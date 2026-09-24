@@ -24,9 +24,9 @@
 #include "MainWindowImpl.hpp"
 #include "WindowData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
-V_OBJECT_META_IMPL(MainWindow, Window)
+VN_OBJECT_META_IMPL(MainWindow, Window)
 
 struct MainWindow::Impl : public WindowData {
     std::unique_ptr<RibbonBar>        ribbon_bar;
@@ -146,4 +146,4 @@ inline auto MainWindow::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

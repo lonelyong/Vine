@@ -9,10 +9,10 @@
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Rect3.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-using vine::math::Mat4d;
-using vine::math::Aabbd;
+using vn::math::Mat4d;
+using vn::math::Aabbd;
 
 class Group;
 
@@ -30,8 +30,8 @@ class Group;
  * boundingBox() of a subtree is computed by walking the parent chain, so any
  * node answers in world space regardless of depth.
  */
-class V_GRAPHICS_API Node : public Object, public RefCounted<Node> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
+    VN_OBJECT_META_DECL;
 
   public:
     Node();
@@ -107,4 +107,4 @@ class V_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
 using NodePtr = intrusive_ptr<Node>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

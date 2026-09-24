@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -322,4 +322,4 @@ bool FrameGraph::isSkipped(std::uint32_t node) const noexcept
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

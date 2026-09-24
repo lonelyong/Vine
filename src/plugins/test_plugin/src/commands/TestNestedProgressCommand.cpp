@@ -7,13 +7,13 @@
 #include <vine/progress/ProgressRange.hpp>
 #include <vine/progress/ProgressScope.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-V_OBJECT_META_IMPL(TestNestedProgressCommand, Command)
+VN_OBJECT_META_IMPL(TestNestedProgressCommand, Command)
 
-vine::async::Task<CommandResult> TestNestedProgressCommand::execute(CommandExecutionContext* context)
+vn::async::Task<CommandResult> TestNestedProgressCommand::execute(CommandExecutionContext* context)
 {
-    auto* host = vine::appfw::ProgressHost::current();
+    auto* host = vn::appfw::ProgressHost::current();
     if (!host) {
         co_return CommandResult(CommandStatus::Failed, String(u8"无进度宿主"));
     }
@@ -25,13 +25,13 @@ vine::async::Task<CommandResult> TestNestedProgressCommand::execute(CommandExecu
     // 每步 50ms：前段约 2s 走到 40%，子命令约 1.5s 顶替驱动整条进度条，
     // 结束后恢复父命令，后段约 3s 从 40% 走完到 100%。
     host->setLabel("父:导出");
-    vine::progress::ProgressScope root = host->scope("父:导出", 100);
+    vn::progress::ProgressScope root = host->scope("父:导出", 100);
     for (int i = 0; i < 40; ++i) {
         if (root.isCancelled()) {
             co_return CommandResult(CommandStatus::Cancelled);
         }
         root.next(1);
-        co_await vine::async::sleepFor(std::chrono::milliseconds(50));
+        co_await vn::async::sleepFor(std::chrono::milliseconds(50));
     }
 
     // 嵌套运行耗时子命令：按名字创建，子命令有独立前台宿主（顶替父命令），
@@ -46,10 +46,10 @@ vine::async::Task<CommandResult> TestNestedProgressCommand::execute(CommandExecu
             co_return CommandResult(CommandStatus::Cancelled);
         }
         root.next(1);
-        co_await vine::async::sleepFor(std::chrono::milliseconds(50));
+        co_await vn::async::sleepFor(std::chrono::milliseconds(50));
     }
 
     co_return CommandResult(CommandStatus::Success);
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

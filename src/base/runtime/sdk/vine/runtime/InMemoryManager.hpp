@@ -10,7 +10,7 @@
 #include <vine/runtime/CacheManager.hpp>
 #include <vine/runtime/InMemoryCache.hpp>
 
-V_RUNTIME_NS_BEGIN
+VN_RUNTIME_NS_BEGIN
 
 /**
  * @brief Bridge exposing a typed in-memory cache through the CacheManager
@@ -20,13 +20,13 @@ V_RUNTIME_NS_BEGIN
  * standalone and does not derive from CacheManager. InMemoryManager is the
  * non-template adapter that implements the String/any interface by delegating
  * to InMemoryCache<String, std::any>, so a typed cache can be
- * registered with vine::di (or swapped) as a single service while the call
+ * registered with vn::di (or swapped) as a single service while the call
  * sites keep std::any_cast.
  *
  * It keeps the same thread-safe TTL semantics as the template, including the
  * background expiry sweeper (see the sweep_interval constructor argument).
  */
-class V_RUNTIME_API InMemoryManager final : public CacheManager {
+class VN_RUNTIME_API InMemoryManager final : public CacheManager {
   public:
     /**
      * @brief Constructs an empty cache and starts its background sweeper.
@@ -58,4 +58,4 @@ class V_RUNTIME_API InMemoryManager final : public CacheManager {
     InMemoryCache<String, std::any> cache_;
 };
 
-V_RUNTIME_NS_END
+VN_RUNTIME_NS_END

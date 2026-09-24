@@ -7,7 +7,7 @@
 
 #include "String.hpp"
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief Universally unique identifier (128-bit).
@@ -15,7 +15,7 @@ V_CORE_NS_BEGIN
  * Values are created with create() (random version 4) or parsed from canonical
  * text. The default-constructed value is the null (all-zero) UUID.
  */
-class V_CORE_API Uuid {
+class VN_CORE_API Uuid {
   public:
     /// Constructs the null (all-zero) UUID.
     Uuid() = default;
@@ -81,4 +81,4 @@ class V_CORE_API Uuid {
     std::array<std::uint8_t, 16> bytes_{};
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

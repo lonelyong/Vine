@@ -3,7 +3,7 @@
 #include "Icon.hpp"
 #include "UIElement.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Ribbon action (wraps QAction).
@@ -15,8 +15,8 @@ V_APPFWGUI_NS_BEGIN
  * Icon); once added to a menu, its QAction is owned by the menu (see the
  * ownership notes in RibbonButton).
  */
-class V_APPFW_API RibbonAction : public UIElement {
-    V_OBJECT_META_DECL
+class VN_APPFW_API RibbonAction : public UIElement {
+    VN_OBJECT_META_DECL
 
   public:
     RibbonAction();
@@ -66,4 +66,4 @@ class V_APPFW_API RibbonAction : public UIElement {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

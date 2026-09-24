@@ -44,7 +44,7 @@
  * FrameRecorder's file note for why that is the rule, and §2.5 P0-1 for the review that pinned it).
  */
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -64,7 +64,7 @@ struct ShadowFacts
 {
     const void*       light{nullptr};              ///< The light this map belongs to (its identity); nullptr = not a map.
     bool              has_view_projection{false};  ///< Whether the producer published how to read the map.
-    vine::math::Mat4d view_projection{};           ///< Light clip <- world, in the producer's clip convention.
+    vn::math::Mat4d view_projection{};           ///< Light clip <- world, in the producer's clip convention.
 };
 
 /** @brief What the compiler knows about one target: the API layer's own account of it. */
@@ -90,7 +90,7 @@ struct CompiledCommand
     std::uint64_t geometry_revision{0};   ///< `Geometry::revision()` at collection time.
     ProgramRef    program{};              ///< The command's own program, or the frame's default (resolved).
     const void*   material{nullptr};      ///< Material identity, or nullptr.
-    vine::math::Mat4d model{};            ///< World-space model matrix.
+    vn::math::Mat4d model{};            ///< World-space model matrix.
     float         opacity{1.0F};          ///< Effective opacity.
     DynamicState  dynamic{};              ///< The dynamic layer, resolved (see resolveDynamicState).
 };
@@ -124,7 +124,7 @@ struct CompiledDraw
 {
     DrawKind         kind{DrawKind::Content};  ///< Content drawing or a full-screen program.
     CameraSnapshot   camera{};                 ///< The camera announced with the call.
-    vine::graphics::Viewport viewport{};       ///< Resolved: the announced rectangle, or the whole target.
+    vn::graphics::Viewport viewport{};       ///< Resolved: the announced rectangle, or the whole target.
     std::span<const LightRef> lights{};        ///< The consumed lights; empty = the backend default.
     const void*      source{nullptr};          ///< Screen draws: the target whose attachments are sampled.
     ProgramRef       program{};                ///< Screen draws: the fragment program to draw with.
@@ -146,8 +146,8 @@ struct CompiledPass
     PassId        pass{0};                    ///< Pass identity.
     std::uint32_t schedule_index{0};          ///< Position in the execution order (0 = first).
     std::uint32_t target_index{0};            ///< Index into CompiledFrame::targets (the pass' target).
-    vine::graphics::Viewport viewport{};      ///< Whole-target rectangle, for the draw calls that announced none.
-    vine::graphics::DepthMode depth{vine::graphics::DepthMode::TestAndWrite};  ///< The pass' depth policy.
+    vn::graphics::Viewport viewport{};      ///< Whole-target rectangle, for the draw calls that announced none.
+    vn::graphics::DepthMode depth{vn::graphics::DepthMode::TestAndWrite};  ///< The pass' depth policy.
     ClearPolicy   clear{};                    ///< The effective clear policy (announced, or the default).
     bool          bootstrap{false};           ///< First writer of freshly built attachments: it must clear.
     bool          depth_preserved{false};     ///< A later pass reads the depth this one writes: never clear it.
@@ -187,8 +187,8 @@ struct CompiledPass
  */
 struct CompiledShape
 {
-    std::span<const vine::graphics::RenderTarget::ColorFormat> color_formats{};  ///< The engine's spelling, one per colour attachment.
-    std::optional<vine::graphics::RenderTarget::DepthFormat>   depth_format{};   ///< The engine's spelling; absent = no depth attachment.
+    std::span<const vn::graphics::RenderTarget::ColorFormat> color_formats{};  ///< The engine's spelling, one per colour attachment.
+    std::optional<vn::graphics::RenderTarget::DepthFormat>   depth_format{};   ///< The engine's spelling; absent = no depth attachment.
     std::span<const std::uint32_t> device_color_formats{};   ///< The device's spelling; empty = never learned.
     std::uint32_t                  device_depth_format{0};   ///< The device's depth format; 0 = no depth, or never learned.
     std::uint32_t                  samples{1};               ///< Sample count.
@@ -269,13 +269,13 @@ class FrameCompiler
 
     /** @brief Resolves one pass' drawing calls into the arena (viewports and programs made explicit). */
     [[nodiscard]] std::span<const CompiledDraw> resolveDraws(const CollectedPass& pass,
-                                                             const vine::graphics::Viewport& whole,
+                                                             const vn::graphics::Viewport& whole,
                                                              const ProgramRef& default_program);
 
     /** @brief Resolves one drawing call's instances (program and dynamic state made explicit). */
     [[nodiscard]] std::span<const CompiledCommand> resolveCommands(const CollectedDraw& draw,
                                                                    const ProgramRef& default_program,
-                                                                   vine::graphics::DepthMode pass_depth);
+                                                                   vn::graphics::DepthMode pass_depth);
 
     /** @brief Resolves one pass' declared inputs into the facts a binding layer needs.
      *
@@ -303,7 +303,7 @@ class FrameCompiler
     [[nodiscard]] static ShadowFacts resolveShadow(std::span<const CompiledInput> inputs) noexcept;
 
     /** @brief Reports one condition through the one route. */
-    void report(vine::graphics::DiagnosticCategory category, const std::string& message);
+    void report(vn::graphics::DiagnosticCategory category, const std::string& message);
 
 
   private:
@@ -336,4 +336,4 @@ class FrameCompiler
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

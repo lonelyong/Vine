@@ -3,7 +3,7 @@
 #include "Control.hpp"
 #include "Gui.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class RibbonGroup;
 
@@ -13,8 +13,8 @@ class RibbonGroup;
  *
  * @note This header includes and exposes no Qt types.
  */
-class V_APPFW_API RibbonTab : public Control {
-    V_OBJECT_META_DECL
+class VN_APPFW_API RibbonTab : public Control {
+    VN_OBJECT_META_DECL
 
   public:
     RibbonTab();
@@ -49,4 +49,4 @@ class V_APPFW_API RibbonTab : public Control {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

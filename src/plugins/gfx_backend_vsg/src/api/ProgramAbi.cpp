@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
@@ -982,4 +982,4 @@ FactMiss scanProgramAbi(std::string_view vertex, std::string_view fragment,
     return FactMiss::None;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

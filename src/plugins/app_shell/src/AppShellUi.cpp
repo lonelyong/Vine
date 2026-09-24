@@ -17,7 +17,7 @@
 
 #include "AppShellDemo.hpp"
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 namespace
 {
@@ -112,15 +112,15 @@ AppShellDock buildAppShellDock(gui::MainWindow* wnd)
 
     // The panel is bound on the visual user I/O itself: that is where the output and the prompts go, and it is the panel
     // that decides whether the interactive console exists at all (a host whose UserIO does not take one has no console).
-    if (auto* io = ::vine::obj_cast<gui::VisualUserIO>(Application::current() ? Application::current()->userIO() : nullptr)) {
+    if (auto* io = ::vn::obj_cast<gui::VisualUserIO>(Application::current() ? Application::current()->userIO() : nullptr)) {
         io->setConsolePanel(console_panel);
     }
     else {
-        V_LOGW("app_shell: no visual user I/O to bind the console panel to; the console will show nothing");
+        VN_LOGW("app_shell: no visual user I/O to bind the console panel to; the console will show nothing");
     }
 
     result.console_panel = console_panel;
     return result;
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

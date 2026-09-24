@@ -31,7 +31,7 @@
  * set is an enum of this layer's own. That is what keeps the whole file testable on a machine with no
  * Vulkan loader at all.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -175,4 +175,4 @@ struct DeviceFacts
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

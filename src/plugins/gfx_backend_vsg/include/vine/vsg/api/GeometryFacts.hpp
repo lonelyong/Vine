@@ -41,7 +41,7 @@
  * here - it is described like any other, and the upload layer is where the backend's current sharing limit
  * says so - because dropping it here would make a geometry that the host authored look like one it did not.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief Builds the geometry table entry for @p geometry.
  *
@@ -51,7 +51,7 @@ V_VSG_NS_BEGIN
  * @return None when the entry was built; Unknown when there is nothing to describe; Malformed when the
  *         geometry cannot be drawn as authored (see the file note).
  */
-[[nodiscard]] FactMiss buildGeometryFacts(const vine::graphics::Geometry& geometry, GeometryFacts& out,
+[[nodiscard]] FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFacts& out,
                                           std::vector<ChannelFacts>& storage);
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -25,9 +25,9 @@
 #include <vine/vsg/core/AllocationGate.hpp>
 #include <vine/vsg/core/FrameGraph.hpp>
 
-using vine::vsg::core::CollectedPass;
-using vine::vsg::core::FrameGraph;
-using vine::vsg::core::FrameSchedule;
+using vn::vsg::core::CollectedPass;
+using vn::vsg::core::FrameGraph;
+using vn::vsg::core::FrameSchedule;
 
 namespace
 {
@@ -78,7 +78,7 @@ TEST(FrameGraphTest, RebuildingAndSchedulingAFrameAsksForNoMemory)
     //
     // The graph's own guard, next to the code: a frame with a real DEPENDENCY is the interesting case,
     // because an edge is what re-allocates when an adjacency row loses its capacity.
-    if (!vine::vsg::core::AllocationGate::countsAvailable())
+    if (!vn::vsg::core::AllocationGate::countsAvailable())
     {
         GTEST_SKIP() << "this binary does not instrument the allocator";
     }
@@ -94,7 +94,7 @@ TEST(FrameGraphTest, RebuildingAndSchedulingAFrameAsksForNoMemory)
     };
     build();  // warm up: the first frame is allowed to grow the tables
 
-    vine::vsg::core::AllocationGate gate;
+    vn::vsg::core::AllocationGate gate;
     gate.begin();
     build();
     gate.end();

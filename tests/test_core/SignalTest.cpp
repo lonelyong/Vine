@@ -9,7 +9,7 @@
 
 TEST(Signal, RvalueEmitDeliveredToAllHandlers)
 {
-    vine::Signal<std::string> signal;
+    vn::Signal<std::string> signal;
 
     std::string first;
     std::string second;
@@ -30,12 +30,12 @@ TEST(Signal, RvalueEmitDeliveredToAllHandlers)
 
 TEST(Signal, RemoveSelfDuringEmitIsSafe)
 {
-    vine::Signal<int> signal;
+    vn::Signal<int> signal;
     std::vector<int> called;
 
     // A handle can cancel itself from inside the handler: the leftover variable is
     // assigned before the first firing, and the lambda captures it by reference.
-    vine::Connection self;
+    vn::Connection self;
     self = signal.connect([&](int value) {
         called.push_back(value * 10);
         self.disconnect();
@@ -54,7 +54,7 @@ TEST(Signal, RemoveSelfDuringEmitIsSafe)
 
 TEST(Signal, AddDuringEmitTakesEffectNextEmit)
 {
-    vine::Signal<int> signal;
+    vn::Signal<int> signal;
     std::vector<int> called;
 
     signal.connect([&](int value) {
@@ -75,7 +75,7 @@ TEST(Signal, AddDuringEmitTakesEffectNextEmit)
 
 TEST(Signal, BlockedSignalDoesNotEmit)
 {
-    vine::Signal<int> signal;
+    vn::Signal<int> signal;
     int               called_count = 0;
 
     signal.connect([&](int) {
@@ -99,10 +99,10 @@ TEST(Signal, RemoveAnotherHandlerDuringEmitSkipsIt)
     // Invariant: a handler removed while the signal is firing is not called any
     // more, even though it had not been reached yet. The firing walks a snapshot,
     // so this is what the per-subscription alive flag is for.
-    vine::Signal<int> signal;
+    vn::Signal<int> signal;
     std::vector<int>  called;
 
-    vine::Connection victim;
+    vn::Connection victim;
     signal.connect([&](int) {
         called.push_back(1);
         victim.disconnect();
@@ -122,7 +122,7 @@ TEST(Signal, RemoveAnotherHandlerDuringEmitSkipsIt)
 
 TEST(Signal, ClearDuringEmitStopsTheRest)
 {
-    vine::Signal<int> signal;
+    vn::Signal<int> signal;
     std::vector<int>  called;
 
     signal.connect([&](int) {
@@ -152,7 +152,7 @@ TEST(Signal, ConcurrentSubscribeAndEmitIsWellDefined)
     // ThreadSanitizer (12 reports before the fix, 0 after, with exactly this
     // shape: one thread firing in a loop while another adds and removes
     // handlers).
-    vine::Signal<int&> signal;
+    vn::Signal<int&> signal;
     std::atomic<int>   fired{ 0 };
     std::atomic<int>   stable_calls{ 0 };
 
@@ -190,7 +190,7 @@ TEST(Signal, SubscribeFromAHandlerOfTheSameSignalIsVisibleToTheNextFiring)
     // The re-entrancy contract, now with the snapshot published in between: a
     // handler firing the signal again sees subscriptions made by handlers of the
     // firing that is still on the stack.
-    vine::Signal<int> signal;
+    vn::Signal<int> signal;
     int               outer = 0;
     int               inner = 0;
 
@@ -213,11 +213,11 @@ TEST(Signal, SubscriptionCancelsOnDestruction)
 {
     // The RAII shape: there is no disconnect call anywhere in this test, the end of the
     // scope is the disconnect.
-    vine::Signal<int> signal;
+    vn::Signal<int> signal;
     std::vector<int>  called;
 
     {
-        const vine::Connection subscription = signal.connect([&](int value) {
+        const vn::Connection subscription = signal.connect([&](int value) {
             called.push_back(value);
         });
 
@@ -233,7 +233,7 @@ TEST(Signal, SubscriptionCancelsOnDestruction)
 
 TEST(Signal, ConnectionIsMovableAndDisconnectIsIdempotent)
 {
-    vine::Signal<int> signal;
+    vn::Signal<int> signal;
     int               called = 0;
 
     auto outer = signal.connect([&](int) { ++called; });
@@ -259,7 +259,7 @@ TEST(Signal, ConnectionIsMovableAndDisconnectIsIdempotent)
 
 TEST(Signal, AssigningASubscriptionCancelsThePreviousSubscription)
 {
-    vine::Signal<int> signal;
+    vn::Signal<int> signal;
     int               first  = 0;
     int               second = 0;
 
@@ -275,7 +275,7 @@ TEST(Signal, AssigningASubscriptionCancelsThePreviousSubscription)
 
 TEST(Signal, DetachedSubscriptionStaysSubscribed)
 {
-    vine::Signal<int> signal;
+    vn::Signal<int> signal;
     int               called = 0;
 
     {
@@ -295,7 +295,7 @@ TEST(Signal, SubscriptionOutlivingTheSignalIsInert)
     // The handle refers to the slot weakly, so tearing the Signal down first leaves it
     // harmless instead of dangling.
     auto subscription = [] {
-        auto local = std::make_unique<vine::Signal<int>>();
+        auto local = std::make_unique<vn::Signal<int>>();
         auto owned = local->connect([](int) { });
         local.reset();
         return owned;
@@ -308,7 +308,7 @@ TEST(Signal, SubscriptionOutlivingTheSignalIsInert)
 
 TEST(Signal, DefaultSubscriptionOwnsNothing)
 {
-    vine::Connection subscription;
+    vn::Connection subscription;
 
     EXPECT_FALSE(subscription.isActive());
 
@@ -324,7 +324,7 @@ TEST(Signal, DestroyingTheSignalFromInsideAHandlerIsSafe)
     // destroys the Signal - the last owner going away - lets the remaining handlers run
     // and returns cleanly.
     std::vector<int> called;
-    auto*            signal = new vine::Signal<int>();
+    auto*            signal = new vn::Signal<int>();
 
     signal->connect([&](int) {
         called.push_back(1);
@@ -344,12 +344,12 @@ TEST(Signal, SubscriptionOfADestroyedSignalStaysInertOnAReusedAddress)
     // A handle identifies a slot, not a Signal address: once the Signal is gone the handle
     // stays inert even if another Signal is later built at the very same address.
     std::vector<int> called;
-    auto*            signal = new vine::Signal<int>();
+    auto*            signal = new vn::Signal<int>();
 
     auto subscription = signal->connect([&](int) { called.push_back(1); });
     delete signal;
 
-    auto* replacement = new vine::Signal<int>();
+    auto* replacement = new vn::Signal<int>();
     EXPECT_FALSE(subscription.isActive());
     subscription.disconnect(); // Must not touch the replacement signal.
     replacement->trigger(0);

@@ -6,7 +6,7 @@
 
 #include <vsg/vk/CommandBuffer.h>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -106,4 +106,4 @@ void SetDynamicState::record(::vsg::CommandBuffer& commandBuffer) const
 
 } // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END

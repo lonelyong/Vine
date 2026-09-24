@@ -24,7 +24,7 @@
  * This is instrumentation, not a layer: nothing here decides anything, and everything here is called
  * from the places that do.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -89,4 +89,4 @@ class Observe
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

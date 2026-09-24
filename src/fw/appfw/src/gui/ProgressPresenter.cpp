@@ -15,7 +15,7 @@
 #include <vine/appfw/ProgressHost.hpp>
 #include "ControlData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace
 {
@@ -28,7 +28,7 @@ constexpr int kHideDelayMs = 300;
 
 } // namespace
 
-V_OBJECT_META_IMPL(ProgressPresenter, Control)
+VN_OBJECT_META_IMPL(ProgressPresenter, Control)
 
 struct ProgressPresenter::Impl : public ControlData {
     /// Owning presenter, redrawn from the change handler.
@@ -41,10 +41,10 @@ struct ProgressPresenter::Impl : public ControlData {
     QTimer*       timer           = nullptr;
 
     /// Connection to ProgressHost::changed(); held so it is cancelled with the presenter.
-    vine::Connection hosts_changed{};
+    vn::Connection hosts_changed{};
 
     /// The tracked foreground host (drives the main bar), or nullptr.
-    vine::appfw::ProgressHost* foreground = nullptr;
+    vn::appfw::ProgressHost* foreground = nullptr;
     std::chrono::steady_clock::time_point host_seen_at{};
     std::chrono::steady_clock::time_point hide_at{};
     bool bar_visible   = false;
@@ -119,7 +119,7 @@ ProgressPresenter::ProgressPresenter(QWidget* parent)
     data->timer->setSingleShot(true);
     QObject::connect(data->timer, &QTimer::timeout, root, [data] { data->self->refresh(); });
 
-    data->hosts_changed = vine::appfw::ProgressHost::changed().connect([data] { Impl::onHostsChanged(data); });
+    data->hosts_changed = vn::appfw::ProgressHost::changed().connect([data] { Impl::onHostsChanged(data); });
 
     // The bar is hidden until an operation shows up; pick up an operation that is already
     // running, so that embedding the presenter mid-operation does not wait for the next change.
@@ -136,7 +136,7 @@ ProgressPresenter::~ProgressPresenter()
 bool ProgressPresenter::isBusy() const
 {
     // Any active host (foreground or background) keeps the presenter engaged.
-    return vine::appfw::ProgressHost::isActive();
+    return vn::appfw::ProgressHost::isActive();
 }
 
 void ProgressPresenter::refresh()
@@ -145,9 +145,9 @@ void ProgressPresenter::refresh()
 
     auto* const data = dptr();
     const auto  now  = steady_clock::now();
-    auto* const fg    = vine::appfw::ProgressHost::current();
-    const auto  hosts = vine::appfw::ProgressHost::activeHosts();
-    const auto  chain = vine::appfw::ProgressHost::foregroundStack();
+    auto* const fg    = vn::appfw::ProgressHost::current();
+    const auto  hosts = vn::appfw::ProgressHost::activeHosts();
+    const auto  chain = vn::appfw::ProgressHost::foregroundStack();
     // 后台宿主 = 活跃宿主中不在前台栈里的（真正并行的任务）。
     const std::size_t bg_count = hosts.size() >= chain.size() ? hosts.size() - chain.size() : 0;
 
@@ -271,4 +271,4 @@ inline auto ProgressPresenter::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

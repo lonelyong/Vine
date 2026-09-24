@@ -5,12 +5,12 @@
 #include "Control.hpp"
 #include "Gui.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class DockPanelManager; // forward-declare for friend access
 
-class V_APPFW_API DockPanel : public Control {
-    V_OBJECT_META_DECL
+class VN_APPFW_API DockPanel : public Control {
+    VN_OBJECT_META_DECL
 
     friend class DockPanelManager;
 
@@ -86,4 +86,4 @@ class V_APPFW_API DockPanel : public Control {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

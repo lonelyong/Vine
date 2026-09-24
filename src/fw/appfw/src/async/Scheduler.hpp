@@ -6,7 +6,7 @@
 
 #include <vine/appfw/appfw_global.hpp>
 
-namespace vine {
+namespace vn {
 namespace appfw {
 namespace async {
 
@@ -17,7 +17,7 @@ namespace async {
  * coroutines. The scheduler must outlive every coroutine scheduled on it, and
  * the owning thread must run an event loop.
  */
-class V_APPFW_API Scheduler final : public QObject
+class VN_APPFW_API Scheduler final : public QObject
 {
   public:
     explicit Scheduler(QObject* parent = nullptr);

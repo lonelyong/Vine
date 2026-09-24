@@ -14,7 +14,7 @@
 #include <vine/robotics/kinematics/Q.hpp>
 #include <vine/robotics/kinematics/State.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 /**
  * @brief Kind of inverse kinematics solver.
@@ -34,7 +34,7 @@ enum class IKSolverType
  * acceleration limits. Joint values are read and written through a scene
  * State; the concrete subclass provides the IK solving.
  */
-class V_ROBOTICS_CORE_API KinematicsBase
+class VN_ROBOTICS_CORE_API KinematicsBase
 {
   public:
     virtual ~KinematicsBase() = default;
@@ -265,4 +265,4 @@ class V_ROBOTICS_CORE_API KinematicsBase
     std::unique_ptr<IKSolver>     ik_solver_;
 };
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

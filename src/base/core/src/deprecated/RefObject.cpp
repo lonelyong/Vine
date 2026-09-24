@@ -1,8 +1,8 @@
 ﻿#include <vine/deprecated/RefObject.hpp>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
-V_OBJECT_META_IMPL(RefObject, Object)
+VN_OBJECT_META_IMPL(RefObject, Object)
 
 RefObject::RefObject() noexcept
 {
@@ -26,4 +26,4 @@ RefObject::~RefObject() noexcept
 
 // Note: strong/weak ref management moved to SPtr/WPtr in Ptr.hpp.
 
-V_CORE_NS_END
+VN_CORE_NS_END

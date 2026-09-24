@@ -20,7 +20,7 @@
 #include "Convert.hpp"
 #include "WindowData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace
 {
@@ -166,7 +166,7 @@ bool readField(InputBox::Field& field, QWidget* editor, QString& error)
 
 } // namespace
 
-V_OBJECT_META_IMPL(InputBox, Window)
+VN_OBJECT_META_IMPL(InputBox, Window)
 
 struct InputBox::Impl : public WindowData {
     /// One built row of the form.
@@ -276,4 +276,4 @@ inline auto InputBox::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

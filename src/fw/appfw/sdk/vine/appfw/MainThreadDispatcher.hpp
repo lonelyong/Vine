@@ -5,7 +5,7 @@
 #include <coroutine>
 #include <functional>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief Main-thread marshaller for EventBus Main/Auto delivery.
@@ -15,7 +15,7 @@ V_APPFW_NS_BEGIN
  * created the QCoreApplication, i.e. the thread that runs exec(); it is not
  * necessarily the operating system's process main thread.
  */
-class V_APPFW_API MainThreadDispatcher {
+class VN_APPFW_API MainThreadDispatcher {
   public:
     MainThreadDispatcher() = default;
     ~MainThreadDispatcher() = default;
@@ -130,4 +130,4 @@ class V_APPFW_API MainThreadDispatcher {
     }
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

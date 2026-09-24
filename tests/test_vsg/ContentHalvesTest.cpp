@@ -21,31 +21,31 @@
 #include <vine/vsg/core/FrameTimeline.hpp>
 #include <vine/vsg/core/RetirementQueue.hpp>
 
-using vine::graphics::Geometry;
-using vine::graphics::Material;
-using vine::graphics::ShaderProgram;
-using vine::graphics::ShaderStage;
-using vine::graphics::ShaderStageType;
-using vine::graphics::Texture2D;
-using vine::vsg::buildGeometryFacts;
-using vine::vsg::buildMaterialFacts;
-using vine::vsg::buildProgramFacts;
-using vine::vsg::ChannelFacts;
-using vine::vsg::ContentFacts;
-using vine::vsg::ContentHalves;
-using vine::vsg::FactMiss;
-using vine::vsg::GeometryFacts;
-using vine::vsg::MaterialFacts;
-using vine::vsg::ProgramFacts;
-using vine::vsg::ProgramVariant;
-using vine::vsg::core::CompiledCommand;
-using vine::vsg::core::CompiledDraw;
-using vine::vsg::core::CompiledPass;
-using vine::vsg::core::DrawKind;
-using vine::vsg::core::FrameTimeline;
-using vine::vsg::core::ProgramRef;
-using vine::vsg::core::RetirementQueue;
-using vine::vsg::core::VariantPool;
+using vn::graphics::Geometry;
+using vn::graphics::Material;
+using vn::graphics::ShaderProgram;
+using vn::graphics::ShaderStage;
+using vn::graphics::ShaderStageType;
+using vn::graphics::Texture2D;
+using vn::vsg::buildGeometryFacts;
+using vn::vsg::buildMaterialFacts;
+using vn::vsg::buildProgramFacts;
+using vn::vsg::ChannelFacts;
+using vn::vsg::ContentFacts;
+using vn::vsg::ContentHalves;
+using vn::vsg::FactMiss;
+using vn::vsg::GeometryFacts;
+using vn::vsg::MaterialFacts;
+using vn::vsg::ProgramFacts;
+using vn::vsg::ProgramVariant;
+using vn::vsg::core::CompiledCommand;
+using vn::vsg::core::CompiledDraw;
+using vn::vsg::core::CompiledPass;
+using vn::vsg::core::DrawKind;
+using vn::vsg::core::FrameTimeline;
+using vn::vsg::core::ProgramRef;
+using vn::vsg::core::RetirementQueue;
+using vn::vsg::core::VariantPool;
 
 namespace
 {
@@ -55,8 +55,8 @@ ShaderStage stage(ShaderStageType type, const char* source)
 {
     ShaderStage out;
     out.type       = type;
-    out.source     = vine::String(reinterpret_cast<const char8_t*>(source));
-    out.entryPoint = vine::String(reinterpret_cast<const char8_t*>("main"));
+    out.source     = vn::String(reinterpret_cast<const char8_t*>(source));
+    out.entryPoint = vn::String(reinterpret_cast<const char8_t*>("main"));
     return out;
 }
 
@@ -90,43 +90,43 @@ constexpr const char* kScreenFragmentSource =
     "void main() { outColor = vec4(vine_uv, 0.0, 1.0); }\n";
 
 /// @brief A content program with both stages.
-vine::intrusive_ptr<ShaderProgram> contentProgram()
+vn::intrusive_ptr<ShaderProgram> contentProgram()
 {
-    const auto program = vine::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    const auto program = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
     program->addStage(stage(ShaderStageType::Vertex, kGatedVertexSource));
     program->addStage(stage(ShaderStageType::Fragment, kGatedFragmentSource));
     return program;
 }
 
 /// @brief A full-screen program: a fragment stage only (the engine brings the vertex stage).
-vine::intrusive_ptr<ShaderProgram> screenProgram()
+vn::intrusive_ptr<ShaderProgram> screenProgram()
 {
-    const auto program = vine::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    const auto program = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
     program->addStage(stage(ShaderStageType::Fragment, kScreenFragmentSource));
     return program;
 }
 
 /// @brief A quad, with the texcoord channel when @p texcoords asks for one.
-vine::intrusive_ptr<Geometry> quad(bool texcoords = false)
+vn::intrusive_ptr<Geometry> quad(bool texcoords = false)
 {
-    const auto geometry = vine::intrusive_ptr<Geometry>(new Geometry());
-    geometry->setPositions(vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(
+    const auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
         std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F })));
     if (texcoords)
     {
-        geometry->setTexcoords2(vine::intrusive_ptr<const vine::Buffer<float>>(
-            new vine::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F })));
+        geometry->setTexcoords2(vn::intrusive_ptr<const vn::Buffer<float>>(
+            new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F })));
     }
-    geometry->setIndices(vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
-        new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+    geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
     geometry->setRevision(1U);
     return geometry;
 }
 
 /// @brief A material with a diffuse colour, and (when @p texture is not null) a texture to sample.
-vine::intrusive_ptr<Material> material(vine::Colorf diffuse, vine::intrusive_ptr<Texture2D> texture = {})
+vn::intrusive_ptr<Material> material(vn::Colorf diffuse, vn::intrusive_ptr<Texture2D> texture = {})
 {
-    const auto out = vine::intrusive_ptr<Material>(new Material());
+    const auto out = vn::intrusive_ptr<Material>(new Material());
     out->setDiffuse(diffuse);
     if (texture != nullptr)
     {
@@ -177,7 +177,7 @@ TEST(ContentHalvesTest, OneHalfPerTupleThePassNames)
 {
     const auto program  = contentProgram();
     const auto geometry = quad();
-    const auto shaded   = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto shaded   = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, program_facts), FactMiss::None);
@@ -229,7 +229,7 @@ TEST(ContentHalvesTest, ASteadyPassBuildsNothing)
 {
     const auto program  = contentProgram();
     const auto geometry = quad();
-    const auto shaded   = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto shaded   = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, program_facts), FactMiss::None);
@@ -277,9 +277,9 @@ TEST(ContentHalvesTest, TwoTextsOfOneProgramAreTwoHalves)
 {
     const auto program  = contentProgram();
     const auto geometry = quad(true);
-    const auto plain    = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
-    const auto texture  = vine::intrusive_ptr<Texture2D>(new Texture2D(1, 1, vine::imaging::PixelFormat::Rgba8Unorm));
-    const auto textured = ::material(vine::Colorf(1.0F, 1.0F, 1.0F, 1.0F), texture);
+    const auto plain    = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto texture  = vn::intrusive_ptr<Texture2D>(new Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+    const auto textured = ::material(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F), texture);
 
     ProgramVariant textured_variant;
     textured_variant.diffuse_map = true;
@@ -332,7 +332,7 @@ TEST(ContentHalvesTest, ThePassAttachmentCountIsPartOfTheHalf)
 {
     const auto program  = contentProgram();
     const auto geometry = quad();
-    const auto shaded   = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto shaded   = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, program_facts), FactMiss::None);
@@ -374,7 +374,7 @@ TEST(ContentHalvesTest, ALayoutIsPartOfTheHalf)
     const auto program = contentProgram();
     const auto plain_geometry = quad(false);
     const auto uv_geometry    = quad(true);
-    const auto shaded = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto shaded = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, program_facts), FactMiss::None);
@@ -422,7 +422,7 @@ TEST(ContentHalvesTest, AScreenDrawGetsAFullScreenHalf)
     const auto program = screenProgram();
 
     ProgramFacts screen_facts;
-    ASSERT_EQ(vine::vsg::buildScreenProgramFacts(*program, screen_facts), FactMiss::None);
+    ASSERT_EQ(vn::vsg::buildScreenProgramFacts(*program, screen_facts), FactMiss::None);
 
     Tables tables;
     tables.programs.push_back(screen_facts);
@@ -449,7 +449,7 @@ TEST(ContentHalvesTest, AKeyTheTablesCannotAnswerProducesNoHalf)
 {
     const auto program  = contentProgram();
     const auto geometry = quad();
-    const auto shaded   = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto shaded   = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     VariantPool   pool;
     ContentHalves halves(pool);
@@ -472,7 +472,7 @@ TEST(ContentHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
 {
     const auto program  = contentProgram();
     const auto geometry = quad();
-    const auto shaded   = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto shaded   = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     ProgramFacts old_facts;
     ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, old_facts), FactMiss::None);
@@ -508,7 +508,7 @@ TEST(ContentHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
     // The host edits the program (a single stage's source) and the tables are rebuilt for the new revision -
     // the OLD revision's entry is gone, exactly as api/ContentStore leaves it once its own window is past.
     ShaderStage patched = stage(ShaderStageType::Fragment, kGatedFragmentSource);
-    patched.source      = vine::String(reinterpret_cast<const char8_t*>(
+    patched.source      = vn::String(reinterpret_cast<const char8_t*>(
         "#pragma import_defines (VINE_DIFFUSE_MAP)\n"
         "layout(location = 0) out vec4 outColor;\n"
         "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
@@ -561,7 +561,7 @@ TEST(ContentHalvesTest, ARefusedLayerIsNotRetriedEveryFrame)
     // declarations, not semantics - so the producer is asked for its half and the LAYER is refused. That
     // refusal is remembered: recompiling the same broken text every frame would put a shader compile in the
     // frame loop and say the same thing again.
-    const auto program = vine::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    const auto program = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
     program->addStage(stage(ShaderStageType::Vertex, kGatedVertexSource));
     program->addStage(stage(ShaderStageType::Fragment,
                             "layout(location = 0) out vec4 outColor;\n"
@@ -576,7 +576,7 @@ TEST(ContentHalvesTest, ARefusedLayerIsNotRetriedEveryFrame)
     GeometryFacts geometry_facts;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back()), FactMiss::None);
     tables.geometries.push_back(geometry_facts);
-    const auto shaded = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto shaded = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
     MaterialFacts material_facts;
     ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()),
               FactMiss::None);

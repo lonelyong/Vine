@@ -16,13 +16,13 @@ class QResizeEvent;
 class QWheelEvent;
 class QWidget;
 
-namespace vine::graphics
+namespace vn::graphics
 {
 class RenderEngine;
 class SceneView;
 }
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief The render surface and the render session living on it.
@@ -30,7 +30,7 @@ V_APPFWGUI_NS_BEGIN
  * The native window a render backend binds to - a QWindow created as a Vulkan surface - plus
  * everything that keeps a session on it: the engine and the interactive primary view, the attach
  * and re-announce rules, the deferred resize path, the display-synced settle frames, and the
- * translation of the Qt events it receives into vine::window events pushed to the view.
+ * translation of the Qt events it receives into vn::window events pushed to the view.
  *
  * RenderControl embeds one of these in its widget tree (QWidget::createWindowContainer) and
  * forwards its public surface to the outside; no decision about the session is taken there. Every
@@ -70,14 +70,14 @@ class SurfaceWindow : public QWindow {
      *
      * @return The engine, or nullptr when creation failed.
      */
-    vine::graphics::RenderEngine* engine() const;
+    vn::graphics::RenderEngine* engine() const;
 
     /**
      * @brief Gets the interactive primary view bound to the engine.
      *
      * @return The view (never null while the surface is alive).
      */
-    vine::graphics::SceneView* view() const;
+    vn::graphics::SceneView* view() const;
 
     /**
      * @brief Attaches the backend to the live native surface and initializes it.
@@ -141,11 +141,11 @@ class SurfaceWindow : public QWindow {
   private:
     /** @brief Pushes a mouse event to the view, refreshes the frame, and opens the context menu on
      * a right-click. */
-    void handleMouse(const vine::window::MouseEvent& event);
+    void handleMouse(const vn::window::MouseEvent& event);
     /** @brief Pushes a scroll event to the view and refreshes the frame. */
-    void handleScroll(const vine::window::ScrollEvent& event);
+    void handleScroll(const vn::window::ScrollEvent& event);
     /** @brief Pushes a key event to the view and refreshes the frame. */
-    void handleKey(const vine::window::KeyEvent& event);
+    void handleKey(const vn::window::KeyEvent& event);
     /** @brief Reports the client size once per change, whichever object saw it first. */
     void handleResized(int width, int height);
     /** @brief Marks the native surface usable and schedules the update that follows it. */
@@ -202,4 +202,4 @@ class SurfaceWindow : public QWindow {
     Impl* const d;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

@@ -45,7 +45,7 @@
 
 #include <vine/appfw/gui/RenderControl.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /*
  * Everything in this unit except install() is file-local: the demo's assets, its content slices,
@@ -76,7 +76,7 @@ std::filesystem::path demoAssetDirectory()
     if (const char* override_dir = std::getenv("VINE_TEST_DATA_DIR"); override_dir != nullptr && *override_dir != '\0') {
         return std::filesystem::path(override_dir);
     }
-    const std::string exe = vine::system::Process::currentExecutablePath().as_std_str();
+    const std::string exe = vn::system::Process::currentExecutablePath().as_std_str();
     if (exe.empty()) {
         return {};
     }
@@ -102,12 +102,12 @@ std::filesystem::path demoAssetDirectory()
  * @param side   Edge length of the result, in texels.
  * @return The filtered image (the source itself when it is already that size or smaller).
  */
-vine::intrusive_ptr<vine::imaging::Image> boxFilterRgba(const vine::imaging::Image& source, int side)
+vn::intrusive_ptr<vn::imaging::Image> boxFilterRgba(const vn::imaging::Image& source, int side)
 {
     if (source.width() <= side || source.height() <= side) {
-        return vine::intrusive_ptr<vine::imaging::Image>(const_cast<vine::imaging::Image*>(&source));
+        return vn::intrusive_ptr<vn::imaging::Image>(const_cast<vn::imaging::Image*>(&source));
     }
-    auto       filtered   = vine::make_intrusive<vine::imaging::Image>(side, side, vine::imaging::PixelFormat::Rgba8Unorm, 1);
+    auto       filtered   = vn::make_intrusive<vn::imaging::Image>(side, side, vn::imaging::PixelFormat::Rgba8Unorm, 1);
     const auto source_px  = source.mipData(0);
     const auto filtered_px = filtered->mipData(0);
     const int  step_x     = source.width() / side;
@@ -146,15 +146,15 @@ vine::intrusive_ptr<vine::imaging::Image> boxFilterRgba(const vine::imaging::Ima
  */
 struct DemoCubeFace
 {
-    vine::graphics::CubeMap::Face face; ///< The face this file is.
+    vn::graphics::CubeMap::Face face; ///< The face this file is.
     const char*                  file; ///< Its name under test_data/images.
 };
 
 /** @brief The faces of the BOX cube map (named after the faces themselves). */
 constexpr DemoCubeFace kBoxCubeFaces[] = {
-    { vine::graphics::CubeMap::Face::PosX, "posx.jpg" }, { vine::graphics::CubeMap::Face::NegX, "negx.jpg" },
-    { vine::graphics::CubeMap::Face::PosY, "posy.jpg" }, { vine::graphics::CubeMap::Face::NegY, "negy.jpg" },
-    { vine::graphics::CubeMap::Face::PosZ, "posz.jpg" }, { vine::graphics::CubeMap::Face::NegZ, "negz.jpg" },
+    { vn::graphics::CubeMap::Face::PosX, "posx.jpg" }, { vn::graphics::CubeMap::Face::NegX, "negx.jpg" },
+    { vn::graphics::CubeMap::Face::PosY, "posy.jpg" }, { vn::graphics::CubeMap::Face::NegY, "negy.jpg" },
+    { vn::graphics::CubeMap::Face::PosZ, "posz.jpg" }, { vn::graphics::CubeMap::Face::NegZ, "negz.jpg" },
 };
 
 /**
@@ -164,9 +164,9 @@ constexpr DemoCubeFace kBoxCubeFaces[] = {
  * the two are not mistaken for each other on screen.
  */
 constexpr DemoCubeFace kSkyCubeFaces[] = {
-    { vine::graphics::CubeMap::Face::PosX, "right.jpg" },  { vine::graphics::CubeMap::Face::NegX, "left.jpg" },
-    { vine::graphics::CubeMap::Face::PosY, "top.jpg" },    { vine::graphics::CubeMap::Face::NegY, "bottom.jpg" },
-    { vine::graphics::CubeMap::Face::PosZ, "front.jpg" },  { vine::graphics::CubeMap::Face::NegZ, "back.jpg" },
+    { vn::graphics::CubeMap::Face::PosX, "right.jpg" },  { vn::graphics::CubeMap::Face::NegX, "left.jpg" },
+    { vn::graphics::CubeMap::Face::PosY, "top.jpg" },    { vn::graphics::CubeMap::Face::NegY, "bottom.jpg" },
+    { vn::graphics::CubeMap::Face::PosZ, "front.jpg" },  { vn::graphics::CubeMap::Face::NegZ, "back.jpg" },
 };
 
 /**
@@ -187,7 +187,7 @@ constexpr DemoCubeFace kSkyCubeFaces[] = {
  * @param what  What samples the map, for the one-line success report.
  * @return The cube map, or null when the assets are absent (already reported).
  */
-vine::intrusive_ptr<vine::graphics::CubeMap> loadDemoCubeMap(int side, std::span<const DemoCubeFace> faces, const char* what)
+vn::intrusive_ptr<vn::graphics::CubeMap> loadDemoCubeMap(int side, std::span<const DemoCubeFace> faces, const char* what)
 {
     const std::filesystem::path images = demoAssetDirectory() / "images";
     if (!std::filesystem::is_directory(images)) {
@@ -199,12 +199,12 @@ vine::intrusive_ptr<vine::graphics::CubeMap> loadDemoCubeMap(int side, std::span
         return nullptr;
     }
 
-    auto cube = vine::make_intrusive<vine::graphics::CubeMap>(side, vine::imaging::PixelFormat::Rgba8Unorm, 1);
+    auto cube = vn::make_intrusive<vn::graphics::CubeMap>(side, vn::imaging::PixelFormat::Rgba8Unorm, 1);
     for (const auto& entry : faces) {
         const std::filesystem::path file = images / entry.file;
         try {
             cube->setFaceImage(entry.face,
-                               boxFilterRgba(*vine::imageio::loadImage(file, vine::imaging::PixelFormat::Rgba8Unorm), side));
+                               boxFilterRgba(*vn::imageio::loadImage(file, vn::imaging::PixelFormat::Rgba8Unorm), side));
         }
         catch (const std::exception& error) {
             std::fprintf(stderr, "[demo] cube map: '%s' could not be read (%s) - the cube map is skipped\n",
@@ -246,14 +246,14 @@ vine::intrusive_ptr<vine::graphics::CubeMap> loadDemoCubeMap(int side, std::span
  * @param half Half extents along X / Y / Z.
  * @return The geometry, with its texcoord channel in the map's frame.
  */
-vine::intrusive_ptr<vine::graphics::Geometry> makeDirectionBox(const vine::String& name, const vine::math::Vec3d& half)
+vn::intrusive_ptr<vn::graphics::Geometry> makeDirectionBox(const vn::String& name, const vn::math::Vec3d& half)
 {
-    using vine::math::Vec3f;
+    using vn::math::Vec3f;
 
-    vine::geometry::Vec3fArray  positions;
-    vine::geometry::Vec3fArray  normals;
-    vine::geometry::Vec3fArray  directions;
-    vine::geometry::UInt32Array indices;
+    vn::geometry::Vec3fArray  positions;
+    vn::geometry::Vec3fArray  normals;
+    vn::geometry::Vec3fArray  directions;
+    vn::geometry::UInt32Array indices;
 
     const int face_table[6][3] = {
         { 0, 1, 2 }, { 1, 2, 0 }, { 2, 0, 1 }, { 0, 2, 1 }, { 1, 0, 2 }, { 2, 1, 0 },
@@ -291,12 +291,12 @@ vine::intrusive_ptr<vine::graphics::Geometry> makeDirectionBox(const vine::Strin
         indices.push_back(base + 3);
     }
 
-    auto geometry = vine::make_intrusive<vine::graphics::Geometry>();
+    auto geometry = vn::make_intrusive<vn::graphics::Geometry>();
     geometry->setName(name);
-    geometry->setPositions(vine::graphics::packAttribute(positions));
-    geometry->setNormals(vine::graphics::packAttribute(normals));
-    geometry->setTexcoords3(vine::graphics::packAttribute(directions));
-    geometry->setIndices(vine::graphics::packIndices(indices));
+    geometry->setPositions(vn::graphics::packAttribute(positions));
+    geometry->setNormals(vn::graphics::packAttribute(normals));
+    geometry->setTexcoords3(vn::graphics::packAttribute(directions));
+    geometry->setIndices(vn::graphics::packIndices(indices));
     return geometry;
 }
 
@@ -310,13 +310,13 @@ vine::intrusive_ptr<vine::graphics::Geometry> makeDirectionBox(const vine::Strin
  * @param half    Half extents along X / Y / Z.
  * @return The created node (kept alive by the root group).
  */
-vine::intrusive_ptr<vine::graphics::MatrixTransform>
-addCubeMappedBox(vine::graphics::Group* root, vine::intrusive_ptr<vine::graphics::Texture> texture, const vine::String& name,
-                 const vine::math::Vec3d& centre, const vine::math::Vec3d& half)
+vn::intrusive_ptr<vn::graphics::MatrixTransform>
+addCubeMappedBox(vn::graphics::Group* root, vn::intrusive_ptr<vn::graphics::Texture> texture, const vn::String& name,
+                 const vn::math::Vec3d& centre, const vn::math::Vec3d& half)
 {
     auto geometry = makeDirectionBox(name, half);
 
-    auto material = vine::make_intrusive<vine::graphics::Material>();
+    auto material = vn::make_intrusive<vn::graphics::Material>();
     // The material is a mid grey, not white: the cube map is the ALBEDO here (the content geometry stage
     // multiplies it by the material and the lighting then shades it), and a white albedo against the
     // skybox's own bright sky made the sun's shading invisible - the box looked lit by nothing. A mid
@@ -326,15 +326,15 @@ addCubeMappedBox(vine::graphics::Group* root, vine::intrusive_ptr<vine::graphics
     //
     // Sampling by the fragment's REFLECTED view direction (a mirror) is a different shading rule and
     // needs a program of its own; the engine's preset samples the direction the vertex stage supplies.
-    material->setDiffuse(vine::Colorf(0.45f, 0.45f, 0.45f, 1.0f));
-    material->setSpecular(vine::Colorf(0.12f, 0.12f, 0.12f, 1.0f));
+    material->setDiffuse(vn::Colorf(0.45f, 0.45f, 0.45f, 1.0f));
+    material->setSpecular(vn::Colorf(0.12f, 0.12f, 0.12f, 1.0f));
     material->setShininess(64.0f);
     material->setTexture(std::move(texture));
     geometry->setMaterial(material);
 
-    auto node = vine::make_intrusive<vine::graphics::MatrixTransform>();
+    auto node = vn::make_intrusive<vn::graphics::MatrixTransform>();
     node->setName(name);
-    node->setMatrix(vine::math::translate(centre));
+    node->setMatrix(vn::math::translate(centre));
     node->addChild(geometry);
     root->addChild(node);
     return node;
@@ -357,7 +357,7 @@ addCubeMappedBox(vine::graphics::Group* root, vine::intrusive_ptr<vine::graphics
  * @param centre World-space centre of the box.
  * @param half   Half extents along X / Y / Z.
  */
-void addDemoCubeMappedBox(vine::graphics::Group* root, const vine::math::Vec3d& centre, const vine::math::Vec3d& half)
+void addDemoCubeMappedBox(vn::graphics::Group* root, const vn::math::Vec3d& centre, const vn::math::Vec3d& half)
 {
     if (auto cube = loadDemoCubeMap(/*side*/ 256, kBoxCubeFaces,
                                     "box 'env_box' samples it by direction (3-component texcoords)")) {
@@ -397,25 +397,25 @@ constexpr double kSkyRadius = 400.0;
  * @param root   Root group receiving the node.
  * @param radius Half extent of the box, in world units.
  */
-void addDemoSkyBox(vine::graphics::Group* root, double radius)
+void addDemoSkyBox(vn::graphics::Group* root, double radius)
 {
-    using vine::math::Vec3d;
+    using vn::math::Vec3d;
 
     if (auto cube = loadDemoCubeMap(/*side*/ 512, kSkyCubeFaces,
                                     "sky box 'sky_box' samples it by direction (3-component texcoords)")) {
         auto geometry = makeDirectionBox(u8"sky_box", Vec3d(radius, radius, radius));
 
-        auto material = vine::make_intrusive<vine::graphics::Material>();
+        auto material = vn::make_intrusive<vn::graphics::Material>();
         // White: the sky program is unlit and multiplies nothing, so the map IS the colour.
-        material->setDiffuse(vine::Colorf(1.0f, 1.0f, 1.0f, 1.0f));
-        material->setSpecular(vine::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+        material->setDiffuse(vn::Colorf(1.0f, 1.0f, 1.0f, 1.0f));
+        material->setSpecular(vn::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
         material->setTexture(std::move(cube));
         geometry->setMaterial(material);
         // The SDK's built-in sky program (BuiltinShaders::skyboxProgram): unlit, samples the material's
         // cube map by the authored direction, and takes its sampler kind from the texcoord channel's
         // width - which is what the backend's kind check needs to keep a mismatched map from becoming an
         // unbindable descriptor.
-        geometry->setProgram(vine::graphics::skyboxProgram());
+        geometry->setProgram(vn::graphics::skyboxProgram());
 
         root->addChild(geometry);
     }
@@ -435,14 +435,14 @@ void addDemoSkyBox(vine::graphics::Group* root, double radius)
  * @param half    Half extents along X / Y / Z.
  * @return The created node (kept alive by the root group).
  */
-vine::intrusive_ptr<vine::graphics::MatrixTransform>
-addBox(vine::graphics::Group* root, const vine::Colorf& diffuse, const vine::String& name, const vine::math::Vec3d& centre, const vine::math::Vec3d& half)
+vn::intrusive_ptr<vn::graphics::MatrixTransform>
+addBox(vn::graphics::Group* root, const vn::Colorf& diffuse, const vn::String& name, const vn::math::Vec3d& centre, const vn::math::Vec3d& half)
 {
-    using vine::math::Vec3f;
+    using vn::math::Vec3f;
 
-    vine::geometry::Vec3fArray  positions;
-    vine::geometry::Vec3fArray  normals;
-    vine::geometry::UInt32Array indices;
+    vn::geometry::Vec3fArray  positions;
+    vn::geometry::Vec3fArray  normals;
+    vn::geometry::UInt32Array indices;
 
     // Build each face with a consistent outward (counter-clockwise, seen from
     // the outside) winding. For a face normal n, pick in-plane unit vectors
@@ -489,27 +489,27 @@ addBox(vine::graphics::Group* root, const vine::Colorf& diffuse, const vine::Str
         indices.push_back(base + 3);
     }
 
-    auto geometry = vine::make_intrusive<vine::graphics::Geometry>();
+    auto geometry = vn::make_intrusive<vn::graphics::Geometry>();
     geometry->setName(name);
-    geometry->setPositions(vine::graphics::packAttribute(positions));
-    geometry->setNormals(vine::graphics::packAttribute(normals));
-    geometry->setIndices(vine::graphics::packIndices(indices));
+    geometry->setPositions(vn::graphics::packAttribute(positions));
+    geometry->setNormals(vn::graphics::packAttribute(normals));
+    geometry->setIndices(vn::graphics::packIndices(indices));
 
-    auto material = vine::make_intrusive<vine::graphics::Material>();
+    auto material = vn::make_intrusive<vn::graphics::Material>();
     material->setDiffuse(diffuse);
     // Matte plastic: a low grey specular keeps lit surfaces looking solid.
     // The Material default specular is pure white, which makes the deferred
     // specular G-buffer attachment read all-white and paints broad white
     // highlights that read as glass / see-through on opaque boxes.
-    material->setSpecular(vine::Colorf(0.12f, 0.12f, 0.12f, 1.0f));
+    material->setSpecular(vn::Colorf(0.12f, 0.12f, 0.12f, 1.0f));
     material->setShininess(64.0f);
     geometry->setMaterial(material);
 
     // Place the box with a MatrixTransform: the transform node carries the
     // position and owns the leaf geometry.
-    auto node = vine::make_intrusive<vine::graphics::MatrixTransform>();
+    auto node = vn::make_intrusive<vn::graphics::MatrixTransform>();
     node->setName(name);
-    node->setMatrix(vine::math::translate(centre));
+    node->setMatrix(vn::math::translate(centre));
     node->addChild(geometry);
 
     root->addChild(node);
@@ -527,12 +527,12 @@ addBox(vine::graphics::Group* root, const vine::Colorf& diffuse, const vine::Str
  *
  * @return Configured star program.
  */
-vine::intrusive_ptr<vine::graphics::ShaderProgram> makeStarPointProgram()
+vn::intrusive_ptr<vn::graphics::ShaderProgram> makeStarPointProgram()
 {
-    using vine::intrusive_ptr;
-    using vine::graphics::ShaderProgram;
-    using vine::graphics::ShaderStage;
-    using vine::graphics::ShaderStageType;
+    using vn::intrusive_ptr;
+    using vn::graphics::ShaderProgram;
+    using vn::graphics::ShaderStage;
+    using vn::graphics::ShaderStageType;
 
     auto program = make_intrusive<ShaderProgram>();
     program->setName(u8"star_sprite");
@@ -594,12 +594,12 @@ vine::intrusive_ptr<vine::graphics::ShaderProgram> makeStarPointProgram()
  *
  * @param root Root group receiving the content.
  */
-void addOpaqueBase(vine::graphics::Group* root)
+void addOpaqueBase(vn::graphics::Group* root)
 {
-    using vine::math::Vec3d;
+    using vn::math::Vec3d;
 
-    addBox(root, vine::Colorf(0.45f, 0.47f, 0.52f, 1.0f), u8"ground", Vec3d(0.0, 0.0, -0.05), Vec3d(3.0, 3.0, 0.05));
-    addBox(root, vine::Colorf(0.30f, 0.62f, 0.36f, 1.0f), u8"box_green", Vec3d(0.0, 0.0, 0.4), Vec3d(0.5, 0.5, 0.4));
+    addBox(root, vn::Colorf(0.45f, 0.47f, 0.52f, 1.0f), u8"ground", Vec3d(0.0, 0.0, -0.05), Vec3d(3.0, 3.0, 0.05));
+    addBox(root, vn::Colorf(0.30f, 0.62f, 0.36f, 1.0f), u8"box_green", Vec3d(0.0, 0.0, 0.4), Vec3d(0.5, 0.5, 0.4));
 
     // --- Cube-mapped box: the material's texture is sampled BY DIRECTION ---
     // Its texcoord channel carries THREE components (a direction, not a UV pair), which is what makes the
@@ -621,18 +621,18 @@ void addOpaqueBase(vine::graphics::Group* root)
  *
  * @param root Root group receiving the content.
  */
-void addGbufferVariety(vine::graphics::Group* root)
+void addGbufferVariety(vn::graphics::Group* root)
 {
-    using vine::math::Vec3d;
+    using vn::math::Vec3d;
 
-    addBox(root, vine::Colorf(0.90f, 0.30f, 0.25f, 1.0f), u8"box_red", Vec3d(1.4, 0.5, 0.35), Vec3d(0.35, 0.35, 0.35));
-    addBox(root, vine::Colorf(0.20f, 0.55f, 0.90f, 1.0f), u8"box_blue", Vec3d(-1.4, -0.5, 0.35), Vec3d(0.35, 0.35, 0.35));
-    addBox(root, vine::Colorf(0.95f, 0.72f, 0.15f, 1.0f), u8"box_gold", Vec3d(-1.2, 1.3, 0.3), Vec3d(0.3, 0.3, 0.3));
+    addBox(root, vn::Colorf(0.90f, 0.30f, 0.25f, 1.0f), u8"box_red", Vec3d(1.4, 0.5, 0.35), Vec3d(0.35, 0.35, 0.35));
+    addBox(root, vn::Colorf(0.20f, 0.55f, 0.90f, 1.0f), u8"box_blue", Vec3d(-1.4, -0.5, 0.35), Vec3d(0.35, 0.35, 0.35));
+    addBox(root, vn::Colorf(0.95f, 0.72f, 0.15f, 1.0f), u8"box_gold", Vec3d(-1.2, 1.3, 0.3), Vec3d(0.3, 0.3, 0.3));
     // A tall pillar and a low slab for varied depth/position content. The pillar is also what the
     // Deferred overlay's translucent box overlaps, so the depth-correct composite is visible
     // (see kOverlayBlended).
-    addBox(root, vine::Colorf(0.55f, 0.30f, 0.85f, 1.0f), u8"box_purple", Vec3d(1.1, -1.1, 0.95), Vec3d(0.3, 0.3, 0.95));
-    addBox(root, vine::Colorf(0.15f, 0.75f, 0.65f, 1.0f), u8"box_teal", Vec3d(-1.6, 0.9, 0.2), Vec3d(0.5, 0.3, 0.2));
+    addBox(root, vn::Colorf(0.55f, 0.30f, 0.85f, 1.0f), u8"box_purple", Vec3d(1.1, -1.1, 0.95), Vec3d(0.3, 0.3, 0.95));
+    addBox(root, vn::Colorf(0.15f, 0.75f, 0.65f, 1.0f), u8"box_teal", Vec3d(-1.6, 0.9, 0.2), Vec3d(0.5, 0.3, 0.2));
 }
 
 /**
@@ -650,30 +650,30 @@ void addGbufferVariety(vine::graphics::Group* root)
  *
  * @param root Root group receiving the content.
  */
-void addForwardShowcase(vine::graphics::Group* root)
+void addForwardShowcase(vn::graphics::Group* root)
 {
-    using vine::graphics::Geometry;
-    using vine::graphics::MatrixTransform;
-    using vine::graphics::ShaderProgram;
-    using vine::graphics::ShaderStage;
-    using vine::graphics::ShaderStageType;
-    using vine::graphics::StateNode;
-    using vine::math::Vec3d;
+    using vn::graphics::Geometry;
+    using vn::graphics::MatrixTransform;
+    using vn::graphics::ShaderProgram;
+    using vn::graphics::ShaderStage;
+    using vn::graphics::ShaderStageType;
+    using vn::graphics::StateNode;
+    using vn::math::Vec3d;
 
     // --- StateNode{ PolygonMode::Line }: wireframe box ----------------------
     // Each box is attached under ITS state node only (single parent).
     {
         auto state = make_intrusive<StateNode>();
-        state->setPolygonMode(vine::graphics::PolygonMode::Line);
-        addBox(state.get(), vine::Colorf(1.0f, 0.68f, 0.12f, 1.0f), u8"wire_box", Vec3d(-2.3, 0.6, 0.35), Vec3d(0.35, 0.35, 0.35));
+        state->setPolygonMode(vn::graphics::PolygonMode::Line);
+        addBox(state.get(), vn::Colorf(1.0f, 0.68f, 0.12f, 1.0f), u8"wire_box", Vec3d(-2.3, 0.6, 0.35), Vec3d(0.35, 0.35, 0.35));
         root->addChild(state);
     }
 
     // --- StateNode{ CullMode::Back }: single-sided box ----------------------
     {
         auto state = make_intrusive<StateNode>();
-        state->setCullMode(vine::graphics::CullMode::Back);
-        addBox(state.get(), vine::Colorf(0.20f, 0.75f, 0.85f, 1.0f), u8"culled_box", Vec3d(-1.6, -0.8, 0.4), Vec3d(0.4, 0.4, 0.4));
+        state->setCullMode(vn::graphics::CullMode::Back);
+        addBox(state.get(), vn::Colorf(0.20f, 0.75f, 0.85f, 1.0f), u8"culled_box", Vec3d(-1.6, -0.8, 0.4), Vec3d(0.4, 0.4, 0.4));
         root->addChild(state);
     }
 
@@ -695,7 +695,7 @@ void addForwardShowcase(vine::graphics::Group* root)
                     u8"void main(){ outColor = vec4(0.9, 0.1, 0.85, 1.0); }\n";
         program->addStage(fs);
 
-        auto  box      = addBox(root, vine::Colorf(1.0f, 1.0f, 1.0f, 1.0f), u8"custom_program", Vec3d(0.0, 0.0, 0.85), Vec3d(0.42, 0.42, 0.45));
+        auto  box      = addBox(root, vn::Colorf(1.0f, 1.0f, 1.0f, 1.0f), u8"custom_program", Vec3d(0.0, 0.0, 0.85), Vec3d(0.42, 0.42, 0.45));
         auto* geometry = dynamic_cast<Geometry*>(box->children().front().get());
         if (geometry != nullptr) {
             geometry->setProgram(program);
@@ -724,7 +724,7 @@ void addForwardShowcase(vine::graphics::Group* root)
 
         auto cloud = make_intrusive<Geometry>();
         cloud->setName(u8"point_cloud");
-        vine::geometry::Vec3fArray points;
+        vn::geometry::Vec3fArray points;
         // Four stacked rings in the Z-up world: horizontal rings at rising
         // heights, centred on the footprint (-2.3, -1.2).
         for (int ring = 0; ring < 4; ++ring) {
@@ -735,11 +735,11 @@ void addForwardShowcase(vine::graphics::Group* root)
                 points.emplace_back(-2.3f + r * std::cos(a), -1.2f + r * std::sin(a), z_h);
             }
         }
-        cloud->setPositions(vine::graphics::packAttribute(points));
+        cloud->setPositions(vn::graphics::packAttribute(points));
         cloud->setProgram(program);
 
         auto state = make_intrusive<StateNode>();
-        state->setTopology(vine::graphics::Topology::Points);
+        state->setTopology(vn::graphics::Topology::Points);
         state->addChild(cloud);
         root->addChild(state);
     }
@@ -748,10 +748,10 @@ void addForwardShowcase(vine::graphics::Group* root)
     {
         auto outer = make_intrusive<MatrixTransform>();
         outer->setName(u8"nested_outer");
-        outer->setMatrix(vine::math::translate(Vec3d(1.5, 0.9, 0.0)));
+        outer->setMatrix(vn::math::translate(Vec3d(1.5, 0.9, 0.0)));
         // Inner box built directly under the outer transform (single parent);
         // its own matrix raises it along +Z.
-        addBox(outer.get(), vine::Colorf(0.95f, 0.5f, 0.1f, 1.0f), u8"nested_inner", Vec3d(0.0, 0.0, 0.32), Vec3d(0.28, 0.28, 0.28));
+        addBox(outer.get(), vn::Colorf(0.95f, 0.5f, 0.1f, 1.0f), u8"nested_inner", Vec3d(0.0, 0.0, 0.32), Vec3d(0.28, 0.28, 0.28));
         root->addChild(outer);
     }
 }
@@ -766,9 +766,9 @@ void addForwardShowcase(vine::graphics::Group* root)
  */
 struct BlendedPlacement {
     /// World-space centre of the translucent box.
-    vine::math::Vec3d box_centre;
+    vn::math::Vec3d box_centre;
     /// World-space centre of the rainbow star cloud's ring stack.
-    vine::math::Vec3d star_centre;
+    vn::math::Vec3d star_centre;
 };
 
 /// Placement of the blended pair inside the forward showcase scene.
@@ -793,12 +793,12 @@ constexpr BlendedPlacement kOverlayBlended{ { 1.0, -0.9, 1.05 }, { 2.0, 0.1, 1.3
  * @param root Root group receiving the content.
  * @param at   Where to float the pair.
  */
-void addBlendedPair(vine::graphics::Group* root, const BlendedPlacement& at)
+void addBlendedPair(vn::graphics::Group* root, const BlendedPlacement& at)
 {
-    using vine::graphics::BlendState;
-    using vine::graphics::Geometry;
-    using vine::graphics::StateNode;
-    using vine::math::Vec3d;
+    using vn::graphics::BlendState;
+    using vn::graphics::Geometry;
+    using vn::graphics::StateNode;
+    using vn::math::Vec3d;
 
     double star_x = 0.0;
     double star_y = 0.0;
@@ -811,11 +811,11 @@ void addBlendedPair(vine::graphics::Group* root, const BlendedPlacement& at)
         auto       state = make_intrusive<StateNode>();
         BlendState blend;
         blend.enabled = true;
-        blend.src     = vine::graphics::BlendFactor::SrcAlpha;
-        blend.dst     = vine::graphics::BlendFactor::OneMinusSrcAlpha;
+        blend.src     = vn::graphics::BlendFactor::SrcAlpha;
+        blend.dst     = vn::graphics::BlendFactor::OneMinusSrcAlpha;
         state->setBlend(blend);
 
-        auto box = addBox(state.get(), vine::Colorf(1.0f, 0.28f, 0.25f, 1.0f), u8"translucent", at.box_centre, Vec3d(0.55, 0.55, 0.55));
+        auto box = addBox(state.get(), vn::Colorf(1.0f, 0.28f, 0.25f, 1.0f), u8"translucent", at.box_centre, Vec3d(0.55, 0.55, 0.55));
         if (auto* geometry = dynamic_cast<Geometry*>(box->children().front().get())) {
             // Per-geometry opacity drives the forward alpha blend.
             geometry->setOpacity(0.5f);
@@ -831,7 +831,7 @@ void addBlendedPair(vine::graphics::Group* root, const BlendedPlacement& at)
 
         auto stars = make_intrusive<Geometry>();
         stars->setName(u8"star_cloud");
-        vine::geometry::Vec3fArray points;
+        vn::geometry::Vec3fArray points;
         // Three stacked rings (radius and height growing per ring) in the Z-up world: horizontal rings
         // at rising heights, centred on the placement.
         for (int ring = 0; ring < 3; ++ring) {
@@ -842,11 +842,11 @@ void addBlendedPair(vine::graphics::Group* root, const BlendedPlacement& at)
                 points.emplace_back(static_cast<float>(star_x) + r * std::cos(a), static_cast<float>(star_y) + r * std::sin(a), z_h);
             }
         }
-        stars->setPositions(vine::graphics::packAttribute(points));
+        stars->setPositions(vn::graphics::packAttribute(points));
         stars->setProgram(program);
 
         auto state = make_intrusive<StateNode>();
-        state->setTopology(vine::graphics::Topology::Points);
+        state->setTopology(vn::graphics::Topology::Points);
         state->addChild(stars);
         root->addChild(state);
     }
@@ -875,7 +875,7 @@ void addDemoLighting(gui::RenderControl* render_control)
     if (scene == nullptr) {
         return;
     }
-    auto ambient = vine::graphics::Light::createAmbient();
+    auto ambient = vn::graphics::Light::createAmbient();
     ambient->setName(u8"scene_ambient");
     ambient->setIntensity(0.35f);
     scene->addLight(ambient);
@@ -890,7 +890,7 @@ void addDemoLighting(gui::RenderControl* render_control)
     // The world is Z-up (robotics convention), so "above" is +Z and the light travels downward: the
     // source sits at +x/+y/+z, well above the 6x6 ground. Lights travel along the given direction (both
     // the deferred and the forward shaders shade with the opposite ray).
-    auto sun = vine::graphics::Light::createDirectional(vine::math::Vec3d(-0.40, -0.50, -0.77));
+    auto sun = vn::graphics::Light::createDirectional(vn::math::Vec3d(-0.40, -0.50, -0.77));
     sun->setName(u8"scene_sun");
     sun->setIntensity(1.0f);
     // The demo's shadow, STATED rather than defaulted, so the numbers can be checked against the
@@ -907,7 +907,7 @@ void addDemoLighting(gui::RenderControl* render_control)
 
     // Soft cool fill from the opposite (back) side so orbiting to the far
     // side does not drop those faces to ambient-only either.
-    auto fill = vine::graphics::Light::createDirectional(vine::math::Vec3d(0.5, 0.5, -0.4));
+    auto fill = vn::graphics::Light::createDirectional(vn::math::Vec3d(0.5, 0.5, -0.4));
     fill->setName(u8"scene_fill");
     fill->setIntensity(0.5f);
     scene->addLight(fill);
@@ -915,15 +915,15 @@ void addDemoLighting(gui::RenderControl* render_control)
     // Dev switch: VINE_VSG_EXTRA_SUNS adds two more directional lights so the
     // scene exercises the deferred light pass' full three-light capacity.
     if (std::getenv("VINE_VSG_EXTRA_SUNS") != nullptr) {
-        auto sun2 = vine::graphics::Light::createDirectional(vine::math::Vec3d(-0.9, -0.3, -0.5));
+        auto sun2 = vn::graphics::Light::createDirectional(vn::math::Vec3d(-0.9, -0.3, -0.5));
         sun2->setName(u8"scene_sun2");
-        sun2->setColor(vine::Colorf(0.6f, 0.8f, 1.0f, 1.0f));
+        sun2->setColor(vn::Colorf(0.6f, 0.8f, 1.0f, 1.0f));
         sun2->setIntensity(0.7f);
         scene->addLight(sun2);
 
-        auto sun3 = vine::graphics::Light::createDirectional(vine::math::Vec3d(-0.2, 0.95, -0.3));
+        auto sun3 = vn::graphics::Light::createDirectional(vn::math::Vec3d(-0.2, 0.95, -0.3));
         sun3->setName(u8"scene_sun3");
-        sun3->setColor(vine::Colorf(1.0f, 0.55f, 0.35f, 1.0f));
+        sun3->setColor(vn::Colorf(1.0f, 0.55f, 0.35f, 1.0f));
         sun3->setIntensity(0.5f);
         scene->addLight(sun3);
     }
@@ -933,9 +933,9 @@ void addDemoLighting(gui::RenderControl* render_control)
     // manipulator, so the manipulator home syncs to this vantage.
     auto* camera = render_control->view()->camera();
     if (camera != nullptr) {
-        camera->setViewMatrixAsLookAt(vine::math::Vec3d(6.5, 6.5, 5.0),  // eye: front-right, elevated
-                                      vine::math::Vec3d(0.0, 0.0, 0.6),  // target: mid-stack
-                                      vine::math::Vec3d(0.0, 0.0, 1.0)); // up: +Z
+        camera->setViewMatrixAsLookAt(vn::math::Vec3d(6.5, 6.5, 5.0),  // eye: front-right, elevated
+                                      vn::math::Vec3d(0.0, 0.0, 0.6),  // target: mid-stack
+                                      vn::math::Vec3d(0.0, 0.0, 1.0)); // up: +Z
     }
 }
 
@@ -1005,15 +1005,15 @@ void addOffscreenValidationPass(gui::RenderControl* render_control)
     int px = 0, py = 0;
     anchorRect(pip_w, pip_h, px, py);
 
-    vine::graphics::RenderPipelineBuilder builder(engine);
+    vn::graphics::RenderPipelineBuilder builder(engine);
     builder.setCamera(render_control->view()->camera());
     builder.setContent(render_control->view()->scene());
     auto* screen = builder.addOffscreenToScreen(u8"SceneColor",
                                                 640,
                                                 360,
-                                                vine::graphics::RenderTarget::ColorFormat::RGBA8,
-                                                vine::graphics::RenderTarget::DepthFormat::D24,
-                                                vine::graphics::Viewport{ px, py, pip_w, pip_h });
+                                                vn::graphics::RenderTarget::ColorFormat::RGBA8,
+                                                vn::graphics::RenderTarget::DepthFormat::D24,
+                                                vn::graphics::Viewport{ px, py, pip_w, pip_h });
     if (screen == nullptr) {
         return;
     }
@@ -1076,30 +1076,30 @@ void addSlotOverlayDemo(gui::RenderControl* render_control)
         if (engine == nullptr || render_control->view()->camera() == nullptr) {
             return;
         }
-        auto overlay      = vine::make_intrusive<vine::graphics::Scene>();
-        auto overlay_root = vine::make_intrusive<vine::graphics::Group>();
+        auto overlay      = vn::make_intrusive<vn::graphics::Scene>();
+        auto overlay_root = vn::make_intrusive<vn::graphics::Group>();
         overlay->setRoot(overlay_root);
-        const auto add_overlay_box = [overlay_root](const vine::Colorf& color, const vine::math::Vec3d& centre, double half) {
-            auto box = addBox(overlay_root.get(), color, u8"slot_overlay", centre, vine::math::Vec3d(half, half, half));
+        const auto add_overlay_box = [overlay_root](const vn::Colorf& color, const vn::math::Vec3d& centre, double half) {
+            auto box = addBox(overlay_root.get(), color, u8"slot_overlay", centre, vn::math::Vec3d(half, half, half));
             // Top (on-top) layers are lit by a pure ambient light: a WHITE
             // ambient material makes ambientColor == diffuse == the box color.
-            if (auto* geometry = dynamic_cast<vine::graphics::Geometry*>(box->children().front().get())) {
+            if (auto* geometry = dynamic_cast<vn::graphics::Geometry*>(box->children().front().get())) {
                 if (auto* material = geometry->material(); material != nullptr) {
-                    material->setAmbient(vine::Colorf(1.0f, 1.0f, 1.0f, 1.0f));
-                    material->setSpecular(vine::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+                    material->setAmbient(vn::Colorf(1.0f, 1.0f, 1.0f, 1.0f));
+                    material->setSpecular(vn::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
                 }
             }
         };
         // Sparse, vivid boxes offset from the main cubes so the overlay is
         // clearly visible on top while tracking the main camera.
-        add_overlay_box(vine::Colorf(1.0f, 0.30f, 0.10f, 1.0f), vine::math::Vec3d(-2.9, -2.4, 0.8), 0.35);
-        add_overlay_box(vine::Colorf(1.0f, 0.95f, 0.10f, 1.0f), vine::math::Vec3d(2.6, 1.9, 1.2), 0.28);
+        add_overlay_box(vn::Colorf(1.0f, 0.30f, 0.10f, 1.0f), vn::math::Vec3d(-2.9, -2.4, 0.8), 0.35);
+        add_overlay_box(vn::Colorf(1.0f, 0.95f, 0.10f, 1.0f), vn::math::Vec3d(2.6, 1.9, 1.2), 0.28);
 
-        auto pass = vine::make_intrusive<vine::graphics::RenderPass>();
+        auto pass = vn::make_intrusive<vn::graphics::RenderPass>();
         pass->setName(u8"slot_overlay");
-        pass->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
+        pass->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
         pass->setClearEnabled(false); // overlay: no clear + no depth -> on-top
-        pass->setDepthMode(vine::graphics::DepthMode::Disabled);
+        pass->setDepthMode(vn::graphics::DepthMode::Disabled);
         engine->addPass(pass, overlay, 20); // its own (master camera, order 20) slot
     });
 }
@@ -1134,44 +1134,44 @@ void addOffscreenMultiSlotDemo(gui::RenderControl* render_control)
     }
 
     // Shared off-screen target: two content slots bake into it.
-    auto target = vine::make_intrusive<vine::graphics::RenderTarget>();
+    auto target = vn::make_intrusive<vn::graphics::RenderTarget>();
     target->setSize(640, 360);
-    target->attachColor(vine::graphics::RenderTarget::ColorFormat::RGBA8);
-    target->attachDepth(vine::graphics::RenderTarget::DepthFormat::D24);
+    target->attachColor(vn::graphics::RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(vn::graphics::RenderTarget::DepthFormat::D24);
 
     // Slot 0: the main engine scene, cleared (depth-on).
-    auto pass_main = vine::make_intrusive<vine::graphics::RenderPass>();
+    auto pass_main = vn::make_intrusive<vn::graphics::RenderPass>();
     pass_main->setName(u8"multislot_main");
-    pass_main->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
+    pass_main->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
     pass_main->setRenderTarget(target);
     pass_main->setOutputName(u8"MultiColor");
     engine->addPass(pass_main, render_control->view()->scene(), -2); // content = view scene
 
     // Slot 1: an extra scene drawn on top (no clear -> on-top, depth-off).
-    auto overlay      = vine::make_intrusive<vine::graphics::Scene>();
-    auto overlay_root = vine::make_intrusive<vine::graphics::Group>();
+    auto overlay      = vn::make_intrusive<vn::graphics::Scene>();
+    auto overlay_root = vn::make_intrusive<vn::graphics::Group>();
     overlay->setRoot(overlay_root);
-    const auto add_overlay_box = [overlay_root](const vine::Colorf& color, const vine::math::Vec3d& centre, const vine::math::Vec3d& half) {
+    const auto add_overlay_box = [overlay_root](const vn::Colorf& color, const vn::math::Vec3d& centre, const vn::math::Vec3d& half) {
         auto box = addBox(overlay_root.get(), color, u8"mslot_overlay", centre, half);
         // On-top (depth-off) slots are lit by a pure ambient light: a WHITE
         // ambient material makes ambientColor == diffuse == the box colour.
-        if (auto* geometry = dynamic_cast<vine::graphics::Geometry*>(box->children().front().get())) {
+        if (auto* geometry = dynamic_cast<vn::graphics::Geometry*>(box->children().front().get())) {
             if (auto* material = geometry->material(); material != nullptr) {
-                material->setAmbient(vine::Colorf(1.0f, 1.0f, 1.0f, 1.0f));
-                material->setSpecular(vine::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+                material->setAmbient(vn::Colorf(1.0f, 1.0f, 1.0f, 1.0f));
+                material->setSpecular(vn::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
             }
         }
     };
-    add_overlay_box(vine::Colorf(1.0f, 0.30f, 0.10f, 1.0f), vine::math::Vec3d(-2.4, -1.8, 0.9), vine::math::Vec3d(0.55, 0.55, 0.55));
-    add_overlay_box(vine::Colorf(0.30f, 0.90f, 0.30f, 1.0f), vine::math::Vec3d(2.2, 1.6, 1.3), vine::math::Vec3d(0.45, 0.45, 0.45));
+    add_overlay_box(vn::Colorf(1.0f, 0.30f, 0.10f, 1.0f), vn::math::Vec3d(-2.4, -1.8, 0.9), vn::math::Vec3d(0.55, 0.55, 0.55));
+    add_overlay_box(vn::Colorf(0.30f, 0.90f, 0.30f, 1.0f), vn::math::Vec3d(2.2, 1.6, 1.3), vn::math::Vec3d(0.45, 0.45, 0.45));
 
-    auto pass_top = vine::make_intrusive<vine::graphics::RenderPass>();
+    auto pass_top = vn::make_intrusive<vn::graphics::RenderPass>();
     pass_top->setName(u8"multislot_top");
-    pass_top->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
+    pass_top->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
     pass_top->setRenderTarget(target);
     pass_top->setOutputName(u8"MultiColor"); // publishes the same baked target
     pass_top->setClearEnabled(false);        // no clear + no depth -> on-top slot
-    pass_top->setDepthMode(vine::graphics::DepthMode::Disabled);
+    pass_top->setDepthMode(vn::graphics::DepthMode::Disabled);
     engine->addPass(pass_top, overlay, -1); // slot = (master, -1)
 
     // PiP screen pass sampling the baked texture into the window.
@@ -1191,12 +1191,12 @@ void addOffscreenMultiSlotDemo(gui::RenderControl* render_control)
         sx               = sw - pip_w - margin;
         sy               = sh - pip_h - margin;
     }
-    auto screen = vine::make_intrusive<vine::graphics::ScreenPass>();
+    auto screen = vn::make_intrusive<vn::graphics::ScreenPass>();
     screen->setName(u8"multislot_pip");
     // A ScreenPass names its program and carries the view camera: there is no implicit copy, and a
     // fullscreen program is drawn through the pass' view (SDK copy program for the plain copy).
-    screen->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
-    screen->setProgram(vine::graphics::screenCopyProgram());
+    screen->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
+    screen->setProgram(vn::graphics::screenCopyProgram());
     screen->addInputName(u8"MultiColor");
     // The two bake passes above accumulate into one target, so neither of them owns the hand-off
     // (a promise is a claim about WHOSE content a consumer gets): the consumer reads the whole baked
@@ -1208,7 +1208,7 @@ void addOffscreenMultiSlotDemo(gui::RenderControl* render_control)
 
 // The deferred / G-buffer previews reuse the RenderPipelineBuilder Deferred
 // preset's built-in shaders and canonical G-buffer target (single source).
-vine::intrusive_ptr<vine::graphics::RenderTarget> makeGbufferTarget();
+vn::intrusive_ptr<vn::graphics::RenderTarget> makeGbufferTarget();
 
 /**
  * @brief Previews the Deferred G-buffer's colour attachments (env
@@ -1237,11 +1237,11 @@ void addGbufferDemo(gui::RenderControl* render_control)
     // program into the shared MRT target (single source with the Deferred
     // preset), published as "GBuffer".
     auto target = makeGbufferTarget();
-    auto gbuf   = vine::make_intrusive<vine::graphics::RenderPass>();
+    auto gbuf   = vn::make_intrusive<vn::graphics::RenderPass>();
     gbuf->setName(u8"gbuffer_pass");
-    gbuf->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
+    gbuf->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
     gbuf->setRenderTarget(target);
-    gbuf->setProgramOverride(vine::graphics::RenderPipelineBuilder::defaultGbufferGeometryProgram());
+    gbuf->setProgramOverride(vn::graphics::RenderPipelineBuilder::defaultGbufferGeometryProgram());
     gbuf->setOutputName(u8"GBuffer");
     gbuf->setOutputTarget(target);   // the G-buffer's only writer owns the hand-off (design §14)
     engine->addPass(gbuf, render_control->view()->scene(), -3);
@@ -1249,21 +1249,21 @@ void addGbufferDemo(gui::RenderControl* render_control)
     // Preview each colour attachment of the same published target: each preview declares the SAME wire
     // at the grain it really is — one image, not "a name plus an attachment index". The identity is
     // the address (target + attachment), so the producer's whole-target promise above answers it.
-    static const vine::String preview_labels[] = { u8"GBuffer.albedo", u8"GBuffer.normal",
+    static const vn::String preview_labels[] = { u8"GBuffer.albedo", u8"GBuffer.normal",
                                                    u8"GBuffer.specular", u8"GBuffer.position" };
     const double dpr   = render_control->devicePixelRatio();
     const int    pip_w = static_cast<int>(108.0 * dpr);
     const int    pip_h = static_cast<int>(61.0 * dpr);
     for (int attachment = 0; attachment < 4; ++attachment) {
-        auto screen = vine::make_intrusive<vine::graphics::ScreenPass>();
+        auto screen = vn::make_intrusive<vn::graphics::ScreenPass>();
         screen->setName(u8"gbuffer_preview");
-        screen->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
+        screen->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
         // One copy program PER attachment: which attachment a fullscreen program reads is its
         // sampler binding (screenCopyProgram(n) writes binding n), and the declared image below says
         // which target it is that binding of.
-        screen->setProgram(vine::graphics::screenCopyProgram(attachment));
+        screen->setProgram(vn::graphics::screenCopyProgram(attachment));
         screen->addInputName(u8"GBuffer");
-        auto image = vine::make_intrusive<vine::graphics::ImageRef>(preview_labels[attachment]);
+        auto image = vn::make_intrusive<vn::graphics::ImageRef>(preview_labels[attachment]);
         image->bind(target, attachment);
         screen->addInput(image);
         const int x = 8 + attachment * (pip_w + 8);
@@ -1290,12 +1290,12 @@ void addGbufferDemo(gui::RenderControl* render_control)
  * @param slot_height   Height of the slot.
  * @return The rectangle to draw into, centred in the slot, at least one pixel a side.
  */
-vine::graphics::Viewport fitPreviewRect(int source_width, int source_height, int slot_x, int slot_y, int slot_width,
+vn::graphics::Viewport fitPreviewRect(int source_width, int source_height, int slot_x, int slot_y, int slot_width,
                                         int slot_height)
 {
     // The arithmetic lives in PreviewFit.hpp so it has a unit test of its own (test_gui/PreviewFitTest); this
     // wrapper keeps the demo's call sites reading as one function of the file.
-    return vine::app_shell::fitPreviewRect(source_width, source_height, slot_x, slot_y, slot_width, slot_height);
+    return vn::app_shell::fitPreviewRect(source_width, source_height, slot_x, slot_y, slot_width, slot_height);
 }
 
 /**
@@ -1324,11 +1324,11 @@ void addDeferredDemo(gui::RenderControl* render_control)
 
     // Shared G-buffer: engine scene through the multi-output program.
     auto target = makeGbufferTarget();
-    auto gbuf   = vine::make_intrusive<vine::graphics::RenderPass>();
+    auto gbuf   = vn::make_intrusive<vn::graphics::RenderPass>();
     gbuf->setName(u8"deferred_gbuffer");
-    gbuf->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
+    gbuf->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
     gbuf->setRenderTarget(target);
-    gbuf->setProgramOverride(vine::graphics::RenderPipelineBuilder::defaultGbufferGeometryProgram());
+    gbuf->setProgramOverride(vn::graphics::RenderPipelineBuilder::defaultGbufferGeometryProgram());
     gbuf->setOutputName(u8"GBuffer");
     gbuf->setOutputTarget(target);   // the G-buffer's only writer owns the hand-off (design §14)
     engine->addPass(gbuf, render_control->view()->scene(), -3);
@@ -1337,12 +1337,12 @@ void addDeferredDemo(gui::RenderControl* render_control)
     const double dpr   = render_control->devicePixelRatio();
     const int    pw    = static_cast<int>(340.0 * dpr);
     const int    ph    = static_cast<int>(191.0 * dpr);
-    auto         light = vine::make_intrusive<vine::graphics::ScreenPass>();
+    auto         light = vn::make_intrusive<vn::graphics::ScreenPass>();
     light->setName(u8"deferred_lighting");
     light->addInputName(u8"GBuffer");
     light->addInputTarget(target);   // a fullscreen program reads the whole source target
-    light->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
-    light->setProgram(vine::graphics::RenderPipelineBuilder::defaultDeferredLightProgram());
+    light->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
+    light->setProgram(vn::graphics::RenderPipelineBuilder::defaultDeferredLightProgram());
     light->setViewport(8, 8, pw, ph);
     // The content scene must be bound to THIS pass too: ScreenPass forwards a scene's lights to the
     // fullscreen program, and a program pass with no scene is handed the backend's default ambient
@@ -1360,11 +1360,11 @@ void addDeferredDemo(gui::RenderControl* render_control)
  *
  * @return The target with four colour attachments + depth.
  */
-vine::intrusive_ptr<vine::graphics::RenderTarget> makeGbufferTarget()
+vn::intrusive_ptr<vn::graphics::RenderTarget> makeGbufferTarget()
 {
     // The A/B preview shares the Deferred preset's canonical G-buffer layout
     // (single source in RenderPipelineBuilder).
-    return vine::graphics::RenderPipelineBuilder::defaultGbufferTarget(640, 360);
+    return vn::graphics::RenderPipelineBuilder::defaultGbufferTarget(640, 360);
 }
 
 /**
@@ -1378,19 +1378,19 @@ vine::intrusive_ptr<vine::graphics::RenderTarget> makeGbufferTarget()
  *
  * @param overlay Overlay scene receiving the lights.
  */
-void addOverlayLightRig(vine::graphics::Scene& overlay)
+void addOverlayLightRig(vn::graphics::Scene& overlay)
 {
-    auto ambient = vine::graphics::Light::createAmbient();
+    auto ambient = vn::graphics::Light::createAmbient();
     ambient->setName(u8"overlay_ambient");
     ambient->setIntensity(0.35f);
     overlay.addLight(ambient);
 
-    auto sun = vine::graphics::Light::createDirectional(vine::math::Vec3d(-0.40, -0.50, -0.77));
+    auto sun = vn::graphics::Light::createDirectional(vn::math::Vec3d(-0.40, -0.50, -0.77));
     sun->setName(u8"overlay_sun");
     sun->setIntensity(1.0f);
     overlay.addLight(sun);
 
-    auto fill = vine::graphics::Light::createDirectional(vine::math::Vec3d(0.5, 0.5, -0.4));
+    auto fill = vn::graphics::Light::createDirectional(vn::math::Vec3d(0.5, 0.5, -0.4));
     fill->setName(u8"overlay_fill");
     fill->setIntensity(0.5f);
     overlay.addLight(fill);
@@ -1435,7 +1435,7 @@ bool demoUsesDeferred()
  *
  * @param render_control Render view whose engine receives the passes.
  */
-void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vine::graphics::Scene> transparent)
+void addDemoPipeline(gui::RenderControl* render_control, vn::intrusive_ptr<vn::graphics::Scene> transparent)
 {
     auto* engine = render_control->engine();
     auto* view   = render_control->view();
@@ -1443,7 +1443,7 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
         return;
     }
 
-    using vine::graphics::ShadingPath;
+    using vn::graphics::ShadingPath;
     // Default demo path = Deferred (see demoUsesDeferred); VINE_PIPELINE keeps
     // forward available for the forward feature-showcase scene. Shadows are the demo's DEFAULT now
     // (the key sun casts - see addDemoLighting), so the *_shadowed values only name a PATH: they stay
@@ -1456,7 +1456,7 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
         }
     }
 
-    vine::graphics::RenderPipelineBuilder builder(engine);
+    vn::graphics::RenderPipelineBuilder builder(engine);
     builder.setCamera(view->camera());
     builder.setContent(view->scene());
     // Forward-only overlay content (Deferred default demo): handed to the
@@ -1465,7 +1465,7 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
     if (transparent != nullptr) {
         builder.setTransparentContent(std::move(transparent));
     }
-    vine::graphics::PipelineOptions options;
+    vn::graphics::PipelineOptions options;
     options.path = path;
     // Axis-gizmo HUD overlay: mirrors the view camera in the bottom-left.
     options.gizmo.source_camera = view->camera();
@@ -1486,8 +1486,8 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
     // The four previews and the one layout step below keep them in step with the
     // window: a preview copies the WHOLE attachment, so its rectangle takes the
     // source's aspect (see fitPreviewRect) instead of squeezing it into the slot.
-    std::vector<vine::intrusive_ptr<vine::graphics::ScreenPass>> previews;
-    vine::intrusive_ptr<vine::graphics::RenderTarget>            preview_source;
+    std::vector<vn::intrusive_ptr<vn::graphics::ScreenPass>> previews;
+    vn::intrusive_ptr<vn::graphics::RenderTarget>            preview_source;
     int                                                          pip_w = 0;
     int                                                          pip_h = 0;
     if (path == ShadingPath::Deferred) {
@@ -1498,18 +1498,18 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
         // the one image they sample (target + attachment) instead of a name plus an index — the same
         // wire the builder's producer promised as a whole target.
         auto*        gbuffer = pipeline->offscreenTarget();
-        preview_source       = vine::intrusive_ptr<vine::graphics::RenderTarget>(gbuffer);
+        preview_source       = vn::intrusive_ptr<vn::graphics::RenderTarget>(gbuffer);
         for (int attachment = 0; attachment < 4; ++attachment) {
-            auto preview = vine::make_intrusive<vine::graphics::ScreenPass>();
+            auto preview = vn::make_intrusive<vn::graphics::ScreenPass>();
             preview->setName(u8"gbuffer_preview");
-            preview->setCamera(vine::intrusive_ptr<vine::graphics::Camera>(render_control->view()->camera()));
+            preview->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
             // One copy program per attachment: the sampler binding IS the attachment (see
             // BuiltinShaders::screenCopyProgram), which is what the declared image below is that of.
-            preview->setProgram(vine::graphics::screenCopyProgram(attachment));
+            preview->setProgram(vn::graphics::screenCopyProgram(attachment));
             preview->addInputName(u8"GBuffer");
             if (gbuffer != nullptr) {
-                auto image = vine::make_intrusive<vine::graphics::ImageRef>(u8"GBuffer.preview");
-                image->bind(vine::intrusive_ptr<vine::graphics::RenderTarget>(gbuffer), attachment);
+                auto image = vn::make_intrusive<vn::graphics::ImageRef>(u8"GBuffer.preview");
+                image->bind(vn::intrusive_ptr<vn::graphics::RenderTarget>(gbuffer), attachment);
                 preview->addInput(image);
             }
             const int x = 8 + attachment * (pip_w + 8);
@@ -1536,7 +1536,7 @@ void addDemoPipeline(gui::RenderControl* render_control, vine::intrusive_ptr<vin
         const int source_height = preview_source->height();
         for (std::size_t index = 0; index < previews.size(); ++index) {
             const int                    slot_x = 8 + static_cast<int>(index) * (pip_w + 8);
-            const vine::graphics::Viewport rect = fitPreviewRect(source_width, source_height, slot_x, 8, pip_w, pip_h);
+            const vn::graphics::Viewport rect = fitPreviewRect(source_width, source_height, slot_x, 8, pip_w, pip_h);
             previews[index]->setViewport(rect.x, rect.y, rect.width, rect.height);
         }
     });
@@ -1546,17 +1546,17 @@ AppShellDemo::AppShellDemo(gui::RenderControl* control) : control_(control)
 {
 }
 
-vine::intrusive_ptr<vine::graphics::Scene> AppShellDemo::buildScene(bool deferred)
+vn::intrusive_ptr<vn::graphics::Scene> AppShellDemo::buildScene(bool deferred)
 {
-    using vine::intrusive_ptr;
-    using vine::graphics::Group;
-    using vine::graphics::Scene;
+    using vn::intrusive_ptr;
+    using vn::graphics::Group;
+    using vn::graphics::Scene;
 
     // Content scene: the shared opaque base plus the slices THIS path can draw. The forward path draws
     // its feature showcase and the blended pair in the same scene (it has one pass that writes depth and
     // one that blends); the Deferred path draws neither, because its G-buffer geometry program would
     // override the showcase's per-drawable programs and has no destination to blend against.
-    auto root = vine::make_intrusive<Group>();
+    auto root = vn::make_intrusive<Group>();
     addOpaqueBase(root.get());
     if (deferred) {
         addGbufferVariety(root.get());
@@ -1569,7 +1569,7 @@ vine::intrusive_ptr<vine::graphics::Scene> AppShellDemo::buildScene(bool deferre
 
     // Overlay scene: drawn AFTER the pipeline's own result with the depth test on and the depth write
     // off, so it composites over what the path already drew.
-    auto overlay_root = vine::make_intrusive<Group>();
+    auto overlay_root = vn::make_intrusive<Group>();
     // SKY FIRST: the overlay draws its content in scene order and nothing in it writes depth, so the sky
     // has to fill the background BEFORE the translucent box blends over it - a sky added after would
     // paint over the blended box instead of behind it.
@@ -1578,7 +1578,7 @@ vine::intrusive_ptr<vine::graphics::Scene> AppShellDemo::buildScene(bool deferre
         addBlendedPair(overlay_root.get(), kOverlayBlended);
     }
 
-    auto overlay = vine::make_intrusive<Scene>();
+    auto overlay = vn::make_intrusive<Scene>();
     overlay->setRoot(overlay_root);
     if (deferred) {
         addOverlayLightRig(*overlay);
@@ -1616,9 +1616,9 @@ void AppShellDemo::install()
     // Dev switch: setting VINE_SHADER_PRESET names the FLAT program as the default content program,
     // exercising the whole engine/backend path (default = forwardProgram(), set by the engine).
     if (std::getenv("VINE_SHADER_PRESET") != nullptr) {
-        render_control->engine()->setDefaultContentProgram(vine::graphics::flatForwardProgram());
+        render_control->engine()->setDefaultContentProgram(vn::graphics::flatForwardProgram());
     }
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END
 

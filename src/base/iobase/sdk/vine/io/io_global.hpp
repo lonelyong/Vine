@@ -1,26 +1,26 @@
 ﻿#pragma once
 
-#include <vine/vi_global.hpp>
+#include <vine/vine_global.hpp>
 
-#ifdef V_IOBASE_LIB
-#    define V_IOBASE_API V_EXPORT
+#ifdef VN_IOBASE_LIB
+#    define VN_IOBASE_API VN_EXPORT
 #else
-#    define V_IOBASE_API V_IMPORT
+#    define VN_IOBASE_API VN_IMPORT
 #endif
 
 /**
- * @brief vine::io provides byte/stream/encoding primitives.
+ * @brief vn::io provides byte/stream/encoding primitives.
  *
  * Scope: byte buffers, input/output streams, gzip/zlib (de)compression and
  * encodings (base64/hex). File-system path operations are out of scope; they
  * belong to the system module.
  */
-#define V_IO_NS_BEGIN                                                                                                                                   \
-    namespace V_ROOT_NS                                                                                                                                 \
+#define VN_IO_NS_BEGIN                                                                                                                                   \
+    namespace VN_ROOT_NS                                                                                                                                 \
     {                                                                                                                                                   \
     namespace io                                                                                                                                        \
     {
 
-#define V_IO_NS_END                                                                                                                                     \
+#define VN_IO_NS_END                                                                                                                                     \
     }                                                                                                                                                   \
     }

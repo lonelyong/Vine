@@ -11,7 +11,7 @@
 #include <wolfssl/wolfcrypt/sha3.h>
 #include <wolfssl/wolfcrypt/sha512.h>
 
-V_CRYPTO_NS_BEGIN
+VN_CRYPTO_NS_BEGIN
 
 namespace
 {
@@ -236,4 +236,4 @@ std::array<std::uint8_t, 64> Hash::sha3_512(std::ostream& in)
     return digest<wc_Sha3, initSha3_512, wc_Sha3_512_Update, wc_Sha3_512_Final, wc_Sha3_512_Free, 64>(bytes.data(), bytes.size());
 }
 
-V_CRYPTO_NS_END
+VN_CRYPTO_NS_END

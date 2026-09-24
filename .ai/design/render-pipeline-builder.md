@@ -38,7 +38,7 @@ flowchart LR
 
 ```cpp
 // sdk/vine/graphics/RenderPipelineBuilder.hpp
-class V_GRAPHICS_API RenderPipelineBuilder {
+class VN_GRAPHICS_API RenderPipelineBuilder {
   public:
     explicit RenderPipelineBuilder(raw_ptr<RenderEngine> engine);   // 目标 engine（借用）
 

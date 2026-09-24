@@ -2,14 +2,14 @@
 
 #include "core_global.hpp"
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 class Color;
 
 /**
  * @brief An RGBA color with floating-point channels, typically in the 0..1 range.
  */
-class V_CORE_API Colorf
+class VN_CORE_API Colorf
 {
   public:
     Colorf() noexcept = default;
@@ -55,4 +55,4 @@ class V_CORE_API Colorf
     float a{ 1.0f };
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

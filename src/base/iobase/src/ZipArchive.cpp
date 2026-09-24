@@ -19,7 +19,7 @@
 #include "VfsInternal.hpp"
 #include "ZipInternal.hpp"
 
-V_IO_NS_BEGIN
+VN_IO_NS_BEGIN
 
 namespace
 {
@@ -1197,4 +1197,4 @@ IoError ZipArchive::addFile(const std::filesystem::path& path, const std::filesy
     return insertFileBacked(norm, real_path) ? IoError::Ok : IoError::IoFailure;
 }
 
-V_IO_NS_END
+VN_IO_NS_END

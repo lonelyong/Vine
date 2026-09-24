@@ -191,7 +191,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 - 格式：`key = value`，`#`/`;` 注释；`path` 必需（库文件或目录，目录按一层平铺扫），
   `name`/`uuid`/`enabled` 可选。未知键只记 info，不报错（安装器可以放自己的记账字段）。
 - **身份以插件库里的 `PluginInfo` 为准**（`uuid` + `name`），文件名/`name=` 只做校验与显示；
-  不一致只记 warning。`uuid` 是 `V_DECLARE_PLUGIN` 里硬编码的 `vine::Uuid`（空 = 未声明，
+  不一致只记 warning。`uuid` 是 `VN_DECLARE_PLUGIN` 里硬编码的 `vn::Uuid`（空 = 未声明，
   退回用名字），用来识别"两个不同插件重名"✓（扫描时 warning）。
 - 写入方式是 tmp + rename（原子），并按需创建目录。
 - 读回顺序：用户目录在前、系统目录在后，各自按文件 id 排序（可预测 ✓）。
@@ -226,7 +226,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 
 两个实现细节（都是踩过的坑）：
 
-1. **SVG 绝不能内嵌到宏参数里**：`V_DECLARE_PLUGIN` 是宏，圆括号外层的逗号会把参数切开，
+1. **SVG 绝不能内嵌到宏参数里**：`VN_DECLARE_PLUGIN` 是宏，圆括号外层的逗号会把参数切开，
    而 SVG 里 `stroke-dasharray="3,2"`、`rotate(90, 12, 12)` 这类逗号很常见。
    插件应该先把 SVG 放进命名常量再传：`constexpr const char8_t* s_plugin_icon = u8R"SVG(...)SVG";`
    （`app_shell` 就是这么写的，它的 SVG 专门带了一个逗号来钉住这条约定）。
@@ -234,7 +234,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
    所以 offscreen 平台下也能渲染（用例 `ManagerDialogShowsMetadataAndIcons` 断言列表行图标非空）。
    Windows 打包含自动带上（`VineDeployQt.cmake` 跑 windeployqt）。
 
-`V_DECLARE_PLUGIN` 的参数顺序随之变成：
+`VN_DECLARE_PLUGIN` 的参数顺序随之变成：
 `(Class, Uuid, Name, DisplayName, Version, Description, Vendor, Email, Repo, Icon, Dependencies)`
 —— **参数个数变了，所有插件必须重编**（和之前加 uuid 一样；旧 `.so` 会让宿主按新布局读旧结构）。
 
@@ -288,7 +288,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 
 ## 一条硬约束：一个插件库在一个进程里只能被创建一次实例
 
-`V_DECLARE_COMMAND` 的注册会写 **vine 类型注册表**（`vine::Type`），它是进程级且**不可撤销**
+`VN_DECLARE_COMMAND` 的注册会写 **vine 类型注册表**（`vn::Type`），它是进程级且**不可撤销**
 的：同一个插件从**两个不同文件**（例如程序目录里的原件和用户装的拷贝）各加载一次，第二次
 `vinePluginRegisterCommands()` 会因为类型重名抛异常。
 
@@ -320,7 +320,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 
 ## 命令注册队列属于模块（第八轮修正，2026-09-11）
 
-`V_DECLARE_COMMAND` 在插件库**被 dlopen 时**排队注册器（`inline static AutoRegistrar`），
+`VN_DECLARE_COMMAND` 在插件库**被 dlopen 时**排队注册器（`inline static AutoRegistrar`），
 `vinePluginRegisterCommands()` 在宿主加载该插件时把队列刷进 `CommandManager`。前提是
 "每个模块各有一份队列"——但旧实现用的是头文件里的 **inline 函数 + 函数局部 static**，
 这在 ELF 上**全进程只有一份**：
@@ -343,10 +343,10 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 
 修法：队列成为模块自己的东西，而且是**代码层面**的，不依赖任何构建选项。
 
-- `command_export.hpp` 声明 `detail::moduleCommandQueue()`（非 inline，带 `V_MODULE_LOCAL`）；
-  `V_DEFINE_MODULE_COMMAND_QUEUE()`（由 `V_DECLARE_PLUGIN()` 展开）用**限定名**定义它，
-  因此不论宏在 `vine::appfw` 里还是全局作用域展开都对；
-- `V_MODULE_LOCAL` = `__attribute__((visibility("hidden")))`（MSVC 下为空：Windows 上
+- `command_export.hpp` 声明 `detail::moduleCommandQueue()`（非 inline，带 `VN_MODULE_LOCAL`）；
+  `VN_DEFINE_MODULE_COMMAND_QUEUE()`（由 `VN_DECLARE_PLUGIN()` 展开）用**限定名**定义它，
+  因此不论宏在 `vn::appfw` 里还是全局作用域展开都对；
+- `VN_MODULE_LOCAL` = `__attribute__((visibility("hidden")))`（MSVC 下为空：Windows 上
   非 dllexport 的符号本来就是 DLL 私有的）。hidden 正是关键：不导出就不会被合并/抢占；
 - flush 改成 `flushQueuedCommands(moduleCommandQueue(), manager)`：容器由调用方（插件自己的
   入口点）显式取出，刷新逻辑只依赖参数，因此也没有可被其它库抢占的中间函数；
@@ -389,7 +389,7 @@ ASan 门（插件套件）：`VINE_ASAN_FILTER='PluginLifecycleTest.*' scripts/a
 |------|------|------|
 | `PluginLoadContext::configs()` | `configRegistry()` | 仓库里同一个东西到处叫 `Application::configRegistry()`/`PluginManager::pluginRegistries` 风格；`configs()` 是全仓唯一一个复数名字的访问器 |
 | `PluginLoadContext::dataDirectory()` | `ensureDataDirectory()` | 它会**创建**目录；与纯访问器 `Application::dataDirectory()` 同名不同义，`ensure` 把副作用写进名字 |
-| `detail::moduleCommands()` | `detail::moduleCommandQueue()` | 与创建它的宏 `V_DEFINE_MODULE_COMMAND_QUEUE` 对齐 |
+| `detail::moduleCommands()` | `detail::moduleCommandQueue()` | 与创建它的宏 `VN_DEFINE_MODULE_COMMAND_QUEUE` 对齐 |
 | `PluginManager::load(const String& str)` / `resolvePluginPath(const String& str)` | `const String& name_or_path` | 参数名的含义就是“插件名或库路径”（头文件注释也是这么写的） |
 | `Impl::entries` | `Impl::discovered` | 它是**发现**列表（不是所有都被加载），文档里一直叫 discovery list |
 | `Impl::disabled` | `Impl::disabled_fallback` | 只在没有 ConfigManager 时才用；与 CommandManager 那边同名同义 |
@@ -422,14 +422,14 @@ SDK 编的，字段就错位——`String` 在错误的偏移上是一对（长�
 握手入口，让宿主在“信不信这个布局”之前先问一句：
 
 ```cpp
-extern "C" const vine::appfw::PluginAbi* vinePluginAbi();      // V_DECLARE_PLUGIN 自动生成
+extern "C" const vn::appfw::PluginAbi* vinePluginAbi();      // VN_DECLARE_PLUGIN 自动生成
 
 struct PluginAbi {
     std::uint32_t abi_version;      // 必须排第一个：对不上之前只读它
-    const char*   framework_version; // 编译时的框架版本（V_APPFW_VERSION），纯诊断
+    const char*   framework_version; // 编译时的框架版本（VN_APPFW_VERSION），纯诊断
 };
 
-#define V_APPFW_PLUGIN_ABI_VERSION 1u   // Plugin.hpp，命名空间块之外
+#define VN_APPFW_PLUGIN_ABI_VERSION 1u   // Plugin.hpp，命名空间块之外
 ```
 
 规则（都写在 `Plugin.hpp` 里）：
@@ -437,12 +437,12 @@ struct PluginAbi {
 - `abi_version` **永远第一个成员**，且宿主在它匹配之前不许读别的成员（两条 `static_assert`
   钉住：标准布局 + 偏移 0）；
 - 成员只能**往后加**，不重排不删除，而且不能用布局会变的 SDK 类型（只能整数/`const char*`）；
-- `V_APPFW_PLUGIN_ABI_VERSION`（现为 `1u`）在任何插件可见面变化时 +1：`PluginAbi`、`PluginInfo`、
+- `VN_APPFW_PLUGIN_ABI_VERSION`（现为 `1u`）在任何插件可见面变化时 +1：`PluginAbi`、`PluginInfo`、
   `Plugin`/`PluginLoadContext`、入口签名、命令注册 ABI。
 
 **这个常量为什么定在 `Plugin.hpp`**（而不是别处）：
 
-- **性质不同**：`V_APPFW_VERSION` 是框架级发布版本（整个 appfw 一个，构建注入），放
+- **性质不同**：`VN_APPFW_VERSION` 是框架级发布版本（整个 appfw 一个，构建注入），放
   `appfw_global.hpp` 是对的；ABI 号是**一个子契约**的版本，只描述插件可见面。今天插件 ABI 恰好是唯一
   的跨模块契约，但那是巧合——将来再出现第二个契约（比如 GUI 插件的 ABI），每个契约的版本号应当跟着
   它自己走，而不是在全局头里堆积；
@@ -452,10 +452,10 @@ struct PluginAbi {
 - **不能放 `plugin_export.hpp`**：那里的头文件契约写着“只给插件作者用，appfw 自己不许包含”，而宿主
   必须能读这个宏；
 - **两个号没有必须一致的约束**（实现变了可以不发版，布局变了可以只 +ABI），并列放一起反而暗示有关；
-- 宏**写在 `V_APPFW_NS_BEGIN` 之外**：宏没有作用域，写在命名空间块里容易被读成有作用域
-  （与 `V_MODULE_LOCAL` 同样处理）；
+- 宏**写在 `VN_APPFW_NS_BEGIN` 之外**：宏没有作用域，写在命名空间块里容易被读成有作用域
+  （与 `VN_MODULE_LOCAL` 同样处理）；
 - 名字里带 `PLUGIN` 是有意的：它只管插件 ABI，**不等于“宿主自己的 ABI”**（宿主侧二进制是普通的
-  全量重编规则），也不是发布版本（`V_APPFW_VERSION`，只做诊断）。
+  全量重编规则），也不是发布版本（`VN_APPFW_VERSION`，只做诊断）。
 
 `queryLibrary()` 的顺序是：加载库 → 解析并调用 `vinePluginAbi()` → 校验 → 才解析
 `vinePluginQuery()` 并按当前布局读 `PluginInfo` → 才允许 `vinePluginCreate()`。三种结果：
@@ -471,10 +471,10 @@ struct PluginAbi {
 
 - **拒绝的库不实例化**：顺序上 `vinePluginCreate()` 在握手之后，也就是不会用错布局去构造
   `Plugin` 子类（那才是真正会崩的地方）。`installPlugin()` 也不注册它（否则以后每次启动多一条警告）。
-- **版本从构建来**：`src/fw/appfw/CMakeLists.txt` 把 `V_APPFW_VERSION="${PROJECT_VERSION}"`（现为
-  `1.0.0`）作为 **PUBLIC** 编译定义给所有链接 `vi::Appfw` 的目标——应用、插件、测试都是同一个值，
+- **版本从构建来**：`src/fw/appfw/CMakeLists.txt` 把 `VN_APPFW_VERSION="${PROJECT_VERSION}"`（现为
+  `1.0.0`）作为 **PUBLIC** 编译定义给所有链接 `vn::Appfw` 的目标——应用、插件、测试都是同一个值，
   所以插件报的就是它编译时的框架版本；用外部安装的 SDK 编且没拿到定义时退化为 `"unknown"`
-  （只影响诊断文本，兼容性由 `V_APPFW_PLUGIN_ABI_VERSION` 决定）。
+  （只影响诊断文本，兼容性由 `VN_APPFW_PLUGIN_ABI_VERSION` 决定）。
 - **只盖插件**：宿主自己的二进制（应用、库、测试）之间仍是普通的“全量重编”规则。
   本轮就真实撞到过这一点：只重建了库和插件、没重建 `test_vsg`，那个旧二进制用的还是旧的
   `PluginEntry` 布局，直接段错误；重编即好。这正是握手要给插件防掉的那类失效，只是插件这边
@@ -486,7 +486,7 @@ struct PluginAbi {
   与“ABI 号 999（框架 99.0.0）”，都必须被 `load()` 拒绝、不得 `isLoaded`、不进入
   `pluginEntries()`，并且 `installPlugin()` 也拒绝。
 - `PluginLifecycleTest.PluginEntryReportsTheFrameworkItWasBuiltWith`：真插件报回的版本与
-  编译期 `V_APPFW_VERSION` 相等——证明整条链路（`V_DECLARE_PLUGIN` → `PluginAbi` →
+  编译期 `VN_APPFW_VERSION` 相等——证明整条链路（`VN_DECLARE_PLUGIN` → `PluginAbi` →
   `queryLibrary()` → `PluginEntry` → 对话框）没有丢值。
 
 ## 依赖不满足时到底会发生什么（2026-09-11 核查并修正）
@@ -533,7 +533,7 @@ struct PluginAbi {
 | `PluginLifecycleTest.DefaultDataDirectoryLayout` | `<data>/<org>/<app>/config/<app>.json` 布局 + builder 默认启用 + 不落盘 |
 | `PluginLifecycleTest.ManagerDialogListsDisabledPlugins` | 对话框列表来自发现（禁用项在列，状态为"已加载 + 已禁用"），详情/刷新不崩 |
 | `PluginLifecycleTest.ManagerDialogHidesToggleWhenItCannotTakeEffect` | 禁用/启用按钮只在能生效时**显示**：被宿主跳过 ⇒ 隐藏（不是灰按钮）；普通 User 插件 ⇒ 显示且可用 |
-| `PluginLifecycleTest.ManagerDialogShowsMetadataAndIcons` | email/repo/icon 经 `V_DECLARE_PLUGIN` → `PluginInfo` → UI 全程贯通；未声明 icon 用内置默认 SVG（每行图标非空）；筛选框只留匹配行 |
+| `PluginLifecycleTest.ManagerDialogShowsMetadataAndIcons` | email/repo/icon 经 `VN_DECLARE_PLUGIN` → `PluginInfo` → UI 全程贯通；未声明 icon 用内置默认 SVG（每行图标非空）；筛选框只留匹配行 |
 | `PluginLifecycleTest.UnloadOrderIsReverseDependencyOrder` | 真实集合：每个已加载插件恰好一次且依赖方在前；合成集合：结论与传入顺序无关、三层链、未加载项不参与、成环不死循环 |
 | `PluginLifecycleTest.PluginDataDirectoryIsPerPlugin` | 插件数据目录 = `<data>/plugins/<插件名>`（首次调用才创建、两插件不互相覆盖、无宿主/无名返回空） |
 | `PluginLifecycleTest.InstallWritesRegistrationFile` | 安装 = 写 installed.d/<id>.plugin；路径不存在/空/BuiltIn 被拒；重复安装幂等；相对路径也被落盘为**绝对路径**；卸载 = 删文件 |
@@ -545,7 +545,7 @@ struct PluginAbi {
 | `PluginLifecycleTest.UnresolvablePluginsAreSkippedWhileTheRestLoads` | 只剪掉不可加载的那一簇：禁用链中段时 `app_shell` 照常加载，`chain_plugin` 不加载，`loadAll()` 报 false |
 | `PluginLifecycleTest.DeclaredDependencyCycleIsPrunedNotFatal` | 声明成环 ⇒ 环那一簇不加载、无关插件照常加载（夹具 `loop_a`/`loop_b`） |
 | `PluginLifecycleTest.PluginsWithoutCompatibleAbiAreRefused` | 没有 ABI 握手 / ABI 号对不上的库必须被拒绝、不实例化、不进发现列表，安装也拒绝（夹具库由 CMake 建） |
-| `PluginLifecycleTest.PluginEntryReportsTheFrameworkItWasBuiltWith` | 插件报回的构建框架版本等于 `V_APPFW_VERSION`（V_DECLARE_PLUGIN → PluginAbi → PluginEntry 全程贯通） |
+| `PluginLifecycleTest.PluginEntryReportsTheFrameworkItWasBuiltWith` | 插件报回的构建框架版本等于 `VN_APPFW_VERSION`（VN_DECLARE_PLUGIN → PluginAbi → PluginEntry 全程贯通） |
 | `VsgBackendPluginTest.ConfigFileRoundTripPersistsDisabledPlugins` | `run()`/`shutdown()` 真把配置写盘并能读回（重启生效的完整链路） |
 
 用例间有顺序依赖（`test_gui` 里禁用必须发生在"该插件从未被加载"之前；一旦某个插件库

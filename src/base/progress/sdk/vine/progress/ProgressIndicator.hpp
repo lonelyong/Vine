@@ -6,7 +6,7 @@
 #include <functional>
 #include <stop_token>
 
-V_PROGRESS_NS_BEGIN
+VN_PROGRESS_NS_BEGIN
 
 class ProgressRange;
 class ProgressScope;
@@ -28,7 +28,7 @@ class ProgressScope;
  * ambient host is the one caller that cares, and it turns the callback into its
  * change signal.
  */
-class V_PROGRESS_API ProgressIndicator
+class VN_PROGRESS_API ProgressIndicator
 {
   public:
     friend class ProgressRange;
@@ -138,4 +138,4 @@ class V_PROGRESS_API ProgressIndicator
     std::stop_token         token_;
 };
 
-V_PROGRESS_NS_END
+VN_PROGRESS_NS_END

@@ -1,8 +1,8 @@
 ﻿#include <vine/graphics/RenderBackend.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(RenderBackend, vine::Object);
+VN_OBJECT_META_IMPL(RenderBackend, vn::Object);
 
 void RenderBackend::setDiagnosticSink(DiagnosticSink sink)
 {
@@ -31,4 +31,4 @@ void RenderBackend::reportDiagnostic(DiagnosticSeverity severity, DiagnosticCate
     }
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

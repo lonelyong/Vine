@@ -61,7 +61,7 @@ Counters& counters() noexcept
 
 }  // namespace
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -171,4 +171,4 @@ std::size_t AllocationGate::bytes() const noexcept
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

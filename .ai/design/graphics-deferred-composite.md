@@ -59,7 +59,7 @@ order 100 present（全幅采样 Composite）→ 窗口（携带 view camera）
 ### 4.1 RenderPass 内容深度（F2→F3 前端，最终形态）
 - **没有“类型/样式”枚举**：深度与 clear、光照正交，全显式。
   - `setClearEnabled/clearColor/shouldClearDepth`：是否清屏（显式，不变）。
-  - 顶层枚举 `vine::graphics::DepthMode { Disabled, TestOnly, TestAndWrite }`（F3）：
+  - 顶层枚举 `vn::graphics::DepthMode { Disabled, TestOnly, TestAndWrite }`（F3）：
     `Disabled` = 不测不写（HUD 浮层）；`TestOnly` = 只 depth test 不 write（半透明叠层，写深度的
     不透明几何不破坏其后半透明）；`TestAndWrite` = 默认，普通不透明几何。
   - `setDepthMode(DepthMode)`（默认 `TestAndWrite`）；**只有这一个拼法**。曾经的便捷 `setOcclusionEnabled(bool)`

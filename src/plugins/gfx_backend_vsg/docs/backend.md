@@ -1,6 +1,6 @@
 # gfx_backend_vsg：后端运行时说明
 
-本插件是 `vine::graphics` 的 Vulkan 后端（`RenderBackend` 的实现），经 VulkanSceneGraph（vsg）落到
+本插件是 `vn::graphics` 的 Vulkan 后端（`RenderBackend` 的实现），经 VulkanSceneGraph（vsg）落到
 Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端名 **`"vsg"`**（宿主用
 `RenderBackendRegistry::instance().create(u8"vsg")` 拿它）。
 
@@ -90,7 +90,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | `CameraBridge.hpp/.cpp` | Vine 相机 → vsg 相机/view（overlay 的两种绘制共用） |
 | `VsgBackendUtility.cpp` | 窗口句柄/宿主窗口判定（`onHostWindow`）等环境相关的小工具 |
 | `VsgDiagnostics.cpp` | 诊断路由：本插件的报告 → SDK 的 sink |
-| 插件 CMakeLists（`v_add_plugin`） | `include/` 是 PUBLIC、`src/` 是 PRIVATE；源文件靠 `GLOB_RECURSE`（**无 `CONFIGURE_DEPENDS`**）⇒ 新增 `src/` 文件必须重新 configure；`shaders/` 不在 glob 里，靠 `v_use_embedded_shaders` 挂生成头文件 |
+| 插件 CMakeLists（`vn_add_plugin`） | `include/` 是 PUBLIC、`src/` 是 PRIVATE；源文件靠 `GLOB_RECURSE`（**无 `CONFIGURE_DEPENDS`**）⇒ 新增 `src/` 文件必须重新 configure；`shaders/` 不在 glob 里，靠 `vn_use_embedded_shaders` 挂生成头文件 |
 
 ## 2. 数据流（纵向）
 
@@ -536,7 +536,7 @@ vsg 的重传粒度是**一条 `BindVertexBuffers` 命令**：命令里任一阵
 
 `BufferInfo` **是命令自己拥有的**，而 vsg 把 `BufferInfo` 变成一个设备缓冲（`BindVertexBuffers::compile()` →
 `createBufferAndTransferData` → 池 reserve + 拷字节）。所以"k 个 drawable 读同一份顶点/索引"在 P9 之前是 k 条 bind、
-k 份设备内存、k 次上传 —— CPU 侧本来就是**同一段内存**（`AttributeChannel` 借 `vine::Buffer`），GPU 侧却复制成 k 份。
+k 份设备内存、k 次上传 —— CPU 侧本来就是**同一段内存**（`AttributeChannel` 借 `vn::Buffer`），GPU 侧却复制成 k 份。
 `VsgMeshResourceCache` 把这类流收敛成**一条 bind**，于是它们共享同一个设备缓冲。
 
 **哪些通道能共享**（判据只有一条：**这条数组是不是模型字节的原样视图**）：

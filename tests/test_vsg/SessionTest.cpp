@@ -36,33 +36,33 @@
 
 #include "FailingStepNode.hpp"
 
-using vine::graphics::RenderTarget;
-using vine::vsg::OffscreenTarget;
-using vine::vsg::VsgExecutor;
-using vine::vsg::api::Session;
-using vine::vsg::api::SessionOptions;
-using vine::vsg::api::probePhysicalDevices;
-using vine::vsg::core::ClearPolicy;
-using vine::vsg::core::CompiledFrame;
-using vine::vsg::core::Diagnostics;
-using vine::vsg::core::FrameArena;
-using vine::vsg::core::FrameCompiler;
-using vine::vsg::core::FrameFacts;
-using vine::vsg::core::FrameRecorder;
-using vine::vsg::core::FrameTimeline;
-using vine::vsg::core::FrameToken;
-using vine::vsg::core::Observe;
-using vine::vsg::core::RetirementQueue;
-using vine::vsg::core::Rgba8;
-using vine::vsg::core::TargetAction;
-using vine::vsg::core::TargetFacts;
-using vine::vsg::core::TargetShape;
+using vn::graphics::RenderTarget;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::VsgExecutor;
+using vn::vsg::api::Session;
+using vn::vsg::api::SessionOptions;
+using vn::vsg::api::probePhysicalDevices;
+using vn::vsg::core::ClearPolicy;
+using vn::vsg::core::CompiledFrame;
+using vn::vsg::core::Diagnostics;
+using vn::vsg::core::FrameArena;
+using vn::vsg::core::FrameCompiler;
+using vn::vsg::core::FrameFacts;
+using vn::vsg::core::FrameRecorder;
+using vn::vsg::core::FrameTimeline;
+using vn::vsg::core::FrameToken;
+using vn::vsg::core::Observe;
+using vn::vsg::core::RetirementQueue;
+using vn::vsg::core::Rgba8;
+using vn::vsg::core::TargetAction;
+using vn::vsg::core::TargetFacts;
+using vn::vsg::core::TargetShape;
 
 namespace
 {
 
-/// @brief Prints a `vine::String` (UTF-8 bytes) as the bytes it holds.
-std::string as_bytes(const vine::String& text)
+/// @brief Prints a `vn::String` (UTF-8 bytes) as the bytes it holds.
+std::string as_bytes(const vn::String& text)
 {
     return std::string(reinterpret_cast<const char*>(text.data()), text.size());
 }
@@ -112,8 +112,8 @@ TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEv
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    vine::vsg::core::Diagnostics diagnostics;
-    diagnostics.setSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
+    vn::vsg::core::Diagnostics diagnostics;
+    diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[session-test] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
@@ -171,7 +171,7 @@ TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEv
 
     // The only thing a healthy session may report is the slot-count note, and only when the learned count
     // differs from the one this code was written against.
-    if (session.slots() == vine::vsg::core::kAssumedInFlightSlots)
+    if (session.slots() == vn::vsg::core::kAssumedInFlightSlots)
     {
         EXPECT_TRUE(diagnostics.clean()) << "learning the expected count is not an event";
     }
@@ -204,14 +204,14 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
 
     // Two off-screen targets, one colour each - so WHICH graph the session submitted is readable: each frame
     // hands over its own graph (one per frame, see makeFrameGraph) and writes one of them with its own clear.
-    const ::vsg::ref_ptr<::vsg::Device> device = vine::vsg::detail::SessionContentAccess::device(session);
+    const ::vsg::ref_ptr<::vsg::Device> device = vn::vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
     auto first_target = OffscreenTarget::create(device, OffscreenTarget::Layout{ 8U, 8U, { 0.2F, 0.0F, 0.0F, 1.0F } });
     auto second_target = OffscreenTarget::create(device, OffscreenTarget::Layout{ 8U, 8U, { 0.6F, 0.0F, 0.0F, 1.0F } });
     ASSERT_NE(first_target, nullptr);
     ASSERT_NE(second_target, nullptr);
 
-    vine::vsg::WindowTarget* window = vine::vsg::detail::SessionContentAccess::windowTarget(session);
+    vn::vsg::WindowTarget* window = vn::vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window, nullptr);
     VsgExecutor executor(diagnostics);
     executor.setWindow(window);
@@ -270,11 +270,11 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
         const CompiledFrame& compiled = compiler.compile(recorder.description(), FrameFacts{ table });
 
         const ::vsg::ref_ptr<::vsg::CommandGraph> graph =
-            vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+            vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
         EXPECT_NE(graph, nullptr);
         EXPECT_TRUE(executor.record(compiled, graph));
         EXPECT_EQ(executor.skipped(), 0U);
-        EXPECT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
+        EXPECT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
         return executor.commit(compiled, session);
     };
 
@@ -296,10 +296,10 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
     {
         // The graphs that were SUBMITTED are the ones handed over per frame: a session that kept the first
         // frame's graph (or the one before it) would show the earlier clear here.
-        const vine::vsg::core::PixelProbe first = first_target->probe();
+        const vn::vsg::core::PixelProbe first = first_target->probe();
         ASSERT_TRUE(first.valid());
         EXPECT_NEAR(first.pixel(4, 4).r, quantise(0.4F), 1) << "the third frame's graph is what ran last for it";
-        const vine::vsg::core::PixelProbe second = second_target->probe();
+        const vn::vsg::core::PixelProbe second = second_target->probe();
         ASSERT_TRUE(second.valid());
         EXPECT_NEAR(second.pixel(4, 4).r, quantise(0.6F), 1);
     }
@@ -330,7 +330,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     target_clear.color_value[3] = 1.0F;
 
     Diagnostics diagnostics;
-    diagnostics.setSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
+    diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[drive-test] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
@@ -344,12 +344,12 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
 
         // The frame drive of the window path: one executor that holds the window and the off-screen target,
         // so every target the plan can resolve to is one it knows.
-        const ::vsg::ref_ptr<::vsg::Device> device = vine::vsg::detail::SessionContentAccess::device(session);
+        const ::vsg::ref_ptr<::vsg::Device> device = vn::vsg::detail::SessionContentAccess::device(session);
         ASSERT_NE(device, nullptr);
         auto target = OffscreenTarget::create(device,
                                               OffscreenTarget::Layout{ 8U, 8U, { 0.25F, 0.5F, 0.75F, 1.0F } });
         ASSERT_NE(target, nullptr);
-        vine::vsg::WindowTarget* window = vine::vsg::detail::SessionContentAccess::windowTarget(session);
+        vn::vsg::WindowTarget* window = vn::vsg::detail::SessionContentAccess::windowTarget(session);
         ASSERT_NE(window, nullptr);
 
         VsgExecutor executor(diagnostics);
@@ -390,18 +390,18 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
         const CompiledFrame* first = record_frame(first_token);
         ASSERT_EQ(first->passes.size(), 2U);
         const ::vsg::ref_ptr<::vsg::CommandGraph> graph =
-            vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+            vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
         ASSERT_NE(graph, nullptr);
         ASSERT_TRUE(executor.record(*first, graph));
         EXPECT_EQ(executor.skipped(), 0U);
-        ASSERT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
+        ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
         EXPECT_TRUE(executor.commit(*first, session)) << "the drive submits and presents through the session";
         EXPECT_EQ(session.framesPresented(), 1U);
         EXPECT_EQ(session.deviceWaits(), 0U) << "a frame that goes through does not stop the device";
         EXPECT_FALSE(target->instance().attachments_invalidated)
             << "a submission that happened leaves nothing to repair";
         {
-            const vine::vsg::core::PixelProbe probe = target->probe();
+            const vn::vsg::core::PixelProbe probe = target->probe();
             ASSERT_TRUE(probe.valid());
             const Rgba8 sampled  = probe.pixel(4, 4);
             const Rgba8 expected{ quantise(0.25F), quantise(0.5F), quantise(0.75F), 255U };
@@ -418,12 +418,12 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     // not one it keeps driving.
     Session session;
     ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
-    const ::vsg::ref_ptr<::vsg::Device> device = vine::vsg::detail::SessionContentAccess::device(session);
+    const ::vsg::ref_ptr<::vsg::Device> device = vn::vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
     auto target = OffscreenTarget::create(device,
                                           OffscreenTarget::Layout{ 8U, 8U, { 0.25F, 0.5F, 0.75F, 1.0F } });
     ASSERT_NE(target, nullptr);
-    vine::vsg::WindowTarget* window = vine::vsg::detail::SessionContentAccess::windowTarget(session);
+    vn::vsg::WindowTarget* window = vn::vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window, nullptr);
 
     VsgExecutor executor(diagnostics);
@@ -464,19 +464,19 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     const FrameToken second_token = session.beginFrame();
     ASSERT_TRUE(second_token);
     const CompiledFrame* second = record_frame(second_token);
-    const auto failing_graph = vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    const auto failing_graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(failing_graph, nullptr);
     ::vsg::ref_ptr<FailingStepNode> failing(new FailingStepNode());
     failing_graph->addChild(failing);
     ASSERT_TRUE(executor.record(*second, failing_graph));
-    ASSERT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(
+    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(
         session, ::vsg::CommandGraphs{ failing_graph }));
     failing->armed = true;
 
     const std::uint64_t failures_before =
-        diagnostics.count(vine::graphics::DiagnosticCategory::SubmissionFailed);
+        diagnostics.count(vn::graphics::DiagnosticCategory::SubmissionFailed);
     EXPECT_FALSE(executor.commit(*second, session)) << "the submission did not happen, and the drive says so";
-    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::SubmissionFailed), failures_before + 1U)
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::SubmissionFailed), failures_before + 1U)
         << "the session is the reporter on this path";
     EXPECT_TRUE(target->instance().attachments_invalidated)
         << "the target this frame wrote holds contents nobody can vouch for";
@@ -521,11 +521,11 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
         const CompiledFrame& compiled = compiler.compile(recorder.description(), FrameFacts{ table });
 
         const ::vsg::ref_ptr<::vsg::CommandGraph> graph =
-            vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+            vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
         EXPECT_NE(graph, nullptr);
         EXPECT_TRUE(executor.record(compiled, graph));
         EXPECT_EQ(executor.skipped(), 0U);
-        EXPECT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
+        EXPECT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
         EXPECT_TRUE(executor.commit(compiled, session)) << "the next frame goes through on the same session";
         return &compiled;
     };
@@ -534,7 +534,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     ASSERT_EQ(third->passes.size(), 2U);
     bool offscreen_bootstraps = false;
     bool window_bootstraps    = false;
-    for (const vine::vsg::core::CompiledPass& pass : third->passes)
+    for (const vn::vsg::core::CompiledPass& pass : third->passes)
     {
         if (third->targets[pass.target_index].target == target.get())
         {
@@ -564,7 +564,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     EXPECT_EQ(diagnostics.total(), failures_before + 1U)
         << "the lost frame was the one event, and it was reported exactly once";
     {
-        const vine::vsg::core::PixelProbe probe = target->probe();
+        const vn::vsg::core::PixelProbe probe = target->probe();
         ASSERT_TRUE(probe.valid());
         const Rgba8 sampled  = probe.pixel(4, 4);
         const Rgba8 expected{ quantise(0.25F), quantise(0.5F), quantise(0.75F), 255U };
@@ -593,7 +593,7 @@ TEST(SessionTest, AWindowPlanThatGotTheFormatWrongIsNotRecorded)
     Session     session;
     ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
 
-    vine::vsg::WindowTarget* window = vine::vsg::detail::SessionContentAccess::windowTarget(session);
+    vn::vsg::WindowTarget* window = vn::vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window, nullptr);
 
     VsgExecutor executor(diagnostics);
@@ -630,19 +630,19 @@ TEST(SessionTest, AWindowPlanThatGotTheFormatWrongIsNotRecorded)
     drifted[0].wanted.shape.color_formats[0] = RenderTarget::ColorFormat::RGBA16F;
     drifted[0].current.desc                  = drifted[0].wanted;  // the table lies consistently
 
-    const std::size_t skipped_before = diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped);
+    const std::size_t skipped_before = diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped);
 
     const CompiledFrame& wrong = compiler.compile(recorder.description(), FrameFacts{ drifted });
     ASSERT_EQ(wrong.passes.size(), 1U);
     EXPECT_EQ(wrong.passes[0].color_attachments, 1U) << "the count agrees: only the format drifted";
 
     const ::vsg::ref_ptr<::vsg::CommandGraph> refused =
-        vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(refused, nullptr);
     EXPECT_FALSE(executor.record(wrong, refused)) << "the same count is not the same render pass";
     EXPECT_EQ(executor.skipped(), 1U);
     EXPECT_TRUE(executor.recorded().empty());
-    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), skipped_before + 1U);
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), skipped_before + 1U);
 
     // Told the truth, the same pass records - and the frame goes on to be presented, so what was wrong was
     // the plan's account of the window, not the window.
@@ -650,14 +650,14 @@ TEST(SessionTest, AWindowPlanThatGotTheFormatWrongIsNotRecorded)
     ASSERT_EQ(right.passes.size(), 1U);
 
     const ::vsg::ref_ptr<::vsg::CommandGraph> served =
-        vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(served, nullptr);
     EXPECT_TRUE(executor.record(right, served));
     EXPECT_EQ(executor.skipped(), 0U);
     ASSERT_EQ(executor.recorded().size(), 1U);
     EXPECT_EQ(executor.recorded()[0], 1U);
 
-    ASSERT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ served }));
+    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ served }));
     EXPECT_TRUE(session.commitFrame());
     EXPECT_EQ(session.framesPresented(), 1U);
     EXPECT_EQ(session.deviceWaits(), 0U) << "none of this is a reason to stop the device";
@@ -681,9 +681,9 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
     Session     session;
     ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
 
-    vine::vsg::WindowTarget* window = vine::vsg::detail::SessionContentAccess::windowTarget(session);
+    vn::vsg::WindowTarget* window = vn::vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window, nullptr);
-    const auto device = vine::vsg::detail::SessionContentAccess::device(session);
+    const auto device = vn::vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
 
     VsgExecutor executor(diagnostics);
@@ -737,7 +737,7 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
     }
     {
         const ::vsg::ref_ptr<::vsg::CommandGraph> graph =
-            vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+            vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
         ASSERT_NE(graph, nullptr);
         EXPECT_TRUE(executor.record(steady, graph));
         EXPECT_EQ(executor.skipped(), 0U);
@@ -749,7 +749,7 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
     std::vector<TargetFacts> claimed = truthful;
     claimed[0].wanted.shape.device_color_formats = { other_format };
 
-    const std::size_t skipped_before = diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped);
+    const std::size_t skipped_before = diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped);
 
     const CompiledFrame& rebuild = compiler.compile(recorder.description(), FrameFacts{ claimed });
     ASSERT_EQ(rebuild.passes.size(), 1U);
@@ -767,25 +767,25 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
     EXPECT_FALSE(window->refresh());
     {
         const ::vsg::ref_ptr<::vsg::CommandGraph> graph =
-            vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+            vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
         ASSERT_NE(graph, nullptr);
         EXPECT_FALSE(executor.record(rebuild, graph)) << "an unapplied rebuild is not recorded";
         EXPECT_EQ(executor.skipped(), 1U);
-        EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), skipped_before + 1U);
+        EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), skipped_before + 1U);
     }
 
     // (3) The window is still usable: told the truth, the same pass records - and the frame is presented.
     const CompiledFrame& again = compiler.compile(recorder.description(), FrameFacts{ truthful });
     ASSERT_EQ(again.passes.size(), 1U);
     const ::vsg::ref_ptr<::vsg::CommandGraph> served =
-        vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(served, nullptr);
     EXPECT_TRUE(executor.record(again, served));
     EXPECT_EQ(executor.skipped(), 0U);
     ASSERT_EQ(executor.recorded().size(), 1U);
     EXPECT_EQ(executor.recorded()[0], 1U);
 
-    ASSERT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ served }));
+    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ served }));
     EXPECT_TRUE(session.commitFrame());
     EXPECT_EQ(session.framesPresented(), 1U);
     EXPECT_EQ(session.deviceWaits(), 0U) << "none of this is a reason to stop the device";
@@ -805,7 +805,7 @@ TEST(SessionTest, ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver)
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    vine::vsg::core::Diagnostics diagnostics;
+    vn::vsg::core::Diagnostics diagnostics;
     Session                        session;
     ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
 
@@ -813,19 +813,19 @@ TEST(SessionTest, ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver)
     // queue submit the driver refuses cannot be summoned on lavapipe, and vsg's own failure vocabulary for
     // "this step cannot be made" is an exception (see FailingStepNode).
     ::vsg::ref_ptr<::vsg::CommandGraph> graph =
-        vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(graph, nullptr);
     ::vsg::ref_ptr<FailingStepNode> failing(new FailingStepNode());
     graph->addChild(failing);
-    ASSERT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
+    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
 
     ASSERT_TRUE(session.beginFrame());
     failing->armed = true;
 
     const std::uint64_t failures_before =
-        diagnostics.count(vine::graphics::DiagnosticCategory::SubmissionFailed);
+        diagnostics.count(vn::graphics::DiagnosticCategory::SubmissionFailed);
     EXPECT_FALSE(session.commitFrame()) << "the step did not happen, and the commit says so";
-    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::SubmissionFailed), failures_before + 1U)
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::SubmissionFailed), failures_before + 1U)
         << "reported through the one route, with the category a host can switch on";
     EXPECT_EQ(session.lostFrames(), 1U);
     EXPECT_EQ(session.framesPresented(), 0U) << "nothing was presented, so nothing may be counted as presented";
@@ -873,8 +873,8 @@ TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevi
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    vine::vsg::core::Diagnostics diagnostics;
-    diagnostics.setSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
+    vn::vsg::core::Diagnostics diagnostics;
+    diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[session-test] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());

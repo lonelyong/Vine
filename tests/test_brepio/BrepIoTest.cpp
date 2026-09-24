@@ -2,7 +2,7 @@
 
 #include <vine/brepio/BrepLoader.hpp>
 
-using vine::brepio::BrepLoader;
+using vn::brepio::BrepLoader;
 
 TEST(BrepIoTest, BrepIsSupportedFormat)
 {

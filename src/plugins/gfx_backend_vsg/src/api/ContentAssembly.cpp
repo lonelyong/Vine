@@ -4,7 +4,7 @@
 
 #include <vine/vsg/core/StateRegistry.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 struct ContentAssembly::Data
 {
@@ -149,4 +149,4 @@ std::uint64_t ContentAssembly::inputSetBuilds() const noexcept
     return d->input_sets.builds;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

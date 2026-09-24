@@ -4,8 +4,8 @@
 
 #include <vine/runtime/DynamicLibraryLoader.hpp>
 
-using vine::String;
-using vine::runtime::DynamicLibraryLoader;
+using vn::String;
+using vn::runtime::DynamicLibraryLoader;
 
 namespace
 {
@@ -16,7 +16,7 @@ namespace
  */
 String fixturePath()
 {
-    return String(std::u8string_view(reinterpret_cast<const char8_t*>(V_RUNTIME_FIXTURE)));
+    return String(std::u8string_view(reinterpret_cast<const char8_t*>(VN_RUNTIME_FIXTURE)));
 }
 
 TEST(DynamicLibraryLoaderTest, LoadMissingReturnsNull)

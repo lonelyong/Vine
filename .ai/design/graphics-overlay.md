@@ -111,7 +111,7 @@ gizmo->setEnabled(false);                   // 需要时隐藏
 
 ## 环境备注
 
-- `v_add_library` 用 `file(GLOB_RECURSE)`：新增/删除 .cpp/.hpp 后需 `cmake.configure` 重新配置
+- `vn_add_library` 用 `file(GLOB_RECURSE)`：新增/删除 .cpp/.hpp 后需 `cmake.configure` 重新配置
   才会纳入（删除文件不重配会让 ninja 报“No rule to make target”）。
 - 若 configure 因残留 `vsg_FOUND:INTERNAL=TRUE` 走错 "installed vsg" 分支：
   删除该行后 `cmake.configure`（强制）即回到 FetchContent vsg（`_deps/vsg-src`）。

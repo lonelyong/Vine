@@ -13,12 +13,12 @@
 #include <vine/io/Stream.hpp>
 #include <vine/String.hpp>
 
-V_IO_NS_BEGIN
+VN_IO_NS_BEGIN
 
 /**
  * @brief What stat() and list() report about one virtual path.
  */
-struct V_IOBASE_API VfsEntryInfo
+struct VN_IOBASE_API VfsEntryInfo
 {
     std::filesystem::path path;          ///< Full normalized virtual path; the empty path is the root.
     bool          is_directory{ false }; ///< true when the path names a directory.
@@ -62,7 +62,7 @@ enum class VfsEntryKind : std::uint8_t
  *
  * See ZipArchive and DirectoryVfs for the backends.
  */
-class V_IOBASE_API Vfs
+class VN_IOBASE_API Vfs
 {
   public:
     /**
@@ -337,4 +337,4 @@ class V_IOBASE_API Vfs
     [[nodiscard]] bool isDirectory(const std::filesystem::path& path) const;
 };
 
-V_IO_NS_END
+VN_IO_NS_END

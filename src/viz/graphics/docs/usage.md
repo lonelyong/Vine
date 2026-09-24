@@ -4,7 +4,7 @@ graphics 模块是 Vine 的**场景图 + 渲染资源 + 渲染引擎**。它自�
 `RenderBackend`，具体后端是插件（今天即 `src/plugins/gfx_backend_vsg`，后端名 `"vsg"`，经
 VulkanSceneGraph 落到 Vulkan）。
 
-- 公开头：`src/viz/graphics/sdk/vine/graphics/`（target `vi::Graphics`）
+- 公开头：`src/viz/graphics/sdk/vine/graphics/`（target `vn::Graphics`）
 - 实现：`src/viz/graphics/src/`
 - 后端插件与它自己的说明：`src/plugins/gfx_backend_vsg/`
 
@@ -37,7 +37,7 @@ graph TB
 后端**按名字**创建，因此宿主对后端及其第三方库没有编译期依赖：
 
 ```cpp
-auto backend = vine::graphics::RenderBackendRegistry::instance().create(u8"vsg");  // 需插件已加载
+auto backend = vn::graphics::RenderBackendRegistry::instance().create(u8"vsg");  // 需插件已加载
 engine.setBackend(backend);
 ```
 
@@ -170,19 +170,19 @@ engine.setBackend(backend);
 ### 3.1 最小可跑：一个三角形 + forward
 
 ```cpp
-using namespace vine::graphics;
+using namespace vn::graphics;
 
 // ① 模型：一个三角形。packAttribute 把 Vec3f 打成 Buffer<float>，geometry 借它（不拷贝）。
-vine::geometry::Vec3fArray positions = {
-    vine::math::Vec3f(0.0f, 0.0f, 0.0f),
-    vine::math::Vec3f(1.0f, 0.0f, 0.0f),
-    vine::math::Vec3f(0.0f, 1.0f, 0.0f),
+vn::geometry::Vec3fArray positions = {
+    vn::math::Vec3f(0.0f, 0.0f, 0.0f),
+    vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+    vn::math::Vec3f(0.0f, 1.0f, 0.0f),
 };
 GeometryPtr geometry(new Geometry());
 geometry->setPositions(packAttribute(positions));
 
 MaterialPtr material(new Material());
-material->setDiffuse(vine::Colorf(0.8f, 0.4f, 0.2f, 1.0f));
+material->setDiffuse(vn::Colorf(0.8f, 0.4f, 0.2f, 1.0f));
 
 // ② 场景图：transform → state → geometry（三层是惯例：位置 / 状态 / 叶子）。
 auto state = StateNodePtr(new StateNode());
@@ -251,7 +251,7 @@ scene_pass->setName(u8"scene_into_rt");
 scene_pass->setCamera(camera);
 scene_pass->setRenderTarget(scene_rt);
 scene_pass->setClearEnabled(true);                     // 自己是第一笔，清屏
-scene_pass->setClearColor(vine::Color(26, 26, 31));    // vine::Color 是 0..255 的 uint8 构造
+scene_pass->setClearColor(vn::Color(26, 26, 31));    // vn::Color 是 0..255 的 uint8 构造
 scene_pass->setShouldClearDepth(true);
 scene_pass->setDepthMode(DepthMode::TestAndWrite);     // 不透明内容：测 + 写
 scene_pass->setOutputName(u8"SceneColor");             // 命名输出（每帧进名字表）

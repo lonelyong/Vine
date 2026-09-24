@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 namespace
 {
@@ -97,4 +97,4 @@ math::Isometry3d Frame::frameInFrame(raw_ptr<const Frame> from, raw_ptr<const Fr
     return frameInWorld(to, state).inverted() * frameInWorld(from, state);
 }
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

@@ -11,7 +11,7 @@
 
 #include <vine/String.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief A choice option: a typed value paired with its display description.
@@ -48,7 +48,7 @@ enum class ConfigItemType
  * @note Fluent builders return the object itself, e.g.
  * item.range(8, 72).defaultValue(14)
  */
-class V_APPFW_API ConfigItem {
+class VN_APPFW_API ConfigItem {
   public:
     /**
      * @brief Constructs an item.
@@ -242,4 +242,4 @@ class V_APPFW_API ConfigItem {
     std::unique_ptr<Impl> d;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

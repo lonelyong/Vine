@@ -1,8 +1,8 @@
 ﻿#include <vine/geometry/Box.hpp>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-V_OBJECT_META_IMPL(Box, Primitive)
+VN_OBJECT_META_IMPL(Box, Primitive)
 
 Box::Box()
 {
@@ -57,4 +57,4 @@ bool Box::hasVolume(double eps) const
     return width_ > eps && height_ > eps && depth_ > eps;
 }
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

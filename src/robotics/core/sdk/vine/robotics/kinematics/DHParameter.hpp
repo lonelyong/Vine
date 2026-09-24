@@ -2,7 +2,7 @@
 
 #include <vine/robotics/robot_core_global.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 struct DHParameter {
     /*
@@ -47,4 +47,4 @@ struct DHParameter {
     double theta{ 0. };
 };
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

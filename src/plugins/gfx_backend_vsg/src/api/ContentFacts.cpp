@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <utility>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
@@ -236,7 +236,7 @@ bool channelsMatchLayout(const GeometryFacts& facts) noexcept
 
 bool blockFitsAbi(const MaterialFacts& facts) noexcept
 {
-    return facts.block.size() == sizeof(vine::graphics::VineMaterialBlock);
+    return facts.block.size() == sizeof(vn::graphics::VineMaterialBlock);
 }
 
 FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::ProgramRef& program,
@@ -403,4 +403,4 @@ FactResult<MaterialFacts> findMaterial(const ContentFacts& facts, const void* ma
     return { nullptr, FactMiss::Unknown };
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -31,10 +31,10 @@
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief The live pass identities, and the number each of them answers (see the file note). */
-class V_VSG_API PassRegistry
+class VN_VSG_API PassRegistry
 {
   public:
     PassRegistry() = default;
@@ -71,4 +71,4 @@ class V_VSG_API PassRegistry
     core::PassId                        next_{1};      ///< Next number to hand out; 0 stays "no pass".
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

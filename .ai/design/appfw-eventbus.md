@@ -123,7 +123,7 @@ Delivery         ── shared_ptr<DeliveryRegistry> + weak_ptr<Payload>；析�
    总线（它们不 drain），结果同样是 `false`——不要把它读成“总线没停”。
 3. 一个 `Subscription` 句柄只由一个线程持有/销毁。
 4. Main/Auto 的 handler 必须自持捕获；不要按引用捕获订阅者栈对象（取消不等待在飞投递）。
-5. 接口订阅依赖事件类在元数据里声明了该接口（`V_OBJECT_META_IMPL(..., Itf)`）；声明了却不真继承
+5. 接口订阅依赖事件类在元数据里声明了该接口（`VN_OBJECT_META_IMPL(..., Itf)`）；声明了却不真继承
    会让 `obj_cast/dynamic_cast` 失败（记日志）。
 
 ## 测试映射（tests/test_gui/EventBusTest.cpp，42 例）

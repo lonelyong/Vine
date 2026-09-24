@@ -7,7 +7,7 @@
 
 #include "RenderPass.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class RenderTarget;
 class ShaderProgram;
@@ -27,8 +27,8 @@ class ShaderProgram;
  * deferred lighting — and anything else is a program the host writes. That is what makes the picture
  * a pass draws something the host stated rather than something a backend filled in.
  */
-class V_GRAPHICS_API ScreenPass : public RenderPass {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API ScreenPass : public RenderPass {
+    VN_OBJECT_META_DECL;
 
   public:
     /** @brief Constructs a screen pass.
@@ -99,4 +99,4 @@ class V_GRAPHICS_API ScreenPass : public RenderPass {
 
 using ScreenPassPtr = intrusive_ptr<ScreenPass>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

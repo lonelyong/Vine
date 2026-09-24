@@ -8,9 +8,9 @@
 #include <vine/window/KeyCode.hpp>
 #include <vine/window/MouseButton.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-using vine::math::Vec3d;
+using vn::math::Vec3d;
 
 class Camera;
 
@@ -22,13 +22,13 @@ class Camera;
  * (e.g. OrbitCameraManipulator) implement a specific camera control scheme and
  * are driven either directly through their motion methods or through the
  * window input callbacks (onMousePress/onMouseMove/onScroll/onKeyDown...).
- * A SceneView typically forwards vine::window events to these callbacks.
+ * A SceneView typically forwards vn::window events to these callbacks.
  *
  * CameraManipulator is reference counted (RefCounted<CameraManipulator>): the
  * SceneView that drives it keeps an intrusive_ptr so the manipulator stays
  * alive as long as it is attached. The camera must outlive the manipulator.
  */
-class V_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
+class VN_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
   public:
     enum class Mode {
         Orbit,        ///< Orbit around a target point.
@@ -87,37 +87,37 @@ class V_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
      *
      * @param event Mouse event describing the pressed button and position.
      */
-    virtual void onMousePress(const vine::window::MouseEvent& event) = 0;
+    virtual void onMousePress(const vn::window::MouseEvent& event) = 0;
 
     /** @brief Handles mouse motion, applying the active drag interaction.
      *
      * @param event Mouse event describing the new position.
      */
-    virtual void onMouseMove(const vine::window::MouseEvent& event) = 0;
+    virtual void onMouseMove(const vn::window::MouseEvent& event) = 0;
 
     /** @brief Handles a mouse button release, ending any drag interaction.
      *
      * @param event Mouse event describing the released button.
      */
-    virtual void onMouseRelease(const vine::window::MouseEvent& event) = 0;
+    virtual void onMouseRelease(const vn::window::MouseEvent& event) = 0;
 
     /** @brief Handles mouse wheel scroll.
      *
      * @param event Scroll event; positive deltaY zooms in.
      */
-    virtual void onScroll(const vine::window::ScrollEvent& event) = 0;
+    virtual void onScroll(const vn::window::ScrollEvent& event) = 0;
 
     /** @brief Handles a key press.
      *
      * @param event Key event describing the pressed key.
      */
-    virtual void onKeyDown(const vine::window::KeyEvent& event) = 0;
+    virtual void onKeyDown(const vn::window::KeyEvent& event) = 0;
 
     /** @brief Handles a key release.
      *
      * @param event Key event describing the released key.
      */
-    virtual void onKeyUp(const vine::window::KeyEvent& event) = 0;
+    virtual void onKeyUp(const vn::window::KeyEvent& event) = 0;
 
     /** @brief Handles a viewport resize.
      *
@@ -126,7 +126,7 @@ class V_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
      *
      * @param event Resize event carrying the new surface size in pixels.
      */
-    virtual void onResize(const vine::window::ResizeEvent& event) = 0;
+    virtual void onResize(const vn::window::ResizeEvent& event) = 0;
 
   protected:
     /** @brief Constructs a manipulator bound to a camera.
@@ -141,4 +141,4 @@ class V_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
     Mode mode_ = Mode::Orbit;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

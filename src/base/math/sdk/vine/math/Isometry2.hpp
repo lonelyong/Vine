@@ -5,7 +5,7 @@
 #include "Point2.hpp"
 #include "Vector2.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief 2D rigid transformation (translation + rotation), no scale.
@@ -98,4 +98,4 @@ Vector2<T> operator*(const Isometry2<T>& t, const Vector2<T>& v);
 using Isometry2f = Isometry2<float>;
 using Isometry2d = Isometry2<double>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

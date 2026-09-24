@@ -10,7 +10,7 @@
 #include "CollisionGeometry.hpp"
 #include "CollisionObject.hpp"
 
-V_ROBOTICS_PROXIMITY_NS_BEGIN
+VN_ROBOTICS_PROXIMITY_NS_BEGIN
 
 /**
  * @brief Factory and registry of collision geometries and objects.
@@ -40,7 +40,7 @@ class CollisionGeometryManager {
      * @param shape The source shape.
      * @return true when a valid geometry is available (new or cached).
      */
-    bool add(const vine::intrusive_ptr<const vine::geometry::Shape>& shape)
+    bool add(const vn::intrusive_ptr<const vn::geometry::Shape>& shape)
     {
         if (shape == nullptr) {
             return false;
@@ -63,13 +63,13 @@ class CollisionGeometryManager {
      * @param shape The source shape.
      * @return The geometry, or null when not registered.
      */
-    vine::intrusive_ptr<CollisionGeometry> get(const vine::intrusive_ptr<const vine::geometry::Shape>& shape) const
+    vn::intrusive_ptr<CollisionGeometry> get(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const
     {
         if (shape == nullptr) {
             return {};
         }
         const auto it = shape_geometry_map_.find(shape.get());
-        return it != shape_geometry_map_.end() ? it->second : vine::intrusive_ptr<CollisionGeometry>{};
+        return it != shape_geometry_map_.end() ? it->second : vn::intrusive_ptr<CollisionGeometry>{};
     }
 
     /**
@@ -78,7 +78,7 @@ class CollisionGeometryManager {
      * @param shape The source shape.
      * @return true when a geometry was removed.
      */
-    bool remove(const vine::intrusive_ptr<const vine::geometry::Shape>& shape)
+    bool remove(const vn::intrusive_ptr<const vn::geometry::Shape>& shape)
     {
         if (shape == nullptr) {
             return false;
@@ -93,7 +93,7 @@ class CollisionGeometryManager {
      * @return true on success, false when the shape was not registered or the
      *         rebuild failed.
      */
-    bool update(const vine::intrusive_ptr<const vine::geometry::Shape>& shape)
+    bool update(const vn::intrusive_ptr<const vn::geometry::Shape>& shape)
     {
         if (shape == nullptr || !shape_geometry_map_.contains(shape.get())) {
             return false;
@@ -121,8 +121,8 @@ class CollisionGeometryManager {
      * @param shape The shape; must already be registered.
      * @return The new collision object, or null when the shape is unregistered.
      */
-    virtual vine::intrusive_ptr<CollisionObject>
-        createCollisionObject(const vine::intrusive_ptr<const vine::geometry::Shape>& shape) const = 0;
+    virtual vn::intrusive_ptr<CollisionObject>
+        createCollisionObject(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const = 0;
 
   protected:
     /**
@@ -131,12 +131,12 @@ class CollisionGeometryManager {
      * @param shape The source shape.
      * @return The new geometry, or null when the shape is unsupported.
      */
-    virtual vine::intrusive_ptr<CollisionGeometry>
-        createCollisionGeometry(const vine::intrusive_ptr<const vine::geometry::Shape>& shape) const = 0;
+    virtual vn::intrusive_ptr<CollisionGeometry>
+        createCollisionGeometry(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const = 0;
 
   protected:
     /// Registered shapes to their cached geometries.
-    std::map<const vine::geometry::Shape*, vine::intrusive_ptr<CollisionGeometry>> shape_geometry_map_;
+    std::map<const vn::geometry::Shape*, vn::intrusive_ptr<CollisionGeometry>> shape_geometry_map_;
 };
 
-V_ROBOTICS_PROXIMITY_NS_END
+VN_ROBOTICS_PROXIMITY_NS_END

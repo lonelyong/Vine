@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 struct ThreadPool::Impl {
     std::vector<std::thread>          workers;
@@ -104,4 +104,4 @@ std::size_t ThreadPool::threadCount() const
     return d->count;
 }
 
-V_CORE_NS_END
+VN_CORE_NS_END

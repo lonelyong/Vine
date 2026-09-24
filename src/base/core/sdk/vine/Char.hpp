@@ -4,7 +4,7 @@
 
 #include <concepts>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 template <typename T>
 concept CharType = std::same_as<T, char> || std::same_as<T, signed char> || std::same_as<T, unsigned char> || std::same_as<T, wchar_t> ||
@@ -154,4 +154,4 @@ constexpr bool islower(Char c)
     return c >= static_cast<Char>('a') && c <= static_cast<Char>('z');
 }
 
-V_CORE_NS_END
+VN_CORE_NS_END

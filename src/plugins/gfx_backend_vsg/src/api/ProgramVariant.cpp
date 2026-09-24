@@ -5,7 +5,7 @@
 #include <vine/vsg/api/ContentFacts.hpp>
 #include <vine/vsg/api/GeometryFacts.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 std::uint32_t ProgramVariant::bits() const noexcept
 {
@@ -56,8 +56,8 @@ bool operator!=(const ProgramVariant& left, const ProgramVariant& right) noexcep
 
 ProgramVariant variantOf(const MaterialFacts& material, const GeometryFacts& geometry) noexcept
 {
-    using vine::graphics::attributeLocation;
-    using vine::graphics::VertexAttribute;
+    using vn::graphics::attributeLocation;
+    using vn::graphics::VertexAttribute;
 
     ProgramVariant variant;
     variant.diffuse_map = material.texture != nullptr;
@@ -78,4 +78,4 @@ ProgramVariant variantOf(const MaterialFacts& material, const GeometryFacts& geo
     return variant;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

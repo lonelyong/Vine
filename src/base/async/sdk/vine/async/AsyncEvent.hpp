@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <mutex>
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 /**
  * @brief Thread-safe, manually reset async event with multiple waiters.
@@ -301,4 +301,4 @@ inline void AsyncEvent::dequeue(Awaiter& a) noexcept
     a.queued_ = false;
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

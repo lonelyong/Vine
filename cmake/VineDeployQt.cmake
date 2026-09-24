@@ -24,7 +24,7 @@ if (WIN32)
     add_custom_command(
             TARGET DeployQt
             POST_BUILD
-            COMMAND ${WINDEPLOYQT_EXE} --verbose 0 $<TARGET_FILE:vi::Appfw>
+            COMMAND ${WINDEPLOYQT_EXE} --verbose 0 $<TARGET_FILE:vn::Appfw>
             COMMENT "--------Run:windeployqt")
 else ()
     message(STATUS "DeployQt: no Qt deployment needed on ${CMAKE_SYSTEM_NAME} (windeployqt is Windows-only)")
@@ -39,51 +39,51 @@ endif ()
 #
 # The plugin directory is looked up as: the layout Qt itself reports, then the
 # SDK layout relative to Qt6_DIR, then the layouts used by Linux distributions.
-set(VINE_QT_PLATFORM_PLUGIN_DIR "")
+set(VN_QT_PLATFORM_PLUGIN_DIR "")
 
-set(VINE_QT_PLUGIN_CANDIDATES "")
+set(VN_QT_PLUGIN_CANDIDATES "")
 if (DEFINED QT6_INSTALL_PREFIX AND DEFINED QT6_INSTALL_PLUGINS)
-    list(APPEND VINE_QT_PLUGIN_CANDIDATES "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_PLUGINS}/platforms")
+    list(APPEND VN_QT_PLUGIN_CANDIDATES "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_PLUGINS}/platforms")
 endif()
 if (Qt6_DIR)
     get_filename_component(VINE_QT_PREFIX "${Qt6_DIR}/../../.." ABSOLUTE)
-    list(APPEND VINE_QT_PLUGIN_CANDIDATES
+    list(APPEND VN_QT_PLUGIN_CANDIDATES
             "${VINE_QT_PREFIX}/plugins/platforms"
             "${VINE_QT_PREFIX}/lib/qt6/plugins/platforms"
             "${VINE_QT_PREFIX}/qt6/plugins/platforms")
     unset(VINE_QT_PREFIX)
 endif()
 
-foreach (_candidate IN LISTS VINE_QT_PLUGIN_CANDIDATES)
-    if (NOT VINE_QT_PLATFORM_PLUGIN_DIR AND EXISTS "${_candidate}")
-        set(VINE_QT_PLATFORM_PLUGIN_DIR "${_candidate}")
+foreach (_candidate IN LISTS VN_QT_PLUGIN_CANDIDATES)
+    if (NOT VN_QT_PLATFORM_PLUGIN_DIR AND EXISTS "${_candidate}")
+        set(VN_QT_PLATFORM_PLUGIN_DIR "${_candidate}")
     endif()
 endforeach()
-unset(VINE_QT_PLUGIN_CANDIDATES)
+unset(VN_QT_PLUGIN_CANDIDATES)
 unset(_candidate)
 
 if (WIN32)
     # MSVC Debug Qt kits ship 'd'-suffixed plugins (qoffscreend.dll); the other
     # configurations link the release Qt, whose plugin is named qoffscreen.dll.
-    set(VINE_OFFSCREEN_PLUGIN "qoffscreen$<$<CONFIG:Debug>:d>.dll")
+    set(VN_OFFSCREEN_PLUGIN "qoffscreen$<$<CONFIG:Debug>:d>.dll")
 elseif (APPLE)
-    set(VINE_OFFSCREEN_PLUGIN "libqoffscreen.dylib")
+    set(VN_OFFSCREEN_PLUGIN "libqoffscreen.dylib")
 else ()
-    set(VINE_OFFSCREEN_PLUGIN "libqoffscreen.so")
+    set(VN_OFFSCREEN_PLUGIN "libqoffscreen.so")
 endif ()
 
-if (VINE_QT_PLATFORM_PLUGIN_DIR AND (WIN32 OR EXISTS "${VINE_QT_PLATFORM_PLUGIN_DIR}/${VINE_OFFSCREEN_PLUGIN}"))
+if (VN_QT_PLATFORM_PLUGIN_DIR AND (WIN32 OR EXISTS "${VN_QT_PLATFORM_PLUGIN_DIR}/${VN_OFFSCREEN_PLUGIN}"))
     add_custom_command(
             TARGET DeployQt
             POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:vi::Appfw>/platforms"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:vn::Appfw>/platforms"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${VINE_QT_PLATFORM_PLUGIN_DIR}/${VINE_OFFSCREEN_PLUGIN}"
-                    "$<TARGET_FILE_DIR:vi::Appfw>/platforms/"
+                    "${VN_QT_PLATFORM_PLUGIN_DIR}/${VN_OFFSCREEN_PLUGIN}"
+                    "$<TARGET_FILE_DIR:vn::Appfw>/platforms/"
             COMMENT "--------Deploy the offscreen platform plugin (ctest uses QT_QPA_PLATFORM=offscreen)")
-elseif (VINE_QT_PLATFORM_PLUGIN_DIR)
-    message(WARNING "No offscreen platform plugin ('${VINE_OFFSCREEN_PLUGIN}') in "
-            "'${VINE_QT_PLATFORM_PLUGIN_DIR}'; ctest runs with QT_QPA_PLATFORM=offscreen "
+elseif (VN_QT_PLATFORM_PLUGIN_DIR)
+    message(WARNING "No offscreen platform plugin ('${VN_OFFSCREEN_PLUGIN}') in "
+            "'${VN_QT_PLATFORM_PLUGIN_DIR}'; ctest runs with QT_QPA_PLATFORM=offscreen "
             "will fall back to the plugin Qt finds by itself")
 else ()
     message(WARNING "Qt platform plugin directory not found for '${Qt6_DIR}'; "

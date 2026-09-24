@@ -7,9 +7,9 @@
 #include <vine/di/Registration.hpp>
 #include <vine/di/ServiceBase.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-class V_APPFW_API ServiceManager {
+class VN_APPFW_API ServiceManager {
 
   public:
     ServiceManager();
@@ -17,11 +17,11 @@ class V_APPFW_API ServiceManager {
 
   public:
     ServiceManager*   registerService(const di::Registration& reg);
-    raw_ptr<vine::di::ServiceBase> service(TypeId type) const;
+    raw_ptr<vn::di::ServiceBase> service(TypeId type) const;
 
   private:
     struct Impl;
     std::unique_ptr<Impl> d;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

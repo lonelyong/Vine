@@ -20,7 +20,7 @@
 
 #include "IoUtils.hpp"
 
-V_ROBOTICS_IO_NS_BEGIN
+VN_ROBOTICS_IO_NS_BEGIN
 
 namespace
 {
@@ -108,10 +108,10 @@ void setAttr(tinyxml2::XMLElement* xe, const char* name, const String& value)
  * @param indices Optional triangle indices (empty for a non-indexed mesh).
  * @return The geoms path prefix ("geoms/meshN") used by the XML description.
  */
-String writeMeshBins(vine::io::Vfs& vfs, std::size_t& geom_seq,
-                     std::span<const vine::math::Vec3f> positions,
-                     std::span<const vine::math::Vec3f> normals,
-                     std::span<const vine::math::Vec2f> texcoords,
+String writeMeshBins(vn::io::Vfs& vfs, std::size_t& geom_seq,
+                     std::span<const vn::math::Vec3f> positions,
+                     std::span<const vn::math::Vec3f> normals,
+                     std::span<const vn::math::Vec2f> texcoords,
                      std::span<const std::uint32_t> indices)
 {
     const std::string seq_str = std::to_string(geom_seq++);
@@ -119,7 +119,7 @@ String writeMeshBins(vine::io::Vfs& vfs, std::size_t& geom_seq,
                              + String(reinterpret_cast<const char8_t*>(seq_str.data()), seq_str.size());
 
     const auto write_bin = [&vfs, &prefix](const char8_t* suffix, const std::vector<unsigned char>& bytes) {
-        if (vfs.addFile(detail::vfsPath(prefix + String(suffix)), bytes) != vine::io::IoError::Ok) {
+        if (vfs.addFile(detail::vfsPath(prefix + String(suffix)), bytes) != vn::io::IoError::Ok) {
             throw std::runtime_error("XmlIOBase::writeMeshBins, failed to write mesh geometry into the package: "
                                      + prefix.as_std_str());
         }
@@ -218,7 +218,7 @@ void XmlIOBase::exportPose(ExportContext& ctx, const math::Isometry3d& pose, tin
     xe->LinkEndChild(origin);
 }
 
-vine::intrusive_ptr<vine::geometry::Material> XmlIOBase::parseMaterial(ParseContext& ctx,
+vn::intrusive_ptr<vn::geometry::Material> XmlIOBase::parseMaterial(ParseContext& ctx,
                                                                        const tinyxml2::XMLElement* xe)
 {
     (void)ctx;
@@ -227,15 +227,15 @@ vine::intrusive_ptr<vine::geometry::Material> XmlIOBase::parseMaterial(ParseCont
         double r = 0.0, g = 0.0, b = 0.0, a = 1.0;
         std::istringstream stream(color_str.as_std_str());
         if (stream >> r >> g >> b >> a) {
-            return vine::make_intrusive<vine::geometry::ColorMaterial>(
-                vine::Colorf(static_cast<float>(r), static_cast<float>(g), static_cast<float>(b), static_cast<float>(a)));
+            return vn::make_intrusive<vn::geometry::ColorMaterial>(
+                vn::Colorf(static_cast<float>(r), static_cast<float>(g), static_cast<float>(b), static_cast<float>(a)));
         }
     }
     return {};
 }
 
 
-vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ctx, const tinyxml2::XMLElement* xe)
+vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ctx, const tinyxml2::XMLElement* xe)
 {
     const tinyxml2::XMLElement* const child = xe->FirstChildElement();
     if (child == nullptr) {
@@ -251,14 +251,14 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
         if (!(stream >> w >> h >> d)) {
             return {};
         }
-        return vine::make_intrusive<vine::geometry::Box>(w * s, h * s, d * s);
+        return vn::make_intrusive<vn::geometry::Box>(w * s, h * s, d * s);
     }
     if (tag == "sphere") {
         double r = 0.0;
         if (!getAttrDouble(child, "radius", r)) {
             return {};
         }
-        return vine::make_intrusive<vine::geometry::Sphere>(r * s);
+        return vn::make_intrusive<vn::geometry::Sphere>(r * s);
     }
     if (tag == "cylinder" || tag == "cone") {
         double r = 0.0, h = 0.0;
@@ -266,9 +266,9 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
             return {};
         }
         if (tag == "cylinder") {
-            return vine::make_intrusive<vine::geometry::Cylinder>(r * s, h * s);
+            return vn::make_intrusive<vn::geometry::Cylinder>(r * s, h * s);
         }
-        return vine::make_intrusive<vine::geometry::Cone>(r * s, h * s);
+        return vn::make_intrusive<vn::geometry::Cone>(r * s, h * s);
     }
     if (tag == "ellipsoid") {
         const String radii_str = attr(child, "radii");
@@ -276,8 +276,8 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
         if (radii_str.empty() || !detail::strToVec3(radii_str, radii)) {
             return {};
         }
-        return vine::intrusive_ptr<vine::geometry::Ellipsoid>(
-            new vine::geometry::Ellipsoid(radii.x * s, radii.y * s, radii.z * s));
+        return vn::intrusive_ptr<vn::geometry::Ellipsoid>(
+            new vn::geometry::Ellipsoid(radii.x * s, radii.y * s, radii.z * s));
     }
     if (tag == "triangle_mesh" || tag == "indexed_triangle_mesh") {
         if (ctx.vfs == nullptr) {
@@ -292,11 +292,11 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
         if (!bytes) {
             return {};
         }
-        vine::geometry::Vec3fArray positions;
+        vn::geometry::Vec3fArray positions;
         if (!detail::bytesToVec3Array(bytes.value(), positions)) {
             return {};
         }
-        vine::geometry::Vec3fArray normals;
+        vn::geometry::Vec3fArray normals;
         const String               nrm_path = attr(child, "normals");
         if (!nrm_path.empty()) {
             const auto nrm_bytes = ctx.vfs->read(detail::vfsPath(nrm_path));
@@ -304,7 +304,7 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
                 return {};
             }
         }
-        vine::geometry::Vec2fArray texcoords;
+        vn::geometry::Vec2fArray texcoords;
         const String               uv_path = attr(child, "texcoords");
         if (!uv_path.empty()) {
             const auto uv_bytes = ctx.vfs->read(detail::vfsPath(uv_path));
@@ -313,7 +313,7 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
             }
         }
         if (tag == "triangle_mesh") {
-            auto mesh = vine::make_intrusive<vine::geometry::TriangleMesh>();
+            auto mesh = vn::make_intrusive<vn::geometry::TriangleMesh>();
             mesh->setPositions(std::move(positions));
             if (!normals.empty()) {
                 mesh->setNormals(std::move(normals));
@@ -331,12 +331,12 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
         if (!idx_bytes) {
             return {};
         }
-        vine::geometry::UInt32Array indices;
+        vn::geometry::UInt32Array indices;
         if (!detail::bytesToUInt32Array(idx_bytes.value(), indices)) {
             return {};
         }
-        auto mesh = vine::intrusive_ptr<vine::geometry::IndexedTriangleMesh>(
-            new vine::geometry::IndexedTriangleMesh());
+        auto mesh = vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh>(
+            new vn::geometry::IndexedTriangleMesh());
         mesh->setPositions(std::move(positions));
         if (!normals.empty()) {
             mesh->setNormals(std::move(normals));
@@ -351,13 +351,13 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
     return {};
 }
 
-void XmlIOBase::exportGeometry(ExportContext& ctx, const vine::geometry::Shape& shape, tinyxml2::XMLElement* xe)
+void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& shape, tinyxml2::XMLElement* xe)
 {
     (void)ctx;
     auto xe_geom = xe->GetDocument()->NewElement("geometry");
     switch (shape.shapeType()) {
-    case vine::geometry::ShapeType::Box: {
-        const auto* const box = dynamic_cast<const vine::geometry::Box*>(&shape);
+    case vn::geometry::ShapeType::Box: {
+        const auto* const box = dynamic_cast<const vn::geometry::Box*>(&shape);
         if (box == nullptr) {
             return;
         }
@@ -369,8 +369,8 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vine::geometry::Shape& 
         xe_geom->LinkEndChild(xe_box);
         break;
     }
-    case vine::geometry::ShapeType::Cylinder: {
-        const auto* const cyli = dynamic_cast<const vine::geometry::Cylinder*>(&shape);
+    case vn::geometry::ShapeType::Cylinder: {
+        const auto* const cyli = dynamic_cast<const vn::geometry::Cylinder*>(&shape);
         if (cyli == nullptr) {
             return;
         }
@@ -380,8 +380,8 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vine::geometry::Shape& 
         xe_geom->LinkEndChild(xe_cyli);
         break;
     }
-    case vine::geometry::ShapeType::Cone: {
-        const auto* const cone = dynamic_cast<const vine::geometry::Cone*>(&shape);
+    case vn::geometry::ShapeType::Cone: {
+        const auto* const cone = dynamic_cast<const vn::geometry::Cone*>(&shape);
         if (cone == nullptr) {
             return;
         }
@@ -391,8 +391,8 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vine::geometry::Shape& 
         xe_geom->LinkEndChild(xe_cone);
         break;
     }
-    case vine::geometry::ShapeType::Sphere: {
-        const auto* const sphere = dynamic_cast<const vine::geometry::Sphere*>(&shape);
+    case vn::geometry::ShapeType::Sphere: {
+        const auto* const sphere = dynamic_cast<const vn::geometry::Sphere*>(&shape);
         if (sphere == nullptr) {
             return;
         }
@@ -401,8 +401,8 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vine::geometry::Shape& 
         xe_geom->LinkEndChild(xe_sphere);
         break;
     }
-    case vine::geometry::ShapeType::Ellipsoid: {
-        const auto* const ellipsoid = dynamic_cast<const vine::geometry::Ellipsoid*>(&shape);
+    case vn::geometry::ShapeType::Ellipsoid: {
+        const auto* const ellipsoid = dynamic_cast<const vn::geometry::Ellipsoid*>(&shape);
         if (ellipsoid == nullptr) {
             return;
         }
@@ -414,8 +414,8 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vine::geometry::Shape& 
         xe_geom->LinkEndChild(xe_ell);
         break;
     }
-    case vine::geometry::ShapeType::TriangleMesh: {
-        const auto* const mesh = dynamic_cast<const vine::geometry::TriangleMesh*>(&shape);
+    case vn::geometry::ShapeType::TriangleMesh: {
+        const auto* const mesh = dynamic_cast<const vn::geometry::TriangleMesh*>(&shape);
         if (mesh == nullptr) {
             return;
         }
@@ -448,8 +448,8 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vine::geometry::Shape& 
         xe_geom->LinkEndChild(xe_mesh);
         break;
     }
-    case vine::geometry::ShapeType::IndexedTriangleMesh: {
-        const auto* const mesh = dynamic_cast<const vine::geometry::IndexedTriangleMesh*>(&shape);
+    case vn::geometry::ShapeType::IndexedTriangleMesh: {
+        const auto* const mesh = dynamic_cast<const vn::geometry::IndexedTriangleMesh*>(&shape);
         if (mesh == nullptr) {
             return;
         }
@@ -788,4 +788,4 @@ void XmlIOBase::exportDeviceMetadata(ExportContext& ctx, const workcell::DeviceM
     xe->LinkEndChild(xe_meta);
 }
 
-V_ROBOTICS_IO_NS_END
+VN_ROBOTICS_IO_NS_END

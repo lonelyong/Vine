@@ -30,16 +30,16 @@
 #include <vine/vsg/core/StateRegistry.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 
-using vine::graphics::BlendState;
-using vine::graphics::CullMode;
-using vine::graphics::DepthMode;
-using vine::graphics::PolygonMode;
-using vine::graphics::RenderTarget;
-using vine::graphics::Topology;
-using vine::vsg::core::DynamicState;
-using vine::vsg::core::PipelineKey;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::VariantPool;
+using vn::graphics::BlendState;
+using vn::graphics::CullMode;
+using vn::graphics::DepthMode;
+using vn::graphics::PolygonMode;
+using vn::graphics::RenderTarget;
+using vn::graphics::Topology;
+using vn::vsg::core::DynamicState;
+using vn::vsg::core::PipelineKey;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::VariantPool;
 
 namespace
 {

@@ -12,7 +12,7 @@
 
 #include <vine/vsg/core/Diagnostics.hpp>
 
-using vine::vsg::core::ReportOnce;
+using vn::vsg::core::ReportOnce;
 
 /**
  * @brief The first call of an episode reports; the rest of it does not.

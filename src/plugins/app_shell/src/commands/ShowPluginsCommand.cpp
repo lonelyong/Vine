@@ -5,11 +5,11 @@
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/PluginManager.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-V_OBJECT_META_IMPL(ShowPluginsCommand, Command)
+VN_OBJECT_META_IMPL(ShowPluginsCommand, Command)
 
-vine::async::Task<CommandResult> ShowPluginsCommand::execute(CommandExecutionContext* context)
+vn::async::Task<CommandResult> ShowPluginsCommand::execute(CommandExecutionContext* context)
 {
     auto* app = context ? context->application() : nullptr;
     auto* pm  = app ? app->pluginManager() : nullptr;
@@ -25,4 +25,4 @@ vine::async::Task<CommandResult> ShowPluginsCommand::execute(CommandExecutionCon
     co_return CommandResult(CommandStatus::Success);
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

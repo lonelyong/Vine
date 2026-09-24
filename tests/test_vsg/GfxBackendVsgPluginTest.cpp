@@ -41,13 +41,13 @@
 #include <memory>
 #include <vector>
 
-using vine::graphics::Geometry;
-using vine::graphics::Material;
-using vine::graphics::RenderCommand;
-using vine::graphics::RenderPass;
-using vine::graphics::ShaderProgram;
-using vine::graphics::ShaderStage;
-using vine::graphics::ShaderStageType;
+using vn::graphics::Geometry;
+using vn::graphics::Material;
+using vn::graphics::RenderCommand;
+using vn::graphics::RenderPass;
+using vn::graphics::ShaderProgram;
+using vn::graphics::ShaderStage;
+using vn::graphics::ShaderStageType;
 
 namespace
 {
@@ -64,7 +64,7 @@ namespace
  * a Qt global singleton, so a second Application in the same process would
  * collide when init() constructs a new QCoreApplication.
  */
-std::unique_ptr<vine::appfw::Application> bootApplication()
+std::unique_ptr<vn::appfw::Application> bootApplication()
 {
     // Nothing this suite writes may reach the user's real data directory: the
     // registration round trip installs a plugin, and installPlugin() writes into
@@ -76,12 +76,12 @@ std::unique_ptr<vine::appfw::Application> bootApplication()
     static char arg0[] = "test_vsg";
     static char* argv[] = { arg0, nullptr };
 
-    vine::appfw::AppConfig config;
+    vn::appfw::AppConfig config;
     config.name = "Vine";
     // Unit tests must not read or write the user's real configuration: the
     // builder would otherwise apply Application::defaultConfigFile().
     config.persist_config = false;
-    auto app = vine::appfw::createApplication(config, 1, argv);
+    auto app = vn::appfw::createApplication(config, 1, argv);
     EXPECT_NE(app, nullptr);
     if (app != nullptr) {
         // The tests below assert on the discovered entries, so a failure here shows
@@ -99,10 +99,10 @@ class VsgBackendPluginTest : public ::testing::Test
         s_app = bootApplication();
     }
 
-    static std::unique_ptr<vine::appfw::Application> s_app;
+    static std::unique_ptr<vn::appfw::Application> s_app;
 };
 
-std::unique_ptr<vine::appfw::Application> VsgBackendPluginTest::s_app;
+std::unique_ptr<vn::appfw::Application> VsgBackendPluginTest::s_app;
 
 /// @brief Whether a device case can run at all (a window system and one usable physical device).
 bool deviceCaseAvailable()
@@ -111,7 +111,7 @@ bool deviceCaseAvailable()
     {
         return false;
     }
-    const auto probed = vine::vsg::api::probePhysicalDevices();
+    const auto probed = vn::vsg::api::probePhysicalDevices();
     return probed.ok && probed.usableCount() != 0;
 }
 
@@ -147,7 +147,7 @@ TEST_F(VsgBackendPluginTest, PluginRegistersVsgBackend)
 {
     ASSERT_NE(s_app, nullptr);
 
-    auto& registry = vine::graphics::RenderBackendRegistry::instance();
+    auto& registry = vn::graphics::RenderBackendRegistry::instance();
     EXPECT_TRUE(registry.has(u8"vsg"))
         << "gfx_backend_vsg plugin should have registered the 'vsg' backend";
 }
@@ -156,7 +156,7 @@ TEST_F(VsgBackendPluginTest, CreateBackendByName)
 {
     ASSERT_NE(s_app, nullptr);
 
-    auto& registry = vine::graphics::RenderBackendRegistry::instance();
+    auto& registry = vn::graphics::RenderBackendRegistry::instance();
 
     // The plugin path must produce the REWRITE's facade: the registered name is the switch the whole
     // rewrite exists for (see the design's §11.16bi), and a factory that still created the implementation
@@ -165,7 +165,7 @@ TEST_F(VsgBackendPluginTest, CreateBackendByName)
     // case below drives the registered backend through the SDK instead.
     auto backend = registry.create(u8"vsg");
     ASSERT_NE(backend, nullptr);
-    EXPECT_NE(dynamic_cast<vine::vsg::VsgBackend*>(backend.get()), nullptr)
+    EXPECT_NE(dynamic_cast<vn::vsg::VsgBackend*>(backend.get()), nullptr)
         << "the registered 'vsg' backend is the rewrite's facade, not the implementation it replaces";
     EXPECT_TRUE(backend->supportsRenderTargets());
     EXPECT_EQ(backend->nativeHandle(), nullptr) << "no surface was announced on this instance";
@@ -201,43 +201,43 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     constexpr int kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
-    auto& registry = vine::graphics::RenderBackendRegistry::instance();
+    auto& registry = vn::graphics::RenderBackendRegistry::instance();
     auto  backend  = registry.create(u8"vsg");
     ASSERT_NE(backend, nullptr);
-    ASSERT_NE(dynamic_cast<vine::vsg::VsgBackend*>(backend.get()), nullptr);
+    ASSERT_NE(dynamic_cast<vn::vsg::VsgBackend*>(backend.get()), nullptr);
 
     // The content: a red triangle under a view-block vertex stage (the pair the rewrite's own device cases
     // draw), so the window's pixels say whether the frame went through.
-    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) in vec3 position;\n"
             "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
             "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) out vec4 outColor;\n"
             "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vine::intrusive_ptr<vine::Buffer<float>> positions = vine::intrusive_ptr<vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
-    const vine::intrusive_ptr<vine::Buffer<std::uint32_t>> indices =
-        vine::intrusive_ptr<vine::Buffer<std::uint32_t>>(
-            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     geometry->setIndices(indices);
     geometry->setRevision(1U);
 
-    const vine::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
     RenderCommand command;
     command.geometry = geometry;
@@ -246,13 +246,13 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     const std::vector<RenderCommand> commands{ command };
 
     // The camera looks half a unit to its right, so the triangle lands in the window's LEFT half.
-    vine::intrusive_ptr<vine::graphics::Camera> camera(new vine::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vine::math::Vec3d(0.5, 0.0, 1.5), vine::math::Vec3d(0.5, 0.0, 0.0),
-                                  vine::math::Vec3d(0.0, 1.0, 0.0));
+    vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0),
+                                  vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
-    const vine::intrusive_ptr<RenderPass> pass(new RenderPass());
-    const vine::graphics::ClearPolicy      clear{ vine::Color(0, 64, 0, 255), true };
+    const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
+    const vn::graphics::ClearPolicy      clear{ vn::Color(0, 64, 0, 255), true };
 
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -263,7 +263,7 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     backend->setPassOrder(0);
     backend->setRenderTarget(nullptr);
     backend->setClearPolicy(clear);
-    backend->setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+    backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
     backend->render(commands, camera.get());
     backend->endPass();
     backend->endFrame();
@@ -319,7 +319,7 @@ TEST_F(VsgBackendPluginTest, ConfigFileRoundTripPersistsDisabledPlugins)
     // A per-user preference: app_shell/test_plugin are application-provided and
     // cannot be disabled, so the round trip records a plugin name of its own.
     EXPECT_TRUE(s_app->pluginManager()->setPluginEnabled(u8"user_plugin_x", false));
-    EXPECT_FALSE(s_app->pluginManager()->installPlugin(vine::String(user_plugins.u8string())).empty());
+    EXPECT_FALSE(s_app->pluginManager()->installPlugin(vn::String(user_plugins.u8string())).empty());
     ASSERT_TRUE(s_app->setConfigFile(path));
 
     // Stop the main loop from another thread (this suite does not link Qt), so
@@ -327,7 +327,7 @@ TEST_F(VsgBackendPluginTest, ConfigFileRoundTripPersistsDisabledPlugins)
     // drains, and the configuration is written.
     std::thread quitter([] {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (auto* app = vine::appfw::Application::current(); app != nullptr) {
+        if (auto* app = vn::appfw::Application::current(); app != nullptr) {
             app->exit(0);
         }
     });
@@ -336,9 +336,9 @@ TEST_F(VsgBackendPluginTest, ConfigFileRoundTripPersistsDisabledPlugins)
     EXPECT_TRUE(std::filesystem::exists(path)) << "shutdown() must persist the configuration";
 
     // The next start reads the file back: the disabled plugin is listed there.
-    vine::appfw::ConfigManager reloaded;
-    ASSERT_TRUE(reloaded.load(vine::String(path.u8string())));
-    const auto disabled = reloaded.getStringArray(vine::appfw::PluginManager::disabledConfigKey());
+    vn::appfw::ConfigManager reloaded;
+    ASSERT_TRUE(reloaded.load(vn::String(path.u8string())));
+    const auto disabled = reloaded.getStringArray(vn::appfw::PluginManager::disabledConfigKey());
     ASSERT_EQ(disabled.size(), 1u);
     EXPECT_TRUE(disabled[0] == u8"user_plugin_x");
 
@@ -346,8 +346,8 @@ TEST_F(VsgBackendPluginTest, ConfigFileRoundTripPersistsDisabledPlugins)
     // installed outside the application directory available after a restart.
     const auto installed = s_app->pluginManager()->pluginRegistrations();
     ASSERT_EQ(installed.size(), 1u);
-    EXPECT_TRUE(installed[0].path == vine::String(user_plugins.u8string()));
-    EXPECT_EQ(installed[0].scope, vine::appfw::PluginScope::User);
+    EXPECT_TRUE(installed[0].path == vn::String(user_plugins.u8string()));
+    EXPECT_EQ(installed[0].scope, vn::appfw::PluginScope::User);
 
     // The preference and the registration survive; the unload kept the metadata
     // (the plugin list is still readable after shutdown).
@@ -355,9 +355,9 @@ TEST_F(VsgBackendPluginTest, ConfigFileRoundTripPersistsDisabledPlugins)
     EXPECT_TRUE(s_app->pluginManager()->plugin(u8"app_shell") == nullptr);
     const auto entries = s_app->pluginManager()->pluginEntries();
     const auto entry   = std::find_if(entries.begin(), entries.end(),
-        [](const vine::appfw::PluginEntry& e) { return e.info.name == u8"app_shell"; });
+        [](const vn::appfw::PluginEntry& e) { return e.info.name == u8"app_shell"; });
     ASSERT_NE(entry, entries.end());
-    EXPECT_EQ(entry->scope, vine::appfw::PluginScope::BuiltIn);
+    EXPECT_EQ(entry->scope, vn::appfw::PluginScope::BuiltIn);
     EXPECT_FALSE(entry->loaded);
 
     std::filesystem::remove(path, ec);
@@ -381,16 +381,16 @@ TEST_F(VsgBackendPluginTest, BuiltInPluginsCannotBeDisabledOrUninstalled)
 
     const auto entries = pm->pluginEntries();
     const auto shell   = std::find_if(entries.begin(), entries.end(),
-        [](const vine::appfw::PluginEntry& entry) { return entry.info.name == u8"app_shell"; });
+        [](const vn::appfw::PluginEntry& entry) { return entry.info.name == u8"app_shell"; });
     ASSERT_NE(shell, entries.end()) << "app_shell 来自程序目录";
-    EXPECT_EQ(shell->scope, vine::appfw::PluginScope::BuiltIn);
+    EXPECT_EQ(shell->scope, vn::appfw::PluginScope::BuiltIn);
     EXPECT_TRUE(shell->enabled);
-    EXPECT_FALSE(shell->info.uuid.isNull()) << "插件身份由 V_DECLARE_PLUGIN 硬编码";
+    EXPECT_FALSE(shell->info.uuid.isNull()) << "插件身份由 VN_DECLARE_PLUGIN 硬编码";
 
     EXPECT_FALSE(pm->setPluginEnabled(u8"app_shell", false)) << "自带插件不能被禁用";
     EXPECT_TRUE(pm->isPluginEnabled(u8"app_shell"));
-    EXPECT_FALSE(pm->uninstallPlugin(u8"app_shell", vine::appfw::PluginScope::User));
-    EXPECT_FALSE(pm->uninstallPlugin(u8"app_shell", vine::appfw::PluginScope::AllUsers));
-    EXPECT_TRUE(pm->installPlugin(u8"/tmp", vine::appfw::PluginScope::BuiltIn).empty())
+    EXPECT_FALSE(pm->uninstallPlugin(u8"app_shell", vn::appfw::PluginScope::User));
+    EXPECT_FALSE(pm->uninstallPlugin(u8"app_shell", vn::appfw::PluginScope::AllUsers));
+    EXPECT_TRUE(pm->installPlugin(u8"/tmp", vn::appfw::PluginScope::BuiltIn).empty())
         << "a plugin location cannot be registered as application-provided";
 }

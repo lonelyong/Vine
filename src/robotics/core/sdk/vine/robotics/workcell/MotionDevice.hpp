@@ -13,7 +13,7 @@
 
 #include "Device.hpp"
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 /**
  * @brief Motion device definition data (immutable): extends DeviceData.
@@ -22,7 +22,7 @@ V_ROBOTICS_WORKCELL_NS_BEGIN
  * solver belongs to the not-yet-modeled metadata); it exists so a device can
  * downcast its definition data and so derived clones keep the concrete type.
  */
-struct V_ROBOTICS_CORE_API MotionDeviceData : DeviceData
+struct VN_ROBOTICS_CORE_API MotionDeviceData : DeviceData
 {
     /**
      * @brief Creates a deep copy as a MotionDeviceData.
@@ -43,7 +43,7 @@ struct V_ROBOTICS_CORE_API MotionDeviceData : DeviceData
  * velocity/acceleration bounds. Currently every motion device is treated as a
  * single serial chain.
  */
-class V_ROBOTICS_CORE_API MotionDevice : public Device
+class VN_ROBOTICS_CORE_API MotionDevice : public Device
 {
   public:
     /**
@@ -192,4 +192,4 @@ class V_ROBOTICS_CORE_API MotionDevice : public Device
     kinematics::Q                     acceleration_limits_;
 };
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

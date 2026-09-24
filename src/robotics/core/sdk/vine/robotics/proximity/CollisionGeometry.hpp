@@ -6,7 +6,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/RefCounted.hpp>
 
-V_ROBOTICS_PROXIMITY_NS_BEGIN
+VN_ROBOTICS_PROXIMITY_NS_BEGIN
 
 /**
  * @brief Engine-side collision shape built from a geometry Shape.
@@ -16,10 +16,10 @@ V_ROBOTICS_PROXIMITY_NS_BEGIN
  * shared by many CollisionObject instances. The concrete backend decides how
  * a Shape is converted; this base only defines the contract.
  *
- * @note Reference counted through vine::RefCounted; owned by
+ * @note Reference counted through vn::RefCounted; owned by
  *       intrusive_ptr<CollisionGeometry>.
  */
-class CollisionGeometry : public vine::RefCounted<CollisionGeometry> {
+class CollisionGeometry : public vn::RefCounted<CollisionGeometry> {
   protected:
     /**
      * @brief Constructs an empty collision geometry.
@@ -38,7 +38,7 @@ class CollisionGeometry : public vine::RefCounted<CollisionGeometry> {
      * @param shape The source geometry shape.
      * @return true when the shape was accepted, false otherwise.
      */
-    virtual bool buildFromShape(const vine::intrusive_ptr<const vine::geometry::Shape>& shape) = 0;
+    virtual bool buildFromShape(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) = 0;
 
     /**
      * @brief Checks whether the geometry holds valid, queryable data.
@@ -48,4 +48,4 @@ class CollisionGeometry : public vine::RefCounted<CollisionGeometry> {
     virtual bool isValid() const = 0;
 };
 
-V_ROBOTICS_PROXIMITY_NS_END
+VN_ROBOTICS_PROXIMITY_NS_END

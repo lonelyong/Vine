@@ -4,7 +4,7 @@
 
 #include "String.hpp"
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief Semantic version (major.minor.patch).
@@ -13,7 +13,7 @@ V_CORE_NS_BEGIN
  * "major.minor.patch" string. A default-constructed or failed-parse version is
  * invalid (isValid() == false).
  */
-class V_CORE_API Version {
+class VN_CORE_API Version {
   public:
     /**
      * @brief Constructs an invalid version (isValid() == false).
@@ -99,4 +99,4 @@ class V_CORE_API Version {
     bool valid_ = false;
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

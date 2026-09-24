@@ -14,7 +14,7 @@
 #include "CollisionRequest.hpp"
 #include "CollisionResult.hpp"
 
-V_ROBOTICS_PROXIMITY_NS_BEGIN
+VN_ROBOTICS_PROXIMITY_NS_BEGIN
 
 /**
  * @brief Base class of a collision detector.
@@ -104,12 +104,12 @@ class CollisionDetector {
      * @param objects The owner's collision bodies; references are added.
      * @warning No change is made when the owner is already registered.
      */
-    void addObject(const vine::INamed* object, const std::vector<vine::intrusive_ptr<CollisionObject>>& objects)
+    void addObject(const vn::INamed* object, const std::vector<vn::intrusive_ptr<CollisionObject>>& objects)
     {
         if (object == nullptr || object_objects_map_.contains(object)) {
             return;
         }
-        std::vector<vine::intrusive_ptr<CollisionObject>> accepted;
+        std::vector<vn::intrusive_ptr<CollisionObject>> accepted;
         accepted.reserve(objects.size());
         for (const auto& cobj : objects) {
             if (cobj != nullptr && doAddCollisionObject(cobj.get())) {
@@ -127,7 +127,7 @@ class CollisionDetector {
      * @param object The owner.
      * @note No change is made when the owner is not registered.
      */
-    void removeObject(const vine::INamed* object)
+    void removeObject(const vn::INamed* object)
     {
         const auto it = object_objects_map_.find(object);
         if (it == object_objects_map_.end()) {
@@ -145,7 +145,7 @@ class CollisionDetector {
      * @param object The owner.
      * @param state The scene state.
      */
-    void updateObjectTransform(const vine::INamed* object, const kinematics::State& state)
+    void updateObjectTransform(const vn::INamed* object, const kinematics::State& state)
     {
         const auto it = object_objects_map_.find(object);
         if (it == object_objects_map_.end()) {
@@ -260,7 +260,7 @@ class CollisionDetector {
     /// beginUpdate() nesting depth; structures are rebuilt when it reaches zero.
     std::size_t update_depth_{ 0 };
     /// Registered owners and their collision bodies.
-    std::map<const vine::INamed*, std::vector<vine::intrusive_ptr<CollisionObject>>> object_objects_map_;
+    std::map<const vn::INamed*, std::vector<vn::intrusive_ptr<CollisionObject>>> object_objects_map_;
 };
 
-V_ROBOTICS_PROXIMITY_NS_END
+VN_ROBOTICS_PROXIMITY_NS_END

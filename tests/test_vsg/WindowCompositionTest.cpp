@@ -87,49 +87,49 @@
 #include <vine/vsg/core/Streams.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 
-using vine::graphics::Geometry;
-using vine::graphics::Material;
-using vine::graphics::RenderCommand;
-using vine::graphics::RenderTarget;
-using vine::graphics::ShaderProgram;
-using vine::graphics::ShaderStage;
-using vine::graphics::ShaderStageType;
-using vine::vsg::api::probePhysicalDevices;
-using vine::vsg::api::Session;
-using vine::vsg::api::SessionOptions;
-using vine::vsg::BlockDescriptors;
-using vine::vsg::BlockStorage;
-using vine::vsg::buildGeometryFacts;
-using vine::vsg::buildMaterialFacts;
-using vine::vsg::buildProgramFacts;
-using vine::vsg::buildScreenProgramFacts;
-using vine::vsg::buildViewBlock;
-using vine::vsg::ContentDraw;
-using vine::vsg::ContentFacts;
-using vine::vsg::ContentPass;
-using vine::vsg::ContentPipeline;
-using vine::vsg::FactMiss;
-using vine::vsg::GeometryFacts;
-using vine::vsg::InputImages;
-using vine::vsg::MaterialFacts;
-using vine::vsg::OffscreenTarget;
-using vine::vsg::PassContent;
-using vine::vsg::ProgramFacts;
-using vine::vsg::StreamUploads;
-using vine::vsg::VsgExecutor;
-using vine::vsg::WindowTarget;
-using vine::vsg::core::ClearPolicy;
-using vine::vsg::core::CompiledFrame;
-using vine::vsg::core::Diagnostics;
-using vine::vsg::core::DrawKind;
-using vine::vsg::core::FrameArena;
-using vine::vsg::core::FrameCompiler;
-using vine::vsg::core::FrameFacts;
-using vine::vsg::core::FrameRecorder;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::TargetFacts;
-using vine::vsg::core::TargetShape;
-using vine::vsg::core::VariantPool;
+using vn::graphics::Geometry;
+using vn::graphics::Material;
+using vn::graphics::RenderCommand;
+using vn::graphics::RenderTarget;
+using vn::graphics::ShaderProgram;
+using vn::graphics::ShaderStage;
+using vn::graphics::ShaderStageType;
+using vn::vsg::api::probePhysicalDevices;
+using vn::vsg::api::Session;
+using vn::vsg::api::SessionOptions;
+using vn::vsg::BlockDescriptors;
+using vn::vsg::BlockStorage;
+using vn::vsg::buildGeometryFacts;
+using vn::vsg::buildMaterialFacts;
+using vn::vsg::buildProgramFacts;
+using vn::vsg::buildScreenProgramFacts;
+using vn::vsg::buildViewBlock;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentFacts;
+using vn::vsg::ContentPass;
+using vn::vsg::ContentPipeline;
+using vn::vsg::FactMiss;
+using vn::vsg::GeometryFacts;
+using vn::vsg::InputImages;
+using vn::vsg::MaterialFacts;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::PassContent;
+using vn::vsg::ProgramFacts;
+using vn::vsg::StreamUploads;
+using vn::vsg::VsgExecutor;
+using vn::vsg::WindowTarget;
+using vn::vsg::core::ClearPolicy;
+using vn::vsg::core::CompiledFrame;
+using vn::vsg::core::Diagnostics;
+using vn::vsg::core::DrawKind;
+using vn::vsg::core::FrameArena;
+using vn::vsg::core::FrameCompiler;
+using vn::vsg::core::FrameFacts;
+using vn::vsg::core::FrameRecorder;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::TargetFacts;
+using vn::vsg::core::TargetShape;
+using vn::vsg::core::VariantPool;
 
 namespace
 {
@@ -148,7 +148,7 @@ constexpr float kOverlayClear[4]{ 0.0F, 0.25F, 0.0F, 1.0F };
 constexpr float kPictureClear[4]{ 0.25F, 0.0F, 0.0F, 1.0F };
 
 /// @brief The picture-in-picture rectangle: to the RIGHT of the triangle the scene draws into the left quarter.
-constexpr vine::graphics::Viewport kPictureInPicture{ 64, 16, 48, 48 };
+constexpr vn::graphics::Viewport kPictureInPicture{ 64, 16, 48, 48 };
 
 /// @brief Whether a byte is the 8-bit image of a linear colour value, in whichever colour space the surface
 /// stores it (an sRGB swapchain encodes a linear write).
@@ -191,7 +191,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     TestHostWindow window(connection, screen, kWidth, kHeight);
 
     Diagnostics diagnostics;
-    diagnostics.setSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
+    diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[window-composition] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     std::string(reinterpret_cast<const char*>(diagnostic.message.data()),
@@ -205,9 +205,9 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     options.validation    = true;
     ASSERT_TRUE(session.initialize(options, diagnostics));
 
-    WindowTarget* window_target = vine::vsg::detail::SessionContentAccess::windowTarget(session);
+    WindowTarget* window_target = vn::vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window_target, nullptr);
-    const auto device = vine::vsg::detail::SessionContentAccess::device(session);
+    const auto device = vn::vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
 
     // The two off-screen targets: A is the picture the overlay samples (a plain clear), B is the target whose
@@ -248,18 +248,18 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     ASSERT_NE(storage, nullptr);
 
 
-    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) in vec3 position;\n"
             "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
             "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
@@ -286,7 +286,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     BlockDescriptors* content_blocks[] = { descriptors.get() };
 
     // The screen layer: the engine's own copy program over the picture.
-    const vine::intrusive_ptr<ShaderProgram> screen_program(vine::graphics::screenCopyProgram(0));
+    const vn::intrusive_ptr<ShaderProgram> screen_program(vn::graphics::screenCopyProgram(0));
     ASSERT_NE(screen_program, nullptr);
     ProgramFacts screen_facts;
     ASSERT_EQ(buildScreenProgramFacts(*screen_program, screen_facts), FactMiss::None);
@@ -296,25 +296,25 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     VariantPool   content_pool;
     VariantPool   screen_pool;
     StreamUploads uploads;
-    const auto    entry_points = vine::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk());
+    const auto    entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk());
     ContentDraw   content_draws(*content_layer, content_pool, entry_points);
     ContentDraw   overlay_draws(*screen_layer, screen_pool, entry_points);
 
     // The scene: a triangle whose fragment stage encodes the view block, at the same camera the earlier
     // session case uses - the view pushes it into the LEFT quarter of the picture.
-    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
-    geometry->setPositions(vine::intrusive_ptr<vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F })));
-    geometry->setIndices(vine::intrusive_ptr<vine::Buffer<std::uint32_t>>(
-        new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    geometry->setPositions(vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F })));
+    geometry->setIndices(vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
     geometry->setRevision(1U);
 
     GeometryFacts                        geometry_facts;
-    std::vector<vine::vsg::ChannelFacts> channel_storage;
+    std::vector<vn::vsg::ChannelFacts> channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
 
-    const vine::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -327,9 +327,9 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     facts.geometries = geometries;
     facts.materials  = materials;
 
-    const vine::intrusive_ptr<vine::graphics::Camera> camera(new vine::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vine::math::Vec3d(0.5, 0.0, 1.5), vine::math::Vec3d(0.5, 0.0, 0.0),
-                                  vine::math::Vec3d(0.0, 1.0, 0.0));
+    const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0),
+                                  vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
     const std::vector<RenderCommand> commands = [&] {
         RenderCommand command;
@@ -340,8 +340,8 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     }();
 
     // The identity the plan names the targets by: the SDK handles the engine announces them with.
-    const vine::intrusive_ptr<RenderTarget> picture_handle(new RenderTarget());
-    const vine::intrusive_ptr<RenderTarget> shared_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> picture_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> shared_handle(new RenderTarget());
 
     // The facts the plan resolves against, taken FROM the targets: a target's shape carries the engine's
     // formats and the device ones, and the plan compares wanted with current - hand-building the wanted shape
@@ -365,7 +365,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // FOUR passes: the picture (cleared), the off-screen scene pass whose ENGINE shape equals the window's, the
     // window's scene pass (the FIRST window pass - it owns the clear) and the window's overlay pass.
     FrameArena    arena{ 64 * 1024 };
-    vine::vsg::core::Observe observe;
+    vn::vsg::core::Observe observe;
     FrameRecorder recorder{ arena, diagnostics, observe };
     FrameCompiler compiler{ arena, diagnostics, observe };
 
@@ -422,7 +422,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
 
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 4U) << "a pass that only clears is still a pass (the picture's producer)";
-    const auto pass_of = [&frame](std::uint32_t id) -> const vine::vsg::core::CompiledPass* {
+    const auto pass_of = [&frame](std::uint32_t id) -> const vn::vsg::core::CompiledPass* {
         for (const auto& pass : frame.passes) {
             if (pass.pass == id) {
                 return &pass;
@@ -441,9 +441,9 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // the registry answers "is this variant already bound?" and a pipeline bound in another pass is not.
     storage->beginFrame();
 
-    const auto state_pass = [&](std::uint32_t id) -> const vine::vsg::core::CompiledPass& {
+    const auto state_pass = [&](std::uint32_t id) -> const vn::vsg::core::CompiledPass& {
         const auto* found = pass_of(id);
-        static const vine::vsg::core::CompiledPass empty{};
+        static const vn::vsg::core::CompiledPass empty{};
         return found != nullptr ? *found : empty;
     };
     const auto view_block_for = [&](std::uint32_t pass_id, std::uint32_t width, std::uint32_t height) {
@@ -522,18 +522,18 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     executor.addTarget(picture_handle.get(), picture.get());
     executor.addTarget(shared_handle.get(), shared_target.get());
 
-    const auto command_graph = vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    const auto command_graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(command_graph, nullptr);
     const PassContent packets[] = { PassContent{ 1U, nullptr },   PassContent{ 2U, shared_node },
                                     PassContent{ 3U, window_node }, PassContent{ 4U, overlay_node } };
     ASSERT_TRUE(executor.record(frame, command_graph, packets));
     EXPECT_EQ(executor.skipped(), 0U);
-    const std::span<const vine::vsg::core::PassId> placed = executor.recorded();
-    EXPECT_EQ(std::vector<vine::vsg::core::PassId>(placed.begin(), placed.end()),
-              std::vector<vine::vsg::core::PassId>({ 1U, 2U, 3U, 4U }))
+    const std::span<const vn::vsg::core::PassId> placed = executor.recorded();
+    EXPECT_EQ(std::vector<vn::vsg::core::PassId>(placed.begin(), placed.end()),
+              std::vector<vn::vsg::core::PassId>({ 1U, 2U, 3U, 4U }))
         << "the executor places the passes in the plan's order, not in the order they were announced";
 
-    ASSERT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
+    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
     ASSERT_TRUE(session.commitFrame());
     EXPECT_EQ(session.framesPresented(), 1U);
 

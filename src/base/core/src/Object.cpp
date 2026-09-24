@@ -4,7 +4,7 @@
 #include <vine/String.hpp>
 #include <vine/Type.hpp>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 const Type* Object::getType() const noexcept
 {
@@ -32,4 +32,4 @@ const Type* Object::desc()
     return t;
 }
 
-V_CORE_NS_END
+VN_CORE_NS_END

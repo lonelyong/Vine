@@ -10,10 +10,10 @@
 #include <vine/system/OperatingSystem.hpp>
 #include <vine/system/Process.hpp>
 
-using vine::String;
-using vine::system::Hardware;
-using vine::system::OperatingSystem;
-using vine::system::Process;
+using vn::String;
+using vn::system::Hardware;
+using vn::system::OperatingSystem;
+using vn::system::Process;
 
 namespace
 {

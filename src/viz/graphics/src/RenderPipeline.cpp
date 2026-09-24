@@ -7,7 +7,7 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 Pipeline::Pipeline(intrusive_ptr<RenderEngine> engine) : engine_(std::move(engine)) {}
 
@@ -109,4 +109,4 @@ void Pipeline::setFpsOverlay(intrusive_ptr<FpsOverlay> fps)
     fps_overlay_ = std::move(fps);
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

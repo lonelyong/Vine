@@ -5,12 +5,12 @@
 
 #include <vine/String.hpp>
 
-V_SYSTEM_NS_BEGIN
+VN_SYSTEM_NS_BEGIN
 
 /**
  * @brief Describes the CPU.
  */
-struct V_SYSTEM_API CpuInfo {
+struct VN_SYSTEM_API CpuInfo {
     String   vendor;            // CPU vendor, e.g. "GenuineIntel" or "AuthenticAMD".
     String   model;             // CPU model name.
     unsigned physicalCores = 0; // Physical core count.
@@ -20,7 +20,7 @@ struct V_SYSTEM_API CpuInfo {
 /**
  * @brief Describes the motherboard.
  */
-struct V_SYSTEM_API MotherboardInfo {
+struct VN_SYSTEM_API MotherboardInfo {
     String manufacturer; // Board manufacturer.
     String product;      // Board model name.
     String version;      // Board version.
@@ -30,7 +30,7 @@ struct V_SYSTEM_API MotherboardInfo {
 /**
  * @brief Describes a disk volume or block device.
  */
-struct V_SYSTEM_API DiskInfo {
+struct VN_SYSTEM_API DiskInfo {
     String             name;         // Drive/device name, e.g. "C:" or "/dev/sda".
     String             model;        // Disk model, may be empty when unavailable.
     String             serial;       // Disk serial number; may be empty when unavailable.
@@ -45,7 +45,7 @@ struct V_SYSTEM_API DiskInfo {
  * disks() enumerates the current volumes or block devices. The disk space
  * helpers return byte counts for the volume containing the given path.
  */
-class V_SYSTEM_API Hardware {
+class VN_SYSTEM_API Hardware {
 
   public:
     /**
@@ -86,4 +86,4 @@ class V_SYSTEM_API Hardware {
     static unsigned long long diskFreeSpace(const String& path);
 };
 
-V_SYSTEM_NS_END
+VN_SYSTEM_NS_END

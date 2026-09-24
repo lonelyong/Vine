@@ -6,12 +6,12 @@
 #include <cstdint>
 #include <ostream>
 
-V_CRYPTO_NS_BEGIN
+VN_CRYPTO_NS_BEGIN
 
 /**
  * @brief Provides cryptographic hash functions.
  */
-class V_CRYPTO_API Hash {
+class VN_CRYPTO_API Hash {
 
   public:
     /**
@@ -185,4 +185,4 @@ class V_CRYPTO_API Hash {
     static std::array<std::uint8_t, 64> sha3_512(std::ostream& in);
 };
 
-V_CRYPTO_NS_END
+VN_CRYPTO_NS_END

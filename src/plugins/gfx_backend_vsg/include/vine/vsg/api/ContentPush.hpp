@@ -50,7 +50,7 @@
  * @see api/ViewBlock.hpp (the fold and the block the same values may live in)
  * @see api/ProgramAbi.hpp (`AbiPushRange::members`: the declarations this fills)
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief Which L1 value a declared push member names. */
 enum class ContentPushMember : std::uint8_t
@@ -115,7 +115,7 @@ enum class ContentPushMember : std::uint8_t
  *         with no size at all).
  */
 [[nodiscard]] bool packContentPush(const AbiPushRange& range, const core::CameraSnapshot& camera,
-                                   const vine::math::Mat4d& model, std::vector<std::byte>& out,
+                                   const vn::math::Mat4d& model, std::vector<std::byte>& out,
                                    std::string_view& unhandled);
 
-V_VSG_NS_END
+VN_VSG_NS_END

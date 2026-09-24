@@ -13,7 +13,7 @@
 #include <vine/progress/ProgressRange.hpp>
 #include <vine/progress/ProgressScope.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief Ambient per-operation progress host (RAII).
@@ -47,7 +47,7 @@ V_APPFW_NS_BEGIN
  *         for (...) { scope.next(1); ... }
  *     }
  */
-class V_APPFW_API ProgressHost
+class VN_APPFW_API ProgressHost
 {
   public:
     /**
@@ -246,4 +246,4 @@ class V_APPFW_API ProgressHost
     std::string        label_;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

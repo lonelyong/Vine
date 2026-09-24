@@ -3,7 +3,7 @@
 #include <vine/math/Matrix3x3.hpp>
 #include <vine/math/Transform2.hpp>
 
-using namespace vine::math;
+using namespace vn::math;
 
 TEST(Matrix3x3, setToIdentity) {
     Mat3d m;

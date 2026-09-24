@@ -6,9 +6,9 @@
 #include "Convert.hpp"
 #include "WindowData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
-V_OBJECT_META_IMPL(Window, Control)
+VN_OBJECT_META_IMPL(Window, Control)
 
 Window::Window(QWidget* native, bool owns)
   : Control(new WindowData(), native, owns)
@@ -131,4 +131,4 @@ Window::Window(UIElementData* data, QWidget* native, bool owns)
   : Control(data, native, owns)
 {}
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

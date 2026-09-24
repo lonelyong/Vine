@@ -15,7 +15,7 @@
 #include <stb_image.h>
 #include <stb_image_write.h>
 
-V_IMAGEIO_NS_BEGIN
+VN_IMAGEIO_NS_BEGIN
 
 namespace
 {
@@ -376,4 +376,4 @@ void saveImage(const std::filesystem::path& path, const imaging::Image& image, I
     }
 }
 
-V_IMAGEIO_NS_END
+VN_IMAGEIO_NS_END

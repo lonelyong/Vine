@@ -67,7 +67,7 @@
 2. **无渲染工具用不了。** `urdf2vine` 现在是
    `PRIVATE RoboticsIO RoboticsCore Geometry IOBase MeshIO tinyxml2` —— **刻意不链 graphics/Qt**。
    将来机器人管线做缩略图/纹理烘焙时，`Image` 在 `graphics` 里它碰不到。
-3. **层级逻辑倒置。** `graphics → PUBLIC vi::Geometry`：顶点数据 `Geometry` 在 `graphics` **下面**。
+3. **层级逻辑倒置。** `graphics → PUBLIC vn::Geometry`：顶点数据 `Geometry` 在 `graphics` **下面**。
    像素数据是同一类东西（buffer + 格式），没道理放在消费者**上面**。
 
 补充：`Image` 也**不能**是 `QImage` —— `graphics` 是 Qt-free 的，`QImage` 在 `Qt6::Gui`。
@@ -85,17 +85,17 @@ Qt 侧的转换桥留在 `appfw`（它本来就链 `Qt6::Gui`）。
 曾考虑把 `window` 模块改名为 `display` 并让 `Image` 住进去。否决理由：
 
 - 名字要能自圆其说，"显示相关叶子资源" 是硬凑；
-- 改名是**牵一发动全身**的动作：短名 / 目录名 / `*_global.hpp` 宏名 / 别名 `vi::X` **四处必须同步**
-  （`v_add_library` 用短名同时生成别名和 `V_<SHORT>_LIB` 宏），漏一处就是 Windows 上的 `dllimport` 自炸；
+- 改名是**牵一发动全身**的动作：短名 / 目录名 / `*_global.hpp` 宏名 / 别名 `vn::X` **四处必须同步**
+  （`vn_add_library` 用短名同时生成别名和 `VN_<SHORT>_LIB` 宏），漏一处就是 Windows 上的 `dllimport` 自炸；
 - 新建模块没有这个风险，且名字更诚实。
 
 ## 4. 模块结构
 
 ```
-src/base/imaging/                      # 短名 Imaging → 别名 vi::Imaging，宏 V_IMAGING_API
-  CMakeLists.txt                       # 只链 vi::Core vi::Global
+src/base/imaging/                      # 短名 Imaging → 别名 vn::Imaging，宏 VN_IMAGING_API
+  CMakeLists.txt                       # 只链 vn::Core vn::Global
   sdk/vine/imaging/
-    imaging_global.hpp                 # API export 宏 + V_IMAGING_NS 命名空间
+    imaging_global.hpp                 # API export 宏 + VN_IMAGING_NS 命名空间
     PixelFormat.hpp                    # 每像素字节布局枚举 + 4 个查询函数
     Image.hpp                          # 一张 2D 图 + mip 链
   src/
@@ -167,7 +167,7 @@ mip 数不在 `[1, mipCapacity]` —— 全部 `std::invalid_argument`。
 
 - `graphics::Texture`（2D + Cube）**已实现**、`Material::textureFile()` → `Texture*` 的迁移**已完成**
   （那个路径字符串在 `src/` 里零调用，只有一个测试引用，是个死 API）；
-- 图像解码/编码**已实现** → 见 `loaders/imageio`（`vi::ImageIO`，stb 支持）；
+- 图像解码/编码**已实现** → 见 `loaders/imageio`（`vn::ImageIO`，stb 支持）；
 - **mip 生成没有**：解码只产出 1 个 mip，所以现有素材只能填 `mip_count == 1` 的 `Texture`；
 - **读回路径**（渲染目标 → `Image`）**尚未有**；
 - **后端仍不消费 `Texture`**：face / mip 链不上传、不建 sampler、不进描述符集；

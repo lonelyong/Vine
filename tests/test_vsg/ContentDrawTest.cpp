@@ -50,13 +50,13 @@
 #include <vine/vsg/core/StateRegistry.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 
-using vine::vsg::ContentDraw;
-using vine::vsg::ContentPipeline;
-using vine::vsg::ViewportRect;
-using vine::vsg::core::DynamicState;
-using vine::vsg::core::PipelineKey;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::VariantPool;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentPipeline;
+using vn::vsg::ViewportRect;
+using vn::vsg::core::DynamicState;
+using vn::vsg::core::PipelineKey;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::VariantPool;
 
 namespace
 {
@@ -82,8 +82,8 @@ class Fixture
                            "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n";
         // The text declares no bindings, so the layer builds a layout with no sets - the recorder's own
         // command shapes are what these cases pin (nothing here is executed on a device).
-        vine::vsg::ProgramAbi abi;
-        EXPECT_EQ(vine::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vine::vsg::FactMiss::None);
+        vn::vsg::ProgramAbi abi;
+        EXPECT_EQ(vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vn::vsg::FactMiss::None);
         const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
         const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
         pipelines = ContentPipeline::create(abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1),
@@ -149,9 +149,9 @@ TEST(ContentDrawTest, TheFirstDrawRecordsThePipelineTheStateAndTheGeometry)
     const auto* pipeline_bind = dynamic_cast<const ::vsg::BindGraphicsPipeline*>(group->stateCommands[0].get());
     ASSERT_NE(pipeline_bind, nullptr);
     EXPECT_NE(pipeline_bind->pipeline, nullptr);
-    const auto* dynamic = dynamic_cast<const vine::vsg::detail::SetDynamicState*>(group->stateCommands[1].get());
+    const auto* dynamic = dynamic_cast<const vn::vsg::detail::SetDynamicState*>(group->stateCommands[1].get());
     ASSERT_NE(dynamic, nullptr);
-    EXPECT_EQ(dynamic->slot, vine::vsg::detail::kDynamicStateSlot)
+    EXPECT_EQ(dynamic->slot, vn::vsg::detail::kDynamicStateSlot)
         << "the dynamic command must not take the pipeline bind's slot";
     EXPECT_EQ(group->stateCommands[2], draw.blocks[0]) << "the third command is this draw's block bind";
 
@@ -186,7 +186,7 @@ TEST(ContentDrawTest, ANonIndexedDrawRecordsTheVertexStreamsItIsAssembledFrom)
     draw.index             = nullptr;
     draw.index_count       = 0U;
     draw.vertex_count      = 12U;
-    draw.key.topology      = vine::graphics::Topology::Points;
+    draw.key.topology      = vn::graphics::Topology::Points;
 
     const auto group = fixture.recorder->record(registry, draw);
     ASSERT_NE(group, nullptr);
@@ -260,14 +260,14 @@ TEST(ContentDrawTest, AStateChangeRecordsOnlyTheDynamicBlock)
     (void)fixture.recorder->record(registry, fixture.draw());
 
     ContentDraw::Draw changed = fixture.draw();
-    changed.dynamic.cull_mode = vine::graphics::CullMode::Front;
-    changed.dynamic.depth     = vine::graphics::DepthMode::TestOnly;
+    changed.dynamic.cull_mode = vn::graphics::CullMode::Front;
+    changed.dynamic.depth     = vn::graphics::DepthMode::TestOnly;
 
     const auto group = fixture.recorder->record(registry, changed);
     ASSERT_NE(group, nullptr);
     ASSERT_EQ(group->stateCommands.size(), 2U) << "the dynamic block and the blocks bind; no pipeline rebind";
 
-    const auto* dynamic = dynamic_cast<const vine::vsg::detail::SetDynamicState*>(group->stateCommands[0].get());
+    const auto* dynamic = dynamic_cast<const vn::vsg::detail::SetDynamicState*>(group->stateCommands[0].get());
     ASSERT_NE(dynamic, nullptr);
     EXPECT_EQ(dynamic->cull_mode, VK_CULL_MODE_FRONT_BIT);
     EXPECT_EQ(dynamic->depth_test_enable, VK_TRUE);
@@ -295,17 +295,17 @@ TEST(ContentDrawTest, AnIdentityChangeRebindsThePipeline)
 
 TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
 {
-    const vine::vsg::detail::DynamicStateEntryPoints none;
+    const vn::vsg::detail::DynamicStateEntryPoints none;
 
     DynamicState disabled;
-    disabled.depth = vine::graphics::DepthMode::Disabled;
-    const auto no_depth = vine::vsg::makeDynamicStateCommand(disabled, 1U, none);
+    disabled.depth = vn::graphics::DepthMode::Disabled;
+    const auto no_depth = vn::vsg::makeDynamicStateCommand(disabled, 1U, none);
     EXPECT_EQ(no_depth->depth_test_enable, VK_FALSE);
     EXPECT_EQ(no_depth->depth_write_enable, VK_FALSE);
 
     DynamicState translucent;
-    translucent.depth = vine::graphics::DepthMode::TestOnly;
-    const auto test_only = vine::vsg::makeDynamicStateCommand(translucent, 1U, none);
+    translucent.depth = vn::graphics::DepthMode::TestOnly;
+    const auto test_only = vn::vsg::makeDynamicStateCommand(translucent, 1U, none);
     EXPECT_EQ(test_only->depth_test_enable, VK_TRUE);
     EXPECT_EQ(test_only->depth_write_enable, VK_FALSE);
 
@@ -314,10 +314,10 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
     EXPECT_EQ(test_only->front_face, VK_FRONT_FACE_CLOCKWISE) << "vsg's projection inverts Y";
 
     DynamicState churn;
-    churn.cull_mode    = vine::graphics::CullMode::Back;
-    churn.polygon_mode = vine::graphics::PolygonMode::Line;
-    churn.topology     = vine::graphics::Topology::Points;
-    const auto mapped  = vine::vsg::makeDynamicStateCommand(churn, 1U, none);
+    churn.cull_mode    = vn::graphics::CullMode::Back;
+    churn.polygon_mode = vn::graphics::PolygonMode::Line;
+    churn.topology     = vn::graphics::Topology::Points;
+    const auto mapped  = vn::vsg::makeDynamicStateCommand(churn, 1U, none);
     EXPECT_EQ(mapped->cull_mode, VK_CULL_MODE_BACK_BIT);
     EXPECT_EQ(mapped->polygon_mode, VK_POLYGON_MODE_LINE);
     EXPECT_EQ(mapped->topology, VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
@@ -336,9 +336,9 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
 
     DynamicState opted_in;
     opted_in.blend.enabled = true;
-    opted_in.blend.src     = vine::graphics::BlendFactor::One;
-    opted_in.blend.dst     = vine::graphics::BlendFactor::Zero;
-    const auto factors     = vine::vsg::makeDynamicStateCommand(opted_in, 1U, none);
+    opted_in.blend.src     = vn::graphics::BlendFactor::One;
+    opted_in.blend.dst     = vn::graphics::BlendFactor::Zero;
+    const auto factors     = vn::vsg::makeDynamicStateCommand(opted_in, 1U, none);
     EXPECT_EQ(factors->blend[0].srcColorBlendFactor, VK_BLEND_FACTOR_ONE);
     EXPECT_EQ(factors->blend[0].dstColorBlendFactor, VK_BLEND_FACTOR_ZERO);
     EXPECT_EQ(factors->blend[0].srcAlphaBlendFactor, VK_BLEND_FACTOR_ONE) << "alpha follows the colour pair";
@@ -347,7 +347,7 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
 
 TEST(ContentDrawTest, TheRectangleCommandsCarryTheRectAndClampWhatTheApiForbids)
 {
-    const auto viewport = vine::vsg::makeViewportCommand(ViewportRect{ 10.0F, 20.0F, 320.0F, 240.0F });
+    const auto viewport = vn::vsg::makeViewportCommand(ViewportRect{ 10.0F, 20.0F, 320.0F, 240.0F });
     ASSERT_EQ(viewport->viewports.size(), 1U);
     EXPECT_FLOAT_EQ(viewport->viewports[0].x, 10.0F);
     EXPECT_FLOAT_EQ(viewport->viewports[0].y, 20.0F);
@@ -356,7 +356,7 @@ TEST(ContentDrawTest, TheRectangleCommandsCarryTheRectAndClampWhatTheApiForbids)
     EXPECT_FLOAT_EQ(viewport->viewports[0].minDepth, 0.0F) << "reverse-Z lives in the projection";
     EXPECT_FLOAT_EQ(viewport->viewports[0].maxDepth, 1.0F);
 
-    const auto scissor = vine::vsg::makeScissorCommand(ViewportRect{ -5.0F, -2.0F, 0.0F, 0.0F });
+    const auto scissor = vn::vsg::makeScissorCommand(ViewportRect{ -5.0F, -2.0F, 0.0F, 0.0F });
     ASSERT_EQ(scissor->scissors.size(), 1U);
     EXPECT_EQ(scissor->scissors[0].offset.x, 0) << "a negative origin is a validation error, not a rectangle";
     EXPECT_EQ(scissor->scissors[0].offset.y, 0);
@@ -389,8 +389,8 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
                        "layout(binding = 0) uniform sampler2D picture;\n"
                        "void main() { out_color = texture(picture, vine_uv); }\n";
     // The layer's set is what the text declares: scan the pair (the engine's table entry does exactly that).
-    vine::vsg::ProgramAbi abi;
-    ASSERT_EQ(vine::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vine::vsg::FactMiss::None);
+    vn::vsg::ProgramAbi abi;
+    ASSERT_EQ(vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vn::vsg::FactMiss::None);
     auto pipelines = ContentPipeline::createScreen(abi, shaders);
     ASSERT_NE(pipelines, nullptr);
 
@@ -414,7 +414,7 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
 
     ContentDraw::ScreenDraw draw;
     static int              program = 0;
-    draw.key.kind                   = vine::vsg::core::DrawKind::Screen;
+    draw.key.kind                   = vn::vsg::core::DrawKind::Screen;
     draw.key.program                = &program;
     draw.key.revision               = 1U;
     draw.key.compatibility.samples  = 1U;
@@ -430,7 +430,7 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     ASSERT_NE(group, nullptr);
     ASSERT_EQ(group->stateCommands.size(), 3U) << "pipeline, dynamic block, the sampler set (no blocks bind)";
     EXPECT_NE(dynamic_cast<const ::vsg::BindGraphicsPipeline*>(group->stateCommands[0].get()), nullptr);
-    EXPECT_NE(dynamic_cast<const vine::vsg::detail::SetDynamicState*>(group->stateCommands[1].get()), nullptr);
+    EXPECT_NE(dynamic_cast<const vn::vsg::detail::SetDynamicState*>(group->stateCommands[1].get()), nullptr);
     EXPECT_EQ(group->stateCommands[2], draw.samplers) << "the sampler set is the third command";
 
     ASSERT_EQ(group->children.size(), 1U);
@@ -470,7 +470,7 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
 
     // An identity of the OTHER kind is refused, not recorded: the layer compiles one descriptor ABI.
     ContentDraw::ScreenDraw wrong_kind = draw;
-    wrong_kind.key.kind                = vine::vsg::core::DrawKind::Content;
+    wrong_kind.key.kind                = vn::vsg::core::DrawKind::Content;
     EXPECT_EQ(recorder.recordScreen(registry, wrong_kind), nullptr);
     EXPECT_EQ(recorder.refusals(), 1U);
     EXPECT_EQ(recorder.draws(), 2U) << "a refused draw is not a recorded one";

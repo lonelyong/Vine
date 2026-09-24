@@ -11,7 +11,7 @@
 #include <unordered_set>
 #include <vector>
 
-V_RUNTIME_NS_BEGIN
+VN_RUNTIME_NS_BEGIN
 
 /**
  * @brief Type-safe, thread-safe, TTL-aware in-memory cache.
@@ -29,7 +29,7 @@ V_RUNTIME_NS_BEGIN
  *
  * The class is intentionally standalone: it does not derive from the
  * CacheManager interface. Use InMemoryManager to expose a typed cache through
- * that String/any interface (e.g. for vine::di injection).
+ * that String/any interface (e.g. for vn::di injection).
  *
  * @tparam TKey Key type; must support operator<.
  * @tparam TVal Value type; must be copy-constructible.
@@ -467,4 +467,4 @@ void InMemoryCache<TKey, TVal>::cleanupLoop()
     }
 }
 
-V_RUNTIME_NS_END
+VN_RUNTIME_NS_END

@@ -2,10 +2,10 @@
 
 #include "Control.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
-class V_APPFW_API StatusBar : public Control {
-    V_OBJECT_META_DECL
+class VN_APPFW_API StatusBar : public Control {
+    VN_OBJECT_META_DECL
 
   public:
     StatusBar();
@@ -20,4 +20,4 @@ class V_APPFW_API StatusBar : public Control {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

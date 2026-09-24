@@ -5,7 +5,7 @@
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief Concrete material category.
@@ -24,8 +24,8 @@ enum class MaterialType {
 /**
  * @brief Base class for surface materials applied to shapes.
  */
-class V_GEOMETRY_API Material : public vine::Object, public vine::RefCounted<Material> {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API Material : public vn::Object, public vn::RefCounted<Material> {
+    VN_OBJECT_META_DECL;
 
   public:
     Material();
@@ -55,4 +55,4 @@ class V_GEOMETRY_API Material : public vine::Object, public vine::RefCounted<Mat
     MaterialType material_type_ = MaterialType::Unknown;
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

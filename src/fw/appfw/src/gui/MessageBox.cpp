@@ -9,7 +9,7 @@
 #include "Convert.hpp"
 #include "WindowData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace
 {
@@ -156,7 +156,7 @@ runBox(Window* owner, const String& title, const String& text, MessageBoxIcon ic
 
 } // namespace
 
-V_OBJECT_META_IMPL(MessageBox, Window)
+VN_OBJECT_META_IMPL(MessageBox, Window)
 
 struct MessageBox::Impl : public WindowData {
     String           text;
@@ -270,4 +270,4 @@ inline auto MessageBox::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

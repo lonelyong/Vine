@@ -8,9 +8,9 @@
 #include <vine/robotics/kinematics/DofInfo.hpp>
 #include <vine/robotics/kinematics/Q.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
-class V_ROBOTICS_CORE_API IKSolver {
+class VN_ROBOTICS_CORE_API IKSolver {
   public:
     virtual ~IKSolver() = default;
 
@@ -39,4 +39,4 @@ class V_ROBOTICS_CORE_API IKSolver {
     bool                 is_valid_;
 };
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

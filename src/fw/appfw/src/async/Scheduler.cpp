@@ -2,7 +2,7 @@
 
 #include <QMetaObject>
 
-namespace vine {
+namespace vn {
 namespace appfw {
 namespace async {
 

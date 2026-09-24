@@ -32,7 +32,7 @@ namespace vsg
 class PhysicalDevice;
 }
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace api
 {
@@ -41,7 +41,7 @@ namespace api
 struct ProbedDevice
 {
     core::DeviceFacts facts;        ///< Reported version and the required-feature flags.
-    vine::String      name;         ///< Device name as the driver reports it (diagnostics only).
+    vn::String      name;         ///< Device name as the driver reports it (diagnostics only).
     bool              usable{false};///< The core's verdict for this device.
 };
 
@@ -51,7 +51,7 @@ struct ProbeResult
     bool                      ok{false};         ///< Whether an instance could be opened at all.
     std::uint32_t             loader_version{0}; ///< Instance version the loader granted (diagnostic).
     std::vector<ProbedDevice> devices;           ///< Every physical device offered, in loader order.
-    vine::String              error;             ///< Why the probe could not run, when !ok.
+    vn::String              error;             ///< Why the probe could not run, when !ok.
 
     /** @brief Gets how many of the offered devices satisfy the requirements. */
     [[nodiscard]] std::size_t usableCount() const noexcept;
@@ -76,4 +76,4 @@ struct ProbeResult
 
 }  // namespace api
 
-V_VSG_NS_END
+VN_VSG_NS_END

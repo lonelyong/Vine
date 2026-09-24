@@ -14,7 +14,7 @@
 #include <vsg/vk/Instance.h>
 #include <vsg/vk/InstanceExtensions.h>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -138,7 +138,7 @@ std::vector<std::pair<std::uint32_t, std::uint32_t>> declaredBindings(const std:
 }
 
 
-bool programDeclaresBinding(vine::raw_ptr<const vine::graphics::ShaderProgram> program, std::uint32_t set,
+bool programDeclaresBinding(vn::raw_ptr<const vn::graphics::ShaderProgram> program, std::uint32_t set,
                            std::uint32_t binding)
 {
     if (program == nullptr) {
@@ -158,7 +158,7 @@ bool programDeclaresBinding(vine::raw_ptr<const vine::graphics::ShaderProgram> p
     return false;
 }
 
-bool programImportsDefine(vine::raw_ptr<const vine::graphics::ShaderProgram> program, const std::string& define)
+bool programImportsDefine(vn::raw_ptr<const vn::graphics::ShaderProgram> program, const std::string& define)
 {
     if (program == nullptr || define.empty()) {
         return false;   // no program: nothing of its own to ask for
@@ -216,9 +216,9 @@ bool nameVulkanObject(const ::vsg::Device& device, std::uint64_t handle, VkObjec
     return extensions->vkSetDebugUtilsObjectNameEXT(device.vk(), &info) == VK_SUCCESS;
 }
 
-vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewport>& viewport, int surf_w, int surf_h)
+vn::graphics::Viewport passDrawRect(const std::optional<vn::graphics::Viewport>& viewport, int surf_w, int surf_h)
 {
-    vine::graphics::Viewport rect{ 0, 0, surf_w, surf_h };
+    vn::graphics::Viewport rect{ 0, 0, surf_w, surf_h };
     if (viewport && viewport->width > 0 && viewport->height > 0) {
         rect = *viewport;
     }
@@ -248,4 +248,4 @@ vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewpo
 
 } // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END

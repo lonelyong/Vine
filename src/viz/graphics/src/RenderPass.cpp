@@ -9,9 +9,9 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(RenderPass, vine::Object);
+VN_OBJECT_META_IMPL(RenderPass, vn::Object);
 
 RenderPass::RenderPass() = default;
 
@@ -294,4 +294,4 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
     }
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

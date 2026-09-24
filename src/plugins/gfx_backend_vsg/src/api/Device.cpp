@@ -7,7 +7,7 @@
 #include <vine/vsg/api/DeviceFeatures.hpp>
 #include <vine/vsg/api/DeviceProbe.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
@@ -80,7 +80,7 @@ DeviceResult createDevice(const DeviceOptions& options)
     }
     if (result.instance == nullptr)
     {
-        result.error = vine::String(u8"no Vulkan loader (no instance could be created)");
+        result.error = vn::String(u8"no Vulkan loader (no instance could be created)");
         return result;
     }
     result.validation = !layers.empty();
@@ -108,7 +108,7 @@ DeviceResult createDevice(const DeviceOptions& options)
 
     if (chosen == nullptr)
     {
-        result.error = vine::String(u8"no device satisfies the device-floor requirements");
+        result.error = vn::String(u8"no device satisfies the device-floor requirements");
         return result;
     }
 
@@ -122,7 +122,7 @@ DeviceResult createDevice(const DeviceOptions& options)
                                          feature_chain);
     if (result.device == nullptr)
     {
-        result.error = vine::String(u8"the device could not be created with the required features");
+        result.error = vn::String(u8"the device could not be created with the required features");
         return result;
     }
 
@@ -131,4 +131,4 @@ DeviceResult createDevice(const DeviceOptions& options)
     return result;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

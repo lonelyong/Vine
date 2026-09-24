@@ -4,7 +4,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/di/Registration.hpp>
 
-V_DI_NS_BEGIN
+VN_DI_NS_BEGIN
 
 namespace
 {
@@ -22,7 +22,7 @@ bool isValidRegistration(const Registration& reg)
 
 } // namespace
 
-V_OBJECT_META_IMPL(Container, ServiceBase)
+VN_OBJECT_META_IMPL(Container, ServiceBase)
 
 struct Container::Impl {
     std::unordered_map<TypeId, Registration>      regs;       // Keyed by service type.
@@ -38,11 +38,11 @@ Container::~Container() = default;
 void Container::add(const Registration& reg)
 {
     if (!isValidRegistration(reg)) {
-        throw vine::Exception(vine::Exception::INVALID_ARGUMENTS, u8"The registration is invalid.");
+        throw vn::Exception(vn::Exception::INVALID_ARGUMENTS, u8"The registration is invalid.");
     }
     auto type = reg.serviceType();
     if (d->regs.contains(type)) {
-        throw vine::Exception(vine::Exception::ITEM_ALREADY_EXISTS, u8"The service is already registered.");
+        throw vn::Exception(vn::Exception::ITEM_ALREADY_EXISTS, u8"The service is already registered.");
     }
     d->regs.emplace(type, reg);
 }
@@ -89,4 +89,4 @@ raw_ptr<ServiceBase> Container::resolve(TypeId type) const
     return created;
 }
 
-V_DI_NS_END
+VN_DI_NS_END

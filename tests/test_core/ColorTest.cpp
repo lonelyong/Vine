@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-using namespace vine;
+using namespace vn;
 
 TEST(ColorTest, DefaultIsOpaqueWhite)
 {

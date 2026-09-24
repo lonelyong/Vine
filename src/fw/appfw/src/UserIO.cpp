@@ -1,8 +1,8 @@
 ﻿#include <vine/appfw/UserIO.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-V_OBJECT_META_IMPL(UserIO, Object);
+VN_OBJECT_META_IMPL(UserIO, Object);
 
 UserIO::UserIO()
 {}
@@ -41,4 +41,4 @@ bool UserIO::parseInt(const String& text, int& value)
     return true;
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

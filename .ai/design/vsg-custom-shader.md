@@ -30,8 +30,8 @@
 > **2026-09-13 命名（本条）：** ① 前向着色的文件 `vine_forward.{vert,frag}` → **`std_forward.{vert,frag}`**（同一个 program 的两段；常量 `kStdForwardVert` / `kStdForwardFrag`）；
 > ② **着色器内不再使用 `vsg_` 前缀**：引擎提供的绑定名一律 `vine_`（`vine_Vertex` / `vine_Normal` / `vine_Color` / `vine_TexCoord0`），后端声明的 attributeBinding 名同步改；
 >    （当时写了“`vsg_probe` 除外”——该工具已在同日删除。）
-> **2026-09-14 命名（接上条）**：着色器内**插值变量**的前缀也从 `v_` 改成 `vine_`（`v_uv` → `vine_uv`、`v_view_pos` → `vine_view_pos`、
->   `v_view_normal` → `vine_view_normal`、`v_color` → `vine_color`、`v_texcoord` → `vine_texcoord`、`v_dir` → `vine_dir`）：着色器里的标识符不分顶点输入 / 插值 / 片元输出，一律 `vine_`。
+> **2026-09-14 命名（接上条）**：着色器内**插值变量**的前缀也从 `vn_` 改成 `vine_`（`vn_uv` → `vine_uv`、`vn_view_pos` → `vine_view_pos`、
+>   `vn_view_normal` → `vine_view_normal`、`vn_color` → `vine_color`、`vn_texcoord` → `vine_texcoord`、`vn_dir` → `vine_dir`）：着色器里的标识符不分顶点输入 / 插值 / 片元输出，一律 `vine_`。
 >   location、绑定与取值范围不变，所以**不改任何 ABI**；改的是文本里读起来像 vsg 风格的那一层。
 > **2026-09-14 同一批：texcoord 的 kind 显式化** —— `VINE_DIFFUSE_MAP` 与“槽是哪一种”是**两个轴**：前者是“有没有贴图要采”的**门**
 >   （决定 pipeline layout 里那个属性/描述符**存不存在**），后者是 kind。kind 原来是**缺省即 UV** 的，现在两个名字都写出来：
@@ -318,8 +318,8 @@ RecordTraversal 每个 drawable 绘制前自动填 → 自定义 program 路径�
 
 | 归属 | 目录 | 生成的头文件 | 命名空间 | 谁在用 |
 | --- | --- | --- | --- | --- |
-| graphics SDK（内建 program） | `src/viz/graphics/shaders/` | `vine/graphics/EmbeddedShaders.hpp` | `vine::graphics::shaders` | `BuiltinShaders`（`forwardProgram()` / `flatForwardProgram()` 前向着色 + gbuffer 几何 / 全屏光照）；`RenderPipelineBuilder` 是它的别名 |
-| vsg 后端（自有阶段）—— **已取消（2026-09-13，见 §11.11）** | ~~`src/plugins/gfx_backend_vsg/shaders/`~~ 目录已删除 | ~~`vine/vsg/EmbeddedShaders.hpp`~~ | ~~`vine::vsg::shaders`~~ | 全屏三角形与屏幕拷贝现在都是 SDK program（`BuiltinShaders::fullscreenVertexProgram` / `screenCopyProgram`）。**清单只剩一个 owner**：`vine/graphics/EmbeddedShaders.hpp` |
+| graphics SDK（内建 program） | `src/viz/graphics/shaders/` | `vine/graphics/EmbeddedShaders.hpp` | `vn::graphics::shaders` | `BuiltinShaders`（`forwardProgram()` / `flatForwardProgram()` 前向着色 + gbuffer 几何 / 全屏光照）；`RenderPipelineBuilder` 是它的别名 |
+| vsg 后端（自有阶段）—— **已取消（2026-09-13，见 §11.11）** | ~~`src/plugins/gfx_backend_vsg/shaders/`~~ 目录已删除 | ~~`vine/vsg/EmbeddedShaders.hpp`~~ | ~~`vn::vsg::shaders`~~ | 全屏三角形与屏幕拷贝现在都是 SDK program（`BuiltinShaders::fullscreenVertexProgram` / `screenCopyProgram`）。**清单只剩一个 owner**：`vine/graphics/EmbeddedShaders.hpp` |
 
 约定：
 
@@ -337,8 +337,8 @@ RecordTraversal 每个 drawable 绘制前自动填 → 自定义 program 路径�
 | 环节 | 位置 | 说明 |
 | --- | --- | --- |
 | 清单（shader → 头文件） | `cmake/VineShaders.cmake`（root `include(VineShaders)`） | 在**顶层**声明：生成规则对 `src/` 与 `tests/` 同时可见 |
-| 机制 | `cmake/VineShaderHelper.cmake` | `v_declare_embedded_shaders(...)` + `v_use_embedded_shaders(<target> ...)` |
-| 生成器 | `cmake/v_embed_shaders.cmake`（`cmake -P`） | 读文件 → 写 `inline constexpr std::u8string_view` + `Entry{name,hash,bytes}` 表 |
+| 机制 | `cmake/VineShaderHelper.cmake` | `vn_declare_embedded_shaders(...)` + `vn_use_embedded_shaders(<target> ...)` |
+| 生成器 | `cmake/VineEmbedShaders.cmake`（`cmake -P`） | 读文件 → 写 `inline constexpr std::u8string_view` + `Entry{name,hash,bytes}` 表 |
 | 消费 | 各 CMakeLists | 加生成目录到 include、加生成顺序依赖（`test_vsg` 直接编译插件源码，所以也要挂） |
 
 为什么是 `-P` 脚本 + `add_custom_command`，而不是 `file(READ)` + reconfigure：
@@ -358,7 +358,7 @@ RecordTraversal 每个 drawable 绘制前自动填 → 自定义 program 路径�
 ### 10.3 用法（C++ 侧）
 
 ```cpp
-// SDK 侧（RenderPipelineBuilder.cpp）：ShaderStage::source 是 vine::String
+// SDK 侧（RenderPipelineBuilder.cpp）：ShaderStage::source 是 vn::String
 vs.source = String(shaders::kBuiltinGbufferVert);
 
 // vsg 侧（VsgPipelineFactory.cpp）：vsg::ShaderStage::source 是 std::string
@@ -368,7 +368,7 @@ const std::string source(asShaderSource(shaders::kBuiltinFullscreenVert));  // V
 | 类型 | 值 | 转换 |
 | --- | --- | --- |
 | 生成常量 | `std::u8string_view` | —— |
-| `vine::String` | 内部 `std::u8string` | `String(kX)`（构造函数 explicit） |
+| `vn::String` | 内部 `std::u8string` | `String(kX)`（构造函数 explicit） |
 | vsg `std::string` | —— | `asShaderSource(kX)`（`vine/vsg/VsgUtils.hpp`，GLSL 是 ASCII，逐字节视图） |
 
 ### 10.4 门禁
@@ -650,16 +650,16 @@ binding 声明 —— 一个 ShaderSet 服务两种形状时，必须由阵列�
 **为什么**：本后端曾经自带两段 GLSL（`shaders/fullscreen.vert`、`shaders/screen_texture.frag`），两段都在**引擎可见的画面**后面：
 
 - 没有 program 的 `ScreenPass` 画的**就是**那段屏幕拷贝文本 —— 引擎的文档写着"纯拷贝"（`ScreenPass` 类注释、`setSourceAttachment`），而那段文本住在一个后端里；
-- 所有全屏 program（延迟光照、宿主后处理）都是照那个三角形写的，`v_uv` 的存在、范围和 Y 方向**只在后端的 GLSL 里**（SDK 只在 `ScreenPass::setProgram` 写了"后端提供全屏顶点段"），没有任何门禁能挡住它漂移。
+- 所有全屏 program（延迟光照、宿主后处理）都是照那个三角形写的，`vn_uv` 的存在、范围和 Y 方向**只在后端的 GLSL 里**（SDK 只在 `ScreenPass::setProgram` 写了"后端提供全屏顶点段"），没有任何门禁能挡住它漂移。
 
 这与 `std_forward` 当初归 SDK 是同一条判据：**引擎承诺的画面，其文本不能住在某一个后端里**。
 
 | 环节 | 落点 |
 | --- | --- |
-| 文件搬家 | `src/plugins/gfx_backend_vsg/shaders/{fullscreen.vert,screen_texture.frag}` → **`src/viz/graphics/shaders/{fullscreen.vert,screen_copy.frag}`**；`cmake/VineShaders.cmake` 从"两个 owner"改成**一个**（`vine/graphics/EmbeddedShaders.hpp`，7 个源）；`vine/vsg/EmbeddedShaders.hpp` 与那三个 `v_use_embedded_shaders(... vine/vsg ...)` 一起删除 |
-| SDK 工厂 | 新增 **`fullscreenVertexProgram()`**（顶点段；把 v_uv 的 location / 范围 / 方向 / "无顶点缓冲、无顶点侧 push"写成 ABI 文档）与 **`screenCopyProgram(int attachment = 0)`**（片元段；**binding 就是附件**，`screenCopyProgram(N)` 把 `layout(binding = N)` 写进文本，N≠0 时替换那一行——脚本化的替换靠一条被单测钉住的 marker 行） |
+| 文件搬家 | `src/plugins/gfx_backend_vsg/shaders/{fullscreen.vert,screen_texture.frag}` → **`src/viz/graphics/shaders/{fullscreen.vert,screen_copy.frag}`**；`cmake/VineShaders.cmake` 从"两个 owner"改成**一个**（`vine/graphics/EmbeddedShaders.hpp`，7 个源）；`vine/vsg/EmbeddedShaders.hpp` 与那三个 `vn_use_embedded_shaders(... vine/vsg ...)` 一起删除 |
+| SDK 工厂 | 新增 **`fullscreenVertexProgram()`**（顶点段；把 vn_uv 的 location / 范围 / 方向 / "无顶点缓冲、无顶点侧 push"写成 ABI 文档）与 **`screenCopyProgram(int attachment = 0)`**（片元段；**binding 就是附件**，`screenCopyProgram(N)` 把 `layout(binding = N)` 写进文本，N≠0 时替换那一行——脚本化的替换靠一条被单测钉住的 marker 行） |
 | 后端 | `VsgPipelineFactory::fullscreenVertexSource()` **直接读 SDK program 的 stage**（不再嵌入第二份）；删除 `makeScreenTextureNode`、`RenderBackend::drawScreenTexture`（两个重载）、`VsgRenderer::drawScreenTexture`、`detail::drawScreenTexture` —— **全屏只剩一条路径**（`drawScreenProgram`） |
-| `ScreenPass` | **program 必需**：删除 `setSourceAttachment`/`sourceAttachment`/`attachmentToSample()` 与 execute 里的拷贝分支；`setProgram` 的文档写明全屏 ABI（binding i = 附件 i、v_uv、相机必需）；没有 program 的 `ScreenPass` **不画**并报一次 |
+| `ScreenPass` | **program 必需**：删除 `setSourceAttachment`/`sourceAttachment`/`attachmentToSample()` 与 execute 里的拷贝分支；`setProgram` 的文档写明全屏 ABI（binding i = 附件 i、vn_uv、相机必需）；没有 program 的 `ScreenPass` **不画**并报一次 |
 | 引擎接线 | `validateWiring` 的 phase 3 改成三问、按宿主必须的修复顺序 `continue`：① 没有 program（新）② 声明里没有任何输入 ③ 没有相机。**删除 phase 3b**（"无 program 的 ScreenPass 只能采一张彩色附件"）——那条规则随路径一起消失，原来被它报的"只声明深度"现在是**合法**的 |
 | 后端槽表 | 删除 `ScreenSlot` / `screen_slots` / `SlotKind::Screen` 及其顺序图、清理、重试逻辑（4 个文件）——PiP 与延迟光照现在是同一种槽 |
 | 调用方 | SDK 自己的配方也**命名**程序：`RenderPipelineBuilder::build` 的 `present`、`addOffscreenToScreen` 的 PiP（并补 `setCamera`）；AppShell 的 PiP / 4 张 G-buffer 预览各用 `screenCopyProgram(attachment)`；selftest 的直驱相位同样命名（并**把 pass 对象提到帧循环外**——见下） |

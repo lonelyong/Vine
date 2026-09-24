@@ -11,7 +11,7 @@ where the float count belongs), which is what this check exists to prevent.
 
 Two families are checked:
   * formatDiagnostic(u8"<fmt>", args...)   -> %-conversions vs top-level commas
-  * V_LOGI / V_LOGW / V_LOGE / V_LOGD(...) -> {} placeholders vs top-level commas
+  * VN_LOGI / VN_LOGW / VN_LOGE / VN_LOGD(...) -> {} placeholders vs top-level commas
 
 Usage: python3 scripts/check_diagnostic_formats.py [files...]
        (defaults to the VSG backend plugin's sources and its selftest)
@@ -23,7 +23,7 @@ import sys
 
 SPEC = re.compile(r"%[-+ #0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?(?:hh|h|ll|l|z|j|t|L)?[diuoxXfFeEgGaAcspn]")
 PLACEHOLDER = re.compile(r"\{[^}]*\}")
-MACROS = ("V_LOGI", "V_LOGW", "V_LOGE", "V_LOGD")
+MACROS = ("VN_LOGI", "VN_LOGW", "VN_LOGE", "VN_LOGD")
 DEFAULT_GLOBS = (
     "src/plugins/gfx_backend_vsg/src/*.cpp",
     "src/plugins/gfx_backend_vsg/vsg_selftest/*.cpp",

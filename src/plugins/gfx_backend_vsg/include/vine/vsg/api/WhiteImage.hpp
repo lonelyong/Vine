@@ -40,7 +40,7 @@
  *
  * NOT thread-safe: it is built from the frame's own thread, like the rest of the backend.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief The white texel a material without a texture samples, as an image a declared set can bind. */
 class WhiteImage
@@ -72,4 +72,4 @@ class WhiteImage
     WhiteImage();
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

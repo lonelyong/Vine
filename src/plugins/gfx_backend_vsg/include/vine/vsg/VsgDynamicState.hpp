@@ -11,7 +11,7 @@
 
 #include <vine/vsg/VsgVulkanEntryPoints.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -75,7 +75,7 @@ inline constexpr uint32_t kDynamicStateSlot = 15u;
 /**
  * @brief The pipeline state of the NEXT draws, as Vulkan dynamic state.
  *
- * The state a vine::graphics::StateNode configures is pipeline-creation state, so without this every state
+ * The state a vn::graphics::StateNode configures is pipeline-creation state, so without this every state
  * change (a depth policy, a culling side, a wireframe toggle, a blend factor, a topology) has to become a
  * new pipeline — the reason this backend carries one content ShaderSet per depth policy and keys its variant
  * cache on the resolved state. Vulkan 1.3 delivers all of it dynamically, so the state moves into the
@@ -183,8 +183,8 @@ class SetDynamicState : public ::vsg::Inherit<::vsg::StateCommand, SetDynamicSta
 
 } // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END
 
-// SetDynamicState lives in vine::vsg::detail, so its type_name<>() specialization has to be written at
+// SetDynamicState lives in vn::vsg::detail, so its type_name<>() specialization has to be written at
 // global scope with the qualified name (vsg's own VSG_type_name macro assumes the vsg namespace).
-EVSG_type_name(vine::vsg::detail::SetDynamicState);
+EVSG_type_name(vn::vsg::detail::SetDynamicState);

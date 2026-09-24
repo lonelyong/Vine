@@ -7,20 +7,20 @@
 #include <vine/vsg/api/GeometryFacts.hpp>
 #include <vine/vsg/api/ProgramVariant.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 struct ContentStore::Data
 {
     struct LiveGeometry
     {
-        vine::intrusive_ptr<vine::graphics::Geometry> object{};  ///< The share that keeps the address alive.
+        vn::intrusive_ptr<vn::graphics::Geometry> object{};  ///< The share that keeps the address alive.
         bool                                          described{false};
         std::uint64_t                                 described_revision{0};
     };
 
     struct LiveProgram
     {
-        vine::intrusive_ptr<vine::graphics::ShaderProgram> object{};
+        vn::intrusive_ptr<vn::graphics::ShaderProgram> object{};
         bool                                               described{false};
         std::uint64_t                                      described_revision{0};
         std::vector<std::uint32_t> variants;  ///< Variants built at that revision (their bits()).
@@ -29,7 +29,7 @@ struct ContentStore::Data
 
     struct LiveMaterial
     {
-        vine::intrusive_ptr<vine::graphics::Material> object{};
+        vn::intrusive_ptr<vn::graphics::Material> object{};
         std::uint64_t                                 revision{0};  ///< Edit counter; only updateMaterial() moves it.
         bool                                          described{false};
         std::uint64_t                                 described_revision{0};
@@ -141,9 +141,9 @@ struct ContentStore::Data
     };
 
     // The live set: the objects the host tracked, held so the address key cannot be recycled.
-    std::unordered_map<const vine::graphics::Geometry*, LiveGeometry>     geometries;
-    std::unordered_map<const vine::graphics::ShaderProgram*, LiveProgram> programs;
-    std::unordered_map<const vine::graphics::Material*, LiveMaterial>     materials;
+    std::unordered_map<const vn::graphics::Geometry*, LiveGeometry>     geometries;
+    std::unordered_map<const vn::graphics::ShaderProgram*, LiveProgram> programs;
+    std::unordered_map<const vn::graphics::Material*, LiveMaterial>     materials;
 
     // The tables (see Table: rows, their storage and their row order together).
     Table<GeometryFacts, GeometryStorage, &orderGeometryRows> geometry;
@@ -236,7 +236,7 @@ ContentStore::ContentStore() :
 
 ContentStore::~ContentStore() = default;
 
-void ContentStore::track(const vine::intrusive_ptr<vine::graphics::Geometry>& geometry)
+void ContentStore::track(const vn::intrusive_ptr<vn::graphics::Geometry>& geometry)
 {
     if (geometry == nullptr)
     {
@@ -249,7 +249,7 @@ void ContentStore::track(const vine::intrusive_ptr<vine::graphics::Geometry>& ge
     }
 }
 
-void ContentStore::track(const vine::intrusive_ptr<vine::graphics::ShaderProgram>& program)
+void ContentStore::track(const vn::intrusive_ptr<vn::graphics::ShaderProgram>& program)
 {
     if (program == nullptr)
     {
@@ -262,7 +262,7 @@ void ContentStore::track(const vine::intrusive_ptr<vine::graphics::ShaderProgram
     }
 }
 
-void ContentStore::track(const vine::intrusive_ptr<vine::graphics::Material>& material)
+void ContentStore::track(const vn::intrusive_ptr<vn::graphics::Material>& material)
 {
     if (material == nullptr)
     {
@@ -275,7 +275,7 @@ void ContentStore::track(const vine::intrusive_ptr<vine::graphics::Material>& ma
     }
 }
 
-void ContentStore::updateMaterial(vine::raw_ptr<vine::graphics::Material> material)
+void ContentStore::updateMaterial(vn::raw_ptr<vn::graphics::Material> material)
 {
     if (material == nullptr)
     {
@@ -317,20 +317,20 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
             {
                 // The full-screen ABI is the engine's and carries no variant: a screen program is one text
                 // (see api/ContentSources).
-                ensureProgram(static_cast<const vine::graphics::ShaderProgram*>(draw.program.program),
+                ensureProgram(static_cast<const vn::graphics::ShaderProgram*>(draw.program.program),
                               ProgramVariant{}, true, timeline, retirement);
                 continue;
             }
 
             for (const core::CompiledCommand& command : draw.commands)
             {
-                const auto* geometry = static_cast<const vine::graphics::Geometry*>(command.geometry);
-                const auto* material = static_cast<const vine::graphics::Material*>(command.material);
+                const auto* geometry = static_cast<const vn::graphics::Geometry*>(command.geometry);
+                const auto* material = static_cast<const vn::graphics::Material*>(command.material);
 
                 ensureGeometry(geometry, timeline, retirement);
                 ensureMaterial(material, timeline, retirement);
 
-                const auto* program = static_cast<const vine::graphics::ShaderProgram*>(command.program.program);
+                const auto* program = static_cast<const vn::graphics::ShaderProgram*>(command.program.program);
                 if (program == nullptr)
                 {
                     continue;
@@ -364,7 +364,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
     return d->facts;
 }
 
-void ContentStore::ensureGeometry(const vine::graphics::Geometry* geometry, core::FrameTimeline& timeline,
+void ContentStore::ensureGeometry(const vn::graphics::Geometry* geometry, core::FrameTimeline& timeline,
                                   core::RetirementQueue& retirement)
 {
     if (geometry == nullptr)
@@ -420,7 +420,7 @@ void ContentStore::ensureGeometry(const vine::graphics::Geometry* geometry, core
     ++d->builds;
 }
 
-void ContentStore::ensureMaterial(const vine::graphics::Material* material, core::FrameTimeline& timeline,
+void ContentStore::ensureMaterial(const vn::graphics::Material* material, core::FrameTimeline& timeline,
                                   core::RetirementQueue& retirement)
 {
     auto entry = d->materials.find(material);
@@ -481,7 +481,7 @@ void ContentStore::ensureMaterial(const vine::graphics::Material* material, core
     }
 }
 
-void ContentStore::ensureProgram(const vine::graphics::ShaderProgram* program, const ProgramVariant& variant,
+void ContentStore::ensureProgram(const vn::graphics::ShaderProgram* program, const ProgramVariant& variant,
                                  bool screen, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
     if (program == nullptr)
@@ -669,4 +669,4 @@ std::size_t ContentStore::retained() const noexcept
     return d->retained;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -1,6 +1,6 @@
 ﻿#include <vine/graphics/Ray.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 double Ray::distanceToPoint(const Vec3d& point) const
 {
@@ -13,4 +13,4 @@ double Ray::distanceToPoint(const Vec3d& point) const
     return (point - closest).length();
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

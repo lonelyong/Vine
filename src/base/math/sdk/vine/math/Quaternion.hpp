@@ -9,7 +9,7 @@
 #include "Vector3.hpp"
 #include "Vector4.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 template <typename T>
 class Point3;
@@ -543,4 +543,4 @@ Vector3<T> operator*(const Quaternion<T>& left, const Vector3<T>& right);
 template <FP T>
 Point3<T> operator*(const Quaternion<T>& left, const Point3<T>& right);
 
-V_MATH_NS_END
+VN_MATH_NS_END

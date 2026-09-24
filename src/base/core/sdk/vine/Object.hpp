@@ -8,7 +8,7 @@
 #include "String.hpp"
 #include "Type.hpp"
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 class Object;
 
@@ -18,7 +18,7 @@ concept ObjectBased = std::is_base_of<Object, T>::value;
 template <typename T>
 concept TypeDescribed = requires { T::desc(); };
 
-class V_CORE_API Object {
+class VN_CORE_API Object {
   public:
     Object() noexcept {};
     virtual ~Object() noexcept {};
@@ -111,49 +111,49 @@ const T& obj_cast(const Object& obj)
     throw std::bad_cast();
 }
 
-V_CORE_NS_END
+VN_CORE_NS_END
 
-#define V_OBJECT_META(Sub, Parent, ...)                                                                                                                          \
+#define VN_OBJECT_META(Sub, Parent, ...)                                                                                                                          \
   public:                                                                                                                                                      \
-    virtual const vine::Type* getType() const noexcept override                                                                                                \
+    virtual const vn::Type* getType() const noexcept override                                                                                                \
     {                                                                                                                                                          \
         return desc();                                                                                                                                         \
     }                                                                                                                                                          \
-    static const vine::Type* desc()                                                                                                                            \
+    static const vn::Type* desc()                                                                                                                            \
     {                                                                                                                                                          \
-        static const vine::Type* t = new vine::Type(typeid(Sub), Parent::desc(), vine::TypeKind::Class __VA_OPT__(, vine::detail::interfacesOf<__VA_ARGS__>()));                 \
+        static const vn::Type* t = new vn::Type(typeid(Sub), Parent::desc(), vn::TypeKind::Class __VA_OPT__(, vn::detail::interfacesOf<__VA_ARGS__>()));                 \
         return t;                                                                                                                                              \
     }
 
-#define V_OBJECT_META_DECL                                                                                                                                     \
+#define VN_OBJECT_META_DECL                                                                                                                                     \
   public:                                                                                                                                                      \
-    virtual const vine::Type* getType() const noexcept override;                                                                                               \
-    static const vine::Type*  desc();
+    virtual const vn::Type* getType() const noexcept override;                                                                                               \
+    static const vn::Type*  desc();
 
-#define V_OBJECT_META_IMPL(Sub, Parent, ...)                                                                                                                 \
-    const vine::Type* Sub::getType() const noexcept                                                                                                           \
+#define VN_OBJECT_META_IMPL(Sub, Parent, ...)                                                                                                                 \
+    const vn::Type* Sub::getType() const noexcept                                                                                                           \
     {                                                                                                                                                          \
         return desc();                                                                                                                                         \
     }                                                                                                                                                          \
                                                                                                                                                                \
-    const vine::Type* Sub::desc()                                                                                                                              \
+    const vn::Type* Sub::desc()                                                                                                                              \
     {                                                                                                                                                          \
-        static const vine::Type* t = new vine::Type(typeid(Sub), Parent::desc(), vine::TypeKind::Class __VA_OPT__(, vine::detail::interfacesOf<__VA_ARGS__>()));                \
+        static const vn::Type* t = new vn::Type(typeid(Sub), Parent::desc(), vn::TypeKind::Class __VA_OPT__(, vn::detail::interfacesOf<__VA_ARGS__>()));                \
         return t;                                                                                                                                              \
     }
 
-#define V_TMPL_OBJECT_META_IMPL(TmplPrefix, Sub, Parent, ...)                                                                                                 \
-    TmplPrefix const vine::Type* Sub::getType() const noexcept                                                                                                \
+#define VN_TMPL_OBJECT_META_IMPL(TmplPrefix, Sub, Parent, ...)                                                                                                 \
+    TmplPrefix const vn::Type* Sub::getType() const noexcept                                                                                                \
     {                                                                                                                                                          \
         return desc();                                                                                                                                         \
     }                                                                                                                                                          \
                                                                                                                                                                \
-    TmplPrefix const vine::Type* Sub::desc()                                                                                                                   \
+    TmplPrefix const vn::Type* Sub::desc()                                                                                                                   \
     {                                                                                                                                                          \
-        static const vine::Type* t = new vine::Type(typeid(Sub), Parent::desc(), vine::TypeKind::Class __VA_OPT__(, vine::detail::interfacesOf<__VA_ARGS__>()));                \
+        static const vn::Type* t = new vn::Type(typeid(Sub), Parent::desc(), vn::TypeKind::Class __VA_OPT__(, vn::detail::interfacesOf<__VA_ARGS__>()));                \
         return t;                                                                                                                                              \
     }
 
-// #define V_OBJ(Parent) \
+// #define VN_OBJ(Parent) \
 // static const Class* desc(); \
 // virtual const Class* getType() const override;

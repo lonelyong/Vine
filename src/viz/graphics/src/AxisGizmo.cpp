@@ -13,9 +13,9 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/geometry/Array.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(AxisGizmo, RenderPass);
+VN_OBJECT_META_IMPL(AxisGizmo, RenderPass);
 
 namespace
 {
@@ -32,11 +32,11 @@ namespace
  * @param mn        Minimum corner.
  * @param mx        Maximum corner.
  */
-void appendBox(vine::geometry::Vec3fArray& positions, vine::geometry::Vec3fArray& normals,
-               vine::geometry::UInt32Array& indices, const vine::math::Vec3f& mn,
-               const vine::math::Vec3f& mx)
+void appendBox(vn::geometry::Vec3fArray& positions, vn::geometry::Vec3fArray& normals,
+               vn::geometry::UInt32Array& indices, const vn::math::Vec3f& mn,
+               const vn::math::Vec3f& mx)
 {
-    using vine::math::Vec3f;
+    using vn::math::Vec3f;
 
     const Vec3f c = (mn + mx) * 0.5f;
     const float h[3] = { (mx.x - mn.x) * 0.5f, (mx.y - mn.y) * 0.5f, (mx.z - mn.z) * 0.5f };
@@ -84,8 +84,8 @@ AxisGizmo::AxisGizmo()
     // Framing distance chosen so the unit sticks fill most of the square
     // sub-viewport (half-height = 3.3 * tan(22.5) ~ 1.37 world units maps a
     // length-1 stick to ~73% of the half box).
-    camera_->setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 3.3), vine::math::Vec3d(0.0, 0.0, 0.0),
-                                   vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera_->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 3.3), vn::math::Vec3d(0.0, 0.0, 0.0),
+                                   vn::math::Vec3d(0.0, 1.0, 0.0));
     camera_->setProjectionMatrixAsPerspective(45.0, 1.0, 0.05, 20.0);
     setCamera(camera_);
 
@@ -177,7 +177,7 @@ void AxisGizmo::applyMirror()
 
 void AxisGizmo::rebuild()
 {
-    using vine::math::Vec3f;
+    using vn::math::Vec3f;
     const float l = static_cast<float>(axis_length_);
     const float t = static_cast<float>(thickness_);
 
@@ -196,9 +196,9 @@ void AxisGizmo::rebuild()
     // Single root: one identity Group owns the three axis sticks.
     auto root = make_intrusive<Group>();
     for (const auto& stick : sticks) {
-        vine::geometry::Vec3fArray positions;
-        vine::geometry::Vec3fArray normals;
-        vine::geometry::UInt32Array indices;
+        vn::geometry::Vec3fArray positions;
+        vn::geometry::Vec3fArray normals;
+        vn::geometry::UInt32Array indices;
         appendBox(positions, normals, indices, stick.mn, stick.mx);
 
         auto geometry = make_intrusive<Geometry>();
@@ -226,4 +226,4 @@ void AxisGizmo::rebuild()
     content_ = std::move(scene);
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

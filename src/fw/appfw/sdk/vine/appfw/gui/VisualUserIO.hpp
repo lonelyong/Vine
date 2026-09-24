@@ -6,7 +6,7 @@
 #include <vine/appfw/appfw_global.hpp>
 #include <vine/appfw/UserIO.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class ConsolePanel;
 
@@ -25,9 +25,9 @@ class ConsolePanel;
  * The state and the helpers behind it live in the implementation, so the layout of this class does not change when they
  * do.
  */
-class V_APPFW_API VisualUserIO : public UserIO {
-    V_OBJECT_META_DECL;
-    V_DISABLE_COPY_MOVE(VisualUserIO);
+class VN_APPFW_API VisualUserIO : public UserIO {
+    VN_OBJECT_META_DECL;
+    VN_DISABLE_COPY_MOVE(VisualUserIO);
 
   public:
     VisualUserIO();
@@ -44,21 +44,21 @@ class V_APPFW_API VisualUserIO : public UserIO {
      */
     void setConsolePanel(ConsolePanel* console);
 
-    void setCommandManager(vine::appfw::CommandManager* manager) override;
+    void setCommandManager(vn::appfw::CommandManager* manager) override;
 
   public:
     virtual void putString(const String& str) override;
     virtual void clear() override;
     virtual void cancelPendingInput() override;
 
-    virtual vine::async::Task<std::optional<String>>        getStringAsync(const String& prompt = {}) override;
-    virtual vine::async::Task<std::optional<int>>           getIntAsync(const String& prompt = {}) override;
-    virtual vine::async::Task<std::optional<double>>        getDoubleAsync(const String& prompt = {}) override;
-    virtual vine::async::Task<std::optional<math::Point3d>> getPoint3dAsync(const String& prompt = {}) override;
+    virtual vn::async::Task<std::optional<String>>        getStringAsync(const String& prompt = {}) override;
+    virtual vn::async::Task<std::optional<int>>           getIntAsync(const String& prompt = {}) override;
+    virtual vn::async::Task<std::optional<double>>        getDoubleAsync(const String& prompt = {}) override;
+    virtual vn::async::Task<std::optional<math::Point3d>> getPoint3dAsync(const String& prompt = {}) override;
 
   private:
     struct Impl;
     std::unique_ptr<Impl> d;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

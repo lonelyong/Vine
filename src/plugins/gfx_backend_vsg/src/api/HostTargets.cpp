@@ -2,9 +2,9 @@
 
 #include <optional>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
-void HostTargets::describe(const vine::graphics::RenderTarget& target, Description& out)
+void HostTargets::describe(const vn::graphics::RenderTarget& target, Description& out)
 {
     out.width  = target.width();
     out.height = target.height();
@@ -20,7 +20,7 @@ void HostTargets::describe(const vine::graphics::RenderTarget& target, Descripti
     out.depth_format    = target.depthFormat();
     out.depth_promotion = target.depthPromotion();
 
-    const vine::graphics::RenderTarget* source = target.depthSource();
+    const vn::graphics::RenderTarget* source = target.depthSource();
     out.depth_source = source;
 
     out.shadow_light = target.shadowOf();
@@ -81,7 +81,7 @@ HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device
     return State::Ready;
 }
 
-HostTargets::Ensured HostTargets::ensure(const vine::graphics::RenderTarget& target, ::vsg::ref_ptr<::vsg::Device> device)
+HostTargets::Ensured HostTargets::ensure(const vn::graphics::RenderTarget& target, ::vsg::ref_ptr<::vsg::Device> device)
 {
     Entry* entry = find(&target);
     if (entry == nullptr)
@@ -117,7 +117,7 @@ HostTargets::Ensured HostTargets::ensure(const vine::graphics::RenderTarget& tar
     return Ensured{ entry, build(*entry, std::move(device)) };
 }
 
-HostTargets::Entry* HostTargets::observe(const vine::graphics::RenderTarget& target)
+HostTargets::Entry* HostTargets::observe(const vn::graphics::RenderTarget& target)
 {
     Entry* entry = find(&target);
     if (entry == nullptr)
@@ -196,7 +196,7 @@ void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
     out.wanted.shape.color_formats = entry.description.color_formats;
     out.wanted.shape.depth_format  = entry.description.has_depth
                                          ? std::optional{ entry.description.depth_format }
-                                         : std::optional<vine::graphics::RenderTarget::DepthFormat>{};
+                                         : std::optional<vn::graphics::RenderTarget::DepthFormat>{};
 
     if (entry.target != nullptr)
     {
@@ -242,4 +242,4 @@ void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
     }
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -17,7 +17,7 @@
 #include <type_traits>
 #include <vector>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /** Optimized C-style string length function
  *  Supports char, char16_t, and char32_t with platform-specific optimizations.
@@ -32,19 +32,19 @@ size_t cstrlen(const T* data);
  *  Uses optimized std::strlen for maximum performance.
  */
 template <>
-V_CORE_API size_t cstrlen<char>(const char* data);
+VN_CORE_API size_t cstrlen<char>(const char* data);
 
 /** Specialization for char16_t
  *  Platform-optimized: uses wcslen on Windows, pointer traversal on Unix/Linux.
  */
 template <>
-V_CORE_API size_t cstrlen<char16_t>(const char16_t* data);
+VN_CORE_API size_t cstrlen<char16_t>(const char16_t* data);
 
 /** Specialization for char32_t
  *  Platform-optimized: uses wcslen on Unix/Linux, pointer traversal on Windows.
  */
 template <>
-V_CORE_API size_t cstrlen<char32_t>(const char32_t* data);
+VN_CORE_API size_t cstrlen<char32_t>(const char32_t* data);
 
 /** String class that wraps std::u8string and provides additional functionality
  *  such as encoding conversions, formatting, and splitting.
@@ -53,7 +53,7 @@ V_CORE_API size_t cstrlen<char32_t>(const char32_t* data);
  *  Naming: the container accessors carry the as_ prefix because "std::string" does not say that nothing is copied,
  *  while the view accessors do not need it - "_view" already means "aliases the storage, no copy".
  */
-class V_CORE_API String final {
+class VN_CORE_API String final {
 
   public:
     using impl_type              = std::u8string;
@@ -1725,20 +1725,20 @@ size_t cstrlen(const T* data)
     return p - data;
 }
 
-V_CORE_NS_END
+VN_CORE_NS_END
 
 /** Hash support, so String can be a key of std::unordered_map / std::unordered_set.
  *  Declared next to the type, like the standard library does for std::string and std::string_view.
  */
 template <>
-struct std::hash<V_ROOT_NS::String>
+struct std::hash<VN_ROOT_NS::String>
 {
     /** @brief Hashes the UTF-8 bytes of a String.
      *
      * @param str The string to hash.
      * @return A hash value computed from the same bytes that operator== compares.
      */
-    std::size_t operator()(const V_ROOT_NS::String& str) const noexcept
+    std::size_t operator()(const VN_ROOT_NS::String& str) const noexcept
     {
         return std::hash<std::string_view>{}(str.std_str_view());
     }

@@ -5,7 +5,7 @@
 #include <coroutine>
 #include <thread>
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 /**
  * @brief Awaiter that yields the current thread's CPU slice.
@@ -63,4 +63,4 @@ inline YieldAwaiter yield() noexcept
     return {};
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

@@ -30,8 +30,8 @@
 #include <vine/vsg/api/BlockStorage.hpp>
 #include <vine/vsg/api/DeviceProbe.hpp>
 
-using vine::vsg::BlockStorage;
-using vine::vsg::api::probePhysicalDevices;
+using vn::vsg::BlockStorage;
+using vn::vsg::api::probePhysicalDevices;
 
 namespace
 {
@@ -149,7 +149,7 @@ TEST(BlockStorageTest, EveryBlockIsReadBackFromInsideItsOwnRegion)
 
     ASSERT_TRUE(view_result.valid);
     ASSERT_TRUE(draw_result.valid);
-    ASSERT_EQ(material_result.kind, vine::vsg::core::MaterialArena::WriteKind::Allocated);
+    ASSERT_EQ(material_result.kind, vn::vsg::core::MaterialArena::WriteKind::Allocated);
     EXPECT_TRUE(inside(view_result.offset, view.size(), regions.views_base, regions.views_bytes));
     EXPECT_TRUE(inside(draw_result.offset, draw.size(), regions.draws_base, regions.draws_bytes));
     EXPECT_TRUE(inside(material_result.offset, material.size(), regions.materials_base, regions.materials_bytes));
@@ -241,14 +241,14 @@ TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBloc
 
     fixture.storage->beginFrame();
     const auto allocated = fixture.storage->writeMaterial(&material, 1, first);
-    ASSERT_EQ(allocated.kind, vine::vsg::core::MaterialArena::WriteKind::Allocated);
+    ASSERT_EQ(allocated.kind, vn::vsg::core::MaterialArena::WriteKind::Allocated);
     EXPECT_EQ(allocated.bytes, first.size());
     EXPECT_EQ(readBack(*fixture.storage, allocated.offset, first.size()), first);
 
     // The steady frame: the same revision, so the bytes the GPU reads are already right.
     fixture.storage->beginFrame();
     const auto steady = fixture.storage->writeMaterial(&material, 1, second);
-    EXPECT_EQ(steady.kind, vine::vsg::core::MaterialArena::WriteKind::Unchanged);
+    EXPECT_EQ(steady.kind, vn::vsg::core::MaterialArena::WriteKind::Unchanged);
     EXPECT_EQ(steady.bytes, 0U);
     EXPECT_EQ(steady.offset, allocated.offset)
         << "a hit still names the block: a draw binds THAT offset (offset 0 is another region's data)";
@@ -258,13 +258,13 @@ TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBloc
     // An edit: exactly one block, wherever this frame's copy lives.
     fixture.storage->beginFrame();
     const auto rewritten = fixture.storage->writeMaterial(&material, 2, third);
-    ASSERT_EQ(rewritten.kind, vine::vsg::core::MaterialArena::WriteKind::Rewritten);
+    ASSERT_EQ(rewritten.kind, vn::vsg::core::MaterialArena::WriteKind::Rewritten);
     EXPECT_EQ(rewritten.bytes, third.size());
     EXPECT_EQ(readBack(*fixture.storage, rewritten.offset, third.size()), third);
 
     // A second edit in the SAME frame: the GPU can only ever see one of the two versions, so one write.
     const auto deduped = fixture.storage->writeMaterial(&material, 3, fourth);
-    EXPECT_EQ(deduped.kind, vine::vsg::core::MaterialArena::WriteKind::Unchanged);
+    EXPECT_EQ(deduped.kind, vn::vsg::core::MaterialArena::WriteKind::Unchanged);
     EXPECT_EQ(deduped.bytes, 0U);
     EXPECT_EQ(deduped.offset, rewritten.offset) << "the frame's copy is where both answers point";
     EXPECT_EQ(readBack(*fixture.storage, rewritten.offset, third.size()), third)
@@ -291,8 +291,8 @@ TEST(BlockStorageTest, TheMaterialCopiesRotateSoAnInFlightFrameIsNeverOverwritte
         fixture.storage->beginFrame();
         const std::vector<std::byte> block  = blockOf(64, revision);
         const auto                   result = fixture.storage->writeMaterial(&material, revision, block);
-        ASSERT_EQ(result.kind, revision == 1 ? vine::vsg::core::MaterialArena::WriteKind::Allocated
-                                             : vine::vsg::core::MaterialArena::WriteKind::Rewritten);
+        ASSERT_EQ(result.kind, revision == 1 ? vn::vsg::core::MaterialArena::WriteKind::Allocated
+                                             : vn::vsg::core::MaterialArena::WriteKind::Rewritten);
         EXPECT_EQ(readBack(*fixture.storage, result.offset, block.size()), block);
         offsets.push_back(result.offset);
     }

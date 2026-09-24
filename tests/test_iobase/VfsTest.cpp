@@ -15,9 +15,9 @@
 
 #include "VfsTestSupport.hpp"
 
-using vine::io::DirectoryVfs;
-using vine::io::IoError;
-using vine::io::ZipArchive;
+using vn::io::DirectoryVfs;
+using vn::io::IoError;
+using vn::io::ZipArchive;
 using vfstest::bytesOf;
 using vfstest::sortedNames;
 using vfstest::TempDir;

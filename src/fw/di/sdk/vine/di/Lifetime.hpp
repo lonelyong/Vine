@@ -1,7 +1,7 @@
 ﻿#pragma once
 #include "di_global.hpp"
 
-V_DI_NS_BEGIN
+VN_DI_NS_BEGIN
 
 /**
  * @brief Controls how a resolved service instance is created and cached.
@@ -14,4 +14,4 @@ enum class Lifetime
     Transient
 };
 
-V_DI_NS_END
+VN_DI_NS_END

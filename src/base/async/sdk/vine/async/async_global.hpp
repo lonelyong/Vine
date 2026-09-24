@@ -1,10 +1,10 @@
 ﻿#pragma once
 
-#include <vine/vi_global.hpp>
+#include <vine/vine_global.hpp>
 
 /**
  * @file async_global.hpp
- * @brief Framework-wide conventions for the vine::async coroutine module.
+ * @brief Framework-wide conventions for the vn::async coroutine module.
  *
  * Lifetime contract: a coroutine suspended at a co_await must not be
  * destroyed concurrently by another thread while the awaited object is
@@ -27,12 +27,11 @@
  * co_await/co_return/co_yield are unaffected.
  */
 
-#define V_ASYNC_NS_BEGIN \
-    namespace vine \
-    { \
+#define VN_ASYNC_NS_BEGIN \
+    VN_ROOT_NS_BEGIN \
     namespace async \
     {
 
-#define V_ASYNC_NS_END \
+#define VN_ASYNC_NS_END \
     } \
-    }
+    VN_ROOT_NS_END

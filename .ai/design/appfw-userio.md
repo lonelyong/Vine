@@ -109,7 +109,7 @@
 | 编号 | 缺陷 | 证据 | 修复 |
 | --- | --- | --- | --- |
 | U1 | 输出路径不编组：`VisualUserIO::putString` 直接写 QWidget | `ConsolePanel::append` 不做编组，而 `CommandManager::reportToUser` 与 `appendOnApplicationThread` 都编组；app_shell 的命令全部 `io->putString(...)` | 编组下沉到 `putString`/`clear`（`onConsolePanel`），并在 `UserIO` 里写明"任意线程可调用、实现负责编组" |
-| U2 | `getIntAsync` 返回 `int8_t` 且两个实现无检查地窄化 | `static_cast<int8_t>(1000)` = -24 | 签名改为 `int`（无调用方），解析改走 `UserIO::parseInt`；`V_APPFW_PLUGIN_ABI_VERSION` 1u → 2u，插件必须重编 |
+| U2 | `getIntAsync` 返回 `int8_t` 且两个实现无检查地窄化 | `static_cast<int8_t>(1000)` = -24 | 签名改为 `int`（无调用方），解析改走 `UserIO::parseInt`；`VN_APPFW_PLUGIN_ABI_VERSION` 1u → 2u，插件必须重编 |
 | U3 | 并发读共享 `done_`/结果字段，互相踩 | 一份 `pending_`/`cancelled_`/四个结果字段 | 单交互槽位 + `beginRead` 的 CAS 拒绝 + warning，`UserIOTest.SecondReadIsRefusedWhileOneIsPending` |
 | U4 | `ConsoleUserIO` 阻塞 `std::getline` ⇒ `cancelPendingInput()` 无效，关机可能让命令恢复到已拆的管理器上 | 旧实现直接在等待者线程上 `getline` | 一个后台读线程 + 行缓冲 + 可唤醒的 `AsyncEvent`，取消后读取立即返回 |
 | U5 | 补全列表不刷新：绑定 console 之后注册的命令进不了补全 | `refreshCompletion` 只在 `setConsolePanel`/`setCommandManager` 调用；app_shell 在自己的 `load()` 里绑定，命令在加载期注册 | 新增 `CommandManager::commandsChanged` 事件（注册/取消/启用开关/别名，均在锁外触发），`VisualUserIO` 订阅后编组刷新 |

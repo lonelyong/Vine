@@ -49,7 +49,7 @@
  * declaration form it cannot classify is reported as Malformed - a text nobody can read is not a text whose
  * bindings may be guessed, because guessing here is guessing which memory a shader reads.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief The stage a binding is read by (this backend's two graphics stages). */
 enum class AbiStage : std::uint32_t
@@ -171,4 +171,4 @@ struct ProgramAbi
  */
 [[nodiscard]] const char* abiBlockRoleName(AbiBlockRole role) noexcept;
 
-V_VSG_NS_END
+VN_VSG_NS_END

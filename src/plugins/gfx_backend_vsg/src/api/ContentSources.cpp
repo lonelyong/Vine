@@ -9,9 +9,9 @@
 
 #include <vine/vsg/api/ProgramAbi.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
-FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, ProgramFacts& out)
+FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out)
 {
     // The empty variant: the text is described exactly as it stands, with none of its imported names
     // defined. A program that GATES a declaration on one of them is a different set of facts per
@@ -19,30 +19,30 @@ FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, Program
     return buildProgramFacts(program, ProgramVariant{}, out);
 }
 
-FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, const ProgramVariant& variant,
+FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const ProgramVariant& variant,
                            ProgramFacts& out)
 {
     out          = ProgramFacts{};
     out.program  = &program;
     out.revision = program.revision();
 
-    const vine::graphics::ShaderStage* vertex   = nullptr;
-    const vine::graphics::ShaderStage* fragment = nullptr;
+    const vn::graphics::ShaderStage* vertex   = nullptr;
+    const vn::graphics::ShaderStage* fragment = nullptr;
     std::size_t                        extra    = 0;
 
-    for (const vine::graphics::ShaderStage& stage : program.stages())
+    for (const vn::graphics::ShaderStage& stage : program.stages())
     {
         switch (stage.type)
         {
-        case vine::graphics::ShaderStageType::Vertex:
+        case vn::graphics::ShaderStageType::Vertex:
             extra += vertex != nullptr ? 1U : 0U;  // a second vertex stage cannot be compiled into one pipeline
             vertex = &stage;
             break;
-        case vine::graphics::ShaderStageType::Fragment:
+        case vn::graphics::ShaderStageType::Fragment:
             extra += fragment != nullptr ? 1U : 0U;
             fragment = &stage;
             break;
-        case vine::graphics::ShaderStageType::Compute:
+        case vn::graphics::ShaderStageType::Compute:
             ++extra;  // a compute stage is not content: this backend's content pipeline is two graphics stages
             break;
         }
@@ -93,28 +93,28 @@ FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, const P
     return FactMiss::None;
 }
 
-FactMiss buildScreenProgramFacts(const vine::graphics::ShaderProgram& program, ProgramFacts& out)
+FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out)
 {
     out          = ProgramFacts{};
     out.program  = &program;
     out.revision = program.revision();
 
-    const vine::graphics::ShaderStage* fragment = nullptr;
+    const vn::graphics::ShaderStage* fragment = nullptr;
     std::size_t                        extra    = 0;
     std::size_t                        seen     = 0;
 
-    for (const vine::graphics::ShaderStage& stage : program.stages())
+    for (const vn::graphics::ShaderStage& stage : program.stages())
     {
         ++seen;
         switch (stage.type)
         {
-        case vine::graphics::ShaderStageType::Vertex:
+        case vn::graphics::ShaderStageType::Vertex:
             break;  // ignored by the contract: the full-screen vertex stage is the engine's (see the header)
-        case vine::graphics::ShaderStageType::Fragment:
+        case vn::graphics::ShaderStageType::Fragment:
             extra += fragment != nullptr ? 1U : 0U;  // a second fragment stage cannot be compiled into one
             fragment = &stage;
             break;
-        case vine::graphics::ShaderStageType::Compute:
+        case vn::graphics::ShaderStageType::Compute:
             ++extra;  // a compute stage is not a screen draw: the full-screen path is one fragment stage
             break;
         }
@@ -134,12 +134,12 @@ FactMiss buildScreenProgramFacts(const vine::graphics::ShaderProgram& program, P
     // The engine owns the triangle text; reading the stage out of the SDK's program - rather than embedding a
     // second copy of the GLSL - is what makes it impossible for a full-screen program to be compiled against
     // a triangle the engine did not state (the previous implementation's factory reads it the same way).
-    const auto fullscreen_vertex = vine::graphics::fullscreenVertexProgram();
+    const auto fullscreen_vertex = vn::graphics::fullscreenVertexProgram();
     if (fullscreen_vertex == nullptr || fullscreen_vertex->stage(0) == nullptr)
     {
         return FactMiss::Malformed;  // the engine's own vertex stage is missing: nothing to compose
     }
-    const vine::graphics::ShaderStage* vertex = fullscreen_vertex->stage(0);
+    const vn::graphics::ShaderStage* vertex = fullscreen_vertex->stage(0);
     if (vertex->entryPoint != fragment->entryPoint)
     {
         // One entry point serves both stages of the pipeline, so a fragment stage whose entry is not the
@@ -172,13 +172,13 @@ namespace
 ///
 /// The ONE spelling of the mapping: buildMaterialFacts writes it, materialBlockAgreesWith reads it back, and
 /// a member added to the engine's mapping cannot reach one without the other.
-[[nodiscard]] vine::graphics::VineMaterialBlock blockOfMaterial(const vine::graphics::Material& material) noexcept
+[[nodiscard]] vn::graphics::VineMaterialBlock blockOfMaterial(const vn::graphics::Material& material) noexcept
 {
-    const vine::Colorf diffuse  = material.diffuse();
-    const vine::Colorf specular = material.specular();
-    const vine::Colorf ambient  = material.ambient();
+    const vn::Colorf diffuse  = material.diffuse();
+    const vn::Colorf specular = material.specular();
+    const vn::Colorf ambient  = material.ambient();
 
-    vine::graphics::VineMaterialBlock block{};  // its member defaults are the default material
+    vn::graphics::VineMaterialBlock block{};  // its member defaults are the default material
     block.diffuse   = { diffuse.r, diffuse.g, diffuse.b, diffuse.a };
     block.specular  = { specular.r, specular.g, specular.b, specular.a };
     block.ambient   = { ambient.r, ambient.g, ambient.b, ambient.a };
@@ -188,7 +188,7 @@ namespace
 
 }  // namespace
 
-FactMiss buildMaterialFacts(const vine::graphics::Material* material, std::uint64_t revision,
+FactMiss buildMaterialFacts(const vn::graphics::Material* material, std::uint64_t revision,
                             MaterialFacts& out, std::vector<std::byte>& storage)
 {
     // The block's MEMBERS are the payload, and `{}` is aggregate initialisation: it initialises the members
@@ -197,8 +197,8 @@ FactMiss buildMaterialFacts(const vine::graphics::Material* material, std::uint6
     // the ABI compares blocks with its own member-wise `operator==` (see materialBlockAgreesWith), and a
     // byte-level comparison of these bytes is not a meaningful operation (it would report "the material
     // changed" for a material that did not).
-    const vine::graphics::VineMaterialBlock block =
-        material != nullptr ? blockOfMaterial(*material) : vine::graphics::VineMaterialBlock{};
+    const vn::graphics::VineMaterialBlock block =
+        material != nullptr ? blockOfMaterial(*material) : vn::graphics::VineMaterialBlock{};
 
     storage.assign(sizeof(block), std::byte{ 0 });
     std::memcpy(storage.data(), &block, sizeof(block));
@@ -213,18 +213,18 @@ FactMiss buildMaterialFacts(const vine::graphics::Material* material, std::uint6
     return FactMiss::None;
 }
 
-bool materialBlockAgreesWith(const vine::graphics::Material& material, std::span<const std::byte> block) noexcept
+bool materialBlockAgreesWith(const vn::graphics::Material& material, std::span<const std::byte> block) noexcept
 {
-    if (block.size() != sizeof(vine::graphics::VineMaterialBlock))
+    if (block.size() != sizeof(vn::graphics::VineMaterialBlock))
     {
         return false;  // not a block this ABI wrote: never "the same"
     }
     // The bytes are copied into a VALUE first: the struct is 16-byte aligned (std140) and the row's storage
     // is a byte vector, so reading it in place would be an unaligned access; the comparison itself is the
     // ABI's own member-wise one, which ignores the padding both sides leave alone.
-    vine::graphics::VineMaterialBlock carried{};
+    vn::graphics::VineMaterialBlock carried{};
     std::memcpy(&carried, block.data(), sizeof(carried));
     return carried == blockOfMaterial(material);
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

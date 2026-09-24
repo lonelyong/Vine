@@ -1,6 +1,6 @@
-﻿v_add_library(MATH_TARGET_NAME Math)
+﻿vn_add_library(MATH_TARGET_NAME Math)
 
-target_link_libraries(${MATH_TARGET_NAME} PUBLIC vi::Global)
+target_link_libraries(${MATH_TARGET_NAME} PUBLIC vn::Global)
 
 # Enable LTO and emit link-time inline remarks.
 set_property(TARGET ${MATH_TARGET_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)

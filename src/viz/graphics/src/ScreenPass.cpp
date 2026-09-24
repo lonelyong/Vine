@@ -6,9 +6,9 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(ScreenPass, vine::graphics::RenderPass);
+VN_OBJECT_META_IMPL(ScreenPass, vn::graphics::RenderPass);
 
 ScreenPass::ScreenPass()
 {
@@ -79,4 +79,4 @@ void ScreenPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
     backend->drawScreenProgram(source_, program_.get(), camera());
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

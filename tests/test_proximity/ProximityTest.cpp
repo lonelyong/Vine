@@ -20,13 +20,13 @@
 namespace
 {
 
-using namespace vine::robotics::proximity;
+using namespace vn::robotics::proximity;
 
 /// Mock geometry backend; the real one is FCL-backed and skipped here.
 class MockGeometry : public CollisionGeometry
 {
   public:
-    bool buildFromShape(const vine::intrusive_ptr<const vine::geometry::Shape>& shape) override
+    bool buildFromShape(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) override
     {
         valid_ = shape != nullptr && shape->isValid();
         return valid_;
@@ -45,7 +45,7 @@ class MockGeometry : public CollisionGeometry
 class MockCollisionObject : public CollisionObject
 {
   public:
-    explicit MockCollisionObject(const vine::intrusive_ptr<CollisionGeometry>& geometry)
+    explicit MockCollisionObject(const vn::intrusive_ptr<CollisionGeometry>& geometry)
       : CollisionObject(geometry)
     {
     }
@@ -84,13 +84,13 @@ class MockDetector : public CollisionDetector
         return {};
     }
 
-    CollisionResult doCheckCollision(const CollisionRequest&, const vine::robotics::kinematics::State&) const override
+    CollisionResult doCheckCollision(const CollisionRequest&, const vn::robotics::kinematics::State&) const override
     {
         return {};
     }
 
     CollisionResult doCheckCollision(const CollisionDetector&, const CollisionRequest&,
-                                     const vine::robotics::kinematics::State&) const override
+                                     const vn::robotics::kinematics::State&) const override
     {
         return {};
     }
@@ -100,29 +100,29 @@ class MockDetector : public CollisionDetector
 class MockGeometryManager : public CollisionGeometryManager
 {
   public:
-    vine::intrusive_ptr<CollisionGeometry>
-        createCollisionGeometry(const vine::intrusive_ptr<const vine::geometry::Shape>& shape) const override
+    vn::intrusive_ptr<CollisionGeometry>
+        createCollisionGeometry(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const override
     {
-        vine::intrusive_ptr<CollisionGeometry> geometry(new MockGeometry());
+        vn::intrusive_ptr<CollisionGeometry> geometry(new MockGeometry());
         geometry->buildFromShape(shape);
         return geometry;
     }
 
-    vine::intrusive_ptr<CollisionObject>
-        createCollisionObject(const vine::intrusive_ptr<const vine::geometry::Shape>& shape) const override
+    vn::intrusive_ptr<CollisionObject>
+        createCollisionObject(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const override
     {
         const auto geometry = get(shape);
         if (geometry == nullptr) {
             return {};
         }
-        return vine::intrusive_ptr<CollisionObject>(new MockCollisionObject(geometry));
+        return vn::intrusive_ptr<CollisionObject>(new MockCollisionObject(geometry));
     }
 };
 
 /// Returns a fixed frame with a pure translation.
-vine::math::Isometry3d translated(const vine::math::Vec3d& offset)
+vn::math::Isometry3d translated(const vn::math::Vec3d& offset)
 {
-    vine::math::Isometry3d tf;
+    vn::math::Isometry3d tf;
     tf.postTranslate(offset);
     return tf;
 }
@@ -131,10 +131,10 @@ vine::math::Isometry3d translated(const vine::math::Vec3d& offset)
 
 TEST(CollisionPairTest, OrderIndependentEqualityAndHash)
 {
-    vine::robotics::kinematics::Frame a;
-    a.setName(vine::String(u8"a"));
-    vine::robotics::kinematics::Frame b;
-    b.setName(vine::String(u8"b"));
+    vn::robotics::kinematics::Frame a;
+    a.setName(vn::String(u8"a"));
+    vn::robotics::kinematics::Frame b;
+    b.setName(vn::String(u8"b"));
 
     const CollisionPair p1{ &a, &b };
     const CollisionPair p2{ &b, &a };
@@ -150,12 +150,12 @@ TEST(CollisionPairTest, OrderIndependentEqualityAndHash)
 TEST(CollisionMatrixTest, RegisterAndMinDistance)
 {
     CollisionMatrix                   matrix;
-    vine::robotics::kinematics::Frame a;
-    a.setName(vine::String(u8"a"));
-    vine::robotics::kinematics::Frame b;
-    b.setName(vine::String(u8"b"));
-    vine::robotics::kinematics::Frame c;
-    c.setName(vine::String(u8"c"));
+    vn::robotics::kinematics::Frame a;
+    a.setName(vn::String(u8"a"));
+    vn::robotics::kinematics::Frame b;
+    b.setName(vn::String(u8"b"));
+    vn::robotics::kinematics::Frame c;
+    c.setName(vn::String(u8"c"));
 
     matrix.registerObject(&a);
     matrix.registerObject(&b);
@@ -186,12 +186,12 @@ TEST(CollisionMatrixTest, RegisterAndMinDistance)
 TEST(CollisionMatrixTest, IgnoreAndShouldCheck)
 {
     CollisionMatrix                   matrix;
-    vine::robotics::kinematics::Frame a;
-    a.setName(vine::String(u8"a"));
-    vine::robotics::kinematics::Frame b;
-    b.setName(vine::String(u8"b"));
-    vine::robotics::kinematics::Frame c;
-    c.setName(vine::String(u8"c"));
+    vn::robotics::kinematics::Frame a;
+    a.setName(vn::String(u8"a"));
+    vn::robotics::kinematics::Frame b;
+    b.setName(vn::String(u8"b"));
+    vn::robotics::kinematics::Frame c;
+    c.setName(vn::String(u8"c"));
 
     matrix.registerObject(&a);
     matrix.registerObject(&b);
@@ -223,10 +223,10 @@ TEST(CollisionMatrixTest, CopyOptionsAndUnregister)
 {
     CollisionMatrix                   source;
     CollisionMatrix                   target;
-    vine::robotics::kinematics::Frame a;
-    a.setName(vine::String(u8"a"));
-    vine::robotics::kinematics::Frame b;
-    b.setName(vine::String(u8"b"));
+    vn::robotics::kinematics::Frame a;
+    a.setName(vn::String(u8"a"));
+    vn::robotics::kinematics::Frame b;
+    b.setName(vn::String(u8"b"));
 
     source.registerObject(&a);
     source.registerObject(&b);
@@ -263,10 +263,10 @@ TEST(CollisionResultTest, Basic)
     CollisionResult result;
     EXPECT_FALSE(result.hasCollision());
 
-    vine::robotics::kinematics::Frame a;
-    a.setName(vine::String(u8"a"));
-    vine::robotics::kinematics::Frame b;
-    b.setName(vine::String(u8"b"));
+    vn::robotics::kinematics::Frame a;
+    a.setName(vn::String(u8"a"));
+    vn::robotics::kinematics::Frame b;
+    b.setName(vn::String(u8"b"));
 
     result.pairs[CollisionPair{ &a, &b }].push_back(CollisionContact{});
     EXPECT_TRUE(result.hasCollision());
@@ -285,26 +285,26 @@ TEST(CollisionResultTest, Basic)
 TEST(ProximityTest, CollisionObjectWorldTransform)
 {
     // root --(offset)--> joint
-    vine::robotics::kinematics::Frame root;
-    root.setName(vine::String(u8"root"));
-    root.setFixedTransform(translated(vine::math::Vec3d(1.0, 0.0, 0.0)));
-    vine::robotics::kinematics::Frame joint;
-    joint.setName(vine::String(u8"joint"));
-    joint.setFixedTransform(translated(vine::math::Vec3d(0.0, 2.0, 0.0)));
+    vn::robotics::kinematics::Frame root;
+    root.setName(vn::String(u8"root"));
+    root.setFixedTransform(translated(vn::math::Vec3d(1.0, 0.0, 0.0)));
+    vn::robotics::kinematics::Frame joint;
+    joint.setName(vn::String(u8"joint"));
+    joint.setFixedTransform(translated(vn::math::Vec3d(0.0, 2.0, 0.0)));
     root.addChild(&joint);
 
-    vine::robotics::kinematics::State state;
+    vn::robotics::kinematics::State state;
     state.setup(&root);
 
-    vine::intrusive_ptr<CollisionGeometry> geometry(new MockGeometry());
-    geometry->buildFromShape(vine::intrusive_ptr<const vine::geometry::Shape>(new vine::geometry::Sphere(0.5)));
+    vn::intrusive_ptr<CollisionGeometry> geometry(new MockGeometry());
+    geometry->buildFromShape(vn::intrusive_ptr<const vn::geometry::Shape>(new vn::geometry::Sphere(0.5)));
 
-    vine::intrusive_ptr<CollisionObject> object(new MockCollisionObject(geometry));
+    vn::intrusive_ptr<CollisionObject> object(new MockCollisionObject(geometry));
     object->setFrame(&joint);
-    object->setLocalTransform(translated(vine::math::Vec3d(0.0, 0.0, 3.0)));
+    object->setLocalTransform(translated(vn::math::Vec3d(0.0, 0.0, 3.0)));
 
     object->computeWorldTransform(state);
-    const auto expected = vine::robotics::kinematics::Frame::frameInWorld(&joint, state)
+    const auto expected = vn::robotics::kinematics::Frame::frameInWorld(&joint, state)
                           * object->localTransform();
     EXPECT_EQ(object->worldTransform().translation.x, expected.translation.x);
     EXPECT_EQ(object->worldTransform().translation.y, expected.translation.y);
@@ -319,13 +319,13 @@ TEST(ProximityTest, CollisionObjectWorldTransform)
 TEST(ProximityTest, CollisionGeometryManager)
 {
     MockGeometryManager manager;
-    const auto          shape = vine::intrusive_ptr<const vine::geometry::Shape>(new vine::geometry::Sphere(1.0));
+    const auto          shape = vn::intrusive_ptr<const vn::geometry::Shape>(new vn::geometry::Sphere(1.0));
 
     EXPECT_TRUE(manager.add(shape));
     EXPECT_TRUE(manager.add(shape)); // cached
     EXPECT_NE(manager.get(shape), nullptr);
 
-    const auto missing = vine::intrusive_ptr<const vine::geometry::Shape>(new vine::geometry::Sphere(2.0));
+    const auto missing = vn::intrusive_ptr<const vn::geometry::Shape>(new vn::geometry::Sphere(2.0));
     EXPECT_EQ(manager.get(missing), nullptr);
 
     EXPECT_TRUE(manager.update(shape));
@@ -341,14 +341,14 @@ TEST(ProximityTest, CollisionGeometryManager)
 TEST(ProximityTest, DetectorBookkeeping)
 {
     MockDetector detector;
-    vine::robotics::kinematics::Frame owner;
-    owner.setName(vine::String(u8"owner"));
-    vine::robotics::kinematics::State state;
+    vn::robotics::kinematics::Frame owner;
+    owner.setName(vn::String(u8"owner"));
+    vn::robotics::kinematics::State state;
     state.setup(&owner);
 
-    vine::intrusive_ptr<CollisionGeometry> geometry(new MockGeometry());
-    geometry->buildFromShape(vine::intrusive_ptr<const vine::geometry::Shape>(new vine::geometry::Sphere(0.5)));
-    vine::intrusive_ptr<CollisionObject> object(new MockCollisionObject(geometry));
+    vn::intrusive_ptr<CollisionGeometry> geometry(new MockGeometry());
+    geometry->buildFromShape(vn::intrusive_ptr<const vn::geometry::Shape>(new vn::geometry::Sphere(0.5)));
+    vn::intrusive_ptr<CollisionObject> object(new MockCollisionObject(geometry));
     object->setFrame(&owner);
 
     detector.beginUpdate();

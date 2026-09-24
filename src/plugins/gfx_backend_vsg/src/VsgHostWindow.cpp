@@ -7,7 +7,7 @@
 
 #include <vine/logging/Log.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -39,7 +39,7 @@ VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
     // for it. The handle is part of it too, and it is the only way to tell which window to look at: a
     // reader that wants the pixels (scripts/xwin2ppm.py) has to name THIS window, because a Qt container
     // keeps the render area as a child and the parent's name matches several windows.
-    V_LOGI("[VsgHostWindow] attached to the host window 0x{:x} ({}x{}, mapped={})", hostHandleValue(_window),
+    VN_LOGI("[VsgHostWindow] attached to the host window 0x{:x} ({}x{}, mapped={})", hostHandleValue(_window),
            _extent2D.width, _extent2D.height, visible());
 }
 
@@ -114,7 +114,7 @@ bool VsgHostWindow::moveToHostSurface(void* native_handle)
     // The device, the render pass and every pipeline are still here: that is the point of the move, and the
     // log says so because it is otherwise invisible. The new handle goes in for the same reason the attach
     // line carries it: whoever reads the pixels has to follow the session to the window it moved to.
-    V_LOGI("[VsgHostWindow] moved to the host's new window 0x{:x} ({}x{}); the device and its pipelines were kept",
+    VN_LOGI("[VsgHostWindow] moved to the host's new window 0x{:x} ({}x{}); the device and its pipelines were kept",
            hostHandleValue(_window), _extent2D.width, _extent2D.height);
     return true;
 }
@@ -133,4 +133,4 @@ VsgHostWindow::~VsgHostWindow()
 
 } // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END

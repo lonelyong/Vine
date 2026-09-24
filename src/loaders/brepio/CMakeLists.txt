@@ -7,6 +7,6 @@
 # The STEP/IGES backend (OpenCASCADE) is NOT wired in yet: BrepLoader::load()
 # returns null and says so. When it lands it will be linked PRIVATE here, so
 # mesh-only consumers keep not paying for it.
-v_add_library(BREPIO_TARGET_NAME BrepIO)
+vn_add_library(BREPIO_TARGET_NAME BrepIO)
 
-target_link_libraries(${BREPIO_TARGET_NAME} PUBLIC vi::Runtime vi::Geometry vi::Crypto)
+target_link_libraries(${BREPIO_TARGET_NAME} PUBLIC vn::Runtime vn::Geometry vn::Crypto)

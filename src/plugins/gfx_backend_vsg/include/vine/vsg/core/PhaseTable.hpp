@@ -33,7 +33,7 @@
  * `[selftest] done` only when everything passed. Reusing the existing format is what lets a rewritten
  * backend be compared against the stored baseline byte for byte.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -93,4 +93,4 @@ class PhaseTable
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

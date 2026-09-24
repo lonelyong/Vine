@@ -7,7 +7,7 @@
 #include "Types.hpp"
 #include "Vector4.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief 4x4 matrix.
@@ -417,4 +417,4 @@ class Matrix4x4 {
 using Mat4f = Matrix4x4<float>;
 using Mat4d = Matrix4x4<double>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

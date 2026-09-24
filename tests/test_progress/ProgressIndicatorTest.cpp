@@ -7,9 +7,9 @@
 #include <vine/progress/ProgressRange.hpp>
 #include <vine/progress/ProgressScope.hpp>
 
-using vine::progress::ProgressIndicator;
-using vine::progress::ProgressRange;
-using vine::progress::ProgressScope;
+using vn::progress::ProgressIndicator;
+using vn::progress::ProgressRange;
+using vn::progress::ProgressScope;
 
 namespace
 {

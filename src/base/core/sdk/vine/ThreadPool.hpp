@@ -8,7 +8,7 @@
 #include <type_traits>
 #include <utility>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief A fixed-size thread pool that executes queued tasks concurrently.
@@ -20,7 +20,7 @@ V_CORE_NS_BEGIN
  *
  * Qt-free; relies only on the C++ standard library.
  */
-class V_CORE_API ThreadPool {
+class VN_CORE_API ThreadPool {
 
   public:
     /**
@@ -104,4 +104,4 @@ auto ThreadPool::enqueue(F&& f, Args&&... args) -> std::future<std::invoke_resul
     return result;
 }
 
-V_CORE_NS_END
+VN_CORE_NS_END

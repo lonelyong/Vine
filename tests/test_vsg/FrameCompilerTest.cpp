@@ -31,30 +31,30 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
 
-using vine::graphics::DepthMode;
-using vine::graphics::DiagnosticCategory;
-using vine::graphics::RenderCommand;
-using vine::graphics::RenderTarget;
-using vine::graphics::ShaderProgram;
-using vine::vsg::core::ClearPolicy;
-using vine::vsg::core::CompiledDraw;
-using vine::vsg::core::CompiledFrame;
-using vine::vsg::core::CompiledPass;
-using vine::vsg::core::CompiledShape;
-using vine::vsg::core::DepthFacts;
-using vine::vsg::core::Diagnostics;
-using vine::vsg::core::DrawKind;
-using vine::vsg::core::FrameArena;
-using vine::vsg::core::FrameCompiler;
-using vine::vsg::core::FrameFacts;
-using vine::vsg::core::FrameRecorder;
-using vine::vsg::core::FrameToken;
-using vine::vsg::core::Observe;
-using vine::vsg::core::RepairReason;
-using vine::vsg::core::statedShapeAgrees;
-using vine::vsg::core::TargetAction;
-using vine::vsg::core::TargetFacts;
-using vine::vsg::core::TargetShape;
+using vn::graphics::DepthMode;
+using vn::graphics::DiagnosticCategory;
+using vn::graphics::RenderCommand;
+using vn::graphics::RenderTarget;
+using vn::graphics::ShaderProgram;
+using vn::vsg::core::ClearPolicy;
+using vn::vsg::core::CompiledDraw;
+using vn::vsg::core::CompiledFrame;
+using vn::vsg::core::CompiledPass;
+using vn::vsg::core::CompiledShape;
+using vn::vsg::core::DepthFacts;
+using vn::vsg::core::Diagnostics;
+using vn::vsg::core::DrawKind;
+using vn::vsg::core::FrameArena;
+using vn::vsg::core::FrameCompiler;
+using vn::vsg::core::FrameFacts;
+using vn::vsg::core::FrameRecorder;
+using vn::vsg::core::FrameToken;
+using vn::vsg::core::Observe;
+using vn::vsg::core::RepairReason;
+using vn::vsg::core::statedShapeAgrees;
+using vn::vsg::core::TargetAction;
+using vn::vsg::core::TargetFacts;
+using vn::vsg::core::TargetShape;
 
 namespace
 {
@@ -116,13 +116,13 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     // depth test rejects the whole overlay. Taking the pass' TestAndWrite would make an overlay vanish on a
     // window and look fine on a colour-only target, which is the kind of difference no counter can report.
     Rig r;
-    vine::intrusive_ptr<RenderTarget> source(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> source(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
     r.addTarget(source.get(), 64, 64, true);
     r.addTarget(destination.get(), 64, 64, true);
 
     const std::vector<RenderCommand> commands = oneCommand();
-    vine::intrusive_ptr<vine::graphics::ShaderProgram> screen_program(new vine::graphics::ShaderProgram());
+    vn::intrusive_ptr<vn::graphics::ShaderProgram> screen_program(new vn::graphics::ShaderProgram());
 
     ASSERT_TRUE(r.recorder.beginFrame(FrameToken{ 1 }));
     ASSERT_TRUE(r.recorder.beginPass(1));
@@ -138,7 +138,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     r.recorder.setRenderTarget(source.get());
     // The producer pass announces a clear: "a pass that announced them and drew nothing" is still a pass (and a
     // pass with neither is not one - the plan drops it).
-    vine::vsg::core::ClearPolicy fill;
+    vn::vsg::core::ClearPolicy fill;
     fill.color          = true;
     fill.color_value[0] = 0.25F;
     fill.color_value[3] = 1.0F;
@@ -163,11 +163,11 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     EXPECT_EQ(screen.viewport.width, 16);
     EXPECT_EQ(screen.viewport.height, 32);
 
-    EXPECT_EQ(screen.dynamic.depth, vine::graphics::DepthMode::Disabled)
+    EXPECT_EQ(screen.dynamic.depth, vn::graphics::DepthMode::Disabled)
         << "a full-screen draw composites on top: the canonical triangle would be rejected at the far plane";
-    EXPECT_EQ(screen.dynamic.cull_mode, vine::graphics::CullMode::None) << "the screen ABI's legacy shape";
-    EXPECT_EQ(screen.dynamic.polygon_mode, vine::graphics::PolygonMode::Fill);
-    EXPECT_EQ(screen.dynamic.topology, vine::graphics::Topology::Triangles);
+    EXPECT_EQ(screen.dynamic.cull_mode, vn::graphics::CullMode::None) << "the screen ABI's legacy shape";
+    EXPECT_EQ(screen.dynamic.polygon_mode, vn::graphics::PolygonMode::Fill);
+    EXPECT_EQ(screen.dynamic.topology, vn::graphics::Topology::Triangles);
 
     const CompiledDraw& content = consumer.draws[1];
     EXPECT_EQ(content.kind, DrawKind::Content);
@@ -181,8 +181,8 @@ TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)
     // cannot keep for it: WHICH target each input reads, and how many colour textures it offers (the count a
     // sampled-input set binds). Both are answered here from the same facts the pass' own target came from.
     Rig r;
-    vine::intrusive_ptr<RenderTarget> source(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> source(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
     r.addTarget(source.get(), 64, 64, true, /*colors=*/2);
     r.addTarget(destination.get(), 64, 64, true);
 
@@ -220,8 +220,8 @@ TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)
 TEST(FrameCompilerTest, AnInputTheFactsCannotAnswerIsReportedAndOffersNothing)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> destination(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> stranger(new RenderTarget());  // never handed to the backend's facts
+    vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> stranger(new RenderTarget());  // never handed to the backend's facts
     r.addTarget(destination.get(), 64, 64, true);
 
     std::vector<RenderTarget*> inputs{ stranger.get() };
@@ -255,11 +255,11 @@ TEST(FrameCompilerTest, ThePlanResolvesAShadowFromWhatTheTargetStates)
     // map that is usable - declared LAST, so a resolution that stopped at the first sampleable depth would pick the
     // wrong one.
     Rig r;
-    vine::intrusive_ptr<RenderTarget> gbuffer(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> map_no_matrix(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> map_flat(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> map_ok(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> colour(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> gbuffer(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> map_no_matrix(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> map_flat(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> map_ok(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> colour(new RenderTarget());
     const void* const                 light = reinterpret_cast<const void*>(0x15U);
     r.addTarget(colour.get(), 64, 64, true);
 
@@ -275,7 +275,7 @@ TEST(FrameCompilerTest, ThePlanResolvesAShadowFromWhatTheTargetStates)
         entry.depth.promotion = promotion;
         entry.shadow.light = is_map ? light : nullptr;
         entry.shadow.has_view_projection = with_matrix;
-        entry.shadow.view_projection     = with_matrix ? vine::math::Mat4d{} : vine::math::Mat4d{};
+        entry.shadow.view_projection     = with_matrix ? vn::math::Mat4d{} : vn::math::Mat4d{};
         r.facts.push_back(entry);
     };
     depth_target(gbuffer.get(), /*promotion*/ true, /*is_map*/ false,
@@ -324,7 +324,7 @@ TEST(FrameCompilerTest, ThePlanResolvesAShadowFromWhatTheTargetStates)
 TEST(FrameCompilerTest, AViewportNobodyAnnouncedBecomesTheWholeTarget)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 640, 360, true);
 
     const std::vector<RenderCommand> commands = oneCommand();
@@ -353,7 +353,7 @@ TEST(FrameCompilerTest, AViewportNobodyAnnouncedBecomesTheWholeTarget)
 TEST(FrameCompilerTest, TheFirstWriterOfAFreshTargetBootstrapsAndTheSecondDoesNot)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, /*built=*/false);  // freshly laid out: nothing to load
 
     const std::vector<RenderCommand> commands = oneCommand();
@@ -381,7 +381,7 @@ TEST(FrameCompilerTest, TheFirstWriterOfAFreshTargetBootstrapsAndTheSecondDoesNo
 TEST(FrameCompilerTest, ASteadyTargetNeedsNoBootstrap)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, /*built=*/true);
 
     const std::vector<RenderCommand> commands = oneCommand();
@@ -403,9 +403,9 @@ TEST(FrameCompilerTest, ASteadyTargetNeedsNoBootstrap)
 TEST(FrameCompilerTest, TheTargetTableSaysWhatEachTargetNeeds)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> steady(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> resized(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> reshaped(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> steady(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> resized(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> reshaped(new RenderTarget());
 
     r.addTarget(steady.get(), 64, 64, true);
     r.addTarget(resized.get(), 64, 64, true);
@@ -439,7 +439,7 @@ TEST(FrameCompilerTest, TheTargetTableSaysWhatEachTargetNeeds)
 TEST(FrameCompilerTest, APassIntoATargetWhoseExtentIsNotUsableIsNotCompiledAndNotABug)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 0, 0, /*built=*/false);  // laid out at 0x0: nothing may be drawn into it yet
 
     const std::vector<RenderCommand> commands = oneCommand();
@@ -477,7 +477,7 @@ TEST(FrameCompilerTest, APassDrawingIntoAnUnknownTargetIsNotCompiledAndIsReporte
 TEST(FrameCompilerTest, ThePassDepthAppliesOnlyWhereTheContentAuthoredNone)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
 
     // A command that authored its own depth state (a StateNode set it) and one that did not.
@@ -510,11 +510,11 @@ TEST(FrameCompilerTest, ThePassDepthAppliesOnlyWhereTheContentAuthoredNone)
 TEST(FrameCompilerTest, ACommandWithoutAProgramGetsTheFramesDefault)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
 
-    const vine::intrusive_ptr<ShaderProgram> fallback(new ShaderProgram());
-    const vine::intrusive_ptr<ShaderProgram> own(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> fallback(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> own(new ShaderProgram());
     ASSERT_TRUE(r.recorder.setDefaultContentProgram(fallback.get()));
 
     RenderCommand with_own;
@@ -540,8 +540,8 @@ TEST(FrameCompilerTest, ACommandWithoutAProgramGetsTheFramesDefault)
 TEST(FrameCompilerTest, WhatAPassReadsDecidesWhenItRunsNotWhenItWasAnnounced)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> produced(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> composed(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> produced(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> composed(new RenderTarget());
     r.addTarget(produced.get(), 64, 64, true);
     r.addTarget(composed.get(), 64, 64, true);
 
@@ -578,9 +578,9 @@ TEST(FrameCompilerTest, WhatAPassReadsDecidesWhenItRunsNotWhenItWasAnnounced)
 TEST(FrameCompilerTest, ACycleIsSkippedTheFrameStillRunsAndTheCounterMoves)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> left(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> right(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> plain(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> left(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> right(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> plain(new RenderTarget());
     r.addTarget(left.get(), 64, 64, true);
     r.addTarget(right.get(), 64, 64, true);
     r.addTarget(plain.get(), 64, 64, true);
@@ -626,7 +626,7 @@ TEST(FrameCompilerTest, ACycleIsSkippedTheFrameStillRunsAndTheCounterMoves)
 TEST(FrameCompilerTest, APreservedDepthIsCarriedToThePassThatMustNotClearIt)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
     r.facts[0].depth.has_depth               = true;
     r.facts[0].depth.promotion                = true;   // the host wanted a sampleable depth
@@ -651,7 +651,7 @@ TEST(FrameCompilerTest, APreservedDepthIsCarriedToThePassThatMustNotClearIt)
 TEST(FrameCompilerTest, ThePlanCarriesWhatAPipelineIdentityNeedsFromThePass)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
 
     // A two-colour-attachment target whose depth the host wants to sample.
@@ -688,7 +688,7 @@ TEST(FrameCompilerTest, ThePlanCarriesWhatAPipelineIdentityNeedsFromThePass)
 TEST(FrameCompilerTest, ThePlanCarriesTheShapeItsFactsStated)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
     r.facts[0].wanted.shape.depth_format         = RenderTarget::DepthFormat::D32F;
     r.facts[0].wanted.shape.device_color_formats = { 44U };  // the layer compares these, never interprets them
@@ -793,11 +793,11 @@ TEST(FrameCompilerTest, AStatedShapeIsComparedOnlyWhereItStatesSomething)
 TEST(FrameCompilerTest, TheFrameCarriesWhatTheRecorderSnapshottedWithoutReworkingIt)
 {
     Rig r;
-    vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 32, 32, true);
 
-    auto                       sun      = vine::graphics::Light::createDirectional(vine::math::Vec3d(0.0, 0.0, -1.0));
-    std::vector<const vine::graphics::Light*> lights{ sun.get() };
+    auto                       sun      = vn::graphics::Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    std::vector<const vn::graphics::Light*> lights{ sun.get() };
     const std::vector<RenderCommand> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });

@@ -3,17 +3,17 @@
 #include <cstddef>
 #include <string>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
 namespace
 {
 
-/// @brief Builds a `vine::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
-vine::String asString(const std::string& text)
+/// @brief Builds a `vn::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
+vn::String asString(const std::string& text)
 {
-    return vine::String(reinterpret_cast<const char8_t*>(text.c_str()));
+    return vn::String(reinterpret_cast<const char8_t*>(text.c_str()));
 }
 
 /// @brief Names one call in the sentence a refusal produces.
@@ -42,7 +42,7 @@ const char* callName(CallKind kind) noexcept
 }
 
 /// @brief Pairs a borrowed program with the revision it is at.
-ProgramRef programRef(const vine::graphics::ShaderProgram* program) noexcept
+ProgramRef programRef(const vn::graphics::ShaderProgram* program) noexcept
 {
     ProgramRef ref;
     if (program != nullptr)
@@ -151,7 +151,7 @@ bool FrameRecorder::beginPass(PassId pass)
     pass_target_            = nullptr;
     pass_has_clear_         = false;
     pass_clear_             = ClearPolicy{};
-    pass_depth_             = vine::graphics::DepthMode::TestAndWrite;
+    pass_depth_             = vn::graphics::DepthMode::TestAndWrite;
     pass_inputs_            = {};
     pending_has_viewport_   = false;
     pending_viewport_       = {};
@@ -251,7 +251,7 @@ bool FrameRecorder::setViewport(int x, int y, int width, int height)
         return false;
     }
     pending_has_viewport_ = true;
-    pending_viewport_     = vine::graphics::Viewport{ x, y, width, height };
+    pending_viewport_     = vn::graphics::Viewport{ x, y, width, height };
     return true;
 }
 
@@ -271,7 +271,7 @@ bool FrameRecorder::setClearPolicy(const ClearPolicy& policy)
     return true;
 }
 
-bool FrameRecorder::setDepthMode(vine::graphics::DepthMode mode)
+bool FrameRecorder::setDepthMode(vn::graphics::DepthMode mode)
 {
     const Decision decision = protocol_.onCall(CallKind::SetScopeAttribute);
     if (decision.verdict != Verdict::Allow)
@@ -286,7 +286,7 @@ bool FrameRecorder::setDepthMode(vine::graphics::DepthMode mode)
     return true;
 }
 
-bool FrameRecorder::setPassInputs(std::span<const vine::graphics::RenderTarget* const> inputs)
+bool FrameRecorder::setPassInputs(std::span<const vn::graphics::RenderTarget* const> inputs)
 {
     const Decision decision = protocol_.onCall(CallKind::SetScopeAttribute);
     if (decision.verdict != Verdict::Allow)
@@ -309,7 +309,7 @@ bool FrameRecorder::setPassInputs(std::span<const vine::graphics::RenderTarget* 
     return true;
 }
 
-bool FrameRecorder::setLights(std::span<const vine::graphics::Light* const> lights)
+bool FrameRecorder::setLights(std::span<const vn::graphics::Light* const> lights)
 {
     const Decision decision = protocol_.onCall(CallKind::SetScopeAttribute);
     if (decision.verdict != Verdict::Allow)
@@ -324,8 +324,8 @@ bool FrameRecorder::setLights(std::span<const vine::graphics::Light* const> ligh
     return true;
 }
 
-bool FrameRecorder::render(std::span<const vine::graphics::RenderCommand> commands,
-                           const vine::graphics::Camera*                    camera)
+bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands,
+                           const vn::graphics::Camera*                    camera)
 {
     const Decision decision = protocol_.onCall(CallKind::Draw);
     if (decision.verdict != Verdict::Allow)
@@ -356,8 +356,8 @@ bool FrameRecorder::render(std::span<const vine::graphics::RenderCommand> comman
     return true;
 }
 
-bool FrameRecorder::drawScreenProgram(const void* source, const vine::graphics::ShaderProgram* program,
-                                      const vine::graphics::Camera* camera)
+bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program,
+                                      const vn::graphics::Camera* camera)
 {
     const Decision decision = protocol_.onCall(CallKind::Draw);
     if (decision.verdict != Verdict::Allow)
@@ -387,7 +387,7 @@ bool FrameRecorder::drawScreenProgram(const void* source, const vine::graphics::
     return true;
 }
 
-bool FrameRecorder::setDefaultContentProgram(const vine::graphics::ShaderProgram* program)
+bool FrameRecorder::setDefaultContentProgram(const vn::graphics::ShaderProgram* program)
 {
     // Frame-level, and legal in every state - there is no question for the protocol to answer here (see
     // the file note). The setting outlives the frame it was made in, so it is kept next to the token.
@@ -478,16 +478,16 @@ void FrameRecorder::reportRefusal(CallKind kind)
         }
     }
 
-    diagnostics_.report(vine::graphics::DiagnosticSeverity::Error,
-                        vine::graphics::DiagnosticCategory::PassProtocolViolation, asString(message));
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Error,
+                        vn::graphics::DiagnosticCategory::PassProtocolViolation, asString(message));
 }
 
-void FrameRecorder::snapshotLights(std::span<const vine::graphics::Light* const> lights)
+void FrameRecorder::snapshotLights(std::span<const vn::graphics::Light* const> lights)
 {
     const std::span<LightRef> copy = arena_.makeArray<LightRef>(lights.size());
     for (std::size_t i = 0; i < lights.size(); ++i)
     {
-        const vine::graphics::Light* light = lights[i];
+        const vn::graphics::Light* light = lights[i];
         if (light == nullptr)
         {
             continue;  // a null entry stays the default "disabled" light: the array keeps its positions
@@ -510,12 +510,12 @@ void FrameRecorder::snapshotLights(std::span<const vine::graphics::Light* const>
 }
 
 std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
-    std::span<const vine::graphics::RenderCommand> commands)
+    std::span<const vn::graphics::RenderCommand> commands)
 {
     const std::span<CollectedCommand> copy = arena_.makeArray<CollectedCommand>(commands.size());
     for (std::size_t i = 0; i < commands.size(); ++i)
     {
-        const vine::graphics::RenderCommand& source = commands[i];
+        const vn::graphics::RenderCommand& source = commands[i];
         CollectedCommand&                    target = copy[i];
 
         target.geometry          = source.geometry.get();
@@ -530,7 +530,7 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
     return copy;
 }
 
-CameraSnapshot FrameRecorder::snapshotCamera(const vine::graphics::Camera* camera)
+CameraSnapshot FrameRecorder::snapshotCamera(const vn::graphics::Camera* camera)
 {
     CameraSnapshot snapshot;
     if (camera == nullptr)
@@ -548,4 +548,4 @@ CameraSnapshot FrameRecorder::snapshotCamera(const vine::graphics::Camera* camer
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

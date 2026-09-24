@@ -38,8 +38,8 @@
 ```cpp
 enum class LightType { Ambient, Directional, Point, Spot };   // 本期只做 Ambient/Directional
 
-class V_GRAPHICS_API Light : public Object, public RefCounted<Light> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
+    VN_OBJECT_META_DECL;
   public:
     Light();                                  // 默认 Ambient? 用显式工厂更清晰
     static intrusive_ptr<Light> createAmbient();
@@ -183,7 +183,7 @@ vsg 侧实现要点（决策 #4，需小幅重构主视图的创建方式）：
   `RenderBackend::setLights`（默认 no-op，`RenderPass::execute` 在 render() 前从内容 scene 传光）；
   vsg 主视图手工化（拿 View 句柄挂/换光根）+ 默认光回退（scene 无光沿用现状默认）；
   demo 给 engine scene 配 1 ambient + 1 directional 验证主/离屏同源。
-- **v4a 已实现（lavapipe 实测）**：新增 `vine::graphics::Light`（Ambient/Directional，Colorf 色 + intensity）；
+- **v4a 已实现（lavapipe 实测）**：新增 `vn::graphics::Light`（Ambient/Directional，Colorf 色 + intensity）；
   `Scene::addLight/removeLight/clearLights/lights/hasLights`；`RenderBackend::setLights`（no-op 默认）由
   `RenderPass::execute` 在 render() 前把内容 scene 的光下发；vsg：主视图改手工构建（`RenderGraph::create
   (window, main_view)` + `main_light_group`(默认 createHeadlight) + vsg_scene），`VsgRenderer::setLights`

@@ -54,7 +54,7 @@
  * goes into the RIGHT pass, and that content for a pass the frame does not contain is reported instead of
  * vanishing.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /**
  * @brief The content of one pass, as the layer that owns the content world recorded it.
@@ -73,7 +73,7 @@ struct PassContent
 /**
  * @brief The execution stage (see the file note for what it decides, which is nothing).
  */
-class V_VSG_API VsgExecutor
+class VN_VSG_API VsgExecutor
 {
   public:
     /** @brief Creates an executor reporting what it cannot serve through @p diagnostics.
@@ -385,4 +385,4 @@ class V_VSG_API VsgExecutor
     std::uint64_t             skipped_{0};   ///< Passes not recorded this frame.
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

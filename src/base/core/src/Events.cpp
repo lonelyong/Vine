@@ -1,7 +1,7 @@
 ﻿#include <vine/Events.hpp>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
-V_OBJECT_META_IMPL(EventArgs, Object)
+VN_OBJECT_META_IMPL(EventArgs, Object)
 
-V_CORE_NS_END
+VN_CORE_NS_END

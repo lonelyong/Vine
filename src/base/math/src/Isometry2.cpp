@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 template <typename T>
 Isometry2<T> Isometry2<T>::inverted() const
@@ -110,11 +110,11 @@ Vector2<T> operator*(const Isometry2<T>& t, const Vector2<T>& v)
                       s * v.x + c * v.y);
 }
 
-template class V_MATH_API Isometry2<float>;
-template class V_MATH_API Isometry2<double>;
-template V_MATH_API Point2<float> operator*(const Isometry2<float>&, const Point2<float>&);
-template V_MATH_API Point2<double> operator*(const Isometry2<double>&, const Point2<double>&);
-template V_MATH_API Vector2<float> operator*(const Isometry2<float>&, const Vector2<float>&);
-template V_MATH_API Vector2<double> operator*(const Isometry2<double>&, const Vector2<double>&);
+template class VN_MATH_API Isometry2<float>;
+template class VN_MATH_API Isometry2<double>;
+template VN_MATH_API Point2<float> operator*(const Isometry2<float>&, const Point2<float>&);
+template VN_MATH_API Point2<double> operator*(const Isometry2<double>&, const Point2<double>&);
+template VN_MATH_API Vector2<float> operator*(const Isometry2<float>&, const Vector2<float>&);
+template VN_MATH_API Vector2<double> operator*(const Isometry2<double>&, const Vector2<double>&);
 
-V_MATH_NS_END
+VN_MATH_NS_END

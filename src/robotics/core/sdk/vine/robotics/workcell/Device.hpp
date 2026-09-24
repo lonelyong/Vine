@@ -20,7 +20,7 @@
 #include "Link.hpp"
 #include "SceneObject.hpp"
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 /**
  * @brief Kind of a device.
@@ -62,7 +62,7 @@ enum class LengthUnit
  * fields (timestamps, length unit, default IK solver) are carried here so
  * the IO layer can round-trip them.
  */
-struct V_ROBOTICS_CORE_API DeviceMetadata
+struct VN_ROBOTICS_CORE_API DeviceMetadata
 {
     // 身份信息
     String id;
@@ -89,12 +89,12 @@ struct V_ROBOTICS_CORE_API DeviceMetadata
  * Visuals reference device materials by name; the material object is shared
  * between the library and the referencing visuals.
  */
-struct V_ROBOTICS_CORE_API DeviceMaterial
+struct VN_ROBOTICS_CORE_API DeviceMaterial
 {
     /// Material name (unique within a device).
     String name;
     /// The material object.
-    vine::intrusive_ptr<vine::geometry::Material> material;
+    vn::intrusive_ptr<vn::geometry::Material> material;
 };
 
 /**
@@ -108,7 +108,7 @@ struct V_ROBOTICS_CORE_API DeviceMaterial
  * Supports clone() for deep-copying the definition (e.g. one builder snapshot
  * per build()). Owns links and joints with unique ownership.
  */
-struct V_ROBOTICS_CORE_API DeviceData
+struct VN_ROBOTICS_CORE_API DeviceData
 {
     DeviceMetadata                                  metadata;
     DeviceKind                                      kind{ DeviceKind::Other };
@@ -165,7 +165,7 @@ struct V_ROBOTICS_CORE_API DeviceData
  *    the same Workcell and must outlive its children (the Workcell detaches
  *    children when a device is removed).
  */
-class V_ROBOTICS_CORE_API Device : public SceneObject
+class VN_ROBOTICS_CORE_API Device : public SceneObject
 {
   protected:
     /**
@@ -405,4 +405,4 @@ class V_ROBOTICS_CORE_API Device : public SceneObject
     bool                                    is_valid_{ false };
 };
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

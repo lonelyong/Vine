@@ -7,7 +7,7 @@
 #include "RigidBody.hpp"
 #include "SceneObject.hpp"
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 /**
  * @brief A standalone rigid body placed in the workcell (table, part, fence,
@@ -17,7 +17,7 @@ V_ROBOTICS_WORKCELL_NS_BEGIN
  * joints, no degrees of freedom, no kinematics. Its geometry (visuals +
  * collisions + frames) is carried by an embedded RigidBody.
  */
-class V_ROBOTICS_CORE_API RigidObject : public SceneObject
+class VN_ROBOTICS_CORE_API RigidObject : public SceneObject
 {
   public:
     /**
@@ -64,4 +64,4 @@ class V_ROBOTICS_CORE_API RigidObject : public SceneObject
     RigidBody body_;
 };
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

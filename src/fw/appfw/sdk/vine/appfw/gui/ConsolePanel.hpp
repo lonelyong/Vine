@@ -9,7 +9,7 @@
 
 class QWidget;
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief A command candidate offered by the console completion popup.
@@ -32,8 +32,8 @@ struct ConsoleCommandEntry {
  * offers up/down history and Tab completion, and reports Enter/Escape through
  * signals. It knows nothing about commands or business logic.
  */
-class V_APPFW_API ConsolePanel : public Control {
-    V_OBJECT_META_DECL
+class VN_APPFW_API ConsolePanel : public Control {
+    VN_OBJECT_META_DECL
 
   public:
     explicit ConsolePanel(QWidget* parent = nullptr);
@@ -78,10 +78,10 @@ class V_APPFW_API ConsolePanel : public Control {
     const ConsoleTheme& theme() const;
 
     /// Fired when the user submits a line (Enter).
-    vine::Signal<const String&> lineEntered;
+    vn::Signal<const String&> lineEntered;
 
     /// Fired when the user presses Escape.
-    vine::Signal<> escapePressed;
+    vn::Signal<> escapePressed;
 
   private:
     /// Applies the ConsoleTheme matching the current application theme.
@@ -92,4 +92,4 @@ class V_APPFW_API ConsolePanel : public Control {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

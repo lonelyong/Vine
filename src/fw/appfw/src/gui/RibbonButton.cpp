@@ -13,7 +13,7 @@
 
 #include "ControlData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace
 {
@@ -44,7 +44,7 @@ RibbonButtonStyle fromQtStyle(Qt::ToolButtonStyle s)
 
 } // namespace
 
-V_OBJECT_META_IMPL(RibbonButton, Control)
+VN_OBJECT_META_IMPL(RibbonButton, Control)
 
 struct RibbonButton::Impl : public ControlData {
     void*          user       = nullptr;
@@ -456,4 +456,4 @@ inline auto RibbonButton::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

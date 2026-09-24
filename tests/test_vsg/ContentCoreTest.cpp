@@ -28,15 +28,15 @@
 #include <vine/vsg/core/MaterialArena.hpp>
 #include <vine/vsg/core/Streams.hpp>
 
-using vine::vsg::core::FrameRing;
-using vine::vsg::core::GeometryAction;
-using vine::vsg::core::GeometryPlan;
-using vine::vsg::core::GeometrySnapshot;
-using vine::vsg::core::GeometryStreams;
-using vine::vsg::core::MaterialArena;
-using vine::vsg::core::SharedStreams;
-using vine::vsg::core::StreamKey;
-using vine::vsg::core::StreamKind;
+using vn::vsg::core::FrameRing;
+using vn::vsg::core::GeometryAction;
+using vn::vsg::core::GeometryPlan;
+using vn::vsg::core::GeometrySnapshot;
+using vn::vsg::core::GeometryStreams;
+using vn::vsg::core::MaterialArena;
+using vn::vsg::core::SharedStreams;
+using vn::vsg::core::StreamKey;
+using vn::vsg::core::StreamKind;
 
 namespace
 {
@@ -97,15 +97,15 @@ TEST(CoreStreamsTest, StreamIdentityIsTheSliceAndTheRevision)
     const StreamKey filled = vertexKey(0, 3, &buffer_a, 8, 0, 12);    // refilled: the revision moved
     const StreamKey other  = vertexKey(0, 3, &buffer_b, 7, 0, 12);
 
-    EXPECT_TRUE(vine::vsg::core::sameStream(first, again)) << "the same slice at the same revision is one stream";
-    EXPECT_FALSE(vine::vsg::core::sameStream(first, moved)) << "two segments of one buffer are two streams";
-    EXPECT_FALSE(vine::vsg::core::sameStream(first, filled)) << "a refilled buffer is a new stream, not a stale one";
-    EXPECT_FALSE(vine::vsg::core::sameStream(first, other));
+    EXPECT_TRUE(vn::vsg::core::sameStream(first, again)) << "the same slice at the same revision is one stream";
+    EXPECT_FALSE(vn::vsg::core::sameStream(first, moved)) << "two segments of one buffer are two streams";
+    EXPECT_FALSE(vn::vsg::core::sameStream(first, filled)) << "a refilled buffer is a new stream, not a stale one";
+    EXPECT_FALSE(vn::vsg::core::sameStream(first, other));
 
     // A slice that moved is still the same SHAPE: that is what decides refresh instead of rebuild.
-    EXPECT_TRUE(vine::vsg::core::sameShape(first, moved));
-    EXPECT_TRUE(vine::vsg::core::sameShape(first, filled));
-    EXPECT_FALSE(vine::vsg::core::sameShape(first, vertexKey(0, 4, &buffer_a, 7, 0, 12)))
+    EXPECT_TRUE(vn::vsg::core::sameShape(first, moved));
+    EXPECT_TRUE(vn::vsg::core::sameShape(first, filled));
+    EXPECT_FALSE(vn::vsg::core::sameShape(first, vertexKey(0, 4, &buffer_a, 7, 0, 12)))
         << "a different component count is a different layout, not a different buffer";
 
     // A derived channel has no buffer to alias, which is exactly what makes it unshareable.
@@ -118,7 +118,7 @@ TEST(CoreStreamsTest, StreamIdentityIsTheSliceAndTheRevision)
 TEST(CoreStreamsTest, NothingBuiltYetIsARebuildThatMayShareUploads)
 {
     const GeometrySnapshot now = snapshotOf(reinterpret_cast<const void*>(1), 1, reinterpret_cast<const void*>(2), 1, 1);
-    const GeometryPlan     plan = vine::vsg::core::planGeometry({}, now);
+    const GeometryPlan     plan = vn::vsg::core::planGeometry({}, now);
 
     EXPECT_EQ(plan.action, GeometryAction::Rebuild);
     EXPECT_TRUE(plan.shared_uploads_allowed) << "every stream is new, so a shared upload may serve it";
@@ -134,17 +134,17 @@ TEST(CoreStreamsTest, AShapeChangeRebuildsWhateverMoved)
     // A channel's component count changed: the node's layout is different, so nothing about it can be reused.
     GeometrySnapshot components_changed = built;
     components_changed.streams.channels[0].components = 4;
-    EXPECT_EQ(vine::vsg::core::planGeometry(built, components_changed).action, GeometryAction::Rebuild);
+    EXPECT_EQ(vn::vsg::core::planGeometry(built, components_changed).action, GeometryAction::Rebuild);
 
     // A channel disappeared.
     GeometrySnapshot channel_removed = built;
     channel_removed.streams.channels.pop_back();
-    EXPECT_EQ(vine::vsg::core::planGeometry(built, channel_removed).action, GeometryAction::Rebuild);
+    EXPECT_EQ(vn::vsg::core::planGeometry(built, channel_removed).action, GeometryAction::Rebuild);
 
     // The geometry became indexed (or stopped being): an unindexed draw is assembled differently.
     GeometrySnapshot index_removed = built;
     index_removed.streams.index.reset();
-    EXPECT_EQ(vine::vsg::core::planGeometry(built, index_removed).action, GeometryAction::Rebuild);
+    EXPECT_EQ(vn::vsg::core::planGeometry(built, index_removed).action, GeometryAction::Rebuild);
 }
 
 TEST(CoreStreamsTest, OnlyTheStreamsThatMovedAreRefreshed)
@@ -156,7 +156,7 @@ TEST(CoreStreamsTest, OnlyTheStreamsThatMovedAreRefreshed)
     // The positions were refilled (same slice, new revision): one channel is re-pointed, nothing else.
     GeometrySnapshot positions_refilled = built;
     positions_refilled.streams.channels[0].revision = 2;
-    const GeometryPlan one_channel = vine::vsg::core::planGeometry(built, positions_refilled);
+    const GeometryPlan one_channel = vn::vsg::core::planGeometry(built, positions_refilled);
     EXPECT_EQ(one_channel.action, GeometryAction::Refresh);
     ASSERT_EQ(one_channel.refreshed_locations.size(), 1U);
     EXPECT_EQ(one_channel.refreshed_locations[0], 0U);
@@ -167,7 +167,7 @@ TEST(CoreStreamsTest, OnlyTheStreamsThatMovedAreRefreshed)
     GeometrySnapshot index_swapped = built;
     index_swapped.streams.index->buffer   = reinterpret_cast<const void*>(3);
     index_swapped.streams.index->revision = 2;
-    const GeometryPlan index_only = vine::vsg::core::planGeometry(built, index_swapped);
+    const GeometryPlan index_only = vn::vsg::core::planGeometry(built, index_swapped);
     EXPECT_EQ(index_only.action, GeometryAction::Refresh);
     EXPECT_TRUE(index_only.refreshed_locations.empty()) << "no channel moved";
     EXPECT_TRUE(index_only.index_refreshed);
@@ -183,7 +183,7 @@ TEST(CoreStreamsTest, TheIndexSpanIsPartOfTheDrawAndOnlyARebuildRewritesIt)
     span_moved.streams.index->offset = 36;  // an index arena's next geometry
     span_moved.streams.index->count  = 12;
     span_moved.streams.index->buffer = reinterpret_cast<const void*>(3);
-    const GeometryPlan plan = vine::vsg::core::planGeometry(built, span_moved);
+    const GeometryPlan plan = vn::vsg::core::planGeometry(built, span_moved);
     EXPECT_EQ(plan.action, GeometryAction::Rebuild)
         << "the assembled node states first index and count; a different span is a different draw";
 }
@@ -195,7 +195,7 @@ TEST(CoreStreamsTest, AnUnexplainedRevisionRebuildsAndRefusesSharedUploads)
     const GeometrySnapshot built    = snapshotOf(vertex_buffer, 1, index_buffer, 1, 1);
     const GeometrySnapshot edited   = snapshotOf(vertex_buffer, 1, index_buffer, 1, 2);
 
-    const GeometryPlan plan = vine::vsg::core::planGeometry(built, edited);
+    const GeometryPlan plan = vn::vsg::core::planGeometry(built, edited);
     EXPECT_EQ(plan.action, GeometryAction::Rebuild)
         << "the model says its data changed while every stream still reads the same bytes";
     EXPECT_FALSE(plan.shared_uploads_allowed)
@@ -210,7 +210,7 @@ TEST(CoreStreamsTest, AnUnchangedModelDoesNothing)
     const GeometrySnapshot built    = snapshotOf(vertex_buffer, 1, index_buffer, 1, 1);
     const GeometrySnapshot same     = snapshotOf(vertex_buffer, 1, index_buffer, 1, 1);
 
-    const GeometryPlan plan = vine::vsg::core::planGeometry(built, same);
+    const GeometryPlan plan = vn::vsg::core::planGeometry(built, same);
     EXPECT_EQ(plan.action, GeometryAction::None);
     EXPECT_TRUE(plan.refreshed_locations.empty());
     EXPECT_FALSE(plan.index_refreshed);

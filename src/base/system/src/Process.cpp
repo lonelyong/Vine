@@ -20,7 +20,7 @@
 #    include <unistd.h>
 #endif
 
-V_SYSTEM_NS_BEGIN
+VN_SYSTEM_NS_BEGIN
 
 int Process::currentProcessId()
 {
@@ -185,4 +185,4 @@ bool Process::kill(int pid)
 #endif
 }
 
-V_SYSTEM_NS_END
+VN_SYSTEM_NS_END

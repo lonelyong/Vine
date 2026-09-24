@@ -9,7 +9,7 @@
 
 #include "RenderTarget.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief The identity of ONE image the pipeline hands from one pass to another: a target plus WHICH
@@ -48,8 +48,8 @@ V_GRAPHICS_NS_BEGIN
  *     that its owner already dropped.
  *   * A LABEL, for diagnostics only. It is never a lookup key — that is what this object replaces.
  */
-class V_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef> {
+    VN_OBJECT_META_DECL;
 
   public:
     /** @brief Which attachment of the target the image is.
@@ -130,4 +130,4 @@ class V_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef> {
     int                         attachment_ = 0;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

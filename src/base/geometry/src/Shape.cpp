@@ -1,8 +1,8 @@
 ﻿#include <vine/geometry/Shape.hpp>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-V_OBJECT_META_IMPL(Shape, vine::Object)
+VN_OBJECT_META_IMPL(Shape, vn::Object)
 
 Shape::Shape()
 {}
@@ -49,4 +49,4 @@ ShapeKind Shape::shapeKind() const
     }
 }
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

@@ -5,9 +5,9 @@
 
 #include "Group.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-using vine::math::Mat4d;
+using vn::math::Mat4d;
 
 /**
  * @brief Scene-graph node placing its subtree with a local transform.
@@ -21,8 +21,8 @@ using vine::math::Mat4d;
  * world-space bounding box is inherited from Group (children already answer
  * in world space, including this matrix).
  */
-class V_GRAPHICS_API MatrixTransform : public Group {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API MatrixTransform : public Group {
+    VN_OBJECT_META_DECL;
 
   public:
     MatrixTransform();
@@ -48,5 +48,5 @@ class V_GRAPHICS_API MatrixTransform : public Group {
 
 using MatrixTransformPtr = intrusive_ptr<MatrixTransform>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END
 

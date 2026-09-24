@@ -28,7 +28,7 @@
  * public API, so it is probed once at session start and passed in here - `retirePoint()` is why the
  * number is needed: a parked object must outlive the slot that recorded it, hence slots + 1.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -124,4 +124,4 @@ class FrameTimeline
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -1,7 +1,7 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief A rectangular draw region in device pixels (top-left origin).
@@ -12,7 +12,7 @@ V_GRAPHICS_NS_BEGIN
  * viewport is maintained explicitly by the pass's owner; it is never derived
  * automatically.
  */
-struct V_GRAPHICS_API Viewport {
+struct VN_GRAPHICS_API Viewport {
     /** @brief Origin x in device pixels. */
     int x = 0;
     /** @brief Origin y in device pixels (top-left origin). */
@@ -29,4 +29,4 @@ struct V_GRAPHICS_API Viewport {
     }
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

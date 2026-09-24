@@ -29,10 +29,10 @@
 #include <utility>
 #include <vector>
 
-using namespace vine::graphics;
-using vine::intrusive_ptr;
-using vine::math::Mat4d;
-using vine::math::Vec3d;
+using namespace vn::graphics;
+using vn::intrusive_ptr;
+using vn::math::Mat4d;
+using vn::math::Vec3d;
 
 namespace
 {
@@ -46,14 +46,14 @@ namespace
  * @param segments Segments to lay out.
  * @return Buffer holding every segment's three vertices.
  */
-intrusive_ptr<vine::Buffer<float>> arenaBuffer(std::size_t segments)
+intrusive_ptr<vn::Buffer<float>> arenaBuffer(std::size_t segments)
 {
     std::vector<float> floats;
     for (std::size_t i = 0; i < segments; ++i) {
         const float y = static_cast<float>(i) * 10.0f;
         floats.insert(floats.end(), { 0.0f, y, 0.0f, 1.0f, y, 0.0f, 0.0f, y + 1.0f, 0.0f });
     }
-    return intrusive_ptr<vine::Buffer<float>>(new vine::Buffer<float>(std::move(floats)));
+    return intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::move(floats)));
 }
 
 /**
@@ -66,7 +66,7 @@ intrusive_ptr<vine::Buffer<float>> arenaBuffer(std::size_t segments)
  * @param first_vertex First vertex of the segment.
  * @return Geometry reading that segment.
  */
-intrusive_ptr<Geometry> segmentGeometry(const intrusive_ptr<const vine::Buffer<float>>& arena,
+intrusive_ptr<Geometry> segmentGeometry(const intrusive_ptr<const vn::Buffer<float>>& arena,
                                        std::size_t                                     first_vertex)
 {
     auto geom = intrusive_ptr<Geometry>(new Geometry());
@@ -142,7 +142,7 @@ TEST(AttributeChannelTest, TheWholeBufferAndTheSegmentSpellingsAgree)
     // second implementation would let the two spellings drift apart silently, and the pixels would only
     // show it as a geometry that draws the wrong vertices.
     const auto arena  = arenaBuffer(2u);
-    const auto loc    = vine::graphics::attributeLocation(VertexAttribute::Position);
+    const auto loc    = vn::graphics::attributeLocation(VertexAttribute::Position);
     const auto uv_loc = Geometry::kTexCoordLocation;
 
     auto whole = intrusive_ptr<Geometry>(new Geometry());
@@ -202,7 +202,7 @@ TEST(AttributeChannelTest, TheWholeBufferAndTheSegmentSpellingsAgree)
     // Normals take a segment too (a geometry that authors them from an arena), with the same stride rule.
     auto normals = intrusive_ptr<Geometry>(new Geometry());
     normals->setNormals(arena, 0u, 3u);
-    ASSERT_NE(normals->buffer(vine::graphics::attributeLocation(VertexAttribute::Normal)), nullptr);
+    ASSERT_NE(normals->buffer(vn::graphics::attributeLocation(VertexAttribute::Normal)), nullptr);
     EXPECT_EQ(normals->normalCount(), 3u);
 }
 
@@ -216,7 +216,7 @@ TEST(AttributeChannelTest, AChannelIsASegmentPlusAStride)
     const auto buffer  = arenaBuffer(2u);
     const auto channel = AttributeChannel::slice(buffer, 3u, 3u, 2u);
 
-    const vine::BufferSlice<float> segment = channel.scalarSlice();
+    const vn::BufferSlice<float> segment = channel.scalarSlice();
     EXPECT_EQ(segment.values, buffer);
     EXPECT_EQ(segment.first, channel.offset);
     EXPECT_EQ(segment.count, channel.scalarCount);
@@ -240,8 +240,8 @@ TEST(GeometryTest, TheIndexStreamIsTheSameKindOfSegment)
     // buffer" and "an offset past the end" mean the same for both, resolved by the same function, so a
     // consumer that walks a geometry's streams has no per-stream arithmetic to get wrong. IndexSliceExposes
     // ItsSpan pins the numbers; this pins that the numbers come from the shared rule and the shared type.
-    const auto indices = intrusive_ptr<const vine::Buffer<std::uint32_t>>(
-        new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 0u, 1u, 2u }));
+    const auto indices = intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 0u, 1u, 2u }));
     auto geometry = intrusive_ptr<Geometry>(new Geometry());
 
     geometry->setIndices(indices, 4u, 0u); // "the rest of the arena"
@@ -255,7 +255,7 @@ TEST(GeometryTest, TheIndexStreamIsTheSameKindOfSegment)
     // function, so "the rest" cannot come out as two different numbers for two streams of one geometry.
     const auto arena = arenaBuffer(2u); // two segments of three vertices = eighteen scalars
     EXPECT_EQ(Geometry::IndexStream::resolvedLength(indices->size(), 4u, 0u), 2u) << "six indices from 4";
-    EXPECT_EQ(vine::BufferSlice<float>::resolvedLength(arena->size(), 8u, 0u), 10u) << "eighteen from 8";
+    EXPECT_EQ(vn::BufferSlice<float>::resolvedLength(arena->size(), 8u, 0u), 10u) << "eighteen from 8";
     EXPECT_EQ(AttributeChannel::shared(arena, 3u, 8u, 0u).floatCount(), 10u)
         << "a channel with the same offset and no count reads the same rest of its buffer";
     EXPECT_EQ(AttributeChannel::shared(arena, 3u, 18u, 0u).floatCount(), 0u) << "starting past the end is empty";
@@ -279,8 +279,8 @@ TEST(GeometryTest, TheTexcoordSlotSpellsTwoWidthsAtOneLocation)
     // by direction with), two in the other spelling (a UV pair). Same location, same binding, ONE shader set
     // — the width is what a consumer reads to know which sampler the data is shaped for, which is why the
     // channel's components are queryable without reaching into the channel itself.
-    const auto directions = intrusive_ptr<vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1 }));
+    const auto directions = intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1 }));
 
     auto whole = intrusive_ptr<Geometry>(new Geometry());
     whole->setTexcoords3(directions);
@@ -297,8 +297,8 @@ TEST(GeometryTest, TheTexcoordSlotSpellsTwoWidthsAtOneLocation)
 
     // The OTHER width of the same slot — which is what keeps a mesh's UVs a UV pair, and what the renderer
     // reads to pick the sampler2D variant instead.
-    const auto uv = intrusive_ptr<vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ 0.0f, 0.0f, 1.0f, 1.0f, 0.5f, 0.5f }));
+    const auto uv = intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ 0.0f, 0.0f, 1.0f, 1.0f, 0.5f, 0.5f }));
     auto uv_geometry = intrusive_ptr<Geometry>(new Geometry());
     uv_geometry->setTexcoords2(uv);
     ASSERT_NE(uv_geometry->buffer(Geometry::kTexCoordLocation), nullptr);
@@ -316,8 +316,8 @@ TEST(GeometryTest, TheIndexStreamsTwoSpellingsShareOneSegment)
 {
     // The index stream states the same two cases as the vertex roles (a whole buffer, or a segment), and
     // the views the draw uses read that ONE segment: nothing here can disagree with anything else.
-    const auto arena = intrusive_ptr<vine::Buffer<std::uint32_t>>(
-        new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 2u, 1u, 0u }));
+    const auto arena = intrusive_ptr<vn::Buffer<std::uint32_t>>(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 2u, 1u, 0u }));
 
     auto whole = intrusive_ptr<Geometry>(new Geometry());
     whole->setIndices(arena);
@@ -348,8 +348,8 @@ TEST(GeometryTest, TheIndexStreamsTwoSpellingsShareOneSegment)
 
 TEST(GeometryTest, IndexSliceExposesItsSpan)
 {
-    const auto indices = intrusive_ptr<const vine::Buffer<std::uint32_t>>(
-        new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 0u, 1u, 2u }));
+    const auto indices = intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 0u, 1u, 2u }));
     auto geom = intrusive_ptr<Geometry>(new Geometry());
 
     geom->setIndices(indices, 3u, 3u);

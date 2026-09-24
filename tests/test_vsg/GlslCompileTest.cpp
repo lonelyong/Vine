@@ -14,14 +14,14 @@ namespace
  * @param type SDK stage kind.
  * @return Vulkan shader-stage flag.
  */
-VkShaderStageFlagBits toVkStage(vine::graphics::ShaderStageType type)
+VkShaderStageFlagBits toVkStage(vn::graphics::ShaderStageType type)
 {
     switch (type) {
-        case vine::graphics::ShaderStageType::Fragment:
+        case vn::graphics::ShaderStageType::Fragment:
             return VK_SHADER_STAGE_FRAGMENT_BIT;
-        case vine::graphics::ShaderStageType::Compute:
+        case vn::graphics::ShaderStageType::Compute:
             return VK_SHADER_STAGE_COMPUTE_BIT;
-        case vine::graphics::ShaderStageType::Vertex:
+        case vn::graphics::ShaderStageType::Vertex:
             return VK_SHADER_STAGE_VERTEX_BIT;
     }
     return VK_SHADER_STAGE_VERTEX_BIT;
@@ -37,17 +37,17 @@ TEST(GlslCompileTest, ShaderCompilerIsSupportedAfterGlslangIntegration)
 
 TEST(GlslCompileTest, CompilesShaderProgramStagesToSpirv)
 {
-    vine::graphics::ShaderProgram program;
+    vn::graphics::ShaderProgram program;
     program.setName(u8"flat-red");
 
-    vine::graphics::ShaderStage vs;
-    vs.type = vine::graphics::ShaderStageType::Vertex;
+    vn::graphics::ShaderStage vs;
+    vs.type = vn::graphics::ShaderStageType::Vertex;
     vs.source = u8"#version 450\n"
                 u8"void main() { gl_Position = vec4(0.0, 0.0, 0.0, 1.0); }\n";
     program.addStage(vs);
 
-    vine::graphics::ShaderStage fs;
-    fs.type = vine::graphics::ShaderStageType::Fragment;
+    vn::graphics::ShaderStage fs;
+    fs.type = vn::graphics::ShaderStageType::Fragment;
     fs.source = u8"#version 450\n"
                 u8"layout(location = 0) out vec4 outColor;\n"
                 u8"void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n";

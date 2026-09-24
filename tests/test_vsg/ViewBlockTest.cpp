@@ -36,11 +36,11 @@
 #include <vine/vsg/api/ViewBlock.hpp>
 #include <vine/vsg/core/FrameRecorder.hpp>
 
-using vine::graphics::VineViewBlock;
-using vine::math::Mat4d;
-using vine::math::Vec3d;
-using vine::vsg::buildViewBlock;
-using vine::vsg::core::CameraSnapshot;
+using vn::graphics::VineViewBlock;
+using vn::math::Mat4d;
+using vn::math::Vec3d;
+using vn::vsg::buildViewBlock;
+using vn::vsg::core::CameraSnapshot;
 
 namespace
 {
@@ -150,7 +150,7 @@ TEST(ViewBlockTest, TheClipMatricesAreFoldedIntoTheDevicesReverseZAndYDownConven
 {
     // A camera the SDK really produces, so the case starts from the convention the block has to convert:
     // looking down -Z from 2 units out, with an orthographic window of [-1, 1] and 0.5/4.0 planes.
-    vine::graphics::Camera sdk_camera;
+    vn::graphics::Camera sdk_camera;
     sdk_camera.setViewMatrixAsLookAt(Vec3d(0.0, 0.0, 2.0), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 1.0, 0.0));
     sdk_camera.setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 

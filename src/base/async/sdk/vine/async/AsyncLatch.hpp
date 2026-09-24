@@ -10,7 +10,7 @@
 #include "AsyncEvent.hpp"
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 namespace detail {
 
@@ -108,4 +108,4 @@ class AsyncLatch
     std::shared_ptr<detail::LatchState> state_;
 };
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

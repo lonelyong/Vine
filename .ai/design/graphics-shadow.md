@@ -53,7 +53,7 @@ flowchart LR
 ```cpp
 enum class ShadowFilter { None, Hard, PCF };   // PCF 采样半径可后续加
 
-struct V_GRAPHICS_API ShadowSettings {          // 值类型，随 Light 存
+struct VN_GRAPHICS_API ShadowSettings {          // 值类型，随 Light 存
     uint32_t   resolution = 1024;               // map 边长（宽=高）
     float      bias       = 0.002f;             // 深度偏移（防自影）
     ShadowFilter filter    = ShadowFilter::Hard;

@@ -4,11 +4,11 @@
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/UserIO.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-V_OBJECT_META_IMPL(ListCommandsCommand, Command)
+VN_OBJECT_META_IMPL(ListCommandsCommand, Command)
 
-vine::async::Task<CommandResult> ListCommandsCommand::execute(CommandExecutionContext* context)
+vn::async::Task<CommandResult> ListCommandsCommand::execute(CommandExecutionContext* context)
 {
     auto* app = context ? context->application() : nullptr;
     auto* cm  = app ? app->commandManager() : nullptr;
@@ -51,4 +51,4 @@ vine::async::Task<CommandResult> ListCommandsCommand::execute(CommandExecutionCo
     co_return CommandResult(CommandStatus::Success);
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

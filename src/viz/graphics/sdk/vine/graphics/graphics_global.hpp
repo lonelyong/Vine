@@ -1,19 +1,19 @@
 ﻿#pragma once
 
-#include <vine/vi_global.hpp>
+#include <vine/vine_global.hpp>
 
-#ifdef V_GRAPHICS_LIB
-#    define V_GRAPHICS_API V_EXPORT
+#ifdef VN_GRAPHICS_LIB
+#    define VN_GRAPHICS_API VN_EXPORT
 #else
-#    define V_GRAPHICS_API V_IMPORT
+#    define VN_GRAPHICS_API VN_IMPORT
 #endif
 
-#define V_GRAPHICS_NS_BEGIN                                                                                                                                    \
-    namespace V_ROOT_NS                                                                                                                                        \
+#define VN_GRAPHICS_NS_BEGIN                                                                                                                                    \
+    namespace VN_ROOT_NS                                                                                                                                        \
     {                                                                                                                                                          \
     namespace graphics                                                                                                                                         \
     {
 
-#define V_GRAPHICS_NS_END                                                                                                                                      \
+#define VN_GRAPHICS_NS_END                                                                                                                                      \
     }                                                                                                                                                          \
     }

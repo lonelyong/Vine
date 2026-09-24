@@ -11,7 +11,7 @@
 #    include <unistd.h>
 #endif
 
-V_SYSTEM_NS_BEGIN
+VN_SYSTEM_NS_BEGIN
 
 namespace
 {
@@ -99,4 +99,4 @@ const OperatingSystemInfo& OperatingSystem::info()
     return cached;
 }
 
-V_SYSTEM_NS_END
+VN_SYSTEM_NS_END

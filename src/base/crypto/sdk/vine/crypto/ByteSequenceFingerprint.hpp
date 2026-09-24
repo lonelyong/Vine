@@ -10,7 +10,7 @@
 #include <iosfwd>
 #include <span>
 
-V_CRYPTO_NS_BEGIN
+VN_CRYPTO_NS_BEGIN
 
 /**
  * @brief Byte-sequence fingerprint for efficiently comparing two byte ranges.
@@ -32,7 +32,7 @@ V_CRYPTO_NS_BEGIN
  * @note The input stream must support seek; a non-seekable stream throws
  *       std::runtime_error.
  */
-class V_CRYPTO_API ByteSequenceFingerprint
+class VN_CRYPTO_API ByteSequenceFingerprint
 {
     // 类型声明区块
   public:
@@ -105,7 +105,7 @@ class V_CRYPTO_API ByteSequenceFingerprint
      *
      * Lexicographic over (mode, size, bytes); consistent with operator==, so
      * fingerprints equal under == never order one below the other. Enables
-     * use as a std::map key (e.g. vine::runtime::InMemoryCache).
+     * use as a std::map key (e.g. vn::runtime::InMemoryCache).
      *
      * @param rhs The fingerprint to compare with.
      * @return true when this fingerprint precedes rhs.
@@ -160,10 +160,10 @@ class V_CRYPTO_API ByteSequenceFingerprint
     std::array<std::byte, kFingerprintSize> fingerprint_{};
 };
 
-V_CRYPTO_NS_END
+VN_CRYPTO_NS_END
 
 template <>
-struct std::hash<V_ROOT_NS::crypto::ByteSequenceFingerprint>
+struct std::hash<VN_ROOT_NS::crypto::ByteSequenceFingerprint>
 {
     /**
      * @brief Computes a hash of the fingerprint.
@@ -174,7 +174,7 @@ struct std::hash<V_ROOT_NS::crypto::ByteSequenceFingerprint>
      * @param fp The fingerprint.
      * @return The hash value.
      */
-    std::size_t operator()(const V_ROOT_NS::crypto::ByteSequenceFingerprint& fp) const noexcept
+    std::size_t operator()(const VN_ROOT_NS::crypto::ByteSequenceFingerprint& fp) const noexcept
     {
         std::size_t h = fp.size_;
 
@@ -185,7 +185,7 @@ struct std::hash<V_ROOT_NS::crypto::ByteSequenceFingerprint>
 
         combine(static_cast<std::size_t>(fp.mode_));
 
-        const std::size_t bytes_to_hash = (fp.mode_ == V_ROOT_NS::crypto::ByteSequenceFingerprint::FingerprintMode::RAW)
+        const std::size_t bytes_to_hash = (fp.mode_ == VN_ROOT_NS::crypto::ByteSequenceFingerprint::FingerprintMode::RAW)
                                               ? fp.fingerprint_.size()
                                               : 32;
 

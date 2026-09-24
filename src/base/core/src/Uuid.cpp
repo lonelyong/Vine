@@ -9,7 +9,7 @@
 extern "C" BOOLEAN NTAPI SystemFunction036(PVOID pbBuffer, ULONG dwLength);
 #endif // _WIN32
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 namespace
 {
@@ -162,4 +162,4 @@ bool Uuid::operator<(const Uuid& other) const
     return false;
 }
 
-V_CORE_NS_END
+VN_CORE_NS_END

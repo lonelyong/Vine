@@ -35,11 +35,11 @@ src/viz/graphics/
   sdk/vine/graphics/
     graphics_global.hpp          # API export 宏 + 命名空间
 
-    # 场景与几何体（边界框类型使用 vine::math::Aabbd，即 Rect3<double>，
+    # 场景与几何体（边界框类型使用 vn::math::Aabbd，即 Rect3<double>，
     #            由 vine/math/Rect3.hpp 提供，BoundingBox 已移除）
     Node.hpp                     # 场景图节点（变换 + 子节点 + 可绘制对象）
     Drawable.hpp                 # 可绘制对象基类（几何 + 材质）
-    Geometry.hpp                 # 几何体（包装 vine::geometry::Shape）
+    Geometry.hpp                 # 几何体（包装 vn::geometry::Shape）
     Material.hpp                 # 材质定义（纯属性）
     MaterialManager.hpp          # 材质管理器抽象基类（后端实现转换/缓存）
     Scene.hpp                    # 场景容器（管理根节点）
@@ -84,8 +84,8 @@ src/viz/graphics/
 纯可渲染对象（几何 + 材质）。不携带场景图变换或层级，那些由所属 `Node` 提供。
 
 ```cpp
-class V_GRAPHICS_API Drawable : public Object, public RefCounted<Drawable> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Drawable : public Object, public RefCounted<Drawable> {
+    VN_OBJECT_META_DECL;
 
   public:
     Drawable();
@@ -122,20 +122,20 @@ using DrawablePtr = intrusive_ptr<Drawable>;
 > ⚠ 本节为**历史草稿**（`Drawable` 基类 + `shape()` 已弃）。`triangleCount()` 已于 2026-09-04 移除：
 > Geometry 现为开放 loc buffer 数据面，不保证是三角网格；图元计数只留 `vertexCount()`。
 
-包装 `vine::geometry::Shape` 的几何可绘制对象。
+包装 `vn::geometry::Shape` 的几何可绘制对象。
 
 ```cpp
-class V_GRAPHICS_API Geometry : public Drawable {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Geometry : public Drawable {
+    VN_OBJECT_META_DECL;
 
   public:
     Geometry();
     ~Geometry();
 
   public:
-    /** @brief 关联的 vine::geometry::Shape（可为空）。 */
-    const vine::geometry::Shape* shape() const;
-    void setShape(vine::geometry::Shape* shape);
+    /** @brief 关联的 vn::geometry::Shape（可为空）。 */
+    const vn::geometry::Shape* shape() const;
+    void setShape(vn::geometry::Shape* shape);
 
     /** @brief 三角形数量（非网格形状返回 0）。 */
     std::size_t triangleCount() const;
@@ -155,15 +155,15 @@ using GeometryPtr = intrusive_ptr<Geometry>;
 ```
 
 > 说明：具体形状类型通过 `shape->shapeType()` 查询（`ShapeType` 定义于
-> `vine::geometry`），不再在 `Geometry` 上复制一份类型枚举。
+> `vn::geometry`），不再在 `Geometry` 上复制一份类型枚举。
 
 ### 3.3 `Material`（材质）
 
 定义对象的渲染属性。
 
 ```cpp
-class V_GRAPHICS_API Material : public Object, public RefCounted<Material> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
+    VN_OBJECT_META_DECL;
 
   public:
     Material();
@@ -244,9 +244,9 @@ using MaterialPtr = intrusive_ptr<Material>;
 > 以 `graphics-scene-graph.md` 顶部落地记录为准。
 
 ```cpp
-class V_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
-    V_OBJECT_META_DECL;
-    V_DISABLE_COPY_MOVE(Scene);
+class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
+    VN_OBJECT_META_DECL;
+    VN_DISABLE_COPY_MOVE(Scene);
 
   public:
     Scene();
@@ -298,8 +298,8 @@ using ScenePtr = intrusive_ptr<Scene>;
 仅管理相机参数和矩阵计算，不管理渲染目标或视口。
 
 ```cpp
-class V_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
+    VN_OBJECT_META_DECL;
 
   public:
     enum class ProjectionType {
@@ -366,8 +366,8 @@ using CameraPtr = intrusive_ptr<Camera>;
 场景层级的基本单元，携带局部变换、父子链接、可见性和可绘制对象列表。
 
 ```cpp
-class V_GRAPHICS_API Node : public Object, public RefCounted<Node> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
+    VN_OBJECT_META_DECL;
 
   public:
     Node();
@@ -426,7 +426,7 @@ using NodePtr = intrusive_ptr<Node>;
 收 `intrusive_ptr`（retain），`cameraManipulator()` 返 `raw_ptr`（借用）。
 
 ```cpp
-class V_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
+class VN_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
   public:
     enum class Mode {
         Orbit,           // 轨道（绕目标点旋转）
@@ -478,7 +478,7 @@ class V_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
 表示单个可绘制对象的渲染指令。
 
 ```cpp
-struct V_GRAPHICS_API RenderCommand {
+struct VN_GRAPHICS_API RenderCommand {
     /** 可绘制对象。 */
     DrawablePtr drawable;
 
@@ -506,7 +506,7 @@ struct V_GRAPHICS_API RenderCommand {
 定义不同渲染实现的接口。
 
 ```cpp
-class V_GRAPHICS_API RenderBackend {
+class VN_GRAPHICS_API RenderBackend {
   public:
     virtual ~RenderBackend() = default;
 
@@ -552,8 +552,8 @@ class V_GRAPHICS_API RenderBackend {
 描述一个完整的渲染阶段：相机 + 渲染目标 + 清除状态。
 
 ```cpp
-class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
+    VN_OBJECT_META_DECL;
 
   public:
     RenderPass();
@@ -595,8 +595,8 @@ using RenderPassPtr = intrusive_ptr<RenderPass>;
 离屏帧缓冲，管理颜色与深度缓冲。
 
 ```cpp
-class V_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarget> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarget> {
+    VN_OBJECT_META_DECL;
 
   public:
     enum class ColorFormat {
@@ -651,8 +651,8 @@ using RenderTargetPtr = intrusive_ptr<RenderTarget>;
 平台无关的帧循环驱动：begin → 主通道 → end → swap。
 
 ```cpp
-class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine> {
+    VN_OBJECT_META_DECL;
 
   public:
     explicit RenderEngine(RenderBackend* backend);
@@ -728,14 +728,14 @@ pre passes (order < 0)  →  main pass (order 0)  →  post passes (order > 0)  
 ### 4.1 引用计数
 - `Scene`、`Camera`、`Drawable`、`Material`、`Node`、`RenderPass`、`RenderTarget`、`RenderEngine`、`CameraManipulator` 都继承 `RefCounted<T>`
 - 使用 `intrusive_ptr<T>` 管理所有权
-- 借用/所有权分界：getter 返回与“不 retain”的借用入参用 `vine::raw_ptr<T>`；
+- 借用/所有权分界：getter 返回与“不 retain”的借用入参用 `vn::raw_ptr<T>`；
   会 retain（存入 owning 字段/容器）的 setter/add 入参用 `intrusive_ptr<T>`
   （by value + `std::move`），与 `setBackend`/`addPass` 及 robotics
   `Visual::setMaterial(const intrusive_ptr<...>&)` 一致
 - 公开 API 接受原始指针（调用者管理生命周期）或返回 `intrusive_ptr`
 
 ### 4.2 不可复制/移动
-- `Scene` 使用 `V_DISABLE_COPY_MOVE` 防止意外复制
+- `Scene` 使用 `VN_DISABLE_COPY_MOVE` 防止意外复制
 - 其余核心类因继承 `RefCounted<T>` 隐式不可拷贝
 
 ### 4.3 数据隐藏（Pimpl）
@@ -769,7 +769,7 @@ pre passes (order < 0)  →  main pass (order 0)  →  post passes (order > 0)  
 - [x] 视锥剔除（Frustum Culling，位于 `collectRenderCommands`）
 
 ### 阶段 4：几何与材质（已完成）
-- [x] 集成 `vine::geometry::Shape`
+- [x] 集成 `vn::geometry::Shape`
 - [x] `Geometry` 包装层
 - [x] `Material` 属性管理
 - [ ] 纹理管理（可选，未实现——仅存纹理文件路径）
@@ -817,16 +817,16 @@ pre passes (order < 0)  →  main pass (order 0)  →  post passes (order > 0)  
 
 ```
 Graphics
-  ├── vi::Core              (Object, RefCounted, intrusive_ptr)
-  ├── vi::Global            (Math: Vec3d, Mat4d, Color, Colorf, etc.)
-  ├── vi::Geometry          (Shape, TriangleMesh, IndexedTriangleMesh)
+  ├── vn::Core              (Object, RefCounted, intrusive_ptr)
+  ├── vn::Global            (Math: Vec3d, Mat4d, Color, Colorf, etc.)
+  ├── vn::Geometry          (Shape, TriangleMesh, IndexedTriangleMesh)
   └── 实现层（可选，均为 appfw 插件，运行时加载）：
       ├── gfx_backend_vsg   (vsg 实现：VsgRenderer 实现 RenderBackend)
       └── (未来) gfx_backend_vulkan (手撸实现)
 ```
 
-`graphics` 本身不反向依赖任何实现层；后端插件也只依赖 `vi::Appfw` +
-`vi::Graphics` + 各自的三方库。
+`graphics` 本身不反向依赖任何实现层；后端插件也只依赖 `vn::Appfw` +
+`vn::Graphics` + 各自的三方库。
 
 ### 6.3 后端自注册（RenderBackendRegistry）
 
@@ -837,7 +837,7 @@ Graphics
 ┌─ graphics ────────────────────────────────────┐
 │ RenderApi（技术族位标志集合）                  │
 │   None/Vulkan/OpenGL2/OpenGL3/OpenGLES/       │
-│   Direct3D（V_ENABLE_ENUM_FLAGS 位运算）       │
+│   Direct3D（VN_ENABLE_ENUM_FLAGS 位运算）       │
 │   renderApiToString() → "vulkan | opengl3"    │
 │ RenderBackendInfo（元数据）                    │
 │   name / display_name / description /         │
@@ -886,7 +886,7 @@ for (const auto& entry : RenderBackendRegistry::instance().entries()) {
 // GfxBackendVsgPlugin.cpp
 RenderBackendRegistry::instance().registerFactory(&s_factory);  // static VsgRenderBackendFactory s_factory;
 ...
-V_DECLARE_PLUGIN(vine::vsg::GfxBackendVsgPlugin, u8"gfx_backend_vsg", ...);
+VN_DECLARE_PLUGIN(vn::vsg::GfxBackendVsgPlugin, u8"gfx_backend_vsg", ...);
 ```
 
 `Registrar<T>` 助手也保留（供非插件、静态链接场景使用）。
@@ -901,7 +901,7 @@ V_DECLARE_PLUGIN(vine::vsg::GfxBackendVsgPlugin, u8"gfx_backend_vsg", ...);
 ## 7. API 示例
 
 ```cpp
-using namespace vine::graphics;
+using namespace vn::graphics;
 
 // 创建场景
 auto scene = make_intrusive<Scene>();
@@ -1009,7 +1009,7 @@ backend->swapBuffers();
   生效、零重建；具体见 `.ai/design/vsg-design.md` §9。
 8. **拾取增强**：选择框选（框选）、可拾取对象接口（`Pickable.hpp` 设计稿曾有，未实现）
 9. **视口系统**：独立 `Viewport` 类（设计稿曾有，当前宽高比直接传给 Camera）；
-   跨平台窗口与输入事件由 `base/window` 模块（`vi::Window`）提供，`graphics`
+   跨平台窗口与输入事件由 `base/window` 模块（`vn::Window`）提供，`graphics`
    通过 Signal 订阅其事件驱动相机操纵
 10. **纹理加载**：从文件加载纹理资源（当前 `Material` 仅存路径）
 

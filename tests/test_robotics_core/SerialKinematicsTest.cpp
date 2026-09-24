@@ -10,8 +10,8 @@
 #include <vine/robotics/kinematics/SerialKinematics.hpp>
 #include <vine/robotics/kinematics/State.hpp>
 
-using namespace vine::math;
-using namespace vine::robotics::kinematics;
+using namespace vn::math;
+using namespace vn::robotics::kinematics;
 
 namespace
 {

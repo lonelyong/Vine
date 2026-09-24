@@ -51,21 +51,21 @@
 
 #include "DevicePhases.hpp"
 
-using vine::graphics::RenderTarget;
-using vine::vsg::BlockDescriptors;
-using vine::vsg::BlockStorage;
-using vine::vsg::ContentDraw;
-using vine::vsg::ContentPipeline;
-using vine::vsg::HostTargets;
-using vine::vsg::OffscreenTarget;
-using vine::vsg::StreamUploads;
-using vine::vsg::ViewportRect;
-using vine::vsg::core::PixelProbe;
-using vine::vsg::core::Rgba8;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::StreamKey;
-using vine::vsg::core::StreamKind;
-using vine::vsg::core::VariantPool;
+using vn::graphics::RenderTarget;
+using vn::vsg::BlockDescriptors;
+using vn::vsg::BlockStorage;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentPipeline;
+using vn::vsg::HostTargets;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::StreamUploads;
+using vn::vsg::ViewportRect;
+using vn::vsg::core::PixelProbe;
+using vn::vsg::core::Rgba8;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::StreamKey;
+using vn::vsg::core::StreamKind;
+using vn::vsg::core::VariantPool;
 
 namespace
 {
@@ -157,7 +157,7 @@ ContentPipeline::Shaders depthShaders()
 /// @brief The device plus everything needed to record draws into it (shared by both targets).
 struct Stack
 {
-    vine::vsg::DeviceResult            created;
+    vn::vsg::DeviceResult            created;
     std::unique_ptr<BlockStorage>      storage;
     std::unique_ptr<BlockDescriptors>  descriptors;
     std::unique_ptr<ContentPipeline>   pipelines;
@@ -169,7 +169,7 @@ struct Stack
 
     static int material_identity;
 
-    bool build(const vine::vsg::DeviceResult& device)
+    bool build(const vn::vsg::DeviceResult& device)
     {
         created = device;  // the shared depth is a layout question, so the caller brings the layers
         if (!created.validation) {
@@ -185,8 +185,8 @@ struct Stack
             return false;
         }
         const ContentPipeline::Shaders shader_pair = depthShaders();
-        vine::vsg::ProgramAbi            abi;
-        if (vine::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vine::vsg::FactMiss::None) {
+        vn::vsg::ProgramAbi            abi;
+        if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::vsg::FactMiss::None) {
             return false;
         }
         descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
@@ -206,7 +206,7 @@ struct Stack
 
         uploads  = std::make_unique<StreamUploads>();
         recorder = std::make_unique<ContentDraw>(*pipelines, pool,
-                                                 vine::vsg::detail::fetchDynamicStateEntryPoints(
+                                                 vn::vsg::detail::fetchDynamicStateEntryPoints(
                                                      created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();
@@ -324,7 +324,7 @@ constexpr float kNearZ = 0.5F;   ///< Depth 0.5: nearer, which is what reverse-Z
 
 }  // namespace
 
-void runSharedDepthPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+void runSharedDepthPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
     Stack stack;
     try {
@@ -428,7 +428,7 @@ void runSharedDepthPhase(const vine::vsg::DeviceResult& device, DevicePhaseCount
     // The depth is the other half of the evidence, and the half a colour picture cannot give: "the triangle
     // is hidden" and "the depth buffer is empty" look the same in pixels. These numbers say which pass wrote
     // what into the image both targets share.
-    const vine::vsg::core::DepthProbe depth = lender->depthProbe();
+    const vn::vsg::core::DepthProbe depth = lender->depthProbe();
     if (!depth.valid()) {
         GTEST_SKIP() << "the depth attachment of this device cannot be read back";
     }
@@ -448,7 +448,7 @@ void runSharedDepthPhase(const vine::vsg::DeviceResult& device, DevicePhaseCount
     // The borrower reads the SAME image back: its own copy-back node copies the lender's attachment, so the
     // numbers are the two passes' writes in one picture. A borrower that owned a depth of its own would answer
     // with its clear value where the lender's near triangle is.
-    const vine::vsg::core::DepthProbe borrowed_depth = borrower->depthProbe();
+    const vn::vsg::core::DepthProbe borrowed_depth = borrower->depthProbe();
     if (!borrowed_depth.valid()) {
         GTEST_SKIP() << "the shared depth cannot be read back through the borrower on this device";
     }
@@ -467,7 +467,7 @@ void runSharedDepthPhase(const vine::vsg::DeviceResult& device, DevicePhaseCount
 
 TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromotion)
 {
-    const auto created = vine::vsg::createDevice();
+    const auto created = vn::vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
@@ -513,21 +513,21 @@ TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromoti
     // Readback of a shared depth is PER TARGET: each target copies the image into a buffer of its own, so the
     // lender's capture says nothing about the borrower's - a borrower whose own copy never ran would otherwise
     // answer a probe with whatever its buffer held.
-    const vine::vsg::core::ReadbackRequest depth_request{ vine::vsg::core::ReadbackKind::Depth, 0U };
+    const vn::vsg::core::ReadbackRequest depth_request{ vn::vsg::core::ReadbackKind::Depth, 0U };
     EXPECT_EQ(static_cast<int>(lender->readbackResult(depth_request).refusal),
-              static_cast<int>(vine::vsg::core::ReadbackRefusal::NotCaptured));
+              static_cast<int>(vn::vsg::core::ReadbackRefusal::NotCaptured));
     EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal),
-              static_cast<int>(vine::vsg::core::ReadbackRefusal::NotCaptured));
+              static_cast<int>(vn::vsg::core::ReadbackRefusal::NotCaptured));
     EXPECT_TRUE(lender->captureDepth() != nullptr);
     EXPECT_EQ(static_cast<int>(lender->readbackResult(depth_request).refusal),
-              static_cast<int>(vine::vsg::core::ReadbackRefusal::None));
+              static_cast<int>(vn::vsg::core::ReadbackRefusal::None));
     EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal),
-              static_cast<int>(vine::vsg::core::ReadbackRefusal::NotCaptured))
+              static_cast<int>(vn::vsg::core::ReadbackRefusal::NotCaptured))
         << "the lender's copy-back is the lender's: the borrower's probe reads the borrower's buffer";
     EXPECT_FALSE(borrower->depthProbe().valid());
     EXPECT_TRUE(borrower->captureDepth() != nullptr) << "the borrower gets its own destination and copy";
     EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal),
-              static_cast<int>(vine::vsg::core::ReadbackRefusal::None));
+              static_cast<int>(vn::vsg::core::ReadbackRefusal::None));
 
     borrower.reset();
     EXPECT_TRUE(lender->depth().sampleable) << "the revocation goes away with the borrower";
@@ -538,9 +538,9 @@ TEST(SharedDepthTest, TheBorrowerSeesTheDepthTheLenderWrote)
 {
     // The phase body is also what the phase table runs (see DevicePhases.hpp). The device is created here,
     // with the layers on: the shared depth is a layout question, and the phase is evidence about it.
-    vine::vsg::DeviceOptions options;
+    vn::vsg::DeviceOptions options;
     options.validation = true;
-    const auto created = vine::vsg::createDevice(options);
+    const auto created = vn::vsg::createDevice(options);
     if (!created.ok) {
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
@@ -552,7 +552,7 @@ TEST(SharedDepthTest, TheBorrowerSeesTheDepthTheLenderWrote)
 
 TEST(SharedDepthTest, TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites)
 {
-    const auto created = vine::vsg::createDevice();
+    const auto created = vn::vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
@@ -560,30 +560,30 @@ TEST(SharedDepthTest, TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites)
     // The pair as a HOST announces it (HostTargets is where the plan's facts come from, see its note): a
     // lender with a colour attachment and a depth, and a borrower that shares that depth.
     HostTargets targets;
-    const vine::intrusive_ptr<RenderTarget> lender(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> lender(new RenderTarget());
     lender->attachColor(RenderTarget::ColorFormat::RGBA8);
     lender->attachDepth(RenderTarget::DepthFormat::D24);
     lender->setSize(32, 32);
     const HostTargets::Ensured lender_ensured = targets.ensure(*lender, created.device);
     ASSERT_EQ(lender_ensured.state, HostTargets::State::Ready) << "a colour + depth description builds";
 
-    const vine::intrusive_ptr<RenderTarget> borrower(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> borrower(new RenderTarget());
     borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
     borrower->shareDepth(lender);
     borrower->setSize(32, 32);
     const HostTargets::Ensured borrower_ensured = targets.ensure(*borrower, created.device);
     ASSERT_EQ(borrower_ensured.state, HostTargets::State::Ready);
 
-    vine::vsg::core::TargetFacts lender_row;
+    vn::vsg::core::TargetFacts lender_row;
     targets.facts(*targets.find(lender.get()), lender_row);
-    vine::vsg::core::TargetFacts borrower_row;
+    vn::vsg::core::TargetFacts borrower_row;
     targets.facts(*targets.find(borrower.get()), borrower_row);
 
     // The borrower: its passes read the lender's image, so they preserve it and never promise it to a shader.
     EXPECT_TRUE(borrower_row.depth.borrowed);
     EXPECT_TRUE(borrower_row.depth.any_pass_preserves_depth)
         << "a borrower's passes read the depth the lender's pass wrote and must never clear it";
-    const vine::vsg::core::DepthPlan borrower_plan = vine::vsg::core::depthPlan(borrower_row.depth);
+    const vn::vsg::core::DepthPlan borrower_plan = vn::vsg::core::depthPlan(borrower_row.depth);
     EXPECT_TRUE(borrower_plan.preserve);
     EXPECT_FALSE(borrower_plan.sampleable);
 
@@ -593,7 +593,7 @@ TEST(SharedDepthTest, TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites)
     EXPECT_TRUE(lender_row.depth.promotion) << "the host's own word: promotion was never turned off";
     EXPECT_TRUE(lender_row.depth.any_pass_preserves_depth)
         << "the lender's depth is read by the borrower's passes: it is preserved while the loan lasts";
-    const vine::vsg::core::DepthPlan lender_plan = vine::vsg::core::depthPlan(lender_row.depth);
+    const vn::vsg::core::DepthPlan lender_plan = vn::vsg::core::depthPlan(lender_row.depth);
     EXPECT_TRUE(lender_plan.preserve);
     EXPECT_FALSE(lender_plan.sampleable)
         << "one image cannot be a texture and an attachment at the same time (measured: the deferred demo's "

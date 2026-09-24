@@ -18,10 +18,10 @@
 
 #include "VfsTestSupport.hpp"
 
-using vine::String;
-using vine::io::DirectoryVfs;
-using vine::io::IoError;
-using vine::io::ZipArchive;
+using vn::String;
+using vn::io::DirectoryVfs;
+using vn::io::IoError;
+using vn::io::ZipArchive;
 using vfstest::bytesOf;
 using vfstest::TempDir;
 
@@ -142,12 +142,12 @@ TEST(EncodingTest, DirectoryVfsReportsNonAsciiNamesAsUtf8)
     ASSERT_NE(vfs, nullptr);
 
     const auto info = vfs->stat(u8"机械臂.txt");
-    ASSERT_TRUE(info.ok()) << vine::io::ioErrorName(info.error());
+    ASSERT_TRUE(info.ok()) << vn::io::ioErrorName(info.error());
     EXPECT_EQ(info->path, std::filesystem::path(u8"机械臂.txt"));
     EXPECT_EQ(info->size, 3u);
 
     const auto listed = vfs->list(std::filesystem::path{});
-    ASSERT_TRUE(listed.ok()) << vine::io::ioErrorName(listed.error());
+    ASSERT_TRUE(listed.ok()) << vn::io::ioErrorName(listed.error());
     ASSERT_EQ(listed->size(), 1u);
     EXPECT_EQ(listed->front().path, std::filesystem::path(u8"机械臂.txt"));
     EXPECT_EQ(listed->front().name(), std::filesystem::path(u8"机械臂.txt"));
@@ -163,17 +163,17 @@ TEST(EncodingTest, AddDirectoryKeepsNonAsciiNamesThroughAZip)
     ASSERT_TRUE(archive.stat(u8"机械臂.txt").ok()) << "the imported name did not survive the import";
 
     auto bytes = archive.toBytes();
-    ASSERT_TRUE(bytes.ok()) << vine::io::ioErrorName(bytes.error());
+    ASSERT_TRUE(bytes.ok()) << vn::io::ioErrorName(bytes.error());
 
     auto reopened = ZipArchive::open(bytes.take(), ZipArchive::OpenMode::ReadOnly);
-    ASSERT_TRUE(reopened.ok()) << vine::io::ioErrorName(reopened.error());
+    ASSERT_TRUE(reopened.ok()) << vn::io::ioErrorName(reopened.error());
 
     const auto read = reopened->read(u8"机械臂.txt");
-    ASSERT_TRUE(read.ok()) << vine::io::ioErrorName(read.error());
+    ASSERT_TRUE(read.ok()) << vn::io::ioErrorName(read.error());
     EXPECT_EQ(std::string(read->begin(), read->end()), "arm");
 
     const auto listed = reopened->list(std::filesystem::path{});
-    ASSERT_TRUE(listed.ok()) << vine::io::ioErrorName(listed.error());
+    ASSERT_TRUE(listed.ok()) << vn::io::ioErrorName(listed.error());
     ASSERT_EQ(listed->size(), 1u);
     EXPECT_EQ(listed->front().path, std::filesystem::path(u8"机械臂.txt"));
 }
@@ -210,19 +210,19 @@ TEST(EncodingTest, HostEncodedNamesSurviveAZipRoundTrip)
     ASSERT_TRUE(archive.stat(name).ok()) << "an entry has to be reachable by the name it was given";
 
     auto bytes = archive.toBytes();
-    ASSERT_TRUE(bytes.ok()) << vine::io::ioErrorName(bytes.error());
+    ASSERT_TRUE(bytes.ok()) << vn::io::ioErrorName(bytes.error());
 
     auto reopened = ZipArchive::open(bytes.take(), ZipArchive::OpenMode::ReadOnly);
-    ASSERT_TRUE(reopened.ok()) << vine::io::ioErrorName(reopened.error());
+    ASSERT_TRUE(reopened.ok()) << vn::io::ioErrorName(reopened.error());
 
     const auto listed = reopened->list(std::filesystem::path{});
-    ASSERT_TRUE(listed.ok()) << vine::io::ioErrorName(listed.error());
+    ASSERT_TRUE(listed.ok()) << vn::io::ioErrorName(listed.error());
     ASSERT_EQ(listed->size(), 1u);
     EXPECT_EQ(listed->front().path, name) << "the name came back as something else";
     EXPECT_EQ(listed->front().name(), name);
 
     const auto read = reopened->read(name);
-    ASSERT_TRUE(read.ok()) << vine::io::ioErrorName(read.error());
+    ASSERT_TRUE(read.ok()) << vn::io::ioErrorName(read.error());
     EXPECT_EQ(std::string(read->begin(), read->end()), "legacy");
 
     // A second repack keeps it stable, so a package can be edited and rewritten.
@@ -251,33 +251,33 @@ TEST(EncodingTest, NamesThatAreTextInNoEncodingStayReachable)
     ZipArchive archive;
     ASSERT_EQ(archive.addFile(std::filesystem::path(placeholder), bytesOf("payload")), IoError::Ok);
     auto written = archive.toBytes();
-    ASSERT_TRUE(written.ok()) << vine::io::ioErrorName(written.error());
+    ASSERT_TRUE(written.ok()) << vn::io::ioErrorName(written.error());
 
     std::vector<unsigned char> raw = written.take();
     rewriteStoredName(raw, placeholder, unreadable_name);
 
     auto reopened = ZipArchive::open(raw, ZipArchive::OpenMode::ReadOnly);
-    ASSERT_TRUE(reopened.ok()) << vine::io::ioErrorName(reopened.error());
+    ASSERT_TRUE(reopened.ok()) << vn::io::ioErrorName(reopened.error());
 
     const auto listed = reopened->list(std::filesystem::path{});
-    ASSERT_TRUE(listed.ok()) << vine::io::ioErrorName(listed.error());
+    ASSERT_TRUE(listed.ok()) << vn::io::ioErrorName(listed.error());
     ASSERT_EQ(listed->size(), 1u) << "an entry whose name cannot be decoded is still an entry";
     const std::filesystem::path name = listed->front().path;
     ASSERT_FALSE(name.empty());
 
     const auto read = reopened->read(name);
-    ASSERT_TRUE(read.ok()) << vine::io::ioErrorName(read.error());
+    ASSERT_TRUE(read.ok()) << vn::io::ioErrorName(read.error());
     EXPECT_EQ(std::string(read->begin(), read->end()), "payload");
 
     // The flat reader looks entries up by name, so the name the listing handed out has to
     // find the entry again even though it spells something the archive never stored.
-    const auto direct = vine::io::Zip::readEntry(std::span<const unsigned char>(raw), name);
-    ASSERT_TRUE(direct.ok()) << vine::io::ioErrorName(direct.error());
+    const auto direct = vn::io::Zip::readEntry(std::span<const unsigned char>(raw), name);
+    ASSERT_TRUE(direct.ok()) << vn::io::ioErrorName(direct.error());
     EXPECT_EQ(std::string(direct->begin(), direct->end()), "payload");
 
     // A repack has to put the archive's own bytes back, not a spelling of what they meant.
     auto repacked = reopened->toBytes();
-    ASSERT_TRUE(repacked.ok()) << vine::io::ioErrorName(repacked.error());
+    ASSERT_TRUE(repacked.ok()) << vn::io::ioErrorName(repacked.error());
     const std::vector<unsigned char>& out = repacked.value();
     EXPECT_NE(std::search(out.begin(), out.end(), unreadable.begin(), unreadable.end()), out.end())
         << "the stored name bytes were replaced by a spelling of them";

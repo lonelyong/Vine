@@ -27,18 +27,18 @@
 #include <vine/vsg/api/ContentFacts.hpp>
 #include <vine/vsg/api/ContentSources.hpp>
 
-using vine::graphics::Material;
-using vine::graphics::ShaderProgram;
-using vine::graphics::ShaderStage;
-using vine::graphics::ShaderStageType;
-using vine::vsg::buildMaterialFacts;
-using vine::vsg::buildProgramFacts;
-using vine::vsg::buildScreenProgramFacts;
-using vine::vsg::ContentFacts;
-using vine::vsg::FactMiss;
-using vine::vsg::findMaterial;
-using vine::vsg::MaterialFacts;
-using vine::vsg::ProgramFacts;
+using vn::graphics::Material;
+using vn::graphics::ShaderProgram;
+using vn::graphics::ShaderStage;
+using vn::graphics::ShaderStageType;
+using vn::vsg::buildMaterialFacts;
+using vn::vsg::buildProgramFacts;
+using vn::vsg::buildScreenProgramFacts;
+using vn::vsg::ContentFacts;
+using vn::vsg::FactMiss;
+using vn::vsg::findMaterial;
+using vn::vsg::MaterialFacts;
+using vn::vsg::ProgramFacts;
 
 namespace
 {
@@ -48,8 +48,8 @@ ShaderStage stage(ShaderStageType type, const char* source, const char* entry = 
 {
     ShaderStage out;
     out.type       = type;
-    out.source     = vine::String(reinterpret_cast<const char8_t*>(source));
-    out.entryPoint = vine::String(reinterpret_cast<const char8_t*>(entry));
+    out.source     = vn::String(reinterpret_cast<const char8_t*>(source));
+    out.entryPoint = vn::String(reinterpret_cast<const char8_t*>(entry));
     return out;
 }
 
@@ -187,9 +187,9 @@ TEST(ContentSourcesTest, AScreenProgramWithoutOneFragmentStageIsNotAScreenProgra
 TEST(ContentSourcesTest, AMaterialBecomesItsAbiBlockFieldForField)
 {
     Material material;
-    material.setDiffuse(vine::Colorf(0.1F, 0.2F, 0.3F, 0.4F));
-    material.setSpecular(vine::Colorf(0.5F, 0.6F, 0.7F, 1.0F));
-    material.setAmbient(vine::Colorf(0.05F, 0.06F, 0.07F, 1.0F));
+    material.setDiffuse(vn::Colorf(0.1F, 0.2F, 0.3F, 0.4F));
+    material.setSpecular(vn::Colorf(0.5F, 0.6F, 0.7F, 1.0F));
+    material.setAmbient(vn::Colorf(0.05F, 0.06F, 0.07F, 1.0F));
     material.setShininess(42.0F);
 
     MaterialFacts            facts;
@@ -198,9 +198,9 @@ TEST(ContentSourcesTest, AMaterialBecomesItsAbiBlockFieldForField)
 
     EXPECT_EQ(facts.material, &material);
     EXPECT_EQ(facts.revision, 9U);
-    EXPECT_EQ(facts.block.size(), sizeof(vine::graphics::VineMaterialBlock));
+    EXPECT_EQ(facts.block.size(), sizeof(vn::graphics::VineMaterialBlock));
 
-    vine::graphics::VineMaterialBlock block;
+    vn::graphics::VineMaterialBlock block;
     ASSERT_GE(facts.block.size(), sizeof(block));
     std::memcpy(&block, facts.block.data(), sizeof(block));
     EXPECT_FLOAT_EQ(block.diffuse[0], 0.1F);
@@ -219,11 +219,11 @@ TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)
     // The entry's identity is null, which is what content without a material looks up - and the bytes are the
     // ABI's own defaults (the existing implementation hands the same block to a drawable that names none).
     EXPECT_EQ(facts.material, nullptr);
-    EXPECT_EQ(facts.block.size(), sizeof(vine::graphics::VineMaterialBlock));
+    EXPECT_EQ(facts.block.size(), sizeof(vn::graphics::VineMaterialBlock));
 
-    vine::graphics::VineMaterialBlock block{};
+    vn::graphics::VineMaterialBlock block{};
     std::memcpy(&block, facts.block.data(), sizeof(block));
-    const vine::graphics::VineMaterialBlock defaults{};
+    const vn::graphics::VineMaterialBlock defaults{};
 
     // The ABI's own comparison - member-wise, on purpose: the block's members are the payload, and its tail
     // padding (shininess ends at 52 of 64 bytes) is not part of it. Comparing the BYTES would report a change
@@ -236,7 +236,7 @@ TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)
     std::vector<std::byte> again_storage;
     MaterialFacts          again;
     ASSERT_EQ(buildMaterialFacts(nullptr, 0U, again, again_storage), FactMiss::None);
-    vine::graphics::VineMaterialBlock again_block{};
+    vn::graphics::VineMaterialBlock again_block{};
     std::memcpy(&again_block, again.block.data(), sizeof(again_block));
     EXPECT_TRUE(again_block == block);
 

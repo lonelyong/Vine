@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-V_IMAGING_NS_BEGIN
+VN_IMAGING_NS_BEGIN
 
 namespace
 {
@@ -41,7 +41,7 @@ std::size_t levelByteSize(int width, int height, PixelFormat format) noexcept
 
 } // namespace
 
-V_OBJECT_META_IMPL(Image, vine::Object);
+VN_OBJECT_META_IMPL(Image, vn::Object);
 
 int Image::mipCapacity(int width, int height) noexcept
 {
@@ -153,4 +153,4 @@ std::size_t Image::totalByteSize() const noexcept
     return mip_offsets_.back();
 }
 
-V_IMAGING_NS_END
+VN_IMAGING_NS_END

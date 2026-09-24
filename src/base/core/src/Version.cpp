@@ -2,7 +2,7 @@
 
 #include <string>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 Version::Version(int major, int minor, int patch)
   : major_(major)
@@ -133,4 +133,4 @@ bool Version::operator>=(const Version& other) const
     return compare(other) >= 0;
 }
 
-V_CORE_NS_END
+VN_CORE_NS_END

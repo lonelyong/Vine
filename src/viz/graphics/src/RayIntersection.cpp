@@ -12,7 +12,7 @@
 #include <vine/geometry/TriangleMesh.hpp>
 #include <vine/math/Transform3.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 namespace
 {
@@ -150,7 +150,7 @@ Aabbd transformBounds(const Aabbd& local, const Mat4d& m)
  * @param positions Position array.
  * @return The bounding box (empty for an empty array).
  */
-Aabbd boundsOfPositions(const vine::geometry::Vec3fArray& positions)
+Aabbd boundsOfPositions(const vn::geometry::Vec3fArray& positions)
 {
     Aabbd box = Aabbd::empty();
     for (const auto& p : positions) {
@@ -173,7 +173,7 @@ Aabbd boundsOfPositions(const vine::geometry::Vec3fArray& positions)
  */
 Vec3d toWorld(const Mat4d& m, double x, double y, double z)
 {
-    const vine::math::Point3d p = m * vine::math::Point3d(x, y, z);
+    const vn::math::Point3d p = m * vn::math::Point3d(x, y, z);
     return Vec3d(p.x, p.y, p.z);
 }
 
@@ -185,7 +185,7 @@ Vec3d toWorld(const Mat4d& m, double x, double y, double z)
  * geometry's index buffer. Lifetime spans the caller's picking call only.
  */
 struct GeometryMesh {
-    vine::geometry::Vec3fArray        positions;
+    vn::geometry::Vec3fArray        positions;
     std::span<const std::uint32_t>    indices;
 
     /** @brief Returns whether position data is available. */
@@ -281,7 +281,7 @@ RayIntersectionResult makeTriangleHit(const Vec3d& a, const Vec3d& b, const Vec3
  * @return true when at least one triangle was hit.
  */
 template <typename OnHit>
-bool traverseMesh(const vine::geometry::Vec3fArray& positions,
+bool traverseMesh(const vn::geometry::Vec3fArray& positions,
                   std::span<const std::uint32_t> indices,
                   const Ray& ray, const Mat4d& world, OnHit&& on_hit)
 {
@@ -522,4 +522,4 @@ std::vector<RayIntersectionResult> RayIntersection::intersectSceneAll(const Ray&
     return results;
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

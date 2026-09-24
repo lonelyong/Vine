@@ -70,7 +70,7 @@
 
 ## 1. 模块定位与插件模型
 
-`gfx_backend_vsg` 是 `vine::graphics` 渲染抽象（`RenderBackend`）的**第一个真后端**，
+`gfx_backend_vsg` 是 `vn::graphics` 渲染抽象（`RenderBackend`）的**第一个真后端**，
 以 appfw **MODULE 插件**（动态库）形式交付。它把 graphics 层的场景图 / 相机 /
 渲染命令翻译成 **VulkanSceneGraph（VSG）** 调用。
 
@@ -96,8 +96,8 @@
 - 插件 `load()` 把 `static VsgRenderBackendFactory s_factory` 注册进
   `RenderBackendRegistry`；上层 `registry.create(u8"vsg")` 拿后端（C6 起无参：
   引擎逐 pass 驱动内容，后端不绑 Vine scene/camera），不依赖本模块或 VSG 库头文件。
-- 命名空间：实现都在 `vine::vsg`（`V_VSG_NS_BEGIN/END`）；graphics 类型在
-  `vine::graphics`；vsg 类型全局 `::vsg`。
+- 命名空间：实现都在 `vn::vsg`（`VN_VSG_NS_BEGIN/END`）；graphics 类型在
+  `vn::graphics`；vsg 类型全局 `::vsg`。
 - 头文件放 `include/vine/vsg/`，其中 `RenderStateMapper.hpp`、`VsgUtils.hpp` 是
   header-only；类主体在插件 `src/`（不进公共 SDK 树）。
 
@@ -105,9 +105,9 @@
 
 ```
 src/plugins/gfx_backend_vsg/
-  CMakeLists.txt                  # v_add_plugin + FetchContent(vsg/glslang)
+  CMakeLists.txt                  # vn_add_plugin + FetchContent(vsg/glslang)
   include/vine/vsg/
-    vsg_global.hpp                # V_VSG_API 导出宏 + 命名空间宏（查 V_VSG_LIB）
+    vsg_global.hpp                # VN_VSG_API 导出宏 + 命名空间宏（查 VN_VSG_LIB）
     VsgRenderer.hpp               # 后端类定义（RenderBackend 实现；无 PImpl，状态按值持有）
     SceneBridge.hpp               # 命令流 → 保留式 vsg 场景（保留缓存声明在此）
     SceneBridgeInternals.hpp      # SceneBridge 的保留态形状（各实现单元共享）
@@ -167,7 +167,7 @@ src/plugins/gfx_backend_vsg/
     VsgBackendUtility.cpp         # detail：图手术、设备同步、会话策略
     VsgPipelineFactory.cpp        # detail：格式转换、渲染通道、着色器集、叠加/程序节点、灯光节点
     VsgRenderBackendFactory.cpp   # 后端工厂注册
-    GfxBackendVsgPlugin.cpp       # 插件外壳 + V_DECLARE_PLUGIN
+    GfxBackendVsgPlugin.cpp       # 插件外壳 + VN_DECLARE_PLUGIN
   shaders/                        # 早期手工 flat shader（flat.vert/frag[.spv]，已不被构建使用）
   vsg_selftest/                   # 无窗口自检（lavapipe 下跑完整帧装配）
   docs/data-flow.md               # 数据映射专项文档（旧名 vine-to-vsg-data-flow.md）
@@ -175,9 +175,9 @@ src/plugins/gfx_backend_vsg/
   gfx_backend_vsg.md              # 本文
 ```
 
-`v_add_plugin` 由短名推出 `V_GFX_BACKEND_VSG_LIB`，但头文件查 `V_VSG_LIB`，所以
-CMake 里显式 `target_compile_definitions(... PRIVATE V_VSG_LIB)` 让 `V_VSG_API`
-在构建本插件时展开为 `V_EXPORT`。
+`vn_add_plugin` 由短名推出 `VN_GFX_BACKEND_VSG_LIB`，但头文件查 `VN_VSG_LIB`，所以
+CMake 里显式 `target_compile_definitions(... PRIVATE VN_VSG_LIB)` 让 `VN_VSG_API`
+在构建本插件时展开为 `VN_EXPORT`。
 
 ## 3. 构建与依赖
 
@@ -186,7 +186,7 @@ CMake 里显式 `target_compile_definitions(... PRIVATE V_VSG_LIB)` 让 `V_VSG_A
   `detail::supportsRequiredVulkanVersion()` 判，低了就 `shutdown()` + 返回 false 并在诊断通道报原因。
   可用/不可用的 API 面看**系统头的版本**（本机 `VK_HEADER_VERSION 341`），vsg 那份 `include/vsg/vk/vulkan.h`
   只是 `#include <vulkan/vulkan.h>` + 老头补丁。
-- `v_add_plugin(GFX_BACKEND_VSG_TARGET gfx_backend_vsg)`：MODULE 库。
+- `vn_add_plugin(GFX_BACKEND_VSG_TARGET gfx_backend_vsg)`：MODULE 库。
 - `VINE_USE_FETCHCONTENT=ON`（推荐）：静态编译 glslang + vsg v1.1.16 打进插件；
   保留运行期 `vsg::ShaderCompiler`（程序路径需要）。
   - 先 `find_package(glslang QUIET)`；没有再 Fetch glslang 16.2.0，并把它的
@@ -199,7 +199,7 @@ CMake 里显式 `target_compile_definitions(... PRIVATE V_VSG_LIB)` 让 `V_VSG_A
   （登记 D12）。默认 phong 用内嵌 SPIR-V blob，无需 glslang 也能渲染。
 - 链接：`vsg::vsg`（PUBLIC，因 `SceneBridge` 对外 API 暴露 `vsg::ref_ptr<vsg::Node>`）
   + appfw（插件基类）+ graphics（接口 + registry）。
-- 部署：`<exe>/plugins/vine/gfx_backend_vsgd.*`（v_add_plugin 规则）。
+- 部署：`<exe>/plugins/vine/gfx_backend_vsgd.*`（vn_add_plugin 规则）。
 - 测试：`tests/test_vsg` 不能链 MODULE 库，改为**直接编实现源文件**做集成测试。
 
 ## 4. 核心类职责一览
@@ -213,7 +213,7 @@ CMake 里显式 `target_compile_definitions(... PRIVATE V_VSG_LIB)` 让 `V_VSG_A
 | `RenderStateMapper` | `ResolvedRenderState` → DepthStencil/Rasterization/ColorBlend/InputAssembly 四态 | header-only；含 reverse-Z 深度比较反转 |
 | `VsgUtils::detail::toVsg` | `Mat4d` → `vsg::dmat4`（列主序复制） | header-only |
 | `VsgRenderBackendFactory` | `create/info` + 静态 `Registrar` 自注册 | 插件加载也注册一次 |
-| `GfxBackendVsgPlugin` | 插件外壳，`load()` 注册工厂 | `V_DECLARE_PLUGIN` |
+| `GfxBackendVsgPlugin` | 插件外壳，`load()` 注册工厂 | `VN_DECLARE_PLUGIN` |
 
 ## 5. 分层数据链路（命令流 → 保留式 vsg 场景）
 

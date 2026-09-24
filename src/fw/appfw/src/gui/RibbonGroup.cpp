@@ -8,9 +8,9 @@
 
 #include "ControlData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
-V_OBJECT_META_IMPL(RibbonGroup, Control)
+VN_OBJECT_META_IMPL(RibbonGroup, Control)
 
 namespace
 {
@@ -305,4 +305,4 @@ inline auto RibbonGroup::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

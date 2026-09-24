@@ -13,12 +13,12 @@
 #include <vine/vsg/api/ContentImages.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
-namespace vine::graphics
+namespace vn::graphics
 {
 class Texture;
 }
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /**
  * @brief The images one engine texture is SAMPLED through: the GPU side of a mat
@@ -118,7 +118,7 @@ ct::Ok`.
      * @return The images to bind, never null (its members are never null either
 ).
      */
-    [[nodiscard]] SamplerImage acquire(vine::raw_ptr<const vine::graphics::Texture> texture,
+    [[nodiscard]] SamplerImage acquire(vn::raw_ptr<const vn::graphics::Texture> texture,
                                        detail::TextureReject& reason);
 
     /** @brief Gets the 1x1 white image a 2D map falls back to (never null; see a
@@ -141,7 +141,7 @@ luded). */
     [[nodiscard]] std::size_t count() const noexcept;
 
     /** @brief States whether @p texture has cached images (by address). */
-    [[nodiscard]] bool has(vine::raw_ptr<const vine::graphics::Texture> texture) const noexcept;
+    [[nodiscard]] bool has(vn::raw_ptr<const vn::graphics::Texture> texture) const noexcept;
 
     /**
      * @brief Releases the images of every texture the app has dropped.
@@ -195,4 +195,4 @@ e default of 1 keeps a cache
     MaterialImages();
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

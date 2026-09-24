@@ -9,7 +9,7 @@
 
 #include "Math.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 template <typename T>
 class Point2;
 
@@ -526,4 +526,4 @@ using Vec2ui   = Vec2ui32;
 using Vec2f    = Vector2<float>;
 using Vec2d    = Vector2<double>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

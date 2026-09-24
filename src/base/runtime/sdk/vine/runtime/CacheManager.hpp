@@ -7,7 +7,7 @@
 
 #include <vine/String.hpp>
 
-V_RUNTIME_NS_BEGIN
+VN_RUNTIME_NS_BEGIN
 
 /**
  * @brief Type-erased, thread-safe, TTL-aware in-memory cache abstraction.
@@ -20,7 +20,7 @@ V_RUNTIME_NS_BEGIN
  * Implementations must be safe for concurrent use. Access may evict expired
  * entries lazily, so methods are non-const.
  */
-class V_RUNTIME_API CacheManager {
+class VN_RUNTIME_API CacheManager {
   public:
     /**
      * @brief Destroys the cache abstraction.
@@ -106,4 +106,4 @@ class V_RUNTIME_API CacheManager {
     virtual std::vector<String> keys() = 0;
 };
 
-V_RUNTIME_NS_END
+VN_RUNTIME_NS_END

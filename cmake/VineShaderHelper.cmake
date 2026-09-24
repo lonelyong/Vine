@@ -9,13 +9,13 @@
 #
 #   # Once, at the top level (the repository root, whose scope covers both src/
 #   # and tests/):
-#   v_declare_embedded_shaders(OUTPUT vine/graphics/EmbeddedShaders.hpp
-#                              NAMESPACE vine::graphics::shaders
+#   vn_declare_embedded_shaders(OUTPUT vine/graphics/EmbeddedShaders.hpp
+#                              NAMESPACE vn::graphics::shaders
 #                              SOURCES src/viz/graphics/shaders/builtin_forward.vert
 #                                      src/viz/graphics/shaders/builtin_forward.frag)
 #
 #   # In any directory, for every target that compiles a TU including the header:
-#   v_use_embedded_shaders(<target> OUTPUT vine/vsg/EmbeddedShaders.hpp)
+#   vn_use_embedded_shaders(<target> OUTPUT vine/vsg/EmbeddedShaders.hpp)
 #
 # The declaration must be at the top level: a custom command is only visible in
 # the directory that declares it and its subdirectories, so declaring it inside
@@ -31,29 +31,29 @@ include_guard(GLOBAL)
 # Generated headers live here; consumers get this on their include path.
 set(VINE_GENERATED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated")
 
-# v_declare_embedded_shaders — declares the generation rule for one header.
+# vn_declare_embedded_shaders — declares the generation rule for one header.
 #
 # @param OUTPUT    Header path below the generated include dir, used verbatim as
 #                  the include spelling (e.g. vine/vsg/EmbeddedShaders.hpp).
 # @param NAMESPACE C++ namespace of the generated constants.
 # @param SOURCES   Shader sources; relative paths are resolved against the
 #                  calling directory.
-function(v_declare_embedded_shaders)
+function(vn_declare_embedded_shaders)
     cmake_parse_arguments(ARG "" "OUTPUT;NAMESPACE" "SOURCES" ${ARGN})
     if(NOT ARG_OUTPUT)
-        message(FATAL_ERROR "v_declare_embedded_shaders: OUTPUT is required")
+        message(FATAL_ERROR "vn_declare_embedded_shaders: OUTPUT is required")
     endif()
     if(NOT ARG_NAMESPACE)
-        message(FATAL_ERROR "v_declare_embedded_shaders: NAMESPACE is required")
+        message(FATAL_ERROR "vn_declare_embedded_shaders: NAMESPACE is required")
     endif()
     if(NOT ARG_SOURCES)
-        message(FATAL_ERROR "v_declare_embedded_shaders: SOURCES is required")
+        message(FATAL_ERROR "vn_declare_embedded_shaders: SOURCES is required")
     endif()
 
     get_property(declared GLOBAL PROPERTY VINE_EMBEDDED_SHADERS_DECLARED)
     if(ARG_OUTPUT IN_LIST declared)
         message(FATAL_ERROR
-            "v_declare_embedded_shaders: ${ARG_OUTPUT} is already declared")
+            "vn_declare_embedded_shaders: ${ARG_OUTPUT} is already declared")
     endif()
 
     set(header "${VINE_GENERATED_INCLUDE_DIR}/${ARG_OUTPUT}")
@@ -64,7 +64,7 @@ function(v_declare_embedded_shaders)
         endif()
         if(NOT EXISTS "${source}")
             message(FATAL_ERROR
-                "v_declare_embedded_shaders: shader source not found: ${source}")
+                "vn_declare_embedded_shaders: shader source not found: ${source}")
         endif()
         list(APPEND sources "${source}")
     endforeach()
@@ -80,8 +80,8 @@ function(v_declare_embedded_shaders)
                 "-DOUT=${header}"
                 "-DSOURCES=${packed_sources}"
                 "-DNAMESPACE=${ARG_NAMESPACE}"
-                -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/v_embed_shaders.cmake"
-        DEPENDS ${sources} "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/v_embed_shaders.cmake"
+                -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VineEmbedShaders.cmake"
+        DEPENDS ${sources} "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VineEmbedShaders.cmake"
         COMMENT "Embedding shaders into ${ARG_OUTPUT}"
         VERBATIM
     )
@@ -92,23 +92,23 @@ function(v_declare_embedded_shaders)
     set_property(GLOBAL APPEND PROPERTY VINE_EMBEDDED_SHADER_SOURCES ${sources})
 endfunction()
 
-# v_use_embedded_shaders — wires a target that includes a declared header.
+# vn_use_embedded_shaders — wires a target that includes a declared header.
 #
 # @param target  Target to wire (must be in the declaring directory or below).
-# @param OUTPUT  Header path as passed to v_declare_embedded_shaders.
+# @param OUTPUT  Header path as passed to vn_declare_embedded_shaders.
 # @param SOURCES Optional keyword: also lists the generated header in the
 #                target's sources so IDEs show it (default: ordering only).
-function(v_use_embedded_shaders target)
+function(vn_use_embedded_shaders target)
     cmake_parse_arguments(ARG "SOURCES" "OUTPUT" "" ${ARGN})
     if(NOT ARG_OUTPUT)
-        message(FATAL_ERROR "v_use_embedded_shaders: OUTPUT is required")
+        message(FATAL_ERROR "vn_use_embedded_shaders: OUTPUT is required")
     endif()
 
     get_property(declared GLOBAL PROPERTY VINE_EMBEDDED_SHADERS_DECLARED)
     if(NOT ARG_OUTPUT IN_LIST declared)
         message(FATAL_ERROR
-            "v_use_embedded_shaders: ${ARG_OUTPUT} was never declared; "
-            "declare it at the top level with v_declare_embedded_shaders")
+            "vn_use_embedded_shaders: ${ARG_OUTPUT} was never declared; "
+            "declare it at the top level with vn_declare_embedded_shaders")
     endif()
 
     string(MAKE_C_IDENTIFIER "${ARG_OUTPUT}" rule_suffix)

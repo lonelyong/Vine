@@ -17,7 +17,7 @@
 #include "Convert.hpp"
 
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace
 {
@@ -287,4 +287,4 @@ std::vector<DockPanel*> DockPanelManager::panels() const
     return result;
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

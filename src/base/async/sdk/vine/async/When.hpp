@@ -21,7 +21,7 @@
 #include "Cancellation.hpp"
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 namespace detail {
 
@@ -869,4 +869,4 @@ Task<void> whenAny(CancellationToken token, Task<Ts>... tasks)
         detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), std::move(token));
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

@@ -6,7 +6,7 @@
 
 #include <vine/robotics/kinematics/Q.hpp>
 
-using namespace vine::robotics::kinematics;
+using namespace vn::robotics::kinematics;
 
 namespace
 {

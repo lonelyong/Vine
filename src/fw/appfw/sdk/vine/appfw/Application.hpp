@@ -10,7 +10,7 @@
 #include <vine/String.hpp>
 #include <vine/raw_ptr.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class CommandManager;
 class PluginManager;
@@ -23,8 +23,8 @@ class StartupProgress;
 class UserIO;
 class ApplicationData;
 
-class V_APPFW_API Application : public Object {
-    V_OBJECT_META_DECL;
+class VN_APPFW_API Application : public Object {
+    VN_OBJECT_META_DECL;
 
   protected:
     ApplicationData*       dptr();
@@ -349,4 +349,4 @@ inline raw_ptr<Application> getApp()
     return Application::current();
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

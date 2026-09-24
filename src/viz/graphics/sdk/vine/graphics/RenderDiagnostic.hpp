@@ -6,7 +6,7 @@
 
 #include <vine/String.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief How bad a backend diagnostic is.
@@ -56,7 +56,7 @@ enum class DiagnosticCategory : std::uint8_t
 /**
  * @brief One backend diagnostic: how bad, about what, and why.
  */
-struct V_GRAPHICS_API RenderDiagnostic
+struct VN_GRAPHICS_API RenderDiagnostic
 {
     DiagnosticSeverity severity = DiagnosticSeverity::Error;          ///< How bad it is.
     DiagnosticCategory category = DiagnosticCategory::GeometryRejected; ///< What it is about.
@@ -73,4 +73,4 @@ struct V_GRAPHICS_API RenderDiagnostic
  */
 using DiagnosticSink = std::function<void(const RenderDiagnostic&)>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

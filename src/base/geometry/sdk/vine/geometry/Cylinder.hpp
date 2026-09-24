@@ -4,13 +4,13 @@
 
 #include "Primitive.hpp"
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief A cylinder primitive centered on the Z axis.
  */
-class V_GEOMETRY_API Cylinder : public Primitive {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API Cylinder : public Primitive {
+    VN_OBJECT_META_DECL;
 
   public:
     /**
@@ -65,7 +65,7 @@ class V_GEOMETRY_API Cylinder : public Primitive {
      * @return true when both radius and height are larger than eps.
      */
     [[nodiscard]]
-    bool hasVolume(double eps = vine::math::EPS<double>()) const override;
+    bool hasVolume(double eps = vn::math::EPS<double>()) const override;
 
   private:
     /// Radius of the circular cross-section.
@@ -74,4 +74,4 @@ class V_GEOMETRY_API Cylinder : public Primitive {
     double height_ = 1.0;
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

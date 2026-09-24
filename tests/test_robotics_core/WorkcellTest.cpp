@@ -15,10 +15,10 @@
 #include <vine/robotics/workcell/Scanner.hpp>
 #include <vine/robotics/workcell/Workcell.hpp>
 
-using namespace vine::math;
-using namespace vine::robotics;
-using namespace vine::robotics::kinematics;
-using namespace vine::robotics::workcell;
+using namespace vn::math;
+using namespace vn::robotics;
+using namespace vn::robotics::kinematics;
+using namespace vn::robotics::workcell;
 
 namespace
 {

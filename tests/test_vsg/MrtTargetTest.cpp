@@ -41,20 +41,20 @@
 #include <vine/vsg/core/Streams.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 
-using vine::graphics::RenderTarget;
-using vine::vsg::BlockDescriptors;
-using vine::vsg::BlockStorage;
-using vine::vsg::ContentDraw;
-using vine::vsg::ContentPipeline;
-using vine::vsg::OffscreenTarget;
-using vine::vsg::StreamUploads;
-using vine::vsg::ViewportRect;
-using vine::vsg::core::PixelProbe;
-using vine::vsg::core::Rgba8;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::StreamKey;
-using vine::vsg::core::StreamKind;
-using vine::vsg::core::VariantPool;
+using vn::graphics::RenderTarget;
+using vn::vsg::BlockDescriptors;
+using vn::vsg::BlockStorage;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentPipeline;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::StreamUploads;
+using vn::vsg::ViewportRect;
+using vn::vsg::core::PixelProbe;
+using vn::vsg::core::Rgba8;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::StreamKey;
+using vn::vsg::core::StreamKind;
+using vn::vsg::core::VariantPool;
 
 namespace
 {
@@ -135,7 +135,7 @@ ContentPipeline::Shaders mrtShaders()
 /// @brief What a case needs: an MRT target and the stack that can draw into it.
 struct Fixture
 {
-    vine::vsg::DeviceResult                 created;
+    vn::vsg::DeviceResult                 created;
     std::unique_ptr<OffscreenTarget>        target;
     std::unique_ptr<BlockStorage>           storage;
     std::unique_ptr<BlockDescriptors>       descriptors;
@@ -150,7 +150,7 @@ struct Fixture
 
     bool build()
     {
-        created = vine::vsg::createDevice();
+        created = vn::vsg::createDevice();
         if (!created.ok) {
             return false;
         }
@@ -163,8 +163,8 @@ struct Fixture
             return false;
         }
         const ContentPipeline::Shaders shader_pair = mrtShaders();
-        vine::vsg::ProgramAbi            abi;
-        if (vine::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vine::vsg::FactMiss::None) {
+        vn::vsg::ProgramAbi            abi;
+        if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::vsg::FactMiss::None) {
             return false;
         }
         descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
@@ -186,7 +186,7 @@ struct Fixture
 
         uploads  = std::make_unique<StreamUploads>();
         recorder = std::make_unique<ContentDraw>(*pipelines, pool,
-                                                 vine::vsg::detail::fetchDynamicStateEntryPoints(
+                                                 vn::vsg::detail::fetchDynamicStateEntryPoints(
                                                      created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();

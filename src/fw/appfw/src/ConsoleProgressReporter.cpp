@@ -12,7 +12,7 @@
 
 #include <vine/appfw/ProgressHost.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 namespace
 {
@@ -61,11 +61,11 @@ struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<Conso
     /// @param generation Generation the state had when the wakeup was armed; a stale one is a
     ///                   no-op, which is how stop() silences a wakeup that is already in flight.
     /// @param delay How long to sleep before reporting back.
-    static vine::async::DetachedTask wakeupAfter(std::shared_ptr<Impl> impl,
+    static vn::async::DetachedTask wakeupAfter(std::shared_ptr<Impl> impl,
                                                 std::uint64_t       generation,
                                                 WakeupDelay         delay)
     {
-        co_await vine::async::sleepFor(delay);
+        co_await vn::async::sleepFor(delay);
 
         impl->afterWakeup(generation);
     }
@@ -208,7 +208,7 @@ struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<Conso
     ConsoleProgressOptions options_;
 
     std::mutex                        mutex_;        ///< Guards everything below; the stop barrier.
-    vine::Connection                  subscription_; ///< Installed by start(), removed by stop().
+    vn::Connection                  subscription_; ///< Installed by start(), removed by stop().
     bool                              stopped_{ false };
     std::uint64_t                     generation_{ 0 }; ///< Bumped by stop(): stale wakeups bail.
     bool                              sleeping_{ false }; ///< A wakeup is already in flight.
@@ -282,4 +282,4 @@ void ConsoleProgressReporter::poll()
     d->arm(delay);
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

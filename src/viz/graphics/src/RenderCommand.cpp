@@ -3,7 +3,7 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 RenderCommand::RenderCommand(intrusive_ptr<Geometry> g, intrusive_ptr<Material> m,
                              const Mat4d& model)
@@ -15,4 +15,4 @@ RenderCommand::RenderCommand(intrusive_ptr<Geometry> g, intrusive_ptr<Material> 
     // subtree opacity only; a material never contributes transparency.
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

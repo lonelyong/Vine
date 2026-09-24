@@ -3,7 +3,7 @@
 #include <vine/appfw/Command.hpp>
 #include <vine/appfw/command_export.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief Simulates a long-running parent command that runs a child via
@@ -15,14 +15,14 @@ V_APPFW_NS_BEGIN
  * while the chain is deeper than one.
  */
 class TestNestedProgressCommand : public Command {
-    V_OBJECT_META_DECL;
-    V_DECLARE_COMMAND(TestNestedProgressCommand, u8"test_nested_progress")
+    VN_OBJECT_META_DECL;
+    VN_DECLARE_COMMAND(TestNestedProgressCommand, u8"test_nested_progress")
 
   public:
     String group() const override { return u8"测试"; }
     String description() const override { return u8"模拟耗时父命令并嵌套调用耗时子命令"; }
     CommandFlags flags() const override { return CommandFlags::LongRunning; }
-    vine::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
+    vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

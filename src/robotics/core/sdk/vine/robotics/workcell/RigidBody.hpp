@@ -7,7 +7,7 @@
 #include "Collision.hpp"
 #include "Visual.hpp"
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 /**
  * @brief A rigid body: visuals and collision shapes.
@@ -86,4 +86,4 @@ class RigidBody
     std::vector<Collision> collisions_;
 };
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

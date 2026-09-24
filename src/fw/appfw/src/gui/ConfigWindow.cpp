@@ -23,7 +23,7 @@
 #include "Convert.hpp"
 #include "WindowData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace
 {
@@ -172,7 +172,7 @@ void writeEditorValue(QWidget* widget, const ConfigManager& config, const Config
 
 } // namespace
 
-V_OBJECT_META_IMPL(ConfigWindow, Window)
+VN_OBJECT_META_IMPL(ConfigWindow, Window)
 
 struct ConfigWindow::Impl : public WindowData {
     /// One editable item: the editor widget and the ConfigManager key it shows.
@@ -310,4 +310,4 @@ inline auto ConfigWindow::dptr() const -> const Impl*
     return static_cast<const Impl*>(Window::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

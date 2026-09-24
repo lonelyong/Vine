@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <type_traits>
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief floating point concept, includes float and double
@@ -65,4 +65,4 @@ struct ColMajor {};
  */
 struct RowMajor {};
 
-V_MATH_NS_END
+VN_MATH_NS_END

@@ -59,24 +59,24 @@
 #include <vine/vsg/core/PixelProbe.hpp>
 #include <vine/vsg/core/Streams.hpp>
 
-using vine::graphics::RenderTarget;
-using vine::vsg::BlockDescriptors;
-using vine::vsg::BlockStorage;
-using vine::vsg::buildScreenProgramFacts;
-using vine::vsg::ContentDraw;
-using vine::vsg::ContentPipeline;
-using vine::vsg::FactMiss;
-using vine::vsg::OffscreenTarget;
-using vine::vsg::ProgramFacts;
-using vine::vsg::StreamUploads;
-using vine::vsg::ViewportRect;
-using vine::vsg::core::DrawKind;
-using vine::vsg::core::PixelProbe;
-using vine::vsg::core::Rgba8;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::StreamKey;
-using vine::vsg::core::StreamKind;
-using vine::vsg::core::VariantPool;
+using vn::graphics::RenderTarget;
+using vn::vsg::BlockDescriptors;
+using vn::vsg::BlockStorage;
+using vn::vsg::buildScreenProgramFacts;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentPipeline;
+using vn::vsg::FactMiss;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::ProgramFacts;
+using vn::vsg::StreamUploads;
+using vn::vsg::ViewportRect;
+using vn::vsg::core::DrawKind;
+using vn::vsg::core::PixelProbe;
+using vn::vsg::core::Rgba8;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::StreamKey;
+using vn::vsg::core::StreamKind;
+using vn::vsg::core::VariantPool;
 
 namespace
 {
@@ -136,7 +136,7 @@ class Fixture
     ///                            engine's full-screen ABI defines as the attachment index.
     bool build(std::uint32_t source_attachments, int sampled_attachment)
     {
-        created = vine::vsg::createDevice();
+        created = vn::vsg::createDevice();
         if (!created.ok) {
             return false;
         }
@@ -164,7 +164,7 @@ class Fixture
 
         // The program the pass draws through: the SDK's own screen copy, whose fragment stage names the binding
         // (see the file note). buildScreenProgramFacts composes it with the engine's full-screen vertex stage.
-        program = vine::graphics::screenCopyProgram(sampled_attachment);
+        program = vn::graphics::screenCopyProgram(sampled_attachment);
         if (program == nullptr) {
             return false;
         }
@@ -180,7 +180,7 @@ class Fixture
         program_revision = facts.revision;
 
         recorder = std::make_unique<ContentDraw>(*pipelines, pool,
-                                                 vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                                                 vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
                                                                                                  created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();
@@ -235,7 +235,7 @@ class Fixture
         full_screen.key.revision              = program_revision;
         full_screen.key.compatibility.samples = 1U;
         full_screen.key.sampled_color_count   = source->colorAttachmentCount();
-        full_screen.dynamic.depth             = vine::graphics::DepthMode::Disabled;  // a composite on top
+        full_screen.dynamic.depth             = vn::graphics::DepthMode::Disabled;  // a composite on top
         full_screen.samplers                  = samplers;
         full_screen.viewport                  = viewport;
         full_screen.color_attachments         = destination->colorAttachmentCount();
@@ -341,8 +341,8 @@ class Fixture
             return false;
         }
         const ContentPipeline::Shaders        shader_pair = mrtShaders();
-        vine::vsg::ProgramAbi                 abi;
-        if (vine::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vine::vsg::FactMiss::None) {
+        vn::vsg::ProgramAbi                 abi;
+        if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::vsg::FactMiss::None) {
             return false;
         }
         content_descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
@@ -364,17 +364,17 @@ class Fixture
 
         uploads          = std::make_unique<StreamUploads>();
         content_recorder = std::make_unique<ContentDraw>(*content_pipelines, content_pool,
-                                                         vine::vsg::detail::fetchDynamicStateEntryPoints(
+                                                         vn::vsg::detail::fetchDynamicStateEntryPoints(
                                                              created.device->vk(), created.instance->vk()));
         content_registry = std::make_unique<StateRegistry>(content_pool);
         return true;
     }
 
   public:
-    vine::vsg::DeviceResult             created;
+    vn::vsg::DeviceResult             created;
     std::unique_ptr<OffscreenTarget>    source;
     std::unique_ptr<OffscreenTarget>    destination;
-    vine::intrusive_ptr<vine::graphics::ShaderProgram> program;
+    vn::intrusive_ptr<vn::graphics::ShaderProgram> program;
     const void*                         program_identity{nullptr};
     std::uint64_t                       program_revision{0};
     std::unique_ptr<ContentPipeline>    pipelines;

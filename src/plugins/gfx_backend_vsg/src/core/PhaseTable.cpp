@@ -2,7 +2,7 @@
 
 #include <utility>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -66,4 +66,4 @@ std::size_t PhaseTable::size() const noexcept
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

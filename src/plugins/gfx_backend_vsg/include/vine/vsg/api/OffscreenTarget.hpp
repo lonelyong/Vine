@@ -46,7 +46,7 @@ class Device;
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief An off-screen colour target plus its copy-back path. */
 class OffscreenTarget
@@ -70,8 +70,8 @@ class OffscreenTarget
     {
         std::uint32_t                                          width{256};   ///< Extent in pixels.
         std::uint32_t                                          height{256};
-        std::vector<vine::graphics::RenderTarget::ColorFormat> color_formats{ vine::graphics::RenderTarget::ColorFormat::RGBA8 };
-        std::optional<vine::graphics::RenderTarget::DepthFormat> depth_format;  ///< Absent for colour only.
+        std::vector<vn::graphics::RenderTarget::ColorFormat> color_formats{ vn::graphics::RenderTarget::ColorFormat::RGBA8 };
+        std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;  ///< Absent for colour only.
         bool           depth_sampleable{false};  ///< The host asked for a depth a shader may sample (promotion).
         core::ClearPolicy clear;        ///< What the pass clears (bootstrap applies).
     };
@@ -593,4 +593,4 @@ class OffscreenTarget
     [[nodiscard]] bool buildAttachments(std::uint32_t width, std::uint32_t height, Attachments& out);
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

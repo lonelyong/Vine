@@ -21,7 +21,7 @@ target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/
                                              # includes the private Qt coroutine glue.
                                              ${CMAKE_SOURCE_DIR}/src/fw/appfw/src)
 
-# vi::ImageIO / vi::System: the PluginLifecycleTest cases load the REAL app_shell
+# vn::ImageIO / vn::System: the PluginLifecycleTest cases load the REAL app_shell
 # plugin, and a plugin installed OUTSIDE the application directory (which is exactly what
 # UserPluginSandbox copies into /tmp/vine_test_plugins) cannot use its own RUNPATH to find
 # anything: the loader only has the libraries the HOST process already loaded, and dlopen
@@ -33,11 +33,11 @@ target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/
 # cmake/VinePluginHelper.cmake). Linking them explicitly keeps that a stated requirement
 # instead of an accident of what the framework happens to pull in.
 target_link_libraries(${TEST_NAME}
-    vi::Appfw
-    vi::Progress
-    vi::ImageIO
-    vi::System
-    vi::Graphics
+    vn::Appfw
+    vn::Progress
+    vn::ImageIO
+    vn::System
+    vn::Graphics
     Qt6::Core Qt6::Gui Qt6::Widgets)
 
 # Plugins that a current host must refuse, to test the ABI guard end to end: one
@@ -52,7 +52,7 @@ add_library(vine_plugin_fixture_loop_b MODULE fixtures/LoopBPlugin.cpp)
 foreach(fixture vine_plugin_fixture_legacy vine_plugin_fixture_future vine_plugin_fixture_chain
         vine_plugin_fixture_loop_a vine_plugin_fixture_loop_b)
     set_target_properties(${fixture} PROPERTIES PREFIX "" FOLDER test)
-    target_link_libraries(${fixture} PRIVATE vi::Appfw)
+    target_link_libraries(${fixture} PRIVATE vn::Appfw)
 endforeach()
 
 target_compile_definitions(${TEST_NAME} PRIVATE

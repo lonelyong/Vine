@@ -2,7 +2,7 @@
 
 #include <vine/appfw/appfw_global.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 namespace gui {
 class MainWindow;
@@ -41,4 +41,4 @@ struct AppShellDock {
  */
 AppShellDock buildAppShellDock(gui::MainWindow* wnd);
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

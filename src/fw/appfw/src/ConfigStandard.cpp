@@ -1,6 +1,6 @@
 ﻿#include <vine/appfw/ConfigStandard.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 String standardCategoryName(StandardCategory id)
 {
@@ -65,4 +65,4 @@ String standardGroupLabel(StandardGroup id)
     return String();
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

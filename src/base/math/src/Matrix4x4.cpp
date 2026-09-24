@@ -5,7 +5,7 @@
 #include <vine/math/Math.hpp>
 #include <vine/math/Vector3.hpp>
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 #define TMPL_PREFIX template <typename T, typename Order>
 
@@ -99,9 +99,9 @@ TMPL_PREFIX bool Matrix4x4<T, Order>::isRigid(T eps) const
 
 #undef TMPL_PREFIX
 
-template class V_MATH_API Matrix4x4<float, ColMajor>;
-template class V_MATH_API Matrix4x4<double, ColMajor>;
-template class V_MATH_API Matrix4x4<float, RowMajor>;
-template class V_MATH_API Matrix4x4<double, RowMajor>;
+template class VN_MATH_API Matrix4x4<float, ColMajor>;
+template class VN_MATH_API Matrix4x4<double, ColMajor>;
+template class VN_MATH_API Matrix4x4<float, RowMajor>;
+template class VN_MATH_API Matrix4x4<double, RowMajor>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

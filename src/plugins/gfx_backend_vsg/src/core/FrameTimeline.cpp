@@ -1,6 +1,6 @@
 #include <vine/vsg/core/FrameTimeline.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -79,4 +79,4 @@ std::uint64_t FrameTimeline::retirePoint(std::uint64_t submitted_frame, std::uin
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

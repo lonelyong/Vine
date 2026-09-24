@@ -1,8 +1,8 @@
 ﻿#include <vine/geometry/Ellipsoid.hpp>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-V_OBJECT_META_IMPL(Ellipsoid, Primitive)
+VN_OBJECT_META_IMPL(Ellipsoid, Primitive)
 
 Ellipsoid::Ellipsoid()
 {
@@ -57,4 +57,4 @@ bool Ellipsoid::hasVolume(double eps) const
     return radius_x_ > eps && radius_y_ > eps && radius_z_ > eps;
 }
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

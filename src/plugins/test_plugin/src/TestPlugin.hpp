@@ -2,13 +2,13 @@
 
 #include <vine/appfw/Plugin.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief Test plugin that depends on the plugin_manager plugin.
  */
 class TestPlugin : public Plugin {
-    V_OBJECT_META_DECL;
+    VN_OBJECT_META_DECL;
 
   public:
     TestPlugin();
@@ -24,7 +24,7 @@ class TestPlugin : public Plugin {
      *
      * @param context Load context exposing host capabilities.
      */
-    void load(vine::appfw::PluginLoadContext* context) override;
+    void load(vn::appfw::PluginLoadContext* context) override;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

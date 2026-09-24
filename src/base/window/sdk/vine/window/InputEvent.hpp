@@ -5,7 +5,7 @@
 #include "KeyCode.hpp"
 #include "MouseButton.hpp"
 
-V_WINDOW_NS_BEGIN
+VN_WINDOW_NS_BEGIN
 
 /**
  * @brief Keyboard key event.
@@ -13,7 +13,7 @@ V_WINDOW_NS_BEGIN
  * Published on key press and release. A repeat is a key press generated while
  * the key is held down.
  */
-struct V_WINDOW_API KeyEvent {
+struct VN_WINDOW_API KeyEvent {
     KeyCode     code = KeyCode::Unknown;  ///< Physical key that changed.
     ModifierKey modifiers = ModifierKey::None;
     bool        pressed = false;          ///< false when the key was released.
@@ -27,7 +27,7 @@ struct V_WINDOW_API KeyEvent {
  * (pixel) units. dx/dy are the deltas relative to the previous event.
  * When only the pointer moved (no button involved) button is MouseButton::None.
  */
-struct V_WINDOW_API MouseEvent {
+struct VN_WINDOW_API MouseEvent {
     MouseButton button = MouseButton::None;
     ModifierKey modifiers = ModifierKey::None;
     double      x = 0.0;
@@ -43,7 +43,7 @@ struct V_WINDOW_API MouseEvent {
  * deltaX/deltaY are scroll amounts; a positive deltaY scrolls up/away, a
  * positive deltaX scrolls right. Units are lines (or notches) by default.
  */
-struct V_WINDOW_API ScrollEvent {
+struct VN_WINDOW_API ScrollEvent {
     double      deltaX = 0.0;
     double      deltaY = 0.0;
     ModifierKey modifiers = ModifierKey::None;
@@ -55,9 +55,9 @@ struct V_WINDOW_API ScrollEvent {
  * Carries the new client-area size in device (pixel) units, matching the
  * extent the render backend should rebuild its swapchain to.
  */
-struct V_WINDOW_API ResizeEvent {
+struct VN_WINDOW_API ResizeEvent {
     int width = 0;   ///< New client width in pixels.
     int height = 0;  ///< New client height in pixels.
 };
 
-V_WINDOW_NS_END
+VN_WINDOW_NS_END

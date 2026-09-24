@@ -23,14 +23,14 @@ namespace
 {
 
 /// 进程级 marshaller，由 GuiEnv 创建的 Application 提供。
-vine::appfw::MainThreadDispatcher* mainDispatcher()
+vn::appfw::MainThreadDispatcher* mainDispatcher()
 {
-    auto* app = vine::appfw::Application::current();
+    auto* app = vn::appfw::Application::current();
     return app != nullptr ? app->mainThreadDispatcher() : nullptr;
 }
 
 class ITagged {
-    V_DECLARE_INTERFACE(ITagged)
+    VN_DECLARE_INTERFACE(ITagged)
 
   public:
     virtual ~ITagged() = default;
@@ -38,85 +38,85 @@ class ITagged {
 };
 
 class ITaggedEx : public ITagged {
-    V_DECLARE_INTERFACE(ITaggedEx, ITagged)
+    VN_DECLARE_INTERFACE(ITaggedEx, ITagged)
 
   public:
     virtual int extra() const = 0;
 };
 
-class BaseEvent : public vine::EventArgs {
+class BaseEvent : public vn::EventArgs {
   public:
-    V_OBJECT_META_DECL;
+    VN_OBJECT_META_DECL;
 };
-V_OBJECT_META_IMPL(BaseEvent, vine::EventArgs)
+VN_OBJECT_META_IMPL(BaseEvent, vn::EventArgs)
 
 class DerivedEvent : public BaseEvent {
   public:
-    V_OBJECT_META_DECL;
+    VN_OBJECT_META_DECL;
 };
-V_OBJECT_META_IMPL(DerivedEvent, BaseEvent)
+VN_OBJECT_META_IMPL(DerivedEvent, BaseEvent)
 
-class PingEvent : public vine::EventArgs {
+class PingEvent : public vn::EventArgs {
   public:
-    V_OBJECT_META_DECL;
+    VN_OBJECT_META_DECL;
 };
-V_OBJECT_META_IMPL(PingEvent, vine::EventArgs)
+VN_OBJECT_META_IMPL(PingEvent, vn::EventArgs)
 
 /// 事件类实现接口（含接口继承接口）。
-class TaggedEvent : public vine::EventArgs, public ITaggedEx {
+class TaggedEvent : public vn::EventArgs, public ITaggedEx {
   public:
-    V_OBJECT_META_DECL;
+    VN_OBJECT_META_DECL;
 
     int tag() const override { return 1; }
     int extra() const override { return 2; }
 };
-V_OBJECT_META_IMPL(TaggedEvent, vine::EventArgs, ITaggedEx)
+VN_OBJECT_META_IMPL(TaggedEvent, vn::EventArgs, ITaggedEx)
 
 /// 基类已实现 ITagged，派生类元数据又列了一遍（合法但冗余：接口经多条路径可达）。
 class TaggedDerivedEvent : public TaggedEvent {
   public:
-    V_OBJECT_META_DECL;
+    VN_OBJECT_META_DECL;
 };
-V_OBJECT_META_IMPL(TaggedDerivedEvent, TaggedEvent, ITagged)
+VN_OBJECT_META_IMPL(TaggedDerivedEvent, TaggedEvent, ITagged)
 
 /// 多接口（共享父接口 ITagged）：验证访问顺序与去重。
 class ILeft : public ITagged {
-    V_DECLARE_INTERFACE(ILeft, ITagged)
+    VN_DECLARE_INTERFACE(ILeft, ITagged)
 
   public:
     virtual int left() const = 0;
 };
 
 class IRight : public ITagged {
-    V_DECLARE_INTERFACE(IRight, ITagged)
+    VN_DECLARE_INTERFACE(IRight, ITagged)
 
   public:
     virtual int right() const = 0;
 };
 
 class IBoth : public ILeft, public IRight {
-    V_DECLARE_INTERFACE(IBoth, ILeft, IRight)
+    VN_DECLARE_INTERFACE(IBoth, ILeft, IRight)
 
   public:
     virtual int both() const = 0;
 };
 
-class BothEvent : public vine::EventArgs, public IBoth {
+class BothEvent : public vn::EventArgs, public IBoth {
   public:
-    V_OBJECT_META_DECL;
+    VN_OBJECT_META_DECL;
 
     int tag() const override { return 1; }
     int left() const override { return 2; }
     int right() const override { return 3; }
     int both() const override { return 4; }
 };
-V_OBJECT_META_IMPL(BothEvent, vine::EventArgs, IBoth)
+VN_OBJECT_META_IMPL(BothEvent, vn::EventArgs, IBoth)
 
 } // namespace
 
 TEST(EventBusTest, PublishDeliversToSubscribers)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     int                   received = 0;
     auto                  sub      = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; });
     bus.publish(std::make_shared<PingEvent>());
@@ -126,7 +126,7 @@ TEST(EventBusTest, PublishDeliversToSubscribers)
 
 TEST(EventBusTest, DifferentTypesAreIsolated)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     int                   ping = 0;
     int                   base = 0;
     auto                  s1   = bus.subscribe<PingEvent>([&](const PingEvent&) { ++ping; });
@@ -138,7 +138,7 @@ TEST(EventBusTest, DifferentTypesAreIsolated)
 
 TEST(EventBusTest, PolymorphicDispatch)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     int                   base    = 0;
     int                   derived = 0;
     auto                  s1      = bus.subscribe<BaseEvent>([&](const BaseEvent&) { ++base; });
@@ -155,13 +155,13 @@ TEST(EventBusTest, PolymorphicDispatch)
 
 TEST(EventBusTest, PublishWithNoSubscribersIsNoOp)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     EXPECT_NO_THROW(bus.publish(std::make_shared<PingEvent>()));
 }
 
 TEST(EventBusTest, SubscriptionUnsubscribesOnDestruction)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     int                   received = 0;
     {
         auto sub = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; });
@@ -174,7 +174,7 @@ TEST(EventBusTest, SubscriptionUnsubscribesOnDestruction)
 
 TEST(EventBusTest, MoveTransfersOwnership)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     int                   received = 0;
     auto                  sub      = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; });
     auto                  sub2     = std::move(sub);
@@ -191,19 +191,19 @@ TEST(EventBusTest, MoveTransfersOwnership)
 
 TEST(EventBusTest, UnsubscribeInsideHandlerCancelsNotYetVisited)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     int                   first  = 0;
     int                   second = 0;
-    std::shared_ptr<vine::appfw::Subscription> s1;
-    std::shared_ptr<vine::appfw::Subscription> s2;
-    s1 = std::make_shared<vine::appfw::Subscription>(
+    std::shared_ptr<vn::appfw::Subscription> s1;
+    std::shared_ptr<vn::appfw::Subscription> s2;
+    s1 = std::make_shared<vn::appfw::Subscription>(
         bus.subscribe<PingEvent>([&](const PingEvent&) {
             ++first;
             if (s2) {
                 s2->unsubscribe();
             }
         }));
-    s2 = std::make_shared<vine::appfw::Subscription>(
+    s2 = std::make_shared<vn::appfw::Subscription>(
         bus.subscribe<PingEvent>([&](const PingEvent&) {
             ++second;
         }));
@@ -220,7 +220,7 @@ TEST(EventBusTest, UnsubscribeInsideHandlerCancelsNotYetVisited)
 
 TEST(EventBusTest, ShutdownCancelsInFlightCurrentDispatch)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     int                   before = 0;
     int                   after  = 0;
     auto                  s1     = bus.subscribe<PingEvent>([&](const PingEvent&) {
@@ -237,9 +237,9 @@ TEST(EventBusTest, ShutdownCancelsInFlightCurrentDispatch)
 
 TEST(EventBusTest, SubscribeDuringDispatchAffectsOnlyLaterPublications)
 {
-    vine::appfw::EventBus      bus;
+    vn::appfw::EventBus      bus;
     int                        base = 0;
-    vine::appfw::Subscription  base_sub;
+    vn::appfw::Subscription  base_sub;
     auto                       derived_sub = bus.subscribe<DerivedEvent>([&](const DerivedEvent&) {
         if (!base_sub.isActive()) {
             base_sub = bus.subscribe<BaseEvent>([&](const BaseEvent&) { ++base; });
@@ -255,14 +255,14 @@ TEST(EventBusTest, SubscribeDuringDispatchAffectsOnlyLaterPublications)
 
 TEST(EventBusTest, ShutdownReleasesPendingEvent)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
     ASSERT_TRUE(bus.pendingDeliveryCount() == 0);
 
     std::weak_ptr<const PingEvent> weak;
     auto                           event = std::make_shared<PingEvent>();
     weak                                 = event;
     auto sub = bus.subscribe<PingEvent>([](const PingEvent&) {},
-                                        vine::appfw::SubscriptionThreadMode::Main);
+                                        vn::appfw::SubscriptionThreadMode::Main);
     bus.publish(event);
     event.reset();
 
@@ -279,7 +279,7 @@ TEST(EventBusTest, ShutdownReleasesPendingEvent)
 
 TEST(EventBusTest, SubscriptionHandleReflectsCancellation)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     auto                  sub = bus.subscribe<PingEvent>([](const PingEvent&) {});
     EXPECT_TRUE(sub.isActive());
 
@@ -293,7 +293,7 @@ TEST(EventBusTest, SubscriptionHandleReflectsCancellation)
 
 TEST(EventBusTest, MoveAssignmentCancelsPreviousSubscription)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     int                   first  = 0;
     int                   second = 0;
     auto                  a      = bus.subscribe<PingEvent>([&](const PingEvent&) { ++first; });
@@ -310,10 +310,10 @@ TEST(EventBusTest, MoveAssignmentCancelsPreviousSubscription)
 
 TEST(EventBusTest, MainWithoutMarshallerRunsOnPublishingThread)
 {
-    vine::appfw::EventBus bus;  // 未注入 marshaller
+    vn::appfw::EventBus bus;  // 未注入 marshaller
     int                   received = 0;
     auto                  sub      = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; },
-                                        vine::appfw::SubscriptionThreadMode::Main);
+                                        vn::appfw::SubscriptionThreadMode::Main);
 
     bus.publish(std::make_shared<PingEvent>());
     EXPECT_EQ(received, 1);                       // 文档化的降级：在发布线程执行
@@ -322,7 +322,7 @@ TEST(EventBusTest, MainWithoutMarshallerRunsOnPublishingThread)
 
 TEST(EventBusTest, SubscriberExceptionIsContained)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     int                   received = 0;
     auto                  s1       = bus.subscribe<PingEvent>([](const PingEvent&) { throw std::runtime_error("boom"); });
     auto                  s2       = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; });
@@ -332,11 +332,11 @@ TEST(EventBusTest, SubscriberExceptionIsContained)
 
 TEST(EventBusTest, MainModeQueuesDelivery)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
     ASSERT_NE(mainDispatcher(), nullptr);  // GuiEnv 提供 Application
     int                   received = 0;
     auto                  sub      = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; },
-                                        vine::appfw::SubscriptionThreadMode::Main);
+                                        vn::appfw::SubscriptionThreadMode::Main);
 
     bus.publish(std::make_shared<PingEvent>());
     EXPECT_EQ(received, 0);  // 未立即执行
@@ -347,10 +347,10 @@ TEST(EventBusTest, MainModeQueuesDelivery)
 
 TEST(EventBusTest, AutoModeOnMainIsSynchronous)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
     int                   received = 0;
     auto                  sub      = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; },
-                                        vine::appfw::SubscriptionThreadMode::Auto);
+                                        vn::appfw::SubscriptionThreadMode::Auto);
     // 测试线程即主线程 → Auto → Current（同步）
     bus.publish(std::make_shared<PingEvent>());
     EXPECT_EQ(received, 1);
@@ -358,10 +358,10 @@ TEST(EventBusTest, AutoModeOnMainIsSynchronous)
 
 TEST(EventBusTest, AutoModeOffMainQueuesToMain)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
     std::atomic<int>      received{ 0 };
     auto                  sub = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; },
-                                        vine::appfw::SubscriptionThreadMode::Auto);
+                                        vn::appfw::SubscriptionThreadMode::Auto);
     // 非主线程发布 → Auto → Main（排队到主线程）
     std::thread worker([&] { bus.publish(std::make_shared<PingEvent>()); });
     worker.join();
@@ -372,10 +372,10 @@ TEST(EventBusTest, AutoModeOffMainQueuesToMain)
 
 TEST(EventBusTest, UnsubscribedBeforeQueuedDeliveryIsSkipped)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
     int                   received = 0;
     auto                  sub      = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; },
-                                        vine::appfw::SubscriptionThreadMode::Main);
+                                        vn::appfw::SubscriptionThreadMode::Main);
     bus.publish(std::make_shared<PingEvent>());
     sub.unsubscribe();  // 主线程投递前退订
     QCoreApplication::processEvents();
@@ -384,13 +384,13 @@ TEST(EventBusTest, UnsubscribedBeforeQueuedDeliveryIsSkipped)
 
 TEST(EventBusTest, EventOutlivesPublishViaSharedPtr)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
     std::weak_ptr<const PingEvent> weak;
     {
         auto event = std::make_shared<PingEvent>();
         weak       = event;
         auto sub = bus.subscribe<PingEvent>([](const PingEvent&) {},
-                                            vine::appfw::SubscriptionThreadMode::Main);
+                                            vn::appfw::SubscriptionThreadMode::Main);
         bus.publish(event);
         event.reset();
         EXPECT_FALSE(weak.expired());  // 排队任务持有 shared_ptr，事件存活
@@ -403,9 +403,9 @@ TEST(EventBusTest, BusDestroyedBeforeQueuedDeliveryIsDropped)
 {
     int received = 0;
     {
-        vine::appfw::EventBus bus(mainDispatcher());
+        vn::appfw::EventBus bus(mainDispatcher());
         auto                  sub = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; },
-                                        vine::appfw::SubscriptionThreadMode::Main);
+                                        vn::appfw::SubscriptionThreadMode::Main);
         bus.publish(std::make_shared<PingEvent>());
         EXPECT_EQ(received, 0);
     }  // bus 销毁时投递仍排在 Qt 队列里
@@ -418,10 +418,10 @@ TEST(EventBusTest, BusDestroyedBeforeQueuedDeliveryIsDropped)
 
 TEST(EventBusTest, TokenOutlivingBusIsInert)
 {
-    std::shared_ptr<vine::appfw::Subscription> sub;
+    std::shared_ptr<vn::appfw::Subscription> sub;
     {
-        vine::appfw::EventBus bus;
-        sub = std::make_shared<vine::appfw::Subscription>(
+        vn::appfw::EventBus bus;
+        sub = std::make_shared<vn::appfw::Subscription>(
             bus.subscribe<PingEvent>([](const PingEvent&) {}));
     }  // bus 先销毁，token 后销毁
 
@@ -431,12 +431,12 @@ TEST(EventBusTest, TokenOutlivingBusIsInert)
 
 TEST(EventBusTest, UnsubscribedHandlerIsReleasedWhileDeliveryQueued)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
     auto                  sentinel = std::make_shared<int>(0);
     std::weak_ptr<int>    weak     = sentinel;
     int                   received = 0;
     auto                  sub      = bus.subscribe<PingEvent>([sentinel, &received](const PingEvent&) { ++received; },
-                                        vine::appfw::SubscriptionThreadMode::Main);
+                                        vn::appfw::SubscriptionThreadMode::Main);
     sentinel.reset();
     EXPECT_FALSE(weak.expired());  // 订阅期间由 channel 持有
 
@@ -451,12 +451,12 @@ TEST(EventBusTest, UnsubscribedHandlerIsReleasedWhileDeliveryQueued)
 
 TEST(EventBusTest, ShutdownStopsDeliveryAndDropsPending)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
     int                   current = 0;
     int                   queued  = 0;
     auto                  s1      = bus.subscribe<PingEvent>([&](const PingEvent&) { ++current; });
     auto                  s2      = bus.subscribe<PingEvent>([&](const PingEvent&) { ++queued; },
-                                        vine::appfw::SubscriptionThreadMode::Main);
+                                        vn::appfw::SubscriptionThreadMode::Main);
     bus.publish(std::make_shared<PingEvent>());
     EXPECT_EQ(current, 1);
     EXPECT_EQ(queued, 0);  // 已入队，尚未执行
@@ -481,11 +481,11 @@ TEST(EventBusTest, ShutdownStopsDeliveryAndDropsPending)
 
 TEST(EventBusTest, InterfaceSubscriptionReceivesImplementingEvents)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     std::vector<int>      order;
     auto                  s1 = bus.subscribe<ITagged>([&](const ITagged&) { order.push_back(1); });
     auto                  s2 = bus.subscribe<ITaggedEx>([&](const ITaggedEx&) { order.push_back(2); });
-    auto                  s3 = bus.subscribe<vine::EventArgs>([&](const vine::EventArgs&) { order.push_back(3); });
+    auto                  s3 = bus.subscribe<vn::EventArgs>([&](const vn::EventArgs&) { order.push_back(3); });
 
     bus.publish(std::make_shared<TaggedEvent>());
     // 顺序：派生类 → 它声明的接口（传递、声明序）→ 基类
@@ -498,7 +498,7 @@ TEST(EventBusTest, InterfaceSubscriptionReceivesImplementingEvents)
 
 TEST(EventBusTest, InterfaceWalkDeliversEachSubscriptionOnce)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     int                   tagged = 0;
     auto                  s1     = bus.subscribe<ITagged>([&](const ITagged&) { ++tagged; });
 
@@ -508,10 +508,10 @@ TEST(EventBusTest, InterfaceWalkDeliversEachSubscriptionOnce)
 
 TEST(EventBusTest, GracefulShutdownDeliversParkedDelivery)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
     int                   received = 0;
     auto                  sub      = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; },
-                                        vine::appfw::SubscriptionThreadMode::Main);
+                                        vn::appfw::SubscriptionThreadMode::Main);
 
     std::thread worker([&] { bus.publish(std::make_shared<PingEvent>()); });
     worker.join();
@@ -526,7 +526,7 @@ TEST(EventBusTest, GracefulShutdownDeliversParkedDelivery)
 
 TEST(EventBusTest, GracefulShutdownWaitsForPublishingThread)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     std::atomic<bool>     inside{ false };
     std::atomic<bool>     release{ false };
     int                   completed = 0;
@@ -554,10 +554,10 @@ TEST(EventBusTest, GracefulShutdownWaitsForPublishingThread)
 
 TEST(EventBusTest, GracefulShutdownFromWorkerReportsDroppedWork)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
     int                   received = 0;
     auto                  sub      = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; },
-                                        vine::appfw::SubscriptionThreadMode::Main);
+                                        vn::appfw::SubscriptionThreadMode::Main);
 
     bool graceful = true;
     std::thread worker([&] {
@@ -574,7 +574,7 @@ TEST(EventBusTest, GracefulShutdownFromWorkerReportsDroppedWork)
 
 TEST(EventBusTest, ConcurrentGracefulShutdownsShareCompletion)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     std::atomic<bool>     inside{ false };
     std::atomic<bool>     release{ false };
     auto                  sub = bus.subscribe<PingEvent>([&](const PingEvent&) {
@@ -614,7 +614,7 @@ TEST(EventBusTest, ConcurrentGracefulShutdownsShareCompletion)
 
 TEST(EventBusTest, GracefulShutdownFromHandlerDoesNotWaitForItself)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
     bool                  inside_result = false;
     auto                  sub           = bus.subscribe<PingEvent>([&](const PingEvent&) {
         inside_result = bus.shutdownGracefully(std::chrono::milliseconds(100));
@@ -627,7 +627,7 @@ TEST(EventBusTest, GracefulShutdownFromHandlerDoesNotWaitForItself)
 
 TEST(EventBusTest, PublishRacingShutdownIsSafe)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
     std::atomic<bool>     go{ true };
     std::atomic<int>      delivered{ 0 };
     auto                  sub = bus.subscribe<PingEvent>([&](const PingEvent&) { delivered.fetch_add(1); });
@@ -653,7 +653,7 @@ TEST(EventBusTest, PublishRacingShutdownIsSafe)
 TEST(EventBusTest, GracefulShutdownDoesNotCountAnotherBusCallAsItsOwn)
 {
     // Bus A：另一个线程正卡在 A 的 handler 里 → A 有在飞调用。
-    vine::appfw::EventBus bus_a;
+    vn::appfw::EventBus bus_a;
     std::atomic<bool>     inside_a{ false };
     std::atomic<bool>     release_a{ false };
     auto                  sub_a = bus_a.subscribe<PingEvent>([&](const PingEvent&) {
@@ -671,7 +671,7 @@ TEST(EventBusTest, GracefulShutdownDoesNotCountAnotherBusCallAsItsOwn)
     // 本线程在 Bus B 的调用栈里对 Bus A 做 graceful shutdown：排除"自己的调用"
     // 必须按 bus 分别计数，不能把 B 的深度算到 A 头上（否则会立刻误判
     // "A 没有在飞调用" → 提前返回 true）。
-    vine::appfw::EventBus bus_b;
+    vn::appfw::EventBus bus_b;
     bool                  result = true;
     auto                  sub_b  = bus_b.subscribe<PingEvent>([&](const PingEvent&) {
         result = bus_a.shutdownGracefully(std::chrono::milliseconds(50));
@@ -691,7 +691,7 @@ TEST(EventBusTest, DestructionWaitsForAdmittedCall)
     std::atomic<bool> release{ false };
     std::atomic<bool> destroyed{ false };
 
-    auto bus = std::make_unique<vine::appfw::EventBus>();
+    auto bus = std::make_unique<vn::appfw::EventBus>();
     auto sub = bus->subscribe<PingEvent>([&](const PingEvent&) {
         inside.store(true);
         while (!release.load()) {
@@ -721,12 +721,12 @@ TEST(EventBusTest, DestructionWaitsForAdmittedCall)
 
 TEST(EventBusTest, MultiInterfaceVisitOrderAndDedup)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     std::vector<int>      order;
     auto                  s1 = bus.subscribe<IBoth>([&](const IBoth&) { order.push_back(1); });
     auto                  s2 = bus.subscribe<ILeft>([&](const ILeft&) { order.push_back(2); });
     auto                  s3 = bus.subscribe<IRight>([&](const IRight&) { order.push_back(3); });
-    auto                  s4 = bus.subscribe<vine::EventArgs>([&](const vine::EventArgs&) { order.push_back(4); });
+    auto                  s4 = bus.subscribe<vn::EventArgs>([&](const vn::EventArgs&) { order.push_back(4); });
 
     bus.publish(std::make_shared<BothEvent>());
     // 类型访问序：派生类 → 接口（声明序，父接口紧随其后）→ 基类；
@@ -736,9 +736,9 @@ TEST(EventBusTest, MultiInterfaceVisitOrderAndDedup)
 
 TEST(EventBusTest, ErrorHandlerReceivesCurrentFailure)
 {
-    vine::appfw::EventBus                     bus;
-    std::vector<vine::appfw::EventBusError>   errors;
-    bus.setErrorHandler([&](const vine::appfw::EventBusError& error) { errors.push_back(error); });
+    vn::appfw::EventBus                     bus;
+    std::vector<vn::appfw::EventBusError>   errors;
+    bus.setErrorHandler([&](const vn::appfw::EventBusError& error) { errors.push_back(error); });
 
     int  delivered = 0;
     auto throwing  = bus.subscribe<PingEvent>([](const PingEvent&) { throw std::runtime_error("boom"); });
@@ -749,7 +749,7 @@ TEST(EventBusTest, ErrorHandlerReceivesCurrentFailure)
     ASSERT_EQ(errors.size(), 1u);
     EXPECT_EQ(errors[0].event_type, PingEvent::desc());
     EXPECT_NE(errors[0].subscriber_id, 0u);  // 标识抛出异常的订阅
-    EXPECT_EQ(errors[0].mode, vine::appfw::SubscriptionThreadMode::Current);
+    EXPECT_EQ(errors[0].mode, vn::appfw::SubscriptionThreadMode::Current);
     EXPECT_FALSE(errors[0].deferred);
     ASSERT_NE(errors[0].error, nullptr);
     EXPECT_EQ(delivered, 1);  // 后续订阅者仍执行
@@ -760,30 +760,30 @@ TEST(EventBusTest, ErrorHandlerReceivesCurrentFailure)
 
 TEST(EventBusTest, ErrorHandlerReceivesDeferredFailure)
 {
-    vine::appfw::EventBus                   bus(mainDispatcher());
-    std::vector<vine::appfw::EventBusError> errors;
+    vn::appfw::EventBus                   bus(mainDispatcher());
+    std::vector<vn::appfw::EventBusError> errors;
     int                                     later_handler_calls = 0;
-    bus.setErrorHandler([&](const vine::appfw::EventBusError& error) { errors.push_back(error); });
+    bus.setErrorHandler([&](const vn::appfw::EventBusError& error) { errors.push_back(error); });
 
     auto sub = bus.subscribe<PingEvent>([](const PingEvent&) { throw std::runtime_error("deferred"); },
-                                        vine::appfw::SubscriptionThreadMode::Main);
+                                        vn::appfw::SubscriptionThreadMode::Main);
     bus.publish(std::make_shared<PingEvent>());
     EXPECT_TRUE(errors.empty());  // 尚未执行
 
     // 投递时安装的处理器被快照，之后更换不影响已排队的投递。
-    bus.setErrorHandler([&](const vine::appfw::EventBusError&) { ++later_handler_calls; });
+    bus.setErrorHandler([&](const vn::appfw::EventBusError&) { ++later_handler_calls; });
     QCoreApplication::processEvents();
 
     ASSERT_EQ(errors.size(), 1u);
     EXPECT_TRUE(errors[0].deferred);
-    EXPECT_EQ(errors[0].mode, vine::appfw::SubscriptionThreadMode::Main);
+    EXPECT_EQ(errors[0].mode, vn::appfw::SubscriptionThreadMode::Main);
     EXPECT_EQ(later_handler_calls, 0);
 }
 
 TEST(EventBusTest, ThrowingErrorHandlerIsIgnored)
 {
-    vine::appfw::EventBus bus;
-    bus.setErrorHandler([](const vine::appfw::EventBusError&) { throw std::runtime_error("handler"); });
+    vn::appfw::EventBus bus;
+    bus.setErrorHandler([](const vn::appfw::EventBusError&) { throw std::runtime_error("handler"); });
 
     int  delivered = 0;
     auto throwing  = bus.subscribe<PingEvent>([](const PingEvent&) { throw std::runtime_error("boom"); });
@@ -795,9 +795,9 @@ TEST(EventBusTest, ThrowingErrorHandlerIsIgnored)
 
 TEST(EventBusTest, ErrorHandlerCanBeRemoved)
 {
-    vine::appfw::EventBus bus;
+    vn::appfw::EventBus bus;
     int                   seen = 0;
-    bus.setErrorHandler([&](const vine::appfw::EventBusError&) { ++seen; });
+    bus.setErrorHandler([&](const vn::appfw::EventBusError&) { ++seen; });
 
     auto throwing = bus.subscribe<PingEvent>([](const PingEvent&) { throw std::runtime_error("boom"); });
     bus.publish(std::make_shared<PingEvent>());
@@ -810,29 +810,29 @@ TEST(EventBusTest, ErrorHandlerCanBeRemoved)
 
 TEST(EventBusTest, ErrorHandlerReportsSubscriptionTag)
 {
-    vine::appfw::EventBus                   bus(mainDispatcher());
-    std::vector<vine::appfw::EventBusError> errors;
-    bus.setErrorHandler([&](const vine::appfw::EventBusError& error) { errors.push_back(error); });
+    vn::appfw::EventBus                   bus(mainDispatcher());
+    std::vector<vn::appfw::EventBusError> errors;
+    bus.setErrorHandler([&](const vn::appfw::EventBusError& error) { errors.push_back(error); });
 
     // 当前线程投递：标签连同上下文一起上报。
     auto current = bus.subscribe<PingEvent>([](const PingEvent&) { throw std::runtime_error("current"); },
-                                           vine::appfw::SubscriptionThreadMode::Current,
-                                           vine::String(u8"ConsolePanel"));
+                                           vn::appfw::SubscriptionThreadMode::Current,
+                                           vn::String(u8"ConsolePanel"));
     bus.publish(std::make_shared<PingEvent>());
     ASSERT_EQ(errors.size(), 1u);
-    EXPECT_TRUE(errors[0].tag == vine::String(u8"ConsolePanel"));
+    EXPECT_TRUE(errors[0].tag == vn::String(u8"ConsolePanel"));
     EXPECT_FALSE(errors[0].deferred);
 
     // 排队投递：标签随 payload 一起被快照，主线程执行时照样带出来。
     current.unsubscribe();
     auto deferred = bus.subscribe<PingEvent>([](const PingEvent&) { throw std::runtime_error("deferred"); },
-                                             vine::appfw::SubscriptionThreadMode::Main,
-                                             vine::String(u8"DockPanel"));
+                                             vn::appfw::SubscriptionThreadMode::Main,
+                                             vn::String(u8"DockPanel"));
     bus.publish(std::make_shared<PingEvent>());
     EXPECT_EQ(errors.size(), 1u);  // 尚未执行
     QCoreApplication::processEvents();
     ASSERT_EQ(errors.size(), 2u);
-    EXPECT_TRUE(errors[1].tag == vine::String(u8"DockPanel"));
+    EXPECT_TRUE(errors[1].tag == vn::String(u8"DockPanel"));
     EXPECT_TRUE(errors[1].deferred);
 
     // 未传标签时为空，便于“只关心有标签的失败”的过滤器。
@@ -846,11 +846,11 @@ TEST(EventBusTest, ErrorHandlerReportsSubscriptionTag)
 // 空事件是 no-op：publish(nullptr) 不得派发、不得排队、不得抛。
 TEST(EventBusTest, PublishNullEventIsIgnored)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
 
     int  current_runs = 0;
     auto current      = bus.subscribe<PingEvent>([&current_runs](const PingEvent&) { ++current_runs; });
-    auto main_mode    = bus.subscribe<PingEvent>([](const PingEvent&) {}, vine::appfw::SubscriptionThreadMode::Main);
+    auto main_mode    = bus.subscribe<PingEvent>([](const PingEvent&) {}, vn::appfw::SubscriptionThreadMode::Main);
 
     EXPECT_NO_THROW(bus.publish(nullptr));
     EXPECT_EQ(current_runs, 0);
@@ -870,9 +870,9 @@ TEST(EventBusTest, PublishNullEventIsIgnored)
 // 认为关停是干净的，甚至在仍有 admitted 调用时就开始销毁外围对象）。
 TEST(EventBusTest, GracefulResultAfterPlainShutdownDoesNotClaimDrainedWork)
 {
-    vine::appfw::EventBus bus(mainDispatcher());
+    vn::appfw::EventBus bus(mainDispatcher());
 
-    auto sub = bus.subscribe<PingEvent>([](const PingEvent&) {}, vine::appfw::SubscriptionThreadMode::Main);
+    auto sub = bus.subscribe<PingEvent>([](const PingEvent&) {}, vn::appfw::SubscriptionThreadMode::Main);
     ASSERT_TRUE(sub.isActive());
 
     // 排一条 Main 投递，然后用非优雅关停把它丢掉（不 drain）。
@@ -891,14 +891,14 @@ namespace
 /// 析构时再次发起关停：挂在订阅闭包上，闭包随关停回收被销毁。
 class ShutdownOnDestroy {
   public:
-    explicit ShutdownOnDestroy(vine::appfw::EventBus* bus)
+    explicit ShutdownOnDestroy(vn::appfw::EventBus* bus)
       : bus_(bus)
     {}
 
     ~ShutdownOnDestroy() { bus_->shutdown(); }
 
   private:
-    vine::appfw::EventBus* bus_;
+    vn::appfw::EventBus* bus_;
 };
 } // namespace
 
@@ -911,7 +911,7 @@ TEST(EventBusTest, ReentrantShutdownFromReleasedHandlerDoesNotWaitForItself)
 
     std::thread worker([&finished] {
         {
-            vine::appfw::EventBus bus;
+            vn::appfw::EventBus bus;
             {
                 auto guard = std::make_shared<ShutdownOnDestroy>(&bus);
                 auto sub   = bus.subscribe<PingEvent>([guard](const PingEvent&) {});

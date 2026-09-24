@@ -4,9 +4,9 @@
 
 #include <vine/robotics/kinematics/IterativeIKSolver.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
-class V_ROBOTICS_CORE_API JacobianIKSolver : public IterativeIKSolver {
+class VN_ROBOTICS_CORE_API JacobianIKSolver : public IterativeIKSolver {
 
   public:
     JacobianIKSolver(const std::vector<DofInfo>& dofs)
@@ -17,4 +17,4 @@ class V_ROBOTICS_CORE_API JacobianIKSolver : public IterativeIKSolver {
     bool solve(const math::Isometry3d& target, std::vector<Q>& solutions) const override;
 };
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

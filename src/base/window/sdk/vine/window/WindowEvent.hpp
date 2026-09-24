@@ -2,7 +2,7 @@
 
 #include "window_global.hpp"
 
-V_WINDOW_NS_BEGIN
+VN_WINDOW_NS_BEGIN
 
 /**
  * @brief Window lifecycle / state event.
@@ -10,7 +10,7 @@ V_WINDOW_NS_BEGIN
  * Published when the window is resized, moved, closed, gains or loses focus,
  * or changes its minimize/restore state.
  */
-struct V_WINDOW_API WindowEvent {
+struct VN_WINDOW_API WindowEvent {
     enum class Type {
         Resize,     ///< Width or height changed; see width/height.
         Move,       ///< Window moved on screen.
@@ -28,4 +28,4 @@ struct V_WINDOW_API WindowEvent {
     int  y = 0;       ///< Window position on screen; valid for Move.
 };
 
-V_WINDOW_NS_END
+VN_WINDOW_NS_END

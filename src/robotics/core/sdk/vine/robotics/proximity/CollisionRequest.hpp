@@ -2,7 +2,7 @@
 
 #include <vine/robotics/robot_core_global.hpp>
 
-V_ROBOTICS_PROXIMITY_NS_BEGIN
+VN_ROBOTICS_PROXIMITY_NS_BEGIN
 
 class CollisionMatrix;
 
@@ -22,4 +22,4 @@ struct CollisionRequest {
     const CollisionMatrix* collision_matrix{};
 };
 
-V_ROBOTICS_PROXIMITY_NS_END
+VN_ROBOTICS_PROXIMITY_NS_END

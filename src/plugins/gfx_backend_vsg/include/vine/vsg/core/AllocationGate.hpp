@@ -49,7 +49,7 @@
  * which would be a gate that passes without checking anything. The counted half is independent of that,
  * and `countsAvailable()` says whether anything is counting.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -148,4 +148,4 @@ class AllocationGate
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

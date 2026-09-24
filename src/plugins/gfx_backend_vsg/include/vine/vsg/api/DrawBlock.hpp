@@ -28,7 +28,7 @@
  * side (a frame number and an extent both belong there), and inventing them here would be a second answer to
  * a question the session already owns.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /**
  * @brief Packs one compiled command into the per-draw block.
@@ -36,6 +36,6 @@ V_VSG_NS_BEGIN
  * @param command The resolved command (its model matrix and opacity are the frame's facts).
  * @param out     Receives the block; every field is written (the reserved slot included).
  */
-void packDrawBlock(const core::CompiledCommand& command, vine::graphics::VineDrawBlock& out) noexcept;
+void packDrawBlock(const core::CompiledCommand& command, vn::graphics::VineDrawBlock& out) noexcept;
 
-V_VSG_NS_END
+VN_VSG_NS_END

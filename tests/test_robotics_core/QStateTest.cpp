@@ -7,7 +7,7 @@
 #include <vine/robotics/kinematics/Frame.hpp>
 #include <vine/robotics/kinematics/QState.hpp>
 
-using namespace vine::robotics::kinematics;
+using namespace vn::robotics::kinematics;
 
 namespace
 {

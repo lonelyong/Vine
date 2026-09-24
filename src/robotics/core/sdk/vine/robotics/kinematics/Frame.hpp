@@ -14,7 +14,7 @@
 #include <vine/math/Isometry3.hpp>
 #include <vine/robotics/kinematics/DofInfo.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 enum class FrameType
 {
@@ -38,10 +38,10 @@ class State;
  * tree links are non-owning: frames are owned externally (e.g. by the robot
  * model) and must outlive the tree that references them.
  */
-class V_ROBOTICS_CORE_API Frame : public vine::Object,
-                                  public vine::INameable,
-                                  public vine::IHierarchyNode<Frame> {
-    V_OBJECT_META(Frame, vine::Object, vine::INameable);
+class VN_ROBOTICS_CORE_API Frame : public vn::Object,
+                                  public vn::INameable,
+                                  public vn::IHierarchyNode<Frame> {
+    VN_OBJECT_META(Frame, vn::Object, vn::INameable);
 
   public:
     Frame();
@@ -228,4 +228,4 @@ class V_ROBOTICS_CORE_API Frame : public vine::Object,
     std::vector<raw_ptr<Frame>> children_;
 };
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

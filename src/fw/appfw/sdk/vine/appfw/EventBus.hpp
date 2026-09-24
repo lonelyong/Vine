@@ -11,7 +11,7 @@
 
 #include <vine/Object.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class EventBus;
 class MainThreadDispatcher;
@@ -37,7 +37,7 @@ enum class SubscriptionThreadMode
  * assertions instead of losing it in a log line.
  */
 struct EventBusError {
-    const vine::Type*      event_type    = nullptr;                          ///< Runtime type of the event being delivered.
+    const vn::Type*      event_type    = nullptr;                          ///< Runtime type of the event being delivered.
     std::size_t            subscriber_id = 0;                                ///< Id of the subscription that threw; unique per event type.
     String                 tag;                                              ///< Label the subscriber passed to subscribe(), empty when it passed none.
     std::exception_ptr     error;                                            ///< Rethrowable exception; null for non-standard ones.
@@ -64,7 +64,7 @@ using EventBusErrorHandler = std::function<void(const EventBusError&)>;
  * Move-only; copy is disabled to prevent double cancellation, and a moved-from
  * handle is inactive and a no-op.
  */
-class V_APPFW_API Subscription {
+class VN_APPFW_API Subscription {
   public:
     Subscription() noexcept = default;
 
@@ -168,7 +168,7 @@ class V_APPFW_API Subscription {
  *   returning true proves that nobody is inside any more, and ~EventBus() waits
  *   for the calls that were already admitted.
  */
-class V_APPFW_API EventBus {
+class VN_APPFW_API EventBus {
   public:
     /**
      * @brief Creates a bus that marshals Main/Auto deliveries with dispatcher.
@@ -193,7 +193,7 @@ class V_APPFW_API EventBus {
      *
      * @tparam TEvent Event type to receive; must be described by the runtime type
      *                system, i.e. an Object-derived class or an interface declared
-     *                with V_DECLARE_INTERFACE. A class type matches the event and
+     *                with VN_DECLARE_INTERFACE. A class type matches the event and
      *                its derived types, an interface type matches every event that
      *                implements it.
      * @param handler Called with each delivered TEvent.
@@ -321,7 +321,7 @@ class V_APPFW_API EventBus {
 
   private:
     /// Type-erased registration used by subscribe<TEvent>.
-    Subscription subscribeErased(vine::TypeId type, std::function<void(const std::shared_ptr<const Object>&)> handler, SubscriptionThreadMode mode, const String& tag);
+    Subscription subscribeErased(vn::TypeId type, std::function<void(const std::shared_ptr<const Object>&)> handler, SubscriptionThreadMode mode, const String& tag);
 
     /// Cancels every subscription and drops the deliveries that are still parked.
     void cancelSubscriptions();
@@ -342,4 +342,4 @@ Subscription EventBus::subscribe(std::function<void(const TEvent&)> handler, Sub
     return subscribeErased(TEvent::desc(), std::move(erased), mode, tag);
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

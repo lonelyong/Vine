@@ -2,7 +2,7 @@
 
 #include <vine/appfw/gui/Window.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 
 
@@ -21,7 +21,7 @@ enum class MessageBoxButton : uint32_t
     Custom4 = 2 << 13,
 };
 
-V_ENABLE_ENUM_FLAGS(MessageBoxButton);
+VN_ENABLE_ENUM_FLAGS(MessageBoxButton);
 
 /// Icon displayed in the box.
 enum class MessageBoxIcon : uint8_t
@@ -59,8 +59,8 @@ enum class MessageBoxIcon : uint8_t
  * helpers may be called from any thread; they dispatch to the GUI thread and
  * block until the box has been handled.
  */
-class V_APPFW_API MessageBox : public Window {
-    V_OBJECT_META_DECL;
+class VN_APPFW_API MessageBox : public Window {
+    VN_OBJECT_META_DECL;
 
 
   public:
@@ -158,4 +158,4 @@ class V_APPFW_API MessageBox : public Window {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

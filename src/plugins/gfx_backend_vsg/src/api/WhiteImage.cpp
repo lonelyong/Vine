@@ -7,7 +7,7 @@
 #include <vsg/core/MipmapLayout.h>
 #include <vsg/state/Image.h>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 struct WhiteImage::Data
 {
@@ -100,4 +100,4 @@ WhiteImage::~WhiteImage() = default;
     return d->sampler;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

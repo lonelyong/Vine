@@ -13,7 +13,7 @@
 #include <vine/Buffer.hpp>
 #include <vine/intrusive_ptr.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -49,7 +49,7 @@ class VsgBufferView : public ::vsg::Inherit<::vsg::Data, VsgBufferView<Element>>
      *
      * @param buffer Buffer to hold and expose; null yields an empty view.
      */
-    explicit VsgBufferView(intrusive_ptr<const vine::Buffer<Element>> buffer)
+    explicit VsgBufferView(intrusive_ptr<const vn::Buffer<Element>> buffer)
       : buffer_(std::move(buffer))
     {
         // `properties` lives in the dependent base `vsg::Data`, so it needs this-> (two-phase lookup).
@@ -97,9 +97,9 @@ class VsgBufferView : public ::vsg::Inherit<::vsg::Data, VsgBufferView<Element>>
     const Element* elements() const { return buffer_ != nullptr ? buffer_->data() : nullptr; }
 
   private:
-    intrusive_ptr<const vine::Buffer<Element>> buffer_;
+    intrusive_ptr<const vn::Buffer<Element>> buffer_;
 };
 
 } // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END

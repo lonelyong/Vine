@@ -7,7 +7,7 @@
 
 class QIcon;
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Icon object: holds a QIcon internally (hidden via Pimpl; the header
@@ -21,7 +21,7 @@ V_APPFWGUI_NS_BEGIN
  * QIcon is only forward-declared in headers, and code that actually needs
  * QIcon (implementation files) must include <QIcon> itself.
  */
-class V_APPFW_API Icon {
+class VN_APPFW_API Icon {
   public:
     Icon();
     explicit Icon(const QIcon& qicon);
@@ -45,4 +45,4 @@ class V_APPFW_API Icon {
     std::unique_ptr<Impl> d;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

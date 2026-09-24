@@ -6,7 +6,7 @@
 
 class TopoDS_Shape;
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief A boundary-representation (B-rep) solid backed by an OpenCASCADE shape.
@@ -14,8 +14,8 @@ V_GEOMETRY_NS_BEGIN
  * The underlying TopoDS_Shape is stored as a non-owning pointer so the SDK
  * headers stay free of OpenCASCADE includes; ownership remains external.
  */
-class V_GEOMETRY_API BrepShape : public Shape {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API BrepShape : public Shape {
+    VN_OBJECT_META_DECL;
 
   public:
     BrepShape();
@@ -45,4 +45,4 @@ class V_GEOMETRY_API BrepShape : public Shape {
     TopoDS_Shape* shape_ = nullptr;
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

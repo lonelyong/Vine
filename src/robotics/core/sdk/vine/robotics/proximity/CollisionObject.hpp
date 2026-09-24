@@ -11,7 +11,7 @@
 
 #include "CollisionGeometry.hpp"
 
-V_ROBOTICS_PROXIMITY_NS_BEGIN
+VN_ROBOTICS_PROXIMITY_NS_BEGIN
 
 /**
  * @brief A collision body: geometry, local pose and owner/frame association.
@@ -23,7 +23,7 @@ V_ROBOTICS_PROXIMITY_NS_BEGIN
  *
  * @note The owner and frame are non-owning; the caller must keep them alive.
  */
-class CollisionObject : public vine::RefCounted<CollisionObject> {
+class CollisionObject : public vn::RefCounted<CollisionObject> {
   protected:
     /**
      * @brief Constructs a collision object.
@@ -31,7 +31,7 @@ class CollisionObject : public vine::RefCounted<CollisionObject> {
      * @param geometry The collision geometry.
      * @param local_transform The pose of the geometry in the owner/frame space.
      */
-    explicit CollisionObject(const vine::intrusive_ptr<CollisionGeometry>& geometry,
+    explicit CollisionObject(const vn::intrusive_ptr<CollisionGeometry>& geometry,
                              const math::Isometry3d&                      local_transform = {})
       : geometry_(geometry)
       , local_transform_(local_transform)
@@ -49,7 +49,7 @@ class CollisionObject : public vine::RefCounted<CollisionObject> {
      *
      * @param object The owning object, or nullptr.
      */
-    void setObject(const vine::INamed* object)
+    void setObject(const vn::INamed* object)
     {
         object_ = object;
     }
@@ -59,7 +59,7 @@ class CollisionObject : public vine::RefCounted<CollisionObject> {
      *
      * @return The owner, or nullptr when not set.
      */
-    const vine::INamed* object() const
+    const vn::INamed* object() const
     {
         return object_;
     }
@@ -109,7 +109,7 @@ class CollisionObject : public vine::RefCounted<CollisionObject> {
      *
      * @return The geometry.
      */
-    const vine::intrusive_ptr<CollisionGeometry>& geometry() const
+    const vn::intrusive_ptr<CollisionGeometry>& geometry() const
     {
         return geometry_;
     }
@@ -147,7 +147,7 @@ class CollisionObject : public vine::RefCounted<CollisionObject> {
 
   protected:
     /// Owner used for collision-matrix lookups; not owned.
-    const vine::INamed* object_{ nullptr };
+    const vn::INamed* object_{ nullptr };
     /// Kinematic frame the body is attached to; not owned.
     raw_ptr<const kinematics::Frame> frame_{ nullptr };
     /// Pose of the geometry in the owner/frame space.
@@ -155,7 +155,7 @@ class CollisionObject : public vine::RefCounted<CollisionObject> {
     /// World pose, updated by computeWorldTransform().
     math::Isometry3d world_transform_;
     /// The collision geometry (shared, immutable).
-    vine::intrusive_ptr<CollisionGeometry> geometry_;
+    vn::intrusive_ptr<CollisionGeometry> geometry_;
 };
 
-V_ROBOTICS_PROXIMITY_NS_END
+VN_ROBOTICS_PROXIMITY_NS_END

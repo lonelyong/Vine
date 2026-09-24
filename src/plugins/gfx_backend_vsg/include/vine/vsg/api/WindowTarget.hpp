@@ -57,10 +57,10 @@ class Window;
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief The window as the default-framebuffer target (see the file note). */
-class V_VSG_API WindowTarget
+class VN_VSG_API WindowTarget
 {
   public:
     /** @brief Wraps @p window as this session's default-framebuffer target.
@@ -193,4 +193,4 @@ class V_VSG_API WindowTarget
     WindowTarget();
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -62,4 +62,4 @@ const std::vector<float>& core::DepthProbe::values() const noexcept
     return values_;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -8,9 +8,9 @@
 
 #include "ControlData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
-V_OBJECT_META_IMPL(RibbonBar, Control)
+VN_OBJECT_META_IMPL(RibbonBar, Control)
 
 struct RibbonBar::Impl : public ControlData {
     std::vector<RibbonTab*> tabs;
@@ -81,7 +81,7 @@ RibbonTab* RibbonBar::tabAt(int idx) const
 
 void RibbonBar::addTab(RibbonTab* tab)
 {
-    V_CHECK_NULL_THROW(tab)
+    VN_CHECK_NULL_THROW(tab)
     if (std::any_of(dptr()->tabs.begin(), dptr()->tabs.end(), [tab](RibbonTab* t) { return tab == t; }))
         return;
     auto w = impl<itype>();
@@ -91,7 +91,7 @@ void RibbonBar::addTab(RibbonTab* tab)
 
 void RibbonBar::removeTab(RibbonTab* tab)
 {
-    V_CHECK_NULL_THROW(tab)
+    VN_CHECK_NULL_THROW(tab)
     if (std::none_of(dptr()->tabs.begin(), dptr()->tabs.end(), [tab](RibbonTab* t) { return t == tab; }))
         return;
     auto w = impl<itype>();
@@ -283,4 +283,4 @@ inline auto RibbonBar::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

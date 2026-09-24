@@ -13,7 +13,7 @@
 
 | 检查项 | 结论 |
 | --- | --- |
-| `Frustum::fromViewProjection` 的 `r3±r2` | 正确。`vine::math::perspective` 是 GL 风格 clip space（z∈[-1,1]），near 面 = `r3+r2` |
+| `Frustum::fromViewProjection` 的 `r3±r2` | 正确。`vn::math::perspective` 是 GL 风格 clip space（z∈[-1,1]），near 面 = `r3+r2` |
 | 深度比较算子取反（`Less → VK_COMPARE_OP_GREATER`） | 正确。vsg 的 `perspective/orthographic` 确为 reverse-Z + Y 翻转 |
 | `makeScenePipelineStates` 的 `blendEnable=FALSE` / `cullMode=NONE` | 不是缺陷：它只是 set 的默认值，`buildStateGroup` 随后用 `makeRenderStateObjects` 整体替换 |
 | `collectRenderCommands` 的 memo 键用矩阵逐元素比较 | 正确（纯函数复用，非指针键是有意为之） |

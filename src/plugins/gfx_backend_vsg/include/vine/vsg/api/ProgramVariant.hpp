@@ -6,7 +6,7 @@
 
 #include <vine/vsg/vsg_global.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 // Forward declarations: the two fact types this header NAMES but does not read (see variantOf). Including
 // their definitions here would close a cycle - the tables key their program entries by this variant, so
@@ -83,4 +83,4 @@ struct ProgramVariant
  */
 [[nodiscard]] ProgramVariant variantOf(const MaterialFacts& material, const GeometryFacts& geometry) noexcept;
 
-V_VSG_NS_END
+VN_VSG_NS_END

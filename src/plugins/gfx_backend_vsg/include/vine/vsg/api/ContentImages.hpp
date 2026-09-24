@@ -46,7 +46,7 @@
  * NO DEVICE IS NEEDED for anything here: the images are views and samplers (create-infos until a context
  * compiles them), and the plan is values.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief The images one compiled input offers, as the layer that owns the target reports them.
  *
@@ -138,4 +138,4 @@ struct SamplerImage
 [[nodiscard]] bool shadowImageOf(const core::CompiledPass& pass, std::span<const InputImages> inputs,
                                  const ::vsg::ref_ptr<::vsg::Sampler>& depth_sampler, SamplerImage& out) noexcept;
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -14,9 +14,9 @@
 #include "Light.hpp"
 #include "Node.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-using vine::math::Aabbd;
+using vn::math::Aabbd;
 
 class Camera;
 struct RenderCommand;
@@ -30,9 +30,9 @@ struct RenderCommand;
  * collection. Content is composed under the root through Group; the root is
  * typically a Group holding the world's top-level subtrees.
  */
-class V_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
-    V_OBJECT_META_DECL;
-    V_DISABLE_COPY_MOVE(Scene);
+class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
+    VN_OBJECT_META_DECL;
+    VN_DISABLE_COPY_MOVE(Scene);
 
   public:
     Scene();
@@ -208,4 +208,4 @@ class V_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
 using ScenePtr = intrusive_ptr<Scene>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

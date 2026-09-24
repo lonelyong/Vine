@@ -6,7 +6,7 @@
 
 #include "Mesh.hpp"
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief A non-indexed triangle mesh (triangle soup).
@@ -14,8 +14,8 @@ V_GEOMETRY_NS_BEGIN
  * Positions are stored as three consecutive vertices per triangle. Normals
  * and texture coordinates, when present, match the position array 1:1.
  */
-class V_GEOMETRY_API TriangleMesh : public Mesh {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API TriangleMesh : public Mesh {
+    VN_OBJECT_META_DECL;
 
   public:
     TriangleMesh();
@@ -27,7 +27,7 @@ class V_GEOMETRY_API TriangleMesh : public Mesh {
      * @param b Second vertex.
      * @param c Third vertex.
      */
-    void addTriangle(const vine::math::Vec3f& a, const vine::math::Vec3f& b, const vine::math::Vec3f& c);
+    void addTriangle(const vn::math::Vec3f& a, const vn::math::Vec3f& b, const vn::math::Vec3f& c);
 
     /**
      * @brief Removes all vertices and attributes.
@@ -46,4 +46,4 @@ class V_GEOMETRY_API TriangleMesh : public Mesh {
     bool isValid() const override;
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

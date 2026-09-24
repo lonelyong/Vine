@@ -19,7 +19,7 @@
 #include "Cancellation.hpp"
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 namespace detail {
 
@@ -384,4 +384,4 @@ inline Task<void> sleepFor(std::chrono::milliseconds duration, CancellationToken
     co_await detail::SleepAwaiter{ duration, std::move(token) };
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

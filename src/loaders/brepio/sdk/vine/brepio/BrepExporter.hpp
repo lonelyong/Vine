@@ -8,7 +8,7 @@
 #include <vine/RefCounted.hpp>
 #include <vine/geometry/BrepShape.hpp>
 
-V_BREPIO_NS_BEGIN
+VN_BREPIO_NS_BEGIN
 
 /**
  * @brief Abstract exporter that writes a B-rep solid to a file.
@@ -16,8 +16,8 @@ V_BREPIO_NS_BEGIN
  * Concrete B-rep exporters (STEP, IGES, ...) derive from this class and
  * write a BrepShape into the target format.
  */
-class V_BREPIO_API BrepExporter : public vine::Object, public vine::RefCounted<BrepExporter> {
-    V_OBJECT_META_DECL;
+class VN_BREPIO_API BrepExporter : public vn::Object, public vn::RefCounted<BrepExporter> {
+    VN_OBJECT_META_DECL;
 
   public:
     BrepExporter();
@@ -31,7 +31,7 @@ class V_BREPIO_API BrepExporter : public vine::Object, public vine::RefCounted<B
      * @param shape B-rep solid to export.
      * @return true on success.
      */
-    virtual bool save(const std::filesystem::path& path, const vine::geometry::BrepShape& shape) = 0;
+    virtual bool save(const std::filesystem::path& path, const vn::geometry::BrepShape& shape) = 0;
 
     /**
      * @brief Returns whether this exporter supports the given solid.
@@ -39,7 +39,7 @@ class V_BREPIO_API BrepExporter : public vine::Object, public vine::RefCounted<B
      * @param shape B-rep solid to check.
      * @return true when the solid is supported.
      */
-    virtual bool canExport(const vine::geometry::BrepShape& shape) const = 0;
+    virtual bool canExport(const vn::geometry::BrepShape& shape) const = 0;
 };
 
-V_BREPIO_NS_END
+VN_BREPIO_NS_END

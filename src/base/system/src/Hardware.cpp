@@ -24,7 +24,7 @@
 #    include <sys/sysctl.h>
 #endif
 
-V_SYSTEM_NS_BEGIN
+VN_SYSTEM_NS_BEGIN
 
 namespace
 {
@@ -401,4 +401,4 @@ unsigned long long Hardware::diskFreeSpace(const String& path)
 #endif
 }
 
-V_SYSTEM_NS_END
+VN_SYSTEM_NS_END

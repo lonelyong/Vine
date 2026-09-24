@@ -6,9 +6,9 @@
 #include "ControlData.hpp"
 #include "SurfaceWindow.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
-V_OBJECT_META_IMPL(RenderControl, Control)
+VN_OBJECT_META_IMPL(RenderControl, Control)
 
 struct RenderControl::Impl : public ControlData {
     /// The surface and the render session on it. It is created bare and handed to the window
@@ -83,12 +83,12 @@ RenderControl::~RenderControl()
     }
 }
 
-vine::graphics::RenderEngine* RenderControl::engine() const
+vn::graphics::RenderEngine* RenderControl::engine() const
 {
     return dptr()->surface->engine();
 }
 
-vine::graphics::SceneView* RenderControl::view() const
+vn::graphics::SceneView* RenderControl::view() const
 {
     return dptr()->surface->view();
 }
@@ -141,4 +141,4 @@ inline auto RenderControl::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

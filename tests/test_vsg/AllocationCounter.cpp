@@ -39,7 +39,7 @@
 namespace
 {
 
-using vine::vsg::core::AllocationGate;
+using vn::vsg::core::AllocationGate;
 
 /// @brief Allocates @p bytes with an alignment the allocation functions must honour.
 ///

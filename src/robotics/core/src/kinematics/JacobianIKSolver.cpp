@@ -10,7 +10,7 @@
 #include <vine/math/Quaternion.hpp>
 #include <vine/math/Vector3.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 namespace
 {
@@ -317,4 +317,4 @@ bool JacobianIKSolver::solve(const math::Isometry3d& target,
     return false;
 }
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

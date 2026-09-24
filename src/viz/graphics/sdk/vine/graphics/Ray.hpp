@@ -3,16 +3,16 @@
 
 #include <vine/math/Vector3.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-using vine::math::Vec3d;
+using vn::math::Vec3d;
 
 /**
  * @brief Ray struct for picking and collision detection.
  *
  * Represents a ray in 3D space defined by an origin point and a direction.
  */
-struct V_GRAPHICS_API Ray {
+struct VN_GRAPHICS_API Ray {
     /** Ray origin point. */
     Vec3d origin;
 
@@ -49,4 +49,4 @@ struct V_GRAPHICS_API Ray {
     double distanceToPoint(const Vec3d& point) const;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

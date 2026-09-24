@@ -9,7 +9,7 @@
 #include <vine/appfw/ConsoleProgressReporter.hpp>
 #include <vine/appfw/UserIO.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief Headless UserIO: writes to stdout and reads from stdin.
@@ -27,9 +27,9 @@ V_APPFW_NS_BEGIN
  * @note Exported although the class is appfw-private (this header lives in src/, not in sdk/): the headless progress
  * test constructs it directly to check what it writes to stdout, which needs the symbols in the shared library.
  */
-class V_APPFW_API ConsoleUserIO : public UserIO {
-    V_OBJECT_META_DECL;
-    V_DISABLE_COPY_MOVE(ConsoleUserIO);
+class VN_APPFW_API ConsoleUserIO : public UserIO {
+    VN_OBJECT_META_DECL;
+    VN_DISABLE_COPY_MOVE(ConsoleUserIO);
 
   public:
     ConsoleUserIO();
@@ -40,10 +40,10 @@ class V_APPFW_API ConsoleUserIO : public UserIO {
     void clear() override;
     void cancelPendingInput() override;
 
-    vine::async::Task<std::optional<String>>        getStringAsync(const String& prompt = {}) override;
-    vine::async::Task<std::optional<int>>           getIntAsync(const String& prompt = {}) override;
-    vine::async::Task<std::optional<double>>        getDoubleAsync(const String& prompt = {}) override;
-    vine::async::Task<std::optional<math::Point3d>> getPoint3dAsync(const String& prompt = {}) override;
+    vn::async::Task<std::optional<String>>        getStringAsync(const String& prompt = {}) override;
+    vn::async::Task<std::optional<int>>           getIntAsync(const String& prompt = {}) override;
+    vn::async::Task<std::optional<double>>        getDoubleAsync(const String& prompt = {}) override;
+    vn::async::Task<std::optional<math::Point3d>> getPoint3dAsync(const String& prompt = {}) override;
 
   private:
     /// State shared with the background reader thread. Both sides hold it through a
@@ -65,7 +65,7 @@ class V_APPFW_API ConsoleUserIO : public UserIO {
     void endRead() noexcept;
     /// Waits for the next line of stdin; std::nullopt when the read was cancelled
     /// or the stream ended.
-    vine::async::Task<std::optional<String>> readLineAsync(const String& prompt);
+    vn::async::Task<std::optional<String>> readLineAsync(const String& prompt);
     /// Writes one line of output.
     ///
     /// Non-virtual on purpose: the progress reporter is a member, so it is still
@@ -89,4 +89,4 @@ class V_APPFW_API ConsoleUserIO : public UserIO {
     std::unique_ptr<ConsoleProgressReporter> progress_;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

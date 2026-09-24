@@ -13,11 +13,11 @@
 #include <vine/meshio/MeshExporter.hpp>
 #include <vine/meshio/MeshLoader.hpp>
 
-using vine::geometry::IndexedTriangleMesh;
-using vine::geometry::ShapeType;
-using vine::math::Vec3f;
-using vine::meshio::MeshExporter;
-using vine::meshio::MeshLoader;
+using vn::geometry::IndexedTriangleMesh;
+using vn::geometry::ShapeType;
+using vn::math::Vec3f;
+using vn::meshio::MeshExporter;
+using vn::meshio::MeshLoader;
 
 namespace
 {
@@ -27,9 +27,9 @@ namespace
  *
  * @return The cube mesh (12 triangles).
  */
-vine::intrusive_ptr<IndexedTriangleMesh> makeCube()
+vn::intrusive_ptr<IndexedTriangleMesh> makeCube()
 {
-    auto mesh = vine::intrusive_ptr<IndexedTriangleMesh>(new IndexedTriangleMesh());
+    auto mesh = vn::intrusive_ptr<IndexedTriangleMesh>(new IndexedTriangleMesh());
 
     // 8 corners of a cube spanning [-1, 1]^3.
     const auto v0 = mesh->addVertex(Vec3f(-1, -1, -1));
@@ -120,7 +120,7 @@ TEST(MeshIoTest, LoadAndExportObjRoundTrip)
     ASSERT_TRUE(loaded);
     EXPECT_EQ(loaded->shapeType(), ShapeType::IndexedTriangleMesh);
 
-    const auto& itm = vine::obj_cast<IndexedTriangleMesh>(*loaded);
+    const auto& itm = vn::obj_cast<IndexedTriangleMesh>(*loaded);
     EXPECT_EQ(itm.triangleCount(), cube->triangleCount());
 
     std::filesystem::remove(path);
@@ -195,7 +195,7 @@ TEST(MeshIoTest, CustomScaleMultipliesVertices)
     const auto mesh = loader.load(path);
     ASSERT_TRUE(mesh);
 
-    const auto& itm       = vine::obj_cast<IndexedTriangleMesh>(*mesh);
+    const auto& itm       = vn::obj_cast<IndexedTriangleMesh>(*mesh);
     const auto& positions = itm.positions();
     ASSERT_EQ(positions.size(), 3u);
 

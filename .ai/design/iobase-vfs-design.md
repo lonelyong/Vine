@@ -1,4 +1,4 @@
-# IOBase（vine::io）核心能力设计 —— VFS 与 Stream
+# IOBase（vn::io）核心能力设计 —— VFS 与 Stream
 
 > 状态：**设计稿，分阶段实现中**。现状：`Vfs` / `ZipVfs` / `DirectoryVfs` /
 > `ZipArchive` 已落地（以 `sdk/vine/io/` 下的头文件为准），本设计只覆盖**核心功能缺口**，不照搬
@@ -56,7 +56,7 @@
 > 与 `ZipArchive::stat` / `list` / `index` 都填它（源归档条目有值，缓冲 / 文件 / 生成条目在写出前为 0），`DirectoryVfs` 恒为 0；
 > `ZipArchive::Entry` 不再自带 `size` / `crc` / `is_directory`，改为内嵌 `VfsEntryInfo info`（path 仍由表键承担）。> `test_iobase` 39/39（S3b 时点记录；HEAD 重构后为 45 例），`test_robotics_io` / `test_core` / `test_crypto` / `test_runtime` / `test_system` 全绿。
 > **虚拟路径统一到 `std::filesystem::path` + 归档名字“不拒收”解码（同日，用户决策，取代上一版 `String` 载体方案）**：
-> 上一版把虚拟树里的名字当**字节载体**（`vine::String`），理由是归档名字可能根本不是文本、`fs::path` 在 Windows 上装不下
+> 上一版把虚拟树里的名字当**字节载体**（`vn::String`），理由是归档名字可能根本不是文本、`fs::path` 在 Windows 上装不下
 > 非法 UTF-8（构造即抛）。用户否掉了它：`path` 与 `String` 混用才是真正的问题（"统一，要么都用 path，要么都用 String"），
 > 而"装不下"要靠**解码策略**解决，不是换类型 —— `String` 一样要面对非法字节，只是把问题推迟到边界。
 > 现在分工固定：**路径一律 `std::filesystem::path`**（虚拟与真实同型），**内容一律字节**（`span<const unsigned char>`）。
@@ -83,7 +83,7 @@
 > 下一步：`Vfs` 的流式读写面（§8）与 `ZipVfs` 的流式写开口（§15.7）。
 >
 > 关联：外部《VFS 需求设计文档 v2.0》（下称"需求文档"）；第一个消费者
-> `.ai/design/robotics-io-design.md`（`DeviceIO` / `WorkcellIO` 以 `vine::io::Vfs&` 为公共签名）。
+> `.ai/design/robotics-io-design.md`（`DeviceIO` / `WorkcellIO` 以 `vn::io::Vfs&` 为公共签名）。
 > 约束：C++20；不引入新第三方依赖（libzip / zlib 已在 IOBase 内）；命名遵循
 > `.github/copilot-instructions.md`。
 
@@ -118,7 +118,7 @@
 ## 3. 错误模型：`IoError` + `Result<T>`
 
 ```cpp
-namespace vine::io {
+namespace vn::io {
 
 /// @brief VFS / Stream 的可区分错误（需求文档 §11.1 一一对应）。
 enum class IoError : std::uint8_t
@@ -157,7 +157,7 @@ class Result
     std::optional<T> value_;
     IoError          error_{ IoError::Ok };
 };
-} // namespace vine::io
+} // namespace vn::io
 ```
 
 要点：
@@ -169,8 +169,8 @@ class Result
    静态成员与普通成员同名同签名的重载是不允许的，为避开这个坑直接用两个隐式构造函数。
    `Result<T>` **不做** `and_then` / `map` 等组合子：阶段 1 的调用点是"取错误码、判成功"。
 3. `T` 需要可移动；`T = void` 的场景直接用 `IoError`（需求文档 §11.2 的"无返回值成功/失败"）。
-4. 放在 `vine::io`：错误枚举是 IO 语义，`Result` 与它同域；**不**上提到 `vine::core`。
-5. **值而非异常**：业务失败一律走返回值（需求文档 §11.3）。异常仍用于编程错误（`bad_alloc`、误用的 `invalid_argument`）。此约束**只约束 `vine::io`**，不回溯改造既有 `vine::crypto`（`HashCalculator` 现在抛 `logic_error` / `runtime_error`）。
+4. 放在 `vn::io`：错误枚举是 IO 语义，`Result` 与它同域；**不**上提到 `vn::core`。
+5. **值而非异常**：业务失败一律走返回值（需求文档 §11.3）。异常仍用于编程错误（`bad_alloc`、误用的 `invalid_argument`）。此约束**只约束 `vn::io`**，不回溯改造既有 `vn::crypto`（`HashCalculator` 现在抛 `logic_error` / `runtime_error`）。
 6. **同名不同返回类型无法重载**（S1 实测结论，也是 S2.5 重设计的直接原因）：`writeFile` / `readFile` /
    `remove` / `save(vector&)` / `mountFile` 要改成返回 `IoError`，就不能与 `bool` 版共存；
    `list` 因为参数个数不同才能合法重载。结论：**不要让两套 API 长期并存** —— 见 §13。
@@ -192,14 +192,14 @@ std::filesystem::path DirectoryVfs::toReal(const String& vfs_path) const;
 设计（S1 已实现）：校验收敛成**一个返回错误码**的函数，不做 `VfsPath` 值类型：
 
 ```cpp
-namespace vine::io::detail {
+namespace vn::io::detail {
 
 /// @brief 规范化虚拟路径并校验。
 /// @param path 调用方给的原始路径（"" 表示根）。
 /// @param out 接收规范化结果（无首尾 '/'、无空段；根为 ""）；失败时不改动。
 /// @return Ok，或 InvalidPath（下表任一规则不满足）。
 IoError normalizeVfsPath(const std::filesystem::path& path, std::filesystem::path& out);
-} // namespace vine::io::detail
+} // namespace vn::io::detail
 ```
 
 | 规则 | S1 实现 |
@@ -230,7 +230,7 @@ IoError normalizeVfsPath(const std::filesystem::path& path, std::filesystem::pat
 
 ```cpp
 /// @brief 虚拟文件/目录的最小信息（需求文档 §6.6）。
-struct V_IOBASE_API VfsEntryInfo
+struct VN_IOBASE_API VfsEntryInfo
 {
     std::filesystem::path path;          // 完整规范化路径（空路径是根）
     bool          is_directory{ false };
@@ -385,7 +385,7 @@ VFS 层的 `openRead` / `read(path, sink)` 落地后也用它。因此**不拆�
 
 ```cpp
 /// @brief 一次一个条目的顺序读；能力探测见 seekable()。
-class V_IOBASE_API VfsReadStream
+class VN_IOBASE_API VfsReadStream
 {
   public:
     virtual ~VfsReadStream() = default;
@@ -411,7 +411,7 @@ class V_IOBASE_API VfsReadStream
 
 ```cpp
 /// @brief 数据来源（pull）：保存时由 VFS/libzip 来拉取。用于“边算边写”，零拷贝。
-class V_IOBASE_API DataSource
+class VN_IOBASE_API DataSource
 {
   public:
     virtual ~DataSource() = default;
@@ -468,7 +468,7 @@ class V_IOBASE_API DataSource
 
 `DataSource` / `DataSink` 只表达“字节流 + 精确长度”，**不做领域派生**：mesh / image / BRep 的“特殊结构”
 由调用方或领域模块**实现**这两个接口（例如 `RoboticsIO` 里的 `MeshDataSource` 把 positions / normals / indices 边拉边拼；
-交错顶点、量化解码、GPU 映射内存都同理）。理由：模块图是 `vi::IOBase ← vi::RoboticsIO`，IOBase 不得依赖领域类型；
+交错顶点、量化解码、GPU 映射内存都同理）。理由：模块图是 `vn::IOBase ← vn::RoboticsIO`，IOBase 不得依赖领域类型；
 反过来给 IOBase 加 `MeshSource` 会让它退化成“已知数据形态枚举表”，每来一种数据都要改 IOBase。
 
 通用场景由**工厂函数**覆盖（不新增类型；实现类藏在 .cpp 里）：
@@ -645,7 +645,7 @@ libzip 的 `zip_source_buffer(za, ptr, len, 0)` 是**借用**（`freep=0` 不拷
 ## 10. `MountVfs`：多后端一棵树
 
 ```cpp
-class V_IOBASE_API MountVfs : public Vfs
+class VN_IOBASE_API MountVfs : public Vfs
 {
   public:
     /// @brief 挂载一个后端（前缀 + 优先级 + 只读）。

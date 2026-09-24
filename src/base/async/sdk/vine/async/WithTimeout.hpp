@@ -18,18 +18,18 @@
 #include "Task.hpp"
 #include "When.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 /**
  * @brief Exception thrown when a task does not complete in time.
  *
- * Derives from vine::Exception with code Exception::TIMEOUT.
+ * Derives from vn::Exception with code Exception::TIMEOUT.
  */
-class TimeoutException : public vine::Exception
+class TimeoutException : public vn::Exception
 {
   public:
     TimeoutException()
-      : vine::Exception(vine::Exception::Code::TIMEOUT, String(u8"operation timed out"))
+      : vn::Exception(vn::Exception::Code::TIMEOUT, String(u8"operation timed out"))
     {}
 };
 
@@ -106,4 +106,4 @@ inline Task<void> withTimeout(Task<void> task,
     co_await whenAny(std::move(race));
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

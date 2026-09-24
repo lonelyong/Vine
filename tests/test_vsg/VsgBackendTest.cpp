@@ -41,30 +41,30 @@
 
 #include "TestHostWindow.hpp"
 
-using vine::graphics::Geometry;
-using vine::graphics::Material;
-using vine::graphics::RenderCommand;
-using vine::graphics::RenderPass;
-using vine::graphics::RenderTarget;
-using vine::graphics::ShaderProgram;
-using vine::graphics::ShaderStage;
-using vine::graphics::ShaderStageType;
-using vine::vsg::ContentAssembly;
-using vine::vsg::ContentStore;
-using vine::vsg::core::TargetFacts;
-using vine::vsg::core::depthPlan;
-using vine::vsg::HostTargets;
-using vine::vsg::PassRegistry;
-using vine::vsg::VsgBackend;
-using vine::vsg::WindowTarget;
-using vine::vsg::api::probePhysicalDevices;
-using vine::vsg::detail::BackendContentAccess;
+using vn::graphics::Geometry;
+using vn::graphics::Material;
+using vn::graphics::RenderCommand;
+using vn::graphics::RenderPass;
+using vn::graphics::RenderTarget;
+using vn::graphics::ShaderProgram;
+using vn::graphics::ShaderStage;
+using vn::graphics::ShaderStageType;
+using vn::vsg::ContentAssembly;
+using vn::vsg::ContentStore;
+using vn::vsg::core::TargetFacts;
+using vn::vsg::core::depthPlan;
+using vn::vsg::HostTargets;
+using vn::vsg::PassRegistry;
+using vn::vsg::VsgBackend;
+using vn::vsg::WindowTarget;
+using vn::vsg::api::probePhysicalDevices;
+using vn::vsg::detail::BackendContentAccess;
 
 namespace
 {
 
-/// @brief Prints a `vine::String` (UTF-8 bytes) as the bytes it holds.
-std::string as_bytes(const vine::String& text)
+/// @brief Prints a `vn::String` (UTF-8 bytes) as the bytes it holds.
+std::string as_bytes(const vn::String& text)
 {
     return std::string(reinterpret_cast<const char*>(text.data()), text.size());
 }
@@ -112,9 +112,9 @@ bool isRed(const std::array<std::uint8_t, 3>& pixel)
 /// @brief A red triangle under a view-block program: the content the off-screen cases draw.
 struct TriangleFixture
 {
-    vine::intrusive_ptr<ShaderProgram> program;
-    vine::intrusive_ptr<Geometry>      geometry;
-    vine::intrusive_ptr<Material>      material;
+    vn::intrusive_ptr<ShaderProgram> program;
+    vn::intrusive_ptr<Geometry>      geometry;
+    vn::intrusive_ptr<Material>      material;
     std::vector<RenderCommand>         commands;
 };
 
@@ -123,18 +123,18 @@ TriangleFixture makeTriangle()
 {
     TriangleFixture fixture;
 
-    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) in vec3 position;\n"
             "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
             "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) out vec4 outColor;\n"
             "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
         program->addStage(vertex);
@@ -142,19 +142,19 @@ TriangleFixture makeTriangle()
     }
     fixture.program = program;
 
-    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vine::intrusive_ptr<vine::Buffer<float>> positions = vine::intrusive_ptr<vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
-    const vine::intrusive_ptr<vine::Buffer<std::uint32_t>> indices =
-        vine::intrusive_ptr<vine::Buffer<std::uint32_t>>(
-            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     geometry->setIndices(indices);
     geometry->setRevision(1U);
     fixture.geometry = geometry;
 
-    const vine::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     fixture.material = material;
 
     RenderCommand command;
@@ -169,11 +169,11 @@ TriangleFixture makeTriangle()
 ///
 /// The world x in [-0.4, 0.4] then lands HALF A UNIT to one side of the camera's centre, which is how the
 /// content case moves its triangle between the window's halves (see SessionContentTest for the same pair).
-vine::intrusive_ptr<vine::graphics::Camera> cameraLookingAt(double x)
+vn::intrusive_ptr<vn::graphics::Camera> cameraLookingAt(double x)
 {
-    vine::intrusive_ptr<vine::graphics::Camera> camera(new vine::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vine::math::Vec3d(x, 0.0, 1.5), vine::math::Vec3d(x, 0.0, 0.0),
-                                  vine::math::Vec3d(0.0, 1.0, 0.0));
+    vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vn::math::Vec3d(x, 0.0, 1.5), vn::math::Vec3d(x, 0.0, 0.0),
+                                  vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
     return camera;
 }
@@ -187,9 +187,9 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
         GTEST_SKIP() << "no window system or no device satisfies the requirements";
     }
 
-    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                     seen = 0;
-    backend->setDiagnosticSink([&seen](const vine::graphics::RenderDiagnostic& diagnostic) {
+    backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
@@ -225,7 +225,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     // have come from the device's own limit - which is what makes "the session hands it over" observable at
     // all (the entry point existed and nothing called it, and no test could tell). A device that reports no
     // anisotropy would read 1.0 here, which is why the assertion is "more than 1x" rather than a number.
-    const vine::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
+    const vn::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
     ASSERT_NE(images, nullptr);
     EXPECT_GT(images->maxAnisotropy(), 1.0F) << "the cache was never told the device's limit";
 
@@ -233,16 +233,16 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     // this backend has not been told about is NotReady (a later announcement can make it readable), a call
     // with no target is Invalid, and each reason is said ONCE per episode - the request is synchronous, and a
     // caller polling a target that is not ready yet must not be flooded.
-    const vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     std::vector<std::uint8_t>               pixels;
     std::vector<float>                      depths;
     const std::size_t                       before_unserved = backend->diagnosticCount();
-    vine::graphics::ReadbackResult why = vine::graphics::ReadbackResult::Ok;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Ok;
     EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::NotReady) << "this backend was never told about it";
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::NotReady) << "this backend was never told about it";
     EXPECT_TRUE(pixels.empty()) << "a refused read leaves the destination untouched";
     EXPECT_FALSE(backend->readDepthBuffer(target.get(), depths, &why));
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::NotReady);
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::NotReady);
     EXPECT_TRUE(depths.empty());
     EXPECT_EQ(backend->diagnosticCount(), before_unserved + 2U) << "one sentence per entry point, once";
     (void)backend->readColorBuffer(target.get(), 0, pixels, &why);
@@ -251,7 +251,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     EXPECT_EQ(seen, backend->diagnosticCount());
 
     EXPECT_FALSE(backend->readColorBuffer(nullptr, 0, pixels, &why));
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::Invalid) << "no target was given, so the request is wrong";
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::Invalid) << "no target was given, so the request is wrong";
     EXPECT_TRUE(backend->supportsRenderTargets()) << "the off-screen half is served now";
 
     // An off-screen target is HELD from the moment it is announced - even before it can be built, because a
@@ -261,7 +261,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     backend->setRenderTarget(target.get());
     EXPECT_EQ(BackendContentAccess::targets(*backend).live(), 1U);
     EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::NotReady) << "held, but its attachments are not built yet";
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::NotReady) << "held, but its attachments are not built yet";
     EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U) << "the held target's own episode";
     (void)backend->readColorBuffer(target.get(), 0, pixels, &why);
     EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U) << "and a repeat adds nothing";
@@ -335,8 +335,8 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
 
     TestHostWindow host(connection, screen, 128, 96);
 
-    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    backend->setDiagnosticSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setDiagnosticSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
@@ -396,9 +396,9 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     constexpr int kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
-    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                     seen = 0;
-    backend->setDiagnosticSink([&seen](const vine::graphics::RenderDiagnostic& diagnostic) {
+    backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
@@ -411,18 +411,18 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     // The content the frames draw: a triangle under a view-block program (the same pair the session's own
     // content case drives), shaded so the picture itself says what the plan carried - the camera's x in the
     // green byte, the target's extent in the outer two.
-    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) in vec3 position;\n"
             "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
             "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
@@ -431,18 +431,18 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
         program->addStage(fragment);
     }
 
-    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vine::intrusive_ptr<vine::Buffer<float>> positions = vine::intrusive_ptr<vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
-    const vine::intrusive_ptr<vine::Buffer<std::uint32_t>> indices =
-        vine::intrusive_ptr<vine::Buffer<std::uint32_t>>(
-            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     geometry->setIndices(indices);
     geometry->setRevision(1U);
 
-    const vine::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
     RenderCommand command;
     command.geometry = geometry;
@@ -450,19 +450,19 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     command.program  = program;
     const std::vector<RenderCommand> commands{ command };
 
-    const vine::intrusive_ptr<vine::graphics::Camera> camera_a = cameraLookingAt(0.5);
-    const vine::intrusive_ptr<vine::graphics::Camera> camera_b = cameraLookingAt(-0.5);
-    const vine::intrusive_ptr<RenderPass>             pass(new RenderPass());
+    const vn::intrusive_ptr<vn::graphics::Camera> camera_a = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<vn::graphics::Camera> camera_b = cameraLookingAt(-0.5);
+    const vn::intrusive_ptr<RenderPass>             pass(new RenderPass());
 
-    const vine::graphics::ClearPolicy clear{ vine::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy clear{ vn::Color(0, 64, 0, 255), true };
 
-    const auto drive = [&](const vine::graphics::Camera* frame_camera) {
+    const auto drive = [&](const vn::graphics::Camera* frame_camera) {
         backend->beginFrame();
         backend->beginPass(pass.get());
         backend->setPassOrder(0);
         backend->setRenderTarget(nullptr);
         backend->setClearPolicy(clear);
-        backend->setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
         backend->render(commands, frame_camera);
         backend->endPass();
         backend->endFrame();
@@ -486,7 +486,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     backend->setPassOrder(-1);
     backend->setRenderTarget(nullptr);
     backend->setClearPolicy(clear);
-    backend->setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+    backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
     backend->render(commands, camera_a.get());
     backend->endPass();
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "a warm-up is designed, not a protocol error";
@@ -547,7 +547,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     // 5. The pass identity is this layer's bookkeeping: the SDK's releasePass() forgets it (nothing retained
     // is keyed by a pass yet), and a re-announced object is a NEW pass - the plan's numbers are never
     // re-issued, because what they keyed may still be remembered elsewhere (see api/PassRegistry).
-    const vine::vsg::core::PassId first_id = registry.adopt(pass.get());
+    const vn::vsg::core::PassId first_id = registry.adopt(pass.get());
     backend->releasePass(pass.get());
     EXPECT_FALSE(registry.contains(pass.get()));
     EXPECT_EQ(registry.live(), 0U);
@@ -578,10 +578,10 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     constexpr int kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
-    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                     seen     = 0;
     std::vector<std::string>        messages;
-    backend->setDiagnosticSink([&seen, &messages](const vine::graphics::RenderDiagnostic& diagnostic) {
+    backend->setDiagnosticSink([&seen, &messages](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         messages.push_back(as_bytes(diagnostic.message));
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
@@ -596,7 +596,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     // The objects behind it are the backend's (the SDK's own contract: "the RenderTarget stays a logical
     // description"), built the first time a pass draws into it. Named the way the builder names its targets:
     // a refusal has to be a sentence a host can act on.
-    const vine::intrusive_ptr<RenderTarget> offscreen(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> offscreen(new RenderTarget());
     offscreen->setName(u8"gbuffer");
     offscreen->attachColor(RenderTarget::ColorFormat::RGBA8);
     offscreen->setSize(64, 64);
@@ -604,21 +604,21 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     // The content of the off-screen pass: a red triangle under a view-block program.
     const TriangleFixture triangle = makeTriangle();
 
-    const vine::intrusive_ptr<vine::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
 
     // The full-screen program is the SDK's OWN copy program - the engine's vocabulary, not a text written for
     // this test: it declares its sampler as `layout(binding = 0)` and reads attachment 0 of its source.
-    const vine::intrusive_ptr<ShaderProgram> copy_program = vine::graphics::screenCopyProgram(0);
+    const vn::intrusive_ptr<ShaderProgram> copy_program = vn::graphics::screenCopyProgram(0);
     ASSERT_NE(copy_program, nullptr) << "the SDK ships the copy program the screen path draws with";
 
-    const vine::intrusive_ptr<RenderPass> offscreen_pass(new RenderPass());
-    const vine::intrusive_ptr<RenderPass> window_pass(new RenderPass());
+    const vn::intrusive_ptr<RenderPass> offscreen_pass(new RenderPass());
+    const vn::intrusive_ptr<RenderPass> window_pass(new RenderPass());
 
     // The SCREEN's clear is blue and the TARGET's is green, so a window pixel says which one a frame ended
     // with: the screen draw covers the window, so a pixel the screen draw touched is the TARGET's picture -
     // the triangle, or the target's clear.
-    const vine::graphics::ClearPolicy offscreen_clear{ vine::Color(0, 64, 0, 255), true };
-    const vine::graphics::ClearPolicy window_clear{ vine::Color(0, 0, 64, 255), true };
+    const vn::graphics::ClearPolicy offscreen_clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy window_clear{ vn::Color(0, 0, 64, 255), true };
 
     const auto drive = [&]() {
         backend->beginFrame();
@@ -626,7 +626,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
         backend->setPassOrder(-1);
         backend->setRenderTarget(offscreen.get());
         backend->setClearPolicy(offscreen_clear);
-        backend->setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
         backend->render(triangle.commands, camera.get());
         backend->endPass();
 
@@ -635,7 +635,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
         backend->setRenderTarget(nullptr);
         backend->setPassInputs({ offscreen.get() });
         backend->setClearPolicy(window_clear);
-        backend->setDepthMode(vine::graphics::DepthMode::Disabled);
+        backend->setDepthMode(vn::graphics::DepthMode::Disabled);
         backend->drawScreenProgram(offscreen.get(), copy_program.get(), camera.get());
         backend->endPass();
 
@@ -719,7 +719,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     // lender is announced later in that setup is order rather than failure - the engine's own pipeline does
     // exactly that (measured on the demo: the composite arrives before its G-buffer, and builds on the next
     // in-frame announcement). A pass staged into an unbuilt target is reported by the executor either way.
-    const vine::intrusive_ptr<RenderTarget> lenderless(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> lenderless(new RenderTarget());
     lenderless->setName(u8"composite");
     lenderless->attachColor(RenderTarget::ColorFormat::RGBA8);
     lenderless->shareDepth(offscreen);  // the lender was released a moment ago
@@ -764,9 +764,9 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
 
     TestHostWindow host(connection, screen, 128, 96);
 
-    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                     seen = 0;
-    backend->setDiagnosticSink([&seen](const vine::graphics::RenderDiagnostic& diagnostic) {
+    backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
@@ -778,15 +778,15 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     // The target the frame draws into: one RGBA8 colour attachment and a D32F depth - the format that has a
     // plain depth copy (a combined depth/stencil image does not, and this backend says so instead of
     // decoding it wrongly).
-    const vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     target->attachColor(RenderTarget::ColorFormat::RGBA8);
     target->attachDepth(RenderTarget::DepthFormat::D32F);
     target->setSize(64, 64);
 
     const TriangleFixture             triangle = makeTriangle();
-    const vine::intrusive_ptr<vine::graphics::Camera> camera = cameraLookingAt(0.5);
-    const vine::intrusive_ptr<RenderPass>             pass(new RenderPass());
-    const vine::graphics::ClearPolicy                 clear{ vine::Color(0, 64, 0, 255), true };
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass>             pass(new RenderPass());
+    const vn::graphics::ClearPolicy                 clear{ vn::Color(0, 64, 0, 255), true };
 
     const auto drive = [&]() {
         backend->beginFrame();
@@ -794,7 +794,7 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
         backend->setPassOrder(0);
         backend->setRenderTarget(target.get());
         backend->setClearPolicy(clear);
-        backend->setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
         backend->render(triangle.commands, camera.get());
         backend->endPass();
         backend->endFrame();
@@ -809,9 +809,9 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     // 1. The colour attachment, as the SDK promises it: tightly packed RGBA8 rows, the picture the frame left.
     std::vector<std::uint8_t>      pixels;
     std::vector<float>             depths;
-    vine::graphics::ReadbackResult why = vine::graphics::ReadbackResult::Failed;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
     ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "the pixels are read back";
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::Ok);
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::Ok);
     ASSERT_EQ(pixels.size(), 64U * 64U * 4U) << "width * height * 4 bytes, tightly packed";
     const auto pixel = [&pixels](int x, int y) {
         const std::size_t at = (static_cast<std::size_t>(y) * 64U + static_cast<std::size_t>(x)) * 4U;
@@ -833,7 +833,7 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     // 2. The depth attachment, as normalised values: the clear is the reverse-Z far plane (0) and the
     // triangle's fragments wrote a depth between it and the near plane.
     ASSERT_TRUE(backend->readDepthBuffer(target.get(), depths, &why));
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::Ok);
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::Ok);
     ASSERT_EQ(depths.size(), 64U * 64U) << "one value per texel";
     EXPECT_GT(depths[40U * 64U + 16U], 0.05F) << "the triangle's depth is not the far plane";
     EXPECT_LT(depths[40U * 64U + 16U], 0.95F);
@@ -850,29 +850,29 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     // submission is made for any of them.
     std::vector<std::uint8_t> scratch;
     EXPECT_FALSE(backend->readColorBuffer(target.get(), 5, scratch, &why));
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::Invalid);
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::Invalid);
     EXPECT_TRUE(scratch.empty()) << "a refused read leaves the destination untouched";
-    const vine::intrusive_ptr<RenderTarget> unknown(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> unknown(new RenderTarget());
     unknown->attachColor(RenderTarget::ColorFormat::RGBA8);
     unknown->setSize(8, 8);
     EXPECT_FALSE(backend->readColorBuffer(unknown.get(), 0, scratch, &why));
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::NotReady) << "never announced to this backend";
-    const vine::intrusive_ptr<RenderTarget> floats(new RenderTarget());
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::NotReady) << "never announced to this backend";
+    const vn::intrusive_ptr<RenderTarget> floats(new RenderTarget());
     floats->attachColor(RenderTarget::ColorFormat::RGBA16F);
     floats->setSize(8, 8);
     backend->setRenderTarget(floats.get());  // held and built (no frame is needed to build one)
     EXPECT_FALSE(backend->readColorBuffer(floats.get(), 0, scratch, &why));
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::Unsupported) << "this backend packs RGBA8 only";
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::Unsupported) << "this backend packs RGBA8 only";
     EXPECT_EQ(backend->deviceWaits(), waits_before + 2U) << "a refused readback never stops the device";
 
     // 4. A BORROWED depth is the lender's to read: the borrower says Unsupported without touching the device
     // (the SDK's own rule - the image belongs to the source target).
-    const vine::intrusive_ptr<RenderTarget> lender(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> lender(new RenderTarget());
     lender->attachColor(RenderTarget::ColorFormat::RGBA8);
     lender->attachDepth(RenderTarget::DepthFormat::D32F);
     lender->setSize(16, 16);
     backend->setRenderTarget(lender.get());
-    const vine::intrusive_ptr<RenderTarget> borrower(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> borrower(new RenderTarget());
     borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
     borrower->shareDepth(lender);
     borrower->setSize(16, 16);
@@ -882,19 +882,19 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     ASSERT_NE(targets.find(borrower.get()), nullptr);
     ASSERT_NE(targets.find(borrower.get())->target, nullptr) << "the borrower was built on the lender's depth";
     EXPECT_FALSE(backend->readDepthBuffer(borrower.get(), depths, &why));
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::Unsupported) << "read it through the source target";
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::Unsupported) << "read it through the source target";
 
     // The lender is held and BUILT, but no frame has ever drawn into it: there is nothing to read back yet
     // (and reading it costs nothing - not even a wait).
     EXPECT_FALSE(backend->readColorBuffer(lender.get(), 0, scratch, &why));
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::NotReady) << "nothing has been recorded into it";
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::NotReady) << "nothing has been recorded into it";
     EXPECT_EQ(backend->deviceWaits(), waits_before + 2U) << "and none of those refusals stops the device";
 
     // 5. A target that was released is NotReady again - the SDK's own reading ("never rendered, or already
     // released"), not Unsupported: a re-announced handle can make it readable.
     backend->releaseRenderTarget(target.get());
     EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
-    EXPECT_EQ(why, vine::graphics::ReadbackResult::NotReady);
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::NotReady);
 
     backend->releaseRenderTarget(borrower.get());
     backend->releaseRenderTarget(lender.get());
@@ -923,9 +923,9 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     constexpr int kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
-    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                     seen = 0;
-    backend->setDiagnosticSink([&seen](const vine::graphics::RenderDiagnostic& diagnostic) {
+    backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
@@ -938,18 +938,18 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     // The content says what the plan carried: the surface's extent in the two outer bytes (a resize therefore
     // shows up in the PICTURE, not only in the shape the target reports) and the camera's x in the green byte.
     // The divisors keep every value in [0, 1] for both sizes (128x96 before, 96x64 after).
-    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) in vec3 position;\n"
             "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
             "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
@@ -958,18 +958,18 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
         program->addStage(fragment);
     }
 
-    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vine::intrusive_ptr<vine::Buffer<float>> positions = vine::intrusive_ptr<vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
-    const vine::intrusive_ptr<vine::Buffer<std::uint32_t>> indices =
-        vine::intrusive_ptr<vine::Buffer<std::uint32_t>>(
-            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     geometry->setIndices(indices);
     geometry->setRevision(1U);
 
-    const vine::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
     RenderCommand command;
     command.geometry = geometry;
@@ -977,9 +977,9 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     command.program  = program;
     const std::vector<RenderCommand> commands{ command };
 
-    const vine::intrusive_ptr<vine::graphics::Camera> camera = cameraLookingAt(0.5);
-    const vine::intrusive_ptr<RenderPass>             pass(new RenderPass());
-    const vine::graphics::ClearPolicy                 clear{ vine::Color(0, 64, 0, 255), true };
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass>             pass(new RenderPass());
+    const vn::graphics::ClearPolicy                 clear{ vn::Color(0, 64, 0, 255), true };
 
     const auto drive = [&] {
         backend->beginFrame();
@@ -987,7 +987,7 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
         backend->setPassOrder(0);
         backend->setRenderTarget(nullptr);
         backend->setClearPolicy(clear);
-        backend->setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
         backend->render(commands, camera.get());
         backend->endPass();
         backend->endFrame();
@@ -1078,9 +1078,9 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
     constexpr int kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
-    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                     seen = 0;
-    backend->setDiagnosticSink([&seen](const vine::graphics::RenderDiagnostic& diagnostic) {
+    backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
@@ -1094,7 +1094,7 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
     // attachment") took the app's whole deferred pipeline down with it: the shadow pass had nowhere to draw,
     // the lighting pass that samples the map lost an input, and it was refused with it (the app smoke found
     // this: 'shadow_map' never built, 'input 1 offers no depth texture').
-    const vine::intrusive_ptr<RenderTarget> shadow(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> shadow(new RenderTarget());
     shadow->setName(u8"shadow_map");
     shadow->setSize(64, 64);
     shadow->attachDepth(RenderTarget::DepthFormat::D24);
@@ -1114,12 +1114,12 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
     // was built with, and core::depthPlan answers "sampleable" - so a pass that declares the map as an input
     // is offered its depth (see the facade's offer loop). Before this slice the row could not exist at all:
     // the description was refused before anything was built, and the app's lighting pass lost its input.
-    vine::vsg::core::TargetFacts row;
+    vn::vsg::core::TargetFacts row;
     targets.facts(*shadow_entry, row);
     EXPECT_TRUE(row.depth.has_depth);
     EXPECT_FALSE(row.depth.borrowed);
     EXPECT_TRUE(row.depth.promotion) << "the built target's own policy answers";
-    EXPECT_TRUE(vine::vsg::core::depthPlan(row.depth).sampleable) << "and the plan promises the depth to a shader";
+    EXPECT_TRUE(vn::vsg::core::depthPlan(row.depth).sampleable) << "and the plan promises the depth to a shader";
 
     // A frame that presents with it held is served silently - the target is part of the frame's world now,
     // and nothing about it needs saying.
@@ -1153,9 +1153,9 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     constexpr int kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
-    vine::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                     seen = 0;
-    backend->setDiagnosticSink([&seen](const vine::graphics::RenderDiagnostic& diagnostic) {
+    backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
@@ -1169,16 +1169,16 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     // expects the picture to follow - the implementation this backend replaces refreshed every commanded
     // material every frame for exactly that reason - so the pixels are the evidence for both halves: the
     // edit landing, and the steady frame that must not rebuild anything.
-    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) in vec3 position;\n"
             "void main() { gl_Position = vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
             "{\n"
@@ -1189,18 +1189,18 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
         program->addStage(fragment);
     }
 
-    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vine::intrusive_ptr<vine::Buffer<float>> positions = vine::intrusive_ptr<vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
-    const vine::intrusive_ptr<vine::Buffer<std::uint32_t>> indices =
-        vine::intrusive_ptr<vine::Buffer<std::uint32_t>>(
-            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     geometry->setIndices(indices);
     geometry->setRevision(1U);
 
-    const vine::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     RenderCommand command;
     command.geometry = geometry;
@@ -1208,9 +1208,9 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     command.program  = program;
     const std::vector<RenderCommand> commands{ command };
 
-    const vine::intrusive_ptr<vine::graphics::Camera> camera = cameraLookingAt(0.5);
-    const vine::intrusive_ptr<RenderPass>             pass(new RenderPass());
-    const vine::graphics::ClearPolicy                 clear{ vine::Color(0, 64, 0, 255), true };
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass>             pass(new RenderPass());
+    const vn::graphics::ClearPolicy                 clear{ vn::Color(0, 64, 0, 255), true };
 
     const auto drive = [&] {
         backend->beginFrame();
@@ -1218,7 +1218,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
         backend->setPassOrder(0);
         backend->setRenderTarget(nullptr);
         backend->setClearPolicy(clear);
-        backend->setDepthMode(vine::graphics::DepthMode::TestAndWrite);
+        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
         backend->render(commands, camera.get());
         backend->endPass();
         backend->endFrame();
@@ -1254,7 +1254,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     // The host edits the material and DOES NOTHING ELSE. There is no announcement to make: the SDK's
     // RenderBackend has no "this material changed" entry point, so the touch the facade makes when the next
     // frame commands the material is the whole mechanism (see ContentStore::updateMaterial).
-    material->setDiffuse(vine::Colorf(0.75F, 0.25F, 0.5F, 1.0F));
+    material->setDiffuse(vn::Colorf(0.75F, 0.25F, 0.5F, 1.0F));
     const std::uint64_t builds_before = store->builds();
     drive();
     EXPECT_EQ(store->builds(), builds_before + 1U) << "the edit replaced exactly that material's row";

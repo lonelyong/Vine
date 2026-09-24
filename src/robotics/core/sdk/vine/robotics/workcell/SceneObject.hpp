@@ -12,7 +12,7 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/robotics/kinematics/Frame.hpp>
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 class Workcell;
 
@@ -31,7 +31,7 @@ enum class SceneObjectKind
  * A SceneObject is something the user adds/removes/finds in the workcell
  * (a robot, a scanner, a part, a table, ...). The Workcell owns every
  * SceneObject (unique ownership); this base exposes identity (via INameable)
- * plus each object's own coordinate frames. Deriving from vine::Object makes
+ * plus each object's own coordinate frames. Deriving from vn::Object makes
  * every scene object part of the Object type system (isKindOf / obj_cast).
  *
  * Parent/child relationships are NOT stored explicitly. They are derived from
@@ -41,9 +41,9 @@ enum class SceneObjectKind
  * relationships through the frame tree (see parentObject(), childObjects(),
  * Workcell::parentOf(), ...).
  */
-class V_ROBOTICS_CORE_API SceneObject : public vine::Object, public vine::INameable
+class VN_ROBOTICS_CORE_API SceneObject : public vn::Object, public vn::INameable
 {
-    V_OBJECT_META(SceneObject, vine::Object, vine::INameable);
+    VN_OBJECT_META(SceneObject, vn::Object, vn::INameable);
 
   public:
     /**
@@ -205,4 +205,4 @@ class V_ROBOTICS_CORE_API SceneObject : public vine::Object, public vine::INamea
     friend class Workcell;
 };
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

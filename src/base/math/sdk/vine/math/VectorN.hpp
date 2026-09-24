@@ -7,7 +7,7 @@
 
 #include "Math.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief A class representing a vector in ND space
@@ -376,4 +376,4 @@ class VectorN {
     T data[N];
 };
 
-V_MATH_NS_END
+VN_MATH_NS_END

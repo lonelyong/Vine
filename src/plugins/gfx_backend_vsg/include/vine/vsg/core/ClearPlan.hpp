@@ -33,7 +33,7 @@
  * The plan is per attachment and is derived from three inputs only (the shape, what the pass asked for, and
  * whether this pass is the bootstrap one), so a phase can assert the whole table without a device.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -148,4 +148,4 @@ struct PassClearPlan
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

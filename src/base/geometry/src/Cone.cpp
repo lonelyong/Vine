@@ -1,8 +1,8 @@
 ﻿#include <vine/geometry/Cone.hpp>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-V_OBJECT_META_IMPL(Cone, Primitive)
+VN_OBJECT_META_IMPL(Cone, Primitive)
 
 Cone::Cone()
 {
@@ -46,4 +46,4 @@ bool Cone::hasVolume(double eps) const
     return radius_ > eps && height_ > eps;
 }
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

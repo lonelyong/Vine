@@ -6,9 +6,9 @@
 // and they load it by the path injected as VINE_LEGACY_ABI_PLUGIN.
 #include <vine/appfw/Plugin.hpp>
 
-extern "C" const vine::appfw::PluginInfo* vinePluginQuery()
+extern "C" const vn::appfw::PluginInfo* vinePluginQuery()
 {
-    static const vine::appfw::PluginInfo s_info{ vine::Uuid::parse(u8"6a1b6d0e-0000-4000-8000-000000000001"),
+    static const vn::appfw::PluginInfo s_info{ vn::Uuid::parse(u8"6a1b6d0e-0000-4000-8000-000000000001"),
                                                  u8"legacy_plugin",
                                                  u8"Legacy plugin",
                                                  u8"0.1.0",
@@ -22,7 +22,7 @@ extern "C" const vine::appfw::PluginInfo* vinePluginQuery()
 }
 
 /// Never reached: the host refuses the library before it creates an instance.
-extern "C" vine::appfw::Plugin* vinePluginCreate()
+extern "C" vn::appfw::Plugin* vinePluginCreate()
 {
     return nullptr;
 }

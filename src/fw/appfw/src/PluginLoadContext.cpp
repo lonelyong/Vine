@@ -8,7 +8,7 @@
 #include <vine/appfw/ConfigRegistry.hpp>
 #include <vine/logging/Log.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 namespace
 {
@@ -75,7 +75,7 @@ std::filesystem::path PluginLoadContext::ensureDataDirectory()
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     if (ec) {
-        V_LOGW("Could not create the data directory '{}' for plugin '{}': {}", dir.string(), toUtf8(d->plugin_name), ec.message());
+        VN_LOGW("Could not create the data directory '{}' for plugin '{}': {}", dir.string(), toUtf8(d->plugin_name), ec.message());
         return {};
     }
     return dir;
@@ -93,4 +93,4 @@ std::vector<const ConfigItem*> PluginLoadContext::registeredConfigs() const
     return reg ? reg->itemsForPlugin(d->plugin_name) : std::vector<const ConfigItem*>{};
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

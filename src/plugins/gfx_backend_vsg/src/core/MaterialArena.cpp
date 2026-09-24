@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -172,4 +172,4 @@ void MaterialArena::clear() noexcept
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

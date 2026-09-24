@@ -7,7 +7,7 @@
 
 #include <vine/appfw/appfw_global.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace detail
 {
@@ -50,4 +50,4 @@ inline void blendIntoSurface(QTableWidget* table)
 
 } // namespace detail
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

@@ -1,15 +1,15 @@
 ﻿#include <vine/geometry/PbrMaterial.hpp>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-V_OBJECT_META_IMPL(PbrMaterial, Material)
+VN_OBJECT_META_IMPL(PbrMaterial, Material)
 
 PbrMaterial::PbrMaterial()
 {
     material_type_ = MaterialType::Pbr;
 }
 
-PbrMaterial::PbrMaterial(const vine::Colorf& base_color, float metallic, float roughness, float opacity)
+PbrMaterial::PbrMaterial(const vn::Colorf& base_color, float metallic, float roughness, float opacity)
   : base_color_(base_color)
   , metallic_(metallic)
   , roughness_(roughness)
@@ -18,22 +18,22 @@ PbrMaterial::PbrMaterial(const vine::Colorf& base_color, float metallic, float r
     material_type_ = MaterialType::Pbr;
 }
 
-const vine::Colorf& PbrMaterial::baseColor() const
+const vn::Colorf& PbrMaterial::baseColor() const
 {
     return base_color_;
 }
 
-void PbrMaterial::setBaseColor(const vine::Colorf& color)
+void PbrMaterial::setBaseColor(const vn::Colorf& color)
 {
     base_color_ = color;
 }
 
-const vine::Colorf& PbrMaterial::emissive() const
+const vn::Colorf& PbrMaterial::emissive() const
 {
     return emissive_;
 }
 
-void PbrMaterial::setEmissive(const vine::Colorf& color)
+void PbrMaterial::setEmissive(const vn::Colorf& color)
 {
     emissive_ = color;
 }
@@ -73,4 +73,4 @@ const char* PbrMaterial::typeName() const
     return "PbrMaterial";
 }
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

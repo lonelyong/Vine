@@ -4,13 +4,13 @@
 
 #include <vine/math/Matrix4x4.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
 
 /// @brief Writes one matrix column-major: element (row, column) lands at `column * 4 + row`.
-void writeMatrix(const vine::math::Mat4d& matrix, std::array<float, 16>& out) noexcept
+void writeMatrix(const vn::math::Mat4d& matrix, std::array<float, 16>& out) noexcept
 {
     for (int column = 0; column < 4; ++column)
     {
@@ -23,9 +23,9 @@ void writeMatrix(const vine::math::Mat4d& matrix, std::array<float, 16>& out) no
 }
 
 /// @brief The SDK's clip space folded into the device's (see the header note): y down, z `0.5 - 0.5 * z`.
-vine::math::Mat4d sdkClipToDeviceClip() noexcept
+vn::math::Mat4d sdkClipToDeviceClip() noexcept
 {
-    vine::math::Mat4d fold;  // identity: x and w are the same in both conventions
+    vn::math::Mat4d fold;  // identity: x and w are the same in both conventions
     fold(1, 1) = -1.0;       // the device's NDC is y-down, so world up stays up only if y is negated here
     fold(2, 2) = -0.5;       // reverse-Z: the SDK's near (-1) becomes 1, its far (+1) becomes 0
     fold(2, 3) = 0.5;
@@ -34,15 +34,15 @@ vine::math::Mat4d sdkClipToDeviceClip() noexcept
 
 }  // namespace
 
-vine::math::Mat4d foldToDeviceClip(const vine::math::Mat4d& sdk_projection) noexcept
+vn::math::Mat4d foldToDeviceClip(const vn::math::Mat4d& sdk_projection) noexcept
 {
     return sdkClipToDeviceClip() * sdk_projection;
 }
 
-vine::graphics::VineViewBlock buildViewBlock(const core::CameraSnapshot& camera, float time_seconds,
+vn::graphics::VineViewBlock buildViewBlock(const core::CameraSnapshot& camera, float time_seconds,
                                              std::uint32_t width, std::uint32_t height) noexcept
 {
-    vine::graphics::VineViewBlock block;
+    vn::graphics::VineViewBlock block;
     if (camera.present)
     {
         // The two view-space matrices are the module's own convention (a lighting term in view space has
@@ -68,4 +68,4 @@ vine::graphics::VineViewBlock buildViewBlock(const core::CameraSnapshot& camera,
     return block;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

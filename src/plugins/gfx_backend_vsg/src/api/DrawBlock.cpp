@@ -4,14 +4,14 @@
 
 #include <vine/math/Matrix4x4.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
-void packDrawBlock(const core::CompiledCommand& command, vine::graphics::VineDrawBlock& out) noexcept
+void packDrawBlock(const core::CompiledCommand& command, vn::graphics::VineDrawBlock& out) noexcept
 {
     // Column-major: element (row, column) of the math module's matrix lands at `column * 4 + row` of the flat
     // array, which is what the shaders (and std140) read. Written from the accessors rather than from the
     // matrix's storage so the convention is stated here, where a reader can check it against the ABI note.
-    const vine::math::Mat4d& model = command.model;
+    const vn::math::Mat4d& model = command.model;
     for (int column = 0; column < 4; ++column)
     {
         for (int row = 0; row < 4; ++row)
@@ -28,4 +28,4 @@ void packDrawBlock(const core::CompiledCommand& command, vine::graphics::VineDra
     out.params[3] = 0.0F;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

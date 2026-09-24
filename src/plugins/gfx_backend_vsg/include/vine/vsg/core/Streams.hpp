@@ -33,7 +33,7 @@
  * for that case - rebuild, and do not reuse a shared upload - is the rule the previous implementation earned
  * by shipping the opposite one.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -284,4 +284,4 @@ class SharedStreams
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

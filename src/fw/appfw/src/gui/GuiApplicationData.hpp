@@ -7,7 +7,7 @@
 
 class QApplication;
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class BootSplash;
 class MainWindow;
@@ -30,4 +30,4 @@ struct GuiApplicationData : public ApplicationData {
     bool  follow_system = true;         // whether to follow the system theme
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

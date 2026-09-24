@@ -1,6 +1,6 @@
 # vsg 后端：STEP 级元素选择 / 高亮设计（Phase 1 草案）
 
-> 模块：`src/plugins/gfx_backend_vsg` + 平台层 `vine::graphics`
+> 模块：`src/plugins/gfx_backend_vsg` + 平台层 `vn::graphics`
 > 日期：2026-09-08
 > 关联：`.ai/design/vsg-pipeline-sharing.md`（管线共享 / 数据·状态解耦 / D22 增量）、
 > `.ai/design/vsg-user-mutation-strategy.md`（可变/可配情形策略）、
@@ -107,7 +107,7 @@ Selector::selectBox(...);  Selector::clearSelection();
 | 1 | 抽出“共享 arrays + 独立索引”的子集 drawable 原语 | `SceneBridge`（data 构造旁） |
 | 2 | highlight 索引数组 `DYNAMIC` + 就地写 + `dirty()` | 沿用透明度模板 |
 | 3 | polygon-offset / 高亮保留状态（fill 不 z-fight） | `RenderStateMapper` / `ResolvedRenderState` 或后端保留项 |
-| 4 | 元素表 + Selector（CPU） | 平台层（`vine::graphics` 或上层 CAD 模块） |
+| 4 | 元素表 + Selector（CPU） | 平台层（`vn::graphics` 或上层 CAD 模块） |
 | 5 | BVH + 拾取返回 element id | 平台层拾取（复用 `RayIntersection`） |
 | 6 | D22 增量不变；首建 highlight 只增一子集节点 | `VsgRenderer` |
 

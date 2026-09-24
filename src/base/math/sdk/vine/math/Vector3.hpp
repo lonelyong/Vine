@@ -10,7 +10,7 @@
 #include "Math.hpp"
 #include "Vector2.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 template <typename T>
 class Vector2;
@@ -827,4 +827,4 @@ using Vec3ui   = Vec3ui32;
 using Vec3f    = Vector3<float>;
 using Vec3d    = Vector3<double>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

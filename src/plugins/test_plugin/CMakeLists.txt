@@ -5,7 +5,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-v_add_plugin(TEST_PLUGIN_TARGET test_plugin)
+vn_add_plugin(TEST_PLUGIN_TARGET test_plugin)
 
 set_target_properties(${TEST_PLUGIN_TARGET} PROPERTIES
     AUTOMOC ON
@@ -13,4 +13,4 @@ set_target_properties(${TEST_PLUGIN_TARGET} PROPERTIES
     AUTORCC ON
 )
 
-target_link_libraries(${TEST_PLUGIN_TARGET} PRIVATE vi::Appfw vi::Graphics vi::Geometry vi::Progress vi::Logging Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(${TEST_PLUGIN_TARGET} PRIVATE vn::Appfw vn::Graphics vn::Geometry vn::Progress vn::Logging Qt6::Core Qt6::Gui Qt6::Widgets)

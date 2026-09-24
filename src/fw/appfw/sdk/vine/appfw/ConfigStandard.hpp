@@ -4,7 +4,7 @@
 
 #include <vine/String.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief Standard configuration categories.
@@ -48,7 +48,7 @@ enum class StandardGroup
  * @param id Standard category.
  * @return The canonical name.
  */
-V_APPFW_API String standardCategoryName(StandardCategory id);
+VN_APPFW_API String standardCategoryName(StandardCategory id);
 
 /**
  * @brief Localized display label of a standard category.
@@ -56,7 +56,7 @@ V_APPFW_API String standardCategoryName(StandardCategory id);
  * @param id Standard category.
  * @return The display label.
  */
-V_APPFW_API String standardCategoryLabel(StandardCategory id);
+VN_APPFW_API String standardCategoryLabel(StandardCategory id);
 
 /**
  * @brief Sort weight of a standard category.
@@ -64,7 +64,7 @@ V_APPFW_API String standardCategoryLabel(StandardCategory id);
  * @param id Standard category.
  * @return The sort weight (smaller comes first).
  */
-V_APPFW_API int standardCategoryOrder(StandardCategory id);
+VN_APPFW_API int standardCategoryOrder(StandardCategory id);
 
 /**
  * @brief Canonical name of a standard group.
@@ -72,7 +72,7 @@ V_APPFW_API int standardCategoryOrder(StandardCategory id);
  * @param id Standard group.
  * @return The canonical name.
  */
-V_APPFW_API String standardGroupName(StandardGroup id);
+VN_APPFW_API String standardGroupName(StandardGroup id);
 
 /**
  * @brief Localized display label of a standard group.
@@ -80,6 +80,6 @@ V_APPFW_API String standardGroupName(StandardGroup id);
  * @param id Standard group.
  * @return The display label.
  */
-V_APPFW_API String standardGroupLabel(StandardGroup id);
+VN_APPFW_API String standardGroupLabel(StandardGroup id);
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

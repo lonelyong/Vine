@@ -15,12 +15,12 @@
 #include <vine/graphics/StateNode.hpp>
 #include <vine/math/Transform3.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-using vine::math::Vec3d;
-using vine::math::Vec4d;
+using vn::math::Vec3d;
+using vn::math::Vec4d;
 
-V_OBJECT_META_IMPL(Scene, vine::Object);
+VN_OBJECT_META_IMPL(Scene, vn::Object);
 
 namespace
 {
@@ -490,7 +490,7 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsSh
     std::vector<std::pair<double, RenderCommand*>> keyed;
     keyed.reserve(commands.size());
     for (RenderCommand& cmd : commands) {
-        const auto origin = cmd.modelMatrix * vine::math::Point3d(0.0, 0.0, 0.0);
+        const auto origin = cmd.modelMatrix * vn::math::Point3d(0.0, 0.0, 0.0);
         keyed.emplace_back((origin.asVector() - eye).length2(), &cmd);
     }
     std::stable_sort(keyed.begin(), keyed.end(),
@@ -559,4 +559,4 @@ std::uint64_t Scene::contentCollectReuseCount() const noexcept
     return content_reuse_count_;
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

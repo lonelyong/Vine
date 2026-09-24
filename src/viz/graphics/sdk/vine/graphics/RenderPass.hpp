@@ -13,7 +13,7 @@
 #include "ImageRef.hpp"
 #include "Viewport.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class Camera;
 class RenderTarget;
@@ -35,8 +35,8 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  * Vulkan render pass. Several passes targeting the same framebuffer are
  * recorded into one backend render pass; the backend owns that distinction.
  */
-class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
+    VN_OBJECT_META_DECL;
 
   public:
     RenderPass();
@@ -465,4 +465,4 @@ class V_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
 
 using RenderPassPtr = intrusive_ptr<RenderPass>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

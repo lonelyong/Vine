@@ -8,7 +8,7 @@
 
 #include <vine/MemoryStream.hpp>
 
-V_CRYPTO_NS_BEGIN
+VN_CRYPTO_NS_BEGIN
 
 /**
  * @brief Incremental hash calculator for a runtime-selected algorithm.
@@ -16,7 +16,7 @@ V_CRYPTO_NS_BEGIN
  * Data is fed in chunks through write() or operator<< and the digest is
  * produced once at the end. Supports every algorithm exposed by Hash.
  */
-class V_CRYPTO_API HashCalculator
+class VN_CRYPTO_API HashCalculator
 {
   public:
     /**
@@ -122,4 +122,4 @@ class V_CRYPTO_API HashCalculator
     std::unique_ptr<Impl> impl;
 };
 
-V_CRYPTO_NS_END
+VN_CRYPTO_NS_END

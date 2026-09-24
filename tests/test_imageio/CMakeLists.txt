@@ -2,7 +2,7 @@ set(TEST_NAME test_imageio)
 file(GLOB SRC_FILE_LIST CONFIGURE_DEPENDS *.cpp)
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
-target_link_libraries(${TEST_NAME} vi::ImageIO vi::Imaging)
+target_link_libraries(${TEST_NAME} vn::ImageIO vn::Imaging)
 
 # Where the shared test assets live.
 #

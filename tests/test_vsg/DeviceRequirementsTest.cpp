@@ -21,8 +21,8 @@
 
 #include <vine/vsg/VsgBackendUtility.hpp>
 
-using vine::vsg::detail::kRequiredVulkanVersion;
-using vine::vsg::detail::supportsRequiredVulkanVersion;
+using vn::vsg::detail::kRequiredVulkanVersion;
+using vn::vsg::detail::supportsRequiredVulkanVersion;
 
 TEST(DeviceRequirementsTest, TheFloorIsVulkan14)
 {

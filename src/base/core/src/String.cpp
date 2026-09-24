@@ -17,7 +17,7 @@
 
 #include <vine/Exception.hpp>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 namespace
 {
@@ -482,4 +482,4 @@ String String::hex(std::span<const std::uint8_t> bytes)
     return String(std::move(out));
 }
 
-V_CORE_NS_END
+VN_CORE_NS_END

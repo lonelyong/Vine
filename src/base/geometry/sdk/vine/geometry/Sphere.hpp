@@ -4,13 +4,13 @@
 
 #include "Primitive.hpp"
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief A sphere primitive centered at the origin.
  */
-class V_GEOMETRY_API Sphere : public Primitive {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API Sphere : public Primitive {
+    VN_OBJECT_META_DECL;
 
   public:
     /**
@@ -50,11 +50,11 @@ class V_GEOMETRY_API Sphere : public Primitive {
      * @return true when the radius is larger than eps.
      */
     [[nodiscard]]
-    bool hasVolume(double eps = vine::math::EPS<double>()) const override;
+    bool hasVolume(double eps = vn::math::EPS<double>()) const override;
 
   private:
     /// Radius of the sphere.
     double radius_ = 0.5;
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

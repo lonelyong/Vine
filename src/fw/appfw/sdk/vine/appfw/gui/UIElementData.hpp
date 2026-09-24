@@ -6,7 +6,7 @@
 
 #include <vine/String.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 struct UIElementData {
     String                  name;
@@ -18,4 +18,4 @@ struct UIElementData {
     virtual ~UIElementData() = default;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

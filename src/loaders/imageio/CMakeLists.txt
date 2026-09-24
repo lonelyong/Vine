@@ -4,7 +4,7 @@
 # a base module (geometry::Mesh, imaging::Image) and the third-party codec that
 # fills it from a file lives here, linked PRIVATE so this module is the only
 # thing that carries stb.
-v_add_library(IMAGEIO_TARGET_NAME ImageIO)
+vn_add_library(IMAGEIO_TARGET_NAME ImageIO)
 
-target_link_libraries(${IMAGEIO_TARGET_NAME} PUBLIC vi::Imaging)
+target_link_libraries(${IMAGEIO_TARGET_NAME} PUBLIC vn::Imaging)
 target_link_libraries(${IMAGEIO_TARGET_NAME} PRIVATE tp::stb)

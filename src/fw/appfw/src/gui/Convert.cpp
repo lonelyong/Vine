@@ -1,7 +1,7 @@
 ﻿#include "Convert.hpp"
 
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 Point Convert::toPoint(const QPoint& pt)
 {
@@ -88,4 +88,4 @@ String Convert::fromQString(const QString& qs)
     return String::fromUtf16(reinterpret_cast<const char16_t*>(qs.utf16()), qs.size());
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

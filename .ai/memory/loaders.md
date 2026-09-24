@@ -21,10 +21,10 @@ loaders/*     ← 用三方库把数据从文件里读出来/写回去
 
 **拆法**（纯拆分，零行为改动）：
 
-| | `vi::MeshIO` | `vi::BrepIO` |
+| | `vn::MeshIO` | `vn::BrepIO` |
 | --- | --- | --- |
 | 目录 | `src/loaders/meshio/` | `src/loaders/brepio/` |
-| 短名 / 宏 / 命名空间 | `MeshIO` / `V_MESHIO_*` / `vine::meshio` | `BrepIO` / `V_BREPIO_*` / `vine::brepio` |
+| 短名 / 宏 / 命名空间 | `MeshIO` / `VN_MESHIO_*` / `vn::meshio` | `BrepIO` / `VN_BREPIO_*` / `vn::brepio` |
 | 头 | `MeshLoader.hpp` `MeshExporter.hpp` | `BrepLoader.hpp` `BrepExporter.hpp` |
 | 依赖 | PUBLIC `Runtime Geometry Crypto` + **PRIVATE `assimp::assimp zlibstatic`** | PUBLIC `Runtime Geometry Crypto`（**零三方**） |
 | 测试 | `tests/test_meshio`（**8**） | `tests/test_brepio`（**3**） |
@@ -32,7 +32,7 @@ loaders/*     ← 用三方库把数据从文件里读出来/写回去
 - assimp 的 FetchContent 块**整体搬到 `meshio`**；`brepio` 的 CMakeLists 只有两行。
   注意 assimp 吃 `base/iobase` 产出的 `zlibstatic`，所以 `src/CMakeLists.txt` 里 `base` 必须先于
   `loaders` 配置（原有约束，未变）。
-- 消费方：只有 `tools/urdf2vine`（用 `MeshLoader`）→ 改成 `vi::MeshIO` + `vine::meshio`。
+- 消费方：只有 `tools/urdf2vine`（用 `MeshLoader`）→ 改成 `vn::MeshIO` + `vn::meshio`。
 - **体积证据**：`libviMeshIOd.so` **87.8 MB**（assimp 在内）vs `libviBrepIOd.so` **708 KB** ——
   拆开的收益是具体的。
 
@@ -45,7 +45,7 @@ loaders/*     ← 用三方库把数据从文件里读出来/写回去
   这正是拆模块要换来的东西。
 - `MeshLoader::load()` 有**按内容指纹的内存缓存**（`Crypto` + `Runtime::InMemoryCache`），
   所以这两条依赖是 **PUBLIC**（缓存类型出现在公开头里）。
-- **新增/移动文件后必须 `cmake -S . -B build`**（`v_add_library` 的 glob 无 `CONFIGURE_DEPENDS`）。
+- **新增/移动文件后必须 `cmake -S . -B build`**（`vn_add_library` 的 glob 无 `CONFIGURE_DEPENDS`）。
 - **搬完后记得清陈旧产物**：`rm -rf build/src/loaders/<old> build/lib/libvi<Old>*`，
   否则旧 `.so` 会留在 `build/lib` 里造成困惑（本仓有过"构建产物不一致导致假结果"的教训，见
   `.ai/memory/graphics.md` 的验证口径章节）。

@@ -3,11 +3,11 @@
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/UserIO.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-V_OBJECT_META_IMPL(ClearCommand, Command)
+VN_OBJECT_META_IMPL(ClearCommand, Command)
 
-vine::async::Task<CommandResult> ClearCommand::execute(CommandExecutionContext* context)
+vn::async::Task<CommandResult> ClearCommand::execute(CommandExecutionContext* context)
 {
     auto* app = context ? context->application() : nullptr;
     auto* io  = app ? app->userIO() : nullptr;
@@ -19,4 +19,4 @@ vine::async::Task<CommandResult> ClearCommand::execute(CommandExecutionContext* 
     co_return CommandResult(CommandStatus::Success);
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

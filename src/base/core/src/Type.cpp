@@ -12,7 +12,7 @@
 
 #include <vine/Exception.hpp>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 namespace
 {
@@ -171,4 +171,4 @@ Type* Type::get(const String& full_name)
     return *it;
 }
 
-V_CORE_NS_END
+VN_CORE_NS_END

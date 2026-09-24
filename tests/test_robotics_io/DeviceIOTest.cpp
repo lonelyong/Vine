@@ -15,10 +15,10 @@
 #include <vine/robotics/workcell/MotionDevice.hpp>
 #include <vine/robotics/workcell/Scanner.hpp>
 
-using namespace vine::robotics;
-using namespace vine::robotics::kinematics;
-using namespace vine::robotics::workcell;
-using vine::robotics::io::DeviceIO;
+using namespace vn::robotics;
+using namespace vn::robotics::kinematics;
+using namespace vn::robotics::workcell;
+using vn::robotics::io::DeviceIO;
 
 namespace
 {
@@ -179,10 +179,10 @@ TEST(DeviceIOTest, LoadXmlFromFolder)
     const auto& body = r->links().front()->body();
     ASSERT_EQ(body.visuals().size(), 1u);
     ASSERT_NE(body.visuals()[0].shape(), nullptr);
-    EXPECT_EQ(body.visuals()[0].shape()->shapeType(), vine::geometry::ShapeType::Box);
-    EXPECT_DOUBLE_EQ(static_cast<vine::geometry::Box*>(body.visuals()[0].shape().get())->width(), 0.2);
+    EXPECT_EQ(body.visuals()[0].shape()->shapeType(), vn::geometry::ShapeType::Box);
+    EXPECT_DOUBLE_EQ(static_cast<vn::geometry::Box*>(body.visuals()[0].shape().get())->width(), 0.2);
     ASSERT_EQ(body.collisions().size(), 1u);
-    EXPECT_EQ(body.collisions()[0].shape()->shapeType(), vine::geometry::ShapeType::Sphere);
+    EXPECT_EQ(body.collisions()[0].shape()->shapeType(), vn::geometry::ShapeType::Sphere);
 }
 
 TEST(DeviceIOTest, LoadXmlFromFolderWithMesh)
@@ -200,7 +200,7 @@ TEST(DeviceIOTest, LoadXmlFromFolderWithMesh)
     auto* const r = dynamic_cast<MotionDevice*>(loaded.get());
     ASSERT_NE(r, nullptr);
     ASSERT_EQ(r->baseLink()->body().visuals().size(), 1u);
-    const auto* const m = dynamic_cast<const vine::geometry::TriangleMesh*>(
+    const auto* const m = dynamic_cast<const vn::geometry::TriangleMesh*>(
         r->baseLink()->body().visuals()[0].shape().get());
     ASSERT_NE(m, nullptr);
     EXPECT_EQ(m->vertexCount(), 3u);
@@ -224,14 +224,14 @@ TEST(DeviceIOTest, MaterialLibraryRoundTrip)
     ASSERT_EQ(r->data()->materials.size(), 1u);
     EXPECT_EQ(r->data()->materials[0].name, u8"orange");
     const auto* const lib_color =
-        dynamic_cast<const vine::geometry::ColorMaterial*>(r->data()->materials[0].material.get());
+        dynamic_cast<const vn::geometry::ColorMaterial*>(r->data()->materials[0].material.get());
     ASSERT_NE(lib_color, nullptr);
     EXPECT_FLOAT_EQ(lib_color->color().r, 1.0f);
 
     // The base-link visual references the library material by name.
     ASSERT_EQ(r->baseLink()->body().visuals().size(), 1u);
     EXPECT_EQ(r->baseLink()->body().visuals()[0].materialName(), u8"orange");
-    const auto* const vis_color = dynamic_cast<const vine::geometry::ColorMaterial*>(
+    const auto* const vis_color = dynamic_cast<const vn::geometry::ColorMaterial*>(
         r->baseLink()->body().visuals()[0].material().get());
     ASSERT_NE(vis_color, nullptr);
     EXPECT_FLOAT_EQ(vis_color->color().r, 1.0f);

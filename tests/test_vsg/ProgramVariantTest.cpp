@@ -23,20 +23,20 @@
 #include <vine/vsg/api/GeometryFacts.hpp>
 #include <vine/vsg/api/ProgramVariant.hpp>
 
-using vine::graphics::attributeLocation;
-using vine::graphics::VertexAttribute;
-using vine::graphics::Texture2D;
-using vine::imaging::PixelFormat;
-using vine::vsg::AbiBinding;
-using vine::vsg::AbiDescriptorKind;
-using vine::vsg::buildProgramFacts;
-using vine::vsg::ChannelFacts;
-using vine::vsg::FactMiss;
-using vine::vsg::GeometryFacts;
-using vine::vsg::MaterialFacts;
-using vine::vsg::ProgramFacts;
-using vine::vsg::ProgramVariant;
-using vine::vsg::variantOf;
+using vn::graphics::attributeLocation;
+using vn::graphics::VertexAttribute;
+using vn::graphics::Texture2D;
+using vn::imaging::PixelFormat;
+using vn::vsg::AbiBinding;
+using vn::vsg::AbiDescriptorKind;
+using vn::vsg::buildProgramFacts;
+using vn::vsg::ChannelFacts;
+using vn::vsg::FactMiss;
+using vn::vsg::GeometryFacts;
+using vn::vsg::MaterialFacts;
+using vn::vsg::ProgramFacts;
+using vn::vsg::ProgramVariant;
+using vn::vsg::variantOf;
 
 namespace
 {
@@ -48,7 +48,7 @@ const void* const kAuthoredBuffer = reinterpret_cast<const void*>(0x11U);
 ChannelFacts channelAt(std::uint32_t location, std::uint32_t components, const void* buffer = kAuthoredBuffer)
 {
     ChannelFacts facts;
-    facts.key.kind       = vine::vsg::core::StreamKind::Vertex;
+    facts.key.kind       = vn::vsg::core::StreamKind::Vertex;
     facts.key.location   = location;
     facts.key.components = components;
     facts.key.buffer     = buffer;
@@ -121,7 +121,7 @@ TEST(ProgramVariantTest, TheRuleFollowsTheChannelWidthTheTextureAndTheAuthoredCo
                                    channelAt(attributeLocation(VertexAttribute::TexCoord0), 2U) };
     {
         GeometryFacts geometry = geometryWith(uvs);
-        const vine::intrusive_ptr<Texture2D> texture(new Texture2D(2, 2, PixelFormat::Rgba8Unorm));
+        const vn::intrusive_ptr<Texture2D> texture(new Texture2D(2, 2, PixelFormat::Rgba8Unorm));
         MaterialFacts material;
         material.texture = texture.get();
         const ProgramVariant variant = variantOf(material, geometry);
@@ -136,7 +136,7 @@ TEST(ProgramVariantTest, TheRuleFollowsTheChannelWidthTheTextureAndTheAuthoredCo
     {
         GeometryFacts geometry = geometryWith(directions);
         MaterialFacts material;
-        material.texture = reinterpret_cast<const vine::graphics::Texture*>(kAuthoredBuffer);
+        material.texture = reinterpret_cast<const vn::graphics::Texture*>(kAuthoredBuffer);
         EXPECT_TRUE(variantOf(material, geometry).cube_texcoord);
     }
 
@@ -157,7 +157,7 @@ TEST(ProgramVariantTest, TheRuleFollowsTheChannelWidthTheTextureAndTheAuthoredCo
 
 TEST(ProgramVariantTest, TheEnginesOwnForwardProgramDescribesItselfPerVariant)
 {
-    const vine::intrusive_ptr<vine::graphics::ShaderProgram> program = vine::graphics::forwardProgram();
+    const vn::intrusive_ptr<vn::graphics::ShaderProgram> program = vn::graphics::forwardProgram();
     ASSERT_NE(program, nullptr);
 
     const auto samplerAt = [](const ProgramFacts& facts, std::uint32_t set, std::uint32_t binding) {

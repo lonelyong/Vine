@@ -1,7 +1,7 @@
 ﻿#include <vine/graphics/MaterialManager.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(MaterialManager, vine::Object);
+VN_OBJECT_META_IMPL(MaterialManager, vn::Object);
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

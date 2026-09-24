@@ -28,20 +28,20 @@
 #include <vine/vsg/core/FrameCompiler.hpp>
 #include <vine/vsg/core/FrameRecorder.hpp>
 
-using vine::graphics::RenderCommand;
-using vine::graphics::RenderTarget;
-using vine::math::Mat4d;
-using vine::vsg::packDrawBlock;
-using vine::vsg::core::CompiledCommand;
-using vine::vsg::core::CompiledFrame;
-using vine::vsg::core::Diagnostics;
-using vine::vsg::core::FrameArena;
-using vine::vsg::core::FrameCompiler;
-using vine::vsg::core::FrameFacts;
-using vine::vsg::core::FrameRecorder;
-using vine::vsg::core::FrameToken;
-using vine::vsg::core::Observe;
-using vine::vsg::core::TargetFacts;
+using vn::graphics::RenderCommand;
+using vn::graphics::RenderTarget;
+using vn::math::Mat4d;
+using vn::vsg::packDrawBlock;
+using vn::vsg::core::CompiledCommand;
+using vn::vsg::core::CompiledFrame;
+using vn::vsg::core::Diagnostics;
+using vn::vsg::core::FrameArena;
+using vn::vsg::core::FrameCompiler;
+using vn::vsg::core::FrameFacts;
+using vn::vsg::core::FrameRecorder;
+using vn::vsg::core::FrameToken;
+using vn::vsg::core::Observe;
+using vn::vsg::core::TargetFacts;
 
 namespace
 {
@@ -68,7 +68,7 @@ TEST(DrawBlockTest, TheModelMatrixLandsColumnMajorAndTheOpacityInTheParameterSlo
     command.model   = nonSymmetric();
     command.opacity = 0.375F;
 
-    vine::graphics::VineDrawBlock block;
+    vn::graphics::VineDrawBlock block;
     packDrawBlock(command, block);
 
     // (row, column) at `column * 4 + row`: a row-major packing would put 1 where 10 belongs (and vice versa).
@@ -103,7 +103,7 @@ TEST(DrawBlockTest, TheValuesThePlanCarriesAreTheOnesThatReachTheBytes)
     FrameRecorder recorder{ arena, diagnostics, observe };
     FrameCompiler compiler{ arena, diagnostics, observe };
 
-    vine::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
 
     TargetFacts facts;
     facts.target        = target.get();
@@ -136,7 +136,7 @@ TEST(DrawBlockTest, TheValuesThePlanCarriesAreTheOnesThatReachTheBytes)
     ASSERT_EQ(frame.passes[0].draws.size(), 1U);
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 1U);
 
-    vine::graphics::VineDrawBlock block;
+    vn::graphics::VineDrawBlock block;
     packDrawBlock(frame.passes[0].draws[0].commands[0], block);
 
     // The translation the host authored - through the recorder's snapshot, the compiler's plan and the packer.

@@ -30,7 +30,7 @@
   单个键的事件始终带该 key（空 key 因此有了明确含义，见 `ConfigChangedEventArgs` 的注释）。
 - **读取永不抛异常**：键不存在或存储类型与访问器不符，一律返回调用方给的默认值。
 - **线程安全**：内部 `shared_mutex`；写者独占、读者共享；`changed` 在**释放锁之后**触发，
-  所以处理函数可以安全回调管理器。**订阅/退订本身无锁**（`vine::Signal` 无锁），启动期接线。
+  所以处理函数可以安全回调管理器。**订阅/退订本身无锁**（`vn::Signal` 无锁），启动期接线。
 - **保存**（`save`）：`QSaveFile` 原子写（临时文件 + rename 覆盖目标），`open`/`write`/`commit`
   每一步的结果都检查；失败时磁盘上的旧文件保持不变，返回 false 一定是真的没写成。
   父目录必须存在（由宿主负责创建，`Application::shutdown` 已如此）。
@@ -74,7 +74,7 @@
 | C7 | `ConfigWindow` 编辑器按下标与遍历顺序配对，注册表一变就显示错值 | 探针：注册 order=-1 的分组后，key=a 的编辑器显示 key=z 的值 | 编辑器与 key 成对，`refresh/reset` 按 key 驱动；`ConfigWindowTest.RefreshKeepsEachValueWithItsKey` |
 | C8 | Choice 存储值不在选项里时显示第 0 项且不回写 | 代码 `idx >= 0 ? idx : 0` | `choiceIndex()`：不匹配返回 -1；`ConfigWindowTest.ChoiceWithoutMatchShowsNoSelection` |
 | C9 | 内部 `int64_t` 但公开只有 `int`，且整数写成 double，“无损往返”不成立 | 探针：`1234567890123456789` 回写成 `...800` | 存储与 JSON 都用 `int`，整数按 JSON 整数写；超范围夹取 + warning |
-| C10 | 畸形 JSON 条目静默丢弃 | 代码：`continue` / “unknown type: skip this key” | 两类跳过都 `V_LOGW` 带 key；`ConfigManager_BadEntriesAreIgnoredNotFatal` |
+| C10 | 畸形 JSON 条目静默丢弃 | 代码：`continue` / “unknown type: skip this key” | 两类跳过都 `VN_LOGW` 带 key；`ConfigManager_BadEntriesAreIgnoredNotFatal` |
 | C11 | 空 key 语义未文档化（与合法空键冲突） | 头文件原本只写“carrying the key” | `ConfigChangedEventArgs` 文档写明空 key = 整体变化 |
 | C12 | `save()` 不建父目录，与插件注册写入器不一致 | 代码对比 | 文档写明父目录由宿主创建（保持既有的 `Application` 行为） |
 | C13 | 描述树无生命周期/线程契约（裸指针 + 无同步） | 头文件缺注释 | 三个类都补 `@note Lifetime` / `@note Threading` |

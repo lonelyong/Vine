@@ -60,7 +60,7 @@
  * The device and the storage outlive the producer (a repointed storage means a new producer: the sets it
  * built bind the buffer it was given). NOT thread-safe, like the rest of the backend.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief Produces the declared sets a pass' drawables need (see the file note). */
 class ContentSets
@@ -129,4 +129,4 @@ class ContentSets
     std::shared_ptr<Data> d;
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -1,8 +1,8 @@
 ﻿#include <vine/graphics/ShaderProgram.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(ShaderProgram, vine::Object);
+VN_OBJECT_META_IMPL(ShaderProgram, vn::Object);
 
 ShaderProgram::ShaderProgram() = default;
 
@@ -66,4 +66,4 @@ const std::vector<ShaderStage>& ShaderProgram::stages() const
     return stages_;
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

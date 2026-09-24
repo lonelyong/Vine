@@ -1,7 +1,7 @@
 ﻿#include <vine/window/WindowContext.hpp>
 
-V_WINDOW_NS_BEGIN
+VN_WINDOW_NS_BEGIN
 
-V_OBJECT_META_IMPL(WindowContext, vine::Object);
+VN_OBJECT_META_IMPL(WindowContext, vn::Object);
 
-V_WINDOW_NS_END
+VN_WINDOW_NS_END

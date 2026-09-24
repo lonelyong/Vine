@@ -19,15 +19,15 @@
 #include <vine/vsg/api/LightBlock.hpp>
 #include <vine/vsg/api/ShadowBlock.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
 
-/// @brief Builds a `vine::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
-vine::String asString(const std::string& text)
+/// @brief Builds a `vn::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
+vn::String asString(const std::string& text)
 {
-    return vine::String(reinterpret_cast<const char8_t*>(text.c_str()));
+    return vn::String(reinterpret_cast<const char8_t*>(text.c_str()));
 }
 
 /// @brief Names a table miss the way the message needs it.
@@ -105,7 +105,7 @@ std::uint32_t sampledDepthCount(const core::CompiledPass& pass) noexcept
 }
 
 /// @brief The full-screen ABI's push range: the layout the SDK's screen programs declare (see LightPushBlock).
-constexpr std::size_t kFullscreenPushBytes = sizeof(vine::vsg::LightPushBlock);
+constexpr std::size_t kFullscreenPushBytes = sizeof(vn::vsg::LightPushBlock);
 static_assert(kFullscreenPushBytes == 128U, "the full-screen push range is the ABI's 128 bytes");
 
 /// @brief Whether two block shapes declare the same roles at the same bindings, in the same order.
@@ -279,7 +279,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     if (inputs.size() != pass.inputs.size())
     {
         diagnostics_.report(
-            vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+            vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
             asString("the pass is not drawn: it declares " + std::to_string(pass.inputs.size()) +
                      " input(s) and the caller offered " + std::to_string(inputs.size()) +
                      " (one entry per declared input, in declaration order)"));
@@ -295,7 +295,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         if (offers_depth != pass.inputs[index].depth_sampleable)
         {
             diagnostics_.report(
-                vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
                 asString("the pass is not drawn: input " + std::to_string(index) +
                          (offers_depth ? " offers a depth texture where the plan says its depth is not "
                                          "sampleable (a depth a pass preserves, or a lender's, cannot be sampled)"
@@ -308,7 +308,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         if (inputs[index].colors.size() != pass.inputs[index].color_attachments)
         {
             diagnostics_.report(
-                vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
                 asString("the pass is not drawn: input " + std::to_string(index) + " offers " +
                          std::to_string(inputs[index].colors.size()) +
                          " colour texture(s) where the plan says " +
@@ -392,8 +392,8 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
             ++empty_rectangles_;
             if (empty_rectangle_reported_.shouldReport())
             {
-                diagnostics_.report(vine::graphics::DiagnosticSeverity::Info,
-                                    vine::graphics::DiagnosticCategory::ContentSkipped,
+                diagnostics_.report(vn::graphics::DiagnosticSeverity::Info,
+                                    vn::graphics::DiagnosticCategory::ContentSkipped,
                                     asString("a drawing call was not recorded: its rectangle is empty (a host "
                                              "whose render area is not laid out yet reports one)"));
             }
@@ -443,7 +443,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         // ONE call (every command of the call shares them), so one block serves the whole call and the block
         // bytes are written before the first command is recorded - the same "one announcement, one call" rule
         // the viewport follows.
-        vine::vsg::VineLightsBlock lights_block;
+        vn::vsg::VineLightsBlock lights_block;
         const std::size_t          represented = packLightBlock(draw.lights, draw.camera, lights_block);
         const BlockStorage::Block  lights      = scope_.storage->writeLights(bytesOf(lights_block));
         reportLightsDropped(draw.lights.size(), represented, draw.camera.present);
@@ -457,7 +457,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         // The shadow block is written for EVERY call, switch on or off: the same shader text serves a shadowed and
         // an unshadowed pass (the ABI's `params.x` is that switch), so the binding must never be left to chance -
         // an unbound block a shader reads is undefined behaviour, not "no shadow".
-        vine::graphics::VineShadowBlock shadow_block;
+        vn::graphics::VineShadowBlock shadow_block;
         const bool                      shadow_on    = packShadowBlock(pass.shadow, draw, shadow_block);
         const BlockStorage::Block       shadow       = scope_.storage->writeShadows(bytesOf(shadow_block));
         (void)shadow_on;
@@ -620,7 +620,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     // The map: the input the plan RESOLVED (by the light its target states), never "the first one with a
     // depth" - a G-buffer has a depth too, and binding that one as the sun's map is the measured defect the
     // plan's own resolution exists to avoid (see api/ContentImages).
-    const std::size_t map_index = vine::vsg::shadowInputIndexOf(pass, inputs);
+    const std::size_t map_index = vn::vsg::shadowInputIndexOf(pass, inputs);
 
     // A text that declares a sampler OTHER than the map's reads the SOURCE's attachments, so a call that names
     // no source among the pass' inputs has nothing to fill them from - and every input that is neither the
@@ -630,7 +630,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
         for (const AbiBinding& binding : layer->abi().bindings)
         {
             if (binding.kind != AbiDescriptorKind::UniformBlock &&
-                vine::vsg::imageOriginOf(binding.name) != ImageOrigin::Shadow)
+                vn::vsg::imageOriginOf(binding.name) != ImageOrigin::Shadow)
             {
                 return true;
             }
@@ -672,9 +672,9 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     // stand-in: the picture would be one nobody asked for, and the reason (the map's depth is not sampleable,
     // or its producer published no matrix) is exactly what the refusal has to say.
     std::uint32_t map_binding = 0U;
-    const bool    declares_map = vine::vsg::shadowBindingOf(layer->abi(), 0U, map_binding);
-    vine::vsg::SamplerImage map_image;
-    if (declares_map && !vine::vsg::shadowImageOf(pass, inputs, layer->depthSampler(), map_image))
+    const bool    declares_map = vn::vsg::shadowBindingOf(layer->abi(), 0U, map_binding);
+    vn::vsg::SamplerImage map_image;
+    if (declares_map && !vn::vsg::shadowImageOf(pass, inputs, layer->depthSampler(), map_image))
     {
         reportRefused("a full-screen drawing call",
                       "its program declares `shadow_map` and this pass resolved no readable map (the depth is "
@@ -688,7 +688,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     // on or off: the same text serves both, and an unbound block a shader reads is undefined behaviour rather
     // than "no shadow".
     const std::span<const BlockDescriptors::Binding> shape = layer->blockShape(0U);
-    vine::graphics::VineShadowBlock                  shadow_block;
+    vn::graphics::VineShadowBlock                  shadow_block;
     std::uint64_t                                    shadow_offset = 0U;
     if (!shape.empty())
     {
@@ -847,7 +847,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     // shades its albedo instead of rendering black. The count of represented lights is deliberately NOT reported
     // here: the drop report is the content path's (the reference behaviour), and a full-screen call packs what fits
     // and says nothing.
-    vine::vsg::LightPushBlock push_block;
+    vn::vsg::LightPushBlock push_block;
     (void)packLightPushBlock(draw.lights, draw.camera, push_block);
     ::vsg::ref_ptr<::vsg::ubyteArray> push_bytes =
         ::vsg::ubyteArray::create(static_cast<std::uint32_t>(sizeof(push_block)));
@@ -967,7 +967,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         else
         {
             diagnostics_.report(
-                vine::graphics::DiagnosticSeverity::Warning, vine::graphics::DiagnosticCategory::ContentSkipped,
+                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
                 asString("the command is not drawn: the pass has no half for the variant this drawable is drawn "
                          "with (" +
                          variant.describe() + "): its own halves serve other variants of that program"));
@@ -1006,7 +1006,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     reportShadowNotSampled(*entry, pass);
 
     // The blocks: this draw's identity and data (the view's bytes came in with the pass).
-    vine::graphics::VineDrawBlock draw_block;
+    vn::graphics::VineDrawBlock draw_block;
     packDrawBlock(command, draw_block);
     const BlockStorage::Block block = scope_.storage->writeDraw(bytesOf(draw_block));
     const BlockStorage::MaterialWrite material_write =
@@ -1170,15 +1170,15 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
 void ContentPass::reportRefused(const char* what, FactMiss miss)
 {
     const std::string message = std::string(what) + " is not drawn: " + missText(miss);
-    diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
-                        vine::graphics::DiagnosticCategory::ContentSkipped, asString(message));
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                        vn::graphics::DiagnosticCategory::ContentSkipped, asString(message));
 }
 
 void ContentPass::reportRefused(const char* what, const char* why)
 {
     const std::string message = std::string(what) + " is not drawn: " + why;
-    diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
-                        vine::graphics::DiagnosticCategory::ContentSkipped, asString(message));
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                        vn::graphics::DiagnosticCategory::ContentSkipped, asString(message));
 }
 
 std::uint64_t ContentPass::emptyRectangles() const noexcept
@@ -1201,8 +1201,8 @@ void ContentPass::reportShadowNotSampled(const Scope::Entry& entry, const core::
     {
         return;
     }
-    diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
-                        vine::graphics::DiagnosticCategory::UnsupportedRequest,
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                        vn::graphics::DiagnosticCategory::UnsupportedRequest,
                         asString("the pass declared a shadow, but the program shading it declares no `shadow_map` "
                                  "sampler, so the map does not reach its drawables: they are shaded unshadowed"));
 }
@@ -1241,8 +1241,8 @@ void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represe
         message += " light(s) are not lit (disabled, not ambient or directional, or beyond the block's three";
         message += " directional slots)";
     }
-    diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
-                        vine::graphics::DiagnosticCategory::ChannelIgnored, asString(message));
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                        vn::graphics::DiagnosticCategory::ChannelIgnored, asString(message));
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

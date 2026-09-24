@@ -18,7 +18,7 @@
  * It lives here, not in AppShellDemo.cpp, so the arithmetic has a unit test of its own (it is the only part
  * of the preview strip whose failure is a PICTURE nobody can grep for).
  */
-namespace vine::app_shell
+namespace vn::app_shell
 {
 
 /**
@@ -33,10 +33,10 @@ namespace vine::app_shell
  * @return The rectangle to draw into, centred in the slot, at least one pixel a side (the slot itself when
  *         either extent is not positive: there is no aspect to fit).
  */
-inline vine::graphics::Viewport fitPreviewRect(int source_width, int source_height, int slot_x, int slot_y,
+inline vn::graphics::Viewport fitPreviewRect(int source_width, int source_height, int slot_x, int slot_y,
                                                int slot_width, int slot_height)
 {
-    vine::graphics::Viewport rect{ slot_x, slot_y, slot_width, slot_height };
+    vn::graphics::Viewport rect{ slot_x, slot_y, slot_width, slot_height };
     if (source_width <= 0 || source_height <= 0 || slot_width <= 0 || slot_height <= 0) {
         return rect;
     }
@@ -51,4 +51,4 @@ inline vine::graphics::Viewport fitPreviewRect(int source_width, int source_heig
     return rect;
 }
 
-}  // namespace vine::app_shell
+}  // namespace vn::app_shell

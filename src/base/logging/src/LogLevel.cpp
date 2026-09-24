@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-V_LOGGING_NS_BEGIN
+VN_LOGGING_NS_BEGIN
 
 std::string_view levelName(LogLevel level) noexcept
 {
@@ -56,4 +56,4 @@ LogLevel parseLevel(std::string_view name) noexcept
     return LogLevel::Info;
 }
 
-V_LOGGING_NS_END
+VN_LOGGING_NS_END

@@ -1,6 +1,6 @@
 #include <vine/vsg/core/SlotProbe.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -78,4 +78,4 @@ bool SlotTracker::agreesWithAssumption() const noexcept
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

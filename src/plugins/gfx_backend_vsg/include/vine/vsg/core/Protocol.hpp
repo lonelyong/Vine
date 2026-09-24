@@ -34,7 +34,7 @@
  * `Decision::report`. That is also why the verdict carries the flag instead of the caller keeping its
  * own bool: a second place to remember "was this already reported" is a second place to get it wrong.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -176,4 +176,4 @@ class Protocol
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

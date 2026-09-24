@@ -20,19 +20,19 @@
 #include <vine/vsg/api/DeviceProbe.hpp>
 #include <vine/vsg/core/DeviceRequirements.hpp>
 
-using vine::vsg::api::probePhysicalDevices;
-using vine::vsg::core::kDeviceFeatureCount;
-using vine::vsg::core::kDeviceExtensionCount;
-using vine::vsg::core::missingExtensionCount;
-using vine::vsg::core::missingFeatureCount;
-using vine::vsg::core::satisfiesRequirements;
-using vine::vsg::core::supportsRequiredVersion;
+using vn::vsg::api::probePhysicalDevices;
+using vn::vsg::core::kDeviceFeatureCount;
+using vn::vsg::core::kDeviceExtensionCount;
+using vn::vsg::core::missingExtensionCount;
+using vn::vsg::core::missingFeatureCount;
+using vn::vsg::core::satisfiesRequirements;
+using vn::vsg::core::supportsRequiredVersion;
 
 namespace
 {
 
-/// @brief Prints a `vine::String` (which holds UTF-8 bytes) as the bytes it holds.
-std::string as_bytes(const vine::String& text)
+/// @brief Prints a `vn::String` (which holds UTF-8 bytes) as the bytes it holds.
+std::string as_bytes(const vn::String& text)
 {
     return std::string(reinterpret_cast<const char*>(text.data()), text.size());
 }

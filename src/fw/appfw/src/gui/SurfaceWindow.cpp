@@ -29,7 +29,7 @@
 #include <vine/window/KeyCode.hpp>
 #include <vine/window/MouseButton.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace
 {
@@ -71,9 +71,9 @@ long long elapsedMs(std::chrono::steady_clock::time_point from)
  * @param m Qt modifiers to translate.
  * @return The matching vine modifiers.
  */
-vine::window::ModifierKey toModifiers(Qt::KeyboardModifiers m)
+vn::window::ModifierKey toModifiers(Qt::KeyboardModifiers m)
 {
-    using namespace vine::window;
+    using namespace vn::window;
     ModifierKey r = ModifierKey::None;
     if (m & Qt::ShiftModifier) {
         r |= ModifierKey::Shift;
@@ -96,9 +96,9 @@ vine::window::ModifierKey toModifiers(Qt::KeyboardModifiers m)
  * @param b Qt button to translate.
  * @return The matching vine button, or None for a button the framework does not model.
  */
-vine::window::MouseButton toMouseButton(Qt::MouseButton b)
+vn::window::MouseButton toMouseButton(Qt::MouseButton b)
 {
-    using namespace vine::window;
+    using namespace vn::window;
     switch (b) {
         case Qt::LeftButton:   return MouseButton::Left;
         case Qt::RightButton:  return MouseButton::Right;
@@ -117,9 +117,9 @@ vine::window::MouseButton toMouseButton(Qt::MouseButton b)
  *               and the keypad codes.
  * @return The matching vine key code, or Unknown for a key the framework does not model.
  */
-vine::window::KeyCode toKeyCode(int key, bool numpad)
+vn::window::KeyCode toKeyCode(int key, bool numpad)
 {
-    using namespace vine::window;
+    using namespace vn::window;
     using KC = KeyCode;
 
     if (key >= Qt::Key_A && key <= Qt::Key_Z) {
@@ -187,9 +187,9 @@ vine::window::KeyCode toKeyCode(int key, bool numpad)
  * @param pressed true for a press, false for a release.
  * @return The translated event.
  */
-vine::window::MouseEvent toMouseEvent(const QMouseEvent& event, vine::window::MouseButton button, bool pressed)
+vn::window::MouseEvent toMouseEvent(const QMouseEvent& event, vn::window::MouseButton button, bool pressed)
 {
-    vine::window::MouseEvent e;
+    vn::window::MouseEvent e;
     e.button    = button;
     e.modifiers = toModifiers(event.modifiers());
     e.x         = event.position().x();
@@ -205,10 +205,10 @@ vine::window::MouseEvent toMouseEvent(const QMouseEvent& event, vine::window::Mo
  * @param pressed true for a press, false for a release.
  * @return The translated event.
  */
-vine::window::KeyEvent toKeyEvent(const QKeyEvent& event, bool pressed)
+vn::window::KeyEvent toKeyEvent(const QKeyEvent& event, bool pressed)
 {
     const bool numpad = bool(event.modifiers() & Qt::KeypadModifier);
-    vine::window::KeyEvent e;
+    vn::window::KeyEvent e;
     e.code      = toKeyCode(event.key(), numpad);
     e.modifiers = toModifiers(event.modifiers());
     e.pressed   = pressed;
@@ -222,10 +222,10 @@ vine::window::KeyEvent toKeyEvent(const QKeyEvent& event, bool pressed)
  * @param event Qt event to translate.
  * @return The translated event.
  */
-vine::window::ScrollEvent toScrollEvent(const QWheelEvent& event)
+vn::window::ScrollEvent toScrollEvent(const QWheelEvent& event)
 {
     const auto delta = event.angleDelta();
-    vine::window::ScrollEvent e;
+    vn::window::ScrollEvent e;
     // Qt angleDelta is in 1/8-degree units; convert to notches/lines.
     e.deltaX    = delta.x() / 120.0;
     e.deltaY    = delta.y() / 120.0;
@@ -239,8 +239,8 @@ struct SurfaceWindow::Impl {
     /// The widget the surface is embedded in: asked whether the control is on screen, which the
     /// surface's own flags cannot answer, and used as the context menu's parent.
     QWidget* host = nullptr;
-    vine::intrusive_ptr<vine::graphics::RenderEngine> engine;
-    vine::intrusive_ptr<vine::graphics::SceneView> view;
+    vn::intrusive_ptr<vn::graphics::RenderEngine> engine;
+    vn::intrusive_ptr<vn::graphics::SceneView> view;
     /// Whether the default backend was already picked (the first init() does it; idempotent).
     bool backend_selected = false;
     // Two flags, two different questions. backend_live: did the last attach attempt succeed (is the
@@ -301,16 +301,16 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     // what keeps an unpresented native window (a hole the compositor fills with whatever it likes) off screen.
 
     d->created_at = std::chrono::steady_clock::now();
-    d->engine     = vine::intrusive_ptr<vine::graphics::RenderEngine>(
-        new vine::graphics::RenderEngine());
+    d->engine     = vn::intrusive_ptr<vn::graphics::RenderEngine>(
+        new vn::graphics::RenderEngine());
     // Design B: RenderEngine starts empty (no passes) and is a pure
     // scheduler - it holds no camera and no content scene. The interactive
     // primary view - its camera, content scene and orbit manipulator - lives
     // in a SceneView that borrows the engine and binds its content to the
     // window pass it registers (SceneView::ensureWindowPass, called in
     // init()).
-    d->view = vine::intrusive_ptr<vine::graphics::SceneView>(
-        new vine::graphics::SceneView());
+    d->view = vn::intrusive_ptr<vn::graphics::SceneView>(
+        new vn::graphics::SceneView());
     d->view->setEngine(d->engine.get());
 
     // Backend diagnostics become log records. This is what makes a failing draw
@@ -320,17 +320,17 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     // listener that information only ever reaches stderr, which a windowed app
     // never shows. The engine stores the sink, so it also applies to the backend
     // created later by initialize().
-    d->engine->setDiagnosticSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
-        auto&             logger  = vine::logging::defaultLogger();
+    d->engine->setDiagnosticSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
+        auto&             logger  = vn::logging::defaultLogger();
         const std::string message = diagnostic.message.as_std_str();
         switch (diagnostic.severity) {
-            case vine::graphics::DiagnosticSeverity::Error:
+            case vn::graphics::DiagnosticSeverity::Error:
                 logger.error("[graphics] {}", message);
                 break;
-            case vine::graphics::DiagnosticSeverity::Warning:
+            case vn::graphics::DiagnosticSeverity::Warning:
                 logger.warn("[graphics] {}", message);
                 break;
-            case vine::graphics::DiagnosticSeverity::Info:
+            case vn::graphics::DiagnosticSeverity::Info:
                 logger.info("[graphics] {}", message);
                 break;
         }
@@ -348,12 +348,12 @@ SurfaceWindow::~SurfaceWindow()
     delete d;
 }
 
-vine::graphics::RenderEngine* SurfaceWindow::engine() const
+vn::graphics::RenderEngine* SurfaceWindow::engine() const
 {
     return d->engine.get();
 }
 
-vine::graphics::SceneView* SurfaceWindow::view() const
+vn::graphics::SceneView* SurfaceWindow::view() const
 {
     return d->view.get();
 }
@@ -448,7 +448,7 @@ void SurfaceWindow::useDefaultBackend()
     // Default to the first registered render backend when none was attached
     // by the caller through engine()->setBackend().
     if (d->engine->backend() == nullptr) {
-        const auto entries = vine::graphics::RenderBackendRegistry::instance().entries();
+        const auto entries = vn::graphics::RenderBackendRegistry::instance().entries();
         if (!entries.empty()) {
             d->engine->setBackend(
                 entries.front().factory->create());
@@ -460,11 +460,11 @@ void SurfaceWindow::useDefaultBackend()
     // window input events to it, so nothing is wired here.
 }
 
-void SurfaceWindow::handleMouse(const vine::window::MouseEvent& event)
+void SurfaceWindow::handleMouse(const vn::window::MouseEvent& event)
 {
     // A right press starts a pan drag; a release close to the press (no
     // movement) is a plain right-click and opens the context menu.
-    const bool is_right = event.button == vine::window::MouseButton::Right;
+    const bool is_right = event.button == vn::window::MouseButton::Right;
     if (is_right) {
         if (event.pressed) {
             d->right_press_active = true;
@@ -485,21 +485,21 @@ void SurfaceWindow::handleMouse(const vine::window::MouseEvent& event)
     // hover moves are skipped (no button held => the manipulator does not change the view);
     // press/release and scroll/key always refresh.
     d->view->pushEvent(event);
-    if (event.button != vine::window::MouseButton::None) {
+    if (event.button != vn::window::MouseButton::None) {
         d->mouse_down = event.pressed;
     }
-    if (event.button != vine::window::MouseButton::None || d->mouse_down) {
+    if (event.button != vn::window::MouseButton::None || d->mouse_down) {
         renderFrame();
     }
 }
 
-void SurfaceWindow::handleScroll(const vine::window::ScrollEvent& event)
+void SurfaceWindow::handleScroll(const vn::window::ScrollEvent& event)
 {
     d->view->pushEvent(event);
     renderFrame();
 }
 
-void SurfaceWindow::handleKey(const vine::window::KeyEvent& event)
+void SurfaceWindow::handleKey(const vn::window::KeyEvent& event)
 {
     d->view->pushEvent(event);
     renderFrame();
@@ -643,7 +643,7 @@ void SurfaceWindow::initializeBackend()
             // Once per session: this line is the answer to "why is my render area empty?".
             // It also says how long the host's own startup kept the surface unusable.
             d->deferral_logged = true;
-            vine::logging::defaultLogger().info("[RenderControl] waiting for a usable surface ({}x{}, {} ms after construction)",
+            vn::logging::defaultLogger().info("[RenderControl] waiting for a usable surface ({}x{}, {} ms after construction)",
                                                 width(),
                                                 height(),
                                                 elapsedMs(d->created_at));
@@ -657,7 +657,7 @@ void SurfaceWindow::initializeBackend()
         // itself when it cannot serve the new window (a different swapchain format). Shutting the engine
         // down here forced the expensive path on every recreation; the vsg backend's windowBuildCount() is
         // what tells the two apart (flat after a move, +1 after a rebuild).
-        vine::logging::defaultLogger().info(
+        vn::logging::defaultLogger().info(
             "[RenderControl] the render surface was recreated: re-announcing the new handle so the backend can follow it");
     }
     // Give the engine the native window the backend must attach to; the
@@ -703,7 +703,7 @@ void SurfaceWindow::initializeBackend()
         // it also explains a longer startup on that platform. The next attach is the host's init() on a first
         // attach and the surface's own follow of a recreated window on an established one.
         d->needs_visible_surface = true;
-        vine::logging::defaultLogger().info(
+        vn::logging::defaultLogger().info(
             "[RenderControl] attaching to a surface that is not on screen failed: this platform wants a visible window, showing the surface so the next attach can use it");
         if (on_needs_visible_surface) {
             on_needs_visible_surface();
@@ -727,7 +727,7 @@ void SurfaceWindow::recreateSurface()
 {
     // destroy() + create() is how a platform window is recreated (the surface is nested in the host widget, so
     // it comes back in the same place with a NEW handle); the follow path then does the work.
-    vine::logging::defaultLogger().info("[RenderControl] test hatch: recreating the render surface");
+    vn::logging::defaultLogger().info("[RenderControl] test hatch: recreating the render surface");
     destroy();
     create();
     show();
@@ -832,14 +832,14 @@ void SurfaceWindow::setState(SurfaceState next)
     // before the window exists), and the surface flags say whether the platform let the surface
     // attach while hidden.
     if (next == SurfaceState::Failed) {
-        vine::logging::defaultLogger().error("[RenderControl] surface {} -> {} after {} ms: {}",
+        vn::logging::defaultLogger().error("[RenderControl] surface {} -> {} after {} ms: {}",
                                              stateName(previous),
                                              stateName(next),
                                              elapsedMs(d->created_at),
                                              d->failure_reason.as_std_str());
     }
     else {
-        vine::logging::defaultLogger().info("[RenderControl] surface {} -> {} after {} ms (surface visible={}, exposed={})",
+        vn::logging::defaultLogger().info("[RenderControl] surface {} -> {} after {} ms (surface visible={}, exposed={})",
                                             stateName(previous),
                                             stateName(next),
                                             elapsedMs(d->created_at),
@@ -920,7 +920,7 @@ void SurfaceWindow::mouseReleaseEvent(QMouseEvent* event)
 
 void SurfaceWindow::mouseMoveEvent(QMouseEvent* event)
 {
-    handleMouse(toMouseEvent(*event, vine::window::MouseButton::None, false));
+    handleMouse(toMouseEvent(*event, vn::window::MouseButton::None, false));
     QWindow::mouseMoveEvent(event);
 }
 
@@ -942,4 +942,4 @@ void SurfaceWindow::keyReleaseEvent(QKeyEvent* event)
     QWindow::keyReleaseEvent(event);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

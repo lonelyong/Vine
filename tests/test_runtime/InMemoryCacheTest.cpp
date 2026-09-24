@@ -9,8 +9,8 @@
 #include <vine/String.hpp>
 #include <vine/runtime/InMemoryCache.hpp>
 
-using vine::String;
-using vine::runtime::InMemoryCache;
+using vn::String;
+using vn::runtime::InMemoryCache;
 
 namespace
 {

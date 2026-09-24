@@ -17,7 +17,7 @@
 #include <vector>
 #include <string>
 
-using namespace vine::graphics;
+using namespace vn::graphics;
 
 namespace
 {
@@ -64,9 +64,9 @@ TEST(ShaderAbiTest, GeometryAttachesCanonicalChannelsWhereTheAbiSays)
     // it fails the moment the ABI moves that role — and it fails HERE rather than as a geometry that
     // silently loses its normals in a backend.
     auto geometry = GeometryPtr(new Geometry());
-    geometry->setPositions(packAttribute(std::vector<vine::math::Vec3f>{ { 0.0f, 0.0f, 0.0f } }));
-    geometry->setNormals(packAttribute(std::vector<vine::math::Vec3f>{ { 0.0f, 0.0f, 1.0f } }));
-    geometry->setTexcoords2(packAttribute(std::vector<vine::math::Vec2f>{ { 0.0f, 0.0f } }));
+    geometry->setPositions(packAttribute(std::vector<vn::math::Vec3f>{ { 0.0f, 0.0f, 0.0f } }));
+    geometry->setNormals(packAttribute(std::vector<vn::math::Vec3f>{ { 0.0f, 0.0f, 1.0f } }));
+    geometry->setTexcoords2(packAttribute(std::vector<vn::math::Vec2f>{ { 0.0f, 0.0f } }));
 
     EXPECT_TRUE(geometry->hasBuffer(attributeLocation(VertexAttribute::Position)));
     EXPECT_TRUE(geometry->hasBuffer(attributeLocation(VertexAttribute::Normal)));

@@ -4,7 +4,7 @@
 
 #include "CameraManipulator.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class Scene;
 
@@ -43,7 +43,7 @@ class Scene;
  * camera keeps an eye-to-centre distance, which drives the perspective dolly
  * step and the orthographic frustum height.
  */
-class V_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
+class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
   public:
     /** @brief Constructs an orbit manipulator bound to a camera.
      *
@@ -200,25 +200,25 @@ class V_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     // ---- Window input callbacks ----
 
     /** @brief Handles a mouse button press (see CameraManipulator). */
-    void onMousePress(const vine::window::MouseEvent& event) override;
+    void onMousePress(const vn::window::MouseEvent& event) override;
 
     /** @brief Handles mouse motion, applying the active drag interaction. */
-    void onMouseMove(const vine::window::MouseEvent& event) override;
+    void onMouseMove(const vn::window::MouseEvent& event) override;
 
     /** @brief Handles a mouse button release, ending any drag interaction. */
-    void onMouseRelease(const vine::window::MouseEvent& event) override;
+    void onMouseRelease(const vn::window::MouseEvent& event) override;
 
     /** @brief Handles mouse wheel scroll, zooming the camera. */
-    void onScroll(const vine::window::ScrollEvent& event) override;
+    void onScroll(const vn::window::ScrollEvent& event) override;
 
     /** @brief Handles a key press (first-person movement / Home = fit). */
-    void onKeyDown(const vine::window::KeyEvent& event) override;
+    void onKeyDown(const vn::window::KeyEvent& event) override;
 
     /** @brief Handles a key release. */
-    void onKeyUp(const vine::window::KeyEvent& event) override;
+    void onKeyUp(const vn::window::KeyEvent& event) override;
 
     /** @brief Updates viewport size and the camera projection on a resize. */
-    void onResize(const vine::window::ResizeEvent& event) override;
+    void onResize(const vn::window::ResizeEvent& event) override;
 
   private:
     /** @brief Ray from the camera through a screen pixel. */
@@ -299,4 +299,4 @@ class V_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     double rotate_step_ = 0.05;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

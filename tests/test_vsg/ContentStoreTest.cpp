@@ -19,29 +19,29 @@
 #include <vine/vsg/core/FrameTimeline.hpp>
 #include <vine/vsg/core/RetirementQueue.hpp>
 
-using vine::graphics::Geometry;
-using vine::graphics::Material;
-using vine::graphics::ShaderProgram;
-using vine::graphics::ShaderStage;
-using vine::graphics::ShaderStageType;
-using vine::graphics::Texture2D;
-using vine::vsg::ContentFacts;
-using vine::vsg::ContentStore;
-using vine::vsg::FactMiss;
-using vine::vsg::findGeometry;
-using vine::vsg::findMaterial;
-using vine::vsg::findProgram;
-using vine::vsg::GeometryFacts;
-using vine::vsg::MaterialFacts;
-using vine::vsg::ProgramVariant;
-using vine::vsg::core::CompiledCommand;
-using vine::vsg::core::CompiledDraw;
-using vine::vsg::core::CompiledFrame;
-using vine::vsg::core::CompiledPass;
-using vine::vsg::core::DrawKind;
-using vine::vsg::core::FrameTimeline;
-using vine::vsg::core::ProgramRef;
-using vine::vsg::core::RetirementQueue;
+using vn::graphics::Geometry;
+using vn::graphics::Material;
+using vn::graphics::ShaderProgram;
+using vn::graphics::ShaderStage;
+using vn::graphics::ShaderStageType;
+using vn::graphics::Texture2D;
+using vn::vsg::ContentFacts;
+using vn::vsg::ContentStore;
+using vn::vsg::FactMiss;
+using vn::vsg::findGeometry;
+using vn::vsg::findMaterial;
+using vn::vsg::findProgram;
+using vn::vsg::GeometryFacts;
+using vn::vsg::MaterialFacts;
+using vn::vsg::ProgramVariant;
+using vn::vsg::core::CompiledCommand;
+using vn::vsg::core::CompiledDraw;
+using vn::vsg::core::CompiledFrame;
+using vn::vsg::core::CompiledPass;
+using vn::vsg::core::DrawKind;
+using vn::vsg::core::FrameTimeline;
+using vn::vsg::core::ProgramRef;
+using vn::vsg::core::RetirementQueue;
 
 namespace
 {
@@ -51,8 +51,8 @@ ShaderStage stage(ShaderStageType type, const char* source)
 {
     ShaderStage out;
     out.type       = type;
-    out.source     = vine::String(reinterpret_cast<const char8_t*>(source));
-    out.entryPoint = vine::String(reinterpret_cast<const char8_t*>("main"));
+    out.source     = vn::String(reinterpret_cast<const char8_t*>(source));
+    out.entryPoint = vn::String(reinterpret_cast<const char8_t*>("main"));
     return out;
 }
 
@@ -86,44 +86,44 @@ constexpr const char* kScreenFragmentSource =
     "void main() { color = vec4(vine_uv, 0.0, 1.0); }\n";
 
 /// @brief A content program with both stages (the identity the plan names).
-vine::intrusive_ptr<ShaderProgram> contentProgram()
+vn::intrusive_ptr<ShaderProgram> contentProgram()
 {
-    const auto program = vine::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    const auto program = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
     program->addStage(stage(ShaderStageType::Vertex, kGatedVertexSource));
     program->addStage(stage(ShaderStageType::Fragment, kGatedFragmentSource));
     return program;
 }
 
 /// @brief A full-screen program: a fragment stage only (the engine brings the vertex stage).
-vine::intrusive_ptr<ShaderProgram> screenProgram()
+vn::intrusive_ptr<ShaderProgram> screenProgram()
 {
-    const auto program = vine::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    const auto program = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
     program->addStage(stage(ShaderStageType::Fragment, kScreenFragmentSource));
     return program;
 }
 
 /// @brief A quad, with the texcoord channel when @p texcoords asks for one.
-vine::intrusive_ptr<Geometry> quad(bool texcoords = false)
+vn::intrusive_ptr<Geometry> quad(bool texcoords = false)
 {
-    const auto geometry = vine::intrusive_ptr<Geometry>(new Geometry());
-    geometry->setPositions(vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(
+    const auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
         std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F })));
     if (texcoords)
     {
-        geometry->setTexcoords2(vine::intrusive_ptr<const vine::Buffer<float>>(
-            new vine::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F })));
+        geometry->setTexcoords2(vn::intrusive_ptr<const vn::Buffer<float>>(
+            new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F })));
     }
-    geometry->setIndices(vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
-        new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+    geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
     geometry->setRevision(1U);
     return geometry;
 }
 
 /// @brief A material with a diffuse colour, and (when @p texture is not null) a texture to sample.
-vine::intrusive_ptr<Material> material(vine::Colorf diffuse,
-                                       vine::intrusive_ptr<Texture2D> texture = {})
+vn::intrusive_ptr<Material> material(vn::Colorf diffuse,
+                                       vn::intrusive_ptr<Texture2D> texture = {})
 {
-    const auto out = vine::intrusive_ptr<Material>(new Material());
+    const auto out = vn::intrusive_ptr<Material>(new Material());
     out->setDiffuse(diffuse);
     if (texture != nullptr)
     {
@@ -133,9 +133,9 @@ vine::intrusive_ptr<Material> material(vine::Colorf diffuse,
 }
 
 /// @brief Reads a material entry's block back as the engine's block (the bytes ARE the shading's input).
-vine::graphics::VineMaterialBlock blockOf(const MaterialFacts& facts)
+vn::graphics::VineMaterialBlock blockOf(const MaterialFacts& facts)
 {
-    vine::graphics::VineMaterialBlock block{};
+    vn::graphics::VineMaterialBlock block{};
     if (facts.block.size() == sizeof(block))
     {
         std::memcpy(&block, facts.block.data(), sizeof(block));
@@ -219,7 +219,7 @@ TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
     const auto   named    = quad();
     const auto   unnamed  = quad();
     const auto   program  = contentProgram();
-    const auto   material = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto   material = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     store.track(named);
     store.track(unnamed);
@@ -258,7 +258,7 @@ TEST(ContentStoreTest, ASteadyFrameBuildsNothing)
     ContentStore store;
     const auto   geometry = quad();
     const auto   program  = contentProgram();
-    const auto   material = ::material(vine::Colorf(0.1F, 0.2F, 0.3F, 1.0F));
+    const auto   material = ::material(vn::Colorf(0.1F, 0.2F, 0.3F, 1.0F));
 
     store.track(geometry);
     store.track(program);
@@ -289,7 +289,7 @@ TEST(ContentStoreTest, ThePublishedTablesCarryTheirRowOrder)
     ContentStore store;
     const auto   geometry = quad();
     const auto   program  = contentProgram();
-    const auto   material = ::material(vine::Colorf(0.1F, 0.2F, 0.3F, 1.0F));
+    const auto   material = ::material(vn::Colorf(0.1F, 0.2F, 0.3F, 1.0F));
 
     store.track(geometry);
     store.track(program);
@@ -329,7 +329,7 @@ TEST(ContentStoreTest, TheRowOrderCoversEveryRowAfterAppendsAndErasures)
     ContentStore store;
     const auto   geometry = quad();
     const auto   program  = contentProgram();
-    const auto   material = ::material(vine::Colorf(0.1F, 0.2F, 0.3F, 1.0F));
+    const auto   material = ::material(vn::Colorf(0.1F, 0.2F, 0.3F, 1.0F));
 
     store.track(geometry);
     store.track(program);
@@ -368,14 +368,14 @@ TEST(ContentStoreTest, TheRowOrderCoversEveryRowAfterAppendsAndErasures)
 
     // A material EDIT replaces a row in place, and a geometry revision bump APPENDS one and parks the old one.
     store.updateMaterial(material.get());
-    auto* mutable_material = const_cast<vine::graphics::Material*>(material.get());
-    mutable_material->setDiffuse(vine::Colorf(0.9F, 0.1F, 0.1F, 1.0F));
+    auto* mutable_material = const_cast<vn::graphics::Material*>(material.get());
+    mutable_material->setDiffuse(vn::Colorf(0.9F, 0.1F, 0.1F, 1.0F));
     store.updateMaterial(material.get());
     const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
     EXPECT_TRUE(covers(second)) << "a replaced row keeps its place in the order";
 
     const std::uint64_t rows_before = static_cast<std::uint64_t>(second.geometries.size());
-    const_cast<vine::graphics::Geometry*>(geometry.get())->setRevision(2U);
+    const_cast<vn::graphics::Geometry*>(geometry.get())->setRevision(2U);
     ASSERT_TRUE(store.tablesFor(plan->frame, timeline, retirement).geometries.size() > rows_before)
         << "the new revision JOINS the table the old one is still answerable in";
     EXPECT_TRUE(covers(store.tablesFor(plan->frame, timeline, retirement)));
@@ -435,7 +435,7 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
     ContentStore store;
     const auto   geometry = quad();
     const auto   program  = contentProgram();
-    const auto   material = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto   material = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     store.track(geometry);
     store.track(program);
@@ -451,7 +451,7 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
     EXPECT_FLOAT_EQ(first_block.diffuse[0], 0.25F);
 
     // The host edits the material and reports it (the SDK MaterialManager's contract).
-    material->setDiffuse(vine::Colorf(0.75F, 0.5F, 0.25F, 1.0F));
+    material->setDiffuse(vn::Colorf(0.75F, 0.5F, 0.25F, 1.0F));
     store.updateMaterial(material.get());
 
     const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
@@ -464,7 +464,7 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
     EXPECT_EQ(retirement.pending(), 0U);
 
     // An edit for a material nobody tracked is answered with nothing at all (it cannot be drawn either).
-    const auto untracked = ::material(vine::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+    const auto untracked = ::material(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
     store.updateMaterial(untracked.get());
     EXPECT_EQ(store.materialEntries(), 1U);
 }
@@ -474,7 +474,7 @@ TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
     ContentStore store;
     const auto   geometry = quad();
     const auto   program  = contentProgram();
-    const auto   material = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto   material = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     store.track(geometry);
     store.track(program);
@@ -500,7 +500,7 @@ TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
 
     // The same touch AFTER an edit moves the revision, and the next walk replaces the row (the SDK's own
     // contract, now reached through the touch rather than through a separate announcement).
-    material->setDiffuse(vine::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
+    material->setDiffuse(vn::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
     store.updateMaterial(material.get());
     const ContentFacts& edited = store.tablesFor(plan->frame, timeline, retirement);
     EXPECT_EQ(store.builds(), builds_before + 1U) << "the edit replaced the row";
@@ -513,9 +513,9 @@ TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
     ContentStore store;
     const auto   geometry   = quad(true);  // the texcoord channel is what a cube variant would widen
     const auto   program    = contentProgram();
-    const auto   texture    = vine::intrusive_ptr<Texture2D>(new Texture2D(1, 1, vine::imaging::PixelFormat::Rgba8Unorm));
-    const auto   textured   = ::material(vine::Colorf(1.0F, 1.0F, 1.0F, 1.0F), texture);
-    const auto   plain      = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto   texture    = vn::intrusive_ptr<Texture2D>(new Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+    const auto   textured   = ::material(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F), texture);
+    const auto   plain      = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     store.track(geometry);
     store.track(program);
@@ -584,7 +584,7 @@ TEST(ContentStoreTest, AnUntrackedObjectIsSimplyAbsent)
     // facts from an address alone, and it does not pretend to.
     const auto geometry = quad();
     const auto program  = contentProgram();
-    const auto material = ::material(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto material = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);

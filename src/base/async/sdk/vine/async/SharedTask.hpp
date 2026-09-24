@@ -16,7 +16,7 @@
 #include "DetachedTask.hpp"
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 namespace detail {
 
@@ -341,4 +341,4 @@ SharedTask<T> sharedTask(Task<T> task)
     return SharedTask<T>{ std::move(state) };
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

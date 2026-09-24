@@ -3,7 +3,7 @@
 #include <chrono>
 #include <utility>
 
-V_RUNTIME_NS_BEGIN
+VN_RUNTIME_NS_BEGIN
 
 InMemoryManager::InMemoryManager(std::chrono::milliseconds sweep_interval)
   : cache_()
@@ -59,4 +59,4 @@ std::vector<String> InMemoryManager::keys()
     return cache_.keys();
 }
 
-V_RUNTIME_NS_END
+VN_RUNTIME_NS_END

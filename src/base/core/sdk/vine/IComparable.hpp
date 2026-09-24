@@ -6,13 +6,13 @@
 
 #include "Object.hpp"
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief Interface for objects that can be ordered against another Object.
  */
 class IComparable {
-    V_DECLARE_INTERFACE(IComparable)
+    VN_DECLARE_INTERFACE(IComparable)
 
   public:
     virtual ~IComparable() = default;
@@ -35,4 +35,4 @@ concept Comparable = requires(const T& t, const Object& other) {
     { t.compareTo(other) } -> std::convertible_to<int>;
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

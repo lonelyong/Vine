@@ -1,19 +1,19 @@
 ﻿#pragma once
 
-#include <vine/vi_global.hpp>
+#include <vine/vine_global.hpp>
 
-#ifdef V_WINDOW_LIB
-#    define V_WINDOW_API V_EXPORT
+#ifdef VN_WINDOW_LIB
+#    define VN_WINDOW_API VN_EXPORT
 #else
-#    define V_WINDOW_API V_IMPORT
+#    define VN_WINDOW_API VN_IMPORT
 #endif
 
-#define V_WINDOW_NS_BEGIN                                                                                                                       \
-    namespace V_ROOT_NS                                                                                                                         \
+#define VN_WINDOW_NS_BEGIN                                                                                                                       \
+    namespace VN_ROOT_NS                                                                                                                         \
     {                                                                                                                                           \
     namespace window                                                                                                                            \
     {
 
-#define V_WINDOW_NS_END                                                                                                                         \
+#define VN_WINDOW_NS_END                                                                                                                         \
     }                                                                                                                                           \
     }

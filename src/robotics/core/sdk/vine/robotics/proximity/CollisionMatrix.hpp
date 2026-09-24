@@ -15,7 +15,7 @@
 
 #include "CollisionPair.hpp"
 
-V_ROBOTICS_PROXIMITY_NS_BEGIN
+VN_ROBOTICS_PROXIMITY_NS_BEGIN
 
 /**
  * @brief N×N collision matrix managing pairwise collision rules between owners.
@@ -54,7 +54,7 @@ class CollisionMatrix final {
      * @param object The owner; must not be null.
      * @throws std::logic_error when the owner is null or already registered.
      */
-    void registerObject(const vine::INamed* object)
+    void registerObject(const vn::INamed* object)
     {
         if (object == nullptr) {
             throw std::logic_error("CollisionMatrix::registerObject, null object.");
@@ -70,7 +70,7 @@ class CollisionMatrix final {
      *
      * @param object The owner.
      */
-    void unregisterObject(const vine::INamed* object)
+    void unregisterObject(const vn::INamed* object)
     {
         registered_objects_.erase(object);
         for (auto it = collision_options_.begin(); it != collision_options_.end();) {
@@ -89,7 +89,7 @@ class CollisionMatrix final {
      * @param object The owner.
      * @return true when registered.
      */
-    bool containsObject(const vine::INamed* object) const
+    bool containsObject(const vn::INamed* object) const
     {
         return registered_objects_.contains(object);
     }
@@ -99,10 +99,10 @@ class CollisionMatrix final {
      *
      * @return The registered owners.
      */
-    std::vector<const vine::INamed*> registeredObjects() const
+    std::vector<const vn::INamed*> registeredObjects() const
     {
-        std::vector<const vine::INamed*> objects(registered_objects_.begin(), registered_objects_.end());
-        std::sort(objects.begin(), objects.end(), [](const vine::INamed* a, const vine::INamed* b) {
+        std::vector<const vn::INamed*> objects(registered_objects_.begin(), registered_objects_.end());
+        std::sort(objects.begin(), objects.end(), [](const vn::INamed* a, const vn::INamed* b) {
             return a->name() < b->name();
         });
         return objects;
@@ -117,7 +117,7 @@ class CollisionMatrix final {
      *        absolute value.
      * @throws std::logic_error when either owner is unregistered or a == b.
      */
-    void setMinDistance(const vine::INamed* object_a, const vine::INamed* object_b, double distance)
+    void setMinDistance(const vn::INamed* object_a, const vn::INamed* object_b, double distance)
     {
         validatePair(object_a, object_b);
         options(object_a, object_b).min_dist = std::abs(distance);
@@ -131,7 +131,7 @@ class CollisionMatrix final {
      * @return >= 0 the configured distance; -1.0 when a == b; -2.0 when
      *         either owner is unregistered.
      */
-    double minDistance(const vine::INamed* object_a, const vine::INamed* object_b) const
+    double minDistance(const vn::INamed* object_a, const vn::INamed* object_b) const
     {
         if (object_a == object_b) {
             return -1.0;
@@ -150,7 +150,7 @@ class CollisionMatrix final {
      * @param ignore Whether to exclude the pair.
      * @throws std::logic_error when either owner is unregistered or a == b.
      */
-    void setIgnored(const vine::INamed* object_a, const vine::INamed* object_b, bool ignore)
+    void setIgnored(const vn::INamed* object_a, const vn::INamed* object_b, bool ignore)
     {
         validatePair(object_a, object_b);
         options(object_a, object_b).ignored = ignore;
@@ -164,7 +164,7 @@ class CollisionMatrix final {
      * @return true when a == b; false when either owner is unregistered;
      *         otherwise the configured ignore flag.
      */
-    bool isIgnored(const vine::INamed* object_a, const vine::INamed* object_b) const
+    bool isIgnored(const vn::INamed* object_a, const vn::INamed* object_b) const
     {
         if (object_a == object_b) {
             return true;
@@ -182,8 +182,8 @@ class CollisionMatrix final {
      * @param object_b Owner B.
      * @return The options, or std::nullopt when either owner is unregistered.
      */
-    std::optional<CollisionOptions> collisionOptions(const vine::INamed* object_a,
-                                                     const vine::INamed* object_b) const
+    std::optional<CollisionOptions> collisionOptions(const vn::INamed* object_a,
+                                                     const vn::INamed* object_b) const
     {
         if (!containsObject(object_a) || !containsObject(object_b)) {
             return std::nullopt;
@@ -213,7 +213,7 @@ class CollisionMatrix final {
      * @param object The owner; must be registered.
      * @throws std::logic_error when the owner is unregistered.
      */
-    void ignoreAgainstAll(const vine::INamed* object)
+    void ignoreAgainstAll(const vn::INamed* object)
     {
         if (!containsObject(object)) {
             throw std::logic_error("CollisionMatrix::ignoreAgainstAll, object not registered: "
@@ -233,7 +233,7 @@ class CollisionMatrix final {
      * @param object_b Owner B.
      * @return true when a != b and the pair is not ignored.
      */
-    bool shouldCheckCollision(const vine::INamed* object_a, const vine::INamed* object_b) const
+    bool shouldCheckCollision(const vn::INamed* object_a, const vn::INamed* object_b) const
     {
         return object_a != object_b && !isIgnored(object_a, object_b);
     }
@@ -246,7 +246,7 @@ class CollisionMatrix final {
      * @param object_b Owner B.
      * @throws std::logic_error on invalid input.
      */
-    void validatePair(const vine::INamed* object_a, const vine::INamed* object_b) const
+    void validatePair(const vn::INamed* object_a, const vn::INamed* object_b) const
     {
         if (object_a == object_b) {
             throw std::logic_error("CollisionMatrix, a == b is not a valid pair.");
@@ -265,7 +265,7 @@ class CollisionMatrix final {
      * @param object_b Owner B.
      * @return The options.
      */
-    CollisionOptions& options(const vine::INamed* object_a, const vine::INamed* object_b)
+    CollisionOptions& options(const vn::INamed* object_a, const vn::INamed* object_b)
     {
         return collision_options_[CollisionPair{ object_a, object_b }];
     }
@@ -277,7 +277,7 @@ class CollisionMatrix final {
      * @param object_b Owner B.
      * @return The options.
      */
-    const CollisionOptions& findOptions(const vine::INamed* object_a, const vine::INamed* object_b) const
+    const CollisionOptions& findOptions(const vn::INamed* object_a, const vn::INamed* object_b) const
     {
         const auto it = collision_options_.find(CollisionPair{ object_a, object_b });
         return it != collision_options_.end() ? it->second : defaultCollisionOptions();
@@ -285,7 +285,7 @@ class CollisionMatrix final {
 
   private:
     /// Owners participating in collision checks.
-    std::unordered_set<const vine::INamed*> registered_objects_;
+    std::unordered_set<const vn::INamed*> registered_objects_;
     /// Pairwise collision rules.
     std::unordered_map<CollisionPair, CollisionOptions, CollisionPairHasher> collision_options_;
 };
@@ -314,4 +314,4 @@ inline bool operator!=(const CollisionMatrix::CollisionOptions& lhs, const Colli
     return !(lhs == rhs);
 }
 
-V_ROBOTICS_PROXIMITY_NS_END
+VN_ROBOTICS_PROXIMITY_NS_END

@@ -1,5 +1,5 @@
  
-v_add_library(APPFW_TARGET_NAME RoboticsCore)
+vn_add_library(APPFW_TARGET_NAME RoboticsCore)
 
 target_link_libraries(${APPFW_TARGET_NAME}
-    PUBLIC vi::Core vi::Math vi::Geometry vi::Global)
+    PUBLIC vn::Core vn::Math vn::Geometry vn::Global)

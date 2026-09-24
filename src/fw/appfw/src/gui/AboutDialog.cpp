@@ -8,9 +8,9 @@
 #include "Convert.hpp"
 #include "WindowData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
-V_OBJECT_META_IMPL(AboutDialog, Window)
+VN_OBJECT_META_IMPL(AboutDialog, Window)
 
 struct AboutDialog::Impl : public WindowData {
     String app_name;
@@ -131,4 +131,4 @@ inline auto AboutDialog::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

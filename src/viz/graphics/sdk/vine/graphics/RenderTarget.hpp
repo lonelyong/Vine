@@ -11,10 +11,10 @@
 #include <vine/RefCounted.hpp>
 #include "Light.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 
-using vine::math::Mat4d;
+using vn::math::Mat4d;
 
 /**
  * @brief Render target managing color and depth buffers.
@@ -22,8 +22,8 @@ using vine::math::Mat4d;
  * Represents an off-screen frame buffer. Supports various color and depth
  * formats and provides buffer readback for post-processing or export.
  */
-class V_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarget> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarget> {
+    VN_OBJECT_META_DECL;
 
   public:
     enum class ColorFormat {
@@ -198,7 +198,7 @@ class V_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarge
      *
      * @param view_projection The producer's projection * view matrix.
      */
-    void setProducerViewProjection(const vine::math::Mat4d& view_projection);
+    void setProducerViewProjection(const vn::math::Mat4d& view_projection);
 
     /** @brief Gets the view-projection this target's producer rendered with.
      *
@@ -260,4 +260,4 @@ class V_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarge
 
 using RenderTargetPtr = intrusive_ptr<RenderTarget>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

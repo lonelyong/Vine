@@ -1,8 +1,8 @@
 ﻿#include <vine/geometry/Cylinder.hpp>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-V_OBJECT_META_IMPL(Cylinder, Primitive)
+VN_OBJECT_META_IMPL(Cylinder, Primitive)
 
 Cylinder::Cylinder()
 {
@@ -46,4 +46,4 @@ bool Cylinder::hasVolume(double eps) const
     return radius_ > eps && height_ > eps;
 }
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

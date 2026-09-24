@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 template <typename... TArgs>
 class Signal;
@@ -352,4 +352,4 @@ class Signal {
     std::atomic<bool> is_blocked_{ false };
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

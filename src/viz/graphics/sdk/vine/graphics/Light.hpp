@@ -8,7 +8,7 @@
 #include <vine/math/Vector3.hpp>
 #include <vine/String.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class Light;
 using LightPtr = intrusive_ptr<Light>;
@@ -41,7 +41,7 @@ enum class ShadowFilter {
  * state the intent a future PCF implementation will honour, and marked here so it cannot be
  * mistaken for a working quality knob.
  */
-struct V_GRAPHICS_API ShadowSettings {
+struct VN_GRAPHICS_API ShadowSettings {
     uint32_t     resolution = 1024;                    ///< Shadow-map side length in texels.
     float        bias       = 0.002f;                  ///< Depth bias used to avoid self-shadowing.
     ShadowFilter filter     = ShadowFilter::Hard;      ///< Sampling filter (RESERVED — not read yet).
@@ -55,9 +55,9 @@ struct V_GRAPHICS_API ShadowSettings {
  * the main, off-screen or shadow passes. v4 ships Ambient and Directional
  * lights; Point/Spot and attachable (node-level) lights are planned later.
  */
-class V_GRAPHICS_API Light : public Object, public RefCounted<Light> {
-    V_OBJECT_META_DECL;
-    V_DISABLE_COPY_MOVE(Light);
+class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
+    VN_OBJECT_META_DECL;
+    VN_DISABLE_COPY_MOVE(Light);
 
   public:
     /** @brief Constructs an ambient light (white, full intensity). */
@@ -70,7 +70,7 @@ class V_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      *
      * @param direction Light propagation direction (world space).
      */
-    static LightPtr createDirectional(const vine::math::Vec3d& direction = vine::math::Vec3d(0.0, 0.0, -1.0));
+    static LightPtr createDirectional(const vn::math::Vec3d& direction = vn::math::Vec3d(0.0, 0.0, -1.0));
 
   public:
     /** @brief Gets the light name. */
@@ -119,13 +119,13 @@ class V_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      *
      * Only meaningful for directional lights.
      */
-    vine::math::Vec3d direction() const;
+    vn::math::Vec3d direction() const;
 
     /** @brief Sets the light propagation direction (world space).
      *
      * @param direction Direction the light travels towards.
      */
-    void setDirection(const vine::math::Vec3d& direction);
+    void setDirection(const vn::math::Vec3d& direction);
 
     /** @brief Returns whether the light casts a shadow (directional, v4b). */
     bool castShadow() const;
@@ -176,9 +176,9 @@ class V_GRAPHICS_API Light : public Object, public RefCounted<Light> {
     bool                                enabled_{ true };
     Colorf                              color_{ 1.0f, 1.0f, 1.0f, 1.0f };
     float                               intensity_{ 1.0f };
-    vine::math::Vec3d                   direction_{ 0.0, 0.0, -1.0 };
+    vn::math::Vec3d                   direction_{ 0.0, 0.0, -1.0 };
     bool                                cast_shadow_{ false };
     ShadowSettings                      shadow_settings_;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

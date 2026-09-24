@@ -4,7 +4,7 @@
 
 #include "Shape.hpp"
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief Base class for parametric primitive shapes.
@@ -12,12 +12,12 @@ V_GEOMETRY_NS_BEGIN
  * Concrete primitives (Box, Cylinder, Cone, Sphere, Ellipsoid) derive from
  * this class and describe their geometry with a small set of dimensions.
  */
-class V_GEOMETRY_API Primitive : public Shape {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API Primitive : public Shape {
+    VN_OBJECT_META_DECL;
 
   protected:
     /// Protected so Primitive cannot be instantiated directly.
     Primitive();
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

@@ -36,31 +36,31 @@
 #include <vine/vsg/core/FrameTimeline.hpp>
 #include <vine/vsg/core/RetirementQueue.hpp>
 
-using vine::graphics::Geometry;
-using vine::graphics::Material;
-using vine::graphics::ShaderProgram;
-using vine::graphics::ShaderStage;
-using vine::graphics::ShaderStageType;
-using vine::graphics::Texture2D;
-using vine::imaging::Image;
-using vine::imaging::PixelFormat;
-using vine::vsg::ContentFacts;
-using vine::vsg::ContentStore;
-using vine::vsg::detail::TextureReject;
-using vine::vsg::MaterialImages;
-using vine::vsg::SweepOutcome;
-using vine::vsg::releaseAbandonedContent;
-using vine::vsg::findGeometry;
-using vine::vsg::findMaterial;
-using vine::vsg::findProgram;
-using vine::vsg::core::CompiledCommand;
-using vine::vsg::core::CompiledDraw;
-using vine::vsg::core::CompiledFrame;
-using vine::vsg::core::CompiledPass;
-using vine::vsg::core::DrawKind;
-using vine::vsg::core::FrameTimeline;
-using vine::vsg::core::ProgramRef;
-using vine::vsg::core::RetirementQueue;
+using vn::graphics::Geometry;
+using vn::graphics::Material;
+using vn::graphics::ShaderProgram;
+using vn::graphics::ShaderStage;
+using vn::graphics::ShaderStageType;
+using vn::graphics::Texture2D;
+using vn::imaging::Image;
+using vn::imaging::PixelFormat;
+using vn::vsg::ContentFacts;
+using vn::vsg::ContentStore;
+using vn::vsg::detail::TextureReject;
+using vn::vsg::MaterialImages;
+using vn::vsg::SweepOutcome;
+using vn::vsg::releaseAbandonedContent;
+using vn::vsg::findGeometry;
+using vn::vsg::findMaterial;
+using vn::vsg::findProgram;
+using vn::vsg::core::CompiledCommand;
+using vn::vsg::core::CompiledDraw;
+using vn::vsg::core::CompiledFrame;
+using vn::vsg::core::CompiledPass;
+using vn::vsg::core::DrawKind;
+using vn::vsg::core::FrameTimeline;
+using vn::vsg::core::ProgramRef;
+using vn::vsg::core::RetirementQueue;
 
 namespace
 {
@@ -70,15 +70,15 @@ ShaderStage stage(ShaderStageType type, const char* source)
 {
     ShaderStage out;
     out.type       = type;
-    out.source     = vine::String(reinterpret_cast<const char8_t*>(source));
-    out.entryPoint = vine::String(reinterpret_cast<const char8_t*>("main"));
+    out.source     = vn::String(reinterpret_cast<const char8_t*>(source));
+    out.entryPoint = vn::String(reinterpret_cast<const char8_t*>("main"));
     return out;
 }
 
 /// @brief A content program: the smallest pair of stages a content pipeline can be built from.
-vine::intrusive_ptr<ShaderProgram> contentProgram()
+vn::intrusive_ptr<ShaderProgram> contentProgram()
 {
-    const auto program = vine::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    const auto program = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
     program->addStage(stage(ShaderStageType::Vertex,
                             "#version 450\n"
                             "layout(location = 0) in vec3 position;\n"
@@ -91,22 +91,22 @@ vine::intrusive_ptr<ShaderProgram> contentProgram()
 }
 
 /// @brief A textured quad, with every stream filled (so the store describes it without refusing).
-vine::intrusive_ptr<Geometry> quad()
+vn::intrusive_ptr<Geometry> quad()
 {
-    const auto geometry = vine::intrusive_ptr<Geometry>(new Geometry());
-    geometry->setPositions(vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(
+    const auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
         std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F })));
-    geometry->setIndices(vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
-        new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+    geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
     geometry->setRevision(1U);
     return geometry;
 }
 
 /// @brief A material that samples @p texture when one is given.
-vine::intrusive_ptr<Material> material(vine::intrusive_ptr<Texture2D> texture = {})
+vn::intrusive_ptr<Material> material(vn::intrusive_ptr<Texture2D> texture = {})
 {
-    const auto out = vine::intrusive_ptr<Material>(new Material());
-    out->setDiffuse(vine::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto out = vn::intrusive_ptr<Material>(new Material());
+    out->setDiffuse(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
     if (texture != nullptr)
     {
         out->setTexture(texture);
@@ -115,10 +115,10 @@ vine::intrusive_ptr<Material> material(vine::intrusive_ptr<Texture2D> texture = 
 }
 
 /// @brief A filled, single-level 2D texture: the shape the image cache accepts.
-vine::intrusive_ptr<Texture2D> readyTexture()
+vn::intrusive_ptr<Texture2D> readyTexture()
 {
-    auto texture = vine::intrusive_ptr<Texture2D>(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
-    texture->setImage(vine::intrusive_ptr<const Image>(new Image(4, 4, PixelFormat::Rgba8Unorm)));
+    auto texture = vn::intrusive_ptr<Texture2D>(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
+    texture->setImage(vn::intrusive_ptr<const Image>(new Image(4, 4, PixelFormat::Rgba8Unorm)));
     return texture;
 }
 
@@ -236,7 +236,7 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
     const std::uint64_t geometry_revision = geometry->revision();
 
     // The host lets go of the whole drawable - the texture goes with the material that held it.
-    const vine::graphics::Texture* texture_address = texture.get();
+    const vn::graphics::Texture* texture_address = texture.get();
     shading.reset();
     geometry.reset();
     program.reset();

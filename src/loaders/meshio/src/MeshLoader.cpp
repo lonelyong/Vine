@@ -14,15 +14,15 @@
 #include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/math/Vector3.hpp>
 
-V_MESHIO_NS_BEGIN
+VN_MESHIO_NS_BEGIN
 
 namespace
 {
 
-using Mesh                = vine::geometry::Mesh;
-using IndexedTriangleMesh = vine::geometry::IndexedTriangleMesh;
-using UInt32Array         = vine::geometry::UInt32Array;
-using Vec3fArray          = vine::geometry::Vec3fArray;
+using Mesh                = vn::geometry::Mesh;
+using IndexedTriangleMesh = vn::geometry::IndexedTriangleMesh;
+using UInt32Array         = vn::geometry::UInt32Array;
+using Vec3fArray          = vn::geometry::Vec3fArray;
 
 /** @brief AABB diagonal length above which the source unit is millimeters. */
 constexpr float kMmThreshold = 10.0f;
@@ -135,8 +135,8 @@ void applyScale(const MeshLoader::Options& options, IndexedTriangleMesh& mesh)
         return;
     }
 
-    vine::math::Vec3f min = positions.front();
-    vine::math::Vec3f max = positions.front();
+    vn::math::Vec3f min = positions.front();
+    vn::math::Vec3f max = positions.front();
     for (const auto& v : positions) {
         min.x = std::min(min.x, v.x);
         min.y = std::min(min.y, v.y);
@@ -202,14 +202,14 @@ void MeshLoader::setOptions(const Options& options)
     options_ = options;
 }
 
-vine::intrusive_ptr<Mesh> MeshLoader::load(const std::filesystem::path& file_path)
+vn::intrusive_ptr<Mesh> MeshLoader::load(const std::filesystem::path& file_path)
 {
     std::error_code ec;
     if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
         return {};
     }
 
-    const vine::crypto::ByteSequenceFingerprint fingerprint(file_path);
+    const vn::crypto::ByteSequenceFingerprint fingerprint(file_path);
     if (auto cached = cache_.get(fingerprint))
     {
         const auto& option_map = cached->option_shape_map;
@@ -234,7 +234,7 @@ vine::intrusive_ptr<Mesh> MeshLoader::load(const std::filesystem::path& file_pat
         return {};
     }
 
-    auto mesh = vine::make_intrusive<IndexedTriangleMesh>();
+    auto mesh = vn::make_intrusive<IndexedTriangleMesh>();
     mergeAssimpScene(*mesh, scene);
     applyScale(options_, *mesh);
 
@@ -248,4 +248,4 @@ vine::intrusive_ptr<Mesh> MeshLoader::load(const std::filesystem::path& file_pat
     return mesh;
 }
 
-V_MESHIO_NS_END
+VN_MESHIO_NS_END

@@ -60,47 +60,47 @@
 #include <vine/vsg/core/VariantPool.hpp>
 #include <vine/vsg/VsgDynamicState.hpp>
 
-using vine::graphics::Geometry;
-using vine::graphics::Material;
-using vine::graphics::RenderCommand;
-using vine::graphics::RenderTarget;
-using vine::graphics::ShaderProgram;
-using vine::graphics::ShaderStage;
-using vine::graphics::ShaderStageType;
-using vine::vsg::BlockDescriptors;
-using vine::vsg::BlockStorage;
-using vine::vsg::buildGeometryFacts;
-using vine::vsg::buildMaterialFacts;
-using vine::vsg::buildProgramFacts;
-using vine::vsg::buildScreenProgramFacts;
-using vine::vsg::ContentDraw;
-using vine::vsg::ContentFacts;
-using vine::vsg::ContentPass;
-using vine::vsg::ContentPipeline;
-using vine::vsg::FactMiss;
-using vine::vsg::GeometryFacts;
-using vine::vsg::InputImages;
-using vine::vsg::MaterialFacts;
-using vine::vsg::OffscreenTarget;
-using vine::vsg::PassContent;
-using vine::vsg::ProgramFacts;
-using vine::vsg::StreamUploads;
-using vine::vsg::VsgExecutor;
-using vine::vsg::core::ClearPolicy;
-using vine::vsg::core::CompiledFrame;
-using vine::vsg::core::Diagnostics;
-using vine::vsg::core::DrawKind;
-using vine::vsg::core::FrameArena;
-using vine::vsg::core::FrameCompiler;
-using vine::vsg::core::FrameFacts;
-using vine::vsg::core::FrameRecorder;
-using vine::vsg::core::FrameToken;
-using vine::vsg::core::Observe;
-using vine::vsg::core::Rgba8;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::TargetFacts;
-using vine::vsg::core::TargetShape;
-using vine::vsg::core::VariantPool;
+using vn::graphics::Geometry;
+using vn::graphics::Material;
+using vn::graphics::RenderCommand;
+using vn::graphics::RenderTarget;
+using vn::graphics::ShaderProgram;
+using vn::graphics::ShaderStage;
+using vn::graphics::ShaderStageType;
+using vn::vsg::BlockDescriptors;
+using vn::vsg::BlockStorage;
+using vn::vsg::buildGeometryFacts;
+using vn::vsg::buildMaterialFacts;
+using vn::vsg::buildProgramFacts;
+using vn::vsg::buildScreenProgramFacts;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentFacts;
+using vn::vsg::ContentPass;
+using vn::vsg::ContentPipeline;
+using vn::vsg::FactMiss;
+using vn::vsg::GeometryFacts;
+using vn::vsg::InputImages;
+using vn::vsg::MaterialFacts;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::PassContent;
+using vn::vsg::ProgramFacts;
+using vn::vsg::StreamUploads;
+using vn::vsg::VsgExecutor;
+using vn::vsg::core::ClearPolicy;
+using vn::vsg::core::CompiledFrame;
+using vn::vsg::core::Diagnostics;
+using vn::vsg::core::DrawKind;
+using vn::vsg::core::FrameArena;
+using vn::vsg::core::FrameCompiler;
+using vn::vsg::core::FrameFacts;
+using vn::vsg::core::FrameRecorder;
+using vn::vsg::core::FrameToken;
+using vn::vsg::core::Observe;
+using vn::vsg::core::Rgba8;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::TargetFacts;
+using vn::vsg::core::TargetShape;
+using vn::vsg::core::VariantPool;
 
 namespace
 {
@@ -121,12 +121,12 @@ void addSamplingStages(ShaderProgram& program)
 {
     ShaderStage vertex;
     vertex.type   = ShaderStageType::Vertex;
-    vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+    vertex.source = vn::String(reinterpret_cast<const char8_t*>(
         "layout(location = 0) in vec3 position;\n"
         "void main() { gl_Position = vec4(position.xy, 0.5, 1.0); }\n"));
     ShaderStage fragment;
     fragment.type   = ShaderStageType::Fragment;
-    fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+    fragment.source = vn::String(reinterpret_cast<const char8_t*>(
         "layout(set = 1, binding = 0) uniform sampler2D sourceColor;\n"
         "layout(location = 0) out vec4 outColor;\n"
         "void main() { outColor = texture(sourceColor, vec2(0.5, 0.5)); }\n"));
@@ -137,11 +137,11 @@ void addSamplingStages(ShaderProgram& program)
 /// @brief The scene's geometry: a triangle with positions and indices, at revision 1.
 struct Triangle
 {
-    vine::intrusive_ptr<const vine::Buffer<float>> positions = vine::intrusive_ptr<const vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ -0.6F, -0.6F, 0.0F, 0.6F, -0.6F, 0.0F, 0.0F, 0.6F, 0.0F }));
-    vine::intrusive_ptr<const vine::Buffer<std::uint32_t>> indices =
-        vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
-            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    vn::intrusive_ptr<const vn::Buffer<float>> positions = vn::intrusive_ptr<const vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -0.6F, -0.6F, 0.0F, 0.6F, -0.6F, 0.0F, 0.0F, 0.6F, 0.0F }));
+    vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> indices =
+        vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
 };
 
 bool isRed(const Rgba8& pixel)
@@ -155,14 +155,14 @@ bool isBlue(const Rgba8& pixel)
 }
 
 /// @brief The rectangle the full-screen draw covers: a picture-in-picture quarter of the destination.
-constexpr vine::graphics::Viewport kPictureInPicture{ 8, 8, 16, 16 };
+constexpr vn::graphics::Viewport kPictureInPicture{ 8, 8, 16, 16 };
 
 }  // namespace
 
 TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
 {
     // 1. A device, the two targets, and the content stack the layer drives.
-    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)
     {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
@@ -197,7 +197,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     settings.color_attachments = 1U;
 
     // The SDK objects are heap-owned: the plan names them by an intrusive_ptr, so they must outlive the frame.
-    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     addSamplingStages(*program);
 
     ProgramFacts program_facts;
@@ -211,22 +211,22 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   draws(*pipelines, pool, vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
                                                                                          created.instance->vk()));
 
     // 2. The three tables, built from the SDK objects the host authored.
     Triangle                            triangle;
-    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
     geometry->setPositions(triangle.positions);
     geometry->setIndices(triangle.indices);
     geometry->setRevision(1U);
 
     GeometryFacts               geometry_facts;
-    std::vector<vine::vsg::ChannelFacts> channel_storage;
+    std::vector<vn::vsg::ChannelFacts> channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
 
-    const vine::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -243,8 +243,8 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     //    input. The producer is announced SECOND, so the plan's order is the graph's answer, not the call order.
     FrameArena    arena{ 64 * 1024 };
     Diagnostics   diagnostics;
-    std::vector<vine::String> messages;
-    diagnostics.setSink([&messages](const vine::graphics::RenderDiagnostic& diagnostic) {
+    std::vector<vn::String> messages;
+    diagnostics.setSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
         messages.push_back(diagnostic.message);
     });
     Observe       observe;
@@ -254,8 +254,8 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     // The identity the frame names a target by is the SDK handle the engine announces it with (the executor
     // resolves that identity to the off-screen object), so the declarations, the facts and the executor all
     // speak about the same target.
-    const vine::intrusive_ptr<RenderTarget> source_handle(new RenderTarget());
-    const vine::intrusive_ptr<RenderTarget> destination_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> source_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> destination_handle(new RenderTarget());
 
     TargetFacts source_facts;
     source_facts.target        = source_handle.get();
@@ -316,7 +316,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 2U);
     ASSERT_EQ(frame.passes[0].pass, 1U) << "the producer runs first - the sampled edge says so";
-    const vine::vsg::core::CompiledPass& consumer = frame.passes[1];
+    const vn::vsg::core::CompiledPass& consumer = frame.passes[1];
     ASSERT_EQ(consumer.inputs.size(), 1U) << "the plan carries what the pass declared";
     EXPECT_EQ(consumer.inputs[0].target, static_cast<const void*>(source_handle.get()));
     EXPECT_EQ(consumer.inputs[0].color_attachments, 1U);
@@ -324,7 +324,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     // 4. The content layer records pass 2, offered the images the SOURCE target has.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision,
+        ContentPass::Scope::Entry{ vn::vsg::core::DrawKind::Content, program.get(), program_facts.revision,
                                    geometry_facts.layout, pipelines.get(), &draws } };
     ContentPass::Scope scope;
     scope.entries  = halves;
@@ -403,7 +403,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     // the draw is three generated vertices inside the announced picture-in-picture rectangle. The program is the
     // SDK'S screen copy, so a set bound at the wrong index, an input that never arrived or a rectangle that was
     // ignored each produce a different picture.
-    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)
     {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
@@ -441,7 +441,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     ASSERT_NE(storage, nullptr);
 
     // The screen program (the SDK's own copy) and the layer that compiles it: no blocks, no vertex streams.
-    const vine::intrusive_ptr<ShaderProgram> screen_program(vine::graphics::screenCopyProgram(0));
+    const vn::intrusive_ptr<ShaderProgram> screen_program(vn::graphics::screenCopyProgram(0));
     ASSERT_NE(screen_program, nullptr);
     ProgramFacts screen_facts;
     ASSERT_EQ(buildScreenProgramFacts(*screen_program, screen_facts), FactMiss::None);
@@ -453,7 +453,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     StateRegistry registry(pool);
     StreamUploads uploads;  // unused by the screen path, but the scope's shape is the pass'
     ContentDraw   screen_draws(*screen_pipelines, pool,
-                               vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                               vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
                                                                                created.instance->vk()));
 
     const ProgramFacts  programs[] = { screen_facts };
@@ -464,16 +464,16 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     // through a full-screen call inside a picture-in-picture rectangle.
     FrameArena    arena{ 64 * 1024 };
     Diagnostics   diagnostics;
-    std::vector<vine::String> messages;
-    diagnostics.setSink([&messages](const vine::graphics::RenderDiagnostic& diagnostic) {
+    std::vector<vn::String> messages;
+    diagnostics.setSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
         messages.push_back(diagnostic.message);
     });
     Observe       observe;
     FrameRecorder recorder{ arena, diagnostics, observe };
     FrameCompiler compiler{ arena, diagnostics, observe };
 
-    const vine::intrusive_ptr<RenderTarget> source_handle(new RenderTarget());
-    const vine::intrusive_ptr<RenderTarget> destination_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> source_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> destination_handle(new RenderTarget());
 
     TargetFacts source_facts;
     source_facts.target        = source_handle.get();
@@ -508,7 +508,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     blue_clear.color_value[3] = 1.0F;
 
     // The SDK refuses a full-screen pass without a camera at wiring time, so the host's call always has one.
-    const vine::intrusive_ptr<vine::graphics::Camera> camera(new vine::graphics::Camera());
+    const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
 
     std::vector<RenderTarget*> inputs{ source_handle.get() };
 
@@ -531,7 +531,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 2U);
     ASSERT_EQ(frame.passes[0].pass, 1U) << "the producer runs first - the sampled edge says so";
-    const vine::vsg::core::CompiledPass& consumer = frame.passes[1];
+    const vn::vsg::core::CompiledPass& consumer = frame.passes[1];
     ASSERT_EQ(consumer.draws.size(), 1U);
     ASSERT_EQ(consumer.draws[0].kind, DrawKind::Screen);
     EXPECT_EQ(consumer.draws[0].viewport.width, kPictureInPicture.width) << "the rectangle is the call's own";
@@ -603,7 +603,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     //     core::depthFinalLayout), so the sampling pass needs no barrier and no transition of its own;
     //   * the depth values are the producer's: inside its triangle the depth it wrote, everywhere else the
     //     cleared reverse-Z far plane (0.0) - which is what makes this a depth READ and not a texture bind.
-    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)
     {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
@@ -641,24 +641,24 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
 
     // The identity the plan names the shadow map by: the SDK handle the host announced it with (the same
     // pairing every fixture makes between a target object and the handle the engine knows it as).
-    const vine::intrusive_ptr<RenderTarget> shadow_handle(new RenderTarget());
-    const vine::intrusive_ptr<RenderTarget> receiver_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> shadow_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> receiver_handle(new RenderTarget());
 
     std::unique_ptr<BlockStorage>     storage     = BlockStorage::create(created.device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
 
     // The producer: a triangle written into the depth map, with NO fragment output (the pass has no colour
     // attachment to write to - a depth-only pipeline, which is what settings.color_attachments = 0 declares).
-    const vine::intrusive_ptr<ShaderProgram> shadow_program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> shadow_program(new ShaderProgram());
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) in vec3 position;\n"
             "void main() { gl_Position = vec4(position.xy, 0.5, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
             "void main() { }\n"));
         shadow_program->addStage(vertex);
         shadow_program->addStage(fragment);
@@ -668,17 +668,17 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
 
     // The consumer: a triangle that samples the depth map and paints the sampled value. Its uv comes from the
     // vertex position (the same NDC the geometry is authored in), so "which texel it reads" is arithmetic.
-    const vine::intrusive_ptr<ShaderProgram> sampling_program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> sampling_program(new ShaderProgram());
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) in vec3 position;\n"
             "layout(location = 0) out vec2 uv;\n"
             "void main() { gl_Position = vec4(position.xy, 0.5, 1.0); uv = position.xy * 0.5 + 0.5; }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(set = 1, binding = 0) uniform sampler2D shadowDepth;\n"
             "layout(location = 0) in vec2 uv;\n"
             "layout(location = 0) out vec4 outColor;\n"
@@ -711,29 +711,29 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     // The producer's geometry covers the LEFT HALF of the target; the consumer's covers the middle, so one of
     // its fragments samples a texel the producer wrote and another samples one it did not.
     const auto make_geometry = [](std::vector<float> positions) {
-        auto indices = vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
-            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
-        auto geometry = vine::intrusive_ptr<Geometry>(new Geometry());
-        geometry->setPositions(vine::intrusive_ptr<const vine::Buffer<float>>(
-            new vine::Buffer<float>(std::move(positions))));
+        auto indices = vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+        auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
+        geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(
+            new vn::Buffer<float>(std::move(positions))));
         geometry->setIndices(indices);
         geometry->setRevision(1U);
         return geometry;
     };
-    const vine::intrusive_ptr<Geometry> shadow_geometry =
+    const vn::intrusive_ptr<Geometry> shadow_geometry =
         make_geometry({ -1.0F, -1.0F, 0.0F, 0.0F, -1.0F, 0.0F, -0.5F, 1.0F, 0.0F });
-    const vine::intrusive_ptr<Geometry> sampling_geometry =
+    const vn::intrusive_ptr<Geometry> sampling_geometry =
         make_geometry({ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 0.0F, 1.0F, 0.0F });
 
     GeometryFacts                        shadow_geometry_facts;
     GeometryFacts                        sampling_geometry_facts;
-    std::vector<vine::vsg::ChannelFacts> shadow_channels;
-    std::vector<vine::vsg::ChannelFacts> sampling_channels;
+    std::vector<vn::vsg::ChannelFacts> shadow_channels;
+    std::vector<vn::vsg::ChannelFacts> sampling_channels;
     ASSERT_EQ(buildGeometryFacts(*shadow_geometry, shadow_geometry_facts, shadow_channels), FactMiss::None);
     ASSERT_EQ(buildGeometryFacts(*sampling_geometry, sampling_geometry_facts, sampling_channels), FactMiss::None);
 
-    const vine::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -749,7 +749,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     VariantPool   pool;
     StreamUploads uploads;
     const auto    entry_points =
-        vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+        vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw   shadow_draws(*shadow_pipelines, pool, entry_points);
     ContentDraw   sampling_draws(*sampling_pipelines, pool, entry_points);
 
@@ -874,7 +874,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
 
     // What the producer wrote, read straight out of the shadow map's depth: 0.5 inside its triangle (the
     // vertex stage puts every fragment there) and the cleared far plane (0.0) outside it.
-    const vine::vsg::core::DepthProbe depth = shadow_map->depthProbe();
+    const vn::vsg::core::DepthProbe depth = shadow_map->depthProbe();
     ASSERT_TRUE(depth.valid()) << "a D32 depth target is readable";
     const float inside_depth  = depth.depthAt(16, 32);
     const float outside_depth = depth.depthAt(48, 32);

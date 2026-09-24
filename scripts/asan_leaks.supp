@@ -28,9 +28,9 @@ leak:libexpat
 # src/base/runtime/src/DynamicLibraryLoader.cpp.
 #
 # Measured (2026-09-16): this is the ONLY leak a test_vsg run reports -- 808 B in
-# 16 allocations, all in vine::runtime::DynamicLibraryLoader /
+# 16 allocations, all in vn::runtime::DynamicLibraryLoader /
 # DynamicLibrary::DynamicLibrary, with no frame in the vsg backend. Before this
 # entry, the backend's ASan run had to be judged with VINE_ASAN_LEAK_SCOPE (report
 # leaks outside a pattern without failing); with it, the whole suite runs with
 # plain all-or-nothing leak judging, which is the stronger setting.
-leak:vine::runtime::DynamicLibrary
+leak:vn::runtime::DynamicLibrary

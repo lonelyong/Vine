@@ -5,7 +5,7 @@
 #include <utility>
 #include <variant>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 struct ConfigItem::Impl {
     String         key;
@@ -255,4 +255,4 @@ ConfigItem& ConfigItem::readOnly(bool on)
     return *this;
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

@@ -61,7 +61,7 @@
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief The live content a host tracks, and the tables the frame's recording reads (see the file note). */
 class ContentStore
@@ -77,14 +77,14 @@ class ContentStore
      *
      * @param geometry Geometry the host draws with; null is ignored.
      */
-    void track(const vine::intrusive_ptr<vine::graphics::Geometry>& geometry);
+    void track(const vn::intrusive_ptr<vn::graphics::Geometry>& geometry);
 
     /**
      * @brief Takes (a share of) ownership of @p program and answers for it from now on.
      *
      * @param program Program the host draws with; null is ignored.
      */
-    void track(const vine::intrusive_ptr<vine::graphics::ShaderProgram>& program);
+    void track(const vn::intrusive_ptr<vn::graphics::ShaderProgram>& program);
 
     /**
      * @brief Takes (a share of) ownership of @p material and answers for it from now on.
@@ -92,7 +92,7 @@ class ContentStore
      * @param material Material the host shades with; null is ignored (content without a material is answered
      *                 for by the default entry, which needs no tracking).
      */
-    void track(const vine::intrusive_ptr<vine::graphics::Material>& material);
+    void track(const vn::intrusive_ptr<vn::graphics::Material>& material);
 
     /**
      * @brief Touches @p material: refreshes its entry when the values it carries NOW differ from the row's.
@@ -112,7 +112,7 @@ class ContentStore
      *
      * @param material Material to touch; null is ignored (the default entry describes itself).
      */
-    void updateMaterial(vine::raw_ptr<vine::graphics::Material> material);
+    void updateMaterial(vn::raw_ptr<vn::graphics::Material> material);
 
     /**
      * @brief Ensures the tables answer for everything @p frame names, and returns them.
@@ -181,15 +181,15 @@ class ContentStore
 
   private:
     /** @brief Ensures the tables answer for one named geometry (see tablesFor). */
-    void ensureGeometry(const vine::graphics::Geometry* geometry, core::FrameTimeline& timeline,
+    void ensureGeometry(const vn::graphics::Geometry* geometry, core::FrameTimeline& timeline,
                         core::RetirementQueue& retirement);
 
     /** @brief Ensures the tables answer for one named material (see tablesFor). */
-    void ensureMaterial(const vine::graphics::Material* material, core::FrameTimeline& timeline,
+    void ensureMaterial(const vn::graphics::Material* material, core::FrameTimeline& timeline,
                         core::RetirementQueue& retirement);
 
     /** @brief Ensures the tables answer for one named program IN ONE GEOMETRY-FREE KIND (see tablesFor). */
-    void ensureProgram(const vine::graphics::ShaderProgram* program, const ProgramVariant& variant, bool screen,
+    void ensureProgram(const vn::graphics::ShaderProgram* program, const ProgramVariant& variant, bool screen,
                        core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     struct Data;
@@ -198,4 +198,4 @@ class ContentStore
     std::shared_ptr<Data> d;
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

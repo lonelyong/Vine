@@ -12,7 +12,7 @@
 #include <vine/geometry/Mesh.hpp>
 #include <vine/runtime/InMemoryCache.hpp>
 
-V_MESHIO_NS_BEGIN
+VN_MESHIO_NS_BEGIN
 
 /**
  * @brief Utility class for loading mesh models (STL, OBJ, ...).
@@ -25,7 +25,7 @@ V_MESHIO_NS_BEGIN
  * @note The cache is not thread-safe; concurrent loads through the same
  *       loader instance must be avoided.
  */
-class V_MESHIO_API MeshLoader
+class VN_MESHIO_API MeshLoader
 {
     // 类型声明区块
   public:
@@ -136,20 +136,20 @@ class V_MESHIO_API MeshLoader
      * @param file_path The model file path (STL, OBJ, ...).
      * @return The loaded mesh, or null on failure.
      */
-    vine::intrusive_ptr<vine::geometry::Mesh> load(const std::filesystem::path& file_path);
+    vn::intrusive_ptr<vn::geometry::Mesh> load(const std::filesystem::path& file_path);
 
     // 类型声明区块
   private:
     /** @brief Per-file cached meshes, grouped by load options. */
     struct CacheData
     {
-        std::unordered_map<Options, vine::intrusive_ptr<vine::geometry::Mesh>, OptionsHash> option_shape_map;
+        std::unordered_map<Options, vn::intrusive_ptr<vn::geometry::Mesh>, OptionsHash> option_shape_map;
     };
 
     // 字段区块
   private:
     Options options_;
-    vine::runtime::InMemoryCache<vine::crypto::ByteSequenceFingerprint, CacheData> cache_;
+    vn::runtime::InMemoryCache<vn::crypto::ByteSequenceFingerprint, CacheData> cache_;
 };
 
-V_MESHIO_NS_END
+VN_MESHIO_NS_END

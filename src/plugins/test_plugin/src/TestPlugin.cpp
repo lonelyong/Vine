@@ -7,9 +7,9 @@
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/plugin_export.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-V_OBJECT_META_IMPL(TestPlugin, Plugin)
+VN_OBJECT_META_IMPL(TestPlugin, Plugin)
 
 TestPlugin::TestPlugin() = default;
 
@@ -29,7 +29,7 @@ void TestPlugin::load(PluginLoadContext* context)
     Plugin::load(context);
 }
 
-V_DECLARE_PLUGIN(TestPlugin, u8"8581747e-3f23-4da0-8fea-c0dfdb78e098", u8"test_plugin", u8"测试插件", u8"1.0.0", u8"测试插件：依赖应用外壳", u8"Vine",
+VN_DECLARE_PLUGIN(TestPlugin, u8"8581747e-3f23-4da0-8fea-c0dfdb78e098", u8"test_plugin", u8"测试插件", u8"1.0.0", u8"测试插件：依赖应用外壳", u8"Vine",
                   u8"dev@vine.example", u8"https://github.com/vine/test_plugin", u8"", { u8"app_shell" })
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

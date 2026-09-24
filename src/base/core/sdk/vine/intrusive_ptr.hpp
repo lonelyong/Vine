@@ -6,7 +6,7 @@
 #include <type_traits>
 #include <utility>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief Intrusive strong reference pointer (boost::intrusive_ptr style).
@@ -335,4 +335,4 @@ inline intrusive_ptr<T> dynamic_pointer_cast(const intrusive_ptr<U>& r)
 template <typename T>
 using IPtr = intrusive_ptr<T>;
 
-V_CORE_NS_END
+VN_CORE_NS_END

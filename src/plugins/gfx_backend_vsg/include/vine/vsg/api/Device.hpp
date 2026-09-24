@@ -22,7 +22,7 @@
  * `applyRequiredFeatures`. A caller therefore gets a device that satisfies the policy or a reason it could
  * not, never a device that happens to be first.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief What a caller may ask about the device it wants. */
 struct DeviceOptions
@@ -34,7 +34,7 @@ struct DeviceOptions
 struct DeviceResult
 {
     bool                          ok{false};         ///< Whether a device satisfying the policy was created.
-    vine::String                  error;            ///< Why not, in the caller's words (empty when ok).
+    vn::String                  error;            ///< Why not, in the caller's words (empty when ok).
     bool                          validation{false}; ///< Whether the validation layer is ACTUALLY enabled.
     ::vsg::ref_ptr<::vsg::Instance> instance;       ///< The instance the device belongs to.
     ::vsg::ref_ptr<::vsg::Device>   device;         ///< The logical device.
@@ -48,4 +48,4 @@ struct DeviceResult
  */
 [[nodiscard]] DeviceResult createDevice(const DeviceOptions& options = {});
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -6,7 +6,7 @@
 #include <vine/progress/ProgressRange.hpp>
 #include <vine/progress/ProgressScope.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 namespace
 {
@@ -133,4 +133,4 @@ double StartupProgress::fraction() const
     return d->host.indicator().position();
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

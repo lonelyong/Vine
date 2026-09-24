@@ -8,9 +8,9 @@
 #include <vine/runtime/CacheManager.hpp>
 #include <vine/runtime/InMemoryManager.hpp>
 
-using vine::String;
-using vine::runtime::CacheManager;
-using vine::runtime::InMemoryManager;
+using vn::String;
+using vn::runtime::CacheManager;
+using vn::runtime::InMemoryManager;
 
 namespace
 {

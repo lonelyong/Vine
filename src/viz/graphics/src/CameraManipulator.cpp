@@ -1,6 +1,6 @@
 ﻿#include <vine/graphics/CameraManipulator.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 CameraManipulator::CameraManipulator(raw_ptr<Camera> camera)
   : camera_(camera)
@@ -33,4 +33,4 @@ void CameraManipulator::home()
 {
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

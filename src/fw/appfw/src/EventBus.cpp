@@ -17,7 +17,7 @@
 #include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/logging/Log.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 namespace
 {
@@ -35,13 +35,13 @@ namespace
  * @param visit Callable invoked once per type, an interface before its parents.
  */
 template <typename Visit>
-void forEachInterface(std::span<const vine::Type* const> roots, std::vector<const vine::Type*>& visited, Visit&& visit)
+void forEachInterface(std::span<const vn::Type* const> roots, std::vector<const vn::Type*>& visited, Visit&& visit)
 {
     // Explicit stack, filled in reverse so that the interface declared first is
     // visited first: the visit order is part of the delivery contract.
-    std::vector<const vine::Type*> stack(roots.rbegin(), roots.rend());
+    std::vector<const vn::Type*> stack(roots.rbegin(), roots.rend());
     while (!stack.empty()) {
-        const vine::Type* itf = stack.back();
+        const vn::Type* itf = stack.back();
         stack.pop_back();
         if (itf == nullptr || std::ranges::find(visited, itf) != visited.end()) {
             continue;  // already visited (or malformed metadata): prune the subtree
@@ -110,10 +110,10 @@ void reportHandlerError(const std::shared_ptr<const EventBusErrorHandler>& handl
     // Logging cannot throw (see Logger: every level function is noexcept and reports
     // a failure on stderr instead), so it needs no guard of its own here.
     if (error != nullptr) {
-        V_LOGE("EventBus: subscriber '{}' threw: {}", state->id(), error->what());
+        VN_LOGE("EventBus: subscriber '{}' threw: {}", state->id(), error->what());
     }
     else {
-        V_LOGE("EventBus: subscriber '{}' threw a non-standard exception", state->id());
+        VN_LOGE("EventBus: subscriber '{}' threw a non-standard exception", state->id());
     }
 
     if (handler == nullptr) {
@@ -450,7 +450,7 @@ struct EventBus::Impl {
     };
 
     // One concrete EventChannel per subscribed event type.
-    std::map<vine::TypeId, EventChannel> channels;
+    std::map<vn::TypeId, EventChannel> channels;
     // Shared lock: publish reads the map concurrently; subscribe inserts.
     mutable std::shared_mutex mutex;
     // Deliveries currently parked in the event loop. Shared with the queued tasks
@@ -601,15 +601,15 @@ void EventBus::Impl::collectPlan(const Object& event, std::vector<SubscriptionEn
     // dispatch only affects later publications. `visited` prunes the interface walk,
     // so a diamond hierarchy is walked once.
     std::vector<SubscriptionEntry> garbage;
-    std::vector<vine::TypeId>      visited;
+    std::vector<vn::TypeId>      visited;
     {
         std::shared_lock lock(mutex);
-        const auto       consider = [&](const vine::Type* type) {
+        const auto       consider = [&](const vn::Type* type) {
             if (const auto it = channels.find(type); it != channels.end()) {
                 it->second.collect(plan, garbage);
             }
         };
-        for (const vine::Type* cls = event.getType(); cls != nullptr; cls = cls->parent()) {
+        for (const vn::Type* cls = event.getType(); cls != nullptr; cls = cls->parent()) {
             consider(cls);
             forEachInterface(cls->interfaces(), visited, consider);
         }
@@ -809,7 +809,7 @@ void EventBus::setErrorHandler(EventBusErrorHandler handler)
     d->setErrorHandler(std::move(handler));
 }
 
-Subscription EventBus::subscribeErased(vine::TypeId type, std::function<void(const std::shared_ptr<const Object>&)> handler, SubscriptionThreadMode mode, const String& tag)
+Subscription EventBus::subscribeErased(vn::TypeId type, std::function<void(const std::shared_ptr<const Object>&)> handler, SubscriptionThreadMode mode, const String& tag)
 {
     const Impl::CallGuard guard(*d);
     if (!guard.admitted()) {
@@ -885,9 +885,9 @@ void EventBus::publish(const std::shared_ptr<const Object>& event)
         if (!dispatcher_->postToMain([delivery] { delivery->run(); })) {
             // The task was dropped and is already gone with the lambda, so its
             // Delivery destructor unregistered the payload again: nothing leaks.
-            V_LOGW("EventBus: dropping a Main delivery, the event loop refused the task");
+            VN_LOGW("EventBus: dropping a Main delivery, the event loop refused the task");
         }
     }
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

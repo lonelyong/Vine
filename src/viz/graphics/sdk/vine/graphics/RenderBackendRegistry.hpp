@@ -10,7 +10,7 @@
 
 #include "RenderBackend.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class RenderBackend;
 class Scene;
@@ -21,7 +21,7 @@ class Camera;
  *
  * A backend may support several families simultaneously (e.g. OGRE renders
  * through OpenGL, Direct3D or Vulkan at runtime), so the values are bit
- * flags: combine with `|` and test with vine::testFlag().
+ * flags: combine with `|` and test with vn::testFlag().
  */
 enum class RenderApi : std::uint32_t {
     None     = 0,
@@ -32,7 +32,7 @@ enum class RenderApi : std::uint32_t {
     Direct3D = 1 << 4,  // Direct3D 11/12.
 };
 
-V_ENABLE_ENUM_FLAGS(RenderApi)
+VN_ENABLE_ENUM_FLAGS(RenderApi)
 
 /** @brief Converts render API flags to a combined display string.
  *
@@ -40,7 +40,7 @@ V_ENABLE_ENUM_FLAGS(RenderApi)
  * @return Lower-case list joined with " | ", e.g. "vulkan | opengl3";
  *         "unknown" when no flag is set.
  */
-V_GRAPHICS_API String renderApiToString(RenderApi api);
+VN_GRAPHICS_API String renderApiToString(RenderApi api);
 
 /**
  * @brief Static metadata describing a render backend implementation.
@@ -48,7 +48,7 @@ V_GRAPHICS_API String renderApiToString(RenderApi api);
  * One backend plugin may register several factories (e.g. different GL
  * versions); each factory carries its own RenderBackendInfo.
  */
-struct V_GRAPHICS_API RenderBackendInfo {
+struct VN_GRAPHICS_API RenderBackendInfo {
     String name;          // Unique backend name (identifier), e.g. "vsg", "opengl3".
     String display_name;  // Human-friendly name shown in UI; falls back to name when empty.
     String description;   // Human-readable description.
@@ -66,7 +66,7 @@ struct V_GRAPHICS_API RenderBackendInfo {
  * backend module or its third-party libraries. A single backend plugin can
  * register several factories, one per implementation.
  */
-class V_GRAPHICS_API RenderBackendFactory {
+class VN_GRAPHICS_API RenderBackendFactory {
   public:
     virtual ~RenderBackendFactory() = default;
 
@@ -91,7 +91,7 @@ class V_GRAPHICS_API RenderBackendFactory {
      *
      * @return Newly created backend; the caller owns the returned reference.
      */
-    virtual vine::intrusive_ptr<RenderBackend> create() = 0;
+    virtual vn::intrusive_ptr<RenderBackend> create() = 0;
 };
 
 /**
@@ -102,7 +102,7 @@ class V_GRAPHICS_API RenderBackendFactory {
  * then creates a backend by name without depending on the backend module at
  * compile time.
  */
-class V_GRAPHICS_API RenderBackendRegistry {
+class VN_GRAPHICS_API RenderBackendRegistry {
   public:
     /** @brief Read-only snapshot of a registered backend factory. */
     struct Entry {
@@ -127,7 +127,7 @@ class V_GRAPHICS_API RenderBackendRegistry {
      * @return New backend, or null when no factory with that name is
      *         registered.
      */
-    vine::intrusive_ptr<RenderBackend> create(const String& name) const;
+    vn::intrusive_ptr<RenderBackend> create(const String& name) const;
 
     /** @brief Gets the names of all registered backends. */
     std::vector<String> names() const;
@@ -170,4 +170,4 @@ class V_GRAPHICS_API RenderBackendRegistry {
     std::unique_ptr<Data> d;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

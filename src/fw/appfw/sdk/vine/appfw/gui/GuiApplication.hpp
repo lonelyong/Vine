@@ -5,11 +5,11 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/Signal.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 struct SplashConfig;
-V_APPFW_NS_END
+VN_APPFW_NS_END
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class MainWindow;
 class BootSplash;
@@ -23,8 +23,8 @@ enum class Theme
     Dark   ///< Dark theme.
 };
 
-class V_APPFW_API GuiApplication : public Application {
-    V_OBJECT_META_DECL
+class VN_APPFW_API GuiApplication : public Application {
+    VN_OBJECT_META_DECL
   public:
     GuiApplication(int argc, char** argv);
     ~GuiApplication() override;
@@ -123,4 +123,4 @@ class V_APPFW_API GuiApplication : public Application {
     void applyTheme(Theme theme);
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

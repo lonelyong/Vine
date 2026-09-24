@@ -2,7 +2,7 @@
 
 #include <vine/vsg/core/DeviceRequirements.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 void applyRequiredFeatures(const ::vsg::ref_ptr<::vsg::DeviceFeatures>& features)
 {
@@ -47,4 +47,4 @@ void applyRequiredFeatures(const ::vsg::ref_ptr<::vsg::DeviceFeatures>& features
                          VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME };
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

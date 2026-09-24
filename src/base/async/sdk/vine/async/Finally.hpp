@@ -5,7 +5,7 @@
 #include <type_traits>
 #include <utility>
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 /**
  * @brief RAII guard that runs a callback when it goes out of scope.
@@ -65,4 +65,4 @@ Finally<std::decay_t<F>> makeFinally(F&& f)
     return Finally<std::decay_t<F>>{ std::forward<F>(f) };
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

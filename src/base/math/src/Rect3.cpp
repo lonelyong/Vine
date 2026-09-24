@@ -8,7 +8,7 @@
 #include <vine/math/Vector3.hpp>
 
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 #define TMPL_PREFIX template <typename T>
 
@@ -83,15 +83,15 @@ TMPL_PREFIX Rect3<T> Rect3<T>::compute(std::span<const Vector3<T>> points)
 
 #undef TMPL_PREFIX
 
-template class V_MATH_API Rect3<float>;
-template class V_MATH_API Rect3<double>;
-template class V_MATH_API Rect3<int8_t>;
-template class V_MATH_API Rect3<uint8_t>;
-template class V_MATH_API Rect3<int16_t>;
-template class V_MATH_API Rect3<uint16_t>;
-template class V_MATH_API Rect3<int32_t>;
-template class V_MATH_API Rect3<uint32_t>;
-template class V_MATH_API Rect3<int64_t>;
-template class V_MATH_API Rect3<uint64_t>;
+template class VN_MATH_API Rect3<float>;
+template class VN_MATH_API Rect3<double>;
+template class VN_MATH_API Rect3<int8_t>;
+template class VN_MATH_API Rect3<uint8_t>;
+template class VN_MATH_API Rect3<int16_t>;
+template class VN_MATH_API Rect3<uint16_t>;
+template class VN_MATH_API Rect3<int32_t>;
+template class VN_MATH_API Rect3<uint32_t>;
+template class VN_MATH_API Rect3<int64_t>;
+template class VN_MATH_API Rect3<uint64_t>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

@@ -10,7 +10,7 @@
 #include "Sleep.hpp"
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 /**
  * @brief Runs a task factory, retrying on failure up to a number of attempts.
@@ -66,4 +66,4 @@ Task<typename std::invoke_result_t<F>::value_type> retry(F factory,
     }
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

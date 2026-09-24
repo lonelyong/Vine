@@ -7,7 +7,7 @@
 
 #include <vine/String.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class PluginLoadContext;
 
@@ -53,4 +53,4 @@ void installConsoleLogSink(gui::ConsolePanel* panel, PluginLoadContext* context)
  */
 void uninstallConsoleLogSink();
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

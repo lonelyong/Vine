@@ -2,10 +2,10 @@
 
 #include <iosfwd>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 class String;
 
-V_CORE_API std::ostream& operator<<(std::ostream& cout, const String& str);
+VN_CORE_API std::ostream& operator<<(std::ostream& cout, const String& str);
 
-V_CORE_NS_END
+VN_CORE_NS_END

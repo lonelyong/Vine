@@ -1,8 +1,8 @@
 ﻿#include <vine/geometry/BrepShape.hpp>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-V_OBJECT_META_IMPL(BrepShape, Shape)
+VN_OBJECT_META_IMPL(BrepShape, Shape)
 
 BrepShape::BrepShape()
 {
@@ -26,4 +26,4 @@ bool BrepShape::isValid() const
     return shape_ != nullptr;
 }
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

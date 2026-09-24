@@ -7,7 +7,7 @@
 #include <mutex>
 #include <utility>
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 /**
  * @brief FIFO coroutine-aware mutex.
@@ -339,4 +339,4 @@ inline void AsyncMutex::dequeue(LockAwaiter& a) noexcept
     a.next_ = nullptr;
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

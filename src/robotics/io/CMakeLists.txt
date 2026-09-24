@@ -1,4 +1,4 @@
-v_add_library(ROBOTICSIO_TARGET_NAME RoboticsIO)
+vn_add_library(ROBOTICSIO_TARGET_NAME RoboticsIO)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -20,5 +20,5 @@ else()
     find_package(tinyxml2 CONFIG REQUIRED)
 endif()
 
-target_link_libraries(${ROBOTICSIO_TARGET_NAME} PUBLIC vi::RoboticsCore vi::Geometry vi::IOBase)
+target_link_libraries(${ROBOTICSIO_TARGET_NAME} PUBLIC vn::RoboticsCore vn::Geometry vn::IOBase)
 target_link_libraries(${ROBOTICSIO_TARGET_NAME} PRIVATE tinyxml2)

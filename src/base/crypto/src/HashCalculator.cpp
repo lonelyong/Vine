@@ -7,7 +7,7 @@
 
 #include <wolfssl/wolfcrypt/hash.h>
 
-V_CRYPTO_NS_BEGIN
+VN_CRYPTO_NS_BEGIN
 
 namespace
 {
@@ -222,4 +222,4 @@ HashCalculator::Algorithm HashCalculator::algorithm() const
     return impl->algorithm;
 }
 
-V_CRYPTO_NS_END
+VN_CRYPTO_NS_END

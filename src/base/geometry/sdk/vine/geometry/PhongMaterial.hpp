@@ -6,13 +6,13 @@
 
 #include "Material.hpp"
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief A Phong shading material with ambient/diffuse/specular components.
  */
-class V_GEOMETRY_API PhongMaterial : public Material {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API PhongMaterial : public Material {
+    VN_OBJECT_META_DECL;
 
   public:
     /**
@@ -28,8 +28,8 @@ class V_GEOMETRY_API PhongMaterial : public Material {
      * @param specular  Specular reflectance (linear RGBA).
      * @param shininess Specular exponent; larger values give sharper highlights.
      */
-    PhongMaterial(const vine::Colorf& ambient, const vine::Colorf& diffuse,
-        const vine::Colorf& specular, float shininess = 32.0f);
+    PhongMaterial(const vn::Colorf& ambient, const vn::Colorf& diffuse,
+        const vn::Colorf& specular, float shininess = 32.0f);
 
   public:
     /**
@@ -37,42 +37,42 @@ class V_GEOMETRY_API PhongMaterial : public Material {
      *
      * @return Ambient color.
      */
-    const vine::Colorf& ambient() const;
+    const vn::Colorf& ambient() const;
 
     /**
      * @brief Sets the ambient reflectance.
      *
      * @param ambient New ambient color.
      */
-    void setAmbient(const vine::Colorf& ambient);
+    void setAmbient(const vn::Colorf& ambient);
 
     /**
      * @brief Returns the diffuse reflectance.
      *
      * @return Diffuse color.
      */
-    const vine::Colorf& diffuse() const;
+    const vn::Colorf& diffuse() const;
 
     /**
      * @brief Sets the diffuse reflectance.
      *
      * @param diffuse New diffuse color.
      */
-    void setDiffuse(const vine::Colorf& diffuse);
+    void setDiffuse(const vn::Colorf& diffuse);
 
     /**
      * @brief Returns the specular reflectance.
      *
      * @return Specular color.
      */
-    const vine::Colorf& specular() const;
+    const vn::Colorf& specular() const;
 
     /**
      * @brief Sets the specular reflectance.
      *
      * @param specular New specular color.
      */
-    void setSpecular(const vine::Colorf& specular);
+    void setSpecular(const vn::Colorf& specular);
 
     /**
      * @brief Returns the specular exponent.
@@ -93,13 +93,13 @@ class V_GEOMETRY_API PhongMaterial : public Material {
 
   private:
     /// Ambient reflectance.
-    vine::Colorf ambient_{ 0.2f, 0.2f, 0.2f, 1.0f };
+    vn::Colorf ambient_{ 0.2f, 0.2f, 0.2f, 1.0f };
     /// Diffuse reflectance.
-    vine::Colorf diffuse_{ 0.8f, 0.8f, 0.8f, 1.0f };
+    vn::Colorf diffuse_{ 0.8f, 0.8f, 0.8f, 1.0f };
     /// Specular reflectance.
-    vine::Colorf specular_{ 1.0f, 1.0f, 1.0f, 1.0f };
+    vn::Colorf specular_{ 1.0f, 1.0f, 1.0f, 1.0f };
     /// Specular exponent.
     float shininess_ = 32.0f;
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

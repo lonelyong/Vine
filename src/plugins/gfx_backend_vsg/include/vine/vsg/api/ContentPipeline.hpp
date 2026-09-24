@@ -56,7 +56,7 @@
  * set 0, the sampled inputs at set 1, vertex streams declared. A FULL-SCREEN layer is the other drawing
  * call the engine has: the source's colour attachments at bindings 0..N-1 of set 0 and NOTHING else - the
  * full-screen ABI the engine's own screen programs are written against (see
- * `vine::graphics::BuiltinShaders`: `screenCopyProgram` declares its sampler as `layout(binding = i)`, with
+ * `vn::graphics::BuiltinShaders`: `screenCopyProgram` declares its sampler as `layout(binding = i)`, with
  * no set qualifier, so set 0 is where a full-screen sampler has to live), the full-screen vertex stage
  * supplied by the backend (the engine's canonical triangle, built from `gl_VertexIndex`, with no vertex
  * buffer and no vertex-side constants), and one 128-byte push block whose layout the SDK's builtin screen
@@ -70,7 +70,7 @@
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 // The entry whose channels one of the factories below describes (see api/ContentFacts; the
 // definition would close a cycle - the tables name this class' `Shaders`).
@@ -128,7 +128,7 @@ class ContentPipeline
         /// than runtime state because of the API's rule: a topology set dynamically may only be of the same
         /// CLASS as this baked value, so a layer built for another class cannot serve the draw at all (see
         /// core::PipelineKey::topology).
-        vine::graphics::Topology topology{vine::graphics::Topology::Triangles};
+        vn::graphics::Topology topology{vn::graphics::Topology::Triangles};
     };
 
     /** @brief What an acquire did. */
@@ -403,4 +403,4 @@ class ContentPipeline
     ContentPipeline();
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

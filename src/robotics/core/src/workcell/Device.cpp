@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 const String& Device::modelName() const
 {
@@ -232,4 +232,4 @@ std::unique_ptr<DeviceData> DeviceData::clone() const
     return out;
 }
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

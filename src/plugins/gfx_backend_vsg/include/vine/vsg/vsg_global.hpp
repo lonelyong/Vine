@@ -1,19 +1,19 @@
 ﻿#pragma once
 
-#include <vine/vi_global.hpp>
+#include <vine/vine_global.hpp>
 
-#ifdef V_VSG_LIB
-#    define V_VSG_API V_EXPORT
+#ifdef VN_VSG_LIB
+#    define VN_VSG_API VN_EXPORT
 #else
-#    define V_VSG_API V_IMPORT
+#    define VN_VSG_API VN_IMPORT
 #endif
 
-#define V_VSG_NS_BEGIN                                                                                                                                    \
-    namespace V_ROOT_NS                                                                                                                                   \
+#define VN_VSG_NS_BEGIN                                                                                                                                    \
+    namespace VN_ROOT_NS                                                                                                                                   \
     {                                                                                                                                                     \
     namespace vsg                                                                                                                                         \
     {
 
-#define V_VSG_NS_END                                                                                                                                      \
+#define VN_VSG_NS_END                                                                                                                                      \
     }                                                                                                                                                     \
     }

@@ -4,7 +4,7 @@
 
 #include <string>
 
-V_PROGRESS_NS_BEGIN
+VN_PROGRESS_NS_BEGIN
 
 class ProgressIndicator;
 class ProgressRange;
@@ -18,7 +18,7 @@ class ProgressRange;
  * empty scope is not attached to any indicator and safely performs no
  * reporting.
  */
-class V_PROGRESS_API ProgressScope
+class VN_PROGRESS_API ProgressScope
 {
   public:
     friend class ProgressIndicator;
@@ -130,4 +130,4 @@ class V_PROGRESS_API ProgressScope
     bool active_{false};
 };
 
-V_PROGRESS_NS_END
+VN_PROGRESS_NS_END

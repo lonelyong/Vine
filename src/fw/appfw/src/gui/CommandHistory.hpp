@@ -8,7 +8,7 @@
 
 #include <vine/String.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Up/down command history for the console input line.
@@ -81,4 +81,4 @@ class CommandHistory
     String              saved_;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

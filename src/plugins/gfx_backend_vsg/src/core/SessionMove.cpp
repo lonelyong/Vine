@@ -1,6 +1,6 @@
 #include <vine/vsg/core/SessionMove.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -37,4 +37,4 @@ MoveDecision planSessionMove(const MoveFacts& facts) noexcept
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

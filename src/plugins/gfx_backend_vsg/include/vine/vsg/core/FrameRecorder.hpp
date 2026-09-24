@@ -63,7 +63,7 @@
  * WHAT IT COUNTS: the pass scopes that enter the plan and the drawing calls collected (Observe, the one
  * place a phase gates on), plus whatever Protocol counted. There is deliberately no second tally here.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -104,11 +104,11 @@ struct LightRef
     /// colour are the same numbers). The pointer is an identity, never dereferenced after the call returns.
     const void*                identity{nullptr};
     bool                       enabled{false};                    ///< Disabled lights are not lit.
-    vine::graphics::LightType  type{vine::graphics::LightType::Ambient};  ///< Ambient / directional / reserved kinds.
-    vine::Colorf               color{};                           ///< Linear colour.
+    vn::graphics::LightType  type{vn::graphics::LightType::Ambient};  ///< Ambient / directional / reserved kinds.
+    vn::Colorf               color{};                           ///< Linear colour.
     float                      intensity{1.0F};                   ///< Intensity multiplier.
     bool                       has_direction{false};              ///< Whether direction() means anything.
-    vine::math::Vec3d          direction{};                       ///< World-space direction (directional lights).
+    vn::math::Vec3d          direction{};                       ///< World-space direction (directional lights).
     bool                       cast_shadow{false};                ///< Light::castShadow: the switch that makes it a caster.
     float                      shadow_bias{0.0F};                 ///< ShadowSettings::bias: the map comparison's depth bias.
 };
@@ -121,11 +121,11 @@ struct LightRef
 struct CameraSnapshot
 {
     bool              present{false};   ///< Whether a camera was announced at all.
-    vine::math::Mat4d view{};           ///< World -> view matrix.
-    vine::math::Mat4d projection{};     ///< Clip-space projection (see Camera).
-    vine::math::Vec3d eye{};            ///< Eye position, for the CPU light transform.
-    vine::math::Vec3d target{};         ///< Look-at target, for the CPU light transform.
-    vine::math::Vec3d up{};             ///< Up vector, for the CPU light transform.
+    vn::math::Mat4d view{};           ///< World -> view matrix.
+    vn::math::Mat4d projection{};     ///< Clip-space projection (see Camera).
+    vn::math::Vec3d eye{};            ///< Eye position, for the CPU light transform.
+    vn::math::Vec3d target{};         ///< Look-at target, for the CPU light transform.
+    vn::math::Vec3d up{};             ///< Up vector, for the CPU light transform.
 };
 
 /** @brief One instance of one command, as the frame remembers it (the SDK's RenderCommand, copied). */
@@ -135,9 +135,9 @@ struct CollectedCommand
     std::uint64_t geometry_revision{0};         ///< `Geometry::revision()` at collection time.
     ProgramRef    program{};                    ///< The command's own program; null = the frame's default.
     const void*   material{nullptr};            ///< Material identity, or nullptr.
-    vine::math::Mat4d model{};                  ///< World-space model matrix.
+    vn::math::Mat4d model{};                  ///< World-space model matrix.
     float         opacity{1.0F};                ///< Effective opacity (the engine's only transparency channel).
-    vine::graphics::ResolvedRenderState state{};  ///< Resolved per-object state (the dynamic layer's source).
+    vn::graphics::ResolvedRenderState state{};  ///< Resolved per-object state (the dynamic layer's source).
     bool          depth_explicit{false};        ///< Whether the depth in `state` came from a StateNode.
 };
 
@@ -154,7 +154,7 @@ struct CollectedDraw
     DrawKind         kind{DrawKind::Content};   ///< Content drawing or a full-screen program.
     CameraSnapshot   camera{};                  ///< The camera announced with the call.
     bool             has_viewport{false};       ///< Whether this call consumed a viewport announcement.
-    vine::graphics::Viewport viewport{};        ///< The consumed viewport (meaningful when has_viewport).
+    vn::graphics::Viewport viewport{};        ///< The consumed viewport (meaningful when has_viewport).
     std::span<const LightRef> lights{};         ///< The consumed lights; empty = the backend default.
     const void*      source{nullptr};           ///< Screen draws: the target whose colour attachments are sampled.
     ProgramRef       program{};                 ///< Screen draws: the fragment program to draw with.
@@ -177,7 +177,7 @@ struct CollectedPass
     std::span<const InputRef> inputs{};    ///< The pass' resolved inputs, in declaration order.
     bool          has_clear{false};        ///< Whether the host announced a clear policy for this scope.
     ClearPolicy   clear{};                 ///< The announced policy (meaningful when has_clear).
-    vine::graphics::DepthMode depth{vine::graphics::DepthMode::TestAndWrite};  ///< The pass' depth mode.
+    vn::graphics::DepthMode depth{vn::graphics::DepthMode::TestAndWrite};  ///< The pass' depth mode.
     std::span<const CollectedDraw> draws{};///< Drawing calls that arrived in the scope, in call order.
 };
 
@@ -279,21 +279,21 @@ class FrameRecorder
      * @param mode Depth handling for the scope.
      * @return true when it was recorded; false when it was dropped.
      */
-    bool setDepthMode(vine::graphics::DepthMode mode);
+    bool setDepthMode(vn::graphics::DepthMode mode);
 
     /** @brief Announces the pass' resolved inputs (a property of the pass, not of one drawing call).
      *
      * @param inputs Resolved input targets in declaration order; a null entry means nothing produced it.
      * @return true when it was recorded; false when it was dropped.
      */
-    bool setPassInputs(std::span<const vine::graphics::RenderTarget* const> inputs);
+    bool setPassInputs(std::span<const vn::graphics::RenderTarget* const> inputs);
 
     /** @brief Announces the lights for the NEXT drawing call of this scope.
      *
      * @param lights Lights of the content scene, or empty for the backend default.
      * @return true when it was recorded; false when it was dropped.
      */
-    bool setLights(std::span<const vine::graphics::Light* const> lights);
+    bool setLights(std::span<const vn::graphics::Light* const> lights);
 
     /** @brief Collects a content drawing call (the SDK's render()).
      *
@@ -301,7 +301,7 @@ class FrameRecorder
      * @param camera   Camera for view/projection, snapshotted.
      * @return true when the call was collected; false when it was refused (no scope, or a released target).
      */
-    bool render(std::span<const vine::graphics::RenderCommand> commands, const vine::graphics::Camera* camera);
+    bool render(std::span<const vn::graphics::RenderCommand> commands, const vn::graphics::Camera* camera);
 
     /** @brief Collects a full-screen program drawing call (the SDK's drawScreenProgram()).
      *
@@ -310,8 +310,8 @@ class FrameRecorder
      * @param camera  Camera whose lights are forwarded.
      * @return true when the call was collected; false when it was refused.
      */
-    bool drawScreenProgram(const void* source, const vine::graphics::ShaderProgram* program,
-                           const vine::graphics::Camera* camera);
+    bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program,
+                           const vn::graphics::Camera* camera);
 
     /** @brief Selects the program content without one of its own is drawn with.
      *
@@ -320,7 +320,7 @@ class FrameRecorder
      * @param program Program to shade program-less content with, or nullptr for "none".
      * @return true always (the setting is a fact, not a request that can fail).
      */
-    bool setDefaultContentProgram(const vine::graphics::ShaderProgram* program);
+    bool setDefaultContentProgram(const vn::graphics::ShaderProgram* program);
 
     /** @brief Notes that a target is going away: the announcement of an open scope is dropped here.
      *
@@ -351,14 +351,14 @@ class FrameRecorder
     void reportRefusal(CallKind kind);
 
     /** @brief Copies @p lights into the arena and makes them the pending announcement. */
-    void snapshotLights(std::span<const vine::graphics::Light* const> lights);
+    void snapshotLights(std::span<const vn::graphics::Light* const> lights);
 
     /** @brief Copies @p commands into the arena as collected commands. */
     [[nodiscard]] std::span<const CollectedCommand> snapshotCommands(
-        std::span<const vine::graphics::RenderCommand> commands);
+        std::span<const vn::graphics::RenderCommand> commands);
 
     /** @brief Snapshots a borrowed camera. */
-    static CameraSnapshot snapshotCamera(const vine::graphics::Camera* camera);
+    static CameraSnapshot snapshotCamera(const vn::graphics::Camera* camera);
 
 
   private:
@@ -376,11 +376,11 @@ class FrameRecorder
     const void* pass_target_{nullptr};           ///< Target announced for the open scope.
     bool        pass_has_clear_{false};          ///< Whether the scope announced a clear.
     ClearPolicy pass_clear_{};                   ///< The announced clear.
-    vine::graphics::DepthMode pass_depth_{vine::graphics::DepthMode::TestAndWrite};  ///< The scope's depth mode.
+    vn::graphics::DepthMode pass_depth_{vn::graphics::DepthMode::TestAndWrite};  ///< The scope's depth mode.
     std::span<const InputRef> pass_inputs_{};    ///< The scope's inputs (a property of the pass).
 
     bool                       pending_has_viewport_{false};  ///< Whether a viewport is waiting for a draw.
-    vine::graphics::Viewport   pending_viewport_{};           ///< The viewport waiting for a draw.
+    vn::graphics::Viewport   pending_viewport_{};           ///< The viewport waiting for a draw.
     std::span<const LightRef>  pending_lights_{};             ///< The lights waiting for a draw.
 
     std::vector<CollectedDraw> open_draws_;      ///< The open scope's drawing calls (copied to the arena at endPass).
@@ -390,4 +390,4 @@ class FrameRecorder
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

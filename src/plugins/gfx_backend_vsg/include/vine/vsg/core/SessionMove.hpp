@@ -30,7 +30,7 @@
  * only exists once the new window has been created and asked, so it is the move attempt's own result
  * (see MoveAttemptResult), not a fact the caller could have supplied up front.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -76,4 +76,4 @@ enum class MoveAttemptResult : std::uint8_t
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

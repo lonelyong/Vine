@@ -5,7 +5,7 @@
 
 ## 1. 定位
 
-纯 header-only 协程运行时（`vine::async`，`vi::Async` 是 INTERFACE 目标，只依赖 `vi::Global` + `vi::Core`），
+纯 header-only 协程运行时（`vn::async`，`vn::Async` 是 INTERFACE 目标，只依赖 `vn::Global` + `vn::Core`），
 26 个头文件、约 6.2k 行。它提供三类东西：
 
 | 类别 | 内容 |
@@ -18,8 +18,8 @@
 `StorableValue`）、`Scheduler.hpp`（`InlineScheduler`、`resumeOn`、`scheduleOn`）、
 `ThreadPoolScheduler.hpp`（`runOn` / `run`，C# `Task.Run` 对应物）。
 
-**不属于**本模块：线程池（`vine::ThreadPool`，base/core）、取消令牌（`vine::CancellationToken` =
-`std::stop_token`，base/core）、Qt 事件循环调度（`vine::appfw::async::Scheduler`，fw/appfw）。
+**不属于**本模块：线程池（`vn::ThreadPool`，base/core）、取消令牌（`vn::CancellationToken` =
+`std::stop_token`，base/core）、Qt 事件循环调度（`vn::appfw::async::Scheduler`，fw/appfw）。
 
 ## 2. 三条必须守住的规则
 
@@ -83,8 +83,8 @@
 
 ## 5. 重复实现与收尾项
 
-- ~~`vine::appfw::async::sleep()`~~：**已于 2026-09-17 删除**（`src/fw/appfw/src/async/Sleep.hpp/.cpp`
-  连同 `test_asyncqt` 的两个用例一起移除）：与 `vine::async::sleepFor()` 功能重复，且当时全仓库
+- ~~`vn::appfw::async::sleep()`~~：**已于 2026-09-17 删除**（`src/fw/appfw/src/async/Sleep.hpp/.cpp`
+  连同 `test_asyncqt` 的两个用例一起移除）：与 `vn::async::sleepFor()` 功能重复，且当时全仓库
   （含测试）已无调用者——"怕动导出符号"的顾虑在调用者为 0 时不成立。
   同目录的 `appfw::async::Scheduler` 与 base 模块不重复（Qt 事件循环调度），保留；它仍是私有头、
   只有 `test_asyncqt` 在用，"提到 `sdk/` 供命令作者做线程回归"见命令管理器模块的后续课题。

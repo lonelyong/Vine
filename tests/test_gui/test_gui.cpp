@@ -39,7 +39,7 @@
 
 #include <SARibbon.h>
 
-#include <vine/vi_global.hpp>
+#include <vine/vine_global.hpp>
 
 #include <vine/appfw/Command.hpp>
 #include <vine/appfw/CommandManager.hpp>
@@ -98,7 +98,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 
-namespace guifw = vine::appfw::gui;
+namespace guifw = vn::appfw::gui;
 
 namespace
 {
@@ -118,7 +118,7 @@ class GuiEnv : public ::testing::Environment {
         static char* argv[] = { arg0, nullptr };
 
         // 与真实应用一样走 builder：它会应用应用身份并启用默认配置文件。
-        vine::appfw::AppConfig config;
+        vn::appfw::AppConfig config;
         config.name = "test_gui";
         app         = guifw::createGuiApplication(config, 1, argv);
 
@@ -144,125 +144,125 @@ std::unique_ptr<guifw::GuiApplication> GuiEnv::app;
 // 把控制台面板绑到可视 UserIO 上：宿主自己找它，框架不在 application 上转一手。
 void bindConsole(guifw::GuiApplication* app, guifw::ConsolePanel* panel)
 {
-    if (auto* io = vine::obj_cast<guifw::VisualUserIO>(app != nullptr ? app->userIO() : nullptr)) {
+    if (auto* io = vn::obj_cast<guifw::VisualUserIO>(app != nullptr ? app->userIO() : nullptr)) {
         io->setConsolePanel(panel);
     }
 }
 
 // 最小具体命令，用于验证 CommandManager 的 owner 跟踪与按插件报告。
-class DummyCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class DummyCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"dummy"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"dummy command"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    vn::String name() const override { return u8"dummy"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"dummy command"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 };
 
-V_OBJECT_META_IMPL(DummyCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(DummyCommand, vn::appfw::Command)
 
 // 返回业务载荷的命令：用来钉住“调用方拿到载荷、历史里不留载荷”这条契约。
-class PayloadCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class PayloadCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"payload"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"command returning a payload"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    vn::String name() const override { return u8"payload"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"command returning a payload"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
-        vine::appfw::CommandResult result(vine::appfw::CommandStatus::Success);
+        vn::appfw::CommandResult result(vn::appfw::CommandStatus::Success);
         result.setData(std::any(7));
         co_return result;
     }
 };
 
-V_OBJECT_META_IMPL(PayloadCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(PayloadCommand, vn::appfw::Command)
 
 // 耗时命令：LongRunning 标志让 CommandManager 自动挂载环境进度宿主。
-class LongCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class LongCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"long"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"long running command"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::LongRunning; }
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    vn::String name() const override { return u8"long"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"long running command"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::LongRunning; }
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
-        co_await vine::async::sleepFor(std::chrono::milliseconds(120));
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_await vn::async::sleepFor(std::chrono::milliseconds(120));
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 };
 
-V_OBJECT_META_IMPL(LongCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(LongCommand, vn::appfw::Command)
 
 // 嵌套子命令：LongRunning，复用父命令的取消/进度宿主。
-class NestedChildCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class NestedChildCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"nested_child"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"nested child command"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::LongRunning; }
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::String name() const override { return u8"nested_child"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"nested child command"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::LongRunning; }
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         // 子命令现在是独立宿主（前台栈顶），可上报自己的进度。
-        if (auto* host = vine::appfw::ProgressHost::current()) {
+        if (auto* host = vn::appfw::ProgressHost::current()) {
             host->setLabel("child");
-            vine::progress::ProgressScope scope = host->scope("child", 20);
+            vn::progress::ProgressScope scope = host->scope("child", 20);
             for (int i = 0; i < 20; ++i) {
                 if (context && context->isCancelled()) {
-                    co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Cancelled);
+                    co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Cancelled);
                 }
                 scope.next(1);
-                co_await vine::async::sleepFor(std::chrono::milliseconds(10));
+                co_await vn::async::sleepFor(std::chrono::milliseconds(10));
             }
         }
         else {
             for (int i = 0; i < 20; ++i) {
                 if (context && context->isCancelled()) {
-                    co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Cancelled);
+                    co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Cancelled);
                 }
-                co_await vine::async::sleepFor(std::chrono::milliseconds(10));
+                co_await vn::async::sleepFor(std::chrono::milliseconds(10));
             }
         }
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 };
 
-V_OBJECT_META_IMPL(NestedChildCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(NestedChildCommand, vn::appfw::Command)
 
 // 嵌套父命令：LongRunning，报告进度并通过 context->executeChild 调用子命令。
-class NestedProgressCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class NestedProgressCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"nested_progress"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"nested progress command"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::LongRunning; }
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::String name() const override { return u8"nested_progress"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"nested progress command"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::LongRunning; }
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
-        auto* host = vine::appfw::ProgressHost::current();
+        auto* host = vn::appfw::ProgressHost::current();
         if (!host || !context) {
-            co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Failed);
+            co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed);
         }
         host->setLabel("parent");
-        vine::progress::ProgressScope root = host->scope("parent", 20);
+        vn::progress::ProgressScope root = host->scope("parent", 20);
         for (int i = 0; i < 8; ++i) {
             if (root.isCancelled()) {
-                co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Cancelled);
+                co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Cancelled);
             }
             root.next(1);
-            co_await vine::async::sleepFor(std::chrono::milliseconds(5));
+            co_await vn::async::sleepFor(std::chrono::milliseconds(5));
         }
         const auto child_result = co_await context->executeChild(u8"nested_child");
         if (!child_result.succeeded()) {
@@ -270,16 +270,16 @@ class NestedProgressCommand : public vine::appfw::Command {
         }
         for (int i = 0; i < 12; ++i) {
             if (root.isCancelled()) {
-                co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Cancelled);
+                co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Cancelled);
             }
             root.next(1);
-            co_await vine::async::sleepFor(std::chrono::milliseconds(5));
+            co_await vn::async::sleepFor(std::chrono::milliseconds(5));
         }
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 };
 
-V_OBJECT_META_IMPL(NestedProgressCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(NestedProgressCommand, vn::appfw::Command)
 
 } // namespace
 
@@ -699,7 +699,7 @@ TEST_F(GuiTest, RibbonButton_DropDownSeparator)
 TEST_F(GuiTest, RibbonButton_ClickedEvent)
 {
     int  clicks       = 0;
-    auto subscription = btnStyle->clicked.connect([&clicks](guifw::RibbonButton&, vine::EventArgs&) { ++clicks; });
+    auto subscription = btnStyle->clicked.connect([&clicks](guifw::RibbonButton&, vn::EventArgs&) { ++clicks; });
 
     auto* tb = btnStyle->impl<SARibbonToolButton>();
     ASSERT_NE(tb, nullptr);
@@ -810,7 +810,7 @@ TEST_F(GuiTest, Control_CommonProps)
 
 TEST_F(GuiTest, ConfigManager_Basic)
 {
-    auto* cfg = new vine::appfw::ConfigManager();
+    auto* cfg = new vn::appfw::ConfigManager();
 
     // 标量
     cfg->setString(u8"name", u8"Vine");
@@ -837,7 +837,7 @@ TEST_F(GuiTest, ConfigManager_Basic)
     EXPECT_TRUE(names[1] == u8"b");
 
     // JSON 往返（类型无损）
-    auto* cfg2 = new vine::appfw::ConfigManager();
+    auto* cfg2 = new vn::appfw::ConfigManager();
     EXPECT_TRUE(cfg2->loadJson(cfg->toJson()));
     EXPECT_TRUE(cfg2->getString(u8"name") == u8"Vine");
     EXPECT_EQ(cfg2->getInt(u8"max"), 100);
@@ -870,7 +870,7 @@ TEST_F(GuiTest, ConfigManager_Basic)
     EXPECT_FALSE(root.contains(QStringLiteral("window.x"))); // 不出现扁平点分 key
 
     // 层级 JSON 往返
-    auto* cfg3 = new vine::appfw::ConfigManager();
+    auto* cfg3 = new vn::appfw::ConfigManager();
     EXPECT_TRUE(cfg3->loadJson(json));
     EXPECT_EQ(cfg3->getInt(u8"window.x"), 100);
     EXPECT_EQ(cfg3->getInt(u8"window.y"), 200);
@@ -897,7 +897,7 @@ TEST_F(GuiTest, ConfigManager_Basic)
 // 保存必须报告真实结果：写失败不能返回 true，失败也不能破坏磁盘上已有的配置。
 TEST_F(GuiTest, ConfigManager_SaveReportsFailureAndKeepsTheOldFile)
 {
-    using vine::appfw::ConfigManager;
+    using vn::appfw::ConfigManager;
 
     auto* cfg = new ConfigManager();
     cfg->setString(u8"name", u8"Vine");
@@ -908,7 +908,7 @@ TEST_F(GuiTest, ConfigManager_SaveReportsFailureAndKeepsTheOldFile)
     std::filesystem::remove_all(dir, ec);
     std::filesystem::create_directories(dir, ec);
     const std::filesystem::path file = dir / "config.json";
-    const vine::String          file_path(file.u8string());
+    const vn::String          file_path(file.u8string());
 
     // 成功路径：返回 true、内容可读回、原子写不留临时文件
     ASSERT_TRUE(cfg->save(file_path));
@@ -927,8 +927,8 @@ TEST_F(GuiTest, ConfigManager_SaveReportsFailureAndKeepsTheOldFile)
     delete loaded;
 
     // 父目录不存在 / 目标是目录：报失败，而不是无声成功
-    EXPECT_FALSE(cfg->save(vine::String((dir / "missing" / "config.json").u8string())));
-    EXPECT_FALSE(cfg->save(vine::String(dir.u8string())));
+    EXPECT_FALSE(cfg->save(vn::String((dir / "missing" / "config.json").u8string())));
+    EXPECT_FALSE(cfg->save(vn::String(dir.u8string())));
 
     // 目录不可写：报失败，且磁盘上的旧配置原样保留
     std::filesystem::permissions(dir, std::filesystem::perms::owner_write, std::filesystem::perm_options::remove, ec);
@@ -955,13 +955,13 @@ TEST_F(GuiTest, ConfigManager_SaveReportsFailureAndKeepsTheOldFile)
 // 变更事件只在值真的改变时发出；loadJson 的整体替换同样要通知（空 key）。
 TEST_F(GuiTest, ConfigManager_NotifiesOnlyOnRealChanges)
 {
-    using vine::appfw::ConfigChangedEventArgs;
-    using vine::appfw::ConfigManager;
+    using vn::appfw::ConfigChangedEventArgs;
+    using vn::appfw::ConfigManager;
 
     auto*     cfg = new ConfigManager();
     int       events    = 0;
     bool      saw_empty = false;
-    vine::String last_key;
+    vn::String last_key;
     cfg->changed.connect([&](ConfigManager&, ConfigChangedEventArgs& e) {
         ++events;
         last_key  = e.key();
@@ -1019,7 +1019,7 @@ TEST_F(GuiTest, ConfigManager_NotifiesOnlyOnRealChanges)
 // JSON 往返：每种类型都无损读回；超范围整数被夹取而不是被静默改写。
 TEST_F(GuiTest, ConfigManager_JsonRoundTripKeepsTypes)
 {
-    using vine::appfw::ConfigManager;
+    using vn::appfw::ConfigManager;
 
     auto* a = new ConfigManager();
     a->setString(u8"name", u8"Vine");
@@ -1055,7 +1055,7 @@ TEST_F(GuiTest, ConfigManager_JsonRoundTripKeepsTypes)
 // 不符合格式的条目被挑出来忽略，其余照常生效；文本不是 JSON 才算失败。
 TEST_F(GuiTest, ConfigManager_BadEntriesAreIgnoredNotFatal)
 {
-    using vine::appfw::ConfigManager;
+    using vn::appfw::ConfigManager;
 
     auto* cfg = new ConfigManager();
     ASSERT_TRUE(cfg->loadJson(u8R"({
@@ -1077,11 +1077,11 @@ TEST_F(GuiTest, ConfigManager_BadEntriesAreIgnoredNotFatal)
 // 否则别的插件卸载时会连它一起删。
 TEST_F(GuiTest, ConfigRegistry_OwnershipDoesNotOutliveTheItem)
 {
-    using vine::appfw::ConfigItem;
-    using vine::appfw::ConfigItemType;
-    using vine::appfw::ConfigRegistry;
-    using vine::appfw::StandardCategory;
-    using vine::appfw::StandardGroup;
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::ConfigRegistry;
+    using vn::appfw::StandardCategory;
+    using vn::appfw::StandardGroup;
 
     ConfigRegistry reg;
     ASSERT_TRUE(reg.addItem(StandardCategory::General, StandardGroup::Behavior, ConfigItem(u8"p.first", u8"1", ConfigItemType::Int), u8"plugin_a"));
@@ -1106,11 +1106,11 @@ TEST_F(GuiTest, ConfigRegistry_OwnershipDoesNotOutliveTheItem)
 // 塞进别的编辑器。
 TEST(ConfigWindowTest, RefreshKeepsEachValueWithItsKey)
 {
-    using vine::appfw::ConfigItem;
-    using vine::appfw::ConfigItemType;
-    using vine::appfw::ConfigManager;
-    using vine::appfw::ConfigRegistry;
-    using vine::appfw::gui::ConfigWindow;
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::ConfigManager;
+    using vn::appfw::ConfigRegistry;
+    using vn::appfw::gui::ConfigWindow;
 
     ConfigRegistry reg;
     auto*          cat = reg.addCategory(u8"C1");
@@ -1145,11 +1145,11 @@ TEST(ConfigWindowTest, RefreshKeepsEachValueWithItsKey)
 // 未选中，而不是谎报第一个选项。
 TEST(ConfigWindowTest, ChoiceWithoutMatchShowsNoSelection)
 {
-    using vine::appfw::ConfigItem;
-    using vine::appfw::ConfigItemType;
-    using vine::appfw::ConfigManager;
-    using vine::appfw::ConfigRegistry;
-    using vine::appfw::gui::ConfigWindow;
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::ConfigManager;
+    using vn::appfw::ConfigRegistry;
+    using vn::appfw::gui::ConfigWindow;
 
     ConfigRegistry reg;
     auto*          cat = reg.addCategory(u8"C1");
@@ -1183,11 +1183,11 @@ TEST(ConfigWindowTest, ChoiceWithoutMatchShowsNoSelection)
 // 没有声明 range 的数值项：编辑器不能把它要显示的值夹到某个任意区间里。
 TEST(ConfigWindowTest, UnboundedNumbersAreNotClamped)
 {
-    using vine::appfw::ConfigItem;
-    using vine::appfw::ConfigItemType;
-    using vine::appfw::ConfigManager;
-    using vine::appfw::ConfigRegistry;
-    using vine::appfw::gui::ConfigWindow;
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::ConfigManager;
+    using vn::appfw::ConfigRegistry;
+    using vn::appfw::gui::ConfigWindow;
 
     ConfigRegistry reg;
     auto*          cat = reg.addCategory(u8"C1");
@@ -1222,8 +1222,8 @@ TEST(ConfigWindowTest, UnboundedNumbersAreNotClamped)
 
 TEST_F(GuiTest, ConfigItem_Descriptor)
 {
-    using vine::appfw::ConfigItem;
-    using vine::appfw::ConfigItemType;
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
 
     ConfigItem item(u8"editor.font.size", u8"字号", ConfigItemType::Int);
     item.description(u8"编辑器字号").range(8, 72).defaultValue(14).step(2);
@@ -1253,8 +1253,8 @@ TEST_F(GuiTest, ConfigItem_Descriptor)
 
 TEST_F(GuiTest, ConfigItem_DefaultTypeCheck)
 {
-    using vine::appfw::ConfigItem;
-    using vine::appfw::ConfigItemType;
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
 
     // No default set -> hasDefault() false; wrong-type getter throws.
     ConfigItem none(u8"k", u8"K", ConfigItemType::Int);
@@ -1281,8 +1281,8 @@ TEST_F(GuiTest, ConfigItem_DefaultTypeCheck)
 
 TEST_F(GuiTest, ConfigItem_RangeAny)
 {
-    using vine::appfw::ConfigItem;
-    using vine::appfw::ConfigItemType;
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
 
     // No range -> hasRange() false; min/max getters throw; step() falls back to 1.0.
     ConfigItem none(u8"k", u8"K", ConfigItemType::Int);
@@ -1314,9 +1314,9 @@ TEST_F(GuiTest, ConfigItem_RangeAny)
 
 TEST_F(GuiTest, ConfigItem_TypedChoices)
 {
-    using vine::String;
-    using vine::appfw::ConfigItem;
-    using vine::appfw::ConfigItemType;
+    using vn::String;
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
 
     // Int-valued choices with descriptions.
     ConfigItem i(u8"theme", u8"主题", ConfigItemType::Choice);
@@ -1354,9 +1354,9 @@ TEST_F(GuiTest, ConfigItem_TypedChoices)
 
 TEST_F(GuiTest, ConfigRegistry_Register)
 {
-    using vine::appfw::ConfigItem;
-    using vine::appfw::ConfigItemType;
-    using vine::appfw::ConfigRegistry;
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::ConfigRegistry;
 
     ConfigRegistry reg;
     auto*          cat1 = reg.addCategory(u8"C1");
@@ -1409,7 +1409,7 @@ TEST_F(GuiTest, ConfigRegistry_Register)
 
 TEST_F(GuiTest, ConfigRegistry_MetaAndOrder)
 {
-    using vine::appfw::ConfigRegistry;
+    using vn::appfw::ConfigRegistry;
 
     ConfigRegistry reg;
     auto*          a = reg.addCategory(u8"a");
@@ -1437,10 +1437,10 @@ TEST_F(GuiTest, ConfigRegistry_MetaAndOrder)
 
 TEST_F(GuiTest, ConfigManager_ChangedEvent)
 {
-    auto*        cfg   = new vine::appfw::ConfigManager();
+    auto*        cfg   = new vn::appfw::ConfigManager();
     int          fired = 0;
-    vine::String lastKey;
-    auto         subscription = cfg->changed.connect([&](vine::appfw::ConfigManager&, vine::appfw::ConfigChangedEventArgs& args) {
+    vn::String lastKey;
+    auto         subscription = cfg->changed.connect([&](vn::appfw::ConfigManager&, vn::appfw::ConfigChangedEventArgs& args) {
         ++fired;
         lastKey = args.key();
     });
@@ -1469,7 +1469,7 @@ TEST_F(GuiTest, PluginLoadContext_Configs)
     auto* app = GuiEnv::app.get();
     ASSERT_NE(app, nullptr);
 
-    vine::appfw::PluginLoadContext ctx(app);
+    vn::appfw::PluginLoadContext ctx(app);
     EXPECT_EQ(ctx.application(), app);
     ASSERT_NE(ctx.configRegistry(), nullptr);
     EXPECT_EQ(ctx.configRegistry(), app->configRegistry());
@@ -1479,7 +1479,7 @@ TEST_F(GuiTest, PluginLoadContext_Configs)
     // Registering through the context targets the same registry as Application
     auto* pluginCat = ctx.configRegistry()->addCategory(u8"插件");
     ASSERT_NE(pluginCat, nullptr);
-    pluginCat->addGroup(u8"常规")->addItem(vine::appfw::ConfigItem(u8"plugin.opt", u8"插件选项", vine::appfw::ConfigItemType::Bool));
+    pluginCat->addGroup(u8"常规")->addItem(vn::appfw::ConfigItem(u8"plugin.opt", u8"插件选项", vn::appfw::ConfigItemType::Bool));
     EXPECT_NE(app->configRegistry()->item(u8"plugin.opt"), nullptr);
     EXPECT_TRUE(ctx.configRegistry()->removeItem(u8"plugin.opt"));
     EXPECT_TRUE(ctx.configRegistry()->removeCategory(u8"插件"));
@@ -1492,9 +1492,9 @@ TEST_F(GuiTest, CommandManager_RegistrationOwner)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto pluginName = vine::String(u8"testPlugin");
-    const auto otherName  = vine::String(u8"myCommand");
-    const auto ownedName  = vine::String(u8"pluginCommand");
+    const auto pluginName = vn::String(u8"testPlugin");
+    const auto otherName  = vn::String(u8"myCommand");
+    const auto ownedName  = vn::String(u8"pluginCommand");
 
     // 清理可能残留的注册，保证用例可重复运行。
     cm->unregisterCommand(otherName);
@@ -1534,11 +1534,11 @@ TEST_F(GuiTest, CommandManager_RegistrationOwner)
 
 TEST_F(GuiTest, ConfigRegistry_StandardCategories)
 {
-    using vine::appfw::ConfigItem;
-    using vine::appfw::ConfigItemType;
-    using vine::appfw::ConfigRegistry;
-    using vine::appfw::StandardCategory;
-    using vine::appfw::StandardGroup;
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::ConfigRegistry;
+    using vn::appfw::StandardCategory;
+    using vn::appfw::StandardGroup;
 
     ConfigRegistry reg;
 
@@ -1569,11 +1569,11 @@ TEST_F(GuiTest, ConfigRegistry_StandardCategories)
 
 TEST_F(GuiTest, ConfigRegistry_Ownership)
 {
-    using vine::appfw::ConfigItem;
-    using vine::appfw::ConfigItemType;
-    using vine::appfw::ConfigRegistry;
-    using vine::appfw::StandardCategory;
-    using vine::appfw::StandardGroup;
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::ConfigRegistry;
+    using vn::appfw::StandardCategory;
+    using vn::appfw::StandardGroup;
 
     ConfigRegistry reg;
     reg.addItem(StandardCategory::Logging, StandardGroup::Console,
@@ -1604,13 +1604,13 @@ TEST_F(GuiTest, PluginLoadContext_RegisterConfigItem)
     auto* app = GuiEnv::app.get();
     ASSERT_NE(app, nullptr);
 
-    vine::appfw::PluginLoadContext ctx(app, u8"my_plugin");
+    vn::appfw::PluginLoadContext ctx(app, u8"my_plugin");
     EXPECT_TRUE(ctx.pluginName() == u8"my_plugin");
 
-    using vine::appfw::ConfigItem;
-    using vine::appfw::ConfigItemType;
-    using vine::appfw::StandardCategory;
-    using vine::appfw::StandardGroup;
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::StandardCategory;
+    using vn::appfw::StandardGroup;
 
     EXPECT_TRUE(ctx.registerConfigItem(StandardCategory::Logging, StandardGroup::Console,
                                        ConfigItem(u8"logging.file_path", u8"日志文件", ConfigItemType::String)));
@@ -1642,9 +1642,9 @@ TEST_F(GuiTest, DockPanelManager_CountAndLookup)
 
 TEST_F(GuiTest, DockPanel_Features)
 {
-    EXPECT_FALSE(vine::testFlag(panelLeft->features(), guifw::DockFeatures::Closable));
-    EXPECT_TRUE(vine::testFlag(panelRight->features(), guifw::DockFeatures::Closable));
-    EXPECT_TRUE(vine::testFlag(panelTop->features(), guifw::DockFeatures::Closable));
+    EXPECT_FALSE(vn::testFlag(panelLeft->features(), guifw::DockFeatures::Closable));
+    EXPECT_TRUE(vn::testFlag(panelRight->features(), guifw::DockFeatures::Closable));
+    EXPECT_TRUE(vn::testFlag(panelTop->features(), guifw::DockFeatures::Closable));
 }
 
 TEST_F(GuiTest, DockPanel_Area)
@@ -1996,13 +1996,13 @@ TEST_F(GuiTest, Application_IsBusyReflectsActiveHost)
     EXPECT_FALSE(app->isBusy());
 
     {
-        vine::appfw::ProgressHost host;
+        vn::appfw::ProgressHost host;
         host.setForeground(true); // 只有前台宿主才让应用处于忙态
-        EXPECT_TRUE(vine::appfw::ProgressHost::isActive());
+        EXPECT_TRUE(vn::appfw::ProgressHost::isActive());
         EXPECT_TRUE(app->isBusy());
-        EXPECT_TRUE(vine::appfw::ProgressHost::current() == &host);
+        EXPECT_TRUE(vn::appfw::ProgressHost::current() == &host);
     }
-    EXPECT_FALSE(vine::appfw::ProgressHost::isActive());
+    EXPECT_FALSE(vn::appfw::ProgressHost::isActive());
     EXPECT_FALSE(app->isBusy());
 }
 
@@ -2013,36 +2013,36 @@ TEST_F(GuiTest, CommandManager_LongRunningCreatesAmbientHost)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"longCmd");
+    const auto name = vn::String(u8"longCmd");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<LongCommand>(name));
 
-    EXPECT_FALSE(vine::appfw::ProgressHost::isActive());
+    EXPECT_FALSE(vn::appfw::ProgressHost::isActive());
 
     // Task 是惰性的：放到工作线程上跑，主线程轮询观察宿主生命周期。
     auto                 task = cm->executeCommandAsync(name);
     std::atomic<bool>    done{ false };
-    vine::appfw::CommandResult result;
+    vn::appfw::CommandResult result;
     std::thread runner([&] {
-        result = vine::async::syncWait(std::move(task));
+        result = vn::async::syncWait(std::move(task));
         done.store(true);
     });
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-    while (!vine::appfw::ProgressHost::isActive() && std::chrono::steady_clock::now() < deadline) {
+    while (!vn::appfw::ProgressHost::isActive() && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     // 长命令运行期间，环境宿主已挂载、应用处于忙态。
-    EXPECT_TRUE(vine::appfw::ProgressHost::isActive());
+    EXPECT_TRUE(vn::appfw::ProgressHost::isActive());
     EXPECT_TRUE(app->isBusy());
 
     while (!done.load() && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     runner.join();
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success);
     // 链结束后宿主释放、应用恢复空闲。
-    EXPECT_FALSE(vine::appfw::ProgressHost::isActive());
+    EXPECT_FALSE(vn::appfw::ProgressHost::isActive());
     EXPECT_FALSE(app->isBusy());
 
     cm->unregisterCommand(name);
@@ -2055,29 +2055,29 @@ TEST_F(GuiTest, CommandManager_BusyGateRejectsNewCommand)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"busyDummy");
+    const auto name = vn::String(u8"busyDummy");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<DummyCommand>(name));
 
     // 空闲时可执行。
     auto ok = cm->executeCommandAndWait(name);
-    EXPECT_EQ(ok.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(ok.status(), vn::appfw::CommandStatus::Success);
 
     {
         // 外部前台长任务持有宿主（模拟用户触发的耗时操作）。
-        vine::appfw::ProgressHost host;
+        vn::appfw::ProgressHost host;
         host.setForeground(true);
         EXPECT_TRUE(app->isBusy());
 
         // 忙时新命令被拒并提示。
         auto busy = cm->executeCommandAndWait(name);
-        EXPECT_EQ(busy.status(), vine::appfw::CommandStatus::Failed);
-        EXPECT_EQ(busy.message(), vine::String(u8"另一个操作正在进行中，请稍候。"));
+        EXPECT_EQ(busy.status(), vn::appfw::CommandStatus::Failed);
+        EXPECT_EQ(busy.message(), vn::String(u8"另一个操作正在进行中，请稍候。"));
     }
 
     // 宿主释放后可再次执行。
     auto after = cm->executeCommandAndWait(name);
-    EXPECT_EQ(after.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(after.status(), vn::appfw::CommandStatus::Success);
 
     cm->unregisterCommand(name);
 }
@@ -2091,10 +2091,10 @@ TEST(ProgressPresenterTest, ShowsBarForActiveHostAndHidesAfter)
     EXPECT_FALSE(presenter.visible());
 
     {
-        vine::appfw::ProgressHost host;
+        vn::appfw::ProgressHost host;
         host.setForeground(true); // 前台操作驱动主进度条
         std::thread worker([&] {
-            vine::progress::ProgressScope scope(host.range(), "Exporting", 30);
+            vn::progress::ProgressScope scope(host.range(), "Exporting", 30);
             for (int i = 0; i < 30; ++i) {
                 scope.next(1);
                 std::this_thread::sleep_for(std::chrono::milliseconds(25));
@@ -2119,33 +2119,33 @@ TEST(ProgressPresenterTest, ShowsBarForActiveHostAndHidesAfter)
 // 这里手动调 poll()，所以既不依赖计时器也不依赖事件循环，节流规则可确定性断言。
 TEST(ConsoleProgressReporterTest, WritesThrottledLinesWhileAForegroundOperationRuns)
 {
-    std::vector<vine::String>                      lines;
-    vine::appfw::ConsoleProgressReporter::Options options;
+    std::vector<vn::String>                      lines;
+    vn::appfw::ConsoleProgressReporter::Options options;
     options.interval     = std::chrono::milliseconds(0); // 手动步进不该被最小行距节流
     options.show_delay   = std::chrono::milliseconds(0);
     options.step_percent = 10;
 
-    vine::appfw::ConsoleProgressReporter reporter([&lines](const vine::String& line) { lines.push_back(line); }, options);
+    vn::appfw::ConsoleProgressReporter reporter([&lines](const vn::String& line) { lines.push_back(line); }, options);
 
     // 没有前台宿主 ⇒ 什么都不打印。
     reporter.poll();
     EXPECT_TRUE(lines.empty());
 
     {
-        vine::appfw::ProgressHost host;
+        vn::appfw::ProgressHost host;
         host.setForeground(true);
         host.setLabel("导出");
 
         // show_delay 为 0 ⇒ 首行立刻出来，且带标签。
         reporter.poll();
         ASSERT_EQ(lines.size(), 1u);
-        EXPECT_NE(lines[0].find(u8"导出"), vine::String::npos);
+        EXPECT_NE(lines[0].find(u8"导出"), vn::String::npos);
 
         auto scope = host.scope("导出", 100);
         scope.next(50);
         reporter.poll();
         ASSERT_EQ(lines.size(), 2u);
-        EXPECT_NE(lines[1].find(u8"50"), vine::String::npos);
+        EXPECT_NE(lines[1].find(u8"50"), vn::String::npos);
 
         // 进度没动 ⇒ 不重复打印（这就是节流）。
         reporter.poll();
@@ -2160,28 +2160,28 @@ TEST(ConsoleProgressReporterTest, WritesThrottledLinesWhileAForegroundOperationR
     // 操作结束 ⇒ 收尾一行，而不是静默收场。
     reporter.poll();
     ASSERT_EQ(lines.size(), 4u);
-    EXPECT_NE(lines[3].find(u8"已结束"), vine::String::npos);
+    EXPECT_NE(lines[3].find(u8"已结束"), vn::String::npos);
 }
 
 // 通知驱动版本：start() 订阅变更，首行在呈现延迟到点后由定时器线程写出（无事件循环也能用），
 // stop() 之后必须彻底安静。
 TEST(ConsoleProgressReporterTest, ChangeNotificationWritesLinesAndStops)
 {
-    std::vector<vine::String>                      lines;
+    std::vector<vn::String>                      lines;
     std::mutex                                     lines_mutex;
-    vine::appfw::ConsoleProgressReporter::Options options;
+    vn::appfw::ConsoleProgressReporter::Options options;
     options.interval     = std::chrono::milliseconds(10);
     options.show_delay   = std::chrono::milliseconds(0);
     options.step_percent = 10;
 
-    vine::appfw::ConsoleProgressReporter reporter(
-      [&lines, &lines_mutex](const vine::String& line) {
+    vn::appfw::ConsoleProgressReporter reporter(
+      [&lines, &lines_mutex](const vn::String& line) {
           std::lock_guard lock(lines_mutex);
           lines.push_back(line);
       },
       options);
 
-    vine::appfw::ProgressHost host;
+    vn::appfw::ProgressHost host;
     host.setForeground(true);
     host.setLabel("后台导出");
 
@@ -2223,19 +2223,19 @@ TEST(ConsoleProgressReporterTest, ChangeNotificationWritesLinesAndStops)
 // 这里让一个短命线程触发被节流的一次上报并退出，到点后仍要写出那一行。
 TEST(ConsoleProgressReporterTest, WakeupOutlivesTheThreadThatReported)
 {
-    std::vector<vine::String>                      lines;
+    std::vector<vn::String>                      lines;
     std::mutex                                     lines_mutex;
-    vine::appfw::ConsoleProgressReporter::Options options;
+    vn::appfw::ConsoleProgressReporter::Options options;
     options.interval     = std::chrono::milliseconds(50);
     options.show_delay   = std::chrono::milliseconds(0);
     options.step_percent = 5;
 
-    vine::appfw::ProgressHost host;
+    vn::appfw::ProgressHost host;
     host.setForeground(true);
     host.setLabel("导出");
 
-    vine::appfw::ConsoleProgressReporter reporter(
-      [&lines, &lines_mutex](const vine::String& line) {
+    vn::appfw::ConsoleProgressReporter reporter(
+      [&lines, &lines_mutex](const vn::String& line) {
           std::lock_guard lock(lines_mutex);
           lines.push_back(line);
       },
@@ -2247,7 +2247,7 @@ TEST(ConsoleProgressReporterTest, WakeupOutlivesTheThreadThatReported)
     // 在短命线程里上报 10%：事件在该线程上触发，但此刻距上一行不到 interval，
     // 于是消费者把"到点再写"的一次性唤醒臂在那个线程上——那个线程马上就退出了。
     std::thread worker([&host] {
-        vine::progress::ProgressScope scope = host.scope("worker", 100);
+        vn::progress::ProgressScope scope = host.scope("worker", 100);
         scope.next(10);
     });
     worker.join();
@@ -2265,7 +2265,7 @@ TEST(ConsoleProgressReporterTest, WakeupOutlivesTheThreadThatReported)
 
     std::lock_guard lock(lines_mutex);
     ASSERT_EQ(lines.size(), 2u);
-    EXPECT_NE(lines[1].find(u8"10"), vine::String::npos);
+    EXPECT_NE(lines[1].find(u8"10"), vn::String::npos);
 }
 
 // 端到端：ConsoleUserIO 构造时就挂上了进度消费者，所以无头模式跑 LongRunning 命令也能看到
@@ -2278,10 +2278,10 @@ TEST(ConsoleProgressReporterTest, ConsoleUserIOPrintsTheProgressOfAForegroundOpe
     auto* const        previous_buffer = std::cout.rdbuf(captured.rdbuf());
 
     {
-        vine::appfw::ConsoleUserIO io;
+        vn::appfw::ConsoleUserIO io;
 
         {
-            vine::appfw::ProgressHost host;
+            vn::appfw::ProgressHost host;
             host.setForeground(true);
             host.setLabel("无头导出");
 
@@ -2303,7 +2303,7 @@ TEST(ConsoleProgressReporterTest, ConsoleUserIOPrintsTheProgressOfAForegroundOpe
 TEST(ProgressPresenterTest, CancelButtonRequestsStop)
 {
     guifw::ProgressPresenter     presenter;
-    vine::appfw::ProgressHost host;
+    vn::appfw::ProgressHost host;
     host.setForeground(true); // 取消按钮只作用于前台操作
 
     // 包装类不是 QObject：取消按钮在原生控件上查找。
@@ -2327,35 +2327,35 @@ TEST_F(GuiTest, CommandManager_NestedProgressRunsChild)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"nestedProgressCmd");
+    const auto name = vn::String(u8"nestedProgressCmd");
     cm->unregisterCommand(name);
     cm->unregisterCommand(u8"nested_child");
     ASSERT_TRUE(cm->registerCommand<NestedChildCommand>(u8"nested_child"));
     ASSERT_TRUE(cm->registerCommand<NestedProgressCommand>(name));
 
-    EXPECT_FALSE(vine::appfw::ProgressHost::isActive());
+    EXPECT_FALSE(vn::appfw::ProgressHost::isActive());
 
     // 父命令为 LongRunning → 前台宿主；内部经 executeChild 运行子命令（绕过串联门）。
     auto                 task = cm->executeCommandAsync(name);
     std::atomic<bool>    done{ false };
-    vine::appfw::CommandResult result;
+    vn::appfw::CommandResult result;
     std::thread runner([&] {
-        result = vine::async::syncWait(std::move(task));
+        result = vn::async::syncWait(std::move(task));
         done.store(true);
     });
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-    while (!vine::appfw::ProgressHost::isActive() && std::chrono::steady_clock::now() < deadline) {
+    while (!vn::appfw::ProgressHost::isActive() && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     // 父命令运行期间：前台宿主挂载、应用忙。
-    EXPECT_TRUE(vine::appfw::ProgressHost::isActive());
+    EXPECT_TRUE(vn::appfw::ProgressHost::isActive());
     EXPECT_TRUE(app->isBusy());
 
     // 方案B：子命令压栈顶替父命令 → 前台栈出现深度 2。
     bool saw_depth2 = false;
     while (std::chrono::steady_clock::now() < deadline) {
-        if (vine::appfw::ProgressHost::foregroundStack().size() >= 2) {
+        if (vn::appfw::ProgressHost::foregroundStack().size() >= 2) {
             saw_depth2 = true;
             break;
         }
@@ -2369,10 +2369,10 @@ TEST_F(GuiTest, CommandManager_NestedProgressRunsChild)
     runner.join();
 
     // 父命令成功 ⇒ 嵌套子命令未被串联门拦截（executeChild 绕过）。
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success);
 
     // 链结束后宿主释放。
-    EXPECT_FALSE(vine::appfw::ProgressHost::isActive());
+    EXPECT_FALSE(vn::appfw::ProgressHost::isActive());
     EXPECT_FALSE(app->isBusy());
 
     cm->unregisterCommand(name);
@@ -2382,47 +2382,47 @@ TEST_F(GuiTest, CommandManager_NestedProgressRunsChild)
 
 // 可取消命令：睡眠期间响应取消请求。用 None 标志 ⇒ 不挂进度宿主、不触发串联门，
 // 因此多个实例可以作为互相独立的链并发运行。
-class CancellableSleepCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class CancellableSleepCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    CancellableSleepCommand(vine::String name, std::chrono::milliseconds duration)
+    CancellableSleepCommand(vn::String name, std::chrono::milliseconds duration)
       : name_(std::move(name))
       , duration_(duration)
     {}
 
-    vine::String name() const override { return name_; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"cancellable sleep"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return name_; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"cancellable sleep"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
-        co_await vine::async::sleepFor(duration_, context->stopToken());
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_await vn::async::sleepFor(duration_, context->stopToken());
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
   private:
-    vine::String              name_;
+    vn::String              name_;
     std::chrono::milliseconds duration_;
 };
 
-V_OBJECT_META_IMPL(CancellableSleepCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(CancellableSleepCommand, vn::appfw::Command)
 
 // 抛异常的命令（挂起后抛，走协程的真实异常路径），用于验证异常不会穿出到
 // DetachedTask/事件循环（旧行为是 std::terminate）。
-class ThrowingCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class ThrowingCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"throwing"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"throws after a suspension"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"throwing"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"throws after a suspension"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
-        co_await vine::async::sleepFor(std::chrono::milliseconds(1));
+        co_await vn::async::sleepFor(std::chrono::milliseconds(1));
         throw std::runtime_error(s_empty_message.load() ? "" : "boom");
     }
 
@@ -2430,135 +2430,135 @@ class ThrowingCommand : public vine::appfw::Command {
     inline static std::atomic<bool> s_empty_message{ false };
 };
 
-V_OBJECT_META_IMPL(ThrowingCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(ThrowingCommand, vn::appfw::Command)
 
 // Undoable 命令：记录是否真的执行过，用于验证快照回调的先后与拦截。
-class UndoableProbeCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class UndoableProbeCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"undoableProbe"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"records that it ran"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::Undoable; }
+    vn::String name() const override { return u8"undoableProbe"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"records that it ran"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::Undoable; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         s_ran = true;
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
     inline static std::atomic<bool> s_ran{ false };
     inline static std::atomic<int>  s_snapshots{ 0 };
 };
 
-V_OBJECT_META_IMPL(UndoableProbeCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(UndoableProbeCommand, vn::appfw::Command)
 
 // 父命令：内部直接用 CommandManager 的顶层入口（而不是 context->executeChild）
 // 运行子命令，用于验证“顶层入口不可当嵌套用”。
-class TopLevelCallingParentCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class TopLevelCallingParentCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"topLevelCaller"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"calls a top-level entry from inside"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::LongRunning; }
+    vn::String name() const override { return u8"topLevelCaller"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"calls a top-level entry from inside"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::LongRunning; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         auto* app = context ? context->application() : nullptr;
         auto* cm  = app ? app->commandManager() : nullptr;
         if (!cm) {
-            co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Failed, vine::String(u8"no manager"));
+            co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed, vn::String(u8"no manager"));
         }
 
         // 父命令持有串联门（LongRunning），顶层入口会被拒。
         const auto child      = cm->executeCommandAndWait(s_child_name);
         s_child_status        = child.status();
         s_child_message       = child.message();
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
-    inline static vine::String              s_child_name{ u8"syncChildInsideParent" };
-    inline static vine::appfw::CommandStatus s_child_status{ vine::appfw::CommandStatus::Success };
-    inline static vine::String              s_child_message;
+    inline static vn::String              s_child_name{ u8"syncChildInsideParent" };
+    inline static vn::appfw::CommandStatus s_child_status{ vn::appfw::CommandStatus::Success };
+    inline static vn::String              s_child_message;
 };
 
-V_OBJECT_META_IMPL(TopLevelCallingParentCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(TopLevelCallingParentCommand, vn::appfw::Command)
 
 // 组合标志：长时间且改数据的命令——两条特性必须同时生效（快照 + 串联门）。
-class CombinedFlagsCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class CombinedFlagsCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"combinedFlags"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"Undoable | LongRunning"; }
+    vn::String name() const override { return u8"combinedFlags"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"Undoable | LongRunning"; }
 
-    vine::appfw::CommandFlags flags() const override
+    vn::appfw::CommandFlags flags() const override
     {
-        return vine::appfw::CommandFlags::Undoable | vine::appfw::CommandFlags::LongRunning;
+        return vn::appfw::CommandFlags::Undoable | vn::appfw::CommandFlags::LongRunning;
     }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         // 跑得够久，让调用方能在它运行期间去抢串联门。
-        co_await vine::async::sleepFor(std::chrono::milliseconds(50));
+        co_await vn::async::sleepFor(std::chrono::milliseconds(50));
         s_ran = true;
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
     inline static bool s_ran = false;
 };
 
-V_OBJECT_META_IMPL(CombinedFlagsCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(CombinedFlagsCommand, vn::appfw::Command)
 
 // 探针子命令：记录执行时“前台链里是谁”与深度，用于观察链的归属。
-class ForegroundProbeChildCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class ForegroundProbeChildCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"foregroundProbe"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"records the foreground chain"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"foregroundProbe"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"records the foreground chain"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         auto* app = context ? context->application() : nullptr;
         auto* cm  = app ? app->commandManager() : nullptr;
         if (cm) {
             const auto* current    = cm->currentCommand();
-            s_foreground_name      = current ? current->name() : vine::String(u8"<none>");
+            s_foreground_name      = current ? current->name() : vn::String(u8"<none>");
             s_foreground_depth     = cm->runningCount();
         }
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
-    inline static vine::String s_foreground_name;
+    inline static vn::String s_foreground_name;
     inline static int          s_foreground_depth{ 0 };
 };
 
-V_OBJECT_META_IMPL(ForegroundProbeChildCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(ForegroundProbeChildCommand, vn::appfw::Command)
 
 // 父命令（非 LongRunning）：内部 co_await 异步顶层入口去跑“子命令”。
 // 异步版是惰性的 ⇒ 链在 await 时才建立，且建立后会成为前台链。
-class AsyncCallingParentCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class AsyncCallingParentCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"asyncCaller"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"awaits a top-level entry from inside"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"asyncCaller"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"awaits a top-level entry from inside"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         auto* app = context ? context->application() : nullptr;
         auto* cm  = app ? app->commandManager() : nullptr;
         if (!cm) {
-            co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Failed, vine::String(u8"no manager"));
+            co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed, vn::String(u8"no manager"));
         }
 
         const auto* before        = cm->currentCommand();
@@ -2569,54 +2569,54 @@ class AsyncCallingParentCommand : public vine::appfw::Command {
 
         // 顶层入口把前台链换成了子链，子链结束后不会自动恢复成父链。
         const auto* after = cm->currentCommand();
-        s_current_after   = after ? after->name() : vine::String(u8"<none>");
+        s_current_after   = after ? after->name() : vn::String(u8"<none>");
         s_depth_after     = cm->runningCount();
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
-    inline static vine::String              s_child_name{ u8"foregroundProbe" };
+    inline static vn::String              s_child_name{ u8"foregroundProbe" };
     inline static bool                      s_parent_is_foreground{ false };
-    inline static vine::appfw::CommandStatus s_child_status{ vine::appfw::CommandStatus::Success };
-    inline static vine::String              s_current_after;
+    inline static vn::appfw::CommandStatus s_child_status{ vn::appfw::CommandStatus::Success };
+    inline static vn::String              s_current_after;
     inline static int                       s_depth_after{ 0 };
 };
 
-V_OBJECT_META_IMPL(AsyncCallingParentCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(AsyncCallingParentCommand, vn::appfw::Command)
 
 // 持有串联门的 LongRunning 命令：一直等待直到测试释放，用来确定性地观察
 // “门的检查与占用是原子的”。
-class GateHoldCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class GateHoldCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"gateHold"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"holds the serialization gate"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::LongRunning; }
+    vn::String name() const override { return u8"gateHold"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"holds the serialization gate"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::LongRunning; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         co_await s_release;
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
     /// 测试通过 set() 释放；使用前先 reset() 恢复未触发态。
-    inline static vine::async::AsyncEvent s_release{};
+    inline static vn::async::AsyncEvent s_release{};
 };
 
-V_OBJECT_META_IMPL(GateHoldCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(GateHoldCommand, vn::appfw::Command)
 
 // 自递归命令：每次通过 context->executeChild() 再进一层，用于验证嵌套深度上限。
-class RecursiveCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class RecursiveCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"selfNesting"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"nests into itself"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"selfNesting"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"nests into itself"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         s_entries.fetch_add(1);
         co_return co_await context->executeChild(u8"selfNesting");
@@ -2625,119 +2625,119 @@ class RecursiveCommand : public vine::appfw::Command {
     inline static std::atomic<int> s_entries{ 0 };
 };
 
-V_OBJECT_META_IMPL(RecursiveCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(RecursiveCommand, vn::appfw::Command)
 
 // 排他命令：接管前台，旧链被取消。记录自身是否真的执行过。
-class ExclusiveTakeOverCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class ExclusiveTakeOverCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"takeover"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"exclusive take over"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::Exclusive; }
+    vn::String name() const override { return u8"takeover"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"exclusive take over"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::Exclusive; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         s_ran = true;
         if (context && context->isCancelled()) {
-            co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Cancelled);
+            co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Cancelled);
         }
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
     inline static std::atomic<bool> s_ran{ false };
 };
 
-V_OBJECT_META_IMPL(ExclusiveTakeOverCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(ExclusiveTakeOverCommand, vn::appfw::Command)
 
 // 不配合取消的命令：睡眠时不传 token，因此取消请求对它无效，只能自然结束。
 // 用来验证排他命令的等待是有界的（超时后继续，而不是无限等待）。
-class UncooperativeSleepCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class UncooperativeSleepCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"uncooperative"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"ignores cancellation"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"uncooperative"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"ignores cancellation"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         s_running.store(true);
-        co_await vine::async::sleepFor(std::chrono::milliseconds(2600));
+        co_await vn::async::sleepFor(std::chrono::milliseconds(2600));
         s_running.store(false);
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
     inline static std::atomic<bool> s_running{ false };
 };
 
-V_OBJECT_META_IMPL(UncooperativeSleepCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(UncooperativeSleepCommand, vn::appfw::Command)
 
 // 探针排他命令：执行时记录被接管的链是否仍在运行。
-class ExclusiveProbeCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class ExclusiveProbeCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"probeTakeover"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"probe exclusive take over"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::Exclusive; }
+    vn::String name() const override { return u8"probeTakeover"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"probe exclusive take over"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::Exclusive; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         s_saw_victim_running.store(UncooperativeSleepCommand::s_running.load());
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
     inline static std::atomic<bool> s_saw_victim_running{ false };
 };
 
-V_OBJECT_META_IMPL(ExclusiveProbeCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(ExclusiveProbeCommand, vn::appfw::Command)
 
 // 父命令：通过 context->executeChild() 嵌套一个可取消子命令，自身不捕获子命令的
 // 取消异常（子命令的取消默认向上抛）。用来验证“子命令被取消时也要上报自己结束”。
-class NestingCancellableParentCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class NestingCancellableParentCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"nestingParent"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"nests a cancellable child"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"nestingParent"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"nests a cancellable child"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         co_return co_await context->executeChild(s_child_name);
     }
 
-    inline static vine::String s_child_name{ u8"nestingChild" };
+    inline static vn::String s_child_name{ u8"nestingChild" };
 };
 
-V_OBJECT_META_IMPL(NestingCancellableParentCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(NestingCancellableParentCommand, vn::appfw::Command)
 
 // 参数由父命令给、就地构造的子命令：这种子命令没法预先注册（注册会在运行期搅动全局注册表、
 // 触发 commandsChanged、并进入"禁用偏好"持久化），所以走 executeChild(instance)。
-class ParameterisedChildCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class ParameterisedChildCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
     explicit ParameterisedChildCommand(int magnitude) : magnitude_(magnitude) { ++s_live; }
 
     ~ParameterisedChildCommand() override { --s_live; }
 
-    vine::String name() const override { return u8"parameterisedChild"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"child built by its parent"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"parameterisedChild"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"child built by its parent"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         s_magnitude     = magnitude_;
         s_live_seen     = s_live;
         s_running_count = context->application()->commandManager()->runningCount();
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
     inline static int s_live          = 0;
@@ -2749,22 +2749,22 @@ class ParameterisedChildCommand : public vine::appfw::Command {
     int magnitude_;
 };
 
-V_OBJECT_META_IMPL(ParameterisedChildCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(ParameterisedChildCommand, vn::appfw::Command)
 
 // 父命令的三种形态：0 = 嵌套参数化子命令，1 = 传 nullptr，2 = 传"名称已被禁用"的实例。
-class InstanceChildParentCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class InstanceChildParentCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"instanceChildParent"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"nests a caller-supplied child"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"instanceChildParent"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"nests a caller-supplied child"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         if (s_mode == 1) {
-            co_return co_await context->executeChild(std::unique_ptr<vine::appfw::Command>{});
+            co_return co_await context->executeChild(std::unique_ptr<vn::appfw::Command>{});
         }
         if (s_mode == 2) {
             co_return co_await context->executeChild(std::make_unique<DummyCommand>());
@@ -2775,19 +2775,19 @@ class InstanceChildParentCommand : public vine::appfw::Command {
     inline static int s_mode = 0;
 };
 
-V_OBJECT_META_IMPL(InstanceChildParentCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(InstanceChildParentCommand, vn::appfw::Command)
 
 // 通过实例自我递归：每层构造一个新的自己作为子命令，用于验证实例形态同样受深度上限约束。
-class InstanceRecursiveCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class InstanceRecursiveCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"instanceRecursive"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"nests itself through instances"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"instanceRecursive"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"nests itself through instances"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         ++s_entries;
         co_return co_await context->executeChild(std::make_unique<InstanceRecursiveCommand>());
@@ -2796,7 +2796,7 @@ class InstanceRecursiveCommand : public vine::appfw::Command {
     inline static int s_entries = 0;
 };
 
-V_OBJECT_META_IMPL(InstanceRecursiveCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(InstanceRecursiveCommand, vn::appfw::Command)
 
 // executeChild(instance)：子命令进父链（不是新顶层链）、执行期由父帧持有、结束后即销毁。
 TEST_F(GuiTest, CommandManager_ExecuteChildRunsACallerSuppliedInstance)
@@ -2806,7 +2806,7 @@ TEST_F(GuiTest, CommandManager_ExecuteChildRunsACallerSuppliedInstance)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"instanceChildParent");
+    const auto name = vn::String(u8"instanceChildParent");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<InstanceChildParentCommand>(name));
 
@@ -2817,7 +2817,7 @@ TEST_F(GuiTest, CommandManager_ExecuteChildRunsACallerSuppliedInstance)
     ParameterisedChildCommand::s_running_count = 0;
 
     const auto result = cm->executeCommandAndWait(name);
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success);
 
     EXPECT_EQ(ParameterisedChildCommand::s_magnitude, 42);
     // 深度为 2 ⇒ 子命令在父链上（顶层入口会开新链，深度则是 1）。
@@ -2828,7 +2828,7 @@ TEST_F(GuiTest, CommandManager_ExecuteChildRunsACallerSuppliedInstance)
 
     // 未注册的子命令不出现在列举里（它的名字只用于事件与历史）。
     const auto infos = cm->commandInfos();
-    EXPECT_TRUE(std::ranges::none_of(infos, [](const vine::appfw::CommandInfo& info) { return info.name == u8"parameterisedChild"; }));
+    EXPECT_TRUE(std::ranges::none_of(infos, [](const vn::appfw::CommandInfo& info) { return info.name == u8"parameterisedChild"; }));
 
     cm->unregisterCommand(name);
 }
@@ -2841,8 +2841,8 @@ TEST_F(GuiTest, CommandManager_ExecuteChildRefusesNullAndDisabledInstances)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto parent = vine::String(u8"instanceChildParent");
-    const auto dummy  = vine::String(u8"dummy");
+    const auto parent = vn::String(u8"instanceChildParent");
+    const auto dummy  = vn::String(u8"dummy");
     cm->unregisterCommand(parent);
     ASSERT_TRUE(cm->registerCommand<InstanceChildParentCommand>(parent));
     cm->unregisterCommand(dummy);
@@ -2850,15 +2850,15 @@ TEST_F(GuiTest, CommandManager_ExecuteChildRefusesNullAndDisabledInstances)
 
     InstanceChildParentCommand::s_mode = 1;
     const auto null_child              = cm->executeCommandAndWait(parent);
-    EXPECT_EQ(null_child.status(), vine::appfw::CommandStatus::Failed);
-    EXPECT_EQ(null_child.message(), vine::String(u8"Command is null"));
+    EXPECT_EQ(null_child.status(), vn::appfw::CommandStatus::Failed);
+    EXPECT_EQ(null_child.message(), vn::String(u8"Command is null"));
 
     // 用户禁用了 "dummy" ⇒ 父命令拿着同名实例也不能绕过禁用（与顶层按实例入口一致）。
     cm->setCommandEnabled(dummy, false);
     InstanceChildParentCommand::s_mode = 2;
     const auto disabled_child          = cm->executeCommandAndWait(parent);
-    EXPECT_EQ(disabled_child.status(), vine::appfw::CommandStatus::Failed);
-    EXPECT_NE(disabled_child.message().find(u8"已被禁用"), vine::String::npos);
+    EXPECT_EQ(disabled_child.status(), vn::appfw::CommandStatus::Failed);
+    EXPECT_NE(disabled_child.message().find(u8"已被禁用"), vn::String::npos);
 
     cm->setCommandEnabled(dummy, true);
     cm->unregisterCommand(dummy);
@@ -2873,15 +2873,15 @@ TEST_F(GuiTest, CommandManager_ExecuteChildBoundsInstanceNesting)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"instanceRecursive");
+    const auto name = vn::String(u8"instanceRecursive");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<InstanceRecursiveCommand>(name));
     InstanceRecursiveCommand::s_entries = 0;
 
     const auto result = cm->executeCommandAndWait(name);
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Failed);
-    EXPECT_EQ(result.message(), vine::String(u8"Command nesting is too deep"));
-    EXPECT_EQ(InstanceRecursiveCommand::s_entries, vine::appfw::CommandManager::maxChainDepth());
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Failed);
+    EXPECT_EQ(result.message(), vn::String(u8"Command nesting is too deep"));
+    EXPECT_EQ(InstanceRecursiveCommand::s_entries, vn::appfw::CommandManager::maxChainDepth());
     EXPECT_EQ(cm->runningCount(), 0);
 
     cm->unregisterCommand(name);
@@ -2896,21 +2896,21 @@ TEST_F(GuiTest, CommandManager_HistoryRecordsValueSnapshots)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"historyDummy");
+    const auto name = vn::String(u8"historyDummy");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<DummyCommand>(name));
     cm->clearHistory();
     ASSERT_EQ(cm->historyCount(), 0);
 
     const auto result = cm->executeCommandAndWait(name);
-    ASSERT_EQ(result.status(), vine::appfw::CommandStatus::Success);
+    ASSERT_EQ(result.status(), vn::appfw::CommandStatus::Success);
 
     ASSERT_EQ(cm->historyCount(), 1);
     const auto entry = cm->historyAt(0);
     ASSERT_TRUE(entry.has_value());
-    EXPECT_EQ(entry->name, vine::String(u8"dummy"));
+    EXPECT_EQ(entry->name, vn::String(u8"dummy"));
     EXPECT_EQ(entry->command_class, DummyCommand::desc());
-    EXPECT_EQ(entry->result.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(entry->result.status(), vn::appfw::CommandStatus::Success);
 
     // 越界返回 nullopt（旧实现返回 nullptr，调用方无从区分“越界”与“命令已销毁”）。
     EXPECT_FALSE(cm->historyAt(1).has_value());
@@ -2934,13 +2934,13 @@ TEST_F(GuiTest, CommandManager_HistoryDoesNotRetainTheResultPayload)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"historyPayload");
+    const auto name = vn::String(u8"historyPayload");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<PayloadCommand>(name));
     cm->clearHistory();
 
     const auto result = cm->executeCommandAndWait(name);
-    ASSERT_EQ(result.status(), vine::appfw::CommandStatus::Success);
+    ASSERT_EQ(result.status(), vn::appfw::CommandStatus::Success);
     // 调用方拿到的那份带载荷……
     ASSERT_TRUE(result.data().has_value());
     EXPECT_EQ(std::any_cast<int>(result.data()), 7);
@@ -2949,7 +2949,7 @@ TEST_F(GuiTest, CommandManager_HistoryDoesNotRetainTheResultPayload)
     ASSERT_EQ(cm->historyCount(), 1);
     const auto entry = cm->historyAt(0);
     ASSERT_TRUE(entry.has_value());
-    EXPECT_EQ(entry->result.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(entry->result.status(), vn::appfw::CommandStatus::Success);
     EXPECT_FALSE(entry->result.data().has_value());
 
     cm->unregisterCommand(name);
@@ -2964,8 +2964,8 @@ TEST_F(GuiTest, CommandManager_ExclusiveTakesOverRunningChain)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto victim_name = vine::String(u8"exclusiveVictim");
-    const auto taker_name  = vine::String(u8"takeoverCmd");
+    const auto victim_name = vn::String(u8"exclusiveVictim");
+    const auto taker_name  = vn::String(u8"takeoverCmd");
     cm->unregisterCommand(victim_name);
     cm->unregisterCommand(taker_name);
     ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), victim_name,
@@ -2977,10 +2977,10 @@ TEST_F(GuiTest, CommandManager_ExclusiveTakesOverRunningChain)
 
     // 后台链：可取消的长睡眠，放到工作线程上驱动，主线程观察。
     auto                        task = cm->executeCommandAsync(victim_name);
-    vine::appfw::CommandResult  victim_result;
+    vn::appfw::CommandResult  victim_result;
     std::atomic<bool>           victim_done{ false };
     std::thread                 runner([&] {
-        victim_result = vine::async::syncWait(std::move(task));
+        victim_result = vn::async::syncWait(std::move(task));
         victim_done.store(true);
     });
 
@@ -2990,11 +2990,11 @@ TEST_F(GuiTest, CommandManager_ExclusiveTakesOverRunningChain)
     }
     ASSERT_EQ(cm->runningCount(), 1);
     ASSERT_NE(cm->currentCommand(), nullptr);
-    EXPECT_EQ(cm->currentCommand()->name(), vine::String(u8"exclusiveVictim"));
+    EXPECT_EQ(cm->currentCommand()->name(), vn::String(u8"exclusiveVictim"));
 
     // 接管：有界等待旧链收尾后，排他命令在自己的链上执行。
     const auto takeover = cm->executeCommandAndWait(taker_name);
-    EXPECT_EQ(takeover.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(takeover.status(), vn::appfw::CommandStatus::Success);
     EXPECT_TRUE(ExclusiveTakeOverCommand::s_ran);
 
     while (!victim_done.load() && std::chrono::steady_clock::now() < deadline) {
@@ -3004,10 +3004,10 @@ TEST_F(GuiTest, CommandManager_ExclusiveTakesOverRunningChain)
 
     // 旧链是被取消的（而不是无人取消地继续跑完），且接管后前台没有残留。
     EXPECT_TRUE(victim_done.load());
-    EXPECT_EQ(victim_result.status(), vine::appfw::CommandStatus::Cancelled);
+    EXPECT_EQ(victim_result.status(), vn::appfw::CommandStatus::Cancelled);
     EXPECT_EQ(cm->runningCount(), 0);
     EXPECT_EQ(cm->currentCommand(), nullptr);
-    EXPECT_FALSE(vine::appfw::ProgressHost::isActive());
+    EXPECT_FALSE(vn::appfw::ProgressHost::isActive());
     EXPECT_FALSE(app->isBusy());
 
     cm->unregisterCommand(victim_name);
@@ -3023,8 +3023,8 @@ TEST_F(GuiTest, CommandManager_ExclusiveIsRejectedWhenChainIgnoresCancellation)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto victim_name = vine::String(u8"uncooperative");
-    const auto probe_name  = vine::String(u8"probeTakeover");
+    const auto victim_name = vn::String(u8"uncooperative");
+    const auto probe_name  = vn::String(u8"probeTakeover");
     cm->unregisterCommand(victim_name);
     cm->unregisterCommand(probe_name);
     ASSERT_TRUE(cm->registerCommand<UncooperativeSleepCommand>(victim_name));
@@ -3032,8 +3032,8 @@ TEST_F(GuiTest, CommandManager_ExclusiveIsRejectedWhenChainIgnoresCancellation)
     ExclusiveProbeCommand::s_saw_victim_running = false;
 
     auto                       task = cm->executeCommandAsync(victim_name);
-    vine::appfw::CommandResult victim_result;
-    std::thread                runner([&] { victim_result = vine::async::syncWait(std::move(task)); });
+    vn::appfw::CommandResult victim_result;
+    std::thread                runner([&] { victim_result = vn::async::syncWait(std::move(task)); });
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
     while (!UncooperativeSleepCommand::s_running.load() && std::chrono::steady_clock::now() < deadline) {
@@ -3043,12 +3043,12 @@ TEST_F(GuiTest, CommandManager_ExclusiveIsRejectedWhenChainIgnoresCancellation)
 
     // 受害者无视取消 ⇒ 排他命令等到上界后被拒绝，而不是与之并发执行。
     const auto takeover = cm->executeCommandAndWait(probe_name);
-    EXPECT_EQ(takeover.status(), vine::appfw::CommandStatus::Failed);
+    EXPECT_EQ(takeover.status(), vn::appfw::CommandStatus::Failed);
     EXPECT_FALSE(ExclusiveProbeCommand::s_saw_victim_running.load());
 
     runner.join();
     // 受害者并未被取消（它不配合），最终自然成功；它从未与新链重叠。
-    EXPECT_EQ(victim_result.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(victim_result.status(), vn::appfw::CommandStatus::Success);
 
     cm->unregisterCommand(victim_name);
     cm->unregisterCommand(probe_name);
@@ -3063,8 +3063,8 @@ TEST_F(GuiTest, CommandManager_CancelCurrentStopsOnlyForegroundChain)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name_a = vine::String(u8"chainA");
-    const auto name_b = vine::String(u8"chainB");
+    const auto name_a = vn::String(u8"chainA");
+    const auto name_b = vn::String(u8"chainB");
     cm->unregisterCommand(name_a);
     cm->unregisterCommand(name_b);
     ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), name_a,
@@ -3080,8 +3080,8 @@ TEST_F(GuiTest, CommandManager_CancelCurrentStopsOnlyForegroundChain)
 
     // 链 A 先运行。
     auto                       task_a = cm->executeCommandAsync(name_a);
-    vine::appfw::CommandResult result_a;
-    std::thread                runner_a([&] { result_a = vine::async::syncWait(std::move(task_a)); });
+    vn::appfw::CommandResult result_a;
+    std::thread                runner_a([&] { result_a = vn::async::syncWait(std::move(task_a)); });
 
     while ((cm->runningCount() == 0 || cm->currentCommand() == nullptr || cm->currentCommand()->name() != name_a)
            && std::chrono::steady_clock::now() < deadline) {
@@ -3092,8 +3092,8 @@ TEST_F(GuiTest, CommandManager_CancelCurrentStopsOnlyForegroundChain)
 
     // 链 B 随后启动，成为前台链。
     auto                       task_b = cm->executeCommandAsync(name_b);
-    vine::appfw::CommandResult result_b;
-    std::thread                runner_b([&] { result_b = vine::async::syncWait(std::move(task_b)); });
+    vn::appfw::CommandResult result_b;
+    std::thread                runner_b([&] { result_b = vn::async::syncWait(std::move(task_b)); });
 
     while ((cm->currentCommand() == nullptr || cm->currentCommand()->name() != name_b)
            && std::chrono::steady_clock::now() < deadline) {
@@ -3108,8 +3108,8 @@ TEST_F(GuiTest, CommandManager_CancelCurrentStopsOnlyForegroundChain)
     runner_a.join();
     runner_b.join();
 
-    EXPECT_EQ(result_b.status(), vine::appfw::CommandStatus::Cancelled);
-    EXPECT_EQ(result_a.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(result_b.status(), vn::appfw::CommandStatus::Cancelled);
+    EXPECT_EQ(result_a.status(), vn::appfw::CommandStatus::Success);
     EXPECT_EQ(cm->runningCount(), 0);
 
     cm->unregisterCommand(name_a);
@@ -3124,12 +3124,12 @@ TEST_F(GuiTest, CommandManager_RegisterValidatesAndCachesMetadata)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"validatedCmd");
+    const auto name = vn::String(u8"validatedCmd");
     cm->unregisterCommand(name);
 
     // 空名与空工厂被拒绝，不会留下不可用的注册项。
-    EXPECT_FALSE(cm->registerCommand(DummyCommand::desc(), vine::String{}, [] { return new DummyCommand; }));
-    EXPECT_FALSE(cm->registerCommand(DummyCommand::desc(), name, std::function<vine::appfw::Command*()>{}));
+    EXPECT_FALSE(cm->registerCommand(DummyCommand::desc(), vn::String{}, [] { return new DummyCommand; }));
+    EXPECT_FALSE(cm->registerCommand(DummyCommand::desc(), name, std::function<vn::appfw::Command*()>{}));
     EXPECT_FALSE(cm->isRegistered(name));
 
     std::atomic<int> instantiations{ 0 };
@@ -3146,11 +3146,11 @@ TEST_F(GuiTest, CommandManager_RegisterValidatesAndCachesMetadata)
     for (int i = 0; i < 3; ++i) {
         const auto infos = cm->commandInfos();
         const auto it    = std::find_if(infos.begin(), infos.end(),
-                                        [&name](const vine::appfw::CommandInfo& info) { return info.name == name; });
+                                        [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
         ASSERT_NE(it, infos.end());
-        EXPECT_EQ(it->group, vine::String(u8"Test"));
-        EXPECT_EQ(it->description, vine::String(u8"dummy command"));
-        EXPECT_EQ(it->owner, vine::String{});
+        EXPECT_EQ(it->group, vn::String(u8"Test"));
+        EXPECT_EQ(it->description, vn::String(u8"dummy command"));
+        EXPECT_EQ(it->owner, vn::String{});
     }
     // 旧实现每次 commandInfos() 都会实例化一次 ⇒ 这里会变成 4。
     EXPECT_EQ(instantiations.load(), 1);
@@ -3168,29 +3168,29 @@ TEST_F(GuiTest, CommandManager_DisableIsAFlagAndIsPersisted)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"disableProbe");
+    const auto name = vn::String(u8"disableProbe");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->setCommandEnabled(name, true)) << "先清掉可能残留的偏好";
     ASSERT_TRUE(cm->registerCommand(DummyCommand::desc(), name, [] { return new DummyCommand; }));
-    ASSERT_TRUE(cm->registerAlias(vine::String(u8"disableProbeAlias"), name));
+    ASSERT_TRUE(cm->registerAlias(vn::String(u8"disableProbeAlias"), name));
 
     // 禁用：仍是注册项、仍在列表里（enabled=false），但不可执行。
     ASSERT_TRUE(cm->setCommandEnabled(name, false));
     EXPECT_TRUE(cm->isRegistered(name)) << "禁用是标记而不是移除";
     EXPECT_FALSE(cm->isCommandEnabled(name)) << "禁用的命令不能执行";
-    EXPECT_FALSE(cm->isRegistered(vine::String(u8"disableProbeAlias"))) << "别名不是注册的命令名";
-    EXPECT_FALSE(cm->isCommandEnabled(vine::String(u8"disableProbeAlias")))
+    EXPECT_FALSE(cm->isRegistered(vn::String(u8"disableProbeAlias"))) << "别名不是注册的命令名";
+    EXPECT_FALSE(cm->isCommandEnabled(vn::String(u8"disableProbeAlias")))
         << "别名解析到禁用的命令，同样不可执行";
 
     const auto infos = cm->commandInfos();
     const auto it    = std::find_if(infos.begin(), infos.end(),
-                                    [&name](const vine::appfw::CommandInfo& info) { return info.name == name; });
+                                    [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
     ASSERT_NE(it, infos.end()) << "禁用不把命令从列表里移除";
     EXPECT_FALSE(it->enabled);
 
     const auto blocked = cm->executeCommandAndWait(name);
-    EXPECT_EQ(blocked.status(), vine::appfw::CommandStatus::Failed);
-    EXPECT_EQ(blocked.message(), vine::String(u8"命令“disableProbe”已被禁用；可在「命令管理器」中启用。"))
+    EXPECT_EQ(blocked.status(), vn::appfw::CommandStatus::Failed);
+    EXPECT_EQ(blocked.message(), vn::String(u8"命令“disableProbe”已被禁用；可在「命令管理器」中启用。"))
         << "禁用与'未注册'要能区分，而且这句是要直接给用户看的";
 
     const auto disabled = cm->disabledCommands();
@@ -3204,11 +3204,11 @@ TEST_F(GuiTest, CommandManager_DisableIsAFlagAndIsPersisted)
     // 启用后立刻恢复执行，并从偏好里移除。
     ASSERT_TRUE(cm->setCommandEnabled(name, true));
     EXPECT_TRUE(cm->isRegistered(name));
-    EXPECT_EQ(cm->executeCommandAndWait(name).status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(cm->executeCommandAndWait(name).status(), vn::appfw::CommandStatus::Success);
     const auto after = cm->disabledCommands();
     EXPECT_EQ(std::find(after.begin(), after.end(), name), after.end());
 
-    cm->unregisterAlias(vine::String(u8"disableProbeAlias"));
+    cm->unregisterAlias(vn::String(u8"disableProbeAlias"));
     cm->unregisterCommand(name);
 }
 
@@ -3221,22 +3221,22 @@ TEST_F(GuiTest, CommandManager_DisableBlocksCallerSuppliedInstance)
     ASSERT_NE(cm, nullptr);
 
     // DummyCommand::name() 就是 u8"dummy"：注册名与实例名一致才谈得上拦它。
-    const auto name = vine::String(u8"dummy");
+    const auto name = vn::String(u8"dummy");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->setCommandEnabled(name, true));
     ASSERT_TRUE(cm->registerCommand(DummyCommand::desc(), name, [] { return new DummyCommand; }));
 
-    EXPECT_EQ(cm->executeCommandAndWait(new DummyCommand).status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(cm->executeCommandAndWait(new DummyCommand).status(), vn::appfw::CommandStatus::Success);
 
     ASSERT_TRUE(cm->setCommandEnabled(name, false));
     const auto blocked = cm->executeCommandAndWait(new DummyCommand);
-    EXPECT_EQ(blocked.status(), vine::appfw::CommandStatus::Failed);
-    EXPECT_EQ(blocked.message(), vine::String(u8"命令“dummy”已被禁用；可在「命令管理器」中启用。"));
+    EXPECT_EQ(blocked.status(), vn::appfw::CommandStatus::Failed);
+    EXPECT_EQ(blocked.message(), vn::String(u8"命令“dummy”已被禁用；可在「命令管理器」中启用。"));
 
     // 未注册的名字不受影响：临时造的命令照旧执行。
     ASSERT_TRUE(cm->setCommandEnabled(name, true));
     cm->unregisterCommand(name);
-    EXPECT_EQ(cm->executeCommandAndWait(new DummyCommand).status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(cm->executeCommandAndWait(new DummyCommand).status(), vn::appfw::CommandStatus::Success);
 }
 
 // 工厂返回空指针不应让列举崩溃（旧实现在 commandInfos() 里直接解引用）。
@@ -3247,22 +3247,22 @@ TEST_F(GuiTest, CommandManager_NullFactoryIsTolerated)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"brokenFactory");
+    const auto name = vn::String(u8"brokenFactory");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand(DummyCommand::desc(), name,
-                                    [] { return static_cast<vine::appfw::Command*>(nullptr); }));
+                                    [] { return static_cast<vn::appfw::Command*>(nullptr); }));
     EXPECT_TRUE(cm->isRegistered(name));
 
     const auto infos = cm->commandInfos();
     const auto it    = std::find_if(infos.begin(), infos.end(),
-                                    [&name](const vine::appfw::CommandInfo& info) { return info.name == name; });
+                                    [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
     ASSERT_NE(it, infos.end());
     EXPECT_TRUE(it->group.empty());
     EXPECT_TRUE(it->description.empty());
 
     // 执行也返回 Failed，而不是解引用空指针。
     const auto result = cm->executeCommandAndWait(name);
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Failed);
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Failed);
 
     cm->unregisterCommand(name);
 }
@@ -3275,33 +3275,33 @@ TEST_F(GuiTest, CommandManager_CommandInfosAttachesAliases)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"aliasTarget");
+    const auto name = vn::String(u8"aliasTarget");
     cm->unregisterCommand(name);
-    cm->unregisterAlias(vine::String(u8"aliasTargetAlias"));
-    cm->unregisterAlias(vine::String(u8"aliasWithoutTarget"));
+    cm->unregisterAlias(vn::String(u8"aliasTargetAlias"));
+    cm->unregisterAlias(vn::String(u8"aliasWithoutTarget"));
 
     ASSERT_TRUE(cm->registerCommand<DummyCommand>(name));
-    ASSERT_TRUE(cm->registerAlias(vine::String(u8"aliasTargetAlias"), name));
-    ASSERT_TRUE(cm->registerAlias(vine::String(u8"aliasWithoutTarget"), vine::String(u8"notRegisteredAtAll")));
+    ASSERT_TRUE(cm->registerAlias(vn::String(u8"aliasTargetAlias"), name));
+    ASSERT_TRUE(cm->registerAlias(vn::String(u8"aliasWithoutTarget"), vn::String(u8"notRegisteredAtAll")));
 
     const auto infos = cm->commandInfos();
     const auto it    = std::find_if(infos.begin(), infos.end(),
-                                    [&name](const vine::appfw::CommandInfo& info) { return info.name == name; });
+                                    [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
     ASSERT_NE(it, infos.end());
     ASSERT_EQ(it->aliases.size(), 1u);
-    EXPECT_EQ(it->aliases.front(), vine::String(u8"aliasTargetAlias"));
+    EXPECT_EQ(it->aliases.front(), vn::String(u8"aliasTargetAlias"));
 
     // 结果按名字排序。
     EXPECT_TRUE(std::is_sorted(infos.begin(), infos.end(),
-                               [](const vine::appfw::CommandInfo& a, const vine::appfw::CommandInfo& b) {
+                               [](const vn::appfw::CommandInfo& a, const vn::appfw::CommandInfo& b) {
                                    return a.name < b.name;
                                }));
 
     // 别名可以启动目标命令。
-    EXPECT_EQ(cm->executeCommandAndWait(vine::String(u8"aliasTargetAlias")).status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(cm->executeCommandAndWait(vn::String(u8"aliasTargetAlias")).status(), vn::appfw::CommandStatus::Success);
 
-    cm->unregisterAlias(vine::String(u8"aliasTargetAlias"));
-    cm->unregisterAlias(vine::String(u8"aliasWithoutTarget"));
+    cm->unregisterAlias(vn::String(u8"aliasTargetAlias"));
+    cm->unregisterAlias(vn::String(u8"aliasWithoutTarget"));
     cm->unregisterCommand(name);
 }
 
@@ -3314,7 +3314,7 @@ TEST_F(GuiTest, CommandManager_UndoableSnapshotHandlerRunsBeforeExecution)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"undoableProbe");
+    const auto name = vn::String(u8"undoableProbe");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<UndoableProbeCommand>(name));
 
@@ -3322,7 +3322,7 @@ TEST_F(GuiTest, CommandManager_UndoableSnapshotHandlerRunsBeforeExecution)
     UndoableProbeCommand::s_ran       = false;
     UndoableProbeCommand::s_snapshots = 0;
     cm->setSnapshotHandler([] { UndoableProbeCommand::s_snapshots.fetch_add(1); });
-    EXPECT_EQ(cm->executeCommandAndWait(name).status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(cm->executeCommandAndWait(name).status(), vn::appfw::CommandStatus::Success);
     EXPECT_EQ(UndoableProbeCommand::s_snapshots.load(), 1);
     EXPECT_TRUE(UndoableProbeCommand::s_ran.load());
 
@@ -3330,14 +3330,14 @@ TEST_F(GuiTest, CommandManager_UndoableSnapshotHandlerRunsBeforeExecution)
     cm->setSnapshotHandler([] { throw std::runtime_error("snapshot boom"); });
     UndoableProbeCommand::s_ran = false;
     const auto failed         = cm->executeCommandAndWait(name);
-    EXPECT_EQ(failed.status(), vine::appfw::CommandStatus::Failed);
-    EXPECT_EQ(failed.message(), vine::String(u8"snapshot boom"));
+    EXPECT_EQ(failed.status(), vn::appfw::CommandStatus::Failed);
+    EXPECT_EQ(failed.message(), vn::String(u8"snapshot boom"));
     EXPECT_FALSE(UndoableProbeCommand::s_ran.load());
 
     // 3) 清空回调：不再调用，命令正常执行。
     cm->setSnapshotHandler({});
     UndoableProbeCommand::s_ran = false;
-    EXPECT_EQ(cm->executeCommandAndWait(name).status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(cm->executeCommandAndWait(name).status(), vn::appfw::CommandStatus::Success);
     EXPECT_TRUE(UndoableProbeCommand::s_ran.load());
     EXPECT_EQ(UndoableProbeCommand::s_snapshots.load(), 1);
 
@@ -3354,22 +3354,22 @@ TEST_F(GuiTest, CommandManager_TopLevelCallInsideLongRunningParentIsRefused)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto parent_name = vine::String(u8"topLevelCaller");
+    const auto parent_name = vn::String(u8"topLevelCaller");
     const auto child_name  = TopLevelCallingParentCommand::s_child_name;
     cm->unregisterCommand(parent_name);
     cm->unregisterCommand(child_name);
     ASSERT_TRUE(cm->registerCommand<DummyCommand>(child_name));
     ASSERT_TRUE(cm->registerCommand<TopLevelCallingParentCommand>(parent_name));
-    TopLevelCallingParentCommand::s_child_status  = vine::appfw::CommandStatus::Success;
+    TopLevelCallingParentCommand::s_child_status  = vn::appfw::CommandStatus::Success;
     TopLevelCallingParentCommand::s_child_message = {};
 
     const auto result = cm->executeCommandAndWait(parent_name);
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Success);
-    EXPECT_EQ(TopLevelCallingParentCommand::s_child_status, vine::appfw::CommandStatus::Failed);
-    EXPECT_EQ(TopLevelCallingParentCommand::s_child_message, vine::String(u8"另一个操作正在进行中，请稍候。"));
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success);
+    EXPECT_EQ(TopLevelCallingParentCommand::s_child_status, vn::appfw::CommandStatus::Failed);
+    EXPECT_EQ(TopLevelCallingParentCommand::s_child_message, vn::String(u8"另一个操作正在进行中，请稍候。"));
 
     // 门随父命令结束释放。
-    EXPECT_FALSE(vine::appfw::ProgressHost::isActive());
+    EXPECT_FALSE(vn::appfw::ProgressHost::isActive());
     EXPECT_EQ(cm->runningCount(), 0);
 
     cm->unregisterCommand(parent_name);
@@ -3385,8 +3385,8 @@ TEST_F(GuiTest, CommandManager_CombinedFlagsAreHonoured)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name  = vine::String(u8"combinedFlags");
-    const auto other = vine::String(u8"combinedFlagsOther");
+    const auto name  = vn::String(u8"combinedFlags");
+    const auto other = vn::String(u8"combinedFlagsOther");
     cm->unregisterCommand(name);
     cm->unregisterCommand(other);
     ASSERT_TRUE(cm->registerCommand<CombinedFlagsCommand>(name));
@@ -3401,8 +3401,8 @@ TEST_F(GuiTest, CommandManager_CombinedFlagsAreHonoured)
 
     // LongRunning 部分：命令正在 50ms 的 sleep 里，顶层命令必须被门拒绝。
     const auto refused = cm->executeCommandAndWait(other);
-    EXPECT_EQ(refused.status(), vine::appfw::CommandStatus::Failed);
-    EXPECT_EQ(refused.message(), vine::String(u8"另一个操作正在进行中，请稍候。"));
+    EXPECT_EQ(refused.status(), vn::appfw::CommandStatus::Failed);
+    EXPECT_EQ(refused.message(), vn::String(u8"另一个操作正在进行中，请稍候。"));
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (cm->historyCount() < 1 && std::chrono::steady_clock::now() < deadline) {
@@ -3410,7 +3410,7 @@ TEST_F(GuiTest, CommandManager_CombinedFlagsAreHonoured)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     ASSERT_GE(cm->historyCount(), 1);
-    EXPECT_EQ(cm->historyAt(0)->result.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vn::appfw::CommandStatus::Success);
     EXPECT_TRUE(CombinedFlagsCommand::s_ran);
     EXPECT_EQ(snapshots, 1) << "Undoable 部分：快照在执行前发生一次";
 
@@ -3429,7 +3429,7 @@ TEST_F(GuiTest, CommandManager_AsyncTopLevelCallInsideCommandOpensNewChain)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto parent_name = vine::String(u8"asyncCaller");
+    const auto parent_name = vn::String(u8"asyncCaller");
     const auto child_name  = AsyncCallingParentCommand::s_child_name;
     cm->unregisterCommand(parent_name);
     cm->unregisterCommand(child_name);
@@ -3438,21 +3438,21 @@ TEST_F(GuiTest, CommandManager_AsyncTopLevelCallInsideCommandOpensNewChain)
     ForegroundProbeChildCommand::s_foreground_name.clear();
     ForegroundProbeChildCommand::s_foreground_depth = 0;
     AsyncCallingParentCommand::s_parent_is_foreground = false;
-    AsyncCallingParentCommand::s_child_status         = vine::appfw::CommandStatus::Failed;
+    AsyncCallingParentCommand::s_child_status         = vn::appfw::CommandStatus::Failed;
     AsyncCallingParentCommand::s_current_after.clear();
     AsyncCallingParentCommand::s_depth_after = -1;
 
     const auto result = cm->executeCommandAndWait(parent_name);
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success);
 
     // 父命令确实在前台链上（否则后面的对照没意义）。
     EXPECT_TRUE(AsyncCallingParentCommand::s_parent_is_foreground);
     // 子命令新链上跑成功，并且在它自己运行时它就是前台。
-    EXPECT_EQ(AsyncCallingParentCommand::s_child_status, vine::appfw::CommandStatus::Success);
-    EXPECT_EQ(ForegroundProbeChildCommand::s_foreground_name, vine::String(u8"foregroundProbe"));
+    EXPECT_EQ(AsyncCallingParentCommand::s_child_status, vn::appfw::CommandStatus::Success);
+    EXPECT_EQ(ForegroundProbeChildCommand::s_foreground_name, vn::String(u8"foregroundProbe"));
     EXPECT_EQ(ForegroundProbeChildCommand::s_foreground_depth, 1);
     // 前台链不被恢复：子链已结束 ⇒ 父命令还在跑但前台查不到任何人。
-    EXPECT_EQ(AsyncCallingParentCommand::s_current_after, vine::String(u8"<none>"));
+    EXPECT_EQ(AsyncCallingParentCommand::s_current_after, vn::String(u8"<none>"));
     EXPECT_EQ(AsyncCallingParentCommand::s_depth_after, 0);
 
     cm->unregisterCommand(parent_name);
@@ -3467,11 +3467,11 @@ TEST_F(GuiTest, CommandManager_ResolvesAliasChains)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name   = vine::String(u8"chainTarget");
-    const auto first  = vine::String(u8"chainAlias1");
-    const auto second = vine::String(u8"chainAlias2");
-    const auto loop_a = vine::String(u8"loopA");
-    const auto loop_b = vine::String(u8"loopB");
+    const auto name   = vn::String(u8"chainTarget");
+    const auto first  = vn::String(u8"chainAlias1");
+    const auto second = vn::String(u8"chainAlias2");
+    const auto loop_a = vn::String(u8"loopA");
+    const auto loop_b = vn::String(u8"loopB");
     cm->unregisterCommand(name);
     cm->unregisterAlias(first);
     cm->unregisterAlias(second);
@@ -3484,12 +3484,12 @@ TEST_F(GuiTest, CommandManager_ResolvesAliasChains)
     ASSERT_TRUE(cm->registerCommand<DummyCommand>(name));
 
     EXPECT_TRUE(cm->isCommandEnabled(first)) << "别名链解析到已注册且启用的命令";
-    EXPECT_EQ(cm->executeCommandAndWait(first).status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(cm->executeCommandAndWait(first).status(), vn::appfw::CommandStatus::Success);
 
     // 两个别名都挂在最终解析到的命令下。
     const auto infos = cm->commandInfos();
     const auto it    = std::find_if(infos.begin(), infos.end(),
-                                    [&name](const vine::appfw::CommandInfo& info) { return info.name == name; });
+                                    [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
     ASSERT_NE(it, infos.end());
     EXPECT_EQ(it->aliases.size(), 2u);
 
@@ -3497,7 +3497,7 @@ TEST_F(GuiTest, CommandManager_ResolvesAliasChains)
     ASSERT_TRUE(cm->registerAlias(loop_a, loop_b));
     ASSERT_TRUE(cm->registerAlias(loop_b, loop_a));
     EXPECT_FALSE(cm->isCommandEnabled(loop_a)) << "环解析不到命令";
-    EXPECT_EQ(cm->executeCommandAndWait(loop_a).status(), vine::appfw::CommandStatus::Failed);
+    EXPECT_EQ(cm->executeCommandAndWait(loop_a).status(), vn::appfw::CommandStatus::Failed);
 
     cm->unregisterAlias(first);
     cm->unregisterAlias(second);
@@ -3514,17 +3514,17 @@ TEST_F(GuiTest, CommandManager_RejectsTooDeepNesting)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"selfNesting");
+    const auto name = vn::String(u8"selfNesting");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<RecursiveCommand>(name));
     RecursiveCommand::s_entries = 0;
 
     const auto result = cm->executeCommandAndWait(name);
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Failed);
-    EXPECT_EQ(result.message(), vine::String(u8"Command nesting is too deep"));
-    EXPECT_EQ(RecursiveCommand::s_entries.load(), vine::appfw::CommandManager::maxChainDepth());
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Failed);
+    EXPECT_EQ(result.message(), vn::String(u8"Command nesting is too deep"));
+    EXPECT_EQ(RecursiveCommand::s_entries.load(), vn::appfw::CommandManager::maxChainDepth());
     EXPECT_EQ(cm->runningCount(), 0);
-    EXPECT_FALSE(vine::appfw::ProgressHost::isActive());
+    EXPECT_FALSE(vn::appfw::ProgressHost::isActive());
 
     cm->unregisterCommand(name);
 }
@@ -3537,15 +3537,15 @@ TEST_F(GuiTest, CommandManager_HistoryIsBounded)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"historyBound");
+    const auto name = vn::String(u8"historyBound");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<DummyCommand>(name));
     cm->clearHistory();
 
-    const auto cap   = static_cast<int>(vine::appfw::CommandManager::maxHistoryEntries());
+    const auto cap   = static_cast<int>(vn::appfw::CommandManager::maxHistoryEntries());
     const auto total = cap + 3;
     for (int i = 0; i < total; ++i) {
-        ASSERT_EQ(cm->executeCommandAndWait(name).status(), vine::appfw::CommandStatus::Success);
+        ASSERT_EQ(cm->executeCommandAndWait(name).status(), vn::appfw::CommandStatus::Success);
     }
 
     EXPECT_EQ(cm->historyCount(), cap);
@@ -3566,15 +3566,15 @@ TEST_F(GuiTest, CommandManager_CommandExceptionBecomesFailedResult)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"throwingCmd");
+    const auto name = vn::String(u8"throwingCmd");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<ThrowingCommand>(name));
     cm->clearHistory();
 
     // 同步路径：不向调用方抛异常，而是返回 Failed 并带上原因。
     const auto result = cm->executeCommandAndWait(name);
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Failed);
-    EXPECT_EQ(result.message(), vine::String(u8"boom"));
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Failed);
+    EXPECT_EQ(result.message(), vn::String(u8"boom"));
 
     // detached 路径：旧实现会在 DetachedTask 里 terminate 掉整个进程。
     cm->executeDetached(name);
@@ -3586,13 +3586,13 @@ TEST_F(GuiTest, CommandManager_CommandExceptionBecomesFailedResult)
     ASSERT_EQ(cm->historyCount(), 2);
     const auto entry = cm->historyAt(1);
     ASSERT_TRUE(entry.has_value());
-    EXPECT_EQ(entry->name, vine::String(u8"throwing"));
-    EXPECT_EQ(entry->result.status(), vine::appfw::CommandStatus::Failed);
+    EXPECT_EQ(entry->name, vn::String(u8"throwing"));
+    EXPECT_EQ(entry->result.status(), vn::appfw::CommandStatus::Failed);
 
     // 异常本身没有描述时，结果消息要有兜底文本（否则 UI 只能显示一条无信息的失败）。
     ThrowingCommand::s_empty_message = true;
     const auto silent             = cm->executeCommandAndWait(name);
-    EXPECT_EQ(silent.status(), vine::appfw::CommandStatus::Failed);
+    EXPECT_EQ(silent.status(), vn::appfw::CommandStatus::Failed);
     EXPECT_FALSE(silent.message().empty());
     ThrowingCommand::s_empty_message = false;
 
@@ -3607,10 +3607,10 @@ TEST_F(GuiTest, CommandManager_ThrowingFactoryDoesNotEscape)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"throwingFactory");
+    const auto name = vn::String(u8"throwingFactory");
     cm->unregisterCommand(name);
 
-    const auto factory = []() -> vine::appfw::Command* {
+    const auto factory = []() -> vn::appfw::Command* {
         throw std::runtime_error("factory boom");
     };
     EXPECT_NO_THROW(EXPECT_TRUE(cm->registerCommand(DummyCommand::desc(), name, factory)));
@@ -3618,15 +3618,15 @@ TEST_F(GuiTest, CommandManager_ThrowingFactoryDoesNotEscape)
 
     const auto infos = cm->commandInfos();
     const auto it    = std::find_if(infos.begin(), infos.end(),
-                                    [&name](const vine::appfw::CommandInfo& info) { return info.name == name; });
+                                    [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
     ASSERT_NE(it, infos.end());
     EXPECT_TRUE(it->group.empty());
     EXPECT_TRUE(it->description.empty());
 
     EXPECT_NO_THROW({
         const auto result = cm->executeCommandAndWait(name);
-        EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Failed);
-        EXPECT_EQ(result.message(), vine::String(u8"factory boom"));
+        EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Failed);
+        EXPECT_EQ(result.message(), vn::String(u8"factory boom"));
     });
 
     cm->unregisterCommand(name);
@@ -3640,8 +3640,8 @@ TEST_F(GuiTest, CommandManager_CancelAllReachesBackgroundChains)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name_a = vine::String(u8"backgroundA");
-    const auto name_b = vine::String(u8"foregroundB");
+    const auto name_a = vn::String(u8"backgroundA");
+    const auto name_b = vn::String(u8"foregroundB");
     cm->unregisterCommand(name_a);
     cm->unregisterCommand(name_b);
     // A 睡很久，保证它在 B 结束后仍然活着；B 短，取消后很快落定。
@@ -3671,7 +3671,7 @@ TEST_F(GuiTest, CommandManager_CancelAllReachesBackgroundChains)
     ASSERT_EQ(cm->historyCount(), 1);
     ASSERT_TRUE(cm->historyAt(0).has_value());
     EXPECT_EQ(cm->historyAt(0)->name, name_b);
-    EXPECT_EQ(cm->historyAt(0)->result.status(), vine::appfw::CommandStatus::Cancelled);
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vn::appfw::CommandStatus::Cancelled);
 
     // cancelAll() 触到后台链 A。
     cm->cancelAll();
@@ -3681,7 +3681,7 @@ TEST_F(GuiTest, CommandManager_CancelAllReachesBackgroundChains)
     ASSERT_EQ(cm->historyCount(), 2);
     ASSERT_TRUE(cm->historyAt(1).has_value());
     EXPECT_EQ(cm->historyAt(1)->name, name_a);
-    EXPECT_EQ(cm->historyAt(1)->result.status(), vine::appfw::CommandStatus::Cancelled);
+    EXPECT_EQ(cm->historyAt(1)->result.status(), vn::appfw::CommandStatus::Cancelled);
     EXPECT_EQ(cm->runningCount(), 0);
 
     cm->clearHistory();
@@ -3698,8 +3698,8 @@ TEST_F(GuiTest, CommandManager_NestedCancelledChildIsReported)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto parent = vine::String(u8"nestingParent");
-    const auto child  = vine::String(u8"nestingChild");
+    const auto parent = vn::String(u8"nestingParent");
+    const auto child  = vn::String(u8"nestingChild");
     cm->unregisterCommand(parent);
     cm->unregisterCommand(child);
     ASSERT_TRUE(cm->registerCommand<NestingCancellableParentCommand>(parent));
@@ -3712,14 +3712,14 @@ TEST_F(GuiTest, CommandManager_NestedCancelledChildIsReported)
     std::atomic<int> child_executed{ 0 };
 
     auto executing = cm->executing.connect(
-        [&](vine::appfw::CommandManager&, vine::appfw::CommandExecutingEventArgs& args) {
+        [&](vn::appfw::CommandManager&, vn::appfw::CommandExecutingEventArgs& args) {
             const auto* c = args.command();
             if (c != nullptr && c->name() == child) {
                 ++child_executing;
             }
         });
     auto executed = cm->executed.connect(
-        [&](vine::appfw::CommandManager&, vine::appfw::CommandExecutedEventArgs& args) {
+        [&](vn::appfw::CommandManager&, vn::appfw::CommandExecutedEventArgs& args) {
             const auto* c = args.command();
             if (c != nullptr && c->name() == child) {
                 ++child_executed;
@@ -3727,8 +3727,8 @@ TEST_F(GuiTest, CommandManager_NestedCancelledChildIsReported)
         });
 
     auto                       task = cm->executeCommandAsync(parent);
-    vine::appfw::CommandResult result;
-    std::thread                runner([&] { result = vine::async::syncWait(std::move(task)); });
+    vn::appfw::CommandResult result;
+    std::thread                runner([&] { result = vn::async::syncWait(std::move(task)); });
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (cm->runningCount() < 2 && std::chrono::steady_clock::now() < deadline) {
@@ -3742,17 +3742,17 @@ TEST_F(GuiTest, CommandManager_NestedCancelledChildIsReported)
     executing.disconnect();
     executed.disconnect();
 
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Cancelled);
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Cancelled);
     EXPECT_EQ(child_executing.load(), 1);
     EXPECT_EQ(child_executed.load(), 1) << "被取消的嵌套子命令必须发出 executed 事件";
 
     ASSERT_EQ(cm->historyCount(), 2) << "父子命令都应进历史";
     ASSERT_TRUE(cm->historyAt(0).has_value());
     EXPECT_EQ(cm->historyAt(0)->name, child);
-    EXPECT_EQ(cm->historyAt(0)->result.status(), vine::appfw::CommandStatus::Cancelled);
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vn::appfw::CommandStatus::Cancelled);
     ASSERT_TRUE(cm->historyAt(1).has_value());
     EXPECT_EQ(cm->historyAt(1)->name, parent);
-    EXPECT_EQ(cm->historyAt(1)->result.status(), vine::appfw::CommandStatus::Cancelled);
+    EXPECT_EQ(cm->historyAt(1)->result.status(), vn::appfw::CommandStatus::Cancelled);
 
     cm->clearHistory();
     cm->unregisterCommand(parent);
@@ -3768,9 +3768,9 @@ TEST_F(GuiTest, CommandManager_ExclusiveStopsEveryLiveChain)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto victim = vine::String(u8"backgroundVictim");
-    const auto quick  = vine::String(u8"quickForeground");
-    const auto taker  = vine::String(u8"takeover");
+    const auto victim = vn::String(u8"backgroundVictim");
+    const auto quick  = vn::String(u8"quickForeground");
+    const auto taker  = vn::String(u8"takeover");
     cm->unregisterCommand(victim);
     cm->unregisterCommand(quick);
     cm->unregisterCommand(taker);
@@ -3786,10 +3786,10 @@ TEST_F(GuiTest, CommandManager_ExclusiveStopsEveryLiveChain)
 
     // 后台链先跑起来（她是前台），由工作线程驱动。
     auto                       task = cm->executeCommandAsync(victim);
-    vine::appfw::CommandResult victim_result;
+    vn::appfw::CommandResult victim_result;
     std::atomic<bool>          victim_done{ false };
     std::thread                runner([&] {
-        victim_result = vine::async::syncWait(std::move(task));
+        victim_result = vn::async::syncWait(std::move(task));
         victim_done.store(true);
     });
 
@@ -3801,12 +3801,12 @@ TEST_F(GuiTest, CommandManager_ExclusiveStopsEveryLiveChain)
     ASSERT_EQ(cm->currentCommand()->name(), victim);
 
     // 一条普通顶层命令把受害者顶出前台（她不是 LongRunning，门是开的）。
-    ASSERT_EQ(cm->executeCommandAndWait(quick).status(), vine::appfw::CommandStatus::Success);
+    ASSERT_EQ(cm->executeCommandAndWait(quick).status(), vn::appfw::CommandStatus::Success);
     EXPECT_EQ(cm->currentCommand(), nullptr) << "前台已换成刚结束的 quick 链";
 
     // 排他命令：接管时必须连后台链一起收掉，并在放行前等到她真的结束。
     const auto takeover = cm->executeCommandAndWait(taker);
-    EXPECT_EQ(takeover.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(takeover.status(), vn::appfw::CommandStatus::Success);
     EXPECT_TRUE(ExclusiveTakeOverCommand::s_ran);
     EXPECT_TRUE(victim_done.load()) << "排他命令运行时后台链必须已经收尾，不能并发";
 
@@ -3814,7 +3814,7 @@ TEST_F(GuiTest, CommandManager_ExclusiveStopsEveryLiveChain)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     runner.join();
-    EXPECT_EQ(victim_result.status(), vine::appfw::CommandStatus::Cancelled);
+    EXPECT_EQ(victim_result.status(), vn::appfw::CommandStatus::Cancelled);
 
     cm->clearHistory();
     cm->unregisterCommand(victim);
@@ -3830,8 +3830,8 @@ TEST_F(GuiTest, CommandManager_DisablingAnAliasDisablesTheCommand)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name  = vine::String(u8"aliasDisableTarget");
-    const auto alias = vine::String(u8"aliasDisableBridge");
+    const auto name  = vn::String(u8"aliasDisableTarget");
+    const auto alias = vn::String(u8"aliasDisableBridge");
     cm->unregisterCommand(name);
     cm->unregisterAlias(alias);
     ASSERT_TRUE(cm->registerCommand<DummyCommand>(name));
@@ -3840,13 +3840,13 @@ TEST_F(GuiTest, CommandManager_DisablingAnAliasDisablesTheCommand)
     EXPECT_TRUE(cm->setCommandEnabled(alias, false));
     EXPECT_FALSE(cm->isCommandEnabled(alias));
     EXPECT_FALSE(cm->isCommandEnabled(name));
-    EXPECT_EQ(cm->executeCommandAndWait(alias).status(), vine::appfw::CommandStatus::Failed);
-    EXPECT_EQ(cm->executeCommandAndWait(name).status(), vine::appfw::CommandStatus::Failed);
+    EXPECT_EQ(cm->executeCommandAndWait(alias).status(), vn::appfw::CommandStatus::Failed);
+    EXPECT_EQ(cm->executeCommandAndWait(name).status(), vn::appfw::CommandStatus::Failed);
 
     // 启用同样按别名落到命令上。
     EXPECT_TRUE(cm->setCommandEnabled(alias, true));
     EXPECT_TRUE(cm->isCommandEnabled(name));
-    EXPECT_EQ(cm->executeCommandAndWait(alias).status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(cm->executeCommandAndWait(alias).status(), vn::appfw::CommandStatus::Success);
 
     cm->unregisterAlias(alias);
     cm->unregisterCommand(name);
@@ -3863,7 +3863,7 @@ TEST_F(GuiTest, CommandManager_CancelAllAndWaitDrainsChains)
     // 空闲时立即成功。
     EXPECT_TRUE(cm->cancelAllAndWait());
 
-    const auto name = vine::String(u8"drainTarget");
+    const auto name = vn::String(u8"drainTarget");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), name, [name] {
         return new CancellableSleepCommand(name, std::chrono::milliseconds(3000));
@@ -3883,7 +3883,7 @@ TEST_F(GuiTest, CommandManager_CancelAllAndWaitDrainsChains)
     EXPECT_EQ(cm->currentCommand(), nullptr);
     ASSERT_EQ(cm->historyCount(), 1);
     ASSERT_TRUE(cm->historyAt(0).has_value());
-    EXPECT_EQ(cm->historyAt(0)->result.status(), vine::appfw::CommandStatus::Cancelled);
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vn::appfw::CommandStatus::Cancelled);
 
     // 空闲时再调用一次：幂等，立即成功。
     EXPECT_TRUE(cm->cancelAllAndWait());
@@ -3901,7 +3901,7 @@ TEST_F(GuiTest, CommandManager_DetachedFailureIsReportedOnTheApplicationThread)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"detachedThrow");
+    const auto name = vn::String(u8"detachedThrow");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<ThrowingCommand>(name));
     cm->clearHistory();
@@ -3922,7 +3922,7 @@ TEST_F(GuiTest, CommandManager_DetachedFailureIsReportedOnTheApplicationThread)
     }
     ASSERT_EQ(cm->historyCount(), 1);
     ASSERT_TRUE(cm->historyAt(0).has_value());
-    EXPECT_EQ(cm->historyAt(0)->result.status(), vine::appfw::CommandStatus::Failed);
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vn::appfw::CommandStatus::Failed);
 
     // 命令已经记录完失败，但消息还没写进面板：它被投递到应用线程，等事件循环取。
     EXPECT_FALSE(output->toPlainText().contains(u8"boom"))
@@ -3944,28 +3944,28 @@ TEST_F(GuiTest, CommandManager_GateAdmitsAtMostOneTopLevelLongRunningCommand)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"gateHold");
+    const auto name = vn::String(u8"gateHold");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<GateHoldCommand>(name));
-    ASSERT_FALSE(vine::appfw::ProgressHost::isActive());
+    ASSERT_FALSE(vn::appfw::ProgressHost::isActive());
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 
     // 阶段 1：持有者挂着不放 ⇒ 第二个顶层命令被门拒绝。
     GateHoldCommand::s_release.reset();
-    vine::appfw::CommandResult holder_result;
+    vn::appfw::CommandResult holder_result;
     std::thread                holder([&] { holder_result = cm->executeCommandAndWait(name); });
 
     while (cm->runningCount() == 0 && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     ASSERT_EQ(cm->runningCount(), 1);
-    EXPECT_EQ(cm->executeCommandAndWait(name).status(), vine::appfw::CommandStatus::Failed);
+    EXPECT_EQ(cm->executeCommandAndWait(name).status(), vn::appfw::CommandStatus::Failed);
 
     GateHoldCommand::s_release.set();
     holder.join();
-    EXPECT_EQ(holder_result.status(), vine::appfw::CommandStatus::Success);
-    EXPECT_FALSE(vine::appfw::ProgressHost::isActive());
+    EXPECT_EQ(holder_result.status(), vn::appfw::CommandStatus::Success);
+    EXPECT_FALSE(vn::appfw::ProgressHost::isActive());
 
     // 阶段 2：两个线程同时抢门 ⇒ 恰好一个成功（赢家一直持有门到我们释放）。
     GateHoldCommand::s_release.reset();
@@ -4009,7 +4009,7 @@ TEST_F(GuiTest, CommandManager_GateAdmitsAtMostOneTopLevelLongRunningCommand)
     second.join();
     EXPECT_EQ(successes.load(), 1);
 
-    EXPECT_FALSE(vine::appfw::ProgressHost::isActive());
+    EXPECT_FALSE(vn::appfw::ProgressHost::isActive());
     EXPECT_EQ(cm->runningCount(), 0);
     cm->unregisterCommand(name);
 }
@@ -4022,14 +4022,14 @@ TEST_F(GuiTest, CommandManager_RegistrySurvivesConcurrentAccess)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name_a = vine::String(u8"concurrentA");
-    const auto name_b = vine::String(u8"concurrentB");
+    const auto name_a = vn::String(u8"concurrentA");
+    const auto name_b = vn::String(u8"concurrentB");
     cm->unregisterCommand(name_a);
     cm->unregisterCommand(name_b);
 
     std::atomic<bool> go{ false };
     std::atomic<int>  failures{ 0 };
-    const auto        worker = [&](const vine::String& name) {
+    const auto        worker = [&](const vn::String& name) {
         while (!go.load()) {
             std::this_thread::yield();
         }
@@ -4068,16 +4068,16 @@ TEST_F(GuiTest, CommandManager_NestedSyncExecuteCommandDoesNotDeadlock)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto child_name = vine::String(u8"syncChild");
+    const auto child_name = vn::String(u8"syncChild");
     cm->unregisterCommand(child_name);
     ASSERT_TRUE(cm->registerCommand<DummyCommand>(child_name));
 
-    const auto parent = [cm, child_name]() -> vine::async::Task<vine::appfw::CommandResult> {
+    const auto parent = [cm, child_name]() -> vn::async::Task<vn::appfw::CommandResult> {
         co_return cm->executeCommandAndWait(child_name);
     };
 
-    const auto result = vine::async::syncWait(parent());
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Success);
+    const auto result = vn::async::syncWait(parent());
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success);
     EXPECT_EQ(cm->runningCount(), 0);
 
     cm->unregisterCommand(child_name);
@@ -4087,7 +4087,7 @@ TEST_F(GuiTest, CommandManager_NestedSyncExecuteCommandDoesNotDeadlock)
 //
 // PluginManager 从默认插件目录（<build>/plugins/vine）发现插件。测试环境里
 // 一定存在 app_shell 与依赖它的 test_plugin（见 test_plugin/TestPlugin.cpp 的
-// V_DECLARE_PLUGIN 依赖声明）。这些用例依赖该目录，缺失时直接跳过。
+// VN_DECLARE_PLUGIN 依赖声明）。这些用例依赖该目录，缺失时直接跳过。
 //
 // 用例之间共享进程内的插件状态，必须按声明顺序执行：先验证"依赖被禁用则
 // 依赖者不加载"，再验证"被禁用的插件仍可见但不加载"，最后验证卸载。
@@ -4096,8 +4096,8 @@ namespace
 {
 
 /// 在插件状态列表里按名字查找，未找到返回 nullptr。
-const vine::appfw::PluginEntry* findPluginEntry(const std::vector<vine::appfw::PluginEntry>& entries,
-                                                const vine::String&                        name)
+const vn::appfw::PluginEntry* findPluginEntry(const std::vector<vn::appfw::PluginEntry>& entries,
+                                                const vn::String&                        name)
 {
     for (const auto& entry : entries) {
         if (entry.info.name == name) {
@@ -4107,15 +4107,15 @@ const vine::appfw::PluginEntry* findPluginEntry(const std::vector<vine::appfw::P
     return nullptr;
 }
 
-/// 把 vine::String 转成 std::string，用于在 JSON 文本里查找子串。
-std::string toUtf8(const vine::String& text)
+/// 把 vn::String 转成 std::string，用于在 JSON 文本里查找子串。
+std::string toUtf8(const vn::String& text)
 {
     return std::string(reinterpret_cast<const char*>(text.data()), text.size());
 }
 
 /// 在注册列表里按 id 查找，未找到返回 nullptr。
-const vine::appfw::PluginRegistration* findRegistration(const std::vector<vine::appfw::PluginRegistration>& registrations,
-                                                        const vine::String& id)
+const vn::appfw::PluginRegistration* findRegistration(const std::vector<vn::appfw::PluginRegistration>& registrations,
+                                                        const vn::String& id)
 {
     for (const auto& registration : registrations) {
         if (registration.id == id) {
@@ -4129,7 +4129,7 @@ const vine::appfw::PluginRegistration* findRegistration(const std::vector<vine::
 std::filesystem::path findPluginLibrary(const char* stem)
 {
     std::error_code ec;
-    const auto      dir = vine::appfw::PluginManager::builtInPluginDirectory();
+    const auto      dir = vn::appfw::PluginManager::builtInPluginDirectory();
     for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
         if (entry.is_regular_file() && entry.path().stem().string().rfind(stem, 0) == 0) {
             return entry.path();
@@ -4142,12 +4142,12 @@ std::filesystem::path findPluginLibrary(const char* stem)
 class BuiltInPluginDirectoryScope {
   public:
     explicit BuiltInPluginDirectoryScope(const std::filesystem::path& dir)
-      : saved_(vine::appfw::PluginManager::builtInPluginDirectory())
+      : saved_(vn::appfw::PluginManager::builtInPluginDirectory())
     {
-        vine::appfw::PluginManager::setBuiltInPluginDirectory(dir);
+        vn::appfw::PluginManager::setBuiltInPluginDirectory(dir);
     }
 
-    ~BuiltInPluginDirectoryScope() { vine::appfw::PluginManager::setBuiltInPluginDirectory(saved_); }
+    ~BuiltInPluginDirectoryScope() { vn::appfw::PluginManager::setBuiltInPluginDirectory(saved_); }
 
     BuiltInPluginDirectoryScope(const BuiltInPluginDirectoryScope&)            = delete;
     BuiltInPluginDirectoryScope& operator=(const BuiltInPluginDirectoryScope&) = delete;
@@ -4162,7 +4162,7 @@ class BuiltInPluginDirectoryScope {
 /// 禁用/卸载；析构时卸载并反注册、删目录、还原程序目录（断言失败也不漏）。
 class UserPluginSandbox {
   public:
-    UserPluginSandbox(vine::appfw::PluginManager* manager, const std::vector<const char*>& stems)
+    UserPluginSandbox(vn::appfw::PluginManager* manager, const std::vector<const char*>& stems)
       : manager_(manager)
     {
         // Copy the libraries while the application directory is still the real
@@ -4181,7 +4181,7 @@ class UserPluginSandbox {
         }
 
         if (manager_ != nullptr) {
-            registration_ = manager_->installPlugin(vine::String(directory().u8string()), vine::appfw::PluginScope::User);
+            registration_ = manager_->installPlugin(vn::String(directory().u8string()), vn::appfw::PluginScope::User);
         }
 
         // Only now hide the application directory, so the sandbox plugins are the
@@ -4199,7 +4199,7 @@ class UserPluginSandbox {
             if (!registration_.empty()) {
                 // Ignored on purpose: the sandbox is gone either way and the next
                 // test installs its own registration.
-                static_cast<void>(manager_->uninstallPlugin(registration_, vine::appfw::PluginScope::User));
+                static_cast<void>(manager_->uninstallPlugin(registration_, vn::appfw::PluginScope::User));
             }
         }
         std::filesystem::remove_all(directory(), ec);
@@ -4210,7 +4210,7 @@ class UserPluginSandbox {
     UserPluginSandbox& operator=(const UserPluginSandbox&) = delete;
 
     const std::filesystem::path& directory() const { return directory_; }
-    const vine::String&          registration() const { return registration_; }
+    const vn::String&          registration() const { return registration_; }
 
   private:
     static std::filesystem::path emptyDirectory()
@@ -4218,29 +4218,29 @@ class UserPluginSandbox {
         return std::filesystem::temp_directory_path() / "vine_sandbox_empty_plugin_dir";
     }
 
-    vine::appfw::PluginManager*           manager_;
+    vn::appfw::PluginManager*           manager_;
     std::unique_ptr<BuiltInPluginDirectoryScope> directory_scope_;
     std::filesystem::path       directory_{ std::filesystem::temp_directory_path() / "vine_test_plugins" };
-    vine::String                registration_;
+    vn::String                registration_;
 };
 
 /// 进程内的宿主跳过列表作用域：构造时替换，析构时恢复，避免用例之间互相影响。
 /// 注意 skipList() 返回的是内部列表的视图，必须先拷贝再 setSkipList()。
 class SkipListScope {
   public:
-    explicit SkipListScope(std::vector<vine::String> names)
-      : saved_(vine::appfw::PluginManager::skipList())
+    explicit SkipListScope(std::vector<vn::String> names)
+      : saved_(vn::appfw::PluginManager::skipList())
     {
-        vine::appfw::PluginManager::setSkipList(names);
+        vn::appfw::PluginManager::setSkipList(names);
     }
 
-    ~SkipListScope() { vine::appfw::PluginManager::setSkipList(saved_); }
+    ~SkipListScope() { vn::appfw::PluginManager::setSkipList(saved_); }
 
     SkipListScope(const SkipListScope&)            = delete;
     SkipListScope& operator=(const SkipListScope&) = delete;
 
   private:
-    std::vector<vine::String> saved_;
+    std::vector<vn::String> saved_;
 };
 
 constexpr char8_t s_shell_plugin[]     = u8"app_shell";   // 被依赖的插件
@@ -4251,7 +4251,7 @@ constexpr char8_t s_dependent_plugin[] = u8"test_plugin"; // 依赖 app_shell �
 bool builtInPluginDirectoryReady()
 {
     std::error_code ec;
-    const auto      dir = vine::appfw::PluginManager::builtInPluginDirectory();
+    const auto      dir = vn::appfw::PluginManager::builtInPluginDirectory();
     if (!std::filesystem::is_directory(dir, ec)) {
         return false;
     }
@@ -4305,7 +4305,7 @@ TEST(PluginLifecycleTest, DisabledDependencyBlocksDependents)
     const auto  entries = pm->pluginEntries();
     const auto* shell   = findPluginEntry(entries, u8"app_shell");
     ASSERT_NE(shell, nullptr) << "被禁用的插件仍必须被发现并列出";
-    EXPECT_EQ(shell->scope, vine::appfw::PluginScope::User);
+    EXPECT_EQ(shell->scope, vn::appfw::PluginScope::User);
     EXPECT_FALSE(shell->enabled);
     EXPECT_FALSE(shell->loaded);
     EXPECT_FALSE(shell->path.empty());
@@ -4355,7 +4355,7 @@ TEST(PluginLifecycleTest, DisabledPluginIsListedWithMetadataButNotLoaded)
     EXPECT_TRUE(dependent->info.version == u8"1.0.0");
     EXPECT_FALSE(dependent->info.description.empty());
     EXPECT_FALSE(dependent->info.vendor.empty());
-    EXPECT_FALSE(dependent->info.uuid.isNull()) << "插件身份由 V_DECLARE_PLUGIN 硬编码";
+    EXPECT_FALSE(dependent->info.uuid.isNull()) << "插件身份由 VN_DECLARE_PLUGIN 硬编码";
     EXPECT_FALSE(dependent->path.empty());
     EXPECT_FALSE(pm->libraryPath(u8"test_plugin").empty());
 
@@ -4365,7 +4365,7 @@ TEST(PluginLifecycleTest, DisabledPluginIsListedWithMetadataButNotLoaded)
     // 也不能被算到别的插件头上：命令队列属于模块，命令的 owner 必须是注册它的
     // 那个插件。修复前这里会把 test_plugin 的命令全部算给 app_shell。
     const auto shell_commands = pm->commandInfosForPlugin(u8"app_shell");
-    EXPECT_TRUE(std::none_of(shell_commands.begin(), shell_commands.end(), [](const vine::appfw::CommandInfo& info) {
+    EXPECT_TRUE(std::none_of(shell_commands.begin(), shell_commands.end(), [](const vn::appfw::CommandInfo& info) {
         return info.name.rfind(u8"test_", 0) == 0;
     })) << "app_shell 名下不得出现 test_plugin 的命令";
     EXPECT_TRUE(pm->commandInfosForPlugin(u8"test_plugin").empty()) << "未加载的插件名下不得有任何命令";
@@ -4377,7 +4377,7 @@ TEST(PluginLifecycleTest, DisabledPluginIsListedWithMetadataButNotLoaded)
     EXPECT_TRUE(cm->isRegistered(u8"test_hello"));
 
     const auto own_commands = pm->commandInfosForPlugin(u8"test_plugin");
-    EXPECT_TRUE(std::any_of(own_commands.begin(), own_commands.end(), [](const vine::appfw::CommandInfo& info) {
+    EXPECT_TRUE(std::any_of(own_commands.begin(), own_commands.end(), [](const vn::appfw::CommandInfo& info) {
         return info.name == u8"test_hello";
     })) << "加载后命令应归属于声明它的插件";
     for (const auto& info : own_commands) {
@@ -4445,7 +4445,7 @@ TEST(PluginLifecycleTest, SkippedPluginStaysVisibleAndIsNeverInstantiated)
     EXPECT_FALSE(pm->isPluginEnabled(u8"test_plugin"));
 
     // 移出跳过列表不需要重启：下一次 loadAll() 就能加载。
-    vine::appfw::PluginManager::removeFromSkipList(u8"test_plugin");
+    vn::appfw::PluginManager::removeFromSkipList(u8"test_plugin");
     EXPECT_FALSE(pm->isSkipped(u8"test_plugin"));
     EXPECT_TRUE(pm->isPluginEnabled(u8"test_plugin"));
     ASSERT_TRUE(pm->loadAll());
@@ -4500,8 +4500,8 @@ TEST(PluginLifecycleTest, DisableIsPersistedInConfig)
     ASSERT_NE(pm, nullptr);
     ASSERT_NE(cfg, nullptr);
 
-    const vine::String name(u8"no_such_plugin");
-    const auto&        key = vine::appfw::PluginManager::disabledConfigKey();
+    const vn::String name(u8"no_such_plugin");
+    const auto&        key = vn::appfw::PluginManager::disabledConfigKey();
     cfg->remove(key);
 
     EXPECT_TRUE(pm->setPluginEnabled(name, false));
@@ -4604,7 +4604,7 @@ TEST(PluginLifecycleTest, ManagerDialogListsDisabledPlugins)
     const auto  entries = pm->pluginEntries();
     const auto* shell   = findPluginEntry(entries, u8"app_shell");
     ASSERT_NE(shell, nullptr);
-    EXPECT_EQ(shell->scope, vine::appfw::PluginScope::User);
+    EXPECT_EQ(shell->scope, vn::appfw::PluginScope::User);
     EXPECT_FALSE(shell->enabled);
     EXPECT_TRUE(shell->loaded) << "禁用不改变本次运行状态：已加载的插件运行到退出";
     EXPECT_TRUE(shell->info.version == u8"1.0.0");
@@ -4759,7 +4759,7 @@ TEST(PluginLifecycleTest, UnloadOrderIsReverseDependencyOrder)
 
     // 真实集合：每个已加载插件恰好出现一次，且依赖方排在被依赖方之前。
     const auto entries = pm->pluginEntries();
-    const auto order   = vine::appfw::PluginManager::unloadOrder(entries);
+    const auto order   = vn::appfw::PluginManager::unloadOrder(entries);
 
     std::size_t loaded = 0;
     for (const auto& entry : entries) {
@@ -4769,7 +4769,7 @@ TEST(PluginLifecycleTest, UnloadOrderIsReverseDependencyOrder)
     }
     ASSERT_EQ(order.size(), loaded);
 
-    const auto index_of = [&order](const vine::String& name) {
+    const auto index_of = [&order](const vn::String& name) {
         const auto it = std::find(order.begin(), order.end(), name);
         return it == order.end() ? order.size() : static_cast<std::size_t>(it - order.begin());
     };
@@ -4786,8 +4786,8 @@ TEST(PluginLifecycleTest, UnloadOrderIsReverseDependencyOrder)
     }
 
     // 合成集合：结论只由依赖声明决定，与传入顺序无关。
-    const auto make_entry = [](const char8_t* name, std::vector<vine::String> deps, bool loaded_flag = true) {
-        vine::appfw::PluginEntry entry;
+    const auto make_entry = [](const char8_t* name, std::vector<vn::String> deps, bool loaded_flag = true) {
+        vn::appfw::PluginEntry entry;
         entry.info.name         = name;
         entry.info.dependencies = std::move(deps);
         entry.enabled           = true;
@@ -4796,37 +4796,37 @@ TEST(PluginLifecycleTest, UnloadOrderIsReverseDependencyOrder)
     };
 
     // child 依赖 parent，但 child 排在前面（显式 load() 的典型结果）。
-    const std::vector<vine::appfw::PluginEntry> dependent_first = {
+    const std::vector<vn::appfw::PluginEntry> dependent_first = {
         make_entry(u8"child", { u8"parent" }),
         make_entry(u8"parent", {}),
     };
-    EXPECT_EQ(vine::appfw::PluginManager::unloadOrder(dependent_first),
-              (std::vector<vine::String>{ u8"child", u8"parent" }));
+    EXPECT_EQ(vn::appfw::PluginManager::unloadOrder(dependent_first),
+              (std::vector<vn::String>{ u8"child", u8"parent" }));
 
     // 正常加载顺序也必须得到同样的结果（"列表倒序"在这里会给出错误答案）。
-    const std::vector<vine::appfw::PluginEntry> dependency_first = {
+    const std::vector<vn::appfw::PluginEntry> dependency_first = {
         make_entry(u8"parent", {}),
         make_entry(u8"child", { u8"parent" }),
     };
-    EXPECT_EQ(vine::appfw::PluginManager::unloadOrder(dependency_first),
-              (std::vector<vine::String>{ u8"child", u8"parent" }));
+    EXPECT_EQ(vn::appfw::PluginManager::unloadOrder(dependency_first),
+              (std::vector<vn::String>{ u8"child", u8"parent" }));
 
     // 三层链 + 未加载项参与排序（未加载不算数）+ 已不在集合里的依赖不阻塞。
-    const std::vector<vine::appfw::PluginEntry> chain = {
+    const std::vector<vn::appfw::PluginEntry> chain = {
         make_entry(u8"grandchild", { u8"child" }),
         make_entry(u8"child", { u8"parent", u8"missing" }),
         make_entry(u8"parent", {}),
         make_entry(u8"not_loaded", { u8"grandchild" }, false),
     };
-    EXPECT_EQ(vine::appfw::PluginManager::unloadOrder(chain),
-              (std::vector<vine::String>{ u8"grandchild", u8"child", u8"parent" }));
+    EXPECT_EQ(vn::appfw::PluginManager::unloadOrder(chain),
+              (std::vector<vn::String>{ u8"grandchild", u8"child", u8"parent" }));
 
     // 声明成环（只有显式 load() 能造出来）：不能死循环，回退为传入顺序。
-    const std::vector<vine::appfw::PluginEntry> cycle = {
+    const std::vector<vn::appfw::PluginEntry> cycle = {
         make_entry(u8"a", { u8"b" }),
         make_entry(u8"b", { u8"a" }),
     };
-    const auto cycle_order = vine::appfw::PluginManager::unloadOrder(cycle);
+    const auto cycle_order = vn::appfw::PluginManager::unloadOrder(cycle);
     ASSERT_EQ(cycle_order.size(), 2u);
     EXPECT_NE(std::find(cycle_order.begin(), cycle_order.end(), u8"a"), cycle_order.end());
     EXPECT_NE(std::find(cycle_order.begin(), cycle_order.end(), u8"b"), cycle_order.end());
@@ -4843,19 +4843,19 @@ TEST(PluginLifecycleTest, PluginDataDirectoryIsPerPlugin)
     EXPECT_EQ(root.parent_path(), app->dataDirectory());
     EXPECT_EQ(root.filename().string(), "plugins");
 
-    vine::appfw::PluginLoadContext ctx(app, u8"my_plugin");
+    vn::appfw::PluginLoadContext ctx(app, u8"my_plugin");
     const auto                    dir = ctx.ensureDataDirectory();
     EXPECT_EQ(dir, root / "my_plugin");
     EXPECT_TRUE(std::filesystem::is_directory(dir)) << "首次调用即创建";
 
     // 另一个插件拿到另一个目录，互不干扰。
-    vine::appfw::PluginLoadContext other(app, u8"other_plugin");
+    vn::appfw::PluginLoadContext other(app, u8"other_plugin");
     EXPECT_EQ(other.ensureDataDirectory(), root / "other_plugin");
 
     // 没有 Application / 没有插件名的上下文返回空路径，不崩。
-    vine::appfw::PluginLoadContext headless(nullptr, u8"my_plugin");
+    vn::appfw::PluginLoadContext headless(nullptr, u8"my_plugin");
     EXPECT_TRUE(headless.ensureDataDirectory().empty());
-    vine::appfw::PluginLoadContext unnamed(app, {});
+    vn::appfw::PluginLoadContext unnamed(app, {});
     EXPECT_TRUE(unnamed.ensureDataDirectory().empty());
 
     // 清理本用例写下的目录（Qt 测试模式已把用户数据目录重定向到临时区）。
@@ -4886,15 +4886,15 @@ TEST(PluginLifecycleTest, InstallWritesRegistrationFile)
     EXPECT_EQ(registry.parent_path(), app->dataDirectory());
     EXPECT_EQ(registry.filename().string(), "installed.d");
 
-    const auto id = pm->installPlugin(vine::String(user_dir.u8string()), vine::appfw::PluginScope::User);
+    const auto id = pm->installPlugin(vn::String(user_dir.u8string()), vn::appfw::PluginScope::User);
     ASSERT_FALSE(id.empty()) << "注册成功应返回 id";
     EXPECT_TRUE(std::filesystem::is_directory(registry)) << "注册目录按需创建";
 
     auto registrations = pm->pluginRegistrations();
     ASSERT_EQ(registrations.size(), 1u);
     EXPECT_TRUE(registrations[0].id == id);
-    EXPECT_TRUE(registrations[0].path == vine::String(user_dir.u8string()));
-    EXPECT_EQ(registrations[0].scope, vine::appfw::PluginScope::User);
+    EXPECT_TRUE(registrations[0].path == vn::String(user_dir.u8string()));
+    EXPECT_EQ(registrations[0].scope, vn::appfw::PluginScope::User);
     EXPECT_TRUE(registrations[0].enabled);
     const std::string file_text(reinterpret_cast<const char*>(registrations[0].file.data()), registrations[0].file.size());
     EXPECT_TRUE(std::filesystem::exists(std::filesystem::path(std::u8string(file_text.begin(), file_text.end()))));
@@ -4902,7 +4902,7 @@ TEST(PluginLifecycleTest, InstallWritesRegistrationFile)
               std::string::npos);
 
     // 重复安装同一位置：写同一个文件，仍然只有一条注册。
-    EXPECT_TRUE(pm->installPlugin(vine::String(user_dir.u8string()), vine::appfw::PluginScope::User) == id);
+    EXPECT_TRUE(pm->installPlugin(vn::String(user_dir.u8string()), vn::appfw::PluginScope::User) == id);
     EXPECT_EQ(pm->pluginRegistrations().size(), 1u);
 
     // 相对路径必须落盘成绝对路径：注册文件是下次启动读的，那时的工作目录未必定是同一个。
@@ -4911,7 +4911,7 @@ TEST(PluginLifecycleTest, InstallWritesRegistrationFile)
     ASSERT_TRUE(std::filesystem::create_directories(relative_dir, ec));
     const auto previous_directory = std::filesystem::current_path();
     std::filesystem::current_path(std::filesystem::temp_directory_path(), ec);
-    const auto relative_id = pm->installPlugin(u8"vine_relative_plugins_test", vine::appfw::PluginScope::User);
+    const auto relative_id = pm->installPlugin(u8"vine_relative_plugins_test", vn::appfw::PluginScope::User);
     std::filesystem::current_path(previous_directory, ec);
     ASSERT_FALSE(relative_id.empty()) << "相对路径也应能注册";
     const auto relative_entries = pm->pluginRegistrations();
@@ -4920,18 +4920,18 @@ TEST(PluginLifecycleTest, InstallWritesRegistrationFile)
     const std::filesystem::path stored(std::u8string_view(relative_entry->path.data(), relative_entry->path.size()));
     EXPECT_TRUE(stored.is_absolute()) << "注册文件里必须是绝对路径";
     EXPECT_EQ(stored, std::filesystem::weakly_canonical(relative_dir, ec));
-    EXPECT_TRUE(pm->uninstallPlugin(relative_id, vine::appfw::PluginScope::User));
+    EXPECT_TRUE(pm->uninstallPlugin(relative_id, vn::appfw::PluginScope::User));
     std::filesystem::remove_all(relative_dir, ec);
 
     // 拒绝的输入：空路径、不存在的路径、BuiltIn 作用域。
-    EXPECT_TRUE(pm->installPlugin({}, vine::appfw::PluginScope::User).empty());
-    EXPECT_TRUE(pm->installPlugin(u8"/no/such/plugin/location.so", vine::appfw::PluginScope::User).empty());
-    EXPECT_TRUE(pm->installPlugin(vine::String(user_dir.u8string()), vine::appfw::PluginScope::BuiltIn).empty());
+    EXPECT_TRUE(pm->installPlugin({}, vn::appfw::PluginScope::User).empty());
+    EXPECT_TRUE(pm->installPlugin(u8"/no/such/plugin/location.so", vn::appfw::PluginScope::User).empty());
+    EXPECT_TRUE(pm->installPlugin(vn::String(user_dir.u8string()), vn::appfw::PluginScope::BuiltIn).empty());
     EXPECT_EQ(pm->pluginRegistrations().size(), 1u);
 
-    EXPECT_TRUE(pm->uninstallPlugin(id, vine::appfw::PluginScope::User));
+    EXPECT_TRUE(pm->uninstallPlugin(id, vn::appfw::PluginScope::User));
     EXPECT_TRUE(pm->pluginRegistrations().empty());
-    EXPECT_FALSE(pm->uninstallPlugin(id, vine::appfw::PluginScope::User)) << "已删除的注册再删应返回 false";
+    EXPECT_FALSE(pm->uninstallPlugin(id, vn::appfw::PluginScope::User)) << "已删除的注册再删应返回 false";
 
     std::filesystem::remove_all(user_dir, ec);
 }
@@ -5003,7 +5003,7 @@ TEST(PluginLifecycleTest, HandWrittenRegistrationCanDisableForAllUsers)
 
     // 策略必须在没有跑过 loadAll() 的进程里也生效：一次显式 load()（对话框的试用加载）
     // 不得把管理员对所有用户禁用的插件重新拉起来。
-    EXPECT_EQ(pm->load(vine::String(copy.u8string())), nullptr) << "策略禁用的插件不得被显式加载";
+    EXPECT_EQ(pm->load(vn::String(copy.u8string())), nullptr) << "策略禁用的插件不得被显式加载";
     EXPECT_FALSE(pm->isLoaded(u8"test_plugin"));
 
     ASSERT_TRUE(pm->loadAll());
@@ -5011,7 +5011,7 @@ TEST(PluginLifecycleTest, HandWrittenRegistrationCanDisableForAllUsers)
     const auto  entries = pm->pluginEntries();
     const auto* entry   = findPluginEntry(entries, u8"test_plugin");
     ASSERT_NE(entry, nullptr) << "被策略禁用的插件仍要能被发现（列表里可见）";
-    EXPECT_EQ(entry->scope, vine::appfw::PluginScope::User);
+    EXPECT_EQ(entry->scope, vn::appfw::PluginScope::User);
     EXPECT_FALSE(entry->enabled) << "注册文件里的 enabled = false 是策略";
     EXPECT_FALSE(entry->loaded);
 
@@ -5053,7 +5053,7 @@ TEST(PluginLifecycleTest, InstalledLocationIsDiscoveredAndDeduplicated)
     ASSERT_TRUE(std::filesystem::create_directories(second_dir, ec));
     ASSERT_TRUE(std::filesystem::copy_file(source, second_dir / source.filename(),
                                            std::filesystem::copy_options::overwrite_existing, ec));
-    const auto second_id = pm->installPlugin(vine::String(second_dir.u8string()), vine::appfw::PluginScope::User);
+    const auto second_id = pm->installPlugin(vn::String(second_dir.u8string()), vn::appfw::PluginScope::User);
     ASSERT_FALSE(second_id.empty());
 
     // 只观察发现与去重，不加载：一个插件库在一个进程里只能创建一次实例（vine
@@ -5062,19 +5062,19 @@ TEST(PluginLifecycleTest, InstalledLocationIsDiscoveredAndDeduplicated)
     static_cast<void>(pm->loadAll());
 
     const auto  entries = pm->pluginEntries();
-    const auto  count   = std::count_if(entries.begin(), entries.end(), [](const vine::appfw::PluginEntry& e) {
+    const auto  count   = std::count_if(entries.begin(), entries.end(), [](const vn::appfw::PluginEntry& e) {
         return e.info.name == u8"test_plugin";
     });
     EXPECT_EQ(count, 1) << "同一插件被多处提供时只能出现一次";
 
     const auto* entry = findPluginEntry(entries, u8"test_plugin");
     ASSERT_NE(entry, nullptr);
-    EXPECT_EQ(entry->scope, vine::appfw::PluginScope::User);
+    EXPECT_EQ(entry->scope, vn::appfw::PluginScope::User);
     // 注册按文件名的顺序读取，所以先发现哪一个位置由注册文件名决定；关键是只有一份
     // 被发现，另一份不会产生第二条记录。
     EXPECT_TRUE(entry->path == first_copy || entry->path == second_dir / source.filename());
 
-    EXPECT_TRUE(pm->uninstallPlugin(second_id, vine::appfw::PluginScope::User));
+    EXPECT_TRUE(pm->uninstallPlugin(second_id, vn::appfw::PluginScope::User));
     std::filesystem::remove_all(second_dir, ec);
 }
 // 关闭时的反初始化：unload() 按依赖反序调用（依赖方先于被依赖方），
@@ -5132,7 +5132,7 @@ TEST(PluginLifecycleTest, LoadAllRollsBackWhenPluginThrows)
     EXPECT_TRUE(pm->setPluginEnabled(u8"app_shell", true));
     EXPECT_TRUE(pm->setPluginEnabled(u8"test_plugin", true));
 
-    const vine::String key(u8"plugins.test_plugin.fail_load");
+    const vn::String key(u8"plugins.test_plugin.fail_load");
     cfg->setBool(key, true);
 
     // 失败原因不作断言：在单独运行时是测试钩子把 test_plugin 的 load() 变成抛异常，
@@ -5175,10 +5175,10 @@ TEST(PluginLifecycleTest, InstallRejectsUnusableRegistrationId)
     // （directory / ""）就拼出一个注册目录之外的文件。
     const std::filesystem::path trailing = std::filesystem::temp_directory_path() / "vine_plugins_trailing";
     std::filesystem::create_directories(trailing, ec);
-    const vine::String id = pm->installPlugin(vine::String((trailing / "").u8string()), vine::appfw::PluginScope::User);
+    const vn::String id = pm->installPlugin(vn::String((trailing / "").u8string()), vn::appfw::PluginScope::User);
     EXPECT_TRUE(id == u8"vine_plugins_trailing") << "应当取目录名，而不是写出畸形文件名";
     if (!id.empty()) {
-        EXPECT_TRUE(pm->uninstallPlugin(id, vine::appfw::PluginScope::User));
+        EXPECT_TRUE(pm->uninstallPlugin(id, vn::appfw::PluginScope::User));
     }
     std::filesystem::remove_all(trailing, ec);
     EXPECT_EQ(pm->pluginRegistrations().size(), baseline) << "临时注册应当被清掉";
@@ -5186,9 +5186,9 @@ TEST(PluginLifecycleTest, InstallRejectsUnusableRegistrationId)
     // 名字含 ':'（Windows 上是盘符/数据流分隔符）：拒绝，且不留文件。
     const std::filesystem::path bad = std::filesystem::temp_directory_path() / "vine_bad:name";
     std::filesystem::create_directories(bad, ec);
-    EXPECT_TRUE(pm->installPlugin(vine::String(bad.u8string()), vine::appfw::PluginScope::User).empty())
+    EXPECT_TRUE(pm->installPlugin(vn::String(bad.u8string()), vn::appfw::PluginScope::User).empty())
         << "含 ':' 的名字必须被拒绝";
-    EXPECT_FALSE(pm->uninstallPlugin(vine::String(u8"bad/name"), vine::appfw::PluginScope::User))
+    EXPECT_FALSE(pm->uninstallPlugin(vn::String(u8"bad/name"), vn::appfw::PluginScope::User))
         << "带分隔符的 id 也必须被拒绝";
     EXPECT_EQ(pm->pluginRegistrations().size(), baseline) << "被拒绝的注册不应留下文件";
     std::filesystem::remove_all(bad, ec);
@@ -5210,8 +5210,8 @@ TEST(PluginLifecycleTest, PluginsWithoutCompatibleAbiAreRefused)
     ASSERT_TRUE(std::filesystem::exists(legacy)) << legacy;
     ASSERT_TRUE(std::filesystem::exists(future)) << future;
 
-    EXPECT_EQ(pm->load(vine::String(legacy.u8string())), nullptr) << "没有 ABI 握手的库必须被拒绝";
-    EXPECT_EQ(pm->load(vine::String(future.u8string())), nullptr) << "ABI 号对不上的库必须被拒绝";
+    EXPECT_EQ(pm->load(vn::String(legacy.u8string())), nullptr) << "没有 ABI 握手的库必须被拒绝";
+    EXPECT_EQ(pm->load(vn::String(future.u8string())), nullptr) << "ABI 号对不上的库必须被拒绝";
     EXPECT_FALSE(pm->isLoaded(u8"legacy_plugin"));
     EXPECT_FALSE(pm->isLoaded(u8"future_plugin"));
 
@@ -5222,11 +5222,11 @@ TEST(PluginLifecycleTest, PluginsWithoutCompatibleAbiAreRefused)
     EXPECT_EQ(findPluginEntry(entries, u8"future_plugin"), nullptr);
 
     // 安装同样被拒：注册一个用不了的库，只会在以后每次启动多一条警告。
-    EXPECT_TRUE(pm->installPlugin(vine::String(legacy.u8string())).empty());
+    EXPECT_TRUE(pm->installPlugin(vn::String(legacy.u8string())).empty());
 }
 
 // 握手带回来的"构建时框架版本"要一路走到 PluginEntry，插件管理器对话框的"信息"页才有
-// 东西可显示。这里与编译期宏比较，能证明整条链路（V_DECLARE_PLUGIN → PluginAbi →
+// 东西可显示。这里与编译期宏比较，能证明整条链路（VN_DECLARE_PLUGIN → PluginAbi →
 // queryLibrary → PluginEntry）没有丢值，而不只是"编译得过"。
 TEST(PluginLifecycleTest, PluginEntryReportsTheFrameworkItWasBuiltWith)
 {
@@ -5246,11 +5246,11 @@ TEST(PluginLifecycleTest, PluginEntryReportsTheFrameworkItWasBuiltWith)
     const auto  entries = pm->pluginEntries();
     const auto* shell   = findPluginEntry(entries, u8"app_shell");
     ASSERT_NE(shell, nullptr);
-    // V_APPFW_VERSION 是构建注入的窄字符串字面量（CMake 的 PROJECT_VERSION），
+    // VN_APPFW_VERSION 是构建注入的窄字符串字面量（CMake 的 PROJECT_VERSION），
     // String 存 UTF-8 字节，所以按字节比较。
-    const vine::String expected(std::u8string_view(reinterpret_cast<const char8_t*>(V_APPFW_VERSION)));
+    const vn::String expected(std::u8string_view(reinterpret_cast<const char8_t*>(VN_APPFW_VERSION)));
     EXPECT_TRUE(shell->framework_version == expected)
-        << "插件报告的应当是它编译时的框架版本（" V_APPFW_VERSION "）";
+        << "插件报告的应当是它编译时的框架版本（" VN_APPFW_VERSION "）";
 }
 
 // 依赖被禁用时，依赖它的插件也不会加载——直接依赖那层已由
@@ -5305,7 +5305,7 @@ TEST(PluginLifecycleTest, DisabledDependencyBlocksDependentsTransitively)
     // 显式 load() 不解析依赖：照常加载，只在日志里提醒依赖没在跑。
     const auto test_lib = sandbox.directory() / built_in_test.filename();
     ASSERT_TRUE(std::filesystem::exists(test_lib));
-    EXPECT_NE(pm->load(vine::String(test_lib.u8string())), nullptr) << "显式 load() 不解析依赖";
+    EXPECT_NE(pm->load(vn::String(test_lib.u8string())), nullptr) << "显式 load() 不解析依赖";
     EXPECT_TRUE(pm->isLoaded(u8"test_plugin"));
 
     // 把偏好恢复成原样，不给后面的用例留状态。
@@ -5382,8 +5382,8 @@ TEST(PluginLifecycleTest, DeclaredDependencyCycleIsPrunedNotFatal)
 // 顺序），并且只排已加载的插件。
 TEST(PluginLifecycleTest, UnloadOrderTerminatesOnACycle)
 {
-    using vine::appfw::PluginEntry;
-    using vine::appfw::PluginManager;
+    using vn::appfw::PluginEntry;
+    using vn::appfw::PluginManager;
 
     auto entry = [](const char8_t* name, std::initializer_list<const char8_t*> dependencies, bool loaded = true) {
         PluginEntry e;
@@ -5408,8 +5408,8 @@ TEST(PluginLifecycleTest, UnloadOrderTerminatesOnACycle)
     const auto                     cyclic_order = PluginManager::unloadOrder(cyclic);
     ASSERT_EQ(cyclic_order.size(), 3u);
     EXPECT_TRUE(cyclic_order[0] == u8"c") << "无依赖的插件先卸载";
-    EXPECT_TRUE(std::find(cyclic_order.begin(), cyclic_order.end(), vine::String(u8"a")) != cyclic_order.end());
-    EXPECT_TRUE(std::find(cyclic_order.begin(), cyclic_order.end(), vine::String(u8"b")) != cyclic_order.end());
+    EXPECT_TRUE(std::find(cyclic_order.begin(), cyclic_order.end(), vn::String(u8"a")) != cyclic_order.end());
+    EXPECT_TRUE(std::find(cyclic_order.begin(), cyclic_order.end(), vn::String(u8"b")) != cyclic_order.end());
 }
 
 namespace
@@ -5441,90 +5441,90 @@ namespace
 {
 
 // 停在等待用户输入上的命令：直到交互被取消才会返回。
-class InteractiveWaitCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class InteractiveWaitCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"interactiveWait"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"waits for user input"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"interactiveWait"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"waits for user input"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         auto* app = context ? context->application() : nullptr;
         auto* io  = app ? app->userIO() : nullptr;
         if (io == nullptr) {
-            co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Failed);
+            co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed);
         }
 
         s_parked.store(true);
         const auto input = co_await io->getStringAsync(u8"输入点什么> ");
         s_parked.store(false);
-        co_return vine::appfw::CommandResult(
-            input.has_value() ? vine::appfw::CommandStatus::Success : vine::appfw::CommandStatus::Cancelled);
+        co_return vn::appfw::CommandResult(
+            input.has_value() ? vn::appfw::CommandStatus::Success : vn::appfw::CommandStatus::Cancelled);
     }
 
     inline static std::atomic<bool> s_parked{ false };
 };
 
-V_OBJECT_META_IMPL(InteractiveWaitCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(InteractiveWaitCommand, vn::appfw::Command)
 
 // 读一个整数并记录结果：用于验证 getIntAsync 的值、范围检查与控制台重新提示。
-class IntReadCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class IntReadCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"intRead"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"reads one integer"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"intRead"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"reads one integer"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         auto* app = context ? context->application() : nullptr;
         auto* io  = app ? app->userIO() : nullptr;
         if (io == nullptr) {
-            co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Failed);
+            co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed);
         }
 
         const auto value = co_await io->getIntAsync(u8"n> ");
         s_value          = value;
-        co_return vine::appfw::CommandResult(value.has_value() ? vine::appfw::CommandStatus::Success
-                                                              : vine::appfw::CommandStatus::Cancelled);
+        co_return vn::appfw::CommandResult(value.has_value() ? vn::appfw::CommandStatus::Success
+                                                              : vn::appfw::CommandStatus::Cancelled);
     }
 
     inline static std::optional<int> s_value;
 };
 
-V_OBJECT_META_IMPL(IntReadCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(IntReadCommand, vn::appfw::Command)
 
 // 挂起一次之后再读入：sleepFor 在定时器线程上恢复，所以这次读（连同它的提示状态）
 // 是在**非应用线程**上发起的。
-class WorkerThreadReadCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class WorkerThreadReadCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"workerRead"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"reads an integer after suspending"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"workerRead"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"reads an integer after suspending"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         auto* app = context ? context->application() : nullptr;
         auto* io  = app ? app->userIO() : nullptr;
         if (io == nullptr) {
-            co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Failed);
+            co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed);
         }
 
-        co_await vine::async::sleepFor(std::chrono::milliseconds(1));
+        co_await vn::async::sleepFor(std::chrono::milliseconds(1));
         s_read_thread = std::this_thread::get_id();
 
         const auto value = co_await io->getIntAsync(u8"worker> ");
         s_value          = value;
-        co_return vine::appfw::CommandResult(value.has_value() ? vine::appfw::CommandStatus::Success
-                                                              : vine::appfw::CommandStatus::Cancelled);
+        co_return vn::appfw::CommandResult(value.has_value() ? vn::appfw::CommandStatus::Success
+                                                              : vn::appfw::CommandStatus::Cancelled);
     }
 
     inline static std::optional<int> s_value;
@@ -5532,63 +5532,63 @@ class WorkerThreadReadCommand : public vine::appfw::Command {
     inline static std::thread::id s_read_thread;
 };
 
-V_OBJECT_META_IMPL(WorkerThreadReadCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(WorkerThreadReadCommand, vn::appfw::Command)
 
 
 // 在命令内部调用"取消并排空"。
-class DrainFromInsideCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class DrainFromInsideCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"drainFromInside"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"drains from inside itself"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return u8"drainFromInside"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"drains from inside itself"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext* context) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         auto* app = context ? context->application() : nullptr;
         auto* cm  = app ? app->commandManager() : nullptr;
         s_drained = cm != nullptr && cm->cancelAllAndWait(std::chrono::milliseconds(50));
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
     inline static bool s_drained{ true };
 };
 
-V_OBJECT_META_IMPL(DrainFromInsideCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(DrainFromInsideCommand, vn::appfw::Command)
 
 // 不配合取消、时长可调的睡眠命令：用来把"排他命令正在等待旧链"这个窗口撑开。
-class UncooperativeSleepForCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class UncooperativeSleepForCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    explicit UncooperativeSleepForCommand(vine::String name, std::chrono::milliseconds duration)
+    explicit UncooperativeSleepForCommand(vn::String name, std::chrono::milliseconds duration)
       : name_(std::move(name))
       , duration_(duration)
     {}
 
-    vine::String name() const override { return name_; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"ignores cancellation"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
+    vn::String name() const override { return name_; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"ignores cancellation"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         s_running.store(true);
-        co_await vine::async::sleepFor(duration_);
+        co_await vn::async::sleepFor(duration_);
         s_running.store(false);
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
     inline static std::atomic<bool> s_running{ false };
 
   private:
-    vine::String              name_;
+    vn::String              name_;
     std::chrono::milliseconds duration_;
 };
 
-V_OBJECT_META_IMPL(UncooperativeSleepForCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(UncooperativeSleepForCommand, vn::appfw::Command)
 
 } // namespace
 
@@ -5604,7 +5604,7 @@ TEST_F(GuiTest, CommandManager_PendingUserInputBlocksDrainUntilCancelled)
     auto* io = app->userIO();
     ASSERT_NE(io, nullptr);
 
-    const auto name = vine::String(u8"interactiveWait");
+    const auto name = vn::String(u8"interactiveWait");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<InteractiveWaitCommand>(name));
     cm->clearHistory();
@@ -5628,7 +5628,7 @@ TEST_F(GuiTest, CommandManager_PendingUserInputBlocksDrainUntilCancelled)
     EXPECT_EQ(cm->runningCount(), 0);
     ASSERT_EQ(cm->historyCount(), 1);
     ASSERT_TRUE(cm->historyAt(0).has_value());
-    EXPECT_EQ(cm->historyAt(0)->result.status(), vine::appfw::CommandStatus::Cancelled);
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vn::appfw::CommandStatus::Cancelled);
 
     // 没有挂起交互时再取消一次是安全的（幂等）。
     io->cancelPendingInput();
@@ -5651,7 +5651,7 @@ TEST(UserIOTest, OutputFromAWorkerThreadIsMarshalledToTheApplicationThread)
     auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
     ASSERT_NE(output, nullptr);
 
-    std::thread writer([io] { io->putString(vine::String(u8"from worker")); });
+    std::thread writer([io] { io->putString(vn::String(u8"from worker")); });
     writer.join();
 
     EXPECT_FALSE(output->toPlainText().contains(u8"from worker")) << "工作线程不得直接写控制台面板";
@@ -5672,7 +5672,7 @@ TEST(UserIOTest, SecondReadIsRefusedWhileOneIsPending)
     ASSERT_NE(cm, nullptr);
     ASSERT_NE(io, nullptr);
 
-    const auto name = vine::String(u8"intRead");
+    const auto name = vn::String(u8"intRead");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<IntReadCommand>(name));
     cm->clearHistory();
@@ -5693,7 +5693,7 @@ TEST(UserIOTest, SecondReadIsRefusedWhileOneIsPending)
     }
 
     // 第二个读必须立刻收尾，并且不能把第一个读叫醒（否则它会拿到别的结果）。
-    const auto refused = vine::async::syncWait(io->getDoubleAsync(u8"second> "));
+    const auto refused = vn::async::syncWait(io->getDoubleAsync(u8"second> "));
     EXPECT_FALSE(refused.has_value()) << "一个交互挂起时，第二个读必须被拒绝";
     EXPECT_EQ(cm->historyCount(), 0) << "第一个读仍应在等待";
 
@@ -5719,7 +5719,7 @@ TEST(UserIOTest, IntReadKeepsItsValueAndRepromptsOnOverflow)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"intRead");
+    const auto name = vn::String(u8"intRead");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<IntReadCommand>(name));
 
@@ -5742,7 +5742,7 @@ TEST(UserIOTest, IntReadKeepsItsValueAndRepromptsOnOverflow)
     IntReadCommand::s_value.reset();
     cm->executeDetached(name);
     wait_for(u8"n> ");
-    panel.lineEntered.trigger(vine::String(u8"1000"));
+    panel.lineEntered.trigger(vn::String(u8"1000"));
     while (cm->historyCount() < 1 && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -5755,12 +5755,12 @@ TEST(UserIOTest, IntReadKeepsItsValueAndRepromptsOnOverflow)
     IntReadCommand::s_value.reset();
     cm->executeDetached(name);
     wait_for(u8"n> ");
-    panel.lineEntered.trigger(vine::String(u8"99999999999"));
+    panel.lineEntered.trigger(vn::String(u8"99999999999"));
     EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
     EXPECT_TRUE(output->toPlainText().contains(u8"请输入整数")) << "超出 int 的文本要重新提示";
     EXPECT_EQ(cm->historyCount(), 0) << "重新提示后读仍在等待";
 
-    panel.lineEntered.trigger(vine::String(u8"42"));
+    panel.lineEntered.trigger(vn::String(u8"42"));
     while (cm->historyCount() < 1 && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -5785,7 +5785,7 @@ TEST(UserIOTest, RebindingTheConsoleDoesNotRunALineTwice)
     bindConsole(app, &panel);
     bindConsole(app, &panel); // 二次绑定：旧实现会在这里再挂一份 handler
 
-    const auto name = vine::String(u8"rebindProbe");
+    const auto name = vn::String(u8"rebindProbe");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<ThrowingCommand>(name));
     cm->clearHistory();
@@ -5817,9 +5817,9 @@ TEST(UserIOTest, CommandsChangedReportsRegistryAndAliasEdits)
 
     int        changes = 0;
     auto       handler = cm->commandsChanged.connect(
-        [&changes](vine::appfw::CommandManager&, vine::EventArgs&) { ++changes; });
+        [&changes](vn::appfw::CommandManager&, vn::EventArgs&) { ++changes; });
 
-    const auto name = vine::String(u8"changedProbe");
+    const auto name = vn::String(u8"changedProbe");
     EXPECT_FALSE(cm->unregisterCommand(name)) << "未注册的名字取消失败";
     EXPECT_EQ(changes, 0) << "集合没变就不通知";
 
@@ -5831,7 +5831,7 @@ TEST(UserIOTest, CommandsChangedReportsRegistryAndAliasEdits)
     cm->setCommandEnabled(name, false);
     EXPECT_EQ(changes, 2) << "没有实际变化就不重复通知";
 
-    const auto alias = vine::String(u8"changedProbeAlias");
+    const auto alias = vn::String(u8"changedProbeAlias");
     EXPECT_FALSE(cm->unregisterAlias(alias));
     EXPECT_EQ(changes, 2);
     ASSERT_TRUE(cm->registerAlias(alias, name));
@@ -5859,7 +5859,7 @@ TEST(UserIOTest, ReadStartedOnAWorkerThreadIsMarshalledAndReprompts)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"workerRead");
+    const auto name = vn::String(u8"workerRead");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<WorkerThreadReadCommand>(name));
 
@@ -5896,16 +5896,16 @@ TEST(UserIOTest, ReadStartedOnAWorkerThreadIsMarshalledAndReprompts)
         << "用例前提：这次读必须在非应用线程上发起（否则钉不住这条路径）";
 
     // 非法输入：重新提示必须用同一个提示文本（它来自编组写入的提示记帐）。
-    panel.lineEntered.trigger(vine::String(u8"abc"));
+    panel.lineEntered.trigger(vn::String(u8"abc"));
     wait_for([&] { return countPrompt() >= 2; });
 
     // 合法输入：值原样返回，命令成功结束。
-    panel.lineEntered.trigger(vine::String(u8"7"));
+    panel.lineEntered.trigger(vn::String(u8"7"));
     wait_for([&] { return cm->historyCount() >= 1; });
 
     ASSERT_TRUE(WorkerThreadReadCommand::s_value.has_value());
     EXPECT_EQ(*WorkerThreadReadCommand::s_value, 7);
-    EXPECT_EQ(cm->historyAt(0)->result.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vn::appfw::CommandStatus::Success);
 
     bindConsole(app, nullptr);
     cm->unregisterCommand(name);
@@ -5922,14 +5922,14 @@ TEST_F(GuiTest, CommandManager_CancelAllAndWaitFromInsideCommandCannotSucceed)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"drainFromInside");
+    const auto name = vn::String(u8"drainFromInside");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<DrainFromInsideCommand>(name));
     cm->clearHistory();
     DrainFromInsideCommand::s_drained = true;
 
     const auto result = cm->executeCommandAndWait(name);
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success);
     EXPECT_FALSE(DrainFromInsideCommand::s_drained) << "命令无法排空自己所在的链";
     EXPECT_EQ(cm->runningCount(), 0) << "命令返回后链仍然正常收尾";
 
@@ -5946,8 +5946,8 @@ TEST_F(GuiTest, CommandManager_CancelAllAbortsWaitingTakeOver)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto victim = vine::String(u8"uncooperativeTimed");
-    const auto taker  = vine::String(u8"takeover");
+    const auto victim = vn::String(u8"uncooperativeTimed");
+    const auto taker  = vn::String(u8"takeover");
     cm->unregisterCommand(victim);
     cm->unregisterCommand(taker);
     ASSERT_TRUE(cm->registerCommand(UncooperativeSleepForCommand::desc(), victim, [victim] {
@@ -5962,16 +5962,16 @@ TEST_F(GuiTest, CommandManager_CancelAllAbortsWaitingTakeOver)
 
     // 旧链在跑，且它无视取消 ⇒ 排他命令会停在"等待旧链收尾"上（上界 2s）。
     auto                       victim_task = cm->executeCommandAsync(victim);
-    vine::appfw::CommandResult victim_result;
-    std::thread victim_runner([&] { victim_result = vine::async::syncWait(std::move(victim_task)); });
+    vn::appfw::CommandResult victim_result;
+    std::thread victim_runner([&] { victim_result = vn::async::syncWait(std::move(victim_task)); });
     while (!UncooperativeSleepForCommand::s_running.load() && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     ASSERT_TRUE(UncooperativeSleepForCommand::s_running.load());
 
     auto                       taker_task = cm->executeCommandAsync(taker);
-    vine::appfw::CommandResult taker_result;
-    std::thread taker_runner([&] { taker_result = vine::async::syncWait(std::move(taker_task)); });
+    vn::appfw::CommandResult taker_result;
+    std::thread taker_runner([&] { taker_result = vn::async::syncWait(std::move(taker_task)); });
 
     // 让排他命令确实进入等待：它自己不执行，没有别的可观察点。
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -5983,7 +5983,7 @@ TEST_F(GuiTest, CommandManager_CancelAllAbortsWaitingTakeOver)
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
 
     // 被打断：立刻以 Cancelled 结束（而不是等满 2s 后 Failed），命令体从未执行。
-    EXPECT_EQ(taker_result.status(), vine::appfw::CommandStatus::Cancelled);
+    EXPECT_EQ(taker_result.status(), vn::appfw::CommandStatus::Cancelled);
     EXPECT_FALSE(ExclusiveTakeOverCommand::s_ran);
     EXPECT_LT(elapsed, 1000) << "cancelAll() 应立即结束等待中的接管";
 
@@ -5991,7 +5991,7 @@ TEST_F(GuiTest, CommandManager_CancelAllAbortsWaitingTakeOver)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     victim_runner.join();
-    EXPECT_EQ(victim_result.status(), vine::appfw::CommandStatus::Success) << "不配合取消的旧链自己跑完";
+    EXPECT_EQ(victim_result.status(), vn::appfw::CommandStatus::Success) << "不配合取消的旧链自己跑完";
 
     cm->clearHistory();
     cm->unregisterCommand(victim);
@@ -6005,58 +6005,58 @@ namespace
 {
 
 // 带名字的极简命令：实例由探针工厂返回。
-class ReentrancyProbeCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class ReentrancyProbeCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    explicit ReentrancyProbeCommand(vine::String name)
+    explicit ReentrancyProbeCommand(vn::String name)
       : name_(std::move(name))
     {}
 
-    vine::String name() const override { return name_; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"reentrancy probe"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    vn::String name() const override { return name_; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"reentrancy probe"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         s_runs.fetch_add(1);
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
     inline static std::atomic<int> s_runs{ 0 };
 
   private:
-    vine::String name_;
+    vn::String name_;
 };
 
-V_OBJECT_META_IMPL(ReentrancyProbeCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(ReentrancyProbeCommand, vn::appfw::Command)
 
 // 慢排他命令：记录自身并发数。
-class SlowExclusiveProbeCommand : public vine::appfw::Command {
-    V_OBJECT_META_DECL;
+class SlowExclusiveProbeCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
 
   public:
-    vine::String name() const override { return u8"exclusiveSlow"; }
-    vine::String group() const override { return u8"Test"; }
-    vine::String description() const override { return u8"slow exclusive"; }
-    vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::Exclusive; }
+    vn::String name() const override { return u8"exclusiveSlow"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"slow exclusive"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::Exclusive; }
 
-    vine::async::Task<vine::appfw::CommandResult> execute(vine::appfw::CommandExecutionContext*) override
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         const int now  = s_in_flight.fetch_add(1) + 1;
         int       prev = s_max.load();
         while (prev < now && !s_max.compare_exchange_weak(prev, now)) {
         }
-        co_await vine::async::sleepFor(std::chrono::milliseconds(200));
+        co_await vn::async::sleepFor(std::chrono::milliseconds(200));
         s_in_flight.fetch_sub(1);
-        co_return vine::appfw::CommandResult(vine::appfw::CommandStatus::Success);
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
     inline static std::atomic<int> s_in_flight{ 0 };
     inline static std::atomic<int> s_max{ 0 };
 };
 
-V_OBJECT_META_IMPL(SlowExclusiveProbeCommand, vine::appfw::Command)
+VN_OBJECT_META_IMPL(SlowExclusiveProbeCommand, vn::appfw::Command)
 
 } // namespace
 
@@ -6069,8 +6069,8 @@ TEST_F(GuiTest, CommandManager_ReentrantFactoryIsSafe)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name  = vine::String(u8"reentrantFactory");
-    const auto other = vine::String(u8"reentrantFactoryOther");
+    const auto name  = vn::String(u8"reentrantFactory");
+    const auto other = vn::String(u8"reentrantFactoryOther");
     cm->unregisterCommand(name);
     cm->unregisterCommand(other);
     ReentrancyProbeCommand::s_runs = 0;
@@ -6079,7 +6079,7 @@ TEST_F(GuiTest, CommandManager_ReentrantFactoryIsSafe)
     bool inside_infos_ok         = false;
     bool inside_unregistered_self = false;
 
-    const bool registered = cm->registerCommand(ReentrancyProbeCommand::desc(), name, [&]() -> vine::appfw::Command* {
+    const bool registered = cm->registerCommand(ReentrancyProbeCommand::desc(), name, [&]() -> vn::appfw::Command* {
         inside_registered_other = cm->registerCommand(ReentrancyProbeCommand::desc(), other, [other] {
             return new ReentrancyProbeCommand(other);
         });
@@ -6093,7 +6093,7 @@ TEST_F(GuiTest, CommandManager_ReentrantFactoryIsSafe)
     EXPECT_TRUE(inside_infos_ok);
     EXPECT_FALSE(inside_unregistered_self) << "探测时它还没注册成功";
     EXPECT_TRUE(cm->isRegistered(name));
-    EXPECT_EQ(cm->executeCommandAndWait(name).status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(cm->executeCommandAndWait(name).status(), vn::appfw::CommandStatus::Success);
     EXPECT_EQ(ReentrancyProbeCommand::s_runs.load(), 1);
 
     cm->unregisterCommand(name);
@@ -6109,8 +6109,8 @@ TEST_F(GuiTest, CommandManager_ReentrantEventHandlerIsSafe)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto first  = vine::String(u8"reentrantFirst");
-    const auto second = vine::String(u8"reentrantSecond");
+    const auto first  = vn::String(u8"reentrantFirst");
+    const auto second = vn::String(u8"reentrantSecond");
     cm->unregisterCommand(first);
     cm->unregisterCommand(second);
     ASSERT_TRUE(cm->registerCommand(ReentrancyProbeCommand::desc(), first, [first] {
@@ -6127,9 +6127,9 @@ TEST_F(GuiTest, CommandManager_ReentrantEventHandlerIsSafe)
 
     // 处理函数在通知里增删处理函数：本轮新增的不应被调用，注销的也不应。
     std::atomic<int>                    late_handler_calls{ 0 };
-    vine::Connection late_handler_id{};
+    vn::Connection late_handler_id{};
     auto            subscription = cm->executed.connect(
-        [&](vine::appfw::CommandManager& manager, vine::appfw::CommandExecutedEventArgs& args) {
+        [&](vn::appfw::CommandManager& manager, vn::appfw::CommandExecutedEventArgs& args) {
             const auto* c = args.command();
             if (c == nullptr || c->name() != first) {
                 return;
@@ -6141,7 +6141,7 @@ TEST_F(GuiTest, CommandManager_ReentrantEventHandlerIsSafe)
             static_cast<void>(manager.unregisterCommand(first));
             // 重入：本轮新增的处理函数不应在本次通知里被调用。
             late_handler_id = manager.executed.connect(
-                [&late_handler_calls](vine::appfw::CommandManager&, vine::appfw::CommandExecutedEventArgs&) {
+                [&late_handler_calls](vn::appfw::CommandManager&, vn::appfw::CommandExecutedEventArgs&) {
                     late_handler_calls.fetch_add(1);
                 });
         });
@@ -6155,10 +6155,10 @@ TEST_F(GuiTest, CommandManager_ReentrantEventHandlerIsSafe)
     // 它捕获的是本用例栈上的对象：用例结束前必须注销，否则会挂到下一条命令上。
     late_handler_id.disconnect();
 
-    EXPECT_EQ(result.status(), vine::appfw::CommandStatus::Success);
-    EXPECT_EQ(after.status(), vine::appfw::CommandStatus::Success);
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success);
+    EXPECT_EQ(after.status(), vn::appfw::CommandStatus::Success);
     EXPECT_EQ(notifications.load(), 1);
-    EXPECT_EQ(nested_status.load(), static_cast<int>(vine::appfw::CommandStatus::Success));
+    EXPECT_EQ(nested_status.load(), static_cast<int>(vn::appfw::CommandStatus::Success));
     EXPECT_EQ(ReentrancyProbeCommand::s_runs.load(), 3);
     EXPECT_EQ(cm->historyCount(), 3);
     EXPECT_FALSE(cm->isRegistered(first)) << "处理函数把命令注销了";
@@ -6177,15 +6177,15 @@ TEST_F(GuiTest, CommandManager_ExclusiveCommandsAreSerialized)
     auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    const auto name = vine::String(u8"exclusiveSlow");
+    const auto name = vn::String(u8"exclusiveSlow");
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<SlowExclusiveProbeCommand>(name));
     cm->clearHistory();
     SlowExclusiveProbeCommand::s_in_flight = 0;
     SlowExclusiveProbeCommand::s_max       = 0;
 
-    vine::appfw::CommandResult result_a;
-    vine::appfw::CommandResult result_b;
+    vn::appfw::CommandResult result_a;
+    vn::appfw::CommandResult result_b;
     std::thread                runner_a([&] { result_a = cm->executeCommandAndWait(name); });
     std::thread                runner_b([&] { result_b = cm->executeCommandAndWait(name); });
     runner_a.join();
@@ -6195,8 +6195,8 @@ TEST_F(GuiTest, CommandManager_ExclusiveCommandsAreSerialized)
 
     // 两种正确结局：后到者接管（前者已收尾 ⇒ 串行成功），或在前者建链前抢先落败
     // 被串行门拒绝。至少有一个真的执行了。
-    const bool a_ok = result_a.status() == vine::appfw::CommandStatus::Success;
-    const bool b_ok = result_b.status() == vine::appfw::CommandStatus::Success;
+    const bool a_ok = result_a.status() == vn::appfw::CommandStatus::Success;
+    const bool b_ok = result_b.status() == vn::appfw::CommandStatus::Success;
     EXPECT_TRUE(a_ok || b_ok) << "至少有一个排他命令应该执行";
     EXPECT_EQ(cm->runningCount(), 0);
 

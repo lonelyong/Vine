@@ -28,7 +28,7 @@
 #include "Convert.hpp"
 #include "WindowData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace
 {
@@ -130,7 +130,7 @@ void centerOnPrimaryScreen(QWidget* widget)
 
 } // namespace
 
-V_OBJECT_META_IMPL(BootSplash, Window)
+VN_OBJECT_META_IMPL(BootSplash, Window)
 
 struct BootSplash::Impl : public WindowData {
     /// Owning frame, repainted from the change handler.
@@ -143,7 +143,7 @@ struct BootSplash::Impl : public WindowData {
     QProgressBar* bar      = nullptr;
 
     /// Subscription to ProgressHost::changed(); held so it is cancelled with the frame.
-    vine::Connection  hosts_changed{};
+    vn::Connection  hosts_changed{};
 
     /// Status line as last reported, before elision.
     QString status;
@@ -263,7 +263,7 @@ BootSplash::BootSplash(const SplashConfig& config)
 
     data->applyConfig(config);
 
-    data->hosts_changed = vine::appfw::ProgressHost::changed().connect([data] { Impl::onStartupChanged(data); });
+    data->hosts_changed = vn::appfw::ProgressHost::changed().connect([data] { Impl::onStartupChanged(data); });
 
     // Pick up a boot that is already reporting, so a frame created after the first stage does not wait for the next one.
     refresh();
@@ -330,4 +330,4 @@ inline auto BootSplash::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

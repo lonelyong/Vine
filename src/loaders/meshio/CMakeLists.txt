@@ -4,7 +4,7 @@
 # (assimp-backed) and B-rep I/O (no third-party code at all). Only this half
 # needs assimp, so keeping them together meant anything that wanted a B-rep
 # loader also had to build assimp.
-v_add_library(MESHIO_TARGET_NAME MeshIO)
+vn_add_library(MESHIO_TARGET_NAME MeshIO)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -24,7 +24,7 @@ if(VINE_USE_FETCHCONTENT)
     set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
     set(ASSIMP_BUILD_ASSIMP_VIEW OFF CACHE BOOL "" FORCE)
     # Do not build assimp's bundled zlib (contrib/zlib defines zlibstatic, which
-    # clashes with the zlib fetched by vi::IOBase). Use that zlibstatic instead.
+    # clashes with the zlib fetched by vn::IOBase). Use that zlibstatic instead.
     set(ASSIMP_BUILD_ZLIB OFF CACHE BOOL "" FORCE)
     # assimp is baked into the MeshIO DLL and never installed; skip its
     # install(EXPORT) rules, which would fail because the zlibstatic it links
@@ -45,11 +45,11 @@ if(VINE_USE_FETCHCONTENT)
         target_compile_options(assimp PRIVATE /WX-)
     endif()
 
-    v_group_targets_folder(${assimp_SOURCE_DIR} third_party)
+    vn_group_targets_folder(${assimp_SOURCE_DIR} third_party)
 else()
     # Consume assimp from vcpkg or a local install.
     find_package(assimp CONFIG REQUIRED)
 endif()
 
-target_link_libraries(${MESHIO_TARGET_NAME} PUBLIC vi::Runtime vi::Geometry vi::Crypto)
+target_link_libraries(${MESHIO_TARGET_NAME} PUBLIC vn::Runtime vn::Geometry vn::Crypto)
 target_link_libraries(${MESHIO_TARGET_NAME} PRIVATE assimp::assimp zlibstatic)

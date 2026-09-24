@@ -13,12 +13,12 @@
 #include <vine/graphics/StateNode.hpp>
 #include <vine/vsg/VsgDynamicState.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /**
  * @brief The four vsg pipeline-state objects derived from one resolved state.
  *
- * Produced from a vine::graphics::ResolvedRenderState by
+ * Produced from a vn::graphics::ResolvedRenderState by
  * makeRenderStateObjects(); installing them replaces the corresponding
  * default states of a vsg::GraphicsPipelineConfigurator. Object construction
  * is device-free, so the mapping is unit-testable without a Vulkan device.
@@ -48,17 +48,17 @@ namespace detail
  * @param op Distance-semantic compare operation.
  * @return Corresponding Vulkan compare operation for a reverse-Z backend.
  */
-inline VkCompareOp mapCompareOp(vine::graphics::CompareOp op)
+inline VkCompareOp mapCompareOp(vn::graphics::CompareOp op)
 {
     switch (op) {
-        case vine::graphics::CompareOp::Never: return VK_COMPARE_OP_NEVER;
-        case vine::graphics::CompareOp::Less: return VK_COMPARE_OP_GREATER;
-        case vine::graphics::CompareOp::Equal: return VK_COMPARE_OP_EQUAL;
-        case vine::graphics::CompareOp::LessEqual: return VK_COMPARE_OP_GREATER_OR_EQUAL;
-        case vine::graphics::CompareOp::Greater: return VK_COMPARE_OP_LESS;
-        case vine::graphics::CompareOp::NotEqual: return VK_COMPARE_OP_NOT_EQUAL;
-        case vine::graphics::CompareOp::GreaterEqual: return VK_COMPARE_OP_LESS_OR_EQUAL;
-        case vine::graphics::CompareOp::Always: return VK_COMPARE_OP_ALWAYS;
+        case vn::graphics::CompareOp::Never: return VK_COMPARE_OP_NEVER;
+        case vn::graphics::CompareOp::Less: return VK_COMPARE_OP_GREATER;
+        case vn::graphics::CompareOp::Equal: return VK_COMPARE_OP_EQUAL;
+        case vn::graphics::CompareOp::LessEqual: return VK_COMPARE_OP_GREATER_OR_EQUAL;
+        case vn::graphics::CompareOp::Greater: return VK_COMPARE_OP_LESS;
+        case vn::graphics::CompareOp::NotEqual: return VK_COMPARE_OP_NOT_EQUAL;
+        case vn::graphics::CompareOp::GreaterEqual: return VK_COMPARE_OP_LESS_OR_EQUAL;
+        case vn::graphics::CompareOp::Always: return VK_COMPARE_OP_ALWAYS;
     }
     return VK_COMPARE_OP_GREATER;
 }
@@ -77,12 +77,12 @@ inline VkCompareOp mapCompareOp(vine::graphics::CompareOp op)
  * @param mode Face-culling mode.
  * @return Vulkan cull-mode flag (VK_CULL_MODE_NONE when no culling).
  */
-inline VkCullModeFlags mapCullMode(vine::graphics::CullMode mode)
+inline VkCullModeFlags mapCullMode(vn::graphics::CullMode mode)
 {
     switch (mode) {
-        case vine::graphics::CullMode::Front: return VK_CULL_MODE_FRONT_BIT;
-        case vine::graphics::CullMode::Back: return VK_CULL_MODE_BACK_BIT;
-        case vine::graphics::CullMode::None: return VK_CULL_MODE_NONE;
+        case vn::graphics::CullMode::Front: return VK_CULL_MODE_FRONT_BIT;
+        case vn::graphics::CullMode::Back: return VK_CULL_MODE_BACK_BIT;
+        case vn::graphics::CullMode::None: return VK_CULL_MODE_NONE;
     }
     return VK_CULL_MODE_NONE;
 }
@@ -93,12 +93,12 @@ inline VkCullModeFlags mapCullMode(vine::graphics::CullMode mode)
  * @param mode Polygon rasterisation mode.
  * @return Corresponding Vulkan polygon mode.
  */
-inline VkPolygonMode mapPolygonMode(vine::graphics::PolygonMode mode)
+inline VkPolygonMode mapPolygonMode(vn::graphics::PolygonMode mode)
 {
     switch (mode) {
-        case vine::graphics::PolygonMode::Fill: return VK_POLYGON_MODE_FILL;
-        case vine::graphics::PolygonMode::Line: return VK_POLYGON_MODE_LINE;
-        case vine::graphics::PolygonMode::Point: return VK_POLYGON_MODE_POINT;
+        case vn::graphics::PolygonMode::Fill: return VK_POLYGON_MODE_FILL;
+        case vn::graphics::PolygonMode::Line: return VK_POLYGON_MODE_LINE;
+        case vn::graphics::PolygonMode::Point: return VK_POLYGON_MODE_POINT;
     }
     return VK_POLYGON_MODE_FILL;
 }
@@ -109,12 +109,12 @@ inline VkPolygonMode mapPolygonMode(vine::graphics::PolygonMode mode)
  * @param topology Primitive topology.
  * @return Corresponding Vulkan primitive topology.
  */
-inline VkPrimitiveTopology mapTopology(vine::graphics::Topology topology)
+inline VkPrimitiveTopology mapTopology(vn::graphics::Topology topology)
 {
     switch (topology) {
-        case vine::graphics::Topology::Triangles: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        case vine::graphics::Topology::Points: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-        case vine::graphics::Topology::Lines: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+        case vn::graphics::Topology::Triangles: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        case vn::graphics::Topology::Points: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+        case vn::graphics::Topology::Lines: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
     }
     return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 }
@@ -125,22 +125,22 @@ inline VkPrimitiveTopology mapTopology(vine::graphics::Topology topology)
  * @param factor Blend factor.
  * @return Corresponding Vulkan blend factor.
  */
-inline VkBlendFactor mapBlendFactor(vine::graphics::BlendFactor factor)
+inline VkBlendFactor mapBlendFactor(vn::graphics::BlendFactor factor)
 {
     switch (factor) {
-        case vine::graphics::BlendFactor::Zero: return VK_BLEND_FACTOR_ZERO;
-        case vine::graphics::BlendFactor::One: return VK_BLEND_FACTOR_ONE;
-        case vine::graphics::BlendFactor::SrcAlpha: return VK_BLEND_FACTOR_SRC_ALPHA;
-        case vine::graphics::BlendFactor::OneMinusSrcAlpha:
+        case vn::graphics::BlendFactor::Zero: return VK_BLEND_FACTOR_ZERO;
+        case vn::graphics::BlendFactor::One: return VK_BLEND_FACTOR_ONE;
+        case vn::graphics::BlendFactor::SrcAlpha: return VK_BLEND_FACTOR_SRC_ALPHA;
+        case vn::graphics::BlendFactor::OneMinusSrcAlpha:
             return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        case vine::graphics::BlendFactor::DstAlpha: return VK_BLEND_FACTOR_DST_ALPHA;
-        case vine::graphics::BlendFactor::OneMinusDstAlpha:
+        case vn::graphics::BlendFactor::DstAlpha: return VK_BLEND_FACTOR_DST_ALPHA;
+        case vn::graphics::BlendFactor::OneMinusDstAlpha:
             return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
-        case vine::graphics::BlendFactor::SrcColor: return VK_BLEND_FACTOR_SRC_COLOR;
-        case vine::graphics::BlendFactor::OneMinusSrcColor:
+        case vn::graphics::BlendFactor::SrcColor: return VK_BLEND_FACTOR_SRC_COLOR;
+        case vn::graphics::BlendFactor::OneMinusSrcColor:
             return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-        case vine::graphics::BlendFactor::DstColor: return VK_BLEND_FACTOR_DST_COLOR;
-        case vine::graphics::BlendFactor::OneMinusDstColor:
+        case vn::graphics::BlendFactor::DstColor: return VK_BLEND_FACTOR_DST_COLOR;
+        case vn::graphics::BlendFactor::OneMinusDstColor:
             return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
     }
     return VK_BLEND_FACTOR_ONE;
@@ -169,7 +169,7 @@ inline VkBlendFactor mapBlendFactor(vine::graphics::BlendFactor factor)
  * @return The four vsg pipeline-state objects.
  */
 inline RenderStateObjects makeRenderStateObjects(
-    const vine::graphics::ResolvedRenderState& state)
+    const vn::graphics::ResolvedRenderState& state)
 {
     RenderStateObjects out;
 
@@ -354,4 +354,4 @@ inline void applyRenderStateObjects(::vsg::GraphicsPipelineConfigurator& config,
     return command;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

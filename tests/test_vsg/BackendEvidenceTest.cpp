@@ -36,26 +36,26 @@
 #include <vine/vsg/core/PhaseTable.hpp>
 #include <vine/vsg/core/PixelProbe.hpp>
 
-using vine::graphics::DiagnosticCategory;
-using vine::graphics::DiagnosticSeverity;
-using vine::graphics::RenderCommand;
-using vine::graphics::RenderDiagnostic;
-using vine::graphics::RenderTarget;
-using vine::graphics::Viewport;
-using vine::vsg::core::AllocationGate;
-using vine::vsg::core::ClearPolicy;
-using vine::vsg::core::Diagnostics;
-using vine::vsg::core::FrameArena;
-using vine::vsg::core::FrameCompiler;
-using vine::vsg::core::FrameRecorder;
-using vine::vsg::core::FrameToken;
-using vine::vsg::core::Observe;
-using vine::vsg::core::Phase;
-using vine::vsg::core::PhaseTable;
-using vine::vsg::core::PixelProbe;
-using vine::vsg::core::ReportOnce;
-using vine::vsg::core::Rgba8;
-using vine::vsg::core::TargetShape;
+using vn::graphics::DiagnosticCategory;
+using vn::graphics::DiagnosticSeverity;
+using vn::graphics::RenderCommand;
+using vn::graphics::RenderDiagnostic;
+using vn::graphics::RenderTarget;
+using vn::graphics::Viewport;
+using vn::vsg::core::AllocationGate;
+using vn::vsg::core::ClearPolicy;
+using vn::vsg::core::Diagnostics;
+using vn::vsg::core::FrameArena;
+using vn::vsg::core::FrameCompiler;
+using vn::vsg::core::FrameRecorder;
+using vn::vsg::core::FrameToken;
+using vn::vsg::core::Observe;
+using vn::vsg::core::Phase;
+using vn::vsg::core::PhaseTable;
+using vn::vsg::core::PixelProbe;
+using vn::vsg::core::ReportOnce;
+using vn::vsg::core::Rgba8;
+using vn::vsg::core::TargetShape;
 
 namespace
 {
@@ -204,11 +204,11 @@ TEST(CoreDiagnosticsTest, ReportsAreCountedPerCategoryAndForwardedToTheSink)
     diagnostics.setSink([&forwarded](const RenderDiagnostic& diagnostic) { forwarded.push_back(diagnostic); });
 
     diagnostics.report(DiagnosticSeverity::Warning, DiagnosticCategory::ContentSkipped,
-                       vine::String(u8"a pass had nothing to draw"));
+                       vn::String(u8"a pass had nothing to draw"));
     diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::GeometryRejected,
-                       vine::String(u8"no positions"));
+                       vn::String(u8"no positions"));
     diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::GeometryRejected,
-                       vine::String(u8"indices out of range"));
+                       vn::String(u8"indices out of range"));
 
     EXPECT_EQ(diagnostics.total(), 3u);
     EXPECT_EQ(diagnostics.count(DiagnosticCategory::GeometryRejected), 2u);
@@ -230,7 +230,7 @@ TEST(CoreDiagnosticsTest, AReportIsCountedEvenWithNoSinkInstalled)
     EXPECT_FALSE(diagnostics.sink());
 
     diagnostics.report(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
-                       vine::String(u8"nothing is listening"));
+                       vn::String(u8"nothing is listening"));
 
     EXPECT_EQ(diagnostics.total(), 1u);
     EXPECT_EQ(diagnostics.count(DiagnosticCategory::UnsupportedRequest), 1u);
@@ -244,7 +244,7 @@ TEST(CoreDiagnosticsTest, AnEpisodeReportsItselfOnceAndReArms)
     const auto   report = [&diagnostics, &episode] {
         return diagnostics.reportOnce(episode, DiagnosticSeverity::Warning,
                                       DiagnosticCategory::PassProtocolViolation,
-                                      vine::String(u8"a drawing call with no scope"));
+                                      vn::String(u8"a drawing call with no scope"));
     };
 
     EXPECT_TRUE(report());
@@ -404,8 +404,8 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
     ClearPolicy  policy;
     policy.color         = true;
     const std::uint64_t plan = measure(kCalls, [&]() -> std::uint64_t {
-        const vine::vsg::core::PassClearPlan built =
-            vine::vsg::core::planClearValues(shape, policy, true, false);
+        const vn::vsg::core::PassClearPlan built =
+            vn::vsg::core::planClearValues(shape, policy, true, false);
         return built.colors.size();
     });
     EXPECT_LE(plan, 2u * static_cast<std::uint64_t>(kCalls))
@@ -413,15 +413,15 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
            "this build's cost for a one-element vector)";
 
     Diagnostics                   diagnostics;
-    vine::vsg::ContentPass::Scope scope;
-    const vine::vsg::ContentPass::Scope::Entry halves[4]{};
+    vn::vsg::ContentPass::Scope scope;
+    const vn::vsg::ContentPass::Scope::Entry halves[4]{};
     const auto record_once = [&scope, &halves, &diagnostics]() -> std::uint64_t {
-        const vine::vsg::ContentPass recorder(scope, diagnostics);
+        const vn::vsg::ContentPass recorder(scope, diagnostics);
         return scope.entries.size();
     };
-    scope.entries = std::span<const vine::vsg::ContentPass::Scope::Entry>(halves, 1U);
+    scope.entries = std::span<const vn::vsg::ContentPass::Scope::Entry>(halves, 1U);
     const std::uint64_t one_entry = measure(kCalls, record_once);
-    scope.entries = std::span<const vine::vsg::ContentPass::Scope::Entry>(halves, 4U);
+    scope.entries = std::span<const vn::vsg::ContentPass::Scope::Entry>(halves, 4U);
     const std::uint64_t four_entries = measure(kCalls, record_once);
     EXPECT_LE(four_entries, 8u * static_cast<std::uint64_t>(kCalls))
         << "one recorder is a fixed handful of small vectors (measured: 7 counted allocations per "
@@ -444,21 +444,21 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
     FrameRecorder recorder(arena, diagnostics, observe);
     FrameCompiler compiler(arena, diagnostics, observe);
 
-    vine::intrusive_ptr<RenderTarget> first(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> second(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> first(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> second(new RenderTarget());
 
-    vine::vsg::core::TargetFacts first_facts;
+    vn::vsg::core::TargetFacts first_facts;
     first_facts.target        = first.get();
     first_facts.wanted.width  = 64;
     first_facts.wanted.height = 64;
     first_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     first_facts.current.desc  = first_facts.wanted;
     first_facts.current.built = true;
-    vine::vsg::core::TargetFacts second_facts = first_facts;
+    vn::vsg::core::TargetFacts second_facts = first_facts;
     second_facts.target                       = second.get();
 
     const std::vector<RenderCommand> one_draw{ RenderCommand{} };
-    const std::vector<vine::vsg::core::TargetFacts> one_target{ first_facts };
+    const std::vector<vn::vsg::core::TargetFacts> one_target{ first_facts };
 
     // One frame, recorded the way the API layer records it: one pass, two content draws into the same target.
     // `swapBuffers()` is the contract's last call of a frame - it closes the books the next `beginFrame()`
@@ -475,8 +475,8 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
         EXPECT_TRUE(recorder.endFrame());
         EXPECT_TRUE(recorder.swapBuffers());
     };
-    const auto compile_frame = [&](const std::vector<vine::vsg::core::TargetFacts>& facts) {
-        return &compiler.compile(recorder.description(), vine::vsg::core::FrameFacts{ facts });
+    const auto compile_frame = [&](const std::vector<vn::vsg::core::TargetFacts>& facts) {
+        return &compiler.compile(recorder.description(), vn::vsg::core::FrameFacts{ facts });
     };
 
     // Warm-up: the plan path grows its own storage over the first frames (measured: the second compile
@@ -573,7 +573,7 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
         [](std::uint64_t before, std::uint64_t after) { return after == before + 1U; },
     });
 
-    const vine::vsg::core::PhaseTable::Report report = table.runAll();
+    const vn::vsg::core::PhaseTable::Report report = table.runAll();
     for (const std::string& line : report.lines)
     {
         std::cout << line << '\n';  // the evidence line format, printed so a script can freeze it

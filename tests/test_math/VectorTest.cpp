@@ -3,7 +3,7 @@
 #include <vine/math/Math.hpp>
 #include <vine/math/Vector4.hpp>
 
-using namespace vine::math;
+using namespace vn::math;
 
 TEST(Vector, cross)
 {

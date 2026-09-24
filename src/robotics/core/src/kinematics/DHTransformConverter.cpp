@@ -8,13 +8,13 @@
 #include <vine/math/Quaternion.hpp>
 #include <vine/math/Transform3.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 /* ========================================================================= */
 /*  Forward transforms                                                       */
 /* ========================================================================= */
 
-V_ROBOTICS_CORE_API math::Isometry3d mdhToTransform(const DHParameter& mdh, double dd, double dtheta)
+VN_ROBOTICS_CORE_API math::Isometry3d mdhToTransform(const DHParameter& mdh, double dd, double dtheta)
 {
     using namespace math;
 
@@ -79,7 +79,7 @@ V_ROBOTICS_CORE_API math::Isometry3d mdhToTransform(const DHParameter& mdh, doub
     return Isometry3d(Point3d(t.x, t.y, t.z), Quatd(qx, qy, qz, qw));
 }
 
-V_ROBOTICS_CORE_API math::Isometry3d sdhToTransform(const DHParameter& sdh, double dd, double dtheta)
+VN_ROBOTICS_CORE_API math::Isometry3d sdhToTransform(const DHParameter& sdh, double dd, double dtheta)
 {
     using namespace math;
 
@@ -148,7 +148,7 @@ V_ROBOTICS_CORE_API math::Isometry3d sdhToTransform(const DHParameter& sdh, doub
 /*  Representability checks                                                  */
 /* ========================================================================= */
 
-V_ROBOTICS_CORE_API bool isMdhRepresentable(const math::Isometry3d& tf, double tolerance)
+VN_ROBOTICS_CORE_API bool isMdhRepresentable(const math::Isometry3d& tf, double tolerance)
 {
     const auto R = rotate3x3(tf.rotation);
 
@@ -156,7 +156,7 @@ V_ROBOTICS_CORE_API bool isMdhRepresentable(const math::Isometry3d& tf, double t
     return std::abs(R(0, 2)) <= tolerance;
 }
 
-V_ROBOTICS_CORE_API bool isSdhRepresentable(const math::Isometry3d& tf, double tolerance)
+VN_ROBOTICS_CORE_API bool isSdhRepresentable(const math::Isometry3d& tf, double tolerance)
 {
     const auto R = rotate3x3(tf.rotation);
 
@@ -168,7 +168,7 @@ V_ROBOTICS_CORE_API bool isSdhRepresentable(const math::Isometry3d& tf, double t
 /*  Inverse extraction                                                       */
 /* ========================================================================= */
 
-V_ROBOTICS_CORE_API std::optional<DHParameter> tryMdhFromTransform(const math::Isometry3d& tf, double tolerance)
+VN_ROBOTICS_CORE_API std::optional<DHParameter> tryMdhFromTransform(const math::Isometry3d& tf, double tolerance)
 {
     using namespace math;
 
@@ -201,7 +201,7 @@ V_ROBOTICS_CORE_API std::optional<DHParameter> tryMdhFromTransform(const math::I
     return p;
 }
 
-V_ROBOTICS_CORE_API std::optional<DHParameter> trySdhFromTransform(const math::Isometry3d& tf, double tolerance)
+VN_ROBOTICS_CORE_API std::optional<DHParameter> trySdhFromTransform(const math::Isometry3d& tf, double tolerance)
 {
     using namespace math;
 
@@ -234,4 +234,4 @@ V_ROBOTICS_CORE_API std::optional<DHParameter> trySdhFromTransform(const math::I
     return p;
 }
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

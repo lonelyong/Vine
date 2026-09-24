@@ -9,7 +9,7 @@
 #include "Vector2.hpp"
 #include "Vector3.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief 3x3 matrix.
@@ -341,4 +341,4 @@ class Matrix3x3 {
 using Mat3f = Matrix3x3<float>;
 using Mat3d = Matrix3x3<double>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

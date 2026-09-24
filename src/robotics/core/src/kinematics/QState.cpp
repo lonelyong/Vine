@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 void QState::setup(const Frame* root)
 {
@@ -63,4 +63,4 @@ void QState::copyFrom(const QState& other)
     }
 }
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

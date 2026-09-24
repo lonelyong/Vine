@@ -11,14 +11,14 @@
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 
-using vine::imaging::bytesPerPixel;
-using vine::imaging::channelCount;
-using vine::imaging::formatName;
-using vine::imaging::Image;
-using vine::imaging::isDepthFormat;
-using vine::imaging::isSrgbFormat;
-using vine::imaging::PixelFormat;
-using vine::intrusive_ptr;
+using vn::imaging::bytesPerPixel;
+using vn::imaging::channelCount;
+using vn::imaging::formatName;
+using vn::imaging::Image;
+using vn::imaging::isDepthFormat;
+using vn::imaging::isSrgbFormat;
+using vn::imaging::PixelFormat;
+using vn::intrusive_ptr;
 
 namespace
 {

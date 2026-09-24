@@ -19,11 +19,11 @@
 #include <vine/robotics/workcell/Scanner.hpp>
 #include <vine/robotics/workcell/Workcell.hpp>
 
-using namespace vine::robotics;
-using namespace vine::robotics::kinematics;
-using namespace vine::robotics::workcell;
-using vine::robotics::io::DeviceIO;
-using vine::robotics::io::WorkcellIO;
+using namespace vn::robotics;
+using namespace vn::robotics::kinematics;
+using namespace vn::robotics::workcell;
+using vn::robotics::io::DeviceIO;
+using vn::robotics::io::WorkcellIO;
 
 namespace
 {
@@ -99,9 +99,9 @@ std::unique_ptr<MotionDevice> makeRobot()
 std::unique_ptr<MotionDevice> makeRobotWithMesh()
 {
     auto robot = makeRobot();
-    auto mesh  = vine::intrusive_ptr<vine::geometry::TriangleMesh>(new vine::geometry::TriangleMesh());
-    mesh->addTriangle(vine::math::Vec3f(0.0f, 0.0f, 0.0f), vine::math::Vec3f(1.0f, 0.0f, 0.0f),
-                      vine::math::Vec3f(0.0f, 1.0f, 0.0f));
+    auto mesh  = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(0.0f, 1.0f, 0.0f));
     auto* const base = robot->baseLink();
     base->body().visuals().resize(1);
     base->body().visuals()[0].setShape(mesh);
@@ -146,9 +146,9 @@ std::unique_ptr<Scanner> makeScanner()
 std::unique_ptr<RigidObject> makeTableWithMesh()
 {
     auto table = std::make_unique<RigidObject>(u8"table");
-    auto mesh  = vine::intrusive_ptr<vine::geometry::TriangleMesh>(new vine::geometry::TriangleMesh());
-    mesh->addTriangle(vine::math::Vec3f(0.0f, 0.0f, 0.0f), vine::math::Vec3f(2.0f, 0.0f, 0.0f),
-                      vine::math::Vec3f(0.0f, 2.0f, 0.0f));
+    auto mesh  = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(2.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(0.0f, 2.0f, 0.0f));
     table->body().visuals().resize(1);
     table->body().visuals()[0].setShape(mesh);
     return table;
@@ -192,7 +192,7 @@ TEST(PkgIOTest, DevicePkgWithMeshRoundTrip)
     ASSERT_NE(r, nullptr);
     ASSERT_EQ(r->baseLink()->body().visuals().size(), 1u);
     const auto* const m =
-        dynamic_cast<const vine::geometry::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
+        dynamic_cast<const vn::geometry::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
     ASSERT_NE(m, nullptr);
     EXPECT_EQ(m->vertexCount(), 3u);
     EXPECT_EQ(m->triangleCount(), 1u);
@@ -205,13 +205,13 @@ TEST(PkgIOTest, DevicePkgMemoryBytes)
     auto     robot = makeRobot();
     DeviceIO io;
 
-    vine::io::ZipArchive vfs;
+    vn::io::ZipArchive vfs;
     io.savePkg(*robot, vfs);
     ASSERT_TRUE(vfs.isFile(std::filesystem::path(u8"device.xml")));
 
     auto zip_bytes = vfs.toBytes();
     ASSERT_TRUE(zip_bytes.ok());
-    auto opened = vine::io::ZipArchive::open(zip_bytes.take(), vine::io::ZipArchive::OpenMode::ReadOnly);
+    auto opened = vn::io::ZipArchive::open(zip_bytes.take(), vn::io::ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
 
     auto loaded = io.loadPkg(*opened);
@@ -252,7 +252,7 @@ TEST(PkgIOTest, WorkcellPkgRoundTrip)
     // The robot's mesh visual round-trips through the package geoms.
     ASSERT_EQ(r->baseLink()->body().visuals().size(), 1u);
     const auto* const rm =
-        dynamic_cast<const vine::geometry::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
+        dynamic_cast<const vn::geometry::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
     ASSERT_NE(rm, nullptr);
     EXPECT_EQ(rm->vertexCount(), 3u);
 
@@ -262,7 +262,7 @@ TEST(PkgIOTest, WorkcellPkgRoundTrip)
 
     auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
     ASSERT_NE(t, nullptr);
-    const auto* const tm = dynamic_cast<const vine::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
+    const auto* const tm = dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
     ASSERT_NE(tm, nullptr);
     EXPECT_EQ(tm->vertexCount(), 3u);
     EXPECT_FLOAT_EQ(tm->positions()[1].x, 2.0f);
@@ -281,7 +281,7 @@ TEST(PkgIOTest, WorkcellPkgInternalPathsAndMemory)
     cell->addSceneObject(std::move(robot));
     cell->addSceneObject(makeTableWithMesh());
 
-    vine::io::ZipArchive vfs;
+    vn::io::ZipArchive vfs;
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
     ASSERT_TRUE(vfs.isFile(std::filesystem::path(u8"workcell.xml")));
@@ -293,7 +293,7 @@ TEST(PkgIOTest, WorkcellPkgInternalPathsAndMemory)
     // Persist to zip bytes and reopen: the whole package round-trips in memory.
     auto zip_bytes = vfs.toBytes();
     ASSERT_TRUE(zip_bytes.ok());
-    auto opened = vine::io::ZipArchive::open(zip_bytes.take(), vine::io::ZipArchive::OpenMode::ReadOnly);
+    auto opened = vn::io::ZipArchive::open(zip_bytes.take(), vn::io::ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
 
     auto loaded = io.loadPkg(*opened);
@@ -313,7 +313,7 @@ TEST(PkgIOTest, NestedDevicePackage)
     cell->addSceneObject(makeTableWithMesh());
 
     // Devices are always stored as nested .vdevpkg zip entries inside a package.
-    vine::io::ZipArchive vfs;
+    vn::io::ZipArchive vfs;
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
     ASSERT_TRUE(vfs.isFile(std::filesystem::path(u8"workcell.xml")));
@@ -326,7 +326,7 @@ TEST(PkgIOTest, NestedDevicePackage)
         ASSERT_TRUE(bytes.ok());
         zip_bytes = bytes.value();
     }
-    auto opened = vine::io::ZipArchive::open(std::move(zip_bytes), vine::io::ZipArchive::OpenMode::ReadOnly);
+    auto opened = vn::io::ZipArchive::open(std::move(zip_bytes), vn::io::ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
 
     // The loader dispatches by extension: .vdevpkg opens a nested VFS and the
@@ -337,7 +337,7 @@ TEST(PkgIOTest, NestedDevicePackage)
     ASSERT_NE(r, nullptr);
     ASSERT_EQ(r->baseLink()->body().visuals().size(), 1u);
     const auto* const rm =
-        dynamic_cast<const vine::geometry::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
+        dynamic_cast<const vn::geometry::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
     ASSERT_NE(rm, nullptr);
     EXPECT_EQ(rm->vertexCount(), 3u);
 }
@@ -345,11 +345,11 @@ TEST(PkgIOTest, NestedDevicePackage)
 TEST(PkgIOTest, IndexedMeshRoundTrip)
 {
     auto table = std::make_unique<RigidObject>(u8"table");
-    auto mesh  = vine::intrusive_ptr<vine::geometry::IndexedTriangleMesh>(
-        new vine::geometry::IndexedTriangleMesh());
-    const std::uint32_t v0 = mesh->addVertex(vine::math::Vec3f(0.0f, 0.0f, 0.0f));
-    const std::uint32_t v1 = mesh->addVertex(vine::math::Vec3f(1.0f, 0.0f, 0.0f));
-    const std::uint32_t v2 = mesh->addVertex(vine::math::Vec3f(0.0f, 1.0f, 0.0f));
+    auto mesh  = vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh>(
+        new vn::geometry::IndexedTriangleMesh());
+    const std::uint32_t v0 = mesh->addVertex(vn::math::Vec3f(0.0f, 0.0f, 0.0f));
+    const std::uint32_t v1 = mesh->addVertex(vn::math::Vec3f(1.0f, 0.0f, 0.0f));
+    const std::uint32_t v2 = mesh->addVertex(vn::math::Vec3f(0.0f, 1.0f, 0.0f));
     mesh->addTriangle(v0, v1, v2);
     table->body().visuals().resize(1);
     table->body().visuals()[0].setShape(mesh);
@@ -357,7 +357,7 @@ TEST(PkgIOTest, IndexedMeshRoundTrip)
     auto cell = std::make_unique<Workcell>();
     cell->addSceneObject(std::move(table));
 
-    vine::io::ZipArchive vfs;
+    vn::io::ZipArchive vfs;
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
     // Indexed mesh writes positions + indices bins.
@@ -370,7 +370,7 @@ TEST(PkgIOTest, IndexedMeshRoundTrip)
     auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
     ASSERT_NE(t, nullptr);
     const auto* const m =
-        dynamic_cast<const vine::geometry::IndexedTriangleMesh*>(t->body().visuals()[0].shape().get());
+        dynamic_cast<const vn::geometry::IndexedTriangleMesh*>(t->body().visuals()[0].shape().get());
     ASSERT_NE(m, nullptr);
     EXPECT_EQ(m->vertexCount(), 3u);
     EXPECT_EQ(m->triangleCount(), 1u);
@@ -381,9 +381,9 @@ TEST(PkgIOTest, IndexedMeshRoundTrip)
 TEST(PkgIOTest, SharedMeshStoredOnce)
 {
     auto table = std::make_unique<RigidObject>(u8"table");
-    auto mesh  = vine::intrusive_ptr<vine::geometry::TriangleMesh>(new vine::geometry::TriangleMesh());
-    mesh->addTriangle(vine::math::Vec3f(0.0f, 0.0f, 0.0f), vine::math::Vec3f(1.0f, 0.0f, 0.0f),
-                      vine::math::Vec3f(0.0f, 1.0f, 0.0f));
+    auto mesh  = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(0.0f, 1.0f, 0.0f));
     // Two visuals share the exact same shape object.
     table->body().visuals().resize(2);
     table->body().visuals()[0].setShape(mesh);
@@ -392,7 +392,7 @@ TEST(PkgIOTest, SharedMeshStoredOnce)
     auto cell = std::make_unique<Workcell>();
     cell->addSceneObject(std::move(table));
 
-    vine::io::ZipArchive vfs;
+    vn::io::ZipArchive vfs;
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
 
@@ -409,9 +409,9 @@ TEST(PkgIOTest, SharedMeshStoredOnce)
     ASSERT_NE(t, nullptr);
     ASSERT_EQ(t->body().visuals().size(), 2u);
     const auto* const m0 =
-        dynamic_cast<const vine::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
+        dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
     const auto* const m1 =
-        dynamic_cast<const vine::geometry::TriangleMesh*>(t->body().visuals()[1].shape().get());
+        dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[1].shape().get());
     ASSERT_NE(m0, nullptr);
     ASSERT_NE(m1, nullptr);
     EXPECT_EQ(m0->vertexCount(), 3u);

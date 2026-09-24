@@ -8,7 +8,7 @@
 #include <vine/io/Vfs.hpp>
 #include <vine/String.hpp>
 
-V_IO_NS_BEGIN
+VN_IO_NS_BEGIN
 
 /**
  * @brief One-shot compression and ZIP archive operations.
@@ -22,7 +22,7 @@ V_IO_NS_BEGIN
  * Every call reports through IoError / Result, like the rest of the library: the
  * bytes go in as a span, and what comes back is either bytes or the failure.
  */
-class V_IOBASE_API Zip
+class VN_IOBASE_API Zip
 {
   public:
     Zip() = delete;
@@ -132,4 +132,4 @@ class V_IOBASE_API Zip
                                                                      const std::filesystem::path& name);
 };
 
-V_IO_NS_END
+VN_IO_NS_END

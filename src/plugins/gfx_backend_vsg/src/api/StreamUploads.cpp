@@ -4,7 +4,7 @@
 
 #include <vine/graphics/ShaderAbi.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
@@ -12,10 +12,10 @@ namespace
 /// @brief Whether a location is one of the canonical attributes (a custom channel is not).
 bool isCanonicalLocation(std::uint32_t location) noexcept
 {
-    return location == vine::graphics::attributeLocation(vine::graphics::VertexAttribute::Position) ||
-           location == vine::graphics::attributeLocation(vine::graphics::VertexAttribute::Normal) ||
-           location == vine::graphics::attributeLocation(vine::graphics::VertexAttribute::Color) ||
-           location == vine::graphics::attributeLocation(vine::graphics::VertexAttribute::TexCoord0);
+    return location == vn::graphics::attributeLocation(vn::graphics::VertexAttribute::Position) ||
+           location == vn::graphics::attributeLocation(vn::graphics::VertexAttribute::Normal) ||
+           location == vn::graphics::attributeLocation(vn::graphics::VertexAttribute::Color) ||
+           location == vn::graphics::attributeLocation(vn::graphics::VertexAttribute::TexCoord0);
 }
 
 /// @brief Gets the key a bind is shared under.
@@ -72,8 +72,8 @@ std::uint32_t StreamUploads::bindingOfCanonical(std::uint32_t location) noexcept
     // of the ABI here, not a definition of it. A custom channel (location >= 3, never the reserved texcoord
     // slot) has no canonical binding: its arrays are bound through one command whose identity is the whole
     // custom layout.
-    using vine::graphics::attributeLocation;
-    using vine::graphics::VertexAttribute;
+    using vn::graphics::attributeLocation;
+    using vn::graphics::VertexAttribute;
     switch (location) {
     case attributeLocation(VertexAttribute::Position): return 0U;
     case attributeLocation(VertexAttribute::Normal): return 1U;
@@ -202,4 +202,4 @@ void StreamUploads::clear()
     d->registry.clear();
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

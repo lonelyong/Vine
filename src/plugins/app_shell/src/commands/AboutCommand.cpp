@@ -4,11 +4,11 @@
 
 #include <vine/appfw/Application.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-V_OBJECT_META_IMPL(AboutCommand, Command)
+VN_OBJECT_META_IMPL(AboutCommand, Command)
 
-vine::async::Task<CommandResult> AboutCommand::execute(CommandExecutionContext* context)
+vn::async::Task<CommandResult> AboutCommand::execute(CommandExecutionContext* context)
 {
     auto* app = context ? context->application() : nullptr;
     if (!app) {
@@ -26,4 +26,4 @@ vine::async::Task<CommandResult> AboutCommand::execute(CommandExecutionContext* 
     co_return CommandResult(CommandStatus::Success);
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

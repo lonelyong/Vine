@@ -14,19 +14,19 @@
 #include <vine/imaging/PixelFormat.hpp>
 #include <vine/imageio/ImageCodec.hpp>
 
-using vine::imaging::bytesPerPixel;
-using vine::imaging::Image;
-using vine::imaging::PixelFormat;
-using vine::imageio::canRead;
-using vine::imageio::canWrite;
-using vine::imageio::decodeImage;
-using vine::imageio::encodeImage;
-using vine::imageio::formatFromPath;
-using vine::imageio::formatName;
-using vine::imageio::ImageFileFormat;
-using vine::imageio::loadImage;
-using vine::imageio::saveImage;
-using vine::intrusive_ptr;
+using vn::imaging::bytesPerPixel;
+using vn::imaging::Image;
+using vn::imaging::PixelFormat;
+using vn::imageio::canRead;
+using vn::imageio::canWrite;
+using vn::imageio::decodeImage;
+using vn::imageio::encodeImage;
+using vn::imageio::formatFromPath;
+using vn::imageio::formatName;
+using vn::imageio::ImageFileFormat;
+using vn::imageio::loadImage;
+using vn::imageio::saveImage;
+using vn::intrusive_ptr;
 
 namespace
 {
@@ -314,7 +314,7 @@ TEST(ImageEncodeTest, EveryWritableContainerRoundTripsEveryLayoutExactly)
     // weaker would let a channel shuffle or a truncated level through.
     for (const ImageFileFormat container : kContainers) {
         for (const PixelFormat layout : kLayouts) {
-            const std::string label = std::string(formatName(container)) + "/" + vine::imaging::formatName(layout);
+            const std::string label = std::string(formatName(container)) + "/" + vn::imaging::formatName(layout);
             SCOPED_TRACE(label);
 
             const auto source = patternImage(7, 5, layout);

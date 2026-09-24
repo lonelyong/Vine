@@ -13,7 +13,7 @@
 #include "LogLevel.hpp"
 #include "LogSink.hpp"
 
-V_LOGGING_NS_BEGIN
+VN_LOGGING_NS_BEGIN
 
 /**
  * @brief A named logger dispatching records to a set of sinks.
@@ -22,7 +22,7 @@ V_LOGGING_NS_BEGIN
  * header leaks into this interface. A logger is a cheap shared value: copies
  * refer to the same underlying spdlog logger.
  */
-class V_LOGGING_API Logger
+class VN_LOGGING_API Logger
 {
   public:
     /**
@@ -194,7 +194,7 @@ class V_LOGGING_API Logger
  * notice goes to stderr because the logger is what broke; it is emitted only the
  * first time, so a broken sink cannot flood the console.
  */
-V_LOGGING_API void reportLoggingFailure() noexcept;
+VN_LOGGING_API void reportLoggingFailure() noexcept;
 
 template <typename... Args>
 void Logger::trace(std::string_view fmt, Args&&... args) noexcept
@@ -293,4 +293,4 @@ void Logger::writeFormatted(LogLevel level, const std::source_location& loc, std
     }
 }
 
-V_LOGGING_NS_END
+VN_LOGGING_NS_END

@@ -49,7 +49,7 @@
  * thing here is the FORMAT table, because "how many bytes is one texel" and "may this format be read at
  * all" are the same fact that decides servability.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -84,11 +84,11 @@ struct ReadbackRequest
 struct ReadbackState
 {
     std::uint32_t color_attachments{0};  ///< How many colour attachments the target has.
-    vine::graphics::RenderTarget::ColorFormat color_format{
-        vine::graphics::RenderTarget::ColorFormat::RGBA8
+    vn::graphics::RenderTarget::ColorFormat color_format{
+        vn::graphics::RenderTarget::ColorFormat::RGBA8
     };                                             ///< The format of the requested colour attachment.
     /// The depth attachment's format; empty when the target has no depth at all.
-    std::optional<vine::graphics::RenderTarget::DepthFormat> depth_format;
+    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;
     bool color_captured{false};  ///< A copy-back node for the requested colour attachment was handed out.
     bool depth_captured{false};  ///< A copy-back node for the depth attachment was handed out.
 };
@@ -134,7 +134,7 @@ struct ReadbackFormat
  * @param format The attachment's colour format.
  * @return Bytes per texel and whether it can be read.
  */
-[[nodiscard]] ReadbackFormat colorReadbackOf(vine::graphics::RenderTarget::ColorFormat format) noexcept;
+[[nodiscard]] ReadbackFormat colorReadbackOf(vn::graphics::RenderTarget::ColorFormat format) noexcept;
 
 /** @brief Gets how a depth format is read back.
  *
@@ -144,7 +144,7 @@ struct ReadbackFormat
  * @param format The attachment's depth format.
  * @return Bytes per texel and whether it can be read.
  */
-[[nodiscard]] ReadbackFormat depthReadbackOf(vine::graphics::RenderTarget::DepthFormat format) noexcept;
+[[nodiscard]] ReadbackFormat depthReadbackOf(vn::graphics::RenderTarget::DepthFormat format) noexcept;
 
 /** @brief Turns copied depth bytes into the normalised values a probe answers with.
  *
@@ -157,9 +157,9 @@ struct ReadbackFormat
  * @param bytes  The copied bytes, in the tightly packed order the copy produced.
  * @return One value per texel, or empty when the bytes cannot be read as this format.
  */
-[[nodiscard]] std::vector<float> decodeDepth(vine::graphics::RenderTarget::DepthFormat format,
+[[nodiscard]] std::vector<float> decodeDepth(vn::graphics::RenderTarget::DepthFormat format,
                                              std::span<const std::byte>                 bytes);
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

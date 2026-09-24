@@ -1,6 +1,6 @@
 # gfx_backend_vsg: VSG render backend delivered as an appfw plugin.
 #
-# The plugin is a MODULE DLL (v_add_plugin). Its implementation is the rewritten backend under src/api
+# The plugin is a MODULE DLL (vn_add_plugin). Its implementation is the rewritten backend under src/api
 # and src/core, plus the handful of flat translation units those share (the host window, the scene rules,
 # the vulkan entry points, the dynamic-state mapper and the backend utility layer - see the source list
 # in tests/test_vsg/CMakeLists.txt). When loaded by PluginManager, GfxBackendVsgPlugin::load() registers
@@ -14,12 +14,12 @@
 # Tests cannot link a MODULE library; test_vsg compiles the implementation
 # sources directly (see tests/test_vsg/CMakeLists.txt).
 
-v_add_plugin(GFX_BACKEND_VSG_TARGET gfx_backend_vsg)
+vn_add_plugin(GFX_BACKEND_VSG_TARGET gfx_backend_vsg)
 
-# v_add_plugin derives the export macro from the short name (gfx_backend_vsg ->
-# V_GFX_BACKEND_VSG_LIB), but vsg_global.hpp checks V_VSG_LIB. Define it
-# explicitly so V_VSG_API expands to dllexport when building this plugin.
-target_compile_definitions(${GFX_BACKEND_VSG_TARGET} PRIVATE V_VSG_LIB)
+# vn_add_plugin derives the export macro from the short name (gfx_backend_vsg ->
+# VN_GFX_BACKEND_VSG_LIB), but vsg_global.hpp checks VN_VSG_LIB. Define it
+# explicitly so VN_VSG_API expands to dllexport when building this plugin.
+target_compile_definitions(${GFX_BACKEND_VSG_TARGET} PRIVATE VN_VSG_LIB)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -48,7 +48,7 @@ if(VINE_USE_FETCHCONTENT)
         set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
         set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
         FetchContent_MakeAvailable(glslang)
-        v_group_targets_folder(${glslang_SOURCE_DIR} third_party)
+        vn_group_targets_folder(${glslang_SOURCE_DIR} third_party)
         # glslang now lives in this build tree; its static targets must be
         # folded into vsg's export set and its headers mirrored into the
         # installed layout (see below) before vsg is built.
@@ -99,7 +99,7 @@ if(VINE_USE_FETCHCONTENT)
     # the default cap is what keeps that honest, because a path that did try to
     # create one now throws instead of quietly working on this machine.
     FetchContent_MakeAvailable(vsg)
-    v_group_targets_folder(${vsg_SOURCE_DIR} third_party)
+    vn_group_targets_folder(${vsg_SOURCE_DIR} third_party)
 
     if(VINE_VSG_GLSLANG_IN_TREE)
         # vsg registers install/export of its vsgTargets export set during its
@@ -144,10 +144,10 @@ if(UNIX AND NOT APPLE)
 endif()
 
 target_link_libraries(${GFX_BACKEND_VSG_TARGET} PRIVATE
-    vi::Appfw
-    vi::Graphics
-    vi::Imaging
-    vi::Logging
+    vn::Appfw
+    vn::Graphics
+    vn::Imaging
+    vn::Logging
     vsg::vsg
     # The meta-loader this backend reaches extension commands through (see VsgVulkanEntryPoints): the
     # loader exports no symbol for those, and volk is what loads them without naming each one.

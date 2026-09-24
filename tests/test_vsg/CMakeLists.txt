@@ -61,14 +61,14 @@ set(SRC_FILE_LIST
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 # The backend is an appfw plugin (MODULE DLL, cannot be linked). Its headers
-# (VsgHostWindow.hpp etc.) annotate the classes V_VSG_API (dllexport/dllimport on
+# (VsgHostWindow.hpp etc.) annotate the classes VN_VSG_API (dllexport/dllimport on
 # Windows). Because VsgHostWindow.cpp + VsgBackendUtility.cpp are compiled INTO
 # this test executable (see target_sources below), the target must build them
-# as the exporting side (V_VSG_LIB); otherwise MSVC treats the classes as
+# as the exporting side (VN_VSG_LIB); otherwise MSVC treats the classes as
 # dllimport, their header-only accessors and vtables are never emitted locally,
 # and the executable can neither import (no plugin .lib) nor resolve them ->
 # LNK2019 / C4273. Harmless (empty) on Linux.
-target_compile_definitions(${TEST_NAME} PRIVATE V_VSG_LIB)
+target_compile_definitions(${TEST_NAME} PRIVATE VN_VSG_LIB)
 # The backend is an appfw plugin (MODULE, cannot be linked). The plugin-load
 # test boots an Application, loads the gfx_backend_vsg plugin through
 # PluginManager, then creates the backend by name via RenderBackendRegistry —
@@ -87,7 +87,7 @@ find_package(vsg CONFIG QUIET)
 # write registration files into the user's real data directory.
 find_package(Qt6 CONFIG REQUIRED COMPONENTS Core)
 
-target_link_libraries(${TEST_NAME} vi::Appfw vi::Graphics vi::Logging Qt6::Core tp::volk)
+target_link_libraries(${TEST_NAME} vn::Appfw vn::Graphics vn::Logging Qt6::Core tp::volk)
 
 # VsgHostWindow creates the host surface itself; vsg builds the same code but links xcb PRIVATE, so its
 # include directories do not reach this target.

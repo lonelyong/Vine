@@ -3,7 +3,7 @@
 #include <vine/progress/ProgressIndicator.hpp>
 #include <vine/progress/ProgressRange.hpp>
 
-V_PROGRESS_NS_BEGIN
+VN_PROGRESS_NS_BEGIN
 
 ProgressScope::ProgressScope() = default;
 
@@ -131,4 +131,4 @@ double ProgressScope::localToGlobal(double value) const
     return global_length_ * value / local_length_;
 }
 
-V_PROGRESS_NS_END
+VN_PROGRESS_NS_END

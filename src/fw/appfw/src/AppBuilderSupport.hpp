@@ -3,7 +3,7 @@
 #include <vine/appfw/AppBuilder.hpp>
 #include <vine/appfw/appfw_global.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class Application;
 
@@ -24,4 +24,4 @@ class Application;
  */
 void applyAppConfig(Application& app, const AppConfig& config);
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

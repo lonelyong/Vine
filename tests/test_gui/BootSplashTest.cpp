@@ -8,11 +8,11 @@
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 
-using vine::appfw::ProgressHost;
-using vine::appfw::SplashConfig;
-using vine::appfw::StartupProgress;
-using vine::appfw::gui::BootSplash;
-using vine::appfw::gui::GuiApplication;
+using vn::appfw::ProgressHost;
+using vn::appfw::SplashConfig;
+using vn::appfw::StartupProgress;
+using vn::appfw::gui::BootSplash;
+using vn::appfw::gui::GuiApplication;
 
 namespace
 {
@@ -153,7 +153,7 @@ TEST(BootSplashTest, FrameSurvivesTheEndOfTheBoot)
 
 TEST(BootSplashTest, DisabledByDefaultInTheTestApplication)
 {
-    auto* app = vine::obj_cast<GuiApplication>(vine::appfw::Application::current());
+    auto* app = vn::obj_cast<GuiApplication>(vn::appfw::Application::current());
     ASSERT_NE(app, nullptr);
 
     // test_gui 共享的 GuiApplication 用默认 AppConfig 创建：不开启动框就没有启动进度口，主窗口直接可见。

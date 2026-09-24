@@ -12,12 +12,12 @@
 #include <vine/math/Point3.hpp>
 #include <vine/math/Math.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 namespace
 {
 
-constexpr double kDegToRad = vine::math::DEG_TO_RAD;
+constexpr double kDegToRad = vn::math::DEG_TO_RAD;
 constexpr double kTiny = 1e-6;
 
 // Elevation policy for the spherical (programmatic / keyboard / pan-zoom)
@@ -26,7 +26,7 @@ constexpr double kTiny = 1e-6;
 // 180-degree flips. The rotate DRAG is not spherical: it pivots rigidly about
 // the press anchor and carries the camera up with it, so it is free to roll
 // and to sweep past the poles.
-constexpr double kMaxElevationRad = vine::math::PI_HALF;
+constexpr double kMaxElevationRad = vn::math::PI_HALF;
 
 // The world-up axis of the spherical model (eyeDirection / viewUp) and of the
 // pivot yaw. Vine scenes are Z-up (robotics convention: X forward, Z up).
@@ -253,7 +253,7 @@ bool OrbitCameraManipulator::fitToScreen()
     if (!bounds.isValid()) {
         return false;
     }
-    const vine::math::Point3d centre_p = bounds.center();
+    const vn::math::Point3d centre_p = bounds.center();
     const Vec3d centre(centre_p.x, centre_p.y, centre_p.z);
     const Vec3d size = bounds.size();
     // Bounding-sphere radius around the box centre.
@@ -380,18 +380,18 @@ void OrbitCameraManipulator::apply()
     }
 }
 
-void OrbitCameraManipulator::onMousePress(const vine::window::MouseEvent& event)
+void OrbitCameraManipulator::onMousePress(const vn::window::MouseEvent& event)
 {
     last_x_ = event.x;
     last_y_ = event.y;
     pointer_known_ = true;
 
     switch (event.button) {
-        case vine::window::MouseButton::Left:
+        case vn::window::MouseButton::Left:
             drag_ = CameraManipulator::DragAction::Rotate;
             break;
-        case vine::window::MouseButton::Middle:
-        case vine::window::MouseButton::Right:
+        case vn::window::MouseButton::Middle:
+        case vn::window::MouseButton::Right:
             drag_ = CameraManipulator::DragAction::Pan;
             break;
         default:
@@ -408,7 +408,7 @@ void OrbitCameraManipulator::onMousePress(const vine::window::MouseEvent& event)
     anchor_ = resolveAnchor(event.x, event.y, anchor_on_ray_);
 }
 
-void OrbitCameraManipulator::onMouseMove(const vine::window::MouseEvent& event)
+void OrbitCameraManipulator::onMouseMove(const vn::window::MouseEvent& event)
 {
     const double dx = event.x - last_x_;
     const double dy = event.y - last_y_;
@@ -438,13 +438,13 @@ void OrbitCameraManipulator::onMouseMove(const vine::window::MouseEvent& event)
     }
 }
 
-void OrbitCameraManipulator::onMouseRelease(const vine::window::MouseEvent& event)
+void OrbitCameraManipulator::onMouseRelease(const vn::window::MouseEvent& event)
 {
     (void)event;
     drag_ = CameraManipulator::DragAction::None;
 }
 
-void OrbitCameraManipulator::onScroll(const vine::window::ScrollEvent& event)
+void OrbitCameraManipulator::onScroll(const vn::window::ScrollEvent& event)
 {
     Camera* cam = camera_;
     if (cam == nullptr || std::abs(event.deltaY) < 1e-6) {
@@ -493,9 +493,9 @@ void OrbitCameraManipulator::onScroll(const vine::window::ScrollEvent& event)
     apply();
 }
 
-void OrbitCameraManipulator::onKeyDown(const vine::window::KeyEvent& event)
+void OrbitCameraManipulator::onKeyDown(const vn::window::KeyEvent& event)
 {
-    if (event.code == vine::window::KeyCode::Home) {
+    if (event.code == vn::window::KeyCode::Home) {
         if (!fitToScreen()) {
             home();
         }
@@ -505,34 +505,34 @@ void OrbitCameraManipulator::onKeyDown(const vine::window::KeyEvent& event)
         return;
     }
     switch (event.code) {
-        case vine::window::KeyCode::W:
+        case vn::window::KeyCode::W:
             moveForward(move_step_);
             break;
-        case vine::window::KeyCode::S:
+        case vn::window::KeyCode::S:
             moveForward(-move_step_);
             break;
-        case vine::window::KeyCode::A:
+        case vn::window::KeyCode::A:
             moveRight(-move_step_);
             break;
-        case vine::window::KeyCode::D:
+        case vn::window::KeyCode::D:
             moveRight(move_step_);
             break;
-        case vine::window::KeyCode::E:
+        case vn::window::KeyCode::E:
             moveUp(move_step_);
             break;
-        case vine::window::KeyCode::Q:
+        case vn::window::KeyCode::Q:
             moveUp(-move_step_);
             break;
-        case vine::window::KeyCode::Left:
+        case vn::window::KeyCode::Left:
             orbit(-rotate_step_, 0.0);
             break;
-        case vine::window::KeyCode::Right:
+        case vn::window::KeyCode::Right:
             orbit(rotate_step_, 0.0);
             break;
-        case vine::window::KeyCode::Up:
+        case vn::window::KeyCode::Up:
             orbit(0.0, -rotate_step_);
             break;
-        case vine::window::KeyCode::Down:
+        case vn::window::KeyCode::Down:
             orbit(0.0, rotate_step_);
             break;
         default:
@@ -540,13 +540,13 @@ void OrbitCameraManipulator::onKeyDown(const vine::window::KeyEvent& event)
     }
 }
 
-void OrbitCameraManipulator::onKeyUp(const vine::window::KeyEvent& event)
+void OrbitCameraManipulator::onKeyUp(const vn::window::KeyEvent& event)
 {
     (void)event;
     // Movement is event-driven per key press; nothing to track on release.
 }
 
-void OrbitCameraManipulator::onResize(const vine::window::ResizeEvent& event)
+void OrbitCameraManipulator::onResize(const vn::window::ResizeEvent& event)
 {
     if (event.width <= 0 || event.height <= 0) {
         return;
@@ -594,7 +594,7 @@ Vec3d OrbitCameraManipulator::resolveAnchor(double screenX, double screenY,
     if (scene_ != nullptr) {
         const Aabbd bounds = scene_->boundingBox();
         if (bounds.isValid()) {
-            const vine::math::Point3d centre_p = bounds.center();
+            const vn::math::Point3d centre_p = bounds.center();
             return Vec3d(centre_p.x, centre_p.y, centre_p.z);
         }
     }
@@ -760,4 +760,4 @@ void OrbitCameraManipulator::updateOrthoProjection()
                                     cam->nearPlane(), cam->farPlane());
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

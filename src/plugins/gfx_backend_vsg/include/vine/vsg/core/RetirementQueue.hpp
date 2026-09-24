@@ -31,7 +31,7 @@
  * command buffer), and advance as the LAST step of a committed frame. Both rules are here as the
  * documented contract of retire()/advance(); the frame's own order is the executor's to keep.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -134,4 +134,4 @@ class RetirementQueue
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

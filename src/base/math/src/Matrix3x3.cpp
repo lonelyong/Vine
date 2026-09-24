@@ -2,7 +2,7 @@
 
 #include <vine/math/Math.hpp>
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 #define TMPL_PREFIX template <typename T, typename Order>
 
@@ -39,9 +39,9 @@ TMPL_PREFIX bool Matrix3x3<T, Order>::invert()
 
 #undef TMPL_PREFIX
 
-template class V_MATH_API Matrix3x3<float, ColMajor>;
-template class V_MATH_API Matrix3x3<double, ColMajor>;
-template class V_MATH_API Matrix3x3<float, RowMajor>;
-template class V_MATH_API Matrix3x3<double, RowMajor>;
+template class VN_MATH_API Matrix3x3<float, ColMajor>;
+template class VN_MATH_API Matrix3x3<double, ColMajor>;
+template class VN_MATH_API Matrix3x3<float, RowMajor>;
+template class VN_MATH_API Matrix3x3<double, RowMajor>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

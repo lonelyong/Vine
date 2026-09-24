@@ -1,16 +1,16 @@
 ﻿#include <vine/geometry/PhongMaterial.hpp>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-V_OBJECT_META_IMPL(PhongMaterial, Material)
+VN_OBJECT_META_IMPL(PhongMaterial, Material)
 
 PhongMaterial::PhongMaterial()
 {
     material_type_ = MaterialType::Phong;
 }
 
-PhongMaterial::PhongMaterial(const vine::Colorf& ambient, const vine::Colorf& diffuse,
-    const vine::Colorf& specular, float shininess)
+PhongMaterial::PhongMaterial(const vn::Colorf& ambient, const vn::Colorf& diffuse,
+    const vn::Colorf& specular, float shininess)
   : ambient_(ambient)
   , diffuse_(diffuse)
   , specular_(specular)
@@ -19,32 +19,32 @@ PhongMaterial::PhongMaterial(const vine::Colorf& ambient, const vine::Colorf& di
     material_type_ = MaterialType::Phong;
 }
 
-const vine::Colorf& PhongMaterial::ambient() const
+const vn::Colorf& PhongMaterial::ambient() const
 {
     return ambient_;
 }
 
-void PhongMaterial::setAmbient(const vine::Colorf& ambient)
+void PhongMaterial::setAmbient(const vn::Colorf& ambient)
 {
     ambient_ = ambient;
 }
 
-const vine::Colorf& PhongMaterial::diffuse() const
+const vn::Colorf& PhongMaterial::diffuse() const
 {
     return diffuse_;
 }
 
-void PhongMaterial::setDiffuse(const vine::Colorf& diffuse)
+void PhongMaterial::setDiffuse(const vn::Colorf& diffuse)
 {
     diffuse_ = diffuse;
 }
 
-const vine::Colorf& PhongMaterial::specular() const
+const vn::Colorf& PhongMaterial::specular() const
 {
     return specular_;
 }
 
-void PhongMaterial::setSpecular(const vine::Colorf& specular)
+void PhongMaterial::setSpecular(const vn::Colorf& specular)
 {
     specular_ = specular;
 }
@@ -64,4 +64,4 @@ const char* PhongMaterial::typeName() const
     return "PhongMaterial";
 }
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 
-V_IMAGING_NS_BEGIN
+VN_IMAGING_NS_BEGIN
 
 /**
  * @brief How the colour or depth channels of ONE pixel are laid out in memory.
@@ -54,7 +54,7 @@ enum class PixelFormat : std::uint8_t {
  * @param format Format to query.
  * @return The channel count, or 0 for `PixelFormat::Unknown` and any out-of-range value.
  */
-V_IMAGING_API int channelCount(PixelFormat format) noexcept;
+VN_IMAGING_API int channelCount(PixelFormat format) noexcept;
 
 /**
  * @brief Gets the size of one pixel of a format, in bytes.
@@ -64,7 +64,7 @@ V_IMAGING_API int channelCount(PixelFormat format) noexcept;
  * @param format Format to query.
  * @return The pixel size in bytes, or 0 for `PixelFormat::Unknown` and any out-of-range value.
  */
-V_IMAGING_API std::size_t bytesPerPixel(PixelFormat format) noexcept;
+VN_IMAGING_API std::size_t bytesPerPixel(PixelFormat format) noexcept;
 
 /**
  * @brief States whether a format stores depth instead of colour.
@@ -74,7 +74,7 @@ V_IMAGING_API std::size_t bytesPerPixel(PixelFormat format) noexcept;
  * @param format Format to query.
  * @return true for the `D*` formats, false otherwise.
  */
-V_IMAGING_API bool isDepthFormat(PixelFormat format) noexcept;
+VN_IMAGING_API bool isDepthFormat(PixelFormat format) noexcept;
 
 /**
  * @brief States whether a format's colour channels are sRGB-encoded.
@@ -85,7 +85,7 @@ V_IMAGING_API bool isDepthFormat(PixelFormat format) noexcept;
  * @param format Format to query.
  * @return true for the `*Srgb` formats, false otherwise.
  */
-V_IMAGING_API bool isSrgbFormat(PixelFormat format) noexcept;
+VN_IMAGING_API bool isSrgbFormat(PixelFormat format) noexcept;
 
 /**
  * @brief Gets a stable, human-readable name for a format, for diagnostics.
@@ -96,6 +96,6 @@ V_IMAGING_API bool isSrgbFormat(PixelFormat format) noexcept;
  * @param format Format to name.
  * @return The format's name, or `"Unknown"` for `PixelFormat::Unknown` and any out-of-range value.
  */
-V_IMAGING_API const char* formatName(PixelFormat format) noexcept;
+VN_IMAGING_API const char* formatName(PixelFormat format) noexcept;
 
-V_IMAGING_NS_END
+VN_IMAGING_NS_END

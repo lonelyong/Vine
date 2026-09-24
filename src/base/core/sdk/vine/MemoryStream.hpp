@@ -10,7 +10,7 @@
 #include <streambuf>
 #include <vector>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief A stream buffer over one contiguous, growing block of memory.
@@ -26,7 +26,7 @@ V_CORE_NS_BEGIN
  * Writes go through `buffer_.data()`, never through `buffer_[i]`, because only the first `size_` elements are logically initialized.
  * A moved-from buffer is left valid and empty.
  */
-class V_CORE_API MemoryStreamBuf : public std::streambuf
+class VN_CORE_API MemoryStreamBuf : public std::streambuf
 {
   public:
     /**
@@ -185,7 +185,7 @@ class V_CORE_API MemoryStreamBuf : public std::streambuf
 /**
  * @brief An input stream over a contiguous memory buffer.
  */
-class V_CORE_API InputMemoryStream : public std::istream
+class VN_CORE_API InputMemoryStream : public std::istream
 {
   public:
     /**
@@ -253,7 +253,7 @@ class V_CORE_API InputMemoryStream : public std::istream
 /**
  * @brief An output stream over a contiguous memory buffer.
  */
-class V_CORE_API OutputMemoryStream : public std::ostream
+class VN_CORE_API OutputMemoryStream : public std::ostream
 {
   public:
     /**
@@ -312,7 +312,7 @@ class V_CORE_API OutputMemoryStream : public std::ostream
 /**
  * @brief A readable and writable stream over a contiguous memory buffer.
  */
-class V_CORE_API MemoryStream : public std::iostream
+class VN_CORE_API MemoryStream : public std::iostream
 {
   public:
     /**
@@ -400,7 +400,7 @@ class V_CORE_API MemoryStream : public std::iostream
  * Unlike `MemoryStreamBuf`, the get area is a cache rather than the source of truth: `read_pos_` stays authoritative whenever no get area is published, which is what allows seeking to the end and appending afterwards to both behave.
  * A moved-from buffer is left valid and empty.
  */
-class V_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
+class VN_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
 {
   public:
     /**
@@ -580,7 +580,7 @@ class V_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
 /**
  * @brief An input stream over a chain of fixed-size chunks.
  */
-class V_CORE_API InputChunkedMemoryStream : public std::istream
+class VN_CORE_API InputChunkedMemoryStream : public std::istream
 {
   public:
     /**
@@ -645,7 +645,7 @@ class V_CORE_API InputChunkedMemoryStream : public std::istream
 /**
  * @brief An output stream over a chain of fixed-size chunks.
  */
-class V_CORE_API OutputChunkedMemoryStream : public std::ostream
+class VN_CORE_API OutputChunkedMemoryStream : public std::ostream
 {
   public:
     /**
@@ -713,7 +713,7 @@ class V_CORE_API OutputChunkedMemoryStream : public std::ostream
 /**
  * @brief A readable and writable stream over a chain of fixed-size chunks.
  */
-class V_CORE_API ChunkedMemoryStream : public std::iostream
+class VN_CORE_API ChunkedMemoryStream : public std::iostream
 {
   public:
     /**
@@ -804,7 +804,7 @@ class V_CORE_API ChunkedMemoryStream : public std::iostream
  * No put area is published, so every single byte goes through `overflow()`; bulk writes still reach the window through `xsputn()` in one copy.
  * The window must outlive the buffer, and a moved-from buffer is left valid and empty.
  */
-class V_CORE_API SpanStreamBuf : public std::streambuf
+class VN_CORE_API SpanStreamBuf : public std::streambuf
 {
   public:
     /**
@@ -961,7 +961,7 @@ class V_CORE_API SpanStreamBuf : public std::streambuf
  * The content is not copied: the stream reads straight from the span it was given, which must outlive it.
  * Formatted input works as over any other istream, and reading past the window reports end of file.
  */
-class V_CORE_API InputSpanStream : public std::istream
+class VN_CORE_API InputSpanStream : public std::istream
 {
   public:
     /**
@@ -1013,7 +1013,7 @@ class V_CORE_API InputSpanStream : public std::istream
  * Writes land in the span the stream was given, which must outlive it.
  * Once the window is full the stream reports the overflow through `badbit` instead of growing.
  */
-class V_CORE_API OutputSpanStream : public std::ostream
+class VN_CORE_API OutputSpanStream : public std::ostream
 {
   public:
     /**
@@ -1077,7 +1077,7 @@ class V_CORE_API OutputSpanStream : public std::ostream
  * Reads see the written prefix and writes land in the same borrowed window, which must outlive the stream.
  * Writing past the window reports the overflow through `badbit` instead of growing.
  */
-class V_CORE_API SpanStream : public std::iostream
+class VN_CORE_API SpanStream : public std::iostream
 {
   public:
     /**
@@ -1135,4 +1135,4 @@ class V_CORE_API SpanStream : public std::iostream
     SpanStreamBuf buf_;
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

@@ -20,40 +20,40 @@
 #include <vine/vsg/RenderStateMapper.hpp>
 #include <vine/vsg/VsgSceneRules.hpp>
 
-using vine::graphics::AttributeChannel;
-using vine::graphics::BlendFactor;
-using vine::graphics::BlendState;
-using vine::graphics::CompareOp;
-using vine::graphics::CullMode;
-using vine::graphics::PolygonMode;
-using vine::graphics::ResolvedRenderState;
-using vine::graphics::Topology;
-using vine::vsg::detail::aliasArray;
-using vine::vsg::detail::aliasTypedVertexData;
-using vine::vsg::detail::applyOpaqueBlendForAttachments;
-using vine::vsg::detail::ChannelShape;
-using vine::vsg::detail::channelShape;
-using vine::vsg::detail::colourAttachmentCount;
-using vine::vsg::detail::customAttributeName;
-using vine::vsg::detail::faceNormal;
-using vine::vsg::detail::formatForComponents;
-using vine::vsg::detail::hashCombine;
-using vine::vsg::detail::hashStateVariant;
-using vine::vsg::detail::ignoredChannelMessage;
-using vine::vsg::detail::ignoredNormalChannelMessage;
-using vine::vsg::detail::kHashSeed;
-using vine::vsg::detail::kLayoutSeed;
-using vine::vsg::detail::makeIndexedNormals;
-using vine::vsg::detail::makeNormals;
-using vine::vsg::detail::makeWhiteColors;
-using vine::vsg::detail::normalIsUsable;
-using vine::vsg::detail::sampleVertexData;
-using vine::vsg::detail::stageFlag;
-using vine::vsg::detail::unpackXyz;
-using vine::vsg::detail::vertexLayoutHash;
-using vine::vsg::detail::XyzUnpack;
-using vine::vsg::makeRenderStateObjects;
-using vine::vsg::RenderStateObjects;
+using vn::graphics::AttributeChannel;
+using vn::graphics::BlendFactor;
+using vn::graphics::BlendState;
+using vn::graphics::CompareOp;
+using vn::graphics::CullMode;
+using vn::graphics::PolygonMode;
+using vn::graphics::ResolvedRenderState;
+using vn::graphics::Topology;
+using vn::vsg::detail::aliasArray;
+using vn::vsg::detail::aliasTypedVertexData;
+using vn::vsg::detail::applyOpaqueBlendForAttachments;
+using vn::vsg::detail::ChannelShape;
+using vn::vsg::detail::channelShape;
+using vn::vsg::detail::colourAttachmentCount;
+using vn::vsg::detail::customAttributeName;
+using vn::vsg::detail::faceNormal;
+using vn::vsg::detail::formatForComponents;
+using vn::vsg::detail::hashCombine;
+using vn::vsg::detail::hashStateVariant;
+using vn::vsg::detail::ignoredChannelMessage;
+using vn::vsg::detail::ignoredNormalChannelMessage;
+using vn::vsg::detail::kHashSeed;
+using vn::vsg::detail::kLayoutSeed;
+using vn::vsg::detail::makeIndexedNormals;
+using vn::vsg::detail::makeNormals;
+using vn::vsg::detail::makeWhiteColors;
+using vn::vsg::detail::normalIsUsable;
+using vn::vsg::detail::sampleVertexData;
+using vn::vsg::detail::stageFlag;
+using vn::vsg::detail::unpackXyz;
+using vn::vsg::detail::vertexLayoutHash;
+using vn::vsg::detail::XyzUnpack;
+using vn::vsg::makeRenderStateObjects;
+using vn::vsg::RenderStateObjects;
 
 namespace
 {
@@ -106,27 +106,27 @@ TEST(SceneRulesTest, TheTexcoordSlotCarriesOneOfTwoWidths)
     // falls back to the declared binding (a UV pair) only otherwise. A cube direction read as a pair draws —
     // with the wrong coordinates, and no error from any layer.
     const auto uv        = AttributeChannel::packed({ 0.0f, 0.0f, 1.0f, 1.0f, 0.5f, 0.5f }, 2u);
-    auto       uv_array  = vine::vsg::detail::texCoordArray(uv, 3u);
+    auto       uv_array  = vn::vsg::detail::texCoordArray(uv, 3u);
     ASSERT_NE(uv_array, nullptr);
     EXPECT_EQ(uv_array->valueCount(), 3u);
     EXPECT_EQ(uv_array->properties.stride, 8u);
     EXPECT_EQ(uv_array->properties.format, VK_FORMAT_R32G32_SFLOAT);
-    EXPECT_FALSE(vine::vsg::detail::isThreeScalarTexcoord(*uv_array));
+    EXPECT_FALSE(vn::vsg::detail::isThreeScalarTexcoord(*uv_array));
 
     const auto directions      = AttributeChannel::packed({ 1.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f }, 3u);
-    auto       direction_array = vine::vsg::detail::texCoordArray(directions, 3u);
+    auto       direction_array = vn::vsg::detail::texCoordArray(directions, 3u);
     ASSERT_NE(direction_array, nullptr);
     EXPECT_EQ(direction_array->valueCount(), 3u);
     EXPECT_EQ(direction_array->properties.stride, 12u);
     EXPECT_EQ(direction_array->properties.format, VK_FORMAT_R32G32B32_SFLOAT);
-    EXPECT_TRUE(vine::vsg::detail::isThreeScalarTexcoord(*direction_array));
+    EXPECT_TRUE(vn::vsg::detail::isThreeScalarTexcoord(*direction_array));
 
     // Neither shape, and a shape that does not cover the mesh's vertices, are refused: the caller reports
     // them and binds zero UVs, which is what keeps a bad optional channel from rejecting a drawable.
-    EXPECT_FALSE(vine::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f, 4.0f }, 4u), 1u));
-    EXPECT_FALSE(vine::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f }, 1u), 3u));
+    EXPECT_FALSE(vn::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f, 4.0f }, 4u), 1u));
+    EXPECT_FALSE(vn::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f }, 1u), 3u));
     EXPECT_FALSE(
-        vine::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }, 2u), 2u));
+        vn::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }, 2u), 2u));
 }
 
 TEST(SceneRulesTest, ChannelShapeAcceptsExactlyOneValuePerVertex)
@@ -394,9 +394,9 @@ TEST(SceneRulesTest, CustomAttributeNameIsStableAndDistinctFromTheBuiltIns)
 
 TEST(SceneRulesTest, StageFlagMapsEveryStageToItsOwnVulkanBit)
 {
-    EXPECT_EQ(stageFlag(vine::graphics::ShaderStageType::Vertex), VK_SHADER_STAGE_VERTEX_BIT);
-    EXPECT_EQ(stageFlag(vine::graphics::ShaderStageType::Fragment), VK_SHADER_STAGE_FRAGMENT_BIT);
-    EXPECT_EQ(stageFlag(vine::graphics::ShaderStageType::Compute), VK_SHADER_STAGE_COMPUTE_BIT);
+    EXPECT_EQ(stageFlag(vn::graphics::ShaderStageType::Vertex), VK_SHADER_STAGE_VERTEX_BIT);
+    EXPECT_EQ(stageFlag(vn::graphics::ShaderStageType::Fragment), VK_SHADER_STAGE_FRAGMENT_BIT);
+    EXPECT_EQ(stageFlag(vn::graphics::ShaderStageType::Compute), VK_SHADER_STAGE_COMPUTE_BIT);
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +405,7 @@ TEST(SceneRulesTest, StageFlagMapsEveryStageToItsOwnVulkanBit)
 
 TEST(SceneRulesTest, UnpackXyzTakesTheFirstThreeOfEveryStride)
 {
-    vine::geometry::Vec3fArray out;
+    vn::geometry::Vec3fArray out;
     // vec3: one vertex per three floats.
     EXPECT_EQ(unpackXyz(packed(3u, { 1.f, 2.f, 3.f, 4.f, 5.f, 6.f }), out), XyzUnpack::Ok);
     ASSERT_EQ(out.size(), 2u);
@@ -428,7 +428,7 @@ TEST(SceneRulesTest, UnpackXyzTakesTheFirstThreeOfEveryStride)
 
 TEST(SceneRulesTest, UnpackXyzRejectsAComponentCountThatIsNotAnXyzStride)
 {
-    vine::geometry::Vec3fArray out;
+    vn::geometry::Vec3fArray out;
     EXPECT_EQ(unpackXyz(packed(1u, { 1.f, 2.f, 3.f }), out), XyzUnpack::NotXyzStride);
     EXPECT_EQ(unpackXyz(packed(2u, { 1.f, 2.f, 3.f, 4.f }), out), XyzUnpack::NotXyzStride);
     EXPECT_EQ(unpackXyz(packed(0u, {}), out), XyzUnpack::NotXyzStride);
@@ -437,14 +437,14 @@ TEST(SceneRulesTest, UnpackXyzRejectsAComponentCountThatIsNotAnXyzStride)
 
 TEST(SceneRulesTest, UnpackXyzRejectsAPartialVertex)
 {
-    vine::geometry::Vec3fArray out;
+    vn::geometry::Vec3fArray out;
     EXPECT_EQ(unpackXyz(packed(3u, { 1.f, 2.f, 3.f, 4.f }), out), XyzUnpack::NotDivisible);
     EXPECT_EQ(unpackXyz(packed(4u, { 1.f, 2.f, 3.f, 4.f, 5.f }), out), XyzUnpack::NotDivisible);
 }
 
 TEST(SceneRulesTest, UnpackXyzReplacesTheOutputAndNeverTouchesItWhenRejected)
 {
-    vine::geometry::Vec3fArray out{ vine::math::Vec3f(9.f, 9.f, 9.f) };
+    vn::geometry::Vec3fArray out{ vn::math::Vec3f(9.f, 9.f, 9.f) };
     // Rejected before anything is written: the caller's array is left exactly as it was.
     EXPECT_EQ(unpackXyz(packed(2u, { 1.f, 2.f }), out), XyzUnpack::NotXyzStride);
     ASSERT_EQ(out.size(), 1u);
@@ -485,11 +485,11 @@ TEST(SceneRulesTest, IgnoredNormalChannelMessageCarriesEachBranchesOwnNumbers)
 
 TEST(SceneRulesTest, FaceNormalFollowsTheWindingAndIsZeroWhenDegenerate)
 {
-    const vine::math::Vec3f a(0.f, 0.f, 0.f);
-    const vine::math::Vec3f b(1.f, 0.f, 0.f);
-    const vine::math::Vec3f c(0.f, 1.f, 0.f);
+    const vn::math::Vec3f a(0.f, 0.f, 0.f);
+    const vn::math::Vec3f b(1.f, 0.f, 0.f);
+    const vn::math::Vec3f c(0.f, 1.f, 0.f);
     // Counter-clockwise in the xy plane faces +z.
-    const vine::math::Vec3f n = faceNormal(a, b, c);
+    const vn::math::Vec3f n = faceNormal(a, b, c);
     EXPECT_FLOAT_EQ(n.x, 0.f);
     EXPECT_FLOAT_EQ(n.y, 0.f);
     EXPECT_FLOAT_EQ(n.z, 1.f);
@@ -497,11 +497,11 @@ TEST(SceneRulesTest, FaceNormalFollowsTheWindingAndIsZeroWhenDegenerate)
     EXPECT_FLOAT_EQ(faceNormal(a, c, b).z, -1.f);
 
     // Degenerate (collinear / duplicated vertices) is EXACTLY zero, never a NaN source.
-    const vine::math::Vec3f collinear = faceNormal(a, b, vine::math::Vec3f(2.f, 0.f, 0.f));
+    const vn::math::Vec3f collinear = faceNormal(a, b, vn::math::Vec3f(2.f, 0.f, 0.f));
     EXPECT_EQ(collinear.x, 0.f);
     EXPECT_EQ(collinear.y, 0.f);
     EXPECT_EQ(collinear.z, 0.f);
-    const vine::math::Vec3f duplicate = faceNormal(b, b, c);
+    const vn::math::Vec3f duplicate = faceNormal(b, b, c);
     EXPECT_EQ(duplicate.x, 0.f);
     EXPECT_EQ(duplicate.y, 0.f);
     EXPECT_EQ(duplicate.z, 0.f);
@@ -517,8 +517,8 @@ TEST(SceneRulesTest, NormalIsUsableRejectsOnlyAZeroLength)
 
 TEST(SceneRulesTest, MakeNormalsDerivesUnitFaceNormalsForANonIndexedMesh)
 {
-    const vine::geometry::Vec3fArray positions{ vine::math::Vec3f(0.f, 0.f, 0.f), vine::math::Vec3f(1.f, 0.f, 0.f),
-                                                vine::math::Vec3f(0.f, 1.f, 0.f) };
+    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f),
+                                                vn::math::Vec3f(0.f, 1.f, 0.f) };
     const auto normals = makeNormals(positions, {});
     ASSERT_NE(normals, nullptr);
     ASSERT_EQ(normals->size(), 3u);
@@ -533,8 +533,8 @@ TEST(SceneRulesTest, MakeNormalsKeepsADegenerateTriangleZeroInsteadOfNaN)
 {
     // Three collinear vertices: the face normal is zero-length, and normalising it would write NaN
     // into every vertex of the triangle (nothing reports a NaN attribute).
-    const vine::geometry::Vec3fArray positions{ vine::math::Vec3f(0.f, 0.f, 0.f), vine::math::Vec3f(1.f, 1.f, 1.f),
-                                                vine::math::Vec3f(2.f, 2.f, 2.f) };
+    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 1.f, 1.f),
+                                                vn::math::Vec3f(2.f, 2.f, 2.f) };
     const auto normals = makeNormals(positions, {});
     ASSERT_NE(normals, nullptr);
     ASSERT_EQ(normals->size(), 3u);
@@ -550,11 +550,11 @@ TEST(SceneRulesTest, MakeNormalsKeepsADegenerateTriangleZeroInsteadOfNaN)
 
 TEST(SceneRulesTest, MakeNormalsCopiesProvidedMeshNormalsVerbatim)
 {
-    const vine::geometry::Vec3fArray positions{ vine::math::Vec3f(0.f, 0.f, 0.f), vine::math::Vec3f(1.f, 0.f, 0.f),
-                                                vine::math::Vec3f(0.f, 1.f, 0.f) };
+    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f),
+                                                vn::math::Vec3f(0.f, 1.f, 0.f) };
     // Deliberately not unit length: provided normals are copied, not re-derived or re-normalised.
-    const vine::geometry::Vec3fArray provided{ vine::math::Vec3f(0.1f, 0.2f, 0.3f), vine::math::Vec3f(0.4f, 0.5f, 0.6f),
-                                               vine::math::Vec3f(0.7f, 0.8f, 0.9f) };
+    const vn::geometry::Vec3fArray provided{ vn::math::Vec3f(0.1f, 0.2f, 0.3f), vn::math::Vec3f(0.4f, 0.5f, 0.6f),
+                                               vn::math::Vec3f(0.7f, 0.8f, 0.9f) };
     const auto normals = makeNormals(positions, provided);
     ASSERT_NE(normals, nullptr);
     ASSERT_EQ(normals->size(), 3u);
@@ -568,8 +568,8 @@ TEST(SceneRulesTest, MakeNormalsCopiesProvidedMeshNormalsVerbatim)
 TEST(SceneRulesTest, MakeIndexedNormalsAccumulatesEveryReferencedVertex)
 {
     // A CCW unit quad (two triangles sharing the 0-2 diagonal): every vertex ends up +z.
-    const vine::geometry::Vec3fArray positions{ vine::math::Vec3f(0.f, 0.f, 0.f), vine::math::Vec3f(1.f, 0.f, 0.f),
-                                                vine::math::Vec3f(1.f, 1.f, 0.f), vine::math::Vec3f(0.f, 1.f, 0.f) };
+    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f),
+                                                vn::math::Vec3f(1.f, 1.f, 0.f), vn::math::Vec3f(0.f, 1.f, 0.f) };
     auto indices = ::vsg::uintArray::create(6u);
     (*indices)[0] = 0u;
     (*indices)[1] = 1u;
@@ -591,8 +591,8 @@ TEST(SceneRulesTest, MakeIndexedNormalsSkipsOutOfRangeIndices)
 {
     // The second triangle names vertex 99: it is skipped, not read, and does not disturb the normals
     // the first triangle accumulated (the data path rejects such geometry; this must stay safe).
-    const vine::geometry::Vec3fArray positions{ vine::math::Vec3f(0.f, 0.f, 0.f), vine::math::Vec3f(1.f, 0.f, 0.f),
-                                                vine::math::Vec3f(0.f, 1.f, 0.f) };
+    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f),
+                                                vn::math::Vec3f(0.f, 1.f, 0.f) };
     auto indices = ::vsg::uintArray::create(6u);
     (*indices)[0] = 0u;
     (*indices)[1] = 1u;
@@ -612,9 +612,9 @@ TEST(SceneRulesTest, MakeIndexedNormalsLeavesAnUnreferencedVertexZero)
 {
     // A vertex no triangle references accumulates nothing: it must stay zero (a zero normal, not
     // NaN), which is what the unusable-length guard is for.
-    const vine::geometry::Vec3fArray positions{ vine::math::Vec3f(0.f, 0.f, 0.f), vine::math::Vec3f(1.f, 0.f, 0.f),
-                                                vine::math::Vec3f(0.f, 1.f, 0.f),
-                                                vine::math::Vec3f(5.f, 5.f, 5.f) };
+    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f),
+                                                vn::math::Vec3f(0.f, 1.f, 0.f),
+                                                vn::math::Vec3f(5.f, 5.f, 5.f) };
     auto indices = ::vsg::uintArray::create(3u);
     (*indices)[0] = 0u;
     (*indices)[1] = 1u;
@@ -652,8 +652,8 @@ TEST(SceneRulesTest, MakeWhiteColorsIsOpaqueWhiteForEveryVertex)
 
 TEST(SceneRulesTest, AliasTypedVertexDataPicksTheArrayTypeFromTheComponentCount)
 {
-    const auto buffer = vine::intrusive_ptr<const vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f }));
+    const auto buffer = vn::intrusive_ptr<const vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f }));
     EXPECT_NE(aliasTypedVertexData(1u, buffer, 8u).cast<::vsg::floatArray>(), nullptr);
     EXPECT_NE(aliasTypedVertexData(2u, buffer, 4u).cast<::vsg::vec2Array>(), nullptr);
     EXPECT_NE(aliasTypedVertexData(3u, buffer, 2u).cast<::vsg::vec3Array>(), nullptr);
@@ -669,8 +669,8 @@ TEST(SceneRulesTest, AliasTypedVertexDataTypeAgreesWithTheBindingFormat)
     // if the two disagreed on the component count the configurator would accept it and the shader would
     // misread the attribute at draw time, with nothing to report. Aliasing keeps them in step by
     // construction — the array's element type IS the format's counterpart.
-    const auto buffer = vine::intrusive_ptr<const vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f }));
+    const auto buffer = vn::intrusive_ptr<const vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f }));
     for (std::uint32_t components : { 1u, 2u, 3u, 4u }) {
         const auto built  = aliasTypedVertexData(components, buffer, 1u);
         const auto sample = sampleVertexData(components);
@@ -684,8 +684,8 @@ TEST(SceneRulesTest, AliasTypedVertexDataReadsTheBuffersOwnMemory)
 {
     // The point of aliasing: vsg reads the address the model owns, so the same scalars are not stored
     // twice. Byte-identical rendering cannot tell the two apart — only the address can.
-    const auto buffer = vine::intrusive_ptr<const vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f, 5.f, 6.f }));
+    const auto buffer = vn::intrusive_ptr<const vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f, 5.f, 6.f }));
     const float* scalars = buffer->data();
 
     const auto arr = aliasTypedVertexData(3u, buffer, 2u).cast<::vsg::vec3Array>();
@@ -714,14 +714,14 @@ TEST(SceneRulesTest, AliasTypedVertexDataKeepsTheBufferAliveItself)
     // The renderer must keep exactly the memory it reads alive — the model may be destroyed first, and
     // nothing in the scene graph holds it. The array holds the storage, and the storage holds the
     // buffer, so dropping every outside handle must leave the values readable.
-    auto buffer = vine::intrusive_ptr<const vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ 7.f, 8.f, 9.f }));
+    auto buffer = vn::intrusive_ptr<const vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ 7.f, 8.f, 9.f }));
     const auto alive_before = buffer->useCount();
     const auto arr          = aliasTypedVertexData(3u, buffer, 1u).cast<::vsg::vec3Array>();
     ASSERT_NE(arr, nullptr);
     EXPECT_GT(buffer->useCount(), alive_before) << "the built array must reference the buffer";
 
-    buffer = vine::intrusive_ptr<const vine::Buffer<float>>(); // the model's handle goes away
+    buffer = vn::intrusive_ptr<const vn::Buffer<float>>(); // the model's handle goes away
     EXPECT_FLOAT_EQ(static_cast<const float*>(arr->dataPointer())[0], 7.f)
         << "the renderer must still read the model's values after the model died";
     EXPECT_FLOAT_EQ((*arr)[0].z, 9.f);
@@ -731,8 +731,8 @@ TEST(SceneRulesTest, AliasArrayWrapsAnIndexBufferAsRealUnsignedIntArrays)
 {
     // Indices go through the same mechanism: a real uintArray over the model's uint32 buffer, which is
     // the element type DrawIndexed reads.
-    const auto buffer = vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
-        new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 2u, 3u, 0u }));
+    const auto buffer = vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 2u, 3u, 0u }));
     const auto indices = aliasArray<::vsg::uintArray, std::uint32_t>(buffer, 6u);
     ASSERT_NE(indices, nullptr);
     EXPECT_EQ(indices->size(), 6u);
@@ -743,8 +743,8 @@ TEST(SceneRulesTest, AliasArrayWrapsAnIndexBufferAsRealUnsignedIntArrays)
 
 TEST(VsgSceneRulesTest, MapsEveryPixelLayoutToItsVulkanFormat)
 {
-    using vine::imaging::PixelFormat;
-    using vine::vsg::detail::vkFormatFor;
+    using vn::imaging::PixelFormat;
+    using vn::vsg::detail::vkFormatFor;
 
     EXPECT_EQ(vkFormatFor(PixelFormat::R8Unorm), VK_FORMAT_R8_UNORM);
     EXPECT_EQ(vkFormatFor(PixelFormat::R8Srgb), VK_FORMAT_R8_SRGB);
@@ -766,8 +766,8 @@ TEST(VsgSceneRulesTest, MapsEveryPixelLayoutToItsVulkanFormat)
 
 TEST(VsgSceneRulesTest, AThreeChannelLayoutHasNoVulkanFormat)
 {
-    using vine::imaging::PixelFormat;
-    using vine::vsg::detail::vkFormatFor;
+    using vn::imaging::PixelFormat;
+    using vn::vsg::detail::vkFormatFor;
 
     // Vulkan has no 24-bit format at all. The rule reports "no such format" rather than quietly picking
     // a 4-channel one, because widening the pixels is the caller's decision, not the mapping's.
@@ -777,8 +777,8 @@ TEST(VsgSceneRulesTest, AThreeChannelLayoutHasNoVulkanFormat)
 
 TEST(VsgSceneRulesTest, AnUnknownPixelLayoutHasNoVulkanFormat)
 {
-    using vine::imaging::PixelFormat;
-    using vine::vsg::detail::vkFormatFor;
+    using vn::imaging::PixelFormat;
+    using vn::vsg::detail::vkFormatFor;
 
     EXPECT_EQ(vkFormatFor(PixelFormat::Unknown), VK_FORMAT_UNDEFINED);
     EXPECT_EQ(vkFormatFor(static_cast<PixelFormat>(200)), VK_FORMAT_UNDEFINED);
@@ -786,8 +786,8 @@ TEST(VsgSceneRulesTest, AnUnknownPixelLayoutHasNoVulkanFormat)
 
 TEST(VsgSceneRulesTest, EveryMappedLayoutGetsItsOwnVulkanFormat)
 {
-    using vine::imaging::PixelFormat;
-    using vine::vsg::detail::vkFormatFor;
+    using vn::imaging::PixelFormat;
+    using vn::vsg::detail::vkFormatFor;
 
     // A duplicated mapping is the copy-paste mistake this table is prone to, and it would sample a
     // texture as the wrong layout with no validation error at all.
@@ -803,9 +803,9 @@ TEST(VsgSceneRulesTest, EveryMappedLayoutGetsItsOwnVulkanFormat)
     std::vector<VkFormat> seen;
     for (const PixelFormat layout : layouts) {
         const VkFormat format = vkFormatFor(layout);
-        ASSERT_NE(format, VK_FORMAT_UNDEFINED) << vine::imaging::formatName(layout);
+        ASSERT_NE(format, VK_FORMAT_UNDEFINED) << vn::imaging::formatName(layout);
         EXPECT_EQ(std::find(seen.begin(), seen.end(), format), seen.end())
-            << vine::imaging::formatName(layout) << " reuses another layout's Vulkan format";
+            << vn::imaging::formatName(layout) << " reuses another layout's Vulkan format";
         seen.push_back(format);
     }
 }
@@ -814,19 +814,19 @@ namespace
 {
 
 /// Builds a texture of the given description with `faces` of its faces filled.
-vine::intrusive_ptr<vine::graphics::Texture> filledTexture(vine::graphics::Texture::Kind shape,
-                                                           vine::imaging::PixelFormat format,
+vn::intrusive_ptr<vn::graphics::Texture> filledTexture(vn::graphics::Texture::Kind shape,
+                                                           vn::imaging::PixelFormat format,
                                                            int faces)
 {
     // Built through the named types rather than by handing a shape to a texture constructor: which object a
     // shape is, and therefore which invariants it carries, is now the type's business.
-    const bool is_cube = (shape == vine::graphics::Texture::Kind::Cube);
-    auto texture = vine::intrusive_ptr<vine::graphics::Texture>(
-        is_cube ? static_cast<vine::graphics::Texture*>(new vine::graphics::CubeMap(4, format))
-                : static_cast<vine::graphics::Texture*>(new vine::graphics::Texture2D(4, 4, format)));
+    const bool is_cube = (shape == vn::graphics::Texture::Kind::Cube);
+    auto texture = vn::intrusive_ptr<vn::graphics::Texture>(
+        is_cube ? static_cast<vn::graphics::Texture*>(new vn::graphics::CubeMap(4, format))
+                : static_cast<vn::graphics::Texture*>(new vn::graphics::Texture2D(4, 4, format)));
     for (int face = 0; face < faces; ++face) {
-        texture->setSource(face, vine::intrusive_ptr<const vine::imaging::Image>(
-                                     new vine::imaging::Image(4, 4, format)));
+        texture->setSource(face, vn::intrusive_ptr<const vn::imaging::Image>(
+                                     new vn::imaging::Image(4, 4, format)));
     }
     return texture;
 }
@@ -835,58 +835,58 @@ vine::intrusive_ptr<vine::graphics::Texture> filledTexture(vine::graphics::Textu
 
 TEST(VsgSceneRulesTest, ClassifiesWhetherATextureCanBeUploaded)
 {
-    using vine::vsg::detail::classifyTexture;
-    using vine::vsg::detail::TextureReject;
+    using vn::vsg::detail::classifyTexture;
+    using vn::vsg::detail::TextureReject;
 
     EXPECT_EQ(classifyTexture(nullptr), TextureReject::Absent);
 
     // A description with no source yet is a texture still being filled, not a broken one.
-    auto unfilled = filledTexture(vine::graphics::Texture::Kind::D2, vine::imaging::PixelFormat::Rgba8Unorm, 0);
+    auto unfilled = filledTexture(vn::graphics::Texture::Kind::D2, vn::imaging::PixelFormat::Rgba8Unorm, 0);
     EXPECT_EQ(classifyTexture(unfilled.get()), TextureReject::Incomplete);
 
-    auto filled = filledTexture(vine::graphics::Texture::Kind::D2, vine::imaging::PixelFormat::Rgba8Unorm, 1);
+    auto filled = filledTexture(vn::graphics::Texture::Kind::D2, vn::imaging::PixelFormat::Rgba8Unorm, 1);
     EXPECT_EQ(classifyTexture(filled.get()), TextureReject::Ok);
 }
 
 TEST(VsgSceneRulesTest, ACubeMapIsUploadedAsSixLayers)
 {
-    using vine::vsg::detail::classifyTexture;
-    using vine::vsg::detail::TextureReject;
+    using vn::vsg::detail::classifyTexture;
+    using vn::vsg::detail::TextureReject;
 
     // A cube is six 2D layers read through a cube view, so it goes down the same upload path as a 2D texture:
     // there is no shape left that this backend refuses.
-    auto cube = filledTexture(vine::graphics::Texture::Kind::Cube, vine::imaging::PixelFormat::Rgba8Unorm, 6);
+    auto cube = filledTexture(vn::graphics::Texture::Kind::Cube, vn::imaging::PixelFormat::Rgba8Unorm, 6);
     EXPECT_EQ(classifyTexture(cube.get()), TextureReject::Ok);
 
     // Supporting a shape did not weaken the check before it: an unfinished cube is still reported as
     // unfinished rather than as something usable.
-    auto half_cube = filledTexture(vine::graphics::Texture::Kind::Cube, vine::imaging::PixelFormat::Rgba8Unorm, 3);
+    auto half_cube = filledTexture(vn::graphics::Texture::Kind::Cube, vn::imaging::PixelFormat::Rgba8Unorm, 3);
     EXPECT_EQ(classifyTexture(half_cube.get()), TextureReject::Incomplete);
 }
 
 TEST(VsgSceneRulesTest, TheExtentRuleAccountsForEveryLevelAndLayer)
 {
-    using vine::vsg::detail::classifyTexture;
-    using vine::vsg::detail::textureDataMatchesExtent;
-    using vine::vsg::detail::TextureReject;
+    using vn::vsg::detail::classifyTexture;
+    using vn::vsg::detail::textureDataMatchesExtent;
+    using vn::vsg::detail::TextureReject;
 
     // A chain, not a single level: the rule sizes each level from ITS extent, so a texture whose image
     // carries three levels has to be measured level by level (level 1 is 4x4 of an 8x8 base, level 2 is 2x2).
-    auto texture = vine::intrusive_ptr<vine::graphics::Texture2D>(
-        new vine::graphics::Texture2D(8, 8, vine::imaging::PixelFormat::Rgba8Unorm, 3));
-    texture->setImage(vine::intrusive_ptr<const vine::imaging::Image>(
-        new vine::imaging::Image(8, 8, vine::imaging::PixelFormat::Rgba8Unorm, 3)));
+    auto texture = vn::intrusive_ptr<vn::graphics::Texture2D>(
+        new vn::graphics::Texture2D(8, 8, vn::imaging::PixelFormat::Rgba8Unorm, 3));
+    texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(
+        new vn::imaging::Image(8, 8, vn::imaging::PixelFormat::Rgba8Unorm, 3)));
 
     EXPECT_TRUE(textureDataMatchesExtent(*texture));
     EXPECT_EQ(classifyTexture(texture.get()), TextureReject::Ok);
 
     // Six layers, each level of each face: the same rule has to walk the layers too, which is what a cube
     // map with mips exercises.
-    auto cube = vine::intrusive_ptr<vine::graphics::CubeMap>(
-        new vine::graphics::CubeMap(4, vine::imaging::PixelFormat::Rgba8Unorm, 2));
+    auto cube = vn::intrusive_ptr<vn::graphics::CubeMap>(
+        new vn::graphics::CubeMap(4, vn::imaging::PixelFormat::Rgba8Unorm, 2));
     for (int face = 0; face < cube->faceCount(); ++face) {
-        cube->setSource(face, vine::intrusive_ptr<const vine::imaging::Image>(
-                                   new vine::imaging::Image(4, 4, vine::imaging::PixelFormat::Rgba8Unorm, 2)));
+        cube->setSource(face, vn::intrusive_ptr<const vn::imaging::Image>(
+                                   new vn::imaging::Image(4, 4, vn::imaging::PixelFormat::Rgba8Unorm, 2)));
     }
     EXPECT_TRUE(textureDataMatchesExtent(*cube));
     EXPECT_EQ(classifyTexture(cube.get()), TextureReject::Ok);
@@ -894,25 +894,25 @@ TEST(VsgSceneRulesTest, TheExtentRuleAccountsForEveryLevelAndLayer)
 
 TEST(VsgSceneRulesTest, AnUnfilledLayerIsRefusedInsteadOfBeingDereferenced)
 {
-    using vine::vsg::detail::classifyTexture;
-    using vine::vsg::detail::textureDataMatchesExtent;
-    using vine::vsg::detail::TextureReject;
+    using vn::vsg::detail::classifyTexture;
+    using vn::vsg::detail::textureDataMatchesExtent;
+    using vn::vsg::detail::TextureReject;
 
     // An empty face is the ordinary "still being filled" state, and the two rules have to agree about it:
     // classification says Incomplete (what the caller can act on), and the extent rule says "no" WITHOUT
     // reading a null layer — the guard the uploader relies on before it copies bytes by the extent.
-    auto unfilled = vine::intrusive_ptr<vine::graphics::Texture2D>(
-        new vine::graphics::Texture2D(4, 4, vine::imaging::PixelFormat::Rgba8Unorm));
+    auto unfilled = vn::intrusive_ptr<vn::graphics::Texture2D>(
+        new vn::graphics::Texture2D(4, 4, vn::imaging::PixelFormat::Rgba8Unorm));
 
     EXPECT_FALSE(textureDataMatchesExtent(*unfilled));
     EXPECT_EQ(classifyTexture(unfilled.get()), TextureReject::Incomplete);
 
     // A cube with one face missing is the same answer: the rule walks every layer, so a single empty one is
     // enough to refuse (and the uploader never stages a partly filled cube).
-    auto half_cube = vine::intrusive_ptr<vine::graphics::CubeMap>(
-        new vine::graphics::CubeMap(4, vine::imaging::PixelFormat::Rgba8Unorm));
-    half_cube->setSource(0, vine::intrusive_ptr<const vine::imaging::Image>(
-                                new vine::imaging::Image(4, 4, vine::imaging::PixelFormat::Rgba8Unorm)));
+    auto half_cube = vn::intrusive_ptr<vn::graphics::CubeMap>(
+        new vn::graphics::CubeMap(4, vn::imaging::PixelFormat::Rgba8Unorm));
+    half_cube->setSource(0, vn::intrusive_ptr<const vn::imaging::Image>(
+                                new vn::imaging::Image(4, 4, vn::imaging::PixelFormat::Rgba8Unorm)));
 
     EXPECT_FALSE(textureDataMatchesExtent(*half_cube));
     EXPECT_EQ(classifyTexture(half_cube.get()), TextureReject::Incomplete);
@@ -920,7 +920,7 @@ TEST(VsgSceneRulesTest, AnUnfilledLayerIsRefusedInsteadOfBeingDereferenced)
 
 TEST(VsgSceneRulesTest, AnisotropyIsClampedToWhatTheDeviceOffers)
 {
-    using vine::vsg::detail::anisotropyFor;
+    using vn::vsg::detail::anisotropyFor;
 
     // A request above the device's limit is a validation error, so the number a sampler is created with has
     // to be the smaller of the two. Vulkan's floor is 1.0, and 1 IS a legal request (it just filters
@@ -938,20 +938,20 @@ TEST(VsgSceneRulesTest, AnisotropyIsClampedToWhatTheDeviceOffers)
 
 TEST(VsgSceneRulesTest, AThreeChannelTextureIsRefusedForHavingNoVulkanFormat)
 {
-    using vine::vsg::detail::classifyTexture;
-    using vine::vsg::detail::TextureReject;
+    using vn::vsg::detail::classifyTexture;
+    using vn::vsg::detail::TextureReject;
 
-    auto three_channel = filledTexture(vine::graphics::Texture::Kind::D2, vine::imaging::PixelFormat::Rgb8Unorm, 1);
+    auto three_channel = filledTexture(vn::graphics::Texture::Kind::D2, vn::imaging::PixelFormat::Rgb8Unorm, 1);
     EXPECT_EQ(classifyTexture(three_channel.get()), TextureReject::UnsupportedFormat);
 }
 
 TEST(VsgSceneRulesTest, EachRefusalSaysWhichCaseFired)
 {
-    using vine::vsg::detail::textureRejectMessage;
-    using vine::vsg::detail::TextureReject;
+    using vn::vsg::detail::textureRejectMessage;
+    using vn::vsg::detail::TextureReject;
 
-    auto unfilled = filledTexture(vine::graphics::Texture::Kind::D2, vine::imaging::PixelFormat::Rgba8Unorm, 0);
-    auto three_channel = filledTexture(vine::graphics::Texture::Kind::D2, vine::imaging::PixelFormat::Rgb8Unorm, 1);
+    auto unfilled = filledTexture(vn::graphics::Texture::Kind::D2, vn::imaging::PixelFormat::Rgba8Unorm, 0);
+    auto three_channel = filledTexture(vn::graphics::Texture::Kind::D2, vn::imaging::PixelFormat::Rgb8Unorm, 1);
 
     const auto incomplete = textureRejectMessage(TextureReject::Incomplete, *unfilled);
     const auto format = textureRejectMessage(TextureReject::UnsupportedFormat, *three_channel);

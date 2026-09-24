@@ -36,7 +36,7 @@ class Device;
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief Why a synchronous readback did not happen (the caller reports the sentence and maps the answer). */
 enum class HostReadbackRefusal : std::uint8_t
@@ -100,7 +100,7 @@ enum class HostReadbackRefusal : std::uint8_t
  * @param refusal Why the readback did not happen.
  * @return The SDK result the refusal means.
  */
-[[nodiscard]] vine::graphics::ReadbackResult readbackResultOf(HostReadbackRefusal refusal) noexcept;
+[[nodiscard]] vn::graphics::ReadbackResult readbackResultOf(HostReadbackRefusal refusal) noexcept;
 
 /** @brief Gets the sentence for one refusal (the caller owns the diagnostic stream).
  *
@@ -108,6 +108,6 @@ enum class HostReadbackRefusal : std::uint8_t
  * @param what    Entry point that refused ("readColorBuffer()" / "readDepthBuffer()").
  * @return The message to report.
  */
-[[nodiscard]] vine::String readbackRefusalMessage(HostReadbackRefusal refusal, const char* what);
+[[nodiscard]] vn::String readbackRefusalMessage(HostReadbackRefusal refusal, const char* what);
 
-V_VSG_NS_END
+VN_VSG_NS_END

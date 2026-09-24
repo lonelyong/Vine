@@ -30,7 +30,7 @@ link_directories(${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/$<$<CONFIG:Debug>:Debug>$<$<C
 link_libraries(gtest gtest_main)
 
 # MSVC options for the project's own test targets. Placed after the gtest
-# FetchContent so the fetched gtest does not inherit them (see v_add_library).
+# FetchContent so the fetched gtest does not inherit them (see vn_add_library).
 if(MSVC)
     add_compile_options(/utf-8 /EHsc /Zc:preprocessor /Zc:__cplusplus)
 endif()

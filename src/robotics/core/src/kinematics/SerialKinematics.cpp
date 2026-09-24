@@ -6,7 +6,7 @@
 #include <vine/robotics/kinematics/JacobianIKSolver.hpp>
 #include <vine/robotics/kinematics/PieperIKSolver.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 SerialKinematics::SerialKinematics(raw_ptr<Frame> base, raw_ptr<Frame> end)
 {
@@ -127,4 +127,4 @@ std::vector<Q> SerialKinematics::solveIK(const math::Isometry3d& pose, const Q& 
     return solutions;
 }
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

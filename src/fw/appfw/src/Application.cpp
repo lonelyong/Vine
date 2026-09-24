@@ -27,7 +27,7 @@
 #include "ApplicationData.hpp"
 #include "ConsoleUserIO.hpp"
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 static std::atomic<Application*> s_current_app{ nullptr };
 
@@ -49,7 +49,7 @@ constexpr const char* s_registration_folder = "installed.d";
 /// File name used when the process has no application name at all.
 constexpr const char* s_fallback_app_name = "application";
 
-/// Converts a vine::String (UTF-8) to a QString.
+/// Converts a vn::String (UTF-8) to a QString.
 QString toQString(const String& text)
 {
     return QString::fromUtf8(reinterpret_cast<const char*>(text.data()), static_cast<int>(text.size()));
@@ -87,7 +87,7 @@ QString applicationNameOrFallback()
 
 } // namespace
 
-V_OBJECT_META_IMPL(Application, Object)
+VN_OBJECT_META_IMPL(Application, Object)
 
 ApplicationData::~ApplicationData() = default;
 
@@ -205,7 +205,7 @@ void Application::shutdown()
             io->cancelPendingInput();
         }
         if (!commands->cancelAllAndWait()) {
-            V_LOGW("Application shutdown: command chains did not stop within the drain bound");
+            VN_LOGW("Application shutdown: command chains did not stop within the drain bound");
         }
     }
 
@@ -224,7 +224,7 @@ void Application::shutdown()
     // either way - but it means some parked delivery never arrived, which is
     // exactly what a subscriber would otherwise never learn.
     if (!eventBus()->shutdownGracefully(EventBus::gracefulShutdownTimeout())) {
-        V_LOGW("Application shutdown: pending events were dropped instead of delivered");
+        VN_LOGW("Application shutdown: pending events were dropped instead of delivered");
     }
 
     // Persist last: plugin unload and the final events may still change values.
@@ -233,7 +233,7 @@ void Application::shutdown()
         std::error_code ec;
         std::filesystem::create_directories(dptr()->config_file.parent_path(), ec);
         if (!dptr()->config_manager->save(path)) {
-            V_LOGW("Failed to save the configuration to '{}'", dptr()->config_file.string());
+            VN_LOGW("Failed to save the configuration to '{}'", dptr()->config_file.string());
         }
     }
 }
@@ -250,7 +250,7 @@ bool Application::setConfigFile(std::filesystem::path file_path)
         return true; // First run: the defaults apply and are saved on shutdown.
     }
     if (!dptr()->config_manager->load(String(dptr()->config_file.u8string()))) {
-        V_LOGW("Failed to load the configuration from '{}'; using the defaults", dptr()->config_file.string());
+        VN_LOGW("Failed to load the configuration from '{}'; using the defaults", dptr()->config_file.string());
         return false;
     }
     return true;
@@ -335,7 +335,7 @@ bool Application::isBusy() const
 {
     // Only the foreground operation blocks new commands; background hosts run
     // in parallel and do not make the application busy.
-    return vine::appfw::ProgressHost::current() != nullptr;
+    return vn::appfw::ProgressHost::current() != nullptr;
 }
 
 raw_ptr<CommandManager> Application::commandManager() const
@@ -393,4 +393,4 @@ char** Application::argv() const
     return dptr()->argv;
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

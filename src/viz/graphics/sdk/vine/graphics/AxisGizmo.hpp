@@ -7,7 +7,7 @@
 #include "CameraMirror.hpp"
 #include "RenderPass.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class Camera;
 class Scene;
@@ -33,8 +33,8 @@ class Scene;
  * engine->addPass(gizmo, 10);               // draws on top of the order-0 window pass
  * \endcode
  */
-class V_GRAPHICS_API AxisGizmo : public RenderPass {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API AxisGizmo : public RenderPass {
+    VN_OBJECT_META_DECL;
 
   public:
     /** @brief Constructs a gizmo with three unit axis sticks.
@@ -144,4 +144,4 @@ class V_GRAPHICS_API AxisGizmo : public RenderPass {
 
 using AxisGizmoPtr = intrusive_ptr<AxisGizmo>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-V_WINDOW_NS_BEGIN
+VN_WINDOW_NS_BEGIN
 
 /**
  * @brief Platform-independent key codes.
@@ -87,4 +87,4 @@ enum class KeyCode : std::uint32_t {
     ContextMenu,
 };
 
-V_WINDOW_NS_END
+VN_WINDOW_NS_END

@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 
-using namespace vine;
+using namespace vn;
 
 namespace
 {

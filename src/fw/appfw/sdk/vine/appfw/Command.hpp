@@ -11,7 +11,7 @@
 #include <vine/String.hpp>
 #include <vine/async/Task.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class Application;
 class CommandManager;
@@ -87,9 +87,9 @@ enum class CommandFlags : std::uint32_t
  *         return CommandFlags::Undoable | CommandFlags::LongRunning;
  *     }
  *
- * Test one bit with vine::testFlag(flags, CommandFlags::Undoable).
+ * Test one bit with vn::testFlag(flags, CommandFlags::Undoable).
  */
-V_ENABLE_ENUM_FLAGS(CommandFlags);
+VN_ENABLE_ENUM_FLAGS(CommandFlags);
 
 /**
  * @brief Outcome of executing a Command.
@@ -119,7 +119,7 @@ enum class CommandStatus : std::uint8_t
  * (usually set on failure), and optional business data produced by the
  * command. succeeded() reports whether the command completed successfully.
  */
-class V_APPFW_API CommandResult
+class VN_APPFW_API CommandResult
 {
   public:
     CommandResult() = default;
@@ -185,7 +185,7 @@ class V_APPFW_API CommandResult
  * application(). The CommandManager provides a private implementation; user
  * code never constructs a context directly.
  */
-class V_APPFW_API CommandExecutionContext
+class VN_APPFW_API CommandExecutionContext
 {
   public:
     virtual ~CommandExecutionContext() = default;
@@ -200,7 +200,7 @@ class V_APPFW_API CommandExecutionContext
     /**
      * @brief Returns the cancellation token for this execution.
      *
-     * Pass it to cancellable async operations (e.g. vine::async::sleep with a
+     * Pass it to cancellable async operations (e.g. vn::async::sleep with a
      * token); they throw TaskCancelledException once the execution is cancelled.
      *
      * @return The execution's cancellation token.
@@ -239,7 +239,7 @@ class V_APPFW_API CommandExecutionContext
      *         registered, when the factory fails, or when the chain is already
      *         maxChainDepth() commands deep.
      */
-    virtual vine::async::Task<CommandResult> executeChild(const String& name) = 0;
+    virtual vn::async::Task<CommandResult> executeChild(const String& name) = 0;
 
     /**
      * @brief Starts a caller-supplied child command as part of this execution.
@@ -265,7 +265,7 @@ class V_APPFW_API CommandExecutionContext
      * @note Declared after the name overload on purpose: appending a virtual keeps the slot
      *       indices of implementations compiled against an older header.
      */
-    virtual vine::async::Task<CommandResult> executeChild(std::unique_ptr<Command> command) = 0;
+    virtual vn::async::Task<CommandResult> executeChild(std::unique_ptr<Command> command) = 0;
 };
 
 /**
@@ -281,10 +281,10 @@ class V_APPFW_API CommandExecutionContext
  * chain and cancellation source (every LongRunning command still owns its own
  * ProgressHost) and is bounded by CommandManager::maxChainDepth().
  */
-class V_APPFW_API Command : public Object
+class VN_APPFW_API Command : public Object
 {
-    V_OBJECT_META_DECL;
-    V_DISABLE_COPY_MOVE(Command);
+    VN_OBJECT_META_DECL;
+    VN_DISABLE_COPY_MOVE(Command);
 
   public:
     /**
@@ -336,7 +336,7 @@ class V_APPFW_API Command : public Object
      *                nested command execution.
      * @return A task yielding the execution outcome.
      */
-    virtual vine::async::Task<CommandResult> execute(CommandExecutionContext* context) = 0;
+    virtual vn::async::Task<CommandResult> execute(CommandExecutionContext* context) = 0;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

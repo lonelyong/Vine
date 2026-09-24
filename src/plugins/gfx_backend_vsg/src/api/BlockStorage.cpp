@@ -8,7 +8,7 @@
 #include <vsg/state/Buffer.h>
 #include <vsg/vk/DeviceMemory.h>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
@@ -351,4 +351,4 @@ std::uint64_t BlockStorage::materialEvictions() const noexcept
     return d->arena.evictions();
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

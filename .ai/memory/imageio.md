@@ -5,12 +5,12 @@
 
 ## 事实速查
 
-- 目录 `src/loaders/imageio/`，短名 **`ImageIO`** → 别名 `vi::ImageIO`，宏 `V_IMAGEIO_API` / `V_IMAGEIO_LIB`，
-  命名空间 `vine::imageio`，头 `<vine/imageio/ImageCodec.hpp>`。
-- 依赖：**PUBLIC `vi::Imaging`** + **PRIVATE `tp::stb`**（静态烘进 DLL，消费者看不到 stb）。
+- 目录 `src/loaders/imageio/`，短名 **`ImageIO`** → 别名 `vn::ImageIO`，宏 `VN_IMAGEIO_API` / `VN_IMAGEIO_LIB`，
+  命名空间 `vn::imageio`，头 `<vine/imageio/ImageCodec.hpp>`。
+- 依赖：**PUBLIC `vn::Imaging`** + **PRIVATE `tp::stb`**（静态烘进 DLL，消费者看不到 stb）。
 - 注册点：`src/loaders/CMakeLists.txt`、`tests/CMakeLists.txt`、`third_party/CMakeLists.txt`
   （新增 `third_party/stb/CMakeLists.txt`，INTERFACE target `stb` / 别名 **`tp::stb`**）。
-- **改完新文件必须 `cmake -S . -B build`**（`v_add_library` 的 glob 没有 `CONFIGURE_DEPENDS`）。
+- **改完新文件必须 `cmake -S . -B build`**（`vn_add_library` 的 glob 没有 `CONFIGURE_DEPENDS`）。
 
 ## 为什么在 loaders 而不是 imaging
 
@@ -19,7 +19,7 @@
 - **"base 层不能碰三方库"是假命题**（`base/crypto` 就 `PRIVATE` 链了 wolfssl），但真正的分界更锋利：
   **crypto 依赖 wolfssl 是因为"哈希就是这个库"；而 `Image` 不是解码器** —— 同一份数据要服务于
   probe / 读回 / 程序生成 / 文件四种来源，stb 只是其中一条通道。
-- 代价具体：`imaging` 现在是只有 Core+Global 的叶子、编译秒级；塞进 stb 后**每个**链 `vi::Imaging` 的目标
+- 代价具体：`imaging` 现在是只有 Core+Global 的叶子、编译秒级；塞进 stb 后**每个**链 `vn::Imaging` 的目标
   （将来的 `meshio`、headless 的 `urdf2vine`）都背上它。
 
 ## stb 引入方式（2026-09-12）

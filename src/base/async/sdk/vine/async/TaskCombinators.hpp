@@ -7,7 +7,7 @@
 
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 namespace detail {
 
@@ -91,4 +91,4 @@ Task<typename detail::AndThenResult<F, T>::type> andThen(Task<T> task, F f)
     }
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

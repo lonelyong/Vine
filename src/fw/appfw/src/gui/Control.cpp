@@ -4,9 +4,9 @@
 
 #include "ControlData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
-V_OBJECT_META_IMPL(Control, UIElement)
+VN_OBJECT_META_IMPL(Control, UIElement)
 
 Control::Control(QWidget* native, bool owns)
   : UIElement(new ControlData(), native)
@@ -92,4 +92,4 @@ Control::Control(UIElementData* data, QWidget* native, bool owns)
     setOwnsImpl(owns);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

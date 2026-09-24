@@ -37,7 +37,7 @@
  * attachment's initial layout, and a target whose promotion was revoked by any depth-preserving pass
  * must stop being bindable as a texture. One function decides all three, so the three cannot disagree.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -73,8 +73,8 @@ enum class RepairReason : std::uint8_t
  */
 struct TargetShape
 {
-    std::vector<vine::graphics::RenderTarget::ColorFormat> color_formats;  ///< One per colour attachment.
-    std::optional<vine::graphics::RenderTarget::DepthFormat> depth_format; ///< Absent for a colour-only target.
+    std::vector<vn::graphics::RenderTarget::ColorFormat> color_formats;  ///< One per colour attachment.
+    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format; ///< Absent for a colour-only target.
     std::vector<std::uint32_t> device_color_formats;  ///< The same attachments, as the device spells them.
     std::uint32_t              device_depth_format{0}; ///< The device's depth format; 0 = no depth.
     std::uint32_t              samples{1};             ///< Sample count.
@@ -167,4 +167,4 @@ struct DepthPlan
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -41,7 +41,7 @@
  * is a heap over one of them (`std::push_heap`/`std::pop_heap` are in-place) rather than a
  * `std::priority_queue`, whose backing vector is built when the queue is.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -145,4 +145,4 @@ class FrameGraph
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

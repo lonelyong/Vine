@@ -20,7 +20,7 @@
 
 #include <vine/vsg/api/WhiteImage.hpp>
 
-using vine::vsg::WhiteImage;
+using vn::vsg::WhiteImage;
 
 TEST(WhiteImageTest, TheFallbackCarriesItsWhiteTexelAsUploadableData)
 {

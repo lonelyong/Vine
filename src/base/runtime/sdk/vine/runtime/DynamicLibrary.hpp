@@ -5,7 +5,7 @@
 
 #include <vine/String.hpp>
 
-V_RUNTIME_NS_BEGIN
+VN_RUNTIME_NS_BEGIN
 
 class DynamicLibraryLoader;
 
@@ -17,7 +17,7 @@ class DynamicLibraryLoader;
  * resolveSymbol<T>(). The class is not copyable and can only be constructed
  * by the loader, so a library can never be loaded outside loader management.
  */
-class V_RUNTIME_API DynamicLibrary {
+class VN_RUNTIME_API DynamicLibrary {
 
   public:
     /**
@@ -85,4 +85,4 @@ T* DynamicLibrary::resolveSymbol(const String& symbol) const
     return reinterpret_cast<T*>(resolveSymbolRaw(symbol));
 }
 
-V_RUNTIME_NS_END
+VN_RUNTIME_NS_END

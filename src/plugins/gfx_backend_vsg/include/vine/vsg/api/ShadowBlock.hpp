@@ -30,7 +30,7 @@
  * casting light's OWN `ShadowSettings` (a private backend default would be the second answer this ABI exists to
  * prevent), `z` the strength (1: the SDK has no knob for it yet), `w` the light's slot.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /**
  * @brief Packs the shadow block one drawing call shades with.
@@ -41,6 +41,6 @@ V_VSG_NS_BEGIN
  * @return true when the shading is on (`params.x == 1`), false when the call shades unshadowed.
  */
 bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& draw,
-                     vine::graphics::VineShadowBlock& out) noexcept;
+                     vn::graphics::VineShadowBlock& out) noexcept;
 
-V_VSG_NS_END
+VN_VSG_NS_END

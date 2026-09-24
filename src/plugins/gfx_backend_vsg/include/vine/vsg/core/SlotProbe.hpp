@@ -32,7 +32,7 @@
  * replaced objects under a counted device wait instead (see RetirementQueue). "We do not know yet" is a
  * state the rest of the backend can act on; a guess is not.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -104,4 +104,4 @@ class SlotTracker
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

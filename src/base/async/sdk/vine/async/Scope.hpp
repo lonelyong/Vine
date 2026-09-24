@@ -16,7 +16,7 @@
 #include "DetachedTask.hpp"
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 namespace detail {
 
@@ -191,4 +191,4 @@ class Scope
     std::shared_ptr<detail::ScopeState> state_{ std::make_shared<detail::ScopeState>() };
 };
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

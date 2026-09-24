@@ -2,8 +2,8 @@
 
 #include <vine/Object.hpp>
 
-using vine::Object;
-using vine::TypeId;
+using vn::Object;
+using vn::TypeId;
 
 namespace
 {
@@ -13,7 +13,7 @@ class IGreeter {
     virtual ~IGreeter() = default;
     virtual const char* greet() const = 0;
 
-    V_DECLARE_INTERFACE(IGreeter)
+    VN_DECLARE_INTERFACE(IGreeter)
 };
 
 class INameable {
@@ -21,19 +21,19 @@ class INameable {
     virtual ~INameable() = default;
     virtual const char* name() const = 0;
 
-    V_DECLARE_INTERFACE(INameable)
+    VN_DECLARE_INTERFACE(INameable)
 };
 
 class IGreetableNameable : public IGreeter {
   public:
     virtual ~IGreetableNameable() = default;
 
-    V_DECLARE_INTERFACE(IGreetableNameable, IGreeter)
+    VN_DECLARE_INTERFACE(IGreetableNameable, IGreeter)
 };
 
 class Person : public Object, public IGreetableNameable, public INameable {
   public:
-    V_OBJECT_META(Person, Object, IGreetableNameable, INameable)
+    VN_OBJECT_META(Person, Object, IGreetableNameable, INameable)
 
     const char* greet() const override
     {

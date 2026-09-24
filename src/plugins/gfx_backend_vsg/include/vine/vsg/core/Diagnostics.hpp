@@ -27,7 +27,7 @@
  * a different picture, and it never turns a refusal into a silent fallback. Severities and categories
  * are the SDK's vocabulary (`RenderDiagnostic.hpp`) because the host switches on them.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -72,10 +72,10 @@ class Diagnostics
      *
      * @param sink Callback invoked for every report; must only record and return.
      */
-    void setSink(vine::graphics::DiagnosticSink sink);
+    void setSink(vn::graphics::DiagnosticSink sink);
 
     /** @brief Gets the installed sink (empty when unset). */
-    [[nodiscard]] const vine::graphics::DiagnosticSink& sink() const noexcept;
+    [[nodiscard]] const vn::graphics::DiagnosticSink& sink() const noexcept;
 
     /** @brief Reports one diagnostic: it is counted and forwarded to the sink when one is installed.
      *
@@ -83,8 +83,8 @@ class Diagnostics
      * @param category Machine-matchable category the host can switch on.
      * @param message Human-readable sentence; the category carries the meaning.
      */
-    void report(vine::graphics::DiagnosticSeverity severity, vine::graphics::DiagnosticCategory category,
-                const vine::String& message);
+    void report(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category,
+                const vn::String& message);
 
     /** @brief Reports @p message for @p episode, unless that episode was already reported.
      *
@@ -94,8 +94,8 @@ class Diagnostics
      * @param message Human-readable sentence.
      * @return true when this call was the one that reported it.
      */
-    bool reportOnce(ReportOnce& episode, vine::graphics::DiagnosticSeverity severity,
-                    vine::graphics::DiagnosticCategory category, const vine::String& message);
+    bool reportOnce(ReportOnce& episode, vn::graphics::DiagnosticSeverity severity,
+                    vn::graphics::DiagnosticCategory category, const vn::String& message);
 
     /** @brief Gets how many diagnostics were reported in total. */
     [[nodiscard]] std::uint64_t total() const noexcept;
@@ -104,7 +104,7 @@ class Diagnostics
      *
      * @param category Category to count; an out-of-range value counts nothing.
      */
-    [[nodiscard]] std::uint64_t count(vine::graphics::DiagnosticCategory category) const noexcept;
+    [[nodiscard]] std::uint64_t count(vn::graphics::DiagnosticCategory category) const noexcept;
 
     /** @brief Gets whether nothing at all was reported.
      *
@@ -116,11 +116,11 @@ class Diagnostics
 
   private:
     /// One counter per category; the SDK's `Count` enumerator is the table's size.
-    std::array<std::uint64_t, static_cast<std::size_t>(vine::graphics::DiagnosticCategory::Count)> per_category_{};
+    std::array<std::uint64_t, static_cast<std::size_t>(vn::graphics::DiagnosticCategory::Count)> per_category_{};
     std::uint64_t                       total_{0};
-    vine::graphics::DiagnosticSink      sink_;
+    vn::graphics::DiagnosticSink      sink_;
 };
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

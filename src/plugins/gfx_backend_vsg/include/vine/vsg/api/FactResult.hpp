@@ -10,7 +10,7 @@
  * It lives on its own so that a table entry may carry a `ProgramAbi` (see api/ProgramAbi.hpp) without the
  * scan having to include the whole content layer - the miss vocabulary is shared, the tables are not.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief Why a lookup did not answer with an entry the content layer can record. */
 enum class FactMiss : std::uint8_t
@@ -32,4 +32,4 @@ struct FactResult
     [[nodiscard]] bool found() const noexcept { return entry != nullptr; }
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

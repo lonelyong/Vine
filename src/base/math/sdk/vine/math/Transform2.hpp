@@ -7,7 +7,7 @@
 #include "Point2.hpp"
 #include "Vector2.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief Create a translation matrix from vector.
@@ -240,4 +240,4 @@ Matrix3x3<T, Order> matrix3x3(const Isometry2<T>& tf)
     return m;
 }
 
-V_MATH_NS_END
+VN_MATH_NS_END

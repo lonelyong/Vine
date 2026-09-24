@@ -1,8 +1,8 @@
 ﻿#include <vine/graphics/Material.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(Material, vine::Object);
+VN_OBJECT_META_IMPL(Material, vn::Object);
 
 Material::Material() = default;
 
@@ -66,4 +66,4 @@ void Material::setTexture(intrusive_ptr<Texture> texture)
     texture_ = texture;
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

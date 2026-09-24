@@ -8,7 +8,7 @@
 #include <vine/Events.hpp>
 #include <vine/String.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief Config change event arguments: carry the key (dotted path) that changed.
@@ -17,8 +17,8 @@ V_APPFW_NS_BEGIN
  * loadJson()/load() that actually replaced something report a change that is
  * not attributable to a single key that way.
  */
-class V_APPFW_API ConfigChangedEventArgs : public EventArgs {
-    V_OBJECT_META_DECL
+class VN_APPFW_API ConfigChangedEventArgs : public EventArgs {
+    VN_OBJECT_META_DECL
 
   public:
     explicit ConfigChangedEventArgs(const String& key);
@@ -51,7 +51,7 @@ class V_APPFW_API ConfigChangedEventArgs : public EventArgs {
  * Subscribing and unsubscribing are thread-safe too (Signal has its own lock-free
  * snapshot), so handlers may be wired up while worker threads are already running.
  */
-class V_APPFW_API ConfigManager {
+class VN_APPFW_API ConfigManager {
   public:
     ConfigManager();
     virtual ~ConfigManager();
@@ -116,4 +116,4 @@ class V_APPFW_API ConfigManager {
     std::unique_ptr<Impl> d;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

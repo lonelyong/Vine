@@ -1,5 +1,5 @@
 
-#add_definitions(-DVI_ROOT_NS=vine)
+#add_definitions(-DVN_ROOT_NS=vine)
 
 include("${CMAKE_CURRENT_LIST_DIR}/VineTargets.cmake")
 #include("${CMAKE_CURRENT_LIST_DIR}/VineTargets-debug.cmake")

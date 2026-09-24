@@ -10,7 +10,7 @@
 #include <vine/io/Stream.hpp>
 #include <vine/String.hpp>
 
-V_IO_NS_BEGIN
+VN_IO_NS_BEGIN
 
 namespace detail
 {
@@ -273,4 +273,4 @@ inline std::filesystem::path nameOf(const std::filesystem::path& path)
 
 } // namespace detail
 
-V_IO_NS_END
+VN_IO_NS_END

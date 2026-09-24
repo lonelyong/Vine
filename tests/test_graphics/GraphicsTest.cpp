@@ -44,17 +44,17 @@
 #include <stdexcept>
 #include <thread>
 
-using namespace vine::graphics;
-using vine::intrusive_ptr;
-using vine::Colorf;
-using vine::Color;
-using vine::imaging::Image;
-using vine::imaging::PixelFormat;
-using vine::math::Vec2d;
-using vine::math::Vec3d;
-using vine::math::Mat4d;
-using vine::math::Aabbd;
-using vine::math::Aabbf;
+using namespace vn::graphics;
+using vn::intrusive_ptr;
+using vn::Colorf;
+using vn::Color;
+using vn::imaging::Image;
+using vn::imaging::PixelFormat;
+using vn::math::Vec2d;
+using vn::math::Vec3d;
+using vn::math::Mat4d;
+using vn::math::Aabbd;
+using vn::math::Aabbf;
 
 namespace
 {
@@ -76,12 +76,12 @@ intrusive_ptr<const Image> sourceImage(const Texture& texture, int mip_count)
  *
  * Vertices: (0,0,0), (1,0,0), (0,1,0).
  */
-intrusive_ptr<vine::geometry::TriangleMesh> makeUnitTriangle()
+intrusive_ptr<vn::geometry::TriangleMesh> makeUnitTriangle()
 {
-    auto mesh = intrusive_ptr<vine::geometry::TriangleMesh>(new vine::geometry::TriangleMesh());
-    mesh->addTriangle(vine::math::Vec3f(0.0f, 0.0f, 0.0f),
-                      vine::math::Vec3f(1.0f, 0.0f, 0.0f),
-                      vine::math::Vec3f(0.0f, 1.0f, 0.0f));
+    auto mesh = intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(0.0f, 1.0f, 0.0f));
     return mesh;
 }
 
@@ -95,7 +95,7 @@ intrusive_ptr<vine::geometry::TriangleMesh> makeUnitTriangle()
  * @param mesh Source mesh.
  * @return New geometry holding the mesh's vertex data.
  */
-intrusive_ptr<Geometry> geometryOf(const vine::geometry::Mesh& mesh)
+intrusive_ptr<Geometry> geometryOf(const vn::geometry::Mesh& mesh)
 {
     auto geom = geometryFromShape(mesh);
     EXPECT_NE(geom.get(), nullptr);
@@ -111,13 +111,13 @@ intrusive_ptr<Geometry> geometryOf(const vine::geometry::Mesh& mesh)
  * @return Node with one triangle drawable.
  */
 intrusive_ptr<MatrixTransform> makeTriangleNode(const Vec3d& position, intrusive_ptr<Material> material,
-                                                const vine::String& name = {})
+                                                const vn::String& name = {})
 {
     auto node = intrusive_ptr<MatrixTransform>(new MatrixTransform());
     auto geom = geometryOf(*makeUnitTriangle());
     geom->setMaterial(std::move(material));
     geom->setName(name);
-    node->setMatrix(vine::math::translate(position));
+    node->setMatrix(vn::math::translate(position));
     node->addChild(geom);
     return node;
 }
@@ -354,7 +354,7 @@ TEST(SceneTest, CollectCommandsHidesDrawable)
     g1->setVisible(false);
     node->addChild(g1);
     node->addChild(g2);
-    node->setMatrix(vine::math::translate(Vec3d(0, 0, -3)));
+    node->setMatrix(vn::math::translate(Vec3d(0, 0, -3)));
     scene.setRoot(node);
 
     Camera cam;
@@ -438,7 +438,7 @@ TEST(CameraTest, ViewMatrixLooksAtTarget)
 
     Mat4d view = cam.viewMatrix();
     // Camera looking down -Z: the origin should be at z = -5 in view space.
-    const auto origin_in_view = view * vine::math::Point3d(0, 0, 0);
+    const auto origin_in_view = view * vn::math::Point3d(0, 0, 0);
     EXPECT_NEAR(origin_in_view.x, 0.0, 1e-6);
     EXPECT_NEAR(origin_in_view.y, 0.0, 1e-6);
     EXPECT_NEAR(origin_in_view.z, -5.0, 1e-6);
@@ -478,14 +478,14 @@ TEST(CameraTest, TheOrthographicWindowIsKeptWhole)
 
     // The stored window IS the projection: the matrix's own centre (what maps to NDC 0,0) is the
     // window's centre — ((left + right) / 2, (bottom + top) / 2) — and not the view axis.
-    const auto window_centre = cam.projectionMatrix() * vine::math::Point3d(2.0, 1.0, -0.5);
+    const auto window_centre = cam.projectionMatrix() * vn::math::Point3d(2.0, 1.0, -0.5);
     EXPECT_NEAR(window_centre.x, 0.0, 1e-9) << "x = 2 is the centre of a [-2, 6] window";
     EXPECT_NEAR(window_centre.y, 0.0, 1e-9) << "y = 1 is the centre of a [-1, 3] window";
     // ...and the bounds map to the NDC edges, so the window really is the projected frustum.
-    const auto left_edge = cam.projectionMatrix() * vine::math::Point3d(-2.0, -1.0, -0.5);
+    const auto left_edge = cam.projectionMatrix() * vn::math::Point3d(-2.0, -1.0, -0.5);
     EXPECT_NEAR(left_edge.x, -1.0, 1e-9);
     EXPECT_NEAR(left_edge.y, -1.0, 1e-9);
-    const auto right_edge = cam.projectionMatrix() * vine::math::Point3d(6.0, 3.0, -0.5);
+    const auto right_edge = cam.projectionMatrix() * vn::math::Point3d(6.0, 3.0, -0.5);
     EXPECT_NEAR(right_edge.x, 1.0, 1e-9);
     EXPECT_NEAR(right_edge.y, 1.0, 1e-9);
 }
@@ -600,14 +600,14 @@ TEST(CameraManipulatorTest, PressOnGeometryKeepsCentre)
     cam->setProjectionMatrixAsPerspective(60.0, 1.0, 0.1, 1000.0);
 
     OrbitCameraManipulator manip(cam.get(), &scene);
-    manip.onResize(vine::window::ResizeEvent{ 800, 600 });
+    manip.onResize(vn::window::ResizeEvent{ 800, 600 });
 
     Vec3d hit;
     ASSERT_TRUE(manip.pickAt(400.0, 300.0, hit));
     EXPECT_NEAR(hit.z, 0.0, 1e-6);  // on the triangle plane (in front of target)
 
-    vine::window::MouseEvent press;
-    press.button = vine::window::MouseButton::Left;
+    vn::window::MouseEvent press;
+    press.button = vn::window::MouseButton::Left;
     press.x = 400.0;
     press.y = 300.0;
     press.pressed = true;
@@ -637,13 +637,13 @@ TEST(CameraManipulatorTest, PressOnEmptyKeepsCentre)
     cam->setProjectionMatrixAsPerspective(60.0, 1.0, 0.1, 1000.0);
 
     OrbitCameraManipulator manip(cam.get(), &scene);
-    manip.onResize(vine::window::ResizeEvent{ 800, 600 });
+    manip.onResize(vn::window::ResizeEvent{ 800, 600 });
 
     Vec3d hit;
     EXPECT_FALSE(manip.pickAt(400.0, 300.0, hit));
 
-    vine::window::MouseEvent press;
-    press.button = vine::window::MouseButton::Left;
+    vn::window::MouseEvent press;
+    press.button = vn::window::MouseButton::Left;
     press.x = 400.0;
     press.y = 300.0;
     press.pressed = true;
@@ -662,7 +662,7 @@ TEST(CameraManipulatorTest, RotateDragPivotsAboutAnchorPinnedUnderCursor)
 {
     Scene scene;
     scene.setRoot(makeTriangleNode(Vec3d(2, 0, -3), nullptr, u8"tri"));
-    const vine::math::Point3d box_c = scene.boundingBox().center();
+    const vn::math::Point3d box_c = scene.boundingBox().center();
     // The rotate pivot for a press on empty space is the scene centre.
     const Vec3d anchor(box_c.x, box_c.y, box_c.z);
 
@@ -674,7 +674,7 @@ TEST(CameraManipulatorTest, RotateDragPivotsAboutAnchorPinnedUnderCursor)
     cam->setProjectionMatrixAsPerspective(60.0, 1.0, 0.1, 1000.0);
 
     OrbitCameraManipulator manip(cam.get(), &scene);
-    manip.onResize(vine::window::ResizeEvent{ 800, 600 });
+    manip.onResize(vn::window::ResizeEvent{ 800, 600 });
 
     Vec3d hit;
     EXPECT_FALSE(manip.pickAt(400.0, 300.0, hit));
@@ -690,15 +690,15 @@ TEST(CameraManipulatorTest, RotateDragPivotsAboutAnchorPinnedUnderCursor)
         const double lz = d.dot(fwd);
         const double lx = d.dot(right);
         const double ly = d.dot(up);
-        const double tan_half = std::tan(cam->fieldOfView() * vine::math::DEG_TO_RAD * 0.5);
+        const double tan_half = std::tan(cam->fieldOfView() * vn::math::DEG_TO_RAD * 0.5);
         const double aspect = cam->aspectRatio();
         const double ndc_x = lx / (lz * tan_half * aspect);
         const double ndc_y = ly / (lz * tan_half);
         return std::make_pair((ndc_x * 0.5 + 0.5) * w, (0.5 - ndc_y * 0.5) * h);
     };
 
-    vine::window::MouseEvent press;
-    press.button = vine::window::MouseButton::Left;
+    vn::window::MouseEvent press;
+    press.button = vn::window::MouseButton::Left;
     press.x = 400.0;
     press.y = 300.0;
     press.pressed = true;
@@ -713,7 +713,7 @@ TEST(CameraManipulatorTest, RotateDragPivotsAboutAnchorPinnedUnderCursor)
         { 462.0, 308.0 }, { 480.0, 310.0 }, { 498.0, 312.0 }, { 520.0, 315.0 },
     };
     for (const auto& [x, y] : steps) {
-        vine::window::MouseEvent move;
+        vn::window::MouseEvent move;
         move.x = x;
         move.y = y;
         move.pressed = true;
@@ -738,10 +738,10 @@ TEST(CameraManipulatorTest, PivotDragReachesTopAndRollsOverWithoutFlip)
     cam->setProjectionMatrixAsPerspective(60.0, 1.0, 0.1, 1000.0);
 
     OrbitCameraManipulator manip(cam.get());
-    manip.onResize(vine::window::ResizeEvent{ 800, 600 });
+    manip.onResize(vn::window::ResizeEvent{ 800, 600 });
 
-    vine::window::MouseEvent press;
-    press.button = vine::window::MouseButton::Left;
+    vn::window::MouseEvent press;
+    press.button = vn::window::MouseButton::Left;
     press.x = 400.0;
     press.y = 300.0;
     press.pressed = true;
@@ -749,7 +749,7 @@ TEST(CameraManipulatorTest, PivotDragReachesTopAndRollsOverWithoutFlip)
 
     const Vec3d world_up(0.0, 1.0, 0.0);
 
-    vine::window::MouseEvent move;
+    vn::window::MouseEvent move;
     move.pressed = true;
     move.x = 400.0;
 
@@ -804,7 +804,7 @@ TEST(CameraManipulatorTest, SetCenterFromScreenRecentersOnPick)
     cam->setProjectionMatrixAsPerspective(60.0, 1.0, 0.1, 1000.0);
 
     OrbitCameraManipulator manip(cam.get(), &scene);
-    manip.onResize(vine::window::ResizeEvent{ 800, 600 });
+    manip.onResize(vn::window::ResizeEvent{ 800, 600 });
 
     EXPECT_TRUE(manip.setCenterFromScreen(400.0, 300.0));
     // The centre snapped to the surface hit (on the z=0 plane), not the target.
@@ -933,13 +933,13 @@ TEST(RayIntersectionTest, AllHitsCollectsEveryTriangleSortedByDepth)
     // near to far while Nearest returns only the closer one.
     auto scene = intrusive_ptr<Scene>(new Scene());
     auto node = intrusive_ptr<Group>(new Group());
-    auto mesh = intrusive_ptr<vine::geometry::TriangleMesh>(new vine::geometry::TriangleMesh());
-    mesh->addTriangle(vine::math::Vec3f(0.0f, 0.0f, 0.0f),
-                      vine::math::Vec3f(1.0f, 0.0f, 0.0f),
-                      vine::math::Vec3f(0.0f, 1.0f, 0.0f));
-    mesh->addTriangle(vine::math::Vec3f(0.0f, 0.0f, -2.0f),
-                      vine::math::Vec3f(1.0f, 0.0f, -2.0f),
-                      vine::math::Vec3f(0.0f, 1.0f, -2.0f));
+    auto mesh = intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, -2.0f),
+                      vn::math::Vec3f(1.0f, 0.0f, -2.0f),
+                      vn::math::Vec3f(0.0f, 1.0f, -2.0f));
     auto geom = geometryOf(*mesh);
     node->addChild(geom);
     scene->setRoot(node);
@@ -976,7 +976,7 @@ TEST(RayIntersectionTest, ASingularWorldTransformIsSkipped)
     auto geom = geometryOf(*makeUnitTriangle());
     auto root = intrusive_ptr<Group>(new Group());
     auto transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    transform->setMatrix(vine::math::scale(Vec3d(0.0, 1.0, 1.0))); // x collapsed
+    transform->setMatrix(vn::math::scale(Vec3d(0.0, 1.0, 1.0))); // x collapsed
     transform->addChild(geom);
     root->addChild(transform);
     auto scene = intrusive_ptr<Scene>(new Scene());
@@ -991,7 +991,7 @@ TEST(RayIntersectionTest, ASingularWorldTransformIsSkipped)
     // Positive control: the same setup with a real (tiny) scale still hits, so the guard rejects
     // degeneracy rather than "everything that is not the identity".
     auto thin = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    thin->setMatrix(vine::math::scale(Vec3d(1e-4, 1.0, 1.0)));
+    thin->setMatrix(vn::math::scale(Vec3d(1e-4, 1.0, 1.0)));
     EXPECT_TRUE(RayIntersection::intersect(ray, geom.get(), thin->matrix()).hit);
 }
 
@@ -1552,11 +1552,11 @@ TEST(NodeTest, WorldTransformCascades)
     parent->addChild(child);
 
     // Parent translates by (1, 0, 0), child by (2, 0, 0).
-    parent->setMatrix(vine::math::translate(Vec3d(1, 0, 0)));
-    child->setMatrix(vine::math::translate(Vec3d(2, 0, 0)));
+    parent->setMatrix(vn::math::translate(Vec3d(1, 0, 0)));
+    child->setMatrix(vn::math::translate(Vec3d(2, 0, 0)));
 
     // Child world origin = parent translation * child translation = (3, 0, 0).
-    const auto origin = child->worldMatrix() * vine::math::Point3d(0, 0, 0);
+    const auto origin = child->worldMatrix() * vn::math::Point3d(0, 0, 0);
     EXPECT_NEAR(origin.x, 3.0, 1e-9);
     EXPECT_NEAR(origin.y, 0.0, 1e-9);
     EXPECT_NEAR(origin.z, 0.0, 1e-9);
@@ -1567,7 +1567,7 @@ TEST(NodeTest, BoundingBoxWithTransform)
     auto node = intrusive_ptr<MatrixTransform>(new MatrixTransform());
     auto geom = geometryOf(*makeUnitTriangle());
     node->addChild(geom);
-    node->setMatrix(vine::math::translate(Vec3d(10, 0, 0)));
+    node->setMatrix(vn::math::translate(Vec3d(10, 0, 0)));
 
     Aabbd box = node->boundingBox();
     // Local box [0,1]x[0,1] translated by +10 on X.
@@ -1584,7 +1584,7 @@ TEST(MatrixTransformTest, MatrixRoundTrip)
     // Default matrix is identity.
     EXPECT_TRUE(mt.matrix().isIdentity());
 
-    const Mat4d m = vine::math::translate(Vec3d(1, 2, 3));
+    const Mat4d m = vn::math::translate(Vec3d(1, 2, 3));
     mt.setMatrix(m);
     EXPECT_NEAR(mt.matrix().element(0, 3), 1.0, 1e-9);
     EXPECT_NEAR(mt.matrix().element(1, 3), 2.0, 1e-9);
@@ -1594,13 +1594,13 @@ TEST(MatrixTransformTest, MatrixRoundTrip)
 TEST(MatrixTransformTest, WorldMatrixAccumulatesNested)
 {
     auto outer = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    outer->setMatrix(vine::math::translate(Vec3d(1, 0, 0)));
+    outer->setMatrix(vn::math::translate(Vec3d(1, 0, 0)));
     auto inner = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    inner->setMatrix(vine::math::translate(Vec3d(0, 2, 0)));
+    inner->setMatrix(vn::math::translate(Vec3d(0, 2, 0)));
     outer->addChild(inner);
 
     // Outer translation then inner translation: (1, 2, 0).
-    const auto p = inner->worldMatrix() * vine::math::Point3d(0, 0, 0);
+    const auto p = inner->worldMatrix() * vn::math::Point3d(0, 0, 0);
     EXPECT_NEAR(p.x, 1.0, 1e-9);
     EXPECT_NEAR(p.y, 2.0, 1e-9);
     EXPECT_NEAR(p.z, 0.0, 1e-9);
@@ -1609,15 +1609,15 @@ TEST(MatrixTransformTest, WorldMatrixAccumulatesNested)
 TEST(MatrixTransformTest, PlainGroupPassesTransformThrough)
 {
     auto root = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    root->setMatrix(vine::math::translate(Vec3d(1, 0, 0)));
+    root->setMatrix(vn::math::translate(Vec3d(1, 0, 0)));
     auto group = intrusive_ptr<Group>(new Group());
     auto leaf = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    leaf->setMatrix(vine::math::translate(Vec3d(0, 0, 3)));
+    leaf->setMatrix(vn::math::translate(Vec3d(0, 0, 3)));
     root->addChild(group);
     group->addChild(leaf);
 
     // A plain Group contributes no matrix of its own.
-    const auto p = leaf->worldMatrix() * vine::math::Point3d(0, 0, 0);
+    const auto p = leaf->worldMatrix() * vn::math::Point3d(0, 0, 0);
     EXPECT_NEAR(p.x, 1.0, 1e-9);
     EXPECT_NEAR(p.y, 0.0, 1e-9);
     EXPECT_NEAR(p.z, 3.0, 1e-9);
@@ -1626,9 +1626,9 @@ TEST(MatrixTransformTest, PlainGroupPassesTransformThrough)
 TEST(MatrixTransformTest, NestedBoundingBoxIsWorld)
 {
     auto outer = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    outer->setMatrix(vine::math::translate(Vec3d(10, 0, 0)));
+    outer->setMatrix(vn::math::translate(Vec3d(10, 0, 0)));
     auto inner = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    inner->setMatrix(vine::math::translate(Vec3d(0, 5, 0)));
+    inner->setMatrix(vn::math::translate(Vec3d(0, 5, 0)));
     outer->addChild(inner);
 
     auto geom = geometryOf(*makeUnitTriangle());
@@ -1649,8 +1649,8 @@ TEST(MatrixTransformTest, WorldMatrixIsOwnMatrixForSingleNode)
     // A lone MatrixTransform's worldMatrix is exactly its own matrix (no
     // self-doubling when folding the parent chain).
     auto node = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    node->setMatrix(vine::math::translate(Vec3d(4, 0, 0)));
-    const auto p = node->worldMatrix() * vine::math::Point3d(0, 0, 0);
+    node->setMatrix(vn::math::translate(Vec3d(4, 0, 0)));
+    const auto p = node->worldMatrix() * vn::math::Point3d(0, 0, 0);
     EXPECT_NEAR(p.x, 4.0, 1e-9);
 }
 
@@ -1672,7 +1672,7 @@ TEST(SceneTest, CollectCommandsBakesNestedWorldMatrix)
 {
     Scene scene;
     auto root = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    root->setMatrix(vine::math::translate(Vec3d(0, 0, -5)));
+    root->setMatrix(vn::math::translate(Vec3d(0, 0, -5)));
     auto holder = makeTriangleNode(Vec3d(0, 0, 0), nullptr, u8"tri");
     root->addChild(holder);
     scene.setRoot(root);
@@ -1682,7 +1682,7 @@ TEST(SceneTest, CollectCommandsBakesNestedWorldMatrix)
     auto commands = scene.collectRenderCommands(&cam);
     ASSERT_EQ(commands.size(), 1u);
     // The command's model matrix is the folded world transform of the leaf.
-    const auto origin = commands[0].modelMatrix * vine::math::Point3d(0, 0, 0);
+    const auto origin = commands[0].modelMatrix * vn::math::Point3d(0, 0, 0);
     EXPECT_NEAR(origin.x, 0.0, 1e-9);
     EXPECT_NEAR(origin.y, 0.0, 1e-9);
     EXPECT_NEAR(origin.z, -5.0, 1e-9);
@@ -1809,7 +1809,7 @@ TEST(MeshTest, AabbCacheManualSet)
     EXPECT_TRUE(mesh->aabb() == custom);
 
     // Geometry edits do not touch the manually cached box.
-    mesh->setPositions({ vine::math::Vec3f(9.0f, 9.0f, 9.0f) });
+    mesh->setPositions({ vn::math::Vec3f(9.0f, 9.0f, 9.0f) });
     EXPECT_TRUE(mesh->aabb() == custom);
 }
 
@@ -1821,34 +1821,34 @@ TEST(MeshTest, AttributesSharedOnBase)
     EXPECT_EQ(mesh->triangleCount(), 1u);
 
     // Position/normal/texcoord storage lives on the Mesh base.
-    mesh->setPositions({ vine::math::Vec3f(0, 0, 0), vine::math::Vec3f(2, 0, 0),
-                         vine::math::Vec3f(0, 2, 0) });
+    mesh->setPositions({ vn::math::Vec3f(0, 0, 0), vn::math::Vec3f(2, 0, 0),
+                         vn::math::Vec3f(0, 2, 0) });
     EXPECT_EQ(mesh->vertexCount(), 3u);
     EXPECT_EQ(mesh->positions()[1].x, 2.0f);
 
-    mesh->setNormals({ vine::math::Vec3f(0, 0, 1), vine::math::Vec3f(0, 0, 1),
-                      vine::math::Vec3f(0, 0, 1) });
+    mesh->setNormals({ vn::math::Vec3f(0, 0, 1), vn::math::Vec3f(0, 0, 1),
+                      vn::math::Vec3f(0, 0, 1) });
     EXPECT_EQ(mesh->normals().size(), 3u);
 }
 
 TEST(MeshTest, AttributeStorageIsSharedNotCopied)
 {
-    intrusive_ptr<vine::geometry::IndexedTriangleMesh> mesh(new vine::geometry::IndexedTriangleMesh());
-    mesh->addVertex(vine::math::Vec3f(0.0f, 0.0f, 0.0f));
-    mesh->addVertex(vine::math::Vec3f(1.0f, 0.0f, 0.0f));
+    intrusive_ptr<vn::geometry::IndexedTriangleMesh> mesh(new vn::geometry::IndexedTriangleMesh());
+    mesh->addVertex(vn::math::Vec3f(0.0f, 0.0f, 0.0f));
+    mesh->addVertex(vn::math::Vec3f(1.0f, 0.0f, 0.0f));
 
     // A second consumer (the renderer, here just a holder) takes the shareable handle rather than a copy.
     const auto shared = mesh->positionsBuffer();
-    EXPECT_EQ(shared->size(), 2u * vine::geometry::Mesh::kVec3Components);
+    EXPECT_EQ(shared->size(), 2u * vn::geometry::Mesh::kVec3Components);
     // One allocation, not two: the typed mesh view and the scalar run the holder reads are the same bytes.
     EXPECT_EQ(shared->data(), reinterpret_cast<const float*>(mesh->positions().data()));
-    EXPECT_EQ(shared->bytes().size(), 2u * sizeof(vine::math::Vec3f));
+    EXPECT_EQ(shared->bytes().size(), 2u * sizeof(vn::math::Vec3f));
 
     // The model keeps building. The holder sees it because it IS the same storage, and the growth is
     // announced so a cache knows its copy of the bytes is stale.
     const auto before = shared->revision();
-    mesh->addVertex(vine::math::Vec3f(2.0f, 0.0f, 0.0f));
-    EXPECT_EQ(shared->size(), 3u * vine::geometry::Mesh::kVec3Components);
+    mesh->addVertex(vn::math::Vec3f(2.0f, 0.0f, 0.0f));
+    EXPECT_EQ(shared->size(), 3u * vn::geometry::Mesh::kVec3Components);
     EXPECT_EQ(shared->data(), reinterpret_cast<const float*>(mesh->positions().data()));
     EXPECT_GT(shared->revision(), before);
 
@@ -1868,7 +1868,7 @@ TEST(MeshTest, EveryEditAnnouncesItselfOncePerEdit)
     // reason `Buffer` does not move its own revision (an append used to bump once per scalar pushed). A holder
     // wants to hear "I am done", so the count says that: one per appended vertex, one per appended triangle,
     // one per cleared array.
-    intrusive_ptr<vine::geometry::IndexedTriangleMesh> mesh(new vine::geometry::IndexedTriangleMesh());
+    intrusive_ptr<vn::geometry::IndexedTriangleMesh> mesh(new vn::geometry::IndexedTriangleMesh());
     const auto positions = mesh->positionsBuffer();
     const auto indices   = mesh->indicesBuffer();
     ASSERT_NE(positions, nullptr);
@@ -1876,9 +1876,9 @@ TEST(MeshTest, EveryEditAnnouncesItselfOncePerEdit)
     EXPECT_EQ(positions->revision(), 0u);
     EXPECT_EQ(indices->revision(), 0u);
 
-    mesh->addVertex(vine::math::Vec3f(0.0f, 0.0f, 0.0f));
+    mesh->addVertex(vn::math::Vec3f(0.0f, 0.0f, 0.0f));
     EXPECT_EQ(positions->revision(), 1u) << "one vertex appended = one announcement";
-    mesh->addVertex(vine::math::Vec3f(1.0f, 0.0f, 0.0f));
+    mesh->addVertex(vn::math::Vec3f(1.0f, 0.0f, 0.0f));
     EXPECT_EQ(positions->revision(), 2u);
 
     mesh->addTriangle(0u, 1u, 1u);
@@ -1971,7 +1971,7 @@ class MockBackend : public RenderBackend {
     /// Emits one diagnostic through the backend contract (test hook for the
     /// engine's sink pass-through; reportDiagnostic is protected).
     void emitDiagnostic(DiagnosticSeverity severity, DiagnosticCategory category,
-                        const vine::String& message)
+                        const vn::String& message)
     {
         reportDiagnostic(severity, category, message);
     }
@@ -2018,7 +2018,7 @@ class MockBackend : public RenderBackend {
         target_history.push_back(target);
     }
     std::vector<RenderTarget*> target_history;
-    void setPassInputs(const std::vector<vine::raw_ptr<RenderTarget>>& inputs) override
+    void setPassInputs(const std::vector<vn::raw_ptr<RenderTarget>>& inputs) override
     {
         ++pass_input_sets;
         last_pass_inputs.assign(inputs.begin(), inputs.end());
@@ -2026,7 +2026,7 @@ class MockBackend : public RenderBackend {
     int                     pass_input_sets = 0;
     std::vector<RenderTarget*> last_pass_inputs;
 
-    void setLights(const std::vector<vine::raw_ptr<const Light>>& lights) override
+    void setLights(const std::vector<vn::raw_ptr<const Light>>& lights) override
     {
         ++light_sets;
         last_light_count = lights.size();
@@ -2080,7 +2080,7 @@ class MockBackend : public RenderBackend {
     std::vector<const RenderPass*> ended;
     int begin_passes = 0;
     int end_passes = 0;
-    void beginPass(vine::raw_ptr<const RenderPass> pass) override
+    void beginPass(vn::raw_ptr<const RenderPass> pass) override
     {
         ++begin_passes;
         began.push_back(pass);
@@ -2092,7 +2092,7 @@ class MockBackend : public RenderBackend {
     int pass_releases = 0;
     RenderTarget* last_released_target = nullptr;
     const RenderPass* last_released_pass = nullptr;
-    void releasePass(vine::raw_ptr<const RenderPass> pass) override
+    void releasePass(vn::raw_ptr<const RenderPass> pass) override
     {
         ++pass_releases;
         last_released_pass = pass;
@@ -2564,7 +2564,7 @@ TEST(RenderEngineTest, DefaultContentProgramForwardedToBackend)
     ASSERT_NE(engine->defaultContentProgram(), nullptr);
     EXPECT_NE(engine->defaultContentProgram(), nullptr);
 
-    const auto flat = vine::graphics::flatForwardProgram();
+    const auto flat = vn::graphics::flatForwardProgram();
     engine->setDefaultContentProgram(flat);
     EXPECT_EQ(engine->defaultContentProgram(), flat);
 
@@ -2800,7 +2800,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
 
     // Consumer: a ScreenPass declaring it wants the published "SceneColor", and NAMING the program it
     // draws it with — a screen pass has no implicit shading (see ScreenPass).
-    auto copy_program = vine::graphics::screenCopyProgram();
+    auto copy_program = vn::graphics::screenCopyProgram();
     auto screen       = intrusive_ptr<ScreenPass>(new ScreenPass());
     screen->setCamera(cam);
     screen->setProgram(copy_program);
@@ -2828,7 +2828,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     engine2->initialize();
     auto orphan = intrusive_ptr<ScreenPass>(new ScreenPass());
     orphan->setCamera(cam);
-    orphan->setProgram(vine::graphics::screenCopyProgram());
+    orphan->setProgram(vn::graphics::screenCopyProgram());
     orphan->addInputName(u8"SceneColor");
     engine2->addPass(orphan, 100);
     engine2->frame();
@@ -2890,8 +2890,8 @@ TEST(RenderEngineTest, ScreenPassProgramCarriesTheAttachmentItReads)
     // Two consumers reading different colour attachments of the same target: the ATTACHMENT is the
     // program's sampler binding (the fullscreen program ABI — binding i reads attachment i), so the two
     // passes differ by the program they name, not by a backend-side index.
-    auto albedo_program = vine::graphics::screenCopyProgram(0);
-    auto normal_program = vine::graphics::screenCopyProgram(1);
+    auto albedo_program = vn::graphics::screenCopyProgram(0);
+    auto normal_program = vn::graphics::screenCopyProgram(1);
     EXPECT_NE(albedo_program->name(), normal_program->name());
 
     auto albedo = intrusive_ptr<ScreenPass>(new ScreenPass());
@@ -2986,15 +2986,15 @@ TEST(LightTest, AmbientFactoryDefaults)
 
 TEST(LightTest, DirectionalFactoryCarriesDirection)
 {
-    const vine::math::Vec3d dir(0.2, -0.5, -0.8);
+    const vn::math::Vec3d dir(0.2, -0.5, -0.8);
     auto light = Light::createDirectional(dir);
     ASSERT_NE(light, nullptr);
     EXPECT_EQ(light->type(), LightType::Directional);
     EXPECT_TRUE(light->hasDirection());
     EXPECT_EQ(light->direction(), dir);
 
-    light->setDirection(vine::math::Vec3d(1.0, 0.0, 0.0));
-    EXPECT_EQ(light->direction(), vine::math::Vec3d(1.0, 0.0, 0.0));
+    light->setDirection(vn::math::Vec3d(1.0, 0.0, 0.0));
+    EXPECT_EQ(light->direction(), vn::math::Vec3d(1.0, 0.0, 0.0));
 }
 
 TEST(LightTest, Setters)
@@ -3019,7 +3019,7 @@ TEST(SceneTest, LightSlots)
     EXPECT_TRUE(scene.lights().empty());
 
     auto ambient = Light::createAmbient();
-    auto sun     = Light::createDirectional(vine::math::Vec3d(0.0, -1.0, 0.0));
+    auto sun     = Light::createDirectional(vn::math::Vec3d(0.0, -1.0, 0.0));
     scene.addLight(ambient);
     scene.addLight(sun);
     EXPECT_TRUE(scene.hasLights());
@@ -3062,7 +3062,7 @@ TEST(RenderPassTest, ExecuteForwardsSceneLights)
 
 TEST(LightTest, ShadowSettingsDefaultsAndSetters)
 {
-    auto sun = Light::createDirectional(vine::math::Vec3d(0.0, -1.0, 0.0));
+    auto sun = Light::createDirectional(vn::math::Vec3d(0.0, -1.0, 0.0));
     EXPECT_FALSE(sun->castShadow());
 
     const auto& defaults = sun->shadowSettings();
@@ -3172,7 +3172,7 @@ TEST(RenderPipelineBuilderTest, OffscreenToScreenBuildsExpectedPipeline)
     // The recipe NAMES the copy program on the pass it just built (the SDK's own recipes do not get
     // an implicit copy either — they pin the SDK program instead).
     EXPECT_NE(screen->program(), nullptr);
-    EXPECT_EQ(screen->program()->name(), vine::graphics::screenCopyProgram()->name());
+    EXPECT_EQ(screen->program()->name(), vn::graphics::screenCopyProgram()->name());
 
     const int draws_before = backend->program_draws;
     engine->frame();
@@ -3314,7 +3314,7 @@ TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
     ASSERT_EQ(reported.size(), 1u);
     EXPECT_EQ(reported[0].severity, DiagnosticSeverity::Warning);
     EXPECT_EQ(reported[0].category, DiagnosticCategory::UnsupportedRequest);
-    EXPECT_NE(reported[0].message.find(u8"no shadow pass"), vine::String::npos);
+    EXPECT_NE(reported[0].message.find(u8"no shadow pass"), vn::String::npos);
 
     // A disabled light asks for nothing, even with the flag still set.
     reported.clear();
@@ -3525,21 +3525,21 @@ TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
  */
 TEST(RenderPipelineBuilderTest, TheDirectionalShadowCameraFramesTheContentFromTheLightSide)
 {
-    auto sun = LightPtr(Light::createDirectional(vine::math::Vec3d(0.0, 0.0, -1.0)));
+    auto sun = LightPtr(Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0)));
     sun->setName(u8"sun");
 
     // A box that is not at the origin: the window has to follow the content, not the world.
-    const vine::math::Rect3<double> bounds(vine::math::Point3<double>(4.0, 2.0, 0.0),
-                                          vine::math::Point3<double>(6.0, 4.0, 2.0));
+    const vn::math::Rect3<double> bounds(vn::math::Point3<double>(4.0, 2.0, 0.0),
+                                          vn::math::Point3<double>(6.0, 4.0, 2.0));
 
     auto camera = intrusive_ptr<Camera>(new Camera());
-    const vine::math::Mat4d view_projection = RenderPipelineBuilder::directionalShadowMatrix(*sun, bounds, *camera);
+    const vn::math::Mat4d view_projection = RenderPipelineBuilder::directionalShadowMatrix(*sun, bounds, *camera);
 
     // Every corner of the box lands inside the clip volume (the map has to cover the casters), and it
     // is the ORTHO window that puts it there — the shading maps fragments through this same matrix.
-    for (const auto& corner : { vine::math::Point3<double>(4.0, 2.0, 0.0), vine::math::Point3<double>(4.0, 4.0, 2.0),
-                                vine::math::Point3<double>(6.0, 2.0, 2.0), vine::math::Point3<double>(6.0, 4.0, 0.0) }) {
-        const vine::math::Point3<double> ndc = view_projection * corner;
+    for (const auto& corner : { vn::math::Point3<double>(4.0, 2.0, 0.0), vn::math::Point3<double>(4.0, 4.0, 2.0),
+                                vn::math::Point3<double>(6.0, 2.0, 2.0), vn::math::Point3<double>(6.0, 4.0, 0.0) }) {
+        const vn::math::Point3<double> ndc = view_projection * corner;
         EXPECT_GE(ndc.x, -1.0);
         EXPECT_LE(ndc.x, 1.0);
         EXPECT_GE(ndc.y, -1.0);
@@ -3548,7 +3548,7 @@ TEST(RenderPipelineBuilderTest, TheDirectionalShadowCameraFramesTheContentFromTh
         EXPECT_LE(ndc.z, 1.0);
     }
     // ...and the eye sits on the side the light comes FROM (the light shines along its direction).
-    const vine::math::Vec3d eye = camera->eye();
+    const vn::math::Vec3d eye = camera->eye();
     EXPECT_NEAR(eye.x, 5.0, 1e-9) << "the eye is centred on the content, so the window is symmetric";
     EXPECT_NEAR(eye.y, 3.0, 1e-9);
     EXPECT_GT(eye.z, 2.0) << "with a -z sun the light camera looks from +z";
@@ -3692,7 +3692,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsCompos
     EXPECT_EQ(present->renderTarget(), nullptr);
     EXPECT_FALSE(present->isClearEnabled());
     const auto& inputs = present->inputNames();
-    EXPECT_NE(std::find(inputs.begin(), inputs.end(), vine::String(u8"Composite")), inputs.end());
+    EXPECT_NE(std::find(inputs.begin(), inputs.end(), vn::String(u8"Composite")), inputs.end());
 
     // Sizing is creator-maintained for both off-screen targets together.
     pipeline->resize(1280, 720, 1.0);
@@ -4094,7 +4094,7 @@ class MockBackendFactory : public RenderBackendFactory {
   public:
     MockBackendFactory() = default;
 
-    explicit MockBackendFactory(const vine::String& name)
+    explicit MockBackendFactory(const vn::String& name)
       : name_(name)
     {
     }
@@ -4106,13 +4106,13 @@ class MockBackendFactory : public RenderBackendFactory {
                                   RenderApi::Vulkan | RenderApi::OpenGL3 };
     }
 
-    vine::intrusive_ptr<RenderBackend> create() override
+    vn::intrusive_ptr<RenderBackend> create() override
     {
-        return vine::intrusive_ptr<RenderBackend>(new MockBackend());
+        return vn::intrusive_ptr<RenderBackend>(new MockBackend());
     }
 
   private:
-    vine::String name_;
+    vn::String name_;
 };
 
 }  // namespace
@@ -4162,8 +4162,8 @@ TEST(RenderBackendRegistryTest, EnumerateEntries)
             EXPECT_NE(entry.factory, nullptr);
             EXPECT_EQ(entry.factory->name(), u8"mock4");
             EXPECT_FALSE(entry.info.description.empty());
-            EXPECT_TRUE(vine::testFlag(entry.info.api_flags, RenderApi::Vulkan));
-            EXPECT_TRUE(vine::testFlag(entry.info.api_flags, RenderApi::OpenGL3));
+            EXPECT_TRUE(vn::testFlag(entry.info.api_flags, RenderApi::Vulkan));
+            EXPECT_TRUE(vn::testFlag(entry.info.api_flags, RenderApi::OpenGL3));
             EXPECT_EQ(renderApiToString(entry.info.api_flags), u8"vulkan | opengl3");
         }
     }
@@ -4192,14 +4192,14 @@ namespace
  */
 class FakeMaterialManager : public MaterialManager {
   public:
-    void updateMaterial(vine::raw_ptr<Material> material) override
+    void updateMaterial(vn::raw_ptr<Material> material) override
     {
         if (material != nullptr) {
             registered_.insert(material);
         }
     }
 
-    void releaseMaterial(vine::raw_ptr<Material> material) override
+    void releaseMaterial(vn::raw_ptr<Material> material) override
     {
         registered_.erase(material);
     }
@@ -4214,20 +4214,20 @@ class FakeMaterialManager : public MaterialManager {
         return registered_.size();
     }
 
-    bool hasMaterial(vine::raw_ptr<Material> material) const override
+    bool hasMaterial(vn::raw_ptr<Material> material) const override
     {
         return registered_.count(material) != 0u;
     }
 
-    void forEachMaterial(const std::function<void(vine::raw_ptr<Material>)>& visitor) const override
+    void forEachMaterial(const std::function<void(vn::raw_ptr<Material>)>& visitor) const override
     {
-        for (vine::raw_ptr<Material> m : registered_) {
+        for (vn::raw_ptr<Material> m : registered_) {
             visitor(m);
         }
     }
 
   private:
-    std::set<vine::raw_ptr<Material>> registered_;
+    std::set<vn::raw_ptr<Material>> registered_;
 };
 
 }  // namespace
@@ -4253,8 +4253,8 @@ TEST(MaterialManagerTest, RegisteredMaterialIntrospection)
     EXPECT_TRUE(manager.hasMaterial(b.get()));
 
     // forEachMaterial enumerates every registered material.
-    std::set<vine::raw_ptr<Material>> seen;
-    manager.forEachMaterial([&seen](vine::raw_ptr<Material> m) { seen.insert(m); });
+    std::set<vn::raw_ptr<Material>> seen;
+    manager.forEachMaterial([&seen](vn::raw_ptr<Material> m) { seen.insert(m); });
     EXPECT_EQ(seen.size(), 2u);
     EXPECT_TRUE(seen.count(a.get()) == 1u && seen.count(b.get()) == 1u);
 
@@ -4578,10 +4578,10 @@ TEST(GeometryTest, RawPositionsDriveCountsAndBounds)
     EXPECT_EQ(geom.vertexCount(), 0u);
     EXPECT_TRUE(geom.boundingBox().isEmpty());
 
-    vine::geometry::Vec3fArray points = {
-        vine::math::Vec3f(0.0f, 0.0f, 0.0f),
-        vine::math::Vec3f(2.0f, 0.0f, 0.0f),
-        vine::math::Vec3f(0.0f, 3.0f, 0.0f),
+    vn::geometry::Vec3fArray points = {
+        vn::math::Vec3f(0.0f, 0.0f, 0.0f),
+        vn::math::Vec3f(2.0f, 0.0f, 0.0f),
+        vn::math::Vec3f(0.0f, 3.0f, 0.0f),
     };
     geom.setPositions(packAttribute(points));
     EXPECT_TRUE(geom.hasPositions());
@@ -4594,7 +4594,7 @@ TEST(GeometryTest, RawPositionsDriveCountsAndBounds)
     EXPECT_NEAR(box.max().x, 2.0, 1e-9);
     EXPECT_NEAR(box.max().y, 3.0, 1e-9);
 
-    vine::geometry::UInt32Array indices = { 0u, 1u, 2u };
+    vn::geometry::UInt32Array indices = { 0u, 1u, 2u };
     geom.setIndices(packIndices(indices));
     EXPECT_TRUE(geom.hasIndices());
     EXPECT_FALSE(geom.indices().empty());
@@ -4610,13 +4610,13 @@ TEST(GeometryTest, NormalsChannelAndRevision)
     EXPECT_FALSE(geom.hasNormals());
     EXPECT_EQ(geom.revision(), 0u);
 
-    vine::geometry::Vec3fArray points = { vine::math::Vec3f(0, 0, 0), vine::math::Vec3f(1, 0, 0),
-                                          vine::math::Vec3f(0, 1, 0) };
+    vn::geometry::Vec3fArray points = { vn::math::Vec3f(0, 0, 0), vn::math::Vec3f(1, 0, 0),
+                                          vn::math::Vec3f(0, 1, 0) };
     geom.setPositions(packAttribute(points));
     EXPECT_EQ(geom.revision(), 0u) << "setting a channel is not an announcement";
 
-    vine::geometry::Vec3fArray normals = { vine::math::Vec3f(0, 0, 1), vine::math::Vec3f(0, 0, 1),
-                                           vine::math::Vec3f(0, 0, 1) };
+    vn::geometry::Vec3fArray normals = { vn::math::Vec3f(0, 0, 1), vn::math::Vec3f(0, 0, 1),
+                                           vn::math::Vec3f(0, 0, 1) };
     geom.setNormals(packAttribute(normals));
     EXPECT_TRUE(geom.hasNormals());
     EXPECT_EQ(geom.normalCount(), 3u);
@@ -4636,7 +4636,7 @@ TEST(GeometryTest, RevisionCanBeReportedByHand)
     // geometry reads without calling any setter here. Reporting that is the ONLY way a retained render
     // node can hear about it — and it is a value, not a bump, so it can mirror the model's version.
     Geometry geom;
-    vine::geometry::Vec3fArray points = { vine::math::Vec3f(0, 0, 0) };
+    vn::geometry::Vec3fArray points = { vn::math::Vec3f(0, 0, 0) };
     geom.setPositions(packAttribute(points));
 
     geom.setRevision(41u);
@@ -4676,13 +4676,13 @@ TEST(GeometryTest, ConverterFillsBuffersFromTriangleMesh)
 
 TEST(GeometryTest, ConverterSharesTheMeshVertexStorage)
 {
-    auto mesh = intrusive_ptr<vine::geometry::TriangleMesh>(new vine::geometry::TriangleMesh());
-    mesh->setPositions({ vine::math::Vec3f(0.0f, 0.0f, 0.0f), vine::math::Vec3f(1.0f, 0.0f, 0.0f),
-                         vine::math::Vec3f(0.0f, 1.0f, 0.0f) });
-    mesh->setNormals({ vine::math::Vec3f(0.0f, 0.0f, 1.0f), vine::math::Vec3f(0.0f, 0.0f, 1.0f),
-                       vine::math::Vec3f(0.0f, 0.0f, 1.0f) });
-    mesh->setTexcoords({ vine::math::Vec2f(0.0f, 0.0f), vine::math::Vec2f(1.0f, 0.0f),
-                         vine::math::Vec2f(0.0f, 1.0f) });
+    auto mesh = intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                         vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
+    mesh->setNormals({ vn::math::Vec3f(0.0f, 0.0f, 1.0f), vn::math::Vec3f(0.0f, 0.0f, 1.0f),
+                       vn::math::Vec3f(0.0f, 0.0f, 1.0f) });
+    mesh->setTexcoords({ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f),
+                         vn::math::Vec2f(0.0f, 1.0f) });
 
     const auto geom = geometryFromShape(*mesh);
     ASSERT_NE(geom.get(), nullptr);
@@ -4708,7 +4708,7 @@ TEST(GeometryTest, ConverterSharesTheMeshVertexStorage)
     EXPECT_FLOAT_EQ(second[2], 0.0f);
 
     // The typed mesh view and the scalar run the geometry reads are the same bytes.
-    EXPECT_EQ(mesh->positions().data(), reinterpret_cast<const vine::math::Vec3f*>(positions->scalars().data()));
+    EXPECT_EQ(mesh->positions().data(), reinterpret_cast<const vn::math::Vec3f*>(positions->scalars().data()));
     EXPECT_EQ(mesh->positions()[1].x, second[0]);
 
     EXPECT_EQ(geom->positionCount(), 3u);
@@ -4718,10 +4718,10 @@ TEST(GeometryTest, ConverterSharesTheMeshVertexStorage)
 
 TEST(GeometryTest, ConverterSharesTheMeshIndexStorage)
 {
-    auto mesh = intrusive_ptr<vine::geometry::IndexedTriangleMesh>(new vine::geometry::IndexedTriangleMesh());
-    mesh->addVertex(vine::math::Vec3f(0.0f, 0.0f, 0.0f));
-    mesh->addVertex(vine::math::Vec3f(1.0f, 0.0f, 0.0f));
-    mesh->addVertex(vine::math::Vec3f(0.0f, 1.0f, 0.0f));
+    auto mesh = intrusive_ptr<vn::geometry::IndexedTriangleMesh>(new vn::geometry::IndexedTriangleMesh());
+    mesh->addVertex(vn::math::Vec3f(0.0f, 0.0f, 0.0f));
+    mesh->addVertex(vn::math::Vec3f(1.0f, 0.0f, 0.0f));
+    mesh->addVertex(vn::math::Vec3f(0.0f, 1.0f, 0.0f));
     mesh->addTriangle(0u, 1u, 2u);
 
     const auto geom = geometryFromShape(*mesh);
@@ -4752,8 +4752,8 @@ TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)
     EXPECT_EQ(geom.texcoordCount(), 0u);
     const std::uint64_t before = geom.revision();
 
-    geom.setTexcoords2(packAttribute(vine::geometry::Vec2fArray{ vine::math::Vec2f(0.0f, 0.0f), vine::math::Vec2f(1.0f, 0.0f),
-                                                                vine::math::Vec2f(0.0f, 1.0f) }));
+    geom.setTexcoords2(packAttribute(vn::geometry::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f),
+                                                                vn::math::Vec2f(0.0f, 1.0f) }));
 
     EXPECT_TRUE(geom.hasTexcoords());
     EXPECT_EQ(geom.texcoordCount(), 3u);
@@ -4768,8 +4768,8 @@ TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)
 TEST(GeometryTest, ConverterCopiesTexcoordsWhenTheyMatchTheVertexCount)
 {
     auto mesh = makeUnitTriangle();
-    mesh->setTexcoords({ vine::math::Vec2f(0.0f, 0.0f), vine::math::Vec2f(1.0f, 0.0f),
-                         vine::math::Vec2f(0.0f, 1.0f) });
+    mesh->setTexcoords({ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f),
+                         vn::math::Vec2f(0.0f, 1.0f) });
 
     const auto geom = geometryFromShape(*mesh);
     ASSERT_NE(geom.get(), nullptr);
@@ -4782,7 +4782,7 @@ TEST(GeometryTest, ConverterSkipsTexcoordsThatDoNotMatchTheVertexCount)
     auto mesh = makeUnitTriangle();
     // Two UVs for three vertices: a channel that cannot be indexed per vertex
     // is dropped rather than sampled against the wrong UV.
-    mesh->setTexcoords({ vine::math::Vec2f(0.0f, 0.0f), vine::math::Vec2f(1.0f, 1.0f) });
+    mesh->setTexcoords({ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 1.0f) });
 
     const auto geom = geometryFromShape(*mesh);
     ASSERT_NE(geom.get(), nullptr);
@@ -4837,7 +4837,7 @@ namespace
  * @param points Triangle vertices; each is padded to four components with w=1.
  * @return Position buffer with components = 4.
  */
-AttributeChannel makeVec4Positions(const std::vector<vine::math::Vec3f>& points)
+AttributeChannel makeVec4Positions(const std::vector<vn::math::Vec3f>& points)
 {
     std::vector<float> scalars;
     scalars.reserve(points.size() * 4u);
@@ -4886,11 +4886,11 @@ TEST(AttributeChannelTest, SharedChannelReadsTheBuffersOwnScalars)
 {
     // The sharing design rests on this: a Vec3f is three tightly packed floats and a Vec2f is two, so a run
     // of scalars IS a run of vertices (this is also static_asserted in Mesh.cpp).
-    static_assert(sizeof(vine::math::Vec3f) == 3u * sizeof(float));
-    static_assert(sizeof(vine::math::Vec2f) == 2u * sizeof(float));
+    static_assert(sizeof(vn::math::Vec3f) == 3u * sizeof(float));
+    static_assert(sizeof(vn::math::Vec2f) == 2u * sizeof(float));
 
-    auto buffer = intrusive_ptr<vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }));
+    auto buffer = intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }));
 
     const AttributeChannel channel = AttributeChannel::shared(buffer, 3u);
     EXPECT_EQ(channel.components, 3u);
@@ -4915,7 +4915,7 @@ TEST(AttributeChannelTest, SharedChannelReadsTheBuffersOwnScalars)
 
     // The channel has to keep the buffer alive — the scalars live inside it. (Reading them after dropping
     // the local handle would be a use-after-free, not a wrong value, if this reference were missing.)
-    const vine::Buffer<float>* const raw = buffer.get();
+    const vn::Buffer<float>* const raw = buffer.get();
     ASSERT_EQ(raw->useCount(), 2u);
     buffer = nullptr;
     EXPECT_EQ(raw->useCount(), 1u);
@@ -4928,9 +4928,9 @@ TEST(GeometryTest, Vec4PositionsUseComponentsAsStride)
     // A triangle offset away from the origin, stored as vec4. A stride-blind
     // reader would treat the w = 1 values as vertex data: it would read 4
     // "vertices" out of 12 floats and fold w = 1 into the bounds.
-    geom.addBuffer(0, makeVec4Positions({ vine::math::Vec3f(1.0f, 2.0f, 0.5f),
-                                          vine::math::Vec3f(3.0f, 2.0f, 0.5f),
-                                          vine::math::Vec3f(1.0f, 5.0f, 0.5f) }));
+    geom.addBuffer(0, makeVec4Positions({ vn::math::Vec3f(1.0f, 2.0f, 0.5f),
+                                          vn::math::Vec3f(3.0f, 2.0f, 0.5f),
+                                          vn::math::Vec3f(1.0f, 5.0f, 0.5f) }));
 
     EXPECT_EQ(geom.positionCount(), 3u);
     EXPECT_EQ(geom.vertexCount(), 3u);
@@ -4948,11 +4948,11 @@ TEST(GeometryTest, Vec4PositionsUseComponentsAsStride)
 TEST(GeometryTest, Vec4NormalsCountedByStride)
 {
     Geometry geom;
-    geom.addBuffer(0, makeVec4Positions({ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
-                                          vine::math::Vec3f(1.0f, 0.0f, 0.0f),
-                                          vine::math::Vec3f(0.0f, 1.0f, 0.0f) }));
-    geom.addBuffer(1, makeVec4Positions({ vine::math::Vec3f(0.0f, 0.0f, 1.0f),
-                                          vine::math::Vec3f(0.0f, 0.0f, 1.0f) }));
+    geom.addBuffer(0, makeVec4Positions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f),
+                                          vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                                          vn::math::Vec3f(0.0f, 1.0f, 0.0f) }));
+    geom.addBuffer(1, makeVec4Positions({ vn::math::Vec3f(0.0f, 0.0f, 1.0f),
+                                          vn::math::Vec3f(0.0f, 0.0f, 1.0f) }));
     EXPECT_EQ(geom.positionCount(), 3u);
     EXPECT_EQ(geom.normalCount(), 2u);
 }
@@ -4992,9 +4992,9 @@ TEST(RayIntersectionTest, PicksVec4PositionGeometry)
     auto root = intrusive_ptr<Group>(new Group());
     auto geom = intrusive_ptr<Geometry>(new Geometry());
     geom->setName(u8"vec4-tri");
-    geom->addBuffer(0, makeVec4Positions({ vine::math::Vec3f(0.0f, 0.0f, 0.0f),
-                                           vine::math::Vec3f(1.0f, 0.0f, 0.0f),
-                                           vine::math::Vec3f(0.0f, 1.0f, 0.0f) }));
+    geom->addBuffer(0, makeVec4Positions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f),
+                                           vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                                           vn::math::Vec3f(0.0f, 1.0f, 0.0f) }));
     root->addChild(geom);
     scene->setRoot(root);
 
@@ -5019,12 +5019,12 @@ TEST(SceneTest, CollectCommandsKeepsVec4PositionGeometryInView)
     Scene scene;
     auto root = setIdentityRoot(scene);
     auto node = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    node->setMatrix(vine::math::translate(Vec3d(0.0, 0.0, -3.0)));
+    node->setMatrix(vn::math::translate(Vec3d(0.0, 0.0, -3.0)));
     auto geom = intrusive_ptr<Geometry>(new Geometry());
     geom->setName(u8"vec4-tri");
-    geom->addBuffer(0, makeVec4Positions({ vine::math::Vec3f(-0.5f, -0.5f, 0.0f),
-                                           vine::math::Vec3f(0.5f, -0.5f, 0.0f),
-                                           vine::math::Vec3f(0.0f, 0.5f, 0.0f) }));
+    geom->addBuffer(0, makeVec4Positions({ vn::math::Vec3f(-0.5f, -0.5f, 0.0f),
+                                           vn::math::Vec3f(0.5f, -0.5f, 0.0f),
+                                           vn::math::Vec3f(0.0f, 0.5f, 0.0f) }));
     node->addChild(geom);
     root->addChild(node);
 
@@ -5036,7 +5036,7 @@ TEST(SceneTest, CollectCommandsKeepsVec4PositionGeometryInView)
 
     // The same geometry pushed far outside the view is still culled, so the
     // fix did not disable culling for this data layout.
-    node->setMatrix(vine::math::translate(Vec3d(400.0, 0.0, -3.0)));
+    node->setMatrix(vn::math::translate(Vec3d(400.0, 0.0, -3.0)));
     EXPECT_TRUE(scene.collectRenderCommands(&cam).empty());
 }
 
@@ -5087,8 +5087,8 @@ TEST(NodeTest, DeepHierarchyWorldMatrixFoldsWholeChain)
 
     for (int level = 0; level < 12; ++level) {
         auto transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-        const Mat4d local = vine::math::translate(Vec3d(0.1, 0.1, -0.2)) *
-                            vine::math::rotate(Vec3d(0.0, 1.0, 0.0), 0.3);
+        const Mat4d local = vn::math::translate(Vec3d(0.1, 0.1, -0.2)) *
+                            vn::math::rotate(Vec3d(0.0, 1.0, 0.0), 0.3);
         transform->setMatrix(local);
         parent->addChild(transform);
         reference = reference * local;
@@ -5137,10 +5137,10 @@ TEST(SceneTest, CollectCommandsAccumulatesWorldMatrixAcrossNesting)
     Scene scene;
     auto root = setIdentityRoot(scene);
     auto outer = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    outer->setMatrix(vine::math::translate(Vec3d(100.0, 0.0, 0.0)));
+    outer->setMatrix(vn::math::translate(Vec3d(100.0, 0.0, 0.0)));
     auto middle = intrusive_ptr<Group>(new Group());
     auto inner = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    inner->setMatrix(vine::math::translate(Vec3d(-100.0, 0.0, -3.0)));
+    inner->setMatrix(vn::math::translate(Vec3d(-100.0, 0.0, -3.0)));
     auto geom = geometryOf(*makeUnitTriangle());
     geom->setName(u8"nested");
     root->addChild(outer);
@@ -5158,7 +5158,7 @@ TEST(SceneTest, CollectCommandsAccumulatesWorldMatrixAcrossNesting)
 
     // Moving the geometry genuinely out of view still culls it, i.e. the
     // container bound is being derived from the children rather than ignored.
-    inner->setMatrix(vine::math::translate(Vec3d(-100.0, 0.0, 500.0)));
+    inner->setMatrix(vn::math::translate(Vec3d(-100.0, 0.0, 500.0)));
     EXPECT_TRUE(scene.collectRenderCommands(&cam).empty());
 }
 
@@ -5275,7 +5275,7 @@ TEST(SceneTest, CollectCommandsAsksEachLeafBoundOnce)
     intrusive_ptr<MatrixTransform> first_transform;
     for (int level = 0; level < 8; ++level) {
         auto transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-        transform->setMatrix(vine::math::translate(Vec3d(0.0, 0.0, -0.1)));
+        transform->setMatrix(vn::math::translate(Vec3d(0.0, 0.0, -0.1)));
         deep->addChild(transform);
         deep = transform;
         if (level == 0) {
@@ -5308,7 +5308,7 @@ TEST(SceneTest, CollectCommandsAsksEachLeafBoundOnce)
 
     // Culled leaves are still bounded exactly once (the bound is what decides).
     leaf->setName(u8"culled");
-    first_transform->setMatrix(vine::math::translate(Vec3d(4000.0, 0.0, 0.0)));
+    first_transform->setMatrix(vn::math::translate(Vec3d(4000.0, 0.0, 0.0)));
     EXPECT_TRUE(scene.collectRenderCommands(&cam).empty());
     EXPECT_EQ(leaf->bound_calls, 3);
 }
@@ -5375,7 +5375,7 @@ TEST(SceneTest, TheLocalDataBoxIsComputedOnceAndRecomputedWhenTheDataChanges)
     // fresh box, and everything else pays one scan instead of one per frame.
     Scene scene;
     auto  root     = setIdentityRoot(scene);
-    auto  geometry = vine::make_intrusive<Geometry>();
+    auto  geometry = vn::make_intrusive<Geometry>();
     // A writable handle as well as the channel's: announcing an edit is the WRITER's job, and a channel
     // hands its buffer out as const (the geometry reads it, it does not own the edit).
     auto positions = packAttribute(makeUnitTriangle()->positions());
@@ -5398,7 +5398,7 @@ TEST(SceneTest, TheLocalDataBoxIsComputedOnceAndRecomputedWhenTheDataChanges)
     const Aabbd local = geometry->boundingBox();
     const Aabbd moved = [&] {
         auto transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-        transform->setMatrix(vine::math::translate(Vec3d(0.1, 0.0, 0.0)));
+        transform->setMatrix(vn::math::translate(Vec3d(0.1, 0.0, 0.0)));
         transform->addChild(geometry);
         root->addChild(transform);
         return geometry->boundingBox();
@@ -5433,13 +5433,13 @@ TEST(SceneTest, TheFoldedStateAgreesWithTheUpWalkingHelpers)
     // that authors its own material.
     Scene scene;
     auto  root   = setIdentityRoot(scene);
-    auto  outer  = vine::make_intrusive<StateNode>();
-    auto  inner  = vine::make_intrusive<StateNode>();
-    auto  geometry = vine::make_intrusive<Geometry>();
+    auto  outer  = vn::make_intrusive<StateNode>();
+    auto  inner  = vn::make_intrusive<StateNode>();
+    auto  geometry = vn::make_intrusive<Geometry>();
     geometry->setPositions(packAttribute(makeUnitTriangle()->positions()));
 
-    auto outer_material = vine::make_intrusive<Material>();
-    auto own_material   = vine::make_intrusive<Material>();
+    auto outer_material = vn::make_intrusive<Material>();
+    auto own_material   = vn::make_intrusive<Material>();
     auto inner_program  = flatForwardProgram();
     ASSERT_NE(inner_program, nullptr);
 
@@ -5757,7 +5757,7 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     consumer->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    consumer->setProgram(vine::graphics::screenCopyProgram());
+    consumer->setProgram(vn::graphics::screenCopyProgram());
     consumer->addInputName(u8"GBuffer");
     engine->addPass(consumer, 0);
 
@@ -5765,8 +5765,8 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"GBuffer"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"light"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"GBuffer"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"light"), vn::String::npos);
 
     // Still missing: reported once, not once per frame.
     engine->frame(0.016);
@@ -5813,7 +5813,7 @@ TEST(RenderEngineTest, TwoProducersUnderOneOutputNameAreReportedOnce)
     auto camera = intrusive_ptr<Camera>(new Camera());
     setupLookAtCamera(*camera);
 
-    const auto make_producer = [&camera](const vine::String& name, RenderTargetPtr target) {
+    const auto make_producer = [&camera](const vn::String& name, RenderTargetPtr target) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
         pass->setCamera(camera);
@@ -5830,7 +5830,7 @@ TEST(RenderEngineTest, TwoProducersUnderOneOutputNameAreReportedOnce)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"shared"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"shared"), vn::String::npos);
 
     // The same collision next frame is the SAME episode: not one message per frame.
     engine->frame(0.016);
@@ -5881,8 +5881,8 @@ TEST(RenderEngineTest, PublishingANameWithoutARenderTargetIsReported)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"presenter"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"SceneColor"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"presenter"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"SceneColor"), vn::String::npos);
 
     // The same problem next frame is the same episode: one message, not one per frame.
     engine->frame(0.016);
@@ -5997,7 +5997,7 @@ TEST(RenderEngineTest, PublishingANullTargetIsReported)
 
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"External"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"External"), vn::String::npos);
     EXPECT_EQ(engine->resolve(u8"External"), nullptr);
 
     // The same call again is the same episode; a real target ends it, so the next failed publish
@@ -6034,7 +6034,7 @@ TEST(RenderEngineTest, OneWireIsReportedByOneCheckWhetherDeclaredByNameOrObject)
     auto camera = intrusive_ptr<Camera>(new Camera());
     setupLookAtCamera(*camera);
 
-    const auto make_pass = [&camera](const vine::String& name, RenderTargetPtr target, RenderTargetPtr promise) {
+    const auto make_pass = [&camera](const vn::String& name, RenderTargetPtr target, RenderTargetPtr promise) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
         pass->setCamera(camera);
@@ -6059,7 +6059,7 @@ TEST(RenderEngineTest, OneWireIsReportedByOneCheckWhetherDeclaredByNameOrObject)
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
-    EXPECT_NE(received[0].message.find(u8"claim"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"claim"), vn::String::npos);
     engine->removePass(first.get());
     engine->removePass(second.get());
 
@@ -6076,7 +6076,7 @@ TEST(RenderEngineTest, OneWireIsReportedByOneCheckWhetherDeclaredByNameOrObject)
     engine->addPass(fourth, -1);
     engine->frame(0.016);
     ASSERT_EQ(received.size(), 1u);
-    EXPECT_NE(received[0].message.find(u8"shared"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"shared"), vn::String::npos);
 }
 
 /**
@@ -6199,7 +6199,7 @@ TEST(RenderEngineTest, ImageDeclaredAsOutputByTwoPassesIsReportedOnce)
 
     // No output NAMES are declared, so the name registry stays silent: the single message can only
     // come from the image declarations (the two rules must not double-report one mistake).
-    const auto make_producer = [&camera, &image](const vine::String& name, RenderTargetPtr target) {
+    const auto make_producer = [&camera, &image](const vn::String& name, RenderTargetPtr target) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
         pass->setCamera(camera);
@@ -6216,9 +6216,9 @@ TEST(RenderEngineTest, ImageDeclaredAsOutputByTwoPassesIsReportedOnce)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"GBuffer.color"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"first"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"second"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"GBuffer.color"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"first"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"second"), vn::String::npos);
 
     // The same collision next frame is the SAME episode: not one message per frame.
     engine->frame(0.016);
@@ -6273,7 +6273,7 @@ TEST(RenderEngineTest, TwoImageRefsOfOneAttachmentAreReportedOnce)
     declared_by_first->bind(target, 0);
     declared_by_second->bind(target, 0);
 
-    const auto make_producer = [&camera, &target](const vine::String& name, intrusive_ptr<ImageRef> image) {
+    const auto make_producer = [&camera, &target](const vn::String& name, intrusive_ptr<ImageRef> image) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
         pass->setCamera(camera);
@@ -6291,10 +6291,10 @@ TEST(RenderEngineTest, TwoImageRefsOfOneAttachmentAreReportedOnce)
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     // Both declarations are named: the point of the report is that they are one image.
-    EXPECT_NE(received[0].message.find(u8"GBuffer.albedo"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"albedo_copy"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"first"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"second"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"GBuffer.albedo"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"albedo_copy"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"first"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"second"), vn::String::npos);
 
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
@@ -6341,7 +6341,7 @@ TEST(RenderEngineTest, TwoImagesOfOneTargetWithDifferentAttachmentsAreNotACollis
     albedo->bind(target, 0);
     normal->bind(target, 1);
 
-    const auto make_pass = [&camera, &target](const vine::String& name, intrusive_ptr<ImageRef> image) {
+    const auto make_pass = [&camera, &target](const vn::String& name, intrusive_ptr<ImageRef> image) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
         pass->setCamera(camera);
@@ -6382,7 +6382,7 @@ TEST(RenderEngineTest, TwoDistinctUnboundImagesAreNotACollision)
     auto camera = intrusive_ptr<Camera>(new Camera());
     setupLookAtCamera(*camera);
 
-    const auto make_pass = [&camera](const vine::String& name, intrusive_ptr<ImageRef> image) {
+    const auto make_pass = [&camera](const vn::String& name, intrusive_ptr<ImageRef> image) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
         pass->setCamera(camera);
@@ -6439,7 +6439,7 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
     consumer->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    consumer->setProgram(vine::graphics::screenCopyProgram());
+    consumer->setProgram(vn::graphics::screenCopyProgram());
     consumer->addInput(image);
     engine->addPass(consumer, 0);
 
@@ -6447,8 +6447,8 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"light"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"GBuffer.albedo"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"light"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"GBuffer.albedo"), vn::String::npos);
 
     // Still nobody: reported once, not once per frame.
     engine->frame(0.016);
@@ -6504,7 +6504,7 @@ TEST(RenderEngineTest, InputImageProducedByALaterPassIsReported)
     consumer->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    consumer->setProgram(vine::graphics::screenCopyProgram());
+    consumer->setProgram(vn::graphics::screenCopyProgram());
     consumer->addInput(image);
     engine->addPass(consumer, 0);
 
@@ -6520,8 +6520,8 @@ TEST(RenderEngineTest, InputImageProducedByALaterPassIsReported)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"light"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"gbuffer"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"light"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"gbuffer"), vn::String::npos);
 
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
@@ -6572,7 +6572,7 @@ TEST(RenderEngineTest, PassReadingTheTargetItDrawsIntoIsLeftToTheBackend)
     pass->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    pass->setProgram(vine::graphics::screenCopyProgram());
+    pass->setProgram(vn::graphics::screenCopyProgram());
     pass->setRenderTarget(target);   // it draws into the very target it reads
     pass->setOutput(image);
     pass->addInput(image);
@@ -6680,7 +6680,7 @@ TEST(RenderEngineTest, WholeTargetPromiseSatisfiesAFineImageRead)
     consumer->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    consumer->setProgram(vine::graphics::screenCopyProgram());
+    consumer->setProgram(vn::graphics::screenCopyProgram());
     consumer->addInput(sampled);
     engine->addPass(consumer, 10);
 
@@ -6718,7 +6718,7 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
     light->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    light->setProgram(vine::graphics::screenCopyProgram());
+    light->setProgram(vn::graphics::screenCopyProgram());
     light->addInputTarget(orphan);
     engine->addPass(light, 0);
 
@@ -6726,8 +6726,8 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"deferred_lighting"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"never_written"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"deferred_lighting"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"never_written"), vn::String::npos);
 
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
@@ -6785,7 +6785,7 @@ TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
     consumer->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    consumer->setProgram(vine::graphics::screenCopyProgram());
+    consumer->setProgram(vn::graphics::screenCopyProgram());
     consumer->addInput(depth_image);
     engine->addPass(consumer, 1);
 
@@ -6793,9 +6793,9 @@ TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"Composite.depth"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"composite"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"depth"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"Composite.depth"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"composite"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"depth"), vn::String::npos);
 }
 
 /**
@@ -6836,7 +6836,7 @@ TEST(RenderEngineTest, AnUnboundDeclaredImageIsReportedAtWiringTime)
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"present");
     consumer->setCamera(camera);
-    consumer->setProgram(vine::graphics::screenCopyProgram());
+    consumer->setProgram(vn::graphics::screenCopyProgram());
     consumer->addInput(unbound);
     engine->addPass(consumer, 1);
 
@@ -6844,8 +6844,8 @@ TEST(RenderEngineTest, AnUnboundDeclaredImageIsReportedAtWiringTime)
     engine->frame(0.016);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"SceneColor"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"bind"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"SceneColor"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"bind"), vn::String::npos);
     // What the report describes is what happens: the consumer resolves nothing and draws nothing.
     EXPECT_EQ(backend->program_draws - draws_before, 0);
 
@@ -6912,8 +6912,8 @@ TEST(RenderEngineTest, ScreenPassWithoutAProgramIsReportedAndDrawsNothing)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"reconstruct"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"program"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"reconstruct"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"program"), vn::String::npos);
     // It resolved its source and still drew nothing: "no program" is not "no input".
     EXPECT_EQ(consumer->sourceTarget(), target.get());
     EXPECT_EQ(backend->program_draws, 0);
@@ -6925,7 +6925,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAProgramIsReportedAndDrawsNothing)
 
     // Naming a program ends the episode, and the pass draws — depth-only declaration and all, which is
     // what the deleted "a screen pass cannot sample that" rule used to refuse.
-    auto program = vine::graphics::screenCopyProgram();
+    auto program = vn::graphics::screenCopyProgram();
     consumer->setProgram(program);
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
@@ -7028,9 +7028,9 @@ TEST(RenderEngineTest, WholeTargetPromiseCollidingWithAFineOneIsReported)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"fine_owner"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"whole_owner"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"shared"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"fine_owner"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"whole_owner"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"shared"), vn::String::npos);
 
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
@@ -7077,7 +7077,7 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
     auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
     preview->setName(u8"preview");
     preview->setCamera(camera);
-    preview->setProgram(vine::graphics::screenCopyProgram(2));
+    preview->setProgram(vn::graphics::screenCopyProgram(2));
     preview->addInput(sampled);
     engine->addPass(preview, 10);
 
@@ -7122,7 +7122,7 @@ TEST(RenderEngineTest, CoarseDeclarationAndTheProgramsBindingPickTheAttachment)
     auto pip = intrusive_ptr<ScreenPass>(new ScreenPass());
     pip->setName(u8"pip");
     pip->setCamera(camera);
-    pip->setProgram(vine::graphics::screenCopyProgram(1));
+    pip->setProgram(vn::graphics::screenCopyProgram(1));
     pip->addInputTarget(baked);
     engine->addPass(pip, 100);
 
@@ -7168,7 +7168,7 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
     preview->setName(u8"preview");
     preview->setCamera(camera);
-    preview->setProgram(vine::graphics::screenCopyProgram());
+    preview->setProgram(vn::graphics::screenCopyProgram());
     preview->addInput(sampled);
     engine->addPass(preview, 10);
 
@@ -7182,8 +7182,8 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"preview"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"GBuffer.albedo"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"preview"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"GBuffer.albedo"), vn::String::npos);
     EXPECT_EQ(backend->program_draws, draws_before_pause);   // nothing to draw from
 
     // Still paused: one message for this episode, not one per frame.
@@ -7237,7 +7237,7 @@ TEST(RenderEngineTest, NameAndObjectDeclarationResolveTheWireOnce)
     auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
     preview->setName(u8"preview");
     preview->setCamera(camera);
-    preview->setProgram(vine::graphics::screenCopyProgram());
+    preview->setProgram(vn::graphics::screenCopyProgram());
     preview->addInputName(u8"GBuffer");
     preview->addInput(sampled);
     engine->addPass(preview, 10);
@@ -7303,10 +7303,10 @@ TEST(RenderEngineTest, PromiseAboutATargetThePassDoesNotWriteIsReported)
     ASSERT_EQ(received.size(), 2u);
     for (const auto& diagnostic : received) {
         EXPECT_EQ(diagnostic.category, DiagnosticCategory::ContentSkipped);
-        EXPECT_NE(diagnostic.message.find(u8"drawn_into"), vine::String::npos);
+        EXPECT_NE(diagnostic.message.find(u8"drawn_into"), vn::String::npos);
     }
-    EXPECT_NE(received[0].message.find(u8"promised_coarse"), vine::String::npos);
-    EXPECT_NE(received[1].message.find(u8"promised_fine"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"promised_coarse"), vn::String::npos);
+    EXPECT_NE(received[1].message.find(u8"promised_fine"), vn::String::npos);
 
     // The same broken promise next frame is the same episode: one message each, not one per frame.
     engine->frame(0.016);
@@ -7358,7 +7358,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     by_name->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    by_name->setProgram(vine::graphics::screenCopyProgram());
+    by_name->setProgram(vn::graphics::screenCopyProgram());
     by_name->addInputName(u8"External");
     engine->addPass(by_name, 0);
 
@@ -7369,7 +7369,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     auto by_object = intrusive_ptr<ScreenPass>(new ScreenPass());
     by_object->setName(u8"by_object");
     by_object->setCamera(camera);
-    by_object->setProgram(vine::graphics::screenCopyProgram());
+    by_object->setProgram(vn::graphics::screenCopyProgram());
     by_object->addInput(declared);
     engine->addPass(by_object, 1);
 
@@ -7443,8 +7443,8 @@ TEST(RenderEngineTest, ScreenPassWithAProgramAndNoCameraIsReported)
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"light"), vine::String::npos);
-    EXPECT_NE(received[0].message.find(u8"camera"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"light"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"camera"), vn::String::npos);
     // The report describes what actually happens: nothing was drawn through the program.
     EXPECT_EQ(backend->program_draws - draws_before, 0);
 
@@ -7478,14 +7478,14 @@ TEST(RenderEngineTest, ScreenPassWithoutAnyInputIsReportedOnce)
     consumer->setCamera(camera);
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    consumer->setProgram(vine::graphics::screenCopyProgram());
+    consumer->setProgram(vn::graphics::screenCopyProgram());
     engine->addPass(consumer, 0);
 
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
-    EXPECT_NE(received[0].message.find(u8"overlay"), vine::String::npos);
+    EXPECT_NE(received[0].message.find(u8"overlay"), vn::String::npos);
 
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
@@ -7559,7 +7559,7 @@ TEST(RenderEngineTest, PublishingOneTargetUnderOneNameTwiceIsNotACollision)
     setupLookAtCamera(*camera);
     auto shared_target = RenderTargetPtr(new RenderTarget());
 
-    const auto make_producer = [&camera, &shared_target](const vine::String& name, int order) {
+    const auto make_producer = [&camera, &shared_target](const vn::String& name, int order) {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
         pass->setName(name);
         pass->setCamera(camera);

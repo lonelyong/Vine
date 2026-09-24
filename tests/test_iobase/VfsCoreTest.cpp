@@ -13,12 +13,12 @@
 
 #include "VfsTestSupport.hpp"
 
-using vine::String;
-using vine::io::DirectoryVfs;
-using vine::io::VfsEntryInfo;
-using vine::io::VfsEntryKind;
-using vine::io::IoError;
-using vine::io::ZipArchive;
+using vn::String;
+using vn::io::DirectoryVfs;
+using vn::io::VfsEntryInfo;
+using vn::io::VfsEntryKind;
+using vn::io::IoError;
+using vn::io::ZipArchive;
 using vfstest::bytesOf;
 using vfstest::findInfo;
 using vfstest::TempDir;
@@ -41,21 +41,21 @@ class ReadOnlyProbe : public DirectoryVfs
 
 TEST(VfsCoreTest, ResultCarriesValueOrError)
 {
-    vine::io::Result<int> good{ 7 };
+    vn::io::Result<int> good{ 7 };
     EXPECT_TRUE(good.ok());
     EXPECT_TRUE(static_cast<bool>(good));
     EXPECT_EQ(good.error(), IoError::Ok);
     EXPECT_EQ(good.value(), 7);
     EXPECT_EQ(*good, 7);
 
-    vine::io::Result<int> taken{ 9 };
+    vn::io::Result<int> taken{ 9 };
     EXPECT_EQ(taken.take(), 9);
 
-    vine::io::Result<VfsEntryInfo> info{ VfsEntryInfo{ std::filesystem::path(u8"a/b.txt"), false, 3 } };
+    vn::io::Result<VfsEntryInfo> info{ VfsEntryInfo{ std::filesystem::path(u8"a/b.txt"), false, 3 } };
     EXPECT_EQ(info->path, std::filesystem::path(u8"a/b.txt"));
     EXPECT_EQ(info->size, 3u);
 
-    vine::io::Result<int> bad{ IoError::NotFound };
+    vn::io::Result<int> bad{ IoError::NotFound };
     EXPECT_FALSE(bad.ok());
     EXPECT_FALSE(static_cast<bool>(bad));
     EXPECT_EQ(bad.error(), IoError::NotFound);
@@ -63,10 +63,10 @@ TEST(VfsCoreTest, ResultCarriesValueOrError)
 
 TEST(VfsCoreTest, ErrorNamesAreReadable)
 {
-    EXPECT_STREQ(vine::io::ioErrorName(IoError::Ok), "Ok");
-    EXPECT_STREQ(vine::io::ioErrorName(IoError::InvalidPath), "InvalidPath");
-    EXPECT_STREQ(vine::io::ioErrorName(IoError::NotEmpty), "NotEmpty");
-    EXPECT_STREQ(vine::io::ioErrorName(IoError::CapacityExceeded), "CapacityExceeded");
+    EXPECT_STREQ(vn::io::ioErrorName(IoError::Ok), "Ok");
+    EXPECT_STREQ(vn::io::ioErrorName(IoError::InvalidPath), "InvalidPath");
+    EXPECT_STREQ(vn::io::ioErrorName(IoError::NotEmpty), "NotEmpty");
+    EXPECT_STREQ(vn::io::ioErrorName(IoError::CapacityExceeded), "CapacityExceeded");
 }
 
 TEST(VfsCoreTest, ZipStatReportsKindAndSize)

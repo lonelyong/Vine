@@ -11,7 +11,7 @@
 
 #include <vine/SmallVector.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 /**
  * @brief Joint-space configuration vector.
@@ -20,9 +20,9 @@ V_ROBOTICS_KINEMATICS_NS_BEGIN
  * vector arithmetic used by kinematics solvers: dot product, element-wise
  * operations, concatenation, sub-vectors, norms and scalar scaling.
  */
-class V_ROBOTICS_CORE_API Q : public vine::SmallVector<double, 8> {
+class VN_ROBOTICS_CORE_API Q : public vn::SmallVector<double, 8> {
   public:
-    using MyBase = vine::SmallVector<double, 8>;
+    using MyBase = vn::SmallVector<double, 8>;
 
   public:
     /** @brief Constructs an empty joint vector. */
@@ -391,4 +391,4 @@ class V_ROBOTICS_CORE_API Q : public vine::SmallVector<double, 8> {
     }
 };
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

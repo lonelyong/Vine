@@ -25,12 +25,12 @@ class XMLDocument;
 class XMLElement;
 } // namespace tinyxml2
 
-namespace vine::io
+namespace vn::io
 {
 class Vfs;
-} // namespace vine::io
+} // namespace vn::io
 
-V_ROBOTICS_IO_NS_BEGIN
+VN_ROBOTICS_IO_NS_BEGIN
 
 /**
  * @brief Shared parse/export helpers for the XML device and workcell formats.
@@ -43,7 +43,7 @@ V_ROBOTICS_IO_NS_BEGIN
  * The base class is stateless: every per-operation value lives in the
  * parse/export context, so IO instances are reentrant and safe to reuse.
  */
-class V_ROBOTICS_IO_API XmlIOBase
+class VN_ROBOTICS_IO_API XmlIOBase
 {
   protected:
     /**
@@ -64,7 +64,7 @@ class V_ROBOTICS_IO_API XmlIOBase
         /// Workcell being exported (read-only frame lookups); null otherwise.
         const workcell::Workcell* cell{ nullptr };
         /// Active VFS for package resources (mesh bins); null for bare XML export.
-        vine::io::Vfs* vfs{ nullptr };
+        vn::io::Vfs* vfs{ nullptr };
         /// Directory of the exported document inside the VFS ("" = root).
         std::filesystem::path vfs_dir;
         /// Collected non-fatal warnings.
@@ -72,7 +72,7 @@ class V_ROBOTICS_IO_API XmlIOBase
         /// Sequence number used to generate unique geoms bin names.
         std::size_t geom_seq{ 0 };
         /// Shape -> geoms prefix, so a shared mesh is stored only once.
-        std::map<const vine::geometry::Shape*, String> mesh_paths;
+        std::map<const vn::geometry::Shape*, String> mesh_paths;
 
         explicit ExportContext(ExportOptions& opts)
           : options(opts)
@@ -97,13 +97,13 @@ class V_ROBOTICS_IO_API XmlIOBase
         /// Workcell being filled; null outside a workcell parse.
         workcell::Workcell* cell{ nullptr };
         /// Active VFS for package resources (mesh bins); null for bare XML parse.
-        vine::io::Vfs* vfs{ nullptr };
+        vn::io::Vfs* vfs{ nullptr };
         /// Directory of the parsed document inside the VFS ("" = root).
         std::filesystem::path vfs_dir;
         /// Collected non-fatal warnings.
         std::string msgs;
         /// Device material library by name, for resolving visual references.
-        std::map<String, vine::intrusive_ptr<vine::geometry::Material>> materials_by_name;
+        std::map<String, vn::intrusive_ptr<vn::geometry::Material>> materials_by_name;
 
         explicit ParseContext(ParseOptions& opts)
           : options(opts)
@@ -165,7 +165,7 @@ class V_ROBOTICS_IO_API XmlIOBase
      * @param xe The material element.
      * @return The material, or null when unset.
      */
-    vine::intrusive_ptr<vine::geometry::Material> parseMaterial(ParseContext& ctx, const tinyxml2::XMLElement* xe);
+    vn::intrusive_ptr<vn::geometry::Material> parseMaterial(ParseContext& ctx, const tinyxml2::XMLElement* xe);
 
     /**
      * @brief Parses a <geometry> element.
@@ -174,7 +174,7 @@ class V_ROBOTICS_IO_API XmlIOBase
      * @param xe The geometry element.
      * @return The shape, or null when empty or unsupported.
      */
-    vine::intrusive_ptr<vine::geometry::Shape> parseGeometry(ParseContext& ctx, const tinyxml2::XMLElement* xe);
+    vn::intrusive_ptr<vn::geometry::Shape> parseGeometry(ParseContext& ctx, const tinyxml2::XMLElement* xe);
 
     /**
      * @brief Writes a <geometry> element.
@@ -183,7 +183,7 @@ class V_ROBOTICS_IO_API XmlIOBase
      * @param shape The shape.
      * @param xe The element to append the geometry to.
      */
-    void exportGeometry(ExportContext& ctx, const vine::geometry::Shape& shape, tinyxml2::XMLElement* xe);
+    void exportGeometry(ExportContext& ctx, const vn::geometry::Shape& shape, tinyxml2::XMLElement* xe);
 
     // ---- visual / collision ----
     /**
@@ -284,4 +284,4 @@ class V_ROBOTICS_IO_API XmlIOBase
     void exportDeviceMetadata(ExportContext& ctx, const workcell::DeviceMetadata& metadata, tinyxml2::XMLElement* xe);
 };
 
-V_ROBOTICS_IO_NS_END
+VN_ROBOTICS_IO_NS_END

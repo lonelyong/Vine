@@ -10,7 +10,7 @@
 #include "Point2.hpp"
 #include "Vector3.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 template <typename T>
 class Point2;
@@ -284,4 +284,4 @@ using Point3i    = Point3i32;
 using Point3ui   = Point3ui32;
 using Point3f    = Point3<float>;
 using Point3d    = Point3<double>;
-V_MATH_NS_END
+VN_MATH_NS_END

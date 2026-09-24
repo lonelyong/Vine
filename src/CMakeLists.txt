@@ -9,11 +9,11 @@ if(WIN32)
     #link_directories(${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/$<$<CONFIG:Debug>:Debug>$<$<CONFIG:Release>:Release>)
 endif()
 
-# set(CMAKE_SHARED_LIBRARY_PREFIX vi)
-# # Prefix all static libraries with 'vi'.
-# set(CMAKE_STATIC_LIBRARY_PREFIX vi)
+# set(CMAKE_SHARED_LIBRARY_PREFIX vn)
+# # Prefix all static libraries with 'vn'.
+# set(CMAKE_STATIC_LIBRARY_PREFIX vn)
 
-set(VI_SHARED_LIBRARY_PREFIX vi)
+set(VN_SHARED_LIBRARY_PREFIX vn)
 
 include(VineLibraryHelper)
 include(VinePluginHelper)
@@ -29,6 +29,6 @@ add_subdirectory(robotics)
 add_subdirectory(app)
 add_subdirectory(plugins)
 
-file(GLOB VI_GLOBAL_HEADER_FILES LIST_DIRECTORIES false ${CMAKE_SOURCE_DIR}/include/vine/*.h)
+file(GLOB VN_GLOBAL_HEADER_FILES LIST_DIRECTORIES false ${CMAKE_SOURCE_DIR}/include/vine/*.h)
 
-install(FILES ${VI_GLOBAL_HEADER_FILES} DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/vine)
+install(FILES ${VN_GLOBAL_HEADER_FILES} DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/vine)

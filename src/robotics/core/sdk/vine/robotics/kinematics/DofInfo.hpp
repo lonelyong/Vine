@@ -4,7 +4,7 @@
 
 #include <vine/math/Isometry3.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 enum class DofType
 {
@@ -23,4 +23,4 @@ struct DofInfo {
     double           acceleration_limit{};
 };
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

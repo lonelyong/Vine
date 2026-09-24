@@ -2,7 +2,7 @@
 
 #include "ControlData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Data block of the Window level: what every top-level window's Impl shares.
@@ -16,4 +16,4 @@ V_APPFWGUI_NS_BEGIN
  */
 struct WindowData : public ControlData {};
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

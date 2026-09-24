@@ -1,6 +1,6 @@
 ﻿#include <vine/robotics/workcell/MotionDevice.hpp>
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 MotionDevice::MotionDevice() = default;
 
@@ -75,4 +75,4 @@ void MotionDevice::initMotion(std::unique_ptr<MotionDeviceData> data)
     }
 }
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

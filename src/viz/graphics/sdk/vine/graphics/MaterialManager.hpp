@@ -9,7 +9,7 @@
 #include <vine/RefCounted.hpp>
 #include <vine/raw_ptr.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class Material;
 
@@ -17,7 +17,7 @@ class Material;
  * @brief Abstract material manager converting user materials to backend resources.
  *
  * MaterialManager defines the lifecycle contract for translating a
- * platform-independent vine::graphics::Material (pure attributes) into
+ * platform-independent vn::graphics::Material (pure attributes) into
  * backend-specific rendering resources (e.g. a uniform block the shading
  * reads).
  * Concrete backends implement this interface and own their resource cache:
@@ -29,8 +29,8 @@ class Material;
  * (materialCount() / hasMaterial() / forEachMaterial()) lets callers query
  * which materials are registered without seeing backend types.
  */
-class V_GRAPHICS_API MaterialManager : public Object, public RefCounted<MaterialManager> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API MaterialManager : public Object, public RefCounted<MaterialManager> {
+    VN_OBJECT_META_DECL;
 
   public:
     ~MaterialManager() override = default;
@@ -86,4 +86,4 @@ class V_GRAPHICS_API MaterialManager : public Object, public RefCounted<Material
     MaterialManager() = default;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

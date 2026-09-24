@@ -63,7 +63,7 @@
 > · **剩下的只有 FIFO→LRU 的顺序**。探针 `SceneBridge::noteEviction`（只在裁剪**真的删掉条目**时才 +1）：**正对照 `test_vsg` 28 次**
 > （那条 65 程序的测试）⇒ 探针确实看得见裁剪；**自检 0 次**（churn 相位 `stage_cache=1` 对上限 64）；**app 0 次**。
 > · **坑（差点把 0 次当结论）**：app 的后端是 **dlopen 进来的插件**，gdb 启动时没有那个符号 ⇒ 脚本第 4 行
-> `Function "vine::vsg::SceneBridge::noteEviction" not defined` 直接中止，**`run` 根本没跑**。必须 `set breakpoint pending on`，
+> `Function "vn::vsg::SceneBridge::noteEviction" not defined` 直接中止，**`run` 根本没跑**。必须 `set breakpoint pending on`，
 > **并且**在同一次运行里用一个每帧必中的符号（`VsgRenderer::beginFrame`，命中 **4**）当"断点真的绑上了"的凭据 —— 否则"0 次"与
 > "探针没绑"长得一模一样。自检/test_vsg 是**静态链接**、不需要 pending：**同一个探针，两条装载路径，行为不同**。
 > · **另一个教训**：app 是**事件驱动**的（gdb 下 120 秒只有 **4** 帧），所以"帧数多"不能当"负载跑过"的凭据；缓存压力的属性是
@@ -100,9 +100,9 @@
 
 > 2026-09-16 **R5 结案：appfw 插件注册表的 LSan 报告 —— 抑制，但把“为什么是有意的”一并写进去**
 > 先查证它到底是不是缺陷：`~DynamicLibraryLoader` 的 `d.release()` **是有意的**（注释写明：若按静态析构序在退出时 dlclose 掉插件代码，而 `CommandManager` / `RenderBackendRegistry` 还持着指进插件的 callable / 工厂指针 ⇒ SIGSEGV）。所以这是**保留决定**，不是忘记释放 —— 而 `asan_leaks.supp` 原来的规则（“框架自己的分配一律不许抑制”）恰好把这种情况也堵死了。
-> · 处置：给那份文件加一条**带条件的例外**（“有意保留 **且** 决定写在代码里，可以入表；‘只有几个字节’不是理由”），并新增 `leak:vine::runtime::DynamicLibrary` + 实测数字。
+> · 处置：给那份文件加一条**带条件的例外**（“有意保留 **且** 决定写在代码里，可以入表；‘只有几个字节’不是理由”），并新增 `leak:vn::runtime::DynamicLibrary` + 实测数字。
 > · 收益：后端两条跑法（`test_vsg` **292** 全绿 + 设备自检 55 行证据全跑完）现在都用**全或无**泄漏判据 PASS —— 比 R2 当时的 `VINE_ASAN_LEAK_SCOPE` **更强**（scope 会把同一轮里别的泄漏一起放过）。scope 开关保留，但降级为“还没 excuse 的泄漏”的备用手段。
-> · **证据**：`LSAN_OPTIONS=…:print_suppressions=1` ⇒ `Suppressions used: count 16 bytes 808 template vine::runtime::DynamicLibrary`（**只有**这一类被匹配）。
+> · **证据**：`LSAN_OPTIONS=…:print_suppressions=1` ⇒ `Suppressions used: count 16 bytes 808 template vn::runtime::DynamicLibrary`（**只有**这一类被匹配）。
 
 > 2026-09-16 **H4 落地：宿主真的开始“跟着走”了（C1 的另一半），且这件事终于可判**
 > 原计划是“把 `initializeBackend()` 里的 `shutdown()` 换成重新公告句柄”。查下去发现**宿主有两处在拆会话**：`initializeBackend()` 的“句柄变了”分支，**以及** `onSurfaceDestroyed()`（Qt 的 `SurfaceAboutToBeDestroyed`）。只要后者还在，前者改得再对也没用 —— 真实路径（Qt 重建窗口）先经过它。两处都改：`onSurfaceDestroyed()` 只标记 `surface_ok=false`（渲染由 `renderFrame()` 既有的“句柄/可见性”守卫拦住），会话留着等新句柄；`initializeBackend()` 在新句柄到来时**重新公告**（`setWindowHandle` + `initialize`），由后端的 `initialize()` 自己决定搬还是重建；`init()` 的幂等返回改成“句柄匹配才算已绑定”。
@@ -139,12 +139,12 @@
 > 2026-09-16 **R1 + R2 落地（审查轮次 4 的头两条）**
 > **R1 平台重复收成一份**：`VsgHostWindow.cpp` **315 → 110 行**、`.cpp` 里**零** `#if`。做法：新增 `VsgHostHandle`（`xcb_window_t` / `HWND`）与 `hostHandleFromVoid(void*)`（头文件里的 4 行 `#if`），类体只写一遍；`makeWindowTraits` 的两处句柄转换也改用它。**两次编译拒绝（标准限制，不是风格问题）**：① `reinterpret_cast<uint32_t>(void*)` ⇒ "cast from pointer to smaller type loses information"；② `reinterpret_cast<uint32_t>(uintptr_t)` ⇒ "reinterpret_cast from integer to integer is not allowed" ⇒ 那个 4 行 `#if`（X11 用 `static_cast` 收窄 / Win32 用 `reinterpret_cast` 取指针）**不可消除**。顺带删掉 `.cpp` 里 A6 派生重构后的残留 include（`vulkan/vulkan_{xcb,win32}.h`、`xcb/xcb.h` —— surface 现在建在基类里），空句柄判定从 `_window == 0` 改成 `hostHandle() == nullptr`（两平台同一写法，也不怕 `-Wzero-as-null-pointer-constant`）。判据：build 0/0、289/272/82、include 卫生 0、**证据 55 行逐字不变**、lavapipe PASS 0 VUID（自检 host-surface 相位就是这条转换的端到端门禁）。
 > **R2 后端进 ASan 门禁**：脚本本来就为 `test_vsg` 加建 `gfx_backend_vsg`（今天才知道 —— 手工 `ninja` 少了这步会让 `VsgBackendPluginTest` 两条假红），真正的卡点是**泄漏判据全或无**：`test_vsg` 链 appfw 插件管理器，`DynamicLibraryLoader` 单例必报 ⇒ 后端结论被遮住。新增 `VINE_ASAN_LEAK_SCOPE`（grep -E 模式）：只有“栈里没有任何一句匹配它”的泄漏才**报出但不判**；内存错误与测试失败永不豁免。两条跑法写进脚本头。
-> · 实测：`VINE_ASAN_TARGET=test_vsg VINE_ASAN_FILTER='*' VINE_ASAN_LEAKS=1 VINE_ASAN_LEAK_SCOPE='vine::vsg' scripts/asan_check.sh` ⇒ 289 全绿 + `RESULT: PASS (scope 'vine::vsg' clean; …)`，唯一报告（appfw loader，808 B / 16 次）**显式打出来**；`VINE_ASAN_TARGET=vsg_backend_selftest … VINE_ASAN_LEAK_SCOPE='vine::vsg|vine::graphics|selftest::'` ⇒ 自检 **55 行证据 + `[selftest] done` 全跑完、零报告**（设备路径：会话建立 / 搬移 / shutdown + 目标物化）。
+> · 实测：`VINE_ASAN_TARGET=test_vsg VINE_ASAN_FILTER='*' VINE_ASAN_LEAKS=1 VINE_ASAN_LEAK_SCOPE='vn::vsg' scripts/asan_check.sh` ⇒ 289 全绿 + `RESULT: PASS (scope 'vn::vsg' clean; …)`，唯一报告（appfw loader，808 B / 16 次）**显式打出来**；`VINE_ASAN_TARGET=vsg_backend_selftest … VINE_ASAN_LEAK_SCOPE='vn::vsg|vn::graphics|selftest::'` ⇒ 自检 **55 行证据 + `[selftest] done` 全跑完、零报告**（设备路径：会话建立 / 搬移 / shutdown + 目标物化）。
 > · **顺手修的门禁缺陷**：`asan_check.sh` 里 `sed -E 's|(^|/)clang\+\+|\1clang|'` 的**分隔符与模式里的 `|` 撞车** ⇒ sed 报 “unknown option to `s'”、编译器名推导**从未生效**（一直回退到 PATH 扫描）。改成 `s#…#…#`。属于“门禁自己撒谎”那一类：**`sed` 用 `|` 当分隔符时，模式里不能再出现 `|`**。
 
 > 2026-09-16 **审查轮次 4：后端 + SDK 复看（只读，无代码改动；候选登记为 R1–R4）**
 > **泄漏这条的判据是跑出来的，不是看出来的**：`build-asan` 里 vsg 目标**一个都没建**（脚本默认 `VINE_ASAN_TARGET=test_gui`），今天手工补建（`ninja -C build-asan test_vsg vsg_backend_selftest`，1m55s，0 error）后跑 LSan：
-> · `ASAN_OPTIONS=detect_leaks=1 ./build-asan/bin/test_vsg` ⇒ **289 全绿**，泄漏报告**唯一一条在 appfw**（`vine::appfw::PluginManager::loadAll` → `DynamicLibraryLoader` 单例，808 B / 16 次分配，栈里**零 vsg 帧**）；
+> · `ASAN_OPTIONS=detect_leaks=1 ./build-asan/bin/test_vsg` ⇒ **289 全绿**，泄漏报告**唯一一条在 appfw**（`vn::appfw::PluginManager::loadAll` → `DynamicLibraryLoader` 单例，808 B / 16 次分配，栈里**零 vsg 帧**）；
 > · `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json ASAN_OPTIONS=detect_leaks=1 ./build-asan/bin/vsg_backend_selftest` ⇒ **exit 0、0 条 sanitizer 报告**（会话建立/搬移/退役环/缓存/编译租约全过）。
 > · **坑**：ASan 树里不先建插件 ⇒ `VsgBackendPluginTest` 两条假红（"gfx_backend_vsg plugin should have registered the 'vsg' backend"），`ninja -C build-asan gfx_backend_vsg` 之后 4/4 绿。所以 **R2** = 把后端纳入 ASan 门禁 + 决定 appfw 那个单例抑制还是修。
 > **R1（平台重复）怎么量出来的**：把 `VsgHostWindow.cpp` 两个 `#if` 分支各自抽出（各 ~93 行）、归一化平台词汇后 `diff` ⇒ **真正因平台不同的代码只有 3 处**（`hostHandle()` 的两种 cast、空句柄判定 `== nullptr`/`== 0`、`next` 的两种转换），其余**逐字相同**，而两份注释已经开始漂移（`xcb_destroy_window` vs `DestroyWindow` + `UnregisterClass`）。收成一份约 **−85 ~ −90 行**，`#if` 只留在头文件的 typedef/include 上。
@@ -388,9 +388,9 @@
 >   `vine_shader_check.sh` 需要 Linux `glslangValidator`（本机只有 Windows exe）⇒ 无法运行，着色器编译由
 >   `test_vsg` 的 `GlslCompileTest` 覆盖。
 
-> 2026-09-14 **着色器内的插值变量前缀 `v_` → `vine_`**（补上 2026-09-13「着色器内标识符前缀统一 `vine_`」的尾巴）
-> - `src/viz/graphics/shaders/` 下 9 个源文件全改：`v_uv` → `vine_uv`、`v_view_pos` → `vine_view_pos`、
->   `v_view_normal` → `vine_view_normal`、`v_color` → `vine_color`、`v_texcoord` → `vine_texcoord`、`v_dir` → `vine_dir`。
+> 2026-09-14 **着色器内的插值变量前缀 `vn_` → `vine_`**（补上 2026-09-13「着色器内标识符前缀统一 `vine_`」的尾巴）
+> - `src/viz/graphics/shaders/` 下 9 个源文件全改：`vn_uv` → `vine_uv`、`vn_view_pos` → `vine_view_pos`、
+>   `vn_view_normal` → `vine_view_normal`、`vn_color` → `vine_color`、`vn_texcoord` → `vine_texcoord`、`vn_dir` → `vine_dir`。
 >   顶点输入本来就是 `vine_Vertex` / `vine_Normal` / `vine_Color` / `vine_TexCoord0`，现在着色器里的标识符
 >   不分输入 / 输出 / 插值，一律 `vine_`。
 > - 同步改：**ABI 文档**（`BuiltinShaders::fullscreenVertexProgram`、`ScreenPass::setProgram`、
@@ -447,7 +447,7 @@
 
 > 2026-09-13 **全屏着色也归 SDK：`ScreenPass` 必须命名 program，后端不再有 shader**
 > - **删掉的东西**：`RenderBackend::drawScreenTexture`（两个重载）、`VsgRenderer::drawScreenTexture`、`detail::drawScreenTexture`、`makeScreenTextureNode`、`ScreenPass::{setSourceAttachment,sourceAttachment,attachmentToSample}`、后端槽表 `ScreenSlot`/`screen_slots`/`SlotKind::Screen`、以及**整个 `src/plugins/gfx_backend_vsg/shaders/`**。清单 `cmake/VineShaders.cmake` 从两个 owner 变成一个（7 个源全在 `vine/graphics/EmbeddedShaders.hpp`）。
-> - **新增**：`BuiltinShaders::fullscreenVertexProgram()`（顶点段 + v_uv 的 ABI 写成文档）与 `screenCopyProgram(int attachment = 0)`（片元段；**binding 就是附件**，N≠0 时替换 `layout(binding = 0)` 那一行，靠被单测钉住的 marker）。全屏只剩**一条**路径：`drawScreenProgram`。
+> - **新增**：`BuiltinShaders::fullscreenVertexProgram()`（顶点段 + vn_uv 的 ABI 写成文档）与 `screenCopyProgram(int attachment = 0)`（片元段；**binding 就是附件**，N≠0 时替换 `layout(binding = 0)` 那一行，靠被单测钉住的 marker）。全屏只剩**一条**路径：`drawScreenProgram`。
 > - **规则**：`ScreenPass` 没有 program ⇒ 不画 + 接线期报一次（"no program"）；接线检查按修复顺序 `continue`：没有 program → 没有输入 → 没有相机。**phase 3b 删除**（"无 program 只能采一张彩色附件"）：原来被它报的"只声明深度"现在合法。
 > - **判据**：**证据基线 53 行逐字节不变**（PiP/合成/深度共享全不动 ⇒ 换绑定路径不改画面）；test_graphics 248；test_vsg 252 → **251**（`EmbeddedShadersTest` 5 条 → `OverlayStagesTest` 4 条）；`vine_shader_check` PASS（7，全 SDK）；lavapipe PASS。
 > - **坑 1（lavapipe 抓到，证据行却是绿的）**：给直驱屏幕画补 pass scope 时把 `RenderPassPtr` 建在帧循环里 ⇒ 每帧新身份 ⇒ 旧槽管线/图像在飞行中被释放 ⇒ `VUID-vkDestroyImage/Pipeline-*`。后端按 **pass 指针**认槽，pass 对象必须比帧活得久（引擎就是这么做的）。
@@ -497,7 +497,7 @@
 
 > 2026-09-13 **FlatShaded 进 SDK（P1 第一步）+ 像素级钉住"平直"**
 > - `builtinProgram(FlatShaded)` 不再是 null：**同一对 stage**，片元源里注入 `#define VINE_FLAT 1`（`withDefine()`：**必须插在 `#version` 之后**——放前面是 GLSL 语法错，而编译失败会被"回落内建集"静默吃掉：第一版就这么画出了 vsg flat 的无光照材质色）。
-> - `std_forward.frag` 增 `VINE_FLAT` 分支：法线用 `cross(dFdy(v_view_pos), dFdx(v_view_pos))`（面法线）。**叉乘顺序必须是这个**：Vulkan 帧缓冲行向下生长，`dFdx × dFdy` 得到的是背向相机的法线（实测：朝向相机的面一直停在大气项，换序后才是受光的）。
+> - `std_forward.frag` 增 `VINE_FLAT` 分支：法线用 `cross(dFdy(vn_view_pos), dFdx(vn_view_pos))`（面法线）。**叉乘顺序必须是这个**：Vulkan 帧缓冲行向下生长，`dFdx × dFdy` 得到的是背向相机的法线（实测：朝向相机的面一直停在大气项，换序后才是受光的）。
 > - 新相位 `runPresetShadingPixelPhase`（取代原 preset-fallback 相位）两半都断言：①Pbr 回落内建 phong 集 → 必须受光（按 set 决定灯源）；②同一块四边形用**背向光源的作者法线**：平滑 preset 只剩大气项（42），flat 必须明显更亮（765）——**这才真的钉住"平直"**（否则平面四边形上两者同值）。
 > - 着色门禁的 `VARIANT_DEFINES` 加 `VINE_FLAT`（7 shader × 8 组合全编）。
 > - 判据：两条基线 49 → **50 行**（第 48 行因相位改用平行光而变值，其余逐字节不变）；build 0/0；test_vsg 243 → **244**；test_graphics 240；`vine_shader_check` PASS。
@@ -526,7 +526,7 @@
 > - 判据：build 0/0；`vine_shader_check` PASS（7）；test_vsg 240 → **241**；test_graphics 240；两条基线 PASS；lavapipe PASS。
 
 > 2026-09-13 **P10 前半：forward 路径接通透明度（已被上面取代，保留作教训）**
-> - 做法：`std_forward.frag` 在 `VINE_VERTEX_COLOR` 下 `alpha *= v_color.a`，载体 alpha 由 SceneBridge 按 `cmd.opacity` 维护；`drop_color` 仅在 `opacity >= 1` 时成立；opacity 跳 1 计入 state 身份。
+> - 做法：`std_forward.frag` 在 `VINE_VERTEX_COLOR` 下 `alpha *= vn_color.a`，载体 alpha 由 SceneBridge 按 `cmd.opacity` 维护；`drop_color` 仅在 `opacity >= 1` 时成立；opacity 跳 1 计入 state 身份。
 > - **为什么被取代**：这条路在 forward 上根本没通（见上）。教训：**"CPU 侧写了正确的字节"不等于"着色器读到它"** —— 一个只看结构（绑了哪些属性、变体文本）的断言会全绿而画面纹丝不动；像素级差分才是判据。
 > - 单测 +1（透明 → 4 条顶点绑定）已被换成 `OpacityIsNotPartOfTheVariantIdentity`（透明 = 不透明，2 条绑定）。
 > - **同一条教训的第二次实证（同日，cube 方向槽）**：`std_forward.*` 用了 `#ifdef VINE_DIFFUSE_MAP` / `VINE_VERTEX_COLOR`，但源码缺 `#pragma import_defines`，而 vsg 只对 pragma 列出的名字发 `#define` ⇒ 两个分支**从未编译过**（内建 forward 路径一直不采样、不读顶点色），而全部结构性门禁（断言 define 名字出现在 stage 里）**全绿**。修法：加 pragma（必须在 `#version` 之后）；新门禁两条 —— `ForwardShaderSetTest::TheForwardStagesAskForEveryDefineTheBackendCanSet`（后端会设的每个 define 必须在 pragma 列表里）+ selftest 的 `built-in sampling` 相（**不设 program**，由引擎自己的 shader 采样一张双色 2D 贴图和一个六色 cube；变异验证：删 pragma 两行都 FAIL，只删 `VINE_TEXCOORD_CUBE` 则只有 cube 行 FAIL）。
@@ -588,12 +588,12 @@
 
 > 2026-09-13 **着色器文件化 + 构建期嵌入（P12）**：产品 shader 从 C++ 字符串搬进真文件，构建期嵌进二进制；死文件
 > `flat.*`（含两个提交进仓库的 `.spv`）删除。清单在**顶层** `cmake/VineShaders.cmake`（生成规则必须在顶层：`tests/test_vsg`
-> 直接编译插件源码，要能依赖同一个生成头文件）→ 机制 `cmake/VineShaderHelper.cmake`（`v_declare_embedded_shaders` /
-> `v_use_embedded_shaders`）→ 生成器 `cmake/v_embed_shaders.cmake`（`cmake -P`，写 `inline constexpr std::u8string_view`
+> 直接编译插件源码，要能依赖同一个生成头文件）→ 机制 `cmake/VineShaderHelper.cmake`（`vn_declare_embedded_shaders` /
+> `vn_use_embedded_shaders`）→ 生成器 `cmake/VineEmbedShaders.cmake`（`cmake -P`，写 `inline constexpr std::u8string_view`
 > + `Entry{name,hash,bytes}` 表）。为什么不用 `file(READ)` + `CMAKE_CONFIGURE_DEPENDS`：那样每次改 shader 都整包
 > reconfigure（实测 ~15s），而 `-P` + `add_custom_command` 拿的是 ninja 原生依赖追踪（改 `.glsl` 只重编依赖它的 TU，
 > 改生成器本身也会重新生成），且内容没变就不重写头文件（否则 touch 一下 `.glsl` 引发一串重编）。
-> 类型口径：`ShaderStage::source` 是 `vine::String`（内部 `std::u8string`）⇒ `String(kX)`；vsg 侧要 `std::string`
+> 类型口径：`ShaderStage::source` 是 `vn::String`（内部 `std::u8string`）⇒ `String(kX)`；vsg 侧要 `std::string`
 > ⇒ `asShaderSource(kX)`（`vine/vsg/VsgUtils.hpp`，GLSL 是 ASCII 的逐字节视图）。
 > **新门禁** `scripts/vine_shader_check.sh`：每个 shader × 4 种 define 变体（`VINE_VERTEX_COLOR` / `VINE_DIFFUSE_MAP`）
 > 过 glslangValidator + 嵌入副本的 SHA-256 前缀与字节数必须与磁盘一致 + 每个 `*/shaders/*` 文件必须在清单里。
@@ -715,7 +715,7 @@
 > 调用点都遵守一次性消费（每个公告后恰好一次绘制）、`beginPass/endPass` 全成对、`ScreenPass` 两条 draw 前都设
 > target ⇒ 契约脆弱处不在现有调用点，而在"契约允许一个作用域画多次、viewport/lights 却只能消费一次"（自定义
 > `RenderPass` 覆写画第二次就静默丢 viewport/灯，登记不修）。**已修 2 条**：**D52** `initialize()` 的 null-window
-> 失败绕过诊断通道（只 `V_LOGE`，而契约写的是"false 也要在诊断通道报原因"）⇒ 补 `InitFailed` 上报；**D53**
+> 失败绕过诊断通道（只 `VN_LOGE`，而契约写的是"false 也要在诊断通道报原因"）⇒ 补 `InitFailed` 上报；**D53**
 > `addDeferredDemo` 的 `ScreenPass` 没绑内容场景 ⇒ `setLights` 不执行 ⇒ 延迟预览只有 0.15 平坦环境光、零方向光
 > （而该函数文档写着"灯是内容场景自己的"；builder 的同一 pass 绑了 `content_`）⇒ `addPass(light, scene, 130)`。
 > **已登记 5 条**：D54 部分灯不可用静默丢（只有全不可用才报，`attached<announced` 可判）· D55 `outputs_` 同名
@@ -786,7 +786,7 @@
 > 0.15）从 `VsgOverlay.cpp` 的匿名命名空间提进 `detail`，声明+文档进 `VsgOverlay.hpp`，定义留 TU。**判词**：
 > 它们决定画面却只在整帧里被执行过 —— 光方向错是「光照看着不对」，`projparms` 错是「深度重建位置偏」，退化
 > 相机（eye==target、up 平行视线）错是 **NaN 进 push 常量**。**踩坑**：`LightPushBlock` 在 `detail` 里，第一版
-> 前向声明写在 `vine::vsg` ⇒ 测试拿到的是那个**永远不完整**的外层声明（16 个 incomplete type）；**名字的真身
+> 前向声明写在 `vn::vsg` ⇒ 测试拿到的是那个**永远不完整**的外层声明（16 个 incomplete type）；**名字的真身
 > 在哪个 namespace，声明就得写在哪**。新测 11 例（右手基 + 正交性 + 两个退化兜底 + 清零 + 透视参数 + 正交相机 +
 > ambient 默认 + view space 光方向 + 禁用/null 不占槽 + 第四个方向光被丢弃）⇒ `test_vsg` 119 → **130**。
 
@@ -815,7 +815,7 @@
 > "它是类的行为，还是状态的取用？"。**踩坑**：①文档挂在 `template <class Slot>` 之上 ⇒ 向上找文档被 template
 > 行挡住，文档没搬、类头留下孤立 doc（靠**备份**取回）；②断言写得太糙（`OverlayDestination` 是
 > `resolveOverlayDestination` 的子串）⇒ 改"计数配平"；③**又一次吃掉最后一个函数的 `}`**（收尾替换
-> `\n}\n\nV_VSG_NS_END`）⇒ 护栏补一条：**收尾替换必须保证函数右括号与命名空间右括号都在**。
+> `\n}\n\nVN_VSG_NS_END`）⇒ 护栏补一条：**收尾替换必须保证函数右括号与命名空间右括号都在**。
 > **§50 收尾**：七个概念全部落地 ⇒ `VsgRenderer` 从 2096 行类体 + 四个上千行 TU 收敛到 **579 行类头** +
 > **两个自己的 TU**（`VsgRenderer.cpp` 830 帧泵+委派 / `VsgRendererPasses.cpp` 150 pass 协议）。**必须留下**的
 > 判定标准：`RenderBackend` 覆写、pass 请求状态机（§28 调用顺序契约）、帧泵、`state = VsgRendererState{};`
@@ -838,7 +838,7 @@
 > `resolveOverlayDestination` 里就调 `buildOffscreenTarget` / `retargetPass`）⇒ **批次顺序 = 依赖方向**。
 > **脚本教训**：函数体必须包进 `namespace detail { ... }`（只加 `using namespace detail;` 会定义出一批
 > **新**函数 ⇒ ambiguous / no member named in namespace detail）；**"内存里删过"不等于"文件里删过"**
-> （后面 `read()` 又读了回来）；新 TU 拿不到 `V_LOGI`（以前靠 `VsgRenderer.hpp` 传递包含）⇒ 显式 include，
+> （后面 `read()` 又读了回来）；新 TU 拿不到 `VN_LOGI`（以前靠 `VsgRenderer.hpp` 传递包含）⇒ 显式 include，
 > **"一个头一个 TU"继续逼出自足**；备份救过一次内存里丢掉的文档。**顺带清旧债**：批次 5 留下的僵尸声明
 > `dropDepthSamplingProgramSlots`；类私有区里被遗忘的 `SlotKey` 身份说明（搬到 `struct SlotKey` 头上）。
 > **⑥ 采样/摆放 `VsgOverlay`(119/744)** —— 见下一条。**⚠ 事故**：搬运脚本把 `\n` 写成字面量 ⇒> `VsgRenderer.cpp` 变 1 行；靠 VS Code 本地历史 + 去空白 token 级 diff **精确**恢复。**护栏**：`chr(10)`
@@ -901,7 +901,7 @@
 > 的头才放（像库那样），目前为空/不存在；`src/` 只留 `.cpp`。做法：`git mv` 五个头（`VsgPipelineFactory` /
 > `VsgBackendUtility` / `VsgUtils` / `SceneBridgeInternals` / `GfxBackendVsgPlugin`）进 `include/vine/vsg/`，
 > 26 处 include 改 `<vine/vsg/X.hpp>`，**清掉 `tests/test_vsg` 与 `vsg_backend_selftest` 里手工加的插件 `src/`
-> 包含路径**（它们本来就是为了这些头）。**为什么这不等于发布私有头**：`v_add_plugin` 的 PUBLIC 只是"本构建
+> 包含路径**（它们本来就是为了这些头）。**为什么这不等于发布私有头**：`vn_add_plugin` 的 PUBLIC 只是"本构建
 > 可见"，**没有任何 install 规则安装插件头**，宿主只经 `RenderBackend` SDK 接口拿渲染器。验收同前。
 
 > 2026-09-12 **去掉 `VsgRenderer` 的 PImpl（设计 §44）**：事实 —— `vine/vsg/VsgRenderer.hpp` 只被插件自己的
@@ -1047,7 +1047,7 @@
 > ⇒ 公开头可写），定义在本 TU（两个实例化点都在此）。行数：`drawScreenTexture` 194→**169**、
 > `drawScreenProgram` 222→**199**（相对 §32 之前 226/247 降了 57/48），TU 724→705。
 > 有意保留的差异：源校验（PiP attachment 钳位 / program 深度提升报告）、key 构造、矩形策略
-> （PiP 自动贴右下 / program 只钳位）、节点工厂与 `V_LOGI` 文案 —— 再合并只会把差异藏进参数。
+> （PiP 自动贴右下 / program 只钳位）、节点工厂与 `VN_LOGI` 文案 —— 再合并只会把差异藏进参数。
 > 验收同前：`[selftest]` 行逐字节相同 + VUID 0/FAIL 0 + test_vsg 100 / test_graphics 158 + 门禁 PASS。
 
 > 2026-09-12 **重构残留检查（设计 §35）**：§33 把一次性提交收进 `Impl::submitOneShot()` 后留下两处
@@ -1376,7 +1376,7 @@
 > 2026-09-11 **后端模块拆分（结构，行为零变更）**：`VsgRenderer.cpp` 3603 -> 901 行，
 > 按职责拆成 `VsgRendererPasses/Targets/Overlay.cpp` + `VsgRenderer.hpp`（会话态；
 > §47 后会话态在 `include/vine/vsg/VsgRendererState.hpp`）
-> + `VsgPipelineFactory.{hpp,cpp}`（纯工厂，`vine::vsg::detail`）+ `VsgBackendUtility.*`
+> + `VsgPipelineFactory.{hpp,cpp}`（纯工厂，`vn::vsg::detail`）+ `VsgBackendUtility.*`
 > （图手术/设备同步/策略）。置放规则：纯工厂只依赖显式参数、只返回失败原因；会话态改
 > `VsgRenderer.hpp`；跨 TU 自由函数进 `detail`（各 TU `using namespace detail;`）。
 > 顺手修正漂移的文档注释与 `LightPushBlock` 的编译期断言位置。设计 §13。
@@ -1807,20 +1807,20 @@ Object
 ## 边界框类型（Aabbd）
 
 - `Scene/Node/Drawable/Geometry::boundingBox()` / `computeBoundingBox()` 返回
-  `vine::math::Aabbd`（`Rect3<double>` 别名，见 `vine/math/Rect3.hpp`）。
-  原来的 `vine::graphics::BoundingBox` 已移除。
+  `vn::math::Aabbd`（`Rect3<double>` 别名，见 `vine/math/Rect3.hpp`）。
+  原来的 `vn::graphics::BoundingBox` 已移除。
 - **语义**：`Rect3` 默认构造为零点在原点的合法零盒；累积式构建必须用
   `Aabbd::empty()`（反转哨兵）起步，再用 `expandBy(Point3/Vector3/Rect3)`。
   空盒 `isEmpty()==true`、`isValid()==false`。
 - **注意**：`Rect3.hpp` 只前向声明 `Point3/Vector3`，`min()/max()/center()/size()`
   的调用方需自行 include `vine/math/Point3.hpp`/`Vector3.hpp`；
-  `vine::math::Point3d` 别名仅定义于 `Point3.hpp`。
+  `vn::math::Point3d` 别名仅定义于 `Point3.hpp`。
 
 ## 设计特点
 
 ✓ **引用计数**：所有核心类（含 `CameraManipulator`）继承 `RefCounted<T>`，用
   `intrusive_ptr` 管理
-✓ **借用/所有权分界**：getter 返回与“不 retain”的借用入参用 `vine::raw_ptr<T>`；
+✓ **借用/所有权分界**：getter 返回与“不 retain”的借用入参用 `vn::raw_ptr<T>`；
   会 retain（存入 owning 字段/容器）的 setter/add 入参用 `intrusive_ptr<T>`
   （by value + std::move，如 `setMaterial`、`Node::addChild`、`setScene`）；
   引擎持有操纵器经 `setCameraManipulator(intrusive_ptr<...>)`，`cameraManipulator()` 返 `raw_ptr`
@@ -1913,7 +1913,7 @@ GPU 资源（format/mip/sampler/usage）→ `graphics`。
 + 每 face 一张 `imaging::Image` 源图；`Shape{D2,Cube}`（**只做这两个**，不做 1D/3D/array）；
 源图必须与描述在 format/size/mipCount **三项都一致**（不一致在**调用处**就拒绝，不让后端到上传时才发现）；
 mip 上限**复用** `imaging::Image::mipCapacity`；写越界 face 抛 `std::out_of_range`、读越界 face 返回 null
-（查询不是错误）。`graphics` 现在 **PUBLIC 依赖 `vi::Imaging`**。
+（查询不是错误）。`graphics` 现在 **PUBLIC 依赖 `vn::Imaging`**。
 `Material`：删 `textureFile()/setTextureFile()`（死 API），改 `texture()/setTexture()`。
 
 **判据**：`test_graphics` **191 → 200**（+9 = 8 个 `TextureTest` + 1 个 `MaterialTest`）；

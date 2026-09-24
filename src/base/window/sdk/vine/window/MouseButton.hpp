@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-V_WINDOW_NS_BEGIN
+VN_WINDOW_NS_BEGIN
 
 /**
  * @brief Mouse buttons reported by a pointing device.
@@ -21,8 +21,8 @@ enum class MouseButton : std::uint32_t {
 /**
  * @brief Bit flags describing the modifier keys held when an event occurred.
  *
- * Use the V_ENABLE_ENUM_FLAGS bitwise operators, e.g. `Shift | Control`, and
- * test with vine::testFlag().
+ * Use the VN_ENABLE_ENUM_FLAGS bitwise operators, e.g. `Shift | Control`, and
+ * test with vn::testFlag().
  */
 enum class ModifierKey : std::uint32_t {
     None    = 0,
@@ -32,6 +32,6 @@ enum class ModifierKey : std::uint32_t {
     Super   = 1 << 3,  ///< Windows key / Command key.
 };
 
-V_ENABLE_ENUM_FLAGS(ModifierKey)
+VN_ENABLE_ENUM_FLAGS(ModifierKey)
 
-V_WINDOW_NS_END
+VN_WINDOW_NS_END

@@ -47,19 +47,19 @@
 #include <vine/vsg/core/Streams.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 
-using vine::vsg::BlockDescriptors;
-using vine::vsg::BlockStorage;
-using vine::vsg::ContentDraw;
-using vine::vsg::ContentPipeline;
-using vine::vsg::OffscreenTarget;
-using vine::vsg::StreamUploads;
-using vine::vsg::ViewportRect;
-using vine::vsg::core::PixelProbe;
-using vine::vsg::core::PipelineKey;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::StreamKey;
-using vine::vsg::core::StreamKind;
-using vine::vsg::core::VariantPool;
+using vn::vsg::BlockDescriptors;
+using vn::vsg::BlockStorage;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentPipeline;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::StreamUploads;
+using vn::vsg::ViewportRect;
+using vn::vsg::core::PixelProbe;
+using vn::vsg::core::PipelineKey;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::StreamKey;
+using vn::vsg::core::StreamKind;
+using vn::vsg::core::VariantPool;
 
 namespace
 {
@@ -130,7 +130,7 @@ struct Fixture
 {
     static constexpr float kClear[4]{ 0.0F, 0.0F, 0.25F, 1.0F };
 
-    vine::vsg::DeviceResult                created;
+    vn::vsg::DeviceResult                created;
     std::unique_ptr<OffscreenTarget>       target;
     std::unique_ptr<BlockStorage>          storage;
     std::unique_ptr<BlockDescriptors>      descriptors;
@@ -145,7 +145,7 @@ struct Fixture
 
     bool build()
     {
-        created = vine::vsg::createDevice();
+        created = vn::vsg::createDevice();
         if (!created.ok) {
             return false;
         }
@@ -160,8 +160,8 @@ struct Fixture
             return false;
         }
         const ContentPipeline::Shaders shader_pair = contentShaders();
-        vine::vsg::ProgramAbi            abi;
-        if (vine::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vine::vsg::FactMiss::None) {
+        vn::vsg::ProgramAbi            abi;
+        if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::vsg::FactMiss::None) {
             return false;
         }
         descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
@@ -184,7 +184,7 @@ struct Fixture
         // command skips the polygon-mode and blend calls, and the pipeline's create-info values would be the
         // picture - which is not what the phase is testing.
         recorder = std::make_unique<ContentDraw>(*pipelines, pool,
-                                                 vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                                                 vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
                                                                                                  created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();
@@ -288,13 +288,13 @@ Pixel pixelAt(float x_ndc, float y_ndc)
              static_cast<int>((y_ndc + 1.0F) * 0.5F * static_cast<float>(kSize)) };
 }
 
-bool isGreen(const vine::vsg::core::Rgba8& pixel)
+bool isGreen(const vn::vsg::core::Rgba8& pixel)
 {
     return pixel.g > 200U && pixel.r < 60U && pixel.b < 60U;
 }
 
 /// @brief Whether @p pixel is the target's clear colour (0, 0, 0.25) within a UNORM step.
-bool isClear(const vine::vsg::core::Rgba8& pixel)
+bool isClear(const vn::vsg::core::Rgba8& pixel)
 {
     const auto near = [](std::uint8_t value, int expected) {
         return std::abs(static_cast<int>(value) - expected) <= 2;

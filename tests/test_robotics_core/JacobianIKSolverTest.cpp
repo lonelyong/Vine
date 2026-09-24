@@ -12,9 +12,9 @@
 
 #include <cmath>
 
-using namespace vine;
-using namespace vine::math;
-using namespace vine::robotics::kinematics;
+using namespace vn;
+using namespace vn::math;
+using namespace vn::robotics::kinematics;
 
 // =============================================================================
 // Helper: forward kinematics (same convention as the solver)

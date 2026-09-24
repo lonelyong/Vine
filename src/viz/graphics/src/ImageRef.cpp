@@ -1,8 +1,8 @@
 #include <vine/graphics/ImageRef.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(ImageRef, vine::Object);
+VN_OBJECT_META_IMPL(ImageRef, vn::Object);
 
 ImageRef::ImageRef(const String& label, Kind kind) : label_(label), kind_(kind) {}
 
@@ -43,4 +43,4 @@ bool ImageRef::isBound() const noexcept
     return target_ != nullptr;
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

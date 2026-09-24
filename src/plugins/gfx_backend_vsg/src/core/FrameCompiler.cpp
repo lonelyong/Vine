@@ -4,17 +4,17 @@
 #include <cstddef>
 #include <string>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
 namespace
 {
 
-/// @brief Builds a `vine::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
-vine::String asString(const std::string& text)
+/// @brief Builds a `vn::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
+vn::String asString(const std::string& text)
 {
-    return vine::String(reinterpret_cast<const char8_t*>(text.c_str()));
+    return vn::String(reinterpret_cast<const char8_t*>(text.c_str()));
 }
 
 /// @brief Whether the target's attachments are being (re)built this frame, so the first pass in must clear.
@@ -43,7 +43,7 @@ bool writes(const CollectedPass& pass) noexcept
 CompiledShape copiedShape(FrameArena& arena, const TargetShape& shape)
 {
     CompiledShape copy;
-    copy.color_formats = arena.copy(std::span<const vine::graphics::RenderTarget::ColorFormat>{ shape.color_formats });
+    copy.color_formats = arena.copy(std::span<const vn::graphics::RenderTarget::ColorFormat>{ shape.color_formats });
     copy.depth_format  = shape.depth_format;
     copy.device_color_formats =
         arena.copy(std::span<const std::uint32_t>{ shape.device_color_formats });
@@ -111,7 +111,7 @@ const CompiledFrame& FrameCompiler::compile(const FrameDescription& description,
         if (found == nullptr)
         {
             graph_.exclude(index);  // no target, no pass: it neither runs nor orders anything
-            report(vine::graphics::DiagnosticCategory::ContentSkipped,
+            report(vn::graphics::DiagnosticCategory::ContentSkipped,
                    "frame " + std::to_string(frame_.token.frame) + ": pass " + std::to_string(pass.pass) +
                        " draws into a render target this backend does not know about: nothing is drawn for it "
                        "this frame");
@@ -212,7 +212,7 @@ const CompiledFrame& FrameCompiler::compile(const FrameDescription& description,
             }
             members += std::to_string(description.passes[member].pass);
         }
-        report(vine::graphics::DiagnosticCategory::ContentSkipped,
+        report(vn::graphics::DiagnosticCategory::ContentSkipped,
                "frame " + std::to_string(frame_.token.frame) + ": passes " + members +
                    " declare a dependency cycle (each reads what the other writes), which no execution order "
                    "can satisfy: those passes are skipped this frame, and the rest of the frame still runs");
@@ -239,7 +239,7 @@ const CompiledFrame& FrameCompiler::compile(const FrameDescription& description,
         pass.target_index    = slot;
         pass.depth           = source.depth;
         pass.clear           = source.clear;
-        pass.viewport        = vine::graphics::Viewport{ 0, 0, targets_[slot].width, targets_[slot].height };
+        pass.viewport        = vn::graphics::Viewport{ 0, 0, targets_[slot].width, targets_[slot].height };
         pass.depth_preserved = target.depth.preserve;
 
         // The other two facts a pipeline's identity needs come from the PASS' side of the plan: how many
@@ -299,7 +299,7 @@ std::span<const CompiledInput> FrameCompiler::resolveInputs(const CollectedPass&
             // The backend does not know a target it is being asked to sample. Binding nothing silently would
             // shade the pass as if it had not declared the input at all, so it is said out loud - the fix is to
             // hand the backend that target's facts.
-            report(vine::graphics::DiagnosticCategory::ContentSkipped,
+            report(vn::graphics::DiagnosticCategory::ContentSkipped,
                    "frame " + std::to_string(token.frame) + ": pass " + std::to_string(pass.pass) +
                        " declares a sampled input this backend cannot resolve to a target it knows: nothing is "
                        "bound for it this frame");
@@ -355,7 +355,7 @@ ShadowFacts FrameCompiler::resolveShadow(std::span<const CompiledInput> inputs) 
 }
 
 std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass&            pass,
-                                                         const vine::graphics::Viewport& whole,
+                                                         const vn::graphics::Viewport& whole,
                                                          const ProgramRef&               default_program)
 {
     const std::span<CompiledDraw> draws = arena_.makeArray<CompiledDraw>(pass.draws.size());
@@ -378,9 +378,9 @@ std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass&  
             // the defaults a screen program does not edit (no culling, fill, triangles, the engine's blend
             // factors) with the depth policy the call's own definition gives it (see CompiledDraw::dynamic -
             // the canonical triangle lies at the reverse-Z far plane, where any depth test rejects it).
-            const vine::graphics::ResolvedRenderState screen_state{};
+            const vn::graphics::ResolvedRenderState screen_state{};
             draw.dynamic =
-                resolveDynamicState(screen_state, /*depth_explicit*/ false, vine::graphics::DepthMode::Disabled);
+                resolveDynamicState(screen_state, /*depth_explicit*/ false, vn::graphics::DepthMode::Disabled);
         }
     }
     return draws;
@@ -388,7 +388,7 @@ std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass&  
 
 std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedDraw& source,
                                                                 const ProgramRef&    default_program,
-                                                                vine::graphics::DepthMode pass_depth)
+                                                                vn::graphics::DepthMode pass_depth)
 {
     const std::span<CompiledCommand> commands = arena_.makeArray<CompiledCommand>(source.commands.size());
     for (std::size_t index = 0; index < source.commands.size(); ++index)
@@ -410,11 +410,11 @@ std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedD
     return commands;
 }
 
-void FrameCompiler::report(vine::graphics::DiagnosticCategory category, const std::string& message)
+void FrameCompiler::report(vn::graphics::DiagnosticCategory category, const std::string& message)
 {
-    diagnostics_.report(vine::graphics::DiagnosticSeverity::Error, category, asString(message));
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Error, category, asString(message));
 }
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

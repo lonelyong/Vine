@@ -12,11 +12,11 @@
 
 #include "Ray.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-using vine::math::Vec3d;
-using vine::math::Vec2d;
-using vine::math::Mat4d;
+using vn::math::Vec3d;
+using vn::math::Vec2d;
+using vn::math::Mat4d;
 
 class Geometry;
 class Scene;
@@ -26,7 +26,7 @@ class Scene;
  *
  * Contains detailed information about the intersection point, if any.
  */
-struct V_GRAPHICS_API RayIntersectionResult {
+struct VN_GRAPHICS_API RayIntersectionResult {
     /** Whether the ray hit the geometry. */
     bool hit = false;
 
@@ -52,7 +52,7 @@ struct V_GRAPHICS_API RayIntersectionResult {
  * Provides static methods for computing ray-geometry intersections,
  * supporting both single geometry and full scene queries.
  */
-class V_GRAPHICS_API RayIntersection {
+class VN_GRAPHICS_API RayIntersection {
   public:
     /** @brief Ray query mode controlling how many hits are collected. */
     enum class Mode {
@@ -118,4 +118,4 @@ class V_GRAPHICS_API RayIntersection {
                                                                 Mode mode = Mode::AllHits);
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

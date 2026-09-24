@@ -2,7 +2,7 @@
 
 #include <vine/robotics/kinematics/State.hpp>
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 std::unique_ptr<Joint> Joint::clone() const
 {
@@ -43,4 +43,4 @@ math::Isometry3d Joint::transform(const kinematics::Q& q) const
     return tf;
 }
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

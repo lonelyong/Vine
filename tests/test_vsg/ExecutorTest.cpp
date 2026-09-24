@@ -56,40 +56,40 @@
 
 #include "DevicePhases.hpp"
 
-using vine::graphics::RenderCommand;
-using vine::graphics::RenderTarget;
-using vine::vsg::BlockDescriptors;
-using vine::vsg::BlockStorage;
-using vine::vsg::ContentDraw;
-using vine::vsg::ContentPipeline;
-using vine::vsg::OffscreenTarget;
-using vine::vsg::PassContent;
-using vine::vsg::StreamUploads;
-using vine::vsg::ViewportRect;
-using vine::vsg::VsgExecutor;
-using vine::vsg::core::ClearPolicy;
-using vine::vsg::core::CompiledFrame;
-using vine::vsg::core::CompiledPass;
-using vine::vsg::core::Diagnostics;
-using vine::vsg::core::FrameArena;
-using vine::vsg::core::FrameCompiler;
-using vine::vsg::core::FrameFacts;
-using vine::vsg::core::FrameRecorder;
-using vine::vsg::core::FrameTimeline;
-using vine::vsg::core::FrameToken;
-using vine::vsg::core::Observe;
-using vine::vsg::core::PassId;
-using vine::vsg::core::RepairReason;
-using vine::vsg::core::RetirementQueue;
-using vine::vsg::core::Rgba8;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::StreamKey;
-using vine::vsg::core::StreamKind;
-using vine::vsg::core::TargetAction;
-using vine::vsg::core::TargetDesc;
-using vine::vsg::core::TargetFacts;
-using vine::vsg::core::TargetShape;
-using vine::vsg::core::VariantPool;
+using vn::graphics::RenderCommand;
+using vn::graphics::RenderTarget;
+using vn::vsg::BlockDescriptors;
+using vn::vsg::BlockStorage;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentPipeline;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::PassContent;
+using vn::vsg::StreamUploads;
+using vn::vsg::ViewportRect;
+using vn::vsg::VsgExecutor;
+using vn::vsg::core::ClearPolicy;
+using vn::vsg::core::CompiledFrame;
+using vn::vsg::core::CompiledPass;
+using vn::vsg::core::Diagnostics;
+using vn::vsg::core::FrameArena;
+using vn::vsg::core::FrameCompiler;
+using vn::vsg::core::FrameFacts;
+using vn::vsg::core::FrameRecorder;
+using vn::vsg::core::FrameTimeline;
+using vn::vsg::core::FrameToken;
+using vn::vsg::core::Observe;
+using vn::vsg::core::PassId;
+using vn::vsg::core::RepairReason;
+using vn::vsg::core::RetirementQueue;
+using vn::vsg::core::Rgba8;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::StreamKey;
+using vn::vsg::core::StreamKind;
+using vn::vsg::core::TargetAction;
+using vn::vsg::core::TargetDesc;
+using vn::vsg::core::TargetFacts;
+using vn::vsg::core::TargetShape;
+using vn::vsg::core::VariantPool;
 
 namespace
 {
@@ -133,7 +133,7 @@ struct Fixture
     Observe                     observe;
     FrameRecorder               recorder{ arena, diagnostics, observe };
     FrameCompiler               compiler{ arena, diagnostics, observe };
-    vine::vsg::DeviceResult     created;
+    vn::vsg::DeviceResult     created;
     std::unique_ptr<OffscreenTarget> first;
     std::unique_ptr<OffscreenTarget> second;
     std::vector<TargetFacts>         facts;
@@ -152,7 +152,7 @@ struct Fixture
 
     bool build()
     {
-        created = vine::vsg::createDevice();
+        created = vn::vsg::createDevice();
         if (!created.ok)
         {
             return false;
@@ -180,8 +180,8 @@ struct Fixture
             return false;
         }
         const ContentPipeline::Shaders shader_pair = triangleShaders();
-        vine::vsg::ProgramAbi            abi;
-        if (vine::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vine::vsg::FactMiss::None) {
+        vn::vsg::ProgramAbi            abi;
+        if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::vsg::FactMiss::None) {
             return false;
         }
         descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
@@ -205,7 +205,7 @@ struct Fixture
 
         uploads  = std::make_unique<StreamUploads>();
         draws    = std::make_unique<ContentDraw>(*pipelines, pool,
-                                                 vine::vsg::detail::fetchDynamicStateEntryPoints(
+                                                 vn::vsg::detail::fetchDynamicStateEntryPoints(
                                                      created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         return true;
@@ -368,7 +368,7 @@ bool isGreen(const Rgba8& pixel)
 
 }  // namespace
 
-void runPlanDrivenTargetPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
     const float kFirst[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
 
@@ -393,7 +393,7 @@ void runPlanDrivenTargetPhase(const vine::vsg::DeviceResult& device, DevicePhase
     FrameCompiler compiler{ arena, diagnostics, observe };
 
     // A plan names IDENTITIES; the executor is the layer that holds the targets they resolve to.
-    vine::intrusive_ptr<RenderTarget> handle(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> handle(new RenderTarget());
 
     VsgExecutor executor(diagnostics);
     executor.addTarget(handle.get(), target.get());
@@ -467,7 +467,7 @@ void runPlanDrivenTargetPhase(const vine::vsg::DeviceResult& device, DevicePhase
     }
     EXPECT_TRUE(target->written()) << "the bootstrapping pass was recorded: the target holds something";
     {
-        const vine::vsg::core::PixelProbe probe = target->probe();
+        const vn::vsg::core::PixelProbe probe = target->probe();
         ASSERT_TRUE(probe.valid());
         EXPECT_EQ(probe.width(), 8);
         EXPECT_EQ(probe.height(), 4);
@@ -491,7 +491,7 @@ void runPlanDrivenTargetPhase(const vine::vsg::DeviceResult& device, DevicePhase
     EXPECT_EQ(target->height(), 12U);
     EXPECT_EQ(target->generation(), 1U);
     {
-        const vine::vsg::core::PixelProbe probe = target->probe();
+        const vn::vsg::core::PixelProbe probe = target->probe();
         ASSERT_TRUE(probe.valid());
         EXPECT_EQ(probe.width(), 16) << "the probe follows the extent the DRIVE's plan asked for";
         EXPECT_EQ(probe.height(), 12);
@@ -530,7 +530,7 @@ void runPlanDrivenTargetPhase(const vine::vsg::DeviceResult& device, DevicePhase
     EXPECT_TRUE(target->hasDepth());
     EXPECT_EQ(target->generation(), 2U);
     {
-        const vine::vsg::core::PixelProbe probe = target->probe();
+        const vn::vsg::core::PixelProbe probe = target->probe();
         ASSERT_TRUE(probe.valid());
         const Rgba8 expected{ quantise(kFirst[0]), quantise(kFirst[1]), quantise(kFirst[2]), 255U };
         const Rgba8 sampled = probe.pixel(8, 6);
@@ -538,7 +538,7 @@ void runPlanDrivenTargetPhase(const vine::vsg::DeviceResult& device, DevicePhase
         EXPECT_TRUE(probe.wholeImageMatches(sampled));
     }
     {
-        const vine::vsg::core::PixelProbe extra = target->probe(1U);
+        const vn::vsg::core::PixelProbe extra = target->probe(1U);
         ASSERT_TRUE(extra.valid()) << "the rebuilt shape has a second colour attachment, and it is readable";
         EXPECT_EQ(extra.width(), 16);
         EXPECT_EQ(extra.pixel(8, 6).a, 0U) << "an extra colour attachment clears to transparent black";
@@ -692,7 +692,7 @@ TEST(ExecutorTest, APlanThatDisagreesWithTheTargetAboutItsShapeIsNotRecorded)
     EXPECT_FALSE(fixture.executor.record(frame, command_graph));
     EXPECT_EQ(fixture.executor.skipped(), 1U);
     EXPECT_TRUE(fixture.executor.recorded().empty());
-    EXPECT_EQ(fixture.diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 1U);
+    EXPECT_EQ(fixture.diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 1U);
 }
 
 TEST(ExecutorTest, APlanThatGotOnlyTheFormatsWrongIsRefusedToo)
@@ -732,7 +732,7 @@ TEST(ExecutorTest, APlanThatGotOnlyTheFormatsWrongIsRefusedToo)
     EXPECT_FALSE(fixture.executor.record(engine_drift, engine_graph)) << "the same count is not the same render pass";
     EXPECT_EQ(fixture.executor.skipped(), 1U);
     EXPECT_TRUE(fixture.executor.recorded().empty());
-    EXPECT_EQ(fixture.diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 1U);
+    EXPECT_EQ(fixture.diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 1U);
 
     // (2) The engine's spelling is back; the DEVICE's drifted - and this one the engine cannot even express
     // (both spellings are RGBA8 to it), which is what the plan's copy of the device formats is for.
@@ -753,7 +753,7 @@ TEST(ExecutorTest, APlanThatGotOnlyTheFormatsWrongIsRefusedToo)
     auto device_graph = ::vsg::CommandGraph::create(fixture.created.device, fixture.created.queue_family);
     EXPECT_FALSE(fixture.executor.record(device_drift, device_graph));
     EXPECT_EQ(fixture.executor.skipped(), 1U);
-    EXPECT_EQ(fixture.diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 2U);
+    EXPECT_EQ(fixture.diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 2U);
 
     // (3) Told the truth, the SAME frame records: what was wrong was the plan's account of the target, not
     // the target.
@@ -857,7 +857,7 @@ TEST(ExecutorTest, APassIntoTheDefaultFramebufferIsReportedRatherThanDrawnSomewh
     EXPECT_TRUE(fixture.executor.recorded().empty());
 
     // Reported, not silently redirected: the caller hears about it through the one route.
-    EXPECT_EQ(fixture.diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 1U);
+    EXPECT_EQ(fixture.diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 1U);
 }
 
 TEST(ExecutorTest, ProfilingOffAddsNothingToTheRecordedGraph)
@@ -1037,8 +1037,8 @@ TEST(ExecutorTest, ATargetThatDidNotFollowItsDescriptionIsNamedInTheReport)
     fixture.recorder.endFrame();
     const CompiledFrame& frame = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ lying });
 
-    vine::vsg::core::FrameTimeline   timeline;
-    vine::vsg::core::RetirementQueue queue(3U);
+    vn::vsg::core::FrameTimeline   timeline;
+    vn::vsg::core::RetirementQueue queue(3U);
     const VsgExecutor::TargetApplications applied = fixture.executor.applyTargetPlans(frame, lying, timeline, queue);
     EXPECT_EQ(applied.refused, 1U) << "a lender with a borrower does not rebuild because a plan says so";
     EXPECT_EQ(applied.resized + applied.rebuilt + applied.failed, 0U);

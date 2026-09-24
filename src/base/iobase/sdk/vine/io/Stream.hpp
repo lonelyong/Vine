@@ -7,7 +7,7 @@
 #include <vine/io/IoError.hpp>
 #include <vine/io/io_global.hpp>
 
-V_IO_NS_BEGIN
+VN_IO_NS_BEGIN
 
 /**
  * @brief One contiguous piece of a fragmented entry.
@@ -31,7 +31,7 @@ struct Fragment
  * to stay alive until the save finishes, and read() is called on the thread that
  * performs the save.
  */
-class V_IOBASE_API DataSource
+class VN_IOBASE_API DataSource
 {
   public:
     virtual ~DataSource() = default;
@@ -67,7 +67,7 @@ class V_IOBASE_API DataSource
  * consumers that walk the bytes once (hashing, parsing, copying to a device
  * buffer).
  */
-class V_IOBASE_API DataSink
+class VN_IOBASE_API DataSink
 {
   public:
     virtual ~DataSink() = default;
@@ -89,7 +89,7 @@ class V_IOBASE_API DataSink
  * not invalidate it; it does depend on the storage behind the VFS staying
  * readable (a file that is deleted or replaced breaks in-flight reads).
  */
-class V_IOBASE_API VfsReadStream
+class VN_IOBASE_API VfsReadStream
 {
   public:
     virtual ~VfsReadStream() = default;
@@ -141,4 +141,4 @@ class V_IOBASE_API VfsReadStream
     [[nodiscard]] virtual IoError seek(std::uint64_t offset) = 0;
 };
 
-V_IO_NS_END
+VN_IO_NS_END

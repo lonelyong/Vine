@@ -1,8 +1,8 @@
 ﻿#include <vine/geometry/Sphere.hpp>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-V_OBJECT_META_IMPL(Sphere, Primitive)
+VN_OBJECT_META_IMPL(Sphere, Primitive)
 
 Sphere::Sphere()
 {
@@ -35,4 +35,4 @@ bool Sphere::hasVolume(double eps) const
     return radius_ > eps;
 }
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

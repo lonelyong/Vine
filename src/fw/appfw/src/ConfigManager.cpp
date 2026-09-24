@@ -22,7 +22,7 @@
 
 #include <vine/logging/Log.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 namespace
 {
@@ -62,7 +62,7 @@ int jsonToInt(qint64 value, const String& key)
     if (value >= lo && value <= hi)
         return static_cast<int>(value);
     const int clamped = value > hi ? static_cast<int>(hi) : static_cast<int>(lo);
-    V_LOGW("Config entry '{}' holds the out-of-range integer {}; using {}", toUtf8View(key), value, clamped);
+    VN_LOGW("Config entry '{}' holds the out-of-range integer {}; using {}", toUtf8View(key), value, clamped);
     return clamped;
 }
 
@@ -136,7 +136,7 @@ void flattenJson(const QJsonObject& obj, const QString& prefix, std::map<String,
         const String     key  = fromQString(full);
         const QJsonValue val  = it.value();
         if (!val.isObject()) {
-            V_LOGW("Config entry '{}' is a plain value, not of the type/value form; ignored", toUtf8View(key));
+            VN_LOGW("Config entry '{}' is a plain value, not of the type/value form; ignored", toUtf8View(key));
             continue;
         }
         const QJsonObject o = val.toObject();
@@ -184,7 +184,7 @@ void flattenJson(const QJsonObject& obj, const QString& prefix, std::map<String,
                 out[key] = std::move(arr);
             }
             else {
-                V_LOGW("Config entry '{}' has the unknown type '{}'; ignored", toUtf8View(key), toUtf8View(fromQString(type)));
+                VN_LOGW("Config entry '{}' has the unknown type '{}'; ignored", toUtf8View(key), toUtf8View(fromQString(type)));
             }
         }
         else {
@@ -196,7 +196,7 @@ void flattenJson(const QJsonObject& obj, const QString& prefix, std::map<String,
 
 } // namespace
 
-V_OBJECT_META_IMPL(ConfigChangedEventArgs, EventArgs)
+VN_OBJECT_META_IMPL(ConfigChangedEventArgs, EventArgs)
 
 ConfigChangedEventArgs::ConfigChangedEventArgs(const String& key)
   : key_(key)
@@ -498,4 +498,4 @@ bool ConfigManager::load(const String& path)
     return loadJson(fromQString(QString::fromUtf8(data)));
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

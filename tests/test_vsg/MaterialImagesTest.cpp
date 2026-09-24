@@ -30,32 +30,32 @@
 
 #include <vine/vsg/api/MaterialImages.hpp>
 
-using vine::graphics::CubeMap;
-using vine::graphics::Texture;
-using vine::graphics::Texture2D;
-using vine::imaging::Image;
-using vine::imaging::PixelFormat;
-using vine::vsg::detail::TextureReject;
-using vine::vsg::MaterialImages;
-using vine::vsg::SamplerImage;
+using vn::graphics::CubeMap;
+using vn::graphics::Texture;
+using vn::graphics::Texture2D;
+using vn::imaging::Image;
+using vn::imaging::PixelFormat;
+using vn::vsg::detail::TextureReject;
+using vn::vsg::MaterialImages;
+using vn::vsg::SamplerImage;
 
 namespace
 {
 
 /// @brief Builds a filled, single-level 2D texture: the shape the cache accepts.
-vine::intrusive_ptr<Texture2D> readyTexture(int width = 4, int height = 4)
+vn::intrusive_ptr<Texture2D> readyTexture(int width = 4, int height = 4)
 {
-    auto texture = vine::intrusive_ptr<Texture2D>(new Texture2D(width, height, PixelFormat::Rgba8Unorm));
-    texture->setImage(vine::intrusive_ptr<const Image>(new Image(width, height, PixelFormat::Rgba8Unorm)));
+    auto texture = vn::intrusive_ptr<Texture2D>(new Texture2D(width, height, PixelFormat::Rgba8Unorm));
+    texture->setImage(vn::intrusive_ptr<const Image>(new Image(width, height, PixelFormat::Rgba8Unorm)));
     return texture;
 }
 
 /// @brief Builds a cube with every face filled, one texel each.
-vine::intrusive_ptr<CubeMap> readyCube()
+vn::intrusive_ptr<CubeMap> readyCube()
 {
-    auto cube = vine::intrusive_ptr<CubeMap>(new CubeMap(1, PixelFormat::Rgba8Unorm));
+    auto cube = vn::intrusive_ptr<CubeMap>(new CubeMap(1, PixelFormat::Rgba8Unorm));
     for (int face = 0; face < cube->faceCount(); ++face) {
-        cube->setSource(face, vine::intrusive_ptr<const Image>(new Image(1, 1, PixelFormat::Rgba8Unorm)));
+        cube->setSource(face, vn::intrusive_ptr<const Image>(new Image(1, 1, PixelFormat::Rgba8Unorm)));
     }
     return cube;
 }
@@ -92,7 +92,7 @@ TEST(MaterialImagesTest, AnUnfinishedTextureNeverCachesItsImages)
 
     // Described but not filled: the backend cannot upload what is not there, and the texture is still a
     // normal intermediate state rather than a caller's mistake.
-    const vine::intrusive_ptr<Texture2D> texture(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
+    const vn::intrusive_ptr<Texture2D> texture(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
 
     TextureReject      reason = TextureReject::Ok;
     const SamplerImage images = cache->acquire(texture.get(), reason);
@@ -109,7 +109,7 @@ TEST(MaterialImagesTest, AFallbackFollowsTheTextureKind)
 
     // A cube sampler cannot bind a 2D view: a 2D view where the text declares `samplerCube` is an invalid
     // descriptor, not an untextured draw. The fallback therefore follows the texture's own kind.
-    const vine::intrusive_ptr<CubeMap> unfinished_cube(new CubeMap(1, PixelFormat::Rgba8Unorm));
+    const vn::intrusive_ptr<CubeMap> unfinished_cube(new CubeMap(1, PixelFormat::Rgba8Unorm));
     TextureReject                      reason = TextureReject::Ok;
     const SamplerImage                 cube   = cache->acquire(unfinished_cube.get(), reason);
     EXPECT_EQ(reason, TextureReject::Incomplete);
@@ -117,7 +117,7 @@ TEST(MaterialImagesTest, AFallbackFollowsTheTextureKind)
     EXPECT_EQ(cube.view.get(), cache->whiteCube().view.get());
     EXPECT_NE(cube.view.get(), cache->white().view.get()) << "the two fallbacks are different images";
 
-    const vine::intrusive_ptr<Texture2D> unfinished_2d(new Texture2D(1, 1, PixelFormat::Rgba8Unorm));
+    const vn::intrusive_ptr<Texture2D> unfinished_2d(new Texture2D(1, 1, PixelFormat::Rgba8Unorm));
     const SamplerImage                   flat = cache->acquire(unfinished_2d.get(), reason);
     EXPECT_EQ(viewTypeOf(flat), VK_IMAGE_VIEW_TYPE_2D);
 }
@@ -129,8 +129,8 @@ TEST(MaterialImagesTest, AFormatWithoutAVulkanCounterpartFallsBack)
 
     // Three channels have no Vulkan format: the caller chose a pixel layout this backend cannot sample, and
     // the answer is the fallback plus the reason, never a descriptor over an image nothing can read.
-    auto texture = vine::intrusive_ptr<Texture2D>(new Texture2D(2, 2, PixelFormat::Rgb8Unorm));
-    texture->setImage(vine::intrusive_ptr<const Image>(new Image(2, 2, PixelFormat::Rgb8Unorm)));
+    auto texture = vn::intrusive_ptr<Texture2D>(new Texture2D(2, 2, PixelFormat::Rgb8Unorm));
+    texture->setImage(vn::intrusive_ptr<const Image>(new Image(2, 2, PixelFormat::Rgb8Unorm)));
 
     TextureReject      reason = TextureReject::Ok;
     const SamplerImage images = cache->acquire(texture.get(), reason);
@@ -145,7 +145,7 @@ TEST(MaterialImagesTest, TheSameUnchangedTextureIsBuiltOnce)
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     ASSERT_NE(cache, nullptr);
 
-    const vine::intrusive_ptr<Texture2D> texture = readyTexture();
+    const vn::intrusive_ptr<Texture2D> texture = readyTexture();
 
     TextureReject reason = TextureReject::Ok;
     const auto    first  = cache->acquire(texture.get(), reason);
@@ -165,14 +165,14 @@ TEST(MaterialImagesTest, RefillingATextureRebuildsItsImages)
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     ASSERT_NE(cache, nullptr);
 
-    const vine::intrusive_ptr<Texture2D> texture = readyTexture();
+    const vn::intrusive_ptr<Texture2D> texture = readyTexture();
     TextureReject                        reason  = TextureReject::Ok;
     const auto                           before  = cache->acquire(texture.get(), reason);
     ASSERT_NE(before.view, nullptr);
 
     // The address is the same, so only the revision says the pixels changed: without it the entry would
     // keep serving the image built from the old texels.
-    texture->setImage(vine::intrusive_ptr<const Image>(new Image(4, 4, PixelFormat::Rgba8Unorm)));
+    texture->setImage(vn::intrusive_ptr<const Image>(new Image(4, 4, PixelFormat::Rgba8Unorm)));
     const auto after = cache->acquire(texture.get(), reason);
     EXPECT_EQ(reason, TextureReject::Ok);
     ASSERT_NE(after.view, nullptr);
@@ -224,8 +224,8 @@ TEST(MaterialImagesTest, TheDeviceLimitIsWhatMipChainedTexturesAreFilteredWith)
 
     // Anisotropy is only meaningful with a mip chain to choose between, which is the texture this case needs:
     // the same 4x4 picture with a second level.
-    const auto texture = vine::intrusive_ptr<Texture2D>(new Texture2D(4, 4, PixelFormat::Rgba8Unorm, 2));
-    texture->setImage(vine::intrusive_ptr<const Image>(new Image(4, 4, PixelFormat::Rgba8Unorm, 2)));
+    const auto texture = vn::intrusive_ptr<Texture2D>(new Texture2D(4, 4, PixelFormat::Rgba8Unorm, 2));
+    texture->setImage(vn::intrusive_ptr<const Image>(new Image(4, 4, PixelFormat::Rgba8Unorm, 2)));
 
     TextureReject      reason = TextureReject::Ok;
     const SamplerImage images = cache->acquire(texture.get(), reason);
@@ -249,7 +249,7 @@ TEST(MaterialImagesTest, ClearDropsEveryEntryAndTheFallbacks)
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     ASSERT_NE(cache, nullptr);
 
-    const vine::intrusive_ptr<Texture2D> texture = readyTexture();
+    const vn::intrusive_ptr<Texture2D> texture = readyTexture();
     TextureReject                        reason  = TextureReject::Ok;
     const auto                           images  = cache->acquire(texture.get(), reason);
     ASSERT_NE(images.view, nullptr);
@@ -274,7 +274,7 @@ TEST(MaterialImagesTest, TheOldestEntryIsTrimmedAtCapacity)
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     ASSERT_NE(cache, nullptr);
 
-    std::vector<vine::intrusive_ptr<Texture2D>> textures;
+    std::vector<vn::intrusive_ptr<Texture2D>> textures;
     textures.reserve(MaterialImages::kMaxEntries + 1U);
     for (std::size_t index = 0; index < MaterialImages::kMaxEntries + 1U; ++index) {
         textures.push_back(readyTexture(1, 1));
@@ -294,7 +294,7 @@ TEST(MaterialImagesTest, ACubeBecomesACubeViewOverItsSixLayers)
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     ASSERT_NE(cache, nullptr);
 
-    const vine::intrusive_ptr<CubeMap> cube = readyCube();
+    const vn::intrusive_ptr<CubeMap> cube = readyCube();
     TextureReject                      reason = TextureReject::Ok;
     const SamplerImage                 images = cache->acquire(cube.get(), reason);
 

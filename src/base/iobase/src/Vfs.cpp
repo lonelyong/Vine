@@ -8,7 +8,7 @@
 
 #include "VfsInternal.hpp"
 
-V_IO_NS_BEGIN
+VN_IO_NS_BEGIN
 
 Vfs::~Vfs() = default;
 
@@ -138,4 +138,4 @@ IoError Vfs::addDirectory(const std::filesystem::path& prefix, const std::filesy
     return ec ? IoError::IoFailure : IoError::Ok;
 }
 
-V_IO_NS_END
+VN_IO_NS_END

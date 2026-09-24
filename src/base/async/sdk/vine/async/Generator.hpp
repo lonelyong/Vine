@@ -12,7 +12,7 @@
 
 #include "Concepts.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 /**
  * @brief Single-pass, lazy synchronous generator.
@@ -212,4 +212,4 @@ class Generator
     std::coroutine_handle<promise_type> coro_{};
 };
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

@@ -20,7 +20,7 @@
 
 #include <vine/vsg/api/WhiteImage.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
@@ -47,9 +47,9 @@ using detail::vkFormatFor;
  * @param texture Texture whose levels are described.
  * @return One entry per level: texel width, texel height, depth 1, byte offset.
  */
-::vsg::ref_ptr<::vsg::MipmapLayout> makeMipmapLayout(const vine::graphics::Texture& texture)
+::vsg::ref_ptr<::vsg::MipmapLayout> makeMipmapLayout(const vn::graphics::Texture& texture)
 {
-    const auto bytes_per_texel = static_cast<std::size_t>(vine::imaging::bytesPerPixel(texture.format()));
+    const auto bytes_per_texel = static_cast<std::size_t>(vn::imaging::bytesPerPixel(texture.format()));
     const auto level_count     = static_cast<std::size_t>(texture.mipCount());
     const auto layer_count     = static_cast<std::size_t>(texture.layerCount());
 
@@ -144,7 +144,7 @@ using detail::vkFormatFor;
  *                the extent the staging below sizes its slots from (`Inconsistent`).
  * @return The image, ready for the transfer step to upload, or null (the caller reports @p reason).
  */
-::vsg::ref_ptr<::vsg::Image> makeImage(const vine::graphics::Texture& texture, VkFormat format,
+::vsg::ref_ptr<::vsg::Image> makeImage(const vn::graphics::Texture& texture, VkFormat format,
                                        TextureReject& reason)
 {
     // The staging below sizes each layer's slot from the texture's EXTENT and copies the layer's own bytes
@@ -160,8 +160,8 @@ using detail::vkFormatFor;
     const auto height          = static_cast<std::uint32_t>(texture.height());
     const auto mip_levels      = static_cast<std::uint32_t>(texture.mipCount());
     const auto layer_count     = static_cast<std::uint32_t>(texture.layerCount());
-    const auto bytes_per_texel  = static_cast<std::uint32_t>(vine::imaging::bytesPerPixel(texture.format()));
-    const bool is_cube          = texture.kind() == vine::graphics::Texture::Kind::Cube;
+    const auto bytes_per_texel  = static_cast<std::uint32_t>(vn::imaging::bytesPerPixel(texture.format()));
+    const bool is_cube          = texture.kind() == vn::graphics::Texture::Kind::Cube;
 
     auto layout = makeMipmapLayout(texture);
 
@@ -309,13 +309,13 @@ struct MaterialImages::Data
     /** @brief One texture's retained images, plus the content revision they were built from. */
     struct Entry
     {
-        vine::intrusive_ptr<const vine::graphics::Texture> owner;     ///< The key object, held (see the note).
+        vn::intrusive_ptr<const vn::graphics::Texture> owner;     ///< The key object, held (see the note).
         SamplerImage                                       images;    ///< What a declared set binds.
         std::uint64_t                                      revision{0};
         std::uint64_t                                      stamp{0};  ///< Insertion order (see the trim).
     };
 
-    using Map = std::unordered_map<const vine::graphics::Texture*, Entry>;
+    using Map = std::unordered_map<const vn::graphics::Texture*, Entry>;
 
     Map                            cache;
     std::uint64_t                  clock{0};
@@ -372,7 +372,7 @@ SamplerImage MaterialImages::whiteCube() const noexcept
     return d->white_cube;
 }
 
-SamplerImage MaterialImages::acquire(vine::raw_ptr<const vine::graphics::Texture> texture,
+SamplerImage MaterialImages::acquire(vn::raw_ptr<const vn::graphics::Texture> texture,
                                      detail::TextureReject& reason)
 {
     reason = detail::classifyTexture(texture);
@@ -382,13 +382,13 @@ SamplerImage MaterialImages::acquire(vine::raw_ptr<const vine::graphics::Texture
         // untextured draw. With no texture at all the cache cannot know what the slot samples, so the 2D
         // fallback is answered and a caller whose text declares `samplerCube` asks for whiteCube() - it is
         // the caller that knows its program's declaration.
-        const bool cube = texture != nullptr && texture->kind() == vine::graphics::Texture::Kind::Cube;
+        const bool cube = texture != nullptr && texture->kind() == vn::graphics::Texture::Kind::Cube;
         return cube ? whiteCube() : white();
     }
 
     // Held before the map is touched: replacing an entry can drop the last other reference to the texture,
     // and the raw pointer this call was handed would then dangle mid-function.
-    vine::intrusive_ptr<const vine::graphics::Texture> owner(texture);
+    vn::intrusive_ptr<const vn::graphics::Texture> owner(texture);
     const std::uint64_t                               revision = texture->revision();
 
     const auto found = d->cache.find(texture);
@@ -443,7 +443,7 @@ std::size_t MaterialImages::count() const noexcept
     return d->cache.size();
 }
 
-bool MaterialImages::has(vine::raw_ptr<const vine::graphics::Texture> texture) const noexcept
+bool MaterialImages::has(vn::raw_ptr<const vn::graphics::Texture> texture) const noexcept
 {
     return d->cache.find(texture) != d->cache.end();
 }
@@ -473,4 +473,4 @@ void MaterialImages::clear()
     d->white_cube = SamplerImage{};
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

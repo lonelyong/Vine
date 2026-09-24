@@ -38,7 +38,7 @@
 
 ## 最佳实践整理（第三轮）
 
-1. **日志不改变行为，且不靠本地封装保证**：调用点直接写裸 `V_LOGI/W/E`，参数一律传
+1. **日志不改变行为，且不靠本地封装保证**：调用点直接写裸 `VN_LOGI/W/E`，参数一律传
    `std::string_view`（`toUtf8View`，调用侧零分配）；“日志失败不会影响命令”由 **Logging 模块的契约**
    承担——`Logger` 的级别函数/`log()`/`defaultLogger()` 全部 `noexcept`，失败经
    `reportLoggingFailure()` 一次性报告到 stderr（见 `logging-module` 内存笔记）。
@@ -59,7 +59,7 @@
 8. **`Impl` 加显式构造函数** `explicit Impl(Application*)`，消除聚合初始化漏字段警告并明确 `app` 的初始化时机。
 9. **严格警告体检**：用 compile_commands 的真实参数 + `-Wall -Wextra -Wpedantic -Wshadow
    -Wnon-virtual-dtor -Woverloaded-virtual -fsyntax-only` 检查本 TU ⇒ **0 警告**。
-   剩余仅是全仓 `V_OBJECT_META_DECL;` 多一个分号的 `-Wextra-semi`（宏末尾自带 `;`，且仓库里两种写法并存），
+   剩余仅是全仓 `VN_OBJECT_META_DECL;` 多一个分号的 `-Wextra-semi`（宏末尾自带 `;`，且仓库里两种写法并存），
    要统一得单独一轮、全仓改，不在本模块范围（项目并未启用该警告）。
 
 ## 第八轮：API / 架构 / 线程安全三轴复核（2026-09-17）
@@ -71,7 +71,7 @@
 
 | # | 问题 | 证据 | 处理 |
 | --- | --- | --- | --- |
-| E1 | `CommandFlags` 是位标志枚举却没有位运算 ⇒ 用户写不出"长时间且改数据"这种组合 | 编译探针：clang 报 `invalid operands to binary expression ... no implicit conversion for scoped enum`；加上 `V_ENABLE_ENUM_FLAGS` 后 `Undoable\|LongRunning == 5`、`vine::testFlag` 可判位（仓库已在 `RenderApi`/`MessageBoxButton`/`DockAreas`/`DockFeatures`/`ModifierKey` 上这么做，`CommandFlags` 是唯一漏网的） | `Command.hpp` 加 `V_ENABLE_ENUM_FLAGS(CommandFlags)`；删掉 `CommandManager.cpp` 里的本地 `hasFlag`，改用仓库的 `vine::testFlag`（5 处） |
+| E1 | `CommandFlags` 是位标志枚举却没有位运算 ⇒ 用户写不出"长时间且改数据"这种组合 | 编译探针：clang 报 `invalid operands to binary expression ... no implicit conversion for scoped enum`；加上 `VN_ENABLE_ENUM_FLAGS` 后 `Undoable\|LongRunning == 5`、`vn::testFlag` 可判位（仓库已在 `RenderApi`/`MessageBoxButton`/`DockAreas`/`DockFeatures`/`ModifierKey` 上这么做，`CommandFlags` 是唯一漏网的） | `Command.hpp` 加 `VN_ENABLE_ENUM_FLAGS(CommandFlags)`；删掉 `CommandManager.cpp` 里的本地 `hasFlag`，改用仓库的 `vn::testFlag`（5 处） |
 | E2 | `isRegistered()` 与 `isCommandEnabled()` 实现完全相同，且名字与语义相反（禁用的命令 `isRegistered` 返回 false，却仍在 `names()`/`commandInfos()` 里） | 两者实现是同一段；既有用例断言禁用后 `isRegistered == false` | `isRegistered()` 改为**存在性**（只查注册表：不解析别名、不看 enabled）；`isCommandEnabled()` 保留"能执行"语义并补齐文档。生产代码没有 `isRegistered` 调用者，只有 test_gui 的断言按新语义改写 |
 | E3 | `CommandExecutedEventArgs` 每次执行深拷贝一份 `CommandResult`（含 `std::any` 载荷） | 读码：值成员 `result_` | 改为持 `const CommandResult*`（同步通知，manager 在整个通知期间持有结果），`result()` 仍返回 `const CommandResult&`；文档写明只在通知期间有效。历史仍按值存（它要活得更久） |
 | E4 | `VisualUserIO::currentPrompt_` 跨线程读写：写在**读发起线程**（命令可在定时器/IO 线程恢复后调用 `getXxxAsync`），读在应用线程（`repromptError`） | 读码 + 新用例把"读在非应用线程发起"钉成事实（命令先 `sleepFor(1ms)` 再提示，断言发起线程 ≠ 应用线程） | 提示记帐改成 `PromptState`（`shared_ptr`，避免 posted 回调捕获 `this`），写入挪进"显示提示"那条编组调用 ⇒ 只在应用线程读写；`onApplicationThread` 加断言守住"有事件循环时 inline 路径必须在应用线程" |
@@ -299,7 +299,7 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
 
 | # | 指控 | 核实结果 | 处理 |
 | --- | --- | --- | --- |
-| 1 | Exclusive 等待超时后静默放行 ⇒ 双链并发 | **真缺陷**：仅 `V_LOGW` 就继续执行，排他契约被破坏 | 改为 **Fail-Safe 拒绝**：`Failed("另一个操作仍在收尾，请稍后再试。")` + 错误日志 |
+| 1 | Exclusive 等待超时后静默放行 ⇒ 双链并发 | **真缺陷**：仅 `VN_LOGW` 就继续执行，排他契约被破坏 | 改为 **Fail-Safe 拒绝**：`Failed("另一个操作仍在收尾，请稍后再试。")` + 错误日志 |
 | 2 | 串联门 `ProgressHost::current()` TOCTOU | **真缺陷**：检查与占用分离，两个顶层长任务可同时通过 | 门检查 + `foreground` 赋值 + 占用标志写入同一临界区 |
 | 3 | 链式别名只解析一层 | **真**（功能性缺陷，且环路会死循环） | `resolveName` 迭代解析 + visited 防环；列举按最终目标挂别名 |
 | 4 | `executeDetached` 异常导致 `std::terminate` | **真缺陷**（已核实 `DetachedTask::promise_type::unhandled_exception()` 无 handler 时直接 terminate；树内 `VisualUserIO::executeInput` 的 DetachedTask 无 try/catch） | 异常在**顶层入口收口**为 `Failed` 结果（含工厂、快照、事件回调），detached 包装再叠一层兵底 catch |
@@ -569,7 +569,7 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
 
 - **合并 `Context` 与 `CommandExecutionContext`（用 friend）**：不合理，理由见下节。
 - **`Impl` 改用 `make_unique`**：仓库的 PImpl 风格是 `d(new Impl(...))`（`ConfigRegistry`/`ThreadPool`/`DynamicLibrary` 等一致）。
-- **`V_DISABLE_COPY_MOVE(CommandManager)`**：`unique_ptr<Impl>` 已隐式删除拷贝/移动，appfw 同类类多数不用该宏。
+- **`VN_DISABLE_COPY_MOVE(CommandManager)`**：`unique_ptr<Impl>` 已隐式删除拷贝/移动，appfw 同类类多数不用该宏。
 - **公共 bool 接口加 `[[nodiscard]]`**：appfw SDK 无先例，且插件侧存在故意忽略返回值的注册调用。
 - **给加锁的访问器标 `noexcept`**：`std::mutex::lock` 理论上会抛（仅无锁的 `application()` 标了）。
 - **私有嵌套类标 `final`**：外部本就无法继承，无收益。

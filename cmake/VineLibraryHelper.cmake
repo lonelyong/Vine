@@ -1,4 +1,4 @@
-function(v_add_library target_name_var short_name)
+function(vn_add_library target_name_var short_name)
     # CMAKE_SOURCE_DIR顶级当前CMakeLists.txt文件所在目录
     # CMAKE_CURRENT_SOURCE_DIR 当前CMakeLists.txt所在目录
     # file(RELATIVE_PATH src_rel_dir ${CMAKE_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
@@ -21,9 +21,9 @@ function(v_add_library target_name_var short_name)
     # 目标名称
     set(target_name ${short_name})
     # 目标别名
-    set(target_alias ${VI_SHARED_LIBRARY_PREFIX}::${short_name})
+    set(target_alias ${VN_SHARED_LIBRARY_PREFIX}::${short_name})
     # 库文件名称
-    set(lib_file_name $<$<PLATFORM_ID:Linux>:lib>${VI_SHARED_LIBRARY_PREFIX}${short_name})
+    set(lib_file_name $<$<PLATFORM_ID:Linux>:lib>${VN_SHARED_LIBRARY_PREFIX}${short_name})
 
     # 创建目标
     if(src_file_list)
@@ -46,7 +46,7 @@ function(v_add_library target_name_var short_name)
     # 设置输出文件名
     set_target_properties(${target_name} PROPERTIES OUTPUT_NAME ${lib_file_name})
     # 设置输出分组：按 src 下一级目录自动归组（src/base/logging -> vine/base）
-    set(target_folder "vi")
+    set(target_folder "vine")
     file(RELATIVE_PATH src_rel_dir ${CMAKE_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
     string(REPLACE "\\" "/" src_rel_dir "${src_rel_dir}")
     if(NOT src_rel_dir STREQUAL "" AND NOT src_rel_dir MATCHES "^[.][.]/")
@@ -63,7 +63,7 @@ function(v_add_library target_name_var short_name)
     source_group(TREE ${src_dir} PREFIX src FILES ${src_file_list})
     # source_group(res FILES ${rc_file_list})
 
-    string(TOUPPER V_${short_name}_LIB lib_compile_def)
+    string(TOUPPER VN_${short_name}_LIB lib_compile_def)
 
     if(src_file_list)
         target_compile_definitions(${target_name} PRIVATE ${lib_compile_def})
@@ -119,19 +119,19 @@ function(v_add_library target_name_var short_name)
 
 endfunction()
 
-# v_group_targets_folder(dir folder)
+# vn_group_targets_folder(dir folder)
 # Recursively sets the FOLDER property on every target created in the given
 # directory and all its subdirectories. FetchContent third-party projects may
 # declare targets in nested subdirectories (e.g. mbedtls library/, 3rdparty/),
 # so a single-level BUILDSYSTEM_TARGETS query misses them. This groups all of
 # them under one solution folder, e.g. third_party.
-function(v_group_targets_folder dir folder)
+function(vn_group_targets_folder dir folder)
     get_property(_targets DIRECTORY ${dir} PROPERTY BUILDSYSTEM_TARGETS)
     foreach(_tgt IN LISTS _targets)
         set_target_properties(${_tgt} PROPERTIES FOLDER ${folder})
     endforeach()
     get_property(_subdirs DIRECTORY ${dir} PROPERTY SUBDIRECTORIES)
     foreach(_sub IN LISTS _subdirs)
-        v_group_targets_folder(${_sub} ${folder})
+        vn_group_targets_folder(${_sub} ${folder})
     endforeach()
 endfunction()

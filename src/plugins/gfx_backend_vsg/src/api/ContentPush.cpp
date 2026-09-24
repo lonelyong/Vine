@@ -6,7 +6,7 @@
 
 #include <vine/vsg/api/ViewBlock.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
@@ -17,7 +17,7 @@ constexpr std::uint32_t kMatrixBytes = 64U;
 
 /// @brief Writes one matrix column-major: element (row, column) lands at `column * 4 + row` (the spelling
 ///        api/ViewBlock and api/DrawBlock use, so the three cannot drift into different orders).
-void writeMatrix(const vine::math::Mat4d& matrix, std::byte* out) noexcept
+void writeMatrix(const vn::math::Mat4d& matrix, std::byte* out) noexcept
 {
     for (int column = 0; column < 4; ++column)
     {
@@ -79,7 +79,7 @@ std::uint32_t pushStagesOf(std::uint32_t stages) noexcept
     return static_cast<std::uint32_t>(flags);
 }
 
-bool packContentPush(const AbiPushRange& range, const core::CameraSnapshot& camera, const vine::math::Mat4d& model,
+bool packContentPush(const AbiPushRange& range, const core::CameraSnapshot& camera, const vn::math::Mat4d& model,
                      std::vector<std::byte>& out, std::string_view& unhandled)
 {
     unhandled = {};
@@ -110,4 +110,4 @@ bool packContentPush(const AbiPushRange& range, const core::CameraSnapshot& came
     return true;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

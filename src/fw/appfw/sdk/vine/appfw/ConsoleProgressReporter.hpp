@@ -8,7 +8,7 @@
 
 #include <vine/String.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief Tuning of the throttle ConsoleProgressReporter writes with.
@@ -30,7 +30,7 @@ struct ConsoleProgressOptions
  * @brief Prints the progress of a running operation as throttled console lines.
  *
  * The headless counterpart of gui::ProgressPresenter. An operation reports progress through the
- * ambient vine::appfw::ProgressHost (the CommandManager creates one for a LongRunning command),
+ * ambient vn::appfw::ProgressHost (the CommandManager creates one for a LongRunning command),
  * and this reporter subscribes to ProgressHost::changed() and writes single-line updates through
  * the sink it was given. ConsoleUserIO hands it its own output path, which is what makes the
  * progress of a LongRunning command visible in a host without a GUI at all.
@@ -48,7 +48,7 @@ struct ConsoleProgressOptions
  * is public so a host that runs its own loop can drive the reporter from there, and so tests can
  * step it deterministically.
  */
-class V_APPFW_API ConsoleProgressReporter
+class VN_APPFW_API ConsoleProgressReporter
 {
   public:
     /// Tuning of the printed lines; see ConsoleProgressOptions.
@@ -105,4 +105,4 @@ class V_APPFW_API ConsoleProgressReporter
     std::shared_ptr<Impl> d;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

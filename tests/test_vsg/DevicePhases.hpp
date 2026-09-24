@@ -40,21 +40,21 @@ struct DevicePhaseCounters
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runOffscreenReadbackPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runOffscreenReadbackPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
 /** @brief The shared-depth phase: a borrower draws against the depth the lender wrote, and reads it back.
  *
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runSharedDepthPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runSharedDepthPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
 /** @brief The target-resize phase: the plan replaces the extent, parks the old set, and the new one renders.
  *
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runTargetResizePhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runTargetResizePhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
 /** @brief The target-rebuild phase: the plan answers a shape change, the pass and the attachments are
  *         rebuilt, and the new shape (two colours and a depth) renders.
@@ -62,7 +62,7 @@ void runTargetResizePhase(const vine::vsg::DeviceResult& device, DevicePhaseCoun
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runTargetRebuildPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runTargetRebuildPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
 /** @brief The plan-driven target phase: the executor applies the plan's answers (resize / rebuild) itself,
  *         and the frames it drives render through what the plan asked for.
@@ -70,12 +70,12 @@ void runTargetRebuildPhase(const vine::vsg::DeviceResult& device, DevicePhaseCou
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runPlanDrivenTargetPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
 /** @brief The lost-submission phase: an invalidated target is re-bootstrapped once, then loads again.
  *
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runLostSubmissionPhase(const vine::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
 

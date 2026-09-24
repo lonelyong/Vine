@@ -43,19 +43,19 @@
 
 include(VineShaderHelper)
 
-set(VINE_SDK_SHADER_DIR "${CMAKE_SOURCE_DIR}/src/viz/graphics/shaders")
+set(VN_SDK_SHADER_DIR "${CMAKE_SOURCE_DIR}/src/viz/graphics/shaders")
 
-v_declare_embedded_shaders(
+vn_declare_embedded_shaders(
     OUTPUT vine/graphics/EmbeddedShaders.hpp
-    NAMESPACE vine::graphics::shaders
+    NAMESPACE vn::graphics::shaders
     SOURCES
-        "${VINE_SDK_SHADER_DIR}/builtin_fullscreen.vert"
-        "${VINE_SDK_SHADER_DIR}/builtin_screen_copy.frag"
-        "${VINE_SDK_SHADER_DIR}/builtin_gbuffer.vert"
-        "${VINE_SDK_SHADER_DIR}/builtin_gbuffer.frag"
-        "${VINE_SDK_SHADER_DIR}/builtin_deferred_lighting.frag"
-        "${VINE_SDK_SHADER_DIR}/builtin_forward.vert"
-        "${VINE_SDK_SHADER_DIR}/builtin_forward.frag"
-        "${VINE_SDK_SHADER_DIR}/builtin_skybox.vert"
-        "${VINE_SDK_SHADER_DIR}/builtin_skybox.frag"
+        "${VN_SDK_SHADER_DIR}/builtin_fullscreen.vert"
+        "${VN_SDK_SHADER_DIR}/builtin_screen_copy.frag"
+        "${VN_SDK_SHADER_DIR}/builtin_gbuffer.vert"
+        "${VN_SDK_SHADER_DIR}/builtin_gbuffer.frag"
+        "${VN_SDK_SHADER_DIR}/builtin_deferred_lighting.frag"
+        "${VN_SDK_SHADER_DIR}/builtin_forward.vert"
+        "${VN_SDK_SHADER_DIR}/builtin_forward.frag"
+        "${VN_SDK_SHADER_DIR}/builtin_skybox.vert"
+        "${VN_SDK_SHADER_DIR}/builtin_skybox.frag"
 )

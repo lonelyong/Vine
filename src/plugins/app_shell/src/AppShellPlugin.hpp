@@ -2,7 +2,7 @@
 
 #include <vine/appfw/Plugin.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief App shell plugin: provides base GUI functionality (plugin info
@@ -14,7 +14,7 @@ V_APPFW_NS_BEGIN
  * owned by ConsoleLogRouter.
  */
 class AppShellPlugin : public Plugin {
-    V_OBJECT_META_DECL;
+    VN_OBJECT_META_DECL;
 
   public:
     AppShellPlugin();
@@ -24,4 +24,4 @@ class AppShellPlugin : public Plugin {
     void unload(PluginLoadContext* context) override;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

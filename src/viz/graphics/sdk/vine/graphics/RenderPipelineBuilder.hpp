@@ -11,7 +11,7 @@
 #include "RenderPipeline.hpp"
 #include "RenderTarget.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class Camera;
 class Light;
@@ -41,7 +41,7 @@ class ScreenPass;
  * configurations, and the SceneView default viewer is assembled through the
  * same Forward preset so the whole codebase shares one main-pipeline recipe.
  */
-class V_GRAPHICS_API RenderPipelineBuilder {
+class VN_GRAPHICS_API RenderPipelineBuilder {
   public:
     /** @brief Constructs a builder targeting an engine.
      *
@@ -156,7 +156,7 @@ class V_GRAPHICS_API RenderPipelineBuilder {
      * @param camera Receives the light camera (also usable as the shadow pass' camera).
      * @return The light camera's projection * view matrix.
      */
-    static vine::math::Mat4d directionalShadowMatrix(const Light& light, const vine::math::Aabbd& bounds,
+    static vn::math::Mat4d directionalShadowMatrix(const Light& light, const vn::math::Aabbd& bounds,
                                                     Camera& camera);
 
     /** @brief Creates the built-in temporary G-buffer geometry program.
@@ -312,4 +312,4 @@ class V_GRAPHICS_API RenderPipelineBuilder {
     std::size_t shadows_built_ = 0;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

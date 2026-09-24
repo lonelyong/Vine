@@ -2,7 +2,7 @@
 
 #include <cstring>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -64,13 +64,13 @@ bool ReadbackFormat::operator==(const ReadbackFormat& other) const noexcept
     return bytes_per_texel == other.bytes_per_texel && readable == other.readable;
 }
 
-ReadbackFormat colorReadbackOf(vine::graphics::RenderTarget::ColorFormat format) noexcept
+ReadbackFormat colorReadbackOf(vn::graphics::RenderTarget::ColorFormat format) noexcept
 {
     switch (format)
     {
-    case vine::graphics::RenderTarget::ColorFormat::RGBA8: return ReadbackFormat{ 4U, true };
-    case vine::graphics::RenderTarget::ColorFormat::RGBA16F:
-    case vine::graphics::RenderTarget::ColorFormat::RGBA32F:
+    case vn::graphics::RenderTarget::ColorFormat::RGBA8: return ReadbackFormat{ 4U, true };
+    case vn::graphics::RenderTarget::ColorFormat::RGBA16F:
+    case vn::graphics::RenderTarget::ColorFormat::RGBA32F:
         // No CPU packing here: the readback contract is tightly packed RGBA8, and pretending a float
         // attachment is one would misread every texel after the first.
         return ReadbackFormat{ 0U, false };
@@ -78,20 +78,20 @@ ReadbackFormat colorReadbackOf(vine::graphics::RenderTarget::ColorFormat format)
     return ReadbackFormat{ 0U, false };
 }
 
-ReadbackFormat depthReadbackOf(vine::graphics::RenderTarget::DepthFormat format) noexcept
+ReadbackFormat depthReadbackOf(vn::graphics::RenderTarget::DepthFormat format) noexcept
 {
     switch (format)
     {
-    case vine::graphics::RenderTarget::DepthFormat::D16: return ReadbackFormat{ 2U, true };
-    case vine::graphics::RenderTarget::DepthFormat::D32:
-    case vine::graphics::RenderTarget::DepthFormat::D32F: return ReadbackFormat{ 4U, true };
-    case vine::graphics::RenderTarget::DepthFormat::D24:
+    case vn::graphics::RenderTarget::DepthFormat::D16: return ReadbackFormat{ 2U, true };
+    case vn::graphics::RenderTarget::DepthFormat::D32:
+    case vn::graphics::RenderTarget::DepthFormat::D32F: return ReadbackFormat{ 4U, true };
+    case vn::graphics::RenderTarget::DepthFormat::D24:
         return ReadbackFormat{ 0U, false };  // depth AND stencil: no plain depth copy exists
     }
     return ReadbackFormat{ 0U, false };
 }
 
-std::vector<float> decodeDepth(vine::graphics::RenderTarget::DepthFormat format,
+std::vector<float> decodeDepth(vn::graphics::RenderTarget::DepthFormat format,
                                std::span<const std::byte>                 bytes)
 {
     const ReadbackFormat packed = depthReadbackOf(format);
@@ -121,4 +121,4 @@ std::vector<float> decodeDepth(vine::graphics::RenderTarget::DepthFormat format,
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

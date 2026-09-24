@@ -12,7 +12,7 @@
 #include <vine/geometry/BrepShape.hpp>
 #include <vine/runtime/InMemoryCache.hpp>
 
-V_BREPIO_NS_BEGIN
+VN_BREPIO_NS_BEGIN
 
 /**
  * @brief Utility class for loading boundary-representation models (STEP, IGES).
@@ -24,7 +24,7 @@ V_BREPIO_NS_BEGIN
  * @note The cache is not thread-safe; concurrent loads through the same
  *       loader instance must be avoided.
  */
-class V_BREPIO_API BrepLoader
+class VN_BREPIO_API BrepLoader
 {
     // 类型声明区块
   public:
@@ -112,20 +112,20 @@ class V_BREPIO_API BrepLoader
      * @param file_path The model file path (STEP, IGES).
      * @return The loaded solid, or null on failure.
      */
-    vine::intrusive_ptr<vine::geometry::BrepShape> load(const std::filesystem::path& file_path);
+    vn::intrusive_ptr<vn::geometry::BrepShape> load(const std::filesystem::path& file_path);
 
     // 类型声明区块
   private:
     /** @brief Per-file cached solids, grouped by load options. */
     struct CacheData
     {
-        std::unordered_map<Options, vine::intrusive_ptr<vine::geometry::BrepShape>, OptionsHash> option_shape_map;
+        std::unordered_map<Options, vn::intrusive_ptr<vn::geometry::BrepShape>, OptionsHash> option_shape_map;
     };
 
     // 字段区块
   private:
     Options options_;
-    vine::runtime::InMemoryCache<vine::crypto::ByteSequenceFingerprint, CacheData> cache_;
+    vn::runtime::InMemoryCache<vn::crypto::ByteSequenceFingerprint, CacheData> cache_;
 };
 
-V_BREPIO_NS_END
+VN_BREPIO_NS_END

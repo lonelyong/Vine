@@ -2,7 +2,7 @@
 
 #include <vine/math/Point3.hpp>
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 #define TMPL_PREFIX template <FP T>
 
@@ -363,12 +363,12 @@ Point3<T> operator*(const Quaternion<T>& left, const Point3<T>& right)
     return Point3<T>(rotated.x, rotated.y, rotated.z);
 }
 
-template class V_MATH_API Quaternion<float>;
-template class V_MATH_API Quaternion<double>;
+template class VN_MATH_API Quaternion<float>;
+template class VN_MATH_API Quaternion<double>;
 
-template V_MATH_API Vector3<float> operator*(const Quaternion<float>&, const Vector3<float>&);
-template V_MATH_API Vector3<double> operator*(const Quaternion<double>&, const Vector3<double>&);
-template V_MATH_API Point3<float> operator*(const Quaternion<float>&, const Point3<float>&);
-template V_MATH_API Point3<double> operator*(const Quaternion<double>&, const Point3<double>&);
+template VN_MATH_API Vector3<float> operator*(const Quaternion<float>&, const Vector3<float>&);
+template VN_MATH_API Vector3<double> operator*(const Quaternion<double>&, const Vector3<double>&);
+template VN_MATH_API Point3<float> operator*(const Quaternion<float>&, const Point3<float>&);
+template VN_MATH_API Point3<double> operator*(const Quaternion<double>&, const Point3<double>&);
 
-V_MATH_NS_END
+VN_MATH_NS_END

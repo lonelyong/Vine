@@ -6,7 +6,7 @@
 
 #include "Object.hpp"
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief Interface for objects that can create a copy of themselves.
@@ -14,7 +14,7 @@ V_CORE_NS_BEGIN
  * The returned clone is owned by the caller.
  */
 class ICloneable {
-    V_DECLARE_INTERFACE(ICloneable)
+    VN_DECLARE_INTERFACE(ICloneable)
 
   public:
     virtual ~ICloneable() = default;
@@ -35,4 +35,4 @@ concept Cloneable = requires(const T& t) {
     { t.clone() } -> std::convertible_to<Object*>;
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

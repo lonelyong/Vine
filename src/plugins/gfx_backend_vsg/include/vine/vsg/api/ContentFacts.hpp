@@ -52,12 +52,12 @@
  * never the table's source of truth: the rows are, and a table without an order still answers correctly (by
  * scanning). What it buys is a lookup whose cost follows the LOGARITHM of the table rather than the table.
  */
-namespace vine::graphics
+namespace vn::graphics
 {
 class Texture;
 }
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief One vertex channel of a geometry: what the stream is shared by, and the bytes to upload. */
 struct ChannelFacts
@@ -127,7 +127,7 @@ struct MaterialFacts
     /// an image, not a texel of material state), and it is a fact the content layer needs: it is what
     /// decides whether a program's `VINE_DIFFUSE_MAP` variant applies to this drawable (see
     /// api/ProgramVariant). The pointer is borrowed with the entry - the material owns it.
-    vine::raw_ptr<const vine::graphics::Texture> texture{};
+    vn::raw_ptr<const vn::graphics::Texture> texture{};
 };
 
 /** @brief Every table a frame's content needs, borrowed for the recording. */
@@ -207,7 +207,7 @@ void orderMaterialRows(std::span<const MaterialFacts> rows, std::vector<std::uin
 /** @brief Gets whether a material entry carries a block of the ABI's size.
  *
  * @param facts Material entry to check.
- * @return true when the block is exactly `sizeof(vine::graphics::VineMaterialBlock)` bytes.
+ * @return true when the block is exactly `sizeof(vn::graphics::VineMaterialBlock)` bytes.
  */
 [[nodiscard]] bool blockFitsAbi(const MaterialFacts& facts) noexcept;
 
@@ -264,4 +264,4 @@ void orderMaterialRows(std::span<const MaterialFacts> rows, std::vector<std::uin
  */
 [[nodiscard]] FactResult<MaterialFacts> findMaterial(const ContentFacts& facts, const void* material) noexcept;
 
-V_VSG_NS_END
+VN_VSG_NS_END

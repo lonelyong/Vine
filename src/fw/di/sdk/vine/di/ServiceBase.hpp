@@ -5,7 +5,7 @@
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 
-V_DI_NS_BEGIN
+VN_DI_NS_BEGIN
 
 /**
  * @brief Common refcounted, Object-based base class for DI services.
@@ -14,12 +14,12 @@ V_DI_NS_BEGIN
  * RefCounted<ServiceBase>) so the container can own services type-erased with
  * intrusive_ptr<ServiceBase>. Concrete services derive from this class.
  */
-class V_DI_API ServiceBase : public Object, public RefCounted<ServiceBase> {
-    V_OBJECT_META_DECL
+class VN_DI_API ServiceBase : public Object, public RefCounted<ServiceBase> {
+    VN_OBJECT_META_DECL
 
   public:
     ServiceBase() = default;
     virtual ~ServiceBase() = default;
 };
 
-V_DI_NS_END
+VN_DI_NS_END

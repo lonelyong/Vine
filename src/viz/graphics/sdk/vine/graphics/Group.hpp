@@ -8,7 +8,7 @@
 
 #include "Node.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief Scene-graph node that aggregates child nodes.
@@ -22,8 +22,8 @@ V_GRAPHICS_NS_BEGIN
  * the union of its children's boxes (each child already answers in world
  * space, so enclosing transforms need no special handling here).
  */
-class V_GRAPHICS_API Group : public Node {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Group : public Node {
+    VN_OBJECT_META_DECL;
 
   public:
     Group();
@@ -82,4 +82,4 @@ class V_GRAPHICS_API Group : public Node {
 
 using GroupPtr = intrusive_ptr<Group>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

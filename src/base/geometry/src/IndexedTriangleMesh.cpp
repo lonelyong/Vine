@@ -2,9 +2,9 @@
 
 #include <utility>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-V_OBJECT_META_IMPL(IndexedTriangleMesh, Mesh)
+VN_OBJECT_META_IMPL(IndexedTriangleMesh, Mesh)
 
 IndexedTriangleMesh::IndexedTriangleMesh()
   : indices_(makeBuffer(UInt32Array{}))
@@ -27,7 +27,7 @@ void IndexedTriangleMesh::setIndices(UInt32Array indices)
     indices_ = makeBuffer(std::move(indices));
 }
 
-std::uint32_t IndexedTriangleMesh::addVertex(const vine::math::Vec3f& position)
+std::uint32_t IndexedTriangleMesh::addVertex(const vn::math::Vec3f& position)
 {
     positions_->push_back(position.x);
     positions_->push_back(position.y);
@@ -62,4 +62,4 @@ bool IndexedTriangleMesh::isValid() const
     return !positions_->empty() && indices_->size() >= 3 && indices_->size() % 3 == 0;
 }
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

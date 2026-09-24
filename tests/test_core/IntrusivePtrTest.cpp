@@ -6,8 +6,8 @@
 #include <vine/RefCounted.hpp>
 #include <vine/Object.hpp>
 
-using vine::IPtr;
-using vine::RefCounted;
+using vn::IPtr;
+using vn::RefCounted;
 
 namespace
 {
@@ -37,9 +37,9 @@ struct Derived : Base {
 };
 
 // Composition of the Object RTTI base with intrusive ref counting.
-class Service : public vine::Object, public RefCounted<Service> {
+class Service : public vn::Object, public RefCounted<Service> {
   public:
-    V_OBJECT_META(Service, Object)
+    VN_OBJECT_META(Service, Object)
     int id{ 0 };
 };
 
@@ -114,17 +114,17 @@ TEST(IntrusivePtrTest, Assignment)
 TEST(IntrusivePtrTest, StaticAndDynamicCast)
 {
     IPtr<Derived> d(new Derived());
-    IPtr<Base>    b = vine::static_pointer_cast<Base>(d);
+    IPtr<Base>    b = vn::static_pointer_cast<Base>(d);
     EXPECT_EQ(d->useCount(), 2ul);
 
-    IPtr<Derived> back = vine::dynamic_pointer_cast<Derived>(b);
+    IPtr<Derived> back = vn::dynamic_pointer_cast<Derived>(b);
     ASSERT_TRUE(back);
     back->extra = 42;
     EXPECT_EQ(d->extra, 42);
     EXPECT_EQ(b->useCount(), 3ul);
 
     IPtr<Base>     base_only(new Base());
-    IPtr<Derived>  failed = vine::dynamic_pointer_cast<Derived>(base_only);
+    IPtr<Derived>  failed = vn::dynamic_pointer_cast<Derived>(base_only);
     EXPECT_FALSE(failed);
 }
 
@@ -134,9 +134,9 @@ TEST(IntrusivePtrTest, CompositionWithObject)
     ASSERT_TRUE(s);
     EXPECT_EQ(s->useCount(), 1ul);
 
-    vine::Object* obj = s.get();
+    vn::Object* obj = s.get();
     EXPECT_TRUE(obj->isKindOf(Service::desc()));
-    EXPECT_TRUE(obj->isKindOf(vine::Object::desc()));
+    EXPECT_TRUE(obj->isKindOf(vn::Object::desc()));
     EXPECT_TRUE(obj->isKindOf<Service>());
 }
 

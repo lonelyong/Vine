@@ -76,7 +76,7 @@ BUILD="${1:-$ROOT/build-asan}"
 TARGET="${VINE_ASAN_TARGET:-test_gui}"
 FILTER="${VINE_ASAN_FILTER:-EventBusTest.*}"
 LEAKS="${VINE_ASAN_LEAKS:-0}"
-# When set (a grep -E pattern, e.g. 'vine::vsg'), a LeakSanitizer report that mentions NO frame matching it
+# When set (a grep -E pattern, e.g. 'vn::vsg'), a LeakSanitizer report that mentions NO frame matching it
 # is reported but does not fail the run: the run judges the pattern's own allocations. Unset = every leak
 # fails, which is what the appfw gate wants. Use it only while a report is not excused yet (see the recipes
 # in this file's header): a justified entry in asan_leaks.supp is the stronger answer.
@@ -213,7 +213,7 @@ leaks_outside_scope_only() {
     grep -qE "ERROR: AddressSanitizer:|\[  FAILED  \]" "$LOG" && return 1
     grep -q "ERROR: LeakSanitizer" "$LOG" || return 1
     # Only the leak section is searched: the test output above it names test suites, which would match a
-    # scope pattern like 'vine::vsg' and turn a report about someone else's allocation into a failure here.
+    # scope pattern like 'vn::vsg' and turn a report about someone else's allocation into a failure here.
     sed -n '/ERROR: LeakSanitizer/,$p' "$LOG" | grep -qE "$LEAK_SCOPE" && return 1
     return 0
 }

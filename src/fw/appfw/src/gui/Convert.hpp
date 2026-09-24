@@ -8,7 +8,7 @@
 
 #include <vine/appfw/gui/Gui.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class Convert {
   public:
@@ -41,4 +41,4 @@ class Convert {
     static String fromQString(const QString& qs);
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

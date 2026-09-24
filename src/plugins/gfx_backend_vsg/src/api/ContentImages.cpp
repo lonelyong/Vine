@@ -2,7 +2,7 @@
 
 #include <string_view>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 ImageOrigin imageOriginOf(std::string_view name) noexcept
 {
@@ -91,4 +91,4 @@ bool shadowImageOf(const core::CompiledPass& pass, std::span<const InputImages> 
     return true;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

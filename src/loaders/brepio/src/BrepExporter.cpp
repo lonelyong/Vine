@@ -1,11 +1,11 @@
 ﻿#include <vine/brepio/BrepExporter.hpp>
 
-V_BREPIO_NS_BEGIN
+VN_BREPIO_NS_BEGIN
 
-V_OBJECT_META_IMPL(BrepExporter, vine::Object)
+VN_OBJECT_META_IMPL(BrepExporter, vn::Object)
 
 BrepExporter::BrepExporter() = default;
 
 BrepExporter::~BrepExporter() = default;
 
-V_BREPIO_NS_END
+VN_BREPIO_NS_END

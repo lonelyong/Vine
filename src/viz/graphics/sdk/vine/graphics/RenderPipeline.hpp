@@ -9,7 +9,7 @@
 
 #include "ShaderProgram.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class AxisGizmo;
 class Camera;
@@ -99,7 +99,7 @@ constexpr int pipelineStageOrder(PipelineStage stage) noexcept
  * pass; it mirrors the source camera's orientation each frame. When
  * @ref source_camera is null the overlay is disabled and nothing is added.
  */
-struct V_GRAPHICS_API AxisGizmoOptions {
+struct VN_GRAPHICS_API AxisGizmoOptions {
     /** @brief Camera the gizmo mirrors (e.g. the view's primary camera).
      *
      * Null disables the overlay.
@@ -139,7 +139,7 @@ struct V_GRAPHICS_API AxisGizmoOptions {
  * source camera. Like the axis gizmo it is opt-in per application — set @ref
  * enabled to true to draw it (the app-shell demo enables it by default).
  */
-struct V_GRAPHICS_API FpsOverlayOptions {
+struct VN_GRAPHICS_API FpsOverlayOptions {
     /** @brief Whether the readout is drawn. Disabled by default. */
     bool enabled = false;
 
@@ -169,7 +169,7 @@ struct V_GRAPHICS_API FpsOverlayOptions {
  * content, because a light outlives any one pipeline and a scene may be drawn by
  * several (see PipelineStage::Depth and .ai/design/render-pipeline.md §2).
  */
-struct V_GRAPHICS_API PipelineOptions {
+struct VN_GRAPHICS_API PipelineOptions {
     /** @brief How the opaque content is shaded (the structural choice). */
     ShadingPath path = ShadingPath::Forward;
 
@@ -233,7 +233,7 @@ struct V_GRAPHICS_API PipelineOptions {
  * rebuilds the off-screen attachments whenever the target size changes between
  * frames).
  */
-class V_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
+class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     friend class RenderPipelineBuilder;
 
   public:
@@ -353,4 +353,4 @@ class V_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     intrusive_ptr<FpsOverlay> fps_overlay_;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

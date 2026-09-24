@@ -1,7 +1,7 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief Per-frame shared context (skeleton).
@@ -11,7 +11,7 @@ V_GRAPHICS_NS_BEGIN
  * Later extensions: previous-frame view-projection matrices (for temporal
  * effects such as motion vectors / TAA) and the active light list.
  */
-struct V_GRAPHICS_API FrameContext {
+struct VN_GRAPHICS_API FrameContext {
     double dt = 0.0;  ///< Seconds elapsed since the previous frame.
     /// Surface width as the HOST announced it (the Qt host announces logical pixels - what its widget
     /// reports - so a consumer that needs device pixels scales by that host's ratio; see Pipeline::resize
@@ -21,4 +21,4 @@ struct V_GRAPHICS_API FrameContext {
     int surface_height = 0;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

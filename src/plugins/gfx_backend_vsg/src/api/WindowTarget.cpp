@@ -10,13 +10,13 @@
 #include <vsg/maths/vec3.h>
 #include <vsg/nodes/Group.h>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
 
 /// @brief The engine's colour entry for a surface format, by bit depth and kind (see WindowTarget::shape).
-vine::graphics::RenderTarget::ColorFormat toColorFormat(VkFormat format) noexcept
+vn::graphics::RenderTarget::ColorFormat toColorFormat(VkFormat format) noexcept
 {
     switch (format)
     {
@@ -26,11 +26,11 @@ vine::graphics::RenderTarget::ColorFormat toColorFormat(VkFormat format) noexcep
     case VK_FORMAT_B8G8R8A8_SRGB:
     case VK_FORMAT_A8B8G8R8_UNORM_PACK32:
     case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
-        return vine::graphics::RenderTarget::ColorFormat::RGBA8;
+        return vn::graphics::RenderTarget::ColorFormat::RGBA8;
     case VK_FORMAT_R16G16B16A16_SFLOAT:
-        return vine::graphics::RenderTarget::ColorFormat::RGBA16F;
+        return vn::graphics::RenderTarget::ColorFormat::RGBA16F;
     case VK_FORMAT_R32G32B32A32_SFLOAT:
-        return vine::graphics::RenderTarget::ColorFormat::RGBA32F;
+        return vn::graphics::RenderTarget::ColorFormat::RGBA32F;
     default:
         // An unknown surface format falls back to the engine's 8-bit entry rather than failing the session:
         // the engine's spelling decides which variants the window's passes may SHARE with off-screen passes,
@@ -38,19 +38,19 @@ vine::graphics::RenderTarget::ColorFormat toColorFormat(VkFormat format) noexcep
         // render passes are compatible at all - so a fallback here costs at most a variant that is not
         // shared, while refusing would make a session unable to start on a platform whose surface list this
         // table has not seen.
-        return vine::graphics::RenderTarget::ColorFormat::RGBA8;
+        return vn::graphics::RenderTarget::ColorFormat::RGBA8;
     }
 }
 
 /// @brief The engine's depth entry for the window's depth format, or nothing when the window has no depth.
-std::optional<vine::graphics::RenderTarget::DepthFormat> toDepthFormat(VkFormat format) noexcept
+std::optional<vn::graphics::RenderTarget::DepthFormat> toDepthFormat(VkFormat format) noexcept
 {
     switch (format)
     {
-    case VK_FORMAT_D16_UNORM: return vine::graphics::RenderTarget::DepthFormat::D16;
-    case VK_FORMAT_D24_UNORM_S8_UINT: return vine::graphics::RenderTarget::DepthFormat::D24;
-    case VK_FORMAT_D32_SFLOAT: return vine::graphics::RenderTarget::DepthFormat::D32F;
-    case VK_FORMAT_D32_SFLOAT_S8_UINT: return vine::graphics::RenderTarget::DepthFormat::D32;
+    case VK_FORMAT_D16_UNORM: return vn::graphics::RenderTarget::DepthFormat::D16;
+    case VK_FORMAT_D24_UNORM_S8_UINT: return vn::graphics::RenderTarget::DepthFormat::D24;
+    case VK_FORMAT_D32_SFLOAT: return vn::graphics::RenderTarget::DepthFormat::D32F;
+    case VK_FORMAT_D32_SFLOAT_S8_UINT: return vn::graphics::RenderTarget::DepthFormat::D32;
     default: return std::nullopt;
     }
 }
@@ -271,4 +271,4 @@ std::uint32_t WindowTarget::height() const noexcept
     return d->window->extent2D().height;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

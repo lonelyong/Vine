@@ -10,7 +10,7 @@
 
 #include "SpdlogInternal.hpp"
 
-V_LOGGING_NS_BEGIN
+VN_LOGGING_NS_BEGIN
 
 struct Logger::Impl
 {
@@ -128,10 +128,10 @@ void reportLoggingFailure() noexcept
     // fputs does not throw, and stderr is used instead of the logging machinery
     // because the logger is what failed here.
     try {
-        std::fputs("[vine::logging] a logging operation failed; further logging failures are dropped\n", stderr);
+        std::fputs("[vn::logging] a logging operation failed; further logging failures are dropped\n", stderr);
     }
     catch (...) {
     }
 }
 
-V_LOGGING_NS_END
+VN_LOGGING_NS_END

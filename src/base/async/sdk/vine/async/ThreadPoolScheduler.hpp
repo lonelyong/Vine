@@ -10,10 +10,10 @@
 #include "Concepts.hpp"
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 /**
- * @brief Scheduler that resumes coroutines on a vine::ThreadPool.
+ * @brief Scheduler that resumes coroutines on a vn::ThreadPool.
  *
  * co_await scheduler.schedule() (or resumeOn(scheduler)) hops the coroutine
  * onto a worker thread of the bound pool. The pool must outlive every
@@ -22,7 +22,7 @@ V_ASYNC_NS_BEGIN
 class ThreadPoolScheduler
 {
   public:
-    explicit ThreadPoolScheduler(vine::ThreadPool& pool) noexcept : pool_(&pool) {}
+    explicit ThreadPoolScheduler(vn::ThreadPool& pool) noexcept : pool_(&pool) {}
 
     ThreadPoolScheduler(const ThreadPoolScheduler&) = delete;
     ThreadPoolScheduler& operator=(const ThreadPoolScheduler&) = delete;
@@ -33,7 +33,7 @@ class ThreadPoolScheduler
     class ScheduleAwaiter
     {
       public:
-        explicit ScheduleAwaiter(vine::ThreadPool& pool) noexcept : pool_(pool) {}
+        explicit ScheduleAwaiter(vn::ThreadPool& pool) noexcept : pool_(pool) {}
 
         [[nodiscard]]
         bool await_ready() const noexcept
@@ -49,7 +49,7 @@ class ThreadPoolScheduler
         void await_resume() const noexcept {}
 
       private:
-        vine::ThreadPool& pool_;
+        vn::ThreadPool& pool_;
     };
 
     /**
@@ -64,7 +64,7 @@ class ThreadPoolScheduler
     }
 
   private:
-    vine::ThreadPool* pool_{ nullptr };
+    vn::ThreadPool* pool_{ nullptr };
 };
 
 /**
@@ -84,7 +84,7 @@ class ThreadPoolScheduler
  */
 template<typename F, typename... Args>
 [[nodiscard]]
-Task<std::invoke_result_t<F, Args...>> runOn(vine::ThreadPool& pool, F f, Args... args)
+Task<std::invoke_result_t<F, Args...>> runOn(vn::ThreadPool& pool, F f, Args... args)
 {
     // Hop to a pool worker before invoking the callable.
     co_await ThreadPoolScheduler{ pool }.schedule();
@@ -118,7 +118,7 @@ template<typename F, typename... Args>
 [[nodiscard]]
 Task<std::invoke_result_t<F, Args...>> run(F f, Args... args)
 {
-    co_return co_await runOn(vine::ThreadPool::defaultPool(), std::move(f), std::move(args)...);
+    co_return co_await runOn(vn::ThreadPool::defaultPool(), std::move(f), std::move(args)...);
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

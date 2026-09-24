@@ -6,7 +6,7 @@
 
 #include <vine/deprecated/RefObject.hpp>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 template <typename T>
 class [[deprecated]] SPtr {
@@ -305,4 +305,4 @@ template <typename T, typename Y>
 inline SPtr<T> const_pointer_cast(const SPtr<Y>& rp)
 { return const_cast<T*>(rp.get()); }
 
-V_CORE_NS_END
+VN_CORE_NS_END

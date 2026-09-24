@@ -15,7 +15,7 @@
 
 #include <vine/vsg/api/PassRegistry.hpp>
 
-using vine::vsg::PassRegistry;
+using vn::vsg::PassRegistry;
 
 TEST(PassRegistryTest, AnAnnouncedPassKeepsItsNumberUntilItIsReleased)
 {

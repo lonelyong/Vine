@@ -20,14 +20,14 @@
 #include <vine/geometry/Array.hpp>
 #include <vine/math/Transform3.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 namespace
 {
 
-using vine::intrusive_ptr;
-using vine::math::Vec3d;
-using vine::math::Vec3f;
+using vn::intrusive_ptr;
+using vn::math::Vec3d;
+using vn::math::Vec3f;
 
 /**
  * @brief Adds a unit triangle at a world-space position to the scene.
@@ -41,33 +41,33 @@ using vine::math::Vec3f;
  * @param at      World-space position.
  * @return The created node (kept alive by the scene).
  */
-intrusive_ptr<vine::graphics::MatrixTransform> addDemoTriangle(vine::graphics::Scene* scene,
-                                                              const vine::Colorf& diffuse,
-                                                              const vine::String& name,
+intrusive_ptr<vn::graphics::MatrixTransform> addDemoTriangle(vn::graphics::Scene* scene,
+                                                              const vn::Colorf& diffuse,
+                                                              const vn::String& name,
                                                               const Vec3d& at)
 {
     // One triangle in the XY plane, authored directly as positions.
-    const vine::geometry::Vec3fArray positions = { Vec3f(-1.0f, -1.0f, 0.0f),
+    const vn::geometry::Vec3fArray positions = { Vec3f(-1.0f, -1.0f, 0.0f),
                                                    Vec3f(1.0f, -1.0f, 0.0f),
                                                    Vec3f(0.0f, 1.0f, 0.0f) };
 
-    auto geometry = make_intrusive<vine::graphics::Geometry>();
+    auto geometry = make_intrusive<vn::graphics::Geometry>();
     geometry->setName(name);
-    geometry->setPositions(vine::graphics::packAttribute(positions));
+    geometry->setPositions(vn::graphics::packAttribute(positions));
 
-    auto material = make_intrusive<vine::graphics::Material>();
+    auto material = make_intrusive<vn::graphics::Material>();
     material->setDiffuse(diffuse);
     geometry->setMaterial(material);
 
-    auto node = intrusive_ptr<vine::graphics::MatrixTransform>(
-        new vine::graphics::MatrixTransform());
+    auto node = intrusive_ptr<vn::graphics::MatrixTransform>(
+        new vn::graphics::MatrixTransform());
     node->setName(name);
-    node->setMatrix(vine::math::translate(at));
+    node->setMatrix(vn::math::translate(at));
     node->addChild(geometry);
 
-    vine::graphics::Group* root = dynamic_cast<vine::graphics::Group*>(scene->root().get());
+    vn::graphics::Group* root = dynamic_cast<vn::graphics::Group*>(scene->root().get());
     if (root == nullptr) {
-        auto group = make_intrusive<vine::graphics::Group>();
+        auto group = make_intrusive<vn::graphics::Group>();
         scene->setRoot(group);
         root = group.get();
     }
@@ -77,12 +77,12 @@ intrusive_ptr<vine::graphics::MatrixTransform> addDemoTriangle(vine::graphics::S
 
 }  // namespace
 
-V_OBJECT_META_IMPL(TestRenderLiveCommand, Command)
+VN_OBJECT_META_IMPL(TestRenderLiveCommand, Command)
 
-vine::async::Task<CommandResult> TestRenderLiveCommand::execute(CommandExecutionContext* context)
+vn::async::Task<CommandResult> TestRenderLiveCommand::execute(CommandExecutionContext* context)
 {
     auto* gui_app =
-        vine::obj_cast<vine::appfw::gui::GuiApplication>(context ? context->application() : nullptr);
+        vn::obj_cast<vn::appfw::gui::GuiApplication>(context ? context->application() : nullptr);
     auto* rc = gui_app ? gui_app->mainWindow()->primaryRenderControl() : nullptr;
     if (rc == nullptr) {
         co_return CommandResult(CommandStatus::Failed, String(u8"未找到主渲染视图"));
@@ -96,15 +96,15 @@ vine::async::Task<CommandResult> TestRenderLiveCommand::execute(CommandExecution
 
     // Keep an owning reference so the content outlives the passes binding it.
     auto scene = rc->view()->scene();
-    auto base  = addDemoTriangle(scene.get(), vine::Colorf(0.8f, 0.2f, 0.2f, 1.0f), u8"live_base",
+    auto base  = addDemoTriangle(scene.get(), vn::Colorf(0.8f, 0.2f, 0.2f, 1.0f), u8"live_base",
                                  Vec3d(0.0, 0.0, -4.0));
-    auto mover = addDemoTriangle(scene.get(), vine::Colorf(0.2f, 0.4f, 0.9f, 1.0f), u8"live_mover",
+    auto mover = addDemoTriangle(scene.get(), vn::Colorf(0.2f, 0.4f, 0.9f, 1.0f), u8"live_mover",
                                  Vec3d(3.0, 0.0, -6.0));
 
     // Each demo triangle lives under its own MatrixTransform as one leaf
     // Geometry child; grab the leaf for the visibility blink below.
-    auto* mover_geom = dynamic_cast<vine::graphics::Geometry*>(mover->children().front().get());
-    auto* base_mat = dynamic_cast<vine::graphics::Geometry*>(base->children().front().get())
+    auto* mover_geom = dynamic_cast<vn::graphics::Geometry*>(mover->children().front().get());
+    auto* base_mat = dynamic_cast<vn::graphics::Geometry*>(base->children().front().get())
                          ->material();
 
     s_timer = new QTimer(QCoreApplication::instance());
@@ -115,7 +115,7 @@ vine::async::Task<CommandResult> TestRenderLiveCommand::execute(CommandExecution
 
         // Node transform updates live (matrix path).
         mover->setMatrix(
-            vine::math::translate(Vec3d(3.0 * std::cos(t), 1.2 * std::sin(t), -6.0)));
+            vn::math::translate(Vec3d(3.0 * std::cos(t), 1.2 * std::sin(t), -6.0)));
 
         // Node-level opacity oscillates (per-vertex alpha path).
         mover->setOpacity(0.2f + 0.8f * static_cast<float>(0.5 + 0.5 * std::sin(t)));
@@ -125,7 +125,7 @@ vine::async::Task<CommandResult> TestRenderLiveCommand::execute(CommandExecution
 
         // Material diffuse cycles through hues (shared Phong uniform path).
         const float c = static_cast<float>(t);
-        base_mat->setDiffuse(vine::Colorf(0.5f + 0.5f * std::sin(c),
+        base_mat->setDiffuse(vn::Colorf(0.5f + 0.5f * std::sin(c),
                                           0.5f + 0.5f * std::sin(c + 2.1f),
                                           0.5f + 0.5f * std::sin(c + 4.2f), 1.0f));
 
@@ -136,4 +136,4 @@ vine::async::Task<CommandResult> TestRenderLiveCommand::execute(CommandExecution
     co_return CommandResult(CommandStatus::Success, String(u8"实时渲染演示已启动"));
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

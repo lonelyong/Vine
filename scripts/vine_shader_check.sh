@@ -129,7 +129,7 @@ done
 headers=()
 while read -r declared; do
     [ -n "$declared" ] && headers+=( "$BUILD/generated/$declared" )
-done < <(grep -A 1 'v_declare_embedded_shaders' "$INVENTORY" | sed -n 's/^ *OUTPUT \(.*\)$/\1/p')
+done < <(grep -A 1 'vn_declare_embedded_shaders' "$INVENTORY" | sed -n 's/^ *OUTPUT \(.*\)$/\1/p')
 if [ "${#headers[@]}" -eq 0 ] || [ ! -f "${headers[0]}" ]; then
     echo "[SKIP] no generated shader header yet ($BUILD/generated/vine/...); build once to check the embedding"
 else

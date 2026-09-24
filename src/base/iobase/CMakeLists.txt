@@ -1,4 +1,4 @@
-v_add_library(IOBASE_TARGET_NAME IOBase)
+vn_add_library(IOBASE_TARGET_NAME IOBase)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -54,8 +54,8 @@ if(VINE_USE_FETCHCONTENT)
     FetchContent_MakeAvailable(libzip)
 
     # Group every third-party target under the third_party solution folder.
-    v_group_targets_folder(${zlib_SOURCE_DIR} third_party)
-    v_group_targets_folder(${libzip_SOURCE_DIR} third_party)
+    vn_group_targets_folder(${zlib_SOURCE_DIR} third_party)
+    vn_group_targets_folder(${libzip_SOURCE_DIR} third_party)
 else()
     # Consume zlib and libzip from vcpkg or a local install.
     find_package(ZLIB REQUIRED)
@@ -69,6 +69,6 @@ else()
     endif()
 endif()
 
-target_link_libraries(${IOBASE_TARGET_NAME} PUBLIC vi::Global vi::Core)
+target_link_libraries(${IOBASE_TARGET_NAME} PUBLIC vn::Global vn::Core)
 # Static zlib and libzip are baked into the IOBase DLL.
 target_link_libraries(${IOBASE_TARGET_NAME} PRIVATE zlibstatic zip)

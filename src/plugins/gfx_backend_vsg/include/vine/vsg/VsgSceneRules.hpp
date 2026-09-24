@@ -50,7 +50,7 @@
 #include <vine/vsg/RenderStateMapper.hpp>
 #include <vine/vsg/VsgBufferView.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -78,7 +78,7 @@ enum class ChannelShape
  * @param vertex_count Vertices the mesh has (the channel must match it).
  * @return Ok when the channel can be materialised, else why it cannot.
  */
-ChannelShape channelShape(const vine::graphics::AttributeChannel& attr, std::size_t vertex_count);
+ChannelShape channelShape(const vn::graphics::AttributeChannel& attr, std::size_t vertex_count);
 
 /**
  * @brief The "channel ignored" diagnostic for a rejected custom channel.
@@ -89,7 +89,7 @@ ChannelShape channelShape(const vine::graphics::AttributeChannel& attr, std::siz
  * @param shape        Why channelShape rejected it (never Ok).
  * @return The message to report.
  */
-vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics::AttributeChannel& attr,
+vn::String ignoredChannelMessage(std::uint32_t location, const vn::graphics::AttributeChannel& attr,
                                    std::size_t vertex_count, ChannelShape shape);
 
 /**
@@ -121,7 +121,7 @@ enum class XyzUnpack
  *             rejected, because the rejection happens before anything is written).
  * @return Ok when unpacked, otherwise why the channel was rejected.
  */
-XyzUnpack unpackXyz(const vine::graphics::AttributeChannel& attr, vine::geometry::Vec3fArray& out);
+XyzUnpack unpackXyz(const vn::graphics::AttributeChannel& attr, vn::geometry::Vec3fArray& out);
 
 /**
  * @brief The diagnostic for an unusable loc1 normal channel.
@@ -135,7 +135,7 @@ XyzUnpack unpackXyz(const vine::graphics::AttributeChannel& attr, vine::geometry
  * @param reason Why unpackXyz rejected it (never Ok).
  * @return The message to report.
  */
-vine::String ignoredNormalChannelMessage(const vine::graphics::AttributeChannel& attr, XyzUnpack reason);
+vn::String ignoredNormalChannelMessage(const vn::graphics::AttributeChannel& attr, XyzUnpack reason);
 
 /**
  * @brief The raw (unnormalised) right-handed face normal of a triangle.
@@ -154,7 +154,7 @@ vine::String ignoredNormalChannelMessage(const vine::graphics::AttributeChannel&
  * @param c Third triangle vertex.
  * @return The unnormalised face normal, zero when the triangle is degenerate.
  */
-vine::math::Vec3f faceNormal(const vine::math::Vec3f& a, const vine::math::Vec3f& b, const vine::math::Vec3f& c);
+vn::math::Vec3f faceNormal(const vn::math::Vec3f& a, const vn::math::Vec3f& b, const vn::math::Vec3f& c);
 
 /**
  * @brief Whether a normal is long enough to be scaled to unit length.
@@ -220,7 +220,7 @@ inline constexpr bool normalIsUsable(float length_sq) noexcept
  * @return The array to bind, or null when the channel is neither shape, is empty, or does not cover
  *         @p vertex_count vertices (the caller reports it and binds zero UVs instead).
  */
-::vsg::ref_ptr<::vsg::Data> texCoordArray(const vine::graphics::AttributeChannel& attr, std::size_t vertex_count);
+::vsg::ref_ptr<::vsg::Data> texCoordArray(const vn::graphics::AttributeChannel& attr, std::size_t vertex_count);
 
 /**
  * @brief Whether a bound texcoord array is three scalars wide.
@@ -249,7 +249,7 @@ bool isThreeScalarTexcoord(const ::vsg::Data& array) noexcept;
  * @param format Pixel layout to map.
  * @return The matching Vulkan format, or VK_FORMAT_UNDEFINED when there is none.
  */
-VkFormat vkFormatFor(vine::imaging::PixelFormat format) noexcept;
+VkFormat vkFormatFor(vn::imaging::PixelFormat format) noexcept;
 
 /**
  * @brief Why a texture cannot become a backend resource.
@@ -276,7 +276,7 @@ enum class TextureReject
  * @param texture Texture to classify (may be null).
  * @return Why the texture cannot be uploaded, or TextureReject::Ok.
  */
-TextureReject classifyTexture(const vine::graphics::Texture* texture) noexcept;
+TextureReject classifyTexture(const vn::graphics::Texture* texture) noexcept;
 
 /**
  * @brief Gets one mip level's extent along one axis.
@@ -306,7 +306,7 @@ std::uint32_t levelExtent(int size, std::size_t level) noexcept;
  *         account for, and the whole chain fits the offsets vsg addresses. A null texture, a null layer
  *         or an empty level is false.
  */
-bool textureDataMatchesExtent(const vine::graphics::Texture& texture) noexcept;
+bool textureDataMatchesExtent(const vn::graphics::Texture& texture) noexcept;
 
 /**
  * @brief Reduces a device's anisotropy limit to the level a sampler may be created with.
@@ -330,7 +330,7 @@ float anisotropyFor(float device_limit) noexcept;
  * @param texture The texture that was refused.
  * @return A human-readable reason.
  */
-vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Texture& texture);
+vn::String textureRejectMessage(TextureReject reason, const vn::graphics::Texture& texture);
 
 /**
  * @brief Builds the per-vertex normal array of a non-indexed mesh.
@@ -343,8 +343,8 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
  * @param meshNormals Optional mesh normals (may be empty).
  * @return Normal array, one vec3 per position.
  */
-::vsg::ref_ptr<::vsg::vec3Array> makeNormals(std::span<const vine::math::Vec3f> positions,
-                                            std::span<const vine::math::Vec3f> meshNormals);
+::vsg::ref_ptr<::vsg::vec3Array> makeNormals(std::span<const vn::math::Vec3f> positions,
+                                            std::span<const vn::math::Vec3f> meshNormals);
 
 /**
  * @brief Builds the per-vertex normal array of an indexed mesh.
@@ -359,8 +359,8 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
  * @param indices     Triangle indices (three per triangle).
  * @return Normal array, one vec3 per position.
  */
-::vsg::ref_ptr<::vsg::vec3Array> makeIndexedNormals(std::span<const vine::math::Vec3f> positions,
-                                                   std::span<const vine::math::Vec3f> meshNormals,
+::vsg::ref_ptr<::vsg::vec3Array> makeIndexedNormals(std::span<const vn::math::Vec3f> positions,
+                                                   std::span<const vn::math::Vec3f> meshNormals,
                                                    const ::vsg::uintArray& indices);
 
 /**
@@ -398,7 +398,7 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
  * @return The array, reading @p buffer's memory from @p offset_scalars on.
  */
 template <typename Array, typename Element>
-::vsg::ref_ptr<Array> aliasArray(intrusive_ptr<const vine::Buffer<Element>> buffer, std::size_t count,
+::vsg::ref_ptr<Array> aliasArray(intrusive_ptr<const vn::Buffer<Element>> buffer, std::size_t count,
                                  std::size_t offset_scalars = 0u)
 {
     using ArrayElement = typename Array::value_type;
@@ -429,7 +429,7 @@ template <typename Array, typename Element>
  * @return Typed array reading @p values.
  */
 ::vsg::ref_ptr<::vsg::Data> aliasTypedVertexData(std::uint32_t components,
-                                                intrusive_ptr<const vine::Buffer<float>> values,
+                                                intrusive_ptr<const vn::Buffer<float>> values,
                                                 std::size_t vertex_count, std::size_t offset_scalars = 0u);
 
 /**
@@ -481,7 +481,7 @@ std::string customAttributeName(std::uint32_t location);
  * @param type SDK stage kind.
  * @return The matching VkShaderStageFlagBits.
  */
-VkShaderStageFlagBits stageFlag(vine::graphics::ShaderStageType type);
+VkShaderStageFlagBits stageFlag(vn::graphics::ShaderStageType type);
 
 /** @brief Seed of every cache key built from the hashing below (FNV-1a basis). */
 inline constexpr std::uint64_t kHashSeed = 0xcbf29ce484222325ull;
@@ -561,9 +561,9 @@ template <class ChannelRange> std::uint64_t vertexLayoutHash(const ChannelRange&
  * @param layout   Hash of the geometry's forwarded custom channels (see vertexLayoutHash).
  * @return The content hash used as the variant cache key.
  */
-std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program, const vine::graphics::Material* material,
+std::uint64_t hashStateVariant(const vn::graphics::ShaderProgram* program, const vn::graphics::Material* material,
                                const void* texture_resource,
-                               const vine::graphics::ResolvedRenderState& state, std::uint64_t layout);
+                               const vn::graphics::ResolvedRenderState& state, std::uint64_t layout);
 
 /**
  * @brief How many colour attachments the slot's shader set declares.
@@ -599,4 +599,4 @@ void applyOpaqueBlendForAttachments(RenderStateObjects& states, int colour_count
 
 } // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END

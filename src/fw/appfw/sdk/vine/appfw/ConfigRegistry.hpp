@@ -10,7 +10,7 @@
 #include "ConfigCategory.hpp"
 #include "ConfigStandard.hpp"
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief Configuration registry: plugins build a "category -> group -> item"
@@ -25,7 +25,7 @@ V_APPFW_NS_BEGIN
  * @note Threading: the registry is not synchronized. Register during startup and
  * plugin loading, before worker threads read the tree.
  */
-class V_APPFW_API ConfigRegistry {
+class VN_APPFW_API ConfigRegistry {
   public:
     ConfigRegistry();
     ~ConfigRegistry();
@@ -157,4 +157,4 @@ class V_APPFW_API ConfigRegistry {
     std::unique_ptr<Impl> d;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

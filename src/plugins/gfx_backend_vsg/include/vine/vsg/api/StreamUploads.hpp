@@ -53,7 +53,7 @@
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief Shared stream uploads, keyed by `core::StreamKey`. */
 class StreamUploads
@@ -180,4 +180,4 @@ class StreamUploads
     std::unique_ptr<Data> d;
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

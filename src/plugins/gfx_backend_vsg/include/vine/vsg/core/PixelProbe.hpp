@@ -29,7 +29,7 @@
  * the image: a phase that asks about a rectangle larger than the surface gets the overlap counted, not
  * an out-of-range read.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -97,7 +97,7 @@ class PixelProbe
      * @param rect Rectangle to look in, in device pixels with a top-left origin.
      * @return Number of matching pixels inside the (clamped) rectangle.
      */
-    [[nodiscard]] std::size_t countMatching(const Rgba8& color, const vine::graphics::Viewport& rect) const noexcept;
+    [[nodiscard]] std::size_t countMatching(const Rgba8& color, const vn::graphics::Viewport& rect) const noexcept;
 
     /** @brief Counts pixels NOT equal to @p color inside @p rect (clamped to the image).
      *
@@ -107,7 +107,7 @@ class PixelProbe
      * @param rect Rectangle to look in.
      * @return Number of non-matching pixels inside the (clamped) rectangle.
      */
-    [[nodiscard]] std::size_t countDifferingFrom(const Rgba8& color, const vine::graphics::Viewport& rect) const noexcept;
+    [[nodiscard]] std::size_t countDifferingFrom(const Rgba8& color, const vn::graphics::Viewport& rect) const noexcept;
 
     /** @brief Gets the packed RGBA8 rows the probe wraps.
      *
@@ -128,7 +128,7 @@ class PixelProbe
 
   private:
     /** @brief Clamps @p rect to the image, returning false when nothing of it is inside. */
-    [[nodiscard]] bool clamped(const vine::graphics::Viewport& rect, int& x0, int& y0, int& x1, int& y1) const noexcept;
+    [[nodiscard]] bool clamped(const vn::graphics::Viewport& rect, int& x0, int& y0, int& x1, int& y1) const noexcept;
 
     int                      width_{0};
     int                      height_{0};
@@ -137,4 +137,4 @@ class PixelProbe
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

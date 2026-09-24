@@ -3,7 +3,7 @@
 #include <vine/progress/ProgressIndicator.hpp>
 #include <vine/progress/ProgressScope.hpp>
 
-V_PROGRESS_NS_BEGIN
+VN_PROGRESS_NS_BEGIN
 
 ProgressRange::ProgressRange() = default;
 
@@ -60,4 +60,4 @@ void ProgressRange::complete()
     used_         = true;
 }
 
-V_PROGRESS_NS_END
+VN_PROGRESS_NS_END

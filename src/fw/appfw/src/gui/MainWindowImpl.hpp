@@ -6,7 +6,7 @@
 #include <vine/Signal.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class MainWindowImpl : public SARibbonMainWindow {
   public:
@@ -25,4 +25,4 @@ class MainWindowImpl : public SARibbonMainWindow {
     Connection theme_handler_{};
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

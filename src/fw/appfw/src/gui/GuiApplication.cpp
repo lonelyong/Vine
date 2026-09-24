@@ -61,9 +61,9 @@ void selectX11UnderWslg()
 } // namespace
 #endif
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
-V_OBJECT_META_IMPL(GuiApplication, Application)
+VN_OBJECT_META_IMPL(GuiApplication, Application)
 
 namespace
 {
@@ -214,7 +214,7 @@ GuiApplication::~GuiApplication()
         // The frame dies with the application either way, but a boot the host never ended also leaves the main window
         // it was hiding unshown, which is exactly what the host has to be told about.
         if (!d->boot_ended) {
-            V_LOGW("Startup frame is still showing as the application is destroyed: the host never called "
+            VN_LOGW("Startup frame is still showing as the application is destroyed: the host never called "
                    "Application::finishStartup()");
         }
         delete d->boot_splash;
@@ -336,7 +336,7 @@ void GuiApplication::finishStartup()
         // Diagnostic: tells "the window sat behind something" (visible but not active) apart from "the window was
         // never shown", which are the two ways a frame that closes too early can look like a window that never
         // appeared.
-        V_LOGI("Startup frame going away: main window visible={}, active={}", d->main_window->visible(), d->main_window->isActive());
+        VN_LOGI("Startup frame going away: main window visible={}, active={}", d->main_window->visible(), d->main_window->isActive());
 
         if (auto* native = d->main_window->impl<QWidget>()) {
             native->raise();
@@ -350,7 +350,7 @@ void GuiApplication::setSplashConfig(const SplashConfig& config)
     auto* d = static_cast<GuiApplicationData*>(dptr());
     if (d->app != nullptr) {
         // init() already ran, so whether a frame is shown has been decided; re-deciding it here would do nothing.
-        V_LOGW("GuiApplication::setSplashConfig() after init() is ignored: the startup frame is created during init()");
+        VN_LOGW("GuiApplication::setSplashConfig() after init() is ignored: the startup frame is created during init()");
         return;
     }
 
@@ -371,7 +371,7 @@ int GuiApplication::run()
         // user has nothing to close and the application would sit in its main loop forever. The window is not shown here
         // on purpose - the host asked for an explicit end of the startup phase - but it must not go unsaid. (A frame
         // that outlives finishStartup() is not this: it is waiting for the window, and closes itself in this loop.)
-        V_LOGW("Startup frame is still showing and the main window is still hidden: the host must call "
+        VN_LOGW("Startup frame is still showing and the main window is still hidden: the host must call "
                "Application::finishStartup() before run()");
     }
 
@@ -439,4 +439,4 @@ void GuiApplication::applyTheme(Theme theme)
     }
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

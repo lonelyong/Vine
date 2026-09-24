@@ -16,11 +16,11 @@
 #include <vine/robotics/workcell/Scanner.hpp>
 #include <vine/robotics/workcell/Workcell.hpp>
 
-using namespace vine::robotics;
-using namespace vine::robotics::kinematics;
-using namespace vine::robotics::workcell;
-using vine::robotics::io::DeviceIO;
-using vine::robotics::io::WorkcellIO;
+using namespace vn::robotics;
+using namespace vn::robotics::kinematics;
+using namespace vn::robotics::workcell;
+using vn::robotics::io::DeviceIO;
+using vn::robotics::io::WorkcellIO;
 
 namespace
 {

@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief Canonical vertex attributes the built-in shading consumes.
@@ -109,7 +109,7 @@ struct alignas(16) VineDrawBlock
 /**
  * @brief Per-material data block the built-in shading reads (L1 shape).
  *
- * The engine's material ABI: a backend fills this from vine::graphics::Material and binds it at the
+ * The engine's material ABI: a backend fills this from vn::graphics::Material and binds it at the
  * shader's material binding. Field order and std140 offsets are the contract (see the shader's
  * `VineMaterialBlock`), so the two sides cannot drift: a member added here without the GLSL fails
  * the static_asserts below or the structural test, never silently mis-reads.
@@ -206,4 +206,4 @@ static_assert(sizeof(VineShadowBlock) == 80u, "VineShadowBlock must be 1 mat4 + 
 static_assert(alignof(VineShadowBlock) == 16u, "VineShadowBlock must stay std140 / D3D-cbuffer aligned");
 static_assert(offsetof(VineShadowBlock, params) == 64u, "VineShadowBlock std140 offset");
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

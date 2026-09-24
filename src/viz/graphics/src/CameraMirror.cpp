@@ -2,7 +2,7 @@
 
 #include <vine/graphics/Camera.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 void applyCameraMirror(raw_ptr<Camera> dst, raw_ptr<Camera> src, MirrorMode mode)
 {
@@ -40,4 +40,4 @@ void applyCameraMirror(raw_ptr<Camera> dst, raw_ptr<Camera> src, MirrorMode mode
     dst->setViewMatrixAsLookAt(eye, Vec3d(0.0, 0.0, 0.0), up);
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

@@ -11,7 +11,7 @@
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
 
-using namespace vine::math;
+using namespace vn::math;
 
 TEST(Rect2, minMax)
 {

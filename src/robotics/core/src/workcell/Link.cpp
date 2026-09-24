@@ -1,6 +1,6 @@
 ﻿#include <vine/robotics/workcell/Link.hpp>
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 Link::Link(const String& name)
   : name_(name)
@@ -26,4 +26,4 @@ void Link::copyFrom(const Link& other)
     device_       = nullptr;
 }
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

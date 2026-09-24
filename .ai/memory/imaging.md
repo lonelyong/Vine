@@ -5,12 +5,12 @@
 
 ## 事实速查
 
-- 目录 `src/base/imaging/`，短名 **`Imaging`** → 别名 `vi::Imaging`，宏 `V_IMAGING_API` / `V_IMAGING_LIB`，
-  命名空间 `vine::imaging`，头 `<vine/imaging/...>`。
-- 依赖 **只有 `vi::Core vi::Global`**（叶子，与 `geometry` 同级）。
+- 目录 `src/base/imaging/`，短名 **`Imaging`** → 别名 `vn::Imaging`，宏 `VN_IMAGING_API` / `VN_IMAGING_LIB`，
+  命名空间 `vn::imaging`，头 `<vine/imaging/...>`。
+- 依赖 **只有 `vn::Core vn::Global`**（叶子，与 `geometry` 同级）。
 - 注册点：`src/base/CMakeLists.txt` 的 `add_subdirectory(imaging)`（放在 `geometry` 之后）、
   `tests/CMakeLists.txt` 的 `add_subdirectory(test_imaging)`。
-- **改完新文件必须 `cmake -S . -B build`**：`v_add_library` 用 `file(GLOB_RECURSE ...)` 且**没有**
+- **改完新文件必须 `cmake -S . -B build`**：`vn_add_library` 用 `file(GLOB_RECURSE ...)` 且**没有**
   `CONFIGURE_DEPENDS`。
 
 ## 分工铁律
@@ -63,7 +63,7 @@
   不让后端到上传时才发现）。
 - 读越界 face 是**查询**（答"没有这个 face"，返回 null）；写越界 face 抛 `std::out_of_range`。
 - mip 上限**复用** `imaging::Image::mipCapacity`，而不是重述规则。
-- `graphics` 现在 **PUBLIC 依赖 `vi::Imaging`**。
+- `graphics` 现在 **PUBLIC 依赖 `vn::Imaging`**。
 - `Material`：删 `textureFile()`/`setTextureFile()`（死 API），改
   `texture()`/`setTexture(intrusive_ptr<Texture>)`。
 

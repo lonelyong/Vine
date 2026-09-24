@@ -3,20 +3,20 @@
 // PluginInfo with the current layout would misinterpret it - and report both
 // revisions so the operator can tell "this plugin is too new" from "too old".
 //
-// The handshake is hand-written rather than taken from V_DECLARE_PLUGIN, precisely
+// The handshake is hand-written rather than taken from VN_DECLARE_PLUGIN, precisely
 // because the current SDK cannot express a revision from the future. Only the tests
 // build this fixture, and they load it by the path injected as VINE_FUTURE_ABI_PLUGIN.
 #include <vine/appfw/Plugin.hpp>
 
-extern "C" const vine::appfw::PluginAbi* vinePluginAbi()
+extern "C" const vn::appfw::PluginAbi* vinePluginAbi()
 {
-    static const vine::appfw::PluginAbi s_abi{ 999u, "99.0.0" };
+    static const vn::appfw::PluginAbi s_abi{ 999u, "99.0.0" };
     return &s_abi;
 }
 
-extern "C" const vine::appfw::PluginInfo* vinePluginQuery()
+extern "C" const vn::appfw::PluginInfo* vinePluginQuery()
 {
-    static const vine::appfw::PluginInfo s_info{ vine::Uuid::parse(u8"6a1b6d0e-0000-4000-8000-000000000002"),
+    static const vn::appfw::PluginInfo s_info{ vn::Uuid::parse(u8"6a1b6d0e-0000-4000-8000-000000000002"),
                                                  u8"future_plugin",
                                                  u8"Future plugin",
                                                  u8"9.9.9",
@@ -30,7 +30,7 @@ extern "C" const vine::appfw::PluginInfo* vinePluginQuery()
 }
 
 /// Never reached: the host refuses the library before it creates an instance.
-extern "C" vine::appfw::Plugin* vinePluginCreate()
+extern "C" vn::appfw::Plugin* vinePluginCreate()
 {
     return nullptr;
 }

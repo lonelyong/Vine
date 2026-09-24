@@ -9,13 +9,13 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/window/window_global.hpp>
 
-V_WINDOW_NS_BEGIN
+VN_WINDOW_NS_BEGIN
 struct KeyEvent;
 struct MouseEvent;
 struct ScrollEvent;
-V_WINDOW_NS_END
+VN_WINDOW_NS_END
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class Camera;
 class CameraManipulator;
@@ -60,7 +60,7 @@ class Scene;
  * onSurfaceResized), which forwards them to the manipulator and keeps the
  * camera projection correct.
  */
-class V_GRAPHICS_API SceneView : public RefCounted<SceneView> {
+class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
   public:
     /** @brief Constructs a view with a default camera and an empty content
      * scene.
@@ -166,19 +166,19 @@ class V_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *
      * @param event Mouse event to forward.
      */
-    void pushEvent(const vine::window::MouseEvent& event);
+    void pushEvent(const vn::window::MouseEvent& event);
 
     /** @brief Pushes a scroll (wheel) event to the manipulator.
      *
      * @param event Scroll event to forward.
      */
-    void pushEvent(const vine::window::ScrollEvent& event);
+    void pushEvent(const vn::window::ScrollEvent& event);
 
     /** @brief Pushes a keyboard event to the manipulator.
      *
      * @param event Key event to forward.
      */
-    void pushEvent(const vine::window::KeyEvent& event);
+    void pushEvent(const vn::window::KeyEvent& event);
 
     /** @brief Refreshes the camera projection aspect for a new surface size.
      *
@@ -239,4 +239,4 @@ class V_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     std::vector<std::function<void(int width, int height)>> surface_layouts_;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

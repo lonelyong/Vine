@@ -11,7 +11,7 @@
 
 #include "LogLevel.hpp"
 
-V_LOGGING_NS_BEGIN
+VN_LOGGING_NS_BEGIN
 
 class Logger;
 
@@ -23,7 +23,7 @@ class Logger;
  * behind a private implementation. Sinks are shared on copy, so the same sink
  * may be attached to several loggers.
  */
-class V_LOGGING_API LogSink
+class VN_LOGGING_API LogSink
 {
   public:
     /**
@@ -94,4 +94,4 @@ class V_LOGGING_API LogSink
     friend class Logger;
 };
 
-V_LOGGING_NS_END
+VN_LOGGING_NS_END

@@ -10,7 +10,7 @@
 
 #include "VfsInternal.hpp"
 
-V_IO_NS_BEGIN
+VN_IO_NS_BEGIN
 
 DirectoryVfs::DirectoryVfs(const std::filesystem::path& root)
   : root_(root)
@@ -465,4 +465,4 @@ Result<std::vector<unsigned char>> DirectoryVfs::toBytes() const
     return IoError::Unsupported; // a directory backend cannot produce an archive
 }
 
-V_IO_NS_END
+VN_IO_NS_END

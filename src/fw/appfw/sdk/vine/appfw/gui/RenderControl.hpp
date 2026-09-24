@@ -6,13 +6,13 @@
 
 #include "Control.hpp"
 
-namespace vine::graphics
+namespace vn::graphics
 {
 class RenderEngine;
 class SceneView;
 }
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Render view control: hosts a native QWindow render surface inside a
@@ -57,8 +57,8 @@ V_APPFWGUI_NS_BEGIN
  * has at that moment, and the size change that follows is served in place. The whole path is observable through
  * state() / state_changed.
  */
-class V_APPFW_API RenderControl : public Control {
-    V_OBJECT_META_DECL;
+class VN_APPFW_API RenderControl : public Control {
+    VN_OBJECT_META_DECL;
 
   public:
     /**
@@ -95,7 +95,7 @@ class V_APPFW_API RenderControl : public Control {
      *
      * @return The engine, or nullptr when creation failed.
      */
-    vine::graphics::RenderEngine* engine() const;
+    vn::graphics::RenderEngine* engine() const;
 
     /** @brief Gets the interactive primary view created by this control.
      *
@@ -107,7 +107,7 @@ class V_APPFW_API RenderControl : public Control {
      *
      * @return The view (never null while the control is alive).
      */
-    vine::graphics::SceneView* view() const;
+    vn::graphics::SceneView* view() const;
 
     /** @brief Attaches the backend to the native surface and initializes it.
      *
@@ -192,4 +192,4 @@ class V_APPFW_API RenderControl : public Control {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

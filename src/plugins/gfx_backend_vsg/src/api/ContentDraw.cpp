@@ -1,6 +1,6 @@
 #include <vine/vsg/api/ContentDraw.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
                          detail::DynamicStateEntryPoints entry_points) noexcept
@@ -173,4 +173,4 @@ std::uint64_t ContentDraw::refusals() const noexcept
     return refusals_;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

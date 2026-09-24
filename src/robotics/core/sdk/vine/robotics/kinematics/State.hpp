@@ -9,7 +9,7 @@
 
 #include "QState.hpp"
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 /**
  * @brief Scene state: the joint-space state of every device in a scene.
@@ -57,4 +57,4 @@ class State {
     QState qstate_;
 };
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

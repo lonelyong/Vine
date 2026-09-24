@@ -27,9 +27,9 @@
 #include <vine/vsg/api/Session.hpp>
 #include <vine/vsg/core/Diagnostics.hpp>
 
-using vine::vsg::api::Session;
-using vine::vsg::api::SessionOptions;
-using vine::vsg::api::probePhysicalDevices;
+using vn::vsg::api::Session;
+using vn::vsg::api::SessionOptions;
+using vn::vsg::api::probePhysicalDevices;
 
 #if !defined(_WIN32)
 
@@ -62,9 +62,9 @@ TEST(SessionMoveTest, ASecondHostWindowMovesTheSessionAndTheSameOneKeepsIt)
     TestHostWindow first(connection, screen, 320, 240);
     TestHostWindow second(connection, screen, 320, 240);
 
-    vine::vsg::core::Diagnostics diagnostics;
+    vn::vsg::core::Diagnostics diagnostics;
     // A session that NEVER pumps the host's events (the host owns the message loop) and reports nothing.
-    diagnostics.setSink([](const vine::graphics::RenderDiagnostic&) {});
+    diagnostics.setSink([](const vn::graphics::RenderDiagnostic&) {});
 
     Session session;
     SessionOptions options;

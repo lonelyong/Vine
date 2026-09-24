@@ -12,7 +12,7 @@
 
 #include "Link.hpp"
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 /**
  * @brief A joint connecting two links of a Device.
@@ -30,7 +30,7 @@ V_ROBOTICS_WORKCELL_NS_BEGIN
  *
  * Owned by a Device through a smart pointer.
  */
-class V_ROBOTICS_CORE_API Joint : public kinematics::Frame
+class VN_ROBOTICS_CORE_API Joint : public kinematics::Frame
 {
   public:
     /**
@@ -157,4 +157,4 @@ class V_ROBOTICS_CORE_API Joint : public kinematics::Frame
     raw_ptr<Link>                    child_link_{ nullptr };
 };
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

@@ -30,7 +30,7 @@
  * ALIGNMENT LIMIT: chunks come from `new std::byte[]`, so the arena serves alignments up to
  * `alignof(std::max_align_t)`. Anything more is refused rather than served misaligned.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -157,4 +157,4 @@ class FrameArena
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

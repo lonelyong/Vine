@@ -29,7 +29,7 @@
 ```
 
 原则：
-- `window` **只依赖** `vi::Core`（Signal/Object/RefCounted/intrusive_ptr）与 `vi::Global`（math）
+- `window` **只依赖** `vn::Core`（Signal/Object/RefCounted/intrusive_ptr）与 `vn::Global`（math）
 - `WindowContext` 是**只读抽象接口**：不创建/销毁/轮询/存储窗口；只暴露查询 + 转发事件
 - 派生类持实际窗口指针，重写 `title()/width()/height()/isVisible()/nativeHandle()` 查询实时状态
 - 窗口真正创建/销毁/事件轮询全部在外部宿主；宿主通过 `postEvent()` 注入事件
@@ -39,9 +39,9 @@
 
 ```
 src/base/window/
-  CMakeLists.txt            # 只链 vi::Core vi::Global
+  CMakeLists.txt            # 只链 vn::Core vn::Global
   sdk/vine/window/
-    window_global.hpp       # API export 宏 + V_WINDOW_NS 命名空间
+    window_global.hpp       # API export 宏 + VN_WINDOW_NS 命名空间
     KeyCode.hpp             # 平台无关键码枚举
     MouseButton.hpp         # 鼠标按钮枚举 + ModifierKey 位标志
     InputEvent.hpp          # KeyEvent / MouseEvent / ScrollEvent
@@ -74,7 +74,7 @@ enum class MouseButton : std::uint32_t {
     None, Left, Right, Middle, XButton1, XButton2,
 };
 
-enum class ModifierKey : std::uint32_t {   // 位标志，V_ENABLE_ENUM_FLAGS
+enum class ModifierKey : std::uint32_t {   // 位标志，VN_ENABLE_ENUM_FLAGS
     None = 0, Shift = 1<<0, Control = 1<<1, Alt = 1<<2, Super = 1<<3,
 };
 
@@ -109,8 +109,8 @@ struct WindowEvent {
 ### 3.2 `WindowContext`（只读抽象接口）
 
 ```cpp
-class V_WINDOW_API WindowContext : public Object, public RefCounted<WindowContext> {
-    V_OBJECT_META_DECL;
+class VN_WINDOW_API WindowContext : public Object, public RefCounted<WindowContext> {
+    VN_OBJECT_META_DECL;
   public:
     ~WindowContext() override = default;
 
@@ -160,9 +160,9 @@ class V_WINDOW_API WindowContext : public Object, public RefCounted<WindowContex
 ## 5. 依赖关系
 
 ```
-Window (vi::Window)
-  ├── vi::Core     (Object, RefCounted, intrusive_ptr, Signal)
-  └── vi::Global   (String, math 等基础类型)
+Window (vn::Window)
+  ├── vn::Core     (Object, RefCounted, intrusive_ptr, Signal)
+  └── vn::Global   (String, math 等基础类型)
 ```
 
 ## 6. 测试
@@ -174,7 +174,7 @@ Window (vi::Window)
 
 ## 7. 后续计划
 
-1. `graphics` 依赖 `vi::Window`；`RenderEngine` 增加 `setWindowContext(...)` 消费数据
+1. `graphics` 依赖 `vn::Window`；`RenderEngine` 增加 `setWindowContext(...)` 消费数据
 2. `CameraManipulator` 增加输入接口（`onMouseMove/onScroll/onKeyDown`），
    订阅 WindowContext 事件驱动相机
 3. vsg 层实现一个 host（窗口创建 + 事件翻译 + handle 注入 WindowContext），

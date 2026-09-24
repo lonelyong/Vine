@@ -25,7 +25,7 @@
 #include <vine/vsg/core/SessionMove.hpp>
 #include <vine/vsg/core/SlotProbe.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace api
 {
@@ -33,13 +33,13 @@ namespace api
 namespace
 {
 
-using vine::graphics::DiagnosticCategory;
-using vine::graphics::DiagnosticSeverity;
+using vn::graphics::DiagnosticCategory;
+using vn::graphics::DiagnosticSeverity;
 
-/// @brief Builds a `vine::String` from an ASCII sentence (the repo's spelling for UTF-8 bytes).
-vine::String asString(const std::string& text)
+/// @brief Builds a `vn::String` from an ASCII sentence (the repo's spelling for UTF-8 bytes).
+vn::String asString(const std::string& text)
 {
-    return vine::String(reinterpret_cast<const char8_t*>(text.c_str()));
+    return vn::String(reinterpret_cast<const char8_t*>(text.c_str()));
 }
 
 /// @brief Reads an environment variable as a non-negative number, or @p fallback when unset or unparsable.
@@ -811,4 +811,4 @@ bool SessionContentAccess::recompile(api::Session& session)
 
 }  // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END

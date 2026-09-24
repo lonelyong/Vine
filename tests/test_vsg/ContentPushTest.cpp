@@ -37,21 +37,21 @@
 #include <vine/vsg/api/ViewBlock.hpp>
 #include <vine/vsg/core/FrameRecorder.hpp>
 
-using vine::graphics::ShaderProgram;
-using vine::math::Mat4d;
-using vine::vsg::AbiPushMember;
-using vine::vsg::AbiPushRange;
-using vine::vsg::buildProgramFacts;
-using vine::vsg::canFillPushMember;
-using vine::vsg::contentPushMemberName;
-using vine::vsg::contentPushMemberOf;
-using vine::vsg::ContentPushMember;
-using vine::vsg::core::CameraSnapshot;
-using vine::vsg::FactMiss;
-using vine::vsg::foldToDeviceClip;
-using vine::vsg::packContentPush;
-using vine::vsg::ProgramAbi;
-using vine::vsg::ProgramFacts;
+using vn::graphics::ShaderProgram;
+using vn::math::Mat4d;
+using vn::vsg::AbiPushMember;
+using vn::vsg::AbiPushRange;
+using vn::vsg::buildProgramFacts;
+using vn::vsg::canFillPushMember;
+using vn::vsg::contentPushMemberName;
+using vn::vsg::contentPushMemberOf;
+using vn::vsg::ContentPushMember;
+using vn::vsg::core::CameraSnapshot;
+using vn::vsg::FactMiss;
+using vn::vsg::foldToDeviceClip;
+using vn::vsg::packContentPush;
+using vn::vsg::ProgramAbi;
+using vn::vsg::ProgramFacts;
 
 namespace
 {
@@ -147,9 +147,9 @@ void expectMatrix(const std::vector<std::byte>& bytes, std::size_t matrix_offset
 AbiPushRange enginePush()
 {
     ProgramFacts facts;
-    EXPECT_EQ(buildProgramFacts(*vine::graphics::forwardProgram(), facts), FactMiss::None);
+    EXPECT_EQ(buildProgramFacts(*vn::graphics::forwardProgram(), facts), FactMiss::None);
     ProgramAbi abi;
-    EXPECT_EQ(vine::vsg::scanProgramAbi(facts.shaders.vertex, facts.shaders.fragment, {}, abi), FactMiss::None);
+    EXPECT_EQ(vn::vsg::scanProgramAbi(facts.shaders.vertex, facts.shaders.fragment, {}, abi), FactMiss::None);
     EXPECT_EQ(abi.pushes.size(), 1U);
     return abi.pushes.empty() ? AbiPushRange{} : abi.pushes.front();
 }
@@ -188,7 +188,7 @@ TEST(ContentPushTest, ThePushCarriesTheSameMatricesTheViewBlockDoes)
 
     // `pc.projection == VineViewBlock.proj`: the fold is the view block's, spelled once (api/ViewBlock), so a
     // program that reads the push and one that reads the block agree about the clip convention.
-    const vine::graphics::VineViewBlock block = vine::vsg::buildViewBlock(camera, 0.0F, 0U, 0U);
+    const vn::graphics::VineViewBlock block = vn::vsg::buildViewBlock(camera, 0.0F, 0U, 0U);
     for (int column = 0; column < 4; ++column)
     {
         for (int row = 0; row < 4; ++row)

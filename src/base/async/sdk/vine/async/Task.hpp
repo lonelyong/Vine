@@ -11,7 +11,7 @@
 
 #include "Concepts.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 /**
  * @brief Lazy, move-only asynchronous operation producing a value (or void).
@@ -470,4 +470,4 @@ Task<void> discard(Task<T> task)
     co_await std::move(task);
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

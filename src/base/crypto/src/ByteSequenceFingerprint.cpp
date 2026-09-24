@@ -15,7 +15,7 @@
 #include <vine/crypto/Hash.hpp>
 #include <vine/crypto/HashCalculator.hpp>
 
-V_CRYPTO_NS_BEGIN
+VN_CRYPTO_NS_BEGIN
 
 namespace
 {
@@ -365,4 +365,4 @@ bool ByteSequenceFingerprint::operator!=(const ByteSequenceFingerprint& rhs) con
     return !(*this == rhs);
 }
 
-V_CRYPTO_NS_END
+VN_CRYPTO_NS_END

@@ -13,7 +13,7 @@
 #include <vine/logging/Log.hpp>
 #include <vine/logging/LogSink.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 namespace
 {
@@ -42,9 +42,9 @@ logging::LogSink*& installedConsoleSink()
 
 /// ConfigManager::changed connection installed by installConsoleLogSink(); assigning to it
 /// cancels whatever was installed before.
-vine::Connection& installedConfigHandler()
+vn::Connection& installedConfigHandler()
 {
-    static vine::Connection s_subscription;
+    static vn::Connection s_subscription;
     return s_subscription;
 }
 
@@ -149,4 +149,4 @@ void uninstallConsoleLogSink()
     consoleLogEnabledState()->store(false, std::memory_order_relaxed);
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

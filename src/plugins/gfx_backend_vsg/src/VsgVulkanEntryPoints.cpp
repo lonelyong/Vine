@@ -15,7 +15,7 @@
 
 #include <mutex>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -76,4 +76,4 @@ DynamicStateEntryPoints fetchDynamicStateEntryPoints(VkDevice device, VkInstance
 
 } // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END

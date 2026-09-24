@@ -9,7 +9,7 @@
 > 本文保留为“当时为什么这么做”的记录。
 >
 > **定位**：`gfx_backend_vsg` 是 `graphics` 模块的一个**渲染后端实现**，以
-> appfw **插件**形式存在。它实现 `vine::graphics::RenderBackend` 抽象接口，
+> appfw **插件**形式存在。它实现 `vn::graphics::RenderBackend` 抽象接口，
 > 把 `graphics` 层的场景图、相机和渲染命令翻译成 VulkanSceneGraph（VSG）调用。
 > 后续会新增纯手撸（如手写 Vulkan/OpenGL）后端，均实现同一 `RenderBackend`。
 
@@ -43,8 +43,8 @@
 ## 2. 模块结构
 
 ```
-src/plugins/gfx_backend_vsg/        # appfw 插件（MODULE DLL，v_add_plugin）
-  CMakeLists.txt                    # v_add_plugin + FetchContent 拉取 VSG
+src/plugins/gfx_backend_vsg/        # appfw 插件（MODULE DLL，vn_add_plugin）
+  CMakeLists.txt                    # vn_add_plugin + FetchContent 拉取 VSG
   include/vine/vsg/                 # 对外头文件（用户要求直接放 include/ 下）
     vsg_global.hpp                  # API export 宏 + 命名空间
     VsgRenderer.hpp                 # 实现 RenderBackend 的后端
@@ -58,7 +58,7 @@ src/plugins/gfx_backend_vsg/        # appfw 插件（MODULE DLL，v_add_plugin�
     CameraBridge.cpp
     VsgMaterialManager.cpp
     VsgRenderBackendFactory.cpp
-    GfxBackendVsgPlugin.hpp/.cpp    # 插件外壳（v_add_plugin glob src/ 一并编译）
+    GfxBackendVsgPlugin.hpp/.cpp    # 插件外壳（vn_add_plugin glob src/ 一并编译）
     VsgUtils.hpp                    # 矩阵转换等工具
 ```
 
@@ -79,7 +79,7 @@ src/plugins/gfx_backend_vsg/        # appfw 插件（MODULE DLL，v_add_plugin�
 
 ```cpp
 // GfxBackendVsgPlugin.cpp 末尾
-V_DECLARE_PLUGIN(vine::vsg::GfxBackendVsgPlugin,
+VN_DECLARE_PLUGIN(vn::vsg::GfxBackendVsgPlugin,
                  u8"gfx_backend_vsg", u8"VSG 渲染后端",
                  u8"1.0.0", u8"Vine", u8"", {})
 ```
@@ -90,14 +90,14 @@ V_DECLARE_PLUGIN(vine::vsg::GfxBackendVsgPlugin,
   用 `load()` 显式注册（保证插件卸载时机可控、避免跨 TU 静态初始化序问题）
 - 上层通过 `RenderBackendRegistry::instance().create(u8"vsg", scene, camera)`
   按名字拿到后端实例，**不依赖后端模块或 VSG 库**（测试只链接
-  `vi::Appfw vi::Graphics`）
+  `vn::Appfw vn::Graphics`）
 
 ### 3.1 `VsgRenderer`（实现 `RenderBackend`）
 
 ```cpp
-class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
+class VN_VSG_API VsgRenderer : public vn::graphics::RenderBackend {
   public:
-    VsgRenderer(vine::graphics::Scene* scene, vine::graphics::Camera* camera);
+    VsgRenderer(vn::graphics::Scene* scene, vn::graphics::Camera* camera);
     ~VsgRenderer() override;
 
     // RenderBackend 接口
@@ -105,12 +105,12 @@ class V_VSG_API VsgRenderer : public vine::graphics::RenderBackend {
     void shutdown() override;
     void beginFrame() override;
     void endFrame() override;
-    void executePass(const vine::graphics::RenderPass* pass,
-                     const std::vector<vine::graphics::RenderCommand>& commands) override;
-    void setRenderTarget(vine::graphics::RenderTarget* target) override;
-    void render(const std::vector<vine::graphics::RenderCommand>& commands,
-                const vine::graphics::Camera* camera) override;
-    void clear(const vine::Color& backgroundColor, bool clearDepth) override;
+    void executePass(const vn::graphics::RenderPass* pass,
+                     const std::vector<vn::graphics::RenderCommand>& commands) override;
+    void setRenderTarget(vn::graphics::RenderTarget* target) override;
+    void render(const std::vector<vn::graphics::RenderCommand>& commands,
+                const vn::graphics::Camera* camera) override;
+    void clear(const vn::Color& backgroundColor, bool clearDepth) override;
     void swapBuffers() override;
 
     // vsg 特有便捷接口
@@ -238,13 +238,13 @@ recordAndSubmit。
    → 修复：`VertexIndexDraw` 直接作为 StateGroup 子节点。
 2. **手工 ShaderSet 不兼容（已修复）**：改用 `createPhongShaderSet()` 内置
    shader set，不再手工拼装。
-3. **导出宏（已修复）**：`v_add_plugin(GFX_BACKEND_VSG_TARGET)` 生成
-   `V_GFX_BACKEND_VSG_LIB`，但头文件检查 `V_VSG_LIB` → 显式
-   `target_compile_definitions(... PRIVATE V_VSG_LIB)`。
+3. **导出宏（已修复）**：`vn_add_plugin(GFX_BACKEND_VSG_TARGET)` 生成
+   `VN_GFX_BACKEND_VSG_LIB`，但头文件检查 `VN_VSG_LIB` → 显式
+   `target_compile_definitions(... PRIVATE VN_VSG_LIB)`。
 4. **相机无 viewportState（已修复）**：`VsgRenderer::initialize()` 从窗口
    `extent2D()` 创建并设置。
 5. **帧顺序（已修复）**：advance → handleEvents → update → recordAndSubmit → present。
-6. **V_DECLARE_PLUGIN C2059（v5 已修复）**：`GfxBackendVsgPlugin.cpp` 缺失
+6. **VN_DECLARE_PLUGIN C2059（v5 已修复）**：`GfxBackendVsgPlugin.cpp` 缺失
    `#include <vine/appfw/plugin_export.hpp>` 导致宏未定义 → 补上 include。
 7. **测试单例冲突（v5 已修复）**：`test_vsg` 每个测试各自
    `createApplication()`，第二个测试再建 `QCoreApplication`（Qt 全局单例）
@@ -256,19 +256,19 @@ recordAndSubmit。
 ## 6. 依赖关系
 
 ```
-gfx_backend_vsg（MODULE 插件，v_add_plugin）
-  ├── vi::Appfw               (插件外壳：Plugin 基类 + V_DECLARE_PLUGIN)
-  ├── vi::Graphics            (RenderBackend 抽象 + RenderBackendRegistry + 场景数据)
+gfx_backend_vsg（MODULE 插件，vn_add_plugin）
+  ├── vn::Appfw               (插件外壳：Plugin 基类 + VN_DECLARE_PLUGIN)
+  ├── vn::Graphics            (RenderBackend 抽象 + RenderBackendRegistry + 场景数据)
   ├── vsg::vsg                (VulkanSceneGraph，FetchContent 自包含)
   └── Vulkan SDK              (系统安装，VULKAN_SDK 环境变量)
 ```
 
-运行时依赖：`<exe>/plugins/vine/gfx_backend_vsgd.dll`（由 v_add_plugin 部署）。
+运行时依赖：`<exe>/plugins/vine/gfx_backend_vsgd.dll`（由 vn_add_plugin 部署）。
 
 ## 7. 测试
 
 - `tests/test_vsg/GfxBackendVsgPluginTest.cpp`（**通过 app 启动的集成测试**，
-  不再链接插件实现源码；只链接 `vi::Appfw vi::Graphics`）：
+  不再链接插件实现源码；只链接 `vn::Appfw vn::Graphics`）：
   - `PluginRegistersVsgBackend` — `createApplication(config, argc, argv)` +
     `pluginManager()->loadAll()`（镜像 app 的 main），断言
     `RenderBackendRegistry::has(u8"vsg")` 为真，证明插件被加载并自注册

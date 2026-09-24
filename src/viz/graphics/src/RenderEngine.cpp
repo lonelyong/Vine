@@ -10,7 +10,7 @@
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/Scene.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 namespace
 {
@@ -30,7 +30,7 @@ String reportedPassName(raw_ptr<const RenderPass> pass)
 
 }  // namespace
 
-V_OBJECT_META_IMPL(RenderEngine, vine::Object);
+VN_OBJECT_META_IMPL(RenderEngine, vn::Object);
 
 RenderEngine::RenderEngine()
 {
@@ -86,13 +86,13 @@ std::size_t RenderEngine::engineDiagnosticCount() const noexcept
     return wiring_.engine_diagnostic_count_;
 }
 
-void RenderEngine::reportEngineProblem(vine::graphics::DiagnosticSeverity severity,
-                                       vine::graphics::DiagnosticCategory category,
+void RenderEngine::reportEngineProblem(vn::graphics::DiagnosticSeverity severity,
+                                       vn::graphics::DiagnosticCategory category,
                                        const String&                message)
 {
     ++wiring_.engine_diagnostic_count_;
     if (diagnostic_sink_) {
-        diagnostic_sink_(vine::graphics::RenderDiagnostic{ severity, category, message });
+        diagnostic_sink_(vn::graphics::RenderDiagnostic{ severity, category, message });
     }
 }
 
@@ -210,8 +210,8 @@ void RenderEngine::frame(double dt)
     if (raw_ptr<const RenderPass> unsupported = passNeedingAnUnsupportedTarget(); unsupported != nullptr) {
         if (!unsupported_target_reported_) {
             unsupported_target_reported_ = true;
-            reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                vine::graphics::DiagnosticCategory::TargetBuildFailed,
+            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::TargetBuildFailed,
                                 String(u8"the backend reports no off-screen render target support, so pass '") +
                                     reportedPassName(unsupported) +
                                     String(u8"' (and any other pass rendering into a target) is not drawn where "
@@ -503,8 +503,8 @@ void RenderEngine::reportUnproducedInput(raw_ptr<RenderPass> pass, const OutputI
     if (wiring_.unproduced_inputs_reported_.count(key) != 0) {
         return;   // the same input, still not produced: one message for this episode
     }
-    reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                        vine::graphics::DiagnosticCategory::ContentSkipped,
+    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                        vn::graphics::DiagnosticCategory::ContentSkipped,
                         String(u8"pass '") + reportedPassName(pass) + String(u8"' declares ") + what +
                             String(u8" but nothing produced it this frame, so the pass draws nothing"
                                    u8" (check the producer's order and its enabled state)"));
@@ -559,8 +559,8 @@ void RenderEngine::resolvePassInputs(raw_ptr<RenderPass> pass)
     if (wiring_.unresolved_inputs_reported_.insert(pass).second) {
         // The frontend has no printf-style helper of its own: the message is
         // assembled from String pieces (a formatting utility is the backend's).
-        reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                            vine::graphics::DiagnosticCategory::ContentSkipped,
+        reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                            vn::graphics::DiagnosticCategory::ContentSkipped,
                             String(u8"pass '") + reportedPassName(pass) + String(u8"' declared input '") +
                                 names.front() +
                                 String(u8"' but no pass published it this frame; the pass draws nothing"
@@ -754,8 +754,8 @@ void RenderEngine::validateWiring()
                 const OutputIdentity identity = OutputIdentity::targetOf(*promised);
                 mismatched_promises.emplace(pass, identity);
                 if (wiring_.mismatched_promises_reported_.count(std::make_pair(raw_ptr<const RenderPass>(pass), identity)) == 0) {
-                    reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                        vine::graphics::DiagnosticCategory::ContentSkipped,
+                    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                        vn::graphics::DiagnosticCategory::ContentSkipped,
                                         String(u8"pass '") + reportedPassName(pass) + String(u8"' promises target '") +
                                             target_name(promised) + String(u8"' as its output but renders into '") +
                                             drawn_into_name(pass) +
@@ -785,8 +785,8 @@ void RenderEngine::validateWiring()
                 }
                 colliding_images.insert(identity);
                 if (wiring_.output_collisions_reported_.insert(identity).second) {
-                    reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                        vine::graphics::DiagnosticCategory::ContentSkipped,
+                    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                        vn::graphics::DiagnosticCategory::ContentSkipped,
                                         String(u8"two passes ('") + reportedPassName(entry->second.pass) +
                                             String(u8"' and '") + reportedPassName(pass) + String(u8"') claim ") +
                                             identity_name(identity) +
@@ -818,8 +818,8 @@ void RenderEngine::validateWiring()
                 const OutputIdentity identity = OutputIdentity::of(*output);
                 mismatched_promises.emplace(pass, identity);
                 if (wiring_.mismatched_promises_reported_.count(std::make_pair(raw_ptr<const RenderPass>(pass), identity)) == 0) {
-                    reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                        vine::graphics::DiagnosticCategory::ContentSkipped,
+                    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                        vn::graphics::DiagnosticCategory::ContentSkipped,
                                         String(u8"pass '") + reportedPassName(pass) + String(u8"' promises the image '") +
                                             output->label() + String(u8"' of target '") + target_name(promised_target) +
                                             String(u8"' as its output but renders into '") + drawn_into_name(pass) +
@@ -856,8 +856,8 @@ void RenderEngine::validateWiring()
                                         String(u8"' of target '") + target_name(output->target()) +
                                         String(u8"', one of them as part of the whole target; a consumer of it gets"
                                                u8" whichever pass runs last");
-                    reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                        vine::graphics::DiagnosticCategory::ContentSkipped,
+                    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                        vn::graphics::DiagnosticCategory::ContentSkipped,
                                         message);
                 }
             }
@@ -904,8 +904,8 @@ void RenderEngine::validateWiring()
                               reportedPassName(entry->second.pass) +
                               String(u8"' is registered after it, so the target is still a frame behind when this"
                                      u8" pass draws");
-                reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                    vine::graphics::DiagnosticCategory::ContentSkipped,
+                reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                    vn::graphics::DiagnosticCategory::ContentSkipped,
                                     message);
             }
         }
@@ -976,8 +976,8 @@ void RenderEngine::validateWiring()
                                     image->label() + String(u8"' but its producer '") + reportedPassName(producer) +
                                     String(u8"' is registered after it, so the image is still a frame behind when"
                                            u8" this pass draws");
-                reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                    vine::graphics::DiagnosticCategory::ContentSkipped,
+                reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                    vn::graphics::DiagnosticCategory::ContentSkipped,
                                     message);
             }
         }
@@ -1001,8 +1001,8 @@ void RenderEngine::validateWiring()
         if (pass->program() == nullptr) {
             program_less_screens.insert(pass);
             if (wiring_.screen_passes_without_program_reported_.insert(pass).second) {
-                reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                    vine::graphics::DiagnosticCategory::ContentSkipped,
+                reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                    vn::graphics::DiagnosticCategory::ContentSkipped,
                                     String(u8"pass '") + reportedPassName(pass) +
                                         String(u8"' is a ScreenPass with no program, so it can never draw: name one"
                                                u8" (BuiltinShaders::screenCopyProgram() for a plain copy of the"
@@ -1018,8 +1018,8 @@ void RenderEngine::validateWiring()
         if (pass->inputs().empty() && pass->inputTargets().empty() && pass->inputNames().empty()) {
             input_less_passes.insert(pass);
             if (wiring_.missing_inputs_reported_.insert(pass).second) {
-                reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                    vine::graphics::DiagnosticCategory::ContentSkipped,
+                reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                    vn::graphics::DiagnosticCategory::ContentSkipped,
                                     String(u8"pass '") + reportedPassName(pass) +
                                         String(u8"' is a ScreenPass that declares no input, so it can never draw"
                                                u8" (give it addInput / addInputName)"));
@@ -1034,8 +1034,8 @@ void RenderEngine::validateWiring()
         if (pass->camera() == nullptr) {
             program_without_camera.insert(pass);
             if (wiring_.program_without_camera_reported_.insert(pass).second) {
-                reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                    vine::graphics::DiagnosticCategory::ContentSkipped,
+                reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                    vn::graphics::DiagnosticCategory::ContentSkipped,
                                     String(u8"pass '") + reportedPassName(pass) +
                                         String(u8"' has a fullscreen program but no camera, so it can never draw: the"
                                                u8" fullscreen path builds its view from the pass camera (and pushes the"
@@ -1058,8 +1058,8 @@ void RenderEngine::validateWiring()
             continue;   // already reported for this episode
         }
         const auto& [pass, as_output] = declarer;
-        reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                            vine::graphics::DiagnosticCategory::ContentSkipped,
+        reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                            vn::graphics::DiagnosticCategory::ContentSkipped,
                             as_output
                                 ? String(u8"pass '") + reportedPassName(pass) +
                                       String(u8"' declares the output image '") + image->label() +
@@ -1098,8 +1098,8 @@ void RenderEngine::publishPassOutput(raw_ptr<RenderPass> pass)
         // producer's mistake.
         wiring_.unpublishable_passes_seen_this_frame_.insert(pass);
         if (wiring_.unpublishable_passes_reported_.insert(pass).second) {
-            reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                vine::graphics::DiagnosticCategory::ContentSkipped,
+            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::ContentSkipped,
                                 String(u8"pass '") + reportedPassName(pass) +
                                     String(u8"' publishes the output name '") + name +
                                     String(u8"' but renders into the window (no render target), so nothing is"
@@ -1133,8 +1133,8 @@ void RenderEngine::publishFrameOutput(const String& name, intrusive_ptr<RenderTa
                                       ? existing->second->name()
                                       : String(u8"(unnamed)");
             const String second = target->name().empty() ? String(u8"(unnamed)") : target->name();
-            reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                vine::graphics::DiagnosticCategory::ContentSkipped,
+            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::ContentSkipped,
                                 String(u8"pass output '") + name +
                                     String(u8"' is published by two passes this frame (targets '") + first +
                                     String(u8"' and '") + second + String(u8"'); every consumer of '") + name +
@@ -1160,8 +1160,8 @@ void RenderEngine::publish(const String& name, intrusive_ptr<RenderTarget> targe
         // publish() hands over a real target (or unpublish() withdraws it), because a host has no
         // frame to re-publish from.
         if (wiring_.unpublishable_host_names_.insert(name).second) {
-            reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                vine::graphics::DiagnosticCategory::ContentSkipped,
+            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::ContentSkipped,
                                 String(u8"publish('") + name +
                                     String(u8"') was given no render target, so the name serves nothing and its"
                                            u8" consumers find nothing — pass the target to hand out, or unpublish()"
@@ -1252,4 +1252,4 @@ void RenderEngine::setWindowHandle(void* native_handle)
     native_handle_ = native_handle;
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

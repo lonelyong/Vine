@@ -34,12 +34,12 @@
  * (Qt, a test) dispatches input, and re-entering a toolkit from inside a frame call is how a backend ends
  * up recursing through someone else's event loop.
  */
-namespace vine::vsg::detail
+namespace vn::vsg::detail
 {
 class SessionContentAccess;
-}  // namespace vine::vsg::detail
+}  // namespace vn::vsg::detail
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace api
 {
@@ -242,7 +242,7 @@ class Session
     // content is attached) lives in api/SessionContent.hpp. It is a friend so that view can stay out of
     // this header: the session's own surface is the one thing a host-facing layer may be built on, and it
     // must not drag the graphics API's types into it (see the file note).
-    friend class ::vine::vsg::detail::SessionContentAccess;
+    friend class ::vn::vsg::detail::SessionContentAccess;
 
     struct Impl;
     std::unique_ptr<Impl> impl;
@@ -250,4 +250,4 @@ class Session
 
 }  // namespace api
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -9,7 +9,7 @@
 #include "Concepts.hpp"
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 /**
  * @brief Resumes the continuation on the given scheduler.
@@ -96,4 +96,4 @@ class InlineScheduler
     }
 };
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

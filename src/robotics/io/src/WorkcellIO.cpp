@@ -17,7 +17,7 @@
 
 #include "IoUtils.hpp"
 
-V_ROBOTICS_IO_NS_BEGIN
+VN_ROBOTICS_IO_NS_BEGIN
 
 WorkcellIO::~WorkcellIO() = default;
 
@@ -56,11 +56,11 @@ std::unique_ptr<workcell::Workcell> WorkcellIO::loadXml(const std::filesystem::p
     if (dir.empty()) {
         dir = std::filesystem::path(".");
     }
-    vine::io::DirectoryVfs vfs(dir);
+    vn::io::DirectoryVfs vfs(dir);
     return loadVfs(vfs, detail::pathLeafName(file_path));
 }
 
-std::unique_ptr<workcell::Workcell> WorkcellIO::loadVfs(vine::io::Vfs& vfs, const std::filesystem::path& vfs_path)
+std::unique_ptr<workcell::Workcell> WorkcellIO::loadVfs(vn::io::Vfs& vfs, const std::filesystem::path& vfs_path)
 {
     const auto xml = detail::readText(vfs, vfs_path);
     if (!xml) {
@@ -82,7 +82,7 @@ std::unique_ptr<workcell::Workcell> WorkcellIO::loadVfs(vine::io::Vfs& vfs, cons
 
     uint16_t major = 0, minor = 0;
     parseVersion(ctx, major, minor, xe_cell);
-    if (major != V_ROBOTICS_IO_VERSION_MAJOR || minor != V_ROBOTICS_IO_VERSION_MINOR) {
+    if (major != VN_ROBOTICS_IO_VERSION_MAJOR || minor != VN_ROBOTICS_IO_VERSION_MINOR) {
         throw std::runtime_error("WorkcellIO::loadXml, unsupported version: " + std::to_string(major) + "."
                                  + std::to_string(minor));
     }
@@ -99,7 +99,7 @@ std::unique_ptr<workcell::Workcell> WorkcellIO::loadVfs(vine::io::Vfs& vfs, cons
     return cell;
 }
 
-void WorkcellIO::exportToVfs(const workcell::Workcell& cell, vine::io::Vfs& vfs, const std::filesystem::path& vfs_path)
+void WorkcellIO::exportToVfs(const workcell::Workcell& cell, vn::io::Vfs& vfs, const std::filesystem::path& vfs_path)
 {
     ExportOptions opts;
     ExportContext ctx(opts);
@@ -111,7 +111,7 @@ void WorkcellIO::exportToVfs(const workcell::Workcell& cell, vine::io::Vfs& vfs,
     auto        doc     = std::make_unique<tinyxml2::XMLDocument>();
     auto* const xe_cell = doc->NewElement("workcell");
     xe_cell->SetAttribute("name", toCStr(cell.name()));
-    exportVersion(ctx, V_ROBOTICS_IO_VERSION_MAJOR, V_ROBOTICS_IO_VERSION_MINOR, xe_cell);
+    exportVersion(ctx, VN_ROBOTICS_IO_VERSION_MAJOR, VN_ROBOTICS_IO_VERSION_MINOR, xe_cell);
     doc->InsertEndChild(xe_cell);
 
     for (const auto* const obj : cell.sceneObjects()) {
@@ -123,12 +123,12 @@ void WorkcellIO::exportToVfs(const workcell::Workcell& cell, vine::io::Vfs& vfs,
     tinyxml2::XMLPrinter printer;
     doc->Print(&printer);
     const String xml(reinterpret_cast<const char8_t*>(printer.CStr()), printer.CStrSize() - 1);
-    if (detail::writeText(vfs, vfs_path, xml) != vine::io::IoError::Ok) {
+    if (detail::writeText(vfs, vfs_path, xml) != vn::io::IoError::Ok) {
         throw std::runtime_error("WorkcellIO::savePkg, failed to write vfs file: " + vfs_path.generic_string());
     }
 }
 
-void WorkcellIO::savePkg(const workcell::Workcell& cell, vine::io::Vfs& vfs, const SaveOptions& options)
+void WorkcellIO::savePkg(const workcell::Workcell& cell, vn::io::Vfs& vfs, const SaveOptions& options)
 {
     (void)options;
     exportToVfs(cell, vfs, std::filesystem::path(u8"workcell.xml"));
@@ -137,14 +137,14 @@ void WorkcellIO::savePkg(const workcell::Workcell& cell, vine::io::Vfs& vfs, con
 std::unique_ptr<workcell::Workcell> WorkcellIO::loadPkg(const std::filesystem::path& pkg_path)
 {
     // Only the archive index is read up front; entries decompress on demand.
-    auto pkg = vine::io::ZipArchive::open(pkg_path, vine::io::ZipArchive::OpenMode::ReadOnly);
+    auto pkg = vn::io::ZipArchive::open(pkg_path, vn::io::ZipArchive::OpenMode::ReadOnly);
     if (!pkg) {
         throw std::runtime_error("WorkcellIO::loadPkg, not a valid workcell package: " + pkg_path.string());
     }
     return loadPkg(*pkg);
 }
 
-std::unique_ptr<workcell::Workcell> WorkcellIO::loadPkg(vine::io::Vfs& vfs)
+std::unique_ptr<workcell::Workcell> WorkcellIO::loadPkg(vn::io::Vfs& vfs)
 {
     return loadVfs(vfs, std::filesystem::path(u8"workcell.xml"));
 }
@@ -152,9 +152,9 @@ std::unique_ptr<workcell::Workcell> WorkcellIO::loadPkg(vine::io::Vfs& vfs)
 void WorkcellIO::savePkg(const workcell::Workcell& cell, const std::filesystem::path& pkg_path,
                          const SaveOptions& options)
 {
-    vine::io::ZipArchive vfs;
+    vn::io::ZipArchive vfs;
     savePkg(cell, vfs, options);
-    if (vfs.saveAs(pkg_path) != vine::io::IoError::Ok) {
+    if (vfs.saveAs(pkg_path) != vn::io::IoError::Ok) {
         throw std::runtime_error("WorkcellIO::savePkg, failed to write package file: " + pkg_path.string());
     }
 }
@@ -200,14 +200,14 @@ void WorkcellIO::exportDevice(ExportContext& ctx, const workcell::Device& dev, t
     const std::filesystem::path  dev_path = ctx.vfs_dir.empty() ? detail::vfsPath(rel) : ctx.vfs_dir / detail::vfsPath(rel);
     DeviceIO     device_io;
     // Build the device package in an inner VFS, then store it as one entry.
-    vine::io::ZipArchive inner;
+    vn::io::ZipArchive inner;
     device_io.savePkg(dev, inner);
     const auto zip_bytes = inner.toBytes();
     if (!zip_bytes) {
         throw std::runtime_error("WorkcellIO::exportDevice, failed to build device package: "
                                  + dev.name().as_std_str());
     }
-    if (ctx.vfs->addFile(dev_path, zip_bytes.value()) != vine::io::IoError::Ok) {
+    if (ctx.vfs->addFile(dev_path, zip_bytes.value()) != vn::io::IoError::Ok) {
         throw std::runtime_error("WorkcellIO::exportDevice, failed to write device package: "
                                  + dev_path.generic_string());
     }
@@ -316,7 +316,7 @@ std::unique_ptr<workcell::SceneObject> WorkcellIO::parseDevice(ParseContext& ctx
         }
         // The nested package is already in memory, so it is indexed rather than
         // expanded: only the entries the device actually needs get decompressed.
-        auto pkg = vine::io::ZipArchive::open(bytes.take(), vine::io::ZipArchive::OpenMode::ReadOnly);
+        auto pkg = vn::io::ZipArchive::open(bytes.take(), vn::io::ZipArchive::OpenMode::ReadOnly);
         if (!pkg) {
             throw std::runtime_error("WorkcellIO::parseDevice, invalid device package: " + dev_path.generic_string());
         }
@@ -362,4 +362,4 @@ void WorkcellIO::parseRigidObject(ParseContext& ctx, workcell::RigidObject& obj,
     }
 }
 
-V_ROBOTICS_IO_NS_END
+VN_ROBOTICS_IO_NS_END

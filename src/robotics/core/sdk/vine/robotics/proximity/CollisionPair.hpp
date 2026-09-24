@@ -8,7 +8,7 @@
 
 #include <vine/INameable.hpp>
 
-V_ROBOTICS_PROXIMITY_NS_BEGIN
+VN_ROBOTICS_PROXIMITY_NS_BEGIN
 
 /**
  * @brief An unordered pair of owners.
@@ -18,9 +18,9 @@ V_ROBOTICS_PROXIMITY_NS_BEGIN
  */
 struct CollisionPair {
     /// The first owner.
-    const vine::INamed* object1{ nullptr };
+    const vn::INamed* object1{ nullptr };
     /// The second owner.
-    const vine::INamed* object2{ nullptr };
+    const vn::INamed* object2{ nullptr };
 
     /**
      * @brief Compares two pairs ignoring the owner order.
@@ -69,4 +69,4 @@ struct CollisionPairHasher {
     }
 };
 
-V_ROBOTICS_PROXIMITY_NS_END
+VN_ROBOTICS_PROXIMITY_NS_END

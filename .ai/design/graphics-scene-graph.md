@@ -73,7 +73,7 @@
 ## 0. 现状与动机
 
 现状：`Node`（自带 localTransform + 持 drawables）；`Drawable`（纯 renderable，visible/opacity/
-material）；`Geometry : Drawable`（包 `vine::geometry::Shape`）。问题：
+material）；`Geometry : Drawable`（包 `vn::geometry::Shape`）。问题：
 - 想获得 osg/vsg 那种"节点类型随意组合"的灵活性（状态/变换按子树生效）；
 - 想支持任意顶点数据（点云/自定义属性）与用户可编程着色；
 - 多一层 `Drawable` + 一次"renderable 包 Shape"造成两个抽象、两处变换归属。
@@ -105,7 +105,7 @@ Node(抽象基)
    `Group/MatrixNode/StateNode` 下，`MatrixNode{ Geometry, Geometry }` 天然成立；比 osg 的
    `Geode + Drawable(非 Node)` 少一层。
 2. **去掉 Drawable**：visible/opacity/material 全部并入 Geometry（叶子）。
-3. **去掉 "renderable 内持 Shape"**：Shape 保留在 `vine::geometry`（loader/urdf 继续产 Shape），
+3. **去掉 "renderable 内持 Shape"**：Shape 保留在 `vn::geometry`（loader/urdf 继续产 Shape），
    新增**转换工具函数** Shape→buffers；Geometry 不持有 Shape。
 4. **变换只在 MatrixNode**：Geometry 不带局部/世界变换；world matrix 由 MatrixNode 沿路径累积，
    渲染收集时烤成 RenderCommand.modelMatrix（现状 `collectRenderCommands` 已在烤，语义照旧）。
@@ -135,7 +135,7 @@ class Geometry : public Node {
   Aabbd boundingBox() const;   // 由 loc0 position（±index）计算
 };
 ```
-- `Buffer` 载体：优先复用 `vine::geometry` 的数组（Vec3fArray/ColorArray/UInt32Array，loader 已在用），
+- `Buffer` 载体：优先复用 `vn::geometry` 的数组（Vec3fArray/ColorArray/UInt32Array，loader 已在用），
   自定义通道用泛型 float 数组——避免再发明一套容器。
 - **bbox/视锥裁剪/RayIntersection 都改读 loc0 position + index**（所以 loc0 约定不能丢）。
 

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <queue>
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 Workcell::Workcell()
   : world_frame_(std::make_unique<kinematics::Frame>())
@@ -224,4 +224,4 @@ bool Workcell::changeObjectName(raw_ptr<SceneObject> object, const String& new_n
     return true;
 }
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

@@ -13,7 +13,7 @@
 
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 namespace detail {
 
@@ -363,4 +363,4 @@ class AsyncQueue
     std::shared_ptr<detail::AsyncQueueState<T>> state_;
 };
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

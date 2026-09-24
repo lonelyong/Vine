@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 void KinematicsBase::setIKSolverType(IKSolverType type)
 {
@@ -106,4 +106,4 @@ Q KinematicsBase::getQ(const State& state) const
     return q;
 }
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

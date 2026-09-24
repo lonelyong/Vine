@@ -1,6 +1,6 @@
 ﻿#include <vine/robotics/workcell/Scanner.hpp>
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 namespace
 {
@@ -114,4 +114,4 @@ void Scanner::initScanner(std::unique_ptr<ScannerData> data)
     }
 }
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

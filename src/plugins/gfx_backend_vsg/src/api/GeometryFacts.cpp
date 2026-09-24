@@ -8,27 +8,27 @@
 
 #include <vine/graphics/ShaderAbi.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
 
 /// @brief The canonical role a location carries, or nothing when it is a custom channel.
-[[nodiscard]] bool canonicalRoleOf(std::uint32_t location, vine::graphics::VertexAttribute& role) noexcept
+[[nodiscard]] bool canonicalRoleOf(std::uint32_t location, vn::graphics::VertexAttribute& role) noexcept
 {
     switch (location)
     {
     case 0U:
-        role = vine::graphics::VertexAttribute::Position;
+        role = vn::graphics::VertexAttribute::Position;
         return true;
     case 1U:
-        role = vine::graphics::VertexAttribute::Normal;
+        role = vn::graphics::VertexAttribute::Normal;
         return true;
     case 2U:
-        role = vine::graphics::VertexAttribute::Color;
+        role = vn::graphics::VertexAttribute::Color;
         return true;
     case 8U:
-        role = vine::graphics::VertexAttribute::TexCoord0;
+        role = vn::graphics::VertexAttribute::TexCoord0;
         return true;
     default:
         return false;
@@ -42,7 +42,7 @@ namespace
     std::vector<std::uint32_t> custom;
     for (const std::uint32_t location : locations)
     {
-        vine::graphics::VertexAttribute role{};
+        vn::graphics::VertexAttribute role{};
         (canonicalRoleOf(location, role) ? canonical : custom).push_back(location);
     }
     std::sort(canonical.begin(), canonical.end());
@@ -53,7 +53,7 @@ namespace
 
 }  // namespace
 
-FactMiss buildGeometryFacts(const vine::graphics::Geometry& geometry, GeometryFacts& out,
+FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFacts& out,
                             std::vector<ChannelFacts>& storage)
 {
     storage.clear();
@@ -74,7 +74,7 @@ FactMiss buildGeometryFacts(const vine::graphics::Geometry& geometry, GeometryFa
 
     for (const std::uint32_t location : orderedLocations(locations))
     {
-        const vine::graphics::AttributeChannel* channel = geometry.buffer(location);
+        const vn::graphics::AttributeChannel* channel = geometry.buffer(location);
         if (channel == nullptr || channel->values == nullptr || channel->components == 0U)
         {
             continue;  // an empty channel feeds nothing, so it is not part of the layout either
@@ -116,11 +116,11 @@ FactMiss buildGeometryFacts(const vine::graphics::Geometry& geometry, GeometryFa
 
         storage.push_back(facts);
 
-        vine::graphics::VertexAttribute role{};
+        vn::graphics::VertexAttribute role{};
         if (canonicalRoleOf(location, role))
         {
             out.layout.canonical_mask |= 1U << static_cast<std::uint32_t>(role);
-            if (role == vine::graphics::VertexAttribute::Position)
+            if (role == vn::graphics::VertexAttribute::Position)
             {
                 positioned        = true;
                 // The vertices a NON-indexed draw assembles from: the position stream's own count, which is
@@ -164,7 +164,7 @@ FactMiss buildGeometryFacts(const vine::graphics::Geometry& geometry, GeometryFa
 
     // The index stream, normalized to the whole buffer (see the file note): the buffer is the identity, the
     // segment travels with the draw.
-    const vine::intrusive_ptr<const vine::Buffer<std::uint32_t>> index_buffer = geometry.indicesBuffer();
+    const vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> index_buffer = geometry.indicesBuffer();
     if (index_buffer == nullptr || geometry.indexCount() == 0U)
     {
         return FactMiss::Malformed;  // hasIndices() promised a range: an empty one draws nothing
@@ -192,4 +192,4 @@ FactMiss buildGeometryFacts(const vine::graphics::Geometry& geometry, GeometryFa
     return FactMiss::None;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

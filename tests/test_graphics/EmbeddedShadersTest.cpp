@@ -35,8 +35,8 @@
 #include <string_view>
 #include <vector>
 
-using namespace vine::graphics;
-using namespace vine::graphics::shaders;
+using namespace vn::graphics;
+using namespace vn::graphics::shaders;
 
 namespace
 {
@@ -171,8 +171,8 @@ TEST(EmbeddedShadersTest, TheDeferredProgramsUseTheEmbeddedSources)
     ASSERT_NE(geometry_fs, nullptr);
     EXPECT_EQ(geometry_vs->type, ShaderStageType::Vertex);
     EXPECT_EQ(geometry_fs->type, ShaderStageType::Fragment);
-    EXPECT_EQ(geometry_vs->source, vine::String(kBuiltinGbufferVert));
-    EXPECT_EQ(geometry_fs->source, vine::String(kBuiltinGbufferFrag));
+    EXPECT_EQ(geometry_vs->source, vn::String(kBuiltinGbufferVert));
+    EXPECT_EQ(geometry_fs->source, vn::String(kBuiltinGbufferFrag));
 
     const auto light = RenderPipelineBuilder::defaultDeferredLightProgram();
     ASSERT_NE(light, nullptr);
@@ -208,7 +208,7 @@ TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
     ASSERT_NE(forward_fs, nullptr);
     EXPECT_EQ(forward_vs->type, ShaderStageType::Vertex);
     EXPECT_EQ(forward_fs->type, ShaderStageType::Fragment);
-    EXPECT_EQ(forward_vs->source, vine::String(kBuiltinForwardVert));
+    EXPECT_EQ(forward_vs->source, vn::String(kBuiltinForwardVert));
     // The fragment stage is that file with the shadow ABI inserted at its markers (the content set is
     // shared per (target, depth mode), so the ABI is declared UNCONDITIONALLY and `shadow.params.x`
     // is the runtime switch — see BuiltinShaders::forwardProgram). What this checks is that every
@@ -227,8 +227,8 @@ TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
     const ShaderStage* flat_fs = flat->stage(1);
     ASSERT_NE(flat_vs, nullptr);
     ASSERT_NE(flat_fs, nullptr);
-    EXPECT_EQ(flat_vs->source, vine::String(kBuiltinForwardVert));
-    EXPECT_NE(flat_fs->source, vine::String(kBuiltinForwardFrag));
+    EXPECT_EQ(flat_vs->source, vn::String(kBuiltinForwardVert));
+    EXPECT_NE(flat_fs->source, vn::String(kBuiltinForwardFrag));
     EXPECT_NE(flat_fs->source.as_std_str().find("#define VINE_FLAT 1"), std::string::npos);
     // ...and it is that text with nothing else changed: the define goes in after the version directive,
     // so dropping that one line has to give back the forward program EXACTLY. Two programs that share a
@@ -376,8 +376,8 @@ TEST(EmbeddedShadersTest, TheSkyboxProgramUsesTheEmbeddedSources)
     ASSERT_NE(skybox_fs, nullptr);
     EXPECT_EQ(skybox_vs->type, ShaderStageType::Vertex);
     EXPECT_EQ(skybox_fs->type, ShaderStageType::Fragment);
-    EXPECT_EQ(skybox_vs->source, vine::String(kBuiltinSkyboxVert));
-    EXPECT_EQ(skybox_fs->source, vine::String(kBuiltinSkyboxFrag));
+    EXPECT_EQ(skybox_vs->source, vn::String(kBuiltinSkyboxVert));
+    EXPECT_EQ(skybox_fs->source, vn::String(kBuiltinSkyboxFrag));
     // Its sampler kind follows the texcoord width, which is the contract the backend's kind check keys
     // on (see the header): both kinds and both branches have to be there, in the stages that declare
     // them. The names must be in the PRAGMA too - a define a source does not ask for is dropped in

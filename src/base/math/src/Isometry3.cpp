@@ -3,7 +3,7 @@
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 template <typename T>
 void Isometry3<T>::invert()
@@ -108,11 +108,11 @@ Vector3<T> operator*(const Isometry3<T>& t, const Vector3<T>& v)
     return t.rotation * v;
 }
 
-template class V_MATH_API Isometry3<float>;
-template class V_MATH_API Isometry3<double>;
-template V_MATH_API Point3<float> operator*(const Isometry3<float>&, const Point3<float>&);
-template V_MATH_API Point3<double> operator*(const Isometry3<double>&, const Point3<double>&);
-template V_MATH_API Vector3<float> operator*(const Isometry3<float>&, const Vector3<float>&);
-template V_MATH_API Vector3<double> operator*(const Isometry3<double>&, const Vector3<double>&);
+template class VN_MATH_API Isometry3<float>;
+template class VN_MATH_API Isometry3<double>;
+template VN_MATH_API Point3<float> operator*(const Isometry3<float>&, const Point3<float>&);
+template VN_MATH_API Point3<double> operator*(const Isometry3<double>&, const Point3<double>&);
+template VN_MATH_API Vector3<float> operator*(const Isometry3<float>&, const Vector3<float>&);
+template VN_MATH_API Vector3<double> operator*(const Isometry3<double>&, const Vector3<double>&);
 
-V_MATH_NS_END
+VN_MATH_NS_END

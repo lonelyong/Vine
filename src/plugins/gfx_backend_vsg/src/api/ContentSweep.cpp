@@ -1,6 +1,6 @@
 #include <vine/vsg/api/ContentSweep.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 SweepOutcome releaseAbandonedContent(ContentStore& store, MaterialImages& images, core::FrameTimeline& timeline,
                                      core::RetirementQueue& retirement)
@@ -18,4 +18,4 @@ SweepOutcome releaseAbandonedContent(ContentStore& store, MaterialImages& images
     return outcome;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -8,7 +8,7 @@
 
 #include "CollisionObject.hpp"
 
-V_ROBOTICS_PROXIMITY_NS_BEGIN
+VN_ROBOTICS_PROXIMITY_NS_BEGIN
 
 /**
  * @brief A single contact point between two collision objects.
@@ -26,4 +26,4 @@ struct CollisionContact {
     math::Vec3d position;
 };
 
-V_ROBOTICS_PROXIMITY_NS_END
+VN_ROBOTICS_PROXIMITY_NS_END

@@ -42,7 +42,7 @@
  * policy. The dynamic command carries the three extension entry points, because those three calls have no
  * linker symbol on Linux (see DynamicStateEntryPoints).
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief The rectangle a draw covers: the viewport and the scissor are the same rectangle. */
 struct ViewportRect
@@ -62,7 +62,7 @@ struct ViewportRect
  * @param topology Engine topology.
  * @return The corresponding `VkPrimitiveTopology` (triangle list for an unrecognised value).
  */
-[[nodiscard]] VkPrimitiveTopology mapTopology(vine::graphics::Topology topology) noexcept;
+[[nodiscard]] VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept;
 
 /** @brief Maps the engine's dynamic state onto the set command that delivers it.
  *
@@ -109,4 +109,4 @@ struct ViewportRect
  */
 [[nodiscard]] ::vsg::ref_ptr<::vsg::SetScissor> makeScissorCommand(const ViewportRect& rect);
 
-V_VSG_NS_END
+VN_VSG_NS_END

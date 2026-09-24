@@ -5,7 +5,7 @@
 
 #include "ShaderProgram.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief The engine's built-in shading programs.
@@ -43,7 +43,7 @@ V_GRAPHICS_NS_BEGIN
  *
  * @return The vertex + fragment program (fresh per call).
  */
-V_GRAPHICS_API intrusive_ptr<ShaderProgram> forwardProgram();
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> forwardProgram();
 
 /**
  * @brief The built-in scene-shading program with the per-FACE normal instead of the vertex normal.
@@ -59,14 +59,14 @@ V_GRAPHICS_API intrusive_ptr<ShaderProgram> forwardProgram();
  *
  * @return The vertex + fragment program (fresh per call).
  */
-V_GRAPHICS_API intrusive_ptr<ShaderProgram> flatForwardProgram();
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> flatForwardProgram();
 
 /**
  * @brief The built-in G-buffer geometry program (scene -> MRT) of the Deferred preset.
  *
  * @return The vertex + fragment program.
  */
-V_GRAPHICS_API intrusive_ptr<ShaderProgram> gbufferGeometryProgram();
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> gbufferGeometryProgram();
 
 /**
  * @brief The built-in SKY BOX program: an UNLIT cube-map lookup by direction.
@@ -89,7 +89,7 @@ V_GRAPHICS_API intrusive_ptr<ShaderProgram> gbufferGeometryProgram();
  *
  * @return The vertex + fragment program (fresh per call).
  */
-V_GRAPHICS_API intrusive_ptr<ShaderProgram> skyboxProgram();
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> skyboxProgram();
 
 /**
  * @brief The built-in fullscreen-triangle VERTEX program every fullscreen FRAGMENT stage is written against.
@@ -111,7 +111,7 @@ V_GRAPHICS_API intrusive_ptr<ShaderProgram> skyboxProgram();
  *
  * @return The vertex program (fresh per call; a backend composes it with a fragment stage).
  */
-V_GRAPHICS_API intrusive_ptr<ShaderProgram> fullscreenVertexProgram();
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> fullscreenVertexProgram();
 
 /**
  * @brief The built-in plain screen copy: one colour attachment of the source, sampled 1:1.
@@ -127,7 +127,7 @@ V_GRAPHICS_API intrusive_ptr<ShaderProgram> fullscreenVertexProgram();
  * @param attachment Colour attachment of the source to sample (binding index in the generated text).
  * @return The fragment program (fresh per call; see fullscreenVertexProgram for the vertex stage).
  */
-V_GRAPHICS_API intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment = 0);
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment = 0);
 
 /**
  * @brief The built-in fullscreen deferred-lighting program.
@@ -140,7 +140,7 @@ V_GRAPHICS_API intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment = 0
  *
  * @return The fragment program (see fullscreenVertexProgram for the vertex stage).
  */
-V_GRAPHICS_API intrusive_ptr<ShaderProgram> deferredLightProgram();
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> deferredLightProgram();
 
 /**
  * @brief The deferred lighting program that also shades a shadow map.
@@ -154,6 +154,6 @@ V_GRAPHICS_API intrusive_ptr<ShaderProgram> deferredLightProgram();
  * @return The fragment program, or null when the source no longer carries the markers the shadowed
  *         variant is built from.
  */
-V_GRAPHICS_API intrusive_ptr<ShaderProgram> shadowedDeferredLightProgram();
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> shadowedDeferredLightProgram();
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

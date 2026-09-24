@@ -6,7 +6,7 @@
 
 #include <vine/appfw/ConfigGroup.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 struct ConfigCategory::Impl {
     ConfigRegistry* owner = nullptr;
@@ -110,4 +110,4 @@ ConfigCategory& ConfigCategory::order(int v)
     return *this;
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

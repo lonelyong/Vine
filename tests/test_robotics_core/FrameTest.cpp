@@ -4,7 +4,7 @@
 
 #include <vine/robotics/kinematics/Frame.hpp>
 
-using namespace vine::robotics::kinematics;
+using namespace vn::robotics::kinematics;
 
 namespace
 {

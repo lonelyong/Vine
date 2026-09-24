@@ -11,7 +11,7 @@
 
 #include "PixelFormat.hpp"
 
-V_IMAGING_NS_BEGIN
+VN_IMAGING_NS_BEGIN
 
 /**
  * @brief One image's pixels in CPU memory, with an optional mip chain.
@@ -40,8 +40,8 @@ V_IMAGING_NS_BEGIN
  * is where an out-of-range request is rejected, and it throws rather than quietly allocating a smaller image
  * than the caller asked for.
  */
-class V_IMAGING_API Image : public Object, public RefCounted<Image> {
-    V_OBJECT_META_DECL;
+class VN_IMAGING_API Image : public Object, public RefCounted<Image> {
+    VN_OBJECT_META_DECL;
 
   public:
     /**
@@ -161,4 +161,4 @@ class V_IMAGING_API Image : public Object, public RefCounted<Image> {
     int                      mip_count_ = 1;
 };
 
-V_IMAGING_NS_END
+VN_IMAGING_NS_END

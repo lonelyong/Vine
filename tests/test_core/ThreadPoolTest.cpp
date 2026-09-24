@@ -7,7 +7,7 @@
 
 #include <vine/ThreadPool.hpp>
 
-using vine::ThreadPool;
+using vn::ThreadPool;
 
 namespace
 {

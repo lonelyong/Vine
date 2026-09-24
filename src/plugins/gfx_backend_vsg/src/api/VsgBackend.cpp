@@ -36,15 +36,15 @@
 #include <vine/vsg/core/Observe.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
 
-/// @brief Builds a `vine::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
-vine::String asString(const std::string& text)
+/// @brief Builds a `vn::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
+vn::String asString(const std::string& text)
 {
-    return vine::String(reinterpret_cast<const char8_t*>(text.c_str()));
+    return vn::String(reinterpret_cast<const char8_t*>(text.c_str()));
 }
 
 /// @brief The calls that have nowhere to go, one slot per call (see the class note).
@@ -70,13 +70,13 @@ enum ReadbackReport : std::size_t
 };
 
 /// @brief Names @p target for a diagnostic sentence: its own name, or a stand-in when it has none.
-std::string nameOf(const vine::graphics::RenderTarget* target)
+std::string nameOf(const vn::graphics::RenderTarget* target)
 {
     if (target == nullptr)
     {
         return "an unnamed target";
     }
-    const vine::String& name = target->name();
+    const vn::String& name = target->name();
     if (name.empty())
     {
         return "an unnamed target";
@@ -85,7 +85,7 @@ std::string nameOf(const vine::graphics::RenderTarget* target)
 }
 
 /// @brief Tracks @p program into @p store, when both exist (see setDefaultContentProgram).
-void trackProgram(ContentStore* store, const vine::intrusive_ptr<const vine::graphics::ShaderProgram>& program)
+void trackProgram(ContentStore* store, const vn::intrusive_ptr<const vn::graphics::ShaderProgram>& program)
 {
     if (store == nullptr || program == nullptr)
     {
@@ -95,8 +95,8 @@ void trackProgram(ContentStore* store, const vine::intrusive_ptr<const vine::gra
     // the store's own handle is mutable (it owns a share of what it describes, see its note): the cast is
     // the bridge between the two views - and nothing in the store writes through it, its tables only READ
     // the object they describe.
-    store->track(vine::intrusive_ptr<vine::graphics::ShaderProgram>(
-        const_cast<vine::graphics::ShaderProgram*>(program.get())));
+    store->track(vn::intrusive_ptr<vn::graphics::ShaderProgram>(
+        const_cast<vn::graphics::ShaderProgram*>(program.get())));
 }
 
 /// @brief The content of every pass the frame's targets can be served for, one packet per pass that has any
@@ -175,11 +175,11 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
 
         // The view block is the PASS' (the content layer's contract), built from the first drawing call's
         // camera - the engine's passes draw through one camera per scope, so the first is the pass'.
-        const vine::graphics::VineViewBlock view_block =
+        const vn::graphics::VineViewBlock view_block =
             buildViewBlock(pass.draws[0].camera, session.frameSeconds(), width, height);
         ::vsg::ref_ptr<::vsg::Node> content;
         (void)assembly.record(pass, compatibility, input_scratch,
-                              std::as_bytes(std::span<const vine::graphics::VineViewBlock>(&view_block, 1U)),
+                              std::as_bytes(std::span<const vn::graphics::VineViewBlock>(&view_block, 1U)),
                               content);
         packets.push_back(PassContent{ pass.pass, std::move(content) });
     }
@@ -212,7 +212,7 @@ struct VsgBackend::Data
     void* host_handle{nullptr};            ///< The handle the host announced (nullptr = a window of our own).
     int   announced_width{640};            ///< What the next initialize() creates its window at.
     int   announced_height{360};           ///< What the next initialize() creates its window at.
-    vine::intrusive_ptr<const vine::graphics::ShaderProgram> default_program;  ///< See the header.
+    vn::intrusive_ptr<const vn::graphics::ShaderProgram> default_program;  ///< See the header.
 
     std::array<core::ReportOnce, kUnservedCount> unserved_reports{};  ///< One episode per entry point.
     std::array<core::ReportOnce, kReadbackReportCount> readback_reports{};  ///< The unresolved-target episodes.
@@ -221,7 +221,7 @@ struct VsgBackend::Data
     std::size_t released_textures{0};
     std::size_t released_streams{0};
     std::vector<core::TargetFacts>            facts;          ///< This frame's target table (borrowed rows).
-    std::vector<const vine::graphics::Light*> light_scratch;  ///< Reused by setLights (no per-call allocation).
+    std::vector<const vn::graphics::Light*> light_scratch;  ///< Reused by setLights (no per-call allocation).
     std::vector<InputImages>                  input_scratch;  ///< Reused per content pass (see recordContent).
     /// One colour-view list per declared input, reused per pass: the InputImages spans point into these, so
     /// they must outlive the record call and must not be reallocated while it runs (see recordContent).
@@ -235,7 +235,7 @@ VsgBackend::VsgBackend() : d(std::make_unique<Data>())
 {
     // The core's one diagnostic route feeds the SDK's: the session and the pieces report through it, and a
     // host that installed a sink - or counts - sees those reports without this layer re-reporting anything.
-    d->diagnostics.setSink([this](const vine::graphics::RenderDiagnostic& diagnostic) {
+    d->diagnostics.setSink([this](const vn::graphics::RenderDiagnostic& diagnostic) {
         reportDiagnostic(diagnostic.severity, diagnostic.category, diagnostic.message);
     });
 }
@@ -472,7 +472,7 @@ void VsgBackend::resize(int width, int height)
     }
 }
 
-void VsgBackend::setDefaultContentProgram(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program)
+void VsgBackend::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
 {
     d->default_program = std::move(program);
     // The plan needs it now - content without a program of its own is drawn with this one, and the
@@ -490,7 +490,7 @@ bool VsgBackend::supportsRenderTargets()
     return true;
 }
 
-void VsgBackend::setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> target)
+void VsgBackend::setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
 {
     if (target == nullptr)
     {
@@ -539,8 +539,8 @@ void VsgBackend::setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> tar
                       " could not be built (its images, render pass or readback buffer failed to create, or "
                       "its description is not a target): the passes that draw into it are skipped";
         }
-        reportDiagnostic(vine::graphics::DiagnosticSeverity::Warning,
-                         vine::graphics::DiagnosticCategory::TargetBuildFailed, asString(message));
+        reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                         vn::graphics::DiagnosticCategory::TargetBuildFailed, asString(message));
     }
 
     if (ensured.entry->target != nullptr)
@@ -553,7 +553,7 @@ void VsgBackend::setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> tar
     }
 }
 
-void VsgBackend::beginPass(vine::raw_ptr<const vine::graphics::RenderPass> pass)
+void VsgBackend::beginPass(vn::raw_ptr<const vn::graphics::RenderPass> pass)
 {
     if (pass == nullptr)
     {
@@ -594,7 +594,7 @@ void VsgBackend::setViewport(int x, int y, int width, int height)
     }
 }
 
-void VsgBackend::setLights(const std::vector<vine::raw_ptr<const vine::graphics::Light>>& lights)
+void VsgBackend::setLights(const std::vector<vn::raw_ptr<const vn::graphics::Light>>& lights)
 {
     if (!d->recorder.inPass())
     {
@@ -607,13 +607,13 @@ void VsgBackend::setLights(const std::vector<vine::raw_ptr<const vine::graphics:
     (void)d->recorder.setLights(d->light_scratch);
 }
 
-void VsgBackend::setPassInputs(const std::vector<vine::raw_ptr<vine::graphics::RenderTarget>>& inputs)
+void VsgBackend::setPassInputs(const std::vector<vn::raw_ptr<vn::graphics::RenderTarget>>& inputs)
 {
     if (!d->recorder.inPass())
     {
         return;
     }
-    for (const vine::raw_ptr<vine::graphics::RenderTarget>& input : inputs)
+    for (const vn::raw_ptr<vn::graphics::RenderTarget>& input : inputs)
     {
         if (input != nullptr)
         {
@@ -628,7 +628,7 @@ void VsgBackend::setPassInputs(const std::vector<vine::raw_ptr<vine::graphics::R
     (void)d->recorder.setPassInputs(inputs);
 }
 
-void VsgBackend::setDepthMode(vine::graphics::DepthMode mode)
+void VsgBackend::setDepthMode(vn::graphics::DepthMode mode)
 {
     if (d->recorder.inPass())
     {
@@ -636,7 +636,7 @@ void VsgBackend::setDepthMode(vine::graphics::DepthMode mode)
     }
 }
 
-void VsgBackend::setClearPolicy(const vine::graphics::ClearPolicy& policy)
+void VsgBackend::setClearPolicy(const vn::graphics::ClearPolicy& policy)
 {
     if (!d->recorder.inPass())
     {
@@ -656,8 +656,8 @@ void VsgBackend::setClearPolicy(const vine::graphics::ClearPolicy& policy)
     (void)d->recorder.setClearPolicy(translated);
 }
 
-void VsgBackend::render(const std::vector<vine::graphics::RenderCommand>& commands,
-                        const vine::graphics::Camera*                      camera)
+void VsgBackend::render(const std::vector<vn::graphics::RenderCommand>& commands,
+                        const vn::graphics::Camera*                      camera)
 {
     if (!d->recorder.inFrame())
     {
@@ -673,7 +673,7 @@ void VsgBackend::render(const std::vector<vine::graphics::RenderCommand>& comman
     // What the commands name becomes the store's live content: the objects are borrowed for the call, and
     // the tables must answer for them when the plan (which copies their identities) is recorded - including
     // after the host has dropped its own handle (the store owns a share, see its note).
-    for (const vine::graphics::RenderCommand& command : commands)
+    for (const vn::graphics::RenderCommand& command : commands)
     {
         d->store->track(command.geometry);
         d->store->track(command.material);
@@ -688,9 +688,9 @@ void VsgBackend::render(const std::vector<vine::graphics::RenderCommand>& comman
     (void)d->recorder.render(commands, camera);  // refusing (no scope, a released target) is the protocol's
 }
 
-void VsgBackend::drawScreenProgram(vine::graphics::RenderTarget*                     source,
-                                   vine::raw_ptr<const vine::graphics::ShaderProgram> program,
-                                   vine::raw_ptr<const vine::graphics::Camera>        camera)
+void VsgBackend::drawScreenProgram(vn::graphics::RenderTarget*                     source,
+                                   vn::raw_ptr<const vn::graphics::ShaderProgram> program,
+                                   vn::raw_ptr<const vn::graphics::Camera>        camera)
 {
     if (!d->recorder.inFrame())
     {
@@ -700,14 +700,14 @@ void VsgBackend::drawScreenProgram(vine::graphics::RenderTarget*                
     {
         // The fragment stage is content like any other: the tables must answer its two texts and their
         // declarations when the plan records (the store's own walk covers full-screen calls' programs).
-        trackProgram(d->store.get(), vine::intrusive_ptr<const vine::graphics::ShaderProgram>(program));
+        trackProgram(d->store.get(), vn::intrusive_ptr<const vn::graphics::ShaderProgram>(program));
     }
     // The source is an IDENTITY here, exactly like a content draw's program: which images it offers was
     // announced with the pass' inputs (setPassInputs), and the content layer resolves it among them.
     (void)d->recorder.drawScreenProgram(source, program, camera);
 }
 
-void VsgBackend::releasePass(vine::raw_ptr<const vine::graphics::RenderPass> pass)
+void VsgBackend::releasePass(vn::raw_ptr<const vn::graphics::RenderPass> pass)
 {
     (void)d->passes.release(pass);
     // Nothing retained is keyed by a pass yet (see the header), so forgetting the identity is the whole of
@@ -715,7 +715,7 @@ void VsgBackend::releasePass(vine::raw_ptr<const vine::graphics::RenderPass> pas
     // adds and removes passes.
 }
 
-void VsgBackend::releaseRenderTarget(vine::graphics::RenderTarget* target)
+void VsgBackend::releaseRenderTarget(vn::graphics::RenderTarget* target)
 {
     if (target == nullptr)
     {
@@ -731,8 +731,8 @@ void VsgBackend::releaseRenderTarget(vine::graphics::RenderTarget* target)
     (void)d->recorder.releaseRenderTarget(target);
 }
 
-bool VsgBackend::readColorBuffer(const vine::graphics::RenderTarget* target, int attachment,
-                                 std::vector<std::uint8_t>& outPixels, vine::graphics::ReadbackResult* why)
+bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int attachment,
+                                 std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why)
 {
     // A refusal says WHY on both channels: the machine answer in @p why and one sentence on the diagnostics
     // route - once per episode, because this call is synchronous and a caller polling a target that is not
@@ -745,8 +745,8 @@ bool VsgBackend::readColorBuffer(const vine::graphics::RenderTarget* target, int
         }
         if (episode.shouldReport())
         {
-            reportDiagnostic(vine::graphics::DiagnosticSeverity::Warning,
-                             vine::graphics::DiagnosticCategory::ContentSkipped,
+            reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                             vn::graphics::DiagnosticCategory::ContentSkipped,
                              readbackRefusalMessage(refusal, "readColorBuffer()"));
         }
         return false;
@@ -801,13 +801,13 @@ bool VsgBackend::readColorBuffer(const vine::graphics::RenderTarget* target, int
     entry->readback_report.rearm();  // a readback that works ends the episode
     if (why != nullptr)
     {
-        *why = vine::graphics::ReadbackResult::Ok;
+        *why = vn::graphics::ReadbackResult::Ok;
     }
     return true;
 }
 
-bool VsgBackend::readDepthBuffer(const vine::graphics::RenderTarget* target, std::vector<float>& outDepths,
-                                 vine::graphics::ReadbackResult* why)
+bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::vector<float>& outDepths,
+                                 vn::graphics::ReadbackResult* why)
 {
     const auto refuse = [&](HostReadbackRefusal refusal, core::ReportOnce& episode) {
         if (why != nullptr)
@@ -816,8 +816,8 @@ bool VsgBackend::readDepthBuffer(const vine::graphics::RenderTarget* target, std
         }
         if (episode.shouldReport())
         {
-            reportDiagnostic(vine::graphics::DiagnosticSeverity::Warning,
-                             vine::graphics::DiagnosticCategory::ContentSkipped,
+            reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                             vn::graphics::DiagnosticCategory::ContentSkipped,
                              readbackRefusalMessage(refusal, "readDepthBuffer()"));
         }
         return false;
@@ -864,7 +864,7 @@ bool VsgBackend::readDepthBuffer(const vine::graphics::RenderTarget* target, std
     entry->readback_report.rearm();
     if (why != nullptr)
     {
-        *why = vine::graphics::ReadbackResult::Ok;
+        *why = vn::graphics::ReadbackResult::Ok;
     }
     return true;
 }
@@ -927,8 +927,8 @@ void VsgBackend::reportUnserved(std::size_t slot) noexcept
     {
         return;
     }
-    reportDiagnostic(vine::graphics::DiagnosticSeverity::Warning,
-                     vine::graphics::DiagnosticCategory::UnsupportedRequest,
+    reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                     vn::graphics::DiagnosticCategory::UnsupportedRequest,
                      asString(std::string(kUnservedNames[slot]) +
                               " has nowhere to go: every part of the frame protocol needs a session that is "
                               "up (see .ai/design/vsg-reimplementation.md)"));
@@ -974,4 +974,4 @@ ContentStore* BackendContentAccess::store(VsgBackend& backend) noexcept
 
 }  // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END

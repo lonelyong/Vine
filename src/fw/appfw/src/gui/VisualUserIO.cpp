@@ -21,7 +21,7 @@
 #include <vine/async/DetachedTask.hpp>
 #include <vine/logging/Log.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace
 {
@@ -77,7 +77,7 @@ void onConsolePanel(ConsolePanel* panel, TFn&& fn)
 
 } // namespace
 
-V_OBJECT_META_IMPL(VisualUserIO, UserIO)
+VN_OBJECT_META_IMPL(VisualUserIO, UserIO)
 
 /// Everything the visual I/O owns: the panel it writes to, the interaction slot, and the bookkeeping of the read that is
 /// waiting for the user.
@@ -117,7 +117,7 @@ struct VisualUserIO::Impl
     explicit Impl(VisualUserIO* owner) : owner(owner) {}
 
     void setConsolePanel(ConsolePanel* console);
-    void setCommandManager(vine::appfw::CommandManager* manager);
+    void setCommandManager(vn::appfw::CommandManager* manager);
     void refreshCompletion();
     void putString(const String& str);
     void clear();
@@ -130,7 +130,7 @@ struct VisualUserIO::Impl
     void endRead() noexcept;
     /// Waits for the user to answer the prompt; true when a value arrived, false
     /// when the interaction was cancelled.
-    vine::async::Task<bool> waitForInput(PendingRead kind, const String& prompt);
+    vn::async::Task<bool> waitForInput(PendingRead kind, const String& prompt);
 
     void onLineEntered(const String& text);
     void onEscape();
@@ -157,7 +157,7 @@ struct VisualUserIO::Impl
     /// The I/O this state belongs to: the command manager and the number parser are its API.
     VisualUserIO* owner{ nullptr };
 
-    vine::async::AsyncEvent done;
+    vn::async::AsyncEvent done;
     std::atomic<bool>    cancelled{ false };
 
     /// The interaction slot: only one read may wait for the user at a time, because
@@ -173,10 +173,10 @@ struct VisualUserIO::Impl
 
     ConsolePanel* console{ nullptr };
     /// Handlers registered on the bound console, so a rebind can drop them again.
-    vine::Connection line_handler{};
-    vine::Connection escape_handler{};
+    vn::Connection line_handler{};
+    vn::Connection escape_handler{};
     /// Connection on the command manager's commandsChanged().
-    vine::Connection commands_handler{};
+    vn::Connection commands_handler{};
 
     /// Prompt bookkeeping of the current read; see PromptState.
     std::shared_ptr<PromptState> prompt_state{ std::make_shared<PromptState>() };
@@ -211,12 +211,12 @@ void VisualUserIO::Impl::setConsolePanel(ConsolePanel* console)
     refreshCompletion();
 }
 
-void VisualUserIO::setCommandManager(vine::appfw::CommandManager* manager)
+void VisualUserIO::setCommandManager(vn::appfw::CommandManager* manager)
 {
     d->setCommandManager(manager);
 }
 
-void VisualUserIO::Impl::setCommandManager(vine::appfw::CommandManager* manager)
+void VisualUserIO::Impl::setCommandManager(vn::appfw::CommandManager* manager)
 {
     if (auto* previous = owner->commandManager(); previous != nullptr && previous != manager) {
         commands_handler.disconnect();
@@ -228,7 +228,7 @@ void VisualUserIO::Impl::setCommandManager(vine::appfw::CommandManager* manager)
         // The completion list is a snapshot: follow the command set so commands of
         // plugins that register after the console was bound still show up.
         commands_handler = manager->commandsChanged.connect(
-            [this](vine::appfw::CommandManager&, vine::EventArgs&) { refreshCompletion(); });
+            [this](vn::appfw::CommandManager&, vn::EventArgs&) { refreshCompletion(); });
     }
     refreshCompletion();
 }
@@ -327,7 +327,7 @@ bool VisualUserIO::Impl::beginRead(PendingRead kind, const String& prompt)
     PendingRead expected = PendingRead::None;
     if (!pending.compare_exchange_strong(expected, kind))
     {
-        V_LOGW("A user-input read is already waiting; refusing the new one");
+        VN_LOGW("A user-input read is already waiting; refusing the new one");
         return false;
     }
 
@@ -344,7 +344,7 @@ void VisualUserIO::Impl::endRead() noexcept
     pending.store(PendingRead::None);
 }
 
-vine::async::Task<bool> VisualUserIO::Impl::waitForInput(PendingRead kind, const String& prompt)
+vn::async::Task<bool> VisualUserIO::Impl::waitForInput(PendingRead kind, const String& prompt)
 {
     if (!beginRead(kind, prompt))
     {
@@ -369,7 +369,7 @@ vine::async::Task<bool> VisualUserIO::Impl::waitForInput(PendingRead kind, const
     co_return !cancelled.load();
 }
 
-vine::async::Task<std::optional<String>> VisualUserIO::getStringAsync(const String& prompt)
+vn::async::Task<std::optional<String>> VisualUserIO::getStringAsync(const String& prompt)
 {
     if (!co_await d->waitForInput(Impl::PendingRead::String, prompt))
     {
@@ -378,7 +378,7 @@ vine::async::Task<std::optional<String>> VisualUserIO::getStringAsync(const Stri
     co_return d->string_result;
 }
 
-vine::async::Task<std::optional<int>> VisualUserIO::getIntAsync(const String& prompt)
+vn::async::Task<std::optional<int>> VisualUserIO::getIntAsync(const String& prompt)
 {
     if (!co_await d->waitForInput(Impl::PendingRead::Int, prompt))
     {
@@ -387,7 +387,7 @@ vine::async::Task<std::optional<int>> VisualUserIO::getIntAsync(const String& pr
     co_return d->int_result;
 }
 
-vine::async::Task<std::optional<double>> VisualUserIO::getDoubleAsync(const String& prompt)
+vn::async::Task<std::optional<double>> VisualUserIO::getDoubleAsync(const String& prompt)
 {
     if (!co_await d->waitForInput(Impl::PendingRead::Double, prompt))
     {
@@ -396,7 +396,7 @@ vine::async::Task<std::optional<double>> VisualUserIO::getDoubleAsync(const Stri
     co_return d->double_result;
 }
 
-vine::async::Task<std::optional<math::Point3d>> VisualUserIO::getPoint3dAsync(const String& prompt)
+vn::async::Task<std::optional<math::Point3d>> VisualUserIO::getPoint3dAsync(const String& prompt)
 {
     if (!co_await d->waitForInput(Impl::PendingRead::Point, prompt))
     {
@@ -432,7 +432,7 @@ void VisualUserIO::Impl::onLineEntered(const String& text)
         // 异步启动命令；失败信息在命令完成后回写。
         // 命令可能在任意线程上结束（await 了定时器/异步读取），因此回写必须
         // 编组到应用线程：控制台面板是 QWidget，只有应用线程可以碰。
-        [](Impl* self, vine::async::Task<CommandResult> task) -> vine::async::DetachedTask {
+        [](Impl* self, vn::async::Task<CommandResult> task) -> vn::async::DetachedTask {
             const auto result = co_await std::move(task);
             if (result.succeeded())
             {
@@ -587,4 +587,4 @@ void VisualUserIO::Impl::cancelInteraction()
     done.set();
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

@@ -3,7 +3,7 @@
 #include <vine/appfw/appfw_global.hpp>
 #include <vine/Color.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Semantic message type used by the console.
@@ -50,4 +50,4 @@ struct ConsoleTheme
     }
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

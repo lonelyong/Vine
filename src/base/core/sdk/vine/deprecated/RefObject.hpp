@@ -6,7 +6,7 @@
 
 #include <vine/Object.hpp>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 template <typename>
 class SPtr;
@@ -28,11 +28,11 @@ concept RefObjectBased = std::is_base_of<RefObject, T>::value;
  *             instead; no base class is required and no control block is
  *             allocated per object.
  */
-class [[deprecated]] V_CORE_API RefObject : public Object {
-    V_OBJECT_META_DECL
-    V_DISABLE_COPY_MOVE(RefObject)
-    // V_DECLARE_PRIVATE(RefObject)
-    // V_DECLARE_DPTR(RefObject)
+class [[deprecated]] VN_CORE_API RefObject : public Object {
+    VN_OBJECT_META_DECL
+    VN_DISABLE_COPY_MOVE(RefObject)
+    // VN_DECLARE_PRIVATE(RefObject)
+    // VN_DECLARE_DPTR(RefObject)
 
   public:
     RefObject() noexcept;
@@ -63,9 +63,9 @@ class [[deprecated]] V_CORE_API RefObject : public Object {
     friend class WPtr;
 };
 
-// class V_CORE_API RefObjectPrivate {
-//     V_DECLARE_PUBLIC(RefObject)
-//     V_DECLARE_VPTR(RefObject)
+// class VN_CORE_API RefObjectPrivate {
+//     VN_DECLARE_PUBLIC(RefObject)
+//     VN_DECLARE_VPTR(RefObject)
 
 //   protected:
 //     RefObjectPrivate()
@@ -73,4 +73,4 @@ class [[deprecated]] V_CORE_API RefObject : public Object {
 //     {}
 // };
 
-V_CORE_NS_END
+VN_CORE_NS_END

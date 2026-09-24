@@ -7,7 +7,7 @@
 #include <type_traits>
 #include <utility>
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 namespace detail {
 
@@ -142,4 +142,4 @@ concept Schedulable = requires(T& s) {
     { s.schedule() } -> Awaitable;
 };
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

@@ -10,7 +10,7 @@
 #include <vine/robotics/kinematics/DHParameter.hpp>
 #include <vine/robotics/kinematics/DHTransformConverter.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 namespace
 {
@@ -535,4 +535,4 @@ bool PieperIKSolver::solve(const math::Isometry3d& target, std::vector<Q>& solut
     return !solutions.empty();
 }
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

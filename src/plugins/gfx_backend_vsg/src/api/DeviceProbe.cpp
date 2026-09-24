@@ -5,7 +5,7 @@
 #include <vsg/vk/Instance.h>
 #include <vsg/vk/PhysicalDevice.h>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace api
 {
@@ -87,7 +87,7 @@ ProbedDevice describePhysicalDevice(::vsg::PhysicalDevice& device)
     }
     // `String` wraps std::u8string, and a driver reports its device name as UTF-8 bytes in a char[]:
     // the cast is the repo's spelling for exactly that hand-over (see PluginManager's helpers).
-    probed.name   = vine::String(reinterpret_cast<const char8_t*>(properties.deviceName));
+    probed.name   = vn::String(reinterpret_cast<const char8_t*>(properties.deviceName));
     probed.usable = core::satisfiesRequirements(probed.facts);
     return probed;
 }
@@ -125,7 +125,7 @@ ProbeResult probePhysicalDevices()
     }
     if (instance == nullptr)
     {
-        result.error = vine::String(u8"no Vulkan loader (no instance could be created)");
+        result.error = vn::String(u8"no Vulkan loader (no instance could be created)");
         return result;
     }
 
@@ -145,4 +145,4 @@ ProbeResult probePhysicalDevices()
 
 }  // namespace api
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -15,7 +15,7 @@
 #include <vine/io/Vfs.hpp>
 #include <vine/String.hpp>
 
-V_IO_NS_BEGIN
+VN_IO_NS_BEGIN
 
 /**
  * @brief A ZIP archive as a virtual file tree.
@@ -42,7 +42,7 @@ V_IO_NS_BEGIN
  * In-memory bytes are either taken over (a moved vector) or borrowed (a span the
  * caller keeps alive).
  */
-class V_IOBASE_API ZipArchive : public Vfs
+class VN_IOBASE_API ZipArchive : public Vfs
 {
   public:
     /**
@@ -586,4 +586,4 @@ class V_IOBASE_API ZipArchive : public Vfs
     bool                           read_only_{ false }; ///< Set by open() with OpenMode::ReadOnly.
 };
 
-V_IO_NS_END
+VN_IO_NS_END

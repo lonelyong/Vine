@@ -6,7 +6,7 @@
 
 #include <vine/appfw/gui/Window.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Configuration window: renders editors from the registry (ConfigRegistry)
@@ -27,8 +27,8 @@ V_APPFWGUI_NS_BEGIN
  * matches none of its choices is shown with no selection rather than with the
  * first choice.
  */
-class V_APPFW_API ConfigWindow : public Window {
-    V_OBJECT_META_DECL
+class VN_APPFW_API ConfigWindow : public Window {
+    VN_OBJECT_META_DECL
 
   public:
     /**
@@ -69,4 +69,4 @@ class V_APPFW_API ConfigWindow : public Window {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

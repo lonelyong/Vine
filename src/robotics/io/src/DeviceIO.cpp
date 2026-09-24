@@ -17,7 +17,7 @@
 
 #include "IoUtils.hpp"
 
-V_ROBOTICS_IO_NS_BEGIN
+VN_ROBOTICS_IO_NS_BEGIN
 
 namespace
 {
@@ -94,8 +94,8 @@ const char* toCStr(const String& s)
 bool getAttrDouble(const tinyxml2::XMLElement* xe, const char* name, double& out)
 {
     const char* const value = xe->Attribute(name);
-    return value != nullptr && vine::robotics::io::detail::strToDouble(
-                                   vine::String(reinterpret_cast<const char8_t*>(value)), out);
+    return value != nullptr && vn::robotics::io::detail::strToDouble(
+                                   vn::String(reinterpret_cast<const char8_t*>(value)), out);
 }
 
 /**
@@ -107,7 +107,7 @@ bool getAttrDouble(const tinyxml2::XMLElement* xe, const char* name, double& out
  */
 void setAttrDouble(tinyxml2::XMLElement* xe, const char* name, double value)
 {
-    xe->SetAttribute(name, toCStr(vine::robotics::io::detail::doubleToStr(value)));
+    xe->SetAttribute(name, toCStr(vn::robotics::io::detail::doubleToStr(value)));
 }
 
 /**
@@ -131,13 +131,13 @@ std::unique_ptr<workcell::Device> DeviceIO::loadXml(const std::filesystem::path&
     if (dir.empty()) {
         dir = std::filesystem::path(".");
     }
-    vine::io::DirectoryVfs vfs(dir);
+    vn::io::DirectoryVfs vfs(dir);
     auto                   dev = loadXmlFromVfs(vfs, detail::pathLeafName(file_path), options);
     dev->setFilePath(file_path);
     return dev;
 }
 
-std::unique_ptr<workcell::Device> DeviceIO::loadXmlFromVfs(vine::io::Vfs& vfs, const std::filesystem::path& vfs_path,
+std::unique_ptr<workcell::Device> DeviceIO::loadXmlFromVfs(vn::io::Vfs& vfs, const std::filesystem::path& vfs_path,
                                                            const LoadOptions& options)
 {
     (void)options;
@@ -170,7 +170,7 @@ std::unique_ptr<workcell::Device> DeviceIO::parseDeviceInternal(ParseContext& ct
     // ---- version ----
     uint16_t major = 0, minor = 0;
     parseVersion(ctx, major, minor, xe_device);
-    if (major != V_ROBOTICS_IO_VERSION_MAJOR || minor != V_ROBOTICS_IO_VERSION_MINOR) {
+    if (major != VN_ROBOTICS_IO_VERSION_MAJOR || minor != VN_ROBOTICS_IO_VERSION_MINOR) {
         throw std::runtime_error("DeviceIO::parseDeviceInternal, unsupported version: " + std::to_string(major) + "."
                                  + std::to_string(minor));
     }
@@ -317,7 +317,7 @@ std::unique_ptr<tinyxml2::XMLDocument> DeviceIO::buildDoc(const workcell::Device
     const auto&    meta = dev.metadata();
     xe_device->SetAttribute("name", toCStr(!meta.name.empty() ? meta.name : meta.model));
     xe_device->SetAttribute("kind", kindToStr(dev.deviceKind()));
-    exportVersion(ctx, V_ROBOTICS_IO_VERSION_MAJOR, V_ROBOTICS_IO_VERSION_MINOR, xe_device);
+    exportVersion(ctx, VN_ROBOTICS_IO_VERSION_MAJOR, VN_ROBOTICS_IO_VERSION_MINOR, xe_device);
     doc->InsertEndChild(xe_device);
     exportDeviceInternal(ctx, dev, xe_device);
     return doc;
@@ -326,7 +326,7 @@ std::unique_ptr<tinyxml2::XMLDocument> DeviceIO::buildDoc(const workcell::Device
 std::unique_ptr<workcell::Device> DeviceIO::loadPkg(const std::filesystem::path& pkg_path, const LoadOptions& options)
 {
     // Only the archive index is read up front; entries decompress on demand.
-    auto pkg = vine::io::ZipArchive::open(pkg_path, vine::io::ZipArchive::OpenMode::ReadOnly);
+    auto pkg = vn::io::ZipArchive::open(pkg_path, vn::io::ZipArchive::OpenMode::ReadOnly);
     if (!pkg) {
         throw std::runtime_error("DeviceIO::loadPkg, not a valid device package: " + pkg_path.string());
     }
@@ -335,21 +335,21 @@ std::unique_ptr<workcell::Device> DeviceIO::loadPkg(const std::filesystem::path&
     return dev;
 }
 
-std::unique_ptr<workcell::Device> DeviceIO::loadPkg(vine::io::Vfs& vfs, const LoadOptions& options)
+std::unique_ptr<workcell::Device> DeviceIO::loadPkg(vn::io::Vfs& vfs, const LoadOptions& options)
 {
     return loadXmlFromVfs(vfs, std::filesystem::path(u8"device.xml"), options);
 }
 
 void DeviceIO::savePkg(const workcell::Device& dev, const std::filesystem::path& pkg_path, const SaveOptions& options)
 {
-    vine::io::ZipArchive vfs;
+    vn::io::ZipArchive vfs;
     savePkg(dev, vfs, options);
-    if (vfs.saveAs(pkg_path) != vine::io::IoError::Ok) {
+    if (vfs.saveAs(pkg_path) != vn::io::IoError::Ok) {
         throw std::runtime_error("DeviceIO::savePkg, failed to write package file: " + pkg_path.string());
     }
 }
 
-void DeviceIO::savePkg(const workcell::Device& dev, vine::io::Vfs& vfs, const SaveOptions& options)
+void DeviceIO::savePkg(const workcell::Device& dev, vn::io::Vfs& vfs, const SaveOptions& options)
 {
     (void)options;
     ExportOptions opts;
@@ -359,7 +359,7 @@ void DeviceIO::savePkg(const workcell::Device& dev, vine::io::Vfs& vfs, const Sa
     tinyxml2::XMLPrinter printer;
     doc->Print(&printer);
     const String xml(reinterpret_cast<const char8_t*>(printer.CStr()), printer.CStrSize() - 1);
-    if (detail::writeText(vfs, std::filesystem::path(u8"device.xml"), xml) != vine::io::IoError::Ok) {
+    if (detail::writeText(vfs, std::filesystem::path(u8"device.xml"), xml) != vn::io::IoError::Ok) {
         throw std::runtime_error("DeviceIO::savePkg, failed to write device.xml into the vfs.");
     }
 }
@@ -373,7 +373,7 @@ void DeviceIO::exportDeviceInternal(ExportContext& ctx, const workcell::Device& 
         if (!data->materials.empty()) {
             auto xe_materials = xe_device->GetDocument()->NewElement("materials");
             for (const auto& entry : data->materials) {
-                const auto* const color = dynamic_cast<const vine::geometry::ColorMaterial*>(entry.material.get());
+                const auto* const color = dynamic_cast<const vn::geometry::ColorMaterial*>(entry.material.get());
                 if (color == nullptr) {
                     detail::appendWarning(ctx.msgs, "DeviceIO::exportDeviceInternal, unsupported material type in library, skipped.");
                     continue;
@@ -443,4 +443,4 @@ void DeviceIO::exportDeviceInternal(ExportContext& ctx, const workcell::Device& 
     }
 }
 
-V_ROBOTICS_IO_NS_END
+VN_ROBOTICS_IO_NS_END

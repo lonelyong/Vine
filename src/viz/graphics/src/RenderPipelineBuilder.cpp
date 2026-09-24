@@ -13,7 +13,7 @@
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /** @brief Builds the default G-buffer geometry program (scene -> MRT).
  *
@@ -49,10 +49,10 @@ intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultDeferredLightProgram(
     return deferredLightProgram();
 }
 
-Mat4d RenderPipelineBuilder::directionalShadowMatrix(const Light& light, const vine::math::Aabbd& bounds,
+Mat4d RenderPipelineBuilder::directionalShadowMatrix(const Light& light, const vn::math::Aabbd& bounds,
                                                         Camera& camera)
 {
-    using vine::math::Vec3d;
+    using vn::math::Vec3d;
 
     const bool   valid   = bounds.max().x >= bounds.min().x && bounds.max().y >= bounds.min().y &&
                          bounds.max().z >= bounds.min().z;
@@ -202,8 +202,8 @@ void RenderPipelineBuilder::reportRequestedShadows() const
     // The integer goes in as ASCII digits, like every other message in the SDK.
     const std::string   digits = std::to_string(unbuilt);
     const std::u8string count_text(digits.begin(), digits.end());
-    engine_->reportEngineProblem(vine::graphics::DiagnosticSeverity::Warning,
-                                 vine::graphics::DiagnosticCategory::UnsupportedRequest,
+    engine_->reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                 vn::graphics::DiagnosticCategory::UnsupportedRequest,
                                  String(count_text) +
                                      String(u8" shadow-casting light(s) in this pipeline's content have no shadow "
                                             u8"pass (its path builds none, or its lighting program is the host's; "
@@ -541,4 +541,4 @@ void RenderPipelineBuilder::addPass(intrusive_ptr<RenderPass> pass, int order)
     engine_->addPass(std::move(pass), order);
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

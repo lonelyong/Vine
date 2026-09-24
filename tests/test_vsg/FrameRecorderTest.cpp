@@ -31,19 +31,19 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/core/FrameRecorder.hpp>
 
-using vine::graphics::DepthMode;
-using vine::graphics::DiagnosticCategory;
-using vine::graphics::Light;
-using vine::graphics::RenderCommand;
-using vine::graphics::RenderTarget;
-using vine::graphics::ShaderProgram;
-using vine::vsg::core::ClearPolicy;
-using vine::vsg::core::Diagnostics;
-using vine::vsg::core::FrameArena;
-using vine::vsg::core::FrameDescription;
-using vine::vsg::core::FrameRecorder;
-using vine::vsg::core::FrameToken;
-using vine::vsg::core::Observe;
+using vn::graphics::DepthMode;
+using vn::graphics::DiagnosticCategory;
+using vn::graphics::Light;
+using vn::graphics::RenderCommand;
+using vn::graphics::RenderTarget;
+using vn::graphics::ShaderProgram;
+using vn::vsg::core::ClearPolicy;
+using vn::vsg::core::Diagnostics;
+using vn::vsg::core::FrameArena;
+using vn::vsg::core::FrameDescription;
+using vn::vsg::core::FrameRecorder;
+using vn::vsg::core::FrameToken;
+using vn::vsg::core::Observe;
 
 namespace
 {
@@ -156,7 +156,7 @@ TEST(FrameRecorderTest, TheAnnouncedLightsAreCopiedNumbersNotBorrowedPointers)
     Rig r;
     r.open();
 
-    auto                          sun = Light::createDirectional(vine::math::Vec3d(0.0, 0.0, -1.0));
+    auto                          sun = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
     std::vector<const Light*>     lights{ sun.get() };
     const std::vector<RenderCommand> commands = oneCommand();
 
@@ -173,7 +173,7 @@ TEST(FrameRecorderTest, TheAnnouncedLightsAreCopiedNumbersNotBorrowedPointers)
 
     ASSERT_EQ(description.passes.size(), 1u);
     ASSERT_EQ(description.passes[0].draws.size(), 1u);
-    const std::span<const vine::vsg::core::LightRef> collected = description.passes[0].draws[0].lights;
+    const std::span<const vn::vsg::core::LightRef> collected = description.passes[0].draws[0].lights;
     ASSERT_EQ(collected.size(), 1u);
     EXPECT_TRUE(collected[0].enabled);
     EXPECT_FLOAT_EQ(collected[0].intensity, 1.0F);  // the value at the call, not the later edit
@@ -185,7 +185,7 @@ TEST(FrameRecorderTest, OneViewportAndLightAnnouncementServesOneDrawingCall)
     Rig r;
     r.open();
 
-    auto                             sun      = Light::createDirectional(vine::math::Vec3d(0.0, 0.0, -1.0));
+    auto                             sun      = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
     std::vector<const Light*>        lights{ sun.get() };
     const std::vector<RenderCommand> commands = oneCommand();
 
@@ -204,7 +204,7 @@ TEST(FrameRecorderTest, OneViewportAndLightAnnouncementServesOneDrawingCall)
 
     const FrameDescription& description = r.seal();
     ASSERT_EQ(description.passes.size(), 1u);
-    const std::span<const vine::vsg::core::CollectedDraw> draws = description.passes[0].draws;
+    const std::span<const vn::vsg::core::CollectedDraw> draws = description.passes[0].draws;
     ASSERT_EQ(draws.size(), 3u);
 
     EXPECT_TRUE(draws[0].has_viewport);
@@ -225,8 +225,8 @@ TEST(FrameRecorderTest, ThePassInputsAreCopiedAndBelongToThePass)
     Rig r;
     r.open();
 
-    vine::intrusive_ptr<RenderTarget> first(new RenderTarget());
-    vine::intrusive_ptr<RenderTarget> second(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> first(new RenderTarget());
+    vn::intrusive_ptr<RenderTarget> second(new RenderTarget());
 
     std::vector<RenderTarget*> inputs{ first.get(), nullptr, second.get() };
     const std::vector<RenderCommand> commands = oneCommand();
@@ -242,7 +242,7 @@ TEST(FrameRecorderTest, ThePassInputsAreCopiedAndBelongToThePass)
     const FrameDescription& description = r.seal();
 
     ASSERT_EQ(description.passes.size(), 1u);
-    const std::span<const vine::vsg::core::InputRef> collected = description.passes[0].inputs;
+    const std::span<const vn::vsg::core::InputRef> collected = description.passes[0].inputs;
     ASSERT_EQ(collected.size(), 3u);
     EXPECT_EQ(collected[0].target, first.get());
     EXPECT_EQ(collected[1].target, nullptr);
@@ -439,7 +439,7 @@ TEST(FrameRecorderTest, TheDefaultProgramIsAFrameLevelFactTheCompilerResolves)
 {
     Rig r;
 
-    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     EXPECT_TRUE(r.recorder.setDefaultContentProgram(program.get()));
 
     // A command with no program of its own records "none": substituting the default is the compiler's job

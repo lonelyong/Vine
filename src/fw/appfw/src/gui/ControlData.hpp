@@ -2,7 +2,7 @@
 
 #include <vine/appfw/gui/UIElementData.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Data block of the Control level: what every control's Impl shares.
@@ -20,4 +20,4 @@ V_APPFWGUI_NS_BEGIN
  */
 struct ControlData : public UIElementData {};
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

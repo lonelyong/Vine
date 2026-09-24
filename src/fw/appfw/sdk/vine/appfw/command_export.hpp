@@ -15,13 +15,13 @@
  * On Windows anything without __declspec(dllexport) is already module-private, so
  * the attribute is only needed on ELF platforms.
  */
-#if defined(V_CC_MSVC)
-#    define V_MODULE_LOCAL
+#if defined(VN_CC_MSVC)
+#    define VN_MODULE_LOCAL
 #else
-#    define V_MODULE_LOCAL __attribute__((visibility("hidden")))
+#    define VN_MODULE_LOCAL __attribute__((visibility("hidden")))
 #endif
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 namespace detail {
 
 /**
@@ -32,8 +32,8 @@ using CommandRegistrar = std::function<bool(CommandManager*)>;
 /**
  * @brief Returns the command registrars declared in the calling module.
  *
- * Defined once per module by V_DEFINE_MODULE_COMMAND_QUEUE(), which
- * V_DECLARE_PLUGIN() expands for a plugin library, and deliberately neither an
+ * Defined once per module by VN_DEFINE_MODULE_COMMAND_QUEUE(), which
+ * VN_DECLARE_PLUGIN() expands for a plugin library, and deliberately neither an
  * inline function nor a variable of one: an inline function with a function-local
  * static is *one object for the whole process*, even across dlopen-ed libraries,
  * because the compiler gives that static the GNU unique binding (and the inline
@@ -43,13 +43,13 @@ using CommandRegistrar = std::function<bool(CommandManager*)>;
  * including the ones the user disabled or the host skipped, which would then
  * become runnable and be attributed to the wrong plugin.
  *
- * V_MODULE_LOCAL is what makes the queue the module's own: V_DECLARE_COMMAND()
+ * VN_MODULE_LOCAL is what makes the queue the module's own: VN_DECLARE_COMMAND()
  * queues into the calling module's container, and the module's own registration
  * entry point (vinePluginRegisterCommands) flushes exactly that container.
  *
  * @return The module-local queue of pending command registrars.
  */
-V_MODULE_LOCAL std::vector<CommandRegistrar>& moduleCommandQueue();
+VN_MODULE_LOCAL std::vector<CommandRegistrar>& moduleCommandQueue();
 
 /**
  * @brief Registers the queued commands of one module and empties its queue.
@@ -77,13 +77,13 @@ inline void flushQueuedCommands(std::vector<CommandRegistrar>& registrars, Comma
 }
 
 } // namespace detail
-V_APPFW_NS_END
+VN_APPFW_NS_END
 
 /**
  * @brief Defines the module-local command queue of the module that uses it.
  *
  * Must appear exactly once per module that declares commands with
- * V_DECLARE_COMMAND(); V_DECLARE_PLUGIN() expands it for a plugin library. A module
+ * VN_DECLARE_COMMAND(); VN_DECLARE_PLUGIN() expands it for a plugin library. A module
  * that declares commands without defining the queue fails to link, which is the
  * intended outcome: the queue must belong to exactly one module.
  *
@@ -91,11 +91,11 @@ V_APPFW_NS_END
  * the appfw namespace and at global scope, which is where a plugin entry point may
  * live.
  */
-#define V_DEFINE_MODULE_COMMAND_QUEUE()                                                  \
-    V_MODULE_LOCAL std::vector<vine::appfw::detail::CommandRegistrar>&                    \
-    vine::appfw::detail::moduleCommandQueue()                                             \
+#define VN_DEFINE_MODULE_COMMAND_QUEUE()                                                  \
+    VN_MODULE_LOCAL std::vector<vn::appfw::detail::CommandRegistrar>&                    \
+    vn::appfw::detail::moduleCommandQueue()                                             \
     {                                                                                    \
-        static std::vector<vine::appfw::detail::CommandRegistrar> registrars;             \
+        static std::vector<vn::appfw::detail::CommandRegistrar> registrars;             \
         return registrars;                                                               \
     }
 
@@ -103,7 +103,7 @@ V_APPFW_NS_END
  * @brief Declares a command inside its class body.
  *
  * Overrides the virtual name() with a compile-time constant and queues the
- * command with this module's registration queue (see V_DEFINE_MODULE_COMMAND_QUEUE()).
+ * command with this module's registration queue (see VN_DEFINE_MODULE_COMMAND_QUEUE()).
  * The command is registered with the CommandManager while the plugin is loaded: the
  * PluginManager calls the plugin's exported vinePluginRegisterCommands entry (see
  * plugin_export.hpp), which flushes this module's queue - never during module (DLL)
@@ -113,28 +113,28 @@ V_APPFW_NS_END
  *
  * Place inside the command class:
  * @code
- * class MyCommand : public vine::appfw::Command {
- *     V_OBJECT_META_DECL;
- *     V_DECLARE_COMMAND(MyCommand, u8"myCommand")
+ * class MyCommand : public vn::appfw::Command {
+ *     VN_OBJECT_META_DECL;
+ *     VN_DECLARE_COMMAND(MyCommand, u8"myCommand")
  *   public:
- *     vine::appfw::String group() const override { return u8"Edit"; }
- *     vine::appfw::CommandFlags flags() const override { return vine::appfw::CommandFlags::None; }
- *     vine::appfw::CommandResult execute(vine::appfw::CommandExecutionContext*) override;
+ *     vn::appfw::String group() const override { return u8"Edit"; }
+ *     vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+ *     vn::appfw::CommandResult execute(vn::appfw::CommandExecutionContext*) override;
  * };
  * @endcode
  *
  * @param CommandClass The command class.
  * @param CommandName The command name as a u8"..." literal.
  */
-#define V_DECLARE_COMMAND(CommandClass, CommandName)                             \
+#define VN_DECLARE_COMMAND(CommandClass, CommandName)                             \
   public:                                                                        \
-    vine::String name() const override { return CommandName; }                   \
+    vn::String name() const override { return CommandName; }                   \
   private:                                                                       \
     struct AutoRegistrar {                                                       \
         AutoRegistrar()                                                          \
         {                                                                        \
-            vine::appfw::detail::moduleCommandQueue().push_back(                 \
-                [](vine::appfw::CommandManager* manager) {                       \
+            vn::appfw::detail::moduleCommandQueue().push_back(                 \
+                [](vn::appfw::CommandManager* manager) {                       \
                     return manager->registerCommand<CommandClass>(CommandName);  \
                 });                                                              \
         }                                                                        \
@@ -149,10 +149,10 @@ V_APPFW_NS_END
  * Place inside the command class that owns the alias.
  *
  * @code
- * class ListCommandsCommand : public vine::appfw::Command {
- *     V_OBJECT_META_DECL;
- *     V_DECLARE_COMMAND(ListCommandsCommand, u8"list_commands")
- *     V_DECLARE_COMMAND_ALIAS(u8"gcm", u8"list_commands")
+ * class ListCommandsCommand : public vn::appfw::Command {
+ *     VN_OBJECT_META_DECL;
+ *     VN_DECLARE_COMMAND(ListCommandsCommand, u8"list_commands")
+ *     VN_DECLARE_COMMAND_ALIAS(u8"gcm", u8"list_commands")
  *   public:
  *     ...
  * };
@@ -161,13 +161,13 @@ V_APPFW_NS_END
  * @param AliasName The alias as a u8"..." literal.
  * @param TargetName The canonical command name the alias resolves to.
  */
-#define V_DECLARE_COMMAND_ALIAS(AliasName, TargetName)                            \
+#define VN_DECLARE_COMMAND_ALIAS(AliasName, TargetName)                            \
   private:                                                                       \
     struct AutoAliasRegistrar {                                                  \
         AutoAliasRegistrar()                                                     \
         {                                                                        \
-            vine::appfw::detail::moduleCommandQueue().push_back(                 \
-                [](vine::appfw::CommandManager* manager) {                       \
+            vn::appfw::detail::moduleCommandQueue().push_back(                 \
+                [](vn::appfw::CommandManager* manager) {                       \
                     return manager->registerAlias(AliasName, TargetName);        \
                 });                                                              \
         }                                                                        \

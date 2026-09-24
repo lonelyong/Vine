@@ -18,7 +18,7 @@
 #include <vine/robotics/io/robot_io_global.hpp>
 #include <vine/String.hpp>
 
-V_ROBOTICS_IO_NS_BEGIN
+VN_ROBOTICS_IO_NS_BEGIN
 
 namespace detail
 {
@@ -33,7 +33,7 @@ namespace detail
  * @param text The path as written, in UTF-8.
  * @return The path; an empty text is the virtual root.
  */
-inline std::filesystem::path vfsPath(const vine::String& text)
+inline std::filesystem::path vfsPath(const vn::String& text)
 {
     return std::filesystem::path(text.as_std_u8str());
 }
@@ -47,7 +47,7 @@ inline std::filesystem::path vfsPath(const vine::String& text)
  * @param path The virtual file path.
  * @return The text, or the failure read() would report.
  */
-inline vine::io::Result<vine::String> readText(const vine::io::Vfs& vfs, const std::filesystem::path& path)
+inline vn::io::Result<vn::String> readText(const vn::io::Vfs& vfs, const std::filesystem::path& path)
 {
     const auto bytes = vfs.read(path);
     if (!bytes) {
@@ -55,9 +55,9 @@ inline vine::io::Result<vine::String> readText(const vine::io::Vfs& vfs, const s
     }
     const std::vector<unsigned char>& data = bytes.value();
     if (data.empty()) {
-        return vine::String{};
+        return vn::String{};
     }
-    return vine::String(reinterpret_cast<const char8_t*>(data.data()), data.size());
+    return vn::String(reinterpret_cast<const char8_t*>(data.data()), data.size());
 }
 
 /**
@@ -68,7 +68,7 @@ inline vine::io::Result<vine::String> readText(const vine::io::Vfs& vfs, const s
  * @param text The UTF-8 text to store.
  * @return The failure addFile() would report.
  */
-inline vine::io::IoError writeText(vine::io::Vfs& vfs, const std::filesystem::path& path, const vine::String& text)
+inline vn::io::IoError writeText(vn::io::Vfs& vfs, const std::filesystem::path& path, const vn::String& text)
 {
     const auto* bytes = reinterpret_cast<const unsigned char*>(text.data());
     return vfs.addFile(path, std::span<const unsigned char>(bytes, text.size()));
@@ -254,7 +254,7 @@ inline bool endsWith(const String& text, const char* suffix)
  * @param arr The values to write.
  * @param out Receives the bytes.
  */
-inline void vec3ArrayToBytes(std::span<const vine::math::Vec3f> arr, std::vector<unsigned char>& out)
+inline void vec3ArrayToBytes(std::span<const vn::math::Vec3f> arr, std::vector<unsigned char>& out)
 {
     out.clear();
     out.reserve(arr.size() * 3u * sizeof(float));
@@ -271,7 +271,7 @@ inline void vec3ArrayToBytes(std::span<const vine::math::Vec3f> arr, std::vector
  * @param arr The values to write.
  * @param out Receives the bytes.
  */
-inline void vec2ArrayToBytes(std::span<const vine::math::Vec2f> arr, std::vector<unsigned char>& out)
+inline void vec2ArrayToBytes(std::span<const vn::math::Vec2f> arr, std::vector<unsigned char>& out)
 {
     out.clear();
     out.reserve(arr.size() * 2u * sizeof(float));
@@ -305,7 +305,7 @@ inline void uint32ArrayToBytes(std::span<const std::uint32_t> arr, std::vector<u
  * @param out Receives the array.
  * @return true when the byte count is a multiple of 12.
  */
-inline bool bytesToVec3Array(const std::vector<unsigned char>& bytes, vine::geometry::Vec3fArray& out)
+inline bool bytesToVec3Array(const std::vector<unsigned char>& bytes, vn::geometry::Vec3fArray& out)
 {
     if (bytes.size() % (3u * sizeof(float)) != 0) {
         return false;
@@ -327,7 +327,7 @@ inline bool bytesToVec3Array(const std::vector<unsigned char>& bytes, vine::geom
  * @param out Receives the array.
  * @return true when the byte count is a multiple of 8.
  */
-inline bool bytesToVec2Array(const std::vector<unsigned char>& bytes, vine::geometry::Vec2fArray& out)
+inline bool bytesToVec2Array(const std::vector<unsigned char>& bytes, vn::geometry::Vec2fArray& out)
 {
     if (bytes.size() % (2u * sizeof(float)) != 0) {
         return false;
@@ -349,7 +349,7 @@ inline bool bytesToVec2Array(const std::vector<unsigned char>& bytes, vine::geom
  * @param out Receives the array.
  * @return true when the byte count is a multiple of 4.
  */
-inline bool bytesToUInt32Array(const std::vector<unsigned char>& bytes, vine::geometry::UInt32Array& out)
+inline bool bytesToUInt32Array(const std::vector<unsigned char>& bytes, vn::geometry::UInt32Array& out)
 {
     if (bytes.size() % sizeof(std::uint32_t) != 0) {
         return false;
@@ -366,4 +366,4 @@ inline bool bytesToUInt32Array(const std::vector<unsigned char>& bytes, vine::ge
 
 } // namespace detail
 
-V_ROBOTICS_IO_NS_END
+VN_ROBOTICS_IO_NS_END

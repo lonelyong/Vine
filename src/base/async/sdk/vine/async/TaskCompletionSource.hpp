@@ -14,7 +14,7 @@
 
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 namespace detail {
 
@@ -476,4 +476,4 @@ class TaskCompletionSource<void>
     std::shared_ptr<detail::TcsState<void>> impl_{ std::make_shared<detail::TcsState<void>>() };
 };
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

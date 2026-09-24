@@ -3,7 +3,7 @@
 
 #include <vine/raw_ptr.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class Camera;
 
@@ -34,6 +34,6 @@ enum class MirrorMode {
  * @param src  Source camera to follow.
  * @param mode Mirror mode (None leaves @p dst untouched).
  */
-V_GRAPHICS_API void applyCameraMirror(raw_ptr<Camera> dst, raw_ptr<Camera> src, MirrorMode mode);
+VN_GRAPHICS_API void applyCameraMirror(raw_ptr<Camera> dst, raw_ptr<Camera> src, MirrorMode mode);
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

@@ -17,7 +17,7 @@
 #include "TableStyle.hpp"
 #include "WindowData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace
 {
@@ -37,17 +37,17 @@ void greyOutRow(QTableWidget* table, int row)
 
 } // namespace
 
-V_OBJECT_META_IMPL(CommandManagerDialog, Window)
+VN_OBJECT_META_IMPL(CommandManagerDialog, Window)
 
 struct CommandManagerDialog::Impl : public WindowData {
-    vine::appfw::CommandManager* manager       = nullptr;
+    vn::appfw::CommandManager* manager       = nullptr;
     QLineEdit*                   filter        = nullptr;
     QTableWidget*                table         = nullptr;
     QPushButton*                 toggle_btn    = nullptr;
     QLabel*                      message_label = nullptr;
 };
 
-CommandManagerDialog::CommandManagerDialog(vine::appfw::CommandManager* manager)
+CommandManagerDialog::CommandManagerDialog(vn::appfw::CommandManager* manager)
   : Window(new Impl(), new QDialog())
 {
     auto* data    = dptr();
@@ -230,4 +230,4 @@ inline auto CommandManagerDialog::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

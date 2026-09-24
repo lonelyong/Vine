@@ -10,7 +10,7 @@
 
 #include <vine/appfw/Plugin.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 struct CommandInfo;
 class ConfigItem;
@@ -34,7 +34,7 @@ enum class PluginScope
  * lifecycle never runs. enabled, skipped and loaded are resolved by
  * pluginEntries() at query time.
  */
-struct V_APPFW_API PluginEntry {
+struct VN_APPFW_API PluginEntry {
     PluginInfo            info;                             ///< Metadata declared by the plugin.
     std::filesystem::path path;                             ///< Library file the plugin was found in.
     PluginScope           scope{ PluginScope::BuiltIn };    ///< Location class the plugin was found in.
@@ -52,7 +52,7 @@ struct V_APPFW_API PluginEntry {
  * plugin it points at. Writing a file needs no application support, which is how
  * a package manager or an administrator installs a plugin.
  */
-struct V_APPFW_API PluginRegistration {
+struct VN_APPFW_API PluginRegistration {
     String                id;                  ///< Registration file name without the extension (unique per scope).
     String                file;                ///< The registration file itself.
     String                path;                ///< Registered plugin library or directory; required.
@@ -97,7 +97,7 @@ struct V_APPFW_API PluginRegistration {
  * unloadAll() followed by loadAll() runs the lifecycle again on the same
  * instances.
  */
-class V_APPFW_API PluginManager {
+class VN_APPFW_API PluginManager {
   public:
     PluginManager();
     ~PluginManager();
@@ -521,4 +521,4 @@ class V_APPFW_API PluginManager {
     std::unique_ptr<Impl> d;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

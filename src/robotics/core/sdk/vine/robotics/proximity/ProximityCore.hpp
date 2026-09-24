@@ -2,7 +2,7 @@
 
 #include <vine/robotics/robot_core_global.hpp>
 
-V_ROBOTICS_PROXIMITY_NS_BEGIN
+VN_ROBOTICS_PROXIMITY_NS_BEGIN
 
 /**
  * @brief Scalar type used throughout the proximity module.
@@ -12,4 +12,4 @@ V_ROBOTICS_PROXIMITY_NS_BEGIN
  */
 using ProximityScalar = double;
 
-V_ROBOTICS_PROXIMITY_NS_END
+VN_ROBOTICS_PROXIMITY_NS_END

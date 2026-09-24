@@ -4,7 +4,7 @@
 
 #include <vine/robotics/kinematics/KinematicsBase.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 /**
  * @brief Kinematics of a serial (open) chain between a base and an end frame.
@@ -15,7 +15,7 @@ V_ROBOTICS_KINEMATICS_NS_BEGIN
  * DofInfos. Picks an IK solver at construction: Pieper when the chain is a
  * supported 6-DOF spherical-wrist robot, Jacobian (iterative) otherwise.
  */
-class V_ROBOTICS_CORE_API SerialKinematics : public KinematicsBase
+class VN_ROBOTICS_CORE_API SerialKinematics : public KinematicsBase
 {
   public:
     /**
@@ -64,4 +64,4 @@ class V_ROBOTICS_CORE_API SerialKinematics : public KinematicsBase
     std::vector<DofInfo> ik_dofs_;
 };
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

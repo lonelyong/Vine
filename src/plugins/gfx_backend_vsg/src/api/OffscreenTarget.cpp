@@ -23,29 +23,29 @@
 #include <vsg/vk/Framebuffer.h>
 #include <vsg/vk/RenderPass.h>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
 
 /// @brief The engine's colour format as the API's enum (the same mapping the pipeline factory uses).
-VkFormat toColorFormat(vine::graphics::RenderTarget::ColorFormat format) noexcept
+VkFormat toColorFormat(vn::graphics::RenderTarget::ColorFormat format) noexcept
 {
     switch (format) {
-    case vine::graphics::RenderTarget::ColorFormat::RGBA8: return VK_FORMAT_R8G8B8A8_UNORM;
-    case vine::graphics::RenderTarget::ColorFormat::RGBA16F: return VK_FORMAT_R16G16B16A16_SFLOAT;
-    case vine::graphics::RenderTarget::ColorFormat::RGBA32F: return VK_FORMAT_R32G32B32A32_SFLOAT;
+    case vn::graphics::RenderTarget::ColorFormat::RGBA8: return VK_FORMAT_R8G8B8A8_UNORM;
+    case vn::graphics::RenderTarget::ColorFormat::RGBA16F: return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case vn::graphics::RenderTarget::ColorFormat::RGBA32F: return VK_FORMAT_R32G32B32A32_SFLOAT;
     }
     return VK_FORMAT_R8G8B8A8_UNORM;
 }
 
 /// @brief The engine's depth format as the API's enum (the same mapping the pipeline factory uses).
-VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat format) noexcept{
+VkFormat toDepthFormat(vn::graphics::RenderTarget::DepthFormat format) noexcept{
     switch (format) {
-    case vine::graphics::RenderTarget::DepthFormat::D16: return VK_FORMAT_D16_UNORM;
-    case vine::graphics::RenderTarget::DepthFormat::D24: return VK_FORMAT_D24_UNORM_S8_UINT;
-    case vine::graphics::RenderTarget::DepthFormat::D32:
-    case vine::graphics::RenderTarget::DepthFormat::D32F: return VK_FORMAT_D32_SFLOAT;
+    case vn::graphics::RenderTarget::DepthFormat::D16: return VK_FORMAT_D16_UNORM;
+    case vn::graphics::RenderTarget::DepthFormat::D24: return VK_FORMAT_D24_UNORM_S8_UINT;
+    case vn::graphics::RenderTarget::DepthFormat::D32:
+    case vn::graphics::RenderTarget::DepthFormat::D32F: return VK_FORMAT_D32_SFLOAT;
     }
     return VK_FORMAT_D32_SFLOAT;
 }
@@ -85,28 +85,28 @@ VkFormat toDepthFormat(vine::graphics::RenderTarget::DepthFormat format) noexcep
  * @param layout The core's layout.
  * @return The API's layout (UNDEFINED for a layout the core does not have).
  */
-VkImageLayout toVkLayout(vine::vsg::core::ImageLayout layout) noexcept
+VkImageLayout toVkLayout(vn::vsg::core::ImageLayout layout) noexcept
 {
     switch (layout) {
-    case vine::vsg::core::ImageLayout::Undefined: return VK_IMAGE_LAYOUT_UNDEFINED;
-    case vine::vsg::core::ImageLayout::ColorAttachment: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    case vine::vsg::core::ImageLayout::DepthAttachment: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    case vine::vsg::core::ImageLayout::ShaderReadOnly: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    case vine::vsg::core::ImageLayout::Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    case vn::vsg::core::ImageLayout::Undefined: return VK_IMAGE_LAYOUT_UNDEFINED;
+    case vn::vsg::core::ImageLayout::ColorAttachment: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    case vn::vsg::core::ImageLayout::DepthAttachment: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    case vn::vsg::core::ImageLayout::ShaderReadOnly: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    case vn::vsg::core::ImageLayout::Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     }
     return VK_IMAGE_LAYOUT_UNDEFINED;
 }
 ::vsg::ref_ptr<::vsg::RenderPass> makeOffscreenRenderPass(
     const ::vsg::ref_ptr<::vsg::Device>&                 device,
-    const std::vector<vine::graphics::RenderTarget::ColorFormat>& color_formats,
-    const std::optional<vine::graphics::RenderTarget::DepthFormat>& depth_format,
-    const vine::vsg::core::LoadOpVariantKey&             variant)
+    const std::vector<vn::graphics::RenderTarget::ColorFormat>& color_formats,
+    const std::optional<vn::graphics::RenderTarget::DepthFormat>& depth_format,
+    const vn::vsg::core::LoadOpVariantKey&             variant)
 {
     // One spelling for one conversion: the core's neutral spellings are the API's enums, bound here.
-    const auto toLoadOp = [](vine::vsg::core::LoadOp load) noexcept {
-        return load == vine::vsg::core::LoadOp::Clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+    const auto toLoadOp = [](vn::vsg::core::LoadOp load) noexcept {
+        return load == vn::vsg::core::LoadOp::Clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
     };
-    const auto toLayout = [](vine::vsg::core::ImageLayout layout) noexcept { return toVkLayout(layout); };
+    const auto toLayout = [](vn::vsg::core::ImageLayout layout) noexcept { return toVkLayout(layout); };
 
     ::vsg::RenderPass::Attachments attachments;
     for (std::size_t index = 0; index < color_formats.size(); ++index) {
@@ -231,7 +231,7 @@ struct OffscreenTarget::Data
     /// Everything whose description contains the extent: replaced as ONE set by a resize, and parked as one set
     /// when it is (see OffscreenTarget::Attachments).
     Attachments                    attachments;
-    std::optional<vine::graphics::RenderTarget::DepthFormat> depth_format;
+    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;
     const OffscreenTarget*            depth_source{nullptr};  ///< The lender, when the depth is borrowed.
     std::shared_ptr<std::uint32_t> lending{};  ///< The count of targets loading this depth: SHARED with them.
     bool                              depth_sampleable{false};  ///< The host asked for a sampleable depth.
@@ -310,7 +310,7 @@ core::TargetShape OffscreenTarget::shapeOf(const TargetLayout& layout)
     // projection (RGBA8 covers both a linear and an sRGB image), and a pipeline key cannot be built from a
     // projection - an sRGB window surface and this linear target are not render-pass compatible (see
     // RenderPassCompatibility).
-    for (const vine::graphics::RenderTarget::ColorFormat format : layout.color_formats)
+    for (const vn::graphics::RenderTarget::ColorFormat format : layout.color_formats)
     {
         shape.device_color_formats.push_back(static_cast<std::uint32_t>(toColorFormat(format)));
     }
@@ -339,7 +339,7 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     TargetLayout target_layout;
     target_layout.width         = layout.width;
     target_layout.height        = layout.height;
-    target_layout.color_formats = { vine::graphics::RenderTarget::ColorFormat::RGBA8 };
+    target_layout.color_formats = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
     target_layout.depth_format.reset();
     target_layout.clear.color = true;
     for (std::size_t index = 0; index < 4U; ++index) {
@@ -445,7 +445,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
 
     const core::PassClearPlan plan =
         core::planClearValues(d->shape, d->clear_policy, /*bootstrap*/ true, /*depth_borrowed*/ d->depth_borrowed);
-    for (const vine::graphics::RenderTarget::ColorFormat format : d->shape.color_formats) {
+    for (const vn::graphics::RenderTarget::ColorFormat format : d->shape.color_formats) {
         OffscreenTarget::Attachments::Color color;
         // The image is created with SAMPLED usage as well as colour-attachment: the pass leaves colour
         // attachments in SHADER_READ_ONLY (see makeOffscreenRenderPass) so a later pass can sample them, and an
@@ -1229,7 +1229,7 @@ OffscreenTarget::Rebuilt OffscreenTarget::rebuild(const TargetLayout& wanted, co
     // of them back when the build fails: a rebuild that failed leaves the target serving the shape it had,
     // exactly like a resize. `buildAttachments` writes only into `built`, so nothing else can have moved.
     const core::TargetShape                 previous_shape      = std::move(d->shape);
-    const std::optional<vine::graphics::RenderTarget::DepthFormat> previous_depth = d->depth_format;
+    const std::optional<vn::graphics::RenderTarget::DepthFormat> previous_depth = d->depth_format;
     const bool                              previous_sampleable = d->depth_sampleable;
     const core::ClearPolicy                 previous_clear      = d->clear_policy;
     const ::vsg::ref_ptr<::vsg::RenderPass> previous_pass       = d->render_pass;
@@ -1305,4 +1305,4 @@ OffscreenTarget::Rebuilt OffscreenTarget::rebuild(const TargetLayout& wanted, co
     return result;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

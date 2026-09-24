@@ -6,7 +6,7 @@
 
 #include <vine/appfw/gui/ConsolePanel.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Case-insensitive prefix completion over command entries.
@@ -65,4 +65,4 @@ class CommandCompleter
     std::vector<ConsoleCommandEntry> entries_;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

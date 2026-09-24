@@ -5,7 +5,7 @@
 #include <memory>
 #include <utility>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 struct ConfigRegistry::Impl {
     std::vector<std::unique_ptr<ConfigCategory>> categories;
@@ -180,4 +180,4 @@ bool ConfigRegistry::removeItem(const String& key)
     return false;
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

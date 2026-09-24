@@ -2,7 +2,7 @@
 
 #include <vine/Color.hpp>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 namespace
 {
@@ -33,4 +33,4 @@ Colorf Colorf::fromColor(const Color& c) noexcept
              static_cast<float>(c.b) / 255.0f, static_cast<float>(c.a) / 255.0f };
 }
 
-V_CORE_NS_END
+VN_CORE_NS_END

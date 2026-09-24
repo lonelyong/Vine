@@ -4,13 +4,13 @@
 #include <array>
 #include <cmath>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
 
 /** @brief Maps a depth policy onto the API's test/write enables. */
-void mapDepth(vine::graphics::DepthMode mode, VkBool32& test, VkBool32& write) noexcept
+void mapDepth(vn::graphics::DepthMode mode, VkBool32& test, VkBool32& write) noexcept
 {
     // The switch names every DepthMode, and the tail below is what the compiler's "not all paths return"
     // warning demands rather than a policy of its own: an enumerator added without a case here lands on "depth
@@ -18,15 +18,15 @@ void mapDepth(vine::graphics::DepthMode mode, VkBool32& test, VkBool32& write) n
     // with the missing case is the signal to come back. (The earlier comment claimed there was no tail, which
     // was simply not true of this code.)
     switch (mode) {
-    case vine::graphics::DepthMode::Disabled:
+    case vn::graphics::DepthMode::Disabled:
         test  = VK_FALSE;
         write = VK_FALSE;
         return;
-    case vine::graphics::DepthMode::TestOnly:
+    case vn::graphics::DepthMode::TestOnly:
         test  = VK_TRUE;
         write = VK_FALSE;
         return;
-    case vine::graphics::DepthMode::TestAndWrite:
+    case vn::graphics::DepthMode::TestAndWrite:
         test  = VK_TRUE;
         write = VK_TRUE;
         return;
@@ -36,41 +36,41 @@ void mapDepth(vine::graphics::DepthMode mode, VkBool32& test, VkBool32& write) n
 }
 
 /** @brief Maps a cull side onto the API's mask. */
-VkCullModeFlags mapCull(vine::graphics::CullMode mode) noexcept
+VkCullModeFlags mapCull(vn::graphics::CullMode mode) noexcept
 {
     switch (mode) {
-    case vine::graphics::CullMode::Front: return VK_CULL_MODE_FRONT_BIT;
-    case vine::graphics::CullMode::Back: return VK_CULL_MODE_BACK_BIT;
-    case vine::graphics::CullMode::None: return VK_CULL_MODE_NONE;
+    case vn::graphics::CullMode::Front: return VK_CULL_MODE_FRONT_BIT;
+    case vn::graphics::CullMode::Back: return VK_CULL_MODE_BACK_BIT;
+    case vn::graphics::CullMode::None: return VK_CULL_MODE_NONE;
     }
     return VK_CULL_MODE_NONE;
 }
 
 /** @brief Maps a polygon mode onto the API's enum. */
-VkPolygonMode mapPolygon(vine::graphics::PolygonMode mode) noexcept
+VkPolygonMode mapPolygon(vn::graphics::PolygonMode mode) noexcept
 {
     switch (mode) {
-    case vine::graphics::PolygonMode::Fill: return VK_POLYGON_MODE_FILL;
-    case vine::graphics::PolygonMode::Line: return VK_POLYGON_MODE_LINE;
-    case vine::graphics::PolygonMode::Point: return VK_POLYGON_MODE_POINT;
+    case vn::graphics::PolygonMode::Fill: return VK_POLYGON_MODE_FILL;
+    case vn::graphics::PolygonMode::Line: return VK_POLYGON_MODE_LINE;
+    case vn::graphics::PolygonMode::Point: return VK_POLYGON_MODE_POINT;
     }
     return VK_POLYGON_MODE_FILL;
 }
 
 /** @brief Maps a blend factor onto the API's enum. */
-VkBlendFactor mapBlendFactor(vine::graphics::BlendFactor factor) noexcept
+VkBlendFactor mapBlendFactor(vn::graphics::BlendFactor factor) noexcept
 {
     switch (factor) {
-    case vine::graphics::BlendFactor::Zero: return VK_BLEND_FACTOR_ZERO;
-    case vine::graphics::BlendFactor::One: return VK_BLEND_FACTOR_ONE;
-    case vine::graphics::BlendFactor::SrcAlpha: return VK_BLEND_FACTOR_SRC_ALPHA;
-    case vine::graphics::BlendFactor::OneMinusSrcAlpha: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    case vine::graphics::BlendFactor::DstAlpha: return VK_BLEND_FACTOR_DST_ALPHA;
-    case vine::graphics::BlendFactor::OneMinusDstAlpha: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
-    case vine::graphics::BlendFactor::SrcColor: return VK_BLEND_FACTOR_SRC_COLOR;
-    case vine::graphics::BlendFactor::OneMinusSrcColor: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-    case vine::graphics::BlendFactor::DstColor: return VK_BLEND_FACTOR_DST_COLOR;
-    case vine::graphics::BlendFactor::OneMinusDstColor: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+    case vn::graphics::BlendFactor::Zero: return VK_BLEND_FACTOR_ZERO;
+    case vn::graphics::BlendFactor::One: return VK_BLEND_FACTOR_ONE;
+    case vn::graphics::BlendFactor::SrcAlpha: return VK_BLEND_FACTOR_SRC_ALPHA;
+    case vn::graphics::BlendFactor::OneMinusSrcAlpha: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    case vn::graphics::BlendFactor::DstAlpha: return VK_BLEND_FACTOR_DST_ALPHA;
+    case vn::graphics::BlendFactor::OneMinusDstAlpha: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+    case vn::graphics::BlendFactor::SrcColor: return VK_BLEND_FACTOR_SRC_COLOR;
+    case vn::graphics::BlendFactor::OneMinusSrcColor: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+    case vn::graphics::BlendFactor::DstColor: return VK_BLEND_FACTOR_DST_COLOR;
+    case vn::graphics::BlendFactor::OneMinusDstColor: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
     }
     // UNREACHABLE TODAY, AND A WRONG ANSWER IF IT EVER ISN'T: this tail turns a factor this list does not
     // know into `ONE`, which is not "no blending" but a different blend than the host asked for - a wrong
@@ -83,12 +83,12 @@ VkBlendFactor mapBlendFactor(vine::graphics::BlendFactor factor) noexcept
 
 }  // namespace
 
-VkPrimitiveTopology mapTopology(vine::graphics::Topology topology) noexcept
+VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
 {
     switch (topology) {
-    case vine::graphics::Topology::Triangles: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    case vine::graphics::Topology::Points: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-    case vine::graphics::Topology::Lines: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    case vn::graphics::Topology::Triangles: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    case vn::graphics::Topology::Points: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    case vn::graphics::Topology::Lines: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
     }
     return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 }
@@ -173,4 +173,4 @@ VkPrimitiveTopology mapTopology(vine::graphics::Topology topology) noexcept
     return ::vsg::SetScissor::create(0U, ::vsg::Scissors{ scissor });
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

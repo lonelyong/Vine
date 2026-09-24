@@ -4,13 +4,13 @@
 
 #include "Primitive.hpp"
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief An axis-aligned box primitive centered at the origin.
  */
-class V_GEOMETRY_API Box : public Primitive {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API Box : public Primitive {
+    VN_OBJECT_META_DECL;
 
   public:
     /**
@@ -80,7 +80,7 @@ class V_GEOMETRY_API Box : public Primitive {
      * @return true when all three edge lengths are larger than eps.
      */
     [[nodiscard]]
-    bool hasVolume(double eps = vine::math::EPS<double>()) const override;
+    bool hasVolume(double eps = vn::math::EPS<double>()) const override;
 
   private:
     /// Size along the X axis.
@@ -91,4 +91,4 @@ class V_GEOMETRY_API Box : public Primitive {
     double depth_  = 1.0;
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

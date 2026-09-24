@@ -3,9 +3,9 @@
 #include <vine/graphics/StateNode.hpp>
 #include <vine/vsg/RenderStateMapper.hpp>
 
-using namespace vine::graphics;
-using vine::vsg::RenderStateObjects;
-using vine::vsg::makeRenderStateObjects;
+using namespace vn::graphics;
+using vn::vsg::RenderStateObjects;
+using vn::vsg::makeRenderStateObjects;
 
 namespace
 {

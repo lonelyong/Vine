@@ -1,6 +1,6 @@
 #include <vine/vsg/api/PassRegistry.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 core::PassId PassRegistry::adopt(const void* identity)
 {
@@ -37,4 +37,4 @@ std::size_t PassRegistry::live() const noexcept
     return ids_.size();
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

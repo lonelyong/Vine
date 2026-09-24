@@ -1,4 +1,4 @@
-v_add_library(CRYPTO_TARGET_NAME Crypto)
+vn_add_library(CRYPTO_TARGET_NAME Crypto)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -37,7 +37,7 @@ if(VINE_USE_FETCHCONTENT)
     target_compile_definitions(${CRYPTO_TARGET_NAME} PRIVATE WOLFSSL_USE_OPTIONS_H)
 
     # Group every third-party target under the third_party solution folder.
-    v_group_targets_folder(${wolfssl_SOURCE_DIR} third_party)
+    vn_group_targets_folder(${wolfssl_SOURCE_DIR} third_party)
 else()
     # Consume wolfSSL from vcpkg or a local install.
     find_package(wolfssl CONFIG REQUIRED)
@@ -46,7 +46,7 @@ else()
     endif()
 endif()
 
-target_link_libraries(${CRYPTO_TARGET_NAME} PUBLIC vi::Global vi::Core)
+target_link_libraries(${CRYPTO_TARGET_NAME} PUBLIC vn::Global vn::Core)
 # Static wolfssl is baked into the crypto DLL.
 target_link_libraries(${CRYPTO_TARGET_NAME} PRIVATE wolfssl)
 

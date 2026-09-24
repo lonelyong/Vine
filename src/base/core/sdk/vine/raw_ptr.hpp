@@ -2,7 +2,7 @@
 
 #include "core_global.hpp"
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief Raw, non-owning pointer alias.
@@ -14,4 +14,4 @@ V_CORE_NS_BEGIN
 template <typename T>
 using raw_ptr = T*;
 
-V_CORE_NS_END
+VN_CORE_NS_END

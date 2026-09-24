@@ -3,7 +3,7 @@
  * @brief Converts a URDF device (with STL meshes) into a Vine .vdevpkg.
  *
  * Reads a URDF resource folder, builds an in-memory workcell::MotionDevice
- * (joints/links from URDF, meshes loaded via vine::meshio::MeshLoader,
+ * (joints/links from URDF, meshes loaded via vn::meshio::MeshLoader,
  * scaled to mm) and reuses DeviceIO::savePkg so the output format is
  * identical to what the RoboticsIO module produces. Loads the package back
  * for verification.
@@ -34,11 +34,11 @@
 #include <vine/robotics/workcell/MotionDevice.hpp>
 #include <vine/String.hpp>
 
-using namespace vine;
-using namespace vine::math;
-using namespace vine::robotics;
-using namespace vine::robotics::kinematics;
-using namespace vine::robotics::workcell;
+using namespace vn;
+using namespace vn::math;
+using namespace vn::robotics;
+using namespace vn::robotics::kinematics;
+using namespace vn::robotics::workcell;
 
 namespace
 {
@@ -147,13 +147,13 @@ Isometry3d parseOrigin(const tinyxml2::XMLElement* xe_origin)
 }
 
 /**
- * @brief Loads an STL/OBJ mesh file into a shape via vine::meshio::MeshLoader.
+ * @brief Loads an STL/OBJ mesh file into a shape via vn::meshio::MeshLoader.
  *
  * @param loader The mesh loader (scale options preset).
  * @param path The mesh file path.
  * @return The shape, or null on failure.
  */
-vine::intrusive_ptr<vine::geometry::Shape> loadShape(vine::meshio::MeshLoader& loader,
+vn::intrusive_ptr<vn::geometry::Shape> loadShape(vn::meshio::MeshLoader& loader,
                                                      const std::filesystem::path& path)
 {
     const auto mesh = loader.load(path);
@@ -177,8 +177,8 @@ vine::intrusive_ptr<vine::geometry::Shape> loadShape(vine::meshio::MeshLoader& l
  * @param base_dir Directory for resolving mesh filenames.
  * @param out The visual to fill.
  */
-void parseVisual(vine::meshio::MeshLoader&                                       loader,
-                 std::map<String, vine::intrusive_ptr<vine::geometry::Material>>& material_lib,
+void parseVisual(vn::meshio::MeshLoader&                                       loader,
+                 std::map<String, vn::intrusive_ptr<vn::geometry::Material>>& material_lib,
                  std::size_t&                                                    next_material_id,
                  const tinyxml2::XMLElement* xe_visual, const std::filesystem::path& base_dir,
                  workcell::Visual& out)
@@ -201,8 +201,8 @@ void parseVisual(vine::meshio::MeshLoader&                                      
             double r = 0.0, g = 0.0, b = 0.0, a = 1.0;
             std::istringstream stream(rgba.as_std_str());
             if (stream >> r >> g >> b >> a) {
-                auto material = vine::intrusive_ptr<vine::geometry::Material>(
-                    new vine::geometry::ColorMaterial(vine::Colorf(static_cast<float>(r), static_cast<float>(g),
+                auto material = vn::intrusive_ptr<vn::geometry::Material>(
+                    new vn::geometry::ColorMaterial(vn::Colorf(static_cast<float>(r), static_cast<float>(g),
                                                                    static_cast<float>(b), static_cast<float>(a))));
                 if (mat_name.empty()) {
                     // Materials must be named; generate one for unnamed ones.
@@ -232,7 +232,7 @@ void parseVisual(vine::meshio::MeshLoader&                                      
  * @param base_dir Directory for resolving mesh filenames.
  * @param out The collision to fill.
  */
-void parseCollision(vine::meshio::MeshLoader& loader, const tinyxml2::XMLElement* xe_collision,
+void parseCollision(vn::meshio::MeshLoader& loader, const tinyxml2::XMLElement* xe_collision,
                     const std::filesystem::path& base_dir, workcell::Collision& out)
 {
     out.setTf(parseOrigin(xe_collision->FirstChildElement("origin")));
@@ -289,16 +289,16 @@ int main(int argc, char** argv)
         data->metadata.model = robot_name;
     }
 
-    // Meshes (STL/OBJ) are loaded through vine::meshio::MeshLoader. Auto
+    // Meshes (STL/OBJ) are loaded through vn::meshio::MeshLoader. Auto
     // scaling infers the source unit from the AABB diagonal and converts to
     // mm, so both meter-based and mm-based URDF mesh packages convert
     // correctly (URDF joint origins are meters and scaled separately).
-    vine::meshio::MeshLoader mesh_loader;
-    mesh_loader.options().scale_mode            = vine::meshio::MeshLoader::ScaleMode::Auto;
-    mesh_loader.options().auto_scale_output_unit = vine::meshio::MeshLoader::LengthUnit::Millimeter;
+    vn::meshio::MeshLoader mesh_loader;
+    mesh_loader.options().scale_mode            = vn::meshio::MeshLoader::ScaleMode::Auto;
+    mesh_loader.options().auto_scale_output_unit = vn::meshio::MeshLoader::LengthUnit::Millimeter;
 
     // Named materials are collected per device and referenced by name.
-    std::map<String, vine::intrusive_ptr<vine::geometry::Material>> material_lib;
+    std::map<String, vn::intrusive_ptr<vn::geometry::Material>> material_lib;
     std::size_t next_material_id = 0;
 
     std::map<String, Link*> link_by_name;
@@ -385,7 +385,7 @@ int main(int argc, char** argv)
     const std::filesystem::path out_path = argc >= 3 ? std::filesystem::path(argv[2])
                                                      : base_dir / (robot_name.as_std_str() + ".vdevpkg");
 
-    vine::robotics::io::DeviceIO io;
+    vn::robotics::io::DeviceIO io;
     io.savePkg(*device, out_path);
     std::cout << "saved: " << out_path.string() << "\n";
 

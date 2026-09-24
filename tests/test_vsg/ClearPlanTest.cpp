@@ -22,18 +22,18 @@
 
 #include <vine/vsg/core/ClearPlan.hpp>
 
-using vine::graphics::RenderTarget;
-using vine::vsg::core::AttachmentClear;
-using vine::vsg::core::ClearPolicy;
-using vine::vsg::core::DepthClear;
-using vine::vsg::core::depthFinalLayout;
-using vine::vsg::core::ImageLayout;
-using vine::vsg::core::kReverseZFarDepth;
-using vine::vsg::core::LoadOp;
-using vine::vsg::core::loadOpVariantOf;
-using vine::vsg::core::PassClearPlan;
-using vine::vsg::core::planClearValues;
-using vine::vsg::core::TargetShape;
+using vn::graphics::RenderTarget;
+using vn::vsg::core::AttachmentClear;
+using vn::vsg::core::ClearPolicy;
+using vn::vsg::core::DepthClear;
+using vn::vsg::core::depthFinalLayout;
+using vn::vsg::core::ImageLayout;
+using vn::vsg::core::kReverseZFarDepth;
+using vn::vsg::core::LoadOp;
+using vn::vsg::core::loadOpVariantOf;
+using vn::vsg::core::PassClearPlan;
+using vn::vsg::core::planClearValues;
+using vn::vsg::core::TargetShape;
 
 namespace
 {
@@ -105,7 +105,7 @@ TEST(CoreClearPlanTest, APassThatClearsNothingLoadsEverything)
 
     ASSERT_EQ(plan.colors.size(), 1U);
     EXPECT_EQ(plan.colors[0].load, LoadOp::Load);
-    EXPECT_EQ(plan.colors[0].store, vine::vsg::core::StoreOp::Store);
+    EXPECT_EQ(plan.colors[0].store, vn::vsg::core::StoreOp::Store);
     EXPECT_FALSE(plan.has_depth);
     EXPECT_FALSE(plan.bootstrap);
 }
@@ -157,7 +157,7 @@ TEST(CoreClearPlanTest, ABorrowedDepthIsNeverClearedAndAnOwnDepthIsNotPreservedF
         const auto borrowed = planClearValues(multiTarget(), policy, /*bootstrap*/ true, /*depth_borrowed*/ true);
         EXPECT_EQ(borrowed.colors[0].load, LoadOp::Clear) << "the colour is still cleared: only the depth is spared";
         EXPECT_EQ(borrowed.depth.load, LoadOp::Load) << "the lender's image is not this target's to clear";
-        EXPECT_EQ(borrowed.depth.store, vine::vsg::core::StoreOp::Store);
+        EXPECT_EQ(borrowed.depth.store, vn::vsg::core::StoreOp::Store);
     }
 
     // An OWN depth whose image was just built is the opposite case, and it is the one that cost a picture: a

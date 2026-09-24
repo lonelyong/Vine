@@ -18,7 +18,7 @@
 #include "Node.hpp"
 #include "ShaderAbi.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class Material;
 using MaterialPtr = intrusive_ptr<Material>;
@@ -65,10 +65,10 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  * vertexCount() / xyz() / stride() rather than assuming three floats per vertex), so a vec4 position
  * channel keeps its xyz and skips the trailing w.
  */
-struct V_GRAPHICS_API AttributeChannel
+struct VN_GRAPHICS_API AttributeChannel
 {
     /// The scalars, or null when the channel holds nothing. Not snapshotted: every accessor reads through it.
-    intrusive_ptr<const vine::Buffer<float>> values;
+    intrusive_ptr<const vn::Buffer<float>> values;
     /// Scalar components per vertex (1..4).
     std::uint32_t components{ 0 };
     /// First scalar of this channel inside @ref values (0 = the buffer's start).
@@ -89,7 +89,7 @@ struct V_GRAPHICS_API AttributeChannel
     [[nodiscard]] static AttributeChannel packed(std::vector<float> values, std::uint32_t components)
     {
         AttributeChannel out;
-        out.values     = intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(std::move(values)));
+        out.values     = intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::move(values)));
         out.components = components;
         return out;
     }
@@ -107,7 +107,7 @@ struct V_GRAPHICS_API AttributeChannel
      * @param scalar_count Scalars to read, or 0 for the rest of @p values from @p offset.
      * @return The channel, reading that buffer's scalars.
      */
-    [[nodiscard]] static AttributeChannel shared(intrusive_ptr<const vine::Buffer<float>> values,
+    [[nodiscard]] static AttributeChannel shared(intrusive_ptr<const vn::Buffer<float>> values,
                                                 std::uint32_t                          components,
                                                 std::size_t                            offset       = 0u,
                                                 std::size_t                            scalar_count = 0u)
@@ -137,7 +137,7 @@ struct V_GRAPHICS_API AttributeChannel
      * @param vertex_count Vertices in the segment (0 for the rest of the buffer from @p first_vertex).
      * @return The channel, reading that segment.
      */
-    [[nodiscard]] static AttributeChannel slice(intrusive_ptr<const vine::Buffer<float>> values,
+    [[nodiscard]] static AttributeChannel slice(intrusive_ptr<const vn::Buffer<float>> values,
                                                std::uint32_t components, std::size_t first_vertex,
                                                std::size_t vertex_count)
     {
@@ -268,14 +268,14 @@ struct V_GRAPHICS_API AttributeChannel
      *
      * @return The channel as Vec3 elements, empty unless the stride is exactly three scalars.
      */
-    std::span<const vine::math::Vec3f> vec3View() const
+    std::span<const vn::math::Vec3f> vec3View() const
     {
         constexpr std::uint32_t kVec3Scalars = 3u;
         if (components != kVec3Scalars) {
             return {};
         }
         const std::span<const float> data = scalars();
-        return { reinterpret_cast<const vine::math::Vec3f*>(data.data()), data.size() / kVec3Scalars };
+        return { reinterpret_cast<const vn::math::Vec3f*>(data.data()), data.size() / kVec3Scalars };
     }
 };
 
@@ -291,8 +291,8 @@ struct V_GRAPHICS_API AttributeChannel
  * world-space bounding box is the bound of the location-0 positions
  * transformed by that chain.
  */
-class V_GRAPHICS_API Geometry : public Node {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Geometry : public Node {
+    VN_OBJECT_META_DECL;
 
   public:
     Geometry();
@@ -350,7 +350,7 @@ class V_GRAPHICS_API Geometry : public Node {
      *
      * @param positions Vertex scalars to read (three floats per vertex), or null for an empty channel.
      */
-    void setPositions(intrusive_ptr<const vine::Buffer<float>> positions);
+    void setPositions(intrusive_ptr<const vn::Buffer<float>> positions);
 
     /** @brief Sets the positions to a SEGMENT of a vertex buffer: @p vertex_count vertices from
      *         @p first_vertex on.
@@ -370,7 +370,7 @@ class V_GRAPHICS_API Geometry : public Node {
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p positions from @p first_vertex.
      */
-    void setPositions(intrusive_ptr<const vine::Buffer<float>> positions, std::size_t first_vertex,
+    void setPositions(intrusive_ptr<const vn::Buffer<float>> positions, std::size_t first_vertex,
                       std::size_t vertex_count);
 
     /** @brief Returns whether positions (location 0) are present. */
@@ -388,7 +388,7 @@ class V_GRAPHICS_API Geometry : public Node {
      *
      * @param normals Normal scalars to read (three floats per vertex), or null for an empty channel.
      */
-    void setNormals(intrusive_ptr<const vine::Buffer<float>> normals);
+    void setNormals(intrusive_ptr<const vn::Buffer<float>> normals);
 
     /** @brief Sets the normals to a SEGMENT of a vertex buffer (see setPositions for the units).
      *
@@ -396,7 +396,7 @@ class V_GRAPHICS_API Geometry : public Node {
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p normals from @p first_vertex.
      */
-    void setNormals(intrusive_ptr<const vine::Buffer<float>> normals, std::size_t first_vertex,
+    void setNormals(intrusive_ptr<const vn::Buffer<float>> normals, std::size_t first_vertex,
                     std::size_t vertex_count);
 
     /** @brief Returns whether normals (location 1) are present. */
@@ -422,7 +422,7 @@ class V_GRAPHICS_API Geometry : public Node {
      *
      * @param texcoords Coordinate scalars to read (two floats per vertex), or null for an empty channel.
      */
-    void setTexcoords2(intrusive_ptr<const vine::Buffer<float>> texcoords);
+    void setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords);
 
     /** @brief Sets the texture coordinates to a SEGMENT of a vertex buffer (see setPositions for the units).
      *
@@ -430,7 +430,7 @@ class V_GRAPHICS_API Geometry : public Node {
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p texcoords from @p first_vertex.
      */
-    void setTexcoords2(intrusive_ptr<const vine::Buffer<float>> texcoords, std::size_t first_vertex,
+    void setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex,
                        std::size_t vertex_count);
 
     /** @brief Sets the texture coordinates (location kTexCoordLocation) made of THREE scalars per vertex.
@@ -445,7 +445,7 @@ class V_GRAPHICS_API Geometry : public Node {
      *
      * @param texcoords Coordinate scalars to read (three floats per vertex), or null for an empty channel.
      */
-    void setTexcoords3(intrusive_ptr<const vine::Buffer<float>> texcoords);
+    void setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords);
 
     /** @brief Sets the three-scalar texture coordinates to a SEGMENT of a vertex buffer (see setPositions).
      *
@@ -453,7 +453,7 @@ class V_GRAPHICS_API Geometry : public Node {
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p texcoords from @p first_vertex.
      */
-    void setTexcoords3(intrusive_ptr<const vine::Buffer<float>> texcoords, std::size_t first_vertex,
+    void setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex,
                        std::size_t vertex_count);
 
     /** @brief Returns whether the texcoord slot (location kTexCoordLocation) holds a channel. */
@@ -479,7 +479,7 @@ class V_GRAPHICS_API Geometry : public Node {
      *
      * @param indices Index scalars to read (three per triangle), or null for an empty index buffer.
      */
-    void setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices);
+    void setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices);
 
     /** @brief Sets the index buffer to a SEGMENT: @p index_count indices from @p first_index on.
      *
@@ -496,7 +496,7 @@ class V_GRAPHICS_API Geometry : public Node {
      * @param first_index First index this geometry draws (0 = the buffer's start).
      * @param index_count Indices this geometry draws, or 0 for the rest of @p indices from @p first_index.
      */
-    void setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices, std::size_t first_index,
+    void setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices, std::size_t first_index,
                     std::size_t index_count);
 
     /** @brief Returns whether a non-empty index range is attached. */
@@ -521,7 +521,7 @@ class V_GRAPHICS_API Geometry : public Node {
      *
      * @return The index buffer, or null when no index buffer is attached.
      */
-    intrusive_ptr<const vine::Buffer<std::uint32_t>> indicesBuffer() const;
+    intrusive_ptr<const vn::Buffer<std::uint32_t>> indicesBuffer() const;
 
     /** @brief Gets the data revision.
      *
@@ -702,7 +702,7 @@ using GeometryPtr = intrusive_ptr<Geometry>;
  * @param vertices Vertices to pack (xyz per element).
  * @return Buffer owning the packed scalars (three per vertex).
  */
-V_GRAPHICS_API intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::math::Vec3f> vertices);
+VN_GRAPHICS_API intrusive_ptr<Buffer<float>> packAttribute(std::span<const vn::math::Vec3f> vertices);
 
 /**
  * @brief Packs a typed Vec2 run into the scalar buffer a geometry attribute reads.
@@ -712,7 +712,7 @@ V_GRAPHICS_API intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::
  * @param vertices Vertices to pack (uv per element).
  * @return Buffer owning the packed scalars (two per vertex).
  */
-V_GRAPHICS_API intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::math::Vec2f> vertices);
+VN_GRAPHICS_API intrusive_ptr<Buffer<float>> packAttribute(std::span<const vn::math::Vec2f> vertices);
 
 /**
  * @brief Packs an index run into the buffer a geometry's index stream reads.
@@ -722,7 +722,7 @@ V_GRAPHICS_API intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::
  * @param indices Index values to pack (three per triangle).
  * @return Buffer owning the copied indices.
  */
-V_GRAPHICS_API intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const std::uint32_t> indices);
+VN_GRAPHICS_API intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const std::uint32_t> indices);
 
 /**
  * @brief Builds a buffer-only Geometry from a triangle-mesh Shape.
@@ -744,6 +744,6 @@ V_GRAPHICS_API intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const 
  * @param shape Mesh shape to convert.
  * @return Filled geometry, or null for unsupported shapes.
  */
-V_GRAPHICS_API GeometryPtr geometryFromShape(const vine::geometry::Shape& shape);
+VN_GRAPHICS_API GeometryPtr geometryFromShape(const vn::geometry::Shape& shape);
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

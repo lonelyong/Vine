@@ -2,9 +2,9 @@
 
 #include <vine/graphics/Light.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(RenderTarget, vine::Object);
+VN_OBJECT_META_IMPL(RenderTarget, vn::Object);
 
 RenderTarget::RenderTarget() = default;
 
@@ -129,4 +129,4 @@ bool RenderTarget::isValid() const
     return (!color_formats_.empty() || has_depth_) && width_ > 0 && height_ > 0;
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

@@ -6,7 +6,7 @@
 #
 #include "Types.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 constexpr double PI         = 3.14159265358979323846;
 constexpr double PI_TWO     = 6.283185307179586;       // PI * 2
@@ -281,4 +281,4 @@ constexpr T normalizeAnglePositive(T angle)
     return angle;
 }
 
-V_MATH_NS_END
+VN_MATH_NS_END

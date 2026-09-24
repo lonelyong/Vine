@@ -5,7 +5,7 @@
 #include "Object.hpp"
 #include "Type.hpp"
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 template <ObjectBased Parent, typename Sub>
 class Inherit : public Parent {
@@ -40,4 +40,4 @@ class Inherit : public Parent {
     // }
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

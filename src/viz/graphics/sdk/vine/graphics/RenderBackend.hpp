@@ -17,7 +17,7 @@
 #include "RenderPass.hpp"
 #include "ShaderProgram.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class Camera;
 class Light;
@@ -145,8 +145,8 @@ struct ClearPolicy
  * RenderEngine keeps its own reference, so ownership and lifetime are
  * explicit.
  */
-class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBackend> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBackend> {
+    VN_OBJECT_META_DECL;
 
   public:
     virtual ~RenderBackend() = default;
@@ -305,9 +305,9 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * A program that cannot be prepared (no fragment stage, a stage that fails to compile, a binding
      * the source cannot provide) is reported and draws NOTHING — never a substituted picture.
      */
-    virtual void drawScreenProgram(vine::graphics::RenderTarget*  source,
-                                   vine::raw_ptr<const vine::graphics::ShaderProgram> program,
-                                   vine::raw_ptr<const vine::graphics::Camera> camera)
+    virtual void drawScreenProgram(vn::graphics::RenderTarget*  source,
+                                   vn::raw_ptr<const vn::graphics::ShaderProgram> program,
+                                   vn::raw_ptr<const vn::graphics::Camera> camera)
     {
         (void)source;
         (void)program;
@@ -377,7 +377,7 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      *
      * @param target The render target being removed, or nullptr.
      */
-    virtual void releaseRenderTarget(vine::graphics::RenderTarget* target)
+    virtual void releaseRenderTarget(vn::graphics::RenderTarget* target)
     {
         (void)target;
     }
@@ -411,7 +411,7 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * @return true when the pixels were read; false when the read could not be
      *         performed (see @p why and the diagnostics channel).
      */
-    virtual bool readColorBuffer(const vine::graphics::RenderTarget* target, int attachment,
+    virtual bool readColorBuffer(const vn::graphics::RenderTarget* target, int attachment,
                                  std::vector<std::uint8_t>& outPixels, ReadbackResult* why = nullptr)
     {
         (void)target;
@@ -440,7 +440,7 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
      * @return true when the depth values were read; false when the read could
      *         not be performed (see @p why and the diagnostics channel).
      */
-    virtual bool readDepthBuffer(const vine::graphics::RenderTarget* target,
+    virtual bool readDepthBuffer(const vn::graphics::RenderTarget* target,
                                  std::vector<float>& outDepths, ReadbackResult* why = nullptr)
     {
         (void)target;
@@ -718,4 +718,4 @@ class V_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBack
         diagnostic_counts_{};
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

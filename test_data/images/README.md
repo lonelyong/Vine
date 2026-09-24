@@ -28,7 +28,7 @@
 
 ## 接线现状（2026-09-12 更新）
 
-- ✅ **解码已可用**：`loaders/imageio`（`vi::ImageIO`，stb 支持）能解 JPEG / PNG / BMP / TGA。
+- ✅ **解码已可用**：`loaders/imageio`（`vn::ImageIO`，stb 支持）能解 JPEG / PNG / BMP / TGA。
   `tests/test_imageio` 已经在解这套素材（**12 张全部解过**）。
 - ✅ `graphics::Texture` 能**描述** cube map（`Shape::Cube`，6 个 face），并能把 `imaging::Image` 作为源图。
 - ❌ 后端**仍不消费** `Texture`：face / mip 链不上传、不建 sampler、不进描述符集。

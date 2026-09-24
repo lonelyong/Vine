@@ -4,7 +4,7 @@
 #include "Gui.hpp"
 #include "Icon.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class RibbonTab;
 class RibbonAction;
@@ -15,8 +15,8 @@ class MainWindow;
  *
  * @note This header includes and exposes no Qt types.
  */
-class V_APPFW_API RibbonBar : public Control {
-    V_OBJECT_META_DECL
+class VN_APPFW_API RibbonBar : public Control {
+    VN_OBJECT_META_DECL
 
     friend class MainWindow;
 
@@ -89,4 +89,4 @@ class V_APPFW_API RibbonBar : public Control {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

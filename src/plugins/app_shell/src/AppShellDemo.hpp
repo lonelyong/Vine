@@ -4,7 +4,7 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/intrusive_ptr.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 namespace gui {
 class RenderControl;
@@ -59,10 +59,10 @@ class AppShellDemo
      *                 showcase + blended pair, sky-only overlay).
      * @return The overlay scene the pipeline draws after the path's own result (never null).
      */
-    vine::intrusive_ptr<vine::graphics::Scene> buildScene(bool deferred);
+    vn::intrusive_ptr<vn::graphics::Scene> buildScene(bool deferred);
 
     /// Render control the demo builds into (owned by the shell's dock layout).
     gui::RenderControl* control_;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

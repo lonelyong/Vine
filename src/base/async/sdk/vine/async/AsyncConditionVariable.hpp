@@ -11,7 +11,7 @@
 #include "AsyncMutex.hpp"
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 class AsyncConditionVariable;
 
@@ -82,7 +82,7 @@ class CvWaiter
 
   private:
     friend struct CvState;
-    friend class vine::async::AsyncConditionVariable;
+    friend class vn::async::AsyncConditionVariable;
 
     std::shared_ptr<CvState> state_;
 
@@ -302,4 +302,4 @@ class AsyncConditionVariable
     std::shared_ptr<detail::CvState> state_{ std::make_shared<detail::CvState>() };
 };
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

@@ -7,9 +7,9 @@
 
 #include <vine/logging/Log.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-V_OBJECT_META_IMPL(ConsoleUserIO, UserIO)
+VN_OBJECT_META_IMPL(ConsoleUserIO, UserIO)
 
 namespace
 {
@@ -38,7 +38,7 @@ struct ConsoleUserIO::StdinReader {
     bool                    eof         = false;
     bool                    failed      = false;
     bool                    cancelled   = false;   ///< The waiting read was cancelled.
-    vine::async::AsyncEvent line_ready;            ///< A line arrived, or the stream ended.
+    vn::async::AsyncEvent line_ready;            ///< A line arrived, or the stream ended.
 
     /// Moves the outcome of one blocking read into this state and wakes the reader.
     void push(std::string line, bool at_eof, bool broken)
@@ -116,7 +116,7 @@ bool ConsoleUserIO::beginRead()
 {
     std::lock_guard state_lock(state_mutex_);
     if (slot_busy_) {
-        V_LOGW("A user-input read is already waiting; refusing the new one");
+        VN_LOGW("A user-input read is already waiting; refusing the new one");
         return false;
     }
     slot_busy_ = true;
@@ -154,7 +154,7 @@ void ConsoleUserIO::endRead() noexcept
     slot_busy_ = false;
 }
 
-vine::async::Task<std::optional<String>> ConsoleUserIO::readLineAsync(const String& prompt)
+vn::async::Task<std::optional<String>> ConsoleUserIO::readLineAsync(const String& prompt)
 {
     if (!beginRead()) {
         co_return std::nullopt;
@@ -190,12 +190,12 @@ vine::async::Task<std::optional<String>> ConsoleUserIO::readLineAsync(const Stri
     }
 }
 
-vine::async::Task<std::optional<String>> ConsoleUserIO::getStringAsync(const String& prompt)
+vn::async::Task<std::optional<String>> ConsoleUserIO::getStringAsync(const String& prompt)
 {
     co_return co_await readLineAsync(prompt);
 }
 
-vine::async::Task<std::optional<int>> ConsoleUserIO::getIntAsync(const String& prompt)
+vn::async::Task<std::optional<int>> ConsoleUserIO::getIntAsync(const String& prompt)
 {
     const auto line = co_await readLineAsync(prompt);
     if (!line.has_value()) {
@@ -206,7 +206,7 @@ vine::async::Task<std::optional<int>> ConsoleUserIO::getIntAsync(const String& p
     co_return parseInt(*line, value) ? std::optional<int>(value) : std::nullopt;
 }
 
-vine::async::Task<std::optional<double>> ConsoleUserIO::getDoubleAsync(const String& prompt)
+vn::async::Task<std::optional<double>> ConsoleUserIO::getDoubleAsync(const String& prompt)
 {
     const auto line = co_await readLineAsync(prompt);
     if (!line.has_value()) {
@@ -218,7 +218,7 @@ vine::async::Task<std::optional<double>> ConsoleUserIO::getDoubleAsync(const Str
     co_return ok && std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
 }
 
-vine::async::Task<std::optional<math::Point3d>> ConsoleUserIO::getPoint3dAsync(const String& prompt)
+vn::async::Task<std::optional<math::Point3d>> ConsoleUserIO::getPoint3dAsync(const String& prompt)
 {
     const auto line = co_await readLineAsync(prompt);
     if (!line.has_value()) {
@@ -247,4 +247,4 @@ vine::async::Task<std::optional<math::Point3d>> ConsoleUserIO::getPoint3dAsync(c
     co_return point;
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

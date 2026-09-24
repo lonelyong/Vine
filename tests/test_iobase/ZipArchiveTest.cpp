@@ -18,11 +18,11 @@
 
 #include "VfsTestSupport.hpp"
 
-using vine::String;
-using vine::io::VfsEntryInfo;
-using vine::io::IoError;
-using vine::io::Zip;
-using vine::io::ZipArchive;
+using vn::String;
+using vn::io::VfsEntryInfo;
+using vn::io::IoError;
+using vn::io::Zip;
+using vn::io::ZipArchive;
 using vfstest::bytesOf;
 using vfstest::findInfo;
 using vfstest::sortedNames;
@@ -219,7 +219,7 @@ TEST(ZipArchiveTest, OpensBorrowedBytes)
     const TempDir              temp;
     std::vector<unsigned char> bytes = buildPackage(); // the caller keeps owning these
 
-    std::unique_ptr<vine::io::VfsReadStream> reader;
+    std::unique_ptr<vn::io::VfsReadStream> reader;
     {
         // An lvalue is borrowed, not copied: the archive reads the caller's block.
         auto zip = ZipArchive::open(bytes, ZipArchive::OpenMode::ReadOnly);
@@ -276,8 +276,8 @@ TEST(ZipArchiveTest, ReportsErrorsAndRefusesEveryChange)
     EXPECT_EQ(zip->remove(u8"workcell.xml"), IoError::ReadOnly);
     EXPECT_EQ(zip->removeAll(u8"geoms"), IoError::ReadOnly);
     EXPECT_EQ(zip->addFile(u8"a", pkg), IoError::ReadOnly);
-    EXPECT_EQ(zip->addFile(u8"a", std::shared_ptr<vine::io::DataSource>{}), IoError::ReadOnly);
-    EXPECT_EQ(zip->addFile(u8"a", std::span<const vine::io::Fragment>{}), IoError::ReadOnly);
+    EXPECT_EQ(zip->addFile(u8"a", std::shared_ptr<vn::io::DataSource>{}), IoError::ReadOnly);
+    EXPECT_EQ(zip->addFile(u8"a", std::span<const vn::io::Fragment>{}), IoError::ReadOnly);
 
     // A read-only view still exports: writing a copy elsewhere does not change it,
     // while committing back to the file it came from is refused.

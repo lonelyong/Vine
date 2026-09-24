@@ -1,8 +1,8 @@
 ﻿#include <vine/appfw/PluginManager.hpp>
 
-#ifdef V_CC_MSVC
+#ifdef VN_CC_MSVC
 #    include <Windows.h>
-#endif // V_CC_MSVC
+#endif // VN_CC_MSVC
 
 #include <algorithm>
 #include <array>
@@ -28,7 +28,7 @@
 #include <vine/logging/Log.hpp>
 #include <vine/runtime/DynamicLibraryLoader.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 namespace
 {
@@ -213,13 +213,13 @@ bool resolveEnabled(const String& name, bool is_built_in, bool is_skipped, bool 
 void logRefusal(const String& name, bool policy_disables)
 {
     if (PluginManager::isSkipped(name)) {
-        V_LOGI("Plugin '{}' is skipped by the host; not loading it", toUtf8(name));
+        VN_LOGI("Plugin '{}' is skipped by the host; not loading it", toUtf8(name));
     }
     else if (policy_disables) {
-        V_LOGW("Plugin '{}' is disabled for all users by its registration file; not loading it", toUtf8(name));
+        VN_LOGW("Plugin '{}' is disabled for all users by its registration file; not loading it", toUtf8(name));
     }
     else {
-        V_LOGW("Plugin '{}' is disabled; not loading it", toUtf8(name));
+        VN_LOGW("Plugin '{}' is disabled; not loading it", toUtf8(name));
     }
 }
 
@@ -247,7 +247,7 @@ void rememberDiscovered(std::vector<PluginEntry>& discovered, const PluginInfo& 
         // precedence) is the plugin, but a different identity is worth reporting
         // because it means two unrelated plugins picked the same name.
         if (!info.uuid.isNull() && !known->info.uuid.isNull() && info.uuid != known->info.uuid) {
-            V_LOGW("Two different plugins are named '{}': keeping '{}', ignoring '{}'",
+            VN_LOGW("Two different plugins are named '{}': keeping '{}', ignoring '{}'",
                    toUtf8(info.name), toUtf8(known->path), toUtf8(path));
         }
         return;
@@ -311,7 +311,7 @@ std::optional<PluginRegistration> parseRegistration(const std::filesystem::path&
 {
     std::ifstream stream(file, std::ios::binary);
     if (!stream) {
-        V_LOGW("Cannot read plugin registration '{}'", toUtf8(file));
+        VN_LOGW("Cannot read plugin registration '{}'", toUtf8(file));
         return std::nullopt;
     }
 
@@ -328,7 +328,7 @@ std::optional<PluginRegistration> parseRegistration(const std::filesystem::path&
         }
         const auto separator = unpadded.find('=');
         if (separator == std::string::npos) {
-            V_LOGW("Plugin registration '{}' has a malformed line: '{}'", toUtf8(file), unpadded);
+            VN_LOGW("Plugin registration '{}' has a malformed line: '{}'", toUtf8(file), unpadded);
             continue;
         }
 
@@ -349,12 +349,12 @@ std::optional<PluginRegistration> parseRegistration(const std::filesystem::path&
         else {
             // Unknown keys are kept harmless: an installer may add its own
             // bookkeeping next to the keys the manager understands.
-            V_LOGI("Plugin registration '{}' has an unknown key '{}'", toUtf8(file), key);
+            VN_LOGI("Plugin registration '{}' has an unknown key '{}'", toUtf8(file), key);
         }
     }
 
     if (registration.path.empty()) {
-        V_LOGW("Plugin registration '{}' has no 'path'; ignoring it", toUtf8(file));
+        VN_LOGW("Plugin registration '{}' has no 'path'; ignoring it", toUtf8(file));
         return std::nullopt;
     }
     return registration;
@@ -454,7 +454,7 @@ bool writeRegistrationFile(const std::filesystem::path& target, const PluginRegi
     {
         std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
         if (!stream) {
-            V_LOGW("Cannot write the plugin registration '{}'", toUtf8(temporary));
+            VN_LOGW("Cannot write the plugin registration '{}'", toUtf8(temporary));
             return false;
         }
         stream << "# Vine plugin registration; written by PluginManager::installPlugin().\n";
@@ -473,7 +473,7 @@ bool writeRegistrationFile(const std::filesystem::path& target, const PluginRegi
     std::filesystem::rename(temporary, target, ec);
     if (ec) {
         std::filesystem::remove(temporary, ec);
-        V_LOGW("Cannot create the plugin registration '{}'", toUtf8(target));
+        VN_LOGW("Cannot create the plugin registration '{}'", toUtf8(target));
         return false;
     }
     return true;
@@ -533,7 +533,7 @@ std::filesystem::path pluginExtension()
  * loading one before any decision to install or load it has no lifetime consequence.
  */
 struct QueriedLibrary {
-    vine::runtime::DynamicLibrary* lib{};
+    vn::runtime::DynamicLibrary* lib{};
     const PluginInfo*              info{};
     String                         framework_version;  ///< Version the library reported as built with.
     String                         rejection;          ///< Non-empty: why this host refuses the library.
@@ -559,7 +559,7 @@ struct QueriedLibrary {
 QueriedLibrary queryLibrary(const std::filesystem::path& library)
 {
     QueriedLibrary result;
-    result.lib = vine::runtime::DynamicLibraryLoader::instance().load(String(library.u8string()));
+    result.lib = vn::runtime::DynamicLibraryLoader::instance().load(String(library.u8string()));
     if (result.lib == nullptr) {
         return result;  // not loadable at all: not a plugin location the host can use
     }
@@ -574,12 +574,12 @@ QueriedLibrary queryLibrary(const std::filesystem::path& library)
         return result;
     }
     if (!PluginManager::isPluginAbiCompatible(*declared)) {
-        const bool newer = declared->abi_version > V_APPFW_PLUGIN_ABI_VERSION;
+        const bool newer = declared->abi_version > VN_APPFW_PLUGIN_ABI_VERSION;
         result.rejection = fromUtf8("Plugin library '" + toUtf8(library) + "' declares ABI revision " +
                                     std::to_string(declared->abi_version) + " (built with framework " +
                                     (declared->framework_version != nullptr ? declared->framework_version : "unknown") +
                                     "), which is " + (newer ? "newer" : "older") + " than this host's " +
-                                    std::to_string(V_APPFW_PLUGIN_ABI_VERSION) + " (framework " V_APPFW_VERSION +
+                                    std::to_string(VN_APPFW_PLUGIN_ABI_VERSION) + " (framework " VN_APPFW_VERSION +
                                     "). Rebuild the plugin against this framework.");
         return result;
     }
@@ -724,7 +724,7 @@ struct LoadedPlugin {
  */
 struct Candidate {
     std::filesystem::path          path;
-    vine::runtime::DynamicLibrary* lib;
+    vn::runtime::DynamicLibrary* lib;
     const PluginInfo*              info;
 };
 
@@ -747,10 +747,10 @@ bool unloadOnePlugin(Plugin* plugin, const String& name)
         return true;
     }
     catch (const std::exception& e) {
-        V_LOGE("Plugin '{}' threw while unloading: {}", toUtf8(name), e.what());
+        VN_LOGE("Plugin '{}' threw while unloading: {}", toUtf8(name), e.what());
     }
     catch (...) {
-        V_LOGE("Plugin '{}' threw an unknown exception while unloading", toUtf8(name));
+        VN_LOGE("Plugin '{}' threw an unknown exception while unloading", toUtf8(name));
     }
     return false;
 }
@@ -766,7 +766,7 @@ bool unloadLoadedPlugins(std::vector<LoadedPlugin>& loaded)
         LoadedPlugin plugin = std::move(loaded.back());
         loaded.pop_back();
         if (unloadOnePlugin(plugin.plugin, plugin.name)) {
-            V_LOGI("Plugin '{}' unloaded after a failed load", toUtf8(plugin.name));
+            VN_LOGI("Plugin '{}' unloaded after a failed load", toUtf8(plugin.name));
         }
         else {
             ok = false;
@@ -849,7 +849,7 @@ bool PluginManager::isPluginAbiCompatible(const PluginAbi& abi) noexcept
     // One rule, one place: anything else would let a path read a layout it was not
     // told it may read. The framework version is diagnostic and deliberately not
     // compared - two builds of the same revision are compatible by construction.
-    return abi.abi_version == V_APPFW_PLUGIN_ABI_VERSION;
+    return abi.abi_version == VN_APPFW_PLUGIN_ABI_VERSION;
 }
 
 Plugin* PluginManager::load(const String& name_or_path)
@@ -863,7 +863,7 @@ Plugin* PluginManager::load(const String& name_or_path)
     // ABI handshake and ask it for its metadata.
     const QueriedLibrary queried = queryLibrary(path);
     if (!queried.rejection.empty()) {
-        V_LOGW("{}", toUtf8(queried.rejection));
+        VN_LOGW("{}", toUtf8(queried.rejection));
         return nullptr;
     }
     if (!queried.isUsable()) {
@@ -899,7 +899,7 @@ Plugin* PluginManager::load(const String& name_or_path)
         const bool dep_loaded = std::any_of(d->plugins.begin(), d->plugins.end(),
             [&dep](const LoadedPlugin& lp) { return lp.name == dep; });
         if (!dep_loaded) {
-            V_LOGW("Plugin '{}' declares dependency '{}', which is not loaded", toUtf8(info->name), toUtf8(dep));
+            VN_LOGW("Plugin '{}' declares dependency '{}', which is not loaded", toUtf8(info->name), toUtf8(dep));
         }
     }
 
@@ -922,10 +922,10 @@ Plugin* PluginManager::load(const String& name_or_path)
             return nullptr;
         }
 
-        // The query entry (from V_DECLARE_PLUGIN) is the single metadata source.
+        // The query entry (from VN_DECLARE_PLUGIN) is the single metadata source.
         plugin->setInfo(*info);
 
-        // Register the plugin's commands (V_DECLARE_COMMAND) inside its own module:
+        // Register the plugin's commands (VN_DECLARE_COMMAND) inside its own module:
         // the DLL exports vinePluginRegisterCommands, which runs in the plugin's
         // code and flushes its per-module queue into the CommandManager. The owner
         // scope attributes every command registered during the plugin's load
@@ -949,18 +949,18 @@ Plugin* PluginManager::load(const String& name_or_path)
         }
     }
     catch (const std::exception& e) {
-        V_LOGE("Plugin '{}' threw while loading: {}", toUtf8(info->name), e.what());
+        VN_LOGE("Plugin '{}' threw while loading: {}", toUtf8(info->name), e.what());
         unloadOnePlugin(plugin, info->name);
         return nullptr;
     }
     catch (...) {
-        V_LOGE("Plugin '{}' threw an unknown exception while loading", toUtf8(info->name));
+        VN_LOGE("Plugin '{}' threw an unknown exception while loading", toUtf8(info->name));
         unloadOnePlugin(plugin, info->name);
         return nullptr;
     }
 
     d->plugins.push_back(LoadedPlugin{ info->name, plugin, path });
-    V_LOGI("Plugin '{}' loaded from '{}'", toUtf8(info->name), toUtf8(path));
+    VN_LOGI("Plugin '{}' loaded from '{}'", toUtf8(info->name), toUtf8(path));
     return plugin;
 }
 
@@ -970,7 +970,7 @@ bool PluginManager::loadAll()
     // would interleave with the batch created below, which is local to this call;
     // refuse the nested call instead of leaving half-initialized instances behind.
     if (d->loading) {
-        V_LOGW("loadAll() was called from a plugin lifecycle callback; ignoring the nested call");
+        VN_LOGW("loadAll() was called from a plugin lifecycle callback; ignoring the nested call");
         return false;
     }
     ScopedFlag loading_scope(d->loading);
@@ -1005,7 +1005,7 @@ bool PluginManager::loadAll()
     // (or editing a registration file by hand) only needs a restart.
     for (const auto& registration : pluginRegistrations()) {
         if (!registration.enabled) {
-            V_LOGI("Plugin registration '{}' disables its plugin for all users", toUtf8(registration.id));
+            VN_LOGI("Plugin registration '{}' disables its plugin for all users", toUtf8(registration.id));
         }
         sources.push_back(Source{ std::filesystem::path(std::u8string_view(registration.path.data(), registration.path.size())),
                                   registration.scope, registration.enabled });
@@ -1020,7 +1020,7 @@ bool PluginManager::loadAll()
         const auto found = pluginLibrariesIn(source.path);
         if (found.empty()) {
             if (source.scope != PluginScope::BuiltIn) {
-                V_LOGW("Registered plugin location '{}' does not exist or holds no plugin library", source.path.string());
+                VN_LOGW("Registered plugin location '{}' does not exist or holds no plugin library", source.path.string());
             }
             continue;
         }
@@ -1030,7 +1030,7 @@ bool PluginManager::loadAll()
             if (!queried.rejection.empty()) {
                 // The one case worth a warning per scan: the library is a plugin, but
                 // this host cannot read it. Everything else here is silence.
-                V_LOGW("{}", toUtf8(queried.rejection));
+                VN_LOGW("{}", toUtf8(queried.rejection));
                 continue;
             }
             if (!queried.isUsable()) {
@@ -1189,7 +1189,7 @@ bool PluginManager::loadAll()
         if (cyclic) {
             report += "\n  These plugins depend on each other in a cycle.";
         }
-        V_LOGE("{}", report);
+        VN_LOGE("{}", report);
     }
 
     // Step 4: create the instances in the order the closure produced, and step 5: run
@@ -1218,21 +1218,21 @@ bool PluginManager::loadAll()
             using CreateFn = Plugin* ();
             const auto create = candidate->lib->resolveSymbol<CreateFn>(u8"vinePluginCreate");
             if (!create) {
-                V_LOGE("Plugin '{}' has no create entry point", toUtf8(name));
+                VN_LOGE("Plugin '{}' has no create entry point", toUtf8(name));
                 unloadLoadedPlugins(created);
                 return false;
             }
             Plugin* plugin = create();
             if (!plugin) {
-                V_LOGE("Plugin '{}' failed to create its instance", toUtf8(name));
+                VN_LOGE("Plugin '{}' failed to create its instance", toUtf8(name));
                 unloadLoadedPlugins(created);
                 return false;
             }
 
-            // The query entry (from V_DECLARE_PLUGIN) is the single metadata source.
+            // The query entry (from VN_DECLARE_PLUGIN) is the single metadata source.
             plugin->setInfo(*candidate->info);
 
-            // Register the plugin's commands (V_DECLARE_COMMAND) inside its own module.
+            // Register the plugin's commands (VN_DECLARE_COMMAND) inside its own module.
             // The owner scope tags these module commands with the plugin name.
             using RegisterFn = void(CommandManager*);
             const auto register_cmds = candidate->lib->resolveSymbol<RegisterFn>(u8"vinePluginRegisterCommands");
@@ -1245,7 +1245,7 @@ bool PluginManager::loadAll()
                 }
             }
 
-            V_LOGI("Plugin '{}' loaded", toUtf8(name));
+            VN_LOGI("Plugin '{}' loaded", toUtf8(name));
             created.push_back(LoadedPlugin{ name, plugin, candidate->path });
         }
 
@@ -1282,12 +1282,12 @@ bool PluginManager::loadAll()
         }
     }
     catch (const std::exception& e) {
-        V_LOGE("Plugin loading failed, releasing the instances created by this call: {}", e.what());
+        VN_LOGE("Plugin loading failed, releasing the instances created by this call: {}", e.what());
         unloadLoadedPlugins(created);
         return false;
     }
     catch (...) {
-        V_LOGE("Plugin loading failed with an unknown exception, releasing the instances created by this call");
+        VN_LOGE("Plugin loading failed with an unknown exception, releasing the instances created by this call");
         unloadLoadedPlugins(created);
         return false;
     }
@@ -1336,7 +1336,7 @@ bool PluginManager::unloadAll()
         d->plugins.erase(it);
 
         if (unloadOnePlugin(loaded.plugin, loaded.name)) {
-            V_LOGI("Plugin '{}' unloaded", toUtf8(loaded.name));
+            VN_LOGI("Plugin '{}' unloaded", toUtf8(loaded.name));
         }
         else {
             // A throwing plugin must not stop the others from unloading.
@@ -1499,26 +1499,26 @@ bool PluginManager::isPolicyDisabled(const String& name, const std::filesystem::
 bool PluginManager::setPluginEnabled(const String& name, bool enabled)
 {
     if (name.empty()) {
-        V_LOGW("Cannot enable or disable a plugin without a name");
+        VN_LOGW("Cannot enable or disable a plugin without a name");
         return false;
     }
 
     if (const PluginEntry* entry = findDiscovered(d->discovered, name);
         entry != nullptr && entry->scope == PluginScope::BuiltIn) {
-        V_LOGW("Plugin '{}' is provided by the application and cannot be disabled; ask the application to stop shipping it", toUtf8(name));
+        VN_LOGW("Plugin '{}' is provided by the application and cannot be disabled; ask the application to stop shipping it", toUtf8(name));
         return false;
     }
 
     if (isPolicyDisabled(name, {}) && enabled) {
         // Storing the preference is fine, but the policy keeps winning; saying so
         // avoids a UI that looks broken.
-        V_LOGW("Plugin '{}' is disabled for all users by its registration file; enabling it here has no effect", toUtf8(name));
+        VN_LOGW("Plugin '{}' is disabled for all users by its registration file; enabling it here has no effect", toUtf8(name));
     }
 
     if (isSkipped(name) && enabled) {
         // The host's skip list wins the same way; the preference is still stored,
         // so it applies as soon as the host stops skipping the plugin.
-        V_LOGW("Plugin '{}' is skipped by the host; enabling it here has no effect until the host stops skipping it", toUtf8(name));
+        VN_LOGW("Plugin '{}' is skipped by the host; enabling it here has no effect until the host stops skipping it", toUtf8(name));
     }
 
     if (ConfigManager* cfg = hostConfigManager(); cfg != nullptr) {
@@ -1537,7 +1537,7 @@ bool PluginManager::setPluginEnabled(const String& name, bool enabled)
             disabled.push_back(name);
         }
         cfg->setStringArray(disabledConfigKey(), disabled);
-        V_LOGI("Plugin '{}' is now {}; the change takes effect at the next start", toUtf8(name),
+        VN_LOGI("Plugin '{}' is now {}; the change takes effect at the next start", toUtf8(name),
                enabled ? "enabled" : "disabled");
         return true;
     }
@@ -1572,11 +1572,11 @@ std::vector<PluginRegistration> PluginManager::pluginRegistrations() const
 String PluginManager::installPlugin(const String& path, PluginScope scope)
 {
     if (path.empty()) {
-        V_LOGW("Cannot register an empty plugin location");
+        VN_LOGW("Cannot register an empty plugin location");
         return {};
     }
     if (scope == PluginScope::BuiltIn) {
-        V_LOGW("Refusing to register '{}' as an application-provided plugin; what ships with the application is not installed by the user",
+        VN_LOGW("Refusing to register '{}' as an application-provided plugin; what ships with the application is not installed by the user",
                toUtf8(path));
         return {};
     }
@@ -1591,7 +1591,7 @@ String PluginManager::installPlugin(const String& path, PluginScope scope)
     if (!std::filesystem::exists(location, ec)) {
         // The registration is a path, so registering a missing one would only
         // produce a warning on every later start.
-        V_LOGW("Cannot register plugin location '{}': it does not exist", toUtf8(location));
+        VN_LOGW("Cannot register plugin location '{}': it does not exist", toUtf8(location));
         return {};
     }
 
@@ -1599,7 +1599,7 @@ String PluginManager::installPlugin(const String& path, PluginScope scope)
     // system directory that exists (writing there needs administrator rights).
     const auto directories = registrationDirectories();
     if (directories.empty()) {
-        V_LOGW("Cannot register plugin location '{}': the application has no registration directory", toUtf8(location));
+        VN_LOGW("Cannot register plugin location '{}': the application has no registration directory", toUtf8(location));
         return {};
     }
 
@@ -1619,7 +1619,7 @@ String PluginManager::installPlugin(const String& path, PluginScope scope)
             }
         }
         if (!found) {
-            V_LOGW("Cannot register plugin location '{}' for all users: no writable system registration directory", toUtf8(location));
+            VN_LOGW("Cannot register plugin location '{}' for all users: no writable system registration directory", toUtf8(location));
             return {};
         }
     }
@@ -1636,7 +1636,7 @@ String PluginManager::installPlugin(const String& path, PluginScope scope)
         const QueriedLibrary queried = queryLibrary(*libraries.begin());
         if (!queried.rejection.empty()) {
             // Registering it would only produce that warning on every later start.
-            V_LOGW("{}", toUtf8(queried.rejection));
+            VN_LOGW("{}", toUtf8(queried.rejection));
             return {};
         }
         if (queried.info != nullptr) {
@@ -1655,7 +1655,7 @@ String PluginManager::installPlugin(const String& path, PluginScope scope)
     const std::filesystem::path base = named.extension() == pluginExtension() ? named.stem() : named.filename();
     const String                id   = !registration.name.empty() ? registration.name : String(base.u8string());
     if (!isUsableRegistrationId(id)) {
-        V_LOGW("Cannot register plugin location '{}': '{}' cannot be used as a registration file name", toUtf8(location), toUtf8(id));
+        VN_LOGW("Cannot register plugin location '{}': '{}' cannot be used as a registration file name", toUtf8(location), toUtf8(id));
         return {};
     }
 
@@ -1666,7 +1666,7 @@ String PluginManager::installPlugin(const String& path, PluginScope scope)
         return {};
     }
 
-    V_LOGI("Plugin location '{}' registered as '{}' in '{}'; it is scanned at the next start", toUtf8(location), toUtf8(id), toUtf8(directory));
+    VN_LOGI("Plugin location '{}' registered as '{}' in '{}'; it is scanned at the next start", toUtf8(location), toUtf8(id), toUtf8(directory));
     return id;
 }
 
@@ -1675,7 +1675,7 @@ bool PluginManager::uninstallPlugin(const String& id, PluginScope scope)
     // The id is a file name inside the registration directory; refuse anything that
     // could reach outside it (see installPlugin()).
     if (!isUsableRegistrationId(id)) {
-        V_LOGW("Cannot uninstall plugin registration '{}': it is not a usable registration id", toUtf8(id));
+        VN_LOGW("Cannot uninstall plugin registration '{}': it is not a usable registration id", toUtf8(id));
         return false;
     }
 
@@ -1701,7 +1701,7 @@ bool PluginManager::uninstallPlugin(const String& id, PluginScope scope)
 
         std::error_code ec;
         if (std::filesystem::remove(file, ec)) {
-            V_LOGI("Plugin registration '{}' removed; it is no longer scanned at the next start", toUtf8(file));
+            VN_LOGI("Plugin registration '{}' removed; it is no longer scanned at the next start", toUtf8(file));
             return true;
         }
     }
@@ -1740,4 +1740,4 @@ std::vector<const ConfigItem*> PluginManager::configItemsForPlugin(const String&
     return instance ? instance->configItems() : std::vector<const ConfigItem*>{};
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

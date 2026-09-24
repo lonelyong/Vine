@@ -37,26 +37,26 @@
 #include <vine/vsg/core/RetirementQueue.hpp>
 #include <vine/vsg/core/TargetPlan.hpp>
 
-using vine::graphics::RenderTarget;
-using vine::vsg::core::CallKind;
-using vine::vsg::core::Decision;
-using vine::vsg::core::FrameArena;
-using vine::vsg::core::FrameTimeline;
-using vine::vsg::core::LoadOpVariantKey;
-using vine::vsg::core::Observe;
-using vine::vsg::core::Phase;
-using vine::vsg::core::PhaseTable;
-using vine::vsg::core::PipelineKey;
-using vine::vsg::core::Protocol;
-using vine::vsg::core::RepairReason;
-using vine::vsg::core::RetirementQueue;
-using vine::vsg::core::ReadbackRequest;
-using vine::vsg::core::ReadbackState;
-using vine::vsg::core::TargetAction;
-using vine::vsg::core::TargetDecision;
-using vine::vsg::core::TargetDesc;
-using vine::vsg::core::TargetInstance;
-using vine::vsg::core::Verdict;
+using vn::graphics::RenderTarget;
+using vn::vsg::core::CallKind;
+using vn::vsg::core::Decision;
+using vn::vsg::core::FrameArena;
+using vn::vsg::core::FrameTimeline;
+using vn::vsg::core::LoadOpVariantKey;
+using vn::vsg::core::Observe;
+using vn::vsg::core::Phase;
+using vn::vsg::core::PhaseTable;
+using vn::vsg::core::PipelineKey;
+using vn::vsg::core::Protocol;
+using vn::vsg::core::RepairReason;
+using vn::vsg::core::RetirementQueue;
+using vn::vsg::core::ReadbackRequest;
+using vn::vsg::core::ReadbackState;
+using vn::vsg::core::TargetAction;
+using vn::vsg::core::TargetDecision;
+using vn::vsg::core::TargetDesc;
+using vn::vsg::core::TargetInstance;
+using vn::vsg::core::Verdict;
 
 namespace
 {
@@ -212,18 +212,18 @@ struct TargetCase
 };
 
 /// @brief The compatible shape most cases share: one RGBA8 colour attachment, no depth.
-vine::vsg::core::TargetShape singleColorShape()
+vn::vsg::core::TargetShape singleColorShape()
 {
-    vine::vsg::core::TargetShape shape;
-    shape.color_formats.push_back(vine::graphics::RenderTarget::ColorFormat::RGBA8);
+    vn::vsg::core::TargetShape shape;
+    shape.color_formats.push_back(vn::graphics::RenderTarget::ColorFormat::RGBA8);
     return shape;
 }
 
 /// @brief A shape with a depth attachment, used to move compatibility.
-vine::vsg::core::TargetShape colorAndDepthShape()
+vn::vsg::core::TargetShape colorAndDepthShape()
 {
-    vine::vsg::core::TargetShape shape = singleColorShape();
-    shape.depth_format                 = vine::graphics::RenderTarget::DepthFormat::D32;
+    vn::vsg::core::TargetShape shape = singleColorShape();
+    shape.depth_format                 = vn::graphics::RenderTarget::DepthFormat::D32;
     return shape;
 }
 
@@ -231,8 +231,8 @@ vine::vsg::core::TargetShape colorAndDepthShape()
 
 TEST(CoreTargetPlanTest, TheActionTableIsDecidedByShapeSizeAndBuildState)
 {
-    const vine::vsg::core::TargetShape single  = singleColorShape();
-    const vine::vsg::core::TargetShape with_d  = colorAndDepthShape();
+    const vn::vsg::core::TargetShape single  = singleColorShape();
+    const vn::vsg::core::TargetShape with_d  = colorAndDepthShape();
 
     TargetDesc built_at_512{512, 256, single};
     TargetDesc built_at_1024{1024, 256, single};
@@ -269,7 +269,7 @@ TEST(CoreTargetPlanTest, TheActionTableIsDecidedByShapeSizeAndBuildState)
         instance.built                   = test_case.built;
         instance.attachments_invalidated = test_case.invalidated;
 
-        const TargetDecision decision = vine::vsg::core::planTarget(instance, test_case.wanted);
+        const TargetDecision decision = vn::vsg::core::planTarget(instance, test_case.wanted);
         EXPECT_EQ(static_cast<int>(decision.action), static_cast<int>(test_case.action)) << test_case.what;
         EXPECT_EQ(static_cast<int>(decision.reason), static_cast<int>(test_case.reason)) << test_case.what;
     }
@@ -283,19 +283,19 @@ TEST(CoreTargetPlanTest, AnUnusableExtentIsDistinguishableFromInvalidatedAttachm
     instance.desc  = TargetDesc{8, 8, singleColorShape()};
     instance.built = true;
 
-    EXPECT_EQ(static_cast<int>(vine::vsg::core::planTarget(instance, TargetDesc{0, 0, {}}).reason),
+    EXPECT_EQ(static_cast<int>(vn::vsg::core::planTarget(instance, TargetDesc{0, 0, {}}).reason),
               static_cast<int>(RepairReason::SizeUnknown));
 
     instance.attachments_invalidated = true;
-    EXPECT_EQ(static_cast<int>(vine::vsg::core::planTarget(instance, instance.desc).reason),
+    EXPECT_EQ(static_cast<int>(vn::vsg::core::planTarget(instance, instance.desc).reason),
               static_cast<int>(RepairReason::Bootstrap));
 }
 
 TEST(CoreTargetPlanTest, DepthPromotionBorrowingAndPreservationAreOneDecision)
 {
-    using vine::vsg::core::DepthFacts;
-    using vine::vsg::core::DepthPlan;
-    using vine::vsg::core::depthPlan;
+    using vn::vsg::core::DepthFacts;
+    using vn::vsg::core::DepthPlan;
+    using vn::vsg::core::depthPlan;
 
     int lender = 0;
 
@@ -539,33 +539,33 @@ TEST(CoreKeysTest, AnExtentIsNotPartOfAPipelineKey)
     b.compatibility.samples       = large.shape.samples;
 
     EXPECT_TRUE(a == b);
-    EXPECT_EQ(static_cast<int>(vine::vsg::core::planTarget(TargetInstance{small, 1, true, false}, large).action),
+    EXPECT_EQ(static_cast<int>(vn::vsg::core::planTarget(TargetInstance{small, 1, true, false}, large).action),
               static_cast<int>(TargetAction::ResizeInPlace));
 }
 
 TEST(CoreKeysTest, CompatibilityIsPartOfTheKeyWhileLoadOpVariantsAreNot)
 {
     PipelineKey a;
-    a.compatibility.color_formats.push_back(vine::graphics::RenderTarget::ColorFormat::RGBA8);
+    a.compatibility.color_formats.push_back(vn::graphics::RenderTarget::ColorFormat::RGBA8);
 
     PipelineKey b = a;
     EXPECT_TRUE(a == b);
 
     // A different attachment format is a different pipeline.
-    b.compatibility.color_formats[0] = vine::graphics::RenderTarget::ColorFormat::RGBA16F;
+    b.compatibility.color_formats[0] = vn::graphics::RenderTarget::ColorFormat::RGBA16F;
     EXPECT_FALSE(a == b);
 
     // A clear instead of a load is a different VARIANT of the same pipeline, not a different pipeline:
     // the API's compatibility rule excludes load ops, which is why the bootstrap can swap one in.
     LoadOpVariantKey loaded;
     LoadOpVariantKey cleared;
-    cleared.color_load = vine::vsg::core::LoadOp::Clear;
+    cleared.color_load = vn::vsg::core::LoadOp::Clear;
     EXPECT_FALSE(loaded == cleared);
 }
 
 TEST(CoreKeysTest, TheAuditTableNamesEveryKeyAndKeepsExtentsOutOfIdentity)
 {
-    const auto audit = vine::vsg::core::keyAuditTable();
+    const auto audit = vn::vsg::core::keyAuditTable();
     ASSERT_EQ(audit.size(), 8u);
 
     const std::vector<std::string> expected_keys{
@@ -657,7 +657,7 @@ TEST(CorePhaseTableTest, PhasesPrintTheEvidenceFormatAndOnlyCloseWhenEverythingP
 
 TEST(CoreDeviceRequirementsTest, TheVersionFloorIgnoresThePatch)
 {
-    using namespace vine::vsg::core;
+    using namespace vn::vsg::core;
 
     // Below the floor is refused - including a device whose patch is enormous, because the policy is
     // about major/minor capability and drivers report their patch freely.
@@ -672,7 +672,7 @@ TEST(CoreDeviceRequirementsTest, TheVersionFloorIgnoresThePatch)
 
 TEST(CoreDeviceRequirementsTest, EveryRequiredFeatureIsNamedAndCounted)
 {
-    using namespace vine::vsg::core;
+    using namespace vn::vsg::core;
 
     DeviceFacts bare;
     bare.api_version = kRequiredApiVersion;
@@ -712,7 +712,7 @@ TEST(CoreDeviceRequirementsTest, EveryRequiredFeatureIsNamedAndCounted)
 
 TEST(CoreDeviceRequirementsTest, AFeatureOffMeansTheDeviceIsRefused)
 {
-    using namespace vine::vsg::core;
+    using namespace vn::vsg::core;
 
     DeviceFacts facts;
     facts.api_version = makeApiVersion(1, 4);
@@ -754,7 +754,7 @@ TEST(CoreDeviceRequirementsTest, AFeatureOffMeansTheDeviceIsRefused)
 
 TEST(CoreDepthProbeTest, AnInvalidProbeAnswersNothingRatherThanZeroes)
 {
-    using namespace vine::vsg::core;
+    using namespace vn::vsg::core;
 
     const DepthProbe empty;
     EXPECT_FALSE(empty.valid());
@@ -771,7 +771,7 @@ TEST(CoreDepthProbeTest, AnInvalidProbeAnswersNothingRatherThanZeroes)
 
 TEST(CoreDepthProbeTest, TheValuesAreRowMajorAndCountedWithinATolerance)
 {
-    using namespace vine::vsg::core;
+    using namespace vn::vsg::core;
 
     std::vector<float> values(4U * 3U, 0.0F);
     values[1U * 4U + 2U] = 0.75F;  // row 1, column 2
@@ -792,9 +792,9 @@ TEST(CoreDepthProbeTest, TheValuesAreRowMajorAndCountedWithinATolerance)
 
 TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
 {
-    using vine::vsg::core::ReadbackKind;
-    using vine::vsg::core::ReadbackRefusal;
-    using vine::vsg::core::readbackOf;
+    using vn::vsg::core::ReadbackKind;
+    using vn::vsg::core::ReadbackRefusal;
+    using vn::vsg::core::readbackOf;
 
     ReadbackState state;
     state.color_attachments = 2U;
@@ -830,9 +830,9 @@ TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
 
 TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
 {
-    using vine::vsg::core::ReadbackKind;
-    using vine::vsg::core::ReadbackRefusal;
-    using vine::vsg::core::readbackOf;
+    using vn::vsg::core::ReadbackKind;
+    using vn::vsg::core::ReadbackRefusal;
+    using vn::vsg::core::readbackOf;
 
     ReadbackState state;
     state.color_attachments = 1U;
@@ -854,17 +854,17 @@ TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
     EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
               static_cast<int>(ReadbackRefusal::UnreadableFormat));
 
-    EXPECT_EQ(vine::vsg::core::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
-    EXPECT_EQ(vine::vsg::core::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
-    EXPECT_EQ(vine::vsg::core::refusalName(ReadbackRefusal::NotCaptured), "not-captured");
-    EXPECT_EQ(vine::vsg::core::refusalName(ReadbackRefusal::None), "none");
+    EXPECT_EQ(vn::vsg::core::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
+    EXPECT_EQ(vn::vsg::core::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
+    EXPECT_EQ(vn::vsg::core::refusalName(ReadbackRefusal::NotCaptured), "not-captured");
+    EXPECT_EQ(vn::vsg::core::refusalName(ReadbackRefusal::None), "none");
 }
 
 TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexel)
 {
-    using vine::vsg::core::colorReadbackOf;
-    using vine::vsg::core::depthReadbackOf;
-    using vine::vsg::core::ReadbackFormat;
+    using vn::vsg::core::colorReadbackOf;
+    using vn::vsg::core::depthReadbackOf;
+    using vn::vsg::core::ReadbackFormat;
 
     // The colour half packs RGBA8 only: the probes are 8-bit probes, and a float attachment converted into one
     // would be a picture of something the GPU never held.
@@ -883,7 +883,7 @@ TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexe
 
 TEST(CoreReadbackTest, TheDepthDecodeIsTheFormatsOwnConversion)
 {
-    using vine::vsg::core::decodeDepth;
+    using vn::vsg::core::decodeDepth;
 
     // D32 / D32F: the stored bits are the value.
     {

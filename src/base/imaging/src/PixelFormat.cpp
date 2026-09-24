@@ -1,6 +1,6 @@
 #include <vine/imaging/PixelFormat.hpp>
 
-V_IMAGING_NS_BEGIN
+VN_IMAGING_NS_BEGIN
 
 int channelCount(PixelFormat format) noexcept
 {
@@ -185,4 +185,4 @@ const char* formatName(PixelFormat format) noexcept
     return "Unknown"; // Also the answer for an out-of-range cast.
 }
 
-V_IMAGING_NS_END
+VN_IMAGING_NS_END

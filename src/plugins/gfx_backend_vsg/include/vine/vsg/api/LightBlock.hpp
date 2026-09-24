@@ -37,7 +37,7 @@
  * behaviour (a pass that announced no camera is unlit rather than lit by a guess), and it is visible: the shading
  * writes black, not the ambient fill.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief The forward path's light block: one ambient plus up to three directional lights, all in view space. */
 struct alignas(16) VineLightsBlock
@@ -129,4 +129,4 @@ std::size_t packLightBlock(std::span<const core::LightRef> lights, const core::C
 std::size_t packLightPushBlock(std::span<const core::LightRef> lights, const core::CameraSnapshot& camera,
                                LightPushBlock& out) noexcept;
 
-V_VSG_NS_END
+VN_VSG_NS_END

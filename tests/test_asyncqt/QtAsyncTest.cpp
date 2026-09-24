@@ -18,7 +18,7 @@
 #include <chrono>
 #include <memory>
 
-using namespace vine;
+using namespace vn;
 
 namespace {
 

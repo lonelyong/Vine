@@ -11,7 +11,7 @@
 #include "Quaternion.hpp"
 #include "Vector3.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief Create a translation matrix from vector.
@@ -399,4 +399,4 @@ Matrix4x4<T, Order> matrix4x4(const Isometry3<T>& tf)
     return m;
 }
 
-V_MATH_NS_END
+VN_MATH_NS_END

@@ -4,14 +4,14 @@
 
 #include <cstdint>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 class Colorf;
 
 /**
  * @brief An RGBA color; each channel is an unsigned byte.
  */
-class V_CORE_API Color
+class VN_CORE_API Color
 {
   public:
     Color() noexcept = default;
@@ -83,4 +83,4 @@ class V_CORE_API Color
     static const Color Blue;
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

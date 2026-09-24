@@ -14,7 +14,7 @@
 
 class QCoreApplication;
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class StartupProgress;
 
@@ -44,4 +44,4 @@ struct ApplicationData {
     virtual ~ApplicationData();
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

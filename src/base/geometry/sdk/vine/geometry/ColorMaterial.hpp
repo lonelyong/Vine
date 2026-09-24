@@ -6,13 +6,13 @@
 
 #include "Material.hpp"
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief A simple material carrying a single base color.
  */
-class V_GEOMETRY_API ColorMaterial : public Material {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API ColorMaterial : public Material {
+    VN_OBJECT_META_DECL;
 
   public:
     /**
@@ -25,7 +25,7 @@ class V_GEOMETRY_API ColorMaterial : public Material {
      *
      * @param color Base color (linear RGBA, 0..1).
      */
-    explicit ColorMaterial(const vine::Colorf& color);
+    explicit ColorMaterial(const vn::Colorf& color);
 
   public:
     /**
@@ -33,21 +33,21 @@ class V_GEOMETRY_API ColorMaterial : public Material {
      *
      * @return The material color.
      */
-    const vine::Colorf& color() const;
+    const vn::Colorf& color() const;
 
     /**
      * @brief Sets the base color.
      *
      * @param color New color.
      */
-    void setColor(const vine::Colorf& color);
+    void setColor(const vn::Colorf& color);
 
     [[nodiscard]]
     const char* typeName() const override;
 
   private:
     /// Base color.
-    vine::Colorf color_{ 1.0f, 1.0f, 1.0f, 1.0f };
+    vn::Colorf color_{ 1.0f, 1.0f, 1.0f, 1.0f };
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

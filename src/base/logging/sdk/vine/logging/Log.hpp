@@ -9,7 +9,7 @@
 #include "LogSink.hpp"
 #include "Logger.hpp"
 
-V_LOGGING_NS_BEGIN
+VN_LOGGING_NS_BEGIN
 
 /**
  * @brief Configuration for the process-wide default logger.
@@ -39,7 +39,7 @@ struct LogConfig {
  *
  * @param config Logger configuration; defaults to console + Info level.
  */
-V_LOGGING_API void initDefault(LogConfig config = {});
+VN_LOGGING_API void initDefault(LogConfig config = {});
 
 /**
  * @brief Returns the process-wide default logger.
@@ -51,14 +51,14 @@ V_LOGGING_API void initDefault(LogConfig config = {});
  *
  * @return The default logger.
  */
-V_LOGGING_API Logger& defaultLogger() noexcept;
+VN_LOGGING_API Logger& defaultLogger() noexcept;
 
 /**
  * @brief Flushes the default logger.
  */
-V_LOGGING_API void flushDefault();
+VN_LOGGING_API void flushDefault();
 
-V_LOGGING_NS_END
+VN_LOGGING_NS_END
 
 /*
  * Macros logging to the default logger.
@@ -66,18 +66,18 @@ V_LOGGING_NS_END
  * They forward the source location (std::source_location::current()) together
  * with an std::format string and its arguments, for example:
  *
- *     V_LOGI("mesh loaded, {} triangles", count);
+ *     VN_LOGI("mesh loaded, {} triangles", count);
  *
- * Levels: V_LOGT(trace) V_LOGD(debug) V_LOGI(info)
- *         V_LOGW(warn)  V_LOGE(error) V_LOGC(critical)
+ * Levels: VN_LOGT(trace) VN_LOGD(debug) VN_LOGI(info)
+ *         VN_LOGW(warn)  VN_LOGE(error) VN_LOGC(critical)
  *
  * They never throw: formatting and sink failures are reported once on stderr and
  * dropped, so macro logging is safe inside catch blocks, noexcept functions and
  * detached coroutines.
  */
-#define V_LOGT(...) ::vine::logging::defaultLogger().trace(::std::source_location::current(), __VA_ARGS__)
-#define V_LOGD(...) ::vine::logging::defaultLogger().debug(::std::source_location::current(), __VA_ARGS__)
-#define V_LOGI(...) ::vine::logging::defaultLogger().info(::std::source_location::current(), __VA_ARGS__)
-#define V_LOGW(...) ::vine::logging::defaultLogger().warn(::std::source_location::current(), __VA_ARGS__)
-#define V_LOGE(...) ::vine::logging::defaultLogger().error(::std::source_location::current(), __VA_ARGS__)
-#define V_LOGC(...) ::vine::logging::defaultLogger().critical(::std::source_location::current(), __VA_ARGS__)
+#define VN_LOGT(...) ::vn::logging::defaultLogger().trace(::std::source_location::current(), __VA_ARGS__)
+#define VN_LOGD(...) ::vn::logging::defaultLogger().debug(::std::source_location::current(), __VA_ARGS__)
+#define VN_LOGI(...) ::vn::logging::defaultLogger().info(::std::source_location::current(), __VA_ARGS__)
+#define VN_LOGW(...) ::vn::logging::defaultLogger().warn(::std::source_location::current(), __VA_ARGS__)
+#define VN_LOGE(...) ::vn::logging::defaultLogger().error(::std::source_location::current(), __VA_ARGS__)
+#define VN_LOGC(...) ::vn::logging::defaultLogger().critical(::std::source_location::current(), __VA_ARGS__)

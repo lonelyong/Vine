@@ -15,9 +15,9 @@
 #include "Array.hpp"
 #include "Shape.hpp"
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-using vine::math::Aabbf;
+using vn::math::Aabbf;
 
 /**
  * @brief Base class for polygonal mesh shapes.
@@ -47,8 +47,8 @@ using vine::math::Aabbf;
  * announceChange(), one call per edit. A consumer that cached the bytes then tells "same buffer, new
  * contents" from "same buffer, still current".
  */
-class V_GEOMETRY_API Mesh : public Shape {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API Mesh : public Shape {
+    VN_OBJECT_META_DECL;
 
   public:
     /// Scalar floats per position / normal element (xyz).
@@ -71,7 +71,7 @@ class V_GEOMETRY_API Mesh : public Shape {
      * @return Read-only view over the positions.
      */
     [[nodiscard]]
-    std::span<const vine::math::Vec3f> positions() const;
+    std::span<const vn::math::Vec3f> positions() const;
 
     /**
      * @brief Returns the per-vertex normals.
@@ -79,7 +79,7 @@ class V_GEOMETRY_API Mesh : public Shape {
      * @return Read-only view over the normals, empty when none were set.
      */
     [[nodiscard]]
-    std::span<const vine::math::Vec3f> normals() const;
+    std::span<const vn::math::Vec3f> normals() const;
 
     /**
      * @brief Returns the per-vertex texture coordinates.
@@ -87,7 +87,7 @@ class V_GEOMETRY_API Mesh : public Shape {
      * @return Read-only view over the texcoords, empty when none were set.
      */
     [[nodiscard]]
-    std::span<const vine::math::Vec2f> texcoords() const;
+    std::span<const vn::math::Vec2f> texcoords() const;
 
     /**
      * @brief Returns the shareable handle to the vertex positions.
@@ -231,4 +231,4 @@ class V_GEOMETRY_API Mesh : public Shape {
     Aabbf aabb_{ Aabbf::empty() };
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

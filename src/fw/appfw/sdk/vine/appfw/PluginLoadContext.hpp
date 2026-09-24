@@ -11,7 +11,7 @@
 
 #include "ConfigStandard.hpp"
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class Application;
 class CommandManager;
@@ -26,7 +26,7 @@ class EventBus;
  * command manager via commandManager(), or the host Application via
  * application(). More specific accessors can be added later.
  */
-class V_APPFW_API PluginLoadContext {
+class VN_APPFW_API PluginLoadContext {
   public:
     /**
      * @brief Constructs the load context with Application as the host.
@@ -117,4 +117,4 @@ class V_APPFW_API PluginLoadContext {
     std::unique_ptr<Impl> d;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

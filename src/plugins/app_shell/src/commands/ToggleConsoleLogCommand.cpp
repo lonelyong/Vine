@@ -6,11 +6,11 @@
 #include <vine/appfw/ConfigManager.hpp>
 #include <vine/appfw/UserIO.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-V_OBJECT_META_IMPL(ToggleConsoleLogCommand, Command)
+VN_OBJECT_META_IMPL(ToggleConsoleLogCommand, Command)
 
-vine::async::Task<CommandResult> ToggleConsoleLogCommand::execute(CommandExecutionContext* context)
+vn::async::Task<CommandResult> ToggleConsoleLogCommand::execute(CommandExecutionContext* context)
 {
     auto* app = context ? context->application() : nullptr;
     auto* io  = app ? app->userIO() : nullptr;
@@ -34,4 +34,4 @@ vine::async::Task<CommandResult> ToggleConsoleLogCommand::execute(CommandExecuti
     co_return CommandResult(CommandStatus::Success);
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

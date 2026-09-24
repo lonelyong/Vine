@@ -6,9 +6,9 @@
 
 #include "String.hpp"
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
-class V_CORE_API Exception : public std::exception {
+class VN_CORE_API Exception : public std::exception {
   public:
     enum Code
     {
@@ -59,11 +59,11 @@ class V_CORE_API Exception : public std::exception {
     String msg_;
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END
 
-#define V_CHECK_NULL_THROW(var)                                                                                                                                \
+#define VN_CHECK_NULL_THROW(var)                                                                                                                                \
     if (!var)                                                                                                                                                  \
-        throw vine::Exception(vine::Exception::ARGUMENT_NULL, u8## #var);
-#define V_CHECK_NULL_RETURN(var)                                                                                                                               \
+        throw vn::Exception(vn::Exception::ARGUMENT_NULL, u8## #var);
+#define VN_CHECK_NULL_RETURN(var)                                                                                                                               \
     if (!var)                                                                                                                                                  \
         return {};

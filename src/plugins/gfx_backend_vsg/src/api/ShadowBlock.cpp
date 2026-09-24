@@ -2,14 +2,14 @@
 
 #include <vine/vsg/api/LightBlock.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& draw,
-                     vine::graphics::VineShadowBlock& out) noexcept
+                     vn::graphics::VineShadowBlock& out) noexcept
 {
     // Every field is written, the switch included: a block left as whatever the previous owner of these bytes wrote
     // is a shader reading another frame's shadow.
-    out = vine::graphics::VineShadowBlock{};
+    out = vn::graphics::VineShadowBlock{};
     if (shadow.light == nullptr || !shadow.has_view_projection || !draw.camera.present)
     {
         // No map declared, no matrix published, or no view to map FROM: the ABI's switch stays off and the shader
@@ -30,7 +30,7 @@ bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& 
         }
     }
     if (caster == nullptr || !caster->enabled || !caster->cast_shadow ||
-        caster->type != vine::graphics::LightType::Directional)
+        caster->type != vn::graphics::LightType::Directional)
     {
         return false;
     }
@@ -46,7 +46,7 @@ bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& 
     // View -> light clip = (producer: light clip <- world) * (world <- this view). The producer's matrix is the one
     // the engine published when it rendered the map, the inverse view is this call's camera: a fragment's view-space
     // position is what the shading has, and the map's own space is what it must be compared in.
-    const vine::math::Mat4d view_to_light = shadow.view_projection * draw.camera.view.inverted();
+    const vn::math::Mat4d view_to_light = shadow.view_projection * draw.camera.view.inverted();
 
     // Column-major, the way the GLSL block reads it (a mat4 is four columns of vec4) - the same convention the
     // draw block's packing states, and the one place a transpose would be invisible with an axis-aligned light.
@@ -62,4 +62,4 @@ bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& 
     return true;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

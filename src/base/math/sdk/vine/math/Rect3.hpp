@@ -9,7 +9,7 @@
 
 #include "Math.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 template <typename T>
 class Point3;
 template <typename T>
@@ -336,4 +336,4 @@ using Aabbd = Rect3<double>;
 template <typename T>
 using Aabb = Rect3<T>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

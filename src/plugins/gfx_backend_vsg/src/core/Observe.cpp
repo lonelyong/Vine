@@ -1,6 +1,6 @@
 #include <vine/vsg/core/Observe.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -36,4 +36,4 @@ bool Observe::agreesWith(const RetirementQueue& queue) const noexcept
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

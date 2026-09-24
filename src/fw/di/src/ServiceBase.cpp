@@ -1,7 +1,7 @@
 ﻿#include <vine/di/ServiceBase.hpp>
 
-V_DI_NS_BEGIN
+VN_DI_NS_BEGIN
 
-V_OBJECT_META_IMPL(ServiceBase, Object)
+VN_OBJECT_META_IMPL(ServiceBase, Object)
 
-V_DI_NS_END
+VN_DI_NS_END

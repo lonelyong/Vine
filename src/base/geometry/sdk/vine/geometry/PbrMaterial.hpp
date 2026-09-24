@@ -6,13 +6,13 @@
 
 #include "Material.hpp"
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief A physically based (PBR) material with metallic/roughness shading.
  */
-class V_GEOMETRY_API PbrMaterial : public Material {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API PbrMaterial : public Material {
+    VN_OBJECT_META_DECL;
 
   public:
     /**
@@ -28,7 +28,7 @@ class V_GEOMETRY_API PbrMaterial : public Material {
      * @param roughness  Roughness factor in [0, 1].
      * @param opacity    Opacity factor; 1.0 is fully opaque.
      */
-    PbrMaterial(const vine::Colorf& base_color, float metallic, float roughness, float opacity = 1.0f);
+    PbrMaterial(const vn::Colorf& base_color, float metallic, float roughness, float opacity = 1.0f);
 
   public:
     /**
@@ -36,28 +36,28 @@ class V_GEOMETRY_API PbrMaterial : public Material {
      *
      * @return Base color.
      */
-    const vine::Colorf& baseColor() const;
+    const vn::Colorf& baseColor() const;
 
     /**
      * @brief Sets the base (albedo) color.
      *
      * @param color New base color.
      */
-    void setBaseColor(const vine::Colorf& color);
+    void setBaseColor(const vn::Colorf& color);
 
     /**
      * @brief Returns the emissive color.
      *
      * @return Emissive color.
      */
-    const vine::Colorf& emissive() const;
+    const vn::Colorf& emissive() const;
 
     /**
      * @brief Sets the emissive color.
      *
      * @param color New emissive color.
      */
-    void setEmissive(const vine::Colorf& color);
+    void setEmissive(const vn::Colorf& color);
 
     /**
      * @brief Returns the metallic factor.
@@ -106,9 +106,9 @@ class V_GEOMETRY_API PbrMaterial : public Material {
 
   private:
     /// Base (albedo) color.
-    vine::Colorf base_color_{ 1.0f, 1.0f, 1.0f, 1.0f };
+    vn::Colorf base_color_{ 1.0f, 1.0f, 1.0f, 1.0f };
     /// Emissive color.
-    vine::Colorf emissive_{ 0.0f, 0.0f, 0.0f, 1.0f };
+    vn::Colorf emissive_{ 0.0f, 0.0f, 0.0f, 1.0f };
     /// Metallic factor in [0, 1].
     float metallic_ = 0.0f;
     /// Roughness factor in [0, 1].
@@ -117,4 +117,4 @@ class V_GEOMETRY_API PbrMaterial : public Material {
     float opacity_ = 1.0f;
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

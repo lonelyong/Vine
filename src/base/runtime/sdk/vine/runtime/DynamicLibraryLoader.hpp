@@ -9,7 +9,7 @@
 
 #include "DynamicLibrary.hpp"
 
-V_RUNTIME_NS_BEGIN
+VN_RUNTIME_NS_BEGIN
 
 /**
  * @brief Loads and caches dynamic libraries, one per file path.
@@ -33,10 +33,10 @@ V_RUNTIME_NS_BEGIN
  * the system dynamic linker (RPATH / LD_LIBRARY_PATH).
  *
  * Use instance() for the process-wide shared loader so every module that
- * links vi::Runtime manages its libraries through one place. The public
+ * links vn::Runtime manages its libraries through one place. The public
  * constructor remains available for isolated loaders, e.g. in tests.
  */
-class V_RUNTIME_API DynamicLibraryLoader {
+class VN_RUNTIME_API DynamicLibraryLoader {
 
   public:
     /**
@@ -62,7 +62,7 @@ class V_RUNTIME_API DynamicLibraryLoader {
     /**
      * @brief Returns the process-wide shared library loader.
      *
-     * A single loader is shared by all modules that link vi::Runtime, so a
+     * A single loader is shared by all modules that link vn::Runtime, so a
      * library is loaded and unloaded exactly once per process regardless of
      * which module requests it. The instance is created on first use and
      * lives until process exit.
@@ -165,4 +165,4 @@ class V_RUNTIME_API DynamicLibraryLoader {
     std::unique_ptr<Impl> d;
 };
 
-V_RUNTIME_NS_END
+VN_RUNTIME_NS_END

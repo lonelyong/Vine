@@ -12,9 +12,9 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/geometry/Array.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(FpsOverlay, RenderPass);
+VN_OBJECT_META_IMPL(FpsOverlay, RenderPass);
 
 namespace
 {
@@ -32,11 +32,11 @@ namespace
  * @param mn        Minimum corner.
  * @param mx        Maximum corner.
  */
-void appendBox(vine::geometry::Vec3fArray& positions, vine::geometry::Vec3fArray& normals,
-               vine::geometry::UInt32Array& indices, const vine::math::Vec3f& mn,
-               const vine::math::Vec3f& mx)
+void appendBox(vn::geometry::Vec3fArray& positions, vn::geometry::Vec3fArray& normals,
+               vn::geometry::UInt32Array& indices, const vn::math::Vec3f& mn,
+               const vn::math::Vec3f& mx)
 {
-    using vine::math::Vec3f;
+    using vn::math::Vec3f;
 
     const Vec3f c = (mn + mx) * 0.5f;
     const float h[3] = { (mx.x - mn.x) * 0.5f, (mx.y - mn.y) * 0.5f, (mx.z - mn.z) * 0.5f };
@@ -99,8 +99,8 @@ FpsOverlay::FpsOverlay()
     // looks down -z from a distance that fits the row, with the projection
     // aspect updated to match the (wide) readout box on every resize.
     camera_ = make_intrusive<Camera>();
-    camera_->setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 1.6), vine::math::Vec3d(0.0, 0.0, 0.0),
-                                   vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera_->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.6), vn::math::Vec3d(0.0, 0.0, 0.0),
+                                   vn::math::Vec3d(0.0, 1.0, 0.0));
     camera_->setProjectionMatrixAsPerspective(45.0, 1.0, 0.05, 20.0);
     setCamera(camera_);
 
@@ -234,13 +234,13 @@ void FpsOverlay::writePattern(std::uint32_t pattern)
     // picture the per-segment visibility gate used to produce (no dark "8" behind the number), reached
     // this way because the row is ONE geometry: what a segment can do individually is contribute its
     // vertices, and the honest way to contribute nothing is to contribute no area.
-    std::vector<vine::math::Vec3f> positions = row_positions_;
+    std::vector<vn::math::Vec3f> positions = row_positions_;
     for (std::size_t seg = 0; seg < kSegmentCount; ++seg) {
         if ((pattern & (1u << seg)) != 0u) {
             continue;
         }
         const std::size_t       base      = seg * kVerticesPerBar;
-        const vine::math::Vec3f collapsed = positions[base];
+        const vn::math::Vec3f collapsed = positions[base];
         for (std::size_t v = 0; v < kVerticesPerBar; ++v) {
             positions[base + v] = collapsed;
         }
@@ -259,7 +259,7 @@ void FpsOverlay::writePattern(std::uint32_t pattern)
 
 void FpsOverlay::rebuild()
 {
-    using vine::math::Vec3f;
+    using vn::math::Vec3f;
 
     // Seven-segment geometry in the z == 0 plane. Order: a b c d e f g =
     // top, upper-right, lower-right, bottom, lower-left, upper-left, middle.
@@ -285,9 +285,9 @@ void FpsOverlay::rebuild()
     // The row is built with EVERY segment lit: this is the template writePattern() copies its lit bars
     // from, and it is what fixes the geometry's vertex and index count for the rest of its life -- what a
     // change edits is which of those bars carry area, never how many vertices exist.
-    vine::geometry::Vec3fArray positions;
-    vine::geometry::Vec3fArray normals;
-    vine::geometry::UInt32Array indices;
+    vn::geometry::Vec3fArray positions;
+    vn::geometry::Vec3fArray normals;
+    vn::geometry::UInt32Array indices;
     positions.reserve(kSegmentCount * kVerticesPerBar);
     normals.reserve(kSegmentCount * kVerticesPerBar);
     indices.reserve(kSegmentCount * kIndicesPerBar);
@@ -332,4 +332,4 @@ void FpsOverlay::rebuild()
     shown_value_   = -1;
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

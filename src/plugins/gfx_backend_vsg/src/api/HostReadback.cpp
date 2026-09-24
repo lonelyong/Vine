@@ -7,7 +7,7 @@
 #include <vsg/commands/Commands.h>
 #include <vsg/vk/Device.h>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
@@ -118,25 +118,25 @@ HostReadbackRefusal readDepthAttachment(OffscreenTarget& target, ::vsg::Device* 
     return HostReadbackRefusal::None;
 }
 
-vine::graphics::ReadbackResult readbackResultOf(HostReadbackRefusal refusal) noexcept
+vn::graphics::ReadbackResult readbackResultOf(HostReadbackRefusal refusal) noexcept
 {
     switch (refusal)
     {
-    case HostReadbackRefusal::None: return vine::graphics::ReadbackResult::Ok;
-    case HostReadbackRefusal::NoTarget: return vine::graphics::ReadbackResult::Invalid;
+    case HostReadbackRefusal::None: return vn::graphics::ReadbackResult::Ok;
+    case HostReadbackRefusal::NoTarget: return vn::graphics::ReadbackResult::Invalid;
     case HostReadbackRefusal::UnknownTarget:
     case HostReadbackRefusal::NotBuilt:
-    case HostReadbackRefusal::NotRecorded: return vine::graphics::ReadbackResult::NotReady;
-    case HostReadbackRefusal::UnknownAttachment: return vine::graphics::ReadbackResult::Invalid;
+    case HostReadbackRefusal::NotRecorded: return vn::graphics::ReadbackResult::NotReady;
+    case HostReadbackRefusal::UnknownAttachment: return vn::graphics::ReadbackResult::Invalid;
     case HostReadbackRefusal::UnreadableFormat:
     case HostReadbackRefusal::BorrowedDepth:
-    case HostReadbackRefusal::NoDevice: return vine::graphics::ReadbackResult::Unsupported;
-    case HostReadbackRefusal::TransferFailed: return vine::graphics::ReadbackResult::Failed;
+    case HostReadbackRefusal::NoDevice: return vn::graphics::ReadbackResult::Unsupported;
+    case HostReadbackRefusal::TransferFailed: return vn::graphics::ReadbackResult::Failed;
     }
-    return vine::graphics::ReadbackResult::Failed;  // an unmapped case is a failure to look at, never "Ok"
+    return vn::graphics::ReadbackResult::Failed;  // an unmapped case is a failure to look at, never "Ok"
 }
 
-vine::String readbackRefusalMessage(HostReadbackRefusal refusal, const char* what)
+vn::String readbackRefusalMessage(HostReadbackRefusal refusal, const char* what)
 {
     const std::string entry = what != nullptr ? what : "readback";
     switch (refusal)
@@ -144,37 +144,37 @@ vine::String readbackRefusalMessage(HostReadbackRefusal refusal, const char* wha
     case HostReadbackRefusal::None:
         break;
     case HostReadbackRefusal::NoTarget:
-        return vine::String(reinterpret_cast<const char8_t*>((entry + ": no target was given, so there is "
+        return vn::String(reinterpret_cast<const char8_t*>((entry + ": no target was given, so there is "
                                                               "nothing to read").c_str()));
     case HostReadbackRefusal::UnknownTarget:
-        return vine::String(reinterpret_cast<const char8_t*>((entry + ": the target is not held by this "
+        return vn::String(reinterpret_cast<const char8_t*>((entry + ": the target is not held by this "
                                                               "backend (never announced, or released) - "
                                                               "nothing to read").c_str()));
     case HostReadbackRefusal::NotBuilt:
-        return vine::String(reinterpret_cast<const char8_t*>((entry + ": the target has no built attachments "
+        return vn::String(reinterpret_cast<const char8_t*>((entry + ": the target has no built attachments "
                                                               "yet - nothing to read").c_str()));
     case HostReadbackRefusal::NotRecorded:
-        return vine::String(reinterpret_cast<const char8_t*>((entry + ": no frame has drawn into the target "
+        return vn::String(reinterpret_cast<const char8_t*>((entry + ": no frame has drawn into the target "
                                                               "yet - there is nothing to read back").c_str()));
     case HostReadbackRefusal::UnknownAttachment:
-        return vine::String(reinterpret_cast<const char8_t*>((entry + ": the target has no such attachment")
+        return vn::String(reinterpret_cast<const char8_t*>((entry + ": the target has no such attachment")
                                                                  .c_str()));
     case HostReadbackRefusal::UnreadableFormat:
-        return vine::String(reinterpret_cast<const char8_t*>((entry + ": this backend packs RGBA8 colour and "
+        return vn::String(reinterpret_cast<const char8_t*>((entry + ": this backend packs RGBA8 colour and "
                                                               "D16/D32/D32F depth only; that attachment's "
                                                               "format cannot be read back").c_str()));
     case HostReadbackRefusal::BorrowedDepth:
-        return vine::String(reinterpret_cast<const char8_t*>((entry + ": the depth attachment is BORROWED from "
+        return vn::String(reinterpret_cast<const char8_t*>((entry + ": the depth attachment is BORROWED from "
                                                               "another target; read it through that source")
                                                                  .c_str()));
     case HostReadbackRefusal::NoDevice:
-        return vine::String(reinterpret_cast<const char8_t*>((entry + ": there is no device to copy with, and "
+        return vn::String(reinterpret_cast<const char8_t*>((entry + ": there is no device to copy with, and "
                                                               "no frame's copy could serve the request").c_str()));
     case HostReadbackRefusal::TransferFailed:
-        return vine::String(reinterpret_cast<const char8_t*>((entry + ": the copy-back buffer does not hold a "
+        return vn::String(reinterpret_cast<const char8_t*>((entry + ": the copy-back buffer does not hold a "
                                                               "readable picture").c_str()));
     }
-    return vine::String();
+    return vn::String();
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

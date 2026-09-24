@@ -1,17 +1,17 @@
 ﻿#include <vine/geometry/TriangleMesh.hpp>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-V_OBJECT_META_IMPL(TriangleMesh, Mesh)
+VN_OBJECT_META_IMPL(TriangleMesh, Mesh)
 
 TriangleMesh::TriangleMesh()
 {
     shape_type_ = ShapeType::TriangleMesh;
 }
 
-void TriangleMesh::addTriangle(const vine::math::Vec3f& a, const vine::math::Vec3f& b, const vine::math::Vec3f& c)
+void TriangleMesh::addTriangle(const vn::math::Vec3f& a, const vn::math::Vec3f& b, const vn::math::Vec3f& c)
 {
-    const vine::math::Vec3f* const vertices[3] = { &a, &b, &c };
+    const vn::math::Vec3f* const vertices[3] = { &a, &b, &c };
     for (const auto* vertex : vertices) {
         positions_->push_back(vertex->x);
         positions_->push_back(vertex->y);
@@ -36,4 +36,4 @@ bool TriangleMesh::isValid() const
     return !positions_->empty() && positions_->size() % (3u * kVec3Components) == 0u;
 }
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

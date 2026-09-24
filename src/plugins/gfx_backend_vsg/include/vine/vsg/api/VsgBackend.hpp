@@ -9,7 +9,7 @@
 #include <vine/vsg/vsg_global.hpp>
 
 /**
- * @brief The SDK-facing backend: the rewrite's session and frame drive behind `vine::graphics::RenderBackend`.
+ * @brief The SDK-facing backend: the rewrite's session and frame drive behind `vn::graphics::RenderBackend`.
  *
  * WHERE THIS SITS (design §2.2). Every other `api/` type is one piece a frame is made of - the session, the
  * store, the assembly, the executor - and this is the seam the ENGINE talks to: it implements the SDK's
@@ -71,7 +71,7 @@
  * ONE THREAD, LIKE EVERYTHING ELSE HERE: the engine drives a backend from one thread and never reentrantly
  * (see RenderBackend's class note), so this type keeps no synchronisation.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -79,7 +79,7 @@ class BackendContentAccess;
 }  // namespace detail
 
 /** @brief The SDK's render backend, driven by the rewrite's session (see the file note). */
-class V_VSG_API VsgBackend : public vine::graphics::RenderBackend
+class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
 {
   public:
     VsgBackend();
@@ -118,16 +118,16 @@ class V_VSG_API VsgBackend : public vine::graphics::RenderBackend
     void resize(int width, int height) override;
 
     /** @brief Remembers the default content program, tells the plan, and tracks it (see the file note). */
-    void setDefaultContentProgram(vine::intrusive_ptr<const vine::graphics::ShaderProgram> program) override;
+    void setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program) override;
 
     /** @brief Answers true: off-screen targets are held, drawn into and sampled (see setRenderTarget). */
     bool supportsRenderTargets() override;
 
     /** @brief Holds the host's target under its own identity; nullptr selects the default framebuffer. */
-    void setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> target) override;
+    void setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target) override;
 
     /** @brief Opens the pass scope, under the pass' own number (see the file note). */
-    void beginPass(vine::raw_ptr<const vine::graphics::RenderPass> pass) override;
+    void beginPass(vn::raw_ptr<const vn::graphics::RenderPass> pass) override;
 
     /** @brief Closes the pass scope (the recorder drops what no draw consumed). */
     void endPass() override;
@@ -139,39 +139,39 @@ class V_VSG_API VsgBackend : public vine::graphics::RenderBackend
     void setViewport(int x, int y, int width, int height) override;
 
     /** @brief Announces the lights for the next drawing call of this scope. */
-    void setLights(const std::vector<vine::raw_ptr<const vine::graphics::Light>>& lights) override;
+    void setLights(const std::vector<vn::raw_ptr<const vn::graphics::Light>>& lights) override;
 
     /** @brief Announces the pass' resolved inputs, in declaration order. */
-    void setPassInputs(const std::vector<vine::raw_ptr<vine::graphics::RenderTarget>>& inputs) override;
+    void setPassInputs(const std::vector<vn::raw_ptr<vn::graphics::RenderTarget>>& inputs) override;
 
     /** @brief Announces how this pass' content handles the target's current depth. */
-    void setDepthMode(vine::graphics::DepthMode mode) override;
+    void setDepthMode(vn::graphics::DepthMode mode) override;
 
     /** @brief Announces the pass' clear policy (translated into the plan's spelling). */
-    void setClearPolicy(const vine::graphics::ClearPolicy& policy) override;
+    void setClearPolicy(const vn::graphics::ClearPolicy& policy) override;
 
     /** @brief Collects a content drawing call, and tracks the objects it names (see the file note). */
-    void render(const std::vector<vine::graphics::RenderCommand>& commands,
-                const vine::graphics::Camera*                      camera) override;
+    void render(const std::vector<vn::graphics::RenderCommand>& commands,
+                const vn::graphics::Camera*                      camera) override;
 
     /** @brief Records a full-screen call whose source is one of the pass' declared inputs. */
-    void drawScreenProgram(vine::graphics::RenderTarget*                     source,
-                           vine::raw_ptr<const vine::graphics::ShaderProgram> program,
-                           vine::raw_ptr<const vine::graphics::Camera>        camera) override;
+    void drawScreenProgram(vn::graphics::RenderTarget*                     source,
+                           vn::raw_ptr<const vn::graphics::ShaderProgram> program,
+                           vn::raw_ptr<const vn::graphics::Camera>        camera) override;
 
     /** @brief Forgets the pass' identity: the SDK's announcement that the pass is going away. */
-    void releasePass(vine::raw_ptr<const vine::graphics::RenderPass> pass) override;
+    void releasePass(vn::raw_ptr<const vn::graphics::RenderPass> pass) override;
 
     /** @brief Drops everything held for a target the host is about to destroy. */
-    void releaseRenderTarget(vine::graphics::RenderTarget* target) override;
+    void releaseRenderTarget(vn::graphics::RenderTarget* target) override;
 
     /** @brief Reads a colour attachment back: the device is stopped (counted), the copy is fenced, bytes out. */
-    bool readColorBuffer(const vine::graphics::RenderTarget* target, int attachment,
-                         std::vector<std::uint8_t>& outPixels, vine::graphics::ReadbackResult* why = nullptr) override;
+    bool readColorBuffer(const vn::graphics::RenderTarget* target, int attachment,
+                         std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why = nullptr) override;
 
     /** @brief Reads a depth attachment back as normalised values (a borrowed depth is the source's to read). */
-    bool readDepthBuffer(const vine::graphics::RenderTarget* target, std::vector<float>& outDepths,
-                         vine::graphics::ReadbackResult* why = nullptr) override;
+    bool readDepthBuffer(const vn::graphics::RenderTarget* target, std::vector<float>& outDepths,
+                         vn::graphics::ReadbackResult* why = nullptr) override;
 
   public:
     /** @brief Gets whether the session is up. */
@@ -234,4 +234,4 @@ class V_VSG_API VsgBackend : public vine::graphics::RenderBackend
     std::unique_ptr<Data> d;
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

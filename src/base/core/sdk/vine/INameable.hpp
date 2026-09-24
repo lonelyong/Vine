@@ -7,13 +7,13 @@
 #include "String.hpp"
 #include "Type.hpp"
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief Interface for objects that have a readable name.
  */
 class INamed {
-    V_DECLARE_INTERFACE(INamed)
+    VN_DECLARE_INTERFACE(INamed)
 
   public:
     virtual ~INamed() = default;
@@ -32,7 +32,7 @@ class INamed {
  * Extends INamed with a name setter.
  */
 class INameable : public INamed {
-    V_DECLARE_INTERFACE(INameable, INamed)
+    VN_DECLARE_INTERFACE(INameable, INamed)
 
   public:
     /**
@@ -52,4 +52,4 @@ concept Nameable = requires(T& t, const String& name) {
     t.setName(name);
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

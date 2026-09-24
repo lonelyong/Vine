@@ -12,7 +12,7 @@
 
 #include <vine/vsg/vsg_global.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /**
  * @brief Submits @p commands once, on a fresh command buffer, and waits for them.
@@ -57,4 +57,4 @@ inline bool submitCommandsOnce(::vsg::Device& device, const ::vsg::ref_ptr<::vsg
     return true;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

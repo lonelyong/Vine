@@ -42,7 +42,7 @@
  * nothing: what it let go is its RETURN VALUE, so the frame's own evidence (a counter that must stay at zero
  * while the host holds everything) can be asserted instead of parsed out of a log.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief What one sweep let go (see the file note). */
 struct SweepOutcome
@@ -68,4 +68,4 @@ struct SweepOutcome
                                                    core::FrameTimeline& timeline,
                                                    core::RetirementQueue& retirement);
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -8,7 +8,7 @@
 
 #include <vine/io/io_global.hpp>
 
-V_IO_NS_BEGIN
+VN_IO_NS_BEGIN
 
 /**
  * @brief Failure classes reported by virtual file system and stream operations.
@@ -221,4 +221,4 @@ class Result
     IoError          error_{ IoError::Ok };
 };
 
-V_IO_NS_END
+VN_IO_NS_END

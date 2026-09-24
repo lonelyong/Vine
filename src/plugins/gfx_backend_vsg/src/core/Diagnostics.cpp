@@ -2,7 +2,7 @@
 
 #include <utility>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -27,18 +27,18 @@ void ReportOnce::rearm() noexcept
     reported_ = false;
 }
 
-void Diagnostics::setSink(vine::graphics::DiagnosticSink sink)
+void Diagnostics::setSink(vn::graphics::DiagnosticSink sink)
 {
     sink_ = std::move(sink);
 }
 
-const vine::graphics::DiagnosticSink& Diagnostics::sink() const noexcept
+const vn::graphics::DiagnosticSink& Diagnostics::sink() const noexcept
 {
     return sink_;
 }
 
-void Diagnostics::report(vine::graphics::DiagnosticSeverity severity,
-                         vine::graphics::DiagnosticCategory category, const vine::String& message)
+void Diagnostics::report(vn::graphics::DiagnosticSeverity severity,
+                         vn::graphics::DiagnosticCategory category, const vn::String& message)
 {
     // Counted first, and counted whether or not a sink is installed: the count is what a phase gates
     // on, and a host that never installed a sink must still be able to see that something happened.
@@ -51,7 +51,7 @@ void Diagnostics::report(vine::graphics::DiagnosticSeverity severity,
 
     if (sink_)
     {
-        vine::graphics::RenderDiagnostic diagnostic;
+        vn::graphics::RenderDiagnostic diagnostic;
         diagnostic.severity = severity;
         diagnostic.category = category;
         diagnostic.message  = message;
@@ -59,8 +59,8 @@ void Diagnostics::report(vine::graphics::DiagnosticSeverity severity,
     }
 }
 
-bool Diagnostics::reportOnce(ReportOnce& episode, vine::graphics::DiagnosticSeverity severity,
-                             vine::graphics::DiagnosticCategory category, const vine::String& message)
+bool Diagnostics::reportOnce(ReportOnce& episode, vn::graphics::DiagnosticSeverity severity,
+                             vn::graphics::DiagnosticCategory category, const vn::String& message)
 {
     if (!episode.shouldReport())
     {
@@ -75,7 +75,7 @@ std::uint64_t Diagnostics::total() const noexcept
     return total_;
 }
 
-std::uint64_t Diagnostics::count(vine::graphics::DiagnosticCategory category) const noexcept
+std::uint64_t Diagnostics::count(vn::graphics::DiagnosticCategory category) const noexcept
 {
     const auto index = static_cast<std::size_t>(category);
     return index < per_category_.size() ? per_category_[index] : 0;
@@ -88,4 +88,4 @@ bool Diagnostics::clean() const noexcept
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

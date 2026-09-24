@@ -166,7 +166,7 @@ vec4 位置（stride 4）**有意不进别名**：它要的是 R32G32B32 绑定�
   小额分配（顶点数据本身远大于此）。
 - 通道的 `size()` 是**标量数**，不是顶点数：顶点数用 `vertexCount()` 或 `positions().size()`。
 - `Vec3f` ↔ float 的 reinterpret 现在主要在 `Mesh` 内部（存取器），由 `static_assert` + 单测钉住。
-- 新增 `src/` 文件后必须 `cmake -S . -B build`（`v_add_library` 的 glob 无 `CONFIGURE_DEPENDS`）。
+- 新增 `src/` 文件后必须 `cmake -S . -B build`（`vn_add_library` 的 glob 无 `CONFIGURE_DEPENDS`）。
 
 ## 流（stream）的统一表示（2026-09-13）
 

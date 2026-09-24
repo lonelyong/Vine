@@ -6,7 +6,7 @@
 
 ## 1. 背景与目标
 
-为 `vine::robotics` 提供碰撞检测的基础接口：碰撞几何 / 碰撞体 / 碰撞矩阵 / 碰撞检测器 / 几何管理器。
+为 `vn::robotics` 提供碰撞检测的基础接口：碰撞几何 / 碰撞体 / 碰撞矩阵 / 碰撞检测器 / 几何管理器。
 当前只落接口与非 FCL 的公共逻辑；FCL 后端（几何转换、broadphase、narrowphase）以后在独立模块实现。
 
 ## 2. 模块结构（新建）
@@ -25,13 +25,13 @@ src/robotics/core/sdk/vine/robotics/proximity/
   CollisionGeometryManager.hpp # 几何工厂/注册表（add/get/remove/update/clear 已实现，create* 纯虚）
 ```
 
-命名空间宏 `V_ROBOTICS_PROXIMITY_NS_BEGIN/END` 加在 `robot_core_global.hpp`。
+命名空间宏 `VN_ROBOTICS_PROXIMITY_NS_BEGIN/END` 加在 `robot_core_global.hpp`。
 测试：`tests/test_proximity/`（9 用例，mock 子类编译验证 + 非 FCL 逻辑）。
 
 ## 3. 关键设计决策
 
 ### 3.1 不依赖 workcell 的 owner 模型
-- owner 类型用 **`const vine::INamed*`**（只读 `name()`，无需 `setName`）：`kinematics::Frame` 与未来的
+- owner 类型用 **`const vn::INamed*`**（只读 `name()`，无需 `setName`）：`kinematics::Frame` 与未来的
   `workcell::SceneObject` 都实现 `INamed`，天然通用；矩阵/检测器按 owner 指针分组。
 - 帧关联用 `raw_ptr<const kinematics::Frame>`；世界位姿默认实现：
   `world = frame ? Frame::frameInWorld(frame, state) * local : local;`（`CollisionObject` 内联默认）。
@@ -48,8 +48,8 @@ src/robotics/core/sdk/vine/robotics/proximity/
 `CollisionRequest` 中 `collision_matrix` 指针用于过滤对象对；`CollisionMatrix` 为**完整实现**（非 FCL）。
 
 ### 3.3 引用计数与内存
-- 几何/对象用 `vine::RefCounted<Derived>` + `vine::intrusive_ptr`（与 `Shape` 一致）。
-- **纯头文件接口不能加 `V_ROBOTICS_CORE_API`**：会 dllimport，而 RoboticsCore 里没有 .cpp 包含
+- 几何/对象用 `vn::RefCounted<Derived>` + `vn::intrusive_ptr`（与 `Shape` 一致）。
+- **纯头文件接口不能加 `VN_ROBOTICS_CORE_API`**：会 dllimport，而 RoboticsCore 里没有 .cpp 包含
   这些头 → 链接 LNK2019。header-only 一律不加导出宏。
 - `RefCounted<Derived>` 析构是 protected 非虚 → 接口类须自带 `virtual ~X() = default;` 才能多态删除。
 
@@ -89,5 +89,5 @@ src/robotics/core/sdk/vine/robotics/proximity/
 ## 7. 测试要点
 - `tests/test_proximity/ProximityTest.cpp` 用 mock 子类（`MockGeometry/MockCollisionObject/MockDetector/
   MockGeometryManager`）证明接口可编译、可派生，并覆盖矩阵/配对/结果/世界位姿/检测器 bookkeeping。
-- 坑：mock 覆盖 `doCheckCollision` 时 `kinematics::State` 必须全限定 `vine::robotics::kinematics::State`
+- 坑：mock 覆盖 `doCheckCollision` 时 `kinematics::State` 必须全限定 `vn::robotics::kinematics::State`
   （using 指令下解析不一致 → 纯虚不匹配）；子类覆盖 public 虚函数保持与基类一致的访问级别。

@@ -2,15 +2,15 @@
 #
 # A plugin is a loadable module living in the plugin directory
 # (<exe>/plugins/vine) that exports vinePluginQuery()/vinePluginCreate() via
-# V_DECLARE_PLUGIN. Plugins are not linked against each other; dependencies are
+# VN_DECLARE_PLUGIN. Plugins are not linked against each other; dependencies are
 # declared in PluginInfo.dependencies and resolved by PluginManager. This
 # helper only builds the module and deploys it next to the application; the
 # caller still adds find_package(Qt6) and target_link_libraries as needed.
 
 # Main application target that plugins are deployed beside.
-set(VI_APP_TARGET "Vine" CACHE STRING "Main application target (plugin deploy directory root)")
+set(VN_APP_TARGET "Vine" CACHE STRING "Main application target (plugin deploy directory root)")
 
-function(v_add_plugin target_name_var short_name)
+function(vn_add_plugin target_name_var short_name)
     set(sdk_dir "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
     set(inc_dir "${CMAKE_CURRENT_SOURCE_DIR}/include")
     set(src_dir "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -32,7 +32,7 @@ function(v_add_plugin target_name_var short_name)
     # MODULE: a loadable DLL that is not linked against (no import library).
     add_library(${target_name} MODULE ${sdk_file_list} ${header_file_list} ${src_file_list} ${rc_file_list})
 
-    # MSVC options for the project's own plugin code only (see v_add_library).
+    # MSVC options for the project's own plugin code only (see vn_add_library).
     if(MSVC)
         target_compile_options(${target_name}
             PRIVATE /utf-8 /EHsc /Zc:preprocessor /Zc:__cplusplus)
@@ -43,9 +43,9 @@ function(v_add_plugin target_name_var short_name)
     # the app runs from the build tree: Windows/macOS use <exe>/plugins/vine,
     # Linux uses <exe>/../plugins/vine (sibling of bin/, matching install).
     if(WIN32 OR APPLE)
-        set(_plugin_output_dir "$<TARGET_FILE_DIR:${VI_APP_TARGET}>/plugins/vine")
+        set(_plugin_output_dir "$<TARGET_FILE_DIR:${VN_APP_TARGET}>/plugins/vine")
     else()
-        set(_plugin_output_dir "$<TARGET_FILE_DIR:${VI_APP_TARGET}>/../plugins/vine")
+        set(_plugin_output_dir "$<TARGET_FILE_DIR:${VN_APP_TARGET}>/../plugins/vine")
     endif()
 
     set_target_properties(${target_name} PROPERTIES

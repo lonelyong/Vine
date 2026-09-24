@@ -4,11 +4,11 @@
 
 #include <vine/appfw/Application.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-V_OBJECT_META_IMPL(ShowConfigWindowCommand, Command)
+VN_OBJECT_META_IMPL(ShowConfigWindowCommand, Command)
 
-vine::async::Task<CommandResult> ShowConfigWindowCommand::execute(CommandExecutionContext* context)
+vn::async::Task<CommandResult> ShowConfigWindowCommand::execute(CommandExecutionContext* context)
 {
     auto* app = context ? context->application() : nullptr;
     if (!app) {
@@ -22,4 +22,4 @@ vine::async::Task<CommandResult> ShowConfigWindowCommand::execute(CommandExecuti
     co_return CommandResult(CommandStatus::Success);
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

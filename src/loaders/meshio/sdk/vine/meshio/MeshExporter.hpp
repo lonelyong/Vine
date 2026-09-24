@@ -6,12 +6,12 @@
 
 #include <vine/geometry/Mesh.hpp>
 
-V_MESHIO_NS_BEGIN
+VN_MESHIO_NS_BEGIN
 
 /**
  * @brief Utility class for exporting meshes to files (STL, OBJ, ...).
  */
-class V_MESHIO_API MeshExporter
+class VN_MESHIO_API MeshExporter
 {
     // 类型声明区块
   public:
@@ -71,7 +71,7 @@ class V_MESHIO_API MeshExporter
      * @param file_path The output file path.
      * @throws std::runtime_error when the export fails.
      */
-    void exportAsStl(const vine::geometry::Mesh& mesh, const std::filesystem::path& file_path) const;
+    void exportAsStl(const vn::geometry::Mesh& mesh, const std::filesystem::path& file_path) const;
 
     /**
      * @brief Exports a mesh as an OBJ file.
@@ -80,11 +80,11 @@ class V_MESHIO_API MeshExporter
      * @param file_path The output file path.
      * @throws std::runtime_error when the export fails.
      */
-    void exportAsObj(const vine::geometry::Mesh& mesh, const std::filesystem::path& file_path) const;
+    void exportAsObj(const vn::geometry::Mesh& mesh, const std::filesystem::path& file_path) const;
 
     // 字段区块
   private:
     Options options_;
 };
 
-V_MESHIO_NS_END
+VN_MESHIO_NS_END

@@ -90,7 +90,7 @@ flowchart LR
 
 ```cpp
 struct AttributeChannel {
-    intrusive_ptr<const vine::Buffer<float>> values;      // 标量就存在这个 buffer 里（元素类型钉死为 float）
+    intrusive_ptr<const vn::Buffer<float>> values;      // 标量就存在这个 buffer 里（元素类型钉死为 float）
     std::uint32_t                            components;  // 每顶点标量数 1..4（即 stride）
 };
 // Geometry 内部：std::map<uint32_t, AttributeChannel> attributes_;

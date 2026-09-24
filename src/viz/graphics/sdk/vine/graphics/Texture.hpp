@@ -13,7 +13,7 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/RefCounted.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief A texture the renderer samples: a description plus the CPU images that fill it.
@@ -37,8 +37,8 @@ V_GRAPHICS_NS_BEGIN
  * Larger kinds (1D, 3D, arrays) are deliberately absent until something needs them, and adding one means
  * answering what `faceCount()` means for it.
  */
-class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
+    VN_OBJECT_META_DECL;
 
   public:
     /** @brief How many images of which arrangement a texture is made of. */
@@ -220,8 +220,8 @@ class V_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
  * The named form of `Kind::D2`. It takes no layer index at all, because a 2D texture has exactly one image
  * and an index that can only ever be 0 is a mistake waiting to be written.
  */
-class V_GRAPHICS_API Texture2D : public Texture {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Texture2D : public Texture {
+    VN_OBJECT_META_DECL;
 
   public:
     /**
@@ -270,8 +270,8 @@ class V_GRAPHICS_API Texture2D : public Texture {
  * The faces are square by construction: a cube map with non-square faces is a description no sampling
  * hardware accepts, so the size is stated once rather than width and height being two chances to disagree.
  */
-class V_GRAPHICS_API CubeMap : public Texture {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API CubeMap : public Texture {
+    VN_OBJECT_META_DECL;
 
   public:
     /** @brief One face of the cube, in Vulkan's layer order. */
@@ -330,4 +330,4 @@ class V_GRAPHICS_API CubeMap : public Texture {
     [[nodiscard]] raw_ptr<const imaging::Image> faceImage(Face face) const noexcept;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

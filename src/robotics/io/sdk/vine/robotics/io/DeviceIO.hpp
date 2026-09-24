@@ -14,7 +14,7 @@ namespace tinyxml2
 class XMLDocument;
 } // namespace tinyxml2
 
-V_ROBOTICS_IO_NS_BEGIN
+VN_ROBOTICS_IO_NS_BEGIN
 
 /**
  * @brief Serializes and deserializes devices as XML.
@@ -26,7 +26,7 @@ V_ROBOTICS_IO_NS_BEGIN
  * context, so a DeviceIO object is reentrant and safe to reuse, including
  * from multiple threads (each operation carries its own context).
  */
-class V_ROBOTICS_IO_API DeviceIO : public XmlIOBase
+class VN_ROBOTICS_IO_API DeviceIO : public XmlIOBase
 {
   public:
     /**
@@ -83,7 +83,7 @@ class V_ROBOTICS_IO_API DeviceIO : public XmlIOBase
      * @return The device, owned by the caller.
      * @throws std::runtime_error on failure.
      */
-    std::unique_ptr<workcell::Device> loadPkg(vine::io::Vfs& vfs, const LoadOptions& options = {});
+    std::unique_ptr<workcell::Device> loadPkg(vn::io::Vfs& vfs, const LoadOptions& options = {});
 
     /**
      * @brief Exports a device as a device package (.vdevpkg).
@@ -109,7 +109,7 @@ class V_ROBOTICS_IO_API DeviceIO : public XmlIOBase
      * @param options Save options.
      * @throws std::runtime_error on failure.
      */
-    void savePkg(const workcell::Device& dev, vine::io::Vfs& vfs, const SaveOptions& options = {});
+    void savePkg(const workcell::Device& dev, vn::io::Vfs& vfs, const SaveOptions& options = {});
 
     /**
      * @brief Loads a device from a .vdev XML entry inside a VFS.
@@ -123,7 +123,7 @@ class V_ROBOTICS_IO_API DeviceIO : public XmlIOBase
      * @param options Load options.
      * @return The device, owned by the caller.
      */
-    std::unique_ptr<workcell::Device> loadXmlFromVfs(vine::io::Vfs& vfs, const std::filesystem::path& vfs_path,
+    std::unique_ptr<workcell::Device> loadXmlFromVfs(vn::io::Vfs& vfs, const std::filesystem::path& vfs_path,
                                                      const LoadOptions& options = {});
 
   private:
@@ -164,4 +164,4 @@ class V_ROBOTICS_IO_API DeviceIO : public XmlIOBase
     void exportDeviceInternal(ExportContext& ctx, const workcell::Device& dev, tinyxml2::XMLElement* xe_device);
 };
 
-V_ROBOTICS_IO_NS_END
+VN_ROBOTICS_IO_NS_END

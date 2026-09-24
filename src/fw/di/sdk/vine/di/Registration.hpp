@@ -10,7 +10,7 @@
 #include "Lifetime.hpp"
 #include "di_global.hpp"
 
-V_DI_NS_BEGIN
+VN_DI_NS_BEGIN
 
 class Container;
 
@@ -32,7 +32,7 @@ using InstanceFactory = std::function<ServiceBase*(TypeId, Container&)>;
  * with streaming setters that return the Registration itself for chaining. It
  * is a copyable value type and is stored inside the container.
  */
-class V_DI_API Registration final {
+class VN_DI_API Registration final {
 
   private:
     /**
@@ -44,7 +44,7 @@ class V_DI_API Registration final {
      * @brief Creates a registration keyed by the given service type.
      *
      * @param type Service type; must be non-null.
-     * @throws vine::Exception with ARGUMENT_NULL when type is null.
+     * @throws vn::Exception with ARGUMENT_NULL when type is null.
      */
     Registration(TypeId type);
 
@@ -57,7 +57,7 @@ class V_DI_API Registration final {
      *
      * @param inst Instance to serve; must be kind of the service type.
      * @return *this for chaining.
-     * @throws vine::Exception with INVALID_ARGUMENTS when inst is not kind of the service type.
+     * @throws vn::Exception with INVALID_ARGUMENTS when inst is not kind of the service type.
      */
     Registration& instance(ServiceBase* inst);
 
@@ -182,4 +182,4 @@ Registration Registration::create()
     return Registration(T::desc());
 }
 
-V_DI_NS_END
+VN_DI_NS_END

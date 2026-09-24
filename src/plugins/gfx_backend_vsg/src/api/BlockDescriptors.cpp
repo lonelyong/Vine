@@ -11,7 +11,7 @@
 #include <vsg/state/DescriptorImage.h>
 #include <vsg/state/ImageInfo.h>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
@@ -315,4 +315,4 @@ std::uint64_t BlockDescriptors::refusals() const noexcept
     return d->refusals;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

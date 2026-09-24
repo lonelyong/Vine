@@ -6,7 +6,7 @@
 #include "Gui.hpp"
 #include "Icon.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class RibbonAction;
 
@@ -25,8 +25,8 @@ class RibbonAction;
  * to remove items or separators by position, use
  * dropDownEntryCount()/removeDropDownEntryAt() (unified counting).
  */
-class V_APPFW_API RibbonButton : public Control {
-    V_OBJECT_META_DECL
+class VN_APPFW_API RibbonButton : public Control {
+    VN_OBJECT_META_DECL
 
   public:
     RibbonButton();
@@ -130,4 +130,4 @@ class V_APPFW_API RibbonButton : public Control {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

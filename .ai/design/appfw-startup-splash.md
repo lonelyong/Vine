@@ -149,7 +149,7 @@ app->run()                      → 主循环
 
 ## ABI
 
-`V_APPFW_PLUGIN_ABI_VERSION` **不需要 +1**：插件可见面（`PluginAbi`/`PluginInfo`/`Plugin`/
+`VN_APPFW_PLUGIN_ABI_VERSION` **不需要 +1**：插件可见面（`PluginAbi`/`PluginInfo`/`Plugin`/
 `PluginLoadContext`/入口签名/命令注册）一个都没动；`StartupProgress` 是新增 API，`Application`
 新增的 `finishStartup()` 是**追加在虚表末尾**（声明在所有既有虚函数之后）。
 
@@ -158,7 +158,7 @@ app->run()                      → 主循环
 `tests/test_gui/test_gui.cpp` 里的 `ConsoleProgressReporterTest.ConsoleUserIOPrintsTheProgressOfAForegroundOperation`
 直接构造 **appfw 私有**类 `ConsoleUserIO`（`src/ConsoleUserIO.hpp`），但该类没有导出宏，
 `viAppfwd.lib` 里根本没有它的符号 ⇒ `test_gui` 在 HEAD 上**链接失败**（LNK2019 ×2，`6ec0e4d` 引入）。
-修法：给 `ConsoleUserIO` 加 `V_APPFW_API`（类仍私有，只多两个导出符号），保留那个端到端用例。
+修法：给 `ConsoleUserIO` 加 `VN_APPFW_API`（类仍私有，只多两个导出符号），保留那个端到端用例。
 
 ## 测试映射
 

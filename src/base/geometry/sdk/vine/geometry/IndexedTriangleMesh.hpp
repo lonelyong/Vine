@@ -9,7 +9,7 @@
 #include "Array.hpp"
 #include "Mesh.hpp"
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief A triangle mesh with shared vertices referenced by indices.
@@ -18,8 +18,8 @@ V_GEOMETRY_NS_BEGIN
  * vertex indices. Normals and texture coordinates, when present, match the
  * position array 1:1.
  */
-class V_GEOMETRY_API IndexedTriangleMesh : public Mesh {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API IndexedTriangleMesh : public Mesh {
+    VN_OBJECT_META_DECL;
 
   public:
     IndexedTriangleMesh();
@@ -55,7 +55,7 @@ class V_GEOMETRY_API IndexedTriangleMesh : public Mesh {
      * @param position Vertex position.
      * @return Index of the appended vertex.
      */
-    std::uint32_t addVertex(const vine::math::Vec3f& position);
+    std::uint32_t addVertex(const vn::math::Vec3f& position);
 
     /**
      * @brief Appends one triangle from vertex indices.
@@ -87,4 +87,4 @@ class V_GEOMETRY_API IndexedTriangleMesh : public Mesh {
     intrusive_ptr<Buffer<std::uint32_t>> indices_;
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

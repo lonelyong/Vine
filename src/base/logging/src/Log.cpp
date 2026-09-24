@@ -2,7 +2,7 @@
 
 #include <utility>
 
-V_LOGGING_NS_BEGIN
+VN_LOGGING_NS_BEGIN
 
 Logger& defaultLogger() noexcept
 {
@@ -35,4 +35,4 @@ void flushDefault()
     defaultLogger().flush();
 }
 
-V_LOGGING_NS_END
+VN_LOGGING_NS_END

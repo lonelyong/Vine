@@ -10,9 +10,9 @@
 #include "ShaderProgram.hpp"
 #include "StateNode.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-using vine::math::Mat4d;
+using vn::math::Mat4d;
 
 /**
  * @brief A single geometry rendering instruction.
@@ -21,7 +21,7 @@ using vine::math::Mat4d;
  * itself, its material, and its world-space model matrix baked from the
  * enclosing MatrixTransform chain.
  */
-struct V_GRAPHICS_API RenderCommand {
+struct VN_GRAPHICS_API RenderCommand {
     /** Leaf geometry to render. */
     GeometryPtr geometry;
 
@@ -86,4 +86,4 @@ struct V_GRAPHICS_API RenderCommand {
      */
     RenderCommand(intrusive_ptr<Geometry> g, intrusive_ptr<Material> m, const Mat4d& model);};
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

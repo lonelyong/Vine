@@ -4,15 +4,15 @@
 #include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/plugin_export.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class ChainPlugin : public Plugin {
-    V_OBJECT_META_DECL;
+    VN_OBJECT_META_DECL;
 };
 
-V_OBJECT_META_IMPL(ChainPlugin, Plugin)
+VN_OBJECT_META_IMPL(ChainPlugin, Plugin)
 
-V_DECLARE_PLUGIN(ChainPlugin, u8"6a1b6d0e-0000-4000-8000-000000000003", u8"chain_plugin", u8"Chain plugin", u8"0.1.0",
+VN_DECLARE_PLUGIN(ChainPlugin, u8"6a1b6d0e-0000-4000-8000-000000000003", u8"chain_plugin", u8"Chain plugin", u8"0.1.0",
                   u8"Test fixture that depends on test_plugin", u8"Vine", u8"", u8"", u8"", { u8"test_plugin" })
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

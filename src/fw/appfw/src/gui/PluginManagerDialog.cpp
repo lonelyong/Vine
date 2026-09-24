@@ -36,7 +36,7 @@
 #include "TableStyle.hpp"
 #include "WindowData.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace
 {
@@ -56,7 +56,7 @@ QString joinStrings(const std::vector<String>& list)
 }
 
 /// Returns the discovery entry of a plugin, or nullptr when unknown.
-const vine::appfw::PluginEntry* findEntry(const std::vector<vine::appfw::PluginEntry>& entries, const String& name)
+const vn::appfw::PluginEntry* findEntry(const std::vector<vn::appfw::PluginEntry>& entries, const String& name)
 {
     for (const auto& entry : entries) {
         if (entry.info.name == name) {
@@ -66,7 +66,7 @@ const vine::appfw::PluginEntry* findEntry(const std::vector<vine::appfw::PluginE
     return nullptr;
 }
 
-/// Converts a vine::String (UTF-8) to a filesystem path.
+/// Converts a vn::String (UTF-8) to a filesystem path.
 std::filesystem::path toPath(const String& text)
 {
     return std::filesystem::path(std::u8string(text));
@@ -76,7 +76,7 @@ std::filesystem::path toPath(const String& text)
 ///
 /// A registration points either at the library file itself or at a directory
 /// that holds it (see PluginManager::installPlugin).
-const vine::appfw::PluginRegistration* findRegistration(const std::vector<vine::appfw::PluginRegistration>& registrations,
+const vn::appfw::PluginRegistration* findRegistration(const std::vector<vn::appfw::PluginRegistration>& registrations,
                                                         const std::filesystem::path&                       library)
 {
     for (const auto& registration : registrations) {
@@ -89,12 +89,12 @@ const vine::appfw::PluginRegistration* findRegistration(const std::vector<vine::
 }
 
 /// Returns the scope of a plugin as shown in the detail page.
-QString scopeLabel(vine::appfw::PluginScope scope)
+QString scopeLabel(vn::appfw::PluginScope scope)
 {
     switch (scope) {
-    case vine::appfw::PluginScope::BuiltIn:  return QStringLiteral("程序自带");
-    case vine::appfw::PluginScope::AllUsers: return QStringLiteral("所有用户");
-    case vine::appfw::PluginScope::User:     return QStringLiteral("仅当前用户");
+    case vn::appfw::PluginScope::BuiltIn:  return QStringLiteral("程序自带");
+    case vn::appfw::PluginScope::AllUsers: return QStringLiteral("所有用户");
+    case vn::appfw::PluginScope::User:     return QStringLiteral("仅当前用户");
     }
     return QStringLiteral("未知");
 }
@@ -145,7 +145,7 @@ QPixmap renderSvgIcon(const QString& svg, int size)
  * @param entry Discovery entry, or nullptr when the plugin is unknown.
  * @return The state, e.g. "已加载" or "由程序跳过".
  */
-QString stateLabel(const vine::appfw::PluginEntry* entry)
+QString stateLabel(const vn::appfw::PluginEntry* entry)
 {
     if (entry == nullptr) {
         return QStringLiteral("元数据缺失");
@@ -168,7 +168,7 @@ QString stateLabel(const vine::appfw::PluginEntry* entry)
  * @param entry Discovery entry, or nullptr when the plugin is unknown.
  * @return The explanation.
  */
-QString stateExplanation(const vine::appfw::PluginEntry* entry)
+QString stateExplanation(const vn::appfw::PluginEntry* entry)
 {
     if (entry == nullptr) {
         return QStringLiteral("未发现该插件的元数据：库已不在注册位置，或注册文件指向的文件不可读。");
@@ -191,7 +191,7 @@ QString stateExplanation(const vine::appfw::PluginEntry* entry)
 }
 
 /// Returns the stylesheet of the state badge for a plugin.
-QString badgeStyle(const vine::appfw::PluginEntry* entry)
+QString badgeStyle(const vn::appfw::PluginEntry* entry)
 {
     // Explicit colors on purpose: the badge has to read as a state in both the
     // light and the dark theme, and palette roles do not survive a stylesheet.
@@ -217,10 +217,10 @@ QString badgeStyle(const vine::appfw::PluginEntry* entry)
 
 } // namespace
 
-V_OBJECT_META_IMPL(PluginManagerDialog, Window)
+VN_OBJECT_META_IMPL(PluginManagerDialog, Window)
 
 struct PluginManagerDialog::Impl : public WindowData {
-    vine::appfw::PluginManager* manager        = nullptr;
+    vn::appfw::PluginManager* manager        = nullptr;
     QLineEdit*                  filter         = nullptr;
     QListWidget*                list           = nullptr;
     QPushButton*                load_btn       = nullptr;
@@ -262,7 +262,7 @@ struct PluginManagerDialog::Impl : public WindowData {
      * @param size       Logical icon size in pixels.
      * @return The icon; never the null icon, unless the default itself is unusable.
      */
-    QPixmap iconFor(const vine::String& svg_source, int size)
+    QPixmap iconFor(const vn::String& svg_source, int size)
     {
         const QString declared = Convert::toQString(svg_source);
         const QString key      = QStringLiteral("%1|%2").arg(size).arg(declared);
@@ -279,7 +279,7 @@ struct PluginManagerDialog::Impl : public WindowData {
     }
 };
 
-PluginManagerDialog::PluginManagerDialog(vine::appfw::PluginManager* manager)
+PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
   : Window(new Impl(), new QDialog())
 {
     auto* data    = dptr();
@@ -559,15 +559,15 @@ PluginManagerDialog::PluginManagerDialog(vine::appfw::PluginManager* manager)
 
     QObject::connect(data->filter, &QLineEdit::textChanged, root, [this] { refresh(); });
     QObject::connect(data->load_btn, &QPushButton::clicked, root, [this] { loadPlugin(); });
-    QObject::connect(install_for_user, &QAction::triggered, root, [this] { installPlugin(vine::appfw::PluginScope::User); });
-    QObject::connect(install_for_users, &QAction::triggered, root, [this] { installPlugin(vine::appfw::PluginScope::AllUsers); });
+    QObject::connect(install_for_user, &QAction::triggered, root, [this] { installPlugin(vn::appfw::PluginScope::User); });
+    QObject::connect(install_for_users, &QAction::triggered, root, [this] { installPlugin(vn::appfw::PluginScope::AllUsers); });
     QObject::connect(data->toggle_btn, &QPushButton::clicked, root, [this] { togglePluginEnabled(); });
     QObject::connect(data->uninstall_btn, &QPushButton::clicked, root, [this] { uninstallSelectedPlugin(); });
     QObject::connect(refresh_btn, &QPushButton::clicked, root, [this] { refresh(); });
     QObject::connect(close_btn, &QPushButton::clicked, root, [root] { root->close(); });
 
     QObject::connect(data->list, &QListWidget::currentItemChanged, root, [this](QListWidgetItem* item, QListWidgetItem*) {
-        showDetail(item ? Convert::fromQString(item->data(Qt::UserRole).toString()) : vine::String{});
+        showDetail(item ? Convert::fromQString(item->data(Qt::UserRole).toString()) : vn::String{});
     });
 
     // Right-click menu: the same actions as the detail page, plus the two that
@@ -577,15 +577,15 @@ PluginManagerDialog::PluginManagerDialog(vine::appfw::PluginManager* manager)
         auto* item = data->list->itemAt(pos);
 
         const String selected = item ? Convert::fromQString(item->data(Qt::UserRole).toString()) : String{};
-        const auto   entries  = data->manager ? data->manager->pluginEntries() : std::vector<vine::appfw::PluginEntry>{};
+        const auto   entries  = data->manager ? data->manager->pluginEntries() : std::vector<vn::appfw::PluginEntry>{};
         // Named copies: findRegistration()/findEntry() would return pointers into
         // temporaries otherwise.
         const auto  registrations = data->manager ? data->manager->pluginRegistrations()
-                                                  : std::vector<vine::appfw::PluginRegistration>{};
+                                                  : std::vector<vn::appfw::PluginRegistration>{};
         const auto* entry         = findEntry(entries, selected);
 
         // Same rule as the buttons: only offer the actions that can take effect.
-        const bool toggleable = entry != nullptr && entry->scope != vine::appfw::PluginScope::BuiltIn && !entry->skipped;
+        const bool toggleable = entry != nullptr && entry->scope != vn::appfw::PluginScope::BuiltIn && !entry->skipped;
         const auto* registration = entry != nullptr ? findRegistration(registrations, entry->path) : nullptr;
 
         QMenu menu(data->list);
@@ -623,9 +623,9 @@ PluginManagerDialog::PluginManagerDialog(vine::appfw::PluginManager* manager)
         } else if (chosen == load_action) {
             loadPlugin();
         } else if (chosen == install_action) {
-            installPlugin(vine::appfw::PluginScope::User);
+            installPlugin(vn::appfw::PluginScope::User);
         } else if (chosen == install_all_users_action) {
-            installPlugin(vine::appfw::PluginScope::AllUsers);
+            installPlugin(vn::appfw::PluginScope::AllUsers);
         } else if (chosen == refresh_action) {
             refresh();
         }
@@ -741,7 +741,7 @@ void PluginManagerDialog::refresh()
     }
 }
 
-void PluginManagerDialog::installPlugin(vine::appfw::PluginScope scope)
+void PluginManagerDialog::installPlugin(vn::appfw::PluginScope scope)
 {
     auto* data = dptr();
     if (!data->manager) {
@@ -763,7 +763,7 @@ void PluginManagerDialog::installPlugin(vine::appfw::PluginScope scope)
         data->message_label->setText(QStringLiteral("已注册（") + scopeLabel(scope) + QStringLiteral("）：") + file
                                      + QStringLiteral("，重启后加载。"));
     }
-    else if (scope == vine::appfw::PluginScope::AllUsers) {
+    else if (scope == vn::appfw::PluginScope::AllUsers) {
         data->message_label->setText(QStringLiteral("为所有用户注册失败（需要管理员权限，或文件不存在）：") + file
                                      + QStringLiteral("；可改用“仅当前用户”安装。"));
     }
@@ -834,7 +834,7 @@ void PluginManagerDialog::togglePluginEnabled()
     showDetail(name);
 }
 
-void PluginManagerDialog::showDetail(const vine::String& name)
+void PluginManagerDialog::showDetail(const vn::String& name)
 {
     auto* data = dptr();
     if (name.empty() || !data->manager) {
@@ -859,7 +859,7 @@ void PluginManagerDialog::showDetail(const vine::String& name)
                                 : id;
 
     // ---- Header: icon, title, identity, vendor contact, state badge ----
-    data->icon_label->setPixmap(data->iconFor(entry != nullptr ? entry->info.icon : vine::String{}, 56));
+    data->icon_label->setPixmap(data->iconFor(entry != nullptr ? entry->info.icon : vn::String{}, 56));
     data->title_label->setText(display);
 
     QString subtitle = id;
@@ -894,7 +894,7 @@ void PluginManagerDialog::showDetail(const vine::String& name)
     data->status_label->setText(stateExplanation(entry));
 
     // ---- Actions: only what can take effect is shown ----
-    const bool toggleable = entry != nullptr && entry->scope != vine::appfw::PluginScope::BuiltIn && !entry->skipped;
+    const bool toggleable = entry != nullptr && entry->scope != vn::appfw::PluginScope::BuiltIn && !entry->skipped;
     data->toggle_btn->setVisible(toggleable);
     if (toggleable) {
         data->toggle_btn->setText(entry->enabled ? QStringLiteral("禁用插件（重启后生效）")
@@ -912,7 +912,7 @@ void PluginManagerDialog::showDetail(const vine::String& name)
     data->desc_label->setText(entry != nullptr && !entry->info.description.empty()
                                   ? Convert::toQString(entry->info.description)
                                   : QStringLiteral("—"));
-    const auto value = [](const vine::String& text) { return text.empty() ? QStringLiteral("—") : Convert::toQString(text); };
+    const auto value = [](const vn::String& text) { return text.empty() ? QStringLiteral("—") : Convert::toQString(text); };
 
     data->id_label->setText(display == id ? id : display + QStringLiteral("（") + id + QStringLiteral("）"));
     data->version_label->setText(entry != nullptr ? value(entry->info.version) : QStringLiteral("—"));
@@ -929,7 +929,7 @@ void PluginManagerDialog::showDetail(const vine::String& name)
     // The version the library was built with (PluginAbi): a plugin compiled against
     // another framework build is usually the first thing to check when it misbehaves.
     data->built_label->setText(entry != nullptr ? value(entry->framework_version) : QStringLiteral("—"));
-    data->built_label->setToolTip(QStringLiteral("本程序内置的框架版本：%1").arg(QStringLiteral(V_APPFW_VERSION)));
+    data->built_label->setToolTip(QStringLiteral("本程序内置的框架版本：%1").arg(QStringLiteral(VN_APPFW_VERSION)));
     data->email_label->setText(entry != nullptr && !entry->info.email.empty()
                                    ? QStringLiteral("<a href=\"mailto:%1\">%1</a>")
                                          .arg(Convert::toQString(entry->info.email).toHtmlEscaped())
@@ -974,4 +974,4 @@ inline auto PluginManagerDialog::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

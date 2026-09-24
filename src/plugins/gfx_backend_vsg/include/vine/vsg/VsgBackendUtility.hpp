@@ -30,7 +30,7 @@
 
 #include <vine/vsg/VsgFwd.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -112,7 +112,7 @@ std::vector<std::pair<std::uint32_t, std::uint32_t>> declaredBindings(const std:
  * @param binding Binding within that set.
  * @return true when a stage declares it.
  */
-bool programDeclaresBinding(vine::raw_ptr<const vine::graphics::ShaderProgram> program, std::uint32_t set,
+bool programDeclaresBinding(vn::raw_ptr<const vn::graphics::ShaderProgram> program, std::uint32_t set,
                             std::uint32_t binding);
 
 /**
@@ -127,7 +127,7 @@ bool programDeclaresBinding(vine::raw_ptr<const vine::graphics::ShaderProgram> p
  * @param define  Define name to look for.
  * @return true when at least one stage lists it.
  */
-bool programImportsDefine(vine::raw_ptr<const vine::graphics::ShaderProgram> program, const std::string& define);
+bool programImportsDefine(vn::raw_ptr<const vn::graphics::ShaderProgram> program, const std::string& define);
 
 /**
  * @brief Names a Vulkan object so validation messages and debuggers identify it.
@@ -168,7 +168,7 @@ bool nameVulkanObject(const ::vsg::Device& device, std::uint64_t handle, VkObjec
  * @param surf_h   Target (or surface) height in device pixels.
  * @return The rectangle to draw into, in device pixels (never empty while the target has an extent).
  */
-vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewport>& viewport, int surf_w, int surf_h);
+vn::graphics::Viewport passDrawRect(const std::optional<vn::graphics::Viewport>& viewport, int surf_w, int surf_h);
 
 /**
  * @brief The oldest Vulkan version a session may run on.
@@ -217,4 +217,4 @@ bool onHostWindow(const ::vsg::ref_ptr<::vsg::Window>& window);
 
 } // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END

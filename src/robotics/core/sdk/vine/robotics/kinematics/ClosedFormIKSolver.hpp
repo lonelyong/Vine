@@ -4,11 +4,11 @@
 
 #include <vine/robotics/kinematics/IKSolver.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
-class V_ROBOTICS_CORE_API ClosedFormIKSolver : public IKSolver {
+class VN_ROBOTICS_CORE_API ClosedFormIKSolver : public IKSolver {
 
     using IKSolver::IKSolver;
 };
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

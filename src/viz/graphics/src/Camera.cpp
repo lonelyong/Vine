@@ -2,9 +2,9 @@
 
 #include <vine/math/Transform3.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(Camera, vine::Object);
+VN_OBJECT_META_IMPL(Camera, vn::Object);
 
 Camera::Camera()
 {
@@ -34,8 +34,8 @@ void Camera::setViewMatrixAsLookAt(const Vec3d& eye, const Vec3d& center, const 
     eye_ = eye;
     center_ = center;
     up_ = up.normalized();
-    view_ = vine::math::lookAt(vine::math::Point3d(eye.x, eye.y, eye.z),
-                               vine::math::Point3d(center.x, center.y, center.z),
+    view_ = vn::math::lookAt(vn::math::Point3d(eye.x, eye.y, eye.z),
+                               vn::math::Point3d(center.x, center.y, center.z),
                                up_);
 }
 
@@ -46,8 +46,8 @@ void Camera::setProjectionMatrixAsPerspective(double fovy, double aspect, double
     aspect_ratio_ = aspect;
     near_plane_ = zNear;
     far_plane_ = zFar;
-    const double fov_rad = fovy * vine::math::DEG_TO_RAD;
-    projection_ = vine::math::perspective<double>(fov_rad, aspect, zNear, zFar);
+    const double fov_rad = fovy * vn::math::DEG_TO_RAD;
+    projection_ = vn::math::perspective<double>(fov_rad, aspect, zNear, zFar);
 }
 
 void Camera::setProjectionMatrixAsOrtho(double left, double right, double bottom, double top,
@@ -63,7 +63,7 @@ void Camera::setProjectionMatrixAsOrtho(double left, double right, double bottom
     ortho_top_    = top;
     near_plane_ = zNear;
     far_plane_  = zFar;
-    projection_ = vine::math::ortho<double>(left, right, bottom, top, zNear, zFar);
+    projection_ = vn::math::ortho<double>(left, right, bottom, top, zNear, zFar);
 }
 
 Vec3d Camera::eye() const
@@ -141,7 +141,7 @@ Ray Camera::screenToWorldRay(const Vec2d& screenPos) const
     const double ndc_x = (2.0 * screenPos.x) - 1.0;
     const double ndc_y = 1.0 - (2.0 * screenPos.y);
 
-    // The basis IS the view matrix's (its rows are right / up / backward — see vine::math::lookAt), so a
+    // The basis IS the view matrix's (its rows are right / up / backward — see vn::math::lookAt), so a
     // ray cannot aim anywhere the rendered picture is not: a second hand-rolled look-at would agree only
     // while the up vector happens to be perpendicular to the view direction, and divide by a length near
     // zero the moment it is not (lookAt resolves that case by picking a reference axis; a bare cross
@@ -161,7 +161,7 @@ Ray Camera::screenToWorldRay(const Vec2d& screenPos) const
         return Ray(origin, forward);
     }
     // Perspective: unproject through the near plane.
-    const double fov_rad = fov_ * vine::math::DEG_TO_RAD;
+    const double fov_rad = fov_ * vn::math::DEG_TO_RAD;
     const double tan_half = std::tan(fov_rad * 0.5);
     const double x = ndc_x * tan_half * aspect_ratio_;
     const double y = ndc_y * tan_half;
@@ -169,4 +169,4 @@ Ray Camera::screenToWorldRay(const Vec2d& screenPos) const
     return Ray(eye_, dir);
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

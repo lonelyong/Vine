@@ -2,7 +2,7 @@
 
 #include <vine/appfw/gui/Window.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief About dialog skeleton.
@@ -11,8 +11,8 @@ V_APPFWGUI_NS_BEGIN
  * framework only provides the frame and placeholder text; each application (or
  * plugin) sets its own content through the setters before showing it.
  */
-class V_APPFW_API AboutDialog : public Window {
-    V_OBJECT_META_DECL;
+class VN_APPFW_API AboutDialog : public Window {
+    VN_OBJECT_META_DECL;
 
   public:
     AboutDialog();
@@ -39,4 +39,4 @@ class V_APPFW_API AboutDialog : public Window {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

@@ -49,7 +49,7 @@
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief The block set: one dynamic uniform binding per block the shape declares. */
 class BlockDescriptors
@@ -257,4 +257,4 @@ class BlockDescriptors
  */
 [[nodiscard]] std::vector<BlockDescriptors::Binding> blockShapeOf(const ProgramAbi& abi, std::uint32_t set);
 
-V_VSG_NS_END
+VN_VSG_NS_END

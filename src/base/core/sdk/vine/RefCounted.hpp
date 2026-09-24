@@ -4,7 +4,7 @@
 
 #include <atomic>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief CRTP mixin providing intrusive strong reference counting.
@@ -82,4 +82,4 @@ class RefCounted {
     mutable std::atomic<unsigned long> refs_{ 0 };
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

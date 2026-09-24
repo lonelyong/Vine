@@ -7,7 +7,7 @@
 #include <vine/vsg/api/ContentPipeline.hpp>
 #include <vine/vsg/api/ProgramVariant.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
@@ -160,7 +160,7 @@ struct ContentSets::Data
             case ImageOrigin::Material:
             {
                 detail::TextureReject reason = detail::TextureReject::Ok;
-                map = images->acquire(static_cast<const vine::graphics::Texture*>(key.source.texture), reason);
+                map = images->acquire(static_cast<const vn::graphics::Texture*>(key.source.texture), reason);
                 // The DECLARED kind is the contract a descriptor write has to satisfy: a cube declaration
                 // cannot take a 2D view and a 2D declaration cannot take a view of a six-layer image (an
                 // invalid descriptor, not a wrong picture - see MaterialImages' fallback note). A map that is
@@ -368,4 +368,4 @@ void ContentSets::clear()
     d->refused   = 0U;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

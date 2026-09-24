@@ -4,7 +4,7 @@
 
 #include <stop_token>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief Token that can be polled to observe a cancellation request.
@@ -20,4 +20,4 @@ using CancellationToken = std::stop_token;
  */
 using CancellationSource = std::stop_source;
 
-V_CORE_NS_END
+VN_CORE_NS_END

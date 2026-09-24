@@ -5,7 +5,7 @@
 
 #include <vine/IHierarchyNode.hpp>
 
-using vine::IHierarchyNode;
+using vn::IHierarchyNode;
 
 namespace
 {

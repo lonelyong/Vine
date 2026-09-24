@@ -5,7 +5,7 @@
 
 #include <vine/String.hpp>
 
-V_SYSTEM_NS_BEGIN
+VN_SYSTEM_NS_BEGIN
 
 /**
  * @brief Provides information about processes and basic process operations.
@@ -14,7 +14,7 @@ V_SYSTEM_NS_BEGIN
  * no process is spawned here. kill() is the only operation and terminates a
  * process forcefully.
  */
-class V_SYSTEM_API Process {
+class VN_SYSTEM_API Process {
 
   public:
     /**
@@ -61,4 +61,4 @@ class V_SYSTEM_API Process {
     static bool kill(int pid);
 };
 
-V_SYSTEM_NS_END
+VN_SYSTEM_NS_END

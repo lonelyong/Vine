@@ -14,7 +14,7 @@
 
 #include "SpdlogInternal.hpp"
 
-V_LOGGING_NS_BEGIN
+VN_LOGGING_NS_BEGIN
 
 namespace
 {
@@ -103,4 +103,4 @@ LogSink LogSink::function(std::function<void(LogLevel, const std::string&)> fn)
     return result;
 }
 
-V_LOGGING_NS_END
+VN_LOGGING_NS_END

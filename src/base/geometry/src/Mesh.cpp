@@ -5,18 +5,18 @@
 #include <utility>
 #include <vector>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
-V_OBJECT_META_IMPL(Mesh, Shape)
+VN_OBJECT_META_IMPL(Mesh, Shape)
 
 // The typed accessors hand out Vec3f / Vec2f views over the SAME scalars the renderer reads, so the two
 // layouts must match exactly. Vector3 is a union of `{T x, y, z}` and `T data[3]`, which is what makes the
 // reinterpretation sound; these asserts make a future change (padding, reordering, a wider element) fail the
 // build instead of silently misreading every vertex.
-static_assert(sizeof(vine::math::Vec3f) == Mesh::kVec3Components * sizeof(float));
-static_assert(alignof(vine::math::Vec3f) == alignof(float));
-static_assert(sizeof(vine::math::Vec2f) == Mesh::kVec2Components * sizeof(float));
-static_assert(alignof(vine::math::Vec2f) == alignof(float));
+static_assert(sizeof(vn::math::Vec3f) == Mesh::kVec3Components * sizeof(float));
+static_assert(alignof(vn::math::Vec3f) == alignof(float));
+static_assert(sizeof(vn::math::Vec2f) == Mesh::kVec2Components * sizeof(float));
+static_assert(alignof(vn::math::Vec2f) == alignof(float));
 
 namespace
 {
@@ -27,9 +27,9 @@ namespace
  * @param scalars Scalars of the attribute (`kVec3Components` per element).
  * @return The same bytes as Vec3f elements.
  */
-std::span<const vine::math::Vec3f> asVec3(std::span<const float> scalars)
+std::span<const vn::math::Vec3f> asVec3(std::span<const float> scalars)
 {
-    return { reinterpret_cast<const vine::math::Vec3f*>(scalars.data()),
+    return { reinterpret_cast<const vn::math::Vec3f*>(scalars.data()),
              scalars.size() / Mesh::kVec3Components };
 }
 
@@ -39,9 +39,9 @@ std::span<const vine::math::Vec3f> asVec3(std::span<const float> scalars)
  * @param scalars Scalars of the attribute (`kVec2Components` per element).
  * @return The same bytes as Vec2f elements.
  */
-std::span<const vine::math::Vec2f> asVec2(std::span<const float> scalars)
+std::span<const vn::math::Vec2f> asVec2(std::span<const float> scalars)
 {
-    return { reinterpret_cast<const vine::math::Vec2f*>(scalars.data()),
+    return { reinterpret_cast<const vn::math::Vec2f*>(scalars.data()),
              scalars.size() / Mesh::kVec2Components };
 }
 
@@ -87,17 +87,17 @@ Mesh::Mesh()
 {
 }
 
-std::span<const vine::math::Vec3f> Mesh::positions() const
+std::span<const vn::math::Vec3f> Mesh::positions() const
 {
     return asVec3(positions_->view());
 }
 
-std::span<const vine::math::Vec3f> Mesh::normals() const
+std::span<const vn::math::Vec3f> Mesh::normals() const
 {
     return asVec3(normals_->view());
 }
 
-std::span<const vine::math::Vec2f> Mesh::texcoords() const
+std::span<const vn::math::Vec2f> Mesh::texcoords() const
 {
     return asVec2(texcoords_->view());
 }
@@ -165,4 +165,4 @@ void Mesh::clearAttributes()
     aabb_ = Aabbf::empty();
 }
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

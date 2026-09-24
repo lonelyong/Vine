@@ -2,7 +2,7 @@
 
 #include <vine/Colorf.hpp>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 std::uint32_t Color::toRgba32() const noexcept
 {
@@ -29,4 +29,4 @@ const Color Color::Red{ 255, 0, 0, 255 };
 const Color Color::Green{ 0, 255, 0, 255 };
 const Color Color::Blue{ 0, 0, 255, 255 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

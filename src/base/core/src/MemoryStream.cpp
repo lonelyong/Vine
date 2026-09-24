@@ -6,7 +6,7 @@
 #include <span>
 #include <utility>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 MemoryStreamBuf::MemoryStreamBuf() = default;
 
@@ -1429,4 +1429,4 @@ void SpanStream::clearData() noexcept
     this->std::ios::clear();
 }
 
-V_CORE_NS_END
+VN_CORE_NS_END

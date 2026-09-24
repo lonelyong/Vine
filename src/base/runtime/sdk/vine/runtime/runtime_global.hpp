@@ -1,19 +1,19 @@
 ﻿#pragma once
 
-#include <vine/vi_global.hpp>
+#include <vine/vine_global.hpp>
 
-#ifdef V_RUNTIME_LIB
-#    define V_RUNTIME_API V_EXPORT
+#ifdef VN_RUNTIME_LIB
+#    define VN_RUNTIME_API VN_EXPORT
 #else
-#    define V_RUNTIME_API V_IMPORT
+#    define VN_RUNTIME_API VN_IMPORT
 #endif
 
-#define V_RUNTIME_NS_BEGIN                                                                                                                                     \
-    namespace V_ROOT_NS                                                                                                                                        \
+#define VN_RUNTIME_NS_BEGIN                                                                                                                                     \
+    namespace VN_ROOT_NS                                                                                                                                        \
     {                                                                                                                                                          \
     namespace runtime                                                                                                                                          \
     {
 
-#define V_RUNTIME_NS_END                                                                                                                                       \
+#define VN_RUNTIME_NS_END                                                                                                                                       \
     }                                                                                                                                                          \
     }

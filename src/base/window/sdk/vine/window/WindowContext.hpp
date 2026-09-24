@@ -11,7 +11,7 @@
 #include "InputEvent.hpp"
 #include "WindowEvent.hpp"
 
-V_WINDOW_NS_BEGIN
+VN_WINDOW_NS_BEGIN
 
 /**
  * @brief Read-only window data context shared between a host and the render layer.
@@ -29,8 +29,8 @@ V_WINDOW_NS_BEGIN
  * point used both by native event translation and by synthetic event
  * injection (tests).
  */
-class V_WINDOW_API WindowContext : public Object, public RefCounted<WindowContext> {
-    V_OBJECT_META_DECL;
+class VN_WINDOW_API WindowContext : public Object, public RefCounted<WindowContext> {
+    VN_OBJECT_META_DECL;
 
   public:
     ~WindowContext() override = default;
@@ -129,4 +129,4 @@ void WindowContext::postEvent(const TEvent& event)
     }
 }
 
-V_WINDOW_NS_END
+VN_WINDOW_NS_END

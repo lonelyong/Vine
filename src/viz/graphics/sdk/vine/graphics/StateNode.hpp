@@ -8,7 +8,7 @@
 // unit that destroys a StateNode instantiates the reference-count hooks and needs the complete type.
 #include "Material.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class ShaderProgram;
 using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
@@ -93,7 +93,7 @@ enum class BlendFactor
 /**
  * @brief Concrete depth-test state (defaults applied).
  */
-struct V_GRAPHICS_API DepthState
+struct VN_GRAPHICS_API DepthState
 {
     bool      test    = true;                ///< Depth test enabled.
     bool      write   = true;                ///< Depth writes enabled.
@@ -115,7 +115,7 @@ inline bool operator!=(const DepthState& lhs, const DepthState& rhs)
 /**
  * @brief Concrete blend state (defaults applied).
  */
-struct V_GRAPHICS_API BlendState
+struct VN_GRAPHICS_API BlendState
 {
     bool        enabled = false;                           ///< Blending enabled.
     BlendFactor src     = BlendFactor::SrcAlpha;           ///< Source blend factor.
@@ -141,7 +141,7 @@ inline bool operator!=(const BlendState& lhs, const BlendState& rhs)
  * StateNode". Only the items a node sets take part in the fold towards a
  * leaf's effective state.
  */
-struct V_GRAPHICS_API RenderState
+struct VN_GRAPHICS_API RenderState
 {
     std::optional<DepthState>  depth;        ///< Depth test/write/compare override.
     std::optional<CullMode>    cullMode;     ///< Face culling override.
@@ -187,7 +187,7 @@ inline bool operator!=(const RenderState& lhs, const RenderState& rhs)
  * the defaults below (which match the backend's current default pipeline
  * state, so a scene without StateNodes resolves to today's behaviour).
  */
-struct V_GRAPHICS_API ResolvedRenderState
+struct VN_GRAPHICS_API ResolvedRenderState
 {
     DepthState   depth;                        ///< Depth state (defaults: test/write on, Less).
     CullMode     cullMode = CullMode::None;    ///< Face culling (default: none).
@@ -226,8 +226,8 @@ inline bool operator!=(const ResolvedRenderState& lhs, const ResolvedRenderState
  * The model mirrors vsg::StateGroup / the OpenGL state stack and is
  * backend-agnostic.
  */
-class V_GRAPHICS_API StateNode : public Group {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API StateNode : public Group {
+    VN_OBJECT_META_DECL;
 
   public:
     StateNode();
@@ -343,7 +343,7 @@ using StateNodePtr = intrusive_ptr<StateNode>;
  * @param node Leaf or intermediate node to fold state for.
  * @return The folded optional state block.
  */
-V_GRAPHICS_API RenderState collectRenderState(raw_ptr<const Node> node);
+VN_GRAPHICS_API RenderState collectRenderState(raw_ptr<const Node> node);
 
 /**
  * @brief Applies default values to a folded optional state block.
@@ -352,7 +352,7 @@ V_GRAPHICS_API RenderState collectRenderState(raw_ptr<const Node> node);
  * @return Concrete state with defaults applied, usable as a pipeline-variant
  *         key component.
  */
-V_GRAPHICS_API ResolvedRenderState resolveRenderState(const RenderState& state);
+VN_GRAPHICS_API ResolvedRenderState resolveRenderState(const RenderState& state);
 
 /**
  * @brief Computes the effective render state for a node in one step.
@@ -362,7 +362,7 @@ V_GRAPHICS_API ResolvedRenderState resolveRenderState(const RenderState& state);
  * @param node Leaf or intermediate node to resolve state for.
  * @return The node's effective (resolved) render state.
  */
-V_GRAPHICS_API ResolvedRenderState effectiveRenderState(raw_ptr<const Node> node);
+VN_GRAPHICS_API ResolvedRenderState effectiveRenderState(raw_ptr<const Node> node);
 
 /**
  * @brief Resolves the effective shader program for a leaf geometry.
@@ -373,7 +373,7 @@ V_GRAPHICS_API ResolvedRenderState effectiveRenderState(raw_ptr<const Node> node
  * @param node Leaf (Geometry) or intermediate node to resolve for.
  * @return Effective program, or null for the engine default.
  */
-V_GRAPHICS_API ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node);
+VN_GRAPHICS_API ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node);
 
 /**
  * @brief Resolves the material a node's Geometry renders with.
@@ -386,6 +386,6 @@ V_GRAPHICS_API ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node);
  * @param node Node to resolve for (typically a Geometry).
  * @return The material to render with, or null when neither the leaf nor any ancestor sets one.
  */
-V_GRAPHICS_API MaterialPtr effectiveMaterial(raw_ptr<const Node> node);
+VN_GRAPHICS_API MaterialPtr effectiveMaterial(raw_ptr<const Node> node);
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

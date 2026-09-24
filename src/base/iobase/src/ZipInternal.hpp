@@ -14,7 +14,7 @@
 
 #include "VfsInternal.hpp"
 
-V_IO_NS_BEGIN
+VN_IO_NS_BEGIN
 
 namespace detail
 {
@@ -293,4 +293,4 @@ inline std::vector<VfsEntryInfo> toEntryInfos(const std::vector<StoredEntry>& st
 
 } // namespace detail
 
-V_IO_NS_END
+VN_IO_NS_END

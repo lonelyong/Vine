@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <mutex>
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 /**
  * @brief Counting semaphore that can be awaited from a coroutine.
@@ -217,4 +217,4 @@ inline void AsyncSemaphore::dequeue(AcquireAwaiter& a) noexcept
     a.next_ = nullptr;
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

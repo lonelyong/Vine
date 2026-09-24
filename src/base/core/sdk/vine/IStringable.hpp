@@ -7,13 +7,13 @@
 #include "String.hpp"
 #include "Type.hpp"
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief Interface for objects that can render themselves as a String.
  */
 class IStringable {
-    V_DECLARE_INTERFACE(IStringable)
+    VN_DECLARE_INTERFACE(IStringable)
 
   public:
     virtual ~IStringable() = default;
@@ -34,4 +34,4 @@ concept Stringable = requires(const T& t) {
     { t.toString() } -> std::convertible_to<String>;
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

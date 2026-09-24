@@ -11,7 +11,7 @@
 #include <vine/io/io_global.hpp>
 #include <vine/String.hpp>
 
-V_IO_NS_BEGIN
+VN_IO_NS_BEGIN
 
 /**
  * @brief Real-directory backed VFS (debug backend).
@@ -21,7 +21,7 @@ V_IO_NS_BEGIN
  * write is already immediate. Useful for inspecting what would go into a ZIP
  * package, and for loading from an unpacked tree.
  */
-class V_IOBASE_API DirectoryVfs : public Vfs
+class VN_IOBASE_API DirectoryVfs : public Vfs
 {
   public:
     /**
@@ -207,4 +207,4 @@ class V_IOBASE_API DirectoryVfs : public Vfs
     std::filesystem::path root_;
 };
 
-V_IO_NS_END
+VN_IO_NS_END

@@ -28,21 +28,21 @@
 
 #include <vine/vsg/api/ContentFacts.hpp>
 
-using vine::vsg::ChannelFacts;
-using vine::vsg::ContentFacts;
-using vine::vsg::findGeometry;
-using vine::vsg::findMaterial;
-using vine::vsg::findProgram;
-using vine::vsg::GeometryFacts;
-using vine::vsg::MaterialFacts;
-using vine::vsg::orderGeometryRows;
-using vine::vsg::orderMaterialRows;
-using vine::vsg::orderProgramRows;
-using vine::vsg::ProgramFacts;
-using vine::vsg::ProgramVariant;
-using vine::vsg::core::DrawKind;
-using vine::vsg::core::ProgramRef;
-using vine::vsg::core::StreamKind;
+using vn::vsg::ChannelFacts;
+using vn::vsg::ContentFacts;
+using vn::vsg::findGeometry;
+using vn::vsg::findMaterial;
+using vn::vsg::findProgram;
+using vn::vsg::GeometryFacts;
+using vn::vsg::MaterialFacts;
+using vn::vsg::orderGeometryRows;
+using vn::vsg::orderMaterialRows;
+using vn::vsg::orderProgramRows;
+using vn::vsg::ProgramFacts;
+using vn::vsg::ProgramVariant;
+using vn::vsg::core::DrawKind;
+using vn::vsg::core::ProgramRef;
+using vn::vsg::core::StreamKind;
 
 namespace
 {
@@ -182,10 +182,10 @@ void buildRows(const Identities& ids, Rows& out)
 
     // MATERIALS: the default (null) entry, the three identities, a REPLACED pair for one identity (two rows,
     // one identity: the first is the answer - see findMaterial) and a malformed block for another.
-    out.addMaterial(nullptr, 0U, sizeof(vine::graphics::VineMaterialBlock));
-    out.addMaterial(&ids.materials[0], 1U, sizeof(vine::graphics::VineMaterialBlock));
-    out.addMaterial(&ids.materials[1], 1U, sizeof(vine::graphics::VineMaterialBlock));
-    out.addMaterial(&ids.materials[1], 2U, sizeof(vine::graphics::VineMaterialBlock));
+    out.addMaterial(nullptr, 0U, sizeof(vn::graphics::VineMaterialBlock));
+    out.addMaterial(&ids.materials[0], 1U, sizeof(vn::graphics::VineMaterialBlock));
+    out.addMaterial(&ids.materials[1], 1U, sizeof(vn::graphics::VineMaterialBlock));
+    out.addMaterial(&ids.materials[1], 2U, sizeof(vn::graphics::VineMaterialBlock));
     out.addMaterial(&ids.materials[2], 1U, 8U);  // not the ABI's size: Malformed
 }
 

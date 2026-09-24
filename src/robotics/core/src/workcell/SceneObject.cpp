@@ -2,7 +2,7 @@
 
 #include <vine/robotics/workcell/Workcell.hpp>
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 raw_ptr<SceneObject> SceneObject::parentObject() const
 {
@@ -40,4 +40,4 @@ bool SceneObject::isDescendantOf(raw_ptr<const SceneObject> ancestor) const
     return ancestor && ancestor->baseFrame()->isAncestorOf(base_frame_.get());
 }
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

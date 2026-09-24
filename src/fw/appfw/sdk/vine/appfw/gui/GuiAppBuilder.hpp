@@ -2,7 +2,7 @@
 
 #include <vine/appfw/AppBuilder.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class GuiApplication;
 
@@ -17,6 +17,6 @@ class GuiApplication;
  * @param argv Command line arguments.
  * @return The initialized GUI application.
  */
-V_APPFW_API std::unique_ptr<GuiApplication> createGuiApplication(const AppConfig& config, int argc, char** argv);
+VN_APPFW_API std::unique_ptr<GuiApplication> createGuiApplication(const AppConfig& config, int argc, char** argv);
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

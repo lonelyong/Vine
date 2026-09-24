@@ -2,16 +2,16 @@
 
 ## 归属与分工
 
-- **base / `vi::Progress`**：`ProgressIndicator`（[0,1] 标尺、原子位置、外部取消 token）、
+- **base / `vn::Progress`**：`ProgressIndicator`（[0,1] 标尺、原子位置、外部取消 token）、
   `ProgressRange` / `ProgressScope`（把标尺切成区间）。零外部依赖，插件和测试可以直接用来算进度。
-- **appfw / `vi::Appfw`**：`ProgressHost`（`sdk/vine/appfw/ProgressHost.hpp`）——进程级注册表、
+- **appfw / `vn::Appfw`**：`ProgressHost`（`sdk/vine/appfw/ProgressHost.hpp`）——进程级注册表、
   前台栈、label、取消源共享、变更通知。"应用此刻在干什么"是应用状态，而且通知要用 Core 的 `Signal`
   （base 不该依赖 Core），所以宿主归 appfw。
 - 2026-09-18 之前宿主在 base：那里用不了 `Signal`，只好自带回调且只能挂**一个**观察者。
   这是层约束逼出来的降级设计，搬迁后 GUI 呈现器与控制台消费者可以各自订阅。
-- 依赖方向：appfw → `vi::Progress`。`ProgressHost.hpp` include indicator/range/scope 且按值返回
-  range/scope，所以 appfw 里 `vi::Progress` 是 **PUBLIC** 链接。
-- `V_APPFW_PLUGIN_ABI_VERSION` 2u → **3u**：公共 SDK 头变了（宿主换了 include 路径与命名空间），
+- 依赖方向：appfw → `vn::Progress`。`ProgressHost.hpp` include indicator/range/scope 且按值返回
+  range/scope，所以 appfw 里 `vn::Progress` 是 **PUBLIC** 链接。
+- `VN_APPFW_PLUGIN_ABI_VERSION` 2u → **3u**：公共 SDK 头变了（宿主换了 include 路径与命名空间），
   插件必须重编。
 
 ## 推送模型（原来是拉）
@@ -54,7 +54,7 @@
 
 | 用例 | 覆盖 |
 | --- | --- |
-| `tests/test_progress/ProgressIndicatorTest.cpp`（9 例，只链 `vi::Progress vi::Core`） | 位置算术、range 一次性、嵌套 scope、回调合流、到终点必通知、重置再通知、跨线程读、无回调也无害 |
+| `tests/test_progress/ProgressIndicatorTest.cpp`（9 例，只链 `vn::Progress vn::Core`） | 位置算术、range 一次性、嵌套 scope、回调合流、到终点必通知、重置再通知、跨线程读、无回调也无害 |
 | `tests/test_gui/ProgressHostTest.cpp`（15 例） | 注册表/前台栈/label/取消，以及 changed() 的注册、label（值相同不发）、前台压栈/弹出、注销、合流（1 万条目约 100 次）、句柄析构即静音 |
 | `ConsoleProgressReporterTest.*`（3 例，`test_gui`） | 手动步进的节流与收尾、通知驱动 + `stop()` 后静音、`ConsoleUserIO` 端到端打印 |
 | `ProgressPresenterTest.*`（`test_gui`） | 取消按钮、`isBusy()` |
@@ -63,7 +63,7 @@
 
 - **保留 base 里的自查回调 + 单观察者**：层约束逼出来的降级（写一个更差的 Signal），搬迁后作废。
 - **把整个 progress 模块搬进 appfw**：`ProgressIndicator`/Range/Scope 是零依赖原语，插件与 base 测试
-  直接可用；整搬会让 `test_progress` 被迫链 `vi::Appfw`（Qt/Graphics/SARibbon）。
+  直接可用；整搬会让 `test_progress` 被迫链 `vn::Appfw`（Qt/Graphics/SARibbon）。
 - **给控制台消费者保留常驻轮询循环**：事件驱动 + 一次性唤醒已足够，且空闲零唤醒；
   轮询只在需要"证明它还在跑"时才有价值，而那正是 show_delay 那一次唤醒。
 - **让宿主自己抱住 indicator 的钩子以外的方式**（例如宿主轮询自己的 indicator）：那就退回了拉模型。

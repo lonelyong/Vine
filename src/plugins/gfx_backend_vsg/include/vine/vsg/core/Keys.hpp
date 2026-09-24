@@ -39,7 +39,7 @@
  * means touching the table (and the test), which is the moment to ask the question again. That is
  * deliberately more friction than a comment and deliberately less than a code generator.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -150,8 +150,8 @@ enum class DrawKind : std::uint8_t
  */
 struct RenderPassCompatibility
 {
-    std::vector<vine::graphics::RenderTarget::ColorFormat> color_formats;  ///< One per colour attachment.
-    std::optional<vine::graphics::RenderTarget::DepthFormat> depth_format; ///< Absent for colour-only.
+    std::vector<vn::graphics::RenderTarget::ColorFormat> color_formats;  ///< One per colour attachment.
+    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format; ///< Absent for colour-only.
     std::vector<std::uint32_t> device_color_formats;  ///< The same attachments as the device spells them.
     std::uint32_t              device_depth_format{0}; ///< The device's depth format; 0 = no depth.
     std::uint32_t              samples{1};             ///< Sample count.
@@ -226,7 +226,7 @@ struct PipelineKey
     /// triangle-baked pipeline is undefined behaviour rather than a picture - and the previous
     /// implementation shipped exactly that. One pipeline per class is therefore the only sound shape,
     /// and the engine's enumeration has one value per class, so the value itself is the honest key.
-    vine::graphics::Topology topology{vine::graphics::Topology::Triangles};
+    vn::graphics::Topology topology{vn::graphics::Topology::Triangles};
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const PipelineKey& other) const noexcept;
@@ -248,11 +248,11 @@ struct PipelineKeyHash
 /** @brief Per-draw state delivered with set commands: changing it must never recompile anything. */
 struct DynamicState
 {
-    vine::graphics::DepthMode     depth{vine::graphics::DepthMode::TestAndWrite};  ///< Depth test/write policy.
-    vine::graphics::CullMode      cull_mode{vine::graphics::CullMode::None};       ///< Face culling.
-    vine::graphics::PolygonMode   polygon_mode{vine::graphics::PolygonMode::Fill}; ///< Rasterisation mode.
-    vine::graphics::Topology      topology{vine::graphics::Topology::Triangles};   ///< Primitive assembly.
-    vine::graphics::BlendState    blend;                                           ///< Blend state.
+    vn::graphics::DepthMode     depth{vn::graphics::DepthMode::TestAndWrite};  ///< Depth test/write policy.
+    vn::graphics::CullMode      cull_mode{vn::graphics::CullMode::None};       ///< Face culling.
+    vn::graphics::PolygonMode   polygon_mode{vn::graphics::PolygonMode::Fill}; ///< Rasterisation mode.
+    vn::graphics::Topology      topology{vn::graphics::Topology::Triangles};   ///< Primitive assembly.
+    vn::graphics::BlendState    blend;                                           ///< Blend state.
 
     /** @brief Compares the whole state. */
     [[nodiscard]] bool operator==(const DynamicState& other) const noexcept;
@@ -278,8 +278,8 @@ struct DynamicState
  * @param pass_depth     The pass' depth handling, used when the content authored none.
  * @return The state to deliver with a set command (never part of an identity - see the file note).
  */
-[[nodiscard]] DynamicState resolveDynamicState(const vine::graphics::ResolvedRenderState& state, bool depth_explicit,
-                                               vine::graphics::DepthMode pass_depth) noexcept;
+[[nodiscard]] DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state, bool depth_explicit,
+                                               vn::graphics::DepthMode pass_depth) noexcept;
 
 /**
  * @brief The per-frame data of one draw: written into a buffer, never part of an identity.
@@ -290,7 +290,7 @@ struct DynamicState
  */
 struct InstanceSlot
 {
-    vine::math::Mat4d model_matrix;          ///< World-space model matrix.
+    vn::math::Mat4d model_matrix;          ///< World-space model matrix.
     float         opacity{1.0F};            ///< Effective opacity (the engine's only transparency channel).
     const void*   material{nullptr};        ///< Material identity.
     std::uint64_t material_revision{0};     ///< Material revision (drives the in-place refresh).
@@ -312,4 +312,4 @@ struct KeyAuditEntry
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

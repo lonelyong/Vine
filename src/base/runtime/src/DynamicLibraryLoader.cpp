@@ -11,7 +11,7 @@
 #    include <dlfcn.h>
 #endif
 
-V_RUNTIME_NS_BEGIN
+VN_RUNTIME_NS_BEGIN
 
 namespace
 {
@@ -211,4 +211,4 @@ std::size_t DynamicLibraryLoader::count() const
     return d->libs.size();
 }
 
-V_RUNTIME_NS_END
+VN_RUNTIME_NS_END

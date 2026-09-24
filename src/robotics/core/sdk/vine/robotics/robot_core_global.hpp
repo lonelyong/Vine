@@ -2,45 +2,45 @@
 
 #include <vine/core_global.hpp>
 
-#ifdef V_ROBOTICSCORE_LIB
-#    define V_ROBOTICS_CORE_API V_EXPORT
+#ifdef VN_ROBOTICSCORE_LIB
+#    define VN_ROBOTICS_CORE_API VN_EXPORT
 #else
-#    define V_ROBOTICS_CORE_API V_IMPORT
+#    define VN_ROBOTICS_CORE_API VN_IMPORT
 #endif
 
-#define V_ROBOTICS_NS_BEGIN                                                                                                                                       \
-    namespace V_ROOT_NS                                                                                                                                        \
+#define VN_ROBOTICS_NS_BEGIN                                                                                                                                       \
+    namespace VN_ROOT_NS                                                                                                                                        \
     {                                                                                                                                                          \
     namespace robotics                                                                                                                                            \
     {
 
-#define V_ROBOTICS_NS_END                                                                                                                                         \
+#define VN_ROBOTICS_NS_END                                                                                                                                         \
     }                                                                                                                                                          \
     }
 
-#define V_ROBOTICS_KINEMATICS_NS_BEGIN                                                                                                                                    \
-    V_ROBOTICS_NS_BEGIN                                                                                                                                           \
+#define VN_ROBOTICS_KINEMATICS_NS_BEGIN                                                                                                                                    \
+    VN_ROBOTICS_NS_BEGIN                                                                                                                                           \
     namespace kinematics                                                                                                                                              \
     {
 
-#define V_ROBOTICS_KINEMATICS_NS_END                                                                                                                                      \
-    V_ROBOTICS_NS_END                                                                                                                                             \
+#define VN_ROBOTICS_KINEMATICS_NS_END                                                                                                                                      \
+    VN_ROBOTICS_NS_END                                                                                                                                             \
     }
 
-#define V_ROBOTICS_WORKCELL_NS_BEGIN                                                                                                                                     \
-    V_ROBOTICS_NS_BEGIN                                                                                                                                             \
+#define VN_ROBOTICS_WORKCELL_NS_BEGIN                                                                                                                                     \
+    VN_ROBOTICS_NS_BEGIN                                                                                                                                             \
     namespace workcell                                                                                                                                                  \
     {
 
-#define V_ROBOTICS_WORKCELL_NS_END                                                                                                                                       \
+#define VN_ROBOTICS_WORKCELL_NS_END                                                                                                                                       \
     }                                                                                                                                                              \
-    V_ROBOTICS_NS_END
+    VN_ROBOTICS_NS_END
 
-#define V_ROBOTICS_PROXIMITY_NS_BEGIN                                                                                                                                     \
-    V_ROBOTICS_NS_BEGIN                                                                                                                                             \
+#define VN_ROBOTICS_PROXIMITY_NS_BEGIN                                                                                                                                     \
+    VN_ROBOTICS_NS_BEGIN                                                                                                                                             \
     namespace proximity                                                                                                                                                  \
     {
 
-#define V_ROBOTICS_PROXIMITY_NS_END                                                                                                                                       \
+#define VN_ROBOTICS_PROXIMITY_NS_END                                                                                                                                       \
     }                                                                                                                                                              \
-    V_ROBOTICS_NS_END
+    VN_ROBOTICS_NS_END

@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 namespace
 {
@@ -20,7 +20,7 @@ std::size_t faceCountOf(Texture::Kind kind) noexcept
 
 } // namespace
 
-V_OBJECT_META_IMPL(Texture, vine::Object);
+VN_OBJECT_META_IMPL(Texture, vn::Object);
 
 const char* Texture::kindName(Kind kind) noexcept
 {
@@ -150,7 +150,7 @@ raw_ptr<const imaging::Image> Texture::layer(int index) const noexcept
     return source(index);
 }
 
-V_OBJECT_META_IMPL(Texture2D, Texture);
+VN_OBJECT_META_IMPL(Texture2D, Texture);
 
 Texture2D::Texture2D(int width, int height, imaging::PixelFormat format, int mip_count)
   : Texture(Kind::D2, width, height, format, mip_count)
@@ -172,7 +172,7 @@ raw_ptr<const imaging::Image> Texture2D::image() const noexcept
     return source(0);
 }
 
-V_OBJECT_META_IMPL(CubeMap, Texture);
+VN_OBJECT_META_IMPL(CubeMap, Texture);
 
 const char* CubeMap::faceName(Face face) noexcept
 {
@@ -214,4 +214,4 @@ raw_ptr<const imaging::Image> CubeMap::faceImage(Face face) const noexcept
     return source(static_cast<int>(face));
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

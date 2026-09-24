@@ -26,7 +26,7 @@
 #include "ControlData.hpp"
 #include "Convert.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 namespace
 {
@@ -120,7 +120,7 @@ class SuggestCloseFilter : public QObject {
 
 } // namespace
 
-V_OBJECT_META_IMPL(ConsolePanel, Control)
+VN_OBJECT_META_IMPL(ConsolePanel, Control)
 
 struct ConsolePanel::Impl : public ControlData {
     /// Owning panel, used by the input handlers to trigger signals.
@@ -136,7 +136,7 @@ struct ConsolePanel::Impl : public ControlData {
     ConsoleTheme theme = ConsoleTheme::dark();
 
     /// Connection to the application theme; cancelling it is the handle's job.
-    vine::Connection theme_handler_{};
+    vn::Connection theme_handler_{};
 
     CommandHistory   history;
     CommandCompleter completer;
@@ -464,4 +464,4 @@ inline auto ConsolePanel::dptr() const -> const Impl*
     return static_cast<const Impl*>(UIElement::d);
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

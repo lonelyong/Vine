@@ -152,9 +152,9 @@ layout(location = 0) in vec3 vine_Vertex;
 layout(location = 1) in vec3 vine_Normal;
 layout(location = 2) in vec4 vine_Color;
 
-layout(location = 0) out vec4 v_color;
-layout(location = 1) out vec3 v_normal_world;
-layout(location = 2) out vec3 v_pos_world;
+layout(location = 0) out vec4 vn_color;
+layout(location = 1) out vec3 vn_normal_world;
+layout(location = 2) out vec3 vn_pos_world;
 
 layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;
 layout(set = 0, binding = 0) uniform FrameUBO { /* 见 4.2 */ } vine_frame;
@@ -164,9 +164,9 @@ void main()
     vec4 mv_pos = pc.modelView * vec4(vine_Vertex, 1.0);
     gl_Position = pc.projection * mv_pos;
     vec4 w = vine_frame.inv_view * mv_pos;
-    v_pos_world = w.xyz / w.w;
-    v_normal_world = normalize(mat3(vine_frame.inv_view) * mat3(pc.modelView) * vine_Normal);
-    v_color = vine_Color;
+    vn_pos_world = w.xyz / w.w;
+    vn_normal_world = normalize(mat3(vine_frame.inv_view) * mat3(pc.modelView) * vine_Normal);
+    vn_color = vine_Color;
 }
 ```
 
@@ -177,9 +177,9 @@ void main()
 
 ```glsl
 #version 450
-layout(location = 0) in vec4 v_color;
-layout(location = 1) in vec3 v_normal_world;
-layout(location = 2) in vec3 v_pos_world;
+layout(location = 0) in vec4 vn_color;
+layout(location = 1) in vec3 vn_normal_world;
+layout(location = 2) in vec3 vn_pos_world;
 layout(location = 0) out vec4 out_color;
 
 layout(set = 0, binding = 0) uniform FrameUBO   { /* 见 4.2 */ } vine_frame;
@@ -188,13 +188,13 @@ layout(set = 1, binding = 0) uniform MaterialUBO{ /* 见 4.2 */ } vine_material;
 
 void main()
 {
-    vec3 base = vine_material.base_color.rgb * v_color.rgb;   // 保 vine_Color 乘法语义
+    vec3 base = vine_material.base_color.rgb * vn_color.rgb;   // 保 vine_Color 乘法语义
     if ((uint(vine_frame.frame.w) & 1u) != 0u) {               // unlit(flat)，全局开关走 FrameUBO
-        out_color = vec4(base, vine_material.base_color.a * v_color.a);
+        out_color = vec4(base, vine_material.base_color.a * vn_color.a);
         return;
     }
-    vec3 N = normalize(v_normal_world);
-    vec3 V = normalize(vine_frame.cam_pos.xyz - v_pos_world);
+    vec3 N = normalize(vn_normal_world);
+    vec3 V = normalize(vine_frame.cam_pos.xyz - vn_pos_world);
     vec3 color = vec3(0.0);
     for (uint i = 0u; i < vine_lights.count; ++i) {
         VineLight L = vine_lights.lights[i];
@@ -213,7 +213,7 @@ void main()
                    * pow(max(dot(N, H), 0.0), vine_material.shininess);
         }
     }
-    out_color = vec4(color, vine_material.base_color.a * v_color.a);
+    out_color = vec4(color, vine_material.base_color.a * vn_color.a);
 }
 ```
 
@@ -356,7 +356,7 @@ void main() { gl_Position = vine_frame.view_proj * vine_draw.model * vec4(positi
 
 ```glsl
 #version 450
-layout(location = 0) in vec2 v_uv;
+layout(location = 0) in vec2 vn_uv;
 layout(set = 0, binding = 0) uniform sampler2D in_SceneColor;   // 槽名=引擎命名产出
 layout(set = 0, binding = 1) uniform sampler2D in_Depth;
 layout(set = 1, binding = 0) uniform VinePost { float exposure; vec4 tint; } params;

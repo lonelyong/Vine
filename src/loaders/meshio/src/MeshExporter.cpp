@@ -14,15 +14,15 @@
 #include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
 
-V_MESHIO_NS_BEGIN
+VN_MESHIO_NS_BEGIN
 
 namespace
 {
 
-using Mesh                = vine::geometry::Mesh;
-using TriangleMesh        = vine::geometry::TriangleMesh;
-using IndexedTriangleMesh = vine::geometry::IndexedTriangleMesh;
-using Vec3f               = vine::math::Vec3f;
+using Mesh                = vn::geometry::Mesh;
+using TriangleMesh        = vn::geometry::TriangleMesh;
+using IndexedTriangleMesh = vn::geometry::IndexedTriangleMesh;
+using Vec3f               = vn::math::Vec3f;
 
 /**
  * @brief RAII owner for a manually built assimp scene.
@@ -82,12 +82,12 @@ void buildAiScene(AiSceneGuard& guard, const Mesh& mesh, const MeshExporter::Opt
 
     MeshData data;
     switch (mesh.shapeType()) {
-      case vine::geometry::ShapeType::IndexedTriangleMesh: {
+      case vn::geometry::ShapeType::IndexedTriangleMesh: {
           const auto& itm = obj_cast<IndexedTriangleMesh>(mesh);
           data            = { itm.positions(), itm.normals(), itm.indices() };
           break;
       }
-      case vine::geometry::ShapeType::TriangleMesh: {
+      case vn::geometry::ShapeType::TriangleMesh: {
           const auto& tm = obj_cast<TriangleMesh>(mesh);
           data           = { tm.positions(), tm.normals(), {} };
           break;
@@ -203,4 +203,4 @@ void MeshExporter::exportAsObj(const Mesh& mesh, const std::filesystem::path& fi
     }
 }
 
-V_MESHIO_NS_END
+VN_MESHIO_NS_END

@@ -18,21 +18,21 @@
 
 #include <vine/vsg/api/ContentFacts.hpp>
 
-using vine::vsg::blockFitsAbi;
-using vine::vsg::channelsMatchLayout;
-using vine::vsg::ChannelFacts;
-using vine::vsg::ContentFacts;
-using vine::vsg::FactMiss;
-using vine::vsg::findGeometry;
-using vine::vsg::findMaterial;
-using vine::vsg::findProgram;
-using vine::vsg::GeometryFacts;
-using vine::vsg::MaterialFacts;
-using vine::vsg::ProgramFacts;
-using vine::vsg::ProgramVariant;
-using vine::vsg::core::DrawKind;
-using vine::vsg::core::ProgramRef;
-using vine::vsg::core::StreamKind;
+using vn::vsg::blockFitsAbi;
+using vn::vsg::channelsMatchLayout;
+using vn::vsg::ChannelFacts;
+using vn::vsg::ContentFacts;
+using vn::vsg::FactMiss;
+using vn::vsg::findGeometry;
+using vn::vsg::findMaterial;
+using vn::vsg::findProgram;
+using vn::vsg::GeometryFacts;
+using vn::vsg::MaterialFacts;
+using vn::vsg::ProgramFacts;
+using vn::vsg::ProgramVariant;
+using vn::vsg::core::DrawKind;
+using vn::vsg::core::ProgramRef;
+using vn::vsg::core::StreamKind;
 
 namespace
 {
@@ -205,10 +205,10 @@ TEST(ContentFactsTest, AMaterialWhoseBlockIsNotTheAbisSizeCannotBeDrawn)
 {
     static int identity = 0;
 
-    const MaterialHolder right(&identity, 1U, sizeof(vine::graphics::VineMaterialBlock));
+    const MaterialHolder right(&identity, 1U, sizeof(vn::graphics::VineMaterialBlock));
     EXPECT_TRUE(blockFitsAbi(right.facts));
 
-    const MaterialHolder short_block(&identity, 1U, sizeof(vine::graphics::VineMaterialBlock) - 1U);
+    const MaterialHolder short_block(&identity, 1U, sizeof(vn::graphics::VineMaterialBlock) - 1U);
     EXPECT_FALSE(blockFitsAbi(short_block.facts));
 
     Tables tables;

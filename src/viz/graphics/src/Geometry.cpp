@@ -13,11 +13,11 @@
 #include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-using vine::math::Vec3d;
+using vn::math::Vec3d;
 
-V_OBJECT_META_IMPL(Geometry, Node);
+VN_OBJECT_META_IMPL(Geometry, Node);
 
 Geometry::Geometry() = default;
 
@@ -40,14 +40,14 @@ Aabbd transformBox(const Aabbd& local, const Mat4d& world)
     }
     const auto mn = local.min();
     const auto mx = local.max();
-    const vine::math::Point3d corners[8] = {
+    const vn::math::Point3d corners[8] = {
         mn,
-        vine::math::Point3d(mx.x, mn.y, mn.z),
-        vine::math::Point3d(mn.x, mx.y, mn.z),
-        vine::math::Point3d(mx.x, mx.y, mn.z),
-        vine::math::Point3d(mn.x, mn.y, mx.z),
-        vine::math::Point3d(mx.x, mn.y, mx.z),
-        vine::math::Point3d(mn.x, mx.y, mx.z),
+        vn::math::Point3d(mx.x, mn.y, mn.z),
+        vn::math::Point3d(mn.x, mx.y, mn.z),
+        vn::math::Point3d(mx.x, mx.y, mn.z),
+        vn::math::Point3d(mn.x, mn.y, mx.z),
+        vn::math::Point3d(mx.x, mn.y, mx.z),
+        vn::math::Point3d(mn.x, mx.y, mx.z),
         mx,
     };
     for (const auto& c : corners) {
@@ -58,8 +58,8 @@ Aabbd transformBox(const Aabbd& local, const Mat4d& world)
 }
 
 /// Scalars per vertex of an attribute channel — the mesh's own element layout, which sharing reads directly.
-constexpr std::uint32_t kVec3Components = vine::geometry::Mesh::kVec3Components;
-constexpr std::uint32_t kVec2Components = vine::geometry::Mesh::kVec2Components;
+constexpr std::uint32_t kVec3Components = vn::geometry::Mesh::kVec3Components;
+constexpr std::uint32_t kVec2Components = vn::geometry::Mesh::kVec2Components;
 
 }  // namespace
 
@@ -99,7 +99,7 @@ std::vector<std::uint32_t> Geometry::bufferLocations() const
     return locations;
 }
 
-void Geometry::setPositions(intrusive_ptr<const vine::Buffer<float>> positions)
+void Geometry::setPositions(intrusive_ptr<const vn::Buffer<float>> positions)
 {
     // The location is the shader ABI's (ShaderAbi.hpp), never a number written here: the built-in
     // shaders declare the attribute where attributeLocation() says, so the two move together.
@@ -118,7 +118,7 @@ std::size_t Geometry::positionCount() const
     return positions != nullptr ? positions->vertexCount() : 0u;
 }
 
-void Geometry::setPositions(intrusive_ptr<const vine::Buffer<float>> positions, std::size_t first_vertex,
+void Geometry::setPositions(intrusive_ptr<const vn::Buffer<float>> positions, std::size_t first_vertex,
                             std::size_t vertex_count)
 {
     // ONE implementation path for both spellings: the segment overload is the general door
@@ -128,7 +128,7 @@ void Geometry::setPositions(intrusive_ptr<const vine::Buffer<float>> positions, 
               AttributeChannel::slice(std::move(positions), kVec3Components, first_vertex, vertex_count));
 }
 
-void Geometry::setNormals(intrusive_ptr<const vine::Buffer<float>> normals)
+void Geometry::setNormals(intrusive_ptr<const vn::Buffer<float>> normals)
 {
     addBuffer(attributeLocation(VertexAttribute::Normal),
               AttributeChannel::shared(std::move(normals), kVec3Components));
@@ -145,14 +145,14 @@ std::size_t Geometry::normalCount() const
     return normals != nullptr ? normals->vertexCount() : 0u;
 }
 
-void Geometry::setNormals(intrusive_ptr<const vine::Buffer<float>> normals, std::size_t first_vertex,
+void Geometry::setNormals(intrusive_ptr<const vn::Buffer<float>> normals, std::size_t first_vertex,
                           std::size_t vertex_count)
 {
     addBuffer(attributeLocation(VertexAttribute::Normal),
               AttributeChannel::slice(std::move(normals), kVec3Components, first_vertex, vertex_count));
 }
 
-void Geometry::setTexcoords2(intrusive_ptr<const vine::Buffer<float>> texcoords)
+void Geometry::setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords)
 {
     addBuffer(kTexCoordLocation, AttributeChannel::shared(std::move(texcoords), kVec2Components));
 }
@@ -176,7 +176,7 @@ std::uint32_t Geometry::texcoordComponents() const
     return texcoords != nullptr ? texcoords->components : 0u;
 }
 
-void Geometry::setTexcoords2(intrusive_ptr<const vine::Buffer<float>> texcoords, std::size_t first_vertex,
+void Geometry::setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex,
                              std::size_t vertex_count)
 {
     // Two scalars per vertex here, and a caller states VERTICES: a segment of three vertices is six scalars.
@@ -184,7 +184,7 @@ void Geometry::setTexcoords2(intrusive_ptr<const vine::Buffer<float>> texcoords,
               AttributeChannel::slice(std::move(texcoords), kVec2Components, first_vertex, vertex_count));
 }
 
-void Geometry::setTexcoords3(intrusive_ptr<const vine::Buffer<float>> texcoords)
+void Geometry::setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords)
 {
     // The SAME slot as setTexcoords2, with the other width: three scalars per vertex, which is what a cube
     // map is sampled by direction with. What the width MEANS stays the sampler's business (a user program
@@ -192,21 +192,21 @@ void Geometry::setTexcoords3(intrusive_ptr<const vine::Buffer<float>> texcoords)
     addBuffer(kTexCoordLocation, AttributeChannel::shared(std::move(texcoords), kVec3Components));
 }
 
-void Geometry::setTexcoords3(intrusive_ptr<const vine::Buffer<float>> texcoords, std::size_t first_vertex,
+void Geometry::setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex,
                              std::size_t vertex_count)
 {
     addBuffer(kTexCoordLocation,
               AttributeChannel::slice(std::move(texcoords), kVec3Components, first_vertex, vertex_count));
 }
 
-void Geometry::setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices)
+void Geometry::setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices)
 {
     // One implementation path for both spellings: the whole-buffer form IS the segment form with the
     // whole range stated, so the two cannot drift apart.
     setIndices(std::move(indices), 0u, 0u);
 }
 
-void Geometry::setIndices(intrusive_ptr<const vine::Buffer<std::uint32_t>> indices, std::size_t first_index,
+void Geometry::setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices, std::size_t first_index,
                           std::size_t index_count)
 {
     // The index stream is a SEGMENT of a buffer, described by the same structure an attribute
@@ -236,7 +236,7 @@ std::size_t Geometry::indexCount() const
     return indices_.size();
 }
 
-intrusive_ptr<const vine::Buffer<std::uint32_t>> Geometry::indicesBuffer() const
+intrusive_ptr<const vn::Buffer<std::uint32_t>> Geometry::indicesBuffer() const
 {
     return indices_.values;
 }
@@ -352,7 +352,7 @@ std::uint64_t Geometry::localBoundsComputationCount() const noexcept
     return local_bounds_computations_;
 }
 
-intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::math::Vec3f> vertices)
+intrusive_ptr<Buffer<float>> packAttribute(std::span<const vn::math::Vec3f> vertices)
 {
     std::vector<float> scalars;
     scalars.reserve(vertices.size() * kVec3Components);
@@ -364,7 +364,7 @@ intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::math::Vec3f> ve
     return intrusive_ptr<Buffer<float>>(new Buffer<float>(std::move(scalars)));
 }
 
-intrusive_ptr<Buffer<float>> packAttribute(std::span<const vine::math::Vec2f> vertices)
+intrusive_ptr<Buffer<float>> packAttribute(std::span<const vn::math::Vec2f> vertices)
 {
     std::vector<float> scalars;
     scalars.reserve(vertices.size() * kVec2Components);
@@ -381,9 +381,9 @@ intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const std::uint32_t> 
         new Buffer<std::uint32_t>(std::vector<std::uint32_t>(indices.begin(), indices.end())));
 }
 
-GeometryPtr geometryFromShape(const vine::geometry::Shape& shape)
+GeometryPtr geometryFromShape(const vn::geometry::Shape& shape)
 {
-    const auto* mesh = dynamic_cast<const vine::geometry::Mesh*>(&shape);
+    const auto* mesh = dynamic_cast<const vn::geometry::Mesh*>(&shape);
     if (mesh == nullptr) {
         return GeometryPtr();
     }
@@ -402,10 +402,10 @@ GeometryPtr geometryFromShape(const vine::geometry::Shape& shape)
         geometry->setTexcoords2(mesh->texcoordsBuffer());
     }
     if (const auto* indexed =
-            dynamic_cast<const vine::geometry::IndexedTriangleMesh*>(&shape)) {
+            dynamic_cast<const vn::geometry::IndexedTriangleMesh*>(&shape)) {
         geometry->setIndices(indexed->indicesBuffer());
     }
     return geometry;
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

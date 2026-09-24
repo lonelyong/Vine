@@ -518,7 +518,7 @@ test_graphics 151 → 156。
 ```cpp
 // 一个可绑定的图像身份：哪张 target 的哪个附件。由创建者持有（intrusive_ptr），
 // 生产者与消费者**指向同一个对象**——这就是"接线"的全部。
-class V_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef>
+class VN_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef>
 {
   public:
     /// 颜色附件 / 深度附件（深度给全屏程序的 `gbuffer_depth` 一类消费留位）。

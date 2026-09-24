@@ -5,7 +5,7 @@
 
 class QWidget;
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Generic control container: wraps any native QWidget so it fits into
@@ -22,8 +22,8 @@ V_APPFWGUI_NS_BEGIN
  * control is taken over by a host (e.g. SARibbonPanel), destroying the
  * control triggers this container's release automatically.
  */
-class V_APPFW_API Control : public UIElement {
-    V_OBJECT_META_DECL
+class VN_APPFW_API Control : public UIElement {
+    VN_OBJECT_META_DECL
 
   public:
     explicit Control(QWidget* native, bool owns = true);
@@ -53,4 +53,4 @@ class V_APPFW_API Control : public UIElement {
     Control(UIElementData* data, QWidget* native, bool owns = true);
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

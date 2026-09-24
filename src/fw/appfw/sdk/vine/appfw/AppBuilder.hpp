@@ -6,7 +6,7 @@
 #include <memory>
 #include <string>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class Application;
 
@@ -89,6 +89,6 @@ struct AppConfig {
  * @param argv Command line arguments.
  * @return The initialized application.
  */
-V_APPFW_API std::unique_ptr<Application> createApplication(const AppConfig& config, int argc, char** argv);
+VN_APPFW_API std::unique_ptr<Application> createApplication(const AppConfig& config, int argc, char** argv);
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

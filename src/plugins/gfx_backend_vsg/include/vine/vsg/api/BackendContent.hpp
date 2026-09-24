@@ -23,7 +23,7 @@
  * its only caller, and every accessor answers a borrowed pointer that is valid only between the facade's
  * own calls (see each note).
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -96,4 +96,4 @@ class BackendContentAccess
 
 }  // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END

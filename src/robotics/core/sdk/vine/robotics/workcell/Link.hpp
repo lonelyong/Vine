@@ -10,7 +10,7 @@
 
 #include "RigidBody.hpp"
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 class Device;
 
@@ -27,9 +27,9 @@ class Device;
  * and the joint frame for every other link. All body geometry (visuals,
  * collisions, auxiliary frames) is expressed relative to that frame.
  */
-class V_ROBOTICS_CORE_API Link : public vine::Object, public vine::INameable
+class VN_ROBOTICS_CORE_API Link : public vn::Object, public vn::INameable
 {
-    V_OBJECT_META(Link, vine::Object, vine::INameable);
+    VN_OBJECT_META(Link, vn::Object, vn::INameable);
 
   public:
     /**
@@ -166,4 +166,4 @@ class V_ROBOTICS_CORE_API Link : public vine::Object, public vine::INameable
     raw_ptr<Device>        device_{ nullptr };
 };
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

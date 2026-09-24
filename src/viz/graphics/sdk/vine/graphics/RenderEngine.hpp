@@ -16,7 +16,7 @@
 #include "RenderDiagnostic.hpp"
 #include "BuiltinShaders.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class Camera;
 class Light;
@@ -51,8 +51,8 @@ class RenderBackend;
  * resizes via resize() and drives camera input through its SceneView. The
  * engine stays platform-independent and owns none of the window objects.
  */
-class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine> {
+    VN_OBJECT_META_DECL;
 
   public:
     /** @brief Constructs an empty engine with no backend attached yet.
@@ -134,8 +134,8 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
      * @param category What it is about.
      * @param message  Human-readable detail, naming the pass and the slot.
      */
-    void reportEngineProblem(vine::graphics::DiagnosticSeverity severity,
-                             vine::graphics::DiagnosticCategory category,
+    void reportEngineProblem(vn::graphics::DiagnosticSeverity severity,
+                             vn::graphics::DiagnosticCategory category,
                              const String&                message);
 
     /** @brief Initializes the backend.
@@ -694,4 +694,4 @@ class V_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngin
     bool wiring_dirty_ = true;
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

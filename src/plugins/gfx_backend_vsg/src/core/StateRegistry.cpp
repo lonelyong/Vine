@@ -1,6 +1,6 @@
 #include <vine/vsg/core/StateRegistry.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -99,4 +99,4 @@ std::uint64_t StateRegistry::inputs_skipped() const noexcept
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

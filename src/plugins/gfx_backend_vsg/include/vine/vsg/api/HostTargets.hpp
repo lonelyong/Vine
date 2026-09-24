@@ -47,10 +47,10 @@
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief The host's off-screen targets and the facts the frame is compiled from (see the file note). */
-class V_VSG_API HostTargets
+class VN_VSG_API HostTargets
 {
   public:
     /** @brief The SDK's description of one target, copied (see the file note). */
@@ -58,14 +58,14 @@ class V_VSG_API HostTargets
     {
         std::int32_t                                           width{0};         ///< Extent in pixels.
         std::int32_t                                           height{0};
-        std::vector<vine::graphics::RenderTarget::ColorFormat> color_formats;   ///< One per colour attachment.
+        std::vector<vn::graphics::RenderTarget::ColorFormat> color_formats;   ///< One per colour attachment.
         bool                                                   has_depth{false};   ///< Own or borrowed depth.
-        vine::graphics::RenderTarget::DepthFormat depth_format{vine::graphics::RenderTarget::DepthFormat::D24};
+        vn::graphics::RenderTarget::DepthFormat depth_format{vn::graphics::RenderTarget::DepthFormat::D24};
         bool        depth_promotion{true};      ///< The host asked for a sampleable depth (own depth only).
         const void* depth_source{nullptr};      ///< The lender, when the depth is borrowed (its identity).
         const void* shadow_light{nullptr};      ///< The light this target is the shadow map of, when stated.
         bool        has_view_projection{false}; ///< Whether the producer stated how to read the map.
-        vine::math::Mat4d view_projection{};    ///< The producer's projection * view, when stated.
+        vn::math::Mat4d view_projection{};    ///< The producer's projection * view, when stated.
     };
 
     /** @brief One host target: the copied description, its objects, and the lender's when its depth is borrowed. */
@@ -111,7 +111,7 @@ class V_VSG_API HostTargets
      *               the description is still kept - the next call with a device builds it).
      * @return The entry, and what happened (see State).
      */
-    [[nodiscard]] Ensured ensure(const vine::graphics::RenderTarget& target, ::vsg::ref_ptr<::vsg::Device> device);
+    [[nodiscard]] Ensured ensure(const vn::graphics::RenderTarget& target, ::vsg::ref_ptr<::vsg::Device> device);
 
     /** @brief Copies @p target's description into its entry without building anything.
      *
@@ -121,7 +121,7 @@ class V_VSG_API HostTargets
      * @param target The host's target; borrowed for the call.
      * @return The entry (never null).
      */
-    [[nodiscard]] Entry* observe(const vine::graphics::RenderTarget& target);
+    [[nodiscard]] Entry* observe(const vn::graphics::RenderTarget& target);
 
     /** @brief Gets the entry @p identity stands for, or null when this backend does not hold it. */
     [[nodiscard]] Entry* find(const void* identity) noexcept;
@@ -155,7 +155,7 @@ class V_VSG_API HostTargets
 
   private:
     /** @brief Copies what changed from @p target into @p out. */
-    static void describe(const vine::graphics::RenderTarget& target, Description& out);
+    static void describe(const vn::graphics::RenderTarget& target, Description& out);
 
     /** @brief Builds @p entry's objects when it has none and its description can make them. */
     [[nodiscard]] static State build(Entry& entry, ::vsg::ref_ptr<::vsg::Device> device);
@@ -164,4 +164,4 @@ class V_VSG_API HostTargets
     std::vector<std::unique_ptr<Entry>> entries_;  ///< The held targets, in first-announced order.
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -4,7 +4,7 @@
 
 #include <vine/appfw/gui/Window.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Plugin manager dialog: left plugin list, right detail page.
@@ -26,11 +26,11 @@ V_APPFWGUI_NS_BEGIN
  * (PluginManager::setSkipList), are not the user's to toggle, so the button and the
  * menu entry are hidden for them instead of being shown as dead controls.
  */
-class V_APPFW_API PluginManagerDialog : public Window {
-    V_OBJECT_META_DECL;
+class VN_APPFW_API PluginManagerDialog : public Window {
+    VN_OBJECT_META_DECL;
 
   public:
-    explicit PluginManagerDialog(vine::appfw::PluginManager* manager);
+    explicit PluginManagerDialog(vn::appfw::PluginManager* manager);
     ~PluginManagerDialog() override;
 
   public:
@@ -45,7 +45,7 @@ class V_APPFW_API PluginManagerDialog : public Window {
     ///
     /// @param scope Scope to register in: PluginScope::User needs no privileges,
     ///              PluginScope::AllUsers needs administrator rights.
-    void installPlugin(vine::appfw::PluginScope scope);
+    void installPlugin(vn::appfw::PluginScope scope);
 
     /// Removes the registered location the selected plugin was discovered from.
     void uninstallSelectedPlugin();
@@ -54,7 +54,7 @@ class V_APPFW_API PluginManagerDialog : public Window {
     void togglePluginEnabled();
 
     /// Fills the right-hand detail page for the given plugin (empty hides it).
-    void showDetail(const vine::String& name);
+    void showDetail(const vn::String& name);
 
   private:
     struct Impl;
@@ -62,4 +62,4 @@ class V_APPFW_API PluginManagerDialog : public Window {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

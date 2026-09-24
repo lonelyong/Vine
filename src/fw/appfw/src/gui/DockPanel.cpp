@@ -6,9 +6,9 @@
 #include "ControlData.hpp"
 #include "Convert.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
-V_OBJECT_META_IMPL(DockPanel, Control)
+VN_OBJECT_META_IMPL(DockPanel, Control)
 
 // Helper to access protected members of DockingPaneContainer.
 struct DPC : DockingPaneContainer {
@@ -374,4 +374,4 @@ void DockPanel::restore()
     c->show();
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

@@ -13,7 +13,7 @@
 
 #include "Device.hpp"
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 struct ScannerData;
 
@@ -32,13 +32,13 @@ struct ScannerData;
  * carrying the cameras and projectors. Frames are bound by name after the
  * base device has built its frame tree.
  */
-class V_ROBOTICS_CORE_API Scanner : public Device
+class VN_ROBOTICS_CORE_API Scanner : public Device
 {
   public:
     /**
      * @brief Camera intrinsics (value type, passed by value).
      */
-    struct V_ROBOTICS_CORE_API CameraIntrinsics
+    struct VN_ROBOTICS_CORE_API CameraIntrinsics
     {
         // 分辨率，单位 px
         double width{}, height{};
@@ -53,7 +53,7 @@ class V_ROBOTICS_CORE_API Scanner : public Device
     /**
      * @brief Projector parameters (value type, passed by value).
      */
-    struct V_ROBOTICS_CORE_API ProjectorParams
+    struct VN_ROBOTICS_CORE_API ProjectorParams
     {
         // 水平/垂直视场角，单位 rad
         double fov_w{}, fov_h{};
@@ -72,7 +72,7 @@ class V_ROBOTICS_CORE_API Scanner : public Device
      * frame of the TF tree to query its pose. The design pose is the frame's
      * fixed transform relative to its parent.
      */
-    struct V_ROBOTICS_CORE_API Camera
+    struct VN_ROBOTICS_CORE_API Camera
     {
         CameraIntrinsics design_intrinsics;     // 设备定义内参
         CameraIntrinsics calibrated_intrinsics; // 标定后内参
@@ -96,7 +96,7 @@ class V_ROBOTICS_CORE_API Scanner : public Device
      * Holds the design and calibrated parameters and references an existing
      * frame of the TF tree to query its pose.
      */
-    struct V_ROBOTICS_CORE_API Projector
+    struct VN_ROBOTICS_CORE_API Projector
     {
         ProjectorParams design_params;      // 设备定义参数
         ProjectorParams calibrated_params;  // 标定后参数
@@ -117,7 +117,7 @@ class V_ROBOTICS_CORE_API Scanner : public Device
     /**
      * @brief Miscellaneous scanner parameters (no camera/projector payload).
      */
-    struct V_ROBOTICS_CORE_API Parameters
+    struct VN_ROBOTICS_CORE_API Parameters
     {
         std::map<String, String> values;
     };
@@ -244,7 +244,7 @@ class V_ROBOTICS_CORE_API Scanner : public Device
  *
  * Adds unique ownership of the cameras and projectors.
  */
-struct V_ROBOTICS_CORE_API ScannerData : DeviceData
+struct VN_ROBOTICS_CORE_API ScannerData : DeviceData
 {
     std::vector<std::unique_ptr<Scanner::Camera>>    cameras;
     std::vector<std::unique_ptr<Scanner::Projector>> projectors;
@@ -260,4 +260,4 @@ struct V_ROBOTICS_CORE_API ScannerData : DeviceData
     std::unique_ptr<DeviceData> clone() const override;
 };
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

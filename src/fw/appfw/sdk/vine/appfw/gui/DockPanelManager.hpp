@@ -10,7 +10,7 @@
 
 #include "Gui.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class DockPanel;
 class MainWindow;
@@ -22,7 +22,7 @@ class UIElement;
  * Owns an internal DockingPaneManager and provides factory methods to create
  * dock panels, tracks all managed panels, and supports lookup by id or title.
  */
-class V_APPFW_API DockPanelManager final {
+class VN_APPFW_API DockPanelManager final {
 
   public:
     DockPanelManager();
@@ -76,4 +76,4 @@ class V_APPFW_API DockPanelManager final {
     std::unique_ptr<Impl> d;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

@@ -1,8 +1,8 @@
 ﻿#include <vine/graphics/Node.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(Node, vine::Object);
+VN_OBJECT_META_IMPL(Node, vn::Object);
 
 Node::Node() = default;
 
@@ -75,4 +75,4 @@ Mat4d Node::localTransformMatrix() const
     return Mat4d();
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

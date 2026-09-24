@@ -15,7 +15,7 @@
 #include <vine/imaging/Image.hpp>
 #include <vine/vsg/VsgUtils.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 // The bridge's device-free rules: what a custom vertex channel may be, which colour attachments a
 // shader set declares, what an opaque multi-attachment pipeline writes, and the cache-key hashing.
@@ -25,7 +25,7 @@ V_VSG_NS_BEGIN
 namespace detail
 {
 
-ChannelShape channelShape(const vine::graphics::AttributeChannel& attr, std::size_t vertex_count)
+ChannelShape channelShape(const vn::graphics::AttributeChannel& attr, std::size_t vertex_count)
 {
     if (attr.components < 1u || attr.components > 4u) {
         return ChannelShape::Components;
@@ -39,7 +39,7 @@ ChannelShape channelShape(const vine::graphics::AttributeChannel& attr, std::siz
     return ChannelShape::Ok;
 }
 
-vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics::AttributeChannel& attr,
+vn::String ignoredChannelMessage(std::uint32_t location, const vn::graphics::AttributeChannel& attr,
                                    std::size_t vertex_count, ChannelShape shape)
 {
     switch (shape) {
@@ -58,10 +58,10 @@ vine::String ignoredChannelMessage(std::uint32_t location, const vine::graphics:
     case ChannelShape::Ok:
         break;
     }
-    return vine::String();
+    return vn::String();
 }
 
-XyzUnpack unpackXyz(const vine::graphics::AttributeChannel& attr, vine::geometry::Vec3fArray& out)
+XyzUnpack unpackXyz(const vn::graphics::AttributeChannel& attr, vn::geometry::Vec3fArray& out)
 {
     const auto             comps = attr.components;
     const std::span<const float> data = attr.scalars();
@@ -81,7 +81,7 @@ XyzUnpack unpackXyz(const vine::graphics::AttributeChannel& attr, vine::geometry
     return XyzUnpack::Ok;
 }
 
-vine::String ignoredNormalChannelMessage(const vine::graphics::AttributeChannel& attr, XyzUnpack reason)
+vn::String ignoredNormalChannelMessage(const vn::graphics::AttributeChannel& attr, XyzUnpack reason)
 {
     if (reason == XyzUnpack::NotXyzStride) {
         return formatDiagnostic(u8"loc1 normal has components=%u (3 or 4 required); "
@@ -93,7 +93,7 @@ vine::String ignoredNormalChannelMessage(const vine::graphics::AttributeChannel&
                             attr.floatCount(), attr.components);
 }
 
-vine::math::Vec3f faceNormal(const vine::math::Vec3f& a, const vine::math::Vec3f& b, const vine::math::Vec3f& c)
+vn::math::Vec3f faceNormal(const vn::math::Vec3f& a, const vn::math::Vec3f& b, const vn::math::Vec3f& c)
 {
     return (b - a).cross(c - a);
 }
@@ -116,7 +116,7 @@ vine::math::Vec3f faceNormal(const vine::math::Vec3f& a, const vine::math::Vec3f
     return texcoords;
 }
 
-::vsg::ref_ptr<::vsg::Data> texCoordArray(const vine::graphics::AttributeChannel& attr, std::size_t vertex_count)
+::vsg::ref_ptr<::vsg::Data> texCoordArray(const vn::graphics::AttributeChannel& attr, std::size_t vertex_count)
 {
     const auto comps = attr.components;
     if (attr.empty() || attr.floatCount() != vertex_count * comps) {
@@ -140,9 +140,9 @@ bool isThreeScalarTexcoord(const ::vsg::Data& array) noexcept
     return array.properties.format == VK_FORMAT_R32G32B32_SFLOAT;
 }
 
-VkFormat vkFormatFor(vine::imaging::PixelFormat format) noexcept
+VkFormat vkFormatFor(vn::imaging::PixelFormat format) noexcept
 {
-    using vine::imaging::PixelFormat;
+    using vn::imaging::PixelFormat;
 
     switch (format) {
         case PixelFormat::R8Unorm:
@@ -201,7 +201,7 @@ namespace
  * @param texture Texture to inspect.
  * @return The number of faces holding a source image.
  */
-int filledFaceCount(const vine::graphics::Texture& texture) noexcept
+int filledFaceCount(const vn::graphics::Texture& texture) noexcept
 {
     int filled = 0;
     for (int face = 0; face < texture.faceCount(); ++face) {
@@ -214,9 +214,9 @@ int filledFaceCount(const vine::graphics::Texture& texture) noexcept
 
 } // namespace
 
-TextureReject classifyTexture(const vine::graphics::Texture* texture) noexcept
+TextureReject classifyTexture(const vn::graphics::Texture* texture) noexcept
 {
-    using vine::graphics::Texture;
+    using vn::graphics::Texture;
 
     if (texture == nullptr) {
         return TextureReject::Absent;
@@ -258,9 +258,9 @@ std::uint32_t levelExtent(int size, std::size_t level) noexcept
     return (shifted == 0u) ? 1u : shifted;
 }
 
-bool textureDataMatchesExtent(const vine::graphics::Texture& texture) noexcept
+bool textureDataMatchesExtent(const vn::graphics::Texture& texture) noexcept
 {
-    const auto bytes_per_texel = static_cast<std::size_t>(vine::imaging::bytesPerPixel(texture.format()));
+    const auto bytes_per_texel = static_cast<std::size_t>(vn::imaging::bytesPerPixel(texture.format()));
     const auto level_count     = static_cast<std::size_t>(texture.mipCount());
     const auto layer_count     = static_cast<std::size_t>(texture.layerCount());
     if (bytes_per_texel == 0u || level_count == 0u || layer_count == 0u) {
@@ -300,7 +300,7 @@ float anisotropyFor(float device_limit) noexcept
     return (device_limit > kCeiling) ? kCeiling : device_limit;
 }
 
-vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Texture& texture)
+vn::String textureRejectMessage(TextureReject reason, const vn::graphics::Texture& texture)
 {
     switch (reason) {
         case TextureReject::Incomplete:
@@ -311,14 +311,14 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
         case TextureReject::UnsupportedFormat:
             return formatDiagnostic(u8"texture pixel layout '%s' has no Vulkan format; "
                                     u8"the material renders untextured",
-                                    vine::imaging::formatName(texture.format()));
+                                    vn::imaging::formatName(texture.format()));
 
         case TextureReject::Inconsistent:
             return formatDiagnostic(u8"texture pixel data does not account for its description "
                                     u8"(%dx%d, %d level(s), %d layer(s), layout '%s'); "
                                     u8"the material renders untextured",
                                     texture.width(), texture.height(), texture.mipCount(), texture.layerCount(),
-                                    vine::imaging::formatName(texture.format()));
+                                    vn::imaging::formatName(texture.format()));
 
         // Absent is the normal "this material has no texture" case and is not a diagnostic; Ok is never
         // reported.
@@ -327,11 +327,11 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
             break;
     }
 
-    return vine::String();
+    return vn::String();
 }
 
-::vsg::ref_ptr<::vsg::vec3Array> makeNormals(std::span<const vine::math::Vec3f> positions,
-                                            std::span<const vine::math::Vec3f> meshNormals)
+::vsg::ref_ptr<::vsg::vec3Array> makeNormals(std::span<const vn::math::Vec3f> positions,
+                                            std::span<const vn::math::Vec3f> meshNormals)
 {
     auto normals = ::vsg::vec3Array::create(static_cast<uint32_t>(positions.size()));
     if (meshNormals.size() == positions.size()) {
@@ -342,7 +342,7 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
         return normals;
     }
     for (std::size_t i = 0; i + 2 < positions.size(); i += 3) {
-        const vine::math::Vec3f n0 = faceNormal(positions[i], positions[i + 1], positions[i + 2]);
+        const vn::math::Vec3f n0 = faceNormal(positions[i], positions[i + 1], positions[i + 2]);
         // A degenerate triangle has a zero-length cross product: leave its
         // normal zero instead of normalising NaN (see normalIsUsable).
         ::vsg::vec3 n{ 0.0f, 0.0f, 0.0f };
@@ -362,8 +362,8 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
     return normals;
 }
 
-::vsg::ref_ptr<::vsg::vec3Array> makeIndexedNormals(std::span<const vine::math::Vec3f> positions,
-                                                   std::span<const vine::math::Vec3f> meshNormals,
+::vsg::ref_ptr<::vsg::vec3Array> makeIndexedNormals(std::span<const vn::math::Vec3f> positions,
+                                                   std::span<const vn::math::Vec3f> meshNormals,
                                                    const ::vsg::uintArray& indices)
 {
     auto normals = ::vsg::vec3Array::create(static_cast<uint32_t>(positions.size()));
@@ -384,7 +384,7 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
         if (ia >= vertex_count || ib >= vertex_count || ic >= vertex_count) {
             continue; // defensive: rejected upstream; never index OOB.
         }
-        const vine::math::Vec3f n = faceNormal(positions[ia], positions[ib], positions[ic]);
+        const vn::math::Vec3f n = faceNormal(positions[ia], positions[ib], positions[ic]);
         (*normals)[ia] += ::vsg::vec3(n.x, n.y, n.z);
         (*normals)[ib] += ::vsg::vec3(n.x, n.y, n.z);
         (*normals)[ic] += ::vsg::vec3(n.x, n.y, n.z);
@@ -401,7 +401,7 @@ vine::String textureRejectMessage(TextureReject reason, const vine::graphics::Te
 }
 
 ::vsg::ref_ptr<::vsg::Data> aliasTypedVertexData(std::uint32_t components,
-                                                intrusive_ptr<const vine::Buffer<float>> values,
+                                                intrusive_ptr<const vn::Buffer<float>> values,
                                                 std::size_t vertex_count, std::size_t offset_scalars)
 {
     switch (components) {
@@ -441,18 +441,18 @@ std::string customAttributeName(std::uint32_t location)
     return "vine_Attribute" + std::to_string(location);
 }
 
-VkShaderStageFlagBits stageFlag(vine::graphics::ShaderStageType type)
+VkShaderStageFlagBits stageFlag(vn::graphics::ShaderStageType type)
 {
     switch (type) {
-    case vine::graphics::ShaderStageType::Fragment: return VK_SHADER_STAGE_FRAGMENT_BIT;
-    case vine::graphics::ShaderStageType::Compute: return VK_SHADER_STAGE_COMPUTE_BIT;
-    case vine::graphics::ShaderStageType::Vertex: return VK_SHADER_STAGE_VERTEX_BIT;
+    case vn::graphics::ShaderStageType::Fragment: return VK_SHADER_STAGE_FRAGMENT_BIT;
+    case vn::graphics::ShaderStageType::Compute: return VK_SHADER_STAGE_COMPUTE_BIT;
+    case vn::graphics::ShaderStageType::Vertex: return VK_SHADER_STAGE_VERTEX_BIT;
     }
     return VK_SHADER_STAGE_VERTEX_BIT;
 }
 
-std::uint64_t hashStateVariant(const vine::graphics::ShaderProgram* program, const vine::graphics::Material* material,
-                               const void* texture_resource, const vine::graphics::ResolvedRenderState& state,
+std::uint64_t hashStateVariant(const vn::graphics::ShaderProgram* program, const vn::graphics::Material* material,
+                               const void* texture_resource, const vn::graphics::ResolvedRenderState& state,
                                std::uint64_t layout)
 {
     std::uint64_t h = kHashSeed;
@@ -512,4 +512,4 @@ void applyOpaqueBlendForAttachments(RenderStateObjects& states, int colour_count
 
 } // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END

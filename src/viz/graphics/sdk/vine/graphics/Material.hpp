@@ -10,7 +10,7 @@
 
 #include "Texture.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief Material class defining surface appearance.
@@ -25,8 +25,8 @@ V_GRAPHICS_NS_BEGIN
  * because the engine sorts by that value and a material is shared by every
  * drawable that uses it.
  */
-class V_GRAPHICS_API Material : public Object, public RefCounted<Material> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
+    VN_OBJECT_META_DECL;
 
   public:
     Material();
@@ -101,4 +101,4 @@ class V_GRAPHICS_API Material : public Object, public RefCounted<Material> {
 
 using MaterialPtr = intrusive_ptr<Material>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

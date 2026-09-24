@@ -4,12 +4,12 @@
 
 class QWidget;
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Automatic main-thread progress bar.
  *
- * Subscribes to vine::appfw::ProgressHost::changed() and renders the top of the foreground stack
+ * Subscribes to vn::appfw::ProgressHost::changed() and renders the top of the foreground stack
  * (the innermost long-running command) in a compact bar with a cancel button; when nested commands
  * push deeper, a breadcrumb ("parent > child") is shown; concurrent background hosts (outside the
  * foreground chain) are summarized by a small badge. The native widget is hidden by default,
@@ -27,8 +27,8 @@ V_APPFWGUI_NS_BEGIN
  * QStatusBar::addPermanentWidget(); Qt then owns the native widget and the presenter
  * self-destructs with it (UIElement ownership model).
  */
-class V_APPFW_API ProgressPresenter : public Control {
-    V_OBJECT_META_DECL
+class VN_APPFW_API ProgressPresenter : public Control {
+    VN_OBJECT_META_DECL
 
   public:
     explicit ProgressPresenter(QWidget* parent = nullptr);
@@ -50,4 +50,4 @@ class V_APPFW_API ProgressPresenter : public Control {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

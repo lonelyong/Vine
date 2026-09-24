@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
@@ -47,7 +47,7 @@ std::size_t directionalSlotOf(std::span<const core::LightRef> lights, const void
     std::size_t slot = 0U;
     for (const core::LightRef& light : lights)
     {
-        if (!light.enabled || light.type != vine::graphics::LightType::Directional)
+        if (!light.enabled || light.type != vn::graphics::LightType::Directional)
         {
             continue;
         }
@@ -85,19 +85,19 @@ std::size_t packLightBlock(std::span<const core::LightRef> lights, const core::C
         }
         switch (light.type)
         {
-        case vine::graphics::LightType::Ambient:
+        case vn::graphics::LightType::Ambient:
             // The ambient slot is one light: a second ambient light replaces the first rather than adding to it (the
             // block has no room for a sum, and "the last announcement wins" is the reference rule).
             out.ambient  = { light.color.r, light.color.g, light.color.b, light.intensity };
             has_ambient  = true;
             break;
-        case vine::graphics::LightType::Directional:
+        case vn::graphics::LightType::Directional:
             if (packed == kLightDirectionalSlots)
             {
                 break;  // the block is full: a later light has no slot a shader could name it by
             }
             {
-                const vine::math::Vec3d& d = light.direction;
+                const vn::math::Vec3d& d = light.direction;
                 // World -> view: dot the direction with the camera's axes (a rotation, so lengths are preserved and
                 // the normalization below is only about the host's own direction length).
                 double vx = axes.right[0] * d.x + axes.right[1] * d.y + axes.right[2] * d.z;
@@ -157,4 +157,4 @@ std::size_t packLightPushBlock(std::span<const core::LightRef> lights, const cor
     return represented;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

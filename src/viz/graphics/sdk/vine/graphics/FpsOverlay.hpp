@@ -13,7 +13,7 @@
 #include "Geometry.hpp"
 #include "RenderPass.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class Camera;
 class Scene;
@@ -53,8 +53,8 @@ class Scene;
  * engine->addPass(fps, 30);             // draws above the order-0 window pass
  * \endcode
  */
-class V_GRAPHICS_API FpsOverlay : public RenderPass {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API FpsOverlay : public RenderPass {
+    VN_OBJECT_META_DECL;
 
   public:
     /** @brief Constructs a readout whose digits are hidden until the first measurement.
@@ -154,7 +154,7 @@ class V_GRAPHICS_API FpsOverlay : public RenderPass {
     // The row's positions with EVERY segment lit -- the template writePattern() copies its lit bars
     // from. Keeping it is what makes a change a memcpy of the boxes to keep plus one collapsed point per
     // box to drop, instead of a mesh built from a bar spec.
-    std::vector<vine::math::Vec3f> row_positions_;
+    std::vector<vn::math::Vec3f> row_positions_;
 
     double pixel_ratio_ = 1.0;
     int    box_width_px_ = 105;
@@ -172,4 +172,4 @@ class V_GRAPHICS_API FpsOverlay : public RenderPass {
 
 using FpsOverlayPtr = intrusive_ptr<FpsOverlay>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

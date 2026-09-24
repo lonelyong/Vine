@@ -5,8 +5,8 @@
 
 ## 结构
 
-- 纯 header-only，`vi::Async` 是 INTERFACE 目标（只依赖 `vi::Global` + `vi::Core`）。
-- 26 个头文件；头文件都在 `sdk/vine/async/`，类在 `namespace vine::async`。
+- 纯 header-only，`vn::Async` 是 INTERFACE 目标（只依赖 `vn::Global` + `vn::Core`）。
+- 26 个头文件；头文件都在 `sdk/vine/async/`，类在 `namespace vn::async`。
 - 任务：`Task<T>`（惰性/单消费者）、`SharedTask<T>`（可复制/缓存结果）、`DetachedTask`（eager/自毁）、`Scope`。
 - 组合：`whenAll` / `whenAny`（vector + 变参，含全 void 变参）、`withTimeout`、`retry`、`transform`、`andThen`。
 - 原语：`AsyncEvent`、`AsyncLatch`、`AsyncMutex`(+`AsyncLockGuard`)、`AsyncConditionVariable`、`AsyncSemaphore`、
@@ -33,7 +33,7 @@
 
 ## 重复实现（已处理）
 
-- `vine::appfw::async::sleep()` **已删除**（2026-09-17）：与 `vine::async::sleepFor()` 重复且已无调用者，
+- `vn::appfw::async::sleep()` **已删除**（2026-09-17）：与 `vn::async::sleepFor()` 重复且已无调用者，
   连同 `test_asyncqt` 的两个用例一起移除。`appfw::async::Scheduler`（Qt 事件循环调度）不重复，保留。
 
 ## 陷阱

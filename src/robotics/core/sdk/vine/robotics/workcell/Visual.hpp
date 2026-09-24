@@ -9,7 +9,7 @@
 #include <vine/geometry/Material.hpp>
 #include <vine/geometry/Shape.hpp>
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 /**
  * @brief Visual geometry: shape, transform and surface material.
@@ -26,7 +26,7 @@ class Visual
      *
      * @return The shape, or null when unset.
      */
-    const vine::intrusive_ptr<vine::geometry::Shape>& shape() const
+    const vn::intrusive_ptr<vn::geometry::Shape>& shape() const
     {
         return shape_;
     }
@@ -36,7 +36,7 @@ class Visual
      *
      * @param shape New shape.
      */
-    void setShape(const vine::intrusive_ptr<vine::geometry::Shape>& shape)
+    void setShape(const vn::intrusive_ptr<vn::geometry::Shape>& shape)
     {
         shape_ = shape;
     }
@@ -66,7 +66,7 @@ class Visual
      *
      * @return The material, or null when unset.
      */
-    const vine::intrusive_ptr<vine::geometry::Material>& material() const
+    const vn::intrusive_ptr<vn::geometry::Material>& material() const
     {
         return material_;
     }
@@ -76,7 +76,7 @@ class Visual
      *
      * @param material New material.
      */
-    void setMaterial(const vine::intrusive_ptr<vine::geometry::Material>& material)
+    void setMaterial(const vn::intrusive_ptr<vn::geometry::Material>& material)
     {
         material_ = material;
     }
@@ -102,10 +102,10 @@ class Visual
     }
 
   private:
-    vine::intrusive_ptr<vine::geometry::Shape>    shape_;
+    vn::intrusive_ptr<vn::geometry::Shape>    shape_;
     math::Isometry3d                             tf_;
-    vine::intrusive_ptr<vine::geometry::Material> material_;
+    vn::intrusive_ptr<vn::geometry::Material> material_;
     String                                       material_name_;
 };
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

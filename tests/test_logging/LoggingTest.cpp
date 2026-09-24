@@ -12,15 +12,15 @@
 #include <vine/logging/LogSink.hpp>
 #include <vine/logging/Logger.hpp>
 
-using vine::logging::LogConfig;
-using vine::logging::LogLevel;
-using vine::logging::LogSink;
-using vine::logging::Logger;
-using vine::logging::defaultLogger;
-using vine::logging::flushDefault;
-using vine::logging::initDefault;
-using vine::logging::levelName;
-using vine::logging::parseLevel;
+using vn::logging::LogConfig;
+using vn::logging::LogLevel;
+using vn::logging::LogSink;
+using vn::logging::Logger;
+using vn::logging::defaultLogger;
+using vn::logging::flushDefault;
+using vn::logging::initDefault;
+using vn::logging::levelName;
+using vn::logging::parseLevel;
 
 namespace
 {
@@ -266,7 +266,7 @@ TEST(LogTest, DefaultLoggerHasVineName)
 TEST(LogTest, InitDefaultGuaranteesConsoleSink)
 {
     initDefault();  // empty config -> a console sink is added
-    EXPECT_NO_THROW(V_LOGI("default console log"));
+    EXPECT_NO_THROW(VN_LOGI("default console log"));
     EXPECT_EQ(defaultLogger().name(), "vine");
 }
 
@@ -276,7 +276,7 @@ TEST(LogTest, InitWithFunctionSinkCapturesMacro)
     auto sink = LogSink::function(
         [&line](LogLevel, const std::string& l) { line = l; });
     initDefault(LogConfig{ .level = LogLevel::Info, .pattern = "%v", .sinks = { sink } });
-    V_LOGI("hello {} from macro", 42);
+    VN_LOGI("hello {} from macro", 42);
     EXPECT_EQ(line, "hello 42 from macro");
 }
 
@@ -286,9 +286,9 @@ TEST(LogTest, SetLevelControlsDefaultLogger)
     auto sink = LogSink::function(
         [&line](LogLevel, const std::string& l) { line = l; });
     initDefault(LogConfig{ .level = LogLevel::Error, .pattern = "%v", .sinks = { sink } });
-    V_LOGI("suppressed");
+    VN_LOGI("suppressed");
     EXPECT_TRUE(line.empty());
-    V_LOGE("visible");
+    VN_LOGE("visible");
     EXPECT_EQ(line, "visible");
 }
 
@@ -298,7 +298,7 @@ TEST(LogTest, InitWithFileSinkWritesToFile)
     std::filesystem::remove(path);
 
     initDefault(LogConfig{ .pattern = "%v", .sinks = { LogSink::file(path) } });
-    V_LOGI("config file line");
+    VN_LOGI("config file line");
     flushDefault();
     initDefault();  // reset default logger, releasing the file sink handle
 
@@ -318,7 +318,7 @@ static_assert(noexcept(defaultLogger()));
 static_assert(noexcept(std::declval<Logger&>().log(LogLevel::Info, std::string{})));
 static_assert(noexcept(std::declval<Logger&>().info("{}", 1)));
 static_assert(noexcept(std::declval<Logger&>().error(std::source_location::current(), "{}", 1)));
-static_assert(noexcept(V_LOGE("{}", 1)));
+static_assert(noexcept(VN_LOGE("{}", 1)));
 
 // sink 抛出非 std::exception 时 spdlog 会重新抛出（它只对 std::exception 走错误处理器）。
 // 这种情况必须被日志层吞掉：否则在 catch 块/析构路径上调日志就会 terminate。

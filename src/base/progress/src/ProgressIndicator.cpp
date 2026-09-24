@@ -5,7 +5,7 @@
 #include <vine/progress/ProgressRange.hpp>
 #include <vine/progress/ProgressScope.hpp>
 
-V_PROGRESS_NS_BEGIN
+VN_PROGRESS_NS_BEGIN
 
 namespace
 {
@@ -110,4 +110,4 @@ void ProgressIndicator::announceIfSignificant(double new_position)
     announce();
 }
 
-V_PROGRESS_NS_END
+VN_PROGRESS_NS_END

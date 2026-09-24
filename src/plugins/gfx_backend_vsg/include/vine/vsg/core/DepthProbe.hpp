@@ -20,7 +20,7 @@
  * read (D32 as its raw float, D16 divided by its full scale), and a format that cannot be read yields no probe
  * at all rather than a plausible-looking conversion (see the target's depth capture).
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -86,4 +86,4 @@ class DepthProbe
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

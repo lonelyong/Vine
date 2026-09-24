@@ -18,7 +18,7 @@
  * spellings of one policy is exactly how a device ends up with different capabilities depending on which
  * door it came in.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief Requests every feature the device-floor policy names on @p features.
  *
@@ -37,4 +37,4 @@ void applyRequiredFeatures(const ::vsg::ref_ptr<::vsg::DeviceFeatures>& features
  */
 [[nodiscard]] ::vsg::Names requiredDeviceExtensions();
 
-V_VSG_NS_END
+VN_VSG_NS_END

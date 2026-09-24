@@ -1,6 +1,6 @@
 set(TEST_NAME test_cppstd)
 file(GLOB SRC_FILE_LIST *.cpp)
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
-target_link_libraries(${TEST_NAME} vi::Core) 
+target_link_libraries(${TEST_NAME} vn::Core) 
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})

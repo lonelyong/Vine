@@ -7,7 +7,7 @@
 
 #include "AppBuilderSupport.hpp"
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 void applyAppConfig(Application& app, const AppConfig& config)
 {
@@ -42,4 +42,4 @@ std::unique_ptr<Application> createApplication(const AppConfig& config, int argc
     return app;
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

@@ -17,10 +17,10 @@
 #include <vine/crypto/HashCalculator.hpp>
 #include <vine/MemoryStream.hpp>
 
-using vine::crypto::ByteSequenceFingerprint;
-using vine::crypto::Hash;
-using vine::crypto::HashCalculator;
-using vine::MemoryStream;
+using vn::crypto::ByteSequenceFingerprint;
+using vn::crypto::Hash;
+using vn::crypto::HashCalculator;
+using vn::MemoryStream;
 
 namespace
 {

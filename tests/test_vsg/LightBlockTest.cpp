@@ -60,56 +60,56 @@
 #include <vine/vsg/core/StateRegistry.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 
-using vine::graphics::Camera;
-using vine::graphics::Geometry;
-using vine::graphics::Light;
-using vine::graphics::LightType;
-using vine::graphics::Material;
-using vine::graphics::RenderCommand;
-using vine::graphics::RenderTarget;
-using vine::graphics::ShaderProgram;
-using vine::graphics::ShaderStage;
-using vine::graphics::ShaderStageType;
-using vine::vsg::BlockDescriptors;
-using vine::vsg::BlockStorage;
-using vine::vsg::buildGeometryFacts;
-using vine::vsg::buildMaterialFacts;
-using vine::vsg::buildProgramFacts;
-using vine::vsg::buildScreenProgramFacts;
-using vine::vsg::ContentDraw;
-using vine::vsg::ContentFacts;
-using vine::vsg::ContentPass;
-using vine::vsg::ContentPipeline;
-using vine::vsg::FactMiss;
-using vine::vsg::GeometryFacts;
-using vine::vsg::kLightDirectionalSlots;
-using vine::vsg::MaterialFacts;
-using vine::vsg::OffscreenTarget;
-using vine::vsg::LightPushBlock;
-using vine::vsg::packLightBlock;
-using vine::vsg::packLightPushBlock;
-using vine::vsg::PassContent;
-using vine::vsg::ProgramFacts;
-using vine::vsg::StreamUploads;
-using vine::vsg::VineLightsBlock;
-using vine::vsg::VsgExecutor;
-using vine::vsg::core::CameraSnapshot;
-using vine::vsg::core::CompiledDraw;
-using vine::vsg::core::ClearPolicy;
-using vine::vsg::core::CompiledFrame;
-using vine::vsg::core::Diagnostics;
-using vine::vsg::core::DrawKind;
-using vine::vsg::core::FrameArena;
-using vine::vsg::core::FrameCompiler;
-using vine::vsg::core::FrameFacts;
-using vine::vsg::core::FrameRecorder;
-using vine::vsg::core::FrameToken;
-using vine::vsg::core::LightRef;
-using vine::vsg::core::Observe;
-using vine::vsg::core::Rgba8;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::TargetFacts;
-using vine::vsg::core::VariantPool;
+using vn::graphics::Camera;
+using vn::graphics::Geometry;
+using vn::graphics::Light;
+using vn::graphics::LightType;
+using vn::graphics::Material;
+using vn::graphics::RenderCommand;
+using vn::graphics::RenderTarget;
+using vn::graphics::ShaderProgram;
+using vn::graphics::ShaderStage;
+using vn::graphics::ShaderStageType;
+using vn::vsg::BlockDescriptors;
+using vn::vsg::BlockStorage;
+using vn::vsg::buildGeometryFacts;
+using vn::vsg::buildMaterialFacts;
+using vn::vsg::buildProgramFacts;
+using vn::vsg::buildScreenProgramFacts;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentFacts;
+using vn::vsg::ContentPass;
+using vn::vsg::ContentPipeline;
+using vn::vsg::FactMiss;
+using vn::vsg::GeometryFacts;
+using vn::vsg::kLightDirectionalSlots;
+using vn::vsg::MaterialFacts;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::LightPushBlock;
+using vn::vsg::packLightBlock;
+using vn::vsg::packLightPushBlock;
+using vn::vsg::PassContent;
+using vn::vsg::ProgramFacts;
+using vn::vsg::StreamUploads;
+using vn::vsg::VineLightsBlock;
+using vn::vsg::VsgExecutor;
+using vn::vsg::core::CameraSnapshot;
+using vn::vsg::core::CompiledDraw;
+using vn::vsg::core::ClearPolicy;
+using vn::vsg::core::CompiledFrame;
+using vn::vsg::core::Diagnostics;
+using vn::vsg::core::DrawKind;
+using vn::vsg::core::FrameArena;
+using vn::vsg::core::FrameCompiler;
+using vn::vsg::core::FrameFacts;
+using vn::vsg::core::FrameRecorder;
+using vn::vsg::core::FrameToken;
+using vn::vsg::core::LightRef;
+using vn::vsg::core::Observe;
+using vn::vsg::core::Rgba8;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::TargetFacts;
+using vn::vsg::core::VariantPool;
 
 namespace
 {
@@ -125,7 +125,7 @@ LightRef makeLight(LightType type, double r, double g, double b, float intensity
     LightRef light;
     light.enabled   = enabled;
     light.type      = type;
-    light.color     = vine::Colorf(r, g, b, 1.0);
+    light.color     = vn::Colorf(r, g, b, 1.0);
     light.intensity = intensity;
     return light;
 }
@@ -138,8 +138,8 @@ CameraSnapshot cameraAtPlusZ()
 {
     CameraSnapshot camera;
     camera.present = true;
-    camera.view    = vine::math::Mat4d{};  // identity: right = +X, up = +Y, backward = +Z
-    camera.eye     = vine::math::Vec3d(0.0, 0.0, 5.0);
+    camera.view    = vn::math::Mat4d{};  // identity: right = +X, up = +Y, backward = +Z
+    camera.eye     = vn::math::Vec3d(0.0, 0.0, 5.0);
     return camera;
 }
 
@@ -148,7 +148,7 @@ CameraSnapshot cameraLookingAlongPlusX()
 {
     CameraSnapshot camera;
     camera.present      = true;
-    camera.view         = vine::math::Mat4d{};
+    camera.view         = vn::math::Mat4d{};
     camera.view(0, 0)   = 0.0;
     camera.view(0, 2)   = 1.0;   // right = +Z
     camera.view(2, 0)   = -1.0;  // backward = -X
@@ -196,9 +196,9 @@ TEST(LightBlockTest, TheBlockCarriesTheLightsInViewSpace)
     LightRef sun  = lights[1];
     LightRef side = lights[2];
     sun.has_direction  = true;
-    sun.direction      = vine::math::Vec3d(0.0, 0.0, 1.0);  // towards the viewer.
+    sun.direction      = vn::math::Vec3d(0.0, 0.0, 1.0);  // towards the viewer.
     side.has_direction = true;
-    side.direction     = vine::math::Vec3d(2.0, 0.0, 0.0);  // NOT unit length: the packing normalizes it.
+    side.direction     = vn::math::Vec3d(2.0, 0.0, 0.0);  // NOT unit length: the packing normalizes it.
 
     const LightRef announced[]{ lights[0], sun, side };
     VineLightsBlock block;
@@ -241,16 +241,16 @@ TEST(LightBlockTest, TheDirectionsAreRotatedIntoViewSpace)
     LightRef along;  // world +X
     along.enabled       = true;
     along.type          = LightType::Directional;
-    along.color         = vine::Colorf(1.0, 1.0, 1.0, 1.0);
+    along.color         = vn::Colorf(1.0, 1.0, 1.0, 1.0);
     along.intensity     = 1.0F;
     along.has_direction = true;
-    along.direction     = vine::math::Vec3d(1.0, 0.0, 0.0);
+    along.direction     = vn::math::Vec3d(1.0, 0.0, 0.0);
 
     LightRef against = along;
-    against.direction = vine::math::Vec3d(-1.0, 0.0, 0.0);
+    against.direction = vn::math::Vec3d(-1.0, 0.0, 0.0);
 
     LightRef up = along;
-    up.direction = vine::math::Vec3d(0.0, 1.0, 0.0);
+    up.direction = vn::math::Vec3d(0.0, 1.0, 0.0);
 
     const LightRef announced[]{ along, against, up };
     VineLightsBlock block;
@@ -273,7 +273,7 @@ TEST(LightBlockTest, DisabledAndUnusableLightsAreNotPacked)
     LightRef point              = makeLight(LightType::Point, 1.0, 0.0, 0.0, 1.0F);  // a kind the block has no slot for
     LightRef sun                = makeLight(LightType::Directional, 0.25, 0.5, 0.75, 1.0F);
     sun.has_direction           = true;
-    sun.direction               = vine::math::Vec3d(0.0, 0.0, 1.0);
+    sun.direction               = vn::math::Vec3d(0.0, 0.0, 1.0);
 
     const LightRef announced[]{ disabled_ambient, disabled_sun, point, sun };
     VineLightsBlock block;
@@ -321,7 +321,7 @@ TEST(LightBlockTest, OnlyThreeDirectionalLightsGetSlots)
     for (LightRef* light : { &first, &second, &third, &fourth })
     {
         light->has_direction = true;
-        light->direction     = vine::math::Vec3d(0.0, 0.0, 1.0);
+        light->direction     = vn::math::Vec3d(0.0, 0.0, 1.0);
     }
 
     const LightRef announced[]{ first, second, third, fourth };
@@ -343,7 +343,7 @@ TEST(LightBlockTest, ACameraThatWasNeverEstablishedLeavesTheBlockEmpty)
     LightRef sun                = makeLight(LightType::Directional, 1.0, 1.0, 1.0, 1.0F);
     LightRef ambient            = makeLight(LightType::Ambient, 0.5, 0.5, 0.5, 1.0F);
     sun.has_direction           = true;
-    sun.direction               = vine::math::Vec3d(0.0, 0.0, 1.0);
+    sun.direction               = vn::math::Vec3d(0.0, 0.0, 1.0);
     const LightRef announced[]{ ambient, sun };
 
     VineLightsBlock block;
@@ -357,7 +357,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
 {
     // THE PICTURE. One pass, four drawing calls, four bands of 16 pixels; each band's light list is chosen so that
     // only a correct packing, bound PER CALL, can explain its colour (see the file note).
-    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)
     {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
@@ -376,19 +376,19 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     // The camera every call announces: at +Z, looking at the origin. A world +Z light therefore travels TOWARDS
     // the viewer, which is the direction that lights the fragment stage's fixed normal.
     Camera camera;
-    camera.setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 5.0), vine::math::Vec3d(0.0, 0.0, 0.0),
-                                 vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera.setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+                                 vn::math::Vec3d(0.0, 1.0, 0.0));
 
-    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) in vec3 position;\n"
             "void main() { gl_Position = vec4(position.xy, 0.5, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vine::String(reinterpret_cast<const char8_t*>(kLightingFragment));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(kLightingFragment));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -416,27 +416,27 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     // Four bands: one triangle each, its base along the TOP rows of the target (NDC y = -1) and its apex at the
     // bottom (NDC y = +1) - the framebuffer's origin is the upper left, so NDC y = +1 lands on the last row.
     const auto make_band = [](float left, float right) {
-        auto indices = vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
-            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
-        auto geometry      = vine::intrusive_ptr<Geometry>(new Geometry());
+        auto indices = vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+        auto geometry      = vn::intrusive_ptr<Geometry>(new Geometry());
         const float centre = (left + right) * 0.5F;
-        geometry->setPositions(vine::intrusive_ptr<const vine::Buffer<float>>(new vine::Buffer<float>(
+        geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
             std::vector<float>{ left, -1.0F, 0.0F, right, -1.0F, 0.0F, centre, 1.0F, 0.0F })));
         geometry->setIndices(indices);
         geometry->setRevision(1U);
         return geometry;
     };
-    const vine::intrusive_ptr<Geometry> bands[]{ make_band(-1.0F, -0.5F), make_band(-0.5F, 0.0F),
+    const vn::intrusive_ptr<Geometry> bands[]{ make_band(-1.0F, -0.5F), make_band(-0.5F, 0.0F),
                                                  make_band(0.0F, 0.5F), make_band(0.5F, 1.0F) };
 
-    const vine::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vine::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
 
     GeometryFacts                        geometry_facts[4];
-    std::vector<vine::vsg::ChannelFacts> geometry_channels[4];
+    std::vector<vn::vsg::ChannelFacts> geometry_channels[4];
     for (std::size_t index = 0; index < 4U; ++index)
     {
         ASSERT_EQ(buildGeometryFacts(*bands[index], geometry_facts[index], geometry_channels[index]), FactMiss::None);
@@ -454,20 +454,20 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
 
     // The four announcements. Bands 0 and 1 differ ONLY in the sun's sign; bands 2 and 3 announce a light the block
     // cannot carry (a disabled one) and must be the ambient fill - with ONE report between them.
-    vine::intrusive_ptr<Light> ambient = Light::createAmbient();
-    ambient->setColor(vine::Colorf(0.1, 0.1, 0.1, 1.0));
+    vn::intrusive_ptr<Light> ambient = Light::createAmbient();
+    ambient->setColor(vn::Colorf(0.1, 0.1, 0.1, 1.0));
     ambient->setIntensity(1.0F);
-    vine::intrusive_ptr<Light> sun_towards = Light::createDirectional(vine::math::Vec3d(0.0, 0.0, 1.0));
-    sun_towards->setColor(vine::Colorf(0.4, 0.0, 0.0, 1.0));
+    vn::intrusive_ptr<Light> sun_towards = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, 1.0));
+    sun_towards->setColor(vn::Colorf(0.4, 0.0, 0.0, 1.0));
     sun_towards->setIntensity(1.0F);
-    vine::intrusive_ptr<Light> sun_away = Light::createDirectional(vine::math::Vec3d(0.0, 0.0, -1.0));
-    sun_away->setColor(vine::Colorf(0.4, 0.0, 0.0, 1.0));
+    vn::intrusive_ptr<Light> sun_away = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    sun_away->setColor(vn::Colorf(0.4, 0.0, 0.0, 1.0));
     sun_away->setIntensity(1.0F);
-    vine::intrusive_ptr<Light> disabled_ambient = Light::createAmbient();
-    disabled_ambient->setColor(vine::Colorf(0.9, 0.9, 0.9, 1.0));
+    vn::intrusive_ptr<Light> disabled_ambient = Light::createAmbient();
+    disabled_ambient->setColor(vn::Colorf(0.9, 0.9, 0.9, 1.0));
     disabled_ambient->setEnabled(false);
-    vine::intrusive_ptr<Light> disabled_sun = Light::createDirectional(vine::math::Vec3d(0.0, 0.0, 1.0));
-    disabled_sun->setColor(vine::Colorf(0.9, 0.9, 0.9, 1.0));
+    vn::intrusive_ptr<Light> disabled_sun = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, 1.0));
+    disabled_sun->setColor(vn::Colorf(0.9, 0.9, 0.9, 1.0));
     disabled_sun->setEnabled(false);
 
     const Light* towards_lights[]{ ambient.get(), sun_towards.get() };
@@ -475,7 +475,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     const Light* disabled_ambient_lights[]{ disabled_ambient.get() };
     const Light* disabled_sun_lights[]{ disabled_sun.get() };
 
-    const vine::intrusive_ptr<RenderTarget> handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> handle(new RenderTarget());
     TargetFacts                             target_facts;
     target_facts.target        = handle.get();
     target_facts.wanted.width  = static_cast<int>(kSize);
@@ -524,7 +524,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     // A local command vector per call: the recorder takes a span, and the temporary above is one command long.
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 1U);
-    const std::span<const vine::vsg::core::CompiledDraw> draws = frame.passes[0].draws;
+    const std::span<const vn::vsg::core::CompiledDraw> draws = frame.passes[0].draws;
     ASSERT_EQ(draws.size(), 4U);
     EXPECT_EQ(draws[0].lights.size(), 2U) << "the plan carries each call's own announcement";
     EXPECT_EQ(draws[3].lights.size(), 1U) << "the fourth call announced one unusable light";
@@ -533,7 +533,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     VariantPool   pool;
     StreamUploads uploads;
     const auto    entry_points =
-        vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+        vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw   draws_recorder(*pipelines, pool, entry_points);
     StateRegistry registry(pool);
 
@@ -551,9 +551,9 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  node;
     ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, node));
-    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 0U)
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
         << "nothing may be refused: every band is a complete content draw";
-    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ChannelIgnored), 1U)
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ChannelIgnored), 1U)
         << "two calls announced an unusable light and the drop report is one episode, not one sentence per call";
 
     VsgExecutor executor(diagnostics);
@@ -618,7 +618,7 @@ TEST(LightBlockTest, ThePushBlockIsTheSameLightsInThePushesOwnLayout)
     LightRef      ambient = makeLight(LightType::Ambient, 0.2, 0.3, 0.4, 0.5F);
     LightRef      sun     = makeLight(LightType::Directional, 0.8, 0.4, 0.2, 2.0F);
     sun.has_direction     = true;
-    sun.direction         = vine::math::Vec3d(0.0, 0.0, 1.0);
+    sun.direction         = vn::math::Vec3d(0.0, 0.0, 1.0);
     const LightRef announced[]{ ambient, sun };
 
     LightPushBlock    push;
@@ -672,7 +672,7 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
     // A push recorded once per PASS (all three calls sharing the first announcement), a zeroed push, or one pushed
     // to the wrong stage moves at least one band, and the destination's clear (blue) is what a band that drew
     // nothing would show.
-    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)
     {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
@@ -691,11 +691,11 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
 
     // The program: the engine's canonical full-screen vertex stage (buildScreenProgramFacts composes it) with a
     // fragment stage that shades from the push.
-    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(push_constant, std140) uniform PushConstants {\n"
             "    vec4 ambient;\n"
             "    vec4 projparms;\n"
@@ -722,20 +722,20 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
     // The camera every call announces: at +Z looking at the origin, so a world +Z direction is a light towards the
     // viewer (which lights the fixed normal) and the reversed one does not.
     Camera camera;
-    camera.setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 5.0), vine::math::Vec3d(0.0, 0.0, 0.0),
-                                 vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera.setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+                                 vn::math::Vec3d(0.0, 1.0, 0.0));
 
-    vine::intrusive_ptr<Light> ambient = Light::createAmbient();
-    ambient->setColor(vine::Colorf(0.1, 0.1, 0.1, 1.0));
-    vine::intrusive_ptr<Light> towards = Light::createDirectional(vine::math::Vec3d(0.0, 0.0, 1.0));
-    towards->setColor(vine::Colorf(0.4, 0.0, 0.0, 1.0));
-    vine::intrusive_ptr<Light> away = Light::createDirectional(vine::math::Vec3d(0.0, 0.0, -1.0));
-    away->setColor(vine::Colorf(0.4, 0.0, 0.0, 1.0));
+    vn::intrusive_ptr<Light> ambient = Light::createAmbient();
+    ambient->setColor(vn::Colorf(0.1, 0.1, 0.1, 1.0));
+    vn::intrusive_ptr<Light> towards = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, 1.0));
+    towards->setColor(vn::Colorf(0.4, 0.0, 0.0, 1.0));
+    vn::intrusive_ptr<Light> away = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    away->setColor(vn::Colorf(0.4, 0.0, 0.0, 1.0));
 
     const Light* band0_lights[]{ ambient.get(), towards.get() };
     const Light* band1_lights[]{ ambient.get(), away.get() };
 
-    const vine::intrusive_ptr<RenderTarget> handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> handle(new RenderTarget());
     TargetFacts                             target_facts;
     target_facts.target        = handle.get();
     target_facts.wanted.width  = static_cast<int>(kSize);
@@ -780,7 +780,7 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
     VariantPool   pool;
     StreamUploads uploads;
     const auto    entry_points =
-        vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+        vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw   draws(*pipelines, pool, entry_points);
     StateRegistry registry(pool);
 
@@ -797,8 +797,8 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
     ::vsg::ref_ptr<::vsg::Node>  node;
     const ContentFacts           facts;  // a screen call reads no tables: its half is looked up by program identity
     ASSERT_TRUE(content.record(frame.passes[0], facts, destination->shape().compatibility(), {}, view_block, node));
-    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 0U);
-    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ChannelIgnored), 0U)
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ChannelIgnored), 0U)
         << "the drop report belongs to the content path: a full-screen call packs what fits and says nothing";
 
     VsgExecutor executor(diagnostics);

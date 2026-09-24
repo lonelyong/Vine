@@ -10,7 +10,7 @@
 #include <vine/robotics/kinematics/Frame.hpp>
 #include <vine/robotics/workcell/SceneObject.hpp>
 
-V_ROBOTICS_WORKCELL_NS_BEGIN
+VN_ROBOTICS_WORKCELL_NS_BEGIN
 
 /**
  * @brief A robotic workcell: the container of all scene objects.
@@ -31,7 +31,7 @@ V_ROBOTICS_WORKCELL_NS_BEGIN
  *
  * @note Not thread-safe.
  */
-class V_ROBOTICS_CORE_API Workcell final
+class VN_ROBOTICS_CORE_API Workcell final
 {
   public:
     /**
@@ -205,4 +205,4 @@ class V_ROBOTICS_CORE_API Workcell final
     std::unique_ptr<kinematics::Frame>        world_frame_;
 };
 
-V_ROBOTICS_WORKCELL_NS_END
+VN_ROBOTICS_WORKCELL_NS_END

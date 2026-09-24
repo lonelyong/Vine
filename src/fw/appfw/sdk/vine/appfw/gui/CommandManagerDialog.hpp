@@ -4,7 +4,7 @@
 
 #include <vine/appfw/gui/Window.hpp>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Command manager dialog: lists registered commands (name, state, aliases,
@@ -16,11 +16,11 @@ V_APPFWGUI_NS_BEGIN
  * choice is persisted, so a command disabled here stays disabled after a restart
  * even though plugins register their commands again on every load.
  */
-class V_APPFW_API CommandManagerDialog : public Window {
-    V_OBJECT_META_DECL;
+class VN_APPFW_API CommandManagerDialog : public Window {
+    VN_OBJECT_META_DECL;
 
   public:
-    explicit CommandManagerDialog(vine::appfw::CommandManager* manager);
+    explicit CommandManagerDialog(vn::appfw::CommandManager* manager);
     ~CommandManagerDialog() override;
 
   public:
@@ -40,4 +40,4 @@ class V_APPFW_API CommandManagerDialog : public Window {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

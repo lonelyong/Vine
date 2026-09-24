@@ -31,13 +31,13 @@
 #include <vine/vsg/api/ContentFacts.hpp>
 #include <vine/vsg/api/GeometryFacts.hpp>
 
-using vine::graphics::Geometry;
-using vine::vsg::buildGeometryFacts;
-using vine::vsg::channelsMatchLayout;
-using vine::vsg::ChannelFacts;
-using vine::vsg::FactMiss;
-using vine::vsg::GeometryFacts;
-using vine::vsg::core::StreamKind;
+using vn::graphics::Geometry;
+using vn::vsg::buildGeometryFacts;
+using vn::vsg::channelsMatchLayout;
+using vn::vsg::ChannelFacts;
+using vn::vsg::FactMiss;
+using vn::vsg::GeometryFacts;
+using vn::vsg::core::StreamKind;
 
 namespace
 {
@@ -45,13 +45,13 @@ namespace
 /// @brief Three vertices of three scalars each, plus the triangle's indices.
 struct Content
 {
-    vine::intrusive_ptr<const vine::Buffer<float>>     positions = vine::intrusive_ptr<const vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F }));
-    vine::intrusive_ptr<const vine::Buffer<float>>     normals = vine::intrusive_ptr<const vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }));
-    vine::intrusive_ptr<const vine::Buffer<std::uint32_t>> indices =
-        vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
-            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    vn::intrusive_ptr<const vn::Buffer<float>>     positions = vn::intrusive_ptr<const vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F }));
+    vn::intrusive_ptr<const vn::Buffer<float>>     normals = vn::intrusive_ptr<const vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }));
+    vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> indices =
+        vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
 };
 
 }  // namespace
@@ -98,10 +98,10 @@ TEST(GeometryFactsTest, TheChannelOrderIsCanonicalFirstAndCustomsAscending)
 
     // A texcoord (the reserved location 8) and a custom channel at 4: the entry's order is fixed by the ABI,
     // not by the map's iteration order, because the entry's order IS the binding order.
-    const vine::graphics::AttributeChannel texcoords = vine::graphics::AttributeChannel::packed(
+    const vn::graphics::AttributeChannel texcoords = vn::graphics::AttributeChannel::packed(
         std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }, 2U);
     geometry.addBuffer(8U, texcoords);
-    const vine::graphics::AttributeChannel custom = vine::graphics::AttributeChannel::packed(
+    const vn::graphics::AttributeChannel custom = vn::graphics::AttributeChannel::packed(
         std::vector<float>{ 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F }, 2U);
     geometry.addBuffer(4U, custom);
 
@@ -165,7 +165,7 @@ TEST(GeometryFactsTest, ANonIndexedSliceCountsItsOwnVertices)
 {
     // Six vertices in the buffer, the geometry reading the last three: the draw must assemble three vertices,
     // not six - the slice IS the stream (see the file note).
-    vine::intrusive_ptr<const vine::Buffer<float>> shared(new vine::Buffer<float>(
+    vn::intrusive_ptr<const vn::Buffer<float>> shared(new vn::Buffer<float>(
         std::vector<float>{ 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F,
                             0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F }));
 
@@ -185,7 +185,7 @@ TEST(GeometryFactsTest, ANonIndexedSliceCountsItsOwnVertices)
 TEST(GeometryFactsTest, ASlicedChannelUploadsItsOwnSegment)
 {
     // A shared vertex buffer of six vertices; the channel reads the LAST three of them.
-    vine::intrusive_ptr<const vine::Buffer<float>> shared(new vine::Buffer<float>(
+    vn::intrusive_ptr<const vn::Buffer<float>> shared(new vn::Buffer<float>(
         std::vector<float>{ 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F,
                             0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F }));
     Content content;

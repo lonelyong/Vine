@@ -9,7 +9,7 @@
 
 #include "ConfigGroup.hpp"
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class ConfigRegistry;
 
@@ -24,7 +24,7 @@ class ConfigRegistry;
  * (removeGroup(), or removeCategory()/clear() on the registry).
  * @note Threading: not synchronized; register before worker threads read the tree.
  */
-class V_APPFW_API ConfigCategory {
+class VN_APPFW_API ConfigCategory {
   public:
     ConfigCategory(const ConfigCategory&)            = delete;
     ConfigCategory& operator=(const ConfigCategory&) = delete;
@@ -105,4 +105,4 @@ class V_APPFW_API ConfigCategory {
     std::unique_ptr<Impl> d;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

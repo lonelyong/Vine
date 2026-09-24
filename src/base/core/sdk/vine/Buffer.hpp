@@ -11,7 +11,7 @@
 #include "intrusive_ptr.hpp"
 #include "RefCounted.hpp"
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief A reference-counted run of T that two consumers can share.
@@ -408,4 +408,4 @@ struct BufferSlice
     }
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

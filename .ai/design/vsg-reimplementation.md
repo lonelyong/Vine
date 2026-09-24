@@ -570,7 +570,7 @@ struct CompiledDraw {
 };
 
 // —— 键（D3）：只放“改了就必须重编/重建”的东西 ——
-struct DataKey { const vine::Buffer<float>* buffer; std::uint64_t revision;   // revision 只来自上游
+struct DataKey { const vn::Buffer<float>* buffer; std::uint64_t revision;   // revision 只来自上游
                  std::uint32_t components, offset, count; };
 struct VertexLayoutKey { std::uint32_t canonical_mask; std::span<const std::uint32_t> custom_locations; };
 struct RenderPassCompatibility { std::span<const Format> color_formats;
@@ -809,7 +809,7 @@ M1 的第一半，也是新实现**第一次碰图形 API**——所以它正好
 ⇒ 地板（1.4）与七个必需特性在仓库门禁用的软件光栅器上全部满足；探测与策略的判决一致（用例本身就在断言
 “探测的 usable == 策略的 satisfiesRequirements”，不允许第二份意见）。
 
-顺带记一个坑：`vine::String` 包的是 `std::u8string`（`value_type = char8_t`）——字面量必须写 `u8"…"`，
+顺带记一个坑：`vn::String` 包的是 `std::u8string`（`value_type = char8_t`）——字面量必须写 `u8"…"`，
 而驱动给的 `char[256]`（如 `deviceName`）与 printf/gtest 转发都要走仓库既有的
 `reinterpret_cast<const char*>(s.data()), s.size()` 写法。
 
@@ -1228,7 +1228,7 @@ M3d-3b 内容绘制（几何/块/描述符经计划进 render graph，`ContentDr
 | 落地抓到的 | 内容 |
 | --- | --- |
 | **变异反证（端到端）** | 让调度器忽略公告 order（`ready.emplace(0, node)`）⇒ `FrameGraphTest` 的排序用例与 **`ExecutorTest` 的像素用例**同时变红，其余 22 绿。⇒ 那条像素断言测的是“**画面跟着 schedule 走**”，不是“图能提交” |
-| 工具 | `GTEST_SKIP() << vine::String` 编不过（u8 串进不了 gtest 的消息流）：要 `.as_std_str()` |
+| 工具 | `GTEST_SKIP() << vn::String` 编不过（u8 串进不了 gtest 的消息流）：要 `.as_std_str()` |
 
 | 结论 | 内容 |
 | --- | --- |
@@ -2638,7 +2638,7 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M8r（计划说的形状，连格式一起核对）~~ | **已完成（2026-09-22）**：`core::CompiledShape`（形状的兼容性半边，编译器用 `arena.copy` 抄进帧的 arena ⇒ 计划里没有指向宿主 facts 的 span、也不每帧分配）+ `CompiledTarget::shape` + `core::statedShapeAgrees`（引擎半边每份计划都说了 ⇒ 直接比；**设备半边只在两边都说了时比**）；`recordOffscreen` / `recordWindow` 都接上（窗口那趟现在拿到 `CompiledTarget`）；无设备用例（计划的副本是它自己的 + 判定表逐行）+ 两条真设备用例（离屏：数目相同的引擎格式漂移、引擎相同的设备格式漂移各拒一次、说真话即录；窗口：同样的事 + 说真话后**呈递**，`deviceWaits()==0`）；当场修掉两处旧夹具的谎话；变异 **5/5 红**（不抄形状 ⇒ 75 行红、无条件下比设备半边 ⇒ 51 行红）（§11.16ba）。 |
 | ~~M8s（窗口的答案也有执行者）~~ | **已完成（2026-09-22）**：`WindowTarget::facts()` 把 "想要" 与 "已有" 分开（wanted = swapchain 现在的 live 采样、current = 记录被建时的形状 ⇒ 平台换了格式就是 `Rebuild`，不再被静默记进旧兼容性的通道）+ `WindowTarget::refresh()`（重新采样，变了才替换；**唯一能写这份形状的是平台**）+ `applyTargetPlans` 的窗口臂（`Rebuild` ⇒ 问平台：变了 ⇒ `rebuilt`，没变 ⇒ `failed`；`ResizeInPlace` 无事可做）；真设备用例（稳定帧四计数全 0 且录得进去；说谎的帧 ⇒ `failed==1`、主张未被采纳、`record` 拒录；再说真话 ⇒ 录进去并呈递、`deviceWaits()==0`）+ 3/3 变异红（§11.16bb）。 |
 | ~~M8t（`skyMap` 是 drawable 自己的图）~~ | **已完成（2026-09-23）**：名字表改正——`skyMap` 与 `diffuseMap` 同一行（`Material`，引擎自带天空程序的文本自己写着它是 material 的纹理、在同 ABI 的 diffuse 槽），`Environment` 行与那一整套拒绝删除；材质图的**种类必须对得上声明的采样器**（`ContentSets` 按声明的种类给 fallback、不一致 ⇒ 声明的白 + 计数；`createScreen` 拒 cube 声明）；顺手抓到并修掉**两处未初始化的 `ImageSource`**（没贴图的材质被按上一个 drawable 的纹理归档）；真设备用例 = 引擎自带 `skyboxProgram` 四个方向条带（+Z 洋红 / +X 红 / 无图白 / 2D 图配 cube 声明 ⇒ 白）+ 计数器；变异 **5/5 红**（其中两条带 6 / 2 条 VUID）（§11.16bc）。 |
-| ~~M9a（门面立起来：会话生命周期 + 空帧驱动）~~ | **已完成（2026-09-23）**：`api/VsgBackend`（`VsgBackend : vine::graphics::RenderBackend`，PImpl）——引擎与重写版之间的缝：`initialize()` 由公告（宿主句柄、尺寸、默认程序）建会话并交给执行器；`beginFrame/endFrame/swapBuffers` 走会话的帧协议（**空帧照样编译、录制、呈递**）；`setWindowHandle/nativeHandle`、`resize` 是公告（下次起会话时生效、活着时报一次）；诊断走核心的**一条**路（会话自己的报告由 SDK 的 sink 与 `diagnosticCount()` 看到，门面不重复报）；画的一半（pass/离屏/内容/全屏/读回）**每处报一次"还没服务"**（`core::ReportOnce`），`supportsRenderTargets() == false`（引擎在摆离屏工作**之前**就知道）。真设备用例两条：①无会话开帧 ⇒ 报一次；三次空帧 ⇒ `framesPresented()==3`、`deviceWaits()==0`、健康会话零报告；三趟 pass 回路 ⇒ **恰好 4 条**报告（`endPass` 与会话内的 `beginPass` 同一条情节）；活着的 `resize` 报一次；再 `initialize()` ⇒ 计数归零；双 `shutdown()` 后再起来照样呈递；②宿主面被采纳、**换另一个宿主面不重建会话**（帧号 2→3 连续），两次关闭后两个宿主窗口都还活着。**本片撞出的真问题**：空帧若提交**空命令图**，被 acquire 的图像停在 `UNDEFINED` ⇒ 呈递 **VUID 01430**（实测 16 行，gtest 全绿）——把图像搬出 `UNDEFINED` 的是**窗口那棵 render graph**（会话自己那张初始化期的图里就有它）；修法 = 计划为空时不换图、直接 `commit` 会话自己的图。变异 **4/4 红**（不呈递 ⇒ 5 行 + 6 VUID；又交空图 ⇒ 16 VUID；不报告 ⇒ 3 行；`supportsRenderTargets` 说谎 ⇒ 3 行）（§11.16bd）。 |
+| ~~M9a（门面立起来：会话生命周期 + 空帧驱动）~~ | **已完成（2026-09-23）**：`api/VsgBackend`（`VsgBackend : vn::graphics::RenderBackend`，PImpl）——引擎与重写版之间的缝：`initialize()` 由公告（宿主句柄、尺寸、默认程序）建会话并交给执行器；`beginFrame/endFrame/swapBuffers` 走会话的帧协议（**空帧照样编译、录制、呈递**）；`setWindowHandle/nativeHandle`、`resize` 是公告（下次起会话时生效、活着时报一次）；诊断走核心的**一条**路（会话自己的报告由 SDK 的 sink 与 `diagnosticCount()` 看到，门面不重复报）；画的一半（pass/离屏/内容/全屏/读回）**每处报一次"还没服务"**（`core::ReportOnce`），`supportsRenderTargets() == false`（引擎在摆离屏工作**之前**就知道）。真设备用例两条：①无会话开帧 ⇒ 报一次；三次空帧 ⇒ `framesPresented()==3`、`deviceWaits()==0`、健康会话零报告；三趟 pass 回路 ⇒ **恰好 4 条**报告（`endPass` 与会话内的 `beginPass` 同一条情节）；活着的 `resize` 报一次；再 `initialize()` ⇒ 计数归零；双 `shutdown()` 后再起来照样呈递；②宿主面被采纳、**换另一个宿主面不重建会话**（帧号 2→3 连续），两次关闭后两个宿主窗口都还活着。**本片撞出的真问题**：空帧若提交**空命令图**，被 acquire 的图像停在 `UNDEFINED` ⇒ 呈递 **VUID 01430**（实测 16 行，gtest 全绿）——把图像搬出 `UNDEFINED` 的是**窗口那棵 render graph**（会话自己那张初始化期的图里就有它）；修法 = 计划为空时不换图、直接 `commit` 会话自己的图。变异 **4/4 红**（不呈递 ⇒ 5 行 + 6 VUID；又交空图 ⇒ 16 VUID；不报告 ⇒ 3 行；`supportsRenderTargets` 说谎 ⇒ 3 行）（§11.16bd）。 |
 | ~~M9b（pass 协议接到内容层）~~ | **已完成（2026-09-23）**：`VsgBackend` 把 SDK 的 pass 协议翻进计划录制器——`beginPass` 经新的 `api/PassRegistry`（SDK 的 pass 对象 → `core::PassId`，**号永不复用**、`releasePass()` 只忘身份）交给 `core::FrameRecorder`，`endPass/setPassOrder/setRenderTarget(nullptr)/setViewport/setClearPolicy/setDepthMode/setLights/render` 全部照收；**帧外的调用**（引擎的 pre-frame warm-up：每个 enabled 非清屏 pass 在**任何帧之前**执行一次）按 SDK 契约**惰性**——只有 pass 身份留下；`render()` 顺带把命令点名的 geometry/material/program 追踪进 `ContentStore`（默认程序在 `initialize` 时追）；`swapBuffers` 现在**真的组装内容**（`ContentAssembly`：开块预算 + 表 → 每趟 pass 的半片/集合/输入/视图块 → `executor.record(frame, graph, packets)`），视图块按**该趟的相机 + 帧时钟 + 窗口尺寸**建，兼容性取窗口自己的形状。**本片撞出的真缺陷**：执行器的窗口臂把每帧内容**累加**进保留视图（`addContent`）——两帧之间移动相机就能看见"上一帧的画还在"且组无边增长；修法 = `WindowTarget::beginFrame()`（帧首清掉**本帧内容组**，宿主的会话根不动）+ `addFrameContent()`，执行器在**本帧第一趟窗口 pass** 调它（空帧不调：上一幅画照旧被呈递）。真设备用例（warm-up 惰性 + 身份跨帧、像素里读到相机 x / 窗口尺寸 / 清屏色、第二帧"稳态零构建"、第三帧换相机 ⇒ 左半旧画**消失**、右半新画就位、`deviceWaits()==0`、pass 释放即重发得新号）+ 无设备 `PassRegistryTest`；变异 **7/7 红**（不换帧内容/不组装内容/不开范围/丢清屏色/不追踪对象/不释放身份/warm-up 进录制器）。门禁 **655 用例 / 100 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 856、相位 11 行 / 2 次（§11.16be）。 |
 | ~~M9c（离屏那一半：目标、输入、全屏、重建）~~ | **已完成（2026-09-23）**：`supportsRenderTargets()` 转真；新 `api/HostTargets`——宿主 `RenderTarget` 的**描述是快照**（每次点名比字段更新，稳态零分配；绝不留宿主指针）、对象**懒建**（正值尺寸 + 至少一个彩色附件才建；建不成与"还缺描述"分开作答：`NotBuilt`/`DepthSourceMissing`/`BuildFailed`）、借来的深度持**lender 的 share**（`shared_ptr`，lender 被释放而 borrower 还在也不悬空）；`facts()` 是计划解析**目标与输入**的那张表（引擎半边永远是宿主的话；**设备半边只在引擎形状没变时**才说——M8r 的"不知道不是没有"；深度的事实：建成后按目标自己的 `layout()` 报 promotion、borrowed 时永不承诺；shadow 声明（谁的图 + 产出者的矩阵）原样搬）；门面：`setRenderTarget` 建/注册/交身份（只报 `DepthSourceMissing`/`BuildFailed` 一次、`Ready` 后重置情节；`NotBuilt` 静默——宿主先配后画）、`setPassInputs` 观察 + 转身份、`drawScreenProgram` 追踪片元程序 + 交身份、`releaseRenderTarget` 忘条目 + 注销执行器 + 让 recorder 丢掉挂起公告；内容驱动按**每趟自己的目标**取兼容性与尺寸（窗口或宿主目标），每个**声明输入**给一条 `InputImages`（该目标的彩色视图 + 计划说可采样时的深度视图，scratch 复用不每帧分配）。真设备用例：离屏目标画三角 → SDK 自带 `screenCopyProgram(0)` 复制到窗口（像素：红三角 + **目标自己的清屏绿**，不是窗口的清屏蓝）；建成目标的 facts（设备拼写非空、`built` 真）；`setSize` ⇒ 计划答 ResizeInPlace、**目标真的变 32×48**、画还在；`attachColor` 第二个附件 ⇒ 形状变 ⇒ 计划答 Rebuild、目标 2 附件、屏幕仍采附件 0；释放后 `live()==0`；借一个**不存在的 lender** ⇒ 报一次（三次公告一条情节）。无设备 `HostTargetsTest`（快照 vs 活对象、借来的深度不是 borrower 的承诺、shadow 声明原样、释放只答一次）。变异 **7/7 红**（不建/不进事实表/丢目标身份/离屏不录内容/输入不给图/释放不清/**形状变了还说旧的设备格式**——后三条各带 12 / 2 / 2 条 VUID）。门禁 **658 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 859、相位 11 行 / 2 次（§11.16bf）。 |
 | ~~M9d（宿主目标的读回）~~ | **已完成（2026-09-23）**：`readColorBuffer`/`readDepthBuffer` 转真；新 `api/HostReadback`——**两个来源一张图**：执行器每帧本来就在**全部 pass 之后**给每个目标接上自己的拷贝节点（彩色目标=附件 0，只有深度的目标=深度），所以读"帧已经拷过的"**不用再提交任何东西**（停一次设备 + 读映射缓冲）；帧**没拷过的**（彩色目标的深度、第二个彩色附件）在这一层用目标自己的拷贝命令**提交一次**（自己的 command buffer + fence，100 s 上限）——被画过的目标处在确定布局，拷贝合法；**没画过的目标答 `NotRecorded`**（拷贝 UNDEFINED 内存再把垃圾叫"图片"是不行的）。顺序即契约：①**先分类**（不需要设备：未知附件、读不了的格式、没录过的目标——不能服务的请求**一分钱不花**）；②**调用者停设备**（写缓冲的那一帧可能还在飞）——这次停**被计数**（`SessionContentAccess::waitDeviceIdle`，与 `deviceWaits()` 同一个计数器：读回是唯一允许停设备的路径，"恰好停一次"保持可查）；③只有帧没拷过才在这里拷（在停之后，两次提交不会重叠）；④探针读映射缓冲，把字节/浮点交给宿主（`PixelProbe::pixels()`/`DepthProbe::values()` 交出原缓冲）。门面：拒绝**两个频道一起说**（`why` 给机器答案、诊断路由给一句话，**每个情节一次**——目标自己的情节挂在条目上，目标解析不了就共用一个每入口点情节；成功即 rearm）；**还没停设备就先拒绝**；借来的深度走 `BorrowedDepth`（SDK 的规矩：源目标才是读的地方）；`readbackResultOf` 一张表（未知目标/没建好/没录过 ⇒ NotReady、空目标/未知附件 ⇒ Invalid、读不了的格式/借来的深度/没设备 ⇒ Unsupported、搬运失败 ⇒ Failed；**未映射的落到 Failed 永不落到 Ok**）；诊断类别沿用旧实现的 `ContentSkipped`。真设备用例（`VsgBackendTest.TheSdkReadsBackItsOwnTargetsPixelsAndDepths`，64×64 的 RGBA8+D32F 目标一帧）：彩色读回 `Ok`、`64*64*4` 字节、三角内 (16,40) 是 `(255,0,0,255)`、外面 (48,8) 是目标的清屏绿、alpha 255；深度 4096 个 float、三角形处 ∈ (0.05, 0.95)、清屏处 `==0.0`、全在 [0,1]；`deviceWaits` 每次读回 **+1**；拒绝面（**全部不加等待**）：附件 5 ⇒ Invalid、未知目标 ⇒ NotReady、RGBA16F ⇒ Unsupported（持有且建成、不需要帧）、borrower 读深度 ⇒ Unsupported、**lender 建成但没画过 ⇒ NotReady**、释放过的目标 ⇒ NotReady。**本片撞出的真问题**：只有离屏 pass 的帧**从没跑过窗口那棵图** ⇒ 被 acquire 的图像停在 `UNDEFINED` ⇒ 呈递 **VUID 01430**（M9a 的同一课，换了张脸）；修法 = `WindowTarget::prepareWithoutClear()`（只重开渲染区、清屏值原样）+ 执行器在**没有任何窗口 pass** 的帧尾把窗口图**不加壳**挂进命令图（没有 pass 可以归因，注释里写明）。变异 **6/6 红**：①没画过的目标读起来像能服务（3 行）；②只有离屏的帧不跑窗口图（**2 条 VUID**）；③**两道"没录过"的闸一起拆**（3 行；只拆一道是绿的——分类那一道先答，两道闸在**不同来源**上各管一半）；④借来的深度从 borrower 读（3 行）；⑤读回的停不计（3 行）；⑥帧不把自己的目标拷回来（**63 行**，执行器与相位一起红）。门禁 **659 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bg）。 |
@@ -2650,7 +2650,7 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
 
-代码落地前的约定：新增 `core/` 文件会被 `v_add_plugin` 的 `GLOB_RECURSE` 自动收进插件，
+代码落地前的约定：新增 `core/` 文件会被 `vn_add_plugin` 的 `GLOB_RECURSE` 自动收进插件，
 `tests/test_vsg` 需要显式加源文件（两份 CMakeLists 各一处）。
 
 ### 11.16ad（M7e）会话侧读数字半边
@@ -3095,7 +3095,7 @@ shininess/256（引擎的 G-buffer 约定；本夹具的材料 shininess = 0）�
 = 0 ⇒ 混合会把法线**整体抹掉**（透明黑底 × 0），阳光消失——变异 M5 把规则退回 `> 4`
 时像素直接回到 (13,6,26)。
 
-**另一个坑（夹具侧，写进 memory）**：`vine::math::Mat4d` 默认构造 = **单位阵**（不是
+**另一个坑（夹具侧，写进 memory）**：`vn::math::Mat4d` 默认构造 = **单位阵**（不是
 零）——生产者矩阵只写了 (0,0)/(1,1)/(2,3)/(3,3) 时 (2,2) 仍是 1，光的 z 变成
 `1*(-2)+5.5 = 3.5` ⇒ `frag = 1-(3.5*0.5+0.5) = -1.25`（RGBA8 夹到 0）⇒ 所有"看着像
 被阴影"的结果都从这一项来。要点：**先读默认值再写矩阵**。
@@ -3824,7 +3824,7 @@ drawable 的纹理归档**（栈上的残留值）。实测形态：天空盒用
 ### 11.16bd M9a（2026-09-23）：门面立起来——SDK 的方法落到会话与帧驱动上
 
 前面每一片的证据都是测试**直接**调用 `api::` 的那些件（会话、执行器、内容层、编译器）。这一片第一次把
-`vine::graphics::RenderBackend` 这条**引擎看得到的缝**接上：`api/VsgBackend`（`VsgBackend : RenderBackend`，
+`vn::graphics::RenderBackend` 这条**引擎看得到的缝**接上：`api/VsgBackend`（`VsgBackend : RenderBackend`，
 PImpl）不自己决定任何事——它把 SDK 的调用翻成对已有件的驱动，翻不过去的**报出来**。
 
 **它今天服务的东西**（就是 SDK 契约里"后端该有的骨架"）：
@@ -4130,7 +4130,7 @@ acquire 发现 `_extent2D` 与交换链不符（`Window::acquireNextImage` 直�
 
 ### 11.16bi M9f（2026-09-23）：工厂切到门面——"vsg" 就是重写版
 
-最后一步：`VsgRenderBackendFactory::create()` 不再造 `VsgRenderer`，而是造 `vine::vsg::VsgBackend`（门面）。
+最后一步：`VsgRenderBackendFactory::create()` 不再造 `VsgRenderer`，而是造 `vn::vsg::VsgBackend`（门面）。
 从此**注册名 "vsg" 的含义就是重写版**——插件 load → 注册表 → `create()` 这条生产路径上跑的是这一路 M0–M9e
 建起来的东西；被替换的实现仍在树里、仍由自己的测试驱动，但**没有任何名字会创建它**（第二个名字就是"哪个是
 vsg"的第二个答案，而这正是重写要消灭的东西）。注册实际有**两条路**：`GfxBackendVsgPlugin::load()` 显式注册
@@ -4155,7 +4155,7 @@ material 调 `VsgMaterialManager::updateMaterial`，而那个方法**自己就�
 
 **证据**：
 
-* `VsgBackendPluginTest.CreateBackendByName` 用 `dynamic_cast<vine::vsg::VsgBackend*>` 把"造出来的是门面"
+* `VsgBackendPluginTest.CreateBackendByName` 用 `dynamic_cast<vn::vsg::VsgBackend*>` 把"造出来的是门面"
   钉住（旧工厂会一模一样地通过 `!= nullptr`）；
 * `VsgBackendPluginTest.TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraws`：**通过注册表**拿对象（不是直接
   `new`）、采纳宿主窗口、初始化、走 SDK 协议画一帧（pass + 一个三角）、呈递、把**宿主窗口的像素**读回来
@@ -4438,7 +4438,7 @@ ThroughALiveResize` 在全量套件里偶发红（平台回旧几何；单独跑
 ### 11.16bp M10g（2026-09-24）：给重写版补一道应用级门禁（画面即证据）
 
 问题：两次回退（resize 后**只剩天空**、四个预览被**挤压**）都是"套件全绿、画面错"。旧门禁 `scripts/gfx_lavapipe_check.sh`
-的第 1/2 阶段驱动的是 `vsg_backend_selftest`（它自己 `new vine::vsg::VsgRenderer()`，即**已无人创建的旧实现**），
+的第 1/2 阶段驱动的是 `vsg_backend_selftest`（它自己 `new vn::vsg::VsgRenderer()`，即**已无人创建的旧实现**），
 应用阶段又要求 `off-screen target 'shadow_map'` 这行**只有旧渲染器**才打印的日志，因此在重写版上**必然红**。
 
 **做了什么（item 1）**
@@ -4647,7 +4647,7 @@ preview 244; vuid=0`）；include hygiene 0/`784` 文件、诊断格式 0/7、do
 | `api/VsgBackend.cpp` | 注册时把 SDK 名字传下去 |
 | `tests/test_vsg/ExecutorTest.cpp` | 新用例：报告指名（借租约拒绝做触发） |
 | `app_shell/src/PreviewFit.hpp`（新）/`AppShellDemo.cpp` | 算术搬出 + demo 转调 |
-| `tests/test_gui/PreviewFitTest.cpp`（新）、`tests/test_gui/CMakeLists.txt` | 五条用例；加 app_shell 的 src 到 include 路径 + `vi::Graphics` |
+| `tests/test_gui/PreviewFitTest.cpp`（新）、`tests/test_gui/CMakeLists.txt` | 五条用例；加 app_shell 的 src 到 include 路径 + `vn::Graphics` |
 
 **证据**：`test_vsg` **413** 全绿（+1 条新用例）、0 VUID；`test_gui --gtest_filter=PreviewFitTest.*` 6 条全绿；
 门禁两棵树同跑全绿，应用阶段 `vuid=0`、画面参数与 §11.16bt 逐字相同（`87.04% / 85.14%, preview 244`）。

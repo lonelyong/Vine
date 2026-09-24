@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief Startup-phase progress sink: reports what a boot is doing to the startup frame and to any other presenter.
@@ -36,7 +36,7 @@ V_APPFW_NS_BEGIN
  * Thread contract: stage()/advance()/setLabel()/complete() are called by the reporting thread (the application thread
  * during a boot), while label()/isCounted()/fraction() are read from wherever a presenter runs.
  */
-class V_APPFW_API StartupProgress
+class VN_APPFW_API StartupProgress
 {
   public:
     StartupProgress();
@@ -125,4 +125,4 @@ class V_APPFW_API StartupProgress
     std::unique_ptr<Impl> d;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

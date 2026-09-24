@@ -1,8 +1,8 @@
 ﻿#include <vine/graphics/Light.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(Light, vine::Object);
+VN_OBJECT_META_IMPL(Light, vn::Object);
 
 Light::Light() = default;
 
@@ -21,7 +21,7 @@ LightPtr Light::createAmbient()
     return make_intrusive<Light>();
 }
 
-LightPtr Light::createDirectional(const vine::math::Vec3d& direction)
+LightPtr Light::createDirectional(const vn::math::Vec3d& direction)
 {
     auto light = make_intrusive<Light>();
     light->type_ = LightType::Directional;
@@ -69,12 +69,12 @@ bool Light::hasDirection() const
     return type_ == LightType::Directional;
 }
 
-vine::math::Vec3d Light::direction() const
+vn::math::Vec3d Light::direction() const
 {
     return direction_;
 }
 
-void Light::setDirection(const vine::math::Vec3d& direction)
+void Light::setDirection(const vn::math::Vec3d& direction)
 {
     direction_ = direction;
 }
@@ -114,4 +114,4 @@ void Light::setShadowFilter(ShadowFilter filter)
     shadow_settings_.filter = filter;
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

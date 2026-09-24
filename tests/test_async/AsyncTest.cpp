@@ -44,7 +44,7 @@
 #include <dirent.h>
 #endif
 
-using namespace vine;
+using namespace vn;
 
 namespace {
 
@@ -1062,8 +1062,8 @@ TEST(SchedulerTest, ScheduleMayReturnATask)
 
 TEST(CancellationTest, TokenAliases)
 {
-    vine::CancellationSource source;
-    vine::CancellationToken token = source.get_token();
+    vn::CancellationSource source;
+    vn::CancellationToken token = source.get_token();
     EXPECT_FALSE(token.stop_requested());
     source.request_stop();
     EXPECT_TRUE(token.stop_requested());
@@ -1154,7 +1154,7 @@ TEST(TaskTest, WhenAnyCompletesOnFirst)
 
 TEST(TaskTest, WithCancellationThrowsWhenCancelled)
 {
-    vine::CancellationSource source;
+    vn::CancellationSource source;
     source.request_stop();
 
     auto task    = one();
@@ -1165,13 +1165,13 @@ TEST(TaskTest, WithCancellationThrowsWhenCancelled)
 TEST(TaskTest, WithCancellationRunsTask)
 {
     auto task    = answer();
-    auto wrapped = async::withCancellation(vine::CancellationToken{}, std::move(task));
+    auto wrapped = async::withCancellation(vn::CancellationToken{}, std::move(task));
     EXPECT_EQ(async::syncWait(std::move(wrapped)), 42);
 }
 
 TEST(TaskTest, WhenAllAlreadyCancelled)
 {
-    vine::CancellationSource source;
+    vn::CancellationSource source;
     source.request_stop();
 
     std::vector<async::AnyTask> tasks;
@@ -1184,7 +1184,7 @@ TEST(TaskTest, WhenAllAlreadyCancelled)
 
 TEST(TaskTest, WhenAllCancellation)
 {
-    vine::CancellationSource source;
+    vn::CancellationSource source;
 
     std::vector<async::AnyTask> tasks;
     tasks.push_back(async::discard(never()));
@@ -1354,7 +1354,7 @@ TEST(AsyncSemaphoreTest, WaiterResumedOnRelease)
 
 TEST(ThreadPoolSchedulerTest, ResumeOnPool)
 {
-    vine::ThreadPool pool(2);
+    vn::ThreadPool pool(2);
     async::ThreadPoolScheduler scheduler(pool);
     bool ran = false;
 
@@ -1366,14 +1366,14 @@ TEST(ThreadPoolSchedulerTest, ResumeOnPool)
 
 TEST(ThreadPoolSchedulerTest, RunOnPool)
 {
-    vine::ThreadPool pool(2);
+    vn::ThreadPool pool(2);
     auto task = async::runOn(pool, [](int a, int b) { return a + b; }, 20, 22);
     EXPECT_EQ(async::syncWait(std::move(task)), 42);
 }
 
 TEST(ThreadPoolSchedulerTest, RunOnPoolVoid)
 {
-    vine::ThreadPool pool(2);
+    vn::ThreadPool pool(2);
     bool ran = false;
     auto task = async::runOn(pool, [&ran] { ran = true; });
     async::syncWait(std::move(task));
@@ -1498,7 +1498,7 @@ TEST(ScopeTest, JoinRethrowsChildFailure)
 TEST(ScopeTest, RunsChildrenOnPool)
 {
     async::Scope scope;
-    vine::ThreadPool pool(2);
+    vn::ThreadPool pool(2);
     std::atomic<int> counter{ 0 };
     for (int i = 0; i < 4; ++i)
     {
@@ -1575,7 +1575,7 @@ TEST(SleepTest, SleepsForDuration)
 
 TEST(SleepTest, CancellationThrows)
 {
-    vine::CancellationSource source;
+    vn::CancellationSource source;
     bool cancelled = false;
     auto runner = sleepCancel(source.get_token(), cancelled);
 
@@ -2217,7 +2217,7 @@ TEST(TypedWhenAnyTest, EmptyListThrows)
 
 TEST(TaskTest, WhenAllCancelledDoesNotStartChildren)
 {
-    vine::CancellationSource source;
+    vn::CancellationSource source;
     source.request_stop();
 
     bool ran = false;
@@ -2233,7 +2233,7 @@ TEST(TaskTest, WhenAllVariadicVoidCancelledDoesNotStartChildren)
     // Invariant: the void variadic overloads forward their token to the shared
     // driver instead of silently dropping it, so an already-cancelled token
     // still throws before any child runs.
-    vine::CancellationSource source;
+    vn::CancellationSource source;
     source.request_stop();
 
     bool ran = false;
@@ -2715,7 +2715,7 @@ async::Task<void> sleepFlag(std::chrono::milliseconds duration, std::atomic<bool
     co_return;
 }
 
-async::Task<void> cancellableSleepFor(vine::CancellationToken token, std::atomic<bool>& cancelled)
+async::Task<void> cancellableSleepFor(vn::CancellationToken token, std::atomic<bool>& cancelled)
 {
     try
     {
@@ -2728,7 +2728,7 @@ async::Task<void> cancellableSleepFor(vine::CancellationToken token, std::atomic
     co_return;
 }
 
-async::Task<void> sleepRecordingThread(vine::CancellationToken token,
+async::Task<void> sleepRecordingThread(vn::CancellationToken token,
                                        std::thread::id& wake_thread,
                                        std::atomic<bool>& cancelled)
 {
@@ -2776,7 +2776,7 @@ TEST(SleepTimerTest, CancellationWakesPromptly)
     long long worst = 0;
     for (int i = 0; i < 5; ++i)
     {
-        vine::CancellationSource source;
+        vn::CancellationSource source;
         std::atomic<bool>        cancelled{ false };
         auto                     task = cancellableSleepFor(source.get_token(), cancelled);
 
@@ -2809,7 +2809,7 @@ TEST(SleepTimerTest, CancellationResumesOnTheTimerThreadNotTheCancellers)
     // timing that other threads observe. Measured before this was fixed: 6/10
     // full test_gui runs failed its exclusive-takeover handshake, against 0/10
     // for the thread-based implementation.
-    vine::CancellationSource source;
+    vn::CancellationSource source;
     std::thread::id          wake_thread{};
     std::atomic<bool>        cancelled{ false };
     auto                     task = sleepRecordingThread(source.get_token(), wake_thread, cancelled);

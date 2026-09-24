@@ -2,9 +2,9 @@
 
 #include <utility>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-V_OBJECT_META_IMPL(Command, Object)
+VN_OBJECT_META_IMPL(Command, Object)
 
 CommandResult::CommandResult(CommandStatus status, String message)
   : status_(status)
@@ -36,4 +36,4 @@ void CommandResult::setData(std::any data)
     data_ = std::move(data);
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

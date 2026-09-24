@@ -2,7 +2,7 @@
 
 #include <QIcon>
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 struct Icon::Impl {
     QIcon qicon;
@@ -57,4 +57,4 @@ Icon::operator QIcon() const
     return d->qicon;
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

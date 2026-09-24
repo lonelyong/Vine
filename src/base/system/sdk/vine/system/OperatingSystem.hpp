@@ -3,12 +3,12 @@
 
 #include <vine/String.hpp>
 
-V_SYSTEM_NS_BEGIN
+VN_SYSTEM_NS_BEGIN
 
 /**
  * @brief Describes the operating system the process is running on.
  */
-struct V_SYSTEM_API OperatingSystemInfo {
+struct VN_SYSTEM_API OperatingSystemInfo {
     String name;         // e.g. "Windows", "Linux", "macOS".
     String version;      // OS version, e.g. "10.0.19045".
     String architecture; // CPU architecture, e.g. "x64", "x86", "arm64".
@@ -17,7 +17,7 @@ struct V_SYSTEM_API OperatingSystemInfo {
 /**
  * @brief Provides read-only information about the host operating system.
  */
-class V_SYSTEM_API OperatingSystem {
+class VN_SYSTEM_API OperatingSystem {
 
   public:
     /**
@@ -31,4 +31,4 @@ class V_SYSTEM_API OperatingSystem {
     static const OperatingSystemInfo& info();
 };
 
-V_SYSTEM_NS_END
+VN_SYSTEM_NS_END

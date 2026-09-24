@@ -6,7 +6,7 @@
 #include "Quaternion.hpp"
 #include "Vector3.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief 3D rigid transformation class that represents translation, rotation.
@@ -130,4 +130,4 @@ Vector3<T> operator*(const Isometry3<T>& t, const Vector3<T>& v);
 using Isometry3f = Isometry3<float>;
 using Isometry3d = Isometry3<double>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

@@ -8,7 +8,7 @@
 
 class QWidget;
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Modal dialog that collects several typed values in a single form.
@@ -26,7 +26,7 @@ V_APPFWGUI_NS_BEGIN
  *
  * Example:
  * @code
- * using namespace vine::appfw::gui;
+ * using namespace vn::appfw::gui;
  *
  * InputBox::StringField name(u8"名称", u8"", true, 1, 32);
  * InputBox::IntField    copies(u8"份数", 1, true, 1, 999);
@@ -39,8 +39,8 @@ V_APPFWGUI_NS_BEGIN
  * }
  * @endcode
  */
-class V_APPFW_API InputBox : public Window {
-    V_OBJECT_META_DECL;
+class VN_APPFW_API InputBox : public Window {
+    VN_OBJECT_META_DECL;
 
   public:
     /// The kind of editor used for a field.
@@ -215,4 +215,4 @@ class V_APPFW_API InputBox : public Window {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

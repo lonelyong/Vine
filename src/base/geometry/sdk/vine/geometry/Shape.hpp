@@ -6,7 +6,7 @@
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 
-V_GEOMETRY_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief Coarse shape family used for category-level dispatch.
@@ -49,8 +49,8 @@ enum class ShapeType {
 /**
  * @brief Base class for all geometric shapes.
  */
-class V_GEOMETRY_API Shape : public vine::Object, public vine::RefCounted<Shape> {
-    V_OBJECT_META_DECL;
+class VN_GEOMETRY_API Shape : public vn::Object, public vn::RefCounted<Shape> {
+    VN_OBJECT_META_DECL;
 
   protected:
     /// Protected so Shape cannot be instantiated directly.
@@ -72,7 +72,7 @@ class V_GEOMETRY_API Shape : public vine::Object, public vine::RefCounted<Shape>
      * @return true for closed solids, false for surfaces or wireframes.
      */
     [[nodiscard]]
-    virtual bool hasVolume(double eps = vine::math::EPS<double>()) const;
+    virtual bool hasVolume(double eps = vn::math::EPS<double>()) const;
 
     /**
      * @brief Returns the concrete shape type.
@@ -101,4 +101,4 @@ class V_GEOMETRY_API Shape : public vine::Object, public vine::RefCounted<Shape>
     ShapeType shape_type_ = ShapeType::Unknown;
 };
 
-V_GEOMETRY_NS_END
+VN_GEOMETRY_NS_END

@@ -59,7 +59,7 @@ endif()
 
 if(MSVC)
     # MSVC compile options are applied per-target to the project's own code
-    # (see v_add_library / v_add_plugin / src/app / tests / third_party), NOT
+    # (see vn_add_library / vn_add_plugin / src/app / tests / third_party), NOT
     # globally: a global add_compile_options() would leak into FetchContent
     # dependencies (e.g. assimp sets its own /source-charset:utf-8, which
     # conflicts with /utf-8 -> D8016).
@@ -111,6 +111,6 @@ install(
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/vine
 )
 install(EXPORT VineTargets
-    NAMESPACE vi::
+    NAMESPACE vn::
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/vine
 )

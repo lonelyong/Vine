@@ -55,58 +55,58 @@
 #include <vine/vsg/core/StateRegistry.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 
-using vine::graphics::Camera;
-using vine::graphics::Geometry;
-using vine::graphics::Light;
-using vine::graphics::LightType;
-using vine::graphics::Material;
-using vine::graphics::RenderCommand;
-using vine::graphics::RenderTarget;
-using vine::graphics::ShaderProgram;
-using vine::graphics::ShaderStage;
-using vine::graphics::ShaderStageType;
-using vine::vsg::BlockDescriptors;
-using vine::vsg::BlockStorage;
-using vine::vsg::buildGeometryFacts;
-using vine::vsg::buildMaterialFacts;
-using vine::vsg::buildProgramFacts;
-using vine::vsg::ContentDraw;
-using vine::vsg::ContentFacts;
-using vine::vsg::ContentPass;
-using vine::vsg::ContentPipeline;
-using vine::vsg::directionalSlotOf;
-using vine::vsg::FactMiss;
-using vine::vsg::GeometryFacts;
-using vine::vsg::InputImages;
-using vine::vsg::kLightDirectionalSlots;
-using vine::vsg::MaterialFacts;
-using vine::vsg::OffscreenTarget;
-using vine::vsg::packLightBlock;
-using vine::vsg::packShadowBlock;
-using vine::vsg::PassContent;
-using vine::vsg::ProgramFacts;
-using vine::vsg::StreamUploads;
-using vine::vsg::VineLightsBlock;
-using vine::vsg::VsgExecutor;
-using vine::vsg::core::CameraSnapshot;
-using vine::vsg::core::CompiledFrame;
-using vine::vsg::core::CompiledPass;
-using vine::vsg::core::ClearPolicy;
-using vine::vsg::core::CompiledDraw;
-using vine::vsg::core::Diagnostics;
-using vine::vsg::core::DrawKind;
-using vine::vsg::core::FrameArena;
-using vine::vsg::core::FrameCompiler;
-using vine::vsg::core::FrameFacts;
-using vine::vsg::core::FrameRecorder;
-using vine::vsg::core::FrameToken;
-using vine::vsg::core::LightRef;
-using vine::vsg::core::Observe;
-using vine::vsg::core::Rgba8;
-using vine::vsg::core::ShadowFacts;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::TargetFacts;
-using vine::vsg::core::VariantPool;
+using vn::graphics::Camera;
+using vn::graphics::Geometry;
+using vn::graphics::Light;
+using vn::graphics::LightType;
+using vn::graphics::Material;
+using vn::graphics::RenderCommand;
+using vn::graphics::RenderTarget;
+using vn::graphics::ShaderProgram;
+using vn::graphics::ShaderStage;
+using vn::graphics::ShaderStageType;
+using vn::vsg::BlockDescriptors;
+using vn::vsg::BlockStorage;
+using vn::vsg::buildGeometryFacts;
+using vn::vsg::buildMaterialFacts;
+using vn::vsg::buildProgramFacts;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentFacts;
+using vn::vsg::ContentPass;
+using vn::vsg::ContentPipeline;
+using vn::vsg::directionalSlotOf;
+using vn::vsg::FactMiss;
+using vn::vsg::GeometryFacts;
+using vn::vsg::InputImages;
+using vn::vsg::kLightDirectionalSlots;
+using vn::vsg::MaterialFacts;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::packLightBlock;
+using vn::vsg::packShadowBlock;
+using vn::vsg::PassContent;
+using vn::vsg::ProgramFacts;
+using vn::vsg::StreamUploads;
+using vn::vsg::VineLightsBlock;
+using vn::vsg::VsgExecutor;
+using vn::vsg::core::CameraSnapshot;
+using vn::vsg::core::CompiledFrame;
+using vn::vsg::core::CompiledPass;
+using vn::vsg::core::ClearPolicy;
+using vn::vsg::core::CompiledDraw;
+using vn::vsg::core::Diagnostics;
+using vn::vsg::core::DrawKind;
+using vn::vsg::core::FrameArena;
+using vn::vsg::core::FrameCompiler;
+using vn::vsg::core::FrameFacts;
+using vn::vsg::core::FrameRecorder;
+using vn::vsg::core::FrameToken;
+using vn::vsg::core::LightRef;
+using vn::vsg::core::Observe;
+using vn::vsg::core::Rgba8;
+using vn::vsg::core::ShadowFacts;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::TargetFacts;
+using vn::vsg::core::VariantPool;
 
 namespace
 {
@@ -118,7 +118,7 @@ LightRef makeLight(const void* identity, LightType type, double r, double g, dou
     light.identity  = identity;
     light.enabled   = true;
     light.type      = type;
-    light.color     = vine::Colorf(r, g, b, 1.0);
+    light.color     = vn::Colorf(r, g, b, 1.0);
     light.intensity = intensity;
     return light;
 }
@@ -128,7 +128,7 @@ LightRef makeSun(const void* identity, double r, double g, double b, bool cast_s
 {
     LightRef sun = makeLight(identity, LightType::Directional, r, g, b, 1.0F);
     sun.has_direction = true;
-    sun.direction     = vine::math::Vec3d(0.0, 0.0, 1.0);
+    sun.direction     = vn::math::Vec3d(0.0, 0.0, 1.0);
     sun.cast_shadow   = cast_shadow;
     sun.shadow_bias   = bias;
     return sun;
@@ -139,7 +139,7 @@ CameraSnapshot cameraLookingAlongPlusX()
 {
     CameraSnapshot camera;
     camera.present    = true;
-    camera.view       = vine::math::Mat4d{};  // identity: right = +X, up = +Y, backward = +Z
+    camera.view       = vn::math::Mat4d{};  // identity: right = +X, up = +Y, backward = +Z
     camera.view(0, 0) = 0.0;
     camera.view(0, 2) = 1.0;   // right = world +Z
     camera.view(2, 0) = -1.0;  // backward = world -X
@@ -148,9 +148,9 @@ CameraSnapshot cameraLookingAlongPlusX()
 }
 
 /// @brief A producer matrix with NO symmetry and NO diagonal-only shape: a transposed packing cannot look like it.
-vine::math::Mat4d mixedProducerMatrix()
+vn::math::Mat4d mixedProducerMatrix()
 {
-    vine::math::Mat4d vp;
+    vn::math::Mat4d vp;
     vp(0, 0) = 0.5;
     vp(0, 1) = 0.25;   // reads world y: the transpose check needs an off-diagonal
     vp(1, 0) = -0.125;
@@ -182,7 +182,7 @@ TEST(ShadowBlockTest, TheBlockMapsViewSpaceIntoTheProducerClipThroughTheWorld)
     const CameraSnapshot camera = cameraLookingAlongPlusX();
     ASSERT_TRUE(camera.present);
 
-    const vine::math::Mat4d vp = mixedProducerMatrix();
+    const vn::math::Mat4d vp = mixedProducerMatrix();
     const void* const        owner = reinterpret_cast<const void*>(0x51U);  // the map's light (any identity)
     LightRef                 sun   = makeSun(owner, 0.4, 0.0, 0.0, /*cast_shadow*/ true, /*bias*/ 0.003F);
     std::vector<LightRef>    storage;
@@ -194,7 +194,7 @@ TEST(ShadowBlockTest, TheBlockMapsViewSpaceIntoTheProducerClipThroughTheWorld)
     shadow.has_view_projection    = true;
     shadow.view_projection        = vp;
 
-    vine::graphics::VineShadowBlock block;
+    vn::graphics::VineShadowBlock block;
     ASSERT_TRUE(packShadowBlock(shadow, draw, block)) << "the map, its light and a camera are all here";
 
     EXPECT_FLOAT_EQ(block.params[0], 1.0F) << "the ABI's switch";
@@ -203,7 +203,7 @@ TEST(ShadowBlockTest, TheBlockMapsViewSpaceIntoTheProducerClipThroughTheWorld)
     EXPECT_FLOAT_EQ(block.params[3], 0.0F) << "and the slot the light block put the caster in";
 
     // The packed matrix, read the way the GLSL does (column-major): element (row, column) at column * 4 + row.
-    const vine::math::Mat4d composed = vp * camera.view.inverted();
+    const vn::math::Mat4d composed = vp * camera.view.inverted();
     for (int column = 0; column < 4; ++column)
     {
         for (int row = 0; row < 4; ++row)
@@ -217,10 +217,10 @@ TEST(ShadowBlockTest, TheBlockMapsViewSpaceIntoTheProducerClipThroughTheWorld)
     // And the SEMANTIC half: one view-space point, taken through the block, lands where the same point lands through
     // the producer's matrix - the composition's whole purpose. (A packing that dropped `inverse(view)` or transposed
     // the result fails here, and the off-diagonal of `vp` is what makes the transpose visible.)
-    const vine::math::Mat4d identity_view = camera.view;
+    const vn::math::Mat4d identity_view = camera.view;
     (void)identity_view;
-    const vine::math::Mat4d view_to_light = vp * camera.view.inverted();
-    const vine::math::Mat4d world_to_light_expected = vp * vine::math::Mat4d{};  // inverse(view) * view == identity
+    const vn::math::Mat4d view_to_light = vp * camera.view.inverted();
+    const vn::math::Mat4d world_to_light_expected = vp * vn::math::Mat4d{};  // inverse(view) * view == identity
     EXPECT_NEAR((view_to_light * camera.view)(0, 1), world_to_light_expected(0, 1), 1e-9)
         << "the block's view -> light composed with the view is the producer's own world -> light";
 }
@@ -247,7 +247,7 @@ TEST(ShadowBlockTest, EveryMissingStatementLeavesTheSwitchOff)
                                    const CameraSnapshot& cam) {
         std::vector<LightRef> storage;
         const CompiledDraw    draw = drawWith(cam, lights, storage);
-        vine::graphics::VineShadowBlock block;
+        vn::graphics::VineShadowBlock block;
         const bool            on = packShadowBlock(shadow, draw, block);
         for (const float value : block.view_to_light) {
             EXPECT_FLOAT_EQ(value, 0.0F) << "an unusable map must not leave a matrix behind";
@@ -272,7 +272,7 @@ TEST(ShadowBlockTest, EveryMissingStatementLeavesTheSwitchOff)
     {
         std::vector<LightRef> storage;
         const CompiledDraw    draw = drawWith(camera, std::span<const LightRef>(casting_only, 1U), storage);
-        vine::graphics::VineShadowBlock block;
+        vn::graphics::VineShadowBlock block;
         EXPECT_TRUE(packShadowBlock(good, draw, block)) << "the reference case: every statement is present";
     }
     ShadowFacts no_map;
@@ -310,7 +310,7 @@ TEST(ShadowBlockTest, ACasterTheBlockCannotNameLeavesTheSwitchOff)
     std::vector<LightRef> storage;
     const LightRef        announced[]{ first, second, third, caster };
     const CompiledDraw    draw = drawWith(camera, std::span<const LightRef>(announced, 4U), storage);
-    vine::graphics::VineShadowBlock block;
+    vn::graphics::VineShadowBlock block;
     EXPECT_FALSE(packShadowBlock(shadow, draw, block))
         << "the owner is the fourth directional light, and the block holds three";
 
@@ -428,7 +428,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     //
     // A packing that bound the map to the wrong slot, ignored the switch, or scaled every light would move at least
     // one of those four colours, and the receiver's clear colour (blue) is what a band that drew nothing looks like.
-    const vine::vsg::DeviceResult created = vine::vsg::createDevice();
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)
     {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
@@ -457,24 +457,24 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     ASSERT_NE(receiver, nullptr);
 
     // The map's identity and its own statements: the target says whose shadow it is and how to read it.
-    const vine::intrusive_ptr<RenderTarget> map_handle(new RenderTarget());
-    const vine::intrusive_ptr<RenderTarget> receiver_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> map_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> receiver_handle(new RenderTarget());
 
     const auto make_program = [](const char8_t* fragment, const char8_t* vertex) {
-        auto program = vine::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+        auto program = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
         ShaderStage v;
         v.type   = ShaderStageType::Vertex;
-        v.source = vine::String(vertex);
+        v.source = vn::String(vertex);
         ShaderStage f;
         f.type   = ShaderStageType::Fragment;
-        f.source = vine::String(fragment);
+        f.source = vn::String(fragment);
         program->addStage(v);
         program->addStage(f);
         return program;
     };
-    const vine::intrusive_ptr<ShaderProgram> producer_program = make_program(
+    const vn::intrusive_ptr<ShaderProgram> producer_program = make_program(
         u8"void main() { }\n", kProducerVertex);
-    const vine::intrusive_ptr<ShaderProgram> consumer_program = make_program(
+    const vn::intrusive_ptr<ShaderProgram> consumer_program = make_program(
         kConsumerFragment,
         u8"layout(location = 0) in vec3 position;\n"
         u8"layout(location = 0) out vec2 surface;\n"
@@ -513,11 +513,11 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
 
     // The geometry: the producer covers the whole map (a clip-space triangle), the receiver draws four bands.
     const auto make_geometry = [](std::vector<float> positions) {
-        auto indices = vine::intrusive_ptr<const vine::Buffer<std::uint32_t>>(
-            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
-        auto geometry = vine::intrusive_ptr<Geometry>(new Geometry());
-        geometry->setPositions(vine::intrusive_ptr<const vine::Buffer<float>>(
-            new vine::Buffer<float>(std::move(positions))));
+        auto indices = vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+        auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
+        geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(
+            new vn::Buffer<float>(std::move(positions))));
         geometry->setIndices(indices);
         geometry->setRevision(1U);
         return geometry;
@@ -526,22 +526,22 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
         const float centre = (left + right) * 0.5F;
         return make_geometry({ left, -1.0F, 0.0F, right, -1.0F, 0.0F, centre, 1.0F, 0.0F });
     };
-    const vine::intrusive_ptr<Geometry> full_quad =
+    const vn::intrusive_ptr<Geometry> full_quad =
         make_geometry({ -1.0F, -1.0F, 0.0F, 3.0F, -1.0F, 0.0F, -1.0F, 3.0F, 0.0F });
-    const vine::intrusive_ptr<Geometry> bands[]{ make_band(-1.0F, -0.5F), make_band(-0.5F, 0.0F),
+    const vn::intrusive_ptr<Geometry> bands[]{ make_band(-1.0F, -0.5F), make_band(-0.5F, 0.0F),
                                                  make_band(0.0F, 0.5F), make_band(0.5F, 1.0F) };
 
-    const vine::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vine::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
 
     GeometryFacts                        quad_facts;
-    std::vector<vine::vsg::ChannelFacts> quad_channels;
+    std::vector<vn::vsg::ChannelFacts> quad_channels;
     ASSERT_EQ(buildGeometryFacts(*full_quad, quad_facts, quad_channels), FactMiss::None);
     GeometryFacts                        band_facts[4];
-    std::vector<vine::vsg::ChannelFacts> band_channels[4];
+    std::vector<vn::vsg::ChannelFacts> band_channels[4];
     for (std::size_t index = 0; index < 4U; ++index)
     {
         ASSERT_EQ(buildGeometryFacts(*bands[index], band_facts[index], band_channels[index]), FactMiss::None);
@@ -562,21 +562,21 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
 
     // The camera: at +Z looking at the origin, so "the world's +Z" is a light pointing at the viewer.
     Camera camera;
-    camera.setViewMatrixAsLookAt(vine::math::Vec3d(0.0, 0.0, 5.0), vine::math::Vec3d(0.0, 0.0, 0.0),
-                                 vine::math::Vec3d(0.0, 1.0, 0.0));
+    camera.setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+                                 vn::math::Vec3d(0.0, 1.0, 0.0));
 
     const auto make_sun = [](double r, double g, double b) {
-        vine::intrusive_ptr<Light> light = Light::createDirectional(vine::math::Vec3d(0.0, 0.0, 1.0));
-        light->setColor(vine::Colorf(r, g, b, 1.0));
+        vn::intrusive_ptr<Light> light = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, 1.0));
+        light->setColor(vn::Colorf(r, g, b, 1.0));
         light->setIntensity(1.0F);
         return light;
     };
-    vine::intrusive_ptr<Light> ambient = Light::createAmbient();
-    ambient->setColor(vine::Colorf(0.1, 0.1, 0.1, 1.0));
-    const vine::intrusive_ptr<Light> sun_a = make_sun(0.4, 0.0, 0.0);  // the map's owner
-    const vine::intrusive_ptr<Light> sun_b = make_sun(0.0, 0.4, 0.0);
-    const vine::intrusive_ptr<Light> sun_c = make_sun(0.0, 0.0, 0.4);
-    const vine::intrusive_ptr<Light> sun_d = make_sun(0.2, 0.2, 0.0);
+    vn::intrusive_ptr<Light> ambient = Light::createAmbient();
+    ambient->setColor(vn::Colorf(0.1, 0.1, 0.1, 1.0));
+    const vn::intrusive_ptr<Light> sun_a = make_sun(0.4, 0.0, 0.0);  // the map's owner
+    const vn::intrusive_ptr<Light> sun_b = make_sun(0.0, 0.4, 0.0);
+    const vn::intrusive_ptr<Light> sun_c = make_sun(0.0, 0.0, 0.4);
+    const vn::intrusive_ptr<Light> sun_d = make_sun(0.2, 0.2, 0.0);
     sun_a->setCastShadow(true);
     sun_b->setCastShadow(true);
     sun_c->setCastShadow(true);
@@ -584,7 +584,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
 
     // The matrix the producer publishes: x/y from the world position, and a CONSTANT light-space depth, so every
     // fragment of the receiver is behind the caster and the map scales the whole surface.
-    vine::math::Mat4d view_projection;
+    vn::math::Mat4d view_projection;
     view_projection(0, 0) = 0.5;
     view_projection(1, 1) = 0.25;
     view_projection(2, 3) = 0.5;
@@ -599,7 +599,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     const Light* band2_lights[]{ ambient.get(), sun_b.get(), sun_a.get() };
     const Light* band3_lights[]{ ambient.get(), sun_b.get(), sun_c.get(), sun_d.get(), sun_a.get() };
 
-    const auto command_for = [&](const vine::intrusive_ptr<Geometry>& geometry, const vine::intrusive_ptr<ShaderProgram>& program) {
+    const auto command_for = [&](const vn::intrusive_ptr<Geometry>& geometry, const vn::intrusive_ptr<ShaderProgram>& program) {
         RenderCommand command;
         command.geometry = geometry;
         command.material = material;
@@ -680,7 +680,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     VariantPool   pool;
     StreamUploads uploads;
     const auto    entry_points =
-        vine::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+        vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw   producer_draws(*producer_pipelines, pool, entry_points);
     ContentDraw   consumer_draws(*consumer_pipelines, pool, entry_points);
     StateRegistry producer_registry(pool);
@@ -713,14 +713,14 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     ::vsg::ref_ptr<::vsg::Node>  consumer_node;
     ASSERT_TRUE(producer_pass.record(frame.passes[0], producer_table, map->shape().compatibility(), {}, view_block,
                                      producer_node));
-    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
 
     const InputImages offered_inputs[] = { InputImages{ {}, map->depthView() } };
     ASSERT_TRUE(consumer_pass.record(receiver_pass, consumer_table, receiver->shape().compatibility(), offered_inputs,
                                      view_block, consumer_node));
-    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ContentSkipped), 0U)
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
         << "every band is a complete content draw";
-    EXPECT_EQ(diagnostics.count(vine::graphics::DiagnosticCategory::ChannelIgnored), 1U)
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ChannelIgnored), 1U)
         << "band 3 announced a caster the light block cannot carry: one episode, one report";
 
     VsgExecutor executor(diagnostics);

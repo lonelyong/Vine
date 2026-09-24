@@ -8,16 +8,16 @@
 
 #include <vine/String.hpp>
 
-using vine::String;
-using vine::testFlag;
-using vine::window::KeyCode;
-using vine::window::KeyEvent;
-using vine::window::ModifierKey;
-using vine::window::MouseButton;
-using vine::window::MouseEvent;
-using vine::window::ScrollEvent;
-using vine::window::WindowContext;
-using vine::window::WindowEvent;
+using vn::String;
+using vn::testFlag;
+using vn::window::KeyCode;
+using vn::window::KeyEvent;
+using vn::window::ModifierKey;
+using vn::window::MouseButton;
+using vn::window::MouseEvent;
+using vn::window::ScrollEvent;
+using vn::window::WindowContext;
+using vn::window::WindowEvent;
 
 namespace
 {
@@ -44,7 +44,7 @@ struct FakeNativeWindow {
  * the read-only accessors to forward the live state.
  */
 class TestWindowContext : public WindowContext {
-    V_OBJECT_META_DECL;
+    VN_OBJECT_META_DECL;
 
   public:
     explicit TestWindowContext(FakeNativeWindow* native)
@@ -66,7 +66,7 @@ class TestWindowContext : public WindowContext {
 
 }  // namespace
 
-V_OBJECT_META_IMPL(TestWindowContext, vine::window::WindowContext);
+VN_OBJECT_META_IMPL(TestWindowContext, vn::window::WindowContext);
 
 // ============ Read-only queries (from the native window) ============
 

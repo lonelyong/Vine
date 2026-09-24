@@ -2,9 +2,9 @@
 
 #include <algorithm>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-V_OBJECT_META_IMPL(Group, Node);
+VN_OBJECT_META_IMPL(Group, Node);
 
 Group::Group() = default;
 
@@ -72,4 +72,4 @@ Aabbd Group::boundingBox() const
     return box;
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

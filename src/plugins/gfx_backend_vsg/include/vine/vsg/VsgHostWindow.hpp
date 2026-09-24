@@ -41,7 +41,7 @@
 #include <vsg/platform/xcb/Xcb_Window.h>
 #endif
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -196,4 +196,4 @@ class VsgHostWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgHostWindow>
 
 } // namespace detail
 
-V_VSG_NS_END
+VN_VSG_NS_END

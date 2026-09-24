@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <utility>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -77,7 +77,7 @@ double PixelProbe::nonBlackFraction() const noexcept
     return pixels == 0 ? 0.0 : static_cast<double>(nonBlackPixels()) / static_cast<double>(pixels);
 }
 
-std::size_t PixelProbe::countMatching(const Rgba8& color, const vine::graphics::Viewport& rect) const noexcept
+std::size_t PixelProbe::countMatching(const Rgba8& color, const vn::graphics::Viewport& rect) const noexcept
 {
     int x0 = 0;
     int y0 = 0;
@@ -102,7 +102,7 @@ std::size_t PixelProbe::countMatching(const Rgba8& color, const vine::graphics::
     return count;
 }
 
-std::size_t PixelProbe::countDifferingFrom(const Rgba8& color, const vine::graphics::Viewport& rect) const noexcept
+std::size_t PixelProbe::countDifferingFrom(const Rgba8& color, const vn::graphics::Viewport& rect) const noexcept
 {
     int x0 = 0;
     int y0 = 0;
@@ -142,7 +142,7 @@ bool PixelProbe::wholeImageMatches(const Rgba8& color) const noexcept
     return pixels != 0;
 }
 
-bool PixelProbe::clamped(const vine::graphics::Viewport& rect, int& x0, int& y0, int& x1, int& y1) const noexcept
+bool PixelProbe::clamped(const vn::graphics::Viewport& rect, int& x0, int& y0, int& x1, int& y1) const noexcept
 {
     if (!valid() || !rect.isValid())
     {
@@ -162,4 +162,4 @@ const std::vector<std::uint8_t>& core::PixelProbe::pixels() const noexcept
     return pixels_;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

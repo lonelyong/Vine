@@ -30,11 +30,11 @@
 
 #include "DevicePhases.hpp"
 
-using vine::vsg::createDevice;
-using vine::vsg::DeviceOptions;
-using vine::vsg::DeviceResult;
-using vine::vsg::core::Phase;
-using vine::vsg::core::PhaseTable;
+using vn::vsg::createDevice;
+using vn::vsg::DeviceOptions;
+using vn::vsg::DeviceResult;
+using vn::vsg::core::Phase;
+using vn::vsg::core::PhaseTable;
 
 namespace
 {

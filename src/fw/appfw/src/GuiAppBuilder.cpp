@@ -6,7 +6,7 @@
 
 #include "AppBuilderSupport.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 std::unique_ptr<GuiApplication> createGuiApplication(const AppConfig& config, int argc, char** argv)
 {
@@ -31,4 +31,4 @@ std::unique_ptr<GuiApplication> createGuiApplication(const AppConfig& config, in
     return app;
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

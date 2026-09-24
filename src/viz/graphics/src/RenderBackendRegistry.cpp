@@ -5,7 +5,7 @@
 
 #include <vine/graphics/RenderBackend.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 String renderApiToString(RenderApi api)
 {
@@ -21,19 +21,19 @@ String renderApiToString(RenderApi api)
         result += token;
     };
 
-    if (vine::testFlag(api, RenderApi::Vulkan)) {
+    if (vn::testFlag(api, RenderApi::Vulkan)) {
         append(u8"vulkan");
     }
-    if (vine::testFlag(api, RenderApi::OpenGL2)) {
+    if (vn::testFlag(api, RenderApi::OpenGL2)) {
         append(u8"opengl2");
     }
-    if (vine::testFlag(api, RenderApi::OpenGL3)) {
+    if (vn::testFlag(api, RenderApi::OpenGL3)) {
         append(u8"opengl3");
     }
-    if (vine::testFlag(api, RenderApi::OpenGLES)) {
+    if (vn::testFlag(api, RenderApi::OpenGLES)) {
         append(u8"gles");
     }
-    if (vine::testFlag(api, RenderApi::Direct3D)) {
+    if (vn::testFlag(api, RenderApi::Direct3D)) {
         append(u8"dx");
     }
     return result;
@@ -66,7 +66,7 @@ void RenderBackendRegistry::registerFactory(raw_ptr<RenderBackendFactory> factor
     d->factories[factory->name()] = factory;
 }
 
-vine::intrusive_ptr<RenderBackend> RenderBackendRegistry::create(const String& name) const
+vn::intrusive_ptr<RenderBackend> RenderBackendRegistry::create(const String& name) const
 {
     std::lock_guard<std::mutex> lock(d->mutex);
     const auto it = d->factories.find(name);
@@ -104,4 +104,4 @@ bool RenderBackendRegistry::has(const String& name) const
     return d->factories.find(name) != d->factories.end();
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

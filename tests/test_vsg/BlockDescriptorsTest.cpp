@@ -35,9 +35,9 @@
 #include <vine/vsg/api/BlockStorage.hpp>
 #include <vine/vsg/api/DeviceProbe.hpp>
 
-using vine::vsg::BlockDescriptors;
-using vine::vsg::BlockStorage;
-using vine::vsg::api::probePhysicalDevices;
+using vn::vsg::BlockDescriptors;
+using vn::vsg::BlockStorage;
+using vn::vsg::api::probePhysicalDevices;
 
 namespace
 {
@@ -196,8 +196,8 @@ TEST(BlockDescriptorsTest, TheDeclaredShapeDecidesTheBindingsAndTheOffsets)
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
 
-    const BlockDescriptors::Binding declared[]{ { 0U, vine::vsg::AbiBlockRole::View },
-                                                { 3U, vine::vsg::AbiBlockRole::Material } };
+    const BlockDescriptors::Binding declared[]{ { 0U, vn::vsg::AbiBlockRole::View },
+                                                { 3U, vn::vsg::AbiBlockRole::Material } };
     std::unique_ptr<BlockDescriptors> descriptors =
         BlockDescriptors::create(fixture.device, *fixture.storage, declared, 1U);
     ASSERT_NE(descriptors, nullptr);
@@ -244,7 +244,7 @@ TEST(BlockDescriptorsTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     const auto sampler = ::vsg::Sampler::create();
     ASSERT_NE(sampler, nullptr);
 
-    const BlockDescriptors::Binding declared[]{ { 0U, vine::vsg::AbiBlockRole::Material } };
+    const BlockDescriptors::Binding declared[]{ { 0U, vn::vsg::AbiBlockRole::Material } };
     const BlockDescriptors::SampledBinding maps[]{ { 1U, view, sampler } };
     std::unique_ptr<BlockDescriptors> descriptors =
         BlockDescriptors::create(fixture.device, *fixture.storage, declared, 0U, maps);

@@ -11,11 +11,11 @@
 
 #include "Ray.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-using vine::math::Mat4d;
-using vine::math::Vec2d;
-using vine::math::Vec3d;
+using vn::math::Mat4d;
+using vn::math::Vec2d;
+using vn::math::Vec3d;
 
 /**
  * @brief Camera class managing view and projection matrices.
@@ -40,8 +40,8 @@ using vine::math::Vec3d;
  * all four or it renders a different frustum than the engine culled with (see
  * orthographicLeft()).
  */
-class V_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
+    VN_OBJECT_META_DECL;
 
   public:
     enum class ProjectionType
@@ -202,4 +202,4 @@ class V_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
 
 using CameraPtr = intrusive_ptr<Camera>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

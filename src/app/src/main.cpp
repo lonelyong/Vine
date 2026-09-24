@@ -18,7 +18,7 @@
 #include <vine/appfw/gui/GuiAppBuilder.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 
-namespace fw    = vine::appfw;
+namespace fw    = vn::appfw;
 namespace guifw = fw::gui;
 
 namespace
@@ -202,11 +202,11 @@ int main(int argc, char** argv)
     // 日志同时输出到控制台和数据目录下按日期滚动的文件。
     // main 只提供数据目录：日志落在 <data>/Vine/Vine/logs/vine.log（每日一文件）；
     // 配置文件由 builder 落在同级的 config/Vine.json。
-    ::vine::logging::initDefault(::vine::logging::LogConfig{
-        .level = ::vine::logging::LogLevel::Info,
+    ::vn::logging::initDefault(::vn::logging::LogConfig{
+        .level = ::vn::logging::LogLevel::Info,
         .sinks = {
-            ::vine::logging::LogSink::console(),
-            ::vine::logging::LogSink::dailyFile(app->dataDirectory() / "logs" / "vine.log"),
+            ::vn::logging::LogSink::console(),
+            ::vn::logging::LogSink::dailyFile(app->dataDirectory() / "logs" / "vine.log"),
         },
     });
 

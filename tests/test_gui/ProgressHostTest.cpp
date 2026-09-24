@@ -9,9 +9,9 @@
 #include <vine/progress/ProgressRange.hpp>
 #include <vine/progress/ProgressScope.hpp>
 
-using vine::appfw::ProgressHost;
-using vine::progress::ProgressRange;
-using vine::progress::ProgressScope;
+using vn::appfw::ProgressHost;
+using vn::progress::ProgressRange;
+using vn::progress::ProgressScope;
 
 namespace
 {

@@ -17,9 +17,9 @@
 #include <vine/io/Zip.hpp>
 #include <vine/io/ZipArchive.hpp>
 
-using vine::io::DirectoryVfs;
-using vine::io::Zip;
-using vine::io::ZipArchive;
+using vn::io::DirectoryVfs;
+using vn::io::Zip;
+using vn::io::ZipArchive;
 
 namespace
 {
@@ -54,10 +54,10 @@ class TempDir
 /**
  * @brief Reports whether an archive index carries an entry with the given path.
  */
-bool hasEntry(const std::vector<vine::io::VfsEntryInfo>& entries, const std::filesystem::path& path)
+bool hasEntry(const std::vector<vn::io::VfsEntryInfo>& entries, const std::filesystem::path& path)
 {
     return std::any_of(entries.begin(), entries.end(),
-                       [&path](const vine::io::VfsEntryInfo& info) { return info.path == path; });
+                       [&path](const vn::io::VfsEntryInfo& info) { return info.path == path; });
 }
 
 /**
@@ -89,7 +89,7 @@ TEST(IoBaseTest, DecompressRejectsGarbage)
 {
     const unsigned char garbage[] = { 0xFF, 0xFE, 0x00, 0x01, 0x02 };
     EXPECT_EQ(Zip::decompress(std::span<const unsigned char>(garbage, sizeof(garbage))).error(),
-              vine::io::IoError::InvalidData);
+              vn::io::IoError::InvalidData);
 }
 
 TEST(IoBaseTest, ZipEntryRoundTrip)
@@ -99,8 +99,8 @@ TEST(IoBaseTest, ZipEntryRoundTrip)
     const std::string           content  = "hello zip world";
 
     ZipArchive archive;
-    ASSERT_EQ(archive.addFile(u8"greeting.txt", asBytes(content)), vine::io::IoError::Ok);
-    ASSERT_EQ(archive.saveAs(zip_path), vine::io::IoError::Ok);
+    ASSERT_EQ(archive.addFile(u8"greeting.txt", asBytes(content)), vn::io::IoError::Ok);
+    ASSERT_EQ(archive.saveAs(zip_path), vn::io::IoError::Ok);
 
     const auto out = Zip::readEntry(zip_path, u8"greeting.txt");
     ASSERT_TRUE(out.ok());
@@ -113,17 +113,17 @@ TEST(IoBaseTest, ZipReadEntryReportsFailures)
     const std::filesystem::path zip_path = dir.path() / "read.zip";
     {
         ZipArchive archive;
-        ASSERT_EQ(archive.addFile(u8"a.txt", asBytes("x")), vine::io::IoError::Ok);
-        ASSERT_EQ(archive.createDirectory(u8"empty"), vine::io::IoError::Ok);
-        ASSERT_EQ(archive.saveAs(zip_path), vine::io::IoError::Ok);
+        ASSERT_EQ(archive.addFile(u8"a.txt", asBytes("x")), vn::io::IoError::Ok);
+        ASSERT_EQ(archive.createDirectory(u8"empty"), vn::io::IoError::Ok);
+        ASSERT_EQ(archive.saveAs(zip_path), vn::io::IoError::Ok);
     }
 
-    EXPECT_EQ(Zip::readEntry(zip_path, u8"nope.txt").error(), vine::io::IoError::NotFound);
-    EXPECT_EQ(Zip::readEntry(zip_path, u8"").error(), vine::io::IoError::InvalidPath);
-    EXPECT_EQ(Zip::readEntry(zip_path, u8"empty/").error(), vine::io::IoError::IsADirectory);
+    EXPECT_EQ(Zip::readEntry(zip_path, u8"nope.txt").error(), vn::io::IoError::NotFound);
+    EXPECT_EQ(Zip::readEntry(zip_path, u8"").error(), vn::io::IoError::InvalidPath);
+    EXPECT_EQ(Zip::readEntry(zip_path, u8"empty/").error(), vn::io::IoError::IsADirectory);
 
     const std::vector<unsigned char> garbage{ 'n', 'o', 't', 'a', 'z', 'i', 'p' };
-    EXPECT_EQ(Zip::readEntry(garbage, u8"a.txt").error(), vine::io::IoError::InvalidData);
+    EXPECT_EQ(Zip::readEntry(garbage, u8"a.txt").error(), vn::io::IoError::InvalidData);
 }
 
 TEST(IoBaseTest, ZipReadEntryVerifiesTheChecksum)
@@ -142,8 +142,8 @@ TEST(IoBaseTest, ZipReadEntryVerifiesTheChecksum)
     }
     {
         ZipArchive archive;
-        ASSERT_EQ(archive.addFile(u8"mesh.bin", payload), vine::io::IoError::Ok);
-        ASSERT_EQ(archive.saveAs(pkg), vine::io::IoError::Ok);
+        ASSERT_EQ(archive.addFile(u8"mesh.bin", payload), vn::io::IoError::Ok);
+        ASSERT_EQ(archive.saveAs(pkg), vn::io::IoError::Ok);
     }
 
     const auto intact = Zip::readEntry(pkg, u8"mesh.bin");
@@ -164,7 +164,7 @@ TEST(IoBaseTest, ZipReadEntryVerifiesTheChecksum)
     }
 
     // The one-shot read refuses it, the same way an opened archive does.
-    EXPECT_EQ(Zip::readEntry(pkg, u8"mesh.bin").error(), vine::io::IoError::IoFailure);
+    EXPECT_EQ(Zip::readEntry(pkg, u8"mesh.bin").error(), vn::io::IoError::IoFailure);
 }
 
 TEST(IoBaseTest, ZipArchiveAddDirectoryRoundTrip)
@@ -182,15 +182,15 @@ TEST(IoBaseTest, ZipArchiveAddDirectoryRoundTrip)
     }
 
     ZipArchive archive;
-    ASSERT_EQ(archive.addDirectory(std::filesystem::path{}, source), vine::io::IoError::Ok);
-    ASSERT_EQ(archive.saveAs(zip_path), vine::io::IoError::Ok);
+    ASSERT_EQ(archive.addDirectory(std::filesystem::path{}, source), vn::io::IoError::Ok);
+    ASSERT_EQ(archive.saveAs(zip_path), vn::io::IoError::Ok);
 
     const auto entries = Zip::entries(zip_path);
     ASSERT_TRUE(entries.ok());
     EXPECT_TRUE(hasEntry(entries.value(), std::filesystem::path(u8"a.txt")));
     EXPECT_TRUE(hasEntry(entries.value(), std::filesystem::path(u8"sub/b.txt")));
 
-    ASSERT_EQ(Zip::decompressFile(zip_path, dest), vine::io::IoError::Ok);
+    ASSERT_EQ(Zip::decompressFile(zip_path, dest), vn::io::IoError::Ok);
     std::ifstream in(dest / "sub" / "b.txt");
     ASSERT_TRUE(in.good());
     const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -199,9 +199,9 @@ TEST(IoBaseTest, ZipArchiveAddDirectoryRoundTrip)
 
 TEST(IoBaseTest, ZipMissingFileFails)
 {
-    EXPECT_EQ(Zip::entries("no_such_file.zip").error(), vine::io::IoError::NotFound);
-    EXPECT_EQ(Zip::readEntry("no_such_file.zip", u8"x").error(), vine::io::IoError::NotFound);
-    EXPECT_EQ(Zip::decompressFile("no_such_file.zip", "out"), vine::io::IoError::NotFound);
+    EXPECT_EQ(Zip::entries("no_such_file.zip").error(), vn::io::IoError::NotFound);
+    EXPECT_EQ(Zip::readEntry("no_such_file.zip", u8"x").error(), vn::io::IoError::NotFound);
+    EXPECT_EQ(Zip::decompressFile("no_such_file.zip", "out"), vn::io::IoError::NotFound);
 }
 
 TEST(IoBaseTest, ZipCompressDirectoryToFile)
@@ -215,7 +215,7 @@ TEST(IoBaseTest, ZipCompressDirectoryToFile)
         f << "hello";
     }
 
-    ASSERT_EQ(Zip::compressDirectory(source, zip_path), vine::io::IoError::Ok);
+    ASSERT_EQ(Zip::compressDirectory(source, zip_path), vn::io::IoError::Ok);
     EXPECT_TRUE(std::filesystem::exists(zip_path));
 
     const auto entries = Zip::entries(zip_path);
@@ -235,8 +235,8 @@ TEST(IoBaseTest, ZipDecompressFileToDirectory)
         f << "world";
     }
 
-    ASSERT_EQ(Zip::compressDirectory(source, zip_path), vine::io::IoError::Ok);
-    ASSERT_EQ(Zip::decompressFile(zip_path, dest), vine::io::IoError::Ok);
+    ASSERT_EQ(Zip::compressDirectory(source, zip_path), vn::io::IoError::Ok);
+    ASSERT_EQ(Zip::decompressFile(zip_path, dest), vn::io::IoError::Ok);
 
     std::ifstream in(dest / "b.txt");
     ASSERT_TRUE(in.good());
@@ -249,7 +249,7 @@ TEST(IoBaseTest, ZipDecompressFileToDirectory)
  */
 void addText(ZipArchive& archive, const std::filesystem::path& name, const std::string& text)
 {
-    EXPECT_EQ(archive.addFile(name, asBytes(text)), vine::io::IoError::Ok);
+    EXPECT_EQ(archive.addFile(name, asBytes(text)), vn::io::IoError::Ok);
 }
 
 /**
@@ -258,7 +258,7 @@ void addText(ZipArchive& archive, const std::filesystem::path& name, const std::
  * A ZIP pulls content only while it is written, so the counters are how a test
  * tells "read while saving" apart from "read up front".
  */
-class GeneratedSource final : public vine::io::DataSource
+class GeneratedSource final : public vn::io::DataSource
 {
   public:
     GeneratedSource(std::uint64_t produced, std::uint64_t reported, unsigned char fill)
@@ -306,8 +306,8 @@ TEST(IoBaseTest, ZipArchiveOpensAndReadsOnDemand)
         ZipArchive archive;
         addText(archive, u8"a.txt", "<workcell/>");
         addText(archive, u8"geoms/base.bin", "abcd");
-        ASSERT_EQ(archive.createDirectory(u8"empty"), vine::io::IoError::Ok);
-        ASSERT_EQ(archive.saveAs(zip_path), vine::io::IoError::Ok);
+        ASSERT_EQ(archive.createDirectory(u8"empty"), vn::io::IoError::Ok);
+        ASSERT_EQ(archive.saveAs(zip_path), vn::io::IoError::Ok);
     }
 
     const auto opened = ZipArchive::open(zip_path, ZipArchive::OpenMode::ReadWrite);
@@ -324,8 +324,8 @@ TEST(IoBaseTest, ZipArchiveOpensAndReadsOnDemand)
     const auto bytes = opened->read(u8"geoms/base.bin");
     ASSERT_TRUE(bytes.ok());
     EXPECT_EQ(std::string(bytes->begin(), bytes->end()), "abcd");
-    EXPECT_EQ(opened->read(u8"nope").error(), vine::io::IoError::NotFound);
-    EXPECT_EQ(opened->read(u8"empty").error(), vine::io::IoError::IsADirectory);
+    EXPECT_EQ(opened->read(u8"nope").error(), vn::io::IoError::NotFound);
+    EXPECT_EQ(opened->read(u8"empty").error(), vn::io::IoError::IsADirectory);
 
     auto stream = opened->openRead(u8"a.txt");
     ASSERT_TRUE(stream.ok());
@@ -334,10 +334,10 @@ TEST(IoBaseTest, ZipArchiveOpensAndReadsOnDemand)
     ASSERT_EQ((*stream)->read(buffer), 11u);
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(buffer.data()), 11), "<workcell/>");
     EXPECT_EQ((*stream)->read(buffer), 0u);
-    ASSERT_EQ((*stream)->seek(0), vine::io::IoError::Ok);
+    ASSERT_EQ((*stream)->seek(0), vn::io::IoError::Ok);
     EXPECT_EQ((*stream)->read(buffer), 11u);
 
-    EXPECT_EQ(ZipArchive::open(dir.path() / "missing.zip", ZipArchive::OpenMode::ReadWrite).error(), vine::io::IoError::NotFound);
+    EXPECT_EQ(ZipArchive::open(dir.path() / "missing.zip", ZipArchive::OpenMode::ReadWrite).error(), vn::io::IoError::NotFound);
 }
 
 TEST(IoBaseTest, ZipArchiveOpensWithoutReadingContent)
@@ -351,8 +351,8 @@ TEST(IoBaseTest, ZipArchiveOpensWithoutReadingContent)
     }
     {
         ZipArchive archive;
-        ASSERT_EQ(archive.addFile(u8"mesh.bin", payload), vine::io::IoError::Ok);
-        ASSERT_EQ(archive.saveAs(source_pkg), vine::io::IoError::Ok);
+        ASSERT_EQ(archive.addFile(u8"mesh.bin", payload), vn::io::IoError::Ok);
+        ASSERT_EQ(archive.saveAs(source_pkg), vn::io::IoError::Ok);
     }
 
     // Wreck the entry data but keep the trailing central directory intact: only a
@@ -379,20 +379,20 @@ TEST(IoBaseTest, ZipArchiveOpensWithoutReadingContent)
 
     // Damaged content is reported here as well: read() checks the result against the
     // checksum the directory recorded, which libzip itself never looks at.
-    EXPECT_EQ(opened->read(u8"mesh.bin").error(), vine::io::IoError::IoFailure);
+    EXPECT_EQ(opened->read(u8"mesh.bin").error(), vn::io::IoError::IoFailure);
 
     auto stream = opened->openRead(u8"mesh.bin");
     ASSERT_TRUE(stream.ok());
     std::array<std::byte, 4096> buffer{};
     while ((*stream)->read(buffer) != 0) {
     }
-    EXPECT_EQ((*stream)->error(), vine::io::IoError::IoFailure) << "a damaged entry is not a clean end";
+    EXPECT_EQ((*stream)->error(), vn::io::IoError::IoFailure) << "a damaged entry is not a clean end";
 
     // Copying an entry onto a new archive reads it as well (libzip checks the content
     // while it writes), so the save refuses rather than producing a broken archive.
     // Reading it is refused too, because read() checks the content against the
     // checksum the directory recorded.
-    EXPECT_EQ(opened->saveAs(dir.path() / "target.zip"), vine::io::IoError::IoFailure);
+    EXPECT_EQ(opened->saveAs(dir.path() / "target.zip"), vn::io::IoError::IoFailure);
 }
 
 TEST(IoBaseTest, ZipArchiveCopiesUntouchedEntriesOnSave)
@@ -405,14 +405,14 @@ TEST(IoBaseTest, ZipArchiveCopiesUntouchedEntriesOnSave)
     {
         ZipArchive archive;
         addText(archive, u8"workcell.xml", "<workcell/>");
-        ASSERT_EQ(archive.addFile(u8"mesh.bin", payload), vine::io::IoError::Ok);
-        ASSERT_EQ(archive.saveAs(source_pkg), vine::io::IoError::Ok);
+        ASSERT_EQ(archive.addFile(u8"mesh.bin", payload), vn::io::IoError::Ok);
+        ASSERT_EQ(archive.saveAs(source_pkg), vn::io::IoError::Ok);
     }
 
     auto opened = ZipArchive::open(source_pkg, ZipArchive::OpenMode::ReadWrite);
     ASSERT_TRUE(opened.ok());
     addText(*opened, u8"extra.txt", "added");
-    ASSERT_EQ(opened->saveAs(target_pkg), vine::io::IoError::Ok);
+    ASSERT_EQ(opened->saveAs(target_pkg), vn::io::IoError::Ok);
 
     const auto copy = ZipArchive::open(target_pkg, ZipArchive::OpenMode::ReadWrite);
     ASSERT_TRUE(copy.ok());
@@ -440,23 +440,23 @@ TEST(IoBaseTest, ZipArchiveWritesFragmentedContent)
     const std::vector<unsigned char> first{ 'a', 'b' };
     const std::vector<unsigned char> second{ 'c' };
     const std::vector<unsigned char> third{ 'd', 'e', 'f' };
-    const std::vector<vine::io::Fragment> pieces{ { first.data(), first.size() },
+    const std::vector<vn::io::Fragment> pieces{ { first.data(), first.size() },
                                                  { second.data(), second.size() },
                                                  { third.data(), third.size() } };
 
     ZipArchive archive;
-    ASSERT_EQ(archive.addFile(u8"joined.bin", pieces), vine::io::IoError::Ok);
+    ASSERT_EQ(archive.addFile(u8"joined.bin", pieces), vn::io::IoError::Ok);
 
     // The borrowed pieces go through the same gate as a byte span: a path that is
     // not a virtual path, a name taken by a directory, or no source at all.
-    EXPECT_EQ(archive.addFile(u8"/escaped.bin", pieces), vine::io::IoError::InvalidPath);
-    EXPECT_EQ(archive.addFile(u8"joined.bin", std::shared_ptr<vine::io::DataSource>{}), vine::io::IoError::InvalidData);
+    EXPECT_EQ(archive.addFile(u8"/escaped.bin", pieces), vn::io::IoError::InvalidPath);
+    EXPECT_EQ(archive.addFile(u8"joined.bin", std::shared_ptr<vn::io::DataSource>{}), vn::io::IoError::InvalidData);
 
     const auto listed = archive.list(u8"");
     ASSERT_TRUE(listed.ok());
     ASSERT_EQ(listed->size(), 1u);
     EXPECT_EQ(listed->front().size, 6u);
-    ASSERT_EQ(archive.saveAs(zip_path), vine::io::IoError::Ok);
+    ASSERT_EQ(archive.saveAs(zip_path), vn::io::IoError::Ok);
 
     const auto opened = ZipArchive::open(zip_path, ZipArchive::OpenMode::ReadWrite);
     ASSERT_TRUE(opened.ok());
@@ -466,7 +466,7 @@ TEST(IoBaseTest, ZipArchiveWritesFragmentedContent)
 
     // An empty piece list writes a zero-length file, like an empty byte span does.
     ZipArchive blank;
-    ASSERT_EQ(blank.addFile(u8"empty.bin", std::span<const vine::io::Fragment>{}), vine::io::IoError::Ok);
+    ASSERT_EQ(blank.addFile(u8"empty.bin", std::span<const vn::io::Fragment>{}), vn::io::IoError::Ok);
     const auto blank_info = blank.stat(u8"empty.bin");
     ASSERT_TRUE(blank_info.ok());
     EXPECT_EQ(blank_info->size, 0u);
@@ -480,8 +480,8 @@ TEST(IoBaseTest, ZipArchivePullsGeneratedContent)
     auto source = std::make_shared<GeneratedSource>(100 * 1024, 100 * 1024, static_cast<unsigned char>(0x5A));
     {
         ZipArchive archive;
-        ASSERT_EQ(archive.addFile(u8"stream.bin", source), vine::io::IoError::Ok);
-        ASSERT_EQ(archive.saveAs(zip_path), vine::io::IoError::Ok);
+        ASSERT_EQ(archive.addFile(u8"stream.bin", source), vn::io::IoError::Ok);
+        ASSERT_EQ(archive.saveAs(zip_path), vn::io::IoError::Ok);
         EXPECT_GT(source->pulls(), 0) << "the content is pulled while the archive is written";
         EXPECT_EQ(source->rewinds(), 1);
     }
@@ -498,13 +498,13 @@ TEST(IoBaseTest, ZipArchivePullsGeneratedContent)
     // instead of writing a truncated entry, and one that stops late is cut off.
     auto short_source = std::make_shared<GeneratedSource>(10, 20, static_cast<unsigned char>(0x11));
     ZipArchive truncating;
-    ASSERT_EQ(truncating.addFile(u8"short.bin", short_source), vine::io::IoError::Ok);
-    EXPECT_NE(truncating.saveAs(dir.path() / "short.zip"), vine::io::IoError::Ok);
+    ASSERT_EQ(truncating.addFile(u8"short.bin", short_source), vn::io::IoError::Ok);
+    EXPECT_NE(truncating.saveAs(dir.path() / "short.zip"), vn::io::IoError::Ok);
 
     auto long_source = std::make_shared<GeneratedSource>(20, 10, static_cast<unsigned char>(0x22));
     ZipArchive clipped;
-    ASSERT_EQ(clipped.addFile(u8"clip.bin", long_source), vine::io::IoError::Ok);
-    ASSERT_EQ(clipped.saveAs(dir.path() / "clip.zip"), vine::io::IoError::Ok);
+    ASSERT_EQ(clipped.addFile(u8"clip.bin", long_source), vn::io::IoError::Ok);
+    ASSERT_EQ(clipped.saveAs(dir.path() / "clip.zip"), vn::io::IoError::Ok);
     const auto clipped_file = ZipArchive::open(dir.path() / "clip.zip", ZipArchive::OpenMode::ReadWrite);
     ASSERT_TRUE(clipped_file.ok());
     const auto clipped_bytes = clipped_file->read(u8"clip.bin");
@@ -521,13 +521,13 @@ TEST(IoBaseTest, DirectoryVfsAssemblesSourcesThroughTheBaseInterface)
     ASSERT_FALSE(ec);
 
     DirectoryVfs   real(root);
-    vine::io::Vfs& base = real; // a caller usually holds the base interface only
+    vn::io::Vfs& base = real; // a caller usually holds the base interface only
 
     const std::vector<unsigned char>      first{ 'a', 'b' };
     const std::vector<unsigned char>      second{ 'c' };
-    const std::vector<vine::io::Fragment> pieces{ { first.data(), first.size() }, { second.data(), second.size() } };
-    ASSERT_EQ(base.addFile(u8"joined.bin", pieces), vine::io::IoError::Ok);
-    ASSERT_EQ(real.addFile(u8"direct.bin", pieces), vine::io::IoError::Ok); // the base overload stays reachable on the backend itself
+    const std::vector<vn::io::Fragment> pieces{ { first.data(), first.size() }, { second.data(), second.size() } };
+    ASSERT_EQ(base.addFile(u8"joined.bin", pieces), vn::io::IoError::Ok);
+    ASSERT_EQ(real.addFile(u8"direct.bin", pieces), vn::io::IoError::Ok); // the base overload stays reachable on the backend itself
     const auto joined = base.read(u8"joined.bin");
     ASSERT_TRUE(joined.ok());
     EXPECT_EQ(std::string(joined->begin(), joined->end()), "abc");
@@ -537,7 +537,7 @@ TEST(IoBaseTest, DirectoryVfsAssemblesSourcesThroughTheBaseInterface)
 
     // The default materializes the content while adding, because this backend stores it right away.
     auto source = std::make_shared<GeneratedSource>(4 * 1024, 4 * 1024, static_cast<unsigned char>(0x6C));
-    ASSERT_EQ(base.addFile(u8"gen.bin", source), vine::io::IoError::Ok);
+    ASSERT_EQ(base.addFile(u8"gen.bin", source), vn::io::IoError::Ok);
     EXPECT_GT(source->pulls(), 0) << "the default pulls the source right away";
     const auto generated = base.read(u8"gen.bin");
     ASSERT_TRUE(generated.ok());
@@ -545,11 +545,11 @@ TEST(IoBaseTest, DirectoryVfsAssemblesSourcesThroughTheBaseInterface)
     EXPECT_EQ((*generated)[0], 0x6C);
 
     // A null source, a source that stops short, and a piece without data are refused and write nothing.
-    EXPECT_EQ(base.addFile(u8"null.bin", std::shared_ptr<vine::io::DataSource>{}), vine::io::IoError::InvalidData);
+    EXPECT_EQ(base.addFile(u8"null.bin", std::shared_ptr<vn::io::DataSource>{}), vn::io::IoError::InvalidData);
     auto short_source = std::make_shared<GeneratedSource>(2, 8, static_cast<unsigned char>(0x11));
-    EXPECT_EQ(base.addFile(u8"short.bin", short_source), vine::io::IoError::InvalidData);
-    const std::vector<vine::io::Fragment> dataless{ { nullptr, 3 } };
-    EXPECT_EQ(base.addFile(u8"dataless.bin", dataless), vine::io::IoError::InvalidData);
+    EXPECT_EQ(base.addFile(u8"short.bin", short_source), vn::io::IoError::InvalidData);
+    const std::vector<vn::io::Fragment> dataless{ { nullptr, 3 } };
+    EXPECT_EQ(base.addFile(u8"dataless.bin", dataless), vn::io::IoError::InvalidData);
     EXPECT_FALSE(base.exists(u8"null.bin"));
     EXPECT_FALSE(base.exists(u8"short.bin"));
     EXPECT_FALSE(base.exists(u8"dataless.bin"));
@@ -562,22 +562,22 @@ TEST(IoBaseTest, ZipArchiveKeepsSourcesLazyThroughTheBaseInterface)
 
     const std::vector<unsigned char>      head{ 'a', 'b' };
     const std::vector<unsigned char>      tail{ 'c', 'd', 'e' };
-    const std::vector<vine::io::Fragment> pieces{ { head.data(), head.size() }, { tail.data(), tail.size() } };
+    const std::vector<vn::io::Fragment> pieces{ { head.data(), head.size() }, { tail.data(), tail.size() } };
     auto source = std::make_shared<GeneratedSource>(3 * 1024, 3 * 1024, static_cast<unsigned char>(0x27));
 
     {
         ZipArchive     archive;
-        vine::io::Vfs& base = archive; // the override, not the default, has to run here
+        vn::io::Vfs& base = archive; // the override, not the default, has to run here
 
-        ASSERT_EQ(base.addFile(u8"gen.bin", source), vine::io::IoError::Ok);
-        ASSERT_EQ(base.addFile(u8"joined.bin", pieces), vine::io::IoError::Ok);
+        ASSERT_EQ(base.addFile(u8"gen.bin", source), vn::io::IoError::Ok);
+        ASSERT_EQ(base.addFile(u8"joined.bin", pieces), vn::io::IoError::Ok);
         EXPECT_EQ(source->pulls(), 0) << "the archive defers the pull to the save";
         EXPECT_EQ(source->rewinds(), 0);
 
-        const std::vector<vine::io::Fragment> dataless{ { nullptr, 3 } };
-        EXPECT_EQ(base.addFile(u8"dataless.bin", dataless), vine::io::IoError::InvalidData);
+        const std::vector<vn::io::Fragment> dataless{ { nullptr, 3 } };
+        EXPECT_EQ(base.addFile(u8"dataless.bin", dataless), vn::io::IoError::InvalidData);
 
-        ASSERT_EQ(base.saveAs(zip_path), vine::io::IoError::Ok);
+        ASSERT_EQ(base.saveAs(zip_path), vn::io::IoError::Ok);
         EXPECT_GT(source->pulls(), 0) << "the content is pulled while the archive is written";
         EXPECT_EQ(source->rewinds(), 1);
     }
@@ -601,14 +601,14 @@ TEST(IoBaseTest, ZipArchiveCommitReplacesTheFile)
     {
         ZipArchive archive;
         addText(archive, u8"a.txt", "one");
-        ASSERT_EQ(archive.saveAs(zip_path), vine::io::IoError::Ok);
+        ASSERT_EQ(archive.saveAs(zip_path), vn::io::IoError::Ok);
     }
 
     auto opened = ZipArchive::open(zip_path, ZipArchive::OpenMode::ReadWrite);
     ASSERT_TRUE(opened.ok());
     addText(*opened, u8"b.txt", "two");
-    ASSERT_EQ(opened->remove(u8"a.txt"), vine::io::IoError::Ok);
-    ASSERT_EQ(opened->commit(), vine::io::IoError::Ok);
+    ASSERT_EQ(opened->remove(u8"a.txt"), vn::io::IoError::Ok);
+    ASSERT_EQ(opened->commit(), vn::io::IoError::Ok);
 
     std::filesystem::path temp = zip_path;
     temp += ".vine-tmp";
@@ -626,7 +626,7 @@ TEST(IoBaseTest, ZipArchiveCommitReplacesTheFile)
 
     // An archive that was not opened from a file has nothing to commit to.
     ZipArchive empty;
-    EXPECT_EQ(empty.commit(), vine::io::IoError::Unsupported);
+    EXPECT_EQ(empty.commit(), vn::io::IoError::Unsupported);
 }
 
 } // namespace

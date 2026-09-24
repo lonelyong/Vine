@@ -5,9 +5,9 @@
 #include <vine/appfw/gui/UIElementData.hpp>
 
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
-V_OBJECT_META_IMPL(UIElement, Object)
+VN_OBJECT_META_IMPL(UIElement, Object)
 
 namespace
 {} // namespace
@@ -77,4 +77,4 @@ void UIElement::setOwnsImpl(bool owns)
     d->owns_impl = owns;
 }
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

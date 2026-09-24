@@ -10,8 +10,8 @@ set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src/fw/appfw/src)
 
 target_link_libraries(${TEST_NAME}
-    vi::Appfw
-    vi::Async
+    vn::Appfw
+    vn::Async
     Qt6::Core)
 
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})

@@ -8,7 +8,7 @@
 #include <vine/robotics/kinematics/Frame.hpp>
 #include <vine/robotics/kinematics/Q.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 /**
  * @brief Joint-space state of a kinematic chain.
@@ -23,7 +23,7 @@ V_ROBOTICS_KINEMATICS_NS_BEGIN
  * @note Not thread-safe; the caller owns any synchronization. Frames are
  *       referenced by pointer, so the frame tree must outlive the state.
  */
-class V_ROBOTICS_CORE_API QState
+class VN_ROBOTICS_CORE_API QState
 {
   public:
     QState() = default;
@@ -96,4 +96,4 @@ class V_ROBOTICS_CORE_API QState
     std::unordered_map<const Frame*, std::size_t> offsets_;
 };
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

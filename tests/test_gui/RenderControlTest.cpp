@@ -21,7 +21,7 @@
 namespace
 {
 
-using vine::appfw::gui::RenderControl;
+using vn::appfw::gui::RenderControl;
 
 /// Backend stub.
 ///
@@ -30,7 +30,7 @@ using vine::appfw::gui::RenderControl;
 /// told, and how often initialize() was called. A stub also makes the failure paths reachable
 /// without a GPU, which is what pins "retries, then gives up" and "never attaches to an empty
 /// surface".
-class StubBackend : public vine::graphics::RenderBackend
+class StubBackend : public vn::graphics::RenderBackend
 {
   public:
     bool initialize() override
@@ -44,9 +44,9 @@ class StubBackend : public vine::graphics::RenderBackend
     void beginFrame() override {}
     void endFrame() override {}
 
-    void setRenderTarget(vine::graphics::RenderTarget*) override {}
+    void setRenderTarget(vn::graphics::RenderTarget*) override {}
 
-    void render(const std::vector<vine::graphics::RenderCommand>&, const vine::graphics::Camera*) override {}
+    void render(const std::vector<vn::graphics::RenderCommand>&, const vn::graphics::Camera*) override {}
 
     void swapBuffers() override { ++swaps; }
 
@@ -118,7 +118,7 @@ class HostedControl
 
         if (with_backend) {
             stub_ = new StubBackend();
-            control_->engine()->setBackend(vine::intrusive_ptr<vine::graphics::RenderBackend>(stub_));
+            control_->engine()->setBackend(vn::intrusive_ptr<vn::graphics::RenderBackend>(stub_));
         }
 
         window_.resize(320, 240);
@@ -222,7 +222,7 @@ TEST(RenderControlTest, HostCanRetryAfterTheBackendRefused)
 // 没有可用的后端插件 ⇒ Failed（等下去也不会变），原因交给宿主。
 TEST(RenderControlTest, ReportsFailedWhenNoRenderBackendIsRegistered)
 {
-    if (!vine::graphics::RenderBackendRegistry::instance().entries().empty()) {
+    if (!vn::graphics::RenderBackendRegistry::instance().entries().empty()) {
         GTEST_SKIP() << "a render backend plugin is registered in this binary";
     }
 

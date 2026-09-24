@@ -4,7 +4,7 @@
 
 #include <vine/graphics/EmbeddedShaders.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 namespace
 {
@@ -328,4 +328,4 @@ intrusive_ptr<ShaderProgram> shadowedDeferredLightProgram()
     return makeDeferredLightingProgram(true);
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

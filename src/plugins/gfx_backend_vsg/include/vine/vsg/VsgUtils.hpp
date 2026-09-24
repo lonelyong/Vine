@@ -10,7 +10,7 @@
 #include <vine/String.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -23,7 +23,7 @@ namespace detail
  * @param m Vine matrix.
  * @return Equivalent vsg matrix.
  */
-inline ::vsg::dmat4 toVsg(const vine::math::Mat4d& m)
+inline ::vsg::dmat4 toVsg(const vn::math::Mat4d& m)
 {
     double v[16];
     for (int col = 0; col < 4; ++col) {
@@ -49,10 +49,10 @@ inline ::vsg::dmat4 toVsg(const vine::math::Mat4d& m)
  * @param ...    Arguments matching @p format.
  * @return The formatted message (empty when formatting failed).
  */
-inline vine::String formatDiagnostic(const char8_t* format, ...)
+inline vn::String formatDiagnostic(const char8_t* format, ...)
 {
     if (format == nullptr) {
-        return vine::String();
+        return vn::String();
     }
     // Diagnostics are ASCII (literals + the failing data's numbers), so the
     // byte-wise local 8-bit copy below is exact for them. The message is
@@ -65,11 +65,11 @@ inline vine::String formatDiagnostic(const char8_t* format, ...)
         std::vsnprintf(buffer, sizeof(buffer), reinterpret_cast<const char*>(format), args);
     va_end(args);
     if (written <= 0) {
-        return vine::String();
+        return vn::String();
     }
     const std::size_t length =
         std::min<std::size_t>(static_cast<std::size_t>(written), sizeof(buffer) - 1u);
-    return vine::String::fromLocal8Bit(buffer, length);
+    return vn::String::fromLocal8Bit(buffer, length);
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

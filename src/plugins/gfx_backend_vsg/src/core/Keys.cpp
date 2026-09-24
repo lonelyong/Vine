@@ -2,7 +2,7 @@
 
 #include <array>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -50,8 +50,8 @@ bool DynamicState::operator==(const DynamicState& other) const noexcept
            topology == other.topology && blend == other.blend;
 }
 
-DynamicState resolveDynamicState(const vine::graphics::ResolvedRenderState& state, bool depth_explicit,
-                                 vine::graphics::DepthMode pass_depth) noexcept
+DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state, bool depth_explicit,
+                                 vn::graphics::DepthMode pass_depth) noexcept
 {
     DynamicState resolved;
     resolved.cull_mode    = state.cullMode;
@@ -68,12 +68,12 @@ DynamicState resolveDynamicState(const vine::graphics::ResolvedRenderState& stat
     }
     if (!state.depth.test)
     {
-        resolved.depth = vine::graphics::DepthMode::Disabled;
+        resolved.depth = vn::graphics::DepthMode::Disabled;
     }
     else
     {
-        resolved.depth = state.depth.write ? vine::graphics::DepthMode::TestAndWrite
-                                           : vine::graphics::DepthMode::TestOnly;
+        resolved.depth = state.depth.write ? vn::graphics::DepthMode::TestAndWrite
+                                           : vn::graphics::DepthMode::TestOnly;
     }
     return resolved;
 }
@@ -141,4 +141,4 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

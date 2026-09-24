@@ -10,7 +10,7 @@
 #include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief Kind of a shader stage.
@@ -30,7 +30,7 @@ enum class ShaderStageType
  * to SPIR-V at run time (vsg ShaderCompiler, glslang) or consumes
  * pre-compiled SPIR-V supplied through the program.
  */
-struct V_GRAPHICS_API ShaderStage
+struct VN_GRAPHICS_API ShaderStage
 {
     ShaderStageType type = ShaderStageType::Vertex;  ///< Stage kind.
     String source;                                   ///< GLSL source for the stage.
@@ -47,8 +47,8 @@ struct V_GRAPHICS_API ShaderStage
  * .ai/design/graphics-shader.md). A Geometry whose program() is null uses the
  * session's default content program (material driven) — zero regression.
  */
-class V_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderProgram> {
-    V_OBJECT_META_DECL;
+class VN_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderProgram> {
+    VN_OBJECT_META_DECL;
 
   public:
     ShaderProgram();
@@ -128,4 +128,4 @@ class V_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderProg
 
 using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

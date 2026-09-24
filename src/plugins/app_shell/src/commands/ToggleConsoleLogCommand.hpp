@@ -3,20 +3,20 @@
 #include <vine/appfw/Command.hpp>
 #include <vine/appfw/command_export.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 /**
  * @brief Toggles routing of the default logger to the console panel.
  */
 class ToggleConsoleLogCommand : public Command {
-    V_OBJECT_META_DECL;
-    V_DECLARE_COMMAND(ToggleConsoleLogCommand, u8"log_to_console")
+    VN_OBJECT_META_DECL;
+    VN_DECLARE_COMMAND(ToggleConsoleLogCommand, u8"log_to_console")
 
   public:
     String group() const override { return u8"控制台"; }
     String description() const override { return u8"开启/关闭日志输出到控制台"; }
     CommandFlags flags() const override { return CommandFlags::None; }
-    vine::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
+    vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

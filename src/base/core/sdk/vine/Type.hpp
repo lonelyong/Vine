@@ -7,7 +7,7 @@
 
 #include "String.hpp"
 
-// V_DECLARE_INTERFACE evaluates typeid() in the interface body, so std::type_info
+// VN_DECLARE_INTERFACE evaluates typeid() in the interface body, so std::type_info
 // must already be complete: gcc 15/16 crashes with "internal compiler error: in
 // typeid_ok_p" on the next typeid() it parses (e.g. the one inside libstdc++'s
 // make_exception_ptr) when a typeid() was evaluated against the incomplete
@@ -31,7 +31,7 @@ class type_info;
 }
 #endif
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief Kind of a runtime type descriptor.
@@ -47,7 +47,7 @@ enum class TypeKind {
     Interface,
 };
 
-class V_CORE_API Type final {
+class VN_CORE_API Type final {
   public:
     /**
      * @brief Creates a runtime type descriptor.
@@ -57,7 +57,7 @@ class V_CORE_API Type final {
      * @param kind Whether the descriptor is a class or an interface.
      * @param interfaces Descriptors of the interfaces a class implements or an
      *                   interface extends.
-     * @throws vine::Exception with ITEM_ALREADY_EXISTS when the type is already
+     * @throws vn::Exception with ITEM_ALREADY_EXISTS when the type is already
      *         registered.
      */
     Type(const std::type_info& ti, const Type* parent, TypeKind kind = TypeKind::Class, std::vector<const Type*> interfaces = {});
@@ -249,7 +249,7 @@ std::vector<const Type*> interfacesOf()
 
 } // namespace detail
 
-V_CORE_NS_END
+VN_CORE_NS_END
 
 /**
  * @brief Declares a runtime interface type.
@@ -260,10 +260,10 @@ V_CORE_NS_END
  * @param Itf The interface type being declared.
  * @param ... Interfaces extended by Itf (optional).
  */
-#define V_DECLARE_INTERFACE(Itf, ...) \
+#define VN_DECLARE_INTERFACE(Itf, ...) \
   public: \
-    static const vine::Type* desc() \
+    static const vn::Type* desc() \
     { \
-        static const vine::Type* t = new vine::Type(typeid(Itf), nullptr, vine::TypeKind::Interface __VA_OPT__(, vine::detail::interfacesOf<__VA_ARGS__>())); \
+        static const vn::Type* t = new vn::Type(typeid(Itf), nullptr, vn::TypeKind::Interface __VA_OPT__(, vn::detail::interfacesOf<__VA_ARGS__>())); \
         return t; \
     }

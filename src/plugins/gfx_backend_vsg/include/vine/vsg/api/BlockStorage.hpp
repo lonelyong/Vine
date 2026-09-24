@@ -39,7 +39,7 @@
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief The frame's mapped block storage (views, draws, lights, shadows, materials). */
 class BlockStorage
@@ -210,4 +210,4 @@ class BlockStorage
     explicit BlockStorage(::vsg::ref_ptr<::vsg::Device> device, const Layout& layout);
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

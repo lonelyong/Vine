@@ -5,7 +5,7 @@
 #include "Control.hpp"
 #include "Gui.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class RibbonButton;
 class RibbonAction;
@@ -23,8 +23,8 @@ class Control;
  * properties such as title height and spacing are managed uniformly by
  * SARibbonBar and are not wrapped here.
  */
-class V_APPFW_API RibbonGroup : public Control {
-    V_OBJECT_META_DECL
+class VN_APPFW_API RibbonGroup : public Control {
+    VN_OBJECT_META_DECL
 
   public:
     RibbonGroup();
@@ -119,4 +119,4 @@ class V_APPFW_API RibbonGroup : public Control {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

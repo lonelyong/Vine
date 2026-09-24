@@ -81,7 +81,7 @@ QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返�
 - **信号改名 `stateChanged` → `state_changed`**（2026-09-21，用户拍板）：与本目录早已存在的属性变更事件
   （`GuiApplication::theme_changed`、`UIElement::name_changed`）同一风格；内部中继 `on_state_changed` 是
   `std::function` **字段**、按字段规则本就是 snake_case，改名后同一个概念只有一个名字。
-  `V_APPFW_PLUGIN_ABI_VERSION` **不需要 +1**（它只描述插件握手面 `PluginAbi`/`PluginInfo`/入口签名/命令注册，
+  `VN_APPFW_PLUGIN_ABI_VERSION` **不需要 +1**（它只描述插件握手面 `PluginAbi`/`PluginInfo`/入口签名/命令注册，
   见 `appfw-plugin-system.md`），但用了该信号的插件必须重编：仓内是 `app_shell` 与 `test_gui`，同批改。
 - **可见性规则归容器控件**（2026-09-20，用户拍板）：`RenderControl` 把窗口容器**隐藏**着，直到 `state_changed` 报到
   `Presenting` 才显示它。理由是 Qt 的 window container 在每次 paint 里把自己的矩形用 `CompositionMode_Source`

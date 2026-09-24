@@ -52,7 +52,7 @@
  * that draws), so this is the honest "there is no view" rather than a made-up identity - and the caller that
  * builds the block decides what to do about it.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief Builds the view block for one pass (see the file note for the conventions it applies).
  *
@@ -62,7 +62,7 @@ V_VSG_NS_BEGIN
  * @param height       Height of the target the pass draws into, in device pixels.
  * @return The block, in the ABI's shape (`VineViewBlock`), ready for BlockStorage::writeView.
  */
-[[nodiscard]] vine::graphics::VineViewBlock buildViewBlock(const core::CameraSnapshot& camera, float time_seconds,
+[[nodiscard]] vn::graphics::VineViewBlock buildViewBlock(const core::CameraSnapshot& camera, float time_seconds,
                                                            std::uint32_t width, std::uint32_t height) noexcept;
 
 /** @brief Folds one projection matrix written in the SDK's clip convention into this device's (see the file
@@ -75,6 +75,6 @@ V_VSG_NS_BEGIN
  * @param sdk_projection A projection matrix in the SDK's convention (y up, z in [-1, 1]).
  * @return The same projection in this device's convention.
  */
-[[nodiscard]] vine::math::Mat4d foldToDeviceClip(const vine::math::Mat4d& sdk_projection) noexcept;
+[[nodiscard]] vn::math::Mat4d foldToDeviceClip(const vn::math::Mat4d& sdk_projection) noexcept;
 
-V_VSG_NS_END
+VN_VSG_NS_END

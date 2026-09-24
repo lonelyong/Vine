@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <concepts>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 /**
  * @brief Interface for a node in a tree.
@@ -104,4 +104,4 @@ concept Hierarchical = requires(const T& t, std::size_t index) {
     { t.childAt(index) } -> std::same_as<T*>;
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

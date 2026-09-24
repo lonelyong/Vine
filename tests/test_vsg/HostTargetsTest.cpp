@@ -18,15 +18,15 @@
 #include <vine/vsg/api/HostTargets.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
 
-using vine::graphics::RenderTarget;
-using vine::vsg::core::TargetFacts;
-using vine::vsg::HostTargets;
+using vn::graphics::RenderTarget;
+using vn::vsg::core::TargetFacts;
+using vn::vsg::HostTargets;
 
 TEST(HostTargetsTest, TheDescriptionIsASnapshotAndTheFactsSayWhatIsBuilt)
 {
     HostTargets targets;
 
-    const vine::intrusive_ptr<RenderTarget> sdk(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> sdk(new RenderTarget());
     sdk->attachColor(RenderTarget::ColorFormat::RGBA16F);
     sdk->attachDepth(RenderTarget::DepthFormat::D32F);
     sdk->setSize(64, 32);
@@ -66,7 +66,7 @@ TEST(HostTargetsTest, TheDescriptionIsASnapshotAndTheFactsSayWhatIsBuilt)
     EXPECT_EQ(row.wanted.width, 128) << "and a new announcement carries the new extent";
 
     // A description that cannot make a target yet (no colour attachment, or no extent).
-    const vine::intrusive_ptr<RenderTarget> bare(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> bare(new RenderTarget());
     EXPECT_EQ(targets.ensure(*bare, {}).state, HostTargets::State::NotBuilt);
 
     // The release forgets the identity, and answers once.
@@ -80,14 +80,14 @@ TEST(HostTargetsTest, ABorrowedDepthAndAShadowStatementAreTheHostsOwnWords)
 {
     HostTargets targets;
 
-    const vine::intrusive_ptr<RenderTarget> lender(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> lender(new RenderTarget());
     lender->attachColor(RenderTarget::ColorFormat::RGBA8);
     lender->attachDepth(RenderTarget::DepthFormat::D24);
     lender->setDepthPromotion(false);  // it will be depth-tested against, so it must not become a texture
     lender->setSize(32, 32);
     EXPECT_EQ(targets.ensure(*lender, {}).state, HostTargets::State::NotBuilt);
 
-    const vine::intrusive_ptr<RenderTarget> borrower(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> borrower(new RenderTarget());
     borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
     borrower->shareDepth(lender);
     borrower->setSize(32, 32);
@@ -107,8 +107,8 @@ TEST(HostTargetsTest, ABorrowedDepthAndAShadowStatementAreTheHostsOwnWords)
 
     // The shadow statement, as the host stated it: whose map it is, and the matrix the producer rendered
     // with. Both travel; neither is derived.
-    const vine::intrusive_ptr<vine::graphics::Light> light(new vine::graphics::Light());
-    vine::math::Mat4d                                view_projection;
+    const vn::intrusive_ptr<vn::graphics::Light> light(new vn::graphics::Light());
+    vn::math::Mat4d                                view_projection;
     view_projection.makeIdentity();
     view_projection.data[0] = 0.5;
     lender->setShadowOf(light);

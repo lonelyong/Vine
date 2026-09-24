@@ -10,7 +10,7 @@
 #include "CollisionContact.hpp"
 #include "CollisionPair.hpp"
 
-V_ROBOTICS_PROXIMITY_NS_BEGIN
+VN_ROBOTICS_PROXIMITY_NS_BEGIN
 
 /**
  * @brief Snapshot of one collision query.
@@ -73,4 +73,4 @@ struct CollisionResult {
     }
 };
 
-V_ROBOTICS_PROXIMITY_NS_END
+VN_ROBOTICS_PROXIMITY_NS_END

@@ -15,7 +15,7 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/appfw/Command.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class Application;
 
@@ -24,8 +24,8 @@ class Application;
  *
  * Carries the command that is about to run.
  */
-class V_APPFW_API CommandExecutingEventArgs : public EventArgs {
-    V_OBJECT_META_DECL
+class VN_APPFW_API CommandExecutingEventArgs : public EventArgs {
+    VN_OBJECT_META_DECL
 
   public:
     explicit CommandExecutingEventArgs(Command* command);
@@ -48,8 +48,8 @@ class V_APPFW_API CommandExecutingEventArgs : public EventArgs {
  * (its payload is a std::any that may be expensive to duplicate), and stays
  * valid for the whole notification only.
  */
-class V_APPFW_API CommandExecutedEventArgs : public EventArgs {
-    V_OBJECT_META_DECL
+class VN_APPFW_API CommandExecutedEventArgs : public EventArgs {
+    VN_OBJECT_META_DECL
 
   public:
     explicit CommandExecutedEventArgs(Command* command, const CommandResult& result);
@@ -126,7 +126,7 @@ struct CommandHistoryEntry {
  * Commands must not start other commands as top-level entries; they run children
  * through CommandExecutionContext::executeChild().
  */
-class V_APPFW_API CommandManager
+class VN_APPFW_API CommandManager
 {
   public:
     /**
@@ -173,7 +173,7 @@ class V_APPFW_API CommandManager
      * The notification is synchronous and runs on the thread that started the
      * command. Handlers may call back into the manager (a nested execution, a
      * registration, adding or removing another handler) - nothing is locked while
-     * they run. The event itself is thread-safe (vine::Signal publishes its handler
+     * they run. The event itself is thread-safe (vn::Signal publishes its handler
      * table as an immutable snapshot), so subscribing or unsubscribing from any
      * thread is safe even while commands finish elsewhere; what a handler must not
      * do is touch a widget on a thread that is not the application thread.
@@ -280,7 +280,7 @@ class V_APPFW_API CommandManager
      *         is registered and disabled, so this entry point cannot bypass
      *         setCommandEnabled().
      */
-    vine::async::Task<CommandResult> executeCommandAsync(Command* command);
+    vn::async::Task<CommandResult> executeCommandAsync(Command* command);
 
     /**
      * @brief Executes a registered command by name asynchronously.
@@ -293,7 +293,7 @@ class V_APPFW_API CommandManager
      * @return A lazy task yielding the execution outcome; Failed when not
      *         registered.
      */
-    vine::async::Task<CommandResult> executeCommandAsync(const String& name);
+    vn::async::Task<CommandResult> executeCommandAsync(const String& name);
 
     /**
      * @brief Executes a registered command by name in the background.
@@ -458,7 +458,7 @@ class V_APPFW_API CommandManager
      * @brief Registers a default-constructible command type by name.
      *
      * The command type must have a no-arg constructor and Object meta
-     * (V_OBJECT_META_IMPL); both are checked at compile time.
+     * (VN_OBJECT_META_IMPL); both are checked at compile time.
      *
      * @tparam T Command type.
      * @param name Unique name used to start the command.
@@ -677,7 +677,7 @@ class V_APPFW_API CommandManager
     /// A top-level scope creates a fresh chain, which becomes the foreground chain and
     /// faces the serialization gate; a nested scope joins the chain the context passes
     /// in, which also skips the gate.
-    vine::async::Task<CommandResult> executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope);
+    vn::async::Task<CommandResult> executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope);
 
     /// Runs a registered command by name on a task that owns its own copy of the name.
     ///
@@ -687,7 +687,7 @@ class V_APPFW_API CommandManager
     ///
     /// @param name Command or alias name, owned by the returned task.
     /// @return A lazy task yielding the execution outcome.
-    vine::async::Task<CommandResult> executeNamedCommand(String name);
+    vn::async::Task<CommandResult> executeNamedCommand(String name);
 
     /// Returns a strong reference to the foreground chain, or an empty pointer when
     /// nothing ran yet. Taken under the manager mutex and handed out by value, so the
@@ -707,4 +707,4 @@ class V_APPFW_API CommandManager
     std::unique_ptr<Impl> d;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

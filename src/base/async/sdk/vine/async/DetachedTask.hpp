@@ -6,7 +6,7 @@
 #include <coroutine>
 #include <exception>
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 namespace detail {
 
@@ -87,4 +87,4 @@ inline void setDetachedExceptionHandler(detail::DetachedExceptionHandler handler
     detail::s_detachedExceptionHandler.store(handler, std::memory_order_release);
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

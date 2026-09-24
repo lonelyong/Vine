@@ -8,7 +8,7 @@
 #    include <dlfcn.h>
 #endif
 
-V_RUNTIME_NS_BEGIN
+VN_RUNTIME_NS_BEGIN
 
 struct DynamicLibrary::Impl {
     String file_name;
@@ -63,4 +63,4 @@ const String& DynamicLibrary::fileName() const
     return d->file_name;
 }
 
-V_RUNTIME_NS_END
+VN_RUNTIME_NS_END

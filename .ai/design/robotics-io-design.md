@@ -1,6 +1,6 @@
 # Robotics IO 模块设计（XML 序列化）
 
-> 状态：设计稿（先设计，未实现）→ **阶段一（VFS 基础设施）已实现**：`vine::io` 的 `Vfs` /
+> 状态：设计稿（先设计，未实现）→ **阶段一（VFS 基础设施）已实现**：`vn::io` 的 `Vfs` /
 > `ZipVfs` / `DirectoryVfs` + `ZipArchive` 后端重载已落地，测试 `tests/test_iobase/VfsTest.cpp`
 > （14 用例）全通过。**阶段二（场景序列化）已实现**：`RoboticsIO` 的 `XmlIOBase` / `DeviceIO` /
 > `WorkcellIO` 已落地。**阶段三（打包）已实现**：`loadPkg` / `savePkg`（`.vdevpkg` / `.vwspkg`，
@@ -35,13 +35,13 @@
 
 ## 1. 背景与目标
 
-为 `vine::robotics::workcell` 的 `Device` / `MotionDevice` / `Scanner` / `Workcell` 提供 XML
+为 `vn::robotics::workcell` 的 `Device` / `MotionDevice` / `Scanner` / `Workcell` 提供 XML
 序列化与反序列化，新建独立模块 `RoboticsIO`。放弃 URDF 的 `<robot>` 根节点语义，采用自研的
 `<device>` / `<workcell>` 根节点格式。
 
 **实施顺序（基础设施优先）**：
-1. **阶段一（已完成）**：VFS 基础设施 —— `vine::io`（IOBase）新增 `Vfs` / `ZipVfs` /
-   `DirectoryVfs`，并给 `vine::io::ZipArchive` 补后端重载（见第 6 节）；测试 `VfsTest`。
+1. **阶段一（已完成）**：VFS 基础设施 —— `vn::io`（IOBase）新增 `Vfs` / `ZipVfs` /
+   `DirectoryVfs`，并给 `vn::io::ZipArchive` 补后端重载（见第 6 节）；测试 `VfsTest`。
 2. **阶段二（已完成）**：场景序列化 —— `RoboticsIO` 的 `XmlIOBase` / `DeviceIO` / `WorkcellIO`
    （`loadXml` / `saveXml`）基于 VFS 落地；配套模型改动（见第 7 节）。
 3. **阶段三（已完成）**：打包 —— `loadPkg` / `savePkg`（zip 流，无临时目录），mesh 原生 bin，BRep（见第 9 节）。
@@ -52,9 +52,9 @@
 src/robotics/
   CMakeLists.txt                          # 增加 add_subdirectory(io)
   io/
-    CMakeLists.txt                        # v_add_library(ROBOTICSIO_TARGET_NAME RoboticsIO)
+    CMakeLists.txt                        # vn_add_library(ROBOTICSIO_TARGET_NAME RoboticsIO)
     sdk/vine/robotics/io/
-      robot_io_global.hpp                 # V_ROBOTICS_IO_API + V_ROBOTICS_IO_NS_BEGIN/END
+      robot_io_global.hpp                 # VN_ROBOTICS_IO_API + VN_ROBOTICS_IO_NS_BEGIN/END
       XmlIOBase.hpp                       # 公共基类（原 VUrdfIOBase，去掉 URDF 语义）
       DeviceIO.hpp                        # 设备序列化
       WorkcellIO.hpp                      # 工作站序列化
@@ -70,7 +70,7 @@ src/robotics/
 `CMakeLists.txt`（沿用 meshio/iobase 的 FetchContent 静态烤进 DLL 模式）：
 
 ```cmake
-v_add_library(ROBOTICSIO_TARGET_NAME RoboticsIO)
+vn_add_library(ROBOTICSIO_TARGET_NAME RoboticsIO)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(FetchContent)
@@ -85,26 +85,26 @@ else()
     find_package(tinyxml2 CONFIG REQUIRED)
 endif()
 
-target_link_libraries(${ROBOTICSIO_TARGET_NAME} PUBLIC vi::RoboticsCore vi::Geometry vi::IOBase)
+target_link_libraries(${ROBOTICSIO_TARGET_NAME} PUBLIC vn::RoboticsCore vn::Geometry vn::IOBase)
 target_link_libraries(${ROBOTICSIO_TARGET_NAME} PRIVATE tinyxml2)
 ```
 
 说明：
 - XML 库选 tinyxml2（与 VMR 一致、轻量、无依赖），静态烤进 `viRoboticsIO*.dll`。
 - `RoboticsIO` 依赖 `RoboticsCore`（workcell/kinematics）、`Geometry`（Shape/Material）与
-  `IOBase`（`vine::io` 的 `Vfs`/`ZipVfs`/`ZipArchive`，见第 6 节），
+  `IOBase`（`vn::io` 的 `Vfs`/`ZipVfs`/`ZipArchive`，见第 6 节），
   不反向依赖，无环。
-- `robot_io_global.hpp` 中 `V_ROBOTICS_IO_API` 由 `v_add_library` 生成的 `V_ROBOTICSIO_LIB`
-  编译宏决定 `V_EXPORT`/`V_IMPORT`。
+- `robot_io_global.hpp` 中 `VN_ROBOTICS_IO_API` 由 `vn_add_library` 生成的 `VN_ROBOTICSIO_LIB`
+  编译宏决定 `VN_EXPORT`/`VN_IMPORT`。
 
 ## 3. 类设计
 
 ### 3.1 `XmlIOBase`（公共基类，对应 VMR `VUrdfIOBase`）
 
 ```cpp
-namespace vine::robotics::io {
+namespace vn::robotics::io {
 
-class V_ROBOTICS_IO_API XmlIOBase {
+class VN_ROBOTICS_IO_API XmlIOBase {
   protected:
     struct ExportOptions {
         double len_unit_scaling = 1.0;  // 导出长度单位缩放
@@ -112,11 +112,11 @@ class V_ROBOTICS_IO_API XmlIOBase {
     struct ExportContext {
         ExportOptions& options;
         const workcell::Workcell* cell{ nullptr };  // 只读帧查找（worldFrame/findSceneObjectByFrame）
-        vine::io::Vfs*     vfs{ nullptr };   // 打包资源（geoms bins）；裸 XML 为 null
+        vn::io::Vfs*     vfs{ nullptr };   // 打包资源（geoms bins）；裸 XML 为 null
         String                    vfs_dir;          // 文档所在 VFS 目录（"" = 根）
         std::string               msgs;             // 本次导出的非致命警告
         std::size_t               geom_seq{ 0 };    // geoms bin 命名序号
-        std::map<const vine::geometry::Shape*, String> mesh_paths;  // 共享 mesh 去重
+        std::map<const vn::geometry::Shape*, String> mesh_paths;  // 共享 mesh 去重
         explicit ExportContext(ExportOptions& opts) : options(opts) {}
     };
 
@@ -126,10 +126,10 @@ class V_ROBOTICS_IO_API XmlIOBase {
     struct ParseContext {
         ParseOptions& options;
         workcell::Workcell* cell{ nullptr };  // 正在填充的工作站（addSceneObject）；非工作站解析为 null
-        vine::io::Vfs* vfs{ nullptr };
+        vn::io::Vfs* vfs{ nullptr };
         String vfs_dir;
         std::string msgs;
-        std::map<String, vine::intrusive_ptr<vine::geometry::Material>> materials_by_name;  // 材质库
+        std::map<String, vn::intrusive_ptr<vn::geometry::Material>> materials_by_name;  // 材质库
         explicit ParseContext(ParseOptions& opts) : options(opts) {}
     };
 
@@ -144,9 +144,9 @@ class V_ROBOTICS_IO_API XmlIOBase {
     void parsePose(ParseContext&, math::Isometry3d& pose, const tinyxml2::XMLElement* xe_origin);
     void exportPose(ExportContext&, const math::Isometry3d& pose, tinyxml2::XMLElement*);
     // 材质 / 几何（visual/collision 共用）
-    vine::intrusive_ptr<vine::geometry::Material> parseMaterial(ParseContext&, const tinyxml2::XMLElement*);
-    vine::intrusive_ptr<vine::geometry::Shape> parseGeometry(ParseContext&, const tinyxml2::XMLElement*);
-    void exportGeometry(ExportContext&, const vine::geometry::Shape&, tinyxml2::XMLElement*);
+    vn::intrusive_ptr<vn::geometry::Material> parseMaterial(ParseContext&, const tinyxml2::XMLElement*);
+    vn::intrusive_ptr<vn::geometry::Shape> parseGeometry(ParseContext&, const tinyxml2::XMLElement*);
+    void exportGeometry(ExportContext&, const vn::geometry::Shape&, tinyxml2::XMLElement*);
     void parseVisual(ParseContext&, workcell::Visual&, const tinyxml2::XMLElement*);
     void exportVisual(ExportContext&, const workcell::Visual&, tinyxml2::XMLElement*);
     void parseCollision(ParseContext&, workcell::Collision&, const tinyxml2::XMLElement*);
@@ -161,7 +161,7 @@ class V_ROBOTICS_IO_API XmlIOBase {
     void exportDeviceMetadata(ExportContext&, const workcell::DeviceMetadata&, tinyxml2::XMLElement*);
 };
 
-} // namespace vine::robotics::io
+} // namespace vn::robotics::io
 ```
 
 要点：
@@ -176,7 +176,7 @@ class V_ROBOTICS_IO_API XmlIOBase {
 ### 3.2 `DeviceIO`（对应 VMR `VDeviceIO`）
 
 ```cpp
-class V_ROBOTICS_IO_API DeviceIO : public XmlIOBase {
+class VN_ROBOTICS_IO_API DeviceIO : public XmlIOBase {
   public:
     struct LoadOptions {
         std::optional<workcell::LengthUnit> source_len_unit; // 文件内单位（默认按 metadata）
@@ -240,7 +240,7 @@ class V_ROBOTICS_IO_API DeviceIO : public XmlIOBase {
 ### 3.3 `WorkcellIO`（对应 VMR `VWorkcellIO`）
 
 ```cpp
-class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase {
+class VN_ROBOTICS_IO_API WorkcellIO : public XmlIOBase {
   public:
     struct SaveOptions {
         bool ignore_part{ false }; // 预留：不保存零件
@@ -431,8 +431,8 @@ class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase {
 ### 6.1 `IMemoryVfs`：内存 VFS 接口（虚拟路径 -> 数据）
 
 ```cpp
-// vine::io 或 vine::robotics::io（归属见 6.4）；语义 = 内存级虚拟文件系统
-class V_IOBASE_API IMemoryVfs {
+// vn::io 或 vn::robotics::io（归属见 6.4）；语义 = 内存级虚拟文件系统
+class VN_IOBASE_API IMemoryVfs {
   public:
     virtual ~IMemoryVfs() = default;
 
@@ -476,7 +476,7 @@ class V_IOBASE_API IMemoryVfs {
 > `WorkcellIO` / `XmlIOBase`）；`IEntity` 仅作扩展点，用于阶段三打包时的实体适配。
 
 ```cpp
-class V_IOBASE_API IEntity {
+class VN_IOBASE_API IEntity {
   public:
     virtual ~IEntity() = default;
 
@@ -511,11 +511,11 @@ class FixtureEntity final : public IEntity {
 
 ```cpp
 // sdk/vine/robotics/io/ZipMemoryVfs.hpp
-class V_ROBOTICS_IO_API ZipMemoryVfs : public IMemoryVfs {
+class VN_ROBOTICS_IO_API ZipMemoryVfs : public IMemoryVfs {
   public:
     ZipMemoryVfs();
     ~ZipMemoryVfs() override;
-    // 全部纯虚实现，内部用 vine::io::ZipArchive 落地（见 6.5 后端补齐）
+    // 全部纯虚实现，内部用 vn::io::ZipArchive 落地（见 6.5 后端补齐）
 
     // 建树后的持久化：save(path) / save(ostream&) / serialize()
     // 不再提供 openZip —— 打开已有包请用 ZipVfs::open(…, OpenMode::ReadOnly)（惰性只读，见 .ai/design/iobase-vfs-design.md §9.1）
@@ -529,16 +529,16 @@ class V_ROBOTICS_IO_API ZipMemoryVfs : public IMemoryVfs {
 > 绝不把条目解压到磁盘；只有归档目录（名字/大小/类型）常驻内存，被读的条目才载入。
 > 与 VMR `loadPkg`（`ZipDecompress` 解压到临时目录再读）相反。
 
-### 6.4 模块归属（已定：放 `vine::io` / IOBase）
+### 6.4 模块归属（已定：放 `vn::io` / IOBase）
 
-- **`IMemoryVfs` / `IEntity` / `ZipMemoryVfs` / `DirectoryVfs`**：全部放 `vine::io`（`IOBase`，
-  与 `ZipArchive` 同层，导出宏 `V_IOBASE_API`），通用可复用，`RoboticsIO` 与其它模块共享。
+- **`IMemoryVfs` / `IEntity` / `ZipMemoryVfs` / `DirectoryVfs`**：全部放 `vn::io`（`IOBase`，
+  与 `ZipArchive` 同层，导出宏 `VN_IOBASE_API`），通用可复用，`RoboticsIO` 与其它模块共享。
 - **`DeviceIO` / `WorkcellIO`**（`RoboticsIO`）：使用上述抽象，不关心后端。
-- 配套：`vine::io::ZipArchive` 增加少量后端重载（见 6.5），文件路径版保持不变。
+- 配套：`vn::io::ZipArchive` 增加少量后端重载（见 6.5），文件路径版保持不变。
 
-### 6.5 后端补齐：`vine::io::ZipArchive`（IOBase 小改）
+### 6.5 后端补齐：`vn::io::ZipArchive`（IOBase 小改）
 
-`ZipMemoryVfs` 用 `vine::io::ZipArchive` 落地。为支持"资源路径条目"与"保存到内存/流"，
+`ZipMemoryVfs` 用 `vn::io::ZipArchive` 落地。为支持"资源路径条目"与"保存到内存/流"，
 给 `ZipArchive` 增加以下能力（文件路径版保持不变）：
 
 ```cpp
@@ -605,7 +605,7 @@ class V_ROBOTICS_IO_API ZipMemoryVfs : public IMemoryVfs {
 
 ### 6.8 Mesh 存储（顶点 / 法线 / 索引）
 
-Vine mesh 数据（`vine::geometry`）：
+Vine mesh 数据（`vn::geometry`）：
 
 - `TriangleMesh`（非索引三角形汤）：`positions`（`Vec3fArray`）、可选 `normals`、可选 `texcoords`；
 - `IndexedTriangleMesh`：`positions`、可选 `normals`、可选 `texcoords` + `indices`（`UInt32Array`）。
@@ -658,7 +658,7 @@ XML 描述（在 `<geometry>` 内，引用包内二进制条目）：
 
 ### 6.9 BRep / STEP（本期不实现，设计预留）
 
-`vine::geometry::BrepShape` 以非拥有 `TopoDS_Shape*` 持有 OCCT 实体（SDK 头只前向声明、不引 OCCT）；
+`vn::geometry::BrepShape` 以非拥有 `TopoDS_Shape*` 持有 OCCT 实体（SDK 头只前向声明、不引 OCCT）；
 `brepio::BrepLoader` 的 STEP/IGES 解析仍是 TODO（需引入 OpenCASCADE）。
 
 **本期不实现 BRep**：`XmlIOBase::parseGeometry / exportGeometry` 对 `BrepShape` 跳过（或记警告），
@@ -728,7 +728,7 @@ XML 描述（在 `<geometry>` 内，引用包内二进制条目）：
      语义正确；`ZipMemoryVfs` 与 `DirectoryVfs` 对同一虚拟树 `save`/`open` 结果一致；
      `open(std::move(bytes), OpenMode::ReadOnly)` 内存包与文件版一致。
 
-**阶段二（场景序列化）**——`tests/test_robotics_io/`（链接 `vi::RoboticsIO`）：
+**阶段二（场景序列化）**——`tests/test_robotics_io/`（链接 `vn::RoboticsIO`）：
   2. `DeviceIOTest`：
      - MotionDevice round-trip（2 关节）：`dof()`、`joints().size()`、bounds/home/ik 类型一致；
      - Scanner round-trip：`cameras()/projectors()` 内参一致、frame 绑定恢复；
@@ -774,9 +774,9 @@ XML 描述（在 `<geometry>` 内，引用包内二进制条目）：
 **已定：**
 - [x] 命名：`DeviceIO` / `WorkcellIO` / `XmlIOBase`（去 V 前缀）；VFS 命名 `IMemoryVfs` /
       `ZipMemoryVfs` / `DirectoryVfs`（接口用 `I` 前缀）。
-- [x] 新模块 `RoboticsIO` 独立 DLL（`src/robotics/io`），依赖 `vi::RoboticsCore vi::Geometry
-      vi::IOBase`，tinyxml2 以 FetchContent 静态烤入。
-- [x] VFS 归属 `vine::io`（IOBase）、接口范围**完整 VFS**（`exists`/`isFile`/`isDirectory`/
+- [x] 新模块 `RoboticsIO` 独立 DLL（`src/robotics/io`），依赖 `vn::RoboticsCore vn::Geometry
+      vn::IOBase`，tinyxml2 以 FetchContent 静态烤入。
+- [x] VFS 归属 `vn::io`（IOBase）、接口范围**完整 VFS**（`exists`/`isFile`/`isDirectory`/
       `list`/`remove` + `DirectoryVfs` 调试后端）。
 - [x] 实施顺序：**VFS 基础设施优先（阶段一）**，再做场景序列化（阶段二）、打包（阶段三）；
       打包（`.vdevpkg` / `.vwspkg`）在场景序列化 OK 后再实现（见第 9 节）。

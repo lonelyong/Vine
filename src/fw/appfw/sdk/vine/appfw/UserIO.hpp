@@ -9,12 +9,12 @@
 #include <vine/async/Task.hpp>
 #include <vine/math/Point3.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class CommandManager;
 
-class V_APPFW_API UserIO : public Object {
-    V_OBJECT_META_DECL;
+class VN_APPFW_API UserIO : public Object {
+    VN_OBJECT_META_DECL;
 
   public:
     UserIO();
@@ -54,7 +54,7 @@ class V_APPFW_API UserIO : public Object {
      *       log a warning. The console shows a single prompt, and two waiting reads
      *       would otherwise share one completion signal and each other's result.
      */
-    virtual vine::async::Task<std::optional<String>> getStringAsync(const String& prompt = {}) = 0;
+    virtual vn::async::Task<std::optional<String>> getStringAsync(const String& prompt = {}) = 0;
 
     /**
      * @brief Asynchronously requests an integer from the user.
@@ -63,7 +63,7 @@ class V_APPFW_API UserIO : public Object {
      * @return A task yielding the entered value, or std::nullopt if cancelled or
      *         if the text is not an integer in the range of int.
      */
-    virtual vine::async::Task<std::optional<int>> getIntAsync(const String& prompt = {}) = 0;
+    virtual vn::async::Task<std::optional<int>> getIntAsync(const String& prompt = {}) = 0;
 
     /**
      * @brief Asynchronously requests a double from the user.
@@ -71,7 +71,7 @@ class V_APPFW_API UserIO : public Object {
      * @param prompt Prompt text shown to the user.
      * @return A task yielding the entered value, or std::nullopt if cancelled.
      */
-    virtual vine::async::Task<std::optional<double>> getDoubleAsync(const String& prompt = {}) = 0;
+    virtual vn::async::Task<std::optional<double>> getDoubleAsync(const String& prompt = {}) = 0;
 
     /**
      * @brief Asynchronously requests a 3D point from the user.
@@ -79,7 +79,7 @@ class V_APPFW_API UserIO : public Object {
      * @param prompt Prompt text shown to the user.
      * @return A task yielding the picked point, or std::nullopt if cancelled.
      */
-    virtual vine::async::Task<std::optional<math::Point3d>> getPoint3dAsync(const String& prompt = {}) = 0;
+    virtual vn::async::Task<std::optional<math::Point3d>> getPoint3dAsync(const String& prompt = {}) = 0;
 
     /**
      * @brief Sets the command manager that idle input is dispatched to.
@@ -143,4 +143,4 @@ class V_APPFW_API UserIO : public Object {
 
 using UserIOPtr = raw_ptr<UserIO>;
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

@@ -8,7 +8,7 @@
 #include "Point2.hpp"
 #include "Vector2.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief Axis-aligned 2D rectangle, defined by its minimum and maximum corners.
@@ -212,4 +212,4 @@ using Rect2i = Rect2<int32_t>;
 using Rect2f = Rect2<float>;
 using Rect2d = Rect2<double>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

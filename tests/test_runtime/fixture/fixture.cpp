@@ -7,14 +7,14 @@
 // tests load it by its build-time path.
 
 #if defined(_WIN32)
-#    define V_TEST_FIXTURE_API __declspec(dllexport)
+#    define VN_TEST_FIXTURE_API __declspec(dllexport)
 #else
-#    define V_TEST_FIXTURE_API __attribute__((visibility("default")))
+#    define VN_TEST_FIXTURE_API __attribute__((visibility("default")))
 #endif
 
-extern "C" V_TEST_FIXTURE_API int vine_test_fixture_answer();
+extern "C" VN_TEST_FIXTURE_API int vine_test_fixture_answer();
 
-extern "C" V_TEST_FIXTURE_API int vine_test_fixture_answer()
+extern "C" VN_TEST_FIXTURE_API int vine_test_fixture_answer()
 {
     return 42;
 }

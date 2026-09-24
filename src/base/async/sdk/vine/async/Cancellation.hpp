@@ -10,18 +10,18 @@
 
 #include "Task.hpp"
 
-V_ASYNC_NS_BEGIN
+VN_ASYNC_NS_BEGIN
 
 /**
  * @brief Exception thrown when a cancellable Task observes cancellation.
  *
- * Derives from vine::Exception with code Exception::CANCELLED.
+ * Derives from vn::Exception with code Exception::CANCELLED.
  */
-class TaskCancelledException : public vine::Exception
+class TaskCancelledException : public vn::Exception
 {
   public:
     TaskCancelledException()
-      : vine::Exception(vine::Exception::Code::CANCELLED, String(u8"task cancelled"))
+      : vn::Exception(vn::Exception::Code::CANCELLED, String(u8"task cancelled"))
     {}
 };
 
@@ -63,4 +63,4 @@ Task<T> withCancellation(CancellationToken token, Task<T> task)
     co_return co_await std::move(task);
 }
 
-V_ASYNC_NS_END
+VN_ASYNC_NS_END

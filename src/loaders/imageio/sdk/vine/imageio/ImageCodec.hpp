@@ -12,7 +12,7 @@
 #include <vine/imaging/PixelFormat.hpp>
 #include <vine/intrusive_ptr.hpp>
 
-V_IMAGEIO_NS_BEGIN
+VN_IMAGEIO_NS_BEGIN
 
 /**
  * @brief A container format an image file can be stored in.
@@ -40,7 +40,7 @@ enum class ImageFileFormat : std::uint8_t {
  * @param format Format to name.
  * @return The format's name, or `"Unknown"` for `ImageFileFormat::Unknown` and any out-of-range value.
  */
-V_IMAGEIO_API const char* formatName(ImageFileFormat format) noexcept;
+VN_IMAGEIO_API const char* formatName(ImageFileFormat format) noexcept;
 
 /**
  * @brief Gets the container format a path's extension names.
@@ -53,7 +53,7 @@ V_IMAGEIO_API const char* formatName(ImageFileFormat format) noexcept;
  * @return The format the extension names, or `ImageFileFormat::Unknown` when it names none this module
  *         handles.
  */
-V_IMAGEIO_API ImageFileFormat formatFromPath(const std::filesystem::path& path);
+VN_IMAGEIO_API ImageFileFormat formatFromPath(const std::filesystem::path& path);
 
 /**
  * @brief States whether this module can decode a container format.
@@ -61,7 +61,7 @@ V_IMAGEIO_API ImageFileFormat formatFromPath(const std::filesystem::path& path);
  * @param format Format to query.
  * @return true when `decodeImage()` accepts a file in this container.
  */
-V_IMAGEIO_API bool canRead(ImageFileFormat format) noexcept;
+VN_IMAGEIO_API bool canRead(ImageFileFormat format) noexcept;
 
 /**
  * @brief States whether this module can encode a container format.
@@ -69,7 +69,7 @@ V_IMAGEIO_API bool canRead(ImageFileFormat format) noexcept;
  * @param format Format to query.
  * @return true when `encodeImage()` can produce this container.
  */
-V_IMAGEIO_API bool canWrite(ImageFileFormat format) noexcept;
+VN_IMAGEIO_API bool canWrite(ImageFileFormat format) noexcept;
 
 /**
  * @brief Decodes an image from bytes already in memory.
@@ -96,7 +96,7 @@ V_IMAGEIO_API bool canWrite(ImageFileFormat format) noexcept;
  * @throws std::invalid_argument if @p format is not an 8-bit colour layout, or @p bytes is empty.
  * @throws std::runtime_error if the bytes are not a readable image, carrying the decoder's own reason.
  */
-V_IMAGEIO_API intrusive_ptr<imaging::Image> decodeImage(std::span<const std::byte> bytes, imaging::PixelFormat format);
+VN_IMAGEIO_API intrusive_ptr<imaging::Image> decodeImage(std::span<const std::byte> bytes, imaging::PixelFormat format);
 
 /**
  * @brief Decodes an image from a file.
@@ -107,7 +107,7 @@ V_IMAGEIO_API intrusive_ptr<imaging::Image> decodeImage(std::span<const std::byt
  * @throws std::invalid_argument if @p format is not an 8-bit colour layout.
  * @throws std::runtime_error if the file cannot be read or does not hold a readable image.
  */
-V_IMAGEIO_API intrusive_ptr<imaging::Image> loadImage(const std::filesystem::path& path, imaging::PixelFormat format);
+VN_IMAGEIO_API intrusive_ptr<imaging::Image> loadImage(const std::filesystem::path& path, imaging::PixelFormat format);
 
 /**
  * @brief Encodes an image into bytes in the given container.
@@ -126,7 +126,7 @@ V_IMAGEIO_API intrusive_ptr<imaging::Image> loadImage(const std::filesystem::pat
  *         the 8-bit colour layouts.
  * @throws std::runtime_error if the encoder fails.
  */
-V_IMAGEIO_API std::vector<std::byte> encodeImage(const imaging::Image& image, ImageFileFormat format);
+VN_IMAGEIO_API std::vector<std::byte> encodeImage(const imaging::Image& image, ImageFileFormat format);
 
 /**
  * @brief Encodes an image and writes it to a file.
@@ -141,6 +141,6 @@ V_IMAGEIO_API std::vector<std::byte> encodeImage(const imaging::Image& image, Im
  *         the 8-bit colour layouts.
  * @throws std::runtime_error if the file cannot be written or the encoder fails.
  */
-V_IMAGEIO_API void saveImage(const std::filesystem::path& path, const imaging::Image& image, ImageFileFormat format);
+VN_IMAGEIO_API void saveImage(const std::filesystem::path& path, const imaging::Image& image, ImageFileFormat format);
 
-V_IMAGEIO_NS_END
+VN_IMAGEIO_NS_END

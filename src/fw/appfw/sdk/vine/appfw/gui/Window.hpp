@@ -3,7 +3,7 @@
 #include "Control.hpp"
 #include "Gui.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Top-level window base class: wraps a native QWidget (top-level
@@ -16,8 +16,8 @@ V_APPFWGUI_NS_BEGIN
  * classes such as ConfigWindow and MainWindow; derived classes build their
  * content into impl<QWidget>().
  */
-class V_APPFW_API Window : public Control {
-    V_OBJECT_META_DECL
+class VN_APPFW_API Window : public Control {
+    VN_OBJECT_META_DECL
 
   public:
     explicit Window(QWidget* native, bool owns = true);
@@ -58,4 +58,4 @@ class V_APPFW_API Window : public Control {
     Window(UIElementData* data, QWidget* native, bool owns = true);
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

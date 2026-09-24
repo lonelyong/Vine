@@ -11,7 +11,7 @@
 #include "Types.hpp"
 #include "Vector2.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief A class representing a point in 2D space
@@ -270,4 +270,4 @@ using Point2ui   = Point2ui32;
 using Point2f    = Point2<float>;
 using Point2d    = Point2<double>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

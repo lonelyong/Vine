@@ -1,7 +1,7 @@
 #pragma once
 #include "graphics_global.hpp"
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief Depth handling of a pass' content relative to the target's depth.
@@ -28,4 +28,4 @@ enum class DepthMode
     TestAndWrite, ///< Depth test + write on (opaque scene content).
 };
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

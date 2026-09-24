@@ -1,6 +1,6 @@
 #include <vine/vsg/core/TargetPlan.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace core
 {
@@ -104,4 +104,4 @@ DepthPlan depthPlan(const DepthFacts& facts) noexcept
 
 }  // namespace core
 
-V_VSG_NS_END
+VN_VSG_NS_END

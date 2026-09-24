@@ -7,15 +7,15 @@
 #include "Gui.hpp"
 #include "Window.hpp"
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 class RibbonBar;
 class StatusBar;
 class DockPanelManager;
 class RenderControl;
 
-class V_APPFW_API MainWindow : public Window {
-    V_OBJECT_META_DECL
+class VN_APPFW_API MainWindow : public Window {
+    VN_OBJECT_META_DECL
 
     friend class RibbonBar;
     friend class StatusBar;
@@ -59,4 +59,4 @@ class V_APPFW_API MainWindow : public Window {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

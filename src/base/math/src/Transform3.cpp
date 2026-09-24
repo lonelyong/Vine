@@ -4,7 +4,7 @@
 
 #include <vine/math/Math.hpp>
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 #define TMPL_PREFIX template <typename T, typename Order>
 
@@ -304,24 +304,24 @@ TMPL_PREFIX bool decompose(const Matrix4x4<T, Order>& m, Vector3<T>& t, Quaterni
 
 #undef TMPL_PREFIX
 
-template V_MATH_API bool decompose(const Matrix4x4<float, ColMajor>&, Vector3<float>&, Quaternion<float>&, Vector3<float>&);
-template V_MATH_API bool decompose(const Matrix4x4<double, ColMajor>&, Vector3<double>&, Quaternion<double>&, Vector3<double>&);
-template V_MATH_API bool decompose(const Matrix4x4<float, RowMajor>&, Vector3<float>&, Quaternion<float>&, Vector3<float>&);
-template V_MATH_API bool decompose(const Matrix4x4<double, RowMajor>&, Vector3<double>&, Quaternion<double>&, Vector3<double>&);
+template VN_MATH_API bool decompose(const Matrix4x4<float, ColMajor>&, Vector3<float>&, Quaternion<float>&, Vector3<float>&);
+template VN_MATH_API bool decompose(const Matrix4x4<double, ColMajor>&, Vector3<double>&, Quaternion<double>&, Vector3<double>&);
+template VN_MATH_API bool decompose(const Matrix4x4<float, RowMajor>&, Vector3<float>&, Quaternion<float>&, Vector3<float>&);
+template VN_MATH_API bool decompose(const Matrix4x4<double, RowMajor>&, Vector3<double>&, Quaternion<double>&, Vector3<double>&);
 
-template V_MATH_API Matrix4x4<float, ColMajor>  rotate(const Vector3<float>&, float);
-template V_MATH_API Matrix4x4<double, ColMajor> rotate(const Vector3<double>&, double);
-template V_MATH_API Matrix4x4<float, RowMajor>  rotate(const Vector3<float>&, float);
-template V_MATH_API Matrix4x4<double, RowMajor> rotate(const Vector3<double>&, double);
+template VN_MATH_API Matrix4x4<float, ColMajor>  rotate(const Vector3<float>&, float);
+template VN_MATH_API Matrix4x4<double, ColMajor> rotate(const Vector3<double>&, double);
+template VN_MATH_API Matrix4x4<float, RowMajor>  rotate(const Vector3<float>&, float);
+template VN_MATH_API Matrix4x4<double, RowMajor> rotate(const Vector3<double>&, double);
 
-template V_MATH_API Matrix4x4<float, ColMajor>  lookAt(const Point3<float>&, const Point3<float>&, const Vector3<float>&);
-template V_MATH_API Matrix4x4<double, ColMajor> lookAt(const Point3<double>&, const Point3<double>&, const Vector3<double>&);
-template V_MATH_API Matrix4x4<float, RowMajor>  lookAt(const Point3<float>&, const Point3<float>&, const Vector3<float>&);
-template V_MATH_API Matrix4x4<double, RowMajor> lookAt(const Point3<double>&, const Point3<double>&, const Vector3<double>&);
+template VN_MATH_API Matrix4x4<float, ColMajor>  lookAt(const Point3<float>&, const Point3<float>&, const Vector3<float>&);
+template VN_MATH_API Matrix4x4<double, ColMajor> lookAt(const Point3<double>&, const Point3<double>&, const Vector3<double>&);
+template VN_MATH_API Matrix4x4<float, RowMajor>  lookAt(const Point3<float>&, const Point3<float>&, const Vector3<float>&);
+template VN_MATH_API Matrix4x4<double, RowMajor> lookAt(const Point3<double>&, const Point3<double>&, const Vector3<double>&);
 
-template V_MATH_API Matrix4x4<float, ColMajor>  reflect(const Vector3<float>&, float);
-template V_MATH_API Matrix4x4<double, ColMajor> reflect(const Vector3<double>&, double);
-template V_MATH_API Matrix4x4<float, RowMajor>  reflect(const Vector3<float>&, float);
-template V_MATH_API Matrix4x4<double, RowMajor> reflect(const Vector3<double>&, double);
+template VN_MATH_API Matrix4x4<float, ColMajor>  reflect(const Vector3<float>&, float);
+template VN_MATH_API Matrix4x4<double, ColMajor> reflect(const Vector3<double>&, double);
+template VN_MATH_API Matrix4x4<float, RowMajor>  reflect(const Vector3<float>&, float);
+template VN_MATH_API Matrix4x4<double, RowMajor> reflect(const Vector3<double>&, double);
 
-V_MATH_NS_END
+VN_MATH_NS_END

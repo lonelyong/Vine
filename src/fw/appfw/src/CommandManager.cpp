@@ -31,9 +31,9 @@
 
 #include <vine/appfw/ProgressHost.hpp>
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
-V_OBJECT_META_IMPL(CommandExecutingEventArgs, EventArgs)
+VN_OBJECT_META_IMPL(CommandExecutingEventArgs, EventArgs)
 
 CommandExecutingEventArgs::CommandExecutingEventArgs(Command* command)
   : command_(command)
@@ -44,7 +44,7 @@ raw_ptr<Command> CommandExecutingEventArgs::command() const
     return command_;
 }
 
-V_OBJECT_META_IMPL(CommandExecutedEventArgs, EventArgs)
+VN_OBJECT_META_IMPL(CommandExecutedEventArgs, EventArgs)
 
 CommandExecutedEventArgs::CommandExecutedEventArgs(Command* command, const CommandResult& result)
   : command_(command)
@@ -151,20 +151,20 @@ CommandResult failedResultFromException(const std::exception& e)
 /// @param body Coroutine producing the outcome; called once, immediately.
 /// @return The outcome, or the Failed/Cancelled result of whatever it threw.
 template <typename Body>
-vine::async::Task<CommandResult> runGuarded(Body body)
+vn::async::Task<CommandResult> runGuarded(Body body)
 {
     try {
         co_return co_await body();
     }
-    catch (const vine::async::TaskCancelledException&) {
+    catch (const vn::async::TaskCancelledException&) {
         co_return cancelledResult();
     }
     catch (const std::exception& e) {
-        V_LOGE("Command execution failed: {}", e.what());
+        VN_LOGE("Command execution failed: {}", e.what());
         co_return failedResultFromException(e);
     }
     catch (...) {
-        V_LOGE("Command execution failed with a non-standard exception");
+        VN_LOGE("Command execution failed with a non-standard exception");
         co_return failedResult(String(u8"command execution failed"));
     }
 }
@@ -194,10 +194,10 @@ void fireEvent(EventType& event, CommandManager& owner, ArgsType& args)
         event.trigger(owner, args);
     }
     catch (const std::exception& e) {
-        V_LOGE("Command event handler threw: {}", e.what());
+        VN_LOGE("Command event handler threw: {}", e.what());
     }
     catch (...) {
-        V_LOGE("Command event handler threw");
+        VN_LOGE("Command event handler threw");
     }
 }
 
@@ -215,13 +215,13 @@ void fireCommandsChanged(CommandManager& manager)
 void logOutcome(const Command& command, const CommandResult& result)
 {
     if (result.succeeded()) {
-        V_LOGI("Command succeeded: {}", toUtf8View(command.name()));
+        VN_LOGI("Command succeeded: {}", toUtf8View(command.name()));
     }
     else if (result.status() == CommandStatus::Cancelled) {
-        V_LOGW("Command cancelled: {}", toUtf8View(command.name()));
+        VN_LOGW("Command cancelled: {}", toUtf8View(command.name()));
     }
     else {
-        V_LOGE("Command failed: {}: {}", toUtf8View(command.name()), toUtf8View(result.message()));
+        VN_LOGE("Command failed: {}: {}", toUtf8View(command.name()), toUtf8View(result.message()));
     }
 }
 
@@ -495,7 +495,7 @@ struct CommandManager::Impl {
     ///                 DrainOutcome::Cancelled once cancelAll() bumps it. A caller
     ///                 that is itself cancelling (cancelAllAndWait) leaves it empty.
     /// @return Why the wait ended.
-    vine::async::Task<DrainOutcome> waitChainsDrained(std::vector<std::shared_ptr<Chain>> chains,
+    vn::async::Task<DrainOutcome> waitChainsDrained(std::vector<std::shared_ptr<Chain>> chains,
                                                      std::chrono::milliseconds                timeout,
                                                      std::optional<std::uint64_t>              generation = std::nullopt);
 
@@ -533,7 +533,7 @@ struct CommandManager::Impl {
      * @param command Command whose rights are being claimed; only used for logging.
      * @return How the takeover ended.
      */
-    vine::async::Task<TakeOverOutcome> takeOverForeground(const Command& command);
+    vn::async::Task<TakeOverOutcome> takeOverForeground(const Command& command);
 
     /**
      * @brief Decides whether a command may run and gives it a chain.
@@ -674,7 +674,7 @@ std::vector<std::shared_ptr<CommandManager::Chain>> CommandManager::Impl::cancel
     return chains;
 }
 
-vine::async::Task<CommandManager::Impl::DrainOutcome> CommandManager::Impl::waitChainsDrained(
+vn::async::Task<CommandManager::Impl::DrainOutcome> CommandManager::Impl::waitChainsDrained(
     std::vector<std::shared_ptr<Chain>> chains,
     std::chrono::milliseconds           timeout,
     std::optional<std::uint64_t>        generation)
@@ -699,11 +699,11 @@ vine::async::Task<CommandManager::Impl::DrainOutcome> CommandManager::Impl::wait
         if (std::chrono::steady_clock::now() >= deadline) {
             co_return DrainOutcome::TimedOut;
         }
-        co_await vine::async::sleepFor(kDrainPollInterval);
+        co_await vn::async::sleepFor(kDrainPollInterval);
     }
 }
 
-vine::async::Task<CommandManager::Impl::TakeOverOutcome> CommandManager::Impl::takeOverForeground(const Command& command)
+vn::async::Task<CommandManager::Impl::TakeOverOutcome> CommandManager::Impl::takeOverForeground(const Command& command)
 {
     std::vector<std::shared_ptr<Chain>> chains = collectLiveChains();
 
@@ -729,13 +729,13 @@ vine::async::Task<CommandManager::Impl::TakeOverOutcome> CommandManager::Impl::t
     case DrainOutcome::Drained:
         co_return TakeOverOutcome::TakenOver;
     case DrainOutcome::Cancelled:
-        V_LOGW("Exclusive command cancelled while waiting for the running chain: {}", toUtf8View(command.name()));
+        VN_LOGW("Exclusive command cancelled while waiting for the running chain: {}", toUtf8View(command.name()));
         co_return TakeOverOutcome::Cancelled;
     case DrainOutcome::TimedOut:
         break;
     }
 
-    V_LOGE("Exclusive command rejected: a running chain did not stop within the drain bound: {}", toUtf8View(command.name()));
+    VN_LOGE("Exclusive command rejected: a running chain did not stop within the drain bound: {}", toUtf8View(command.name()));
     co_return TakeOverOutcome::StillStopping;
 }
 
@@ -755,7 +755,7 @@ bool CommandManager::Impl::admit(CommandFlags flags, bool exclusive, ChainScope 
     // manager's mutex is held would nest the two (the manager never calls out
     // under its own lock). The ambient host only complements the gate flag; the
     // gate decision itself is still one atomic step with the flag update below.
-    const bool ambient_host_busy = vine::appfw::ProgressHost::current() != nullptr;
+    const bool ambient_host_busy = vn::appfw::ProgressHost::current() != nullptr;
 
     std::lock_guard<std::mutex> lock(mutex);
     if (exclusive) {
@@ -809,10 +809,10 @@ void CommandManager::Impl::recordHistory(const Command& command, const CommandRe
         history.push_back(entry);
     }
     catch (const std::exception& e) {
-        V_LOGE("Failed to record the execution history: {}", e.what());
+        VN_LOGE("Failed to record the execution history: {}", e.what());
     }
     catch (...) {
-        V_LOGE("Failed to record the execution history");
+        VN_LOGE("Failed to record the execution history");
     }
 }
 
@@ -912,12 +912,12 @@ class CommandManager::Context : public CommandExecutionContext {
         return chain_->stop_source.stop_requested();
     }
 
-    vine::async::Task<CommandResult> executeChild(const String& name) override
+    vn::async::Task<CommandResult> executeChild(const String& name) override
     {
         // Bound the nesting so a command that calls itself can only exhaust the
         // chain's budget, not the process's coroutine frames.
         if (chain_->stackSize() >= CommandManager::maxChainDepth()) {
-            V_LOGE("Command nesting is too deep; refusing child command: {}", toUtf8View(name));
+            VN_LOGE("Command nesting is too deep; refusing child command: {}", toUtf8View(name));
             co_return failedResult(String(u8"Command nesting is too deep"));
         }
 
@@ -929,11 +929,11 @@ class CommandManager::Context : public CommandExecutionContext {
             command = manager_->createCommandByName(name, &disabled);
         }
         catch (const std::exception& e) {
-            V_LOGE("Child command factory threw: {}: {}", toUtf8View(name), e.what());
+            VN_LOGE("Child command factory threw: {}: {}", toUtf8View(name), e.what());
             co_return failedResultFromException(e);
         }
         catch (...) {
-            V_LOGE("Child command factory threw: {}", toUtf8View(name));
+            VN_LOGE("Child command factory threw: {}", toUtf8View(name));
             co_return failedResult(String(u8"command factory threw"));
         }
 
@@ -943,7 +943,7 @@ class CommandManager::Context : public CommandExecutionContext {
         co_return co_await manager_->executeCommandAsyncImpl(command.get(), chain_, ChainScope::Nested);
     }
 
-    vine::async::Task<CommandResult> executeChild(std::unique_ptr<Command> command) override
+    vn::async::Task<CommandResult> executeChild(std::unique_ptr<Command> command) override
     {
         if (command == nullptr) {
             co_return failedResult(String(u8"Command is null"));
@@ -952,7 +952,7 @@ class CommandManager::Context : public CommandExecutionContext {
         // Bounded like the name overload: a command that nests itself through instances has to
         // exhaust the chain's budget, not the process's coroutine frames.
         if (chain_->stackSize() >= CommandManager::maxChainDepth()) {
-            V_LOGE("Command nesting is too deep; refusing child command: {}", toUtf8View(command->name()));
+            VN_LOGE("Command nesting is too deep; refusing child command: {}", toUtf8View(command->name()));
             co_return failedResult(String(u8"Command nesting is too deep"));
         }
 
@@ -960,7 +960,7 @@ class CommandManager::Context : public CommandExecutionContext {
         // registered and disabled is refused, so a command the user disabled cannot be run
         // under that name through a parent either.
         if (manager_->d->isDisabledRegistration(command->name())) {
-            V_LOGI("Command '{}' is disabled; refusing the nested caller-supplied instance", toUtf8View(command->name()));
+            VN_LOGI("Command '{}' is disabled; refusing the nested caller-supplied instance", toUtf8View(command->name()));
             co_return failedResult(refusalMessage(command->name(), /*disabled=*/true));
         }
 
@@ -1001,7 +1001,7 @@ CommandManager::~CommandManager()
     });
 
     if (still_running) {
-        V_LOGW("CommandManager destroyed while command chains are still running");
+        VN_LOGW("CommandManager destroyed while command chains are still running");
     }
 }
 
@@ -1012,26 +1012,26 @@ raw_ptr<Application> CommandManager::application() const noexcept
 
 CommandResult CommandManager::executeCommandAndWait(Command* command)
 {
-    return vine::async::syncWait(executeCommandAsync(command));
+    return vn::async::syncWait(executeCommandAsync(command));
 }
 
 CommandResult CommandManager::executeCommandAndWait(const String& name)
 {
-    return vine::async::syncWait(executeCommandAsync(name));
+    return vn::async::syncWait(executeCommandAsync(name));
 }
 
-vine::async::Task<CommandResult> CommandManager::executeCommandAsync(Command* command)
+vn::async::Task<CommandResult> CommandManager::executeCommandAsync(Command* command)
 {
     // The disabled-instance check is inside the funnel on purpose: it calls
     // command->name() (user code) and copies the name (allocates).
-    return runGuarded([this, command]() -> vine::async::Task<CommandResult> {
+    return runGuarded([this, command]() -> vn::async::Task<CommandResult> {
         // A caller-supplied instance runs under its own name, so it must not become
         // a back door around a disabled registration. An instance whose name is not
         // registered (a private command built on the spot) is the caller's business
         // and runs as before.
         const String command_name = command != nullptr ? command->name() : String{};
         if (command != nullptr && d->isDisabledRegistration(command_name)) {
-            V_LOGI("Command '{}' is disabled; refusing the caller-supplied instance", toUtf8View(command_name));
+            VN_LOGI("Command '{}' is disabled; refusing the caller-supplied instance", toUtf8View(command_name));
             co_return failedResult(refusalMessage(command_name, /*disabled=*/true));
         }
 
@@ -1039,7 +1039,7 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsync(Command* co
     });
 }
 
-vine::async::Task<CommandResult> CommandManager::executeCommandAsync(const String& name)
+vn::async::Task<CommandResult> CommandManager::executeCommandAsync(const String& name)
 {
     // The copy happens here, while the caller's argument is still alive: the task is
     // lazy, so a coroutine that held a reference to name would read a destroyed
@@ -1047,9 +1047,9 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsync(const Strin
     return executeNamedCommand(String(name));
 }
 
-vine::async::Task<CommandResult> CommandManager::executeNamedCommand(String name)
+vn::async::Task<CommandResult> CommandManager::executeNamedCommand(String name)
 {
-    return runGuarded([this, name = std::move(name)]() -> vine::async::Task<CommandResult> {
+    return runGuarded([this, name = std::move(name)]() -> vn::async::Task<CommandResult> {
         bool                     disabled = false;
         std::unique_ptr<Command> command  = createCommandByName(name, &disabled);
         if (!command) {
@@ -1084,7 +1084,7 @@ std::unique_ptr<Command> CommandManager::createCommandByName(const String& name,
     return std::unique_ptr<Command>(factory());
 }
 
-vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope)
+vn::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope)
 {
     if (!command) {
         co_return failedResult(String(u8"Command is null"));
@@ -1108,7 +1108,7 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
     if (!d->admit(flags, exclusive, scope, chain)) {
         // Visible for the callers that cannot read the result: a detached command
         // that is refused would otherwise fail silently.
-        V_LOGW("Command refused by the serialization gate: {}", toUtf8View(command->name()));
+        VN_LOGW("Command refused by the serialization gate: {}", toUtf8View(command->name()));
         co_return failedResult(String(u8"另一个操作正在进行中，请稍候。"));
     }
 
@@ -1151,15 +1151,15 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
     // coroutine-local: it lives for this command's execution and is destroyed
     // (popping the stack) when the command completes. All hosts in the chain
     // bind to the same chain-wide cancellation source.
-    std::unique_ptr<vine::appfw::ProgressHost> progress_host;
+    std::unique_ptr<vn::appfw::ProgressHost> progress_host;
     if (testFlag(flags, CommandFlags::LongRunning)) {
-        progress_host = std::make_unique<vine::appfw::ProgressHost>(chain->stop_source);
+        progress_host = std::make_unique<vn::appfw::ProgressHost>(chain->stop_source);
         progress_host->setForeground(true);
     }
 
     chain->enter(command);
 
-    V_LOGI("Executing command: {}", toUtf8View(command->name()));
+    VN_LOGI("Executing command: {}", toUtf8View(command->name()));
 
     // Leaves the chain's stack when the command completes, keeping the manager
     // usable. The chain outlives this frame — the shared_ptr parameter is
@@ -1192,11 +1192,11 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
             snapshot_handler();
         }
         catch (const std::exception& e) {
-            V_LOGE("Snapshot handler failed; command not executed: {}", e.what());
+            VN_LOGE("Snapshot handler failed; command not executed: {}", e.what());
             co_return failedResultFromException(e);
         }
         catch (...) {
-            V_LOGE("Snapshot handler failed; command not executed");
+            VN_LOGE("Snapshot handler failed; command not executed");
             co_return failedResult(String(u8"snapshot handler failed"));
         }
     }
@@ -1208,7 +1208,7 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
     try {
         result = co_await command->execute(&context);
     }
-    catch (const vine::async::TaskCancelledException&) {
+    catch (const vn::async::TaskCancelledException&) {
         // Nested commands propagate the cancellation upward by default; only the
         // command that started the chain reports it as a Cancelled result. The
         // chain's own stack is the judge: it still holds this command, so a
@@ -1228,11 +1228,11 @@ vine::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command
         // Anything else is reported as a Failed outcome instead of propagating:
         // commands are started from UI event handlers and from detached tasks
         // where an escaping exception terminates the process.
-        V_LOGE("Command threw an exception: {}: {}", toUtf8View(command->name()), e.what());
+        VN_LOGE("Command threw an exception: {}: {}", toUtf8View(command->name()), e.what());
         result = failedResultFromException(e);
     }
     catch (...) {
-        V_LOGE("Command threw a non-standard exception: {}", toUtf8View(command->name()));
+        VN_LOGE("Command threw a non-standard exception: {}", toUtf8View(command->name()));
         result = failedResult(String(u8"command threw an exception"));
     }
 
@@ -1257,17 +1257,17 @@ void CommandManager::executeDetached(const String& name)
         // Starting the task can fail too (copying the name, allocating the coroutine
         // frame), and that happens before the wrapper exists, so it needs this catch
         // as well: a fire-and-forget entry point must not throw at its caller.
-        [](Application* app, vine::async::Task<CommandResult> task) -> vine::async::DetachedTask {
+        [](Application* app, vn::async::Task<CommandResult> task) -> vn::async::DetachedTask {
             CommandResult result{ CommandStatus::Failed };
             try {
                 result = co_await std::move(task);
             }
             catch (const std::exception& e) {
-                V_LOGE("Detached command failed: {}", e.what());
+                VN_LOGE("Detached command failed: {}", e.what());
                 co_return;
             }
             catch (...) {
-                V_LOGE("Detached command failed with a non-standard exception");
+                VN_LOGE("Detached command failed with a non-standard exception");
                 co_return;
             }
 
@@ -1281,10 +1281,10 @@ void CommandManager::executeDetached(const String& name)
         }(owner, executeCommandAsync(name));
     }
     catch (const std::exception& e) {
-        V_LOGE("Detached command could not be started: {}", e.what());
+        VN_LOGE("Detached command could not be started: {}", e.what());
     }
     catch (...) {
-        V_LOGE("Detached command could not be started");
+        VN_LOGE("Detached command could not be started");
     }
 }
 
@@ -1332,7 +1332,7 @@ bool CommandManager::cancelAllAndWait(std::chrono::milliseconds timeout)
     // (a live frame still points at it) but a hostile command must not hang the
     // teardown forever. The wait watches no generation here - this call is the one
     // that bumps it.
-    return vine::async::syncWait(d->waitChainsDrained(std::move(chains), timeout)) == Impl::DrainOutcome::Drained;
+    return vn::async::syncWait(d->waitChainsDrained(std::move(chains), timeout)) == Impl::DrainOutcome::Drained;
 }
 
 int CommandManager::historyCount() const
@@ -1359,7 +1359,7 @@ void CommandManager::clearHistory()
 bool CommandManager::registerCommand(TypeId command_class, String name, std::function<Command*()> factory)
 {
     if (name.empty() || !factory) {
-        V_LOGW("Ignoring command registration with an empty name or an empty factory");
+        VN_LOGW("Ignoring command registration with an empty name or an empty factory");
         return false;
     }
 
@@ -1387,14 +1387,14 @@ bool CommandManager::registerCommand(TypeId command_class, String name, std::fun
             description = probe->description();
         }
         else {
-            V_LOGW("Command factory returned no instance; listing metadata stays empty: {}", toUtf8View(name));
+            VN_LOGW("Command factory returned no instance; listing metadata stays empty: {}", toUtf8View(name));
         }
     }
     catch (const std::exception& e) {
-        V_LOGW("Command factory threw during the metadata probe: {}: {}", toUtf8View(name), e.what());
+        VN_LOGW("Command factory threw during the metadata probe: {}: {}", toUtf8View(name), e.what());
     }
     catch (...) {
-        V_LOGW("Command factory threw during the metadata probe: {}", toUtf8View(name));
+        VN_LOGW("Command factory threw during the metadata probe: {}", toUtf8View(name));
     }
 
     // Applied here, outside every lock: a command the user disabled comes back
@@ -1479,7 +1479,7 @@ bool CommandManager::isCommandEnabled(const String& name) const
 bool CommandManager::setCommandEnabled(const String& name, bool enabled)
 {
     if (name.empty()) {
-        V_LOGW("Cannot enable or disable a command without a name");
+        VN_LOGW("Cannot enable or disable a command without a name");
         return false;
     }
 
@@ -1512,10 +1512,10 @@ bool CommandManager::setCommandEnabled(const String& name, bool enabled)
     }
 
     if (applied) {
-        V_LOGI("Command '{}' is now {}", toUtf8View(canonical), enabled ? "enabled" : "disabled");
+        VN_LOGI("Command '{}' is now {}", toUtf8View(canonical), enabled ? "enabled" : "disabled");
     }
     else {
-        V_LOGI("Command '{}' is not registered; the preference applies when it registers again: {}", toUtf8View(canonical),
+        VN_LOGI("Command '{}' is not registered; the preference applies when it registers again: {}", toUtf8View(canonical),
                enabled ? "enabled" : "disabled");
     }
     return true;
@@ -1530,7 +1530,7 @@ bool CommandManager::registerAlias(const String& alias, const String& target)
     {
         std::lock_guard<std::mutex> lock(d->registry_mutex);
         if (!d->aliases.emplace(alias, target).second) {
-            V_LOGW("Alias already registered, ignoring target: {} -> {}", toUtf8View(alias), toUtf8View(target));
+            VN_LOGW("Alias already registered, ignoring target: {} -> {}", toUtf8View(alias), toUtf8View(target));
             return false;
         }
     }
@@ -1630,4 +1630,4 @@ void CommandManager::setSnapshotHandler(std::function<void()> handler)
     d->snapshot_handler = std::move(handler);
 }
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

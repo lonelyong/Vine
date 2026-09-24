@@ -6,15 +6,15 @@
 
 #include <vsg/core/Exception.h>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
 
-/// @brief Builds a `vine::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
-vine::String asString(const std::string& text)
+/// @brief Builds a `vn::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
+vn::String asString(const std::string& text)
 {
-    return vine::String(reinterpret_cast<const char8_t*>(text.c_str()));
+    return vn::String(reinterpret_cast<const char8_t*>(text.c_str()));
 }
 
 }  // namespace
@@ -104,8 +104,8 @@ bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg:
         if (!known && packet.content != nullptr)
         {
             ++skipped_;
-            diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
-                                vine::graphics::DiagnosticCategory::ContentSkipped,
+            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::ContentSkipped,
                                 asString("recorded content was not placed: the plan has no pass " +
                                          std::to_string(packet.pass) +
                                          " (its target could not be served, or it sits on a dependency "
@@ -368,8 +368,8 @@ bool VsgExecutor::submit(const core::CompiledFrame& frame, ::vsg::Viewer& viewer
     }
 
     const std::size_t marked = noteLostSubmission(frame);
-    diagnostics_.report(vine::graphics::DiagnosticSeverity::Error,
-                        vine::graphics::DiagnosticCategory::SubmissionFailed,
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Error,
+                        vn::graphics::DiagnosticCategory::SubmissionFailed,
                         asString("the frame's submission failed, so what its passes wrote was never "
                                  "performed: " +
                                  std::to_string(marked) +
@@ -739,8 +739,8 @@ void VsgExecutor::reportUnapplied(const core::CompiledTarget& target, const char
         return;  // not registered here: record() reports the passes that needed it
     }
     const std::string which = entry->label != nullptr ? std::string(entry->label) : std::string("a target");
-    diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
-                        vine::graphics::DiagnosticCategory::TargetBuildFailed,
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                        vn::graphics::DiagnosticCategory::TargetBuildFailed,
                         asString("the target '" + which + "' did not follow its description: " + why));
 }
 
@@ -759,8 +759,8 @@ VsgExecutor::Entry* VsgExecutor::entryOf(const void* identity) noexcept
 void VsgExecutor::reportSkipped(const core::CompiledTarget& target, const char* why)
 {
     ++skipped_;
-    diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
-                        vine::graphics::DiagnosticCategory::ContentSkipped,
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                        vn::graphics::DiagnosticCategory::ContentSkipped,
                         asString(std::string("a compiled pass is not recorded: ") + why +
                                  (target.target == nullptr ? " (the pass targets the default framebuffer)"
                                                            : "")));
@@ -769,10 +769,10 @@ void VsgExecutor::reportSkipped(const core::CompiledTarget& target, const char* 
 void VsgExecutor::reportWindowSkipped(const char* why)
 {
     ++skipped_;
-    diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
-                        vine::graphics::DiagnosticCategory::ContentSkipped,
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                        vn::graphics::DiagnosticCategory::ContentSkipped,
                         asString(std::string("a compiled pass is not recorded: ") + why +
                                  " (the pass targets the default framebuffer)"));
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

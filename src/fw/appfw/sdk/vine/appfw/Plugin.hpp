@@ -21,15 +21,15 @@
  * is what such a change requires anyway.
  *
  * 3u: ProgressHost moved from the base progress module into appfw, so plugs that
- * reported progress through vine::progress::ProgressHost include it from here now.
+ * reported progress through vn::progress::ProgressHost include it from here now.
  *
  * The name says *plugin* ABI on purpose: it is not the release version (that is
- * V_APPFW_VERSION in appfw_global.hpp, diagnostic only), and it says nothing about
+ * VN_APPFW_VERSION in appfw_global.hpp, diagnostic only), and it says nothing about
  * the host's own binaries, which are built and rebuilt together with the framework.
  */
-#define V_APPFW_PLUGIN_ABI_VERSION 3u
+#define VN_APPFW_PLUGIN_ABI_VERSION 3u
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 
 class PluginLoadContext;
 class ConfigItem;
@@ -47,16 +47,16 @@ struct CommandInfo;
  * This struct is the small, deliberately stable prefix that is read first. Rules:
  *
  * - abi_version stays the first member, and the host reads no other member until it
- *   matches its own V_APPFW_PLUGIN_ABI_VERSION (the static_asserts below keep it first);
+ *   matches its own VN_APPFW_PLUGIN_ABI_VERSION (the static_asserts below keep it first);
  * - members may only be appended, never reordered or removed, and they must not use
  *   SDK types whose own layout can change (plain integers and const char* only);
- * - V_APPFW_PLUGIN_ABI_VERSION is bumped by any change to that surface (its own
+ * - VN_APPFW_PLUGIN_ABI_VERSION is bumped by any change to that surface (its own
  *   documentation lists what counts), which is what turns "silently misread
  *   metadata" into one clear refusal.
  */
-struct V_APPFW_API PluginAbi {
-    std::uint32_t abi_version{ 0 };      ///< V_APPFW_PLUGIN_ABI_VERSION the library was compiled with.
-    const char*   framework_version{};   ///< V_APPFW_VERSION it was built against; never null, UTF-8.
+struct VN_APPFW_API PluginAbi {
+    std::uint32_t abi_version{ 0 };      ///< VN_APPFW_PLUGIN_ABI_VERSION the library was compiled with.
+    const char*   framework_version{};   ///< VN_APPFW_VERSION it was built against; never null, UTF-8.
 };
 
 static_assert(std::is_standard_layout_v<PluginAbi>, "PluginAbi is read across a module boundary and must stay standard layout");
@@ -66,12 +66,12 @@ static_assert(offsetof(PluginAbi, abi_version) == 0, "abi_version must stay the 
  * @brief Static metadata declared by a plugin.
  *
  * The layout is part of the plugin ABI: a field added or reordered here is a change
- * every plugin must be rebuilt for, so V_APPFW_PLUGIN_ABI_VERSION is bumped together
+ * every plugin must be rebuilt for, so VN_APPFW_PLUGIN_ABI_VERSION is bumped together
  * with it.
  */
-struct V_APPFW_API PluginInfo {
+struct VN_APPFW_API PluginInfo {
     ///
-    /// Stable plugin identity, hardcoded by the plugin (V_DECLARE_PLUGIN) and
+    /// Stable plugin identity, hardcoded by the plugin (VN_DECLARE_PLUGIN) and
     /// independent of its name and of where its library is installed. The null
     /// UUID means "not declared": identity then falls back to name.
     Uuid                uuid;
@@ -105,15 +105,15 @@ struct V_APPFW_API PluginInfo {
  * plugin library can be created only once per process, so unload() must tolerate
  * being called on a plugin whose load() did not complete.
  */
-class V_APPFW_API Plugin : public Object {
-    V_OBJECT_META_DECL;
+class VN_APPFW_API Plugin : public Object {
+    VN_OBJECT_META_DECL;
 
   public:
     /**
      * @brief Returns the plugin's static metadata.
      *
      * Populated by the PluginManager from the plugin's vinePluginQuery() entry
-     * when the plugin is created; V_DECLARE_PLUGIN is the single source of the
+     * when the plugin is created; VN_DECLARE_PLUGIN is the single source of the
      * metadata.
      *
      * @return The plugin metadata.
@@ -209,4 +209,4 @@ class V_APPFW_API Plugin : public Object {
     PluginInfo info_;
 };
 
-V_APPFW_NS_END
+VN_APPFW_NS_END

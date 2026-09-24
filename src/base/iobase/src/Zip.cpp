@@ -13,7 +13,7 @@
 
 #include "ZipInternal.hpp"
 
-V_IO_NS_BEGIN
+VN_IO_NS_BEGIN
 
 namespace
 {
@@ -388,4 +388,4 @@ Result<std::vector<unsigned char>> Zip::readEntry(std::span<const unsigned char>
     return out;
 }
 
-V_IO_NS_END
+VN_IO_NS_END

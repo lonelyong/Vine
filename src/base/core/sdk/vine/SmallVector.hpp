@@ -12,7 +12,7 @@
 #include <type_traits>
 #include <utility>
 
-V_CORE_NS_BEGIN
+VN_CORE_NS_BEGIN
 
 template <typename T, std::size_t InlineCapacity>
 class SmallVector {
@@ -468,4 +468,4 @@ class SmallVector {
     size_type capacity_;
 };
 
-V_CORE_NS_END
+VN_CORE_NS_END

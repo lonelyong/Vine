@@ -6,7 +6,7 @@
 #include <vine/vsg/api/ContentPipeline.hpp>
 #include <vine/vsg/api/ProgramVariant.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 struct ContentHalves::Data
 {
@@ -19,7 +19,7 @@ struct ContentHalves::Data
         core::VertexLayoutKey layout{};
         ProgramVariant        variant{};
         std::uint32_t         color_attachments{1};
-        vine::graphics::Topology topology{vine::graphics::Topology::Triangles};
+        vn::graphics::Topology topology{vn::graphics::Topology::Triangles};
     };
 
     /** @brief One compiled half: a layer and its recorder, and the key that says when they are this one. */
@@ -270,4 +270,4 @@ void ContentHalves::clear()
     d->refused = 0U;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

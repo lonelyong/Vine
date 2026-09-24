@@ -9,18 +9,18 @@
 #include <utility>
 #include <vector>
 
-using vine::ChunkedMemoryStream;
-using vine::ChunkedMemoryStreamBuf;
-using vine::InputChunkedMemoryStream;
-using vine::InputMemoryStream;
-using vine::InputSpanStream;
-using vine::MemoryStream;
-using vine::MemoryStreamBuf;
-using vine::OutputChunkedMemoryStream;
-using vine::OutputMemoryStream;
-using vine::OutputSpanStream;
-using vine::SpanStream;
-using vine::SpanStreamBuf;
+using vn::ChunkedMemoryStream;
+using vn::ChunkedMemoryStreamBuf;
+using vn::InputChunkedMemoryStream;
+using vn::InputMemoryStream;
+using vn::InputSpanStream;
+using vn::MemoryStream;
+using vn::MemoryStreamBuf;
+using vn::OutputChunkedMemoryStream;
+using vn::OutputMemoryStream;
+using vn::OutputSpanStream;
+using vn::SpanStream;
+using vn::SpanStreamBuf;
 
 namespace
 {

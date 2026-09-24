@@ -39,7 +39,7 @@
  * they are written - so the layout the layer builds and the module it compiles cannot disagree about which
  * declarations are in effect.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief Builds the program table entry for @p program.
  *
@@ -50,7 +50,7 @@ V_VSG_NS_BEGIN
  *         point the two stages disagree about, or a text whose declared bindings cannot be read - see
  *         api/ProgramAbi).
  */
-[[nodiscard]] FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, ProgramFacts& out);
+[[nodiscard]] FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out);
 
 /**
  * @brief Builds the program table entry for ONE variant of a content program.
@@ -67,7 +67,7 @@ V_VSG_NS_BEGIN
  * @param out      Receives the entry (its `shaders.defines` are the variant's).
  * @return None when the entry was built; Unknown/Malformed exactly as the untagged overload says.
  */
-[[nodiscard]] FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program,
+[[nodiscard]] FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program,
                                          const ProgramVariant&                  variant, ProgramFacts& out);
 
 /** @brief Builds the program table entry for a FULL-SCREEN program (see core::DrawKind::Screen).
@@ -91,7 +91,7 @@ V_VSG_NS_BEGIN
  *         fragment entry point that is not the canonical vertex stage's (the pipeline carries one entry point
  *         for both stages), or a fragment text whose declared bindings cannot be read.
  */
-[[nodiscard]] FactMiss buildScreenProgramFacts(const vine::graphics::ShaderProgram& program, ProgramFacts& out);
+[[nodiscard]] FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out);
 
 /** @brief Builds the material table entry for @p material, or for the DEFAULT material when it is null.
  *
@@ -101,7 +101,7 @@ V_VSG_NS_BEGIN
  * @param storage  Caller-owned storage the entry borrows; resized to the block's size and must outlive it.
  * @return None always: an absent material is a describable thing (see the file note), not a miss.
  */
-[[nodiscard]] FactMiss buildMaterialFacts(const vine::graphics::Material* material, std::uint64_t revision,
+[[nodiscard]] FactMiss buildMaterialFacts(const vn::graphics::Material* material, std::uint64_t revision,
                                           MaterialFacts& out, std::vector<std::byte>& storage);
 
 /** @brief Whether @p material's current values are the ones @p block carries.
@@ -115,7 +115,7 @@ V_VSG_NS_BEGIN
  * @param block    A block built for that material (its bytes, the ABI's size).
  * @return true when the values agree.
  */
-[[nodiscard]] bool materialBlockAgreesWith(const vine::graphics::Material& material,
+[[nodiscard]] bool materialBlockAgreesWith(const vn::graphics::Material& material,
                                            std::span<const std::byte> block) noexcept;
 
-V_VSG_NS_END
+VN_VSG_NS_END

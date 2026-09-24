@@ -24,7 +24,7 @@
 #include <vine/vsg/api/StateCommands.hpp>
 #include <vine/vsg/api/StreamUploads.hpp>
 
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 namespace
 {
@@ -53,11 +53,11 @@ std::uint32_t abiSizeOfRole(AbiBlockRole role) noexcept
 {
     switch (role)
     {
-    case AbiBlockRole::View: return static_cast<std::uint32_t>(sizeof(vine::graphics::VineViewBlock));
-    case AbiBlockRole::Draw: return static_cast<std::uint32_t>(sizeof(vine::graphics::VineDrawBlock));
-    case AbiBlockRole::Material: return static_cast<std::uint32_t>(sizeof(vine::graphics::VineMaterialBlock));
+    case AbiBlockRole::View: return static_cast<std::uint32_t>(sizeof(vn::graphics::VineViewBlock));
+    case AbiBlockRole::Draw: return static_cast<std::uint32_t>(sizeof(vn::graphics::VineDrawBlock));
+    case AbiBlockRole::Material: return static_cast<std::uint32_t>(sizeof(vn::graphics::VineMaterialBlock));
     case AbiBlockRole::Lights: return static_cast<std::uint32_t>(sizeof(VineLightsBlock));
-    case AbiBlockRole::ShadowBlock: return static_cast<std::uint32_t>(sizeof(vine::graphics::VineShadowBlock));
+    case AbiBlockRole::ShadowBlock: return static_cast<std::uint32_t>(sizeof(vn::graphics::VineShadowBlock));
     case AbiBlockRole::NotABlock:
     case AbiBlockRole::Foreign: return 0U;
     }
@@ -805,4 +805,4 @@ bool ContentPipeline::agreesWithPool(const core::VariantPool& pool) const noexce
     return true;
 }
 
-V_VSG_NS_END
+VN_VSG_NS_END

@@ -4,7 +4,7 @@
 #include <cctype>
 #include <string>
 
-V_BREPIO_NS_BEGIN
+VN_BREPIO_NS_BEGIN
 
 namespace
 {
@@ -71,7 +71,7 @@ void BrepLoader::setOptions(const Options& options)
     options_ = options;
 }
 
-vine::intrusive_ptr<vine::geometry::BrepShape> BrepLoader::load(const std::filesystem::path& file_path)
+vn::intrusive_ptr<vn::geometry::BrepShape> BrepLoader::load(const std::filesystem::path& file_path)
 {
     // TODO: STEP/IGES parsing requires OpenCASCADE (STEPControl_Reader /
     // IGESControl_Reader), which is not linked into the project yet. The
@@ -80,4 +80,4 @@ vine::intrusive_ptr<vine::geometry::BrepShape> BrepLoader::load(const std::files
     return {};
 }
 
-V_BREPIO_NS_END
+VN_BREPIO_NS_END

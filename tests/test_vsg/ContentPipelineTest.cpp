@@ -45,14 +45,14 @@
 #include <vine/vsg/core/StateRegistry.hpp>
 #include <vine/vsg/core/VariantPool.hpp>
 
-using vine::vsg::buildScreenProgramFacts;
-using vine::vsg::ContentPipeline;
-using vine::vsg::FactMiss;
-using vine::vsg::ProgramFacts;
-using vine::vsg::core::DynamicState;
-using vine::vsg::core::PipelineKey;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::VariantPool;
+using vn::vsg::buildScreenProgramFacts;
+using vn::vsg::ContentPipeline;
+using vn::vsg::FactMiss;
+using vn::vsg::ProgramFacts;
+using vn::vsg::core::DynamicState;
+using vn::vsg::core::PipelineKey;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::VariantPool;
 
 namespace
 {
@@ -95,10 +95,10 @@ PipelineKey contentKey(std::uint64_t revision)
 }
 
 /// @brief The bindings and push ranges @p shaders declare (the layer is built from these, not from a set).
-vine::vsg::ProgramAbi abiOf(const ContentPipeline::Shaders& shaders)
+vn::vsg::ProgramAbi abiOf(const ContentPipeline::Shaders& shaders)
 {
-    vine::vsg::ProgramAbi abi;
-    EXPECT_EQ(vine::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vine::vsg::FactMiss::None);
+    vn::vsg::ProgramAbi abi;
+    EXPECT_EQ(vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vn::vsg::FactMiss::None);
     return abi;
 }
 
@@ -166,8 +166,8 @@ ContentPipeline::Shaders screenShaders()
 ///        the text says.
 std::unique_ptr<ContentPipeline> screenLayer(const ContentPipeline::Shaders& shaders)
 {
-    vine::vsg::ProgramAbi abi;
-    if (vine::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
+    vn::vsg::ProgramAbi abi;
+    if (vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
         return nullptr;
     }
     return ContentPipeline::createScreen(abi, shaders);
@@ -178,7 +178,7 @@ PipelineKey screenKey(std::uint64_t revision, std::uint32_t sampled_colors = 1U)
 {
     static int program = 0;
     PipelineKey key;
-    key.kind                     = vine::vsg::core::DrawKind::Screen;
+    key.kind                     = vn::vsg::core::DrawKind::Screen;
     key.program                  = &program;
     key.revision                 = revision;
     key.compatibility.samples    = 1U;
@@ -235,7 +235,7 @@ TEST(ContentPipelineTest, TheTopologyTheSettingsNameIsWhatThePipelineBakes)
     // undefined behaviour rather than a picture. The class is therefore identity, and the create-info has to
     // state the one the key names - a default layer keeps the engine's own default.
     ContentPipeline::Settings points;
-    points.topology = vine::graphics::Topology::Points;
+    points.topology = vn::graphics::Topology::Points;
     auto point_layer = makeLayerWithSettings(points);
     ASSERT_NE(point_layer, nullptr);
 
@@ -332,7 +332,7 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     // sampler2D`, no set qualifier). A layer that mixed the two would compile a pipeline the draw cannot bind.
     auto layer = screenLayer(screenShaders());
     ASSERT_NE(layer, nullptr) << "the full-screen pair must compile";
-    EXPECT_EQ(layer->kind(), vine::vsg::core::DrawKind::Screen);
+    EXPECT_EQ(layer->kind(), vn::vsg::core::DrawKind::Screen);
 
     // A CUBE declaration is refused HERE, unlike a content layer's: the full-screen ABI binds the SOURCE's
     // attachments and depth - 2D views, one per binding - so a text declaring a cube asks for an image this
@@ -382,7 +382,7 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     // layer cannot build a pipeline for a descriptor ABI its draws do not bind.
     const std::uint64_t failures_before = layer->failures();
     PipelineKey         content_kind    = screenKey(1U);
-    content_kind.kind                   = vine::vsg::core::DrawKind::Content;
+    content_kind.kind                   = vn::vsg::core::DrawKind::Content;
     const auto refused                  = layer->acquire(pool, content_kind);
     EXPECT_EQ(refused.pipeline, nullptr);
     EXPECT_EQ(layer->failures(), failures_before + 1U) << "a silently compiled wrong-ABI pipeline is the failure";
@@ -394,8 +394,8 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     // shadow ABI's bindings down by hand: the map at 5 (the source's four colours take 0..3 and its depth
     // would take 4) and the block at 6. The layer's set is what the TEXT declares, so those numbers are the
     // text's - and the layer has to serve them.
-    const vine::intrusive_ptr<vine::graphics::ShaderProgram> program =
-        vine::graphics::shadowedDeferredLightProgram();
+    const vn::intrusive_ptr<vn::graphics::ShaderProgram> program =
+        vn::graphics::shadowedDeferredLightProgram();
     ASSERT_NE(program, nullptr);
     ProgramFacts facts;
     ASSERT_EQ(buildScreenProgramFacts(*program, facts), FactMiss::None);
@@ -413,7 +413,7 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     const auto shape = layer->blockShape(0U);
     ASSERT_EQ(shape.size(), 1U);
     EXPECT_EQ(shape[0].binding, 6U);
-    EXPECT_EQ(shape[0].role, vine::vsg::AbiBlockRole::ShadowBlock);
+    EXPECT_EQ(shape[0].role, vn::vsg::AbiBlockRole::ShadowBlock);
 
     // The set a pass binds when its source offers FOUR colours and NO sampleable depth: 0..3 for the colours,
     // the map at 5 and the block at 6 - binding 4 is NOT in it, which is exactly where an arrangement that
@@ -464,8 +464,8 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
                            "layout(location = 0) in vec2 vine_uv;\n"
                            "layout(location = 0) out vec4 out_color;\n" +
                            declaration + "\nvoid main() { out_color = vec4(vine_uv, 0.0, 1.0); }\n";
-        vine::vsg::ProgramAbi abi;
-        if (vine::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
+        vn::vsg::ProgramAbi abi;
+        if (vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
             return std::unique_ptr<ContentPipeline>{};
         }
         return ContentPipeline::createScreen(abi, shaders);
@@ -573,8 +573,8 @@ TEST(ContentPipelineTest, DynamicStateChurnNeverReachesThePoolOrThisLayer)
     (void)registry.resolve(key, DynamicState{});
     for (int step = 0; step < 20; ++step) {
         DynamicState state;
-        state.cull_mode     = (step % 2 == 0) ? vine::graphics::CullMode::Back : vine::graphics::CullMode::Front;
-        state.polygon_mode  = (step % 3 == 0) ? vine::graphics::PolygonMode::Line : vine::graphics::PolygonMode::Fill;
+        state.cull_mode     = (step % 2 == 0) ? vn::graphics::CullMode::Back : vn::graphics::CullMode::Front;
+        state.polygon_mode  = (step % 3 == 0) ? vn::graphics::PolygonMode::Line : vn::graphics::PolygonMode::Fill;
         state.blend.enabled = (step % 2) == 0;
         (void)registry.resolve(key, state);
         EXPECT_EQ(layer->acquire(pool, key).action, VariantPool::Action::Reused);
@@ -654,10 +654,10 @@ TEST(ContentPipelineTest, TheLayoutFollowsTheDeclarationsWhereverTheyPutTheBlock
     ASSERT_EQ(layer->declaredSets().size(), 2U) << "the sets a caller has to build block sets for";
     EXPECT_EQ(layer->declaredSets()[0], 0U);
     EXPECT_EQ(layer->declaredSets()[1], 1U);
-    const std::span<const vine::vsg::BlockDescriptors::Binding> shape = layer->blockShape(0U);
+    const std::span<const vn::vsg::BlockDescriptors::Binding> shape = layer->blockShape(0U);
     ASSERT_EQ(shape.size(), 1U);
     EXPECT_EQ(shape[0].binding, 3U);
-    EXPECT_EQ(shape[0].role, vine::vsg::AbiBlockRole::Material);
+    EXPECT_EQ(shape[0].role, vn::vsg::AbiBlockRole::Material);
     EXPECT_TRUE(layer->blockShape(2U).empty()) << "a set the text says nothing about declares nothing";
 
     // A block in set 2 ALONE: the sets before it are part of the layout all the same - the API wants a
@@ -732,9 +732,9 @@ TEST(ContentPipelineTest, ADeclarationThisBackendCannotFillIsRefused)
     // A block that reads a PREFIX of the L1 struct is fine: the range it is bound with covers what it reads.
     auto prefix = layerDeclaring("layout(set = 0, binding = 0, std140) uniform VineLightsBlock { vec4 light0; } lights;");
     ASSERT_NE(prefix, nullptr);
-    const std::span<const vine::vsg::BlockDescriptors::Binding> shape = prefix->blockShape(0U);
+    const std::span<const vn::vsg::BlockDescriptors::Binding> shape = prefix->blockShape(0U);
     ASSERT_EQ(shape.size(), 1U);
-    EXPECT_EQ(shape[0].role, vine::vsg::AbiBlockRole::Lights);
+    EXPECT_EQ(shape[0].role, vn::vsg::AbiBlockRole::Lights);
 
     // A declared input sampler is a fact of the program, but the KEY has to cover it: a pass that samples
     // nothing cannot bind an image at binding 0, so the pipeline is refused for that key and only that key.

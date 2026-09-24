@@ -13,7 +13,7 @@
 #include <vine/window/InputEvent.hpp>
 #include <vine/window/MouseButton.hpp>
 
-V_GRAPHICS_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 SceneView::SceneView()
   : camera_(make_intrusive<Camera>())
@@ -137,13 +137,13 @@ void SceneView::home()
     }
 }
 
-void SceneView::pushEvent(const vine::window::MouseEvent& event)
+void SceneView::pushEvent(const vn::window::MouseEvent& event)
 {
     CameraManipulator* manip = manipulator();
     if (manip == nullptr) {
         return;
     }
-    if (event.button == vine::window::MouseButton::None) {
+    if (event.button == vn::window::MouseButton::None) {
         manip->onMouseMove(event);
     } else if (event.pressed) {
         manip->onMousePress(event);
@@ -152,7 +152,7 @@ void SceneView::pushEvent(const vine::window::MouseEvent& event)
     }
 }
 
-void SceneView::pushEvent(const vine::window::ScrollEvent& event)
+void SceneView::pushEvent(const vn::window::ScrollEvent& event)
 {
     CameraManipulator* manip = manipulator();
     if (manip != nullptr) {
@@ -160,7 +160,7 @@ void SceneView::pushEvent(const vine::window::ScrollEvent& event)
     }
 }
 
-void SceneView::pushEvent(const vine::window::KeyEvent& event)
+void SceneView::pushEvent(const vn::window::KeyEvent& event)
 {
     CameraManipulator* manip = manipulator();
     if (manip == nullptr) {
@@ -180,7 +180,7 @@ void SceneView::onSurfaceResized(int width, int height)
     }
     // 1) The interactive view camera stays in step with the surface.
     if (CameraManipulator* manip = manipulator(); manip != nullptr) {
-        manip->onResize(vine::window::ResizeEvent{ width, height });
+        manip->onResize(vn::window::ResizeEvent{ width, height });
     } else if (camera_->projectionType() == Camera::ProjectionType::Perspective) {
         const double aspect = static_cast<double>(width) / static_cast<double>(height);
         camera_->setProjectionMatrixAsPerspective(camera_->fieldOfView(), aspect,
@@ -210,4 +210,4 @@ void SceneView::frame(double dt)
     }
 }
 
-V_GRAPHICS_NS_END
+VN_GRAPHICS_NS_END

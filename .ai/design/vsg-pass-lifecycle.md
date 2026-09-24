@@ -302,7 +302,7 @@ descriptor set 可能仍被**已提交但未完成**的命令缓冲引用：view
 
 **方案**
 - **A（推荐，与 §8.1 同法，纯后端内改动）**：把缓存值改成自持条目
-  `struct Entry { vine::intrusive_ptr<Material> material; ::vsg::ref_ptr<::vsg::PhongMaterialValue> value; }`；
+  `struct Entry { vn::intrusive_ptr<Material> material; ::vsg::ref_ptr<::vsg::PhongMaterialValue> value; }`；
   驱逐策略同样双轨：`useCount() == 1`（仅缓存持有）→ 立即驱逐；离开使用集合后按帧计数兜底，
   再加**容量上限**（建议 256，与 `program_shader_sets_` 的 64/256 量级一致）兜底；
   `releaseMaterial(m)` 语义不变（仍作显式入口，供引擎调用）。
@@ -1544,8 +1544,8 @@ cp -f build/lib/*.so* dist/lib/ && cp -f build/plugins/vine/*.so dist/plugins/vi
 3. **信息性 stderr 迁 `vine/logging`**：harness 与 `scripts/gfx_lavapipe_check.sh` 有多处
    stderr 断言（`[VsgRenderer] device:` / `EXPERIMENTAL off-screen target` / `has no depth
    image yet`），必须**同一次提交**里同步改，否则闸门会红。
-   **已完成（2026-09-11）**：插件库自身的 10 处信息性跟踪改走 `V_LOGI` / `V_LOGW` /
-   `V_LOGE`（`vi::Logging` 已加入插件 / `vsg_backend_selftest` / `test_vsg` 三个目标），
+   **已完成（2026-09-11）**：插件库自身的 10 处信息性跟踪改走 `VN_LOGI` / `VN_LOGW` /
+   `VN_LOGE`（`vn::Logging` 已加入插件 / `vsg_backend_selftest` / `test_vsg` 三个目标），
    **消息原文保持不变**、级别取 Info ⇒ 默认级别即可见，所以
    `scripts/gfx_lavapipe_check.sh` 的 `[VsgRenderer] device:` 断言**无需改动**（已复跑确认
    PASS）。两条有意不迁：`reportFailure` 的 stderr 半边（它自身就是“validation harness 会读
@@ -2079,7 +2079,7 @@ TU 758 → 780）。它的收益是**单点定义**："overlay drawable 的配�
 `test_vsg` 100 / `test_graphics` 158；`scripts/gfx_lavapipe_check.sh` → `RESULT: PASS`。
 
 **overlay 这两个函数还剩什么（有意保留）**：源校验（PiP 的 attachment 钳位 / program 的深度提升
-报告）、key 构造、矩形策略（PiP 自动贴右下 / program 只钳位）、节点工厂与 `V_LOGI` 文案 ——
+报告）、key 构造、矩形策略（PiP 自动贴右下 / program 只钳位）、节点工厂与 `VN_LOGI` 文案 ——
 这些正是两者的**差异**，再合并只会把差异藏进参数。
 
 ## 37. 结构整理六：内容槽每帧路径的阶段化（2026-09-12）
@@ -2186,7 +2186,7 @@ teardown 路径，并断言"重建数 = frames-1、等待数 = 重建数"。等�
 `(components, size, components)` ⇒ **第二条分支打印的是"holds <components> floats, not divisible by its
 components=<size> stride"**（数字互换、`%zu` 读 32 位值）。它编译、运行、验证层干净，只是消息在撒谎。
 修法：两条分支各自一个 `ignoredNormalChannelMessage()` 调用，各传自己的数。**系统性排查**：写了一个
-`formatDiagnostic` / `V_LOG*` 的参数计数检查器（三元格式**按分支**核对，否则这类"顺序错"根本看不见，
+`formatDiagnostic` / `VN_LOG*` 的参数计数检查器（三元格式**按分支**核对，否则这类"顺序错"根本看不见，
 因为它不缺参数），对插件 14 个文件扫描 **0 命中** ⇒ 这一类缺陷只剩这一处。检查器已入库：
 `scripts/check_diagnostic_formats.py`（默认扫插件源码，有怀疑则退出码 1，可挂到门禁）。
 
@@ -2377,8 +2377,8 @@ viewer/命令图 → 首次编译"。
 **问题**（用户提出）：这个插件不是 SDK、不会被直接引用，PImpl 还有必要吗？
 
 **先看事实**：`vine/vsg/VsgRenderer.hpp` 的消费者只有插件自己的 6 个 TU + `vsg_selftest/main.cpp` +
-`tests/test_vsg/PassProtocolTest.cpp`；插件是 `v_add_plugin`（MODULE DLL），宿主通过
-**`vine::graphics::RenderBackend` 这个 SDK 接口**拿渲染器 —— `VsgRenderer.hpp` 不在任何部署边界上。
+`tests/test_vsg/PassProtocolTest.cpp`；插件是 `vn_add_plugin`（MODULE DLL），宿主通过
+**`vn::graphics::RenderBackend` 这个 SDK 接口**拿渲染器 —— `VsgRenderer.hpp` 不在任何部署边界上。
 于是 PImpl 的常规理由逐条落空：
 
 | 理由 | 结论 |
@@ -2417,7 +2417,7 @@ viewer/命令图 → 首次编译"。
 
 **先取事实**
 
-- `v_add_plugin()`（`cmake/VinePluginHelper.cmake`）把 **`include/` 设为 PUBLIC** 包含目录、**`src/` 设为
+- `vn_add_plugin()`（`cmake/VinePluginHelper.cmake`）把 **`include/` 设为 PUBLIC** 包含目录、**`src/` 设为
   PRIVATE**；两处的 `*.hpp` 都只是被 glob 进源码列表。
 - **没有任何 `install(FILES|DIRECTORY)` 安装插件头** ⇒ `include/` 不是"打包出去给消费者"的面，只是"本构建里
   对本插件可见的面"。
@@ -2434,7 +2434,7 @@ viewer/命令图 → 首次编译"。
    `CameraBridge.hpp` / `VsgMaterialManager.hpp` 都如此）。
 2. **改名成 `VsgRenderBackend.hpp`：不合理。** 它（a）与被声明的类 `VsgRenderer` 对不上；（b）会紧挨着
    `VsgRenderBackendFactory.hpp`（创建这个对象的工厂）而立，语义上还和 SDK 的
-   `vine::graphics::RenderBackend`（真正的接口）撞概念；（c）要配套改类名，牵动 ~200 处 `VsgRenderer::` 与
+   `vn::graphics::RenderBackend`（真正的接口）撞概念；（c）要配套改类名，牵动 ~200 处 `VsgRenderer::` 与
    全部文档，而语义收益为零。要改类名是另一个决定、另一份 diff。
 3. **移入 `include/`：合理，而且正好把一处"手工绕过"清掉。** `src/` 是 PRIVATE，而两个非本 target 的消费者
    却要包含这个头 —— 今天靠测试 CMake 手工加路径；`include/` 本来就是构建里对本插件可见的面，且插件其它
@@ -2476,8 +2476,8 @@ viewer/命令图 → 首次编译"。
   `target_include_directories` 里原来都手工加了插件的 `src/`（就是为了这些头）⇒ 现在删掉。至此
   **`src/` 只剩 `.cpp`**，"头在 `include/`、实现 在 `src/`"这条约定不再有例外。
 
-**为什么这不等于"把私有头发布出去"**：`v_add_plugin()` 把 `include/` 设为 PUBLIC 只是"本构建里可见"，而
-**没有任何 `install(FILES|DIRECTORY)` 安装插件头**；插件是 MODULE，宿主只经 `vine::graphics::RenderBackend`
+**为什么这不等于"把私有头发布出去"**：`vn_add_plugin()` 把 `include/` 设为 PUBLIC 只是"本构建里可见"，而
+**没有任何 `install(FILES|DIRECTORY)` 安装插件头**；插件是 MODULE，宿主只经 `vn::graphics::RenderBackend`
 这个 SDK 接口拿渲染器。`sdk/` 目录目前**不存在**，也不需要在没有真接口时存在（helper 对它做 glob 与引用都
 容忍缺失）—— 它是一份**留白**：哪天有头要对外，就放那里，而不是迁就 `include/`。
 
@@ -2611,8 +2611,8 @@ TU 里；顺带把 §44 合并脚本留在类头 include 区的乱序与重复�
 是**显式列表**，各加三行 —— 与 §13 的提醒一致（加/删 `.cpp` 必须同步）。
 
 **踩坑（值得记）**：拆分后新 TU 的**第一个 include 是自己的头** ⇒ 每个头第一次被"独自"编译，立刻暴露
-两个**被传递包含掩盖的缺口**：`VsgRendererState.hpp` 用了 `vine::graphics::RenderPass` 却靠别人带进来
-（补 `<vine/graphics/RenderPass.hpp>`），`VsgRenderTargetEntry.hpp` 用了 `vine::graphics::RenderPass` 与
+两个**被传递包含掩盖的缺口**：`VsgRendererState.hpp` 用了 `vn::graphics::RenderPass` 却靠别人带进来
+（补 `<vine/graphics/RenderPass.hpp>`），`VsgRenderTargetEntry.hpp` 用了 `vn::graphics::RenderPass` 与
 `::vsg::PipelineBarrier` 同样靠别人（补两个 include）。**这是"一个头一个 TU"的附带收益：头文件被迫自足。**
 （§48 顺手做的 include 瘦身正是这次暴露的前提。）
 
@@ -2733,11 +2733,11 @@ swapchain 图像必须被 present）搬成 `detail` 函数；编译**队列留�
 
 **踩坑（脚本，五条）**：①定位声明时把 `bool resolveDepthBorrow(` 写成 `void ...` ⇒ 断言退出（护栏
 生效，没有静默跳过）；②`drop_block()` 忘了 `return`，`SlotKey` 那段说明在内存里丢了 —— 好在**备份里
-有**（写前备份的第二个收益）；③第一版把函数体直接贴在 `vine::vsg` 作用域（只加了 `using namespace detail;`），
+有**（写前备份的第二个收益）；③第一版把函数体直接贴在 `vn::vsg` 作用域（只加了 `using namespace detail;`），
 于是定义成了一批**新**函数、与 `detail` 里的声明重名 ⇒ 一堆 "ambiguous" / "no member named in namespace
  detail"；**正确做法是 `namespace detail { ... }` 包住定义**；④`VsgRendererPasses.cpp` 的两个旧成员定义
 要**从磁盘重读后再删**（我在内存里删过一次，随后 `read()` 又读了回来）⇒ 记一条：**"内存里删过"不等于
-"文件里删过"**；⑤新 TU 拿不到 `V_LOGI`（以前靠 `VsgRenderer.hpp` 传递包含）⇒ 显式
+"文件里删过"**；⑤新 TU 拿不到 `VN_LOGI`（以前靠 `VsgRenderer.hpp` 传递包含）⇒ 显式
 `#include <vine/logging/Log.hpp>`，"一个头一个 TU"继续逼出自足。
 
 **顺带清三处旧债**：①类里 `dropDepthSamplingProgramSlots` 的声明（批次 5 搬走实现后留下的僵尸，无人
@@ -2766,7 +2766,7 @@ swapchain 图像必须被 present）搬成 `detail` 函数；编译**队列留�
 **踩坑**：①`installOverlayView` 的文档挂在 `template <class Slot>` 之上，第一版脚本"向上找文档"时被 template
 行挡住 ⇒ 文档没搬走、类头留下孤立的 doc + `template` 行（补了一轮清理，并从**备份**里取回文档）；
 ②断言写得太糙（`OverlayDestination` 是 `resolveOverlayDestination` 的子串）⇒ 改成"计数配平"；③又一次把最后
-一个函数的 `}` 吃掉了（把 `\n}\n\nV_VSG_NS_END` 换成 `\n\n} // namespace detail\n\nV_VSG_NS_END`）—— 与批次 7
+一个函数的 `}` 吃掉了（把 `\n}\n\nVN_VSG_NS_END` 换成 `\n\n} // namespace detail\n\nVN_VSG_NS_END`）—— 与批次 7
 同一个坑，**收尾替换必须保证"函数右括号 + 命名空间右括号"两个都在**（这条已写进护栏）。
 
 **验收**：全量 `ninja` 零错零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` 108 /
@@ -2853,7 +2853,7 @@ f 兜底 (0,0,-1)；up 与视线平行 ⇒ r 兜底 (1,0,0)，都不是 NaN / �
 0.15/0.15/0.15/1 + 方向光在 **view space** 烤入（-Z 前向、+X 右向、非单位方向被归一化）+ 禁用与 null 光**不占
 三个槽位** + 第四个方向光被丢弃（S4 限制）而不是覆盖已烤入的。⇒ `test_vsg` 119 → **130**。
 
-**踩坑**：`LightPushBlock` 在 `detail` 里 —— 第一版前向声明写在了 `vine::vsg`，于是测试里 `using` 到的是那个
+**踩坑**：`LightPushBlock` 在 `detail` 里 —— 第一版前向声明写在了 `vn::vsg`，于是测试里 `using` 到的是那个
 **永远不完整**的外层声明（16 个 incomplete type 错误）；名字的真身在哪个 namespace，声明就得写在哪。
 
 **验收**：全量 `ninja` 零错零警告 + 证据 45 行逐字节相同 + VUID 0 / FAIL 0 + `test_vsg` **130** /
@@ -2896,7 +2896,7 @@ f 兜底 (0,0,-1)；up 与视线平行 ⇒ r 兜底 (1,0,0)，都不是 NaN / �
 
 **做法**：三条一起提进 `detail`，声明 + 文档进 `VsgSceneRules.hpp`，定义进 `VsgSceneRules.cpp`（延续
 "一个概念的头 ↔ 一个概念的 TU"）；`SceneBridgeGeometry.cpp` 的 using 块加三行**显式**接入。头文件只多一个
-`<vine/geometry/Array.hpp>`（`Vec3fArray = std::vector<vine::math::Vec3f>`）。头里的文档把
+`<vine/geometry/Array.hpp>`（`Vec3fArray = std::vector<vn::math::Vec3f>`）。头里的文档把
 `@param out` 的语义写准：**Ok 时替换（先 clear）、被拒时不动**（判定都发生在写入之前）。
 
 **新测 5 例（全设备无关）**：vec3 / vec4 按 stride 取 xyz —— vec4 的 w 被**跳过**而不是被读成下一个顶点的
@@ -2962,7 +2962,7 @@ float 里取分量（1/2/3/4 → `floatArray` / `vec2Array` / `vec3Array` / `vec
 
 ## 57. 第四轮审查：后端 ↔ graphics 的协同（D52–D58，2026-09-12）
 
-**范围**：`gfx_backend_vsg` 与 `vine::graphics`（含 SDK 接口 `RenderBackend.hpp` 与前端 `RenderEngine` /
+**范围**：`gfx_backend_vsg` 与 `vn::graphics`（含 SDK 接口 `RenderBackend.hpp` 与前端 `RenderEngine` /
 `RenderPass` / `ScreenPass` / `RenderPipelineBuilder`）之间的**协同契约**，不是单侧代码质量。两条线并行：
 ①**边界静默失败**——每个 caller 可见的"什么都没发生"是否带诊断；②**前端调用序列 ↔ 后端消费规则**——
 `setViewport` / `setLights` 按"下一次绘制一次性消费"、作用域属性有效到 `endPass`、screen draw 写
@@ -2979,7 +2979,7 @@ float 里取分量（1/2/3/4 → `floatArray` / `vec2Array` / `vec3Array` / `vec
 
 | ID | 缺陷 | 位置 | 判词 / 影响 | 状态 |
 |---|---|---|---|---|
-| D52 | **`initialize()` 的 null-window 失败绕过诊断通道**：`Window::create` 返回 null 时只 `V_LOGE`（自带 stderr 通道）+ `shutdown()` + `return false`，而同一函数的 `compile()` 失败与 `catch(...)` 都 `diagnostics.report(InitFailed)` | `VsgRenderer.cpp:271-286` vs `RenderBackend.hpp:105-113`（"On false … **reports the reason on its diagnostics channel**"） | 契约违反：只看宿主 sink / `diagnosticCount()` 的宿主拿到 `false` 却拿不到原因（stderr 是另一条通道） | **已修（2026-09-12）**：补 `diagnostics.report(InitFailed)`，消息与另两处同形（`initialize FAILED at '<stage>': …`） |
+| D52 | **`initialize()` 的 null-window 失败绕过诊断通道**：`Window::create` 返回 null 时只 `VN_LOGE`（自带 stderr 通道）+ `shutdown()` + `return false`，而同一函数的 `compile()` 失败与 `catch(...)` 都 `diagnostics.report(InitFailed)` | `VsgRenderer.cpp:271-286` vs `RenderBackend.hpp:105-113`（"On false … **reports the reason on its diagnostics channel**"） | 契约违反：只看宿主 sink / `diagnosticCount()` 的宿主拿到 `false` 却拿不到原因（stderr 是另一条通道） | **已修（2026-09-12）**：补 `diagnostics.report(InitFailed)`，消息与另两处同形（`initialize FAILED at '<stage>': …`） |
 | D53 | **延迟光照 demo 的 `ScreenPass` 没有内容场景 ⇒ 全屏程序拿到零方向光**：`ScreenPass::execute` 只在 `scene != nullptr` 时 `setLights`，而 `addDeferredDemo` 用 `addPass(light, 130)` 注册（无场景）⇒ `takeLights()` 空 ⇒ `fillLightPushBlock` 只补 0.15 ambient | `AppShellUi.cpp:867-871`（`addDeferredDemo`；demo 代码 2026-09-15 从 `AppShellUi.cpp` 拆到 `src/plugins/app_shell/src/AppShellDemo.cpp`，函数名不变）、`ScreenPass.cpp:87-90`、`VsgOverlay.cpp` 的 `fillLightPushBlock`；对照 `RenderPipelineBuilder.cpp:335`（builder 的同一 pass 绑了 `content_`） | 延迟预览是**平坦环境光**（0.15·albedo、无方向光项），而该函数自己的文档（`AppShellUi.cpp:829-839`）写的是"灯是内容场景自己的（ambient + directional）"；手写 demo 与 builder 两条路不一致 | **已修（2026-09-12）**：`engine->addPass(light, render_control->view()->scene(), 130)` |
 | D54 | **部分灯不可用被静默丢弃**：`beginLightsDroppedEpisode` 只在 `attached == 0` 时报；`setGroupLights` 的返回值本来就是"真正挂上的数量" | `VsgContentSlot.cpp:55-68` + `VsgPipelineFactory.cpp:735-737`（Point/Spot → null） | 一个"1 方向光 + 1 点光"的场景，点光被静默忽略（用户以为生效）；**全**不可用才有报告，**部分**没有 | **已修（2026-09-12）**：判定改 `attached < announced`（空公告不算一段、全亮即重新武装），消息按"全丢 / 部分丢"两条分支**各用自己的格式串**（§54 教训）；规则提进 `detail`（声明+文档 → `VsgContentSlot.hpp`，定义留 `VsgContentSlot.cpp`）⇒ 可无设备测试，`light_fallback_reported` 的字段注释同步（不再只是"全部不可用"）。**判据**：`LightGroupTest.cpp` 新增 4 例（部分丢就是一段 / 同一段每帧只报一次且更深的丢仍属同段 / 全亮重新武装后再丢是新段 / 空公告不是段且重新武装）⇒ `test_vsg` 158 → **162** |
 | D55 | **`RenderEngine::outputs_` 同名输出静默后者覆盖**：`publish` 直接 `outputs_[name] = …`，无重复检测 | `RenderEngine.cpp:363-384`（`publish` / `publishPassOutput`）、`:322-361`（按名解析） | 同帧两个 pass 同名 output ⇒ 消费者静默拿到记录顺序靠后的那个。仓库内当前三个 `"GBuffer"` 生产者恰好同目标同程序 ⇒ 像素无差异，**一旦有差异即静默错画面**（`RenderPipelineBuilder::addOffscreenToScreen` 亦无守卫） | 已登记（修法：同名且**对象不同**时报一次；同对象重复发布是合法的，不能误报） |
@@ -3436,7 +3436,7 @@ harness 的目录）、`selftest_support.cpp` + `selftest_protocol/pixels/textur
 | lavapipe 门禁 | `RESULT: PASS`，0 VUID |
 | 死符号 | `cameraOrder|sampledTarget|pass_protocol_used|releaseWindowLayer|contentSlotKey|programSlotKey` 在插件与 test_vsg 中 **0 命中** |
 | 反证①（守卫） | 守卫短路 ⇒ `ADrawingCallOutsideAPassScopeIsRefusedAndReportedOnce` 红 |
-| 反证②（第二种键真没了） | 探针里写 `SlotKey::cameraOrder(...)` ⇒ clang `no member named 'cameraOrder' in 'vine::vsg::SlotKey'` |
+| 反证②（第二种键真没了） | 探针里写 `SlotKey::cameraOrder(...)` ⇒ clang `no member named 'cameraOrder' in 'vn::vsg::SlotKey'` |
 | 反证③（提交令牌） | 见 §66.3（去实参 ⇒ 编译期红；守卫短路 ⇒ 2 条测试红） |
 
 **仍未做**：`endFrame()` 不配对的拒绝、未初始化时 `render()/clear()` 的静默返回（判定不做，见 §66.4）；

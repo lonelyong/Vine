@@ -18,7 +18,7 @@ class XMLDocument;
 class XMLElement;
 } // namespace tinyxml2
 
-V_ROBOTICS_IO_NS_BEGIN
+VN_ROBOTICS_IO_NS_BEGIN
 
 /**
  * @brief Serializes and deserializes a workcell as XML.
@@ -33,7 +33,7 @@ V_ROBOTICS_IO_NS_BEGIN
  * reuse, including from multiple threads (each operation carries its own
  * context).
  */
-class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
+class VN_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
 {
   public:
     /**
@@ -85,7 +85,7 @@ class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
      * @return The workcell, owned by the caller.
      * @throws std::runtime_error on failure.
      */
-    std::unique_ptr<workcell::Workcell> loadPkg(vine::io::Vfs& vfs);
+    std::unique_ptr<workcell::Workcell> loadPkg(vn::io::Vfs& vfs);
 
     /**
      * @brief Exports a workcell as a workcell package (.vwspkg).
@@ -113,7 +113,7 @@ class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
      * @param options Save options.
      * @throws std::runtime_error on failure.
      */
-    void savePkg(const workcell::Workcell& cell, vine::io::Vfs& vfs, const SaveOptions& options = {});
+    void savePkg(const workcell::Workcell& cell, vn::io::Vfs& vfs, const SaveOptions& options = {});
 
   private:
     /**
@@ -123,7 +123,7 @@ class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
      * @param vfs_path The virtual path of the .vcell file.
      * @return The workcell, owned by the caller.
      */
-    std::unique_ptr<workcell::Workcell> loadVfs(vine::io::Vfs& vfs, const std::filesystem::path& vfs_path);
+    std::unique_ptr<workcell::Workcell> loadVfs(vn::io::Vfs& vfs, const std::filesystem::path& vfs_path);
 
     /**
      * @brief Shared export body: writes the .vcell and device files into a VFS.
@@ -132,7 +132,7 @@ class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
      * @param vfs The virtual file system.
      * @param vfs_path The virtual path of the .vcell file.
      */
-    void exportToVfs(const workcell::Workcell& cell, vine::io::Vfs& vfs, const std::filesystem::path& vfs_path);
+    void exportToVfs(const workcell::Workcell& cell, vn::io::Vfs& vfs, const std::filesystem::path& vfs_path);
 
     /**
      * @brief Exports one object (and its children) as an <obj> element.
@@ -198,4 +198,4 @@ class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
     void parseRigidObject(ParseContext& ctx, workcell::RigidObject& obj, tinyxml2::XMLElement* xe);
 };
 
-V_ROBOTICS_IO_NS_END
+VN_ROBOTICS_IO_NS_END

@@ -7,7 +7,7 @@
 #include <vine/robotics/kinematics/ClosedFormIKSolver.hpp>
 #include <vine/robotics/kinematics/DHParameter.hpp>
 
-V_ROBOTICS_KINEMATICS_NS_BEGIN
+VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
 /*
  * PieperIKSolver – analytic inverse kinematics for 6-DOF serial robots
@@ -36,7 +36,7 @@ V_ROBOTICS_KINEMATICS_NS_BEGIN
  * The solve(seed) overload sorts results by angular distance from the
  * seed joint configuration, respecting 2π-periodic equivalence.
  */
-class V_ROBOTICS_CORE_API PieperIKSolver : public ClosedFormIKSolver {
+class VN_ROBOTICS_CORE_API PieperIKSolver : public ClosedFormIKSolver {
 
   public:
     /*
@@ -64,4 +64,4 @@ class V_ROBOTICS_CORE_API PieperIKSolver : public ClosedFormIKSolver {
     std::array<DHParameter, 6> mdh_;
 };
 
-V_ROBOTICS_KINEMATICS_NS_END
+VN_ROBOTICS_KINEMATICS_NS_END

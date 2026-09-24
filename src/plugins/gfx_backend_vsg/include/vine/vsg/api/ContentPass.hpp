@@ -79,7 +79,7 @@
  * block carries the call's lights (see `recordScreenDraw`) - the full-screen ABI's own copy of what the
  * content path's light block is.
  */
-V_VSG_NS_BEGIN
+VN_VSG_NS_BEGIN
 
 /** @brief The sampled-input sets a session may reuse, keyed by the images they name.
  *
@@ -163,7 +163,7 @@ struct InputSetCache
 };
 
 /** @brief The content recorder of one pass scope (see the file note for what it refuses and why). */
-class V_VSG_API ContentPass
+class VN_VSG_API ContentPass
 {
   public:
     /** @brief The pieces this layer drives; the caller owns them and keeps them alive. */
@@ -196,7 +196,7 @@ class V_VSG_API ContentPass
             /// APPENDED after @ref variant, for the same reason variant was: an entry that names none is
             /// the engine's own default (triangles), which is what every entry written before this field
             /// meant.
-            vine::graphics::Topology topology{vine::graphics::Topology::Triangles};
+            vn::graphics::Topology topology{vn::graphics::Topology::Triangles};
         };
 
         std::span<const Entry> entries;               ///< One per (program, revision, layout, VARIANT) it draws with.
@@ -407,4 +407,4 @@ class V_VSG_API ContentPass
     std::string_view unhandled_member_{};
 };
 
-V_VSG_NS_END
+VN_VSG_NS_END

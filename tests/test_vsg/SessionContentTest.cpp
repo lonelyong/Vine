@@ -69,47 +69,47 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-using vine::graphics::Geometry;
-using vine::graphics::Material;
-using vine::graphics::RenderCommand;
-using vine::graphics::ShaderProgram;
-using vine::graphics::ShaderStage;
-using vine::graphics::ShaderStageType;
-using vine::vsg::BlockDescriptors;
-using vine::vsg::BlockStorage;
-using vine::vsg::buildGeometryFacts;
-using vine::vsg::buildMaterialFacts;
-using vine::vsg::buildProgramFacts;
-using vine::vsg::buildViewBlock;
-using vine::vsg::ContentDraw;
-using vine::vsg::ContentFacts;
-using vine::vsg::ContentPass;
-using vine::vsg::ContentPipeline;
-using vine::vsg::FactMiss;
-using vine::vsg::GeometryFacts;
-using vine::vsg::MaterialFacts;
-using vine::vsg::OffscreenTarget;
-using vine::vsg::PassContent;
-using vine::vsg::ProgramFacts;
-using vine::vsg::StreamUploads;
-using vine::vsg::ViewportRect;
-using vine::vsg::VsgExecutor;
-using vine::vsg::WindowTarget;
-using vine::vsg::api::Session;
-using vine::vsg::api::SessionOptions;
-using vine::vsg::api::probePhysicalDevices;
-using vine::vsg::core::ClearPolicy;
-using vine::vsg::core::CompiledFrame;
-using vine::vsg::core::FrameArena;
-using vine::vsg::core::FrameCompiler;
-using vine::vsg::core::FrameFacts;
-using vine::vsg::core::FrameRecorder;
-using vine::vsg::core::StateRegistry;
-using vine::vsg::core::StreamKey;
-using vine::vsg::core::StreamKind;
-using vine::vsg::core::TargetFacts;
-using vine::vsg::core::TargetShape;
-using vine::vsg::core::VariantPool;
+using vn::graphics::Geometry;
+using vn::graphics::Material;
+using vn::graphics::RenderCommand;
+using vn::graphics::ShaderProgram;
+using vn::graphics::ShaderStage;
+using vn::graphics::ShaderStageType;
+using vn::vsg::BlockDescriptors;
+using vn::vsg::BlockStorage;
+using vn::vsg::buildGeometryFacts;
+using vn::vsg::buildMaterialFacts;
+using vn::vsg::buildProgramFacts;
+using vn::vsg::buildViewBlock;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentFacts;
+using vn::vsg::ContentPass;
+using vn::vsg::ContentPipeline;
+using vn::vsg::FactMiss;
+using vn::vsg::GeometryFacts;
+using vn::vsg::MaterialFacts;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::PassContent;
+using vn::vsg::ProgramFacts;
+using vn::vsg::StreamUploads;
+using vn::vsg::ViewportRect;
+using vn::vsg::VsgExecutor;
+using vn::vsg::WindowTarget;
+using vn::vsg::api::Session;
+using vn::vsg::api::SessionOptions;
+using vn::vsg::api::probePhysicalDevices;
+using vn::vsg::core::ClearPolicy;
+using vn::vsg::core::CompiledFrame;
+using vn::vsg::core::FrameArena;
+using vn::vsg::core::FrameCompiler;
+using vn::vsg::core::FrameFacts;
+using vn::vsg::core::FrameRecorder;
+using vn::vsg::core::StateRegistry;
+using vn::vsg::core::StreamKey;
+using vn::vsg::core::StreamKind;
+using vn::vsg::core::TargetFacts;
+using vn::vsg::core::TargetShape;
+using vn::vsg::core::VariantPool;
 
 #if !defined(_WIN32)
 
@@ -201,8 +201,8 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
 
     TestHostWindow window(connection, screen, kWidth, kHeight);
 
-    vine::vsg::core::Diagnostics diagnostics;
-    diagnostics.setSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
+    vn::vsg::core::Diagnostics diagnostics;
+    diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[session-content] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     std::string(reinterpret_cast<const char*>(diagnostic.message.data()),
@@ -221,8 +221,8 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     ASSERT_TRUE(session.initialize(options, diagnostics)) << "the session must adopt the host window";
 
     // The three facts a drawing layer needs from the session: its content root, its device, a recompile.
-    const auto root   = vine::vsg::detail::SessionContentAccess::root(session);
-    const auto device = vine::vsg::detail::SessionContentAccess::device(session);
+    const auto root   = vn::vsg::detail::SessionContentAccess::root(session);
+    const auto device = vn::vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(root, nullptr) << "the session must expose the node it renders";
     ASSERT_NE(device, nullptr);
 
@@ -230,8 +230,8 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     auto storage = BlockStorage::create(device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
     const ContentPipeline::Shaders program_shaders = shaders();
-    vine::vsg::ProgramAbi            program_abi;
-    ASSERT_EQ(vine::vsg::scanProgramAbi(program_shaders.vertex, program_shaders.fragment, {}, program_abi),
+    vn::vsg::ProgramAbi            program_abi;
+    ASSERT_EQ(vn::vsg::scanProgramAbi(program_shaders.vertex, program_shaders.fragment, {}, program_abi),
               FactMiss::None);
     auto descriptors = BlockDescriptors::forAbi(program_abi, 0U, device, *storage);
     ASSERT_NE(descriptors, nullptr);
@@ -279,7 +279,7 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     VariantPool   pool;
     StateRegistry registry(pool);
     ContentDraw   recorder(*pipelines, pool,
-                           vine::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk()));
+                           vn::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk()));
 
     storage->beginFrame();
     const auto view     = storage->writeView(std::vector<std::byte>(288U, std::byte{ 0 }));
@@ -307,7 +307,7 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     ASSERT_NE(content, nullptr) << "the draw must record";
 
     root->addChild(content);
-    ASSERT_TRUE(vine::vsg::detail::SessionContentAccess::recompile(session))
+    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::recompile(session))
         << "content attached after the session came up has to be compiled";
 
     for (int frame = 0; frame < 3; ++frame) {
@@ -365,8 +365,8 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
 
     TestHostWindow window(connection, screen, kWidth, kHeight);
 
-    vine::vsg::core::Diagnostics diagnostics;
-    diagnostics.setSink([](const vine::graphics::RenderDiagnostic& diagnostic) {
+    vn::vsg::core::Diagnostics diagnostics;
+    diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[session-plan] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     std::string(reinterpret_cast<const char*>(diagnostic.message.data()),
@@ -380,27 +380,27 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     options.validation    = true;
     ASSERT_TRUE(session.initialize(options, diagnostics));
 
-    WindowTarget* window_target = vine::vsg::detail::SessionContentAccess::windowTarget(session);
+    WindowTarget* window_target = vn::vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window_target, nullptr) << "the session wraps its window as the frame's default framebuffer";
-    const auto device = vine::vsg::detail::SessionContentAccess::device(session);
+    const auto device = vn::vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
 
     // The content stack, built on the SESSION's device.
     auto storage = BlockStorage::create(device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
 
-    const vine::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vine::String(reinterpret_cast<const char8_t*>(
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) in vec3 position;\n"
             "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
             "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vine::String(reinterpret_cast<const char8_t*>(
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
             "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
@@ -425,21 +425,21 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
                                              program_facts.shaders);
     ASSERT_NE(pipelines, nullptr) << "the view-block shader pair must compile";
 
-    const vine::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vine::intrusive_ptr<vine::Buffer<float>> positions_buffer = vine::intrusive_ptr<vine::Buffer<float>>(
-        new vine::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
-    const vine::intrusive_ptr<vine::Buffer<std::uint32_t>> indices_buffer =
-        vine::intrusive_ptr<vine::Buffer<std::uint32_t>>(
-            new vine::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions_buffer = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices_buffer =
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions_buffer);
     geometry->setIndices(indices_buffer);
     geometry->setRevision(1U);
 
-    const vine::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vine::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
     GeometryFacts                        geometry_facts;
-    std::vector<vine::vsg::ChannelFacts> channel_storage;
+    std::vector<vn::vsg::ChannelFacts> channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
@@ -457,14 +457,14 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     StateRegistry registry(pool);
     StreamUploads uploads;
     ContentDraw   draws(*pipelines, pool,
-                        vine::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk()));
+                        vn::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk()));
 
     // The camera: looking at (0.5, 0, 0) from (0.5, 0, 1.5), with an orthographic window of [-1, 1] squared.
     // The look-at puts the triangle 0.5 to the LEFT of the window's centre; the fragment stage reports the
     // camera's x (0.5) in a colour byte.
-    const vine::intrusive_ptr<vine::graphics::Camera> camera(new vine::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vine::math::Vec3d(0.5, 0.0, 1.5), vine::math::Vec3d(0.5, 0.0, 0.0),
-                                  vine::math::Vec3d(0.0, 1.0, 0.0));
+    const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0),
+                                  vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     RenderCommand command;
@@ -482,11 +482,11 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
 
     // The plan: one pass into the default framebuffer, whose frame token is the SESSION's.
     FrameArena             arena{ 64 * 1024 };
-    vine::vsg::core::Observe observe;
+    vn::vsg::core::Observe observe;
     FrameRecorder          recorder{ arena, diagnostics, observe };
     FrameCompiler          compiler{ arena, diagnostics, observe };
 
-    const vine::vsg::core::FrameToken token = session.beginFrame();
+    const vn::vsg::core::FrameToken token = session.beginFrame();
     ASSERT_TRUE(token) << "the session opens the frame the plan belongs to";
     recorder.beginFrame(token);
     recorder.beginPass(7U);
@@ -508,7 +508,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // frame clock - the extent is the window's, which is the picture the shading reconstructs from.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
-        vine::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
+        vn::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
         pipelines.get(), &draws } };
     ContentPass::Scope scope;
     scope.entries    = halves;
@@ -520,10 +520,10 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
 
     const std::uint32_t target_width  = window_target->width();
     const std::uint32_t target_height = window_target->height();
-    const vine::graphics::VineViewBlock view_block =
+    const vn::graphics::VineViewBlock view_block =
         buildViewBlock(frame.passes[0].draws[0].camera, session.frameSeconds(), target_width, target_height);
     const std::span<const std::byte> view_bytes =
-        std::as_bytes(std::span<const vine::graphics::VineViewBlock>(&view_block, 1U));
+        std::as_bytes(std::span<const vn::graphics::VineViewBlock>(&view_block, 1U));
 
     ::vsg::ref_ptr<::vsg::Node> content_node;
     ASSERT_TRUE(content.record(frame.passes[0], facts, window_target->shape().compatibility(), {}, view_bytes,
@@ -534,7 +534,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // the graph the session hands out for this frame.
     VsgExecutor executor(diagnostics);
     executor.setWindow(window_target);
-    const auto command_graph = vine::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    const auto command_graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(command_graph, nullptr);
 
     const PassContent packet{ frame.passes[0].pass, content_node };
@@ -543,7 +543,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     ASSERT_EQ(executor.recorded().size(), 1U);
     EXPECT_EQ(executor.recorded()[0], 7U);
 
-    ASSERT_TRUE(vine::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
+    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
     ASSERT_TRUE(session.commitFrame());
 
     // The frame's books: ONE present for the frame, the timeline moved once, no device wait anywhere.

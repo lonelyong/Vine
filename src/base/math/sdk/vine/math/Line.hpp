@@ -2,7 +2,7 @@
 #include "Point3.hpp"
 #include "Vector3.hpp"
 
-V_MATH_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief A 3D line in point–direction parametric form.
@@ -147,4 +147,4 @@ class Line {
 using Linef = Line<float>;
 using Lined = Line<double>;
 
-V_MATH_NS_END
+VN_MATH_NS_END

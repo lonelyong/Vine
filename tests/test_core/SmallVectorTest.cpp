@@ -2,7 +2,7 @@
 
 #include <vine/SmallVector.hpp>
 
-using namespace vine;
+using namespace vn;
 
 TEST(SmallVector, defaultConstructEmpty) {
     SmallVector<int, 8> v;

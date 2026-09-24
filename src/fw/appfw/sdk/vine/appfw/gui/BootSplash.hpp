@@ -2,11 +2,11 @@
 
 #include "Window.hpp"
 
-V_APPFW_NS_BEGIN
+VN_APPFW_NS_BEGIN
 struct SplashConfig;
-V_APPFW_NS_END
+VN_APPFW_NS_END
 
-V_APPFWGUI_NS_BEGIN
+VN_APPFWGUI_NS_BEGIN
 
 /**
  * @brief Startup frame: the frameless window shown while an application boots.
@@ -28,8 +28,8 @@ V_APPFWGUI_NS_BEGIN
  * repaints and pumps the event queue right away (user input excluded); without that the frame would be painted for the
  * first time after the boot it is reporting on had already finished.
  */
-class V_APPFW_API BootSplash : public Window {
-    V_OBJECT_META_DECL
+class VN_APPFW_API BootSplash : public Window {
+    VN_OBJECT_META_DECL
 
   public:
     /**
@@ -73,4 +73,4 @@ class V_APPFW_API BootSplash : public Window {
     const Impl* dptr() const;
 };
 
-V_APPFWGUI_NS_END
+VN_APPFWGUI_NS_END

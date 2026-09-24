@@ -27,9 +27,9 @@
 #include <vine/vsg/api/StreamUploads.hpp>
 #include <vine/vsg/core/Streams.hpp>
 
-using vine::vsg::StreamUploads;
-using vine::vsg::core::StreamKey;
-using vine::vsg::core::StreamKind;
+using vn::vsg::StreamUploads;
+using vn::vsg::core::StreamKey;
+using vn::vsg::core::StreamKind;
 
 namespace
 {
@@ -42,7 +42,7 @@ StreamKey vertexKey(const void* buffer, std::uint64_t revision, std::uint64_t of
 {
     StreamKey key;
     key.kind       = StreamKind::Vertex;
-    key.location   = vine::graphics::attributeLocation(vine::graphics::VertexAttribute::Position);
+    key.location   = vn::graphics::attributeLocation(vn::graphics::VertexAttribute::Position);
     key.components = 3;
     key.buffer     = buffer;
     key.revision   = revision;
@@ -194,8 +194,8 @@ TEST(StreamUploadsTest, ACustomChannelIsRefusedBecauseItsBindIsTheWholeLayout)
 
 TEST(StreamUploadsTest, TheCanonicalBindingMappingIsThisStoreSpelling)
 {
-    using vine::graphics::attributeLocation;
-    using vine::graphics::VertexAttribute;
+    using vn::graphics::attributeLocation;
+    using vn::graphics::VertexAttribute;
 
     EXPECT_EQ(StreamUploads::bindingOfCanonical(attributeLocation(VertexAttribute::Position)), 0U);
     EXPECT_EQ(StreamUploads::bindingOfCanonical(attributeLocation(VertexAttribute::Normal)), 1U);

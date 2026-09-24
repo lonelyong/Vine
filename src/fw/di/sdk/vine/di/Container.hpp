@@ -6,11 +6,11 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/di/ServiceBase.hpp>
 
-V_DI_NS_BEGIN
+VN_DI_NS_BEGIN
 
 class Registration;
 
-V_DECLARE_PIMPL(Container)
+VN_DECLARE_PIMPL(Container)
 
 /**
  * @brief Dependency injection container.
@@ -26,8 +26,8 @@ V_DECLARE_PIMPL(Container)
  * while a transient instance must be adopted by the caller through
  * intrusive_ptr.
  */
-class V_DI_API Container : public ServiceBase {
-    V_OBJECT_META_DECL
+class VN_DI_API Container : public ServiceBase {
+    VN_OBJECT_META_DECL
 
   public:
     /**
@@ -45,8 +45,8 @@ class V_DI_API Container : public ServiceBase {
      * @brief Registers a service descriptor.
      *
      * @param reg Registration to add; it must provide an instance, a factory or an impl type.
-     * @throws vine::Exception with INVALID_ARGUMENTS when the registration cannot create a service.
-     * @throws vine::Exception with ITEM_ALREADY_EXISTS when the service type is already registered.
+     * @throws vn::Exception with INVALID_ARGUMENTS when the registration cannot create a service.
+     * @throws vn::Exception with ITEM_ALREADY_EXISTS when the service type is already registered.
      */
     void add(const Registration& reg);
 
@@ -79,4 +79,4 @@ raw_ptr<T> Container::resolve() const
     return resolve(T::desc());
 }
 
-V_DI_NS_END
+VN_DI_NS_END
