@@ -29,17 +29,18 @@ void VsgExecutor::setWindow(WindowTarget* window) noexcept
     window_ = window;
 }
 
-void VsgExecutor::addTarget(const void* identity, OffscreenTarget* target) noexcept
+void VsgExecutor::addTarget(const void* identity, OffscreenTarget* target, const char* label) noexcept
 {
     for (Entry& entry : targets_)
     {
         if (entry.identity == identity)
         {
             entry.target = target;
+            entry.label  = label;
             return;
         }
     }
-    targets_.push_back(Entry{ identity, target });
+    targets_.push_back(Entry{ identity, target, label });
 }
 
 void VsgExecutor::clearTargets() noexcept
@@ -210,6 +211,17 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::Co
         reportSkipped(compiled_target, "the plan and the target disagree about its shape (colour attachments, "
                                        "formats, samples or depth)");
         return false;
+    }
+
+    // Name the images for the validation layer on the first frame that CAN (see OffscreenTarget::nameImages):
+    // a create-info has no Vulkan handle until the first compile allocates it, so this is retried until it
+    // sticks and costs one flag check per pass afterwards. The plan's own identity is the name - it is what
+    // the host calls this target and what a validation message should say.
+    if (compiled_target.target != nullptr) {
+        const Entry* entry = entryOf(compiled_target.target);
+        if (entry != nullptr && entry->label != nullptr) {
+            (void)target->nameImages(entry->label);
+        }
     }
 
     // What the pass does to its attachments is the PLAN's decision, and both halves of it are facts the
@@ -726,9 +738,10 @@ void VsgExecutor::reportUnapplied(const core::CompiledTarget& target, const char
     {
         return;  // not registered here: record() reports the passes that needed it
     }
+    const std::string which = entry->label != nullptr ? std::string(entry->label) : std::string("a target");
     diagnostics_.report(vine::graphics::DiagnosticSeverity::Warning,
                         vine::graphics::DiagnosticCategory::TargetBuildFailed,
-                        asString(std::string("a target asked to follow its description could not: ") + why));
+                        asString("the target '" + which + "' did not follow its description: " + why));
 }
 
 VsgExecutor::Entry* VsgExecutor::entryOf(const void* identity) noexcept

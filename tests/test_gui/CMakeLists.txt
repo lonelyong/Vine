@@ -11,6 +11,10 @@ set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 # 这里只加头文件路径供 static_cast（impl<T>）使用，不用 qobject_cast 断言。
 target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/SARibbon
                                              ${CMAKE_SOURCE_DIR}/third_party/DockingPanes/inc
+                                             # PreviewFit.hpp is a pure-arithmetic helper of the app_shell
+                                             # demo (it lives in the plugin's src/, like the private appfw
+                                             # header below) so its unit test can include it directly.
+                                             ${CMAKE_SOURCE_DIR}/src/plugins/app_shell/src
                                              # ConsoleUserIO is appfw-private (it lives in
                                              # src/, not sdk/): the headless progress test
                                              # constructs it directly, like test_asyncqt
@@ -33,6 +37,7 @@ target_link_libraries(${TEST_NAME}
     vi::Progress
     vi::ImageIO
     vi::System
+    vi::Graphics
     Qt6::Core Qt6::Gui Qt6::Widgets)
 
 # Plugins that a current host must refuse, to test the ABI guard end to end: one

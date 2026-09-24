@@ -18,6 +18,7 @@
 #include <vsg/nodes/Group.h>
 #include <vsg/nodes/Node.h>
 #include <vsg/state/ImageView.h>
+#include <vsg/vk/Device.h>
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Light.hpp>
@@ -127,6 +128,22 @@ bool programDeclaresBinding(vine::raw_ptr<const vine::graphics::ShaderProgram> p
  * @return true when at least one stage lists it.
  */
 bool programImportsDefine(vine::raw_ptr<const vine::graphics::ShaderProgram> program, const std::string& define);
+
+/**
+ * @brief Names a Vulkan object so validation messages and debuggers identify it.
+ *
+ * A name turns "VkImage 0x..." in a validation error into the attachment it actually is, which is the
+ * difference between reading the message and chasing handles. The name reaches anyone only when the instance
+ * loaded `VK_EXT_debug_utils` (vsg's `InstanceExtensions::vkSetDebugUtilsObjectNameEXT`); without it this is
+ * a cheap no-op, so a caller never has to ask whether this session is meant to be talked about.
+ *
+ * @param device Device whose instance carries the extension.
+ * @param handle Handle to name (0 is refused - it is not an object).
+ * @param type   What @p handle names (an image, a buffer, ...).
+ * @param name   ASCII name to give it.
+ * @return true when the name was set, false when this instance cannot name objects.
+ */
+bool nameVulkanObject(const ::vsg::Device& device, std::uint64_t handle, VkObjectType type, const char* name) noexcept;
 
 /**
  * @brief The ONE rule for the rectangle a pass draws into: the rectangle it announced, else the whole target.

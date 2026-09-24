@@ -1,9 +1,11 @@
 #include <vine/vsg/api/OffscreenTarget.hpp>
 
+#include <vine/vsg/VsgBackendUtility.hpp>
 #include <vine/vsg/core/TargetPlan.hpp>
 
 #include <cstring>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -251,6 +253,11 @@ struct OffscreenTarget::Data
     /// Repair(Bootstrap) for such a target, so the next frame's first writer clears instead of loading.
     bool                               attachments_invalidated{false};
 
+    /// @brief Whether the CURRENT image set has been named for the validation layer (see nameImages).
+    ///
+    /// A fresh set starts unnamed, so the flag is cleared wherever attachments are built; the executor
+    /// retries every frame until the images are allocated and the names stick.
+    bool                               names_set{false};
     /// @brief One render pass this target has served a pass with: its load-op variant and the pass object.
     struct PassVariant
     {
@@ -433,6 +440,9 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
 bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height,
                                         Attachments& out)
 {
+    // Fresh images: whatever names the old set had belong to the old set (see nameImages).
+    d->names_set = false;
+
     const core::PassClearPlan plan =
         core::planClearValues(d->shape, d->clear_policy, /*bootstrap*/ true, /*depth_borrowed*/ d->depth_borrowed);
     for (const vine::graphics::RenderTarget::ColorFormat format : d->shape.color_formats) {
@@ -851,6 +861,45 @@ void OffscreenTarget::invalidateAttachments() noexcept
     // Not a teardown: the images stay, the FACT about their contents changes. `written` is deliberately left
     // alone - "something was recorded" is still true, and the two facts answer different questions.
     d->attachments_invalidated = true;
+}
+
+bool OffscreenTarget::nameImages(const char* label) noexcept
+{
+    if (d->names_set) {
+        return true;
+    }
+    if (d->device == nullptr || label == nullptr || d->attachments.colors.empty()) {
+        return false;
+    }
+    // EVERY image has to exist before any of them is named: naming one half of a set and then failing would
+    // make the flag record something that is not true.
+    const std::uint32_t device_id = d->device->deviceID;
+    for (const OffscreenTarget::Attachments::Color& color : d->attachments.colors) {
+        if (color.image == nullptr || color.image->vk(device_id) == nullptr) {
+            return false;
+        }
+    }
+    const bool has_own_depth = d->attachments.depth_image != nullptr && !d->depth_borrowed;
+    if (has_own_depth && d->attachments.depth_image->vk(device_id) == nullptr) {
+        return false;
+    }
+
+    for (std::size_t index = 0; index < d->attachments.colors.size(); ++index) {
+        const std::string name = std::string("vine ") + label + " colour " + std::to_string(index);
+        (void)detail::nameVulkanObject(
+            *d->device, reinterpret_cast<std::uint64_t>(d->attachments.colors[index].image->vk(device_id)),
+            VK_OBJECT_TYPE_IMAGE, name.c_str());
+    }
+    if (has_own_depth) {
+        // A BORROWED depth is the lender's image and the lender names it: two targets fighting over one
+        // image's name would name it after whichever recorded last.
+        const std::string name = std::string("vine ") + label + " depth";
+        (void)detail::nameVulkanObject(*d->device,
+                                       reinterpret_cast<std::uint64_t>(d->attachments.depth_image->vk(device_id)),
+                                       VK_OBJECT_TYPE_IMAGE, name.c_str());
+    }
+    d->names_set = true;
+    return true;
 }
 
 ::vsg::ref_ptr<::vsg::Node> OffscreenTarget::capture() const noexcept

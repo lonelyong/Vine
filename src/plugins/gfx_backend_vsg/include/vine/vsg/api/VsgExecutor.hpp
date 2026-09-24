@@ -103,8 +103,9 @@ class V_VSG_API VsgExecutor
      *
      * @param identity The identity the plan's CompiledTarget carries.
      * @param target   The target to draw into, or nullptr to unregister.
+     * @param label    What the host calls this target (borrowed like @p identity), or null.
      */
-    void addTarget(const void* identity, OffscreenTarget* target) noexcept;
+    void addTarget(const void* identity, OffscreenTarget* target, const char* label = nullptr) noexcept;
 
     /** @brief Forgets every registered target. */
     void clearTargets() noexcept;
@@ -296,6 +297,11 @@ class V_VSG_API VsgExecutor
     {
         const void*      identity{nullptr};  ///< What CompiledTarget::target carries.
         OffscreenTarget* target{nullptr};    ///< The target, borrowed.
+        /// @brief What the host calls this target, for the images' debug names and the diagnostics.
+        ///
+        /// Borrowed like the identity itself: the caller's target has to outlive the registration, and the
+        /// name belongs to it. Null when the caller did not name it - naming is then simply skipped.
+        const char*      label{nullptr};
         core::ReportOnce unapplied;          ///< The episode @ref reportUnapplied reports this entry through.
         /** @brief Re-arms the episode: the target followed its description, so a later failure is new. */
         void noteApplied() noexcept { unapplied.rearm(); }

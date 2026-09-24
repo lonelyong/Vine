@@ -11,6 +11,9 @@
 
 #include <vine/vsg/VsgHostWindow.hpp>
 
+#include <vsg/vk/Instance.h>
+#include <vsg/vk/InstanceExtensions.h>
+
 V_VSG_NS_BEGIN
 
 namespace detail
@@ -193,6 +196,24 @@ bool programImportsDefine(vine::raw_ptr<const vine::graphics::ShaderProgram> pro
         }
     }
     return false;
+}
+
+bool nameVulkanObject(const ::vsg::Device& device, std::uint64_t handle, VkObjectType type, const char* name) noexcept
+{
+    const ::vsg::Instance* instance = device.getInstance();
+    if (instance == nullptr || handle == 0U || name == nullptr) {
+        return false;
+    }
+    const ::vsg::InstanceExtensions* extensions = instance->getExtensions();
+    if (extensions == nullptr || extensions->vkSetDebugUtilsObjectNameEXT == nullptr) {
+        return false;  // this instance cannot name objects: nothing to report, nothing to do
+    }
+    VkDebugUtilsObjectNameInfoEXT info{};
+    info.sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+    info.objectType   = type;
+    info.objectHandle = handle;
+    info.pObjectName  = name;
+    return extensions->vkSetDebugUtilsObjectNameEXT(device.vk(), &info) == VK_SUCCESS;
 }
 
 vine::graphics::Viewport passDrawRect(const std::optional<vine::graphics::Viewport>& viewport, int surf_w, int surf_h)

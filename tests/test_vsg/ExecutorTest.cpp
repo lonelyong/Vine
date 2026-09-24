@@ -982,3 +982,68 @@ TEST(ExecutorTest, ProfilingWrapsEachPassAndNamesItForTheCapture)
     EXPECT_EQ(replaced.graph, second_graph) << "the entry names the frame that was just recorded";
     EXPECT_EQ(fixture.executor.profileOf(*second_graph), &replaced);
 }
+
+TEST(ExecutorTest, ATargetThatDidNotFollowItsDescriptionIsNamedInTheReport)
+{
+    // An unapplied answer is a WARNING a host has to act on, and a warning that says "a target" is one nobody
+    // can act on: the report names the target the way the host does (the SDK target's own name - what
+    // api/VsgBackend registers, and the same name the target's images get for the validation layer). This case
+    // drives the report through the executor and reads the message off the sink.
+    Fixture fixture;
+    if (!fixture.build())
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
+                     << fixture.created.error.as_std_str();
+    }
+
+    // A lender and a borrower: the borrower's depth is the lender's image, so the borrower may not grow past
+    // it (VUID-VkFramebufferCreateInfo-pAttachments-00861, see core::coversBorrowers). A plan that asks it to
+    // is REFUSED - and the refusal is exactly the answer that has to name the target.
+    OffscreenTarget::TargetLayout layout;
+    layout.width         = 8U;
+    layout.height        = 6U;
+    layout.color_formats = { RenderTarget::ColorFormat::RGBA8 };
+    layout.depth_format  = RenderTarget::DepthFormat::D32;
+    std::unique_ptr<OffscreenTarget> lender   = OffscreenTarget::create(fixture.created.device, layout);
+    ASSERT_NE(lender, nullptr);
+    std::unique_ptr<OffscreenTarget> borrower = OffscreenTarget::create(fixture.created.device, layout, lender.get());
+    ASSERT_NE(borrower, nullptr);
+
+    // Registered under the names the backend passes along, and watched through the host's sink.
+    fixture.executor.addTarget(lender.get(), lender.get(), "probe-lender");
+    fixture.executor.addTarget(borrower.get(), borrower.get(), "probe-borrower");
+
+    std::vector<std::string> said;
+    fixture.diagnostics.setSink([&said](const auto& diagnostic) { said.push_back(diagnostic.message.as_std_str()); });
+
+    std::vector<TargetFacts> lying(2U);
+    lying[0].target              = lender.get();
+    lying[0].wanted.width        = 8;
+    lying[0].wanted.height       = 6;
+    lying[0].wanted.shape        = lender->shape();
+    // A shape change on the LENDER: a target another target loads the depth of does not rebuild (see
+    // OffscreenTarget::rebuild), so this is the answer that gets refused.
+    lying[0].wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA16F);
+    lying[0].current             = lender->instance();
+    lying[1]                     = lying[0];
+    lying[1].target              = borrower.get();
+    lying[1].wanted.width        = 8;
+    lying[1].wanted.height       = 6;
+    lying[1].wanted.shape        = borrower->shape();
+    lying[1].current             = borrower->instance();
+
+    fixture.recorder.beginFrame(FrameToken{ 1 });
+    fixture.clearPass(lender.get(), 1U, 0, 1.0F, 0.0F, 0.0F);
+    fixture.recorder.endFrame();
+    const CompiledFrame& frame = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ lying });
+
+    vine::vsg::core::FrameTimeline   timeline;
+    vine::vsg::core::RetirementQueue queue(3U);
+    const VsgExecutor::TargetApplications applied = fixture.executor.applyTargetPlans(frame, lying, timeline, queue);
+    EXPECT_EQ(applied.refused, 1U) << "a lender with a borrower does not rebuild because a plan says so";
+    EXPECT_EQ(applied.resized + applied.rebuilt + applied.failed, 0U);
+
+    ASSERT_EQ(said.size(), 1U) << "one report, and it went to the host's sink";
+    EXPECT_NE(said.front().find("probe-lender"), std::string::npos)
+        << "the report has to say WHICH target, got: " << said.front();
+}

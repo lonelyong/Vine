@@ -210,7 +210,6 @@ class OffscreenTarget
      * business (probe after the device is idle).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::Node> capture() const noexcept;
-
     /** @brief Gets the node that copies one colour attachment into host-visible memory.
      *
      * @param attachment Colour attachment index (0 when there is only one).
@@ -219,6 +218,21 @@ class OffscreenTarget
      *         are built for a float attachment - the pass still renders).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::Node> capture(std::uint32_t attachment) const;
+
+    /**
+     * @brief Names this target's images for the validation layer, once they exist.
+     *
+     * A name is what turns "VkImage 0x..." in a validation message into WHICH attachment of WHICH target -
+     * see api/VsgExecutor, which is where the name comes from (the plan's own identity) and where this is
+     * called. It is best-effort and idempotent: `vsg::Image` is a create-info until the first compile
+     * ALLOCATES it, so the frame that creates a target cannot name it, and the attempt is repeated until it
+     * sticks (a rebuild makes fresh images, so the flag starts over).
+     *
+     * @param label The SDK target's name, or a stand-in when nobody named it.
+     * @return true when every image is named, false while they are not allocated yet (or without the
+     *         debug-utils extension: naming is not an error condition).
+     */
+    [[nodiscard]] bool nameImages(const char* label) noexcept;
 
     /** @brief Reads the last submitted frame's pixels.
      *

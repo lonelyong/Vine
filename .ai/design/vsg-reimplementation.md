@@ -4615,3 +4615,39 @@ include 它，闭包脚本把它当成"老单元"——按"能编过 + 用例绿
 **证据**：`test_vsg` **412** 全绿（原 672；被删的 260 条用例全部属于老渲染器）、0 VUID；门禁两棵树同跑，
 应用阶段与删除前**逐字相同**（`before 378x247: content 87.04%, preview 244; after 698x132: content 85.14%,
 preview 244; vuid=0`）；include hygiene 0/`784` 文件、诊断格式 0/7、doc symbols 0。
+
+### 11.16bu M10l（2026-09-24）：收尾四件——图像名字、顺序用例、指名的报告、letterbox 单测
+
+**①target 图像挂 debug-utils 名字**。验证层里一条 `VkImage 0x…` 要能读成"哪个目标的哪个附件"：新
+`detail::nameVulkanObject(device, handle, type, name)`（`VsgBackendUtility`，经 vsg 的
+`InstanceExtensions::vkSetDebugUtilsObjectNameEXT`，**没装扩展时是空操作**），`OffscreenTarget::nameImages(label)`
+给当前这组附件命名（`vine <label> colour <i>` / `vine <label> depth`；借来的深度归出借方命名），
+`VsgExecutor::recordOffscreen` 每帧试一次直到成功——`vsg::Image` 到第一次 compile 分配前没有句柄，所以
+"建目标那一帧"命不了名（与 §11.16bs 同一条约束）。名字/来源：`addTarget(identity, target, label)` 多收一个
+**借用的标签**（`api/VsgBackend` 传 SDK `RenderTarget::name()`）。
+
+**②"执行器顺序"用例其实已经在**：`ExecutorTest.TheRecordOrderIsTheSchedulesOrderNotTheOrderThePassesWereAnnouncedIn`
+同时钉了三层——编译出来的计划顺序、`executor.recorded()` 的顺序、**以及像素**（谁最后跑）。§11.16bo 的登记
+已过时，本片只做确认（不新增重复用例）。
+
+**③`reportUnapplied` 指名目标**：插话从"a target asked to follow…"改成
+`the target '<名字>' did not follow its description: <原因>`（名字取自注册时那条标签；没有名字才是"a target"）。
+新用例 `ExecutorTest.ATargetThatDidNotFollowItsDescriptionIsNamedInTheReport`：出借方+借方，计划让**出借方**
+重建（借方还在 ⇒ 拒），把宿主 sink 里的消息读出来断言含 `probe-lender`。
+
+**④`fitPreviewRect` 单测**：算术搬进 `app_shell/src/PreviewFit.hpp`（内联、纯函数；demo 的调用点经同名包装
+转调 ⇒ **一份实现**），`test_gui/PreviewFitTest.cpp` 五条用例（上下 letterbox / 左右 pillarbox / 同比例填满 /
+退化输入答回槽本身 / 极扁源仍保 1 像素）。门禁自己那份 awk 复刻没有变，画面参数与改前逐字相同。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `VsgBackendUtility.{hpp,cpp}` | `detail::nameVulkanObject` |
+| `OffscreenTarget.{hpp,cpp}` | `nameImages` + 命名标志（重建即失效）；`buildAttachments` 开头清标志 |
+| `VsgExecutor.{hpp,cpp}` | `Entry::label`（借用）、`addTarget` 新参、录制时命名、报告指名 |
+| `api/VsgBackend.cpp` | 注册时把 SDK 名字传下去 |
+| `tests/test_vsg/ExecutorTest.cpp` | 新用例：报告指名（借租约拒绝做触发） |
+| `app_shell/src/PreviewFit.hpp`（新）/`AppShellDemo.cpp` | 算术搬出 + demo 转调 |
+| `tests/test_gui/PreviewFitTest.cpp`（新）、`tests/test_gui/CMakeLists.txt` | 五条用例；加 app_shell 的 src 到 include 路径 + `vi::Graphics` |
+
+**证据**：`test_vsg` **413** 全绿（+1 条新用例）、0 VUID；`test_gui --gtest_filter=PreviewFitTest.*` 6 条全绿；
+门禁两棵树同跑全绿，应用阶段 `vuid=0`、画面参数与 §11.16bt 逐字相同（`87.04% / 85.14%, preview 244`）。

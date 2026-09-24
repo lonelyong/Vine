@@ -518,7 +518,7 @@ void VsgBackend::setRenderTarget(vine::raw_ptr<vine::graphics::RenderTarget> tar
 
     if (ensured.entry->target != nullptr)
     {
-        d->executor.addTarget(target, ensured.entry->target.get());
+        d->executor.addTarget(target, ensured.entry->target.get(), target->name().as_std_str().c_str());
     }
     if (d->recorder.inPass())
     {

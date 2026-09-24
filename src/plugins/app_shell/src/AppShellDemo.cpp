@@ -1,5 +1,7 @@
 #include "AppShellDemo.hpp"
 
+#include "PreviewFit.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -1291,19 +1293,9 @@ void addGbufferDemo(gui::RenderControl* render_control)
 vine::graphics::Viewport fitPreviewRect(int source_width, int source_height, int slot_x, int slot_y, int slot_width,
                                         int slot_height)
 {
-    vine::graphics::Viewport rect{ slot_x, slot_y, slot_width, slot_height };
-    if (source_width <= 0 || source_height <= 0 || slot_width <= 0 || slot_height <= 0) {
-        return rect;
-    }
-    const double scale = std::min(static_cast<double>(slot_width) / static_cast<double>(source_width),
-                                  static_cast<double>(slot_height) / static_cast<double>(source_height));
-    const int    width = std::max(1, static_cast<int>(std::lround(static_cast<double>(source_width) * scale)));
-    const int    height = std::max(1, static_cast<int>(std::lround(static_cast<double>(source_height) * scale)));
-    rect.x              = slot_x + (slot_width - width) / 2;
-    rect.y              = slot_y + (slot_height - height) / 2;
-    rect.width          = width;
-    rect.height         = height;
-    return rect;
+    // The arithmetic lives in PreviewFit.hpp so it has a unit test of its own (test_gui/PreviewFitTest); this
+    // wrapper keeps the demo's call sites reading as one function of the file.
+    return vine::app_shell::fitPreviewRect(source_width, source_height, slot_x, slot_y, slot_width, slot_height);
 }
 
 /**
