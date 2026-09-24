@@ -197,6 +197,16 @@ class VN_VSG_API ContentPass
             /// the engine's own default (triangles), which is what every entry written before this field
             /// meant.
             vn::graphics::Topology topology{vn::graphics::Topology::Triangles};
+
+            /// Episode state of this half's two reports, when the CALLER keeps them: one for the refusal
+            /// @ref serveHalf writes ("the pass' content half" could not be served) and one for
+            /// @ref reportShadowNotSampled. Null - the default, and what a hand-built entry means - keeps
+            /// the recorder's own, whose episode lasts one ContentPass, i.e. ONE FRAME in the frame path.
+            /// api/ContentHalves hands the HALF's own state in, so a half that cannot be served (or whose
+            /// pass declared a shadow its text cannot read) says so once per session instead of once per
+            /// frame (registered 2026-09-25, M11m).
+            core::ReportOnce* reported{nullptr};
+            core::ReportOnce* shadow_reported{nullptr};
         };
 
         std::span<const Entry> entries;               ///< One per (program, revision, layout, VARIANT) it draws with.
@@ -215,6 +225,15 @@ class VN_VSG_API ContentPass
         /// than once per drawing call (see `record`). The episode's END is the caller's decision - a scope
         /// that lives for one frame reports once per frame, and one that lives for the session reports once.
         core::ReportOnce       lights_dropped;
+        /// The CALLER's episode state for the same report as @ref lights_dropped, when it keeps one: null
+        /// means the scope's own. The sentence is about a PASS ("the announced lights do not fit the
+        /// block"), and the frame path builds a scope per pass per frame, so the caller that wants it once
+        /// per session owns the state and hands it in (api/ContentAssembly does).
+        core::ReportOnce*      lights_dropped_episode{nullptr};
+        /// The CALLER's episode state for "a drawing call was not recorded: its rectangle is empty": one
+        /// FACT about the session (a host whose render area is not laid out yet repeats it in every frame
+        /// and every pass), so the caller that lives longer owns the state. Null means the recorder's own.
+        core::ReportOnce*      empty_rectangle_episode{nullptr};
         /// The sampled-input sets this pass may REUSE (see InputSetCache). Null when the caller keeps none,
         /// in which case every pass builds its own set - which is correct and writes a descriptor per pass.
         InputSetCache*         input_sets{nullptr};
@@ -382,6 +401,41 @@ class VN_VSG_API ContentPass
     /** @brief The most push ranges one program can declare and still be served (the engine declares one). */
     static constexpr std::size_t kMaxPushRanges = 4U;
 
+    /** @brief Gets the episode state of the light-drop report: the caller's when it keeps one, else this one.
+     *
+     * @return The ReportOnce the light-drop sentence's episode lives in (see Scope::lights_dropped_episode).
+     */
+    [[nodiscard]] core::ReportOnce& lightsEpisode() noexcept;
+
+    /** @brief One reason a drawing call was refused, and how many calls it cost (see reportRefused).
+     *
+     * A scene with broken content has MANY broken draws, and a message per draw is a flood the host cannot
+     * read - while the host still needs to know what was lost. So the FIRST refusal of a reason is reported
+     * in full (it names the command), and the rest are COUNTED here and said in one line when the pass ends
+     * (see reportRefusedSummary).
+     */
+    struct RefusalRow
+    {
+        const char*   what{nullptr};   ///< The thing that was refused (a static string from the call site).
+        const char*   why{nullptr};    ///< The reason, in the first refusal's own words.
+        std::uint64_t count{0};        ///< How many drawing calls this reason refused.
+    };
+
+    /** @brief Adds @p what / @p why to the refusal ledger and says whether this is the FIRST of them.
+     *
+     * @param what The thing that was refused.
+     * @param why  The reason, as the caller would print it.
+     * @return true when this refusal is the first of its reason (report it in full), false for the rest.
+     */
+    [[nodiscard]] bool noteRefusal(const char* what, const char* why);
+
+    /** @brief Reports one line per reason that refused more than one drawing call (see RefusalRow).
+     *
+     * Called at the END of a pass (see `record`): the ledger is the pass' own, so the count means "in this
+     * pass, this frame".
+     */
+    void reportRefusedSummary();
+
     Scope               scope_;        ///< The pieces this layer drives (borrowed).
     core::Diagnostics&  diagnostics_;  ///< The one diagnostic route.
     /// One report-once per entry: a half that cannot be served must say so once, not once per command.
@@ -392,6 +446,9 @@ class VN_VSG_API ContentPass
     /// One report-once for "the rectangle is empty": it is one fact about the session, and it repeats every
     /// frame (the host has no render area until it lays the window out), so it must not repeat with it.
     core::ReportOnce empty_rectangle_reported_;
+    /// The refusal ledger of the pass being recorded: one row per reason (see RefusalRow). Cleared at the
+    /// start of `record`, summarised at its end.
+    std::vector<RefusalRow> refusals_;
     /// How many calls were skipped for an empty rectangle (see `emptyRectangles`).
     std::uint64_t empty_rectangles_{0};
     /// The block sets `serveHalf` resolved for the half the command being recorded draws

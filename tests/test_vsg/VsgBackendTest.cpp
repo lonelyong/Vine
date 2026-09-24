@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -107,6 +108,17 @@ bool isRed(const std::array<std::uint8_t, 3>& pixel)
     return isColourByte(pixel[1], 0.0) &&
            ((isColourByte(pixel[0], 1.0) && isColourByte(pixel[2], 0.0)) ||
             (isColourByte(pixel[2], 1.0) && isColourByte(pixel[0], 0.0)));
+}
+
+/// @brief Whether a pixel is anything but the window's own background (what an UNTOUCHED window shows).
+///
+/// THE WAIT'S PREDICATE for a window something has just been presented to: "a frame ARRIVED" is the weakest
+/// fact that means the display path caught up with the session, and asserting the picture itself stays the
+/// caller's job (see TestHostWindow::waitForPixel for why waiting for the EXPECTED value would hide a
+/// transiently wrong picture, and for the measured cost of polling too eagerly).
+bool arrived(const std::array<std::uint8_t, 3>& pixel)
+{
+    return pixel[0] != 0U || pixel[1] != 0U || pixel[2] != 0U;
 }
 
 /// @brief A red triangle under a view-block program: the content the off-screen cases draw.
@@ -468,15 +480,13 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
         backend->endFrame();
         backend->swapBuffers();
     };
-    // A presentation reaches the display server asynchronously, so a picture is read after a couple of
-    // plan-free frames re-present it (the same settle SessionContentTest uses).
-    const auto settle = [&] {
-        for (int index = 0; index < 2; ++index)
-        {
-            backend->beginFrame();
-            backend->endFrame();
-            backend->swapBuffers();
-        }
+    // The display path lags the session's presents, so a picture is read after a couple more frames that
+    // carry the SAME picture. A plan-free frame is not a settle: it repaints the window with the session's
+    // own graph, and a read that catches one answers the window's background (measured: `read-error 0`,
+    // the window's own clear - see TestHostWindow::waitForPixel).
+    const auto settle = [&](const vn::graphics::Camera* frame_camera) {
+        drive(frame_camera);
+        drive(frame_camera);
     };
 
     // 1. The engine's PRE-FRAME WARM-UP: every enabled non-clearing pass executes once with NO frame open so
@@ -510,9 +520,10 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     EXPECT_EQ(recorded[0], registry.adopt(pass.get()))
         << "the frame records the pass the warm-up announced, under the same identity";
 
-    settle();
-    const auto left_a  = host.pixel(kWidth / 4, kHeight / 2);      // inside the triangle
-    const auto right_a = host.pixel(3 * kWidth / 4, kHeight / 2);  // never: the clear
+    settle(camera_a.get());
+    const auto left_a = host.waitForPixel(kWidth / 4, kHeight / 2, arrived,
+                                          std::chrono::milliseconds{ 500 });  // inside the triangle
+    const auto right_a = host.pixel(3 * kWidth / 4, kHeight / 2);            // never: the clear
     EXPECT_TRUE(isColourByte(left_a[1], 0.5))
         << "the camera's x reached the fragment stage through the view block the facade built: got ("
         << static_cast<int>(left_a[0]) << ", " << static_cast<int>(left_a[1]) << ", "
@@ -533,7 +544,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     // recorded is REPLACED, not accumulated - if it stacked, this frame would draw both pictures and the left
     // quarter would still show the old triangle (see WindowTarget::beginFrame).
     drive(camera_b.get());
-    settle();
+    settle(camera_b.get());
     const auto left_b  = host.pixel(kWidth / 4, kHeight / 2);
     const auto right_b = host.pixel(3 * kWidth / 4, kHeight / 2);
     EXPECT_TRUE(isGreenClear(left_b)) << "the previous frame's picture is gone, got ("
@@ -643,12 +654,8 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
         backend->swapBuffers();
     };
     const auto settle = [&] {
-        for (int index = 0; index < 2; ++index)
-        {
-            backend->beginFrame();
-            backend->endFrame();
-            backend->swapBuffers();
-        }
+        drive();
+        drive();
     };
 
     // 1. One frame, two passes: the content draws into the TARGET (its own clear and camera), and a full-screen
@@ -676,12 +683,16 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     EXPECT_EQ(row.depth.has_depth, false) << "the host attached no depth";
 
     settle();
-    const auto left   = host.pixel(kWidth / 4, kHeight / 2);
+    // The first picture after presenting is read through the bounded wait: the display path lags the session's
+    // presents (see TestHostWindow::waitForPixel - measured: the same probe answers black, then the picture,
+    // with `readError() == 0` both times).
+    const auto left   = host.waitForPixel(kWidth / 4, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
     const auto right  = host.pixel(3 * kWidth / 4, kHeight / 2);
     const auto corner = host.pixel(2, 2);
     EXPECT_TRUE(isRed(left)) << "the triangle drawn into the TARGET reached the window through the screen draw: got ("
                              << static_cast<int>(left[0]) << ", " << static_cast<int>(left[1]) << ", "
-                             << static_cast<int>(left[2]) << ")";
+                             << static_cast<int>(left[2]) << ") read-error " << static_cast<int>(host.readError())
+                             << " (see HostWindowReadTest: a refusal is not a black pixel)";
     EXPECT_TRUE(isGreenClear(right)) << "the rest of the window is the TARGET's clear, not the window's own";
     EXPECT_TRUE(isGreenClear(corner));
 
@@ -994,12 +1005,8 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
         backend->swapBuffers();
     };
     const auto settle = [&] {
-        for (int index = 0; index < 2; ++index)
-        {
-            backend->beginFrame();
-            backend->endFrame();
-            backend->swapBuffers();
-        }
+        drive();
+        drive();
     };
 
     drive();
@@ -1007,7 +1014,7 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
 
     // 1. The picture at the size the host's surface has: the triangle left of centre (the camera looks half a
     // unit to its right) with the extent encoded in it.
-    const auto before_left  = host.pixel(kWidth / 4, kHeight / 2);
+    const auto before_left  = host.waitForPixel(kWidth / 4, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
     const auto before_right = host.pixel(3 * kWidth / 4, kHeight / 2);
     EXPECT_TRUE(isColourByte(before_left[1], 0.5))
         << "the camera's x is in the picture, got (" << static_cast<int>(before_left[0]) << ", "
@@ -1042,7 +1049,7 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     // the swapchain it presents all follow the surface - nobody re-tells them.
     drive();
     settle();
-    const auto after_left  = host.pixel(96 / 4, 64 / 2);
+    const auto after_left  = host.waitForPixel(96 / 4, 64 / 2, arrived, std::chrono::milliseconds{ 500 });
     const auto after_right = host.pixel(3 * 96 / 4, 64 / 2);
     EXPECT_TRUE(isColourByte(after_left[1], 0.5))
         << "the picture is still there, got (" << static_cast<int>(after_left[0]) << ", "
@@ -1225,12 +1232,8 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
         backend->swapBuffers();
     };
     const auto settle = [&] {
-        for (int index = 0; index < 2; ++index)
-        {
-            backend->beginFrame();
-            backend->endFrame();
-            backend->swapBuffers();
-        }
+        drive();
+        drive();
     };
     // The two outer bytes are the red and blue of the material's diffuse, in the server's order.
     const auto outer = [](const std::array<std::uint8_t, 3>& pixel, double red, double blue) {
@@ -1245,10 +1248,12 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     settle();
     // The vertex stage passes the geometry's own coordinates through, so the triangle covers the middle of
     // the window: probe inside it, and off to the left for the clear.
-    const auto first = host.pixel(kWidth / 2, kHeight / 2);
+    const auto first = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
     EXPECT_TRUE(isColourByte(first[1], 0.5)) << "the material's green byte reached the picture, got ("
                                             << static_cast<int>(first[0]) << ", " << static_cast<int>(first[1])
-                                            << ", " << static_cast<int>(first[2]) << ")";
+                                            << ", " << static_cast<int>(first[2]) << ") read-error "
+                                            << static_cast<int>(host.readError())
+                                            << " (see HostWindowReadTest: a refusal is not a black pixel)";
     EXPECT_TRUE(outer(first, 0.25, 0.75)) << "and so did red and blue, in the server's order";
 
     // The host edits the material and DOES NOTHING ELSE. There is no announcement to make: the SDK's
@@ -1259,7 +1264,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     drive();
     EXPECT_EQ(store->builds(), builds_before + 1U) << "the edit replaced exactly that material's row";
     settle();
-    const auto edited = host.pixel(kWidth / 2, kHeight / 2);
+    const auto edited = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
     EXPECT_TRUE(isColourByte(edited[1], 0.25)) << "the edit lands on the very next frame, got ("
                                                << static_cast<int>(edited[0]) << ", "
                                                << static_cast<int>(edited[1]) << ", "

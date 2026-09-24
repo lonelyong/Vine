@@ -61,6 +61,8 @@
 #   VINE_GATE_APP_AFTER=N    Seconds to settle after the resize before the second sample (default 3).
 #   VINE_GATE_APP_MIN_CONTENT=P  Percent of the render area that must not be near-black (default 30).
 #   VINE_GATE_APP_MIN_PREVIEW=C  Max channel the G-buffer preview strip must reach (default 64).
+#   VINE_GATE_APP_MAX_BACKGROUND=P  Percent of the picture the flat background colour may cover (default 5;
+#                                measured 0.00% when healthy, 14.53% when the whole view goes flat).
 #   VINE_GATE_KEEP_LOGS=1    Keep the logs of a clean run too (chasing a flake across runs).
 #
 # Exit code 0 only when every stage is clean; 1 otherwise. The last lines are a stage summary.
@@ -333,7 +335,7 @@ fi
 # the real application, reads its WINDOW (scripts/xwin2ppm.py) and judges TWO pictures - one settled, one
 # after a size change - plus the application's own log.
 #
-# THE TWO PIXEL CRITERIA, and why these two:
+# THE THREE PIXEL CRITERIA, and why these three:
 #
 #   * the render area is not near-black: a black window used to pass "no validation error" for a whole run
 #     (measured 2026-09-16, which is why scripts/xwin2ppm.py exists at all);
@@ -341,8 +343,16 @@ fi
 #     demo's full-screen copies of its off-screen attachments, so they answer "did the deferred chain draw
 #     anything" - the question the first criterion cannot answer, because a dead chain still gets a
 #     colourful sky over it (the window measured 84% non-black while the deferred half drew nothing).
+#   * the flat BACKGROUND does not cover the picture. The deferred lighting program paints one colour where
+#     no geometry was written (linear 0.06, sRGB-encoded - 69 per channel on this host's swapchain), and a
+#     healthy demo shows it on 0.00% of the window. Measured 2026-09-25, the day the G-buffer's write mask
+#     became the background test (see .ai/design/vsg-reimplementation.md §11.16cg, item D4): when the
+#     G-buffer STOPPED writing w = 1, the whole deferred view went flat at that colour - 14 53% of the window
+#     - while the other two criteria stayed satisfied (the flat colour is not near-black, and the previews
+#     keep their own content). The share is what says "the picture is one flat surface", which no max, mean
+#     or non-black count can.
 #
-# Both are asserted BEFORE and AFTER the resize, because that is where the swapchain, the off-screen chain and
+# All are asserted BEFORE and AFTER the resize, because that is where the swapchain, the off-screen chain and
 # every viewport move at once. The preview geometry (four 160x90 slots at x = 8 + 168*i, y = 8, each holding
 # the source's aspect inside it - see AppShellDemo's fitPreviewRect) is the DEMO's own layout: this stage reads
 # the demo's evidence, so a demo that moves its previews has to move this recipe with it.
@@ -378,8 +388,31 @@ app_sample() { # ppm, label -> fills APP_SAMPLE_{CONTENT,PREVIEW,SIZE}; returns 
     APP_SAMPLE_CONTENT="$(sed -n 's/^content (not near-black): [0-9]*\/[0-9]* = \([0-9.]*\)%$/\1/p' <<<"$report")"
     APP_SAMPLE_PREVIEW="$(python3 "$ROOT/scripts/ppmprobe.py" "$ppm" $rect | sed -n 's/.*max \([0-9]*\) .*/\1/p')"
     APP_SAMPLE_SIZE="${width}x${height}"
-    if [ -z "$APP_SAMPLE_CONTENT" ] || [ -z "$APP_SAMPLE_PREVIEW" ]; then
-        echo "${label}: the samples did not report a share and a preview maximum" >&2
+    # The flat background colour, in BOTH spellings the host may hand back: the sRGB-encoded 69 (this host's
+    # B8G8R8A8_SRGB swapchain) and the linear 15 (a UNORM surface). The larger share is the one judged: the
+    # question is "is the picture flat at the background colour", and a picture can only be flat in one
+    # encoding.
+    #
+    # The region judged is the VIEW BAND BELOW THE PREVIEW STRIP, not the whole window: the previews are an
+    # overlay with content of their own, so counting them dilutes the question (measured 2026-09-25 on ONE
+    # flat picture: 15.47% of the whole window, 25.64% of the band below the strip). AFTER the resize the
+    # window is 698x132 and the four slots cover most of the view, so even the band reads only 3.97% there -
+    # the pre-resize sample is the sensitive one, which is exactly why both samples are judged. A window too
+    # short to hold a band falls back to the whole window rather than to no check at all.
+    local band_y=$(( 8 + 90 ))
+    local band_h=$(( height - band_y ))
+    if [ "$band_h" -lt 8 ]; then
+        band_y=0
+        band_h="$height"
+    fi
+    local flat_srgb flat_linear
+    flat_srgb="$(python3 "$ROOT/scripts/ppmprobe.py" "$ppm" 0 "$band_y" "$width" "$band_h" 69,69,69 \
+        | sed -n 's/^share [^:]*: [0-9]* pixel(s) (\([0-9.]*\)%)$/\1/p')"
+    flat_linear="$(python3 "$ROOT/scripts/ppmprobe.py" "$ppm" 0 "$band_y" "$width" "$band_h" 15,15,15 \
+        | sed -n 's/^share [^:]*: [0-9]* pixel(s) (\([0-9.]*\)%)$/\1/p')"
+    APP_SAMPLE_BACKGROUND="$(awk -v a="${flat_srgb:-}" -v b="${flat_linear:-}" 'BEGIN { a += 0; b += 0; print (a > b) ? a : b }')"
+    if [ -z "$APP_SAMPLE_CONTENT" ] || [ -z "$APP_SAMPLE_PREVIEW" ] || [ -z "$APP_SAMPLE_BACKGROUND" ]; then
+        echo "${label}: the samples did not report a share, a preview maximum and a background share" >&2
         return 1
     fi
     return 0
@@ -408,6 +441,7 @@ check_app() {
     local after="${VINE_GATE_APP_AFTER:-3}"
     local want_content="${VINE_GATE_APP_MIN_CONTENT:-30}"
     local want_preview="${VINE_GATE_APP_MIN_PREVIEW:-64}"
+    local max_background="${VINE_GATE_APP_MAX_BACKGROUND:-5}"
     local drag="${VINE_GATE_APP_RESIZE:-1120x420}"
 
     if [ ! -x "$app_bin" ]; then
@@ -457,11 +491,12 @@ check_app() {
     #    of this stage too, and saying which sample failed is the difference between a diagnosis and a red row.
     sleep "$settle"
     local status=0 evidence=""
-    local before_content="" before_preview="" before_size=""
-    local after_content="" after_preview="" after_size=""
+    local before_content="" before_preview="" before_size="" before_background=""
+    local after_content="" after_preview="" after_size="" after_background=""
     if app_sample "$LOG_DIR/app-before.ppm" "before the resize"; then
         before_content="$APP_SAMPLE_CONTENT" before_preview="$APP_SAMPLE_PREVIEW" before_size="$APP_SAMPLE_SIZE"
-        evidence="before ${before_size}: content ${before_content}%, preview ${before_preview};"
+        before_background="$APP_SAMPLE_BACKGROUND"
+        evidence="before ${before_size}: content ${before_content}%, preview ${before_preview}, background ${before_background}%;"
     else
         status=1
     fi
@@ -474,7 +509,8 @@ check_app() {
             sleep "$after"
             if app_sample "$LOG_DIR/app-after.ppm" "after the resize"; then
                 after_content="$APP_SAMPLE_CONTENT" after_preview="$APP_SAMPLE_PREVIEW" after_size="$APP_SAMPLE_SIZE"
-                evidence="$evidence after ${after_size}: content ${after_content}%, preview ${after_preview};"
+                after_background="$APP_SAMPLE_BACKGROUND"
+                evidence="$evidence after ${after_size}: content ${after_content}%, preview ${after_preview}, background ${after_background}%;"
             else
                 status=1
             fi
@@ -523,13 +559,15 @@ check_app() {
     fi
     # 4. The thresholds, per sample.
     local sample
-    for sample in "before $before_size $before_content $before_preview" "after $after_size $after_content $after_preview"; do
+    for sample in "before $before_size $before_content $before_preview $before_background" \
+                  "after $after_size $after_content $after_preview $after_background"; do
         # Field by field rather than through `set --`: a sample that failed to read has fewer fields, and `set -u`
         # turned that into an unbound variable instead of the failure it already was.
         local when="${sample%% *}" rest="${sample#* }"
         local size="${rest%% *}" rest2="${rest#* }"
         [ "$size" != "$rest" ] || size=""
-        local content="${rest2%% *}" preview="${rest2#* }"
+        local content="${rest2%% *}" rest3="${rest2#* }"
+        local preview="${rest3%% *}" background="${rest3#* }"
         [ -n "$size" ] || continue
         if ! awk -v have="$content" -v want="$want_content" 'BEGIN { exit !(have + 0 >= want + 0) }'; then
             evidence="$evidence ($when: content ${content}% < ${want_content}%)"
@@ -537,6 +575,10 @@ check_app() {
         fi
         if ! awk -v have="$preview" -v want="$want_preview" 'BEGIN { exit !(have + 0 >= want + 0) }'; then
             evidence="$evidence ($when: the G-buffer preview strip holds ${preview} < ${want_preview})"
+            status=1
+        fi
+        if ! awk -v have="$background" -v want="$max_background" 'BEGIN { exit !(have + 0 <= want + 0) }'; then
+            evidence="$evidence ($when: the flat background covers ${background}% > ${max_background}% - the picture is one flat surface)"
             status=1
         fi
     done

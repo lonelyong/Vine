@@ -39,6 +39,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdio>
 #include <functional>
 #include <set>
 #include <stdexcept>
@@ -7575,4 +7576,91 @@ TEST(RenderEngineTest, PublishingOneTargetUnderOneNameTwiceIsNotACollision)
     engine->frame(0.016);
     EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
     EXPECT_TRUE(received.empty());
+}
+
+// ============ Measurement recipe: what one collection costs ============
+
+TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
+{
+    // A RECIPE, not a gate: it answers the question the B4 row in the backend's design log
+    // (.ai/design/vsg-reimplementation.md §11.16bw) could not - "the demo's collection is a memo hit or ~42
+    // commands, so the cost is unmeasurable there". Nothing here asserts a machine-dependent number; the
+    // figures below are printed so they can be recorded in the design log, and the asserted facts are the
+    // machine-independent ones: a MOVED camera collects again, a STILL one reuses the shared list, and the
+    // command list is the same size either way.
+    //
+    // Run it where the numbers matter (Release builds the walk inlined):
+    //   ./build-release/bin/test_graphics --gtest_filter='*MeasureWhatOneCollectionCosts*'
+    std::printf("\n");   // keep the measurements on their own lines
+    for (const std::size_t drawables : { std::size_t{ 200 }, std::size_t{ 2000 } }) {
+        Scene scene;
+        intrusive_ptr<Group> root = setIdentityRoot(scene);
+        // A grid of unit triangles five units in front of the camera: all inside the frustum, at DIFFERENT
+        // distances (so the sort has real work), and small enough that the walk's culling cannot remove any.
+        for (std::size_t index = 0; index < drawables; ++index) {
+            const double x = static_cast<double>(index % 50U) * 0.04 - 1.0;
+            const double y = static_cast<double>((index / 50U) % 50U) * 0.04 - 1.0;
+            root->addChild(makeTriangleNode(Vec3d(x, y, -5.0), nullptr));
+        }
+
+        Camera camera;
+        setupLookAtCamera(camera);
+        // The memo lives INSIDE one content frame (see Scene::setContentFrame: a new token drops the previous
+        // frame's lists), so the recipe opens one and keeps it: what is measured is the within-frame reuse -
+        // exactly the question "the demo's next frame collects again, what does that cost".
+        scene.setContentFrame(1);
+        const auto moving = [&camera](int step) {
+            // A moved EYE: the memo keys on (revision, eye, view projection), so every one of these misses.
+            camera.setViewMatrixAsLookAt(Vec3d(0.001 * static_cast<double>(step), 0, 5), Vec3d(0, 0, 0),
+                                         Vec3d(0, 1, 0));
+        };
+
+        moving(0);
+        const std::uint64_t collects_before = scene.contentCollectCount();
+        const auto          warm            = scene.collectRenderCommandsShared(&camera);
+        ASSERT_NE(warm, nullptr);
+        const std::size_t commands = warm->size();
+        EXPECT_EQ(scene.contentCollectCount(), collects_before + 1U);
+
+        constexpr int kRepetitions = 10;
+        const auto    began        = std::chrono::steady_clock::now();
+        const void*   last         = nullptr;
+        for (int step = 1; step <= kRepetitions; ++step) {
+            moving(step);
+            const auto collected = scene.collectRenderCommandsShared(&camera);
+            ASSERT_NE(collected, nullptr);
+            EXPECT_NE(collected.get(), warm.get()) << "a moved camera cannot reuse the shared list";
+            last = collected.get();
+        }
+        const void* first_of_moving = last;
+        const auto  moving_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began)
+                .count() /
+            kRepetitions;
+        EXPECT_EQ(scene.contentCollectCount(), collects_before + 1U + static_cast<std::uint64_t>(kRepetitions))
+            << "every moved view is a real walk";
+
+        const std::uint64_t reuses_before = scene.contentCollectReuseCount();
+        const auto          still_began   = std::chrono::steady_clock::now();
+        const auto          still_first   = scene.collectRenderCommandsShared(&camera);
+        for (int step = 1; step < kRepetitions; ++step) {
+            const auto again = scene.collectRenderCommandsShared(&camera);
+            ASSERT_NE(again, nullptr);
+            EXPECT_EQ(again.get(), still_first.get()) << "a still camera reuses the shared list";
+        }
+        const auto still_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - still_began)
+                .count() /
+            kRepetitions;
+        EXPECT_GE(scene.contentCollectReuseCount(), reuses_before + static_cast<std::uint64_t>(kRepetitions - 1))
+            << "a still camera is the memo's whole point";
+
+        EXPECT_EQ(still_first->size(), commands) << "both views collect the same commands";
+        EXPECT_NE(first_of_moving, nullptr);
+        std::printf("[measure] drawables=%zu commands=%zu moving=%lld us/collect still=%lld us/collect (%d of "
+                    "each)\n",
+                    drawables, commands, static_cast<long long>(moving_us), static_cast<long long>(still_us),
+                    kRepetitions);
+        std::fflush(stdout);
+    }
 }

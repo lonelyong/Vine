@@ -51,12 +51,18 @@ class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
      */
     void setDiffuse(const Colorf& color);
 
-    /** @brief Gets the specular color (RGB, A is intensity). */
+    /** @brief Gets the specular color (RGB, A is intensity).
+     *
+     * The intensity multiplies the highlight in every engine program that shades one - the forward lit
+     * program and the deferred chain alike (the G-buffer's specular attachment carries the colour already
+     * scaled by it) - so an alpha of 0.5 leaves the surface half as reflective as the colour alone. Wired
+     * 2026-09-25: the accessor documented this from the first release, and no shader read it until then.
+     */
     Colorf specular() const;
 
     /** @brief Sets the specular color.
      *
-     * @param color RGBA color in [0, 1].
+     * @param color RGB in [0, 1] is the highlight's colour; A in [0, 1] scales its strength.
      */
     void setSpecular(const Colorf& color);
 

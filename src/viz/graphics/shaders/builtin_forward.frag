@@ -149,7 +149,12 @@ void main()
         {
             vec3 h = normalize(L + view_dir);
             float spec = pow(max(dot(n, h), 0.0), shininess);
-            color += c * a * spec * material.specular.rgb * ndl;
+            // The material's specular ALPHA scales the highlight (the SDK documented "A is intensity" from
+            // the first release, and no engine program read it until 2026-09-25 - see
+            // .ai/design/vsg-reimplementation.md §11.16cj). Whichever way it is spelled, the product that
+            // reaches the sum is colour x intensity: the G-buffer writer folds the same two factors into its
+            // attachment, so the forward and the deferred picture agree by construction.
+            color += c * a * spec * material.specular.rgb * clamp(material.specular.a, 0.0, 1.0) * ndl;
         }
     }
     out_color = vec4(color, alpha);

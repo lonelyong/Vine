@@ -107,6 +107,7 @@ using vn::vsg::core::FrameRecorder;
 using vn::vsg::core::FrameToken;
 using vn::vsg::core::Observe;
 using vn::vsg::core::Rgba8;
+using vn::vsg::core::ReportOnce;
 using vn::vsg::core::StateRegistry;
 using vn::vsg::core::TargetFacts;
 using vn::vsg::core::TargetShape;
@@ -3076,9 +3077,13 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     const ContentPass::Scope::Entry shadow_halves[]{ ContentPass::Scope::Entry{
         vn::vsg::core::DrawKind::Content, shadow_program.get(), shadow_facts.revision, geometry_facts.layout,
         shadow_layer.get(), &shadow_draws } };
+    // The episode state belongs to the CALLER here, exactly as api/ContentHalves' entries carry it: it must
+    // survive the recorder, which the frame path builds per frame.
+    ReportOnce               plain_shadow_episode;
     const ContentPass::Scope::Entry unshadowed_halves[]{ ContentPass::Scope::Entry{
         vn::vsg::core::DrawKind::Content, unshadowed_program.get(), unshadowed_facts.revision,
-        geometry_facts.layout, unshadowed_layer.get(), &unshadowed_draws } };
+        geometry_facts.layout, unshadowed_layer.get(), &unshadowed_draws, vn::vsg::ProgramVariant{},
+        vn::graphics::Topology::Triangles, nullptr, &plain_shadow_episode } };
 
     storage->beginFrame();
     // One scope per pass, and each carries the half ITS command names: the two programs declare different
@@ -3124,6 +3129,26 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
         << "the map the pass resolved and the program cannot read is reported";
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
         << "and the drawable is NOT lost over it";
+
+    // THE SENTENCE IS AN EPISODE, and the episode is the CALLER's (see ContentPass::Scope::Entry): a second
+    // frame recorded through the same entries - a new recorder, the same half state - must stay SILENT.
+    // Without caller-owned state the recorder's own flag resets with it and the same sentence lands in the
+    // log every frame (registered 2026-09-25, M11m).
+    StateRegistry       second_frame_registry(pool);
+    const std::uint64_t reported_once =
+        diagnostics.count(vn::graphics::DiagnosticCategory::UnsupportedRequest);
+    (void)recordPass(frame.passes[4], unshadowed_halves, plain->shape().compatibility(),
+                     std::span<const InputImages>(lit_inputs, 2U), none_sets, second_frame_registry);
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::UnsupportedRequest), reported_once)
+        << "the same half must not repeat in the next frame what it already said";
+    // ... and the CALLER decides when that episode ends: re-arming it makes the next frame say it again
+    // ("fixed then broken reports again" - the rule the diagnostics carry).
+    plain_shadow_episode.rearm();
+    StateRegistry       third_frame_registry(pool);
+    (void)recordPass(frame.passes[4], unshadowed_halves, plain->shape().compatibility(),
+                     std::span<const InputImages>(lit_inputs, 2U), none_sets, third_frame_registry);
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::UnsupportedRequest), reported_once + 1U)
+        << "a re-armed episode is reported again";
 
     VsgExecutor executor(diagnostics);
     executor.addTarget(depth_handle.get(), plain_depth.get());
@@ -3605,6 +3630,766 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     EXPECT_TRUE(near(plain_pixel.r, 0.25) && near(plain_pixel.g, 0.125) && near(plain_pixel.b, 0.1))
         << "a program that cannot read the map still draws, got (" << static_cast<int>(plain_pixel.r) << ", "
         << static_cast<int>(plain_pixel.g) << ", " << static_cast<int>(plain_pixel.b) << ")";
+}
+
+TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritten)
+{
+    // The G-buffer's position attachment carries TWO facts, and this case pins both halves of the contract
+    // the deferred lighting program reads (registered as D4, fixed 2026-09-25):
+    //
+    //   * a pixel no geometry reached keeps the transparent black its clear left there (the backend clears
+    //     every attachment beyond the first to transparent black - see core::planClearValues), and the
+    //     lighting must paint its flat background there;
+    //   * a pixel that WAS written carries w = 1 (`builtin_gbuffer.frag` writes `vec4(view_pos, 1.0)`), so
+    //     a written fragment whose view position is ~(0,0,0) - the camera touching the surface it shades -
+    //     must be SHADED. A distance test (`dot(pos, pos) < 1e-6`, the criterion before the fix) paints a
+    //     fixed 0.06-grey hole over it.
+    //
+    // The writer is hand-written so the position can be written EXACTLY: `vec4(0, 0, 0, 1)` is the
+    // camera-at-the-surface case, and no rasterised geometry reliably lands on it. Its outputs are the
+    // engine's own four (albedo / normal with the shininess in alpha / specular / position), which is the
+    // shape a real G-buffer has.
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    // The G-buffer: the engine's four attachments AND their formats (`defaultGbufferTarget`) - a position
+    // the camera is touching is only representable because that attachment is RGBA16F.
+    OffscreenTarget::TargetLayout gbuffer_layout;
+    gbuffer_layout.width         = kSize;
+    gbuffer_layout.height        = kSize;
+    gbuffer_layout.color_formats = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F,
+                                     RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F };
+    std::unique_ptr<OffscreenTarget> gbuffer = OffscreenTarget::create(created.device, gbuffer_layout);
+    ASSERT_NE(gbuffer, nullptr);
+    ASSERT_EQ(gbuffer->colorAttachmentCount(), 4U);
+
+    OffscreenTarget::Layout lit_layout;
+    lit_layout.width  = kSize;
+    lit_layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> lit = OffscreenTarget::create(created.device, lit_layout);
+    ASSERT_NE(lit, nullptr);
+
+    const vn::intrusive_ptr<RenderTarget> gbuffer_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> lit_handle(new RenderTarget());
+
+    // One ambient light and no sun: the shading is one multiplication (`albedo * ambient.rgb * ambient.a`),
+    // so the two probes below answer the background question alone.
+    const vn::intrusive_ptr<vn::graphics::Light> ambient = vn::graphics::Light::createAmbient();
+    ambient->setColor(vn::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
+    ambient->setIntensity(1.0F);
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+
+    // The G-buffer writer: fills the LEFT half of the picture (NDC x in [-1, 0]) with a position the camera
+    // is touching. The right half is never covered, so it keeps the clear.
+    const vn::intrusive_ptr<ShaderProgram> writer_program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "void main() { gl_Position = vec4(position.xy, 0.5, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 albedo_out;\n"
+            "layout(location = 1) out vec4 normal_out;\n"
+            "layout(location = 2) out vec4 specular_out;\n"
+            "layout(location = 3) out vec4 position_out;\n"
+            "void main() {\n"
+            "    albedo_out   = vec4(1.0, 0.25, 0.25, 1.0);\n"
+            "    normal_out   = vec4(0.0, 0.0, 1.0, 0.0);\n"
+            "    specular_out = vec4(0.0, 0.0, 0.0, 1.0);\n"
+            // w = 1: this pixel WAS written (the engine's G-buffer writes the same), and the distance to the
+            // origin is zero because the camera is touching this fragment.
+            "    position_out = vec4(0.0, 0.0, 0.0, 1.0);\n"
+            "}\n"));
+        writer_program->addStage(vertex);
+        writer_program->addStage(fragment);
+    }
+    ProgramFacts writer_facts;
+    ASSERT_EQ(buildProgramFacts(*writer_program, writer_facts), FactMiss::None);
+
+    // The engine's own unshadowed lighting program (the shadowed variant shares its text and its background
+    // test, so this one covers the contract).
+    const vn::intrusive_ptr<ShaderProgram> lighting_program = vn::graphics::deferredLightProgram();
+    ASSERT_NE(lighting_program, nullptr);
+    ProgramFacts lighting_facts;
+    ASSERT_EQ(buildScreenProgramFacts(*lighting_program, lighting_facts), FactMiss::None);
+
+    const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
+    const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
+    ContentPipeline::Settings              writer_settings;
+    writer_settings.color_attachments = 4U;
+    std::unique_ptr<ContentPipeline> writer_layer =
+        ContentPipeline::create(writer_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+                                std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
+                                writer_facts.shaders, writer_settings);
+    ASSERT_NE(writer_layer, nullptr);
+    std::unique_ptr<ContentPipeline> lighting_layer =
+        ContentPipeline::createScreen(lighting_facts.abi, lighting_facts.shaders);
+    ASSERT_NE(lighting_layer, nullptr);
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    {
+        const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 0.0F, -1.0F, 0.0F,
+                                            0.0F,  1.0F,  0.0F, -1.0F, 1.0F, 0.0F };
+        geometry->setPositions(
+            vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
+        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+        geometry->setRevision(1U);
+    }
+    GeometryFacts                      geometry_facts;
+    std::vector<vn::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+
+    const vn::intrusive_ptr<Material> material(new Material());
+    MaterialFacts                     material_facts;
+    std::vector<std::byte>            material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+
+    const ProgramFacts  programs[]{ writer_facts, lighting_facts };
+    const GeometryFacts geometries[]{ geometry_facts };
+    const MaterialFacts materials[]{ material_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    FrameArena    arena{ 128 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    const auto targetFacts = [](OffscreenTarget& which, const void* handle) {
+        TargetFacts entry;
+        entry.target          = handle;
+        entry.wanted.width    = static_cast<int>(kSize);
+        entry.wanted.height   = static_cast<int>(kSize);
+        entry.wanted.shape    = which.shape();
+        entry.current         = which.instance();
+        entry.depth.has_depth = which.hasDepth();
+        entry.depth.promotion = which.hasDepth();
+        return entry;
+    };
+    const std::vector<TargetFacts> target_table{ targetFacts(*gbuffer, gbuffer_handle.get()),
+                                                  targetFacts(*lit, lit_handle.get()) };
+
+    ClearPolicy gbuffer_clear;
+    gbuffer_clear.color          = true;
+    gbuffer_clear.color_value[0] = kClear[0];
+    gbuffer_clear.color_value[1] = kClear[1];
+    gbuffer_clear.color_value[2] = kClear[2];
+    gbuffer_clear.color_value[3] = 1.0F;
+    ClearPolicy lit_clear;
+    lit_clear.color          = true;
+    lit_clear.color_value[0] = 0.0F;   // the lit target's own clear, NOT the 0.06 the background branch writes
+    lit_clear.color_value[1] = 0.0F;
+    lit_clear.color_value[2] = 0.0F;
+    lit_clear.color_value[3] = 1.0F;
+
+    RenderCommand writer_command;
+    writer_command.geometry = geometry;
+    writer_command.material = material;
+    writer_command.program  = writer_program;
+    const std::vector<RenderCommand> writer_commands{ writer_command };
+    const vn::graphics::Light* const shading_lights[]{ ambient.get() };
+    const RenderTarget*              gbuffer_input[]{ gbuffer_handle.get() };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(gbuffer_handle.get());
+    recorder.setClearPolicy(gbuffer_clear);
+    recorder.render(writer_commands, camera.get());
+    recorder.endPass();
+    recorder.beginPass(2U);
+    recorder.setRenderTarget(lit_handle.get());
+    recorder.setClearPolicy(lit_clear);
+    recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_input, 1U));
+    recorder.setLights(std::span<const vn::graphics::Light* const>(shading_lights, 1U));
+    recorder.drawScreenProgram(gbuffer_handle.get(), lighting_program.get(), camera.get());
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 2U);
+    EXPECT_EQ(frame.passes[1].shadow.light, nullptr) << "the pass declared no map, so none was resolved";
+
+    VariantPool   pool;
+    StreamUploads uploads;
+    const auto    entry_points =
+        vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    ContentDraw writer_draws(*writer_layer, pool, entry_points);
+    ContentDraw lighting_draws(*lighting_layer, pool, entry_points);
+    const ContentPass::Scope::Entry writer_halves[]{ ContentPass::Scope::Entry{
+        vn::vsg::core::DrawKind::Content, writer_program.get(), writer_facts.revision, geometry_facts.layout,
+        writer_layer.get(), &writer_draws } };
+    const ContentPass::Scope::Entry lighting_halves[]{ ContentPass::Scope::Entry{
+        vn::vsg::core::DrawKind::Screen, lighting_program.get(), lighting_facts.revision, {},
+        lighting_layer.get(), &lighting_draws } };
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    storage->beginFrame();
+
+    std::vector<::vsg::ref_ptr<::vsg::ImageView>> gbuffer_views;
+    for (std::uint32_t index = 0; index < gbuffer->colorAttachmentCount(); ++index) {
+        gbuffer_views.push_back(gbuffer->colorView(index));
+    }
+    const InputImages gbuffer_only[]{ InputImages{ gbuffer_views, {} } };
+
+    std::vector<std::unique_ptr<StateRegistry>> registries;
+    registries.reserve(frame.passes.size());
+    for (std::size_t index = 0; index < frame.passes.size(); ++index) {
+        registries.push_back(std::make_unique<StateRegistry>(pool));
+    }
+    const auto recordPass = [&](const vn::vsg::core::CompiledPass& pass,
+                                std::span<const ContentPass::Scope::Entry> halves,
+                                const vn::vsg::core::RenderPassCompatibility& compatibility,
+                                std::span<const InputImages> inputs, StateRegistry& registry) {
+        ContentPass::Scope scope;
+        scope.entries    = halves;
+        scope.registry   = &registry;
+        scope.storage    = storage.get();
+        scope.uploads    = &uploads;
+        ContentPass content(scope, diagnostics);
+        ::vsg::ref_ptr<::vsg::Node> node;
+        EXPECT_TRUE(content.record(pass, facts, compatibility, inputs, view_block, node));
+        return node;
+    };
+    ::vsg::ref_ptr<::vsg::Node> gbuffer_node =
+        recordPass(frame.passes[0], writer_halves, gbuffer->shape().compatibility(), {}, *registries[0]);
+    ::vsg::ref_ptr<::vsg::Node> lit_node =
+        recordPass(frame.passes[1], lighting_halves, lit->shape().compatibility(),
+                   std::span<const InputImages>(gbuffer_only, 1U), *registries[1]);
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
+        << "nothing is refused: the engine's own lighting program must be servable";
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(gbuffer_handle.get(), gbuffer.get());
+    executor.addTarget(lit_handle.get(), lit.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packets[]{ PassContent{ frame.passes[0].pass, gbuffer_node },
+                                 PassContent{ frame.passes[1].pass, lit_node } };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(packets, 2U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    const auto near = [](std::uint8_t byte, double linear) {
+        return std::abs(static_cast<double>(byte) - 255.0 * linear) <= 4.0;
+    };
+    // The left half was written with a position AT the camera (the case D4 is about): albedo (1.0, 0.25,
+    // 0.25) times ambient 0.5 is (0.5, 0.125, 0.125). The old criterion shaded this pixel as background.
+    const Rgba8 touched = lit->probe().pixel(static_cast<int>(kSize) / 4, static_cast<int>(kSize) / 2);
+    EXPECT_TRUE(near(touched.r, 0.5) && near(touched.g, 0.125) && near(touched.b, 0.125))
+        << "a WRITTEN pixel whose view position is (0,0,0) is shaded, got (" << static_cast<int>(touched.r)
+        << ", " << static_cast<int>(touched.g) << ", " << static_cast<int>(touched.b)
+        << ") - (15, 15, 15) here means the background test is reading the distance again";
+    // The right half was never covered: the G-buffer's position attachment still holds its clear, so the
+    // lighting must paint its flat background there.
+    const Rgba8 untouched = lit->probe().pixel(3 * static_cast<int>(kSize) / 4, static_cast<int>(kSize) / 2);
+    EXPECT_TRUE(near(untouched.r, 0.06) && near(untouched.g, 0.06) && near(untouched.b, 0.06))
+        << "a pixel no geometry reached keeps the background, got (" << static_cast<int>(untouched.r) << ", "
+        << static_cast<int>(untouched.g) << ", " << static_cast<int>(untouched.b) << ")";
+}
+
+TEST(ContentPassTest, ASpecularIntensityScalesWhatTheSurfaceReflects)
+{
+    // `Material::specular()` has documented "A is intensity" since the SDK's first release, and until
+    // 2026-09-25 NO engine program read it (registered as D2): the highlight was the colour alone, so a host
+    // asking for a weaker reflection had only `shininess` to reach for. This case pins the wiring in BOTH
+    // paths the engine shades with - the forward lit program and the G-buffer writer + its lighting pass -
+    // because "one fact, one spelling" is the point: the deferred attachment carries the colour ALREADY
+    // scaled, and the forward program scales the same two factors into its sum.
+    //
+    // The material is chosen so the answer is one multiplication wide: albedo is BLACK (the ambient fill and
+    // the sun's diffuse term multiply it to zero), the specular colour is WHITE, and the geometry faces the
+    // camera with the sun straight behind the lens - so `L`, the view direction and the normal all point the
+    // same way, `dot(n, h) == 1` and `pow(..., shininess) == 1`: the lit value IS
+    // `sun_colour(0.5) x 1 x 1 x alpha`. Alpha 0.25 therefore lands on 0.125, and a path that ignores the
+    // alpha lands on 0.5.
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout single_layout;
+    single_layout.width  = kSize;
+    single_layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> forward_black   = OffscreenTarget::create(created.device, single_layout);
+    std::unique_ptr<OffscreenTarget> forward_quarter = OffscreenTarget::create(created.device, single_layout);
+    std::unique_ptr<OffscreenTarget> deferred        = OffscreenTarget::create(created.device, single_layout);
+    ASSERT_NE(forward_black, nullptr);
+    ASSERT_NE(forward_quarter, nullptr);
+    ASSERT_NE(deferred, nullptr);
+
+    // The G-buffer: the engine's four attachments and their formats (`defaultGbufferTarget`).
+    OffscreenTarget::TargetLayout gbuffer_layout;
+    gbuffer_layout.width         = kSize;
+    gbuffer_layout.height        = kSize;
+    gbuffer_layout.color_formats = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F,
+                                     RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F };
+    std::unique_ptr<OffscreenTarget> gbuffer = OffscreenTarget::create(created.device, gbuffer_layout);
+    ASSERT_NE(gbuffer, nullptr);
+
+    const vn::intrusive_ptr<RenderTarget> forward_black_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> forward_quarter_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> deferred_handle(new RenderTarget());
+    const vn::intrusive_ptr<RenderTarget> gbuffer_handle(new RenderTarget());
+
+    // The sun points along the view direction, so every covered fragment is the highlight's PEAK: the case
+    // needs no pixel hunting, and the arithmetic is one multiplication.
+    const vn::intrusive_ptr<vn::graphics::Light> sun =
+        vn::graphics::Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    sun->setColor(vn::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
+    sun->setIntensity(1.0F);
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
+    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+
+    const vn::intrusive_ptr<Material> black_material(new Material());
+    black_material->setDiffuse(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
+    black_material->setSpecular(vn::Colorf(1.0F, 1.0F, 1.0F, 0.0F));    // alpha 0: reflects NOTHING
+    const vn::intrusive_ptr<Material> quarter_material(new Material());
+    quarter_material->setDiffuse(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
+    quarter_material->setSpecular(vn::Colorf(1.0F, 1.0F, 1.0F, 0.25F));   // a quarter of the reflection
+
+    // The engine's own programs: the forward one shades a lit target directly, the G-buffer writer and its
+    // lighting are the deferred pair.
+    const vn::intrusive_ptr<ShaderProgram> forward_program  = vn::graphics::forwardProgram();
+    const vn::intrusive_ptr<ShaderProgram> gbuffer_program  = vn::graphics::gbufferGeometryProgram();
+    const vn::intrusive_ptr<ShaderProgram> lighting_program = vn::graphics::deferredLightProgram();
+    ASSERT_NE(forward_program, nullptr);
+    ASSERT_NE(gbuffer_program, nullptr);
+    ASSERT_NE(lighting_program, nullptr);
+    ProgramFacts forward_facts;
+    ProgramFacts gbuffer_facts;
+    ProgramFacts lighting_facts;
+    ASSERT_EQ(buildProgramFacts(*forward_program, forward_facts), FactMiss::None);
+    ASSERT_EQ(buildProgramFacts(*gbuffer_program, gbuffer_facts), FactMiss::None);
+    ASSERT_EQ(buildScreenProgramFacts(*lighting_program, lighting_facts), FactMiss::None);
+
+    // A quad facing the camera, with the normals the engine's programs read.
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    {
+        const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F,
+                                            1.0F,  1.0F,  0.0F, -1.0F, 1.0F,  0.0F };
+        const std::vector<float> normals{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F };
+        geometry->setPositions(
+            vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
+        geometry->setNormals(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(normals)));
+        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+        geometry->setRevision(1U);
+    }
+    GeometryFacts                      geometry_facts;
+    std::vector<vn::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+
+    MaterialFacts        black_facts;
+    MaterialFacts        quarter_facts;
+    std::vector<std::byte> black_storage;
+    std::vector<std::byte> quarter_storage;
+    ASSERT_EQ(buildMaterialFacts(black_material.get(), 1U, black_facts, black_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(quarter_material.get(), 1U, quarter_facts, quarter_storage), FactMiss::None);
+
+    const ProgramFacts  programs[]{ forward_facts, gbuffer_facts, lighting_facts };
+    const GeometryFacts geometries[]{ geometry_facts };
+    const MaterialFacts materials[]{ black_facts, quarter_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+
+    // The canonical bindings are the BACKEND's rule (see StreamUploads::bindingOfCanonical) and the
+    // locations are the vertex text's (position 0, normal 1 - see builtin_forward.vert).
+    const ContentPipeline::VertexBinding bindings[]{
+        { vn::vsg::StreamUploads::bindingOfCanonical(0U), sizeof(float) * 3U, false },
+        { vn::vsg::StreamUploads::bindingOfCanonical(1U), sizeof(float) * 3U, false }
+    };
+    const ContentPipeline::VertexAttribute attributes[]{ { 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U },
+                                                         { 1U, 1U, VK_FORMAT_R32G32B32_SFLOAT, 0U } };
+    std::unique_ptr<ContentPipeline> forward_layer =
+        ContentPipeline::create(forward_facts.abi, bindings, attributes, forward_facts.shaders);
+    ASSERT_NE(forward_layer, nullptr) << "the engine's forward program must be servable";
+    ContentPipeline::Settings gbuffer_settings;
+    gbuffer_settings.color_attachments = 4U;
+    std::unique_ptr<ContentPipeline> gbuffer_layer =
+        ContentPipeline::create(gbuffer_facts.abi, bindings, attributes, gbuffer_facts.shaders, gbuffer_settings);
+    ASSERT_NE(gbuffer_layer, nullptr) << "the engine's G-buffer writer must be servable";
+    std::unique_ptr<ContentPipeline> lighting_layer =
+        ContentPipeline::createScreen(lighting_facts.abi, lighting_facts.shaders);
+    ASSERT_NE(lighting_layer, nullptr);
+
+    FrameArena    arena{ 128 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    const auto targetFacts = [](OffscreenTarget& which, const void* handle) {
+        TargetFacts entry;
+        entry.target          = handle;
+        entry.wanted.width    = static_cast<int>(kSize);
+        entry.wanted.height   = static_cast<int>(kSize);
+        entry.wanted.shape    = which.shape();
+        entry.current         = which.instance();
+        entry.depth.has_depth = which.hasDepth();
+        entry.depth.promotion = which.hasDepth();
+        return entry;
+    };
+    const std::vector<TargetFacts> target_table{
+        targetFacts(*forward_black, forward_black_handle.get()),
+        targetFacts(*forward_quarter, forward_quarter_handle.get()),
+        targetFacts(*gbuffer, gbuffer_handle.get()),
+        targetFacts(*deferred, deferred_handle.get())
+    };
+
+    ClearPolicy black_clear;
+    black_clear.color       = true;
+    black_clear.color_value[3] = 1.0F;
+    RenderCommand black_command;
+    black_command.geometry = geometry;
+    black_command.material = black_material;
+    black_command.program  = forward_program;
+    RenderCommand quarter_command;
+    quarter_command.geometry = geometry;
+    quarter_command.material = quarter_material;
+    quarter_command.program  = forward_program;
+    RenderCommand gbuffer_command;
+    gbuffer_command.geometry = geometry;
+    gbuffer_command.material = quarter_material;
+    gbuffer_command.program  = gbuffer_program;
+    const vn::graphics::Light* const lights[]{ sun.get() };
+    const RenderTarget*              gbuffer_input[]{ gbuffer_handle.get() };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(forward_black_handle.get());
+    recorder.setClearPolicy(black_clear);
+    recorder.setLights(std::span<const vn::graphics::Light* const>(lights, 1U));
+    recorder.render(std::vector<RenderCommand>{ black_command }, camera.get());
+    recorder.endPass();
+    recorder.beginPass(2U);
+    recorder.setRenderTarget(forward_quarter_handle.get());
+    recorder.setClearPolicy(black_clear);
+    recorder.setLights(std::span<const vn::graphics::Light* const>(lights, 1U));
+    recorder.render(std::vector<RenderCommand>{ quarter_command }, camera.get());
+    recorder.endPass();
+    recorder.beginPass(3U);
+    recorder.setRenderTarget(gbuffer_handle.get());
+    recorder.setClearPolicy(black_clear);
+    recorder.render(std::vector<RenderCommand>{ gbuffer_command }, camera.get());
+    recorder.endPass();
+    recorder.beginPass(4U);
+    recorder.setRenderTarget(deferred_handle.get());
+    recorder.setClearPolicy(black_clear);
+    recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_input, 1U));
+    recorder.setLights(std::span<const vn::graphics::Light* const>(lights, 1U));
+    recorder.drawScreenProgram(gbuffer_handle.get(), lighting_program.get(), camera.get());
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 4U);
+
+    VariantPool   pool;
+    StreamUploads uploads;
+    const auto    entry_points =
+        vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    ContentDraw forward_draws(*forward_layer, pool, entry_points);
+    ContentDraw gbuffer_draws(*gbuffer_layer, pool, entry_points);
+    ContentDraw lighting_draws(*lighting_layer, pool, entry_points);
+    const ContentPass::Scope::Entry forward_halves[]{ ContentPass::Scope::Entry{
+        vn::vsg::core::DrawKind::Content, forward_program.get(), forward_facts.revision, geometry_facts.layout,
+        forward_layer.get(), &forward_draws } };
+    const ContentPass::Scope::Entry gbuffer_halves[]{ ContentPass::Scope::Entry{
+        vn::vsg::core::DrawKind::Content, gbuffer_program.get(), gbuffer_facts.revision, geometry_facts.layout,
+        gbuffer_layer.get(), &gbuffer_draws } };
+    const ContentPass::Scope::Entry lighting_halves[]{ ContentPass::Scope::Entry{
+        vn::vsg::core::DrawKind::Screen, lighting_program.get(), lighting_facts.revision, {},
+        lighting_layer.get(), &lighting_draws } };
+
+    // The declared sets, from the programs' OWN declarations: the engine's forward program carries the
+    // material and the lights in set 0 (with the `shadow_map` slot its text declares, which this pass does
+    // not resolve - the WHITE stand-in is what the engine's own path binds there, see api/WhiteImage) and
+    // the DRAW block in its own set 1; the G-buffer writer carries the material alone.
+    const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
+    ASSERT_NE(images, nullptr);
+    const vn::vsg::SamplerImage white = images->white();
+    ASSERT_NE(white.view, nullptr);
+    const vn::vsg::BlockDescriptors::SampledBinding forward_maps[] = {
+        vn::vsg::BlockDescriptors::SampledBinding{ 3U, white.view, white.sampler }
+    };
+    std::unique_ptr<BlockDescriptors> forward_set =
+        BlockDescriptors::forAbi(forward_facts.abi, 0U, created.device, *storage, forward_maps);
+    ASSERT_NE(forward_set, nullptr);
+    std::unique_ptr<BlockDescriptors> forward_draw_set =
+        BlockDescriptors::forAbi(forward_facts.abi, 1U, created.device, *storage);
+    ASSERT_NE(forward_draw_set, nullptr) << "the forward program declares its DRAW block in set 1";
+    std::unique_ptr<BlockDescriptors> gbuffer_set =
+        BlockDescriptors::forAbi(gbuffer_facts.abi, 0U, created.device, *storage);
+    ASSERT_NE(gbuffer_set, nullptr);
+    BlockDescriptors* const forward_sets[]{ forward_set.get(), forward_draw_set.get() };
+    BlockDescriptors* const gbuffer_sets[]{ gbuffer_set.get() };
+
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    storage->beginFrame();
+
+    std::vector<::vsg::ref_ptr<::vsg::ImageView>> gbuffer_views;
+    for (std::uint32_t index = 0; index < gbuffer->colorAttachmentCount(); ++index) {
+        gbuffer_views.push_back(gbuffer->colorView(index));
+    }
+    const InputImages gbuffer_only[]{ InputImages{ gbuffer_views, {} } };
+
+    std::vector<std::unique_ptr<StateRegistry>> registries;
+    registries.reserve(frame.passes.size());
+    for (std::size_t index = 0; index < frame.passes.size(); ++index) {
+        registries.push_back(std::make_unique<StateRegistry>(pool));
+    }
+    const auto recordPass = [&](const vn::vsg::core::CompiledPass& pass,
+                                std::span<const ContentPass::Scope::Entry> halves,
+                                std::span<BlockDescriptors* const> sets,
+                                const vn::vsg::core::RenderPassCompatibility& compatibility,
+                                std::span<const InputImages> inputs, StateRegistry& registry) {
+        ContentPass::Scope scope;
+        scope.entries    = halves;
+        scope.registry   = &registry;
+        scope.storage    = storage.get();
+        scope.block_sets = sets;
+        scope.uploads    = &uploads;
+        ContentPass content(scope, diagnostics);
+        ::vsg::ref_ptr<::vsg::Node> node;
+        EXPECT_TRUE(content.record(pass, facts, compatibility, inputs, view_block, node));
+        return node;
+    };
+    ::vsg::ref_ptr<::vsg::Node> forward_black_node =
+        recordPass(frame.passes[0], forward_halves, forward_sets, forward_black->shape().compatibility(), {},
+                   *registries[0]);
+    ::vsg::ref_ptr<::vsg::Node> forward_quarter_node =
+        recordPass(frame.passes[1], forward_halves, forward_sets, forward_quarter->shape().compatibility(), {},
+                   *registries[1]);
+    ::vsg::ref_ptr<::vsg::Node> gbuffer_node = recordPass(frame.passes[2], gbuffer_halves, gbuffer_sets,
+                                                          gbuffer->shape().compatibility(), {}, *registries[2]);
+    ::vsg::ref_ptr<::vsg::Node> deferred_node =
+        recordPass(frame.passes[3], lighting_halves, {}, deferred->shape().compatibility(),
+                   std::span<const InputImages>(gbuffer_only, 1U), *registries[3]);
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
+        << "nothing is refused: the engine's own programs must be servable";
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(forward_black_handle.get(), forward_black.get());
+    executor.addTarget(forward_quarter_handle.get(), forward_quarter.get());
+    executor.addTarget(gbuffer_handle.get(), gbuffer.get());
+    executor.addTarget(deferred_handle.get(), deferred.get());
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packets[]{ PassContent{ frame.passes[0].pass, forward_black_node },
+                                 PassContent{ frame.passes[1].pass, forward_quarter_node },
+                                 PassContent{ frame.passes[2].pass, gbuffer_node },
+                                 PassContent{ frame.passes[3].pass, deferred_node } };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(packets, 4U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    const auto near = [](std::uint8_t byte, double linear) {
+        return std::abs(static_cast<double>(byte) - 255.0 * linear) <= 5.0;
+    };
+    const Rgba8 silent = forward_black->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
+    EXPECT_TRUE(near(silent.r, 0.0) && near(silent.g, 0.0) && near(silent.b, 0.0))
+        << "alpha 0 must reflect nothing, got (" << static_cast<int>(silent.r) << ", "
+        << static_cast<int>(silent.g) << ", " << static_cast<int>(silent.b)
+        << ") - 0.5 here means the forward program still ignores the intensity";
+    const Rgba8 quarter = forward_quarter->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
+    EXPECT_TRUE(near(quarter.r, 0.125) && near(quarter.g, 0.125) && near(quarter.b, 0.125))
+        << "alpha 0.25 must land on sun_colour x alpha = 0.125, got (" << static_cast<int>(quarter.r) << ", "
+        << static_cast<int>(quarter.g) << ", " << static_cast<int>(quarter.b) << ")";
+    const Rgba8 shaded = deferred->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
+    EXPECT_TRUE(near(shaded.r, 0.125) && near(shaded.g, 0.125) && near(shaded.b, 0.125))
+        << "the DEFERRED path must shade the same value (the G-buffer's specular attachment carries the "
+           "colour already scaled by the intensity), got ("
+        << static_cast<int>(shaded.r) << ", " << static_cast<int>(shaded.g) << ", " << static_cast<int>(shaded.b)
+        << ") - 0.5 here means the writer folded nothing";
+}
+
+TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
+{
+    // A scene with broken content has MANY broken draws, and a sentence per draw is a flood the host cannot
+    // read - while the host still has to know what was lost (registered as B5: "把逐命令上报压成'每插话一次'
+    // 会让'这一帧有 300 条画不出来'变成一句话（丢信息）", and the fix is the middle ground). The recorder
+    // reports the FIRST refusal of a reason in full (it names the command) and ONE line with the count when
+    // the pass ends (see ContentPass::RefusalRow), so the number of messages follows the number of REASONS,
+    // not the number of broken commands.
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout layout;
+    layout.width  = kSize;
+    layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    ASSERT_NE(target, nullptr);
+    const vn::intrusive_ptr<RenderTarget> target_handle(new RenderTarget());
+
+    std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+    VariantPool   pool;
+    StreamUploads uploads;
+
+    // The tables answer for the GEOMETRY and the MATERIAL, but for NO program: every command that names this
+    // program is refused for the SAME reason, whatever its identity.
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    {
+        const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 3.0F, -1.0F, 0.0F, -1.0F, 3.0F, 0.0F };
+        geometry->setPositions(
+            vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
+        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
+        geometry->setRevision(1U);
+    }
+    GeometryFacts                      geometry_facts;
+    std::vector<vn::vsg::ChannelFacts> channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    const vn::intrusive_ptr<Material> material(new Material());
+    MaterialFacts                     material_facts;
+    std::vector<std::byte>            material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    const vn::intrusive_ptr<ShaderProgram> absent_program(new ShaderProgram());
+    addStages(*absent_program);
+    // ... and one program the tables DO answer for, so the pass has a compiled half to draw with: without
+    // one the recorder refuses the WHOLE pass in one sentence (which is its own collapse - see the branch it
+    // writes), and the per-command ledger below would never be reached.
+    const vn::intrusive_ptr<ShaderProgram> present_program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "void main() { gl_Position = vec4(position.xy, 0.5, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\nvoid main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }\n"));
+        present_program->addStage(vertex);
+        present_program->addStage(fragment);
+    }
+    ProgramFacts present_facts;
+    ASSERT_EQ(buildProgramFacts(*present_program, present_facts), FactMiss::None);
+
+    const ProgramFacts  programs[]{ present_facts };
+    const GeometryFacts geometries[]{ geometry_facts };
+    const MaterialFacts materials[]{ material_facts };
+    ContentFacts        facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    FrameArena                arena{ 64 * 1024 };
+    Diagnostics               diagnostics;
+    std::vector<vn::String>   messages;
+    diagnostics.setSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
+        messages.push_back(diagnostic.message);
+    });
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    TargetFacts target_facts;
+    target_facts.target        = target_handle.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    target_facts.current       = target->instance();
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    ClearPolicy clear;
+    clear.color          = true;
+    clear.color_value[0] = kClear[0];
+    clear.color_value[1] = kClear[1];
+    clear.color_value[2] = kClear[2];
+    clear.color_value[3] = 1.0F;
+
+    RenderCommand broken;
+    broken.geometry = geometry;
+    broken.material = material;
+    broken.program  = absent_program;
+    const std::vector<RenderCommand> broken_commands{ broken, broken, broken };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(target_handle.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(broken_commands, nullptr);
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 1U);
+    ASSERT_EQ(frame.passes[0].draws.size(), 1U);
+    ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 3U) << "three drawing calls, all broken the same way";
+
+    storage->beginFrame();
+    StateRegistry     registry(pool);
+    const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
+    const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
+    std::unique_ptr<ContentPipeline> present_layer =
+        ContentPipeline::create(present_facts.abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+                                std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
+                                present_facts.shaders);
+    ASSERT_NE(present_layer, nullptr);
+    const auto entry_points =
+        vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    ContentDraw                    present_draws(*present_layer, pool, entry_points);
+    const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
+        vn::vsg::core::DrawKind::Content, present_program.get(), present_facts.revision, geometry_facts.layout,
+        present_layer.get(), &present_draws } };
+    ContentPass::Scope scope;
+    scope.entries  = halves;
+    scope.registry = &registry;
+    scope.storage  = storage.get();
+    scope.uploads  = &uploads;
+    ContentPass content(scope, diagnostics);
+    const std::vector<std::byte>  view_block(288U, std::byte{ 0 });
+    ::vsg::ref_ptr<::vsg::Node>   node;
+    (void)content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, node);
+
+    ASSERT_EQ(messages.size(), 2U) << "one refusal per REASON, plus its count - got "
+                                   << messages.size() << " message(s); the first is: "
+                                   << (messages.empty() ? std::string("(none)") : messages[0].as_std_str());
+    EXPECT_NE(messages[0].as_std_str().find("the command's program"), std::string::npos)
+        << "the first refusal names what was refused: " << messages[0].as_std_str();
+    EXPECT_NE(messages[1].as_std_str().find("3 drawing call"), std::string::npos)
+        << "and the count says how many: " << messages[1].as_std_str();
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 2U)
+        << "the counter follows the messages: the two are one fact (see Diagnostics)";
 }
 
 TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)

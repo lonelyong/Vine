@@ -316,6 +316,14 @@ program 编译失败 ⇒ 报一条 `ShaderFallback` Warning 且该 drawable **�
 守卫：`FrameGraphTest.RebuildingAndSchedulingAFrameAsksForNoMemory`（**带边**的图）与相位行
 `two steady frames allocate nothing`（判据 = 计数）。这一段的过程与数字见 `.ai/design/vsg-reimplementation.md` §11.16bx。
 
+**插桩者自己的契约（2026-09-24 补，代价是六片没有设备证据）**：替换全局分配函数的东西**必须服务语言允许的
+每一个对齐**——"aligned"不等于"更大"。`AllocationCounter.cpp` 的 `allocateAligned` 曾把每个对齐都转给
+`posix_memalign`，而它拒绝小于 `sizeof(void*)` 的对齐（EINVAL）⇒ 那些请求变成 `std::bad_alloc`；libLLVM
+（lavapipe 的 JIT：`allocate_buffer` 会传 **4 对齐**的块）不接这个异常，于是**第一个设备用例就 abort**：
+设备电池不再运行，而每次收尾取的是"不带设备"的那次运行（"passed / 24 skipped"）⇒ 报告全绿。
+守卫：`CoreAllocationGateTest.EveryAlignmentTheLanguageAllowsIsServed`（1..128 逐对齐验收 + 计数窗口）；
+全案见 `.ai/design/vsg-reimplementation.md` §11.16cc。**"skipped" 的条数就是设备电池的缺席**，读证据行时先看它。
+
 **记录路径为什么不是"零分配"门禁，而是一条上限**：记录路径**按设计**每帧新建命令节点
 （`vsg::RenderGraph`、每条命令的 bind/draw），在那里断言 0 就是在断言 vsg 的行为。2026-09-24 量到的
 （MSVC Debug，单 pass、单 draw、稳态）：`VsgExecutor::record` **12 次分配** = 7（构造一个 `ContentPass`：
@@ -324,6 +332,26 @@ program 编译失败 ⇒ 报一条 `ShaderFallback` Warning 且该 drawable **�
 （每 pass 固定几条），所以门禁断言的是上限而不是 0：
 `CoreAllocationGateTest.TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass`（含"1 个 entry 与 4 个 entry
 同价"这条形状断言）。四处"不改"的逐条论证与代价见 §11.16by。
+
+### 0.3b 画面怎么读：窗口读回把"黑"拆成两种事实（2026-09-24）
+
+窗口用例的结论都是"像素这么说"，而那些像素来自 `tests/test_vsg/TestHostWindow::pixel`
+（在窗口上做 `XGetImage`）。
+那次调用有两种失败形态，过去长得一样（都返回 `{0,0,0}`）：**服务端拒绝了这次读**
+（`BadMatch`，比如窗口还没被它认为 viewable）与
+**像素本来就是黑的**。现在 `readError()` 把 X 错误记下来（0 = 被服务；8 = `BadMatch`），
+失败消息里带上它 —— 于是"拒绝了"与"还没到"可以分开打印。
+
+两条实测的规矩（全案见 `.ai/design/vsg-reimplementation.md` §11.16cf）：
+
+* **窗口被服务端报 VIEWABLE 之前呈递的帧永远到不了**：窗口停在自己的后备存储上（黑），
+  再呈递多少次、等多久都不会到（实测：有时服务端 >2 s 才报一个刚 map 的窗口 viewable）。
+  所以 `TestHostWindow` 的构造**先等**服务端的报告，之后才让用例呈递。
+* **空帧不是 settle**：会话的空计划帧呈递的是**会话自己的图**，会把窗口重画成它那张（清屏色）
+  ⇒ "驱动两帧空计划再读"是在**盖掉**画面，读到的黑是真事实。窗口用例改成**再呈递同一张画面**。
+
+**仍未做**：产品侧"画面已经落地"的事实（会话 presented/displayed 计数或 present 完成事件）。
+在那之前，读窗口只有**有界等待**（`waitForPixel`，50 ms 轮询），它等的是"画面到达"，不是断言工具。
 
 ### 0.4 内容表的查找：为什么不是全表扫描（`ContentFacts` 的行序）
 

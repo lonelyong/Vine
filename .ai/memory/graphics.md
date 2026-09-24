@@ -1,3 +1,163 @@
+> 2026-09-24 **M11i：租约的顺序有了设备相位（设计 §11.16ce，收掉 M10c/M10d/M10e/M10f 反复登记的一条）**
+> · 新相位 `runLeasedTargetOrderPhase`（`DevicePhaseTest` 第七行）：出借方 8×4 + 借方（自己的颜色、出借方的深度），
+>   计划把**借方那趟放第一位**（走计划顺序 = 走错顺序），事实里两个都要求长到 16×12 ⇒ 两趟 `ResizeInPlace`；
+>   判据：`resized == 2`、`refused+failed == 0`、两边 extent 16×12、`queue.pending() == 2`、两个目标在新 extent 上
+>   各自的清屏色、诊断干净。第一帧是 bootstrap（`Repair` 那一臂压过 resize，所以先按原尺寸渲染一帧）。
+> · **写它当场抓到的**：执行者的排序**由事实驱动** —— 手工拼 `TargetFacts` 时漏了租约（`depth.borrowed/source`）
+>   ⇒ 它按计划顺序走、借方被拒（`resized==1`）。填法照 `OffscreenTarget::depth()`：`has_depth/borrowed/source/
+>   promotion/any_pass_preserves_depth`。任何自己拼 facts 的调用方都要照这条。
+> · `counters.parked` / `counters.plan_applied` 是**相位体自己加的**（不是读队列）⇒ 新相位要加；表尾合计跟着更新
+>   （frames 12→14、targets_built 8→10、resizes 2→4、plan_applied 2→4、parked 4→6）。
+> · 证据：两棵树门禁 `cases=431 failed=0 vuid=0 hazard=0 skipped=0`、**相位 12 行 / 2 次运行**（新行
+>   `[selftest] leased targets: … lender first …`）、应用 `vuid=0 warnings=0`。诚实记录：应用画面参数这次 Debug 跑
+>   是 `86.53%/242`、Release 是 `87.04%/244`（历史各跑都是后者）⇒ 那几个数字跑与跑之间有 ~0.5% 抖动（FPS 数字 /
+>   抓帧时机），门禁判的是阈值。
+> · 变异 1/1：`indexOf(lenderOf(...))` 改成"没有出借方"（按计划顺序走）⇒ 相位红（`resized==1`、借方停 8×4、
+>   行文本 FAILED）；恢复后 7 行全绿。
+
+> 2026-09-25 **M11o：拒绝报告"先说一遍，再说一共几条"（B5 前半；设计 §11.16ck）**
+> · 老问题：拒绝路径**逐命令**上报（~35 个 `reportRefused` 调用点），场景里有坏内容时刷屏；登记的形状
+>   = "每 pass 每原因一次 + 后续只计数"。
+> · 改法：`ContentPass` 一张**本趟账本**（`RefusalRow{what,why,count}`）——首次照旧完整报（点名那条命令），
+>   同 `what` 后续只计数；pass 结束时（`record` 里 **RAII 守卫**，任何 return 都跑）每个 count≥2 的
+>   原因报一行 "N drawing call(s) were not drawn for one reason - …"；诊断计数跟着消息走。
+> · 证据：新真设备用例 `ManyRefusalsForOneReasonAreOneLinePlusACount`（3 条同因被拒 ⇒ **恰好 2 条**消息 +
+>   计数==2）。变异 1/1 红（`noteRefusal` 恒 true ⇒ 4 条消息）。两棵树门禁
+>   `cases=438 failed=0 vuid=0 hazard=0 skipped=0`。
+> · **B5 后半（块预算 1024/256）不改**：`BlockStorage.hpp` 的文件注记写明这是**有意**的（"growing the buffer
+>   would move bytes a submitted command buffer still names"）；登记里"按需增长"的方向与实现冲突，若要真的
+>   增长要走"新 buffer + retirement"（同 `MaterialArena` 轮转），是另一片的量级。
+
+> 2026-09-25 **M11n：高光强度真的接上了（收掉 D2；设计 §11.16cj）**
+> · 登记：`Material::specular()` 文档写"A 是强度"，但**没有着色器读它**（前向与 G-buffer 都只读 `.rgb`）。
+>   选**接线**（改文档会留一个哑字段）：前向 `... * material.specular.rgb * clamp(material.specular.a,0,1) * ndl`；
+>   G-buffer `out_specular = vec4(rgb * a, 1.0)`（把强度折进彩色 ⇒ 光照侧一行不改，两条路按构造同乘积）。
+> · 文档同步：`Material.hpp` 的 `@brief`、`usage.md` 的规范 G-buffer 清单。
+> · 证据：新真设备用例 `ContentPassTest.ASpecularIntensityScalesWhatTheSurfaceReflects` —— 材质选成
+>   "答案只差一次乘法"（albedo 全黑、高光白、太阳在镜头后方 ⇒ `dot(n,h)=1`、`pow=1`），四趟里三档读数
+>   （前向 α=0 ⇒ 0、前向 α=0.25 ⇒ 0.125、G-buffer→光照 α=0.25 ⇒ 0.125）。变异 2/2 红（两条路各去掉强度 ⇒
+>   读回 0.5）。两棵树门禁 `cases=437 failed=0 vuid=0 hazard=0 skipped=0`、`vine_shader_check.sh` PASS。
+> · **顺手量到**：演示证据行**逐字不变**（87.04%/85.14%, preview 244）——demo 的材质全用 `alpha=1.0`
+>   ⇒ 这缺陷能活到现在的原因就是"没人用过分数 alpha"。
+
+> 2026-09-25 **M11m：一句话只说一次——半分片的插话归半片所有（设计 §11.16ci）**
+> · 登记过两次的老问题：`ContentPass` **每帧新建** ⇒ 它的 `ReportOnce` 插话每帧重置（`shadow_map` 那条
+>   警告每帧重复）。`Scope` 的注释早就写着契约"episode 的结束是**调用方**的选择"，缺的是有人真给一个
+>   活得更久的 scope。
+> · 三处插话各归各处：半片的两种句子（content half 不能服务 / `reportShadowNotSampled`）归 **half**
+>   （`ContentHalves::Data::Half` 的两个 `ReportOnce`，`halvesFor` 填进 `Scope::Entry`）；光掉落归
+>   **每 pass**（`ContentAssembly::Data::lights_dropped`，按 `PassId` 一行，id 不回收 ⇒ 随 pass 数长、
+>   不随帧长）；空矩形归**会话**。
+> · 契约写进类型且**向后兼容**：`Entry` 尾部追加 `reported/shadow_reported`，`Scope` 追加
+>   `lights_dropped_episode/empty_rectangle_episode`——**空 = 旧行为**（一帧一插话），手工拼 Entry 的
+>   老用例一行不改。
+> · 证据：新**无设备**用例 `ContentHalvesTest.TheHalvesEpisodeStateIsTheHalvesOwn`（跨帧同一个对象、
+>   第一帧说过第二帧静默、另一个 pass 也不再说、`rearm()` 后再说、两种句子互不干扰）+ 真设备用例扩展
+>   （第二帧静默、重臂后再报）。变异 2/2 红（记录器忽略调用方状态 / halves 不再交出状态）。
+> · 门禁两棵树 `cases=436 failed=0 vuid=0 hazard=0 skipped=0`、应用 `vuid=0 warnings=0`。
+> · 未做（登记）：`lights_dropped_episode` / `empty_rectangle_episode` 的管线只有代码审查，没有自己的
+>   用例（触发要真设备 + 一次"灯装不下"/"矩形为空"的计划）。
+
+> 2026-09-25 **M11l：门禁的应用阶段有了第三条画面判据——"整片背景灰"（设计 §11.16ch）**
+> · 起因 = M11k 里那条 M3 登记：D4 契约的另一半（G-buffer 写 `w = 1`）没有用例看着 —— 把 `w` 改成 0，
+>   演示窗口**看得见**（14 440 px 平色 `(69,69,69)`、平均色 (101,112,121)→(84,91,99)），但门禁两条判据
+>   （非黑占比 ≥30%、预览条 max ≥64）**都通过**。
+> · 量出来的分离度：健康画面里平背景色 **2 px**（±4）/ **1 px**（线性拼法）；变异画面 **13 565 px = 14.53%**。
+> · 改法：`scripts/ppmprobe.py` 多一个**可选**颜色参数（+容差，默认 ±4），给了颜色就多打一行
+>   `share r,g,b +-t: N pixel(s) (P%)`（原输出不变）；应用阶段多一条判据 = **预览条以下"视口带"**里平背景色的
+>   占比（两种编码取大者）≤ `VINE_GATE_APP_MAX_BACKGROUND`（默认 **5%**），两个样本都判、写进证据行。
+> · 证据：健康时两棵树 `background 0%`；变异（G-buffer `w = 0`）⇒ 应用阶段红
+>   （`before … background 25.64% … the picture is one flat surface`）。
+> · **限度（诚实记录）**：resize **之后**那个样本不敏感（698×132 里四个预览槽盖住视口大部分 ⇒ 同一次失败只读
+>   3.97%）⇒ 敏感的是 resize **前**那个样本；整窗版 15.47% vs 视口带版 25.64% ⇒ 判据选视口带。
+> · 顺带登记：Debug 门禁**首跑**有一次 `BlockStorageTest.TheRegionsAreLaidOutOnceAndDoNotOverlap` 红、重跑绿
+>   （门禁把首跑失败具名写进证据行）；此前不在已知偶发名单 ⇒ 第二次出现就按 §11.16cf 的办法先分环境/真缺陷。
+
+> 2026-09-25 **M11k：延迟光照的"背景"改看写掩码（收掉 D4；设计 §11.16cg）**
+> · 旧判据 `dot(pos,pos) < 1e-6`（`builtin_deferred_lighting.frag`）在**相机贴住几何**时把视图位置 ≈(0,0,0)
+>   的**写过的**像素当成背景 ⇒ 固定的 0.06 色洞。新判据 = G-buffer 位置附件的 **w**：写过的像素
+>   `w = 1`（`builtin_gbuffer.frag` 本来就这么写），没写过的保持**透明黑**（后端 `core::planClearValues`
+>   Rule 4：只有附件 0 收到 pass 颜色，其余彩色附件保持构造值）⇒ `if (pos4.a < 0.5) 背景;`。
+> · **契约的两半**写进两个 shader 的注释 + `usage.md` §3.4 手搭延迟管线清单（位置的 w 不是备用通道）。
+> · 证据：新真设备用例 `ContentPassTest.TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritten` ——
+>   **手写** G-buffer writer 覆盖左半、位置**精确**写成 `vec4(0,0,0,1)`（光栅化几何不可能可靠落在
+>   `|pos|² < 1e-6` 上，所以必须手写值），右半保留清除；两探针：写过的贴脸像素 = `albedo × ambient` =
+>   (0.5,0.125,0.125)，没写过的 = 0.06 平背景。变异 2/2 红（判据改回距离 ⇒ 红，消息自带 "(15,15,15) 说明
+>   判据又在读距离"；writer 写 w=0 ⇒ 红 ⇒ 用例读的是写掩码）。
+> · **M3 诚实记录**：把**引擎 G-buffer** 的 `w` 改成 0 —— 演示窗口**看得见**（天空渐变消失、14 440 px 平色
+>   `(69,69,69)` = sRGB 编码的 0.06、平均色 (101,112,121)→(84,91,99)），但**门禁判据看不见**（content 两次
+>   都 87.04%，阈值 30%）⇒ 登记"应用阶段画面判据对'整片天空变平背景'不敏感"，方向 = 加平色/颜色种类判据。
+> · 门禁两棵树 `cases=435 failed=0 vuid=0 hazard=0 skipped=0`、相位 12 行 2 次、应用与修前**逐字相同**
+>   （87.04%/85.14%, preview 244）—— 演示里没有一个可见像素的视图位置接近 0，这就是缺陷活到现在的原因。
+>   `scripts/vine_shader_check.sh` PASS（9 shader 编译 + 内嵌副本逐字节同步）。
+
+> 2026-09-24 **M11j：读窗口的偶发红 = "窗口还没被服务端报可用就呈递"（测试宿主加了同步点；设计 §11.16cf）**
+> · 先把黑拆成两种事实：`TestHostWindow::readError()` 记下每次读自己的 X 错误 ⇒ `read-error 8`（`BadMatch`，
+>   服务端**拒绝**了读）与 `read-error 0`（读被服务、窗口里就是没画面）。改前两者都是 `{0,0,0}`，
+>   所以被当成"画面错误"读了好几轮。设备无关的新用例组 `HostWindowReadTest`（纯 X，不碰设备）钉住两半 +
+>   有界等待的两种行为。
+> · 20 次探针的时间线：`@501ms read-error=8`（窗口还没 VIEWABLE）→ 4 次 `read-error=0` 仍黑（≈1.3 s）→
+>   **再呈递一次自己的图**后立刻 `(0,137,0)`；另一跑 5 s 内始终没到 ⇒ ①**窗口被报 VIEWABLE 之前的呈递永远
+>   到不了**（等多久都没用）②同一张画面再呈递一次能落地。
+> · **plan-free 帧不是 settle**：会话空帧呈递的是**会话自己的图**，会把窗口重画成它那张（清屏色）⇒
+>   "驱动两帧空计划再读"是在**盖掉**画面。三处 settle 改成再呈递同一张画面（`VsgBackendTest` 的
+>   `settle()` 直接再 `drive()`；两个会话套件在循环里重新 `assignFrameGraphs`——分配只供**下一次**
+>   `commitFrame` 用，必须进循环）。
+> · 根因（设备无关）：`TestHostWindow` 构造先等"服务端报 VIEWABLE"（原 2 s 期限），**只跑 X 的
+>   `HostWindowReadTest` 20 次红 2 次**，红的就是 `wasViewableAtCreation()` ⇒ **服务端有时 >2 s 才把刚 map
+>   的窗口报成 viewable**；用例在那之前呈递的帧全作废。抖动**成片**出现（另一时段 30 次一次不迟）。
+>   ⇒ 期限放宽到 10 s（迟到会打 `[host-window] … after N ms`），花销只在服务端迟到的那几跑。
+> · 证据：两棵树门禁 `cases=434 failed=0 vuid=0 hazard=0 skipped=0`、hygiene `0/793`、相位 12 行 2 次、应用
+>   `vuid=0 warnings=0`（`87.04%/85.14%, preview 244`）。速率：单跑 4/12 红 → 0/12、三套件组 2/3 红 → 3/3 绿、
+>   全量 4 跑（3 跑 3~7 条红）→ 4 跑全绿 434。
+> · 变异：M3（去掉构造的等待）⇒ `wasViewableAtCreation` 用例确定性红，恢复即绿；M4 **没证成**（`kViewDeadline=0`
+>   重跑 12 次不红——那时服务端已不迟到）⇒ 速率对比是**跨时段**量的，机制由探针直接测到。
+> · 未做（登记）：产品侧"画面已落地"的事实（会话 presented/displayed 计数或 present 完成事件）；构造的等待只
+>   保证"呈递发生在窗口可用之后"，不保证"读的时候画面已落地"。
+
+> 2026-09-24 **M11h：空绘制调用不是绘制调用 —— 应用日志最后一条 warning 消失（设计 §11.16cd）**
+> · 定位手法：在 `ContentAssembly::record` / `ContentHalves::halvesFor` / `ContentPass::record` 的拒绝点插 `[probe]`，
+>   第一帧第 7 趟 pass 是 `content=1 entries=0` 且**没有任何"事实缺失"的 skip 输出** ⇒ 那条 draw 本身
+>   `commands=0`；再在 `beginPass` 打印身份 ⇒ `id=7 name=`（无名 = `applyOverlays` 的 gizmo/fps 叠层），
+>   `AxisGizmo` 在 `surface_w_ <= 0` 时不设视口 ⇒ 那一帧的场景收集是空的（引擎侧行为，合法）。
+> · 缺陷链（三跳，只有第二跳是错的）：空调用合法 → **录制器把调用记成绘制**（计划描述一件不存在的工作）→
+>   内容层看到"内容绘制"却没有半片 ⇒ 拒绝**整趟**（连清屏）+ 一条 warning。修生产者，不给消费者加容忍。
+> · 修法：`FrameRecorder::render` 只在 `commands` 非空时记绘制；调用仍消费 viewport/lights 公告（一条公告一次
+>   调用不变）；`FrameCounters::draws` 是"draw calls **recorded**" ⇒ 空调用不计数；既没画也没清屏的 pass 照旧不存在。
+>   契约注记补在 `FrameRecorder.hpp` 的消费规则第二条。
+> · 守卫（无设备）`FrameRecorderTest.ADrawingCallWithNothingToDrawIsNotADrawAtAll`：空调用不留 draw、公告被它
+>   消费、计数器 == 1、诊断干净；空调用 + 无清屏 ⇒ 计划里没有这趟 pass。变异 1/1：`if (true || !commands.empty())`
+>   ⇒ 守卫红 **且** 应用 warning 回到 1；恢复后两处都绿。
+> · 证据：`build` 与 `build-release` 同一道门禁 —— **431 用例 0 failed / 0 VUID / 0 SYNC-HAZARD / skipped=0**、
+>   hygiene `0/792`、相位 11 行 2 次收尾、应用 **`vuid=0 warnings=0`**（修前 1），画面参数与修前**逐字相同**
+>   （`87.04% / 85.14%, preview 244`）；gizmo 从第二帧起照旧可见（首帧它本来就没有命令可画）。
+
+> 2026-09-24 **M11g：计数分配器把 4 对齐的分配变成 `bad_alloc` ⇒ 设备电池全灭（已修；设计 §11.16cc）**
+> · 症状：**带设备**的 `test_vsg` 在第一个设备用例上 abort（`LLVM ERROR: out of memory / Buffer allocation failed`）；
+>   其实是"分配被拒"而不是"没内存"（0.03 s、峰值 RSS 85 MB）。gdb 断 `posix_memalign` ⇒ 最后一次请求
+>   **`align=4 size=512`**；栈 `llvm::allocate_buffer` ← `EngineBuilder::selectTarget` ← lavapipe 的 JIT。
+> · 根因：`tests/test_vsg/AllocationCounter.cpp`（§11.16bx 加的**计数分配器**）把**每个** aligned 分配转给
+>   `posix_memalign`，而它对 `alignment < sizeof(void*)` 回 EINVAL ⇒ 我们按契约抛 `bad_alloc`，libLLVM 不接 ⇒ abort。
+> · 代价：**M11b–M11f（六片）的证据行（"passed / 24 skipped"）都是不带设备的那一半** —— 设备电池事实上停了几片，
+>   没人发现。规则：**证据行里的 skipped 条数就是设备电池的缺席**（"跑过了、跳过几条"是误读）；每次收尾都要
+>   `VK_ICD_FILENAMES=<lvp_icd.json>` 跑套件并断言 `skipped == 0`（门禁脚本本来就这么要求，前提是人去跑它）。
+> · 修法：对齐 **≤ `alignof(std::max_align_t)` 用 `std::malloc`**（"aligned"不等于"更大"）；分支只放 POSIX 半，
+>   因为 MSVC 的 `_aligned_malloc` 内存必须由 `_aligned_free` 释放（在 Windows 上返回 `malloc` 内存 = 堆损坏）。
+>   守卫 `CoreAllocationGateTest.EveryAlignmentTheLanguageAllowsIsServed`（1..128 逐对齐 + 计数窗口；
+>   **检查必须在窗口外** —— gtest 的消息自己会分配，实测给窗口加了 160 B 噪声）。
+> · 同一族的**第二处**（只有跑 Release 才露出）：`-O2` 会**省略**对可替换全局分配函数的调用（`[expr.new]` 的省略规则）
+>   ⇒ `TheCountedHalfSeesChurnTheHeapReadingCannot` 在 Release 里数到 **0/64**，也就是说这条"正对照"只在 Debug 成立。
+>   修法：新 `keepAllocation()`（本文件匿名命名空间的 `noinline` 函数：POSIX `asm volatile("" : : "r"(block) : "memory")`、
+>   MSVC `__declspec(noinline)` + volatile 存储）把块地址交给优化器看不穿的代码（**volatile 存储不够**：语言不要求地址值互不相同）。
+>   变异：删那一行调用 ⇒ **Release 红（0/64）、Debug 绿（64/64）**。
+> · 变异 2/2：删掉那一支 ⇒ 守卫红（exit 1）**且**第一个设备用例 abort（exit -6）；恢复后两处都绿。
+> · 现状（2026-09-25，lavapipe + `DISPLAY=:0`）：`test_vsg` **435 passed / 0 skipped / 0 failed**（Debug 与
+>   Release 两棵树都是）；两棵树的整道门禁阶段行与画面参数**逐字相同**（0 VUID / 0 SYNC-HAZARD /
+>   hygiene `0/793` / 相位 **12** 行 2 次收尾 / 应用 `vuid=0 warnings=0`）。**Release 树别忘了建插件**
+>   （`ninja -C build-release gfx_backend_vsg`：没有它三条 `VsgBackendPluginTest` 报空后端，与 M10h 的教训同源）。
+>   应用那条 warning（首帧 "no compiled content half"）已由 M11h 收掉；读窗口的偶发红由 M11j 收掉大半
+>   （**计数器**那半仍未做，见 M11j 最后一条）。
+
 > 2026-09-17 **P18：剔除的盒成本 —— 这一轮唯一量出"大收益"的项（其余都在 0.0001% 量级）**
 > 形状：`Scene.cpp:239` 的早退只省**下降**，而容器的盒是**后代盒的并集** ⇒ 每次收集给所有可达节点算世界盒，**与可见量无关**。
 > · **实测（Release -O2，同 N、同"可见 95 条命令"）**：全部可见 72.8 ms ／ 99% 散落兄弟 **24.7 ms** ／ 99% 挂**一个视锥外 Group**

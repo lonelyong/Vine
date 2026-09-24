@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -114,6 +115,32 @@ PixelProbe makeCopyIntoRectangleImage()
     }
     return PixelProbe(8, 8, std::move(pixels));
 }
+
+/// @brief Makes an allocation's address opaque to the optimizer, so a `new`/`delete` pair cannot be elided.
+///
+/// WHY A TEST NEEDS THIS: C++ allows a call to a replaceable global allocation function to be ELIDED, and an
+/// optimizing build does exactly that - measured 2026-09-24 in `build-release`, where the churn case below
+/// saw **0 of 64** allocations. That is the same shape as the aligned-allocation defect its neighbour
+/// guards: the evidence stops running in one of the two build trees and nothing says so. A pointer that
+/// only reaches a `volatile` store is still provably harmless (the language does not require the address'
+/// value to be distinct, so a stack block would do), so the block has to leave this translation unit's
+/// view: a `noinline` function the optimizer cannot see through.
+void keepAllocation(void* block) noexcept;
+
+#if defined(_MSC_VER)
+__declspec(noinline) void keepAllocation(void* block) noexcept
+{
+    // MSVC has no inline assembly on x64; a volatile store behind a barrier the optimizer cannot cross has
+    // the same effect (the callee may be observed from anywhere).
+    static volatile void* kept = nullptr;
+    kept                       = block;
+}
+#else
+[[gnu::noinline]] void keepAllocation(void* block) noexcept
+{
+    asm volatile("" : : "r"(block) : "memory");
+}
+#endif
 
 }  // namespace
 
@@ -297,10 +324,16 @@ TEST(CoreAllocationGateTest, TheCountedHalfSeesChurnTheHeapReadingCannot)
         << "this binary must instrument the allocator: without it, \"counted zero\" and \"nothing counted\" "
            "are the same number (see AllocationGate's file note)";
 
+    // The block's address is handed to a `noinline` function, and that is not decoration: C++ allows a call
+    // to a replaceable global allocation function to be ELIDED, and an optimizing build does exactly that
+    // (measured 2026-09-24 in `build-release`: 0 of 64 allocations reached the counting half, so this
+    // positive control passed only in the Debug tree - the same "the evidence was not running" shape as the
+    // aligned-allocation defect next door). See keepAllocation.
     gate.begin();
     for (int i = 0; i < 64; ++i)
     {
         auto* block = new char[64];  // allocated and released inside the window
+        keepAllocation(block);
         delete[] block;
     }
     const std::ptrdiff_t grew = gate.end();
@@ -310,6 +343,57 @@ TEST(CoreAllocationGateTest, TheCountedHalfSeesChurnTheHeapReadingCannot)
     if (AllocationGate::supported())
     {
         EXPECT_EQ(grew, 0) << "while the heap reading alone would have passed this window";
+    }
+}
+
+TEST(CoreAllocationGateTest, EveryAlignmentTheLanguageAllowsIsServed)
+{
+    // The guard for the HARNESS ITSELF. The counting half replaces the global allocation functions, so a
+    // mistake in it is not a wrong number - it is a process that dies wherever the replacement refuses a
+    // request the C++ runtime considers legal. Measured 2026-09-24: the aligned forms forwarded every
+    // alignment to `posix_memalign`, which rejects anything below `sizeof(void*)` with EINVAL; libLLVM's JIT
+    // asks for alignment 4 while compiling the first pipeline of a device case (measured: `allocate_buffer`
+    // with a 4-aligned 512-byte block), took the refused block as `std::bad_alloc`, and aborted the suite
+    // before its first drawing call. Every device case in `test_vsg` was dead, and nothing said so - which
+    // is what this case is for.
+    //
+    // The alignments below are the powers of two a compiler may ask for, small ones included: 1 is what an
+    // `alignas(1)` allocation comes out as, 4 is what libLLVM asked for, and the large ones still have to
+    // take the platform's aligned path.
+    ASSERT_TRUE(AllocationGate::countsAvailable()) << "this binary must instrument the allocator";
+
+    constexpr std::size_t kAlignments[] = { 1U, 2U, 4U, 8U, 16U, 32U, 64U, 128U };
+    constexpr std::size_t kBytes        = 64U;
+    constexpr std::size_t kCount        = sizeof(kAlignments) / sizeof(kAlignments[0]);
+
+    // First the shape, checked case by case: every alignment is served, the block really is aligned for it, and
+    // the matching aligned delete releases it. A refusal here is a `std::bad_alloc` thrown out of the test -
+    // which is exactly the failure mode that killed the device cases (libLLVM does not catch it).
+    for (const std::size_t alignment : kAlignments)
+    {
+        void* block = ::operator new(kBytes, std::align_val_t(alignment));
+        ASSERT_NE(block, nullptr) << "alignment " << alignment << " has to be served";
+        EXPECT_EQ(reinterpret_cast<std::uintptr_t>(block) % alignment, 0U) << "alignment " << alignment;
+        ::operator delete(block, std::align_val_t(alignment));
+    }
+
+    // Then the same pattern with NOTHING ELSE in the window: a gtest message allocates, so checks belong
+    // outside a window that is meant to measure the allocator (see AllocationGate's file note).
+    AllocationGate gate;
+    gate.begin();
+    for (const std::size_t alignment : kAlignments)
+    {
+        void* block = ::operator new(kBytes, std::align_val_t(alignment));
+        ::operator delete(block, std::align_val_t(alignment));
+    }
+    const std::ptrdiff_t grew = gate.end();
+
+    EXPECT_EQ(gate.allocations(), kCount)
+        << "each alignment asked the allocator for a block (the count is of allocations, not of live blocks - "
+           "see AllocationGate::noteDeallocation)";
+    if (AllocationGate::supported())
+    {
+        EXPECT_EQ(grew, 0) << "and each block was released again by the matching aligned delete";
     }
 }
 

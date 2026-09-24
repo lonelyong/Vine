@@ -27,9 +27,14 @@ void main()
     vec3 albedo = texture(albedo_tex, uv).rgb;
     vec4 n4 = texture(normal_tex, uv);
     vec3 n = n4.xyz;
-    vec3 pos = texture(pos_tex, uv).xyz;
-    // Background (stored position ~0 where nothing was drawn).
-    if (dot(pos, pos) < 1e-6) { out_color = vec4(vec3(0.06), 1.0); return; }
+    vec4 pos4 = texture(pos_tex, uv);
+    vec3 pos = pos4.xyz;
+    // Background: nothing was drawn here. The G-buffer's position attachment is cleared to transparent
+    // black and every fragment the geometry pass writes carries w = 1 (builtin_gbuffer.frag), so the WRITE
+    // MASK - not the distance - separates background from geometry. A distance test cannot: the fragment
+    // the camera is touching stores view position ~(0,0,0), and shading it as background paints a fixed
+    // 0.06-grey hole over geometry that is right in front of the lens (registered as D4, fixed 2026-09-25).
+    if (pos4.a < 0.5) { out_color = vec4(vec3(0.06), 1.0); return; }
     n = normalize(n);
     // Per-pixel material from the G-buffer: specular colour rides
     // attachment 2, shininess rides the normal attachment's alpha.

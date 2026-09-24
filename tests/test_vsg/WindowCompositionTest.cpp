@@ -537,13 +537,16 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     ASSERT_TRUE(session.commitFrame());
     EXPECT_EQ(session.framesPresented(), 1U);
 
-    // Two plan-free frames: the presentation lands asynchronously, so the read-back needs the picture to have
-    // been through the display server (see the session case). They also re-record the off-screen passes and
-    // their copies, which is what makes this fixture the one that found the copy-back's cross-frame ordering
-    // gap (a second frame writing the same destination buffer with no declared dependency; see
-    // OffscreenTarget's capture).
+    // Two more presents of the SAME graph: the presentation lands asynchronously, so the read-back needs the
+    // picture to have been through the display server - and a PLAN-FREE frame is not a settle, because it
+    // repaints the window with the session's own graph (measured: the read then answers the window's own
+    // background with `read-error 0`; see TestHostWindow::waitForPixel). Re-submitting the recorded graph
+    // re-presents the picture and still re-runs the off-screen passes and their copies, which is what makes
+    // this fixture the one that found the copy-back's cross-frame ordering gap (a second frame writing the
+    // same destination buffer with no declared dependency; see OffscreenTarget's capture).
     for (int settle = 0; settle < 2; ++settle) {
         ASSERT_TRUE(session.beginFrame());
+        ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
         ASSERT_TRUE(session.commitFrame());
     }
 

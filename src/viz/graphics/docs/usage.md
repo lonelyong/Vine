@@ -289,6 +289,10 @@ compose->setViewport(surface_w - 320 - 8, 8, 320, 180);
 ```cpp
 // ① 规范 G-buffer：告警里说的 4 张彩色附件（albedo / view normal+shininess / specular / view position）
 //    + D24 深度。几何 program 必须写这 4 个输出。
+//    specular 附件装的是**颜色 × 强度**（`Material::specular()` 的 alpha）：光照侧直接乘它，
+//    所以前向与延迟两条路的高光强度一致（2026-09-25 接线）。
+//    位置的 w 是**契约的一半**：写过的像素写 1（清除留下的透明黑是 0），光照 program 用它区分
+//    "背景" 与 "几何"；距离判据做不到——相机贴住的像素视图位置就是 ~0（2026-09-25 修）。
 auto gbuffer = RenderPipelineBuilder::defaultGbufferTarget(width, height);
 
 // ② G-buffer pass（order < 0）：一个场景遍历写 MRT。

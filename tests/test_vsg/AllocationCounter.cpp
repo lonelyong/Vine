@@ -43,14 +43,30 @@ using vn::vsg::core::AllocationGate;
 
 /// @brief Allocates @p bytes with an alignment the allocation functions must honour.
 ///
+/// EVERY ALIGNMENT THE LANGUAGE ALLOWS, not only the ones `posix_memalign` accepts. The aligned allocation
+/// functions may be called with an alignment no larger than `max_align_t` - libLLVM does exactly that when
+/// llvmpipe's JIT builds its target machine (measured 2026-09-24: `allocate_buffer(512, 4)` on the first
+/// device case of this suite) - and `posix_memalign` refuses anything below `sizeof(void*)` with EINVAL.
+/// Forwarding that refusal as a null block turned into `std::bad_alloc`, which libLLVM reports as
+/// "out of memory: Buffer allocation failed" and aborts on: EVERY DEVICE CASE IN THIS BINARY DIED BEFORE
+/// ITS FIRST DRAWING CALL, and the device half of the suite was not running at all. `malloc` already
+/// returns memory aligned for every fundamental type, so the small alignments need no help - the error
+/// was treating "aligned" as "large".
+///
 /// Two deallocators, because the platforms do not agree: MSVC's `_aligned_malloc` memory must be released
 /// with `_aligned_free` (its `free` would corrupt the heap), while `posix_memalign` memory is ordinary
-/// `malloc` memory and is released with `free`.
+/// `malloc` memory and is released with `free`. That is also why the small-alignment branch lives inside
+/// the POSIX half: MSVC's `_aligned_malloc` accepts small alignments itself, and returning `malloc` memory
+/// that @ref releaseAligned would hand to `_aligned_free` would corrupt the Windows heap.
 void* allocateAligned(std::size_t bytes, std::size_t alignment)
 {
 #if defined(_MSC_VER)
     return _aligned_malloc(bytes, alignment);
 #else
+    if (alignment <= alignof(std::max_align_t))
+    {
+        return std::malloc(bytes);
+    }
     void* block = nullptr;
     // `posix_memalign` (not `std::aligned_alloc`): the latter requires the size to be a multiple of the
     // alignment, which the language's aligned allocation functions do not guarantee - they are given

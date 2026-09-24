@@ -49,6 +49,7 @@ set(SRC_FILE_LIST
 	SessionTest.cpp
 	SessionMoveTest.cpp
 	VsgBackendTest.cpp
+	HostWindowReadTest.cpp
 	PassRegistryTest.cpp
 	HostTargetsTest.cpp
 	GfxBackendVsgPluginTest.cpp

@@ -273,6 +273,79 @@ TEST(ContentHalvesTest, ASteadyPassBuildsNothing)
     EXPECT_EQ(retirement.pending(), 0U);
 }
 
+TEST(ContentHalvesTest, TheHalvesEpisodeStateIsTheHalvesOwn)
+{
+    // THE REPORT OF A HALF SPANS FRAMES (and passes): the frame path builds a ContentPass - and its episode
+    // state - per FRAME, so a sentence about a half that repeats while the condition holds would be said
+    // again every frame (measured 2026-09-24 on the demo's `shadow_map` warning). The entries now carry the
+    // HALF's own state, and the half lives as long as the tables answer for it.
+    const auto program  = contentProgram();
+    const auto geometry = quad();
+    const auto shaded   = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, program_facts), FactMiss::None);
+    Tables tables;
+    tables.programs.push_back(program_facts);
+    GeometryFacts geometry_facts;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back()),
+              FactMiss::None);
+    tables.geometries.push_back(geometry_facts);
+    MaterialFacts material_facts;
+    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()),
+              FactMiss::None);
+    tables.materials.push_back(material_facts);
+    tables.facts.programs   = tables.programs;
+    tables.facts.geometries = tables.geometries;
+    tables.facts.materials  = tables.materials;
+
+    VariantPool    pool;
+    ContentHalves  halves(pool);
+    FrameTimeline  timeline;
+    RetirementQueue retirement(1U);
+
+    const std::vector<CompiledCommand> commands{
+        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+    };
+    const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
+    const CompiledPass              first_pass  = passWith(draws);
+    const CompiledPass              second_pass = passWith(draws);
+
+    const auto frame_one = halves.halvesFor(first_pass, tables.facts, timeline, retirement);
+    ASSERT_EQ(frame_one.size(), 1U);
+    ASSERT_NE(frame_one[0].reported, nullptr) << "the half's own episode state, not the recorder's";
+    ASSERT_NE(frame_one[0].shadow_reported, nullptr);
+    EXPECT_NE(frame_one[0].reported, frame_one[0].shadow_reported)
+        << "the two sentences have their own episodes: one must not silence the other";
+
+    // Frame one says it: the episode is open, and the caller can see that much.
+    EXPECT_TRUE(frame_one[0].reported->shouldReport());
+    EXPECT_TRUE(frame_one[0].reported->reported());
+
+    // Frame two: a NEW recorder (a new scope), the SAME half state - so the sentence is NOT said again.
+    const auto frame_two = halves.halvesFor(first_pass, tables.facts, timeline, retirement);
+    ASSERT_EQ(frame_two.size(), 1U);
+    EXPECT_EQ(frame_two[0].reported, frame_one[0].reported) << "the state is the half's, not the frame's";
+    EXPECT_FALSE(frame_two[0].reported->shouldReport()) << "the episode outlives the frame that opened it";
+
+    // Another PASS drawing through the same half shares it: the sentence is about the half.
+    const auto other_pass = halves.halvesFor(second_pass, tables.facts, timeline, retirement);
+    ASSERT_EQ(other_pass.size(), 1U);
+    EXPECT_EQ(other_pass[0].reported, frame_one[0].reported);
+    EXPECT_FALSE(other_pass[0].reported->shouldReport());
+
+    // And the caller decides when the episode ENDS: the half being served again re-arms it, and the next
+    // failure is said again ("fixed then broken reports again" - the rule the diagnostics carry).
+    frame_one[0].reported->rearm();
+    const auto frame_three = halves.halvesFor(first_pass, tables.facts, timeline, retirement);
+    ASSERT_EQ(frame_three.size(), 1U);
+    EXPECT_TRUE(frame_three[0].reported->shouldReport()) << "a re-armed episode reports again";
+    // The two sentences have their own episodes: what one has said does not silence the other (the same
+    // half can be unservable AND be shaded by a pass whose map its text cannot read).
+    EXPECT_TRUE(frame_three[0].shadow_reported->shouldReport()) << "the shadow sentence has its own episode";
+    EXPECT_FALSE(frame_three[0].shadow_reported->shouldReport()) << "... and it, too, is said once";
+}
+
 TEST(ContentHalvesTest, TwoTextsOfOneProgramAreTwoHalves)
 {
     const auto program  = contentProgram();

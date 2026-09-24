@@ -51,7 +51,11 @@
  *     in one scope announces again before the second draw, and a draw with no fresh announcement gets the
  *     whole target (viewport) or the backend default (lights). Consuming them here is what makes that
  *     rule mechanical instead of remembered - and the consumed values are recorded ON the drawing call, so
- *     a compiled draw never has to look back at a scope to find them.
+ *     a compiled draw never has to look back at a scope to find them. A CALL WITH NOTHING TO DRAW IS STILL
+ *     A CALL: it consumes its announcements exactly like a call that draws, but it is NOT recorded as a
+ *     drawing call - there is nothing in it, and a plan carrying it would describe work that does not exist
+ *     (measured 2026-09-24: the engine's axis-gizmo pass calls with an empty list while its surface size is
+ *     unknown, and that empty draw was what the content layer refused a whole pass - clear included - over).
  *   * PASS INPUTS are a property of the pass (the engine announces them once per pass and says so), so
  *     they are not consumed by a drawing call.
  *

@@ -170,8 +170,15 @@ bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count
     }
 
     const auto refuse = [&](const char* why) {
-        const std::size_t index = static_cast<std::size_t>(&entry - scope_.entries.data());
-        if (index < half_reported_.size() && half_reported_[index].shouldReport())
+        const std::size_t index   = static_cast<std::size_t>(&entry - scope_.entries.data());
+        // The caller's episode when it keeps one (a half's state spans passes and frames - see
+        // api/ContentHalves); the recorder's own otherwise, whose episode is this one ContentPass.
+        core::ReportOnce* episode = entry.reported;
+        if (episode == nullptr && index < half_reported_.size())
+        {
+            episode = &half_reported_[index];
+        }
+        if (episode != nullptr && episode->shouldReport())
         {
             reportRefused("the pass' content half", why);
         }
@@ -271,6 +278,15 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
                          ::vsg::ref_ptr<::vsg::Node>& out)
 {
     auto group = ::vsg::Group::create();
+
+    // The refusal ledger belongs to THIS pass, and its summary has to be said however the pass ends - so it
+    // is cleared here and emitted by a guard, not by a call before every `return`.
+    refusals_.clear();
+    struct LedgerGuard
+    {
+        ContentPass& pass;
+        ~LedgerGuard() { pass.reportRefusedSummary(); }
+    } ledger_guard{ *this };
 
     // The plan says what the pass READS; the caller says what those images ARE. The two have to agree before
     // anything is bound - the same discipline the executor applies to a pass' target shape - because a pass
@@ -390,7 +406,10 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         if (draw.viewport.width <= 0.0F || draw.viewport.height <= 0.0F)
         {
             ++empty_rectangles_;
-            if (empty_rectangle_reported_.shouldReport())
+            core::ReportOnce& empty_episode = scope_.empty_rectangle_episode != nullptr
+                                                  ? *scope_.empty_rectangle_episode
+                                                  : empty_rectangle_reported_;
+            if (empty_episode.shouldReport())
             {
                 diagnostics_.report(vn::graphics::DiagnosticSeverity::Info,
                                     vn::graphics::DiagnosticCategory::ContentSkipped,
@@ -1167,9 +1186,43 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     return true;
 }
 
+bool ContentPass::noteRefusal(const char* what, const char* why)
+{
+    for (RefusalRow& row : refusals_)
+    {
+        if (row.what == what)
+        {
+            ++row.count;
+            return false;
+        }
+    }
+    refusals_.push_back(RefusalRow{ what, why, 1U });
+    return true;
+}
+
+void ContentPass::reportRefusedSummary()
+{
+    for (const RefusalRow& row : refusals_)
+    {
+        if (row.count < 2U)
+        {
+            continue;
+        }
+        diagnostics_.report(
+            vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
+            asString(std::to_string(row.count) + " drawing call(s) were not drawn for one reason - " +
+                     row.what + " is not drawn: " + row.why +
+                     " (the first one is named above; the rest are the same fact about the same pass)"));
+    }
+}
+
 void ContentPass::reportRefused(const char* what, FactMiss miss)
 {
     const std::string message = std::string(what) + " is not drawn: " + missText(miss);
+    if (!noteRefusal(what, missText(miss)))
+    {
+        return;   // the reason was already said; the count goes out when the pass ends
+    }
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                         vn::graphics::DiagnosticCategory::ContentSkipped, asString(message));
 }
@@ -1177,6 +1230,10 @@ void ContentPass::reportRefused(const char* what, FactMiss miss)
 void ContentPass::reportRefused(const char* what, const char* why)
 {
     const std::string message = std::string(what) + " is not drawn: " + why;
+    if (!noteRefusal(what, why))
+    {
+        return;
+    }
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                         vn::graphics::DiagnosticCategory::ContentSkipped, asString(message));
 }
@@ -1196,8 +1253,13 @@ void ContentPass::reportShadowNotSampled(const Scope::Entry& entry, const core::
     {
         return;  // the text names the map: the caller fills that binding (see api/ContentImages)
     }
-    const std::size_t index = static_cast<std::size_t>(&entry - scope_.entries.data());
-    if (index >= shadow_reported_.size() || !shadow_reported_[index].shouldReport())
+    const std::size_t index   = static_cast<std::size_t>(&entry - scope_.entries.data());
+    core::ReportOnce* episode = entry.shadow_reported;
+    if (episode == nullptr && index < shadow_reported_.size())
+    {
+        episode = &shadow_reported_[index];
+    }
+    if (episode == nullptr || !episode->shouldReport())
     {
         return;
     }
@@ -1207,6 +1269,11 @@ void ContentPass::reportShadowNotSampled(const Scope::Entry& entry, const core::
                                  "sampler, so the map does not reach its drawables: they are shaded unshadowed"));
 }
 
+core::ReportOnce& ContentPass::lightsEpisode() noexcept
+{
+    return scope_.lights_dropped_episode != nullptr ? *scope_.lights_dropped_episode : scope_.lights_dropped;
+}
+
 void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represented, bool has_camera)
 {
     // The episode rule the SDK states for dropped lights: a drawing call whose lights ALL fit (or which announced
@@ -1214,10 +1281,10 @@ void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represe
     // one light list and would otherwise fill the log with the same sentence per drawable.
     if (announced == 0U || represented >= announced)
     {
-        scope_.lights_dropped.rearm();
+        lightsEpisode().rearm();
         return;
     }
-    if (!scope_.lights_dropped.shouldReport())
+    if (!lightsEpisode().shouldReport())
     {
         return;
     }

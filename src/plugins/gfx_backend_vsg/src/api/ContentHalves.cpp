@@ -28,6 +28,12 @@ struct ContentHalves::Data
         Key key{};
         std::unique_ptr<ContentPipeline> layer{};  ///< Null when the layer was REFUSED (never retried).
         std::unique_ptr<ContentDraw>     draws{};
+        /// Episode state of the two per-half reports (see ContentPass::Scope::Entry): they live WITH the
+        /// half, so a half that cannot be served says so once per session, not once per frame - and a
+        /// second pass drawing through the same half does not repeat it. A refused half is kept (it is not
+        /// retried), so its report survives the frames that keep asking for it.
+        core::ReportOnce reported{};
+        core::ReportOnce shadow_reported{};
     };
 
     core::VariantPool*              pool{nullptr};
@@ -54,7 +60,7 @@ struct ContentHalves::Data
     }
 
     /** @brief Adds @p half's entry to this call's list, once. */
-    void serve(const Half& half)
+    void serve(Half& half)
     {
         for (const ContentPass::Scope::Entry& entry : entries)
         {
@@ -63,9 +69,11 @@ struct ContentHalves::Data
                 return;  // the same half, drawn twice in one pass
             }
         }
-        entries.push_back(ContentPass::Scope::Entry{ half.key.kind, half.key.program, half.key.revision,
-                                                     half.key.layout, half.layer.get(), half.draws.get(),
-                                                     half.key.variant, half.key.topology });
+        entries.push_back(ContentPass::Scope::Entry{ half.key.kind,      half.key.program,
+                                                     half.key.revision,  half.key.layout,
+                                                     half.layer.get(),   half.draws.get(),
+                                                     half.key.variant,   half.key.topology,
+                                                     &half.reported,     &half.shadow_reported });
     }
 
     /** @brief Whether the tables still answer the key of @p half (see the sweep in halvesFor). */

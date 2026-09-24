@@ -551,6 +551,173 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
     EXPECT_FALSE(bystander->written()) << "no pass of any driven frame named it";
 }
 
+void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+{
+    // THE ORDER THE PLAN'S ANSWERS ARE APPLIED IN, as a device phase (the gap M10c/M10d/M10e registered:
+    // `applyTargetPlans`' selection sort had only the object-level case and the demo's picture behind it).
+    //
+    // A borrower's framebuffer names the LENDER's depth image, so a leased pair that GROWS has exactly one
+    // legal order: the lender first, and the borrower's own resize then builds against the image the lender
+    // serves now. The plan here makes the wrong order fail on purpose - the borrower's pass is announced
+    // FIRST, so a walk in the plan's order would try to give the borrower a framebuffer larger than the
+    // depth image it borrows (VUID-VkFramebufferCreateInfo-pAttachments-00861) and be refused, leaving the
+    // pair at different extents. That is the shape that kept the engine's deferred chain at its build-time
+    // extent for a whole session, silently (measured 2026-09-23).
+    OffscreenTarget::TargetLayout lender_layout;
+    lender_layout.width                = 8U;
+    lender_layout.height               = 4U;
+    lender_layout.color_formats        = { RenderTarget::ColorFormat::RGBA8 };
+    lender_layout.depth_format         = RenderTarget::DepthFormat::D32;
+    lender_layout.clear.color          = true;
+    lender_layout.clear.color_value[0] = 0.5F;
+
+    OffscreenTarget::TargetLayout borrower_layout = lender_layout;
+    borrower_layout.clear.color_value[0] = 0.25F;  // a different clear: the two pictures are told apart
+
+    auto lender = OffscreenTarget::create(device.device, lender_layout);
+    EXPECT_NE(lender, nullptr);
+    auto borrower = OffscreenTarget::create(device.device, borrower_layout, lender.get());
+    EXPECT_NE(borrower, nullptr) << "the borrower (its own colour, the lender's depth) must be creatable";
+    counters.targets_built += 2U;
+    if (lender == nullptr || borrower == nullptr)
+    {
+        return;  // the assertions above already failed; the rest would read through a null
+    }
+
+    FrameArena      arena(64 * 1024);
+    Diagnostics     diagnostics;
+    Observe         observe;
+    FrameRecorder   recorder{ arena, diagnostics, observe };
+    FrameCompiler   compiler{ arena, diagnostics, observe };
+    FrameTimeline   timeline;
+    RetirementQueue queue(3U);
+    VsgExecutor     executor(diagnostics);
+    executor.addTarget(borrower.get(), borrower.get());
+    executor.addTarget(lender.get(), lender.get());
+
+    const auto clear_of = [](const OffscreenTarget::TargetLayout& layout) {
+        ClearPolicy policy;
+        policy.color       = true;
+        policy.depth       = true;
+        policy.depth_value = 0.0F;
+        for (std::size_t index = 0; index < 4U; ++index)
+        {
+            policy.color_value[index] = layout.clear.color_value[index];
+        }
+        return policy;
+    };
+
+    // The facts state what each target should become; the sizing is the caller's, so one lambda fills them for
+    // whichever frame is being compiled.
+    std::vector<TargetFacts> facts(2U);
+    const auto facts_for = [&facts](const OffscreenTarget& borrower_target, const OffscreenTarget& lender_target,
+                                    int width, int height) {
+        const auto one = [width, height](const OffscreenTarget& target) {
+            TargetFacts entry;
+            entry.target        = &target;
+            entry.wanted.width  = width;
+            entry.wanted.height = height;
+            entry.wanted.shape  = target.shape();
+            entry.current       = target.instance();
+            // The LEASE, stated the way the target itself reports it: without this the executor cannot know
+            // that one target's framebuffer names the other's depth image - and its ordering rule has nothing
+            // to order by (measured while writing this phase: the borrower was applied first and refused).
+            const vn::vsg::core::DepthPlan depth = target.depth();
+            entry.depth.has_depth                = depth.has_depth;
+            entry.depth.borrowed                 = depth.borrowed;
+            entry.depth.source                   = depth.source;
+            entry.depth.promotion                = depth.sampleable;
+            entry.depth.any_pass_preserves_depth = depth.preserve;
+            return entry;
+        };
+        facts[0] = one(borrower_target);
+        facts[1] = one(lender_target);
+    };
+
+    // One frame's pass scopes: the BORROWER's pass first, the lender's second (see the note above).
+    const auto record_frame = [&](std::uint64_t token, int width, int height) -> const CompiledFrame* {
+        EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
+        EXPECT_TRUE(recorder.beginPass(1U));
+        EXPECT_TRUE(recorder.setRenderTarget(borrower.get()));
+        EXPECT_TRUE(recorder.setClearPolicy(clear_of(borrower_layout)));
+        EXPECT_TRUE(recorder.endPass());
+        EXPECT_TRUE(recorder.beginPass(2U));
+        EXPECT_TRUE(recorder.setRenderTarget(lender.get()));
+        EXPECT_TRUE(recorder.setClearPolicy(clear_of(lender_layout)));
+        EXPECT_TRUE(recorder.endPass());
+        EXPECT_TRUE(recorder.endFrame());
+        EXPECT_TRUE(recorder.swapBuffers());
+        facts_for(*borrower, *lender, width, height);
+        return &compiler.compile(recorder.description(), FrameFacts{ facts });
+    };
+    const auto submit = [&](const CompiledFrame& frame) {
+        auto command_graph = ::vsg::CommandGraph::create(device.device, device.queue_family);
+        EXPECT_TRUE(executor.record(frame, command_graph));
+        EXPECT_EQ(executor.skipped(), 0U);
+
+        auto viewer = ::vsg::Viewer::create();
+        viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+        EXPECT_TRUE(viewer->compile());
+        viewer->advanceToNextFrame();
+        viewer->handleEvents();
+        EXPECT_TRUE(executor.submit(frame, *viewer));
+        viewer->deviceWaitIdle();
+    };
+
+    // Frame 1 at the size the pair was built at: nothing to apply, and the passes are the bootstrap clears -
+    // which is what makes the second frame a RESIZE rather than a repair (the plan answers Repair(Bootstrap)
+    // for a target nothing has written yet, and that arm outranks a resize).
+    const CompiledFrame* bootstrap = record_frame(1U, 8, 4);
+    ASSERT_NE(bootstrap, nullptr);
+    const VsgExecutor::TargetApplications idle = executor.applyTargetPlans(*bootstrap, facts, timeline, queue);
+    EXPECT_EQ(idle.resized + idle.rebuilt + idle.refused + idle.failed, 0U) << "nothing to apply yet";
+    submit(*bootstrap);
+    EXPECT_TRUE(lender->written());
+    EXPECT_TRUE(borrower->written());
+    ++counters.frames;
+
+    // Frame 2: both grow to the same new extent, with the BORROWER's pass announced first on purpose.
+    const CompiledFrame* growth = record_frame(2U, 16, 12);
+    ASSERT_NE(growth, nullptr);
+    ASSERT_EQ(growth->targets.size(), 2U);
+    ASSERT_EQ(growth->targets[0].target, borrower.get())
+        << "the plan names the BORROWER first: a walk in this order is the wrong one, which is the point";
+    ASSERT_EQ(growth->targets[1].target, lender.get());
+    ASSERT_EQ(static_cast<int>(growth->targets[0].decision.action),
+              static_cast<int>(TargetAction::ResizeInPlace));
+    ASSERT_EQ(static_cast<int>(growth->targets[1].decision.action),
+              static_cast<int>(TargetAction::ResizeInPlace));
+
+    const VsgExecutor::TargetApplications applied = executor.applyTargetPlans(*growth, facts, timeline, queue);
+    EXPECT_EQ(applied.resized, 2U) << "the lender first and the borrower after it: both extents were replaced";
+    EXPECT_EQ(applied.refused + applied.failed, 0U);
+    EXPECT_EQ(borrower->width(), 16U);
+    EXPECT_EQ(borrower->height(), 12U);
+    EXPECT_EQ(lender->width(), 16U);
+    EXPECT_EQ(lender->height(), 12U);
+    EXPECT_EQ(queue.pending(), 2U) << "each replaced attachment set is parked, not destroyed";
+    counters.resizes_replaced += 2U;
+    counters.plan_applied += 2U;
+    counters.parked += 2U;
+
+    // And the pictures: both targets really render at the new extent, through what the drive applied.
+    submit(*growth);
+    ++counters.frames;
+
+    const auto expects_clear = [](const OffscreenTarget& target, float value, const char* which) {
+        const vn::vsg::core::PixelProbe probe = target.probe();
+        ASSERT_TRUE(probe.valid()) << which;
+        EXPECT_EQ(probe.width(), 16) << which;
+        EXPECT_EQ(probe.height(), 12) << which;
+        const Rgba8 sampled = probe.pixel(8, 6);
+        EXPECT_NEAR(sampled.r, quantise(value), 1) << which;
+        EXPECT_TRUE(probe.wholeImageMatches(sampled)) << which;
+    };
+    expects_clear(*lender, 0.5F, "the lender renders at its NEW extent");
+    expects_clear(*borrower, 0.25F, "the borrower too, against the depth its lender now serves");
+    EXPECT_TRUE(diagnostics.clean());
+}
+
 int Fixture::material_identity = 0;
 
 TEST(ExecutorTest, TheContentOfAPassIsRecordedInsideThatPassWithThePlansClear)

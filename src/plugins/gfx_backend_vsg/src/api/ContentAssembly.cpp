@@ -25,6 +25,34 @@ struct ContentAssembly::Data
     const ContentFacts*  facts{nullptr};
     core::FrameTimeline* timeline{nullptr};
     core::RetirementQueue* retirement{nullptr};
+
+    /// Episode state of the light-drop sentence, PER PASS: the sentence is about a pass ("the lights the
+    /// host announced do not fit the block"), and the frame path builds a scope per pass per frame - so
+    /// the state has to outlive the frame or the same sentence repeats every frame (registered
+    /// 2026-09-25, M11m). One row per pass id ever recorded; ids are never re-issued (see api/PassRegistry),
+    /// so this grows with the passes a host announces, not with frames.
+    std::vector<std::pair<core::PassId, core::ReportOnce>> lights_dropped;
+    /// Episode state of "a host whose render area is not laid out yet": one fact about the SESSION, said
+    /// once however many frames (and passes) hit it.
+    core::ReportOnce empty_rectangle;
+
+    /** @brief Gets the episode state of @p pass ' light-drop report (a row is created on first use).
+     *
+     * @param pass The pass the report is about.
+     * @return The ReportOnce that pass' episode lives in.
+     */
+    [[nodiscard]] core::ReportOnce& lightsDroppedFor(core::PassId pass) noexcept
+    {
+        for (std::pair<core::PassId, core::ReportOnce>& row : lights_dropped)
+        {
+            if (row.first == pass)
+            {
+                return row.second;
+            }
+        }
+        lights_dropped.emplace_back(pass, core::ReportOnce{});
+        return lights_dropped.back().second;
+    }
 };
 
 ContentAssembly::ContentAssembly(ContentStore& store, ::vsg::ref_ptr<::vsg::Device> device, core::VariantPool& pool,
@@ -114,6 +142,11 @@ bool ContentAssembly::record(const core::CompiledPass& pass, const core::RenderP
     scope.block_sets = candidates;
     scope.uploads    = &d->uploads;
     scope.input_sets = &d->input_sets;
+    // The two reports that are NOT about this frame: the light-drop sentence is about the PASS and the
+    // empty-rectangle one is about the SESSION, so their episodes belong to the content world (see
+    // ContentPass::Scope and the note on the halves' own state).
+    scope.lights_dropped_episode    = &d->lightsDroppedFor(pass.pass);
+    scope.empty_rectangle_episode   = &d->empty_rectangle;
 
     ContentPass recorder(scope, *d->diagnostics);
     return recorder.record(pass, *d->facts, compatibility, inputs, view_block, out);

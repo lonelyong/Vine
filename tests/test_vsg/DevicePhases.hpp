@@ -72,6 +72,21 @@ void runTargetRebuildPhase(const vn::vsg::DeviceResult& device, DevicePhaseCount
  */
 void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
+/** @brief The leased-pair phase: the plan's answers are applied LENDER FIRST, so a leased pair that grows
+ *         together really moves together - even though the plan names the borrower first.
+ *
+ * A borrower's framebuffer names the LENDER's depth image, so the order the applications happen in is a
+ * lease question, not a bookkeeping one: applying the borrower first tries to build a framebuffer larger
+ * than the image it borrows (VUID-VkFramebufferCreateInfo-pAttachments-00861) and is refused, which leaves
+ * the pair one frame apart - the shape that kept the engine's deferred chain at its build-time extent for a
+ * whole session, silently. The plan here is built to make the WRONG order fail: the borrower's pass is
+ * announced first.
+ *
+ * @param device  A device that satisfies the backend's floor.
+ * @param counters Receives what the phase drove.
+ */
+void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+
 /** @brief The lost-submission phase: an invalidated target is re-bootstrapped once, then loads again.
  *
  * @param device  A device that satisfies the backend's floor.

@@ -220,6 +220,61 @@ TEST(FrameRecorderTest, OneViewportAndLightAnnouncementServesOneDrawingCall)
     EXPECT_EQ(r.observe.counters().draws, 3u);
 }
 
+TEST(FrameRecorderTest, ADrawingCallWithNothingToDrawIsNotADrawAtAll)
+{
+    // WHAT THE APPLICATION'S FIRST FRAME DID (measured 2026-09-24). The engine's axis-gizmo pass calls
+    // render() with an EMPTY command list while its surface size is still unknown - a legal call, and the
+    // only thing the pass announces that frame is "I ran". The recorder turned it into a draw with no
+    // commands, and the content layer read that as "this pass has content, but no compiled content half was
+    // built for it": it refused the WHOLE pass, the clear it carries included, and reported a warning - the
+    // last warning the demo's own log carried.
+    //
+    // A call with nothing to draw is still a CALL: it consumes its announcements exactly as the case above
+    // pins for a call that draws (one announcement, one call), and the pass survives on a clear. Nothing is
+    // recorded for it, because there is nothing to record - and nothing reaches the content layer to be
+    // refused later.
+    Rig r;
+    r.open();
+
+    auto                             sun      = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    std::vector<const Light*>        lights{ sun.get() };
+    const std::vector<RenderCommand> commands = oneCommand();
+
+    ClearPolicy clear;
+    clear.color = true;
+
+    EXPECT_TRUE(r.recorder.beginPass(1));
+    EXPECT_TRUE(r.recorder.setClearPolicy(clear));
+    {
+        EXPECT_TRUE(r.recorder.setViewport(1, 2, 3, 4));
+        EXPECT_TRUE(r.recorder.setLights(lights));
+        EXPECT_TRUE(r.recorder.render(std::span<const RenderCommand>{}, nullptr));  // nothing to draw
+    }
+    EXPECT_TRUE(r.recorder.render(commands, nullptr));  // nothing announced: the whole target, default lights
+    EXPECT_TRUE(r.recorder.endPass());
+
+    const FrameDescription& description = r.seal();
+    ASSERT_EQ(description.passes.size(), 1u);
+    EXPECT_TRUE(description.passes[0].has_clear);
+    const std::span<const vn::vsg::core::CollectedDraw> draws = description.passes[0].draws;
+    ASSERT_EQ(draws.size(), 1u) << "the empty call left no draw behind: there was nothing to record";
+    EXPECT_EQ(draws[0].commands.size(), 1u);
+    EXPECT_FALSE(draws[0].has_viewport) << "the empty call CONSUMED the announcement (one call, one viewport)";
+    EXPECT_TRUE(draws[0].lights.empty()) << "and the lights with it";
+    EXPECT_EQ(r.observe.counters().draws, 1u) << "the counter counts draws that were RECORDED";
+    EXPECT_TRUE(r.diagnostics.clean());
+
+    // ...and a pass whose only call is empty and which clears nothing is no pass at all - the same rule a
+    // pass with no draws and no clear has always had (see endPass).
+    Rig bare;
+    bare.open();
+    EXPECT_TRUE(bare.recorder.beginPass(2));
+    EXPECT_TRUE(bare.recorder.render(std::span<const RenderCommand>{}, nullptr));
+    EXPECT_TRUE(bare.recorder.endPass());
+    EXPECT_TRUE(bare.seal().passes.empty()) << "nothing to draw and nothing to clear is not a pass";
+    EXPECT_EQ(bare.observe.counters().draws, 0u);
+}
+
 TEST(FrameRecorderTest, ThePassInputsAreCopiedAndBelongToThePass)
 {
     Rig r;

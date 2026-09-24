@@ -2,6 +2,10 @@
 
 > 状态：**设计提案 v2（2026-09-21）**，核心层已开始落地（见 §11），**不改动**现有 `gfx_backend_vsg`。
 >
+> **实施进度以 §11 的逐片记录为准，而它一直在往后长**：下面这段"实施进度"是 **2026-09-22 的快照**，此后
+> 又落了 M8j–M8t、M9a–M9f、M10a–M10l、M11a–M11g（逐片见 §11.16ak 之后的各节，最后一片 = **§11.16cc**）。
+> **动手前先读 §11 的最后一节**（它写明了当前状态、证据与未做项）。
+>
 > **实施进度（截至 2026-09-22）**：§11 是逐片的实施记录，每片都带自己的证据面。当前已完成的最后一片是
 > **M8i：一帧收成两次调用**——`api/ContentAssembly`：`beginFrame(计划)` 开块预算 + 由 store 产出表，
 > `record(pass, …)` 把半片（`ContentHalves`）、声明集合（`ContentSets`）、**每 pass 一个 `StateRegistry`**
@@ -2645,7 +2649,7 @@ profiler 安装 + 不阻塞的读取）。这一片把第一半做完，并把�
 | ~~M9e（活着的 resize）~~ | **已完成（2026-09-23）**：`resize()` 转真；`SessionContentAccess::followResizedSurface`——**表面拥有尺寸**（SDK 授权顺序 surface > announcement > default），跟随 = `window->resize()`（重读表面几何 + 重建交换链），**停一次设备且被计数**（与 M8q 丢帧修复同一笔开销）；挂在尺寸上的东西下一帧现读（`WindowTarget::prepare(WithoutClear)` 的 renderArea、目标形状、每趟视图块），没有第二份尺寸要同步；非正值不跟随；公告仍是**下次 `initialize()`** 的建窗尺寸。`kUnservedResize` 槽删除 ⇒ **门面不再有未服务入口点**（剩下两个"没地方可去"的调用照旧各报一次：无会话的帧、内容世界未起来的 `render()`）；`BackendContentAccess::windowTarget()` 作为测试视图。**本片量到的机理**：表面变了却不公告/不跟随时，vsg 的 Viewer 会在 **acquire** 发现 `_extent2D` 与交换链不符（`Window::acquireNextImage` 直接答 `OUT_OF_DATE`），在**提交里**自己 `window->resize()`——而那一帧**已按旧矩形录完** ⇒ `VUID-VkRenderPassBeginInfo-pNext-02852/02853` + 段错误（M1 变异实测）。真设备用例：画面自身编码尺寸（`frame.y/160`、`frame.z/192`，两个尺寸下都在 [0,1]）——宿主窗口 128×96 → 改 96×64 + 公告 ⇒ 恰好 **1 次**被计数的停、`WindowTarget` 报 96×64、零报告、新尺寸下三角与清屏都在（`resize(0,0)` 一分钱不花）；第一个用例同步改写（活着 resize 不再报、`deviceWaits()==1`、重生日窗口 = 公告的 320×180）。变异 **5/5 红**（①不重读表面 ⇒ **4 条 VUID + 段错误**；②重建停不计数；③活得公告不记（回默认 640×360）；④ `0×0` 闸拆掉；⑤渲染区冻在第一个尺寸 ⇒ **4 条 VUID + 段错误**）。门禁 **660 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bh）。 |
 | ~~M9f（工厂切到门面）~~ | **已完成（2026-09-23）**：`VsgRenderBackendFactory::create()` 造 `VsgBackend` 而不是 `VsgRenderer`——**注册名 "vsg" 就是重写版**（插件 load → 注册表 → create 这条生产路径）；旧实现仍在树里、仍由自己的测试驱动，但没有任何名字创建它。**两条注册路径**（`load()` 里显式注册的 `s_factory` 与 `VsgRenderBackendFactory.cpp` 里的静态 `Registrar`）都在，所以变异 M3 要把**两处**一起关才红。**切换逼出的半片**：老实现每帧刷新它命令到的每个材质（`SceneBridge` → `VsgMaterialManager::updateMaterial`，而那方法自己就是 compare-and-write），重写版 `ContentStore` 只认 `updateMaterial()` 推的修订、**而没人调它**（§11.16be 的登记）⇒ 不补则切完工厂**材质编辑不再进画**。所以门面 `render()` 对每条命令的材质调一次 `ContentStore::updateMaterial()`，并把该方法从"盲增修订"改成 **compare-and-write**：读材质现在的字段、与表里那行的块**按 ABI 逐成员比较**（`materialBlockAgreesWith`——**不能比字节**，块的尾部填充故意不写；块映射收成一处 `blockOfMaterial`），只有不同才推修订 ⇒ 下一帧换行 + 停靠旧值照旧，稳态帧只比不建、不分配。证据：真设备①`VsgBackendPluginTest.TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraws`（**通过注册表**拿门面、采纳宿主窗口、走 SDK 协议画一帧、把宿主窗口像素读回）；②`VsgBackendTest.AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNothing`（材质 diffuse 着色：编辑帧 `builds()` 恰好 +1 且像素质变，稳态帧不涨、`deviceWaits()==0`）；无设备 `ContentStoreTest.ATouchWithNoEditChangesNothing`。`CreateBackendByName` 用 `dynamic_cast` 钉住"造出来的是门面"；`BackendContentAccess::store()` 是测试视图。**夹具教训**：块 canonical 绑定 **View=0 / Draw=1 / Material=2**——把材质块写在 binding 0 会被 ABI 扫描判成"两阶段同绑定不一致" ⇒ 内容层整趟拒绝（只剩清屏色）。变异 **6/6 红**（旧实现 / 答空 / **两处注册全关** / 名字不是 vsg / 触碰盲增 / 门面不触碰）。门禁 **663 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bi）。 |
 | ~~M10a（引擎侧冒烟）~~ | **已完成（2026-09-23）**：`build/bin/Vine`（默认 Deferred + 阴影的演示场景）在 lavapipe + X11 上真跑起来，像素读回 **378×247、100% 非近黑、均值 (118,121,127)**（天空底、红平台、紫盒、gizmo、G-buffer 预览、HUD）。**修 1：深度专属目标**——`HostTargets::build` 原先要求"至少一个彩色附件"⇒ 引擎的 `shadow_map`（`attachDepth(D24)`、没有彩色）永远建不出来 ⇒ 阴影 pass 无处画、光照 pass 丢掉输入整趟被拒（"input 1 offers no depth texture…"）——**整条 deferred 管线的连锁拒绝**；`OffscreenTarget` 本来就支持 depth-only，改成"有尺寸 + 至少有一样东西可挂（彩色**或**深度）"后三个警告全消。**修 2：缺 lender 的报告帧外沉默、帧内指名**（引擎在开帧前先公告 `composite`、其 lender `gbuffer` 后到，自愈的配置顺序被当失败报；现在帧外不报（与 `NotBuilt` 同一口径，真需要由执行器在录帧时报），帧内报一次且带 `'composite'`/`'gbuffer'`）。登记：**非索引/点线拓扑**（`star_cloud` 无索引 ⇒ `Malformed`；老实现合成恒等索引并尊重拓扑）与**首帧的 no-compiled-half 自愈项**。证据：冒烟截图 + 统计；真设备 `VsgBackendTest.ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput`（建成 / 0 彩色 / 深度视图非空 / `facts.promotion` 与 `core::depthPlan` 都答 sampleable）；旧用例改写（帧外沉默 + 帧内报文含两名）；变异 **3/3 红**。门禁 **664 用例 / 101 套件**、0 VUID / 0 SYNC-HAZARD、hygiene 0 / 861、相位 11 行 / 2 次（§11.16bj）。 |
-| **下一步** | **引擎侧继续**：非索引 / 点线拓扑的内容（点是 `vkCmdDraw` + POINT_LIST，两样一起才有意义）；首帧的 no-compiled-half；旧实现退场（删 `VsgRenderer` 一路）。 |
+| **下一步** | **引擎侧继续**：非索引 / 点线拓扑的内容（点是 `vkCmdDraw` + POINT_LIST，两样一起才有意义）；首帧的 no-compiled-half；旧实现退场（删 `VsgRenderer` 一路）。**（2026-09-24 注：这一行已过时——非索引/点线拓扑见 §11.16bk，旧实现退场见 §11.16bt；首帧自愈项仍未做。当前未做项以 §11.16bw 的表与各片末尾的"登记"为准，最新的量具缺陷与设备电池见 §11.16cc。）** |
 
 M1 起每条相位都要同时给出：像素/计数器断言（`PhaseTable` + `PixelProbe`）、不得移动的计数器
 （`expect` 为“不变”的那些）、以及需要时的一段 `AllocationGate` 窗口。
@@ -4320,9 +4324,9 @@ blending 是**关**的；重写版给了它们所有 draw 同一份 SRC_ALPHA/ON
 全量 670 用例只有这一条（旧名 `AResizeIsRefusedWhileADepthLeaseIsInForce`）需要跟着改。
 `scripts/check_include_hygiene.py` 0 / 866、`check_diagnostic_formats.py` 0 / 39。
 
-**顺带量到、本片不修（登记）**：①`ContentPass` 是每帧新建的，它的 `ReportOnce` 插话因此每帧重置——"pass 声明了影子图但
+**顺带量到、本片不修（登记）**：①`ContentPass` 是每帧新建的，它的 `ReportOnce` 插话因此每帧重置**（已由 §11.16ci 收掉）**——"pass 声明了影子图但
 程序没有 `shadow_map` 采样器"这条警告在延迟链上仍会每帧重复（24 行/帧）；②执行者层的**顺序**目前只有对象层用例 + 演示
-画面钉着（`applyTargetPlans` 的选择排序本身没有设备相位用例；相位表加一行要动门禁基线，留作下一步）。
+画面钉着（`applyTargetPlans` 的选择排序本身没有设备相位用例；相位表加一行要动门禁基线，留作下一步）。**（②已由 §11.16ce 收掉。）**
 
 ### 11.16bm M10d（2026-09-23）：resize 时"几何闪、天空不闪"——借来的深度被借方自己清掉
 
@@ -4359,7 +4363,7 @@ pass 必须 preserve）。④`VINE_PIPELINE=forward` 的 showcase 正常；hygie
 
 **登记**：①resize 帧仍会报 `vkCmdDraw-None-09600`（"被采样的图仍是 UNDEFINED"）约 2 条/帧；稳态跑是 20×`03047` + 6×`09600` +
 6×`Viewport-01770`，与**修前日志逐项相同**（核对过），所以那一类是**先于本片**存在的，不是这次改动带出来的；②上一片登记的
-"执行者层顺序还没有设备相位用例"仍未补。
+"执行者层顺序还没有设备相位用例"仍未补。**（②已由 §11.16ce 收掉。）**
 
 ### 11.16bn M10e（2026-09-23）：自查一遍——五个真缺陷（其中两个是上一片自己带出来的）、一条租约语义修正
 
@@ -4409,9 +4413,9 @@ framebuffer 小**：lender 缩小到 borrower 之下时会把 borrower 指向小
 （新增 2 个用例：宿主的 lender/borrower 深度行、重新指向的最小图拒绝；`ClearPlanTest` 重写为两个方向）。
 hygiene 0/866、诊断格式 0/39、文档符号 0。变异反证：①宿主机行那条（4 条断言红）②重新指向哨兵（3 条红）。
 
-**登记（未修，按严重度）**：①执行者层的**顺序**仍只有对象层用例 + 演示画面钉着（相位表加一行要动门禁基线）；
+**登记（未修，按严重度）**：①执行者层的**顺序**仍只有对象层用例 + 演示画面钉着（相位表加一行要动门禁基线）**（已由 §11.16ce 收掉）**；
 ②resize 帧仍有约 2 条 `vkCmdDraw-None-09600`，稳态 20×`03047` + 6×`09600` + 6×`Viewport-01770` 与修前逐项相同（先前存在）；
-③`ContentPass` 每帧新建 ⇒ `ReportOnce` 插话每帧重置（`shadow_map` 那条警告每帧重复）；④`VsgBackendTest.TheWindowFollowsItsHostsSurface
+③`ContentPass` 每帧新建 ⇒ `ReportOnce` 插话每帧重置（`shadow_map` 那条警告每帧重复）**（已由 §11.16ci 收掉：半分片的插话归半片、灯归 pass、空矩形归会话）**；④`VsgBackendTest.TheWindowFollowsItsHostsSurface
 ThroughALiveResize` 在全量套件里偶发红（平台回旧几何；单独跑绿）——测试/平台时序，不是渲染路径；⑤`rebuild()` 在租约存在时
 仍两向拒绝（有意的，但现在会**响亮**上报）；⑥borrower 的深度测试假定 lender 这一帧的画跑过（共享深度的固有前提，没有检测）；
 ⑦`reportUnapplied` 的句子说不出**是哪个**目标（执行者的条目不带名字）；⑧`fitPreviewRect` 在示例的匿名命名空间里，
@@ -4433,7 +4437,7 @@ ThroughALiveResize` 在全量套件里偶发红（平台回旧几何；单独跑
 正确的修法在**宿主那一侧**：测试宿主 `TestHostWindow::resize` 现在**轮询到服务器确实报告了新尺寸**（上限 500 ms，超时返回 false 并由用例 `ASSERT_TRUE` 响亮失败），而不是"发完 configure 就假装已经应用"（`xcb_configure_window` 是 unchecked 请求，原来那记 round trip 的回复还被丢掉了）。**证据：全量套件 6/6 绿**（改前 5 次里 2–3 次红）。
 **顺带**：`followResizedSurface` 的注释补上这条契约（宿主公告必须是表面已经有的尺寸），以后再有"resize 后画面不对"的报障，先查这一条。
 
-**3. 没做的（登记，附理由）**：①resize 帧那约 2 条 `vkCmdDraw-None-09600`（稳态 20×`03047`+6×`09600`+6×`Viewport-01770`，与修前逐项相同）——先于本片存在，且画面正确；②Release 构建：`build-release/` 只配了 selftest/tests，没有 app+插件（要整棵重配重编，不在本轮预算内）；③执行者层的相位用例。
+**3. 没做的（登记，附理由）**：①resize 帧那约 2 条 `vkCmdDraw-None-09600`（稳态 20×`03047`+6×`09600`+6×`Viewport-01770`，与修前逐项相同）——先于本片存在，且画面正确；②Release 构建：`build-release/` 只配了 selftest/tests，没有 app+插件（要整棵重配重编，不在本轮预算内）；③执行者层的相位用例。**（③已由 §11.16ce 收掉。）**
 
 ### 11.16bp M10g（2026-09-24）：给重写版补一道应用级门禁（画面即证据）
 
@@ -4478,6 +4482,9 @@ ThroughALiveResize` 在全量套件里偶发红（平台回旧几何；单独跑
 - 全量套件里"读窗口"的用例在**显示环境被占**时仍会红（单跑全绿、整套红一片；重跑一次也未必救得回来）。
   这是测试宿主的脆弱点，不是后端的画面问题；下一步要么让读窗口有可靠的同步点（会话自己的 presented 计数），
   要么把"整片窗口用例红"当成环境信号报告出来。
+  **（已由 §11.16cf 收掉大半：根因是服务端有时 >2 s 才把一个刚 map 的窗口报成 viewable，而用例在那之前
+  呈递的帧永远到不了——测试宿主现在先等这个报告，单跑 4/12 红 → 0/12、全量 4 跑全绿；**会话侧**
+  "画面已落地"的事实仍未做，那是 §11.16cf 第 8 条。）**
 
 ### 11.16bq M10h（2026-09-24）：Release 构建进同一道门禁——并抓出"两个 device 同时活着"
 
@@ -4734,11 +4741,11 @@ preview 244; vuid=0`）；include hygiene 0/`784` 文件、诊断格式 0/7、do
 | **B1** 三张内容表的查找是**线性扫描**，而每命令每帧要跑 5~9 次（`ContentFacts.cpp:50/91/122`；表只增不减） | **缺陷（已修：§11.16bz 量了斜率并落地行序 + 二分；`tablesFor` 自身那两次查找仍登记，见该节第 4 点）** | 复杂度 O(每帧命令数 × 表项数)：1 万 drawable/1 万表项时单帧 ~10⁸ 次指针比较，而 demo 是 ~42 条命令 ⇒ **任何现有门禁都看不见**（所以先做的是修 2：把键补完整，否则索引化会把"两行同键"变成"索引里后写覆盖先写"，把一个静默错图换成另一个）。另一条论证：**现在做没有收益面**，而有真实的回归面（内容路径是 407 条用例里最密的一片） | 形状：每帧在 `tablesFor` 里重建**排序的行号索引**（`vector<uint32_t>` + 每表一个比较器，O(n log n)/帧、`lower_bound` 每次 O(log n)），**不是**给表本身排序（手工构造的表会静默失配）；`ContentFacts` 带一个可空的 `const RowOrder*`，为空时回退到扫描并**在文档里写明这是慢路径**。**触发器**：某个负载的 drawable 数越过 ~2 000，或剖析里 `find*` 家族进入前列 |
 | **B2** 每 pass 每帧的堆分配：`planClearValues` 的 `std::vector<AttachmentClear>`（`ClearPlan.cpp:36-52`，`ClearPlan.hpp:78`）、`ContentPass` 每帧的两个 `vector<ReportOnce>`（`ContentPass.cpp:153`）、`makeInputSet` 的 key `vector`（`ContentPass.cpp:516`）、每 pass 一个 `vsg::RenderGraph`（`OffscreenTarget.cpp:757`） | **缺陷（已收尾：§11.16bx 修第一处，§11.16by 量完其余并改为上限门禁）** | 全部是**小对象**（每 pass 几十~几百字节），M10f 已实测本层稳态帧 ≈2 ms（Debug + lavapipe），而 `AllocationGate` 测的是**堆净增长**、看不见 allocate/free churn（见 B3）⇒ 现在改它无法用证据收尾。`vsg::RenderGraph` 那条更不该省：上一帧的图可能还在飞，复用一个对象就是在改一个已提交命令图里的状态 | 形状：`PassClearPlan::colors` 换成定长 `std::array<AttachmentClear, kMaxColorAttachments>`（附件的上界是设备给的，很小）+ 计数；`ContentPass` 的两个 `ReportOnce` 向量改成复用（resize 而非重新赋值）；`makeInputSet` 的 key 换成成员 scratch。**触发器**：B3 的计数式分配门禁就位之后（先有量具再改） |
 | **B3** 分配证据的强度被高估：`AllocationGate` 用 `mallinfo2`（`AllocationGate.cpp:21-30`，`__GLIBC__` 限定）⇒ **Windows 上 unsupported**，用例在 unsupported 时把增长当 0（`BackendEvidenceTest.cpp:363`）；且只测净增长，对 churn 免疫 | **缺陷（已修：§11.16bx 加了计数的一半，相位改以计数为判据）** | 它守的命题（"稳态帧不分配"）在**交付平台上没有量具**：Windows 上那条相位退化成"没测"，而本仓已经宣称 Windows 是一等公民（H1）。修法是换量具而不是改断言 —— 需要**计数式**分配门禁（覆写 `operator new/delete` 计数，或注入计数分配器），这本身要新单元 + 相位 + 变异，属独立一片 | 形状：`test_vsg` 里一个只计数不改行为的全局 `operator new` 钩子 + `AllocationGate::countAllocations()`；相位断言"稳态帧分配次数 == 0"（并保留 heap 增长作为第二判据）。**触发器**：B2 落地之前必须先有它（否则 B2 无法证明干净） |
-| **B4** `Scene::collectRenderCommandsShared` 每次收集分配 3 个 vector（`Scene.cpp:468/497/512`）并把整表搬 2~3 遍，`commands` 无 `reserve` | **缺陷（登记）** | 相机每动一帧就整份重来，是**引擎侧**（不在本轮前端改动范围内），而它的可见代价取决于命令数与 `sizeof(RenderCommand)`（≈200 B，含 3 个 `intrusive_ptr` 的原子增减）。当前 demo 的收集是 memo 命中或 ~42 条命令，量不出来 | 形状：`keyed` 改成 `vector<pair<double, uint32_t>>`（行号）并就地应用置换；`commands` 按上一帧规模 `reserve`。**触发器**：相机常动的负载 + drawable 数越过 ~2 000，或 B1 之后收集成为下一热点 |
-| **B5** 拒绝路径逐命令上报（`ContentPass.cpp:882-1116`）+ 每帧重置的 `ReportOnce`；块预算是硬上限（`draws/lights/shadows` 1024/帧、`views` 256/帧，`BlockStorage.hpp:50-56`） | **登记（前者已在 M10c/M10e 登记过）** | 洪水只在"场景里有坏内容"时出现，而那时宿主**需要**知道是哪一条；把逐命令上报压成"每插话一次"会让"这一帧有 300 条画不出来"变成一句话（丢信息）。块预算超限是**拒画**（有报告）而不是错图，且 1024 条/帧远超 demo 量级 | 形状：①按"每 pass 每原因一次"上报（保留第一条的完整身份，后续只计数）；②预算按需增长（插入点 `BlockStorage::beginFrame`）并在诊断里报"本帧预算不够"。**触发器**：大场景宿主报"日志被刷满"或撞到 1024 |
-| **D2** `Material::specular()` 的 alpha 文档写"A 是强度"，但**没有任何着色器读它**（`builtin_forward.frag:145`、`builtin_gbuffer.frag:59` 都只读 `.rgb`） | **缺陷（登记：要么接线，要么改文档，二选一）** | 接线会**改画面**（默认 `specular.a = 0.5` ⇒ 高光减半），而"逐像素材质"的通道已经排满（G-buffer 的 spec 附件 alpha 空着，前向可用 `material.specular.a`），于是它是"能接、但要重新调 demo 并重钉像素基线"的一类 | 形状：前向 `spec *= material.specular.a`、G-buffer 把 alpha 写进 spec 附件、延迟侧读出并相乘；两条基线（证据行）随之更新。**触发器**：有人要求"按材质调高光强度"（当前唯一能做到的是改 shininess） |
+| **B4**（**已测：§11.16cl**，0.53 µs/drawable·次，触发点仅 ~6% 帧预算 ⇒ 不改）`Scene::collectRenderCommandsShared` 每次收集分配 3 个 vector（`Scene.cpp:468/497/512`）并把整表搬 2~3 遍，`commands` 无 `reserve` | **缺陷（登记）** | 相机每动一帧就整份重来，是**引擎侧**（不在本轮前端改动范围内），而它的可见代价取决于命令数与 `sizeof(RenderCommand)`（≈200 B，含 3 个 `intrusive_ptr` 的原子增减）。当前 demo 的收集是 memo 命中或 ~42 条命令，量不出来 | 形状：`keyed` 改成 `vector<pair<double, uint32_t>>`（行号）并就地应用置换；`commands` 按上一帧规模 `reserve`。**触发器**：相机常动的负载 + drawable 数越过 ~2 000，或 B1 之后收集成为下一热点 |
+| **B5**（**前半已收：§11.16ck**；预算不改，理由见该节）拒绝路径逐命令上报（`ContentPass.cpp:882-1116`）+ 每帧重置的 `ReportOnce`；块预算是硬上限（`draws/lights/shadows` 1024/帧、`views` 256/帧，`BlockStorage.hpp:50-56`） | **登记（前者已在 M10c/M10e 登记过）** | 洪水只在"场景里有坏内容"时出现，而那时宿主**需要**知道是哪一条；把逐命令上报压成"每插话一次"会让"这一帧有 300 条画不出来"变成一句话（丢信息）。块预算超限是**拒画**（有报告）而不是错图，且 1024 条/帧远超 demo 量级 | 形状：①按"每 pass 每原因一次"上报（保留第一条的完整身份，后续只计数）；②预算按需增长（插入点 `BlockStorage::beginFrame`）并在诊断里报"本帧预算不够"。**触发器**：大场景宿主报"日志被刷满"或撞到 1024 |
+| **D2**（**已修：§11.16cj**）`Material::specular()` 的 alpha 文档写"A 是强度"，但**没有任何着色器读它**（`builtin_forward.frag:145`、`builtin_gbuffer.frag:59` 都只读 `.rgb`） | **缺陷（登记：要么接线，要么改文档，二选一）** | 接线会**改画面**（默认 `specular.a = 0.5` ⇒ 高光减半），而"逐像素材质"的通道已经排满（G-buffer 的 spec 附件 alpha 空着，前向可用 `material.specular.a`），于是它是"能接、但要重新调 demo 并重钉像素基线"的一类 | 形状：前向 `spec *= material.specular.a`、G-buffer 把 alpha 写进 spec 附件、延迟侧读出并相乘；两条基线（证据行）随之更新。**触发器**：有人要求"按材质调高光强度"（当前唯一能做到的是改 shininess） |
 | **D3** 色彩空间没有契约：窗口交换链是 `*SRGB`（`WindowTarget.cpp:24-28`），离屏目标是线性，着色器直接对 0..1 的材质/灯值相乘，纹理按 `PixelFormat` 一对一映射 | **设计问题（登记，倾向"写契约"而不是"改管线"）** | 现在**能自洽**：写入 SRGB 交换链的值被硬件当作线性、离屏 16F 也是线性、`*Srgb` 贴图格式存在且映射正确 ⇒ 只要"贴图用 `*Srgb`、颜色值按线性给"，管线就是对的线性管线。真正缺的是**把这条写成契约**并对最常见的错法报警 | 形状：①`Texture`/`PixelFormat`/`RenderTarget::ColorFormat` 的文档写明"引擎内部一律线性，颜色贴图请用 `*Srgb`（PNG 通常是 sRGB）"；②`Colorf` 文档写明"线性值"；③（可选）在 `MaterialImages::acquire` 对"非 sRGB 格式的颜色贴图"给一次 Info。**触发器**：有人报"画面比参考图亮/暗一个 gamma" |
-| **D4** 延迟光照的背景判据是 `dot(pos,pos) < 1e-6`（`builtin_deferred_lighting.frag:34`）⇒ 相机贴住几何时出现固定的 0.06 色洞 | **缺陷（登记：判据该换成"这条通道写没写过"）** | 修法明确（G-buffer 的 position 附件 `w = 1` 表示写过，清成透明黑 ⇒ `w == 0` 就是没写过），但它是**着色器契约**的改动：要同时改两个 shader 的注释/ABI 说明、重跑 `vine_shader_check.sh`，并造一个"相机在几何内部"的设备像素用例才有证据 —— 本机窗口用例跳过，这条链路里最贵的一环（真机画面）恰好是缺的 | 形状：`if (pos_tex.a < 0.5) { 背景 }`，并把"w = 1 表示写过"写进 G-buffer 的 ABI 说明；用例：把相机放进球内部，断言中心像素不是 0.06。**触发器**：有人报"贴脸看模型时出现一块纯色" |
+| **D4**（**已修：§11.16cg**）延迟光照的背景判据是 `dot(pos,pos) < 1e-6`（`builtin_deferred_lighting.frag:34`）⇒ 相机贴住几何时出现固定的 0.06 色洞 | **缺陷（登记：判据该换成"这条通道写没写过"）** | 修法明确（G-buffer 的 position 附件 `w = 1` 表示写过，清成透明黑 ⇒ `w == 0` 就是没写过），但它是**着色器契约**的改动：要同时改两个 shader 的注释/ABI 说明、重跑 `vine_shader_check.sh`，并造一个"相机在几何内部"的设备像素用例才有证据 —— 本机窗口用例跳过，这条链路里最贵的一环（真机画面）恰好是缺的 | 形状：`if (pos_tex.a < 0.5) { 背景 }`，并把"w = 1 表示写过"写进 G-buffer 的 ABI 说明；用例：把相机放进球内部，断言中心像素不是 0.06。**触发器**：有人报"贴脸看模型时出现一块纯色" |
 | **D5** G-buffer 的 albedo 附件是 `RGBA8`（`RenderPipelineBuilder.cpp:87`）而存的是**线性** albedo | **登记（低）** | 8 位线性量化的代价是暗部条带；改成 sRGB 存储或 16F 会**改内存与前缀**（目标形状进管线键，全部离屏管线要重编一次），收益只在极暗材质上可见 | 形状：`attachColor(RGBA16F)`（或让 albedo 走 sRGB 附件）。**触发器**：暗部条带被报（或做 HDR 管线时一并改） |
 | **D6** `LightType::Point/Spot` 落到 `LightBlock.cpp:133` 的 `default: break;` 静默丢弃 | **不是缺陷（维持）** | SDK 自己的文档写着这两种是 **reserved / planned later**（`Light.hpp:22-23,55-56`），而且**丢了几盏**会经 `reportLightsDropped` 报一次（`ContentPass.cpp:1209`），报文已含"a kind the light block does not carry" | 不改。**触发器**：SDK 真的支持点/聚光（那时块布局与 falloff 一起设计） |
 | **C1 残留** 历史段落里仍有大量旧单元名 | **已按既有规矩处理** | `backend.md` 的 §5.3.x 被补上 `历史登记` 标记（修 4 报出的那条），其余历史段落本来就带标记；门禁的豁免规则（冻结段落 / `<!-- drift-ok -->`）保持不变 —— 这是"旧记录保留可读"与"新句子不许漂移"之间的既定折中 | — |
@@ -4979,3 +4986,519 @@ eraseIf / eraseAt）在**同一处**移动三者——顺带把现在**手工对
 **证据（本条）**：`test_vsg` 415 → **417**；**393 passed / 24 skipped / 0 failed**；
 `test_vsg` 与 `gfx_backend_vsg` 两个目标 0 error 0 warning；三条静态门禁绿。
 
+### 11.16cc M11g（2026-09-24）：量具自己坏了——4 对齐的分配变成 `bad_alloc`，设备电池全灭（修好并接回）
+
+**一句话**：`tests/test_vsg/AllocationCounter.cpp`（§11.16bx 为"稳态帧不分配"加的**计数分配器**）把**每一个**
+aligned 分配都转给 `posix_memalign`，而它拒绝小于 `sizeof(void*)` 的对齐 ⇒ 那些请求变成 `std::bad_alloc`；
+libLLVM 不接这个异常（lavapipe 的 JIT 会给 `allocate_buffer` 传 **4 对齐**的块），于是**任何带设备的运行都会在
+第一个设备用例上 abort**。**从 M11b 起，设备电池事实上停止运行**，而 M11a–M11f 的证据行（"383~393 passed /
+24 skipped"）恰好是**不含设备用例**的那一半 —— 这条缺陷的形状正是本仓最在意的那一类：**门禁静默失效**。
+
+**1. 怎么发现的。** 本片从"继续迭代"的第一步开始：源码比二进制新（20:21 对 09:00）⇒ 先整包重建，再跑基线。
+`test_vsg` 在 `ExecutorTest.TheContentOfAPassIsRecordedInsideThatPassWithThePlansClear` 上 **abort**：
+`LLVM ERROR: out of memory / Buffer allocation failed`。**它不是内存不够**：`/usr/bin/time -v` 显示
+elapsed **0.03 s**、峰值 RSS **85 MB**（本机当时 10 GB 空闲），是"分配被拒绝"而不是"分配不到"。
+
+**2. 定位（gdb，两步）。** ①断在 `posix_memalign` 并打印参数：最后一次调用是 **`align=4 size=512`**；
+②abort 处的调用栈把这条链补齐：`llvm::report_bad_alloc_error` ← `llvm::allocate_buffer` ←
+`CodeGenTargetMachineImpl::initAsmInfo` ← `EngineBuilder::selectTarget` ← `libvulkan_lvp`（**lavapipe 编译第一个
+管线时给 JIT 选目标机**）。机制：POSIX 要求 `posix_memalign` 的对齐是**二的幂且是 `sizeof(void*)` 的倍数**，
+`4` 被 EINVAL 拒 ⇒ 我们的 aligned `operator new` 按契约抛 `bad_alloc` ⇒ libLLVM 既没接也没查，直接 abort。
+
+**3. 为什么是"静默"的（本片最值钱的一条）。** 计数分配器是 **M11b（§11.16bx）** 加进测试目标的；它一进来，
+**带设备的运行就再也跑不完**，而每片的收尾证据取的是**不带设备**的那次运行（"passed / 24 skipped"），
+静态门禁三条全绿 ⇒ 报告一直很好看。**最后一次同时跑了设备与门禁的记录是 M10j（§11.16bs）**；M11a–M11f
+六片的证据面都没有设备。教训写进本条：**"passed / N skipped" 里的 N 就是设备电池的缺席**，它必须被当成**没测**，
+而不是"跑过了、跳过了几条"。（门禁脚本本来就把"有 SKIP 即失败"写在头上，但只有当人真的去跑门禁时才生效。）
+
+**4. 修法：对齐不是"更大"，"小"也一样要服务。** `allocateAligned`（POSIX 半，`AllocationCounter.cpp`）：
+对齐 **≤ `alignof(std::max_align_t)` 时直接 `std::malloc`**（malloc 本来就满足一切基本对齐，`posix_memalign`
+只服务更大的），其余仍走 `posix_memalign`。**分支故意只放在 POSIX 半**：MSVC 的 `_aligned_malloc` 自己接受小对齐，
+而它分配的内存必须由 `_aligned_free` 释放 —— 在 Windows 上返回 `malloc` 内存会被 `releaseAligned` 交给
+`_aligned_free`，那是**堆损坏**（注释里写明）。
+
+**5. 守卫（这条缺陷的回归用例）。** `CoreAllocationGateTest.EveryAlignmentTheLanguageAllowsIsServed`：
+①逐对齐（1/2/4/8/16/32/64/128）断言"服务得到 + 指针真的按它对齐 + 配对的 aligned delete 能释放"；
+②再在**只有分配/释放的窗口**里数一次（`allocations() == 8`、字节读数 0）——检查必须在窗口外，因为
+**gtest 的消息自己会分配**（第一版把 `EXPECT_*` 放进窗口，读数就带上 160 B 的测试框架噪声，实测抓到）。
+
+**6. 证据**（本片的总账，也是重写版第一次把**全部**电池跑完的记录）。
+`VK_ICD_FILENAMES=<lvp> DISPLAY=:0 ./build/bin/test_vsg`：**430 passed / 0 skipped / 0 failed**（修前：
+第一个设备用例 abort，exit 134）。`scripts/vsg_rewrite_gate.sh build`：**每个阶段干净** ——
+`suite (validation) cases=430 failed=0 vuid=0 hazard=0 skipped=0`、`sync validation 430/0/0/0`、
+include hygiene **0 / 792 文件**、诊断格式 **0 / 7**、doc symbols **145 单元**、
+相位 **11 行 / 2 次运行全部收尾**、应用阶段 `before 378x247: content 87.04%, preview 244;
+after 698x132: content 85.14%, preview 244; vuid=0 warnings=1`。
+**两棵树跑同一道门禁**（本仓的规矩）：`build` 与 `build-release` 各自的阶段行与画面参数**逐字相同**。
+
+**7. 变异（2/2，都跑了恢复后的复验）。** 把"小对齐走 malloc"那一支删回去 ⇒ ①新用例**红**（exit 1）；
+②第一个设备用例**abort**（exit **-6**，日志里 `LLVM ERROR: out of memory`）；恢复后两条都绿
+（守卫 exit 0、设备用例 exit 0 / 96 ms）。
+
+**7b. 同一族的第二处：`-O2` 把"churn 的正对照"优化掉了（Release 树里它一直是 0/64）。** 按本仓的规矩
+**两棵树跑同一道门禁**，第一次跑 Release 就抓到 `CoreAllocationGateTest.TheCountedHalfSeesChurnTheHeapReadingCannot`
+红：`gate.allocations() == 0`、`gate.bytes() == 0` —— 语言允许**省略**对可替换全局分配函数的调用
+（`[expr.new]` 的省略规则），`-O2` 正是这么做的 ⇒ §11.16bx 写的这条**正对照**只在 Debug 树里成立。
+修法：新 `keepAllocation()`（本文件的匿名命名空间里的 `noinline` 函数：POSIX 用
+`asm volatile("" : : "r"(block) : "memory")`，MSVC 用 `__declspec(noinline)` + volatile 存储）把块地址交给
+优化器看不穿的代码；注释里写明**为什么 volatile 存储不够**（语言不要求地址值互不相同，栈块也是合法答案）。
+变异：**删掉那一行调用 ⇒ Release 红（0/64）、Debug 绿（64/64）**——它正是那棵树里唯一承重的一行；恢复后两棵树都绿。
+
+**8. 顺带核实的三件事。**
+- 应用阶段那**唯一一条** warning 就是 §11.16bj 登记的**首帧 "no compiled content half"**
+  （实测抓到原文：`the pass' sampled inputs is not drawn: no compiled content half was built for this pass`），
+  它仍按"首帧自愈"登记（未做）。
+- 窗口类用例在今天这台机器上**真的在跑**（`DISPLAY=:0`）：430 条里有它们，且 `skipped=0`。
+- **Release 树当时还缺插件**（`build-release/plugins/vine/gfx_backend_vsg.so` 没建过 ⇒ 三条
+  `VsgBackendPluginTest` 报后端为空）；`ninja -C build-release gfx_backend_vsg` 补上后那三条立刻绿。
+  这与 M10h 的教训同源（`--target Vine` 不会顺带建插件），所以"两棵树跑门禁"必须**连插件目标一起建**。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `tests/test_vsg/AllocationCounter.cpp` | `allocateAligned`：POSIX 半加"≤ `max_align_t` ⇒ `std::malloc`"（MSVC 半不动，理由写在注释里） |
+| `tests/test_vsg/BackendEvidenceTest.cpp` | 新用例 `CoreAllocationGateTest.EveryAlignmentTheLanguageAllowsIsServed`（形状 + 计数，检查在窗口外）；新 helper `keepAllocation()` + churn 用例改用它（挡 `-O2` 的省略） |
+| `.ai/design/vsg-reimplementation.md` | 本节 + 顶部"实施进度"改为指向 §11 最新一节 + §11.17 末行加过时注记 |
+| `src/plugins/gfx_backend_vsg/docs/backend.md` | §0.3 补"插桩者自己的契约"（对齐 ≠ 更大；`skipped` 的条数就是设备电池的缺席） |
+
+**下一步（本片之后）**：**设备电池必须回到每次收尾里**（跑门禁、或至少带 `VK_ICD_FILENAMES` 跑一次套件并断言
+`skipped == 0`，**连插件目标一起建**）；其余未做项照旧以 §11.16bw 的表与各片"登记"为准（B4/B5、D2–D5、A4/A6、
+执行者顺序的设备相位、首帧自愈、`ContentPass` 每帧重置的插话）。
+
+### 11.16cd M11h（2026-09-24）：空绘制调用不是绘制调用——应用日志的最后一条 warning 消失
+
+**一句话**：引擎真的会用**空命令列表**调 `render()`（示例的坐标轴 gizmo 在表面尺寸还没定下来时），而
+`FrameRecorder::render` 把它无条件记成"一次内容绘制"⇒ 计划里出现**没有命令的内容绘制** ⇒ `ContentPass::record`
+的 `has_content` 把它读成"这趟 pass 有内容，但没有为它编出半片"⇒ **整趟拒绝**（连它的清屏一起）并报一条
+warning。修法 = **没有东西可画的调用不是绘制调用**：调用本身照旧（公告照旧被消费），只是不记成绘制。
+
+**1. 怎么定位的（探针 + 命名）。** 上一片修好设备电池后，应用日志只剩**一条** warning（首帧）。在
+`ContentAssembly::record` / `ContentHalves::halvesFor` / `ContentPass::record` 的拒绝点插探针，第一帧的七趟 pass 里
+第 7 趟是：`colors=1 draws=1 content=1 entries=0`，**而且没有任何"事实缺失"的 skip 输出** ⇒ 不是表查不到，而是那条
+draw 本身**没有命令**（探针：`draw kind=0 commands=0`）。再在 `beginPass` 打印 pass 身份：`id=7 name=`（无名，
+与 `id=6 name=` 一起正是 `RenderPipelineBuilder::applyOverlays` 加的 gizmo 与 fps 两个叠层 pass）；`AxisGizmo::execute`
+在 `surface_w_ <= 0` 时不会设视口，那一帧的场景收集因此是空的。
+
+**2. 缺陷链（三跳，每跳都合法）。** ①引擎的调用合法（空的命令列表就是"这次什么都没画"）；②录制器把调用记成
+绘制（**这一步是错的**：计划于是描述了一件不存在的工作）；③内容层看到"内容绘制"却没有半片 ⇒ 按既有政策拒绝整趟
+（那是它该做的——对**真的**有命令但缺半片的趟）。所以修在②，不是给③加容忍：本仓的口径是"修生产者，不给消费者
+加"。
+
+**3. 修法（`core/FrameRecorder::render`，唯一一处）。**
+- `commands` 为空 ⇒ **不记绘制**（`open_draws_` 不动、`Observe::counters().draws` 不加——那个计数器的语义就是
+  "draw calls **recorded**"，既有用例 `ADrawingCallWithNoScopeIsRefused…` 已经钉着"被拒的调用不算"）。
+- 调用仍然是调用：**viewport / lights 的公告照旧被消费**（"一条公告服务一次调用"这条契约不变，所以宿主的公告
+  不会漏进下一次调用），pass 的存活规则不变（有清屏就活、既没画也没清屏就不是 pass）。
+- `FrameRecorder.hpp` 的契约注记补上这条（就是那三条"消费规则"里的第二条）。
+
+**4. 守卫（无设备）。** `FrameRecorderTest.ADrawingCallWithNothingToDrawIsNotADrawAtAll`：
+①同一趟里先空调用（并先公告 viewport + 灯）再真调用 ⇒ 计划里**只有一条 draw**、它**没有**拿到那对公告（说明空调用
+消费掉了）、`counters().draws == 1`、诊断干净；②一趟只有空调用且**没有清屏** ⇒ 计划里**没有这趟 pass**（同既有规则）。
+形状是"一条公告一次调用"那条用例的邻居，读起来是同一件事的两半。
+
+**5. 证据（两棵树同一道门禁）。** `build` 与 `build-release` 各自：`suite (validation) cases=431 failed=0 vuid=0
+hazard=0 skipped=0`（+1 条新用例）、`sync validation 431/0/0/0`、hygiene `0/792`、诊断格式 `0/7`、doc symbols
+`145`、相位 11 行 2 次收尾、应用阶段 **`vuid=0 warnings=0`**（修前 `warnings=1`，那条 warning 就是本节开头的报文），
+而画面参数与修前**逐字相同**：`before 378x247: content 87.04%, preview 244; after 698x132: content 85.14%,
+preview 244` ⇒ 去掉的是一次**没有内容**的拒绝，不是画面。gizmo 从第二帧起照旧可见（首帧它本来就没有命令可画）。
+
+**6. 变异（1/1，含恢复复验）。** 把守卫改回 `if (true || !commands.empty())` ⇒ ①新用例**红**；②应用日志的
+warning **回到 1**（原文：`the pass' sampled inputs is not drawn: no compiled content half was built for this pass`）；
+恢复后两处都绿、`warnings=0`。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `src/plugins/gfx_backend_vsg/src/core/FrameRecorder.cpp` | `render()`：空命令列表 ⇒ 不记绘制（公告照旧消费、计数器照旧只数被记下的） |
+| `src/plugins/gfx_backend_vsg/include/vine/vsg/core/FrameRecorder.hpp` | 消费规则第二条补"空调用仍是调用，但不是绘制调用"及实测出处 |
+| `tests/test_vsg/FrameRecorderTest.cpp` | 新用例 `ADrawingCallWithNothingToDrawIsNotADrawAtAll`（空调用不记 + 公告被消费 + 无清屏即无 pass） |
+| `.ai/design/vsg-reimplementation.md` | 本节 |
+
+**登记（本片没做）**：①**首帧的 gizmo 画不出来**这件事本身在引擎侧（`AxisGizmo` 表面尺寸未知 ⇒ 空场景）；后端
+现在照实处理（那一帧没有它的 pass），要"首帧也画"属于引擎的改动（触发条件：有人报首帧缺 gizmo）；②门禁本次首跑
+出现一次**已知的窗口读回偶发**（`VsgBackendTest.AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNothing`，
+重跑即绿，门禁照既有规矩**把首跑失败写进证据行**再裁决）——与本节改动无关，留给出窗口同步点那一条登记；
+③其余未做项照旧以 §11.16bw 与各片"登记"为准。
+
+### 11.16ce M11i（2026-09-24）：租约的顺序有了设备相位——借来的一对一起长大
+
+**本条收掉 M10c/M10d/M10e/M10f 反复登记的那一条**："`applyTargetPlans` 的选择排序只有对象层用例 + 演示画面钉着，
+没有设备相位用例"。做法是**加一行相位**（`DevicePhaseTest` 的第七行）+ 一个共享体（`DevicePhases.hpp` 的
+`runLeasedTargetOrderPhase`，与既有相位一样"体是函数、用例与相位行各读一次"）。
+
+**1. 相位长什么样（它的形状就是它要防的那个缺陷）。** 出借方 8×4（自己的颜色 + 深度），借方 8×4（**自己的颜色、
+出借方的深度**）；计划把**借方的那趟 pass 放在第一位**（走计划顺序 = 走错顺序），而事实里两个目标都要求长到
+16×12 ⇒ 两趟都是 `ResizeInPlace`。第二帧应用：
+- `applied.resized == 2`、`refused + failed == 0`、两个目标的 extent 都是 16×12；
+- `queue.pending() == 2`（两套被换掉的附件都**停放**，不是销毁）；
+- 画面：两个目标都在**新** extent 上给出各自的清屏色（`probe().pixel(8,6)` + `wholeImageMatches`），诊断干净。
+
+第一帧是**建尺寸那一帧**（两趟 bootstrap 清屏），因为 `planTarget` 对"还没人写过"的目标答 `Repair(Bootstrap)`，
+而那一臂**压过** resize —— 先渲染一帧，第二帧才是"长大"（这也是示例真实经历的次序）。
+
+**2. 写这一行当场抓到的两件事（都值得写下来）。**
+- **顺序规则靠事实驱动，不靠身份猜测**：第一版相位手工拼 `TargetFacts` 时**没写租约**（`depth.borrowed` /
+  `depth.source`）⇒ 执行者无从知道"借方的 framebuffer 指着出借方的深度图"，于是按计划顺序走、借方被拒
+  （实测 `resized == 1`、借方停在 8×4）。相位现在把租约**按 `OffscreenTarget::depth()` 的报法**原样填进事实
+  （`has_depth` / `borrowed` / `source` / `promotion` / `any_pass_preserves_depth`）。⇒ **任何自己拼 facts 的调用方
+  都要照这条**，否则拿到的是"坏顺序"那一支。
+- **两个计数器的语义**：`parked` 与 `plan_applied` 是**相位体自己加上去的**（不是读队列），所以新相位也要加；
+  表尾的合计断言（frames / targets_built / resizes_replaced / plan_applied / parked）跟着更新。
+
+**3. 证据（两棵树同一道门禁）。** `build` 与 `build-release`：`cases=431 failed=0 vuid=0 hazard=0 skipped=0`
+（validation 与 sync 各一次）、hygiene `0/792`、诊断格式 `0/7`、doc symbols `145`、**相位 12 行 / 2 次运行全部收尾**
+（新行：`[selftest] leased targets: the plan's answers are applied lender first, so a pair that grows together
+moves together`）、应用 `vuid=0 warnings=0`。**一处诚实记录**：应用阶段的画面参数这次 Debug 跑是
+`content 86.53% / preview 242`、Release 跑是 `87.04% / 244`（历史各跑也都是后者）⇒ 那几个数字在跑与跑之间有
+约半个百分点的抖动（FPS 数字与抓帧时机），**门禁判的是阈值**，且本片没有一处改动落在应用路径上。
+
+**4. 变异（1/1，含恢复复验）。** 把选择排序的租约查找改成"没有出借方"（`indexOf(lenderOf(...))` ⇒
+`frame.targets.size()`，即按计划顺序走）⇒ 新相位**红**：`resized == 1`、`refused == 1`、借方仍是 8×4，行文本
+`FAILED: assertion failed`；恢复后 7 行全绿。⇒ 这一行真的在守"顺序"，不是"跑过了"。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `tests/test_vsg/ExecutorTest.cpp` | 新相位体 `runLeasedTargetOrderPhase`（两帧：bootstrap → 长大；含租约事实的填法） |
+| `tests/test_vsg/DevicePhases.hpp` | 声明 + 为什么这样排序的注释（借方的 framebuffer 指着出借方的图） |
+| `tests/test_vsg/DevicePhaseTest.cpp` | 第七行（门 `resizes_replaced +2`）、基线行、`passed == 7`、表尾合计更新 |
+| `.ai/design/vsg-reimplementation.md` | 本节 + M10c/M10d/M10e/M10f 的四处登记标注"已由本节收掉" |
+
+**下一步（本片之后）**：仍未做的按 §11.16bw 与各片"登记"（B4/B5、D2–D5、A4/A6、`ContentPass` 每帧重置的插话、
+首帧的 gizmo 空白、窗口读回偶发）。
+
+
+
+### 11.16cf M11j（2026-09-24）：读窗口的偶发红——"窗口还没被服务端报可用就呈递"（测试宿主的同步点）
+
+**登记来自哪里**：§11.16bp 的最后一条（"全量套件里读窗口的用例在**显示环境被占**时仍会红…
+下一步要么让读窗口有可靠的同步点（会话自己的 presented 计数），要么把'整片窗口用例红'当成
+环境信号报告出来"）。本片交的是**测量 + 测试宿主侧的同步点**，**不是**那个会话侧计数器。
+
+**1. 先把"黑"拆成两种事实（新仪器）。** `TestHostWindow` 现在记下每一次读**自己的 X 错误**
+（`readError()`，0 = 服务端照办了）。同一片黑于是分成两类：`read-error 8`（`BadMatch`，服务端
+**拒绝**了这次读，比如窗口还不被它认为 viewable）与 `read-error 0`（读被服务了，窗口里就是没有
+画面）。改之前两者在返回值里一模一样（都是 `{0,0,0}`）——这正是它被当成"画面错误"读了好几轮的
+原因。设备无关的新用例组 `HostWindowReadTest`（纯 X，不碰设备）把两半都钉住：画上去的白能读回
+且 `read-error 0`；**越界的读被拒并如实报 8**（确定性守卫）；有界等待在"已经满足"时不花时间、
+"永不满足"时到点也返回（调用方自己的断言才判红）。
+
+**2. 20 次探针的时间线（关键测量）。** 一次失败的跑里，从建窗之后依次是：
+`attempt=0 @501ms read-error=8`（窗口还没被报 VIEWABLE，读被拒）→ 接着 4 次 `read-error=0`
+但仍黑（≈1.3 s）→ 用例**再呈递一次自己的图**之后立刻读到 `(0,137,0)`（画面）。另一跑 5 s 内
+**始终没到**。⇒ 两件事：①窗口被服务端报 VIEWABLE **之前**的呈递**永远到不了**窗口（等多久都
+没用）；②同一张画面**再呈递一次**能让它落地。
+
+**3. 另一件被误用的事：plan-free 帧不是 settle。** 会话的空帧呈递的是**会话自己的图**，它会把
+窗口按自己那张图**重画**（清屏色）。所以"驱动两帧空计划再读"其实是在**盖掉**画面：读到的黑是
+真事实，不是延迟。⇒ 三处 settle 改成**再呈递同一张画面**：`VsgBackendTest` 四例（`settle()`
+再 `drive()` 两次）、`SessionContentTest` 与 `WindowCompositionTest`（在循环里重新
+`assignFrameGraphs` 同一张 `command_graph` 再提交——分配是"给下一次 `commitFrame` 用"的，
+所以必须进循环）。
+
+**4. 根因（设备无关的测量）。** `TestHostWindow` 构造时等"服务端自己报 VIEWABLE"（`kViewDeadline`
+先是 2 s）。**只跑 X、不建设备的 `HostWindowReadTest` 20 次里红了 2 次**，红的就是
+`wasViewableAtCreation()`：**服务端有时要超过 2 s 才把一个刚 map 的窗口报成 viewable**。这不是
+后端的画面问题，是显示环境的时间抖动；而用例在这段窗口期里呈递的帧全部作废、读出来全是黑。
+另一时段 30 次里**一次都没迟到** ⇒ 抖动是**成片**出现的，与之前"整片用例同时红"的观察一致。
+
+**5. 改了什么（全在测试侧，产品零改动）。** ①构造**先等**服务端报 viewable 再让调用方呈递
+（`kViewDeadline{10s}`；迟到时打一行 `[host-window] the server reported the window viewable
+after N ms`）；②`readError()` + `HostWindowReadTest`（仪器）；③三处 settle 改成再呈递画面；
+④窗口用例的**首次读**走有界等待 `waitForPixel`（50 ms 轮询而非 2 ms：紧轮询自己的往返会跟显示
+路径的拷贝抢）。
+
+**6. 证据（同一道门禁，两棵树）。** `build` 与 `build-release`：`cases=434 failed=0 vuid=0
+hazard=0 skipped=0`（validation 与 sync 各一次）、hygiene `0/793`、诊断格式 `0/7`、
+doc symbols `145`、**相位 12 行 / 2 次运行全部收尾**、应用两棵树都是
+`content 87.04% / 85.14%, preview 244, vuid=0 warnings=0`。
+改前改后的速率（同一时段内的 A/B，见 §7 的诚实记录）：单跑
+`SessionContentTest.APlanDrivenFrame…` **4/12 红 → 0/12 红**；三套件组 **2/3 红 → 3/3 绿**；
+全量套件 **4 跑里 3 跑有 3~7 条红 → 4 跑全绿（434 passed）**。
+
+**7. 变异与"这次没证成的部分"（诚实记录）。** M3（确定性守卫）：构造里去掉那次等待 ⇒
+`HostWindowReadTest.AReadOfWhatTheWindowShows…` **红**（消息 `…(waited 0 ms)`），恢复即绿。
+M1/M2（本片仪器，早先已证）：`readError()` 不记错误 ⇒ 越界读用例红；`waitForPixel` 读完第一口
+就返回 ⇒ 期限用例红。**M4 没证成**：把 `kViewDeadline` 设成 0 再跑 12 次**一次没红**——那个时段
+服务端已经不迟到了。所以"改前/改后"的速率对比是**跨时段**量的，不是同一次电池里的 A/B；本片
+能确定的是机制（§2/§3/§4 三处直接测量）与守卫（M3），不是"同一分钟内 4/12 → 0/12"。
+
+**8. 没做到的（登记）。** 真正的同步点是**显示路径**的事实，今天没做：构造的等待只保证"呈递
+发生在窗口可用之后"，**不**保证"读的时候画面已经落地"（§2 的 5 s 那跑里它就没落地）。产品侧
+方向仍是会话自己的 presented/displayed 计数或 present 完成事件；在此之前，门禁遇到窗口组红
+仍按既有规矩**重跑一次并把首跑失败具名写进证据行**。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `tests/test_vsg/TestHostWindow.hpp` | 构造等 viewable（`kViewDeadline`/`wasViewableAtCreation`/`viewWait`）、`readError()`、`waitForPixel`（`kProbeInterval` 50 ms）、`kReadDeadline` |
+| `tests/test_vsg/HostWindowReadTest.cpp` | 新设备无关用例组 3 条（仪器两半 + 有界等待） |
+| `tests/test_vsg/VsgBackendTest.cpp` | 四处 `settle()` 改为再呈递画面；首次读走有界等待；失败消息带 `read-error` |
+| `tests/test_vsg/SessionContentTest.cpp` / `WindowCompositionTest.cpp` | settle 改为再提交同一张 `command_graph`；失败消息带 `read-error` |
+| `.ai/design/vsg-reimplementation.md` | 本节 + §11.16bp 那条登记的标注 |
+
+**下一步（本片之后）**：仍未做的按 §11.16bw 与各片"登记"（B4/B5、D2–D5、A4/A6、`ContentPass`
+每帧重置的插话、首帧的 gizmo 空白），加上本片第 8 条（会话侧"画面已落地"的事实）。
+
+### 11.16cg M11k（2026-09-25）：延迟光照的"背景"判据（收掉 D4）——写掩码，不是距离
+
+**登记来自哪里**：§11.16bw 表的 **D4** 行："延迟光照的背景判据是 `dot(pos,pos) < 1e-6`
+（`builtin_deferred_lighting.frag:34`）⇒ 相机贴住几何时出现固定的 0.06 色洞"，形状当时就写明了：
+"判据该换成'这条通道写没写过'（G-buffer 的 position 附件 `w = 1` 表示写过，清成透明黑 ⇒ `w == 0`
+就是没写过）"，并在末句标注"本机窗口用例跳过，这条链路里最贵的一环（真机画面）恰好是缺的"。
+
+**1. 先把注册里的两个前提量实（都成立，不用改）**：
+- `builtin_gbuffer.frag:62` 本来就写 `out_position = vec4(vine_view_pos, 1.0)`；
+- 后端的批清除里，**只有附件 0 收到 pass 的颜色**，其余彩色附件保持"透明黑"构造值
+  （`core::planClearValues` 的 Rule 4，注释就写着"那是'这里什么都没有'的值"）⇒ 背景像素的
+  `w` 恰好是 0。
+
+**2. 修法（两行 + 两处文档）。** 光照 program 改成读**写掩码**：
+`vec4 pos4 = texture(pos_tex, uv); if (pos4.a < 0.5) { 背景; }`，`pos = pos4.xyz` 照旧。
+两个 program 各自的注释写明这是**一条契约的两半**（G-buffer 写 `w = 1`，光照读 `w`），
+`src/viz/graphics/docs/usage.md` §3.4 的手搭延迟管线清单里也补了一句（位置的 w 不是备用通道）。
+
+**3. 证据（真设备像素，新用例 435 条里的第 435 条）。**
+`ContentPassTest.TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritten`：**手写**的 G-buffer
+writer 覆盖画面**左半**（NDC x ∈ [-1,0]）并把位置**精确**写成 `vec4(0,0,0,1)`——相机贴住表面的
+那个像素，注册里说"最贵的一环"就是它：光栅化的几何**不可能**可靠地落在 `|pos|² < 1e-6` 上，只有
+手写值能稳定钉住这个分支；右半不覆盖（保留清除=透明黑）。两半各一个探针：
+- 左半（写过的、位置在相机原点）⇒ 必须被**着色**：`albedo(1,0.25,0.25) × ambient 0.5 = (0.5,0.125,0.125)`；
+- 右半（没写过的）⇒ 必须是 0.06 的平背景。
+修好之前/之后两条都被断言，所以它同时钉"新判据"和"背景没丢"。
+
+**4. 变异（2/2 红，各带恢复复验）。**
+- **M1**：把判据改回 `dot(pos,pos) < 1e-6` ⇒ 用例红，消息正是它自己的诊断：
+  `a WRITTEN pixel whose view position is (0,0,0) is shaded, got (15, 15, 15) - (15, 15, 15) here means
+  the background test is reading the distance again`；
+- **M2**：手写 writer 改成写 `w = 0` ⇒ 同样红（证明用例读的是**写掩码**，不是距离）。
+- **M3（契约的另一半：引擎自己的 G-buffer 停止写 `w = 1`）**：没有任何用例写这个像素，所以拿**演示
+  画面**量（照门禁自己的法子：从应用日志里取 `attached to the host window 0x…`）。实测：窗口读**看
+  得见**——天空的渐变消失、出现 **14 440 个像素的平色 `(69,69,69)`**（= sRGB 编码后的 0.06）、
+  平均色 `(101,112,121) → (84,91,99)`；但**门禁的判据看不见**：`content` 两次都是 87.04%（阈值 30%）。
+  ⇒ **登记**（**已由 §11.16ch 收掉**）：应用阶段补了一条"视口带里平背景色的占比 ≤ 5%"的判据，
+  该变异在门禁里**红**（`background 25.64%`）。**本片当时不改**（只修 D4）。
+
+**5. 证据行。** 两棵树门禁：`cases=435 failed=0 vuid=0 hazard=0 skipped=0`、hygiene `0/793`、
+诊断格式 `0/7`、doc symbols `145`、**相位 12 行 / 2 次**、应用 `content 87.04% / 85.14%, preview 244,
+vuid=0 warnings=0`——**与修前逐字相同**：演示相机的可见像素里没有一个的视图位置接近 0（这正是这个
+缺陷能活到现在的原因），所以修的是"贴脸看几何"那一类画面；`scripts/vine_shader_check.sh` PASS
+（9 个 shader 编译 + 内嵌副本逐字节同步）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `src/viz/graphics/shaders/builtin_deferred_lighting.frag` | 背景判据改成 `pos4.a < 0.5` + 注释（两条 program 是一条契约） |
+| `src/viz/graphics/shaders/builtin_gbuffer.frag` | 位置写入处注明 `w = 1` 是契约的一半 |
+| `src/viz/graphics/docs/usage.md` | §3.4 手搭延迟管线清单补一句（w 不是备用通道） |
+| `tests/test_vsg/ContentPassTest.cpp` | 新用例：手写 writer（左半、`vec4(0,0,0,1)`）+ 引擎光照程序 + 两探针 |
+| `.ai/design/vsg-reimplementation.md` | 本节 + D4 行标注 |
+
+**下一步（本片之后）**：仍未做的按 §11.16bw 与各片"登记"（B4/B5、D2、D3、D5、A4/A6、`ContentPass`
+每帧重置的插话、首帧 gizmo 空白、会话侧"画面已落地"的事实），加上本片第 4 条 M3 登记的应用阶段判据。
+
+### 11.16ch M11l（2026-09-25）：应用阶段的**第三条**画面判据——"整片背景灰"（收掉 §11.16cg 第 4 条的登记）
+
+**登记来自哪里**：§11.16cg 第 4 条的 **M3**：D4 修好之后，契约的另一半（**引擎 G-buffer 写 `w = 1`**）没有任何
+用例看着——把 `builtin_gbuffer.frag` 的 `w` 改成 0，演示窗口**看得见**（14 440 px 平色 `(69,69,69)`、平均色
+(101,112,121)→(84,91,99)），但门禁两条判据都**通过**（`content` 87.04%、`preview` 244）。本片把这条判据补上。
+
+**1. 先量判据的候选（在两张已有截图上离线算，不动代码）**：健康的画面里平背景色
+**一个像素都没有**（`(69,69,69)±4` = 2 px、(15,15,15)±4 = 1 px），变异画面里 **13 565 px（14.53%）**
+⇒ 分开得极干净，而且"哪种编码"两种拼法都算（本机是 `B8G8R8A8_SRGB` ⇒ 69；线性表面会是 15）。
+这条正是 max/mean/非黑比例都答不了的问题："**画面是不是一整片平的**"。
+
+**2. 改了什么。**
+- `scripts/ppmprobe.py`：参数从 5 个变 5~7 个（可选 `<r,g,b> [<tolerance>]`，默认 ±4），给了颜色就**多打一行**
+  `share r,g,b +-t: N pixel(s) (P%)`——原有调用方的输出逐字节不变；
+- `scripts/vsg_rewrite_gate.sh` 的应用阶段：多一条判据 `background` = **预览条以下那条"视口带"**里平背景色的占比
+  （两种编码取大者），两个样本都要 ≤ `VINE_GATE_APP_MAX_BACKGROUND`（默认 **5%**），并写进证据行；
+- 头部的"两条像素判据"改成三条（写明为什么第三条存在、以及量到的数字）。
+
+**3. 证据（同一道门禁）。**
+- 健康：两棵树 `background 0%`（Debug `before 378x247 / after 698x226`，Release `before 378x247 / after 698x132`），
+  其余阶段照旧全绿；
+- **变异（G-buffer 写 `w = 0`）**：应用阶段**红**——
+  `[FAIL] app (deferred demo) before 378x247: content 87.04%, preview 244, background 25.64%; after 698x132: … background 3.97%; … (before: the flat background covers 25.64% > 5% - the picture is one flat surface)`;
+- **诚实记录（判据的限度）**：resize **之后**那个样本不敏感——698×132 的窗口里四个预览槽盖住了视口的大部分，
+  同一次失败只读出 3.97%（< 5%）。也就是说**敏感的是 resize 前那个样本**，这正是"两个样本都判"的意义；
+  整窗版 vs 视口带版也量过（同一次失败：整窗 15.47%、视口带 25.64%）⇒ 判据选视口带。
+
+**4. 顺带记录（新登记的观察）**：Debug 那次门禁的**首跑**出现一次
+`BlockStorageTest.TheRegionsAreLaidOutOnceAndDoNotOverlap`（976 ms）红、**重跑即绿**，门禁按既有规矩把首跑
+失败具名写进证据行再裁决（Release 同一次没有）。它此前不在"已知偶发"名单里 ⇒ 登记：**若第二次出现**，按
+§11.16cf 的办法（探针 + 单独重跑 10 次）先分"环境/顺序"与"真缺陷"。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `scripts/ppmprobe.py` | 可选颜色参数 + `share` 行（原输出不变）；文档记下这条判据量到的数字 |
+| `scripts/vsg_rewrite_gate.sh` | 应用阶段第三条判据（视口带平背景占比、阈值可配、进证据行）；头部理由与 `VINE_GATE_APP_MAX_BACKGROUND` |
+| `.ai/design/vsg-reimplementation.md` | 本节 + §11.16cg 第 4 条的登记标注"已由本节收掉" |
+
+**下一步（本片之后）**：仍未做的按 §11.16bw 与各片"登记"（B4/B5、D2、D3、D5、A4/A6、`ContentPass` 每帧重置的
+插话、首帧 gizmo 空白、会话侧"画面已落地"的事实），加上本片第 4 条那次首跑红。
+
+### 11.16ci M11m（2026-09-25）：一句话不是说一次——**半分片的插话状态归半片所有**（收掉 §11.16ce/§11.16bw 反复登记的一条）
+
+**登记来自哪里**：§11.16ce 的"顺带量到、本片不修（登记）"①与 §11.16cg 的 B5 登记里都写着同一件事：
+"`ContentPass` 是**每帧新建**的，它的 `ReportOnce` 插话因此每帧重置（`shadow_map` 那条警告每帧重复）"。
+`ContentPass::Scope` 的注释其实早就写明契约——"episode 的结束是**调用方**的选择：一个只活一帧的 scope
+就每帧报一次，活一个会话的 scope 就只报一次"——缺的是**有人真的给一个活得更久的 scope**。
+
+**1. 三处插话，各归各处。**
+- 半片的两种句子（"the pass' content half 不能服务"、`reportShadowNotSampled`）⇒ 归 **half 自己**
+  （`ContentHalves::Data::Half` 新增两个 `core::ReportOnce`，`halvesFor` 把它们填进 `Scope::Entry`）；
+  半片的寿命就是"表还答得上它就活着"，所以刷新、换尺寸、多帧都不重置。
+- 光掉落（"announced lights 装不进 block"）⇒ **每 pass** 一份，放在内容世界
+  （`ContentAssembly::Data::lights_dropped`，按 `core::PassId` 一行；**id 不回收**（`api/PassRegistry`），
+  所以这张表随"宿主宣布过几个 pass"长，不随帧长）。
+- 空矩形（"宿主还没排好渲染区"）⇒ **一会话**一份，也在内容世界。
+
+**2. 契约写进类型（向后兼容）。** `ContentPass::Scope::Entry` 尾部追加
+`core::ReportOnce* reported / shadow_reported`，`Scope` 追加 `lights_dropped_episode /
+empty_rectangle_episode`：**空 = 保持旧行为**（记录器自己的、一帧一插话），所以手工拼 Entry 的老用例
+一行不改；`ContentHalves` / `ContentAssembly` 走的是"调用方持有"那条路。
+
+**3. 证据（新增/扩展用例，436 条）。**
+- **无设备**新用例 `ContentHalvesTest.TheHalvesEpisodeStateIsTheHalvesOwn`：同一个 half 在**两帧**
+  （两次 `halvesFor`）里拿到的 `reported/shadow_reported` 是**同一个对象**；第一帧说过之后第二帧
+  `shouldReport()` 为假；**另一个 pass** 用同一个 half 也不再说；`rearm()` 之后再说（"修好再坏会重报"），
+  且两种句子的插话互不干扰。
+- 真设备用例**扩展**（`ContentPassTest.TheDeclaredShadowMapBindingCarriesTheMapThePassResolved`）：
+  原来只断言"这条句子报了一次"，现在再录一帧（新记录器、同一半片状态）断言**不再报**，然后
+  `rearm()` 再录一帧断言**又报**。
+- **变异 2/2 红（各带恢复复验）**：M1 记录器忽略调用方状态（`episode = nullptr`）⇒ 设备用例红
+  （消息 `the same half must not repeat in the next frame what it already said`）；M2 `halvesFor` 不再
+  交出半片状态 ⇒ 无设备用例红。
+- **门禁两棵树**：`cases=436 failed=0 vuid=0 hazard=0 skipped=0`、相位 12 行 2 次、应用
+  `vuid=0 warnings=0`（画面参数与修前逐字相同）。
+
+**4. 没做到的（登记）**：`lights_dropped_episode` / `empty_rectangle_episode` 的**管线**只有代码审查，
+没有自己的用例（两条句子的触发都要真设备 + 一次"灯装不下"/"矩形为空"的计划；本轮预算给了半分片那两条）。
+**触发器**：任何一次"同一条灯/矩形警告每帧重复"的宿主报告，或下次给 `ContentAssembly` 加用例时。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `include/vine/vsg/api/ContentPass.hpp` | `Entry::reported/shadow_reported`、`Scope::lights_dropped_episode/empty_rectangle_episode`、`lightsEpisode()` 声明与理由 |
+| `src/api/ContentPass.cpp` | 三处报告改用调用方状态（有则用，无则旧行为）；`lightsEpisode()` 定义 |
+| `src/api/ContentHalves.cpp` | `Half` 持有两种句子的插话；`serve()` 把它们交给 Entry（签名 `Half&`） |
+| `src/api/ContentAssembly.cpp` | 每 pass 的灯插话表 + 会话级空矩形插话，接入 Scope |
+| `tests/test_vsg/ContentHalvesTest.cpp` | 新无设备用例（跨帧/跨 pass/重臂） |
+| `tests/test_vsg/ContentPassTest.cpp` | 设备用例扩展：第二帧静默、`rearm()` 后再报 |
+| `.ai/design/vsg-reimplementation.md` | 本节 + 两条旧登记标注"已由本节收掉" |
+
+**下一步（本片之后）**：任务列表里的 B（D2 高光 alpha）、C（B5 拒绝路径 + 预算）、D（B4 引擎收集分配，先测），
+其余按 §11.16bw 与各片"登记"。
+
+### 11.16cj M11n（2026-09-25）：高光强度真的接上了（收掉 D2）
+
+**登记来自哪里**：§11.16bw 表的 **D2** 行：`Material::specular()` 的文档写着"A 是强度"，而**没有任何着色器读
+它**（`builtin_forward.frag` 与 `builtin_gbuffer.frag` 都只读 `.rgb`）。登记给了两条路："要么接线，要么改
+文档"。
+
+**1. 接线（两条路，一处乘积）。** 选接线，因为这是文档从第一版就承诺的语义，而"改文档说它没用"会让一个
+已发布的字段变成哑字段。
+- 前向：`color += c * a * spec * material.specular.rgb * clamp(material.specular.a, 0, 1) * ndl;`
+- G-buffer：`out_specular = vec4(clamp(rgb,0,1) * clamp(a,0,1), 1.0)` —— 把强度**折进彩色**，光照侧
+  （`spec_col = texture(spec_tex).rgb`）一行不用改；两条路于是**按构造**同一个乘积。
+
+**2. 文档同一处改齐**：`Material::specular()` 的 `@brief` 写明"强度乘进每条引擎路径的高光，G-buffer 的
+specular 附件装的是乘好的颜色"；`docs/usage.md` 的规范 G-buffer 清单加一句"specular 附件 = 颜色 × 强度"。
+
+**3. 证据（新真设备用例，437 条）。** `ContentPassTest.ASpecularIntensityScalesWhatTheSurfaceReflects`：
+材质选成"答案只差一次乘法"——albedo **全黑**（环境补光与漫反射都乘成 0）、高光颜色**白**、几何正对相机而
+太阳在镜头后方 ⇒ `L`、视方向、法线同向 ⇒ `dot(n,h) == 1`、`pow(...,shininess) == 1`，于是亮值**就是**
+`sun_colour(0.5) × alpha`。四趟：前向 α=0（判 0）、前向 α=0.25（判 0.125）、引擎 G-buffer 写入 α=0.25、引擎
+光照读它（判 0.125）。
+- **变异 2/2 红**：M1 前向去掉强度 ⇒ 读回 **0.5**（消息自带 `0.5 here means the forward program still ignores
+the intensity`）；M2 G-buffer 不再折进去 ⇒ 延迟侧读回 **0.5**。恢复即绿。
+- `scripts/vine_shader_check.sh` PASS（9 shader 编译 + 内嵌副本同步）。两棵树门禁
+`cases=437 failed=0 vuid=0 hazard=0 skipped=0`、应用 `vuid=0 warnings=0`。
+
+**4. 顺手量到的一件事**：**演示画面的证据行逐字不变**（`87.04% / 85.14%, preview 244`）——因为 demo 的材质
+全部写 `alpha = 1.0`（或 0.0 的全黑高光），所以 D2 在 demo 上等价于"接线前后一样"。这也说明这个缺陷为什么能
+活到现在：**没人用过分数 alpha**，而 demo 又恰好只用 1.0。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `src/viz/graphics/shaders/builtin_forward.frag` | 前向高光乘 `material.specular.a` + 理由 |
+| `src/viz/graphics/shaders/builtin_gbuffer.frag` | specular 附件装"颜色 × 强度" + 理由 |
+| `src/viz/graphics/sdk/vine/graphics/Material.hpp` | `specular()/setSpecular()` 的文档写明强度的语义与出处 |
+| `src/viz/graphics/docs/usage.md` | 规范 G-buffer 清单补"specular = 颜色 × 强度" |
+| `tests/test_vsg/ContentPassTest.cpp` | 新真设备用例：前向两档 + G-buffer→光照 |
+| `.ai/design/vsg-reimplementation.md` | 本节 + D2 行标注"已修" |
+
+**下一步（本片之后）**：任务列表里的 C（B5 拒绝路径逐命令上报 + 块预算）、D（B4 引擎侧收集分配，**先测**），
+其余按 §11.16bw 与各片"登记"。
+
+### 11.16ck M11o（2026-09-25）：拒绝报告"先说一遍，再说一共几条"（收掉 B5 的前半；预算那一半不改）
+
+**登记来自哪里**：§11.16bw 表的 **B5** 行前半：拒绝路径**逐命令**上报（`ContentPass.cpp` 里 ~35 个
+`reportRefused` 调用点），而"场景里有坏内容"时这就是刷屏；登记给的形状是"按'每 pass 每原因一次'上报
+（保留第一条的完整身份，后续只计数）"。**后半（块预算 1024/256 的硬上限）不改**——代码里早就写明了理由
+（`BlockStorage.hpp` 文件注记："A block larger than its region's stride, and the (blocks_per_frame)th view
+or draw block of one frame. Both are counted rather than accommodated: **growing the buffer would move bytes
+a submitted command buffer still names**"）——这是**有意的设计决定**，不是待修的洞；本片把这句话与 B5 的
+登记对齐（登记里"按需增长"的方向与它冲突，理由在实现里）。
+
+**1. 改法（账本 + 一句汇总）。** `ContentPass` 多一张**本趟 pass 的拒绝账本**
+（`std::vector<RefusalRow>{what, why, count}`）：`reportRefused` 的第一次**照旧完整报**（点名那条命令），
+同一 `what` 的后续**只加计数**；pass 结束时（`record` 里的 RAII 守卫，任何 return 路径都跑）每个
+count ≥ 2 的原因**报一行汇总**："N drawing call(s) were not drawn for one reason - <what> is not drawn:
+<why>（第一条在上面；其余是同一条事实）"。诊断计数跟着消息走（2 条消息 = 2 个计数）。
+
+**2. 证据（新真设备用例，438 条）。** `ContentPassTest.ManyRefusalsForOneReasonAreOneLinePlusACount`：
+表里答得上几何与材质、**答不上**程序 ⇒ 3 条命令同一个原因被拒（且给一趟一个可服务的半片，否则记录器
+会把**整趟**用一句话拒掉——那是它自己的收敛，见那条分支）；断言**恰好 2 条消息**（第一条点名
+"the command's program"，第二条说 "3 drawing call(s)…"）且 `ContentSkipped` 计数 == 2。
+- **变异 1/1 红**：`noteRefusal` 每次都返回 true（回到逐命令上报）⇒ 消息变成 **4 条**，用例红；恢复即绿。
+- **两棵树门禁**：`cases=438 failed=0 vuid=0 hazard=0 skipped=0`、相位 12 行 2 次、应用与修前逐字相同
+（`vuid=0 warnings=0`）。
+
+**3. 没做（登记）。** 预算的"按需增长"与实现里的理由冲突，**保持现状**；若将来真撞上 1024 条/帧
+（触发器：宿主报"内容被拒"且原因里出现 `the frame's block budget is full`），要走的不是"悄悄长大"，
+而是**双缓冲/新 buffer + retirement**（同 `MaterialArena` 的轮转思路），那是另一片的量级。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `include/vine/vsg/api/ContentPass.hpp` | `RefusalRow` 账本、`noteRefusal`、`reportRefusedSummary` 与理由；`refusals_` 成员 |
+| `src/api/ContentPass.cpp` | 两个 `reportRefused` 先入账（首次才报全文）；`record` 里 RAII 守卫在结束时汇总 |
+| `tests/test_vsg/ContentPassTest.cpp` | 新真设备用例（3 条同因被拒 ⇒ 2 条消息 + 计数） |
+| `.ai/design/vsg-reimplementation.md` | 本节 + B5 行标注 |
+
+**下一步（本片之后）**：任务列表的 D（B4 引擎侧 `Scene::collectRenderCommandsShared`，**先测再改**）。
+
+### 11.16cl M11p（2026-09-25）：B4 的测量——**只测不改**（引擎侧收集的真实代价）
+
+**登记来自哪里**：§11.16bw 表的 **B4** 行（`Scene::collectRenderCommandsShared` 每次收集分配 3 个 vector、
+把整表搬 2~3 遍、`commands` 无 `reserve`），它自己写着"**引擎侧（不在本轮前端改动范围内）**"且"当前 demo 的
+收集是 memo 命中或 ~42 条命令，**量不出来**"，触发器 = "相机常动的负载 + drawable 数越过 ~2000"。
+2026-09-25 决定：**先测、不改引擎**（用户明确要求 `src/viz/graphics` 不随意改动）。
+
+**1. 测量配方（新加在引擎自己的套件里，只打印、不断言机器相关的数字）。**
+`tests/test_graphics/GraphicsTest.cpp` 的 `SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera`：
+N 个三角形（网格铺开、全部在视锥内、距离各不同 ⇒ 排序有真活）装在同一个 root 下；打开一个 content frame
+（`Scene::setContentFrame(1)`，memo 只在帧内有效——**第一次写这个测量时忘了它，结果"静止相机"也全量重收**，
+这一步是测量能不能读的关键）；相机每帧移动一点点（memo 键 = revision + eye + view_proj ⇒ 必 miss）收 10 次，
+再静止着收 10 次；断言的全是**机器无关**的事实（移动的每次都真的走树：`contentCollectCount()` 每次 +1；静止的
+走 memo：`contentCollectReuseCount()` +9；两种视图命令数相同），耗时只打印。
+跑法：`./build/bin/test_graphics --gtest_filter='*MeasureWhatOneCollectionCosts*'`（Release 更有意义）。
+
+**2. 实测数字（本机，lavapipe 无关——这是纯 CPU 的树遍历）。**
+
+| 规模 | Debug | Release | 静止相机（memo 命中） |
+| --- | --- | --- | --- |
+| 200 drawables / 200 命令 | 1008 µs | **85 µs** | 0–1 µs |
+| 2000 drawables / 2000 命令 | 9649 µs | **1047 µs** | 0 µs |
+
+⇒ 边际成本 ≈ **(1047 − 85) / 1800 ≈ 0.53 µs 每 drawable 每次收集**（Release）；
+⇒ demo 量级（~42 命令）外推 ≈ **18 µs/帧 ≈ 0.1% 的 16.6 ms 帧**——这就是"demo 上量不出来"的量化说法；
+⇒ 登记触发点（2000 drawable + 相机常动）≈ **1.05 ms/帧 ≈ 6% 的 60 fps 预算**：有代价，但**未达**"必须改"。
+
+**3. 决定与形状（登记更新）。** **不改**：把 B4 从"缺陷（登记）"改成"**已测，代价 0.53 µs/drawable·次；
+触发点约 6% 帧预算**"。要改时的形状与登记一致（`commands` 按上一帧规模 `reserve` ⇒ 省掉倍增重分配与
+~400 KB 的搬运；`keyed` 改行号 + 就地置换 ⇒ 省一次 N 条 `RenderCommand` 的移动）——**那是引擎侧的另一片**，
+需要单独的批准与它自己的像素/顺序用例。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `tests/test_graphics/GraphicsTest.cpp` | 测量配方（打印，不进门禁判据） |
+| `.ai/design/vsg-reimplementation.md` | 本节 + B4 行标注"已测" |
+
+**下一步**：任务列表 1–4 全部收到（A §11.16ci、B §11.16cj、C §11.16ck、D 本节）；仍未做的按 §11.16bw 与
+各片"登记"（D3/D5、A4/A6、首帧 gizmo 空白、会话侧"画面已落地"的事实、`lights_dropped`/空矩形两条句子的用例）。

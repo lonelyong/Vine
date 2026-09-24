@@ -2,10 +2,20 @@
 """ppmprobe.py — what one RECTANGLE of a PPM holds.
 
 Usage:
-    ppmprobe.py <file.ppm> <x> <y> <width> <height>
+    ppmprobe.py <file.ppm> <x> <y> <width> <height> [<r,g,b> [<tolerance>]]
 
 Prints one line:
     rect <x>,<y> <w>x<h>: max <max-channel> mean <mean-channel>
+
+and, when a colour is given, a second one:
+    share <r>,<g>,<b> +-<tolerance>: <pixels> pixel(s) (<percent>%)
+
+The SHARE answers a question the max and the mean cannot: "how much of this rectangle is FLAT at this one
+colour". Measured 2026-09-25 (the demo's deferred view, 378x247): the shader's flat background colour
+(linear 0.06, sRGB-encoded) covers 0.00% of a healthy picture and 14.53% when the G-buffer stops marking
+its pixels as written - while BOTH existing criteria (the window's non-black share and the preview strip's
+max) stayed satisfied, because the flat colour is not near-black and the previews keep their own content.
+The default tolerance of 4 absorbs the encoding and the read-back path's rounding.
 
 WHY IT EXISTS. The gates judge pictures that already exist as files (scripts/xwin2ppm.py writes them), and the
 questions they ask are about a REGION: "does the demo's G-buffer preview hold anything at all", "is the HUD's
@@ -49,8 +59,8 @@ def read_ppm(path):
 
 
 def main() -> int:
-    if len(sys.argv) != 6:
-        sys.exit("usage: ppmprobe.py <file.ppm> <x> <y> <width> <height>")
+    if len(sys.argv) not in (6, 7, 8):
+        sys.exit("usage: ppmprobe.py <file.ppm> <x> <y> <width> <height> [<r,g,b> [<tolerance>]]")
     path = sys.argv[1]
     want_x, want_y, want_w, want_h = (int(value) for value in sys.argv[2:6])
     width, height, pixels = read_ppm(path)
@@ -69,6 +79,22 @@ def main() -> int:
             total += pixels[index] + pixels[index + 1] + pixels[index + 2]
             count += 1
     print(f"rect {x0},{y0} {x1 - x0}x{y1 - y0}: max {best} mean {total / max(1, count * 3):.1f}")
+
+    if len(sys.argv) >= 7:
+        parts = sys.argv[6].split(",")
+        if len(parts) != 3:
+            sys.exit(f"the colour has to be 'r,g,b', got '{sys.argv[6]}'")
+        colour = tuple(int(value) for value in parts)
+        tolerance = int(sys.argv[7]) if len(sys.argv) == 8 else 4
+        flat = 0
+        for y in range(y0, y1):
+            row = y * width
+            for x in range(x0, x1):
+                index = (row + x) * 3
+                if all(abs(pixels[index + channel] - colour[channel]) <= tolerance for channel in range(3)):
+                    flat += 1
+        print(f"share {colour[0]},{colour[1]},{colour[2]} +-{tolerance}: {flat} pixel(s) "
+              f"({100.0 * flat / max(1, count):.2f}%)")
     return 0
 
 

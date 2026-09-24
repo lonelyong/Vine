@@ -328,7 +328,10 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     EXPECT_EQ(recorder.dynamic_commands(), 1U);
 
     EXPECT_TRUE(isGreen(centre)) << "the window's centre must hold the content, got (" << static_cast<int>(centre[0])
-                                 << ", " << static_cast<int>(centre[1]) << ", " << static_cast<int>(centre[2]) << ")";
+                                 << ", " << static_cast<int>(centre[1]) << ", " << static_cast<int>(centre[2])
+                                 << ") read-error " << static_cast<int>(window.readError())
+                                 << " (0 = the read was served and the display path had not delivered the "
+                                    "picture yet; non-zero = the server refused it, see HostWindowReadTest)";
     EXPECT_FALSE(isGreen(corner)) << "a window that is green everywhere would pass a sloppier check";
 
     session.shutdown();
@@ -551,14 +554,18 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     EXPECT_EQ(session.timeline().submittedFrame(), 1U);
     EXPECT_EQ(session.deviceWaits(), 0U);
 
-    // Two more (plan-free) frames: the graph the plan built stays where it is, and the picture it drew is
-    // presented again. The reason is the read-back, not the rendering: a presentation is copied into the
-    // window by the display server asynchronously, so the image a test reads straight after the FIRST
-    // present can still be the window's untouched backing store. (The other case in this file presents
-    // three frames for the same reason.)
+    // Two more presents of the SAME graph: the graph the plan built stays where it is, and the picture it
+    // drew is presented again. The reason is the read-back, not the rendering: a presentation is copied into
+    // the window by the display server asynchronously, so the image a test reads straight after the FIRST
+    // present can still be the window's untouched backing store - while a PLAN-FREE frame would repaint the
+    // window with the session's own graph (measured: the read then answers the window's own background with
+    // `read-error 0`; see TestHostWindow::waitForPixel). Moving `assignFrameGraphs` inside the loop is what
+    // keeps the picture: the assignment is consumed by the commit that follows it.
     for (int settle = 0; settle < 2; ++settle)
     {
         ASSERT_TRUE(session.beginFrame());
+        ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(
+            session, ::vsg::CommandGraphs{ command_graph }));
         ASSERT_TRUE(session.commitFrame());
     }
 
@@ -596,7 +603,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     EXPECT_TRUE(isPlanClear(clear_pixel))
         << "the right quarter is the plan's clear, so the view really moved the triangle: got ("
         << static_cast<int>(clear_pixel[0]) << ", " << static_cast<int>(clear_pixel[1]) << ", "
-        << static_cast<int>(clear_pixel[2]) << ")";
+        << static_cast<int>(clear_pixel[2]) << ") read-error " << static_cast<int>(window.readError());
     EXPECT_TRUE(isPlanClear(corner)) << "the swapchain image was cleared to the plan's colour";
 
     session.shutdown();

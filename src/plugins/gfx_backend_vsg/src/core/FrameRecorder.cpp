@@ -337,14 +337,26 @@ bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands
         return false;
     }
 
-    CollectedDraw draw;
-    draw.kind         = DrawKind::Content;
-    draw.camera       = snapshotCamera(camera);
-    draw.has_viewport = pending_has_viewport_;
-    draw.viewport     = pending_viewport_;
-    draw.lights       = pending_lights_;
-    draw.commands     = snapshotCommands(commands);
-    open_draws_.push_back(draw);
+    // A CALL WITH NOTHING TO DRAW IS NOT A DRAW. The engine really announces one, and it is not exotic: the
+    // demo's axis-gizmo pass calls render() with an empty list while its surface size is still unknown
+    // (measured 2026-09-24). Recording that as a draw put a content draw with NO commands into the plan, and
+    // the content layer read it as "this pass has content, but no compiled content half was built for it" -
+    // it refused the WHOLE pass, the clear the pass carries included, and reported a warning (the application
+    // log's last one). The call is still a call: what it announced is consumed below, exactly as it is for a
+    // call that draws, so a host's announcement never leaks into the next call - only the DRAW is not
+    // recorded, because there is nothing in it (see FrameCounters::draws: "draw calls recorded").
+    if (!commands.empty())
+    {
+        CollectedDraw draw;
+        draw.kind         = DrawKind::Content;
+        draw.camera       = snapshotCamera(camera);
+        draw.has_viewport = pending_has_viewport_;
+        draw.viewport     = pending_viewport_;
+        draw.lights       = pending_lights_;
+        draw.commands     = snapshotCommands(commands);
+        open_draws_.push_back(draw);
+        ++observe_.counters().draws;
+    }
 
     // ONE announcement serves ONE drawing call: the next draw of this scope that wants them announces
     // again (see the file note). The pass-level attributes stay, because they belong to the pass.
@@ -352,7 +364,6 @@ bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands
     pending_viewport_     = {};
     pending_lights_       = {};
 
-    ++observe_.counters().draws;
     return true;
 }
 
