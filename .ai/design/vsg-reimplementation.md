@@ -4572,3 +4572,46 @@ Release 两棵树）应用阶段证据行都是 **`vuid=0 warnings=1`**，画面
 （`before 378x247: content 87.04%, preview 244; after 698x132: content 85.14%, preview 244`）⇒ 换的是准备
 那张图的方式，不是画面；`test_vsg` 两棵树都 672 全绿、0 VUID；`WhiteImageTest` 改名后的用例
 （`TheFallbackCarriesItsWhiteTexelAsUploadableData`）与两个去掉 `fill()` 的 `ContentPassTest` 用例同跑通过。
+
+### 11.16bt M10k（2026-09-24）：老渲染器退场——删掉 22 个 TU、31 个头、30 个用例、自检目标与两个脚本
+
+`VsgRenderer` 一路的代码从 M9f 起就没有任何调用方（工厂造的是 `VsgBackend`），但它仍在树里、
+仍被自己的用例驱动、仍被老门禁脚本当端到端证据。这一片把它整体删掉：**22 个扁平 TU**（`VsgRenderer*`、
+`SceneBridge*`、`CameraBridge`、`VsgPipelineFactory`、`VsgTargetBookkeeping`、`VsgTextureCache`、
+`VsgMaterialManager`、`VsgMeshResourceCache`、`VsgDrawBlockPool`、`VsgPassMaterialiser`、`VsgContentSlot`、
+`VsgProgramSlot`、`VsgViewCompiler`、`VsgRecordOrder`、`VsgRetireRing`、`VsgReadback`、`VsgLights`、
+`VsgGpuProfile`、`VsgDiagnostics`）+ **31 个同族头** + **30 个用例**（外加只被它们用的 `TestContentSet.hpp`）
++ **`vsg_backend_selftest` 目标**（连同 `vsg_selftest/` 目录）+ `scripts/gfx_lavapipe_check.sh`、
+`scripts/vsg_selftest_evidence.sh`、`scripts/vsg_selftest_evidence.txt`（字节基线）。
+
+**删除集怎么定的**：不是按名字猜，而是从**重写版的根**（插件入口 + `VsgRenderBackendFactory` + 全部
+`src/api/*` + `src/core/*`）算 include 闭包，再并上**保留下来的用例**的闭包；两个闭包都不碰的扁平单元才
+在删除集里。剩下与重写版**共享**的 6 个扁平 TU：`VsgHostWindow`、`VsgSceneRules`、`VsgDynamicState`、
+`VsgVulkanEntryPoints`、`VsgBackendUtility`、`VsgUtils`（这一条是编译器替我抓回来的：`VsgSceneRules.cpp`
+include 它，闭包脚本把它当成"老单元"——按"能编过 + 用例绿"判定，把它放回）。
+
+**顺手的三处收尾**：`VsgBackendUtility` 里只为老渲染器存在的 `resolveShadowInput`/`ShadowInput`（连同
+`VsgRendererState`/`VsgLights` 两个 include）删掉；`ReportOnceTest` 从老头 `VsgReportOnce.hpp` 改指重写版的
+`core/Diagnostics.hpp`（同一个 API：`shouldReport`/`reported`/`rearm`）；`gfx_backend_vsg` 插件与 `test_vsg`
+的 CMake 源表只留下上表那 6 个共享 TU。
+
+**三份 living 文档的模块图重写**：`docs/backend.md` 顶上加 §0（重写版的模块地图 + "本文其余部分是历史"），
+老渲染器那些章（§1 文件地图、§2.4/§3.1/§4.1/§5.1/§5.7 等）标题改标 **（历史登记）**，让
+`scripts/check_doc_symbols.py` 的"历史段落不参与漂移检查"这条规则接住它们；`gfx_backend_vsg.md` 的两处
+（§11.1 类布局、§14.2 头文件纪律）同样标历史，§10 里那句指向 `VsgTargetBookkeeping.cpp` 的清屏值改指
+`core/TargetPlan`；`data-flow.md` 过时提示里的两个单元名用 `<!-- drift-ok -->`（那行**就是**在说被删掉的
+东西）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| 删除的 22 TU / 31 头 / 30 用例 / `vsg_selftest/` | 见上；全部 `git rm`，可随时从历史找回 |
+| `src/plugins/gfx_backend_vsg/CMakeLists.txt` | 自检目标与它的 24 个源整块删除（原位留一段"为什么没了"的注释） |
+| `tests/test_vsg/CMakeLists.txt` | 用例表从 86 项减到 56 项；`target_sources` 只留重写版的 core/api + 6 个共享 TU |
+| `src/VsgBackendUtility.{hpp,cpp}` | 老渲染器的 shadow-input 规则删除 |
+| `tests/test_vsg/ReportOnceTest.cpp` | 改指 `core/Diagnostics.hpp` |
+| `docs/backend.md` / `gfx_backend_vsg.md` / `docs/data-flow.md` | §0 模块地图 + 历史标记 + 两处改指 |
+| `scripts/vsg_rewrite_gate.sh` | 头部注释里对老门禁脚本的那句"历史"改写（脚本本身已删） |
+
+**证据**：`test_vsg` **412** 全绿（原 672；被删的 260 条用例全部属于老渲染器）、0 VUID；门禁两棵树同跑，
+应用阶段与删除前**逐字相同**（`before 378x247: content 87.04%, preview 244; after 698x132: content 85.14%,
+preview 244; vuid=0`）；include hygiene 0/`784` 文件、诊断格式 0/7、doc symbols 0。

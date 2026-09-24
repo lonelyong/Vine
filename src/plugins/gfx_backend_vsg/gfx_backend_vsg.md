@@ -434,7 +434,7 @@ graph TD
 - `RenderStateMapper` 把平面状态映射成 4 个 vsg 态：
   - **深度**：test/write 1:1；**比较符反转**（`Less→GREATER` 等）。这是 reverse-Z 约定的代码面：
     `RenderStateMapper.hpp` 直接写着“the vsg backend uses a reverse-Z …”，目标清屏值取的是
-    reverse-Z 的远平面（`VsgTargetBookkeeping.cpp`：depth clear = 0.0）。**已实测**（不再是待验证项）：
+    reverse-Z 的远平面（重写版在 `core/TargetPlan`：depth clear = 0.0）。**已实测**（不再是待验证项）：
     selftest 的 program 相位把几何画在 clip `z = 0.5`，若约定不成立（clear 0 + GREATER）该几何会
     被整片丢弃；反向改 `LESS` 或把 z 写成 0 会立即可见。
   - **剔除/多边形**：`cullMode` 映射，`frontFace` **固定 CCW**（配合 vsg Y-flip）；
@@ -466,7 +466,7 @@ graph TD
 4. **重初始化前必须把会话资源清干净**（否则新 `Window::create()` 撞 `VSG_MAX_DEVICES == 1`）：
    做法是 `state = VsgRendererState{}` 整体替换，而不是手写拆卸清单。
 
-### 11.1 状态按值，无 PImpl
+### 11.1 状态按值，无 PImpl（历史登记，2026-09-24：`VsgRenderer` 已退役）
 
 类定义整个在 `include/vine/vsg/VsgRenderer.hpp`；会话态 = `VsgRendererState`（`VsgRendererState.hpp`），
 跨会话态 = `VsgRendererPersistent`，目标账本 / 帧计划 / 物料化 / 泊车环各在
@@ -555,7 +555,7 @@ graph TD
 （`OwnedCacheEntry`），所以“外侧放手”与“仍被持有”用 `useCount() <= shares` 就能分开，
 既不需要弱引用/世代号，也不需要时间窗（早期 600 帧滞留窗已删）。
 
-### 14.2 头文件纪律
+### 14.2 头文件纪律（历史登记，2026-09-24：约束针对已退役的 `VsgRenderer.hpp`）
 
 | ID | 约束 | 位置 | 说明 |
 |---|---|---|---|

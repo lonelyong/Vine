@@ -68,7 +68,8 @@
 set -u
 # pipefail as well: the checks below judge PIPELINES (`grep -c ... | tail`), and a pipeline's status is
 # its LAST command's - a filter that succeeded must not decide the outcome (the legacy gate read as a
-# PASS for as long as that bug lived, see gfx_lavapipe_check.sh).
+# PASS for as long as that bug lived; that script, which drove the retired renderer, has since been
+# deleted - this gate's suite and application stages are what replace it).
 set -o pipefail
 
 usage() {

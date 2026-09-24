@@ -27,8 +27,8 @@
 > 最后由 viewer->compile() 上传 GPU 并建管线**。中间两层各有一张"对应表"。
 
 > ⚠️ **2026-09-08 复核（批次 A 之后）——本文部分段落已过期，以本注 + 代码为准**。
-> 权威来源：`SceneBridge.cpp` / `VsgRenderer.cpp`（本次核对版本）；契约见
-> `.ai/design/vsg-custom-attributes.md`（已实现）。已变更的要点：
+> 权威来源：`.ai/design/vsg-reimplementation.md` §11（本次核对版本；文中点名的 `SceneBridge.cpp` / <!-- drift-ok -->
+> `VsgRenderer.cpp` 已随老渲染器一起删除）。已变更的要点： <!-- drift-ok -->
 > - loc0/loc1 已按 **AttributeChannel.components 作 stride** 解包（3/4 分量取 xyz，
 >   跳过 w），不再是写死 `i+=3`（下文 §6 坑① 已过期）。
 > - **loc≥3 自定义通道已接线**：数据超集绑定 + `vine_Attribute{L}` 绑定名（§7

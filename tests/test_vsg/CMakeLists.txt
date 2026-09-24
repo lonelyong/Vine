@@ -51,52 +51,21 @@ set(SRC_FILE_LIST
 	HostTargetsTest.cpp
 	GfxBackendVsgPluginTest.cpp
 	RenderStateMapperTest.cpp
-	CameraBridgeTest.cpp
-	ContentSlotViewportTest.cpp
 	GlslCompileTest.cpp
-	SceneBridgePipelineSharingTest.cpp
-	SceneBridgeCacheOwnershipTest.cpp
-	DrawBlockPoolRetireTest.cpp
-	DrawBlockPoolSlotsTest.cpp
-	DeferredReleaseTest.cpp
-	SceneBridgeDataRebuildTest.cpp
-	GeometrySafetyTest.cpp
-	CustomAttributeTest.cpp
-	PassProtocolTest.cpp
-	FrameCommitTest.cpp
 	ReportOnceTest.cpp
-	MaterialManagerTest.cpp
-	LightDropReportTest.cpp
-	PassObjectReleaseTest.cpp
-	TargetBookkeepingTest.cpp
-	GpuProfileTest.cpp
-	PassRenderPassPlanTest.cpp
-	PassClearValuesTest.cpp
 	DeviceRequirementsTest.cpp
-	DynamicStateTest.cpp
-	ProgramSamplingTest.cpp
-	GraphOrderTest.cpp
-	DiagnosticsTest.cpp
-	ReadbackTest.cpp
 	SceneRulesTest.cpp
-	TextureCacheTest.cpp
-	MeshResourceCacheTest.cpp
-	ChannelSliceTest.cpp
-	LightsTest.cpp
-	OverlayStagesTest.cpp
-	ForwardShaderSetTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 # The backend is an appfw plugin (MODULE DLL, cannot be linked). Its headers
-# (SceneBridge.hpp etc.) annotate the classes V_VSG_API (dllexport/dllimport on
-# Windows). Because SceneBridge.cpp + VsgMaterialManager.cpp are compiled INTO
+# (VsgHostWindow.hpp etc.) annotate the classes V_VSG_API (dllexport/dllimport on
+# Windows). Because VsgHostWindow.cpp + VsgBackendUtility.cpp are compiled INTO
 # this test executable (see target_sources below), the target must build them
 # as the exporting side (V_VSG_LIB); otherwise MSVC treats the classes as
-# dllimport, the header-only accessors (pipelineVariantCount / variantReuseCount)
-# and the vtable are never emitted locally, and the executable can neither
-# import (no plugin .lib) nor resolve them -> LNK2019 / C4273. Harmless (empty)
-# on Linux.
+# dllimport, their header-only accessors and vtables are never emitted locally,
+# and the executable can neither import (no plugin .lib) nor resolve them ->
+# LNK2019 / C4273. Harmless (empty) on Linux.
 target_compile_definitions(${TEST_NAME} PRIVATE V_VSG_LIB)
 # The backend is an appfw plugin (MODULE, cannot be linked). The plugin-load
 # test boots an Application, loads the gfx_backend_vsg plugin through
@@ -107,9 +76,8 @@ target_compile_definitions(${TEST_NAME} PRIVATE V_VSG_LIB)
 # mapping, so this target also links vsg and includes the plugin's public
 # headers directly.
 #
-# SceneBridgePipelineSharingTest instantiates SceneBridge itself, so the two
-# device-free bridge sources (SceneBridge + its material manager) are compiled
-# into the test alongside its public headers.
+# The host-window and backend-utility sources are shared with the rewritten
+# backend, so they are compiled into the test alongside its public headers.
 find_package(vsg CONFIG QUIET)
 # The plugin-load test boots an Application, whose data directory comes from
 # QStandardPaths. Qt test mode keeps it under a per-user test root instead of the
@@ -195,37 +163,13 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentPass.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/WindowTarget.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ViewBlock.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/SceneBridge.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/SceneBridgeGeometry.cpp
+	# The flat translation units the rewritten backend still shares: the scene rules its pipeline layer
+	# reads, and the host window the session creates.
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgSceneRules.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/SceneBridgePipeline.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgMaterialManager.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgTextureCache.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgMeshResourceCache.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgDrawBlockPool.cpp
-	# The pass protocol (the beginPass/endPass scope) lives in VsgRenderer, and
-	# its validation must be testable WITHOUT a device: constructing the renderer
-	# creates no window/viewer, and the scope calls only touch the retained
-	# request. CameraBridge comes with it (content slots create one).
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgHostWindow.cpp	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgDiagnostics.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgRecordOrder.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgReadback.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgViewCompiler.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgContentSlot.cpp
-	   ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgTargetBookkeeping.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgPassMaterialiser.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgRetireRing.cpp
-	# VsgRenderer is split over several TUs that share one free-function layer;
-	# the test compiles the ones a device-free run reaches.
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgRendererPasses.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgProgramSlot.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgLights.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgHostWindow.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgBackendUtility.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgDynamicState.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgGpuProfile.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgVulkanEntryPoints.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgPipelineFactory.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/CameraBridge.cpp)
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/VsgVulkanEntryPoints.cpp)
 target_include_directories(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/include)
 

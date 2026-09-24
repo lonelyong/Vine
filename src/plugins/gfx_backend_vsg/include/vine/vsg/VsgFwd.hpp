@@ -9,8 +9,8 @@
  * unit that reaches that header pays it again. The plugin's headers reached them for no more than a name:
  * a member of type `::vsg::ref_ptr<T>` does not need T to be complete, because the reference counting
  * happens in the translation unit that destroys the object — which is exactly why the classes holding those
- * members declare their destructors out of line (see VsgRendererState and VsgRenderer, whose destructors
- * live in VsgRenderer.cpp).
+ * members declare their destructors out of line (see VsgHostWindow, whose destructor lives in
+ * VsgHostWindow.cpp).
  *
  * THE RULE, so this list does not quietly become a second interface: a type belongs here only while EVERY
  * header that names it needs nothing more than a pointer or a reference. The moment one of them calls a

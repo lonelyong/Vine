@@ -1,9 +1,15 @@
 # gfx_backend_vsg: VSG render backend delivered as an appfw plugin.
 #
-# The plugin is a MODULE DLL (v_add_plugin) containing the full implementation:
-# SceneBridge, CameraBridge, VsgRenderer, VsgMaterialManager and the backend
-# factory. When loaded by PluginManager, GfxBackendVsgPlugin::load() registers
+# The plugin is a MODULE DLL (v_add_plugin). Its implementation is the rewritten backend under src/api
+# and src/core, plus the handful of flat translation units those share (the host window, the scene rules,
+# the vulkan entry points, the dynamic-state mapper and the backend utility layer - see the source list
+# in tests/test_vsg/CMakeLists.txt). When loaded by PluginManager, GfxBackendVsgPlugin::load() registers
 # the "vsg" backend into RenderBackendRegistry.
+#
+# The retired renderer (VsgRenderer and everything it drove: SceneBridge, CameraBridge, the texture and
+# mesh caches, the pipeline factory, the retire ring, ...) has been deleted; its last caller was gone once
+# the factory created VsgBackend. What replaces its end-to-end evidence is the application gate in
+# scripts/vsg_rewrite_gate.sh.
 #
 # Tests cannot link a MODULE library; test_vsg compiles the implementation
 # sources directly (see tests/test_vsg/CMakeLists.txt).
@@ -151,62 +157,9 @@ target_link_libraries(${GFX_BACKEND_VSG_TARGET} PRIVATE
 # The backend has no GLSL of its own: every stage it compiles comes from the SDK
 # (vine/graphics/EmbeddedShaders.hpp, via BuiltinShaders). See cmake/VineShaders.cmake.
 
-# GPU-free (lavapipe) end-to-end self-test of the vsg backend GPU paths that
-# device-free unit tests cannot reach: off-screen MRT targets, PiP sampling,
-# deferred fullscreen programs, multi-pass sharing of camera/target/scene/
-# viewport, hot edits and resource-release teardown. It validates "no crash +
-# no Vulkan validation-layer error"; pixel-level visuals need a real GPU.
-# Run headless under the lavapipe ICD with the validation layer enabled, e.g.
-#   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
-#   VINE_VSG_DEBUG_LAYER=1 VINE_SELFTEST_FRAMES=30 ./vsg_backend_selftest
-add_executable(vsg_backend_selftest
-    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/main.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_support.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_protocol.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_pixels.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_textures.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_shadows.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_hostsurface.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_profile.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_datarefresh.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/vsg_selftest/selftest_resize.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridge.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridgeGeometry.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/SceneBridgePipeline.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/CameraBridge.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgMaterialManager.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgTextureCache.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgMeshResourceCache.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgDrawBlockPool.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRenderer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgSceneRules.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgDiagnostics.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRecordOrder.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgReadback.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgViewCompiler.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgContentSlot.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgTargetBookkeeping.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgPassMaterialiser.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRetireRing.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgRendererPasses.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgProgramSlot.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgLights.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgBackendUtility.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgDynamicState.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgGpuProfile.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgVulkanEntryPoints.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgHostWindow.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VsgPipelineFactory.cpp)
-target_compile_definitions(vsg_backend_selftest PRIVATE V_VSG_LIB)
-# MSVC options for the project's own code, as v_add_library/v_add_plugin set them: the
-# self-test reuses the plugin's translation units, whose string literals carry non-ASCII
-# text that MSVC would otherwise read through the system code page (C4819, and C2001 once a
-# mis-decoded byte eats the closing quote).
-if(MSVC)
-    target_compile_options(vsg_backend_selftest PRIVATE /utf-8 /EHsc /Zc:preprocessor /Zc:__cplusplus)
-endif()
-target_include_directories(vsg_backend_selftest PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(vsg_backend_selftest PRIVATE vi::Graphics vi::Logging vsg::vsg tp::volk
-    ${_gfx_backend_vsg_host_surface_libs})
-set_target_properties(vsg_backend_selftest PROPERTIES FOLDER third_party)
+# The GPU-free end-to-end self-test target (vsg_backend_selftest) USED TO BE HERE. It was built from
+# the retired renderer's own translation units (SceneBridge, CameraBridge, VsgRenderer, ...) and drove
+# that renderer through its off-screen/MRT/PiP/deferred phases - all of code that no longer runs. The
+# application gate in scripts/vsg_rewrite_gate.sh is the end-to-end evidence now: it starts the demo on
+# lavapipe with the validation layer, samples the picture before and after a resize, and fails on any
+# unknown VUID.

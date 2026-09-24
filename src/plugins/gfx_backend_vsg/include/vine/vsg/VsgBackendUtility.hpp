@@ -31,8 +31,6 @@
 
 V_VSG_NS_BEGIN
 
-struct VsgRendererState;
-
 namespace detail
 {
 
@@ -129,51 +127,6 @@ bool programDeclaresBinding(vine::raw_ptr<const vine::graphics::ShaderProgram> p
  * @return true when at least one stage lists it.
  */
 bool programImportsDefine(vine::raw_ptr<const vine::graphics::ShaderProgram> program, const std::string& define);
-
-/**
- * @brief The shadow a pass declared, resolved from that pass' own inputs.
- *
- * The pass announces its declared inputs (RenderBackend::setPassInputs) before it draws, and the
- * shadow ABI says the map is the first DECLARED target whose depth is sampleable. The matrix comes
- * from that target's STATED view-projection (RenderTarget::setProducerViewProjection) — the one
- * derivation the pipeline wrote when it built the light camera — never from a second light camera
- * fitted here, so the two cannot disagree about where the light was.
- *
- * `map` is null when the pass declares no target that is a light's shadow map (RenderTarget::setShadowOf),
- * when that map has not been produced (yet) or its depth cannot be sampled, when its producer never stated
- * a view-projection (a map nobody stated how to read is not mapped with the identity), when the light it
- * belongs to stopped casting (Light::castShadow), or when that light is not one the block's three
- * directional slots can carry. `block.params.x` is 0 in every one of those, so the shader's switch is off
- * and nothing is scaled: a pass shades the shadow it declared, or none.
- */
-struct ShadowInput
-{
-    ::vsg::ref_ptr<::vsg::ImageView> map;   ///< The map's depth view, or null when no shadow was declared.
-    const vine::graphics::RenderTarget* source = nullptr; ///< Target @ref map is the depth of, or null when no shadow was declared.
-    vine::graphics::VineShadowBlock  block; ///< The block matching @ref map (params.x == 0 when none).
-};
-
-/**
- * @brief Resolves the shadow @p camera's pass declared (see @ref ShadowInput).
- *
- * The ONE rule every consumer of a shadow uses — the fullscreen lighting pass and a content slot
- * (forward shading) - so the two cannot drift. It reads the pass' own declaration of what it shades
- * (RenderPass::shadowSource) and the per-target table, so it must be called after beginPass() has
- * announced the pass and after setPassInputs() has resolved its inputs, and before the draw it belongs
- * to.
- *
- * The lights are an ARGUMENT rather than read from the session: a content draw call CONSUMES the
- * announced light list (VsgRenderer::render takes it), so by the time a slot resolves its shadow the
- * session's list is empty and the only correct source is the list that draw call was given.
- *
- * @param state  Session holding the announced inputs and the targets they name.
- * @param camera Camera the consuming pass draws through: the fragment is in ITS view space, which
- *               is what the block's view-to-light matrix is composed for.
- * @param lights Lights of the pass that declared the shadow (its bias comes from the casting one).
- * @return The resolved shadow (a null @ref ShadowInput::map when there is none).
- */
-ShadowInput resolveShadowInput(const VsgRendererState& state, vine::raw_ptr<const vine::graphics::Camera> camera,
-                               const std::vector<const vine::graphics::Light*>& lights);
 
 /**
  * @brief The ONE rule for the rectangle a pass draws into: the rectangle it announced, else the whole target.

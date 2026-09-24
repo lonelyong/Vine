@@ -30,7 +30,29 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 > | **待办与当前缺陷** | `.ai/memory/graphics-perf-backlog.md`（**唯一登记**） |
 > | 目标/槽模型与 pass 生命周期、模块导航 | `.ai/design/vsg-target-unification.md`、[`../gfx_backend_vsg.md`](../gfx_backend_vsg.md) |
 
-## 1. 文件地图：谁负责什么
+## 0. 当前实现（2026-09-24：重写版）
+
+**本文其余部分描述的是已退役的渲染器**（`VsgRenderer` 及其 SceneBridge / CameraBridge / 纹理与网格缓存 /
+管线工厂 / 退役环……），它们已于 2026-09-24 从树里删除：工厂自 M9f 起造的就是 `VsgBackend`，老渲染器
+再没有任何调用方。每章的标题带“（历史登记）”的段落**不再随代码更新**，留作当时的记录。
+
+当前的设计 of record 是 `.ai/design/vsg-reimplementation.md`（逐片实施记录 + 每片的证据面）；端到端证据是
+`scripts/vsg_rewrite_gate.sh`（套件 + 同步验证 + 三条合规检查 + 相位行 + **应用门禁**：起真 demo，判画面、
+把任何不知名的 VUID 当失败）。
+
+### 0.1 文件地图（重写版）
+
+| 层 | 单元 |
+| --- | --- |
+| 入口 | `GfxBackendVsgPlugin.cpp/.hpp`（自注册）、`VsgRenderBackendFactory.cpp`（造 `VsgBackend`） |
+| 门面与帧驱动（`src/api/`） | `VsgBackend`、`Session`、`SessionContent`、`WindowTarget`、`VsgExecutor`、`HostTargets`、`HostReadback`、`BackendContent` |
+| 内容管线（`src/api/`） | `ContentAssembly`、`ContentHalves`、`ContentSets`、`ContentDraw`、`ContentPass`、`ContentPipeline`、`ContentPush`、`ContentStore`、`ContentFacts`、`ContentImages`、`MaterialImages`、`WhiteImage`、`GeometryFacts`、`DrawBlock`、`LightBlock`、`ShadowBlock`、`ProgramAbi`、`ProgramVariant`、`BlockDescriptors`、`BlockStorage`、`StateCommands`、`StreamUploads`、`ViewBlock` |
+| 目标与设备（`src/api/`） | `OffscreenTarget`、`Device`、`DeviceFeatures`、`DeviceProbe`、`PassRegistry`、`OneShot`（一次性提交的两种形式） |
+| 设备无关层（`src/core/`） | `Protocol`、`FrameRecorder`、`FrameGraph`、`FrameCompiler`、`FrameArena`、`FrameRing`、`FrameTimeline`、`RetirementQueue`、`ClearPlan`、`TargetPlan`、`Keys`、`Observe`、`Diagnostics`、`DeviceRequirements`、`AllocationGate`、`StateRegistry`、`VariantPool`、`MaterialArena`、`Streams`、`Readback`、`PixelProbe`、`DepthProbe`、`SlotProbe`、`SessionMove`、`PhaseTable` |
+| 与重写版共享的旧单元 | `VsgHostWindow`（宿主表面，绝不销毁宿主窗口）、`VsgSceneRules`（设备无关规则）、`VsgDynamicState`（动态状态命令）、`VsgVulkanEntryPoints`（三个 loader 不导出的扩展命令，唯一含 `volk.h` 的 TU）、`VsgBackendUtility`（宿主窗口判定等环境工具）、`VsgUtils`（矩阵转换与诊断格式化）、`VsgFwd`、`vsg_global.hpp`、`RenderStateMapper`、`VsgBufferView` |
+| 测试 | `tests/test_vsg/`（设备无关层 + 真设备用例；插件是 MODULE，套件直接编译 api/core 与上表共享的扁平 TU） |
+
+## 1. 文件地图：谁负责什么（历史登记 2026-09-24：VsgRenderer 时代，连同该渲染器一起退役）
 
 | 单元 | 职责 |
 | --- | --- |
@@ -159,7 +181,7 @@ graph TB
 
 更细的逐帧时序、支持/不支持矩阵、已知缺陷清单见 [`data-flow.md`](data-flow.md)。
 
-### 2.4 属性喂入：名字、location 与绑定顺序
+### 2.4 属性喂入：名字、location 与绑定顺序（历史登记，2026-09-24 前的 SceneBridge 路径）
 
 **先把四个词分清**（本节全用这一套叫法，别混）：
 
@@ -265,7 +287,7 @@ program 编译失败 ⇒ 报一条 `ShaderFallback` Warning 且该 drawable **�
 
 ## 3. 生命周期
 
-### 3.1 谁拥有什么
+### 3.1 谁拥有什么（历史登记，2026-09-24 前的 SceneBridge 路径）
 
 | 对象 | 拥有者 | 说明 |
 | --- | --- | --- |
@@ -344,7 +366,7 @@ parked/released/waits、以及**换掉 manager 才能收回**的编译上下文�
 
 ## 4. 调用次数（一帧各发生多少次）
 
-### 4.1 每帧恰好一次
+### 4.1 每帧恰好一次（历史登记，2026-09-24 前的 `VsgRenderer::submitFrame`）
 
 `submitFrame()` 就是这份清单（`VsgRenderer.cpp`）：
 
@@ -399,7 +421,7 @@ parked/released/waits、以及**换掉 manager 才能收回**的编译上下文�
 
 ## 5. 更新策略
 
-### 5.1 数据与状态解耦
+### 5.1 数据与状态解耦（历史登记，2026-09-24 前的 SceneBridge 路径）
 
 ```
                     ┌─ data_dirty ─→ 重建数据节点（新数组、别名模型内存）→ 重新上传
@@ -673,15 +695,15 @@ vendored：header v363、上游 `54fc0d7a`、MIT，两个文件 + 自己的 LICE
 - 装载顺序由 volk 定：`volkInitialize()`（dlopen loader）→ `volkLoadInstanceOnly(instance)`（填 instance 表，
   volk 自己的 `vkGetDeviceProcAddr` 出自这里）→ `volkLoadDeviceTable(&table, device)`。表是**调用内局部**的：
   调用方要带走的是一个值（三个指针），不是一个 device 的表。
-- **不委派的部分**：扩展与 feature **策略**仍手写在 `VsgRenderer.cpp` 的 `makeWindowTraits`（要哪个扩展、要哪个
-  feature 位、以及"polygon mode 的 enum 住在 EDS2 块里但 gate 它的是 `extendedDynamicState3PolygonMode`"这
-  条踩过坑的区别），volk 只负责取指针。
+- **不委派的部分**：扩展与 feature **策略**现在写在 `src/api/DeviceFeatures.cpp` / `src/api/Session.cpp`
+  （要哪个扩展、建 `WindowTraits` 时声明什么；那套 `extendedDynamicState3PolygonMode` 的 enum 住在
+  EDS2 块里、gate 它的是另一个 feature 位的区别见 `api/DeviceProbe.cpp`），volk 只负责取指针。
 
 **判据**：30 帧证据与改动前**逐字节相同**（只差已知的 `ring released` 漂移计数）、0 FAIL；`test_vsg` 321、
 `test_graphics` 275；syncval 0 SYNC-HAZARD / 0 VUID / 0 FAIL；两次变异证明"volk 取到的指针"确实是被调的那一个
 （`set_polygon_mode` 强制 `VK_POLYGON_MODE_LINE` ⇒ 45 条 FAIL；`blendEnable` 强制关 ⇒ 3 条 FAIL）。
 
-### 5.7 GPU 侧的度量：逐 pass 时间（R6）
+### 5.7 GPU 侧的度量：逐 pass 时间（R6）（历史登记，2026-09-24 前的 VsgGpuProfile）
 
 `VsgBuildProfile` 量的是**我们**花的时间（attach / compile / record / present），答不出"**设备**拿这些活干了多久、花在哪个 pass"。这一半现在有了，**开关是环境变量**（会话建立时读，和别的 hatch 一样）：
 
