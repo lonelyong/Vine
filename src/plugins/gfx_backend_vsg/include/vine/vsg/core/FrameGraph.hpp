@@ -33,7 +33,13 @@
  *
  * WORKING MEMORY, NOT PLAN STORAGE. The graph is rebuilt every frame and holds no GPU object, no host
  * pointer and no arena span - the plan the executor reads is arena-backed (see FrameCompiler) - so plain
- * vectors are the right storage here.
+ * vectors are the right storage here. WHAT THAT DOES NOT LICENCE is building them per frame: the first
+ * version constructed its Tarjan tables and its ready-queue as LOCALS, so one steady frame allocated ~27
+ * blocks for a one-pass pipeline (measured with `core::AllocationGate`'s counting half, which exists
+ * because the heap-byte reading cannot see allocate/free churn). Every table below is therefore a MEMBER,
+ * filled in place with `assign`/`clear` so its capacity survives from frame to frame, and the ready-queue
+ * is a heap over one of them (`std::push_heap`/`std::pop_heap` are in-place) rather than a
+ * `std::priority_queue`, whose backing vector is built when the queue is.
  */
 V_VSG_NS_BEGIN
 
@@ -123,6 +129,18 @@ class FrameGraph
     std::vector<int>                        order_key_;   ///< Announced stacking order per node.
     std::vector<std::uint8_t>               excluded_;    ///< Non-zero = takes no part in this frame.
     FrameSchedule                           schedule_;    ///< The last computed answer.
+
+    // The per-frame working memory (see the file note): the Tarjan tables, the component stack and the
+    // ready-queue backing store. Members, because a solver that builds them per frame allocates per frame.
+    std::vector<std::uint32_t>            tarjan_index_;  ///< Discovery index per node (kUnvisited = unseen).
+    std::vector<std::uint32_t>            tarjan_low_;    ///< Lowest reachable index per node.
+    std::vector<std::uint32_t>            tarjan_cursor_; ///< Next successor to visit per node.
+    std::vector<std::uint8_t>             on_stack_;      ///< Whether a node is on the component stack.
+    std::vector<std::uint32_t>            component_stack_;  ///< Tarjan's component stack.
+    std::vector<std::uint32_t>            dfs_stack_;        ///< The iterative DFS' own stack.
+    std::vector<std::uint32_t>            in_degree_;        ///< Unordered predecessors per node.
+    std::vector<std::pair<int, std::uint32_t>> ready_;     ///< The ready set, kept as a heap.
+    std::vector<std::uint32_t>            component_scratch_;  ///< One component, before it is known cyclic.
 };
 
 }  // namespace core

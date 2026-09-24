@@ -71,6 +71,9 @@ class ContentAssembly
     /**
      * @brief Opens @p frame: the tables are built for the identities it names, and the block budget opens.
      *
+     * The frame also opens for the STREAM sharing (see api/StreamUploads): every stream this frame's drawing
+     * calls bind is stamped with it, which is what keeps a live stream and lets an unnamed one go.
+     *
      * @param frame      The compiled plan whose identities the tables must answer.
      * @param timeline   The frame clock parks are dated against (kept for this frame's record calls).
      * @param retirement Where replaced halves and sets are parked (kept for this frame's record calls).
@@ -101,6 +104,20 @@ class ContentAssembly
 
     /** @brief Gets the declared sets the assembly produced for this frame (its counters are evidence). */
     [[nodiscard]] ContentSets& sets() noexcept;
+
+    /** @brief Gets the stream sharing this session records through (its counters are evidence). */
+    [[nodiscard]] StreamUploads& uploads() noexcept;
+
+    /** @brief Drops the shared streams no frame has named for the grace window (the frame's last step).
+     *
+     * The other half of what api/StreamUploads's note describes: the frame stamps what it binds, and this - run
+     * where the frame's content is swept - lets a stream whose geometry the host stopped drawing leave, its
+     * bind with it. The grace window is the executor's own parking window (`slots + 1`), so a stream is kept
+     * for exactly as long as a recorded frame that named it may still be in flight.
+     *
+     * @return How many entries left.
+     */
+    std::uint64_t releaseUnusedStreams();
 
     /** @brief Gets how many sampled-input sets this session has built.
      *

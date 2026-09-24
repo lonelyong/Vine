@@ -149,54 +149,66 @@ SharedStreams::SharedStreams(std::size_t capacity) : capacity_(std::max<std::siz
 {
 }
 
-SharedStreams::Decision SharedStreams::acquire(const StreamKey& key)
+SharedStreams::Decision SharedStreams::acquire(const StreamKey& key, std::uint64_t frame)
 {
     const auto found = index_.find(key);
     if (found != index_.end()) {
-        ++found->second->readers;
+        // Named again: the grace window restarts. This is the whole of "how many readers it has" - an entry
+        // is alive because a frame named it, not because a tally said so (see the class note).
+        found->second->last_frame = frame;
         ++aliases_;
-        return {Action::Alias, found->second->readers};
+        return {Action::Alias, std::nullopt};
     }
 
-    order_.push_back(Entry{key, 1U});
+    order_.push_back(Entry{key, frame});
     index_[key] = std::prev(order_.end());
     ++uploads_;
 
-    Decision decision{Action::Upload, 1U, std::nullopt};
+    Decision decision{Action::Upload, std::nullopt};
 
-    // Past the capacity the OLDEST entry leaves the MAP. Readers keep reading what they bound (the entry
-    // leaving the registry is not a release), so only the lookup disappears - a later acquire of the same
-    // identity uploads again, which is the price of the bound.
+    // Past the capacity the STALEST entry leaves the MAP - not the oldest INSERTED, which is a different row
+    // as soon as a scene re-names old streams (see the class note). Readers keep reading what they bound (the
+    // entry leaving the registry is not a release), so only the lookup disappears - a later acquire of the
+    // same identity uploads again, which is the price of the bound.
     if (order_.size() > capacity_) {
-        decision.evicted = order_.front().key;
-        index_.erase(order_.front().key);
-        order_.pop_front();
+        auto stalest = order_.begin();
+        for (auto it = std::next(order_.begin()); it != order_.end(); ++it) {
+            if (it->last_frame < stalest->last_frame) {
+                stalest = it;
+            }
+        }
+        decision.evicted = stalest->key;
+        index_.erase(stalest->key);
+        order_.erase(stalest);
         ++evictions_;
     }
 
     return decision;
 }
 
-bool SharedStreams::release(const StreamKey& key)
+std::uint64_t SharedStreams::releaseUnseen(std::uint64_t frame, std::uint64_t grace,
+                                           std::vector<StreamKey>& dropped)
 {
-    const auto found = index_.find(key);
-    if (found == index_.end()) {
-        return false;
-    }
-    std::list<Entry>::iterator& entry = found->second;
-    if (entry->readers > 1U) {
-        --entry->readers;
-        return false;
-    }
-    order_.erase(entry);
-    index_.erase(found);
-    return true;
-}
+    dropped.clear();
+    std::uint64_t released = 0U;
 
-std::uint32_t SharedStreams::readers(const StreamKey& key) const noexcept
-{
-    const auto found = index_.find(key);
-    return found == index_.end() ? 0U : found->second->readers;
+    for (auto it = order_.begin(); it != order_.end();) {
+        // Frames only go up, so the difference is the age. `age <= grace` keeps an entry the CURRENT frame
+        // named, which is what makes "a stream a frame still names is never dropped" true by algebra and not
+        // by ordering (a sweep that ran before the frame's own acquires would otherwise drop them).
+        const std::uint64_t age = frame >= it->last_frame ? frame - it->last_frame : 0U;
+        if (age <= grace) {
+            ++it;
+            continue;
+        }
+        dropped.push_back(it->key);
+        index_.erase(it->key);
+        it = order_.erase(it);
+        ++released;
+    }
+
+    unused_ += released;
+    return released;
 }
 
 std::size_t SharedStreams::live() const noexcept
@@ -219,10 +231,15 @@ std::uint64_t SharedStreams::evictions() const noexcept
     return evictions_;
 }
 
+std::uint64_t SharedStreams::unused() const noexcept
+{
+    return unused_;
+}
+
 void SharedStreams::clear() noexcept
 {
-    order_.clear();
     index_.clear();
+    order_.clear();
 }
 
 }  // namespace core

@@ -900,7 +900,8 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // own text declares (see findProgram).
     const ProgramVariant variant = variantOf(*material.entry, *geometry.entry);
 
-    const FactResult<ProgramFacts> program = findProgram(facts, command.program, variant);
+    const FactResult<ProgramFacts> program =
+        findProgram(facts, command.program, variant, core::DrawKind::Content);
     if (!program.found())
     {
         reportRefused("the command's program", program.miss);

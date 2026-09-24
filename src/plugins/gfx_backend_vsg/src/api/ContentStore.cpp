@@ -52,18 +52,103 @@ struct ContentStore::Data
         std::unique_ptr<MaterialStorage> storage{};
     };
 
+    /// A program row's per-row storage: none. The type is here because the three tables move their rows the
+    /// same way, and an EMPTY slot (a null pointer) costs nothing to carry beside the other two.
+    struct NoStorage
+    {
+    };
+
+    /// One table: its rows, the per-row storage their spans point at, and the ROW ORDER its lookups search.
+    ///
+    /// WHY THE THREE ARE ONE TYPE. The rows must be contiguous (`ContentFacts` hands out spans of them), every
+    /// row's spans point into that row's OWN storage, and the order must stay a permutation of the rows sorted
+    /// by the lookup's key - so a row appearing or leaving moves all three. Before the order existed, the rows
+    /// and their storage were two vectors kept in step BY HAND at five erasure sites; a slip there is a row
+    /// whose spans point at its neighbour's bytes, i.e. a wrong picture with no refusal anywhere, and the order
+    /// would have added a third vector to the same discipline. Here the only mutators are the four operations
+    /// below, and each of them refreshes the order, so "the order is a permutation of the rows" is true by
+    /// construction rather than by remembering to set a flag.
+    ///
+    /// The order is refreshed on EVERY mutation (a content change, not a frame) and never per lookup: a frame
+    /// that changes nothing touches none of this (see tablesFor).
+    template <typename Row, typename Storage, void (*MakeOrder)(std::span<const Row>, std::vector<std::uint32_t>&)>
+    class Table
+    {
+      public:
+        /// @brief Appends one row and its storage. A null storage is allowed and keeps its empty slot.
+        void append(const Row& row, std::unique_ptr<Storage> cell)
+        {
+            rows_.push_back(row);
+            storage_.push_back(std::move(cell));
+            refresh();
+        }
+
+        /// @brief Replaces one row and its storage, giving the replaced storage back to the caller.
+        ///
+        /// The storage comes back because a row's spans point INTO it: the material table parks the value it
+        /// replaced, and that parked row has to keep pointing at the bytes it described (see the file note).
+        [[nodiscard]] std::unique_ptr<Storage> replace(std::size_t index, const Row& row,
+                                                      std::unique_ptr<Storage> cell)
+        {
+            std::unique_ptr<Storage> replaced = std::move(storage_[index]);
+            rows_[index]                      = row;
+            storage_[index]                   = std::move(cell);
+            refresh();
+            return replaced;
+        }
+
+        /// @brief Erases every row @p drop names, with its storage.
+        template <typename Predicate>
+        void eraseIf(Predicate drop)
+        {
+            for (std::size_t index = 0U; index < rows_.size();)
+            {
+                if (!drop(rows_[index]))
+                {
+                    ++index;
+                    continue;
+                }
+                rows_.erase(rows_.begin() + static_cast<std::ptrdiff_t>(index));
+                storage_.erase(storage_.begin() + static_cast<std::ptrdiff_t>(index));
+            }
+            refresh();
+        }
+
+        /// @brief Forgets every row, its storage and the order (the session-teardown path).
+        void clear()
+        {
+            rows_.clear();
+            storage_.clear();
+            order_.clear();
+        }
+
+        /** @brief Gets the rows (contiguous: `ContentFacts` hands out spans of them). */
+        [[nodiscard]] std::span<const Row> rows() const noexcept { return rows_; }
+
+        /** @brief Gets the row order the lookups of this table search (see api/ContentFacts). */
+        [[nodiscard]] std::span<const std::uint32_t> order() const noexcept { return order_; }
+
+        /** @brief Gets how many rows the table carries. */
+        [[nodiscard]] std::size_t size() const noexcept { return rows_.size(); }
+
+      private:
+        /// @brief Rebuilds the order from the rows (the only thing that ever writes it).
+        void refresh() { MakeOrder(rows_, order_); }
+
+        std::vector<Row>                      rows_;
+        std::vector<std::unique_ptr<Storage>> storage_;  ///< One per row, in row order.
+        std::vector<std::uint32_t>            order_;    ///< A permutation of `rows_`, sorted by the lookup key.
+    };
+
     // The live set: the objects the host tracked, held so the address key cannot be recycled.
     std::unordered_map<const vine::graphics::Geometry*, LiveGeometry>     geometries;
     std::unordered_map<const vine::graphics::ShaderProgram*, LiveProgram> programs;
     std::unordered_map<const vine::graphics::Material*, LiveMaterial>     materials;
 
-    // The tables: contiguous BECAUSE `ContentFacts` hands out spans of them, with per-entry storage beside
-    // each row so a span inside a row (its channels, its block) points at that row's own memory.
-    std::vector<GeometryFacts>                    geometry_table;
-    std::vector<std::unique_ptr<GeometryStorage>> geometry_storage;
-    std::vector<ProgramFacts>                     program_table;
-    std::vector<MaterialFacts>                    material_table;
-    std::vector<std::unique_ptr<MaterialStorage>> material_storage;
+    // The tables (see Table: rows, their storage and their row order together).
+    Table<GeometryFacts, GeometryStorage, &orderGeometryRows> geometry;
+    Table<ProgramFacts, NoStorage, &orderProgramRows>         program;
+    Table<MaterialFacts, MaterialStorage, &orderMaterialRows> material;
 
     ContentFacts  facts{};
     std::uint64_t builds{0};
@@ -71,95 +156,76 @@ struct ContentStore::Data
     /// Cells a refused park left: no parking window means "keep", never "free early".
     std::vector<std::shared_ptr<void>> kept;
 
+    /**
+     * @brief Gets the tables as the lookups see them: the rows, and the row order each is searched by.
+     *
+     * Built on demand rather than cached, because the walk MUTATES the tables while it runs: a cached view
+     * would hold spans into a vector that has since reallocated (the arrays live in the tables, the view does
+     * not own them). Six spans are cheap, and the answer it produces is always the table's current one.
+     *
+     * @return The tables and their orders.
+     */
+    [[nodiscard]] ContentFacts view() const noexcept
+    {
+        ContentFacts tables;
+        tables.programs   = program.rows();
+        tables.geometries = geometry.rows();
+        tables.materials  = material.rows();
+        tables.program_order  = program.order();
+        tables.geometry_order = geometry.order();
+        tables.material_order = material.order();
+        return tables;
+    }
+
     /** @brief Removes the geometry rows of one identity at one revision (a parked supersession). */
     void eraseGeometryRows(const void* identity, std::uint64_t revision) noexcept
     {
-        for (std::size_t i = 0U; i < geometry_table.size();)
-        {
-            if (geometry_table[i].geometry == identity && geometry_table[i].revision == revision)
-            {
-                geometry_table.erase(geometry_table.begin() + static_cast<std::ptrdiff_t>(i));
-                geometry_storage.erase(geometry_storage.begin() + static_cast<std::ptrdiff_t>(i));
-                continue;
-            }
-            ++i;
-        }
+        geometry.eraseIf([identity, revision](const GeometryFacts& row) {
+            return row.geometry == identity && row.revision == revision;
+        });
     }
 
     /** @brief Removes every geometry row of one identity (an abandoned object's rows). */
     void eraseGeometryOf(const void* identity) noexcept
     {
-        for (std::size_t i = 0U; i < geometry_table.size();)
-        {
-            if (geometry_table[i].geometry == identity)
-            {
-                geometry_table.erase(geometry_table.begin() + static_cast<std::ptrdiff_t>(i));
-                geometry_storage.erase(geometry_storage.begin() + static_cast<std::ptrdiff_t>(i));
-                continue;
-            }
-            ++i;
-        }
+        geometry.eraseIf([identity](const GeometryFacts& row) { return row.geometry == identity; });
     }
 
     /** @brief Removes the program rows of one identity at one revision (a parked supersession). */
     void eraseProgramRows(const void* identity, std::uint64_t revision) noexcept
     {
-        program_table.erase(std::remove_if(program_table.begin(), program_table.end(),
-                                           [identity, revision](const ProgramFacts& entry) {
-                                               return entry.program == identity && entry.revision == revision;
-                                           }),
-                            program_table.end());
+        program.eraseIf([identity, revision](const ProgramFacts& row) {
+            return row.program == identity && row.revision == revision;
+        });
     }
 
     /** @brief Removes every program row of one identity (an abandoned object's rows). */
     void eraseProgramOf(const void* identity) noexcept
     {
-        program_table.erase(std::remove_if(program_table.begin(), program_table.end(),
-                                           [identity](const ProgramFacts& entry) {
-                                               return entry.program == identity;
-                                           }),
-                            program_table.end());
+        program.eraseIf([identity](const ProgramFacts& row) { return row.program == identity; });
     }
 
-    /** @brief Removes the material row of one identity (an abandoned object's row). */
+    /** @brief Removes every material row of one identity (an abandoned object's rows). */
     void eraseMaterialOf(const void* identity) noexcept
     {
-        for (std::size_t i = 0U; i < material_table.size();)
-        {
-            if (material_table[i].material == identity)
-            {
-                material_table.erase(material_table.begin() + static_cast<std::ptrdiff_t>(i));
-                material_storage.erase(material_storage.begin() + static_cast<std::ptrdiff_t>(i));
-                continue;
-            }
-            ++i;
-        }
+        material.eraseIf([identity](const MaterialFacts& row) { return row.material == identity; });
     }
 
-    /** @brief Gets the row that answers for a geometry right now (the one built at its live revision). */
+    /** @brief Gets the row that answers for a geometry right now (the one built at its live revision).
+     *
+     * It asks through the SAME lookup the recording asks with (`findGeometry`), so what this walk believes and
+     * what the recording will find cannot drift apart - and the question is a bisection of the row order
+     * rather than a walk of the table (the walk asks it once per command, see api/ContentFacts).
+     */
     [[nodiscard]] const GeometryFacts* liveGeometry(const void* identity, std::uint64_t revision) const noexcept
     {
-        for (const GeometryFacts& entry : geometry_table)
-        {
-            if (entry.geometry == identity && entry.revision == revision)
-            {
-                return &entry;
-            }
-        }
-        return nullptr;
+        return findGeometry(view(), identity, revision).entry;
     }
 
     /** @brief Gets the row that answers for a material right now (identity is the whole key). */
     [[nodiscard]] const MaterialFacts* liveMaterial(const void* identity) const noexcept
     {
-        for (const MaterialFacts& entry : material_table)
-        {
-            if (entry.material == identity)
-            {
-                return &entry;
-            }
-        }
-        return nullptr;
+        return findMaterial(view(), identity).entry;
     }
 };
 
@@ -285,9 +351,16 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
         }
     }
 
-    d->facts.programs   = d->program_table;
-    d->facts.geometries = d->geometry_table;
-    d->facts.materials  = d->material_table;
+    d->facts.programs   = d->program.rows();
+    d->facts.geometries = d->geometry.rows();
+    d->facts.materials  = d->material.rows();
+
+    // The tables are published WITH THEIR ROW ORDER, which is what turns the recording's lookups into
+    // bisections instead of whole-table scans (see api/ContentFacts). Nothing is built here: each table owns
+    // its order and refreshes it when a row moves, so this is the copy of six spans that the frame reads.
+    d->facts.program_order  = d->program.order();
+    d->facts.geometry_order = d->geometry.order();
+    d->facts.material_order = d->material.order();
     return d->facts;
 }
 
@@ -343,8 +416,7 @@ void ContentStore::ensureGeometry(const vine::graphics::Geometry* geometry, core
         return;
     }
 
-    d->geometry_table.push_back(fresh);
-    d->geometry_storage.push_back(std::move(storage));
+    d->geometry.append(fresh, std::move(storage));
     ++d->builds;
 }
 
@@ -380,33 +452,22 @@ void ContentStore::ensureMaterial(const vine::graphics::Material* material, core
     }
 
     // The material's lookup is by identity alone, so the table has to answer "the material now": the row is
-    // REPLACED, and only the value it had is parked (see the file note).
-    std::size_t row = d->material_table.size();
-    for (std::size_t i = 0U; i < d->material_table.size(); ++i)
+    // REPLACED, and only the value it had is parked (see the file note). WHICH row is the same question the
+    // recording asks, so it is asked the same way - through the lookup that owns the rule.
+    const MaterialFacts* const live_row = d->liveMaterial(material);
+    if (live_row == nullptr)
     {
-        if (d->material_table[i].material == material)
-        {
-            row = i;
-            break;
-        }
-    }
-
-    if (row == d->material_table.size())
-    {
-        d->material_table.push_back(fresh);
-        d->material_storage.push_back(std::move(storage));
+        d->material.append(fresh, std::move(storage));
         ++d->builds;
         return;
     }
+    const std::size_t row = static_cast<std::size_t>(live_row - d->material.rows().data());
 
-    Data::RetiredMaterial retired;
-    retired.facts                 = d->material_table[row];
-    retired.storage               = std::move(d->material_storage[row]);
-    const std::shared_ptr<Data::RetiredMaterial> cell =
-        std::make_shared<Data::RetiredMaterial>(std::move(retired));
-
-    d->material_table[row]   = std::move(fresh);
-    d->material_storage[row] = std::move(storage);
+    // The value being replaced goes on living in the parked cell: the row's block span points into the
+    // storage, so the storage travels WITH the value rather than being overwritten where it lies.
+    const std::shared_ptr<Data::RetiredMaterial> cell = std::make_shared<Data::RetiredMaterial>();
+    cell->facts                                      = *live_row;
+    cell->storage                                    = d->material.replace(row, fresh, std::move(storage));
     ++d->builds;
 
     const bool parked = retirement.retire(timeline, [cell]() { (void)cell; });
@@ -487,7 +548,7 @@ void ContentStore::ensureProgram(const vine::graphics::ShaderProgram* program, c
     {
         live.variants.push_back(variant.bits());
     }
-    d->program_table.push_back(std::move(fresh));
+    d->program.append(fresh, {});
     ++d->builds;
 }
 
@@ -575,11 +636,9 @@ void ContentStore::clear()
     d->geometries.clear();
     d->programs.clear();
     d->materials.clear();
-    d->geometry_table.clear();
-    d->geometry_storage.clear();
-    d->program_table.clear();
-    d->material_table.clear();
-    d->material_storage.clear();
+    d->geometry.clear();
+    d->program.clear();
+    d->material.clear();
     d->facts    = ContentFacts{};
     d->retained = 0U;
     d->kept.clear();
@@ -587,17 +646,17 @@ void ContentStore::clear()
 
 std::size_t ContentStore::geometryEntries() const noexcept
 {
-    return d->geometry_table.size();
+    return d->geometry.size();
 }
 
 std::size_t ContentStore::programEntries() const noexcept
 {
-    return d->program_table.size();
+    return d->program.size();
 }
 
 std::size_t ContentStore::materialEntries() const noexcept
 {
-    return d->material_table.size();
+    return d->material.size();
 }
 
 std::uint64_t ContentStore::builds() const noexcept

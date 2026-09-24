@@ -46,7 +46,7 @@ Vulkan。它对外只有一个身份：`RenderBackendFactory` 自注册，后端
 | --- | --- |
 | 入口 | `GfxBackendVsgPlugin.cpp/.hpp`（自注册）、`VsgRenderBackendFactory.cpp`（造 `VsgBackend`） |
 | 门面与帧驱动（`src/api/`） | `VsgBackend`、`Session`、`SessionContent`、`WindowTarget`、`VsgExecutor`、`HostTargets`、`HostReadback`、`BackendContent` |
-| 内容管线（`src/api/`） | `ContentAssembly`、`ContentHalves`、`ContentSets`、`ContentDraw`、`ContentPass`、`ContentPipeline`、`ContentPush`、`ContentStore`、`ContentFacts`、`ContentImages`、`MaterialImages`、`WhiteImage`、`GeometryFacts`、`DrawBlock`、`LightBlock`、`ShadowBlock`、`ProgramAbi`、`ProgramVariant`、`BlockDescriptors`、`BlockStorage`、`StateCommands`、`StreamUploads`、`ViewBlock` |
+| 内容管线（`src/api/`） | `ContentAssembly`、`ContentHalves`、`ContentSets`、`ContentDraw`、`ContentPass`、`ContentPipeline`、`ContentPush`、`ContentStore`、`ContentFacts`、`ContentImages`、`ContentSources`、`ContentSweep`、`MaterialImages`、`WhiteImage`、`GeometryFacts`、`FactResult`、`DrawBlock`、`LightBlock`、`ShadowBlock`、`ProgramAbi`、`ProgramVariant`、`BlockDescriptors`、`BlockStorage`、`StateCommands`、`StreamUploads`、`ViewBlock` |
 | 目标与设备（`src/api/`） | `OffscreenTarget`、`Device`、`DeviceFeatures`、`DeviceProbe`、`PassRegistry`、`OneShot`（一次性提交的两种形式） |
 | 设备无关层（`src/core/`） | `Protocol`、`FrameRecorder`、`FrameGraph`、`FrameCompiler`、`FrameArena`、`FrameRing`、`FrameTimeline`、`RetirementQueue`、`ClearPlan`、`TargetPlan`、`Keys`、`Observe`、`Diagnostics`、`DeviceRequirements`、`AllocationGate`、`StateRegistry`、`VariantPool`、`MaterialArena`、`Streams`、`Readback`、`PixelProbe`、`DepthProbe`、`SlotProbe`、`SessionMove`、`PhaseTable` |
 | 与重写版共享的旧单元 | `VsgHostWindow`（宿主表面，绝不销毁宿主窗口）、`VsgSceneRules`（设备无关规则）、`VsgDynamicState`（动态状态命令）、`VsgVulkanEntryPoints`（三个 loader 不导出的扩展命令，唯一含 `volk.h` 的 TU）、`VsgBackendUtility`（宿主窗口判定等环境工具）、`VsgUtils`（矩阵转换与诊断格式化）、`VsgFwd`、`vsg_global.hpp`、`RenderStateMapper`、`VsgBufferView` |
@@ -286,6 +286,87 @@ program 编译失败 ⇒ 报一条 `ShaderFallback` Warning 且该 drawable **�
 > `src/viz/graphics/docs/usage.md` §3.8。
 
 ## 3. 生命周期
+
+### 0.2 宿主放手的内容：每帧一次扫尾（`api/ContentSweep`，2026-09-24 落地）
+
+重写版把“宿主放手了”做成**一帧一次的一个调用**，而不是让每个缓存自己决定何时扫：
+
+| 缓存 | 留存的东西 | 放手判据 | 松手方式 |
+| --- | --- | --- | --- |
+| `ContentStore` | 几何 / 程序 / 材料的**表行** + 每个对象的份额 | 缓存之外已无人持有（`useCount()`） | 行经 `core::RetirementQueue` **停放**（已录制的帧可能还点名它），份额当帧放掉 |
+| `MaterialImages` | 已被采样的纹理（image / view / sampler） | 同上 | 直接放掉：对象引用计数到底（保留的描述符集自己持着它），不需要窗口 |
+
+- 调用点**唯一**：`VsgBackend::swapBuffers()`，在**本帧内容录完之后、会话提交之前**。顺序不是风格：提交会推进停放队，而停放必须在推进之前（否则早放一帧）——见 `core::RetirementQueue` 的顺序契约。空帧也扫（宿主可以在不画的帧里放手）。
+- 可观测量：`VsgBackend::releasedContentObjects()` / `releasedTextures()`。宿主一直持着自己画的东西时它们**恒为 0**，放手后下一帧移动。
+- **为什么它必须是一个单元**：两个 `releaseAbandoned` 之前都实现好了、也各有单测，而**帧驱动里没有任何调用点** —— 宿主丢掉的几何会连着它的半片、集合与管线活到会话结束。半片/集合的清扫判据是“表还能不能回答这个键”（`ContentHalves` / `ContentSets` 的 sweep），所以表不放手，它们也不会放手：这是同一条链。
+
+### 0.3 “稳态帧不分配”这条规矩，怎么量（`core::AllocationGate`，2026-09-24 有了计数的一半）
+
+规矩：**内容没变的一帧不得申请内存**（计划存储、几何重传、缓存条目、容器增长都不许）。它必须可判，否则
+“本应如此”等于零。门禁现在有**两半**：
+
+| 半 | 回答 | 局限（写在类型里） |
+| --- | --- | --- |
+| 字节读数（`supported()`/`end()`） | “窗口内进程已分配字节涨了吗” | **看不见 churn**（一帧内 new+delete 同一块，字节数原样）；`mallinfo2` **在 Windows 上不存在** ⇒ 那里这一半是 `supported() == false` |
+| **计数**（`allocations()`/`countsAvailable()`） | “窗口内申请了几次内存” | 需要 harness 插桩（库不许替换宿主的分配器）：`tests/test_vsg/AllocationCounter.cpp` 替换全局分配函数并 `announceCountedAllocations()`；**`countsAvailable()` 必须先断言**，否则“数了 0 次”与“没人数”是同一个数字 |
+
+**它当场量出的第一处真缺陷**：单 pass 的稳态帧在 `core::FrameGraph` 里分配 **27 块**（Tarjan 的表/栈 +
+`priority_queue` 的容器都当局部变量建；`reset` 用 `assign` 丢掉邻接表容量，下一步每条边再要一块）。修法是
+把那些临时量变成**成员 + 原地填充**（`std::push_heap/pop_heap` 取代 `priority_queue`），复测 **27 → 0**；
+守卫：`FrameGraphTest.RebuildingAndSchedulingAFrameAsksForNoMemory`（**带边**的图）与相位行
+`two steady frames allocate nothing`（判据 = 计数）。这一段的过程与数字见 `.ai/design/vsg-reimplementation.md` §11.16bx。
+
+**记录路径为什么不是"零分配"门禁，而是一条上限**：记录路径**按设计**每帧新建命令节点
+（`vsg::RenderGraph`、每条命令的 bind/draw），在那里断言 0 就是在断言 vsg 的行为。2026-09-24 量到的
+（MSVC Debug，单 pass、单 draw、稳态）：`VsgExecutor::record` **12 次分配** = 7（构造一个 `ContentPass`：
+每 entry 的 `ReportOnce` 行 + 记录器成员）+ 2（`planClearValues` 的 per-attachment 向量）+ 3（该 pass 的
+`vsg::RenderGraph` 与它的 clear values —— 节点）；对照**一次**三角形成本 33 次。这层的账本**不随内容增长**
+（每 pass 固定几条），所以门禁断言的是上限而不是 0：
+`CoreAllocationGateTest.TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass`（含"1 个 entry 与 4 个 entry
+同价"这条形状断言）。四处"不改"的逐条论证与代价见 §11.16by。
+
+### 0.4 内容表的查找：为什么不是全表扫描（`ContentFacts` 的行序）
+
+三张表（程序 / 几何 / 材质）的查找**每条命令每帧跑 5~9 次**（`ContentHalves` 与 `ContentPass` 各自解析同一批身份），
+而表只增不减 ⇒ 全表扫描是 `O(每帧命令数 × 表项数)`。2026-09-24 量到的斜率（同一台机，`-O2` 等价机制；
+Debug 的绝对数带检查迭代器，不代表发布构建）：16 行时扫描 3.3 ns / 二分 3.4 ns，64 行 9.6 / **4.8**，
+1024 行 112.8 / **28.8**，16384 行 1719.7 / **45.8** —— 交叉点在 ~10~16 行，之后二分一路领先，
+所以**没有"小表扫描"的阈值规则**（数字见 §11.16bz）。
+
+- 行序是 `ContentFacts` 里三个 `*_order`（行号的置换），由 `orderProgramRows/orderGeometryRows/orderMaterialRows`
+  构建 —— **唯一的构建方式**；**空 = 未索引 ⇒ 扫描**（手工搭表与既有用例走这条）。
+- **排序键只含常数时间可比字段**：程序 `(身份, revision, kind)`、几何 `(身份, revision)`、材质 `(身份)`。
+  VARIANT 不进键：它在序里**相邻且保表序**的那一小段里扫，于是"第一行决定"的规则（Malformed 判据、材质
+  答"现在的样子"）与扫描逐字一致；未命中的三分类由键的两个前缀段二分得出。
+- `ContentStore::tablesFor` 发布的表**带着行序**，而每张表的行序由**表自己**维护：`Data::Table` 把（rows,
+  每行的 storage, 行序）关在一起，四个会移动行的操作（`append`/`replace`/`eraseIf`/`clear`）各自刷新它 ⇒
+  "行序是行的置换"由构造保证（顺带：rows 与 storage 原来在五个删除点**手工对齐**，现在只有一个主人）。
+  因此 `tablesFor` 走帧时自己的两次查找（`liveGeometry`/`liveMaterial`）也走同一个 `find*`，不再是扫描。
+- **正确性与性能分开保证**：`find*` 只在"行序恰好覆盖整张表"时二分，否则退化成扫描（忘了刷新最坏是慢）；
+  而"覆盖整张表"这条不变式由 `ContentStoreTest.TheRowOrderCoversEveryRowAfterAppendsAndErasures` 断言。
+- 守卫是**差分式**的，不靠计时：`ContentFactsIndexTest` 对同一批行问两遍（带序 / 不带序）断言答案逐字相同，
+  并断言行序是置换且按键单调（变异：把几何行序的键改错 ⇒ 两条用例同时红）。
+
+### 0.5 共享流的寿命：帧命名就是生命（`api/StreamUploads` / `core::SharedStreams`，2026-09-24）
+
+同一份网格被两个槽画就该只上传一次 —— 决定"同一份"的是 `core::SharedStreams`（纯簿记，可无设备测试），
+拥有对象的是 `StreamUploads`（一身份一个 bind）。
+
+- **寿命不是读者计数，而是"哪个帧还在命名它"。** 第一版是一个 `readers` 计数 + 一个"最后一个读者"会调的
+  `release()`：而**一次绘制每帧 acquire 一次**（录进去的节点每帧重建）⇒ 计数只增不减，"最后一个读者"**永不可达**，
+  实测 `release()` 在生产代码里**零调用点**。现在的规则：`acquire(key, frame)` 盖帧戳，
+  `releaseUnseen(frame, grace)` 放掉"超过 grace 帧没被命名"的条目并交出 key（出参复用容量 ⇒ 稳定帧不分配）。
+- **窗口就是执行器自己的停放窗**（`retirement.slots() + 1`）：一条流被保留的时长恰好等于"命名过它的已录制帧可能还在飞"的时长。
+  `ContentAssembly::beginFrame` 开帧，`VsgBackend::sweepAbandonedContent`（帧尾那次清扫）接着扫 —— 可观测
+  `VsgBackend::releasedStreams()`（宿主一直画所有东西时恒为 0；丢掉一个网格后在窗口过去时移动）。
+- **为什么不是"内容被移除时 release"（精确释放）**：表里**还留着被跟踪对象的行**（宿主持有但不再画的网格），
+  "行离开"与"没有帧再命名它"是两件事 —— 只有后者收得住这种情况。
+- **容量 512 降级为硬兜底**：满了挤掉**最旧被命名**的那条（不是最早插入的那条：内容轮换时两者不是同一行）。
+  用的是同一个帧戳，所以没有多出第二处状态；`evictions()` 是这条兜底被撞到的计数。
+- 守卫钉的是**窗口算术**（差一帧就是静默错）：`CoreSharedStreamsTest`（F+grace 尚在、F+grace+1 走且只走一次、
+  每帧命名则永远一条、满时挤最旧的）、`StreamUploadsTest`（bind 随条目走、两个 map 与注册表同步）、
+  以及装配级的 `ContentPassTest.AFrameIsAssembledAndRecordedInTwoCalls`（命名后 4 帧内不放、第 5 帧一次全放）。
+  变异：接线失效（帧号不记）⇒ 3 条红；窗口差一帧 ⇒ 4 条红。
 
 ### 3.1 谁拥有什么（历史登记，2026-09-24 前的 SceneBridge 路径）
 
@@ -569,7 +650,7 @@ drawable 换到别的缓冲了）由帧级清扫 `releaseAbandonedCaches()` → 
 
 **怎么按需把它看出来**：自检 policy churn 相位前后各采一次保留量，默认**不打印**（否则会动到证据基线），用 `VINE_PROBE_RETENTION=1 VK_ICD_FILENAMES=<lavapipe icd> ./bin/vsg_backend_selftest` 打开；该相位末尾还会**断言**`compile_contexts <= content_slots`（修前的 60 对 4 会直接 FAIL）。未做的：上游加 `CompileManager::remove(view)`（有了派生方案就不需要了），以及上面那 0.4 s 的归因。
 
-### 5.3.2 宿主表面归宿主：附加、搬移、绝不销毁（2026-09-16 落地）
+### 5.3.2 宿主表面归宿主：附加、搬移、绝不销毁（历史登记 2026-09-16 落地，VsgRenderer 时代）
 
 **约束曾来自宿主（2026-09-16 晚已解，见本节末条）**：宿主以前在句柄变化时做 `engine->shutdown()` + `initialize()`（而且是**两处**：`initializeBackend()` 的“句柄变了”分支，加上 `onSurfaceDestroyed()` 的 `SurfaceAboutToBeDestroyed`），而 SDK 的 `setWindowHandle()` 语义本来就是“把后端**搬**到新表面”。于是此前为了“重建窗口不炸”加的两条补丁都是**症状**，不是需求：
 

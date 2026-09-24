@@ -45,6 +45,18 @@ struct StreamUploads::Data
     std::unordered_map<core::StreamKey, ::vsg::ref_ptr<::vsg::BindVertexBuffers>, core::StreamKeyHash> vertex;
     std::unordered_map<core::StreamKey, ::vsg::ref_ptr<::vsg::BindIndexBuffer>, core::StreamKeyHash>  index;
     std::uint64_t                                                                                     refusals{0};
+    /// The frame the acquires are stamped with, and the window an unnamed entry survives (see beginFrame).
+    std::uint64_t frame{0};
+    std::uint32_t grace{0};
+    /// The keys a sweep dropped, so the two maps can follow without allocating per sweep.
+    std::vector<core::StreamKey> dropped;
+
+    /** @brief Drops one key's bind from the map that holds it (both are tried: the key is opaque here). */
+    void dropBind(const core::StreamKey& key)
+    {
+        vertex.erase(key);
+        index.erase(key);
+    }
 };
 
 StreamUploads::StreamUploads(std::size_t capacity) : d(std::make_unique<Data>(capacity))
@@ -83,12 +95,11 @@ StreamUploads::VertexResult StreamUploads::acquireVertex(const core::StreamKey& 
         return {};
     }
 
-    const core::SharedStreams::Decision decision = d->registry.acquire(key);
+    const core::SharedStreams::Decision decision = d->registry.acquire(key, d->frame);
     if (decision.evicted.has_value()) {
-        // The registry dropped the oldest lookup; the bind goes with it. A reader that already bound it holds
+        // The registry dropped the stalest lookup; the bind goes with it. A reader that already bound it holds
         // its own reference, so nothing it reads disappears (see the file note).
-        d->vertex.erase(*decision.evicted);
-        d->index.erase(*decision.evicted);
+        d->dropBind(*decision.evicted);
     }
     if (decision.action == core::SharedStreams::Action::Alias) {
         const auto found = d->vertex.find(key);
@@ -114,10 +125,9 @@ StreamUploads::IndexResult StreamUploads::acquireIndex(const core::StreamKey& ke
     // entry and shares one index upload (see bindKeyOf).
     const core::StreamKey normalised = bindKeyOf(key);
 
-    const core::SharedStreams::Decision decision = d->registry.acquire(normalised);
+    const core::SharedStreams::Decision decision = d->registry.acquire(normalised, d->frame);
     if (decision.evicted.has_value()) {
-        d->vertex.erase(*decision.evicted);
-        d->index.erase(*decision.evicted);
+        d->dropBind(*decision.evicted);
     }
     if (decision.action == core::SharedStreams::Action::Alias) {
         const auto found = d->index.find(normalised);
@@ -129,16 +139,21 @@ StreamUploads::IndexResult StreamUploads::acquireIndex(const core::StreamKey& ke
     return {Action::Uploaded, bind};
 }
 
-bool StreamUploads::release(const core::StreamKey& key)
+void StreamUploads::beginFrame(std::uint64_t frame, std::uint32_t grace) noexcept
 {
-    const core::StreamKey bind_key = bindKeyOf(key);
-    if (!d->registry.release(bind_key)) {
-        return false;
-    }
-    d->vertex.erase(bind_key);
-    d->index.erase(bind_key);
-    return true;
+    d->frame = frame;
+    d->grace = grace;
 }
+
+std::uint64_t StreamUploads::releaseUnseen()
+{
+    const std::uint64_t released = d->registry.releaseUnseen(d->frame, d->grace, d->dropped);
+    for (const core::StreamKey& key : d->dropped) {
+        d->dropBind(key);
+    }
+    return released;
+}
+
 
 std::size_t StreamUploads::live() const noexcept
 {
@@ -168,6 +183,11 @@ std::uint64_t StreamUploads::refusals() const noexcept
 std::uint64_t StreamUploads::evictions() const noexcept
 {
     return d->registry.evictions();
+}
+
+std::uint64_t StreamUploads::unused() const noexcept
+{
+    return d->registry.unused();
 }
 
 bool StreamUploads::agreesWithRegistry() const noexcept

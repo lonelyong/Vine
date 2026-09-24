@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <vector>
 
 #include <vsg/core/Data.h>
 #include <vsg/core/ref_ptr.h>
@@ -40,6 +41,16 @@
  * outlive the recording; a provider that rebuilds a geometry must keep the old revision alive for as long as
  * a plan that names it may still be recorded (the same rule as every other borrowed argument in this
  * backend, and the same reason StreamUploads keys its binds by revision).
+ *
+ * WHY A LOOKUP IS NOT A SCAN. Each lookup runs several times per drawing call per frame (`api/ContentHalves`
+ * and `api/ContentPass` both resolve the same three identities), and the tables only GROW: a linear scan is
+ * therefore O(rows) per lookup, i.e. O(drawables x rows) per frame - invisible at the content sizes this
+ * backend was written for (tens of rows) and a wall at a thousand (measured 2026-09-24: see the design log's
+ * §11.16bz, which is also where the index's own cost is stated). So a table may carry a ROW ORDER - the same
+ * rows, sorted by the identity the lookup names - and a lookup that has one narrows to the run of rows that
+ * share that identity by bisection instead of reading all of them. The order is DERIVED and is therefore
+ * never the table's source of truth: the rows are, and a table without an order still answers correctly (by
+ * scanning). What it buys is a lookup whose cost follows the LOGARITHM of the table rather than the table.
  */
 namespace vine::graphics
 {
@@ -90,6 +101,17 @@ struct ProgramFacts
     const void*              program{nullptr};  ///< The identity the plan names.
     std::uint64_t            revision{0};       ///< The revision the plan names.
     ProgramVariant           variant{};         ///< The variant (which of the program's texts) this entry is.
+
+    /// Which of the engine's two drawing CALLS this entry describes. It is part of the entry's key and not a
+    /// decoration: ONE program object can be described twice at one revision - as content (both stages, the
+    /// content ABI) and as a full-screen call (the engine brings the vertex stage, so only the fragment stage
+    /// is read, and the ABI is the screen one) - and the two entries carry different texts, different
+    /// declarations and different pipelines. A lookup that did not name the kind would hand whichever row the
+    /// table happened to carry first to a caller expecting the other, which is a wrong picture with no refusal
+    /// anywhere: the ambiguity this field closes (measured reachable - a host that also draws its post-process
+    /// program as content is the ordinary way to hit it).
+    core::DrawKind           kind{core::DrawKind::Content};
+
     ContentPipeline::Shaders shaders{};         ///< The GLSL those two stages consist of.
     ProgramAbi               abi{};             ///< The bindings and push ranges those two texts declare.
 };
@@ -114,7 +136,56 @@ struct ContentFacts
     std::span<const ProgramFacts>  programs{};    ///< Program identities → their GLSL.
     std::span<const GeometryFacts> geometries{};  ///< Geometry identities → their streams and layout.
     std::span<const MaterialFacts> materials{};   ///< Material identities → their block bytes.
+
+    /// The ROW ORDER of each table, as the lookups search it: a permutation of that table's row indices,
+    /// sorted by the identity the lookup names (see @ref orderProgramRows and the file note).
+    ///
+    /// EMPTY IS ALLOWED AND MEANS "NOT INDEXED": every lookup then answers by scanning its whole table, which
+    /// is the same answer at a linear price - the path a table built by hand takes (tests do that), and the
+    /// reason the two spellings can live side by side without one of them being wrong. An order that does not
+    /// cover exactly the table's rows is treated the same way (a SCAN), so a table that moved without its
+    /// order being rebuilt still answers with its own rows rather than with an index it does not hold; the
+    /// builders below are the only supported way to make one, and `api/ContentStore`'s own tables keep the
+    /// order current through every mutation.
+    std::span<const std::uint32_t> program_order{};
+    std::span<const std::uint32_t> geometry_order{};
+    std::span<const std::uint32_t> material_order{};
 };
+
+/** @brief Replaces @p order with the row order @ref findProgram searches the program table by.
+ *
+ * The order is (identity, revision, KIND) - the three fields the lookup can compare in constant time. The
+ * VARIANT is deliberately not part of it: comparing two of them is comparing their define lists, which is
+ * work the search would then pay per comparison. The rows that share those three are therefore contiguous
+ * and IN TABLE ORDER inside the order (the sort is stable), and the lookup scans that short run for the
+ * variant - which is also what keeps "the first entry of that identity and revision" meaning the same thing
+ * it means today.
+ *
+ * @param rows  The table's rows.
+ * @param order Receives the order; its previous contents are replaced and its capacity is kept.
+ */
+void orderProgramRows(std::span<const ProgramFacts> rows, std::vector<std::uint32_t>& order);
+
+/** @brief Replaces @p order with the row order @ref findGeometry searches the geometry table by.
+ *
+ * The order is (identity, revision): rows that share both are contiguous and in table order, so the geometry
+ * the scan would have answered with is the first row of that run.
+ *
+ * @param rows  The table's rows.
+ * @param order Receives the order; its previous contents are replaced and its capacity is kept.
+ */
+void orderGeometryRows(std::span<const GeometryFacts> rows, std::vector<std::uint32_t>& order);
+
+/** @brief Replaces @p order with the row order @ref findMaterial searches the material table by.
+ *
+ * The order is the identity alone (see findMaterial: the material lookup has no revision), and rows that
+ * name the same identity keep their table order - the material table answers "the material now", so which
+ * of two rows of one identity is the answer is decided by row order, not by the sort.
+ *
+ * @param rows  The table's rows.
+ * @param order Receives the order; its previous contents are replaced and its capacity is kept.
+ */
+void orderMaterialRows(std::span<const MaterialFacts> rows, std::vector<std::uint32_t>& order);
 
 /** @brief Gets whether a geometry's channels are exactly what its layout declares, and how it is drawn.
  *
@@ -156,10 +227,12 @@ struct ContentFacts
  * @param facts    The tables.
  * @param program  Program identity and revision (from the plan).
  * @param variant  Which of the program's texts the drawable means.
+ * @param kind     Which drawing CALL the entry must describe (see ProgramFacts::kind): the same program may
+ *                 be answered for both, and the two answers are different entries.
  * @return The entry, or the reason there is none.
  */
 [[nodiscard]] FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::ProgramRef& program,
-                                                   const ProgramVariant& variant) noexcept;
+                                                   const ProgramVariant& variant, core::DrawKind kind) noexcept;
 
 /** @brief Finds the geometry a compiled command names.
  *

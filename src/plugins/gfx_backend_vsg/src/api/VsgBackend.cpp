@@ -12,12 +12,14 @@
 #include <vsg/app/CommandGraph.h>
 #include <vsg/state/ImageView.h>
 #include <vsg/vk/Device.h>
+#include <vsg/vk/PhysicalDevice.h>
 
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/vsg/api/BackendContent.hpp>
 #include <vine/vsg/api/BlockStorage.hpp>
 #include <vine/vsg/api/ContentAssembly.hpp>
 #include <vine/vsg/api/ContentStore.hpp>
+#include <vine/vsg/api/ContentSweep.hpp>
 #include <vine/vsg/api/HostReadback.hpp>
 #include <vine/vsg/api/HostTargets.hpp>
 #include <vine/vsg/api/MaterialImages.hpp>
@@ -214,6 +216,10 @@ struct VsgBackend::Data
 
     std::array<core::ReportOnce, kUnservedCount> unserved_reports{};  ///< One episode per entry point.
     std::array<core::ReportOnce, kReadbackReportCount> readback_reports{};  ///< The unresolved-target episodes.
+    /// What the frame's sweeps have let go (see api/ContentSweep); zero while the host holds everything.
+    std::size_t released_objects{0};
+    std::size_t released_textures{0};
+    std::size_t released_streams{0};
     std::vector<core::TargetFacts>            facts;          ///< This frame's target table (borrowed rows).
     std::vector<const vine::graphics::Light*> light_scratch;  ///< Reused by setLights (no per-call allocation).
     std::vector<InputImages>                  input_scratch;  ///< Reused per content pass (see recordContent).
@@ -280,6 +286,19 @@ bool VsgBackend::initialize()
     {
         d->storage = BlockStorage::create(device, BlockStorage::Layout{});
         d->images  = MaterialImages::create();
+        if (d->images != nullptr)
+        {
+            // THE CACHE IS TOLD WHAT THE DEVICE OFFERS, once, here - where the device is. The limit is a
+            // device property, and a cache that is never told samples with anisotropy enabled at 1x, which is
+            // the same picture as not asking (see MaterialImages::makeSampler): the entry point existed and
+            // nothing called it, so mip-chained textures were filtered isotropically however good the device
+            // was. Read from the physical device the session built, and clamped by anisotropyFor - asking for
+            // more than VkPhysicalDeviceLimits::maxSamplerAnisotropy is a validation error.
+            if (const ::vsg::PhysicalDevice* physical = device->getPhysicalDevice())
+            {
+                d->images->setMaxAnisotropy(physical->getProperties().limits.maxSamplerAnisotropy);
+            }
+        }
         if (d->storage != nullptr && d->images != nullptr)
         {
             d->store    = std::make_unique<ContentStore>();
@@ -373,6 +392,10 @@ void VsgBackend::swapBuffers()
         // command graph presents an image nobody rendered into). The plan with passes below builds its own
         // graph instead, because the executor places each pass graph in it (the window's included, see
         // recordWindow).
+        //
+        // The sweep runs on this path too: a frame that draws nothing is still a frame in which the host may
+        // have dropped something, and the sweep's place is the frame's - not "the frames that drew".
+        sweepAbandonedContent();
         (void)d->executor.commit(*d->frame, d->session);
         d->frame = nullptr;
         return;
@@ -398,6 +421,10 @@ void VsgBackend::swapBuffers()
                                 d->input_views, d->packets);
     }
     (void)d->executor.record(*d->frame, graph, packets);
+    // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is
+    // what advances the retirement queue - so this is the last moment a park can be dated against this frame
+    // (see api/ContentSweep, and the ordering rule core::RetirementQueue states).
+    sweepAbandonedContent();
     if (detail::SessionContentAccess::assignFrameGraphs(d->session, ::vsg::CommandGraphs{ graph }))
     {
         (void)d->executor.commit(*d->frame, d->session);  // it reports its own failure and marks what it wrote
@@ -857,6 +884,43 @@ std::size_t VsgBackend::deviceWaits() const noexcept
     return d->session.deviceWaits();
 }
 
+std::size_t VsgBackend::releasedContentObjects() const noexcept
+{
+    return d->released_objects;
+}
+
+std::size_t VsgBackend::releasedTextures() const noexcept
+{
+    return d->released_textures;
+}
+
+std::size_t VsgBackend::releasedStreams() const noexcept
+{
+    return d->released_streams;
+}
+
+void VsgBackend::sweepAbandonedContent()
+{
+    if (d->store == nullptr || d->images == nullptr)
+    {
+        // No content world on this session (see initialize): there is nothing retained to let go of either.
+        return;
+    }
+    const SweepOutcome outcome =
+        releaseAbandonedContent(*d->store, *d->images, d->session.timeline(), d->session.retirement());
+    d->released_objects += outcome.objects;
+    d->released_textures += outcome.textures;
+
+    // The shared streams nothing names any more go in the same step (see api/StreamUploads): what a frame
+    // binds is stamped with it, and this is the frame's last word on streams. It runs beside the sweep above
+    // because the two answer the same question about different things - "is anything still holding this?" -
+    // and because a stream whose geometry was just released is exactly one of the entries this finds.
+    if (d->assembly != nullptr)
+    {
+        d->released_streams += d->assembly->releaseUnusedStreams();
+    }
+}
+
 void VsgBackend::reportUnserved(std::size_t slot) noexcept
 {
     if (slot >= kUnservedCount || !d->unserved_reports[slot].shouldReport())
@@ -896,6 +960,11 @@ VsgExecutor& BackendContentAccess::executor(VsgBackend& backend) noexcept
 WindowTarget* BackendContentAccess::windowTarget(VsgBackend& backend) noexcept
 {
     return SessionContentAccess::windowTarget(backend.d->session);
+}
+
+MaterialImages* BackendContentAccess::images(VsgBackend& backend) noexcept
+{
+    return backend.d->images.get();
 }
 
 ContentStore* BackendContentAccess::store(VsgBackend& backend) noexcept

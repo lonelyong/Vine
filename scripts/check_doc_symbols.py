@@ -43,11 +43,16 @@ DOCS = [
     PLUGIN / "docs" / "backend.md",
     PLUGIN / "docs" / "data-flow.md",
 ]
-# Directories whose units the docs are expected to map.
+# Directories whose units the docs are expected to map. RECURSIVE: the rewrite moved the backend into
+# `src/api` + `src/core` (and `include/vine/vsg/api` + `core`), and a walk that stopped at the top level
+# would enumerate the seven flat files that are left (19 units) while 143 exist - which is exactly how this
+# script silently stopped covering the new architecture (the finding that put the recursion here).
 MAPPED_DIRS = [PLUGIN / "src", PLUGIN / "include" / "vine" / "vsg"]
-# A unit mention is checked only when it names THIS plugin: the docs legitimately name vsg's own
-# units (vsg::Builder) and the SDK's (RenderBackend.hpp), which live outside this tree.
-PLUGIN_UNIT_PREFIXES = ("Vsg", "SceneBridge", "CameraBridge", "OwnedCache", "GfxBackendVsg", "vsg_global")
+# Where a unit mention is looked for when deciding whether it names SOMETHING: every unit this repository
+# has, so a doc sentence may name the SDK's `RenderBackend.hpp` or a framework unit without being drift.
+# The prefix list this replaces only knew the old flat names (`Vsg*`, `SceneBridge*`, ...), so it neither
+# recognised the rewrite's units nor could tell a stale mention of a deleted one from a foreign unit.
+KNOWN_UNIT_ROOTS = ["src", "tests", "tools", "cmake"]
 FROZEN_SECTION_MARKERS = ("历史登记", "不再更新", "历史）")
 # An HTML comment, so that a sentence DESCRIBING the escape hatch (and therefore mentioning its
 # name in backticks) cannot exempt itself the way a bare marker word would.
@@ -58,13 +63,27 @@ FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
 
 
 def units_of(directory: Path) -> set[str]:
-    """Names of the unit files directly under @p directory."""
+    """Names of every unit file under @p directory, at any depth."""
     if not directory.is_dir():
         return set()
-    return {entry.name for entry in directory.iterdir() if entry.suffix in (".hpp", ".cpp")}
+    return {entry.name for entry in directory.rglob("*") if entry.suffix in (".hpp", ".cpp")}
 
 
-def check_doc(path: Path, unit_names: set[str], text: str) -> list[str]:
+def known_units() -> set[str]:
+    """Names of every unit this repository has (see KNOWN_UNIT_ROOTS).
+
+    A doc sentence may name a unit that is not this plugin's - the SDK's, the framework's, a test's - and
+    that is not drift. What IS drift is a backticked unit name that matches nothing anywhere in the tree:
+    either a unit was renamed or deleted and the sentence stayed, or the sentence has a typo. Both are what
+    a reader following the pointer hits.
+    """
+    names: set[str] = set()
+    for root in KNOWN_UNIT_ROOTS:
+        names |= units_of(ROOT / root)
+    return names
+
+
+def check_doc(path: Path, unit_names: set[str], known: set[str], text: str) -> list[str]:
     """Return one finding per unit the doc names but the tree does not have."""
     findings: list[str] = []
     # A frozen section stays frozen for its SUB-sections too: the history tables carry their own
@@ -88,10 +107,9 @@ def check_doc(path: Path, unit_names: set[str], text: str) -> list[str]:
         if frozen_level != 0 or DRIFT_OK_MARKER in line:
             continue
         for mentioned in UNIT_RE.findall(line):
-            if not mentioned.startswith(PLUGIN_UNIT_PREFIXES):
-                continue  # a foreign unit (vsg's, the SDK's): not this tree's business
-            if mentioned not in unit_names:
-                findings.append(f"{path.name}:{number}: no such unit: `{mentioned}`")
+            if mentioned in known or mentioned in unit_names:
+                continue  # a unit this repository has (the plugin's own included)
+            findings.append(f"{path.name}:{number}: no such unit: `{mentioned}`")
     return findings
 
 
@@ -111,9 +129,10 @@ def main() -> int:
     unit_names: set[str] = set()
     for directory in MAPPED_DIRS:
         unit_names |= units_of(directory)
+    known = known_units()
 
     for doc in DOCS:
-        findings.extend(check_doc(doc, unit_names, doc.read_text(encoding="utf-8", errors="replace")))
+        findings.extend(check_doc(doc, unit_names, known, doc.read_text(encoding="utf-8", errors="replace")))
 
     # Rule 2: the map has to cover the tree — a unit nobody documented is a hole in it.
     all_text = print_doc_texts()

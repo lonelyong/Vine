@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <vector>
 
+#include <vine/vsg/core/AllocationGate.hpp>
 #include <vine/vsg/core/FrameGraph.hpp>
 
 using vine::vsg::core::CollectedPass;
@@ -65,6 +66,42 @@ TEST(FrameGraphTest, PassesWithoutDependenciesKeepTheAnnouncedOrderAndTheirCallO
     EXPECT_EQ(orderOf(schedule), (std::vector<std::uint32_t>{ 1, 0, 2 }));
     EXPECT_TRUE(schedule.valid());
     EXPECT_EQ(graph.edgeCount(), 0u);
+}
+
+TEST(FrameGraphTest, RebuildingAndSchedulingAFrameAsksForNoMemory)
+{
+    // THE STEADY-STATE RULE FOR THIS TYPE, and the defect that put it here: the first version built its
+    // Tarjan tables, its two stacks and its ready-queue as LOCALS, and cleared the adjacency table with
+    // `assign` - which throws away the capacity every edge then asks for again. Measured as ~27 allocations
+    // per frame for a one-pass pipeline, and invisible to a heap-byte reading because a frame frees what it
+    // takes (`core::AllocationGate`'s counting half is what showed it; see its file note).
+    //
+    // The graph's own guard, next to the code: a frame with a real DEPENDENCY is the interesting case,
+    // because an edge is what re-allocates when an adjacency row loses its capacity.
+    if (!vine::vsg::core::AllocationGate::countsAvailable())
+    {
+        GTEST_SKIP() << "this binary does not instrument the allocator";
+    }
+
+    const std::vector<CollectedPass> list = passes({ { 1, -10 }, { 2, 0 }, { 3, 20 } });
+    FrameGraph                       graph;
+
+    const auto build = [&] {
+        graph.reset(list);
+        graph.addEdge(0, 1);
+        graph.addEdge(1, 2);
+        (void)graph.schedule();
+    };
+    build();  // warm up: the first frame is allowed to grow the tables
+
+    vine::vsg::core::AllocationGate gate;
+    gate.begin();
+    build();
+    gate.end();
+
+    EXPECT_EQ(gate.allocations(), 0u)
+        << "a frame that reuses the graph must not ask for memory (counted " << gate.allocations() << ")";
+    EXPECT_TRUE(graph.schedule().valid());
 }
 
 TEST(FrameGraphTest, AProducerRunsBeforeItsConsumerWhateverTheAnnouncedOrder)

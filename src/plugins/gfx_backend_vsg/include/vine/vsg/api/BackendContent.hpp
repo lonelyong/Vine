@@ -81,6 +81,17 @@ class BackendContentAccess
      * @return The store, or null while the session is not up.
      */
     [[nodiscard]] static ContentStore* store(VsgBackend& backend) noexcept;
+
+    /** @brief Gets the material-image cache the declared sets resolve their maps from.
+     *
+     * The cache is where the device's own anisotropy limit lands (the session reads it once, see
+     * VsgBackend::initialize), and its samplers are built from that number - so a test that wants to tell
+     * "the cache was told" from "nothing ever called it" asks here.
+     *
+     * @param backend Backend to ask.
+     * @return The cache, or null while the content world is not up.
+     */
+    [[nodiscard]] static MaterialImages* images(VsgBackend& backend) noexcept;
 };
 
 }  // namespace detail

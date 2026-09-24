@@ -345,6 +345,11 @@ void MaterialImages::setMaxAnisotropy(float device_limit) noexcept
     d->max_anisotropy = anisotropyFor(device_limit);
 }
 
+float MaterialImages::maxAnisotropy() const noexcept
+{
+    return d->max_anisotropy;
+}
+
 SamplerImage MaterialImages::white() const noexcept
 {
     // Lazily, and through the shared WhiteImage: a scene with no textured material pays nothing, and the

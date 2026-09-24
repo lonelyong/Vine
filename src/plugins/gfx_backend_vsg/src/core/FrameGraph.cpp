@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <queue>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -20,12 +20,46 @@ constexpr std::uint32_t kUnvisited = 0xFFFFFFFFU;
 
 void FrameGraph::reset(std::span<const CollectedPass> passes)
 {
-    successors_.assign(passes.size(), std::vector<std::uint32_t>{});
-    order_key_.resize(passes.size());
-    excluded_.assign(passes.size(), 0);
-    schedule_ = FrameSchedule{};
+    const std::size_t count = passes.size();
 
-    for (std::size_t index = 0; index < passes.size(); ++index)
+    // IN PLACE, CAPACITY KEPT (see the header's working-memory note): resizing the adjacency table only
+    // allocates when the pass count GROWS, and clearing each row keeps the buffer an edge will need - which
+    // is what makes a steady frame's addEdge() allocation-free instead of one allocation per edge.
+    if (successors_.size() != count)
+    {
+        successors_.resize(count);
+    }
+    for (std::vector<std::uint32_t>& out : successors_)
+    {
+        out.clear();
+    }
+
+    if (order_key_.size() != count)
+    {
+        order_key_.resize(count);
+    }
+    if (excluded_.size() != count)
+    {
+        excluded_.resize(count);
+    }
+    std::fill(excluded_.begin(), excluded_.end(), static_cast<std::uint8_t>(0));
+
+    // The answer of the LAST frame is cleared, not replaced: assigning a fresh FrameSchedule would free the
+    // three buffers this one will fill again - and the cycle list is only touched when there really were
+    // cycles (a pipeline with a cycle is a configuration error, so that path may allocate; the ordinary
+    // frame must not).
+    schedule_.order.clear();
+    schedule_.skipped.clear();
+    if (!schedule_.cycles.empty())
+    {
+        for (std::vector<std::uint32_t>& component : schedule_.cycles)
+        {
+            component.clear();
+        }
+        schedule_.cycles.clear();
+    }
+
+    for (std::size_t index = 0; index < count; ++index)
     {
         order_key_[index] = passes[index].order;
     }
@@ -78,7 +112,19 @@ std::size_t FrameGraph::edgeCount() const noexcept
 
 const FrameSchedule& FrameGraph::schedule()
 {
-    schedule_ = FrameSchedule{};
+    // The bookkeeping is cleared, not rebuilt (see the header's working-memory note): a steady frame that
+    // assigned fresh containers here would allocate on every frame, which is what the counting half of
+    // core::AllocationGate measured (27 blocks for a one-pass pipeline).
+    schedule_.order.clear();
+    schedule_.skipped.clear();
+    if (!schedule_.cycles.empty())
+    {
+        for (std::vector<std::uint32_t>& component : schedule_.cycles)
+        {
+            component.clear();
+        }
+        schedule_.cycles.clear();
+    }
     findCycles();
     orderAcyclic();
     return schedule_;
@@ -87,91 +133,103 @@ const FrameSchedule& FrameGraph::schedule()
 void FrameGraph::findCycles()
 {
     // Tarjan, iterative: the recursion a textbook version uses would put the pass count on the C++ call
-    // stack, and the pass count is the HOST's number, not this backend's.
-    const std::size_t          node_count = successors_.size();
-    std::vector<std::uint32_t> index(node_count, kUnvisited);
-    std::vector<std::uint32_t> low(node_count, 0);
-    std::vector<std::uint32_t> cursor(node_count, 0);
-    std::vector<bool>          on_stack(node_count, false);
-    std::vector<std::uint32_t> component_stack;
-    std::vector<std::uint32_t> dfs_stack;
-    std::uint32_t              next_index = 0;
+    // stack, and the pass count is the HOST's number, not this backend's. The three tables and the two
+    // stacks are MEMBERS filled in place (see the header): the textbook spelling - one `std::vector` per
+    // table, constructed here - is six allocations a frame before any work happens.
+    const std::size_t node_count = successors_.size();
+    if (tarjan_index_.size() != node_count)
+    {
+        tarjan_index_.resize(node_count);
+        tarjan_low_.resize(node_count);
+        tarjan_cursor_.resize(node_count);
+        on_stack_.resize(node_count);
+    }
+    std::fill(tarjan_index_.begin(), tarjan_index_.end(), kUnvisited);
+    std::fill(tarjan_low_.begin(), tarjan_low_.end(), 0U);
+    std::fill(tarjan_cursor_.begin(), tarjan_cursor_.end(), 0U);
+    std::fill(on_stack_.begin(), on_stack_.end(), static_cast<std::uint8_t>(0));
+    component_stack_.clear();
+    dfs_stack_.clear();
+
+    std::uint32_t next_index = 0;
 
     for (std::uint32_t root = 0; root < node_count; ++root)
     {
-        if (excluded_[root] != 0 || index[root] != kUnvisited)
+        if (excluded_[root] != 0 || tarjan_index_[root] != kUnvisited)
         {
             continue;
         }
 
-        index[root] = next_index;
-        low[root]   = next_index;
+        tarjan_index_[root] = next_index;
+        tarjan_low_[root]   = next_index;
         ++next_index;
-        component_stack.push_back(root);
-        on_stack[root] = true;
-        dfs_stack.push_back(root);
+        component_stack_.push_back(root);
+        on_stack_[root] = 1U;
+        dfs_stack_.push_back(root);
 
-        while (!dfs_stack.empty())
+        while (!dfs_stack_.empty())
         {
-            const std::uint32_t node = dfs_stack.back();
-            if (cursor[node] < successors_[node].size())
+            const std::uint32_t node = dfs_stack_.back();
+            if (tarjan_cursor_[node] < successors_[node].size())
             {
-                const std::uint32_t next = successors_[node][cursor[node]];
-                ++cursor[node];
+                const std::uint32_t next = successors_[node][tarjan_cursor_[node]];
+                ++tarjan_cursor_[node];
                 if (excluded_[next] != 0)
                 {
                     continue;
                 }
-                if (index[next] == kUnvisited)
+                if (tarjan_index_[next] == kUnvisited)
                 {
-                    index[next] = next_index;
-                    low[next]   = next_index;
+                    tarjan_index_[next] = next_index;
+                    tarjan_low_[next]   = next_index;
                     ++next_index;
-                    component_stack.push_back(next);
-                    on_stack[next] = true;
-                    dfs_stack.push_back(next);
+                    component_stack_.push_back(next);
+                    on_stack_[next] = 1U;
+                    dfs_stack_.push_back(next);
                 }
-                else if (on_stack[next])
+                else if (on_stack_[next] != 0)
                 {
-                    low[node] = std::min(low[node], index[next]);
+                    tarjan_low_[node] = std::min(tarjan_low_[node], tarjan_index_[next]);
                 }
                 continue;
             }
 
             // The node is finished: its component is known, and its low link reaches its parent.
-            dfs_stack.pop_back();
-            if (!dfs_stack.empty())
+            dfs_stack_.pop_back();
+            if (!dfs_stack_.empty())
             {
-                low[dfs_stack.back()] = std::min(low[dfs_stack.back()], low[node]);
+                tarjan_low_[dfs_stack_.back()] = std::min(tarjan_low_[dfs_stack_.back()], tarjan_low_[node]);
             }
 
-            if (low[node] != index[node])
+            if (tarjan_low_[node] != tarjan_index_[node])
             {
                 continue;
             }
 
-            std::vector<std::uint32_t> component;
+            // ONE component: collected into a stack scratch first, so the answer only allocates when the
+            // component is really cyclic (the common case is a singleton, which is not copied anywhere).
+            component_scratch_.clear();
             for (;;)
             {
-                const std::uint32_t member = component_stack.back();
-                component_stack.pop_back();
-                on_stack[member] = false;
-                component.push_back(member);
+                const std::uint32_t member = component_stack_.back();
+                component_stack_.pop_back();
+                on_stack_[member] = 0U;
+                component_scratch_.push_back(member);
                 if (member == node)
                 {
                     break;
                 }
             }
 
-            const bool cyclic = component.size() > 1 || selfLoop(node);
+            const bool cyclic = component_scratch_.size() > 1U || selfLoop(node);
             if (!cyclic)
             {
                 continue;
             }
 
-            std::sort(component.begin(), component.end());
-            schedule_.skipped.insert(schedule_.skipped.end(), component.begin(), component.end());
-            schedule_.cycles.push_back(std::move(component));
+            std::sort(component_scratch_.begin(), component_scratch_.end());
+            schedule_.skipped.insert(schedule_.skipped.end(), component_scratch_.begin(), component_scratch_.end());
+            schedule_.cycles.push_back(component_scratch_);
         }
     }
 
@@ -193,7 +251,12 @@ void FrameGraph::orderAcyclic()
         return excluded_[node] == 0 && !isSkipped(node);
     };
 
-    std::vector<std::uint32_t> in_degree(node_count, 0);
+    if (in_degree_.size() != node_count)
+    {
+        in_degree_.resize(node_count);
+    }
+    std::fill(in_degree_.begin(), in_degree_.end(), 0U);
+
     for (std::uint32_t node = 0; node < node_count; ++node)
     {
         if (!usable(node))
@@ -204,26 +267,30 @@ void FrameGraph::orderAcyclic()
         {
             if (usable(next))
             {
-                ++in_degree[next];
+                ++in_degree_[next];
             }
         }
     }
 
-    // Smallest announced order first, ties by the position the pass was announced in.
+    // Smallest announced order first, ties by the position the pass was announced in. A HEAP OVER A MEMBER
+    // VECTOR rather than a `std::priority_queue`: the queue's own container is constructed when the queue
+    // is, and the push/pop algorithms are in-place, so keeping the buffer is the whole difference.
     using Ready = std::pair<int, std::uint32_t>;
-    std::priority_queue<Ready, std::vector<Ready>, std::greater<Ready>> ready;
+    ready_.clear();
     for (std::uint32_t node = 0; node < node_count; ++node)
     {
-        if (usable(node) && in_degree[node] == 0)
+        if (usable(node) && in_degree_[node] == 0)
         {
-            ready.emplace(order_key_[node], node);
+            ready_.emplace_back(order_key_[node], node);
         }
     }
+    std::make_heap(ready_.begin(), ready_.end(), std::greater<Ready>{});
 
-    while (!ready.empty())
+    while (!ready_.empty())
     {
-        const std::uint32_t node = ready.top().second;
-        ready.pop();
+        std::pop_heap(ready_.begin(), ready_.end(), std::greater<Ready>{});
+        const std::uint32_t node = ready_.back().second;
+        ready_.pop_back();
         schedule_.order.push_back(node);
 
         for (const std::uint32_t next : successors_[node])
@@ -232,9 +299,10 @@ void FrameGraph::orderAcyclic()
             {
                 continue;
             }
-            if (--in_degree[next] == 0)
+            if (--in_degree_[next] == 0)
             {
-                ready.emplace(order_key_[next], next);
+                ready_.emplace_back(order_key_[next], next);
+                std::push_heap(ready_.begin(), ready_.end(), std::greater<Ready>{});
             }
         }
     }

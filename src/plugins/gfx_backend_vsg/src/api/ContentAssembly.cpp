@@ -53,6 +53,10 @@ const ContentFacts& ContentAssembly::beginFrame(const core::CompiledFrame& frame
     d->timeline   = &timeline;
     d->retirement = &retirement;
     d->storage->beginFrame();
+    // The streams' frame opens with it (see api/StreamUploads): what this frame binds is stamped with it, and
+    // the grace window is the parking window itself - a stream is kept for exactly as long as a recorded frame
+    // that named it may still be in flight.
+    d->uploads.beginFrame(timeline.submittedFrame(), retirement.slots() + 1U);
     d->facts = &d->store->tablesFor(frame, timeline, retirement);
 
     // The sampled-input sets the previous frame did not ask for are no longer this session's to keep: the
@@ -125,10 +129,19 @@ ContentHalves& ContentAssembly::halves() noexcept
 {
     return *d->halves;
 }
-
 ContentSets& ContentAssembly::sets() noexcept
 {
     return *d->sets;
+}
+
+StreamUploads& ContentAssembly::uploads() noexcept
+{
+    return d->uploads;
+}
+
+std::uint64_t ContentAssembly::releaseUnusedStreams()
+{
+    return d->uploads.releaseUnseen();
 }
 
 std::uint64_t ContentAssembly::inputSetBuilds() const noexcept

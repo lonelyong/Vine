@@ -25,7 +25,10 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
+#include <vine/vsg/api/ContentPass.hpp>
+
 #include <vine/vsg/core/AllocationGate.hpp>
+#include <vine/vsg/core/ClearPlan.hpp>
 #include <vine/vsg/core/Diagnostics.hpp>
 #include <vine/vsg/core/FrameArena.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
@@ -40,6 +43,7 @@ using vine::graphics::RenderDiagnostic;
 using vine::graphics::RenderTarget;
 using vine::graphics::Viewport;
 using vine::vsg::core::AllocationGate;
+using vine::vsg::core::ClearPolicy;
 using vine::vsg::core::Diagnostics;
 using vine::vsg::core::FrameArena;
 using vine::vsg::core::FrameCompiler;
@@ -51,6 +55,7 @@ using vine::vsg::core::PhaseTable;
 using vine::vsg::core::PixelProbe;
 using vine::vsg::core::ReportOnce;
 using vine::vsg::core::Rgba8;
+using vine::vsg::core::TargetShape;
 
 namespace
 {
@@ -281,6 +286,48 @@ TEST(CoreAllocationGateTest, ASteadyWindowGrowsTheHeapByNothing)
     EXPECT_EQ(gate.lastGrowth(), 0);
 }
 
+TEST(CoreAllocationGateTest, TheCountedHalfSeesChurnTheHeapReadingCannot)
+{
+    // THE POSITIVE CONTROL FOR THE COUNTING HALF, and the defect it exists to close: a window that allocates
+    // and frees the SAME block leaves the process' allocated bytes exactly where they were, so the heap
+    // reading answers "nothing happened". That is what a per-pass vector or a `std::function` parked and
+    // released looks like from the outside - the shape almost every per-frame allocation actually has.
+    AllocationGate gate;
+    ASSERT_TRUE(AllocationGate::countsAvailable())
+        << "this binary must instrument the allocator: without it, \"counted zero\" and \"nothing counted\" "
+           "are the same number (see AllocationGate's file note)";
+
+    gate.begin();
+    for (int i = 0; i < 64; ++i)
+    {
+        auto* block = new char[64];  // allocated and released inside the window
+        delete[] block;
+    }
+    const std::ptrdiff_t grew = gate.end();
+
+    EXPECT_EQ(gate.allocations(), 64u) << "every allocation in the window is counted, churn included";
+    EXPECT_EQ(gate.bytes(), 64u * 64u) << "and the bytes it asked for are reported beside the count";
+    if (AllocationGate::supported())
+    {
+        EXPECT_EQ(grew, 0) << "while the heap reading alone would have passed this window";
+    }
+}
+
+TEST(CoreAllocationGateTest, AZeroCountIsOnlyReadWhereSomethingCounts)
+{
+    // The two halves are independent, and the gate says which one it is answering: a platform whose C library
+    // reports no heap usage (Windows) still gets the counted verdict - that is the whole point of the second
+    // half - and a phase must never treat "read nothing" as "measured nothing happened".
+    AllocationGate gate;
+    gate.begin();
+    const std::ptrdiff_t grew = gate.end();
+
+    EXPECT_EQ(gate.allocations(), 0u);
+    EXPECT_EQ(gate.bytes(), 0u);
+    (void)grew;
+    EXPECT_TRUE(AllocationGate::countsAvailable()) << "this binary's allocator is instrumented";
+}
+
 TEST(CoreAllocationGateTest, ADeliberateAllocationIsCaught)
 {
     if (!AllocationGate::supported())
@@ -299,6 +346,90 @@ TEST(CoreAllocationGateTest, ADeliberateAllocationIsCaught)
 
     EXPECT_GT(grew, 0) << "the gate has to be able to fail, or it is not a gate";
     EXPECT_GT(grows.size(), 0u);
+}
+
+TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass)
+{
+    // THE SECOND QUESTION A READER OF THE STEADY-STATE RULE ASKS. The plan path is at ZERO allocations and is
+    // gated on it (see CorePhaseTableTest). The record path cannot be: it builds new command NODES for the
+    // frame by design (`vsg::RenderGraph`, one bind and one draw per call), so "counted zero" there would be
+    // a claim about vsg, not about this backend. What this backend OWNS in that path is its BOOKKEEPING, and
+    // that is what the ceilings below are.
+    //
+    // Measured on 2026-09-24 (MSVC Debug, one pass, one drawing call, steady content): a frame's
+    // `VsgExecutor::record` asks for 12 allocations, and they split like this -
+    //
+    //   * 7 - one `ContentPass` construction: two `std::vector<ReportOnce>` sized per entry (four counted
+    //         allocations for two one-element vectors in this build) plus the recorder's own members;
+    //   * 2 - `planClearValues`'s one-per-attachment vector (`PassClearPlan::colors`);
+    //   * 3 - the pass' `vsg::RenderGraph` and the clear values it carries - NODES, i.e. the deliberate half
+    //         (the previous frame's graph may still be in flight, see the executor's note).
+    //
+    // None of the first two grow with the frame's CONTENT (they are per pass, not per drawing call), and a
+    // frame's per-call cost is dominated by the nodes: `test_vsg`'s own fixture measures ~33 allocations for
+    // ONE recorded triangle, and a readback/multi-pass frame is bigger still. So the ceilings stay ceilings
+    // instead of zeros - the fix (caller-owned scratch for the plan, and episode rows owned by whoever decides
+    // the episode) buys a handful of bytes per pass, and it is written up with its trigger in
+    // `.ai/design/vsg-reimplementation.md` rather than paid for with an abstraction.
+    //
+    // This test is the TRIPWIRE: if either number grows, something started allocating per pass and §0.3 of
+    // `docs/backend.md` has to be re-argued against the new number.
+    ASSERT_TRUE(AllocationGate::countsAvailable())
+        << "this binary must instrument the allocator (see AllocationGate's file note)";
+
+    constexpr int kCalls = 64;
+
+    const auto measure = [](int calls, auto&& body) -> std::uint64_t {
+        // The body's answer is CONSUMED rather than discarded: what it returns is the check that the measured
+        // code really ran (a body that returns a count), and consuming it keeps the bodies free to call
+        // `[[nodiscard]]` producers without a cast that this compiler still warns about.
+        std::uint64_t sample = 0U;
+        for (int index = 0; index < 8; ++index)
+        {
+            sample += static_cast<std::uint64_t>(body());  // warm-up: the measured code reuses, the first caller may not
+        }
+        AllocationGate gate;
+        gate.begin();
+        for (int index = 0; index < calls; ++index)
+        {
+            sample += static_cast<std::uint64_t>(body());
+        }
+        (void)gate.end();  // the byte reading is the second opinion here (see the class it comes from)
+        EXPECT_GT(sample, 0U) << "the measured code has to have run";
+        return gate.allocations();
+    };
+
+    TargetShape shape;
+    shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    ClearPolicy  policy;
+    policy.color         = true;
+    const std::uint64_t plan = measure(kCalls, [&]() -> std::uint64_t {
+        const vine::vsg::core::PassClearPlan built =
+            vine::vsg::core::planClearValues(shape, policy, true, false);
+        return built.colors.size();
+    });
+    EXPECT_LE(plan, 2u * static_cast<std::uint64_t>(kCalls))
+        << "one plan is one small vector (measured: 2 counted allocations per call in this build, which is "
+           "this build's cost for a one-element vector)";
+
+    Diagnostics                   diagnostics;
+    vine::vsg::ContentPass::Scope scope;
+    const vine::vsg::ContentPass::Scope::Entry halves[4]{};
+    const auto record_once = [&scope, &halves, &diagnostics]() -> std::uint64_t {
+        const vine::vsg::ContentPass recorder(scope, diagnostics);
+        return scope.entries.size();
+    };
+    scope.entries = std::span<const vine::vsg::ContentPass::Scope::Entry>(halves, 1U);
+    const std::uint64_t one_entry = measure(kCalls, record_once);
+    scope.entries = std::span<const vine::vsg::ContentPass::Scope::Entry>(halves, 4U);
+    const std::uint64_t four_entries = measure(kCalls, record_once);
+    EXPECT_LE(four_entries, 8u * static_cast<std::uint64_t>(kCalls))
+        << "one recorder is a fixed handful of small vectors (measured: 7 counted allocations per "
+           "construction in this build)";
+    EXPECT_EQ(one_entry, four_entries)
+        << "the episode memory is one row per entry in a vector that is sized ONCE: its cost must not grow "
+           "with the number of entries a pass draws through (a vector per ENTRY would, and that is the shape "
+           "this assertion refuses)";
 }
 
 TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
@@ -359,32 +490,38 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
     }
 
     // TWO consecutive steady frames, each in its own window: one free frame after a warm-up is a fact about
-    // that frame; two in a row is the rule.
+    // that frame; two in a row is the rule. Both halves of the gate are read: the heap reading (where the
+    // platform has one) and the COUNT, which needs no C library and sees the churn the byte reading cannot.
+    ASSERT_TRUE(AllocationGate::countsAvailable())
+        << "the steady-frame rule must be measured by a count: a phase that reads bytes alone asserts nothing "
+           "on a platform whose C library does not report heap usage (see AllocationGate's file note)";
     const bool          heap_gated = AllocationGate::supported();
     std::ptrdiff_t      grew_first = 0;
     std::ptrdiff_t      grew_second = 0;
+    std::uint64_t       counted_first = 0;
+    std::uint64_t       counted_second = 0;
     std::size_t         arena_first = 0;
     std::size_t         arena_second = 0;
     for (std::uint64_t token = 100U; token <= 101U; ++token)
     {
         AllocationGate gate;
-        if (heap_gated)
-        {
-            gate.begin();
-        }
+        gate.begin();
         record_frame(token, first.get(), 2);
         compile_frame(one_target);
-        const std::ptrdiff_t grew = heap_gated ? gate.end() : 0;
+        const std::ptrdiff_t grew = gate.end();
+        const std::uint64_t  counted = gate.allocations();
         const std::size_t    allocated = arena.allocations();
         if (token == 100U)
         {
-            grew_first  = grew;
-            arena_first = allocated;
+            grew_first    = grew;
+            counted_first = counted;
+            arena_first   = allocated;
         }
         else
         {
-            grew_second  = grew;
-            arena_second = allocated;
+            grew_second    = grew;
+            counted_second = counted;
+            arena_second   = allocated;
         }
     }
 
@@ -413,8 +550,11 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
     PhaseTable table;
     table.add(Phase{ "two steady frames allocate nothing",
                      [&]() {
-                         return !heap_gated
-                                || (grew_first == 0 && grew_second == 0 && arena_first == 0U && arena_second == 0U);
+                         // The COUNT is the verdict (it is the half that always exists); the byte reading is
+                         // the second opinion where the platform has one.
+                         const bool counted_nothing = counted_first == 0U && counted_second == 0U;
+                         const bool heap_flat = !heap_gated || (grew_first == 0 && grew_second == 0);
+                         return counted_nothing && heap_flat && arena_first == 0U && arena_second == 0U;
                      } });
     table.add(Phase{
         "counters move by the frame's own shape",

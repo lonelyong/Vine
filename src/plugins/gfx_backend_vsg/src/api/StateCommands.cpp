@@ -12,8 +12,11 @@ namespace
 /** @brief Maps a depth policy onto the API's test/write enables. */
 void mapDepth(vine::graphics::DepthMode mode, VkBool32& test, VkBool32& write) noexcept
 {
-    // No default arm: a new DepthMode is a compile-time question here, not a silent fall-through to "no
-    // depth at all".
+    // The switch names every DepthMode, and the tail below is what the compiler's "not all paths return"
+    // warning demands rather than a policy of its own: an enumerator added without a case here lands on "depth
+    // on, and writing" - not on the "no depth at all" a fall-through usually means - and the warning that goes
+    // with the missing case is the signal to come back. (The earlier comment claimed there was no tail, which
+    // was simply not true of this code.)
     switch (mode) {
     case vine::graphics::DepthMode::Disabled:
         test  = VK_FALSE;
@@ -69,6 +72,12 @@ VkBlendFactor mapBlendFactor(vine::graphics::BlendFactor factor) noexcept
     case vine::graphics::BlendFactor::DstColor: return VK_BLEND_FACTOR_DST_COLOR;
     case vine::graphics::BlendFactor::OneMinusDstColor: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
     }
+    // UNREACHABLE TODAY, AND A WRONG ANSWER IF IT EVER ISN'T: this tail turns a factor this list does not
+    // know into `ONE`, which is not "no blending" but a different blend than the host asked for - a wrong
+    // picture with no refusal anywhere (the same shape as the old front-face default). Closing it properly
+    // means validating the factor where the state is AUTHORED (the engine's BlendState) instead of guessing
+    // here, which is why the guess is only documented rather than replaced: the SDK's enum has no value this
+    // list is missing. A factor added there must gain a case here.
     return VK_BLEND_FACTOR_ONE;
 }
 

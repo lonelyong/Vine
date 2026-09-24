@@ -12,6 +12,7 @@ set(SRC_FILE_LIST
 	FrameCompilerTest.cpp
 	ExecutorTest.cpp
 	ContentFactsTest.cpp
+	ContentFactsIndexTest.cpp
 	DrawBlockTest.cpp
 	GeometryFactsTest.cpp
 	ContentSourcesTest.cpp
@@ -30,6 +31,7 @@ set(SRC_FILE_LIST
 	MaterialImagesTest.cpp
 	ProgramVariantTest.cpp
 	ContentStoreTest.cpp
+	ContentSweepTest.cpp
 	ExecutorSubmissionTest.cpp
 	ContentHalvesTest.cpp
 	ContentDrawTest.cpp
@@ -100,6 +102,10 @@ if(vsg_FOUND)
 	target_link_libraries(${TEST_NAME} vsg::vsg)
 endif()
 target_sources(${TEST_NAME} PRIVATE
+	# The harness' own support: this binary replaces the global allocation functions so
+	# AllocationGate's COUNTING half has an instrumenter (see the file's note). It must be part of this target
+	# and not of the library: replacing the allocator is the host's choice to make, not the backend's.
+	${CMAKE_CURRENT_SOURCE_DIR}/AllocationCounter.cpp
 	# The rewritten backend's core layer: device-free by construction (no vsg:: include anywhere -
 	# see the design's §2.3 boundary).
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/core/Protocol.cpp
@@ -156,6 +162,7 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/MaterialImages.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ProgramVariant.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentStore.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentSweep.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentSets.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentAssembly.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/api/ContentHalves.cpp

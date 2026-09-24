@@ -55,7 +55,14 @@
  *     surface it is on (re-read it, rebuild the swapchain when it changed - one COUNTED device stop), while
  *     the announced numbers are what the next `initialize()` creates a window at;
  *   * the diagnostics route - the core's one route feeds the SDK's `reportDiagnostic`, so a host's sink and
- *     `diagnosticCount()` see the session's own reports without this layer re-reporting anything.
+ *     `diagnosticCount()` see the session's own reports without this layer re-reporting anything;
+ *   * THE SWEEP - a frame's content is retained for as long as the host holds it, and what the host has let go
+ *     is let go ONCE PER FRAME, in the one call that owns the order (api/ContentSweep: after the frame's
+ *     content has been recorded, before the frame's parks are advanced). Before that unit existed both halves
+ *     existed and were called by nothing, so a dropped geometry kept its tables, its halves and its pipelines
+ *     alive until the session ended; `releasedContentObjects()` / `releasedTextures()` / `releasedStreams()`
+ *     are the counters that
+ *     keep the sweep visible from outside.
  *
  * WHAT IS REPORTED AS NOT SERVED YET: two calls that have nowhere to go - a frame asked for with no session,
  * and a draw before the content world is up. Each says so once per episode (core::ReportOnce); a facade that
@@ -176,9 +183,39 @@ class V_VSG_API VsgBackend : public vine::graphics::RenderBackend
     /** @brief Gets how many times this backend has waited the device idle. */
     [[nodiscard]] std::size_t deviceWaits() const noexcept;
 
+    /** @brief Gets how many abandoned content objects the frame's sweeps have let go (see api/ContentSweep).
+     *
+     * ONE PER OBJECT whose last holder was the content store - a geometry, a program or a material the host
+     * dropped. The counter is how "the sweep runs, and it only ever lets go of what nobody holds" stays
+     * checkable from outside: a host that keeps everything it draws reads zero however long it runs, and a
+     * host that drops something reads it move on the next frame.
+     */
+    [[nodiscard]] std::size_t releasedContentObjects() const noexcept;
+
+    /** @brief Gets how many abandoned textures the frame's sweeps have let go (see api/ContentSweep). */
+    [[nodiscard]] std::size_t releasedTextures() const noexcept;
+
+    /** @brief Gets how many shared streams the frame's steps have let go because no frame named them any more.
+     *
+     * The observable behind api/StreamUploads's lifetime rule: a geometry the host stops drawing is not
+     * released any differently from one it keeps - what ends is its streams being NAMED, and the window is the
+     * executor's own (`slots + 1`). A host that keeps drawing everything reads zero; one that drops a mesh
+     * reads it move once the window has passed. It is deliberately NOT part of `releasedContentObjects()`:
+     * that one counts objects the host let go of, this one counts uploads no frame asks for any more.
+     */
+    [[nodiscard]] std::size_t releasedStreams() const noexcept;
+
   private:
     /** @brief Reports one unserved entry point, once per episode (see the file note). */
     void reportUnserved(std::size_t slot) noexcept;
+
+    /** @brief Runs this frame's sweep: what the host let go is let go (see api/ContentSweep).
+     *
+     * Called once per frame, after the frame's content has been recorded and before the session commits it -
+     * the commit advances the retirement queue, and a park made after that advance would be released a frame
+     * early (the ordering rule core::RetirementQueue documents).
+     */
+    void sweepAbandonedContent();
 
     /** @brief Releases everything that belongs to the SESSION'S DEVICE (the content world and the targets).
      *

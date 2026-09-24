@@ -72,6 +72,7 @@ FactMiss buildProgramFacts(const vine::graphics::ShaderProgram& program, const P
     out.shaders.entry    = std::string(vertex->entryPoint.as_std_str());
     out.shaders.defines  = variant.defines();
     out.variant          = variant;   // the entry says which of the program's texts it is (see findProgram)
+    out.kind             = core::DrawKind::Content;  // ... and which drawing CALL it answers (see ProgramFacts)
 
     // The ABI is scanned from the same two texts, for the SAME variant the layer will compile them with:
     // the layout a pipeline is built against and the module it compiles cannot disagree about which
@@ -150,6 +151,9 @@ FactMiss buildScreenProgramFacts(const vine::graphics::ShaderProgram& program, P
     out.shaders.vertex   = std::string(vertex->source.as_std_str());
     out.shaders.fragment = std::string(fragment->source.as_std_str());
     out.shaders.entry    = std::string(fragment->entryPoint.as_std_str());
+    // The entry answers the FULL-SCREEN call and says so: the same host program can also be described as
+    // content, and the two entries must never be served for one another (see ProgramFacts::kind).
+    out.kind             = core::DrawKind::Screen;
 
     // The composed pair's own declarations - the engine's triangle declares none, so the ABI is the host's
     // fragment stage's (see api/ProgramAbi.hpp).

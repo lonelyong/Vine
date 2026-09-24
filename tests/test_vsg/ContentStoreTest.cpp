@@ -239,7 +239,7 @@ TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
     EXPECT_EQ(store.builds(), 3U);
 
     EXPECT_TRUE(findGeometry(facts, named.get(), named->revision()).found());
-    EXPECT_TRUE(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}).found());
+    EXPECT_TRUE(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content).found());
     EXPECT_TRUE(findMaterial(facts, material.get()).found());
 
     // A second frame naming the other three builds the other three, and nothing else.
@@ -279,6 +279,112 @@ TEST(ContentStoreTest, ASteadyFrameBuildsNothing)
         EXPECT_EQ(store.builds(), built) << "a steady frame builds nothing";
     }
     EXPECT_EQ(retirement.pending(), 0U) << "nothing was superseded, so nothing was parked";
+}
+
+TEST(ContentStoreTest, ThePublishedTablesCarryTheirRowOrder)
+{
+    // The store publishes a ROW ORDER beside each table (see api/ContentFacts): it is what turns the
+    // recording's lookups from scans into bisections. The rows stay the truth - the order is rebuilt FROM them
+    // at publication - which is why the case above can still see the same table storage every frame.
+    ContentStore store;
+    const auto   geometry = quad();
+    const auto   program  = contentProgram();
+    const auto   material = ::material(vine::Colorf(0.1F, 0.2F, 0.3F, 1.0F));
+
+    store.track(geometry);
+    store.track(program);
+    store.track(material);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
+                                  program.get());
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+
+    EXPECT_EQ(facts.program_order.size(), facts.programs.size());
+    EXPECT_EQ(facts.geometry_order.size(), facts.geometries.size());
+    EXPECT_EQ(facts.material_order.size(), facts.materials.size());
+    ASSERT_FALSE(facts.program_order.empty()) << "one program was described, so its table has a row";
+
+    // And the order is the one the lookups search, so the recording's own three questions answer through it.
+    const auto found_program  = findProgram(facts, ProgramRef{ program.get(), program->revision() },
+                                            ProgramVariant{}, DrawKind::Content);
+    const auto found_geometry = findGeometry(facts, geometry.get(), geometry->revision());
+    const auto found_material = findMaterial(facts, material.get());
+    EXPECT_TRUE(found_program.entry != nullptr);
+    EXPECT_TRUE(found_geometry.entry != nullptr);
+    EXPECT_TRUE(found_material.entry != nullptr);
+    EXPECT_EQ(found_geometry.entry, &facts.geometries[facts.geometry_order.front()])
+        << "the answer IS the row the order names";
+}
+
+TEST(ContentStoreTest, TheRowOrderCoversEveryRowAfterAppendsAndErasures)
+{
+    // THE INVARIANT THE LOOKUPS TRUST: each table's row order is a permutation of that table's rows. The store
+    // moves rows in four ways - a row appears (a first description), a row is REPLACED (a material edit), rows
+    // are erased when a superseded revision's park comes due, and rows are erased when an abandoned object's
+    // park comes due - and every one of them has to leave the order covering the table. A lookup may not prove
+    // this (it falls back to scanning the table, which is correct but slow), so it is asserted HERE.
+    ContentStore store;
+    const auto   geometry = quad();
+    const auto   program  = contentProgram();
+    const auto   material = ::material(vine::Colorf(0.1F, 0.2F, 0.3F, 1.0F));
+
+    store.track(geometry);
+    store.track(program);
+    store.track(material);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
+                                  program.get());
+    const auto covers = [](const ContentFacts& facts) {
+        const auto is_permutation = [](std::span<const std::uint32_t> order, std::size_t rows) {
+            if (order.size() != rows)
+            {
+                return false;  // the order does not cover the table: it fell behind an append or an erase
+            }
+            std::vector<std::uint32_t> sorted(order.begin(), order.end());
+            std::sort(sorted.begin(), sorted.end());
+            for (std::size_t index = 0U; index < rows; ++index)
+            {
+                if (sorted[index] != index)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        return is_permutation(facts.program_order, facts.programs.size()) &&
+               is_permutation(facts.geometry_order, facts.geometries.size()) &&
+               is_permutation(facts.material_order, facts.materials.size());
+    };
+
+    const ContentFacts& first = store.tablesFor(plan->frame, timeline, retirement);
+    EXPECT_EQ(first.geometry_order.size(), first.geometries.size()) << "one row was appended: the order covers it";
+    EXPECT_TRUE(covers(first));
+
+    // A material EDIT replaces a row in place, and a geometry revision bump APPENDS one and parks the old one.
+    store.updateMaterial(material.get());
+    auto* mutable_material = const_cast<vine::graphics::Material*>(material.get());
+    mutable_material->setDiffuse(vine::Colorf(0.9F, 0.1F, 0.1F, 1.0F));
+    store.updateMaterial(material.get());
+    const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
+    EXPECT_TRUE(covers(second)) << "a replaced row keeps its place in the order";
+
+    const std::uint64_t rows_before = static_cast<std::uint64_t>(second.geometries.size());
+    const_cast<vine::graphics::Geometry*>(geometry.get())->setRevision(2U);
+    ASSERT_TRUE(store.tablesFor(plan->frame, timeline, retirement).geometries.size() > rows_before)
+        << "the new revision JOINS the table the old one is still answerable in";
+    EXPECT_TRUE(covers(store.tablesFor(plan->frame, timeline, retirement)));
+
+    // The parks come due: the superseded revision's rows leave, and the order has to shrink with them.
+    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    const ContentFacts& pruned = store.tablesFor(plan->frame, timeline, retirement);
+    EXPECT_EQ(pruned.geometries.size(), rows_before) << "the superseded revision's row has left";
+    EXPECT_TRUE(covers(pruned)) << "an ERASURE has to leave the order covering exactly what is left";
 }
 
 TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesAtItsPark)
@@ -430,8 +536,8 @@ TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
     textured_variant.diffuse_map = true;
     const ProgramVariant plain_variant;
 
-    const auto textured_entry = findProgram(facts, ProgramRef{ program.get(), program->revision() }, textured_variant);
-    const auto plain_entry    = findProgram(facts, ProgramRef{ program.get(), program->revision() }, plain_variant);
+    const auto textured_entry = findProgram(facts, ProgramRef{ program.get(), program->revision() }, textured_variant, DrawKind::Content);
+    const auto plain_entry    = findProgram(facts, ProgramRef{ program.get(), program->revision() }, plain_variant, DrawKind::Content);
     ASSERT_TRUE(textured_entry.found());
     ASSERT_TRUE(plain_entry.found());
     EXPECT_EQ(textured_entry.entry->abi.bindings.size(), plain_entry.entry->abi.bindings.size() + 1U)
@@ -456,10 +562,18 @@ TEST(ContentStoreTest, AScreenProgramGetsTheEnginesOwnVertexStage)
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
 
     ASSERT_EQ(store.programEntries(), 1U);
-    const auto entry = findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{});
+    // Asked for as the call it was described FOR: this program's entry answers the full-screen ABI (see
+    // ProgramFacts::kind), and asking for the content one is a miss rather than the other build.
+    const auto entry =
+        findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Screen);
     ASSERT_TRUE(entry.found());
+    EXPECT_EQ(entry.entry->kind, DrawKind::Screen);
     EXPECT_NE(entry.entry->shaders.vertex.find("gl_VertexIndex"), std::string::npos)
         << "the full-screen ABI's vertex stage is the engine's triangle, not the host's";
+    EXPECT_FALSE(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{},
+                             DrawKind::Content)
+                     .found())
+        << "a program only ever described as a screen call has no content entry";
 }
 
 TEST(ContentStoreTest, AnUntrackedObjectIsSimplyAbsent)
@@ -484,7 +598,7 @@ TEST(ContentStoreTest, AnUntrackedObjectIsSimplyAbsent)
     EXPECT_EQ(store.materialEntries(), 0U);
     EXPECT_EQ(store.builds(), 0U);
     EXPECT_EQ(findGeometry(facts, geometry.get(), geometry->revision()).miss, FactMiss::Unknown);
-    EXPECT_EQ(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}).miss, FactMiss::Unknown);
+    EXPECT_EQ(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
     EXPECT_EQ(findMaterial(facts, material.get()).miss, FactMiss::Unknown);
 }
 
@@ -522,4 +636,45 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark
     releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
     EXPECT_EQ(store.geometryEntries(), 0U);
     EXPECT_EQ(store.programEntries(), 1U) << "the program is still held by the host";
+}
+
+TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
+{
+    ContentStore store;
+    const auto   geometry = quad();
+    const auto   program  = contentProgram();  // both stages: describable as content AND as a screen call
+
+    store.track(geometry);
+    store.track(program);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+
+    // One frame shades CONTENT with it...
+    const auto content_plan =
+        contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
+    (void)store.tablesFor(content_plan->frame, timeline, retirement);
+    ASSERT_EQ(store.programEntries(), 1U);
+
+    // ... and a later frame draws the SAME program as a full-screen call. The two are different ABIs, so the
+    // table has to answer with two entries - and a lookup that did not name the kind would hand whichever row
+    // came first to a caller expecting the other, which is a wrong picture with no refusal anywhere.
+    const auto          screen_plan = screenPlan(program.get());
+    const ContentFacts& facts       = store.tablesFor(screen_plan->frame, timeline, retirement);
+
+    ASSERT_EQ(store.programEntries(), 2U) << "one text, two entries: the two calls are different ABIs";
+    const auto content =
+        findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content);
+    const auto screen =
+        findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Screen);
+    ASSERT_TRUE(content.found());
+    ASSERT_TRUE(screen.found());
+    EXPECT_NE(content.entry, screen.entry) << "each call gets its own entry";
+    EXPECT_EQ(content.entry->kind, DrawKind::Content);
+    EXPECT_EQ(screen.entry->kind, DrawKind::Screen);
+    // And the entries really are those two builds: the content one carries the HOST's vertex stage, the screen
+    // one the engine's generated triangle (see api/ContentSources).
+    EXPECT_EQ(content.entry->shaders.vertex, std::string(kGatedVertexSource));
+    EXPECT_NE(screen.entry->shaders.vertex.find("gl_VertexIndex"), std::string::npos)
+        << "the full-screen entry's vertex stage is the engine's, not the host's";
 }

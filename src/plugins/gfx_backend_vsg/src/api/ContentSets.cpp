@@ -306,7 +306,12 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
     {
         const std::shared_ptr<Data::Set> set = *it;
         const bool answerable =
-            findProgram(facts, core::ProgramRef{ set->key.program, set->key.revision }, set->key.variant).found();
+            // The set's source program is asked for AS CONTENT: every set here belongs to a content half (a
+            // full-screen call's set is the pass' own and never reaches this table - see this function's own
+            // guard above), so the entry that keeps it alive is the content one (see ProgramFacts::kind).
+            findProgram(facts, core::ProgramRef{ set->key.program, set->key.revision }, set->key.variant,
+                        core::DrawKind::Content)
+                .found();
         if (answerable)
         {
             ++it;

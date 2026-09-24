@@ -1,5 +1,7 @@
 #include <vine/vsg/core/AllocationGate.hpp>
 
+#include <atomic>
+
 #if defined(__GLIBC__)
 #    include <malloc.h>
 #endif
@@ -36,6 +38,29 @@ HeapUsage heapUsage() noexcept
 
 }  // namespace
 
+namespace
+{
+
+/// @brief The counting half's state (see the header: the instrumenter that feeds it is the harness').
+///
+/// Function-local statics, so a global `operator new` may call into them during static initialisation - the
+/// allocation that happens before `main()` is as real as any other, and a counter that only becomes usable
+/// once some TU's dynamic initialiser ran would silently lose it.
+struct Counters
+{
+    std::atomic<std::uint64_t> count{0};
+    std::atomic<std::size_t>   bytes{0};
+    std::atomic<bool>          announced{false};
+};
+
+Counters& counters() noexcept
+{
+    static Counters state;
+    return state;
+}
+
+}  // namespace
+
 V_VSG_NS_BEGIN
 
 namespace core
@@ -51,6 +76,35 @@ std::size_t AllocationGate::bytesInUse() noexcept
     return heapUsage().bytes;
 }
 
+bool AllocationGate::countsAvailable() noexcept
+{
+    return counters().announced.load(std::memory_order_relaxed);
+}
+
+void AllocationGate::announceCountedAllocations() noexcept
+{
+    counters().announced.store(true, std::memory_order_relaxed);
+}
+
+void AllocationGate::noteAllocation(std::size_t bytes) noexcept
+{
+    Counters& state = counters();
+    state.count.fetch_add(1U, std::memory_order_relaxed);
+    state.bytes.fetch_add(bytes, std::memory_order_relaxed);
+}
+
+void AllocationGate::noteDeallocation() noexcept
+{
+    // The count is of ALLOCATIONS, not of live blocks: the rule a frame has to keep is "it does not ask for
+    // memory", and a frame that allocates and frees in the same pass breaks it just as much as one that
+    // leaks. (That is the whole reason this half exists next to the byte reading - see the header.)
+}
+
+std::uint64_t AllocationGate::allocationCount() noexcept
+{
+    return counters().count.load(std::memory_order_relaxed);
+}
+
 void AllocationGate::begin() noexcept
 {
     if (open_)
@@ -58,8 +112,10 @@ void AllocationGate::begin() noexcept
         // Already measuring: the first open owns the window, so a nested one cannot shorten it.
         return;
     }
-    opened_at_ = bytesInUse();
-    open_      = true;
+    opened_at_    = bytesInUse();
+    opened_count_ = allocationCount();
+    opened_bytes_ = counters().bytes.load(std::memory_order_relaxed);
+    open_         = true;
 }
 
 std::ptrdiff_t AllocationGate::end() noexcept
@@ -70,6 +126,11 @@ std::ptrdiff_t AllocationGate::end() noexcept
     }
     open_ = false;
     ++windows_;
+
+    // The counted half first: it is the one a phase can always read (the byte reading depends on the
+    // platform's C library, this one on whether a harness instrumented the allocator - see the header).
+    allocations_ = allocationCount() - opened_count_;
+    bytes_       = counters().bytes.load(std::memory_order_relaxed) - opened_bytes_;
 
     if (!supported())
     {
@@ -96,6 +157,16 @@ std::size_t AllocationGate::windows() const noexcept
 std::ptrdiff_t AllocationGate::lastGrowth() const noexcept
 {
     return last_growth_;
+}
+
+std::uint64_t AllocationGate::allocations() const noexcept
+{
+    return allocations_;
+}
+
+std::size_t AllocationGate::bytes() const noexcept
+{
+    return bytes_;
 }
 
 }  // namespace core

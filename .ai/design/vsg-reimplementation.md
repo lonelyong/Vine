@@ -4651,3 +4651,331 @@ preview 244; vuid=0`）；include hygiene 0/`784` 文件、诊断格式 0/7、do
 
 **证据**：`test_vsg` **413** 全绿（+1 条新用例）、0 VUID；`test_gui --gtest_filter=PreviewFitTest.*` 6 条全绿；
 门禁两棵树同跑全绿，应用阶段 `vuid=0`、画面参数与 §11.16bt 逐字相同（`87.04% / 85.14%, preview 244`）。
+
+### 11.16bv M11a（2026-09-24）：一次外部审查的落地——三处真缺陷 + 一道失效的门禁（含变异）
+
+**触发**：对 `src/viz/graphics`（SDK + 引擎）与 `src/plugins/gfx_backend_vsg`（重写版 `api/` + `core/`）做了一次
+全量走查（读代码 + 跑三条静态门禁，未跑设备）。走查列出的条目分三类：**"实现好了但生产路径上没人调用/键不完整"
+的真缺陷**（本条修掉，各有变异反证）、**门禁自己静默失效**（修掉）、**设计取舍**（不改的先写论证，见 §11.16bw）。
+
+**修 1：放手回收的"另一半"从来没有调用点 —— 新增 `api/ContentSweep`（审查 A1）。**
+`ContentStore::releaseAbandoned`（`ContentStore.hpp:151`）与 `MaterialImages::releaseAbandoned`（`MaterialImages.hpp:156`）
+都实现好了、都各有单测，而**帧驱动里一个调用点都没有**（`ContentStore::clear` 更是全仓零调用）⇒ 宿主丢掉的几何
+连着它的**表行、半片、集合与管线**活到会话结束（半片/集合的 sweep 判据是"表还能不能回答这个键"，
+`ContentHalves.cpp:210` / `ContentSets.cpp:302`，所以表不放手它们也不会放手）。这正是上一轮 P8 修过的缺陷在重写版复发。
+- 做法：新单元 `api/ContentSweep.{hpp,cpp}`——**一帧一次的一个调用**，把"何时扫"和"各缓存自己怎么松手"分开
+  （store 的行经 `RetirementQueue` 停放；纹理对象引用计数到底，直接放）。
+- 调用点唯一：`VsgBackend::swapBuffers()`，**录完之后、提交之前**（提交推进停放队；停放必须在推进之前）。
+  空帧也扫（宿主可以在不画的帧里放手）。
+- 可观测：`releasedContentObjects()` / `releasedTextures()`（宿主一直持有 ⇒ 恒 0）。
+- 证据：`ContentSweepTest` 4 条（单调用覆盖两半 / 持有人仍在时不放 / 行留到停放到期才走 / 默认材质永不被放手）；
+  **变异 2/2**：图像那一半空转 ⇒ 恰好 `EverythingTheHostDropped…` 红（计数 + `has()` 两条断言）；
+  store 那一半空转 ⇒ 3 条红。
+
+**修 2：程序表的一条歧义 —— `ProgramFacts::kind`（审查 B1 的前置发现）。**
+`findProgram` 的键是 (identity, revision, variant)，而**同一个 program 对象可以在同一 revision 上有两行**：
+内容构建（两个 stage、内容 ABI）与全屏构建（引擎提供顶点阶段、屏幕 ABI，见 `ContentSources.cpp` 的两个构造器）。
+于是"既当内容画、又当全屏程序画"的宿主会拿到**碰巧在前面的那一行** ⇒ 另一套 ABI/GLSL ⇒ 静默错图（`ContentHalves`
+的两种 half 与 `ContentPass` 的内容路径都受影响）。可达性不需要稀奇用法：把后处理程序也用 `render()` 画一次就命中。
+- 做法：`ProgramFacts` 加 `core::DrawKind kind`（并写明它为什么是键的一部分）；两个构造器各自填；`findProgram`
+  多收一个 kind 参数（**不留默认值**：忘了它会静默拿到另一套 ABI，正是这条缺陷的形状）；5 个生产调用点与 12 个测试
+  调用点显式说明自己要哪一种。
+- 证据：新用例 `ContentStoreTest.OneProgramDescribedAsBothKindsIsNeverServedForTheOther`（两行都在、各取各的、
+  内容行的顶点文本是宿主的、屏幕行是引擎的 `gl_VertexIndex` 三角形）；既有用例
+  `AScreenProgramGetsTheEnginesOwnVertexStage` 改成"问屏幕要"并加一条"问内容要 = miss"。
+  **变异**：把 kind 从比较里去掉 ⇒ 恰好这两条红。
+
+**修 3：设备报的各向异性上限从没进过纹理缓存（审查 A5）。**
+`samplerAnisotropy` 是**设备地板**的一部分（`DeviceFeatures.cpp:15` 请求、`DeviceProbe.cpp:36` 探测），而
+`MaterialImages::setMaxAnisotropy` 也是**零调用点** ⇒ `max_anisotropy` 恒为 1.0，采样器 `anisotropyEnable = TRUE`
+而倍率 1 ⇒ **与关闭等价**（有 mip 链也按各向同性过滤）。"文档化了的能力没人接上"的第三种形状。
+- 做法：`MaterialImages::maxAnisotropy()` 取值器（可观测）；`VsgBackend::initialize()` 在**设备在手上的那一处**
+  读 `physicalDevice->getProperties().limits.maxSamplerAnisotropy` 并交给缓存（`anisotropyFor` 负责钳到 [1,16]，
+  超过设备上限是非法的）。`detail::BackendContentAccess::images()` 供测试查看。
+- 证据：`MaterialImagesTest.TheDeviceLimitIsWhatMipChainedTexturesAreFilteredWith`（未被告知 ⇒ 1.0；16 ⇒ 16；
+  64 ⇒ 钳到 16；0.5 ⇒ 1；**2 级 mip 纹理**的采样器 `anisotropyEnable=TRUE` 且倍率 = 上限；单级纹理仍是 FALSE）；
+  设备用例 `VsgBackendTest` 第 3 步断言"缓存被告诉过"（`maxAnisotropy() > 1`）。
+
+**修 4：`check_doc_symbols.py` 在重写后只看得见 19/143 个单元（审查 C1）。**
+两半都失效：① `MAPPED_DIRS` + `units_of()` 只枚举**目录直接子项**，而代码搬进了 `src/api|core`、
+`include/vine/vsg/api|core` ⇒ 它只看见顶层那 19 个（实测：树里 143 个，**124 个不在门禁范围内**）；
+② 点名检查用前缀白名单（`PLUGIN_UNIT_PREFIXES`），它不认任何新名字 ⇒ 文档里写错/写旧了也不会红。
+⇒ "每个单元都要被文档点到"和"文档点到的单元必须存在"两条都成了空话。
+- 做法：`units_of` 改递归；点名检查改成"这个名字在本仓（`src`/`tests`/`tools`/`cmake`）里必须真的存在"，
+  去掉前缀白名单（历史段落与 `<!-- drift-ok -->` 两条既有豁免不变）。
+- 结果：修完立即报出 **6 条真漂移**——`ContentSources.{hpp,cpp}`、`ContentSweep.{hpp,cpp}`、`FactResult.hpp`
+  四个单元**没有任何文档点到**，以及 `backend.md:600` 一句仍在点已删除的 `selftest_datarefresh.cpp`
+  （它所在的 §5.3.2 是旧渲染器的内容，已补 `历史登记` 标记）。修完 **145 单元全绿**。
+- **变异**：把枚举改回只列顶层 ⇒ 立刻红；把 `ContentSweep` 从三份文档里整体改名 ⇒
+  `ContentSweep.{cpp,hpp}: no living document names this unit`（覆盖面有牙）。
+
+**修 5（注释）：两处"注释说代码做不到的事"。** `StateCommands.cpp` 的 `mapDepth` 注释写"没有 default 分支"，
+而 switch 后面就有一段静默尾部；`mapBlendFactor` 的尾部把未知因子变成 `VK_BLEND_FACTOR_ONE`（**不是**"不混合"，
+而是另一种混合 ⇒ 静默错图）。两处都改成说真话，并把"未知因子"那条登记为需要"在状态被书写的源头（引擎的
+`BlendState`）校验"才算真修（见 §11.16bw）。
+
+**证据（本轮总账）**：`test_vsg` **401 → 407**（+6 用例）、**383 passed / 24 skipped / 0 failed**；
+目标 `test_vsg` 与 `gfx_backend_vsg` 两个构建 0 error；三条静态门禁：hygiene 0/790、诊断格式 0/7、
+**doc symbols 145 单元**（修前 19）；五条变异各自咬住目标。**证据边界**：本机没有窗口系统 ⇒ 窗口类用例
+（含 `VsgBackendTest` 的整条门面用例）**跳过**，所以"修 1 的接线"与"修 3 的设备侧读数"在本机只有
+**编译 + 设备无关半边的证据**，整链证据在能开窗口的机器上（`scripts/vsg_rewrite_gate.sh` 的应用阶段）。
+
+### 11.16bw 审查的其余条目：不改的，先在这里论证（附"真要做时的形状 + 触发条件"）
+
+> 规则与本仓既有习惯一致：**"有意不做"必须写得出理由和触发器**，否则它就是被忘掉的缺陷。
+> 下表的"现在不做"都不是"不重要"，而是"现在的代价/风险与收益不成比例，或收益面还没出现"。
+
+| 审查编号 | 结论 | 为什么现在不做（论证） | 真要做时的形状 + 触发条件 |
+| --- | --- | --- | --- |
+| **A2** 共享流的释放半边没接线，且 `SharedStreams::acquire` 每次 `++readers`（`Streams.cpp:156`），`release` 生产路径零调用 | **缺陷（已修：§11.16cb 换成“帧命名 + 窗口”的寿命，不可达的 `release` 撤掉）** | `readers` 已经退化成"累计 acquire 次数"，"最后一个读者放手 ⇒ 条目离开"不可达；唯一回收是容量 FIFO（512）。**但**：①它现在的可见后果只在"同一帧里被命名的不同流数 > 512"时才出现（那时每帧会把最老的 ~(N−512) 条挤出去、下一帧重新上传），demo 是 ~10 条量级；②修它要动"条目什么时候可以走"的语义（谁是读者？答案不是命令，而是**保留在半片/集合里的 bind**），而正确形状与 A1 的扫尾同一套：**按"本帧被命名过"设 seen 集 + 停 K 帧未命名才放手**，并把容量 FIFO 降级为硬兜底 | 形状：`StreamUploads::beginFrame()` + 每命令 `noteSeen(key)` + 帧尾 `releaseUnseen(timeline, retirement)`（K = `slots + 1`，与其余停放同窗）。**触发器**：某个负载的"每帧命名流数"越过 512，或有人报"网格多起来之后每帧在重传" |
+| **A3** SDK 没有内容释放入口（`releaseGeometry/Material/Program/Texture` 都没有） | **设计问题（不改 SDK）** | `RenderBackend` 只给了 `releasePass` / `releaseRenderTarget`，因为**只有这两种对象的生命周期由宿主显式宣布**（SDK 文档如此）；内容对象是引用计数的，宿主放手即 `useCount` 变化 —— 修 1 之后这条链已经闭合（帧级扫尾看得见放手）。加一套"显式 release 内容"的入口等于把引用计数的信息再手写一遍，还多一处必须与 `useCount` 一致的状态 | 不加。**触发器**：出现"宿主必须在同帧内让后端立刻放手"的需求（例如显存压力下的显式驱逐），那时先加**一个**入口（`releaseContent()`？）而不是四个 |
+| **A4** `Material` 是全 SDK 唯一没有 revision 的内容类型；`MaterialManager` 成了死抽象（唯一实现是测试假件） | **两半：一半改设计（已论证），一半登记** | ①`Material` 无 revision ⇒ 后端只能**每帧逐命令** compare-and-write（`VsgBackend.cpp:659`）。这是**有意的兜底**，不是漏接：SDK 的既有规矩是"被共享的对象自己不推断内容变了"，而 `Material` 的 setter 至今没有公告语义 ⇒ 后端不能假设"没人公告 = 没变"。②`MaterialManager`（`MaterialManager.hpp:19-27` 明说"具体后端实现它并自己持有资源缓存"）现在**没有任何生产实现**，那句话是**错的** | ①形状：给 `Material` 加 `revision()/setRevision()/bumpRevision()`（照 `Geometry`/`Texture`/`ShaderProgram`），缓存用"revision 变了才比较"的快路径，**保留** compare-and-write 作为"没公告"的兜底。**触发器**：材质数量大到"每帧 O(命令数) 次块比较"进入剖析的前列（当前 11 趟 × 42 命令 = 数百次 64 B 比较，量级还看不见）。②形状：删掉 `MaterialManager` + 它的假件与用例，并在 SDK 文档里写明"材质由后端按帧观察"。**触发器**：任何一次"宿主以为管理器在物化材质"的误读事件（文档已经写着相反的话，所以先按文档漂移处理） |
+| **A6** `MaterialImages` 淘汰是 FIFO 而非 LRU；`ContentStore` 没有任何容量上界 | **登记** | FIFO 的代价是"批量加载贴图会把正在用的挤掉并重建"，而那一次重建的价钱是**一次上传**（不是错误）；换成 LRU 需要"最近使用帧号"并接进诊断，收益面（同屏活纹理数逼近 256）在 demo 上不成立。`ContentStore` 的上界在修 1 之后由**扫尾**给出（宿主放手即回收），剩下的是"宿主一直持有但从不画"的对象 —— 按本仓既有口径那是**应当保留**（持有者是宿主） | 形状：淘汰键从 `stamp`（插入序）换成"最近被 acquire 的帧号"，`kMaxEntries` 不变。**触发器**：活纹理数接近 256 且观察到"用了很久的贴图被重建" |
+| **B1** 三张内容表的查找是**线性扫描**，而每命令每帧要跑 5~9 次（`ContentFacts.cpp:50/91/122`；表只增不减） | **缺陷（已修：§11.16bz 量了斜率并落地行序 + 二分；`tablesFor` 自身那两次查找仍登记，见该节第 4 点）** | 复杂度 O(每帧命令数 × 表项数)：1 万 drawable/1 万表项时单帧 ~10⁸ 次指针比较，而 demo 是 ~42 条命令 ⇒ **任何现有门禁都看不见**（所以先做的是修 2：把键补完整，否则索引化会把"两行同键"变成"索引里后写覆盖先写"，把一个静默错图换成另一个）。另一条论证：**现在做没有收益面**，而有真实的回归面（内容路径是 407 条用例里最密的一片） | 形状：每帧在 `tablesFor` 里重建**排序的行号索引**（`vector<uint32_t>` + 每表一个比较器，O(n log n)/帧、`lower_bound` 每次 O(log n)），**不是**给表本身排序（手工构造的表会静默失配）；`ContentFacts` 带一个可空的 `const RowOrder*`，为空时回退到扫描并**在文档里写明这是慢路径**。**触发器**：某个负载的 drawable 数越过 ~2 000，或剖析里 `find*` 家族进入前列 |
+| **B2** 每 pass 每帧的堆分配：`planClearValues` 的 `std::vector<AttachmentClear>`（`ClearPlan.cpp:36-52`，`ClearPlan.hpp:78`）、`ContentPass` 每帧的两个 `vector<ReportOnce>`（`ContentPass.cpp:153`）、`makeInputSet` 的 key `vector`（`ContentPass.cpp:516`）、每 pass 一个 `vsg::RenderGraph`（`OffscreenTarget.cpp:757`） | **缺陷（已收尾：§11.16bx 修第一处，§11.16by 量完其余并改为上限门禁）** | 全部是**小对象**（每 pass 几十~几百字节），M10f 已实测本层稳态帧 ≈2 ms（Debug + lavapipe），而 `AllocationGate` 测的是**堆净增长**、看不见 allocate/free churn（见 B3）⇒ 现在改它无法用证据收尾。`vsg::RenderGraph` 那条更不该省：上一帧的图可能还在飞，复用一个对象就是在改一个已提交命令图里的状态 | 形状：`PassClearPlan::colors` 换成定长 `std::array<AttachmentClear, kMaxColorAttachments>`（附件的上界是设备给的，很小）+ 计数；`ContentPass` 的两个 `ReportOnce` 向量改成复用（resize 而非重新赋值）；`makeInputSet` 的 key 换成成员 scratch。**触发器**：B3 的计数式分配门禁就位之后（先有量具再改） |
+| **B3** 分配证据的强度被高估：`AllocationGate` 用 `mallinfo2`（`AllocationGate.cpp:21-30`，`__GLIBC__` 限定）⇒ **Windows 上 unsupported**，用例在 unsupported 时把增长当 0（`BackendEvidenceTest.cpp:363`）；且只测净增长，对 churn 免疫 | **缺陷（已修：§11.16bx 加了计数的一半，相位改以计数为判据）** | 它守的命题（"稳态帧不分配"）在**交付平台上没有量具**：Windows 上那条相位退化成"没测"，而本仓已经宣称 Windows 是一等公民（H1）。修法是换量具而不是改断言 —— 需要**计数式**分配门禁（覆写 `operator new/delete` 计数，或注入计数分配器），这本身要新单元 + 相位 + 变异，属独立一片 | 形状：`test_vsg` 里一个只计数不改行为的全局 `operator new` 钩子 + `AllocationGate::countAllocations()`；相位断言"稳态帧分配次数 == 0"（并保留 heap 增长作为第二判据）。**触发器**：B2 落地之前必须先有它（否则 B2 无法证明干净） |
+| **B4** `Scene::collectRenderCommandsShared` 每次收集分配 3 个 vector（`Scene.cpp:468/497/512`）并把整表搬 2~3 遍，`commands` 无 `reserve` | **缺陷（登记）** | 相机每动一帧就整份重来，是**引擎侧**（不在本轮前端改动范围内），而它的可见代价取决于命令数与 `sizeof(RenderCommand)`（≈200 B，含 3 个 `intrusive_ptr` 的原子增减）。当前 demo 的收集是 memo 命中或 ~42 条命令，量不出来 | 形状：`keyed` 改成 `vector<pair<double, uint32_t>>`（行号）并就地应用置换；`commands` 按上一帧规模 `reserve`。**触发器**：相机常动的负载 + drawable 数越过 ~2 000，或 B1 之后收集成为下一热点 |
+| **B5** 拒绝路径逐命令上报（`ContentPass.cpp:882-1116`）+ 每帧重置的 `ReportOnce`；块预算是硬上限（`draws/lights/shadows` 1024/帧、`views` 256/帧，`BlockStorage.hpp:50-56`） | **登记（前者已在 M10c/M10e 登记过）** | 洪水只在"场景里有坏内容"时出现，而那时宿主**需要**知道是哪一条；把逐命令上报压成"每插话一次"会让"这一帧有 300 条画不出来"变成一句话（丢信息）。块预算超限是**拒画**（有报告）而不是错图，且 1024 条/帧远超 demo 量级 | 形状：①按"每 pass 每原因一次"上报（保留第一条的完整身份，后续只计数）；②预算按需增长（插入点 `BlockStorage::beginFrame`）并在诊断里报"本帧预算不够"。**触发器**：大场景宿主报"日志被刷满"或撞到 1024 |
+| **D2** `Material::specular()` 的 alpha 文档写"A 是强度"，但**没有任何着色器读它**（`builtin_forward.frag:145`、`builtin_gbuffer.frag:59` 都只读 `.rgb`） | **缺陷（登记：要么接线，要么改文档，二选一）** | 接线会**改画面**（默认 `specular.a = 0.5` ⇒ 高光减半），而"逐像素材质"的通道已经排满（G-buffer 的 spec 附件 alpha 空着，前向可用 `material.specular.a`），于是它是"能接、但要重新调 demo 并重钉像素基线"的一类 | 形状：前向 `spec *= material.specular.a`、G-buffer 把 alpha 写进 spec 附件、延迟侧读出并相乘；两条基线（证据行）随之更新。**触发器**：有人要求"按材质调高光强度"（当前唯一能做到的是改 shininess） |
+| **D3** 色彩空间没有契约：窗口交换链是 `*SRGB`（`WindowTarget.cpp:24-28`），离屏目标是线性，着色器直接对 0..1 的材质/灯值相乘，纹理按 `PixelFormat` 一对一映射 | **设计问题（登记，倾向"写契约"而不是"改管线"）** | 现在**能自洽**：写入 SRGB 交换链的值被硬件当作线性、离屏 16F 也是线性、`*Srgb` 贴图格式存在且映射正确 ⇒ 只要"贴图用 `*Srgb`、颜色值按线性给"，管线就是对的线性管线。真正缺的是**把这条写成契约**并对最常见的错法报警 | 形状：①`Texture`/`PixelFormat`/`RenderTarget::ColorFormat` 的文档写明"引擎内部一律线性，颜色贴图请用 `*Srgb`（PNG 通常是 sRGB）"；②`Colorf` 文档写明"线性值"；③（可选）在 `MaterialImages::acquire` 对"非 sRGB 格式的颜色贴图"给一次 Info。**触发器**：有人报"画面比参考图亮/暗一个 gamma" |
+| **D4** 延迟光照的背景判据是 `dot(pos,pos) < 1e-6`（`builtin_deferred_lighting.frag:34`）⇒ 相机贴住几何时出现固定的 0.06 色洞 | **缺陷（登记：判据该换成"这条通道写没写过"）** | 修法明确（G-buffer 的 position 附件 `w = 1` 表示写过，清成透明黑 ⇒ `w == 0` 就是没写过），但它是**着色器契约**的改动：要同时改两个 shader 的注释/ABI 说明、重跑 `vine_shader_check.sh`，并造一个"相机在几何内部"的设备像素用例才有证据 —— 本机窗口用例跳过，这条链路里最贵的一环（真机画面）恰好是缺的 | 形状：`if (pos_tex.a < 0.5) { 背景 }`，并把"w = 1 表示写过"写进 G-buffer 的 ABI 说明；用例：把相机放进球内部，断言中心像素不是 0.06。**触发器**：有人报"贴脸看模型时出现一块纯色" |
+| **D5** G-buffer 的 albedo 附件是 `RGBA8`（`RenderPipelineBuilder.cpp:87`）而存的是**线性** albedo | **登记（低）** | 8 位线性量化的代价是暗部条带；改成 sRGB 存储或 16F 会**改内存与前缀**（目标形状进管线键，全部离屏管线要重编一次），收益只在极暗材质上可见 | 形状：`attachColor(RGBA16F)`（或让 albedo 走 sRGB 附件）。**触发器**：暗部条带被报（或做 HDR 管线时一并改） |
+| **D6** `LightType::Point/Spot` 落到 `LightBlock.cpp:133` 的 `default: break;` 静默丢弃 | **不是缺陷（维持）** | SDK 自己的文档写着这两种是 **reserved / planned later**（`Light.hpp:22-23,55-56`），而且**丢了几盏**会经 `reportLightsDropped` 报一次（`ContentPass.cpp:1209`），报文已含"a kind the light block does not carry" | 不改。**触发器**：SDK 真的支持点/聚光（那时块布局与 falloff 一起设计） |
+| **C1 残留** 历史段落里仍有大量旧单元名 | **已按既有规矩处理** | `backend.md` 的 §5.3.x 被补上 `历史登记` 标记（修 4 报出的那条），其余历史段落本来就带标记；门禁的豁免规则（冻结段落 / `<!-- drift-ok -->`）保持不变 —— 这是"旧记录保留可读"与"新句子不许漂移"之间的既定折中 | — |
+
+**顺带证实为"不是缺陷"的几条（免得下一轮重查）**：`RenderBackend` 的 25 个虚函数**全部**被 `VsgBackend` 覆写
+（没有静默继承的空实现）；`PipelineKeyHash` 覆盖 `PipelineKey::operator==` 的**全部字段**（不存在"相等却 hash
+不同"的查找失败）；`ViewBlock` 的 Y 翻转 × reverse-Z 折叠与 `VK_FRONT_FACE_CLOCKWISE` / `VK_COMPARE_OP_GREATER`
+/ 清屏 depth 0.0 四处自洽（有像素级用例）；引擎的透明排序（不透明前到后、透明后到前，`Scene.cpp:479-511`）与
+透明 pass 的 `TestOnly` 到位；`RetirementQueue::advance` 在无事可做时不分配。
+
+### 11.16bx M11b（2026-09-24）：先把量具做出来，它当场量出并修掉一处真的每帧分配（B3 + B2 的第一半）
+
+**本条取代 §11.16bw 的 B3 行**，并把 B2 行里"每 pass 每帧分配"的**第一处**修掉——顺序就是那条规矩：
+**先有量具，再改代码**，否则改完无法证明。
+
+**1. 量具（B3）：`AllocationGate` 有了计数的一半，并且"数得出来"与"什么都没数"分得清。**
+原来的门禁只有 `mallinfo2` 的**字节净增长**：①它**看不见 churn**（一帧里 new+delete 同一块，字节数原样），
+而那正是"每 pass 一个 vector""一个 `std::function` 停放着再释放"这类错误的形状；②`malloc.h`/`mallinfo2`
+**在 Windows 上不存在** ⇒ 那些相位退化成"没测"却报成功（本仓已经把 Windows 当一等公民）。
+- 做法：`core::AllocationGate` 增计数一半——`noteAllocation/noteDeallocation`（被替换的全局分配函数调用）、
+  静态计数、窗口差值 `allocations()/bytes()`，以及 **`countsAvailable()` + `announceCountedAllocations()`**：
+  **库不许替换宿主分配器**，所以插桩是 harness 的事，而"说一声"让 `"窗口内 0 次分配"` 与 `"没有任何人在数"`
+  这两个**同一个数字**可区分——这正是这个文件存在的理由。
+- 插桩者：`tests/test_vsg/AllocationCounter.cpp`（替换全部可替换的全局分配函数，含 `[]`/nothrow/sized/
+  **aligned** 变体；MSVC 的 aligned 用 `_aligned_malloc`/`_aligned_free`，POSIX 用 `posix_memalign`/`free`）。
+  它只属于测试目标：换分配器是宿主的选择，不是后端的。
+- 证据：`CoreAllocationGateTest.TheCountedHalfSeesChurnTheHeapReadingCannot`（64 次 new+delete ⇒ **计数 64**、
+  字节读数**纹丝不动**——这就是字节读数看不见的那类）；`AZeroCountIsOnlyReadWhereSomethingCounts`；
+  相位 `two steady frames allocate nothing` 改成**以计数为判据**（字节读数降为第二判据），并在读数之前
+  `ASSERT_TRUE(countsAvailable())`。
+  **变异**：把计数去掉（`noteAllocation` 空转）⇒ churn 用例红；把 `FrameGraph::reset` 改回 `assign` ⇒ 相位行红。
+
+**2. 量出来的东西（真缺陷，不是估的）：一个单 pass 的稳态帧在 `compile` 里分配了 27 块，而"稳态帧不分配"
+这条断言一直是空的。** 逐段量（探针，已撤）：
+`entry → graph.reset` **+4**，`reset → step2` 0，`step2 → schedule` **+23**，`schedule → step4` 0。
+两处都在 `core/FrameGraph.cpp`：`findCycles`/`orderAcyclic` 把 Tarjan 的三张表、两个栈、
+`std::priority_queue` 的底层容器都当**局部变量**建（一次 6~10 块），`reset` 用
+`successors_.assign(n, {})`/`schedule_ = FrameSchedule{}` **丢掉容量**（下一步 `addEdge` 每条边再要一块）。
+`Recording` 那一半是干净的（`beginFrame/beginPass/setRenderTarget/render×2/endPass/endFrame/swapBuffers` 全 0），
+所以这 27 块全在计划侧。
+
+**修法**（`FrameGraph`：把一次性的临时量变成**成员 + 原地填充**）：
+`tarjan_index_/tarjan_low_/tarjan_cursor_/on_stack_/component_stack_/dfs_stack_/in_degree_/ready_/component_scratch_`
+全部成为成员，用 `resize + std::fill`/`clear` 原地刷新（容量跨帧保留）；邻接表 `reset` 只 `clear()` 每一行
+（**不丢容量** ⇒ `addEdge` 的 `push_back` 不再要内存）；`schedule_` 的三个向量改成 `clear()`（**只在真的有环时**
+才动 `cycles`，那是配置错误路径，允许它分配）；`std::priority_queue` 换成 **`std::push_heap/pop_heap` + 成员
+vector**（原地算法，容器不再每次构造）。
+
+**证据**：同一探针复测 ⇒ `compile` **27 → 0**、`graph.reset` 4 → **0**、`schedule` 23 → **0**；
+新用例 `FrameGraphTest.RebuildingAndSchedulingAFrameAsksForNoMemory`（**带两条边的**三 pass 图：reset + 2×addEdge +
+schedule 的窗口计数必须为 0——边上最容易丢容量，所以判据取带依赖的形状）；相位行 `two steady frames allocate
+nothing` 现在**真的在判**（变异：`reset` 改回 `assign` ⇒ 该行红）。
+**仍然登记**：B2 表的其余几处（`planClearValues` 的 vector、`ContentPass` 每帧的两个 `ReportOnce` 向量、
+`makeInputSet` 的 key、每 pass 一个 `vsg::RenderGraph`）——它们现在**可以被量了**（把 `AllocationGate` 的计数
+窗口挪到那一条路径上即可），这是下一步而不是本轮的事。
+
+**证据（本条）**：`test_vsg` **407 → 410**（+2 计数门禁用例 + 1 图用例；临时探针文件已删）、
+**386 passed / 24 skipped / 0 failed**；`test_vsg` 与 `gfx_backend_vsg` 两个目标 0 error；
+三条静态门禁：hygiene 0/791、诊断格式 0/7、doc symbols 145 单元。
+
+### 11.16by M11c（2026-09-24）：B2 的其余几处——量完再决定（改 0 处代码，留 1 道门 + 4 条论证）
+
+**本条收尾 §11.16bw 的 B2 行**（B3 行已由 §11.16bx 取代）。顺序仍是那条规矩：先量，再决定是改还是留。
+
+**1. 量出来的数**（临时探针，已撤；MSVC Debug；单 pass、单 draw、内容不变的稳态帧）：
+
+- `VsgExecutor::record` 整帧 **12 次分配**，拆开是：
+  - **7** — 构造一个 `ContentPass`：两个按 entry 数定尺寸的 `std::vector<ReportOnce>`（本 build 里一个单元素 vector 记 2 次）
+    加上记录器自身成员；
+  - **2** — `planClearValues` 的 `PassClearPlan::colors`（一个 per-attachment vector）；
+  - **3** — 该 pass 的 `vsg::RenderGraph` 与其 clear values，也就是**节点**：每帧新建是设计（上一帧的图可能还在飞）。
+- 对照：同一 fixture 里**一次**三角形成本 **33 次分配**（vsg 节点 + 测试自己建的 buffer）。真实帧的成本由
+  **每条命令**决定，不由此处决定。
+- 另两条：`planClearValues` 的代价**与颜色附件数无关**（1 个附件 2 次、2 颜色+depth 3 次）；`ContentPass` 的构造成本
+  **与 entry 数无关**（1 个 entry 与 4 个 entry 都是 7 次——每个 vector 只定尺寸一次）。
+
+**2. 结论：这四处都不是设计问题，而是"每 pass 一次的几条小向量" ⇒ 不改，改为设上限门禁。** 逐条：
+
+| 处 | 量到的代价 | 为什么不改 | 真要做时的形状 + 触发器 |
+| --- | --- | --- | --- |
+| `PassClearPlan::colors` | 2 次/pass | 要免掉它只有两条路：①签名改成"调用方给 scratch"（核心计划函数的入口形状要变，十余处调用与用例跟着动）；②换成定长 `std::array` + 计数（那就要给颜色附件数**定一个上界并加拒绝路径**，而上界是设备给的、本层现在没有这条规矩）。而"计划是 per-attachment 的表"正是 `ClearPlanTest` 断言的东西——改它就是改设计去换 2 次分配 | `void planClearValues(PassClearPlan& out, ...)`，`OffscreenTarget`/`WindowTarget` 各持一个复用的 plan。**触发器**：记录路径的"零分配"成为硬指标（硬实时/嵌入式），或剖析里 per-pass 分配进入前列 |
+| `ContentPass` 的两个 `ReportOnce` 向量 | 4 次/pass（该构造共 7） | **语义上没有错**：`Scope` 的头注写着"episode 的边界由调用方决定——一帧的 scope 就每帧报一次"，而 `ContentAssembly` 每 pass 建一个 scope。要变成 session 级 episode，要么让 episode 行由调用方持有（`Scope` 加可空 span + 空时回退 = 第二条路径），要么把状态放进半片表——但表行是跨 pass、跨帧共享的，一次拒绝就会**永久静音**，那是行为回归 | `Scope` 加一个可空的 `std::span<EntryEpisodes>`（照 `input_sets` 的"空 = 调用方不保留"口径），由 `ContentAssembly` 按 session 持有。**触发器**：宿主报"日志每帧重复同一条拒绝"，或这条路径要进零分配门禁 |
+| `makeInputSet` 的 key `vector` | 与上面同量级 | 同一个形状（per-pass scratch），而 key 就是 cache 查找的键，换成成员 scratch 又要开一个"调用方持有"的口子 | 与上一条合并考虑。**触发器**：同上 |
+| 每 pass 一个 `vsg::RenderGraph` | 3 次/pass（含 clear values） | **不该省**：上一帧的图可能还在飞，复用一个对象就是改一个已提交命令图里的状态——这是安全性，不是分配问题 | 不改 |
+
+**3. 留下的门禁：这道门证明的是"账本没长"，不是"账本是 0"。**
+`CoreAllocationGateTest.TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass`（device-free）：
+`planClearValues` ≤ 2 次/调用、`ContentPass` 构造 ≤ 8 次/次，且 **1 个 entry 与 4 个 entry 的次数必须相等**
+（"每 entry 一个 vector"这种形状会被这条断言挡住）。
+**变异 2/2 红**：在 `ContentPass` 构造里塞一个 `std::vector<int>(8)` ⇒ 9 > 8 红；在 `planClearValues` 里塞一个 ⇒ 4 > 2 红。
+**为什么不是"== 0"**：记录路径**按设计**每帧新建命令节点（`vsg::RenderGraph`、每条命令的 bind/draw），在那里断言 0
+等于在断言 vsg 的行为；能且应当为 0 的是**计划路径**，它由相位行 `two steady frames allocate nothing` 守着（§11.16bx）。
+
+**证据（本条）**：`test_vsg` 410 → **411**（+1 上限用例；探针已撤，`ExecutorTest.cpp` 回到 HEAD 内容）；
+**387 passed / 24 skipped / 0 failed**；两个目标 0 error；三条静态门禁绿。
+
+### 11.16bz M11d（2026-09-24）：B1——三张内容表的查找从扫描变成二分（先量斜率，再改）
+
+**本条取代 §11.16bw 的 B1 行**（那行把 B1 登记为"规模化墙"，触发器是"drawable 数越过 ~2 000"。这次把
+**斜率量出来**，然后按量的结果落地）。
+
+**1. 量到的斜率**（2026-09-24；同一台机；`findGeometry` 命中，每次查找 ns）：
+
+| 表行数 | 线性扫描（Debug） | 带行序（Debug） | 线性扫描（-O2 等价机制） | 二分（-O2 等价机制） |
+| --- | --- | --- | --- | --- |
+| 16 | — | — | **3.3** | **3.4** |
+| 64 | — | — | 9.6 | **4.8** |
+| 256 | 221.8 | 1306.8 | 33.1 | **6.3** |
+| 1024 | 780.0 | 1493.2 | 112.8 | **28.8** |
+| 4096 | 3104.4 | 1783.7 | 457.4 | **39.5** |
+| 16384 | 12802.7 | 2102.5 | 1719.7 | **45.8** |
+
+- **扫描的成本严格正比于行数**（×4 行 ⇒ ×4 时间，四次都是），**二分不是**（64× 行数只涨 1.6×）
+  ⇒ §11.16bw 里"1 万 drawable 时单帧 ~10⁸ 次比较"这个推算有了实测支撑。
+- Debug 列里"带行序"看着更慢（1306 vs 222 ns @256 行）**是 Debug 的产物**，不是设计的产物：MSVC Debug 的
+  `std::lower_bound` 带检查迭代器、且比较器是两层不内联调用。同一个机制在 **-O2** 下（右两列，用
+  `build/scratch` 里的一次性小程序量的，机制的形状与生产代码同构）**交叉点在 ~10~16 行**，此后二分一路领先：
+  64 行已快 2×、1024 行 4×、16384 行 **37×**。
+- **结论：不需要"小表扫描 / 大表二分"的阈值规则。** 在 demo 量级（几十行）两者同为 ~3 ns，而 demo 之上
+  每一行都是纯赚。这个"没有阈值"是用数字换来的，所以阈值也就没有存在的理由（少一条分支、少一条规则）。
+
+**2. 做法：行序是 DERIVED state，只在发布处重建；查找读它，读不到就扫描。**
+- `api/ContentFacts`：`ContentFacts` 增三个 `*_order`（`std::span<const std::uint32_t>`）= 该表行号的
+  **置换**，按查找所用的身份排序；新增 `orderProgramRows/orderGeometryRows/orderMaterialRows`（三个纯函数，
+  出参复用容量）作为**唯一**的构建方式。**空 = 未索引 ⇒ 全表扫描**（手工搭表的调用方与所有既有用例走的
+  就是这条路径，因此两条拼写并存而互不矛盾）。
+- 排序键 = 查找能**常数时间比较**的字段：程序 `(身份, revision, kind)`、几何 `(身份, revision)`、
+  材质 `(身份)`。**VARIANT 不进排序键**（比较两个 variant = 比较两个 define 列表，把它放进键就是把这份工作
+  放进每次比较）：共享前三者的行在序里**相邻且保持表序**（`stable_sort`），查找在那一小段里扫 variant。
+- 同一身份+revision 的**第一行**仍然决定答案（`channelsMatchLayout` / `blockFitsAbi` 的 Malformed 判据、
+  材质"表答的是它现在的样子"）——因为稳定排序保证了段内表序。
+- 未命中的**三分类**（Unknown / Revision / 同身份同 revision 但非本条）由键的两个**前缀**段（身份段、身份+revision 段）
+  各自二分得出，与扫描的分类逐字一致。
+- **指针比较用 `std::less`**：只有它保证全序（两个无关地址用 `<` 是 unspecified）。
+- `api/ContentStore`：`tablesFor` 在**发布表的地方**（走完一趟之后，行不会在这之后变动）重建三张行序并随表发布
+  ——每帧一次 `O(n log n)`，而不是每次查找一次，也不是每条命令行一次。
+
+**3. 守卫（差分式，不靠计时）**：`ContentFactsIndexTest`（device-free）
+- `AnIndexedTableAnswersExactlyWhatAScanWould`：同一批行问两遍（带序 / 不带序），断言**答案逐字相同**——包括
+  未命中的三分类、以及那些"多行同键"的形状（同一几何的两个 revision、一个程序的两种 kind 与三个 variant、
+  材质原地替换的两行、**畸形行与好行成对且顺序颠倒**——扫描"第一行决定"，段内表序必须让二分也这样答）。
+- `TheOrderIsAPermutationOfTheRowsAndItsRunsAreContiguous`：行序是置换，且按查找键**单调**
+  （这是二分成立的前提，直接断言，而不是"某次查找恰好命中"）。
+- `ContentStoreTest.ThePublishedTablesCarryTheirRowOrder`：store 发布的行序非空、尺寸与表一致，且
+  `findGeometry` 的答案**就是行序指向的那一行**。
+- **变异 1/1 红**：把 `orderGeometryRows` 的键改成"先 revision 后身份" ⇒ 两条用例同时红（差分 + 单调）。
+
+**4. 仍然登记（B1 的另一半，`api/ContentStore` 自己的查找）**：`tablesFor` 走帧时调用的
+`Data::liveGeometry` / `liveMaterial`（每命令每帧 2 次）**仍是线性扫描**——它们跑在"表还在长大"的那一趟里，
+要让它们也走行序，行序就必须由**每个追加行的地方**维护（三个追加点 + 五个删除点，而且**过期的行序不是漏掉
+而是答错行**）。形状：把每张表的（rows, per-row storage, order）收进一个小类型，四个操作（append / replace /
+eraseIf / eraseAt）在**同一处**移动三者——顺带把现在**手工对齐**的 rows 与 storage 也归到一个主人手里。
+**触发器**：剖析里 `tablesFor` 的两次扫描进入前列（或某个负载的每帧命令数越千）。
+**（已于 §11.16ca 收掉。）**
+
+**证据（本条）**：`test_vsg` 411 → **414**（+2 差分/单调用例 +1 store 用例）；Debug 与 Release 两个配置都能
+编译（Release 的 `test_vsg.exe` 在本机**跑不起来**——依赖未部署，所以上面 -O2 的两列是用一次性小程序量的，
+它在设计日志里注明来源）；三条静态门禁绿（hygiene 0/792、诊断格式 0/7、doc symbols 145 单元）。
+
+### 11.16ca M11e（2026-09-24）：B1 的另一半——表自己拥有行序（rows + storage + order 一个主人）
+
+**本条收掉 §11.16bz 的第 4 点**（`tablesFor` 走帧时自己的两次查找仍是线性扫描）。
+
+**1. 为什么它不是"顺手把 `live*` 也改成二分"。** `liveGeometry`/`liveMaterial` 跑在**表还在长大的那一趟**里，
+所以行序必须**始终当前**——过期的行序不是漏一行，而是按旧同余关系读到**别的行**（甚至越界）。而"始终当前"
+意味着**每个移动行的地方**都得刷新它：三个追加点 + 五个删除点，其中两个（revision 上跳、对象被弃）是**走帧期间**
+由停放回调触发的。手工维护三条平行向量（rows / storage / order）正是上一节拒绝过的形状。
+
+**2. 做法：`Data::Table<Row, Storage, MakeOrder>`** —— 一个私有小类型，把三者关在一起，只暴露四个会移动行的操作：
+`append` / `replace` / `eraseIf` / `clear`。
+- 每个操作**自己**刷新行序 ⇒ "行序是行的置换"**由构造保证**，不需要"记得置脏位"（脏位正是本仓最反感的那种
+  "两半规矩、没人检查"）。
+- `replace` **把被换掉的 storage 交还调用方**：材质表要停放被替换的值，而那一行的 block span 指着这块 storage，
+  所以它得跟着值一起进停放格（先记下旧行，再让 replace 返回旧 storage ⇒ 缓冲区地址不变，span 仍有效）。
+- 顺带把**手工对齐**的 rows 与 storage（原来在五个删除点各写两遍）归到一个主人：此前一个笔误就是"这行的 span
+  指着邻居的字节"，静默错图。
+- `NoStorage`（空类型）让程序表用同一套：空的 `unique_ptr` 槽位不分配任何东西。
+- `Data::view()`（按需构造的 6 个 span，不缓存——走帧会重新分配 rows 的缓冲区）让 store **自己的**查找也走**同一个**
+  `findGeometry`/`findMaterial` ⇒ "走帧时相信什么"与"录制时会找到什么"不可能漂移。
+- `tablesFor` 发布处**不再重建**（每帧那一次 `O(n log n)` 没了）：行序只在**内容变动**时重建。
+
+**3. 两个保证分开写清楚**（这就是本仓对"门"的口径）：
+- **正确性不依赖不变式**：`find*` 只在"行序恰好覆盖整张表"时二分，否则**退化成扫描**（`searchable(rows, order)`）。
+  "忘了刷新"最坏是慢，不是读到不存在的行。
+- **性能依赖不变式，而它被断言**：`ContentStoreTest.TheRowOrderCoversEveryRowAfterAppendsAndErasures` 把 store
+  走一遍四种移动行的方式（首次描述 = 追加、材质编辑 = 原地替换、revision 上跳 = 追加 + 停放、停放到期 = 删除），
+  每一步都断言三张表的行序是**恰好覆盖**该表的置换。
+
+**4. 变异 2/2 红**：`Table::eraseIf` 不刷新 ⇒ 上面那条用例在删除那一步红；`Table::append` 不刷新 ⇒ **两条**用例红
+（6 处断言：覆盖 + 发布处的"答案就是行序指向的那一行"）。
+**并且变异抓住了守卫自己的一个漏洞**：`covers()` 最初只检查"前 n 个是 0..n-1"，于是**行序比表长**时它仍然为真——
+这正是删除变异**第一次没被抓住**的原因；改成先比尺寸才红。教训写在用例注释里：**守卫写错了会静默通过，
+而"没抓住变异"是它唯一的报警器**。
+
+**证据（本条）**：`test_vsg` 414 → **415**；**391 passed / 24 skipped / 0 failed**（用时回到 ~21 s，
+之前一跑 33~55 s 是机器噪声）；`test_vsg` 与 `gfx_backend_vsg` 两个目标 0 error 0 warning；
+三条静态门禁绿（hygiene 0/792、诊断格式 0/7、doc symbols 145 单元）。
+
+### 11.16cb M11f（2026-09-24）：A2——共享流的寿命改成“帧命名”，那半个 `release` 撤掉
+
+**本条取代 §11.16bw 的 A2 行**（并修正它给出的形状：it 写的是“每命令 `noteSeen(key)`”，而落地时发现
+**`acquire` 本身就是那次命名**——一次绘制每帧 acquire 一次——所以没有单独的 `noteSeen` 调用）。
+
+**1. 先确认它确实是坏的。** `SharedStreams::acquire` 每次 `++readers`，而一次绘制**每帧** acquire 一次
+（它录进去的节点每帧重建）⇒ `readers` 是“累计 acquire 次数”，`release()` 的“最后一个读者”**永不可达**。
+实测：`release()` 在生产代码里**零调用点**（grep 全库，只有声明、定义与用例）。
+- 后果不是“内存无界”（容量 512 是有界的），而是**FIFO 分不清活的与死的**：① 一帧命名超过 512 条流时，
+  正在用的条目每帧被挤掉 ⇒ 每帧重传（这就是§11.16bw 登记的墙）；② 长会话里被弃的旧网格占着名额，把活的挤出去。
+
+**2. 做法：寿命跟着“谁还在命名它”。**
+- `acquire(key, frame)` 给条目盖**帧戳**；`releaseUnseen(frame, grace, dropped)` 放掉“超过 grace 帧没被命名”的
+  条目，并把 key 交给调用方（出参复用容量 ⇒ 稳态帧不分配）。
+- **窗口 = 执行器自己的停放窗**（`retirement.slots() + 1`）：一条流被保留的时长恰好等于“命名过它的已录制帧
+  可能还在飞”的时长。
+- 为什么不是“内容被移除时 release”（精确释放）？因为**表里还留着被跟踪对象的行**（宿主持有但不再画的网格）：
+  “行离开”和“没有帧再命名它”是两件事，只有后者收得住这种情况。
+- 容量降级为**硬兜底**：满了挤掉**最旧被命名**的那条（stale），而不是最早插入的那条——内容轮换时两者不是同一行。
+  用的是同一个帧戳，所以没有多出第二处状态。
+- `readers()`/`release()` 删除，并在头注里写明它为何是缺陷（一个永不可达的“半个机制”）。
+
+**3. 接线。** `ContentAssembly::beginFrame` 开帧（`timeline.submittedFrame()` + `retirement.slots() + 1`）；
+`VsgBackend::sweepAbandonedContent`（帧尾那次清扫）接着调 `releaseUnusedStreams()`，计数进
+`releasedStreams()`——与 `releasedContentObjects()`/`releasedTextures()` 并列但语义不同：那两条数“宿主放手了对象”，
+这条数“没有帧再要这些上传”。
+
+**4. 守卫与变异**（这是唯一能说明“窗口就是 slots+1、不是随便一个数”的方式）：
+- `ContentCoreTest`：`AnEntryNoFrameNamesForTheGraceWindowLeavesAndTheNextAcquireUploadsAgain`（F+grace 尚在、
+  F+grace+1 走、且只走一次）、`AStreamAFrameStillNamesIsNeverDropped`（每帧命名 ⇒ 永远一条，且扫尾在命名之后
+  跑也不会误伤）、`TheBoundTakesTheStalestEntryNotTheOldestInserted`（与 FIFO 的区别）。
+- `StreamUploadsTest`：`AStreamNoFrameNamesAnyMoreDropsItsBindAndTheNextAcquireUploadsAgain`（bind 跟着走、
+  `objects()==0`、`unused()` 动）、`TheIndexEntryLeavesUnderTheSameNormalisedKeyTheAcquireUsed`（索引 bind 的键是
+  整缓冲，扫尾用的是同一个键）。
+- **装配级（真正的接线证明）**：`ContentPassTest.AFrameIsAssembledAndRecordedInTwoCalls` 末尾把帧循环继续跑：
+  命名它的那一帧之后 **4 帧内一条都不放**，**第 5 帧一次全放**（live/objects 归零、unused == 原条数、evictions == 0）。
+- **变异 2/2 红**：① `StreamUploads::beginFrame` 不记帧号（接线失效）⇒ **3 条**用例红（含装配级）；
+  ② `releaseUnseen` 的 `age <= grace` 改成 `age < grace`（窗口差一帧）⇒ **4 条**红（含装配级）。
+
+**证据（本条）**：`test_vsg` 415 → **417**；**393 passed / 24 skipped / 0 failed**；
+`test_vsg` 与 `gfx_backend_vsg` 两个目标 0 error 0 warning；三条静态门禁绿。
+

@@ -203,6 +203,47 @@ TEST(MaterialImagesTest, AnEntryKeepsItsTextureAliveUntilItIsAbandoned)
     EXPECT_EQ(cache->count(), 0U);
 }
 
+TEST(MaterialImagesTest, TheDeviceLimitIsWhatMipChainedTexturesAreFilteredWith)
+{
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
+    ASSERT_NE(cache, nullptr);
+
+    // A cache that was never told filters isotropically. That is the safe answer AND the one a missing piece
+    // of wiring leaves in place for the whole session: the sampler asks for anisotropy with a factor of 1,
+    // which is the same picture as not asking at all (see MaterialImages::makeSampler).
+    EXPECT_FLOAT_EQ(cache->maxAnisotropy(), 1.0F);
+
+    cache->setMaxAnisotropy(16.0F);  // what a device may report
+    EXPECT_FLOAT_EQ(cache->maxAnisotropy(), 16.0F);
+    cache->setMaxAnisotropy(64.0F);  // more than this backend asks for: clamped, never an illegal request
+    EXPECT_FLOAT_EQ(cache->maxAnisotropy(), 16.0F);
+    cache->setMaxAnisotropy(0.5F);  // a device that offers less than 1: 1 is legal on every device
+    EXPECT_FLOAT_EQ(cache->maxAnisotropy(), 1.0F);
+
+    cache->setMaxAnisotropy(16.0F);
+
+    // Anisotropy is only meaningful with a mip chain to choose between, which is the texture this case needs:
+    // the same 4x4 picture with a second level.
+    const auto texture = vine::intrusive_ptr<Texture2D>(new Texture2D(4, 4, PixelFormat::Rgba8Unorm, 2));
+    texture->setImage(vine::intrusive_ptr<const Image>(new Image(4, 4, PixelFormat::Rgba8Unorm, 2)));
+
+    TextureReject      reason = TextureReject::Ok;
+    const SamplerImage images = cache->acquire(texture.get(), reason);
+    ASSERT_EQ(reason, TextureReject::Ok);
+    ASSERT_NE(images.sampler, nullptr);
+    EXPECT_EQ(images.sampler->anisotropyEnable, VK_TRUE);
+    EXPECT_FLOAT_EQ(images.sampler->maxAnisotropy, 16.0F) << "the device's own limit, not the 1x default";
+
+    // And the contrast: a single-level texture must NOT ask for it - there is nothing to interpolate between,
+    // and leaving the flag on would make the driver filter across levels that do not exist.
+    const auto flat_texture = readyTexture();
+    const auto flat         = cache->acquire(flat_texture.get(), reason);
+    ASSERT_EQ(reason, TextureReject::Ok);
+    ASSERT_NE(flat.sampler, nullptr);
+    EXPECT_EQ(flat.sampler->anisotropyEnable, VK_FALSE);
+    EXPECT_FLOAT_EQ(flat.sampler->maxAnisotropy, 1.0F);
+}
+
 TEST(MaterialImagesTest, ClearDropsEveryEntryAndTheFallbacks)
 {
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();

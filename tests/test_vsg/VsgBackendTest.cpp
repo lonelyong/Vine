@@ -220,7 +220,16 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     EXPECT_EQ(backend->deviceWaits(), 0U) << "the frame path never stops the device";
     EXPECT_EQ(backend->diagnosticCount(), 1U) << "a healthy session reports nothing";
 
-    // 3. The readbacks are served now, and their REFUSALS are classified rather than slammed shut: a target
+    // 3. The content world was told what the device offers. Anisotropy is part of this backend's feature floor
+    // (see api/DeviceFeatures) and pointless at the never-told default of 1x, so the number in the cache has to
+    // have come from the device's own limit - which is what makes "the session hands it over" observable at
+    // all (the entry point existed and nothing called it, and no test could tell). A device that reports no
+    // anisotropy would read 1.0 here, which is why the assertion is "more than 1x" rather than a number.
+    const vine::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
+    ASSERT_NE(images, nullptr);
+    EXPECT_GT(images->maxAnisotropy(), 1.0F) << "the cache was never told the device's limit";
+
+    // 4. The readbacks are served now, and their REFUSALS are classified rather than slammed shut: a target
     // this backend has not been told about is NotReady (a later announcement can make it readable), a call
     // with no target is Invalid, and each reason is said ONCE per episode - the request is synchronous, and a
     // caller polling a target that is not ready yet must not be flooded.
@@ -260,7 +269,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     EXPECT_EQ(BackendContentAccess::targets(*backend).live(), 0U);
     EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U) << "holding and releasing a target is served";
 
-    // 4. The protocol still judges: a DRAWING call with no scope open has nothing to belong to, so the
+    // 5. The protocol still judges: a DRAWING call with no scope open has nothing to belong to, so the
     // plan's recorder refuses it and says so - once per frame, because a host that lost its scopes hits this
     // on every pass. The frame is still a frame (it presents), it just has nothing in it.
     backend->beginFrame();
@@ -272,7 +281,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
         << "the first scope-less draw is refused out loud, the second is the same episode";
     EXPECT_EQ(backend->framesPresented(), 4U) << "a frame whose draws were all refused still presents";
 
-    // 5. The announced size is the SURFACE's, and this backend FOLLOWS the surface it is on (the SDK's
+    // 6. The announced size is the SURFACE's, and this backend FOLLOWS the surface it is on (the SDK's
     // authority order: surface > announcement > default). Following re-reads the window and rebuilds its
     // swapchain, which stops the device once - the counter says so - and nothing is reported, because a live
     // size event is served now. The announcement is what the NEXT initialize() creates a window at, which is
@@ -293,7 +302,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     backend->swapBuffers();
     EXPECT_EQ(backend->framesPresented(), 1U);
 
-    // 6. shutdown() is safe twice and leaves the backend initializable again (the SDK's contract for a
+    // 7. shutdown() is safe twice and leaves the backend initializable again (the SDK's contract for a
     // recreated surface).
     backend->shutdown();
     EXPECT_FALSE(backend->initialized());

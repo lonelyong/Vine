@@ -71,7 +71,9 @@ struct ContentHalves::Data
     /** @brief Whether the tables still answer the key of @p half (see the sweep in halvesFor). */
     [[nodiscard]] bool answerable(const Half& half, const ContentFacts& facts) const noexcept
     {
-        if (!findProgram(facts, core::ProgramRef{ half.key.program, half.key.revision }, half.key.variant).found())
+        if (!findProgram(facts, core::ProgramRef{ half.key.program, half.key.revision }, half.key.variant,
+                         half.key.kind)
+                 .found())
         {
             return false;
         }
@@ -154,7 +156,8 @@ std::span<const ContentPass::Scope::Entry> ContentHalves::halvesFor(const core::
         {
             // The full-screen ABI is the engine's and carries no variant: a screen program is one text, and
             // it draws without a vertex layout (see api/ContentSources).
-            const FactResult<ProgramFacts> program = findProgram(facts, draw.program, ProgramVariant{});
+            const FactResult<ProgramFacts> program =
+                findProgram(facts, draw.program, ProgramVariant{}, core::DrawKind::Screen);
             if (!program.found())
             {
                 continue;  // the recorder reports the miss; no half is invented for it
@@ -187,7 +190,8 @@ std::span<const ContentPass::Scope::Entry> ContentHalves::halvesFor(const core::
                 continue;
             }
             const ProgramVariant           variant = variantOf(*material.entry, *geometry.entry);
-            const FactResult<ProgramFacts> program = findProgram(facts, command.program, variant);
+            const FactResult<ProgramFacts> program =
+                findProgram(facts, command.program, variant, core::DrawKind::Content);
             if (!program.found())
             {
                 continue;

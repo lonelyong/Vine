@@ -141,19 +141,24 @@ TEST(StreamUploadsTest, TheIndexBindAliasesTheWholeBufferSoTwoSpansShareIt)
     EXPECT_EQ(store.uploads(), 1U);
 }
 
-TEST(StreamUploadsTest, TheIndexBufferIsReleasedUnderTheSameNormalisedKey)
+TEST(StreamUploadsTest, TheIndexEntryLeavesUnderTheSameNormalisedKeyTheAcquireUsed)
 {
     StreamUploads store;
     const StreamKey first  = indexKey(&model_buffer_b, 4, 0, 36);
     const StreamKey second = indexKey(&model_buffer_b, 4, 36, 12);
 
+    store.beginFrame(1U, 1U);
     (void)store.acquireIndex(first, indices(48));
     (void)store.acquireIndex(second, indices(48));
+    EXPECT_EQ(store.live(), 1U) << "the bind covers the whole buffer, so both spans are ONE entry";
 
-    EXPECT_FALSE(store.release(first)) << "one reader left";
-    EXPECT_TRUE(store.release(second)) << "the draw's span is not part of the bind's identity";
+    // The sweep looks an entry up by the identity the acquire stored, so the DRAW's span (which is not part of
+    // that identity) cannot leave anything behind: the bind goes with the entry, under the whole-buffer key.
+    store.beginFrame(9U, 1U);
+    EXPECT_EQ(store.releaseUnseen(), 1U);
     EXPECT_EQ(store.live(), 0U);
     EXPECT_EQ(store.objects(), 0U);
+    EXPECT_TRUE(store.agreesWithRegistry());
 
     const auto again = store.acquireIndex(first, indices(48));
     EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "nothing holds those bytes any more";
@@ -200,18 +205,27 @@ TEST(StreamUploadsTest, TheCanonicalBindingMappingIsThisStoreSpelling)
     EXPECT_EQ(StreamUploads::bindingOfCanonical(5U), StreamUploads::kNoBinding) << "a custom channel has none";
 }
 
-TEST(StreamUploadsTest, TheLastReaderLeavingDropsTheBindAndTheNextAcquireUploadsAgain)
+TEST(StreamUploadsTest, AStreamNoFrameNamesAnyMoreDropsItsBindAndTheNextAcquireUploadsAgain)
 {
     StreamUploads store;
     const StreamKey key = vertexKey(&model_buffer_a, 7, 0, 36);
 
+    // Two frames name it (the second one aliases), and then nothing does.
+    store.beginFrame(1U, 1U);
     (void)store.acquireVertex(key, floats(36));
+    store.beginFrame(2U, 1U);
     (void)store.acquireVertex(key, floats(36));
+    EXPECT_EQ(store.live(), 1U);
 
-    EXPECT_FALSE(store.release(key)) << "one reader left, one still holds it";
-    EXPECT_TRUE(store.release(key)) << "the last reader leaving drops the bind";
+    store.beginFrame(3U, 1U);
+    EXPECT_EQ(store.releaseUnseen(), 0U) << "named one frame ago: inside the window";
+    EXPECT_EQ(store.live(), 1U);
+
+    store.beginFrame(4U, 1U);
+    EXPECT_EQ(store.releaseUnseen(), 1U) << "a frame past the window and no frame has named it";
+    EXPECT_EQ(store.unused(), 1U);
     EXPECT_EQ(store.live(), 0U);
-    EXPECT_EQ(store.objects(), 0U);
+    EXPECT_EQ(store.objects(), 0U) << "the bind went with the entry";
 
     const auto again = store.acquireVertex(key, floats(36));
     EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "the bytes are uploaded again";
@@ -226,6 +240,7 @@ TEST(StreamUploadsTest, ACapacityEvictionDropsTheBindAndTheTwoMapsStayInStep)
     const StreamKey second = vertexKey(&model_buffer_a, 1, 12, 12);
     const StreamKey third  = vertexKey(&model_buffer_a, 1, 24, 12);
 
+    store.beginFrame(1U, 1U);
     (void)store.acquireVertex(first, floats(12));
     (void)store.acquireVertex(second, floats(12));
     const auto evicting = store.acquireVertex(third, floats(12));

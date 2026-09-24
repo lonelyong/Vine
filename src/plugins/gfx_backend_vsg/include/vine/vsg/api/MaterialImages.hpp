@@ -171,6 +171,16 @@ e default of 1 keeps a cache
      */
     void setMaxAnisotropy(float device_limit) noexcept;
 
+    /** @brief Gets the anisotropy this cache requests from its samplers (see setMaxAnisotropy).
+     *
+     * 1 is "isotropic filtering", which is what a cache that was never told uses - and the reason this
+     * getter exists is that a cache which is never told is indistinguishable from one that ignores the
+     * device: the wiring (the session hands the device's own limit over once) is asserted through it.
+     *
+     * @return The anisotropy in [1, 16].
+     */
+    [[nodiscard]] float maxAnisotropy() const noexcept;
+
     ~MaterialImages();
 
     MaterialImages(const MaterialImages&) = delete;

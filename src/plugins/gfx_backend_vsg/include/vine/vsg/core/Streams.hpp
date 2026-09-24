@@ -165,13 +165,27 @@ struct GeometryPlan
  * @brief The registry of streams more than one draw reads: the geometry aliasing decision, without the bytes.
  *
  * WHAT IT IS FOR. The same mesh drawn by two slots must upload once. The decision belongs here because it is
- * pure bookkeeping - is this exact stream identity already offered, and how many readers does it have - while
- * the upload itself belongs to the layer that owns GPU objects.
+ * pure bookkeeping - is this exact stream identity already offered, and may the caller alias it - while the
+ * upload itself belongs to the layer that owns GPU objects.
  *
- * WHAT EVICTION DOES NOT MEAN. Past the capacity the OLDEST entry leaves the map (a session that keeps
- * generating meshes must not grow this for ever), and that only stops NEW readers from joining: the readers
- * that already bound it keep reading their own copy of the reference, which is why the entry leaving the map
- * is not a release. `evictions()` counts exactly those departures so a phase can see the bound being hit.
+ * LIFETIME IS USAGE, NOT A READER COUNT. The first spelling kept a `readers` count and a `release()` the last
+ * reader was supposed to call - and it could never fire: a draw acquires its streams once per FRAME (the
+ * node it records into is rebuilt every frame), so the count became a cumulative tally of acquires and "the
+ * last reader let go" was unreachable. MEASURED: `release()` had no production caller at all, and the only
+ * thing that ever removed an entry was the capacity bound. What an entry's lifetime really follows is which
+ * frame last NAMED it, so that is what an entry carries: @ref acquire stamps the frame it is called from, and
+ * @ref releaseUnseen drops everything no frame has named for more than a grace window (the window the
+ * executor parks replaced GPU objects for - `slots + 1`). A stream a frame still names is never dropped, and
+ * a stream nothing names - a mesh the host stopped drawing, a revision that has moved on - leaves on its own.
+ * A content-removal hook could not do that job: the store keeps a TRACKED object's rows whether or not any
+ * frame draws it, so "the rows left" and "nothing names the stream" are different facts.
+ *
+ * WHAT EVICTION DOES NOT MEAN. The capacity is a HARD BOUND on the map, and what leaves when it is reached is
+ * the STALEST entry (the one no frame named for longest) rather than the oldest inserted: a scene that
+ * rotates its content re-names old entries, and there those are two different rows. What leaves the map is
+ * only a lookup - the readers that already bound the stream hold their own reference to the bind, which is
+ * why an entry leaving the map is not a release. `evictions()` counts exactly those departures so a phase can
+ * see the bound being hit.
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
@@ -191,9 +205,8 @@ class SharedStreams
     /** @brief The answer of @ref acquire. */
     struct Decision
     {
-        Action        action{Action::Upload};  ///< Whether to upload or to alias.
-        std::uint32_t readers{0};              ///< Readers the entry has after this call (1 for a fresh one).
-        std::optional<StreamKey> evicted;      ///< The entry that made room, when the capacity was reached.
+        Action                   action{Action::Upload};  ///< Whether to upload or to alias.
+        std::optional<StreamKey> evicted;                 ///< The entry that made room, when the bound was hit.
     };
 
   public:
@@ -207,25 +220,33 @@ class SharedStreams
     SharedStreams& operator=(const SharedStreams&) = delete;
 
   public:
-    /** @brief Offers a stream, telling the caller whether to upload it or to read the existing one.
+    /** @brief Offers a stream from @p frame, telling the caller whether to upload it or to read what exists.
      *
-     * @param key Stream identity (kind, location, components, buffer, revision, offset, count).
-     * @return Whether this caller uploads or aliases, the entry's reader count afterwards, and - when this
-     *         call pushed the oldest entry out - the key that left the map. Reporting it is what lets a
-     *         layer that OWNS one object per entry stay in step with this registry: it is the only moment
-     *         the two can be reconciled, and doing it here keeps the registry free of callbacks.
-     */
-    [[nodiscard]] Decision acquire(const StreamKey& key);
-
-    /** @brief Gives up one reader of a stream.
+     * NAMING IT IS WHAT KEEPS IT. The call stamps the entry with @p frame, which is the whole lifetime rule
+     * (see the class note): an entry a frame names is never released, however many frames ago it was created.
      *
-     * @param key Stream identity.
-     * @return true when this was the last reader, so the entry left the map.
+     * @param key   Stream identity (kind, location, components, buffer, revision, offset, count).
+     * @param frame The frame this offer comes from (see core::FrameTimeline).
+     * @return Whether this caller uploads or aliases, and - when this call pushed the STALEST entry out - the
+     *         key that left the map. Reporting it is what lets a layer that OWNS one object per entry stay in
+     *         step with this registry: it is the only moment the two can be reconciled, and doing it here keeps
+     *         the registry free of callbacks.
      */
-    bool release(const StreamKey& key);
+    [[nodiscard]] Decision acquire(const StreamKey& key, std::uint64_t frame);
 
-    /** @brief Gets the number of readers of a stream (0 when the registry has no entry for it). */
-    [[nodiscard]] std::uint32_t readers(const StreamKey& key) const noexcept;
+    /** @brief Drops every entry no frame has named for more than @p grace frames.
+     *
+     * THE SWEEP'S HALF OF THE LIFETIME RULE, and the reason this registry needs no reader bookkeeping: what a
+     * frame names survives (@ref acquire), and what nothing names leaves here. An entry named in @p frame has
+     * an age of 0 and is kept whatever @p grace is; one named @p grace + 1 frames ago is dropped.
+     *
+     * @param frame   The frame the sweep runs in.
+     * @param grace   How many frames an entry survives without being named (the caller's window).
+     * @param dropped Receives the keys that left, in the order they were inserted; cleared first, and its
+     *                capacity is kept - a caller that owns one object per entry sweeps its own maps with it.
+     * @return How many entries left.
+     */
+    std::uint64_t releaseUnseen(std::uint64_t frame, std::uint64_t grace, std::vector<StreamKey>& dropped);
 
     /** @brief Gets the number of entries the map holds. */
     [[nodiscard]] std::size_t live() const noexcept;
@@ -239,22 +260,26 @@ class SharedStreams
     /** @brief Gets the number of entries that left the map because the capacity was reached. */
     [[nodiscard]] std::uint64_t evictions() const noexcept;
 
+    /** @brief Gets the number of entries that left because no frame named them any more. */
+    [[nodiscard]] std::uint64_t unused() const noexcept;
+
     /** @brief Drops every entry, keeping the counters. */
     void clear() noexcept;
 
   private:
     struct Entry
     {
-        StreamKey     key;         ///< The identity this entry stands for.
-        std::uint32_t readers{0};  ///< How many callers hold it.
+        StreamKey     key;            ///< The identity this entry stands for.
+        std::uint64_t last_frame{0};  ///< The last frame that named it (the whole lifetime rule, see the class note).
     };
 
-    std::size_t                                                    capacity_;
-    std::list<Entry>                                               order_;  ///< FIFO order (insertion).
+    std::size_t                                                         capacity_;
+    std::list<Entry>                                                    order_;  ///< Insertion order (the index into it).
     std::unordered_map<StreamKey, std::list<Entry>::iterator, StreamKeyHash> index_;
-    std::uint64_t                                                  uploads_{0};
-    std::uint64_t                                                  aliases_{0};
-    std::uint64_t                                                  evictions_{0};
+    std::uint64_t                                                       uploads_{0};
+    std::uint64_t                                                       aliases_{0};
+    std::uint64_t                                                       evictions_{0};
+    std::uint64_t                                                       unused_{0};
 };
 
 }  // namespace core
