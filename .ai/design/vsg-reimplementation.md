@@ -2949,6 +2949,12 @@ sampler）**，谁在哪一个 binding 由文本说了算；只要不把两样�
 命令（不需要挂载点、不需要 pass 处于活动状态），所以调用方把它加进**帧的命令图**、放在内容之前；每帧重录
 是幂等的，代价是一次 1×1 的清。
 
+> **本节的上传/清屏选择已被 §11.16bs（2026-09-24）取代：fallback 现在和其他每张图一样走上传。**
+> `fill()` 需要一个**录制方**，而重写后的应用路径没有（老 `VsgRenderer` 才有）：图像一直停在
+> `UNDEFINED`，而描述符声明的是 `SHADER_READ_ONLY`，验证在**每次采样它的提交**上报
+> `VUID-vkCmdDraw-None-09600`（实测：demo 最后剩下的 7 条，同一张图、每一帧）。下面这段保留为当时的决定
+> 记录。
+
 **工具与政策分开**。`api/WhiteImage` 只是"那个值"（图像 + 视图 + 采样器 + `fill()` 节点，且**不需要设备**：
 `vsg::Image` / `ImageView` / `Sampler` 到 `Context` 编译前都只是 create-info，和 `ContentPipeline` 同一个
 理由）。**谁把哪个 binding 指向它**是政策：`diffuseMap` → 材料自己的贴图，没有贴图就是白（本片）；材料
@@ -2957,7 +2963,7 @@ sampler）**，谁在哪一个 binding 由文本说了算；只要不把两样�
 
 | 文件 | 是什么 |
 | --- | --- |
-| `api/WhiteImage.hpp` / `src/api/WhiteImage.cpp`（新） | `WhiteImage::create()`（无设备）→ `view()` / `sampler()` / `fill()`；`fill()` = 屏障（`UNDEFINED → TRANSFER_DST`）+ `ClearColorImage`(白) + 屏障（`TRANSFER_DST → SHADER_READ_ONLY`）；每次 `create()` 给一套**独立**的对象（一个集合绑的东西不与他人共享） |
+| `api/WhiteImage.hpp` / `src/api/WhiteImage.cpp`（新） | `WhiteImage::create()`（无设备）→ `view()` / `sampler()` / ~~`fill()`~~（已由 §11.16bs 去掉）；每次 `create()` 给一套**独立**的对象（一个集合绑的东西不与他人共享） |
 | `tests/test_vsg/WhiteImageTest.cpp`（新，无设备） | fallback 就是声明集合需要的那三样；`fill()` 的结构（屏障 / 清 / 屏障）、清的是白、`TRANSFER_DST`、覆盖整张图；两次 `create()` 不共享视图 |
 | `tests/test_vsg/ContentPassTest.cpp` | +1 真设备像素：引擎形状的程序（material 块 @(0,0) + `diffuseMap` @(0,1) + push），材料**没有**贴图 ⇒ 图那一半绑 fallback，`fill()` 先于内容录进帧 ⇒ 画面 = 材料的 diffuse（白 × 材质） |
 
@@ -3148,7 +3154,8 @@ staging 字节链（**mip-major 交错**：vsg 的拷贝区域按"一级里的�
 2. **条目持住键**：地址是键而缓存看不见销毁，条目持一个 owning 引用，新纹理复用同一地址时不会拿到死纹理的图；
    `releaseAbandoned()` 释放"只剩缓存自己持有"的条目；
 3. **有界**（256 条，超限淘汰最旧的）+ **fallback 是值**：不可用的纹理给白图而不是空视图，**按种类**给
-   （cube 槽不能绑 2D 视图——那不是"没贴图"，是非法描述符）；2D 白复用 `api/WhiteImage`（清屏、不是上传），
+   （cube 槽不能绑 2D 视图——那不是"没贴图"，是非法描述符）；2D 白复用 `api/WhiteImage`（**现在也是上传**：
+   一个 texel 的数据背书图像，见 §11.16bs），
    白 cube 走与真纹理同一条路（六面一个 texel）。
 
 **顺手放开的拒绝**：`ContentPipeline` 原先按"没有视图的采样器种类"拒掉 `samplerCube`；立方体视图落地后这条
@@ -4464,7 +4471,7 @@ ThroughALiveResize` 在全量套件里偶发红（平台回旧几何；单独跑
   （实测 6 个遗留窗口时全套件 5~9 个用例红，杀干净后 3/3 全绿）。门禁之所以用 `exec` 起应用并 `cleanup_app`，
   就是为了自己不留窗口；**任何别的跑法也必须做到**（`( … ) &` 里不加 `exec` 的话，杀的是子壳，应用活着）。
 
-**未修（登记，附方向；`03047` 已于 M10i 修掉，见 §11.16br）**
+**未修（登记，附方向；`03047` 已于 M10i 修掉，见 §11.16br；`09600` 已于 M10j 修掉，见 §11.16bs）**
 - `09600`（采样描述符声明的布局在提交时还不是真的）仍在门禁的**已知名单**里（按 VUID**具名**计数并打进证据行），
   名单外的任何 VUID 仍会让阶段红。方向分别是：屏幕路径改用**动态 uniform 偏移**（内容路径 `api/BlockDescriptors`
   已经是这么做的，这正是"一个事实一种拼法"的漏网处）；以及上面 09600 的那条。
@@ -4501,7 +4508,7 @@ try to create one now throws instead of quietly working"——**它就是用来�
 **结果**：Release 全门禁绿（672×2 + hygiene + 阶段行 + 应用画面）；把 `build/` 缓存改回 `VSG_MAX_DEVICES=1` 重建后，
 **Debug 也全绿**——绊线在两个构建树里都武装上了（此后任何"两个 device"的路径都会当场抛异常，而不是在 Release 里偷偷失败）。
 
-**登记（仍未修）**：①`09600` 一类（已按 VUID 具名进应用门禁的已知名单，修法方向见 §11.16bp；`03047` 见 §11.16br 已修）；
+**登记（仍未修）**：①`09600` 一类（已于 M10j 修掉：§11.16bs——白 fallback 改走上传；`03047` 见 §11.16br）；
 ②拖动时的重建策略（产品决策，待用户拍板）；③退役 `VsgRenderer`/`vsg_backend_selftest` 与旧脚本的两个阶段（第 4 条）。
 
 ### 11.16br M10i（2026-09-24）：`03047` 修掉——影子块改走动态偏移，屏幕采样集可复用
@@ -4522,3 +4529,46 @@ block's offset into the descriptor`——而那个偏移**每帧都变**（帧 a
 **证据**：`test_vsg` 672 全绿、0 VUID；应用门禁的证据行从 `09600=7 + 03047=10（共 17 条）` 降到 **`09600=7`**，
 而画面参数与修前**逐字相同**（`content 87.04% / 85.14%, preview 244`）⇒ 动态偏移送的是同一张图。
 门禁的**已知名单同步收紧**：`03047` 已从名单移除（再出现就是红）。
+
+### 11.16bs M10j（2026-09-24）：`09600` 修掉——白 fallback 改走上传，"录制方"这个前提没了
+
+应用门禁收紧到只剩 `09600` 之后（§11.16br），manual 跑真机 + 验证层能看到它**每一帧**都在报，而且 7 条
+全是**同一张图**（`VkImage` 句柄相同，7 个不同的命令缓冲）。代码上追得很快：`api/WhiteImage` 的
+`fill()` 这套"屏障 + 清 + 屏障"从设计起就要由**帧的命令图**录制（文件注释写着"每帧重录是幂等的"），
+但重写版的应用路径**没有录制方**——老的 `VsgRenderer` 才是那个调用方，它退场时这段连线一起没了。
+于是那张 1×1 图从未被写过，停在 `UNDEFINED`，而每个采样它的描述符声明的是 `SHADER_READ_ONLY`：
+**每次提交都报 `09600`**（`tests/test_vsg` 里两个用例自己录了 `fill()`，所以套件看不见这个缺口——
+门禁的应用阶段才是抓它的地方）。
+
+**为什么"把 `fill()` 录进帧图"不是修法。** §11.16br 已经量过这条 VUID 的检查时机：**声明布局在命令缓冲
+被提交（`vkQueueSubmit`）时核对，早于这次提交自己录的任何命令**——帧首的屏障也算太晚。所以唯一的修法是
+让这张图在**第一帧之前**就落到声明布局，而不是让某一帧替它做。
+
+**修法：让白纹素走与其他每张图完全相同的那条路。** `vsg::Image` 上挂 DATA（一个 RGBA8 纹素、四通道
+`0xFF`，`properties.imageViewType = 2D` + `MipmapLayout`，与 `api/MaterialImages` 的白 cube 同一套
+拼法），由 viewer 的传输步上传——`RecordAndSubmitTask::submit` 里的
+`transferData(TRANSFER_BEFORE_RECORD_TRAVERSAL)`（§11.16al 记过的那条），**在录制之前**完成拷贝并把
+图像留在 `SHADER_READ_ONLY_OPTIMAL`。设备依旧不需要：`create()` 只造 create-info，上传是 viewer 的
+事。`fill()` 与它的一整套清屏机制随之删掉（`WhiteImageTest` 改成断言"数据在图上、属性正确、四通道全
+`0xFF`"）。
+
+**与此同时否掉的一个方案（记下来，免得下次再走）**：给新建的 target 加一次**不等待的引导提交**
+（`vkQueueSubmit` 后把命令缓冲、池、状态的保管交给 `RetirementQueue`，不 `vkWaitForFences`）。想法本身
+（FIFO 队列保证它在后续帧之前执行；持有到窗口到位即可，无需等待）没问题，但**建图像的那一刻根本没有可
+以提交的东西**：`vsg::Image` / `ImageView` 是 create-info，`vk()` 要等 `vsg::Context` 编译（帧循环里的
+compile 步）才有效——在 `OffscreenTarget::buildAttachments` 里录的屏障会指着空句柄。实现过、量过（应用
+VUID 一条没少）、随即整体回退；结论写在这里：**要在"提交前"把某张图弄进声明布局，只有两条路——让它带
+DATA 走传输步，或让它已经被编译过。**
+
+| 文件 | 是什么 |
+| --- | --- |
+| `api/WhiteImage.hpp` / `src/api/WhiteImage.cpp` | `fill()` 及清屏机制删除；`create()` 造"一个白纹素的数据背书 image"（`ubyteArray` → `uintArray3D` + `MipmapLayout` + `Data::Properties`），`usage = TRANSFER_DST | SAMPLED`、`initialLayout = UNDEFINED`（传输步拥有这次转换） |
+| `tests/test_vsg/WhiteImageTest.cpp` | 用例改名 `TheFallbackCarriesItsWhiteTexelAsUploadableData`：视图/采样器/格式/尺寸/用途位 + DATA 的 `depth()==1`、`imageViewType==2D`、纹素 `0xFFFFFFFF` |
+| `tests/test_vsg/ContentPassTest.cpp` | 两处 `command_graph->addChild(white->fill())` 删除（图现在由传输步准备好） |
+| `scripts/vsg_rewrite_gate.sh` | `app_known_vuids()` 清空——**名单里一个都不剩**（再出现任何 VUID 都是红），函数保留为"以后要放行必须先写出机制"的接口 |
+
+**证据**：manual 跑真机 + 验证层（lavapipe，1120×420，resize 后继续渲染）**VUID 7 → 0**；门禁（Debug 与
+Release 两棵树）应用阶段证据行都是 **`vuid=0 warnings=1`**，画面参数与修前**逐字相同**
+（`before 378x247: content 87.04%, preview 244; after 698x132: content 85.14%, preview 244`）⇒ 换的是准备
+那张图的方式，不是画面；`test_vsg` 两棵树都 672 全绿、0 VUID；`WhiteImageTest` 改名后的用例
+（`TheFallbackCarriesItsWhiteTexelAsUploadableData`）与两个去掉 `fill()` 的 `ContentPassTest` 用例同跑通过。

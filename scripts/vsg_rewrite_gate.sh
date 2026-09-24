@@ -386,21 +386,19 @@ app_sample() { # ppm, label -> fills APP_SAMPLE_{CONTENT,PREVIEW,SIZE}; returns 
 
 app_known_vuids() { # the VUID names this stage tolerates, one per line, with the reason in the comment below
     # AN ALLOW-LIST, NOT A FILTER: every name here is still COUNTED and printed in the stage's evidence line, and
-    # any VUID that is not on this list fails the stage. What is left is documented with its mechanism in
-    # .ai/design/vsg-reimplementation.md:
+    # any VUID that is not on this list fails the stage.
     #
-    #   * VUID-vkCmdDraw-None-09600 - a sampled descriptor declares SHADER_READ_ONLY while its image is in
-    #     UNDEFINED at the moment the command buffer is SUBMITTED (validation checks the promise at submit, so a
-    #     barrier recorded in the same frame - even at its head - is too late). It takes a frame that reaches a
-    #     sampling call before anything wrote the image: the first frames of a session and the first frame after
-    #     a resize.
+    # IT IS EMPTY (2026-09-24, M10j) AND THAT IS THE POINT: the last two entries were real defects, not noise.
     #
-    # VUID-vkUpdateDescriptorSets-None-03047 USED TO BE HERE and is FIXED (2026-09-24, M10i): the screen path
-    # baked the shadow block's per-frame offset into its descriptor, which made it rebuild the set every frame
-    # and write a handle a pending command buffer still named. The block now travels as a dynamic uniform offset
-    # (see api/ContentPipeline:sampledSetLayout and ContentPass::recordScreenDraw) and the set is reused through
-    # InputSetCache - measured: the application's total VUID count fell from 17 to 7, with the picture unchanged.
-    printf '%s\n' "VUID-vkCmdDraw-None-09600"
+    #   * VUID-vkUpdateDescriptorSets-None-03047 (fixed, M10i): a baked shadow-block offset rebuilt a set every
+    #     frame (see api/ContentPipeline:sampledSetLayout, ContentPass::recordScreenDraw).
+    #   * VUID-vkCmdDraw-None-09600 (fixed, M10j): the "no texture" white fallback was a CLEAR a frame had to
+    #     record, and the app's path no longer had a recorder - its image stayed UNDEFINED while descriptors
+    #     declared SHADER_READ_ONLY, at every submit that sampled it. It is uploaded like every other image now
+    #     (see api/WhiteImage, .ai/design/vsg-reimplementation.md §11.16bs).
+    #
+    # An entry belongs here only with a written mechanism and a design-doc section, never to make a run green.
+    :
 }
 
 check_app() {

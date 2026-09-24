@@ -2747,9 +2747,6 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     VsgExecutor executor(diagnostics);
     executor.addTarget(target.get(), target.get());
     auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
-    // The fallback's fill goes BEFORE the content: a clear needs no render pass, and the draws that sample
-    // the image have to see it white (see api/WhiteImage).
-    command_graph->addChild(white->fill());
     const PassContent packet{ frame.passes[0].pass, content_node };
     ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(&packet, 1U)));
 
@@ -3135,7 +3132,6 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     executor.addTarget(flat_handle.get(), flat.get());
     executor.addTarget(plain_handle.get(), plain.get());
     auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
-    command_graph->addChild(white->fill());
     const PassContent packets[]{ PassContent{ frame.passes[2].pass, lit_node },
                                  PassContent{ frame.passes[3].pass, flat_node },
                                  PassContent{ frame.passes[4].pass, plain_node } };
