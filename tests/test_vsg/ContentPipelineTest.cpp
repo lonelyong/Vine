@@ -432,8 +432,13 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
         << "nothing lives at 4: the source offers no depth";
     for (const auto& entry : set->bindings) {
         if (entry.binding == 6U) {
-            EXPECT_EQ(entry.descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                << "a full-screen call has ONE block: the pass bakes its offset into the descriptor";
+            // DYNAMIC, and that is the point: the block's offset moves every frame (the arena writes one block
+            // per call per frame), so a descriptor that baked it would make the pass rebuild its set every
+            // frame - and a freshly written set that a pending command buffer still names is exactly what the
+            // pending-state rule refuses (VUID-vkUpdateDescriptorSets-None-03047). The set names the buffer,
+            // the bind carries the offset.
+            EXPECT_EQ(entry.descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
+                << "a full-screen call's block travels as a dynamic offset, not as a baked descriptor offset";
         }
     }
 

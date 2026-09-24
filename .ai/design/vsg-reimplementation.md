@@ -4464,9 +4464,8 @@ ThroughALiveResize` 在全量套件里偶发红（平台回旧几何；单独跑
   （实测 6 个遗留窗口时全套件 5~9 个用例红，杀干净后 3/3 全绿）。门禁之所以用 `exec` 起应用并 `cleanup_app`，
   就是为了自己不留窗口；**任何别的跑法也必须做到**（`( … ) &` 里不加 `exec` 的话，杀的是子壳，应用活着）。
 
-**未修（登记，附方向）**
-- 稳态仍有 `03047`（屏幕路径每帧重建采样集，因为**影子块把每帧变化的偏移烤进了描述符**）+ `09600`（采样描述符
-  声明的布局在提交时还不是真的）。两者都进了门禁的**已知名单**（按 VUID**具名**计数并打进证据行），
+**未修（登记，附方向；`03047` 已于 M10i 修掉，见 §11.16br）**
+- `09600`（采样描述符声明的布局在提交时还不是真的）仍在门禁的**已知名单**里（按 VUID**具名**计数并打进证据行），
   名单外的任何 VUID 仍会让阶段红。方向分别是：屏幕路径改用**动态 uniform 偏移**（内容路径 `api/BlockDescriptors`
   已经是这么做的，这正是"一个事实一种拼法"的漏网处）；以及上面 09600 的那条。
 - 全量套件里"读窗口"的用例在**显示环境被占**时仍会红（单跑全绿、整套红一片；重跑一次也未必救得回来）。
@@ -4502,5 +4501,24 @@ try to create one now throws instead of quietly working"——**它就是用来�
 **结果**：Release 全门禁绿（672×2 + hygiene + 阶段行 + 应用画面）；把 `build/` 缓存改回 `VSG_MAX_DEVICES=1` 重建后，
 **Debug 也全绿**——绊线在两个构建树里都武装上了（此后任何"两个 device"的路径都会当场抛异常，而不是在 Release 里偷偷失败）。
 
-**登记（仍未修）**：①`09600` / `03047` 两类（已按 VUID 具名进应用门禁的已知名单，修法方向分别见 §11.16bp）；
+**登记（仍未修）**：①`09600` 一类（已按 VUID 具名进应用门禁的已知名单，修法方向见 §11.16bp；`03047` 见 §11.16br 已修）；
 ②拖动时的重建策略（产品决策，待用户拍板）；③退役 `VsgRenderer`/`vsg_backend_selftest` 与旧脚本的两个阶段（第 4 条）。
+
+### 11.16br M10i（2026-09-24）：`03047` 修掉——影子块改走动态偏移，屏幕采样集可复用
+
+**缺陷**（M10g 的门禁发现、M10h 登记）：稳态每帧约 20 条 `VUID-vkUpdateDescriptorSets-None-03047`——**屏幕路径每帧重建它那份
+采样集**。原因写在 `api/ContentPipeline::sampledSetLayout` 的注释里：`a full-screen call has ONE block ... the pass bakes that
+block's offset into the descriptor`——而那个偏移**每帧都变**（帧 arena 每帧为每个 call 写一份块），于是集合必须重建；
+框架的池又把同一个 `VkDescriptorSet` 句柄发回给下一帧，而上一帧的命令缓冲还在用它，正撞在这条 VUID 上。
+
+**改法（与内容路径"一个需求一种拼法"对齐）**
+- `sampledSetLayout`（screen 分支）把声明的块从 `VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER` 改成 **`..._DYNAMIC`**：集合只**命名缓冲**（不随帧变），
+  偏移随 **bind** 走（`BindDescriptorSet::dynamicOffsets`，按绑定顺序）；内容路径本来就以动态偏移绑它的块（`api/BlockDescriptors`）。
+- `ContentPass::recordScreenDraw`：描述符写成 `BufferInfo{buffer, 0, sizeof(block)}`（**基址 0**，范围是块大小；描述符偏移 + 动态偏移
+  会被叠加，若基址也填块偏移就等于算了两遍），并把这一个 call 的偏移塞进 bind；集合本身走 **`InputSetCache`** 复用——缓存键加上了
+  **布局**维度（content 的输入集在 set 1、screen 的在 set 0，光看图列表会让两种集合互相顶替）。
+- 用例 `ContentPipelineTest.TheEnginesShadowedLightingDeclaresItsOwnShadowSlots` 改成断言 `..._DYNAMIC`（注释写明为什么必须是动态的）。
+
+**证据**：`test_vsg` 672 全绿、0 VUID；应用门禁的证据行从 `09600=7 + 03047=10（共 17 条）` 降到 **`09600=7`**，
+而画面参数与修前**逐字相同**（`content 87.04% / 85.14%, preview 244`）⇒ 动态偏移送的是同一张图。
+门禁的**已知名单同步收紧**：`03047` 已从名单移除（再出现就是红）。

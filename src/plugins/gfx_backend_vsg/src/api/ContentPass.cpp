@@ -536,7 +536,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     ::vsg::ref_ptr<::vsg::DescriptorSet> set;
     if (cache != nullptr)
     {
-        set = cache->find(key);
+        set = cache->find(set_layout.get(), key);
     }
     if (set == nullptr)
     {
@@ -579,7 +579,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         }
         if (cache != nullptr)
         {
-            cache->store(key, set);
+            cache->store(set_layout.get(), key, set);
         }
     }
     // The pipeline layout this command names is the one built for the same pair of counts, and the set index
@@ -727,15 +727,29 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     const std::span<const VkDescriptorSetLayoutBinding> declared_bindings =
         set_layout != nullptr ? std::span<const VkDescriptorSetLayoutBinding>(set_layout->bindings)
                               : std::span<const VkDescriptorSetLayoutBinding>{};
+    // The set's KEY is the images it names, in the order the bindings take them (see InputSetCache): the
+    // block is a dynamic uniform, so what the SET names about it is the buffer, which does not move with the
+    // frame - which is what lets a steady frame find the set it built last time instead of writing a new one
+    // a command buffer of the previous frame may still read.
+    std::vector<const ::vsg::ImageView*> key;
+    // The offsets the BIND carries, one per dynamic binding in binding order (the layout's bindings are in
+    // ascending order), each naming this call's block.
+    std::vector<std::uint32_t>           dynamic_offsets;
     descriptors.reserve(declared_bindings.size());
+    key.reserve(declared_bindings.size());
     for (const VkDescriptorSetLayoutBinding& declared : declared_bindings)
     {
-        if (declared.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+        if (declared.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
         {
-            auto buffer_info = ::vsg::BufferInfo::create(scope_.storage->buffer(), shadow_offset,
+            // The descriptor names the whole buffer at offset 0; the CALL's offset is the bind's. A range that
+            // started at the block's own offset would be counted twice (the effective window is the descriptor's
+            // offset plus the dynamic one).
+            auto buffer_info = ::vsg::BufferInfo::create(scope_.storage->buffer(), 0U,
                                                          static_cast<VkDeviceSize>(sizeof(shadow_block)));
-            descriptors.push_back(::vsg::DescriptorBuffer::create(
-                ::vsg::BufferInfoList{ buffer_info }, declared.binding, 0U, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER));
+            descriptors.push_back(::vsg::DescriptorBuffer::create(::vsg::BufferInfoList{ buffer_info },
+                                                                  declared.binding, 0U,
+                                                                  VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC));
+            dynamic_offsets.push_back(static_cast<std::uint32_t>(shadow_offset));
             continue;
         }
         if (declares_map && declared.binding == map_binding)
@@ -744,6 +758,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
                 ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(map_image.sampler, map_image.view,
                                                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
                 declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+            key.push_back(map_image.view.get());
             continue;
         }
         if (source != nullptr && declared.binding < colours)
@@ -757,6 +772,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
             descriptors.push_back(::vsg::DescriptorImage::create(
                 ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
                 declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+            key.push_back(view.get());
             continue;
         }
         if (!source_depth_used && source != nullptr && source->depth != nullptr)
@@ -766,6 +782,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
                 ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(depth_sampler, source->depth,
                                                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
                 declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+            key.push_back(source->depth.get());
             continue;
         }
         // A binding the layout declares (the text names it) that neither the source nor the map fills: the
@@ -780,11 +797,29 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     ::vsg::ref_ptr<::vsg::BindDescriptorSet> samples;
     if (needs_set)
     {
-        auto set = ::vsg::DescriptorSet::create(set_layout, descriptors);
+        // THE SET IS THE FRAME'S TO REUSE (see InputSetCache): the same call of the next frame names the same
+        // images, so the set built for them is the set it binds - and building it again would WRITE a
+        // VkDescriptorSet the framework's pool may have handed back while a command buffer of the previous
+        // frame still reads it (VUID-vkUpdateDescriptorSets-None-03047). What changes per call is only the
+        // block's offset, and that travels with the bind.
+        InputSetCache* const cache = scope_.input_sets;
+        ::vsg::ref_ptr<::vsg::DescriptorSet> set;
+        if (cache != nullptr)
+        {
+            set = cache->find(set_layout.get(), key);
+        }
         if (set == nullptr)
         {
-            reportRefused("a full-screen drawing call", "its sampled set could not be created");
-            return false;
+            set = ::vsg::DescriptorSet::create(set_layout, descriptors);
+            if (set == nullptr)
+            {
+                reportRefused("a full-screen drawing call", "its sampled set could not be created");
+                return false;
+            }
+            if (cache != nullptr)
+            {
+                cache->store(set_layout.get(), key, set);
+            }
         }
         samples = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS,
                                                    layer->layoutFor(colours, depths), 0U, set);
@@ -793,6 +828,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
             reportRefused("a full-screen drawing call", "its sampled set could not be bound");
             return false;
         }
+        samples->dynamicOffsets = std::move(dynamic_offsets);
     }
 
     ContentDraw::ScreenDraw full_screen;

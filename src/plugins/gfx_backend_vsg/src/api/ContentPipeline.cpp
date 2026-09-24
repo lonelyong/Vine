@@ -642,9 +642,15 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
         // engine's shadowed lighting program hard-codes 5 for a four-colour G-buffer, so a pass whose source
         // depth is NOT sampleable would otherwise put the map one binding too low), and a declared block.
         //
-        // WHY THE BLOCK IS A STATIC UNIFORM HERE. A full-screen call has ONE block (its lights and camera are
-        // the call's), the pass bakes that block's offset into the descriptor, and the bind carries no dynamic
-        // offsets - so the one set a pass builds can be bound by its one call. A depth slot never takes a
+        // WHY THE BLOCK IS A DYNAMIC UNIFORM HERE. A full-screen call has ONE block (its lights and camera
+        // are the call's), but its OFFSET moves every frame: the frame arena writes one block per call per
+        // frame, so a set that baked the offset into the descriptor would have to be rebuilt every frame -
+        // and a fresh VkDescriptorSet per frame is exactly what the pending-state rule refuses
+        // (VUID-vkUpdateDescriptorSets-None-03047, measured on every frame of the application: the framework's
+        // pools hand the same handle back to the next frame while a command buffer of the previous one still
+        // names it). What the SET names is the buffer, which does not move; the call's offset travels with the
+        // bind (`dynamicOffsets`, in binding order - see ContentPass::recordScreenDraw). The content path
+        // binds its blocks the same way (api/BlockDescriptors): one need, one spelling. A depth slot never takes a
         // binding the text names for something else.
         const std::span<const std::uint32_t> declared_samplers =
             d->sampler_shapes.empty() ? std::span<const std::uint32_t>{}
@@ -669,7 +675,7 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
             entries.emplace_back(binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         }
         for (const BlockDescriptors::Binding& entry : declared_blocks) {
-            entries.emplace_back(entry.binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+            entries.emplace_back(entry.binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
         }
         std::sort(entries.begin(), entries.end(),
                   [](const auto& left, const auto& right) { return left.first < right.first; });

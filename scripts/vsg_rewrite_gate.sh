@@ -386,17 +386,21 @@ app_sample() { # ppm, label -> fills APP_SAMPLE_{CONTENT,PREVIEW,SIZE}; returns 
 
 app_known_vuids() { # the VUID names this stage tolerates, one per line, with the reason in the comment below
     # AN ALLOW-LIST, NOT A FILTER: every name here is still COUNTED and printed in the stage's evidence line, and
-    # any VUID that is not on this list fails the stage. The two names below are the app path's own defects, and
-    # they are documented with their mechanisms in .ai/design/vsg-reimplementation.md:
+    # any VUID that is not on this list fails the stage. What is left is documented with its mechanism in
+    # .ai/design/vsg-reimplementation.md:
     #
     #   * VUID-vkCmdDraw-None-09600 - a sampled descriptor declares SHADER_READ_ONLY while its image is in
-    #     UNDEFINED at the moment the command buffer is SUBMITTED. It takes a frame that reaches a sampling call
-    #     before anything wrote the image: the first frames of a session and the first frame after a resize.
-    #   * VUID-vkUpdateDescriptorSets-None-03047 - a descriptor set the pool handed back is written while a
-    #     command buffer of an earlier frame still uses it. The screen path rebuilds its set every frame because
-    #     the shadow block it binds bakes a per-frame offset into the descriptor; the content path solves the
-    #     same problem with UNIFORM_BUFFER_DYNAMIC bindings (see api/BlockDescriptors).
-    printf '%s\n' "VUID-vkCmdDraw-None-09600" "VUID-vkUpdateDescriptorSets-None-03047"
+    #     UNDEFINED at the moment the command buffer is SUBMITTED (validation checks the promise at submit, so a
+    #     barrier recorded in the same frame - even at its head - is too late). It takes a frame that reaches a
+    #     sampling call before anything wrote the image: the first frames of a session and the first frame after
+    #     a resize.
+    #
+    # VUID-vkUpdateDescriptorSets-None-03047 USED TO BE HERE and is FIXED (2026-09-24, M10i): the screen path
+    # baked the shadow block's per-frame offset into its descriptor, which made it rebuild the set every frame
+    # and write a handle a pending command buffer still named. The block now travels as a dynamic uniform offset
+    # (see api/ContentPipeline:sampledSetLayout and ContentPass::recordScreenDraw) and the set is reused through
+    # InputSetCache - measured: the application's total VUID count fell from 17 to 7, with the picture unchanged.
+    printf '%s\n' "VUID-vkCmdDraw-None-09600"
 }
 
 check_app() {

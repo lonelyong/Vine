@@ -103,24 +103,34 @@ V_VSG_NS_BEGIN
  */
 struct InputSetCache
 {
-    /// @brief One built set and the images it names.
+    /// @brief One built set and the key it was built for.
     struct Entry
     {
-        std::vector<const ::vsg::ImageView*> images;      ///< The key: the views, in binding order.
+        /// @brief The layout the set was built against.
+        ///
+        /// It is part of the key because two CALL KINDS sample the same images: a content pass' input set lives
+        /// in set 1 of its pipeline layout and a full-screen call's set in set 0 of its own, and both are built
+        /// from the pass' inputs - so the views alone would let one kind answer for the other, with a layout
+        /// mismatch the driver refuses.
+        const ::vsg::DescriptorSetLayout*    layout{nullptr};
+        std::vector<const ::vsg::ImageView*> images;      ///< The views, in the order the set binds them.
         ::vsg::ref_ptr<::vsg::DescriptorSet> set;         ///< What was built for that key.
         std::uint64_t                        frame{0};    ///< The frame last asked for it (see `frame`).
     };
 
     /** @brief Finds the set already built for @p key, marking it as used by the current frame.
      *
-     * @param key The image views, in binding order.
+     * @param layout The layout the set must have been built against.
+     * @param key    The image views, in the order the set binds them.
      * @return The set, or null when this key has not been built yet.
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSet> find(std::span<const ::vsg::ImageView* const> key)
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSet> find(const ::vsg::DescriptorSetLayout* layout,
+                                                            std::span<const ::vsg::ImageView* const> key)
     {
         for (Entry& entry : entries)
         {
-            if (entry.images.size() == key.size() && std::equal(key.begin(), key.end(), entry.images.begin()))
+            if (entry.layout == layout && entry.images.size() == key.size() &&
+                std::equal(key.begin(), key.end(), entry.images.begin()))
             {
                 entry.frame = frame;
                 return entry.set;
@@ -131,12 +141,15 @@ struct InputSetCache
 
     /** @brief Remembers @p set as the one built for @p key (and counts the build).
      *
-     * @param key The image views, in binding order.
-     * @param set The set built for them.
+     * @param layout The layout @p set was built against.
+     * @param key    The image views, in the order the set binds them.
+     * @param set    The set built for them.
      */
-    void store(std::span<const ::vsg::ImageView* const> key, const ::vsg::ref_ptr<::vsg::DescriptorSet>& set)
+    void store(const ::vsg::DescriptorSetLayout* layout, std::span<const ::vsg::ImageView* const> key,
+               const ::vsg::ref_ptr<::vsg::DescriptorSet>& set)
     {
         Entry entry;
+        entry.layout = layout;
         entry.images.assign(key.begin(), key.end());
         entry.set   = set;
         entry.frame = frame;
