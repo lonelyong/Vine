@@ -137,7 +137,7 @@ std::unique_ptr<workcell::Device> DeviceIO::loadXml(const std::filesystem::path&
     return dev;
 }
 
-std::unique_ptr<workcell::Device> DeviceIO::loadXmlFromVfs(vine::io::Vfs& vfs, const String& vfs_path,
+std::unique_ptr<workcell::Device> DeviceIO::loadXmlFromVfs(vine::io::Vfs& vfs, const std::filesystem::path& vfs_path,
                                                            const LoadOptions& options)
 {
     (void)options;
@@ -146,7 +146,7 @@ std::unique_ptr<workcell::Device> DeviceIO::loadXmlFromVfs(vine::io::Vfs& vfs, c
     ctx.vfs = &vfs;
     const auto xml = detail::readText(vfs, vfs_path);
     if (!xml) {
-        throw std::runtime_error("DeviceIO::loadXml, failed to read vfs file: " + vfs_path.as_std_str());
+        throw std::runtime_error("DeviceIO::loadXml, failed to read vfs file: " + vfs_path.generic_string());
     }
     return parseDoc(xml.value(), ctx);
 }
@@ -337,7 +337,7 @@ std::unique_ptr<workcell::Device> DeviceIO::loadPkg(const std::filesystem::path&
 
 std::unique_ptr<workcell::Device> DeviceIO::loadPkg(vine::io::Vfs& vfs, const LoadOptions& options)
 {
-    return loadXmlFromVfs(vfs, vine::String(u8"device.xml"), options);
+    return loadXmlFromVfs(vfs, std::filesystem::path(u8"device.xml"), options);
 }
 
 void DeviceIO::savePkg(const workcell::Device& dev, const std::filesystem::path& pkg_path, const SaveOptions& options)
@@ -359,7 +359,7 @@ void DeviceIO::savePkg(const workcell::Device& dev, vine::io::Vfs& vfs, const Sa
     tinyxml2::XMLPrinter printer;
     doc->Print(&printer);
     const String xml(reinterpret_cast<const char8_t*>(printer.CStr()), printer.CStrSize() - 1);
-    if (detail::writeText(vfs, vine::String(u8"device.xml"), xml) != vine::io::IoError::Ok) {
+    if (detail::writeText(vfs, std::filesystem::path(u8"device.xml"), xml) != vine::io::IoError::Ok) {
         throw std::runtime_error("DeviceIO::savePkg, failed to write device.xml into the vfs.");
     }
 }

@@ -292,7 +292,7 @@ ZipArchive::~ZipArchive() = default;
 ZipArchive::ZipArchive(ZipArchive&&) noexcept = default;
 ZipArchive& ZipArchive::operator=(ZipArchive&&) noexcept = default;
 
-bool ZipArchive::insertBytes(const String& path, std::span<const unsigned char> bytes)
+bool ZipArchive::insertBytes(const std::filesystem::path& path, std::span<const unsigned char> bytes)
 {
     if (path.empty()) {
         return false;
@@ -304,7 +304,7 @@ bool ZipArchive::insertBytes(const String& path, std::span<const unsigned char> 
     return true;
 }
 
-bool ZipArchive::insertFileBacked(const String& path, const std::filesystem::path& src_path)
+bool ZipArchive::insertFileBacked(const std::filesystem::path& path, const std::filesystem::path& src_path)
 {
     if (path.empty() || src_path.empty()) {
         return false;
@@ -316,7 +316,7 @@ bool ZipArchive::insertFileBacked(const String& path, const std::filesystem::pat
     return true;
 }
 
-IoError ZipArchive::addFile(const String& path, std::shared_ptr<DataSource> source)
+IoError ZipArchive::addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source)
 {
     if (const IoError blocked = guard(); blocked != IoError::Ok) {
         return blocked;
@@ -324,7 +324,7 @@ IoError ZipArchive::addFile(const String& path, std::shared_ptr<DataSource> sour
     if (source == nullptr) {
         return IoError::InvalidData;
     }
-    String        norm;
+    std::filesystem::path norm;
     const IoError error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
@@ -339,7 +339,7 @@ IoError ZipArchive::addFile(const String& path, std::shared_ptr<DataSource> sour
     return IoError::Ok;
 }
 
-IoError ZipArchive::addFile(const String& path, std::span<const Fragment> fragments)
+IoError ZipArchive::addFile(const std::filesystem::path& path, std::span<const Fragment> fragments)
 {
     if (const IoError blocked = guard(); blocked != IoError::Ok) {
         return blocked;
@@ -350,7 +350,7 @@ IoError ZipArchive::addFile(const String& path, std::span<const Fragment> fragme
     return addFile(path, std::make_shared<FragmentSource>(fragments));
 }
 
-bool ZipArchive::insertDirectory(const String& path)
+bool ZipArchive::insertDirectory(const std::filesystem::path& path)
 {
     if (path.empty()) {
         return false;
@@ -362,12 +362,12 @@ bool ZipArchive::insertDirectory(const String& path)
     return true;
 }
 
-bool ZipArchive::removeEntry(const String& name)
+bool ZipArchive::removeEntry(const std::filesystem::path& name)
 {
     return entries_.erase(name) > 0;
 }
 
-bool ZipArchive::renameEntry(const String& from, const String& to)
+bool ZipArchive::renameEntry(const std::filesystem::path& from, const std::filesystem::path& to)
 {
     const auto it = entries_.find(from);
     if (it == entries_.end() || to.empty() || entries_.find(to) != entries_.end()) {
@@ -375,6 +375,7 @@ bool ZipArchive::renameEntry(const String& from, const String& to)
     }
     Entry entry = std::move(it->second);
     entries_.erase(it);
+    entry.stored_name.clear(); // the name is this archive's own now, so it is written from the path
     entries_.insert_or_assign(to, std::move(entry));
     return true;
 }
@@ -401,7 +402,7 @@ std::vector<VfsEntryInfo> ZipArchive::index() const
     return listed;
 }
 
-VfsEntryKind ZipArchive::entryKindOf(const String& name) const
+VfsEntryKind ZipArchive::entryKindOf(const std::filesystem::path& name) const
 {
     const auto it = entries_.find(name);
     if (it != entries_.end()) {
@@ -416,25 +417,25 @@ VfsEntryKind ZipArchive::entryKindOf(const String& name) const
     return VfsEntryKind::Missing;
 }
 
-std::uint64_t ZipArchive::sizeOf(const String& name) const
+std::uint64_t ZipArchive::sizeOf(const std::filesystem::path& name) const
 {
     const auto it = entries_.find(name);
     return it == entries_.end() ? 0 : entrySize(it->second);
 }
 
-std::uint32_t ZipArchive::crcOf(const String& name) const
+std::uint32_t ZipArchive::crcOf(const std::filesystem::path& name) const
 {
     const auto it = entries_.find(name);
     return it == entries_.end() ? 0 : it->second.info.crc;
 }
 
-std::vector<VfsEntryInfo> ZipArchive::children(const String& dir) const
+std::vector<VfsEntryInfo> ZipArchive::children(const std::filesystem::path& dir) const
 {
     std::vector<VfsEntryInfo> children;
-    const std::u8string       prefix = dir.empty() ? std::u8string() : dir.as_std_u8str() + u8"/";
+    const std::u8string       prefix = dir.empty() ? std::u8string() : dir.generic_u8string() + u8"/";
     std::set<std::u8string>   seen;
     for (const auto& [key, entry] : entries_) {
-        const std::u8string& k = key.as_std_u8str();
+        const std::u8string k = key.generic_u8string();
         if (!prefix.empty() && k.compare(0, prefix.size(), prefix) != 0) {
             continue;
         }
@@ -447,7 +448,7 @@ std::vector<VfsEntryInfo> ZipArchive::children(const String& dir) const
         }
 
         VfsEntryInfo child;
-        child.path         = dir.empty() ? String(segment) : String(dir.as_std_u8str() + u8"/" + segment);
+        child.path         = detail::joinVfs(dir, std::filesystem::path(segment));
         child.is_directory = !is_leaf || entry.info.is_directory;
         if (!child.is_directory) {
             child.size = entrySize(entry);
@@ -506,9 +507,9 @@ Result<std::vector<unsigned char>> ZipArchive::contentOf(const Entry& entry) con
     return bytes;
 }
 
-Result<std::vector<unsigned char>> ZipArchive::read(const String& path) const
+Result<std::vector<unsigned char>> ZipArchive::read(const std::filesystem::path& path) const
 {
-    String        norm;
+    std::filesystem::path norm;
     const IoError error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
@@ -516,7 +517,7 @@ Result<std::vector<unsigned char>> ZipArchive::read(const String& path) const
     return readStored(norm);
 }
 
-Result<std::vector<unsigned char>> ZipArchive::readStored(const String& name) const
+Result<std::vector<unsigned char>> ZipArchive::readStored(const std::filesystem::path& name) const
 {
     const VfsEntryKind kind = entryKindOf(name);
     if (kind == VfsEntryKind::Missing) {
@@ -576,7 +577,7 @@ Result<std::vector<unsigned char>> ZipArchive::readStored(const String& name) co
     return bytes;
 }
 
-Result<std::unique_ptr<VfsReadStream>> ZipArchive::openRead(const String& name) const
+Result<std::unique_ptr<VfsReadStream>> ZipArchive::openRead(const std::filesystem::path& name) const
 {
     const VfsEntryKind kind = entryKindOf(name);
     if (kind == VfsEntryKind::Missing) {
@@ -726,22 +727,21 @@ IoError ZipArchive::adoptHandle(std::shared_ptr<ArchiveHandle> handle, const std
         return listed.error(); // the handle closes itself on the way out
     }
 
-    std::map<String, Entry> entries;
+    std::map<std::filesystem::path, Entry> entries;
     for (std::size_t i = 0; i < listed->size(); ++i) {
         const detail::StoredEntry& info = (*listed)[i];
-        bool                       is_directory = false;
-        String                     name         = detail::fromStoredName(info.name, is_directory);
-        if (name.empty()) {
+        if (info.name.empty()) {
             continue; // the root, which always exists
         }
 
         Entry entry;
-        entry.from_source       = !is_directory; // a directory entry has no content to copy through
+        entry.stored_name       = info.stored; // kept verbatim: a legacy name is written back as it was
+        entry.from_source       = !info.is_directory; // a directory entry has no content to copy through
         entry.source_index      = i;
-        entry.info.is_directory = is_directory;
+        entry.info.is_directory = info.is_directory;
         entry.info.size         = info.size;
         entry.info.crc          = info.crc;
-        entries.insert_or_assign(std::move(name), std::move(entry));
+        entries.insert_or_assign(info.name, std::move(entry));
     }
 
     entries_     = std::move(entries);
@@ -755,7 +755,11 @@ bool ZipArchive::emit(void* target) const
     auto* const archive = static_cast<zip_t*>(target);
 
     for (const auto& [name, entry] : entries_) {
-        const std::string stored = detail::toStoredName(name, entry.info.is_directory);
+        // An entry that came from an archive is written back under the bytes that archive
+        // held, so a legacy name survives a repack; an entry this archive created itself
+        // is written in UTF-8, and libzip decides the UTF-8 flag from those bytes.
+        const std::string stored = entry.stored_name.empty() ? detail::toStoredName(name, entry.info.is_directory)
+                                                            : entry.stored_name;
         zip_source_t*     source = nullptr;
 
         if (entry.info.is_directory) {
@@ -791,7 +795,10 @@ bool ZipArchive::emit(void* target) const
             source = zip_source_buffer(archive, entry.data.data(), entry.data.size(), 0);
         }
 
-        if (source == nullptr || zip_file_add(archive, stored.c_str(), source, ZIP_FL_ENC_UTF_8 | ZIP_FL_OVERWRITE) < 0) {
+        // The UTF-8 flag is left to libzip: it marks the entry's name as UTF-8 exactly
+        // when the bytes are UTF-8, and keeps a legacy name as the bytes it was. Claiming
+        // UTF-8 for a name that is not would make the archive we write unreadable.
+        if (source == nullptr || zip_file_add(archive, stored.c_str(), source, ZIP_FL_OVERWRITE) < 0) {
             zip_source_free(source);
             return false;
         }
@@ -928,14 +935,15 @@ IoError ZipArchive::guard() const
     return read_only_ ? IoError::ReadOnly : IoError::Ok;
 }
 
-bool ZipArchive::isDirectoryPath(const String& normalized) const
+bool ZipArchive::isDirectoryPath(const std::filesystem::path& normalized) const
 {
     return normalized.empty() || entryKindOf(normalized) == VfsEntryKind::Directory;
 }
 
-IoError ZipArchive::ancestorBlockerOf(const String& normalized) const
+IoError ZipArchive::ancestorBlockerOf(const std::filesystem::path& normalized) const
 {
-    for (String ancestor = detail::parentOf(normalized); !ancestor.empty(); ancestor = detail::parentOf(ancestor)) {
+    for (std::filesystem::path ancestor = detail::parentOf(normalized); !ancestor.empty();
+         ancestor = detail::parentOf(ancestor)) {
         const VfsEntryKind kind = entryKindOf(ancestor);
         if (kind == VfsEntryKind::File) {
             return IoError::NotADirectory;
@@ -947,15 +955,15 @@ IoError ZipArchive::ancestorBlockerOf(const String& normalized) const
     return IoError::Ok;
 }
 
-Result<VfsEntryInfo> ZipArchive::stat(const String& path) const
+Result<VfsEntryInfo> ZipArchive::stat(const std::filesystem::path& path) const
 {
-    String        norm;
+    std::filesystem::path norm;
     const IoError error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
     }
     if (norm.empty()) {
-        return VfsEntryInfo{ String{}, true, 0 };
+        return VfsEntryInfo{ std::filesystem::path{}, true, 0 };
     }
 
     switch (entryKindOf(norm)) {
@@ -969,9 +977,9 @@ Result<VfsEntryInfo> ZipArchive::stat(const String& path) const
     return IoError::NotFound;
 }
 
-Result<std::vector<VfsEntryInfo>> ZipArchive::list(const String& dir) const
+Result<std::vector<VfsEntryInfo>> ZipArchive::list(const std::filesystem::path& dir) const
 {
-    String        norm;
+    std::filesystem::path norm;
     const IoError error = detail::normalizeVfsPath(dir, norm);
     if (error != IoError::Ok) {
         return error;
@@ -986,12 +994,12 @@ Result<std::vector<VfsEntryInfo>> ZipArchive::list(const String& dir) const
     return children(norm);
 }
 
-IoError ZipArchive::addFile(const String& path, std::span<const unsigned char> bytes)
+IoError ZipArchive::addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes)
 {
     if (const IoError blocked = guard(); blocked != IoError::Ok) {
         return blocked;
     }
-    String        norm;
+    std::filesystem::path norm;
     const IoError error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
@@ -1002,12 +1010,12 @@ IoError ZipArchive::addFile(const String& path, std::span<const unsigned char> b
     return insertBytes(norm, bytes) ? IoError::Ok : IoError::IoFailure;
 }
 
-IoError ZipArchive::createDirectory(const String& path)
+IoError ZipArchive::createDirectory(const std::filesystem::path& path)
 {
     if (const IoError blocked = guard(); blocked != IoError::Ok) {
         return blocked;
     }
-    String        norm;
+    std::filesystem::path norm;
     const IoError error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
@@ -1022,19 +1030,19 @@ IoError ZipArchive::createDirectory(const String& path)
         return blocker;
     }
 
-    const String parent = detail::parentOf(norm);
+    const std::filesystem::path parent = detail::parentOf(norm);
     if (!parent.empty() && !isDirectoryPath(parent)) {
         return IoError::NotFound; // mkdir, not mkdir -p
     }
     return insertDirectory(norm) ? IoError::Ok : IoError::IoFailure;
 }
 
-IoError ZipArchive::createDirectories(const String& path)
+IoError ZipArchive::createDirectories(const std::filesystem::path& path)
 {
     if (const IoError blocked = guard(); blocked != IoError::Ok) {
         return blocked;
     }
-    String        norm;
+    std::filesystem::path norm;
     const IoError error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
@@ -1054,17 +1062,17 @@ IoError ZipArchive::createDirectories(const String& path)
     return insertDirectory(norm) ? IoError::Ok : IoError::IoFailure;
 }
 
-IoError ZipArchive::rename(const String& from, const String& to)
+IoError ZipArchive::rename(const std::filesystem::path& from, const std::filesystem::path& to)
 {
     if (const IoError blocked = guard(); blocked != IoError::Ok) {
         return blocked;
     }
-    String  source;
-    IoError error = detail::normalizeVfsPath(from, source);
+    std::filesystem::path source;
+    IoError  error = detail::normalizeVfsPath(from, source);
     if (error != IoError::Ok) {
         return error;
     }
-    String target;
+    std::filesystem::path target;
     error = detail::normalizeVfsPath(to, target);
     if (error != IoError::Ok) {
         return error;
@@ -1088,19 +1096,19 @@ IoError ZipArchive::rename(const String& from, const String& to)
         return blocker;
     }
 
-    const String parent = detail::parentOf(target);
+    const std::filesystem::path parent = detail::parentOf(target);
     if (!parent.empty() && !isDirectoryPath(parent)) {
         return IoError::NotFound; // the target's parent is missing
     }
 
-    // A whole subtree moves with its directory, so every entry below it follows.
-    std::vector<std::pair<String, String>> moved;
+    // A whole subtree moves with its directory, so every entry below it follows: what
+    // sits below the moved directory is the same relative path under the new name.
+    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> moved;
     for (const VfsEntryInfo& entry : index()) {
         if (entry.path == source || detail::isPathBelow(source, entry.path)) {
-            const String suffix = entry.path.size() == source.size()
-                                      ? String{}
-                                      : String(entry.path.as_std_u8str().substr(source.size()));
-            moved.emplace_back(entry.path, String(target.as_std_u8str() + suffix.as_std_u8str()));
+            moved.emplace_back(entry.path, entry.path == source
+                                                 ? target
+                                                 : detail::joinVfs(target, entry.path.lexically_relative(source)));
         }
     }
     for (const auto& [old_name, new_name] : moved) {
@@ -1111,12 +1119,12 @@ IoError ZipArchive::rename(const String& from, const String& to)
     return IoError::Ok;
 }
 
-IoError ZipArchive::remove(const String& path)
+IoError ZipArchive::remove(const std::filesystem::path& path)
 {
     if (const IoError blocked = guard(); blocked != IoError::Ok) {
         return blocked;
     }
-    String        norm;
+    std::filesystem::path norm;
     const IoError error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
@@ -1130,12 +1138,12 @@ IoError ZipArchive::remove(const String& path)
     return removeEntry(norm) ? IoError::Ok : IoError::NotFound;
 }
 
-IoError ZipArchive::removeAll(const String& path)
+IoError ZipArchive::removeAll(const std::filesystem::path& path)
 {
     if (const IoError blocked = guard(); blocked != IoError::Ok) {
         return blocked;
     }
-    String        norm;
+    std::filesystem::path norm;
     const IoError error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
@@ -1147,24 +1155,24 @@ IoError ZipArchive::removeAll(const String& path)
         return IoError::NotFound;
     }
 
-    std::vector<String> doomed;
+    std::vector<std::filesystem::path> doomed;
     for (const VfsEntryInfo& entry : index()) {
         if (entry.path == norm || detail::isPathBelow(norm, entry.path)) {
             doomed.push_back(entry.path);
         }
     }
-    for (const String& name : doomed) {
+    for (const std::filesystem::path& name : doomed) {
         removeEntry(name);
     }
     return IoError::Ok;
 }
 
-IoError ZipArchive::addFile(const String& path, const std::filesystem::path& real_path)
+IoError ZipArchive::addFile(const std::filesystem::path& path, const std::filesystem::path& real_path)
 {
     if (const IoError blocked = guard(); blocked != IoError::Ok) {
         return blocked;
     }
-    String        norm;
+    std::filesystem::path norm;
     const IoError error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;

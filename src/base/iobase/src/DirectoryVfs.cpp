@@ -28,7 +28,8 @@ std::unique_ptr<DirectoryVfs> DirectoryVfs::openDirectory(const std::filesystem:
     return std::make_unique<DirectoryVfs>(dir);
 }
 
-IoError DirectoryVfs::resolve(const String& vfs_path, String& normalized, std::filesystem::path& out) const
+IoError DirectoryVfs::resolve(const std::filesystem::path& vfs_path, std::filesystem::path& normalized,
+                              std::filesystem::path& out) const
 {
     const IoError error = detail::normalizeVfsPath(vfs_path, normalized);
     if (error != IoError::Ok) {
@@ -38,11 +39,12 @@ IoError DirectoryVfs::resolve(const String& vfs_path, String& normalized, std::f
         out = root_;
         return IoError::Ok;
     }
-    const std::filesystem::path relative(normalized.as_std_u8str());
-    if (relative.is_absolute() || relative.has_root_name()) {
-        return IoError::InvalidPath; // defense in depth: joining must not replace the root
+    // A normalized virtual path is relative and carries no root name, so joining it can
+    // only extend root_ - it has no spelling left that would replace it.
+    if (normalized.is_absolute() || normalized.has_root_name()) {
+        return IoError::InvalidPath; // defense in depth
     }
-    out = root_ / relative;
+    out = root_ / normalized;
     return IoError::Ok;
 }
 
@@ -51,9 +53,9 @@ bool DirectoryVfs::isReadOnly() const noexcept
     return false;
 }
 
-Result<VfsEntryInfo> DirectoryVfs::stat(const String& path) const
+Result<VfsEntryInfo> DirectoryVfs::stat(const std::filesystem::path& path) const
 {
-    String                norm;
+    std::filesystem::path norm;
     std::filesystem::path real;
     const IoError         error = resolve(path, norm, real);
     if (error != IoError::Ok) {
@@ -84,9 +86,9 @@ Result<VfsEntryInfo> DirectoryVfs::stat(const String& path) const
     return VfsEntryInfo{ std::move(norm), false, static_cast<std::uint64_t>(bytes) };
 }
 
-Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const String& dir) const
+Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const std::filesystem::path& dir) const
 {
-    String                base;
+    std::filesystem::path base;
     std::filesystem::path real;
     const IoError         error = resolve(dir, base, real);
     if (error != IoError::Ok) {
@@ -118,9 +120,9 @@ Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const String& dir) const
         }
         const bool is_dir = entry_type == std::filesystem::file_type::directory;
 
-        const String name(entry.path().filename().u8string());
+        const std::filesystem::path name = entry.path().filename();
         VfsEntryInfo info;
-        info.path         = base.empty() ? name : String(base.as_std_u8str() + u8"/" + name.as_std_u8str());
+        info.path         = detail::joinVfs(base, name);
         info.is_directory = is_dir;
         if (!is_dir) {
             std::error_code      size_ec;
@@ -138,12 +140,12 @@ Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const String& dir) const
     return children;
 }
 
-IoError DirectoryVfs::remove(const String& path)
+IoError DirectoryVfs::remove(const std::filesystem::path& path)
 {
     if (isReadOnly()) {
         return IoError::ReadOnly;
     }
-    String                base;
+    std::filesystem::path base;
     std::filesystem::path real;
     const IoError         error = resolve(path, base, real);
     if (error != IoError::Ok) {
@@ -172,12 +174,12 @@ IoError DirectoryVfs::remove(const String& path)
     return IoError::Ok;
 }
 
-IoError DirectoryVfs::removeAll(const String& path)
+IoError DirectoryVfs::removeAll(const std::filesystem::path& path)
 {
     if (isReadOnly()) {
         return IoError::ReadOnly;
     }
-    String                base;
+    std::filesystem::path base;
     std::filesystem::path real;
     const IoError         error = resolve(path, base, real);
     if (error != IoError::Ok) {
@@ -202,12 +204,12 @@ IoError DirectoryVfs::removeAll(const String& path)
     return IoError::Ok;
 }
 
-IoError DirectoryVfs::createDirectory(const String& path)
+IoError DirectoryVfs::createDirectory(const std::filesystem::path& path)
 {
     if (isReadOnly()) {
         return IoError::ReadOnly;
     }
-    String                base;
+    std::filesystem::path base;
     std::filesystem::path real;
     const IoError         error = resolve(path, base, real);
     if (error != IoError::Ok) {
@@ -237,12 +239,12 @@ IoError DirectoryVfs::createDirectory(const String& path)
     return IoError::Ok;
 }
 
-IoError DirectoryVfs::createDirectories(const String& path)
+IoError DirectoryVfs::createDirectories(const std::filesystem::path& path)
 {
     if (isReadOnly()) {
         return IoError::ReadOnly;
     }
-    String                base;
+    std::filesystem::path base;
     std::filesystem::path real;
     const IoError         error = resolve(path, base, real);
     if (error != IoError::Ok) {
@@ -274,12 +276,12 @@ IoError DirectoryVfs::createDirectories(const String& path)
     return IoError::Ok;
 }
 
-IoError DirectoryVfs::addFile(const String& path, const std::filesystem::path& real_path)
+IoError DirectoryVfs::addFile(const std::filesystem::path& path, const std::filesystem::path& real_path)
 {
     if (isReadOnly()) {
         return IoError::ReadOnly;
     }
-    String                norm;
+    std::filesystem::path norm;
     std::filesystem::path real;
     const IoError         error = resolve(path, norm, real);
     if (error != IoError::Ok) {
@@ -317,18 +319,18 @@ IoError DirectoryVfs::addFile(const String& path, const std::filesystem::path& r
     return IoError::Ok;
 }
 
-IoError DirectoryVfs::rename(const String& from, const String& to)
+IoError DirectoryVfs::rename(const std::filesystem::path& from, const std::filesystem::path& to)
 {
     if (isReadOnly()) {
         return IoError::ReadOnly;
     }
-    String                source;
+    std::filesystem::path source;
     std::filesystem::path source_real;
     IoError               error = resolve(from, source, source_real);
     if (error != IoError::Ok) {
         return error;
     }
-    String                target;
+    std::filesystem::path target;
     std::filesystem::path target_real;
     error = resolve(to, target, target_real);
     if (error != IoError::Ok) {
@@ -366,9 +368,9 @@ IoError DirectoryVfs::rename(const String& from, const String& to)
     return IoError::Ok;
 }
 
-Result<std::vector<unsigned char>> DirectoryVfs::read(const String& path) const
+Result<std::vector<unsigned char>> DirectoryVfs::read(const std::filesystem::path& path) const
 {
-    String                norm;
+    std::filesystem::path norm;
     std::filesystem::path real;
     const IoError         error = resolve(path, norm, real);
     if (error != IoError::Ok) {
@@ -403,12 +405,12 @@ Result<std::vector<unsigned char>> DirectoryVfs::read(const String& path) const
     return bytes;
 }
 
-IoError DirectoryVfs::addFile(const String& path, std::span<const unsigned char> bytes)
+IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes)
 {
     if (isReadOnly()) {
         return IoError::ReadOnly;
     }
-    String                norm;
+    std::filesystem::path norm;
     std::filesystem::path real;
     const IoError         error = resolve(path, norm, real);
     if (error != IoError::Ok) {

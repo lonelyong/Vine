@@ -60,11 +60,11 @@ std::unique_ptr<workcell::Workcell> WorkcellIO::loadXml(const std::filesystem::p
     return loadVfs(vfs, detail::pathLeafName(file_path));
 }
 
-std::unique_ptr<workcell::Workcell> WorkcellIO::loadVfs(vine::io::Vfs& vfs, const String& vfs_path)
+std::unique_ptr<workcell::Workcell> WorkcellIO::loadVfs(vine::io::Vfs& vfs, const std::filesystem::path& vfs_path)
 {
     const auto xml = detail::readText(vfs, vfs_path);
     if (!xml) {
-        throw std::runtime_error("WorkcellIO::loadXml, failed to read vfs file: " + vfs_path.as_std_str());
+        throw std::runtime_error("WorkcellIO::loadXml, failed to read vfs file: " + vfs_path.generic_string());
     }
 
     ParseOptions opts;
@@ -99,7 +99,7 @@ std::unique_ptr<workcell::Workcell> WorkcellIO::loadVfs(vine::io::Vfs& vfs, cons
     return cell;
 }
 
-void WorkcellIO::exportToVfs(const workcell::Workcell& cell, vine::io::Vfs& vfs, const String& vfs_path)
+void WorkcellIO::exportToVfs(const workcell::Workcell& cell, vine::io::Vfs& vfs, const std::filesystem::path& vfs_path)
 {
     ExportOptions opts;
     ExportContext ctx(opts);
@@ -124,14 +124,14 @@ void WorkcellIO::exportToVfs(const workcell::Workcell& cell, vine::io::Vfs& vfs,
     doc->Print(&printer);
     const String xml(reinterpret_cast<const char8_t*>(printer.CStr()), printer.CStrSize() - 1);
     if (detail::writeText(vfs, vfs_path, xml) != vine::io::IoError::Ok) {
-        throw std::runtime_error("WorkcellIO::savePkg, failed to write vfs file: " + vfs_path.as_std_str());
+        throw std::runtime_error("WorkcellIO::savePkg, failed to write vfs file: " + vfs_path.generic_string());
     }
 }
 
 void WorkcellIO::savePkg(const workcell::Workcell& cell, vine::io::Vfs& vfs, const SaveOptions& options)
 {
     (void)options;
-    exportToVfs(cell, vfs, vine::String(u8"workcell.xml"));
+    exportToVfs(cell, vfs, std::filesystem::path(u8"workcell.xml"));
 }
 
 std::unique_ptr<workcell::Workcell> WorkcellIO::loadPkg(const std::filesystem::path& pkg_path)
@@ -146,7 +146,7 @@ std::unique_ptr<workcell::Workcell> WorkcellIO::loadPkg(const std::filesystem::p
 
 std::unique_ptr<workcell::Workcell> WorkcellIO::loadPkg(vine::io::Vfs& vfs)
 {
-    return loadVfs(vfs, vine::String(u8"workcell.xml"));
+    return loadVfs(vfs, std::filesystem::path(u8"workcell.xml"));
 }
 
 void WorkcellIO::savePkg(const workcell::Workcell& cell, const std::filesystem::path& pkg_path,
@@ -196,8 +196,8 @@ void WorkcellIO::exportObject(ExportContext& ctx, const workcell::SceneObject& o
 
 void WorkcellIO::exportDevice(ExportContext& ctx, const workcell::Device& dev, tinyxml2::XMLElement* xe)
 {
-    const String rel      = String(u8"devices/") + dev.name() + String(u8".vdevpkg");
-    const String dev_path = ctx.vfs_dir.empty() ? rel : ctx.vfs_dir + String(u8"/") + rel;
+    const String                 rel      = String(u8"devices/") + dev.name() + String(u8".vdevpkg");
+    const std::filesystem::path  dev_path = ctx.vfs_dir.empty() ? detail::vfsPath(rel) : ctx.vfs_dir / detail::vfsPath(rel);
     DeviceIO     device_io;
     // Build the device package in an inner VFS, then store it as one entry.
     vine::io::ZipArchive inner;
@@ -209,7 +209,7 @@ void WorkcellIO::exportDevice(ExportContext& ctx, const workcell::Device& dev, t
     }
     if (ctx.vfs->addFile(dev_path, zip_bytes.value()) != vine::io::IoError::Ok) {
         throw std::runtime_error("WorkcellIO::exportDevice, failed to write device package: "
-                                 + dev_path.as_std_str());
+                                 + dev_path.generic_string());
     }
     xe->SetAttribute("file", toCStr(rel));
 
@@ -305,20 +305,20 @@ std::unique_ptr<workcell::SceneObject> WorkcellIO::parseDevice(ParseContext& ctx
     if (file.empty()) {
         throw std::runtime_error("WorkcellIO::parseDevice, device <obj> requires a file attribute.");
     }
-    const String dev_path = ctx.vfs_dir.empty() ? file : ctx.vfs_dir + String(u8"/") + file;
+    const std::filesystem::path  dev_path = ctx.vfs_dir.empty() ? detail::vfsPath(file) : ctx.vfs_dir / detail::vfsPath(file);
     DeviceIO     device_io;
     std::unique_ptr<workcell::Device> dev;
     if (detail::endsWith(file, ".vdevpkg")) {
         auto bytes = ctx.vfs->read(dev_path);
         if (!bytes) {
             throw std::runtime_error("WorkcellIO::parseDevice, failed to read device package: "
-                                     + dev_path.as_std_str());
+                                     + dev_path.generic_string());
         }
         // The nested package is already in memory, so it is indexed rather than
         // expanded: only the entries the device actually needs get decompressed.
         auto pkg = vine::io::ZipArchive::open(bytes.take(), vine::io::ZipArchive::OpenMode::ReadOnly);
         if (!pkg) {
-            throw std::runtime_error("WorkcellIO::parseDevice, invalid device package: " + dev_path.as_std_str());
+            throw std::runtime_error("WorkcellIO::parseDevice, invalid device package: " + dev_path.generic_string());
         }
         dev = device_io.loadPkg(*pkg);
     }

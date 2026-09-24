@@ -123,7 +123,7 @@ class V_ROBOTICS_IO_API DeviceIO : public XmlIOBase
      * @param options Load options.
      * @return The device, owned by the caller.
      */
-    std::unique_ptr<workcell::Device> loadXmlFromVfs(vine::io::Vfs& vfs, const String& vfs_path,
+    std::unique_ptr<workcell::Device> loadXmlFromVfs(vine::io::Vfs& vfs, const std::filesystem::path& vfs_path,
                                                      const LoadOptions& options = {});
 
   private:

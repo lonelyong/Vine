@@ -59,7 +59,7 @@ std::vector<unsigned char> buildPackage()
 /**
  * @brief Reports whether a child is present with the expected kind and size.
  */
-bool matches(const std::vector<VfsEntryInfo>& children, const String& path, bool is_directory, std::uint64_t size)
+bool matches(const std::vector<VfsEntryInfo>& children, const std::filesystem::path& path, bool is_directory, std::uint64_t size)
 {
     const VfsEntryInfo* info = findInfo(children, path);
     return info != nullptr && info->is_directory == is_directory && info->size == size;
@@ -80,7 +80,7 @@ TEST(ZipArchiveTest, ArchiveIndexReportsNamesSizesAndKinds)
     const auto entries = Zip::entries(pkg);
     ASSERT_TRUE(entries.ok());
 
-    const auto found = [&entries](const String& path) -> const VfsEntryInfo* {
+    const auto found = [&entries](const std::filesystem::path& path) -> const VfsEntryInfo* {
         for (const VfsEntryInfo& entry : entries.value()) {
             if (entry.path == path) {
                 return &entry;
@@ -89,12 +89,12 @@ TEST(ZipArchiveTest, ArchiveIndexReportsNamesSizesAndKinds)
         return nullptr;
     };
 
-    const VfsEntryInfo* xml = found(String(u8"workcell.xml"));
+    const VfsEntryInfo* xml = found(std::filesystem::path(u8"workcell.xml"));
     ASSERT_NE(xml, nullptr);
     EXPECT_FALSE(xml->is_directory);
     EXPECT_EQ(xml->size, 11u);
 
-    const VfsEntryInfo* empty = found(String(u8"empty"));
+    const VfsEntryInfo* empty = found(std::filesystem::path(u8"empty"));
     ASSERT_NE(empty, nullptr);
     EXPECT_TRUE(empty->is_directory);
     EXPECT_EQ(empty->size, 0u);
@@ -136,38 +136,38 @@ TEST(ZipArchiveTest, MatchesTheMemoryBackendForTheSameContent)
     auto lazy = ZipArchive::open(pkg, ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(lazy.ok());
 
-    for (const String& dir :
-         { String(u8""), String(u8"geoms"), String(u8"devices"), String(u8"nested"), String(u8"empty") }) {
+    for (const std::filesystem::path& dir :
+         { std::filesystem::path(u8""), std::filesystem::path(u8"geoms"), std::filesystem::path(u8"devices"), std::filesystem::path(u8"nested"), std::filesystem::path(u8"empty") }) {
         const auto lazy_children = lazy->list(dir);
         const auto tree_children = built.list(dir);
-        ASSERT_TRUE(lazy_children.ok()) << dir.as_std_str();
-        ASSERT_TRUE(tree_children.ok()) << dir.as_std_str();
-        EXPECT_EQ(sortedNames(lazy_children.value()), sortedNames(tree_children.value())) << dir.as_std_str();
-        EXPECT_EQ(lazy_children->size(), tree_children->size()) << dir.as_std_str();
+        ASSERT_TRUE(lazy_children.ok()) << dir.generic_string();
+        ASSERT_TRUE(tree_children.ok()) << dir.generic_string();
+        EXPECT_EQ(sortedNames(lazy_children.value()), sortedNames(tree_children.value())) << dir.generic_string();
+        EXPECT_EQ(lazy_children->size(), tree_children->size()) << dir.generic_string();
     }
 
     // The same paths also fail the same way.
-    for (const String& path : { String(u8"nope"), String(u8"workcell.xml"), String(u8"empty") }) {
-        EXPECT_EQ(lazy->list(path).error(), built.list(path).error()) << path.as_std_str();
+    for (const std::filesystem::path& path : { std::filesystem::path(u8"nope"), std::filesystem::path(u8"workcell.xml"), std::filesystem::path(u8"empty") }) {
+        EXPECT_EQ(lazy->list(path).error(), built.list(path).error()) << path.generic_string();
     }
 
-    for (const String& path :
-         { String(u8"workcell.xml"), String(u8"geoms"), String(u8"geoms/base.bin"), String(u8"empty"), String(u8"nested/deep") }) {
+    for (const std::filesystem::path& path :
+         { std::filesystem::path(u8"workcell.xml"), std::filesystem::path(u8"geoms"), std::filesystem::path(u8"geoms/base.bin"), std::filesystem::path(u8"empty"), std::filesystem::path(u8"nested/deep") }) {
         const auto lazy_info = lazy->stat(path);
         const auto tree_info = built.stat(path);
-        ASSERT_TRUE(lazy_info.ok()) << path.as_std_str();
-        ASSERT_TRUE(tree_info.ok()) << path.as_std_str();
-        EXPECT_EQ(lazy_info->path, tree_info->path) << path.as_std_str();
-        EXPECT_EQ(lazy_info->is_directory, tree_info->is_directory) << path.as_std_str();
-        EXPECT_EQ(lazy_info->size, tree_info->size) << path.as_std_str();
+        ASSERT_TRUE(lazy_info.ok()) << path.generic_string();
+        ASSERT_TRUE(tree_info.ok()) << path.generic_string();
+        EXPECT_EQ(lazy_info->path, tree_info->path) << path.generic_string();
+        EXPECT_EQ(lazy_info->is_directory, tree_info->is_directory) << path.generic_string();
+        EXPECT_EQ(lazy_info->size, tree_info->size) << path.generic_string();
     }
 
-    for (const String& path : { String(u8"workcell.xml"), String(u8"geoms/base.bin"), String(u8"devices/robot.vdev") }) {
+    for (const std::filesystem::path& path : { std::filesystem::path(u8"workcell.xml"), std::filesystem::path(u8"geoms/base.bin"), std::filesystem::path(u8"devices/robot.vdev") }) {
         const auto lazy_bytes = lazy->read(path);
         const auto tree_bytes = built.read(path);
-        ASSERT_TRUE(lazy_bytes.ok()) << path.as_std_str();
-        ASSERT_TRUE(tree_bytes.ok()) << path.as_std_str();
-        EXPECT_EQ(lazy_bytes.value(), tree_bytes.value()) << path.as_std_str();
+        ASSERT_TRUE(lazy_bytes.ok()) << path.generic_string();
+        ASSERT_TRUE(tree_bytes.ok()) << path.generic_string();
+        EXPECT_EQ(lazy_bytes.value(), tree_bytes.value()) << path.generic_string();
     }
 }
 
@@ -304,20 +304,20 @@ TEST(ZipArchiveTest, ListReportsEveryChildShape)
 
     const auto top = zip->list(u8"");
     ASSERT_TRUE(top.ok());
-    EXPECT_TRUE(matches(top.value(), String(u8"workcell.xml"), false, 11u));
-    EXPECT_TRUE(matches(top.value(), String(u8"geoms"), true, 0u));
-    EXPECT_TRUE(matches(top.value(), String(u8"empty"), true, 0u));
-    EXPECT_TRUE(matches(top.value(), String(u8"nested"), true, 0u));
-    EXPECT_TRUE(matches(top.value(), String(u8"devices"), true, 0u));
+    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"workcell.xml"), false, 11u));
+    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"geoms"), true, 0u));
+    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"empty"), true, 0u));
+    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"nested"), true, 0u));
+    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"devices"), true, 0u));
     EXPECT_EQ(top->size(), 5u);
 
     const auto nested = zip->list(u8"nested");
     ASSERT_TRUE(nested.ok());
     ASSERT_EQ(nested->size(), 1u);
-    EXPECT_TRUE(matches(nested.value(), String(u8"nested/deep"), true, 0u));
+    EXPECT_TRUE(matches(nested.value(), std::filesystem::path(u8"nested/deep"), true, 0u));
 
     const auto devices = zip->list(u8"devices");
     ASSERT_TRUE(devices.ok());
     ASSERT_EQ(devices->size(), 1u);
-    EXPECT_TRUE(matches(devices.value(), String(u8"devices/robot.vdev"), false, 3u));
+    EXPECT_TRUE(matches(devices.value(), std::filesystem::path(u8"devices/robot.vdev"), false, 3u));
 }

@@ -25,7 +25,7 @@ using vfstest::TempDir;
 namespace
 {
 
-bool contains(const std::vector<vine::String>& list, const vine::String& name)
+bool contains(const std::vector<std::filesystem::path>& list, const std::filesystem::path& name)
 {
     return std::find(list.begin(), list.end(), name) != list.end();
 }
@@ -72,9 +72,9 @@ TEST(VfsTest, ZipListAndRemove)
     ASSERT_TRUE(top.ok());
     ASSERT_EQ(top->size(), 3u); // a.txt, b, e
     const auto top_names = sortedNames(top.value());
-    EXPECT_TRUE(contains(top_names, vine::String(u8"a.txt")));
-    EXPECT_TRUE(contains(top_names, vine::String(u8"b")));
-    EXPECT_TRUE(contains(top_names, vine::String(u8"e")));
+    EXPECT_TRUE(contains(top_names, std::filesystem::path(u8"a.txt")));
+    EXPECT_TRUE(contains(top_names, std::filesystem::path(u8"b")));
+    EXPECT_TRUE(contains(top_names, std::filesystem::path(u8"e")));
 
     const auto in_b = vfs.list(u8"b");
     ASSERT_TRUE(in_b.ok());

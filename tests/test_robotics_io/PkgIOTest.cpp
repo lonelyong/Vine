@@ -207,7 +207,7 @@ TEST(PkgIOTest, DevicePkgMemoryBytes)
 
     vine::io::ZipArchive vfs;
     io.savePkg(*robot, vfs);
-    ASSERT_TRUE(vfs.isFile(vine::String(u8"device.xml")));
+    ASSERT_TRUE(vfs.isFile(std::filesystem::path(u8"device.xml")));
 
     auto zip_bytes = vfs.toBytes();
     ASSERT_TRUE(zip_bytes.ok());
@@ -284,11 +284,11 @@ TEST(PkgIOTest, WorkcellPkgInternalPathsAndMemory)
     vine::io::ZipArchive vfs;
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
-    ASSERT_TRUE(vfs.isFile(vine::String(u8"workcell.xml")));
-    ASSERT_TRUE(vfs.isFile(vine::String(u8"devices/robot1.vdevpkg")));
+    ASSERT_TRUE(vfs.isFile(std::filesystem::path(u8"workcell.xml")));
+    ASSERT_TRUE(vfs.isFile(std::filesystem::path(u8"devices/robot1.vdevpkg")));
     // Mesh bins live under geoms/ inside the package.
-    ASSERT_TRUE(vfs.isDirectory(vine::String(u8"geoms")));
-    ASSERT_TRUE(vfs.exists(vine::String(u8"geoms/mesh0.positions.bin")));
+    ASSERT_TRUE(vfs.isDirectory(std::filesystem::path(u8"geoms")));
+    ASSERT_TRUE(vfs.exists(std::filesystem::path(u8"geoms/mesh0.positions.bin")));
 
     // Persist to zip bytes and reopen: the whole package round-trips in memory.
     auto zip_bytes = vfs.toBytes();
@@ -316,9 +316,9 @@ TEST(PkgIOTest, NestedDevicePackage)
     vine::io::ZipArchive vfs;
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
-    ASSERT_TRUE(vfs.isFile(vine::String(u8"workcell.xml")));
-    ASSERT_TRUE(vfs.isFile(vine::String(u8"devices/robot1.vdevpkg")));
-    EXPECT_FALSE(vfs.exists(vine::String(u8"devices/robot1.vdev")));
+    ASSERT_TRUE(vfs.isFile(std::filesystem::path(u8"workcell.xml")));
+    ASSERT_TRUE(vfs.isFile(std::filesystem::path(u8"devices/robot1.vdevpkg")));
+    EXPECT_FALSE(vfs.exists(std::filesystem::path(u8"devices/robot1.vdev")));
 
     std::vector<unsigned char> zip_bytes;
     {
@@ -361,7 +361,7 @@ TEST(PkgIOTest, IndexedMeshRoundTrip)
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
     // Indexed mesh writes positions + indices bins.
-    const auto geoms = vfs.list(vine::String(u8"geoms"));
+    const auto geoms = vfs.list(std::filesystem::path(u8"geoms"));
     ASSERT_TRUE(geoms.ok());
     EXPECT_EQ(geoms->size(), 2u);
 
@@ -397,10 +397,10 @@ TEST(PkgIOTest, SharedMeshStoredOnce)
     io.savePkg(*cell, vfs);
 
     // The shared mesh is written once: only a single positions bin exists.
-    const auto geoms = vfs.list(vine::String(u8"geoms"));
+    const auto geoms = vfs.list(std::filesystem::path(u8"geoms"));
     ASSERT_TRUE(geoms.ok());
     ASSERT_EQ(geoms->size(), 1u);
-    EXPECT_EQ(geoms->front().name(), vine::String(u8"mesh0.positions.bin"));
+    EXPECT_EQ(geoms->front().name(), std::filesystem::path(u8"mesh0.positions.bin"));
 
     // Both visuals round-trip with the mesh.
     auto loaded = io.loadPkg(vfs);

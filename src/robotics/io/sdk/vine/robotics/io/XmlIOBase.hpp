@@ -66,7 +66,7 @@ class V_ROBOTICS_IO_API XmlIOBase
         /// Active VFS for package resources (mesh bins); null for bare XML export.
         vine::io::Vfs* vfs{ nullptr };
         /// Directory of the exported document inside the VFS ("" = root).
-        String vfs_dir;
+        std::filesystem::path vfs_dir;
         /// Collected non-fatal warnings.
         std::string msgs;
         /// Sequence number used to generate unique geoms bin names.
@@ -99,7 +99,7 @@ class V_ROBOTICS_IO_API XmlIOBase
         /// Active VFS for package resources (mesh bins); null for bare XML parse.
         vine::io::Vfs* vfs{ nullptr };
         /// Directory of the parsed document inside the VFS ("" = root).
-        String vfs_dir;
+        std::filesystem::path vfs_dir;
         /// Collected non-fatal warnings.
         std::string msgs;
         /// Device material library by name, for resolving visual references.

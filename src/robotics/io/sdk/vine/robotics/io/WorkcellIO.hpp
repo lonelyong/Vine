@@ -123,7 +123,7 @@ class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
      * @param vfs_path The virtual path of the .vcell file.
      * @return The workcell, owned by the caller.
      */
-    std::unique_ptr<workcell::Workcell> loadVfs(vine::io::Vfs& vfs, const String& vfs_path);
+    std::unique_ptr<workcell::Workcell> loadVfs(vine::io::Vfs& vfs, const std::filesystem::path& vfs_path);
 
     /**
      * @brief Shared export body: writes the .vcell and device files into a VFS.
@@ -132,7 +132,7 @@ class V_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
      * @param vfs The virtual file system.
      * @param vfs_path The virtual path of the .vcell file.
      */
-    void exportToVfs(const workcell::Workcell& cell, vine::io::Vfs& vfs, const String& vfs_path);
+    void exportToVfs(const workcell::Workcell& cell, vine::io::Vfs& vfs, const std::filesystem::path& vfs_path);
 
     /**
      * @brief Exports one object (and its children) as an <obj> element.

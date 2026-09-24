@@ -119,7 +119,7 @@ String writeMeshBins(vine::io::Vfs& vfs, std::size_t& geom_seq,
                              + String(reinterpret_cast<const char8_t*>(seq_str.data()), seq_str.size());
 
     const auto write_bin = [&vfs, &prefix](const char8_t* suffix, const std::vector<unsigned char>& bytes) {
-        if (vfs.addFile(prefix + String(suffix), bytes) != vine::io::IoError::Ok) {
+        if (vfs.addFile(detail::vfsPath(prefix + String(suffix)), bytes) != vine::io::IoError::Ok) {
             throw std::runtime_error("XmlIOBase::writeMeshBins, failed to write mesh geometry into the package: "
                                      + prefix.as_std_str());
         }
@@ -288,7 +288,7 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
         if (pos_path.empty()) {
             return {};
         }
-        const auto bytes = ctx.vfs->read(pos_path);
+        const auto bytes = ctx.vfs->read(detail::vfsPath(pos_path));
         if (!bytes) {
             return {};
         }
@@ -299,7 +299,7 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
         vine::geometry::Vec3fArray normals;
         const String               nrm_path = attr(child, "normals");
         if (!nrm_path.empty()) {
-            const auto nrm_bytes = ctx.vfs->read(nrm_path);
+            const auto nrm_bytes = ctx.vfs->read(detail::vfsPath(nrm_path));
             if (!nrm_bytes || !detail::bytesToVec3Array(nrm_bytes.value(), normals)) {
                 return {};
             }
@@ -307,7 +307,7 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
         vine::geometry::Vec2fArray texcoords;
         const String               uv_path = attr(child, "texcoords");
         if (!uv_path.empty()) {
-            const auto uv_bytes = ctx.vfs->read(uv_path);
+            const auto uv_bytes = ctx.vfs->read(detail::vfsPath(uv_path));
             if (!uv_bytes || !detail::bytesToVec2Array(uv_bytes.value(), texcoords)) {
                 return {};
             }
@@ -327,7 +327,7 @@ vine::intrusive_ptr<vine::geometry::Shape> XmlIOBase::parseGeometry(ParseContext
         if (idx_path.empty()) {
             return {};
         }
-        const auto idx_bytes = ctx.vfs->read(idx_path);
+        const auto idx_bytes = ctx.vfs->read(detail::vfsPath(idx_path));
         if (!idx_bytes) {
             return {};
         }

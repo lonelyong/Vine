@@ -54,7 +54,7 @@ class TempDir
 /**
  * @brief Reports whether an archive index carries an entry with the given path.
  */
-bool hasEntry(const std::vector<vine::io::VfsEntryInfo>& entries, const vine::String& path)
+bool hasEntry(const std::vector<vine::io::VfsEntryInfo>& entries, const std::filesystem::path& path)
 {
     return std::any_of(entries.begin(), entries.end(),
                        [&path](const vine::io::VfsEntryInfo& info) { return info.path == path; });
@@ -182,13 +182,13 @@ TEST(IoBaseTest, ZipArchiveAddDirectoryRoundTrip)
     }
 
     ZipArchive archive;
-    ASSERT_EQ(archive.addDirectory(vine::String{}, source), vine::io::IoError::Ok);
+    ASSERT_EQ(archive.addDirectory(std::filesystem::path{}, source), vine::io::IoError::Ok);
     ASSERT_EQ(archive.saveAs(zip_path), vine::io::IoError::Ok);
 
     const auto entries = Zip::entries(zip_path);
     ASSERT_TRUE(entries.ok());
-    EXPECT_TRUE(hasEntry(entries.value(), vine::String(u8"a.txt")));
-    EXPECT_TRUE(hasEntry(entries.value(), vine::String(u8"sub/b.txt")));
+    EXPECT_TRUE(hasEntry(entries.value(), std::filesystem::path(u8"a.txt")));
+    EXPECT_TRUE(hasEntry(entries.value(), std::filesystem::path(u8"sub/b.txt")));
 
     ASSERT_EQ(Zip::decompressFile(zip_path, dest), vine::io::IoError::Ok);
     std::ifstream in(dest / "sub" / "b.txt");
@@ -220,7 +220,7 @@ TEST(IoBaseTest, ZipCompressDirectoryToFile)
 
     const auto entries = Zip::entries(zip_path);
     ASSERT_TRUE(entries.ok());
-    EXPECT_TRUE(hasEntry(entries.value(), vine::String(u8"a.txt")));
+    EXPECT_TRUE(hasEntry(entries.value(), std::filesystem::path(u8"a.txt")));
 }
 
 TEST(IoBaseTest, ZipDecompressFileToDirectory)
@@ -247,7 +247,7 @@ TEST(IoBaseTest, ZipDecompressFileToDirectory)
 /**
  * @brief Adds text content to an archive.
  */
-void addText(ZipArchive& archive, const vine::String& name, const std::string& text)
+void addText(ZipArchive& archive, const std::filesystem::path& name, const std::string& text)
 {
     EXPECT_EQ(archive.addFile(name, asBytes(text)), vine::io::IoError::Ok);
 }
@@ -374,7 +374,7 @@ TEST(IoBaseTest, ZipArchiveOpensWithoutReadingContent)
     const auto listed = opened->list(u8"");
     ASSERT_TRUE(listed.ok());
     ASSERT_EQ(listed->size(), 1u);
-    EXPECT_EQ(listed->front().path, vine::String(u8"mesh.bin"));
+    EXPECT_EQ(listed->front().path, std::filesystem::path(u8"mesh.bin"));
     EXPECT_EQ(listed->front().size, payload.size());
 
     // Damaged content is reported here as well: read() checks the result against the

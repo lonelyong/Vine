@@ -20,7 +20,7 @@ V_IO_NS_BEGIN
  */
 struct V_IOBASE_API VfsEntryInfo
 {
-    String        path;                  ///< Full normalized virtual path; the empty string is the root.
+    std::filesystem::path path;          ///< Full normalized virtual path; the empty path is the root.
     bool          is_directory{ false }; ///< true when the path names a directory.
     std::uint64_t size{ 0 };             ///< Size in bytes; always 0 for a directory.
     std::uint32_t crc{ 0 };              ///< Content checksum recorded by the backend (a ZIP records CRC-32); 0 when it has none yet.
@@ -28,9 +28,9 @@ struct V_IOBASE_API VfsEntryInfo
     /**
      * @brief The last path segment, i.e. the entry's own name.
      *
-     * @return The name, or an empty string for the virtual root.
+     * @return The name, or an empty path for the virtual root.
      */
-    [[nodiscard]] String name() const;
+    [[nodiscard]] std::filesystem::path name() const;
 };
 
 /**
@@ -87,7 +87,7 @@ class V_IOBASE_API Vfs
      * @return The information, or IoError::NotFound when nothing is there,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] virtual Result<VfsEntryInfo> stat(const String& path) const = 0;
+    [[nodiscard]] virtual Result<VfsEntryInfo> stat(const std::filesystem::path& path) const = 0;
 
     /**
      * @brief Lists the direct children of a directory.
@@ -100,7 +100,7 @@ class V_IOBASE_API Vfs
      *         IoError::NotADirectory when dir names a file,
      *         IoError::InvalidPath when dir is not a valid virtual path.
      */
-    [[nodiscard]] virtual Result<std::vector<VfsEntryInfo>> list(const String& dir) const = 0;
+    [[nodiscard]] virtual Result<std::vector<VfsEntryInfo>> list(const std::filesystem::path& dir) const = 0;
 
     /**
      * @brief Reads a whole virtual file.
@@ -110,7 +110,7 @@ class V_IOBASE_API Vfs
      *         IoError::IsADirectory when path names a directory,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] virtual Result<std::vector<unsigned char>> read(const String& path) const = 0;
+    [[nodiscard]] virtual Result<std::vector<unsigned char>> read(const std::filesystem::path& path) const = 0;
 
     /**
      * @brief Adds a whole virtual file whose content is buffered here.
@@ -124,7 +124,7 @@ class V_IOBASE_API Vfs
      *         taken by a directory, IoError::ReadOnly when the backend refuses
      *         writes, IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] virtual IoError addFile(const String& path, std::span<const unsigned char> bytes) = 0;
+    [[nodiscard]] virtual IoError addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes) = 0;
 
     /**
      * @brief Adds a whole virtual file whose content comes from the local file system.
@@ -140,7 +140,7 @@ class V_IOBASE_API Vfs
      *         directory, IoError::ReadOnly when the backend refuses writes,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] virtual IoError addFile(const String& path, const std::filesystem::path& real_path) = 0;
+    [[nodiscard]] virtual IoError addFile(const std::filesystem::path& path, const std::filesystem::path& real_path) = 0;
 
     /**
      * @brief Adds a whole virtual file stored as several separate byte ranges.
@@ -157,7 +157,7 @@ class V_IOBASE_API Vfs
      *         taken by a directory, IoError::ReadOnly when the backend refuses
      *         writes, IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] virtual IoError addFile(const String& path, std::span<const Fragment> fragments);
+    [[nodiscard]] virtual IoError addFile(const std::filesystem::path& path, std::span<const Fragment> fragments);
 
     /**
      * @brief Adds a whole virtual file whose content comes from a pull source.
@@ -176,7 +176,7 @@ class V_IOBASE_API Vfs
      *         IoError::ReadOnly when the backend refuses writes,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] virtual IoError addFile(const String& path, std::shared_ptr<DataSource> source);
+    [[nodiscard]] virtual IoError addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source);
 
     /**
      * @brief Adds a whole real directory, and everything below it, into the tree.
@@ -191,7 +191,7 @@ class V_IOBASE_API Vfs
      * @return IoError::Ok on success, IoError::NotFound when dir is not a directory,
      *         or the first failure an import reports.
      */
-    [[nodiscard]] IoError addDirectory(const String& prefix, const std::filesystem::path& dir);
+    [[nodiscard]] IoError addDirectory(const std::filesystem::path& prefix, const std::filesystem::path& dir);
 
     /**
      * @brief Creates a virtual directory.
@@ -205,7 +205,7 @@ class V_IOBASE_API Vfs
      *         IoError::ReadOnly when the backend refuses writes,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] virtual IoError createDirectory(const String& path) = 0;
+    [[nodiscard]] virtual IoError createDirectory(const std::filesystem::path& path) = 0;
 
     /**
      * @brief Creates a virtual directory together with every missing parent.
@@ -215,7 +215,7 @@ class V_IOBASE_API Vfs
      *         the way, IoError::ReadOnly when the backend refuses writes,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] virtual IoError createDirectories(const String& path) = 0;
+    [[nodiscard]] virtual IoError createDirectories(const std::filesystem::path& path) = 0;
 
     /**
      * @brief Renames or moves a file or a whole subtree.
@@ -232,7 +232,7 @@ class V_IOBASE_API Vfs
      *         IoError::ReadOnly when the backend refuses writes,
      *         IoError::InvalidPath when either path is invalid or to lies below from.
      */
-    [[nodiscard]] virtual IoError rename(const String& from, const String& to) = 0;
+    [[nodiscard]] virtual IoError rename(const std::filesystem::path& from, const std::filesystem::path& to) = 0;
 
     /**
      * @brief Removes a file or an empty directory.
@@ -243,7 +243,7 @@ class V_IOBASE_API Vfs
      *         IoError::ReadOnly when the backend refuses writes,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] virtual IoError remove(const String& path) = 0;
+    [[nodiscard]] virtual IoError remove(const std::filesystem::path& path) = 0;
 
     /**
      * @brief Removes a file or a whole subtree.
@@ -253,7 +253,7 @@ class V_IOBASE_API Vfs
      *         IoError::ReadOnly when the backend refuses writes,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] virtual IoError removeAll(const String& path) = 0;
+    [[nodiscard]] virtual IoError removeAll(const std::filesystem::path& path) = 0;
 
     /**
      * @brief Writes the changes back to the target this tree was opened on.
@@ -306,7 +306,7 @@ class V_IOBASE_API Vfs
      * @param path The virtual path to query; empty denotes the root.
      * @return The kind of the path.
      */
-    [[nodiscard]] VfsEntryKind kindOf(const String& path) const;
+    [[nodiscard]] VfsEntryKind kindOf(const std::filesystem::path& path) const;
 
     /**
      * @brief Checks whether a virtual file or directory exists.
@@ -316,7 +316,7 @@ class V_IOBASE_API Vfs
      * @param path The virtual path to check.
      * @return true when path names an existing file, directory or the root.
      */
-    [[nodiscard]] bool exists(const String& path) const;
+    [[nodiscard]] bool exists(const std::filesystem::path& path) const;
 
     /**
      * @brief Checks whether a virtual path names a file (not a directory).
@@ -324,7 +324,7 @@ class V_IOBASE_API Vfs
      * @param path The virtual path to check.
      * @return true when path names an existing file.
      */
-    [[nodiscard]] bool isFile(const String& path) const;
+    [[nodiscard]] bool isFile(const std::filesystem::path& path) const;
 
     /**
      * @brief Checks whether a virtual path names a directory.
@@ -334,7 +334,7 @@ class V_IOBASE_API Vfs
      * @param path The virtual path to check.
      * @return true when path names an existing directory or the root.
      */
-    [[nodiscard]] bool isDirectory(const String& path) const;
+    [[nodiscard]] bool isDirectory(const std::filesystem::path& path) const;
 };
 
 V_IO_NS_END

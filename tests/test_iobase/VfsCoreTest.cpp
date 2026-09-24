@@ -51,8 +51,8 @@ TEST(VfsCoreTest, ResultCarriesValueOrError)
     vine::io::Result<int> taken{ 9 };
     EXPECT_EQ(taken.take(), 9);
 
-    vine::io::Result<VfsEntryInfo> info{ VfsEntryInfo{ String(u8"a/b.txt"), false, 3 } };
-    EXPECT_EQ(info->path, String(u8"a/b.txt"));
+    vine::io::Result<VfsEntryInfo> info{ VfsEntryInfo{ std::filesystem::path(u8"a/b.txt"), false, 3 } };
+    EXPECT_EQ(info->path, std::filesystem::path(u8"a/b.txt"));
     EXPECT_EQ(info->size, 3u);
 
     vine::io::Result<int> bad{ IoError::NotFound };
@@ -78,21 +78,21 @@ TEST(VfsCoreTest, ZipStatReportsKindAndSize)
     const auto root = vfs.stat(u8"");
     ASSERT_TRUE(root.ok());
     EXPECT_TRUE(root->is_directory);
-    EXPECT_EQ(root->path, String(u8""));
-    EXPECT_EQ(root->name(), String(u8""));
+    EXPECT_EQ(root->path, std::filesystem::path(u8""));
+    EXPECT_EQ(root->name(), std::filesystem::path(u8""));
     EXPECT_EQ(root->size, 0u);
 
     const auto geoms = vfs.stat(u8"geoms");
     ASSERT_TRUE(geoms.ok());
     EXPECT_TRUE(geoms->is_directory);
-    EXPECT_EQ(geoms->path, String(u8"geoms"));
+    EXPECT_EQ(geoms->path, std::filesystem::path(u8"geoms"));
     EXPECT_EQ(geoms->size, 0u);
 
     const auto leaf = vfs.stat(u8"geoms/base.bin");
     ASSERT_TRUE(leaf.ok());
     EXPECT_FALSE(leaf->is_directory);
-    EXPECT_EQ(leaf->path, String(u8"geoms/base.bin"));
-    EXPECT_EQ(leaf->name(), String(u8"base.bin"));
+    EXPECT_EQ(leaf->path, std::filesystem::path(u8"geoms/base.bin"));
+    EXPECT_EQ(leaf->name(), std::filesystem::path(u8"base.bin"));
     EXPECT_EQ(leaf->size, 4u);
     EXPECT_EQ(leaf->crc, 0u); // nothing is recorded until the entry is written out
 
@@ -163,18 +163,18 @@ TEST(VfsCoreTest, ZipListReportsChildren)
     const auto top = vfs.list(u8"");
     ASSERT_TRUE(top.ok());
     ASSERT_EQ(top->size(), 2u);
-    ASSERT_NE(findInfo(top.value(), String(u8"a.txt")), nullptr);
-    ASSERT_NE(findInfo(top.value(), String(u8"b")), nullptr);
-    EXPECT_EQ(findInfo(top.value(), String(u8"a.txt"))->size, 1u);
-    EXPECT_TRUE(findInfo(top.value(), String(u8"b"))->is_directory);
-    EXPECT_EQ(findInfo(top.value(), String(u8"b"))->size, 0u);
+    ASSERT_NE(findInfo(top.value(), std::filesystem::path(u8"a.txt")), nullptr);
+    ASSERT_NE(findInfo(top.value(), std::filesystem::path(u8"b")), nullptr);
+    EXPECT_EQ(findInfo(top.value(), std::filesystem::path(u8"a.txt"))->size, 1u);
+    EXPECT_TRUE(findInfo(top.value(), std::filesystem::path(u8"b"))->is_directory);
+    EXPECT_EQ(findInfo(top.value(), std::filesystem::path(u8"b"))->size, 0u);
 
     const auto in_b = vfs.list(u8"b");
     ASSERT_TRUE(in_b.ok());
     ASSERT_EQ(in_b->size(), 2u);
-    ASSERT_NE(findInfo(in_b.value(), String(u8"b/c.txt")), nullptr);
-    EXPECT_EQ(findInfo(in_b.value(), String(u8"b/c.txt"))->size, 2u);
-    EXPECT_EQ(findInfo(in_b.value(), String(u8"b/d.txt"))->size, 3u);
+    ASSERT_NE(findInfo(in_b.value(), std::filesystem::path(u8"b/c.txt")), nullptr);
+    EXPECT_EQ(findInfo(in_b.value(), std::filesystem::path(u8"b/c.txt"))->size, 2u);
+    EXPECT_EQ(findInfo(in_b.value(), std::filesystem::path(u8"b/d.txt"))->size, 3u);
 
     EXPECT_EQ(vfs.list(u8"a.txt").error(), IoError::NotADirectory);
     EXPECT_EQ(vfs.list(u8"nope").error(), IoError::NotFound);
@@ -187,15 +187,15 @@ TEST(VfsCoreTest, InvalidPathsAreRejected)
 
     // A leading '/' is refused too: a virtual path has no working directory, so
     // there is nothing an absolute spelling could name.
-    const std::vector<String> invalid{ String(u8".."),
-                                       String(u8"a/../.."),
-                                       String(u8"../../x"),
-                                       String(u8"C:/escape.txt"),
-                                       String(u8"a\\b"),
-                                       String(u8"/a.txt"),
-                                       String(u8"/") };
+    const std::vector<std::filesystem::path> invalid{ std::filesystem::path(u8".."),
+                                       std::filesystem::path(u8"a/../.."),
+                                       std::filesystem::path(u8"../../x"),
+                                       std::filesystem::path(u8"C:/escape.txt"),
+                                       std::filesystem::path(u8"a\\b"),
+                                       std::filesystem::path(u8"/a.txt"),
+                                       std::filesystem::path(u8"/") };
     for (std::size_t i = 0; i < invalid.size(); ++i) {
-        const String& path = invalid[i];
+        const std::filesystem::path& path = invalid[i];
         EXPECT_EQ(vfs.stat(path).error(), IoError::InvalidPath) << "bad path #" << i;
         EXPECT_EQ(vfs.list(path).error(), IoError::InvalidPath) << "bad path #" << i;
         EXPECT_EQ(vfs.read(path).error(), IoError::InvalidPath) << "bad path #" << i;
@@ -205,14 +205,14 @@ TEST(VfsCoreTest, InvalidPathsAreRejected)
     }
 
     // An invalid path must never create a file.
-    EXPECT_FALSE(vfs.exists(String(u8"C:/escape.txt")));
+    EXPECT_FALSE(vfs.exists(std::filesystem::path(u8"C:/escape.txt")));
 
     // ".." inside a segment is an ordinary name, not a traversal.
     ASSERT_EQ(vfs.addFile(u8"dir/a..b", bytesOf("x")), IoError::Ok);
-    EXPECT_EQ(vfs.stat(u8"dir/a..b")->path, String(u8"dir/a..b"));
+    EXPECT_EQ(vfs.stat(u8"dir/a..b")->path, std::filesystem::path(u8"dir/a..b"));
 
     // "." and repeated separators are folded rather than rejected.
-    EXPECT_EQ(vfs.stat(u8"a/../a.txt")->path, String(u8"a.txt"));
+    EXPECT_EQ(vfs.stat(u8"a/../a.txt")->path, std::filesystem::path(u8"a.txt"));
     EXPECT_EQ(vfs.stat(u8"./a.txt").error(), IoError::Ok);
     EXPECT_EQ(vfs.stat(u8"a//b//c.txt").error(), IoError::NotFound);
 }
@@ -234,7 +234,7 @@ TEST(VfsCoreTest, DirectoryStatAndList)
     ASSERT_TRUE(xml.ok());
     EXPECT_FALSE(xml->is_directory);
     EXPECT_EQ(xml->size, 11u);
-    EXPECT_EQ(xml->path, String(u8"workcell.xml"));
+    EXPECT_EQ(xml->path, std::filesystem::path(u8"workcell.xml"));
 
     const auto root_info = dir->stat(u8"");
     ASSERT_TRUE(root_info.ok());
@@ -244,11 +244,11 @@ TEST(VfsCoreTest, DirectoryStatAndList)
     const auto children = dir->list(u8"");
     ASSERT_TRUE(children.ok());
     ASSERT_EQ(children->size(), 2u);
-    const VfsEntryInfo* geoms = findInfo(children.value(), String(u8"geoms"));
+    const VfsEntryInfo* geoms = findInfo(children.value(), std::filesystem::path(u8"geoms"));
     ASSERT_NE(geoms, nullptr);
     EXPECT_TRUE(geoms->is_directory);
     EXPECT_EQ(geoms->size, 0u);
-    const VfsEntryInfo* leaf = findInfo(children.value(), String(u8"workcell.xml"));
+    const VfsEntryInfo* leaf = findInfo(children.value(), std::filesystem::path(u8"workcell.xml"));
     ASSERT_NE(leaf, nullptr);
     EXPECT_FALSE(leaf->is_directory);
     EXPECT_EQ(leaf->size, 11u);
@@ -256,7 +256,7 @@ TEST(VfsCoreTest, DirectoryStatAndList)
     const auto in_geoms = dir->list(u8"geoms");
     ASSERT_TRUE(in_geoms.ok());
     ASSERT_EQ(in_geoms->size(), 1u);
-    EXPECT_EQ((*in_geoms)[0].path, String(u8"geoms/a.bin"));
+    EXPECT_EQ((*in_geoms)[0].path, std::filesystem::path(u8"geoms/a.bin"));
     EXPECT_EQ((*in_geoms)[0].size, 3u);
 
     EXPECT_EQ(dir->list(u8"workcell.xml").error(), IoError::NotADirectory);
@@ -273,7 +273,7 @@ TEST(VfsCoreTest, DirectoryVfsNeverEscapesItsRoot)
 
     // Joining an absolute path with std::filesystem *replaces* the root, so it
     // has to be rejected before the path reaches the filesystem.
-    const String escape{ (outside.path() / "escaped.txt").u8string() };
+    const std::filesystem::path escape{ (outside.path() / "escaped.txt").u8string() };
     EXPECT_EQ(dir->addFile(escape, bytesOf("x")), IoError::InvalidPath);
     EXPECT_EQ(dir->addFile(escape, bytesOf("x")), IoError::InvalidPath);
     EXPECT_EQ(dir->stat(escape).error(), IoError::InvalidPath);
@@ -366,7 +366,7 @@ TEST(VfsCoreTest, ZipCreateDirectoriesMakesTheWholeChain)
     const auto top = vfs.list(u8"");
     ASSERT_TRUE(top.ok());
     ASSERT_EQ(top->size(), 1u);
-    EXPECT_EQ((*top)[0].path, String(u8"two"));
+    EXPECT_EQ((*top)[0].path, std::filesystem::path(u8"two"));
 
     ASSERT_EQ(vfs.addFile(u8"file.txt", bytesOf("x")), IoError::Ok);
     EXPECT_EQ(vfs.createDirectories(u8"file.txt"), IoError::AlreadyExists);
@@ -480,11 +480,11 @@ TEST(VfsCoreTest, ZipDirectoryEntriesSurviveSaveAndOpen)
     const auto children = opened->list(u8"");
     ASSERT_TRUE(children.ok());
     ASSERT_EQ(children->size(), 3u);
-    ASSERT_NE(findInfo(children.value(), String(u8"empty")), nullptr);
-    EXPECT_TRUE(findInfo(children.value(), String(u8"empty"))->is_directory);
-    ASSERT_NE(findInfo(children.value(), String(u8"nested")), nullptr);
-    EXPECT_TRUE(findInfo(children.value(), String(u8"nested"))->is_directory);
-    EXPECT_EQ(findInfo(children.value(), String(u8"a.txt"))->size, 1u);
+    ASSERT_NE(findInfo(children.value(), std::filesystem::path(u8"empty")), nullptr);
+    EXPECT_TRUE(findInfo(children.value(), std::filesystem::path(u8"empty"))->is_directory);
+    ASSERT_NE(findInfo(children.value(), std::filesystem::path(u8"nested")), nullptr);
+    EXPECT_TRUE(findInfo(children.value(), std::filesystem::path(u8"nested"))->is_directory);
+    EXPECT_EQ(findInfo(children.value(), std::filesystem::path(u8"a.txt"))->size, 1u);
 }
 
 TEST(VfsCoreTest, DirectoryCreateRenameRemove)

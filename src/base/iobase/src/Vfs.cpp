@@ -12,12 +12,12 @@ V_IO_NS_BEGIN
 
 Vfs::~Vfs() = default;
 
-String VfsEntryInfo::name() const
+std::filesystem::path VfsEntryInfo::name() const
 {
     return detail::nameOf(path);
 }
 
-VfsEntryKind Vfs::kindOf(const String& path) const
+VfsEntryKind Vfs::kindOf(const std::filesystem::path& path) const
 {
     const Result<VfsEntryInfo> info = stat(path);
     if (!info.ok()) {
@@ -26,24 +26,24 @@ VfsEntryKind Vfs::kindOf(const String& path) const
     return info.value().is_directory ? VfsEntryKind::Directory : VfsEntryKind::File;
 }
 
-bool Vfs::exists(const String& path) const
+bool Vfs::exists(const std::filesystem::path& path) const
 {
     return stat(path).ok();
 }
 
-bool Vfs::isFile(const String& path) const
+bool Vfs::isFile(const std::filesystem::path& path) const
 {
     const Result<VfsEntryInfo> info = stat(path);
     return info.ok() && !info.value().is_directory;
 }
 
-bool Vfs::isDirectory(const String& path) const
+bool Vfs::isDirectory(const std::filesystem::path& path) const
 {
     const Result<VfsEntryInfo> info = stat(path);
     return info.ok() && info.value().is_directory;
 }
 
-IoError Vfs::addFile(const String& path, std::span<const Fragment> fragments)
+IoError Vfs::addFile(const std::filesystem::path& path, std::span<const Fragment> fragments)
 {
     if (isReadOnly()) {
         return IoError::ReadOnly;
@@ -67,7 +67,7 @@ IoError Vfs::addFile(const String& path, std::span<const Fragment> fragments)
     return addFile(path, std::span<const unsigned char>(bytes));
 }
 
-IoError Vfs::addFile(const String& path, std::shared_ptr<DataSource> source)
+IoError Vfs::addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source)
 {
     if (isReadOnly()) {
         return IoError::ReadOnly;
@@ -92,7 +92,7 @@ IoError Vfs::addFile(const String& path, std::shared_ptr<DataSource> source)
     return addFile(path, std::span<const unsigned char>(bytes));
 }
 
-IoError Vfs::addDirectory(const String& prefix, const std::filesystem::path& dir)
+IoError Vfs::addDirectory(const std::filesystem::path& prefix, const std::filesystem::path& dir)
 {
     std::error_code ec;
     if (!std::filesystem::is_directory(dir, ec) || ec) {
@@ -112,10 +112,9 @@ IoError Vfs::addDirectory(const String& prefix, const std::filesystem::path& dir
             return IoError::IoFailure;
         }
 
-        const std::string suffix = relative.generic_string();
-        const String      path   = prefix.empty()
-                                       ? detail::fromUtf8(suffix.c_str(), suffix.size())
-                                       : String(prefix.as_std_u8str() + u8"/" + detail::fromUtf8(suffix.c_str(), suffix.size()).as_std_u8str());
+        // Joined as virtual paths, so the spelling stays '/'-separated: the host would
+        // have spelled the relative part with '\' on Windows, which is not a virtual path.
+        const std::filesystem::path path = detail::joinVfs(prefix, relative);
 
         if (it->is_directory(ec)) {
             if (ec) {

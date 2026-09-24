@@ -55,6 +55,31 @@
 > **条目记录带上校验和（同日）**：`VfsEntryInfo` 增加 `crc`（后端记录的内容校验和，未记录为 0）；`Zip::entries`
 > 与 `ZipArchive::stat` / `list` / `index` 都填它（源归档条目有值，缓冲 / 文件 / 生成条目在写出前为 0），`DirectoryVfs` 恒为 0；
 > `ZipArchive::Entry` 不再自带 `size` / `crc` / `is_directory`，改为内嵌 `VfsEntryInfo info`（path 仍由表键承担）。> `test_iobase` 39/39（S3b 时点记录；HEAD 重构后为 45 例），`test_robotics_io` / `test_core` / `test_crypto` / `test_runtime` / `test_system` 全绿。
+> **虚拟路径统一到 `std::filesystem::path` + 归档名字“不拒收”解码（同日，用户决策，取代上一版 `String` 载体方案）**：
+> 上一版把虚拟树里的名字当**字节载体**（`vine::String`），理由是归档名字可能根本不是文本、`fs::path` 在 Windows 上装不下
+> 非法 UTF-8（构造即抛）。用户否掉了它：`path` 与 `String` 混用才是真正的问题（"统一，要么都用 path，要么都用 String"），
+> 而"装不下"要靠**解码策略**解决，不是换类型 —— `String` 一样要面对非法字节，只是把问题推迟到边界。
+> 现在分工固定：**路径一律 `std::filesystem::path`**（虚拟与真实同型），**内容一律字节**（`span<const unsigned char>`）。
+> 代价（用户明确接受）：`addFile(path, real_path)` 两个参数同型，传反从编译错变成语义错。
+> 解码策略是唯一一处"猜"，且**永不失败**（`detail::fromStoredName` 按序降级）：
+> 1. **合法 UTF-8** → 直接用（现代写入方；EFS/UTF-8 位与 Info-ZIP Unicode Path extra field 0x7075 的升级在 libzip 读中央目录时已完成）；
+> 2. **本机代码页** → 历史写入方（GBK 名字读回它的文本）；转换失败会抛 `std::system_error`，故这一步包在 `try` 里；
+> 3. **都不是** → `detail::promoteBytesToText`：每个字节写成同值码点（经典保字节拼写）。它是**单射**（不同名字不会撞成一个）、
+>    **不会失败**，于是"名字读不出"不再等于"条目不可达"。
+> 配套三条：
+> - **读归档取原样字节**：`readEntries` 传 `ZIP_FL_ENC_RAW` —— libzip 默认把非 UTF-8 当 CP437 翻译成 UTF-8，那是**编造**原文没有的文本；
+> - **重打包写回原字节**：`StoredEntry::stored` / `ZipArchive::Entry::stored_name` 保存归档里的原始拼写，`emit()` 优先用它
+>   （`zip_file_add(..., ZIP_FL_OVERWRITE)`，不强制 `ZIP_FL_ENC_UTF_8` —— 强制声明会让 libzip 直接拒收非 UTF-8 名字）；
+>   所以"从外国归档读进树、未改名、再写出"是**字节保真**的，其余条目按 UTF-8 写出；
+> - **按名字查条目也认解码结果**：`detail::locateEntry` 先按 UTF-8 拼写与存储字节比对，未命中再逐条解码比对文本，
+>   于是"树里拿到的名字"必然能读回内容（`Zip::readEntry` 两个重载都走它）；目录标记取自归档（尾 `/`），不再要求调用方带尾斜杠。
+> 建虚拟路径**不要用 `operator/`**（Windows 上拼原生 `\` → 被路径校验拒），用 `detail::joinVfs`；归档字节映射用 `detail::toUtf8Generic`。
+> 回归用例 `tests/test_iobase/EncodingTest.cpp`（5 例）：非 ASCII 名字的三条边界（真实目录 ↔ 虚拟路径 ↔ ZIP 条目名）+
+> legacy 本机编码名往返 + **既非 UTF-8 也非本机编码的名字仍可列出 / 读回 / 原字节写回**
+> （夹具由归档字节就地改写名字、等长替换并清掉 UTF-8 位得到，因为本库已无法写出这样的名字）。
+> 实测 `test_iobase` 全绿（EncodingTest 5/5）、`test_robotics_io` 全绿、`urdf2vine` 通过、include hygiene 0。
+> 已知取舍：`DirectoryVfs` 落地到真实磁盘那一步仍要求名字能转成宿主文件名（真实名字由宿主决定）；`fs::path` 的值语义
+> 本来就是宿主语义（`a\b` 在 Windows 是两个组件、`C:/x` 在 Windows 是绝对），故 `normalizeVfsPath` 仍显式拒 `\` / `:` / 前导 `/`。
 > 下一步：`Vfs` 的流式读写面（§8）与 `ZipVfs` 的流式写开口（§15.7）。
 >
 > 关联：外部《VFS 需求设计文档 v2.0》（下称"需求文档"）；第一个消费者
@@ -173,7 +198,7 @@ namespace vine::io::detail {
 /// @param path 调用方给的原始路径（"" 表示根）。
 /// @param out 接收规范化结果（无首尾 '/'、无空段；根为 ""）；失败时不改动。
 /// @return Ok，或 InvalidPath（下表任一规则不满足）。
-IoError normalizeVfsPath(const String& path, String& out);
+IoError normalizeVfsPath(const std::filesystem::path& path, std::filesystem::path& out);
 } // namespace vine::io::detail
 ```
 
@@ -187,6 +212,7 @@ IoError normalizeVfsPath(const String& path, String& out);
 | 嵌入 `\0` | 拒绝 |
 | `..` | **按段判断**：抵消上一段；抵消到根之外 → `InvalidPath`。（旧的子串判断会误杀 `a..b` 这类合法名，S1 已修正） |
 | `:` 段 | 拒绝（Windows 盘符 / UNC / 类 URI 段）→ `InvalidPath`。这是 S1 真正堵掉的漏洞 |
+| 非文本条目名 | **不拒收**：归档里的字节不是任何编码的文本时，按“合法 UTF-8 → 本机代码页 → 每个字节提为一个同值码点”解码（`detail::fromStoredName`），条目仍然列得出、读得回；归档里的原字节在重打包时原样写回（§9） |
 | 后端落地 | 后端把规范化后的相对路径拼到自己的根上，并**再验证** `is_absolute()` / `has_root_name()`（双保险） |
 
 实现要点：
@@ -206,13 +232,13 @@ IoError normalizeVfsPath(const String& path, String& out);
 /// @brief 虚拟文件/目录的最小信息（需求文档 §6.6）。
 struct V_IOBASE_API VfsEntryInfo
 {
-    String        path;                  // 完整规范化路径（根为 ""）
+    std::filesystem::path path;          // 完整规范化路径（空路径是根）
     bool          is_directory{ false };
     std::uint64_t size{ 0 };             // 目录恒为 0
     std::uint32_t crc{ 0 };              // 后端记录的内容校验和（ZIP = CRC-32）；没有记录或尚未写出为 0
 
     /// @brief 最后一个路径段，即条目自己的名字；根为空串。
-    [[nodiscard]] String name() const;
+    [[nodiscard]] std::filesystem::path name() const;
 };
 
 /// @brief 路径指向什么（`kindOf` 的返回值）。
@@ -223,9 +249,9 @@ enum class VfsEntryKind : std::uint8_t
     Directory, // 目录（显式，或由更长的路径隐含）
 };
 
-// IMemoryVfs（纯虚）
-virtual Result<VfsEntryInfo>              stat(const String& path) const = 0;
-virtual Result<std::vector<VfsEntryInfo>> list(const String& dir) const = 0;
+// Vfs（纯虚）
+virtual Result<VfsEntryInfo>              stat(const std::filesystem::path& path) const = 0;
+virtual Result<std::vector<VfsEntryInfo>> list(const std::filesystem::path& dir) const = 0;
 ```
 
 - **没有 out-parameter**：查询返回 `Result<T>`，调用点写成 `if (const auto info = vfs.stat(p)) { ... }`。
@@ -265,12 +291,12 @@ virtual Result<std::vector<VfsEntryInfo>> list(const String& dir) const = 0;
 ## 7. 目录与文件操作（S2 + S2.5 已实现）
 
 ```cpp
-// IMemoryVfs（纯虚），三个操作家族都是"单个"+"递归/整体"一对
-virtual IoError createDirectory(const String& path) = 0;    // mkdir：父目录必须已在
-virtual IoError createDirectories(const String& path) = 0;  // mkdir -p：已存在不算错
-virtual IoError rename(const String& from, const String& to) = 0;
-virtual IoError remove(const String& path) = 0;             // 文件或空目录
-virtual IoError removeAll(const String& path) = 0;          // 文件或整棵子树
+// Vfs（纯虚），三个操作家族都是"单个"+"递归/整体"一对
+virtual IoError createDirectory(const std::filesystem::path& path) = 0;    // mkdir：父目录必须已在
+virtual IoError createDirectories(const std::filesystem::path& path) = 0;  // mkdir -p：已存在不算错
+virtual IoError rename(const std::filesystem::path& from, const std::filesystem::path& to) = 0;
+virtual IoError remove(const std::filesystem::path& path) = 0;             // 文件或空目录
+virtual IoError removeAll(const std::filesystem::path& path) = 0;          // 文件或整棵子树
 ```
 
 **为什么把 `recursive` 布尔参数换成两个函数**：一是 `createDirectory(p, true)` 在调用点看不出意图，
@@ -370,10 +396,10 @@ class V_IOBASE_API VfsReadStream
     [[nodiscard]] virtual IoError seek(std::uint64_t offset) = 0;
 };
 
-[[nodiscard]] virtual Result<std::unique_ptr<VfsReadStream>> openRead(const String& path) const = 0;
+[[nodiscard]] virtual Result<std::unique_ptr<VfsReadStream>> openRead(const std::filesystem::path& path) const = 0;
 
 /// @brief Push 变体：后端把数据一块块推给 sink，调用方不拿整条。
-[[nodiscard]] virtual IoError read(const String& path, DataSink& sink) const = 0;
+[[nodiscard]] virtual IoError read(const std::filesystem::path& path, DataSink& sink) const = 0;
 ```
 
 - **pull 流**：调用方控节奏（解析器、拷进 GPU 缓冲、分块处理）；
@@ -619,13 +645,13 @@ libzip 的 `zip_source_buffer(za, ptr, len, 0)` 是**借用**（`freep=0` 不拷
 ## 10. `MountVfs`：多后端一棵树
 
 ```cpp
-class V_IOBASE_API MountVfs : public IMemoryVfs
+class V_IOBASE_API MountVfs : public Vfs
 {
   public:
     /// @brief 挂载一个后端（前缀 + 优先级 + 只读）。
-    IoError mount(const String& prefix, std::shared_ptr<IMemoryVfs> backend, int priority = 0, bool read_only = false);
+    IoError mount(const std::filesystem::path& prefix, std::shared_ptr<Vfs> backend, int priority = 0, bool read_only = false);
 
-    // IMemoryVfs 全部实现；自身可被挂载（需求文档 §7.7 的嵌套）
+    // Vfs 全部实现；自身可被挂载（需求文档 §7.7 的嵌套）
 };
 ```
 

@@ -24,6 +24,21 @@ namespace detail
 {
 
 /**
+ * @brief The virtual path a UTF-8 text spells.
+ *
+ * Document attributes hold paths as text while the file system speaks
+ * std::filesystem::path, so this is where the two meet. The bytes are taken as UTF-8,
+ * which is what the file system and every archive below it store.
+ *
+ * @param text The path as written, in UTF-8.
+ * @return The path; an empty text is the virtual root.
+ */
+inline std::filesystem::path vfsPath(const vine::String& text)
+{
+    return std::filesystem::path(text.as_std_u8str());
+}
+
+/**
  * @brief Reads a whole virtual file as UTF-8 text.
  *
  * The file system itself deals in bytes; this is the text view the XML parsers need.
@@ -32,7 +47,7 @@ namespace detail
  * @param path The virtual file path.
  * @return The text, or the failure read() would report.
  */
-inline vine::io::Result<vine::String> readText(const vine::io::Vfs& vfs, const vine::String& path)
+inline vine::io::Result<vine::String> readText(const vine::io::Vfs& vfs, const std::filesystem::path& path)
 {
     const auto bytes = vfs.read(path);
     if (!bytes) {
@@ -53,7 +68,7 @@ inline vine::io::Result<vine::String> readText(const vine::io::Vfs& vfs, const v
  * @param text The UTF-8 text to store.
  * @return The failure addFile() would report.
  */
-inline vine::io::IoError writeText(vine::io::Vfs& vfs, const vine::String& path, const vine::String& text)
+inline vine::io::IoError writeText(vine::io::Vfs& vfs, const std::filesystem::path& path, const vine::String& text)
 {
     const auto* bytes = reinterpret_cast<const unsigned char*>(text.data());
     return vfs.addFile(path, std::span<const unsigned char>(bytes, text.size()));
@@ -196,29 +211,27 @@ inline bool strToVec3(const String& str, math::Vec3d& out)
 /**
  * @brief Returns the parent directory part of a VFS path.
  *
- * @param path The VFS path ('/' separated).
- * @return The substring before the last '/', or empty when path has no '/'.
+ * @param path The VFS path.
+ * @return The parent path, or an empty path when path has no parent.
  */
-inline String vfsParentDir(const String& path)
+inline std::filesystem::path vfsParentDir(const std::filesystem::path& path)
 {
-    const std::string text = path.as_std_str();
-    const std::size_t pos  = text.find_last_of('/');
-    if (pos == std::string::npos) {
-        return String();
-    }
-    return String(reinterpret_cast<const char8_t*>(text.data()), pos);
+    return path.parent_path();
 }
 
 /**
- * @brief Converts a filesystem path to its file name as a String.
+ * @brief Converts a filesystem path to its file name as a virtual path.
+ *
+ * The name is taken from the path's own form: the native narrow form would encode a
+ * non-ASCII name in the local code page, which the file system - and every archive
+ * below it - would then read as broken UTF-8.
  *
  * @param path The filesystem path.
- * @return The leaf file name.
+ * @return The leaf name.
  */
-inline String pathLeafName(const std::filesystem::path& path)
+inline std::filesystem::path pathLeafName(const std::filesystem::path& path)
 {
-    const std::string leaf = path.filename().string();
-    return String(reinterpret_cast<const char8_t*>(leaf.data()), leaf.size());
+    return path.filename();
 }
 
 /**

@@ -104,7 +104,7 @@ class V_IOBASE_API Zip
      * an opened archive checks it - libzip itself does not.
      *
      * @param path Input .zip file path.
-     * @param name Entry name to read; a trailing '/' marks a directory.
+     * @param name Entry name to read; the name the listing reported, or one ending in '/'.
      * @return The entry bytes, IoError::NotFound when the file or the entry is
      *         missing, IoError::InvalidData when the file is not an archive,
      *         IoError::InvalidPath when name is empty, IoError::IsADirectory when
@@ -112,7 +112,7 @@ class V_IOBASE_API Zip
      *         read or its content does not match the recorded checksum.
      */
     [[nodiscard]] static Result<std::vector<unsigned char>> readEntry(const std::filesystem::path& path,
-                                                                     const String& name);
+                                                                     const std::filesystem::path& name);
 
     /**
      * @brief Reads one entry of an in-memory ZIP.
@@ -121,7 +121,7 @@ class V_IOBASE_API Zip
      * an opened archive checks it - libzip itself does not.
      *
      * @param bytes ZIP bytes, which must stay readable for the call.
-     * @param name Entry name to read; a trailing '/' marks a directory.
+     * @param name Entry name to read; the name the listing reported, or one ending in '/'.
      * @return The entry bytes, IoError::NotFound when the entry is missing,
      *         IoError::InvalidData when the bytes are not an archive,
      *         IoError::InvalidPath when name is empty, IoError::IsADirectory when
@@ -129,7 +129,7 @@ class V_IOBASE_API Zip
      *         read or its content does not match the recorded checksum.
      */
     [[nodiscard]] static Result<std::vector<unsigned char>> readEntry(std::span<const unsigned char> bytes,
-                                                                     const String& name);
+                                                                     const std::filesystem::path& name);
 };
 
 V_IO_NS_END

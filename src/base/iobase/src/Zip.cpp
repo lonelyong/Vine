@@ -91,7 +91,7 @@ Result<std::vector<unsigned char>> Zip::decompress(std::span<const unsigned char
 IoError Zip::compressDirectory(const std::filesystem::path& dir_path, const std::filesystem::path& zip_path)
 {
     ZipArchive    archive;
-    const IoError imported = archive.addDirectory(String{}, dir_path);
+    const IoError imported = archive.addDirectory(std::filesystem::path{}, dir_path);
     if (imported != IoError::Ok) {
         return imported;
     }
@@ -135,9 +135,19 @@ IoError Zip::decompressFile(const std::filesystem::path& zip_path, const std::fi
             break;
         }
 
-        const std::filesystem::path target =
-            dir_path / std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(st.name)));
-        if (name.back() == '/') {
+        // Decoded the way the tree decodes it, so an entry the VFS can read can also be
+        // written out; a name that is text in no encoding this host knows is reported
+        // instead of being guessed at.
+        bool                  is_directory = false;
+        std::filesystem::path entry_name;
+        const IoError         decoded = detail::fromStoredName(st.name, name.size(), entry_name, is_directory);
+        if (decoded != IoError::Ok) {
+            result = decoded;
+            break;
+        }
+
+        const std::filesystem::path target = dir_path / entry_name;
+        if (is_directory) {
             if (!std::filesystem::create_directories(target, ec) && ec) {
                 result = IoError::IoFailure;
                 break;
@@ -236,7 +246,8 @@ Result<std::vector<VfsEntryInfo>> Zip::entries(std::span<const unsigned char> by
     return detail::toEntryInfos(result.value());
 }
 
-Result<std::vector<unsigned char>> Zip::readEntry(const std::filesystem::path& path, const String& name)
+Result<std::vector<unsigned char>> Zip::readEntry(const std::filesystem::path& path,
+                                                 const std::filesystem::path& name)
 {
     if (name.empty()) {
         return IoError::InvalidPath;
@@ -252,21 +263,24 @@ Result<std::vector<unsigned char>> Zip::readEntry(const std::filesystem::path& p
     }
 
     const std::string path_utf8 = detail::toUtf8(path);
-    const auto*       name_utf8 = reinterpret_cast<const char*>(name.data());
     int               error     = 0;
     zip_t* const      archive   = zip_open(path_utf8.c_str(), ZIP_RDONLY, &error);
     if (archive == nullptr) {
         return IoError::InvalidData;
     }
-    const zip_int64_t index = zip_name_locate(archive, name_utf8, ZIP_FL_ENC_UTF_8);
-    if (index < 0) {
+    // The lookup first compares the bytes we hold with the bytes the archive stored, and
+    // falls back to comparing decoded names, so a legacy name is found by what it says
+    // rather than by the spelling this side happens to use.
+    detail::LocatedEntry located;
+    if (!detail::locateEntry(archive, name, located)) {
         zip_close(archive);
         return IoError::NotFound;
     }
-    if (name.as_std_u8str().back() == u8'/') {
+    if (located.is_directory) {
         zip_close(archive);
         return IoError::IsADirectory; // the trailing '/' is how a ZIP marks a directory
     }
+    const zip_int64_t index = located.index;
 
     struct zip_stat st;
     zip_stat_init(&st);
@@ -303,7 +317,8 @@ Result<std::vector<unsigned char>> Zip::readEntry(const std::filesystem::path& p
     return out;
 }
 
-Result<std::vector<unsigned char>> Zip::readEntry(std::span<const unsigned char> bytes, const String& name)
+Result<std::vector<unsigned char>> Zip::readEntry(std::span<const unsigned char> bytes,
+                                                 const std::filesystem::path& name)
 {
     if (name.empty()) {
         return IoError::InvalidPath;
@@ -325,30 +340,27 @@ Result<std::vector<unsigned char>> Zip::readEntry(std::span<const unsigned char>
         return IoError::InvalidData;
     }
 
-    const auto*       name_utf8 = reinterpret_cast<const char*>(name.data());
-    const zip_int64_t index     = zip_name_locate(archive, name_utf8, ZIP_FL_ENC_UTF_8);
-    if (index < 0) {
+    // Same lookup as the file overload: stored bytes first, decoded names second.
+    detail::LocatedEntry located;
+    if (!detail::locateEntry(archive, name, located)) {
         zip_close(archive);
-        zip_error_fini(&error);
         return IoError::NotFound;
     }
-    if (name.as_std_u8str().back() == u8'/') {
+    if (located.is_directory) {
         zip_close(archive);
-        zip_error_fini(&error);
         return IoError::IsADirectory; // the trailing '/' is how a ZIP marks a directory
     }
+    const zip_int64_t index = located.index;
 
     struct zip_stat st;
     zip_stat_init(&st);
     if (zip_stat_index(archive, index, 0, &st) != 0) {
         zip_close(archive);
-        zip_error_fini(&error);
         return IoError::IoFailure;
     }
     zip_file_t* const file = zip_fopen_index(archive, index, 0);
     if (file == nullptr) {
         zip_close(archive);
-        zip_error_fini(&error);
         return IoError::IoFailure;
     }
 

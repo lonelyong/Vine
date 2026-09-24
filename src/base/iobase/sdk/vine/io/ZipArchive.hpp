@@ -7,6 +7,7 @@
 #include <memory>
 #include <ostream>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <vine/io/IoError.hpp>
@@ -130,7 +131,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @return The information, or IoError::NotFound when nothing is there,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] Result<VfsEntryInfo> stat(const String& path) const override;
+    [[nodiscard]] Result<VfsEntryInfo> stat(const std::filesystem::path& path) const override;
 
     /**
      * @brief Lists the direct children of a virtual directory.
@@ -140,7 +141,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         IoError::NotADirectory when dir names a file,
      *         IoError::InvalidPath when dir is not a valid virtual path.
      */
-    [[nodiscard]] Result<std::vector<VfsEntryInfo>> list(const String& dir) const override;
+    [[nodiscard]] Result<std::vector<VfsEntryInfo>> list(const std::filesystem::path& dir) const override;
 
     /**
      * @brief Adds a whole virtual file whose content is buffered here.
@@ -151,7 +152,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         IoError::IsADirectory when the name is taken by a directory,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] IoError addFile(const String& path, std::span<const unsigned char> bytes) override;
+    [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes) override;
 
     /**
      * @brief Creates a virtual directory.
@@ -162,7 +163,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         the parent is missing, IoError::NotADirectory when a file blocks the
      *         way, IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] IoError createDirectory(const String& path) override;
+    [[nodiscard]] IoError createDirectory(const std::filesystem::path& path) override;
 
     /**
      * @brief Creates a virtual directory together with every missing parent.
@@ -173,7 +174,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         IoError::NotADirectory when a file blocks the way,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] IoError createDirectories(const String& path) override;
+    [[nodiscard]] IoError createDirectories(const std::filesystem::path& path) override;
 
     /**
      * @brief Renames or moves a file or a whole subtree.
@@ -186,7 +187,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         taken, IoError::NotADirectory when a file blocks the target's parent,
      *         IoError::InvalidPath when either path is invalid or to lies below from.
      */
-    [[nodiscard]] IoError rename(const String& from, const String& to) override;
+    [[nodiscard]] IoError rename(const std::filesystem::path& from, const std::filesystem::path& to) override;
 
     /**
      * @brief Removes a file or an empty directory.
@@ -197,7 +198,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         directory still holds entries, IoError::InvalidPath when path is not a
      *         valid virtual path.
      */
-    [[nodiscard]] IoError remove(const String& path) override;
+    [[nodiscard]] IoError remove(const std::filesystem::path& path) override;
 
     /**
      * @brief Removes a file or a whole subtree.
@@ -207,7 +208,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         IoError::NotFound when nothing is there, IoError::InvalidPath when path
      *         is not a valid virtual path.
      */
-    [[nodiscard]] IoError removeAll(const String& path) override;
+    [[nodiscard]] IoError removeAll(const std::filesystem::path& path) override;
 
     /**
      * @brief Adds a whole virtual file whose content comes from the local file system.
@@ -222,7 +223,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         IoError::IsADirectory when the name is taken by a directory,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] IoError addFile(const String& path, const std::filesystem::path& real_path) override;
+    [[nodiscard]] IoError addFile(const std::filesystem::path& path, const std::filesystem::path& real_path) override;
 
     /**
      * @brief Reads a whole virtual file, decompressing it on demand.
@@ -236,7 +237,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         IoError::IoFailure when the content cannot be read,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] Result<std::vector<unsigned char>> read(const String& path) const override;
+    [[nodiscard]] Result<std::vector<unsigned char>> read(const std::filesystem::path& path) const override;
 
     /**
      * @brief Opens a chunk-wise reader over one entry.
@@ -245,7 +246,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @return The reader, IoError::NotFound when there is no such entry,
      *         IoError::IsADirectory when name is a directory.
      */
-    [[nodiscard]] Result<std::unique_ptr<VfsReadStream>> openRead(const String& name) const;
+    [[nodiscard]] Result<std::unique_ptr<VfsReadStream>> openRead(const std::filesystem::path& name) const;
 
     /**
      * @brief Adds a whole virtual file whose content comes from a pull source.
@@ -261,7 +262,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         the name is taken by a directory, IoError::InvalidPath when path is
      *         not a valid virtual path.
      */
-    [[nodiscard]] IoError addFile(const String& path, std::shared_ptr<DataSource> source) override;
+    [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source) override;
 
     /**
      * @brief Adds a whole virtual file stored as several separate byte ranges.
@@ -277,7 +278,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *         IoError::IsADirectory when the name is taken by a directory,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
-    [[nodiscard]] IoError addFile(const String& path, std::span<const Fragment> fragments) override;
+    [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::span<const Fragment> fragments) override;
 
     /**
      * @brief Writes the whole archive to a ZIP file, streaming entry by entry.
@@ -341,7 +342,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @param normalized A normalized virtual path; empty denotes the root.
      * @return true when the path names a directory.
      */
-    [[nodiscard]] bool isDirectoryPath(const String& normalized) const;
+    [[nodiscard]] bool isDirectoryPath(const std::filesystem::path& normalized) const;
 
     /**
      * @brief Reports whether a file blocks a path or one of its ancestors.
@@ -350,7 +351,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @return IoError::NotADirectory when the nearest existing part of the path is a
      *         file, IoError::Ok otherwise.
      */
-    [[nodiscard]] IoError ancestorBlockerOf(const String& normalized) const;
+    [[nodiscard]] IoError ancestorBlockerOf(const std::filesystem::path& normalized) const;
 
     /**
      * @brief Inserts a directory marker, checked by the caller.
@@ -363,7 +364,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      *        needs a marker.
      * @return true on success.
      */
-    bool insertDirectory(const String& path);
+    bool insertDirectory(const std::filesystem::path& path);
 
     /**
      * @brief Inserts or replaces an entry whose content is buffered here.
@@ -372,7 +373,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @param bytes The content; it is copied into the entry table.
      * @return true on success.
      */
-    bool insertBytes(const String& path, std::span<const unsigned char> bytes);
+    bool insertBytes(const std::filesystem::path& path, std::span<const unsigned char> bytes);
 
     /**
      * @brief Inserts or replaces a file-backed entry.
@@ -384,7 +385,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @param src_path The physical file to read from.
      * @return true on success.
      */
-    bool insertFileBacked(const String& path, const std::filesystem::path& src_path);
+    bool insertFileBacked(const std::filesystem::path& path, const std::filesystem::path& src_path);
 
     /**
      * @brief Reports what a stored entry name refers to.
@@ -396,7 +397,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @param name A stored entry name; empty denotes the root.
      * @return The kind of the name.
      */
-    [[nodiscard]] VfsEntryKind entryKindOf(const String& name) const;
+    [[nodiscard]] VfsEntryKind entryKindOf(const std::filesystem::path& name) const;
 
     /**
      * @brief Reports the uncompressed size of one stored entry.
@@ -404,7 +405,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @param name A stored entry name.
      * @return The size in bytes, or 0 when there is no such entry.
      */
-    [[nodiscard]] std::uint64_t sizeOf(const String& name) const;
+    [[nodiscard]] std::uint64_t sizeOf(const std::filesystem::path& name) const;
 
     /**
      * @brief Reports the content checksum of one stored entry.
@@ -415,7 +416,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @param name A stored entry name.
      * @return The checksum, or 0 when there is no such entry or none is recorded.
      */
-    [[nodiscard]] std::uint32_t crcOf(const String& name) const;
+    [[nodiscard]] std::uint32_t crcOf(const std::filesystem::path& name) const;
 
     /**
      * @brief Lists the direct children of one directory.
@@ -423,7 +424,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @param dir A directory path; empty denotes the archive root.
      * @return The children, one segment deep and deduplicated, with full paths.
      */
-    [[nodiscard]] std::vector<VfsEntryInfo> children(const String& dir) const;
+    [[nodiscard]] std::vector<VfsEntryInfo> children(const std::filesystem::path& dir) const;
 
     /**
      * @brief Lists every entry this archive holds.
@@ -438,7 +439,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @param name A stored entry name.
      * @return true when the entry was there, false when it was not.
      */
-    bool removeEntry(const String& name);
+    bool removeEntry(const std::filesystem::path& name);
 
     /**
      * @brief Renames one stored entry.
@@ -447,7 +448,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @param to The new entry name; it must not be taken.
      * @return true on success.
      */
-    bool renameEntry(const String& from, const String& to);
+    bool renameEntry(const std::filesystem::path& from, const std::filesystem::path& to);
 
     /**
      * @brief Reads one entry by the name the archive stores it under.
@@ -455,7 +456,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      * @param name An entry name as stored, already normalized by the caller.
      * @return The entry bytes, or the failure the entry read reports.
      */
-    [[nodiscard]] Result<std::vector<unsigned char>> readStored(const String& name) const;
+    [[nodiscard]] Result<std::vector<unsigned char>> readStored(const std::filesystem::path& name) const;
 
     /**
      * @brief Where the content of one entry comes from.
@@ -469,6 +470,7 @@ class V_IOBASE_API ZipArchive : public Vfs
         std::vector<unsigned char>  data;                  ///< Buffered content.
         std::filesystem::path       src;                   ///< Content file when from_file is true.
         std::shared_ptr<DataSource> generator;             ///< Pull source, read while the archive is written.
+        std::string                 stored_name;           ///< Name the source archive held, verbatim; empty for an entry this archive created itself.
         std::uint64_t               source_index{ 0 };     ///< Index in the source archive when from_source is true.
         bool                        from_file{ false };
         bool                        from_source{ false }; ///< Content still lives in the opened archive.
@@ -578,7 +580,7 @@ class V_IOBASE_API ZipArchive : public Vfs
      */
     [[nodiscard]] IoError adoptFile(const std::filesystem::path& path);
 
-    std::map<String, Entry>        entries_;      ///< Entry name to where its content comes from.
+    std::map<std::filesystem::path, Entry> entries_; ///< Entry name to where its content comes from.
     std::shared_ptr<ArchiveHandle> handle_;       ///< The source archive, when this one was opened.
     std::filesystem::path          source_path_;  ///< File the handle came from, when it is file-backed.
     bool                           read_only_{ false }; ///< Set by open() with OpenMode::ReadOnly.
