@@ -32,6 +32,7 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
+#include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
 // TestHostWindow is an XCB window, so the cases that use it reach for the connection themselves; the guard
@@ -1692,6 +1693,246 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     EXPECT_EQ(seen, 0U) << "and every one of them is served silently";
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
+TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
+{
+    // B6'S SCALE, MADE A RECIPE. The registry (§6) keeps B6 gated on "a host with a MULTI-CHANNEL mesh
+    // reports upload bandwidth", and the mechanism is right there in the code: the stream key of EVERY
+    // channel - and of the index stream - carries the GEOMETRY's announced revision (see
+    // src/api/GeometryFacts.cpp), so one `bumpRevision()` moves the identity of all of them and the next
+    // frame re-sends every byte of the mesh even when the host touched ONE channel. This recipe is the
+    // cost curve that gate would be judged against: a 512x512 grid with the four canonical channels
+    // (positions, normals, colour, texcoords) and indices, one channel edited per frame - and, for
+    // contrast, ALL channels edited per frame, at the same announced-revision cost.
+    //
+    // The numbers are PRINTED for the design log; what is ASSERTED is the shape B6 would change: one
+    // announcement re-uploads ALL FIVE streams (four channels + the index stream), whether the host
+    // touched one channel or all of them, and it compiles nothing either way.
+    //
+    // Calibration while the recipe was made: 256x256 (4.24 MiB re-sent) cost +11..15 ms/frame and
+    // 512x512 (16.98 MiB) cost +30..42 ms/frame on lavapipe - roughly LINEAR in bytes, so the cost is
+    // the re-sent bytes (at 60 fps the 512 case alone asks for ~1 GB/s of upload bandwidth a host with
+    // per-channel revisions simply would not send).
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth           = 128;
+    constexpr int kHeight          = 96;
+    constexpr int kSide            = 512;
+    constexpr int kFramesPerRegime = 8;
+
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+
+    // A positions-only program: the extra channels are the HOST's mesh, not this shader's business - the
+    // uploads below happen because the geometry ENTRY names them, which is exactly B6's scope.
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+            "{\n"
+            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "} material;\n"
+            "void main() { outColor = material.diffuse; }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    // The mesh: 512x512 vertices with all four canonical channels and the index list every cell needs.
+    const std::size_t vertex_count = static_cast<std::size_t>(kSide) * static_cast<std::size_t>(kSide);
+    const std::size_t index_count =
+        static_cast<std::size_t>(kSide - 1) * static_cast<std::size_t>(kSide - 1) * 6U;
+    const std::size_t stream_bytes = vertex_count * 3U * 4U * 3U  // positions + normals + colour
+                                     + vertex_count * 2U * 4U     // texcoords (two components)
+                                     + (index_count + 6U) * 4U;   // the whole index buffer (see below)
+
+    const auto repeating = [&](std::vector<float> one, std::size_t count) {
+        std::vector<float> values;
+        values.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            values.insert(values.end(), one.begin(), one.end());
+        }
+        return values;
+    };
+
+    const vn::intrusive_ptr<vn::Buffer<float>> normals(
+        new vn::Buffer<float>(repeating({ 0.0F, 0.0F, 1.0F }, vertex_count)));
+    const vn::intrusive_ptr<vn::Buffer<float>> colour(
+        new vn::Buffer<float>(repeating({ 0.8F, 0.8F, 0.8F }, vertex_count)));
+    const vn::intrusive_ptr<vn::Buffer<float>> texcoords(
+        new vn::Buffer<float>(repeating({ 0.0F, 0.0F }, vertex_count)));
+
+    vn::intrusive_ptr<Geometry>          geometry(new Geometry());
+    // The index buffer: the two screen-covering triangles FIRST - they are ALL the draw takes (the
+    // six-index slice below) - then the full grid triangulation. The frame's raster cost therefore
+    // vanishes, while the index STREAM stays the WHOLE buffer: the key normalises to it (see
+    // src/api/GeometryFacts.cpp), which is the part of B6's story this recipe must keep.
+    const std::vector<float> grid_vertex_data = gridPositions(kSide);
+    std::vector<std::uint32_t> index_data{ 0U, static_cast<std::uint32_t>(kSide - 1),
+                                           static_cast<std::uint32_t>(kSide * kSide - 1), 0U,
+                                           static_cast<std::uint32_t>(kSide * kSide - 1),
+                                           static_cast<std::uint32_t>((kSide - 1) * kSide) };
+    {
+        const std::vector<std::uint32_t> grid = gridIndices(kSide);
+        index_data.insert(index_data.end(), grid.begin(), grid.end());
+    }
+
+    vn::intrusive_ptr<vn::Buffer<float>> positions(new vn::Buffer<float>(grid_vertex_data));
+    geometry->setPositions(positions);
+    geometry->setNormals(normals);
+    geometry->addBuffer(vn::graphics::attributeLocation(vn::graphics::VertexAttribute::Color),
+                        vn::graphics::AttributeChannel::shared(colour, 3U));
+    geometry->setTexcoords2(texcoords);
+    geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+                             new vn::Buffer<std::uint32_t>(index_data)),
+                         0U, 6U);
+    geometry->bumpRevision();
+
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.3F, 0.4F, 0.3F, 1.0F));
+
+    std::vector<RenderCommand> commands(1U);
+    commands[0].geometry = geometry;
+    commands[0].material = material;
+    commands[0].program  = program;
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+
+    ContentStore*    store    = BackendContentAccess::store(*backend);
+    ContentAssembly* assembly = BackendContentAccess::assembly(*backend);
+    ASSERT_NE(store, nullptr) << "a live session owns the content tables its frames are built from";
+    ASSERT_NE(assembly, nullptr);
+    VariantPool& pool = BackendContentAccess::pool(*backend);
+
+    const auto drive = [&]() {
+        const auto began = std::chrono::steady_clock::now();
+        backend->beginFrame();
+        backend->beginPass(pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(nullptr);
+        backend->setClearPolicy(clear);
+        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
+        backend->render(commands, camera.get());
+        backend->endPass();
+        backend->endFrame();
+        const auto recorded  = std::chrono::steady_clock::now();
+        backend->swapBuffers();
+        const auto committed = std::chrono::steady_clock::now();
+        const auto micros    = [](auto from, auto to) {
+            return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(to - from).count();
+        };
+        return std::pair<double, double>{ micros(began, recorded), micros(recorded, committed) };
+    };
+
+    std::printf("\n");
+    std::printf("[b6] mesh %dx%d (%zu verts), 4 channels + indices: one announcement re-sends 5 streams "
+                "= %.2f MiB\n",
+                kSide, kSide, vertex_count,
+                static_cast<double>(stream_bytes) / (1024.0 * 1024.0));
+    for (int settle = 0; settle < 6; ++settle) {
+        drive();  // the session's opening frames compile the initial pipelines and settle the window
+    }
+
+    const auto run = [&](const char* label, int frames, auto&& edit) {
+        const EditCostCounters before = readEditCosts(*store, *assembly, pool);
+        double                 record_us = 0.0;
+        double                 commit_us = 0.0;
+        for (int frame = 0; frame < frames; ++frame) {
+            edit(frame);
+            const auto [record, commit] = drive();
+            record_us += record;
+            commit_us += commit;
+        }
+        const EditCostCounters after  = readEditCosts(*store, *assembly, pool);
+        const EditCostDelta    change = editCostDelta(before, after);
+        std::printf("[b6] %-32s record %8.1f us/f  commit %8.1f us/f"
+                    " | builds %+4lld uploads %+4lld created %+4lld reused %+4lld\n",
+                    label, record_us / frames, commit_us / frames, static_cast<long long>(change.builds),
+                    static_cast<long long>(change.uploads), static_cast<long long>(change.created),
+                    static_cast<long long>(change.reused));
+        return std::pair<EditCostCounters, EditCostCounters>{ before, after };
+    };
+
+    {
+        const auto [before, after] = run("steady (nothing edited)", kFramesPerRegime, [](int) {});
+        const EditCostDelta change = editCostDelta(before, after);
+        EXPECT_EQ(change.builds, 0) << "a steady frame builds no row";
+        EXPECT_EQ(change.uploads, 0) << "and uploads nothing";
+        EXPECT_EQ(change.created, 0) << "and compiles nothing";
+    }
+
+    // ONE channel re-authored (a new positions buffer, the spelling the SDK's contract names): the frame
+    // pays for the WHOLE mesh - four channel streams and the index stream all carry the announced
+    // revision. This is the row B6 exists to shrink.
+    {
+        const auto [before, after] = run("one channel re-authored", kFramesPerRegime, [&](int) {
+            positions = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(grid_vertex_data));
+            geometry->setPositions(positions);
+            geometry->bumpRevision();
+        });
+        const EditCostDelta change = editCostDelta(before, after);
+        EXPECT_EQ(change.builds, kFramesPerRegime) << "each announcement is a new revision: one row";
+        EXPECT_EQ(change.created, 0) << "bytes are data: the pipeline key cannot see them";
+        EXPECT_EQ(change.uploads, 5LL * kFramesPerRegime)
+            << "one announcement moves EVERY channel and the index stream - the whole mesh is re-sent";
+    }
+
+    // ALL FOUR channels re-authored in place: the cost must be IDENTICAL to the one-channel row, because
+    // today's granularity is the geometry, not the channel. The contrast is the point: what B6 would buy
+    // is exactly the difference this row does NOT show.
+    {
+        const auto [before, after] = run("all channels re-authored", kFramesPerRegime, [&](int frame) {
+            const auto touch = [&](const vn::intrusive_ptr<vn::Buffer<float>>& buffer) {
+                const auto bytes = buffer->data();
+                bytes[0]         = 0.01F * static_cast<float>(frame + 1);
+                buffer->setRevision(buffer->revision() + 1U);
+            };
+            touch(positions);
+            touch(normals);
+            touch(colour);
+            touch(texcoords);
+            geometry->bumpRevision();
+        });
+        const EditCostDelta change = editCostDelta(before, after);
+        EXPECT_EQ(change.uploads, 5LL * kFramesPerRegime)
+            << "touching four channels costs exactly what touching one costs: no per-channel granularity";
+        EXPECT_EQ(change.created, 0) << "and no variant either way";
+    }
+
+    drive();
+    const auto centre = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
+    EXPECT_TRUE(isColourByte(centre[0], 0.3) && isColourByte(centre[1], 0.4) && isColourByte(centre[2], 0.3))
+        << "the mesh is still what the centre probe sees, got (" << static_cast<int>(centre[0]) << ", "
+        << static_cast<int>(centre[1]) << ", " << static_cast<int>(centre[2]) << ")";
+    EXPECT_EQ(backend->deviceWaits(), 0U) << "re-sending the mesh stops nothing";
     backend->shutdown();
     EXPECT_TRUE(host.alive());
 }

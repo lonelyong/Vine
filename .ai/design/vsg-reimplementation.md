@@ -307,7 +307,7 @@ material 值 / 流字节 / cull 全部**不进**。
 
 | 项 | 内容 | 触发器 |
 | --- | --- | --- |
-| **B6** | `StreamKey.revision` 取 Geometry 的 revision ⇒ 任何数据公告重传所有通道；逐 `Buffer::revision()` 能省未改通道，但契约更弱（漏报静默） | 多通道大网格宿主报上传带宽 |
+| **B6** | `StreamKey.revision` 取 Geometry 的 revision ⇒ 任何数据公告重传所有通道；逐 `Buffer::revision()` 能省未改通道，但契约更弱（漏报静默） | 多通道大网格宿主报上传带宽（**2026-09-25 已量化，见 §11.16cw**：512²×4 通道+索引一次公告重传 16.98 MiB ≈ +30 ms/帧；触发未兑现） |
 | **B7** | 管线销毁与在飞提交的竞态：已按设计规则给破坏路径加计数过的 device idle；此后 20 次单例 + 2 次全量套件 + 两棵树门禁 **0 VUID，未再复现** | 再次出现时先查"最近被替换或逐出的管线"与 teardown 的 `deviceWaits` |
 | **A2 残留** | 共享流的"释放半边"已按新形态改掉（寿命 = 帧点名，`releaseUnseen`）；旧 `reader` 计数与 `release()` 是**旧实现**的缺陷，已随重写退场——此条仅作历史 | — |
 | **A3** | SDK 没有内容释放入口（`releaseGeometry/Material/Program/Texture`）：登记的"不改 SDK" | 宿主报告内存压力 |
@@ -1007,7 +1007,7 @@ material 值 / 流字节 / cull 全部**不进**。
 * **B3** 分配证据的强度被高估：`AllocationGate` 用 `mallinfo2`（`AllocationGate.cpp:21-30`，`__GLIBC__` 限定）⇒ **Windows 上 unsupported**，用例在 unsupported 时把增长当 0（`BackendEvidenceTest.cpp:363`）；且只测净增长，对 churn 免疫 — **缺陷（已修：§11.16bx 加了计数的一半，相位改以计数为判据）** | 它守的命题（"稳态帧不分配"）在**交付平台上没有量具**：Windows 上那条相位退化成"没测"，而本仓已经宣称 Windows 是一等公民（H1）。修法是换量具而不是改断言 —— 需要**计数式**分配门禁（覆写 `operator new/delete` 计数，或注入计数分配器），这本身要新单元 + 相位 + 变异，属独立一片 | 形状：`test_vsg` 里一个只计数不改行为的全局 `operator new` 钩子 + `AllocationGate::countAllocations()`；相位断言"稳态帧分配次数 == 0"（并保留 heap 增长作为第二判据）。**触发器**：B2 落地之前必须先有它（否则 B2 无法证明干净）
 * **B4**（**已测：§11.16cl**，0.53 µs/drawable·次，触发点仅 ~6% 帧预算 ⇒ 不改）`Scene::collectRenderCommandsShared` 每次收集分配 3 个 vector（`Scene.cpp:468/497/512`）并把整表搬 2~3 遍，`commands` 无 `reserve` — **缺陷（登记）** | 相机每动一帧就整份重来，是**引擎侧**（不在本轮前端改动范围内），而它的可见代价取决于命令数与 `sizeof(RenderCommand)`（≈200 B，含 3 个 `intrusive_ptr` 的原子增减）。当前 demo 的收集是 memo 命中或 ~42 条命令，量不出来 | 形状：`keyed` 改成 `vector<pair<double, uint32_t>>`（行号）并就地应用置换；`commands` 按上一帧规模 `reserve`。**触发器**：相机常动的负载 + drawable 数越过 ~2 000，或 B1 之后收集成为下一热点
 * **B5**（**前半已收：§11.16ck**；预算不改，理由见该节）拒绝路径逐命令上报（`ContentPass.cpp:882-1116`）+ 每帧重置的 `ReportOnce`；块预算是硬上限（`draws/lights/shadows` 1024/帧、`views` 256/帧，`BlockStorage.hpp:50-56`） — **登记（前者已在 M10c/M10e 登记过）** | 洪水只在"场景里有坏内容"时出现，而那时宿主**需要**知道是哪一条；把逐命令上报压成"每插话一次"会让"这一帧有 300 条画不出来"变成一句话（丢信息）。块预算超限是**拒画**（有报告）而不是错图，且 1024 条/帧远超 demo 量级 | 形状：①按"每 pass 每原因一次"上报（保留第一条的完整身份，后续只计数）；②预算按需增长（插入点 `BlockStorage::beginFrame`）并在诊断里报"本帧预算不够"。**触发器**：大场景宿主报"日志被刷满"或撞到 1024
-* **B6**（**登记**，§11.16cq；更正：§11.16cr——不存在的刷新路径已删）`StreamKey.revision` 取的是 **Geometry 的 revision**（`GeometryFacts.cpp:107/178`）⇒ 任何一次几何数据公告都会重传**所有** channel 与 index（本片实测 2 streams/帧；替换 buffer 与就地改写一样贵） — **登记（保持现状）** | 逐 `Buffer::revision()` 能省下未改通道的上传，但把"一次公告"的契约换成"每个 buffer 各自公告"——更弱（手册：漏报是静默的） | **触发器**：多通道大网格宿主报上传带宽
+* **B6**（**登记**，§11.16cq；更正：§11.16cr——不存在的刷新路径已删）`StreamKey.revision` 取的是 **Geometry 的 revision**（`GeometryFacts.cpp:107/178`）⇒ 任何一次几何数据公告都会重传**所有** channel 与 index（本片实测 2 streams/帧；替换 buffer 与就地改写一样贵） — **登记（保持现状）** | 逐 `Buffer::revision()` 能省下未改通道的上传，但把"一次公告"的契约换成"每个 buffer 各自公告"——更弱（手册：漏报是静默的） | **触发器**：多通道大网格宿主报上传带宽（2026-09-25：已量化——见 §11.16cw；触发器仍未兑现）
 * **B7**（**已按设计规则处理；未再复现，§11.16cq**）管线销毁与在飞提交的竞态：本配方首次入套件时门禁两阶段各报 **4×VUID-vkDestroyPipeline-pipeline-00765**；修复 = `releaseContentWorld()` 首行的**计数过的 device idle**（`SessionContentAccess::waitDeviceIdle`） — **登记（诚实记录未复现）** | 此后 20 次单例 + 两次全量套件（有/无该 wait 各试过）+ 两棵树门禁都是 0 VUID | **触发器**：再次出现时先查"最近被替换或逐出的管线"（`VariantPool` 逐出是另一条销毁路径）与 teardown 的 `deviceWaits`
 * **D2**（**已修：§11.16cj**）`Material::specular()` 的 alpha 文档写"A 是强度"，但**没有任何着色器读它**（`builtin_forward.frag:145`、`builtin_gbuffer.frag:59` 都只读 `.rgb`） — **缺陷（登记：要么接线，要么改文档，二选一）** | 接线会**改画面**（默认 `specular.a = 0.5` ⇒ 高光减半），而"逐像素材质"的通道已经排满（G-buffer 的 spec 附件 alpha 空着，前向可用 `material.specular.a`），于是它是"能接、但要重新调 demo 并重钉像素基线"的一类 | 形状：前向 `spec *= material.specular.a`、G-buffer 把 alpha 写进 spec 附件、延迟侧读出并相乘；两条基线（证据行）随之更新。**触发器**：有人要求"按材质调高光强度"（当前唯一能做到的是改 shininess）
 
@@ -1286,3 +1286,23 @@ material 值 / 流字节 / cull 全部**不进**。
   `blendEnable` 关掉，同一探测点会读到 **1.0 红 / 0.0 蓝**（变异 M1/M2，都实测红）。
 * **判据**：套件 440 → **441**；两棵树门禁 `cases=441 failed=0 vuid=0 hazard=0`、应用行与历史逐字相同；
   本片**无源改动**（只加用例与记录）。
+
+### §11.16cw M11z（2026-09-25）：B6 的触发面先量出来——多通道大网格一次公告的字节账（只加配方，不实现）
+
+* **登记来自哪里**：§6 的 B6 行把“逐 `Buffer::revision()`”挂在“多通道大网格宿主报上传带宽”上；
+  实现前先把“宿主会报多大的带宽”量成曲线。
+* **代码事实**（重新核实过）：`src/api/GeometryFacts.cpp` 里每个通道与索引流的 `key.revision` 都取
+  `geometry.revision()` ⇒ 一次 `bumpRevision()` 动**所有**流的身份，下一帧整网格重传。
+* **配方**（`VsgBackendTest.MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges`）：512² 网格
+  （262144 顶点）× 四个正典通道（位置/法线/色/UV）+ 整索引 buffer；绘制只取索引切片前 6 个
+  （两大三角形盖屏）⇒ 光栅成本≈ 0，而索引**流**仍是整 buffer（键归一化到整 buffer）。三个区制：稳态 /
+  只改位置 / 四通道全改。
+* **实测**（lavapipe；Debug 与 Release 同量级，此处用 Release）：一次公告重传 **5 流 = 16.98 MiB**，
+  commit **33.6 ms/帧** vs 稳态 3.2 ms ⇒ **+30.4 ms/帧**；只改一格与全改**同价**（上传数都 = 5/帧，
+  `created` 都 = 0）。标定：256² ⇒ 4.24 MiB ⇒ +11..15 ms/帧 ⇒ **按字节近线性**；60 fps 下 512² 规模
+  ≈ **1 GB/s** 的名目带宽（只改位置时其中约 82% 是未改通道的字节）。record 半段始终 µs 级。
+* **判断**：成本真实且随规模线性 ⇒ B6 真动手时，同场景可省掉约 80% 的上传字节。**但触发器未按字面兑现**
+  （没有宿主来报），所以本片只量化，不动契约；真要改，先用“逐 Buffer revision + 漏报如何被抓住”回答
+  契约变弱一项。
+* **判据**：套件 441 → **442**；两棵树门禁 `cases=442 vuid=0 hazard=0`、应用行与历史逐字相同；
+  本片**无源改动**（只加配方与记录）。
