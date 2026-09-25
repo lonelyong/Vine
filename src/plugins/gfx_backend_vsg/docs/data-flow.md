@@ -86,8 +86,7 @@ swapBuffers()     ──▶  ContentAssembly（事实表 + 流 + 块）→ Conte
   `VineShadowBlock` / push 结构），**不是**按 binding 序号。
 * **变体是事实的一部分**：`VINE_DIFFUSE_MAP`（材质有图）、`VINE_VERTEX_COLOR`（几何自己写了颜色通道）、
   `VINE_TEXCOORD_CUBE|UV` 由 `ProgramVariant` 从事实算出，进管线键。
-* 引擎自带程序的声明与实测 ABI 逐条钉在 `tests/test_vsg/ProgramAbiTest.cpp`；自定义程序的契约见
-  `.ai/design/vsg-custom-shader.md`。
+* 引擎自带程序的声明与实测 ABI 逐条钉在 `tests/test_vsg/ProgramAbiTest.cpp`；自定义程序的后端契约见设计文档 §5.4（作者视角见 `src/viz/graphics/docs/usage.md`）。
 
 ## 7. 支持矩阵（唯一一份）
 

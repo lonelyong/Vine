@@ -10,16 +10,19 @@ SDK 侧的类型设计（`Texture` / `Texture2D` / `CubeMap` / `Kind`、`layerCo
 > 没有 VUID、没有异常、返回值不可查，画面上只是"少了点什么"或"采到了别的东西"。不写下来就只能
 > 再花一轮把它们重新推一遍。
 
+> **2026-09-25 注**：本接缝事实对 vsg 1.1.16 仍然成立，本文保留为活文档；角色名已换成
+> 重写后的单元（`MaterialImages` 等），旧 `VsgTextureCache` / `SceneBridgePipeline` 随老渲染器删除。
+
 ## 1. 分工
 
 | 一侧 | 负责 |
 |---|---|
 | `graphics::Texture` 及其派生 | 逻辑描述（种类 / 尺寸 / 格式 / 级数）+ 每层一个 `imaging::Image`；**无 GPU 对象、无设备句柄** |
-| `VsgTextureCache` | 按 `Texture*` 缓存，把描述物化成 `vsg::ImageInfo`（图像 + 视图 + 采样器） |
-| `SceneBridgePipeline` | 把该 `ImageInfo` 绑到程序的 `diffuseMap` 描述符 |
+| `MaterialImages` | 按 `Texture*` 缓存，把描述物化成 `vsg::ImageInfo`（图像 + 视图 + 采样器） |
+| `BlockDescriptors` / `ContentDraw` | 把该 `ImageInfo` 绑到程序声明的采样器上（`diffuseMap` / `skyMap`） |
 
-`VsgTextureCache` 构建的全部是 **CPU 侧描述** —— `vsg::Image` / `ImageView` / `Sampler` 在编译前不碰设备 ——
-所以它的决策可以**无设备单测**（`tests/test_vsg/TextureCacheTest.cpp`）。
+`MaterialImages` 构建的全部是 **CPU 侧描述** —— `vsg::Image` / `ImageView` / `Sampler` 在编译前不碰设备 ——
+所以它的决策可以**无设备单测**（`tests/test_vsg/MaterialImagesTest.cpp`）。
 
 ## 2. 四条不成文的 vsg 约定
 
@@ -91,9 +94,9 @@ else
 
 | 手段 | 管什么 | **看不见**什么 |
 |---|---|---|
-| `gfx_lavapipe_check.sh`（0 VUID） | 请求是否**合法** | 层数错、次层未写入 —— 这些都合法 |
-| selftest 像素断言 | 结果**对不对** | 缓存决策、性能 |
-| `TextureCacheTest` | 缓存**决策**（命中 / 重建 / 兜底 / 回收 / 淘汰） | 像素对错 |
+| 门禁的 VUID 计数（`scripts/vsg_rewrite_gate.sh`） | 请求是否**合法** | 层数错、次层未写入 —— 这些都合法 |
+| 像素用例 / 门禁应用阶段 | 结果**对不对** | 缓存决策、性能 |
+| `MaterialImagesTest` | 缓存**决策**（命中 / 重建 / 兜底 / 回收 / 淘汰） | 像素对错 |
 
 六面断言（六面各一色，读回 6 个 band）是唯一能抓住 2.1 的手段：**层序错位会让两个 band 颜色互换**。
 
@@ -106,6 +109,5 @@ else
 - **`Texture3D` / `2DArray` 无法表达**：`imaging::Image` 是严格二维的（无 depth/slice）。基类的
   `layer()` / `layerCount()` 已为此备好，`imaging` 出现维度变体后，加形状是**纯增量**。
 - 各向异性过滤**已接入**：`detail::anisotropyFor()` 把设备上限夹到 `[1, 16]`，`makeSampler` 按级数决定
-  是否开启。注意 `samplerAnisotropy` 必须在创建设备时**显式申请**（见 `VsgRenderer` 的
-  `deviceFeatures`）—— 漏掉它不是"退化为各向同性"，而是
+  是否开启。注意 `samplerAnisotropy` 必须在创建设备时**显式申请**（设备特性由 `DeviceFeatures` 显式申请）—— 漏掉它不是"退化为各向同性"，而是
   `VUID-VkSamplerCreateInfo-anisotropyEnable-01070` 报错。

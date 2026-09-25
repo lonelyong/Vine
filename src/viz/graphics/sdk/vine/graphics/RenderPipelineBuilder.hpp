@@ -128,8 +128,8 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * shadow_map while its pass declared a shadow.
      *
      * Deferred requires a content scene and a camera; when either is missing
-     * nothing is registered and null is returned (no silent substitution, see
-     * .ai/design/vsg-custom-shader.md §11.7).
+     * nothing is registered and null is returned (no silent substitution; the backend
+     * applies the same rule, see "服务与拒绝" in `src/plugins/gfx_backend_vsg/docs/backend.md`).
      *
      * @param options The pipeline's description (see PipelineOptions).
      * @return The built pipeline, or null when the requested path cannot be built.

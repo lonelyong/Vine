@@ -1,12 +1,12 @@
 # 离屏目标：尺寸变化的"原地化"（resize in place）设计
 
-状态：**已实现（2026-09-19）**。实现与实测见 §8；本文 §1–§7 保留为设计当时的推理与
-预期数字（§8 记录实际落地时改了什么）。
-门禁：`test_vsg`（`TargetBookkeepingTest` 的借用判定用例）、`test_gui`、
-`vsg_backend_selftest`（`selftest_resize.cpp` 相位）、真机 `Vine.exe` 的最大化/还原实测。
-前置阅读：`.ai/design/vsg-pass-lifecycle.md` §28（每 pass 一个 render pass）、
-`src/plugins/gfx_backend_vsg/docs/backend.md` §3.1（所有权表）、`.ai/memory/graphics-perf-backlog.md`
-2026-09-19 条目（实测数字与"已否决"记录）。
+状态：**已实现（2026-09-19，旧实现）**。**2026-09-25 注**：§1–§7 的设计理由与上游先例仍然成立
+（新实现 = `TargetPlan` / `applyTargetPlans`，见 `docs/data-flow.md` §4、`.ai/design/vsg-reimplementation.md` §5.6）；
+**§8 的实施记录针对已删除的旧实现，只作历史**（全文在 git 历史：`git show 248c3f3:.ai/design/vsg-target-resize-in-place.md`）。
+门禁（现在）：`tests/test_vsg` 的目标 / 执行器用例（`MrtTargetTest`、`HostTargetsTest`、`OffscreenTargetTest`、
+`ExecutorTest`）+ 门禁应用阶段的画面判据（`scripts/vsg_rewrite_gate.sh`）。
+前置阅读：`.ai/design/vsg-reimplementation.md` §5.6（目标、寿命与设备空闲）、
+`docs/backend.md` §5（生命周期与所有权）、`.ai/memory/graphics-perf-backlog.md` 2026-09-19 条目。
 
 ## 0. 一句话
 

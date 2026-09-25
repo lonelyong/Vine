@@ -115,9 +115,12 @@ bash scripts/vsg_rewrite_gate.sh build                   # 完整门禁（Debug�
 | 契约、设计决定（D1–D8）、**坑**、实施记录与登记 | `.ai/design/vsg-reimplementation.md` |
 | 运行时行为：服务/拒绝、每帧调用次数、更新策略、诊断、验证 | 本文 §4 + [`docs/backend.md`](./docs/backend.md) |
 | 逐帧数据流、L0/L1 与 ShaderSet 映射、支持矩阵 | [`docs/data-flow.md`](./docs/data-flow.md) |
-| 自定义着色 ABI、内建着色契约 | `.ai/design/vsg-custom-shader.md`、`.ai/design/graphics-shader.md` |
+| 自定义着色：作者视角 / 后端 ABI / 名字地图 / 引擎契约 | `src/viz/graphics/docs/usage.md`、`.ai/design/vsg-reimplementation.md` §5.4、`docs/data-flow.md` §6、`.ai/design/graphics-shader.md` |
 | 引擎侧使用文档（宿主视角） | `src/viz/graphics/docs/usage.md` |
-| 构建树 / 工具约定 | `.ai/memory/build-conventions.md`、仓库根 `CMakeLists.txt` |
+| 构建树 / 工具约定 | 仓库根 `CMakeLists.txt` 与 `cmake/`、`scripts/vsg_rewrite_gate.sh`、`.ai/memory/graphics.md` |
 
-> 早期设计历史（`vsg-design.md`、`vsg-target-unification.md`、`vsg-pass-lifecycle.md`、缺陷表 D1–D45 等）
-> 描述的是已退场的 SceneBridge 时代；读它们时把"现状"当历史看，规则与教训已并入设计文档 §5。
+> 早期设计历史（vsg-design、vsg-pass-lifecycle、vsg-pipeline-sharing、vsg-target-unification、
+> vsg-custom-attributes、vsg-user-mutation-strategy、vsg-selection-highlight、vsg-upstream-alignment、
+> graphics-vsg-audit、vsg-custom-shader 等）已在 2026-09-25 压缩为**历史登记**存根：它们描述的都是
+> 已退场的 SceneBridge 时代，全文在 git 历史（存根顶部写了 `git show <hash>:<path>`）；仍生效的规则
+> 与教训已并入设计文档 §5。
