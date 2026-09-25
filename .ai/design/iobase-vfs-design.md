@@ -90,7 +90,8 @@
 > **不拒收**"的规则打反：`EncodingTest.HostEncodedNamesSurviveAZipRoundTrip` / `NamesThatAreTextInNoEncodingStayReachable`
 > 在 Linux 上双双红（`addFile` / `read` 报 `InvalidPath`）。修法是按 §4 的规则删掉该闸门——名字是字节，解码规则归
 > 归档层（`detail::fromStoredName`），`isValidUtf8` 仍为它服务。修后两棵树 `test_iobase` **58/58**。
-> 下一步：`Vfs` 的流式**写**面与 `§15.7` 已如上收口；其余按 §15 的裁决记录（无待办）。
+> **S4 已落地（2026-09-25）：`MountVfs`（§10）** —— 多后端按前缀拼成一棵树：最长前缀优先且**不回退**；同一前缀按优先级降序成一层 overlay（同优先级按挂载顺序）。读（`stat` / `read` / `openRead`）取组内第一个命中，条目一律报**完整虚拟路径**；`list` 合并组内所有后端（同名先到者胜）并**补出更深处挂载点蕴含的目录**（含多级中间目录与挂载点自身）。写按 §15.2 的裁决收口：路径已存在 → 归**命中者**，命中者不收写就 `ReadOnly`（**不改道**）；不存在 → 组内**第一个可写**（更高优先级优先）；没有任何挂载覆盖该路径 → `ReadOnly`。跨后端 `rename` = 读源（**一次物化一个条目**：目标后端可能把内容拉取推迟到自己的 save，先挂 `DataSource` 再删源会把内容源头抽掉）→ 写目标 → 删源，失败保留源；跨后端目录 `Unsupported`、跨后端占位目标 `AlreadyExists`。`commit()` 扇出到每个可写后端一次（只读跳过），`saveAs` / `toBytes` = `Unsupported`；无挂载的树只读且不解析任何路径。新增用例 8 个（`tests/test_iobase/MountVfsTest.cpp`）：`test_iobase` 66/66 两树，变异 5/5 各自红，门禁见 §14。
+> 下一步：`Vfs` 的流式**写**面与 `§15.7` 已如上收口；其余按 §15 的裁决记录（S4 已如上落地；余下 S5 内存流容量上限 / S6 并发级别文档，见 §13）。
 >
 > 关联：外部《VFS 需求设计文档 v2.0》（下称"需求文档"）；第一个消费者
 > `.ai/design/robotics-io-design.md`（`DeviceIO` / `WorkcellIO` 以 `vn::io::Vfs&` 为公共签名）。
@@ -673,11 +674,20 @@ class VN_IOBASE_API MountVfs : public Vfs
 
 1. **最长前缀优先**：挂载点集按前缀长度降序排列；挂载点数量在 O(10) 量级，线性扫描即可，路由结果可缓存。
 2. **读**：同一前缀下按优先级降序，命中即返回。
-3. **写**：见 §15 待裁决（需求文档 §7.3 的"第一个可写后端"会让读到的与写入的不是同一个）。
+3. **写**：见 §15.2 已决（需求文档 §7.3 的"第一个可写后端"会让读到的与写入的不是同一个）。
 4. **枚举合并**：合并各后端（去重、同名高优先级胜），并且**必须补出中间目录** —— 例如挂了
    `/data/a` 与 `/data/b`，列 `/data` 要看到 `a`、`b` 两个目录。这是最容易漏的一条。
 5. **跨后端 `rename`**：同后端走 native `rename`；跨后端 = 读源 → 写目标 → 删源，失败保留源并返回错误。
-6. 所有 `IMemoryVfs` 方法在 `prefix` 命中为单后端时**直接转发**，不做多余复制。
+6. 所有 `Vfs` 方法在 `prefix` 命中为单后端时**直接转发**，不做多余复制。
+
+**已落地（2026-09-25，`sdk/vine/io/MountVfs.hpp` + `src/MountVfs.cpp`，用例 `tests/test_iobase/MountVfsTest.cpp`）**：
+
+- 路由把最长前缀的挂载按优先级降序成一组；后端报错的路径在路由上视为未命中。
+- `stat` 在没有后端命中时合成**蕴含目录**（更深处挂载点的每一级祖先，含挂载点自身与根）：类型目录、大小为 0、路径为完整虚拟路径。
+- `list` 的合并里，蕴含目录先于后端条目占位（同名以挂载为准）；若合并为空且某个后端列目录失败，返回第一个错误。
+- 跨后端 `rename` 的复制必须**一次物化一个条目**：`ZipArchive::addFile(source)` 存的是**到 save 才拉**的 generator，先挂 `DataSource` 再删源会把内容源头抽掉（首轮实现踩到，用例抓住）。
+- 一个后端挂多处时 `commit()` 只调它一次；只读挂载（后端只读或挂载策略只读）跳过。
+- `mount()` 校验前缀（`InvalidPath`）与后端非空（`InvalidData`）；前缀按虚拟路径规范化（空串 = 根），于是任意分隔符拼写命中同一个挂载。
 
 ## 11. 内存流：`reserve` + 容量上限
 
@@ -749,7 +759,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | S2.5 | **API 重设计**：零 out-parameter、一操作一名、派生便利函数，删旧 `bool` 家族并迁移调用方 | **已完成**（`test_iobase` 33/33） |
 | S3a | §9 `ZipArchive::entries` + 惰性只读 `ZipVfs`（+ robotics 改用它） | **已完成**（`test_iobase` 39/39） |
 | S3b | §9 单一 zip 后端（惰性源 + overlay + `commit`/`saveAs`/`toBytes`）、`ZipMemoryVfs` 删除、`IMemoryVfs` → `Vfs` | **已完成**（对账 2026-09-25：类名最终为 `ZipArchive`——空状态下它就是可写内存树；见顶部 banner 与 §9） |
-| S4 | §10 `MountVfs` | 待做 |
+| S4 | §10 `MountVfs` | **已完成**（`test_iobase` 66/66 两树；变异 5/5；门禁 2026-09-25） |
 | S5 | §11 `reserve`/上限（内存流侧） | 与 VFS 解耦，可并行 |
 | S6 | §12 并发级别文档 + 跨进程/跨模块复查 | 待做 |
 
@@ -776,8 +786,14 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | 惰性 zip 只读索引、条目按需解压 | **已过**：`ZipVfsTest.ReadsEntriesOnDemand`（删掉归档文件后再读 → `IoFailure`） |
 | 惰性后端与内存后端行为一致 | **已过**：`ZipVfsTest.MatchesTheMemoryBackendForTheSameContent`（拿产生该包的 `ZipMemoryVfs` 树做基准） |
 | 归档索引可供 `stat` / `list` 直接使用 | **已过**：`ZipVfsTest.ArchiveIndexReportsNamesSizesAndKinds` |
-| Mount 优先级覆盖 → 高优先级胜出 | S4 |
-| Mount 同前缀多后端 `list` → 合并去重（含中间目录） | S4 |
+| Mount 优先级覆盖 → 高优先级胜出 | **已过**：`MountVfsTest.MountPriorityShadowsReads` |
+| Mount 同前缀多后端 `list` → 合并去重（含中间目录） | **已过**：`MountVfsTest.MountMergesListsAndSynthesizesIntermediateDirectories` |
+| Mount 写路由：命中者拥有、只读命中不改道、新路径走第一个可写 | **已过**：`MountVfsTest.MountRoutesWritesToTheOwningOrFirstWritableBackend` |
+| Mount 跨后端 `rename`：文件复制 + 删源 / 目录 `Unsupported` / 占用目标 `AlreadyExists` | **已过**：`MountVfsTest.MountRenamesWithinAndAcrossBackends` |
+| Mount 全只读树 → 写立即失败（`isReadOnly`） | **已过**：`MountVfsTest.MountRefusesWritesWhenNoTargetIsWritable` |
+| Mount 嵌套挂载（树挂树） | **已过**：`MountVfsTest.MountNestsInsideAnotherMount` |
+| Mount 最长前缀且不回退（读 / 枚举） | **已过**：`MountVfsTest.MountLongestPrefixWinsWithoutFallback` |
+| Mount 参数校验（绝对前缀 / 空后端 / 规范化拼写） | **已过**：`MountVfsTest.MountRejectsInvalidRequests` |
 | VFS 析构后 Stream 仍可读 → 生命周期正确 | S3（弱化版：`intrusive_ptr<Buffer>` 存活） |
 | 超出容量上限 → 超出容量 | S5 |
 | seek 越界 → 越界 | S5 |
@@ -787,10 +803,10 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 ## 15. 待裁决
 
 1. ~~冲突操作的命名~~ **已决**：采用"一次断代"，直接删旧 `bool` 家族，新名字见 §13 对照表。
-2. **写路由语义**（§10.3）：需求文档说"写走高优先级第一个**可写**后端"，这会出现"读到的与写入的不是同一个文件"
-   （高优先级是只读 zip 时，写落到低优先级目录）。我建议**读和写都走同一个"第一个命中的挂载"，命中项只读就返回 `ReadOnly`** —— 可预测、不会写偏。要哪种？
-3. **`MountVfs` 的持有方式**：建议用 `std::shared_ptr<IMemoryVfs>`（不动 `IMemoryVfs` 的 ref-count 状态；
-   `unique_ptr` 可隐式转 `shared_ptr`）；是否接受？
+2. **写路由语义（§10.3）—— 已决（S4 落地，2026-09-25）**：需求文档说"写走高优先级第一个**可写**后端"，这会出现"读到的与写入的不是同一个文件"
+   （高优先级是只读 zip 时，写落到低优先级目录）。我建议**读和写都走同一个"第一个命中的挂载"，命中项只读就返回 `ReadOnly`** —— 可预测、不会写偏。要哪种？**已决：采用本文建议 —— 读和写都走同一个第一个命中项，命中项只读即 `ReadOnly`，不落到别的后端；建议没覆盖的新路径补一条：走组内第一个可写（更高优先级优先），没有任何命中也没有可写挂载则 `ReadOnly`。实现与用例见 §10 / §14。**
+3. **`MountVfs` 的持有方式 —— 已决（S4 落地，2026-09-25）**：用 `std::shared_ptr<IMemoryVfs>`（不动 `IMemoryVfs` 的 ref-count 状态；
+   `unique_ptr` 可隐式转 `shared_ptr`）；**已决：接受 `std::shared_ptr<Vfs>`（S3b 之后 `IMemoryVfs` 即 `Vfs`），mount 持有它，调用方照旧可传 `unique_ptr`。**
 4. ~~两个 zip 后端并存~~ **已决（§9.1）**：职责分层 —— `ZipVfs` 是打开已有包的唯一入口且只读，
    `ZipMemoryVfs` 只写（建树 → zip），`ZipArchive` 只做编解码；三方名字保留，重叠的 API 删掉不保留。
 5. **容量上限的 API 形态**：`setCapacityLimit()` + `bool reserve()`（本文建议）还是只做 `reserve()`、上限推到 S3 的 `open` 层？
