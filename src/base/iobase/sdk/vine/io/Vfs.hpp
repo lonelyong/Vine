@@ -61,6 +61,9 @@ enum class VfsEntryKind : std::uint8_t
  *     the buffered one - so a backend implements only what it must.
  *
  * See ZipArchive and DirectoryVfs for the backends.
+ *
+ * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
+ * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
 class VN_IOBASE_API Vfs
 {

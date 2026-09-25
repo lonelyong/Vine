@@ -3,9 +3,11 @@
 
 #include <array>
 #include <cstddef>
+#include <exception>
 #include <ostream>
 #include <span>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -699,4 +701,48 @@ TEST(ChunkedMemoryStreamBuf, MoveKeepsTheCapacityLimit)
     assigned = std::move(moved);
     EXPECT_EQ(assigned.capacityLimit(), 4u);
     EXPECT_EQ(assigned.size(), 4u);
+}
+
+TEST(MemoryStream, InstancesRunInParallelOverTheirOwnBuffers)
+{
+    constexpr int         threads = 4;
+    constexpr std::size_t bytes   = 16 * 1024;
+
+    std::vector<std::string> results(threads);
+    std::vector<std::thread> workers;
+    workers.reserve(threads);
+
+    for (int t = 0; t < threads; ++t) {
+        workers.emplace_back([t, &results] {
+            try {
+                // Both buffers, the payload and the result slot are the only
+                // things this thread touches.
+                MemoryStreamBuf        contiguous;
+                ChunkedMemoryStreamBuf chunked(512);
+
+                std::string expected;
+                expected.reserve(bytes);
+                for (std::size_t i = 0; i < bytes; ++i) {
+                    const char byte = static_cast<char>('a' + ((i + static_cast<std::size_t>(t)) % 26));
+                    expected.push_back(byte);
+                    contiguous.sputc(byte);
+                    chunked.sputc(byte);
+                }
+
+                const std::string flat(reinterpret_cast<const char*>(contiguous.data()), contiguous.size());
+                const std::string pieces(reinterpret_cast<const char*>(chunked.data()), chunked.size());
+                results[t] = (flat == expected && pieces == expected) ? "ok" : "content changed";
+            }
+            catch (const std::exception& error) {
+                results[t] = std::string("exception: ") + error.what();
+            }
+        });
+    }
+    for (std::thread& worker : workers) {
+        worker.join();
+    }
+
+    for (const std::string& result : results) {
+        EXPECT_EQ(result, "ok");
+    }
 }

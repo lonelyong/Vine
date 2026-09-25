@@ -92,7 +92,8 @@
 > 归档层（`detail::fromStoredName`），`isValidUtf8` 仍为它服务。修后两棵树 `test_iobase` **58/58**。
 > **S4 已落地（2026-09-25）：`MountVfs`（§10）** —— 多后端按前缀拼成一棵树：最长前缀优先且**不回退**；同一前缀按优先级降序成一层 overlay（同优先级按挂载顺序）。读（`stat` / `read` / `openRead`）取组内第一个命中，条目一律报**完整虚拟路径**；`list` 合并组内所有后端（同名先到者胜）并**补出更深处挂载点蕴含的目录**（含多级中间目录与挂载点自身）。写按 §15.2 的裁决收口：路径已存在 → 归**命中者**，命中者不收写就 `ReadOnly`（**不改道**）；不存在 → 组内**第一个可写**（更高优先级优先）；没有任何挂载覆盖该路径 → `ReadOnly`。跨后端 `rename` = 读源（**一次物化一个条目**：目标后端可能把内容拉取推迟到自己的 save，先挂 `DataSource` 再删源会把内容源头抽掉）→ 写目标 → 删源，失败保留源；跨后端目录 `Unsupported`、跨后端占位目标 `AlreadyExists`。`commit()` 扇出到每个可写后端一次（只读跳过），`saveAs` / `toBytes` = `Unsupported`；无挂载的树只读且不解析任何路径。新增用例 8 个（`tests/test_iobase/MountVfsTest.cpp`）：`test_iobase` 66/66 两树，变异 5/5 各自红，门禁见 §14。
 > **S5 已落地（2026-09-25）：内存流 `reserve` + 容量上限（§11）** —— `MemoryStreamBuf` / `ChunkedMemoryStreamBuf` 各得 `reserve(bytes)`（从起点算总容量；超上限或分配失败 → `false` 且缓冲不动）、`setCapacityLimit(max)`（0 = 无限）、`capacityLimit()`；上限约束增长（`overflow` → eof、`xsputn` → 短写 → `badbit`、`seekp` 超限失败、`reserve` 超限 false），现有内容保留、移动带上限。实现要点：单字符写绕过 `overflow()`，所以 put 区终点缩到 `min(容量, 上限)` 且降上限时重发 put 区（else sputc 溜过）；chunked 的 `reserve` 预建空 chunk 再整体接入（失败无半成品，空 chunk 不出现在 `chunks()`）。用例 8 个：`test_core` 140/140 两树，变异 7/7 各自红，两树门禁全阶段干净，ASan `*MemoryStream*` 全过。
-> 下一步：`Vfs` 的流式**写**面与 `§15.7` 已如上收口；其余按 §15 的裁决记录（S4 / S5 已如上落地；余下 S6 并发级别文档，见 §13）。
+> **S6 已落地（2026-09-25）：并发级别声明 + 跨进程/跨模块复查（§12）** —— 18 个类文档（VFS 契约 4 + 后端 3 + `Zip` + 内存流 12）统一声明 `Threading:`：方法级不线程安全、无内部锁、共享对象/共享存储由调用方同步、互不共享者可并发。跨进程复查：全库无文件锁；`DirectoryVfs` 直写（最后写者胜，崩写留半成品）；`ZipArchive::commit()` 临时文件 + 替换（POSIX 原子；**固定临时名 ⇒ 同一文件的并发 commit 不受支持**，已写进 `commit()` 文档）。跨模块复查：消费者仅 `robotics::io` 与 `tools/urdf2vine`，均无线程、无跨调用缓存 Vfs。证据：`MemoryStream.InstancesRunInParallelOverTheirOwnBuffers` + `ConcurrencyTest.VfsInstancesRunInParallelOverDistinctStorage`（4 线程各自的缓冲 / 目录 / 档案）。
+> 下一步：`Vfs` 的流式**写**面与 `§15.7` 已如上收口；其余按 §15 的裁决记录（设计内阶段 S1–S6 已全部落地；余下为触发条件挂账，见 §13 / §15）。
 >
 > 关联：外部《VFS 需求设计文档 v2.0》（下称"需求文档"）；第一个消费者
 > `.ai/design/robotics-io-design.md`（`DeviceIO` / `WorkcellIO` 以 `vn::io::Vfs&` 为公共签名）。
@@ -717,10 +718,30 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 
 ## 12. 并发级别（需求文档 §12）
 
-- 各 VFS / Stream 类文档**必须声明级别**。阶段 1 统一声明：**方法级不线程安全**，调用方外部同步；
-  不同流之间可并发（各自持有自己的 `Buffer` / 文件句柄）。
-- 这几天落地的内存流类型（`MemoryStreamBuf` / `ChunkedMemoryStreamBuf` / `SpanStreamBuf` 及其包装）
-  同样声明"非线程安全"，保持全 IOBase 一致。
+**已落地（2026-09-25）**。阶段 1 的口径不变：**方法级不线程安全、无内部锁**；共享对象与两对象共享的存储由调用方同步；互不共享（缓冲 / 句柄 / 存储）的对象可并发。
+
+**声明位置** —— 18 个类文档尾部各一段 `Threading:`（同一句式）：
+
+| 层 | 类 |
+|---|---|
+| VFS 契约 | `Vfs`、`DataSource`、`DataSink`、`VfsReadStream`（`Stream.hpp`） |
+| 后端 | `DirectoryVfs`、`ZipArchive`、`MountVfs` |
+| 一次性工具 | `Zip`（无状态：只碰入参，自带该次调用的句柄 / 缓冲） |
+| 内存流 | `MemoryStreamBuf` / `ChunkedMemoryStreamBuf` / `SpanStreamBuf` 及其三套包装（12 个类，`MemoryStream.hpp`） |
+
+**跨进程复查**（只读复查，未改行为）：
+
+- `DirectoryVfs`：直接读写真实文件；全库无任何文件锁（`flock|LockFile|F_SETLK|lockf` 为 0）；两进程（或两实例）同目录并发 = 文件系统原生语义，最后写者胜；写中途崩溃会留下半写文件（无临时文件策略）。
+- `ZipArchive`：档案文件在对象生命周期内保持打开。`commit()` = 同目录临时文件（**固定名** `<name>.vine-tmp`）→ 关源句柄 → `fs::rename` 替换 → 重新索引；POSIX 上替换原子、替换前打开的读者继续读旧 inode；Windows 上先关源再替换（实现不允许 rename 覆盖本进程仍打开的文件），被平台拒绝时 `IoFailure` 且清掉临时文件；崩溃最多留下陈旧临时文件，下一次 `commit()` 会先删它。**同一文件的并发 `commit()` 不受支持**（固定临时名）—— 已写进 `commit()` 文档；要并发提交，改成唯一临时名是将来选项。
+- `Zip` 一次性操作：只为该次调用打开句柄；读到一半被替换在 POSIX 上照读旧内容，Windows 上打开/读失败，都落在 `IoError` 里。
+- 内存流家族：纯进程内，无文件面。
+
+**跨模块复查**：
+
+- 今天的消费者只有 `robotics::io`（`DeviceIO` / `WorkcellIO` 以 `Vfs&` 入参、随调用存亡）与 `tools/urdf2vine`（CLI）；`src/fw` / `src/app` 不碰 `vn::io`；两边都没有线程（`std::thread|ThreadPool|QtConcurrent|QThread` 为 0）⇒ 现实使用全在“单线程内一步用完”。
+- `VfsReadStream` 既有承诺（流可活过 VFS，依赖底层存储仍可读）继续有效；`MountVfs` 用 `shared_ptr` 挂载 ⇒ “实例互不共享”的默认前提对**共享后端**不成立 —— 声明里“两对象共享的存储由调用方同步”正是为它写的。
+
+**证据**（正向声明的行为钉；无 TSAN 树，这两例不是竞态证明）：`test_core` 的 `MemoryStream.InstancesRunInParallelOverTheirOwnBuffers`（4 线程各自持有两缓冲、逐字节写 16 KiB 校验）与 `test_iobase` 的 `ConcurrencyTest.VfsInstancesRunInParallelOverDistinctStorage`（4 线程各自真实目录 + 内存 ZIP：写 → 读 → `toBytes` → 接管字节重开 → 再读）。**同对象并发是不支持的用法**，不做（也无法）用测试证明。
 
 ## 13. 迁移策略：一次断代（S2.5 已执行）
 
@@ -771,7 +792,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | S3b | §9 单一 zip 后端（惰性源 + overlay + `commit`/`saveAs`/`toBytes`）、`ZipMemoryVfs` 删除、`IMemoryVfs` → `Vfs` | **已完成**（对账 2026-09-25：类名最终为 `ZipArchive`——空状态下它就是可写内存树；见顶部 banner 与 §9） |
 | S4 | §10 `MountVfs` | **已完成**（`test_iobase` 66/66 两树；变异 5/5；门禁 2026-09-25） |
 | S5 | §11 `reserve`/上限（内存流侧） | **已完成**（`test_core` 140/140 两树；变异 7/7；门禁 2026-09-25） |
-| S6 | §12 并发级别文档 + 跨进程/跨模块复查 | 待做 |
+| S6 | §12 并发级别文档 + 跨进程/跨模块复查 | **已完成**（18 类声明；两份复查；2 个正向并发用例） |
 
 ## 14. 测试门禁（对照需求文档 §17.5）
 

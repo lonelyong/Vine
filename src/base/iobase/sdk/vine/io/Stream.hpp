@@ -30,6 +30,9 @@ struct Fragment
  * so it never has to be assembled into one contiguous block first. The source has
  * to stay alive until the save finishes, and read() is called on the thread that
  * performs the save.
+ *
+ * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
+ * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
 class VN_IOBASE_API DataSource
 {
@@ -66,6 +69,9 @@ class VN_IOBASE_API DataSource
  * This is the streaming counterpart of reading a whole entry into memory, for
  * consumers that walk the bytes once (hashing, parsing, copying to a device
  * buffer).
+ *
+ * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
+ * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
 class VN_IOBASE_API DataSink
 {
@@ -88,6 +94,9 @@ class VN_IOBASE_API DataSink
  * A stream outlives the tree it came from, so closing or destroying the VFS does
  * not invalidate it; it does depend on the storage behind the VFS staying
  * readable (a file that is deleted or replaced breaks in-flight reads).
+ *
+ * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
+ * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
 class VN_IOBASE_API VfsReadStream
 {

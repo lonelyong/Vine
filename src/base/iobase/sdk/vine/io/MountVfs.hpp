@@ -43,6 +43,9 @@ VN_IO_NS_BEGIN
  * The tree is read-only exactly when no mount accepts writes; a tree without
  * mounts is read-only and resolves nothing. A MountVfs can itself be mounted,
  * and mounting keeps the backend alive through a shared handle.
+ *
+ * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
+ * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
 class VN_IOBASE_API MountVfs : public Vfs
 {

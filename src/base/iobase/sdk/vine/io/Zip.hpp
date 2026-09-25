@@ -21,6 +21,8 @@ VN_IO_NS_BEGIN
  *
  * Every call reports through IoError / Result, like the rest of the library: the
  * bytes go in as a span, and what comes back is either bytes or the failure.
+ *
+ * Threading: the class holds no state - a call works on its arguments alone and owns the handles and buffers it needs, so calls that share no argument are independent.
  */
 class VN_IOBASE_API Zip
 {

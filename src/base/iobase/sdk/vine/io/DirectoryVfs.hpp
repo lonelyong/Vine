@@ -20,6 +20,9 @@ VN_IO_NS_BEGIN
  * file, a read reads one, and saveAs() only confirms the target because every
  * write is already immediate. Useful for inspecting what would go into a ZIP
  * package, and for loading from an unpacked tree.
+ *
+ * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
+ * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
 class VN_IOBASE_API DirectoryVfs : public Vfs
 {

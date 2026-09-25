@@ -41,6 +41,9 @@ VN_IO_NS_BEGIN
  * list and nothing more; entry contents are decompressed when they are read.
  * In-memory bytes are either taken over (a moved vector) or borrowed (a span the
  * caller keeps alive).
+ *
+ * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
+ * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
 class VN_IOBASE_API ZipArchive : public Vfs
 {
@@ -326,6 +329,8 @@ class VN_IOBASE_API ZipArchive : public Vfs
      * The new archive is built next to the target and then replaces it in one
      * step, so a failure leaves the previous file untouched; afterwards the source
      * handle is re-opened on the new file.
+     * Two commits of the same file have to be serialized by the caller - the
+     * temporary file next to the target has a fixed name.
      *
      * @return IoError::Ok on success, IoError::ReadOnly on a read-only archive,
      *         IoError::Unsupported when this archive was not opened from a file,
