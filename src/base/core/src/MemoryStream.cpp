@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <exception>
 #include <span>
 #include <utility>
 
@@ -25,6 +26,7 @@ MemoryStreamBuf::MemoryStreamBuf(std::vector<std::byte>&& src)
 MemoryStreamBuf::MemoryStreamBuf(MemoryStreamBuf&& other) noexcept
   : buffer_(std::move(other.buffer_))
   , size_(other.size_)
+  , capacity_limit_(other.capacity_limit_)
 {
     setPointers(0, size_);
     other.resetState();
@@ -33,8 +35,9 @@ MemoryStreamBuf::MemoryStreamBuf(MemoryStreamBuf&& other) noexcept
 MemoryStreamBuf& MemoryStreamBuf::operator=(MemoryStreamBuf&& other) noexcept
 {
     if (this != &other) {
-        buffer_ = std::move(other.buffer_);
-        size_   = other.size_;
+        buffer_         = std::move(other.buffer_);
+        size_           = other.size_;
+        capacity_limit_ = other.capacity_limit_;
         setPointers(0, size_);
         other.resetState();
     }
@@ -84,6 +87,48 @@ void MemoryStreamBuf::reset(std::span<const std::byte> src)
     setPointers(0, size_);
 }
 
+bool MemoryStreamBuf::reserve(std::size_t bytes) noexcept
+{
+    if (capacity_limit_ != 0 && bytes > capacity_limit_) {
+        return false;
+    }
+    if (bytes <= buffer_.size()) {
+        return true; // the storage already covers the request
+    }
+
+    // resize() may move the storage, so the offsets are captured as values.
+    const std::size_t read_off  = readPosition();
+    const std::size_t write_off = writePosition();
+    if (write_off > size_) {
+        // Fold in put-area writes that never reached overflow()/xsputn().
+        size_ = write_off;
+    }
+
+    try {
+        buffer_.resize(bytes);
+    }
+    catch (const std::exception&) {
+        return false; // the old storage is intact and the buffer is unchanged
+    }
+    setPointers(read_off, write_off);
+    return true;
+}
+
+void MemoryStreamBuf::setCapacityLimit(std::size_t max_bytes) noexcept
+{
+    capacity_limit_ = max_bytes;
+    // The put area has to follow a newly lowered limit, or a single-character
+    // write could still slip past it through the area published earlier.
+    if (!buffer_.empty()) {
+        setPointers(readPosition(), writePosition());
+    }
+}
+
+std::size_t MemoryStreamBuf::capacityLimit() const noexcept
+{
+    return capacity_limit_;
+}
+
 std::streambuf::int_type MemoryStreamBuf::underflow()
 {
     syncGetArea();
@@ -100,6 +145,9 @@ std::streambuf::int_type MemoryStreamBuf::overflow(std::streambuf::int_type ch)
     }
 
     const std::size_t pos = writePosition();
+    if (clampToLimit(pos, 1) == 0) {
+        return traits_type::eof(); // the capacity limit refuses this byte
+    }
     grow(pos + 1);
     buffer_.data()[pos] = static_cast<std::byte>(ch);
     if (pos + 1 > size_) {
@@ -116,14 +164,17 @@ std::streamsize MemoryStreamBuf::xsputn(const char* s, std::streamsize count)
     }
 
     const std::size_t pos = writePosition();
-    const auto        n   = static_cast<std::size_t>(count);
+    const auto        n   = clampToLimit(pos, static_cast<std::size_t>(count));
+    if (n == 0) {
+        return 0; // full: the caller sees a short write
+    }
     grow(pos + n);
     std::memcpy(buffer_.data() + pos, s, n);
     if (pos + n > size_) {
         size_ = pos + n;
     }
     setPointers(readPosition(), pos + n);
-    return count;
+    return static_cast<std::streamsize>(n);
 }
 
 std::streamsize MemoryStreamBuf::xsgetn(char* s, std::streamsize count)
@@ -197,6 +248,9 @@ std::streambuf::pos_type MemoryStreamBuf::seekoff(std::streambuf::off_type off, 
         }
 
         const auto pos = static_cast<std::size_t>(target);
+        if (capacity_limit_ != 0 && pos > capacity_limit_) {
+            return result; // the capacity limit forbids seeking past it
+        }
         grow(pos);
         if (pos > size_) {
             // Seeking past the logical end opens a hole; report it as zeros.
@@ -241,6 +295,26 @@ std::size_t MemoryStreamBuf::writePosition() const noexcept
         return static_cast<std::size_t>(pptr() - pbase());
     }
     return size_;
+}
+
+/**
+ * @brief Caps a write count at the capacity limit.
+ *
+ * @param pos Offset the write starts at.
+ * @param count Bytes the caller wants to write.
+ * @return The bytes that may be written from @p pos, which is the whole count
+ *         when the buffer is unlimited.
+ */
+std::size_t MemoryStreamBuf::clampToLimit(std::size_t pos, std::size_t count) const noexcept
+{
+    if (capacity_limit_ == 0) {
+        return count;
+    }
+    if (pos >= capacity_limit_) {
+        return 0;
+    }
+    const std::size_t room = capacity_limit_ - pos;
+    return count < room ? count : room;
 }
 
 /**
@@ -309,11 +383,17 @@ void MemoryStreamBuf::setPointers(std::size_t read_off, std::size_t write_off) n
     if (read_off > size_) {
         read_off = size_;
     }
-    if (write_off > buffer_.size()) {
-        write_off = buffer_.size();
+    // The put area ends at the capacity limit, so even a single-character
+    // write walks into overflow() once the data has reached it.
+    std::size_t put_end = buffer_.size();
+    if (capacity_limit_ != 0 && capacity_limit_ < put_end) {
+        put_end = capacity_limit_;
+    }
+    if (write_off > put_end) {
+        write_off = put_end;
     }
     setg(base, base + read_off, base + size_);
-    setp(base, base + buffer_.size());
+    setp(base, base + put_end);
     advancePut(write_off);
 }
 
@@ -524,6 +604,7 @@ ChunkedMemoryStreamBuf::ChunkedMemoryStreamBuf(ChunkedMemoryStreamBuf&& other) n
   , coalesced_(std::move(other.coalesced_))
   , coalesced_valid_(other.coalesced_valid_)
   , size_(other.size_)
+  , capacity_limit_(other.capacity_limit_)
 {
     setp(nullptr, nullptr);
     // The chunks keep their storage, so resuming the reader is a pointer
@@ -545,6 +626,7 @@ ChunkedMemoryStreamBuf& ChunkedMemoryStreamBuf::operator=(ChunkedMemoryStreamBuf
         coalesced_          = std::move(other.coalesced_);
         coalesced_valid_    = other.coalesced_valid_;
         size_               = other.size_;
+        capacity_limit_     = other.capacity_limit_;
 
         setp(nullptr, nullptr);
         detachGetArea();
@@ -579,6 +661,9 @@ std::vector<ChunkedMemoryStreamBuf::BufferPart> ChunkedMemoryStreamBuf::chunks()
             break;
         }
         const std::size_t n = std::min(chunk.size(), remaining);
+        if (n == 0) {
+            continue; // a chunk reserved ahead of the content carries nothing yet
+        }
         parts.push_back({ reinterpret_cast<const std::byte*>(chunk.data()), n });
         remaining -= n;
     }
@@ -612,6 +697,51 @@ void ChunkedMemoryStreamBuf::clearData() noexcept
     resetState();
 }
 
+bool ChunkedMemoryStreamBuf::reserve(std::size_t bytes) noexcept
+{
+    if (capacity_limit_ != 0 && bytes > capacity_limit_) {
+        return false;
+    }
+
+    // Every chunk can fill up to chunk_size_ without reallocating, so a chain
+    // of this many chunks already covers the request.
+    const std::size_t needed = bytes / chunk_size_ + (bytes % chunk_size_ != 0 ? 1 : 0);
+    if (needed <= chunks_.size()) {
+        return true;
+    }
+    const std::size_t extra = needed - chunks_.size();
+
+    // The spare chunks are carved out aside and spliced in at the end, so a
+    // failed allocation leaves the buffer untouched. They hold no content, so
+    // size(), chunks(), data() and release() report exactly what was written.
+    try {
+        std::vector<std::vector<char>> spare;
+        spare.reserve(extra);
+        for (std::size_t i = 0; i < extra; ++i) {
+            spare.emplace_back();
+            spare.back().reserve(chunk_size_);
+        }
+        chunks_.reserve(chunks_.size() + extra);
+        for (std::vector<char>& chunk : spare) {
+            chunks_.push_back(std::move(chunk));
+        }
+    }
+    catch (const std::exception&) {
+        return false;
+    }
+    return true;
+}
+
+void ChunkedMemoryStreamBuf::setCapacityLimit(std::size_t max_bytes) noexcept
+{
+    capacity_limit_ = max_bytes;
+}
+
+std::size_t ChunkedMemoryStreamBuf::capacityLimit() const noexcept
+{
+    return capacity_limit_;
+}
+
 std::streambuf::int_type ChunkedMemoryStreamBuf::underflow()
 {
     if (gptr() != nullptr && gptr() < egptr()) {
@@ -641,6 +771,9 @@ std::streambuf::int_type ChunkedMemoryStreamBuf::overflow(std::streambuf::int_ty
         return traits_type::eof();
     }
     const std::byte byte = static_cast<std::byte>(ch);
+    if (clampToLimit(size_, 1) == 0) {
+        return traits_type::eof(); // the capacity limit refuses this byte
+    }
     appendRaw(&byte, 1);
     return traits_type::not_eof(ch);
 }
@@ -650,8 +783,12 @@ std::streamsize ChunkedMemoryStreamBuf::xsputn(const char* s, std::streamsize co
     if (count <= 0) {
         return 0;
     }
-    appendRaw(reinterpret_cast<const std::byte*>(s), static_cast<std::size_t>(count));
-    return count;
+    const auto n = clampToLimit(size_, static_cast<std::size_t>(count));
+    if (n == 0) {
+        return 0; // full: the caller sees a short write
+    }
+    appendRaw(reinterpret_cast<const std::byte*>(s), n);
+    return static_cast<std::streamsize>(n);
 }
 
 std::streamsize ChunkedMemoryStreamBuf::xsgetn(char* s, std::streamsize count)
@@ -763,6 +900,26 @@ std::size_t ChunkedMemoryStreamBuf::readPosition() const noexcept
         return read_pos_;
     }
     return active_chunk_start_ + static_cast<std::size_t>(gptr() - eback());
+}
+
+/**
+ * @brief Caps a write count at the capacity limit.
+ *
+ * @param pos Offset the write starts at.
+ * @param count Bytes the caller wants to write.
+ * @return The bytes that may be written from @p pos, which is the whole count
+ *         when the buffer is unlimited.
+ */
+std::size_t ChunkedMemoryStreamBuf::clampToLimit(std::size_t pos, std::size_t count) const noexcept
+{
+    if (capacity_limit_ == 0) {
+        return count;
+    }
+    if (pos >= capacity_limit_) {
+        return 0;
+    }
+    const std::size_t room = capacity_limit_ - pos;
+    return count < room ? count : room;
 }
 
 /**

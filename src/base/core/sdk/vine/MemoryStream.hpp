@@ -24,6 +24,7 @@ VN_CORE_NS_BEGIN
  *  - The get area ends at `size_`, so reads stop at the logical end.
  *
  * Writes go through `buffer_.data()`, never through `buffer_[i]`, because only the first `size_` elements are logically initialized.
+ * A capacity limit caps growth - appends, seeks and reserve() fail past it - while content that is already there is kept.
  * A moved-from buffer is left valid and empty.
  */
 class VN_CORE_API MemoryStreamBuf : public std::streambuf
@@ -111,6 +112,34 @@ class VN_CORE_API MemoryStreamBuf : public std::streambuf
      */
     void reset(std::span<const std::byte> src);
 
+    /**
+     * @brief Requests storage for a total size without touching the content.
+     *
+     * The request covers the whole data from its start, so it is a no-op once the capacity already covers @p bytes.
+     * Reads, writes and every position keep working; the call only changes how much can be written before the storage has to grow again.
+     *
+     * @param bytes Bytes of capacity to hold from the start of the data.
+     * @return true when the capacity covers @p bytes; false when the capacity limit refuses the request or the allocation fails, which leaves the buffer unchanged.
+     */
+    bool reserve(std::size_t bytes) noexcept;
+
+    /**
+     * @brief Caps how many bytes the buffer may hold.
+     *
+     * The limit bounds growth: once the data reaches it, overflow() reports eof, xsputn() writes short, a seek past it fails, and reserve() refuses.
+     * Content that is already there is kept, even when the new limit lies below the current size; only appends and seeks past the limit stop.
+     *
+     * @param max_bytes The byte cap, or 0 to restore the unlimited default.
+     */
+    void setCapacityLimit(std::size_t max_bytes) noexcept;
+
+    /**
+     * @brief Returns the current byte cap.
+     *
+     * @return The cap in bytes, or 0 when the buffer is unlimited.
+     */
+    [[nodiscard]] std::size_t capacityLimit() const noexcept;
+
   protected:
     /**
      * @brief Returns the byte the get area points at, or reports end of data.
@@ -168,6 +197,7 @@ class VN_CORE_API MemoryStreamBuf : public std::streambuf
   private:
     [[nodiscard]] std::size_t readPosition() const noexcept;
     [[nodiscard]] std::size_t writePosition() const noexcept;
+    [[nodiscard]] std::size_t clampToLimit(std::size_t pos, std::size_t count) const noexcept;
     void syncGetArea() noexcept;
     void grow(std::size_t needed);
     void setPointers(std::size_t read_off, std::size_t write_off) noexcept;
@@ -179,7 +209,8 @@ class VN_CORE_API MemoryStreamBuf : public std::streambuf
     static constexpr int         s_maxBump = std::numeric_limits<int>::max();
 
     std::vector<std::byte> buffer_;
-    std::size_t            size_ = 0;
+    std::size_t            size_           = 0;
+    std::size_t            capacity_limit_ = 0;
 };
 
 /**
@@ -398,6 +429,7 @@ class VN_CORE_API MemoryStream : public std::iostream
  * Reads are random access: a seek only records an offset, and the chunk holding it is located on the next read.
  *
  * Unlike `MemoryStreamBuf`, the get area is a cache rather than the source of truth: `read_pos_` stays authoritative whenever no get area is published, which is what allows seeking to the end and appending afterwards to both behave.
+ * A capacity limit caps growth - appends and reserve() fail past it - while content that is already there is kept.
  * A moved-from buffer is left valid and empty.
  */
 class VN_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
@@ -487,6 +519,34 @@ class VN_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
      */
     void clearData() noexcept;
 
+    /**
+     * @brief Requests storage for a total size without touching the content or the read position.
+     *
+     * The whole chain is covered by the request, so it is a no-op once the chunks already cover @p bytes; otherwise chunk buffers are carved out ahead of time.
+     * Reserved chunks hold no content, so size(), chunks(), data() and release() see exactly what was written.
+     *
+     * @param bytes Bytes of capacity to hold from the start of the data.
+     * @return true when the chain covers @p bytes; false when the capacity limit refuses the request or the allocation fails, which leaves the buffer unchanged.
+     */
+    bool reserve(std::size_t bytes) noexcept;
+
+    /**
+     * @brief Caps how many bytes the buffer may hold.
+     *
+     * The limit bounds growth: once the content reaches it, overflow() reports eof and xsputn() writes short.
+     * Content that is already there is kept, even when the new limit lies below the current size; only appends past the limit stop.
+     *
+     * @param max_bytes The byte cap, or 0 to restore the unlimited default.
+     */
+    void setCapacityLimit(std::size_t max_bytes) noexcept;
+
+    /**
+     * @brief Returns the current byte cap.
+     *
+     * @return The cap in bytes, or 0 when the buffer is unlimited.
+     */
+    [[nodiscard]] std::size_t capacityLimit() const noexcept;
+
     inline static constexpr std::size_t s_defaultChunkSize = 64 * 1024;
 
   protected:
@@ -555,6 +615,7 @@ class VN_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
   private:
     void appendRaw(const std::byte* src, std::size_t len);
     [[nodiscard]] std::size_t readPosition() const noexcept;
+    [[nodiscard]] std::size_t clampToLimit(std::size_t pos, std::size_t count) const noexcept;
     bool activateGetArea() noexcept;
     void republishGetArea() noexcept;
     void detachGetArea() noexcept;
@@ -574,7 +635,8 @@ class VN_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
     mutable std::vector<std::byte> coalesced_;
     mutable bool                   coalesced_valid_ = false;
 
-    std::size_t size_ = 0;
+    std::size_t size_           = 0;
+    std::size_t capacity_limit_ = 0;
 };
 
 /**

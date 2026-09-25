@@ -91,7 +91,8 @@
 > 在 Linux 上双双红（`addFile` / `read` 报 `InvalidPath`）。修法是按 §4 的规则删掉该闸门——名字是字节，解码规则归
 > 归档层（`detail::fromStoredName`），`isValidUtf8` 仍为它服务。修后两棵树 `test_iobase` **58/58**。
 > **S4 已落地（2026-09-25）：`MountVfs`（§10）** —— 多后端按前缀拼成一棵树：最长前缀优先且**不回退**；同一前缀按优先级降序成一层 overlay（同优先级按挂载顺序）。读（`stat` / `read` / `openRead`）取组内第一个命中，条目一律报**完整虚拟路径**；`list` 合并组内所有后端（同名先到者胜）并**补出更深处挂载点蕴含的目录**（含多级中间目录与挂载点自身）。写按 §15.2 的裁决收口：路径已存在 → 归**命中者**，命中者不收写就 `ReadOnly`（**不改道**）；不存在 → 组内**第一个可写**（更高优先级优先）；没有任何挂载覆盖该路径 → `ReadOnly`。跨后端 `rename` = 读源（**一次物化一个条目**：目标后端可能把内容拉取推迟到自己的 save，先挂 `DataSource` 再删源会把内容源头抽掉）→ 写目标 → 删源，失败保留源；跨后端目录 `Unsupported`、跨后端占位目标 `AlreadyExists`。`commit()` 扇出到每个可写后端一次（只读跳过），`saveAs` / `toBytes` = `Unsupported`；无挂载的树只读且不解析任何路径。新增用例 8 个（`tests/test_iobase/MountVfsTest.cpp`）：`test_iobase` 66/66 两树，变异 5/5 各自红，门禁见 §14。
-> 下一步：`Vfs` 的流式**写**面与 `§15.7` 已如上收口；其余按 §15 的裁决记录（S4 已如上落地；余下 S5 内存流容量上限 / S6 并发级别文档，见 §13）。
+> **S5 已落地（2026-09-25）：内存流 `reserve` + 容量上限（§11）** —— `MemoryStreamBuf` / `ChunkedMemoryStreamBuf` 各得 `reserve(bytes)`（从起点算总容量；超上限或分配失败 → `false` 且缓冲不动）、`setCapacityLimit(max)`（0 = 无限）、`capacityLimit()`；上限约束增长（`overflow` → eof、`xsputn` → 短写 → `badbit`、`seekp` 超限失败、`reserve` 超限 false），现有内容保留、移动带上限。实现要点：单字符写绕过 `overflow()`，所以 put 区终点缩到 `min(容量, 上限)` 且降上限时重发 put 区（else sputc 溜过）；chunked 的 `reserve` 预建空 chunk 再整体接入（失败无半成品，空 chunk 不出现在 `chunks()`）。用例 8 个：`test_core` 140/140 两树，变异 7/7 各自红，两树门禁全阶段干净，ASan `*MemoryStream*` 全过。
+> 下一步：`Vfs` 的流式**写**面与 `§15.7` 已如上收口；其余按 §15 的裁决记录（S4 / S5 已如上落地；余下 S6 并发级别文档，见 §13）。
 >
 > 关联：外部《VFS 需求设计文档 v2.0》（下称"需求文档"）；第一个消费者
 > `.ai/design/robotics-io-design.md`（`DeviceIO` / `WorkcellIO` 以 `vn::io::Vfs&` 为公共签名）。
@@ -705,6 +706,15 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
   （`open` / `write` / 后端写入前预检），这正是 §2 里"推迟核心 `IStream`"的代价与分工。
 - 上限对 `seekp` 生效（不可 seek 到超过上限的位置）、对 `reserve` 生效（超出即 `false`）。
 
+**已落地（2026-09-25，`sdk/vine/MemoryStream.hpp` + `src/MemoryStream.cpp`，用例 `tests/test_core/MemoryStreamTest.cpp`）**：
+
+- 三个方法只落在**两个缓冲类**上（`MemoryStreamBuf` / `ChunkedMemoryStreamBuf`；四个流包装不动——上限是缓冲层的事，需要 `CapacityExceeded` 的高层自己预检）。
+- `reserve(bytes)` 的口径是“从起点算总共能装 `bytes`”（vector::reserve 的意思）：已覆盖则无操作；超上限或分配失败返回 `false`，缓冲**原封不动**（`noexcept` 由设计稿钉死：分配失败也以 `false` 表达，旧存储保持完好）。
+- **坑（本次实测）**：`MemoryStreamBuf` 的**单字符写不经过 `overflow()`**（sputc 直接写 put 区）⇒ 光在 `overflow`/`xsputn`/`seekoff` 里查上限不够，还必须把 **put 区终点裁到 `min(容量, 上限)`**（`setPointers()`）；且 `setCapacityLimit()` **降上限时要重发 put 区**，否则之前发布的旧 put 区会让 `sputc` 溜过新上限（变异 M5 专钉这条）。chunked 的写全走 `overflow`/`xsputn`，不必裁区。
+- chunked 的 `reserve` 把空 chunk（每块已 `reserve(chunk_size_)`）先建在旁边再整体接入 ⇒ 分配失败不留半成品；空 chunk 不进 `chunks()`/`data()`/`release()`（`chunks()` 跳过 0 长段）。
+- 上限只约束**增长**：现有内容（含把上限降到 size 以下）保留；`release()` / `clearData()` 不重置上限（它是配置），移动构造/赋值**带上上限**（各一个用例）。
+- 失败路径按设计：`overflow()` → `eof`、`xsputn()` → 短写 → STL 层 `badbit`；`seekp` 超限失败；`reserve` 超限 `false`。
+
 ## 12. 并发级别（需求文档 §12）
 
 - 各 VFS / Stream 类文档**必须声明级别**。阶段 1 统一声明：**方法级不线程安全**，调用方外部同步；
@@ -760,7 +770,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | S3a | §9 `ZipArchive::entries` + 惰性只读 `ZipVfs`（+ robotics 改用它） | **已完成**（`test_iobase` 39/39） |
 | S3b | §9 单一 zip 后端（惰性源 + overlay + `commit`/`saveAs`/`toBytes`）、`ZipMemoryVfs` 删除、`IMemoryVfs` → `Vfs` | **已完成**（对账 2026-09-25：类名最终为 `ZipArchive`——空状态下它就是可写内存树；见顶部 banner 与 §9） |
 | S4 | §10 `MountVfs` | **已完成**（`test_iobase` 66/66 两树；变异 5/5；门禁 2026-09-25） |
-| S5 | §11 `reserve`/上限（内存流侧） | 与 VFS 解耦，可并行 |
+| S5 | §11 `reserve`/上限（内存流侧） | **已完成**（`test_core` 140/140 两树；变异 7/7；门禁 2026-09-25） |
 | S6 | §12 并发级别文档 + 跨进程/跨模块复查 | 待做 |
 
 ## 14. 测试门禁（对照需求文档 §17.5）
@@ -795,8 +805,8 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | Mount 最长前缀且不回退（读 / 枚举） | **已过**：`MountVfsTest.MountLongestPrefixWinsWithoutFallback` |
 | Mount 参数校验（绝对前缀 / 空后端 / 规范化拼写） | **已过**：`MountVfsTest.MountRejectsInvalidRequests` |
 | VFS 析构后 Stream 仍可读 → 生命周期正确 | S3（弱化版：`intrusive_ptr<Buffer>` 存活） |
-| 超出容量上限 → 超出容量 | S5 |
-| seek 越界 → 越界 | S5 |
+| 超出容量上限 → 超出容量 | **已过（分工版）**：缓冲层沿失败路径 —— `overflow` eof / `xsputn` 短写 / `seekp` 超限失败 / `reserve` `false`，STL 层表现为 `badbit`；可区分的 `CapacityExceeded` 留给高层预检（本层不产）：`MemoryStreamBuf.CapacityLimit{ShortWritesAndRefusesOverflow,HoldsSeekAndReserveBack}` / `ChunkedMemoryStreamBuf.CapacityLimitStopsAppends` |
+| seek 越界 → 越界 | **已过**：`MemoryStreamBuf.CapacityLimitHoldsSeekAndReserveBack`（超上限 seekp 失败；流层 failbit） |
 | 内容来源（片段 / 拉取）经 `Vfs&` 可达（默认实现 / override 两条路径） | **已过**：`IoBaseTest.DirectoryVfsAssemblesSourcesThroughTheBaseInterface` / `ZipArchiveKeepsSourcesLazyThroughTheBaseInterface` |
 | 读侧流式经 `Vfs&` 可达（`openRead` / `read(sink)`；override / 默认两条路径） | **已过**：`IoBaseTest.ZipArchiveStreamsReadsThroughTheBaseInterface` / `DirectoryVfsStreamsReadsThroughTheBaseInterface`（三种拼法同内容：整读 / 流读 / 推 sink；sink 拒绝即停并原样返回错误；损坏成员在 push 末尾报 `IoFailure`，同文件 `ZipArchiveOpensWithoutReadingContent` 的损坏夹具）；越界 seek → `OutOfRange` |
 

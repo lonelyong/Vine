@@ -536,3 +536,167 @@ TEST(ChunkedStreamWrappers, InputAndOutputStreamsReadAndWrite)
     reader.read(text.data(), 10);
     EXPECT_EQ(text, "abcdefghij");
 }
+
+TEST(MemoryStreamBuf, ReserveKeepsContentAndPositions)
+{
+    MemoryStreamBuf   buf;
+    const std::string text = "hello world";
+    ASSERT_EQ(buf.sputn(text.data(), text.size()), static_cast<std::streamsize>(text.size()));
+    ASSERT_EQ(buf.pubseekpos(3, std::ios::in), std::streambuf::pos_type(3));
+
+    EXPECT_TRUE(buf.reserve(1024));
+    EXPECT_TRUE(buf.reserve(1024)); // nothing to do the second time
+    EXPECT_TRUE(buf.reserve(0));
+    EXPECT_EQ(buf.size(), 11u);     // content, size and positions survive
+
+    char out[8]{};
+    EXPECT_EQ(buf.sgetn(out, 8), 8);
+    EXPECT_EQ(std::string(out, 8), "lo world");
+    EXPECT_EQ(buf.sputn("!", 1), 1); // the write position stayed at the end
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(buf.data()), buf.size()), "hello world!");
+}
+
+TEST(MemoryStreamBuf, CapacityLimitShortWritesAndRefusesOverflow)
+{
+    MemoryStreamBuf buf;
+    buf.setCapacityLimit(5);
+    EXPECT_EQ(buf.capacityLimit(), 5u);
+
+    // A bulk write is short at the limit...
+    EXPECT_EQ(buf.sputn("12345678", 8), 5);
+    EXPECT_EQ(buf.size(), 5u);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(buf.data()), buf.size()), "12345");
+
+    // ...and a single byte reports the overflow as eof.
+    EXPECT_EQ(buf.sputc('x'), std::streambuf::traits_type::eof());
+    EXPECT_EQ(buf.size(), 5u);
+
+    // Zero restores the unlimited default.
+    buf.setCapacityLimit(0);
+    EXPECT_EQ(buf.capacityLimit(), 0u);
+    EXPECT_EQ(buf.sputn("678", 3), 3);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(buf.data()), buf.size()), "12345678");
+}
+
+TEST(MemoryStreamBuf, CapacityLimitHoldsSeekAndReserveBack)
+{
+    MemoryStreamBuf buf;
+    buf.setCapacityLimit(10);
+
+    EXPECT_FALSE(buf.reserve(11));
+    EXPECT_TRUE(buf.reserve(10));
+    EXPECT_EQ(buf.size(), 0u);
+
+    // Seeking to the limit is allowed; one past it is refused.
+    EXPECT_EQ(buf.pubseekpos(10, std::ios::out), std::streambuf::pos_type(10));
+    EXPECT_EQ(buf.size(), 10u); // the seek zero-filled the hole up to the limit
+    EXPECT_EQ(buf.pubseekpos(11, std::ios::out), std::streambuf::pos_type(-1));
+    EXPECT_EQ(buf.sputc('x'), std::streambuf::traits_type::eof());
+    EXPECT_EQ(buf.size(), 10u);
+
+    // A write that starts close to the limit is cut short there.
+    ASSERT_EQ(buf.pubseekpos(8, std::ios::out), std::streambuf::pos_type(8));
+    EXPECT_EQ(buf.sputn("abc", 3), 2);
+    EXPECT_EQ(buf.size(), 10u);
+
+    // A lowered limit keeps the content but stops further growth, even though
+    // the put area was published before it shrank.
+    buf.setCapacityLimit(3);
+    EXPECT_EQ(buf.capacityLimit(), 3u);
+    EXPECT_EQ(buf.sputn("ab", 2), 0);
+    EXPECT_EQ(buf.sputc('c'), std::streambuf::traits_type::eof());
+    EXPECT_EQ(buf.size(), 10u);
+    EXPECT_EQ(buf.pubseekpos(4, std::ios::out), std::streambuf::pos_type(-1));
+}
+
+TEST(MemoryStreamBuf, WritingPastTheLimitSetsBadbit)
+{
+    MemoryStreamBuf buf;
+    buf.setCapacityLimit(4);
+
+    std::ostream out(&buf);
+    out.write("12345", 5); // xsputn() writes four and reports a short write
+    EXPECT_TRUE(out.bad());
+    EXPECT_EQ(buf.size(), 4u);
+
+    out.clear();
+    out.put('x'); // overflow() reports eof
+    EXPECT_TRUE(out.bad());
+    EXPECT_EQ(buf.size(), 4u);
+}
+
+TEST(MemoryStreamBuf, MoveKeepsTheCapacityLimit)
+{
+    MemoryStreamBuf buf;
+    buf.setCapacityLimit(4);
+    ASSERT_EQ(buf.sputn("ab", 2), 2);
+
+    MemoryStreamBuf moved(std::move(buf));
+    EXPECT_EQ(moved.capacityLimit(), 4u);
+    EXPECT_EQ(moved.size(), 2u);
+    EXPECT_EQ(moved.sputn("cde", 3), 2); // only the remaining room is written
+    EXPECT_EQ(moved.size(), 4u);
+
+    MemoryStreamBuf assigned;
+    assigned = std::move(moved);
+    EXPECT_EQ(assigned.capacityLimit(), 4u);
+    EXPECT_EQ(assigned.size(), 4u);
+}
+
+TEST(ChunkedMemoryStreamBuf, ReservePreallocatesChunksWithoutPublishingContent)
+{
+    ChunkedMemoryStreamBuf buf(4);
+    EXPECT_TRUE(buf.reserve(10)); // three chunks, all still empty
+    EXPECT_EQ(buf.size(), 0u);
+    EXPECT_TRUE(buf.chunks().empty());
+
+    const std::string text = "hello world!";
+    ASSERT_EQ(buf.sputn(text.data(), text.size()), 12);
+    EXPECT_EQ(buf.size(), 12u);
+
+    // The reserved chunks carry the content, and empty ones are not published.
+    const auto parts = buf.chunks();
+    ASSERT_EQ(parts.size(), 3u);
+    EXPECT_EQ(parts[0].size, 4u);
+    EXPECT_EQ(parts[1].size, 4u);
+    EXPECT_EQ(parts[2].size, 4u);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(buf.data()), buf.size()), text);
+}
+
+TEST(ChunkedMemoryStreamBuf, CapacityLimitStopsAppends)
+{
+    ChunkedMemoryStreamBuf buf(4);
+    buf.setCapacityLimit(5);
+    EXPECT_EQ(buf.capacityLimit(), 5u);
+
+    EXPECT_EQ(buf.sputn("12345678", 8), 5);
+    EXPECT_EQ(buf.size(), 5u);
+    EXPECT_EQ(buf.sputc('x'), std::streambuf::traits_type::eof());
+    EXPECT_EQ(buf.size(), 5u);
+    EXPECT_FALSE(buf.reserve(6));
+    EXPECT_TRUE(buf.reserve(5));
+
+    const auto parts = buf.chunks();
+    ASSERT_EQ(parts.size(), 2u);
+    EXPECT_EQ(parts[0].size, 4u);
+    EXPECT_EQ(parts[1].size, 1u);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(buf.data()), buf.size()), "12345");
+}
+
+TEST(ChunkedMemoryStreamBuf, MoveKeepsTheCapacityLimit)
+{
+    ChunkedMemoryStreamBuf buf(4);
+    buf.setCapacityLimit(4);
+    ASSERT_EQ(buf.sputn("ab", 2), 2);
+
+    ChunkedMemoryStreamBuf moved(std::move(buf));
+    EXPECT_EQ(moved.capacityLimit(), 4u);
+    EXPECT_EQ(moved.size(), 2u);
+    EXPECT_EQ(moved.sputn("cde", 3), 2);
+    EXPECT_EQ(moved.size(), 4u);
+
+    ChunkedMemoryStreamBuf assigned(4);
+    assigned = std::move(moved);
+    EXPECT_EQ(assigned.capacityLimit(), 4u);
+    EXPECT_EQ(assigned.size(), 4u);
+}
