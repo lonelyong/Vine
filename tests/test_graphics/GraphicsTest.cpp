@@ -1645,6 +1645,37 @@ TEST(MatrixTransformTest, NestedBoundingBoxIsWorld)
     EXPECT_NEAR(box.max().z, 0.0, 1e-9);
 }
 
+TEST(NodeTest, TheLocalBoxPlacedByTheWorldMatrixIsTheWorldBox)
+{
+    // ONE RULE, TWO SPELLINGS. The collection walk transforms each leaf's LOCAL box by the matrix IT
+    // accumulated (see Scene.cpp's bounds cache); the leaf's own boundingBox() transforms the same local
+    // box by its own worldMatrix(). On a chain with rotation, translation and non-uniform scale the two
+    // must be the SAME box - if they could disagree, culling would decide differently depending on which
+    // spelling asked.
+    auto outer = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    outer->setMatrix(vn::math::translate(Vec3d(3.0, -2.0, 1.0)) *
+                     vn::math::rotate(Vec3d(0.0, 0.0, 1.0), 0.7) * vn::math::scale(Vec3d(2.0, 0.5, 1.5)));
+    auto inner = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    inner->setMatrix(vn::math::rotate(Vec3d(1.0, 0.0, 0.0), 0.4) * vn::math::translate(Vec3d(0.0, 1.0, 0.0)));
+    auto geom = geometryOf(*makeUnitTriangle());
+    outer->addChild(inner);
+    inner->addChild(geom);
+
+    const Aabbd local = geom->localBounds();
+    EXPECT_TRUE(local.isValid()) << "a triangle with positions has a local box";
+
+    const Aabbd via_leaf = geom->boundingBox();
+    const Aabbd via_walk = transformBox(geom->localBounds(), geom->worldMatrix());
+    EXPECT_TRUE(via_leaf == via_walk) << "the walk's spelling and the leaf's spelling must be one box";
+
+    // The local box belongs to the DATA, not to the placement: moving the chain leaves it alone while
+    // the world box follows.
+    const Aabbd local_before = geom->localBounds();
+    outer->setMatrix(vn::math::translate(Vec3d(-5.0, 4.0, 2.0)));
+    EXPECT_TRUE(geom->localBounds() == local_before) << "placement is not data";
+    EXPECT_FALSE(geom->boundingBox() == via_leaf) << "while the world box follows the placement";
+}
+
 TEST(MatrixTransformTest, WorldMatrixIsOwnMatrixForSingleNode)
 {
     // A lone MatrixTransform's worldMatrix is exactly its own matrix (no

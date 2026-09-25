@@ -1,8 +1,37 @@
 ﻿#include <vine/graphics/Node.hpp>
 
+#include <vine/math/Point3.hpp>
+#include <vine/math/Transform3.hpp>
+#include <vine/math/Vector3.hpp>
+
 VN_GRAPHICS_NS_BEGIN
 
 VN_OBJECT_META_IMPL(Node, vn::Object);
+
+Aabbd transformBox(const Aabbd& local, const Mat4d& world)
+{
+    Aabbd result = Aabbd::empty();
+    if (!local.isValid()) {
+        return result;
+    }
+    const auto mn = local.min();
+    const auto mx = local.max();
+    const vn::math::Point3d corners[8] = {
+        mn,
+        vn::math::Point3d(mx.x, mn.y, mn.z),
+        vn::math::Point3d(mn.x, mx.y, mn.z),
+        vn::math::Point3d(mx.x, mx.y, mn.z),
+        vn::math::Point3d(mn.x, mn.y, mx.z),
+        vn::math::Point3d(mx.x, mn.y, mx.z),
+        vn::math::Point3d(mn.x, mx.y, mx.z),
+        mx,
+    };
+    for (const auto& c : corners) {
+        const auto p = world * c;
+        result.expandBy(vn::math::Vec3d(p.x, p.y, p.z));
+    }
+    return result;
+}
 
 Node::Node() = default;
 

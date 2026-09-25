@@ -176,8 +176,18 @@ class BoundsCache {
                 box.expandBy(worldBound(child.get(), world * child->localTransformMatrix()));
             }
         }
+        else if (typeid(*node) == typeid(Geometry)) {
+            // The engine's own leaf, EXACTLY this class: its LOCAL box placed by the matrix the walk
+            // already accumulated (which IS node->worldMatrix() for every visited node - the root is
+            // seeded with it and every descent multiplies the child's local), so the per-leaf
+            // parent-chain re-walk its own boundingBox() would do is gone. A SUBCLASS may override
+            // boundingBox() itself - the tests' CountingGeometry does - and the walk must keep honouring
+            // the virtual for it, so only the exact class takes this path. A test pins the two spellings
+            // equal for it (see Node.hpp's transformBox).
+            box = transformBox(static_cast<const Geometry*>(node)->localBounds(), world);
+        }
         else {
-            // Leaves answer for themselves (a custom leaf keeps working).
+            // A leaf that is not the engine's own (or is a subclass of one) answers for itself.
             box = node->boundingBox();
         }
         return bounds_.emplace(node, box).first->second;

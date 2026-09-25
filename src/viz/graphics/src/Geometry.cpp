@@ -25,38 +25,6 @@ Geometry::~Geometry() = default;
 
 namespace
 {
-/**
- * @brief Transforms a local-space AABB by a matrix into a world-space AABB.
- *
- * @param local Box in local space.
- * @param world World transform of the geometry.
- * @return World-space AABB (empty when the local box is empty).
- */
-Aabbd transformBox(const Aabbd& local, const Mat4d& world)
-{
-    Aabbd result = Aabbd::empty();
-    if (!local.isValid()) {
-        return result;
-    }
-    const auto mn = local.min();
-    const auto mx = local.max();
-    const vn::math::Point3d corners[8] = {
-        mn,
-        vn::math::Point3d(mx.x, mn.y, mn.z),
-        vn::math::Point3d(mn.x, mx.y, mn.z),
-        vn::math::Point3d(mx.x, mx.y, mn.z),
-        vn::math::Point3d(mn.x, mn.y, mx.z),
-        vn::math::Point3d(mx.x, mn.y, mx.z),
-        vn::math::Point3d(mn.x, mx.y, mx.z),
-        mx,
-    };
-    for (const auto& c : corners) {
-        const auto p = world * c;
-        result.expandBy(Vec3d(p.x, p.y, p.z));
-    }
-    return result;
-}
-
 /// Scalars per vertex of an attribute channel — the mesh's own element layout, which sharing reads directly.
 constexpr std::uint32_t kVec3Components = vn::geometry::Mesh::kVec3Components;
 constexpr std::uint32_t kVec2Components = vn::geometry::Mesh::kVec2Components;
@@ -312,10 +280,11 @@ void Geometry::setProgram(intrusive_ptr<ShaderProgram> program)
     program_ = std::move(program);
 }
 
-Aabbd Geometry::boundingBox() const
+Aabbd Geometry::localBounds() const
 {
-    // The local data box (location 0 positions) placed in world space by the
-    // enclosing MatrixTransform chain.
+    // The bound of the location-0 positions in the leaf's OWN frame: the"data-derived" half of
+    // boundingBox(), and the half a collection walk can place itself (it already holds the accumulated
+    // world matrix - see Scene.cpp).
     //
     // The LOCAL half is remembered between calls: the pass asks every geometry for its bound on every
     // frame it walks (a moving camera invalidates the frame memo), and scanning the vertices for a box
@@ -344,7 +313,15 @@ Aabbd Geometry::boundingBox() const
         local_bounds_.valid             = true;
         ++local_bounds_computations_;
     }
-    return transformBox(local_bounds_.box, worldMatrix());
+    return local_bounds_.box;
+}
+
+Aabbd Geometry::boundingBox() const
+{
+    // The same LOCAL box a collection walk transforms with the matrix IT accumulated (see Scene.cpp's
+    // bounds cache), placed by this leaf's own worldMatrix(): one spelling of "place the box"
+    // (transformBox), so the walk's answer and this one cannot disagree (a test pins it).
+    return transformBox(localBounds(), worldMatrix());
 }
 
 std::uint64_t Geometry::localBoundsComputationCount() const noexcept

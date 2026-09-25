@@ -595,6 +595,18 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     void setProgram(intrusive_ptr<ShaderProgram> program);
 
+    /** @brief Computes the LOCAL-space bounding box of this leaf's vertex data.
+     *
+     * The bound of the location-0 positions in the leaf's OWN frame: no enclosing MatrixTransform
+     * contributes. A collection pass that already accumulates world matrices uses this plus
+     * transformBox() instead of boundingBox(), which would re-walk the parent chain
+     * (Node::worldMatrix()) once per leaf per pass - the two spellings are equal by construction and a
+     * test pins it.
+     *
+     * @return Local-space AABB of this geometry's data (empty when no positions are set).
+     */
+    Aabbd localBounds() const;
+
     /** @brief Computes the world-space bounding box of this leaf.
      *
      * The bound of the location-0 positions (local data box) transformed by

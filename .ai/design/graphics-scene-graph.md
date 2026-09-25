@@ -244,7 +244,8 @@ Debug 树（`build/`）同比值：被剔节点 ≈3.4 µs、可见 ≈5.2 µs/�
 ## 10. 后续重设计方向：持久化世界 AABB（**待排期**）
 
 结论：这是**"场景一大就撞墙"的项**（§9 实测上限 ~99%），但它需要先做一个**契约决定**，而且触发条件
-（"存在但不可见的节点数 ≫ 可见节点数"）在我们手上的负载里还没出现 ⇒ **今天不做**。
+（"存在但不可见的节点数 ≫ 可见节点数"）在我们手上的负载里还没出现 ⇒ §10.2 **今天不做**；
+**§10.1（零风险前置）已于 2026-09-25 落地**（见下）。
 
 ### 10.1 前置（零失效风险，可先做）
 
@@ -261,6 +262,21 @@ transformBox(node->localBounds(), world /* walk 传下来的 */);    // 摆放�
 - **零失效面**：仍然每次收集从零推 ⇒ 对任何 `Node` 子类都 sound；
 - 门禁：一条"两种拼写必须一致"的测试，照 `InheritedState` 那条先例
   （"同一规则的两种拼写必须有测试对齐"）：`boundingBox(worldMatrix()) == transformBox(localBounds(), worldMatrix())`。
+
+**已落地（2026-09-25）**：
+
+- `Geometry::localBounds()` 公开（数据派生的局部盒，缓存语义原样搬过去）；`Geometry::boundingBox()` 变成
+  `transformBox(localBounds(), worldMatrix())`；`transformBox` 从 `Geometry.cpp` 的匿名命名空间提到
+  `Node.hpp`/`Node.cpp`（一个拼写给 walk 与节点共用，带 Doxygen）。
+- `Scene` 的 `BoundsCache` 叶子分支：**恰好是 `Geometry` 类**时走 `transformBox(localBounds(), world)`
+  （walk 的 `world` 对每个访问节点就是 `node->worldMatrix()`）；**`Geometry` 的子类保持走虚函数
+  `boundingBox()`**——先例是测试里的 `CountingGeometry`（覆写它并被要求只被问一次），子类扩展行为不静默改变。
+- 门禁：`NodeTest.TheLocalBoxPlacedByTheWorldMatrixIsTheWorldBox` 钉"两种拼写相等"（带旋转/平移/非均匀
+  缩放的嵌套链，并钉局部盒不随摆放变化）；`test_graphics` 两棵树 **277/277**；vsg 门禁两棵树
+  `cases=445 vuid=0 hazard=0`、应用画面行**逐字不变**。
+- 实测（临时基准，形状照 §9.2，跑完已删）：100k 节点"平铺 ~1% 可见"收集 **~38.7 → ~34.0 ms/帧**（−~12%）；
+  深链 8 层（225k 节点）**~38.0 → ~36.8 ms/帧**（−~3%）；全可见形状不变（发射主导）。
+  **§9 的 ~250 ns/节点大头仍在**——那部分正是 §10.2 的持久化要吃的。
 
 ### 10.2 持久化本身（要的就是 §9 那个上限）
 
@@ -283,5 +299,6 @@ transformBox(node->localBounds(), world /* walk 传下来的 */);    // 摆放�
 ### 10.3 顺序建议
 
 1. 先做 §10.1 的前置：零风险，且是持久化的**必要条件**——世界盒要有自己的身份，才有资格被持久化；
+   **（2026-09-25 已完成，见 §10.1）**
 2. 触发条件出现后再做 §10.2：版本键 + 显式失效口，并给"漏失效"配一条**能红**的门禁
    （例如故意把某版本的缓存打脏 ⇒ 必须重算，而不是继续用旧的）。

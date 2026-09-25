@@ -107,4 +107,18 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
 using NodePtr = intrusive_ptr<Node>;
 
+/**
+ * @brief Places a local-space AABB with @p world into a world-space AABB.
+ *
+ * The one spelling of "place an axis-aligned box": all eight corners are transformed and the result is
+ * re-boxed. A node's own `boundingBox()` uses it, and so does the scene's collection walk with the matrix
+ * IT accumulated - the two must agree (a test pins `boundingBox() == transformBox(localBounds(),
+ * worldMatrix())` on a nested chain), which is why this helper lives here rather than once per caller.
+ *
+ * @param local Box in the node's own frame.
+ * @param world World transform to place it with.
+ * @return World-space AABB (empty when @p local is empty).
+ */
+[[nodiscard]] Aabbd transformBox(const Aabbd& local, const Mat4d& world);
+
 VN_GRAPHICS_NS_END

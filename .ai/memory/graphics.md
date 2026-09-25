@@ -189,6 +189,14 @@
 > · 关键测量技巧：用"**只存在那 1% 可见节点**"的同类场景当**理想持久化代理**（今天的代码就能跑），
 > 于是"上限收益"是被**测**出来的，不是估的。
 
+> 2026-09-25 **P18 §10.1 已落地**（前置：局部盒/世界盒拆开）：`Geometry::localBounds()` 公开、`boundingBox()` 变成
+> `transformBox(localBounds(), worldMatrix())`、`transformBox` 上移到 Node 层（Node.hpp/.cpp）；walk 的叶子分支
+> 对**恰好 `Geometry` 类**走 local+world（**子类保持虚调用**——`CountingGeometry` 先例；第一版绕过虚函数当场红了
+> `CollectCommandsAsksEachLeafBoundOnce`）。门禁：`NodeTest.TheLocalBoxPlacedByTheWorldMatrixIsTheWorldBox` 钉两拼写
+> 相等；test_graphics 两棵树 277、vsg 门禁 cases=445、应用画面行逐字不变。实测（临时基准照 §9.2 后删）：100k 平铺
+> 1% 可见收集 **−12%**（38.7→34.0 ms/帧），深链 8 层 −3%，全可见不变——**§9 的 ~250 ns/节点大头仍在**，
+> 属 §10.2（触发未到）。见 `.ai/design/graphics-scene-graph.md` §10.1。
+
 > 2026-09-17 **V3/V4 收口：把"等上游"从假设变成有门禁的事实（附一个表格形状的坑）**
 > 停在"被上游阻塞"上的条目，危险的不是它没做，而是**前提悄悄失效后没人再看它**。
 > · **事实（现抓，不是回忆）**：pinned v1.1.16 与**上游 master** 都是 `vkCreateGraphicsPipelines(*device, **VK_NULL_HANDLE**, …)`
