@@ -1026,6 +1026,161 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     EXPECT_TRUE(host.alive());
 }
 
+// 跨帧差异相位（登记 B8）：现有像素相位全是静止相机，任何"某一帧读到别的帧的块"都看不见。
+// 这条相位每帧只动一点相机，并把判据做成可读回的子类：帧 1..5 相机 0.95..0.75（红通道类 1）、
+// 末帧 0.1（类 0），它的输出留在离屏 target 上；帧 7..14 相机 0.9、打进窗口。
+//
+// 判据刻意避开色彩空间：视图块的 x 经 step(0.75, x) 落成红通道 0 或 1（0 与 1 在 linear/sRGB
+// 两种拼法下同字节）。末帧只可能读到自己的 0.1（红 0）；绑定冻结在早前帧、错 slab、串帧——
+// 任何读到别帧数据的形状都会把它翻到 255。
+//
+// 诚实的边界（2026-09-25 探针实测）：§11.16dd 的受害帧是"最旧在飞帧（F−N）"，它的输出不是
+// 一次 readback 能看到的东西（readback 只见最新帧），而本机框架的逐帧节流（submit/回拷阻塞
+// ≈ 一个 GPU 帧）让 F−N 总在覆盖写之前收尾——把负载压到 1G 像素/帧也没造出重叠。那条缺陷
+// 继续由结构性旋转用例（BlockStorageTest.TheSlabsRotate…）承担；本相位守的是"可读回"的
+// 跨帧子类（末帧读到别帧的数据 / 绑定冻结）。
+TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kTargetSide = 1024;
+
+    TestHostWindow host(connection, screen, 128, 96);
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    std::size_t                   seen = 0;
+    backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
+        ++seen;
+        std::printf("[cross-frame] diagnostic: severity=%d category=%d message=%s\n",
+                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    as_bytes(diagnostic.message).c_str());
+    });
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(kTargetSide, kTargetSide);
+
+    // 全屏四边形 + 读视图块的片元：像素 = (step(0.75, |cam_pos.x|), 0.5, 0, 1)。
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { outColor = vec4(step(0.75, abs(vb.cam_pos.x)), 0.5, 0.0, 1.0); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -2.0F, -2.0F, 0.5F, 2.0F, -2.0F, 0.5F, 2.0F, 2.0F, 0.5F, -2.0F, 2.0F, 0.5F }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U }));
+    geometry->setPositions(positions);
+    geometry->setIndices(indices);
+    geometry->setRevision(1U);
+
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+
+    // 每帧把同一个全屏四边形画 8 遍：多一点填充量，让帧真正在 GPU 上跑起来（探针实测：Debug
+    // 下 CPU 每帧与 GPU 帧同量级，纯粹加负载并不会制造出跨帧重叠窗口——本相位的职责见文件头）。
+    constexpr int kDrawsPerFrame = 8;
+
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
+    const std::vector<RenderCommand> commands(kDrawsPerFrame, command);
+
+    const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
+    const vn::graphics::ClearPolicy     clear{ vn::Color(0, 64, 0, 255), true };
+
+    const auto drive_into = [&](RenderTarget* where, double camera_x) {
+        const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(camera_x);
+        backend->beginFrame();
+        backend->beginPass(pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(where);
+        backend->setClearPolicy(clear);
+        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
+        backend->render(commands, camera.get());
+        backend->endPass();
+        backend->endFrame();
+        backend->swapBuffers();
+    };
+
+    // 帧 1..5：相机 0.95..0.75（红通道类 1）；末帧 0.1（类 0）——它的输出留在 target 上。
+    const auto phase_start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 5; ++i)
+    {
+        drive_into(target.get(), 0.95 - 0.05 * i);
+    }
+    drive_into(target.get(), 0.1);
+    // 帧 7..14：相机 0.9（类 1），打进窗口。任何"末帧读到别帧数据"都会把它的红通道翻到 255。
+    for (int i = 7; i <= 14; ++i)
+    {
+        drive_into(nullptr, 0.9);
+    }
+    const auto phase_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - phase_start).count();
+    std::printf("[cross-frame] 14 frames (%d draws each) in %lld ms\n", kDrawsPerFrame, static_cast<long long>(phase_ms));
+
+    std::vector<std::uint8_t>    pixels;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "the target is read back";
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::Ok);
+    ASSERT_EQ(pixels.size(), static_cast<std::size_t>(kTargetSide) * kTargetSide * 4U);
+
+    const auto pixel = [&pixels](int x, int y) {
+        const std::size_t at = (static_cast<std::size_t>(y) * kTargetSide + static_cast<std::size_t>(x)) * 4U;
+        return std::array<std::uint8_t, 4>{ pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3] };
+    };
+
+    // 五个采样点全在末帧的四边形内：绿通道必须是 0.5 那类（quad 画到了），红通道必须是 0 那类
+    // （末帧读到的是自己的视图块）。红通道若成群出现 255，就是读到了别帧的数据。
+    const int offsets[][2] = { { 0, 0 }, { -150, 0 }, { 150, 0 }, { 0, -150 }, { 0, 150 } };
+    for (const auto& offset : offsets)
+    {
+        const auto sample = pixel(kTargetSide / 2 + offset[0], kTargetSide / 2 + offset[1]);
+        std::printf("[cross-frame] pixel(%d,%d) = (%u, %u, %u, %u)\n",
+                    kTargetSide / 2 + offset[0], kTargetSide / 2 + offset[1],
+                    static_cast<unsigned>(sample[0]), static_cast<unsigned>(sample[1]),
+                    static_cast<unsigned>(sample[2]), static_cast<unsigned>(sample[3]));
+        EXPECT_GT(sample[1], 100U) << "the quad covered this sample (green 0.5)";
+        EXPECT_LT(sample[0], 8U) << "this frame must be shaded from its OWN view block (step(0.75, 0.1) = 0); "
+                                    "a read of any other frame's block (>=0.75) flips the red channel to 255";
+    }
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+
+    backend->releaseRenderTarget(target.get());
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
 TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
 {
     if (!deviceCaseAvailable())

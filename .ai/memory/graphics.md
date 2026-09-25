@@ -1,3 +1,13 @@
+> 2026-09-25 **B8 跨帧差异相位（部分）：可读回子类守住，F−N 洞记实**
+> · 新相位 `VsgBackendTest.TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue`（test_vsg 447→**448**；门禁 cases=448/vuid=0、
+>   应用阶段逐字不变）：每帧动相机（0.95..0.75）、**末帧 0.1**；片元 `step(0.75,|cam_pos.x|)` 把红通道变成 0/1 两类
+>   （linear/sRGB 同字节，判据与色彩空间无关）⇒ 末帧只要读到别帧数据（绑定冻结/过期、错 slab）就整片翻 255。
+>   变异（`ContentPass::recordCommand` 读侧绑定落后一 slab）**2/2 红**；写侧"落后一 slab"变异自洽、抓不到（读写共用同一 `view.offset`）。
+> · **为什么抓不到 §11.16dd 本体**：受害帧 = 最旧在飞帧（F−N），readback 只见最新帧；探针实测（`writeView` 帧号/slab/偏移/时间戳、
+>   `Session` 学到槽数 = 3）本机框架逐帧节流 ≈ 1 GPU 帧（submit/回拷阻塞），F−N 总在覆盖写之前收尾；负载压到 4096²×64 遍
+>   （≈1G 像素/帧）仍无重叠。⇒ 该洞继续由结构性旋转用例（`BlockStorageTest.TheSlabsRotate…`）承担；登记 B8 行已改写。
+> · 方法记：临时探针跑完即撤；"读是活的"用两次判别实验钉的（全 0.9 ⇒ 255；0.9×5+0.1 ⇒ 0 ⇒ 读自己帧的 slab）。
+
 > 2026-09-25 **M11ah：节点四种变更行为钉住（换父 / 换材质 / 换着色器 / 移除；设计 §10.2）**
 > · 新套件 `SceneMutationTest.*`（4 例，无设备，收集层）：①换父 = 单父结构 + 命令世界矩阵跟随 + **新旧两链都重算**
 >   （`boundsRecomputeCount()` 证人）+ 旧父 box 缩回；②换父跨越 `StateNode` ⇒ 材质/程序/不透明度按新链整体切换
