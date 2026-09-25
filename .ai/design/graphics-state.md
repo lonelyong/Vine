@@ -16,7 +16,9 @@
 > 模式作用在错误的面；D6 修正，见 `RenderStateMapper.hpp`）；PolygonMode→polygonMode；
 > Topology→InputAssemblyState.topology（Triangles/Points/Lines）。
 > **对账（2026-09-25）**：winding 已钉——D6 修正 + 像素用例（`VsgBackendTest` 状态区制：Back 剔除下网格仍在）；
-> blend 因子由 `ContentDrawTest` 逐项映射断言钉住（每附件的 blendEnable/因子），**像素级专项仍未做**。
+> blend 因子：`ContentDrawTest` 逐项映射断言 + **像素专项已落地**
+> （`VsgBackendTest.TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsSaySo`：α=0.5 的红叠蓝清屏 ⇒
+> 两个外通道各 0.5；把 src 改成 ONE 或关掉 blendEnable 即红）。
 
 > 落地记录（2026-09-03）：
 > - SDK 类型已实现——`StateNode`（Group 子类）+ `CompareOp/CullMode/BlendFactor/PolygonMode/

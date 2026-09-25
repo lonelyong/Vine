@@ -164,7 +164,8 @@ material 值 / 流字节 / cull 全部**不进**。
   0 VUID、0 诊断**。
 * **折反看不出来**：z 镜像（近→0）时画面照样过测，只有算术用例能抓 ⇒ 算术用例与像素用例各管一段。
 * **front face = CLOCKWISE**（vsg 的投影翻转 Y；照抄直觉的 CCW 会让每个 cull 模式作用在错误的面——静默）。
-  混合恒开，`blend.enabled` 只选因子。
+  混合**对单附件内容绘制恒开**（因子 `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA`），`blend.enabled` 只选因子；
+  多附件 pass 与全屏 draw **不混合**（`color_attachments > 1 || !draws_content`，见 §11.16bl；像素专项见 §11.16cv）。
 * **全屏调用不测深度是它的定义**（正典三角形 z = 0 = reverse-Z 远平面；测了就整块消失）。
 * **全屏 push 必须紧贴绘制、放进 `Commands` 节点**（vsg 的 stateCommands 按 slot 记录 ⇒ 命令发出去了，
   shader 读到的是恒等矩阵，画面"看着正常"）。**push 的阶段（顶点/片元）是 ABI 的一半**，发错阶段 0 VUID 静默。
@@ -375,7 +376,7 @@ material 值 / 流字节 / cull 全部**不进**。
 
 ### 11.11 M2c-2b-2b-1（2026-09-21）：绘制录制（api，无设备）
 * 动态块的槽 — `kDynamicStateSlot == 15`：槽是状态栈的**身份**不是优先级，取默认槽 0 会顶掉管线绑定（既有实现从驱动崩溃里学到的那条，这里断言钉住）
-* 两条引擎约定 — reverse-Z ⇒ `VK_COMPARE_OP_GREATER`；**front face = CLOCKWISE**（vsg 的投影翻转 Y，声明成直觉的 CCW 会让每个 cull 模式作用在错误的面——静默）；混合**恒开**，`blend.enabled` 只选因子
+* 两条引擎约定 — reverse-Z ⇒ `VK_COMPARE_OP_GREATER`；**front face = CLOCKWISE**（vsg 的投影翻转 Y，声明成直觉的 CCW 会让每个 cull 模式作用在错误的面——静默）；混合**恒开**，`blend.enabled` 只选因子（2026-09-25 注：该约定后来有了限定——单附件内容绘制才恒开，多附件 pass 与全屏 draw 不混合；见 §11.16bl 与 §11.16cv）
 * 顺带修掉的偏差 — `ContentPipeline` 的 baked 常量原写成 `LESS_OR_EQUAL` + `COUNTER_CLOCKWISE`（照抄时的直觉值），已按引擎约定改为 `GREATER` + `CLOCKWISE`
 
 ### 11.12 M2c-2b-2b-2a（2026-09-21）：离屏目标与读回（api，真设备、无窗口）
@@ -1272,3 +1273,16 @@ material 值 / 流字节 / cull 全部**不进**。
   **量出来的才是口径**：一次 `render()` = 一个 drawing call（灯/影每 call 一块），命令只是它的 draw 块。
 * **判据**：套件 439 → **440**；两棵树门禁 `cases=440 failed=0 vuid=0 hazard=0`、应用行与历史逐字相同；本片
   **无源改动**（只加配方与记录）。
+
+### §11.16cv M11y（2026-09-25）：单附件内容绘制的混合因子读回像素（收掉图形侧对账的尾项）
+
+* **登记来自哪里**：图形侧登记对账（commit `aa1176f`）把 `graphics-state.md` 的旧声明“blend 因子的真机视觉
+  验证未做”改成“映射单测钉住、像素专项仍无”——本片把这条尾项收掉。
+* **用例**（`VsgBackendTest.TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsSaySo`）：一个 pass、
+  一个内容绘制，fragment 写 `(1,0,0,0.5)`，清屏 **蓝**。混合按 `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA` 生效 ⇒
+  中心像素两个外通道各 **0.5**（读回接受 0.5 的 linear/sRGB 两种拼法，但不接受 1.0 的）；角落仍是清屏蓝。
+  两个外通道都是 0.5 ⇒ **与字节序无关**。
+* **判据为何钉的是因子而不是“有没有混合”**：把 `StateCommands.cpp` 的 src 因子改成 `ONE`，或把单附件
+  `blendEnable` 关掉，同一探测点会读到 **1.0 红 / 0.0 蓝**（变异 M1/M2，都实测红）。
+* **判据**：套件 440 → **441**；两棵树门禁 `cases=441 failed=0 vuid=0 hazard=0`、应用行与历史逐字相同；
+  本片**无源改动**（只加用例与记录）。

@@ -1842,6 +1842,121 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     EXPECT_TRUE(host.alive());
 }
 
+TEST(VsgBackendTest, TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsSaySo)
+{
+    // THE OPACITY PATH'S FACTORS, READ BACK FROM THE SURFACE. A content draw into a ONE-attachment target
+    // blends with SRC_ALPHA / ONE_MINUS_SRC_ALPHA even though the draw does not opt in (StateCommands.cpp:
+    // the single-attachment CONTENT path's standard pair; the opaque pair is what a >1-attachment or
+    // full-screen draw gets). A fragment writing (1, 0, 0, 0.5) over a blue clear therefore leaves HALF red
+    // and HALF blue - 0.5 in both outer bytes. With either factor flipped to the opaque pair the same probe
+    // reads 1.0 red / 0.0 blue (the read-back accepts 0.5's linear AND sRGB spellings, but not 1.0's), so
+    // this case asserts the FACTORS, not merely that blending happens at all.
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth  = 128;
+    constexpr int kHeight = 96;
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+
+    // Clip-space positions passed through, and a fragment that writes a HALF-TRANSPARENT red: the alpha is
+    // the shader's, so nothing here depends on how the engine feeds opacity into a program.
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "void main() { outColor = vec4(1.0, 0.0, 0.0, 0.5); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices = vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    geometry->setPositions(positions);
+    geometry->setIndices(indices);
+    geometry->setRevision(1U);
+
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
+    const std::vector<RenderCommand> commands{ command };
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    // A blue clear: the dst factor is what leaves it standing at half strength next to the fragment's red.
+    const vn::graphics::ClearPolicy clear{ vn::Color(0, 0, 255, 255), true };
+
+    const auto drive = [&] {
+        backend->beginFrame();
+        backend->beginPass(pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(nullptr);
+        backend->setClearPolicy(clear);
+        backend->setDepthMode(vn::graphics::DepthMode::Disabled);
+        backend->render(commands, camera.get());
+        backend->endPass();
+        backend->endFrame();
+        backend->swapBuffers();
+    };
+
+    // The display path lags the session's presents: present the SAME picture once more, then read (a
+    // plan-free frame would repaint the window with the session's own graph).
+    drive();
+    drive();
+    const auto centre = host.waitForPixel(
+        kWidth / 2, kHeight / 2,
+        [](const std::array<std::uint8_t, 3>& pixel) { return isColourByte(pixel[0], 0.5); },
+        std::chrono::milliseconds{ 500 });
+    // Both outer channels are 0.5, so the surface's byte order does not matter for the centre.
+    EXPECT_TRUE(isColourByte(centre[0], 0.5))
+        << "src * SRC_ALPHA: the fragment's red at half alpha, got (" << static_cast<int>(centre[0]) << ", "
+        << static_cast<int>(centre[1]) << ", " << static_cast<int>(centre[2]) << ")";
+    EXPECT_TRUE(isColourByte(centre[2], 0.5))
+        << "dst * ONE_MINUS_SRC_ALPHA: the clear's blue survives at half strength, got ("
+        << static_cast<int>(centre[0]) << ", " << static_cast<int>(centre[1]) << ", "
+        << static_cast<int>(centre[2]) << ")";
+
+    // The corner never saw a fragment: the pass' own clear, in whichever byte order the surface uses.
+    const auto corner = host.pixel(1, 1);
+    const bool blue_clear = (isColourByte(corner[0], 0.0) && isColourByte(corner[2], 1.0)) ||
+                            (isColourByte(corner[2], 0.0) && isColourByte(corner[0], 1.0));
+    EXPECT_TRUE(blue_clear) << "the corner is the blue clear, got (" << static_cast<int>(corner[0]) << ", "
+                            << static_cast<int>(corner[1]) << ", " << static_cast<int>(corner[2]) << ")";
+
+    EXPECT_EQ(backend->deviceWaits(), 0U) << "reading the picture stops nothing";
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
 TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryCommand)
 {
     // THE TRIGGER SCALE ITSELF, MADE A RECIPE. The design log names ~2000 drawables as the size at which the
