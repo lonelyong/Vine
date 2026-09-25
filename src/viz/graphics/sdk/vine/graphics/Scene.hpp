@@ -175,6 +175,10 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * edited DIRECTLY (a transform, a material, a drawable's attributes) cannot
      * be observed by the scene, so such an edit made between two passes of one
      * frame is picked up by the next frame — call this to pick it up at once.
+     *
+     * The CACHED BOUNDS (Node::invalidateBounds) are reset with it: the built-in setters announce
+     * themselves, and this call reaches the edits they could not see, so the next collection also
+     * re-derives every box before it culls with one.
      */
     void invalidateContent();
 

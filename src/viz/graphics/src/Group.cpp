@@ -35,6 +35,9 @@ void Group::addChild(intrusive_ptr<Node> child)
     }
     child->parent_ = this;
     children_.emplace_back(std::move(child));
+    // The structure changed: the union this node answers with is stale, and so is every ancestor's
+    // (see Node::invalidateBounds).
+    invalidateBounds();
 }
 
 void Group::removeChild(raw_ptr<Node> child)
@@ -47,6 +50,8 @@ void Group::removeChild(raw_ptr<Node> child)
     if (it != children_.end()) {
         child->parent_ = nullptr;
         children_.erase(it);
+        // The structure changed: the union this node answers with is stale (see Node::invalidateBounds).
+        invalidateBounds();
     }
 }
 

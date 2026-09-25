@@ -5353,6 +5353,186 @@ TEST(SceneTest, CollectCommandsAsksEachLeafBoundOnce)
     EXPECT_EQ(leaf->bound_calls, 3);
 }
 
+namespace
+{
+
+/// @brief A camera that sees world x in [3.5, 7.5] and y in [-1.5, 2.5] - the region the invalidation
+/// firewalls below move content into (a unit triangle at the origin is out of view for it). The ortho
+/// bounds are CAMERA space, and the eye sits at x = 5.5, so the visible world window is x ~ [3.5, 7.5].
+void pointCameraAtX5(Camera& camera)
+{
+    camera.setViewMatrixAsLookAt(Vec3d(5.5, 0.5, 5.0), Vec3d(5.5, 0.5, 0.0), Vec3d(0.0, 1.0, 0.0));
+    camera.setProjectionMatrixAsOrtho(-2.0, 2.0, -2.0, 2.0, 0.5, 100.0);
+}
+
+/// @brief Sums Node::boundsRecomputeCount() over @p node's subtree (the per-node bounds cache's witness).
+std::uint64_t sumBoundsRecomputes(const Node* node)
+{
+    std::uint64_t total = node->boundsRecomputeCount();
+    if (const auto* group = dynamic_cast<const Group*>(node)) {
+        for (const auto& child : group->childrenRef()) {
+            total += sumBoundsRecomputes(child.get());
+        }
+    }
+    return total;
+}
+
+/// @brief A node whose placement lives OUTSIDE the engine's setters - the case Node::invalidateBounds()
+/// exists for: the node announces its own changes through the hook.
+class ShiftedGroup : public Group
+{
+  public:
+    void setShift(double x) noexcept
+    {
+        shift_ = x;
+    }
+
+    Mat4d localTransformMatrix() const override
+    {
+        return vn::math::translate(Vec3d(shift_, 0.0, 0.0));
+    }
+
+  private:
+    double shift_ = 0.0;
+};
+
+}  // namespace
+
+TEST(SceneTest, CachedSubtreeBoxesSurviveCameraMovesAndFollowAnnouncements)
+{
+    // P18 §10.2: each subtree's box in its OWN frame is cached per node, so it survives CAMERA moves -
+    // a box in a node's own frame does not depend on the camera - and only an announcement inside the
+    // subtree invalidates it. The witness is Node::boundsRecomputeCount(): a second collect through a
+    // different camera recomputes nothing, while setMatrix() recomputes exactly the announced spine.
+    Scene scene;
+    auto  root      = setIdentityRoot(scene);
+    auto  container = intrusive_ptr<Group>(new Group());
+    auto  transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    transform->addChild(geometryOf(*makeUnitTriangle()));
+    container->addChild(transform);
+    root->addChild(container);
+
+    Camera first;
+    setupLookAtCamera(first); // looks at the origin: the unit triangle is in view
+    Camera second;
+    setupLookAtCamera(second);
+    second.setProjectionMatrixAsPerspective(70.0, 1.0, 0.1, 1000.0); // the camera MOVED: same scene, new view
+
+    scene.setContentFrame(1);
+    ASSERT_EQ(scene.collectRenderCommands(&first).size(), 1u);
+    const std::uint64_t first_total = sumBoundsRecomputes(root.get());
+    EXPECT_GT(first_total, 0u) << "the first collect computes the unions";
+
+    scene.setContentFrame(2);
+    EXPECT_EQ(scene.collectRenderCommands(&second).size(), 1u) << "the triangle is still in view";
+    EXPECT_EQ(sumBoundsRecomputes(root.get()), first_total)
+        << "a camera move must not recompute a single cached box";
+
+    transform->setMatrix(vn::math::translate(Vec3d(0.0, 0.4, 0.0)));
+    scene.setContentFrame(3);
+    (void)scene.collectRenderCommands(&first);
+    EXPECT_GT(sumBoundsRecomputes(root.get()), first_total) << "the announced spine recomputes";
+}
+
+TEST(SceneTest, ASubtreeMovedIntoViewIsNotHiddenByAStaleBox)
+{
+    // The failure a missed announcement causes is a DISAPPEARING OBJECT, not a slow frame: a stale
+    // container box culls content that moved into the camera. The triangle sits at x in [0, 1]
+    // (correctly out of view); moving it to x = 5 must bring it back.
+    Scene scene;
+    auto  root      = setIdentityRoot(scene);
+    auto  container = intrusive_ptr<Group>(new Group());
+    auto  transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    transform->addChild(geometryOf(*makeUnitTriangle()));
+    container->addChild(transform);
+    root->addChild(container);
+
+    Camera camera;
+    pointCameraAtX5(camera);
+
+    scene.setContentFrame(1);
+    EXPECT_TRUE(scene.collectRenderCommands(&camera).empty()) << "x in [0, 1] is out of view";
+
+    transform->setMatrix(vn::math::translate(Vec3d(5.0, 0.0, 0.0)));
+    scene.setContentFrame(2);
+    EXPECT_EQ(scene.collectRenderCommands(&camera).size(), 1u)
+        << "the moved subtree must be found again: a stale box would hide it";
+}
+
+TEST(SceneTest, AChildAddedLaterExtendsItsParentsBox)
+{
+    Scene scene;
+    auto  root      = setIdentityRoot(scene);
+    auto  container = intrusive_ptr<Group>(new Group());
+    root->addChild(container);
+
+    Camera camera;
+    pointCameraAtX5(camera);
+
+    scene.setContentFrame(1);
+    EXPECT_TRUE(scene.collectRenderCommands(&camera).empty()) << "an empty container draws nothing";
+
+    auto transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    transform->setMatrix(vn::math::translate(Vec3d(5.0, 0.0, 0.0)));
+    transform->addChild(geometryOf(*makeUnitTriangle()));
+    container->addChild(transform);
+    scene.setContentFrame(2);
+    EXPECT_EQ(scene.collectRenderCommands(&camera).size(), 1u)
+        << "addChild announces: a stale empty box would hide the new child";
+}
+
+TEST(SceneTest, AnEditedGeometryAnnouncesItsBoundsThroughItsSetters)
+{
+    Scene scene;
+    auto  root      = setIdentityRoot(scene);
+    auto  container = intrusive_ptr<Group>(new Group());
+    auto  transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    auto  leaf      = geometryOf(*makeUnitTriangle());
+    transform->addChild(leaf);
+    container->addChild(transform);
+    root->addChild(container);
+
+    Camera camera;
+    pointCameraAtX5(camera);
+
+    scene.setContentFrame(1);
+    EXPECT_TRUE(scene.collectRenderCommands(&camera).empty()) << "x in [0, 1] is out of view";
+
+    // The host replaces the data: the triangle moves +5 on X in the geometry's own frame, and the
+    // revision announcement is what tells every cached box above the leaf to let go.
+    leaf->setPositions(intrusive_ptr<const vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ 5.0F, 0.0F, 0.0F, 6.0F, 0.0F, 0.0F, 5.0F, 1.0F, 0.0F })));
+    leaf->bumpRevision();
+    scene.setContentFrame(2);
+    EXPECT_EQ(scene.collectRenderCommands(&camera).size(), 1u)
+        << "the data edit must reach the boxes above: an unannounced edit would hide the object";
+}
+
+TEST(SceneTest, ACustomPlacementAnnouncesThroughInvalidateBounds)
+{
+    // A node whose local matrix comes from its own state is outside every built-in setter: the
+    // documented hook is Node::invalidateBounds(), called after the change - the same announce pattern
+    // the rest of the SDK follows (Geometry::bumpRevision for data). The hook is what makes the custom
+    // case part of the contract instead of a silent stale box.
+    Scene scene;
+    auto  root   = setIdentityRoot(scene);
+    auto  custom = intrusive_ptr<ShiftedGroup>(new ShiftedGroup());
+    custom->addChild(geometryOf(*makeUnitTriangle()));
+    root->addChild(custom);
+
+    Camera camera;
+    pointCameraAtX5(camera);
+
+    scene.setContentFrame(1);
+    EXPECT_TRUE(scene.collectRenderCommands(&camera).empty()) << "x in [0, 1] is out of view";
+
+    custom->setShift(5.0);
+    custom->invalidateBounds();
+    scene.setContentFrame(2);
+    EXPECT_EQ(scene.collectRenderCommands(&camera).size(), 1u)
+        << "the announced custom placement must be picked up";
+}
+
 TEST(SceneTest, TheSharedCollectionIsOneListAndTheOwningSpellingCopiesIt)
 {
     // The passes of one frame draw the SAME commands, so the engine's pass path takes the list by

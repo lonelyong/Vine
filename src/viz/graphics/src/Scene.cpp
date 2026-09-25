@@ -152,8 +152,16 @@ NodePtr findNodeRecursive(const Node* node, const String& name)
  * places the data box in world space. Asking every visited node for its bound
  * therefore re-walks the whole subtree below every container — quadratic in the
  * node count for deep / broad assemblies — while the culling decision only
- * needs each node's box once. This cache makes one collection pass visit every
+ * needs each node's box once. This map makes one collection pass visit every
  * subtree exactly once.
+ *
+ * THE SECOND LAYER IS PER NODE AND OUTLIVES THE PASS (see Node::subtreeBounds):
+ * a subtree's box in its OWN frame is cached on the node and survives camera
+ * moves, so a pass costs one transform per visited node and a culled subtree is
+ * closed without descending — invalidated only by announcements
+ * (Node::invalidateBounds). This map still earns its keep for the nodes that
+ * cannot answer that way (a custom leaf makes its ancestors compute from
+ * scratch) and as the per-pass dedup the tree always relied on.
  *
  * The traversal is a tree (Group::addChild re-parents a node, so a node has one
  * parent), which is what makes a node-keyed cache valid: within one pass a node
@@ -168,23 +176,23 @@ class BoundsCache {
         if (cached != bounds_.end()) {
             return cached->second;
         }
-        Aabbd box = Aabbd::empty();
-        if (const auto* group = dynamic_cast<const Group*>(node)) {
-            // Containers derive their extent from their children, the same
-            // union Group::boundingBox() performs.
+        Aabbd box   = Aabbd::empty();
+        Aabbd local = Aabbd::empty();
+        if (node->subtreeBounds(local)) {
+            // The subtree's box in its own frame, cached per node: a camera move recomputes nothing,
+            // and a culled subtree is closed without visiting anything below it. The one edit that can
+            // stale it is a change INSIDE the subtree, announced through Node::invalidateBounds().
+            box = transformBox(local, world);
+        }
+        else if (const auto* group = dynamic_cast<const Group*>(node)) {
+            // The subtree could not answer in its own frame (a node below answers only in world space,
+            // e.g. a custom leaf): compute from scratch, exactly as collection always did. Children
+            // that CAN answer still use their caches through this same entry point — including the
+            // exact Geometry fast path (its local data box placed by the accumulated matrix; a Geometry
+            // SUBCLASS keeps answering through its own boundingBox(), see Node::subtreeBounds).
             for (const auto& child : group->childrenRef()) {
                 box.expandBy(worldBound(child.get(), world * child->localTransformMatrix()));
             }
-        }
-        else if (typeid(*node) == typeid(Geometry)) {
-            // The engine's own leaf, EXACTLY this class: its LOCAL box placed by the matrix the walk
-            // already accumulated (which IS node->worldMatrix() for every visited node - the root is
-            // seeded with it and every descent multiplies the child's local), so the per-leaf
-            // parent-chain re-walk its own boundingBox() would do is gone. A SUBCLASS may override
-            // boundingBox() itself - the tests' CountingGeometry does - and the walk must keep honouring
-            // the virtual for it, so only the exact class takes this path. A test pins the two spellings
-            // equal for it (see Node.hpp's transformBox).
-            box = transformBox(static_cast<const Geometry*>(node)->localBounds(), world);
         }
         else {
             // A leaf that is not the engine's own (or is a subclass of one) answers for itself.
@@ -196,6 +204,20 @@ class BoundsCache {
   private:
     std::unordered_map<const Node*, Aabbd> bounds_;
 };
+
+/// @brief Bumps every bounds stamp in @p node's subtree (a scene-level invalidation).
+///
+/// One call per scene edit is rare enough that the O(nodes x depth) propagation invalidateBounds()
+/// performs per node is not worth a second bump path.
+void invalidateBoundsUnder(Node& node)
+{
+    node.invalidateBounds();
+    if (const auto* group = dynamic_cast<const Group*>(&node)) {
+        for (const auto& child : group->childrenRef()) {
+            invalidateBoundsUnder(*child);
+        }
+    }
+}
 
 /**
  * @brief The shading state a node INHERITS from the nodes above it.
@@ -557,6 +579,13 @@ void Scene::setContentFrame(std::uint64_t frame)
 void Scene::invalidateContent()
 {
     ++content_revision_;
+    // The bounds caches are per node and keyed by ANNOUNCEMENTS, and the built-in setters already
+    // announce - so what this reaches is the edit they could not see: data written through a buffer, a
+    // custom node's own state. Bumping every stamp makes the next collect recompute every box once (and
+    // re-cache), which is what "picked up at once" has to mean for the culling cache too.
+    if (root_ != nullptr) {
+        invalidateBoundsUnder(*root_);
+    }
 }
 
 std::uint64_t Scene::contentCollectCount() const noexcept

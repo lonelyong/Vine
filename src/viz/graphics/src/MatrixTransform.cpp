@@ -16,6 +16,8 @@ Mat4d MatrixTransform::matrix() const
 void MatrixTransform::setMatrix(const Mat4d& matrix)
 {
     matrix_ = matrix;
+    // The placement changed: every box above is stale (see Node::invalidateBounds).
+    invalidateBounds();
 }
 
 Mat4d MatrixTransform::localTransformMatrix() const

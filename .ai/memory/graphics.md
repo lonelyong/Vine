@@ -197,6 +197,19 @@
 > 1% 可见收集 **−12%**（38.7→34.0 ms/帧），深链 8 层 −3%，全可见不变——**§9 的 ~250 ns/节点大头仍在**，
 > 属 §10.2（触发未到）。见 `.ai/design/graphics-scene-graph.md` §10.1。
 
+> 2026-09-25 **P18 §10.2 已落地**（持久化本体——§9 那 250 ns/节点的大头被吃掉）：契约 = **公告驱动的版本键 +
+> unknown 回退**。每节点持久**子树盒（自身坐标系）**（与相机无关、也与本节点自身摆放无关 ⇒ 失效只**上行**）；
+> `Node::invalidateBounds()` 沿父链 bump `bounds_stamp_`；内置挂钩 = `MatrixTransform::setMatrix`、`Group::addChild/
+> removeChild`、`Geometry::addBuffer/removeBuffer/setRevision/bumpRevision`、`Scene::invalidateContent`（内容帧号 +
+> 全体打脏，逃生口）。`subtreeBounds()` 只对**恰好 `Geometry`** 的叶子给 `localBounds()`、对 `Group`（含子类）查缓存，
+> **其他子类一律 unknown ⇒ 祖先整棵从零推**（漏失效由构造不可能；自定义节点想拿缓存须自己公告——已写进 SDK 文档）。
+> **关键否证**：`setContentFrame` token **不能**当失效依据（`RenderEngine` 每渲染帧公告新 token ⇒ 永远 miss；那正是
+> §9 "每帧重算"的来源）。门禁：5 条防火墙测试（含"移入视锥的子树不被陈旧盒藏掉"= 物体消失形态）+ 4 条变异电池
+> （setMatrix 静默／addChild 静默／addBuffer+bumpRevision 同时静默／invalidateBounds 空实现 ⇒ 对应测试全红，
+> 恢复全绿）；两棵树 282/282、vsg 门禁 cases=445、应用画面行逐字不变。实测（临时基准，缓存关 vs 开，Release）：
+> 全可见 200k 129→113 ms；平铺 1% 200k 39.9→16.8 ms；深链 8 层 225k 50.2→**4.7 ms**；**1k 可见 + 99k 挂一个视锥外
+> Group（§9 头号形状）31.8→0.55 ms（57×）**。见 `.ai/design/graphics-scene-graph.md` §10.2/§10.3。
+
 > 2026-09-17 **V3/V4 收口：把"等上游"从假设变成有门禁的事实（附一个表格形状的坑）**
 > 停在"被上游阻塞"上的条目，危险的不是它没做，而是**前提悄悄失效后没人再看它**。
 > · **事实（现抓，不是回忆）**：pinned v1.1.16 与**上游 master** 都是 `vkCreateGraphicsPipelines(*device, **VK_NULL_HANDLE**, …)`

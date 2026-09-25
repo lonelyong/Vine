@@ -34,11 +34,15 @@ constexpr std::uint32_t kVec2Components = vn::geometry::Mesh::kVec2Components;
 void Geometry::addBuffer(std::uint32_t location, const AttributeChannel& buffer)
 {
     attributes_[location] = buffer;
+    // The data box may have changed: the cached boxes above this leaf are stale (see
+    // Node::invalidateBounds).
+    invalidateBounds();
 }
 
 void Geometry::removeBuffer(std::uint32_t location)
 {
     attributes_.erase(location);
+    invalidateBounds();
 }
 
 bool Geometry::hasBuffer(std::uint32_t location) const
@@ -217,11 +221,15 @@ std::uint64_t Geometry::revision() const
 void Geometry::setRevision(std::uint64_t revision) noexcept
 {
     revision_ = revision;
+    // The announced revision keys the data box AND every cached box above this leaf: a host that edits
+    // bytes through a buffer announces here (see Node::invalidateBounds).
+    invalidateBounds();
 }
 
 void Geometry::bumpRevision() noexcept
 {
     ++revision_;
+    invalidateBounds();
 }
 
 std::size_t Geometry::vertexCount() const

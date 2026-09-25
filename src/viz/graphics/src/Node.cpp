@@ -1,5 +1,9 @@
 ﻿#include <vine/graphics/Node.hpp>
 
+#include <typeinfo>
+
+#include <vine/graphics/Geometry.hpp>
+#include <vine/graphics/Group.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
@@ -31,6 +35,67 @@ Aabbd transformBox(const Aabbd& local, const Mat4d& world)
         result.expandBy(vn::math::Vec3d(p.x, p.y, p.z));
     }
     return result;
+}
+
+void Node::invalidateBounds() noexcept
+{
+    // This node's box and every ancestor's union may now be stale. Only UP: a subtree box lives in the
+    // node's own frame (see subtreeBounds), so nothing below this node depended on what changed here.
+    for (Node* node = this; node != nullptr; node = node->parent_) {
+        ++node->bounds_stamp_;
+    }
+}
+
+bool Node::subtreeBounds(Aabbd& box) const
+{
+    // A leaf's box is its DATA box, and localBounds() re-checks its own data key on every ask (cheap:
+    // a few compares against the cached scan), so a leaf needs no stamp and answers fresh.
+    if (typeid(*this) == typeid(Geometry)) {
+        box = static_cast<const Geometry*>(this)->localBounds();
+        return true;
+    }
+    if (const auto* group = dynamic_cast<const Group*>(this)) {
+        if (cached_known_ && cached_stamp_ == bounds_stamp_) {
+            box = cached_bounds_;
+            return true;
+        }
+        ++bounds_recomputes_;
+        Aabbd subtree  = Aabbd::empty();
+        bool  complete = true;
+        for (const auto& child : group->childrenRef()) {
+            Aabbd child_box = Aabbd::empty();
+            if (!child->subtreeBounds(child_box)) {
+                complete = false;
+                break;
+            }
+            subtree.expandBy(transformBox(child_box, child->localTransformMatrix()));
+        }
+        if (!complete) {
+            // Some node below answers only in world space (a custom leaf): this frame's box is UNKNOWN.
+            // The cache stays invalid (no stamp is stored) so every collect takes the from-scratch path -
+            // correct, and the documented price of a node the engine cannot see inside.
+            cached_known_ = false;
+            return false;
+        }
+        cached_bounds_ = subtree;
+        cached_stamp_  = bounds_stamp_;
+        cached_known_  = true;
+        box            = cached_bounds_;
+        return true;
+    }
+    // An exact plain Node has no content and no children: it answers empty. Any OTHER class answers
+    // through its own boundingBox() only, which lives in world space and cannot be expressed in this
+    // frame - unknown, so the walk falls back (and stays sound for any subclass).
+    if (typeid(*this) == typeid(Node)) {
+        box = Aabbd::empty();
+        return true;
+    }
+    return false;
+}
+
+std::uint64_t Node::boundsRecomputeCount() const noexcept
+{
+    return bounds_recomputes_;
 }
 
 Node::Node() = default;
