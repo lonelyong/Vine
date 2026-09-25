@@ -317,7 +317,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | **会话侧"画面已落地"** | 把窗口读那条链从"测试碰运气"变成"宿主可查的事实"（WSI present fence） | 下一个真宿主接窗口时 |
 | **窗口随日志长大** | demo 的窗口启动尺寸不确定（§11.16cs 的门禁侧已钉住；宿主/框架侧未修——默认窗口尺寸是产品决定） | 下一次 app shell / 框架的窗口布局工作 |
 | **B1/B2/B3** | 三张表查找已二分（§11.16bz/ca）；每 pass 堆分配与 `mallinfo2` 的证据强度问题按 §11.16bx/by 的测量结论维持 | — |
-| **BlockStorageTest 偶发** | `TheRegionsAreLaidOutOnceAndDoNotOverlap` 首跑红重跑绿两次（环境/顺序类） | 第三次出现时打印失败断言 + 设备 `minUniformBufferAlignment` |
+| **BlockStorageTest 偶发** | `TheRegionsAreLaidOutOnceAndDoNotOverlap` 首跑红重跑绿两次（环境/顺序类） | 第三次出现时打印失败断言 + 设备 `minUniformBufferAlignment`（**2026-09-25 证据已预置**：用例始终打印并经 `SCOPED_TRACE` 携带 `minUniformBufferOffsetAlignment`+regions+strides+capacity；复现尝试 40× 冷进程未红，见 §11.16da） |
 
 ## 7. 术语（只留还在用的）
 
@@ -1355,3 +1355,14 @@ material 值 / 流字节 / cull 全部**不进**。
 * **顺手修的源码小疵**：`ContentSweep.cpp` 里 “The store first, and it parks…” 注释重复了一遍（注释级去重，零行为）。
 * **变异**：M1（跳过纹理释放）与 M2（跳过内容释放）都红。
 * **判据**：套件 444 → **445**；两棵树门禁 `cases=445 vuid=0 hazard=0`、应用行与历史逐字相同。
+
+### §11.16da M11ad（2026-09-25）：BlockStorageTest 偶发的证据预置（只改测试）
+
+* **登记来自哪里**：§6 的“BlockStorageTest 偶发”行——同一用例首跑红/重跑绿出现过两次，登记的动作是
+  “第三次出现时打印失败断言 + 设备 minUniformBufferAlignment”。
+* **预置**（`TheRegionsAreLaidOutOnceAndDoNotOverlap`）：无论成败都打印一行
+  `[storage] minUniformBufferOffsetAlignment=… regions… strides… capacity…`，并用 `SCOPED_TRACE` 携带同一份
+  证据进任何失败——下次红了直接能在日志/失败消息里重建布局算式。（`VkPhysicalDeviceLimits` 里并没有
+  `minUniformBufferAlignment` 这个字段；影响布局的是 `minUniformBufferOffsetAlignment`，探针印的是它。）
+* **复现尝试**：40 次全新进程单跑 ⇒ **0 红**（本环境本次未复现）。
+* **判据**：套件仍 **445**（无新用例）；两棵树门禁 `cases=445 vuid=0 hazard=0`、应用行逐字不变。

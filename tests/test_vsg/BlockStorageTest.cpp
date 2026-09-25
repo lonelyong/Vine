@@ -20,9 +20,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <vsg/app/Window.h>
@@ -117,6 +119,24 @@ TEST(BlockStorageTest, TheRegionsAreLaidOutOnceAndDoNotOverlap)
     ASSERT_TRUE(fixture.build({})) << "the storage could not be created on this device";
 
     const BlockStorage::Regions regions = fixture.storage->regions();
+    const BlockStorage::Strides strides = fixture.storage->strides();
+
+    // THE REGISTERED FLAKE'S EVIDENCE RIDES ON EVERY ASSERTION BELOW. This case was once seen red on a
+    // first run and green on the rerun, twice, with no other trace - so what the DEVICE reported and what
+    // the layer computed out of it is printed even when it passes, and SCOPED_TRACE carries it into any
+    // failure. The offset alignment leads the line because it is the input that shapes the layout
+    // (BlockStorage::uniformAlignment: every region's stride is alignUp'ed to it; a device reporting 0
+    // takes the fallback) - the next occurrence has to arrive with its inputs attached.
+    const auto&       limits = fixture.device->getPhysicalDevice()->getProperties().limits;
+    const std::string probe =
+        "minUniformBufferOffsetAlignment=" + std::to_string(limits.minUniformBufferOffsetAlignment) + "\n  views [0, " +
+        std::to_string(regions.views_bytes) + ") stride " + std::to_string(strides.view) + " | draws [" +
+        std::to_string(regions.draws_base) + ", " + std::to_string(regions.draws_base + regions.draws_bytes) +
+        ") stride " + std::to_string(strides.draw) + " | materials [" + std::to_string(regions.materials_base) +
+        ", " + std::to_string(regions.materials_base + regions.materials_bytes) + ") stride " +
+        std::to_string(strides.material) + " | capacity " + std::to_string(fixture.storage->capacityBytes());
+    SCOPED_TRACE(probe);
+    std::printf("[storage] %s\n", probe.c_str());
 
     EXPECT_EQ(regions.views_base, 0U) << "the view blocks start the buffer";
     EXPECT_GT(regions.views_bytes, 0U);
