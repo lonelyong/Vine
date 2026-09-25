@@ -298,6 +298,67 @@ class GeneratedSource final : public vn::io::DataSource
     int           rewinds_{ 0 };
 };
 
+/**
+ * @brief Records every chunk a streaming read pushes, for comparing against read().
+ */
+class CaptureSink final : public vn::io::DataSink
+{
+  public:
+    vn::io::IoError write(std::span<const std::byte> bytes) override
+    {
+        ++chunks;
+        bytes_.insert(bytes_.end(), reinterpret_cast<const unsigned char*>(bytes.data()),
+                      reinterpret_cast<const unsigned char*>(bytes.data()) + bytes.size());
+        return vn::io::IoError::Ok;
+    }
+
+    std::vector<unsigned char> bytes_;
+    std::size_t                chunks{ 0 };
+};
+
+/**
+ * @brief Refuses the chunk whose 1-based number is given, to pin "the sink's error is returned".
+ */
+class RefusingSink final : public vn::io::DataSink
+{
+  public:
+    explicit RefusingSink(std::size_t refuse_at) : refuse_at_(refuse_at) {}
+
+    vn::io::IoError write(std::span<const std::byte> bytes) override
+    {
+        ++chunks;
+        if (chunks >= refuse_at_) {
+            return vn::io::IoError::InvalidData;
+        }
+        received += bytes.size();
+        return vn::io::IoError::Ok;
+    }
+
+    std::size_t chunks{ 0 };
+    std::size_t received{ 0 };
+
+  private:
+    std::size_t refuse_at_;
+};
+
+/**
+ * @brief Drains a reader into one buffer, the way read() spells the same content.
+ *
+ * @param stream The reader to consume to its end.
+ * @return Every byte the reader produced, in order.
+ */
+std::vector<unsigned char> drain(vn::io::VfsReadStream& stream)
+{
+    std::vector<unsigned char>  out;
+    std::array<std::byte, 4096> buffer{};
+    std::size_t                 got = 0;
+    while ((got = stream.read(buffer)) != 0) {
+        out.insert(out.end(), reinterpret_cast<const unsigned char*>(buffer.data()),
+                   reinterpret_cast<const unsigned char*>(buffer.data()) + got);
+    }
+    return out;
+}
+
 TEST(IoBaseTest, ZipArchiveOpensAndReadsOnDemand)
 {
     TempDir    dir;
@@ -387,6 +448,10 @@ TEST(IoBaseTest, ZipArchiveOpensWithoutReadingContent)
     while ((*stream)->read(buffer) != 0) {
     }
     EXPECT_EQ((*stream)->error(), vn::io::IoError::IoFailure) << "a damaged entry is not a clean end";
+
+    // The push variant ends the same way: the damage surfaces as IoFailure, not as a clean end.
+    CaptureSink damaged_sink;
+    EXPECT_EQ(opened->read(u8"mesh.bin", damaged_sink), vn::io::IoError::IoFailure);
 
     // Copying an entry onto a new archive reads it as well (libzip checks the content
     // while it writes), so the save refuses rather than producing a broken archive.
@@ -592,6 +657,103 @@ TEST(IoBaseTest, ZipArchiveKeepsSourcesLazyThroughTheBaseInterface)
     ASSERT_EQ(generated->size(), 3 * 1024u);
     EXPECT_EQ((*generated)[0], 0x27);
     EXPECT_FALSE(opened->exists(u8"dataless.bin"));
+}
+
+TEST(IoBaseTest, DirectoryVfsStreamsReadsThroughTheBaseInterface)
+{
+    TempDir         dir;
+    std::error_code ec;
+    const auto      root = dir.path() / "tree";
+    std::filesystem::create_directories(root, ec);
+    ASSERT_FALSE(ec);
+
+    DirectoryVfs real(root);
+    vn::io::Vfs& base = real; // a caller usually holds the base interface only
+
+    // The push loop's chunk is 64 KiB: this payload crosses that boundary, so a loop that stops
+    // early, miscounts or truncates cannot pass.
+    std::vector<unsigned char> payload(4 * 64 * 1024 + 123);
+    for (std::size_t i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<unsigned char>((i * 31 + 11) % 251);
+    }
+    ASSERT_EQ(base.addFile(u8"big.bin", payload), vn::io::IoError::Ok);
+    ASSERT_EQ(base.createDirectory(u8"sub"), vn::io::IoError::Ok);
+
+    // Three spellings, one content: whole read, chunk stream, sink push.
+    const auto whole = base.read(u8"big.bin");
+    ASSERT_TRUE(whole.ok());
+    EXPECT_EQ(whole.value(), payload);
+
+    auto stream = base.openRead(u8"big.bin");
+    ASSERT_TRUE(stream.ok());
+    EXPECT_EQ((*stream)->size(), payload.size());
+    EXPECT_TRUE((*stream)->seekable());
+    EXPECT_EQ(drain(**stream), payload);
+    EXPECT_EQ((*stream)->error(), vn::io::IoError::Ok);
+
+    // seek() restarts the same reader; the end positions exactly, one past it does not.
+    ASSERT_EQ((*stream)->seek(0), vn::io::IoError::Ok);
+    std::array<std::byte, 64> head{};
+    ASSERT_EQ((*stream)->read(head), head.size());
+    EXPECT_EQ(std::to_integer<unsigned>(head[0]), static_cast<unsigned>(payload[0]));
+    EXPECT_EQ((*stream)->seek(payload.size()), vn::io::IoError::Ok);
+    EXPECT_EQ((*stream)->read(head), 0u);
+    EXPECT_EQ((*stream)->seek(payload.size() + 1), vn::io::IoError::OutOfRange);
+
+    CaptureSink sink;
+    EXPECT_EQ(base.read(u8"big.bin", sink), vn::io::IoError::Ok);
+    EXPECT_EQ(sink.bytes_, payload);
+    EXPECT_GT(sink.chunks, 1u) << "a payload past the chunk size arrives in several pieces";
+
+    // A sink's own failure stops the transfer and is returned as it is.
+    RefusingSink refusing(2);
+    EXPECT_EQ(base.read(u8"big.bin", refusing), vn::io::IoError::InvalidData);
+    EXPECT_EQ(refusing.chunks, 2u);
+    EXPECT_EQ(refusing.received, 64u * 1024u) << "the first chunk went through, the second was refused";
+
+    // Errors mirror read()'s.
+    EXPECT_EQ(base.openRead(u8"nope").error(), vn::io::IoError::NotFound);
+    EXPECT_EQ(base.openRead(u8"sub").error(), vn::io::IoError::IsADirectory);
+    EXPECT_EQ(base.read(u8"nope", sink), vn::io::IoError::NotFound);
+    EXPECT_EQ(base.read(u8"sub", sink), vn::io::IoError::IsADirectory);
+    EXPECT_EQ(base.openRead(u8"../outside").error(), vn::io::IoError::InvalidPath);
+}
+
+TEST(IoBaseTest, ZipArchiveStreamsReadsThroughTheBaseInterface)
+{
+    TempDir    dir;
+    const auto zip_path = dir.path() / "stream.zip";
+
+    std::vector<unsigned char> payload(3 * 64 * 1024 + 333);
+    for (std::size_t i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<unsigned char>((i * 17 + 5) % 251);
+    }
+    {
+        ZipArchive archive;
+        ASSERT_EQ(archive.addFile(u8"big.bin", payload), vn::io::IoError::Ok);
+        ASSERT_EQ(archive.saveAs(zip_path), vn::io::IoError::Ok);
+    }
+
+    const auto opened = ZipArchive::open(zip_path, ZipArchive::OpenMode::ReadOnly);
+    ASSERT_TRUE(opened.ok());
+    const vn::io::Vfs& base = *opened; // the base interface reaches the streaming override
+
+    auto stream = base.openRead(u8"big.bin");
+    ASSERT_TRUE(stream.ok());
+    EXPECT_EQ((*stream)->size(), payload.size());
+    EXPECT_EQ(drain(**stream), payload);
+    EXPECT_EQ((*stream)->error(), vn::io::IoError::Ok) << "a clean entry ends clean";
+
+    CaptureSink sink;
+    EXPECT_EQ(base.read(u8"big.bin", sink), vn::io::IoError::Ok);
+    EXPECT_EQ(sink.bytes_, payload);
+    EXPECT_GT(sink.chunks, 1u);
+
+    RefusingSink refusing(3);
+    EXPECT_EQ(base.read(u8"big.bin", refusing), vn::io::IoError::InvalidData);
+    EXPECT_EQ(refusing.chunks, 3u);
+
+    EXPECT_EQ(base.openRead(u8"nope").error(), vn::io::IoError::NotFound);
 }
 
 TEST(IoBaseTest, ZipArchiveCommitReplacesTheFile)

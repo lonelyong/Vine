@@ -45,6 +45,7 @@ VN_IO_NS_BEGIN
 class VN_IOBASE_API ZipArchive : public Vfs
 {
   public:
+    using Vfs::read; // the override below would otherwise hide the base's sink-push overload
     /**
      * @brief How an existing archive is attached.
      */
@@ -242,11 +243,15 @@ class VN_IOBASE_API ZipArchive : public Vfs
     /**
      * @brief Opens a chunk-wise reader over one entry.
      *
+     * This is the base's streaming primitive, overridden: the entry is
+     * decompressed as it is read and never held as one buffer. It is the
+     * override, not the default, that has to run here (see Vfs::openRead).
+     *
      * @param name Entry name.
      * @return The reader, IoError::NotFound when there is no such entry,
      *         IoError::IsADirectory when name is a directory.
      */
-    [[nodiscard]] Result<std::unique_ptr<VfsReadStream>> openRead(const std::filesystem::path& name) const;
+    [[nodiscard]] Result<std::unique_ptr<VfsReadStream>> openRead(const std::filesystem::path& name) const override;
 
     /**
      * @brief Adds a whole virtual file whose content comes from a pull source.

@@ -105,12 +105,52 @@ class VN_IOBASE_API Vfs
     /**
      * @brief Reads a whole virtual file.
      *
+     * Use openRead() when the content is large or consumed once: this call
+     * holds the whole file in memory.
+     *
      * @param path The virtual file path.
      * @return The file bytes, or IoError::NotFound when there is no such file,
      *         IoError::IsADirectory when path names a directory,
-     *         IoError::InvalidPath when path is not a valid virtual path.
+     *         IoError::InvalidPath when path is not a valid virtual path,
+     *         IoError::IoFailure when the content cannot be read.
      */
     [[nodiscard]] virtual Result<std::vector<unsigned char>> read(const std::filesystem::path& path) const = 0;
+
+    /**
+     * @brief Opens a chunk-wise reader over one virtual file.
+     *
+     * The streaming counterpart of read(): the content is pulled in chunks and
+     * never has to be held as one buffer. The reader outlives the tree it came
+     * from (a ZipArchive's reader keeps the source handle alive); it does
+     * depend on the storage staying readable, so a file that is deleted or
+     * replaced breaks in-flight reads.
+     *
+     * @param path The virtual file path.
+     * @return The reader, or IoError::NotFound when there is no such file,
+     *         IoError::IsADirectory when path names a directory,
+     *         IoError::InvalidPath when path is not a valid virtual path,
+     *         IoError::IoFailure when the content cannot be opened.
+     */
+    [[nodiscard]] virtual Result<std::unique_ptr<VfsReadStream>> openRead(const std::filesystem::path& path) const = 0;
+
+    /**
+     * @brief Pushes a whole virtual file into a sink, chunk by chunk.
+     *
+     * The push variant of openRead(), for consumers that walk the bytes once
+     * (hashing, parsing, uploading) and therefore never want the entry in
+     * memory. The default pulls through openRead() and hands the sink one
+     * chunk per read; an error the sink reports stops the transfer and is
+     * returned as it is. Content that only turns out to be broken at the end
+     * of the entry (a damaged archive member) is reported like read() reports
+     * it.
+     *
+     * @param path The virtual file path; openRead()'s errors apply here too.
+     * @param sink Receives the content; its write() runs on the calling thread.
+     * @return IoError::Ok on success, the sink's own error when it refused a
+     *         chunk, IoError::IoFailure when the content could not be read
+     *         whole.
+     */
+    [[nodiscard]] virtual IoError read(const std::filesystem::path& path, DataSink& sink) const;
 
     /**
      * @brief Adds a whole virtual file whose content is buffered here.

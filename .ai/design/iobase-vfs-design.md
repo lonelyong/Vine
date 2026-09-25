@@ -80,7 +80,17 @@
 > 实测 `test_iobase` 全绿（EncodingTest 5/5）、`test_robotics_io` 全绿、`urdf2vine` 通过、include hygiene 0。
 > 已知取舍：`DirectoryVfs` 落地到真实磁盘那一步仍要求名字能转成宿主文件名（真实名字由宿主决定）；`fs::path` 的值语义
 > 本来就是宿主语义（`a\b` 在 Windows 是两个组件、`C:/x` 在 Windows 是绝对），故 `normalizeVfsPath` 仍显式拒 `\` / `:` / 前导 `/`。
-> 下一步：`Vfs` 的流式读写面（§8）与 `ZipVfs` 的流式写开口（§15.7）。
+> **流式面（§8）已落地（2026-09-25）**：写侧（片段 / `DataSource` 两类内容源）在 S3b 期间已在 `Vfs` 基类上（虚 + 默认实现，
+> `ZipArchive` 覆写保惰性）；**读侧本次补齐**——`Vfs::openRead`（基类纯虚；`ZipArchive` 覆写复用既有 `EntryReadStream`、
+> `DirectoryVfs` 以自有文件流覆写）+ `Vfs::read(path, DataSink&)`（基类虚 + 默认：经 `openRead` 按 64 KiB 分块推给 sink，
+> sink 自己的错误原样返回、条目末尾的内容错误（损坏成员）按 `read()` 的口径报 `IoFailure`）。`§15.7`（流式 sink 写）
+> 维持"本仓库无此需求"的结论。门禁见 §14。
+> **同轮修掉一个 Linux 侧的真红（本次由用户 09-24 的 iobase 优化带出）**：`normalizeVfsPath` 一度要求整条路径是合法
+> UTF-8。该闸门在 Windows 上从不触发（窄名到 path 已被代码页转成文本），而在**字节平台**上把上面这条"非文本条目名
+> **不拒收**"的规则打反：`EncodingTest.HostEncodedNamesSurviveAZipRoundTrip` / `NamesThatAreTextInNoEncodingStayReachable`
+> 在 Linux 上双双红（`addFile` / `read` 报 `InvalidPath`）。修法是按 §4 的规则删掉该闸门——名字是字节，解码规则归
+> 归档层（`detail::fromStoredName`），`isValidUtf8` 仍为它服务。修后两棵树 `test_iobase` **58/58**。
+> 下一步：`Vfs` 的流式**写**面与 `§15.7` 已如上收口；其余按 §15 的裁决记录（无待办）。
 >
 > 关联：外部《VFS 需求设计文档 v2.0》（下称"需求文档"）；第一个消费者
 > `.ai/design/robotics-io-design.md`（`DeviceIO` / `WorkcellIO` 以 `vn::io::Vfs&` 为公共签名）。
@@ -406,7 +416,11 @@ class VN_IOBASE_API VfsReadStream
 - **push 回调**：只消费一次（算哈希、直接喂下游 API）；
 - 两者都**不把整条读进内存**：libzip 侧就是 `zip_fopen_index` + 循环 `zip_fread`（`zip_file_t` 是独立对象，可同时开多个）；
 - `seekable()` 有真实含义：对应 `zip_file_is_seekable()` —— **STORED 条目可 seek**，压缩条目上 seek 等于“解压到该位置”（慢）。这正好兑现需求文档 §5.2 的能力探测。
-
+**（已落地 2026-09-25）**：`Vfs::openRead` 是基类的读侧原语（纯虚）；`Vfs::read(path, DataSink&)` 是它的 push 变体（虚 + 默认实现，
+基类只写一遍：按 64 KiB 分块把 `openRead` 的字节推给 sink，sink 拒绝的那一块原样返回错误、条目末尾的 `stream->error()`
+当作本次调用的结果）。`ZipArchive` 覆写 `openRead`（复用它的 `EntryReadStream`，本就是流式的）；`DirectoryVfs` 覆写为自有
+文件流（`FileReadStream`：ifstream + 开档时捕获的尺寸；`seekable() == true`、越界 seek 答 `OutOfRange`）。读流可以活过 VFS
+（两个实现都自持句柄）。两个派生类各有一条 `using Vfs::read;`——覆写单参 `read` 会遮住基类的 push 重载。门禁见 §14。
 ### 8.2 写：只有“回调/来源”这一种零拷贝形态
 
 ```cpp
@@ -768,6 +782,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | 超出容量上限 → 超出容量 | S5 |
 | seek 越界 → 越界 | S5 |
 | 内容来源（片段 / 拉取）经 `Vfs&` 可达（默认实现 / override 两条路径） | **已过**：`IoBaseTest.DirectoryVfsAssemblesSourcesThroughTheBaseInterface` / `ZipArchiveKeepsSourcesLazyThroughTheBaseInterface` |
+| 读侧流式经 `Vfs&` 可达（`openRead` / `read(sink)`；override / 默认两条路径） | **已过**：`IoBaseTest.ZipArchiveStreamsReadsThroughTheBaseInterface` / `DirectoryVfsStreamsReadsThroughTheBaseInterface`（三种拼法同内容：整读 / 流读 / 推 sink；sink 拒绝即停并原样返回错误；损坏成员在 push 末尾报 `IoFailure`，同文件 `ZipArchiveOpensWithoutReadingContent` 的损坏夹具）；越界 seek → `OutOfRange` |
 
 ## 15. 待裁决
 

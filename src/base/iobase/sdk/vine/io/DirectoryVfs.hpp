@@ -45,6 +45,7 @@ class VN_IOBASE_API DirectoryVfs : public Vfs
     static std::unique_ptr<DirectoryVfs> openDirectory(const std::filesystem::path& dir);
 
     // Vfs
+    using Vfs::read;   // the override below would otherwise hide the base's sink-push overload
     using Vfs::addFile; // the overrides below would otherwise hide the base's content-source overloads
 
     /**
@@ -82,6 +83,21 @@ class VN_IOBASE_API DirectoryVfs : public Vfs
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
     [[nodiscard]] Result<std::vector<unsigned char>> read(const std::filesystem::path& path) const override;
+
+    /**
+     * @brief Opens a chunk-wise reader over a real file.
+     *
+     * The reader holds its own file handle, so it outlives this tree; it does
+     * depend on the file staying in place, so deleting or replacing it breaks
+     * in-flight reads.
+     *
+     * @param path The virtual file path.
+     * @return The reader, or IoError::NotFound when there is no such file,
+     *         IoError::IsADirectory when path names a directory,
+     *         IoError::InvalidPath when path is not a valid virtual path,
+     *         IoError::IoFailure when the file cannot be opened.
+     */
+    [[nodiscard]] Result<std::unique_ptr<VfsReadStream>> openRead(const std::filesystem::path& path) const override;
 
     /**
      * @brief Adds a whole real file, creating missing parents.

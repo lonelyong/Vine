@@ -77,6 +77,14 @@ inline bool isValidUtf8(const std::u8string& text);
  * backends would read them differently - a drive letter in particular turns a
  * path into an absolute one, and joining it would replace a backend's root.
  *
+ * There is NO UTF-8 requirement: a virtual path carries a name as bytes, and
+ * on a byte-based host the bytes are the name (on Windows the path machinery
+ * has already turned the narrow form into text). What a STORED archive name
+ * means is decided by the archive layer, which keeps a name that is text in no
+ * encoding reachable instead of refusing it (see detail::fromStoredName); a
+ * validator that demanded UTF-8 here would make such an entry unreadable - the
+ * one outcome the encoding rules forbid.
+ *
  * @param path The raw virtual path; the empty path denotes the virtual root.
  * @param out Receives the normalized path, without leading or trailing '/' and
  *            without empty segments; the empty path denotes the root.
@@ -94,9 +102,6 @@ inline IoError normalizeVfsPath(const std::filesystem::path& path, std::filesyst
         return IoError::InvalidPath;
     }
 #endif
-    if (!isValidUtf8(raw)) {
-        return IoError::InvalidPath;
-    }
 
     if (raw.find(u8'\\') != std::u8string::npos || raw.find(u8'\0') != std::u8string::npos) {
         return IoError::InvalidPath;

@@ -43,6 +43,30 @@ bool Vfs::isDirectory(const std::filesystem::path& path) const
     return info.ok() && info.value().is_directory;
 }
 
+IoError Vfs::read(const std::filesystem::path& path, DataSink& sink) const
+{
+    const Result<std::unique_ptr<VfsReadStream>> opened = openRead(path);
+    if (!opened.ok()) {
+        return opened.error();
+    }
+
+    // The chunk is both the unit the sink sees and the whole scratch this push
+    // costs: a file is never assembled, however large it is. The end of the
+    // entry and a failure read() cannot express are told apart by error().
+    constexpr std::size_t  kPushChunk = 64U * 1024U;
+    std::vector<std::byte> chunk(kPushChunk);
+    while (true) {
+        const std::size_t got = opened.value()->read(chunk);
+        if (got == 0) {
+            return opened.value()->error();
+        }
+        const IoError refused = sink.write(std::span<const std::byte>(chunk.data(), got));
+        if (refused != IoError::Ok) {
+            return refused;
+        }
+    }
+}
+
 IoError Vfs::addFile(const std::filesystem::path& path, std::span<const Fragment> fragments)
 {
     if (isReadOnly()) {

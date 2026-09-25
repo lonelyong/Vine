@@ -405,6 +405,139 @@ Result<std::vector<unsigned char>> DirectoryVfs::read(const std::filesystem::pat
     return bytes;
 }
 
+namespace
+{
+
+/**
+ * @brief A sequential reader over one open real file.
+ *
+ * The stream owns its handle, which is what lets it outlive the tree (see
+ * VfsReadStream); a file that disappears mid-read fails at the next read().
+ */
+class FileReadStream final : public VfsReadStream
+{
+  public:
+    /**
+     * @brief Adopts an open binary file.
+     *
+     * @param file The open file.
+     * @param size The number of bytes the reader reports and seeks within.
+     */
+    FileReadStream(std::ifstream file, std::uint64_t size)
+      : file_(std::move(file))
+      , size_(size)
+    {
+    }
+
+    /**
+     * @brief Reads the next chunk.
+     *
+     * @param out Buffer to fill.
+     * @return The number of bytes read, or 0 at the end; a failure also
+     *         reports 0 here, and error() tells the two apart.
+     */
+    std::size_t read(std::span<std::byte> out) override
+    {
+        file_.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(out.size()));
+        const std::streamsize got = file_.gcount();
+        if (got == 0 && file_.bad()) {
+            error_ = IoError::IoFailure;
+        }
+        return static_cast<std::size_t>(got);
+    }
+
+    /**
+     * @brief Reports whether a failure happened behind a 0-byte read.
+     *
+     * @return IoError::Ok while the file reads cleanly, IoError::IoFailure
+     *         when a read failed.
+     */
+    IoError error() const override { return error_; }
+
+    /**
+     * @brief Reports the file size the reader was opened with.
+     *
+     * @return The size in bytes.
+     */
+    std::uint64_t size() const noexcept override { return size_; }
+
+    /**
+     * @brief Reports that this reader can position itself directly.
+     *
+     * @return true always: a real file seeks without decoding anything.
+     */
+    bool seekable() const noexcept override { return true; }
+
+    /**
+     * @brief Positions the reader at an absolute offset.
+     *
+     * @param offset Target offset, counted from the start of the file.
+     * @return IoError::Ok on success, IoError::OutOfRange when offset is past
+     *         the end.
+     */
+    IoError seek(std::uint64_t offset) override
+    {
+        if (offset > size_) {
+            return IoError::OutOfRange;
+        }
+        file_.clear(); // a previous failure must not block the seek itself
+        file_.seekg(static_cast<std::streamoff>(offset));
+        if (!file_) {
+            error_ = IoError::IoFailure;
+            return IoError::IoFailure;
+        }
+        error_ = IoError::Ok;
+        return IoError::Ok;
+    }
+
+  private:
+    std::ifstream file_;
+    std::uint64_t size_;
+    IoError       error_{ IoError::Ok };
+};
+
+} // namespace
+
+Result<std::unique_ptr<VfsReadStream>> DirectoryVfs::openRead(const std::filesystem::path& path) const
+{
+    std::filesystem::path norm;
+    std::filesystem::path real;
+    const IoError         error = resolve(path, norm, real);
+    if (error != IoError::Ok) {
+        return error;
+    }
+
+    // The type decides, not the error code: MSVC also sets it for a missing
+    // path, where the standard only asks for file_type::not_found.
+    std::error_code                  ec;
+    const std::filesystem::file_type type = std::filesystem::status(real, ec).type();
+    if (type == std::filesystem::file_type::not_found) {
+        return IoError::NotFound;
+    }
+    if (ec) {
+        return IoError::IoFailure;
+    }
+    if (type == std::filesystem::file_type::directory) {
+        return IoError::IsADirectory;
+    }
+    if (type != std::filesystem::file_type::regular) {
+        return IoError::NotFound;
+    }
+
+    std::ifstream in(real, std::ios::binary);
+    if (!in) {
+        return IoError::IoFailure;
+    }
+    const std::uintmax_t size = std::filesystem::file_size(real, ec);
+    if (ec) {
+        return IoError::IoFailure;
+    }
+    // The size is captured here and never re-read: like every reader, this one
+    // describes the entry as it was opened, so a file that grows underneath it
+    // does not silently extend the content.
+    return std::unique_ptr<VfsReadStream>(new FileReadStream(std::move(in), size));
+}
+
 IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes)
 {
     if (isReadOnly()) {
