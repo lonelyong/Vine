@@ -1,5 +1,13 @@
 # graphics / vsg 后端性能待办（2026-09-13 立项）
 
+> ⚠️ **历史与对账（2026-09-25）**：本文立项于**老渲染器**（SceneBridge/VsgRenderer）时代；那套实现已被重写版
+> （`core/`+`api/` 分层，见 `.ai/design/vsg-reimplementation.md`）替换，所以 §0 的机制表与 §1 各表里
+> **针对老后端的实现结论（P1–P17、R1–R5、V1–V7 的行）不要再按它们去改代码**（作为方法与教训仍可读）。
+> **仍然活跃的登记**：H1 的两条残留（Windows 上没有读像素等价物；“拉伸窗口看画面跟随”仍靠人工）、
+> H2/H3（真机复验 Qt 事件与 XdndAware）、P18（场景图规模化，触发=不可见数 ≫ 可见数）、V2/V3/V4（升级 vsg
+> 时逐条复核；能力断言在 `scripts/check_vsg_upstream_capabilities.py`）。**后端活跃登记以
+> `.ai/design/vsg-reimplementation.md` §6 为准**；图形侧当前状态见 `.ai/memory/graphics.md`。
+
 > **2026-09-15 更新（审查轮次，逐条见 `.ai/design/graphics-vsg-audit.md`）**：
 > - **P3 已完成**：`Geometry` 现在缓存局部包围盒（键 = positions 缓冲指针 + 缓冲 revision + 段 + geometry revision）。
 >   此前 `BoundsCache` 只能保证"每个叶子算一次盒"，而**求 root 的盒必须先求所有叶子的盒** ⇒ 每次收集 = O(全部节点)

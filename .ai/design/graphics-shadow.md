@@ -178,7 +178,9 @@ virtual void setShadowMap(raw_ptr<const Light> light, raw_ptr<RenderTarget> shad
   finalLayout=SHADER_READ_ONLY + external→fragment 读依赖；clearValues 按附件逐项填）。实测：
   VINE_VSG_OFFSCREEN 下日志出现 `EXPERIMENTAL off-screen target 1024x1024 attached`（shadow 先于
   640x360 颜色离屏），无崩溃/无 Vulkan 报错；GraphicsTest 77 全过（新增 Light.ShadowSettings +
-  3 个调度用例：自动/无投影不跑/手动）。demo 的 sun 现 castShadow(true)。采样(v4b-2)未做。
+  3 个调度用例：自动/无投影不跑/手动）。demo 的 sun 现 castShadow(true)。**（对账 2026-09-25：采样早已落地——
+  本节及以下为旧实现期记录；重写版里影图的解析点在 `ContentImagesTest` 的 `shadowImageOf`（声明名
+  `shadow_map`、按 pass 解析、无图给白兜底），内置光照程序自己声明 `shadow_map` 槽位并按 `params.w` 门控。**
 
 ## 10. v4b-2（采样）要点备忘
 

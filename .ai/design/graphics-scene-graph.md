@@ -46,8 +46,11 @@
 >   `AxisGizmo`、`SceneBridge`（命令直接带 `Geometry*`，无需 dynamic_cast）、`VsgRenderer` 的
 >   no-cull walker、`app_shell::addBox`、`test_plugin::TestRenderLiveCommand`、`GraphicsTest.cpp`
 >   （99 tests 全绿）。测试 helper `makeTriangleNode` 现返回 `MatrixTransform`（子 = Geometry 叶子）。
-> - 遗留：program 槽（graphics-shader.md）、StateNode 的 renderState 后端消费、点云数据型自定义通道——
->   均留待后续切片；`Geometry` 的开放 loc buffer 列表已在早前切片落地。
+> - **已全部落地（对账 2026-09-25）**：①程序槽——`StateNode::setProgram` + `RenderPass::setProgramOverride`，
+>   重写版后端按程序文本声明的 `(set, binding)` 建管线与集合；②`StateNode` 的 renderState **由后端消费**——
+>   `core::resolveDynamicState` 把 `ResolvedRenderState` 折进逐绘制的动态状态，M11u 的状态区制有像素断言；
+>   ③点云——`Topology::Points` + 非索引路径已落地，demo 的 `star_cloud` 在画。
+>   `Geometry` 的开放 loc buffer 列表已在早前切片落地。
 >
 > 早期“落地后修订”记录（2026-09-03，先于本次 R1）：
 > - `Geometry` 已**纯数据化**：移除 `shape_`/`shape()`；新增 `geometryFromShape()` 转换器与

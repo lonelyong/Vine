@@ -12,9 +12,11 @@
 >    不作为"是否合色"，而作为"是否用自定义因子"：enabled=true 用 StateNode 的 src/dst；默认
 >    (disabled) 用 SrcAlpha/OneMinusSrcAlpha。即 vsg 后端无法通过 StateNode 关掉 alpha blending
 >    （若确需"无 blend"，走 depth-only pass 或未来的显式 no-blend 标志）。
-> 其余映射：CullMode→cullMode（frontFace=CCW，两态默认 NONE 不变）；PolygonMode→polygonMode；
+> 其余映射：CullMode→cullMode（**frontFace = CLOCKWISE** —— vsg 的投影翻转 Y，写成直觉的 CCW 会让每个 cull
+> 模式作用在错误的面；D6 修正，见 `RenderStateMapper.hpp`）；PolygonMode→polygonMode；
 > Topology→InputAssemblyState.topology（Triangles/Points/Lines）。
-> **未做**：cull 的 winding 与 blend 因子真机视觉验证（无 GPU，映射逻辑有单测钉住）。
+> **对账（2026-09-25）**：winding 已钉——D6 修正 + 像素用例（`VsgBackendTest` 状态区制：Back 剔除下网格仍在）；
+> blend 因子由 `ContentDrawTest` 逐项映射断言钉住（每附件的 blendEnable/因子），**像素级专项仍未做**。
 
 > 落地记录（2026-09-03）：
 > - SDK 类型已实现——`StateNode`（Group 子类）+ `CompareOp/CullMode/BlendFactor/PolygonMode/

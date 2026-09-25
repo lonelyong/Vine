@@ -166,7 +166,8 @@ deferred 光照 pass 复刻当前 phong 产出（与现在画面一致 A/B）。
     （forward 永远可用）。待像素目检定位 deferred 黑屏后重审默认化。
   * 验证：default 冒烟日志 "deferred fullscreen program 640x360 -> 0,0 378x234 attached"；
     FORWARD 冒烟无 deferred；test_graphics 117 / test_vsg 10；default+FORWARD+五 demo 冒烟全干净。
-- S4（未做）：per-attachment clear 色、多光>2。
+- S4（未做）：per-attachment clear 色、多光>2。（对账 2026-09-25：多光在新后端**已不设限**——见下方 S4 剩余条的注；
+  per-attachment clear 色仍不成立。）
 - **S4a ✅（2026-09-04）**：specular **RGB**（第 4 附件 RGBA8，helper target/gbuffer 几何/光照 FS
   同步：geometry loc3=out_specular=clamp(specular.rgb)；光照 FS binding3=spec_tex，高光项乘 spec_col；
   att0 alpha 回 1）。消除 S3 的标量 spec 强度近似，高光色随材质。default deferred 冒烟 0 错误，
@@ -187,6 +188,9 @@ deferred 光照 pass 复刻当前 phong 产出（与现在画面一致 A/B）。
   光照 FS push 块改 `sun_dir[3]/sun_color[3]`、循环 0..2。demo 加 env `VINE_VSG_EXTRA_SUNS`（再添
   2 个方向光，共 3 个方向光）验证。default(3 光) 与 FORWARD(3 光) 冒烟 0 错误；117/10 绿。
 - S4 剩余（未做）：per-attachment clear 色；>3 方向光（需 >128B push，改 UBO 或 range 扩容）。
+  * 对账（2026-09-25）：**>3 方向光在新后端已不设限**——光源走 lights 块（1024 槽，`BlockStorage::writeLights`）
+    而非 128B push（这正是当初说的“range 扩容”）。**per-attachment clear 色仍不成立**——`core/ClearPlan` 的
+    Rule 4：一条清屏请求清**所有**色附件，且只有 attachment 0 收到 pass 的颜色。
 - S3（可选）：gbuffer 附带 spec/粗糙度（或 lit color 附件）/ per-attachment clear / 深度重建 pos。
 
 ## 9. 回归与验证

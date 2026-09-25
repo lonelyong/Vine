@@ -156,7 +156,9 @@ void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend);
 > 收益（解耦 / 可复用 / 顺序可推导）保留，但端点的**身份**应从字符串换成对象（`ImageRef`，初稿名为
 > `RenderPort`），字符串降级为
 > 标签 + 语法糖；结构错误因此能在**接线期**判定（D55/D56 那一族的解）。本节其余内容（两种依赖、四种载体、
-> 一帧时序）仍然有效。**设计稿见 §14；步 1 已实施（2026-09-12），逐帧读 `ImageRef` 的步 2 未做。**
+> 一帧时序）仍然有效。**设计稿见 §14；步 1 与步 2 均已实施（对账 2026-09-25）——步 2 的运行时读法就是
+> `RenderEngine::resolvePassInputs` 的声明优先：非空的 `inputs()/inputTargets()` 决定条目（名字完全不查），
+> 只有"只声明名字"的 pass 才回退名字表，`pass->resolveInputTextures(...)` 把结果交给消费者。**
 
 不做“pass 之间互相握 target 指针”，而是 **Engine 侧“命名产出注册表（publish/resolve）”**：
 
