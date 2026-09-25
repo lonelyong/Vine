@@ -131,8 +131,14 @@ class BlockStorage
   public:
     /** @brief Creates a storage on a device.
      *
+     * @p layout is raised to the in-flight floor first (see @ref layoutForInFlight): rings that state fewer
+     * slabs than the assumed in-flight count are not a smaller budget but a steady frame that overwrites
+     * the slab the oldest frame in flight is still reading, so they cannot be built. A layout that already
+     * serves the assumed count is built exactly as stated. The answer is the floor, not a refusal: a refusal
+     * has no channel to explain itself, and a storage too shallow has no correct way to serve.
+     *
      * @param device The device every buffer and mapping belongs to (the storage does not own it).
-     * @param layout Block sizes, in-flight copies and per-frame budgets.
+     * @param layout Block sizes, per-frame budgets and in-flight copies (raised to the floor when shallow).
      * @return The storage, or null when there is no device or the buffer/mapping could not be created.
      */
     static std::unique_ptr<BlockStorage> create(::vsg::ref_ptr<::vsg::Device> device, const Layout& layout);
@@ -207,9 +213,10 @@ class BlockStorage
 
     /** @brief Gets the layout this storage was built with (what a growth doubles from).
      *
-     * The REQUESTED layout - block sizes and budgets as the caller stated them - and not the device-adjusted
-     * strides: this is what @ref grownLayout takes (see VsgBackend::growBlockStorageIfNeeded), and it is how
-     * a caller answers "what is this session's budget" without keeping a second copy of the question.
+     * The layout as it was BUILT - block sizes and budgets as the caller stated them, with the rings already
+     * raised to the in-flight floor (see @ref create) - and not the device-adjusted strides: this is what
+     * @ref grownLayout takes (see VsgBackend::growBlockStorageIfNeeded), and it is how a caller answers
+     * "what is this session's budget" without keeping a second copy of the question.
      */
     [[nodiscard]] Layout layout() const noexcept;
 
@@ -235,6 +242,34 @@ class BlockStorage
      * request of its own - so "clear the request" is not an operation this type has.
      */
     [[nodiscard]] Growth growthNeeded() const noexcept;
+
+    /** @brief Gets whether @p layout owns a slab for every frame that may be in flight, plus the spare.
+     *
+     * Every per-frame shape is asked (views, draws, lights, shadows and the material copies), because a ring
+     * that states fewer than core::perFrameCopies(@p frames_in_flight) slabs is not a smaller budget: the
+     * frame being recorded writes the slab the oldest frame still allowed to be in flight reads (see
+     * core::perFrameCopies). Device-free, so the policy is testable without a device.
+     *
+     * @param layout           The layout to check.
+     * @param frames_in_flight Frames that may be in flight: the assumed count until the session learned its
+     *                         own (see Session::slots), the learned count afterwards.
+     * @return true when every per-frame shape owns at least core::perFrameCopies(@p frames_in_flight) slabs.
+     */
+    [[nodiscard]] static bool hasSlabsForInFlight(const Layout& layout, std::uint32_t frames_in_flight) noexcept;
+
+    /** @brief Gets @p layout with every per-frame shape raised to core::perFrameCopies(@p frames_in_flight).
+     *
+     * The raise is the floor @ref create applies (with the assumed count) and the correction the session
+     * applies once it LEARNED a deeper count than the storage was built for (see
+     * VsgBackend::growBlockStorageIfNeeded). Shapes that already own enough slabs are left as they are - it
+     * never shrinks, because a ring sized for a shallower count is safe exactly until the next count is
+     * learned (and its pages are already paid for). Strides and budgets are not touched.
+     *
+     * @param layout           The layout to raise.
+     * @param frames_in_flight Frames the raised layout must serve.
+     * @return The raised layout (equal to @p layout when it already serves @p frames_in_flight).
+     */
+    [[nodiscard]] static Layout layoutForInFlight(const Layout& layout, std::uint32_t frames_in_flight) noexcept;
 
     /** @brief Gets the layout a replacement storage must be built with to serve @p need (doubling policy).
      *

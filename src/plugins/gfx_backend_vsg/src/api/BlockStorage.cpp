@@ -185,9 +185,14 @@ std::unique_ptr<BlockStorage> BlockStorage::create(::vsg::ref_ptr<::vsg::Device>
     if (device == nullptr) {
         return nullptr;
     }
+    // THE IN-FLIGHT FLOOR (see layoutForInFlight): a storage is never built for fewer frames than may be in
+    // flight. The raise is silent on purpose - the alternative is a ring whose oldest in-flight frame is
+    // still reading the slab the frame being recorded writes, which is not a smaller storage but a torn
+    // picture, and no frame could tell either way.
+    const Layout floored = layoutForInFlight(layout, core::kAssumedInFlightSlots);
     // make_unique cannot see the private constructor; this allocation is the one written inside the class
     // that may name it (the same spelling VsgDrawBlockPool::create uses).
-    auto storage = std::unique_ptr<BlockStorage>(new BlockStorage(std::move(device), layout));
+    auto storage = std::unique_ptr<BlockStorage>(new BlockStorage(std::move(device), floored));
     return storage->d->ready() ? std::move(storage) : nullptr;
 }
 
@@ -377,6 +382,27 @@ std::uint64_t BlockStorage::overflows() const noexcept
 BlockStorage::Growth BlockStorage::growthNeeded() const noexcept
 {
     return Growth{ d->grow_views, d->grow_draws, d->grow_lights, d->grow_shadows };
+}
+
+bool BlockStorage::hasSlabsForInFlight(const Layout& layout, std::uint32_t frames_in_flight) noexcept
+{
+    const std::uint32_t needed = core::perFrameCopies(frames_in_flight);
+    return layout.views.slabs >= needed && layout.draws.slabs >= needed && layout.lights.slabs >= needed &&
+           layout.shadows.slabs >= needed && layout.materials.copies >= needed;
+}
+
+BlockStorage::Layout BlockStorage::layoutForInFlight(const Layout& layout, std::uint32_t frames_in_flight) noexcept
+{
+    const std::uint32_t needed = core::perFrameCopies(frames_in_flight);
+    const auto          raised = [needed](std::uint32_t slabs) noexcept { return std::max(slabs, needed); };
+
+    Layout adjusted           = layout;
+    adjusted.views.slabs      = raised(adjusted.views.slabs);
+    adjusted.draws.slabs      = raised(adjusted.draws.slabs);
+    adjusted.lights.slabs     = raised(adjusted.lights.slabs);
+    adjusted.shadows.slabs    = raised(adjusted.shadows.slabs);
+    adjusted.materials.copies = raised(adjusted.materials.copies);
+    return adjusted;
 }
 
 BlockStorage::Layout BlockStorage::grownLayout(const Layout& current, const Growth& need) noexcept

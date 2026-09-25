@@ -205,6 +205,99 @@ TEST(BlockStorageTest, TheDefaultsOwnOneSlabMoreThanTheFramesInFlight)
     EXPECT_EQ(layout.materials.copies, copies) << "the material copies follow the same rule";
 }
 
+TEST(BlockStorageTest, AShallowLayoutIsRaisedToTheInFlightFloorAndNeverShrunk)
+{
+    // Device-free: the two layout policies the in-flight floor is made of. The floor is what create()
+    // applies, and the same raise answers a session that LEARNED a deeper count than the storage was built
+    // for (see VsgBackend::growBlockStorageIfNeeded). The old literal `slots{3}` - one slab per frame, no
+    // spare for the oldest frame in flight - is exactly the shape that must never become a storage again.
+    const std::uint32_t floor_copies = perFrameCopies(kAssumedInFlightSlots);
+
+    BlockStorage::Layout shallow;
+    shallow.views.slabs      = 3U;
+    shallow.draws.slabs      = 3U;
+    shallow.lights.slabs     = 3U;
+    shallow.shadows.slabs    = 3U;
+    shallow.materials.copies = 3U;
+
+    EXPECT_FALSE(BlockStorage::hasSlabsForInFlight(shallow, kAssumedInFlightSlots))
+        << "three slabs for three frames in flight is the torn-picture shape";
+
+    const BlockStorage::Layout raised = BlockStorage::layoutForInFlight(shallow, kAssumedInFlightSlots);
+    EXPECT_TRUE(BlockStorage::hasSlabsForInFlight(raised, kAssumedInFlightSlots));
+    EXPECT_EQ(raised.views.slabs, floor_copies);
+    EXPECT_EQ(raised.draws.slabs, floor_copies);
+    EXPECT_EQ(raised.lights.slabs, floor_copies);
+    EXPECT_EQ(raised.shadows.slabs, floor_copies);
+    EXPECT_EQ(raised.materials.copies, floor_copies) << "the material copies follow the same rule";
+
+    // Shape by shape: a ring already deeper than the floor is left where it is, and the short one - the
+    // only shape that makes the layout unsafe - is what the raise moves. The raise never shrinks either: a
+    // ring sized for a shallower count is safe exactly until the next count is learned.
+    BlockStorage::Layout mixed;
+    mixed.views.slabs = 6U;
+    mixed.draws.slabs = 2U;
+    EXPECT_FALSE(BlockStorage::hasSlabsForInFlight(mixed, kAssumedInFlightSlots))
+        << "one short shape makes the whole layout unsafe";
+    const BlockStorage::Layout fixed = BlockStorage::layoutForInFlight(mixed, kAssumedInFlightSlots);
+    EXPECT_EQ(fixed.views.slabs, 6U);
+    EXPECT_EQ(fixed.draws.slabs, floor_copies);
+
+    // A count the session LEARNED, deeper than the assumption, raises further - and a shallower one does
+    // not shrink what is already there.
+    EXPECT_FALSE(BlockStorage::hasSlabsForInFlight(raised, 4U));
+    EXPECT_EQ(BlockStorage::layoutForInFlight(raised, 4U).views.slabs, perFrameCopies(4U));
+    EXPECT_EQ(BlockStorage::layoutForInFlight(raised, 2U).views.slabs, floor_copies)
+        << "the ring is not shrunk to what a shallower count would ask for";
+
+    // Strides and budgets are not the shape's business: only the slab counts move.
+    BlockStorage::Layout budgeted    = raised;
+    budgeted.draws.blocks_per_frame  = 77U;
+    budgeted.views.stride            = 512U;
+    const BlockStorage::Layout again = BlockStorage::layoutForInFlight(budgeted, kAssumedInFlightSlots);
+    EXPECT_EQ(again.draws.blocks_per_frame, 77U);
+    EXPECT_EQ(again.views.stride, 512U);
+}
+
+TEST(BlockStorageTest, AStorageBuiltFromAShallowLayoutOwnsTheInFlightFloor)
+{
+    // The floor at the one place it guards: create(). A shallow layout is BUILT (raised), not refused - a
+    // refusal has no channel to explain itself, and the raised storage is the only one that can serve.
+    if (!Fixture::available()) {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+    Fixture              fixture;
+    BlockStorage::Layout shallow;
+    shallow.views.slabs      = 3U;
+    shallow.draws.slabs      = 3U;
+    shallow.lights.slabs     = 3U;
+    shallow.shadows.slabs    = 3U;
+    shallow.materials.copies = 3U;
+    ASSERT_TRUE(fixture.build(shallow)) << "the floor makes the layout buildable, it does not refuse it";
+
+    const std::uint32_t        copies = perFrameCopies(kAssumedInFlightSlots);
+    const BlockStorage::Layout built  = fixture.storage->layout();
+    EXPECT_EQ(built.views.slabs, copies) << "what the storage states is what it was built with";
+    EXPECT_EQ(built.draws.slabs, copies);
+    EXPECT_EQ(built.lights.slabs, copies);
+    EXPECT_EQ(built.shadows.slabs, copies);
+    EXPECT_EQ(built.materials.copies, copies);
+
+    // And the raised storage is the one that serves: five frames write four distinct slabs, the fifth wraps.
+    const std::vector<std::byte> block = blockOf(288, 0x66);
+    std::vector<std::uint64_t>   offsets;
+    for (int frame = 0; frame < 5; ++frame) {
+        fixture.storage->beginFrame();
+        offsets.push_back(fixture.storage->writeView(block).offset);
+    }
+    EXPECT_NE(offsets[0], offsets[1]);
+    EXPECT_NE(offsets[1], offsets[2]);
+    EXPECT_NE(offsets[3], offsets[0])
+        << "the oldest of the three frames in flight is only proved finished when its slot is recycled";
+    EXPECT_EQ(offsets[4], offsets[0]) << "four slabs is the whole ring: the fifth frame wraps into the first";
+    EXPECT_EQ(fixture.storage->overflows(), 0U);
+}
+
 TEST(BlockStorageTest, TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightDoNot)
 {
     if (!Fixture::available()) {

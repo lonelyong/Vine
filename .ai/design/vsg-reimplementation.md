@@ -310,7 +310,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | **B6** | `StreamKey.revision` 取 Geometry 的 revision ⇒ 任何数据公告重传所有通道；逐 `Buffer::revision()` 能省未改通道，但契约更弱（漏报静默） | 多通道大网格宿主报上传带宽（**2026-09-25 已量化，见 §11.16cw**：512²×4 通道+索引一次公告重传 16.98 MiB ≈ +30 ms/帧；触发未兑现） |
 | **B7** | 管线销毁与在飞提交的竞态：已按设计规则给破坏路径加计数过的 device idle；此后 20 次单例 + 2 次全量套件 + 两棵树门禁 **0 VUID，未再复现** | 再次出现时先查"最近被替换或逐出的管线"与 teardown 的 `deviceWaits` |
 | **B8** | **"跨帧差异"相位：可读回子类已在门禁里，F−N 洞仍在**。新相位 `VsgBackendTest.TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue`（每帧动相机 0.95..0.75、末帧 0.1；片元 `step(0.75,|cam_pos.x|)` 把红通道变成 0/1 两类，判据与色彩空间无关）守住**末帧读到别帧数据 / 绑定冻结·过期**的形状；变异（`recordCommand` 读侧绑定落后一 slab）⇒ 2/2 红。§11.16dd 的受害帧是**最旧在飞帧（F−N）**：它的输出不进 readback（只见最新帧），且 2026-09-25 探针实测（写偏移/slab 轮转/学到槽数=3/帧写节奏）本机框架逐帧节流 ≈ 1 GPU 帧，F−N 总在覆盖写之前收尾；负载压到 4096²×64 遍（≈1G 像素/帧）也造不出重叠 ⇒ **该洞继续由结构性旋转用例承担**（`BlockStorageTest.TheSlabsRotate…`） | 触发不变；真机/换框架再现同类画面缺陷时，先复核"唯一在飞数/布局"与相位边界（§11.16dd 诚实登记） |
-| **B9** | **在飞槽数只有一个拼法且无强制点**：① `BlockStorage::create` 不校验 layout 的槽数 ≥ `core::perFrameCopies(在飞数)`（旧的字面量 `slots{3}` 能静默通过）；② 框架报出的在飞数 ≠3 时存储**不重新布局**（会话只发一条 Info，`Session::probeSlots`），而存储的槽数是"假设 3 + 1" | 触发：真机/新框架报出 N≠3，或有人新加 per-frame 存储。形状：构造处校验（拒绝或上调）+ 学到数之后走 `adoptBlockStorage` 那条路径重布局（见 §11.16dd 的"诚实登记"） |
+| **B9** | **在飞槽数有地板、学到更深就重布局（已收口，2026-09-25，§11.16de）**：① 构造地板——`BlockStorage::create` 把五个 per-frame 形态**上举**到 `core::perFrameCopies(kAssumedInFlightSlots)`（`layoutForInFlight`；旧字面量 `slots{3}` 再也造不出一条存储），选上举而非拒绝：`create` 的 null 是设备/缓冲失败的语言，太浅的存储没有正确的服务方式；② 学到更深数 ⇒ **一次替换**——`growBlockStorageIfNeeded` 每帧把 `Session::slots()` 与预算增长**合并**成一次 `create` + `adoptBlockStorage`（分开做会丢另半请求：替换身的 `growthNeeded` 从零起），Info 记录两个来源。用例 +3：无设备策略（上举/逐形态/不缩/预算不动）、设备建造地板、接缝 `BackendContentAccess::assumeInFlightSlots` 触发重布局 + 次帧不再换。变异 4/4 红（地板移除 / 上举失效 / 接线断 / 谓词过宽[套件崩]） | 真机首次报出 N≥4 时核对 Info 文案与内存代价（接缝走同一条分支，但“真的学到更深”本机未自然观测） |
 | **A2 残留** | 共享流的"释放半边"已按新形态改掉（寿命 = 帧点名，`releaseUnseen`）；旧 `reader` 计数与 `release()` 是**旧实现**的缺陷，已随重写退场——此条仅作历史 | — |
 | **A3** | SDK 没有内容释放入口（`releaseGeometry/Material/Program/Texture`）：登记的"不改 SDK" | 宿主报告内存压力（**2026-09-25 账本已量化，见 §11.16cz**：12 轮创建+丢弃全清；唯材料槽残留；slot 知识学到前的丢弃会保留整会话） |
 | **A6** | `MaterialImages` 淘汰是 FIFO 而非 LRU；`ContentStore` 无容量上界 | 同屏活纹理逼近 256（**2026-09-25 语义已钉+量化，见 §11.16cy**：A/B/X 判别钉 FIFO；200 张循环 = 0 缺失，300 张 = 每轮 300/300 全重建） |
@@ -1445,3 +1445,36 @@ material 值 / 流字节 / cull 全部**不进**。
   支持的最强候选**，不是实测复现（复现需要能真拖鼠标的 GPU 窗口）；② 在飞帧数一旦学到 ≠3，存储仍按**假设**
   布局（会话会报一条 Info，见 `Session::probeSlots`），那时需要“按学到的数重新布局存储”（走
   `adoptBlockStorage` 同一条路径）。**触发器**：真机报出 N≠3，且画面仍有跨帧串扰。
+
+
+### §11.16de（2026-09-25）：在飞槽数的地板与“学到更深就重布局”——B9 的双半
+
+* **登记来自哪里**：§11.16dd 的诚实登记②——“在飞帧数一旦学到 ≠3，存储仍按**假设**布局”。翻成可查的缺陷面就是 B9：
+  ① `BlockStorage::create` 对 layout 的槽数**零校验**（旧字面量 `slots{3}` 能静默造出“最老在飞帧被本帧覆盖”的存储）；
+  ② 会话学到更深数时只发一条 Info，存储不重布局。
+* **① 地板（上举，不拒绝）**：`BlockStorage::layoutForInFlight(layout, n)` 把五个 per-frame 形态逐一上举到
+  `core::perFrameCopies(n)`（**只上举、从不收缩**——按更浅数缩掉的环形只是“下一次数被学到之前”的安全，且页已付钱）；
+  `create` 以 `kAssumedInFlightSlots` 应用它，`layout()` 自此回报“造出来时的形状”（已在地板之上）。判断面是
+  `hasSlabsForInFlight(layout, n)`：五个形态逐一查，不只看 views。选“上举”而非“拒绝”：拒绝没有报错渠道
+  （`create` 只答 null，那是设备/缓冲失败的语言），而太浅的存储**没有正确的服务方式**——不是更小的预算，是撕裂的画面。
+* **② 学到更深 ⇒ 一次替换**：`VsgBackend::growBlockStorageIfNeeded` 每帧读“被声明的在飞数”（生产路径 =
+  `Session::slots()`），形态不够就把它与预算增长**合并**成一次 `create` + `adoptBlockStorage`（新 buffer、旧存储经会话
+  窗口停靠、一条 Info）。**必须合并**：替换存储身上的 `growthNeeded` 从零开始，分两步做会把另半边的请求悄悄丢掉。
+  Info 文案三个变体（只有槽 / 只有预算 / 两者同时），预算变体的前缀照旧含 “grew”（既有增长用例在盯）。
+* **门禁（四条，本机跑过）**：① 无设备 `BlockStorageTest.AShallowLayoutIsRaisedToTheInFlightFloorAndNeverShrunk`
+  （上举五个形态、逐形态处理混合布局、不收缩、预算/步长不动）；② 设备
+  `BlockStorageTest.AStorageBuiltFromAShallowLayoutOwnsTheInFlightFloor`（create 后 `layout()` 五个形态 = 地板；
+  五帧写四个不同 slab 再回卷）；③ 设备接缝
+  `VsgBackendTest.ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNextFrame`（`assumeInFlightSlots` 声明 4 ⇒
+  下一帧的 beginFrame 换存储：五形态 = `perFrameCopies(4)`=5、容量变大、恰一条 Info、第二帧不再换）；④ 原增长用例照旧
+  （纯预算替换的文案仍含 “grew”）。`test_vsg` 448→**451**，门禁 **cases=451 / failed=0 / vuid=0 / hazard=0**，
+  应用阶段判图逐字不变。
+* **变异 4/4（各红，恢复后基线 451 全绿）**：M1 地板移除（`create` 直接用请求）⇒ 地板设备用例红；M2 上举失效（identity）
+  ⇒ 策略、地板、接缝三用例红（批量运行里 `VsgBackendPluginTest.TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraws`
+  曾读回一帧黑——**单跑绿**，判为既知“同批窗口读回”环境模式，与 M2 语义无关：插件路径的默认布局本就 ≥ 地板）；
+  M3 接线断（`slabs_short` 恒 false）⇒ 接缝用例红；M4 谓词过宽（只看 `learned != 0`）⇒ 4 用例红 + 套件 SIGSEGV
+  （逐帧替换 + 停靠无止境——“次帧不再换”的判别力就在接缝用例的第二帧断言里）。
+* **诚实登记**：本机框架学到的在飞数恰是假设值 3，“真 N≥4”仍**没有在真机自然观测到**——接缝声明的数与真实学到的数走
+  **同一条分支**（同一次 `hasSlabsForInFlight` 判定、同一次替换、同一条诊断），但“某台机器上真的学到 4”这件事本身不在
+  本机证据里。**触发器**：真机首次报出 N≠3 时，核对 Info 文案（应出现 “learned its in-flight count (N)”）与替换后的
+  内存代价。

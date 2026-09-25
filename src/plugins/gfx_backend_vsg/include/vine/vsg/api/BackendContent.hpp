@@ -72,6 +72,20 @@ class BackendContentAccess
      */
     static bool useBlockStorage(VsgBackend& backend, const BlockStorage::Layout& layout);
 
+    /** @brief States the in-flight count the per-frame storage is justified against (the learned-count seam).
+     *
+     * The framework this plugin is tested against reports exactly the assumed count, so no test can drive
+     * frames into the re-layout a DEEPER count asks for. The seam states the count the next beginFrame()
+     * justifies the layout against, the way @ref useBlockStorage states a budget: the rings are found too
+     * shallow, the storage is replaced through the same path a learned count takes (a new buffer, the old
+     * one parked) and the same diagnostic is reported - so the branch is observable on a machine that
+     * cannot reach it naturally.
+     *
+     * @param backend          Backend whose layout decision to pin.
+     * @param frames_in_flight The count to justify the layout against (0 = ask the session again).
+     */
+    static void assumeInFlightSlots(VsgBackend& backend, std::uint32_t frames_in_flight) noexcept;
+
     /** @brief Gets the host targets the facade holds (their entries are the plan's off-screen world).
      *
      * @param backend Backend to ask.

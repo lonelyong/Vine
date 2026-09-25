@@ -208,8 +208,12 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     [[nodiscard]] std::size_t releasedStreams() const noexcept;
 
   private:
-    /** @brief Grows the frame's block storage when a frame ran out of budget (see BlockStorage's file note).
+    /** @brief Replaces the frame's block storage when a frame outgrew it or the learned in-flight count did.
      *
+     * Two requests ask for it - a frame that ran out of budget (see BlockStorage's file note) and rings too
+     * shallow for the count the session LEARNED (see BlockStorage::layoutForInFlight) - and they are answered
+     * together, in ONE replacement: a replacement starts with no growth request of its own, so answering
+     * either half alone would silently drop the other.
      * BETWEEN frames, never inside one: the replacement is a NEW buffer (its bytes are laid out the same way,
      * so only the sets' elements move - see ContentAssembly::repoint), and the storage it replaces is parked
      * through the retirement queue for the window a submitted command buffer may still name its bytes. A

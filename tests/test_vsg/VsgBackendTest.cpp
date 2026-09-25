@@ -2833,6 +2833,92 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     EXPECT_TRUE(host.alive());
 }
 
+TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNextFrame)
+{
+    // THE IN-FLIGHT FLOOR'S OTHER HALF. BlockStorage::create raises a shallow layout (see its cases), and
+    // this is what happens when the count the storage was built for turns out to be TOO SMALL: the session
+    // LEARNS the framework's real count over the first frames, and a deeper one than the rings serve asks
+    // for the same replacement growth takes - a new buffer, the old one parked, said out loud once. The
+    // framework on this machine reports exactly the assumed count, so the deeper count is stated through
+    // the seam that exists for it (see assumeInFlightSlots); the branch it reaches is the branch a real
+    // deeper framework reaches.
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth  = 128;
+    constexpr int kHeight = 96;
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    std::vector<std::string>      messages;
+    backend->setDiagnosticSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
+        messages.push_back(as_bytes(diagnostic.message));
+    });
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+
+    BlockStorage* const before = BackendContentAccess::storage(*backend);
+    ASSERT_NE(before, nullptr);
+    ASSERT_EQ(before->layout().views.slabs, vn::vsg::core::perFrameCopies(vn::vsg::core::kAssumedInFlightSlots))
+        << "the session starts on the assumed count; the floor is what create() built";
+    const std::uint64_t before_capacity = before->capacityBytes();
+
+    BackendContentAccess::assumeInFlightSlots(*backend, vn::vsg::core::kAssumedInFlightSlots + 1U);
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+    const std::vector<RenderCommand>              no_commands;
+    const auto                                    drive = [&] {
+        backend->beginFrame();
+        backend->beginPass(pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(nullptr);
+        backend->setClearPolicy(clear);
+        backend->setDepthMode(vn::graphics::DepthMode::Disabled);
+        backend->render(no_commands, camera.get());
+        backend->endPass();
+        backend->endFrame();
+        backend->swapBuffers();
+    };
+
+    drive();  // its beginFrame() finds the rings too shallow for the stated count
+
+    BlockStorage* const after = BackendContentAccess::storage(*backend);
+    ASSERT_NE(after, before) << "replaced, not resized - the same swap growth makes";
+    const std::uint32_t deeper = vn::vsg::core::perFrameCopies(vn::vsg::core::kAssumedInFlightSlots + 1U);
+    EXPECT_EQ(after->layout().views.slabs, deeper);
+    EXPECT_EQ(after->layout().draws.slabs, deeper) << "every per-frame shape is re-laid out together";
+    EXPECT_EQ(after->layout().materials.copies, deeper);
+    EXPECT_GT(after->capacityBytes(), before_capacity);
+    ASSERT_EQ(backend->diagnosticCount(), 1U) << "the re-layout is its own fact, said once";
+    EXPECT_NE(std::string::npos, messages.back().find("in-flight count (4)"))
+        << "and the host can read WHY the bytes moved";
+    EXPECT_EQ(after->overflows(), 0U);
+
+    // AND IT SETTLES: the count it was re-laid out for is the count it now serves, so the next frame leaves
+    // it alone - a storage replaced every frame would churn a buffer per frame and park without end.
+    BlockStorage* const settled = after;
+    drive();
+    EXPECT_EQ(BackendContentAccess::storage(*backend), settled);
+    EXPECT_EQ(backend->diagnosticCount(), 1U);
+
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
 TEST(VsgBackendTest, TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsSaySo)
 {
     // THE OPACITY PATH'S FACTORS, READ BACK FROM THE SURFACE. A content draw into a ONE-attachment target

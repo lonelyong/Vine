@@ -205,6 +205,11 @@ struct VsgBackend::Data
     // but it is what the assembly reads its tables from - so the set lives and dies together.
     core::VariantPool                pool{};
     std::shared_ptr<BlockStorage>    storage{};
+    /// The in-flight count the next beginFrame() justifies the layout against; 0 = ask the session (the
+    /// production read). TEST SEAM (see BackendContentAccess::assumeInFlightSlots): the framework these
+    /// builds run against reports exactly the assumed count, so the deeper-count re-layout has no natural
+    /// way to be observed here.
+    std::uint32_t stated_in_flight{0};
     /// Storages a growth could not park yet: KEPT until the session ends, never freed early (the same
     /// fallback ContentAssembly::beginFrame takes when the parking window is not open yet).
     std::vector<std::shared_ptr<BlockStorage>> kept_storage{};
@@ -360,9 +365,10 @@ void VsgBackend::beginFrame()
         reportUnserved(kUnservedNoSession);
         return;
     }
-    // A frame that ran out of budget asks to be served by a bigger storage, and the swap happens HERE -
-    // between frames, where no recording is in progress and the previous frame's bytes can be left behind
-    // safely (see the growth note).
+    // The per-frame storage is brought up to what this frame needs HERE - between frames, where no recording
+    // is in progress and the previous frame's bytes can be left behind safely: a storage a frame outgrew is
+    // replaced (see the growth note), and so is one the session has LEARNED to be too shallow for the
+    // in-flight count (see the in-flight floor note). Both are answered by one replacement.
     growBlockStorageIfNeeded();
 
     // The session mints the frame's token and advances the viewer's clock; the recorder opens the plan for
@@ -949,36 +955,75 @@ void VsgBackend::growBlockStorageIfNeeded()
     {
         return;  // no content world on this session (see initialize): nothing writes blocks
     }
-    const BlockStorage::Growth need = d->storage->growthNeeded();
-    if (!need.needed())
+
+    // TWO REQUESTS, ONE REPLACEMENT. A frame that ran out of budget asks for deeper rings (see the growth
+    // note), and the count the session LEARNED asks for rings at least one slab deeper than it (see
+    // BlockStorage::layoutForInFlight) - which the storage is not, when the framework turns out to keep more
+    // frames in flight than the code assumed. Answering them one at a time would drop the second request:
+    // a replacement starts with no growth request of its own (see BlockStorage::growthNeeded).
+    const std::uint32_t        learned = d->stated_in_flight != 0U ? d->stated_in_flight : d->session.slots();
+    const BlockStorage::Layout before  = d->storage->layout();
+    const BlockStorage::Growth need    = d->storage->growthNeeded();
+
+    const bool slabs_short = learned != 0U && !BlockStorage::hasSlabsForInFlight(before, learned);
+    if (!slabs_short && !need.needed())
     {
         return;
     }
 
-    const BlockStorage::Layout    before = d->storage->layout();
-    const BlockStorage::Layout    grown  = BlockStorage::grownLayout(before, need);
+    BlockStorage::Layout wanted = before;
+    if (slabs_short)
+    {
+        wanted = BlockStorage::layoutForInFlight(wanted, learned);
+    }
+    if (need.needed())
+    {
+        wanted = BlockStorage::grownLayout(wanted, need);
+    }
+
     std::shared_ptr<BlockStorage> replacement =
-        BlockStorage::create(detail::SessionContentAccess::device(d->session), grown);
+        BlockStorage::create(detail::SessionContentAccess::device(d->session), wanted);
     if (replacement == nullptr || !adoptBlockStorage(std::move(replacement)))
     {
         return;  // the old storage keeps serving (and counting); its refusals were already reported
     }
 
-    // GROWING IS SAID OUT LOUD: the per-pass warnings were the frames that lost content, and this is the
-    // fact that ends them - a host reading its diagnostics sees why they stop and what the picture now
-    // costs. Info, because the request WAS served - by a bigger buffer rather than by dropping less.
-    std::string grew = "the frame's block budget was exhausted, so the block storage grew (a new buffer; the old one is parked):";
-    const auto  append = [&grew](const char* what, std::uint32_t from, std::uint32_t to) {
+    // WHY THE BYTES MOVED IS SAID OUT LOUD: for a grown budget, the per-pass warnings were the frames that
+    // lost content and this is the fact that ends them; for the learned count this diagnostic is the ONLY
+    // record - the frames it protects were about to shade with another frame's slab, silently. Info, because
+    // BOTH requests were served - by a bigger buffer rather than by dropping less.
+    std::string reason;
+    if (slabs_short && need.needed())
+    {
+        reason = "the session learned its in-flight count (" + std::to_string(learned) +
+                 ") and the frame's block budget was exhausted, so the block storage was replaced (a new "
+                 "buffer; the old one is parked):";
+    }
+    else if (slabs_short)
+    {
+        reason = "the session learned its in-flight count (" + std::to_string(learned) +
+                 "), so the per-frame block storage was re-laid out (a new buffer; the old one is parked):";
+    }
+    else
+    {
+        reason = "the frame's block budget was exhausted, so the block storage grew (a new buffer; the old "
+                 "one is parked):";
+    }
+    const auto append = [&reason](const char* what, std::uint32_t from, std::uint32_t to) {
         if (from != to) {
-            grew += std::string(" ") + what + " " + std::to_string(from) + " -> " + std::to_string(to) + ";";
+            reason += std::string(" ") + what + " " + std::to_string(from) + " -> " + std::to_string(to) + ";";
         }
     };
-    append("views", before.views.blocks_per_frame, grown.views.blocks_per_frame);
-    append("draws", before.draws.blocks_per_frame, grown.draws.blocks_per_frame);
-    append("lights", before.lights.blocks_per_frame, grown.lights.blocks_per_frame);
-    append("shadows", before.shadows.blocks_per_frame, grown.shadows.blocks_per_frame);
+    if (slabs_short)
+    {
+        append("slabs", before.views.slabs, wanted.views.slabs);
+    }
+    append("views", before.views.blocks_per_frame, wanted.views.blocks_per_frame);
+    append("draws", before.draws.blocks_per_frame, wanted.draws.blocks_per_frame);
+    append("lights", before.lights.blocks_per_frame, wanted.lights.blocks_per_frame);
+    append("shadows", before.shadows.blocks_per_frame, wanted.shadows.blocks_per_frame);
     reportDiagnostic(vn::graphics::DiagnosticSeverity::Info, vn::graphics::DiagnosticCategory::ContentSkipped,
-                     asString(grew));
+                     asString(reason));
 }
 
 bool VsgBackend::adoptBlockStorage(std::shared_ptr<BlockStorage> storage)
@@ -1048,6 +1093,11 @@ bool BackendContentAccess::useBlockStorage(VsgBackend& backend, const BlockStora
     std::shared_ptr<BlockStorage> replacement =
         BlockStorage::create(SessionContentAccess::device(backend.d->session), layout);
     return backend.adoptBlockStorage(std::move(replacement));
+}
+
+void BackendContentAccess::assumeInFlightSlots(VsgBackend& backend, std::uint32_t frames_in_flight) noexcept
+{
+    backend.d->stated_in_flight = frames_in_flight;
 }
 
 HostTargets& BackendContentAccess::targets(VsgBackend& backend) noexcept

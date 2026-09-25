@@ -1,3 +1,15 @@
+> 2026-09-25 **B9 在飞槽数地板 + 学到更深即重布局（收口）**
+> · ① 构造地板：`BlockStorage::create` 以 `layoutForInFlight(layout, kAssumedInFlightSlots)` **上举**五个 per-frame
+>   形态（只举不缩）；`hasSlabsForInFlight` 是判断面。旧字面量 `slots{3}` 从此造不出存储——**上举而非拒绝**
+>   （create 的 null 是设备语言，太浅的存储没有正确的服务方式）。
+> · ② `VsgBackend::growBlockStorageIfNeeded` 每帧读 `Session::slots()` 并把“槽数太浅”与“预算增长”**合并**一次
+>   `create`+`adoptBlockStorage`——分开做会丢另半请求（替换身 `growthNeeded` 从零起）。Info 三个文案变体；
+>   预算变体前缀照旧含 "grew"。测试接缝 `BackendContentAccess::assumeInFlightSlots`（本机框架报的恰=假设 3）。
+> · 门禁四条：无设备策略、设备建造地板、接缝触发重布局（4 ⇒ 五形态 5、恰一条 Info、次帧不再换）、原增长用例。
+>   变异 4/4 红：地板移除 / 上举失效（策略+地板+接缝；批量跑的插件黑帧单跑绿=环境模式）/ 接线断 / 谓词过宽（+套件崩）。
+>   test_vsg 448→**451**、门禁 cases=451 vuid=0 hazard=0、应用阶段逐字不变。
+> · 诚实边界：本机学到的在飞数恰=假设 3；“真 N≥4”经接缝可走同一条分支，但本机未自然观测到（真机首现时复核文案与内存）。
+
 > 2026-09-25 **B8 跨帧差异相位（部分）：可读回子类守住，F−N 洞记实**
 > · 新相位 `VsgBackendTest.TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue`（test_vsg 447→**448**；门禁 cases=448/vuid=0、
 >   应用阶段逐字不变）：每帧动相机（0.95..0.75）、**末帧 0.1**；片元 `step(0.75,|cam_pos.x|)` 把红通道变成 0/1 两类
