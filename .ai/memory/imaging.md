@@ -70,3 +70,9 @@
 **判据**：`test_graphics` **191 → 200**（+9 = 8 个 `TextureTest` + 1 个 `MaterialTest`）；
 全量 `ninja` 零 error / 零 warning；`vsg_selftest_evidence.sh` → PASS（**45 行逐字节相同**，后端零改动）；
 `gfx_lavapipe_check.sh` → PASS（0 VUID）；`check_diagnostic_formats.py` → 0 suspicious。
+
+> 对账注（2026-09-25）：本文件上面"未做（明确推迟）"里的两条**已过期**——**"后端仍不消费 `Texture`"**
+> （重写版已消费：face 0 / Cube 六层、mip 链、sampler 含各向异性、采样描述符集）与**"读回路径未有"**
+> （后端层已有离屏 `readColorBuffer/readDepthBuffer`，`test_vsg` 像素相位在用）；仍真的是 **mip 生成**
+> （解码只产 1 级）、**`Image` 级包装与窗口读回**、**`PixelFormat` 合并**。现况见
+> `.ai/design/imaging-design.md` §7 的 2026-09-25 对账。

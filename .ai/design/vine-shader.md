@@ -1,5 +1,14 @@
 # Vine 自写 shader 设计（custom-shader P0/P1 落地稿）
 
+> ⚠ 落地后修订（2026-09-25，**实现状态段**）：本文是**重写前**（SceneBridge 时代）内置 shader 的
+> P0/P1 落地稿。后端已按 `.ai/design/vsg-reimplementation.md` 从零重写（2026-09-21 起）⇒ 本文的
+> **实现状态叙述（"非目标"里的未做项、"遗留路线"、载具与参数的取舍）一律以重写版的记录为准，别照抄**；
+> 已验证的一例：文中"未做的只剩各向异性过滤"**已落地**——`MaterialImages::makeSampler` 按 mip 级数
+> 启用各向异性、上限经 `detail::anisotropyFor()` 夹到 `[1, 16]`，`DeviceFeatures` 在创建设备时显式申请
+> `samplerAnisotropy`（详见 `vsg-texture-upload.md` §5）。§11 契约部分以 `graphics-shader.md` 为准
+> （该文自注已写明）。**设计方向（SDK 第一准则、声明式契约、内置与用户 program 同模型）仍有效**，
+> 方向性论证照读，实现细节不要照抄。
+
 > 状态：设计稿 v1.1（2026-09-03）
 > **方向确认（SDK 第一准则）**：用户必须能写 GLSL；SDK 着色契约先于后端，vsg（乃至手写
 > Vulkan）只是可替换实现。**内置 program 与用户 Program 是同一个模型**（2026-09-13：枚举
