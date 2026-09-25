@@ -2336,6 +2336,202 @@ TEST(VsgBackendTest, TheTextureCacheDropsTheOldestInsertionAndRebuildsWhatItDrop
     EXPECT_TRUE(host.alive());
 }
 
+TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
+{
+    // A3'S QUESTION, MADE A LEDGER. The host's only way to "release" content today is dropping its own
+    // references (the SDK has no release entry - §6/A3), so this recipe runs exactly that over cycles:
+    // every cycle creates a geometry, a material, a PROGRAM and a texture, draws the geometry once, then
+    // lets all four go. At each cycle's end the tables, the stream registry and the image cache must be
+    // back at their baseline - the sweep's counters (releasedContentObjects / releasedTextures /
+    // releasedStreams) are the proof the letting-go happened - and what the ledger always shows as the
+    // residue is the material arena's slot handling, which has no release path at all (eviction only).
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth  = 128;
+    constexpr int kHeight = 96;
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    ContentStore*    store    = BackendContentAccess::store(*backend);
+    ContentAssembly* assembly = BackendContentAccess::assembly(*backend);
+    ASSERT_NE(store, nullptr);
+    ASSERT_NE(assembly, nullptr);
+    vn::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
+    ASSERT_NE(images, nullptr);
+    BlockStorage* const storage = BackendContentAccess::storage(*backend);
+    ASSERT_NE(storage, nullptr);
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+
+    std::vector<RenderCommand> commands;
+
+    const auto drive = [&]() {
+        backend->beginFrame();
+        backend->beginPass(pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(nullptr);
+        backend->setClearPolicy(clear);
+        backend->setDepthMode(vn::graphics::DepthMode::Disabled);
+        backend->render(commands, camera.get());
+        backend->endPass();
+        backend->endFrame();
+        backend->swapBuffers();
+    };
+
+    constexpr int kCycles = 12;
+    // The settle window has to outlive the frames whose PLANS may still name the dropped objects (the sweep
+    // skips anything somebody else still holds), so it is generously above the executor's own window.
+    constexpr int kSettle = 16;
+
+    // One cycle, verbatim: the host makes a geometry, a material, a program and a texture, draws the
+    // geometry once, and then lets all of them go.
+    const auto run_cycle = [&](int cycle) {
+        {
+            // What the host makes THIS cycle: its own geometry, material, program and texture...
+            const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+            geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
+                std::vector<float>{ -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F })));
+            geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+                new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
+            geometry->bumpRevision();
+
+            const vn::intrusive_ptr<Material> material(new Material());
+            material->setDiffuse(vn::Colorf(0.3F, 0.4F, 0.5F, 1.0F));
+
+            const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+            {
+                ShaderStage vertex;
+                vertex.type   = ShaderStageType::Vertex;
+                vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+                    "layout(location = 0) in vec3 position;\n"
+                    "void main() { gl_Position = vec4(position, 1.0); }\n"));
+                ShaderStage fragment;
+                fragment.type   = ShaderStageType::Fragment;
+                fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+                    "layout(location = 0) out vec4 outColor;\n"
+                    "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+                    "{\n"
+                    "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+                    "} material;\n"
+                    "void main() { outColor = material.diffuse; }\n"));
+                program->addStage(vertex);
+                program->addStage(fragment);
+            }
+
+            commands = std::vector<RenderCommand>(1U);
+            commands[0].geometry = geometry;
+            commands[0].material = material;
+            commands[0].program  = program;
+
+            // ... and a texture of its own, acquired through the cache the way a declared set would.
+            const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
+                new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+            {
+                const vn::intrusive_ptr<vn::imaging::Image> image(
+                    new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+                const std::span<std::byte> pixels = image->mipData(0);
+                for (std::size_t index = 0; index < pixels.size(); ++index) {
+                    pixels[index] = static_cast<std::byte>(
+                        (index * 7U + static_cast<std::size_t>(cycle)) & 0xFFU);
+                }
+                texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
+            }
+            vn::vsg::detail::TextureReject reason = vn::vsg::detail::TextureReject::Ok;
+            (void)images->acquire(texture.get(), reason);
+            EXPECT_EQ(reason, vn::vsg::detail::TextureReject::Ok);
+            EXPECT_TRUE(images->has(texture.get())) << "the cache holds this cycle's texture, for now";
+
+            drive();  // the one frame that names all of it
+        }
+        // The host lets EVERYTHING go here (the references above are gone).
+        commands.clear();
+    };
+    const auto settle_frames = [&]() {
+        for (int frame = 0; frame < kSettle; ++frame) {
+            drive();
+        }
+    };
+
+    // WARM-UP FIRST, and it stays OUT of the measured counters. Two parts: empty frames until the session has
+    // LEARNED its in-flight slot count (a drop before that cannot be parked - RetirementQueue::retire
+    // refuses to guess - and its rows are then retained for the session, by design; see
+    // ContentStore::retained), then one whole cycle whose drop therefore parks like every later one.
+    // Letting the warm-up absorb both makes every measured cycle's baseline the settled state.
+    std::printf("\n");
+    for (int warm = 0; warm < kSettle; ++warm) {
+        drive();
+    }
+    run_cycle(0);
+    settle_frames();
+    const std::size_t retained_after_warmup = store->retained();
+    const std::size_t base_geometry         = store->geometryEntries();
+    const std::size_t base_material         = store->materialEntries();
+    const std::size_t base_program          = store->programEntries();
+    const std::size_t base_slots            = storage->liveMaterials();
+    const std::size_t base_streams          = assembly->uploads().live();
+    const std::size_t released_objects_before  = backend->releasedContentObjects();
+    const std::size_t released_textures_before = backend->releasedTextures();
+    std::printf("[a3] warm-up: rows g%zu m%zu p%zu retained %zu (pre-slot-knowledge drops stay for the "
+                "session), slots %zu, streams %zu\n",
+                base_geometry, base_material, base_program, retained_after_warmup, base_slots, base_streams);
+
+    for (int cycle = 0; cycle < kCycles; ++cycle) {
+        run_cycle(cycle + 1);
+        settle_frames();
+
+        EXPECT_EQ(store->geometryEntries(), base_geometry) << "cycle " << cycle << ": the row is let go";
+        EXPECT_EQ(store->materialEntries(), base_material) << "cycle " << cycle << ": the row is let go";
+        EXPECT_EQ(store->programEntries(), base_program) << "cycle " << cycle << ": the row is let go";
+        EXPECT_EQ(images->count(), 0U) << "cycle " << cycle << ": the texture is let go";
+        EXPECT_EQ(assembly->uploads().live(), base_streams) << "cycle " << cycle << ": the streams are let go";
+        std::printf("[a3] cycle %2d: entries g%zu m%zu p%zu | images %zu streams %zu slots %zu | released "
+                    "objects %zu textures %zu streams %zu\n",
+                    cycle, store->geometryEntries(), store->materialEntries(), store->programEntries(),
+                    images->count(), assembly->uploads().live(), storage->liveMaterials(),
+                    backend->releasedContentObjects(), backend->releasedTextures(),
+                    backend->releasedStreams());
+    }
+
+    // THE RELEASES REALLY HAPPENED, once per object and once per texture - the counters the sweep feeds.
+    EXPECT_EQ(backend->releasedContentObjects() - released_objects_before, static_cast<std::size_t>(kCycles) * 3U)
+        << "a geometry, a material and a program per cycle";
+    EXPECT_EQ(backend->releasedTextures() - released_textures_before, static_cast<std::size_t>(kCycles))
+        << "one texture per cycle";
+    EXPECT_GE(backend->releasedStreams(), static_cast<std::size_t>(kCycles))
+        << "the streams of the dropped geometries are let go once the naming window passes";
+    EXPECT_EQ(store->retained(), retained_after_warmup)
+        << "no drop during the measured cycles needed retention: every park came due";
+    EXPECT_LE(store->retained(), 3U) << "only the first drops, before the slots were learned, are kept";
+
+    // THE ONE RESIDUE the ledger shows: material SLOTS have no release path (eviction only, see §11.16cx),
+    // and how many survive here is the allocator's business - a freed material's address may come back.
+    const std::size_t slots = storage->liveMaterials();
+    EXPECT_LE(slots, 256U) << "the arena's bound still holds";
+    std::printf("[a3] residue: %zu/%zu material slots held, %zu above the session's baseline (no release "
+                "path - eviction only)\n",
+                slots, base_slots + static_cast<std::size_t>(kCycles), slots - base_slots);
+
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
 TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
 {
     // ONE BLOCK OF BUDGET, TWO DRAWS - AND WHAT THE FRAME DOES ABOUT IT. Frame 1's second draw block is

@@ -310,7 +310,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | **B6** | `StreamKey.revision` 取 Geometry 的 revision ⇒ 任何数据公告重传所有通道；逐 `Buffer::revision()` 能省未改通道，但契约更弱（漏报静默） | 多通道大网格宿主报上传带宽（**2026-09-25 已量化，见 §11.16cw**：512²×4 通道+索引一次公告重传 16.98 MiB ≈ +30 ms/帧；触发未兑现） |
 | **B7** | 管线销毁与在飞提交的竞态：已按设计规则给破坏路径加计数过的 device idle；此后 20 次单例 + 2 次全量套件 + 两棵树门禁 **0 VUID，未再复现** | 再次出现时先查"最近被替换或逐出的管线"与 teardown 的 `deviceWaits` |
 | **A2 残留** | 共享流的"释放半边"已按新形态改掉（寿命 = 帧点名，`releaseUnseen`）；旧 `reader` 计数与 `release()` 是**旧实现**的缺陷，已随重写退场——此条仅作历史 | — |
-| **A3** | SDK 没有内容释放入口（`releaseGeometry/Material/Program/Texture`）：登记的"不改 SDK" | 宿主报告内存压力 |
+| **A3** | SDK 没有内容释放入口（`releaseGeometry/Material/Program/Texture`）：登记的"不改 SDK" | 宿主报告内存压力（**2026-09-25 账本已量化，见 §11.16cz**：12 轮创建+丢弃全清；唯材料槽残留；slot 知识学到前的丢弃会保留整会话） |
 | **A6** | `MaterialImages` 淘汰是 FIFO 而非 LRU；`ContentStore` 无容量上界 | 同屏活纹理逼近 256（**2026-09-25 语义已钉+量化，见 §11.16cy**：A/B/X 判别钉 FIFO；200 张循环 = 0 缺失，300 张 = 每轮 300/300 全重建） |
 | **A4** | `Material` 是全 SDK 唯一没有 revision 的内容类型（后端每帧逐命令 compare-and-write；实测 ~10 µs/帧量级，比噪声小） | 材质数量大到"每帧 O(命令数) 次块比较"进入剖析前列（**2026-09-25 已量化，见 §11.16cx**：命令地板 ~28 µs/条（Release）；>256 不同材料 = 0 命中、每帧全量重写+驱逐） |
 | **首帧 gizmo 空白** | 一帧没有工具叠层 | 低（下一次 app shell 视觉工作） |
@@ -1338,3 +1338,20 @@ material 值 / 流字节 / cull 全部**不进**。
 * **备注**：本配方钉的是**缓存层**契约；一帧内是否真的发生这些 acquire（描述符集缓存复用时可能不再 acquire）不在本配方
   里——“同屏活纹理逼近 256”的宿主侧影响仍待真场景触发。
 * **判据**：套件 443 → **444**；两棵树门禁 `cases=444 vuid=0 hazard=0`、应用行与历史逐字相同。
+
+### §11.16cz M11ac（2026-09-25）：重复创建+丢弃的账本（A3 触发面量化）
+
+* **登记来自哪里**：§6 的 A3 行——“SDK 没有内容释放入口…| 宿主报告内存压力”。宿主唯一的“释放”=丢掉自己的
+  引用；本片把“丢掉之后各层留下什么”做成账本。
+* **配方**（`VsgBackendTest.MeasureWhatRepeatedCreateAndDropLeavesBehind`）：每轮新建 geometry+material+program+
+  texture，画一帧（零面积三角形），然后全部丢引用；结算 16 帧后读账本（lavapipe，连跑三次全同）。
+* **实测**：
+  * 每轮结束：表行 **g0 m0 p0**、纹理 **images 0**、流 **streams 0**——全部回到基线；
+  * 计数器：`releasedContentObjects` **+3/轮**、`releasedTextures` **+1/轮**、`releasedStreams` **+2/轮**；
+  * **唯一残留**：材料 arena 槽 **12/12**（每轮一个，只经驱逐离场，§11.16cx）。
+* **顺带发现（保留式设计，不是缺陷）**：在会话**学到 in-flight slot 数之前**被丢弃的内容无法停放
+  （`RetirementQueue::retire` 拒绝猜），行按设计保留整会话（`retained()` 3 条；`ContentStore::retained` 注释已写
+  “costs memory, never correctness”）。配方用“16 个空帧 + 1 个热身轮”吸收该窗口；测量轮 `retained` 零增长。
+* **顺手修的源码小疵**：`ContentSweep.cpp` 里 “The store first, and it parks…” 注释重复了一遍（注释级去重，零行为）。
+* **变异**：M1（跳过纹理释放）与 M2（跳过内容释放）都红。
+* **判据**：套件 444 → **445**；两棵树门禁 `cases=445 vuid=0 hazard=0`、应用行与历史逐字相同。
