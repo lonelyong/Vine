@@ -312,7 +312,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | **A2 残留** | 共享流的"释放半边"已按新形态改掉（寿命 = 帧点名，`releaseUnseen`）；旧 `reader` 计数与 `release()` 是**旧实现**的缺陷，已随重写退场——此条仅作历史 | — |
 | **A3** | SDK 没有内容释放入口（`releaseGeometry/Material/Program/Texture`）：登记的"不改 SDK" | 宿主报告内存压力 |
 | **A6** | `MaterialImages` 淘汰是 FIFO 而非 LRU；`ContentStore` 无容量上界 | 同屏活纹理逼近 256 |
-| **A4** | `Material` 是全 SDK 唯一没有 revision 的内容类型（后端每帧逐命令 compare-and-write；实测 ~10 µs/帧量级，比噪声小） | 材质数量大到"每帧 O(命令数) 次块比较"进入剖析前列 |
+| **A4** | `Material` 是全 SDK 唯一没有 revision 的内容类型（后端每帧逐命令 compare-and-write；实测 ~10 µs/帧量级，比噪声小） | 材质数量大到"每帧 O(命令数) 次块比较"进入剖析前列（**2026-09-25 已量化，见 §11.16cx**：命令地板 ~28 µs/条（Release）；>256 不同材料 = 0 命中、每帧全量重写+驱逐） |
 | **首帧 gizmo 空白** | 一帧没有工具叠层 | 低（下一次 app shell 视觉工作） |
 | **会话侧"画面已落地"** | 把窗口读那条链从"测试碰运气"变成"宿主可查的事实"（WSI present fence） | 下一个真宿主接窗口时 |
 | **窗口随日志长大** | demo 的窗口启动尺寸不确定（§11.16cs 的门禁侧已钉住；宿主/框架侧未修——默认窗口尺寸是产品决定） | 下一次 app shell / 框架的窗口布局工作 |
@@ -999,7 +999,7 @@ material 值 / 流字节 / cull 全部**不进**。
 * > 规则与本仓既有习惯一致：**"有意不做"必须写得出理由和触发器**，否则它就是被忘掉的缺陷。
 * **A2** 共享流的释放半边没接线，且 `SharedStreams::acquire` 每次 `++readers`（`Streams.cpp:156`），`release` 生产路径零调用 — **缺陷（已修：§11.16cb 换成“帧命名 + 窗口”的寿命，不可达的 `release` 撤掉）** | `readers` 已经退化成"累计 acquire 次数"，"最后一个读者放手 ⇒ 条目离开"不可达；唯一回收是容量 FIFO（512）。**但**：①它现在的可见后果只在"同一帧里被命名的不同流数 > 512"时才出现（那时每帧会把最老的 ~(N−512) 条挤出去、下一帧重新上传），demo 是 ~10 条量级；②修它要动"条目什么时候可以走"的语义（谁是读者？答案不是命令，而是**保留在半片/集合里的 bind**），而正确形状与 A1 的扫尾同一套：**按"本帧被命名过"设 seen 集 + 停 K 帧未命名才放手**，并把容量 FIFO 降级为硬兜底 | 形状：`StreamUploads::beginFrame()` + 每命令 `noteSeen(key)` + 帧尾 `releaseUnseen(timeline, retirement)`（K = `slots + 1`，与其余停放同窗）。**触发器**：某个负载的"每帧命名流数"越过 512，或有人报"网格多起来之后每帧在重传"
 * **A3** SDK 没有内容释放入口（`releaseGeometry/Material/Program/Texture` 都没有） — **设计问题（不改 SDK）** | `RenderBackend` 只给了 `releasePass` / `releaseRenderTarget`，因为**只有这两种对象的生命周期由宿主显式宣布**（SDK 文档如此）；内容对象是引用计数的，宿主放手即 `useCount` 变化 —— 修 1 之后这条链已经闭合（帧级扫尾看得见放手）。加一套"显式 release 内容"的入口等于把引用计数的信息再手写一遍，还多一处必须与 `useCount` 一致的状态 | 不加。**触发器**：出现"宿主必须在同帧内让后端立刻放手"的需求（例如显存压力下的显式驱逐），那时先加**一个**入口（`releaseContent()`？）而不是四个
-* **A4** `Material` 是全 SDK 唯一没有 revision 的内容类型；`MaterialManager` 成了死抽象（唯一实现是测试假件） — **两半：一半改设计（已论证），一半登记** | ①`Material` 无 revision ⇒ 后端只能**每帧逐命令** compare-and-write（`VsgBackend.cpp:659`）。这是**有意的兜底**，不是漏接：SDK 的既有规矩是"被共享的对象自己不推断内容变了"，而 `Material` 的 setter 至今没有公告语义 ⇒ 后端不能假设"没人公告 = 没变"。②`MaterialManager`（`MaterialManager.hpp:19-27` 明说"具体后端实现它并自己持有资源缓存"）现在**没有任何生产实现**，那句话是**错的** | ①形状：给 `Material` 加 `revision()/setRevision()/bumpRevision()`（照 `Geometry`/`Texture`/`ShaderProgram`），缓存用"revision 变了才比较"的快路径，**保留** compare-and-write 作为"没公告"的兜底。**触发器**：材质数量大到"每帧 O(命令数) 次块比较"进入剖析的前列（当前 11 趟 × 42 命令 = 数百次 64 B 比较，量级还看不见）。②形状：删掉 `MaterialManager` + 它的假件与用例，并在 SDK 文档里写明"材质由后端按帧观察"。**触发器**：任何一次"宿主以为管理器在物化材质"
+* **A4** `Material` 是全 SDK 唯一没有 revision 的内容类型；`MaterialManager` 成了死抽象（唯一实现是测试假件） — **两半：一半改设计（已论证），一半登记** | ①`Material` 无 revision ⇒ 后端只能**每帧逐命令** compare-and-write（`VsgBackend.cpp:659`）。这是**有意的兜底**，不是漏接：SDK 的既有规矩是"被共享的对象自己不推断内容变了"，而 `Material` 的 setter 至今没有公告语义 ⇒ 后端不能假设"没人公告 = 没变"。②`MaterialManager`（`MaterialManager.hpp:19-27` 明说"具体后端实现它并自己持有资源缓存"）现在**没有任何生产实现**，那句话是**错的** | ①形状：给 `Material` 加 `revision()/setRevision()/bumpRevision()`（照 `Geometry`/`Texture`/`ShaderProgram`），缓存用"revision 变了才比较"的快路径，**保留** compare-and-write 作为"没公告"的兜底。**触发器**：材质数量大到"每帧 O(命令数) 次块比较"进入剖析的前列（当前 11 趟 × 42 命令 = 数百次 64 B 比较，量级还看不见）。（2026-09-25 已量化：§11.16cx——命令地板 ≈28 µs/条；>256 不同材料时 **0 命中**、每帧全量重写+驱逐；比较本身不是大头，write/evict 才是。另：storage **没有释放路径**，arena 槽位只经驱逐离场。）②形状：删掉 `MaterialManager` + 它的假件与用例，并在 SDK 文档里写明"材质由后端按帧观察"。**触发器**：任何一次"宿主以为管理器在物化材质"
 * **A6** `MaterialImages` 淘汰是 FIFO 而非 LRU；`ContentStore` 没有任何容量上界 — **登记** | FIFO 的代价是"批量加载贴图会把正在用的挤掉并重建"，而那一次重建的价钱是**一次上传**（不是错误）；换成 LRU 需要"最近使用帧号"并接进诊断，收益面（同屏活纹理数逼近 256）在 demo 上不成立。`ContentStore` 的上界在修 1 之后由**扫尾**给出（宿主放手即回收），剩下的是"宿主一直持有但从不画"的对象 —— 按本仓既有口径那是**应当保留**（持有者是宿主） | 形状：淘汰键从 `stamp`（插入序）换成"最近被 acquire 的帧号"，`kMaxEntries` 不变。**触发器**：活纹理数接近 256 且观察到"用了很久的贴图被重建"
 * **A8**（**已删：§11.16cr**，M11v）`Observe::FrameCounters` 及 `RetentionStats` 共九个字段无人写也无人读：`data_nodes_built`、`streams_refreshed`、`offscreen_builds`、`offscreen_resizes`、`window_builds`、`program_slot_builds`（`Observe.hpp:38-43` 声明并写文档；`PhaseTable.hpp:26` 拿 `offscreen_builds` 举例说"phase 必须能拦住它"）。相位用的是自己的 `DevicePhaseCounters`，所以那些规则永远不会响。| **已删**（连同无调用方的 `planGeometry` 刷新计划） — 要么接线（`ContentStore`/`Streams`/`HostTargets` 都有现成计数点），要么删掉；本配方想要的"Refresh vs Rebuild" 正是 `streams_refreshed`/`data_nodes_built` 能答的 | **触发器**：下一次有人想按"帧里的重建次数"写规则
 * **B1** 三张内容表的查找是**线性扫描**，而每命令每帧要跑 5~9 次（`ContentFacts.cpp:50/91/122`；表只增不减） — **缺陷（已修：§11.16bz 量了斜率并落地行序 + 二分；`tablesFor` 自身那两次查找仍登记，见该节第 4 点）** | 复杂度 O(每帧命令数 × 表项数)：1 万 drawable/1 万表项时单帧 ~10⁸ 次指针比较，而 demo 是 ~42 条命令 ⇒ **任何现有门禁都看不见**（所以先做的是修 2：把键补完整，否则索引化会把"两行同键"变成"索引里后写覆盖先写"，把一个静默错图换成另一个）。另一条论证：**现在做没有收益面**，而有真实的回归面（内容路径是 407 条用例里最密的一片） | 形状：每帧在 `tablesFor` 里重建**排序的行号索引**（`vector<uint32_t>` + 每表一个比较器，O(n log n)/帧、`lower_bound` 每次 O(log n)），**不是**给表本身排序（手工构造的表会静默失配）；`ContentFacts` 带一个可空的 `const RowOrder*`，为空时回退到扫描并**在文档里写明这是慢路径**。**触发器**：某个负载的 drawable 数越过 ~2 000，或剖析里 `find*` 家族进入前列
@@ -1306,3 +1306,20 @@ material 值 / 流字节 / cull 全部**不进**。
   契约变弱一项。
 * **判据**：套件 441 → **442**；两棵树门禁 `cases=442 vuid=0 hazard=0`、应用行与历史逐字相同；
   本片**无源改动**（只加配方与记录）。
+
+### §11.16cx M11aa（2026-09-25）：命令成本地板与材料 arena 的 256 槽边界（A4 触发面量化，只加配方）
+
+* **登记来自哪里**：§6 的 A4 行——“材质数量大到每帧 O(命令数) 次块比较进入剖析前列”。
+* **配方**（`VsgBackendTest.MeasureWhatCommandsCostWhenTheirDrawingLandsNothing`）：三个**完全相同的顶点**
+  （零面积三角形 ⇒ 不落任何片元），剩下的就是逐命令地板（draw 块、材料 note、绑定、draw call）。
+  五个区制：1 条命令 / 2000 条同材质 / 200 个不同材料 / 300 个（超 256 边界）/ 2000 个。
+* **实测**（lavapipe；Release 为主，Debug 同量级）：**命令地板 ≈ 28.0 µs/条**
+  （(57.6 ms − 1.56 ms)/1999；Debug ≈ 38.7 µs）——2000 条**不落一像素**的命令本身 = **56 ms/帧**。
+  2000 个不同材料相对同材质再 **+5.4 µs/条**。
+* **材料 arena 边界**（默认 256 槽 FIFO，`BlockStorage::Layout` 的 `materials{64,3,256}`）：200 个材料 ⇒
+  每帧 200 命中、0 写、0 驱逐；**300 个 ⇒ 每帧 0 命中、300 写、300 驱逐**；2000 个 ⇒ 0 命中、2000 写、2000 驱逐
+  ——超过容量后场景**永远没有稳态帧**（FIFO 级联让每个材料在轮到自己之前就被驱逐）。
+* **顺带量到的事实**：storage **没有任何释放路径**（`MaterialArena::release` 无调用者）——槽位只经驱逐
+  离场；这也是 200 个活材料读出 201 槽的原因（上一区制的一个材料仍驻留）。
+* **判据**：套件 442 → **443**；两棵树门禁 `cases=443 vuid=0 hazard=0`、应用行与历史逐字相同；
+  变异（arena 容量 256→400）⇒ 配方红，恢复绿；本片**无源改动**（只加配方与记录）。

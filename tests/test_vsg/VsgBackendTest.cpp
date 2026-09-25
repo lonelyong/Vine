@@ -1937,6 +1937,262 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     EXPECT_TRUE(host.alive());
 }
 
+TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
+{
+    // A4'S FLOOR, AND THE MATERIAL ARENA'S BOUNDARY. The registry (§6) keeps A4 gated on "material count
+    // large enough that the per-frame O(commands) block compares enter the profile top". Before that
+    // report exists, this recipe measures what a command costs when its DRAWING lands nothing: three
+    // IDENTICAL vertices are a zero-area triangle, so no fragment ever runs and what is left is the
+    // per-command floor - the draw block, the material note, the bind, the draw call. The material ARENA
+    // holds 256 slots (BlockStorage's default layout), so the same recipe walks the bound: while the live
+    // set fits, every note is a HIT and nothing is written; past it, the FIFO cascade means NO note
+    // hits at all - every command allocates-and-evicts every frame, which is exactly the "per-frame
+    // O(commands) material work" A4 worries about, quantised.
+    //
+    // The numbers are PRINTED for the design log; what is ASSERTED is machine-independent: nothing
+    // compiles or uploads in any regime, the arena's counters say exactly what the bound implies, and
+    // the window stays the clear colour - the drawings really did land nothing.
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth           = 128;
+    constexpr int kHeight          = 96;
+    constexpr int kFramesPerRegime = 12;
+
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+            "{\n"
+            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "} material;\n"
+            "void main() { outColor = material.diffuse; }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    // Three IDENTICAL vertices: a zero-area triangle, which rasterises to no fragment at all.
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
+        std::vector<float>{ -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F })));
+    geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
+    geometry->bumpRevision();
+
+    const auto material_set = [](std::size_t count) {
+        std::vector<vn::intrusive_ptr<Material>> materials;
+        materials.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            const vn::intrusive_ptr<Material> material(new Material());
+            const float shade = 0.2F + 0.6F * static_cast<float>(index % 16U) / 15.0F;
+            material->setDiffuse(vn::Colorf(shade, 0.4F, 1.0F - shade, 1.0F));
+            materials.push_back(std::move(material));
+        }
+        return materials;
+    };
+
+    const auto commands_for = [&](const std::vector<vn::intrusive_ptr<Material>>& materials,
+                                  std::size_t count) {
+        std::vector<RenderCommand> built(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            built[index].geometry = geometry;
+            built[index].material = materials[index % materials.size()];
+            built[index].program  = program;
+        }
+        return built;
+    };
+
+    std::vector<RenderCommand> commands = commands_for(material_set(1U), 1U);
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+
+    ContentStore*    store    = BackendContentAccess::store(*backend);
+    ContentAssembly* assembly = BackendContentAccess::assembly(*backend);
+    ASSERT_NE(store, nullptr);
+    ASSERT_NE(assembly, nullptr);
+    VariantPool& pool = BackendContentAccess::pool(*backend);
+
+    const auto drive = [&]() {
+        const auto began = std::chrono::steady_clock::now();
+        backend->beginFrame();
+        backend->beginPass(pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(nullptr);
+        backend->setClearPolicy(clear);
+        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
+        backend->render(commands, camera.get());
+        backend->endPass();
+        backend->endFrame();
+        const auto recorded  = std::chrono::steady_clock::now();
+        backend->swapBuffers();
+        const auto committed = std::chrono::steady_clock::now();
+        const auto micros    = [](auto from, auto to) {
+            return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(to - from).count();
+        };
+        return std::pair<double, double>{ micros(began, recorded), micros(recorded, committed) };
+    };
+
+    struct MaterialCounters
+    {
+        std::uint64_t writes{0};
+        std::uint64_t hits{0};
+        std::uint64_t evictions{0};
+        std::size_t   live{0};
+    };
+    const auto read_material = [&]() {
+        const BlockStorage* storage = BackendContentAccess::storage(*backend);
+        return MaterialCounters{ storage->materialWrites(), storage->materialHits(),
+                                 storage->materialEvictions(), storage->liveMaterials() };
+    };
+
+    struct RegimeCost
+    {
+        EditCostDelta content;
+        std::int64_t  writes{0};
+        std::int64_t  hits{0};
+        std::int64_t  evictions{0};
+        std::size_t   live{0};
+        double        record_us{0.0};
+        double        commit_us{0.0};
+    };
+
+    std::printf("\n");
+    const auto measure = [&](const char* label) {
+        for (int warm = 0; warm < 3; ++warm) {
+            drive();
+        }
+        const EditCostCounters before  = readEditCosts(*store, *assembly, pool);
+        const MaterialCounters material_before = read_material();
+        double                 record_us = 0.0;
+        double                 commit_us = 0.0;
+        for (int frame = 0; frame < kFramesPerRegime; ++frame) {
+            const auto [record, commit] = drive();
+            record_us += record;
+            commit_us += commit;
+        }
+        const EditCostCounters after  = readEditCosts(*store, *assembly, pool);
+        const MaterialCounters material_after = read_material();
+        const EditCostDelta    change = editCostDelta(before, after);
+        const auto             step   = [](std::uint64_t from, std::uint64_t to) {
+            return static_cast<std::int64_t>(to) - static_cast<std::int64_t>(from);
+        };
+        const std::int64_t writes = step(material_before.writes, material_after.writes);
+        const std::int64_t hits   = step(material_before.hits, material_after.hits);
+        const std::int64_t evictions = step(material_before.evictions, material_after.evictions);
+        std::printf("[a4] %-26s record %7.1f us/f  commit %8.1f us/f"
+                    " | uploads %+3lld created %+3lld | write/f %7.1f hit/f %7.1f evict/f %7.1f live %zu\n",
+                    label, record_us / kFramesPerRegime, commit_us / kFramesPerRegime,
+                    static_cast<long long>(change.uploads), static_cast<long long>(change.created),
+                    static_cast<double>(writes) / kFramesPerRegime,
+                    static_cast<double>(hits) / kFramesPerRegime,
+                    static_cast<double>(evictions) / kFramesPerRegime, material_after.live);
+        return RegimeCost{ change,
+                           writes,
+                           hits,
+                           evictions,
+                           material_after.live,
+                           record_us / kFramesPerRegime,
+                           commit_us / kFramesPerRegime };
+    };
+
+    for (int settle = 0; settle < 6; ++settle) {
+        drive();
+    }
+
+    // 1. ONE command: the frame's own floor (baseline every other row subtracts).
+    const RegimeCost one = measure("1 command, 1 material");
+    EXPECT_EQ(one.content.builds, 0);
+    EXPECT_EQ(one.content.uploads, 0);
+    EXPECT_EQ(one.content.created, 0);
+    EXPECT_EQ(one.writes, 0) << "one unchanged material is one hit per frame";
+    EXPECT_EQ(one.hits, kFramesPerRegime);
+    EXPECT_EQ(one.evictions, 0);
+    EXPECT_EQ(one.live, 1U);
+
+    // 2. MANY commands, ONE material: everything the delta over regime 1 shows is the per-command floor.
+    commands = commands_for(material_set(1U), 2000U);
+    const RegimeCost many = measure("2000 commands, 1 material");
+    EXPECT_EQ(many.content.uploads, 0);
+    EXPECT_EQ(many.content.created, 0) << "2000 commands of one program/layout/geometry compile nothing";
+    EXPECT_EQ(many.writes, 0);
+    EXPECT_EQ(many.hits, static_cast<std::int64_t>(kFramesPerRegime) * 2000);
+    EXPECT_EQ(many.evictions, 0);
+    EXPECT_EQ(many.live, 1U)
+        << "the first 2000-command frame grew the block storage (the draw budget), arena included: "
+           "this arena has noted one material - and nothing but eviction ever removes a slot";
+    std::printf("[a4] per-command floor ~= %.2f us/frame (2000-command frame minus the one-command frame)\n",
+                (many.commit_us - one.commit_us) / 1999.0);
+
+    // 3. THE BOUND, FITTING SIDE: 200 distinct materials are still served from the 256 slots - no write,
+    //    no eviction, every note a hit.
+    commands = commands_for(material_set(200U), 200U);
+    const RegimeCost fitting = measure("200 commands, 200 materials");
+    EXPECT_EQ(fitting.writes, 0) << "the live set fits the arena: nothing is rewritten";
+    EXPECT_EQ(fitting.hits, static_cast<std::int64_t>(kFramesPerRegime) * 200);
+    EXPECT_EQ(fitting.evictions, 0);
+    EXPECT_EQ(fitting.live, 201U)
+        << "200 live materials read as 201 slots: the PREVIOUS regime's material is still resident, "
+           "because the storage has no release path at all - a slot leaves by eviction alone";
+
+    // 4. THE BOUND, MISSING SIDE BY 44: 300 distinct materials against 256 slots - and the FIFO cascade
+    //    means NOT ONE note hits: every command of every frame allocates and evicts.
+    commands = commands_for(material_set(300U), 300U);
+    const RegimeCost tight = measure("300 commands, 300 materials");
+    EXPECT_EQ(tight.writes, static_cast<std::int64_t>(kFramesPerRegime) * 300)
+        << "past the bound the scene can NEVER have a steady frame";
+    EXPECT_EQ(tight.hits, 0) << "the cascade evicts a material before its own note comes round";
+    EXPECT_EQ(tight.evictions, static_cast<std::int64_t>(kFramesPerRegime) * 300)
+        << "every allocation evicts: the arena churns its whole live set per frame";
+    EXPECT_EQ(tight.live, 256U);
+
+    // 5. THE EXTREME: 2000 distinct materials - the whole per-frame cost writes every block, and the
+    //    counters are the same shape, 2000 times over.
+    commands = commands_for(material_set(2000U), 2000U);
+    const RegimeCost churn = measure("2000 commands, 2000 materials");
+    EXPECT_EQ(churn.writes, static_cast<std::int64_t>(kFramesPerRegime) * 2000);
+    EXPECT_EQ(churn.hits, 0);
+    EXPECT_EQ(churn.evictions, static_cast<std::int64_t>(kFramesPerRegime) * 2000);
+    EXPECT_EQ(churn.live, 256U);
+
+    // The drawings landed nothing: whatever the regimes did to the arena, the window is still the clear.
+    drive();
+    const auto centre = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
+    EXPECT_TRUE(isGreenClear(centre)) << "a zero-area triangle lands no fragment, got ("
+                                      << static_cast<int>(centre[0]) << ", " << static_cast<int>(centre[1])
+                                      << ", " << static_cast<int>(centre[2]) << ")";
+    EXPECT_EQ(backend->deviceWaits(), 0U) << "2000 notes a frame stop nothing";
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
 TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
 {
     // ONE BLOCK OF BUDGET, TWO DRAWS - AND WHAT THE FRAME DOES ABOUT IT. Frame 1's second draw block is
