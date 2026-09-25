@@ -25,21 +25,32 @@
 #   VINE_ASAN_TARGET=test_core VINE_ASAN_FILTER='*' scripts/asan_check.sh
 #   VINE_ASAN_LEAKS=1 scripts/asan_check.sh                 # + LeakSanitizer
 #
-# The vsg BACKEND (the device-free suite plus its device-backed self-test), both
-# under STRICT leak judging: the one report the suite produced came from the
-# plugin loader, whose retention is deliberate (it never dlclose()s plugin code),
-# and that is excused in asan_leaks.supp with its reason next to the release()
-# that causes it:
+# The vsg BACKEND, under STRICT leak judging. What a report may still contain,
+# and why, is part of the judge (measured 2026-09-25, design §11.16df):
+#   * the plugin loader's retention is deliberate (it never dlclose()s plugin
+#     code) and is excused in asan_leaks.supp with its reason next to the
+#     release() that causes it;
+#   * ~6 KB in ~108 small allocations whose stacks run through the plugin
+#     module with garbled symbols - the plugin and the binary each link their
+#     OWN static ASan runtime, so plugin-side allocations unwind through the
+#     wrong bookkeeping. Attributing and settling those (one -shared-libasan
+#     tree, or per-entry excuses) is an open registered item; a strict run whose
+#     red ends at these two entries is the expected shape.
 #   VINE_ASAN_TARGET=test_vsg VINE_ASAN_FILTER='*' VINE_ASAN_LEAKS=1 scripts/asan_check.sh
-#   VINE_ASAN_TARGET=vsg_backend_selftest VINE_ASAN_LEAKS=1 scripts/asan_check.sh
-#       (the self-test needs DISPLAY + an ICD; QT_QPA_PLATFORM is irrelevant to it)
+#       (the device cases connect to X and close it again themselves - see
+#        TestXConnection in tests/test_vsg/TestHostWindow.hpp - and SKIP without
+#        DISPLAY. CoreAllocationGateTest's mallinfo2-teeth case skips under ASan:
+#        ASan's allocator is invisible to mallinfo2.)
+#   vsg_backend_selftest no longer exists: it drove the retired renderer and went
+#   with it (see src/plugins/gfx_backend_vsg/CMakeLists.txt). The app gate in
+#   scripts/vsg_rewrite_gate.sh is the end-to-end evidence now.
 # VINE_ASAN_LEAK_SCOPE remains the FALLBACK for a run whose leaks are not excused
 # yet: it reports leaks outside the pattern without failing the run. Prefer
 # excusing them properly (a justified entry) over scoping them away, because a
 # scope also hides the next leak in the same run.
-# What the suite covers: the caches, the pools, the retire rings, the compile leases and the session
-# teardown of the GPU-free paths. What the self-test adds: the SAME objects with a real device, i.e.
-# session build / move / shutdown and every target it materialises.
+# What the suite covers: the caches, the pools, the retire rings, the compile leases, the session
+# teardown of the GPU-free paths, and - with DISPLAY + an ICD - the device phases (DevicePhaseTest):
+# session build / move / shutdown and the targets it materialises, for real.
 #
 # COMPILER FAMILY OF THE TREE. A suite that links a C dependency (test_iobase,
 # and anything reaching IOBase through loaders/robotics) needs the tree's C and

@@ -450,6 +450,7 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -509,6 +510,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -690,6 +692,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -878,6 +881,7 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -1048,6 +1052,7 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -1190,6 +1195,7 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -1341,6 +1347,7 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -1416,6 +1423,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -1578,6 +1586,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -1881,6 +1890,7 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -2117,6 +2127,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -2368,6 +2379,7 @@ TEST(VsgBackendTest, TheTextureCacheDropsTheOldestInsertionAndRebuildsWhatItDrop
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -2507,6 +2519,7 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -2703,6 +2716,7 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -2849,6 +2863,7 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -2935,6 +2950,7 @@ TEST(VsgBackendTest, TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsS
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
@@ -3055,6 +3071,7 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";

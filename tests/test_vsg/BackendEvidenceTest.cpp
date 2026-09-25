@@ -14,6 +14,15 @@
 
 #include <gtest/gtest.h>
 
+/// @brief Whether this translation unit is compiled under AddressSanitizer (see ADeliberateAllocationIsCaught).
+#if defined(__SANITIZE_ADDRESS__)
+#    define VN_TEST_UNDER_ASAN 1
+#elif defined(__has_feature)
+#    if __has_feature(address_sanitizer)
+#        define VN_TEST_UNDER_ASAN 1
+#    endif
+#endif
+
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -418,6 +427,13 @@ TEST(CoreAllocationGateTest, ADeliberateAllocationIsCaught)
     {
         GTEST_SKIP() << "this platform cannot report heap usage";
     }
+#if defined(VN_TEST_UNDER_ASAN)
+    // The gate's instrument is mallinfo2, which tracks glibc's arena - and AddressSanitizer replaces the
+    // allocator wholesale, so under ASan this deliberately-planted allocation is invisible TO THE INSTRUMENT
+    // (measured 2026-09-25: grew == 0 under the strict-LeakSanitizer run while every other build passes).
+    // The gate's teeth are not weakened: the non-ASan runs still prove it can fail.
+    GTEST_SKIP() << "mallinfo2 cannot see through AddressSanitizer's allocator";
+#endif
 
     AllocationGate gate;
     gate.begin();

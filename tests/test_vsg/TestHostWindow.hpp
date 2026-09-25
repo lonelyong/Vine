@@ -301,4 +301,33 @@ class TestHostWindow
     mutable std::uint8_t     last_read_error_{ 0 };            ///< See readError: written by the const reads above.
 };
 
+/**
+ * @brief Closes the test's X connection when the scope ends.
+ *
+ * `xcb_connect` has no RAII of its own, and the device cases connected and never disconnected: the WHOLE
+ * strict-leak ASan/LSan report of test_vsg was these connections ("Direct leak of 21176 byte(s)" x22, the
+ * connection's buffer, measured 2026-09-25). Declare one of these right AFTER the connection and make sure
+ * it is declared BEFORE the objects built on it: C++ destroys in reverse declaration order, so the windows
+ * go first and this closes the connection last.
+ */
+class TestXConnection
+{
+  public:
+    explicit TestXConnection(xcb_connection_t* connection) noexcept : connection_(connection) {}
+
+    ~TestXConnection()
+    {
+        if (connection_ != nullptr)
+        {
+            xcb_disconnect(connection_);
+        }
+    }
+
+    TestXConnection(const TestXConnection&)            = delete;
+    TestXConnection& operator=(const TestXConnection&) = delete;
+
+  private:
+    xcb_connection_t* connection_;
+};
+
 #endif  // !_WIN32

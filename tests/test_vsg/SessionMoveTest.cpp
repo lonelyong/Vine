@@ -51,6 +51,7 @@ TEST(SessionMoveTest, ASecondHostWindowMovesTheSessionAndTheSameOneKeepsIt)
     }
 
     xcb_connection_t* connection = xcb_connect(nullptr, nullptr);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create host windows on";

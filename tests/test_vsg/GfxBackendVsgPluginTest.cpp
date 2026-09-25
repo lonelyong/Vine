@@ -190,6 +190,7 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
 
     int               screen_index = 0;
     xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
     {
         GTEST_SKIP() << "no X display to create a host window on";
