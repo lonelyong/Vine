@@ -2,7 +2,7 @@
 
 代码：`src/fw/appfw/sdk/vine/appfw/CommandManager.hpp`、`src/fw/appfw/src/CommandManager.cpp`；
 `CommandFlags::Exclusive` 语义见 `src/fw/appfw/sdk/vine/appfw/Command.hpp`。
-测试：`tests/test_gui/test_gui.cpp`（`CommandManager_*` 共 36 例）。
+测试：`tests/test_gui/test_gui.cpp`（`CommandManager_*` 共 41 例）。
 
 ## 入口点语义（顶层 vs 嵌套）
 
@@ -214,6 +214,9 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
   类型检查 + 拷贝；本轮已去掉事件里那份拷贝。
 - **"manager 必须长于所有命令帧"仍是契约而非类型保证**：让 `ChainGuard`/`Context` 持 `shared_ptr<Impl>`
   可把它变成类型保证，但要求 `Impl` 与 `CommandManager` 对象寿命解耦，属单独一轮的所有权改造。
+  **该轮已于 2026-09-25 落地实现后否决并回退**（共享 `Impl`、链上死亡标记、三个恢复点守卫、
+  独占路径预建链；实现期 44 用例全绿、ASan 变异 5/5 命中预期 UAF）、维持契约形态，理由见
+  "已评估但**未采纳**"。
 - **`Command::name()/group()/description()` 值返回**：`String` 有 SSO，短名不分配；改成 `const String&`/view
   要动虚函数签名与插件 ABI，收益不抵成本。
 
@@ -494,11 +497,13 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   但不要求无副作用：探测失败只影响列举元数据。
 - 命令运行时不得忽略取消令牌又长时间持有共享状态：框架只能在“拒绝新命令”与“并发执行”中选一个，
   当前选前者（排他性优先）。
-- **管理器必须长于所有命令执行**：活着的命令帧里存着 `Impl*`（`ChainGuard`）与
-  `CommandManager*`（`Context`），销毁管理器时若还有链没收尾，这些帧一旦恢复就会触碰已释放的
-  内存。宿主用 `cancelAllAndWait()` 建立这个前提（`Application::shutdown()` 已经这么做）；
-  管理器自身不做排空（析构里阻塞线程等协程恢复本身就是死锁风险），只在返回 false 时由宿主
-  决定是否继续销毁。
+- **管理器生命周期只跟随 `Application`；退出必须优雅清空**：活着的命令帧里存着 `Impl*`
+  （`ChainGuard`）与 `CommandManager*`（`Context`），销毁管理器时若还有链没收尾，这些帧一旦恢复
+  就会触碰已释放的内存——**这是未定义行为，框架不做运行期兜底**（仅在析构里告警）。
+  唯一受支持的形状：管理器与 `Application` 同生灭；`Application::shutdown()` 把命令排空放在第一步
+  （`cancelPendingInput()` → `cancelAllAndWait()`，未收干净只告警不阻塞），随后才是插件卸载、
+  事件总线排空与配置落盘；之后资源才随析构释放。管理器自身不排空（析构里阻塞线程等协程恢复
+  本身就是死锁风险）。2026-09-25 决策（否决共享 `Impl` 的运行期兜底一揽子方案）见"已评估但**未采纳**"。
 - **独占性由调用方按语义使用**：Exclusive 会取消**所有**活链（包括 `executeDetached()` 启动的
   后台链）。UI 上"切换工具/模式"这类命令适合用它；一个还需要别的命令继续跑的场景不能用。
 - **不要在命令内部排空或关停**：`cancelAllAndWait()`/`Application::shutdown()` 会等待命令自己
@@ -605,3 +610,11 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   互斥与 STL 内部状态，且 C++ 标准下属未定义行为。明确不做。
 - **“校验频率自适应”系列课题**：前置依赖资源租约层，该层未采纳，因此当前无实现对象。
 - **注册表不加锁**：已改为加锁（`registry_mutex`，叶子锁，锁内不调用户代码）。
+- **运行期"宿主违约"兜底（2026-09-25 实现后否决）**：一揽子方案 = `Impl` 改共享（帧持 `shared_ptr`）、
+  链上死亡标记 `orphaned`、三个恢复点守卫（执行尾部的 `report` 前、`Context::executeChild()` 两处、
+  接管等待循环）、独占路径"接管前预建链 + 停链扫掠里排除自己"；另有配套的 3 个违约场景用例与
+  ASan 变异电池（M1–M5 全红，命中预期 UAF 位置）。整轮实现完工、44 用例全绿后**否决并回退**：
+  收益只在"带着活动帧销毁管理器"这一违约场景，而契约已收紧为 manager 跟随 `Application`、退出先
+  `cancelAllAndWait()`；代价是运行态跨对象耦合（帧要从链上读死亡标记、接管路径多一条必须在停链扫掠里
+  排除自己的预建链——实现期内它就制造过一次"接管被自己取消"的缺陷）。复查条件：出现"管理器短于进程"
+  的合法宿主（多管理器/嵌入宿主）时再评估。
