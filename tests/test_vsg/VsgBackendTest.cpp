@@ -54,6 +54,7 @@ using vn::vsg::ContentAssembly;
 using vn::vsg::ContentStore;
 using vn::vsg::core::TargetFacts;
 using vn::vsg::core::depthPlan;
+using vn::vsg::BlockStorage;
 using vn::vsg::HostTargets;
 using vn::vsg::PassRegistry;
 using vn::vsg::VsgBackend;
@@ -1691,6 +1692,152 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     EXPECT_EQ(seen, 0U) << "and every one of them is served silently";
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
+TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
+{
+    // ONE BLOCK OF BUDGET, TWO DRAWS - AND WHAT THE FRAME DOES ABOUT IT. Frame 1's second draw block is
+    // refused (the pass keeps drawing what fits, and the refusal is reported once); the storage REMEMBERS
+    // what the frame tried, so the next beginFrame() replaces the whole storage: a NEW buffer (the old one
+    // is parked, because a submitted frame may still name its bytes), the cached sets repointed at it, and
+    // the growth reported as its own fact. The pixels are the evidence for both halves: frame 1 shows the
+    // first command's colour only, frame 2 shows the second command's colour on top - which cannot happen
+    // unless BOTH draw blocks landed in the replacement's bytes through sets that were repointed.
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth  = 128;
+    constexpr int kHeight = 96;
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    std::vector<std::string>      messages;
+    backend->setDiagnosticSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
+        messages.push_back(as_bytes(diagnostic.message));
+    });
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+
+    // The same pair the material case uses: clip-space positions passed through, and a fragment stage
+    // shading with the material's own diffuse colour - so one probe at the window's centre sees whichever
+    // drawing call drew LAST.
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+            "{\n"
+            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "} material;\n"
+            "void main() { outColor = material.diffuse; }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    geometry->setPositions(positions);
+    geometry->setIndices(indices);
+    geometry->setRevision(1U);
+
+    const vn::intrusive_ptr<Material> first_material(new Material());
+    first_material->setDiffuse(vn::Colorf(0.25F, 0.6F, 0.25F, 1.0F));
+    const vn::intrusive_ptr<Material> second_material(new Material());
+    second_material->setDiffuse(vn::Colorf(0.75F, 0.2F, 0.75F, 1.0F));
+
+    RenderCommand first;
+    first.geometry = geometry;
+    first.material = first_material;
+    first.program  = program;
+    RenderCommand second;
+    second.geometry = geometry;
+    second.material = second_material;
+    second.program  = program;
+    const std::vector<RenderCommand> commands{ first, second };
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+
+    const auto drive = [&] {
+        backend->beginFrame();
+        backend->beginPass(pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(nullptr);
+        backend->setClearPolicy(clear);
+        // Depth off, so the second drawing call is simply the one whose colour the probe sees.
+        backend->setDepthMode(vn::graphics::DepthMode::Disabled);
+        backend->render(commands, camera.get());
+        backend->endPass();
+        backend->endFrame();
+        backend->swapBuffers();
+    };
+
+    // Put the drive on a storage that fits ONE draw block: the frame below will ask for two.
+    BlockStorage::Layout tight;
+    tight.draws.blocks_per_frame = 1U;
+    ASSERT_TRUE(BackendContentAccess::useBlockStorage(*backend, tight));
+    BlockStorage* const tight_storage = BackendContentAccess::storage(*backend);
+    ASSERT_NE(tight_storage, nullptr);
+    const std::uint64_t tight_capacity = tight_storage->capacityBytes();
+
+    drive();
+    EXPECT_EQ(tight_storage->overflows(), 1U) << "the frame's second draw block was refused";
+    EXPECT_EQ(tight_storage->growthNeeded().draws, 2U) << "the frame TRIED two blocks: that is the request";
+    EXPECT_EQ(tight_storage->capacityBytes(), tight_capacity) << "the storage itself never grows";
+    ASSERT_EQ(backend->diagnosticCount(), 1U) << "the refused drawing call is reported once";
+    EXPECT_NE(std::string::npos, messages.back().find("budget is full"));
+    const auto dropped = host.waitForPixel(
+        kWidth / 2, kHeight / 2,
+        [](const std::array<std::uint8_t, 3>& pixel) { return isColourByte(pixel[1], 0.6); },
+        std::chrono::milliseconds{ 500 });
+    EXPECT_TRUE(isColourByte(dropped[1], 0.6))
+        << "frame 1 shows the FIRST command's colour: the second was dropped (read-error "
+        << static_cast<int>(host.readError()) << ")";
+
+    drive();  // its beginFrame() is where the growth happens
+    BlockStorage* const grown_storage = BackendContentAccess::storage(*backend);
+    ASSERT_NE(grown_storage, tight_storage) << "the storage was replaced, not resized";
+    EXPECT_GT(grown_storage->capacityBytes(), tight_capacity);
+    EXPECT_EQ(grown_storage->layout().draws.blocks_per_frame, 2U) << "one over a budget of one doubles it";
+    EXPECT_EQ(grown_storage->overflows(), 0U) << "both draw blocks fitted";
+    EXPECT_FALSE(grown_storage->growthNeeded().needed());
+
+    ASSERT_EQ(backend->diagnosticCount(), 2U) << "the growth is its own fact, said once";
+    EXPECT_NE(std::string::npos, messages.back().find("grew")) << "and the host can see why the refusals stop";
+    const auto grown_pixel = host.waitForPixel(
+        kWidth / 2, kHeight / 2,
+        [](const std::array<std::uint8_t, 3>& pixel) { return isColourByte(pixel[1], 0.2); },
+        std::chrono::milliseconds{ 500 });
+    EXPECT_TRUE(isColourByte(grown_pixel[1], 0.2))
+        << "frame 2 shows the SECOND command on top: both blocks landed in the replacement's bytes";
+
+    EXPECT_EQ(backend->deviceWaits(), 0U) << "growing between frames stops nothing";
     backend->shutdown();
     EXPECT_TRUE(host.alive());
 }

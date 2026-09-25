@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vine/vsg/api/BlockStorage.hpp>
 #include <vine/vsg/api/ContentAssembly.hpp>
 #include <vine/vsg/api/ContentStore.hpp>
 #include <vine/vsg/api/HostTargets.hpp>
@@ -46,6 +47,30 @@ class BackendContentAccess
      * @return The assembly, or null while the session is not up (it needs the session's device).
      */
     [[nodiscard]] static ContentAssembly* assembly(VsgBackend& backend) noexcept;
+
+    /** @brief Gets the frame's block storage (what this frame's blocks are written into).
+     *
+     * The tests read its counters around a frame: `overflows()` tells "a write was refused" from "the frame
+     * fit", `growthNeeded()` answers what a frame tried where it was refused, and `capacityBytes()` tells a
+     * replaced storage from the one that was there - the three facts the growth recipe is built from.
+     *
+     * @param backend Backend to ask.
+     * @return The storage, or null while the content world is not up (it belongs to the session's device).
+     */
+    [[nodiscard]] static BlockStorage* storage(VsgBackend& backend) noexcept;
+
+    /** @brief Puts the drive on a storage with a deliberately small budget (the growth recipe's seam).
+     *
+     * It creates @p layout's storage over the session's device and adopts it exactly like growth does -
+     * same repoint of the cached sets, same park of the one it replaces - so a test can drive one frame past
+     * a budget of 1 draw block and watch the NEXT frame's beginFrame() grow the storage, without authoring a
+     * thousand drawables to reach the default budget.
+     *
+     * @param backend Backend to re-point (it must have a live session).
+     * @param layout  The shape to build.
+     * @return true when the replacement was built and adopted.
+     */
+    static bool useBlockStorage(VsgBackend& backend, const BlockStorage::Layout& layout);
 
     /** @brief Gets the host targets the facade holds (their entries are the plan's off-screen world).
      *

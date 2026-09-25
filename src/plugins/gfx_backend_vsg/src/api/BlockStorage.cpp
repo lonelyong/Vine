@@ -41,6 +41,7 @@ struct BlockStorage::Data
 {
     Data(::vsg::ref_ptr<::vsg::Device> device_in, const Layout& layout, std::uint64_t alignment)
       : device(std::move(device_in)),
+        shape(layout),
         view_ring(withAlignment(layout.views, alignment)),
         draw_ring(withAlignment(layout.draws, alignment)),
         light_ring(withAlignment(layout.lights, alignment)),
@@ -130,6 +131,7 @@ struct BlockStorage::Data
     }
 
     ::vsg::ref_ptr<::vsg::Device>                 device;
+    Layout                                        shape;  ///< The layout as requested (see layout()).
     core::FrameRing                               view_ring;
     core::FrameRing                               draw_ring;
     core::FrameRing                               light_ring;
@@ -142,6 +144,31 @@ struct BlockStorage::Data
     std::uint64_t                                 writes{0};
     std::uint64_t                                 bytes_written{0};
     std::uint64_t                                 oversized_count{0};
+
+    // What the CURRENT frame has tried per region (reset by beginFrame) and the worst any frame tried where
+    // its budget refused (never reset: a replacement storage is how a request is served - see growthNeeded).
+    std::uint32_t tried_views{0};
+    std::uint32_t tried_draws{0};
+    std::uint32_t tried_lights{0};
+    std::uint32_t tried_shadows{0};
+    std::uint32_t grow_views{0};
+    std::uint32_t grow_draws{0};
+    std::uint32_t grow_lights{0};
+    std::uint32_t grow_shadows{0};
+
+    /** @brief Records one write attempt and, when the budget refused it, what the frame wanted instead.
+     *
+     * The attempt is counted BEFORE the ring's answer on purpose: a refused block was still WANTED, and the
+     * count of what the frame wanted is exactly the number a replacement storage has to serve (see Growth).
+     */
+    void noteAttempt(std::uint32_t& tried, std::uint32_t& grow, bool refused) noexcept
+    {
+        ++tried;
+        if (refused)
+        {
+            grow = std::max(grow, tried);
+        }
+    }
 };
 
 BlockStorage::BlockStorage(::vsg::ref_ptr<::vsg::Device> device, const Layout& layout)
@@ -173,6 +200,13 @@ void BlockStorage::beginFrame() noexcept
     d->light_ring.beginFrame();
     d->shadow_ring.beginFrame();
     d->arena.beginFrame();
+
+    // This frame's attempt counts start over; the growth request (`grow_*`) is a max over frames and
+    // deliberately survives (see growthNeeded).
+    d->tried_views   = 0;
+    d->tried_draws   = 0;
+    d->tried_lights  = 0;
+    d->tried_shadows = 0;
 }
 
 BlockStorage::Block BlockStorage::writeView(std::span<const std::byte> block) noexcept
@@ -184,6 +218,7 @@ BlockStorage::Block BlockStorage::writeView(std::span<const std::byte> block) no
         return {};
     }
     const core::FrameRing::Reservation reservation = d->view_ring.reserve();
+    d->noteAttempt(d->tried_views, d->grow_views, !reservation.valid);
     if (!reservation.valid) {
         return {};
     }
@@ -201,6 +236,7 @@ BlockStorage::Block BlockStorage::writeDraw(std::span<const std::byte> block) no
         return {};
     }
     const core::FrameRing::Reservation reservation = d->draw_ring.reserve();
+    d->noteAttempt(d->tried_draws, d->grow_draws, !reservation.valid);
     if (!reservation.valid) {
         return {};
     }
@@ -220,6 +256,7 @@ BlockStorage::Block BlockStorage::writeLights(std::span<const std::byte> block) 
         return {};
     }
     const core::FrameRing::Reservation reservation = d->light_ring.reserve();
+    d->noteAttempt(d->tried_lights, d->grow_lights, !reservation.valid);
     if (!reservation.valid) {
         return {};
     }
@@ -237,6 +274,7 @@ BlockStorage::Block BlockStorage::writeShadows(std::span<const std::byte> block)
         return {};
     }
     const core::FrameRing::Reservation reservation = d->shadow_ring.reserve();
+    d->noteAttempt(d->tried_shadows, d->grow_shadows, !reservation.valid);
     if (!reservation.valid) {
         return {};
     }
@@ -305,6 +343,11 @@ std::uint64_t BlockStorage::capacityBytes() const noexcept
     return d->regions.materials_base + d->regions.materials_bytes;
 }
 
+BlockStorage::Layout BlockStorage::layout() const noexcept
+{
+    return d->shape;
+}
+
 std::uint64_t BlockStorage::frames() const noexcept
 {
     return d->view_ring.frames();
@@ -329,6 +372,32 @@ std::uint64_t BlockStorage::overflows() const noexcept
 {
     return d->view_ring.overflows() + d->draw_ring.overflows() + d->light_ring.overflows() +
            d->shadow_ring.overflows();
+}
+
+BlockStorage::Growth BlockStorage::growthNeeded() const noexcept
+{
+    return Growth{ d->grow_views, d->grow_draws, d->grow_lights, d->grow_shadows };
+}
+
+BlockStorage::Layout BlockStorage::grownLayout(const Layout& current, const Growth& need) noexcept
+{
+    // Both halves of the policy: doubling is what makes growth a RARE event (a scene that keeps adding
+    // drawables pays a few replacements, then none), and `max` with what the frame actually tried is what
+    // keeps one big frame from needing two events (1024 -> 3000 in one step, not 2048 and then 3000).
+    const auto grown = [](std::uint32_t budget, std::uint32_t tried) noexcept {
+        if (tried <= budget) {
+            return budget;
+        }
+        const auto doubled = static_cast<std::uint64_t>(budget) * 2U;
+        return static_cast<std::uint32_t>(std::max<std::uint64_t>(doubled, tried));
+    };
+
+    Layout grown_layout                  = current;
+    grown_layout.views.blocks_per_frame   = grown(current.views.blocks_per_frame, need.views);
+    grown_layout.draws.blocks_per_frame   = grown(current.draws.blocks_per_frame, need.draws);
+    grown_layout.lights.blocks_per_frame  = grown(current.lights.blocks_per_frame, need.lights);
+    grown_layout.shadows.blocks_per_frame = grown(current.shadows.blocks_per_frame, need.shadows);
+    return grown_layout;
 }
 
 std::size_t BlockStorage::liveMaterials() const noexcept

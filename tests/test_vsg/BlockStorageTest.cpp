@@ -4,9 +4,11 @@
  * The properties these cases pin are the ones a steady frame depends on: every block lands inside its own
  * region of ONE buffer, the rings rotate by slab so a frame writes where the frames in flight are not, a
  * steady frame reuses the same bytes, and a material whose revision did not move writes NOTHING (while an
- * edit writes exactly one block). Refusals are pinned too: a block past its region's stride and a frame past
- * its block budget are counted, never accommodated by growing - growth would move bytes a submitted command
- * buffer still names.
+ * edit writes exactly one block). Refusals are pinned too: a block past its region's stride is counted and
+ * asks for nothing, and a frame past its block budget is counted AND remembered as the request a
+ * replacement storage has to serve (`growthNeeded`) - the storage itself never grows, and building the
+ * replacement is the caller's act between frames (see the growth cases below and
+ * VsgBackend::growBlockStorageIfNeeded).
  *
  * A window is how the backend reaches a device (`Window::create` then `getOrCreateDevice()`, exactly what
  * the session does), so this test creates one instead of inventing a second way to bring up Vulkan. X11 +
@@ -185,7 +187,7 @@ TEST(BlockStorageTest, TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightD
     EXPECT_EQ(fixture.storage->overflows(), 0U);
 }
 
-TEST(BlockStorageTest, AFramePastItsBudgetIsRefusedAndNothingGrows)
+TEST(BlockStorageTest, AFramePastItsBudgetIsRefusedButAsksForAReplacement)
 {
     if (!Fixture::available()) {
         GTEST_SKIP() << "no window system or no device satisfies the requirements";
@@ -204,6 +206,59 @@ TEST(BlockStorageTest, AFramePastItsBudgetIsRefusedAndNothingGrows)
     EXPECT_FALSE(fixture.storage->writeDraw(block).valid) << "the budget is a promise, not a hint";
     EXPECT_EQ(fixture.storage->overflows(), 1U);
     EXPECT_EQ(fixture.storage->capacityBytes(), capacity) << "the buffer did not move";
+
+    // The refusal is the frame's, and what the frame TRIED is the request a replacement has to serve.
+    const BlockStorage::Growth need = fixture.storage->growthNeeded();
+    EXPECT_EQ(need.draws, 3U) << "three draw blocks were wanted, so three is what the replacement must fit";
+    EXPECT_EQ(need.views, 0U) << "a region that never ran out must not grow";
+    EXPECT_EQ(need.lights, 0U);
+    EXPECT_EQ(need.shadows, 0U);
+    EXPECT_TRUE(need.needed());
+
+    // The request is a MAX OVER FRAMES: a later frame that fits cannot erase what an earlier one tried.
+    fixture.storage->beginFrame();
+    EXPECT_TRUE(fixture.storage->writeDraw(block).valid);
+    EXPECT_EQ(fixture.storage->growthNeeded().draws, 3U);
+
+    // The replacement the policy spells serves all three, and starts with no request of its own.
+    const BlockStorage::Layout grown = BlockStorage::grownLayout(layout, need);
+    EXPECT_EQ(grown.draws.blocks_per_frame, 4U) << "doubling (2 -> 4) already covers the need (3)";
+    EXPECT_EQ(grown.views.blocks_per_frame, layout.views.blocks_per_frame)
+        << "a region the need leaves alone keeps its budget";
+
+    std::unique_ptr<BlockStorage> replacement = BlockStorage::create(fixture.device, grown);
+    ASSERT_NE(replacement, nullptr) << "the grown layout could not be built on this device";
+    replacement->beginFrame();
+    EXPECT_TRUE(replacement->writeDraw(block).valid);
+    EXPECT_TRUE(replacement->writeDraw(block).valid);
+    EXPECT_TRUE(replacement->writeDraw(block).valid);
+    EXPECT_EQ(replacement->overflows(), 0U);
+    EXPECT_FALSE(replacement->growthNeeded().needed()) << "a replacement starts without a request";
+}
+
+TEST(BlockStorageTest, TheGrowthPolicyDoublesWhileItCoversAndTakesABiggerNeed)
+{
+    // Device-free: the policy is a pure function of the layout and the request (see grownLayout), so it
+    // cannot hide behind a device case's skip.
+    const BlockStorage::Layout current;
+
+    EXPECT_EQ(BlockStorage::grownLayout(current, BlockStorage::Growth{}).draws.blocks_per_frame, 1024U)
+        << "nothing asked means nothing changes";
+
+    const BlockStorage::Layout doubled =
+        BlockStorage::grownLayout(current, BlockStorage::Growth{ 0U, 1200U, 0U, 0U });
+    EXPECT_EQ(doubled.draws.blocks_per_frame, 2048U) << "a need inside the doubling grows to 2x (amortised)";
+    EXPECT_EQ(doubled.views.blocks_per_frame, 256U) << "regions without a request keep their budget";
+
+    const BlockStorage::Layout covered =
+        BlockStorage::grownLayout(current, BlockStorage::Growth{ 0U, 5000U, 0U, 0U });
+    EXPECT_EQ(covered.draws.blocks_per_frame, 5000U)
+        << "a need past the doubling wins: one big frame must not grow twice";
+
+    const BlockStorage::Layout views =
+        BlockStorage::grownLayout(current, BlockStorage::Growth{ 300U, 0U, 0U, 0U });
+    EXPECT_EQ(views.views.blocks_per_frame, 512U) << "doubling (256 -> 512) covers a 300-block need";
+    EXPECT_EQ(views.draws.blocks_per_frame, 1024U) << "and the region without a request is untouched";
 }
 
 TEST(BlockStorageTest, AnOversizedBlockIsRefusedBeforeItConsumesAnything)

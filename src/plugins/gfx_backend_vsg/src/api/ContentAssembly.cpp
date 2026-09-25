@@ -75,6 +75,16 @@ ContentAssembly::ContentAssembly(ContentStore& store, ::vsg::ref_ptr<::vsg::Devi
 
 ContentAssembly::~ContentAssembly() = default;
 
+void ContentAssembly::repoint(BlockStorage& storage, core::FrameTimeline& timeline,
+                              core::RetirementQueue& retirement)
+{
+    d->storage = &storage;
+    if (d->sets != nullptr)
+    {
+        (void)d->sets->repoint(storage, timeline, retirement);
+    }
+}
+
 const ContentFacts& ContentAssembly::beginFrame(const core::CompiledFrame& frame, core::FrameTimeline& timeline,
                                                 core::RetirementQueue& retirement)
 {

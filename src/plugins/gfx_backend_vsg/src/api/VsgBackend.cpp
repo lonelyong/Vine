@@ -205,6 +205,9 @@ struct VsgBackend::Data
     // but it is what the assembly reads its tables from - so the set lives and dies together.
     core::VariantPool                pool{};
     std::shared_ptr<BlockStorage>    storage{};
+    /// Storages a growth could not park yet: KEPT until the session ends, never freed early (the same
+    /// fallback ContentAssembly::beginFrame takes when the parking window is not open yet).
+    std::vector<std::shared_ptr<BlockStorage>> kept_storage{};
     std::shared_ptr<MaterialImages>  images{};
     std::unique_ptr<ContentStore>    store{};
     std::unique_ptr<ContentAssembly> assembly{};
@@ -336,6 +339,9 @@ void VsgBackend::releaseContentWorld() noexcept
     d->store.reset();
     d->images.reset();
     d->storage.reset();
+    // The replacements growth could not park yet go with the device that owns them (the shape needs no
+    // reset: a fresh storage states its own, see BlockStorage::layout).
+    d->kept_storage.clear();
     // And the host's targets: their objects belong to the same device (a borrower's share of a lender's image
     // goes with its own entry - see api/HostTargets).
     d->targets.clear();
@@ -354,6 +360,11 @@ void VsgBackend::beginFrame()
         reportUnserved(kUnservedNoSession);
         return;
     }
+    // A frame that ran out of budget asks to be served by a bigger storage, and the swap happens HERE -
+    // between frames, where no recording is in progress and the previous frame's bytes can be left behind
+    // safely (see the growth note).
+    growBlockStorageIfNeeded();
+
     // The session mints the frame's token and advances the viewer's clock; the recorder opens the plan for
     // the same token, so the description and the session's frame cannot disagree about which frame it is.
     const core::FrameToken token = d->session.beginFrame();
@@ -932,6 +943,71 @@ void VsgBackend::sweepAbandonedContent()
     }
 }
 
+void VsgBackend::growBlockStorageIfNeeded()
+{
+    if (d->storage == nullptr)
+    {
+        return;  // no content world on this session (see initialize): nothing writes blocks
+    }
+    const BlockStorage::Growth need = d->storage->growthNeeded();
+    if (!need.needed())
+    {
+        return;
+    }
+
+    const BlockStorage::Layout    before = d->storage->layout();
+    const BlockStorage::Layout    grown  = BlockStorage::grownLayout(before, need);
+    std::shared_ptr<BlockStorage> replacement =
+        BlockStorage::create(detail::SessionContentAccess::device(d->session), grown);
+    if (replacement == nullptr || !adoptBlockStorage(std::move(replacement)))
+    {
+        return;  // the old storage keeps serving (and counting); its refusals were already reported
+    }
+
+    // GROWING IS SAID OUT LOUD: the per-pass warnings were the frames that lost content, and this is the
+    // fact that ends them - a host reading its diagnostics sees why they stop and what the picture now
+    // costs. Info, because the request WAS served - by a bigger buffer rather than by dropping less.
+    std::string grew = "the frame's block budget was exhausted, so the block storage grew (a new buffer; the old one is parked):";
+    const auto  append = [&grew](const char* what, std::uint32_t from, std::uint32_t to) {
+        if (from != to) {
+            grew += std::string(" ") + what + " " + std::to_string(from) + " -> " + std::to_string(to) + ";";
+        }
+    };
+    append("views", before.views.blocks_per_frame, grown.views.blocks_per_frame);
+    append("draws", before.draws.blocks_per_frame, grown.draws.blocks_per_frame);
+    append("lights", before.lights.blocks_per_frame, grown.lights.blocks_per_frame);
+    append("shadows", before.shadows.blocks_per_frame, grown.shadows.blocks_per_frame);
+    reportDiagnostic(vn::graphics::DiagnosticSeverity::Info, vn::graphics::DiagnosticCategory::ContentSkipped,
+                     asString(grew));
+}
+
+bool VsgBackend::adoptBlockStorage(std::shared_ptr<BlockStorage> storage)
+{
+    if (storage == nullptr)
+    {
+        return false;
+    }
+    // The assembly first: it is what hands the storage to a record, and its cached sets bind the buffer
+    // (the replaced sets are parked through the session's own window - see ContentSets::repoint).
+    if (d->assembly != nullptr)
+    {
+        d->assembly->repoint(*storage, d->session.timeline(), d->session.retirement());
+    }
+    std::shared_ptr<BlockStorage> previous = std::move(d->storage);
+    d->storage                             = std::move(storage);
+    if (previous != nullptr)
+    {
+        // The old bytes may still be named by a submitted command buffer, so they leave through the window
+        // every replaced object gets - and when there is no window to park through yet, they are KEPT
+        // (memory spent, never freed early: the same fallback ContentAssembly::beginFrame takes).
+        if (!d->session.retirement().retire(d->session.timeline(), [previous]() {}))
+        {
+            d->kept_storage.push_back(std::move(previous));
+        }
+    }
+    return true;
+}
+
 void VsgBackend::reportUnserved(std::size_t slot) noexcept
 {
     if (slot >= kUnservedCount || !d->unserved_reports[slot].shouldReport())
@@ -956,6 +1032,22 @@ PassRegistry& BackendContentAccess::passes(VsgBackend& backend) noexcept
 ContentAssembly* BackendContentAccess::assembly(VsgBackend& backend) noexcept
 {
     return backend.d->assembly.get();
+}
+
+BlockStorage* BackendContentAccess::storage(VsgBackend& backend) noexcept
+{
+    return backend.d->storage.get();
+}
+
+bool BackendContentAccess::useBlockStorage(VsgBackend& backend, const BlockStorage::Layout& layout)
+{
+    if (!backend.d->session.initialized() || backend.d->assembly == nullptr)
+    {
+        return false;
+    }
+    std::shared_ptr<BlockStorage> replacement =
+        BlockStorage::create(SessionContentAccess::device(backend.d->session), layout);
+    return backend.adoptBlockStorage(std::move(replacement));
 }
 
 HostTargets& BackendContentAccess::targets(VsgBackend& backend) noexcept

@@ -33,9 +33,13 @@
  * `minUniformBufferOffsetAlignment`, and only the device knows that number, so this class reads it and lays
  * every region out with it. Callers state a block's SIZE; they never state an offset or a stride.
  *
- * WHAT IT REFUSES. A block larger than its region's stride, and the (blocks_per_frame)th view or draw block
- * of one frame. Both are counted rather than accommodated: growing the buffer would move bytes a submitted
- * command buffer still names.
+ * WHAT IT REFUSES, AND WHAT THAT ASKS FOR. A block larger than its region's stride is refused outright and
+ * counted (a caller error, never a reason to grow). A frame that asks past its region's budget is refused
+ * TOO - and that refusal stands FOR THAT FRAME, because growing the buffer in place would move bytes a
+ * submitted command buffer still names. What the frame tried is remembered instead (`growthNeeded()`), and
+ * the caller replaces the whole storage between frames: a new buffer with larger budgets, the old one parked
+ * through the retirement queue until no command buffer can still name it (the facade does exactly that, see
+ * VsgBackend::growBlockStorageIfNeeded). The storage itself never grows - the same rule its rings state.
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
@@ -96,6 +100,26 @@ class BlockStorage
         std::uint64_t light{0};     ///< Bytes between two light blocks.
         std::uint64_t shadow{0};    ///< Bytes between two shadow blocks.
         std::uint64_t material{0};  ///< Bytes between two material blocks.
+    };
+
+    /** @brief What the frames written so far tried to write where a budget refused them (the growth request).
+     *
+     * One field per ring region: the blocks the WORST frame since the storage was built tried to write
+     * (written or refused), or 0 when that region never ran out of budget. A region at 0 must not grow - a
+     * scene that only ever filled its draw budget must not pay for bigger view blocks.
+     */
+    struct Growth
+    {
+        std::uint32_t views{0};    ///< Blocks the worst frame tried to write into the view region.
+        std::uint32_t draws{0};    ///< Blocks the worst frame tried to write into the draw region.
+        std::uint32_t lights{0};   ///< Blocks the worst frame tried to write into the light region.
+        std::uint32_t shadows{0};  ///< Blocks the worst frame tried to write into the shadow region.
+
+        /** @brief Whether any region ran out of budget (only then is a replacement storage needed). */
+        [[nodiscard]] bool needed() const noexcept
+        {
+            return views != 0U || draws != 0U || lights != 0U || shadows != 0U;
+        }
     };
 
   public:
@@ -175,6 +199,14 @@ class BlockStorage
     /** @brief Gets the size of the buffer, in bytes. */
     [[nodiscard]] std::uint64_t capacityBytes() const noexcept;
 
+    /** @brief Gets the layout this storage was built with (what a growth doubles from).
+     *
+     * The REQUESTED layout - block sizes and budgets as the caller stated them - and not the device-adjusted
+     * strides: this is what @ref grownLayout takes (see VsgBackend::growBlockStorageIfNeeded), and it is how
+     * a caller answers "what is this session's budget" without keeping a second copy of the question.
+     */
+    [[nodiscard]] Layout layout() const noexcept;
+
     /** @brief Gets the number of frames begun. */
     [[nodiscard]] std::uint64_t frames() const noexcept;
 
@@ -189,6 +221,27 @@ class BlockStorage
 
     /** @brief Gets the number of view/draw/light/shadow writes refused because the frame's budget ran out. */
     [[nodiscard]] std::uint64_t overflows() const noexcept;
+
+    /** @brief Gets what the frames so far tried to write where a budget refused them (see @ref Growth).
+     *
+     * Grows as the max over frames and is deliberately NEVER reset: the request is applied by building a
+     * REPLACEMENT storage and letting this one go (see @ref grownLayout), and a replacement starts with no
+     * request of its own - so "clear the request" is not an operation this type has.
+     */
+    [[nodiscard]] Growth growthNeeded() const noexcept;
+
+    /** @brief Gets the layout a replacement storage must be built with to serve @p need (doubling policy).
+     *
+     * Each region @p need names grows to `max(need, 2 x budget)`: the doubling amortises a scene that keeps
+     * adding drawables (a few events, then none), and taking the need when it is larger keeps one big frame
+     * from growing twice. Regions @p need leaves at 0 keep their budget. Device-free, so the policy is
+     * testable without a device.
+     *
+     * @param current The layout the storage being replaced was built with.
+     * @param need    What that storage's frames tried to write where they were refused.
+     * @return The layout for the replacement (equal to @p current when nothing needs to grow).
+     */
+    [[nodiscard]] static Layout grownLayout(const Layout& current, const Growth& need) noexcept;
 
     /** @brief Gets the number of materials with a slot. */
     [[nodiscard]] std::size_t liveMaterials() const noexcept;

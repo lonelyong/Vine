@@ -73,6 +73,8 @@
  */
 VN_VSG_NS_BEGIN
 
+class BlockStorage;
+
 namespace detail
 {
 class BackendContentAccess;
@@ -206,6 +208,23 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     [[nodiscard]] std::size_t releasedStreams() const noexcept;
 
   private:
+    /** @brief Grows the frame's block storage when a frame ran out of budget (see BlockStorage's file note).
+     *
+     * BETWEEN frames, never inside one: the replacement is a NEW buffer (its bytes are laid out the same way,
+     * so only the sets' elements move - see ContentAssembly::repoint), and the storage it replaces is parked
+     * through the retirement queue for the window a submitted command buffer may still name its bytes. A
+     * replacement that cannot be built leaves the old storage serving (and counting): its refusals were
+     * already reported per pass, so there is nothing new to say.
+     */
+    void growBlockStorageIfNeeded();
+
+    /** @brief Lets the drive use @p storage from now on, parking the one it replaces (the growth step).
+     *
+     * @param storage The replacement (null leaves the current storage in place and answers false).
+     * @return true when the drive adopted it.
+     */
+    bool adoptBlockStorage(std::shared_ptr<BlockStorage> storage);
+
     /** @brief Reports one unserved entry point, once per episode (see the file note). */
     void reportUnserved(std::size_t slot) noexcept;
 

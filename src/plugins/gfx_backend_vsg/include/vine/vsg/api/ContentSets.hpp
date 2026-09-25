@@ -102,6 +102,26 @@ class ContentSets
                                                               core::FrameTimeline& timeline,
                                                               core::RetirementQueue& retirement);
 
+    /** @brief Rebuilds every cached set over a replacement storage (what a grown budget produces).
+     *
+     * The binding shapes do not change, so only the sets' elements move: each cached set is repointed at
+     * @p storage's buffer and keeps its layout - the pipelines compiled against that layout stay valid.
+     * The set it REPLACES is parked through @p retirement for the same window every replaced object gets:
+     * its VkDescriptorSet handle may still be named by a submitted command buffer, and the descriptor pool
+     * would hand that handle back to the replacement - updating it then is `VUID-vkUpdateDescriptorSets-
+     * None-03047` (measured: exactly this, before the park was added). Refused sets (a declaration this
+     * backend cannot serve) stay refused: there is nothing to repoint, and a retry would answer the same
+     * way.
+     *
+     * @param storage    The storage the sets bind from now on.
+     * @param timeline   The frame clock the parks are dated against.
+     * @param retirement Where the replaced sets are parked.
+     * @return How many cached sets were repointed (0 when none was built yet - the sets built next bind
+     *         @p storage anyway).
+     */
+    std::size_t repoint(const BlockStorage& storage, core::FrameTimeline& timeline,
+                        core::RetirementQueue& retirement);
+
     /** @brief Gets how many sets are alive (a steady pass raises this by nothing). */
     [[nodiscard]] std::size_t sets() const noexcept;
 

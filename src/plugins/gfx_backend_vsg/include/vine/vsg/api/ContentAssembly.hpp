@@ -82,6 +82,20 @@ class ContentAssembly
     [[nodiscard]] const ContentFacts& beginFrame(const core::CompiledFrame& frame, core::FrameTimeline& timeline,
                                                  core::RetirementQueue& retirement);
 
+    /** @brief Points the assembly (and every set it has cached) at a replacement block storage.
+     *
+     * WHY A REPLACEMENT AND NOT A RESIZE: the block buffer is named by submitted command buffers, so a grown
+     * storage is a NEW buffer (see BlockStorage's file note) - and what binds that buffer here is the
+     * declared sets' producer, which is what has to be told. The sets being replaced are parked through
+     * @p retirement (their handles may still be named by a submitted frame), and the caller parks the old
+     * storage the same way (see VsgBackend::growBlockStorageIfNeeded).
+     *
+     * @param storage    The storage the frames from now on write into (its buffer is what the sets bind).
+     * @param timeline   The frame clock the parks are dated against.
+     * @param retirement Where the replaced sets are parked.
+     */
+    void repoint(BlockStorage& storage, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+
     /**
      * @brief Assemblies @p pass' halves and declared sets and records it.
      *

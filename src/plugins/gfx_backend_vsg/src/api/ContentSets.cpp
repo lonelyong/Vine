@@ -101,6 +101,9 @@ struct ContentSets::Data
 
     std::vector<std::shared_ptr<Set>>      sets;
     std::vector<BlockDescriptors*>         candidates;
+    /// Sets a repoint replaced where the parking window was not open: kept until the producer ends
+    /// (never freed early - see repoint).
+    std::vector<::vsg::ref_ptr<::vsg::DescriptorSet>> kept_replaced;
     std::uint64_t                          builds{0};
     std::size_t                            fallbacks{0};
     std::size_t                            refused{0};
@@ -218,6 +221,34 @@ ContentSets::ContentSets(::vsg::ref_ptr<::vsg::Device> device, const BlockStorag
     d->device  = std::move(device);
     d->storage = &storage;
     d->images  = &images;
+}
+
+std::size_t ContentSets::repoint(const BlockStorage& storage, core::FrameTimeline& timeline,
+                                 core::RetirementQueue& retirement)
+{
+    d->storage = &storage;
+    std::size_t repointed = 0;
+    for (const std::shared_ptr<Data::Set>& set : d->sets)
+    {
+        if (set == nullptr || set->descriptors == nullptr)
+        {
+            continue;  // a REFUSED set: there is nothing to repoint, and a retry answers the same way
+        }
+        const ::vsg::ref_ptr<::vsg::DescriptorSet> previous = set->descriptors->set();
+        if (!set->descriptors->repoint(storage))
+        {
+            continue;
+        }
+        ++repointed;
+        // The set that was replaced keeps its VkDescriptorSet handle, and the pool may not hand that handle
+        // back while anything still names it - so it leaves through the window every replaced object gets
+        // (and when there is no window to park through yet, it is KEPT: memory spent, never freed early).
+        if (previous != nullptr && !retirement.retire(timeline, [previous]() {}))
+        {
+            d->kept_replaced.push_back(previous);
+        }
+    }
+    return repointed;
 }
 
 ContentSets::~ContentSets() = default;
