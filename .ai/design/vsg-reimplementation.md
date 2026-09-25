@@ -179,6 +179,10 @@ material 值 / 流字节 / cull 全部**不进**。
 * **dynamic offset 必须是设备 `minUniformBufferOffsetAlignment` 的倍数**：不合规**不给命令** + 计数
   （不要把验证错误交给驱动）。
 * **别把每帧变化的偏移烤进描述符集**：池会把同一句柄发回下一帧，而上一帧的命令缓冲还在用它（VUID `03047`）。
+* **替换一张描述符集 = 旧的那张必须进退役窗口**：`BlockDescriptors::repoint` 换的是 set 对象，而池会把**已被释放**
+  set 的 `VkDescriptorSet` 句柄发给替代品 —— 新 set 的 `compile` 发生在**下一帧**，那时被换下的帧仍是 pending ⇒
+  `vkUpdateDescriptorSets` 打在在用的句柄上 = 又是 `03047`（实测：本片增长路径；M4 变异=只删停放 ⇒ 用例全绿、
+  验证层 1 条）。命令缓冲对 vsg 对象（`BindDescriptorSet` 的 `ref_ptr<DescriptorSet>`）的引用**不足以**保住句柄。
 * **布局要声明两种绑定**（块 + 采样）；**空隙必须是真布局**（空指针 ⇒ `PipelineLayout` 里出现无效句柄 ⇒ 段错误）。
 * **"什么都不声明"就是"什么都不绑"**：程序文本没声明块，就**没有集合可绑**（夹具别无条件绑块集 ⇒ VUID `00360`）。
 * **声明了 push 却没填 ⇒ 拒绝那一半**（"黑屏是因为矩阵是零"不算诊断）。
@@ -302,7 +306,6 @@ material 值 / 流字节 / cull 全部**不进**。
 
 | 项 | 内容 | 触发器 |
 | --- | --- | --- |
-| **B5 后半** | 块预算（1024 draw / 256 view 每帧）按需增长：新 buffer + retirement（"跨帧换 buffer 会动到已提交命令缓冲命名的字节"） | 第一个大场景宿主（2000 drawable 会拒掉约一半绘制） |
 | **B6** | `StreamKey.revision` 取 Geometry 的 revision ⇒ 任何数据公告重传所有通道；逐 `Buffer::revision()` 能省未改通道，但契约更弱（漏报静默） | 多通道大网格宿主报上传带宽 |
 | **B7** | 管线销毁与在飞提交的竞态：已按设计规则给破坏路径加计数过的 device idle；此后 20 次单例 + 2 次全量套件 + 两棵树门禁 **0 VUID，未再复现** | 再次出现时先查"最近被替换或逐出的管线"与 teardown 的 `deviceWaits` |
 | **A2 残留** | 共享流的"释放半边"已按新形态改掉（寿命 = 帧点名，`releaseUnseen`）；旧 `reader` 计数与 `release()` 是**旧实现**的缺陷，已随重写退场——此条仅作历史 | — |
@@ -1031,9 +1034,8 @@ material 值 / 流字节 / cull 全部**不进**。
 * - 同一身份+revision 的**第一行**仍然决定答案（`channelsMatchLayout` / `blockFitsAbi` 的 Malformed 判据、
 * 未命中的三分类、以及那些"多行同键"的形状（同一几何的两个 revision、一个程序的两种 kind 与三个 variant、 材质原地替换的两行、**畸形行与好行成对且顺序颠倒**——扫描"第一行决定"，段内表序必须让二分也这样答）。
 * - **变异 1/1 红**：把 `orderGeometryRows` 的键改成"先 revision 后身份" ⇒ 两条用例同时红（差分 + 单调）。
-* **4. 仍然登记（B1 的另一半，`api/ContentStore` 自己的查找）**：`tablesFor` 走帧时调用的
-* `Data::liveGeometry` / `liveMaterial`（每命令每帧 2 次）**仍是线性扫描**——它们跑在"表还在长大"的那一趟里， 要让它们也走行序，行序就必须由**每个追加行的地方**维护（三个追加点 + 五个删除点，而且**过期的行序不是漏掉 而是答错行**）。形状：把每张表的（rows, per-row storage, order）收进一个小类型，四个操作（append / replace / eraseIf / eraseAt）在**同一处**移动三者——顺带把现在**手工对齐**的 rows 与 storage 也归到一个主人手里。
-* **触发器**：剖析里 `tablesFor` 的两次扫描进入前列（或某个负载的每帧命令数越千）。
+* **4.（已收：§11.16ca）当时的 B1 另一半，`api/ContentStore` 自己的查找**：本节写下时 `tablesFor` 走帧调用的
+* `Data::liveGeometry` / `liveMaterial` 还是线性扫描；§11.16ca 把（rows、每行存储、行序）收进一个 `Table<Row, Storage, MakeOrder>`，两个 live 查找现在走的正是与录制同一个二分（`findGeometry` / `findMaterial`）。本节留下的形状描述只作历史。
 * - **结论：不需要"小表扫描 / 大表二分"的阈值规则。** 在 demo 量级（几十行）两者同为 ~3 ns，而 demo 之上
 * 每一行都是纯赚。这个"没有阈值"是用数字换来的，所以阈值也就没有存在的理由（少一条分支、少一条规则）。
 * - `AnIndexedTableAnswersExactlyWhatAScanWould`：同一批行问两遍（带序 / 不带序），断言**答案逐字相同**——包括
@@ -1140,7 +1142,7 @@ material 值 / 流字节 / cull 全部**不进**。
 * `reportRefused` 调用点），而"场景里有坏内容"时这就是刷屏；登记给的形状是"按'每 pass 每原因一次'上报 （保留第一条的完整身份，后续只计数）"。**后半（块预算 1024/256 的硬上限）不改**——代码里早就写明了理由 （`BlockStorage.hpp` 文件注记："A block larger than its region's stride, and the (blocks_per_frame)th view or draw block of one frame. Both are counted rather than accommodated: **growing the buffer would move bytes a submitted command buffer still names**"）——这是**有意的设计决定**，不是待修的洞；本片把这句话与 B5 的 登记对齐（登记里"按需增长"的方向与它冲突，理由在实现里）。
 * - **变异 1/1 红**：`noteRefusal` 每次都返回 true（回到逐命令上报）⇒ 消息变成 **4 条**，用例红；恢复即绿。
 * **3. 没做（登记）。** 预算的"按需增长"与实现里的理由冲突，**保持现状**；若将来真撞上 1024 条/帧
-* （触发器：宿主报"内容被拒"且原因里出现 `the frame's block budget is full`），要走的不是"悄悄长大"， 而是**双缓冲/新 buffer + retirement**（同 `MaterialArena` 的轮转思路），那是另一片的量级。
+* （触发器：宿主报"内容被拒"且原因里出现 `the frame's block budget is full`），要走的不是"悄悄长大"， 而是**双缓冲/新 buffer + retirement**（同 `MaterialArena` 的轮转思路），那是另一片的量级。 **（2026-09-25：已由 §11.16ct 落地——拒写仍按帧成立，增长是帧与帧之间的整体替换。）**
 * （`std::vector<RefusalRow>{what, why, count}`）：`reportRefused` 的第一次**照旧完整报**（点名那条命令）， 同一 `what` 的后续**只加计数**；pass 结束时（`record` 里的 RAII 守卫，任何 return 路径都跑）每个 count ≥ 2 的原因**报一行汇总**："N drawing call(s) were not drawn for one reason - <what> is not drawn: <why>（第一条在上面；其余是同一条事实）"。诊断计数跟着消息走（2 条消息 = 2 个计数）。
 * 表里答得上几何与材质、**答不上**程序 ⇒ 3 条命令同一个原因被拒（且给一趟一个可服务的半片，否则记录器 会把**整趟**用一句话拒掉——那是它自己的收敛，见那条分支）；断言**恰好 2 条消息**（第一条点名 "the command's program"，第二条说 "3 drawing call(s)…"）且 `ContentSkipped` 计数 == 2。
 * **下一步（本片之后）**：任务列表的 D（B4 引擎侧 `Scene::collectRenderCommandsShared`，**先测再改**）。
@@ -1215,3 +1217,37 @@ material 值 / 流字节 / cull 全部**不进**。
 * **修复的判据**：修复前后各测一组——修复前 6 次启动 4 次读出不同尺寸；修复后 **4/4 都是 378x247**；两次门禁的
 * **登记（不修，属宿主/框架）**：demo 的窗口会随日志 dock 的内容长大（一次启动可以长到 3418×1110）——"窗口尺寸
 * 跟着日志文字走"是宿主侧该收的口子（框架的默认窗口尺寸是产品决定）。**触发器**：下一次 app shell / 框架的窗口 布局工作；复现数字即本节那六个渲染区。
+
+### §11.16ct M11w（2026-09-25）：块预算按需增长——跨帧换新 buffer + 停放旧 storage 与旧 set（收掉 B5 后半）
+
+* **登记来自哪里**：§6 的 B5 后半 / §11.16ck（前半已收，当时判"预算的按需增长是另一片"）。本片按登记里的形状落地：
+  拒写仍**按帧**成立，增长发生在**帧与帧之间**（新 buffer + retirement）。
+* **规则（新的契约）**
+  * `BlockStorage` 记住每帧**试了**多少块（每个 ring region 各计），撞预算时把"最坏一帧的尝试数"存进
+    `growthNeeded()`（max over frames，**不重置**：请求靠"换成新 storage"兑现，替换件从零开始）。
+  * 调用方（`VsgBackend::growBlockStorageIfNeeded`，在 `beginFrame()` 里）用 `grownLayout()` 算新预算：
+    `max(need, 2 x budget)`（doubling 让增长是**稀有事件**；need 更大时一次到位）。只长 `need` 点名的 region。
+  * 替换 = **新 buffer** + `ContentAssembly::repoint`（新 storage 的 buffer 绑进每个缓存 set）+ 旧 storage 与
+    旧 set 都进**退役队列**；无停放窗口时"留着"（`kept_storage` / `kept_replaced`），绝不早放。
+  * 增长本身报一条 `Info/ContentSkipped`（预算耗尽 ⇒ 存储长大 + 各 region 数字）：每 pass 的拒绝警告说的是
+    "这一帧丢了内容"，这条说的是"为什么以后不再丢"。
+* **关键实现事实（§5.4 也记了）**：`repoint` 换 set 时**必须停放旧 set**。vsg 的池会把**已被释放** set 的
+  `VkDescriptorSet` 句柄发给新 set，而新 set 的 `compile` 发生在**下一帧**——那时被换下的帧仍是 pending ⇒
+  `vkUpdateDescriptorSets` 打在在用的句柄上 = `03047`（实测：本片第一版，验证层 2 条；用例当时全绿）。
+  命令缓冲对 vsg 对象（`BindDescriptorSet` 的 `ref_ptr<DescriptorSet>`）的引用**不足以**保住句柄。
+* **判据**（三个新用例，全部带真设备；两端都有像素）：
+  * `BlockStorageTest.AFramePastItsBudgetIsRefusedButAsksForAReplacement`：拒写 + `overflows` + buffer 不动；
+    请求 = 最坏一帧的尝试（3 块）；跨帧不退；`grownLayout` 给 2→4；替换件三条都装下且无请求。
+  * `BlockStorageTest.TheGrowthPolicyDoublesWhileItCoversAndTakesABiggerNeed`（**设备无关**）：doubling、
+    大 need 一次到位、未点名的 region 不动。
+  * `VsgBackendTest.AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame`：小预算（draws=1）→ 帧 1：第二条
+    draw 被拒（1 条诊断 + 像素=第一条的颜色）；帧 2 的 `beginFrame()` 换 storage（指针变、容量涨、布局 1→2）→
+    像素=第二条的颜色（两条 draw 都进了新 buffer，且 set 真的被 repoint）+ 第 2 条诊断=增长；`deviceWaits()==0`。
+  * 测试接缝：`BackendContentAccess::storage()` / `useBlockStorage(backend, layout)`（走与增长**同一条** adopt 路径，
+    不用真的画 1025 条）。
+* **数字**：`test_vsg` 437 → **439**；两棵树门禁 `cases=439 failed=0 vuid=0 hazard=0 skipped=0`、hygiene 0/793、
+  应用行与历史逐字相同（`87.04%/244`）。
+* **变异 4/4 红**：M1 `growBlockStorageIfNeeded` 恒早退、M2 adopt 不 repoint、M3 策略恒不长大、M4 **不停放被换下的
+  set**（M4 用例全绿、验证层 1 条 —— 正是"只有门禁看得见"的那一类）。
+* **口子（登记）**：①撞预算的那一帧仍丢内容（有报告 + 计数；帧内不搬字节是有意的）；②`ContentSets::kept_replaced`
+  是"无停放窗口"的兜底（随增长事件增长，不随帧）；③直连 `ContentAssembly` 的调用方要自己调 `repoint`。

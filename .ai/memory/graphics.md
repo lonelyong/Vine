@@ -1,3 +1,14 @@
+> 2026-09-25 **M11w：块预算按需增长（收掉 B5 后半；设计 §11.16ct）**
+> · 某帧写超预算仍**按帧**拒写（有报告 + 计数），但 storage 记住"最坏一帧试了多少"（`growthNeeded()`，max over
+>   frames、不重置）；下一次 `beginFrame()` 用**新 buffer**（预算 `max(need, 2×budget)`）整体替换，旧 storage 与
+>   **被换下的描述符集**都进退役队列停放，并以一条 Info/`ContentSkipped` 报"拒绝为什么停了"。
+> · **踩到并修掉的真缺陷（03047）**：`BlockDescriptors::repoint` 换 set 时若不停放旧的，池会把已被释放 set 的
+>   `VkDescriptorSet` 句柄发回，新 set 在下一帧编译时 `vkUpdateDescriptorSets` 一个挂起命令缓冲仍在用的句柄 ——
+>   用例全绿、验证层 1 条（M4 变异专门钉它）。命令缓冲对 vsg 对象的引用**保不住句柄**。
+> · 判据：`test_vsg` 437→**439**（两个 `BlockStorageTest` 用例 + `VsgBackendTest.AFrameThatRanOutOfBudgetGrows
+>   TheStorageBeforeTheNextFrame`，端到端两层像素）；变异 **4/4 红**；两棵树门禁 `cases=439 vuid=0 hazard=0`、
+>   应用行与历史逐字相同。测试接缝：`BackendContentAccess::{storage, useBlockStorage}`。
+
 > 2026-09-24 **M11i：租约的顺序有了设备相位（设计 §11.16ce，收掉 M10c/M10d/M10e/M10f 反复登记的一条）**
 > · 新相位 `runLeasedTargetOrderPhase`（`DevicePhaseTest` 第七行）：出借方 8×4 + 借方（自己的颜色、出借方的深度），
 >   计划把**借方那趟放第一位**（走计划顺序 = 走错顺序），事实里两个都要求长到 16×12 ⇒ 两趟 `ResizeInPlace`；

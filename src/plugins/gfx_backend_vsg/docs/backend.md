@@ -56,7 +56,7 @@
 | 每帧恰好一次 | `beginFrame` / `endFrame`（编译）/ `swapBuffers`（提交+呈递）；一帧一次 present |
 | 每 pass 一次 | 绑定该 pass 的管线变体（**只在变体变了**）、动态状态块（**只在值变了**）、采样输入集（一趟 pass 一条） |
 | 每次变化一次（稳态 0 次） | 材质 touch 后的**块写**（比较相同就不写）；几何 revision 变化后的流上传；push（按声明）；一次 `vkCmdSet*` |
-| 结构性变化才发生 | 目标 resize/rebuild、管线编译（新**变体**——新 program、新拓扑类、新采样计数）、会话移动（停一次设备） |
+| 结构性变化才发生 | 目标 resize/rebuild、管线编译（新**变体**——新 program、新拓扑类、新采样计数）、会话移动（停一次设备）、块预算撞顶后的**存储替换**（新 buffer；旧 storage 与旧描述符集都停放，一条 Info 说清原因） |
 
 **稳态应当为 0 的计数**（可断言，判据就是这些数）：`ContentStore::builds()`、
 `StreamUploads::uploads()`（同名流走 `aliases()`）、`VariantPool::created()`、`Session::deviceWaits()`（帧路径）、
@@ -80,6 +80,9 @@
   通过 **compare**（不是时间）判断是否要重新构建行。
 * **替换 = 停靠**：被顶替的行/流/变体/目标进出**退役队列**（窗口 `slots + 1` 帧）；槽数还没学会时
   `retire()` 返回 false，调用方退回**计数过的** device wait（不许猜窗口）。
+* **块预算撞顶 = 换存储**：某一帧写超预算仍**按帧**拒绝（有报告 + 计数），但 storage 记住"最坏一帧试了多少"；
+  下一次 `beginFrame()` 用新 buffer（`max(need, 2×budget)`）整体替换，旧 storage 与**被换下的描述符集**都进退役队列
+  （后者是 `03047` 的根因：池会把释放 set 的句柄发回，而新 set 在下一帧才编译）。帧内绝不搬字节。
 * **销毁只有两条合法路径**（契约）：整会话替换（前置一次计数过的 device idle）或退役出队。
 * **宿主的东西归宿主**：宿主表面/句柄由宿主销毁；后端只采纳与跟随（`setWindowHandle`/`resize`）。
 * **`VSG_MAX_DEVICES` 默认 1 是有意的绊线**：任何"同时两个 device"的路径都该当场抛错（别改构建树里的值）。
