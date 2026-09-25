@@ -41,6 +41,17 @@
 # teardown of the GPU-free paths. What the self-test adds: the SAME objects with a real device, i.e.
 # session build / move / shutdown and every target it materialises.
 #
+# COMPILER FAMILY OF THE TREE. A suite that links a C dependency (test_iobase,
+# and anything reaching IOBase through loaders/robotics) needs the tree's C and
+# C++ compilers from the SAME family. A tree configured with CC=gcc + CXX=clang
+# mixes gcc's shared libasan into a binary that also carries clang's static
+# runtime, and the run dies before any test executes with "Your application is
+# linked against incompatible ASan runtimes" (measured 2026-09-25 on a tree that
+# predated the CC derivation below; test_gui/test_vsg never noticed, because
+# they link no C-built library). VINE_ASAN_RECONFIG=1 does NOT switch an
+# existing cache's compiler - remove the build dir and let the script configure
+# a consistent one.
+#
 # LeakSanitizer suppressions live in scripts/asan_leaks.supp and only cover
 # library-internal retention (fontconfig); anything the framework leaks is still
 # reported. The whole-suite leak mode additionally reports `GuiTest::buildDock`
