@@ -1,7 +1,7 @@
 # IOBase（vn::io）核心能力设计 —— VFS 与 Stream
 
-> 状态：**设计稿，分阶段实现中**。现状：`Vfs` / `ZipVfs` / `DirectoryVfs` /
-> `ZipArchive` 已落地（以 `sdk/vine/io/` 下的头文件为准），本设计只覆盖**核心功能缺口**，不照搬
+> 状态：**设计稿（S1–S6 均已落地，见 §13；§14 为对照门禁）**。现状：`Vfs` / `ZipArchive` / `DirectoryVfs` /
+> `MountVfs` 已落地（以 `sdk/vine/io/` 下的头文件为准），本设计只覆盖**核心功能缺口**，不照搬
 > 外部需求文档的 API 形态。
 >
 > 阶段：**S1 / S2 已完成**（错误模型、路径校验、`stat`/`list`、`isReadOnly`、目录与删除操作）。
@@ -18,6 +18,7 @@
 > `ZipArchive` 成为存储层：opened 状态 + `openRead`（流式）+ 回调/片段来源 + 流式 `saveAs`/`commit` + CRC 校验。
 > 过渡拼写已清（S3b 收尾）：`ZipVfs::openZip`、`Vfs::save` / `serialize`、`ZipArchive::save` 包装全部删除，
 > 调用点已迁到 `open(…, ReadOnly)` / `saveAs` / `toBytes`；同一个动作只剩一个名字。
+> **名字终态（对账说明）**：S3b 曾计划两层（`ZipArchive` 存储层 + 薄层 `ZipVfs`），收尾时合并为**一个**类 —— 终名 **`ZipArchive`**（空状态即内存树）；本文件**历史条目**保留当时的名字，其余章节一律用终名。
 > 流词汇头文件也从 `VfsStream.hpp` 改名 **`Stream.hpp`**（同目录，内容不变）：它是 IOBase 级词汇，
 > 存储层与 VFS 层共用，旧名错误地把它归给了 VFS（论证见 §8）。
 > **条目记录统一（S3b 收口）**：`ZipEntryInfo` **删除** —— 条目信息只有一套词汇，即 `Vfs.hpp` 的 `VfsEntryInfo`
@@ -110,7 +111,7 @@
 | P2 | **只能整文件读写** | 同上，无 `open` | 大文件无法部分/随机读；**没有追加**（写日志、增量构建只能 read-all + write-all）；不能边写边产出 | §8 |
 | P3 | **错误不可区分** | 全部返回 `bool`；`DirectoryVfs::toReal` 对越界 `..` 返回空路径（`src/DirectoryVfs.cpp:34`），上层表现为 `false` | 调用方分不清"不存在 / 路径非法 / 只读 / 后端 I/O 错"，无法做正确反应（"不存在就用默认值" vs "I/O 错必须上报"） | §3、§4 |
 | P4 | **写权限不可预知** | 无 `isReadOnly`；`DirectoryVfs::save(vector/ostream)` 直接 `false` | 写操作要试了才知道不行；需求文档 §6.5 要求"只读后端的写操作立即失败，不得延迟到实际写入" | §6 |
-| P5 | **打开 zip 全量驻留内存** | `ZipMemoryVfs::openZip` 把所有条目读进内存 | 500 MB 资源包一打开就全量驻留；需求文档 §13.2 只要求"建索引 + O(1) 定位" | §9（**已修**：`ZipVfs`，`openZip` 本身已删） |
+| P5 | **打开 zip 全量驻留内存** | `ZipMemoryVfs::openZip` 把所有条目读进内存 | 500 MB 资源包一打开就全量驻留；需求文档 §13.2 只要求"建索引 + O(1) 定位" | §9（**已修**：`ZipArchive`，`openZip` 本身已删） |
 
 另有一处**安全缺口**（§4）：`DirectoryVfs::toReal` 只按子串拒绝 `..`，未拒绝形如 `C:/…` 的绝对段，
 而 `std::filesystem::path::operator/` 在右操作数为绝对路径时会**替换**左操作数 —— 可能逃出 `root_`。
@@ -294,7 +295,7 @@ virtual Result<std::vector<VfsEntryInfo>> list(const std::filesystem::path& dir)
 | `DirectoryVfs` | `false` | 直接写真实目录 |
 | `MemoryVfs`（新） | `false` | 内存树可写 |
 | `ZipMemoryVfs` | `false` | 内存副本可写，`save` 时落盘（robotics 的 `savePkg(obj, pkg_path)` 依赖这一点，**不能改成只读**） |
-| `ZipVfs`（新，惰性） | `true` | 只能读 zip 内容；要改就重写整个 zip，属于另一件事 |
+| `ZipArchive`（只读开口） | `true` | 只能读 zip 内容；要改就重写整个 zip，属于另一件事 |
 | `MountVfs`（新） | 全部挂载只读时为 `true` | 单个挂载点的只读由挂载项声明 |
 
 "动手之前"的落地：`addFile` 一族 / `writeText` / `createDirectory` / `createDirectories` /
@@ -473,7 +474,7 @@ class VN_IOBASE_API DataSource
 
 ### 8.4 生命周期与已知取舍
 
-- **读流可以活过 VFS**：`ZipVfs` 把 libzip 句柄放进 `shared_ptr`，`VfsReadStream` 持一份（满足 §14 的
+- **读流可以活过 VFS**：`ZipArchive` 把 libzip 句柄放进 `shared_ptr`，`VfsReadStream` 持一份（满足 §14 的
   “VFS 析构后 Stream 仍可读”门禁）；流不暴露任何后端句柄（需求文档 §5.3）。代价：源文件被删/被替换时读会失败，文档要写明。
 - **push 写不做**（理由见 §8.2）：zip 成员必须是“大小已知的连续压缩数据”，生产者只能被拉取。
 - **`Append` 在 zip 上没有意义**：zip 条目不能追加（改一个条目 = 重写序列）；`open(path, Append)`
@@ -523,25 +524,24 @@ class VN_IOBASE_API DataSource
 
 C1 与“把持久化完全外置”（`MemoryVfs` 只管内存、zip 交给外部序列化）是**互斥**的：
 外置意味着“打开 zip”= 把条目全部解压进内存，正好回到 P5。所以 **`MemoryVfs` 这个类型不建** ——
-它能做的事已经被 `ZipVfs()`（无源归档 = 只有改动区的空树）+ `toBytes()` 覆盖，而它做不到惰性。
+它能做的事已经被 `ZipArchive()`（无源归档 = 只有改动区的空树）+ `toBytes()` 覆盖，而它做不到惰性。
 
 ```
 Vfs（抽象接口，原 IMemoryVfs）      // 路径/树/权限/错误模型；不假设介质
  ├── DirectoryVfs   介质 = 真实目录；写即落盘，commit() 无事可做 → Ok
- ├── ZipVfs         介质 = ZIP：惰性索引 + 改动 overlay + commit/saveAs 回 zip
- └── MountVfs       待做：多后端一棵树（§10）
+ ├── ZipArchive     介质 = ZIP：惰性索引 + 改动 overlay + commit/saveAs 回 zip；开口 open（ReadOnly | ReadWrite）/ 默认构造，+ read / openRead / addFile×4
+ └── MountVfs       多后端一棵树（§10；已落地 S4）
 
 Zip                 一次性操作层：compress / decompress / compressDirectory / decompressFile / entries / readEntry
-ZipArchive          打开态的 ZIP 树（Vfs 后端）：open（ReadOnly | ReadWrite）+ read / openRead / addFile×4 / saveAs / commit / toBytes
 ```
 
-### 9.1 一个 `ZipVfs` 的三个开口
+### 9.1 一个 `ZipArchive` 的三个开口
 
 | 入口 | 绑定 | `isReadOnly()` | 语义 |
 |---|---|---|---|
 | `open(path \| bytes, OpenMode::ReadOnly)` | 只读源归档 | `true` | 只读视图；写操作立即 `ReadOnly`（需求文档 §6.5） |
 | `open(path \| bytes, OpenMode::ReadWrite)` | 只读源 + 可写 overlay；文件目标 = 同一路径（供 `commit()`） | `false` | 读 + 改；`commit()` 原子替换回原路径（`bytes` 版无文件目标 → `Unsupported`） |
-| `ZipVfs()` | 无源、无目标 | `false` | 纯内存树；`commit()` → `Unsupported`，落地走 `saveAs` / `toBytes` |
+| `ZipArchive()` | 无源、无目标 | `false` | 纯内存树；`commit()` → `Unsupported`，落地走 `saveAs` / `toBytes` |
 
 三个开口是**同一个类型**的三种状态，不是三个类型：VFS 的操作集合是同一套，“能不能写”是**状态**而不是**接口**。
 正确的类比是 `std::fstream` + `ios::in|out`（一个类 + 模式），不是 `istream`/`ostream`/`iostream`
@@ -549,7 +549,7 @@ ZipArchive          打开态的 ZIP 树（Vfs 后端）：open（ReadOnly | Rea
 模式是显式实参（`OpenMode`，**无默认值**）：加载方要只读就在调用点写出来，不会因为少写一个实参而悄悄拿到可写视图。
 内存字节同样两个入口：`open(vector&&, …)` 接管（move 进来）、`open(span, …)` 借用（不持有；span 必须活到 archive 及其所有读者结束）。
 
-### 9.2 一个 `ZipVfs` 的两个句柄（生命周期不同）
+### 9.2 一个 `ZipArchive` 的两个句柄（生命周期不同）
 
 | 句柄 | 生命周期 | 干什么 |
 |---|---|---|
@@ -568,7 +568,7 @@ ZipArchive          打开态的 ZIP 树（Vfs 后端）：open（ReadOnly | Rea
 
 基类**不提供** `save(path)`：它把“写回自己的位置”与“另存到别处”混在一个名字里，而这两件事的目标来源不同。
 
-| 方法 | 语义 | `DirectoryVfs` | `ZipVfs`（有源） | `ZipVfs`（无源） |
+| 方法 | 语义 | `DirectoryVfs` | `ZipArchive`（有源） | `ZipArchive`（无源） |
 |---|---|---|---|---|
 | `commit()` | 写回构造时绑定的目标 | `Ok`（本已落盘） | 临时文件 + 原子替换 + 重建索引 | `Unsupported` |
 | `saveAs(path)` / `saveAs(ostream&)` | 写到指定目标 | `Unsupported` | 支持 | 支持 |
@@ -611,11 +611,11 @@ ZipArchive          打开态的 ZIP 树（Vfs 后端）：open（ReadOnly | Rea
 
 ### 9.5 命名与一次断代
 
-- `IMemoryVfs` → **`IVfs`**：`DirectoryVfs` / `ZipVfs` 都不是“memory”，旧名误导；`I` 前缀与 `INamed` / `IHierarchyNode` 一致。
+- `IMemoryVfs` → `IVfs`（中途名）→ **`Vfs`**（终名，无 `I` 前缀，用户明确要求）：`DirectoryVfs` / `ZipArchive` 都不是“memory”，旧名误导。
 - `save(path)` / `save(ostream&)` / `serialize()` → `saveAs(path)` / `saveAs(ostream&)` / `toBytes()`；新增 `commit()`。
-- `ZipMemoryVfs`（头文件与实现）删除；`ZipVfs` 由“只读惰性”变为“惰性源 + overlay”的唯一 zip 后端。
+- `ZipMemoryVfs`（头文件与实现）删除；zip 后端收敛为**一个类**（终名 `ZipArchive`）：惰性源 + 改动 overlay + `commit` / `saveAs` / `toBytes`。
 - 迁移面：`robotics::io`（`loadPkg` → `open(…, ReadOnly)`，`savePkg(obj, path)` → 无源树 + `saveAs`）、
-  `tests/test_iobase`（`ZipMemoryVfs` → `ZipVfs`）、`tests/test_robotics_io`。
+  `tests/test_iobase`（`ZipMemoryVfs` → `ZipArchive`；套件 `ZipVfsTest` → `ZipArchiveTest`）、`tests/test_robotics_io`。
 
 ### 9.6 数据所有权与生命周期
 
@@ -788,7 +788,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | S1 | §3 `IoError`/`Result` + §4 路径校验 + §5 `stat`/`list` + §6 `isReadOnly` | **已完成** |
 | S2 | §7 目录/删除操作 + 内存后端的显式目录标记 | **已完成** |
 | S2.5 | **API 重设计**：零 out-parameter、一操作一名、派生便利函数，删旧 `bool` 家族并迁移调用方 | **已完成**（`test_iobase` 33/33） |
-| S3a | §9 `ZipArchive::entries` + 惰性只读 `ZipVfs`（+ robotics 改用它） | **已完成**（`test_iobase` 39/39） |
+| S3a | §9 `ZipArchive::entries` + 惰性只读 ZIP 后端（终名 `ZipArchive`；+ robotics 改用它） | **已完成**（`test_iobase` 39/39） |
 | S3b | §9 单一 zip 后端（惰性源 + overlay + `commit`/`saveAs`/`toBytes`）、`ZipMemoryVfs` 删除、`IMemoryVfs` → `Vfs` | **已完成**（对账 2026-09-25：类名最终为 `ZipArchive`——空状态下它就是可写内存树；见顶部 banner 与 §9） |
 | S4 | §10 `MountVfs` | **已完成**（`test_iobase` 66/66 两树；变异 5/5；门禁 2026-09-25） |
 | S5 | §11 `reserve`/上限（内存流侧） | **已完成**（`test_core` 140/140 两树；变异 7/7；门禁 2026-09-25） |
@@ -809,14 +809,14 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | 读取目录作为文件 / 枚举文件作为目录 | **部分已过**：`read(目录)` → `IsADirectory`；`list(文件)` → `NotADirectory`；`open` 待 S3 |
 | 重命名到已存在 / 到自己的子树 / 到缺失父目录 | **已过**：`ZipRenameRejectsBadTargets` / `DirectoryCreateRenameRemove` |
 | 删文件 / 删空目录 / 删非空目录 / 删子树 | **已过**：`ZipRemoveAndRemoveAll` / `DirectoryCreateRenameRemove` |
-| 空目录能过 `save`/`ZipVfs` 往返 | **已过**：`ZipDirectoryEntriesSurviveSaveAndOpen` |
+| 空目录能过 `save`/`ZipArchive` 往返 | **已过**：`ZipDirectoryEntriesSurviveSaveAndOpen` |
 | 只读后端写操作立即失败 | **已过**：`ReadOnlyBackendRefusesEveryChange`（探针子类覆写 `isReadOnly()`） |
 | 不支持的能力报 `Unsupported` 而非静默 `false` | **已过**：`DirectoryBackendRefusesArchives`（`serialize` / `save(ostream)`） |
 | **绝对路径不得逃出后端根**（需求文档未列，S1 新增） | **已过**：`DirectoryVfsNeverEscapesItsRoot` |
-| ZIP 越界条目 → 未找到 | **已过**：`ZipVfsTest.ReportsErrorsAndRefusesEveryChange`（`NotFound` / `IsADirectory` / `NotADirectory`） |
-| 惰性 zip 只读索引、条目按需解压 | **已过**：`ZipVfsTest.ReadsEntriesOnDemand`（删掉归档文件后再读 → `IoFailure`） |
-| 惰性后端与内存后端行为一致 | **已过**：`ZipVfsTest.MatchesTheMemoryBackendForTheSameContent`（拿产生该包的 `ZipMemoryVfs` 树做基准） |
-| 归档索引可供 `stat` / `list` 直接使用 | **已过**：`ZipVfsTest.ArchiveIndexReportsNamesSizesAndKinds` |
+| ZIP 越界条目 → 未找到 | **已过**：`ZipArchiveTest.ReportsErrorsAndRefusesEveryChange`（`NotFound` / `IsADirectory` / `NotADirectory`） |
+| 惰性 zip 只读索引、条目按需解压 | **已过**：`ZipArchiveTest.ReadsEntriesOnDemand`（删掉归档文件后再读 → `IoFailure`） |
+| 惰性后端与内存后端行为一致 | **已过**：`ZipArchiveTest.MatchesTheMemoryBackendForTheSameContent`（拿产生该包的默认构造写树做基准） |
+| 归档索引可供 `stat` / `list` 直接使用 | **已过**：`ZipArchiveTest.ArchiveIndexReportsNamesSizesAndKinds` |
 | Mount 优先级覆盖 → 高优先级胜出 | **已过**：`MountVfsTest.MountPriorityShadowsReads` |
 | Mount 同前缀多后端 `list` → 合并去重（含中间目录） | **已过**：`MountVfsTest.MountMergesListsAndSynthesizesIntermediateDirectories` |
 | Mount 写路由：命中者拥有、只读命中不改道、新路径走第一个可写 | **已过**：`MountVfsTest.MountRoutesWritesToTheOwningOrFirstWritableBackend` |
@@ -838,9 +838,9 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
    （高优先级是只读 zip 时，写落到低优先级目录）。我建议**读和写都走同一个"第一个命中的挂载"，命中项只读就返回 `ReadOnly`** —— 可预测、不会写偏。要哪种？**已决：采用本文建议 —— 读和写都走同一个第一个命中项，命中项只读即 `ReadOnly`，不落到别的后端；建议没覆盖的新路径补一条：走组内第一个可写（更高优先级优先），没有任何命中也没有可写挂载则 `ReadOnly`。实现与用例见 §10 / §14。**
 3. **`MountVfs` 的持有方式 —— 已决（S4 落地，2026-09-25）**：用 `std::shared_ptr<IMemoryVfs>`（不动 `IMemoryVfs` 的 ref-count 状态；
    `unique_ptr` 可隐式转 `shared_ptr`）；**已决：接受 `std::shared_ptr<Vfs>`（S3b 之后 `IMemoryVfs` 即 `Vfs`），mount 持有它，调用方照旧可传 `unique_ptr`。**
-4. ~~两个 zip 后端并存~~ **已决（§9.1）**：职责分层 —— `ZipVfs` 是打开已有包的唯一入口且只读，
-   `ZipMemoryVfs` 只写（建树 → zip），`ZipArchive` 只做编解码；三方名字保留，重叠的 API 删掉不保留。
-5. **容量上限的 API 形态**：`setCapacityLimit()` + `bool reserve()`（本文建议）还是只做 `reserve()`、上限推到 S3 的 `open` 层？
+4. ~~两个 zip 后端并存~~ **已决（§9.1）—— 后被 S3b 收口取代**：当时定的是「`ZipVfs` 只读开口 / `ZipMemoryVfs` 建树 / `ZipArchive` 编解码，三方名字保留」；
+   S3b 收口把三者并成**两个**名字 —— `ZipArchive`（打开态树，空状态即内存树）与 `Zip`（一次性操作层），`ZipMemoryVfs` / `ZipVfs` 均已删除（见顶部名字终态说明与 §9.5）。
+5. **容量上限的 API 形态 —— 已决（S5 落地，2026-09-25）**：采用本文建议 —— `setCapacityLimit()` + `bool reserve()`（`noexcept` 与“分配失败也返回 `false`、缓冲不动”的口径见 §11 落地记录）。
 6. **就地更新（libzip cloning）备选 —— 已评估，暂不采纳**：`zip_close` 对支持 cloning 的文件源会保留原文件前缀、
    只重写后面的条目 + 中央目录（`zip_close.c` 的 `ZIP_SOURCE_BEGIN_WRITE_CLONING` 分支，
    “already implicitly copied by cloning”），所以**就地更新**大包的 I/O ≈ 改动 + 目录，
