@@ -407,7 +407,7 @@ material 值 / 流字节 / cull 全部**不进**。
 * 边界没被偷偷扩大 — 录制器只答“这次调用合法吗、它记录成什么数据”：不判 rebuild / resize / borrow / 顺序 / 缓存。编译器需要的一切都是描述里的**事实**（这条是 M3d-2 的入口条件）
 
 ### 11.16d M3d-2（2026-09-21）：帧的编译段（`core/FrameGraph` + `core/FrameCompiler`，无设备）
-* 逐 draw 的 compare op 仍未进动态层 — `core::DynamicState` 没有 compare 字段；M2c 的 `ContentPipeline` 按 §11.11 把 `GREATER` 烘进管线（引擎 reverse-Z 约定），而**旧实现**用 `RenderStateMapper::mapCompareOp` 按 `DepthState.compare` 逐 draw 映射。⇒ 内容自定比较算子的画面，新旧后端的答案不同。**登记为待办**（把 compare 加进 `DynamicState` 要动 `Keys.hpp` 的审计表，是独立小批次）
+* 逐 draw 的 compare op **已进动态层（2026-09-25 落地，见 `.ai/memory/graphics.md` M11ag）** — `core::DynamicState` 增加 `compare`（默认 `Less`，距离语义），`resolveDynamicState` 从 `state.depth.compare` 拷贝（pass 早退分支也拷），`makeDynamicStateCommand` 用 `RenderStateMapper::mapCompareOp` 在 Vulkan 边界反转（默认 `Less→GREATER` = 烘死时的逐字同值 ⇒ 无 StateNode 的场景管线与画面不变）；`Keys.hpp` 审计表 `DynamicState` 行补 `+ compare`。原登记的分歧（内容自定比较算子的画面新旧不同）随之关闭。
 * 变异反证 ×2（都实测） — ① 不认环（`cyclic = false`）⇒ **5 个用例红**（图 3 + 编译 2），其余 17 绿；② `freshAttachments` 恒 false ⇒ bootstrap 那条红
 * **环 = 跳过整个强连通分量** — 三条失败语义各自落地：① 上报 Error（列出分量里的 pass，**每分量一次/每帧**）；② 分量成员不进计划（不是"按当前顺序偷偷画"，是不画）；③ 分量外的 pass 照旧，帧照旧提交呈现；计数器 `invalid_schedules` **按分量 +1**（两个独立环是两个问题），自检断言恒 0
 * **0×0 目标不是错误** — 没有任何东西能画进去 ⇒ 它的 pass 不进计划，**也不上报**（这是状态，不是错；目标层的构建失败另有报告）。用例断言 `diagnostics.clean()`

@@ -249,6 +249,7 @@ struct PipelineKeyHash
 struct DynamicState
 {
     vn::graphics::DepthMode     depth{vn::graphics::DepthMode::TestAndWrite};  ///< Depth test/write policy.
+    vn::graphics::CompareOp     compare{vn::graphics::CompareOp::Less};        ///< Distance-semantic compare op; the reverse-Z inversion happens at the Vulkan boundary.
     vn::graphics::CullMode      cull_mode{vn::graphics::CullMode::None};       ///< Face culling.
     vn::graphics::PolygonMode   polygon_mode{vn::graphics::PolygonMode::Fill}; ///< Rasterisation mode.
     vn::graphics::Topology      topology{vn::graphics::Topology::Triangles};   ///< Primitive assembly.
@@ -267,11 +268,11 @@ struct DynamicState
  * in both directions: a HUD overlay drawn with the scene's depth policy writes depth over everything
  * after it, and translucent content drawn with the pass default writes depth it was never meant to.
  *
- * Everything else in the dynamic layer has one source, so it is copied: culling, polygon mode, topology
- * and blending come from the resolved state and nowhere else. The compare operation is deliberately NOT
- * resolved here: under the engine's reverse-Z convention it is an engine-wide constant (GREATER) delivered
- * by the pipeline layer, not a per-draw item - see `RenderStateMapper::mapCompareOp` for the distance-to-
- * reverse-Z mapping and `.ai/design/vsg-reimplementation.md` §11.11 for why the rewrite bakes it.
+ * Everything else in the dynamic layer has one source, so it is copied: culling, polygon mode, topology,
+ * blending and the compare operation come from the resolved state and nowhere else. The compare op is
+ * distance-semantic - "closer wins" - so it travels unchanged and the reverse-Z inversion happens at the
+ * Vulkan boundary (`RenderStateMapper::mapCompareOp`): the default Less maps to GREATER, which keeps a
+ * scene without StateNodes on the same pipeline as before.
  *
  * @param state          Resolved per-object state (`RenderCommand::renderState`).
  * @param depth_explicit Whether that state's depth item came from a StateNode.

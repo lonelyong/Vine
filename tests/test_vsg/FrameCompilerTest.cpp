@@ -507,6 +507,39 @@ TEST(FrameCompilerTest, ThePassDepthAppliesOnlyWhereTheContentAuthoredNone)
     EXPECT_EQ(frame.passes[0].draws[0].commands[1].dynamic.depth, DepthMode::Disabled);
 }
 
+TEST(FrameCompilerTest, TheAuthoredCompareOpTravelsIntoTheDynamicState)
+{
+    Rig r;
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    r.addTarget(target.get(), 64, 64, true);
+
+    // One command authored a non-default compare op (a StateNode set it), one
+    // left the default. The resolve copies what the content said and leaves the
+    // reverse-Z inversion to the Vulkan boundary.
+    RenderCommand authored;
+    authored.depthExplicit             = true;
+    authored.renderState.depth.compare = vn::graphics::CompareOp::LessEqual;
+    RenderCommand inherited;
+    inherited.depthExplicit = false;
+
+    const std::vector<RenderCommand> commands{ authored, inherited };
+
+    r.recorder.beginFrame(FrameToken{ 1 });
+    r.recorder.beginPass(1);
+    r.recorder.setRenderTarget(target.get());
+    r.recorder.render(commands, nullptr);
+    r.recorder.endPass();
+    r.recorder.endFrame();
+
+    const CompiledFrame& frame = r.compile();
+    ASSERT_EQ(frame.passes.size(), 1u);
+    ASSERT_EQ(frame.passes[0].draws.size(), 1u);
+    ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 2u);
+    EXPECT_EQ(frame.passes[0].draws[0].commands[0].dynamic.compare, vn::graphics::CompareOp::LessEqual);
+    EXPECT_EQ(frame.passes[0].draws[0].commands[1].dynamic.compare, vn::graphics::CompareOp::Less)
+        << "the untouched default is carried as-is";
+}
+
 TEST(FrameCompilerTest, ACommandWithoutAProgramGetsTheFramesDefault)
 {
     Rig r;

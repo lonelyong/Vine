@@ -1,5 +1,7 @@
 #include <vine/vsg/api/StateCommands.hpp>
 
+#include <vine/vsg/RenderStateMapper.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -101,8 +103,9 @@ VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
     auto command = detail::SetDynamicState::create();
 
     mapDepth(state.depth, command->depth_test_enable, command->depth_write_enable);
-    // Reverse-Z: the projection maps the near plane to 1 and the far plane to 0, so "closer" is GREATER.
-    command->compare_op = VK_COMPARE_OP_GREATER;
+    // The content's compare op is distance-semantic, so the reverse-Z inversion happens at this boundary:
+    // the default (Less) maps to GREATER, which is the engine convention.
+    command->compare_op = detail::mapCompareOp(state.compare);
 
     command->cull_mode = mapCull(state.cull_mode);
     // Clockwise, because vsg's projection inverts Y (see the file note).

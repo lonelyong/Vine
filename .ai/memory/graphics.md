@@ -1,3 +1,17 @@
+> 2026-09-25 **M11ag：逐 draw compare op 进动态层（收掉 M3d-2 的登记待办）**
+> · 背景（旧登记）：`core::DynamicState` 没有 compare 字段，M2c 的 `ContentPipeline` 把 `GREATER` 烘死
+>   （§11.11 的 reverse-Z 约定），而旧实现按 `DepthState.compare` 逐 draw 映射 ⇒ **内容自定比较算子**的
+>   画面新旧不同。落地：`DynamicState` 加 `compare`（默认 `Less`，距离语义）；`resolveDynamicState` 直接
+>   拷贝 `state.depth.compare`（pass 早退分支也拷 —— 比较与深度策略正交）；`makeDynamicStateCommand` 以
+>   `RenderStateMapper::mapCompareOp` 做边界反转（`Less→GREATER` / `LessEqual→GREATER_OR_EQUAL` / `Greater→LESS`…）。
+>   默认 `Less→GREATER` 与烘死时逐字同值 ⇒ **无 StateNode 的场景管线与画面不变**（门禁 app 判据逐字复现）。
+>   `Keys.hpp` 审计表 `DynamicState` 行补 `+ compare`；文件头 "deliberately NOT resolved" 段改写为距离语义。
+> · **另修一处静默**：`DynamicState::operator==` 补上 compare ⇒ 比较算子变了现在会被 variant 的"动态变了"
+>   看见（此前改了它不会重发 set 命令，画面停旧值）。
+> · 用例：`ContentDrawTest.TheDynamicMappingFollowsTheEngineConventions`（默认与自定义两向）+ 
+>   `FrameCompilerTest.TheAuthoredCompareOpTravelsIntoTheDynamicState`；变异 3/3 红（烘死回归 / 解析不拷 / 翻转表破）。
+>   `test_vsg` 两棵树全绿；门禁 cases **445→446**、vuid=0、app 画面逐字同。
+
 > 2026-09-25 **M11ae/M11af：首帧叠层收口 + 应用启动尺寸定下来（设计 §11.16db/dc）**
 > · **首帧叠层**（旧登记"一帧没有工具叠层"）：探针（`AxisGizmo::onSurfaceResized/execute` 前 8 次，跑完即撤）把
 >   旧读法"表面尺寸未知"改写了——预热帧（160×160）叠层**有效**（vp 96×96）；第一个**上屏**帧画在 Qt 布局**瞬态**

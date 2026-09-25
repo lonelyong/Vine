@@ -46,14 +46,15 @@ bool PipelineKey::operator==(const PipelineKey& other) const noexcept
 
 bool DynamicState::operator==(const DynamicState& other) const noexcept
 {
-    return depth == other.depth && cull_mode == other.cull_mode && polygon_mode == other.polygon_mode &&
-           topology == other.topology && blend == other.blend;
+    return depth == other.depth && compare == other.compare && cull_mode == other.cull_mode &&
+           polygon_mode == other.polygon_mode && topology == other.topology && blend == other.blend;
 }
 
 DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state, bool depth_explicit,
                                  vn::graphics::DepthMode pass_depth) noexcept
 {
     DynamicState resolved;
+    resolved.compare      = state.depth.compare;
     resolved.cull_mode    = state.cullMode;
     resolved.polygon_mode = state.polygonMode;
     resolved.topology     = state.topology;
@@ -129,7 +130,7 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
           "defines that change what its text means - see api/ProgramVariant) + the topology CLASS (a static "
           "topology may only be changed dynamically within its own class, so it is compiled in)" },
         { "DynamicState",
-          "depth policy + cull + polygon + topology + blend - delivered per draw with set commands (the "
+          "depth policy + compare + cull + polygon + topology + blend - delivered per draw with set commands (the "
           "topology within the class its pipeline was compiled for, see PipelineKey)" },
         { "InstanceSlot", "model matrix + opacity + material identity + revision - per frame data" },
         { "TargetDesc.shape",

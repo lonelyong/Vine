@@ -313,6 +313,16 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
     EXPECT_EQ(test_only->compare_op, VK_COMPARE_OP_GREATER) << "reverse-Z: closer is GREATER";
     EXPECT_EQ(test_only->front_face, VK_FRONT_FACE_CLOCKWISE) << "vsg's projection inverts Y";
 
+    // A content-authored compare op is distance-semantic: it travels through and the reverse-Z
+    // inversion happens at this boundary, so LessEqual (standard depth) becomes GREATER_OR_EQUAL.
+    DynamicState farther_wins;
+    farther_wins.compare = vn::graphics::CompareOp::LessEqual;
+    EXPECT_EQ(vn::vsg::makeDynamicStateCommand(farther_wins, 1U, none)->compare_op, VK_COMPARE_OP_GREATER_OR_EQUAL);
+
+    DynamicState nearer_loses;
+    nearer_loses.compare = vn::graphics::CompareOp::Greater;
+    EXPECT_EQ(vn::vsg::makeDynamicStateCommand(nearer_loses, 1U, none)->compare_op, VK_COMPARE_OP_LESS);
+
     DynamicState churn;
     churn.cull_mode    = vn::graphics::CullMode::Back;
     churn.polygon_mode = vn::graphics::PolygonMode::Line;
