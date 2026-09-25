@@ -85,6 +85,7 @@
 #include <any>
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -92,6 +93,7 @@
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
+#include <streambuf>
 #include <thread>
 
 #include <QListWidget>
@@ -2298,6 +2300,234 @@ TEST(ConsoleProgressReporterTest, ConsoleUserIOPrintsTheProgressOfAForegroundOpe
     const auto text = captured.str();
     EXPECT_NE(text.find("无头导出"), std::string::npos);
     EXPECT_NE(text.find("已结束"), std::string::npos);
+}
+
+// ── ConsoleUserIO 读路径（无头 stdin）：此前只有进度侧有覆盖 ───────────────
+//
+// 读路径是 一个分离的后台读线程 + 行队列 + 可唤醒事件（std::getline 阻塞且不可
+// 中断），取消是关机的关键依赖（Application::shutdown() 先 cancelPendingInput()
+// 再排空命令链）。这里用脚本化的 std::cin 缓冲把行、EOF、单飞拒绝与跨线程取消
+// 全部钉成确定性事实。
+//
+// 缓冲是静态的、进程级且绝不还原：后台读线程可能比用例对象活得久，让线程去碰
+// 一个已经析构的测试对象就是测试自己的 UB；碰静态对象则永远安全。
+class ScriptedStdinBuf : public std::streambuf {
+  public:
+    /// 追加可读数据并唤醒阻塞中的读线程。
+    void feed(const std::string& text)
+    {
+        {
+            std::lock_guard lock(mutex_);
+            data_ += text;
+        }
+        cv_.notify_all();
+    }
+
+    /// 数据读完（且不再追加）后给出 EOF：std::getline 以失败收尾，读线程退出。
+    void set_eof()
+    {
+        {
+            std::lock_guard lock(mutex_);
+            eof_ = true;
+        }
+        cv_.notify_all();
+    }
+
+    /// 回到"无数据、无 EOF"（每个用例开头）。
+    void reset()
+    {
+        std::lock_guard lock(mutex_);
+        data_.clear();
+        eof_ = false;
+    }
+
+    /// 等到至少 count 个线程卡在取字符上（卡住 ⇒ 读线程确实跑起来了）。
+    bool waitBlockedAtLeast(int count, std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            {
+                std::lock_guard lock(mutex_);
+                if (blocked_ >= count) {
+                    return true;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        std::lock_guard lock(mutex_);
+        return blocked_ >= count;
+    }
+
+    /// EOF 已交给某个读线程的次数；比之前多 1 ⇒ 该线程已从 getline 出来，
+    /// 此后不会再碰这个缓冲（可以安全拆测试对象）。
+    int eofReturns()
+    {
+        std::lock_guard lock(mutex_);
+        return eof_returns_;
+    }
+
+    /// 等到 EOF 至少再多交付一次（有界，避免用例挂死）。
+    bool waitEofDelivered(int previous_count, std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (eofReturns() > previous_count) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return eofReturns() > previous_count;
+    }
+
+  protected:
+    int_type underflow() override
+    {
+        std::unique_lock lock(mutex_);
+        ++blocked_;
+        cv_.wait(lock, [this] { return !data_.empty() || eof_; });
+        --blocked_;
+
+        if (data_.empty()) {
+            ++eof_returns_;
+            return traits_type::eof();
+        }
+
+        ch_ = data_.front();
+        data_.erase(0, 1);
+        setg(&ch_, &ch_, &ch_ + 1);
+        return traits_type::to_int_type(ch_);
+    }
+
+  private:
+    std::mutex              mutex_;
+    std::condition_variable cv_;
+    std::string             data_;
+    bool                    eof_{ false };
+    int                     blocked_{ 0 };
+    int                     eof_returns_{ 0 };
+    char                    ch_{ 0 };
+};
+
+/// 进程级脚本 stdin：首次调用把 std::cin 接到脚本缓冲上，并解开 cin→cout 的 tie
+/// （后台线程每次 getline 都会 flush 它，而用例同时把 cout 抓到字符串流里——
+/// 解开 tie 就没有两线程同写一个流的竞争）。
+ScriptedStdinBuf& scriptedStdin()
+{
+    static ScriptedStdinBuf buf;
+    static const bool       armed = [] {
+        std::cin.tie(nullptr);
+        std::cin.rdbuf(&buf);
+        return true;
+    }();
+    static_cast<void>(armed);
+    return buf;
+}
+
+class ConsoleUserIOReadTest : public ::testing::Test {
+  protected:
+    void SetUp() override
+    {
+        scriptedStdin(); // 首次调用完成 cin 的替换，之后是幂等的
+        previous_eof_returns_ = scriptedStdin().eofReturns();
+        scriptedStdin().reset();
+        std::cin.clear(); // 上一轮 EOF 留下的 eofbit/failbit 必须清掉
+
+        previous_cout_ = std::cout.rdbuf(captured_.rdbuf());
+        io             = std::make_unique<vn::appfw::ConsoleUserIO>();
+    }
+
+    void TearDown() override
+    {
+        // 让后台读线程走到 EOF 并退出 getline：它是分离线程，只有 EOF 能放它走，
+        // 而它可能正阻塞在脚本缓冲里——确认它最后一次用完缓冲之后，测试才可以拆。
+        scriptedStdin().set_eof();
+        EXPECT_TRUE(scriptedStdin().waitEofDelivered(previous_eof_returns_, std::chrono::seconds(5)))
+            << "后台读线程没有在 EOF 后退出";
+
+        io.reset();
+        std::cout.rdbuf(previous_cout_);
+    }
+
+    std::unique_ptr<vn::appfw::ConsoleUserIO> io;
+    std::ostringstream                        captured_;
+    std::streambuf*                           previous_cout_{ nullptr };
+    int                                       previous_eof_returns_{ 0 };
+};
+
+// 行、EOF 与提示上屏：第二行来自行队列（读线程在第一个读跑完前就把它读进来了），
+// 第三次读必须以 nullopt 立即收尾——关机排空等待的正是这个收尾。
+TEST_F(ConsoleUserIOReadTest, ReadsLinesAndReportsEndOfInput)
+{
+    scriptedStdin().feed("hello\nworld\n");
+    scriptedStdin().set_eof();
+
+    const auto first = vn::async::syncWait(io->getStringAsync(u8"输入名称> "));
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(*first, vn::String(u8"hello"));
+
+    const auto second = vn::async::syncWait(io->getStringAsync());
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ(*second, vn::String(u8"world"));
+
+    const auto third = vn::async::syncWait(io->getStringAsync());
+    EXPECT_FALSE(third.has_value()) << "EOF 之后的读必须立刻以 nullopt 收尾，而不是挂住";
+
+    EXPECT_NE(captured_.str().find("输入名称> "), std::string::npos) << "提示必须写进 stdout";
+}
+
+// Console 的解析语义与 GUI 不同：坏行 ⇒ nullopt（GUI 是原地重新提示）。
+// 这里同时钉住 U2 的范围规则：超出 int 的输入必须失败，绝不回绕。
+TEST_F(ConsoleUserIOReadTest, ParsesIntsAndFailsOnBadInputWithoutReprompt)
+{
+    scriptedStdin().feed("42\n不是数字\n99999999999\n");
+    scriptedStdin().set_eof();
+
+    const auto ok = vn::async::syncWait(io->getIntAsync(u8"n> "));
+    ASSERT_TRUE(ok.has_value());
+    EXPECT_EQ(*ok, 42);
+
+    const auto bad = vn::async::syncWait(io->getIntAsync());
+    EXPECT_FALSE(bad.has_value()) << "非数字必须失败，而不是回绕或原地重提示";
+
+    const auto overflow = vn::async::syncWait(io->getIntAsync());
+    EXPECT_FALSE(overflow.has_value()) << "超出 int 的输入必须失败（U2 的范围规则）";
+}
+
+// 不变量 2（无头侧）：同一时刻最多一个读在等，第二个立刻以 nullopt 被拒。
+TEST_F(ConsoleUserIOReadTest, SecondReadIsRefusedWhileOneIsPending)
+{
+    std::optional<vn::String> first;
+    std::thread               runner([&] { first = vn::async::syncWait(io->getStringAsync(u8"first> ")); });
+
+    // 后台读线程一跑起来，槽位就已经归第一个读：此后它只可能被输入或取消解开。
+    ASSERT_TRUE(scriptedStdin().waitBlockedAtLeast(1, std::chrono::seconds(5)));
+
+    const auto second = vn::async::syncWait(io->getStringAsync(u8"second> "));
+    EXPECT_FALSE(second.has_value()) << "第二个读必须被单飞槽位拒绝";
+
+    io->cancelPendingInput();
+    runner.join();
+    EXPECT_FALSE(first.has_value()) << "被取消的读以 nullopt 收尾";
+}
+
+// 不变量 3（无头侧）：cancelPendingInput() 可以从任意线程调用并解开等待中的读；
+// 取消既不能吃掉之后到达的输入，也不能把取消状态泄漏给下一个读。
+TEST_F(ConsoleUserIOReadTest, CancelFromAnotherThreadUnblocksAndKeepsArrivedLine)
+{
+    std::optional<vn::String> first;
+    std::thread               runner([&] { first = vn::async::syncWait(io->getStringAsync(u8"parked> ")); });
+    ASSERT_TRUE(scriptedStdin().waitBlockedAtLeast(1, std::chrono::seconds(5)));
+
+    // Application::shutdown() 正是从别的线程这样调的。
+    std::thread canceller([this] { io->cancelPendingInput(); });
+    canceller.join();
+    runner.join();
+    EXPECT_FALSE(first.has_value()) << "取消必须解开等待中的读";
+
+    scriptedStdin().feed("late\n");
+    const auto second = vn::async::syncWait(io->getStringAsync());
+    ASSERT_TRUE(second.has_value()) << "取消后的下一个读必须照常工作（取消状态不得泄漏）";
+    EXPECT_EQ(*second, vn::String(u8"late"));
 }
 
 TEST(ProgressPresenterTest, CancelButtonRequestsStop)

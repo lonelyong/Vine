@@ -75,7 +75,8 @@ class VN_APPFW_API ConsoleUserIO : public UserIO {
 
   private:
     std::shared_ptr<StdinReader> reader_;
-    /// Guards the interaction slot and the reader's start flag.
+    /// Guards the interaction slot (the reader's own start flag lives under
+    /// StdinReader::mutex).
     std::mutex                   state_mutex_;
     /// True while a read waits or unwinds; guarded by state_mutex_.
     bool                         slot_busy_{ false };

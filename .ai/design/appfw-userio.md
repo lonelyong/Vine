@@ -5,7 +5,7 @@
 `src/fw/appfw/sdk/vine/appfw/gui/VisualUserIO.hpp` + `src/fw/appfw/src/gui/VisualUserIO.cpp`（GUI，2026-09-21 起公开），
 宿主接线在 `Application`（`createUserIO()`/`setupUserIO()`、`ApplicationData::user_io`）、
 `VisualUserIO::setConsolePanel()`（由宿主自己绑，见下）与 `CommandManager`（`reportToUser()`、命令集事件）。
-测试：`tests/test_gui/test_gui.cpp`（`UserIOTest.*` 5 例 + `GuiTest.CommandManager_PendingUserInput*`）。
+测试：`tests/test_gui/test_gui.cpp`（`UserIOTest.*` 6 例、`ConsoleUserIOReadTest.*` 4 例 + `GuiTest.CommandManager_PendingUserInput*`）。
 
 ## 结构
 
@@ -144,6 +144,10 @@
 | `UserIOTest.RebindingTheConsoleDoesNotRunALineTwice` | U7 |
 | `UserIOTest.ReadStartedOnAWorkerThreadIsMarshalledAndReprompts` | E4：读在非应用线程发起（先 `sleepFor` 再提示），提示/重新提示/取值照常 |
 | `UserIOTest.CommandsChangedReportsRegistryAndAliasEdits` | U5 的机制 |
+| `ConsoleUserIOReadTest.ReadsLinesAndReportsEndOfInput` | 无头读路径：行、队列、EOF 收尾、提示上屏 |
+| `ConsoleUserIOReadTest.ParsesIntsAndFailsOnBadInputWithoutReprompt` | 无头解析语义：坏行/溢出 ⇒ `nullopt`（重提示是 GUI 的交互模型） |
+| `ConsoleUserIOReadTest.SecondReadIsRefusedWhileOneIsPending` | 不变量 2（无头侧） |
+| `ConsoleUserIOReadTest.CancelFromAnotherThreadUnblocksAndKeepsArrivedLine` | 不变量 3（无头侧）+ 取消不吞后续输入、不泄漏给下一个读 |
 | `GuiTest.CommandManager_PendingUserInputBlocksDrainUntilCancelled` | 取消与排空（原有） |
 | `GuiTest.CommandManager_DetachedFailureIsReportedOnTheApplicationThread` | 失败上报编组（原有） |
 | `ConsoleProgressReporterTest.WritesThrottledLinesWhileAForegroundOperationRuns` | 无头进度的节流/标签/收尾（确定性，`poll()` 直驱） |
@@ -160,3 +164,10 @@
 - **不为 `ConsoleUserIO::clear()` 加 TTY 判断**：需要 `isatty`/`_isatty` 的平台分支，留档（重定向时
   会出现 ANSI 控制字符）。
 - **不在 `UserIO` 上加读取"存储类型"之类的访问器**：本轮的 `parseInt` 是唯一需要共享的解析逻辑。
+- **两个实现的"悬挂读"状态机合一提炼（③，2026-09-25 复核后降级为覆盖收口）**：原议是把单飞拒绝/取消/重提示
+  收进一个共享内部状态机、两个实现退化为渲染后端。**不做**：等待机制结构不同（`ConsoleUserIO` = 分离读线程 +
+  行队列 + 重臂事件循环；`VisualUserIO` = UI 事件 + 按类型结果字段 + 重提示），`ConsoleUserIO` 的取消标志必须
+  住在 `StdinReader`（读线程可以活过 IO 对象本身），且解析失败语义刻意不同（无头 ⇒ `nullopt`，GUI ⇒ 原地重提示）
+  ——可共享的只有 ~15 行槽位协议，合并反而要跨这两种形状做抽象。改以覆盖收口：新增 `ConsoleUserIOReadTest.*`
+  四条用例（行/解析/单飞/跨线程取消），此前无头读路径只有进度侧有覆盖；变异 M1/M2/M3 全红见证
+  （槽位不释放 / 取消标志不重置 / 提示不上屏）。
