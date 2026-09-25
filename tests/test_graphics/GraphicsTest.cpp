@@ -4066,6 +4066,27 @@ TEST(AxisGizmoTest, ViewportPlacedBottomLeft)
     EXPECT_EQ(vp.y, 600 - 16 - 96);
 }
 
+TEST(AxisGizmoTest, ASurfaceTooSmallForTheBoxNeverYieldsANegativeViewport)
+{
+    // A window mid-layout can be smaller than the corner box plus its margins: measured 100x30 on the
+    // demo's first shown frame, where the naive fit computed -2 pixels for the box side (see
+    // .ai/design/vsg-reimplementation.md §11.16db). "No room" must be spelled as a zero-area rectangle
+    // - the backend's empty-rectangle rule then skips the drawing call - never as a negative one.
+    auto gizmo = intrusive_ptr<AxisGizmo>(new AxisGizmo());
+    gizmo->onSurfaceResized(100, 30);
+
+    const Viewport vp = gizmo->viewport();
+    EXPECT_EQ(vp.width, 0);
+    EXPECT_EQ(vp.height, 0);
+
+    // A surface that DOES fit the box still gets it: the clamp only bites where the box cannot fit.
+    gizmo->onSurfaceResized(100, 128);
+    const Viewport fitted = gizmo->viewport();
+    EXPECT_EQ(fitted.width, 96);
+    EXPECT_EQ(fitted.height, 96);
+    EXPECT_EQ(fitted.y, 128 - 16 - 96);
+}
+
 TEST(AxisGizmoTest, OrientationMirrorTracksSource)
 {
     auto gizmo = intrusive_ptr<AxisGizmo>(new AxisGizmo());

@@ -313,9 +313,9 @@ material 值 / 流字节 / cull 全部**不进**。
 | **A3** | SDK 没有内容释放入口（`releaseGeometry/Material/Program/Texture`）：登记的"不改 SDK" | 宿主报告内存压力（**2026-09-25 账本已量化，见 §11.16cz**：12 轮创建+丢弃全清；唯材料槽残留；slot 知识学到前的丢弃会保留整会话） |
 | **A6** | `MaterialImages` 淘汰是 FIFO 而非 LRU；`ContentStore` 无容量上界 | 同屏活纹理逼近 256（**2026-09-25 语义已钉+量化，见 §11.16cy**：A/B/X 判别钉 FIFO；200 张循环 = 0 缺失，300 张 = 每轮 300/300 全重建） |
 | **A4** | `Material` 是全 SDK 唯一没有 revision 的内容类型（后端每帧逐命令 compare-and-write；实测 ~10 µs/帧量级，比噪声小） | 材质数量大到"每帧 O(命令数) 次块比较"进入剖析前列（**2026-09-25 已量化，见 §11.16cx**：命令地板 ~28 µs/条（Release）；>256 不同材料 = 0 命中、每帧全量重写+驱逐） |
-| **首帧 gizmo 空白** | 一帧没有工具叠层 | 低（下一次 app shell 视觉工作） |
+| **首帧叠层** | 一帧没有工具叠层（§11.16cd 当时读作“表面尺寸未知”） | 低（下一次 app shell 视觉工作）——**已查明并收口（2026-09-25，§11.16db）**：预热帧叠层有效；第一个上屏帧画在 Qt 布局**瞬态**尺寸（实测 100×30）上，角落 HUD 盒放不下 ⇒ 旧算式在那算出**负视口**（-2×-2），已夹到 0 并配钉子用例；用户可见性≈零 |
 | **会话侧"画面已落地"** | 把窗口读那条链从"测试碰运气"变成"宿主可查的事实"（WSI present fence） | 下一个真宿主接窗口时 |
-| **窗口随日志长大** | demo 的窗口启动尺寸不确定（§11.16cs 的门禁侧已钉住；宿主/框架侧未修——默认窗口尺寸是产品决定） | 下一次 app shell / 框架的窗口布局工作 |
+| **窗口随日志长大** | demo 的窗口启动尺寸不确定（§11.16cs：六次启动六个渲染区，最大 3418×1110；门禁侧已先 resize 到 800×600 再判图；宿主/框架侧未修——默认窗口尺寸是产品决定） | **已收口（2026-09-25，§11.16dc）**：`MainWindow` 显式 `resize(800×600)`（= 最小值 = 文档默认 = 门禁判图尺寸）；本机修前/修后各一批都读到 378×247（今天未复现漂移，改动按构造去掉“首 show 跟随布局 sizeHint”）；钉子用例 + 变异 1/1 红 |
 | **B1/B2/B3** | 三张表查找已二分（§11.16bz/ca）；每 pass 堆分配与 `mallinfo2` 的证据强度问题按 §11.16bx/by 的测量结论维持 | — |
 | **BlockStorageTest 偶发** | `TheRegionsAreLaidOutOnceAndDoNotOverlap` 首跑红重跑绿两次（环境/顺序类） | 第三次出现时打印失败断言 + 设备 `minUniformBufferAlignment`（**2026-09-25 证据已预置**：用例始终打印并经 `SCOPED_TRACE` 携带 `minUniformBufferOffsetAlignment`+regions+strides+capacity；复现尝试 40× 冷进程未红，见 §11.16da） |
 
@@ -1073,7 +1073,8 @@ material 值 / 流字节 / cull 全部**不进**。
 ### 11.16cd M11h（2026-09-24）：空绘制调用不是绘制调用——应用日志的最后一条 warning 消失
 * **6. 变异（1/1，含恢复复验）。** 把守卫改回 `if (true || !commands.empty())` ⇒ ①新用例**红**；②应用日志的
 * **登记（本片没做）**：①**首帧的 gizmo 画不出来**这件事本身在引擎侧（`AxisGizmo` 表面尺寸未知 ⇒ 空场景）；后端
-* 现在照实处理（那一帧没有它的 pass），要"首帧也画"属于引擎的改动（触发条件：有人报首帧缺 gizmo）；②门禁本次首跑 出现一次**已知的窗口读回偶发**（`VsgBackendTest.AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNothing`， 重跑即绿，门禁照既有规矩**把首跑失败写进证据行**再裁决）——与本节改动无关，留给出窗口同步点那一条登记； ③其余未做项照旧以 §11.16bw 与各片"登记"为准。
+* 现在照实处理（那一帧没有它的 pass），要"首帧也画"属于引擎的改动（触发条件：有人报首帧缺 gizmo）**（2026-09-25 复核并收口：见 §11.16db——不是"尺寸未知"，预热帧叠层有效；是布局瞬态尺寸（100×30）下盒放不下，
+  而旧算式给的是负视口）**；②门禁本次首跑 出现一次**已知的窗口读回偶发**（`VsgBackendTest.AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNothing`， 重跑即绿，门禁照既有规矩**把首跑失败写进证据行**再裁决）——与本节改动无关，留给出窗口同步点那一条登记； ③其余未做项照旧以 §11.16bw 与各片"登记"为准。
 * `ContentAssembly::record` / `ContentHalves::halvesFor` / `ContentPass::record` 的拒绝点插探针，第一帧的七趟 pass 里 第 7 趟是：`colors=1 draws=1 content=1 entries=0`，**而且没有任何"事实缺失"的 skip 输出** ⇒ 不是表查不到，而是那条 draw 本身**没有命令**（探针：`draw kind=0 commands=0`）。再在 `beginPass` 打印 pass 身份：`id=7 name=`（无名， 与 `id=6 name=` 一起正是 `RenderPipelineBuilder::applyOverlays` 加的 gizmo 与 fps 两个叠层 pass）；`AxisGizmo::execute` 在 `surface_w_ <= 0` 时不会设视口，那一帧的场景收集因此是空的。
 
 ### 11.16ce M11i（2026-09-24）：租约的顺序有了设备相位——借来的一对一起长大
@@ -1366,3 +1367,50 @@ material 值 / 流字节 / cull 全部**不进**。
   `minUniformBufferAlignment` 这个字段；影响布局的是 `minUniformBufferOffsetAlignment`，探针印的是它。）
 * **复现尝试**：40 次全新进程单跑 ⇒ **0 红**（本环境本次未复现）。
 * **判据**：套件仍 **445**（无新用例）；两棵树门禁 `cases=445 vuid=0 hazard=0`、应用行逐字不变。
+
+### §11.16db M11ae（2026-09-25）：首帧的叠层是什么、不是什么——探针把“尺寸未知”改写成“瞬态尺寸放不下”
+
+* **登记来自哪里**：§6 的“首帧 gizmo 空白 | 一帧没有工具叠层 | 低（下一次 app shell 视觉工作）”，
+  以及 §11.16cd（M11h）当时的读法“`AxisGizmo::execute` 在 `surface_w_ <= 0` 时不会设视口，那一帧的场景收集
+  因此是空的”。
+* **探针（临时，跑完即撤）**：在 `AxisGizmo::onSurfaceResized` 与 `execute` 各打前 8 次调用（尺寸 + 视口），
+  与 `[RenderControl] surface … -> …` 状态行对齐时间戳。实测（本机，xcb）：
+  * `Pending -> Attached`（表面 160×160）→ `onSurfaceResized#1 160×160` → `execute#1 vp=16,48 96×96`
+    ⇒ **预热帧的叠层是好的**（“尺寸未知”不是今天的形态）；
+  * `Startup frame going away` 之后：`onSurfaceResized#2 100×30`（Qt 布局**瞬态**）→
+    `execute#2 vp=16,16 -2×-2` ⇒ 第一个**上屏**帧（`Attached -> Presenting` 紧随其后）画在 100×30 的瞬态窗口里，
+    角落 HUD 盒放不下，旧算式 `dev_h - 2*margin_px_` 在那里是**负数**；
+  * 随后 `onSurfaceResized#3 378×247` → `execute#3…6 vp=16,135 96×96`（settle 帧起一切正常）。
+  * 旁证：应用日志里那条 `[graphics] a drawing call was not recorded: its rectangle is empty` 的 Info
+    （`ContentPass.cpp:416` 的空矩形守卫）就是这帧的负矩形触发的——每会话一条。
+* ⇒ **结论改写**：不是“表面尺寸未知”，而是“**布局瞬态尺寸下 HUD 盒放不下**”；用户可见性≈零
+  （100×30 的一帧本来就无画可看，settle 帧即正常）。**真正的缺陷是那道负视口**：把“放不下”拼成了
+  `-2×-2`，交给后端的空矩形守卫兜底。
+* **修**（`AxisGizmo::onSurfaceResized`）：`side = fitted > 0 ? min(size_px_, fitted) : 0`——放不下就老实给
+  **零面积**矩形（下游同样跳过绘制，但那是一个说出来的决定，不是垃圾入参）。`FpsOverlay` 的同类边界**保持原样**
+  （放不下时保留上一矩形，后端会把视口夹进目标、被裁剪；差别只在瞬态一帧里可见，未统一，此句即登记）。
+* **门禁**：`AxisGizmoTest.ASurfaceTooSmallForTheBoxNeverYieldsANegativeViewport`（100×30 ⇒ 0×0；100×128
+  ⇒ 96×96 不误伤）。**变异 1/1 红**：把旧算式放回 ⇒ 该用例红；恢复 ⇒ `AxisGizmoTest.*` 4/4 绿。
+* **判据**：`test_graphics` 两棵树 **282 → 283**；两棵树门禁 `cases=445 vuid=0 hazard=0`、应用行逐字不变。
+
+### §11.16dc M11af（2026-09-25）：应用窗口的启动尺寸从“由布局竞态决定”改成“说出来的默认”
+
+* **登记来自哪里**：§6 的“窗口随日志长大 | 宿主/框架侧未修——默认窗口尺寸是产品决定”，
+  以及 §11.16cs 的记录（六次启动六个渲染区：378×247 / 1037×509 / 491×319 / 378×406 / 558×247 / 一次门禁 3418×1110；
+  门禁因此**自己**先把窗口 resize 到 800×600 再判图）。
+* **修**：`MainWindow` 构造里在 `setMinimumSize(800,600)` 旁加 `resize(QSize(800,600))`——
+  **800×600 = 文档默认 = 最小值 = 门禁判图尺寸**；置上 `WA_Resized` 后，首 show 不再走“按布局 sizeHint 定尺寸”
+  那条路。用户之后的拖动/缩放不受影响。
+* **实测（诚实记录）**：修前后各跑一批，渲染区**都是 378×247**（修后 4 次、修前对照 6 次；另加 2 次
+  “强制宽控制台”对照组）——**今天的本机没能复现漂移**（顶层链读数为 渲染区 378×247 ← 容器 800×600 ←
+  顶层 864×664，两配置一致）。⇒ 改动按**构造**去掉机制，而不是靠复现；§11.16cs 那组测量仍是漂移存在的记录。
+* **门禁**：`MainWindowTest.TheOpeningSizeIsStatedInsteadOfInheritedFromTheLayout`（构造后
+  `minimumSize==size==800×600` 且 `WA_Resized` 已置）。**变异 1/1 红**：删掉 `resize` 行 ⇒
+  size 回 Qt 默认 640×480、属性未置 ⇒ 该用例红（两平台都验过）；恢复 ⇒ 绿。
+* **顺带修掉一条既有红（两棵树纪律的又一例）**：在 `build-release` 跑 `test_gui` 全量时
+  `PluginLifecycleTest.HandwrittenRegistrationCanDisableForAllUsers` 红——断言写死了 Debug 后缀
+  `test_plugind`（`808bbd2` 起），而 Release 的库叫 `test_plugin.so`，即**这条在 Release 树一直是红的**。
+  改成“注册路径必须点名沙箱里那份拷贝的文件名”（期望值从拷贝自身推出），两棵树单跑 + 全量都绿。
+* **判据**：`test_gui` 两棵树 **207 → 208**（新增 1 例）全绿、`test_graphics` 两棵树 283 全绿；
+  两棵树门禁 `cases=445 vuid=0 hazard=0`、应用行**逐字不变**（门禁本来就把判图尺寸说成 800×600，
+  改了默认之后那一步从“补偿”变成“确认”）。

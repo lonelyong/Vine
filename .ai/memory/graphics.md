@@ -1,3 +1,23 @@
+> 2026-09-25 **M11ae/M11af：首帧叠层收口 + 应用启动尺寸定下来（设计 §11.16db/dc）**
+> · **首帧叠层**（旧登记"一帧没有工具叠层"）：探针（`AxisGizmo::onSurfaceResized/execute` 前 8 次，跑完即撤）把
+>   旧读法"表面尺寸未知"改写了——预热帧（160×160）叠层**有效**（vp 96×96）；第一个**上屏**帧画在 Qt 布局**瞬态**
+>   尺寸 **100×30** 上（`Startup frame going away` 之后、`-> Presenting` 之前），角落盒放不下 ⇒ 旧算式
+>   `dev_h-2*margin` = **-2** 给出**负视口**（-2×-2），后端空矩形守卫跳过并记一条 Info（日志里那条
+>   "its rectangle is empty" 就是它）。修：`side = fitted>0 ? min(size_px_,fitted) : 0`——零面积=说出来的"画不下"。
+>   `FpsOverlay` 同类边界**保持原样**（放不下留上一矩形、被夹进目标；两拼法未统一，此句即登记）。
+>   钉子 `AxisGizmoTest.ASurfaceTooSmallForTheBoxNeverYieldsANegativeViewport`；变异 1/1 红（放回旧算式）。
+>   `test_graphics` 两棵树 **283**。
+> · **启动尺寸**（旧登记"窗口随日志长大 = 产品决定"）：`MainWindow` 在 `setMinimumSize(800,600)` 旁加
+>   `resize(800×600)`（= 最小值 = 文档默认 = 门禁判图尺寸），首 show 不再走"按布局 sizeHint 定尺寸"。
+>   **诚实记录：今天本机没能复现漂移**——修前后各一批 + 两次强制宽控制台对照都读 **378×247**（顶层链：
+>   渲染区 378×247 ← 容器 800×600 ← 顶层 864×664）；§11.16cs 那组"六次启动六个渲染区（最大 3418×1110）"
+>   仍是漂移存在的记录，改动按**构造**去机制。钉子 `MainWindowTest.TheOpeningSizeIsStatedInsteadOfInheritedFromTheLayout`
+>   （构造后 min==size==800×600 且 `WA_Resized` 已置；hint 跟随在本机两平台都不可复现，所以只钉构造决定）；
+>   变异 1/1 红（删 resize 行 ⇒ 回 Qt 默认 640×480）。`test_gui` 两棵树 **208**。
+> · **顺带的既有红**：`build-release` 跑 `test_gui` 全量露出 `PluginLifecycleTest.HandwrittenRegistrationCanDisableForAllUsers`
+>   一直红（断言写死 Debug 后缀 `test_plugind`，`808bbd2` 起；Release 库叫 `test_plugin.so`）⇒ 改成"注册路径必须点名
+>   沙箱拷贝的文件名"（期望值从拷贝自身推出）。教训：**测试里写死构建后缀 = 另一棵树必红**。
+
 > 2026-09-25 **M11x：B5 的触发规模做成配方（设计 §11.16cu）**
 > · `VsgBackendTest.TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryCommand`：一次 `render()` 带
 >   **2000 条命令**（文档点名的规模），默认预算。帧 1 拒 **976 个 draw 块**（首条 + 汇总两条诊断）；同 call 的

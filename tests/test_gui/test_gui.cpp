@@ -4998,8 +4998,11 @@ TEST(PluginLifecycleTest, HandWrittenRegistrationCanDisableForAllUsers)
     ASSERT_NE(manual, nullptr) << "手写的注册文件必须被读到";
     EXPECT_FALSE(manual->enabled);
     EXPECT_TRUE(manual->name == u8"test_plugin");
-    EXPECT_NE(std::string(reinterpret_cast<const char*>(manual->path.data()), manual->path.size()).find("test_plugind"),
-              std::string::npos);
+    // 注册必须点名那个库 FILE（沙箱里那份拷贝），而不是只把插件名抄回来；期望的文件名从拷贝自身
+    // 推出，两棵树都成立——这里原来写死 Debug 后缀 "test_plugind"，于是本条在 Release 树一直是红的
+    // （Debug 的库叫 test_plugind.so，Release 叫 test_plugin.so）。
+    const std::string registered_path(reinterpret_cast<const char*>(manual->path.data()), manual->path.size());
+    EXPECT_NE(registered_path.find(source.filename().string()), std::string::npos);
 
     // 策略必须在没有跑过 loadAll() 的进程里也生效：一次显式 load()（对话框的试用加载）
     // 不得把管理员对所有用户禁用的插件重新拉起来。

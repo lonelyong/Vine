@@ -160,7 +160,14 @@ void AxisGizmo::onSurfaceResized(int width, int height)
         return;
     }
     // Bottom-left corner in top-left-origin device coordinates.
-    const int side = size_px_ > dev_h - 2 * margin_px_ ? dev_h - 2 * margin_px_ : size_px_;
+    //
+    // A window mid-layout can be smaller than the box plus its margins (measured 100x30 on the demo's
+    // first shown frame): then the box does not fit and the honest spelling of that is a ZERO-area
+    // rectangle, which the backend's empty-rectangle rule skips. The naive `dev_h - 2 * margin_px_`
+    // went NEGATIVE there and announced a -2x-2 viewport - the same skip downstream, but as garbage
+    // handed to the backend rather than a stated decision.
+    const int fitted = dev_h - 2 * margin_px_;
+    const int side   = fitted > 0 ? (size_px_ > fitted ? fitted : size_px_) : 0;
     setViewport(margin_px_, dev_h - margin_px_ - side, side, side);
 }
 

@@ -67,6 +67,11 @@
   attach 只要求“句柄 + 尺寸 > 0”，而新 QWindow 的退化尺寸（实测 1x1，不是 0x0）就够，真实尺寸随布局
   由 resize/settle 路径补齐。否则设备/管线构建会掉到事件循环第一拍（启动框关掉后那 ~1 s 空屏）。
   框架不该为这事加尺寸策略（曾加的 `RenderControl::setInitialSurfaceSize()` 已删）。
+- **主窗口的启动尺寸是显式写下的**（2026-09-25）：`MainWindow` 构造里 `resize(800×600)`（与
+  `setMinimumSize` 同值）。不写它的话 Qt 首 show 会**按布局 sizeHint 定尺寸**，而 hint 跟着
+  ribbon/dock/日志内容走——实测六次启动六个渲染区（最大 3418×1110，见 §11.16cs/dc）；门禁因此一直
+  **自己**先把窗口 resize 到 800×600 再判图（`scripts/vsg_rewrite_gate.sh`），写上之后那一步从“补偿”
+  变“确认”。钉子 `MainWindowTest.TheOpeningSizeIsStatedInsteadOfInheritedFromTheLayout`（去掉 resize 行 ⇒ 红）。
 - **无头模式已经有进度显示了**（2026-09-18）：`ConsoleUserIO` 构造时挂一个 `ConsoleProgressReporter`，
   订阅 `ProgressHost::changed()` 后按"500ms 后首次出字、最小行距 200ms、百分比变 5% 才重画"出**一行一条**的
   `[进度] 42% 阶段名`，宿主结束后补一行 `[进度] 已结束`；要推自己的节奏就调 `poll()`（不需先 `start()`）。

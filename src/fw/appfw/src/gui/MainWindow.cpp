@@ -85,6 +85,13 @@ MainWindow::MainWindow()
 
     impl<itype>()->setWindowTitle("Vine");
     impl<itype>()->setMinimumSize(QSize(800, 600));
+    // The opening size is STATED, not inherited from the dock layout. Without an explicit size Qt sizes
+    // the first show from the layout's size hint, which follows the dock contents: a start whose console
+    // log is long opened the window several times larger (measured up to 3418x1110, and six starts gave
+    // six different render areas). 800x600 is the documented default the gate judges the picture at (see
+    // scripts/vsg_rewrite_gate.sh, "the app's own start-up size is NOT deterministic"); a resize the user
+    // makes afterwards is left alone.
+    impl<itype>()->resize(QSize(800, 600));
     impl<itype>()->setCentralWidget(static_cast<QWidget*>(dptr()->dock_panel_mgr->root()->impl()));
     impl<itype>()->setStatusBar(dptr()->status_bar->impl<QStatusBar>());
 
