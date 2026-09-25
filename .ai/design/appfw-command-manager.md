@@ -649,3 +649,7 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   二是承诺的直接收益"不用 GUI 测转移"在"零签名变化"下不可达——嵌套私有类没有任何测试缝，加缝就是动 API。
   审计价值已由"调度内核转移表"一节承接。真正需要 `Scheduler` 形态的是带队列/优先级的整体重设计，
   等 API 轮一起做。
+- **`collectLiveChains()` 快照分配复用（④A，2026-09-25 测量后否决）**：它只有 2 个调用者——
+  `cancelLiveChains()`（生产路径仅 `Application::shutdown()` 的 `cancelAllAndWait()`，每进程一次）与
+  `takeOverForeground()`（顶层 Exclusive 命令，按用户操作、自带 2s 有界等待）。快照大小 = 活链数
+  （典型 0–3）。复用会引入一把锁保护的常驻缓冲，去优化一个每进程一次、O(活链数) 的分配——无对象可优化。
