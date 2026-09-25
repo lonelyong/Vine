@@ -1251,3 +1251,24 @@ material 值 / 流字节 / cull 全部**不进**。
   set**（M4 用例全绿、验证层 1 条 —— 正是"只有门禁看得见"的那一类）。
 * **口子（登记）**：①撞预算的那一帧仍丢内容（有报告 + 计数；帧内不搬字节是有意的）；②`ContentSets::kept_replaced`
   是"无停放窗口"的兜底（随增长事件增长，不随帧）；③直连 `ContentAssembly` 的调用方要自己调 `repoint`。
+
+### §11.16cu M11x（2026-09-25）：B5 的触发规模做成配方——一个 drawing call 装 2000 条命令（一次增长收口）
+
+* **登记来自哪里**：§11.16cm 的收益表把"1024 draw/帧的上限在 2000 drawable 规模上会拒掉约一半绘制"列为 B5 后半的触发面；
+  §11.16ct 落地了机制，本片把**触发规模本身**放进常驻套件。
+* **配方**（`VsgBackendTest.TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryCommand`）：一个 pass、一个
+  program、**一次 `render()` 带 2000 条命令**（= 文档点名的规模），默认预算（views 256 / draws·lights·shadows 各
+  1024）。
+* **实测（lavapipe，Debug + 验证层）**：帧 1 的 2000 个 draw block **976 被拒**（首条点名 `the command's draw
+  block` + 一条 "976 drawing call(s)…" 汇总）；同一 drawing call 的 **1 个 light 块与 1 个 shadow 块**装得下——
+  块的口径是"每 call 一块（灯/影）+ 每命令一块（draw）"，所以撞顶只落在 draw region。帧 2 的 `beginFrame()`
+  替换存储（draws 1024 → 2048，doubling 已覆盖 2000）后**同一内容全部装下**（`overflows()==0`、无新请求）；
+  帧 3 稳态（不替换、不报）。诊断全书 = **3 条**（2 次拒绝 + 1 次增长）。
+* **数字（只打印）**：record ≈ **2–5 ms/帧**、commit ≈ **84–179 ms/帧**（首帧含管道编译；其余是软件光栅器画
+  2000 个重叠三角形）。
+* **结论**：跨过文档规模是**一次**增长事件，而不是"每个 region 一帧"——增长半径按"本帧真正试过的 region"兑现，
+  正常场景的压力只在 draw 块上；若三个 region 都被压满，仍会逐帧逐个兑现（区域隔离由策略用例与 `grow_*` 断言守着）。
+* **方法与教训**：第一版配方按"每条命令是一个 drawing call"预测（三帧、每帧长一个 region），实测全相反——
+  **量出来的才是口径**：一次 `render()` = 一个 drawing call（灯/影每 call 一块），命令只是它的 draw 块。
+* **判据**：套件 439 → **440**；两棵树门禁 `cases=440 failed=0 vuid=0 hazard=0`、应用行与历史逐字相同；本片
+  **无源改动**（只加配方与记录）。

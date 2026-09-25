@@ -1,3 +1,11 @@
+> 2026-09-25 **M11x：B5 的触发规模做成配方（设计 §11.16cu）**
+> · `VsgBackendTest.TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryCommand`：一次 `render()` 带
+>   **2000 条命令**（文档点名的规模），默认预算。帧 1 拒 **976 个 draw 块**（首条 + 汇总两条诊断）；同 call 的
+>   light/shadow 各 1 块装得下 ⇒ 撞顶只在 draw region。帧 2 换存储（draws 1024→2048）后全部装下、帧 3 稳态，
+>   全书 3 条诊断、**一次**增长事件。record ≈2–5 ms、commit ≈84–179 ms（打印）。
+> · 口径教训：一次 `render()` = **一个 drawing call**（灯/影每 call 一块），命令只是它的 draw 块 —— 我按"每条命令一个 call"
+>   预测成三帧三次增长，实测全相反。套件 **440**、两棵树门禁 vuid=0；本片只加配方与记录（无源改动）。
+
 > 2026-09-25 **M11w：块预算按需增长（收掉 B5 后半；设计 §11.16ct）**
 > · 某帧写超预算仍**按帧**拒写（有报告 + 计数），但 storage 记住"最坏一帧试了多少"（`growthNeeded()`，max over
 >   frames、不重置）；下一次 `beginFrame()` 用**新 buffer**（预算 `max(need, 2×budget)`）整体替换，旧 storage 与
