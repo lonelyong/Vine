@@ -22,6 +22,7 @@
 #include <vine/vsg/api/ContentStore.hpp>
 #include <vine/vsg/api/DeviceProbe.hpp>
 #include <vine/vsg/api/HostTargets.hpp>
+#include <vine/vsg/api/MaterialImages.hpp>
 #include <vine/vsg/api/VsgBackend.hpp>
 #include <vine/vsg/api/WindowTarget.hpp>
 #include <vine/vsg/core/FrameCompiler.hpp>
@@ -34,6 +35,8 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/Texture.hpp>
+#include <vine/imaging/Image.hpp>
 
 // TestHostWindow is an XCB window, so the cases that use it reach for the connection themselves; the guard
 // matches the one around those cases.
@@ -2189,6 +2192,146 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
                                       << static_cast<int>(centre[0]) << ", " << static_cast<int>(centre[1])
                                       << ", " << static_cast<int>(centre[2]) << ")";
     EXPECT_EQ(backend->deviceWaits(), 0U) << "2000 notes a frame stop nothing";
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
+TEST(VsgBackendTest, TheTextureCacheDropsTheOldestInsertionAndRebuildsWhatItDropped)
+{
+    // A6'S SEMANTICS, PINNED WITHOUT A COUNTER. The cache's own vocabulary (has/count) is enough to say
+    // what the registry (§6) registers: eviction is by INSERTION order rather than by use, and past the
+    // 256-entry bound the cache stops caching - in a cyclic pass over L > 256 textures EVERY acquire of
+    // the NEXT pass misses (each texture is evicted before its own turn comes round again), so the cache
+    // uploads all L textures per pass. A pass over 200 textures misses NOTHING.
+    //
+    // Nothing is drawn: this is the cache's contract, not a frame's. The numbers are printed; the
+    // assertions are the misses counted through has() plus the one A/B pair that tells FIFO from LRU.
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth  = 128;
+    constexpr int kHeight = 96;
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    vn::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
+    ASSERT_NE(images, nullptr);
+    EXPECT_EQ(images->count(), 0U) << "a session that drew nothing caches no texture";
+
+    const auto make_texture = [](int side, unsigned shade) {
+        const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
+            new vn::graphics::Texture2D(side, side, vn::imaging::PixelFormat::Rgba8Unorm));
+        const vn::intrusive_ptr<vn::imaging::Image> image(
+            new vn::imaging::Image(side, side, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        for (std::size_t index = 0; index < pixels.size(); ++index) {
+            pixels[index] = static_cast<std::byte>((index + shade) & 0xFFU);
+        }
+        texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
+        return texture;
+    };
+    const auto acquire = [&](const vn::intrusive_ptr<vn::graphics::Texture2D>& texture) {
+        vn::vsg::detail::TextureReject reason = vn::vsg::detail::TextureReject::Ok;
+        const vn::vsg::SamplerImage acquired = images->acquire(texture.get(), reason);
+        EXPECT_EQ(reason, vn::vsg::detail::TextureReject::Ok) << "a complete 2D texture must upload";
+        EXPECT_NE(acquired.view, nullptr);
+        EXPECT_NE(acquired.sampler, nullptr);
+    };
+
+    std::printf("\n");
+    // 1. THE POLICY: insertion order, NOT use. B is acquired right after A; A is then acquired AGAIN (a
+    //    hit - same revision) before X pushes the cache one past its bound. A cache that refreshed
+    //    recency on a hit would drop B; this one drops A.
+    {
+        const auto oldest = make_texture(2, 1U);
+        const auto second = make_texture(2, 2U);
+        acquire(oldest);
+        acquire(second);
+        std::vector<vn::intrusive_ptr<vn::graphics::Texture2D>> filler;
+        filler.reserve(254U);
+        for (unsigned index = 0; index < 254U; ++index) {
+            filler.push_back(make_texture(2, 3U + index));
+            acquire(filler.back());
+        }
+        ASSERT_EQ(images->count(), 256U) << "the bound is 256 entries";
+        ASSERT_TRUE(images->has(oldest.get()));
+        acquire(oldest);  // the hit an LRU cache would count as USE
+        const auto one_past = make_texture(2, 9U);
+        acquire(one_past);
+        EXPECT_FALSE(images->has(oldest.get()))
+            << "eviction is by insertion order: the re-acquired texture is still the OLDEST insertion";
+        EXPECT_TRUE(images->has(second.get())) << "an LRU cache would have dropped this one instead";
+        EXPECT_EQ(images->count(), 256U) << "one past the bound evicts exactly one entry";
+    }
+
+    // The pass runner: count the entries the NEXT acquire will have to REBUILD by asking has() BEFORE it.
+    const auto pass = [&](const std::vector<vn::intrusive_ptr<vn::graphics::Texture2D>>& set) {
+        std::size_t misses = 0;
+        for (const auto& texture : set) {
+            if (!images->has(texture.get())) {
+                ++misses;
+            }
+            acquire(texture);
+        }
+        return misses;
+    };
+    const auto time_pass = [&](const std::vector<vn::intrusive_ptr<vn::graphics::Texture2D>>& set) {
+        const auto        began = std::chrono::steady_clock::now();
+        const std::size_t misses = pass(set);
+        const auto        ended = std::chrono::steady_clock::now();
+        const double      millis =
+            std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(ended - began).count();
+        return std::pair<std::size_t, double>{ misses, millis };
+    };
+
+    // 2. A SET THAT FITS: 200 textures (64x64, 16 KiB each) are rebuilt once, then served every pass.
+    std::vector<vn::intrusive_ptr<vn::graphics::Texture2D>> fitting;
+    fitting.reserve(200U);
+    for (unsigned index = 0; index < 200U; ++index) {
+        fitting.push_back(make_texture(64, index));
+    }
+    const auto [first_fitting, first_fitting_ms]   = time_pass(fitting);
+    const auto [after_fitting, after_fitting_ms]   = time_pass(fitting);
+    EXPECT_EQ(first_fitting, 200U) << "first sight of every texture rebuilds it";
+    EXPECT_EQ(after_fitting, 0U) << "a set that fits the bound is served every pass";
+    std::printf("[a6] 200-texture pass: %zu misses then %zu; %.2f ms then %.2f ms\n", first_fitting,
+                after_fitting, first_fitting_ms, after_fitting_ms);
+
+    // 3. PAST THE BOUND: 300 textures - a pass's tail (the last 256 insertions) survives, and EVERY pass
+    //    after it misses EVERY texture (each is evicted before its own turn comes round again).
+    std::vector<vn::intrusive_ptr<vn::graphics::Texture2D>> exceeding;
+    exceeding.reserve(300U);
+    for (unsigned index = 0; index < 300U; ++index) {
+        exceeding.push_back(make_texture(64, 64U + index));
+    }
+    const auto [first_exceeding, first_exceeding_ms] = time_pass(exceeding);
+    EXPECT_EQ(first_exceeding, 300U) << "first sight of every texture rebuilds it";
+    EXPECT_EQ(images->count(), 256U) << "the bound caps the entries";
+    EXPECT_FALSE(images->has(exceeding[0].get()));
+    EXPECT_TRUE(images->has(exceeding[44].get())) << "the last 256 insertions are what survives a pass";
+    EXPECT_TRUE(images->has(exceeding[299].get()));
+    const auto [after_exceeding, after_exceeding_ms] = time_pass(exceeding);
+    EXPECT_EQ(after_exceeding, 300U) << "past the bound the cache uploads every texture of every pass";
+    std::printf("[a6] 300-texture pass: %zu misses then %zu; %.2f ms then %.2f ms (~%.1f us per rebuilt "
+                "64x64 texture)\n",
+                first_exceeding, after_exceeding, first_exceeding_ms, after_exceeding_ms,
+                (after_exceeding_ms - after_fitting_ms) * 1000.0 / 300.0);
+    EXPECT_EQ(images->count(), 256U);
+
     backend->shutdown();
     EXPECT_TRUE(host.alive());
 }
