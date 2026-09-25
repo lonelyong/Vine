@@ -174,6 +174,6 @@ using NodePtr = intrusive_ptr<Node>;
  * @param world World transform to place it with.
  * @return World-space AABB (empty when @p local is empty).
  */
-[[nodiscard]] Aabbd transformBox(const Aabbd& local, const Mat4d& world);
+[[nodiscard]] VN_GRAPHICS_API Aabbd transformBox(const Aabbd& local, const Mat4d& world);
 
 VN_GRAPHICS_NS_END
