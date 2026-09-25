@@ -494,17 +494,18 @@
 >   （最后一个是同类内一致性：改了兄弟就一起改）。
 > - **`bumpRevision()` 新增**（`Buffer` 与 `Geometry`——唯一两个有 `setRevision` 的）：`setRevision(revision() + 1u)`
 >   这个咒语此前在测试里 20+ 处重复，连 `Mesh.hpp:219` 的**生产代码**都在写它；新方法让"前进一格、不会倒退"成为易写且写不错的路。
-> - **T7（已记待办，未做）**：专门写了扫描器量 Doxygen 覆盖——**公开函数 `@param` 缺口 = 0**（约定这半边本来就守住了）；
+> - **T7（已记待办，未做；2026-09-25 复核仍待裁决）**：专门写了扫描器量 Doxygen 覆盖——**公开函数 `@param` 缺口 = 0**（约定这半边本来就守住了）；
 >   **缺 `@return` 的 103 处**，绝大多数是 `/** @brief Gets X. */ X x() const;`，`@brief` 本身就是返回值说明。
 >   补 103 条 "@return The X" 属文档戏法，**建议把规则收窄为"`@brief` 已说明返回值时可省 `@return`"**；决定前不动
->   （`scripts/check_doc_symbols.py` 不查每参数标签，门禁不会因此变红）。
+>   （`scripts/check_doc_symbols.py` 不查每参数标签，门禁不会因此变红）。**现行 `.github/copilot-instructions.md` 仍要求每个非 void 返回都写 `@return`** ⇒
+>   要动先改指引（用户裁决）；且 103 是重写前的计数，真要补得重新扫。
 > - **T6 遗留（已决定不改）**：`Light::castShadow()`、`RenderTarget::depthPromotion()`、`OrbitCameraManipulator::zoomToCursor()`
 >   三处不合 `is/has` 前缀，但其 `is/has` 形式读起来更差——与 `RenderPass::shouldClearDepth()`（**请求**而非状态，头文件已写明理由）同理。
 > - **T10（重新定性，只改注释）**：`setLights` 的 `reserve` 与 `setPassInputs` 的"assign 保住 buffer"注释**陈述了代码做不到的事**
 >   ——`resetPassRequest()` 是 `state.request = VsgPassRequest{}`，**每个 pass 整体赋值两次**（beginPass + endPass），容量照样丢。
 >   修法要么字段化重置（丢掉"新增字段永不忘重置"这个**刻意**保证，见该函数注释），要么把两个 buffer 移出 request（~8 处改名）；
 >   **收益（~2 次分配/pass/帧）不值这个保证**，故只把注释改成事实，并写下将来真要动时该怎么做。
-> - **T15（已量，待做）**：`VsgRendererState&` 的实际使用面量出来了——真正收它的**定义**是 **38 个**（先前口径 81 含头文件声明），
+> - **T15（已量，待做）—— 2026-09-25 复核：已失效**：`VsgRendererState&` 的测量是 `SceneBridge` 时代的事；该类型已随重写退场（`grep -r VsgRendererState src/ tests/` = **0**），"收窄参数 24 处"不再有对象，按历史记录封存。原文留档：真正收它的**定义**是 **38 个**（先前口径 81 含头文件声明），
 >   **24 个只碰 ≤2 个字段**，均值 **2.6 字段 / ~30**；只有 3 个碰 ≥8（`setupContentSlot` 12、`drawScreenProgram` 12、
 >   `renderContentSlot` 8 —— 正是已标记过长的那些）。⇒ **收窄参数是机械可做的（24 处）且真能换来隔离**，
 >   而重耦合只在 3 个长函数上，属于 T14/拆函数的同一味药。测量脚本：`/tmp/statefields.py`（按 `state.<field>` 读点计数）。
