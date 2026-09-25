@@ -7904,3 +7904,215 @@ TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
         std::fflush(stdout);
     }
 }
+
+TEST(SceneMutationTest, ReparentingMovesTheCommandAndBothSubtreeBoxes)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+
+    auto left = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    left->setMatrix(vn::math::translate(Vec3d(-2.0, 0.0, 0.0)));
+    auto right = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    right->setMatrix(vn::math::translate(Vec3d(2.0, 0.0, 0.0)));
+    root->addChild(left);
+    root->addChild(right);
+
+    auto mover = makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"mover");
+    left->addChild(mover);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    // The world-space box is the end result; the cache witness is the
+    // recompute counter read below (the collection walk is what consumes the
+    // per-node cached boxes).
+    const Aabbd before = scene.boundingBox();
+    ASSERT_TRUE(before.isValid());
+    EXPECT_NEAR(before.min().x, -2.0, 1e-9);
+    EXPECT_NEAR(before.max().x, -1.0, 1e-9);
+
+    auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_NEAR(commands[0].modelMatrix.element(0, 3), -2.0, 1e-9);
+    const std::uint64_t left_seeded  = left->boundsRecomputeCount();
+    const std::uint64_t right_seeded = right->boundsRecomputeCount();
+
+    // The only thing that changes: which matrix sits above the mover.
+    right->addChild(mover);
+
+    EXPECT_TRUE(left->children().empty());
+    EXPECT_EQ(right->children().size(), 1u);
+    EXPECT_EQ(mover->parent(), right.get());
+
+    const Aabbd after = scene.boundingBox();
+    ASSERT_TRUE(after.isValid());
+    EXPECT_NEAR(after.min().x, 2.0, 1e-9);
+    EXPECT_NEAR(after.max().x, 3.0, 1e-9);
+
+    commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_NEAR(commands[0].modelMatrix.element(0, 3), 2.0, 1e-9);
+
+    // Both unions are re-derived: the old parent loses a child, the new one
+    // gains it, and each announcement must reach its own chain (the per-node
+    // box cache is served by stamp, so a missed one stays stale for every
+    // later walk).
+    EXPECT_GT(left->boundsRecomputeCount(), left_seeded) << "the OLD parent's union is re-derived";
+    EXPECT_GT(right->boundsRecomputeCount(), right_seeded) << "the NEW parent's union is re-derived";
+}
+
+TEST(SceneMutationTest, ReparentingSwapsWhichStateOverridesApply)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+
+    auto material_a = MaterialPtr(new Material());
+    auto material_b = MaterialPtr(new Material());
+    auto program_a  = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    program_a->setName(u8"program-a");
+    auto program_b = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    program_b->setName(u8"program-b");
+
+    auto state_a = intrusive_ptr<StateNode>(new StateNode());
+    state_a->setMaterial(material_a);
+    state_a->setProgram(program_a);
+    state_a->setOpacity(0.25f);
+    auto state_b = intrusive_ptr<StateNode>(new StateNode());
+    state_b->setMaterial(material_b);
+    state_b->setProgram(program_b);
+    state_b->setOpacity(0.5f);
+
+    auto holder = intrusive_ptr<Group>(new Group());
+    holder->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    state_a->addChild(holder);
+    root->addChild(state_a);
+    root->addChild(state_b);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material.get(), material_a.get());
+    EXPECT_EQ(commands[0].program.get(), program_a.get());
+    EXPECT_NEAR(commands[0].opacity, 0.25f, 1e-5f);
+
+    // The override chain is re-resolved every collection, so the move changes
+    // material, program and opacity together.
+    state_b->addChild(holder);
+    commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material.get(), material_b.get());
+    EXPECT_EQ(commands[0].program.get(), program_b.get());
+    EXPECT_NEAR(commands[0].opacity, 0.5f, 1e-5f);
+
+    // And back: nothing of the other subtree sticks.
+    state_a->addChild(holder);
+    commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material.get(), material_a.get());
+    EXPECT_EQ(commands[0].program.get(), program_a.get());
+    EXPECT_NEAR(commands[0].opacity, 0.25f, 1e-5f);
+}
+
+TEST(SceneMutationTest, SwappingMaterialAndProgramTakesEffectOnTheNextCollection)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  node = makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri");
+    root->addChild(node);
+    auto* geom = dynamic_cast<Geometry*>(node->children().front().get());
+    ASSERT_NE(geom, nullptr);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    auto material_x = MaterialPtr(new Material());
+    auto material_y = MaterialPtr(new Material());
+    auto program_x  = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    program_x->setName(u8"program-x");
+    auto program_y = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    program_y->setName(u8"program-y");
+
+    geom->setMaterial(material_x);
+    geom->setProgram(program_x);
+    auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material.get(), material_x.get());
+    EXPECT_EQ(commands[0].program.get(), program_x.get());
+
+    // A swap on the same drawable: the next collection carries the new
+    // identities, not the ones it started with.
+    geom->setMaterial(material_y);
+    geom->setProgram(program_y);
+    commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material.get(), material_y.get());
+    EXPECT_EQ(commands[0].program.get(), program_y.get());
+
+    // And clearing both falls back to the inherited defaults.
+    geom->setMaterial(nullptr);
+    geom->setProgram(nullptr);
+    commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material, nullptr);
+    EXPECT_EQ(commands[0].program, nullptr);
+}
+
+TEST(SceneMutationTest, RemovingASubtreeDropsItsCommandsAndShrinksTheBox)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+
+    auto keeper  = makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"keeper");
+    auto removed = makeTriangleNode(Vec3d(-2, 0, -3), nullptr, u8"removed");
+    root->addChild(keeper);
+    root->addChild(removed);
+
+    auto* keeper_geom  = dynamic_cast<Geometry*>(keeper->children().front().get());
+    auto* removed_geom = dynamic_cast<Geometry*>(removed->children().front().get());
+    ASSERT_NE(keeper_geom, nullptr);
+    ASSERT_NE(removed_geom, nullptr);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    // The world-space box after the removal is the end result; the cache
+    // witness is the recompute counter read below.
+    const Aabbd before = scene.boundingBox();
+    ASSERT_TRUE(before.isValid());
+    EXPECT_NEAR(before.min().x, -2.0, 1e-9);
+
+    auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 2u);
+    const std::uint64_t root_seeded = root->boundsRecomputeCount();
+
+    root->removeChild(removed.get());
+    EXPECT_EQ(root->childrenRef().size(), 1u);
+    EXPECT_EQ(removed->parent(), nullptr);
+
+    // The box shrinks with the removal, and the command disappears.
+    const Aabbd after = scene.boundingBox();
+    ASSERT_TRUE(after.isValid());
+    EXPECT_NEAR(after.min().x, 0.0, 1e-9);
+    EXPECT_NEAR(after.max().x, 1.0, 1e-9);
+
+    commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].geometry.get(), keeper_geom);
+
+    // The removal announces on the OLD chain, so the parent's union is
+    // re-derived instead of being served stale from the per-node cache.
+    EXPECT_GT(root->boundsRecomputeCount(), root_seeded) << "the removal announces on the old chain";
+
+    // Removal is not destruction: the detached subtree can come back.
+    root->addChild(removed);
+    commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 2u);
+    bool removed_back = false;
+    for (const RenderCommand& command : commands) {
+        removed_back = removed_back || command.geometry.get() == removed_geom;
+    }
+    EXPECT_TRUE(removed_back);
+    EXPECT_NEAR(scene.boundingBox().min().x, -2.0, 1e-9);
+}
