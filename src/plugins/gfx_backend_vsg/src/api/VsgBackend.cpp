@@ -314,6 +314,17 @@ bool VsgBackend::initialize()
 
 void VsgBackend::releaseContentWorld() noexcept
 {
+    // THE DESTRUCTIVE PATH RUNS UNDER ONE COUNTED DEVICE IDLE (the resource rule the design writes down:
+    // destruction has two legal paths, and the whole-session replacement is the one that idles). What is
+    // about to be dropped holds the PIPELINES the frames just submitted still name, and a pipeline
+    // destroyed while a queue executes it is a validation error rather than a picture: measured
+    // 2026-09-25, tearing the world down right after a frame that had switched to a newly compiled
+    // program or topology produced four VUID-vkDestroyPipeline-pipeline-00765 messages (see the
+    // per-frame cost recipe in test_vsg/VsgBackendTest, which is the case that creates a pipeline after
+    // frames have started). The wait is COUNTED because "the frame path never idles the device" has to
+    // stay checkable - see Session::deviceWaits and RetentionStats::device_waits.
+    detail::SessionContentAccess::waitDeviceIdle(d->session);
+
     d->frame = nullptr;
     d->facts.clear();
     d->packets.clear();
@@ -970,6 +981,11 @@ MaterialImages* BackendContentAccess::images(VsgBackend& backend) noexcept
 ContentStore* BackendContentAccess::store(VsgBackend& backend) noexcept
 {
     return backend.d->store.get();
+}
+
+core::VariantPool& BackendContentAccess::pool(VsgBackend& backend) noexcept
+{
+    return backend.d->pool;
 }
 
 }  // namespace detail

@@ -376,6 +376,8 @@ TargetShape
 `StateNode` 改 cull/polygon/blend ⇒ `pipelineVariantCount()` 不变；材质改参数 ⇒ 节点重建 0 次、
 只发生一次 64B 写；目标改尺寸 ⇒ `offscreen_builds` / `program_slot_builds` 不变。
 
+（**2026-09-25 落地**：这份判据已按现代名字实现，见 §11.16cq 的配方——`VariantPool::created()` 在 12 帧材质/几何/状态编辑里逐个 **+0**，只在 program 与 topology 类各 **+1**；材质编辑每帧恰好 +1 行（"只发生一次 64B 写"的现名）。目标改尺寸那半早由 resize 相位与 §11.16ch 的应用判据盖住。）
+
 ### D4 · 资源寿命：owning 的 ResourceManager + 退役队列 + 只读校验器
 
 **做法**（评审 P0-4，把 v1 的 `Ledger` 拆成三件事）：
@@ -4738,11 +4740,14 @@ preview 244; vuid=0`）；include hygiene 0/`784` 文件、诊断格式 0/7、do
 | **A3** SDK 没有内容释放入口（`releaseGeometry/Material/Program/Texture` 都没有） | **设计问题（不改 SDK）** | `RenderBackend` 只给了 `releasePass` / `releaseRenderTarget`，因为**只有这两种对象的生命周期由宿主显式宣布**（SDK 文档如此）；内容对象是引用计数的，宿主放手即 `useCount` 变化 —— 修 1 之后这条链已经闭合（帧级扫尾看得见放手）。加一套"显式 release 内容"的入口等于把引用计数的信息再手写一遍，还多一处必须与 `useCount` 一致的状态 | 不加。**触发器**：出现"宿主必须在同帧内让后端立刻放手"的需求（例如显存压力下的显式驱逐），那时先加**一个**入口（`releaseContent()`？）而不是四个 |
 | **A4** `Material` 是全 SDK 唯一没有 revision 的内容类型；`MaterialManager` 成了死抽象（唯一实现是测试假件） | **两半：一半改设计（已论证），一半登记** | ①`Material` 无 revision ⇒ 后端只能**每帧逐命令** compare-and-write（`VsgBackend.cpp:659`）。这是**有意的兜底**，不是漏接：SDK 的既有规矩是"被共享的对象自己不推断内容变了"，而 `Material` 的 setter 至今没有公告语义 ⇒ 后端不能假设"没人公告 = 没变"。②`MaterialManager`（`MaterialManager.hpp:19-27` 明说"具体后端实现它并自己持有资源缓存"）现在**没有任何生产实现**，那句话是**错的** | ①形状：给 `Material` 加 `revision()/setRevision()/bumpRevision()`（照 `Geometry`/`Texture`/`ShaderProgram`），缓存用"revision 变了才比较"的快路径，**保留** compare-and-write 作为"没公告"的兜底。**触发器**：材质数量大到"每帧 O(命令数) 次块比较"进入剖析的前列（当前 11 趟 × 42 命令 = 数百次 64 B 比较，量级还看不见）。②形状：删掉 `MaterialManager` + 它的假件与用例，并在 SDK 文档里写明"材质由后端按帧观察"。**触发器**：任何一次"宿主以为管理器在物化材质"的误读事件（文档已经写着相反的话，所以先按文档漂移处理） |
 | **A6** `MaterialImages` 淘汰是 FIFO 而非 LRU；`ContentStore` 没有任何容量上界 | **登记** | FIFO 的代价是"批量加载贴图会把正在用的挤掉并重建"，而那一次重建的价钱是**一次上传**（不是错误）；换成 LRU 需要"最近使用帧号"并接进诊断，收益面（同屏活纹理数逼近 256）在 demo 上不成立。`ContentStore` 的上界在修 1 之后由**扫尾**给出（宿主放手即回收），剩下的是"宿主一直持有但从不画"的对象 —— 按本仓既有口径那是**应当保留**（持有者是宿主） | 形状：淘汰键从 `stamp`（插入序）换成"最近被 acquire 的帧号"，`kMaxEntries` 不变。**触发器**：活纹理数接近 256 且观察到"用了很久的贴图被重建" |
+| **A8**（**登记**，§11.16cq）`Observe::FrameCounters` 的六个字段无人写也无人读：`data_nodes_built`、`streams_refreshed`、`offscreen_builds`、`offscreen_resizes`、`window_builds`、`program_slot_builds`（`Observe.hpp:38-43` 声明并写文档；`PhaseTable.hpp:26` 拿 `offscreen_builds` 举例说"phase 必须能拦住它"）。相位用的是自己的 `DevicePhaseCounters`，所以那些规则永远不会响。| **登记** | 要么接线（`ContentStore`/`Streams`/`HostTargets` 都有现成计数点），要么删掉；本配方想要的"Refresh vs Rebuild" 正是 `streams_refreshed`/`data_nodes_built` 能答的 | **触发器**：下一次有人想按"帧里的重建次数"写规则 |
 | **B1** 三张内容表的查找是**线性扫描**，而每命令每帧要跑 5~9 次（`ContentFacts.cpp:50/91/122`；表只增不减） | **缺陷（已修：§11.16bz 量了斜率并落地行序 + 二分；`tablesFor` 自身那两次查找仍登记，见该节第 4 点）** | 复杂度 O(每帧命令数 × 表项数)：1 万 drawable/1 万表项时单帧 ~10⁸ 次指针比较，而 demo 是 ~42 条命令 ⇒ **任何现有门禁都看不见**（所以先做的是修 2：把键补完整，否则索引化会把"两行同键"变成"索引里后写覆盖先写"，把一个静默错图换成另一个）。另一条论证：**现在做没有收益面**，而有真实的回归面（内容路径是 407 条用例里最密的一片） | 形状：每帧在 `tablesFor` 里重建**排序的行号索引**（`vector<uint32_t>` + 每表一个比较器，O(n log n)/帧、`lower_bound` 每次 O(log n)），**不是**给表本身排序（手工构造的表会静默失配）；`ContentFacts` 带一个可空的 `const RowOrder*`，为空时回退到扫描并**在文档里写明这是慢路径**。**触发器**：某个负载的 drawable 数越过 ~2 000，或剖析里 `find*` 家族进入前列 |
 | **B2** 每 pass 每帧的堆分配：`planClearValues` 的 `std::vector<AttachmentClear>`（`ClearPlan.cpp:36-52`，`ClearPlan.hpp:78`）、`ContentPass` 每帧的两个 `vector<ReportOnce>`（`ContentPass.cpp:153`）、`makeInputSet` 的 key `vector`（`ContentPass.cpp:516`）、每 pass 一个 `vsg::RenderGraph`（`OffscreenTarget.cpp:757`） | **缺陷（已收尾：§11.16bx 修第一处，§11.16by 量完其余并改为上限门禁）** | 全部是**小对象**（每 pass 几十~几百字节），M10f 已实测本层稳态帧 ≈2 ms（Debug + lavapipe），而 `AllocationGate` 测的是**堆净增长**、看不见 allocate/free churn（见 B3）⇒ 现在改它无法用证据收尾。`vsg::RenderGraph` 那条更不该省：上一帧的图可能还在飞，复用一个对象就是在改一个已提交命令图里的状态 | 形状：`PassClearPlan::colors` 换成定长 `std::array<AttachmentClear, kMaxColorAttachments>`（附件的上界是设备给的，很小）+ 计数；`ContentPass` 的两个 `ReportOnce` 向量改成复用（resize 而非重新赋值）；`makeInputSet` 的 key 换成成员 scratch。**触发器**：B3 的计数式分配门禁就位之后（先有量具再改） |
 | **B3** 分配证据的强度被高估：`AllocationGate` 用 `mallinfo2`（`AllocationGate.cpp:21-30`，`__GLIBC__` 限定）⇒ **Windows 上 unsupported**，用例在 unsupported 时把增长当 0（`BackendEvidenceTest.cpp:363`）；且只测净增长，对 churn 免疫 | **缺陷（已修：§11.16bx 加了计数的一半，相位改以计数为判据）** | 它守的命题（"稳态帧不分配"）在**交付平台上没有量具**：Windows 上那条相位退化成"没测"，而本仓已经宣称 Windows 是一等公民（H1）。修法是换量具而不是改断言 —— 需要**计数式**分配门禁（覆写 `operator new/delete` 计数，或注入计数分配器），这本身要新单元 + 相位 + 变异，属独立一片 | 形状：`test_vsg` 里一个只计数不改行为的全局 `operator new` 钩子 + `AllocationGate::countAllocations()`；相位断言"稳态帧分配次数 == 0"（并保留 heap 增长作为第二判据）。**触发器**：B2 落地之前必须先有它（否则 B2 无法证明干净） |
 | **B4**（**已测：§11.16cl**，0.53 µs/drawable·次，触发点仅 ~6% 帧预算 ⇒ 不改）`Scene::collectRenderCommandsShared` 每次收集分配 3 个 vector（`Scene.cpp:468/497/512`）并把整表搬 2~3 遍，`commands` 无 `reserve` | **缺陷（登记）** | 相机每动一帧就整份重来，是**引擎侧**（不在本轮前端改动范围内），而它的可见代价取决于命令数与 `sizeof(RenderCommand)`（≈200 B，含 3 个 `intrusive_ptr` 的原子增减）。当前 demo 的收集是 memo 命中或 ~42 条命令，量不出来 | 形状：`keyed` 改成 `vector<pair<double, uint32_t>>`（行号）并就地应用置换；`commands` 按上一帧规模 `reserve`。**触发器**：相机常动的负载 + drawable 数越过 ~2 000，或 B1 之后收集成为下一热点 |
 | **B5**（**前半已收：§11.16ck**；预算不改，理由见该节）拒绝路径逐命令上报（`ContentPass.cpp:882-1116`）+ 每帧重置的 `ReportOnce`；块预算是硬上限（`draws/lights/shadows` 1024/帧、`views` 256/帧，`BlockStorage.hpp:50-56`） | **登记（前者已在 M10c/M10e 登记过）** | 洪水只在"场景里有坏内容"时出现，而那时宿主**需要**知道是哪一条；把逐命令上报压成"每插话一次"会让"这一帧有 300 条画不出来"变成一句话（丢信息）。块预算超限是**拒画**（有报告）而不是错图，且 1024 条/帧远超 demo 量级 | 形状：①按"每 pass 每原因一次"上报（保留第一条的完整身份，后续只计数）；②预算按需增长（插入点 `BlockStorage::beginFrame`）并在诊断里报"本帧预算不够"。**触发器**：大场景宿主报"日志被刷满"或撞到 1024 |
+| **B6**（**登记**，§11.16cq）`StreamKey.revision` 取的是 **Geometry 的 revision**（`GeometryFacts.cpp:107/178`）⇒ 任何一次几何数据公告都会重传**所有** channel 与 index（本片实测 2 streams/帧；替换 buffer 与就地改写一样贵） | **登记（保持现状）** | 逐 `Buffer::revision()` 能省下未改通道的上传，但把"一次公告"的契约换成"每个 buffer 各自公告"——更弱（手册：漏报是静默的） | **触发器**：多通道大网格宿主报上传带宽 |
+| **B7**（**已按设计规则处理；未再复现，§11.16cq**）管线销毁与在飞提交的竞态：本配方首次入套件时门禁两阶段各报 **4×VUID-vkDestroyPipeline-pipeline-00765**；修复 = `releaseContentWorld()` 首行的**计数过的 device idle**（`SessionContentAccess::waitDeviceIdle`） | **登记（诚实记录未复现）** | 此后 20 次单例 + 两次全量套件（有/无该 wait 各试过）+ 两棵树门禁都是 0 VUID | **触发器**：再次出现时先查"最近被替换或逐出的管线"（`VariantPool` 逐出是另一条销毁路径）与 teardown 的 `deviceWaits` |
 | **D2**（**已修：§11.16cj**）`Material::specular()` 的 alpha 文档写"A 是强度"，但**没有任何着色器读它**（`builtin_forward.frag:145`、`builtin_gbuffer.frag:59` 都只读 `.rgb`） | **缺陷（登记：要么接线，要么改文档，二选一）** | 接线会**改画面**（默认 `specular.a = 0.5` ⇒ 高光减半），而"逐像素材质"的通道已经排满（G-buffer 的 spec 附件 alpha 空着，前向可用 `material.specular.a`），于是它是"能接、但要重新调 demo 并重钉像素基线"的一类 | 形状：前向 `spec *= material.specular.a`、G-buffer 把 alpha 写进 spec 附件、延迟侧读出并相乘；两条基线（证据行）随之更新。**触发器**：有人要求"按材质调高光强度"（当前唯一能做到的是改 shininess） |
 | **D3**（**契约已写：§11.16cp**；第一个实例已改：demo 的六张 JPG 天空面 `Rgba8Unorm` → `Rgba8Srgb`，视口带 mean 122.7 → 80.8，判据行不动）色彩空间没有契约：窗口交换链是 `*SRGB`（`WindowTarget.cpp:24-28`），离屏目标是线性，着色器直接对 0..1 的材质/灯值相乘，纹理按 `PixelFormat` 一对一映射 | **设计问题（登记，倾向"写契约"而不是"改管线"）** | 现在**能自洽**：写入 SRGB 交换链的值被硬件当作线性、离屏 16F 也是线性、`*Srgb` 贴图格式存在且映射正确 ⇒ 只要"贴图用 `*Srgb`、颜色值按线性给"，管线就是对的线性管线。真正缺的是**把这条写成契约**并对最常见的错法报警 | 形状：①`Texture`/`PixelFormat`/`RenderTarget::ColorFormat` 的文档写明"引擎内部一律线性，颜色贴图请用 `*Srgb`（PNG 通常是 sRGB）"；②`Colorf` 文档写明"线性值"；③（可选）在 `MaterialImages::acquire` 对"非 sRGB 格式的颜色贴图"给一次 Info。**触发器**：有人报"画面比参考图亮/暗一个 gamma" |
 | **D4**（**已修：§11.16cg**）延迟光照的背景判据是 `dot(pos,pos) < 1e-6`（`builtin_deferred_lighting.frag:34`）⇒ 相机贴住几何时出现固定的 0.06 色洞 | **缺陷（登记：判据该换成"这条通道写没写过"）** | 修法明确（G-buffer 的 position 附件 `w = 1` 表示写过，清成透明黑 ⇒ `w == 0` 就是没写过），但它是**着色器契约**的改动：要同时改两个 shader 的注释/ABI 说明、重跑 `vine_shader_check.sh`，并造一个"相机在几何内部"的设备像素用例才有证据 —— 本机窗口用例跳过，这条链路里最贵的一环（真机画面）恰好是缺的 | 形状：`if (pos_tex.a < 0.5) { 背景 }`，并把"w = 1 表示写过"写进 G-buffer 的 ABI 说明；用例：把相机放进球内部，断言中心像素不是 0.06。**触发器**：有人报"贴脸看模型时出现一块纯色" |
@@ -5528,7 +5533,7 @@ N 个三角形（网格铺开、全部在视锥内、距离各不同 ⇒ 排序�
 | --- | --- | --- | --- |
 | **D5** albedo 附件 RGBA8 → RGBA16F | ★ **实测**：0.06 的暗色阶在 RGBA8 里只有 **16 级 / 64 步**、相邻步长正好 **1/255** ⇒ 暗端**相对跳变 6.5%**（人眼看得见的条带）；RGBA16F 在同量级的步长 ≈2^-17 ≈ **0.013%**（不可见） | 每张 G-buffer 颜色附件 **+8.3 MB**（1080p：8.29 → 16.6 MB）+ 目标形状进管线键 ⇒ 全部离屏管线**重编一次**（一次性） | **值得做**（唯一的"看得见画质"的项；代价小且一次性） |
 | **B5 后半**（块预算按需增长） | 1024 draw/帧的上限在**B4 的触发规模（2000 drawable）上会拒掉约一半绘制**（拒画有报告、有计数） | 新 buffer + retirement（照 `MaterialArena` 的轮转形状）；已写明"跨帧换 buffer 会动到已提交命令缓冲命名的字节" | 中：第一个大场景宿主出现时做 |
-| **A4** `Material` revision | 每帧的上界：demo 规模 11 趟 × 42 命令 ≈ **460 次 64 B 比较 ≈ 10 µs/帧 ≈ 0.06%**（由 M10f 实测的 2 ms/帧内容层推） | 新公开 API + 文档 | **不值得**：数字比噪声还小 |
+| **A4** `Material` revision（**已实测：§11.16cq**——一次材质编辑 = 每帧 +1 行重建、**0 上传、0 变体**；record 半段 7–19 µs/帧（Release, 1 drawable）） | 每帧的上界：demo 规模 11 趟 × 42 命令 ≈ **460 次 64 B 比较 ≈ 10 µs/帧 ≈ 0.06%**（由 M10f 实测的 2 ms/帧内容层推） | 新公开 API + 文档 | **不值得**：数字比噪声还小 |
 | **B4 的修**（reserve + 就地置换） | 省掉倍增重分配与 ~400 KB 搬运 ≈ **1.05 ms 里的 5–8%**（M11p 实测） | 引擎侧改动 + 顺序用例 | 不在本轮（触发点只到 6% 帧预算） |
 | **A6** LRU / 容量上界 | 只在"同屏活纹理逼近 256"时才有面（demo 不成立） | 淘汰键改造 | 保持登记 |
 | **首帧 gizmo 空白** | 一帧没有工具叠层 | 引擎侧行为改动 | 低 |
@@ -5689,3 +5694,75 @@ background 0%; vuid=0 warnings=0`；引擎 `test_graphics` 两棵树各 **276 �
 
 **下一步**：D3 收口 ⇒ §11.16cm 的排序里只剩 **B5 后半**（等第一个大场景宿主）与各自触发器的项；
 `BlockStorageTest` 那条偶发仍等第三次出现（复用 §11.16co 的判据）。
+
+### §11.16cq 每帧变化的成本：四类编辑的实测 + 键审计落地（M11u，2026-09-25）
+
+**问题**：宿主每帧改一样东西——材质值、Geometry 的顶点字节、StateNode 的状态、节点的 program——后端必须
+用**最便宜且正确**的答法回应。哪一种答法正确写在 `core/Keys.hpp` 里：program（含 revision）、顶点布局、
+目标形状、variant、**topology 类**是身份（改了要编译）；材质值、流字节、depth/cull/polygon/blend 是数据
+（**永远不许重编**）。
+
+**配方**（新用例 `VsgBackendTest.MeasureWhatEachKindOfEditCostsPerFrame`）：一个 32×32 网格
+（1024 顶点 = 12 KiB + 5766 索引），一个 pass 一个 drawable。先 6 帧热机，然后 6 个区制各 12 帧，每帧只改
+一样东西；时间把一帧切成两半——**record**（`beginFrame…endFrame`：facts/计划/块/流）与 **commit**
+（`swapBuffers`：记录+提交+呈现）——并在每个区制前后读三组**活的**计数：`ContentStore::builds()`、
+`StreamUploads::uploads()`、`VariantPool::created()/reused()`。数字打印出来供下表；断言全是机器无关的。
+
+**数字（Release，两次运行；µs/帧；Debug 供对照：record 23–39、commit 0.76–1.09 ms）**：
+
+| 区制（每帧） | record run1/run2 | commit run1/run2 | builds | uploads | created | reused |
+| --- | --- | --- | --- | --- | --- | --- |
+| 稳态（什么都不改） | 19.1 / 7.3 | 967 / 812 | +0 | +0 | +0 | +24 |
+| 材质编辑（`setDiffuse`） | 8.9 / 7.5 | 906 / 840 | **+12** | +0 | **+0** | +24 |
+| 几何：**新 buffer** + 公告 | 9.2 / 7.8 | 936 / 944 | **+12** | **+24** | **+0** | +24 |
+| 几何：**同一 buffer 改写字节** + 公告 | 10.2 / 9.1 | 954 / 970 | **+12** | **+24** | **+0** | +24 |
+| 状态：cull 每帧翻转 | 7.8 / 10.5 | 843 / 846 | +0 | +0 | **+0** | +24 |
+| program 每帧交替（**冷**：新 program 第一帧） | 12.9 / 8.9（一帧） | **2440 / 2485** | +1 | +0 | **+1** | +1 |
+| program 每帧交替（热） | 7.7 / 11.5 | 810 / 906 | +0 | +0 | **+0** | +24 |
+| topology 类改变（一次性，边界） | —— | —— | +0 | +0 | **+1** | —— |
+
+**结论（按能看见的量排序）**：
+
+1. **record 半段是平的**：7–19 µs/帧（Release），横跨所有区制——包括"每帧重传 24 KiB"和"每帧换 program"。
+   后端的每帧账面工作与编辑种类无关；帧的成本在 commit 半段（lavapipe 上 0.8–1.0 ms）。
+2. **唯一花毫秒的编辑是新 program 的第一帧**：commit **2440/2485 µs vs 稳态约 850 µs ⇒ 约 +1.6 ms 一次性**
+   （Release 两次几乎一致；Debug 里 2.6–21.8 ms 的抖动来自 CPU 争用，不代表路径）。之后每帧换 program
+   **不再编译**（created +0、reused +2/帧）。
+3. **键审计成立**：材质/几何/状态三类在 12 帧里 `created` 全是 **+0**；program 与 topology 类各 **+1**——
+   后两行是本配方的**正对照**，证明"created 不动"不是空话。材质编辑每帧恰好 +1 行、0 上传；几何编辑每帧
+   +1 行（新 revision）。
+4. **几何数据编辑的成本 = 每条 stream 一次上传**（本网格 2 条：位置 channel + index），而且**替换 buffer
+   对象与就地改写字节一样贵**——因为 `StreamKey.revision` 取的是 **Geometry 的 revision**
+   （`GeometryFacts.cpp:107/178`）：一次公告移动了所有流的身份。就地那条路的收益只是"节点 Refresh 而不是
+   Rebuild"，不是带宽。（登记 **B6**：逐 `Buffer::revision()` 能省下未改通道的上传，但把"一次公告"的契约
+   换成"每个 buffer 各自公告"——更弱，且手册说漏报是静默的 ⇒ 保持现状，触发器：多通道大网格宿主报带宽。）
+5. **两条正面交付证据**：几何区制把网格每帧右移 0.04（12 帧 +0.48）⇒ 左边缘探针从"网格"变成"背景"（**就地
+   刷新真的把字节送到了帧里**）；状态区制打开 Back 面剔除后网格仍在（**状态真的到了光栅化器**）。后者抓到过
+   真错：第一版网格索引是**顺时针**，Back 剔除把整片网格剔没了——这条断言不是装饰。
+
+**顺带的两条发现（都登记，不改）**：
+
+* **B7 管线销毁与在飞提交**：本配方首次入套件时，门禁两阶段各报 **4×VUID-vkDestroyPipeline-pipeline-00765**
+  （"submitted commands … must have completed execution"）⇒ 门禁红。按设计既有规则（销毁只有两条合法路径，
+  整会话替换前置一次**计数过的 device idle**）在 `releaseContentWorld()` 首行加了
+  `SessionContentAccess::waitDeviceIdle`（计数走 `Session::deviceWaits`）。**诚实记录**：此后 20 次单例运行 +
+  两次全量套件（有/无该 wait 各试过）+ 本片两棵树门禁都是 **0 VUID，未再复现** ⇒ 若再次出现，先查"最近被替换
+  或逐出的管线"（`VariantPool` 逐出是另一条销毁路径）与 teardown 时的 `deviceWaits`。
+* **A8 `Observe::FrameCounters` 有六个字段无人写**：`data_nodes_built`、`streams_refreshed`、
+  `offscreen_builds`、`offscreen_resizes`、`window_builds`、`program_slot_builds`（`Observe.hpp:38-43` 声明并
+  写文档，`PhaseTable.hpp:26` 还拿 `offscreen_builds` 举例说"phase 必须能拦住它"）——全仓库没有一处写、没有
+  一处读；相位用的是自己的 `DevicePhaseCounters`（`tests/test_vsg/DevicePhases.hpp`）。⇒ 那些规则永远不会响。
+  要么接线（`ContentStore`/`Streams`/`HostTargets` 都有现成计数点——本配方想要的"Refresh vs Rebuild"正是
+  `streams_refreshed`/`data_nodes_built` 能答的）要么删掉；触发器：下一次有人想按"帧里的重建次数"写规则。
+
+**证据**：两棵树门禁 8 stage 全 ok、`cases=442 failed=0 vuid=0 hazard=0 skipped=0`、相位 12 行×2、应用行与
+上一片逐字相同（`vuid=0 warnings=0`）。本片**不碰引擎**（`src/viz/graphics` 零改动）；`test_graphics` 不需要
+单独跑（引擎未动）。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `tests/test_vsg/VsgBackendTest.cpp` | 配方 `MeasureWhatEachKindOfEditCostsPerFrame` + 网格/计数/差值辅助 |
+| `src/plugins/gfx_backend_vsg/include/vine/vsg/api/BackendContent.hpp` | `BackendContentAccess::pool()`：读 variant 计数（测试视角，同族访问器） |
+| `src/plugins/gfx_backend_vsg/src/api/VsgBackend.cpp` | 访问器实现 + `releaseContentWorld()` 首行的**计数过的 device idle** |
+
+**下一步**：排序表只剩 **B5 后半**（等第一个大场景宿主）；新登记 B6/B7/A8 按各自触发器。

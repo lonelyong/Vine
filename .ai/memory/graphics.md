@@ -2241,3 +2241,21 @@ program 不自己套 gamma），宿主视角写在 `docs/usage.md` **§3.9**。*
 （同一片踩到的构建坑，记进"身份铁律"那一条的同类：**demo 宿主是插件** `plugins/vine/app_shelld.so` ——
 `ninja -C build Vine` **不会**重建它，改完 `AppShellDemo.cpp` 必须 `ninja -C build app_shell`；门禁跑的是
 全量 `ninja`，所以这个坑只在手工改 demo 时踩得到。）
+
+**2026-09-25（每帧变化的成本：四类编辑 + 键审计）**：新用例 `tests/test_vsg/VsgBackendTest.cpp` 的
+`MeasureWhatEachKindOfEditCostsPerFrame`——1 个 drawable（32×32 网格，1024 顶点/12 KiB + 5766 索引），每帧只改一样：
+材质值 / 几何顶点字节（新 buffer 与就地改写两种拼写）/ cull 状态 / program 交替，各 12 帧，先 6 帧热机；时间切
+**record**（`beginFrame…endFrame`）与 **commit**（`swapBuffers`）两半，前后读三组活计数（`ContentStore::builds()`、
+`StreamUploads::uploads()`、`VariantPool::created()/reused()`；后者要靠新的测试访问器 `BackendContentAccess::pool()`）。
+**Release 数字**：record 半段 **7–19 µs/帧，全区制一样平**；commit（lavapipe）0.8–1.0 ms；**唯一花毫秒的是"新 program 的
+第一帧" ≈ +1.6 ms 一次性**（2440/2485 µs vs 稳态 850，之后 created +0、reused +2/帧）。**键审计**：材质/几何/状态 12 帧
+`created` 全 +0，program 与 topology 类各 +1（后者是正对照）。材质编辑每帧恰好 +1 行（"只发生一次 64B 写"）、0 上传；
+几何编辑每帧 +1 行、**2 次上传**（位置 channel + index）——**替换 buffer 对象与就地改写字节一样贵**：`StreamKey.revision`
+取的是 **Geometry 的 revision**（`GeometryFacts.cpp:107/178`），一次公告移动所有流的身份；就地那条路的收益只是节点
+Refresh 而非 Rebuild。**交付证据**：几何区制每帧右移 0.04（12 帧 +0.48）⇒ 左边缘探针变背景（刷新真的送达）；cull 区制
+开 Back 剔除后网格仍在（状态真的到光栅化器）——第一版网格索引顺时针，Back 剔除整片剔没，这条断言不是装饰。
+**登记**：B6（逐 Buffer revision 能省未改通道，但"一次公告"契约更弱）；B7（本配方首次入套件时门禁两阶段各报
+4×VUID-vkDestroyPipeline-pipeline-00765；已按设计规则在 `releaseContentWorld()` 首行加**计数过的 device idle**，
+此后 20 次单例 + 2 次全量套件 + 两棵树门禁 0 VUID，**未再复现**）；A8（`Observe::FrameCounters` 六个字段无人写读，
+相位规则点名它们的永远不会响）。证据：两棵树门禁 8 stage 全 ok、`cases=442 vuid=0`、应用行与上片逐字相同；
+本片**不碰引擎**。详见 `.ai/design/vsg-reimplementation.md` §11.16cq。

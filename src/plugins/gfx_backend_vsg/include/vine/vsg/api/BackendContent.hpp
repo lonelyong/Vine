@@ -7,6 +7,7 @@
 #include <vine/vsg/api/VsgBackend.hpp>
 #include <vine/vsg/api/VsgExecutor.hpp>
 #include <vine/vsg/api/WindowTarget.hpp>
+#include <vine/vsg/core/VariantPool.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -92,6 +93,19 @@ class BackendContentAccess
      * @return The cache, or null while the content world is not up.
      */
     [[nodiscard]] static MaterialImages* images(VsgBackend& backend) noexcept;
+
+    /** @brief Gets the compiled-pipeline pool the frame drive acquires its variants from.
+     *
+     * The pool is where "did this edit recompile anything" is answered: `created()` moves when a key the pool
+     * has not seen is compiled, `reused()` when an existing variant serves another draw, and `variants()` is
+     * how many are held. A recipe that edits one thing per frame reads all three around the regime to tell
+     * "the edit was data" from "the edit was identity" (see core/Keys.hpp for which edits are allowed to be
+     * which).
+     *
+     * @param backend Backend to ask.
+     * @return The pool, valid for the backend's lifetime.
+     */
+    [[nodiscard]] static core::VariantPool& pool(VsgBackend& backend) noexcept;
 };
 
 }  // namespace detail

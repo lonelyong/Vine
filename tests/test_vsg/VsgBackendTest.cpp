@@ -57,6 +57,7 @@ using vn::vsg::core::depthPlan;
 using vn::vsg::HostTargets;
 using vn::vsg::PassRegistry;
 using vn::vsg::VsgBackend;
+using vn::vsg::core::VariantPool;
 using vn::vsg::WindowTarget;
 using vn::vsg::api::probePhysicalDevices;
 using vn::vsg::detail::BackendContentAccess;
@@ -188,6 +189,112 @@ vn::intrusive_ptr<vn::graphics::Camera> cameraLookingAt(double x)
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
     return camera;
+}
+
+/// @brief A packed grid of @p side x @p side clip-space positions covering [-0.9, 0.9] squared.
+///
+/// The per-frame-cost recipe's mesh, sized for the measurement rather than for beauty: 1024 vertices are
+/// 12 KiB of vertex bytes, so "the host replaced them again" costs something a frame's fixed overhead
+/// cannot hide. The positions are CLIP space (the recipe's programs pass them through unchanged) and the
+/// grid covers the middle of the window, which is what lets one probe see it and another, near the left
+/// edge, stop seeing it after the mesh has been shifted.
+std::vector<float> gridPositions(int side)
+{
+    std::vector<float> positions;
+    positions.reserve(static_cast<std::size_t>(side * side) * 3U);
+    for (int y = 0; y < side; ++y) {
+        for (int x = 0; x < side; ++x) {
+            positions.push_back(-0.9F + 1.8F * static_cast<float>(x) / static_cast<float>(side - 1));
+            positions.push_back(-0.9F + 1.8F * static_cast<float>(y) / static_cast<float>(side - 1));
+            positions.push_back(0.5F);
+        }
+    }
+    return positions;
+}
+
+/// @brief The two triangles of every grid cell, counter-clockwise in clip space.
+///
+/// The winding matters to the recipe's state regime: it turns Back-face culling ON and asserts the mesh
+/// stays visible, and that assertion is also the proof that the state change really reached the
+/// rasteriser (a cull mode that only changed a local would leave an unchanged picture either way). The
+/// first spelling of this table was CLOCKWISE and the mesh vanished under Back-face culling - which is
+/// how the assertion earned its keep before the recipe was ever recorded.
+std::vector<std::uint32_t> gridIndices(int side)
+{
+    std::vector<std::uint32_t> indices;
+    indices.reserve(static_cast<std::size_t>((side - 1) * (side - 1)) * 6U);
+    for (int y = 0; y + 1 < side; ++y) {
+        for (int x = 0; x + 1 < side; ++x) {
+            const std::uint32_t a = static_cast<std::uint32_t>(y * side + x);
+            const std::uint32_t b = a + 1U;
+            const std::uint32_t c = a + static_cast<std::uint32_t>(side);
+            const std::uint32_t d = c + 1U;
+            indices.push_back(a);
+            indices.push_back(b);
+            indices.push_back(c);
+            indices.push_back(b);
+            indices.push_back(d);
+            indices.push_back(c);
+        }
+    }
+    return indices;
+}
+
+/// @brief The live counters one regime of the per-frame-cost recipe is judged by.
+///
+/// One counter per ANSWER, not per layer: a row (re)built says the edit was DATA the tables had to be told
+/// about, an upload says bytes reached the device as a NEW stream, a compile says the edit was IDENTITY,
+/// and a reuse says the frame switched between variants the pool already had.
+struct EditCostCounters
+{
+    std::uint64_t builds{0};   ///< `ContentStore::builds()`: table rows (re)built.
+    std::uint64_t uploads{0};  ///< `StreamUploads::uploads()`: streams uploaded as new objects.
+    std::uint64_t created{0};  ///< `VariantPool::created()`: pipelines compiled.
+    std::uint64_t reused{0};   ///< `VariantPool::reused()`: variant switches the pool served.
+};
+
+/// @brief Reads @ref EditCostCounters off a live backend.
+///
+/// @param store    The facade's content tables.
+/// @param assembly The facade's content world (its stream sharing owns the upload count).
+/// @param pool     The facade's compiled-pipeline pool.
+/// @return The counters as they are now.
+EditCostCounters readEditCosts(const ContentStore& store, ContentAssembly& assembly,
+                               const vn::vsg::core::VariantPool& pool)
+{
+    EditCostCounters counters;
+    counters.builds  = store.builds();
+    counters.uploads = assembly.uploads().uploads();
+    counters.created = pool.created();
+    counters.reused  = pool.reused();
+    return counters;
+}
+
+/// @brief What one regime moved, as signed deltas (a counter that went backwards is a bug worth seeing).
+struct EditCostDelta
+{
+    std::int64_t builds{0};   ///< Rows rebuilt.
+    std::int64_t uploads{0};  ///< Streams uploaded.
+    std::int64_t created{0};  ///< Pipelines compiled.
+    std::int64_t reused{0};   ///< Variant switches served by the pool.
+};
+
+/// @brief Subtracts two @ref EditCostCounters samples.
+///
+/// @param before Counters read before the regime.
+/// @param after  Counters read after it.
+/// @return The signed deltas.
+EditCostDelta editCostDelta(const EditCostCounters& before, const EditCostCounters& after)
+{
+    const auto step = [](std::uint64_t from, std::uint64_t to) {
+        return static_cast<std::int64_t>(to) - static_cast<std::int64_t>(from);
+    };
+    EditCostDelta delta;
+    delta.builds  = step(before.builds, after.builds);
+    delta.uploads = step(before.uploads, after.uploads);
+    delta.created = step(before.created, after.created);
+    delta.reused  = step(before.reused, after.reused);
+    return delta;
 }
 
 }  // namespace
@@ -1280,6 +1387,307 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     EXPECT_TRUE(isColourByte(host.pixel(kWidth / 2, kHeight / 2)[1], 0.25)) << "and shows the same picture";
     EXPECT_EQ(backend->deviceWaits(), 0U) << "none of this stops the device";
     EXPECT_EQ(seen, backend->diagnosticCount());
+
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
+TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
+{
+    // THE QUESTION. A host keeps editing a live scene one thing at a time - a material's value, the
+    // geometry's vertex bytes, a StateNode's state, the node's program - and the backend has to answer each
+    // edit with the cheapest thing that is CORRECT. Which answer is correct is written down in
+    // core/Keys.hpp: the program, its revision, the vertex layout, the target shape, the program variant
+    // and the topology CLASS are identity (changing one is a compile); material values, stream bytes and
+    // depth / cull / polygon / blend are DATA and must never recompile anything.
+    //
+    // This recipe drives the facade the way the material case above does - a live window, one pass, one
+    // command - edits ONE thing per regime, times the frame's two halves (the record+compile half, then
+    // the commit half) and reads the live counters around each regime. The numbers are PRINTED for the
+    // design log; what is ASSERTED is machine-independent: a steady frame touches nothing, an edit that is
+    // data creates no variant and no upload it should not, and the two edits that ARE identity (the
+    // program, the topology class) create exactly one. Those two rows are also the recipe's positive
+    // control: they are what shows the `created` counter CAN move in this very setup, which is what makes
+    // the "no compile" rows falsifiable instead of vacuous.
+    //
+    // Run it where the numbers matter: ./build-release/bin/test_vsg --gtest_filter='*MeasureWhatEachKind*'
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth           = 128;
+    constexpr int kHeight          = 96;
+    constexpr int kGridSide        = 32;
+    constexpr int kFramesPerRegime = 12;
+
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    std::size_t                   seen = 0;
+    backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
+        ++seen;
+        std::printf("[cost] diagnostic: severity=%d category=%d message=%s\n",
+                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    as_bytes(diagnostic.message).c_str());
+    });
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    // The two programs: both shade with the material's own diffuse colour, so the picture cannot tell them
+    // apart - what differs is the TEXT, and that is what the pipeline key carries (see PipelineKey::program).
+    const auto material_program = [](const char* body) {
+        const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+        ShaderStage                            vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        std::string text = "layout(location = 0) out vec4 outColor;\n"
+                           "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+                           "{\n"
+                           "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+                           "} material;\n"
+                           "void main() { ";
+        text += body;
+        text += " }\n";
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(text.data()), text.size());
+        program->addStage(vertex);
+        program->addStage(fragment);
+        return program;
+    };
+    const vn::intrusive_ptr<ShaderProgram> program_a = material_program("outColor = material.diffuse;");
+    const vn::intrusive_ptr<ShaderProgram> program_b =
+        material_program("vec4 tinted = material.diffuse * 1.0; outColor = tinted;");
+
+    vn::intrusive_ptr<Geometry>          geometry(new Geometry());
+    vn::intrusive_ptr<vn::Buffer<float>> positions(new vn::Buffer<float>(gridPositions(kGridSide)));
+    geometry->setPositions(positions);
+    geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        new vn::Buffer<std::uint32_t>(gridIndices(kGridSide))));
+    geometry->bumpRevision();
+
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.3F, 0.4F, 0.3F, 1.0F));
+
+    std::vector<RenderCommand> commands(1U);
+    commands[0].geometry = geometry;
+    commands[0].material = material;
+    commands[0].program  = program_a;
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+
+    ContentStore*    store    = BackendContentAccess::store(*backend);
+    ContentAssembly* assembly = BackendContentAccess::assembly(*backend);
+    ASSERT_NE(store, nullptr) << "a live session owns the content tables its frames are built from";
+    ASSERT_NE(assembly, nullptr);
+    VariantPool& pool = BackendContentAccess::pool(*backend);
+
+    // One frame, split at the seam between the two halves of the cost: everything up to endFrame() is the
+    // frame's own bookkeeping (facts, plan, blocks, streams), and swapBuffers() is the commit that records,
+    // submits and presents. The number a host feels is the sum; the two halves are printed apart because
+    // that is what tells a backend cost from a presentation cost.
+    const auto drive = [&]() {
+        const auto began = std::chrono::steady_clock::now();
+        backend->beginFrame();
+        backend->beginPass(pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(nullptr);
+        backend->setClearPolicy(clear);
+        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
+        backend->render(commands, camera.get());
+        backend->endPass();
+        backend->endFrame();
+        const auto recorded  = std::chrono::steady_clock::now();
+        backend->swapBuffers();
+        const auto committed = std::chrono::steady_clock::now();
+        const auto micros    = [](auto from, auto to) {
+            return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(to - from).count();
+        };
+        return std::pair<double, double>{ micros(began, recorded), micros(recorded, committed) };
+    };
+
+    std::printf("\n");  // the measurements get their own lines
+    for (int settle = 0; settle < 6; ++settle) {
+        drive();  // the session's opening frames compile the initial pipelines and settle the window
+    }
+
+    const auto run = [&](const char* label, int frames, auto&& edit) {
+        const EditCostCounters before = readEditCosts(*store, *assembly, pool);
+        double                 record_us = 0.0;
+        double                 commit_us = 0.0;
+        for (int frame = 0; frame < frames; ++frame) {
+            edit(frame);
+            const auto [record, commit] = drive();
+            record_us += record;
+            commit_us += commit;
+        }
+        const EditCostCounters after  = readEditCosts(*store, *assembly, pool);
+        const EditCostDelta    change = editCostDelta(before, after);
+        std::printf("[cost] %-32s record %8.1f us/f  commit %8.1f us/f"
+                    " | builds %+4lld uploads %+4lld created %+4lld reused %+4lld\n",
+                    label, record_us / frames, commit_us / frames, static_cast<long long>(change.builds),
+                    static_cast<long long>(change.uploads), static_cast<long long>(change.created),
+                    static_cast<long long>(change.reused));
+        return std::pair<EditCostCounters, EditCostCounters>{ before, after };
+    };
+
+    // 0. STEADY: the baseline every other row is compared against.
+    {
+        const auto [before, after] = run("steady (nothing edited)", kFramesPerRegime, [](int) {});
+        const EditCostDelta change = editCostDelta(before, after);
+        EXPECT_EQ(change.builds, 0) << "a steady frame builds no row";
+        EXPECT_EQ(change.uploads, 0) << "and uploads nothing";
+        EXPECT_EQ(change.created, 0) << "and compiles nothing";
+    }
+
+    // 1. MATERIAL: the value is edited in place every frame. The store's own compare-and-write replaces the
+    //    row, and that is the WHOLE cost: a material value is not identity.
+    {
+        const auto [before, after] = run("material edited every frame", kFramesPerRegime, [&](int frame) {
+            const float shade = 0.3F + 0.02F * static_cast<float>(frame + 1);
+            material->setDiffuse(vn::Colorf(shade, 0.4F, shade, 1.0F));
+        });
+        const EditCostDelta change = editCostDelta(before, after);
+        EXPECT_EQ(change.builds, kFramesPerRegime) << "each edit replaces exactly the material's row";
+        EXPECT_EQ(change.created, 0) << "a material VALUE is data: the pipeline key cannot see it";
+        EXPECT_EQ(change.uploads, 0) << "and it lands as a block write, not as an upload";
+        drive();
+        const auto pixel = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
+        EXPECT_TRUE(isColourByte(pixel[1], 0.4)) << "the mesh is still what the centre probe sees";
+        EXPECT_TRUE(isColourByte(pixel[0], 0.54) && isColourByte(pixel[2], 0.54))
+            << "and the LAST edited colour is in the picture (read-error " << static_cast<int>(host.readError())
+            << ")";
+    }
+
+    // 2. GEOMETRY, A NEW BUFFER: the host re-created the vertex data every frame (a new Buffer object) and
+    //    announced it - the engine's contract for "the data changed". The bytes must reach the device every
+    //    frame, and the LAYOUT is unchanged, so the pipeline key cannot see any of it.
+    //
+    //    TWO uploads per frame, and the count is the layer's own shape rather than a waste: a stream key carries
+    //    the GEOMETRY's announced revision (see GeometryFacts), so one announcement moves the identity of the
+    //    channel AND of the index stream - the mesh's bytes and its index list both go up. What a revision
+    //    announcement must never do is compile, and that is what the `created` row below gates on.
+    {
+        const auto [before, after] = run("geometry: a new buffer", kFramesPerRegime, [&](int) {
+            geometry->setPositions(
+                vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(gridPositions(kGridSide))));
+            geometry->bumpRevision();
+        });
+        const EditCostDelta change = editCostDelta(before, after);
+        EXPECT_GE(change.uploads, kFramesPerRegime)
+            << "the bytes are re-sent every frame (one upload per stream the geometry names)";
+        EXPECT_EQ(change.builds, kFramesPerRegime) << "each announcement is a new revision: one row";
+        EXPECT_EQ(change.created, 0) << "the vertex layout did not change, so no pipeline is compiled";
+    }
+
+    // 3. GEOMETRY, THE SAME BUFFER: the host wrote through the buffer it had already handed over and announced
+    //    it. The node is REFRESHED in place rather than rebuilt (planGeometry's Refresh action), and the bytes
+    //    still have to go up - what this row shows is that the in-place spelling costs what the replacing one
+    //    costs at this layer, and that neither is allowed to compile. The shift is the delivery proof: 12 steps
+    //    of +0.04 move the mesh's left edge from -0.9 to -0.42, so a probe that saw mesh has to see background.
+    positions = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(gridPositions(kGridSide)));
+    geometry->setPositions(positions);
+    geometry->bumpRevision();
+    drive();
+    {
+        const auto [before, after] = run("geometry: same buffer, new bytes", kFramesPerRegime, [&](int frame) {
+            std::vector<float> shifted = gridPositions(kGridSide);
+            const float        step    = 0.04F * static_cast<float>(frame + 1);
+            for (std::size_t index = 0; index + 2 < shifted.size(); index += 3U) {
+                shifted[index] += step;
+            }
+            const auto bytes = positions->data();
+            for (std::size_t index = 0; index < shifted.size(); ++index) {
+                bytes[index] = shifted[index];
+            }
+            positions->setRevision(positions->revision() + 1U);
+            geometry->bumpRevision();
+        });
+        const EditCostDelta change = editCostDelta(before, after);
+        EXPECT_GE(change.uploads, kFramesPerRegime) << "edited bytes still have to reach the device";
+        EXPECT_EQ(change.created, 0) << "and the pipeline key cannot see bytes";
+        drive();
+        const auto left = host.waitForPixel(8, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
+        EXPECT_TRUE(isGreenClear(left)) << "the shifted bytes reached the frame: the left edge is background"
+                                       << " again (read-error " << static_cast<int>(host.readError()) << ")";
+        const auto centre = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
+        EXPECT_TRUE(isColourByte(centre[0], 0.54)) << "and the middle is still the mesh";
+    }
+
+    // 4. STATE: a StateNode's cull mode flips every frame. State is DYNAMIC (core::DynamicState: "changing it
+    //    must never recompile anything"), so the frame answers with a set command - and the picture must keep
+    //    the mesh, which is what shows the flip reached the rasteriser instead of a local variable.
+    {
+        const auto [before, after] = run("state: cull mode flipped", kFramesPerRegime, [&](int frame) {
+            commands[0].renderState.cullMode =
+                (frame % 2 == 0) ? vn::graphics::CullMode::Back : vn::graphics::CullMode::None;
+        });
+        const EditCostDelta change = editCostDelta(before, after);
+        EXPECT_EQ(change.builds, 0) << "a state change is not content: no row is built";
+        EXPECT_EQ(change.uploads, 0) << "and nothing is uploaded";
+        EXPECT_EQ(change.created, 0) << "cull is dynamic state: the pipeline key cannot see it (core/Keys.hpp)";
+        commands[0].renderState.cullMode = vn::graphics::CullMode::Back;
+        drive();
+        const auto pixel = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
+        EXPECT_TRUE(isColourByte(pixel[0], 0.54)) << "Back-face culling kept the mesh visible";
+    }
+
+    // 5. THE NODE'S SHADER: the command's program alternates between two programs every frame. A PROGRAM is
+    //    identity, so the FIRST frame with the second one compiles a pipeline - reported on its own line as
+    //    the cold number - and every frame after that is a variant switch the pool already has.
+    {
+        const EditCostCounters cold_before    = readEditCosts(*store, *assembly, pool);
+        commands[0].program                   = program_b;
+        const auto [cold_record, cold_commit] = drive();
+        const EditCostCounters cold_after     = readEditCosts(*store, *assembly, pool);
+        const EditCostDelta    cold_change    = editCostDelta(cold_before, cold_after);
+        std::printf("[cost] %-32s record %8.1f us    commit %8.1f us"
+                    " | builds %+4lld uploads %+4lld created %+4lld reused %+4lld\n",
+                    "program switched (first, cold)", cold_record, cold_commit,
+                    static_cast<long long>(cold_change.builds), static_cast<long long>(cold_change.uploads),
+                    static_cast<long long>(cold_change.created), static_cast<long long>(cold_change.reused));
+        EXPECT_EQ(cold_change.created, 1) << "the first frame with a program compiles exactly one pipeline";
+
+        const auto [before, after] = run("program switched every frame", kFramesPerRegime, [&](int frame) {
+            commands[0].program = (frame % 2 == 0) ? program_a : program_b;
+        });
+        const EditCostDelta change = editCostDelta(before, after);
+        EXPECT_EQ(change.created, 0) << "both variants are in the pool: no frame after the first compiles";
+        EXPECT_GE(change.reused, kFramesPerRegime) << "every frame's switch is served by the variant pool";
+        EXPECT_EQ(change.uploads, 0) << "switching a program moves no bytes";
+    }
+
+    // 6. THE BOUNDARY: a topology CLASS change IS identity - the key carries the topology, because dynamic
+    //    primitive topology may only switch WITHIN a class (the reason is on PipelineKey::topology). This row
+    //    is also the positive control for every "no compile" claim above: it shows the counter moving for an
+    //    edit that really is identity, in this very setup.
+    {
+        const EditCostCounters before    = readEditCosts(*store, *assembly, pool);
+        commands[0].renderState.topology = vn::graphics::Topology::Lines;
+        drive();
+        const EditCostCounters after = readEditCosts(*store, *assembly, pool);
+        EXPECT_EQ(after.created - before.created, 1U)
+            << "a different topology class is a different pipeline (see PipelineKey::topology)";
+        EXPECT_EQ(after.uploads - before.uploads, 0U) << "and it moves no bytes either";
+    }
+
+    EXPECT_EQ(backend->deviceWaits(), 0U) << "none of these edits stops the device";
+    EXPECT_EQ(seen, 0U) << "and every one of them is served silently";
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
 
     backend->shutdown();
     EXPECT_TRUE(host.alive());
