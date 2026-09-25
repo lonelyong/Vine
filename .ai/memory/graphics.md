@@ -1921,7 +1921,8 @@
 > `WindowKey` + `RenderPass::contentSlot`/`setContentSlot` + `releaseWindowLayer(camera, slot)`，
 > 同相机非零槽=各自保留层顺序叠画（复用窗口图多 View），槽0 行为不变。
 > 单测：GraphicsTest 114 全绿；test_vsg 10 绿；全量构建 0。App 冒烟（C6.2b/C6.3b）用户已确认正常。
-> 遗留：逐槽 depth 策略(≤/write-off)、slot>0 运行期 demo、gfx_backend_vsg.md §7/11/12 旧文改写、C6.4 离屏多槽。
+> 遗留：逐槽 depth 策略(≤/write-off)、slot>0 运行期 demo、C6.4 离屏多槽。
+> （后端三份 living 文档 2026-09 已重写统一，见 `src/plugins/gfx_backend_vsg/gfx_backend_vsg.md`。）
 
 **模块职责**：场景图管理、可视对象、相机视图、渲染抽象层
 

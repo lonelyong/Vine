@@ -532,19 +532,16 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | location 覆盖 | shader 只能声明 geometry 真有数据的 location | 声明了没有的 ⇒ 不喂数据：Vulkan 合法、读到未定义值、**无任何诊断** |
 | 分量数 | geometry 的 3 分量 ↔ shader 的 `vec3` | 两边都能接受，只在绘制时表现为“属性读错/缺失” |
 | 反方向 | 数组喂了、但管线不声明那个名字 | 报一条 `ContentSkipped` 的 Warning（`vertex binding '%s' (array %zu, %s) was not matched by the pipeline…`） |
-| 绑定顺序 | **不用管、也改不了**：后端按固定顺序排（位置、法线、texcoords、颜色，再按 location 升序的自定义通道） | 你能控的只有 location；binding 下标由后端按通道列表算出 |
+| 绑定顺序 | **不用管、也改不了**：后端按**几何自己的通道顺序**（location 升序）排 binding；你能控的只有 location | 机制与理由见后端文档（`data-flow.md` §6） |
 
 **边角**：
 
-| 情形 | 行为 |
-| --- | --- |
-| program 编译失败 / 槽自己没有 set | **不画**（2026-09-13 起不再回落内建 set），并报一条 `ShaderFallback` Warning（不静默） |
-| geometry 带 loc2 颜色、切换路径 | **数据节点也要重建**：内建路径 binding 2 是后端白 **DYNAMIC** 载体（alpha 驱动 opacity），自定义路径绑作者的颜色原样 |
-| 自定义通道遇上**内建路径** | 照喂但没人声明 ⇒ `assignArray` 失败被跳过；它在尾部，不挤前缀四个 binding，也**不需要重新上传** |
-| 同一份 program 的多个布局 | 共享一次 glslang 编译，按布局各建一个 ShaderSet（缓存上界 64，FIFO 淘汰） |
+**后端侧的事**（绑定下标怎么算、变体与缓存怎么组织、切路径要不要重建、编译失败怎么答）不在这里重复——
+唯一权威是后端文档：
 
-> 实现细节（名字 ↔ 数组下标那张表、vsg 的两套编号为何不同）见
-> [`src/plugins/gfx_backend_vsg/docs/backend.md`](../../../plugins/gfx_backend_vsg/docs/backend.md) §2.4。
+> [`.ai/design/vsg-reimplementation.md`](../../../../.ai/design/vsg-reimplementation.md) §5.4（ABI 与坑）、
+> [`docs/data-flow.md`](../../../plugins/gfx_backend_vsg/docs/data-flow.md) §6（名字即绑定）、
+> [`docs/backend.md`](../../../plugins/gfx_backend_vsg/docs/backend.md) §2（服务与拒绝）。
 
 **内建 program 的 GLSL 从哪来**（自己写 shader 时想对照/改写它们）：
 
