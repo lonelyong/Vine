@@ -748,7 +748,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | S2 | §7 目录/删除操作 + 内存后端的显式目录标记 | **已完成** |
 | S2.5 | **API 重设计**：零 out-parameter、一操作一名、派生便利函数，删旧 `bool` 家族并迁移调用方 | **已完成**（`test_iobase` 33/33） |
 | S3a | §9 `ZipArchive::entries` + 惰性只读 `ZipVfs`（+ robotics 改用它） | **已完成**（`test_iobase` 39/39） |
-| S3b | §9 单一 `ZipVfs`（惰性源 + overlay + `commit`/`saveAs`/`toBytes`）、`ZipMemoryVfs` 删除、`IMemoryVfs` → `IVfs` | 定稿，待实现 |
+| S3b | §9 单一 zip 后端（惰性源 + overlay + `commit`/`saveAs`/`toBytes`）、`ZipMemoryVfs` 删除、`IMemoryVfs` → `Vfs` | **已完成**（对账 2026-09-25：类名最终为 `ZipArchive`——空状态下它就是可写内存树；见顶部 banner 与 §9） |
 | S4 | §10 `MountVfs` | 待做 |
 | S5 | §11 `reserve`/上限（内存流侧） | 与 VFS 解耦，可并行 |
 | S6 | §12 并发级别文档 + 跨进程/跨模块复查 | 待做 |

@@ -121,7 +121,9 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
   app_shell demo 的手写 offscreen→PiP 段已改为 Builder 调用（灯/内容绑定仍属应用层）。
   GraphicsTest 78 全过（+1 `RenderPipelineBuilderTest.OffscreenToScreenBuildsExpectedPipeline`：2 个 pass、
   resolve SceneColor、screen 采样一次）；lavapipe 截图 PiP 与主画面一致（无回归）。
-- 待做：`shadowedScene` 配方（与 v4b-2 采样落地后一起接线）；必要时 sceneOnly 等其余配方。
+- **（2026-09-25 对账）`shadowedScene` 配方作废**：阴影已由灯提出请求（`Light::castShadow`），`RenderPipelineBuilder`
+  的路径构建里 `buildShadowPass` 直接建 depth pass，`reportRequestedShadows()` 负责报“请求了但没建”的那些 ⇒
+  不再需要一条单独的配方；sceneOnly 的等价物是引擎默认主 pass（本文件 §4 已写明“保持、不替代”）。
 
 
 > **2026-09-13：`PipelinePreset` 枚举已被 `.ai/design/render-pipeline.md` 取代。**

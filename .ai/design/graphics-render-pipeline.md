@@ -210,10 +210,10 @@ endFrame(); swapBuffers()
 | 阶段 | 范围 | 状态 |
 |---|---|---|
 | **v1（现在）** | 有序场景通道管线 + Engine 内容关联 + RenderPass 持有输出 target | ✅ 已实现 |
-| **v2** | RenderTarget 离屏能力 + RenderBackend 离屏契约（**平台层已落地**）；`FrameContext` 与 vsg 离屏 render-to-texture 待 GPU 上迭代 | 平台层 ✅，vsg 待做 |
+| **v2** | RenderTarget 离屏能力 + RenderBackend 离屏契约；`FrameContext` 与 vsg 离屏 render-to-texture | ✅ 已实现（对账 2026-09-25：`FrameContext` 在 `RenderEngine::frameContext()`；vsg 离屏链由重写版后端承担，见 `vsg-reimplementation.md`） |
 | **v3** | Screen/全屏 pass + “命名产出槽” publish/resolve 衔接 | ✅ 已实现（2026-09-03） |
-| **v4** | 光源系统（挂 Scene）+ shadow map（光源相机 order<0 通道） | 待做 |
-| **v5（可选）** | 自动依赖排序/帧图、后处理链 | 待做 |
+| **v4** | 光源系统（挂 Scene）+ shadow map（光源相机 order<0 通道） | ✅ 已实现（对账 2026-09-25：`Scene::lights` / `Light::castShadow` / `buildShadowPass`，demo 默认 Deferred+阴影） |
+| **v5（可选）** | 自动依赖排序/帧图、后处理链 | 帧图与依赖排序已由重写版后端承担（`core::FrameGraph`：Tarjan 检环 + 拓扑排序）；引擎侧 pass 顺序仍是显式 `order`；后处理链（blur/合成族）未做 |
 
 ## 8. 与未来光源系统的衔接
 
