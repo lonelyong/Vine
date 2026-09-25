@@ -1842,4 +1842,165 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     EXPECT_TRUE(host.alive());
 }
 
+TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryCommand)
+{
+    // THE TRIGGER SCALE ITSELF, MADE A RECIPE. The design log names ~2000 drawables as the size at which the
+    // 1024-block budget stops being generous; this case drives that shape - ONE drawing call carrying 2000
+    // commands - against the DEFAULT budgets, and pins what settling in costs:
+    //
+    //   * frame 1 asks for 2000 draw blocks (one per command) - and 976 are refused, with the call's own
+    //     light and shadow blocks (one each per CALL) fitting comfortably;
+    //   * frame 2's beginFrame() has replaced the storage (draws 1024 -> 2048, the doubling policy already
+    //     covering the 2000 the frame tried), and every command of the same content is served;
+    //   * frame 3 is steady: nothing replaced, nothing said.
+    //
+    // The per-frame record / commit times are PRINTED for the design log; nothing machine-dependent is
+    // asserted.
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth  = 128;
+    constexpr int kHeight = 96;
+    constexpr int kDraws  = 2000;  // the design log's trigger scale
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    std::vector<std::string>      messages;
+    backend->setDiagnosticSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
+        messages.push_back(as_bytes(diagnostic.message));
+    });
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+            "{\n"
+            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "} material;\n"
+            "void main() { outColor = material.diffuse; }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    geometry->setPositions(positions);
+    geometry->setIndices(indices);
+    geometry->setRevision(1U);
+
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.25F, 0.6F, 0.25F, 1.0F));
+
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
+    const std::vector<RenderCommand> commands(static_cast<std::size_t>(kDraws), command);
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+
+    const auto drive = [&]() {
+        const auto began = std::chrono::steady_clock::now();
+        backend->beginFrame();
+        backend->beginPass(pass.get());
+        backend->setPassOrder(0);
+        backend->setRenderTarget(nullptr);
+        backend->setClearPolicy(clear);
+        backend->setDepthMode(vn::graphics::DepthMode::Disabled);
+        backend->render(commands, camera.get());
+        backend->endPass();
+        backend->endFrame();
+        const auto recorded  = std::chrono::steady_clock::now();
+        backend->swapBuffers();
+        const auto committed = std::chrono::steady_clock::now();
+        const auto millis    = [](auto from, auto to) {
+            return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(to - from).count();
+        };
+        return std::pair<double, double>{ millis(began, recorded), millis(recorded, committed) };
+    };
+
+    // Frame 1: the default budgets; the light blocks run out first (the call checks them first).
+    const auto [record1, commit1] = drive();
+    std::printf("[cost] %d draws, frame 1 (default budgets): record %.1f ms, commit %.1f ms\n", kDraws, record1,
+                commit1);
+    BlockStorage* const default_storage = BackendContentAccess::storage(*backend);
+    ASSERT_NE(default_storage, nullptr);
+    EXPECT_EQ(default_storage->overflows(), kDraws - 1024) << "976 draw blocks were refused";
+    EXPECT_EQ(default_storage->growthNeeded().draws, kDraws) << "the request is what the frame TRIED";
+    EXPECT_EQ(default_storage->growthNeeded().lights, 0U) << "the call's ONE light block fitted";
+    EXPECT_EQ(default_storage->growthNeeded().shadows, 0U) << "and so did its ONE shadow block";
+    ASSERT_FALSE(messages.empty());
+    EXPECT_NE(std::string::npos, messages.front().find("draw block")) << "the first refusal names the block";
+    EXPECT_NE(std::string::npos, messages.back().find("976")) << "the summary counts how many commands were lost";
+
+    // Frame 2: the draw region grew, and the SAME content is served whole - the storage itself is not
+    // resized: it was replaced by one whose draw budget covers what the frame tried.
+    const auto [record2, commit2] = drive();
+    std::printf("[cost] %d draws, frame 2 (draws grew): record %.1f ms, commit %.1f ms\n", kDraws, record2, commit2);
+    BlockStorage* const grown = BackendContentAccess::storage(*backend);
+    ASSERT_NE(grown, default_storage) << "frame 2's beginFrame() replaced the storage";
+    EXPECT_EQ(grown->layout().draws.blocks_per_frame, 2048U) << "doubling covers the 2000 the frame tried";
+    EXPECT_EQ(grown->layout().lights.blocks_per_frame, 1024U) << "only the exhausted region grows";
+    EXPECT_EQ(grown->layout().shadows.blocks_per_frame, 1024U);
+    EXPECT_EQ(grown->overflows(), 0U) << "all 2000 commands are served";
+    EXPECT_FALSE(grown->growthNeeded().needed()) << "and the storage asks for nothing more";
+    EXPECT_EQ(backend->diagnosticCount(), 3U) << "two lines for the lost frame, one for the growth";
+
+    // Frame 3: steady - the settling is ONE growth event, and a settled frame says nothing at all.
+    const auto [record3, commit3] = drive();
+    std::printf("[cost] %d draws, frame 3 (steady): record %.1f ms, commit %.1f ms\n", kDraws, record3, commit3);
+    EXPECT_EQ(BackendContentAccess::storage(*backend), grown) << "a settled frame replaces nothing";
+    EXPECT_EQ(grown->overflows(), 0U);
+    EXPECT_EQ(backend->diagnosticCount(), 3U) << "and says nothing new";
+
+    // The books: exactly one growth, and the frame that asked for it was the last one to lose content.
+    std::size_t growths = 0U;
+    for (const std::string& message : messages) {
+        if (message.find("grew") != std::string::npos) {
+            ++growths;
+        }
+    }
+    EXPECT_EQ(growths, 1U) << "one growth event settled the documented scale";
+
+    // The picture after all of it: the triangle the commands draw, and a frame path that never stopped the
+    // device while the storage was replaced under it.
+    const auto pixel = host.waitForPixel(
+        kWidth / 2, kHeight / 2,
+        [](const std::array<std::uint8_t, 3>& value) { return isColourByte(value[1], 0.6); },
+        std::chrono::milliseconds{ 500 });
+    EXPECT_TRUE(isColourByte(pixel[1], 0.6)) << "the 2000-call pass still lands in the window";
+    EXPECT_EQ(backend->deviceWaits(), 0U);
+
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
 #endif  // !defined(_WIN32)
