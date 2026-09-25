@@ -217,9 +217,25 @@ struct ContentStore::Data
      * what the recording will find cannot drift apart - and the question is a bisection of the row order
      * rather than a walk of the table (the walk asks it once per command, see api/ContentFacts).
      */
-    [[nodiscard]] const GeometryFacts* liveGeometry(const void* identity, std::uint64_t revision) const noexcept
+    /** @brief Gets the row that answers for a TRACKED geometry right now (the one built at its live revision).
+     *
+     * It asks through the SAME lookup the recording asks with (`findGeometry`), so what this walk believes and
+     * what the recording will find cannot drift apart - and the question is a bisection of the row order
+     * rather than a walk of the table (the walk asks it once per command, see api/ContentFacts).
+     *
+     * The membership check comes FIRST, and it is load-bearing: the revision has to be read from the object,
+     * and a plan may name one the host has already let go of - a parked row still answers for it (see
+     * releaseAbandoned), but the address itself may be freed memory, so it must not be read. A row that
+     * EXISTS holds a share (LiveGeometry::object), and that share is the license to touch the object; a
+     * row-less address answers nullptr without being read.
+     */
+    [[nodiscard]] const GeometryFacts* liveGeometry(const vn::graphics::Geometry* geometry) const noexcept
     {
-        return findGeometry(view(), identity, revision).entry;
+        if (geometry == nullptr || geometries.find(geometry) == geometries.end())
+        {
+            return nullptr;
+        }
+        return findGeometry(view(), geometry, geometry->revision()).entry;
     }
 
     /** @brief Gets the row that answers for a material right now (identity is the whole key). */
@@ -339,8 +355,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
                 // The variant is a fact of the DRAWABLE, so it is computed from the entries the same walk
                 // just produced. A drawable whose geometry or material got no entry is skipped here: the
                 // recorder refuses it on those two, and the program's text never decides anything for it.
-                const GeometryFacts* live_geometry =
-                    geometry != nullptr ? d->liveGeometry(geometry, geometry->revision()) : nullptr;
+                const GeometryFacts* live_geometry = d->liveGeometry(geometry);
                 const MaterialFacts* live_material = d->liveMaterial(material);
                 if (live_geometry == nullptr || live_material == nullptr)
                 {

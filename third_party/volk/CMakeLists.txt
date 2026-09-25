@@ -36,6 +36,14 @@ add_library(tp::volk ALIAS volk)
 
 set_target_properties(volk PROPERTIES FOLDER third_party)
 
+# PIC is load-bearing: volk is linked STATICALLY into the plugin MODULE (gfx_backend_vsgd.so). Without it
+# volk.c.o keeps PC32 relocations against its own exported globals, and whether a link tolerates that
+# depends on the object's build history and the linker - measured 2026-09-25: the ASan tree's ld.bfd
+# refused the link outright ("relocation R_X86_64_PC32 ... can not be used when making a shared object;
+# recompile with -fPIC") while the Debug/Release trees were passing with non-PIC objects built earlier.
+# PIC here is what removes the luck; a static archive linked into a shared library always wants it.
+set_target_properties(volk PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # VOLK_NAMESPACE is PUBLIC: it changes what volk.h declares, so volk.c and every consumer have to agree on it.
 target_compile_definitions(volk PUBLIC VOLK_NAMESPACE)
 
