@@ -309,6 +309,8 @@ material 值 / 流字节 / cull 全部**不进**。
 | --- | --- | --- |
 | **B6** | `StreamKey.revision` 取 Geometry 的 revision ⇒ 任何数据公告重传所有通道；逐 `Buffer::revision()` 能省未改通道，但契约更弱（漏报静默） | 多通道大网格宿主报上传带宽（**2026-09-25 已量化，见 §11.16cw**：512²×4 通道+索引一次公告重传 16.98 MiB ≈ +30 ms/帧；触发未兑现） |
 | **B7** | 管线销毁与在飞提交的竞态：已按设计规则给破坏路径加计数过的 device idle；此后 20 次单例 + 2 次全量套件 + 两棵树门禁 **0 VUID，未再复现** | 再次出现时先查"最近被替换或逐出的管线"与 teardown 的 `deviceWaits` |
+| **B8** | **缺"跨帧差异"相位**：现有像素相位全是**静止相机**（单帧 / 重复同一帧），验证层的 hazard 只跟踪 Vulkan 对象与屏障 ⇒ **"CPU 每帧原地改 GPU 会读的 mapped 内存"这一整类缺陷在门禁里结构上不可见**（§11.16dd 的缺陷就是这么活下来的） | 形状：提交 N+1 帧、每帧动一点相机，断言末帧像素 == 静止时的期望。触发：下一次"帧间数据不同才显形"的画面缺陷（§11.16dd 是靠推导修的，不是靠门禁） |
+| **B9** | **在飞槽数只有一个拼法且无强制点**：① `BlockStorage::create` 不校验 layout 的槽数 ≥ `core::perFrameCopies(在飞数)`（旧的字面量 `slots{3}` 能静默通过）；② 框架报出的在飞数 ≠3 时存储**不重新布局**（会话只发一条 Info，`Session::probeSlots`），而存储的槽数是"假设 3 + 1" | 触发：真机/新框架报出 N≠3，或有人新加 per-frame 存储。形状：构造处校验（拒绝或上调）+ 学到数之后走 `adoptBlockStorage` 那条路径重布局（见 §11.16dd 的"诚实登记"） |
 | **A2 残留** | 共享流的"释放半边"已按新形态改掉（寿命 = 帧点名，`releaseUnseen`）；旧 `reader` 计数与 `release()` 是**旧实现**的缺陷，已随重写退场——此条仅作历史 | — |
 | **A3** | SDK 没有内容释放入口（`releaseGeometry/Material/Program/Texture`）：登记的"不改 SDK" | 宿主报告内存压力（**2026-09-25 账本已量化，见 §11.16cz**：12 轮创建+丢弃全清；唯材料槽残留；slot 知识学到前的丢弃会保留整会话） |
 | **A6** | `MaterialImages` 淘汰是 FIFO 而非 LRU；`ContentStore` 无容量上界 | 同屏活纹理逼近 256（**2026-09-25 语义已钉+量化，见 §11.16cy**：A/B/X 判别钉 FIFO；200 张循环 = 0 缺失，300 张 = 每轮 300/300 全重建） |
@@ -1414,3 +1416,32 @@ material 值 / 流字节 / cull 全部**不进**。
 * **判据**：`test_gui` 两棵树 **207 → 208**（新增 1 例）全绿、`test_graphics` 两棵树 283 全绿；
   两棵树门禁 `cases=445 vuid=0 hazard=0`、应用行**逐字不变**（门禁本来就把判图尺寸说成 800×600，
   改了默认之后那一步从“补偿”变成“确认”）。
+
+### §11.16dd（2026-09-25）：每帧块存储的 slab 少一个——“最老的那一帧”才是本轮写入的读者
+
+* **登记来自哪里**：用户报的运行时症状——**默认 demo**（Deferred + 阴影）启动后**上下拖动鼠标**（相机每帧在变），
+  地板上多出一些**闪烁的**阴影，停止拖动立刻消失，而“本来该有的那道阴影”一直正常。
+* **为什么只有阴影看得见（形状分析）**：延迟路径里片元的视图位置来自 G-buffer 附件，几何变换走 **push**
+  （每帧由 CPU 写进命令缓冲 ⇒ 永远是当帧）；着色器真正读的**每帧 ring 数据**只有三样：阴影块、灯块、材质块。
+  后两者在默认 demo 里要么不走这条路（灯在延迟路径走 128B push）、要么字节不变（材质静态），于是唯一
+  “每帧都变 + 判据是硬的（一次比较）”的就是 `VineShadowBlock`。⇒ “某帧读到别的帧的块”在画面上的表现
+  **只**会是阴影错位/多出，其余部分看着正常——这正是症状的形状。
+* **根因（可证，不靠猜）**：`FrameRing` 的 slab 数被写成“在飞帧数”（3）。但在飞**比“上一帧”更深**：框架只在
+  **回收槽**时等到该帧的 fence，而那次等待发生在**后一帧的 submit 之内**（`RecordAndSubmitTask::submit → start()`），
+  即**本帧字节已经写进 ring 之后**（Vine 的块在 `swapBuffers()` 的 `recordContent` 里写，提交仍在它后面）。
+  ⇒ 本帧写的 slab 正是**最老的那帧**（F − slots）在读的 slab，`slots` 个 slab **恰好差一个**。
+* **规则（一处命名）**：`core::perFrameCopies(frames_in_flight) = frames_in_flight + 1`（`SlotProbe.hpp`，理由写进
+  它的 doc）；`FrameRing::Layout::slots` **改名 `slabs`**（名字修正：它从来不是“在飞帧数”），默认
+  `perFrameCopies(kAssumedInFlightSlots)`；`MaterialArena::Layout::copies` 同规则；
+  `BlockStorage::Layout::kAssumedSlabs` 一处算出四个 ring + arena 的默认。
+* **门禁（三条，本机当场跑过）**：① 无设备 `BlockStorageTest.TheDefaultsOwnOneSlabMoreThanTheFramesInFlight`
+  （默认布局 = 在飞 + 1，五个 region 逐一断言）；② 无设备 `CoreMaterialArenaTest.TheCopyRotationSpansTheInFlightFrames`
+  （一次完整旋转是 `copies` 帧，第一份 copy 在第 `copies` 帧才回来）；③ X11 设备
+  `BlockStorageTest.TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightDoNot`（三帧在飞 ⇒ 第 3 帧不得落回
+  slab 0——**这一条原来断言的正是错的模型**：“after three frames the first slab is free again”）。
+  **变异**：把 `perFrameCopies` 改成不加一 ⇒ ①② 当场红（Windows 上就能证）。`test_vsg` 全量 **400 通过 /
+  25 跳过**（无 X ⇒ 设备与窗口读数用例照旧跳过，判法见 §11.16cc）。
+* **诚实登记**：① 本机（Windows/Release）**没能**跑设备相位，“用户看到的症状确由这条引起”是**由推导与门禁
+  支持的最强候选**，不是实测复现（复现需要能真拖鼠标的 GPU 窗口）；② 在飞帧数一旦学到 ≠3，存储仍按**假设**
+  布局（会话会报一条 Info，见 `Session::probeSlots`），那时需要“按学到的数重新布局存储”（走
+  `adoptBlockStorage` 同一条路径）。**触发器**：真机报出 N≠3，且画面仍有跨帧串扰。

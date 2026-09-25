@@ -29,7 +29,9 @@
 #include <vine/vsg/core/Streams.hpp>
 
 using vn::vsg::core::FrameRing;
+using vn::vsg::core::kAssumedInFlightSlots;
 using vn::vsg::core::MaterialArena;
+using vn::vsg::core::perFrameCopies;
 using vn::vsg::core::SharedStreams;
 using vn::vsg::core::StreamKey;
 using vn::vsg::core::StreamKind;
@@ -256,7 +258,11 @@ TEST(CoreMaterialArenaTest, TheFirstNoteAllocatesAndWritesOneBlock)
     EXPECT_EQ(arena.writes(), 1U);
     EXPECT_EQ(arena.allocations(), 1U);
     EXPECT_EQ(arena.live(), 1U);
-    EXPECT_EQ(arena.capacityBytes(), 64U * 3U * 256U) << "block x copies x slots is what the API layer allocates";
+    EXPECT_EQ(arena.capacityBytes(), 64U * arena.copies() * 256U)
+        << "block x copies x slots is what the API layer allocates";
+    EXPECT_EQ(arena.copies(), perFrameCopies(kAssumedInFlightSlots))
+        << "one copy MORE than the frames in flight: the frame being written lands on the copy the OLDEST frame "
+           "still allowed to be in flight reads (see core::perFrameCopies)";
 }
 
 TEST(CoreMaterialArenaTest, ASteadyFrameWritesNothing)
@@ -304,8 +310,11 @@ TEST(CoreMaterialArenaTest, TheCopyRotationSpansTheInFlightFrames)
     MaterialArena arena({});
     const int     material = 0;
 
+    // ONE MORE frame than the arena owns copies: a copy is only free once the frame that read it is proved
+    // finished, and the framework proves that when the slot is recycled - after this frame's write. So the
+    // rotation spans `copies` frames, and the first copy comes back on the frame AFTER the last in flight.
     std::vector<std::uint32_t> copies;
-    for (std::uint64_t frame = 0; frame < 4; ++frame) {
+    for (std::uint64_t frame = 0; frame <= arena.copies(); ++frame) {
         arena.beginFrame();
         EXPECT_EQ(arena.frame(), frame);
         const MaterialArena::Write write = arena.note(&material, frame + 1);
@@ -313,11 +322,13 @@ TEST(CoreMaterialArenaTest, TheCopyRotationSpansTheInFlightFrames)
         copies.push_back(write.copy);
     }
 
-    ASSERT_EQ(copies.size(), 4U);
-    EXPECT_EQ(copies[0], 0U);
-    EXPECT_EQ(copies[1], 1U);
-    EXPECT_EQ(copies[2], 2U);
-    EXPECT_EQ(copies[3], 0U) << "the first copy is free again: its frame is out of flight";
+    ASSERT_EQ(copies.size(), static_cast<std::size_t>(arena.copies()) + 1U);
+    for (std::uint32_t copy = 0; copy < arena.copies(); ++copy) {
+        EXPECT_EQ(copies[copy], copy) << "every frame of a full rotation writes its own copy";
+    }
+    EXPECT_EQ(copies[arena.copies()], 0U)
+        << "the first copy is free again only once the frame that read it is out of flight, which is one frame "
+           "later than the number of frames in flight";
     EXPECT_NE(arena.offsetOf(0U, copies[0]), arena.offsetOf(0U, copies[1])) << "copies are distinct blocks";
 }
 

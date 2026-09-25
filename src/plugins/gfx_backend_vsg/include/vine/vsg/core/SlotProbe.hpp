@@ -46,11 +46,38 @@ struct SlotProbeOutcome
 
 /** @brief The slot count this backend expects a viewer of this fleet to own.
  *
- * Not a configuration and not used to decide anything: it exists so a session can say whether what it
- * LEARNED matches what this code was written against, which is the difference between "unchanged" and
- * "the framework changed something and we should look".
+ * Not a configuration: it exists so a session can say whether what it LEARNED matches what this code was
+ * written against, which is the difference between "unchanged" and "the framework changed something and we
+ * should look". Its one DECIDED use is a SIZE - the per-frame storage that has to exist before any frame has
+ * been run is laid out from it (see @ref perFrameCopies), because a session learns its count only after
+ * several frames and a frame cannot be recorded without storage.
  */
 inline constexpr std::uint32_t kAssumedInFlightSlots = 3;
+
+/**
+ * @brief The copies (slabs) any per-frame storage needs when @p frames_in_flight frames may be in flight.
+ *
+ * ONE MORE THAN THE FRAMES IN FLIGHT, and that extra copy is the whole difference between a correct picture
+ * and a torn one - it is not a margin. WHERE THE RULE COMES FROM: the framework proves a frame finished only
+ * when the slot it recorded into is RECYCLED (its fence is waited there), and that happens inside the submit
+ * of a later frame - i.e. AFTER that later frame has already written its bytes. So a frame writes the copy
+ * that the OLDEST frame still allowed to be in flight is reading, and a storage of exactly `frames_in_flight`
+ * copies hands that oldest frame the NEWEST frame's data. With matrices per frame (a view, a shadow matrix)
+ * the result is not a lost frame but a visibly wrong one: the fragment positions of frame F - N were shaded
+ * with frame F's camera, which lands the shadow lookup in the wrong texel and shows up as extra shadows that
+ * flicker only for as long as the camera moves. `frames_in_flight + 1` is the first count that keeps them
+ * apart, and it is the same window @ref RetirementQueue parks against and ContentAssembly gives its upload
+ * streams.
+ *
+ * @param frames_in_flight Frames that may be in flight at once: Session::slots() once the session knows the
+ *                         number, else @ref kAssumedInFlightSlots.
+ * @return Copies of every per-frame block the storage must own (see FrameRing::Layout::slabs and
+ *         MaterialArena::Layout::copies).
+ */
+[[nodiscard]] constexpr std::uint32_t perFrameCopies(std::uint32_t frames_in_flight) noexcept
+{
+    return frames_in_flight + 1U;
+}
 
 /** @brief Asks how many slots the framework can answer for right now.
  *

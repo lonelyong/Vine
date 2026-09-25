@@ -11,6 +11,7 @@
 
 #include <vine/vsg/core/FrameRing.hpp>
 #include <vine/vsg/core/MaterialArena.hpp>
+#include <vine/vsg/core/SlotProbe.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -52,11 +53,16 @@ class BlockStorage
     /** @brief The storage's shape. Alignment fields are not read - the device's own alignment is used. */
     struct Layout
     {
-        core::FrameRing::Layout     views{ 288U, 1U, 3U, 256U };       ///< View blocks (one per pass per frame).
-        core::FrameRing::Layout     draws{ 80U, 1U, 3U, 1024U };       ///< Draw blocks (one per draw per frame).
-        core::FrameRing::Layout     lights{ 112U, 1U, 3U, 1024U };     ///< Light blocks (one per drawing call).
-        core::FrameRing::Layout     shadows{ 80U, 1U, 3U, 1024U };     ///< Shadow blocks (one per drawing call).
-        core::MaterialArena::Layout materials{ 64U, 3U, 256U };        ///< Material blocks (persistent, rotating).
+        /// The slabs every ring below owns on a session whose in-flight count has not been learned yet: one
+        /// MORE than that count, because a frame writes the slab the oldest frame still allowed to be in
+        /// flight reads (see core::perFrameCopies - getting this wrong is not a lost frame but a wrong one).
+        static constexpr std::uint32_t kAssumedSlabs = core::perFrameCopies(core::kAssumedInFlightSlots);
+
+        core::FrameRing::Layout     views{ 288U, 1U, kAssumedSlabs, 256U };   ///< View blocks (one per pass per frame).
+        core::FrameRing::Layout     draws{ 80U, 1U, kAssumedSlabs, 1024U };   ///< Draw blocks (one per draw per frame).
+        core::FrameRing::Layout     lights{ 112U, 1U, kAssumedSlabs, 1024U }; ///< Light blocks (one per drawing call).
+        core::FrameRing::Layout     shadows{ 80U, 1U, kAssumedSlabs, 1024U }; ///< Shadow blocks (one per drawing call).
+        core::MaterialArena::Layout materials{ 64U, kAssumedSlabs, 256U };    ///< Material blocks (persistent, rotating).
     };
 
     /** @brief Where a block was written. */

@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <vine/vsg/core/SlotProbe.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -21,10 +22,11 @@
  *
  * WHY COPIES, AND WHY THE ROTATION MATTERS. A write while an earlier frame is still reading the block is a
  * data race the GPU will happily commit (it renders half of the old and half of the new value). Each slot
- * therefore holds as many copies as frames may be in flight, and the frame's copy rotates - the same
- * arithmetic the retirement queue uses to know which frames are done. A caller that writes to the copy the
- * current frame reads is correct by construction; a caller that writes to the copy an IN-FLIGHT frame reads
- * is the bug this layout exists to make impossible to express.
+ * therefore holds one copy MORE than the frames that may be in flight (core::perFrameCopies: the framework
+ * only proves a frame finished when its slot is recycled, which is after the next frame's write), and the
+ * frame's copy rotates - the same arithmetic the retirement queue uses to know which frames are done. A
+ * caller that writes to the copy the current frame reads is correct by construction; a caller that writes to
+ * the copy an IN-FLIGHT frame reads is the bug this layout exists to make impossible to express.
  *
  * WHAT THIS TYPE DOES NOT OWN. No GPU object and no buffer: it is the layout and the accounting (which slot,
  * which copy, how many 64-byte writes happened), so its rules are testable without a device. The API layer
@@ -45,7 +47,9 @@ class MaterialArena
     struct Layout
     {
         std::uint32_t block_bytes{64};       ///< Bytes one material block occupies (the engine's material ABI).
-        std::uint32_t copies{3};             ///< Copies per slot: one per frame that may still read it.
+        /// Copies per slot, one MORE than the frames that may be in flight (see core::perFrameCopies and
+        /// FrameRing::Layout::slabs: the same rule, for the same reason).
+        std::uint32_t copies{perFrameCopies(kAssumedInFlightSlots)};
         std::uint32_t capacity{256};         ///< Slots; the oldest entry is evicted past it (the cache bound).
     };
 

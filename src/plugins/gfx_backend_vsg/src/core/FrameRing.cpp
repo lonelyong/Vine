@@ -23,7 +23,7 @@ FrameRing::FrameRing(const Layout& layout)
 {
     stride_           = std::max<std::uint64_t>(layout.stride, 1U);
     alignment_        = std::max<std::uint64_t>(layout.alignment, 1U);
-    slots_            = std::max<std::uint32_t>(layout.slots, 1U);
+    slabs_            = std::max<std::uint32_t>(layout.slabs, 1U);
     blocks_per_frame_ = std::max<std::uint32_t>(layout.blocks_per_frame, 1U);
 
     // The aligned stride is the EFFECTIVE stride: every block starts aligned, so a reservation's offset can be
@@ -76,7 +76,7 @@ std::uint64_t FrameRing::slabBytes() const noexcept
 
 std::uint64_t FrameRing::capacityBytes() const noexcept
 {
-    return slab_bytes_ * slots_;
+    return slab_bytes_ * slabs_;
 }
 
 std::uint64_t FrameRing::frames() const noexcept
@@ -86,7 +86,7 @@ std::uint64_t FrameRing::frames() const noexcept
 
 std::uint32_t FrameRing::slot() const noexcept
 {
-    return static_cast<std::uint32_t>(frames_ % slots_);
+    return static_cast<std::uint32_t>(frames_ % slabs_);
 }
 
 std::uint32_t FrameRing::reserved() const noexcept

@@ -2,9 +2,10 @@
  * @brief The frame's mapped block storage, on a real device.
  *
  * The properties these cases pin are the ones a steady frame depends on: every block lands inside its own
- * region of ONE buffer, the rings rotate by slab so a frame writes where the frames in flight are not, a
- * steady frame reuses the same bytes, and a material whose revision did not move writes NOTHING (while an
- * edit writes exactly one block). Refusals are pinned too: a block past its region's stride is counted and
+ * region of ONE buffer, the rings rotate by slab so a frame writes where the frames in flight are not (one
+ * slab MORE than those frames - see core::perFrameCopies), a steady frame reuses the same bytes, and a
+ * material whose revision did not move writes NOTHING, while an edit writes exactly one block. Refusals are
+ * pinned too: a block past its region's stride is counted and
  * asks for nothing, and a frame past its block budget is counted AND remembered as the request a
  * replacement storage has to serve (`growthNeeded`) - the storage itself never grows, and building the
  * replacement is the caller's act between frames (see the growth cases below and
@@ -33,9 +34,12 @@
 
 #include <vine/vsg/api/BlockStorage.hpp>
 #include <vine/vsg/api/DeviceProbe.hpp>
+#include <vine/vsg/core/SlotProbe.hpp>
 
 using vn::vsg::BlockStorage;
 using vn::vsg::api::probePhysicalDevices;
+using vn::vsg::core::kAssumedInFlightSlots;
+using vn::vsg::core::perFrameCopies;
 
 namespace
 {
@@ -183,6 +187,24 @@ TEST(BlockStorageTest, EveryBlockIsReadBackFromInsideItsOwnRegion)
     EXPECT_EQ(fixture.storage->bytesWritten(), view.size() + draw.size() + material.size());
 }
 
+TEST(BlockStorageTest, TheDefaultsOwnOneSlabMoreThanTheFramesInFlight)
+{
+    // Device-free: the rule is a pure function of the count the code was written against (see
+    // core::perFrameCopies), and it is the difference between a correct frame and one that shades with
+    // another frame's matrices - the frame being recorded writes the slab the OLDEST frame still allowed to
+    // be in flight reads, because the framework only proves a frame finished when its slot is recycled.
+    const BlockStorage::Layout layout;
+    const std::uint32_t       copies = perFrameCopies(kAssumedInFlightSlots);
+
+    EXPECT_GT(copies, kAssumedInFlightSlots)
+        << "a ring of exactly the in-flight count hands the oldest in-flight frame the newest frame's bytes";
+    EXPECT_EQ(layout.views.slabs, copies);
+    EXPECT_EQ(layout.draws.slabs, copies);
+    EXPECT_EQ(layout.lights.slabs, copies);
+    EXPECT_EQ(layout.shadows.slabs, copies);
+    EXPECT_EQ(layout.materials.copies, copies) << "the material copies follow the same rule";
+}
+
 TEST(BlockStorageTest, TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightDoNot)
 {
     if (!Fixture::available()) {
@@ -190,7 +212,7 @@ TEST(BlockStorageTest, TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightD
     }
     Fixture fixture;
     BlockStorage::Layout layout;
-    layout.views.slots = 3;  // three frames in flight: three slabs
+    layout.views.slabs = perFrameCopies(3U);  // three frames in flight: four slabs (see core::perFrameCopies)
     ASSERT_TRUE(fixture.build(layout));
 
     const std::vector<std::byte> block = blockOf(288, 0x44);
@@ -203,7 +225,9 @@ TEST(BlockStorageTest, TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightD
 
     EXPECT_NE(offsets[0], offsets[1]) << "frame 1 must not write over the frame the GPU may still read";
     EXPECT_NE(offsets[1], offsets[2]);
-    EXPECT_EQ(offsets[3], offsets[0]) << "after three frames the first slab is free again";
+    EXPECT_NE(offsets[3], offsets[0])
+        << "frame 3 writes while frame 0 may still be reading slab 0: the oldest of the three frames in flight"
+           " is only proved finished when its slot is recycled, which is not until frame 3 has been submitted";
     EXPECT_EQ(fixture.storage->overflows(), 0U);
 }
 
@@ -355,14 +379,15 @@ TEST(BlockStorageTest, TheMaterialCopiesRotateSoAnInFlightFrameIsNeverOverwritte
     }
     Fixture fixture;
     BlockStorage::Layout layout;
-    layout.materials.copies = 3;
+    layout.materials.copies = perFrameCopies(3U);  // three frames in flight: four copies (see the arena's note)
     ASSERT_TRUE(fixture.build(layout));
 
     const int material = 0;
 
-    // Three consecutive edits: each frame writes its own copy, because the previous ones are in flight.
+    // Four consecutive edits: each frame writes its own copy, because the frames before it may still be in
+    // flight - the OLDEST of them included, which is what the extra copy is for (see core::perFrameCopies).
     std::vector<std::uint64_t> offsets;
-    for (std::uint8_t revision = 1; revision <= 3; ++revision) {
+    for (std::uint8_t revision = 1; revision <= 4; ++revision) {
         fixture.storage->beginFrame();
         const std::vector<std::byte> block  = blockOf(64, revision);
         const auto                   result = fixture.storage->writeMaterial(&material, revision, block);
@@ -374,4 +399,5 @@ TEST(BlockStorageTest, TheMaterialCopiesRotateSoAnInFlightFrameIsNeverOverwritte
 
     EXPECT_NE(offsets[0], offsets[1]);
     EXPECT_NE(offsets[1], offsets[2]);
+    EXPECT_NE(offsets[3], offsets[0]) << "the third frame in flight is still reading the first copy";
 }

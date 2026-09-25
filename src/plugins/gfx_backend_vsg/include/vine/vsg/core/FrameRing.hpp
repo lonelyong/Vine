@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include <vine/vsg/core/SlotProbe.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -19,9 +20,13 @@
  * act), never have a "convenient" resize silently relocate a buffer a submitted command buffer still names.
  * So a reservation past the frame's budget is INVALID and counted, and the caller decides what to do.
  *
- * WHY THE SLOT ROTATION. Frames in flight read the ring at the same time, so frame N writes into slot
- * N % slots while frame N-1 still reads slot (N-1) % slots. One slab per slot keeps them apart without any
- * synchronisation.
+ * WHY THE SLAB ROTATION, AND WHY THERE ARE MORE SLABS THAN FRAMES. Frames in flight read the ring at the same
+ * time, and "in flight" reaches FURTHER BACK than the previous frame: the framework proves a frame finished
+ * only when the slot that recorded it is recycled, and that fence wait happens inside the submit of a later
+ * frame - after that frame has written its own bytes (see core::perFrameCopies). So the slab a frame writes is
+ * the one the OLDEST frame still allowed to be in flight is reading, and the ring owns ONE SLAB MORE than
+ * there are frames in flight. With exactly as many slabs as frames, that oldest frame shades with the newest
+ * frame's matrices: a wrong frame rather than a lost one, and with a moving camera a visibly wrong one.
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
@@ -30,7 +35,7 @@ VN_VSG_NS_BEGIN
 namespace core
 {
 
-/** @brief Per-frame storage: a fixed ring of blocks, one slab per in-flight frame. */
+/** @brief Per-frame storage: a fixed ring of blocks, one slab per frame that may still read it. */
 class FrameRing
 {
   public:
@@ -39,7 +44,9 @@ class FrameRing
     {
         std::uint64_t stride{80};            ///< Bytes one reservation holds (a draw block, a view block).
         std::uint64_t alignment{256};        ///< Offset alignment; the effective stride is rounded up to it.
-        std::uint32_t slots{3};              ///< In-flight copies: one slab per slot.
+        /// Slabs owned, one MORE than the frames that may be in flight (see the file note, and
+        /// core::perFrameCopies for the count and why the extra slab is what makes a frame correct).
+        std::uint32_t slabs{perFrameCopies(kAssumedInFlightSlots)};
         std::uint32_t blocks_per_frame{512}; ///< Reservations a single frame may make.
     };
 
@@ -107,7 +114,7 @@ class FrameRing
     std::uint64_t stride_{1};
     std::uint64_t alignment_{1};
     std::uint64_t slab_bytes_{1};
-    std::uint32_t slots_{1};
+    std::uint32_t slabs_{1};
     std::uint32_t blocks_per_frame_{1};
     bool          started_{false};
     std::uint64_t frames_{0};
