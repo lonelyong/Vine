@@ -1478,3 +1478,37 @@ material 值 / 流字节 / cull 全部**不进**。
   **同一条分支**（同一次 `hasSlabsForInFlight` 判定、同一次替换、同一条诊断），但“某台机器上真的学到 4”这件事本身不在
   本机证据里。**触发器**：真机首次报出 N≠3 时，核对 Info 文案（应出现 “learned its in-flight count (N)”）与替换后的
   内存代价。
+
+### §11.16df（2026-09-25）：ASan 全量 test_vsg 第一次真的跑起来——一处构建地雷、一处真 UAF、一处测试卫生
+
+* **这根线怎么开的**：B9 收尾想跑脚本里那条严格泄漏判据（`VINE_ASAN_TARGET=test_vsg VINE_ASAN_FILTER='*' VINE_ASAN_LEAKS=1 scripts/asan_check.sh`），
+  ASan 树的插件链接先炸：`libvolkd.a(volk.c.o): relocation R_X86_64_PC32 ... can not be used when making a
+  shared object; recompile with -fPIC`（ld.bfd）。查证：volk 目标在**所有树**都没有 `-fPIC`（三棵树的对象里 PC32 对
+  volk 符号 728/4309/741 处），Debug/Release 能链上是**历史对象**的运气（Debug 的归档还是 9 月 19 日建的，Sep-19 归档的
+  PIC 性无法回溯解释——能说的是现在的对象在任何树都非 PIC）。修复 = `third_party/volk/CMakeLists.txt` 给目标
+  `POSITION_INDEPENDENT_CODE ON`（静态归档进共享库永远要它）；三棵树重链验证（ASan 树此前根本链不出插件）。
+* **环境坑（同一根线）**：ASan 树重生成会跑 FetchContent 的 spdlog 更新步骤 ⇒ **要带 `env -u http_proxy …` 跑**（本仓
+  git 走直连，代理环境变量会掐握手）。
+* **第一处真缺陷（UAF）**：套件首个 ASan 错——`ContentStoreTest.AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark`
+  里 `tablesFor` 读已释放的 `Geometry`（`Geometry::revision()`，READ of size 8）。机制：用例契约是"**停靠的行在停放
+  窗口内仍要应答**"（它把命名已释放地址的旧计划喂回 `tablesFor` 是故意的），而 `tablesFor` 在**查表之前**就读
+  `geometry->revision()`；同文件另外三处（`ensureGeometry`/`ensureMaterial`/`ensureProgram`）都是**先查后读**——
+  "行在即持 share（`LiveGeometry::object`），持 share 才准读对象"本就是该文件自己的不变式，`tablesFor` 是唯一例外。
+  修复：成员检查移进 `liveGeometry(对象指针)`，无行答 `nullptr` 且**不读**。证据：修前 ASan 红（free 栈 = `LiveGeometry`
+  析构释放最后一个 share）；修后全量 **0 个 ASan 错**。
+* **一处测试卫生（严格泄漏判据的主体）**：修完 UAF 全量跑到尾，LeakSanitizer 报 **685,560 B / 395 处**——主体是
+  **22 个设备用例各自 `xcb_connect` 后从不 `xcb_disconnect`**（"Direct leak of 21176 byte(s)" ×22 = 连接缓冲）。
+  修复：`TestXConnection` RAII（`tests/test_vsg/TestHostWindow.hpp`；声明在连接之后、窗口之前——C++ 逆序销毁 ⇒ 窗口先走、
+  连接后关）+ 22 处插入（`HostWindowReadTest` 的 Fixture 本来就会断，跳过）。**泄漏 685,560/395 → 6,048/108**。
+  另：`CoreAllocationGateTest.ADeliberateAllocationIsCaught` 在 ASan 下必红且**应当**红——它的量具是 `mallinfo2`
+  （glibc 堆），ASan 把分配器整体替换 ⇒ 种子分配对量具不可见（`grew == 0`）。处理 = ASan 下 `GTEST_SKIP`（判词写进
+  用例：门禁的牙由非 ASan 跑证明），不是改断言。
+* **剩下的 6 KB 与它的归属（登记待决）**：6,048 B / 108 处（≈56 B/处）的栈**穿过插件模块且符号错乱**（`<unknown
+  module>`、把 `calloc` 归给 `_Rb_tree::end()` 之类的胡话）——实测插件与主程序**各自静态链了一份 ASan 运行时**
+  （两边符号表里都有 `__asan_init`），插件侧分配在退出报告里走错账本。可见的命名帧是 vsg 的一次性缓存
+  （`ResourceRequirements`/`Array2D::create`）与 `OffscreenTarget::buildAttachments` 两处。**收口二选一留作独立单元**：
+  全树 `-shared-libasan`，或逐条归属后按 `asan_leaks.supp` 的规矩写**带理由的**豁免。`scripts/asan_check.sh` 头部已把
+  这两条边界与 `vsg_backend_selftest`（已随老渲染器删除，头部引用陈旧）写清。
+* **门禁**：两棵树 `test_vsg` **451/451**；两棵树门禁 `cases=451 failed=0 vuid=0 hazard=0`、应用阶段判图逐字不变
+  （before 378x247: content 87.04% / after 698x132: content 85.14%）；include 卫生 0/798、诊断格式 0/7、文档符号 3/145。
+* **提交**：`28f1332`（volk PIC + UAF 修复）、`6dc23d1`（22 处连接 RAII + ASan 跳过 + 脚本边界）。

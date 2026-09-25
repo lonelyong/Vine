@@ -1,3 +1,13 @@
+> 2026-09-25 **ASan 全量 test_vsg 首次跑通（设计 §11.16df）——一雷一 UAF 一卫生**
+> · volk 静态进插件**所有树都没有 -fPIC**（Debug/Release 靠历史对象在绿；ASan 树 ld.bfd 直接拒链）⇒
+>   `POSITION_INDEPENDENT_CODE ON`，三棵树重链验证；ASan 树重生成要 `env -u http_proxy`（FetchContent 更新步）。
+> · **真 UAF**：`ContentStore::tablesFor` 查表前读 `geometry->revision()`——停靠契约（"窗口内旧计划仍应答"）与同文件
+>   三处的"先查后读、持 share 才准读"违背 ⇒ 成员检查移进 `liveGeometry`；修前 ASan 红、修后 0 ASan 错。
+> · 泄漏主体 = 22 个设备用例不 `xcb_disconnect`（685,560B/395 处）⇒ `TestXConnection` RAII + 22 处插入 ⇒ **6,048B/108 处**；
+>   分配门禁 mallinfo2 用例 ASan 下 GTEST_SKIP（量具对 ASan 分配器不可见）。余 6KB 栈穿插件、符号错乱（插件与主程序
+>   各带一份静态 ASan 运行时）⇒ 收口（-shared-libasan / 逐条豁免）**登记待决**。
+> · 提交 `28f1332` + `6dc23d1`；两棵树 451/451、门禁 cases=451 vuid=0、应用行逐字不变。
+
 > 2026-09-25 **B9 在飞槽数地板 + 学到更深即重布局（收口）**
 > · ① 构造地板：`BlockStorage::create` 以 `layoutForInFlight(layout, kAssumedInFlightSlots)` **上举**五个 per-frame
 >   形态（只举不缩）；`hasSlabsForInFlight` 是判断面。旧字面量 `slots{3}` 从此造不出存储——**上举而非拒绝**
