@@ -351,6 +351,32 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
   `exclusive_busy` 保证两个排他命令不同时运行（后到者要么接管前者、要么被拒）。
 9. **资源有界**：历史不超过 `maxHistoryEntries()`，嵌套深度不超过 `maxChainDepth()`。
 
+## 调度内核转移表（2026-09-25 审计）
+
+对 `Impl::admit()` / `takeOverForeground()` / `waitChainsDrained()` / `ChainGuard` / `cancelLiveChains()`
+的现状逐事件落表，作为"调度内核状态机化"（②）的复核交付：审计确认代码与不变量 4/5/8 一致，
+**不做** `Scheduler` 类抽取（理由见"已评估但**未采纳**"）。
+状态＝占用位（`foreground_busy` 门 / `exclusive_busy` 排他，均在 `Impl::mutex` 内读写，释放统一在
+`ChainGuard` 析构）＋活链集合 R ＋ `cancel_generation` 代际 G。
+
+| 事件 | 前置 | 结果 |
+| --- | --- | --- |
+| E1a 顶层非排他 admit | 门空闲且无环境进度宿主（`ProgressHost::current()`，进临界区前采样） | 建链并登记；`foreground` 指向它；LongRunning ⇒ 门置位 |
+| E1a 同上 | 门被占或环境宿主忙（与来者自身 flags 无关） | 拒绝：`Failed("另一个操作正在进行中，请稍候。")` |
+| E1b 顶层排他 admit（E2 成功后才到） | `exclusive_busy` 空闲 | 认领排他位（LongRunning 加置门位）；建链同 E1a |
+| E1b 同上 | `exclusive_busy` 被占 | 拒绝——并发提交的两个排他只有一个过（D16） |
+| E1c 嵌套 admit | 任意 | 无调度效果（入父链、绕门） |
+| E2 排他接管 | 任意 | 快照 R → 全链 `request_stop()`；无活链 ⇒ 直接成功；否则采样 G 后 5ms 轮询：排空 ⇒ 成功；G 变化 ⇒ `Cancelled`（D13）；到期 ⇒ `StillStopping`，顶层以 `Failed` 拒绝 |
+| E3 帧收尾（`ChainGuard`） | 持有门/排他位 | 位先清（锁内）→ `leaveChain()`（runs 归零）；位清在归零之前（不变量 5），且 `ChainGuard` 在 progress host/StackGuard 之前声明 ⇒ 最后析构 |
+| E4 `cancelAll()`/`cancelAllAndWait()` | 任意 | G 先自增（打断等待中的 E2）→ 快照 R → 全链停；位由各帧 E3 释放 |
+| E5 `~CommandManager` | 任意 | 只告警（宿主契约，见"必须由调用方保证"） |
+
+**已知残余（本表不消除）**：排他是"启动时刻清场"，不是**入场锁**——运行期（或接管等待窗口内，D12）
+被准入的普通顶层命令会与排他命令并存；彻底关门需要"管理器拒绝新顶层命令"的显式状态，属动 API 轮。
+覆盖用例：`GateAdmitsAtMostOneTopLevelLongRunningCommand`（E1a 拒绝）、`ExclusiveCommandsAreSerialized`
+（E1b 并发）、`ExclusiveStopsEveryLiveChain`（E2 全链）、`CancelAllAbortsWaitingTakeOver`（E2×E4）、
+`ExclusiveIsRejectedWhenChainIgnoresCancellation`（E2 超时）。
+
 ## 结构
 
 ```
@@ -618,3 +644,8 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   `cancelAllAndWait()`；代价是运行态跨对象耦合（帧要从链上读死亡标记、接管路径多一条必须在停链扫掠里
   排除自己的预建链——实现期内它就制造过一次"接管被自己取消"的缺陷）。复查条件：出现"管理器短于进程"
   的合法宿主（多管理器/嵌入宿主）时再评估。
+- **调度内核 `Scheduler` 类抽取（②，2026-09-25 复核后降级为审计）**：把 `admit`／接管／drain／释放
+  提炼为 Impl 私有嵌套类 + 显式状态转移表。**不做**：一是行为中性重排（既有 41 用例只能证明"没改坏"）；
+  二是承诺的直接收益"不用 GUI 测转移"在"零签名变化"下不可达——嵌套私有类没有任何测试缝，加缝就是动 API。
+  审计价值已由"调度内核转移表"一节承接。真正需要 `Scheduler` 形态的是带队列/优先级的整体重设计，
+  等 API 轮一起做。
