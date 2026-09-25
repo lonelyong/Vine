@@ -6,6 +6,15 @@ page (e.g. 936 on zh-CN Windows), so any Chinese / non-ASCII comment triggers
 C4819. A UTF-8 BOM makes MSVC treat the file as UTF-8 unconditionally (the
 same effect as /utf-8, but for every tool that reads the file).
 
+Note on coverage: the project's own targets already pass /utf-8
+(cmake/VineLibraryHelper.cmake, cmake/VinePluginHelper.cmake), so C4819 cannot
+fire in a Vine build either way - this script is belt-and-suspenders for the
+tools that ignore the flag (editors, scripts, foreign build systems). The
+convention is therefore not uniformly applied (measured 2026-09-25: 306 of 794
+tracked non-third_party C++ files carry no BOM, mostly the rewrite-era backend
+and its tests); run this script when adopting the convention in a tree, not to
+fix a build.
+
 Scope & safety:
   * Processes ONLY files tracked by git (git ls-files); untracked or ignored
     artifacts (build/, dist/, etc.) are never touched.
