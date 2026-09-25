@@ -56,6 +56,8 @@
 #                          a missing DISPLAY a skipped app stage instead of a failure.
 #   VINE_GATE_TEST=<path>    Test binary to run instead of <BUILD_DIR>/bin/test_vsg.
 #   VINE_GATE_APP=<path>     Application to run instead of <BUILD_DIR>/bin/Vine.
+#   VINE_GATE_APP_FIRST=WxH   Size the demo's window is set to BEFORE the first sample (default 800x600,
+#                          the demo's own default; the app's start-up size is not deterministic).
 #   VINE_GATE_APP_RESIZE=WxH Size the demo's top-level window is dragged to (default 1120x420).
 #   VINE_GATE_APP_SETTLE=N   Seconds to let the demo build and present its scene (default 4).
 #   VINE_GATE_APP_AFTER=N    Seconds to settle after the resize before the second sample (default 3).
@@ -356,6 +358,12 @@ fi
 # every viewport move at once. The preview geometry (four 160x90 slots at x = 8 + 168*i, y = 8, each holding
 # the source's aspect inside it - see AppShellDemo's fitPreviewRect) is the DEMO's own layout: this stage reads
 # the demo's evidence, so a demo that moves its previews has to move this recipe with it.
+#
+# THE FIRST SAMPLE'S WINDOW SIZE IS SET BY THE GATE, not inherited from the app: the demo's start-up size
+# is not deterministic (its docks grow with their content - six starts measured 2026-09-25 produced six
+# different render areas, and one run opened at 3418x1110 where a healthy picture read content 6.85%).
+# The gate drags the window to VINE_GATE_APP_FIRST first, so what is judged is the picture, and then to a
+# DIFFERENT size (VINE_GATE_APP_RESIZE) for the second sample, which is the resize half of the stage.
 app_pixel_ids() { # the pixel report on stdin -> "<width> <height>" of the render area
     sed -n 's/^window 0x[0-9a-fA-F]*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1
 }
@@ -486,7 +494,23 @@ check_app() {
         return
     fi
 
-    # 2. The settled picture, then the same picture after a resize the app has to follow. Both are measured
+    # 2. THE WINDOW GETS A KNOWN SIZE FIRST. The app's own start-up size is NOT deterministic: the demo's
+    #    window grows with its docks, and a run can open it several times larger (measured 2026-09-25: six
+    #    starts produced 378x247, 1037x509, 491x319, 378x406, 558x247, and one gate run 3418x1110), which
+    #    makes content% count the empty window area and a healthy picture read 6.85% - a FALSE red. The
+    #    first sample has to judge the PICTURE, so the size it is judged at is stated here instead of
+    #    inherited from the app (the same drag a user makes; the second sample still resizes to a DIFFERENT
+    #    size, which is what keeps the "follows a resize" half of this stage honest). 800x600 is the
+    #    demo's own default and yields the 378x247 render area the recorded evidence lines were taken at.
+    local first="${VINE_GATE_APP_FIRST:-800x600}"
+    if ! python3 "$ROOT/scripts/xwinresize.py" "$APP_WINDOW" "${first%x*}" "${first#*x}" >/dev/null 2>&1; then
+        kill "$app_pid" 2>/dev/null
+        wait "$app_pid" 2>/dev/null
+        record_stage "app (deferred demo)" 1 "the window could not be set to $first before the first sample"
+        return
+    fi
+
+    # 3. The settled picture, then the same picture after a resize the app has to follow. Both are measured
     #    the same way and both are judged: a picture that was already broken BEFORE the resize is a failure
     #    of this stage too, and saying which sample failed is the difference between a diagnosis and a red row.
     sleep "$settle"

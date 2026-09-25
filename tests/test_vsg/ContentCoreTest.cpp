@@ -29,10 +29,6 @@
 #include <vine/vsg/core/Streams.hpp>
 
 using vn::vsg::core::FrameRing;
-using vn::vsg::core::GeometryAction;
-using vn::vsg::core::GeometryPlan;
-using vn::vsg::core::GeometrySnapshot;
-using vn::vsg::core::GeometryStreams;
 using vn::vsg::core::MaterialArena;
 using vn::vsg::core::SharedStreams;
 using vn::vsg::core::StreamKey;
@@ -56,32 +52,6 @@ StreamKey vertexKey(std::uint32_t location, std::uint32_t components, const void
     return key;
 }
 
-/// @brief An index stream key with the given span, on a stand-in buffer.
-StreamKey indexKey(const void* buffer, std::uint64_t revision, std::uint64_t offset, std::uint64_t count)
-{
-    StreamKey key;
-    key.kind       = StreamKind::Index;
-    key.location   = 0;
-    key.components = 1;
-    key.buffer     = buffer;
-    key.revision   = revision;
-    key.offset     = offset;
-    key.count      = count;
-    return key;
-}
-
-/// @brief The snapshot a node was built from: positions and normals on one buffer, an index stream on another.
-GeometrySnapshot snapshotOf(const void* vertex_buffer, std::uint64_t vertex_revision, const void* index_buffer,
-                            std::uint64_t index_revision, std::uint64_t geometry_revision)
-{
-    GeometrySnapshot snapshot;
-    snapshot.streams.channels.push_back(vertexKey(0, 3, vertex_buffer, vertex_revision, 0, 12));
-    snapshot.streams.channels.push_back(vertexKey(1, 3, vertex_buffer, vertex_revision, 36, 12));
-    snapshot.streams.index    = indexKey(index_buffer, index_revision, 0, 36);
-    snapshot.revision         = geometry_revision;
-    return snapshot;
-}
-
 }  // namespace
 
 // --- stream identity -----------------------------------------------------------------------------------
@@ -97,123 +67,17 @@ TEST(CoreStreamsTest, StreamIdentityIsTheSliceAndTheRevision)
     const StreamKey filled = vertexKey(0, 3, &buffer_a, 8, 0, 12);    // refilled: the revision moved
     const StreamKey other  = vertexKey(0, 3, &buffer_b, 7, 0, 12);
 
-    EXPECT_TRUE(vn::vsg::core::sameStream(first, again)) << "the same slice at the same revision is one stream";
-    EXPECT_FALSE(vn::vsg::core::sameStream(first, moved)) << "two segments of one buffer are two streams";
-    EXPECT_FALSE(vn::vsg::core::sameStream(first, filled)) << "a refilled buffer is a new stream, not a stale one";
-    EXPECT_FALSE(vn::vsg::core::sameStream(first, other));
-
-    // A slice that moved is still the same SHAPE: that is what decides refresh instead of rebuild.
-    EXPECT_TRUE(vn::vsg::core::sameShape(first, moved));
-    EXPECT_TRUE(vn::vsg::core::sameShape(first, filled));
-    EXPECT_FALSE(vn::vsg::core::sameShape(first, vertexKey(0, 4, &buffer_a, 7, 0, 12)))
-        << "a different component count is a different layout, not a different buffer";
+    // The key IS the identity the alias registry looks up (CoreSharedStreamsTest observes the same rules
+    // through the live registry): the slice and the revision both matter, and a refilled buffer is a
+    // different stream rather than a stale copy of the earlier one.
+    EXPECT_TRUE(first == again) << "the same slice at the same revision is one stream";
+    EXPECT_FALSE(first == moved) << "two segments of one buffer are two streams";
+    EXPECT_FALSE(first == filled) << "a refilled buffer is a new stream, not a stale one";
+    EXPECT_FALSE(first == other);
 
     // A derived channel has no buffer to alias, which is exactly what makes it unshareable.
     EXPECT_TRUE(vertexKey(2, 4, nullptr, 0, 0, 12).derived());
     EXPECT_FALSE(first.derived());
-}
-
-// --- the edit plan -------------------------------------------------------------------------------------
-
-TEST(CoreStreamsTest, NothingBuiltYetIsARebuildThatMayShareUploads)
-{
-    const GeometrySnapshot now = snapshotOf(reinterpret_cast<const void*>(1), 1, reinterpret_cast<const void*>(2), 1, 1);
-    const GeometryPlan     plan = vn::vsg::core::planGeometry({}, now);
-
-    EXPECT_EQ(plan.action, GeometryAction::Rebuild);
-    EXPECT_TRUE(plan.shared_uploads_allowed) << "every stream is new, so a shared upload may serve it";
-    EXPECT_FALSE(plan.unexplained_revision);
-}
-
-TEST(CoreStreamsTest, AShapeChangeRebuildsWhateverMoved)
-{
-    const auto* const vertex_buffer = reinterpret_cast<const void*>(1);
-    const auto* const index_buffer  = reinterpret_cast<const void*>(2);
-    const GeometrySnapshot built    = snapshotOf(vertex_buffer, 1, index_buffer, 1, 1);
-
-    // A channel's component count changed: the node's layout is different, so nothing about it can be reused.
-    GeometrySnapshot components_changed = built;
-    components_changed.streams.channels[0].components = 4;
-    EXPECT_EQ(vn::vsg::core::planGeometry(built, components_changed).action, GeometryAction::Rebuild);
-
-    // A channel disappeared.
-    GeometrySnapshot channel_removed = built;
-    channel_removed.streams.channels.pop_back();
-    EXPECT_EQ(vn::vsg::core::planGeometry(built, channel_removed).action, GeometryAction::Rebuild);
-
-    // The geometry became indexed (or stopped being): an unindexed draw is assembled differently.
-    GeometrySnapshot index_removed = built;
-    index_removed.streams.index.reset();
-    EXPECT_EQ(vn::vsg::core::planGeometry(built, index_removed).action, GeometryAction::Rebuild);
-}
-
-TEST(CoreStreamsTest, OnlyTheStreamsThatMovedAreRefreshed)
-{
-    const auto* const vertex_buffer = reinterpret_cast<const void*>(1);
-    const auto* const index_buffer  = reinterpret_cast<const void*>(2);
-    const GeometrySnapshot built    = snapshotOf(vertex_buffer, 1, index_buffer, 1, 1);
-
-    // The positions were refilled (same slice, new revision): one channel is re-pointed, nothing else.
-    GeometrySnapshot positions_refilled = built;
-    positions_refilled.streams.channels[0].revision = 2;
-    const GeometryPlan one_channel = vn::vsg::core::planGeometry(built, positions_refilled);
-    EXPECT_EQ(one_channel.action, GeometryAction::Refresh);
-    ASSERT_EQ(one_channel.refreshed_locations.size(), 1U);
-    EXPECT_EQ(one_channel.refreshed_locations[0], 0U);
-    EXPECT_FALSE(one_channel.index_refreshed);
-    EXPECT_TRUE(one_channel.shared_uploads_allowed);
-
-    // Only the index BUFFER was replaced, drawing the same span: the bind is re-pointed in place.
-    GeometrySnapshot index_swapped = built;
-    index_swapped.streams.index->buffer   = reinterpret_cast<const void*>(3);
-    index_swapped.streams.index->revision = 2;
-    const GeometryPlan index_only = vn::vsg::core::planGeometry(built, index_swapped);
-    EXPECT_EQ(index_only.action, GeometryAction::Refresh);
-    EXPECT_TRUE(index_only.refreshed_locations.empty()) << "no channel moved";
-    EXPECT_TRUE(index_only.index_refreshed);
-}
-
-TEST(CoreStreamsTest, TheIndexSpanIsPartOfTheDrawAndOnlyARebuildRewritesIt)
-{
-    const auto* const vertex_buffer = reinterpret_cast<const void*>(1);
-    const auto* const index_buffer  = reinterpret_cast<const void*>(2);
-    const GeometrySnapshot built    = snapshotOf(vertex_buffer, 1, index_buffer, 1, 1);
-
-    GeometrySnapshot span_moved = built;
-    span_moved.streams.index->offset = 36;  // an index arena's next geometry
-    span_moved.streams.index->count  = 12;
-    span_moved.streams.index->buffer = reinterpret_cast<const void*>(3);
-    const GeometryPlan plan = vn::vsg::core::planGeometry(built, span_moved);
-    EXPECT_EQ(plan.action, GeometryAction::Rebuild)
-        << "the assembled node states first index and count; a different span is a different draw";
-}
-
-TEST(CoreStreamsTest, AnUnexplainedRevisionRebuildsAndRefusesSharedUploads)
-{
-    const auto* const vertex_buffer = reinterpret_cast<const void*>(1);
-    const auto* const index_buffer  = reinterpret_cast<const void*>(2);
-    const GeometrySnapshot built    = snapshotOf(vertex_buffer, 1, index_buffer, 1, 1);
-    const GeometrySnapshot edited   = snapshotOf(vertex_buffer, 1, index_buffer, 1, 2);
-
-    const GeometryPlan plan = vn::vsg::core::planGeometry(built, edited);
-    EXPECT_EQ(plan.action, GeometryAction::Rebuild)
-        << "the model says its data changed while every stream still reads the same bytes";
-    EXPECT_FALSE(plan.shared_uploads_allowed)
-        << "a shared upload holds the bytes as of its own insertion and cannot vouch for these";
-    EXPECT_TRUE(plan.unexplained_revision);
-}
-
-TEST(CoreStreamsTest, AnUnchangedModelDoesNothing)
-{
-    const auto* const vertex_buffer = reinterpret_cast<const void*>(1);
-    const auto* const index_buffer  = reinterpret_cast<const void*>(2);
-    const GeometrySnapshot built    = snapshotOf(vertex_buffer, 1, index_buffer, 1, 1);
-    const GeometrySnapshot same     = snapshotOf(vertex_buffer, 1, index_buffer, 1, 1);
-
-    const GeometryPlan plan = vn::vsg::core::planGeometry(built, same);
-    EXPECT_EQ(plan.action, GeometryAction::None);
-    EXPECT_TRUE(plan.refreshed_locations.empty());
-    EXPECT_FALSE(plan.index_refreshed);
 }
 
 // --- the alias registry --------------------------------------------------------------------------------
@@ -245,6 +109,25 @@ TEST(CoreSharedStreamsTest, ASliceThatMovedIsAUploadNotAnAlias)
     EXPECT_EQ(decision.action, SharedStreams::Action::Upload)
         << "the next geometry in the same arena reads different bytes";
     EXPECT_EQ(registry.uploads(), 2U);
+}
+
+TEST(CoreSharedStreamsTest, ARefilledSliceIsANewStreamSoItUploadsAgain)
+{
+    // THE RULE, through the LIVE path: the revision is part of the identity, so a buffer the host refilled
+    // (and announced) can never alias the earlier upload - what is on the device is the old bytes. The
+    // unwired `planGeometry` used to be where this was pinned; it had no production caller and is gone
+    // (design log §11.16cr), so the evidence moved onto the registry the frame path really uses.
+    SharedStreams   registry;
+    const StreamKey before   = vertexKey(0, 3, reinterpret_cast<const void*>(1), 5, 0, 12);
+    const StreamKey refilled = vertexKey(0, 3, reinterpret_cast<const void*>(1), 6, 0, 12);
+
+    EXPECT_EQ(registry.acquire(before, 1U).action, SharedStreams::Action::Upload);
+    EXPECT_EQ(registry.acquire(before, 2U).action, SharedStreams::Action::Alias)
+        << "the same identity named again is served by the upload it already has";
+    EXPECT_EQ(registry.acquire(refilled, 3U).action, SharedStreams::Action::Upload)
+        << "a refilled buffer is a different stream: it uploads again instead of aliasing";
+    EXPECT_EQ(registry.uploads(), 2U);
+    EXPECT_EQ(registry.aliases(), 1U);
 }
 
 TEST(CoreSharedStreamsTest, AnEntryNoFrameNamesForTheGraceWindowLeavesAndTheNextAcquireUploadsAgain)

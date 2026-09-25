@@ -10,8 +10,7 @@
 #include <vine/vsg/vsg_global.hpp>
 
 /**
- * @brief Content identity: which geometry streams two draws read, whether they can share one upload, and what
- * a data edit actually changed.
+ * @brief Content identity: which geometry streams two draws read, and whether they can share one upload.
  *
  * THE PROBLEM THIS ANSWERS. A scene draws the same mesh from several slots, several passes may read one
  * target, and an application edits meshes while the GPU is still reading the uploads. "Same geometry" and
@@ -26,12 +25,6 @@
  * different facts - a shared upload whose map entry was evicted is still read by everyone who bound it, and
  * the layer that owns the GPU object is the only one that may decide when it dies. Keeping that split is
  * what makes this file device-free and its rules testable without a GPU.
- *
- * THE PLAN IS A PURE FUNCTION. `planGeometry` takes two snapshots and returns what has to happen: nothing,
- * an in-place refresh of named streams, or a rebuild. It cannot read a buffer, so "the app wrote through a
- * raw pointer and only bumped the geometry-level revision" reaches it as a fact it is told, and its answer
- * for that case - rebuild, and do not reuse a shared upload - is the rule the previous implementation earned
- * by shipping the opposite one.
  */
 VN_VSG_NS_BEGIN
 
@@ -83,83 +76,6 @@ struct StreamKeyHash
     std::size_t operator()(const StreamKey& key) const noexcept;
 };
 
-/** @brief Gets whether two keys describe the same channel with the same SHAPE (bytes excluded).
- *
- * Shape is what decides how a node is assembled - the location, the component count and the element count.
- * Two keys that differ only in their buffer, revision or offset are exactly the case an in-place refresh
- * serves; a shape difference is a rebuild.
- *
- * @param a First key.
- * @param b Second key.
- * @return true when both describe the same shape.
- */
-[[nodiscard]] bool sameShape(const StreamKey& a, const StreamKey& b) noexcept;
-
-/** @brief Gets whether two keys describe the same stream (shape and bytes).
- *
- * @param a First key.
- * @param b Second key.
- * @return true when both describe the same stream.
- */
-[[nodiscard]] bool sameStream(const StreamKey& a, const StreamKey& b) noexcept;
-
-/**
- * @brief Everything one retained data node reads: its vertex channels plus its index stream.
- *
- * `channels` is in ascending location order - the order the builder walks, and the order that makes two
- * snapshots comparable entry by entry. An ABSENT index stream is a different geometry from an empty one:
- * the first draws unindexed, the second draws zero triangles, and the difference is a shape change.
- */
-struct GeometryStreams
-{
-    std::vector<StreamKey>    channels;  ///< Vertex channels, ascending location.
-    std::optional<StreamKey>  index;     ///< The index stream, when the geometry draws indexed.
-};
-
-/** @brief A retained node's inputs: what it was built from, and the revision the model reported then. */
-struct GeometrySnapshot
-{
-    GeometryStreams streams;             ///< The streams themselves.
-    std::uint64_t   revision{0};         ///< Upstream geometry revision at the time of the build.
-};
-
-/** @brief What has to happen to keep a retained data node current. */
-enum class GeometryAction : std::uint8_t
-{
-    None,     ///< Nothing changed: the retained node already reads exactly these streams.
-    Refresh,  ///< Re-point the named streams in place; the node's shape is unchanged.
-    Rebuild,  ///< Re-materialise the whole node.
-};
-
-/** @brief The answer of @ref planGeometry. */
-struct GeometryPlan
-{
-    GeometryAction              action{GeometryAction::Rebuild};  ///< What to do.
-    std::vector<std::uint32_t>  refreshed_locations;              ///< Channels whose bytes moved (ascending).
-    bool                        index_refreshed{false};           ///< The index stream needs re-pointing.
-    bool                        shared_uploads_allowed{true};     ///< Whether shared uploads may serve this build.
-    bool                        unexplained_revision{false};      ///< The revision moved and no stream did.
-};
-
-/** @brief Decides how a retained data node reacts to the model's current state.
- *
- * The rules, in the order they are applied:
- *
- *   * nothing was built yet -> rebuild (every stream is new, so sharing is allowed);
- *   * the channel shape, the channel set or the presence of an index stream changed -> rebuild;
- *   * a channel's bytes moved, or the index buffer was replaced with the same span -> refresh exactly
- *     those streams;
- *   * the INDEX SPAN moved -> rebuild: the assembled node states first index and count, so a different span
- *     is a different draw, not a different buffer;
- *   * the revision moved while every stream stayed identical -> rebuild with sharing REFUSED. That
- *     announcement is one no stream accounts for (the app wrote through a pointer the buffer cannot see),
- *     and a shared upload holds the bytes as of its own insertion, so it cannot be vouched for here.
- *
- * @param built  What the retained node was built from (empty when nothing was built yet).
- * @param now    What the model reports now.
- * @return The plan (never throws; a rebuild is the safe answer for anything unclear).
- */
-[[nodiscard]] GeometryPlan planGeometry(const GeometrySnapshot& built, const GeometrySnapshot& now) noexcept;
 
 /**
  * @brief The registry of streams more than one draw reads: the geometry aliasing decision, without the bytes.

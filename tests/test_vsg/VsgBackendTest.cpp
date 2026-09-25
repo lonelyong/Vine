@@ -1594,11 +1594,13 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
         EXPECT_EQ(change.created, 0) << "the vertex layout did not change, so no pipeline is compiled";
     }
 
-    // 3. GEOMETRY, THE SAME BUFFER: the host wrote through the buffer it had already handed over and announced
-    //    it. The node is REFRESHED in place rather than rebuilt (planGeometry's Refresh action), and the bytes
-    //    still have to go up - what this row shows is that the in-place spelling costs what the replacing one
-    //    costs at this layer, and that neither is allowed to compile. The shift is the delivery proof: 12 steps
-    //    of +0.04 move the mesh's left edge from -0.9 to -0.42, so a probe that saw mesh has to see background.
+    // 3. GEOMETRY, THE SAME BUFFER: the host wrote through the buffer it had already handed over and
+    //    announced it. There is NO in-place refresh path in production - the tested pure function that would
+    //    have decided one had no caller and is gone (design log §11.16cr) - so a revision announcement
+    //    rebuilds the node and re-sends every stream, and this row's point is that the spelling the host picks
+    //    (a new buffer object, or writing through the old one) makes no difference at this layer. The shift is
+    //    the delivery proof: 12 steps of +0.04 move the mesh's left edge from -0.9 to -0.42, so a probe that
+    //    saw mesh has to see background.
     positions = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(gridPositions(kGridSide)));
     geometry->setPositions(positions);
     geometry->bumpRevision();

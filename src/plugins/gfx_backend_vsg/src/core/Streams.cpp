@@ -18,16 +18,6 @@ bool StreamKey::derived() const noexcept
     return buffer == nullptr;
 }
 
-bool sameShape(const StreamKey& a, const StreamKey& b) noexcept
-{
-    return a.kind == b.kind && a.location == b.location && a.components == b.components && a.count == b.count;
-}
-
-bool sameStream(const StreamKey& a, const StreamKey& b) noexcept
-{
-    return a == b;
-}
-
 std::size_t StreamKeyHash::operator()(const StreamKey& key) const noexcept
 {
     // A plain combine over the fields that make up the identity. The pointer is mixed as an integer, which
@@ -43,106 +33,6 @@ std::size_t StreamKeyHash::operator()(const StreamKey& key) const noexcept
     mix(key.location);
     mix(key.components);
     return hash;
-}
-
-namespace
-{
-
-/** @brief Finds a channel by location in an ascending-location snapshot. */
-const StreamKey* channelAt(const std::vector<StreamKey>& channels, std::uint32_t location) noexcept
-{
-    const auto found = std::find_if(channels.begin(), channels.end(),
-                                    [location](const StreamKey& key) { return key.location == location; });
-    return found == channels.end() ? nullptr : &*found;
-}
-
-/** @brief Whether the two snapshots describe the same CHANNEL shape (see @ref sameShape). */
-bool channelShapesMatch(const std::vector<StreamKey>& before, const std::vector<StreamKey>& after) noexcept
-{
-    if (before.size() != after.size()) {
-        return false;  // a channel appeared or disappeared: the node's layout changed
-    }
-    for (const StreamKey& key : before) {
-        const StreamKey* const current = channelAt(after, key.location);
-        if (current == nullptr || !sameShape(key, *current)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-}  // namespace
-
-GeometryPlan planGeometry(const GeometrySnapshot& built, const GeometrySnapshot& now) noexcept
-{
-    GeometryPlan plan;
-
-    // Nothing was built yet: everything about the node is new, so a shared upload may serve it (this is the
-    // common path on the first frame a drawable appears).
-    const bool nothing_built = built.streams.channels.empty() && !built.streams.index.has_value();
-    if (nothing_built) {
-        plan.action                 = GeometryAction::Rebuild;
-        plan.shared_uploads_allowed = true;
-        return plan;
-    }
-
-    // The index stream's PRESENCE is shape: an unindexed draw and an indexed one are assembled differently.
-    const bool index_presence_changed =
-        built.streams.index.has_value() != now.streams.index.has_value();
-    if (index_presence_changed || !channelShapesMatch(built.streams.channels, now.streams.channels)) {
-        plan.action                 = GeometryAction::Rebuild;
-        plan.shared_uploads_allowed = true;  // every channel is read again, and its identity drives sharing
-        return plan;
-    }
-
-    // A different SPAN is a different draw, not a different buffer: the assembled node states first index
-    // and count, so only a rebuild can rewrite it. (Replacing the index BUFFER while drawing the same span
-    // is the case an in-place re-point serves.)
-    bool index_buffer_changed = false;
-    if (now.streams.index.has_value() && built.streams.index.has_value()) {
-        const StreamKey& before = *built.streams.index;
-        const StreamKey& after  = *now.streams.index;
-        const bool       span_moved = before.offset != after.offset || before.count != after.count;
-        if (span_moved) {
-            plan.action                 = GeometryAction::Rebuild;
-            plan.shared_uploads_allowed = true;
-            return plan;
-        }
-        index_buffer_changed = !sameStream(before, after);
-    }
-
-    // Which channels' bytes moved. A channel that is absent from one side cannot reach this point (the shape
-    // check above rejected it), so every lookup here finds its counterpart.
-    bool streams_moved = false;
-    for (const StreamKey& key : now.streams.channels) {
-        const StreamKey* const before = channelAt(built.streams.channels, key.location);
-        if (before == nullptr || !sameStream(*before, key)) {
-            plan.refreshed_locations.push_back(key.location);
-            streams_moved = true;
-        }
-    }
-    plan.index_refreshed = index_buffer_changed;
-
-    if (streams_moved || index_buffer_changed) {
-        plan.action                 = GeometryAction::Refresh;
-        plan.shared_uploads_allowed = true;
-        return plan;
-    }
-
-    // Every stream is identical. The node is current unless the model's own revision moved - and that case
-    // is the one no stream can account for: the bytes may have changed under a pointer no buffer sees, so
-    // the node is rebuilt from the model and NO shared upload is reused (it holds the bytes as of its own
-    // insertion and cannot vouch for them).
-    if (built.revision != now.revision) {
-        plan.action                 = GeometryAction::Rebuild;
-        plan.shared_uploads_allowed = false;
-        plan.unexplained_revision   = true;
-        return plan;
-    }
-
-    plan.action                 = GeometryAction::None;
-    plan.shared_uploads_allowed = true;
-    return plan;
 }
 
 SharedStreams::SharedStreams(std::size_t capacity) : capacity_(std::max<std::size_t>(capacity, 1U))

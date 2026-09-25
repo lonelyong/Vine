@@ -23,10 +23,10 @@
  *
  * EACH ROW CARRIES THREE THINGS, and the third is the one that matters most for a backend: the
  * assertion, an optional counter sample, and what that counter is allowed to do during the phase.
- * "This phase must not raise offscreen_builds" is a rule that a passing run otherwise says nothing
- * about - the phase renders correctly and still rebuilt everything. The expectation is deliberately a
- * predicate (before, after) rather than a number, so a phase can require "unchanged", "grew by one" or
- * "at least one" without the table inventing a delta type.
+ * "This phase must not raise the counter it is judged on" is a rule that a passing run otherwise says
+ * nothing about - the phase renders correctly and still rebuilt everything. The expectation is
+ * deliberately a predicate (before, after) rather than a number, so a phase can require "unchanged",
+ * "grew by one" or "at least one" without the table inventing a delta type.
  *
  * THE LINE FORMAT IS THE CONTRACT with the evidence script: one `[selftest] <name>` line per phase that
  * passed, a `[selftest] <name> FAILED: <detail>` line for one that did not, and a closing

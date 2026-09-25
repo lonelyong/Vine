@@ -4740,13 +4740,13 @@ preview 244; vuid=0`）；include hygiene 0/`784` 文件、诊断格式 0/7、do
 | **A3** SDK 没有内容释放入口（`releaseGeometry/Material/Program/Texture` 都没有） | **设计问题（不改 SDK）** | `RenderBackend` 只给了 `releasePass` / `releaseRenderTarget`，因为**只有这两种对象的生命周期由宿主显式宣布**（SDK 文档如此）；内容对象是引用计数的，宿主放手即 `useCount` 变化 —— 修 1 之后这条链已经闭合（帧级扫尾看得见放手）。加一套"显式 release 内容"的入口等于把引用计数的信息再手写一遍，还多一处必须与 `useCount` 一致的状态 | 不加。**触发器**：出现"宿主必须在同帧内让后端立刻放手"的需求（例如显存压力下的显式驱逐），那时先加**一个**入口（`releaseContent()`？）而不是四个 |
 | **A4** `Material` 是全 SDK 唯一没有 revision 的内容类型；`MaterialManager` 成了死抽象（唯一实现是测试假件） | **两半：一半改设计（已论证），一半登记** | ①`Material` 无 revision ⇒ 后端只能**每帧逐命令** compare-and-write（`VsgBackend.cpp:659`）。这是**有意的兜底**，不是漏接：SDK 的既有规矩是"被共享的对象自己不推断内容变了"，而 `Material` 的 setter 至今没有公告语义 ⇒ 后端不能假设"没人公告 = 没变"。②`MaterialManager`（`MaterialManager.hpp:19-27` 明说"具体后端实现它并自己持有资源缓存"）现在**没有任何生产实现**，那句话是**错的** | ①形状：给 `Material` 加 `revision()/setRevision()/bumpRevision()`（照 `Geometry`/`Texture`/`ShaderProgram`），缓存用"revision 变了才比较"的快路径，**保留** compare-and-write 作为"没公告"的兜底。**触发器**：材质数量大到"每帧 O(命令数) 次块比较"进入剖析的前列（当前 11 趟 × 42 命令 = 数百次 64 B 比较，量级还看不见）。②形状：删掉 `MaterialManager` + 它的假件与用例，并在 SDK 文档里写明"材质由后端按帧观察"。**触发器**：任何一次"宿主以为管理器在物化材质"的误读事件（文档已经写着相反的话，所以先按文档漂移处理） |
 | **A6** `MaterialImages` 淘汰是 FIFO 而非 LRU；`ContentStore` 没有任何容量上界 | **登记** | FIFO 的代价是"批量加载贴图会把正在用的挤掉并重建"，而那一次重建的价钱是**一次上传**（不是错误）；换成 LRU 需要"最近使用帧号"并接进诊断，收益面（同屏活纹理数逼近 256）在 demo 上不成立。`ContentStore` 的上界在修 1 之后由**扫尾**给出（宿主放手即回收），剩下的是"宿主一直持有但从不画"的对象 —— 按本仓既有口径那是**应当保留**（持有者是宿主） | 形状：淘汰键从 `stamp`（插入序）换成"最近被 acquire 的帧号"，`kMaxEntries` 不变。**触发器**：活纹理数接近 256 且观察到"用了很久的贴图被重建" |
-| **A8**（**登记**，§11.16cq）`Observe::FrameCounters` 的六个字段无人写也无人读：`data_nodes_built`、`streams_refreshed`、`offscreen_builds`、`offscreen_resizes`、`window_builds`、`program_slot_builds`（`Observe.hpp:38-43` 声明并写文档；`PhaseTable.hpp:26` 拿 `offscreen_builds` 举例说"phase 必须能拦住它"）。相位用的是自己的 `DevicePhaseCounters`，所以那些规则永远不会响。| **登记** | 要么接线（`ContentStore`/`Streams`/`HostTargets` 都有现成计数点），要么删掉；本配方想要的"Refresh vs Rebuild" 正是 `streams_refreshed`/`data_nodes_built` 能答的 | **触发器**：下一次有人想按"帧里的重建次数"写规则 |
+| **A8**（**已删：§11.16cr**，M11v）`Observe::FrameCounters` 及 `RetentionStats` 共九个字段无人写也无人读：`data_nodes_built`、`streams_refreshed`、`offscreen_builds`、`offscreen_resizes`、`window_builds`、`program_slot_builds`（`Observe.hpp:38-43` 声明并写文档；`PhaseTable.hpp:26` 拿 `offscreen_builds` 举例说"phase 必须能拦住它"）。相位用的是自己的 `DevicePhaseCounters`，所以那些规则永远不会响。| **已删**（连同无调用方的 `planGeometry` 刷新计划） | 要么接线（`ContentStore`/`Streams`/`HostTargets` 都有现成计数点），要么删掉；本配方想要的"Refresh vs Rebuild" 正是 `streams_refreshed`/`data_nodes_built` 能答的 | **触发器**：下一次有人想按"帧里的重建次数"写规则 |
 | **B1** 三张内容表的查找是**线性扫描**，而每命令每帧要跑 5~9 次（`ContentFacts.cpp:50/91/122`；表只增不减） | **缺陷（已修：§11.16bz 量了斜率并落地行序 + 二分；`tablesFor` 自身那两次查找仍登记，见该节第 4 点）** | 复杂度 O(每帧命令数 × 表项数)：1 万 drawable/1 万表项时单帧 ~10⁸ 次指针比较，而 demo 是 ~42 条命令 ⇒ **任何现有门禁都看不见**（所以先做的是修 2：把键补完整，否则索引化会把"两行同键"变成"索引里后写覆盖先写"，把一个静默错图换成另一个）。另一条论证：**现在做没有收益面**，而有真实的回归面（内容路径是 407 条用例里最密的一片） | 形状：每帧在 `tablesFor` 里重建**排序的行号索引**（`vector<uint32_t>` + 每表一个比较器，O(n log n)/帧、`lower_bound` 每次 O(log n)），**不是**给表本身排序（手工构造的表会静默失配）；`ContentFacts` 带一个可空的 `const RowOrder*`，为空时回退到扫描并**在文档里写明这是慢路径**。**触发器**：某个负载的 drawable 数越过 ~2 000，或剖析里 `find*` 家族进入前列 |
 | **B2** 每 pass 每帧的堆分配：`planClearValues` 的 `std::vector<AttachmentClear>`（`ClearPlan.cpp:36-52`，`ClearPlan.hpp:78`）、`ContentPass` 每帧的两个 `vector<ReportOnce>`（`ContentPass.cpp:153`）、`makeInputSet` 的 key `vector`（`ContentPass.cpp:516`）、每 pass 一个 `vsg::RenderGraph`（`OffscreenTarget.cpp:757`） | **缺陷（已收尾：§11.16bx 修第一处，§11.16by 量完其余并改为上限门禁）** | 全部是**小对象**（每 pass 几十~几百字节），M10f 已实测本层稳态帧 ≈2 ms（Debug + lavapipe），而 `AllocationGate` 测的是**堆净增长**、看不见 allocate/free churn（见 B3）⇒ 现在改它无法用证据收尾。`vsg::RenderGraph` 那条更不该省：上一帧的图可能还在飞，复用一个对象就是在改一个已提交命令图里的状态 | 形状：`PassClearPlan::colors` 换成定长 `std::array<AttachmentClear, kMaxColorAttachments>`（附件的上界是设备给的，很小）+ 计数；`ContentPass` 的两个 `ReportOnce` 向量改成复用（resize 而非重新赋值）；`makeInputSet` 的 key 换成成员 scratch。**触发器**：B3 的计数式分配门禁就位之后（先有量具再改） |
 | **B3** 分配证据的强度被高估：`AllocationGate` 用 `mallinfo2`（`AllocationGate.cpp:21-30`，`__GLIBC__` 限定）⇒ **Windows 上 unsupported**，用例在 unsupported 时把增长当 0（`BackendEvidenceTest.cpp:363`）；且只测净增长，对 churn 免疫 | **缺陷（已修：§11.16bx 加了计数的一半，相位改以计数为判据）** | 它守的命题（"稳态帧不分配"）在**交付平台上没有量具**：Windows 上那条相位退化成"没测"，而本仓已经宣称 Windows 是一等公民（H1）。修法是换量具而不是改断言 —— 需要**计数式**分配门禁（覆写 `operator new/delete` 计数，或注入计数分配器），这本身要新单元 + 相位 + 变异，属独立一片 | 形状：`test_vsg` 里一个只计数不改行为的全局 `operator new` 钩子 + `AllocationGate::countAllocations()`；相位断言"稳态帧分配次数 == 0"（并保留 heap 增长作为第二判据）。**触发器**：B2 落地之前必须先有它（否则 B2 无法证明干净） |
 | **B4**（**已测：§11.16cl**，0.53 µs/drawable·次，触发点仅 ~6% 帧预算 ⇒ 不改）`Scene::collectRenderCommandsShared` 每次收集分配 3 个 vector（`Scene.cpp:468/497/512`）并把整表搬 2~3 遍，`commands` 无 `reserve` | **缺陷（登记）** | 相机每动一帧就整份重来，是**引擎侧**（不在本轮前端改动范围内），而它的可见代价取决于命令数与 `sizeof(RenderCommand)`（≈200 B，含 3 个 `intrusive_ptr` 的原子增减）。当前 demo 的收集是 memo 命中或 ~42 条命令，量不出来 | 形状：`keyed` 改成 `vector<pair<double, uint32_t>>`（行号）并就地应用置换；`commands` 按上一帧规模 `reserve`。**触发器**：相机常动的负载 + drawable 数越过 ~2 000，或 B1 之后收集成为下一热点 |
 | **B5**（**前半已收：§11.16ck**；预算不改，理由见该节）拒绝路径逐命令上报（`ContentPass.cpp:882-1116`）+ 每帧重置的 `ReportOnce`；块预算是硬上限（`draws/lights/shadows` 1024/帧、`views` 256/帧，`BlockStorage.hpp:50-56`） | **登记（前者已在 M10c/M10e 登记过）** | 洪水只在"场景里有坏内容"时出现，而那时宿主**需要**知道是哪一条；把逐命令上报压成"每插话一次"会让"这一帧有 300 条画不出来"变成一句话（丢信息）。块预算超限是**拒画**（有报告）而不是错图，且 1024 条/帧远超 demo 量级 | 形状：①按"每 pass 每原因一次"上报（保留第一条的完整身份，后续只计数）；②预算按需增长（插入点 `BlockStorage::beginFrame`）并在诊断里报"本帧预算不够"。**触发器**：大场景宿主报"日志被刷满"或撞到 1024 |
-| **B6**（**登记**，§11.16cq）`StreamKey.revision` 取的是 **Geometry 的 revision**（`GeometryFacts.cpp:107/178`）⇒ 任何一次几何数据公告都会重传**所有** channel 与 index（本片实测 2 streams/帧；替换 buffer 与就地改写一样贵） | **登记（保持现状）** | 逐 `Buffer::revision()` 能省下未改通道的上传，但把"一次公告"的契约换成"每个 buffer 各自公告"——更弱（手册：漏报是静默的） | **触发器**：多通道大网格宿主报上传带宽 |
+| **B6**（**登记**，§11.16cq；更正：§11.16cr——不存在的刷新路径已删）`StreamKey.revision` 取的是 **Geometry 的 revision**（`GeometryFacts.cpp:107/178`）⇒ 任何一次几何数据公告都会重传**所有** channel 与 index（本片实测 2 streams/帧；替换 buffer 与就地改写一样贵） | **登记（保持现状）** | 逐 `Buffer::revision()` 能省下未改通道的上传，但把"一次公告"的契约换成"每个 buffer 各自公告"——更弱（手册：漏报是静默的） | **触发器**：多通道大网格宿主报上传带宽 |
 | **B7**（**已按设计规则处理；未再复现，§11.16cq**）管线销毁与在飞提交的竞态：本配方首次入套件时门禁两阶段各报 **4×VUID-vkDestroyPipeline-pipeline-00765**；修复 = `releaseContentWorld()` 首行的**计数过的 device idle**（`SessionContentAccess::waitDeviceIdle`） | **登记（诚实记录未复现）** | 此后 20 次单例 + 两次全量套件（有/无该 wait 各试过）+ 两棵树门禁都是 0 VUID | **触发器**：再次出现时先查"最近被替换或逐出的管线"（`VariantPool` 逐出是另一条销毁路径）与 teardown 的 `deviceWaits` |
 | **D2**（**已修：§11.16cj**）`Material::specular()` 的 alpha 文档写"A 是强度"，但**没有任何着色器读它**（`builtin_forward.frag:145`、`builtin_gbuffer.frag:59` 都只读 `.rgb`） | **缺陷（登记：要么接线，要么改文档，二选一）** | 接线会**改画面**（默认 `specular.a = 0.5` ⇒ 高光减半），而"逐像素材质"的通道已经排满（G-buffer 的 spec 附件 alpha 空着，前向可用 `material.specular.a`），于是它是"能接、但要重新调 demo 并重钉像素基线"的一类 | 形状：前向 `spec *= material.specular.a`、G-buffer 把 alpha 写进 spec 附件、延迟侧读出并相乘；两条基线（证据行）随之更新。**触发器**：有人要求"按材质调高光强度"（当前唯一能做到的是改 shininess） |
 | **D3**（**契约已写：§11.16cp**；第一个实例已改：demo 的六张 JPG 天空面 `Rgba8Unorm` → `Rgba8Srgb`，视口带 mean 122.7 → 80.8，判据行不动）色彩空间没有契约：窗口交换链是 `*SRGB`（`WindowTarget.cpp:24-28`），离屏目标是线性，着色器直接对 0..1 的材质/灯值相乘，纹理按 `PixelFormat` 一对一映射 | **设计问题（登记，倾向"写契约"而不是"改管线"）** | 现在**能自洽**：写入 SRGB 交换链的值被硬件当作线性、离屏 16F 也是线性、`*Srgb` 贴图格式存在且映射正确 ⇒ 只要"贴图用 `*Srgb`、颜色值按线性给"，管线就是对的线性管线。真正缺的是**把这条写成契约**并对最常见的错法报警 | 形状：①`Texture`/`PixelFormat`/`RenderTarget::ColorFormat` 的文档写明"引擎内部一律线性，颜色贴图请用 `*Srgb`（PNG 通常是 sRGB）"；②`Colorf` 文档写明"线性值"；③（可选）在 `MaterialImages::acquire` 对"非 sRGB 格式的颜色贴图"给一次 Info。**触发器**：有人报"画面比参考图亮/暗一个 gamma" |
@@ -5733,11 +5733,13 @@ background 0%; vuid=0 warnings=0`；引擎 `test_graphics` 两棵树各 **276 �
    +1 行（新 revision）。
 4. **几何数据编辑的成本 = 每条 stream 一次上传**（本网格 2 条：位置 channel + index），而且**替换 buffer
    对象与就地改写字节一样贵**——因为 `StreamKey.revision` 取的是 **Geometry 的 revision**
-   （`GeometryFacts.cpp:107/178`）：一次公告移动了所有流的身份。就地那条路的收益只是"节点 Refresh 而不是
-   Rebuild"，不是带宽。（登记 **B6**：逐 `Buffer::revision()` 能省下未改通道的上传，但把"一次公告"的契约
-   换成"每个 buffer 各自公告"——更弱，且手册说漏报是静默的 ⇒ 保持现状，触发器：多通道大网格宿主报带宽。）
-5. **两条正面交付证据**：几何区制把网格每帧右移 0.04（12 帧 +0.48）⇒ 左边缘探针从"网格"变成"背景"（**就地
-   刷新真的把字节送到了帧里**）；状态区制打开 Back 面剔除后网格仍在（**状态真的到了光栅化器**）。后者抓到过
+   （`GeometryFacts.cpp:107/178`）：一次公告移动了所有流的身份。**更正（§11.16cr）**：本行当时接着写了"就地
+   那条路的收益只是节点 Refresh 而不是 Rebuild"——**这是错的**：那条 Refresh 路径（`planGeometry`）没有任何
+   生产调用方，本片量到的每一次几何编辑都是**重建**（新 revision ⇒ 新行 + 节点重造）。"逐 `Buffer::revision()`"
+   的登记（**B6**）不受影响：那是一条真实存在的省法（未改通道不必重传），与这条不存在的刷新路径无关。
+   （触发器：多通道大网格宿主报带宽。）
+5. **两条正面交付证据**：几何区制把网格每帧右移 0.04（12 帧 +0.48）⇒ 左边缘探针从"网格"变成"背景"（**改写
+   过的字节真的送到了帧里**）；状态区制打开 Back 面剔除后网格仍在（**状态真的到了光栅化器**）。后者抓到过
    真错：第一版网格索引是**顺时针**，Back 剔除把整片网格剔没了——这条断言不是装饰。
 
 **顺带的两条发现（都登记，不改）**：
@@ -5766,3 +5768,70 @@ background 0%; vuid=0 warnings=0`；引擎 `test_graphics` 两棵树各 **276 �
 | `src/plugins/gfx_backend_vsg/src/api/VsgBackend.cpp` | 访问器实现 + `releaseContentWorld()` 首行的**计数过的 device idle** |
 
 **下一步**：排序表只剩 **B5 后半**（等第一个大场景宿主）；新登记 B6/B7/A8 按各自触发器。
+
+### §11.16cr 死机制退场：无生产调用方的"几何刷新计划" + 九个永远为零的计数（M11v，2026-09-25）
+
+**怎么发现的**：§11.16cq 的配方量到"每条 stream 每次公告都要重传"之后，本片顺手查了那条被引用的
+`planGeometry`（原地刷新 vs 重建的裁决）——`grep` 全仓：**它只有 `ContentCoreTest` 一个调用方**，生产路径
+（`ContentStore::ensureGeometry`）在 revision 变化时直接建新行（`ContentStore.cpp:389-425`），**从来没有刷新路径**。
+⇒ §11.16cq 里"节点被原地 Refresh 而不是 Rebuild"那句是**错的**，已在原处标注更正。
+
+**决定（删，不接线）**，判据是本片自己的数字：
+* 帧的 record 半段在四类编辑下都是平的（7–19 µs/帧）——节点重建的成本落在噪声里；
+* 即使接上刷新，**上传也省不掉**：`StreamKey.revision` 取的是 Geometry 的 revision（`GeometryFacts.cpp:107/178`），
+  一次公告移动**所有**流的身份（§11.16cq 实测 2 上传/帧，替换 buffer 与就地改写一样贵）。能省带宽的是另一件事
+  （逐 `Buffer::revision()`，登记 **B6**），与这个刷新路径无关。
+
+**删除集**：`core/Streams.hpp/.cpp` 的 `GeometrySnapshot` / `GeometryPlan` / `GeometryAction` / `planGeometry` /
+`sameShape` / `sameStream`（+ 匿名 helpers）；`core/Observe.hpp` 的九个字段（`frames`、`data_nodes_built`、
+`streams_refreshed`、`offscreen_builds`、`offscreen_resizes`、`window_builds`、`program_slot_builds`、
+`parked_nodes`、`compile_contexts`）——**没有一处写、没有一处读**（相位用的是自己的 `DevicePhaseCounters`）。
+`Observe` 的文件注释改成"记账与编译这两个每帧都经过这里的层才有计数；行/流/管线的数字在各自动手的层
+（`ContentStore::builds()` / `StreamUploads::uploads()` / `VariantPool::created()`）里读，别抄回来"，
+`PhaseTable` 的举例不再点名被删的计数器。
+
+**规则不能丢：换成活路径钉住。** 被删的断言里有一条真规则——"**被重填的 buffer 是新流，不是旧副本**"。
+它现在由 `CoreSharedStreamsTest.ARefilledSliceIsANewStreamSoItUploadsAgain`（真注册表：同键 ⇒ Alias，
+revision 变了 ⇒ **Upload**）钉住。**变异 1/1 红**：把 `revision` 从 `StreamKey` 的相等与哈希里拿掉 ⇒ 该用例红
+（其余 7 条共享流用例仍绿）；恢复 ⇒ 9/9 绿。
+
+**证据**：两棵树门禁 8 stage 全 ok、`cases=437 failed=0 vuid=0 hazard=0 skipped=0`（442 − 6 个计划用例 + 1 个
+活路径用例）、hygiene/doc/相位/应用行全绿。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `src/plugins/gfx_backend_vsg/include/vine/vsg/core/Streams.hpp` | 删计划块与两个谓词；文件注释去掉"计划"一段 |
+| `src/plugins/gfx_backend_vsg/src/core/Streams.cpp` | 删实现（`planGeometry`/`sameShape`/`sameStream`/匿名 helpers） |
+| `src/plugins/gfx_backend_vsg/include/vine/vsg/core/Observe.hpp` | 删九个死字段 + 注释写明"别的数字在别的层" |
+| `src/plugins/gfx_backend_vsg/include/vine/vsg/core/PhaseTable.hpp` | 举例不再点名已删计数器 |
+| `tests/test_vsg/ContentCoreTest.cpp` | 删 6 个计划用例与 helpers；身份用例改断键相等；新增活路径用例 |
+| `tests/test_vsg/VsgBackendTest.cpp` | §11.16cq 配方第 3 段注释按事实改写 |
+
+### §11.16cs 应用窗口的启动尺寸不是确定的：门禁先把尺寸钉住（M11v 附带，2026-09-25）
+
+**发现（门禁一次假红）**：`app (deferred demo)` 报 `before 3418x1110: content 6.85% < 30%`。把那次读到的画面
+转成 PNG 看：**场景只占左上 378×247 的一小块视口**，其余是黑的（docks 画在其上）⇒ 读的窗口是"整个 demo 窗口"，
+尺寸比正常大 9 倍 ⇒ content% 被空面积稀释。
+
+**量出来的成因**：demo 的启动尺寸**不是确定的**——窗口随 docks 的内容长（日志 dock 的 sizeHint），六次启动读出
+六个渲染区：`378x247 / 1037x509 / 491x319 / 378x406 / 558x247 /`（门禁那次）`3418x1110`。即：这不是后端缺陷，
+而是"宿主窗口起始尺寸由 Qt 布局竞态决定"，而门禁的第一条判据（`content ≥30%`）默认它接近全窗。
+
+**修法（门禁侧，不动宿主）**：app 阶段在**第一条采样之前**把窗口拖到 `VINE_GATE_APP_FIRST`（默认 `800x600`，
+demo 自己的默认；正是历史上证据行 `before 378x247` 的来处），再 settle、采样；第二条采样仍拖到
+`VINE_GATE_APP_RESIZE`（默认 `1120x420`）——**两次尺寸不同**，"窗口跟随尺寸变化"那半照旧成立。
+`xwinresize.py` 改的始终是顶层窗口（被记录的 id 是渲染区子窗口，见该工具的说明）。
+
+**修复的判据**：修复前后各测一组——修复前 6 次启动 4 次读出不同尺寸；修复后 **4/4 都是 378x247**；两次门禁的
+应用行与历史逐字相同（`before 378x247: content 87.04%, preview 244, background 0.02%; after 698x132: content
+85.14%, preview 244, background 0%`）。
+
+**登记（不修，属宿主/框架）**：demo 的窗口会随日志 dock 的内容长大（一次启动可以长到 3418×1110）——"窗口尺寸
+跟着日志文字走"是宿主侧该收的口子（框架的默认窗口尺寸是产品决定）。**触发器**：下一次 app shell / 框架的窗口
+布局工作；复现数字即本节那六个渲染区。
+
+**证据**：两棵树门禁 8 stage 全 ok（Debug/Release 各一次）、应用行与历史逐字相同。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `scripts/vsg_rewrite_gate.sh` | app 阶段新增"先把窗口定到 `VINE_GATE_APP_FIRST`"一步 + 头部注释/环境变量表更新 |

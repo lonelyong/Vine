@@ -2259,3 +2259,19 @@ Refresh 而非 Rebuild。**交付证据**：几何区制每帧右移 0.04（12 �
 此后 20 次单例 + 2 次全量套件 + 两棵树门禁 0 VUID，**未再复现**）；A8（`Observe::FrameCounters` 六个字段无人写读，
 相位规则点名它们的永远不会响）。证据：两棵树门禁 8 stage 全 ok、`cases=442 vuid=0`、应用行与上片逐字相同；
 本片**不碰引擎**。详见 `.ai/design/vsg-reimplementation.md` §11.16cq。
+
+**2026-09-25（死机制退场 + 门禁把应用窗口尺寸钉住）**：①**`planGeometry` 刷新计划是死的**——它是"原地刷新
+vs 重建"的纯函数裁决，只有测试调用，生产路径（`ContentStore::ensureGeometry`）在 revision 变化时直接建新行 ⇒
+§11.16cq 里"节点被原地 Refresh"那句是错的（已在原处更正）。删除判据是本片自己量到的数：record 半段全平
+（7–19 µs/帧）、且刷新也省不掉上传（`StreamKey.revision` 取 Geometry 的 revision ⇒ 一次公告移动所有流的身份）。
+同批删了 `Observe` 的九个永远为零的字段（`frames`/`data_nodes_built`/`streams_refreshed`/`offscreen_builds`/
+`offscreen_resizes`/`window_builds`/`program_slot_builds`/`parked_nodes`/`compile_contexts`——无写无读）；行/流/管线的
+数字改在各自动手的层读（`ContentStore::builds()` / `StreamUploads::uploads()` / `VariantPool::created()`）。
+被删断言里的真规则"**被重填的 buffer 是新流**"改由活注册表钉住：`CoreSharedStreamsTest.ARefilledSliceIsANewStreamSoItUploadsAgain`
+（变异：把 revision 从 `StreamKey` 的相等+哈希拿掉 ⇒ 红；恢复 ⇒ 9/9 绿）。②**应用窗口的启动尺寸不确定**：
+demo 窗口随日志 dock 的内容长，六次启动读出六个渲染区（378x247 / 1037x509 / 491x319 / 378x406 / 558x247 / 3418x1110），
+门禁因此假红过一次（`before 3418x1110: content 6.85%`，画面里场景只占左上 378×247）。**门禁修法**：app 阶段在
+第一条采样**之前**把窗口拖到 `VINE_GATE_APP_FIRST`（默认 `800x600`，即历史证据行 `before 378x247` 的来处），
+第二条采样仍拖到 `VINE_GATE_APP_RESIZE`（1120x420）⇒ 两次尺寸不同，"跟随 resize"那半照旧。修复后 4/4 启动都读
+378×247，两棵树门禁的应用行与历史逐字相同。**登记**：宿主/框架侧"窗口随日志长大"未修（产品决定），触发器 =
+下一次 app shell 窗口布局工作。详见 `.ai/design/vsg-reimplementation.md` §11.16cr/§11.16cs。
