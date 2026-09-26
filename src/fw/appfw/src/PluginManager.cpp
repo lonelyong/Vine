@@ -1262,7 +1262,7 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
         // One unit per plugin, reported while the heaviest pass (the load() phase below) runs; the
         // phases around it only update the label, so the bar does not reach its end before the
         // plugins are really up.
-        startup->stage("正在加载插件", static_cast<double>(plan.planned.size()));
+        startup->stage(u8"正在加载插件", static_cast<double>(plan.planned.size()));
     }
 
     for (const Candidate* candidate : plan.planned) {
@@ -1275,7 +1275,7 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
         }
 
         if (startup != nullptr) {
-            startup->setLabel("正在创建插件 " + toUtf8(name));
+            startup->setLabel(fromUtf8("正在创建插件 " + toUtf8(name)));
         }
         using CreateFn = Plugin* ();
         const auto create = candidate->lib->resolveSymbol<CreateFn>(u8"vinePluginCreate");
@@ -1343,7 +1343,7 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
         RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
         PluginLoadContext      context(Application::current(), lp.name);
         if (startup != nullptr) {
-            startup->setLabel("正在加载插件 " + toUtf8(lp.name) + " (" + std::to_string(loaded_units + 1) + "/" + std::to_string(created.size()) + ")");
+            startup->setLabel(fromUtf8("正在加载插件 " + toUtf8(lp.name) + " (" + std::to_string(loaded_units + 1) + "/" + std::to_string(created.size()) + ")"));
         }
         if (startup != nullptr && startup->stopToken().stop_requested()) {
             VN_LOGI("the plugin load was cancelled; '{}' and the plugins after it are not loaded", toUtf8(lp.name));
@@ -1352,7 +1352,7 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
         co_await lp.plugin->load(&context);
         if (startup != nullptr) {
             ++loaded_units;
-            startup->advance(static_cast<double>(loaded_units));
+            startup->setDone(static_cast<double>(loaded_units));
         }
     }
 
@@ -1360,7 +1360,7 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
         RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
         PluginLoadContext      context(Application::current(), lp.name);
         if (startup != nullptr) {
-            startup->setLabel("正在收尾插件 " + toUtf8(lp.name));
+            startup->setLabel(fromUtf8("正在收尾插件 " + toUtf8(lp.name)));
         }
         co_await lp.plugin->postLoad(&context);
     }
@@ -1408,7 +1408,7 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
     // there is no sink and every report below is a no-op.
     StartupProgress* const startup = StartupProgress::current();
     if (startup != nullptr) {
-        startup->stage("正在查找插件");
+        startup->stage(u8"正在查找插件");
     }
 
     const std::vector<Candidate> candidates = collectCandidates(*this, d->discovered, d->policy_disabled, d->plugins);

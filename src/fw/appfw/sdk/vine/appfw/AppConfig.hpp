@@ -3,7 +3,8 @@
 #include "appfw_global.hpp"
 
 #include <filesystem>
-#include <string>
+
+#include <vine/String.hpp>
 
 VN_APPFW_NS_BEGIN
 
@@ -25,11 +26,11 @@ struct SplashConfig {
     /// Whether the application shows a startup frame while it boots.
     bool enabled = false;
 
-    /// Title shown on the frame; empty uses the Qt application name (AppConfig::name).
-    std::string title;
+    /// Title shown on the frame (UTF-8); empty uses the Qt application name (AppConfig::name).
+    String title;
 
-    /// Second line under the title (version, vendor, ...); empty hides the line.
-    std::string subtitle;
+    /// Second line under the title (version, vendor, ...), UTF-8; empty hides the line.
+    String subtitle;
 
     /// Logo image drawn next to the title (SVG or a raster format); empty hides the logo.
     std::filesystem::path logo;
@@ -44,13 +45,13 @@ struct SplashConfig {
  * directory). language is a placeholder reserved for locale selection.
  */
 struct AppConfig {
-    /// Application name, applied as QCoreApplication::applicationName().
-    std::string name;
+    /// Application name (UTF-8), applied as QCoreApplication::applicationName().
+    String name;
 
     ///
-    /// Organization name, applied as QCoreApplication::organizationName().
+    /// Organization name (UTF-8), applied as QCoreApplication::organizationName().
     /// Empty keeps Application::defaultOrganizationName().
-    std::string organization;
+    String organization;
 
     ///
     /// Directory of the plugins that ship with the application
@@ -78,7 +79,7 @@ struct AppConfig {
     bool load_plugins = true;
 
     /// Locale placeholder reserved for i18n (not wired yet).
-    std::string language;
+    String language;
 
     /// Startup frame shown while the application boots; see SplashConfig.
     SplashConfig splash;

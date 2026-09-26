@@ -78,7 +78,7 @@ std::unique_ptr<vn::appfw::Application> bootApplication()
     static char* argv[] = { arg0, nullptr };
 
     vn::appfw::AppConfig config;
-    config.name = "Vine";
+    config.name = u8"Vine";
     // Unit tests must not read or write the user's real configuration: the
     // builder would otherwise apply Application::defaultConfigFile().
     config.persist_config = false;

@@ -1588,14 +1588,12 @@ void assembleDemoContentLater(std::shared_ptr<AppShellDemo> demo)
         //    比“同步委托”（invokeOnMainThread）好在：挂起期间池的那条 worker 是自由的（同步委托会把它按住
         //    整段 UI 工作）。什么时候用哪个：整条尾巴都在 UI 上（这里）就用 await；任务要把自己的线程留着、
         //    只借 UI 线程做一段，再用 invokeOnMainThread。
-        auto* app        = Application::current();
-        auto* dispatcher = app != nullptr ? app->mainThreadDispatcher() : nullptr;
-        if (dispatcher == nullptr) {
+        if (Application::current() == nullptr) {
             // 没有应用（只有测试会走到这里）：没有应用线程可回，就地做完。
             demo->installContent(images);
             co_return;
         }
-        co_await dispatcher->resumeOnMainThread();
+        co_await MainThreadDispatcher::resumeOnMainThread();
 
         // 4. 在**应用线程上**再确认一次再装：attach 也是在应用线程上开的（插件的 load() 里），所以"检查 + 装"
         //    之间没有挂起点 ⇒ 两者相对 attach 的开启是原子的。只靠上面那次检查不够——它跑在池上，

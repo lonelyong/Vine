@@ -16,7 +16,7 @@
 > 框上不再有进度条、也没有任何百分比：启动没有已知总量，条只能骗人（见下“两种阶段”一节的结论）。
 > 留下的是：状态行（在干什么）+ 18 px 的转圈指示器（在动）。`BootSplash::progressFraction()` /
 > `isIndeterminate()` 随之删除，换成 `BootSplash::isBusyIndicatorRunning()`。
-> 报告方的**可计数阶段照旧存在**（`stage(name, total)` / `advance()`，插件加载就在用）——
+> 报告方的**可计数阶段照旧存在**（`stage(name, total)` / `setDone()`，插件加载就在用）——
 > 状态栏的呈现者与无头控制台照旧显示它们，只是**启动框不把它们变成数字**。
 
 "通用"落在两件事上：
@@ -32,7 +32,7 @@
 | `SplashConfig` | `AppConfig::splash`（`AppConfig.hpp`） | 应用侧配置：开关 + 标题/副标题/logo |
 | `StartupProgress` | `sdk/vine/appfw/StartupProgress.hpp` | 启动期上报口：阶段、状态文字、比例；进程内至多一个 |
 | `gui::BootSplash` | `sdk/vine/appfw/gui/BootSplash.hpp` | 呈现：无边框自绘圆角框 + 状态行 + 转圈指示器（无条无百分比） |
-| `Application` | 启动期由 `startupSequence()` 驱动：建/收上报口（`beginStartupProgress()` / `startupProgress()`），三拍是异步钩子 | 生命周期与销毁 |
+| `Application` | 启动期由 `startupSequence()` 驱动：建/收上报口（`beginStartupProgress()` / `endStartupProgress()`），三拍是异步钩子 | 生命周期与销毁 |
 | `GuiApplication` | **构造函数** / `startupStart()` + `startupEnd()` 覆写（异步） | 建框、显示、关闭 |
 | `PluginManager::loadAllAsync()` | 上报"正在查找插件"、"正在创建/加载/收尾插件 x (i/n)" | 启动里最长、最不可预测的一段 |
 
@@ -43,7 +43,7 @@
 
 ## 两种阶段，以及为什么不是"整体 ETA"
 
-- **可计数阶段** `stage(name, total)`：有总量，`advance()` 按 `done/total` 推进（插件加载就是这样，
+- **可计数阶段** `stage(name, total)`：有总量，`setDone()` 按 `done/total` 推进（插件加载就是这样，
   每个插件的 `load()` 回来算一份）。**启动框不显示它**（没有条）；状态栏呈现者与控制台照旧显示。
 - **不确定阶段** `stage(name)`：只知道在做什么。
 
@@ -74,7 +74,7 @@ main: app->run()          （宿主有自己的启动工作就重写 startup() �
   理由不是风格：窗口系统那一半（X11 的 expose、Windows 的 WM_PAINT）只能由循环派发，循环起来之前 `show()`
   出来的窗口一个像素都没有；而启动工作的第一道门就是“启动画面真的在屏上”。
   修之前无头那条路是例外：等待钩子（当时叫 `whenUserInterfaceIsUp()`）默认立刻 `then()`，而它在 `exec()` 之前被调
-  ⇒ 无头的插件加载跑在循环外（“启动工作跑在循环里、可以 postToMain / `exit()`”这条对无头是假的）。
+  ⇒ 无头的插件加载跑在循环外（“启动工作跑在循环里、可以 postToMainThread / `exit()`”这条对无头是假的）。
   钉子：`test_appfw` 在宿主那一拍（当时还是 `run(work)`）跑起来之前 post 一帧回调，工作里快照它是否已经到过（post 事件 FIFO ⇒
   只有循环真在派发时它才先到）；变异（把启动步改回 `exec()` 之前直接调）⇒ 红。
   **2026-09-26 再加两钉**：宿主的 work 跑在**它自己的线程**上（线程 id 断言）、且工作期间主线程**仍在派发**

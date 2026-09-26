@@ -72,7 +72,7 @@ TEST(ProgressHostTest, ScopeHelperReportsProgress)
 
     // 便捷方法：直接建顶层 scope，避免直接碰 one-shot 的 ProgressRange。
     {
-        ProgressScope scope = host.scope("Exporting", 10);
+        ProgressScope scope = host.scope(u8"Exporting", 10);
         EXPECT_TRUE(scope.isActive());
         for (int i = 0; i < 5; ++i) {
             scope.next(1);
@@ -99,7 +99,7 @@ TEST(ProgressHostTest, RangeIsActiveOnceOnly)
     EXPECT_FALSE(s2.isActive());
 
     // 多阶段应使用嵌套：一个顶层 scope + next() 分配子范围。
-    ProgressScope root = host.scope("whole", 10);
+    ProgressScope root = host.scope(u8"whole", 10);
     ProgressRange  part = root.next(4);
     ProgressScope  stage(part, "stage", 4);
     EXPECT_TRUE(stage.isActive());
@@ -109,8 +109,8 @@ TEST(ProgressHostTest, LabelRoundTrip)
 {
     ProgressHost host;
     EXPECT_TRUE(host.label().empty());
-    host.setLabel("Importing mesh");
-    EXPECT_EQ(host.label(), "Importing mesh");
+    host.setLabel(u8"Importing mesh");
+    EXPECT_EQ(host.label(), u8"Importing mesh");
 }
 
 TEST(ProgressHostTest, NestedHostDoesNotClobberForeground)
@@ -218,9 +218,9 @@ TEST(ProgressHostTest, ChangedFiresOnRegistrationLabelAndForeground)
     ProgressHost host;
     EXPECT_EQ(events, 1); // 注册
 
-    host.setLabel("导入");
+    host.setLabel(u8"导入");
     EXPECT_EQ(events, 2);
-    host.setLabel("导入");
+    host.setLabel(u8"导入");
     EXPECT_EQ(events, 2); // 标签没变：不打扰观察者
 
     host.setForeground(true);
@@ -257,7 +257,7 @@ TEST(ProgressHostTest, ChangedIsCoalescedToPercentSteps)
 
     constexpr int kItems = 10'000;
     {
-        ProgressScope scope = host.scope("coalesce", kItems);
+        ProgressScope scope = host.scope(u8"coalesce", kItems);
         for (int i = 0; i < kItems; ++i) {
             scope.next(1);
         }

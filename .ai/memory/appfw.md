@@ -9,7 +9,7 @@
 > 宿主的启动工作：**框架不替宿主拥有线程**（`run(work)` 重载已删）——宿主重写 `startup()` 那一拍，先
 > `co_await Application::startup()`（插件先加载），自己的重活再 `co_await vn::async::run(...)` 丢到进程线程池上；
 > 它抛的异常从那一拍抛出 ⇒ 与叶子异常同样致命。
-> `Task` 是懒的 ⇒ 调用点必须 `co_await`（不跑循环的叶子用 `Task::result()`）。`VN_APPFW_PLUGIN_ABI_VERSION` = **6u**
+> `Task` 是懒的 ⇒ 调用点必须 `co_await`（不跑循环的叶子用 `Task::result()`）。`VN_APPFW_PLUGIN_ABI_VERSION` = **7u**
 > （钩子 `preLoad/load/postLoad` 变成 `Task<void>`；**每条出口都要写 `co_return;`**，否则返回空 `Task` / `ud2`）。
 > 早期笔记里的 `beginStartup` / `finishStartup` / `runStartup` 就是这三个的新名。见 `.ai/design/appfw-startup-phases.md`。
 > **插件加载两道门（2026-09-26）**：`loadAllAsync()` 是启动用的协程（插件自己能在钩子里跳池 + `resumeOnMainThread()`
@@ -43,14 +43,24 @@
 > `appfw-eventbus.md`、`appfw-plugin-system.md`、`appfw-config.md`。
 > 本文件只放"跨这几篇、干活时必须立刻想起的规则"。
 
+> **SDK 面统一（2026-09-26，ABI 7u）**：插件/宿主交给框架的**文本一律 `vn::String`**
+> （`StartupProgress::stage/setLabel/label`、`ProgressHost::setLabel/label/scope`、`AppConfig`/`SplashConfig` 的文本字段）
+> ⇒ 字面量写 `u8"…"`（与 `PluginInfo`/`VN_DECLARE_PLUGIN` 一致）；只有 base 的 progress 模块（Qt 无关）用 `std::string`，
+> 在 appfw 边界转换一次（`as_std_str()`）。**阶段推进叫 `setDone(double)`**（值一直是绝对值，旧名 `advance` 骗人）；
+> **可计数与否只由 `std::optional<double> fraction()` 回答**（`isCounted()` 已删，完成后不再有“残留的 1.0”）。
+> **跨线程助手全在 `MainThreadDispatcher` 的静态面上**（`isMainThread/hasEventLoop/postToMainThread/invokeOnMainThread/
+> resumeOnMainThread`；实例上只剩 `deliverPostedCalls()` 这个泵——它是 EventBus 手里那个 marshaller 的用法）；
+> 实例方法 `postToMain()` 与 `Application::startupProgress()` 都删了（前者是同义词，后者与 `StartupProgress::current()` 重复）。
+> **`Application::d` 已私有**（叶子只走 `dptr()`）；`argv()` 返回 `char* const*`。
+
 ## 三条横切规则
 
 1. **线程**：命令在它**恢复时所在的线程**上继续（定时器/IO/线程池），所以
    - `UserIO::putString`/`clear`/`cancelPendingInput` 可以被任意线程调用（GUI 实现自己编组，`VisualUserIO`
      用 `onConsolePanel` + `QPointer` 守卫，面板没了就是空操作）；
    - 命令可能在任意线程结束 ⇒ 事件 `executing`/`executed` 的**处理函数**必须自己编组（它们跑在结束线程上）；
-     要回到应用线程：命令体里 `co_await app->mainThreadDispatcher()->resumeOnMainThread()`（协程式，无事件循环时不挂起），
-     纯回调场景用 `postToMain()`；
+     要回到应用线程：命令体里 `co_await MainThreadDispatcher::resumeOnMainThread()`（协程式，无事件循环时不挂起），
+     纯回调场景用 `postToMainThread()`；
    - `Signal` **本身已经是线程安全的**（2026-09-17：不可变快照 `vector<Entry>` + 原子发布，`trigger` **不取任何锁**、
      不分配，与 Qt 连接表同构），
      所以"订阅必须放在启动期"这条老限制**已作废**——任何线程都可以随时 `connect`/`disconnect`。
@@ -119,7 +129,7 @@
   整百分点时发火；位置合流在 `ProgressIndicator::setPositionCallback`（每条目一次的热路径上只多一次比较，
   -O3 实测无代价，2000 万条目 101 次通知）。GUI 呈现器与控制台消费者各自订阅（不再是单观察者回调）。
 - **启动框（2026-09-18；统一流程 2026-09-26）**：`AppConfig::splash` 开（`enabled`/`title`/`subtitle`/`logo`），
-  框架自己上报 "正在启动 + 逐个插件"，应用插入自己的阶段用 `app->startupProgress()->stage("正在初始化日志")`（无上报口时是空操作）。
+  框架自己上报 "正在启动 + 逐个插件"，应用插入自己的阶段用 `StartupProgress::current()->stage(u8"正在初始化日志")`（无上报口时是空操作）。
   **宿主只做一件事**：调 `app->run()`（要加自己的启动工作就重写 `startup()` 那一拍，见三拍一节）；框架把活干完就
   做最后一拍 `startupEnd()`（上主窗 + 撤启动框），上报口由驱动在那一拍**之后**收（`endStartupProgress()`）。
   启动期**只有启动框在屏**（`startupStart()` 只上框），
@@ -130,7 +140,7 @@
   （取消 `cancelStartup()` / 失败 `failStartup()` 也收）；
   启动框/状态栏只是呈现者 ⇒ **无头宿主也报告自己的启动**（控制台 `[进度] …`）。构造就建是不行的：
   不跑启动的进程会多一个活的前台宿主 ⇒ `isBusy()` 恒真 ⇒ 顶层命令全被拒。
-  阶段语义是**阶段内比例**（可计数 `stage(name,total)`+`advance`；不确定 `stage(name)`），不是全局 ETA。
+  阶段语义是**阶段内比例**（可计数 `stage(name,total)`+`setDone`；不确定 `stage(name)`），不是全局 ETA。
 - 📋 **下一步待办（2026-09-26 用户定的方向，独立文档 `.ai/design/appfw-startup-next.md`）**：
   ✅**①已落地**：`init()` 折进构造函数（`Application(const AppConfig&, argc, argv)`：身份 → managers → Qt 应用对象
   → `initialize()`（UserIO + 配置文件）；GUI 多一步建窗口）⇒ `init()`/`setSplashConfig()` 删、ABI **3u→4u**、

@@ -122,6 +122,9 @@ class VN_APPFW_API GuiApplication : public Application {
      * what lets the boot report its last stage from inside this one. The main window is raised and activated as the
      * frame goes, because a stay-on-top frame is shown without activating the process and the window would otherwise
      * stay under whatever was in front when it appeared.
+     *
+     * Idempotent, as the phase's contract asks: the boot ends with the first call, and a second one (a host that drives
+     * its own boot, a test) does nothing at all.
      */
     vn::async::Task<void> startupEnd() override;
 

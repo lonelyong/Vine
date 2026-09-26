@@ -181,7 +181,7 @@ int main(int argc, char** argv)
     // main 只声明应用身份（应用名/可选组织名），数据与配置目录由框架默认推导：
     // <用户数据>/<org>/<app>/{config,logs}，见 Application::dataDirectory()。
     fw::AppConfig config;
-    config.name = "Vine";
+    config.name = u8"Vine";
     // config.organization 留空以使用框架默认组织名。
     // config.built_in_plugin_dir 留空以使用默认的自带插件目录；config.load_plugins 默认开，
     // 插件由框架在启动阶段加载（下面的 run() 里），宿主不用自己调 loadAll()。

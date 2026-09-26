@@ -32,9 +32,13 @@ class VN_APPFW_API Application : public Object {
     VN_OBJECT_META_DECL;
 
   protected:
+    /// Returns the private data block (see the private ApplicationData): leaves read their state through this, and
+    /// nothing outside the framework can name the type (its header is private and not installed).
     ApplicationData*       dptr();
     const ApplicationData* dptr() const;
 
+  private:
+    /// The data block. Private on purpose: a leaf reaches it through dptr() and never replaces it.
     std::unique_ptr<ApplicationData> d;
 
   public:
@@ -76,7 +80,9 @@ class VN_APPFW_API Application : public Object {
      * it in the application data (ApplicationData::app, a private detail of the framework) and then calls
      * initialize().
      *
-     * @param data   Application data; may already be the leaf's own extension of it.
+     * @param data   Application data; a leaf inside this framework may pass its own extension of it (the data header
+     *               is private and not installed, so a host outside this tree cannot name the type - it derives from
+     *               Application or GuiApplication instead).
      * @param config Application configuration.
      * @param argc   Command line argument count.
      * @param argv   Command line arguments.
@@ -189,18 +195,6 @@ class VN_APPFW_API Application : public Object {
      * @param code The exit code to return from run().
      */
     void exit(int code);
-
-    /**
-     * @brief Returns the startup progress sink of the current boot, or nullptr when there is none.
-     *
-     * The sink exists for the startup phase and nothing else: the boot creates it before its first phase and destroys it
-     * when the last one is through, so a process that never runs a boot - a test, a tool - never has one. Boot code -
-     * the framework's plugin loading as much as the host's own stages, on whichever thread it runs - reports into it
-     * through StartupProgress::current(), so a nullptr is simply "nobody is watching, report anyway".
-     *
-     * @return The sink, or nullptr when the application is not booting.
-     */
-    StartupProgress* startupProgress() const;
 
     /**
      * @brief Returns the application's command manager.
@@ -368,10 +362,10 @@ class VN_APPFW_API Application : public Object {
     raw_ptr<EventBus> eventBus() const;
 
     /**
-     * @brief Returns the application's main thread dispatcher.
+     * @brief Returns the main-thread marshaller the EventBus was built with.
      *
-     * The main thread dispatcher is a singleton that lives with the application and
-     * is used by the event bus for main/auto delivery.
+     * Everything that moves work between threads is on the type (its statics - see MainThreadDispatcher); this accessor
+     * hands over the one object the bus pumps through and keeps the "was this bus given a marshaller at all" answer.
      *
      * @return The main thread dispatcher.
      */
@@ -387,9 +381,22 @@ class VN_APPFW_API Application : public Object {
      */
     raw_ptr<UserIO> userIO() const;
 
+    /**
+     * @brief Returns the argument count the application was constructed with.
+     *
+     * @return The count passed to the constructor.
+     */
     int argc() const;
 
-    char** argv() const;
+    /**
+     * @brief Returns the arguments the application was constructed with.
+     *
+     * A read-only view of what the constructor stored: Qt keeps the array for the application's lifetime, so the
+     * pointer stays valid, but nothing here may change it (Qt registered the command line it saw).
+     *
+     * @return The arguments, valid for the application's lifetime.
+     */
+    char* const* argv() const;
 
     /**
      * @brief Returns whether a long-running operation is in progress.
@@ -480,8 +487,14 @@ class VN_APPFW_API Application : public Object {
      *
      * A host that drives its own boot calls this from its own class (it is protected: ending the boot is the framework's
      * move, and a host does not reach into a running boot from outside) - that is also the call that brings the windows
-     * up for a host that never runs the loop. It is a lazy task, so it has to be awaited: Task::result() drives
-     * it to completion on the calling thread, which only works while it does not need the event loop.
+     * up for a host that never runs the loop.
+     *
+     * It is a lazy task, so it has to be awaited: Task::result() drives it to completion on the calling thread, which only
+     * works while it does not need the event loop.
+     *
+     * Idempotent by contract, because that host may call it when the boot has already ended (the framework calls it once
+     * per boot): the second call does nothing - GuiApplication remembers the boot ended, so the frame is not taken down
+     * twice and the main window is not shown again.
      *
      * @return A task that completes once the boot's face is away.
      */

@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <thread>
 
 #include <QCloseEvent>
@@ -31,6 +32,17 @@ using vn::appfw::gui::GuiApplication;
 namespace
 {
 
+/// The counted stage's position, asserted to be one: an indeterminate stage reports no fraction at all.
+///
+/// @param boot Sink to read.
+/// @return The stage's fraction, or 0 when there is none (which the assertion has already reported).
+double countedFraction(const StartupProgress& boot)
+{
+    const std::optional<double> value = boot.fraction();
+    EXPECT_TRUE(value.has_value()) << "this stage is counted, so it must report a fraction";
+    return value.value_or(0.0);
+}
+
 TEST(StartupProgressTest, NoSinkByDefault)
 {
     EXPECT_EQ(StartupProgress::current(), nullptr);
@@ -53,65 +65,66 @@ TEST(StartupProgressTest, SinkIsForegroundAndProcessWide)
 TEST(StartupProgressTest, IndeterminateStageReportsLabelOnly)
 {
     StartupProgress boot;
-    boot.stage("正在查找插件");
-    EXPECT_EQ(boot.label(), "正在查找插件");
-    EXPECT_FALSE(boot.isCounted());
+    boot.stage(u8"正在查找插件");
+    EXPECT_EQ(boot.label(), u8"正在查找插件");
+    EXPECT_FALSE(boot.fraction().has_value());
 }
 
 TEST(StartupProgressTest, CountedStageReportsFraction)
 {
     StartupProgress boot;
-    boot.stage("正在加载插件", 4);
-    EXPECT_TRUE(boot.isCounted());
-    EXPECT_EQ(boot.label(), "正在加载插件");
-    EXPECT_NEAR(boot.fraction(), 0.0, 1e-9);
+    boot.stage(u8"正在加载插件", 4);
+    EXPECT_TRUE(boot.fraction().has_value());
+    EXPECT_EQ(boot.label(), u8"正在加载插件");
+    EXPECT_NEAR(countedFraction(boot), 0.0, 1e-9);
 
-    boot.advance(1);
-    EXPECT_NEAR(boot.fraction(), 0.25, 1e-9);
+    boot.setDone(1);
+    EXPECT_NEAR(countedFraction(boot), 0.25, 1e-9);
 
     // 绝对值语义：报到 3 就是 3/4，而不是在 1/4 之上再加 3。
-    boot.advance(3);
-    EXPECT_NEAR(boot.fraction(), 0.75, 1e-9);
+    boot.setDone(3);
+    EXPECT_NEAR(countedFraction(boot), 0.75, 1e-9);
 
     // 倒退被忽略：进度条不回退。
-    boot.advance(2);
-    EXPECT_NEAR(boot.fraction(), 0.75, 1e-9);
+    boot.setDone(2);
+    EXPECT_NEAR(countedFraction(boot), 0.75, 1e-9);
 
     // 状态文字可以细到插件一级，而进度仍按整个阶段走。
-    boot.setLabel("正在加载插件 app_shell (4/4)");
-    EXPECT_EQ(boot.label(), "正在加载插件 app_shell (4/4)");
-    EXPECT_NEAR(boot.fraction(), 0.75, 1e-9);
+    boot.setLabel(u8"正在加载插件 app_shell (4/4)");
+    EXPECT_EQ(boot.label(), u8"正在加载插件 app_shell (4/4)");
+    EXPECT_NEAR(countedFraction(boot), 0.75, 1e-9);
 
+    // 完成之后就不再报"本阶段的比例"了：完成这件事由 complete() 本身与上报口的销毁表达，不靠一个残留的数字
+    // （旧形状在这里返回 1.0，而 isCounted() 为 false —— 那种"标志与数字各说各话"的组合已经删掉）。
     boot.complete();
-    EXPECT_FALSE(boot.isCounted());
-    EXPECT_NEAR(boot.fraction(), 1.0, 1e-9);
+    EXPECT_FALSE(boot.fraction().has_value());
 }
 
 TEST(StartupProgressTest, EveryCountedStageStartsOver)
 {
     StartupProgress boot;
-    boot.stage("阶段一", 2);
-    boot.advance(2);
-    EXPECT_NEAR(boot.fraction(), 1.0, 1e-9);
+    boot.stage(u8"阶段一", 2);
+    boot.setDone(2);
+    EXPECT_NEAR(countedFraction(boot), 1.0, 1e-9);
 
     // 可计数阶段各自从零开始：进度条读的是"本阶段的比例"，不是整次启动的剩余。
-    boot.stage("阶段二", 10);
-    EXPECT_NEAR(boot.fraction(), 0.0, 1e-9);
+    boot.stage(u8"阶段二", 10);
+    EXPECT_NEAR(countedFraction(boot), 0.0, 1e-9);
 }
 
 TEST(StartupProgressTest, StageWithoutTotalIsIndeterminate)
 {
     StartupProgress boot;
-    boot.stage("无总量的阶段", 0);
-    EXPECT_FALSE(boot.isCounted());
+    boot.stage(u8"无总量的阶段", 0);
+    EXPECT_FALSE(boot.fraction().has_value());
 }
 
 TEST(BootSplashTest, ShowsReportedStageAndKeepsItsIndicatorTurning)
 {
     StartupProgress boot;
     SplashConfig    config;
-    config.title    = "Vine";
-    config.subtitle = "test";
+    config.title    = u8"Vine";
+    config.subtitle = u8"test";
 
     BootSplash splash(config);
     auto* const frame = splash.impl<QWidget>();
@@ -124,13 +137,13 @@ TEST(BootSplashTest, ShowsReportedStageAndKeepsItsIndicatorTurning)
     EXPECT_EQ(frame->findChild<QProgressBar*>(), nullptr) << "启动框不该有进度条";
     EXPECT_TRUE(splash.isBusyIndicatorRunning()) << "指示器必须是一直在转的那个东西";
 
-    boot.stage("正在查找插件");
+    boot.stage(u8"正在查找插件");
     EXPECT_TRUE(splash.statusText() == u8"正在查找插件");
 
     // 计数阶段也一样：文字照跟，但框上没有任何总量可看（条不存在，所以也没有“走到哪”这回事）。
-    boot.stage("正在加载插件", 4);
-    boot.setLabel("正在加载插件 app_shell (2/4)");
-    boot.advance(2);
+    boot.stage(u8"正在加载插件", 4);
+    boot.setLabel(u8"正在加载插件 app_shell (2/4)");
+    boot.setDone(2);
     EXPECT_TRUE(splash.statusText() == u8"正在加载插件 app_shell (2/4)");
     EXPECT_TRUE(splash.isBusyIndicatorRunning());
 
@@ -148,7 +161,7 @@ TEST(BootSplashTest, ShowsReportedStageAndKeepsItsIndicatorTurning)
 TEST(BootSplashTest, TheFrameRefusesToCloseWhileTheBootRuns)
 {
     SplashConfig config;
-    config.title = "Vine";
+    config.title = u8"Vine";
 
     StartupProgress boot;
     BootSplash      splash(config);
@@ -178,14 +191,14 @@ TEST(BootSplashTest, MissingLogoIsNotFatal)
 TEST(BootSplashTest, FrameSurvivesTheEndOfTheBoot)
 {
     SplashConfig config;
-    config.title = "Vine";
+    config.title = u8"Vine";
 
     std::unique_ptr<BootSplash> splash;
     {
         StartupProgress boot;
         splash = std::make_unique<BootSplash>(config);
-        boot.stage("正在加载插件", 2);
-        boot.advance(1);
+        boot.stage(u8"正在加载插件", 2);
+        boot.setDone(1);
     }
 
     // 上报口先于启动框销毁（宿主先关框），此时启动框保留最后一帧而不是读已销毁的上报口。
@@ -207,7 +220,7 @@ TEST(BootSplashTest, AnEmptyTitleShowsTheApplicationName)
 TEST(BootSplashTest, TheFramePaintsOnceTheWindowSystemHasShownIt)
 {
     SplashConfig config;
-    config.title = "Vine";
+    config.title = u8"Vine";
 
     BootSplash splash(config);
 
@@ -235,7 +248,7 @@ TEST(BootSplashTest, DisabledByDefaultInTheTestApplication)
     ASSERT_NE(app, nullptr);
 
     // test_gui 共享的 GuiApplication 用默认 AppConfig 创建：不开启动框就没有启动进度口，主窗口直接可见。
-    EXPECT_EQ(app->startupProgress(), nullptr);
+    EXPECT_EQ(StartupProgress::current(), nullptr);
     EXPECT_EQ(app->bootSplash(), nullptr);
     ASSERT_NE(app->mainWindow(), nullptr);
 

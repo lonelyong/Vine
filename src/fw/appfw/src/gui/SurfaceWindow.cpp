@@ -712,9 +712,9 @@ vn::async::Task<bool> SurfaceWindow::initAsync()
     // The one stretch that only needs the handle: the device, the session and every pipeline are built here, on a
     // pool worker, while the application thread goes back to its loop (that is the point - the boot keeps reporting,
     // repainting and taking input through it).
-    Application* const app        = Application::current();
-    auto* const        dispatcher = app != nullptr ? app->mainThreadDispatcher() : nullptr;
-    if (dispatcher == nullptr) {
+    // Nothing to come back to without an application (and so without an event loop): do the whole attach here, exactly
+    // as init() does.
+    if (Application::current() == nullptr) {
         // Nothing to come back to (no application, no event loop): do the whole attach here, exactly as init() does.
         d->backend_live = d->engine->initialize();
         finishBackendAttach(/*warm_up_here=*/true);
@@ -728,7 +728,7 @@ vn::async::Task<bool> SurfaceWindow::initAsync()
     const AttachScope attaching(d->attaching);
 
     co_await vn::async::run([engine_ptr, &initialized] { initialized = engine_ptr->initialize(); });
-    co_await dispatcher->resumeOnMainThread();
+    co_await MainThreadDispatcher::resumeOnMainThread();
 
     d->backend_live = initialized;
     finishBackendAttach(/*warm_up_here=*/false);
@@ -739,7 +739,7 @@ vn::async::Task<bool> SurfaceWindow::initAsync()
     if (!isOnScreen()) {
         vn::graphics::RenderEngine* const warm_engine = d->engine.get();
         co_await vn::async::run([warm_engine] { warm_engine->frame(); });
-        co_await dispatcher->resumeOnMainThread();
+        co_await MainThreadDispatcher::resumeOnMainThread();
         requestSettleFrames();
     }
     co_return d->backend_live;

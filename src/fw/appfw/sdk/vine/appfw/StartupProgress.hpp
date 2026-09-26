@@ -3,8 +3,10 @@
 #include "appfw_global.hpp"
 
 #include <memory>
+#include <optional>
 #include <stop_token>
-#include <string>
+
+#include <vine/String.hpp>
 
 VN_APPFW_NS_BEGIN
 
@@ -30,14 +32,14 @@ VN_APPFW_NS_BEGIN
  * The sink owns a foreground ProgressHost, so the startup progress is not private to the startup frame: the status
  * bar's ProgressPresenter and the headless ConsoleProgressReporter show the same state without any extra wiring.
  *
- * Lifetime: at most one per process, owned by the application and reachable through Application::startupProgress().
+ * Lifetime: at most one per process, owned by the application and reached through StartupProgress::current().
  * The framework that drives a boot creates it just before the first phase (Application::beginStartupProgress()) and
  * destroys it right after the last one (Application::endStartupProgress(), on the paths out of a boot that succeeded,
  * was cancelled and failed alike) - so the last phase still reports into it. Without a sink
  * (StartupProgress::current() == nullptr) every call is a no-op, so boot code may report unconditionally.
  *
- * Thread contract: stage()/advance()/setLabel()/complete() are called by the reporting thread (the application thread
- * during a boot), while label()/isCounted()/fraction() are read from wherever a presenter runs.
+ * Thread contract: stage()/setDone()/setLabel()/complete() are called by the reporting thread (the application thread
+ * during a boot), while label()/fraction() are read from wherever a presenter runs.
  */
 class VN_APPFW_API StartupProgress
 {
@@ -52,6 +54,11 @@ class VN_APPFW_API StartupProgress
     /**
      * @brief Returns the process-wide startup progress sink, or nullptr when there is none.
      *
+     * The sink belongs to the startup phase and nothing else: a boot creates it before its first phase and destroys it
+     * when the last one is through, so a process that never runs a boot - a test, a tool - never has one. Boot code -
+     * the framework's plugin loading as much as the host's own stages, on whichever thread it runs - reports into it
+     * here, so a nullptr is simply "nobody is watching, report anyway".
+     *
      * @return The sink of the running boot, or nullptr.
      */
     static StartupProgress* current();
@@ -64,25 +71,28 @@ class VN_APPFW_API StartupProgress
      *
      * @param name Status text, e.g. "正在查找插件".
      */
-    void stage(const std::string& name);
+    void stage(const String& name);
 
     /**
      * @brief Begins a stage that reports how much of it is done.
      *
-     * The bar returns to its start and follows advance(); total <= 0 is equivalent to stage(name).
+     * The bar returns to its start and follows setDone(); total <= 0 is equivalent to stage(name).
      *
      * @param name Status text, e.g. "正在加载插件".
      * @param total Number of units the stage consists of.
      */
-    void stage(const std::string& name, double total);
+    void stage(const String& name, double total);
 
     /**
-     * @brief Advances the current counted stage to the number of units done.
+     * @brief Sets how many units of the current counted stage are done.
      *
-     * @param done Units done so far (an absolute count, not an increment); a value below what was already reported is
-     *        ignored.
+     * The count is absolute and not an increment (report 3 of 4 as 3, not as "one more"), which is also what
+     * fraction() reports back; a value below what was already reported is ignored, so a reporter that counts
+     * out-of-order never makes the bar go backwards.
+     *
+     * @param done Units done so far.
      */
-    void advance(double done);
+    void setDone(double done);
 
     /**
      * @brief Updates the status text without changing how the current stage is counted.
@@ -92,7 +102,7 @@ class VN_APPFW_API StartupProgress
      *
      * @param text The new status text.
      */
-    void setLabel(const std::string& text);
+    void setLabel(const String& text);
 
     /**
      * @brief Ends the current stage and fills the bar.
@@ -108,24 +118,18 @@ class VN_APPFW_API StartupProgress
      *
      * @return The status text, possibly empty.
      */
-    std::string label() const;
+    String label() const;
 
     /**
-     * @brief Returns whether the current stage can be counted.
+     * @brief Returns how far the current counted stage has come, or nothing when the stage cannot be counted.
      *
-     * @return true when fraction() is meaningful, false when the bar is to be shown as busy.
+     * One value, not two: the caller cannot pair a stale flag with a fresh number, and an indeterminate stage is
+     * expressed by the absence rather than by a number that must not be read.
+     *
+     * @return The units done as a fraction of the stage's total, in [0, 1], or std::nullopt for an indeterminate (or
+     *         already completed) stage.
      */
-    bool isCounted() const;
-
-    /**
-     * @brief Returns how far the current counted stage has come.
-     *
-     * Read it while isCounted() is true: the value is where the last counted stage left the bar, so an indeterminate
-     * (or already completed) stage reports that position rather than a fraction of its own.
-     *
-     * @return The units done as a fraction of the stage's total, in [0, 1].
-     */
-    double fraction() const;
+    std::optional<double> fraction() const;
 
     /**
      * @brief Returns the cancellation token of this boot.

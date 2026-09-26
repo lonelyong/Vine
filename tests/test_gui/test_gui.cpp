@@ -122,7 +122,7 @@ class GuiEnv : public ::testing::Environment {
         // 与真实应用一样把 AppConfig 交给构造函数（builder 也只有这一步：本进程不设 built_in_plugin_dir）。
         // 用测试子类是为了拿到受保护的启动收尾钩子（见 fixtures/TestGuiApplication.hpp）。
         vn::appfw::AppConfig config;
-        config.name = "test_gui";
+        config.name = u8"test_gui";
         app         = std::make_unique<TestGuiApplication>(config, 1, argv);
 
         // 从干净状态开始：上一次运行（或中途失败）可能留下插件注册文件。
@@ -219,8 +219,8 @@ class NestedChildCommand : public vn::appfw::Command {
     {
         // 子命令现在是独立宿主（前台栈顶），可上报自己的进度。
         if (auto* host = vn::appfw::ProgressHost::current()) {
-            host->setLabel("child");
-            vn::progress::ProgressScope scope = host->scope("child", 20);
+            host->setLabel(u8"child");
+            vn::progress::ProgressScope scope = host->scope(u8"child", 20);
             for (int i = 0; i < 20; ++i) {
                 if (context && context->isCancelled()) {
                     co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Cancelled);
@@ -258,8 +258,8 @@ class NestedProgressCommand : public vn::appfw::Command {
         if (!host || !context) {
             co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed);
         }
-        host->setLabel("parent");
-        vn::progress::ProgressScope root = host->scope("parent", 20);
+        host->setLabel(u8"parent");
+        vn::progress::ProgressScope root = host->scope(u8"parent", 20);
         for (int i = 0; i < 8; ++i) {
             if (root.isCancelled()) {
                 co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Cancelled);
@@ -2137,14 +2137,14 @@ TEST(ConsoleProgressReporterTest, WritesThrottledLinesWhileAForegroundOperationR
     {
         vn::appfw::ProgressHost host;
         host.setForeground(true);
-        host.setLabel("导出");
+        host.setLabel(u8"导出");
 
         // show_delay 为 0 ⇒ 首行立刻出来，且带标签。
         reporter.poll();
         ASSERT_EQ(lines.size(), 1u);
         EXPECT_NE(lines[0].find(u8"导出"), vn::String::npos);
 
-        auto scope = host.scope("导出", 100);
+        auto scope = host.scope(u8"导出", 100);
         scope.next(50);
         reporter.poll();
         ASSERT_EQ(lines.size(), 2u);
@@ -2186,7 +2186,7 @@ TEST(ConsoleProgressReporterTest, ChangeNotificationWritesLinesAndStops)
 
     vn::appfw::ProgressHost host;
     host.setForeground(true);
-    host.setLabel("后台导出");
+    host.setLabel(u8"后台导出");
 
     reporter.start();
 
@@ -2235,7 +2235,7 @@ TEST(ConsoleProgressReporterTest, WakeupOutlivesTheThreadThatReported)
 
     vn::appfw::ProgressHost host;
     host.setForeground(true);
-    host.setLabel("导出");
+    host.setLabel(u8"导出");
 
     vn::appfw::ConsoleProgressReporter reporter(
       [&lines, &lines_mutex](const vn::String& line) {
@@ -2250,7 +2250,7 @@ TEST(ConsoleProgressReporterTest, WakeupOutlivesTheThreadThatReported)
     // 在短命线程里上报 10%：事件在该线程上触发，但此刻距上一行不到 interval，
     // 于是消费者把"到点再写"的一次性唤醒臂在那个线程上——那个线程马上就退出了。
     std::thread worker([&host] {
-        vn::progress::ProgressScope scope = host.scope("worker", 100);
+        vn::progress::ProgressScope scope = host.scope(u8"worker", 100);
         scope.next(10);
     });
     worker.join();
@@ -2286,7 +2286,7 @@ TEST(ConsoleProgressReporterTest, ConsoleUserIOPrintsTheProgressOfAForegroundOpe
         {
             vn::appfw::ProgressHost host;
             host.setForeground(true);
-            host.setLabel("无头导出");
+            host.setLabel(u8"无头导出");
 
             // 默认节流：500ms 首字 + 200ms 轮询，留足余量到 1s。
             std::this_thread::sleep_for(std::chrono::milliseconds(1000));

@@ -157,7 +157,7 @@ TEST(HeadlessBootTest, TheBootReportsItsProgressAndLoadsThePluginsWithoutAWindow
     static char* argv[] = { arg0, nullptr };
 
     vn::appfw::AppConfig config;
-    config.name           = "test_appfw";
+    config.name           = u8"test_appfw";
     config.persist_config = false;
     config.load_plugins   = true; // 默认值，写明"加载是框架的内置动作"
 
@@ -172,7 +172,6 @@ TEST(HeadlessBootTest, TheBootReportsItsProgressAndLoadsThePluginsWithoutAWindow
     // 都不属于构造。
     EXPECT_NE(QCoreApplication::instance(), nullptr);
     EXPECT_NE(app->userIO(), nullptr);
-    EXPECT_EQ(app->startupProgress(), nullptr);
     EXPECT_EQ(vn::appfw::StartupProgress::current(), nullptr);
     EXPECT_FALSE(app->pluginManager()->isLoaded(u8"headless_boot_plugin"));
     EXPECT_FALSE(app->isBusy()); // 没在启动：命令可以跑
@@ -207,17 +206,17 @@ TEST(HeadlessBootTest, TheBootReportsItsProgressAndLoadsThePluginsWithoutAWindow
     app->work = [&] {
         work_thread = std::this_thread::get_id();
 
-        auto* boot    = app->startupProgress();
+        auto* boot    = vn::appfw::StartupProgress::current();
         reported      = boot != nullptr && vn::appfw::StartupProgress::current() == boot;
         busy          = app->isBusy();
         plugins_first = app->pluginManager()->isLoaded(u8"headless_boot_plugin");
         boot_in_loop  = probe_delivered;
 
         if (boot != nullptr) {
-            boot->stage("正在加载插件", 2);
-            boot->advance(1);
-            labeled  = boot->label() == "正在加载插件";
-            advanced = boot->isCounted() && boot->fraction() > 0.0;
+            boot->stage(u8"正在加载插件", 2);
+            boot->setDone(1);
+            labeled  = boot->label() == u8"正在加载插件";
+            advanced = boot->fraction().has_value() && *boot->fraction() > 0.0;
         }
 
         // 睡够几拍定时器的时间：工作期间主线程应该一直在派发（ticks 会涨）。
@@ -228,7 +227,7 @@ TEST(HeadlessBootTest, TheBootReportsItsProgressAndLoadsThePluginsWithoutAWindow
         // 委托那一段故意睡 60 ms：调用方量到的时长才能证明它真的在等（不等就一定远小于 60 ms）。
         QElapsedTimer delegated_timer;
         delegated_timer.start();
-        delegated_ran = app->mainThreadDispatcher()->invokeOnMainThread([&] {
+        delegated_ran = vn::appfw::MainThreadDispatcher::invokeOnMainThread([&] {
             delegated_on_main = std::this_thread::get_id() == main_thread;
             std::this_thread::sleep_for(std::chrono::milliseconds(60));
         });
@@ -236,7 +235,7 @@ TEST(HeadlessBootTest, TheBootReportsItsProgressAndLoadsThePluginsWithoutAWindow
         delegated_when_returned = delegated_on_main;
 
         // 宿主的活干完了：回主线程收尾——让框架把启动收完（startupEnd() 那一拍），再让循环退出。
-        static_cast<void>(app->mainThreadDispatcher()->postToMain([] {
+        static_cast<void>(vn::appfw::MainThreadDispatcher::postToMainThread([] {
             QTimer::singleShot(50, qApp, [] { QCoreApplication::exit(0); });
         }));
     };
@@ -264,7 +263,6 @@ TEST(HeadlessBootTest, TheBootReportsItsProgressAndLoadsThePluginsWithoutAWindow
     EXPECT_TRUE(inline_ran);
 
     // 启动阶段结束：上报口销毁，前台栈清空（之后的命令进度不会被启动期遮住）。
-    EXPECT_EQ(app->startupProgress(), nullptr);
     EXPECT_EQ(vn::appfw::StartupProgress::current(), nullptr);
     EXPECT_FALSE(app->isBusy());
 
@@ -284,7 +282,7 @@ TEST(HeadlessBootTest, AFailingStartupWorkEndsTheProcess)
     static char* argv[] = { arg0, nullptr };
 
     vn::appfw::AppConfig config;
-    config.name           = "test_appfw";
+    config.name           = u8"test_appfw";
     config.persist_config = false;
     config.load_plugins   = false; // 这条用例只量"工作抛异常"那一头，插件不是主角
     auto app              = std::make_unique<WorkingHostApplication>(config, 1, argv);
@@ -297,7 +295,7 @@ TEST(HeadlessBootTest, AFailingStartupWorkEndsTheProcess)
     const int code = app->run();
 
     EXPECT_EQ(code, 1) << "启动期的异常是致命的：进程以非零码退出";
-    EXPECT_EQ(app->startupProgress(), nullptr) << "上报口照样要收掉（不该继续往一个死掉的启动里报）";
+    EXPECT_EQ(vn::appfw::StartupProgress::current(), nullptr) << "上报口照样要收掉（不该继续往一个死掉的启动里报）";
     EXPECT_FALSE(app->isBusy());
 }
 
@@ -326,7 +324,7 @@ TEST(HeadlessBootTest, ACancelledBootEndsCleanlyWithoutFinishingTheBoot)
     static char* argv[] = { arg0, nullptr };
 
     vn::appfw::AppConfig config;
-    config.name           = "test_appfw";
+    config.name           = u8"test_appfw";
     config.persist_config = false;
     config.load_plugins   = true;
 
@@ -347,7 +345,7 @@ TEST(HeadlessBootTest, ACancelledBootEndsCleanlyWithoutFinishingTheBoot)
 
     EXPECT_EQ(code, 0) << "取消不是失败：退出码是 0";
     EXPECT_FALSE(app->end_phase_ran) << "取消的启动不走最后一拍，主窗不该上屏";
-    EXPECT_EQ(app->startupProgress(), nullptr) << "上报口要收掉";
+    EXPECT_EQ(vn::appfw::StartupProgress::current(), nullptr) << "上报口要收掉";
     EXPECT_FALSE(app->isBusy());
     EXPECT_FALSE(app->pluginManager()->isLoaded(u8"headless_boot_plugin"))
         << "取消时已经装上的插件必须卸掉（插件在 load() 里建的东西不能留在进程里）";
@@ -372,7 +370,7 @@ class AwaitingPhaseApplication : public vn::appfw::Application {  public:
     /// 第二拍：进来时应该已经在应用线程上（框架在上一拍之后垫了一次 `resumeOnMainThread()`）。
     vn::async::Task<void> startup() override
     {
-        second_phase_on_main.store(mainThreadDispatcher()->isMainThread());
+        second_phase_on_main.store(vn::appfw::MainThreadDispatcher::isMainThread());
         co_await Application::startup();
     }
 };
@@ -389,7 +387,7 @@ TEST(HeadlessBootTest, ALeafPhaseCanWaitWithoutBlockingTheLoop)
     static char* argv[] = { arg0, nullptr };
 
     vn::appfw::AppConfig config;
-    config.name           = "test_appfw";
+    config.name           = u8"test_appfw";
     config.persist_config = false;
     config.load_plugins   = false; // 这条用例量的是"叶子那一拍在等"，插件不是主角
 
@@ -420,7 +418,7 @@ TEST(HeadlessBootTest, ALeafPhaseCanWaitWithoutBlockingTheLoop)
     EXPECT_GE(ticks, 20) << "启动期主线程必须一直在派发（消息循环不被任何一拍占住）";
     EXPECT_LT(max_gap, 100) << "叶子那一拍等 150 ms 时循环也必须转：忙等会把最大间隔拉到 150 ms 以上";
     EXPECT_TRUE(app->second_phase_on_main.load()) << "叶子在别的线程上结束了上一拍，框架要把下一拍拉回应用线程";
-    EXPECT_EQ(app->startupProgress(), nullptr) << "叶子自己等待的那一拍跑完后，启动要照常走完（上报口收起）";
+    EXPECT_EQ(vn::appfw::StartupProgress::current(), nullptr) << "叶子自己等待的那一拍跑完后，启动要照常走完（上报口收起）";
 }
 
 /// 同步门（`loadAll()`）里插件把重活丢到池上、再回应用线程：等的时候必须派发"回应用线程"那条投递，否则死锁。
@@ -435,7 +433,7 @@ TEST(HeadlessBootTest, TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicati
     static char* argv[] = { arg0, nullptr };
 
     vn::appfw::AppConfig config;
-    config.name           = "test_appfw";
+    config.name           = u8"test_appfw";
     config.persist_config = false;
     config.load_plugins   = false; // 同步门由用例自己调，不经过启动阶段
 
@@ -466,7 +464,7 @@ TEST(HeadlessBootTest, TwoPluginsClaimingOneIdentityAreBothFoundAndReported)
     static char* argv[] = { arg0, nullptr };
 
     vn::appfw::AppConfig config;
-    config.name           = "test_appfw";
+    config.name           = u8"test_appfw";
     config.persist_config = false;
     config.load_plugins   = false;  // 同步门由用例自己调，不经过启动阶段
 
@@ -495,7 +493,7 @@ TEST(HeadlessBootTest, ARegistrationThatDisagreesWithItsLibraryIsReportedAndTheL
     static char* argv[] = { arg0, nullptr };
 
     vn::appfw::AppConfig config;
-    config.name           = "test_appfw";
+    config.name           = u8"test_appfw";
     config.persist_config = false;
     config.load_plugins   = false;
 
@@ -553,7 +551,7 @@ TEST(HeadlessBootTest, ShutdownFromAnotherThreadIsReportedAndStillRuns)
     static char* argv[] = { arg0, nullptr };
 
     vn::appfw::AppConfig config;
-    config.name           = "test_appfw";
+    config.name           = u8"test_appfw";
     config.persist_config = false;
     config.load_plugins   = false;
 

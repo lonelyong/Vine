@@ -17,13 +17,13 @@
 
 VN_APPFW_NS_BEGIN
 
-bool MainThreadDispatcher::isMainThread() const noexcept
+bool MainThreadDispatcher::isMainThread() noexcept
 {
     const auto* app = QCoreApplication::instance();
     return app != nullptr && QThread::currentThread() == app->thread();
 }
 
-bool MainThreadDispatcher::hasEventLoop() const noexcept
+bool MainThreadDispatcher::hasEventLoop() noexcept
 {
     return QCoreApplication::instance() != nullptr;
 }
@@ -46,9 +46,9 @@ bool MainThreadDispatcher::invokeOnMainThread(std::function<void()> task, std::c
     };
     auto handoff = std::make_shared<Handoff>();
 
-    const bool queued = postToMain([handoff, task = std::move(task)] {
+    const bool queued = postToMainThread([handoff, task = std::move(task)] {
         // The flag is raised by a guard: a task that throws must not leave the caller waiting out the whole bound
-        // (the exception itself is the queued call's business, exactly as it is for postToMain()).
+        // (the exception itself is the queued call's business, exactly as it is for postToMainThread()).
         const auto raise = vn::async::makeFinally([handoff] {
             {
                 std::lock_guard lock(handoff->mutex);
@@ -70,11 +70,6 @@ bool MainThreadDispatcher::invokeOnMainThread(std::function<void()> task, std::c
         return false;
     }
     return true;
-}
-
-bool MainThreadDispatcher::postToMain(std::function<void()> task)
-{
-    return postToMainThread(std::move(task));
 }
 
 bool MainThreadDispatcher::postToMainThread(std::function<void()> task)

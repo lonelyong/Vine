@@ -3,6 +3,7 @@
 #include <atomic>
 
 #include <vine/appfw/ProgressHost.hpp>
+#include <vine/logging/Log.hpp>
 #include <vine/progress/ProgressRange.hpp>
 #include <vine/progress/ProgressScope.hpp>
 
@@ -33,7 +34,12 @@ struct StartupProgress::Impl {
 StartupProgress::StartupProgress()
   : d(new Impl())
 {
-    s_current.store(this, std::memory_order_release);
+    // The contract is "at most one per process": a second sink takes over (reporting from the first one still reaches
+    // the same presenters, since both report into the progress registry), and the overlap is reported rather than
+    // silently resolved - a boot that nests in another boot is a bug in the caller.
+    if (StartupProgress* const previous = s_current.exchange(this, std::memory_order_acq_rel); previous != nullptr) {
+        VN_LOGW("a second StartupProgress took over while another one was alive: the first one's reports are shadowed");
+    }
 
     // Promoting the host is what makes the startup frame, the status bar and the console show the boot instead of
     // reporting "one more background task is running".
@@ -42,9 +48,13 @@ StartupProgress::StartupProgress()
 
 StartupProgress::~StartupProgress()
 {
+    // Only clear the slot when this sink is the one in it: a sink that was already taken over must not erase its
+    // successor (which is exactly what an unconditional store would do).
+    StartupProgress* expected = this;
+    static_cast<void>(s_current.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel));
+
     // The host leaves the foreground stack by itself, so a presenter re-sampling the registry sees the operation that
     // was running underneath (normally none) rather than this dying sink.
-    s_current.store(nullptr, std::memory_order_release);
 }
 
 StartupProgress* StartupProgress::current()
@@ -64,7 +74,7 @@ void StartupProgress::requestCancel()
     d->host.cancelSource().request_stop();
 }
 
-void StartupProgress::stage(const std::string& name)
+void StartupProgress::stage(const String& name)
 {
     // Ending the counted stage advances the bar to its end, which the presenters then hide behind a busy bar until the
     // next counted stage starts over.
@@ -74,7 +84,7 @@ void StartupProgress::stage(const std::string& name)
     d->host.setLabel(name);
 }
 
-void StartupProgress::stage(const std::string& name, double total)
+void StartupProgress::stage(const String& name, double total)
 {
     if (!(total > 0.0)) {
         stage(name);
@@ -86,11 +96,11 @@ void StartupProgress::stage(const std::string& name, double total)
     d->counted.store(true, std::memory_order_release);
 
     // range() resets the scale, so every counted stage starts at zero: the bar reads as this stage's own progress.
-    d->stage_scope = std::make_unique<progress::ProgressScope>(d->host.range(), name, total);
+    d->stage_scope = std::make_unique<progress::ProgressScope>(d->host.range(), name.as_std_str(), total);
     d->host.setLabel(name);
 }
 
-void StartupProgress::advance(double done)
+void StartupProgress::setDone(double done)
 {
     if (d->stage_scope == nullptr) {
         return;
@@ -108,7 +118,7 @@ void StartupProgress::advance(double done)
     step_range.complete();
 }
 
-void StartupProgress::setLabel(const std::string& text)
+void StartupProgress::setLabel(const String& text)
 {
     d->host.setLabel(text);
 }
@@ -130,18 +140,16 @@ void StartupProgress::complete()
     d->counted.store(false, std::memory_order_release);
 }
 
-std::string StartupProgress::label() const
+String StartupProgress::label() const
 {
     return d->host.label();
 }
 
-bool StartupProgress::isCounted() const
+std::optional<double> StartupProgress::fraction() const
 {
-    return d->counted.load(std::memory_order_acquire);
-}
-
-double StartupProgress::fraction() const
-{
+    if (!d->counted.load(std::memory_order_acquire)) {
+        return std::nullopt;
+    }
     return d->host.indicator().position();
 }
 

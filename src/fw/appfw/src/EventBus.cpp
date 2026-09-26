@@ -862,8 +862,8 @@ void EventBus::publish(const std::shared_ptr<const Object>& event)
 
     // Thread policy, resolved once per publish. Without a marshaller there is
     // nowhere to marshal to, so Main/Auto degrade to the publishing thread.
-    const bool marshaller_ready = dispatcher_ != nullptr && dispatcher_->hasEventLoop();
-    const bool on_main_thread   = !marshaller_ready || dispatcher_->isMainThread();
+    const bool marshaller_ready = dispatcher_ != nullptr && MainThreadDispatcher::hasEventLoop();
+    const bool on_main_thread   = !marshaller_ready || MainThreadDispatcher::isMainThread();
     // Error observation snapshot: one load when no handler is installed.
     const auto error_handler = d->has_error_handler.load(std::memory_order_acquire) ? d->currentErrorHandler() : nullptr;
 
@@ -882,7 +882,7 @@ void EventBus::publish(const std::shared_ptr<const Object>& event)
         auto payload  = std::make_shared<Payload>(entry.state, event, entry.mode, error_handler);
         auto delivery = std::make_shared<Delivery>(d->deliveries, payload);
         d->deliveries->add(std::move(payload));
-        if (!dispatcher_->postToMain([delivery] { delivery->run(); })) {
+        if (!MainThreadDispatcher::postToMainThread([delivery] { delivery->run(); })) {
             // The task was dropped and is already gone with the lambda, so its
             // Delivery destructor unregistered the payload again: nothing leaks.
             VN_LOGW("EventBus: dropping a Main delivery, the event loop refused the task");

@@ -167,14 +167,15 @@ progress::ProgressRange ProgressHost::range()
     return indicator_.start();
 }
 
-progress::ProgressScope ProgressHost::scope(const std::string& name, double max)
+progress::ProgressScope ProgressHost::scope(const String& name, double max)
 {
     // The root range from range() is consumed by exactly this scope, so the
-    // caller never touches the one-shot ProgressRange directly.
-    return progress::ProgressScope(range(), name, max);
+    // caller never touches the one-shot ProgressRange directly. The progress
+    // module below appfw is Qt-free and spells its labels as UTF-8 std::string.
+    return progress::ProgressScope(range(), name.as_std_str(), max);
 }
 
-void ProgressHost::setLabel(const std::string& label)
+void ProgressHost::setLabel(const String& label)
 {
     {
         std::lock_guard lock(label_mutex_);
@@ -187,7 +188,7 @@ void ProgressHost::setLabel(const std::string& label)
     changed().trigger();
 }
 
-std::string ProgressHost::label() const
+String ProgressHost::label() const
 {
     std::lock_guard lock(label_mutex_);
     return label_;

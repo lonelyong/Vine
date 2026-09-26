@@ -289,7 +289,7 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
 
 | # | 缺陷 | 证据 | 修复 |
 | --- | --- | --- | --- |
-| D1 | `executeDetached()` 的失败回写发生在命令结束的那个线程上（定时器/异步 IO 线程），GUI 的 `VisualUserIO::putString()` → `ConsolePanel::append()` 直接写 QWidget | 探针：`executed` 回调线程 ≠ 应用线程 | 新增 `reportToUser()`：`MainThreadDispatcher::isMainThread()/hasEventLoop()` 为假时 `postToMain()` 编组，否则内联；`VisualUserIO` 的控制台回写同样处理（`appendOnApplicationThread()`） |
+| D1 | `executeDetached()` 的失败回写发生在命令结束的那个线程上（定时器/异步 IO 线程），GUI 的 `VisualUserIO::putString()` → `ConsolePanel::append()` 直接写 QWidget | 探针：`executed` 回调线程 ≠ 应用线程 | 新增 `reportToUser()`：`MainThreadDispatcher::isMainThread()/hasEventLoop()` 为假时 `postToMainThread()` 编组，否则内联；`VisualUserIO` 的控制台回写同样处理（`appendOnApplicationThread()`） |
 | D2 | Exclusive 只取消 `foreground` 链 ⇒ 被别的顶层命令顶出前台的后台链与之并发（不变量 8 失效） | 探针：`takeover=Success` 且后台链仍在跑 | `takeOverForeground()` 改为取活链快照、对**全部**活链 `request_stop()` 并等待全部收尾；超时仍以 `Failed` 拒绝 |
 | D3 | 被取消的嵌套子命令在 `throw` 上抛前不 `report()` ⇒ 没有 `executed` 事件、不进历史（可 `executing` 已经发出） | 探针：child `executing=1 executed=0`、`history=1` | 上抛前先 `report(..., Cancelled)` |
 | D4 | 关停时既不取消也不等待命令链；`~CommandManager` 也无保护 ⇒ 活帧在管理器销毁后恢复即 UAF | 代码：全仓无 `cancelAll()` 生产调用；`Application::shutdown()` 不碰管理器 | 新增 `cancelAllAndWait(timeout)`；`Application::shutdown()` 第一步调用（超时只记 warning）；`~CommandManager` 若发现活链则告警（不在析构里阻塞） |
@@ -537,9 +537,9 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   用 `Application::quit()`（停止主循环），由宿主在 `run()` 返回后收尾。
 
 - **跨线程碰 UI 的写法**：命令可能在任意线程恢复，要回到应用线程就用
-  `co_await app->mainThreadDispatcher()->resumeOnMainThread()`（2026-09-17 新增，见
+  `co_await MainThreadDispatcher::resumeOnMainThread()`（2026-09-17 新增，见
   `MainThreadDispatcher.hpp`；协程式，与事件处理函数里的"自己编组"是同一条规则）；
-  没有事件循环时它不挂起，直接在调用线程继续。回调式场景仍用 `postToMain()`。
+  没有事件循环时它不挂起，直接在调用线程继续。回调式场景仍用 `postToMainThread()`。
 
 ## 测试映射（tests/test_gui/test_gui.cpp）
 

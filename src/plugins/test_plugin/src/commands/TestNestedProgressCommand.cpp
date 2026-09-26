@@ -24,8 +24,8 @@ vn::async::Task<CommandResult> TestNestedProgressCommand::execute(CommandExecuti
     // 父命令驱动整体进度（0→40% → 子命令顶替 → 40→100%）。
     // 每步 50ms：前段约 2s 走到 40%，子命令约 1.5s 顶替驱动整条进度条，
     // 结束后恢复父命令，后段约 3s 从 40% 走完到 100%。
-    host->setLabel("父:导出");
-    vn::progress::ProgressScope root = host->scope("父:导出", 100);
+    host->setLabel(u8"父:导出");
+    vn::progress::ProgressScope root = host->scope(u8"父:导出", 100);
     for (int i = 0; i < 40; ++i) {
         if (root.isCancelled()) {
             co_return CommandResult(CommandStatus::Cancelled);

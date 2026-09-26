@@ -318,7 +318,7 @@ vn::async::Task<void> GuiApplication::startupStart()
     // 启动框上屏本身就是一拍，而这一拍要等首帧（下面那条 await），所以先把相位名报上去：
     // 进度按相位跳，读者看到的每一段都应该是“正在干什么”，而不是上一拍留下的名字。
     if (StartupProgress* progress = StartupProgress::current(); progress != nullptr) {
-        progress->stage("正在显示启动画面");
+        progress->stage(u8"正在显示启动画面");
     }
 
     // What is waited for is that frame's first paint: showing a window only asks the window system to map it, and the
@@ -449,7 +449,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
 
     // 最后这一拍也报一次：主窗口上屏、启动框撤走全在这里，读完最后一段就可以收上报口了（见 Application::startupSequence()）。
     if (StartupProgress* progress = StartupProgress::current(); progress != nullptr) {
-        progress->stage("正在准备主窗口");
+        progress->stage(u8"正在准备主窗口");
     }
 
     // The startup progress is still alive here (the framework tears it down once this phase returns: it belongs to the

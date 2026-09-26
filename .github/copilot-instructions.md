@@ -47,6 +47,9 @@ Fields use `snake_case`:
 * Class static fields additionally get an `s_` prefix (e.g. `s_count`, `s_val2`, `s_val5_`).
 * Under PImpl:
   * The `impl` member does NOT get a trailing underscore (`Impl* const impl;` or `std::unique_ptr<Impl> impl;`).
+  * appfw's data blocks are named the Qt way instead - `d` with a `dptr()` accessor - also
+    without a trailing underscore (`std::unique_ptr<ApplicationData> d;`). Keep whichever
+    name the class family around you already uses.
   * Fields of the `Impl` object do NOT get a trailing underscore.
 * The Qt Designer generated UI member `Ui::XXX ui;` does NOT get a trailing underscore, regardless of access level (even when private).
 * Local variables use `snake_case` without a trailing underscore.

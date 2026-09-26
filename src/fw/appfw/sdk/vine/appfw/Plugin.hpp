@@ -43,11 +43,23 @@
  * does not turn the loop; it reports per phase instead (see PluginManager). unload()
  * deliberately stays synchronous: it runs while the loop is already down.
  *
+ * 7u: the SDK's text and its cross-thread helpers were unified. The text a plugin hands
+ * to the framework is vn::String, not std::string: StartupProgress::stage()/setLabel()/
+ * label(), ProgressHost::setLabel()/label()/scope() and the AppConfig/SplashConfig
+ * fields. StartupProgress::advance() became setDone() (the count was always absolute,
+ * the name said otherwise) and its isCounted()/fraction() pair became one
+ * std::optional<double> fraction() - there is no longer a flag a caller can pair with
+ * the wrong number. The MainThreadDispatcher helpers a worker can reach without an
+ * object are static now (isMainThread(), hasEventLoop(), postToMainThread(),
+ * invokeOnMainThread(), resumeOnMainThread()) and the instance-only postToMain() is
+ * gone. Application::startupProgress() is gone too: StartupProgress::current() is the
+ * one way to reach the boot's sink.
+ *
  * The name says *plugin* ABI on purpose: it is not the release version (that is
  * VN_APPFW_VERSION in appfw_global.hpp, diagnostic only), and it says nothing about
  * the host's own binaries, which are built and rebuilt together with the framework.
  */
-#define VN_APPFW_PLUGIN_ABI_VERSION 6u
+#define VN_APPFW_PLUGIN_ABI_VERSION 7u
 
 VN_APPFW_NS_BEGIN
 
@@ -182,7 +194,7 @@ class VN_APPFW_API Plugin : public Object {
      *
      * Runs on the application thread and returns once the plugin is usable. Its work is SPLIT, not moved: a plugin that
      * has something expensive and UI-free to do sends it to the pool - `co_await vn::async::run(...)`, then
-     * `co_await app->mainThreadDispatcher()->resumeOnMainThread()` before touching UI again - while the widgets and
+     * `co_await MainThreadDispatcher::resumeOnMainThread()` before touching UI again - while the widgets and
      * graphics objects it builds stay on this thread, as they must.
      *
      * What this buys the boot: while the hook is suspended on the pool the event loop runs freely, so a progress report

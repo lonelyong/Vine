@@ -138,12 +138,12 @@ Application::Application(ApplicationData* data, const AppConfig& config, int arg
     // name. The framework assumes an organization so those paths are well formed even when the host only names the
     // application; an identity the host set before this constructor is kept.
     if (!config.organization.empty()) {
-        QCoreApplication::setOrganizationName(QString::fromStdString(config.organization));
+        QCoreApplication::setOrganizationName(toQString(config.organization));
     } else if (QCoreApplication::organizationName().isEmpty()) {
         QCoreApplication::setOrganizationName(toQString(Application::defaultOrganizationName()));
     }
     if (!config.name.empty()) {
-        QCoreApplication::setApplicationName(QString::fromStdString(config.name));
+        QCoreApplication::setApplicationName(toQString(config.name));
     }
 
     dptr()->load_plugins = config.load_plugins;
@@ -192,11 +192,6 @@ StartupProgress* Application::beginStartupProgress()
     if (dptr()->startup_progress == nullptr) {
         dptr()->startup_progress = std::make_unique<StartupProgress>();
     }
-    return dptr()->startup_progress.get();
-}
-
-StartupProgress* Application::startupProgress() const
-{
     return dptr()->startup_progress.get();
 }
 
@@ -255,7 +250,10 @@ void Application::cancelStartup()
     }
 
     endStartupProgress();
-    exit(0);
+
+    // 以 0 停主循环（不是失败）：run() 随即返回，shutdown() 照常跑完。限定名是有意的：这里的 exit() 必须是
+    // 本类的那个（它会把非主线程的调用改道），不是 ::exit()。
+    Application::exit(0);
 }
 
 void Application::failStartup()
@@ -266,7 +264,8 @@ void Application::failStartup()
     endStartupProgress();
 
     // 以非零码停主循环：run() 随即返回，进程带着这个码退出，shutdown() 照常跑完（命令、插件、配置都干净收尾）。
-    exit(kStartupFailureExitCode);
+    // 限定名是有意的：这里的 exit() 必须是本类的那个（它会把非主线程的调用改道），不是 ::exit()。
+    Application::exit(kStartupFailureExitCode);
 }
 
 void Application::endStartupProgress()
@@ -315,24 +314,24 @@ vn::async::DetachedTask Application::startupSequence()
     //
     // 每拍之后垫一次 `resumeOnMainThread()`：一拍可能在别的线程上结束（定时器、IO、宿主自己丢到池上的活），
     // 而下一拍与这次启动的收尾都必须在应用线程上。已经在主线程时它是空操作。
-    beginStartupProgress()->stage("正在启动");
+    beginStartupProgress()->stage(u8"正在启动");
 
     bool ok = true;
     try {
         co_await startupStart();
-        co_await dptr()->main_dispatcher->resumeOnMainThread();
+        co_await MainThreadDispatcher::resumeOnMainThread();
         if (startupCancelled()) {
             cancelStartup();
             co_return;
         }
         co_await startup();
-        co_await dptr()->main_dispatcher->resumeOnMainThread();
+        co_await MainThreadDispatcher::resumeOnMainThread();
         if (startupCancelled()) {
             cancelStartup();
             co_return;
         }
         co_await startupEnd();
-        co_await dptr()->main_dispatcher->resumeOnMainThread();
+        co_await MainThreadDispatcher::resumeOnMainThread();
     }
     catch (const std::exception& error) {
         VN_LOGE("the startup phase failed: {}", error.what());
@@ -348,7 +347,7 @@ vn::async::DetachedTask Application::startupSequence()
     // 启动成功）。收尾也要在应用线程上，而 `co_await` 不能写在 catch
     // 处理块里（失败那一拍也可能是在别的线程上抛的）⇒ 两条路都在 try 之后合并。
     if (!ok) {
-        co_await dptr()->main_dispatcher->resumeOnMainThread();
+        co_await MainThreadDispatcher::resumeOnMainThread();
         failStartup();
         co_return;
     }
@@ -368,7 +367,7 @@ void Application::shutdown()
         VN_LOGW("Application::shutdown() was called while the main loop is still running: the application is being torn "
                 "down under it; ask the loop to exit() instead");
     }
-    if (auto* dispatcher = dptr()->main_dispatcher.get(); dispatcher != nullptr && !dispatcher->isMainThread()) {
+    if (MainThreadDispatcher::hasEventLoop() && !MainThreadDispatcher::isMainThread()) {
         VN_LOGW("Application::shutdown() was called from a thread that is not the application thread: plugin unload() runs "
                 "here, and a plugin takes its windows and graphics objects down there");
     }
@@ -510,8 +509,8 @@ std::vector<std::filesystem::path> Application::allUsersPluginRegistrationDirect
 void Application::exit(int code)
 {
     // 退出请求只能由主线程下：别的线程上的调用方（宿主自己丢到池上的启动工作就是一条）不必知道这条规矩。
-    if (auto* dispatcher = dptr()->main_dispatcher.get(); dispatcher != nullptr && !dispatcher->isMainThread()) {
-        static_cast<void>(dispatcher->postToMain([code] { QCoreApplication::exit(code); }));
+    if (MainThreadDispatcher::hasEventLoop() && !MainThreadDispatcher::isMainThread()) {
+        static_cast<void>(MainThreadDispatcher::postToMainThread([code] { QCoreApplication::exit(code); }));
         return;
     }
 
@@ -575,7 +574,7 @@ int Application::argc() const
     return dptr()->argc;
 }
 
-char** Application::argv() const
+char* const* Application::argv() const
 {
     return dptr()->argv;
 }

@@ -21,23 +21,23 @@ namespace
 using WakeupDelay = std::chrono::milliseconds;
 
 /**
- * @brief Builds the UTF-8 String of a formatted progress line.
+ * @brief Builds the UTF-8 line a progress report is printed as.
  *
- * The progress module labels are UTF-8 std::string, so this is the same reinterpretation the
- * plugin layer uses for native text (PluginManager.cpp) - a copy, not a transcode.
+ * The label arrives as an SDK String (UTF-8) while the line is assembled in std::string, because the percentage is
+ * formatted with std::to_string; one conversion at the end is cheaper than one per piece.
  *
  * @param percent Overall progress in percent, already rounded.
  * @param label Stage label, may be empty.
  * @return The line to hand to the sink.
  */
-String lineFor(int percent, const std::string& label)
+String lineFor(int percent, const String& label)
 {
     std::string text = "[进度] ";
     text += std::to_string(percent);
     text += '%';
     if (!label.empty()) {
         text += ' ';
-        text += label;
+        text += label.as_std_str();
     }
     return String(std::u8string_view(reinterpret_cast<const char8_t*>(text.data()), text.size()));
 }
@@ -135,8 +135,8 @@ struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<Conso
             last_label_.clear();
         }
 
-        const int         percent = static_cast<int>(current->indicator().position() * 100.0 + 0.5);
-        const std::string label   = current->label();
+        const int      percent = static_cast<int>(current->indicator().position() * 100.0 + 0.5);
+        const String   label   = current->label();
 
         if (!shown_) {
             const auto due = started_ + options_.show_delay;
@@ -217,7 +217,7 @@ struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<Conso
     std::chrono::steady_clock::time_point last_written_{};
     bool                                  shown_{ false }; ///< A line was written for host_.
     int                                   last_percent_{ -1 };
-    std::string                           last_label_;
+    String                                last_label_;
 };
 
 ConsoleProgressReporter::ConsoleProgressReporter(Sink sink, ConsoleProgressOptions options)

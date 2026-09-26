@@ -56,11 +56,10 @@ namespace
 vn::async::Task<void> HeadlessBootPlugin::load(PluginLoadContext* context)
 {
     raw_ptr<Application> app = context != nullptr ? context->application() : nullptr;
-    MainThreadDispatcher* dispatcher = app != nullptr ? app->mainThreadDispatcher() : nullptr;
 
     // 钩子必须在应用线程上跑（插件正是在这里建窗口、建图形对象）。夹具自己断言这条，用例就量得到它：
     // 不在应用线程上就把加载变成失败。
-    if (dispatcher != nullptr && !dispatcher->isMainThread()) {
+    if (MainThreadDispatcher::hasEventLoop() && !MainThreadDispatcher::isMainThread()) {
         throw std::runtime_error("headless_boot_plugin: load() ran off the application thread");
     }
 
@@ -81,11 +80,9 @@ vn::async::Task<void> HeadlessBootPlugin::load(PluginLoadContext* context)
     // 模式：与界面无关的活丢到池上，回来时回应用线程再继续。池上那一段里循环空着，谁也占不到它。
     if (pool_ms > 0) {
         co_await vn::async::run([pool_ms] { std::this_thread::sleep_for(std::chrono::milliseconds(pool_ms)); });
-        if (dispatcher != nullptr) {
-            co_await dispatcher->resumeOnMainThread();
-            if (!dispatcher->isMainThread()) {
-                throw std::runtime_error("headless_boot_plugin: did not come back to the application thread");
-            }
+        co_await MainThreadDispatcher::resumeOnMainThread();
+        if (MainThreadDispatcher::hasEventLoop() && !MainThreadDispatcher::isMainThread()) {
+            throw std::runtime_error("headless_boot_plugin: did not come back to the application thread");
         }
     }
 

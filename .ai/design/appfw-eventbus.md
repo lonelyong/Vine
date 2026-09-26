@@ -38,7 +38,7 @@ Delivery         ── shared_ptr<DeliveryRegistry> + weak_ptr<Payload>；析�
   `Application::current()`）。`ApplicationData` 中 `main_dispatcher` 先于 `event_bus` 声明 →
   析构时后销毁 → dispatcher 比 bus 长命。
 - `MainThreadDispatcher::isMainThread()` = "创建 QCoreApplication 的线程"（不再在无 app 时返回 true）；
-  `hasEventLoop()` = QCoreApplication 是否存在；`postToMain()` 返回 bool，不会在调用线程内联执行。
+  `hasEventLoop()` = QCoreApplication 是否存在；`postToMainThread()` 返回 bool，不会在调用线程内联执行。
 
 ## 关键机制
 
@@ -91,10 +91,10 @@ Delivery         ── shared_ptr<DeliveryRegistry> + weak_ptr<Payload>；析�
   `shutdown()` 清空注册表 → payload（及其 event）立即释放，已投递的 Qt 回调仍留在队列里但退化为 no-op；
   bus 析构走同一路径。任务无论运行、被取消还是被事件循环丢弃，都由 `~Delivery` 注销。
 - **降级策略**：无 dispatcher 或 QCoreApplication 不存在 → Main/Auto 在发布线程内联执行（文档化）；
-  `postToMain` 失败 → 丢弃 + 警告日志。
+  `postToMainThread` 失败 → 丢弃 + 警告日志。
 - **优雅关停**：`shutdownGracefully(timeout)` = 置 stopped → 等其它线程离开 `publish()/subscribe()`
   （`CallGuard` 计数 + `thread_local` 排除自己，避免 handler 内调用自杀）→ 在应用线程上
-  `MainThreadDispatcher::deliverPostedCalls()`（只派发 `QEvent::MetaCall`，即 `postToMain` 投的调用，
+  `MainThreadDispatcher::deliverPostedCalls()`（只派发 `QEvent::MetaCall`，即 `postToMainThread` 投的调用，
   不跑定时器/绘制/输入）循环泵队列直到 `pendingDeliveryCount()==0` 或超时 → 再 `cancelSubscriptions()`。
   返回 false 表示有工作被丢弃（超时、或调用线程不是应用线程）。
 - **关停结果是共享的**：`Impl::shutdown_result` 由“**发起**那次关停的调用”写入，之后每个到达的

@@ -269,15 +269,14 @@ void reportToUser(Application& app, const String& message)
         return;
     }
 
-    MainThreadDispatcher* dispatcher = app.mainThreadDispatcher();
-    if (dispatcher == nullptr || dispatcher->isMainThread() || !dispatcher->hasEventLoop()) {
+    if (MainThreadDispatcher::isMainThread() || !MainThreadDispatcher::hasEventLoop()) {
         io->putString(message);
         return;
     }
 
     // Dropped when the event loop stops before it gets to the task, which is the
     // right outcome during a shutdown: nobody is left to read the message.
-    static_cast<void>(dispatcher->postToMain([io, message] { io->putString(message); }));
+    static_cast<void>(MainThreadDispatcher::postToMainThread([io, message] { io->putString(message); }));
 }
 
 } // namespace

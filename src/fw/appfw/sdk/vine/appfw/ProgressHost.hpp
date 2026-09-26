@@ -4,10 +4,10 @@
 
 #include <mutex>
 #include <stop_token>
-#include <string>
 #include <vector>
 
 #include <vine/Signal.hpp>
+#include <vine/String.hpp>
 
 #include <vine/progress/ProgressIndicator.hpp>
 #include <vine/progress/ProgressRange.hpp>
@@ -43,7 +43,7 @@ VN_APPFW_NS_BEGIN
  * the scope() helper, which hides the one-shot ProgressRange entirely:
  *
  *     if (auto* host = ProgressHost::current()) {
- *         ProgressScope scope = host->scope("Exporting", count);
+ *         ProgressScope scope = host->scope(u8"Exporting", count);
  *         for (...) { scope.next(1); ... }
  *     }
  */
@@ -213,7 +213,7 @@ class VN_APPFW_API ProgressHost
      * @param max Local range length.
      * @return The operation's top-level progress scope.
      */
-    progress::ProgressScope scope(const std::string& name = {}, double max = 1.0);
+    progress::ProgressScope scope(const String& name = {}, double max = 1.0);
 
     /**
      * @brief Sets a human-readable label describing the current stage.
@@ -223,7 +223,7 @@ class VN_APPFW_API ProgressHost
      *
      * @param label Stage label, may be empty.
      */
-    void setLabel(const std::string& label);
+    void setLabel(const String& label);
 
     /**
      * @brief Returns the current stage label.
@@ -234,7 +234,7 @@ class VN_APPFW_API ProgressHost
      *
      * @return The stage label.
      */
-    std::string label() const;
+    String label() const;
 
   private:
     // stop_source_ is declared first so the indicator can bind to its token.
@@ -243,7 +243,7 @@ class VN_APPFW_API ProgressHost
 
     /// Guards label_, which the operation writes and observers read.
     mutable std::mutex label_mutex_;
-    std::string        label_;
+    String             label_;
 };
 
 VN_APPFW_NS_END

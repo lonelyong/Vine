@@ -438,7 +438,7 @@ struct PluginAbi {
     const char*   framework_version; // 编译时的框架版本（VN_APPFW_VERSION），纯诊断
 };
 
-#define VN_APPFW_PLUGIN_ABI_VERSION 4u   // Plugin.hpp，命名空间块之外
+#define VN_APPFW_PLUGIN_ABI_VERSION 7u   // Plugin.hpp，命名空间块之外
 ```
 
 规则（都写在 `Plugin.hpp` 里）：
@@ -446,7 +446,7 @@ struct PluginAbi {
 - `abi_version` **永远第一个成员**，且宿主在它匹配之前不许读别的成员（两条 `static_assert`
   钉住：标准布局 + 偏移 0）；
 - 成员只能**往后加**，不重排不删除，而且不能用布局会变的 SDK 类型（只能整数/`const char*`）；
-- `VN_APPFW_PLUGIN_ABI_VERSION`（现为 `4u`）在任何插件可见面变化时 +1：`PluginAbi`、`PluginInfo`、
+- `VN_APPFW_PLUGIN_ABI_VERSION`（现为 `7u`）在任何插件可见面变化时 +1：`PluginAbi`、`PluginInfo`、
   `Plugin`/`PluginLoadContext`、入口签名、命令注册 ABI。
 
 **这个常量为什么定在 `Plugin.hpp`**（而不是别处）：

@@ -63,7 +63,7 @@ TEST_F(QtAsyncTest, SchedulerResumesOnOwningThread)
 }
 
 // 命令在任意线程恢复后要碰 UI 就得先回到应用线程：resumeOnMainThread() 把这段回归
-// 变成一行 co_await（回调式的 postToMain() 在协程里写起来很别扭）。
+// 变成一行 co_await（回调式的 postToMainThread() 在协程里写起来很别扭）。
 //
 // 这里刻意走 sleepFor()：它在 base 的进程级定时器线程上恢复协程，于是到达那个
 // co_await 时确实不在应用线程上——正是命令里真实的形态。协程本身在应用线程创建，

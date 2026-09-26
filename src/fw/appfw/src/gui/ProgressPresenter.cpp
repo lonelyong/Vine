@@ -13,6 +13,7 @@
 #include <vine/Signal.hpp>
 
 #include <vine/appfw/ProgressHost.hpp>
+#include "Convert.hpp"
 #include "ControlData.hpp"
 
 VN_APPFWGUI_NS_BEGIN
@@ -186,7 +187,7 @@ void ProgressPresenter::refresh()
                     data->bar->setFormat(QStringLiteral("%p%"));
                 }
                 else {
-                    data->bar->setFormat(QString::fromStdString(fg->label()) + QStringLiteral(" %p%"));
+                    data->bar->setFormat(Convert::toQString(fg->label()) + QStringLiteral(" %p%"));
                 }
             }
             else {
@@ -206,7 +207,7 @@ void ProgressPresenter::refresh()
             if (!text.isEmpty()) {
                 text += QStringLiteral(" \u25B8 ");
             }
-            QString name = QString::fromStdString(h->label());
+            QString name = Convert::toQString(h->label());
             text += name.isEmpty() ? QStringLiteral("\u2026") : name;
         }
         data->chain_label->setText(text);

@@ -60,17 +60,17 @@ vn::async::DetachedTask Application::startupSequence()
     bool ok = true;
     try {
         co_await startupStart();
-        co_await dptr()->main_dispatcher->resumeOnMainThread();   // 每拍之后：下一拍与收尾都在应用线程上
+        co_await MainThreadDispatcher::resumeOnMainThread();   // 每拍之后：下一拍与收尾都在应用线程上
         co_await startup();
-        co_await dptr()->main_dispatcher->resumeOnMainThread();
+        co_await MainThreadDispatcher::resumeOnMainThread();
         co_await startupEnd();
-        co_await dptr()->main_dispatcher->resumeOnMainThread();
+        co_await MainThreadDispatcher::resumeOnMainThread();
     }
     catch (const std::exception& error) { VN_LOGE("the startup phase failed: {}", error.what()); ok = false; }
     catch (...)                         { VN_LOGE("the startup phase failed with an unknown exception"); ok = false; }
 
     if (!ok) {
-        co_await dptr()->main_dispatcher->resumeOnMainThread();   // catch 里不能 co_await，所以两条路在这里合并
+        co_await MainThreadDispatcher::resumeOnMainThread();   // catch 里不能 co_await，所以两条路在这里合并
         failStartup();
         co_return;
     }
@@ -244,7 +244,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
 2. **工作期间循环真的在转**：主线程上每 10 ms 一跳的定时器，工作里睡 120 ms，断言到点前 ≥5 跳
    （变异：主线程阻塞等 worker ⇒ 红）。这条直接对应"消息不更新"。
 3. 顺序：插件先加载完 → 工作线程开跑；启动收尾在工作完成之后。
-4. 工作线程里的 `stage()/advance()` 到得了上报口与呈现者。
+4. 工作线程里的 `stage()/setDone()` 到得了上报口与呈现者。
 5. 启动工作抛异常：**进程以非零码退出**（`run()` 返回 1），上报口已收、没有半启动状态（用例
    `AFailingStartupWorkEndsTheProcess`）。第 1–5 条现在量的是**宿主那一拍的写法**（用例的夹具就是范例），不再是框架的机制。
 6. **没有任何一拍可以占住循环**（2026-09-26 加，比第 2 条更强）：测试叶子在自己的第一拍里

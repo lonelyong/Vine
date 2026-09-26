@@ -225,11 +225,11 @@ struct BootSplash::Impl : public WindowData {
     void applyConfig(const SplashConfig& config)
     {
         const QString title_text = config.title.empty() ? QCoreApplication::applicationName()
-                                                        : QString::fromUtf8(config.title.data(), static_cast<int>(config.title.size()));
+                                                        : Convert::toQString(config.title);
         title->setText(title_text);
         static_cast<QWidget*>(impl)->setWindowTitle(title_text);
 
-        subtitle->setText(QString::fromUtf8(config.subtitle.data(), static_cast<int>(config.subtitle.size())));
+        subtitle->setText(Convert::toQString(config.subtitle));
         subtitle->setVisible(!subtitle->text().isEmpty());
 
         const QPixmap logo_pixmap = config.logo.empty() ? QPixmap() : loadLogo(config.logo);
@@ -370,8 +370,7 @@ void BootSplash::refresh()
     // What is shown is what is happening; how far the boot has come is not shown at all. The counted stages a reporter
     // may use (PluginManager counts plugins) still exist, and the status bar and the console still show them - the
     // frame just does not turn them into a number, because a boot has no known total.
-    const std::string text = boot->label();
-    data->status           = QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+    data->status = Convert::toQString(boot->label());
 
     // Elide by hand: a plugin name can be longer than the frame, and QLabel would simply widen it.
     const QFontMetrics metrics(data->status_label->font());

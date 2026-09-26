@@ -39,20 +39,17 @@ namespace
 template <typename TFn>
 void onApplicationThread(TFn&& fn)
 {
-    auto* app        = Application::current();
-    auto* dispatcher = app ? app->mainThreadDispatcher() : nullptr;
-    if (dispatcher == nullptr || dispatcher->isMainThread() || !dispatcher->hasEventLoop()) {
-        // Debug check on the invariant every caller relies on: with an event loop
-        // present, the inline path is only taken on the application thread. A
-        // widget touched from here would otherwise be written from a worker thread.
-        assert(dispatcher == nullptr || dispatcher->isMainThread() || !dispatcher->hasEventLoop());
+    // The inline path is for when there is no queue to reach the application thread through (a headless run, the
+    // application going down) and for the application thread itself; both questions are answered by the marshaller's
+    // statics, so this neither holds nor dereferences the marshaller object.
+    if (MainThreadDispatcher::isMainThread() || !MainThreadDispatcher::hasEventLoop()) {
         fn();
         return;
     }
 
     // Dropped when the event loop stops before it gets to the call: during a
     // shutdown nobody is left to read the panel anyway.
-    static_cast<void>(dispatcher->postToMain(std::forward<TFn>(fn)));
+    static_cast<void>(MainThreadDispatcher::postToMainThread(std::forward<TFn>(fn)));
 }
 
 /// Runs fn on the application thread with a live panel, or does nothing.
