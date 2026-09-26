@@ -45,7 +45,7 @@ const char* toCStr(const String& s)
 String attr(const tinyxml2::XMLElement* xe, const char* name)
 {
     const char* const value = xe->Attribute(name);
-    return value ? String(reinterpret_cast<const char8_t*>(value)) : String();
+    return value ? String::fromUtf8(value) : String{};
 }
 
 } // namespace
@@ -122,7 +122,8 @@ void WorkcellIO::exportToVfs(const workcell::Workcell& cell, vn::io::Vfs& vfs, c
 
     tinyxml2::XMLPrinter printer;
     doc->Print(&printer);
-    const String xml(reinterpret_cast<const char8_t*>(printer.CStr()), printer.CStrSize() - 1);
+    // CStrSize() counts the terminating NUL the printer appends, and the document is the text without it.
+    const String xml = String::fromUtf8(std::string_view(printer.CStr(), printer.CStrSize() - 1));
     if (detail::writeText(vfs, vfs_path, xml) != vn::io::IoError::Ok) {
         throw std::runtime_error("WorkcellIO::savePkg, failed to write vfs file: " + vfs_path.generic_string());
     }

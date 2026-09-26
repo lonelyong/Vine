@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <memory>
@@ -217,6 +218,28 @@ TEST(PkgIOTest, DevicePkgMemoryBytes)
     auto loaded = io.loadPkg(*opened);
     ASSERT_NE(loaded, nullptr);
     EXPECT_EQ(loaded->joints().size(), 2u);
+}
+
+TEST(PkgIOTest, TheStoredDeviceXmlIsExactlyTheDocument)
+{
+    // The XML printer's CStrSize() includes the NUL it terminates its buffer with, so what is stored is CStrSize() - 1
+    // bytes. A conversion that kept the NUL would put one extra byte in the archive, and every test that merely loads
+    // the package back would still pass - so this reads the stored file and says what is in it.
+    auto     robot = makeRobot();
+    DeviceIO io;
+
+    vn::io::ZipArchive vfs;
+    io.savePkg(*robot, vfs);
+    const std::filesystem::path xml_path(u8"device.xml");
+    ASSERT_TRUE(vfs.isFile(xml_path));
+
+    const auto bytes = vfs.read(xml_path);
+    ASSERT_TRUE(bytes.ok());
+    const std::vector<unsigned char>& xml = bytes.value();
+    ASSERT_FALSE(xml.empty());
+    EXPECT_EQ(std::find(xml.begin(), xml.end(), static_cast<unsigned char>(0)), xml.end())
+        << "the stored document must not carry the printer's terminating NUL";
+    EXPECT_EQ(xml[0], static_cast<unsigned char>('<')) << "the document starts with its XML declaration";
 }
 
 TEST(PkgIOTest, WorkcellPkgRoundTrip)

@@ -9,6 +9,7 @@
 #include <span>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <vine/geometry/Array.hpp>
@@ -57,7 +58,7 @@ inline vn::io::Result<vn::String> readText(const vn::io::Vfs& vfs, const std::fi
     if (data.empty()) {
         return vn::String{};
     }
-    return vn::String(reinterpret_cast<const char8_t*>(data.data()), data.size());
+    return vn::String::fromUtf8(std::string_view(reinterpret_cast<const char*>(data.data()), data.size()));
 }
 
 /**
@@ -117,7 +118,7 @@ inline String doubleToStr(double value)
         return String(u8"0");
     }
     const std::size_t length = static_cast<std::size_t>(result.ptr - buffer.data());
-    return String(reinterpret_cast<const char8_t*>(buffer.data()), length);
+    return String::fromUtf8(std::string_view(buffer.data(), length));
 }
 
 /**
@@ -156,7 +157,7 @@ inline String qToStr(const kinematics::Q& q)
         const auto           result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), q[i]);
         out.append(buffer.data(), static_cast<std::size_t>(result.ptr - buffer.data()));
     }
-    return String(reinterpret_cast<const char8_t*>(out.data()), out.size());
+    return String::fromUtf8(out);
 }
 
 /**
@@ -187,7 +188,7 @@ inline String vec3ToStr(const math::Vec3d& v)
 {
     std::string out = std::string(doubleToStr(v.x).as_std_str()) + ' ' + std::string(doubleToStr(v.y).as_std_str())
                       + ' ' + std::string(doubleToStr(v.z).as_std_str());
-    return String(reinterpret_cast<const char8_t*>(out.data()), out.size());
+    return String::fromUtf8(out);
 }
 
 /**

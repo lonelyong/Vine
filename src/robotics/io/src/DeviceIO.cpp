@@ -95,7 +95,7 @@ bool getAttrDouble(const tinyxml2::XMLElement* xe, const char* name, double& out
 {
     const char* const value = xe->Attribute(name);
     return value != nullptr && vn::robotics::io::detail::strToDouble(
-                                   vn::String(reinterpret_cast<const char8_t*>(value)), out);
+                                   String::fromUtf8(value), out);
 }
 
 /**
@@ -120,7 +120,7 @@ void setAttrDouble(tinyxml2::XMLElement* xe, const char* name, double value)
 String attr(const tinyxml2::XMLElement* xe, const char* name)
 {
     const char* const value = xe->Attribute(name);
-    return value ? String(reinterpret_cast<const char8_t*>(value)) : String();
+    return value ? String::fromUtf8(value) : String{};
 }
 
 } // namespace
@@ -358,7 +358,8 @@ void DeviceIO::savePkg(const workcell::Device& dev, vn::io::Vfs& vfs, const Save
     const auto           doc = buildDoc(dev, ctx);
     tinyxml2::XMLPrinter printer;
     doc->Print(&printer);
-    const String xml(reinterpret_cast<const char8_t*>(printer.CStr()), printer.CStrSize() - 1);
+    // CStrSize() counts the terminating NUL the printer appends, and the document is the text without it.
+    const String xml = String::fromUtf8(std::string_view(printer.CStr(), printer.CStrSize() - 1));
     if (detail::writeText(vfs, std::filesystem::path(u8"device.xml"), xml) != vn::io::IoError::Ok) {
         throw std::runtime_error("DeviceIO::savePkg, failed to write device.xml into the vfs.");
     }

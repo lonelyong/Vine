@@ -44,7 +44,7 @@ const char* toCStr(const String& s)
  */
 String fromCStr(const char* s)
 {
-    return s ? String(reinterpret_cast<const char8_t*>(s)) : String();
+    return s ? String::fromUtf8(s) : String{};
 }
 
 /**
@@ -115,8 +115,7 @@ String writeMeshBins(vn::io::Vfs& vfs, std::size_t& geom_seq,
                      std::span<const std::uint32_t> indices)
 {
     const std::string seq_str = std::to_string(geom_seq++);
-    const String      prefix  = String(u8"geoms/mesh")
-                             + String(reinterpret_cast<const char8_t*>(seq_str.data()), seq_str.size());
+    const String      prefix  = String(u8"geoms/mesh") + String::fromUtf8(seq_str);
 
     const auto write_bin = [&vfs, &prefix](const char8_t* suffix, const std::vector<unsigned char>& bytes) {
         if (vfs.addFile(detail::vfsPath(prefix + String(suffix)), bytes) != vn::io::IoError::Ok) {
