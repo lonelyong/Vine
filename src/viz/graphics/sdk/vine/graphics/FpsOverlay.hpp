@@ -122,7 +122,7 @@ class VN_GRAPHICS_API FpsOverlay : public RenderPass {
      * default 0.5 s a human gets about two figures a second, and the caller only repaints when the ROUNDED
      * value changes, so a steady frame rate costs no data work at all.
      */
-    struct Sampler
+    struct VN_GRAPHICS_API Sampler
     {
         /** @brief Seconds one published figure averages over: the sampling interval (must be > 0).
          *
