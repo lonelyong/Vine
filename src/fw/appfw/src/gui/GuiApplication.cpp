@@ -368,11 +368,13 @@ GuiApplication::~GuiApplication()
     auto* d = static_cast<GuiApplicationData*>(dptr());
 
     if (d->boot_splash != nullptr) {
-        // The frame dies with the application either way, but a boot the host never ended also leaves the main window
-        // it was hiding unshown, which is exactly what the host has to be told about.
+        // The frame dies with the application either way, but a boot that never reached its last phase also leaves the
+        // main window it was hiding unshown, which is what is worth reporting. Two ways there: a host that drives its own
+        // boot and never calls startupEnd(), and a boot the framework cancelled or failed - which leaves the frame up on
+        // purpose (see Application::cancelStartup()), so the line states the fact and does not blame the host.
         if (!d->boot_ended) {
-            VN_LOGW("Startup frame is still showing as the application is destroyed: the host never called "
-                   "Application::startupEnd()");
+            VN_LOGW("Startup frame is still showing as the application is destroyed: the boot never reached its last "
+                    "phase (Application::startupEnd())");
         }
         delete d->boot_splash;
         d->boot_splash = nullptr;

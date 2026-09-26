@@ -47,7 +47,7 @@
    所以观察者重采样时看到的是"已经恢复的前台"（父宿主或 nullptr）。
 3. 没有前台宿主时 `current()` 为 nullptr；`LongRunning` 命令用 `setForeground(true)` 提升为前台，
    嵌套子命令压栈、析构自动恢复父宿主。**启动阶段自己也是一个前台宿主**（`StartupProgress`，
-   由 `Application::run()` 在启动阶段开始时建、`finishStartup()` 销毁）⇒ 无头宿主通过控制台消费者
+   由启动驱动 `startupSequence()` 在第一拍之前建、启动收完后由 `endStartupProgress()` 销毁）⇒ 无头宿主通过控制台消费者
    看到 `[进度] …`，启动框只是同一份状态的另一个呈现者；构造时不建，否则不跑启动的进程会一直被判成"忙"
    （`isBusy()` = 有前台宿主）。
 4. **空闲零唤醒**：presenter 无定时器，控制台消费者没有待发唤醒；只有真正有待办截止时间时才各臂一个。

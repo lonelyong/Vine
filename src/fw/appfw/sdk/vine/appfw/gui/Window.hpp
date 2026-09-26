@@ -58,10 +58,10 @@ class VN_APPFW_API Window : public Control {
      * @brief Returns whether the window has painted at least once.
      *
      * A window that is up is not a window that has painted: painting it waits for the window system's "it is visible
-     * now" notice, which arrives through the event queue, and a boot does not run it (it repaints and reports its
-     * progress directly). A window shown during one is therefore an empty window on screen - black under X11,
-     * transparent for a translucent frame - until the queue has been dispatched; measured under WSLg, both of the
-     * framework's startup windows spent their whole boot that way.
+     * now" notice, which arrives through the event queue, so nothing of the window is on screen - black under X11,
+     * transparent for a translucent frame - until that notice has been dispatched. The boot is where this matters: its
+     * first phase shows the startup frame and then suspends on this change (see GuiApplication::startupStart()), which
+     * is what lets the loop dispatch the notice that makes the window real.
      *
      * The paint of the window itself and the paint of anything inside it both count: which of them comes first is the
      * layout's business, and a window whose area is covered by opaque children paints none of it itself.
@@ -76,7 +76,8 @@ class VN_APPFW_API Window : public Control {
      *
      * The change that goes with hasPainted(), for code that has to wait for a window it has just shown: the paint
      * arrives as an event, so waiting for it is a subscription rather than a poll (see
-     * GuiApplication::showAndWaitForFirstPaint()). Emitted once, from the paint event that produced the first paint.
+     * GuiApplication::startupStart(), which awaits it for the startup frame). Emitted once, from the paint event that
+     * produced the first paint.
      */
     vn::Signal<> first_paint;
 

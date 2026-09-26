@@ -113,7 +113,7 @@ void greyOut(QListWidgetItem* item)
 /// A module glyph in plain shapes, because the host renders icons with
 /// QSvgRenderer, which supports a static (Tiny) SVG subset: no scripts, no
 /// external references, no filters.
-constexpr const char* s_default_plugin_icon_svg =
+constexpr const char* kDefaultPluginIconSvg =
     R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#5b8def" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5"/><path d="M10 3v3.5M14 3v3.5M10 17.5V21M14 17.5V21M3 10h3.5M3 14h3.5M17.5 10H21M17.5 14H21"/></g></svg>)SVG";
 
 /// Renders an inline SVG at the given logical size.
@@ -272,7 +272,7 @@ struct PluginManagerDialog::Impl : public WindowData {
 
         QPixmap pixmap = declared.isEmpty() ? QPixmap() : renderSvgIcon(declared, size);
         if (pixmap.isNull()) {
-            pixmap = renderSvgIcon(QString::fromUtf8(s_default_plugin_icon_svg), size);
+            pixmap = renderSvgIcon(QString::fromUtf8(kDefaultPluginIconSvg), size);
         }
         icons.insert(key, pixmap);
         return pixmap;
@@ -345,7 +345,7 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
     placeholder_lay->addStretch();
 
     auto* placeholder_icon = new QLabel(placeholder);
-    placeholder_icon->setPixmap(renderSvgIcon(QString::fromUtf8(s_default_plugin_icon_svg), 64));
+    placeholder_icon->setPixmap(renderSvgIcon(QString::fromUtf8(kDefaultPluginIconSvg), 64));
     placeholder_icon->setAlignment(Qt::AlignCenter);
 
     auto* placeholder_text = new QLabel(QStringLiteral("选择一个插件查看详情"), placeholder);

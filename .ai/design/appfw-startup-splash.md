@@ -7,7 +7,7 @@
 
 ## 目标与定位
 
-启动期没有进度可看：`GuiApplication` 的**构造函数**建主窗口（Ribbon、停靠面板），而 `PluginManager::loadAll()`
+启动期没有进度可看：`GuiApplication` 的**构造函数**建主窗口（Ribbon、停靠面板），而 `PluginManager::loadAllAsync()`
 在应用线程上跑，用户面对的是一个"还没长齐的窗口"，而且插件加载快慢完全不可见。
 本次加的是**框架级**的启动框：任何 app 通过 `AppConfig::splash` 开一个，框里显示应用身份
 （logo/标题/副标题）+ 当前在做什么（"正在加载插件 app_shell (2/3)"）+ 一个**一直在转的小指示器**。
@@ -34,7 +34,7 @@
 | `gui::BootSplash` | `sdk/vine/appfw/gui/BootSplash.hpp` | 呈现：无边框自绘圆角框 + 状态行 + 转圈指示器（无条无百分比） |
 | `Application` | 启动期由 `startupSequence()` 驱动：建/收上报口（`beginStartupProgress()` / `startupProgress()`），三拍是异步钩子 | 生命周期与销毁 |
 | `GuiApplication` | **构造函数** / `startupStart()` + `startupEnd()` 覆写（异步） | 建框、显示、关闭 |
-| `PluginManager::loadAll()` | 上报"正在查找插件"、"正在创建/加载/收尾插件 x (i/n)" | 启动里最长、最不可预测的一段 |
+| `PluginManager::loadAllAsync()` | 上报"正在查找插件"、"正在创建/加载/收尾插件 x (i/n)" | 启动里最长、最不可预测的一段 |
 
 **为什么上报口在 appfw 而不是 base**：与 `ProgressHost` 同源——"应用此刻在干什么"是应用状态，
 且要往 `ProgressHost` 里报（Core 的 Signal）。上报口**自己持一个前台 `ProgressHost`**，

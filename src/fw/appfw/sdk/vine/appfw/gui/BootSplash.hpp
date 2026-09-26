@@ -18,13 +18,15 @@ VN_APPFWGUI_NS_BEGIN
  * whatever the framework and the application report and needs no application-side presentation code: it subscribes to
  * ProgressHost::changed() and redraws on every notification.
  *
- * The frame is created and owned by GuiApplication when AppConfig::splash is enabled, and it stays on screen until the
- * the boot ends with Application::startupEnd() - it does not close itself, because that moment is the framework's to
- * is done.
+ * The frame is created and owned by GuiApplication when AppConfig::splash is enabled, and it is destroyed by the boot's
+ * last phase (Application::startupEnd()) - it does not close itself, because taking the boot's face down is the
+ * framework's move (a close request from the window system is ignored; see the frame's closeEvent).
  *
- * It is drawn on top of the main window rather than instead of it: the window is shown while the boot lasts, since an
- * embedded render surface creates its swapchain from the native window of the top-level widget and a window that was
- * never shown has none. The frame is a stay-on-top splash, so it covers that window while the boot is reported.
+ * It is the only window up while the boot runs: the main window is built by the constructor but shown by startupEnd(),
+ * which is also what takes the frame down - so what the user sees while the boot runs is one frame that reports, never
+ * a window that is still growing its ribbon. Nothing in that window is half-built when it appears: a render view
+ * attached during loading keeps its native surface off screen until a frame is in it (see RenderControl), so the area
+ * it occupies shows the window's own background rather than a hole.
  *
  * A boot holds the application thread in stretches - the session attach, the warm-up frame and the content load all
  * run on the pool, but what builds widgets and graphics objects on the application thread cannot - and every report is

@@ -29,7 +29,7 @@ namespace
 {
 
 /// Key under which a pane remembers the area it should dock back to.
-constexpr const char* s_area_property = "_vine_dockarea";
+constexpr const char* kAreaProperty = "_vine_dockarea";
 
 /// Maps a dock area to the position DockingPanes expects.
 ///
@@ -53,7 +53,7 @@ DockingPaneManager::DockPosition dockPositionFor(DockAreas area, DockingPaneMana
 /// @return The remembered area, or DockAreas::None when none was recorded.
 DockAreas rememberedDockArea(DockingPaneContainer* container)
 {
-    const QVariant area = container->property(s_area_property);
+    const QVariant area = container->property(kAreaProperty);
     if (!area.isValid()) {
         return DockAreas::None;
     }
@@ -87,7 +87,7 @@ void rememberDockArea(DockingPaneContainer* container)
     default: return; // not docked (floating/hidden): keep what is already recorded
     }
 
-    container->setProperty(s_area_property, static_cast<int>(area));
+    container->setProperty(kAreaProperty, static_cast<int>(area));
 }
 
 } // namespace

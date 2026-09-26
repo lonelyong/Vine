@@ -51,6 +51,14 @@ Fields use `snake_case`:
 * The Qt Designer generated UI member `Ui::XXX ui;` does NOT get a trailing underscore, regardless of access level (even when private).
 * Local variables use `snake_case` without a trailing underscore.
 
+### File-Scope Constants
+
+* File-scope constants (`constexpr`, `inline constexpr`) use a `k` prefix followed by
+  PascalCase (e.g. `kConfigFolder`, `kFirstPaintDeadlineMs`).
+* A file-scope object that is not a constant - a registrar kept for its constructor's
+  side effect, a mutable global - is not a constant and keeps the `s_` prefix, like
+  class and function-local statics (e.g. `s_detachedExceptionHandler`).
+
 ### Class Layout
 
 For simple classes, group members with access control specifiers (`public:` /

@@ -61,10 +61,10 @@ concept ContextuallyConvertibleToBool = requires(T&& value) { static_cast<bool>(
  * @brief Whether R is the type of a std::coroutine_handle specialization.
  */
 template<typename R>
-inline constexpr bool s_isCoroutineHandle = false;
+inline constexpr bool kIsCoroutineHandle = false;
 
 template<typename Promise>
-inline constexpr bool s_isCoroutineHandle<std::coroutine_handle<Promise>> = true;
+inline constexpr bool kIsCoroutineHandle<std::coroutine_handle<Promise>> = true;
 
 /**
  * @brief Whether R is one of the three await_suspend return forms.
@@ -78,7 +78,7 @@ inline constexpr bool s_isCoroutineHandle<std::coroutine_handle<Promise>> = true
 template<typename R>
 concept SuspendResult = std::is_void_v<R>
     || std::is_same_v<std::remove_cv_t<R>, bool>
-    || s_isCoroutineHandle<std::remove_cv_t<R>>;
+    || kIsCoroutineHandle<std::remove_cv_t<R>>;
 
 /**
  * @brief Whether A fulfils the awaiter protocol co_await relies on.

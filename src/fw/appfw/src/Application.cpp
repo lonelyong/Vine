@@ -1,4 +1,6 @@
-﻿#include <algorithm>
+﻿#include <vine/appfw/Application.hpp>
+
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <system_error>
@@ -10,22 +12,18 @@
 #include <QStringList>
 
 #include <vine/Exception.hpp>
+#include <vine/async/DetachedTask.hpp>
+#include <vine/logging/Log.hpp>
 
-#include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/ConfigManager.hpp>
 #include <vine/appfw/ConfigRegistry.hpp>
 #include <vine/appfw/EventBus.hpp>
-#include <vine/appfw/PluginManager.hpp>
-#include <vine/appfw/ServiceManager.hpp>
-#include <vine/logging/Log.hpp>
-
 #include <vine/appfw/MainThreadDispatcher.hpp>
-
+#include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/ProgressHost.hpp>
+#include <vine/appfw/ServiceManager.hpp>
 #include <vine/appfw/StartupProgress.hpp>
-
-#include <vine/async/DetachedTask.hpp>
 
 #include "ApplicationData.hpp"
 #include "ConsoleUserIO.hpp"
@@ -38,19 +36,19 @@ namespace
 {
 
 /// Organization assumed when the host does not set one.
-constexpr char8_t s_default_organization[] = u8"Vine";
+constexpr char8_t kDefaultOrganization[] = u8"Vine";
 
 /// Folder inside the data directory that holds the persisted configuration.
-constexpr const char* s_config_folder = "config";
+constexpr const char* kConfigFolder = "config";
 
 /// Folder inside the data directory that holds plugin-owned data files.
-constexpr const char* s_plugins_folder = "plugins";
+constexpr const char* kPluginsFolder = "plugins";
 
 /// Folder inside the data directory that holds installed-plugin registrations.
-constexpr const char* s_registration_folder = "installed.d";
+constexpr const char* kRegistrationFolder = "installed.d";
 
 /// File name used when the process has no application name at all.
-constexpr const char* s_fallback_app_name = "application";
+constexpr const char* kFallbackAppName = "application";
 
 /// Converts a vn::String (UTF-8) to a QString.
 QString toQString(const String& text)
@@ -85,12 +83,12 @@ std::filesystem::path userDataRoot()
 QString applicationNameOrFallback()
 {
     const QString name = QCoreApplication::applicationName();
-    return name.isEmpty() ? QString::fromUtf8(s_fallback_app_name) : name;
+    return name.isEmpty() ? QString::fromUtf8(kFallbackAppName) : name;
 }
 
 /// 启动失败时进程的退出码：启动期的异常是致命的（见 startupSequence()），run() 带着它返回，
 /// 进程随之退出。
-constexpr int s_startup_failure_exit_code = 1;
+constexpr int kStartupFailureExitCode = 1;
 
 } // namespace
 
@@ -262,13 +260,13 @@ void Application::cancelStartup()
 
 void Application::failStartup()
 {
-    VN_LOGE("startup failed: the application exits with code {}", s_startup_failure_exit_code);
+    VN_LOGE("startup failed: the application exits with code {}", kStartupFailureExitCode);
 
     // 上报口先收：不让任何人继续往一个死掉的启动里报（presenter 也随之回到"跟下一步干什么"）。
     endStartupProgress();
 
     // 以非零码停主循环：run() 随即返回，进程带着这个码退出，shutdown() 照常跑完（命令、插件、配置都干净收尾）。
-    exit(s_startup_failure_exit_code);
+    exit(kStartupFailureExitCode);
 }
 
 void Application::endStartupProgress()
@@ -446,7 +444,7 @@ const std::filesystem::path& Application::configFile() const
 
 const String& Application::defaultOrganizationName()
 {
-    static const String s_name(s_default_organization);
+    static const String s_name(kDefaultOrganization);
     return s_name;
 }
 
@@ -464,19 +462,19 @@ std::filesystem::path Application::dataDirectory() const
 
 std::filesystem::path Application::defaultConfigFile() const
 {
-    std::filesystem::path file = dataDirectory() / s_config_folder;
+    std::filesystem::path file = dataDirectory() / kConfigFolder;
     file /= toPath(applicationNameOrFallback() + QStringLiteral(".json"));
     return file;
 }
 
 std::filesystem::path Application::pluginDataDirectory() const
 {
-    return dataDirectory() / s_plugins_folder;
+    return dataDirectory() / kPluginsFolder;
 }
 
 std::filesystem::path Application::pluginRegistrationDirectory() const
 {
-    return dataDirectory() / s_registration_folder;
+    return dataDirectory() / kRegistrationFolder;
 }
 
 std::vector<std::filesystem::path> Application::allUsersPluginRegistrationDirectories() const
@@ -500,7 +498,7 @@ std::vector<std::filesystem::path> Application::allUsersPluginRegistrationDirect
             dir /= toPath(organization);
         }
         dir /= toPath(applicationNameOrFallback());
-        dir /= s_registration_folder;
+        dir /= kRegistrationFolder;
 
         if (std::find(directories.begin(), directories.end(), dir) == directories.end()) {
             directories.push_back(dir);

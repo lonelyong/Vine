@@ -488,55 +488,64 @@ class VN_APPFW_API Application : public Object {
     virtual vn::async::Task<void> startupEnd();
 
   private:
-    /// 走完启动阶段的三拍（startupStart() → startup() → startupEnd()），顺序只写在这一处，而且是**平铺**的：三拍就是三行
-    /// `co_await`，一个 `try` 罩住它们，像顺序代码一样读。
+    /// Walks the boot's three phases (startupStart() -> startup() -> startupEnd()); the order lives in this one place
+    /// and it is flat: the three phases, each followed by a return to the application thread, read as a sequence under
+    /// a single `try`.
     ///
-    /// 三拍不能是三个裸调用：一拍返回不等于它做完了（第一拍要等启动期要显示的东西真的上了屏），而普通函数里"下一条
-    /// 语句"就是"上一条返回之后" ⇒ 平铺 + 异步的拍不可兼得。协程把"等下一拍"拉直成 `co_await`：挂起期间控制权回到
-    /// 事件循环，这就是"等它，但不占住消息循环"。
+    /// The three cannot be three bare calls: a phase returning is not a phase being done (the first one waits for what
+    /// the boot puts up to be really on screen), and in an ordinary function "the next statement" means "after the
+    /// previous one returned", so a flat sequence of phases that suspend is not expressible. The coroutine straightens
+    /// "wait for the next phase" into `co_await`: the loop keeps turning while the boot waits, which is what "wait for
+    /// it without holding the message loop" means.
     ///
-    /// 每一拍之后垫一次 `resumeOnMainThread()`：一拍可能在别的线程上结束（定时器、IO、宿主自己丢到池上的活），而下一拍
-    /// 与这次启动的收尾都必须在应用线程上。已经在主线程时它是空操作，快路径不付代价。
+    /// Each phase is followed by a `resumeOnMainThread()`: a phase may finish on another thread (a timer, I/O, the
+    /// host's own work posted to the pool), and both the next phase and the end of this boot belong on the application
+    /// thread. There it is a no-op, so the fast path pays nothing.
     ///
-    /// 启动期的异常**不吞**：任一拍（含宿主的启动工作带上来的异常）失败就收起上报口、以非零码停掉主循环（见
-    /// failStartup()）——启动失败不该留下一个半启动的应用在那里跑。收尾同样要在应用线程上，而 `co_await` 不能写在 catch
-    /// 处理块里，所以失败那条路先垫一次，两条路在 `try` 之后合并。
+    /// An exception out of the boot is not swallowed: a failure in any phase (including one the host's own startup work
+    /// carries up) tears the progress sink down and stops the main loop with a non-zero code (see failStartup()) - a
+    /// failed boot must not leave a half-started application running. That teardown belongs on the application thread
+    /// as well, and `co_await` cannot be written inside a catch handler, so the failing path is padded first and the two
+    /// paths rejoin after the `try`.
     ///
-    /// `DetachedTask` 那个类型本身**不是返回值**，它是"协程"这件事的标记（C++ 要求协程函数的返回类型是协程类型）：
-    /// 里面没有东西，也没有可等的东西——调用即开跑（急启动），协程帧在最后一行之后自毁。用它（而不是 `Task`）是因为
-    /// 这次启动**没有所有者**：没人要它的结果，也不该有人能等它或销毁它。
+    /// `DetachedTask` is not a return value in the usual sense: it is the marker that says "this is a coroutine" (C++
+    /// requires a coroutine function's return type to be a coroutine type) and holds nothing - no value, nothing to
+    /// await. Calling it starts it (eager start) and the frame destroys itself past the last line, which is why it is
+    /// used instead of `Task`: this boot has no owner, so nobody wants its result and nobody may await or destroy it.
+    /// (An exception thrown outside this function's `try` would reach the handler installed with
+    /// vn::async::setDetachedExceptionHandler(), or terminate the process.)
     vn::async::DetachedTask startupSequence();
 
-    /// 启动失败：收起上报口（不让任何人继续往一个死掉的启动里报），并以非零码停掉主循环 - run() 随即返回，
-    /// 进程带着这个码退出，shutdown() 照常跑完。**不走 startupEnd()**：启动都没成，把半成品的主窗端上来更糟。
+    /// The boot failed: tears the progress sink down (so nobody keeps reporting into a dead boot) and stops the main
+    /// loop with a non-zero code - run() returns at once, the process exits with that code, and shutdown() still runs
+    /// to the end. **startupEnd() is deliberately skipped**: the boot did not happen, and putting a half-built main
+    /// window on screen would be worse.
     void failStartup();
-    /// 本次启动是否被请求取消（托盘/启动框上的取消按钮，或宿主自己调的 StartupProgress::requestCancel()）。
+    /// Whether this boot was asked to stop (a host calling StartupProgress::requestCancel(), or a cancel affordance it
+    /// draws itself - the startup frame has none: it refuses to be closed).
     ///
-    /// 取消不是失败：框架每拍之后、插件加载每装一个之前都会看一眼它，并在看到时走 cancelStartup()。
+    /// Cancellation is not a failure: the framework looks at it after every phase and before it instantiates each
+    /// plugin, and takes cancelStartup() when it is set.
     ///
-    /// @return true 表示这次启动应当停下来。
+    /// @return true when this boot should stop.
     bool startupCancelled() const;
 
-    /// 取消这次启动：记日志、把已经装上的插件卸掉、收起上报口，并以 0 停掉主循环（用户主动取消不是失败）。
-    /// 主窗不会上屏（它不是 startupEnd() 那条路），已装的插件不会留在进程里。
+    /// Cancels this boot: logs it, unloads the plugins that were already loaded, tears the progress sink down and stops
+    /// the main loop with 0 (cancelling is not failing). The main window never goes up - this is not startupEnd()'s
+    /// path - and nothing that was loaded stays in the process.
     void cancelStartup();
-    /// 建启动期的上报口（幂等：已经有一个就返回它）。只给启动序列用 - 上报口的生命周期就是启动阶段的生命周期，
-    /// 宿主不需要提前建一个（提前建会让 `isBusy()` 在启动之前就为真，顶层命令全被拒），要报东西就在三拍里报。
+    /// Creates the boot's progress sink (idempotent: an existing one is returned). For the startup sequence only - the
+    /// sink's lifetime is the startup phase's, and a host does not create one ahead of time (that would make `isBusy()`
+    /// true before the boot, which refuses every top-level command); report from inside the three phases instead.
     ///
-    /// @return 应用的上报口。
+    /// @return The application's progress sink.
     StartupProgress* beginStartupProgress();
 
-    /// 收起启动期的上报口（`complete()` + 销毁）。这是刻意的销毁而不是只 `complete()`：活着的宿主会一直待在前台栈
-    /// 上，把之后所有命令的进度挡在后面。幂等（没有上报口时什么也不做），启动成功时在 startupEnd() **之后**走它。
+    /// Tears the boot's progress sink down (`complete()` and then destroy). Destroying it rather than only completing
+    /// it is deliberate: a live host would sit on the foreground stack and shadow the progress of every command that
+    /// runs afterwards. Idempotent (nothing happens without a sink), and on a boot that succeeded it runs **after**
+    /// startupEnd().
     void endStartupProgress();
 };
-
-/*
- * @brief Returns the current application instance.
- */
-inline raw_ptr<Application> getApp()
-{
-    return Application::current();
-}
 
 VN_APPFW_NS_END

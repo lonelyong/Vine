@@ -237,7 +237,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 
 1. **SVG 绝不能内嵌到宏参数里**：`VN_DECLARE_PLUGIN` 是宏，圆括号外层的逗号会把参数切开，
    而 SVG 里 `stroke-dasharray="3,2"`、`rotate(90, 12, 12)` 这类逗号很常见。
-   插件应该先把 SVG 放进命名常量再传：`constexpr const char8_t* s_plugin_icon = u8R"SVG(...)SVG";`
+   插件应该先把 SVG 放进命名常量再传：`constexpr const char8_t* kPluginIcon = u8R"SVG(...)SVG";`
    （`app_shell` 就是这么写的，它的 SVG 专门带了一个逗号来钉住这条约定）。
 2. **Appfw 因此要链 `Qt6::Svg`**（`QSvgRenderer`）。SVG 是库而不是插件，
    所以 offscreen 平台下也能渲染（用例 `ManagerDialogShowsMetadataAndIcons` 断言列表行图标非空）。

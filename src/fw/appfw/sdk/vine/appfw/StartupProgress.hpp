@@ -30,9 +30,11 @@ VN_APPFW_NS_BEGIN
  * The sink owns a foreground ProgressHost, so the startup progress is not private to the startup frame: the status
  * bar's ProgressPresenter and the headless ConsoleProgressReporter show the same state without any extra wiring.
  *
- * Lifetime: at most one per process, owned by Application::startupProgress(), created when the boot starts and
- * destroyed by Application::startupEnd(). Without a sink (StartupProgress::current() == nullptr) every call is a
- * no-op, so boot code may report unconditionally.
+ * Lifetime: at most one per process, owned by the application and reachable through Application::startupProgress().
+ * The framework that drives a boot creates it just before the first phase (Application::beginStartupProgress()) and
+ * destroys it right after the last one (Application::endStartupProgress(), on the paths out of a boot that succeeded,
+ * was cancelled and failed alike) - so the last phase still reports into it. Without a sink
+ * (StartupProgress::current() == nullptr) every call is a no-op, so boot code may report unconditionally.
  *
  * Thread contract: stage()/advance()/setLabel()/complete() are called by the reporting thread (the application thread
  * during a boot), while label()/isCounted()/fraction() are read from wherever a presenter runs.
@@ -95,7 +97,8 @@ class VN_APPFW_API StartupProgress
     /**
      * @brief Ends the current stage and fills the bar.
      *
-     * Called by Application::startupEnd(); reporting a further stage afterwards starts over.
+     * Called by the framework once a boot is through (Application::endStartupProgress(), right after the last phase);
+     * reporting a further stage afterwards starts over.
      */
     void complete();
 
@@ -117,7 +120,10 @@ class VN_APPFW_API StartupProgress
     /**
      * @brief Returns how far the current counted stage has come.
      *
-     * @return The units done as a fraction of the stage's total, in [0, 1]; 0 for an indeterminate stage.
+     * Read it while isCounted() is true: the value is where the last counted stage left the bar, so an indeterminate
+     * (or already completed) stage reports that position rather than a fraction of its own.
+     *
+     * @return The units done as a fraction of the stage's total, in [0, 1].
      */
     double fraction() const;
 

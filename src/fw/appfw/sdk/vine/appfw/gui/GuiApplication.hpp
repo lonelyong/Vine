@@ -1,7 +1,5 @@
 ﻿#pragma once
 
-#include <functional>
-
 #include <vine/appfw/Application.hpp>
 
 #include <vine/raw_ptr.hpp>
@@ -115,12 +113,15 @@ class VN_APPFW_API GuiApplication : public Application {
      * its native surface off screen until a frame is in it (see RenderControl), so the area it occupies shows the plain
      * widget background until the picture arrives, and showing the window can never reveal an empty native window.
      *
-     * The frame, when there is one, is drawn on top of that window and stays until this phase: the boot ends when its
-     * work is done - the framework's plugin load and the host's own startup work - and neither the frame nor the
-     * framework can guess that moment. The startup progress has already been ended by the framework here (its sink is
-     * destroyed just before this runs). The main window is raised and activated as the frame goes, because a
-     * stay-on-top frame is shown without activating the process and the window would otherwise stay under whatever was
-     * in front when it appeared.
+     * The frame, when there is one, was the only window up during the boot: this phase shows the main window first and
+     * then destroys the frame, so what the user sees next is the finished window. The boot ends when its work is done -
+     * the framework's plugin load and the host's own startup work - and neither the frame nor the framework can guess
+     * that moment, which is why taking the frame down belongs to this phase and not to a timer.
+     *
+     * The startup progress sink is still alive here: the framework destroys it right after this phase returns, which is
+     * what lets the boot report its last stage from inside this one. The main window is raised and activated as the
+     * frame goes, because a stay-on-top frame is shown without activating the process and the window would otherwise
+     * stay under whatever was in front when it appeared.
      */
     vn::async::Task<void> startupEnd() override;
 

@@ -70,7 +70,7 @@ struct AppConfig {
 
     ///
     /// Whether the framework loads the plugins during the startup phase
-    /// (PluginManager::loadAll()), so a host does not write that out itself. The load happens once
+    /// (PluginManager::loadAllAsync()), so a host does not write that out itself. The load happens once
     /// the startup interface is on screen and before the host's own startup work (see
     /// Application::startup()), which is what lets a host rely on the commands and services
     /// the plugins register. Set to false for a host that manages the plugin list itself: a test

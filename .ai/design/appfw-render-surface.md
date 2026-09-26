@@ -2,7 +2,7 @@
 
 ## 问题
 
-启动顺序是"窗口先生效，插件后布 UI"：窗口由 `Application::run()` 的启动步上屏（`beginStartup()`，
+启动顺序是"窗口先生效，插件后布 UI"：窗口由 `Application::run()` 的启动步上屏（`startupStart()`，
 2026-09-26 起构造函数只建不 show、启动步跑在事件循环里），等它画出首帧之后框架才加载插件
 （`AppConfig::load_plugins`，2026-09-26 起宿主不用自己调 `loadAll()`），app_shell 的 `buildAppShellDock()` 才
 `new RenderControl()` + `setCentralWidget()`。

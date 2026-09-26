@@ -8,7 +8,6 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
-#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -289,7 +288,7 @@ const PluginEntry* findDiscovered(const std::vector<PluginEntry>& discovered, co
 }
 
 /// Extension of a plugin registration file (installed.d/<id>.plugin).
-constexpr const char* s_registration_extension = ".plugin";
+constexpr const char* kRegistrationExtension = ".plugin";
 
 /**
  * @brief Returns the per-user and system plugin registration directories.
@@ -396,7 +395,7 @@ std::vector<PluginRegistration> registrationsIn(const std::filesystem::path& dir
 
     std::vector<std::filesystem::path> files;
     for (const auto& entry : std::filesystem::directory_iterator(directory, ec)) {
-        if (entry.is_regular_file(ec) && entry.path().extension() == s_registration_extension) {
+        if (entry.is_regular_file(ec) && entry.path().extension() == kRegistrationExtension) {
             files.push_back(entry.path());
         }
     }
@@ -1818,7 +1817,7 @@ String PluginManager::installPlugin(const String& path, PluginScope scope)
     }
 
     std::filesystem::path target = directory / std::filesystem::path(std::u8string_view(id.data(), id.size()));
-    target += s_registration_extension;
+    target += kRegistrationExtension;
 
     if (!writeRegistrationFile(target, registration)) {
         return {};
@@ -1855,7 +1854,7 @@ bool PluginManager::uninstallPlugin(const String& id, PluginScope scope)
 
     for (const auto& directory : candidates) {
         std::filesystem::path file = directory / std::filesystem::path(std::u8string_view(id.data(), id.size()));
-        file += s_registration_extension;
+        file += kRegistrationExtension;
 
         std::error_code ec;
         if (std::filesystem::remove(file, ec)) {

@@ -120,12 +120,14 @@
   -O3 实测无代价，2000 万条目 101 次通知）。GUI 呈现器与控制台消费者各自订阅（不再是单观察者回调）。
 - **启动框（2026-09-18；统一流程 2026-09-26）**：`AppConfig::splash` 开（`enabled`/`title`/`subtitle`/`logo`），
   框架自己上报 "正在启动 + 逐个插件"，应用插入自己的阶段用 `app->startupProgress()->stage("正在初始化日志")`（无上报口时是空操作）。
-  **宿主只做两件事**：调 `app->run()`（或 `runStartup(work)` 交自己的启动工作）；框架把活干完就调
-  `finishStartup()`（关框 + 上主窗 + 销毁上报口）。启动期**只有启动框在屏**（`beginStartup()` 只上框），
-  主窗在 `finishStartup()` 第一次 `show()`；首帧门只等启动框（没框 ⇒ 没什么可等）。
-  `Application::run()` 的步骤（两边共用一份）：**`exec()` 先跑** → 队列里的启动步（建上报口 + `stage("正在启动")` →
-  `beginStartup()` → `beginStartup(等首帧)`）→ **框架加载插件** → 宿主的 work（如果有）→ `finishStartup()`。
-  ⚠️ **上报口属于启动阶段，不属于窗口**（2026-09-26 修）：它由 `run()` 建、`finishStartup()` 销毁；
+  **宿主只做一件事**：调 `app->run()`（要加自己的启动工作就重写 `startup()` 那一拍，见三拍一节）；框架把活干完就
+  做最后一拍 `startupEnd()`（上主窗 + 撤启动框），上报口由驱动在那一拍**之后**收（`endStartupProgress()`）。
+  启动期**只有启动框在屏**（`startupStart()` 只上框），
+  主窗在 `startupEnd()` 第一次 `show()`；首帧门只等启动框（没框 ⇒ 没什么可等）。
+  `Application::run()` 的步骤（两边共用一份）：**`exec()` 先跑** → 队列里的启动步（`startupSequence()`：建上报口 +
+  `stage("正在启动")` → `startupStart()`（上框 + 等首帧）→ `startup()`（框架加载插件 + 宿主的活）→ `startupEnd()`）。
+  ⚠️ **上报口属于启动阶段，不属于窗口**（2026-09-26 修）：它由 `startupSequence()` 在第一拍之前建、启动收完后销毁
+  （取消 `cancelStartup()` / 失败 `failStartup()` 也收）；
   启动框/状态栏只是呈现者 ⇒ **无头宿主也报告自己的启动**（控制台 `[进度] …`）。构造就建是不行的：
   不跑启动的进程会多一个活的前台宿主 ⇒ `isBusy()` 恒真 ⇒ 顶层命令全被拒。
   阶段语义是**阶段内比例**（可计数 `stage(name,total)`+`advance`；不确定 `stage(name)`），不是全局 ETA。
@@ -133,10 +135,9 @@
   ✅**①已落地**：`init()` 折进构造函数（`Application(const AppConfig&, argc, argv)`：身份 → managers → Qt 应用对象
   → `initialize()`（UserIO + 配置文件）；GUI 多一步建窗口）⇒ `init()`/`setSplashConfig()` 删、ABI **3u→4u**、
   两个 builder 各剩一句 `make_unique`；**Qt 类型不进 core SDK**（Qt 对象走私有 `ApplicationData::app`）；
-  ✅**②机制已落地**：`run()` 先 `exec()`，再推 posted 启动步（建上报口 → `stage("正在启动")`
-  → `beginStartup()` → `beginStartup(门)`）；插件加载也成了框架内置动作（`AppConfig::load_plugins`）。
-  **仍待做**：`beginStartup()` 换成单个 `virtual void beginStartup()`；
-  ✅**③已落地（X11 已验）**：启动期只有启动框在屏，主窗在 `finishStartup()` 第一次 show；
+  ✅**②机制已落地**：`run()` 先 `exec()`，再推 posted 启动步（`startupSequence()`：建上报口 + `stage("正在启动")`
+  → `startupStart()` → `startup()` → `startupEnd()`）；插件加载也成了框架内置动作（`AppConfig::load_plugins`）。
+  ✅**③已落地（X11 已验）**：启动期只有启动框在屏，主窗在 `startupEnd()` 第一次 show；
   ✅**④X11 半边已验**：句柄来自容器里独立 `QWindow` 的 `winId()`，顶层不必 show（Windows 待验）。
   细节与实测见 `.ai/design/appfw-startup-next.md`。
 - ⚠️ ~~窗口一定在宿主的启动工作之前上屏~~（2026-09-26 **已推翻**，X11 实测）：启动期**只有启动框在屏**，
@@ -148,16 +149,15 @@
   万一那边拿不到 HWND，回退是“主窗早 show + 门等两窗”。
 - ⚠️ **启动期不要 `processEvents()`**：会顺手跑别的组件的定时器/事件（渲染表面的 resize/settle 更新
   就是这样被提前唤醒的）。启动框只 `repaint()` 自己那一帧。
-- ⚠️ **唯一例外（2026-09-26）：闪屏与主窗都要“show 之后派发到它画出第一帧”**。X11 上 Qt 要先收到服务端的
-  expose 才把 backing store flush 进窗口，而 expose 只能由事件队列派发送来 ⇒ 不派发时 `repaint()` 是空转，
-  闪屏整个启动期全透明、主窗整个启动期是一块黑板（用户实测报的就是这两条）。机制：`run()` 排好顺序，
-  `GuiApplication::beginStartup()` 订阅每个启动窗口的 `Window::first_paint`，上限是
-  `QTimer::singleShot(300 ms)`，进循环前先用 `Window::hasPainted()` 走快路径，超时 `VN_LOGW`；
-  **到点后再排一拍**（`singleShot(0)`）才跑 work —— 首帧信号是在派发那个窗口的 paint 事件时到的，
-  work 会重绘启动框并最后把它 delete（直接在信号里跑 ⇒ `QWidget::repaint: Recursive repaint detected` + 段错误）。
+- ⚠️ **启动期只有启动框要“show 之后派发到它画出第一帧”**（2026-09-26 调整；主窗现在启动期不上屏，见上一条）。
+  X11 上 Qt 要先收到服务端的 expose 才把 backing store flush 进窗口，而 expose 只能由事件队列派发送来 ⇒
+  不派发时 `repaint()` 是空转，启动框整个启动期全透明（用户实测报的就是这条）。机制：第一拍
+  `GuiApplication::startupStart()` 先 `show()` 启动框，再 `co_await AwaitStartupFrame{…}`
+  （`Window::first_paint` + 300 ms `QTimer` 兜底；唤醒先 `postToMainThread` 排一拍再 `resume()`，否则就在那个
+  窗口的 paint 派发里跑后面的加载 —— 实测 `QWidget::repaint: Recursive repaint detected` + 段错误）。
   契约都在 SDK 里：`Window::hasPainted()`（状态）+ `Window::first_paint`（状态转移，只报一次），实现是
   `WindowData` 里的 `PaintWatcher`（窗口自己 + 已有子控件 + 后加的子控件靠 `ChildAdded`）。
-  实测：`startup work starting 5–11 ms after the application was asked to run: the startup frame and the main window are on screen`。
+  实测：`startup work starting N ms after the application was asked to run: the startup frame is on screen`。
   测试：`tests/test_gui/WindowPaintTest.cpp` 4 例（含"首帧信号只报一次"）；Qt 自己的 `QSplashScreen::repaint()`
   也是转 `processEvents()`（文档："even when there is no event loop present"）——这是 Qt 级行为，不是 WSL 缺陷。
 - ⚠️ **启动框关掉时要把主窗口 `raise()` + `activate()`**：`Qt::SplashScreen` 置顶且不激活进程地显示，
@@ -178,7 +178,7 @@
   `Attached -> Presenting`，这一帧 `total 3.8 ms`（旧版 183.6 ms）→ 稳定帧 `extent 752x480, program slots 2,
   total 43.8 ms`。**框到 Presenting：759 ms → 392 ms**。像素证据：品红窗口垫在主窗口背后 + `PrintWindow`
   （与 z 序无关）—— 那一格是主题背景色，`Presenting` 后是画面，品红没露过。契约不变：
-  **插件从 `load()` 返回即表示其子系统可用**，`finishStartup()` 仍是“宿主 + 插件的活都干完了”。
+  **插件从 `load()` 返回即表示其子系统可用**，`startupEnd()` 仍是“宿主 + 插件的活都干完了”。
 - ⚠️ **`ConsoleUserIO` 现带 `VN_APPFW_API`**（类仍私有，头在 `src/`）：`test_gui` 直接构造它抽 stdout，
   不导出就 LNK2019（`6ec0e4d` 起 `test_gui` 一直链不上，2026-09-18 修）。
 - 命令不能在自身上 `cancelAllAndWait()`（必定失败，用例钉住）；要退出应用用 `Application::quit()`。
@@ -193,8 +193,8 @@
 ## 测试
 
 - `tests/test_gui/test_gui.cpp`：`CommandManager_*` 37 例、`UserIOTest.*` 6 例（含工作线程读与历史去载荷）。
-- `tests/test_appfw/HeadlessBootTest.cpp`：1 例（**无头宿主**：只链 `vn::Appfw` + `Qt6::Core`；构造不建上报口、
-  启动阶段里有且能用、`finishStartup()` 后销毁；`runStartup()` 的循环用 `QTimer::singleShot(0, …exit)` 收尾）。
+- `tests/test_appfw/HeadlessBootTest.cpp`：8 例（**无头宿主**：只链 `vn::Appfw` + `Qt6::Core`；构造不建上报口、
+  启动阶段里有且能用、启动收完后销毁；三拍顺序、取消、失败退出、同步门、uuid 身份告警、shutdown 误用告警）。
   这是 appfw 无头宿主路径唯一的用例集（`test_gui`/`test_vsg` 都只经 builder 造应用、从不跑循环）。
 - `tests/test_core/SignalTest.cpp`：16 例（含"发火期间注销/清空"与"并发订阅+发火"）。
 - `tests/test_asyncqt/QtAsyncTest.cpp`：2 例（`async::Scheduler` 与 `MainThreadDispatcher::resumeOnMainThread`，

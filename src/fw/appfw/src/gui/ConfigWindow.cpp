@@ -31,7 +31,7 @@ namespace
 // Fallback range of an editor whose item declares no range: it must never clamp
 // the value it is asked to show. Wide enough for any setting, and still far from
 // double extremes that QDoubleSpinBox cannot round sanely.
-constexpr double s_unbounded_double = 1.0e15;
+constexpr double kUnboundedDouble = 1.0e15;
 
 // Tab title: label > name > "General".
 String categoryTitle(const ConfigCategory* cat)
@@ -85,7 +85,7 @@ QWidget* makeEditorWidget(ConfigManager* config, const ConfigItem& item)
         if (item.hasRange())
             e->setRange(item.minDouble(), item.maxDouble());
         else
-            e->setRange(-s_unbounded_double, s_unbounded_double);
+            e->setRange(-kUnboundedDouble, kUnboundedDouble);
         e->setSingleStep(item.step());
         e->setDecimals(6);
         QObject::connect(e, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [config, key](double v) { config->setDouble(key, v); });
