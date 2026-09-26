@@ -144,7 +144,8 @@
 - 📋 **下一步待办（2026-09-26 用户定的方向，独立文档 `.ai/design/appfw-startup-next.md`）**：
   ✅**①已落地**：`init()` 折进构造函数（`Application(const AppConfig&, argc, argv)`：身份 → managers → Qt 应用对象
   → `initialize()`（UserIO + 配置文件）；GUI 多一步建窗口）⇒ `init()`/`setSplashConfig()` 删、ABI **3u→4u**、
-  两个 builder 各剩一句 `make_unique`；**Qt 类型不进 core SDK**（Qt 对象走私有 `ApplicationData::app`）；
+  两个 builder 各剩一句 `make_unique`；**Qt 类型不进 core SDK**（Qt 对象走私有 `ApplicationData::app`，
+  `unique_ptr` 持有且声明在最前 ⇒ 最后析构，一个进程因此能接着建下一个宿主）；
   ✅**②机制已落地**：`run()` 先 `exec()`，再推 posted 启动步（`startupSequence()`：建上报口 + `stage("正在启动")`
   → `startupStart()` → `startup()` → `startupEnd()`）；插件加载也成了框架内置动作（`AppConfig::load_plugins`）。
   ✅**③已落地（X11 已验）**：启动期只有启动框在屏，主窗在 `startupEnd()` 第一次 show；

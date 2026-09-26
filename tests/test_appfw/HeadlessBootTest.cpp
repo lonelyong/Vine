@@ -58,17 +58,38 @@
 namespace
 {
 
+/// 造一个**新的**空暂存目录：每个用例都要有自己的插件目录，不能复用。
+///
+/// 插件库是进程生命期的（DynamicLibraryLoader 故意不卸载它们，见它的析构），所以一个库被加载过之后，
+/// Windows 就再不许删或替换那个文件了——复用同一个路径会让下一个用例的拷贝拿到 sharing violation
+/// （`The process cannot access the file because it is being used by another process`）。每次换个名字，
+/// 每个目录只写一次；旧目录留在 temp 里（库还映射着，删不掉）。
+///
+/// @param stem Directory name stem, suffixed with a per-call counter.
+/// @return The freshly created, empty directory.
+std::filesystem::path freshPluginDirectory(const std::string& stem)
+{
+    static std::atomic<unsigned> dir_counter{ 0 };
+
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(dir_counter.fetch_add(1)));
+
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    EXPECT_FALSE(ec) << "临时插件目录 '" << dir.string() << "' 建不出来: " << ec.message();
+    return dir;
+}
+
 /// 把夹具插件摆进一个空目录，返回那个目录：`loadAll()` 只会扫到它。
 ///
 /// @return The directory holding nothing but the fixture plugin.
 std::filesystem::path bootPluginDirectory()
 {
     const std::filesystem::path fixture = VINE_HEADLESS_BOOT_PLUGIN;
-    const std::filesystem::path dir     = std::filesystem::temp_directory_path() / "vine_test_appfw_plugins";
+    const std::filesystem::path dir     = freshPluginDirectory("vine_test_appfw_plugins");
 
     std::error_code ec;
-    std::filesystem::remove_all(dir, ec);
-    std::filesystem::create_directories(dir, ec);
     std::filesystem::copy_file(fixture, dir / ("headless_boot" + fixture.extension().string()),
                                std::filesystem::copy_options::overwrite_existing, ec);
     EXPECT_FALSE(ec) << "夹具插件没拷进 '" << dir.string() << "': " << ec.message();
@@ -80,11 +101,9 @@ std::filesystem::path bootPluginDirectory()
 /// @return The directory holding the two fixtures that claim one identity.
 std::filesystem::path twinPluginDirectory()
 {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "vine_test_appfw_twins";
+    const std::filesystem::path dir = freshPluginDirectory("vine_test_appfw_twins");
 
     std::error_code ec;
-    std::filesystem::remove_all(dir, ec);
-    std::filesystem::create_directories(dir, ec);
     for (const char* const fixture : { VINE_HEADLESS_BOOT_PLUGIN, VINE_TWIN_IDENTITY_PLUGIN }) {
         const std::filesystem::path library = fixture;
         std::filesystem::copy_file(library, dir / library.filename(), std::filesystem::copy_options::overwrite_existing, ec);

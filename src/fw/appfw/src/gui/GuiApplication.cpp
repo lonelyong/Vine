@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <coroutine>
+#include <memory>
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -325,7 +326,7 @@ vn::async::Task<void> GuiApplication::startupStart()
     // notification that it is on screen is dispatched by the very loop this phase runs in - which is why the wait is a
     // suspension (`co_await`) and not a block: the loop has to keep turning for that notice to arrive at all. The
     // deadline inside the awaitable is the backstop for a window system that never reports a window as visible.
-    co_await AwaitStartupFrame{ static_cast<QObject*>(d->app), frame };
+    co_await AwaitStartupFrame{ static_cast<QObject*>(d->app.get()), frame };
 
     // Whatever happened, this line is the evidence that the boot reached the point where its work may start, and it is
     // the one the design documents quote (`hasPainted()` tells the two cases apart).
@@ -353,7 +354,7 @@ GuiApplication::GuiApplication(const AppConfig& config, int argc, char** argv)
     //
     // QCoreApplication keeps a reference to argc; the data it refers to must stay valid for the whole application
     // lifetime, so pass the stored member instead of a local copy.
-    dptr()->app = new QApplication(dptr()->argc, dptr()->argv);
+    dptr()->app = std::make_unique<QApplication>(dptr()->argc, dptr()->argv);
     initialize(config);
 
     createWindows(config.splash);
@@ -392,7 +393,7 @@ UserIO* GuiApplication::createUserIO()
 void GuiApplication::createWindows(const SplashConfig& splash)
 {
     auto* d      = static_cast<GuiApplicationData*>(dptr());
-    auto* qt_app = static_cast<QApplication*>(d->app);
+    auto* qt_app = static_cast<QApplication*>(d->app.get());
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     // When following the system, listen for system theme changes and re-resolve.
@@ -534,9 +535,10 @@ raw_ptr<MainWindow> GuiApplication::mainWindow() const
 
 void GuiApplication::applyTheme(Theme theme)
 {
-    // The Qt application object is created by the constructor and lives as long as the process does, so there is nothing
-    // to guard against here.
-    auto* qt_app = static_cast<QApplication*>(static_cast<const GuiApplicationData*>(dptr())->app);
+    // The Qt application object is owned by the base's application data and is the last member standing there, so it is
+    // alive for as long as this call can happen: applyTheme() runs from the constructor and from a theme change, both of
+    // which need a live application.
+    auto* qt_app = static_cast<QApplication*>(static_cast<const GuiApplicationData*>(dptr())->app.get());
 
     if (theme == Theme::Dark) {
         qt_app->setPalette(createDarkPalette());

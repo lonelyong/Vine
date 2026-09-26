@@ -48,9 +48,13 @@ run():  exec()                           先把循环跑起来（此前屏幕上
 - **为什么分成两半**：进程只能有一个 Qt 应用对象，而 base 构造时还不知道叶子要 `QCoreApplication` 还是
   `QApplication`（虚调用在 base 构造里不会派发到叶子）⇒ 叶子建好、存进数据，再调 `initialize()` 收尾。
 - **Qt 类型不进 SDK**：`initialize(const AppConfig&)` 不带 Qt 参数，Qt 对象由叶子写进私有 `ApplicationData::app`
-  （`dptr()->app = new QCoreApplication/QApplication(dptr()->argc, dptr()->argv)`）。
+  （`dptr()->app = std::make_unique<QCoreApplication/QApplication>(dptr()->argc, dptr()->argv)`）。
   中间版本曾把 `QCoreApplication*` 放进受保护的 SDK 签名（并在 `Application.hpp` 里前置声明 Qt 类型）——**已撤回**：
   core SDK（`Application.hpp`/`AppConfig.hpp`/`AppBuilder.hpp`）里不出现任何 Qt 类型，只有文档提到 Qt。
+- **Qt 应用对象归 `Application` 所有（2026-09-26 补）**：`ApplicationData::app` 曾是裸指针（只赋值、不释放），
+  于是“一个进程跑完一个宿主再建下一个”在**带断言的 Qt** 上直接死在 `Q_ASSERT_X(!self, "QCoreApplication", ...)`.  Qt 只允许同时存在**一个**应用对象，而 `test_appfw` 每个用例建一个宿主 ⇒ 只有第一个用例跑得起来（release Qt 把断言编掉，所以作者的机器上看不见）。
+  现在它是 `std::unique_ptr`，而且**声明在 `ApplicationData` 最前** ⇒ **最后**析构：UserIO 的窗口与各 manager 都先走，
+  应用对象最后走；它的析构里 Qt 自己摘掉那个单例，下一个 `Application` 才建得起来。
 - **ABI（坑 1 的结论）**：`init()` 是公开虚函数且位于 vtable 中间 ⇒ 删除让后面所有槽位整体前移 ⇒
   `VN_APPFW_PLUGIN_ABI_VERSION` **3u → 4u**（不留 deprecated 空槽）。
   `beginStartup()` 已声明在所有其它虚函数之后，之后的追加不必再动版本。

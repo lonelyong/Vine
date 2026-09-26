@@ -24,6 +24,14 @@ struct ApplicationData {
     // Members are destroyed in reverse declaration order; the order below is
     // deliberately reversed so destruction matches the legacy explicit delete
     // order (user_io first ... main_dispatcher last).
+
+    /// The process-wide Qt application object a leaf stores here: a QCoreApplication for a headless host, the
+    /// QApplication a GUI leaf builds instead (see GuiApplication). Declared FIRST, so it is destroyed LAST -
+    /// Qt drops the application object in its destructor, which is what lets the process construct the next
+    /// Application (Qt asserts that only one exists at a time), and every Qt-using member below - UserIO's
+    /// widgets above all - has to be gone before that happens.
+    std::unique_ptr<QCoreApplication> app;
+
     std::unique_ptr<MainThreadDispatcher> main_dispatcher;
     std::unique_ptr<EventBus>             event_bus;
     std::unique_ptr<ConfigRegistry>       config_registry;
@@ -32,7 +40,6 @@ struct ApplicationData {
     std::unique_ptr<ServiceManager>       service_manager;
     std::unique_ptr<PluginManager>        plugin_manager;
     std::unique_ptr<UserIO>               user_io;
-    QCoreApplication*                     app = nullptr;
 
     /// Startup progress sink of this boot; created just before the first phase and destroyed right after the last one
     /// (both by Application::startupSequence(), which owns the boot).

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <filesystem>
+#include <memory>
 #include <system_error>
 #include <utility>
 
@@ -112,8 +113,9 @@ Application::Application(const AppConfig& config, int argc, char** argv)
     // The process may hold only one Qt application object, and the base cannot know which one a leaf wants: a headless
     // host gets a QCoreApplication, a GUI a QApplication (see GuiApplication). Either leaf stores it in the application
     // data, where it is a private detail, and then calls initialize() - which is why no Qt type appears in the
-    // framework's public headers.
-    dptr()->app = new QCoreApplication(dptr()->argc, dptr()->argv);
+    // framework's public headers. Owning it is what lets a process run one host after another: the object goes away with
+    // the Application that made it.
+    dptr()->app = std::make_unique<QCoreApplication>(dptr()->argc, dptr()->argv);
     initialize(config);
 }
 
@@ -294,7 +296,7 @@ int Application::run()
     // 循环起来之前 show() 出来的窗口一个像素都没有；而启动阶段的第一道门就是“启动画面真的在屏上”。
     // 两个好处：无头与有窗口的启动阶段走同一条时间轴（同一个事件队列），差别只剩“上不上屏”；
     // 宿主的活跑在池里，循环不必为它停。
-    QMetaObject::invokeMethod(d->app, [this] { static_cast<void>(startupSequence()); }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(d->app.get(), [this] { static_cast<void>(startupSequence()); }, Qt::QueuedConnection);
 
     // 循环跑着的时候收尾是用法错误（见 shutdown()）：这一位就是那句话的判据。
     d->loop_running = true;
