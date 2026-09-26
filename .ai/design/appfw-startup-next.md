@@ -55,6 +55,13 @@ run():  exec()                           先把循环跑起来（此前屏幕上
   于是“一个进程跑完一个宿主再建下一个”在**带断言的 Qt** 上直接死在 `Q_ASSERT_X(!self, "QCoreApplication", ...)`.  Qt 只允许同时存在**一个**应用对象，而 `test_appfw` 每个用例建一个宿主 ⇒ 只有第一个用例跑得起来（release Qt 把断言编掉，所以作者的机器上看不见）。
   现在它是 `std::unique_ptr`，而且**声明在 `ApplicationData` 最前** ⇒ **最后**析构：UserIO 的窗口与各 manager 都先走，
   应用对象最后走；它的析构里 Qt 自己摘掉那个单例，下一个 `Application` 才建得起来。
+  **随之而来的代价（2026-09-26 同日补）**：宿主**不能有静态存储期**。`test_vsg` 把宿主放在 static `unique_ptr` 里
+  （`SetUpTestSuite()` 建、从不释放），于是 Qt 应用对象在**静态析构**里才被销毁——那时 Qt 自己的全局与插件加载器
+  已经走了，`~QCoreApplication()` 会调到一个**已不再映射**的地址：`ctest` 报 `test_vsg (SEGFAULT)`，而二进制自己
+  打印的是 "452 tests ... [ PASSED ] 452"（崩在最后一个用例之后）；3/3 复现（exit 139），栈是
+  `__run_exit_handlers → unique_ptr<Application>(s_app) → ~Application → ~ApplicationData → ~QCoreApplication`。
+  修法是给该套件加 `TearDownTestSuite()` 显式释放宿主（在 `main()` 里死，Qt 还完整），契约同时写进 `Application`
+  公开构造函数的文档；`test_appfw` 不受影响（它在用例体里建宿主，宿主死在 `main()` 里）。
 - **ABI（坑 1 的结论）**：`init()` 是公开虚函数且位于 vtable 中间 ⇒ 删除让后面所有槽位整体前移 ⇒
   `VN_APPFW_PLUGIN_ABI_VERSION` **3u → 4u**（不留 deprecated 空槽）。
   `beginStartup()` 已声明在所有其它虚函数之后，之后的追加不必再动版本。

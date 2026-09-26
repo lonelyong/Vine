@@ -100,6 +100,16 @@ class VsgBackendPluginTest : public ::testing::Test
         s_app = bootApplication();
     }
 
+    // The host owns the Qt application object, so it has to be released while Qt is still intact. Left to the static
+    // destructor below, that happens after Qt's own globals and its plugin loader have gone, and the Qt destructor
+    // then calls through an address that is no longer mapped: an exit-time segfault with all 452 tests already
+    // reported green (ctest reads that as a failed test). test_appfw never meets this because it builds its host
+    // inside a test body, so the host dies inside main().
+    static void TearDownTestSuite()
+    {
+        s_app.reset();
+    }
+
     static std::unique_ptr<vn::appfw::Application> s_app;
 };
 

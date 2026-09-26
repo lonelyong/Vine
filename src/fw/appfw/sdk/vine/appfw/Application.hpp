@@ -53,6 +53,11 @@ class VN_APPFW_API Application : public Object {
      *
      * A host has nothing left to call before run().
      *
+     * The host owns that Qt object, and it is destroyed with the application data - so the host must not have static
+     * storage duration. Released from a static destructor, it would delete the Qt object after Qt's own global state
+     * and plugin loader are gone, and the Qt destructor then calls through an address that is no longer mapped (an
+     * exit-time crash, with everything else already finished). Build the host inside main(), or inside a test body.
+     *
      * @param config Application configuration.
      * @param argc Command line argument count.
      * @param argv Command line arguments.
