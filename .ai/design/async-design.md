@@ -139,27 +139,26 @@
 
 
 
-## 8. 待设计（P2，本轮只记结论，不动代码）
+## 8. P2：下一步的结论（详细设计见 `.ai/design/async-next.md`）
 
-三条都属于"范式升级"，都要先设计再改：
+三项的**形状、依据（含全仓 grep 实测）、验证配方与 go/no-go** 都在 `.ai/design/async-next.md`；
+这里只留结论，避免两处说法漂移：
 
-1. **结构化作用域的强制**：`Scope` 现在允许孩子活得比作用域长（§4.4），而 Trio/Swift/Rust/Kotlin 与
-   P3149 `async_scope` 的规范是"作用域退出即同步点"：析构必须等待（或先请求取消再等），要放手得显式
-   `detach()`。另：`join(token)` 的取消只停止等待、**不向孩子传播 stop**（没有 `stop_source`），组合子也没有把
-   token 放进孩子的"环境"里。
-2. **取消通道**：现在是"异常（`TaskCancelledException`）+ 就地销毁未完成的孩子"（与 cppcoro/folly 一致），
-   P2300 要求"先请求停止、由操作自己上报 `set_stopped`"。`set_stopped` 相对异常的价值：取消与失败在类型上分开、
-   组合子不必把取消当错误、孩子可以收尾而不是被销毁。做这条要先给组合子建环境（stop token 随子任务走）。
-3. **帧分配策略**：全模块 0 个 `promise_type::operator new/delete`、0 个 `allocator_arg_t` 构造、0 个
-   `get_return_object_on_allocation_failure` ⇒ 每个协程帧都走全局 `operator new`，既没有池化，也没有"分配失败
-   返回空"的口子。第一步是给 `Task` 的 promise 加分配器支持（P2014 形状）。
+1. **取消的环境（stop token 随任务走）⇒ 建议排期**：appfw 早已把令牌装进上下文对象
+   （`PluginLoadContext::stopToken()` / `CommandExecutionContext::stopToken()` / `StartupProgress::stopToken()`），
+   而 `vn::async` 的组合子看不见它；建议给它一个"环境式令牌"（显式参数全部保留、不改 ABI 与用例）。
+2. **结构化作用域 ⇒ 小改**：`Scope` 在生产代码**0 使用者**，且标准形状是"析构断言、同步点显式 await"
+   （stdexec 的 `async_scope`/`counting_scope` 同理）⇒ 析构只做 `request_stop()` + 断言，另加 `detach()`，
+   不做"析构里等待"（析构不是协程，等待要么阻塞线程、要么泵循环，那是宿主的策略）。
+3. **帧分配 ⇒ 不做，挂账**：协程体只出现在 appfw/app_shell/test_plugin/vsg 插件各若干处，`src/viz`
+   渲染路径 **0 个** ⇒ 帧分配不在任何热路径上；判据写在 `async-next.md` §3。
 
-另记一条本轮量到的（不是风险，是"别写没用的守卫"）：把 `WhenAnyChild::promise_type::return_value()` 里的
-`try/catch` 删掉再跑，用例**仍然全绿**——说明语言本身会把 `return_value` 抛出的异常走 `unhandled_exception`
-（今天这条路径上没有 `noexcept` 边界）。真正承重的是 `WhenAnyChild::FinalAwaiter::await_suspend()` 里那个守卫
+另记一条本轮量到的（不是风险，是"别写没用的守卫"）：`WhenAnyChild::promise_type::return_value()` 里的
+`try/catch` 变异掉**不红**——语言本身会把 `return_value` 抛出的异常交给 `unhandled_exception`（今天这条
+路径上没有 `noexcept` 边界）。真正承重的是 `WhenAnyChild::FinalAwaiter::await_suspend()` 里那个守卫
 （删掉 ⇒ 直接 abort）。守卫暂时都留：`return_value` 那个是防"将来把它挪进 `noexcept` 的 `start()`"。
 
 另：`Concepts.hpp` 的 `Awaitable` 有意窄化——`await_suspend` 只用类型擦除的 `coroutine_handle<>` 探测，所以
 "在签名里点名 promise 型 handle"的 awaiter（正是本模块 `When.hpp` 的 final awaiter 形状）**不满足**该概念，
-而语言是允许的。原因已写在头文件里："some `coroutine_handle<P>`" 无法表达为概念，用一个探针 promise 去近似
-只会接受错误的类型。
+而语言是允许的。原因已写在头文件里："some `coroutine_handle<P>`" 无法表达为概念，用一个探针 promise 去
+近似只会接受错误的类型。

@@ -12,6 +12,7 @@
   - `robotics-io-design.md` —— Robotics IO 设计（XML 序列化、VFS 打包、5 版本 API、材质库、无状态重构）。
   - `robotics-proximity-design.md` —— Robotics proximity 设计（接口清单、设计决策、VMR 对照、FCL 接入点、测试）。
   - `async-design.md` —— `src/base/async` 设计（三条必守规则、与 cppcoro/P2300 的差异对照、已知风险、验证配方）。
+  - `async-next.md` —— `src/base/async` 的下一步（P2）：取消的环境令牌、结构化作用域的小改形状、帧分配的 go/no-go 判据，各带验证配方。
   - `appfw-render-surface.md` —— appfw 渲染表面生命周期（宿主驱动 attach 的状态机、已建会话跟句柄重建、平台回退、实测启动时序、Qt 容器事实）。
   - `appfw-startup-splash.md` —— appfw 启动框与启动进度（`BootSplash`/`StartupProgress`、阶段语义、显式 `finishStartup()`、以及"主窗口必须先 show"的实测结论）。
 - `bugs/` —— 已修复 Bug 记录（现象 / 根因 / 修复 / 涉及文件 / 验证）。

@@ -1,6 +1,7 @@
 # async 模块要点（`src/base/async`）
 
 > 详细设计、与 cppcoro/P2300 的差异、已知风险：`.ai/design/async-design.md`。
+> 下一步（P2）设计与 go/no-go：`.ai/design/async-next.md`。
 > 本文件只放"干活时需要立刻想起的东西"。
 
 ## 结构
