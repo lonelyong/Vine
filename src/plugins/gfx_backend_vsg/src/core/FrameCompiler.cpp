@@ -11,12 +11,6 @@ namespace core
 namespace
 {
 
-/// @brief Builds a `vn::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
-vn::String asString(const std::string& text)
-{
-    return vn::String(reinterpret_cast<const char8_t*>(text.c_str()));
-}
-
 /// @brief Whether the target's attachments are being (re)built this frame, so the first pass in must clear.
 bool freshAttachments(const TargetDecision& decision) noexcept
 {
@@ -412,7 +406,7 @@ std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedD
 
 void FrameCompiler::report(vn::graphics::DiagnosticCategory category, const std::string& message)
 {
-    diagnostics_.report(vn::graphics::DiagnosticSeverity::Error, category, asString(message));
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Error, category, vn::String::fromUtf8(message));
 }
 
 }  // namespace core

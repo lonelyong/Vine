@@ -41,12 +41,6 @@ VN_VSG_NS_BEGIN
 namespace
 {
 
-/// @brief Builds a `vn::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
-vn::String asString(const std::string& text)
-{
-    return vn::String(reinterpret_cast<const char8_t*>(text.c_str()));
-}
-
 /// @brief The calls that have nowhere to go, one slot per call (see the class note).
 enum Unserved : std::size_t
 {
@@ -568,7 +562,7 @@ void VsgBackend::setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
                       "its description is not a target): the passes that draw into it are skipped";
         }
         reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
-                         vn::graphics::DiagnosticCategory::TargetBuildFailed, asString(message));
+                         vn::graphics::DiagnosticCategory::TargetBuildFailed, vn::String::fromUtf8(message));
     }
 
     if (ensured.entry->target != nullptr)
@@ -1023,7 +1017,7 @@ void VsgBackend::growBlockStorageIfNeeded()
     append("lights", before.lights.blocks_per_frame, wanted.lights.blocks_per_frame);
     append("shadows", before.shadows.blocks_per_frame, wanted.shadows.blocks_per_frame);
     reportDiagnostic(vn::graphics::DiagnosticSeverity::Info, vn::graphics::DiagnosticCategory::ContentSkipped,
-                     asString(reason));
+                     vn::String::fromUtf8(reason));
 }
 
 bool VsgBackend::adoptBlockStorage(std::shared_ptr<BlockStorage> storage)
@@ -1061,7 +1055,7 @@ void VsgBackend::reportUnserved(std::size_t slot) noexcept
     }
     reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
                      vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                     asString(std::string(kUnservedNames[slot]) +
+                     vn::String::fromUtf8(std::string(kUnservedNames[slot]) +
                               " has nowhere to go: every part of the frame protocol needs a session that is "
                               "up (see .ai/design/vsg-reimplementation.md)"));
 }

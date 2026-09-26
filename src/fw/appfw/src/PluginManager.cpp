@@ -56,12 +56,6 @@ std::string toUtf8(const std::filesystem::path& path)
     return std::string(reinterpret_cast<const char*>(text.data()), text.size());
 }
 
-/// Converts UTF-8 bytes held in a std::string to a String.
-String fromUtf8(const std::string& text)
-{
-    return String(std::u8string_view(reinterpret_cast<const char8_t*>(text.data()), text.size()));
-}
-
 /// Returns the text without surrounding spaces, tabs and newlines.
 std::string trimmed(const std::string& text)
 {
@@ -352,13 +346,13 @@ std::optional<PluginRegistration> parseRegistration(const std::filesystem::path&
         const std::string key   = trimmed(unpadded.substr(0, separator));
         const std::string value = trimmed(unpadded.substr(separator + 1));
         if (key == "path") {
-            registration.path = fromUtf8(value);
+            registration.path = String::fromUtf8(value);
         }
         else if (key == "name") {
-            registration.name = fromUtf8(value);
+            registration.name = String::fromUtf8(value);
         }
         else if (key == "uuid") {
-            registration.uuid = Uuid::parse(fromUtf8(value));
+            registration.uuid = Uuid::parse(String::fromUtf8(value));
         }
         else if (key == "enabled") {
             registration.enabled = !(value == "false" || value == "0" || value == "no");
@@ -585,14 +579,14 @@ QueriedLibrary queryLibrary(const std::filesystem::path& library)
     const auto      abi      = result.lib->resolveSymbol<AbiFn>(u8"vinePluginAbi");
     const PluginAbi* declared = abi != nullptr ? abi() : nullptr;
     if (declared == nullptr) {
-        result.rejection = fromUtf8("Plugin library '" + toUtf8(library) +
+        result.rejection = String::fromUtf8("Plugin library '" + toUtf8(library) +
                                     "' declares no ABI handshake (vinePluginAbi), so it was built against a framework "
                                     "older than this one. Rebuild the plugin against this framework.");
         return result;
     }
     if (!PluginManager::isPluginAbiCompatible(*declared)) {
         const bool newer = declared->abi_version > VN_APPFW_PLUGIN_ABI_VERSION;
-        result.rejection = fromUtf8("Plugin library '" + toUtf8(library) + "' declares ABI revision " +
+        result.rejection = String::fromUtf8("Plugin library '" + toUtf8(library) + "' declares ABI revision " +
                                     std::to_string(declared->abi_version) + " (built with framework " +
                                     (declared->framework_version != nullptr ? declared->framework_version : "unknown") +
                                     "), which is " + (newer ? "newer" : "older") + " than this host's " +
@@ -601,7 +595,7 @@ QueriedLibrary queryLibrary(const std::filesystem::path& library)
         return result;
     }
     result.framework_version =
-        declared->framework_version != nullptr ? fromUtf8(declared->framework_version) : String{};
+        declared->framework_version != nullptr ? String::fromUtf8(declared->framework_version) : String{};
 
     using QueryFn = const PluginInfo* ();
     const auto query = result.lib->resolveSymbol<QueryFn>(u8"vinePluginQuery");
@@ -1275,7 +1269,7 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
         }
 
         if (startup != nullptr) {
-            startup->setLabel(fromUtf8("正在创建插件 " + toUtf8(name)));
+            startup->setLabel(String::fromUtf8("正在创建插件 " + toUtf8(name)));
         }
         using CreateFn = Plugin* ();
         const auto create = candidate->lib->resolveSymbol<CreateFn>(u8"vinePluginCreate");
@@ -1343,7 +1337,7 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
         RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
         PluginLoadContext      context(Application::current(), lp.name);
         if (startup != nullptr) {
-            startup->setLabel(fromUtf8("正在加载插件 " + toUtf8(lp.name) + " (" + std::to_string(loaded_units + 1) + "/" + std::to_string(created.size()) + ")"));
+            startup->setLabel(String::fromUtf8("正在加载插件 " + toUtf8(lp.name) + " (" + std::to_string(loaded_units + 1) + "/" + std::to_string(created.size()) + ")"));
         }
         if (startup != nullptr && startup->stopToken().stop_requested()) {
             VN_LOGI("the plugin load was cancelled; '{}' and the plugins after it are not loaded", toUtf8(lp.name));
@@ -1360,7 +1354,7 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
         RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
         PluginLoadContext      context(Application::current(), lp.name);
         if (startup != nullptr) {
-            startup->setLabel(fromUtf8("正在收尾插件 " + toUtf8(lp.name)));
+            startup->setLabel(String::fromUtf8("正在收尾插件 " + toUtf8(lp.name)));
         }
         co_await lp.plugin->postLoad(&context);
     }

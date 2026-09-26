@@ -36,12 +36,6 @@ namespace
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::DiagnosticSeverity;
 
-/// @brief Builds a `vn::String` from an ASCII sentence (the repo's spelling for UTF-8 bytes).
-vn::String asString(const std::string& text)
-{
-    return vn::String(reinterpret_cast<const char8_t*>(text.c_str()));
-}
-
 /// @brief Reads an environment variable as a non-negative number, or @p fallback when unset or unparsable.
 unsigned int envLevel(const char* name, unsigned int fallback)
 {
@@ -207,7 +201,7 @@ bool Session::initialize(const SessionOptions& options, core::Diagnostics& diagn
         // does not recreate).
         ++impl->rebuilds;
         diagnostics.report(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
-                           asString(std::string("the session is rebuilt from scratch: ") + decision.reason));
+                           vn::String::fromUtf8(std::string("the session is rebuilt from scratch: ") + decision.reason));
     }
 
     shutdown();
@@ -248,7 +242,7 @@ bool Session::initialize(const SessionOptions& options, core::Diagnostics& diagn
         if (!impl->window)
         {
             diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
-                               asString("the session could not create a window"));
+                               vn::String::fromUtf8("the session could not create a window"));
             shutdown();
             return false;
         }
@@ -264,7 +258,7 @@ bool Session::initialize(const SessionOptions& options, core::Diagnostics& diagn
         if (impl->window_target == nullptr)
         {
             diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
-                               asString("the session could not wrap its window as a render target"));
+                               vn::String::fromUtf8("the session could not wrap its window as a render target"));
             shutdown();
             return false;
         }
@@ -301,7 +295,7 @@ bool Session::initialize(const SessionOptions& options, core::Diagnostics& diagn
         if (!compiled)
         {
             diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
-                               asString("the session failed to compile: " + compiled.message));
+                               vn::String::fromUtf8("the session failed to compile: " + compiled.message));
             shutdown();
             return false;
         }
@@ -315,7 +309,7 @@ bool Session::initialize(const SessionOptions& options, core::Diagnostics& diagn
     catch (const std::exception& error)
     {
         diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
-                           asString(std::string("the session failed to initialize: ") + error.what()));
+                           vn::String::fromUtf8(std::string("the session failed to initialize: ") + error.what()));
         shutdown();
         return false;
     }
@@ -403,7 +397,7 @@ void Session::probeSlots()
         return;
     }
     impl->diagnostics->report(DiagnosticSeverity::Info, DiagnosticCategory::UnsupportedRequest,
-                              asString("the in-flight slot count is " + std::to_string(impl->slots) +
+                              vn::String::fromUtf8("the in-flight slot count is " + std::to_string(impl->slots) +
                                        ", not the " + std::to_string(core::kAssumedInFlightSlots) +
                                        " this code was written against (learned over " +
                                        std::to_string(impl->slot_tracker.framesObserved()) + " frames)"));
@@ -422,7 +416,7 @@ bool Session::commitFrame()
         if (impl->diagnostics != nullptr)
         {
             impl->diagnostics->report(DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
-                                      asString("commitFrame with no open frame"));
+                                      vn::String::fromUtf8("commitFrame with no open frame"));
         }
         return false;
     }
@@ -460,7 +454,7 @@ bool Session::commitFrame()
         if (impl->diagnostics != nullptr)
         {
             impl->diagnostics->report(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed,
-                                      asString("the frame's submission did not happen, so nothing it recorded "
+                                      vn::String::fromUtf8("the frame's submission did not happen, so nothing it recorded "
                                                "was performed and nothing was presented - the failure was: " +
                                                failure));
         }
@@ -667,7 +661,7 @@ bool Session::moveTo(void* handle)
         {
             impl->diagnostics->report(
                 DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
-                asString("the host's new window could not serve this session (a different swapchain format, "
+                vn::String::fromUtf8("the host's new window could not serve this session (a different swapchain format, "
                          "or a window that never went as far as a device): it is rebuilt from scratch"));
         }
         return false;
@@ -801,7 +795,7 @@ bool SessionContentAccess::recompile(api::Session& session)
         if (session.impl->diagnostics != nullptr)
         {
             session.impl->diagnostics->report(api::DiagnosticSeverity::Warning, api::DiagnosticCategory::InitFailed,
-                                              api::asString(std::string("the content attached to the session did not compile: ") +
+                                              vn::String::fromUtf8(std::string("the content attached to the session did not compile: ") +
                                                             compiled.message));
         }
         return false;

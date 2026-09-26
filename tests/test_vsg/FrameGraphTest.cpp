@@ -97,7 +97,9 @@ TEST(FrameGraphTest, RebuildingAndSchedulingAFrameAsksForNoMemory)
     vn::vsg::core::AllocationGate gate;
     gate.begin();
     build();
-    gate.end();
+    // The byte delta end() reports is the other half of the gate; this phase asserts the count half (see the message
+    // below), so the result is deliberately dropped - explicitly, because end() is [[nodiscard]] on purpose.
+    static_cast<void>(gate.end());
 
     EXPECT_EQ(gate.allocations(), 0u)
         << "a frame that reuses the graph must not ask for memory (counted " << gate.allocations() << ")";

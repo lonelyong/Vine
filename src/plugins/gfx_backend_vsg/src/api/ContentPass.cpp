@@ -24,12 +24,6 @@ VN_VSG_NS_BEGIN
 namespace
 {
 
-/// @brief Builds a `vn::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
-vn::String asString(const std::string& text)
-{
-    return vn::String(reinterpret_cast<const char8_t*>(text.c_str()));
-}
-
 /// @brief Names a table miss the way the message needs it.
 const char* missText(FactMiss miss) noexcept
 {
@@ -296,7 +290,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     {
         diagnostics_.report(
             vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-            asString("the pass is not drawn: it declares " + std::to_string(pass.inputs.size()) +
+            vn::String::fromUtf8("the pass is not drawn: it declares " + std::to_string(pass.inputs.size()) +
                      " input(s) and the caller offered " + std::to_string(inputs.size()) +
                      " (one entry per declared input, in declaration order)"));
         out = group;
@@ -312,7 +306,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         {
             diagnostics_.report(
                 vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-                asString("the pass is not drawn: input " + std::to_string(index) +
+                vn::String::fromUtf8("the pass is not drawn: input " + std::to_string(index) +
                          (offers_depth ? " offers a depth texture where the plan says its depth is not "
                                          "sampleable (a depth a pass preserves, or a lender's, cannot be sampled)"
                                        : " offers no depth texture where the plan says its depth IS sampleable "
@@ -325,7 +319,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         {
             diagnostics_.report(
                 vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-                asString("the pass is not drawn: input " + std::to_string(index) + " offers " +
+                vn::String::fromUtf8("the pass is not drawn: input " + std::to_string(index) + " offers " +
                          std::to_string(inputs[index].colors.size()) +
                          " colour texture(s) where the plan says " +
                          std::to_string(pass.inputs[index].color_attachments)));
@@ -413,7 +407,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
             {
                 diagnostics_.report(vn::graphics::DiagnosticSeverity::Info,
                                     vn::graphics::DiagnosticCategory::ContentSkipped,
-                                    asString("a drawing call was not recorded: its rectangle is empty (a host "
+                                    vn::String::fromUtf8("a drawing call was not recorded: its rectangle is empty (a host "
                                              "whose render area is not laid out yet reports one)"));
             }
             continue;
@@ -987,7 +981,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         {
             diagnostics_.report(
                 vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-                asString("the command is not drawn: the pass has no half for the variant this drawable is drawn "
+                vn::String::fromUtf8("the command is not drawn: the pass has no half for the variant this drawable is drawn "
                          "with (" +
                          variant.describe() + "): its own halves serve other variants of that program"));
         }
@@ -1210,7 +1204,7 @@ void ContentPass::reportRefusedSummary()
         }
         diagnostics_.report(
             vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-            asString(std::to_string(row.count) + " drawing call(s) were not drawn for one reason - " +
+            vn::String::fromUtf8(std::to_string(row.count) + " drawing call(s) were not drawn for one reason - " +
                      row.what + " is not drawn: " + row.why +
                      " (the first one is named above; the rest are the same fact about the same pass)"));
     }
@@ -1224,7 +1218,7 @@ void ContentPass::reportRefused(const char* what, FactMiss miss)
         return;   // the reason was already said; the count goes out when the pass ends
     }
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
-                        vn::graphics::DiagnosticCategory::ContentSkipped, asString(message));
+                        vn::graphics::DiagnosticCategory::ContentSkipped, vn::String::fromUtf8(message));
 }
 
 void ContentPass::reportRefused(const char* what, const char* why)
@@ -1235,7 +1229,7 @@ void ContentPass::reportRefused(const char* what, const char* why)
         return;
     }
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
-                        vn::graphics::DiagnosticCategory::ContentSkipped, asString(message));
+                        vn::graphics::DiagnosticCategory::ContentSkipped, vn::String::fromUtf8(message));
 }
 
 std::uint64_t ContentPass::emptyRectangles() const noexcept
@@ -1265,7 +1259,7 @@ void ContentPass::reportShadowNotSampled(const Scope::Entry& entry, const core::
     }
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                         vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                        asString("the pass declared a shadow, but the program shading it declares no `shadow_map` "
+                        vn::String::fromUtf8("the pass declared a shadow, but the program shading it declares no `shadow_map` "
                                  "sampler, so the map does not reach its drawables: they are shaded unshadowed"));
 }
 
@@ -1309,7 +1303,7 @@ void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represe
         message += " directional slots)";
     }
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
-                        vn::graphics::DiagnosticCategory::ChannelIgnored, asString(message));
+                        vn::graphics::DiagnosticCategory::ChannelIgnored, vn::String::fromUtf8(message));
 }
 
 VN_VSG_NS_END

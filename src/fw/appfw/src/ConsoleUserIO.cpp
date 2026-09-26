@@ -14,11 +14,6 @@ VN_OBJECT_META_IMPL(ConsoleUserIO, UserIO)
 namespace
 {
 
-String toVineString(const std::string& s)
-{
-    return String(reinterpret_cast<const char8_t*>(s.data()), s.size());
-}
-
 } // namespace
 
 /**
@@ -50,7 +45,7 @@ struct ConsoleUserIO::StdinReader {
                 failed = broken;
             }
             else {
-                lines.push_back(toVineString(line));
+                lines.push_back(String::fromUtf8(line));
             }
         }
         line_ready.set();

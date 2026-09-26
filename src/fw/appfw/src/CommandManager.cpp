@@ -129,7 +129,7 @@ CommandResult failedResult(String message)
 CommandResult failedResultFromException(const std::exception& e)
 {
     try {
-        String message(reinterpret_cast<const char8_t*>(e.what()));
+        String message = String::fromUtf8(e.what());
         if (!message.empty()) {
             return failedResult(std::move(message));
         }

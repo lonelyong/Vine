@@ -10,12 +10,6 @@ namespace core
 namespace
 {
 
-/// @brief Builds a `vn::String` from an ASCII sentence (the house spelling for UTF-8 bytes).
-vn::String asString(const std::string& text)
-{
-    return vn::String(reinterpret_cast<const char8_t*>(text.c_str()));
-}
-
 /// @brief Names one call in the sentence a refusal produces.
 const char* callName(CallKind kind) noexcept
 {
@@ -490,7 +484,7 @@ void FrameRecorder::reportRefusal(CallKind kind)
     }
 
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Error,
-                        vn::graphics::DiagnosticCategory::PassProtocolViolation, asString(message));
+                        vn::graphics::DiagnosticCategory::PassProtocolViolation, vn::String::fromUtf8(message));
 }
 
 void FrameRecorder::snapshotLights(std::span<const vn::graphics::Light* const> lights)

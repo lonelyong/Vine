@@ -363,3 +363,23 @@ TEST(String, IgnoreCaseFoldsAsciiOnly)
     EXPECT_TRUE(vn::String(u8"Content-Type").startsWith(vn::String(u8"content"), true));
     EXPECT_TRUE(vn::String(u8"file.XML").endsWith(vn::String(u8".xml"), true));
 }
+TEST(String, FromUtf8CopiesTheBytesVerbatim)
+{
+    // The narrow-to-String boundary the project crosses when a std::string-shaped API hands text over: the bytes are
+    // copied as they are (they are UTF-8 already), so the round trip through as_std_str() is the identity.
+    const std::string narrow = "中文 and ascii";
+    const vn::String  text   = vn::String::fromUtf8(narrow);
+    EXPECT_EQ(text.as_std_str(), narrow);
+    EXPECT_EQ(text.size(), narrow.size());
+
+    // Not a C string: an embedded NUL must survive (the old hand-rolled helpers spelled c_str() and truncated here).
+    const std::string with_nul("a\0b", 3);
+    EXPECT_EQ(vn::String::fromUtf8(with_nul).size(), 3u);
+
+    // Nothing to transcode, nothing to validate: bytes that are not valid UTF-8 pass through unchanged.
+    const std::string invalid("\xC3\x28", 2);
+    EXPECT_EQ(vn::String::fromUtf8(invalid).as_std_str(), invalid);
+
+    EXPECT_TRUE(vn::String::fromUtf8(std::string_view{}).empty());
+    EXPECT_TRUE(vn::String::fromUtf8("").empty());
+}

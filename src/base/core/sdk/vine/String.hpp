@@ -1567,6 +1567,23 @@ class VN_CORE_API String final {
      */
     static String fromUtf32(const char32_t* data, size_type count = std::string::npos);
 
+    /** Create a string from UTF-8 encoded bytes handed over as a narrow string - the mirror of
+     *  as_std_str(), and the one place where bytes from a std::string-shaped API (std::filesystem,
+     *  a third-party library, a plugin's own text) become a String.
+     *  UTF-8 is what a String holds, so there is nothing to transcode and nothing to validate:
+     *  the bytes are copied as they are, and the caller is saying "these are UTF-8" - which is
+     *  what the project is throughout. The reverse direction is as_std_str().
+     *  @param text UTF-8 bytes to copy; may be empty, and may contain embedded NULs
+     *  @return A new String holding those bytes
+     */
+    static String fromUtf8(std::string_view text)
+    {
+        if (text.empty()) {
+            return {};
+        }
+        return String(reinterpret_cast<const char8_t*>(text.data()), text.size());
+    }
+
     /** Create a lowercase hex string from a byte sequence
      *  @param bytes The byte sequence to encode
      *  @return A new String with the lowercase hex representation

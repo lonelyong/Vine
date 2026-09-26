@@ -39,7 +39,7 @@ String lineFor(int percent, const String& label)
         text += ' ';
         text += label.as_std_str();
     }
-    return String(std::u8string_view(reinterpret_cast<const char8_t*>(text.data()), text.size()));
+    return String::fromUtf8(text);
 }
 
 } // namespace
