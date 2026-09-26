@@ -15,6 +15,7 @@
 #include "Concepts.hpp"
 #include "DetachedTask.hpp"
 #include "Task.hpp"
+#include "WaiterList.hpp"
 
 VN_ASYNC_NS_BEGIN
 
@@ -137,7 +138,7 @@ class SharedTaskAwaiter
     SharedTaskAwaiter(const SharedTaskAwaiter&) = delete;
     SharedTaskAwaiter& operator=(const SharedTaskAwaiter&) = delete;
 
-    ~SharedTaskAwaiter()
+    ~SharedTaskAwaiter() noexcept
     {
         if (handle_)
         {
@@ -193,9 +194,8 @@ class SharedTaskAwaiter
             {
                 return false; // Completed during spawn; resume inline.
             }
-            state_->waiters.push_back(h);
+            return detail::tryRegisterWaiter(state_->waiters, h, failure_);
         }
-        return true;
     }
 
     /**
@@ -205,6 +205,10 @@ class SharedTaskAwaiter
      */
     decltype(auto) await_resume()
     {
+        if (failure_)
+        {
+            std::rethrow_exception(std::exchange(failure_, nullptr));
+        }
         if (state_->exception)
         {
             std::rethrow_exception(state_->exception);
@@ -218,6 +222,9 @@ class SharedTaskAwaiter
   private:
     std::shared_ptr<SharedTaskState<T>> state_;
     std::coroutine_handle<> handle_{};
+
+    /// Why the waiter could not be registered; rethrown by await_resume().
+    std::exception_ptr failure_{};
 };
 
 } // namespace detail

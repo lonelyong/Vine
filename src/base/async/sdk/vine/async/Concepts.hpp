@@ -108,6 +108,15 @@ concept Awaiter = requires(A& a, std::coroutine_handle<> h) {
  * non-awaitable type and an awaiter with an illegal await_suspend return type
  * do not.
  *
+ * One deliberate narrowing: await_suspend is probed with a type-erased
+ * coroutine_handle<>, so an awaiter that names the awaiting coroutine's promise
+ * type in its signature - the shape of a final_suspend awaiter, e.g. When.hpp's -
+ * is NOT accepted here, even though the language allows it for a coroutine with
+ * that promise. The concept exists for awaiters handed to generic code, which can
+ * only ever see the type-erased handle, and "some coroutine_handle<P>" cannot be
+ * spelled as a concept: a probe promise would accept the wrong types instead of
+ * naming the limit.
+ *
  * Use it to constrain custom awaitables or types accepted by generic APIs.
  */
 template<typename T>

@@ -46,6 +46,7 @@ class AsyncMutex
      *
      * @return true if acquired, false if already locked.
      */
+[[nodiscard]]
     bool try_lock() noexcept;
 
     /**
@@ -59,7 +60,7 @@ class AsyncMutex
         LockAwaiter(const LockAwaiter&) = delete;
         LockAwaiter& operator=(const LockAwaiter&) = delete;
 
-        ~LockAwaiter();
+        ~LockAwaiter() noexcept;
 
         [[nodiscard]]
         bool await_ready() const noexcept
@@ -251,7 +252,7 @@ inline bool AsyncMutex::LockAwaiter::await_suspend(std::coroutine_handle<> h) no
     return true;
 }
 
-inline AsyncMutex::LockAwaiter::~LockAwaiter()
+inline AsyncMutex::LockAwaiter::~LockAwaiter() noexcept
 {
     if (waiter_)
     {

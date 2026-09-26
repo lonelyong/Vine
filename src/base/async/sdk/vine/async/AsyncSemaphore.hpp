@@ -30,6 +30,7 @@ class AsyncSemaphore
      *
      * @return true if a permit was consumed, false if none is available.
      */
+[[nodiscard]]
     bool try_acquire() noexcept;
 
     /**
@@ -50,7 +51,7 @@ class AsyncSemaphore
         AcquireAwaiter(const AcquireAwaiter&) = delete;
         AcquireAwaiter& operator=(const AcquireAwaiter&) = delete;
 
-        ~AcquireAwaiter();
+        ~AcquireAwaiter() noexcept;
 
         [[nodiscard]]
         bool await_ready() const noexcept
@@ -117,7 +118,7 @@ inline bool AsyncSemaphore::AcquireAwaiter::await_suspend(std::coroutine_handle<
     return true;
 }
 
-inline AsyncSemaphore::AcquireAwaiter::~AcquireAwaiter()
+inline AsyncSemaphore::AcquireAwaiter::~AcquireAwaiter() noexcept
 {
     if (waiter_)
     {

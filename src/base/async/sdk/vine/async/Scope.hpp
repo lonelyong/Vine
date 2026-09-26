@@ -14,6 +14,7 @@
 #include "AsyncEvent.hpp"
 #include "Cancellation.hpp"
 #include "DetachedTask.hpp"
+#include "Sleep.hpp"
 #include "Task.hpp"
 
 VN_ASYNC_NS_BEGIN
@@ -145,10 +146,10 @@ class Scope
 
         // Cancellation only wakes the wait; join() re-checks the token and the
         // pending counter after every wakeup, so a cancelled join never leaves
-        // done armed for a later join().
-        std::stop_callback cancellation{ token, [state = state_]() noexcept {
-            state->done.set();
-        } };
+        // done armed for a later join(). The wake-up is handed to the timer thread: this
+        // callback runs inside request_stop(), and resuming join() here would destroy this
+        // stop_callback from inside its own callback (see detail::deferWake).
+        std::stop_callback cancellation{ token, [state = state_]() noexcept { detail::deferWake(state); } };
 
         for (;;)
         {

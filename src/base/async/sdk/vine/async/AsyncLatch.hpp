@@ -33,6 +33,10 @@ struct LatchState
  * released it returns immediately forever (manual-reset semantics). A latch
  * constructed with a count of zero is already released: wait() completes
  * without suspending and isReady() reports true from the start. Thread-safe.
+  *
+ * Threading: countDown() may be called from any thread, and the waiters it releases are
+ * resumed on the thread that called it. The latch must outlive every coroutine waiting on it
+ * (a destroyed waiter unregisters itself, see AsyncEvent).
  */
 class AsyncLatch
 {

@@ -96,7 +96,7 @@ class AsyncEvent
         Awaiter(Awaiter&&) = delete;
         Awaiter& operator=(Awaiter&&) = delete;
 
-        ~Awaiter();
+        ~Awaiter() noexcept;
 
         /**
          * @brief Always defers to await_suspend for a single locked decision.
@@ -246,7 +246,7 @@ inline bool AsyncEvent::Awaiter::await_suspend(std::coroutine_handle<> h) noexce
     return true;
 }
 
-inline AsyncEvent::Awaiter::~Awaiter()
+inline AsyncEvent::Awaiter::~Awaiter() noexcept
 {
     std::lock_guard lock(event_.mutex_);
     if (queued_)

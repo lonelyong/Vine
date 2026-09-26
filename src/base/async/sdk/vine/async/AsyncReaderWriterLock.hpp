@@ -127,6 +127,10 @@ class AsyncWriterGuard
  * at a time (never holding a waiter pointer across a resume), so a resumed
  * reader whose completion destroys a sibling waiter is safe: the destroyed
  * sibling unregisters itself from the shared list.
+  *
+ * Threading: the lock's state is mutex-guarded, so an acquire and the release that follows it
+ * may come from different threads; the waiters a release wakes are resumed on the releasing
+ * thread. The lock must outlive every coroutine waiting on it.
  */
 class AsyncReaderWriterLock
 {
@@ -147,7 +151,7 @@ class AsyncReaderWriterLock
         ReaderAwaiter(const ReaderAwaiter&) = delete;
         ReaderAwaiter& operator=(const ReaderAwaiter&) = delete;
 
-        ~ReaderAwaiter()
+        ~ReaderAwaiter() noexcept
         {
             if (waiter_)
             {
@@ -208,7 +212,7 @@ class AsyncReaderWriterLock
         WriterAwaiter(const WriterAwaiter&) = delete;
         WriterAwaiter& operator=(const WriterAwaiter&) = delete;
 
-        ~WriterAwaiter()
+        ~WriterAwaiter() noexcept
         {
             if (waiter_)
             {

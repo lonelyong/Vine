@@ -51,6 +51,25 @@ struct TimerNode
 };
 
 /**
+ * @brief The action a posted wake-up runs on the timer thread.
+ *
+ * A plain function pointer rather than a std::function: a post happens inside a
+ * stop_callback, where allocating for a type-erased callable would be one more thing that can
+ * fail. What the action needs travels beside it as a shared_ptr, so the queue entry keeps that
+ * object alive until the action has run.
+ */
+using WakeAction = void (*)(void*) noexcept;
+
+/**
+ * @brief One wake-up posted by another thread, waiting for the timer thread to run it.
+ */
+struct PostedWake
+{
+    std::shared_ptr<void> owner{};                        ///< Kept alive until action has run.
+    WakeAction            action{ nullptr };              ///< Invoked with owner.get(); never null.
+};
+
+/**
  * @brief Process-wide timer thread shared by every sleep.
  *
  * One thread serves all pending sleeps instead of one thread per sleep, it
@@ -106,6 +125,22 @@ class TimerService
      */
     void cancel(const std::shared_ptr<TimerNode>& node) noexcept;
 
+    /**
+     * @brief Queues a wake-up for the timer thread, resuming nobody on the calling one.
+     *
+     * For a thread that must wake a coroutine but may not resume it itself - a stop_callback
+     * above all: the resumed coroutine unwinds and destroys that callback, and destroying a
+     * stop_callback while its own callback runs on the same thread is the case the standard
+     * leaves undefined (libstdc++ tolerates it, libc++/MSVC are not verified). Posted here,
+     * the resume happens on the timer thread, so the callback has already returned and
+     * ~stop_callback is then the sanctioned cross-thread block.
+     *
+     * @param owner Object the action needs; the queue entry owns it until the action has run,
+     *              so a coroutine that gives up before the wake-up arrives is still safe.
+     * @param action Callback invoked with owner.get() on the timer thread; null is ignored.
+     */
+    void postWake(std::shared_ptr<void> owner, WakeAction action) noexcept;
+
   private:
     TimerService() noexcept = default;
 
@@ -126,6 +161,9 @@ class TimerService
 
     /// Waits whose token was cancelled, to be resumed by the timer thread.
     std::deque<std::weak_ptr<TimerNode>> early_;
+
+    /// Wake-ups posted by other threads, to be run by the timer thread.
+    std::deque<PostedWake> posted_;
 
     std::thread worker_;
 };
@@ -187,12 +225,65 @@ inline void TimerService::cancel(const std::shared_ptr<TimerNode>& node) noexcep
     node->settled = true; // Its entry expires at the deadline, without a resume.
 }
 
+/**
+ * @brief Wakes a waiting object on the timer thread, not on the one asking for it.
+ *
+ * For a caller that must wake a coroutine but may not resume it itself - a stop_callback,
+ * where the resumed coroutine unwinds and destroys that callback while its own callback is
+ * still running on this thread (the same-thread case the standard leaves undefined; libstdc++
+ * tolerates it, libc++/MSVC are not verified). The wake-up is posted instead, so the callback
+ * returns first and ~stop_callback is then the sanctioned cross-thread block - the same rule
+ * requestAbort() follows for a partial sleep.
+ *
+ * The queue entry owns a reference to state, so a wait that has already given up (or a frame
+ * that is already gone) cannot be touched by a stale wake-up: the event's set() is simply
+ * sticky.
+ *
+ * @tparam State Type holding the AsyncEvent `done` to wake; must have such a member.
+ * @param state State to wake; kept alive until the wake-up has run.
+ */
+template<typename State>
+void deferWake(const std::shared_ptr<State>& state) noexcept
+{
+    TimerService::instance().postWake(state, [](void* p) noexcept { static_cast<State*>(p)->done.set(); });
+}
+
+inline void TimerService::postWake(std::shared_ptr<void> owner, WakeAction action) noexcept
+{
+    if (!action)
+    {
+        return;
+    }
+    {
+        std::lock_guard lock(mutex_);
+        // The queue grows by one entry per pending wake-up. Growth can fail, and a
+        // stop_callback has nowhere to report that - the same exposure requestAbort()'s
+        // early_ queue already has, and the price of a wake-up that is allocation-free in
+        // every other respect (the shared_ptr beside it only bumps a count).
+        posted_.push_back(PostedWake{ std::move(owner), action });
+        ensureWorkerLocked();
+    }
+    cv_.notify_all();
+}
+
 inline void TimerService::run() noexcept
 {
     std::unique_lock<std::mutex> lock(mutex_);
     for (;;)
     {
-        // 1. Cancelled waits wake first, whatever their deadline: they were
+        // 1. Wake-ups posted by other threads come first, whatever the clock says: they are
+        //    already due by the time they are queued.
+        if (!posted_.empty())
+        {
+            PostedWake wake = std::move(posted_.front());
+            posted_.pop_front();
+            lock.unlock();
+            wake.action(wake.owner.get()); // Never hold the mutex across a wake-up.
+            lock.lock();
+            continue;
+        }
+
+        // 2. Cancelled waits wake next, whatever their deadline: they were
         //    queued by requestAbort() rather than by the clock.
         if (!early_.empty())
         {
@@ -278,7 +369,7 @@ class SleepAwaiter
      * passed the resume itself, which is the framework contract in
      * async_global.hpp (no concurrent destroy during a resume).
      */
-    ~SleepAwaiter()
+    ~SleepAwaiter() noexcept
     {
         abort_.reset();
         if (scheduled_)

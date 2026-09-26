@@ -178,6 +178,7 @@ class Generator
      *
      * @return Iterator to the first value, or end() for an empty generator.
      */
+[[nodiscard]]
     iterator begin()
     {
         if (coro_)

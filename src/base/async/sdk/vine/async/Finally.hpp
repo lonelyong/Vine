@@ -55,11 +55,16 @@ class Finally
 /**
  * @brief Creates a Finally guard running f when it goes out of scope.
  *
+ * The guard is [[nodiscard]]: it does its work in its destructor, so writing `makeFinally(f);` as
+ * a statement would run f at the end of that statement - the one moment a cleanup guard is not
+ * meant to fire.
+ *
  * @tparam F Callback type.
  * @param f Callback invoked on destruction; must not throw.
  * @return A move-only guard.
  */
 template<typename F>
+[[nodiscard]]
 Finally<std::decay_t<F>> makeFinally(F&& f)
 {
     return Finally<std::decay_t<F>>{ std::forward<F>(f) };

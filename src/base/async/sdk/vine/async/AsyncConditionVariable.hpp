@@ -56,7 +56,7 @@ class CvWaiter
     CvWaiter(CvWaiter&&) = delete;
     CvWaiter& operator=(CvWaiter&&) = delete;
 
-    ~CvWaiter();
+    ~CvWaiter() noexcept;
 
     /**
      * @brief Always defers to await_suspend for a single locked decision.
@@ -122,7 +122,7 @@ inline bool CvWaiter::await_suspend(std::coroutine_handle<> h) noexcept
     return true;
 }
 
-inline CvWaiter::~CvWaiter()
+inline CvWaiter::~CvWaiter() noexcept
 {
     std::lock_guard<std::mutex> lock(state_->mutex);
     if (queued_)
@@ -180,6 +180,10 @@ inline CvWaiter::~CvWaiter()
  *     never holds a waiter pointer across a resume;
  *   - abandoning a wait is safe: the waiter unregisters itself (queued_).
  * queued_ protects the LIST against concurrent destruction, not the frame.
+  *
+ * Threading: notify_one()/notify_all() may be called from any thread, and the waiters they wake
+ * are resumed on the notifying thread. The condition variable must outlive every waiting
+ * coroutine; the predicate and the mutex stay the caller's (see the loop rule above).
  */
 class AsyncConditionVariable
 {

@@ -19,6 +19,7 @@
 
 #include "AsyncEvent.hpp"
 #include "Cancellation.hpp"
+#include "Sleep.hpp"
 #include "Task.hpp"
 
 VN_ASYNC_NS_BEGIN
@@ -45,6 +46,9 @@ enum class WhenMode
  * results) are published before the child ticks the seq_cst counters below.
  * The final decrement synchronizes-with every earlier one, and
  * AsyncEvent::set() resumes the composition inline on the completer's thread.
+ * Cancellation is the one path that does not: its wake-up is posted to the timer thread, so
+ * the composition never unwinds inside the cancelling thread's stop_callback (see
+ * detail::deferWake).
  * The cancellation path never reads those payloads (it throws first), so no
  * data race exists.
  */
@@ -220,11 +224,14 @@ Task<void> whenRace(WhenMode mode, std::vector<AnyTask> tasks, CancellationToken
     state->mode      = mode;
     state->remaining = count;
 
-    // Wakes the composition on cancellation; flag-only, no coroutine resume race.
+    // Wakes the composition on cancellation; flag-only, no coroutine resume race. The wake-up
+    // is handed to the timer thread instead of being resumed here: this callback runs inside
+    // request_stop(), and the composition it would resume unwinds and destroys this very
+    // stop_callback while its own callback is still on the stack - the same-thread destruction
+    // the standard leaves undefined (see detail::deferWake).
     std::stop_callback cancellation{ token, [state]() noexcept {
-        auto s = state; // Thread-stack copy keeps the state alive through set().
-        s->cancelled = true;
-        s->done.set();
+        state->cancelled = true;
+        detail::deferWake(state);
     } };
 
     std::vector<WhenChild> children;
@@ -396,10 +403,10 @@ Task<std::tuple<Ts...>> whenAllImpl(CancellationToken token, Task<Ts>... tasks)
     state->mode      = detail::WhenMode::All;
     state->remaining = sizeof...(Ts);
 
+    // Cancellation is handed to the timer thread; see whenRace() for why.
     std::stop_callback cancellation{ token, [state]() noexcept {
-        auto s = state; // Thread-stack copy keeps the state alive through set().
-        s->cancelled = true;
-        s->done.set();
+        state->cancelled = true;
+        detail::deferWake(state);
     } };
 
     std::tuple<std::optional<Ts>...> results;
@@ -488,7 +495,18 @@ class WhenAnyChild
                     else
                     {
                         assert(p.result.has_value());
-                        state->result.emplace(std::move(p.result).value());
+                        // A result whose move constructor throws must not escape this noexcept
+                        // await_suspend: nothing here could catch it, so the process would
+                        // terminate. It becomes this child's failure instead, and the
+                        // composition rethrows it like any other.
+                        try
+                        {
+                            state->result.emplace(std::move(p.result).value());
+                        }
+                        catch (...)
+                        {
+                            state->exception = std::current_exception();
+                        }
                     }
                     state->done.set();
                 }
@@ -502,9 +520,17 @@ class WhenAnyChild
 
         FinalAwaiter final_suspend() noexcept { return {}; }
 
+        /// A value that cannot be moved into the frame is reported as this child's failure.
         void return_value(T value)
         {
-            result.emplace(std::move(value));
+            try
+            {
+                result.emplace(std::move(value));
+            }
+            catch (...)
+            {
+                exception = std::current_exception();
+            }
         }
 
         void unhandled_exception() noexcept { exception = std::current_exception(); }
@@ -692,10 +718,10 @@ Task<typename detail::VectorResult<T>::type> whenAll(std::vector<Task<T>> tasks,
     state->mode      = detail::WhenMode::All;
     state->remaining = count;
 
+    // Cancellation is handed to the timer thread; see whenRace() for why.
     std::stop_callback cancellation{ token, [state]() noexcept {
-        auto s = state; // Thread-stack copy keeps the state alive through set().
-        s->cancelled = true;
-        s->done.set();
+        state->cancelled = true;
+        detail::deferWake(state);
     } };
 
     std::vector<std::optional<T>> results(count);
@@ -760,10 +786,10 @@ Task<T> whenAny(std::vector<Task<T>> tasks, CancellationToken token = {})
 
     auto state = std::make_shared<detail::WhenAnyState<T>>();
 
+    // Cancellation is handed to the timer thread; see whenRace() for why.
     std::stop_callback cancellation{ token, [state]() noexcept {
-        auto s = state; // Thread-stack copy keeps the state alive through set().
-        s->cancelled = true;
-        s->done.set();
+        state->cancelled = true;
+        detail::deferWake(state);
     } };
 
     std::vector<detail::WhenAnyChild<T>> children;

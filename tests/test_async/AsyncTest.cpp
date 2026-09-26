@@ -797,9 +797,21 @@ async::Task<void> cvMakeAny(async::AsyncMutex& mutex,
     co_await async::whenAny(std::move(tasks));
 }
 
+/// Set by scopeChildThatReports() once its released child ran: proof that a cancelled join left it alive.
+std::atomic<bool> s_scopeChildFinished{ false };
+
+/**
+ * @brief Runs a whenAll that never finishes and records where its cancellation is observed.
+ *
+ * The probe is eager, so it is parked on the composition when the caller asks for stop; the
+ * cancellation therefore has to arrive from another thread, and the thread id records which
+ * one resumed it. cancelled_seen is published last, with release, so a reader that waits for
+ * it can read wake_thread without a race.
+ */
 async::DetachedTask cancellationProbe(std::vector<async::AnyTask> tasks,
                                       CancellationToken token,
-                                      bool& cancelled_seen)
+                                      std::atomic<bool>& cancelled_seen,
+                                      std::thread::id& wake_thread)
 {
     try
     {
@@ -807,7 +819,36 @@ async::DetachedTask cancellationProbe(std::vector<async::AnyTask> tasks,
     }
     catch (const async::TaskCancelledException&)
     {
-        cancelled_seen = true;
+        wake_thread = std::this_thread::get_id();
+        cancelled_seen.store(true, std::memory_order_release);
+    }
+}
+
+/** A scope child that reports itself once released, so a cancelled join can be shown to leave it running. */
+async::Task<void> scopeChildThatReports(async::AsyncEvent& release, std::atomic<bool>& finished)
+{
+    co_await release;
+    finished.store(true, std::memory_order_release);
+}
+
+/**
+ * @brief Joins a scope whose child is still running, recording where the cancellation is seen.
+ */
+async::DetachedTask scopeJoinProbe(async::AsyncEvent& release,
+                                   CancellationToken token,
+                                   std::atomic<bool>& cancelled_seen,
+                                   std::thread::id& wake_thread)
+{
+    async::Scope scope;
+    scope.add(scopeChildThatReports(release, s_scopeChildFinished));
+    try
+    {
+        co_await scope.join(token);
+    }
+    catch (const async::TaskCancelledException&)
+    {
+        wake_thread = std::this_thread::get_id();
+        cancelled_seen.store(true, std::memory_order_release);
     }
 }
 
@@ -1340,16 +1381,35 @@ TEST(TaskTest, WhenAllAlreadyCancelled)
 
 TEST(TaskTest, WhenAllCancellation)
 {
+    // Cancellation is observed on the timer thread, not inside request_stop(): the wake-up is
+    // posted there so the composition never unwinds inside the canceller's stop_callback
+    // (destroying a stop_callback from inside its own callback is the same-thread case the
+    // standard leaves undefined). This is also what std::stop_token promises: request_stop()
+    // returns once the callbacks have run, not once the cancelled work has finished.
     vn::CancellationSource source;
 
     std::vector<async::AnyTask> tasks;
     tasks.push_back(async::discard(never()));
 
-    bool cancelled_seen = false;
-    cancellationProbe(std::move(tasks), source.get_token(), cancelled_seen);
+    std::atomic<bool> cancelled_seen{ false };
+    std::thread::id   wake_thread{};
+    cancellationProbe(std::move(tasks), source.get_token(), cancelled_seen, wake_thread);
 
-    source.request_stop();
-    EXPECT_TRUE(cancelled_seen);
+    std::thread::id canceller_thread{};
+    std::thread     canceller([&] {
+        canceller_thread = std::this_thread::get_id();
+        source.request_stop();
+    });
+    canceller.join();
+
+    for (auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+         !cancelled_seen.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline;)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    EXPECT_TRUE(cancelled_seen.load());
+    EXPECT_NE(wake_thread, canceller_thread);
 }
 
 TEST(GeneratorTest, YieldsSequence)
@@ -1649,6 +1709,45 @@ TEST(ScopeTest, JoinRethrowsChildFailure)
     async::Scope scope;
     scope.add(failTask());
     EXPECT_THROW(scope.join().result(), std::runtime_error);
+}
+
+TEST(ScopeTest, JoinCancellationWakesOffTheCancellersStackAndLeavesTheChildRunning)
+{
+    // Cancelling a join() only stops the wait, and the child keeps running (documented). The
+    // wake-up itself must come from the timer thread: resuming join() inside request_stop()
+    // would destroy its stop_callback while that callback is still on the canceller's stack.
+    vn::CancellationSource source;
+    async::AsyncEvent      release;
+    s_scopeChildFinished.store(false, std::memory_order_release);
+
+    std::atomic<bool> cancelled_seen{ false };
+    std::thread::id   wake_thread{};
+    scopeJoinProbe(release, source.get_token(), cancelled_seen, wake_thread);
+
+    std::thread::id canceller_thread{};
+    std::thread     canceller([&] {
+        canceller_thread = std::this_thread::get_id();
+        source.request_stop();
+    });
+    canceller.join();
+
+    for (auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+         !cancelled_seen.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline;)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_TRUE(cancelled_seen.load());
+    EXPECT_NE(wake_thread, canceller_thread);
+
+    // The cancelled join did not destroy the child: releasing it still runs its body.
+    release.set();
+    for (auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+         !s_scopeChildFinished.load(std::memory_order_acquire)
+         && std::chrono::steady_clock::now() < deadline;)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_TRUE(s_scopeChildFinished.load());
 }
 
 TEST(ScopeTest, RunsChildrenOnPool)
@@ -2718,7 +2817,8 @@ TEST(AsyncDefectRegressionTest, FinishedGeneratorReleasesItsFrame)
     }
     {
         auto throwing = genThrowBeforeYield();
-        EXPECT_THROW(throwing.begin(), std::runtime_error);
+        // begin() is [[nodiscard]]; the throw is the point here, not the iterator it would return.
+        EXPECT_THROW(static_cast<void>(throwing.begin()), std::runtime_error);
     }
 }
 
@@ -3048,4 +3148,185 @@ TEST(SleepTimerTest, AbandonedSleepIsDroppedWithoutResuming)
 
     std::this_thread::sleep_for(std::chrono::milliseconds(120)); // past its deadline
     EXPECT_FALSE(abandoned_ran.load());
+}
+
+// ---------------------------------------------------------------------------
+// Composition and queue contracts that used to be promises the code could not
+// keep: a result that cannot be moved into a composition's state, and a queue
+// whose capacity was only checked before the enqueue.
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Result type whose move constructor throws on a chosen attempt.
+ *
+ * Two moves stand between a child's co_return and the composition's state: the promise stores
+ * the value (move 1), then the final awaiter moves it into the composition (move 2). Letting
+ * either throw is legal - the value type only has to be movable - and both must surface as the
+ * task's error. Escaping an await_suspend that is noexcept would terminate the process instead,
+ * which is what the tests below catch.
+ */
+struct ThrowingMove
+{
+    /// Which move attempt throws; 0 means none.
+    inline static int s_throw_on{ 0 };
+
+    /// Move attempts so far; reset by the tests.
+    inline static int s_moves{ 0 };
+
+    ThrowingMove() = default;
+    ThrowingMove(const ThrowingMove&) = delete;
+    ThrowingMove& operator=(const ThrowingMove&) = delete;
+    ThrowingMove& operator=(ThrowingMove&&) = delete;
+
+    ThrowingMove(ThrowingMove&&)
+    {
+        if (++s_moves == s_throw_on)
+        {
+            throw std::runtime_error("throwing move");
+        }
+    }
+};
+
+async::Task<ThrowingMove> throwingMoveTask()
+{
+    co_return ThrowingMove{};
+}
+
+/// Pushes one value and counts the pushes that completed; the count is what a bound is visible in.
+async::Task<void> pushAndCount(async::AsyncQueue<int>& queue, int value, std::atomic<int>& completed)
+{
+    co_await queue.push(value);
+    completed.fetch_add(1, std::memory_order_release);
+}
+
+/// Waiter container whose registration always fails, so the no-throw path can be exercised.
+struct FailingWaiters
+{
+    void push_back(std::coroutine_handle<>)
+    {
+        throw std::bad_alloc{};
+    }
+};
+
+/// Awaiter whose await_suspend result is none of the three forms the language allows.
+struct IllegalSuspendResult
+{
+    bool await_ready() const noexcept { return false; }
+    int  await_suspend(std::coroutine_handle<>) const noexcept { return 0; }
+    void await_resume() const noexcept {}
+};
+
+/// Type that is not awaitable at all.
+struct NotAwaitable
+{};
+
+// The Awaitable concept accepts what co_await accepts - including the module's own awaitables,
+// which are reachable only through operator co_await - and rejects what the compiler would
+// refuse. Both sides are pinned here because a concept that says yes to everything is worthless.
+static_assert(async::Awaitable<async::Task<int>>);
+static_assert(async::Awaitable<async::Task<void>>);
+static_assert(async::Awaitable<async::SharedTask<int>>);
+static_assert(async::Awaitable<async::AsyncEvent&>);
+static_assert(async::Awaitable<async::detail::QueuePopAwaiter<int>>);
+static_assert(!async::Awaitable<IllegalSuspendResult>);
+static_assert(!async::Awaitable<NotAwaitable>);
+static_assert(!async::Awaitable<int>);
+static_assert(!async::Awaitable<void>);
+
+TEST(AsyncDetailTest, AThrowingWaiterListIsReportedInsteadOfEscaping)
+{
+    // The waiter lists are std::vectors, so registering a waiter allocates inside await_suspend,
+    // which the awaiters declare noexcept: a thrown bad_alloc there would terminate the process,
+    // and letting it escape would leave the coroutine suspended with nothing holding it. The
+    // failure is captured and rethrown from await_resume() instead - on the coroutine's own
+    // stack, where unhandled_exception() turns it into the task's error.
+    FailingWaiters      waiters;
+    std::exception_ptr  failure{};
+
+    EXPECT_FALSE(async::detail::tryRegisterWaiter(waiters, std::coroutine_handle<>{}, failure));
+    ASSERT_NE(failure, nullptr);
+    EXPECT_THROW(std::rethrow_exception(failure), std::bad_alloc);
+}
+
+TEST(WhenAnyTest, AValueThatCannotBeMovedBecomesTheCompositionsError)
+{
+    // A result type only has to be movable, and its move constructor may throw - including on the
+    // moves the library performs itself, inside the child's promise and inside the composition's
+    // state. Both of those stores sit in noexcept code, so a throw that escaped would terminate
+    // the process. Every move of the chain is tried in turn: each has to reach the caller as this
+    // task's error. Only runtime_error is caught, so any other outcome - including a terminate -
+    // fails the test.
+    bool any_threw = false;
+    for (int move = 1; move <= 8; ++move)
+    {
+        ThrowingMove::s_moves    = 0;
+        ThrowingMove::s_throw_on = move;
+
+        std::vector<async::Task<ThrowingMove>> tasks;
+        tasks.push_back(throwingMoveTask());
+        try
+        {
+            static_cast<void>(async::whenAny(std::move(tasks)).result());
+        }
+        catch (const std::runtime_error&)
+        {
+            any_threw = true; // the move failure came out as the task's error
+        }
+    }
+    ThrowingMove::s_throw_on = 0;
+
+    EXPECT_TRUE(any_threw);
+}
+
+TEST(AsyncQueueTest, ABoundedPushClaimsItsSlotInsideTheEnqueue)
+{
+    // The bound is only real when the room is claimed in the same critical section that enqueues.
+    // A bounded awaiter therefore may not report "ready": that would enqueue from await_resume(),
+    // after the lock had been released, and two pushers could both claim the same free slot. An
+    // unbounded queue has no bound to keep, so it stays inline.
+    auto bounded    = std::make_shared<async::detail::AsyncQueueState<int>>();
+    bounded->capacity = 1;
+    async::detail::QueuePushAwaiter<int> bounded_push(bounded, 1);
+    EXPECT_FALSE(bounded_push.await_ready());
+
+    auto unbounded = std::make_shared<async::detail::AsyncQueueState<int>>();
+    async::detail::QueuePushAwaiter<int> unbounded_push(unbounded, 2);
+    EXPECT_TRUE(unbounded_push.await_ready());
+}
+
+TEST(AsyncQueueTest, ABoundedQueueNeverHoldsMoreThanItsCapacity)
+{
+    // capacity == 1 with no consumer: exactly one of four concurrent pushes may complete, and it
+    // has to hold for every interleaving. The room is claimed under the same lock that enqueues,
+    // so a second pusher cannot slip into a slot that was free when it looked - which is what
+    // the check-then-enqueue shape let happen.
+    for (int attempt = 0; attempt < 20; ++attempt)
+    {
+        async::AsyncQueue<int> queue(1);
+        std::atomic<int>       completed{ 0 };
+
+        std::vector<std::thread> pushers;
+        for (int i = 0; i < 4; ++i)
+        {
+            pushers.emplace_back([&queue, i, &completed] {
+                auto push = pushAndCount(queue, i, completed);
+                push.result(); // blocks until this push has been enqueued
+            });
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const int settled = completed.load(std::memory_order_acquire);
+
+        // Free every slot so the parked pushers finish and the threads can join.
+        for (int i = 0; i < 4; ++i)
+        {
+            static_cast<void>(queue.pop().result());
+        }
+        for (auto& pusher : pushers)
+        {
+            pusher.join();
+        }
+
+        EXPECT_EQ(settled, 1) << "attempt " << attempt << ": a bounded queue of capacity 1 "
+                                 "accepted more than one push with no consumer";
+    }
 }

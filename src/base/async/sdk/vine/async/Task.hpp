@@ -21,10 +21,15 @@ VN_ASYNC_NS_BEGIN
  * The result type must be storable (see StorableValue): references, arrays and
  * function types are rejected here rather than inside std::optional.
  *
+ * The type itself is [[nodiscard]]: calling a coroutine that returns a Task only builds the frame,
+ * so discarding the result means the body never runs at all - a silent no-op that a warning at
+ * the call site is the only way to show. (DetachedTask, which starts eagerly, is discardable on
+ * purpose.)
+ *
  * @tparam T Result type of the asynchronous operation; void for no result.
  */
 template<StorableValue T>
-class Task;
+class [[nodiscard]] Task;
 
 namespace detail {
 
@@ -252,7 +257,7 @@ WaitTask<T> makeWaitTask(Task<T>&& task)
  * @tparam T Result type of the asynchronous operation; void for no result.
  */
 template<StorableValue T>
-class Task
+class [[nodiscard]] Task
 {
   public:
     /**

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "Task.hpp"
+#include "WaiterList.hpp"
 
 VN_ASYNC_NS_BEGIN
 
@@ -63,7 +64,7 @@ class TcsAwaiter
     TcsAwaiter(const TcsAwaiter&) = delete;
     TcsAwaiter& operator=(const TcsAwaiter&) = delete;
 
-    ~TcsAwaiter()
+    ~TcsAwaiter() noexcept
     {
         if (handle_)
         {
@@ -97,8 +98,7 @@ class TcsAwaiter
         {
             return false; // Already completed; do not suspend.
         }
-        state_->waiters.push_back(h);
-        return true;
+        return detail::tryRegisterWaiter(state_->waiters, h, failure_);
     }
 
     /**
@@ -108,6 +108,10 @@ class TcsAwaiter
      */
     decltype(auto) await_resume()
     {
+        if (failure_)
+        {
+            std::rethrow_exception(std::exchange(failure_, nullptr));
+        }
         if (state_->exception)
         {
             std::rethrow_exception(state_->exception);
@@ -121,6 +125,9 @@ class TcsAwaiter
   private:
     std::shared_ptr<TcsState<T>> state_;
     std::coroutine_handle<> handle_{};
+
+    /// Why the waiter could not be registered; rethrown by await_resume().
+    std::exception_ptr failure_{};
 };
 
 /**
@@ -167,6 +174,10 @@ inline void resumeWaitersOneByOne(const std::shared_ptr<TcsState<T>>& state) noe
  * either a std::exception_ptr or any exception object.
  *
  * @tparam T Result type; void for a result-less source.
+  *
+ * Threading: the internal state is mutex-guarded, so a completion may arrive from any thread - a
+ * callback, an event handler, a worker - and concurrent awaits are supported. Waiters are
+ * resumed on the thread that completes the source, and the source must outlive them.
  */
 template<typename T>
 class TaskCompletionSource
@@ -214,6 +225,7 @@ class TaskCompletionSource
      * @param value Result delivered to every awaiting task.
      * @return true if this call completed the source.
      */
+[[nodiscard]]
     bool trySetResult(T value)
     {
         {
@@ -270,6 +282,7 @@ class TaskCompletionSource
      * @param exception Exception to rethrow from every awaiting task.
      * @return true if this call completed the source.
      */
+[[nodiscard]]
     bool trySetException(std::exception_ptr exception)
     {
         if (!exception)
@@ -297,6 +310,7 @@ class TaskCompletionSource
      * @return true if this call completed the source.
      */
     template<typename E>
+[[nodiscard]]
     bool trySetException(const E& exception)
     {
         return trySetException(std::make_exception_ptr(exception));
@@ -373,6 +387,7 @@ class TaskCompletionSource<void>
      *
      * @return true if this call completed the source.
      */
+[[nodiscard]]
     bool trySetResult()
     {
         {
@@ -428,6 +443,7 @@ class TaskCompletionSource<void>
      * @param exception Exception to rethrow from every awaiting task.
      * @return true if this call completed the source.
      */
+[[nodiscard]]
     bool trySetException(std::exception_ptr exception)
     {
         if (!exception)
@@ -455,6 +471,7 @@ class TaskCompletionSource<void>
      * @return true if this call completed the source.
      */
     template<typename E>
+[[nodiscard]]
     bool trySetException(const E& exception)
     {
         return trySetException(std::make_exception_ptr(exception));
