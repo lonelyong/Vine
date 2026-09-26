@@ -39,6 +39,8 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <set>
@@ -3985,12 +3987,14 @@ TEST(FpsOverlayTest, TheReadoutIsASingleCommandAndBlankUntilItHasAValue)
     // dark three-eights behind the number).
     EXPECT_TRUE(commandsOf(overlay->content()->root(), camera).empty());
 
-    // Two executes: the first only arms the clock (a frame rate needs two samples), the second measures
-    // dt and writes the value. The throttle it must also pass is 0.15 s, which the sleep covers, and
-    // which value comes out of a wall-clock measurement is not what this asks -- only that a value did.
+    // Two executes: the first only arms the clock (a frame rate needs two samples), the second feeds the
+    // delta to the sampler. A figure is published only when a sampling WINDOW closes (0.5 s by default), so
+    // the test shortens the window instead of sleeping half a second; which value comes out of a wall-clock
+    // measurement is not what this asks -- only that a value did.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    overlay->sampler().window_seconds = 0.05;
     overlay->execute(nullptr, backend.get());
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
     overlay->execute(nullptr, backend.get());
 
     const auto commands = commandsOf(overlay->content()->root(), camera);
@@ -3999,6 +4003,127 @@ TEST(FpsOverlayTest, TheReadoutIsASingleCommandAndBlankUntilItHasAValue)
     // carry area, never how many exist -- which is what lets the backend serve it as one in-place
     // stream refresh instead of a geometry rebuild.
     EXPECT_EQ(commands[0].geometry->vertexCount(), 21u * 24u);
+}
+
+TEST(FpsOverlayTest, TheFigureAveragesFramesOverWallTimeAndPublishesAtAboutTwoHertz)
+{
+    // WHAT THE READOUT MEASURES: frames counted over one window of wall time, published when that window
+    // closes. A constant frame time makes the figure exactly 1/dt (frames and elapsed are counted from the
+    // same deltas), and ten seconds of 60 fps is twenty figures - not the ~67 the old 0.15 s repaint
+    // produced.
+    FpsOverlay::Sampler sampler;
+    int                publishes = 0;
+    for (int frame = 0; frame < 600; ++frame) {
+        if (sampler.addFrame(1.0 / 60.0)) {
+            ++publishes;
+            EXPECT_DOUBLE_EQ(sampler.fps(), 60.0);
+        }
+    }
+    EXPECT_GE(publishes, 19);
+    EXPECT_LE(publishes, 21);
+
+    // A clock that did not move is not a frame: it must not even feed the window.
+    FpsOverlay::Sampler still;
+    EXPECT_FALSE(still.addFrame(0.0));
+    EXPECT_DOUBLE_EQ(still.fps(), 0.0);
+}
+
+TEST(FpsOverlayTest, TheFigureIsExactlyWhatItsWindowAveraged)
+{
+    // THE CONTRACT: every published figure IS the average of the interval it covers - frames counted over
+    // wall time, with nothing blended in. The readout exists to say what the loop really did, so a figure
+    // that no interval ever had is a defect however steady it looks (the old per-frame EMA of 1/dt printed
+    // 40 and 33 on a real 60 -> 30 step). This recomputes each window's true average from the same deltas
+    // and demands the sampler publish exactly that, on a drag-shaped stream.
+    FpsOverlay::Sampler sampler;
+    std::uint32_t       state     = 12345u;  // an LCG, so the test says which stream it feeds
+    int                 in_window = 0;
+    double              elapsed   = 0.0;
+    int                 publishes = 0;
+    for (int frame = 0; frame < 600; ++frame) {
+        state                = state * 1664525u + 1013904223u;
+        const double roll    = static_cast<double>((state >> 8) & 0xFFFFu) / 65536.0;
+        const double stretch = (roll < 0.75) ? 1.0 : ((roll < 0.95) ? 1.5 : 2.5);
+        const double dt      = (1.0 / 60.0) * stretch;
+        ++in_window;
+        elapsed += dt;
+        if (!sampler.addFrame(dt)) {
+            continue;
+        }
+        ++publishes;
+        EXPECT_DOUBLE_EQ(sampler.fps(), static_cast<double>(in_window) / elapsed)
+            << "the figure is the window's own average, not a filtered version of it";
+        in_window = 0;
+        elapsed   = 0.0;
+    }
+    EXPECT_GE(publishes, 20);  // ~two a second over ~12 s of stream
+    EXPECT_LE(publishes, 26);
+}
+
+TEST(FpsOverlayTest, ARealChangeIsShownWithinOneWindowAndOnlyOneWindowMixesTwoRates)
+{
+    // A sustained change must not be smeared into values that never happened: 3 s at 60 fps then 3 s at
+    // 30 fps publishes the 60s, ONE window that really was part 60 and part 30 (its exact average), then
+    // the 30s - where the old EMA printed 40, 33, 31 before it settled.
+    FpsOverlay::Sampler sampler;
+    std::vector<double> figures;
+    for (int i = 0; i < 180; ++i) {
+        if (sampler.addFrame(1.0 / 60.0)) {
+            figures.push_back(sampler.fps());
+        }
+    }
+    for (int i = 0; i < 90; ++i) {
+        if (sampler.addFrame(1.0 / 30.0)) {
+            figures.push_back(sampler.fps());
+        }
+    }
+    ASSERT_GT(figures.size(), 8u);
+
+    int  mixed    = 0;
+    int  first_30 = -1;
+    int  last_60  = -1;
+    for (std::size_t i = 0; i < figures.size(); ++i) {
+        const double figure = figures[i];
+        if (figure > 30.0 + 1e-9 && figure < 60.0 - 1e-9) {
+            ++mixed;
+            continue;
+        }
+        EXPECT_TRUE(std::abs(figure - 60.0) < 1e-9 || std::abs(figure - 30.0) < 1e-9)
+            << "a figure is either a rate the stream really held, or the exact mix of the one window that "
+               "straddled the change - never anything else (figure: "
+            << figure << ")";
+        if (figure < 31.0) {
+            if (first_30 < 0) {
+                first_30 = static_cast<int>(i);
+            }
+        } else {
+            last_60 = static_cast<int>(i);
+        }
+    }
+    EXPECT_EQ(mixed, 1) << "only the window that straddles the change may mix the two rates";
+    EXPECT_DOUBLE_EQ(figures.front(), 60.0);
+    EXPECT_DOUBLE_EQ(figures.back(), 30.0);
+    EXPECT_GE(last_60, 3) << "60 fps really held for 3 s: several windows must say so";
+    EXPECT_LE(first_30, last_60 + 2) << "the change is shown within about one window of happening";
+}
+
+TEST(FpsOverlayTest, AStallIsReportedAtItsTrueCostNotHidden)
+{
+    // A 50 ms frame inside an otherwise 60 fps window is a real cost - that half-second really averaged
+    // 56.25 - and the readout's job is to say so rather than hide it behind the neighbouring 60s.
+    FpsOverlay::Sampler sampler;
+    for (int i = 0; i < 29; ++i) {
+        sampler.addFrame(1.0 / 60.0);
+    }
+    ASSERT_TRUE(sampler.addFrame(0.050)) << "30 frames over 29/60 + 0.05 s is one full window";
+    EXPECT_NEAR(sampler.fps(), 30.0 / (29.0 / 60.0 + 0.050), 1e-9);
+    EXPECT_NEAR(sampler.fps(), 56.25, 1e-9);
+
+    // And the next window is 60 again: the stall is not smeared forward either.
+    for (int i = 0; i < 31; ++i) {
+        sampler.addFrame(1.0 / 60.0);
+    }
+    EXPECT_NEAR(sampler.fps(), 60.0, 1e-9);
 }
 
 TEST(CameraMirrorTest, OrientationKeepsFraming)

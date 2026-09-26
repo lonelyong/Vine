@@ -24,9 +24,30 @@ class Scene;
  * FpsOverlay is a self-contained HUD pass (like AxisGizmo): it owns a content
  * scene holding a 3-digit seven-segment display built from thin bars, rendered
  * into a sub-viewport anchored to the BOTTOM-RIGHT corner of the surface
- * (device pixels). Each execute() it measures the actual render-loop frame
- * rate (steady clock), EMA-smooths it and, at a throttled cadence, writes the
- * value into the row of bars.
+ * (device pixels). Each execute() it feeds the wall-clock frame delta to its
+ * @ref Sampler, which counts FRAMES over a window of wall time (default
+ * 0.5 s) and publishes a figure about twice a second; a new figure rewrites
+ * the row of bars.
+ *
+ * WHY THE FIGURE IS A WINDOW AVERAGE, AND NOTHING IS BLENDED INTO IT. The first version smoothed the
+ * instantaneous rate 1/dt with a per-frame EMA (weight 0.2) and repainted every 0.15 s. That reports a
+ * quantity no interval ever had, and both halves of it are wrong for a readout whose whole job is to say
+ * what the loop really did:
+ *
+ *   * 1/dt is one frame's sample, not a rate, and the EMA's time constant is 1/(0.2 * fps) - about 83 ms
+ *     at 60 fps and 25 ms at 200 fps, i.e. it depends on the very number it displays;
+ *   * measured on a real step (60 fps for 3 s, then 30 for 3 s) it printed 60, 60, **40, 33**, 31, 30 -
+ *     values that never happened - while the window average prints 60, 60, 60, 60, 60, **54**, 30, 30: the
+ *     one straddling window shows the true average of a half-second that really was part 60 and part 30,
+ *     and nothing else is invented;
+ *   * measured on a drag-shaped stream (60 fps nominal, a quarter of the frames 1.5-2.5x slow) it changed
+ *     75 times in 10 s with single steps up to 17 fps - jumping faster than a rate can meaningfully change.
+ *
+ * So the figure IS the last window's exact average (frames / elapsed over 0.5 s by default, about two
+ * figures a second): every published number is the truth about its own interval, a real change appears
+ * within one window, and a 50 ms stall inside a 60 fps window is reported at its true cost (30 frames over
+ * 0.533 s = 56.25), not hidden. window_seconds IS the sampling interval and the only trade-off a host can
+ * tune: a longer window estimates more steadily but takes longer to reflect a real change.
  *
  * The row is ONE geometry with ONE material, so the whole readout is one draw — the shape a HUD has
  * everywhere else. Seven bars per digit as seven nodes with seven materials was 7 to 21 draw commands
@@ -93,6 +114,45 @@ class VN_GRAPHICS_API FpsOverlay : public RenderPass {
     /** @brief Gets the content scene drawn by the overlay. */
     raw_ptr<Scene> content() const;
 
+    /** @brief Turns a stream of frame deltas into the figure the readout shows.
+     *
+     * Frames are COUNTED over one window of wall time (window_seconds) and the figure published when the
+     * window closes is frames / elapsed - the exact average of that interval, with nothing blended into it
+     * (see the class note: a blend would print values no interval ever had and lag real changes). At the
+     * default 0.5 s a human gets about two figures a second, and the caller only repaints when the ROUNDED
+     * value changes, so a steady frame rate costs no data work at all.
+     */
+    struct Sampler
+    {
+        /** @brief Seconds one published figure averages over: the sampling interval (must be > 0).
+         *
+         * The only trade-off there is: a longer window estimates more steadily and takes longer to reflect
+         * a real change; a shorter one is the reverse. Every figure is the truth about its own window.
+         */
+        double window_seconds{ 0.5 };
+
+        /** @brief Adds one frame's wall time; true when a window closed and a figure is ready. */
+        bool addFrame(double dt_seconds) noexcept;
+
+        /** @brief Gets the figure published last, in frames per second (0 before the first window closes). */
+        [[nodiscard]] double fps() const noexcept;
+
+      private:
+        double        elapsed_seconds_{ 0.0 };
+        std::uint32_t frames_{ 0 };
+        double        published_{ 0.0 };
+    };
+
+    /** @brief Gets the readout's measurement policy (the sampling interval).
+     *
+     * Exposed because that number IS the readout's behaviour: a host can make it steadier (a longer window)
+     * or quicker to follow a change (a shorter one), and a test can drive the sampling with no scene at all.
+     */
+    [[nodiscard]] Sampler& sampler() noexcept;
+
+    /** @brief Gets the readout's measurement policy (see the non-const overload). */
+    [[nodiscard]] const Sampler& sampler() const noexcept;
+
     /** @brief Re-anchors the overlay viewport to the bottom-right corner for a
      * new surface size.
      *
@@ -124,7 +184,7 @@ class VN_GRAPHICS_API FpsOverlay : public RenderPass {
     /** @brief Rebuilds the seven-segment content scene. */
     void rebuild();
 
-    /** @brief Updates the displayed value from the smoothed frame rate.
+    /** @brief Feeds one frame delta to the sampler and repaints the row when a window closes.
      *
      * Writes the shown digits into the row of bars (see writePattern) and does nothing while the value
      * does not change, so a steady frame rate costs no data work at all.
@@ -163,11 +223,10 @@ class VN_GRAPHICS_API FpsOverlay : public RenderPass {
     int    surface_w_ = 0;
     int    surface_h_ = 0;
 
-    // Frame-rate smoothing / readout throttle state.
+    // The frame clock the sampler is fed from, the sampler itself, and the value the row currently shows.
     std::chrono::steady_clock::time_point last_tick_{};
-    double fps_smoothed_ = 0.0;
-    double readout_elapsed_ = 0.0;
-    int    shown_value_ = -1;
+    Sampler                               sampler_{};
+    int                                   shown_value_ = -1;
 };
 
 using FpsOverlayPtr = intrusive_ptr<FpsOverlay>;

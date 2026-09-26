@@ -135,6 +135,40 @@ raw_ptr<Scene> FpsOverlay::content() const
     return content_.get();
 }
 
+FpsOverlay::Sampler& FpsOverlay::sampler() noexcept
+{
+    return sampler_;
+}
+
+const FpsOverlay::Sampler& FpsOverlay::sampler() const noexcept
+{
+    return sampler_;
+}
+
+bool FpsOverlay::Sampler::addFrame(double dt_seconds) noexcept
+{
+    if (!(dt_seconds > 0.0)) {
+        return false;  // a clock that did not move is not a frame, and feeding it would only add time
+    }
+    ++frames_;
+    elapsed_seconds_ += dt_seconds;
+    if (elapsed_seconds_ < window_seconds) {
+        return false;
+    }
+
+    // frames / elapsed IS what the window averaged, and this is what gets published: no 1/dt of one frame
+    // in it, no blending that would print a value no interval ever had (see the class note).
+    published_       = static_cast<double>(frames_) / elapsed_seconds_;
+    frames_          = 0;
+    elapsed_seconds_ = 0.0;
+    return true;
+}
+
+double FpsOverlay::Sampler::fps() const noexcept
+{
+    return published_;
+}
+
 void FpsOverlay::onSurfaceResized(int width, int height)
 {
     surface_w_ = width;
@@ -191,20 +225,14 @@ void FpsOverlay::execute(raw_ptr<Scene> /*scene*/, raw_ptr<RenderBackend> backen
 
 void FpsOverlay::updateReadout(double dt)
 {
-    // EMA smoothing of the instantaneous frame rate.
-    const double inst = (dt > 1e-6) ? (1.0 / dt) : 0.0;
-    fps_smoothed_ = (fps_smoothed_ <= 0.0) ? inst : 0.2 * inst + 0.8 * fps_smoothed_;
-
-    // Throttle the readout changes (~ every 0.15 s); acting only on change keeps the cost quiet in
-    // steady state: a change rewrites ONE geometry's positions and announces it (see writePattern), and a
-    // value that does not change costs nothing at all.
-    readout_elapsed_ += dt;
-    if (readout_elapsed_ < 0.15) {
+    // The window IS the readout's cadence (see Sampler): a figure is published when one closes, and on a
+    // value that does not change nothing happens at all - a change rewrites ONE geometry's positions and
+    // announces it (see writePattern), so a steady frame rate costs no data work.
+    if (!sampler_.addFrame(dt)) {
         return;
     }
-    readout_elapsed_ = 0.0;
 
-    int value = static_cast<int>(fps_smoothed_ + 0.5);
+    int value = static_cast<int>(sampler_.fps() + 0.5);
     if (value > 999) {
         value = 999;
     }
