@@ -16,6 +16,7 @@
 #include <vine/appfw/StartupProgress.hpp>
 #include <vine/appfw/plugin_export.hpp>
 
+#include <vine/async/StopToken.hpp>
 #include <vine/async/ThreadPoolScheduler.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -75,6 +76,13 @@ vn::async::Task<void> HeadlessBootPlugin::load(PluginLoadContext* context)
         }
         config->setBool(u8"plugins.headless_boot.saw_token",
                         context != nullptr && context->stopToken().stop_requested());
+
+        // 同一个令牌还必须从这个口看得到：框架把启动 token 当成钩子的**环境**交进来
+        // （async::withStopToken()），钩子用 `co_await currentStopToken()` 就地读。没有这条接线时读到的是
+        // **空**令牌（stop_possible() 为 false），所以用例分得出"接线断了"与"令牌没被取消"。
+        const std::stop_token environment = co_await vn::async::currentStopToken();
+        config->setBool(u8"plugins.headless_boot.saw_environment", environment.stop_possible());
+        config->setBool(u8"plugins.headless_boot.environment_sees_stop", environment.stop_requested());
     }
 
     // 模式：与界面无关的活丢到池上，回来时回应用线程再继续。池上那一段里循环空着，谁也占不到它。

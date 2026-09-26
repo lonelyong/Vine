@@ -370,6 +370,10 @@ TEST(HeadlessBootTest, ACancelledBootEndsCleanlyWithoutFinishingTheBoot)
         << "取消时已经装上的插件必须卸掉（插件在 load() 里建的东西不能留在进程里）";
     EXPECT_TRUE(app->configManager()->getBool(u8"plugins.headless_boot.saw_token", false))
         << "插件必须能从这个口看到这次启动的 token（PluginLoadContext::stopToken()），而不是去摸全局上报口";
+    EXPECT_TRUE(app->configManager()->getBool(u8"plugins.headless_boot.saw_environment", false))
+        << "框架要把启动 token 当**环境**交给钩子（async::withStopToken），钩子才可能用 currentStopToken() 读到它";
+    EXPECT_TRUE(app->configManager()->getBool(u8"plugins.headless_boot.environment_sees_stop", false))
+        << "环境里的令牌必须就是被取消的那一个，而不是一个碰巧存在的空令牌";
 }
 
 /// 叶子自己的启动拍可以异步：`co_await` 一个定时器，启动照常往前走。

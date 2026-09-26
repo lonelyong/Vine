@@ -25,6 +25,7 @@
 #include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/StartupProgress.hpp>
+#include <vine/async/StopToken.hpp>
 #include <vine/logging/Log.hpp>
 #include <vine/runtime/DynamicLibraryLoader.hpp>
 
@@ -958,9 +959,14 @@ Plugin* PluginManager::load(const String& name_or_path)
             // heavy half on the pool still loads here. This door does not turn the event loop otherwise - loadAllAsync()
             // is the one the boot uses.
             PluginLoadContext context(app, info->name);
-            static_cast<void>(MainThreadDispatcher::runToCompletion(plugin->preLoad(&context)));
-            static_cast<void>(MainThreadDispatcher::runToCompletion(plugin->load(&context)));
-            static_cast<void>(MainThreadDispatcher::runToCompletion(plugin->postLoad(&context)));
+            // 每个钩子都跑在**这次启动的环境**里：钩子用 `co_await async::currentStopToken()` 就地拿到同一个
+            // 停止令牌，不必由框架当参数传、也不必去摸全局上报口。环境里放的就是上下文里那一个。
+            static_cast<void>(MainThreadDispatcher::runToCompletion(
+                async::withStopToken(context.stopToken(), plugin->preLoad(&context))));
+            static_cast<void>(MainThreadDispatcher::runToCompletion(
+                async::withStopToken(context.stopToken(), plugin->load(&context))));
+            static_cast<void>(MainThreadDispatcher::runToCompletion(
+                async::withStopToken(context.stopToken(), plugin->postLoad(&context))));
         }
     }
     catch (const std::exception& e) {
@@ -1329,7 +1335,9 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
     for (const auto& lp : created) {
         RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
         PluginLoadContext      context(Application::current(), lp.name);
-        co_await lp.plugin->preLoad(&context);
+        // 钩子的环境就是这次启动的令牌（见下面三拍）：`co_await currentStopToken()` 读到的与
+        // `context.stopToken()` 是同一个。
+        co_await async::withStopToken(context.stopToken(), lp.plugin->preLoad(&context));
     }
 
     std::size_t loaded_units = 0;  // plugins whose load() has returned: one unit of the progress each
@@ -1343,7 +1351,7 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
             VN_LOGI("the plugin load was cancelled; '{}' and the plugins after it are not loaded", toUtf8(lp.name));
             co_return false;
         }
-        co_await lp.plugin->load(&context);
+        co_await async::withStopToken(context.stopToken(), lp.plugin->load(&context));
         if (startup != nullptr) {
             ++loaded_units;
             startup->setDone(static_cast<double>(loaded_units));
@@ -1356,7 +1364,7 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
         if (startup != nullptr) {
             startup->setLabel(String::fromUtf8("正在收尾插件 " + toUtf8(lp.name)));
         }
-        co_await lp.plugin->postLoad(&context);
+        co_await async::withStopToken(context.stopToken(), lp.plugin->postLoad(&context));
     }
     co_return true;
 }

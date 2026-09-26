@@ -207,6 +207,11 @@ Scope 给孩子令牌且离开时请求停止（`ChildrenRunInTheScopesEnvironme
 **变异（实测）**：`TaskEnvironment::setToken` 变空操作 ⇒ 注入那两条红；`~Scope()` 去掉 `request_stop()` ⇒
 Scope 那条红、`detach` 那条仍绿。恢复后 150/150 绿。
 
-**尚未接线**：appfw 还没有任何调用点用 `withStopToken`（例如把 `PluginLoadContext::stopToken()` 交给插件钩子
-返回的 Task），所以本阶对产品行为**零影响**；接线本身是一个独立的小改动（框架侧一句），接线后插件 body 里的
-`co_await currentStopToken()` 才会看到启动取消。
+**接线已落地（2026-09-26，同轮）**：`PluginManager` 不再裸等钩子，而是把启动令牌当环境交进去 —— 同步门
+（`runToCompletion(async::withStopToken(context.stopToken(), plugin->hook(&context)))`）与启动门
+（`co_await async::withStopToken(context.stopToken(), lp.plugin->hook(&context))`）各三拍，共 6 处。
+于是插件 body 里的 `co_await currentStopToken()` 就是这次启动的取消令牌。
+钉子：夹具插件的 `load()` 在既有的"这一拍请求取消"分支里多记两个键（`saw_environment` / `environment_sees_stop`），
+`HeadlessBootTest.ACancelledBootEndsCleanlyWithoutFinishingTheBoot` 断言两者为真 —— 空令牌的 `stop_possible()`
+是 false，所以"接线断了"与"令牌没被取消"分得开。变异：把 `load()` 那一处的 `withStopToken` 去掉 ⇒ 该用例红
+（两条断言同时失败），恢复 ⇒ 绿。
