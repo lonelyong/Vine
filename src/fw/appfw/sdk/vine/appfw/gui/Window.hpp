@@ -52,6 +52,22 @@ class VN_APPFW_API Window : public Control {
     /// Whether the window is active.
     bool isActive() const;
 
+    /**
+     * @brief Returns whether the window has painted at least once.
+     *
+     * A window that is up is not a window that has painted: painting it waits for the window system's "it is visible
+     * now" notice, which arrives through the event queue, and a boot does not run it (it repaints and reports its
+     * progress directly). A window shown during one is therefore an empty window on screen - black under X11,
+     * transparent for a translucent frame - until the queue has been dispatched; measured under WSLg, both of the
+     * framework's startup windows spent their whole boot that way.
+     *
+     * The paint of the window itself and the paint of anything inside it both count: which of them comes first is the
+     * layout's business, and a window whose area is covered by opaque children paints none of it itself.
+     *
+     * @return true once the window has painted, false while it has not.
+     */
+    bool hasPainted() const noexcept;
+
   protected:
     // Derived classes pass their own data block, deriving from WindowData (see the private
     // WindowData.hpp), so the data hierarchy mirrors the widget hierarchy.

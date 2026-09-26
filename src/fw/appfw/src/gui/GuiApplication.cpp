@@ -1,5 +1,7 @@
 ﻿#include <vine/appfw/gui/GuiApplication.hpp>
 
+#include <cassert>
+
 #include <QApplication>
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -22,6 +24,7 @@
 #include <vine/appfw/gui/RenderControl.hpp>
 #include <vine/appfw/gui/StatusBar.hpp>
 #include <vine/appfw/gui/VisualUserIO.hpp>
+#include <vine/appfw/gui/Window.hpp>
 
 #include <vine/appfw/StartupProgress.hpp>
 #include <vine/logging/Log.hpp>
@@ -72,97 +75,49 @@ VN_OBJECT_META_IMPL(GuiApplication, Application)
 namespace
 {
 
-/// Upper bound for the startup frame's first paint; a window system that never shows the frame must not hold the boot.
+/// Upper bound for a window's first paint; a window system that never shows a window must not hold the boot.
 constexpr int kFirstPaintDeadlineMs = 300;
 
 /// Pace of the dispatch loop below; a window paints within milliseconds on a display that shows windows promptly.
 constexpr int kDispatchPollMs = 5;
 
-/// Reports whether the widget it watches has painted anything at all.
-///
-/// A window that is up but unpainted is a black rectangle on screen until the event loop runs (measured under WSLg:
-/// the main window stayed 0% painted for the whole boot), so this is the signal that it has stopped being one.
-class FirstPaintSpy : public QObject
-{
-  public:
-    explicit FirstPaintSpy(QObject* parent = nullptr)
-      : QObject(parent)
-    {}
-
-    /**
-     * @brief Returns whether a paint event has been seen.
-     *
-     * @return true once any part of the watched window has painted.
-     */
-    bool painted() const noexcept
-    {
-        return painted_;
-    }
-
-  protected:
-    bool eventFilter(QObject* watched, QEvent* event) override
-    {
-        if (event->type() == QEvent::Paint) {
-            painted_ = true;
-        }
-        return QObject::eventFilter(watched, event);
-    }
-
-  private:
-    bool painted_{ false };
-};
-
-/// Makes a filter see the paint of a window and of everything inside it.
-///
-/// A window paints its own area and hands every child its own paint event, and which of the two comes first is the
-/// layout's business, so watching the top level alone would miss the first paint whenever a child covers it.
-///
-/// @param window Window whose paints are of interest.
-/// @param spy Filter to install on the window and its children.
-void watchPaints(QWidget& window, QObject& spy)
-{
-    window.installEventFilter(&spy);
-    for (QWidget* child : window.findChildren<QWidget*>()) {
-        child->installEventFilter(&spy);
-    }
-}
-
 /**
- * Dispatches the event queue until a window has painted, or until the deadline passes.
+ * Shows a window, then dispatches the event queue until it has painted or the deadline passes.
  *
- * Painting a window waits for the window system's "it is visible now" notice, which arrives through the event queue
- * (on X11, an expose event). A synchronous repaint() paints the widget, but nothing of it reaches the window before
- * that notice has been dispatched - measured under WSLg, where the startup frame spent its whole boot as a fully
- * transparent window while sixteen updates were reported to it, and where the main window was a black rectangle for
- * just as long.
+ * The two halves belong together: painting a window waits for the window system's "it is visible now" notice, which
+ * arrives through the event queue (on X11, an expose event), and a boot never runs the event loop - so a window shown
+ * without this dispatch stays empty on screen for the whole boot. Measured under WSLg: the startup frame spent its
+ * whole life fully transparent while sixteen updates were reported to it, and the main window was a black rectangle
+ * for just as long; one dispatch (11-25 ms) turned both into a picture. Qt's own splash screen pumps the queue for
+ * the same reason - QSplashScreen::repaint() calls processEvents(), documented as "even when there is no event loop
+ * present".
  *
- * The queue is dispatched at the two moments where it is safe: right after the startup frame is shown, and right after
- * the main window is shown - both before any plugin has loaded, so no render surface exists yet and this cannot wake a
- * component that is still starting up. That is also why neither window pumps for itself (see BootSplash).
+ * Dispatching the queue runs the timers of everything that is starting up, and an embedded render surface drives its
+ * attach backoff that way (see appfw-startup-splash.md) - which is why this may only be called while nothing but the
+ * window itself exists. The two call sites below are the two moments where that holds, and each asserts it.
  *
- * @param painted Predicate that becomes true once the window has painted.
- * @param subject Window being waited for, named in the diagnostics.
- * @return true if the window painted before the deadline, false otherwise.
+ * @param window Window to show; it has not painted yet.
+ * @param subject Window named in the diagnostics.
  */
-template <typename Painted>
-bool dispatchUntilPainted(Painted painted, const char* subject)
+void showAndWaitForFirstPaint(Window& window, const char* subject)
 {
+    window.show();
+
     QElapsedTimer timer;
     timer.start();
 
-    while (!painted()) {
+    while (!window.hasPainted()) {
         if (timer.elapsed() >= kFirstPaintDeadlineMs) {
             VN_LOGW("{} was shown but has not painted within {} ms: it stays an empty window until the event loop runs",
                     subject,
                     kFirstPaintDeadlineMs);
-            return false;
+            return;
         }
         QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
         QThread::msleep(kDispatchPollMs);
     }
 
     VN_LOGI("{} painted after {} ms", subject, timer.elapsed());
-    return true;
 }
 
 // Classic Fusion dark palette (matches the Qt >= 6.5 Fusion dark palette).
@@ -371,40 +326,33 @@ void GuiApplication::init()
         boot->stage("正在初始化界面");
 
         d->boot_splash = new BootSplash(d->splash);
-        d->boot_splash->show();
 
-        // The frame is only on screen once it has painted, and that waits for the window system's notice on the event
-        // queue (see dispatchUntilPainted): give it that, so the boot is covered by a picture rather than by an empty
-        // window. Nothing else is alive yet, so dispatching here is free of the hazard the frame's own comments warn
-        // about; the deadline keeps a window system that never shows the frame from holding the boot.
-        dispatchUntilPainted([d] { return d->boot_splash->hasPainted(); }, "startup frame");
+        // Nothing but the frame exists yet - the main window is built right below and the plugins only come when the
+        // host loads them - which is what makes dispatching the queue here safe (see showAndWaitForFirstPaint).
+        assert(d->main_window == nullptr);
+        showAndWaitForFirstPaint(*d->boot_splash, "startup frame");
     }
 
     d->main_window = new MainWindow();
 
-    // The window is shown while the frame reports the boot, not after it: an embedded render surface (RenderControl, the
-    // VSG backend) creates its swapchain from the native window of the top-level widget, and a window that was never
-    // shown has none - the surface then fails to initialize instead of waiting for the window. The frame is a
-    // stay-on-top splash, so it covers the window while the boot lasts.
-    d->main_window->show();
-
-    // Embed the automatic progress bar into the main window's status bar.
-    // Qt owns the native widget via the status bar; the presenter
-    // self-destructs with it (UIElement ownership model).
+    // Embed the automatic progress bar into the main window's status bar, before the window is shown: what the
+    // framework puts into the window is painted by its first paint, and the paint is what showing it waits for below.
+    // Qt owns the native widget via the status bar; the presenter self-destructs with it (UIElement ownership model).
     if (auto* status = d->main_window->statusBar()->impl<QStatusBar>()) {
         auto* presenter = new ProgressPresenter();
         status->addPermanentWidget(static_cast<QWidget*>(presenter->impl()));
     }
 
-    if (auto* window = d->main_window->impl<QWidget>()) {
-        // The window is on screen from here on, and an unpainted window is a black rectangle: measured under WSLg, it
-        // stayed unpainted for the whole boot and the user saw exactly that. Give it the dispatch its first paint
-        // waits for, after everything the framework itself puts into it is there. Same reasoning and same safe moment
-        // as the frame above: no plugin has loaded yet, so no render surface exists.
-        FirstPaintSpy spy;
-        watchPaints(*window, spy);
-        dispatchUntilPainted([&spy] { return spy.painted(); }, "main window");
-    }
+    // The window is shown while the frame reports the boot, not after it: an embedded render surface (RenderControl, the
+    // VSG backend) creates its swapchain from the native window of the top-level widget, and a window that was never
+    // shown has none - the surface then fails to initialize instead of waiting for the window. The frame is a
+    // stay-on-top splash, so it covers the window while the boot lasts.
+    //
+    // The render surface is also what makes this the last moment at which the queue may be dispatched: it lives in a
+    // plugin, whose attach backoff must not run before the window it attaches to has been laid out, which is the
+    // assertion's subject (see showAndWaitForFirstPaint).
+    assert(d->main_window->primaryRenderControl() == nullptr);
+    showAndWaitForFirstPaint(*d->main_window, "main window");
 }
 
 void GuiApplication::finishStartup()

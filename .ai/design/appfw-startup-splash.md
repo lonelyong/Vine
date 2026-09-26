@@ -157,20 +157,21 @@ app->run()                      → 主循环
 
 **机制**：X11 上 Qt 把内容画进窗口要先有"窗口已可见"的通知（expose 事件），而它只能由**事件队列派发**送达；
 启动期不跑事件循环（这正是当初选 `repaint()` 的原因），于是 `repaint()` 只画进 backing store，
-一个像素都到不了窗口。Windows 上 `repaint()` 直写 HWND，所以同一份代码在 Windows 正常——**WSL/X11 特有**。
+一个像素都到不了窗口。Windows 上 `repaint()` 直写 HWND，所以同一份代码在 Windows 正常。
+（**夸平台口径**：Qt 自己在 `QSplashScreen::repaint()` 的说明里写的就是"标准 `repaint()` 也要调 `processEvents()`，
+以保证更新显示，**even when there is no event loop present**"，"有些 X11 WM 不支持 stays-on-top，
+办法是定时 `raise()`"——即这是"启动期不跑事件循环"的 Qt 级行为，不是 WSL/Weston 的缺陷。）
 
-**修法**：`GuiApplication::init()` 在 `show()` 之后做一次**有界派发**（`processEvents(ExcludeUserInputEvents)`
-+ 5 ms 步进，上限 300 ms），条件取自 `BootSplash::hasPainted()`（`paintEvent` 里置位）。
-位置刻意选在"主窗与所有插件都还不存在"的那一刻：启动期唯一活着的东西就是启动框，
+**修法**：`GuiApplication::init()` 把"show 窗口"与"派发到它画出第一帧"成对放在
+`showAndWaitForFirstPaint()` 里（`processEvents(ExcludeUserInputEvents)` + 5 ms 步进，上限 300 ms，
+超时 `VN_LOGW` 不静默），判断条件就是 `Window::hasPainted()`（见下节）。
+位置刻意选在"主窗与所有插件都还不存在"的那一刻，并用 `assert` 把它写死（而不是只写在注释里）：
 所以本文件上面那条"不要替渲染组件 pump"的顾虑在这里不成立（那时还没有渲染表面）。
-超时打 `VN_LOGW`，不静默兜底。
 
 **实测**（本机 WSLg/Weston + Xwayland，2026-09-26）：`startup frame painted after 11 ms`（本次启动的第一条日志），
 独立 X 读回 `440×152 painted=99.9% modal=rgba(245,245,245,255)`（主题面板色），从 ~0.4 s 一直覆盖到启动结束（~1.9 s）。
 
-**反证（3/3 红，恢复后 3/3 绿）**：M1 `paintEvent` 不置位 → 新用例红；M2 访问器谎报已画 → 新用例红
-（`show()` 之前的 `EXPECT_FALSE` 就红）；M3 去掉 `init()` 里的派发（**真机**）→ 闪屏回到
-`painted=0.0% rgba(0,0,0,0)`，恢复后回到 99.9%。
+**反证（真机）**：去掉 `init()` 里的派发 ⇒ 闪屏回到 `painted=0.0% rgba(0,0,0,0)`；恢复 ⇒ 99.9%。
 
 **顺带修正**：`BootSplash.hpp` 的类注释里"a notification repaints **and pumps the event queue**"是旧设计的残留
 （实现从 6988216 起就只 `repaint()`），已改成与实现一致，并写清"把窗口系统那一半交给宿主"。
@@ -182,16 +183,35 @@ app->run()                      → 主循环
 **实测**：主窗的 WM 框（`864x664`）在整段启动期（~0.35 s → 1.9 s）`XGetImage` 采样都是 `painted=0.0%`，
 直到 `run()` 进事件循环才跳到 `83.5%`。与闪屏同根：Qt 把窗口画上屏要事件队列派发，而启动期不跑事件循环。
 
-**修法**：`init()` 里主窗 `show()`（并在状态栏进度条挂好）之后做**同一次有界派发**，条件由文件内的
-`FirstPaintSpy` 给出（事件过滤器递归装在窗口与全部子控件上：窗口自己画、子控件各自收到 paint，
-谁先到取决于布局，只盯顶层会漏）。位置同样安全：插件尚未加载，没有渲染表面。
+**修法**：`init()` 里主窗 `show()`（状态栏进度条先挂好，这样首帧就把框架放进窗口的东西都画上）
+也走同一个 `showAndWaitForFirstPaint()`；这里用 `assert(d->main_window->primaryRenderControl() == nullptr)`
+把"插件还没加载、渲染表面还不存在"写死（渲染表面就在插件里，它的 attach 退避正是不能提前唤醒的那个东西）。
 
-**实测**：`main window painted after 12–19 ms`，主窗框从 ~0.35 s 起就是 `83.5%`（余下 16.5% ≈ 378×247
+**实测**：`main window painted after 12–21 ms`，主窗框从 ~0.35 s 起就是 `83.5%`（余下 16.5% ≈ 378×247
 就是渲染区那块"洞"——容器里的原生子窗还没有帧，见 `appfw-render-surface.md`；首帧呈递后就是画面）。
 
-**反证**：M4 去掉主窗派发（**真机**）⇒ 主窗回到 `painted=0.0%`、没有 `main window painted` 行；
-恢复 ⇒ `83.5%` + `after 17 ms`。`test_gui` 213/213（offscreen 下主窗 8 ms 画出、无告警）；
-两棵树门禁 `cases=451 failed=0 vuid=0 hazard=0`，应用阶段像素与基线**逐字节一致**（额外派发没有打扰渲染表面）。
+**反证（真机）**：去掉主窗派发 ⇒ 主窗回到 `painted=0.0%`、没有 `main window painted` 行；恢复 ⇒ `83.5%`。
+`test_gui` **216/216**；两棵树门禁 `cases=451 failed=0 vuid=0 hazard=0`，应用阶段像素与基线**逐字节一致**
+（额外派发没打扰渲染表面，进度条提前挂也不影响画面）。
+
+### “已画过”是 SDK 级契约：`Window::hasPainted()`（2026-09-26 复核后重排）
+
+两个窗口问的是同一个问题，所以机制只留一份、放在它该在的层：
+
+- **契约**：`Window::hasPainted()`（公开 SDK，`noexcept`）。语义：**窗口自己或它里面任何东西画过**；
+  窗口已不再是一个“空窗口”（X11 上全黑、透明框则全透明）。
+- **实现**：`WindowData` 持一个 `Window.cpp` 内部的 `PaintWatcher`（事件过滤器）。安装时递归接上
+  窗口与当时已有的全部子控件；**后加的**子控件（停靠面板、状态栏里的进度条）靠父控件的 `ChildAdded`
+  通知接上。两条路径各有原因：顶层自己可能一个像素都不画（面积被不透明子控件盖住），
+  而“谁先画”取决于布局；窗口里的东西也不必在观察之前就存在。
+- **观察者随窗口销毁**（不挂在被观察的 widget 上：窗口不拥有 widget 时 widget 会先死）。
+- **测试**（`tests/test_gui/WindowPaintTest.cpp`，3 例）：未 show ⇒ 未画；show + 派发 ⇒ 已画；
+  已在里面的子控件画 ⇒ 已画；后加进来的子控件画 ⇒ 已画。
+- **变异（4/4 各有用例负责）**：`Paint` 不置位 ⇒ 3 例全红；观察者不装到窗口自己 ⇒ 2 例红；
+  忽略 `ChildAdded` ⇒ 只“后加进来的子控件”红；安装时不接已有子控件 ⇒ 只“已在里面的子控件”红。
+
+**另一个好处**：这套机制让“等待”变成可验证的后置条件，而不是平台 hack——
+没有 `#ifdef`，在派发即可画的平台上循环第一次就退出。
 
 **没有改 z 序（当日量过，记下免得再查）**：怀疑"主窗压住闪屏"时量过 X 子窗顺序
 （`XQueryTree` 自下而上）——主窗框始终列在闪屏框之后（=更靠上），而且在
@@ -234,7 +254,10 @@ app->run()                      → 主循环
 | `BootSplashTest.MissingLogoIsNotFatal` | 读不到的 logo 不致命 |
 | `BootSplashTest.FrameSurvivesTheEndOfTheBoot` | 上报口先死（宿主先关框）时保留最后一帧，不读已销毁对象 |
 | `BootSplashTest.DisabledByDefaultInTheTestApplication` | 默认关闭；`finishStartup()` 幂等 |
-| `BootSplashTest.TheFramePaintsOnceTheWindowSystemHasShownIt` | `hasPainted()` 直到窗口系统通知可见（派发事件队列）之后才为真 |
+| `BootSplashTest.TheFramePaintsOnceTheWindowSystemHasShownIt` | `Window::hasPainted()` 直到窗口系统通知可见（派发事件队列）之后才为真 |
+| `WindowPaintTest.AWindowHasNotPaintedUntilTheQueueHasBeenDispatched` | 未 show 未画；show + 派发后已画 |
+| `WindowPaintTest.APaintOfAnythingThatIsAlreadyInsideTheWindowCounts` | 窗口构造时就已存在的子控件画了也算 |
+| `WindowPaintTest.APaintOfAWidgetThatArrivesLaterCounts` | 窗口构造之后才加进来的子控件画了也算（`ChildAdded`） |
 
 视觉验证（临时用例 + `grab()` 离屏渲染，验证后已删）：圆角面板/标题/副标题/进度条/状态行、
 SVG logo 等比缩放、确定态与忙碌态两种进度条。

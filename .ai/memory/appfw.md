@@ -91,12 +91,14 @@
   启动框是 stay-on-top splash，盖在窗口上面。
 - ⚠️ **启动期不要 `processEvents()`**：会顺手跑别的组件的定时器/事件（渲染表面的 resize/settle 更新
   就是这样被提前唤醒的）。启动框只 `repaint()` 自己那一帧。
-- ⚠️ **唯一例外（2026-09-26）：闪屏 `show()` 与主窗 `show()` 之后各要派发到它画出第一帧**。X11 上 Qt 要先
-  收到服务端的 expose 才把 backing store flush 进窗口，而 expose 只能由事件队列派发送来 ⇒ 不派发时
-  `repaint()` 是空转，闪屏整个启动期全透明、主窗整个启动期是一块黑板（用户实测报的就是这两条）。
-  `GuiApplication::init()` 因此在两处做有界派发（上限 300 ms，闪屏读 `BootSplash::hasPainted()`、
-  主窗读文件内的 `FirstPaintSpy`，超时 `VN_LOGW`）：**主窗与插件都还不存在**时——那时唯一活着的组件
-  就是刚 show 的窗口，上面那条顾虑不成立。实测：闪屏 `11 ms`、主窗 `12–19 ms`。
+- ⚠️ **唯一例外（2026-09-26）：闪屏与主窗都要“show 之后派发到它画出第一帧”**。X11 上 Qt 要先收到服务端的
+  expose 才把 backing store flush 进窗口，而 expose 只能由事件队列派发送来 ⇒ 不派发时 `repaint()` 是空转，
+  闪屏整个启动期全透明、主窗整个启动期是一块黑板（用户实测报的就是这两条）。机制：`GuiApplication::init()`
+  经 `showAndWaitForFirstPaint()` 把 show 与派发成对（上限 300 ms，超时 `VN_LOGW`），条件是 SDK 级的
+  `Window::hasPainted()`（`WindowData` 里的 `PaintWatcher`：窗口自己 + 已有子控件 + 后加的子控件），
+  两处调用点各带一条 `assert`（框架自证“此刻只有这个窗口”）。实测：闪屏 `11 ms`、主窗 `12–21 ms`。
+  测试：`tests/test_gui/WindowPaintTest.cpp`（3 例）；Qt 自己的 `QSplashScreen::repaint()` 也是调 `processEvents()`
+  （文档："even when there is no event loop present"）——即这是 Qt 级行为，不是 WSL 缺陷。
 - ⚠️ **启动框关掉时要把主窗口 `raise()` + `activate()`**：`Qt::SplashScreen` 置顶且不激活进程地显示，
   Windows 的前台激活名额被它占掉，随后 show() 的主窗口就压在终端/IDE 后面（看起来像“没显示出来”）。
   `finishStartup()` 只“确实有框”时做，那一刻会打一行 `main window visible=…, active=…` 供区分。

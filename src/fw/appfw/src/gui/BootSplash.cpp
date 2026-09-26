@@ -60,21 +60,9 @@ class SplashWindow : public QWidget
       : QWidget(parent)
     {}
 
-    /**
-     * @brief Returns whether this window has painted at least once.
-     *
-     * @return true once paintEvent() has run, false while the window is still empty.
-     */
-    bool hasPainted() const noexcept
-    {
-        return painted_;
-    }
-
   protected:
     void paintEvent(QPaintEvent*) override
     {
-        painted_ = true;
-
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
 
@@ -84,10 +72,6 @@ class SplashWindow : public QWidget
         painter.setPen(palette().mid().color());
         painter.drawRoundedRect(panel, kRadius, kRadius);
     }
-
-  private:
-    /// Set by the first paint; when that happens is the window system's decision, not the frame's.
-    bool painted_{ false };
 };
 
 /// Loads the logo scaled into the frame's logo box, keeping its aspect ratio; a null pixmap when it cannot be read.
@@ -305,12 +289,6 @@ double BootSplash::progressFraction() const
 bool BootSplash::isIndeterminate() const
 {
     return dptr()->fraction < 0.0;
-}
-
-bool BootSplash::hasPainted() const noexcept
-{
-    // The frame's top-level widget is the SplashWindow this class created, so the downcast is exact.
-    return static_cast<const SplashWindow*>(impl<QWidget>())->hasPainted();
 }
 
 void BootSplash::refresh()
