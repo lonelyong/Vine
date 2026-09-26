@@ -192,7 +192,10 @@ main: app->runStartup(work)
 `startup work starting 5–11 ms after the application was asked to run: the startup frame and the main window are on screen`；
 独立 X 读回从 t≈0 起框就是 `504x216 painted=61.9%`、主窗框 `864x664 painted=83.5%`，直到启动结束（~1.9 s）。
 
-**反证**：把这道门拿掉（启动工作立刻开跑）⇒ 两个窗口都是 `painted=0.0%`，且框架自己打出上面那条超时告警。
+**反证**：把这道门拿掉（`whenUserInterfaceIsUp()` 里直接 `then()`，启动工作立刻开跑）⇒ 启动期读回是
+**主窗 `864x664 painted=0.0%`**（闪屏框仍是 61.9%：启动过程自己会驱动嵌套派发，框因此仍然画得出来），
+且日志里没有那条 "on screen" 行——**正是用户最初报的\"闪屏还亮着、主窗全黑\"那一幕**。恢复后基线照旧
+（框 61.9% / 主窗 83.5%）。
 
 **顺带修正**：`BootSplash.hpp` 的类注释里"a notification repaints **and pumps the event queue**"是旧设计的残留
 （实现从 6988216 起就只 `repaint()`），已改成与实现一致，并写清"把窗口系统那一半交给宿主"。
