@@ -1512,3 +1512,28 @@ material 值 / 流字节 / cull 全部**不进**。
 * **门禁**：两棵树 `test_vsg` **451/451**；两棵树门禁 `cases=451 failed=0 vuid=0 hazard=0`、应用阶段判图逐字不变
   （before 378x247: content 87.04% / after 698x132: content 85.14%）；include 卫生 0/798、诊断格式 0/7、文档符号 3/145。
 * **提交**：`28f1332`（volk PIC + UAF 修复）、`6dc23d1`（22 处连接 RAII + ASan 跳过 + 脚本边界）。
+
+### §11.16dg（2026-09-26）：ASan 余量收口——单一共享运行时，判词按 LSan 的语义分层
+
+* **为什么先把运行时统一**：§11.16df 剩下的 6 KB 报告**无法归属**——插件与主程序各带一份**静态** ASan 运行时，
+  插件侧的分配在退出报告里走错账本（帧符号错乱、`<unknown module>`），任何豁免都只能靠瞎猜。修改 =
+  `scripts/asan_check.sh` 的旗标加 `-shared-libasan`（编译与链接都带），并补 **rpath**
+  （`-Wl,-rpath,$(clang -print-runtime-dir)`——clang 自己不加，实测不加则 `libclang_rt.asan-x86_64.so` 找不到）；
+  重配置整树重建（一次性），默认电池与 `test_vsg` 复验绿。
+* **报告变诚实之后看到什么**：`test_vsg` 严格线剩下 **零个 Direct、全部 Indirect**——也就是说**所有直接根都已被
+  豁免**（`vn::runtime::DynamicLibrary` 的加载器保留），其余是它下面的**同一份保留**；能解出符号的那些条目，
+  分配帧全在 **glslang 的 `spv::Builder` 构造**里（`makeHitObjectEXTType` / `createCooperativeMatrixPerElementOp`，
+  每 builder 12 条指令 / 672 B 的量级）。
+* **判词分层（`asan_check.sh` 的 `leaks_indirect_under_excused_only()`）**：**Direct 泄漏 = 判词，永远红**；
+  **Indirect 条目 = 已被豁免根的子树**，PASS **且把计数与豁免表打印出来**（不隐藏，完整报告仍留在日志）。
+  内存错误与失败用例照旧永不放行。
+* **新豁免条目**：`leak:spv::Builder::`（理由写在本文件同名的 `.supp` 里：glslang 的 SPIR-V builder 在构造函数里
+  急切创建扩展类型指令、自身 teardown 不释放；后端只是调用方，拿不到 builder 内部类型表）。符号化成功的条目靠它匹配
+  （实测那次 2 条 ×112 B），解不出的那些靠上面的判词分层。
+* **数字（2026-09-26 实测）**：严格 `test_vsg` **exit 0 / RESULT: PASS (indirect entries under excused roots)**，
+  间接计数 **106 块 / 5,936 B / 28 条**，豁免表 `16×808 vn::runtime::DynamicLibrary` + `2×112 spv::Builder::`；
+  默认电池 `test_gui EventBusTest.*` PASS；**`test_gui` + `VINE_ASAN_FILTER='*'` + 泄漏仍红**（13 个 Direct 根在
+  `GuiTest::SetUp`/`buildDock`、207 条 Indirect，2026-09-26）——那条配置从来不在"已知干净"之列，属它自己的单元。
+* **诚实边界**：① 插件帧的符号化仍**只是部分**（外部 `llvm-symbolizer` 也只改善一部分），所以这套豁免的根据是
+  **LSan 的结构性 INDIRECT 标记**（它自己算出来的可达性），不是帧名；帧名只用来解释"这堆字节长什么样"；② 计数在两次
+  运行间有小幅摆动（6,048/108 与 5,936/106）——有多少条目能解出符号，决定它们走 `spv::Builder::` 条目还是走间接判词。

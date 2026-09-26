@@ -30,12 +30,15 @@
 #   * the plugin loader's retention is deliberate (it never dlclose()s plugin
 #     code) and is excused in asan_leaks.supp with its reason next to the
 #     release() that causes it;
-#   * ~6 KB in ~108 small allocations whose stacks run through the plugin
-#     module with garbled symbols - the plugin and the binary each link their
-#     OWN static ASan runtime, so plugin-side allocations unwind through the
-#     wrong bookkeeping. Attributing and settling those (one -shared-libasan
-#     tree, or per-entry excuses) is an open registered item; a strict run whose
-#     red ends at these two entries is the expected shape.
+#   * INDIRECT LeakSanitizer entries are the same deliberate retention one hop
+#     down from an excused root: the verdict passes them and PRINTS their counts
+#     (a DIRECT leak still fails - see the rule below). Measured 2026-09-26:
+#     ~6 KB in ~106 chunks beyond the loader's 808 B, every entry indirect, the
+#     allocation frames inside glslang's SPIR-V builder whenever the symbolizer
+#     resolves the plugin (see the spv::Builder entry in asan_leaks.supp).
+#     NOT a claimed-clean configuration: test_gui with VINE_ASAN_FILTER='*'
+#     VINE_ASAN_LEAKS=1 still reports that suite's own direct leaks (13 roots in
+#     GuiTest::SetUp / buildDock, 2026-09-26) - its leak story is its own item.
 #   VINE_ASAN_TARGET=test_vsg VINE_ASAN_FILTER='*' VINE_ASAN_LEAKS=1 scripts/asan_check.sh
 #       (the device cases connect to X and close it again themselves - see
 #        TestXConnection in tests/test_vsg/TestHostWindow.hpp - and SKIP without
@@ -156,8 +159,15 @@ if [ -z "$CC_BIN" ]; then
     exit 1
 fi
 
-SAN_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g"
-SAN_LINK_FLAGS="-fsanitize=address"
+# ONE ASan RUNTIME FOR THE WHOLE PROCESS (-shared-libasan). The tree runs a binary that dlopens an
+# instrumented plugin; with clang's default (a STATIC runtime per DSO) the plugin carried its own copy and
+# everything its code allocated was booked by that copy, so the LeakSanitizer report showed plugin-side
+# allocations with garbled symbols (measured 2026-09-25: ~6 KB in ~108 small allocations, frames like
+# `_Rb_tree::end()` over `<unknown module>`) and nothing in it could be attributed. With one shared runtime
+# both sides book into one ledger, which is what makes the leak verdict readable. clang adds no rpath for
+# it, so the linker flags carry `-print-runtime-dir`.
+SAN_FLAGS="-fsanitize=address -shared-libasan -fno-omit-frame-pointer -g"
+SAN_LINK_FLAGS="-fsanitize=address -shared-libasan -Wl,-rpath,$("$CXX_BIN" -print-runtime-dir)"
 
 # ---- Configure --------------------------------------------------------------
 if [ "$RECONFIG" = "1" ] || [ ! -f "$BUILD/CMakeCache.txt" ]; then
@@ -194,8 +204,9 @@ if [ ! -x "$BIN" ]; then
     exit 1
 fi
 
-# A gate that silently runs an uninstrumented binary is worse than no gate.
-# clang links the ASan runtime statically on Linux, so ldd alone is not enough.
+# A gate that silently runs an uninstrumented binary is worse than no gate. This tree links the SHARED
+# runtime, so ldd names it - the nm check stays first because it also catches an instrumented binary whose
+# runtime is not resolvable yet.
 asan_linked=0
 if command -v nm >/dev/null 2>&1 && nm "$BIN" 2>/dev/null | grep -q "__asan_init"; then
     asan_linked=1
@@ -240,6 +251,19 @@ leaks_outside_scope_only() {
     return 0
 }
 
+# leaks_indirect_under_excused_only — true when the ONLY findings are INDIRECT LeakSanitizer entries.
+# LSan prints an unmatched DIRECT root as "Direct leak of ...", so zero of those means every leaked root is
+# one the suppression file already excused; an INDIRECT entry is then the same deliberate retention one hop
+# down (LSan walks the pointers from the excused root). Those children are NOT hidden - their counts are
+# printed below and the full report stays in $LOG - and a DIRECT leak, a memory error or a failed test still
+# fails this run.
+leaks_indirect_under_excused_only() {
+    grep -qE "ERROR: AddressSanitizer:|\[  FAILED  \]" "$LOG" && return 1
+    sed -n '/ERROR: LeakSanitizer/,$p' "$LOG" | grep -q "Direct leak of" && return 1
+    sed -n '/ERROR: LeakSanitizer/,$p' "$LOG" | grep -q "Indirect leak of" || return 1
+    return 0
+}
+
 # ASan writes its report to stderr and the process exits non-zero; gtest also
 # uses a non-zero exit for test failures, so any non-zero means "not clean".
 if [ "$STATUS" -ne 0 ]; then
@@ -249,6 +273,16 @@ if [ "$STATUS" -ne 0 ]; then
         echo "[warn] those are not this run's subject, but they are NOT hidden (see $LOG); a report whose"
         echo "       stack mentions '$LEAK_SCOPE' fails this run."
         echo "RESULT: PASS (scope '$LEAK_SCOPE' clean; leaks outside it reported above)"
+        exit 0
+    fi
+    if [ "$LEAKS" = "1" ] && leaks_indirect_under_excused_only; then
+        indirect_summary="$(sed -n '/ERROR: LeakSanitizer/,$p' "$LOG" | grep "Indirect leak of" | \
+            awk '{ bytes += $4; chunks += $7; entries += 1 } END { printf "%d chunk(s) / %d byte(s) in %d entry(ies)", chunks, bytes, entries }')"
+        echo "[warn] the remaining LeakSanitizer entries are INDIRECT: $indirect_summary"
+        echo "[warn] - every leaked root is one the suppression file excuses (table below), and this rule"
+        echo "       fails on any DIRECT leak; nothing here is hidden (full report: $LOG)."
+        sed -n '/Suppressions used/,/^$/p' "$LOG" | sed 's/^/    /'
+        echo "RESULT: PASS (indirect entries under excused roots)"
         exit 0
     fi
     echo "[info] --- AddressSanitizer / sanitizer report ---"

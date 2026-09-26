@@ -1,3 +1,12 @@
+> 2026-09-26 **ASan 余量收口（设计 §11.16dg）——单一共享运行时 + 判词分层**
+> · `asan_check.sh` 旗标改 `-shared-libasan`（+`-Wl,-rpath,$(clang -print-runtime-dir)`，clang 不加 rpath）⇒
+>   插件侧分配与主程序同账本，报告可读；整树重建一次，默认电池与 test_vsg 复验绿。
+> · 读明白后的结论：严格 test_vsg 剩 **零 Direct、全 Indirect** ⇒ 直接根全被豁免，其余是同一保留的子树
+>   （分配帧= glslang `spv::Builder` 构造里的扩展类型指令，~12 条/672 B 每 builder）。判词分层：Direct=永远红；
+>   Indirect 条目 PASS 并把计数+豁免表打印（不隐藏）；新增 `leak:spv::Builder::` 带理由豁免（解出符号时命中）。
+> · 实测：严格 test_vsg exit 0（间接 106 块/5,936 B/28 条）；`test_gui '*' + 泄漏` 仍红=其自身 13 个 Direct 根
+>   （GuiTest::SetUp/buildDock），非本线。边界：插件帧符号化只部分（豁免根据=LSan 的结构性 INDIRECT 标记）。
+
 > 2026-09-25 **ASan 全量 test_vsg 首次跑通（设计 §11.16df）——一雷一 UAF 一卫生**
 > · volk 静态进插件**所有树都没有 -fPIC**（Debug/Release 靠历史对象在绿；ASan 树 ld.bfd 直接拒链）⇒
 >   `POSITION_INDEPENDENT_CODE ON`，三棵树重链验证；ASan 树重生成要 `env -u http_proxy`（FetchContent 更新步）。

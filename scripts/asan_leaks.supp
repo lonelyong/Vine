@@ -34,3 +34,15 @@ leak:libexpat
 # leaks outside a pattern without failing); with it, the whole suite runs with
 # plain all-or-nothing leak judging, which is the stronger setting.
 leak:vn::runtime::DynamicLibrary
+
+# glslang's SPIR-V builder creates its extension-type instructions EAGERLY in its constructor
+# (makeHitObjectEXTType / createCooperativeMatrixPerElementOp: 12 instructions, 672 B, per builder) and its
+# own teardown never releases them; the backend compiles every program variant through glslang and holds no
+# handle on the builder's internal type tables, so this retention is upstream's, not the framework's.
+# Measured (2026-09-26, with the tree on ONE shared ASan runtime - see asan_check.sh): ~6 KB in ~106 chunks,
+# EVERY entry INDIRECT - LSan sees them held by other leaked chunks (the loader retention above). This entry
+# matches the entries whose frames the symbolizer can resolve (2 of them in the measured run); the rest
+# arrive as indirect children under the loader entry and are handled by the harness's verdict rule, which
+# fails on any DIRECT leak. With the old two-static-runtimes setup these same bytes were reported with
+# garbled symbols and could not be attributed at all.
+leak:spv::Builder::
