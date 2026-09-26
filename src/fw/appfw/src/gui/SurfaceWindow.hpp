@@ -6,6 +6,7 @@
 
 #include <vine/String.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
+#include <vine/async/Task.hpp>
 #include <vine/window/InputEvent.hpp>
 
 class QEvent;
@@ -87,6 +88,35 @@ class SurfaceWindow : public QWindow {
      */
     bool init();
 
+    /**
+     * @brief Same attach as init(), with the backend's own initialization on the thread pool.
+     *
+     * The engine's initialize() - the device, the session and every pipeline - is the expensive half and needs the
+     * native handle, not the Qt thread, so it runs through vn::async::run() here and the application thread is free
+     * while it does (which is what lets a boot keep reporting, repainting and taking input through that stretch).
+     * The warm-up frame follows it on the pool for the same reason (that one frame is where pass graphs, program
+     * slots and pipeline compilation are paid). What has to stay on this thread does: taking the handle, publishing
+     * the state, sizing the view, the settle frames - so the caller must be on the application thread, with an event
+     * loop running to come back to.
+     *
+     * Contract: the attach reads the scene graph (the pipelines are built from the passes that are registered, and
+     * the warm-up frame records them). A host must therefore not mutate the scene while the attach is in flight -
+     * work whose result is installed into the scene has to wait until this returns.
+     *
+     * @return A task that completes with the same answer as init().
+     */
+    vn::async::Task<bool> initAsync();
+
+    /**
+     * @brief Reports whether an attach is running right now (including the warm-up frame).
+     *
+     * The attach reads the scene graph - the pipelines are built from the passes that are registered and the warm-up
+     * frame records them - so work that changes the scene has to wait for it (see initAsync()).
+     *
+     * @return true while init() or initAsync() is in flight.
+     */
+    bool isAttaching() const noexcept;
+
     /** @brief Renders one frame through the engine. The first frame of a session is also what puts the surface
      * on screen (it is hidden until then, see initializeBackend()). */
     void renderFrame();
@@ -164,6 +194,18 @@ class SurfaceWindow : public QWindow {
     void requestSettleFrames();
     /** @brief Binds the backend to the live native surface (and re-announces a new handle). */
     void initializeBackend();
+    /** @brief The Qt-bound half of an attach, up to giving the backend the handle.
+     *
+     * @return false when there is nothing to do (already bound to this surface) or no usable native
+     *         surface yet; true when the caller should run the backend's initialize().
+     */
+    bool prepareBackendAttach();
+    /** @brief The Qt-bound half after the backend's initialize(): session state, size, warm-up, settle. */
+    void finishBackendAttach(bool warm_up_here);
+    /** @brief Arms the platform-window recreation test hatch (VINE_RECREATE_SURFACE_MS), once per session. */
+    void armRecreateHatch();
+
+    /// The Qt-bound half of an attach, up to giving the backend the handle.
     /** @brief Renders the frame that pays a session's one-time build cost, before the control is on screen.
      *
      * Called once per attach when the control is not on screen yet (the host calls init() from a plugin's load(),

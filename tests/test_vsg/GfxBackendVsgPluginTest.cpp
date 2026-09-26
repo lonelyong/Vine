@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <QCoreApplication>
 #include <QStandardPaths>
 
 #include <vine/appfw/AppBuilder.hpp>
@@ -62,7 +63,7 @@ namespace
  *
  * The Application is created exactly once per test suite: QCoreApplication is
  * a Qt global singleton, so a second Application in the same process would
- * collide when init() constructs a new QCoreApplication.
+ * collide when its constructor creates a new QCoreApplication.
  */
 std::unique_ptr<vn::appfw::Application> bootApplication()
 {
@@ -103,6 +104,19 @@ class VsgBackendPluginTest : public ::testing::Test
 };
 
 std::unique_ptr<vn::appfw::Application> VsgBackendPluginTest::s_app;
+
+TEST_F(VsgBackendPluginTest, TheConstructorBuildsTheApplicationFromItsConfig)
+{
+    // 构造即完成（Application::init() 已删）：builder 只把 AppConfig 交进构造函数，Qt 应用对象、进程身份、
+    // UserIO 与配置持久化都在构造里办完。persist_config=false ⇒ 不读也不写用户的真实配置。
+    ASSERT_NE(s_app, nullptr);
+    EXPECT_NE(QCoreApplication::instance(), nullptr);
+    EXPECT_EQ(QCoreApplication::applicationName(), QStringLiteral("Vine"));
+    EXPECT_NE(s_app->userIO(), nullptr);
+    EXPECT_NE(s_app->commandManager(), nullptr);
+    EXPECT_NE(s_app->eventBus(), nullptr);
+    EXPECT_TRUE(s_app->configFile().empty());
+}
 
 /// @brief Whether a device case can run at all (a window system and one usable physical device).
 bool deviceCaseAvailable()

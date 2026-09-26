@@ -4,6 +4,8 @@
 #include <vine/Signal.hpp>
 #include <vine/String.hpp>
 
+#include <vine/async/Task.hpp>
+
 #include "Control.hpp"
 
 namespace vn::graphics
@@ -130,6 +132,32 @@ class VN_APPFW_API RenderControl : public Control {
      *         surface stays hidden in that case).
      */
     bool init();
+
+    /** @brief Same attach as init(), with the backend's own initialization moved to the thread pool.
+     *
+     * The engine's initialize() - the device, the session and every pipeline - is the expensive half of an attach and
+     * needs the native handle, not the Qt thread. Here it runs through vn::async::run(), so the application thread goes
+     * back to its event loop for that stretch instead of holding it: a boot keeps reporting, repainting and taking input
+     * while the session comes up. Everything that does need this thread stays on it - taking the handle, publishing the
+     * state, sizing the view, the warm-up frame, the settle frames - so the caller has to be on the application thread
+     * with an event loop to come back to (a host that runs no loop calls init() instead, which does the whole thing on
+     * the calling thread).
+     *
+     * @return A task that completes with the same answer as init().
+     */
+    vn::async::Task<bool> initAsync();
+
+    /** @brief Reports whether the session is being attached right now (init() or initAsync(), warm-up included).
+     *
+     * The attach reads the scene graph: the pipelines are built from the passes that are registered, and the warm-up
+     * frame records the scene once. A host that builds its own content therefore has this one rule to keep - do not
+     * change the scene while this is true, i.e. install the content after the attach, not during it. Polling it is the
+     * simple form of that (`while (control->isAttaching()) { ... wait ... }`); a host that starts content work early
+     * and installs the result later entirely sidesteps it.
+     *
+     * @return true while an attach is in flight.
+     */
+    bool isAttaching() const noexcept;
 
     /** @brief Renders one frame through the engine. */
     void renderFrame();

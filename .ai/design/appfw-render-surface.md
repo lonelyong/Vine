@@ -2,8 +2,9 @@
 
 ## 问题
 
-启动顺序是"窗口先生效，插件后布 UI"：窗口由 `Application::run()` 上屏（`showUserInterface()`，2026-09-26 起
-`init()` 只建不 show），之后 `main.cpp` 交出去的启动工作才 `pluginManager()->loadAll()`，app_shell 的 `buildAppShellDock()` 才
+启动顺序是"窗口先生效，插件后布 UI"：窗口由 `Application::run()` 的启动步上屏（`beginStartup()`，
+2026-09-26 起构造函数只建不 show、启动步跑在事件循环里），等它画出首帧之后框架才加载插件
+（`AppConfig::load_plugins`，2026-09-26 起宿主不用自己调 `loadAll()`），app_shell 的 `buildAppShellDock()` 才
 `new RenderControl()` + `setCentralWidget()`。
 
 后端 attach 需要"窗口存在、已布局、尺寸可用"，而这比 UI 组装晚。旧做法是插件猜一个延迟：
@@ -189,6 +190,11 @@ render_control->init();                      // 设备 + 管线在这个同步�
 
 - attach 只要“句柄 + 尺寸 > 0”，而新 QWindow 的退化尺寸（本机实测 **1x1**，不是 0x0）就满足；
   真实尺寸随后由布局给出，走既有的 resize / settle 路径重建 swapchain（用例钉住 `resize_calls > 1`）。
+- **句柄是表面窗口自己的，不是顶层的**（2026-09-26 实测）：`SurfaceWindow::nativeHandle()` 返回容器里那个
+  独立 `QWindow` 的 `winId()`，所以**顶层（主窗）没 show 也能 attach**（WSLg/X11：主窗全程未 show 时
+  `[VsgHostWindow] attached … (160x160)` + `Pending -> Attached` 都正常，`Attached -> Presenting`
+  紧随主窗上屏）。历史那次 `GetClientRect(..) failed : 无效的窗口句柄` 来自**旧渲染器拿顶层句柄** +
+  没人建原生窗口，不是本形状的性质（详见 `appfw-startup-splash.md` 的“启动期只有启动框”）。
 - **不需要**给控件加“初始尺寸”类 API：曾加过 `setInitialSurfaceSize()`（以及“未上屏允许 attach、
   失败不计预算、不提前显示表面”那套预热语义），用户判定是把业务/策略塞进框架层，已全部删掉。
 - 平台差异：Wayland 上未映射 surface 拿不到 extent ⇒ 那里的 `init()` 返回 `false`（静默不生效），

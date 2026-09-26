@@ -4,6 +4,7 @@
 #include <cctype>
 
 #include <QApplication>
+#include <QCloseEvent>
 #include <QCoreApplication>
 #include <QFont>
 #include <QFontMetrics>
@@ -53,6 +54,10 @@ constexpr double kIndeterminate = -1.0;
 ///
 /// Painting the panel (instead of styling the widget) is what keeps the frame readable on both themes: the colours come
 /// from the palette, so the frame follows the application theme like every other window.
+///
+/// It does not close on request: the boot's face is the framework's to take down (startupEnd() destroys it), and a frame
+/// the user dismissed while the load goes on would leave the screen empty until the main window comes up. Nothing to do
+/// with the cancellation machinery - that one is reachable from a host, not from here.
 class SplashWindow : public QWidget
 {
   public:
@@ -61,6 +66,11 @@ class SplashWindow : public QWidget
     {}
 
   protected:
+    void closeEvent(QCloseEvent* event) override
+    {
+        event->ignore();
+    }
+
     void paintEvent(QPaintEvent*) override
     {
         QPainter painter(this);
@@ -221,6 +231,10 @@ BootSplash::BootSplash(const SplashConfig& config)
 
     auto* header = new QHBoxLayout();
     header->setSpacing(16);
+
+    // 启动期**不提供关闭**（2026-09-26 决定）：框上没有取消按钮，也拒掉窗口系统送来的关闭请求
+    // （见 SplashWindow::closeEvent()）。取消的机器仍然在（`StartupProgress::requestCancel()` → 宿主的 stop
+    // token，宿主/工具/无头场景照用），只是启动期不把它接到界面上。
 
     data->logo = new QLabel(root);
     data->logo->setFixedSize(kLogoSize, kLogoSize);

@@ -54,7 +54,6 @@
 #include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/gui/ConfigWindow.hpp>
 #include <vine/appfw/gui/ConsolePanel.hpp>
-#include <vine/appfw/gui/GuiAppBuilder.hpp>
 #include <vine/appfw/gui/PluginManagerDialog.hpp>
 #include <vine/appfw/gui/Control.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
@@ -73,6 +72,8 @@
 #include <vine/appfw/ConsoleProgressReporter.hpp>
 
 #include "ConsoleUserIO.hpp"
+
+#include "fixtures/TestGuiApplication.hpp"
 
 #include <vine/appfw/ProgressHost.hpp>
 #include <vine/progress/ProgressRange.hpp>
@@ -119,10 +120,11 @@ class GuiEnv : public ::testing::Environment {
         static char  arg0[] = "test_gui";
         static char* argv[] = { arg0, nullptr };
 
-        // 与真实应用一样走 builder：它会应用应用身份并启用默认配置文件。
+        // 与真实应用一样把 AppConfig 交给构造函数（builder 也只有这一步：本进程不设 built_in_plugin_dir）。
+        // 用测试子类是为了拿到受保护的启动收尾钩子（见 fixtures/TestGuiApplication.hpp）。
         vn::appfw::AppConfig config;
         config.name = "test_gui";
-        app         = guifw::createGuiApplication(config, 1, argv);
+        app         = std::make_unique<TestGuiApplication>(config, 1, argv);
 
         // 从干净状态开始：上一次运行（或中途失败）可能留下插件注册文件。
         // Qt 测试模式已经把数据目录重定向到临时区，删掉它是安全的。
@@ -135,10 +137,10 @@ class GuiEnv : public ::testing::Environment {
         app.reset();
     }
 
-    static std::unique_ptr<guifw::GuiApplication> app;
+    static std::unique_ptr<TestGuiApplication> app;
 };
 
-std::unique_ptr<guifw::GuiApplication> GuiEnv::app;
+std::unique_ptr<TestGuiApplication> GuiEnv::app;
 
 // gtest_main 没有自定义 main 的钩子，用静态初始化注册全局环境即可。
 ::testing::Environment* const g_gui_env = ::testing::AddGlobalTestEnvironment(new GuiEnv());

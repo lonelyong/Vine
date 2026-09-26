@@ -200,7 +200,7 @@ VINE_ASAN_FILTER='*' scripts/asan_check.sh     # 整个 test_gui（68 例）
 AddressSanitizer 错误为零**（UAF/越界/释放后使用均无），默认跑法输出 `RESULT: PASS`。
 加 `VINE_ASAN_LEAKS=1` 时 LeakSanitizer 报 15 处 / 5864 字节，栈**全部**经过
 `GuiTest::SetUp`（`tests/test_gui/test_gui.cpp:108`）→ `createGuiApplication()` →
-`GuiApplication::init()` → `MainWindow`/`SARibbonMainWindow`（第三方），也就是测试夹具与
+`GuiApplication` 构造函数 → `MainWindow`/`SARibbonMainWindow`（第三方），也就是测试夹具与
 QApplication 的既有保留，与 EventBus 无关；这与早先整跑 test_gui 时出现的 `GuiTest::buildDock`
 是同一类问题（测试夹具自己持有对象），只是不同跑法命中的不同用例。
 

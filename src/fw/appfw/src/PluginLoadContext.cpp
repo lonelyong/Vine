@@ -6,6 +6,7 @@
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/ConfigRegistry.hpp>
+#include <vine/appfw/StartupProgress.hpp>
 #include <vine/logging/Log.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -38,6 +39,16 @@ PluginLoadContext::~PluginLoadContext() = default;
 raw_ptr<Application> PluginLoadContext::application() const
 {
     return d->app;
+}
+
+std::stop_token PluginLoadContext::stopToken() const
+{
+    // The token belongs to the boot, which reports through the process-wide sink; without a boot (a plugin loaded by a
+    // test or a tool) there is nothing to cancel, and the default token says exactly that.
+    if (const StartupProgress* const progress = StartupProgress::current(); progress != nullptr) {
+        return progress->stopToken();
+    }
+    return {};
 }
 
 raw_ptr<ConfigRegistry> PluginLoadContext::configRegistry() const

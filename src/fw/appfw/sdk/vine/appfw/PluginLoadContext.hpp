@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <stop_token>
 #include <vector>
 
 #include <vine/raw_ptr.hpp>
@@ -43,6 +44,21 @@ class VN_APPFW_API PluginLoadContext {
      * @return The Application this context was created for, or nullptr if none.
      */
     raw_ptr<Application> application() const;
+
+    /**
+     * @brief Returns the cancellation token of the boot this plugin is being loaded by.
+     *
+     * A plugin does not have to reach for the process-wide startup sink to learn that the boot is being cancelled: the
+     * context it is loaded with carries the same token (see StartupProgress::stopToken()). A hook that starts long,
+     * UI-free work - the half a plugin sends to the thread pool - should hand this on so that work can stop early, and
+     * a hook should check it between its own stages.
+     *
+     * A plugin loaded outside a boot (a test, a tool that calls PluginManager::load()) gets a token that is never
+     * stopped, which is the same answer as "nobody is cancelling this".
+     *
+     * @return The token of the running boot, or a never-stopped token when there is none.
+     */
+    std::stop_token stopToken() const;
 
     /**
      * @brief Config registry: plugins register config items (ConfigItem) here.

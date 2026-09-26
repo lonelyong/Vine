@@ -2,6 +2,7 @@
 
 #include "appfw_global.hpp"
 
+#include <chrono>
 #include <coroutine>
 #include <functional>
 
@@ -47,6 +48,41 @@ class VN_APPFW_API MainThreadDispatcher {
      * @return true if the task was queued, false if it was dropped without running.
      */
     bool postToMain(std::function<void()> task);
+
+    /**
+     * @brief Runs task ON the application thread and returns once it has run: a blocking delegation.
+     *
+     * What a worker thread needs when part of its work belongs to the application thread - building widgets, creating
+     * graphics objects, touching the render control - and what comes AFTER that part depends on it: the callable runs
+     * there, this thread waits for it, and the caller keeps its own thread for the rest. It is the synchronous
+     * counterpart of postToMain(), and the contrast with resumeOnMainThread() is the point: that one gives the calling
+     * thread UP (the rest of the coroutine continues on the application thread), this one only LENDS the other thread
+     * the piece that must run there.
+     *
+     * Called on the application thread it simply runs the task inline: queueing to itself and waiting would deadlock.
+     *
+     * THE WAIT IS BOUNDED, and only a worker may do it: the application thread must never block on a worker (that stops
+     * the loop, and this call from the application thread could never complete). When the bound passes, the task may
+     * still be queued - the call logs it and reports false, and the caller must not assume the work happened.
+     *
+     * @param task    Task to run on the application thread.
+     * @param timeout How long to wait for it (bounded on purpose; see above).
+     * @return true if the task ran (inline or on the application thread), false when it could not be handed over or the
+     *         wait ran out.
+     */
+    bool invokeOnMainThread(std::function<void()> task, std::chrono::milliseconds timeout = std::chrono::seconds(5));
+
+    /**
+     * @brief Queues task for execution on the application thread, without a dispatcher instance.
+     *
+     * For code that runs on a worker thread and must not hold the dispatcher: the dispatcher belongs to the application
+     * and dies with it, so a boot that outlives the application (see Application::shutdown()) could otherwise reach a
+     * destroyed object. Delivery follows the same rules as postToMain().
+     *
+     * @param task Task to run on the application thread.
+     * @return true if the task was queued, false if it was dropped without running.
+     */
+    static bool postToMainThread(std::function<void()> task);
 
     /**
      * @brief Delivers the calls that are already queued for the application thread.

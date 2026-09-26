@@ -3,6 +3,7 @@
 #include "appfw_global.hpp"
 
 #include <memory>
+#include <stop_token>
 #include <string>
 
 VN_APPFW_NS_BEGIN
@@ -30,7 +31,7 @@ VN_APPFW_NS_BEGIN
  * bar's ProgressPresenter and the headless ConsoleProgressReporter show the same state without any extra wiring.
  *
  * Lifetime: at most one per process, owned by Application::startupProgress(), created when the boot starts and
- * destroyed by Application::finishStartup(). Without a sink (StartupProgress::current() == nullptr) every call is a
+ * destroyed by Application::startupEnd(). Without a sink (StartupProgress::current() == nullptr) every call is a
  * no-op, so boot code may report unconditionally.
  *
  * Thread contract: stage()/advance()/setLabel()/complete() are called by the reporting thread (the application thread
@@ -94,7 +95,7 @@ class VN_APPFW_API StartupProgress
     /**
      * @brief Ends the current stage and fills the bar.
      *
-     * Called by Application::finishStartup(); reporting a further stage afterwards starts over.
+     * Called by Application::startupEnd(); reporting a further stage afterwards starts over.
      */
     void complete();
 
@@ -119,6 +120,27 @@ class VN_APPFW_API StartupProgress
      * @return The units done as a fraction of the stage's total, in [0, 1]; 0 for an indeterminate stage.
      */
     double fraction() const;
+
+    /**
+     * @brief Returns the cancellation token of this boot.
+     *
+     * A boot owns a cancellation source (it is a progress host, and every host has one), which is what a cancel button
+     * - the one in the startup frame, the one the status bar shows, or something the host draws itself - requests
+     * through requestCancel(). Boot code reads the token here and stops what it is doing: the framework checks it
+     * between its own phases and between the plugins it loads, and a plugin that has a long, UI-free stretch can pass
+     * it on to whatever runs that work.
+     *
+     * @return The token; it never stops being valid, and a boot that nobody cancels reports false.
+     */
+    std::stop_token stopToken() const;
+
+    /**
+     * @brief Requests that the boot stops.
+     *
+     * What the application does with it is the application's: Application::cancelStartup() ends the boot without
+     * calling it a failure, releases what the boot had already loaded and stops the main loop with a success code.
+     */
+    void requestCancel();
 
   private:
     struct Impl;

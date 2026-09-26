@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <QCoreApplication>
+#include <QMetaObject>
 #include <QStandardPaths>
 #include <QStringList>
 
@@ -23,6 +24,8 @@
 
 #include <vine/appfw/ProgressHost.hpp>
 #include <vine/appfw/StartupProgress.hpp>
+
+#include <vine/async/DetachedTask.hpp>
 
 #include "ApplicationData.hpp"
 #include "ConsoleUserIO.hpp"
@@ -85,6 +88,10 @@ QString applicationNameOrFallback()
     return name.isEmpty() ? QString::fromUtf8(s_fallback_app_name) : name;
 }
 
+/// 启动失败时进程的退出码：启动期的异常是致命的（见 startupSequence()），run() 带着它返回，
+/// 进程随之退出。
+constexpr int s_startup_failure_exit_code = 1;
+
 } // namespace
 
 VN_OBJECT_META_IMPL(Application, Object)
@@ -101,11 +108,22 @@ auto Application::dptr() const -> const ApplicationData*
     return d.get();
 }
 
+Application::Application(const AppConfig& config, int argc, char** argv)
+  : Application(new ApplicationData(), config, argc, argv)
+{
+    // The process may hold only one Qt application object, and the base cannot know which one a leaf wants: a headless
+    // host gets a QCoreApplication, a GUI a QApplication (see GuiApplication). Either leaf stores it in the application
+    // data, where it is a private detail, and then calls initialize() - which is why no Qt type appears in the
+    // framework's public headers.
+    dptr()->app = new QCoreApplication(dptr()->argc, dptr()->argv);
+    initialize(config);
+}
+
 Application::Application(int argc, char** argv)
-  : Application(new ApplicationData(), argc, argv)
+  : Application(AppConfig{}, argc, argv)
 {}
 
-Application::Application(ApplicationData* data, int argc, char** argv)
+Application::Application(ApplicationData* data, const AppConfig& config, int argc, char** argv)
   : d(data)
 {
     if (s_current_app.load(std::memory_order_acquire) != nullptr) {
@@ -114,12 +132,23 @@ Application::Application(ApplicationData* data, int argc, char** argv)
 
     s_current_app.store(this, std::memory_order_release);
 
-    // The framework assumes an organization so that the per-user data and config
-    // paths (QStandardPaths) are well formed even when the host only names the
-    // application. A host identity set before this constructor is kept.
-    if (QCoreApplication::organizationName().isEmpty()) {
+    dptr()->argc = argc;
+    dptr()->argv = argv;
+
+    // The process identity comes first, because everything below reads it: the per-user data and config paths
+    // (QStandardPaths), the configuration file, and the startup frame, which resolves an empty title to the application
+    // name. The framework assumes an organization so those paths are well formed even when the host only names the
+    // application; an identity the host set before this constructor is kept.
+    if (!config.organization.empty()) {
+        QCoreApplication::setOrganizationName(QString::fromStdString(config.organization));
+    } else if (QCoreApplication::organizationName().isEmpty()) {
         QCoreApplication::setOrganizationName(toQString(Application::defaultOrganizationName()));
     }
+    if (!config.name.empty()) {
+        QCoreApplication::setApplicationName(QString::fromStdString(config.name));
+    }
+
+    dptr()->load_plugins = config.load_plugins;
 
     dptr()->plugin_manager  = std::make_unique<PluginManager>();
     dptr()->service_manager = std::make_unique<ServiceManager>();
@@ -130,8 +159,6 @@ Application::Application(ApplicationData* data, int argc, char** argv)
     // The marshaller is injected and outlives the bus (ApplicationData declares it
     // before the bus, so it is destroyed after it).
     dptr()->event_bus = std::make_unique<EventBus>(dptr()->main_dispatcher.get());
-    dptr()->argc            = argc;
-    dptr()->argv            = argv;
 }
 
 Application::~Application()
@@ -139,12 +166,19 @@ Application::~Application()
     s_current_app.store(nullptr, std::memory_order_release);
 }
 
-void Application::init()
+void Application::initialize(const AppConfig& config)
 {
-    if (dptr()->app == nullptr) {
-        dptr()->app = new QCoreApplication(dptr()->argc, dptr()->argv);
-    }
     setupUserIO();
+
+    // An explicit file always wins; otherwise the framework layout under the user's data directory is used unless the
+    // host opted out (tests, tools). A file that cannot be read is logged by setConfigFile() and the defaults apply.
+    if (!config.config_file.empty()) {
+        static_cast<void>(setConfigFile(config.config_file));
+        return;
+    }
+    if (config.persist_config) {
+        static_cast<void>(setConfigFile(defaultConfigFile()));
+    }
 }
 
 void Application::setupUserIO()
@@ -168,7 +202,76 @@ StartupProgress* Application::startupProgress() const
     return dptr()->startup_progress.get();
 }
 
-void Application::finishStartup()
+UserIO* Application::createUserIO()
+{
+    return new ConsoleUserIO;
+}
+
+vn::async::Task<void> Application::startupStart()
+{
+    co_return; // 默认什么都不摆：无头宿主没有"启动期的脸"，叶子（GUI）在这里上屏、等首帧。
+}
+
+vn::async::Task<void> Application::startup()
+{
+    auto* const d = dptr();
+
+    // 框架自己的启动工作先来：插件是宿主的活最容易依赖的东西（命令、服务、界面都是它们注册的），而且
+    // "加载插件"每个应用都要做一遍，不该由每个 main 重写（AppConfig::load_plugins 关掉就能自管）。
+    // 时机是契约：这一段跑在启动画面画出首帧之后（由 startupStart() 那一拍等出来）——插件里建窗口、建渲染
+    // 表面时，窗口系统已经能派发通知了（X11 上不派发就只是一个空窗口）。它也必须在主线程：插件正是在
+    // load() 里建窗口与视图。
+    if (d->load_plugins && d->plugin_manager != nullptr) {
+        // 异步门（loadAllAsync()）：插件生命周期必须跑在应用线程上（插件正是在 load() 里建窗口与视图），所以
+        // "耗时操作不阻塞事件循环"只能靠切：插件把与界面无关的那一半丢到池上（`vn::async::run`），回来之前
+        // 事件循环照跑——启动框的进度也正是这样从池上那一半报上来的。
+        // 进度是按**相位**更新的：管理器在每段之前报一次阶段名、每个插件换一次标签（查找/创建/加载/收尾），
+        // 启动框每收到一次上报就同步重画一次（见 BootSplash::onStartupChanged()）——所以相位边界一定看得见，
+        // 而相位**内部**那段连续占用（例如会话 init() 的两百多毫秒）期间画面不动，这是有意接受的：
+        // 不为此在启动期回转事件循环（会把别人的定时器也跑起来，见 PluginManager::loadAllAsync() 的注释）。
+        const bool loaded = co_await d->plugin_manager->loadAllAsync();
+        if (!loaded && !startupCancelled()) {
+            // 取消不是失败：取消时管理器提前收工也返回 false，别拿"插件没装上"去吓人。
+            VN_LOGW("Some plugins failed to load; the application starts without them");
+        }
+    }
+
+    co_return;
+}
+
+bool Application::startupCancelled() const
+{
+    const StartupProgress* const progress = dptr()->startup_progress.get();
+    return progress != nullptr && progress->stopToken().stop_requested();
+}
+
+void Application::cancelStartup()
+{
+    // 用户（或宿主）不想等这次启动了：这不是失败，所以不走 failStartup() 那条非零退出的路，但也不能装作启动
+    // 成功——主窗永远不上屏，已经装上的插件按依赖反序卸掉（插件写在 load() 里的东西不能留在进程里），上报口收起，
+    // 主循环以 0 停掉：run() 随即返回，shutdown() 照常跑完（那时候插件表已经是空的）。
+    VN_LOGI("startup cancelled: the application stops without finishing the boot");
+
+    if (auto* const plugins = dptr()->plugin_manager.get(); plugins != nullptr) {
+        static_cast<void>(plugins->unloadAll());
+    }
+
+    endStartupProgress();
+    exit(0);
+}
+
+void Application::failStartup()
+{
+    VN_LOGE("startup failed: the application exits with code {}", s_startup_failure_exit_code);
+
+    // 上报口先收：不让任何人继续往一个死掉的启动里报（presenter 也随之回到"跟下一步干什么"）。
+    endStartupProgress();
+
+    // 以非零码停主循环：run() 随即返回，进程带着这个码退出，shutdown() 照常跑完（命令、插件、配置都干净收尾）。
+    exit(s_startup_failure_exit_code);
+}
+
+void Application::endStartupProgress()
 {
     // The sink is destroyed, not just completed: a live host would stay in the foreground stack and shadow the progress
     // of every command that runs afterwards.
@@ -178,59 +281,78 @@ void Application::finishStartup()
     }
 }
 
-UserIO* Application::createUserIO()
+vn::async::Task<void> Application::startupEnd()
 {
-    return new ConsoleUserIO;
-}
-
-void Application::showUserInterface()
-{
-}
-
-void Application::whenUserInterfaceIsUp(std::function<void()> then)
-{
-    then();
-}
-
-int Application::runStartup(std::function<void()> work)
-{
-    dptr()->startup_work = std::move(work);
-    dptr()->startup_handed_over.start();
-    return run();
+    co_return; // 默认没有"脸"要收：叶子（GUI）在这里收框、把主窗第一次上屏。
 }
 
 int Application::run()
 {
     auto* const d = dptr();
 
-    // 计时从"被要求运行"算起（runStartup() 先记下交接时刻），给启动期的诊断一个统一起点。
-    if (!d->startup_handed_over.isValid()) {
-        d->startup_handed_over.start();
-    }
+    // 计时从“被要求运行”算起，给启动期的诊断一个统一起点（无头宿主没有读者，但多算一次也不花钱）。
+    d->startup_requested_at.start();
 
-    // 界面先上屏，再允许启动工作开始：工作会阻塞应用线程，而它依赖的东西（顶层窗口、渲染表面）要在那之前就位。
-    showUserInterface();
-    whenUserInterfaceIsUp([this] { startStartupWork(); });
+    // 先让循环跑起来，启动阶段再从队列里推：窗口系统那一半（X11 的 expose、Windows 的 WM_PAINT）本来就靠循环派发，
+    // 循环起来之前 show() 出来的窗口一个像素都没有；而启动阶段的第一道门就是“启动画面真的在屏上”。
+    // 两个好处：无头与有窗口的启动阶段走同一条时间轴（同一个事件队列），差别只剩“上不上屏”；
+    // 宿主的活跑在池里，循环不必为它停。
+    QMetaObject::invokeMethod(d->app, [this] { static_cast<void>(startupSequence()); }, Qt::QueuedConnection);
 
     const int code = d->app->exec();
     shutdown();
     return code;
 }
 
-void Application::startStartupWork()
+vn::async::DetachedTask Application::startupSequence()
 {
-    auto* const d = dptr();
-    if (d->startup_started) {
-        return;
-    }
-    d->startup_started = true;
+    // 三拍平铺（startupStart() → startup() → startupEnd()），像顺序代码一样读。
+    //
+    // 三拍不能是三个裸调用：一拍返回不等于它做完了（GUI 的第一拍要等启动框真的画出首帧）。协程把“等下一拍”
+    // 拉直成 `co_await`：挂起期间控制权回到事件循环——这就是“等它，但不占住消息循环”。
+    //
+    // 每拍之后垫一次 `resumeOnMainThread()`：一拍可能在别的线程上结束（定时器、IO、宿主自己丢到池上的活），
+    // 而下一拍与这次启动的收尾都必须在应用线程上。已经在主线程时它是空操作。
+    beginStartupProgress()->stage("正在启动");
 
-    // 工作跑完再结束启动阶段：工作里报告的每个阶段都还属于这次启动的进度。
-    auto work = std::move(d->startup_work);
-    if (work) {
-        work();
+    bool ok = true;
+    try {
+        co_await startupStart();
+        co_await dptr()->main_dispatcher->resumeOnMainThread();
+        if (startupCancelled()) {
+            cancelStartup();
+            co_return;
+        }
+        co_await startup();
+        co_await dptr()->main_dispatcher->resumeOnMainThread();
+        if (startupCancelled()) {
+            cancelStartup();
+            co_return;
+        }
+        co_await startupEnd();
+        co_await dptr()->main_dispatcher->resumeOnMainThread();
     }
-    finishStartup();
+    catch (const std::exception& error) {
+        VN_LOGE("the startup phase failed: {}", error.what());
+        ok = false;
+    }
+    catch (...) {
+        VN_LOGE("the startup phase failed with an unknown exception");
+        ok = false;
+    }
+
+    // 启动期异常**不吞**：任一拍（含宿主启动工作带上来的异常）失败就收起上报口、以非零码停掉主循环（见
+    // failStartup()）——启动失败不该留下一个半启动的应用在跑。取消走另一条路（cancelStartup()：没失败，也没
+    // 启动成功）。收尾也要在应用线程上，而 `co_await` 不能写在 catch
+    // 处理块里（失败那一拍也可能是在别的线程上抛的）⇒ 两条路都在 try 之后合并。
+    if (!ok) {
+        co_await dptr()->main_dispatcher->resumeOnMainThread();
+        failStartup();
+        co_return;
+    }
+
+    // 三拍都过了：这次启动结束，上报口最后收（presenter 随之回到“跟下一步干什么”）。
+    endStartupProgress();
 }
 
 void Application::shutdown()
@@ -371,6 +493,12 @@ std::vector<std::filesystem::path> Application::allUsersPluginRegistrationDirect
 
 void Application::exit(int code)
 {
+    // 退出请求只能由主线程下：别的线程上的调用方（宿主自己丢到池上的启动工作就是一条）不必知道这条规矩。
+    if (auto* dispatcher = dptr()->main_dispatcher.get(); dispatcher != nullptr && !dispatcher->isMainThread()) {
+        static_cast<void>(dispatcher->postToMain([code] { QCoreApplication::exit(code); }));
+        return;
+    }
+
     QCoreApplication::exit(code);
 }
 

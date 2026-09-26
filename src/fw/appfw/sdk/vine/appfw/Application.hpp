@@ -3,13 +3,17 @@
 #include "appfw_global.hpp"
 
 #include <filesystem>
-#include <functional>
 #include <memory>
 #include <vector>
+
+#include <vine/async/DetachedTask.hpp>
+#include <vine/async/Task.hpp>
 
 #include <vine/Object.hpp>
 #include <vine/String.hpp>
 #include <vine/raw_ptr.hpp>
+
+#include <vine/appfw/AppConfig.hpp>
 
 VN_APPFW_NS_BEGIN
 
@@ -34,10 +38,63 @@ class VN_APPFW_API Application : public Object {
     std::unique_ptr<ApplicationData> d;
 
   public:
+    /**
+     * @brief Builds the application from its configuration.
+     *
+     * The constructor does the whole initialization, in order: it applies the process identity (AppConfig::name and
+     * AppConfig::organization, the default organization when the config sets none), builds the managers, and the leaf
+     * constructor creates the Qt application object (see the protected constructor and initialize()), which is why no
+     * Qt object may exist when this runs. The configuration file is loaded last (see AppConfig::config_file and
+     * AppConfig::persist_config).
+     *
+     * A host has nothing left to call before run().
+     *
+     * @param config Application configuration.
+     * @param argc Command line argument count.
+     * @param argv Command line arguments.
+     */
+    Application(const AppConfig& config, int argc, char** argv);
+
+    /**
+     * @brief Builds the application with a default configuration.
+     *
+     * For a test or a tool: the framework's services come up, the process identity is whatever the host set itself, and
+     * the configuration is read from and saved to Application::defaultConfigFile() (pass an AppConfig with
+     * persist_config = false to keep the process out of the user's data directory).
+     *
+     * @param argc Command line argument count.
+     * @param argv Command line arguments.
+     */
     Application(int argc, char** argv);
 
   protected:
-    Application(ApplicationData* data, int argc, char** argv);
+    /**
+     * @brief Builds the application data and everything that does not depend on the Qt application object.
+     *
+     * The leaf constructor finishes the job, because creating the Qt object cannot happen here: the process may hold
+     * only one such object and the base cannot know whether a headless host or a GUI is being built. So the leaf stores
+     * it in the application data (ApplicationData::app, a private detail of the framework) and then calls
+     * initialize().
+     *
+     * @param data   Application data; may already be the leaf's own extension of it.
+     * @param config Application configuration.
+     * @param argc   Command line argument count.
+     * @param argv   Command line arguments.
+     */
+    Application(ApplicationData* data, const AppConfig& config, int argc, char** argv);
+
+    /**
+     * @brief Completes construction: creates the user IO and applies the configuration file.
+     *
+     * The configuration file is loaded here (immediately, not at the start of run()) and saved by shutdown(); an
+     * explicit AppConfig::config_file wins over AppConfig::persist_config, which only decides whether the framework
+     * layout under the user's data directory is used at all.
+     *
+     * The Qt application object has to be in place before this is called (see the protected constructor).
+     *
+     * @param config Application configuration, for the configuration file.
+     */
+    void initialize(const AppConfig& config);
 
     /**
      * @brief Creates the application's UserIO.
@@ -53,16 +110,6 @@ class VN_APPFW_API Application : public Object {
      * @brief Creates and stores the application's UserIO.
      */
     void setupUserIO();
-
-    /**
-     * @brief Creates the startup progress sink when the application reports its boot.
-     *
-     * Idempotent, so an application may call it on the path where it decides to report a boot; the sink is destroyed by
-     * finishStartup(). Called by GuiApplication::init() when the configured startup frame is enabled.
-     *
-     * @return The application's startup progress sink.
-     */
-    StartupProgress* beginStartupProgress();
 
     /**
      * @brief Tears the application down after the main loop has stopped.
@@ -87,40 +134,33 @@ class VN_APPFW_API Application : public Object {
     ~Application() override;
 
   public:
-    virtual void init();
-
-  public:
     /**
-     * @brief Runs the application: shows the user interface, does the host's startup work, then runs the loop.
+     * @brief Runs the application: starts the loop, then boot and serves the host from inside it.
      *
      * This method starts the application's main loop and blocks until the application is exited. It returns the exit
      * code provided to the exit() method.
      *
-     * Showing and the work are ordered by the framework, which is why the host hands its work over instead of running
-     * it before this call: the work blocks the application thread, so it may only start once the user interface is on
-     * screen (see showUserInterface() and whenUserInterfaceIsUp()). The startup phase ends when the work returns
-     * (finishStartup() is called for the host), so a host with a startup frame does not have to end it itself.
+     * The whole startup phase happens inside the loop, because the window system needs it: a window is on screen only
+     * once the loop has dispatched the notification that says so, and what depends on a window being on screen - the
+     * plugin load, an embedded render surface - can only run after that. So run() posts one step and starts the loop;
+     * that step walks the boot's three phases in order (startupStart(), startup(), startupEnd()), each of them deciding
+     * on the main thread when the next one may run. A host without a window walks the same three, which is what makes the
+     * two differ only in what goes on screen.
+     *
+     * The loop keeps turning for the whole boot except where a phase has to block it: the plugin load runs on the main
+     * thread (a plugin's load() builds windows and views) - so what the boot reports, and anything the user does, stays
+     * live while the loading goes on. A host whose own startup work is heavy overrides startup() and hands that work to
+     * another thread itself (vn::async::run() is what the async library offers for a blocking callable, and it is what
+     * the framework would do for the host anyway); blocking inside a phase instead stops the loop for as long as the
+     * work takes, which is the "the window does not repaint, the progress does not update" case this shape exists to
+     * avoid.
+     *
+     * The boot also loads the plugins (AppConfig::load_plugins) as the first thing its second phase does, which is what
+     * lets a host call run() and nothing else.
      *
      * @return The application's exit code.
      */
     virtual int run();
-
-    /**
-     * @brief Runs the application, doing the host's startup work once the user interface is up.
-     *
-     * The work is what has to happen before the application can be used - the host's own stages and the loading of the
-     * plugins - and it runs between the two steps run() orders: the user interface is up, and the loop has not settled
-     * into its normal work yet. It may block.
-     *
-     * What the hand-off implies: the work runs from inside the loop, so for its duration the application has a running
-     * event loop (MainThreadDispatcher::hasEventLoop() is true) while that very loop is blocked by the work - events
-     * posted to the application thread are delivered once it returns. An exception thrown by the work leaves through
-     * the loop, the way it would have left through the caller.
-     *
-     * @param work Startup work; may be empty for a host that has none.
-     * @return The application's exit code.
-     */
-    int runStartup(std::function<void()> work);
 
     /**
      * @brief Requests that the application's main loop stops with the given code.
@@ -135,27 +175,14 @@ class VN_APPFW_API Application : public Object {
     void exit(int code);
 
     /**
-     * @brief Finishes the startup phase and reports it to the startup progress sink.
-     *
-     * The startup phase is over when the host's startup work is done - after the plugins are loaded and after the
-     * host's own startup stages have run - and only then is the application considered started: a startup frame stays
-     * on screen until this call, and the startup progress sink is destroyed here. runStartup() calls it once the work
-     * it was handed returns, so a host that hands its work over does not have to; a host that starts the application
-     * some other way calls it itself. Calling it twice is harmless: there is no sink left to finish and nothing else is
-     * left to do - which also makes it the call that brings the windows up for a host that never runs the loop (a test,
-     * a tool), since it makes sure the main window is visible.
-     */
-    virtual void finishStartup();
-
-    /**
      * @brief Returns the startup progress sink of the current boot, or nullptr when there is none.
      *
-     * The sink is created when a startup frame is enabled (GuiApplication) or by a host that reports a headless
-     * boot itself, and it is destroyed by finishStartup(). Boot code - the framework's plugin loading as much as
-     * the host's own stages - reports into it through StartupProgress::current(), so a nullptr is simply "nobody is
-     * watching, report anyway".
+     * The sink exists for the startup phase and nothing else: the boot creates it before its first phase and destroys it
+     * when the last one is through, so a process that never runs a boot - a test, a tool - never has one. Boot code -
+     * the framework's plugin loading as much as the host's own stages, on whichever thread it runs - reports into it
+     * through StartupProgress::current(), so a nullptr is simply "nobody is watching, report anyway".
      *
-     * @return The sink, or nullptr when the application reports no startup progress.
+     * @return The sink, or nullptr when the application is not booting.
      */
     StartupProgress* startupProgress() const;
 
@@ -362,34 +389,130 @@ class VN_APPFW_API Application : public Object {
   public:
     static raw_ptr<Application> current();
 
-  private:
-    /// Runs the handed-over startup work, if any, and ends the startup phase: the single place the phase moves on, and
-    /// the reason both the "interface is up" notice and its backstop can exist without doing anything twice.
-    void startStartupWork();
-
   protected:
-    // Declared after every pre-existing virtual function on purpose: a new virtual inserted anywhere earlier in this
-    // class would move the vtable slots of the ones after it, and the plugin ABI version gate would have to move too.
+    // Declared after every other virtual function on purpose: a new virtual inserted anywhere earlier in this class
+    // moves the vtable slots of the ones after it. The slots of everything below were reset by the ABI revision that
+    // folded init() into the constructor, so keeping the additions at the end is what lets the next one be appended
+    // without another bump. (The three boot phases live here as one set; their signatures changed when they became
+    // async, which is why VN_APPFW_PLUGIN_ABI_VERSION moved to 5u, and the plugin lifecycle hooks themselves became
+    // tasks in 6u.)
 
     /**
-     * @brief Shows what the host puts in front of the user, before the startup work may begin.
+     * @brief Phase one of the boot: puts up what the user should see while it runs, and returns once it is up.
      *
-     * Nothing by default: a headless application has no window. GuiApplication shows the windows it created in init()
-     * here, which is what makes creation and presentation two separate steps - init() builds, run() presents - and what
-     * keeps the ordering that matters (a window has to be up before the work that needs it runs).
+     * The framework calls this from inside the event loop, once the boot has started, and the boot does not go on -
+     * neither the plugin load nor the host's own startup work - until this returns: what it puts up has to be really on
+     * screen first, or the user spends the boot looking at an empty window (a window is painted only once the loop has
+     * dispatched the window system's notice that it is there - see Window::hasPainted()).
+     *
+     * Nothing to put up by default: a headless application has nothing to show. A GUI application shows the startup frame
+     * the configuration asked for and waits for its first paint here - which is what makes the two differ only in what
+     * goes on screen.
+     *
+     * Waiting is written as `co_await`, and that is the point of the async shape: the phase suspends and the loop keeps
+     * turning, so the very notification it waits for can be dispatched. Blocking here would stop that loop, and pumping
+     * the queue to force a paint is what the startup phase must not do (it would run the timers and settles of everything
+     * else that is starting up).
+     *
+     * A leaf may well finish on another thread (a timer, an I/O completion): the framework comes back to the application
+     * thread itself after every phase, because everything the boot touches - windows, the sink, the managers - belongs
+     * there. What a leaf does *inside* its own phase still has to respect that (see
+     * MainThreadDispatcher::resumeOnMainThread()).
+     *
+     * The wait is a deadline as well: a window system that never reports a window as visible must not keep the boot from
+     * running (see GuiApplication::startupStart()).
+     *
+     * @return A task that completes once what this shows is on screen; the framework awaits it.
      */
-    virtual void showUserInterface();
+    virtual vn::async::Task<void> startupStart();
 
     /**
-     * @brief Calls \a then once the user interface is on screen.
+     * @brief Phase two of the boot: loads the plugins, runs the host's startup work, and returns when both are through.
      *
-     * Immediately by default, because a headless application has nothing to wait for. GuiApplication waits until the
-     * windows it shows have painted: driving the queue is the job of the loop run() starts, and a window that has not
-     * painted yet is an empty window on screen.
+     * The framework's part is the plugin load (AppConfig::load_plugins), which runs on the main thread because a plugin's
+     * load() builds windows, views and render surfaces; it is the first thing the phase does, so the commands, services
+     * and UI the plugins register are there before anything the host adds.
      *
-     * @param then What to do once the user interface is up; called exactly once.
+     * This is also the phase a host with startup work of its own overrides: it does its own part and then awaits
+     * Application::startup(), so the plugin load keeps coming first. Heavy work goes to another thread - vn::async::run()
+     * is what the async library offers for a blocking callable - and `co_await`ing it is what keeps the loop turning
+     * (progress reaches the frame, the windows keep painting, the host's own input stays answered) while it runs; a host
+     * that blocks here instead stops the loop for as long as its work takes. Whatever is done on another thread must not
+     * touch what belongs to the main thread - windows, widgets, the render surface, the Qt application object - and
+     * reaches it through MainThreadDispatcher::postToMainThread() where it has to.
+     *
+     * Nothing here reports progress of its own: the plugin load is reported by PluginManager ("正在加载插件").
+     *
+     * A failure here - an exception out of a leaf's own part, or out of the host's startup work - is fatal: the boot is
+     * over and the application exits with a non-zero code. A plugin that merely fails to load is not: the application
+     * starts without it.
+     *
+     * @return A task that completes once the boot's own work is done.
      */
-    virtual void whenUserInterfaceIsUp(std::function<void()> then);
+    virtual vn::async::Task<void> startup();
+
+    /**
+     * @brief Phase three of the boot: puts the boot's face away and lets what it was hiding come up.
+     *
+     * The framework's *end of the boot* is not here: the startup progress sink is destroyed right after this returns (so
+     * the presenters go back to following whatever runs next once the last phase is through). GuiApplication takes the
+     * startup frame down and shows the main window for the first time; a headless application has nothing to put away.
+     *
+     * This is deliberately not the mirror image of startupStart(): that one waits for something only the loop can
+     * deliver, so it has to suspend; this one is over as soon as it is done, and would be a plain call if the three
+     * phases were not one shape.
+     *
+     * A host that drives its own boot calls this from its own class (it is protected: ending the boot is the framework's
+     * move, and a host does not reach into a running boot from outside) - that is also the call that brings the windows
+     * up for a host that never runs the loop. It is a lazy task, so it has to be awaited: vn::async::syncWait() drives
+     * it to completion on the calling thread, which only works while it does not need the event loop.
+     *
+     * @return A task that completes once the boot's face is away.
+     */
+    virtual vn::async::Task<void> startupEnd();
+
+  private:
+    /// 走完启动阶段的三拍（startupStart() → startup() → startupEnd()），顺序只写在这一处，而且是**平铺**的：三拍就是三行
+    /// `co_await`，一个 `try` 罩住它们，像顺序代码一样读。
+    ///
+    /// 三拍不能是三个裸调用：一拍返回不等于它做完了（第一拍要等启动期要显示的东西真的上了屏），而普通函数里"下一条
+    /// 语句"就是"上一条返回之后" ⇒ 平铺 + 异步的拍不可兼得。协程把"等下一拍"拉直成 `co_await`：挂起期间控制权回到
+    /// 事件循环，这就是"等它，但不占住消息循环"。
+    ///
+    /// 每一拍之后垫一次 `resumeOnMainThread()`：一拍可能在别的线程上结束（定时器、IO、宿主自己丢到池上的活），而下一拍
+    /// 与这次启动的收尾都必须在应用线程上。已经在主线程时它是空操作，快路径不付代价。
+    ///
+    /// 启动期的异常**不吞**：任一拍（含宿主的启动工作带上来的异常）失败就收起上报口、以非零码停掉主循环（见
+    /// failStartup()）——启动失败不该留下一个半启动的应用在那里跑。收尾同样要在应用线程上，而 `co_await` 不能写在 catch
+    /// 处理块里，所以失败那条路先垫一次，两条路在 `try` 之后合并。
+    ///
+    /// `DetachedTask` 那个类型本身**不是返回值**，它是"协程"这件事的标记（C++ 要求协程函数的返回类型是协程类型）：
+    /// 里面没有东西，也没有可等的东西——调用即开跑（急启动），协程帧在最后一行之后自毁。用它（而不是 `Task`）是因为
+    /// 这次启动**没有所有者**：没人要它的结果，也不该有人能等它或销毁它。
+    vn::async::DetachedTask startupSequence();
+
+    /// 启动失败：收起上报口（不让任何人继续往一个死掉的启动里报），并以非零码停掉主循环 - run() 随即返回，
+    /// 进程带着这个码退出，shutdown() 照常跑完。**不走 startupEnd()**：启动都没成，把半成品的主窗端上来更糟。
+    void failStartup();
+    /// 本次启动是否被请求取消（托盘/启动框上的取消按钮，或宿主自己调的 StartupProgress::requestCancel()）。
+    ///
+    /// 取消不是失败：框架每拍之后、插件加载每装一个之前都会看一眼它，并在看到时走 cancelStartup()。
+    ///
+    /// @return true 表示这次启动应当停下来。
+    bool startupCancelled() const;
+
+    /// 取消这次启动：记日志、把已经装上的插件卸掉、收起上报口，并以 0 停掉主循环（用户主动取消不是失败）。
+    /// 主窗不会上屏（它不是 startupEnd() 那条路），已装的插件不会留在进程里。
+    void cancelStartup();
+    /// 建启动期的上报口（幂等：已经有一个就返回它）。只给启动序列用 - 上报口的生命周期就是启动阶段的生命周期，
+    /// 宿主不需要提前建一个（提前建会让 `isBusy()` 在启动之前就为真，顶层命令全被拒），要报东西就在三拍里报。
+    ///
+    /// @return 应用的上报口。
+    StartupProgress* beginStartupProgress();
+
+    /// 收起启动期的上报口（`complete()` + 销毁）。这是刻意的销毁而不是只 `complete()`：活着的宿主会一直待在前台栈
+    /// 上，把之后所有命令的进度挡在后面。幂等（没有上报口时什么也不做），启动成功时在 startupEnd() **之后**走它。
+    void endStartupProgress();
 };
 
 /*

@@ -98,6 +98,16 @@ bool RenderControl::init()
     return dptr()->surface->init();
 }
 
+vn::async::Task<bool> RenderControl::initAsync()
+{
+    return dptr()->surface->initAsync();
+}
+
+bool RenderControl::isAttaching() const noexcept
+{
+    return dptr()->surface->isAttaching();
+}
+
 void RenderControl::renderFrame()
 {
     dptr()->surface->renderFrame();

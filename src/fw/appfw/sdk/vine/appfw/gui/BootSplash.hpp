@@ -17,21 +17,28 @@ VN_APPFWGUI_NS_BEGIN
  * application-side presentation code: it subscribes to ProgressHost::changed() and redraws on every notification.
  *
  * The frame is created and owned by GuiApplication when AppConfig::splash is enabled, and it stays on screen until the
- * host calls Application::finishStartup() - it does not close itself, because only the host knows when its startup work
+ * the boot ends with Application::startupEnd() - it does not close itself, because that moment is the framework's to
  * is done.
  *
  * It is drawn on top of the main window rather than instead of it: the window is shown while the boot lasts, since an
  * embedded render surface creates its swapchain from the native window of the top-level widget and a window that was
  * never shown has none. The frame is a stay-on-top splash, so it covers that window while the boot is reported.
  *
- * A boot runs on the application thread, which never returns to the event loop while it works, so a notification
- * repaints the frame right there instead of posting an update: the frame would otherwise be painted for the first
- * time only after the boot it reports on had already finished.
+ * A boot holds the application thread in stretches - the session attach, the warm-up frame and the content load all
+ * run on the pool, but what builds widgets and graphics objects on the application thread cannot - and every report is
+ * made from inside one of those stretches or at a phase boundary between them. So a notification repaints the frame
+ * right there instead of posting an update: posting would show it only once the loop came back, and pumping the queue
+ * to force it is what this codebase refuses (it would run the timers of everything else that is starting up).
  *
- * That synchronous repaint is not by itself enough to put the frame on screen: painting a window waits for the window
- * system's "it is visible now" notice, which reaches the frame through the event queue (on X11, an expose event), and
- * a boot never dispatches that queue. Until it has been dispatched once the frame is an empty window on screen, so
- * the host dispatches it once right after showing the frame (see hasPainted(), inherited from Window).
+ * That synchronous repaint is not by itself enough to put the frame on screen: the very first paint waits for the
+ * window system's "it is visible now" notice, which reaches the frame through the event queue (on X11, an expose
+ * event). That notice arrives because the boot suspends while it waits for it - see GuiApplication::startupStart() and
+ * AwaitStartupFrame - and until it has been dispatched once the frame is an empty window on screen (hasPainted(),
+ * inherited from Window, is what tells the two apart).
+ *
+ * Closing is not offered: there is no cancel affordance on the frame, and a close request from the window system is
+ * ignored (see the frame's closeEvent). The boot's face is the framework's to take down, and a frame the user dismissed
+ * while the load goes on would leave the screen empty until the main window comes up.
  */
 class VN_APPFW_API BootSplash : public Window {
     VN_OBJECT_META_DECL

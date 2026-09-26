@@ -6,12 +6,17 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -19,9 +24,12 @@
 #    include <unistd.h>
 #endif // __linux__
 
+#include <vine/async/DetachedTask.hpp>
+
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/ConfigManager.hpp>
+#include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/StartupProgress.hpp>
@@ -705,6 +713,185 @@ class ScopedFlag
     bool& flag_;
 };
 
+/**
+ * @brief 同步门的落点：中继把结果放进来，同步门取走（见 waitForSyncDoor()）。
+ *
+ * 存在的理由只有一个：插件钩子是协程（Plugin::preLoad()/load()/postLoad()），而 `load()`/`loadAll()` 是阻塞 API。
+ * 这里不能用 `vn::async::syncWait()`：它只阻塞、不派发，而钩子收起自己那一步（`resumeOnMainThread()`，或插件把重活
+ * 丢到池上之后回到应用线程）正好是一条**已投递的调用**——没人派发它就永远不来，同步门会死锁。
+ */
+template<typename T>
+class SyncDoor
+{
+  public:
+    /**
+     * @brief Stores the produced value and releases the waiter.
+     *
+     * @param value Value the driven load produced.
+     */
+    void complete(T value)
+    {
+        std::lock_guard lock(mutex_);
+        value_     = std::move(value);
+        completed_ = true;
+    }
+
+    /**
+     * @brief Stores the failure and releases the waiter.
+     *
+     * @param error Exception the driven load threw.
+     */
+    void fail(std::exception_ptr error)
+    {
+        std::lock_guard lock(mutex_);
+        error_     = std::move(error);
+        completed_ = true;
+    }
+
+    /**
+     * @brief Reports whether the outcome has arrived.
+     *
+     * The waiter polls this rather than blocking on a condition variable: it has to dispatch posted calls in between.
+     *
+     * @return true once complete() or fail() has run.
+     */
+    [[nodiscard]] bool isCompleted() const
+    {
+        std::lock_guard lock(mutex_);
+        return completed_;
+    }
+
+    /**
+     * @brief Returns the value, or rethrows the failure.
+     *
+     * @return The value the load produced.
+     */
+    T take()
+    {
+        std::lock_guard lock(mutex_);
+        if (error_ != nullptr) {
+            std::rethrow_exception(error_);
+        }
+        return std::move(*value_);
+    }
+
+  private:
+    mutable std::mutex mutex_;
+    std::optional<T>   value_{};
+    std::exception_ptr error_{};
+    bool               completed_{ false };
+};
+
+/// SyncDoor for a hook that produces nothing; see the primary template.
+template<>
+class SyncDoor<void>
+{
+  public:
+    /// Releases the waiter.
+    void complete()
+    {
+        std::lock_guard lock(mutex_);
+        completed_ = true;
+    }
+
+    /**
+     * @brief Stores the failure and releases the waiter.
+     *
+     * @param error Exception the driven hook threw.
+     */
+    void fail(std::exception_ptr error)
+    {
+        std::lock_guard lock(mutex_);
+        error_     = std::move(error);
+        completed_ = true;
+    }
+
+    /**
+     * @brief Reports whether the hook has finished.
+     *
+     * @return true once complete() or fail() has run.
+     */
+    [[nodiscard]] bool isCompleted() const
+    {
+        std::lock_guard lock(mutex_);
+        return completed_;
+    }
+
+    /// Rethrows the failure, if there was one.
+    void take()
+    {
+        std::lock_guard lock(mutex_);
+        if (error_ != nullptr) {
+            std::rethrow_exception(error_);
+        }
+    }
+
+  private:
+    mutable std::mutex mutex_;
+    std::exception_ptr error_{};
+    bool               completed_{ false };
+};
+
+/**
+ * @brief 中继：把一段协程跑到底，把结果交给同步门。
+ *
+ * 急启动（DetachedTask）且在调用线程上跑到第一次挂起，所以同步门里的加载仍然从调用它的那个线程开始；之后的续体由
+ * 谁来恢复就归谁来恢复（池上、或者应用线程派发的调用），同步门只负责把它等完。
+ */
+template<typename T>
+vn::async::DetachedTask relayToSyncDoor(vn::async::Task<T> task, std::shared_ptr<SyncDoor<T>> door)
+{
+    try {
+        if constexpr (std::is_void_v<T>) {
+            co_await std::move(task);
+            door->complete();
+        }
+        else {
+            door->complete(co_await std::move(task));
+        }
+    }
+    catch (...) {
+        door->fail(std::current_exception());
+    }
+}
+
+/**
+ * @brief 同步门等一段协程结束；等的时候**只**派发已投递的调用。
+ *
+ * `deliverPostedCalls()` 跑的就是 `QMetaObject::invokeMethod(..., QueuedConnection)` 排下的那条 `MetaCall`：不跑定时器、
+ * 不绘制、不处理输入——所以这不是"重入事件循环"，而是刚好让钩子"回到应用线程"那一步能落地。
+ *
+ * @param door Sync door the relay writes the outcome to.
+ * @return The value the coroutine produced.
+ */
+template<typename T>
+T waitForSyncDoor(const std::shared_ptr<SyncDoor<T>>& door)
+{
+    Application*          app        = Application::current();
+    MainThreadDispatcher* dispatcher = app != nullptr ? app->mainThreadDispatcher() : nullptr;
+
+    while (!door->isCompleted()) {
+        if (dispatcher != nullptr) {
+            // Not on the application thread (or no loop): nothing to dispatch, and the coroutine is running here anyway.
+            static_cast<void>(dispatcher->deliverPostedCalls());
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+    return door->take();
+}
+
+/**
+ * @brief 同步门驱动一段钩子（`Task<void>`）。
+ *
+ * @param task Hook coroutine to run to completion on the calling thread.
+ */
+void driveHook(vn::async::Task<void> task)
+{
+    auto door = std::make_shared<SyncDoor<void>>();
+    static_cast<void>(relayToSyncDoor(std::move(task), door));
+    waitForSyncDoor(door);
+}
+
 } // namespace
 
 /**
@@ -941,11 +1128,14 @@ Plugin* PluginManager::load(const String& name_or_path)
             }
 
             // Three-phase lifecycle, aligned with loadAll(): preLoad(), then load(),
-            // then postLoad() for cross-plugin wiring.
+            // then postLoad() for cross-plugin wiring. The hooks are coroutines, and this is the synchronous door: it
+            // drives each of them to completion on this thread, dispatching what they post to the application thread
+            // (`resumeOnMainThread()`, see waitForSyncDoor()) so a plugin that runs its heavy half on the pool still
+            // loads here. This door does not turn the event loop otherwise - loadAllAsync() is the one the boot uses.
             PluginLoadContext context(app, info->name);
-            plugin->preLoad(&context);
-            plugin->load(&context);
-            plugin->postLoad(&context);
+            driveHook(plugin->preLoad(&context));
+            driveHook(plugin->load(&context));
+            driveHook(plugin->postLoad(&context));
         }
     }
     catch (const std::exception& e) {
@@ -966,12 +1156,34 @@ Plugin* PluginManager::load(const String& name_or_path)
 
 bool PluginManager::loadAll()
 {
+    // The synchronous door: a tool, a test, or a host that runs no loop drives the same load to completion on its own
+    // thread. What that costs is the event loop: on the application thread this blocks it for as long as the plugins'
+    // own stretches take, which is exactly why the boot uses loadAllAsync() instead.
+    auto door = std::make_shared<SyncDoor<bool>>();
+    static_cast<void>(relayToSyncDoor(loadAllAsync(), door));
+    return waitForSyncDoor(door);
+}
+
+vn::async::Task<bool> PluginManager::loadAllAsync()
+{
+    // The same load as the synchronous door above, as a coroutine for one reason: a plugin's hooks are coroutines, so a
+    // plugin that has heavy, UI-free startup work can send it to the thread pool (`co_await vn::async::run(...)`) and
+    // come back with `resumeOnMainThread()` before touching UI again. While it waits there, the event loop runs freely -
+    // which is also what lets a report made on the pool thread reach the screen.
+    //
+    // The manager itself does NOT turn the loop between steps. The startup frame repaints synchronously whenever a
+    // report changes it (see BootSplash::onStartupChanged()), and pumping the queue during a boot is something this
+    // codebase rejects on purpose: it would also run the timers of everything else that is starting up - an embedded
+    // render surface drives its own attach backoff that way, and letting it run before the host has laid its window out
+    // makes it build a swapchain on a window that has no native handle yet. What the animation needs is a repaint
+    // source of its own, not a loop turn here.
+
     // A plugin that calls loadAll() again from its own preLoad()/load()/postLoad()
     // would interleave with the batch created below, which is local to this call;
     // refuse the nested call instead of leaving half-initialized instances behind.
     if (d->loading) {
         VN_LOGW("loadAll() was called from a plugin lifecycle callback; ignoring the nested call");
-        return false;
+        co_return false;
     }
     ScopedFlag loading_scope(d->loading);
 
@@ -1212,6 +1424,15 @@ bool PluginManager::loadAll()
     try {
         for (const Candidate* candidate : planned) {
             const String& name = candidate->info->name;
+
+            // 取消：启动被请求停下就不再装下一个（已装的那些由调用方决定去留：应用级取消会把它们卸掉）。
+            if (const StartupProgress* const progress = StartupProgress::current();
+                progress != nullptr && progress->stopToken().stop_requested()) {
+                VN_LOGI("the plugin load was cancelled; '{}' and the plugins after it are not loaded", toUtf8(name));
+                unloadLoadedPlugins(created);
+                co_return false;
+            }
+
             if (startup != nullptr) {
                 startup->setLabel("正在创建插件 " + toUtf8(name));
             }
@@ -1220,13 +1441,13 @@ bool PluginManager::loadAll()
             if (!create) {
                 VN_LOGE("Plugin '{}' has no create entry point", toUtf8(name));
                 unloadLoadedPlugins(created);
-                return false;
+                co_return false;
             }
             Plugin* plugin = create();
             if (!plugin) {
                 VN_LOGE("Plugin '{}' failed to create its instance", toUtf8(name));
                 unloadLoadedPlugins(created);
-                return false;
+                co_return false;
             }
 
             // The query entry (from VN_DECLARE_PLUGIN) is the single metadata source.
@@ -1255,18 +1476,28 @@ bool PluginManager::loadAll()
         // query pluginName() and its own registered configs. Every phase runs
         // inside a per-plugin owner scope so lifecycle-registered commands are
         // attributed to the plugin.
+        //
+        // 每拍都是一次 `co_await`，原因有两个：钩子是协程（插件自己要分段、要跳池都在里面），而且回调返回后要让循环
+        // 转一圈。owner scope 刻意写在**花括号里、不跨 await**：回转期间别的排队调用也会注册命令，owner 还挂着就会
+        // 把它们记到这个插件名下。
         for (const auto& lp : created) {
             RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
-            PluginLoadContext context(Application::current(), lp.name);
-            lp.plugin->preLoad(&context);
+            PluginLoadContext      context(Application::current(), lp.name);
+            co_await lp.plugin->preLoad(&context);
         }
         for (const auto& lp : created) {
             RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
-            PluginLoadContext context(Application::current(), lp.name);
+            PluginLoadContext      context(Application::current(), lp.name);
             if (startup != nullptr) {
                 startup->setLabel("正在加载插件 " + toUtf8(lp.name) + " (" + std::to_string(loaded_units + 1) + "/" + std::to_string(created.size()) + ")");
             }
-            lp.plugin->load(&context);
+            if (const StartupProgress* const progress = StartupProgress::current();
+                progress != nullptr && progress->stopToken().stop_requested()) {
+                VN_LOGI("the plugin load was cancelled; '{}' and the plugins after it are not loaded", toUtf8(lp.name));
+                unloadLoadedPlugins(created);
+                co_return false;
+            }
+            co_await lp.plugin->load(&context);
             if (startup != nullptr) {
                 ++loaded_units;
                 startup->advance(static_cast<double>(loaded_units));
@@ -1274,22 +1505,22 @@ bool PluginManager::loadAll()
         }
         for (const auto& lp : created) {
             RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
-            PluginLoadContext context(Application::current(), lp.name);
+            PluginLoadContext      context(Application::current(), lp.name);
             if (startup != nullptr) {
                 startup->setLabel("正在收尾插件 " + toUtf8(lp.name));
             }
-            lp.plugin->postLoad(&context);
+            co_await lp.plugin->postLoad(&context);
         }
     }
     catch (const std::exception& e) {
         VN_LOGE("Plugin loading failed, releasing the instances created by this call: {}", e.what());
         unloadLoadedPlugins(created);
-        return false;
+        co_return false;
     }
     catch (...) {
         VN_LOGE("Plugin loading failed with an unknown exception, releasing the instances created by this call");
         unloadLoadedPlugins(created);
-        return false;
+        co_return false;
     }
 
     // Register the created plugins (in dependency order).
@@ -1298,7 +1529,7 @@ bool PluginManager::loadAll()
     }
     // The batch is loaded; plugins left out because their dependencies cannot be
     // satisfied make the call report false, without having cost the rest anything.
-    return problems.empty();
+    co_return problems.empty();
 }
 
 bool PluginManager::unloadAll()

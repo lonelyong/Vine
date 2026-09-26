@@ -11,6 +11,8 @@
 #include <QWindow>
 
 #include <vine/appfw/gui/RenderControl.hpp>
+
+#include <vine/async/DetachedTask.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
@@ -170,8 +172,34 @@ TEST(RenderControlTest, NothingAttachesBeforeTheHostAsks)
 }
 
 // 状态序列是 Pending -> Attached -> Presenting，且每个转换只报一次。
-TEST(RenderControlTest, ReportsTheLifecycleThroughStateChanges)
+// 异步 attach（initAsync()）：设备/会话/管线与 warm-up 那一帧都在池上，应用线程在它跑着的时候可以回循环——
+// 而“正在 attach”这个状态是**开启时就置位**的，宿主的内容装配靠它排到 attach 之后（见 RenderControl::isAttaching()）。
+TEST(RenderControlTest, InitAsyncAttachesOffTheApplicationThreadAndPublishesWhenAttaching)
 {
+    HostedControl host;
+    host.show();
+
+    bool done     = false;
+    bool attached = false;
+
+    // DetachedTask 是急启动的（
+    // `initial_suspend = suspend_never`），所以这句返回时协程已经跑过“置位并准备第一次挂起”那一小段。
+    auto task = [](RenderControl* control, bool* done, bool* attached) -> vn::async::DetachedTask {
+        *attached = co_await control->initAsync();
+        *done     = true;
+    }(host.control(), &done, &attached);
+    static_cast<void>(task);
+
+    EXPECT_TRUE(host.control()->isAttaching()) << "attach 一开始就该说“正在 attach”：内容装配要能在它跑完前就等它";
+
+    EXPECT_TRUE(pumpUntil([&] { return done; }, 3000)) << "initAsync() 必须在循环跑着的时候自己跑完";
+    EXPECT_TRUE(attached);
+    EXPECT_FALSE(host.control()->isAttaching()) << "attach 结束后必须归位，否则装配会一直等下去";
+    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting);
+    EXPECT_GT(host.stub()->initialize_calls, 0);
+}
+
+TEST(RenderControlTest, ReportsTheLifecycleThroughStateChanges){
     HostedControl host;
 
     std::vector<RenderControl::SurfaceState> seen;

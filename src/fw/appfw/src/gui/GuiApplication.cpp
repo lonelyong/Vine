@@ -1,7 +1,7 @@
 ﻿#include <vine/appfw/gui/GuiApplication.hpp>
 
-#include <array>
 #include <cassert>
+#include <coroutine>
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -25,6 +25,7 @@
 #include <vine/appfw/gui/VisualUserIO.hpp>
 #include <vine/appfw/gui/Window.hpp>
 
+#include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/StartupProgress.hpp>
 #include <vine/logging/Log.hpp>
 
@@ -78,28 +79,14 @@ namespace
 /// the host's startup work from running.
 constexpr int kFirstPaintDeadlineMs = 300;
 
-/// The windows a boot puts on screen, in the order they appear: the startup frame when there is one, then the main
-/// window. Either entry can be null - a boot without a frame has no first one.
+/// The window a boot puts on screen: the startup frame, when the configuration enables one. The main window is NOT
+/// among them - it is shown by startupEnd(), so that the user never sees a window that is still growing its ribbon.
 ///
 /// @param d Application data.
-/// @return The two windows, in that order.
-std::array<Window*, 2> bootWindows(GuiApplicationData* d)
+/// @return The startup frame, or nullptr when the boot shows nothing.
+Window* startupWindow(GuiApplicationData* d)
 {
-    return {static_cast<Window*>(d->boot_splash), static_cast<Window*>(d->main_window)};
-}
-
-/// Returns whether every window of \a windows has painted; a window that is not there is not owed one.
-///
-/// @param windows Windows to ask, as bootWindows() returns them.
-/// @return true when nothing is left unpainted.
-bool allPainted(const std::array<Window*, 2>& windows)
-{
-    for (const Window* const window : windows) {
-        if (window != nullptr && !window->hasPainted()) {
-            return false;
-        }
-    }
-    return true;
+    return static_cast<Window*>(d->boot_splash);
 }
 
 // Classic Fusion dark palette (matches the Qt >= 6.5 Fusion dark palette).
@@ -234,88 +221,146 @@ Theme resolveSystemTheme()
 #endif
 }
 
+/**
+ * @brief 等一个窗口画出首帧，或等到 300 ms 兜底 —— 启动第一拍里的“等”。
+ *
+ * 三条来源（首帧信号、超时、以及“挂起前就画过了”）从同一个收口走，只唤醒一次；唤醒**排一拍**再 `resume()`：
+ * 首帧信号是在派发那个窗口的 paint 事件里到的，就地唤醒会让后面的加载跑在别人的绘制里——而启动的加载会重画
+ * 这个框、最后把它删掉（实测：`QWidget::repaint: Recursive repaint detected` + 段错误）。
+ *
+ * 逾期不算失败：窗口系统可能永不报“已可见”，那时这里照常放行，由调用方看 `Window::hasPainted()` 判定并告警。
+ */
+class AwaitStartupFrame
+{
+  public:
+    /**
+     * @brief 构造一段等待。
+     *
+     * @param context Qt 对象，超时定时器挂在它名下（本类不是 QObject）。
+     * @param frame   要等的窗口。
+     */
+    AwaitStartupFrame(QObject* context, Window* frame) noexcept
+      : context_(context)
+      , frame_(frame)
+    {}
+
+    /// 已经画过就不必挂起（有些平台 `show()` 会同步画）。
+    [[nodiscard]] bool await_ready() const noexcept
+    {
+        return frame_->hasPainted();
+    }
+
+    void await_suspend(std::coroutine_handle<> handle)
+    {
+        handle_       = handle;
+        subscription_ = frame_->first_paint.connect([this] { wake(); });
+
+        timer_ = new QTimer(context_);
+        timer_->setSingleShot(true);
+        QObject::connect(timer_, &QTimer::timeout, context_, [this] { wake(); });
+        timer_->start(kFirstPaintDeadlineMs);
+    }
+
+    void await_resume() const noexcept {}
+
+    ~AwaitStartupFrame()
+    {
+        // 没等到就析构（应用退出、协程被丢弃）时不留悬挂的订阅与定时器。
+        subscription_ = {};
+        delete timer_;
+    }
+
+  private:
+    /// 唯一的收口：三条来源谁先到都只走一次。
+    void wake()
+    {
+        const std::coroutine_handle<> handle = handle_;
+        if (handle == nullptr) {
+            return;
+        }
+
+        handle_       = {};
+        subscription_ = {};
+        delete timer_;
+        timer_ = nullptr;
+
+        // 排一拍再唤醒：不跑在某个窗口的绘制里，也不跑在定时器回调里（那里可能正在派发别人的事件）。
+        static_cast<void>(MainThreadDispatcher::postToMainThread([handle] { handle.resume(); }));
+    }
+
+    QObject*                context_ = nullptr;
+    Window*                 frame_   = nullptr;
+    QTimer*                 timer_   = nullptr;
+    vn::Connection          subscription_{};
+    std::coroutine_handle<> handle_{};
+};
+
 } // namespace
 
-void GuiApplication::showUserInterface()
+vn::async::Task<void> GuiApplication::startupStart()
 {
-    auto* d = static_cast<GuiApplicationData*>(dptr());
+    auto* d             = static_cast<GuiApplicationData*>(dptr());
+    Window* const frame = startupWindow(d);
 
-    // The order is load-bearing: the frame is what covers the boot, so it goes up first, and the main window follows -
-    // not after the boot - because an embedded render surface (RenderControl, the VSG backend) creates its swapchain from
-    // the native window of the top-level widget, and a window that was never shown has none (the surface then fails to
-    // initialize instead of waiting for the window).
-    if (d->boot_splash != nullptr) {
-        d->boot_splash->show();
-    }
-    if (d->main_window != nullptr) {
-        d->main_window->show();
-    }
-}
-
-void GuiApplication::whenUserInterfaceIsUp(std::function<void()> then)
-{
-    auto* d = static_cast<GuiApplicationData*>(dptr());
-    d->when_up = std::move(then);
-
-    // What is waited for is every window the boot puts on screen, not the first one: the frame covers the boot and the
-    // main window is what is around it, and either of them left unpainted is exactly the empty window this hand-off
-    // exists to avoid. Nothing has painted yet - the loop has not run - so this waits for the events.
-    for (Window* const window : bootWindows(d)) {
-        if (window != nullptr && !window->hasPainted()) {
-            d->startup_gates.push_back(window->first_paint.connect([this] { startWhenUp(false); }));
-        }
+    // A boot without a frame shows nothing, so there is no window that could sit there empty.
+    if (frame == nullptr) {
+        co_return;
     }
 
-    // The deadline is the backstop for a window system that never reports a window as visible: the framework moves on
-    // anyway, and says so. The QApplication is the context because this class is not a QObject.
-    QTimer::singleShot(kFirstPaintDeadlineMs, d->app, [this] { startWhenUp(true); });
+    // Only the frame goes up while the boot runs. What the old shape was protecting - the main window having a native
+    // handle before the plugins load - does not need the window to be on screen: the render surface is embedded in a Qt
+    // window container, and the embedded QWindow gets its own native handle whether or not the top-level was ever shown
+    // (measured on X11/WSLg 2026-09-26: the backend attached 1707 ms into the boot with the main window still hidden, and
+    // the first frame landed right after startupEnd() showed it). Keeping the main window off screen is what the boot
+    // looks like: one frame that reports, and no window that grows a ribbon in front of the user.
+    frame->show();
 
-    startWhenUp(false); // Nothing may be owed: no windows at all, or they painted while this was being armed.
-}
-
-void GuiApplication::startWhenUp(bool deadline)
-{
-    auto* d = static_cast<GuiApplicationData*>(dptr());
-    if (!d->when_up) {
-        return; // Already handed over: every source arrives here, and the first one takes the pending callback.
+    // 启动框上屏本身就是一拍，而这一拍要等首帧（下面那条 await），所以先把相位名报上去：
+    // 进度按相位跳，读者看到的每一段都应该是“正在干什么”，而不是上一拍留下的名字。
+    if (StartupProgress* progress = StartupProgress::current(); progress != nullptr) {
+        progress->stage("正在显示启动画面");
     }
 
-    const bool painted = allPainted(bootWindows(d));
-    if (!painted && !deadline) {
-        return; // Still owed a window: its own first paint brings us back here.
-    }
+    // What is waited for is that frame's first paint: showing a window only asks the window system to map it, and the
+    // notification that it is on screen is dispatched by the very loop this phase runs in - which is why the wait is a
+    // suspension (`co_await`) and not a block: the loop has to keep turning for that notice to arrive at all. The
+    // deadline inside the awaitable is the backstop for a window system that never reports a window as visible.
+    co_await AwaitStartupFrame{ static_cast<QObject*>(d->app), frame };
 
-    const bool        framed = d->boot_splash != nullptr;
-    const char* const shown  = framed ? "the startup frame and the main window" : "the main window";
-    const long long   waited = d->startup_handed_over.isValid() ? d->startup_handed_over.elapsed() : 0;
-
-    if (painted) {
-        if (d->startup_work != nullptr) {
-            VN_LOGI("startup work starting {} ms after the application was asked to run: {} {} on screen",
-                    waited,
-                    shown,
-                    framed ? "are" : "is");
-        }
+    // Whatever happened, this line is the evidence that the boot reached the point where its work may start, and it is
+    // the one the design documents quote (`hasPainted()` tells the two cases apart).
+    if (frame->hasPainted()) {
+        VN_LOGI("startup work starting {} ms after the application was asked to run: the startup frame is on screen",
+                d->startup_requested_at.elapsed());
     }
     else {
-        VN_LOGW("the startup phase is moving on {} ms after the application was asked to run without {} having painted "
-                "within {} ms: it stays an empty window until the event loop runs",
-                waited,
-                shown,
+        VN_LOGW("the startup phase is moving on {} ms after the application was asked to run without the startup frame "
+                "having painted within {} ms: it stays an empty window until the window system maps it",
+                d->startup_requested_at.elapsed(),
                 kFirstPaintDeadlineMs);
     }
+}
 
-    // Handed to the next turn rather than run from here: this can run while a paint event is being dispatched (that is
-    // what the signal reports), and the host's startup work repaints the frame on every progress report and finally
-    // takes the frame away - neither can happen inside the paint of the window being taken away. Being posted more than
-    // once does not matter: the base takes the callback once.
-    auto then = std::move(d->when_up);
-    d->startup_gates.clear();
-    QTimer::singleShot(0, d->app, [then = std::move(then)] { then(); });
+GuiApplication::GuiApplication(const AppConfig& config, int argc, char** argv)
+  : Application(new GuiApplicationData(), config, argc, argv)
+{
+#if defined(Q_OS_LINUX)
+    selectX11UnderWslg();
+#endif
+
+    // A QApplication, not the QCoreApplication the headless constructor makes: the platform plugin is chosen and the
+    // window system comes up here, and the process may hold only one Qt application object.
+    //
+    // QCoreApplication keeps a reference to argc; the data it refers to must stay valid for the whole application
+    // lifetime, so pass the stored member instead of a local copy.
+    dptr()->app = new QApplication(dptr()->argc, dptr()->argv);
+    initialize(config);
+
+    createWindows(config.splash);
 }
 
 GuiApplication::GuiApplication(int argc, char** argv)
-  : Application(new GuiApplicationData(), argc, argv)
+  : GuiApplication(AppConfig{}, argc, argv)
 {}
 
 GuiApplication::~GuiApplication()
@@ -327,7 +372,7 @@ GuiApplication::~GuiApplication()
         // it was hiding unshown, which is exactly what the host has to be told about.
         if (!d->boot_ended) {
             VN_LOGW("Startup frame is still showing as the application is destroyed: the host never called "
-                   "Application::finishStartup()");
+                   "Application::startupEnd()");
         }
         delete d->boot_splash;
         d->boot_splash = nullptr;
@@ -342,25 +387,14 @@ UserIO* GuiApplication::createUserIO()
     return new VisualUserIO;
 }
 
-void GuiApplication::init()
+void GuiApplication::createWindows(const SplashConfig& splash)
 {
-    auto* d = static_cast<GuiApplicationData*>(dptr());
-    if (d->app != nullptr) {
-        return;
-    }
-
-#if defined(Q_OS_LINUX)
-    selectX11UnderWslg();
-#endif
-
-    // QCoreApplication keeps a reference to argc; the data it refers to
-    // must stay valid for the whole application lifetime, so pass the
-    // stored member instead of a local copy.
-    d->app = new QApplication(d->argc, d->argv);
+    auto* d      = static_cast<GuiApplicationData*>(dptr());
+    auto* qt_app = static_cast<QApplication*>(d->app);
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     // When following the system, listen for system theme changes and re-resolve.
-    QObject::connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, d->app, [this, d](Qt::ColorScheme) {
+    QObject::connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, qt_app, [this, d](Qt::ColorScheme) {
         if (d->follow_system) {
             setTheme(resolveSystemTheme());
         }
@@ -373,83 +407,74 @@ void GuiApplication::init()
     }
     applyTheme(d->theme);
 
-    setupUserIO();
-
-    if (d->main_window != nullptr) {
-        return;
-    }
-
-    if (d->splash.enabled) {
+    if (splash.enabled) {
         // The frame comes first, so that the boot which follows - building the main window, loading the plugins - is
         // covered by something that reports what is happening instead of by a window still growing its ribbon.
-        auto* boot = beginStartupProgress();
-        boot->stage("正在初始化界面");
+        // It is the only window the boot shows (see startupStart()) and only a view of it: the startup progress
+        // sink belongs to the framework (the startup phase creates it) and the frame follows it through ProgressHost,
+        // so nothing is reported from here.
+        d->boot_splash = new BootSplash(splash);
 
-        d->boot_splash = new BootSplash(d->splash);
-
-        // Created, not shown: run() shows the windows the boot puts in front of the user (see showUserInterface()) and
-        // the loop paints them before the host's startup work may start. Showing here would drive the queue before the
-        // loop exists - which itself would run the timers of everything that is starting up, the very thing the frame's
-        // repaint() exists to avoid.
+        // Created, not shown: the startup phase shows the frame (see startupStart()) and waits for its first paint
+        // before the plugins load. Showing it here would drive the queue before the loop exists - which itself would run
+        // the timers of everything that is starting up, the very thing the frame's repaint() exists to avoid.
     }
 
     d->main_window = new MainWindow();
 
-    // Embed the automatic progress bar into the main window's status bar: what the framework puts into the window is
-    // painted by its first paint, and the paint is what run() waits for before the host's startup work may start.
+    // Embed the automatic progress bar into the main window's status bar: the framework's startup progress follows that
+    // presenter too, so what the boot reports stays visible for as long as the window is up.
     // Qt owns the native widget via the status bar; the presenter self-destructs with it (UIElement ownership model).
     if (auto* status = d->main_window->statusBar()->impl<QStatusBar>()) {
         auto* presenter = new ProgressPresenter();
         status->addPermanentWidget(static_cast<QWidget*>(presenter->impl()));
     }
 
-    // Created, not shown: showUserInterface() is where the window goes up, once the whole boot has been built (this
-    // window, its docks, its status bar) - and the loop paints it before the host's startup work, with it the plugin
-    // loading, is allowed to start (see runStartup()).
+    // Created, not shown: the main window goes up in startupEnd(), at the end of the boot, once the whole boot has
+    // been built (this window, its docks, its status bar) - so the user never sees a window that is still assembling
+    // itself. Until then the render view inside it keeps its native surface off screen, so the area it occupies is the
+    // window's own background rather than a hole.
 }
 
-void GuiApplication::finishStartup()
+vn::async::Task<void> GuiApplication::startupEnd()
 {
     auto* d = static_cast<GuiApplicationData*>(dptr());
 
     if (d->boot_ended) {
-        return; // Idempotent: the boot ends with the first call, whatever the frame does afterwards.
+        co_return; // Idempotent: the boot ends with the first call, whatever the frame does afterwards.
     }
     d->boot_ended = true;
 
-    // Whether a frame is going away decides whether the window has to be brought forward below: the frame is a
-    // stay-on-top window that was shown without activating the process, so the main window was shown underneath it and,
-    // on Windows, never became the foreground window - without an explicit raise it stays under whatever was in front at
-    // the time (the terminal the application was started from), which looks exactly like a window that never appeared.
-    const bool frame_was_showing = d->boot_splash != nullptr;
-
-    // The boot work is over here, and the startup progress ends with it: the sink goes back to following whatever runs
-    // next, whether or not the frame is still up.
-    Application::finishStartup();
-
-    if (!frame_was_showing) {
-        // Nothing to uncover: the window is what it is, and it only has to be up (a host that never showed it, or a
-        // boot that ran without a frame, ends here).
-        if (d->main_window != nullptr && !d->main_window->visible()) {
-            d->main_window->show();
-        }
-        return;
+    // 最后这一拍也报一次：主窗口上屏、启动框撤走全在这里，读完最后一段就可以收上报口了（见 Application::startupSequence()）。
+    if (StartupProgress* progress = StartupProgress::current(); progress != nullptr) {
+        progress->stage("正在准备主窗口");
     }
 
-    // The frame goes now: the window is what can be uncovered, because a render view in it keeps its area hidden
-    // until a frame is in the surface (see RenderControl) - what shows in the meantime is the window's own
-    // background. There is nothing to wait for here.
+    // The startup progress is still alive here (the framework tears it down once this phase returns: it belongs to the
+    // whole boot, this last phase included), so what is done here is the boot's own face: the main window goes up and
+    // the frame goes away.
+    //
+    // The window goes up now, and this is the only place it does: it was created by the constructor and kept off screen
+    // for the whole boot. What shows in the render area until its first frame is the window's own background, not a hole
+    // (see RenderControl).
+    if (d->main_window != nullptr && !d->main_window->visible()) {
+        d->main_window->show();
+    }
+
+    if (d->boot_splash == nullptr) {
+        co_return; // No frame was covering the boot: nothing to take away, nothing to bring forward.
+    }
+
+    // The frame goes now that what it covered is up. The window has to be brought forward with it: a stay-on-top frame
+    // is shown without activating the process, so on Windows the window never became the foreground window and, without
+    // an explicit raise, stays under whatever was in front when the frame appeared (the terminal the application was
+    // started from) - which looks exactly like a window that never showed up.
     delete d->boot_splash;
     d->boot_splash = nullptr;
 
     if (d->main_window != nullptr) {
-        if (!d->main_window->visible()) {
-            d->main_window->show();
-        }
-
-        // Diagnostic: tells "the window sat behind something" (visible but not active) apart from "the window was
-        // never shown", which are the two ways a frame that closes too early can look like a window that never
-        // appeared.
+        // Diagnostic: tells "the window sat behind something" (visible but not active) apart from "the window was never
+        // shown", which are the two ways a frame that closes too early can look like a window that never appeared.
         VN_LOGI("Startup frame going away: main window visible={}, active={}", d->main_window->visible(), d->main_window->isActive());
 
         if (auto* native = d->main_window->impl<QWidget>()) {
@@ -457,18 +482,6 @@ void GuiApplication::finishStartup()
         }
         d->main_window->activate();
     }
-}
-
-void GuiApplication::setSplashConfig(const SplashConfig& config)
-{
-    auto* d = static_cast<GuiApplicationData*>(dptr());
-    if (d->app != nullptr) {
-        // init() already ran, so whether a frame is shown has been decided; re-deciding it here would do nothing.
-        VN_LOGW("GuiApplication::setSplashConfig() after init() is ignored: the startup frame is created during init()");
-        return;
-    }
-
-    d->splash = config;
 }
 
 raw_ptr<BootSplash> GuiApplication::bootSplash() const
@@ -519,16 +532,15 @@ raw_ptr<MainWindow> GuiApplication::mainWindow() const
 
 void GuiApplication::applyTheme(Theme theme)
 {
-    const auto* d = static_cast<GuiApplicationData*>(dptr());
-    if (d->app == nullptr) {
-        return;
-    }
+    // The Qt application object is created by the constructor and lives as long as the process does, so there is nothing
+    // to guard against here.
+    auto* qt_app = static_cast<QApplication*>(static_cast<const GuiApplicationData*>(dptr())->app);
 
     if (theme == Theme::Dark) {
-        d->app->setPalette(createDarkPalette());
+        qt_app->setPalette(createDarkPalette());
     }
     else {
-        d->app->setPalette(createLightPalette());
+        qt_app->setPalette(createLightPalette());
     }
 }
 

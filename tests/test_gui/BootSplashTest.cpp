@@ -2,9 +2,13 @@
 
 #include <memory>
 
+#include <QCloseEvent>
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QPushButton>
 #include <QThread>
+
+#include <vine/async/SyncWait.hpp>
 
 #include <vine/appfw/AppBuilder.hpp>
 #include <vine/appfw/Application.hpp>
@@ -13,6 +17,8 @@
 #include <vine/appfw/gui/BootSplash.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
+
+#include "fixtures/TestGuiApplication.hpp"
 
 using vn::appfw::ProgressHost;
 using vn::appfw::SplashConfig;
@@ -28,7 +34,6 @@ TEST(StartupProgressTest, NoSinkByDefault)
     EXPECT_EQ(StartupProgress::current(), nullptr);
     EXPECT_EQ(ProgressHost::current(), nullptr);
 }
-
 TEST(StartupProgressTest, SinkIsForegroundAndProcessWide)
 {
     {
@@ -128,6 +133,25 @@ TEST(BootSplashTest, ShowsReportedStageAndProgress)
     EXPECT_NEAR(splash.progressFraction(), 1.0, 1e-9);
 }
 
+TEST(BootSplashTest, TheFrameRefusesToCloseWhileTheBootRuns)
+{
+    SplashConfig config;
+    config.title = "Vine";
+
+    StartupProgress boot;
+    BootSplash      splash(config);
+
+    // 启动期不允许关闭（2026-09-26 决定）：框上没有取消按钮，窗口系统送来的关闭请求也被拒——启动的脸是框架撤的
+    // （startupEnd() 析构它），用户提前把它关掉只会得到一段空屏幕。取消的机器仍在，只是不接到界面上。
+    auto* const frame = splash.impl<QWidget>();
+    ASSERT_NE(frame, nullptr);
+    EXPECT_EQ(frame->findChild<QPushButton*>(), nullptr) << "启动期不给关闭入口：框上不该有取消按钮";
+
+    QCloseEvent request;
+    QCoreApplication::sendEvent(frame, &request);
+    EXPECT_FALSE(request.isAccepted()) << "关闭请求必须被拒（否则用户可以中途把启动框撤走）";
+}
+
 TEST(BootSplashTest, MissingLogoIsNotFatal)
 {
     StartupProgress boot;
@@ -157,6 +181,17 @@ TEST(BootSplashTest, FrameSurvivesTheEndOfTheBoot)
     EXPECT_NEAR(splash->progressFraction(), 0.5, 1e-9);
 }
 
+TEST(BootSplashTest, AnEmptyTitleShowsTheApplicationName)
+{
+    // 身份先于窗口应用（构造函数里先设 name/组织，再建窗口），所以空标题由启动框自己解析成应用名。
+    // GUI builder 里那句 `splash.title = config.name` 的补丁就是因此删掉的。
+    SplashConfig config;
+    BootSplash   splash(config);
+
+    EXPECT_EQ(QString::fromStdString(splash.windowTitle().as_std_str()), QCoreApplication::applicationName());
+    EXPECT_FALSE(splash.windowTitle().empty());
+}
+
 TEST(BootSplashTest, TheFramePaintsOnceTheWindowSystemHasShownIt)
 {
     SplashConfig config;
@@ -170,8 +205,8 @@ TEST(BootSplashTest, TheFramePaintsOnceTheWindowSystemHasShownIt)
     splash.show();
 
     // show() 只把窗口交给窗口系统：“现在可见了”的通知（X11 是 expose 事件）要派发事件队列才会到窗口。
-    // 宿主因此要在 show() 之后派发到首帧（GuiApplication::init），否则窗口里一个像素都没有：
-    // WSLg 实测整个启动期全透明，十六次上报都没能把它画上屏。
+    // 宿主因此要在 show() 之后派发到首帧（GUI 的上屏路径：`GuiApplication::startupStart()` 里等首帧），
+    // 否则窗口里一个像素都没有：WSLg 实测整个启动期全透明，十六次上报都没能把它画上屏。
     QElapsedTimer timer;
     timer.start();
     while (!splash.hasPainted() && timer.elapsed() < 2000) {
@@ -184,7 +219,7 @@ TEST(BootSplashTest, TheFramePaintsOnceTheWindowSystemHasShownIt)
 
 TEST(BootSplashTest, DisabledByDefaultInTheTestApplication)
 {
-    auto* app = vn::obj_cast<GuiApplication>(vn::appfw::Application::current());
+    auto* app = static_cast<TestGuiApplication*>(vn::appfw::Application::current());
     ASSERT_NE(app, nullptr);
 
     // test_gui 共享的 GuiApplication 用默认 AppConfig 创建：不开启动框就没有启动进度口，主窗口直接可见。
@@ -192,10 +227,31 @@ TEST(BootSplashTest, DisabledByDefaultInTheTestApplication)
     EXPECT_EQ(app->bootSplash(), nullptr);
     ASSERT_NE(app->mainWindow(), nullptr);
 
-    // finishStartup() 幂等：没有启动框时它只是保证主窗口处于可见状态。
-    app->finishStartup();
-    app->finishStartup();
+    // startupEnd() 幂等：没有启动框时它只是保证主窗口处于可见状态。
+    // 钩子是受保护的（收尾是框架的动作），而且是一个**懒**任务 - 只有 await 它才会跑：本进程不跑循环，
+    // 用例用 syncWait 在调用线程上把它驱动完（见 fixtures/TestGuiApplication.hpp）。
+    vn::async::syncWait(app->startupEnd());
+    vn::async::syncWait(app->startupEnd());
     EXPECT_TRUE(app->mainWindow()->visible());
+}
+
+TEST(GuiApplicationConstructionTest, TheBuilderReturnsAFinishedApplication)
+{
+    // 构造函数即完成全部初始化：builder 只把 AppConfig 交进来，进程身份、Qt 应用对象、UserIO 与配置文件都在
+    // 构造里办完 —— 没有 "先构造、再 init()" 的第二步（Application::init() 与 setSplashConfig() 已删）。
+    // 因此把 AppConfig 从构造路径上拿掉（例如重新变成构造后单独调用）就会红。
+    auto* app = vn::obj_cast<GuiApplication>(vn::appfw::Application::current());
+    ASSERT_NE(app, nullptr);
+
+    EXPECT_NE(QCoreApplication::instance(), nullptr);
+    EXPECT_EQ(QCoreApplication::applicationName(), QStringLiteral("test_gui"));
+    // 身份在构造里先应用（AppConfig::organization 缺省 ⇒ 回落框架默认组织），路径都读它。
+    EXPECT_EQ(QCoreApplication::organizationName(), QStringLiteral("Vine"));
+    EXPECT_NE(app->userIO(), nullptr);
+    ASSERT_NE(app->mainWindow(), nullptr);
+
+    // persist_config 默认打开：构造函数已经把默认配置文件装上（<数据目录>/config/test_gui.json）。
+    EXPECT_EQ(app->configFile(), app->defaultConfigFile());
 }
 
 } // namespace

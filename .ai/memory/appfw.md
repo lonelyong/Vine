@@ -1,5 +1,36 @@
 # appfw 模块要点（`src/fw/appfw`）
 
+> **启动阶段三拍（2026-09-26）**：`startupStart()` / `startup()` / `startupEnd()` 是**异步方法**
+> （`vn::async::Task<void>`，protected，声明为类末尾一组）；`run()` 推的 `startupSequence()` 协程里三行
+> `co_await` 平铺（每拍之后垫一次 `resumeOnMainThread()`，因为 `co_await` 之后跑在唤醒它的线程上；三拍罩在
+> 一个 `try` 里，失败路径先垫一次再 `failStartup()`——`co_await` 不能写在 catch 块里）。上报口建在第一拍前、
+> **收在最后一拍之后**。启动期异常**致命**：记日志 + 收上报口 +
+> `exit(1)`（`failStartup()`），不走 `startupEnd()`；插件 `loadAll()` 返回 false 则不算失败。
+> 宿主的启动工作：**框架不替宿主拥有线程**（`run(work)` 重载已删）——宿主重写 `startup()` 那一拍，先
+> `co_await Application::startup()`（插件先加载），自己的重活再 `co_await vn::async::run(...)` 丢到进程线程池上；
+> 它抛的异常从那一拍抛出 ⇒ 与叶子异常同样致命。
+> `Task` 是懒的 ⇒ 调用点必须 `co_await`（不跑循环的叶子用 `syncWait`）。`VN_APPFW_PLUGIN_ABI_VERSION` = **6u**
+> （钩子 `preLoad/load/postLoad` 变成 `Task<void>`；**每条出口都要写 `co_return;`**，否则返回空 `Task` / `ud2`）。
+> 早期笔记里的 `beginStartup` / `finishStartup` / `runStartup` 就是这三个的新名。见 `.ai/design/appfw-startup-phases.md`。
+> **插件加载两道门（2026-09-26）**：`loadAllAsync()` 是启动用的协程（插件自己能在钩子里跳池 + `resumeOnMainThread()`
+> 回来）；`loadAll()` 是给不跑循环的工具/测试用的同步门（中继 + 轮询，等的时候只 `deliverPostedCalls()`——
+> **不能用 `syncWait()`**：它只阻塞不派发，钩子"回到应用线程"那一步会死锁）。管理器**自己不转循环**。
+> **启动可以被取消**（2026-09-26）：`StartupProgress::stopToken()/requestCancel()`；插件从 `PluginLoadContext::stopToken()`
+> 拿同一个 token（不用摸全局上报口；不在启动里的插件拿到的是永不停的 token）。框架在每拍之后、每个插件之前
+> 看一眼；取消**不是失败**——`Application::cancelStartup()` 卸掉已装插件 + 收上报口 + `exit(0)`，不走 `startupEnd()`
+> （主窗不上屏）也不走 `failStartup()`。启动框右上角有个 `✕` 往这个 token 上写。
+
+> **渲染会话可以异步建**（2026-09-26）：`RenderControl::initAsync()`（`Task<bool>`）把会话的 `engine->initialize()`
+> （设备/会话/管线）**和 warm-up 那一帧**（`engine->frame()`）都放到池上跑，应用线程回到循环；取句柄、状态、尺寸、
+> settle 帧仍留在应用线程。同步 `init()` 行为不变（不跑循环的宿主用它）。
+> A/B：应用线程最长连续占用 **414 ms → 189–204 ms → 74 ms**（warm-up 也搬走之后），渲染区像素逐位不变（87.04%）。
+> ⚠️ **契约**：attach 读场景图（管线由 pass 建、warm-up 要 record）⇒ 宿主不得在 attach 进行中改场景。已做成结构性保证：
+> `RenderControl::isAttaching()`（`AttachScope` 罩住整段 attach）；demo 的装配**在应用线程上再确认一次**再装
+> （attach 也是在应用线程上开的 ⇒ "检查+装"之间无挂起点，相对它的开启原子）。
+> **进度按相位更新**（用户 2026-09-26 定稿："算了不管卡顿，按相位更新吧"）：不做连续动画/心跳，每个相位开始报一次
+> （"正在启动" → "正在显示启动画面" → "正在查找/加载/收尾插件" → "正在准备主窗口"；插件内部相位由插件自己报），
+> 框每收到一次上报就同步 `repaint()` 一次。相位**内部**不动画是有意的：应用线程最长连续占用实测 414 ms
+> （会话 `init()` 304 ms），要插帧只能切 `init()` 或启动期回转循环，两条都被拒。
 > 详细设计按模块拆在 `.ai/design/`：`appfw-command-manager.md`（含 Command/执行链/历史/禁用）、
 > `appfw-userio.md`（UserIO/ConsoleUserIO/VisualUserIO）、`appfw-progress.md`（ProgressHost 与两个呈现者）、
 > `appfw-render-surface.md`（RenderControl 的表面生命周期）、`appfw-startup-splash.md`（启动框与启动进度）、
@@ -82,28 +113,39 @@
   整百分点时发火；位置合流在 `ProgressIndicator::setPositionCallback`（每条目一次的热路径上只多一次比较，
   -O3 实测无代价，2000 万条目 101 次通知）。GUI 呈现器与控制台消费者各自订阅（不再是单观察者回调）。
 - **启动框（2026-09-18；统一流程 2026-09-26）**：`AppConfig::splash` 开（`enabled`/`title`/`subtitle`/`logo`），
-  框架自己上报 "初始化界面 + 逐个插件"，应用插入自己的阶段用 `app->startupProgress()->stage("正在初始化日志")`（无框时是空操作）。
-  **宿主只做两件事**：调 `app->runStartup(work)` 把自己在进主循环前要做的事交出去；框架把 work 跑完就调
-  `finishStartup()`（关框 + 销毁上报口）。`Application::run()` 就是这五步（两边共用一份）：
-  `showUserInterface()` → `whenUserInterfaceIsUp(跑 work)` → `finishStartup()` → `exec()`，
-  分歧只在两个 protected 虚函数：GUI 的 `showUserInterface()` 先上框再上主窗、`whenUserInterfaceIsUp()` 等两个窗口各画出首帧
-  （上限 300 ms）。`init()` **只建不 show**；从不跑循环的宿主（测试）靠幂等的 `finishStartup()` 让主窗可见。
+  框架自己上报 "正在启动 + 逐个插件"，应用插入自己的阶段用 `app->startupProgress()->stage("正在初始化日志")`（无上报口时是空操作）。
+  **宿主只做两件事**：调 `app->run()`（或 `runStartup(work)` 交自己的启动工作）；框架把活干完就调
+  `finishStartup()`（关框 + 上主窗 + 销毁上报口）。启动期**只有启动框在屏**（`beginStartup()` 只上框），
+  主窗在 `finishStartup()` 第一次 `show()`；首帧门只等启动框（没框 ⇒ 没什么可等）。
+  `Application::run()` 的步骤（两边共用一份）：**`exec()` 先跑** → 队列里的启动步（建上报口 + `stage("正在启动")` →
+  `beginStartup()` → `beginStartup(等首帧)`）→ **框架加载插件** → 宿主的 work（如果有）→ `finishStartup()`。
+  ⚠️ **上报口属于启动阶段，不属于窗口**（2026-09-26 修）：它由 `run()` 建、`finishStartup()` 销毁；
+  启动框/状态栏只是呈现者 ⇒ **无头宿主也报告自己的启动**（控制台 `[进度] …`）。构造就建是不行的：
+  不跑启动的进程会多一个活的前台宿主 ⇒ `isBusy()` 恒真 ⇒ 顶层命令全被拒。
   阶段语义是**阶段内比例**（可计数 `stage(name,total)`+`advance`；不确定 `stage(name)`），不是全局 ETA。
 - 📋 **下一步待办（2026-09-26 用户定的方向，独立文档 `.ai/design/appfw-startup-next.md`）**：
-  ①`init()` 去留（建议折进构造：`Application(const AppConfig&, argc, argv)`；⚠它占 vtable 中间槽位 ⇒ 要么保留 deprecated 空槽，
-  要么 ABI +1）；②启动改由"`exec()` 先跑 + 一个启动事件推 `beginStartup()`"推进（⚠坑：用户事件与绘制请求同趟 FIFO，
-  **不能**替代首帧门）；③主窗改成 `finishStartup()` 里第一次 show（启动期屏幕上只有启动框）；
-  ④前置是"渲染资源先于窗口显示就绪"——attach 只需"句柄+尺寸"、present 才要窗口在屏，而未 show 的顶窗有没有可用句柄
-  得先做探针查清（历史失败日志见 `appfw-startup-splash.md`）。顺序：1 → 2 → 4 → 3。
-- ⚠️ **窗口一定在宿主的启动工作之前上屏**（不是偏好，是硬约束）：嵌入式渲染表面要用顶层窗口的原生句柄建 swapchain，
-  没 show 过（或隐藏）的窗口给不出来 → VSG `GetClientRect failed: 无效的窗口句柄` + `surface Failed`。
-  结论是"主窗要在插件加载前 show"，而不是"要在 `init()` 里 show"。启动框是 stay-on-top splash，盖在上面。
+  ✅**①已落地**：`init()` 折进构造函数（`Application(const AppConfig&, argc, argv)`：身份 → managers → Qt 应用对象
+  → `initialize()`（UserIO + 配置文件）；GUI 多一步建窗口）⇒ `init()`/`setSplashConfig()` 删、ABI **3u→4u**、
+  两个 builder 各剩一句 `make_unique`；**Qt 类型不进 core SDK**（Qt 对象走私有 `ApplicationData::app`）；
+  ✅**②机制已落地**：`run()` 先 `exec()`，再推 posted 启动步（建上报口 → `stage("正在启动")`
+  → `beginStartup()` → `beginStartup(门)`）；插件加载也成了框架内置动作（`AppConfig::load_plugins`）。
+  **仍待做**：`beginStartup()` 换成单个 `virtual void beginStartup()`；
+  ✅**③已落地（X11 已验）**：启动期只有启动框在屏，主窗在 `finishStartup()` 第一次 show；
+  ✅**④X11 半边已验**：句柄来自容器里独立 `QWindow` 的 `winId()`，顶层不必 show（Windows 待验）。
+  细节与实测见 `.ai/design/appfw-startup-next.md`。
+- ⚠️ ~~窗口一定在宿主的启动工作之前上屏~~（2026-09-26 **已推翻**，X11 实测）：启动期**只有启动框在屏**，
+  主窗由 `finishStartup()` 第一次 `show()`。旧结论（“嵌入式渲染表面要用顶层窗口的原生句柄 ⇒ 主窗必须先 show”）
+  错在把句柄的归属搞错了：`SurfaceWindow::nativeHandle()` 用的是容器里那个独立 `QWindow` 自己的 `winId()`，
+  与顶层是否 show 无关（WSLg/X11：主窗未 show 时 `[VsgHostWindow] attached …` + `Pending -> Attached` 都正常，
+  `Attached -> Presenting` 紧随主窗上屏）。历史那次 `GetClientRect(..) failed : 无效的窗口句柄` 来自旧渲染器拿顶层句柄。
+  ⚠️ **Windows 侧未验**（判据：启动期日志里有没有 `attached to the host window 0x…` / `surface Pending -> Attached`）；
+  万一那边拿不到 HWND，回退是“主窗早 show + 门等两窗”。
 - ⚠️ **启动期不要 `processEvents()`**：会顺手跑别的组件的定时器/事件（渲染表面的 resize/settle 更新
   就是这样被提前唤醒的）。启动框只 `repaint()` 自己那一帧。
 - ⚠️ **唯一例外（2026-09-26）：闪屏与主窗都要“show 之后派发到它画出第一帧”**。X11 上 Qt 要先收到服务端的
   expose 才把 backing store flush 进窗口，而 expose 只能由事件队列派发送来 ⇒ 不派发时 `repaint()` 是空转，
   闪屏整个启动期全透明、主窗整个启动期是一块黑板（用户实测报的就是这两条）。机制：`run()` 排好顺序，
-  `GuiApplication::whenUserInterfaceIsUp()` 订阅每个启动窗口的 `Window::first_paint`，上限是
+  `GuiApplication::beginStartup()` 订阅每个启动窗口的 `Window::first_paint`，上限是
   `QTimer::singleShot(300 ms)`，进循环前先用 `Window::hasPainted()` 走快路径，超时 `VN_LOGW`；
   **到点后再排一拍**（`singleShot(0)`）才跑 work —— 首帧信号是在派发那个窗口的 paint 事件时到的，
   work 会重绘启动框并最后把它 delete（直接在信号里跑 ⇒ `QWidget::repaint: Recursive repaint detected` + 段错误）。
@@ -145,6 +187,9 @@
 ## 测试
 
 - `tests/test_gui/test_gui.cpp`：`CommandManager_*` 37 例、`UserIOTest.*` 6 例（含工作线程读与历史去载荷）。
+- `tests/test_appfw/HeadlessBootTest.cpp`：1 例（**无头宿主**：只链 `vn::Appfw` + `Qt6::Core`；构造不建上报口、
+  启动阶段里有且能用、`finishStartup()` 后销毁；`runStartup()` 的循环用 `QTimer::singleShot(0, …exit)` 收尾）。
+  这是 appfw 无头宿主路径唯一的用例集（`test_gui`/`test_vsg` 都只经 builder 造应用、从不跑循环）。
 - `tests/test_core/SignalTest.cpp`：16 例（含"发火期间注销/清空"与"并发订阅+发火"）。
 - `tests/test_asyncqt/QtAsyncTest.cpp`：2 例（`async::Scheduler` 与 `MainThreadDispatcher::resumeOnMainThread`，
   都用到 appfw 私有头）；同目录原来的 QTimer 版 `async::Sleep` 已删除（与 `vn::async::sleepFor()` 重复且无调用者）。

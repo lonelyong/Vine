@@ -8,9 +8,10 @@
 // the event queue. Measured under WSLg on 2026-09-26: the main window's frame was mapped and viewable, sixteen
 // progress updates were reported, and the window read back 0% painted for the whole boot; one dispatch (12-19 ms)
 // turned that into 83.5%, and the frame's window went from fully transparent to 99.9% painted the same way.
-// GuiApplication::init() therefore shows each of its windows through showAndWaitForFirstPaint(), which waits for
-// exactly this answer, and Qt's own splash screen pumps the queue for the same reason (QSplashScreen::repaint() calls
-// processEvents(), documented as "even when there is no event loop present").
+// GuiApplication therefore shows its startup frame in startupStart() and waits for exactly this answer before the
+// plugin load and the host's startup work (the boot goes on from that callback), and Qt's own splash screen pumps the
+// queue for the same reason (QSplashScreen::repaint() calls processEvents(), documented as "even when there is no event
+// loop present").
 // See .ai/design/appfw-startup-splash.md.
 
 #include <gtest/gtest.h>

@@ -1,10 +1,7 @@
 ﻿#include <vine/appfw/gui/GuiAppBuilder.hpp>
 
-#include <vine/appfw/AppBuilder.hpp>
 #include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
-
-#include "AppBuilderSupport.hpp"
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -14,21 +11,10 @@ std::unique_ptr<GuiApplication> createGuiApplication(const AppConfig& config, in
         PluginManager::setBuiltInPluginDirectory(config.built_in_plugin_dir);
     }
 
-    auto app = std::make_unique<GuiApplication>(argc, argv);
-
-    // The startup frame is configured before init(): that is where it is created. The title the framework can resolve
-    // itself (an empty title means "the application name") is resolved here, because the application name is applied
-    // after init() - QCoreApplication exists only then. The frame and the main window are shown later, by run().
-    SplashConfig splash = config.splash;
-    if (splash.enabled && splash.title.empty()) {
-        splash.title = config.name;
-    }
-    app->setSplashConfig(splash);
-
-    app->init();
-    applyAppConfig(*app, config);
-
-    return app;
+    // The constructor does the rest: the identity, the QApplication, the user IO, the configuration file and the
+    // windows. The startup frame comes from AppConfig::splash and resolves an empty title to the application name
+    // itself, so nothing has to be patched in here.
+    return std::make_unique<GuiApplication>(config, argc, argv);
 }
 
 VN_APPFWGUI_NS_END

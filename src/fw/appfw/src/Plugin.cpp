@@ -39,21 +39,29 @@ std::vector<const ConfigItem*> Plugin::configItems() const
     return reg ? reg->itemsForPlugin(name()) : std::vector<const ConfigItem*>{};
 }
 
-void Plugin::preLoad(PluginLoadContext* context)
+vn::async::Task<void> Plugin::preLoad(PluginLoadContext* context)
 {
     // Commands (VN_DECLARE_COMMAND) are registered by the PluginManager through
     // the plugin DLL's vinePluginRegisterCommands entry, which runs inside the
     // plugin module and flushes its per-module queue.
     (void)context;
+    // Every hook body is a coroutine, `co_return` included: a body without it is an ordinary function that returns an
+    // empty task, and the caller waits for work that never runs (see the note on Plugin::load()).
+    co_return;
 }
 
-void Plugin::load(PluginLoadContext* context)
-{}
+vn::async::Task<void> Plugin::load(PluginLoadContext* context)
+{
+    (void)context;
+    co_return;
+}
 
-void Plugin::postLoad(PluginLoadContext* context)
-{}
+vn::async::Task<void> Plugin::postLoad(PluginLoadContext* context)
+{
+    (void)context;
+    co_return;
+}
 
 void Plugin::unload(PluginLoadContext* context)
 {}
-
 VN_APPFW_NS_END

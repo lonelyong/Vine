@@ -13,7 +13,7 @@ VN_OBJECT_META_IMPL(TestPlugin, Plugin)
 
 TestPlugin::TestPlugin() = default;
 
-void TestPlugin::load(PluginLoadContext* context)
+vn::async::Task<void> TestPlugin::load(PluginLoadContext* context)
 {
     // Test hook (see the header): a normal run never sets this key.
     if (context != nullptr) {
@@ -26,7 +26,7 @@ void TestPlugin::load(PluginLoadContext* context)
         }
     }
 
-    Plugin::load(context);
+    co_await Plugin::load(context);
 }
 
 VN_DECLARE_PLUGIN(TestPlugin, u8"8581747e-3f23-4da0-8fea-c0dfdb78e098", u8"test_plugin", u8"测试插件", u8"1.0.0", u8"测试插件：依赖应用外壳", u8"Vine",

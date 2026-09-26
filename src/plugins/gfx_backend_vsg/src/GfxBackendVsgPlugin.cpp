@@ -13,13 +13,14 @@ GfxBackendVsgPlugin::GfxBackendVsgPlugin() = default;
 
 GfxBackendVsgPlugin::~GfxBackendVsgPlugin() = default;
 
-void GfxBackendVsgPlugin::load(vn::appfw::PluginLoadContext* context)
+vn::async::Task<void> GfxBackendVsgPlugin::load(vn::appfw::PluginLoadContext* context)
 {
     (void)context;
     // Register the VSG backend factory so the app can create a backend by
     // name ("vsg") without a compile-time dependency on this plugin.
     static VsgRenderBackendFactory s_factory;
     vn::graphics::RenderBackendRegistry::instance().registerFactory(&s_factory);
+    co_return;
 }
 
 void GfxBackendVsgPlugin::unload(vn::appfw::PluginLoadContext* context)

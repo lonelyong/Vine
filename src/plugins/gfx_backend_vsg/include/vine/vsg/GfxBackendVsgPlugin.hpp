@@ -25,8 +25,15 @@ class VN_VSG_API GfxBackendVsgPlugin : public vn::appfw::Plugin {
     ~GfxBackendVsgPlugin() override;
 
   public:
-    /** @brief Registers the VSG backend factory into the registry. */
-    void load(vn::appfw::PluginLoadContext* context) override;
+    /**
+     * @brief Registers the VSG backend factory into the registry.
+     *
+     * Synchronous inside, and therefore a single stretch: registering a factory is a pointer store.
+     *
+     * @param context Load context exposing host capabilities.
+     * @return A task that completes when the backend is registered.
+     */
+    vn::async::Task<void> load(vn::appfw::PluginLoadContext* context) override;
 
     /**
      * @brief Unregisters nothing: the VSG backend stays registered.

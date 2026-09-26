@@ -3,17 +3,28 @@
 #include "PreviewFit.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <span>
 #include <system_error>
 #include <utility>
 #include <vector>
 
 #include <QTimer>
+
+#include <vine/async/DetachedTask.hpp>
+#include <vine/async/Sleep.hpp>
+#include <vine/async/ThreadPoolScheduler.hpp>
+#include <vine/async/When.hpp>
+
+#include <vine/appfw/Application.hpp>
+#include <vine/appfw/MainThreadDispatcher.hpp>
+#include <vine/logging/Log.hpp>
 
 #include <vine/Colorf.hpp>
 #include <vine/geometry/Array.hpp>
@@ -172,56 +183,61 @@ constexpr DemoCubeFace kSkyCubeFaces[] = {
 };
 
 /**
- * @brief Loads a demo cube map from six shipped faces, or null.
+ * @brief Reads, decodes and filters ONE cube-map face: pure data, callable from any thread.
  *
- * The images live in test_data/images next to the binaries (see demoAssetDirectory). The FACE FILES
- * are mapped EXPLICITLY, never derived from their names or a directory order: the two shipped sets
- * are named by different conventions (one names the faces, the other uses right/left/top/...), and
- * sorting either file list gives an order the faces do not follow (the box set's names sort as -X
- * before +X). The tables are written out for that reason.
+ * The shipped faces are 2048^2 JPEGs and the demo only ever uses 256^2 / 512^2 of them (see boxFilterRgba),
+ * so this is where the demo's start-up is spent: the decode is the expensive half. Nothing here creates a
+ * graphics object or touches a widget.
  *
- * A missing/unreadable face is REPORTED and the map is skipped: a cube map with a white face would
- * look like a shading bug, and the demo is the only place this asset is read, so saying which file
- * failed is what makes it fixable.
+ * A face that cannot be read is REPORTED and comes back empty instead of throwing: the twelve reads run
+ * concurrently and one missing file must not fail the others. The caller then skips that whole map - a cube
+ * map with a white face would look like a shading bug.
  *
- * THE FACES ARE COLOUR IMAGES, so the map and every face are declared `Rgba8Srgb` (the colour-space
- * contract, see `vn::imaging::PixelFormat`): the JPG bytes ARE sRGB-encoded, the sampler decodes them,
- * and the shading stays in linear light. Declared `Rgba8Unorm` - which this used to do - the sky reads
- * a gamma too BRIGHT, because the encoded values are then used as if they were linear ones.
- *
- * @param side  Edge length, in texels, to box-filter the faces down to.
- * @param faces The six faces and the files they come from (see DemoCubeFace).
- * @param what  What samples the map, for the one-line success report.
- * @return The cube map, or null when the assets are absent (already reported).
+ * @param file Face file (under the demo's images directory).
+ * @param side Edge length, in texels, to box-filter the face down to.
+ * @return The filtered image, or null when the file could not be read.
  */
-vn::intrusive_ptr<vn::graphics::CubeMap> loadDemoCubeMap(int side, std::span<const DemoCubeFace> faces, const char* what)
+vn::intrusive_ptr<vn::imaging::Image> readDemoFace(const std::filesystem::path& file, int side)
 {
-    const std::filesystem::path images = demoAssetDirectory() / "images";
-    if (!std::filesystem::is_directory(images)) {
-        std::fprintf(stderr,
-                     "[demo] cube map: no assets beside the executable (looked for 'images' under "
-                     "'%s' and its parent; set VINE_TEST_DATA_DIR to point at test_data) - the "
-                     "cube map is skipped\n",
-                     demoAssetDirectory().string().c_str());
-        return nullptr;
+    try {
+        return boxFilterRgba(*vn::imageio::loadImage(file, vn::imaging::PixelFormat::Rgba8Srgb), side);
     }
+    catch (const std::exception& error) {
+        std::fprintf(stderr, "[demo] cube map: '%s' could not be read (%s) - the cube map is skipped\n", file.string().c_str(),
+                     error.what());
+        return {};
+    }
+}
 
+/// Edge length of the BOX cube map's faces, in texels.
+constexpr int kBoxCubeSide = 256;
+
+/// Edge length of the SKY cube map's faces, in texels.
+constexpr int kSkyCubeSide = 512;
+
+/**
+ * @brief Turns six staged faces into a CubeMap: the cheap half, on the application thread.
+ *
+ * No file is read and nothing is decoded here - the images arrive already at their final size, so this is
+ * the "put it on the scene" step rather than the "make it" step (see loadDemoCubeImagesAsync()).
+ *
+ * @param side   Edge length of the map, in texels (the size the faces were filtered to).
+ * @param faces  The six faces and the files they came from (slot i is staged[i]).
+ * @param staged The filtered face images.
+ * @param what   What samples the map, for the one-line success report.
+ * @return The cube map.
+ */
+vn::intrusive_ptr<vn::graphics::CubeMap> makeDemoCubeMap(int side, std::span<const DemoCubeFace> faces,
+                                                        const std::array<vn::intrusive_ptr<vn::imaging::Image>, 6>& staged, const char* what)
+{
     auto cube = vn::make_intrusive<vn::graphics::CubeMap>(side, vn::imaging::PixelFormat::Rgba8Srgb, 1);
-    for (const auto& entry : faces) {
-        const std::filesystem::path file = images / entry.file;
-        try {
-            cube->setFaceImage(entry.face,
-                               boxFilterRgba(*vn::imageio::loadImage(file, vn::imaging::PixelFormat::Rgba8Srgb), side));
-        }
-        catch (const std::exception& error) {
-            std::fprintf(stderr, "[demo] cube map: '%s' could not be read (%s) - the cube map is skipped\n",
-                         file.string().c_str(), error.what());
-            return nullptr;
-        }
+    for (std::size_t i = 0; i < faces.size(); ++i) {
+        cube->setFaceImage(faces[i].face, staged[i]);
     }
     std::fprintf(stderr, "[demo] cube map: six %dx%d faces of test_data/images loaded; %s\n", side, side, what);
     return cube;
 }
+
 
 /**
  * @brief Builds an axis-aligned box whose texcoord channel carries a DIRECTION per vertex.
@@ -348,9 +364,10 @@ addCubeMappedBox(vn::graphics::Group* root, vn::intrusive_ptr<vn::graphics::Text
 }
 
 /**
- * @brief Adds the demo's cube-mapped box to a scene root, or nothing when the assets are absent.
+ * @brief Adds the demo's cube-mapped box to a scene root.
  *
- * Both examples that show it share this slice (AppShellDemo's buildScene: addOpaqueBase). It belongs
+ * Both examples that show it share this slice (AppShellDemo::buildScene: addOpaqueBase, then
+ * AppShellDemo::installContent - it is the one piece of the opaque base whose asset arrives late). It belongs
  * in the opaque scene
  * because the G-buffer geometry stage samples the material's texture like the forward stage does, so
  * the box is shaded correctly AND drawn in the pass that writes depth - which is what lets it occlude
@@ -361,13 +378,13 @@ addCubeMappedBox(vn::graphics::Group* root, vn::intrusive_ptr<vn::graphics::Text
  * skipped - loudly - when the assets are not there: a white cube would read as a shading bug.
  *
  * @param root   Root group receiving the node.
+ * @param cube   The map it samples (null skips the box).
  * @param centre World-space centre of the box.
  * @param half   Half extents along X / Y / Z.
  */
-void addDemoCubeMappedBox(vn::graphics::Group* root, const vn::math::Vec3d& centre, const vn::math::Vec3d& half)
+void addDemoCubeMappedBox(vn::graphics::Group* root, vn::intrusive_ptr<vn::graphics::CubeMap> cube, const vn::math::Vec3d& centre, const vn::math::Vec3d& half)
 {
-    if (auto cube = loadDemoCubeMap(/*side*/ 256, kBoxCubeFaces,
-                                    "box 'env_box' samples it by direction (3-component texcoords)")) {
+    if (cube != nullptr) {
         addCubeMappedBox(root, std::move(cube), u8"env_box", centre, half);
     }
 }
@@ -403,13 +420,13 @@ constexpr double kSkyRadius = 400.0;
  *
  * @param root   Root group receiving the node.
  * @param radius Half extent of the box, in world units.
+ * @param cube   The map it samples (null skips the sky).
  */
-void addDemoSkyBox(vn::graphics::Group* root, double radius)
+void addDemoSkyBox(vn::graphics::Group* root, double radius, vn::intrusive_ptr<vn::graphics::CubeMap> cube)
 {
     using vn::math::Vec3d;
 
-    if (auto cube = loadDemoCubeMap(/*side*/ 512, kSkyCubeFaces,
-                                    "sky box 'sky_box' samples it by direction (3-component texcoords)")) {
+    if (cube != nullptr) {
         auto geometry = makeDirectionBox(u8"sky_box", Vec3d(radius, radius, radius));
 
         auto material = vn::make_intrusive<vn::graphics::Material>();
@@ -608,15 +625,9 @@ void addOpaqueBase(vn::graphics::Group* root)
     addBox(root, vn::Colorf(0.45f, 0.47f, 0.52f, 1.0f), u8"ground", Vec3d(0.0, 0.0, -0.05), Vec3d(3.0, 3.0, 0.05));
     addBox(root, vn::Colorf(0.30f, 0.62f, 0.36f, 1.0f), u8"box_green", Vec3d(0.0, 0.0, 0.4), Vec3d(0.5, 0.5, 0.4));
 
-    // --- Cube-mapped box: the material's texture is sampled BY DIRECTION ---
-    // Its texcoord channel carries THREE components (a direction, not a UV pair), which is what makes the
-    // content set sample the texture as a cube map - see Geometry::setTexcoords3. BOTH paths build the
-    // `samplerCube` variant from that width: the forward content set and the G-buffer geometry stage. It
-    // has to be drawn by a pass that WRITES depth, so the box occludes its own far faces; the forward
-    // overlay pass is depth-TEST-only for the blended content it carries and would show a closed body's
-    // inside (see addBlendedPair). The box stands in the open, so the map is not half-hidden by another
-    // box's shadow - the shadow is shown by the stack on the ground instead.
-    addDemoCubeMappedBox(root, Vec3d(1.5, 1.2, 0.5), Vec3d(0.5, 0.5, 0.5));
+    // The cube-mapped box is the ONE slice of this base that needs an asset, so it is not added here: the
+    // skeleton is built before the control is initialized and the map arrives later (see installContent).
+    // Its placement and the reason it must be drawn by a depth-wRITING pass moved with it.
 }
 
 /**
@@ -1549,6 +1560,90 @@ void addDemoPipeline(gui::RenderControl* render_control, vn::intrusive_ptr<vn::g
     });
 }
 
+// 定义必须在文件内部的匿名 namespace **之外**：它声明在 AppShellDemo.hpp 里、由 AppShellUi.cpp 调用，
+// 而匿名 namespace 里的符号是内部链接——同一个 .so 的两个 TU 也凑不到一起（运行期报 undefined symbol）。
+bool AppShellDemo::sessionAttaching() const noexcept
+{
+    return control_ != nullptr && control_->isAttaching();
+}
+
+void assembleDemoContentLater(std::shared_ptr<AppShellDemo> demo)
+{
+    // 协程体写成 lambda 并**立即调用**：`DetachedTask` 是急的，所以这一句就是把下面这段开起来，
+    // 之后没人需要它的返回值（没人等它，它也不属于哪一拍——接口已经起来了，内容在它自己的线程上补齐）。
+    [](std::shared_ptr<AppShellDemo> demo) -> vn::async::DetachedTask {
+        // 1. 重活在池上：十二个面并行读盘 + 解码 + 降采样（loadDemoCubeImagesAsync）。应用线程一直空着——
+        //    启动框照重绘、进度照上报、取消点得动。
+        auto images = co_await loadDemoCubeImagesAsync();
+
+        // 2. 等会话 attach 结束再装：attach 会读场景图（管线由已注册的 pass 建，还有一帧 warm-up 要 record 它），
+        //    所以装内容赶在它前面就是跟它抢——这不是时序默契，是构造上的顺序（attach 跑在池上，应用线程空着，
+        //    正好就是装配想动手的时候）。等的时候只挂起，池上那条 worker 与主循环都不被占。
+        while (demo->sessionAttaching()) {
+            co_await vn::async::sleepFor(std::chrono::milliseconds(2));
+        }
+
+        // 3. 让**应用线程唤醒这次 await**（MainThreadDispatcher::resumeOnMainThread()）：它只投递一次 resume，
+        //    由应用线程执行 —— 于是 `co_await` 之后的代码天然就跑在应用线程上，CubeMap 与场景节点建在那里。
+        //    比“同步委托”（invokeOnMainThread）好在：挂起期间池的那条 worker 是自由的（同步委托会把它按住
+        //    整段 UI 工作）。什么时候用哪个：整条尾巴都在 UI 上（这里）就用 await；任务要把自己的线程留着、
+        //    只借 UI 线程做一段，再用 invokeOnMainThread。
+        auto* app        = Application::current();
+        auto* dispatcher = app != nullptr ? app->mainThreadDispatcher() : nullptr;
+        if (dispatcher == nullptr) {
+            // 没有应用（只有测试会走到这里）：没有应用线程可回，就地做完。
+            demo->installContent(images);
+            co_return;
+        }
+        co_await dispatcher->resumeOnMainThread();
+
+        // 4. 在**应用线程上**再确认一次再装：attach 也是在应用线程上开的（插件的 load() 里），所以"检查 + 装"
+        //    之间没有挂起点 ⇒ 两者相对 attach 的开启是原子的。只靠上面那次检查不够——它跑在池上，
+        //    attach 完全可能在那次检查之后、这一句之前开起来。
+        while (demo->sessionAttaching()) {
+            co_await vn::async::sleepFor(std::chrono::milliseconds(2));
+        }
+
+        demo->installContent(images);
+    }(std::move(demo));
+}
+
+vn::async::Task<DemoCubeImages> loadDemoCubeImagesAsync()
+{
+    auto staged = std::make_shared<DemoCubeImages>();
+
+    const std::filesystem::path images = demoAssetDirectory() / "images";
+    if (!std::filesystem::is_directory(images)) {
+        std::fprintf(stderr,
+                     "[demo] cube map: no assets beside the executable (looked for 'images' under "
+                     "'%s' and its parent; set VINE_TEST_DATA_DIR to point at test_data) - the "
+                     "cube maps are skipped\n",
+                     demoAssetDirectory().string().c_str());
+        co_return std::move(*staged);
+    }
+
+    // ONE POOL TASK PER FACE, all twelve at once: the reads and decodes are independent (different files,
+    // no shared state), so the wall clock is one face's work rather than twelve. This is the "heavy work on
+    // another thread" half of the split; the caller awaits it from the boot's second phase, which keeps the
+    // loop turning and the order on the application thread.
+    std::vector<vn::async::AnyTask> jobs;
+    jobs.reserve(staged->box.size() + staged->sky.size());
+    for (std::size_t i = 0; i < staged->box.size(); ++i) {
+        jobs.push_back(vn::async::run([staged, images, i] { staged->box[i] = readDemoFace(images / kBoxCubeFaces[i].file, kBoxCubeSide); }));
+    }
+    for (std::size_t i = 0; i < staged->sky.size(); ++i) {
+        jobs.push_back(vn::async::run([staged, images, i] { staged->sky[i] = readDemoFace(images / kSkyCubeFaces[i].file, kSkyCubeSide); }));
+    }
+    co_await vn::async::whenAll(std::move(jobs));
+
+    const auto all_there = [](const auto& faces) {
+        return std::all_of(faces.begin(), faces.end(), [](const auto& face) { return face != nullptr; });
+    };
+    staged->box_complete = all_there(staged->box);
+    staged->sky_complete = all_there(staged->sky);
+    co_return std::move(*staged);
+}
+
 AppShellDemo::AppShellDemo(gui::RenderControl* control) : control_(control)
 {
 }
@@ -1573,14 +1668,20 @@ vn::intrusive_ptr<vn::graphics::Scene> AppShellDemo::buildScene(bool deferred)
         addBlendedPair(root.get(), kForwardBlended);
     }
     control_->view()->scene()->setRoot(root);
+    // The cube-mapped box goes on HERE, later: it is the one opaque-base slice with an asset behind it (see
+    // installContent).
+    content_root_ = root;
 
     // Overlay scene: drawn AFTER the pipeline's own result with the depth test on and the depth write
     // off, so it composites over what the path already drew.
     auto overlay_root = vn::make_intrusive<Group>();
     // SKY FIRST: the overlay draws its content in scene order and nothing in it writes depth, so the sky
     // has to fill the background BEFORE the translucent box blends over it - a sky added after would
-    // paint over the blended box instead of behind it.
-    addDemoSkyBox(overlay_root.get(), kSkyRadius);
+    // paint over the blended box instead of behind it. The slot is a group created here and filled by
+    // installContent(); creating it empty keeps the sky in that position whatever the asset's timing is.
+    sky_group_ = vn::make_intrusive<Group>();
+    sky_group_->setName(u8"sky_slot");
+    overlay_root->addChild(sky_group_);
     if (deferred) {
         addBlendedPair(overlay_root.get(), kOverlayBlended);
     }
@@ -1599,6 +1700,7 @@ void AppShellDemo::install()
 
     // Scene content: ONE composition rule for both examples (see buildScene). The default demo is
     // Deferred; VINE_PIPELINE=forward selects the forward feature-showcase path.
+    // No asset is read here: the two cube maps arrive later (loadDemoCubeImagesAsync + installContent).
     auto overlay_scene = buildScene(demoUsesDeferred());
 
     addDemoLighting(render_control);
@@ -1624,6 +1726,34 @@ void AppShellDemo::install()
     // exercising the whole engine/backend path (default = forwardProgram(), set by the engine).
     if (std::getenv("VINE_SHADER_PRESET") != nullptr) {
         render_control->engine()->setDefaultContentProgram(vn::graphics::flatForwardProgram());
+    }
+}
+
+void AppShellDemo::installContent(const DemoCubeImages& images)
+{
+    using vn::math::Vec3d;
+
+    // --- Cube-mapped box: the material's texture is sampled BY DIRECTION ---
+    // Its texcoord channel carries THREE components (a direction, not a UV pair), which is what makes the
+    // content set sample the texture as a cube map - see Geometry::setTexcoords3. BOTH paths build the
+    // `samplerCube` variant from that width: the forward content set and the G-buffer geometry stage. It
+    // has to be drawn by a pass that WRITES depth, so the box occludes its own far faces; the forward
+    // overlay pass is depth-TEST-only for the blended content it carries and would show a closed body's
+    // inside (see addBlendedPair). The box stands in the open, so the map is not half-hidden by another
+    // box's shadow - the shadow is shown by the stack on the ground instead.
+    if (images.box_complete && content_root_ != nullptr) {
+        addDemoCubeMappedBox(content_root_.get(),
+                             makeDemoCubeMap(kBoxCubeSide, kBoxCubeFaces, images.box,
+                                             "box 'env_box' samples it by direction (3-component texcoords)"),
+                             Vec3d(1.5, 1.2, 0.5), Vec3d(0.5, 0.5, 0.5));
+    }
+
+    // The sky goes into the slot buildScene left first in the overlay root, so it stays behind the blended
+    // pair however late the map arrives.
+    if (images.sky_complete && sky_group_ != nullptr) {
+        addDemoSkyBox(sky_group_.get(), kSkyRadius,
+                      makeDemoCubeMap(kSkyCubeSide, kSkyCubeFaces, images.sky,
+                                      "sky box 'sky_box' samples it by direction (3-component texcoords)"));
     }
 }
 

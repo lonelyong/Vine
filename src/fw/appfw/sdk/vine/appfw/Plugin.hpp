@@ -8,6 +8,7 @@
 
 #include <vine/Object.hpp>
 #include <vine/Uuid.hpp>
+#include <vine/async/Task.hpp>
 
 /**
  * @brief ABI revision of the plugin-facing SDK.
@@ -23,11 +24,30 @@
  * 3u: ProgressHost moved from the base progress module into appfw, so plugs that
  * reported progress through vn::progress::ProgressHost include it from here now.
  *
+ * 4u: Application::init() was folded into the constructor. The virtual was removed
+ * from the middle of Application's vtable, so every slot after it moved - a plugin
+ * built against 3u would call the wrong ones. AppConfig/SplashConfig also moved to
+ * their own header (AppBuilder.hpp includes it, so existing includes still work).
+ *
+ * 5u: the boot's three phases became async methods (Application::startupStart(),
+ * startup() and startupEnd() return vn::async::Task<void> instead of taking a
+ * continuation) and are declared as one set at the end of the class, so
+ * Application's vtable changed shape once more - a plugin built against 4u would
+ * call the wrong slots.
+ *
+ * 6u: the plugin lifecycle's three hooks (preLoad(), load() and postLoad()) return
+ * vn::async::Task<void> instead of void. A plugin's startup work happens on the
+ * application thread (widgets, graphics objects, render sessions), so the only way an
+ * application thread stretch stops blocking the loop is for the plugin itself to send
+ * its UI-free half to the pool and come back - and that needs an await. The manager
+ * does not turn the loop; it reports per phase instead (see PluginManager). unload()
+ * deliberately stays synchronous: it runs while the loop is already down.
+ *
  * The name says *plugin* ABI on purpose: it is not the release version (that is
  * VN_APPFW_VERSION in appfw_global.hpp, diagnostic only), and it says nothing about
  * the host's own binaries, which are built and rebuilt together with the framework.
  */
-#define VN_APPFW_PLUGIN_ABI_VERSION 3u
+#define VN_APPFW_PLUGIN_ABI_VERSION 6u
 
 VN_APPFW_NS_BEGIN
 
@@ -150,23 +170,44 @@ class VN_APPFW_API Plugin : public Object {
     /**
      * @brief Called before load(); used for dependency checks and early setup.
      *
+     * A coroutine, like the two hooks after it: see load() for what the await buys.
+     *
      * @param context Load context exposing host capabilities.
+     * @return A task that completes when this phase is done on the application thread.
      */
-    virtual void preLoad(PluginLoadContext* context);
+    virtual vn::async::Task<void> preLoad(PluginLoadContext* context);
 
     /**
      * @brief Registers the plugin's contributions (services, configs, ...).
      *
+     * Runs on the application thread and returns once the plugin is usable. Its work is SPLIT, not moved: a plugin that
+     * has something expensive and UI-free to do sends it to the pool - `co_await vn::async::run(...)`, then
+     * `co_await app->mainThreadDispatcher()->resumeOnMainThread()` before touching UI again - while the widgets and
+     * graphics objects it builds stay on this thread, as they must.
+     *
+     * What this buys the boot: while the hook is suspended on the pool the event loop runs freely, so a progress report
+     * made there is delivered, and the interface stays alive. What it does NOT do is keep a long application-thread
+     * stretch animated - nothing can paint that window while its thread is inside that stretch - so keep those stretches
+     * short, and prefer the pool for anything that does not need a widget or a graphics object.
+     *
+     * @note A hook that does only synchronous work is still a coroutine and must end with `co_return;`: without a
+     *       `co_await`/`co_return` the body compiles as an ordinary function returning an empty task, and the call site
+     *       waits for something that never runs (the framework's own driver hit this as a `ud2` at run time).
+     *
      * @param context Load context exposing host capabilities.
+     * @return A task that completes when the plugin is usable.
      */
-    virtual void load(PluginLoadContext* context);
+    virtual vn::async::Task<void> load(PluginLoadContext* context);
 
     /**
      * @brief Called after every plugin has loaded; used for cross-plugin wiring.
      *
+     * A coroutine, like the two hooks before it: see load() for what the await buys.
+     *
      * @param context Load context exposing host capabilities.
+     * @return A task that completes when this phase is done on the application thread.
      */
-    virtual void postLoad(PluginLoadContext* context);
+    virtual vn::async::Task<void> postLoad(PluginLoadContext* context);
 
     /**
      * @brief Releases the plugin's resources on shutdown.

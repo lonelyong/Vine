@@ -125,12 +125,12 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
   `appdata` 是冗余的。现在就是 `<用户数据>/<org>/<app>`，与 Qt 的 `AppDataLocation` 同构。
 - **org 由 `Application` 构造时默认设置**（`Application::defaultOrganizationName()` =
   `Vine`）：宿主不设也能得到合法路径；宿主自定义则用 `AppConfig::organization`
-  （builder 后设，覆盖默认）。Application 只在当前 org 为空时才设，不覆盖宿主已设的值。
+  （构造函数先设它，覆盖默认）。Application 只在当前 org 为空时才设，不覆盖宿主已设的值。
 - **应用名由每个 app 的 main 提供**（`AppConfig::name`），框架推导其余路径。
-- **builder 默认打开持久化**：`applyAppConfig()`（`src/fw/appfw/src/AppBuilderSupport.hpp`，
-  `createApplication` 与 `createGuiApplication` 共用）→ `setConfigFile(config_file 非空 ?
+- **持久化默认打开**：`Application::initialize()`（2026-09-26 起；原来是 `applyAppConfig()`，
+  `AppBuilderSupport.hpp` 已删）→ `setConfigFile(config_file 非空 ?
   config_file : defaultConfigFile())`。`AppConfig::persist_config = false` 则不读不写
-  （测试/短命工具）；显式 `config_file` 始终优先。
+  （测试/短命工具）；显式 `config_file` 始终优先。构造里就装上，所以插件 `load()` 注册配置项时配置文件已经读完。
 - 禁用列表存在同一个 ConfigManager 里，键 `PluginManager::disabledConfigKey()` =
   `plugins.disabled`（字符串数组，点分路径 ⇒ 嵌套 JSON `plugins.disabled`）。
 - `Application::setConfigFile(path)` 打开时读回、`shutdown()` 时写回（自动建父目录）；
@@ -429,7 +429,7 @@ struct PluginAbi {
     const char*   framework_version; // 编译时的框架版本（VN_APPFW_VERSION），纯诊断
 };
 
-#define VN_APPFW_PLUGIN_ABI_VERSION 1u   // Plugin.hpp，命名空间块之外
+#define VN_APPFW_PLUGIN_ABI_VERSION 4u   // Plugin.hpp，命名空间块之外
 ```
 
 规则（都写在 `Plugin.hpp` 里）：
@@ -437,7 +437,7 @@ struct PluginAbi {
 - `abi_version` **永远第一个成员**，且宿主在它匹配之前不许读别的成员（两条 `static_assert`
   钉住：标准布局 + 偏移 0）；
 - 成员只能**往后加**，不重排不删除，而且不能用布局会变的 SDK 类型（只能整数/`const char*`）；
-- `VN_APPFW_PLUGIN_ABI_VERSION`（现为 `1u`）在任何插件可见面变化时 +1：`PluginAbi`、`PluginInfo`、
+- `VN_APPFW_PLUGIN_ABI_VERSION`（现为 `4u`）在任何插件可见面变化时 +1：`PluginAbi`、`PluginInfo`、
   `Plugin`/`PluginLoadContext`、入口签名、命令注册 ABI。
 
 **这个常量为什么定在 `Plugin.hpp`**（而不是别处）：

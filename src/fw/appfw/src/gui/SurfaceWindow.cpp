@@ -16,9 +16,14 @@
 #include <QWindow>
 
 #include <chrono>
+#include <atomic>
 #include <cstdlib>
 #include <string>
 #include <utility>
+
+#include <vine/appfw/Application.hpp>
+#include <vine/appfw/MainThreadDispatcher.hpp>
+#include <vine/async/ThreadPoolScheduler.hpp>
 
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderEngine.hpp>
@@ -235,6 +240,26 @@ vn::window::ScrollEvent toScrollEvent(const QWheelEvent& event)
 
 }  // namespace
 
+/// Keeps one attach marked as in flight, however it ends (the async path can also be abandoned).
+class AttachScope
+{
+  public:
+    /// @param flag Flag to hold for the object's lifetime.
+    explicit AttachScope(std::atomic<bool>& flag)
+      : flag_(flag)
+    {
+        flag_.store(true, std::memory_order_release);
+    }
+
+    ~AttachScope() { flag_.store(false, std::memory_order_release); }
+
+    AttachScope(const AttachScope&)            = delete;
+    AttachScope& operator=(const AttachScope&) = delete;
+
+  private:
+    std::atomic<bool>& flag_;
+};
+
 struct SurfaceWindow::Impl {
     /// The widget the surface is embedded in: asked whether the control is on screen, which the
     /// surface's own flags cannot answer, and used as the context menu's parent.
@@ -253,6 +278,10 @@ struct SurfaceWindow::Impl {
     bool backend_live = false;
     // Whether the VINE_RECREATE_SURFACE_MS test hatch has been armed (the first init() arms it).
     bool recreate_hatch_armed = false;
+    // Whether an attach is running right now (including its warm-up frame). Read by hosts that mutate the scene
+    // graph: the attach builds pipelines from the registered passes and records a frame, so scene work waits on it
+    // (see SurfaceWindow::initAsync()). Atomic because the attach runs across threads and the readers are hosts.
+    std::atomic<bool> attaching{ false };
     // Surface lifecycle, published through state()/on_state_changed.
     State state = State::Pending;
     // Why the state reached Failed (empty otherwise).
@@ -424,18 +453,24 @@ bool SurfaceWindow::init()
     // Test hatch: force a platform-window recreation after VINE_RECREATE_SURFACE_MS milliseconds, which is
     // the event the follow path above exists for. See recreateSurface(). Armed by the FIRST init() only:
     // following a recreated window re-enters init(), and re-arming here would recreate the surface forever.
-    if (!d->recreate_hatch_armed) {
-        if (const char* recreate_ms = std::getenv("VINE_RECREATE_SURFACE_MS"); recreate_ms != nullptr && *recreate_ms != '\0') {
-            d->recreate_hatch_armed = true;
-            const int delay_ms      = std::atoi(recreate_ms);
-            QTimer::singleShot(delay_ms, this, [this] { recreateSurface(); });
-        }
-    }
+    armRecreateHatch();
     // Nothing is re-checked on a timer here: the surface is drawn into on the events that report a drawable
     // surface - the container's show (see RenderControl), the container's resize (handleResized()) and the
     // recreated platform window (noteSurfaceUsable()) - so the backend ends up at the live surface size
     // without this class guessing when that is.
     return d->backend_live;
+}
+
+void SurfaceWindow::armRecreateHatch()
+{
+    if (d->recreate_hatch_armed) {
+        return;
+    }
+    if (const char* recreate_ms = std::getenv("VINE_RECREATE_SURFACE_MS"); recreate_ms != nullptr && *recreate_ms != '\0') {
+        d->recreate_hatch_armed = true;
+        const int delay_ms      = std::atoi(recreate_ms);
+        QTimer::singleShot(delay_ms, this, [this] { recreateSurface(); });
+    }
 }
 
 void SurfaceWindow::useDefaultBackend()
@@ -628,12 +663,94 @@ void SurfaceWindow::handleUpdateTick()
     }
 }
 
+bool SurfaceWindow::isAttaching() const noexcept
+{
+    return d->attaching.load(std::memory_order_acquire);
+}
+
 void SurfaceWindow::initializeBackend()
+{
+    if (!prepareBackendAttach()) {
+        return;
+    }
+
+    // 整段 attach（含 warm-up 那一帧）都算“正在 attach”：装配要等它过去（见 initAsync() 的契约）。
+    const AttachScope attaching(d->attaching);
+    d->backend_live = d->engine->initialize();
+    finishBackendAttach(/*warm_up_here=*/true);
+}
+
+vn::async::Task<bool> SurfaceWindow::initAsync()
+{
+    // Same head and same tail as init(); the only difference is where the backend's own initialize() runs (see the
+    // declaration). Everything that touches Qt - the handle, the state, the view, the frames - stays on this thread.
+    if (d->backend_live && nativeHandle() == d->session_handle) {
+        co_return true;
+    }
+    if (d->engine == nullptr) {
+        co_return false;
+    }
+    if (d->state == SurfaceState::Failed) {
+        d->failure_reason.clear();
+        setState(SurfaceState::Pending);
+    }
+    useDefaultBackend();
+    if (d->engine->backend() == nullptr) {
+        failAttach(u8"no render backend is registered");
+        co_return false;
+    }
+    d->view->ensureWindowPass();
+    armRecreateHatch();
+
+    if (nativeHandle() == nullptr) {
+        co_return d->backend_live;  // deferred: calling again is the host's retry
+    }
+    if (!prepareBackendAttach()) {
+        co_return d->backend_live;
+    }
+
+    // The one stretch that only needs the handle: the device, the session and every pipeline are built here, on a
+    // pool worker, while the application thread goes back to its loop (that is the point - the boot keeps reporting,
+    // repainting and taking input through it).
+    Application* const app        = Application::current();
+    auto* const        dispatcher = app != nullptr ? app->mainThreadDispatcher() : nullptr;
+    if (dispatcher == nullptr) {
+        // Nothing to come back to (no application, no event loop): do the whole attach here, exactly as init() does.
+        d->backend_live = d->engine->initialize();
+        finishBackendAttach(/*warm_up_here=*/true);
+        co_return d->backend_live;
+    }
+
+    vn::graphics::RenderEngine* const engine_ptr   = d->engine.get();
+    bool                              initialized = false;
+
+    // 整段 attach（直到 warm-up 完成）都在这个作用域里：它是宿主的“现在别动场景”信号。
+    const AttachScope attaching(d->attaching);
+
+    co_await vn::async::run([engine_ptr, &initialized] { initialized = engine_ptr->initialize(); });
+    co_await dispatcher->resumeOnMainThread();
+
+    d->backend_live = initialized;
+    finishBackendAttach(/*warm_up_here=*/false);
+
+    // 会话的最后一笔开销：warm-up 那一帧。它只是 engine->frame()（建 pass 图、program slot、编译管线，实测
+    // ~166-184 ms），而要的只有句柄与一个已经建好的会话——所以它也在池上跑，应用线程继续空着。
+    // ⚠️ 它读的是场景图：宿主在 attach 进行中不要去改场景（装内容要等这里返回，见 RenderControl::initAsync()）。
+    if (!isOnScreen()) {
+        vn::graphics::RenderEngine* const warm_engine = d->engine.get();
+        co_await vn::async::run([warm_engine] { warm_engine->frame(); });
+        co_await dispatcher->resumeOnMainThread();
+        requestSettleFrames();
+    }
+    co_return d->backend_live;
+}
+
+bool SurfaceWindow::prepareBackendAttach()
 {
     void* h = nativeHandle();
     if (d->backend_live && h != nullptr && h == d->session_handle) {
         // Already bound to this very surface: nothing to do (backend_live implies has_session).
-        return;
+        return false;
     }
     if (h == nullptr || width() <= 0 || height() <= 0) {
         // No usable native surface yet (Qt destroying/recreating the platform window, or the
@@ -648,7 +765,7 @@ void SurfaceWindow::initializeBackend()
                                                 height(),
                                                 elapsedMs(d->created_at));
         }
-        return;
+        return false;
     }
     if (d->has_session && h != d->session_handle) {
         // The platform window was recreated and this is the new one. Re-announce the handle instead of
@@ -664,10 +781,14 @@ void SurfaceWindow::initializeBackend()
     // handle is refreshed here so a re-announce after a surface recreate uses
     // the new handle (and a backend that can move does exactly that).
     d->engine->setWindowHandle(h);
-    d->backend_live = d->engine->initialize();
+    return true;
+}
+
+void SurfaceWindow::finishBackendAttach(bool warm_up_here)
+{
     if (d->backend_live) {
         d->has_session    = true;
-        d->session_handle = h;
+        d->session_handle = nativeHandle();
         setState(SurfaceState::Attached);
         // What the host sees is the widget that holds this surface, and RenderControl keeps it hidden until a frame
         // is in the surface (see its constructor) - a hidden widget is not painted, so the hole Qt's window
@@ -683,9 +804,11 @@ void SurfaceWindow::initializeBackend()
         if (isOnScreen()) {
             renderFrame();
         }
-        else {
+        else if (warm_up_here) {
             prewarmFrame();
         }
+        // 不是自己付 warm-up 的调用方（initAsync 把那一帧丢到池上）在这里不做别的：settle 帧本来就是
+        // "等循环回来"的活，它自己会再请求。
         // The first attach can land mid-layout (the host calls init() right after embedding the
         // control, before its dock layout has settled), so the
         // native surface may still be resized afterwards. Request settle frames

@@ -52,6 +52,18 @@ StartupProgress* StartupProgress::current()
     return s_current.load(std::memory_order_acquire);
 }
 
+std::stop_token StartupProgress::stopToken() const
+{
+    // The host owns the source; the token follows it, so a boot that is cancelled through the presenter (the status
+    // bar's Cancel button calls the same source) is seen here too.
+    return d->host.cancelSource().get_token();
+}
+
+void StartupProgress::requestCancel()
+{
+    d->host.cancelSource().request_stop();
+}
+
 void StartupProgress::stage(const std::string& name)
 {
     // Ending the counted stage advances the bar to its end, which the presenters then hide behind a busy bar until the

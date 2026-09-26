@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <vine/String.hpp>
+#include <vine/async/Task.hpp>
 
 #include <vine/appfw/Plugin.hpp>
 
@@ -85,11 +86,16 @@ struct VN_APPFW_API PluginRegistration {
  * and listed (PluginEntry::skipped) so it stays visible, but it is never
  * instantiated.
  *
- * Thread and re-entrancy contract: the manager is not thread-safe. load(),
- * loadAll() and unloadAll() run on the thread that owns the Application, never
- * from a plugin lifecycle callback (a nested loadAll() is refused and logged),
- * and the process-wide configuration (setBuiltInPluginDirectory(), setSkipList())
- * is set before the first load.
+ * Thread and re-entrancy contract: the manager is not thread-safe. load(), loadAll(), loadAllAsync() and unloadAll()
+ * run on the thread that owns the Application, never from a plugin lifecycle callback (a nested loadAll() is refused and
+ * logged), and the process-wide configuration (setBuiltInPluginDirectory(), setSkipList()) is set before the first load.
+ *
+ * The plugin lifecycle runs on the application thread, because that is where the widgets, graphics objects and render
+ * sessions it builds belong. The manager does not turn the event loop for that: it reports its phases through
+ * StartupProgress and a plugin that has long, UI-free work sends it to the pool itself (see Plugin::load()), which is
+ * what keeps the application thread free while it waits. The synchronous doors (load(), loadAll()) drive the same
+ * coroutines to completion on the calling thread, dispatching the calls that those hooks post to the application
+ * thread so that a hook which hops to the pool and back still completes - see loadAll() for what that costs.
  *
  * Hard constraint: a plugin library can be instantiated only once per process,
  * because its commands register into a process-global, non-revocable type
@@ -224,6 +230,12 @@ class VN_APPFW_API PluginManager {
      * and its position in the load list carries no dependency meaning. Unloading
      * does not rely on that position (see unloadOrder()).
      *
+     * The lifecycle hooks are coroutines now (Plugin::preLoad() and friends): this door drives them to completion on
+     * the calling thread, dispatching the calls they post to the application thread (`resumeOnMainThread()`) while it
+     * waits - so a plugin that sends its heavy work to the pool and comes back still loads here. It does not turn the
+     * event loop otherwise: on the application thread this call blocks it for as long as the plugin's own stretches
+     * take, which is why the boot uses loadAllAsync() (see the note on Plugin::load()).
+     *
      * @param name_or_path Plugin name or library path.
      * @return The loaded plugin, or nullptr on failure.
      */
@@ -273,6 +285,25 @@ class VN_APPFW_API PluginManager {
      *         instantiate or threw out of its lifecycle.
      */
     [[nodiscard]] bool loadAll();
+
+    /**
+     * @brief Loads every plugin, as a coroutine: the door a boot uses.
+     *
+     * The same load as loadAll() - the same scan, the same dependency closure, the same lifecycle in the same order -
+     * with one difference: a plugin's hooks are coroutines, so a plugin with heavy, UI-free startup work can send it to
+     * the thread pool (`co_await vn::async::run(...)`) and come back with `resumeOnMainThread()` before touching UI
+     * again. While it waits, the event loop runs freely, which keeps the interface alive and delivers reports made on
+     * the pool thread.
+     *
+     * Nothing about the result changes: the plugins are still loaded in dependency order, the batch is still atomic,
+     * and a nested call from a lifecycle callback is still refused.
+     *
+     * The manager does not turn the event loop between its own steps (see the implementation: pumping the queue during
+     * a boot would let the render surface's attach backoff run before the host has laid its window out).
+     *
+     * @return A task that completes with the same answer as loadAll().
+     */
+    [[nodiscard]] vn::async::Task<bool> loadAllAsync();
 
     /**
      * @brief Unloads every loaded plugin in reverse dependency order.

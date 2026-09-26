@@ -1,20 +1,14 @@
-﻿#include <filesystem>
-#include <iostream>
+﻿#include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 
-#ifdef _WIN32
-#    include <windows.h>
-#    include <dbghelp.h>
-#    pragma comment(lib, "dbghelp.lib")
-#endif
+#include <QCoreApplication>
 
 #include <vine/logging/Log.hpp>
 #include <vine/logging/LogSink.hpp>
 
 #include <vine/appfw/AppBuilder.hpp>
-#include <vine/appfw/PluginManager.hpp>
-#include <vine/appfw/StartupProgress.hpp>
 #include <vine/appfw/gui/GuiAppBuilder.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 
@@ -181,41 +175,32 @@ int main(int argc, char** argv)
 {
     installCrashLogger();
 
-    // 通过 builder 构建并初始化 GUI 应用（内部会创建并显示主窗口）。
+    // 通过 builder 构建应用：构造函数建身份、Qt 应用对象、UserIO、配置文件与窗口（不 show）；
     // main 只声明应用身份（应用名/可选组织名），数据与配置目录由框架默认推导：
     // <用户数据>/<org>/<app>/{config,logs}，见 Application::dataDirectory()。
     fw::AppConfig config;
     config.name = "Vine";
     // config.organization 留空以使用框架默认组织名。
-    // config.built_in_plugin_dir 留空以使用默认的自带插件目录。
-    // 启动框：显示到 finishStartup() 为止，期间报告正在初始化界面/正在加载哪个插件。
+    // config.built_in_plugin_dir 留空以使用默认的自带插件目录；config.load_plugins 默认开，
+    // 插件由框架在启动阶段加载（下面的 run() 里），宿主不用自己调 loadAll()。
+    // 启动框：显示到 startupEnd() 为止，期间报告正在启动/正在加载哪个插件。
     config.splash.enabled = true;
 
     auto app = guifw::createGuiApplication(config, argc, argv);
 
-    // 启动工作交给框架：窗口先由事件循环画出来，然后才跑这一段（否则这段时间窗口是空的），
-    // 这段返回后框架自己结束启动阶段（关掉启动框、把主窗口提到前面）。
-    return app->runStartup([&app] {
-        // 应用自己的启动阶段：框架报的是"初始化界面"和"加载插件"，日志落在哪里只有应用知道。
-        // 没有启动进度口时（未启用启动框）这里是空操作。
-        if (auto* boot = app->startupProgress()) {
-            boot->stage("正在初始化日志");
-        }
-
-        // 日志同时输出到控制台和数据目录下按日期滚动的文件。
-        // main 只提供数据目录：日志落在 <data>/Vine/Vine/logs/vine.log（每日一文件）；
-        // 配置文件由 builder 落在同级的 config/Vine.json。
-        ::vn::logging::initDefault(::vn::logging::LogConfig{
-            .level = ::vn::logging::LogLevel::Info,
-            .sinks = {
-                ::vn::logging::LogSink::console(),
-                ::vn::logging::LogSink::dailyFile(app->dataDirectory() / "logs" / "vine.log"),
-            },
-        });
-
-        // 加载插件：app_shell 会在主窗口上注册 Ribbon 标签与命令。
-        if (!app->pluginManager()->loadAll()) {
-            std::cerr << "Some plugins failed to load" << std::endl;
-        }
+    // 日志落在哪里只有应用知道（控制台 + 数据目录下按日期滚动），所以它归 main —— 而且是**初始化**而不是
+    // 启动阶段的一步：它不进启动框，也不必等界面上屏。数据目录要等应用建好才知道，所以这是最早能放的位置。
+    // 这条规则只受一条约束：任何想进日志的启动动作（包括插件的 load()）都得排在它后面。
+    ::vn::logging::initDefault(::vn::logging::LogConfig{
+        .level = ::vn::logging::LogLevel::Info,
+        .sinks = {
+            ::vn::logging::LogSink::console(),
+            ::vn::logging::LogSink::dailyFile(app->dataDirectory() / "logs" / "vine.log"),
+        },
     });
+
+    // 剩下的全归框架：run() 先把事件循环跑起来，再由队列里的启动步上屏、等首帧、加载插件
+    // （AppConfig::load_plugins 默认开），最后结束启动阶段（关掉启动框、把主窗口提到前面）。
+    // 这个宿主没有自己的启动工作：有的话就重写 startup() 那一拍（重活再由它自己丢到池上）。
+    return app->run();
 }

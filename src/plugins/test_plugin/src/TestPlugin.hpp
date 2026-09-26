@@ -23,8 +23,9 @@ class TestPlugin : public Plugin {
      * PluginManager::loadAll() with a real plugin library.
      *
      * @param context Load context exposing host capabilities.
+     * @return A task that completes when the plugin is loaded.
      */
-    void load(vn::appfw::PluginLoadContext* context) override;
+    vn::async::Task<void> load(vn::appfw::PluginLoadContext* context) override;
 };
 
 VN_APPFW_NS_END
