@@ -85,9 +85,9 @@ ProbedDevice describePhysicalDevice(::vsg::PhysicalDevice& device)
     {
         probed.facts.note(core::DeviceExtension::ExtendedDynamicState3);
     }
-    // `String` wraps std::u8string, and a driver reports its device name as UTF-8 bytes in a char[]:
-    // the cast is the repo's spelling for exactly that hand-over (see PluginManager's helpers).
-    probed.name   = vn::String(reinterpret_cast<const char8_t*>(properties.deviceName));
+    // A driver reports its device name as UTF-8 bytes in a char[], which is exactly the claim
+    // String::fromUtf8() takes over: the bytes are copied as they are, up to the driver's NUL.
+    probed.name   = vn::String::fromUtf8(properties.deviceName);
     probed.usable = core::satisfiesRequirements(probed.facts);
     return probed;
 }

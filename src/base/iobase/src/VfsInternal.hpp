@@ -46,26 +46,6 @@ inline std::string toUtf8Generic(const std::filesystem::path& path)
 }
 
 /**
- * @brief Builds a String from UTF-8 bytes of a known length.
- *
- * @param bytes The UTF-8 bytes; they do not have to be NUL-terminated.
- * @param length Number of bytes to take.
- * @return The decoded string.
- */
-inline String fromUtf8(const char* bytes, std::size_t length)
-{
-    return String(reinterpret_cast<const char8_t*>(bytes), static_cast<String::size_type>(length));
-}
-
-/**
- * @brief Reports whether a byte sequence is well-formed UTF-8.
- *
- * @param text The bytes to inspect.
- * @return true when text is a sequence of well-formed UTF-8 code units.
- */
-inline bool isValidUtf8(const std::u8string& text);
-
-/**
  * @brief Normalizes a VFS path and validates it.
  *
  * A virtual path is a '/'-separated sequence of segments relative to the
@@ -141,64 +121,6 @@ inline IoError normalizeVfsPath(const std::filesystem::path& path, std::filesyst
 
     out = std::filesystem::path(normalized);
     return IoError::Ok;
-}
-
-/**
- * @brief Reports whether a byte sequence is well-formed UTF-8.
- *
- * This is what tells a UTF-8 archive entry name from a legacy one, so the two can be
- * decoded by their own rules instead of guessed at.
- *
- * @param text The bytes to inspect.
- * @return true when text is a sequence of well-formed UTF-8 code units.
- */
-inline bool isValidUtf8(const std::u8string& text)
-{
-    std::size_t i = 0;
-    while (i < text.size()) {
-        const unsigned char lead = static_cast<unsigned char>(text[i]);
-        std::size_t         length = 0;
-        char32_t            lowest = 0;
-        if (lead < 0x80) {
-            ++i;
-            continue;
-        }
-        if ((lead & 0xE0) == 0xC0) {
-            length = 2;
-            lowest = 0x80;
-        }
-        else if ((lead & 0xF0) == 0xE0) {
-            length = 3;
-            lowest = 0x800;
-        }
-        else if ((lead & 0xF8) == 0xF0) {
-            length = 4;
-            lowest = 0x10000;
-        }
-        else {
-            return false; // a continuation byte or a 5-byte lead
-        }
-
-        if (i + length > text.size()) {
-            return false; // cut short at the end
-        }
-        char32_t code = lead & (0x7F >> length);
-        for (std::size_t k = 1; k < length; ++k) {
-            const unsigned char next = static_cast<unsigned char>(text[i + k]);
-            if ((next & 0xC0) != 0x80) {
-                return false;
-            }
-            code = (code << 6) | (next & 0x3F);
-        }
-        // Overlong spellings and surrogates are refused as well: they decode, but no
-        // encoder produces them, so accepting one would make two byte strings mean the
-        // same name.
-        if (code < lowest || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) {
-            return false;
-        }
-        i += length;
-    }
-    return true;
 }
 
 /**

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -186,8 +187,13 @@ inline IoError fromStoredName(const char* bytes, std::size_t length, std::filesy
         return IoError::InvalidData; // an entry naming the root says nothing a tree can use
     }
 
-    const std::u8string raw(reinterpret_cast<const char8_t*>(bytes), kept);
-    if (isValidUtf8(raw)) {
+    // These bytes are candidate UTF-8, not known UTF-8: the whole point of this function is that they may be text in a
+    // legacy code page instead. So the question is put to vn::isValidUtf8() (core), which is fed the raw bytes rather
+    // than a text view of them, and the hand-over is deliberately NOT String::fromUtf8(): that factory's contract is the
+    // caller asserting "these bytes are UTF-8", which is exactly what cannot be asserted before the validator has
+    // answered. Only once it has does the same byte range become the UTF-8 text a path is built from.
+    if (isValidUtf8(std::string_view(bytes, kept))) {
+        const std::u8string raw(reinterpret_cast<const char8_t*>(bytes), kept);
         out = std::filesystem::path(raw);
         return IoError::Ok;
     }

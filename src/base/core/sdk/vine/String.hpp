@@ -1734,6 +1734,73 @@ class VN_CORE_API String final {
     std::u8string stdstr_; // Internal storage for string data
 };
 
+/** Check whether a byte sequence is well-formed UTF-8
+ *  This is the question every boundary asks before bytes are trusted as text: text that arrives from outside - a stored
+ *  name, a file's contents, a foreign library's property - is only CANDIDATE UTF-8, and this decides whether it is.
+ *  String::fromUtf8() is the hand-over for the bytes that are: it asserts that claim, copies them and does not check -
+ *  so a caller that cannot assert first asks here.
+ *  Refused, because no UTF-8 encoder produces such bytes and accepting one would make two byte sequences mean one text:
+ *  - a lead byte that begins no sequence (0x80..0xBF, a continuation with nothing to continue; 0xF8..0xFF);
+ *  - a sequence cut short at the end of the bytes, or interrupted by a byte that is not 10xxxxxx;
+ *  - an overlong spelling, i.e. more code units than the code point needs;
+ *  - a surrogate (U+D800..U+DFFF);
+ *  - a code point beyond U+10FFFF.
+ *  Accepted, and carried unchanged by every operation of this class:
+ *  - an embedded NUL, which is an ordinary byte rather than the end of the text;
+ *  - the empty sequence.
+ *  @param text The bytes to inspect
+ *  @return true when the whole sequence is well-formed UTF-8, false otherwise
+ *  @note constexpr: a literal is checked where it is written, by a static_assert
+ */
+inline constexpr bool isValidUtf8(std::string_view text) noexcept
+{
+    size_t at = 0;
+    while (at < text.size()) {
+        const auto lead = static_cast<unsigned char>(text[at]);
+        if (lead < 0x80) {
+            ++at; // 0xxxxxxx: the ASCII range, one code unit
+            continue;
+        }
+
+        // The lead byte states the length: 110xxxxx -> 2 code units, 1110xxxx -> 3, 11110xxx -> 4.
+        size_t   length = 0;
+        char32_t lowest = 0; // the smallest code point this length may spell, which is what refuses an overlong form
+        if ((lead & 0xE0) == 0xC0) {
+            length = 2;
+            lowest = 0x80;
+        }
+        else if ((lead & 0xF0) == 0xE0) {
+            length = 3;
+            lowest = 0x800;
+        }
+        else if ((lead & 0xF8) == 0xF0) {
+            length = 4;
+            lowest = 0x10000;
+        }
+        else {
+            return false; // a continuation byte with nothing to continue, or a five-byte lead
+        }
+
+        if (at + length > text.size()) {
+            return false; // cut short at the end of the bytes
+        }
+
+        char32_t code = lead & (0x7F >> length);
+        for (size_t k = 1; k < length; ++k) {
+            const auto next = static_cast<unsigned char>(text[at + k]);
+            if ((next & 0xC0) != 0x80) {
+                return false; // interrupted, so the bytes are text in no encoding after all
+            }
+            code = (code << 6) | (next & 0x3F);
+        }
+        if (code < lowest || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) {
+            return false; // overlong, beyond the last code point, or a surrogate
+        }
+        at += length;
+    }
+    return true;
+}
+
 template <typename T>
 size_t cstrlen(const T* data)
 {

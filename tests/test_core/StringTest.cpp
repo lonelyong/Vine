@@ -383,3 +383,63 @@ TEST(String, FromUtf8CopiesTheBytesVerbatim)
     EXPECT_TRUE(vn::String::fromUtf8(std::string_view{}).empty());
     EXPECT_TRUE(vn::String::fromUtf8("").empty());
 }
+
+// constexpr: a literal is decided where it is written, not at runtime.
+static_assert(vn::isValidUtf8("plain ascii"));
+static_assert(vn::isValidUtf8("\xE4\xB8\xAD")); // U+4E2D
+static_assert(!vn::isValidUtf8("\xC0\x80"));    // overlong
+static_assert(!vn::isValidUtf8("\xE2\x82"));    // cut short
+
+TEST(String, IsValidUtf8AcceptsWellFormedSequences)
+{
+    // Every length the encoding has, at both ends of its range: the shortest spelling of a length is the one an overlong
+    // form would collide with, and the last code point of a length is where the next one takes over.
+    EXPECT_TRUE(vn::isValidUtf8(""));
+    EXPECT_TRUE(vn::isValidUtf8("plain ascii"));
+    EXPECT_TRUE(vn::isValidUtf8("ASCII \xE4\xB8\xAD\xE6\x96\x87 mixed")); // "中文" in a run of ASCII
+    EXPECT_TRUE(vn::isValidUtf8("\xC2\x80"));             // U+0080, the first 2-code-unit code point
+    EXPECT_TRUE(vn::isValidUtf8("\xDF\xBF"));             // U+07FF, the last one
+    EXPECT_TRUE(vn::isValidUtf8("\xE0\xA0\x80"));         // U+0800, the first 3-code-unit code point
+    EXPECT_TRUE(vn::isValidUtf8("\xED\x9F\xBF"));         // U+D7FF, the last code point before the surrogates
+    EXPECT_TRUE(vn::isValidUtf8("\xEE\x80\x80"));         // U+E000, the first one after them
+    EXPECT_TRUE(vn::isValidUtf8("\xEF\xBF\xBF"));         // U+FFFF, the last one of the BMP
+    EXPECT_TRUE(vn::isValidUtf8("\xF0\x90\x80\x80"));     // U+10000, the first 4-code-unit code point
+    EXPECT_TRUE(vn::isValidUtf8("\xF0\x9F\x98\x80"));     // U+1F600
+    EXPECT_TRUE(vn::isValidUtf8("\xF4\x8F\xBF\xBF"));     // U+10FFFF, the last code point there is
+
+    // A NUL is an ordinary byte here: the sequence is what is checked, not a C string.
+    EXPECT_TRUE(vn::isValidUtf8(std::string_view("a\0b", 3)));
+}
+
+TEST(String, IsValidUtf8RejectsMalformedBytes)
+{
+    // Continuation bytes with nothing to continue, and leads that begin no sequence.
+    EXPECT_FALSE(vn::isValidUtf8("\x80"));
+    EXPECT_FALSE(vn::isValidUtf8("\xBF"));
+    EXPECT_FALSE(vn::isValidUtf8("\xFE"));
+    EXPECT_FALSE(vn::isValidUtf8("\xFF"));
+
+    // A sequence interrupted by a byte that is not 10xxxxxx, and one cut short at the end.
+    EXPECT_FALSE(vn::isValidUtf8("\xC3\x28"));
+    EXPECT_FALSE(vn::isValidUtf8("ok\xC3"));
+    EXPECT_FALSE(vn::isValidUtf8("\xE2\x82"));
+    EXPECT_FALSE(vn::isValidUtf8("\xF0\x9F\x98"));
+    EXPECT_FALSE(vn::isValidUtf8("\xE2\x82\x41")); // a valid length, but the third byte is not a continuation
+
+    // Overlong spellings: each one decodes to a code point that a shorter sequence already spells.
+    EXPECT_FALSE(vn::isValidUtf8("\xC0\x80"));     // U+0000 in two code units
+    EXPECT_FALSE(vn::isValidUtf8("\xC1\x81"));     // U+0041 in two code units
+    EXPECT_FALSE(vn::isValidUtf8("\xE0\x80\x80")); // U+0000 in three code units
+    EXPECT_FALSE(vn::isValidUtf8("\xE0\x9F\xBF")); // U+07FF in three code units
+    EXPECT_FALSE(vn::isValidUtf8("\xF0\x80\x80\x80")); // U+0000 in four code units
+    EXPECT_FALSE(vn::isValidUtf8("\xF0\x8F\xBF\xBF")); // U+FFFF in four code units
+
+    // Surrogates and code points beyond U+10FFFF: a decoder refuses them, so text never holds them.
+    EXPECT_FALSE(vn::isValidUtf8("\xED\xA0\x80"));         // U+D800
+    EXPECT_FALSE(vn::isValidUtf8("\xED\xBF\xBF"));         // U+DFFF
+    EXPECT_FALSE(vn::isValidUtf8("\xF4\x90\x80\x80"));     // U+110000
+    EXPECT_FALSE(vn::isValidUtf8("\xF5\x80\x80\x80"));
+
+    // A malformed byte spoils the sequence wherever it sits, and the check never repairs one.
+    EXPECT_FALSE(vn::isValidUtf8("plain ascii\x80tail"));
+}

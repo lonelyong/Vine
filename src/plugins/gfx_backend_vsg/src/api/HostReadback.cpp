@@ -1,4 +1,4 @@
-#include <vine/vsg/api/HostReadback.hpp>
+﻿#include <vine/vsg/api/HostReadback.hpp>
 
 #include <string>
 
@@ -144,35 +144,28 @@ vn::String readbackRefusalMessage(HostReadbackRefusal refusal, const char* what)
     case HostReadbackRefusal::None:
         break;
     case HostReadbackRefusal::NoTarget:
-        return vn::String(reinterpret_cast<const char8_t*>((entry + ": no target was given, so there is "
-                                                              "nothing to read").c_str()));
+        return vn::String::fromUtf8(entry + ": no target was given, so there is nothing to read");
     case HostReadbackRefusal::UnknownTarget:
-        return vn::String(reinterpret_cast<const char8_t*>((entry + ": the target is not held by this "
-                                                              "backend (never announced, or released) - "
-                                                              "nothing to read").c_str()));
+        return vn::String::fromUtf8(entry + ": the target is not held by this backend (never announced, or"
+                                    "released) - nothing to read");
     case HostReadbackRefusal::NotBuilt:
-        return vn::String(reinterpret_cast<const char8_t*>((entry + ": the target has no built attachments "
-                                                              "yet - nothing to read").c_str()));
+        return vn::String::fromUtf8(entry + ": the target has no built attachments yet - nothing to read");
     case HostReadbackRefusal::NotRecorded:
-        return vn::String(reinterpret_cast<const char8_t*>((entry + ": no frame has drawn into the target "
-                                                              "yet - there is nothing to read back").c_str()));
+        return vn::String::fromUtf8(entry + ": no frame has drawn into the target yet - there is nothing to read"
+                                    "back");
     case HostReadbackRefusal::UnknownAttachment:
-        return vn::String(reinterpret_cast<const char8_t*>((entry + ": the target has no such attachment")
-                                                                 .c_str()));
+        return vn::String::fromUtf8(entry + ": the target has no such attachment");
     case HostReadbackRefusal::UnreadableFormat:
-        return vn::String(reinterpret_cast<const char8_t*>((entry + ": this backend packs RGBA8 colour and "
-                                                              "D16/D32/D32F depth only; that attachment's "
-                                                              "format cannot be read back").c_str()));
+        return vn::String::fromUtf8(entry + ": this backend packs RGBA8 colour and D16/D32/D32F depth only; that"
+                                    "attachment's format cannot be read back");
     case HostReadbackRefusal::BorrowedDepth:
-        return vn::String(reinterpret_cast<const char8_t*>((entry + ": the depth attachment is BORROWED from "
-                                                              "another target; read it through that source")
-                                                                 .c_str()));
+        return vn::String::fromUtf8(entry + ": the depth attachment is BORROWED from another target; read it"
+                                    "through that source");
     case HostReadbackRefusal::NoDevice:
-        return vn::String(reinterpret_cast<const char8_t*>((entry + ": there is no device to copy with, and "
-                                                              "no frame's copy could serve the request").c_str()));
+        return vn::String::fromUtf8(entry + ": there is no device to copy with, and no frame's copy could serve"
+                                    "the request");
     case HostReadbackRefusal::TransferFailed:
-        return vn::String(reinterpret_cast<const char8_t*>((entry + ": the copy-back buffer does not hold a "
-                                                              "readable picture").c_str()));
+        return vn::String::fromUtf8(entry + ": the copy-back buffer does not hold a readable picture");
     }
     return vn::String();
 }
