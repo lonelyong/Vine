@@ -229,7 +229,7 @@ class VN_APPFW_API CommandManager
      * what bypasses the gate. Calling this from inside a command starts an
      * independent top-level chain instead.
      *
-     * Blocks the calling thread for the whole execution (see syncWait, which also
+     * Blocks the calling thread for the whole execution (see Task::result(), which also
      * documents when that deadlocks); inside a coroutine prefer co_awaiting
      * executeCommandAsync(), which never blocks the thread the command runs on.
      *
@@ -270,7 +270,7 @@ class VN_APPFW_API CommandManager
      * @brief Executes a command asynchronously.
      *
      * The returned task is lazy: the command starts when the task is awaited (or
-     * driven by syncWait), and abandoning the task means it never runs. It is a
+     * driven by Task::result()), and abandoning the task means it never runs. It is a
      * top-level entry point, so the command gets a chain of its own, becomes the
      * foreground chain and is subject to the serialization gate; a nested child
      * goes through CommandExecutionContext::executeChild() instead.

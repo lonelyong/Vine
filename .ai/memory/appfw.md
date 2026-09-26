@@ -9,12 +9,12 @@
 > 宿主的启动工作：**框架不替宿主拥有线程**（`run(work)` 重载已删）——宿主重写 `startup()` 那一拍，先
 > `co_await Application::startup()`（插件先加载），自己的重活再 `co_await vn::async::run(...)` 丢到进程线程池上；
 > 它抛的异常从那一拍抛出 ⇒ 与叶子异常同样致命。
-> `Task` 是懒的 ⇒ 调用点必须 `co_await`（不跑循环的叶子用 `syncWait`）。`VN_APPFW_PLUGIN_ABI_VERSION` = **6u**
+> `Task` 是懒的 ⇒ 调用点必须 `co_await`（不跑循环的叶子用 `Task::result()`）。`VN_APPFW_PLUGIN_ABI_VERSION` = **6u**
 > （钩子 `preLoad/load/postLoad` 变成 `Task<void>`；**每条出口都要写 `co_return;`**，否则返回空 `Task` / `ud2`）。
 > 早期笔记里的 `beginStartup` / `finishStartup` / `runStartup` 就是这三个的新名。见 `.ai/design/appfw-startup-phases.md`。
 > **插件加载两道门（2026-09-26）**：`loadAllAsync()` 是启动用的协程（插件自己能在钩子里跳池 + `resumeOnMainThread()`
 > 回来）；`loadAll()` 是给不跑循环的工具/测试用的同步门（中继 + 轮询，等的时候只 `deliverPostedCalls()`——
-> **不能用 `syncWait()`**：它只阻塞不派发，钩子"回到应用线程"那一步会死锁）。管理器**自己不转循环**。
+> **不能用 `Task::result()`**：它只阻塞不派发，钩子"回到应用线程"那一步会死锁）。管理器**自己不转循环**。
 > **启动可以被取消**（2026-09-26）：`StartupProgress::stopToken()/requestCancel()`；插件从 `PluginLoadContext::stopToken()`
 > 拿同一个 token（不用摸全局上报口；不在启动里的插件拿到的是永不停的 token）。框架在每拍之后、每个插件之前
 > 看一眼；取消**不是失败**——`Application::cancelStartup()` 卸掉已装插件 + 收上报口 + `exit(0)`，不走 `startupEnd()`

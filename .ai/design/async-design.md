@@ -21,7 +21,7 @@
 **不属于**本模块：线程池（`vn::ThreadPool`，base/core）、取消令牌（`vn::CancellationToken` =
 `std::stop_token`，base/core）、Qt 事件循环调度（`vn::appfw::async::Scheduler`，fw/appfw）。
 
-## 2. 三条必须守住的规则
+## 2. 四条必须守住的规则
 
 ### 2.1 生命周期契约（`async_global.hpp` 里写明）
 
@@ -52,12 +52,29 @@
 `YieldAwaiter::await_suspend` 都 **return handle** 而不是 `h.resume()`：内联 resume 会让每层 await 在机器栈上
 多留一帧（实测 `yield` 336 B/次 @-O0，20 万次即爆栈）。新增 awaiter 时先问"这里能不能 return handle"。
 
+### 2.4 阻塞取结果：两道门，风险写在调用点
+
+`Task::result()` 在调用线程上把 body 驱动完（惰性照旧：body 从调用线程开始、跑到第一次挂起）：**只阻塞，
+不派发**任何东西。`runToCompletion(task, pump)` 是同一条驱动，但每片（默认 200 µs）调一次 `pump()`。
+
+- `result()` 对应 C# 的 `task.Result`，**连坑都一样**：body 的下一步若需要调用线程继续转（把投递给应用线程的
+  调用执行掉），而调用线程正卡在 `result()` 里——死锁。所以它只在"该线程上没有别人需要转循环"时安全
+  （工具、测试、headless）；应用线程上要阻塞就该用下面那道门。
+- `runToCompletion()` 是 C# 里用 `DispatcherFrame` 排空队列的同款绕法：泵**由调用者传**（appfw 的门传
+  `MainThreadDispatcher::deliverPostedCalls()`）。**async 不装"全局泵"**：谁该被推进是宿主的策略，不该由
+  async 猜；因此也不给 `Task` 加隐式派发。
+- 泵推到什么程度由 pump 决定：appfw 那个只跑 `QEvent::MetaCall`，不跑定时器/绘制/输入，所以它不是
+  "重入事件循环"。
+- 钉子（`test_async`，两条都变异验过）：挂起时 pump 确实被调用且只一次；**不挂起的任务 pump 一次都不该发生**
+  （body 在 `resume()` 里跑完 ⇒ 第一个 `waitFor` 立即返回 ⇒ 零开销）；`result()` 只能读一次——再读一次当场
+  `throw std::logic_error`（去掉那道守卫就不是报错而是踩已销毁的帧，实测 SIGSEGV）。
+
 ## 3. 与其它协程库的对照（差异都写在这里，避免重复讨论）
 
 | 主题 | cppcoro / folly / P2300 | 本模块 | 原因 |
 | --- | --- | --- | --- |
 | `Task` 惰性、单消费者 | 相同（`cppcoro::task` 亦为 `operator co_await() &&`） | 同 | — |
-| `Task<T&>` | cppcoro 支持 | **不支持**，`StorableValue` 在模板边界拒绝（报错清晰，不再落进 `std::optional`） | 结果用 `std::optional` 缓存；支持引用要改 Task/SharedTask/SyncWait/When 五处，收益低。需要引用时返回指针/`std::reference_wrapper` |
+| `Task<T&>` | cppcoro 支持 | **不支持**，`StorableValue` 在模板边界拒绕（报错清晰，不再落进 `std::optional`） | 结果用 `std::optional` 缓存；支持引用要改 Task/SharedTask/When 三处，收益低。需要引用时返回指针/`std::reference_wrapper` |
 | `Awaitable` 概念 | cppcoro `awaitable_traits` 用 `get_awaiter` 展开成员/非成员 `operator co_await` | 同（`detail::getAwaiter`），并额外校验 `await_ready` 可按语言规则上下文转 bool、`await_suspend` 只能是 `void`/`bool`/`coroutine_handle<>` **值**（引用形式的 handle 被 clang 判错、g++ 目前放过，本概念按标准拒绝） | 只有"像 co_await 一样查找"的概念才能接受本模块自己的 awaitable（Task/SharedTask/AsyncEvent 都靠 `operator co_await`）；返回型别也要查，否则概念会放过编译器会拒绝的写法 |
 | `Generator` 的 ranges 契约 | `std::generator`（C++23）是 input_range | 已补齐 `iterator_concept` + 后置 `++` + `operator->`，实测 `std::ranges::input_range` = true | C++20 ranges 只要求后置 `++`，缺它 `weakly_incrementable` 即失败 |
 | 取消模型 | P2300：环境 stop token（`get_stop_token`），取消必须**请求**后由操作上报 `set_stopped` | 显式传 `CancellationToken`（同 cppcoro），组合子在取消/超时时**直接销毁**未完成的孩子 | 与 cppcoro 一致；但"强制销毁"比 P2300 激进，见 §4 |
@@ -83,6 +100,9 @@
 
 ## 5. 重复实现与收尾项
 
+- **`SyncWait.hpp` 已删（2026-09-26）**：阻塞驱动的机制（`detail::WaitEvent`/`WaitTask`/`makeWaitTask`）
+  搬到 `Task.hpp`（`result()` 要用它，而成员只能在自己头文件里定义），`syncWait()` 这个自由函数连同头文件
+  一并去掉——同一个动作只留一个名字。全仓库 172 处调用点改成 `x.result()`。
 - ~~`vn::appfw::async::sleep()`~~：**已于 2026-09-17 删除**（`src/fw/appfw/src/async/Sleep.hpp/.cpp`
   连同 `test_asyncqt` 的两个用例一起移除）：与 `vn::async::sleepFor()` 功能重复，且当时全仓库
   （含测试）已无调用者——"怕动导出符号"的顾虑在调用者为 0 时不成立。
@@ -106,7 +126,7 @@
 - 并发：TSan 手工编同一套用例（需要一起编 `src/base/core/src/ThreadPool.cpp`、gtest-all、gtest_main）；
   内存：`VINE_ASAN_TARGET=test_async VINE_ASAN_LEAKS=1 scripts/asan_check.sh`。
 - **让"resume 已释放帧"这类缺陷变确定**：把等待者协程帧做厚（帧内 256 KiB padding + 不让编译器消掉的
-  asm 屏障）→ 帧走独立 mmap → 销毁即 munmap → 过期 resume 必然踩空；再在 `syncWait` 之后加一小段
-  settle（过期 resume 发生在 `syncWait` 返回**之后**，进程若先退出就看不到了）。
+  asm 屏障）→ 帧走独立 mmap → 销毁即 munmap → 过期 resume 必然踩空；再在 `Task::result()` 之后加一小段
+  settle（过期 resume 发生在 `Task::result()` 返回**之后**，进程若先退出就看不到了）。
   实测：不加这两样 19/20 命中，加上 20/20；修好的版本 0/20。
 - 变异反证：`git checkout -- <头文件>` → 重建 → 跑目标用例必须红 → 立刻恢复并重建（不要让工作区停在变异态）。

@@ -42,7 +42,7 @@ for (auto h : to_resume) h.resume();
 - 对照：同样的场景换成 `TaskCompletionSource` / `AsyncEvent`（同为"一次完成、多个等待者"）本来就通过，
   证明根因只在 `runShared` 的批量换出。
 - 让这类缺陷变确定的手法（可复用）：等待者协程帧做厚到走独立 mmap（帧内 256 KiB padding + 防优化 asm 屏障），
-  并在 `syncWait` 之后留一小段 settle —— 过期 resume 发生在 `syncWait` 返回**之后**，进程先退出就看不到了。
+  并在 `Task::result()` 之后留一小段 settle —— 过期 resume 发生在 `Task::result()` 返回**之后**，进程先退出就看不到了。
   实测：不加固 19/20 命中，加固后 20/20。
 
 ## 教训

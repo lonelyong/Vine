@@ -114,12 +114,12 @@ vn::async::DetachedTask Application::startupSequence()
 - 一拍抛异常：异常存在 `Task` 的 promise 里、在驱动的 `co_await` 处重抛，驱动接住它 → 记日志 →
   `failStartup()`（收上报口 + `exit(1)`），不把应用卡在"上报口还开着、主窗永远不上屏"，也不留下一个半启动的应用。
 - **懒任务**：`Task` 挂起在第一行之前 ⇒ "调钩子"≠"跑钩子"，必须 `co_await`（`[[nodiscard]]` 会把漏写变成警告）。
-  不跑循环的叶子（测试、工具）用 `vn::async::syncWait()` 驱动它——只在那几拍**不会真挂起**时安全
+  不跑循环的叶子（测试、工具）用 `Task::result()` 驱动它——只在那几拍**不会真挂起**时安全
   （`GuiApplication::startupEnd()` 就是全同步的那一拍）。
 
 **访问控制**：三拍都是 **protected**（`startupEnd()` 原来是 public）：收尾是框架的动作，宿主不从外面插手到一次
 正在跑的启动里去；叶子重写它，需要自己驱动启动的叶子从自己的类里调它。`test_gui` 的共享应用就是
-`TestGuiApplication`（`tests/test_gui/fixtures/`），用 `using` 把最后一拍提上来并用 `syncWait` 驱动。
+`TestGuiApplication`（`tests/test_gui/fixtures/`），用 `using` 把最后一拍提上来并用 `Task::result()` 驱动。
 **槽位**：三拍声明为**一组、放在类末尾**（新虚函数追加在末尾的既有规矩），签名同时变了 ⇒
 `VN_APPFW_PLUGIN_ABI_VERSION` 抬到 **5u**。
 
@@ -156,16 +156,27 @@ vn::async::Task<void> GuiApplication::startupEnd()
 **`PluginManager` 的两道门与"管理器不转循环"**（2026-09-26 定稿，`VN_APPFW_PLUGIN_ABI_VERSION` 6u）：早先那版
 "`loadAll()` 保持同步"被撤了。钩子 `preLoad()/load()`/`postLoad()` 现在是 `Task<void>`，于是插件自己就能在钩子里
 **跳池**（`co_await vn::async::run(...)`）→ 用 `resumeOnMainThread()` 回来，界面那一半仍在应用线程上。
-管理器因此有两道门：
+管理器因此有两道门，做的是**同一件事**（同一份扫描、同一个依赖闭包、同一个生命周期顺序），差别只有一个：
+**等的时候线程在谁手里**。实测（同一条二进制，只换启动走哪道门，`VINE_BOOT_TIMING=1`）：
+
+| 启动走哪道门 | 应用线程最长连续占用 | Attached | 首个 Presenting |
+|---|---|---|---|
+| `loadAllAsync()`（启动用的） | **73 ms** | 149 ms | 363 ms |
+| `loadAll()`（同步门） | **450 ms** | 153 ms | 410 ms |
+
+同步门**能跑通**（它轮询时派发已投递的调用，钩子"回应用线程"那一步因此不死锁——见下），但它"等"的方式就是
+**阻塞**：即便插件把活丢到池上，应用线程照样被按住整段（450 ms 里大部分是池上的时间换了个地方被阻塞）。
+所以两道门的分工是：**`loadAllAsync()` = 启动（有循环）；`loadAll()` = 没有循环的调用方**（测试、工具、自驱宿主）。
+门禁守着这条：应用阶段要求 <= 150 ms（见"门上守着它"），把启动改回同步门会直接红。
 
 - `loadAllAsync()`：启动用的那道，是协程。管理器**自己不转循环**（不抽队列、不放 0 ms 定时器）：那会把别人的定时器
   一并带跑——内嵌渲染面自带 attach 退避定时器，让它在本机窗口还没布局好之前跑起来，就会拿"没有原生句柄的窗口"去建
   交换链。
 - `loadAll()`（同步门）：给不跑循环的工具/测试/宿主用。它是 `loadAllAsync()` 外面包的一层中继 + 轮询
   （`relayToSyncDoor()` + `waitForSyncDoor()`），等的时候**只派发已投递的调用**
-  （`deliverPostedCalls()` → 只跑 `QEvent::MetaCall`）。**不能用 `vn::async::syncWait()`**：它只阻塞、不派发，
+  （`deliverPostedCalls()` → 只跑 `QEvent::MetaCall`）。**不能用 `Task::result()`**：它只阻塞、不派发，
   而钩子"回到应用线程"那一步正是一条已投递的调用 ⇒ 死锁（用例
-  `TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicationThread` 就是钉这件事的：改用 `syncWait` 会挂死）。
+  `TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicationThread` 就是钉这件事的：改用 `Task::result()` 会挂死）。
 
 钩子必须**每条出口都写 `co_return;`**（哪怕它一件事都不做）：缺了它函数不是协程，返回的是个空 `Task`（无帧），
 `co_await` 它必然 `ud2`。这条写进了 `Plugin.hpp` 的钩子文档。

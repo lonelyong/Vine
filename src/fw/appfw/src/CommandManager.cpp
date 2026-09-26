@@ -24,7 +24,6 @@
 #include <vine/async/Cancellation.hpp>
 #include <vine/async/DetachedTask.hpp>
 #include <vine/async/Sleep.hpp>
-#include <vine/async/SyncWait.hpp>
 #include <vine/async/Task.hpp>
 
 #include <vine/logging/Log.hpp>
@@ -1012,12 +1011,12 @@ raw_ptr<Application> CommandManager::application() const noexcept
 
 CommandResult CommandManager::executeCommandAndWait(Command* command)
 {
-    return vn::async::syncWait(executeCommandAsync(command));
+    return executeCommandAsync(command).result();
 }
 
 CommandResult CommandManager::executeCommandAndWait(const String& name)
 {
-    return vn::async::syncWait(executeCommandAsync(name));
+    return executeCommandAsync(name).result();
 }
 
 vn::async::Task<CommandResult> CommandManager::executeCommandAsync(Command* command)
@@ -1332,7 +1331,7 @@ bool CommandManager::cancelAllAndWait(std::chrono::milliseconds timeout)
     // (a live frame still points at it) but a hostile command must not hang the
     // teardown forever. The wait watches no generation here - this call is the one
     // that bumps it.
-    return vn::async::syncWait(d->waitChainsDrained(std::move(chains), timeout)) == Impl::DrainOutcome::Drained;
+    return d->waitChainsDrained(std::move(chains), timeout).result() == Impl::DrainOutcome::Drained;
 }
 
 int CommandManager::historyCount() const

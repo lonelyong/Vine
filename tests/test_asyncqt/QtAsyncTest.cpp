@@ -1,6 +1,5 @@
 #include <vine/async/Task.hpp>
 #include <vine/async/DetachedTask.hpp>
-#include <vine/async/SyncWait.hpp>
 #include <vine/async/Cancellation.hpp>
 #include <vine/async/Sleep.hpp>
 

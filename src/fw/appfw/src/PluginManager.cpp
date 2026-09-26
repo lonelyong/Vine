@@ -6,25 +6,18 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <map>
-#include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
 #ifdef __linux__
 #    include <unistd.h>
 #endif // __linux__
-
-#include <vine/async/DetachedTask.hpp>
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
@@ -713,185 +706,6 @@ class ScopedFlag
     bool& flag_;
 };
 
-/**
- * @brief 同步门的落点：中继把结果放进来，同步门取走（见 waitForSyncDoor()）。
- *
- * 存在的理由只有一个：插件钩子是协程（Plugin::preLoad()/load()/postLoad()），而 `load()`/`loadAll()` 是阻塞 API。
- * 这里不能用 `vn::async::syncWait()`：它只阻塞、不派发，而钩子收起自己那一步（`resumeOnMainThread()`，或插件把重活
- * 丢到池上之后回到应用线程）正好是一条**已投递的调用**——没人派发它就永远不来，同步门会死锁。
- */
-template<typename T>
-class SyncDoor
-{
-  public:
-    /**
-     * @brief Stores the produced value and releases the waiter.
-     *
-     * @param value Value the driven load produced.
-     */
-    void complete(T value)
-    {
-        std::lock_guard lock(mutex_);
-        value_     = std::move(value);
-        completed_ = true;
-    }
-
-    /**
-     * @brief Stores the failure and releases the waiter.
-     *
-     * @param error Exception the driven load threw.
-     */
-    void fail(std::exception_ptr error)
-    {
-        std::lock_guard lock(mutex_);
-        error_     = std::move(error);
-        completed_ = true;
-    }
-
-    /**
-     * @brief Reports whether the outcome has arrived.
-     *
-     * The waiter polls this rather than blocking on a condition variable: it has to dispatch posted calls in between.
-     *
-     * @return true once complete() or fail() has run.
-     */
-    [[nodiscard]] bool isCompleted() const
-    {
-        std::lock_guard lock(mutex_);
-        return completed_;
-    }
-
-    /**
-     * @brief Returns the value, or rethrows the failure.
-     *
-     * @return The value the load produced.
-     */
-    T take()
-    {
-        std::lock_guard lock(mutex_);
-        if (error_ != nullptr) {
-            std::rethrow_exception(error_);
-        }
-        return std::move(*value_);
-    }
-
-  private:
-    mutable std::mutex mutex_;
-    std::optional<T>   value_{};
-    std::exception_ptr error_{};
-    bool               completed_{ false };
-};
-
-/// SyncDoor for a hook that produces nothing; see the primary template.
-template<>
-class SyncDoor<void>
-{
-  public:
-    /// Releases the waiter.
-    void complete()
-    {
-        std::lock_guard lock(mutex_);
-        completed_ = true;
-    }
-
-    /**
-     * @brief Stores the failure and releases the waiter.
-     *
-     * @param error Exception the driven hook threw.
-     */
-    void fail(std::exception_ptr error)
-    {
-        std::lock_guard lock(mutex_);
-        error_     = std::move(error);
-        completed_ = true;
-    }
-
-    /**
-     * @brief Reports whether the hook has finished.
-     *
-     * @return true once complete() or fail() has run.
-     */
-    [[nodiscard]] bool isCompleted() const
-    {
-        std::lock_guard lock(mutex_);
-        return completed_;
-    }
-
-    /// Rethrows the failure, if there was one.
-    void take()
-    {
-        std::lock_guard lock(mutex_);
-        if (error_ != nullptr) {
-            std::rethrow_exception(error_);
-        }
-    }
-
-  private:
-    mutable std::mutex mutex_;
-    std::exception_ptr error_{};
-    bool               completed_{ false };
-};
-
-/**
- * @brief 中继：把一段协程跑到底，把结果交给同步门。
- *
- * 急启动（DetachedTask）且在调用线程上跑到第一次挂起，所以同步门里的加载仍然从调用它的那个线程开始；之后的续体由
- * 谁来恢复就归谁来恢复（池上、或者应用线程派发的调用），同步门只负责把它等完。
- */
-template<typename T>
-vn::async::DetachedTask relayToSyncDoor(vn::async::Task<T> task, std::shared_ptr<SyncDoor<T>> door)
-{
-    try {
-        if constexpr (std::is_void_v<T>) {
-            co_await std::move(task);
-            door->complete();
-        }
-        else {
-            door->complete(co_await std::move(task));
-        }
-    }
-    catch (...) {
-        door->fail(std::current_exception());
-    }
-}
-
-/**
- * @brief 同步门等一段协程结束；等的时候**只**派发已投递的调用。
- *
- * `deliverPostedCalls()` 跑的就是 `QMetaObject::invokeMethod(..., QueuedConnection)` 排下的那条 `MetaCall`：不跑定时器、
- * 不绘制、不处理输入——所以这不是"重入事件循环"，而是刚好让钩子"回到应用线程"那一步能落地。
- *
- * @param door Sync door the relay writes the outcome to.
- * @return The value the coroutine produced.
- */
-template<typename T>
-T waitForSyncDoor(const std::shared_ptr<SyncDoor<T>>& door)
-{
-    Application*          app        = Application::current();
-    MainThreadDispatcher* dispatcher = app != nullptr ? app->mainThreadDispatcher() : nullptr;
-
-    while (!door->isCompleted()) {
-        if (dispatcher != nullptr) {
-            // Not on the application thread (or no loop): nothing to dispatch, and the coroutine is running here anyway.
-            static_cast<void>(dispatcher->deliverPostedCalls());
-        }
-        std::this_thread::sleep_for(std::chrono::microseconds(200));
-    }
-    return door->take();
-}
-
-/**
- * @brief 同步门驱动一段钩子（`Task<void>`）。
- *
- * @param task Hook coroutine to run to completion on the calling thread.
- */
-void driveHook(vn::async::Task<void> task)
-{
-    auto door = std::make_shared<SyncDoor<void>>();
-    static_cast<void>(relayToSyncDoor(std::move(task), door));
-    waitForSyncDoor(door);
-}
-
 } // namespace
 
 /**
@@ -1129,13 +943,14 @@ Plugin* PluginManager::load(const String& name_or_path)
 
             // Three-phase lifecycle, aligned with loadAll(): preLoad(), then load(),
             // then postLoad() for cross-plugin wiring. The hooks are coroutines, and this is the synchronous door: it
-            // drives each of them to completion on this thread, dispatching what they post to the application thread
-            // (`resumeOnMainThread()`, see waitForSyncDoor()) so a plugin that runs its heavy half on the pool still
-            // loads here. This door does not turn the event loop otherwise - loadAllAsync() is the one the boot uses.
+            // drives each of them to completion on this thread, delivering what they post to the application thread
+            // (MainThreadDispatcher::runToCompletion(), over vn::async::runToCompletion()) so a plugin that runs its
+            // heavy half on the pool still loads here. This door does not turn the event loop otherwise - loadAllAsync()
+            // is the one the boot uses.
             PluginLoadContext context(app, info->name);
-            driveHook(plugin->preLoad(&context));
-            driveHook(plugin->load(&context));
-            driveHook(plugin->postLoad(&context));
+            static_cast<void>(MainThreadDispatcher::runToCompletion(plugin->preLoad(&context)));
+            static_cast<void>(MainThreadDispatcher::runToCompletion(plugin->load(&context)));
+            static_cast<void>(MainThreadDispatcher::runToCompletion(plugin->postLoad(&context)));
         }
     }
     catch (const std::exception& e) {
@@ -1158,10 +973,10 @@ bool PluginManager::loadAll()
 {
     // The synchronous door: a tool, a test, or a host that runs no loop drives the same load to completion on its own
     // thread. What that costs is the event loop: on the application thread this blocks it for as long as the plugins'
-    // own stretches take, which is exactly why the boot uses loadAllAsync() instead.
-    auto door = std::make_shared<SyncDoor<bool>>();
-    static_cast<void>(relayToSyncDoor(loadAllAsync(), door));
-    return waitForSyncDoor(door);
+    // own stretches take, which is exactly why the boot uses loadAllAsync() instead. It dispatches while it waits (see
+    // MainThreadDispatcher::runToCompletion()) because a plugin that hops to the pool comes back through the application
+    // thread, which is the thread this call is holding.
+    return MainThreadDispatcher::runToCompletion(loadAllAsync());
 }
 
 vn::async::Task<bool> PluginManager::loadAllAsync()

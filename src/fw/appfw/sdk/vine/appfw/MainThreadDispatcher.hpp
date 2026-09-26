@@ -5,6 +5,10 @@
 #include <chrono>
 #include <coroutine>
 #include <functional>
+#include <utility>
+
+#include <vine/async/RunToCompletion.hpp>
+#include <vine/async/Task.hpp>
 
 VN_APPFW_NS_BEGIN
 
@@ -164,6 +168,44 @@ class VN_APPFW_API MainThreadDispatcher {
     {
         return ResumeOnMainThread{ this };
     }
+
+    /**
+     * @brief Runs a coroutine to completion on the calling thread, delivering the calls it queues for the application
+     *        thread while it waits.
+     *
+     * The application-thread flavour of vn::async::runToCompletion() - read that for the mechanics, and for why a plain
+     * Task::result() deadlocks here (a coroutine waiting to be resumed by the application thread has to have its queued call
+     * delivered by whoever is driving it). The pump is this dispatcher's deliverPostedCalls(), so the step the coroutine
+     * left for the application thread runs while the caller waits; timers, paint and input still do not.
+     *
+     * Why not simply read the result (vn::async::Task::result(), which blocks and leaves the trap to its caller): because
+     * the load has to START on the application thread - plugin hooks build widgets and graphics objects - and once that
+     * thread blocks inside itself there is nobody left to deliver the step a pool-hopping hook posts back to it. The pump
+     * is not an optimisation here; it is the only candidate.
+     *
+     * What it is for: a blocking API that has to drive a coroutine whose next step belongs to the application thread -
+     * the plugin lifecycle hooks are the case in point. What it costs: the calling thread is blocked for as long as the
+     * coroutine takes, which on the application thread is exactly as long as the loop stands still - so a host that runs
+     * a loop should await the coroutine instead of calling this.
+     *
+     * @param task Coroutine to drive to completion on the calling thread.
+     * @return What the coroutine produced.
+     */
+    template<typename T>
+    static T runToCompletion(vn::async::Task<T> task)
+    {
+        return vn::async::runToCompletion(std::move(task), [] { deliverQueuedApplicationCalls(); });
+    }
+
+  private:
+    /**
+     * @brief Delivers the calls queued for the application thread, when there is an application and this thread may
+     *        deliver them.
+     *
+     * The pump of runToCompletion(): without an application there is no queue to deliver, and from a thread that is not
+     * the application thread deliverPostedCalls() refuses to run anything.
+     */
+    static void deliverQueuedApplicationCalls();
 };
 
 VN_APPFW_NS_END

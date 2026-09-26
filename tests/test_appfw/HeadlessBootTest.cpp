@@ -365,8 +365,8 @@ TEST(HeadlessBootTest, ALeafPhaseCanWaitWithoutBlockingTheLoop)
 
 /// 同步门（`loadAll()`）里插件把重活丢到池上、再回应用线程：等的时候必须派发"回应用线程"那条投递，否则死锁。
 ///
-/// 这就是`waitForSyncDoor()`存在的理由：`vn::async::syncWait()`只阻塞、不派发，而钩子回来的那一步正是一条已投递的
-/// 调用。用例没有循环在跑（它自己调同步门），所以这条投递只能由同步门派发；变异（改成 syncWait）会挂死在这里。
+/// 这就是`waitForSyncDoor()`存在的理由：`.result()`只阻塞、不派发，而钩子回来的那一步正是一条已投递的
+/// 调用。用例没有循环在跑（它自己调同步门），所以这条投递只能由同步门派发；变异（把门改成只阻塞的 `Task::result()`）会挂死在这里。
 TEST(HeadlessBootTest, TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicationThread)
 {
     QStandardPaths::setTestModeEnabled(true);

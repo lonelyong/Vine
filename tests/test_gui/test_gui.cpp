@@ -81,7 +81,6 @@
 
 #include <vine/async/AsyncEvent.hpp>
 #include <vine/async/Sleep.hpp>
-#include <vine/async/SyncWait.hpp>
 
 #include <any>
 #include <algorithm>
@@ -2028,7 +2027,7 @@ TEST_F(GuiTest, CommandManager_LongRunningCreatesAmbientHost)
     std::atomic<bool>    done{ false };
     vn::appfw::CommandResult result;
     std::thread runner([&] {
-        result = vn::async::syncWait(std::move(task));
+        result = std::move(task).result();
         done.store(true);
     });
 
@@ -2463,15 +2462,15 @@ TEST_F(ConsoleUserIOReadTest, ReadsLinesAndReportsEndOfInput)
     scriptedStdin().feed("hello\nworld\n");
     scriptedStdin().set_eof();
 
-    const auto first = vn::async::syncWait(io->getStringAsync(u8"输入名称> "));
+    const auto first = io->getStringAsync(u8"输入名称> ").result();
     ASSERT_TRUE(first.has_value());
     EXPECT_EQ(*first, vn::String(u8"hello"));
 
-    const auto second = vn::async::syncWait(io->getStringAsync());
+    const auto second = io->getStringAsync().result();
     ASSERT_TRUE(second.has_value());
     EXPECT_EQ(*second, vn::String(u8"world"));
 
-    const auto third = vn::async::syncWait(io->getStringAsync());
+    const auto third = io->getStringAsync().result();
     EXPECT_FALSE(third.has_value()) << "EOF 之后的读必须立刻以 nullopt 收尾，而不是挂住";
 
     EXPECT_NE(captured_.str().find("输入名称> "), std::string::npos) << "提示必须写进 stdout";
@@ -2484,14 +2483,14 @@ TEST_F(ConsoleUserIOReadTest, ParsesIntsAndFailsOnBadInputWithoutReprompt)
     scriptedStdin().feed("42\n不是数字\n99999999999\n");
     scriptedStdin().set_eof();
 
-    const auto ok = vn::async::syncWait(io->getIntAsync(u8"n> "));
+    const auto ok = io->getIntAsync(u8"n> ").result();
     ASSERT_TRUE(ok.has_value());
     EXPECT_EQ(*ok, 42);
 
-    const auto bad = vn::async::syncWait(io->getIntAsync());
+    const auto bad = io->getIntAsync().result();
     EXPECT_FALSE(bad.has_value()) << "非数字必须失败，而不是回绕或原地重提示";
 
-    const auto overflow = vn::async::syncWait(io->getIntAsync());
+    const auto overflow = io->getIntAsync().result();
     EXPECT_FALSE(overflow.has_value()) << "超出 int 的输入必须失败（U2 的范围规则）";
 }
 
@@ -2499,12 +2498,12 @@ TEST_F(ConsoleUserIOReadTest, ParsesIntsAndFailsOnBadInputWithoutReprompt)
 TEST_F(ConsoleUserIOReadTest, SecondReadIsRefusedWhileOneIsPending)
 {
     std::optional<vn::String> first;
-    std::thread               runner([&] { first = vn::async::syncWait(io->getStringAsync(u8"first> ")); });
+    std::thread               runner([&] { first = io->getStringAsync(u8"first> ").result(); });
 
     // 后台读线程一跑起来，槽位就已经归第一个读：此后它只可能被输入或取消解开。
     ASSERT_TRUE(scriptedStdin().waitBlockedAtLeast(1, std::chrono::seconds(5)));
 
-    const auto second = vn::async::syncWait(io->getStringAsync(u8"second> "));
+    const auto second = io->getStringAsync(u8"second> ").result();
     EXPECT_FALSE(second.has_value()) << "第二个读必须被单飞槽位拒绝";
 
     io->cancelPendingInput();
@@ -2517,7 +2516,7 @@ TEST_F(ConsoleUserIOReadTest, SecondReadIsRefusedWhileOneIsPending)
 TEST_F(ConsoleUserIOReadTest, CancelFromAnotherThreadUnblocksAndKeepsArrivedLine)
 {
     std::optional<vn::String> first;
-    std::thread               runner([&] { first = vn::async::syncWait(io->getStringAsync(u8"parked> ")); });
+    std::thread               runner([&] { first = io->getStringAsync(u8"parked> ").result(); });
     ASSERT_TRUE(scriptedStdin().waitBlockedAtLeast(1, std::chrono::seconds(5)));
 
     // Application::shutdown() 正是从别的线程这样调的。
@@ -2527,7 +2526,7 @@ TEST_F(ConsoleUserIOReadTest, CancelFromAnotherThreadUnblocksAndKeepsArrivedLine
     EXPECT_FALSE(first.has_value()) << "取消必须解开等待中的读";
 
     scriptedStdin().feed("late\n");
-    const auto second = vn::async::syncWait(io->getStringAsync());
+    const auto second = io->getStringAsync().result();
     ASSERT_TRUE(second.has_value()) << "取消后的下一个读必须照常工作（取消状态不得泄漏）";
     EXPECT_EQ(*second, vn::String(u8"late"));
 }
@@ -2572,7 +2571,7 @@ TEST_F(GuiTest, CommandManager_NestedProgressRunsChild)
     std::atomic<bool>    done{ false };
     vn::appfw::CommandResult result;
     std::thread runner([&] {
-        result = vn::async::syncWait(std::move(task));
+        result = std::move(task).result();
         done.store(true);
     });
 
@@ -3212,7 +3211,7 @@ TEST_F(GuiTest, CommandManager_ExclusiveTakesOverRunningChain)
     vn::appfw::CommandResult  victim_result;
     std::atomic<bool>           victim_done{ false };
     std::thread                 runner([&] {
-        victim_result = vn::async::syncWait(std::move(task));
+        victim_result = std::move(task).result();
         victim_done.store(true);
     });
 
@@ -3265,7 +3264,7 @@ TEST_F(GuiTest, CommandManager_ExclusiveIsRejectedWhenChainIgnoresCancellation)
 
     auto                       task = cm->executeCommandAsync(victim_name);
     vn::appfw::CommandResult victim_result;
-    std::thread                runner([&] { victim_result = vn::async::syncWait(std::move(task)); });
+    std::thread                runner([&] { victim_result = std::move(task).result(); });
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
     while (!UncooperativeSleepCommand::s_running.load() && std::chrono::steady_clock::now() < deadline) {
@@ -3313,7 +3312,7 @@ TEST_F(GuiTest, CommandManager_CancelCurrentStopsOnlyForegroundChain)
     // 链 A 先运行。
     auto                       task_a = cm->executeCommandAsync(name_a);
     vn::appfw::CommandResult result_a;
-    std::thread                runner_a([&] { result_a = vn::async::syncWait(std::move(task_a)); });
+    std::thread                runner_a([&] { result_a = std::move(task_a).result(); });
 
     while ((cm->runningCount() == 0 || cm->currentCommand() == nullptr || cm->currentCommand()->name() != name_a)
            && std::chrono::steady_clock::now() < deadline) {
@@ -3325,7 +3324,7 @@ TEST_F(GuiTest, CommandManager_CancelCurrentStopsOnlyForegroundChain)
     // 链 B 随后启动，成为前台链。
     auto                       task_b = cm->executeCommandAsync(name_b);
     vn::appfw::CommandResult result_b;
-    std::thread                runner_b([&] { result_b = vn::async::syncWait(std::move(task_b)); });
+    std::thread                runner_b([&] { result_b = std::move(task_b).result(); });
 
     while ((cm->currentCommand() == nullptr || cm->currentCommand()->name() != name_b)
            && std::chrono::steady_clock::now() < deadline) {
@@ -3960,7 +3959,7 @@ TEST_F(GuiTest, CommandManager_NestedCancelledChildIsReported)
 
     auto                       task = cm->executeCommandAsync(parent);
     vn::appfw::CommandResult result;
-    std::thread                runner([&] { result = vn::async::syncWait(std::move(task)); });
+    std::thread                runner([&] { result = std::move(task).result(); });
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (cm->runningCount() < 2 && std::chrono::steady_clock::now() < deadline) {
@@ -4021,7 +4020,7 @@ TEST_F(GuiTest, CommandManager_ExclusiveStopsEveryLiveChain)
     vn::appfw::CommandResult victim_result;
     std::atomic<bool>          victim_done{ false };
     std::thread                runner([&] {
-        victim_result = vn::async::syncWait(std::move(task));
+        victim_result = std::move(task).result();
         victim_done.store(true);
     });
 
@@ -4291,7 +4290,7 @@ TEST_F(GuiTest, CommandManager_RegistrySurvivesConcurrentAccess)
     EXPECT_FALSE(cm->isRegistered(name_b));
 }
 
-// 命令内部同步调用 executeCommandAndWait() 不会死锁（syncWait 在调用线程上驱动任务），
+// 命令内部同步调用 executeCommandAndWait() 不会死锁（`result()` 在调用线程上驱动任务），
 // 但会开一条新链——嵌套应当走 context->executeChild()。
 TEST_F(GuiTest, CommandManager_NestedSyncExecuteCommandDoesNotDeadlock)
 {
@@ -4308,7 +4307,7 @@ TEST_F(GuiTest, CommandManager_NestedSyncExecuteCommandDoesNotDeadlock)
         co_return cm->executeCommandAndWait(child_name);
     };
 
-    const auto result = vn::async::syncWait(parent());
+    const auto result = parent().result();
     EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success);
     EXPECT_EQ(cm->runningCount(), 0);
 
@@ -5928,7 +5927,7 @@ TEST(UserIOTest, SecondReadIsRefusedWhileOneIsPending)
     }
 
     // 第二个读必须立刻收尾，并且不能把第一个读叫醒（否则它会拿到别的结果）。
-    const auto refused = vn::async::syncWait(io->getDoubleAsync(u8"second> "));
+    const auto refused = io->getDoubleAsync(u8"second> ").result();
     EXPECT_FALSE(refused.has_value()) << "一个交互挂起时，第二个读必须被拒绝";
     EXPECT_EQ(cm->historyCount(), 0) << "第一个读仍应在等待";
 
@@ -6198,7 +6197,7 @@ TEST_F(GuiTest, CommandManager_CancelAllAbortsWaitingTakeOver)
     // 旧链在跑，且它无视取消 ⇒ 排他命令会停在"等待旧链收尾"上（上界 2s）。
     auto                       victim_task = cm->executeCommandAsync(victim);
     vn::appfw::CommandResult victim_result;
-    std::thread victim_runner([&] { victim_result = vn::async::syncWait(std::move(victim_task)); });
+    std::thread victim_runner([&] { victim_result = std::move(victim_task).result(); });
     while (!UncooperativeSleepForCommand::s_running.load() && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -6206,7 +6205,7 @@ TEST_F(GuiTest, CommandManager_CancelAllAbortsWaitingTakeOver)
 
     auto                       taker_task = cm->executeCommandAsync(taker);
     vn::appfw::CommandResult taker_result;
-    std::thread taker_runner([&] { taker_result = vn::async::syncWait(std::move(taker_task)); });
+    std::thread taker_runner([&] { taker_result = std::move(taker_task).result(); });
 
     // 让排他命令确实进入等待：它自己不执行，没有别的可观察点。
     std::this_thread::sleep_for(std::chrono::milliseconds(100));

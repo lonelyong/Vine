@@ -11,7 +11,6 @@
 #include <QPushButton>
 #include <QThread>
 
-#include <vine/async/SyncWait.hpp>
 
 #include <vine/appfw/AppBuilder.hpp>
 #include <vine/appfw/Application.hpp>
@@ -242,9 +241,9 @@ TEST(BootSplashTest, DisabledByDefaultInTheTestApplication)
 
     // startupEnd() 幂等：没有启动框时它只是保证主窗口处于可见状态。
     // 钩子是受保护的（收尾是框架的动作），而且是一个**懒**任务 - 只有 await 它才会跑：本进程不跑循环，
-    // 用例用 syncWait 在调用线程上把它驱动完（见 fixtures/TestGuiApplication.hpp）。
-    vn::async::syncWait(app->startupEnd());
-    vn::async::syncWait(app->startupEnd());
+    // 用例用 `result()` 在调用线程上把它驱动完（见 fixtures/TestGuiApplication.hpp）。
+    app->startupEnd().result();
+    app->startupEnd().result();
     EXPECT_TRUE(app->mainWindow()->visible());
 }
 

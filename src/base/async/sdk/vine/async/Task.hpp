@@ -2,9 +2,11 @@
 
 #include "async_global.hpp"
 
+#include <chrono>
 #include <coroutine>
 #include <exception>
 #include <optional>
+#include <semaphore>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -49,7 +51,7 @@ struct TaskPromiseBase
  *
  * Holds the result slot for non-void tasks and provides return_void for void
  * tasks, so a promise type can inherit one mix-in regardless of T. The slot is
- * read by the Task's awaiter (and by syncWait's helper promise) after the body
+ * read by the Task's awaiter (and by the blocking drive's helper promise) after the body
  * has finished.
  */
 template<typename T>
@@ -112,6 +114,119 @@ struct TaskFinalAwaiter
     void await_resume() const noexcept {}
 };
 
+/**
+ * @brief Blocking handshake between a driven task and the thread that waits for it.
+ *
+ * The blocking drives (Task::result() and runToCompletion()) run the task's body on the
+ * calling thread; when the body completes, its final awaiter releases the semaphore so the waiter
+ * stops blocking and returns the produced result.
+ */
+struct WaitEvent
+{
+    std::binary_semaphore semaphore{ 0 };
+
+    void set() noexcept { semaphore.release(); }
+
+    void wait() noexcept { semaphore.acquire(); }
+
+    /**
+     * @brief Waits for the completion signal, but no longer than timeout.
+     *
+     * What a waiter that has something else to do while it waits needs: it can tell "the task
+     * finished" from "my slice is over" and do the other thing in between (see
+     * runToCompletion(), which pumps a queue that way).
+     *
+     * @param timeout How long to wait at most.
+     * @return true when the signal arrived, false when the timeout passed.
+     */
+    bool waitFor(std::chrono::microseconds timeout) noexcept { return semaphore.try_acquire_for(timeout); }
+};
+
+/**
+ * @brief Helper coroutine that awaits a task and notifies a waiter on completion.
+ */
+template<typename T>
+class WaitTask
+{
+  public:
+    struct promise_type : detail::TaskPromiseReturn<T>
+    {
+        [[nodiscard]]
+        WaitTask get_return_object() noexcept
+        {
+            return WaitTask{ std::coroutine_handle<promise_type>::from_promise(*this) };
+        }
+
+        std::suspend_always initial_suspend() noexcept { return {}; }
+
+        struct FinalAwaiter
+        {
+            [[nodiscard]]
+            bool await_ready() const noexcept
+            {
+                return false;
+            }
+
+            void await_suspend(std::coroutine_handle<promise_type> h) noexcept
+            {
+                if (h.promise().event)
+                {
+                    h.promise().event->set();
+                }
+            }
+
+            void await_resume() const noexcept {}
+        };
+
+        FinalAwaiter final_suspend() noexcept { return {}; }
+
+        void unhandled_exception() noexcept { exception = std::current_exception(); }
+
+        std::exception_ptr exception{};
+        WaitEvent*    event{ nullptr };
+    };
+
+    using handle_type = std::coroutine_handle<promise_type>;
+
+    explicit WaitTask(handle_type h) noexcept : handle_(h) {}
+
+    ~WaitTask()
+    {
+        if (handle_)
+        {
+            handle_.destroy();
+        }
+    }
+
+    WaitTask(const WaitTask&) = delete;
+    WaitTask& operator=(const WaitTask&) = delete;
+    WaitTask(WaitTask&& other) noexcept : handle_(std::exchange(other.handle_, {})) {}
+    WaitTask& operator=(WaitTask&&) = delete;
+
+    handle_type handle_;
+};
+
+/**
+ * @brief Helper coroutine that awaits a task and notifies the waiter.
+ *
+ * The blocking drive resumes this coroutine on the calling thread; when the wrapped task has
+ * produced its result, this coroutine's final awaiter signals the WaitEvent so the waiter
+ * unblocks and returns the value.
+ */
+template<typename T>
+WaitTask<T> makeWaitTask(Task<T>&& task)
+{
+    if constexpr (std::is_void_v<T>)
+    {
+        co_await std::move(task);
+        co_return;
+    }
+    else
+    {
+        co_return co_await std::move(task);
+    }
+}
+
 } // namespace detail
 
 /**
@@ -119,7 +234,7 @@ struct TaskFinalAwaiter
  *
  * A Task wraps the compiler-generated coroutine frame of a co_await/co_return
  * function and exposes it as an awaitable handle. The body does not run until
- * the task is awaited or passed to syncWait: initial_suspend() returns
+ * the task is awaited or its result is read (Task::result()): initial_suspend() returns
  * suspend_always, so control returns to the caller immediately.
  *
  * Execution flow:
@@ -279,6 +394,46 @@ class Task
     explicit operator bool() const noexcept
     {
         return static_cast<bool>(handle_);
+    }
+
+    /**
+     * @brief Blocks the calling thread until the body has finished, and returns what it produced.
+     *
+     * The read that looks like C#'s `task.Result` - and it carries the same trap, so it is worth
+     * naming it: the calling thread is blocked for the whole body, so whatever the body's next step
+     * needs FROM THAT THREAD cannot happen. Blocking a thread whose machinery the body is waiting for
+     * (an event loop that has to deliver a queued call, a UI thread whose continuation goes back to
+     * it) therefore deadlocks, exactly like `.Result` does in C#.
+     *
+     * Two ways out, and neither belongs here: await the task when the caller is allowed to (the
+     * coroutine shape), or use runToCompletion(), which keeps running a pump while it waits.
+     *
+     * What this does do is block, and that is all it claims: the body starts on the calling thread
+     * and runs up to its first suspension, and work handed to another thread (the pool, a device) is
+     * waited for correctly - only work that needs this thread back does not arrive.
+     *
+     * @return The task's result; the task is empty afterwards.
+     */
+    T result()
+    {
+        detail::WaitEvent event;
+
+        auto driver = detail::makeWaitTask(std::move(*this));
+        driver.handle_.promise().event = &event;
+
+        driver.handle_.resume();
+        event.wait();
+
+        auto& promise = driver.handle_.promise();
+        if (promise.exception)
+        {
+            std::rethrow_exception(std::move(promise.exception));
+        }
+
+        if constexpr (!std::is_void_v<T>)
+        {
+            return std::move(promise.value).value();
+        }
     }
 
   public:

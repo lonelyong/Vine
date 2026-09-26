@@ -12,6 +12,7 @@
 
 #include <vine/async/Finally.hpp>
 
+#include <vine/appfw/Application.hpp>
 #include <vine/logging/Log.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -94,6 +95,19 @@ bool MainThreadDispatcher::deliverPostedCalls()
     // queued calls without running timers, paint or input events.
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     return true;
+}
+
+void MainThreadDispatcher::deliverQueuedApplicationCalls()
+{
+    Application* app = Application::current();
+    if (app == nullptr) {
+        return;  // No application: no dispatcher, no queue, nothing to deliver.
+    }
+    // The dispatcher is created with the application and destroyed with it, so a caller that drives a coroutine while
+    // the application is going down may find none - and then there is no queue left to deliver either.
+    if (MainThreadDispatcher* dispatcher = app->mainThreadDispatcher(); dispatcher != nullptr) {
+        static_cast<void>(dispatcher->deliverPostedCalls());
+    }
 }
 
 VN_APPFW_NS_END

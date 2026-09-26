@@ -464,7 +464,7 @@ class VN_APPFW_API Application : public Object {
      *
      * A host that drives its own boot calls this from its own class (it is protected: ending the boot is the framework's
      * move, and a host does not reach into a running boot from outside) - that is also the call that brings the windows
-     * up for a host that never runs the loop. It is a lazy task, so it has to be awaited: vn::async::syncWait() drives
+     * up for a host that never runs the loop. It is a lazy task, so it has to be awaited: Task::result() drives
      * it to completion on the calling thread, which only works while it does not need the event loop.
      *
      * @return A task that completes once the boot's face is away.

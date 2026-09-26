@@ -30,6 +30,9 @@
 - `Task`/`SharedTask`/`Generator` 的值类型受 `StorableValue` 约束：**不支持引用/数组/函数型别**（用指针或 `reference_wrapper`）。
 - `whenAll`/`whenAny` 变参只支持"全 void"或"全非 void"，混合的用 `vector<AnyTask>` + `discard()`。
 - `AsyncMutex::try_lock` / `AsyncSemaphore::try_acquire` 用 snake_case（对齐 std），是仓库 camelCase 规则的**刻意例外**。
+- **阻塞取结果只有两道门**（2026-09-26）：`Task::result()` = 纯阻塞（C# 的 `task.Result`，连死锁坑一样：
+  body 下一步若需要调用线程继续转，就自己把自己锁死）/ `runToCompletion(task, pump)` = 同一条驱动 + 每 200 µs
+  一次 `pump()`（泵由调用者传，async **不装全局泵**）。`SyncWait.hpp` 与 `syncWait()` 已删。
 
 ## 重复实现（已处理）
 
@@ -40,11 +43,11 @@
 
 - **协程帧的创建线程必须活到协程结束**：在会退出的线程上创建 `DetachedTask` 并让它挂起、再由别的线程恢复
   ⇒ 帧所在的那段栈随线程退出而消失，恢复即 SIGSEGV（2026-09-17 实测：`gdb` 里崩溃点的 `this` 落在
-  已退出线程的栈区间）。要跨线程恢复，就让创建线程留在事件循环或 `syncWait` 里：
+  已退出线程的栈区间）。要跨线程恢复，就让创建线程留在事件循环或 `Task::result()` 里：
   `test_asyncqt` 的 `MainThreadDispatcherResumesOnApplicationThread` 是范式——应用线程创建，
   先被定时器线程恢复（断言"确实不在应用线程"），再跳回应用线程。
 
 ## 命令
 
-- 构建+跑：`cmake --build build --target test_async && ./build/bin/test_async`（当前 135 条）。
-- TSan/ASan 配方、以及"让过期 resume 缺陷变确定"的手法（帧内 padding + `syncWait` 后 settle）见设计文档 §7。
+- 构建+跑：`cmake --build build --target test_async && ./build/bin/test_async`（当前 140 条）。
+- TSan/ASan 配方、以及"让过期 resume 缺陷变确定"的手法（帧内 padding + `Task::result()` 后 settle）见设计文档 §7。

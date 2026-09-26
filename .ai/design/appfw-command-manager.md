@@ -11,7 +11,7 @@
 
 | 入口 | 链 | 前台归属 | 串联门 | 取消源 | 阻塞调用线程 |
 | --- | --- | --- | --- | --- | --- |
-| `executeCommandAndWait(Command*)` / `(name)` | 新建 | 成为前台链 | 受门 | 新源 | 是（`syncWait`） |
+| `executeCommandAndWait(Command*)` / `(name)` | 新建 | 成为前台链 | 受门 | 新源 | 是（`Task::result()`） |
 | `executeCommandAsync(Command*)` / `(name)` | 新建 | 成为前台链 | 受门 | 新源 | 否（惰性，await 后才跑） |
 | `executeDetached(name)` | 新建 | 成为前台链 | 受门 | 新源 | 否（立即跑到首次挂起） |
 | `context->executeChild(name)` / `(instance)` | **共享父链** | 不变（同一条链） | **绕过** | **共享父链源** | 否（co_await） |
@@ -20,7 +20,7 @@
 
 - **异步入口的链是“首次 await 时才建立”的**：`Task` 是惰性的（`initial_suspend = suspend_always`），
   所以 `cm->executeCommandAsync(...)` 只是拿到一个未启动的 task，**那一刻不建链、不抢前台**；
-  真正 `co_await`（或 `syncWait`）时子协程才进入 `Impl::admit`，此时才新建链并写 `foreground`。
+  真正 `co_await`（或 `Task::result()`）时子协程才进入 `Impl::admit`，此时才新建链并写 `foreground`。
   丢掉不 await = 命令永不执行（帧被析构），也不会留下任何链。
 - 在命令内部调顶层入口 = 开一条**独立链**，不是嵌套：它会**抢走前台**
   （`currentCommand()`/`runningCount()` 随后描述新的链，`cancelCurrent()`/Esc 也只能取消它），
@@ -33,7 +33,7 @@
 - 被门拒绝现在会记一条 warning（`Command refused by the serialization gate`）：
   `executeDetached` 的调用方拿不到返回值，否则拒绝会完全无声。
 - 命令内部**不要**用同步 `executeCommandAndWait()`：它阻塞当前线程，而该线程可能是 UI 线程或定时器线程
-  （`syncWait` 自己的文档就警告：若该线程的事件循环是任务恢复所必需的，就会死锁）。
+  （`Task::result()` 自己的文档就警告：若该线程的事件循环是任务恢复所必需的，就会死锁）。
   命令内部应 `co_await executeCommandAsync(...)`，或直接用 `executeChild()`。
 
 ## 最佳实践整理（第三轮）
@@ -308,7 +308,7 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
 | 4 | `executeDetached` 异常导致 `std::terminate` | **真缺陷**（已核实 `DetachedTask::promise_type::unhandled_exception()` 无 handler 时直接 terminate；树内 `VisualUserIO::executeInput` 的 DetachedTask 无 try/catch） | 异常在**顶层入口收口**为 `Failed` 结果（含工厂、快照、事件回调），detached 包装再叠一层兵底 catch |
 | 5 | history 无上限 | 真 | `std::deque` + `maxHistoryEntries()`（默认 1024），超出丢最旧 |
 | 6 | detached 链被顶出前台后无法取消 | 真 | 新增活跃链注册表 + `cancelAll()`（`cancelCurrent()` 语义不变） |
-| 7 | `syncWait` 在协程内可能死锁 | **无法确认为框架缺陷**：`syncWait` 在调用线程上驱动任务，`sleepFor` 在独立定时器线程恢复，因此嵌套同步调用不会自锁（已用 `NestedSyncExecuteCommandDoesNotDeadlock` 验证）。真正的约束是语义性：命令内部嵌套必须走 `context->executeChild()`，否则开新链会被串联门拒绝 | 保留 `syncWait` 语义 + 用例验证 + 文档强调 `executeChild` |
+| 7 | `Task::result()` 在协程内可能死锁 | **无法确认为框架缺陷**：`Task::result()` 在调用线程上驱动任务，`sleepFor` 在独立定时器线程恢复，因此嵌套同步调用不会自锁（已用 `NestedSyncExecuteCommandDoesNotDeadlock` 验证）。真正的约束是语义性：命令内部嵌套必须走 `context->executeChild()`，否则开新链会被串联门拒绝 | 保留 `Task::result()` 语义 + 用例验证 + 文档强调 `executeChild` |
 | 8 | 嵌套无深度限制 | 真 | `maxChainDepth()`（默认 64），`executeChild` 超限返回 `Failed("Command nesting is too deep")` |
 | 9 | probe 实例化有副作用/可能抛异常 | 部分真：副作用是设计选择（缓存元数据必须实例化一次）；**异常穿出确是真问题** | 探测在锁外 + try/catch；工厂抛/返回 nullptr 仍注册成功，仅无缓存元数据（插件加载期服务未就绪也能注册） |
 | 10 | registry/aliases 无线程保护 | 真 | 新增 `registry_mutex`（叶子锁）；`registrationOwner()` 改为返回值（原来返引用，调用方零使用） |

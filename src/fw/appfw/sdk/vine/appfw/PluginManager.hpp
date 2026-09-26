@@ -231,10 +231,11 @@ class VN_APPFW_API PluginManager {
      * does not rely on that position (see unloadOrder()).
      *
      * The lifecycle hooks are coroutines now (Plugin::preLoad() and friends): this door drives them to completion on
-     * the calling thread, dispatching the calls they post to the application thread (`resumeOnMainThread()`) while it
-     * waits - so a plugin that sends its heavy work to the pool and comes back still loads here. It does not turn the
-     * event loop otherwise: on the application thread this call blocks it for as long as the plugin's own stretches
-     * take, which is why the boot uses loadAllAsync() (see the note on Plugin::load()).
+     * the calling thread with MainThreadDispatcher::runToCompletion(), which delivers the calls they post to the
+     * application thread (`resumeOnMainThread()`) while it waits - so a plugin that sends its heavy work to the pool and
+     * comes back still loads here. It does not turn the event loop otherwise: on the application thread this call blocks
+     * it for as long as the plugin's own stretches take, which is why the boot uses loadAllAsync() (see the note on
+     * Plugin::load()).
      *
      * @param name_or_path Plugin name or library path.
      * @return The loaded plugin, or nullptr on failure.
@@ -243,6 +244,9 @@ class VN_APPFW_API PluginManager {
 
     /**
      * @brief Loads every plugin library found in the configured locations.
+     *
+     * The blocking door: MainThreadDispatcher::runToCompletion() drives the loadAllAsync() coroutine on the calling
+     * thread, delivering what it posts to the application thread. A tool, a test or a host that runs no loop uses it.
      *
      * Scans builtInPluginDirectory() and every registered location
      * (pluginRegistrations(); each one a library file or a directory) and
