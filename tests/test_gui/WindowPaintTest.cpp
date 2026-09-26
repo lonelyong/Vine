@@ -25,27 +25,6 @@
 
 namespace guifw = vn::appfw::gui;
 
-TEST(WindowPaintTest, AWindowHasNotPaintedUntilTheQueueHasBeenDispatched)
-{
-    QWidget        native;
-    guifw::Window window(&native, false);
-
-    // 还没 show：没有平台窗口，也就没有任何绘制。
-    EXPECT_FALSE(window.hasPainted());
-
-    window.show();
-
-    // show() 只把窗口交给窗口系统；"现在可见了"的通知要派发事件队列才会到窗口，在此之前窗口是空的。
-    QElapsedTimer timer;
-    timer.start();
-    while (!window.hasPainted() && timer.elapsed() < 2000) {
-        QCoreApplication::processEvents();
-        QThread::msleep(5);
-    }
-
-    EXPECT_TRUE(window.hasPainted());
-}
-
 TEST(WindowPaintTest, APaintOfAnythingThatIsAlreadyInsideTheWindowCounts)
 {
     QWidget        native;
@@ -73,4 +52,47 @@ TEST(WindowPaintTest, APaintOfAWidgetThatArrivesLaterCounts)
     QCoreApplication::sendEvent(late_child, &paint);
 
     EXPECT_TRUE(window.hasPainted());
+}
+
+TEST(WindowPaintTest, TheFirstPaintIsReportedOnceThroughItsSignal)
+{
+    QWidget        native;
+    guifw::Window window(&native, false);
+
+    int reports = 0;
+    const vn::Connection connection = window.first_paint.connect([&reports] { ++reports; });
+
+    QEvent paint(QEvent::Paint);
+    QCoreApplication::sendEvent(&native, &paint);
+    EXPECT_TRUE(window.hasPainted());
+    EXPECT_EQ(reports, 1);
+
+    // 报的是"第一次画了"这个状态转移，不是每次绘制：等它的代码只该被叫醒一次。
+    QCoreApplication::sendEvent(&native, &paint);
+    EXPECT_EQ(reports, 1);
+}
+
+TEST(WindowPaintTest, AWindowHasNotPaintedUntilTheQueueHasBeenDispatched)
+{
+    QWidget        native;
+    guifw::Window window(&native, false);
+
+    // 还没 show：没有平台窗口，也就没有任何绘制。
+    EXPECT_FALSE(window.hasPainted());
+
+    int reports = 0;
+    const vn::Connection connection = window.first_paint.connect([&reports] { ++reports; });
+
+    window.show();
+
+    // show() 只把窗口交给窗口系统；首帧是事件（信号），没派发队列就不会到。
+    QElapsedTimer timer;
+    timer.start();
+    while (!window.hasPainted() && timer.elapsed() < 2000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(5);
+    }
+
+    EXPECT_TRUE(window.hasPainted());
+    EXPECT_EQ(reports, 1);
 }

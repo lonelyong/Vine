@@ -126,16 +126,16 @@ class VN_APPFW_API GuiApplication : public Application {
     void applyTheme(Theme theme);
 
     /**
-     * @brief Shows a window and dispatches the event queue until it has painted.
+     * @brief Shows a window and waits for it to paint.
      *
      * For the windows a boot puts on screen before run() owns the event loop: painting a window waits for the window
-     * system's "it is visible now" notice, which reaches it through the event queue, so a window shown without this
-     * dispatch stays empty on screen (black, or transparent when it is translucent) until the loop starts. The wait is
-     * bounded, and both outcomes are reported - see the design notes for the measurements.
+     * system's "it is visible now" notice, which reaches it through the event queue, so a window shown without driving
+     * that queue stays empty on screen (black, or transparent when it is translucent) until the loop starts. The wait
+     * is bounded, and both outcomes are reported - see the design notes for the measurements.
      *
-     * Dispatching the queue runs the timers of everything that is starting up, so it is only done while no render
-     * surface exists yet: that is asserted inside, and it is the reason this is not a general purpose "show" (a
-     * plugin showing a window during a boot must not come through here).
+     * Driving the queue runs the timers of everything that is starting up, so it is only done while no render surface
+     * exists yet: that is asserted inside, and it is the reason this is not a general purpose "show" (a plugin showing
+     * a window during a boot must not come through here).
      *
      * @param window  Window to show; it has not painted yet.
      * @param subject Window name for the diagnostics.

@@ -162,9 +162,12 @@ app->run()                      → 主循环
 以保证更新显示，**even when there is no event loop present**"，"有些 X11 WM 不支持 stays-on-top，
 办法是定时 `raise()`"——即这是"启动期不跑事件循环"的 Qt 级行为，不是 WSL/Weston 的缺陷。）
 
-**修法**：`GuiApplication::init()` 把"show 窗口"与"派发到它画出第一帧"成对放在
-`showAndWaitForFirstPaint()` 里（`processEvents(ExcludeUserInputEvents)` + 2 ms 步进，上限 300 ms，
-超时 `VN_LOGW` 不静默），判断条件就是 `Window::hasPainted()`（见下节）。
+**修法**：`GuiApplication::init()` 把"show 窗口"与"等它画出首帧"成对放在
+`showAndWaitForFirstPaint()` 里。等待是**事件驱动**的：订阅 `Window::first_paint`（首帧信号）+ 一个
+`QTimer::singleShot(300 ms)` 作上限，二者在同一只嵌套 `QEventLoop` 里赛跑；
+进循环前先看一眼 `Window::hasPainted()`（快路径：已经画了就不等），这一步与 `exec()` 之间
+**没有任何代码**，队列也只会被那只循环派发 ⇒ 不会漏掉已经发生的那次首帧。
+没有轮询、没有步进常量，超时先到就 `VN_LOGW`（不静默）。
 位置刻意选在"主窗与所有插件都还不存在"那一刻，并把这个前提用 `assert` 写死在
 **函数内部**（而不是只写在注释里，也不拆到两个调用点上）：
 `assert(d->main_window == nullptr || d->main_window->primaryRenderControl() == nullptr)` ——
@@ -200,17 +203,20 @@ app->run()                      → 主循环
 
 两个窗口问的是同一个问题，所以机制只留一份、放在它该在的层：
 
-- **契约**：`Window::hasPainted()`（公开 SDK，`noexcept`）。语义：**窗口自己或它里面任何东西画过**；
+- **契约**：`Window::hasPainted()`（公开 SDK，`noexcept`）**报状态**；`Window::first_paint`（`vn::Signal<>`）
+  **报状态转移**（只 trigger 一次）。语义：**窗口自己或它里面任何东西画过**；
   窗口已不再是一个“空窗口”（X11 上全黑、透明框则全透明）。
+  两者都是同一只观察者给的：等它用事件（不再轮询），问它用查询（快路径与事后判定）。
 - **实现**：`WindowData` 持一个 `Window.cpp` 内部的 `PaintWatcher`（事件过滤器）。安装时递归接上
   窗口与当时已有的全部子控件；**后加的**子控件（停靠面板、状态栏里的进度条）靠父控件的 `ChildAdded`
   通知接上。两条路径各有原因：顶层自己可能一个像素都不画（面积被不透明子控件盖住），
   而“谁先画”取决于布局；窗口里的东西也不必在观察之前就存在。
 - **观察者随窗口销毁**（不挂在被观察的 widget 上：窗口不拥有 widget 时 widget 会先死）。
-- **测试**（`tests/test_gui/WindowPaintTest.cpp`，3 例）：未 show ⇒ 未画；show + 派发 ⇒ 已画；
-  已在里面的子控件画 ⇒ 已画；后加进来的子控件画 ⇒ 已画。
-- **变异（4/4 各有用例负责）**：`Paint` 不置位 ⇒ 3 例全红；观察者不装到窗口自己 ⇒ 2 例红；
-  忽略 `ChildAdded` ⇒ 只“后加进来的子控件”红；安装时不接已有子控件 ⇒ 只“已在里面的子控件”红。
+- **测试**（`tests/test_gui/WindowPaintTest.cpp`，4 例）：未 show ⇒ 未画；show + 派发 ⇒ 已画；
+  已在里面的子控件画 ⇒ 已画；后加进来的子控件画 ⇒ 已画；**首帧信号只报一次**（第二次 paint 不再报）。
+- **变异（4/4 各自被对应用例或被真机逮到）**：信号从不 trigger ⇒ 2 例红（且真机上会退化成等满 300 ms 上限）；
+  每次 paint 都 trigger ⇒ 只"只报一次"红；不记录已画 ⇒ 4 例全红；**整段等待拿掉（真机）** ⇒ 两个窗口
+  `painted=0.0%`（原缺陷重现）且框架自己打出 "stays an empty window until the event loop runs" 告警。
 
 **另一个好处**：这套机制让“等待”变成可验证的后置条件，而不是平台 hack——
 没有 `#ifdef`，在派发即可画的平台上循环第一次就退出。
@@ -260,6 +266,7 @@ app->run()                      → 主循环
 | `WindowPaintTest.AWindowHasNotPaintedUntilTheQueueHasBeenDispatched` | 未 show 未画；show + 派发后已画 |
 | `WindowPaintTest.APaintOfAnythingThatIsAlreadyInsideTheWindowCounts` | 窗口构造时就已存在的子控件画了也算 |
 | `WindowPaintTest.APaintOfAWidgetThatArrivesLaterCounts` | 窗口构造之后才加进来的子控件画了也算（`ChildAdded`） |
+| `WindowPaintTest.TheFirstPaintIsReportedOnceThroughItsSignal` | 首帧信号只报一次（状态转移，不是每次绘制） |
 
 视觉验证（临时用例 + `grab()` 离屏渲染，验证后已删）：圆角面板/标题/副标题/进度条/状态行、
 SVG logo 等比缩放、确定态与忙碌态两种进度条。

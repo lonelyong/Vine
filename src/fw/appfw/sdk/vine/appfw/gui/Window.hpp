@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include <vine/Signal.hpp>
+
 #include "Control.hpp"
 #include "Gui.hpp"
 
@@ -67,6 +69,16 @@ class VN_APPFW_API Window : public Control {
      * @return true once the window has painted, false while it has not.
      */
     bool hasPainted() const noexcept;
+
+  public:
+    /**
+     * @brief Emitted when the window has painted for the first time.
+     *
+     * The change that goes with hasPainted(), for code that has to wait for a window it has just shown: the paint
+     * arrives as an event, so waiting for it is a subscription rather than a poll (see
+     * GuiApplication::showAndWaitForFirstPaint()). Emitted once, from the paint event that produced the first paint.
+     */
+    vn::Signal<> first_paint;
 
   protected:
     // Derived classes pass their own data block, deriving from WindowData (see the private

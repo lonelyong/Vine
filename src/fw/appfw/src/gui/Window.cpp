@@ -16,7 +16,7 @@ namespace
 {
 
 /**
- * @brief Watches a window's widget tree and remembers that it painted at least once.
+ * @brief Watches a window's widget tree, remembers that it painted and says so once.
  *
  * The window's own paint and the paint of anything inside it both count: which of them comes first is the layout's
  * business, and a window whose area is covered by opaque children paints none of it itself. Children that appear
@@ -26,8 +26,15 @@ namespace
 class PaintWatcher : public QObject
 {
   public:
-    explicit PaintWatcher(QObject* parent)
+    /**
+     * @brief Watches a tree for its first paint and reports it through \a first_paint.
+     *
+     * @param parent      QObject parent, or null.
+     * @param first_paint Signal of the window being watched; triggered once, on the first paint.
+     */
+    PaintWatcher(QObject* parent, vn::Signal<>& first_paint)
       : QObject(parent)
+      , first_paint_(first_paint)
     {}
 
     /**
@@ -58,7 +65,10 @@ class PaintWatcher : public QObject
     {
         switch (event->type()) {
             case QEvent::Paint:
-                painted_ = true;
+                if (!painted_) {
+                    painted_ = true;
+                    first_paint_.trigger();
+                }
                 break;
             case QEvent::ChildAdded:
                 // Seen from the parent's side, which is why watching a widget is enough to pick up its own children: a
@@ -80,20 +90,24 @@ class PaintWatcher : public QObject
         object.installEventFilter(this);
     }
 
+    /// Signal of the window being watched: the watcher and the window die together (see ~Window), so this stays valid.
+    vn::Signal<>& first_paint_;
+
     bool painted_{ false };
 };
 
 /// Watches a window's widget tree for its first paint.
 ///
-/// @param native Top-level widget of the window, or null for a window without one.
+/// @param native      Top-level widget of the window, or null for a window without one.
+/// @param first_paint Signal to trigger on that first paint.
 /// @return A watcher the caller owns, or null when there is no widget to watch.
-PaintWatcher* makePaintWatcher(QWidget* native)
+PaintWatcher* makePaintWatcher(QWidget* native, vn::Signal<>& first_paint)
 {
     if (native == nullptr) {
         return nullptr;
     }
 
-    auto* watcher = new PaintWatcher(nullptr);
+    auto* watcher = new PaintWatcher(nullptr, first_paint);
     watcher->watch(*native);
     return watcher;
 }
@@ -103,7 +117,7 @@ PaintWatcher* makePaintWatcher(QWidget* native)
 Window::Window(QWidget* native, bool owns)
   : Control(new WindowData(), native, owns)
 {
-    static_cast<WindowData*>(d)->paint_watcher = makePaintWatcher(native);
+    static_cast<WindowData*>(d)->paint_watcher = makePaintWatcher(native, first_paint);
 }
 
 Window::~Window()
@@ -233,7 +247,7 @@ bool Window::hasPainted() const noexcept
 Window::Window(UIElementData* data, QWidget* native, bool owns)
   : Control(data, native, owns)
 {
-    static_cast<WindowData*>(d)->paint_watcher = makePaintWatcher(native);
+    static_cast<WindowData*>(d)->paint_watcher = makePaintWatcher(native, first_paint);
 }
 
 VN_APPFWGUI_NS_END

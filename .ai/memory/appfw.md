@@ -94,13 +94,14 @@
 - ⚠️ **唯一例外（2026-09-26）：闪屏与主窗都要“show 之后派发到它画出第一帧”**。X11 上 Qt 要先收到服务端的
   expose 才把 backing store flush 进窗口，而 expose 只能由事件队列派发送来 ⇒ 不派发时 `repaint()` 是空转，
   闪屏整个启动期全透明、主窗整个启动期是一块黑板（用户实测报的就是这两条）。机制：`GuiApplication::init()`
-  经 `showAndWaitForFirstPaint()` 把 show 与派发成对（上限 300 ms，超时 `VN_LOGW`），条件是 SDK 级的
-  `Window::hasPainted()`（`WindowData` 里的 `PaintWatcher`：窗口自己 + 已有子控件 + 后加的子控件），
-  助手）**内部**用一条 `assert(d->main_window == nullptr || d->main_window->primaryRenderControl() == nullptr)`
-  把安全前提写死（同一句覆盖两个调用点：闪屏那次主窗还不存在，主窗那次插件还没加载）。实测：
-  闪屏 `5–11 ms`、主窗 `17–24 ms`（轮询步进 2 ms）。
-  测试：`tests/test_gui/WindowPaintTest.cpp`（3 例）；Qt 自己的 `QSplashScreen::repaint()` 也是调 `processEvents()`
-  （文档："even when there is no event loop present"）——即这是 Qt 级行为，不是 WSL 缺陷。
+  经 `showAndWaitForFirstPaint()` 把 show 与等待成对，**事件驱动**：订阅 `Window::first_paint`（首帧信号），
+  上限是一个 `QTimer::singleShot(300 ms)`，两者在同一只嵌套 `QEventLoop` 里赛跑；进循环前先用
+  `Window::hasPainted()` 走快路径（长这样就不会漏掉已经发生过的首帧），超时 `VN_LOGW`。契约都在 SDK 里：
+  `Window::hasPainted()`（状态）+ `Window::first_paint`（状态转移，只报一次），实现是 `WindowData` 里的
+  `PaintWatcher`（窗口自己 + 已有子控件 + 后加的子控件靠 `ChildAdded`）；安全前提（"此刻没有渲染表面"）
+  是**函数内一条** `assert`。实测：闪屏 `1–11 ms`、主窗 `5–24 ms`。
+  测试：`tests/test_gui/WindowPaintTest.cpp` 4 例（含"首帧信号只报一次"）；Qt 自己的 `QSplashScreen::repaint()`
+  也是转 `processEvents()`（文档："even when there is no event loop present"）——这是 Qt 级行为，不是 WSL 缺陷。
 - ⚠️ **启动框关掉时要把主窗口 `raise()` + `activate()`**：`Qt::SplashScreen` 置顶且不激活进程地显示，
   Windows 的前台激活名额被它占掉，随后 show() 的主窗口就压在终端/IDE 后面（看起来像“没显示出来”）。
   `finishStartup()` 只“确实有框”时做，那一刻会打一行 `main window visible=…, active=…` 供区分。

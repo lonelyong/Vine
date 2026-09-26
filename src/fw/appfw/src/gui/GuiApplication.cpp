@@ -10,7 +10,6 @@
 #include <QPalette>
 #include <QStatusBar>
 #include <QStyleHints>
-#include <QThread>
 #include <QTimer>
 #include <QWidget>
 
@@ -77,9 +76,6 @@ namespace
 
 /// Upper bound for a window's first paint; a window system that never shows a window must not hold the boot.
 constexpr int kFirstPaintDeadlineMs = 300;
-
-/// Pace of the wait below: one dispatch per turn, and a window paints within a few turns where windows show promptly.
-constexpr int kDispatchPollMs = 2;
 
 // Classic Fusion dark palette (matches the Qt >= 6.5 Fusion dark palette).
 QPalette createDarkPalette()
@@ -219,9 +215,10 @@ void GuiApplication::showAndWaitForFirstPaint(Window& window, std::string_view s
 {
     auto* d = static_cast<GuiApplicationData*>(dptr());
 
-    // Dispatching the queue runs the timers of everything that is starting up, and an embedded render surface drives its
-    // attach backoff that way - it must not run before the window it attaches to has been laid out. That holds at both
-    // call sites: the frame is shown before the main window is built, the window before any plugin loads.
+    // Waiting here dispatches the queue, and that runs the timers of everything that is starting up - an embedded
+    // render surface drives its attach backoff that way, and it must not run before the window it attaches to has been
+    // laid out. That holds at both call sites: the frame is shown before the main window is built, the window before
+    // any plugin loads.
     assert(d->main_window == nullptr || d->main_window->primaryRenderControl() == nullptr);
 
     window.show();
@@ -229,18 +226,26 @@ void GuiApplication::showAndWaitForFirstPaint(Window& window, std::string_view s
     QElapsedTimer timer;
     timer.start();
 
-    while (!window.hasPainted()) {
-        if (timer.elapsed() >= kFirstPaintDeadlineMs) {
-            VN_LOGW("{} was shown but has not painted within {} ms: it stays an empty window until the event loop runs",
-                    subject,
-                    kFirstPaintDeadlineMs);
-            return;
-        }
-        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-        QThread::msleep(kDispatchPollMs);
+    // Waited for, not polled for: the first paint arrives as an event, and the deadline is a single-shot timer racing
+    // it inside the same loop. The check in front is what keeps a window that painted during show() from waiting for
+    // the deadline, and it cannot miss the event: nothing runs between it and exec(), so nothing can paint in between.
+    if (!window.hasPainted()) {
+        QEventLoop loop;
+
+        const vn::Connection painted  = window.first_paint.connect([&loop] { loop.quit(); });
+        QTimer::singleShot(kFirstPaintDeadlineMs, &loop, &QEventLoop::quit);
+
+        loop.exec(QEventLoop::ExcludeUserInputEvents);
     }
 
-    VN_LOGI("{} painted after {} ms", subject, timer.elapsed());
+    if (window.hasPainted()) {
+        VN_LOGI("{} painted after {} ms", subject, timer.elapsed());
+    }
+    else {
+        VN_LOGW("{} was shown but has not painted within {} ms: it stays an empty window until the event loop runs",
+                subject,
+                kFirstPaintDeadlineMs);
+    }
 }
 
 GuiApplication::GuiApplication(int argc, char** argv)
