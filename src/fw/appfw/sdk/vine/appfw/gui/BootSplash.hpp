@@ -12,9 +12,11 @@ VN_APPFWGUI_NS_BEGIN
  * @brief Startup frame: the frameless window shown while an application boots.
  *
  * Draws the application's identity (logo, title, subtitle) and the boot itself: the status line says what is happening
- * right now ("正在加载插件 app_shell (2/3)") and the bar shows how far the current stage has come. The content comes
- * from StartupProgress, so the frame renders whatever the framework and the application report and needs no
- * application-side presentation code: it subscribes to ProgressHost::changed() and redraws on every notification.
+ * right now ("正在加载插件 app_shell (2/3)") next to a small indicator that keeps turning. There is no bar and no
+ * percentage: a boot has no known total (see StartupProgress), so the frame reports *what* is happening and *that* it is
+ * happening, and nothing about how far along it is. The content comes from StartupProgress, so the frame renders
+ * whatever the framework and the application report and needs no application-side presentation code: it subscribes to
+ * ProgressHost::changed() and redraws on every notification.
  *
  * The frame is created and owned by GuiApplication when AppConfig::splash is enabled, and it stays on screen until the
  * the boot ends with Application::startupEnd() - it does not close itself, because that moment is the framework's to
@@ -63,18 +65,15 @@ class VN_APPFW_API BootSplash : public Window {
     String statusText() const;
 
     /**
-     * @brief Returns the fraction of the current counted stage shown by the bar.
+     * @brief Reports whether the frame's busy indicator is turning.
      *
-     * @return A value in [0, 1], or a negative value while the bar is shown as busy (isIndeterminate()).
-     */
-    double progressFraction() const;
-
-    /**
-     * @brief Returns whether the bar is shown as busy.
+     * The frame shows no percentage and no bar: how far a boot has come is not knowable (the stages that have not started
+     * yet have no known length - see StartupProgress), so a bar could only lie. What it shows instead is motion - a small
+     * indicator that keeps turning, next to the line that says what is happening - and this is the state of that motion.
      *
-     * @return true when the current stage reports no countable total.
+     * @return true while the indicator is running.
      */
-    bool isIndeterminate() const;
+    bool isBusyIndicatorRunning() const;
 
   private:
     /// Redraws the frame from the startup progress sink; application thread only.

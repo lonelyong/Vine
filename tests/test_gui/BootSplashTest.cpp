@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <memory>
+#include <thread>
 
 #include <QCloseEvent>
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QThread>
 
@@ -104,7 +107,7 @@ TEST(StartupProgressTest, StageWithoutTotalIsIndeterminate)
     EXPECT_FALSE(boot.isCounted());
 }
 
-TEST(BootSplashTest, ShowsReportedStageAndProgress)
+TEST(BootSplashTest, ShowsReportedStageAndKeepsItsIndicatorTurning)
 {
     StartupProgress boot;
     SplashConfig    config;
@@ -112,25 +115,35 @@ TEST(BootSplashTest, ShowsReportedStageAndProgress)
     config.subtitle = "test";
 
     BootSplash splash(config);
-    // 还没上报任何阶段：状态文字为空，进度条显示为"进行中"。
+    auto* const frame = splash.impl<QWidget>();
+    ASSERT_NE(frame, nullptr);
+
+    // 还没上报任何阶段：状态文字为空。
     EXPECT_TRUE(splash.statusText().empty());
-    EXPECT_TRUE(splash.isIndeterminate());
+
+    // **没有进度条、没有百分比**（2026-09-26 决定）：启动没有已知总量，条只能骗人。框只说“在干什么”与“在动”。
+    EXPECT_EQ(frame->findChild<QProgressBar*>(), nullptr) << "启动框不该有进度条";
+    EXPECT_TRUE(splash.isBusyIndicatorRunning()) << "指示器必须是一直在转的那个东西";
 
     boot.stage("正在查找插件");
     EXPECT_TRUE(splash.statusText() == u8"正在查找插件");
-    EXPECT_TRUE(splash.isIndeterminate());
 
+    // 计数阶段也一样：文字照跟，但框上没有任何总量可看（条不存在，所以也没有“走到哪”这回事）。
     boot.stage("正在加载插件", 4);
-    EXPECT_FALSE(splash.isIndeterminate());
-    EXPECT_NEAR(splash.progressFraction(), 0.0, 1e-9);
-
     boot.setLabel("正在加载插件 app_shell (2/4)");
     boot.advance(2);
     EXPECT_TRUE(splash.statusText() == u8"正在加载插件 app_shell (2/4)");
-    EXPECT_NEAR(splash.progressFraction(), 0.5, 1e-9);
+    EXPECT_TRUE(splash.isBusyIndicatorRunning());
 
-    boot.complete();
-    EXPECT_NEAR(splash.progressFraction(), 1.0, 1e-9);
+    // 指示器真的在动：两次抓图在事件循环跑过之后必须不一样（定时器停了就是静止的图）。
+    const QPixmap before = frame->grab();
+    const auto    deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+    while (std::chrono::steady_clock::now() < deadline) {
+        QCoreApplication::processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    QCoreApplication::processEvents();
+    EXPECT_NE(before.toImage(), frame->grab().toImage()) << "指示器必须在转：两次抓图一模一样就说明它是一张静止的图";
 }
 
 TEST(BootSplashTest, TheFrameRefusesToCloseWhileTheBootRuns)
@@ -160,7 +173,7 @@ TEST(BootSplashTest, MissingLogoIsNotFatal)
 
     // 读不到的装饰按"没有 logo"处理：启动框不会因为一张图而让整个启动失败。
     BootSplash splash(config);
-    EXPECT_TRUE(splash.isIndeterminate());
+    EXPECT_TRUE(splash.isBusyIndicatorRunning());
 }
 
 TEST(BootSplashTest, FrameSurvivesTheEndOfTheBoot)
@@ -177,8 +190,8 @@ TEST(BootSplashTest, FrameSurvivesTheEndOfTheBoot)
     }
 
     // 上报口先于启动框销毁（宿主先关框），此时启动框保留最后一帧而不是读已销毁的上报口。
-    EXPECT_FALSE(splash->isIndeterminate());
-    EXPECT_NEAR(splash->progressFraction(), 0.5, 1e-9);
+    EXPECT_TRUE(splash->statusText() == u8"正在加载插件");
+    EXPECT_TRUE(splash->isBusyIndicatorRunning());
 }
 
 TEST(BootSplashTest, AnEmptyTitleShowsTheApplicationName)

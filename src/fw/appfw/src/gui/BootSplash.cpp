@@ -12,11 +12,11 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
-#include <QProgressBar>
 #include <QScreen>
 #include <QRect>
 #include <QSvgRenderer>
 #include <QThread>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -44,11 +44,17 @@ constexpr int kRadius = 8;
 /// Logo box; a logo is scaled into it, keeping its aspect ratio.
 constexpr int kLogoSize = 64;
 
-/// Fraction scale of the bar: a 1/1000 step is finer than any progress report.
-constexpr int kBarRange = 1000;
+/// The busy indicator's box; small on purpose - it says "working", it is not a gauge.
+constexpr int kSpinnerSize = 18;
 
-/// Marks the bar as busy in progressFraction().
-constexpr double kIndeterminate = -1.0;
+/// How often the indicator turns, in milliseconds (about 30 fps, which is smoother than anything it reports).
+constexpr int kSpinnerStepMs = 33;
+
+/// How far it turns per step: a full turn every ~400 ms - moving without being frantic.
+constexpr int kSpinnerStepDegrees = 30;
+
+/// Length of the drawn arc, in degrees: a moving segment reads as motion, a full ring would not.
+constexpr int kSpinnerSweepDegrees = 100;
 
 /// The frame: a frameless top-level window that draws its own rounded panel.
 ///
@@ -82,6 +88,57 @@ class SplashWindow : public QWidget
         painter.setPen(palette().mid().color());
         painter.drawRoundedRect(panel, kRadius, kRadius);
     }
+};
+
+/// The startup frame's busy indicator: an arc that keeps turning.
+///
+/// The frame deliberately shows no percentage: nobody can know how far a boot has come (see StartupProgress - the
+/// stages that have not started yet have no known length), so what it shows instead is that something is happening.
+/// The indicator runs from construction until the frame is destroyed: the boot is over when the framework takes the
+/// frame down, not when a report stops arriving.
+///
+/// It turns on the application thread's timer, so it advances whenever the event loop gets a turn - which the boot now
+/// grants it repeatedly (the session attach, its warm-up frame and the content load all run on the pool). A stretch that
+/// does hold the thread simply leaves the last frame on screen.
+class Spinner : public QWidget
+{
+  public:
+    explicit Spinner(QWidget* parent = nullptr)
+      : QWidget(parent)
+    {
+        setFixedSize(kSpinnerSize, kSpinnerSize);
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+
+        timer_.setInterval(kSpinnerStepMs);
+        QObject::connect(&timer_, &QTimer::timeout, this, [this] {
+            angle_ = (angle_ + kSpinnerStepDegrees) % 360;
+            update();
+        });
+        timer_.start();
+    }
+
+    /// @brief Reports whether it is turning; a still indicator would be a picture that claims nothing is happening.
+    [[nodiscard]] bool isRunning() const noexcept { return timer_.isActive(); }
+
+  protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+
+        QPen pen(palette().color(QPalette::Highlight));
+        pen.setWidthF(2.0);
+        pen.setCapStyle(Qt::RoundCap);
+        painter.setPen(pen);
+
+        // A segment of a circle, drawn in 1/16 degree steps (Qt's angles are counter-clockwise and 16x).
+        const QRectF disc = QRectF(rect()).adjusted(2.0, 2.0, -2.0, -2.0);
+        painter.drawArc(disc, -angle_ * 16, kSpinnerSweepDegrees * 16);
+    }
+
+  private:
+    QTimer timer_;
+    int    angle_ = 0;
 };
 
 /// Loads the logo scaled into the frame's logo box, keeping its aspect ratio; a null pixmap when it cannot be read.
@@ -150,16 +207,13 @@ struct BootSplash::Impl : public WindowData {
     QLabel*       title    = nullptr;
     QLabel*       subtitle = nullptr;
     QLabel*       status_label = nullptr;
-    QProgressBar* bar      = nullptr;
+    Spinner*      spinner  = nullptr;
 
     /// Subscription to ProgressHost::changed(); held so it is cancelled with the frame.
     vn::Connection  hosts_changed{};
 
     /// Status line as last reported, before elision.
     QString status;
-
-    /// Fraction shown by the bar; negative while the bar is busy.
-    double fraction = kIndeterminate;
 
     /// Applies the frame's identity: title, subtitle and logo.
     ///
@@ -263,17 +317,19 @@ BootSplash::BootSplash(const SplashConfig& config)
 
     layout->addStretch(1);
 
-    data->bar = new QProgressBar(root);
-    data->bar->setFixedHeight(6);
-    data->bar->setTextVisible(false);
-    data->bar->setStyleSheet(QStringLiteral("QProgressBar { border: none; border-radius: 3px; background: palette(mid); }"
-                                            "QProgressBar::chunk { border-radius: 3px; background: palette(highlight); }"));
-    layout->addWidget(data->bar);
+    // 一行：在动的指示器 + 在做什么。没有百分比——没人知道这次启动一共有多少（见 StartupProgress），
+    // 所以框只说“在动”和“在干什么”这两件事。
+    auto* status_row = new QHBoxLayout();
+    status_row->setSpacing(10);
+
+    data->spinner = new Spinner(root);
+    status_row->addWidget(data->spinner, 0, Qt::AlignVCenter);
 
     data->status_label = new QLabel(root);
     data->status_label->setStyleSheet(QStringLiteral("color: palette(window-text);"));
-    layout->addSpacing(8);
-    layout->addWidget(data->status_label);
+    status_row->addWidget(data->status_label, 1);
+
+    layout->addLayout(status_row);
 
     data->applyConfig(config);
 
@@ -295,14 +351,10 @@ String BootSplash::statusText() const
     return Convert::fromQString(dptr()->status);
 }
 
-double BootSplash::progressFraction() const
+bool BootSplash::isBusyIndicatorRunning() const
 {
-    return dptr()->fraction;
-}
-
-bool BootSplash::isIndeterminate() const
-{
-    return dptr()->fraction < 0.0;
+    const auto* const data = dptr();
+    return data->spinner != nullptr && data->spinner->isRunning();
 }
 
 void BootSplash::refresh()
@@ -315,23 +367,15 @@ void BootSplash::refresh()
         return;
     }
 
+    // What is shown is what is happening; how far the boot has come is not shown at all. The counted stages a reporter
+    // may use (PluginManager counts plugins) still exist, and the status bar and the console still show them - the
+    // frame just does not turn them into a number, because a boot has no known total.
     const std::string text = boot->label();
     data->status           = QString::fromUtf8(text.data(), static_cast<int>(text.size()));
 
     // Elide by hand: a plugin name can be longer than the frame, and QLabel would simply widen it.
     const QFontMetrics metrics(data->status_label->font());
     data->status_label->setText(metrics.elidedText(data->status, Qt::ElideMiddle, kWidth - 48));
-
-    if (boot->isCounted()) {
-        data->fraction = std::clamp(boot->fraction(), 0.0, 1.0);
-        data->bar->setRange(0, kBarRange);
-        data->bar->setValue(static_cast<int>(data->fraction * kBarRange));
-    }
-    else {
-        // Busy: what is happening is known, how long it takes is not.
-        data->fraction = kIndeterminate;
-        data->bar->setRange(0, 0);
-    }
 }
 
 inline auto BootSplash::dptr() -> Impl*

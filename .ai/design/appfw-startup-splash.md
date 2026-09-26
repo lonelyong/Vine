@@ -10,7 +10,14 @@
 启动期没有进度可看：`GuiApplication` 的**构造函数**建主窗口（Ribbon、停靠面板），而 `PluginManager::loadAll()`
 在应用线程上跑，用户面对的是一个"还没长齐的窗口"，而且插件加载快慢完全不可见。
 本次加的是**框架级**的启动框：任何 app 通过 `AppConfig::splash` 开一个，框里显示应用身份
-（logo/标题/副标题）+ 当前在做什么（"正在加载插件 app_shell (2/3)"）+ 进度条。
+（logo/标题/副标题）+ 当前在做什么（"正在加载插件 app_shell (2/3)"）+ 一个**一直在转的小指示器**。
+
+> **2026-09-26 改版（用户）：”不搞总进度，只是不断推进，不显示进度条，显示一个小的转圈的图标”。**
+> 框上不再有进度条、也没有任何百分比：启动没有已知总量，条只能骗人（见下“两种阶段”一节的结论）。
+> 留下的是：状态行（在干什么）+ 18 px 的转圈指示器（在动）。`BootSplash::progressFraction()` /
+> `isIndeterminate()` 随之删除，换成 `BootSplash::isBusyIndicatorRunning()`。
+> 报告方的**可计数阶段照旧存在**（`stage(name, total)` / `advance()`，插件加载就在用）——
+> 状态栏的呈现者与无头控制台照旧显示它们，只是**启动框不把它们变成数字**。
 
 "通用"落在两件事上：
 
@@ -24,7 +31,7 @@
 | --- | --- | --- |
 | `SplashConfig` | `AppConfig::splash`（`AppConfig.hpp`） | 应用侧配置：开关 + 标题/副标题/logo |
 | `StartupProgress` | `sdk/vine/appfw/StartupProgress.hpp` | 启动期上报口：阶段、状态文字、比例；进程内至多一个 |
-| `gui::BootSplash` | `sdk/vine/appfw/gui/BootSplash.hpp` | 呈现：无边框自绘圆角框 + 状态行 + 进度条 |
+| `gui::BootSplash` | `sdk/vine/appfw/gui/BootSplash.hpp` | 呈现：无边框自绘圆角框 + 状态行 + 转圈指示器（无条无百分比） |
 | `Application` | 启动期由 `startupSequence()` 驱动：建/收上报口（`beginStartupProgress()` / `startupProgress()`），三拍是异步钩子 | 生命周期与销毁 |
 | `GuiApplication` | **构造函数** / `startupStart()` + `startupEnd()` 覆写（异步） | 建框、显示、关闭 |
 | `PluginManager::loadAll()` | 上报"正在查找插件"、"正在创建/加载/收尾插件 x (i/n)" | 启动里最长、最不可预测的一段 |
@@ -36,9 +43,9 @@
 
 ## 两种阶段，以及为什么不是"整体 ETA"
 
-- **可计数阶段** `stage(name, total)`：有总量，进度条按 `done/total` 推进（插件加载就是这样，
-  每个插件的 `load()` 回来算一份）。
-- **不确定阶段** `stage(name)`：只知道在做什么，进度条显示"进行中"。
+- **可计数阶段** `stage(name, total)`：有总量，`advance()` 按 `done/total` 推进（插件加载就是这样，
+  每个插件的 `load()` 回来算一份）。**启动框不显示它**（没有条）；状态栏呈现者与控制台照旧显示。
+- **不确定阶段** `stage(name)`：只知道在做什么。
 
 **每个可计数阶段从零开始**（等于该阶段自己的比例），而不是整次启动的剩余。
 理由：上报方不可能知道还没走到的阶段有多长，硬凑一个全局百分比要么在阶段切换处跳回 0
