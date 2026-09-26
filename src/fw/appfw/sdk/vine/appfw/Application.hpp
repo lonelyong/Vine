@@ -114,8 +114,8 @@ class VN_APPFW_API Application : public Object {
     /**
      * @brief Tears the application down after the main loop has stopped.
      *
-     * Runs the shutdown sequence shared by every run() implementation, while the
-     * application is still fully alive:
+     * The teardown run() performs once the loop has stopped, while the application is
+     * still fully alive (a host that writes its own run() uses the same one):
      * 1. cancels a pending user-input read (UserIO::cancelPendingInput()) and then
      *    cancels every command chain and waits, bounded, for them to finish
      *    (CommandManager::cancelAllAndWait()) - a command frame holds the manager,
@@ -127,6 +127,22 @@ class VN_APPFW_API Application : public Object {
      *
      * Calling it twice is harmless: the chains are already gone, the plugin list is
      * empty and the bus is already stopped, so only the config save repeats.
+     *
+     * Protected on purpose: the teardown belongs to the run() being torn down. A host, a
+     * command or a plugin that wants the application to stop asks the loop to exit
+     * (exit()) - which is what the framework itself uses to end a boot early
+     * (cancelStartup(), failStartup()) - so the loop returns and run() tears down, and
+     * the order above cannot be entered from the middle.
+     *
+     * Called while the loop is still running, or from a thread that is not the application
+     * thread, it reports that and continues: the caller may know something the framework does
+     * not, and a teardown that refused to run would leave the process worse off.
+     *
+     * It must not be called from inside a command or a plugin's unload() either, although
+     * the two fail differently: the drain cancels every live chain - including the one
+     * making the call - so a command doing this sits out the whole bound and then tears
+     * the application down under a frame that is still running, and a plugin unloading
+     * would stop the event bus before the remaining plugins have been unloaded.
      */
     void shutdown();
 

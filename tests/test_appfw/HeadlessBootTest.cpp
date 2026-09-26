@@ -46,6 +46,7 @@
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/ConfigManager.hpp>
+#include <vine/appfw/EventBus.hpp>
 #include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/StartupProgress.hpp>
@@ -130,6 +131,9 @@ struct WarningCapture {
 class WorkingHostApplication : public vn::appfw::Application {
   public:
     using Application::Application;
+
+    /// 收尾是 protected（只有 `run()` 那条路径调它）：用例要能直接调，才能量"线程/时机不对会怎样"。
+    using Application::shutdown;
 
     /// 第二拍：框架的插件加载照旧先来，然后是宿主的活。
     vn::async::Task<void> startup() override
@@ -537,6 +541,33 @@ TEST(HeadlessBootTest, ARegistrationThatDisagreesWithItsLibraryIsReportedAndTheL
     EXPECT_TRUE(warnings.contains("mismatch")) << "要点名是哪个注册文件";
 
     EXPECT_TRUE(app->pluginManager()->unloadAll());
+}
+
+/// 收尾必须发生在应用线程上：插件正是在 `unload()` 里拆自己的窗口与图形对象。用错线程要留下一条警告 ——
+/// **只警告不拒绝**（调用者可能有自己的理由，而"拒绝收尾"比"不干净的收尾"更糟）。
+TEST(HeadlessBootTest, ShutdownFromAnotherThreadIsReportedAndStillRuns)
+{
+    QStandardPaths::setTestModeEnabled(true);
+
+    static char  arg0[] = "test_appfw";
+    static char* argv[] = { arg0, nullptr };
+
+    vn::appfw::AppConfig config;
+    config.name           = "test_appfw";
+    config.persist_config = false;
+    config.load_plugins   = false;
+
+    auto app = std::make_unique<WorkingHostApplication>(config, 1, argv);
+    ASSERT_NE(app, nullptr);
+
+    const WarningCapture warnings = captureWarnings();
+
+    std::thread teardown([&app] { app->shutdown(); });
+    teardown.join();
+
+    EXPECT_TRUE(warnings.contains("not the application thread")) << "插件收尾在错的线程上必须被报出来";
+    // 而且它**真的跑过**：总线已经是停的，第二次调用直接复述同一个结果（不是又等一遍）。
+    EXPECT_TRUE(app->eventBus()->shutdownGracefully(std::chrono::milliseconds(10)));
 }
 
 } // namespace

@@ -299,7 +299,11 @@ int Application::run()
     // 宿主的活跑在池里，循环不必为它停。
     QMetaObject::invokeMethod(d->app, [this] { static_cast<void>(startupSequence()); }, Qt::QueuedConnection);
 
+    // 循环跑着的时候收尾是用法错误（见 shutdown()）：这一位就是那句话的判据。
+    d->loop_running = true;
     const int code = d->app->exec();
+    d->loop_running = false;
+
     shutdown();
     return code;
 }
@@ -357,6 +361,20 @@ vn::async::DetachedTask Application::startupSequence()
 
 void Application::shutdown()
 {
+    // Two ways to call this wrong, both reported and neither refused: the caller may know
+    // something the framework does not (a host that stops its own loop and tears down from
+    // inside it), and a teardown that refuses to run would leave the process worse off than
+    // an unclean one. The order below is what makes the difference: commands are drained
+    // before the managers they hold, plugins are unloaded before the bus they publish on.
+    if (dptr()->loop_running) {
+        VN_LOGW("Application::shutdown() was called while the main loop is still running: the application is being torn "
+                "down under it; ask the loop to exit() instead");
+    }
+    if (auto* dispatcher = dptr()->main_dispatcher.get(); dispatcher != nullptr && !dispatcher->isMainThread()) {
+        VN_LOGW("Application::shutdown() was called from a thread that is not the application thread: plugin unload() runs "
+                "here, and a plugin takes its windows and graphics objects down there");
+    }
+
     // Commands go first: their frames hold the manager, the user IO and plugin
     // services, and a command that is still suspended when the manager is
     // destroyed would resume into freed memory. The wait is bounded, so a command

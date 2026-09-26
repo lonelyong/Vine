@@ -109,7 +109,7 @@ Delivery         ── shared_ptr<DeliveryRegistry> + weak_ptr<Payload>；析�
   是完全合法的用法——此时 `state == Stopping` 且 `stopper` 就是本线程，等下去只能死锁（外层
   的 `Stopped` 转换要等这次调用返回）。两条路径都直接返回（`shutdown()` 返回空句柄语义的 no-op，
   `shutdownGracefully()` 返回 `false`，因为这次关停确实没有 drain）。
-  `Application::run()`/`GuiApplication::run()` 用 `EventBus::gracefulShutdownTimeout()`（200ms）优雅关停，
+  `Application::shutdown()`（由 `Application::run()` 调用）用 `EventBus::gracefulShutdownTimeout()`（200ms）优雅关停，
   `Application::shutdown()` 在其返回 `false` 时记一条警告（与命令链 drain 超时的警告对称）。
 
 ## 必须由调用方保证

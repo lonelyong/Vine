@@ -52,6 +52,11 @@ struct ApplicationData {
     /// Whether the framework loads the plugins during the startup phase (AppConfig::load_plugins).
     bool load_plugins = true;
 
+    /// True while run() is inside the main loop. The teardown belongs after the loop has
+    /// stopped, and shutdown() reports a call that arrives before that instead of trusting
+    /// the caller to know - it cannot tell "the loop is running" any other way.
+    bool loop_running = false;
+
     virtual ~ApplicationData();
 };
 

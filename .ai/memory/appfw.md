@@ -16,6 +16,9 @@
 > 回来）；`loadAll()` 是给不跑循环的工具/测试用的同步门（`MainThreadDispatcher::runToCompletion()` = async 的 `runToCompletion(task, pump)`，pump 就是
 > `deliverPostedCalls()`，等的时候只派发它——
 > **不能用 `Task::result()`**：它只阻塞不派发，钩子"回到应用线程"那一步会死锁）。管理器**自己不转循环**。
+> **`Application::shutdown()` 是 protected（2026-09-26 说准）**：只有 `run()` 那条收尾路径调它（派生宿主
+> 自己写 `run()` 用同一段）；宿主/命令/插件要停进程用 `exit()`（`cancelStartup()`/`failStartup()` 也走它）。
+> 循环还在跑时调、或从非应用线程调 ⇒ 各留一条**只警告不拒绝**的日志（`run()` 的 `loop_running` 位是判据）。
 > **`uuid` 是身份（2026-09-26 补齐）**：扫描时三条告警，都只 warning 不拒绝——同名不同 `uuid`（第一个位置胜）/
 > 不同名同 `uuid`（两个都留下）/ 注册文件的 `name`·`uuid` 与库不符（**库为准**，只比"指向单个库文件"的注册）。
 > **启动可以被取消**（2026-09-26）：`StartupProgress::stopToken()/requestCancel()`；插件从 `PluginLoadContext::stopToken()`

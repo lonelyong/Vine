@@ -13,7 +13,7 @@ UI：`src/fw/appfw/src/gui/PluginManagerDialog.cpp`。
    写了没接线的死代码。
 2. 缺"禁用插件"能力：`PluginManager` 只有 `load()`/`loadAll()`，没有
    `unload`/`disable`；`ConfigRegistry::removeItemsForPlugin` 也只有测试在用。
-3. 关闭路径（`Application::run()` / `GuiApplication::run()`）只做了总线优雅停机，
+3. 关闭路径（`Application::run()`——今天唯一的 `run()` 实现）只做了总线优雅停机，
    注释里写的"before the subscribers (windows, plugins) start to be torn down"
    只兑现了总线那一半。
 
@@ -57,8 +57,11 @@ UI：`src/fw/appfw/src/gui/PluginManagerDialog.cpp`。
 
 ## 卸载与关闭顺序
 
-`Application::shutdown()`（`Application.cpp`）是 `run()` 与 `GuiApplication::run()`
-共用的关闭序列，顺序有语义：
+`Application::shutdown()`（`Application.cpp`，**protected**：只有 `run()` 那条收尾路径调它；
+宿主/命令/插件要停进程用 `exit()`）是关闭序列，顺序有语义。两种"来早了"的用法各留一条
+**只警告不拒绝**的日志（2026-09-26 加；`run()` 里那个 `loop_running` 位就是第一条的判据）：
+**循环还在跑时调**（应用会被拆到循环脚下）、**从非应用线程调**（插件 `unload()` 会在那条线程上
+拆自己的窗口/图形对象）：
 
 1. `PluginManager::unloadAll()` —— 按**依赖反序**调用 `Plugin::unload()`。此时**总线、
    CommandManager、ConfigManager、窗口都还活着**，插件可以正常收尾、最后一次发布
