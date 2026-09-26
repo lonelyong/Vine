@@ -3,6 +3,14 @@
 #include <filesystem>
 #include <string>
 
+#ifdef _WIN32
+// clang-format off
+#    include <windows.h>  // Must precede dbghelp.h.
+#    include <dbghelp.h>
+// clang-format on
+#    pragma comment(lib, "dbghelp.lib")
+#endif
+
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QTimer>
