@@ -96,7 +96,9 @@
   闪屏整个启动期全透明、主窗整个启动期是一块黑板（用户实测报的就是这两条）。机制：`GuiApplication::init()`
   经 `showAndWaitForFirstPaint()` 把 show 与派发成对（上限 300 ms，超时 `VN_LOGW`），条件是 SDK 级的
   `Window::hasPainted()`（`WindowData` 里的 `PaintWatcher`：窗口自己 + 已有子控件 + 后加的子控件），
-  两处调用点各带一条 `assert`（框架自证“此刻只有这个窗口”）。实测：闪屏 `11 ms`、主窗 `12–21 ms`。
+  助手）**内部**用一条 `assert(d->main_window == nullptr || d->main_window->primaryRenderControl() == nullptr)`
+  把安全前提写死（同一句覆盖两个调用点：闪屏那次主窗还不存在，主窗那次插件还没加载）。实测：
+  闪屏 `5–11 ms`、主窗 `17–24 ms`（轮询步进 2 ms）。
   测试：`tests/test_gui/WindowPaintTest.cpp`（3 例）；Qt 自己的 `QSplashScreen::repaint()` 也是调 `processEvents()`
   （文档："even when there is no event loop present"）——即这是 Qt 级行为，不是 WSL 缺陷。
 - ⚠️ **启动框关掉时要把主窗口 `raise()` + `activate()`**：`Qt::SplashScreen` 置顶且不激活进程地显示，

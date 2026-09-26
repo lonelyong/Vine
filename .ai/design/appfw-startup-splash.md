@@ -163,9 +163,12 @@ app->run()                      → 主循环
 办法是定时 `raise()`"——即这是"启动期不跑事件循环"的 Qt 级行为，不是 WSL/Weston 的缺陷。）
 
 **修法**：`GuiApplication::init()` 把"show 窗口"与"派发到它画出第一帧"成对放在
-`showAndWaitForFirstPaint()` 里（`processEvents(ExcludeUserInputEvents)` + 5 ms 步进，上限 300 ms，
+`showAndWaitForFirstPaint()` 里（`processEvents(ExcludeUserInputEvents)` + 2 ms 步进，上限 300 ms，
 超时 `VN_LOGW` 不静默），判断条件就是 `Window::hasPainted()`（见下节）。
-位置刻意选在"主窗与所有插件都还不存在"的那一刻，并用 `assert` 把它写死（而不是只写在注释里）：
+位置刻意选在"主窗与所有插件都还不存在"那一刻，并把这个前提用 `assert` 写死在
+**函数内部**（而不是只写在注释里，也不拆到两个调用点上）：
+`assert(d->main_window == nullptr || d->main_window->primaryRenderControl() == nullptr)` ——
+同一句覆盖两个调用点（闪屏那次主窗还不存在，主窗那次插件还没加载）。
 所以本文件上面那条"不要替渲染组件 pump"的顾虑在这里不成立（那时还没有渲染表面）。
 
 **实测**（本机 WSLg/Weston + Xwayland，2026-09-26）：`startup frame painted after 11 ms`（本次启动的第一条日志），
@@ -184,8 +187,7 @@ app->run()                      → 主循环
 直到 `run()` 进事件循环才跳到 `83.5%`。与闪屏同根：Qt 把窗口画上屏要事件队列派发，而启动期不跑事件循环。
 
 **修法**：`init()` 里主窗 `show()`（状态栏进度条先挂好，这样首帧就把框架放进窗口的东西都画上）
-也走同一个 `showAndWaitForFirstPaint()`；这里用 `assert(d->main_window->primaryRenderControl() == nullptr)`
-把"插件还没加载、渲染表面还不存在"写死（渲染表面就在插件里，它的 attach 退避正是不能提前唤醒的那个东西）。
+也走同一个 `showAndWaitForFirstPaint()`（守卫在函数里，见上一节）。
 
 **实测**：`main window painted after 12–21 ms`，主窗框从 ~0.35 s 起就是 `83.5%`（余下 16.5% ≈ 378×247
 就是渲染区那块"洞"——容器里的原生子窗还没有帧，见 `appfw-render-surface.md`；首帧呈递后就是画面）。
