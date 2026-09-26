@@ -4,6 +4,8 @@
 #include <string>
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QTimer>
 
 #include <vine/logging/Log.hpp>
 #include <vine/logging/LogSink.hpp>
@@ -198,6 +200,33 @@ int main(int argc, char** argv)
             ::vn::logging::LogSink::dailyFile(app->dataDirectory() / "logs" / "vine.log"),
         },
     });
+
+    // 启动期应用线程最长连续占用（`VINE_BOOT_TIMING=1`；门禁读这一行）。这是"启动不会把界面卡住"的实测依据：
+    // 现在的形状里，会话 attach（设备/管线）与 warm-up 那一帧都在池上跑，剩下的账是 功能栏+面板 / 取句柄+尺寸 /
+    // 收尾 三段（2026-09-26 实测 74 ms；改成同步形状时它是 414 ms 一整段）。守着它的地方：
+    // scripts/vsg_rewrite_gate.sh 的应用阶段（阈值 VINE_GATE_BOOT_OCCUPANCY_MS，默认 150）。
+    if (qEnvironmentVariableIsSet("VINE_BOOT_TIMING")) {
+        static QElapsedTimer since_start;
+        static qint64        last_tick = 0;
+        static qint64        worst_gap = 0;
+        since_start.start();
+
+        auto* watch = new QTimer(QCoreApplication::instance());
+        watch->setInterval(10);
+        QObject::connect(watch, &QTimer::timeout, QCoreApplication::instance(), [] {
+            const qint64 now = since_start.elapsed();
+            const qint64 gap = now - last_tick;
+            last_tick        = now;
+            if (gap > worst_gap) {
+                worst_gap = gap;
+            }
+        });
+        watch->start();
+
+        QTimer::singleShot(1500, QCoreApplication::instance(), [] {
+            std::fprintf(stderr, "[boot-timing] application thread max continuous occupancy: %lld ms\n", static_cast<long long>(worst_gap));
+        });
+    }
 
     // 剩下的全归框架：run() 先把事件循环跑起来，再由队列里的启动步上屏、等首帧、加载插件
     // （AppConfig::load_plugins 默认开），最后结束启动阶段（关掉启动框、把主窗口提到前面）。

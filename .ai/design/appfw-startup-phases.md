@@ -310,6 +310,15 @@ void assembleDemoContentLater(std::shared_ptr<AppShellDemo>);   // 自己包的�
   `load()` 里请求取消 ⇒ `run()` 返回 **0**、最后一拍没跑、插件已卸、上报口已收）。变异（把两处 `startupCancelled()`
   检查改成 `false`）⇒ 那条用例**挂死**（没人停循环）⇒ 它自带 3 s 兜底，回归时以失败收场而不是卡死。
 
+## 门上守着它：应用线程最长连续占用（2026-09-26 加）
+
+那个“414 → 74 ms”的数字以前只在提交信息里。现在它是**门禁的一行**：demo 在 `VINE_BOOT_TIMING=1` 下把启动期
+应用线程**最长一次连续占用**打到 stderr（10 ms 定时器量间隔），`scripts/vsg_rewrite_gate.sh` 的应用阶段读它并要求
+`<= VINE_GATE_BOOT_OCCUPANCY_MS`（默认 150 ms，约是实测的两倍，免得机器一忙就假红）。
+把某一段搬回应用线程 ⇒ 这里直接红（反证：用 `VINE_GATE_BOOT_OCCUPANCY_MS=1` 跑同一道门 ⇒
+`[FAIL] app (deferred demo) … the boot held the application thread for 69 ms, over the 1 ms allowed`）。
+日志里没有这一行也算红（探针被删掉不能被静默放过）。
+
 ## 渲染会话 init 的一半搬到池上（2026-09-26 落地，**A/B 量过**）
 
 结论先给：**会话 init 只是"要句柄"，不是"要应用线程"**——设备/会话/管线建在池上完全成立，像素逐位不变。

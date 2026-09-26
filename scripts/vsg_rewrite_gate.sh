@@ -32,7 +32,13 @@
 #                                     sky-only frame after a resize, squashed previews) passed every
 #                                     test in this gate and were found by looking at the window. A run
 #                                     without DISPLAY skips it unless VINE_GATE_ALLOW_SKIPS=1, and a run
-#                                     whose demo never reports its window FAILS.
+#                                     whose demo never reports its window FAILS. It also guards the boot's
+#                                     own timing (the demo prints it under VINE_BOOT_TIMING=1): the longest
+#                                     single stretch the boot holds the APPLICATION THREAD for, bounded by
+#                                     VINE_GATE_BOOT_OCCUPANCY_MS (default 150 ms; measured 74-92 ms in the
+#                                     current shape against 414 ms when the whole session attach ran on the
+#                                     application thread) - so moving work back onto that thread is a red row
+#                                     here instead of a note in a commit message.
 #
 # A FAILING SUITE IS RUN ONCE MORE, and the retry decides the stage (the first run's failing cases are
 # named in the evidence line, never hidden): one case in this suite reads a window right after a session's
@@ -471,7 +477,7 @@ check_app() {
     # `exec` matters: without it the job is a SUBSHELL, the gate's kill reaches the subshell, and the
     # application keeps its window and keeps drawing into it (see cleanup_app) - which is how the stray
     # windows that made this suite flaky were left behind in the first place.
-    ( cd "$BUILD_DIR" && exec env QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" VINE_VSG_DEBUG_LAYER=1 \
+    ( cd "$BUILD_DIR" && exec env QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" VINE_VSG_DEBUG_LAYER=1 VINE_BOOT_TIMING=1 \
         "$app_bin" >"$log" 2>&1 ) &
     APP_PID=$!
     local app_pid="$APP_PID"
@@ -606,6 +612,23 @@ check_app() {
             status=1
         fi
     done
+    # 4. The boot's own timing. The application prints one line under VINE_BOOT_TIMING=1: how long the boot held the
+    #    APPLICATION THREAD in its longest single stretch. That number is the whole point of the boot's shape - what
+    #    runs on the pool (session attach, its warm-up frame, the content load) does not block the loop, what has to
+    #    stay on the thread does - so it is guarded here instead of living in a commit message: moving a stretch back
+    #    onto the application thread turns this stage red. Measured 2026-09-26: 74 ms in the current shape, 414 ms when
+    #    the whole attach ran on the application thread. The threshold is ~2x the measurement on purpose (a machine
+    #    under load must not read as a regression); override with VINE_GATE_BOOT_OCCUPANCY_MS to probe the check itself.
+    local boot_max
+    boot_max="$(sed -n 's/.*\[boot-timing\] application thread max continuous occupancy: \([0-9]*\) ms.*/\1/p' "$log" | tail -1)"
+    if [ -z "$boot_max" ]; then
+        evidence="$evidence (no [boot-timing] line in the log: the application did not report its boot timing)"
+        status=1
+    elif [ "$boot_max" -gt "${VINE_GATE_BOOT_OCCUPANCY_MS:-150}" ]; then
+        evidence="$evidence (the boot held the application thread for ${boot_max} ms, over the ${VINE_GATE_BOOT_OCCUPANCY_MS:-150} ms allowed: something that should run on the pool runs on it)"
+        status=1
+    fi
+
     record_stage "app (deferred demo)" "$status" "$evidence"
 }
 check_app
