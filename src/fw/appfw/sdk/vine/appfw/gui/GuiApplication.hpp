@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include <string_view>
+#include <functional>
 
 #include <vine/appfw/Application.hpp>
 
@@ -33,11 +33,16 @@ class VN_APPFW_API GuiApplication : public Application {
     ~GuiApplication() override;
 
   public:
+    /**
+     * @brief Creates the application's windows: the startup frame (when enabled), then the main window.
+     *
+     * Creation and presentation are two steps: this method builds what the application is made of and puts nothing on
+     * screen, run() shows it (see showUserInterface()) once the boot has built everything. A host that never runs the
+     * loop presents its window the same way any host does - by ending the startup phase (see finishStartup()).
+     */
     virtual void init() override;
 
   public:
-    virtual int run() override;
-
     /**
      * @brief Ends the startup phase: finishes the startup progress and takes the startup frame away.
      *
@@ -54,6 +59,9 @@ class VN_APPFW_API GuiApplication : public Application {
      * is the render view's own business, not the frame's - the view keeps its native surface off screen until a frame
      * is in it (see RenderControl), so the area it occupies shows the plain widget background until the picture
      * arrives, and uncovering the window here can never reveal an empty native window.
+     *
+     * runStartup() calls it once the work it was handed returns, so a host that hands its startup work over does not
+     * have to; one that wants to end the boot at a different moment still calls it itself.
      */
     void finishStartup() override;
 
@@ -122,25 +130,40 @@ class VN_APPFW_API GuiApplication : public Application {
   protected:
     UserIO* createUserIO() override;
 
+    /**
+     * @brief Shows the windows the boot put in front of the user: the startup frame, then the main window.
+     *
+     * Both are created by init() and shown here, and the order between them is load-bearing: the frame is what covers
+     * the boot, so it goes up first, and the main window goes up next - not after the boot - because an embedded
+     * render surface (RenderControl, the VSG backend) creates its swapchain from the native window of the top-level
+     * widget, and a window that was never shown has none (the surface then fails to initialize instead of waiting for
+     * the window). The loop paints both before the host's startup work - with it the plugin loading - is allowed to
+     * start, which is what keeps them from being empty windows while the work blocks the thread.
+     */
+    void showUserInterface() override;
+
+    /**
+     * @brief Calls \a then once both boot windows have painted, at the latest once the first-paint deadline passes.
+     *
+     * A window is painted only once the event loop drives its queue (see Window::hasPainted()), so what this waits for
+     * are the windows' first paints - the frame that covers the boot and the main window around it, because either of
+     * them left empty is exactly what this hand-off exists to avoid. The deadline is the backstop for a window system
+     * that never reports a window as visible: the framework moves on and says so.
+     *
+     * @param then What run() runs once the user interface is up; called exactly once, from the next event-loop turn.
+     */
+    void whenUserInterfaceIsUp(std::function<void()> then) override;
+
   private:
     void applyTheme(Theme theme);
 
-    /**
-     * @brief Shows a window and waits for it to paint.
-     *
-     * For the windows a boot puts on screen before run() owns the event loop: painting a window waits for the window
-     * system's "it is visible now" notice, which reaches it through the event queue, so a window shown without driving
-     * that queue stays empty on screen (black, or transparent when it is translucent) until the loop starts. The wait
-     * is bounded, and both outcomes are reported - see the design notes for the measurements.
-     *
-     * Driving the queue runs the timers of everything that is starting up, so it is only done while no render surface
-     * exists yet: that is asserted inside, and it is the reason this is not a general purpose "show" (a plugin showing
-     * a window during a boot must not come through here).
-     *
-     * @param window  Window to show; it has not painted yet.
-     * @param subject Window name for the diagnostics.
-     */
-    void showAndWaitForFirstPaint(Window& window, std::string_view subject);
+    /// Calls the pending then of whenUserInterfaceIsUp() once no boot window is left unpainted, from the next event-loop
+    /// turn: the first paint arrives while that window's paint event is being dispatched, and the host's startup work
+    /// repaints the frame and finally takes it away - neither belongs inside a window's paint.
+    ///
+    /// @param deadline Whether the call comes from the first-paint backstop; a window still unpainted is then reported
+    ///                 and the host's work starts anyway instead of being waited for.
+    void startWhenUp(bool deadline);
 };
 
 VN_APPFWGUI_NS_END

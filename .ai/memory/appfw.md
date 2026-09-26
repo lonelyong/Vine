@@ -81,25 +81,29 @@
 - **进度是推送而不是轮询**：`ProgressHost::changed()` 是进程级 `Signal<>`，在注册/注销/前台栈/label/
   整百分点时发火；位置合流在 `ProgressIndicator::setPositionCallback`（每条目一次的热路径上只多一次比较，
   -O3 实测无代价，2000 万条目 101 次通知）。GUI 呈现器与控制台消费者各自订阅（不再是单观察者回调）。
-- **启动框（2026-09-18）**：`AppConfig::splash` 开（`enabled`/`title`/`subtitle`/`logo`），框架自己上报
-  "初始化界面 + 逐个插件"，应用插入自己的阶段用 `app->startupProgress()->stage("正在初始化日志")`（无框时是空操作）。
-  **宿主必须在进主循环前调 `Application::finishStartup()`**：框不自动关（忘了会盖着主窗口，`run()` 记 warning）；
-  它是幂等的，也是销毁上报口的地方。阶段语义是**阶段内比例**（可计数 `stage(name,total)`+`advance`；
-  不确定 `stage(name)`），不是全局 ETA。
-- ⚠️ **有启动框时主窗口照旧在 `init()` 里 show()**：嵌入式渲染表面要用顶层窗口的原生句柄建 swapchain，
+- **启动框（2026-09-18；统一流程 2026-09-26）**：`AppConfig::splash` 开（`enabled`/`title`/`subtitle`/`logo`），
+  框架自己上报 "初始化界面 + 逐个插件"，应用插入自己的阶段用 `app->startupProgress()->stage("正在初始化日志")`（无框时是空操作）。
+  **宿主只做两件事**：调 `app->runStartup(work)` 把自己在进主循环前要做的事交出去；框架把 work 跑完就调
+  `finishStartup()`（关框 + 销毁上报口）。`Application::run()` 就是这五步（两边共用一份）：
+  `showUserInterface()` → `whenUserInterfaceIsUp(跑 work)` → `finishStartup()` → `exec()`，
+  分歧只在两个 protected 虚函数：GUI 的 `showUserInterface()` 先上框再上主窗、`whenUserInterfaceIsUp()` 等两个窗口各画出首帧
+  （上限 300 ms）。`init()` **只建不 show**；从不跑循环的宿主（测试）靠幂等的 `finishStartup()` 让主窗可见。
+  阶段语义是**阶段内比例**（可计数 `stage(name,total)`+`advance`；不确定 `stage(name)`），不是全局 ETA。
+- ⚠️ **窗口一定在宿主的启动工作之前上屏**（不是偏好，是硬约束）：嵌入式渲染表面要用顶层窗口的原生句柄建 swapchain，
   没 show 过（或隐藏）的窗口给不出来 → VSG `GetClientRect failed: 无效的窗口句柄` + `surface Failed`。
-  启动框是 stay-on-top splash，盖在窗口上面。
+  结论是"主窗要在插件加载前 show"，而不是"要在 `init()` 里 show"。启动框是 stay-on-top splash，盖在上面。
 - ⚠️ **启动期不要 `processEvents()`**：会顺手跑别的组件的定时器/事件（渲染表面的 resize/settle 更新
   就是这样被提前唤醒的）。启动框只 `repaint()` 自己那一帧。
 - ⚠️ **唯一例外（2026-09-26）：闪屏与主窗都要“show 之后派发到它画出第一帧”**。X11 上 Qt 要先收到服务端的
   expose 才把 backing store flush 进窗口，而 expose 只能由事件队列派发送来 ⇒ 不派发时 `repaint()` 是空转，
-  闪屏整个启动期全透明、主窗整个启动期是一块黑板（用户实测报的就是这两条）。机制：`GuiApplication::init()`
-  经 `showAndWaitForFirstPaint()` 把 show 与等待成对，**事件驱动**：订阅 `Window::first_paint`（首帧信号），
-  上限是一个 `QTimer::singleShot(300 ms)`，两者在同一只嵌套 `QEventLoop` 里赛跑；进循环前先用
-  `Window::hasPainted()` 走快路径（长这样就不会漏掉已经发生过的首帧），超时 `VN_LOGW`。契约都在 SDK 里：
-  `Window::hasPainted()`（状态）+ `Window::first_paint`（状态转移，只报一次），实现是 `WindowData` 里的
-  `PaintWatcher`（窗口自己 + 已有子控件 + 后加的子控件靠 `ChildAdded`）；安全前提（"此刻没有渲染表面"）
-  是**函数内一条** `assert`。实测：闪屏 `1–11 ms`、主窗 `5–24 ms`。
+  闪屏整个启动期全透明、主窗整个启动期是一块黑板（用户实测报的就是这两条）。机制：`run()` 排好顺序，
+  `GuiApplication::whenUserInterfaceIsUp()` 订阅每个启动窗口的 `Window::first_paint`，上限是
+  `QTimer::singleShot(300 ms)`，进循环前先用 `Window::hasPainted()` 走快路径，超时 `VN_LOGW`；
+  **到点后再排一拍**（`singleShot(0)`）才跑 work —— 首帧信号是在派发那个窗口的 paint 事件时到的，
+  work 会重绘启动框并最后把它 delete（直接在信号里跑 ⇒ `QWidget::repaint: Recursive repaint detected` + 段错误）。
+  契约都在 SDK 里：`Window::hasPainted()`（状态）+ `Window::first_paint`（状态转移，只报一次），实现是
+  `WindowData` 里的 `PaintWatcher`（窗口自己 + 已有子控件 + 后加的子控件靠 `ChildAdded`）。
+  实测：`startup work starting 5–11 ms after the application was asked to run: the startup frame and the main window are on screen`。
   测试：`tests/test_gui/WindowPaintTest.cpp` 4 例（含"首帧信号只报一次"）；Qt 自己的 `QSplashScreen::repaint()`
   也是转 `processEvents()`（文档："even when there is no event loop present"）——这是 Qt 级行为，不是 WSL 缺陷。
 - ⚠️ **启动框关掉时要把主窗口 `raise()` + `activate()`**：`Qt::SplashScreen` 置顶且不激活进程地显示，

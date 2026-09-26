@@ -183,11 +183,54 @@ UserIO* Application::createUserIO()
     return new ConsoleUserIO;
 }
 
+void Application::showUserInterface()
+{
+}
+
+void Application::whenUserInterfaceIsUp(std::function<void()> then)
+{
+    then();
+}
+
+int Application::runStartup(std::function<void()> work)
+{
+    dptr()->startup_work = std::move(work);
+    dptr()->startup_handed_over.start();
+    return run();
+}
+
 int Application::run()
 {
-    const int code = dptr()->app->exec();
+    auto* const d = dptr();
+
+    // 计时从"被要求运行"算起（runStartup() 先记下交接时刻），给启动期的诊断一个统一起点。
+    if (!d->startup_handed_over.isValid()) {
+        d->startup_handed_over.start();
+    }
+
+    // 界面先上屏，再允许启动工作开始：工作会阻塞应用线程，而它依赖的东西（顶层窗口、渲染表面）要在那之前就位。
+    showUserInterface();
+    whenUserInterfaceIsUp([this] { startStartupWork(); });
+
+    const int code = d->app->exec();
     shutdown();
     return code;
+}
+
+void Application::startStartupWork()
+{
+    auto* const d = dptr();
+    if (d->startup_started) {
+        return;
+    }
+    d->startup_started = true;
+
+    // 工作跑完再结束启动阶段：工作里报告的每个阶段都还属于这次启动的进度。
+    auto work = std::move(d->startup_work);
+    if (work) {
+        work();
+    }
+    finishStartup();
 }
 
 void Application::shutdown()

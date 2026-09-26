@@ -1,7 +1,10 @@
 ﻿#pragma once
 
 #include <filesystem>
+#include <functional>
 #include <memory>
+
+#include <QElapsedTimer>
 
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/ConfigManager.hpp>
@@ -34,6 +37,16 @@ struct ApplicationData {
 
     /// Startup progress sink of this boot; only alive between beginStartupProgress() and finishStartup().
     std::unique_ptr<StartupProgress> startup_progress;
+
+    /// Host's startup work, handed over by runStartup(): run once the user interface is up. Empty is legal.
+    std::function<void()> startup_work;
+
+    /// Whether the startup phase has moved on (the work ran and the phase ended); the notice and its backstop can both
+    /// arrive, and this is what keeps the phase to one move.
+    bool startup_started = false;
+
+    /// When runStartup() was called, for the diagnostic that says how long the interface took to come up.
+    QElapsedTimer startup_handed_over;
 
     int    argc = 0;
     char** argv = nullptr;

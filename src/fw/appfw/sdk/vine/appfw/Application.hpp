@@ -3,6 +3,7 @@
 #include "appfw_global.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -90,15 +91,36 @@ class VN_APPFW_API Application : public Object {
 
   public:
     /**
-     * @brief Runs the application.
+     * @brief Runs the application: shows the user interface, does the host's startup work, then runs the loop.
      *
-     * This method starts the application's main loop and blocks until the
-     * application is exited. It returns the exit code provided to the exit()
-     * method.
+     * This method starts the application's main loop and blocks until the application is exited. It returns the exit
+     * code provided to the exit() method.
+     *
+     * Showing and the work are ordered by the framework, which is why the host hands its work over instead of running
+     * it before this call: the work blocks the application thread, so it may only start once the user interface is on
+     * screen (see showUserInterface() and whenUserInterfaceIsUp()). The startup phase ends when the work returns
+     * (finishStartup() is called for the host), so a host with a startup frame does not have to end it itself.
      *
      * @return The application's exit code.
      */
     virtual int run();
+
+    /**
+     * @brief Runs the application, doing the host's startup work once the user interface is up.
+     *
+     * The work is what has to happen before the application can be used - the host's own stages and the loading of the
+     * plugins - and it runs between the two steps run() orders: the user interface is up, and the loop has not settled
+     * into its normal work yet. It may block.
+     *
+     * What the hand-off implies: the work runs from inside the loop, so for its duration the application has a running
+     * event loop (MainThreadDispatcher::hasEventLoop() is true) while that very loop is blocked by the work - events
+     * posted to the application thread are delivered once it returns. An exception thrown by the work leaves through
+     * the loop, the way it would have left through the caller.
+     *
+     * @param work Startup work; may be empty for a host that has none.
+     * @return The application's exit code.
+     */
+    int runStartup(std::function<void()> work);
 
     /**
      * @brief Requests that the application's main loop stops with the given code.
@@ -115,13 +137,13 @@ class VN_APPFW_API Application : public Object {
     /**
      * @brief Finishes the startup phase and reports it to the startup progress sink.
      *
-     * The host calls this once when its startup work is done - after the plugins are loaded and after its own startup
-     * stages have run - and only then is the application considered started: a startup frame stays on screen until this
-     * call, and the startup progress sink is destroyed here. Calling it twice is harmless: there is no sink left to
-     * finish and nothing else is left to do.
-     *
-     * A host that enables a startup frame must call it before run(); otherwise the frame stays where it is, hiding the
-     * main window behind it (logged as a warning).
+     * The startup phase is over when the host's startup work is done - after the plugins are loaded and after the
+     * host's own startup stages have run - and only then is the application considered started: a startup frame stays
+     * on screen until this call, and the startup progress sink is destroyed here. runStartup() calls it once the work
+     * it was handed returns, so a host that hands its work over does not have to; a host that starts the application
+     * some other way calls it itself. Calling it twice is harmless: there is no sink left to finish and nothing else is
+     * left to do - which also makes it the call that brings the windows up for a host that never runs the loop (a test,
+     * a tool), since it makes sure the main window is visible.
      */
     virtual void finishStartup();
 
@@ -339,6 +361,35 @@ class VN_APPFW_API Application : public Object {
 
   public:
     static raw_ptr<Application> current();
+
+  private:
+    /// Runs the handed-over startup work, if any, and ends the startup phase: the single place the phase moves on, and
+    /// the reason both the "interface is up" notice and its backstop can exist without doing anything twice.
+    void startStartupWork();
+
+  protected:
+    // Declared after every pre-existing virtual function on purpose: a new virtual inserted anywhere earlier in this
+    // class would move the vtable slots of the ones after it, and the plugin ABI version gate would have to move too.
+
+    /**
+     * @brief Shows what the host puts in front of the user, before the startup work may begin.
+     *
+     * Nothing by default: a headless application has no window. GuiApplication shows the windows it created in init()
+     * here, which is what makes creation and presentation two separate steps - init() builds, run() presents - and what
+     * keeps the ordering that matters (a window has to be up before the work that needs it runs).
+     */
+    virtual void showUserInterface();
+
+    /**
+     * @brief Calls \a then once the user interface is on screen.
+     *
+     * Immediately by default, because a headless application has nothing to wait for. GuiApplication waits until the
+     * windows it shows have painted: driving the queue is the job of the loop run() starts, and a window that has not
+     * painted yet is an empty window on screen.
+     *
+     * @param then What to do once the user interface is up; called exactly once.
+     */
+    virtual void whenUserInterfaceIsUp(std::function<void()> then);
 };
 
 /*
