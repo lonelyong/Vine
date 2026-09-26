@@ -1,10 +1,14 @@
 ﻿#include <vine/appfw/gui/GuiApplication.hpp>
 
 #include <QApplication>
+#include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QGuiApplication>
 #include <QPalette>
 #include <QStatusBar>
 #include <QStyleHints>
+#include <QThread>
 #include <QTimer>
 #include <QWidget>
 
@@ -67,6 +71,42 @@ VN_OBJECT_META_IMPL(GuiApplication, Application)
 
 namespace
 {
+
+/// Upper bound for the startup frame's first paint; a window system that never shows the frame must not hold the boot.
+constexpr int kFirstPaintDeadlineMs = 300;
+
+/// Pace of the dispatch loop below; the frame paints within milliseconds on a display that shows windows promptly.
+constexpr int kFirstPaintPollMs = 5;
+
+/// Dispatches the event queue until the startup frame has painted, or until the deadline passes.
+///
+/// Painting a window waits for the window system's "it is visible now" notice, which arrives through the event queue
+/// (on X11, an expose event). The frame's synchronous repaint() paints the widget, but nothing of it reaches the
+/// window before that notice has been dispatched - measured under WSLg, where the frame spent its whole boot as a
+/// fully transparent window while sixteen updates were reported to it.
+///
+/// The queue is dispatched here, right after the frame is shown and before anything else exists: the main window and
+/// every plugin come later, so this cannot wake a component that is still starting up. That is also why the frame does
+/// not pump for itself (see BootSplash).
+///
+/// @param frame Startup frame that has already been shown.
+/// @return true if the frame painted before the deadline, false otherwise.
+bool dispatchUntilPainted(const BootSplash& frame)
+{
+    QElapsedTimer timer;
+    timer.start();
+
+    while (!frame.hasPainted()) {
+        if (timer.elapsed() >= kFirstPaintDeadlineMs) {
+            return false;
+        }
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        QThread::msleep(kFirstPaintPollMs);
+    }
+
+    VN_LOGI("startup frame painted after {} ms", timer.elapsed());
+    return true;
+}
 
 // Classic Fusion dark palette (matches the Qt >= 6.5 Fusion dark palette).
 QPalette createDarkPalette()
@@ -275,6 +315,16 @@ void GuiApplication::init()
 
         d->boot_splash = new BootSplash(d->splash);
         d->boot_splash->show();
+
+        // The frame is only on screen once it has painted, and that waits for the window system's notice on the event
+        // queue (see dispatchUntilPainted): give it that, so the boot is covered by a picture rather than by an empty
+        // window. Nothing else is alive yet, so dispatching here is free of the hazard the frame's own comments warn
+        // about; the deadline keeps a window system that never shows the frame from holding the boot.
+        if (!dispatchUntilPainted(*d->boot_splash)) {
+            VN_LOGW("startup frame was shown but has not painted within {} ms: it stays an empty window until the event "
+                    "loop runs",
+                    kFirstPaintDeadlineMs);
+        }
     }
 
     d->main_window = new MainWindow();

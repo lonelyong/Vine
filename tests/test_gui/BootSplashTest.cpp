@@ -1,5 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <memory>
+
+#include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QThread>
+
 #include <vine/appfw/AppBuilder.hpp>
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/ProgressHost.hpp>
@@ -149,6 +155,31 @@ TEST(BootSplashTest, FrameSurvivesTheEndOfTheBoot)
     // 上报口先于启动框销毁（宿主先关框），此时启动框保留最后一帧而不是读已销毁的上报口。
     EXPECT_FALSE(splash->isIndeterminate());
     EXPECT_NEAR(splash->progressFraction(), 0.5, 1e-9);
+}
+
+TEST(BootSplashTest, TheFramePaintsOnceTheWindowSystemHasShownIt)
+{
+    SplashConfig config;
+    config.title = "Vine";
+
+    BootSplash splash(config);
+
+    // 还没 show：没有窗口，也就没有任何绘制。
+    EXPECT_FALSE(splash.hasPainted());
+
+    splash.show();
+
+    // show() 只把窗口交给窗口系统：“现在可见了”的通知（X11 是 expose 事件）要派发事件队列才会到窗口。
+    // 宿主因此要在 show() 之后派发到首帧（GuiApplication::init），否则窗口里一个像素都没有：
+    // WSLg 实测整个启动期全透明，十六次上报都没能把它画上屏。
+    QElapsedTimer timer;
+    timer.start();
+    while (!splash.hasPainted() && timer.elapsed() < 2000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(5);
+    }
+
+    EXPECT_TRUE(splash.hasPainted());
 }
 
 TEST(BootSplashTest, DisabledByDefaultInTheTestApplication)

@@ -92,6 +92,8 @@ app->run()                      → 主循环
 - 所以：**主窗口保持与原行为一致地显示**，启动框作为 stay-on-top 的 splash 盖在它上面。
   代价是"框后面的窗口已经可见"，收益是不碰渲染路径的启动时序（那套时序很脆，见该设计文档的"实测"一节）。
 - 插一句同源提醒：**启动期不要替渲染组件 pump 事件**（本节第一条日志就是 pump 提前唤醒 attach 的样子）。
+  这条规则有一个例外，见"框要上屏，先派发'窗口已可见'通知"一节：闪屏 `show()` 之后必须派发到它画出第一帧，
+  而那一刻主窗与插件都还不存在。
 
 ### 框关掉后必须把主窗口提到前面（2026-09-18 用户实测报“框没了，主窗口没出来”）
 
@@ -140,10 +142,45 @@ app->run()                      → 主循环
   “宿主自己的活 + 所有插件的活都干完了”。`Pending`（宿主还没让它 attach）与这条无关。
 - 不放在插件里的原因（当时）：`load()` 跑在 `loadAll()` 中段，在那儿等会拖住**其它插件**的加载与进度上报。
 
+### 框要上屏，先派发"窗口已可见"通知（2026-09-26：WSL 下启动框整只全透明）
+
+**现象**（用户实测报"启动画面，wsl 下不显示"）：闪屏的 X 窗（440×152、depth 32 ARGB，外加 WM 的
+504×216 装饰框）已映射、`MAP_STATE_VIEWABLE`、尺寸也对，**但整个生命期每个像素都是 `rgba(0,0,0,0)`** ——
+既不是"被别的窗口盖住"，也不是"位置跑到屏外"，而是**窗口里一个像素都没有**。
+
+**探针**（临时 `fprintf` 到 stderr，验后已删）：`show()` 之后只收到 `QEvent::Show(exposed=0)`，
+16 次启动上报各调一次 `repaint()`，**全程没有 `QEvent::Expose`，`paintEvent` 一次都没跑**；
+框在启动结束（~1.9 s）被 `delete`。
+
+**分辨"服务端还是客户端"**（两个 X 连接的最小客户端：A 建窗+填色，B 独立 `XGetImage`）：B 在 0 ms 就读到了填充
+⇒ X 服务端**立刻**保存新窗内容，卡住的不是服务端。
+
+**机制**：X11 上 Qt 把内容画进窗口要先有"窗口已可见"的通知（expose 事件），而它只能由**事件队列派发**送达；
+启动期不跑事件循环（这正是当初选 `repaint()` 的原因），于是 `repaint()` 只画进 backing store，
+一个像素都到不了窗口。Windows 上 `repaint()` 直写 HWND，所以同一份代码在 Windows 正常——**WSL/X11 特有**。
+
+**修法**：`GuiApplication::init()` 在 `show()` 之后做一次**有界派发**（`processEvents(ExcludeUserInputEvents)`
++ 5 ms 步进，上限 300 ms），条件取自 `BootSplash::hasPainted()`（`paintEvent` 里置位）。
+位置刻意选在"主窗与所有插件都还不存在"的那一刻：启动期唯一活着的东西就是启动框，
+所以本文件上面那条"不要替渲染组件 pump"的顾虑在这里不成立（那时还没有渲染表面）。
+超时打 `VN_LOGW`，不静默兜底。
+
+**实测**（本机 WSLg/Weston + Xwayland，2026-09-26）：`startup frame painted after 11 ms`（本次启动的第一条日志），
+独立 X 读回 `440×152 painted=99.9% modal=rgba(245,245,245,255)`（主题面板色），从 ~0.4 s 一直覆盖到启动结束（~1.9 s）。
+
+**反证（3/3 红，恢复后 3/3 绿）**：M1 `paintEvent` 不置位 → 新用例红；M2 访问器谎报已画 → 新用例红
+（`show()` 之前的 `EXPECT_FALSE` 就红）；M3 去掉 `init()` 里的派发（**真机**）→ 闪屏回到
+`painted=0.0% rgba(0,0,0,0)`，恢复后回到 99.9%。
+
+**顺带修正**：`BootSplash.hpp` 的类注释里"a notification repaints **and pumps the event queue**"是旧设计的残留
+（实现从 6988216 起就只 `repaint()`），已改成与实现一致，并写清"把窗口系统那一半交给宿主"。
+
 ## 平台注意
 
 - 圆角靠 `WA_TranslucentBackground`；没有合成的 X11 会话里圆角会退化成黑角（Windows/WSLg 正常）。
   要绝对稳就把 `paintEvent` 的面板改成满矩形（一处改动）。
+- **"窗口已映射"不等于"框上屏"**：还要窗口系统把"现在可见了"的通知派发进来（见下节）。
+  WSLg 上框的 X 窗从建出来就是 `Viewable`，但只要不派发就一个像素都没有。
 - Wayland 上"未映射窗口 attach"本就不成立，`RenderControl` 会走"先显示表面再 attach"的回退
   （见 `appfw-render-surface.md` 的平台契约）；启动框与它的关系只是"框也在最上层"。
 
@@ -174,6 +211,7 @@ app->run()                      → 主循环
 | `BootSplashTest.MissingLogoIsNotFatal` | 读不到的 logo 不致命 |
 | `BootSplashTest.FrameSurvivesTheEndOfTheBoot` | 上报口先死（宿主先关框）时保留最后一帧，不读已销毁对象 |
 | `BootSplashTest.DisabledByDefaultInTheTestApplication` | 默认关闭；`finishStartup()` 幂等 |
+| `BootSplashTest.TheFramePaintsOnceTheWindowSystemHasShownIt` | `hasPainted()` 直到窗口系统通知可见（派发事件队列）之后才为真 |
 
 视觉验证（临时用例 + `grab()` 离屏渲染，验证后已删）：圆角面板/标题/副标题/进度条/状态行、
 SVG logo 等比缩放、确定态与忙碌态两种进度条。

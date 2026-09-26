@@ -91,6 +91,11 @@
   启动框是 stay-on-top splash，盖在窗口上面。
 - ⚠️ **启动期不要 `processEvents()`**：会顺手跑别的组件的定时器/事件（渲染表面的 resize/settle 更新
   就是这样被提前唤醒的）。启动框只 `repaint()` 自己那一帧。
+- ⚠️ **唯一例外（2026-09-26）：闪屏 `show()` 之后要派发到它画出第一帧**。X11 上 Qt 要先收到服务端的 expose
+  才把 backing store flush 进窗口，而 expose 只能由事件队列派发送来 ⇒ 不派发时 `repaint()` 是空转，
+  闪屏整个启动期全透明（WSL 实测：16 次上报、窗口一个像素都没写）。`GuiApplication::init()` 因此在
+  `show()` 之后、**主窗与插件都还不存在**时做一次有界派发（上限 300 ms，条件 `BootSplash::hasPainted()`，
+  超时 `VN_LOGW`）；那时唯一活着的组件就是闪屏，上面那条顾虑不成立。实测：`painted after 11 ms`。
 - ⚠️ **启动框关掉时要把主窗口 `raise()` + `activate()`**：`Qt::SplashScreen` 置顶且不激活进程地显示，
   Windows 的前台激活名额被它占掉，随后 show() 的主窗口就压在终端/IDE 后面（看起来像“没显示出来”）。
   `finishStartup()` 只“确实有框”时做，那一刻会打一行 `main window visible=…, active=…` 供区分。

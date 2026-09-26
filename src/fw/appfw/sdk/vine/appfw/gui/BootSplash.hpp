@@ -25,8 +25,13 @@ VN_APPFWGUI_NS_BEGIN
  * never shown has none. The frame is a stay-on-top splash, so it covers that window while the boot is reported.
  *
  * A boot runs on the application thread, which never returns to the event loop while it works, so a notification
- * repaints and pumps the event queue right away (user input excluded); without that the frame would be painted for the
- * first time after the boot it is reporting on had already finished.
+ * repaints the frame right there instead of posting an update: the frame would otherwise be painted for the first
+ * time only after the boot it reports on had already finished.
+ *
+ * That synchronous repaint is not by itself enough to put the frame on screen: painting a window waits for the window
+ * system's "it is visible now" notice, which reaches the frame through the event queue (on X11, an expose event), and
+ * a boot never dispatches that queue. Until it has been dispatched once the frame is an empty window on screen, so
+ * the host dispatches it once right after showing the frame (see hasPainted()).
  */
 class VN_APPFW_API BootSplash : public Window {
     VN_OBJECT_META_DECL
@@ -63,6 +68,18 @@ class VN_APPFW_API BootSplash : public Window {
      * @return true when the current stage reports no countable total.
      */
     bool isIndeterminate() const;
+
+    /**
+     * @brief Returns whether the frame has painted at least once.
+     *
+     * A shown frame is not a painted one: the first paint follows the window system's "it is visible now" notice,
+     * which arrives through the event queue. Until that has been dispatched the frame is an empty window, which is
+     * what it looks like when the boot never gets it on screen - measured under WSLg, where the frame stayed fully
+     * transparent for its whole life while sixteen updates were reported.
+     *
+     * @return true once the frame has painted, false while it has not.
+     */
+    bool hasPainted() const noexcept;
 
   private:
     /// Redraws the frame from the startup progress sink; application thread only.
