@@ -172,8 +172,9 @@ vn::async::Task<void> GuiApplication::startupEnd()
 - `loadAllAsync()`：启动用的那道，是协程。管理器**自己不转循环**（不抽队列、不放 0 ms 定时器）：那会把别人的定时器
   一并带跑——内嵌渲染面自带 attach 退避定时器，让它在本机窗口还没布局好之前跑起来，就会拿"没有原生句柄的窗口"去建
   交换链。
-- `loadAll()`（同步门）：给不跑循环的工具/测试/宿主用。它是 `loadAllAsync()` 外面包的一层中继 + 轮询
-  （`relayToSyncDoor()` + `waitForSyncDoor()`），等的时候**只派发已投递的调用**
+- `loadAll()`（同步门）：给不跑循环的工具/测试/宿主用。它就是
+  `MainThreadDispatcher::runToCompletion(loadAllAsync())`——async 的 `runToCompletion(task, pump)`，pump 是
+  `deliverPostedCalls()`，等的时候**只派发已投递的调用**
   （`deliverPostedCalls()` → 只跑 `QEvent::MetaCall`）。**不能用 `Task::result()`**：它只阻塞、不派发，
   而钩子"回到应用线程"那一步正是一条已投递的调用 ⇒ 死锁（用例
   `TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicationThread` 就是钉这件事的：改用 `Task::result()` 会挂死）。

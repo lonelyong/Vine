@@ -26,11 +26,14 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 #include <thread>
+#include <vector>
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -47,6 +50,9 @@
 #include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/StartupProgress.hpp>
 #include <vine/appfw/UserIO.hpp>
+
+#include <vine/logging/Log.hpp>
+#include <vine/logging/LogSink.hpp>
 
 namespace
 {
@@ -66,6 +72,56 @@ std::filesystem::path bootPluginDirectory()
                                std::filesystem::copy_options::overwrite_existing, ec);
     EXPECT_FALSE(ec) << "夹具插件没拷进 '" << dir.string() << "': " << ec.message();
     return dir;
+}
+
+/// 把两份夹具插件（**同一个 uuid**、两个名字）摆进一个空目录，返回那个目录。
+///
+/// @return The directory holding the two fixtures that claim one identity.
+std::filesystem::path twinPluginDirectory()
+{
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "vine_test_appfw_twins";
+
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    for (const char* const fixture : { VINE_HEADLESS_BOOT_PLUGIN, VINE_TWIN_IDENTITY_PLUGIN }) {
+        const std::filesystem::path library = fixture;
+        std::filesystem::copy_file(library, dir / library.filename(), std::filesystem::copy_options::overwrite_existing, ec);
+    }
+    EXPECT_FALSE(ec) << "夹具插件没拷进 '" << dir.string() << "': " << ec.message();
+    return dir;
+}
+
+/// 抓住 logger 上的 warning 行。
+///
+/// 行容器由 sink 的 lambda 持有（shared_ptr），所以用例结束后 sink 再被调用也不会悬垂。
+struct WarningCapture {
+    std::shared_ptr<std::vector<std::string>> lines = std::make_shared<std::vector<std::string>>();
+
+    /**
+     * @brief Reports whether one captured warning contains @p text.
+     *
+     * @param text Substring to look for.
+     * @return true when some captured line contains it.
+     */
+    [[nodiscard]] bool contains(const std::string& text) const
+    {
+        return std::any_of(lines->begin(), lines->end(), [&text](const std::string& line) { return line.find(text) != std::string::npos; });
+    }
+};
+
+/// @brief Attaches a warning capture to the logger the VN_LOG* macros write to.
+/// @return The capture, to assert on.
+[[nodiscard]] WarningCapture captureWarnings()
+{
+    WarningCapture capture;
+    vn::logging::defaultLogger().addSink(vn::logging::LogSink::function(
+        [lines = capture.lines](vn::logging::LogLevel level, const std::string& line) {
+            if (level == vn::logging::LogLevel::Warn) {
+                lines->push_back(line);
+            }
+        }));
+    return capture;
 }
 
 /// 有自己启动工作的无头宿主：第二拍先让框架把插件加载完（`co_await Application::startup()`），再把重活丢到线程池上
@@ -365,7 +421,7 @@ TEST(HeadlessBootTest, ALeafPhaseCanWaitWithoutBlockingTheLoop)
 
 /// 同步门（`loadAll()`）里插件把重活丢到池上、再回应用线程：等的时候必须派发"回应用线程"那条投递，否则死锁。
 ///
-/// 这就是`waitForSyncDoor()`存在的理由：`.result()`只阻塞、不派发，而钩子回来的那一步正是一条已投递的
+/// 这就是 `MainThreadDispatcher::runToCompletion()` 存在的理由：`.result()` 只阻塞、不派发，而钩子回来的那一步正是一条已投递的
 /// 调用。用例没有循环在跑（它自己调同步门），所以这条投递只能由同步门派发；变异（把门改成只阻塞的 `Task::result()`）会挂死在这里。
 TEST(HeadlessBootTest, TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicationThread)
 {
@@ -393,6 +449,94 @@ TEST(HeadlessBootTest, TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicati
 
     // 插件自己在那次加载里断言了两次线程（钩子在应用线程上、跳池回来还在应用线程上），所以加载成功就是那两条也过了。
     EXPECT_FALSE(app->pluginManager()->isLoaded(u8"headless_boot_plugin"));
+}
+
+/// 两个插件声明同一个身份（同 uuid、不同名字）：两个都照常被发现与加载，但日志点名。
+///
+/// 名字不同，所以除了 uuid 没有任何检查会发现它们是同一个插件——这正是 uuid 存在的理由。
+TEST(HeadlessBootTest, TwoPluginsClaimingOneIdentityAreBothFoundAndReported)
+{
+    QStandardPaths::setTestModeEnabled(true);
+
+    static char  arg0[] = "test_appfw";
+    static char* argv[] = { arg0, nullptr };
+
+    vn::appfw::AppConfig config;
+    config.name           = "test_appfw";
+    config.persist_config = false;
+    config.load_plugins   = false;  // 同步门由用例自己调，不经过启动阶段
+
+    vn::appfw::PluginManager::setBuiltInPluginDirectory(twinPluginDirectory());
+
+    auto app = std::make_unique<WorkingHostApplication>(config, 1, argv);
+    ASSERT_NE(app, nullptr);
+
+    const WarningCapture warnings = captureWarnings();
+
+    EXPECT_TRUE(app->pluginManager()->loadAll());
+    EXPECT_TRUE(app->pluginManager()->isLoaded(u8"headless_boot_plugin"));
+    EXPECT_TRUE(app->pluginManager()->isLoaded(u8"headless_boot_twin")) << "同一个身份的两个插件都要留下：人要看得见才能改";
+    ASSERT_TRUE(warnings.contains("same identity")) << "身份冲突必须被报出来（uuid 就是为这个存在的）";
+    EXPECT_TRUE(warnings.contains("headless_boot_twin")) << "告警要点名两边";
+
+    EXPECT_TRUE(app->pluginManager()->unloadAll());
+}
+
+/// 注册文件里的 name/uuid 与库里的不符：身份以**库**为准 ⇒ 照常加载，日志两条警告点名注册文件。
+TEST(HeadlessBootTest, ARegistrationThatDisagreesWithItsLibraryIsReportedAndTheLibraryWins)
+{
+    QStandardPaths::setTestModeEnabled(true);
+
+    static char  arg0[] = "test_appfw";
+    static char* argv[] = { arg0, nullptr };
+
+    vn::appfw::AppConfig config;
+    config.name           = "test_appfw";
+    config.persist_config = false;
+    config.load_plugins   = false;
+
+    const std::filesystem::path dir = bootPluginDirectory();
+    vn::appfw::PluginManager::setBuiltInPluginDirectory(dir);
+
+    auto app = std::make_unique<WorkingHostApplication>(config, 1, argv);
+    ASSERT_NE(app, nullptr);
+
+    // 手写一份"名字与 uuid 都跟库里不符"的注册文件（安装器或人手写错就是这样）。指向库文件的注册
+    // 才做这个比对：目录注册没法说清里面的每个插件是谁。
+    const std::filesystem::path fixture  = VINE_HEADLESS_BOOT_PLUGIN;
+    const std::filesystem::path library  = dir / ("headless_boot" + fixture.extension().string());
+    const std::filesystem::path registry = app->pluginRegistrationDirectory() / "mismatch.plugin";
+
+    std::error_code ec;
+    std::filesystem::create_directories(registry.parent_path(), ec);
+    {
+        std::ofstream stream(registry, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(stream.good()) << "写不了注册文件 '" << registry.string() << "'";
+        stream << "# 用例夹具：注册文件与它指的库不一致\n";
+        stream << "path = " << library.string() << "\n";
+        stream << "name = not_the_real_name\n";
+        stream << "uuid = 11111111-1111-4111-8111-111111111111\n";
+    }
+    // 注册目录是每用户共享的：用例自己收尾，免得后面跑的用例多扫到这份文件。
+    struct RemoveRegistration {
+        std::filesystem::path path;
+        ~RemoveRegistration()
+        {
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+        }
+    } remove_registration{ registry };
+
+    const WarningCapture warnings = captureWarnings();
+
+    EXPECT_TRUE(app->pluginManager()->loadAll());
+    EXPECT_TRUE(app->pluginManager()->isLoaded(u8"headless_boot_plugin")) << "身份以库为准：照常按库里的名字加载";
+    EXPECT_FALSE(app->pluginManager()->isLoaded(u8"not_the_real_name"));
+    EXPECT_TRUE(warnings.contains("names plugin")) << "注册文件写的名字与库不符要报";
+    EXPECT_TRUE(warnings.contains("records uuid")) << "注册文件写的 uuid 与库不符要报";
+    EXPECT_TRUE(warnings.contains("mismatch")) << "要点名是哪个注册文件";
+
+    EXPECT_TRUE(app->pluginManager()->unloadAll());
 }
 
 } // namespace

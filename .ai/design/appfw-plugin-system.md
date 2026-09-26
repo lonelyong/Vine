@@ -190,9 +190,15 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
   的并发覆盖问题 ✓。
 - 格式：`key = value`，`#`/`;` 注释；`path` 必需（库文件或目录，目录按一层平铺扫），
   `name`/`uuid`/`enabled` 可选。未知键只记 info，不报错（安装器可以放自己的记账字段）。
-- **身份以插件库里的 `PluginInfo` 为准**（`uuid` + `name`），文件名/`name=` 只做校验与显示；
-  不一致只记 warning。`uuid` 是 `VN_DECLARE_PLUGIN` 里硬编码的 `vn::Uuid`（空 = 未声明，
-  退回用名字），用来识别"两个不同插件重名"✓（扫描时 warning）。
+- **身份以插件库里的 `PluginInfo` 为准**（`uuid` + `name`），文件名/`name=` 只做校验与显示。`uuid` 是
+  `VN_DECLARE_PLUGIN` 里硬编码的 `vn::Uuid`（空 = 未声明，退回用名字）。扫描时三条身份告警
+  （2026-09-26 补齐后两条，`test_appfw` 各一个用例钉住）：
+  - **同名、不同 uuid**（两个无关插件撞名字）⇒ warning，第一个位置胜；
+  - **不同名、同 uuid**（拷插件忘了改 uuid ⇒ 两份库其实是同一个插件）⇒ warning，**两个都留下**——
+    名字不同，除了 uuid 没有任何别的检查会发现，而且人要看得见才能改；
+  - **注册文件的 `name`/`uuid` 与所指的库不符**（只比"指向单个库文件"的注册；目录注册说不清里面的
+    每个插件是谁）⇒ 两条 warning，**库为准**，插件照常按库里的元数据加载（告警是给人看文件写错了，
+    不是拒绝插件）。
 - 写入方式是 tmp + rename（原子），并按需创建目录。
 - 读回顺序：用户目录在前、系统目录在后，各自按文件 id 排序（可预测 ✓）。
 - `installPlugin(path, scope)` 返回 id（库文件里只有一个插件时用插件名，否则用位置名）；
@@ -502,7 +508,11 @@ struct PluginAbi {
 | `load()`（显式加载，如对话框试用） | **照常加载**，只记一条警告 `declares dependency 'app_shell', which is not loaded`：它有意不解析依赖（见头文件对 `load()` 的说明） |
 | 运行时的 `setPluginEnabled(false)` | **不影响已加载的插件**：偏好只作用于下一次 `loadAll()`，已加载的依赖方跑到进程结束 |
 
-实现是一处**可加载闭包**的不动点计算（`loadAll()` step 3）：一个候选只有在它的依赖都已加载或已在集合里时才加入集合，因此一次性得到三样东西：
+实现是一处**可加载闭包**的不动点计算（`resolveLoadPlan()`，`loadAll()` 的 step 3）：一个候选只有在它的依赖都已加载或已在集合里时才加入集合，因此一次性得到三样东西：
+
+（2026-09-26：一次加载的四个 step 从 `loadAllAsync()` 里拆成了文件内函数 `collectCandidates()`（step 1+2）、
+`resolveLoadPlan()`（step 3）、`instantiatePlugins()`（step 4）、`runLifecycle()`（step 5）——**只有最后一个是协程**
+（钩子是协程）；`loadAllAsync()` 只剩约 30 行编排，前三步不需要事件循环就能单测。）
 
 1. **加载顺序**：加入顺序天然是依赖序，原来那段 Kahn 拓扑排序连同它的环检测一起删掉了；
 2. **完整报告**：集合之外的每个插件都带着自己的原因出现，而且链条可读——

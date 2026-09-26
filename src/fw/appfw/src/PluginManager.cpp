@@ -253,6 +253,23 @@ void rememberDiscovered(std::vector<PluginEntry>& discovered, const PluginInfo& 
         }
         return;
     }
+
+    // The other way round: two different names claiming one identity. The uuid is hardcoded by the
+    // plugin (VN_DECLARE_PLUGIN), so the only way this happens is a copy-paste that forgot to change
+    // it - which means two libraries are really the same plugin under two names. Both stay in the
+    // list (a human has to see them to fix it) and the log names both, because nothing else would
+    // ever tell: the names differ, so every other check here passes.
+    if (!info.uuid.isNull()) {
+        const auto same_identity = std::find_if(discovered.begin(), discovered.end(),
+            [&info](const PluginEntry& entry) { return entry.info.uuid == info.uuid; });
+        if (same_identity != discovered.end()) {
+            VN_LOGW("Two plugins declare the same identity: '{}' at '{}' and '{}' at '{}' both report uuid '{}'; "
+                    "a plugin's uuid must be its own",
+                   toUtf8(same_identity->info.name), toUtf8(same_identity->path), toUtf8(info.name), toUtf8(path),
+                   toUtf8(info.uuid.toString()));
+        }
+    }
+
     // The state flags keep their defaults (enabled, not loaded, not skipped);
     // pluginEntries() resolves them when the entry is reported.
     discovered.push_back(PluginEntry{ .info = info, .path = path, .scope = scope, .framework_version = framework_version });
@@ -969,79 +986,60 @@ Plugin* PluginManager::load(const String& name_or_path)
     return plugin;
 }
 
-bool PluginManager::loadAll()
+namespace
 {
-    // The synchronous door: a tool, a test, or a host that runs no loop drives the same load to completion on its own
-    // thread. What that costs is the event loop: on the application thread this blocks it for as long as the plugins'
-    // own stretches take, which is exactly why the boot uses loadAllAsync() instead. It dispatches while it waits (see
-    // MainThreadDispatcher::runToCompletion()) because a plugin that hops to the pool comes back through the application
-    // thread, which is the thread this call is holding.
-    return MainThreadDispatcher::runToCompletion(loadAllAsync());
-}
 
-vn::async::Task<bool> PluginManager::loadAllAsync()
+/// What one load pass may load, and whether the plan covers everything it found.
+struct LoadPlan {
+    std::vector<const Candidate*> planned;           ///< In dependency order; points into the pass's candidate list.
+    bool                          complete{ true };  ///< false: something was left out (its reason is already logged).
+};
+
+/**
+ * @brief Finds the plugins a load pass may load: every configured location, scanned and filtered.
+ *
+ * Step 1 and 2 of a load (see loadAllAsync()): the application's own directory comes first, then the
+ * per-user registrations and finally the machine-wide ones, so the first location that provides a
+ * name wins and an application-provided plugin is never overridden. Every library that answers the
+ * ABI handshake is remembered in @p discovered - loadable or not, because a UI reports the disabled
+ * ones too - and the loadable ones come back as candidates.
+ *
+ * @param manager         Manager whose enable decision and registrations are used.
+ * @param discovered      Discovery list; it is cleared and refilled here.
+ * @param policy_disabled Names a registration disables for everyone; cleared and refilled here.
+ * @param loaded          Plugins already loaded; they are no candidates again.
+ * @return The candidates, in scan order.
+ */
+std::vector<Candidate> collectCandidates(const PluginManager& manager, std::vector<PluginEntry>& discovered,
+                                         std::vector<String>& policy_disabled, const std::vector<LoadedPlugin>& loaded)
 {
-    // The same load as the synchronous door above, as a coroutine for one reason: a plugin's hooks are coroutines, so a
-    // plugin that has heavy, UI-free startup work can send it to the thread pool (`co_await vn::async::run(...)`) and
-    // come back with `resumeOnMainThread()` before touching UI again. While it waits there, the event loop runs freely -
-    // which is also what lets a report made on the pool thread reach the screen.
-    //
-    // The manager itself does NOT turn the loop between steps. The startup frame repaints synchronously whenever a
-    // report changes it (see BootSplash::onStartupChanged()), and pumping the queue during a boot is something this
-    // codebase rejects on purpose: it would also run the timers of everything else that is starting up - an embedded
-    // render surface drives its own attach backoff that way, and letting it run before the host has laid its window out
-    // makes it build a swapchain on a window that has no native handle yet. What the animation needs is a repaint
-    // source of its own, not a loop turn here.
+    discovered.clear();
+    policy_disabled.clear();
 
-    // A plugin that calls loadAll() again from its own preLoad()/load()/postLoad()
-    // would interleave with the batch created below, which is local to this call;
-    // refuse the nested call instead of leaving half-initialized instances behind.
-    if (d->loading) {
-        VN_LOGW("loadAll() was called from a plugin lifecycle callback; ignoring the nested call");
-        co_return false;
-    }
-    ScopedFlag loading_scope(d->loading);
-
-    // Startup progress is optional: without a startup frame (or a host that reports a headless boot) there is no sink
-    // and every report below is a no-op. The plugin load is the part of a boot that takes the longest and that nobody
-    // can guess, so it is the one worth counting.
-    StartupProgress* const startup = StartupProgress::current();
-    if (startup != nullptr) {
-        startup->stage("正在查找插件");
-    }
-
-    // Discovery starts over on every scan so that plugins added or removed on
-    // disk are reflected in pluginEntries().
-    d->discovered.clear();
-
-    // Step 1: collect the library files of every configured location. The
-    // application's own directory comes first, then the per-user registrations
-    // and finally the machine-wide ones, so the first location that provides a
-    // plugin name wins and an application-provided plugin is never overridden.
+    // Step 1: the library files of every configured location.
     struct Source {
-        std::filesystem::path path;
-        PluginScope           scope;
-        bool                  registration_enabled; // false: a registration disables it for everyone.
+        std::filesystem::path     path;
+        PluginScope               scope;
+        bool                      registration_enabled;  // false: a registration disables it for everyone.
+        const PluginRegistration* registration{};        // the file this source came from; null for the application's directory.
     };
 
-    std::vector<Source> sources;
-    sources.push_back(Source{ builtInPluginDirectory(), PluginScope::BuiltIn, true });
-    d->policy_disabled.clear();
+    std::vector<Source>         sources;
+    sources.push_back(Source{ PluginManager::builtInPluginDirectory(), PluginScope::BuiltIn, true, nullptr });
 
-    // Registrations are read on every scan, so installing or removing a plugin
-    // (or editing a registration file by hand) only needs a restart.
-    for (const auto& registration : pluginRegistrations()) {
+    // Registrations are read on every scan, so installing or removing a plugin (or editing a
+    // registration file by hand) only needs a restart.
+    const std::vector<PluginRegistration> registrations = manager.pluginRegistrations();
+    for (const auto& registration : registrations) {
         if (!registration.enabled) {
             VN_LOGI("Plugin registration '{}' disables its plugin for all users", toUtf8(registration.id));
         }
         sources.push_back(Source{ std::filesystem::path(std::u8string_view(registration.path.data(), registration.path.size())),
-                                  registration.scope, registration.enabled });
+                                  registration.scope, registration.enabled, &registration });
     }
 
-    // Step 2: query the metadata of every unfiltered, valid Vine plugin. No
-    // instance is created yet; only the library is loaded so that
-    // vinePluginQuery() can be resolved. A plugin provided by several locations
-    // is discovered once, from the first one.
+    // Step 2: the metadata of every unfiltered, valid Vine plugin. No instance is created yet; only
+    // the library is loaded, so that vinePluginQuery() can be resolved.
     std::vector<Candidate> candidates;
     for (const auto& source : sources) {
         const auto found = pluginLibrariesIn(source.path);
@@ -1055,8 +1053,7 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
         for (const auto& path : found) {
             const QueriedLibrary queried = queryLibrary(path);
             if (!queried.rejection.empty()) {
-                // The one case worth a warning per scan: the library is a plugin, but
-                // this host cannot read it. Everything else here is silence.
+                // The one case worth a warning per scan: the library is a plugin, but this host cannot read it.
                 VN_LOGW("{}", toUtf8(queried.rejection));
                 continue;
             }
@@ -1065,39 +1062,53 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
             }
             const PluginInfo* info = queried.info;
 
-            // Discovery is independent of loading: a disabled plugin, or one the
-            // host skips, is still reported (metadata + library path) so a UI can
-            // show it and explain why it is not running.
-            rememberDiscovered(d->discovered, *info, path, source.scope, queried.framework_version);
-
-            // A registration that disables the plugin for every user is policy:
-            // record it before the enabled check below, which reads it back.
-            const bool policy_disables = !source.registration_enabled;
-            if (policy_disables) {
-                d->policy_disabled.push_back(info->name);
+            // A registration that points at one library also records that plugin's name and identity.
+            // The library is the authority (see the design doc), so a file that disagrees is reported
+            // and the plugin still loads under what its own metadata says - the point of the warning is
+            // to tell a human that the file (or the library) is wrong, not to refuse the plugin. Only
+            // single-library registrations are compared: that is what installPlugin() writes name and
+            // uuid for, and a directory registration says nothing about the plugins inside it.
+            if (source.registration != nullptr && found.size() == 1) {
+                if (!source.registration->name.empty() && source.registration->name != info->name) {
+                    VN_LOGW("Plugin registration '{}' names plugin '{}', but the library at '{}' reports '{}'; the library wins",
+                           toUtf8(source.registration->id), toUtf8(source.registration->name), toUtf8(path), toUtf8(info->name));
+                }
+                if (!source.registration->uuid.isNull() && !info->uuid.isNull() && source.registration->uuid != info->uuid) {
+                    VN_LOGW("Plugin registration '{}' records uuid '{}', but the library at '{}' reports '{}'; the library wins",
+                           toUtf8(source.registration->id), toUtf8(source.registration->uuid.toString()), toUtf8(path),
+                           toUtf8(info->uuid.toString()));
+                }
             }
 
-            const bool already_loaded = std::any_of(d->plugins.begin(), d->plugins.end(),
+            // Discovery is independent of loading: a disabled plugin, or one the host skips, is still
+            // reported (metadata + library path) so a UI can show it and explain why it is not running.
+            rememberDiscovered(discovered, *info, path, source.scope, queried.framework_version);
+
+            // A registration that disables the plugin for every user is policy: record it before the
+            // enabled check below, which reads it back.
+            const bool policy_disables = !source.registration_enabled;
+            if (policy_disables) {
+                policy_disabled.push_back(info->name);
+            }
+
+            const bool already_loaded = std::any_of(loaded.begin(), loaded.end(),
                 [&info](const LoadedPlugin& lp) { return lp.name == info->name; });
             if (already_loaded) {
                 continue;
             }
 
-            // The same plugin can be provided by several locations (the
-            // application directory, a per-user registration, a machine-wide
-            // registration): load it once, from the first location.
+            // The same plugin can be provided by several locations (the application directory, a
+            // per-user registration, a machine-wide registration): load it once, from the first one.
             const bool already_candidate = std::any_of(candidates.begin(), candidates.end(),
                 [&info](const Candidate& c) { return c.info->name == info->name; });
             if (already_candidate) {
                 continue;
             }
 
-            // Disabled plugins (by the user, by a registration that disables them
-            // for every user, or by the host's skip list) are not instantiated and
-            // do not take part in dependency resolution; a dependent is therefore
-            // reported as unresolved instead of being loaded with a missing
-            // dependency.
-            if (!isPluginEnabled(info->name)) {
+            // Disabled plugins (by the user, by a registration, or by the host's skip list) are not
+            // instantiated and do not take part in dependency resolution; a dependent is therefore
+            // reported as unresolved instead of being loaded with a missing dependency.
+            if (!manager.isPluginEnabled(info->name)) {
                 logRefusal(info->name, policy_disables);
                 continue;
             }
@@ -1105,25 +1116,34 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
             candidates.push_back(Candidate{ path, queried.lib, info });
         }
     }
+    return candidates;
+}
 
-    // Step 3: dependency resolution, computed as a fixpoint: "can be loaded" is not a
-    // property of one plugin but of the whole set, because a plugin whose dependency
-    // cannot be loaded cannot be loaded either - and neither can anything below it.
-    //
-    // Doing it that way answers three questions with one computation:
-    //
-    // - the load order falls out of it: a candidate joins the set only once all its
-    //   dependencies are already in it, so no separate topological sort is needed;
-    // - the report can name *every* plugin that will not be loaded, with the reason
-    //   (its own, or the dependency that blocks it) instead of only the first level;
-    // - everything else still loads. One third-party plugin with a missing or
-    //   disabled dependency must not cost the whole application its shell; the
-    //   caller is told what was left out through the return value.
+/**
+ * @brief Resolves which candidates may be loaded, in which order, and reports the rest.
+ *
+ * Step 3 of a load (see loadAllAsync()). "Can be loaded" is not a property of one plugin but of the
+ * whole set, so it is computed as a fixpoint: a candidate joins the batch once every dependency of it
+ * is already loaded or already in the batch. One computation answers three questions - the load order
+ * falls out (a dependency is always in before its dependent, so no separate topological sort is
+ * needed), the report can name *every* plugin that will not be loaded with the reason (its own, or
+ * the dependency that blocks it, chain by chain), and everything else still loads: one third-party
+ * plugin with a missing or disabled dependency must not cost the application its shell.
+ *
+ * @param manager    Manager whose enable and skip decisions are used.
+ * @param candidates What collectCandidates() found.
+ * @param loaded     Plugins already loaded: satisfied dependencies.
+ * @param discovered Discovery list, to tell "missing" from "disabled" from "blocked".
+ * @return The plan; the reason for everything left out is logged here.
+ */
+LoadPlan resolveLoadPlan(const PluginManager& manager, const std::vector<Candidate>& candidates,
+                         const std::vector<LoadedPlugin>& loaded, const std::vector<PluginEntry>& discovered)
+{
     std::vector<const Candidate*> planned;
     planned.reserve(candidates.size());
     std::vector<String> satisfiable;
-    satisfiable.reserve(d->plugins.size() + candidates.size());
-    for (const auto& lp : d->plugins) {
+    satisfiable.reserve(loaded.size() + candidates.size());
+    for (const auto& lp : loaded) {
         satisfiable.push_back(lp.name);  // already loaded: a satisfied dependency
     }
     const auto isSatisfiable = [&satisfiable](const String& name) {
@@ -1143,10 +1163,9 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
         }
     }
 
-    // Everything outside the closure cannot be loaded. Each of those is reported with
-    // its own reason, so the reader can tell "install it", "enable it" and "stop
-    // skipping it" apart - and can follow a chain, because the dependency that blocks
-    // a plugin is itself reported on its own line.
+    // Everything outside the closure cannot be loaded. Each of those is reported with its own reason,
+    // so the reader can tell "install it", "enable it" and "stop skipping it" apart - and can follow a
+    // chain, because the dependency that blocks a plugin is reported on its own line as well.
     struct LoadProblem {
         String              plugin;
         std::vector<String> missing;
@@ -1164,14 +1183,14 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
             if (isSatisfiable(dep)) {
                 continue;
             }
-            if (isSkipped(dep)) {
+            if (PluginManager::isSkipped(dep)) {
                 problem.skipped.push_back(dep);
             }
-            else if (const PluginEntry* entry = findDiscovered(d->discovered, dep);
-                     entry != nullptr && !isPluginEnabled(dep)) {
+            else if (const PluginEntry* entry = findDiscovered(discovered, dep);
+                     entry != nullptr && !manager.isPluginEnabled(dep)) {
                 problem.disabled.push_back(dep);
             }
-            else if (findDiscovered(d->discovered, dep) != nullptr) {
+            else if (findDiscovered(discovered, dep) != nullptr) {
                 problem.blocked.push_back(dep);  // discovered and enabled, but not loadable
             }
             else {
@@ -1181,8 +1200,8 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
         problems.push_back(std::move(problem));
     }
 
-    // A cluster whose members only depend on each other is a declared cycle; saying so
-    // beats leaving the reader with mutual "not loadable" lines.
+    // A cluster whose members only depend on each other is a declared cycle; saying so beats leaving
+    // the reader with mutual "not loadable" lines.
     const bool cyclic = !problems.empty() && std::all_of(problems.begin(), problems.end(), [&problems](const LoadProblem& problem) {
         return std::all_of(problem.blocked.begin(), problem.blocked.end(), [&problems](const String& blocked) {
             return std::any_of(problems.begin(), problems.end(), [&blocked](const LoadProblem& other) { return other.plugin == blocked; });
@@ -1219,132 +1238,225 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
         VN_LOGE("{}", report);
     }
 
-    // Step 4: create the instances in the order the closure produced, and step 5: run
-    // the lifecycle. Both are wrapped so that a throwing plugin, or a library without
-    // a usable create entry point, cannot leave instances behind that the manager
-    // does not know about: a plugin library can be created only once per process,
-    // so a retry would reuse the same, half-initialized instance.
-    std::vector<LoadedPlugin> created;
-    created.reserve(planned.size());
+    return LoadPlan{ std::move(planned), problems.empty() };
+}
 
-    // Plugins whose load() has returned: one unit of the plugin-load progress each.
-    std::size_t loaded_units = 0;
-
+/**
+ * @brief Creates the instances of the planned plugins and registers each one's commands.
+ *
+ * Step 4 of a load (see loadAllAsync()). Nothing is registered in the manager here: the caller owns
+ * @p created and decides what happens to the batch - a load that does not finish unloads it, because
+ * a plugin library can be created only once per process and a retry would reuse the same,
+ * half-initialized instance.
+ *
+ * @param plan    What to create, in dependency order.
+ * @param startup Progress sink; may be null.
+ * @param created Filled with the instances created here, in order (also when this returns false, so
+ *                the caller can release them and tag them - Plugin::setInfo() is private to the
+ *                manager, so handing the metadata over is the caller's step).
+ * @return true when every planned plugin was instantiated; false when one could not be, or when a
+ *         stop request arrived.
+ */
+bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vector<LoadedPlugin>& created)
+{
     if (startup != nullptr) {
-        // One unit per plugin, reported while the heaviest pass (the load() phase below) runs; the phases around it only
-        // update the label, so the bar does not reach its end before the plugins are really up.
-        startup->stage("正在加载插件", static_cast<double>(planned.size()));
+        // One unit per plugin, reported while the heaviest pass (the load() phase below) runs; the
+        // phases around it only update the label, so the bar does not reach its end before the
+        // plugins are really up.
+        startup->stage("正在加载插件", static_cast<double>(plan.planned.size()));
     }
 
+    for (const Candidate* candidate : plan.planned) {
+        const String& name = candidate->info->name;
+
+        // 取消：启动被请求停下就不再装下一个（已装的那些由调用方决定去留：应用级取消会把它们卸掉）。
+        if (startup != nullptr && startup->stopToken().stop_requested()) {
+            VN_LOGI("the plugin load was cancelled; '{}' and the plugins after it are not loaded", toUtf8(name));
+            return false;
+        }
+
+        if (startup != nullptr) {
+            startup->setLabel("正在创建插件 " + toUtf8(name));
+        }
+        using CreateFn = Plugin* ();
+        const auto create = candidate->lib->resolveSymbol<CreateFn>(u8"vinePluginCreate");
+        if (!create) {
+            VN_LOGE("Plugin '{}' has no create entry point", toUtf8(name));
+            return false;
+        }
+        Plugin* plugin = create();
+        if (!plugin) {
+            VN_LOGE("Plugin '{}' failed to create its instance", toUtf8(name));
+            return false;
+        }
+
+        // Register the plugin's commands (VN_DECLARE_COMMAND) inside its own module. The owner scope
+        // tags these module commands with the plugin name.
+        using RegisterFn = void(CommandManager*);
+        const auto register_cmds = candidate->lib->resolveSymbol<RegisterFn>(u8"vinePluginRegisterCommands");
+        Application* app = Application::current();
+        CommandManager* cm = app ? app->commandManager() : nullptr;
+        {
+            RegistrationOwnerScope owner_scope(cm, name);
+            if (register_cmds) {
+                register_cmds(cm);
+            }
+        }
+
+        VN_LOGI("Plugin '{}' loaded", toUtf8(name));
+        created.push_back(LoadedPlugin{ name, plugin, candidate->path });
+    }
+    return true;
+}
+
+/**
+ * @brief Runs the three lifecycle phases of a batch of plugins.
+ *
+ * Step 5 of a load (see loadAllAsync()): preLoad() for every plugin (each one registers its own
+ * commands), then load() for every plugin, then postLoad() for every plugin for cross-plugin wiring.
+ * Each plugin gets its own context so it can query pluginName() and its own registered configs, and
+ * every phase runs inside a per-plugin owner scope so lifecycle-registered commands are attributed
+ * to the plugin.
+ *
+ * This is the only part of a load that has to be a coroutine: the hooks are (`Plugin::preLoad()` and
+ * friends return a task), so a plugin can send heavy, UI-free work to the pool and come back with
+ * resumeOnMainThread() before touching UI again.
+ *
+ * @param created Instances to run the lifecycle on, in dependency order; the caller owns (and
+ *                releases) them.
+ * @param startup Progress sink; may be null.
+ * @return true when every phase ran; false when a stop request arrived.
+ * @throws Whatever a hook throws; the caller releases the batch and fails the pass.
+ */
+vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, StartupProgress* startup)
+{
+    // 每拍都是一次 `co_await`，原因有两个：钩子是协程（插件自己要分段、要跳池都在里面），而且回调返回后要让循环
+    // 转一圈。owner scope 刻意写在**花括号里、不跨 await**：回转期间别的排队调用也会注册命令，owner 还挂着就会
+    // 把它们记到这个插件名下。
+    for (const auto& lp : created) {
+        RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
+        PluginLoadContext      context(Application::current(), lp.name);
+        co_await lp.plugin->preLoad(&context);
+    }
+
+    std::size_t loaded_units = 0;  // plugins whose load() has returned: one unit of the progress each
+    for (const auto& lp : created) {
+        RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
+        PluginLoadContext      context(Application::current(), lp.name);
+        if (startup != nullptr) {
+            startup->setLabel("正在加载插件 " + toUtf8(lp.name) + " (" + std::to_string(loaded_units + 1) + "/" + std::to_string(created.size()) + ")");
+        }
+        if (startup != nullptr && startup->stopToken().stop_requested()) {
+            VN_LOGI("the plugin load was cancelled; '{}' and the plugins after it are not loaded", toUtf8(lp.name));
+            co_return false;
+        }
+        co_await lp.plugin->load(&context);
+        if (startup != nullptr) {
+            ++loaded_units;
+            startup->advance(static_cast<double>(loaded_units));
+        }
+    }
+
+    for (const auto& lp : created) {
+        RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
+        PluginLoadContext      context(Application::current(), lp.name);
+        if (startup != nullptr) {
+            startup->setLabel("正在收尾插件 " + toUtf8(lp.name));
+        }
+        co_await lp.plugin->postLoad(&context);
+    }
+    co_return true;
+}
+
+} // namespace
+
+
+bool PluginManager::loadAll()
+{
+    // The synchronous door: a tool, a test, or a host that runs no loop drives the same load to completion on its own
+    // thread. What that costs is the event loop: on the application thread this blocks it for as long as the plugins'
+    // own stretches take, which is exactly why the boot uses loadAllAsync() instead. It dispatches while it waits (see
+    // MainThreadDispatcher::runToCompletion()) because a plugin that hops to the pool comes back through the application
+    // thread, which is the thread this call is holding.
+    return MainThreadDispatcher::runToCompletion(loadAllAsync());
+}
+
+vn::async::Task<bool> PluginManager::loadAllAsync()
+{
+    // The load is four steps, and only the last one is a coroutine: the hooks are coroutines (a plugin
+    // can send heavy, UI-free startup work to the pool with `co_await vn::async::run(...)` and come back
+    // with `resumeOnMainThread()`), while scanning, dependency resolution and instantiation are plain
+    // synchronous code (see collectCandidates(), resolveLoadPlan() and instantiatePlugins()).
+    //
+    // The manager itself does NOT turn the loop between steps. The startup frame repaints synchronously
+    // whenever a report changes it (see BootSplash::onStartupChanged()), and pumping the queue during a
+    // boot is something this codebase rejects on purpose: it would also run the timers of everything
+    // else that is starting up - an embedded render surface drives its own attach backoff that way, and
+    // letting it run before the host has laid its window out makes it build a swapchain on a window that
+    // has no native handle yet. What the animation needs is a repaint source of its own, not a loop turn
+    // here. A caller that has to block while driving this (loadAll()) gets the same load with the
+    // dispatcher as its pump - see MainThreadDispatcher::runToCompletion().
+
+    // A plugin that calls loadAll() again from its own preLoad()/load()/postLoad() would interleave with
+    // the batch this call owns; refuse the nested call instead of leaving half-initialized instances.
+    if (d->loading) {
+        VN_LOGW("loadAll() was called from a plugin lifecycle callback; ignoring the nested call");
+        co_return false;
+    }
+    ScopedFlag loading_scope(d->loading);
+
+    // Startup progress is optional: without a startup frame (or a host that reports a headless boot)
+    // there is no sink and every report below is a no-op.
+    StartupProgress* const startup = StartupProgress::current();
+    if (startup != nullptr) {
+        startup->stage("正在查找插件");
+    }
+
+    const std::vector<Candidate> candidates = collectCandidates(*this, d->discovered, d->policy_disabled, d->plugins);
+    const LoadPlan               plan       = resolveLoadPlan(*this, candidates, d->plugins, d->discovered);
+
+    // Created here, registered only at the end: until the whole batch has run its lifecycle it belongs
+    // to this call, so a pass that does not finish can release it (a plugin library can be created only
+    // once per process, and a retry would reuse the same, half-initialized instance).
+    std::vector<LoadedPlugin> created;
+    created.reserve(plan.planned.size());
+
+    bool loaded = false;
     try {
-        for (const Candidate* candidate : planned) {
-            const String& name = candidate->info->name;
-
-            // 取消：启动被请求停下就不再装下一个（已装的那些由调用方决定去留：应用级取消会把它们卸掉）。
-            if (const StartupProgress* const progress = StartupProgress::current();
-                progress != nullptr && progress->stopToken().stop_requested()) {
-                VN_LOGI("the plugin load was cancelled; '{}' and the plugins after it are not loaded", toUtf8(name));
-                unloadLoadedPlugins(created);
-                co_return false;
+        bool batch_ready = instantiatePlugins(plan, startup, created);
+        if (batch_ready) {
+            // The query entry (from VN_DECLARE_PLUGIN) is the single metadata source, and handing it to
+            // the instance is the manager's own step (Plugin::setInfo() is private; the file-local
+            // creation step above cannot reach it).
+            for (std::size_t i = 0; i < created.size(); ++i) {
+                created[i].plugin->setInfo(*plan.planned[i]->info);
             }
-
-            if (startup != nullptr) {
-                startup->setLabel("正在创建插件 " + toUtf8(name));
-            }
-            using CreateFn = Plugin* ();
-            const auto create = candidate->lib->resolveSymbol<CreateFn>(u8"vinePluginCreate");
-            if (!create) {
-                VN_LOGE("Plugin '{}' has no create entry point", toUtf8(name));
-                unloadLoadedPlugins(created);
-                co_return false;
-            }
-            Plugin* plugin = create();
-            if (!plugin) {
-                VN_LOGE("Plugin '{}' failed to create its instance", toUtf8(name));
-                unloadLoadedPlugins(created);
-                co_return false;
-            }
-
-            // The query entry (from VN_DECLARE_PLUGIN) is the single metadata source.
-            plugin->setInfo(*candidate->info);
-
-            // Register the plugin's commands (VN_DECLARE_COMMAND) inside its own module.
-            // The owner scope tags these module commands with the plugin name.
-            using RegisterFn = void(CommandManager*);
-            const auto register_cmds = candidate->lib->resolveSymbol<RegisterFn>(u8"vinePluginRegisterCommands");
-            Application* app = Application::current();
-            CommandManager* cm = app ? app->commandManager() : nullptr;
-            {
-                RegistrationOwnerScope owner_scope(cm, name);
-                if (register_cmds) {
-                    register_cmds(cm);
-                }
-            }
-
-            VN_LOGI("Plugin '{}' loaded", toUtf8(name));
-            created.push_back(LoadedPlugin{ name, plugin, candidate->path });
+            batch_ready = co_await runLifecycle(created, startup);
         }
 
-        // Step 5: three-phase lifecycle - preLoad() for every plugin (each one
-        // registers its own commands), then load() for every plugin, then
-        // postLoad() for every plugin. Each plugin gets its own context so it can
-        // query pluginName() and its own registered configs. Every phase runs
-        // inside a per-plugin owner scope so lifecycle-registered commands are
-        // attributed to the plugin.
-        //
-        // 每拍都是一次 `co_await`，原因有两个：钩子是协程（插件自己要分段、要跳池都在里面），而且回调返回后要让循环
-        // 转一圈。owner scope 刻意写在**花括号里、不跨 await**：回转期间别的排队调用也会注册命令，owner 还挂着就会
-        // 把它们记到这个插件名下。
-        for (const auto& lp : created) {
-            RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
-            PluginLoadContext      context(Application::current(), lp.name);
-            co_await lp.plugin->preLoad(&context);
+        if (batch_ready) {
+            for (auto& lp : created) {
+                d->plugins.push_back(std::move(lp));
+            }
+            loaded = plan.complete;
         }
-        for (const auto& lp : created) {
-            RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
-            PluginLoadContext      context(Application::current(), lp.name);
-            if (startup != nullptr) {
-                startup->setLabel("正在加载插件 " + toUtf8(lp.name) + " (" + std::to_string(loaded_units + 1) + "/" + std::to_string(created.size()) + ")");
-            }
-            if (const StartupProgress* const progress = StartupProgress::current();
-                progress != nullptr && progress->stopToken().stop_requested()) {
-                VN_LOGI("the plugin load was cancelled; '{}' and the plugins after it are not loaded", toUtf8(lp.name));
-                unloadLoadedPlugins(created);
-                co_return false;
-            }
-            co_await lp.plugin->load(&context);
-            if (startup != nullptr) {
-                ++loaded_units;
-                startup->advance(static_cast<double>(loaded_units));
-            }
-        }
-        for (const auto& lp : created) {
-            RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
-            PluginLoadContext      context(Application::current(), lp.name);
-            if (startup != nullptr) {
-                startup->setLabel("正在收尾插件 " + toUtf8(lp.name));
-            }
-            co_await lp.plugin->postLoad(&context);
+        else {
+            // A plugin could not be created, or the load was cancelled: neither keeps the batch (the
+            // instances are library-level singletons, so a retry would reuse the same half-initialized
+            // objects), and the caller reports a cancelled boot as such.
+            unloadLoadedPlugins(created);
         }
     }
     catch (const std::exception& e) {
         VN_LOGE("Plugin loading failed, releasing the instances created by this call: {}", e.what());
         unloadLoadedPlugins(created);
-        co_return false;
     }
     catch (...) {
         VN_LOGE("Plugin loading failed with an unknown exception, releasing the instances created by this call");
         unloadLoadedPlugins(created);
-        co_return false;
     }
 
-    // Register the created plugins (in dependency order).
-    for (auto& lp : created) {
-        d->plugins.push_back(std::move(lp));
-    }
-    // The batch is loaded; plugins left out because their dependencies cannot be
-    // satisfied make the call report false, without having cost the rest anything.
-    co_return problems.empty();
+    co_return loaded;
 }
 
 bool PluginManager::unloadAll()
