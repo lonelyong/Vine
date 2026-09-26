@@ -2,8 +2,8 @@
 
 ## 问题
 
-启动顺序是"窗口先生效，插件后布 UI"：`GuiApplication::init()` 里 `main_window->show()`（GuiApplication.cpp:250），
-之后 `main.cpp` 才 `pluginManager()->loadAll()`，app_shell 的 `buildAppShellDock()` 才
+启动顺序是"窗口先生效，插件后布 UI"：窗口由 `Application::run()` 上屏（`showUserInterface()`，2026-09-26 起
+`init()` 只建不 show），之后 `main.cpp` 交出去的启动工作才 `pluginManager()->loadAll()`，app_shell 的 `buildAppShellDock()` 才
 `new RenderControl()` + `setCentralWidget()`。
 
 后端 attach 需要"窗口存在、已布局、尺寸可用"，而这比 UI 组装晚。旧做法是插件猜一个延迟：

@@ -16,9 +16,9 @@ std::unique_ptr<GuiApplication> createGuiApplication(const AppConfig& config, in
 
     auto app = std::make_unique<GuiApplication>(argc, argv);
 
-    // The startup frame is configured before init(): that is where it is created, and the main window stays hidden until
-    // finishStartup() because of it. The title the framework can resolve itself (an empty title means "the application
-    // name") is resolved here, because the application name is applied after init() - QCoreApplication exists only then.
+    // The startup frame is configured before init(): that is where it is created. The title the framework can resolve
+    // itself (an empty title means "the application name") is resolved here, because the application name is applied
+    // after init() - QCoreApplication exists only then. The frame and the main window are shown later, by run().
     SplashConfig splash = config.splash;
     if (splash.enabled && splash.title.empty()) {
         splash.title = config.name;

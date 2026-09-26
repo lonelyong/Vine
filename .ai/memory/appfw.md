@@ -89,6 +89,12 @@
   分歧只在两个 protected 虚函数：GUI 的 `showUserInterface()` 先上框再上主窗、`whenUserInterfaceIsUp()` 等两个窗口各画出首帧
   （上限 300 ms）。`init()` **只建不 show**；从不跑循环的宿主（测试）靠幂等的 `finishStartup()` 让主窗可见。
   阶段语义是**阶段内比例**（可计数 `stage(name,total)`+`advance`；不确定 `stage(name)`），不是全局 ETA。
+- 📋 **下一步待办（2026-09-26 用户定的方向，独立文档 `.ai/design/appfw-startup-next.md`）**：
+  ①`init()` 去留（建议折进构造：`Application(const AppConfig&, argc, argv)`；⚠它占 vtable 中间槽位 ⇒ 要么保留 deprecated 空槽，
+  要么 ABI +1）；②启动改由"`exec()` 先跑 + 一个启动事件推 `beginStartup()`"推进（⚠坑：用户事件与绘制请求同趟 FIFO，
+  **不能**替代首帧门）；③主窗改成 `finishStartup()` 里第一次 show（启动期屏幕上只有启动框）；
+  ④前置是"渲染资源先于窗口显示就绪"——attach 只需"句柄+尺寸"、present 才要窗口在屏，而未 show 的顶窗有没有可用句柄
+  得先做探针查清（历史失败日志见 `appfw-startup-splash.md`）。顺序：1 → 2 → 4 → 3。
 - ⚠️ **窗口一定在宿主的启动工作之前上屏**（不是偏好，是硬约束）：嵌入式渲染表面要用顶层窗口的原生句柄建 swapchain，
   没 show 过（或隐藏）的窗口给不出来 → VSG `GetClientRect failed: 无效的窗口句柄` + `surface Failed`。
   结论是"主窗要在插件加载前 show"，而不是"要在 `init()` 里 show"。启动框是 stay-on-top splash，盖在上面。
