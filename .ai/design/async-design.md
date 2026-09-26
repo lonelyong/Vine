@@ -6,7 +6,7 @@
 ## 1. 定位
 
 纯 header-only 协程运行时（`vn::async`，`vn::Async` 是 INTERFACE 目标，只依赖 `vn::Global` + `vn::Core`），
-27 个头文件、约 6.7k 行（含 `WaiterList.hpp`：等待者注册的 no-throw 助手）
+28 个头文件、约 6.9k 行（含 `WaiterList.hpp`：等待者注册的 no-throw 助手；`StopToken.hpp`：环境令牌）
 
 | 类别 | 内容 |
 | --- | --- |

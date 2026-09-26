@@ -17,6 +17,7 @@
 #include <vine/async/Scope.hpp>
 #include <vine/async/SharedTask.hpp>
 #include <vine/async/Sleep.hpp>
+#include <vine/async/StopToken.hpp>
 #include <vine/async/TaskCombinators.hpp>
 #include <vine/async/TaskCompletionSource.hpp>
 #include <vine/async/ThreadPoolScheduler.hpp>
@@ -3329,4 +3330,139 @@ TEST(AsyncQueueTest, ABoundedQueueNeverHoldsMoreThanItsCapacity)
         EXPECT_EQ(settled, 1) << "attempt " << attempt << ": a bounded queue of capacity 1 "
                                  "accepted more than one push with no consumer";
     }
+}
+
+// ---------------------------------------------------------------------------
+// Environment tokens: a task can be handed a stop token, read it as its own environment inside
+// its body, and have the operations that take a token inherit it. Nothing is inherited
+// automatically, so a task nobody handed a token to behaves exactly as before.
+// ---------------------------------------------------------------------------
+
+/// Reads its own environment token and hands it back through the out parameter.
+async::Task<void> readEnvironment(std::optional<std::stop_token>& seen)
+{
+    seen = co_await async::currentStopToken();
+}
+
+/**
+ * @brief Sleeps in its own environment and records how it ended.
+ *
+ * This is the pattern an environment enables: the body reads the token its creator handed over
+ * (co_await currentStopToken()) and hands it to the operations it awaits. It cannot be the other
+ * way round - an operation cannot look up its caller's environment (see StopToken.hpp) - so the
+ * body is the one that passes it on.
+ *
+ * cancelled is stored only when the sleep was cancelled, and finished always, so a test can tell
+ * "the token reached the sleep" from "the sleep ran to its deadline".
+ */
+async::Task<void> sleepInEnvironment(std::chrono::milliseconds duration,
+                                     std::atomic<bool>& cancelled,
+                                     std::atomic<bool>& finished)
+{
+    const std::stop_token inherited = co_await async::currentStopToken();
+    try
+    {
+        co_await async::sleepFor(duration, inherited);
+    }
+    catch (const async::TaskCancelledException&)
+    {
+        cancelled.store(true, std::memory_order_release);
+    }
+    finished.store(true, std::memory_order_release);
+}
+
+/// Waits (bounded) for a flag another thread sets.
+bool waitForFlag(const std::atomic<bool>& flag, std::chrono::milliseconds budget)
+{
+    const auto deadline = std::chrono::steady_clock::now() + budget;
+    while (!flag.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return flag.load(std::memory_order_acquire);
+}
+
+TEST(StopTokenTest, ATaskNobodyHandedATokenToSeesAnEmptyEnvironment)
+{
+    std::optional<std::stop_token> seen;
+    std::move(readEnvironment(seen)).result();
+
+    ASSERT_TRUE(seen.has_value());
+    EXPECT_FALSE(seen->stop_possible()) << "no environment must not look like a cancellable one";
+}
+
+TEST(StopTokenTest, WithStopTokenBecomesTheTasksOwnEnvironment)
+{
+    vn::CancellationSource source;
+    std::optional<std::stop_token> seen;
+
+    std::move(async::withStopToken(source.get_token(), readEnvironment(seen))).result();
+
+    ASSERT_TRUE(seen.has_value());
+    EXPECT_TRUE(seen->stop_possible());
+    EXPECT_FALSE(seen->stop_requested());
+}
+
+TEST(StopTokenTest, AHandedOverTokenReachesWorkDeepInsideTheBody)
+{
+    // The point of the environment: work inside a task that was handed a token is cancellable without
+    // the caller passing a token into every call - the body reads its own environment and hands it on.
+    // Without the inheritance the sleep would run its whole 2 s and this test would see neither the
+    // cancellation nor the prompt wake-up.
+    vn::CancellationSource source;
+    std::atomic<bool>      cancelled{ false };
+    std::atomic<bool>      finished{ false };
+
+    std::thread driver([&] {
+        std::move(async::withStopToken(source.get_token(),
+                                       sleepInEnvironment(std::chrono::milliseconds(2000), cancelled, finished)))
+            .result();
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    const auto requested = std::chrono::steady_clock::now();
+    source.request_stop();
+    const bool woken = waitForFlag(finished, std::chrono::milliseconds(1000));
+    const auto latency = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - requested).count();
+    driver.join();
+
+    EXPECT_TRUE(woken);
+    EXPECT_TRUE(cancelled.load());
+    EXPECT_LT(latency, 300000); // microseconds; the 2 s deadline is 6x away
+}
+
+TEST(ScopeTest, ChildrenRunInTheScopesEnvironmentAndLeavingAsksThemToStop)
+{
+    // Scope hands its own token to every child it adds, and going away asks them to stop instead of
+    // silently abandoning them. It cannot wait (see ~Scope), which is why pendingChildren() exists.
+    std::atomic<bool> cancelled{ false };
+    std::atomic<bool> finished{ false };
+
+    {
+        async::Scope scope;
+        scope.add(sleepInEnvironment(std::chrono::milliseconds(2000), cancelled, finished));
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        EXPECT_EQ(scope.pendingChildren(), 1u);
+    } // leaving the scope requests stop, without waiting
+
+    EXPECT_TRUE(waitForFlag(finished, std::chrono::milliseconds(1000)));
+    EXPECT_TRUE(cancelled.load()) << "the scope's token never reached the child's sleep";
+}
+
+TEST(ScopeTest, ADetachedScopeLeavesItsChildrenAlone)
+{
+    // detach() is how a caller says "these children are mine to wait for": the destructor no longer
+    // asks them to stop, so a child that would have been cancelled finishes on its own.
+    std::atomic<bool> cancelled{ false };
+    std::atomic<bool> finished{ false };
+
+    {
+        async::Scope scope;
+        scope.add(sleepInEnvironment(std::chrono::milliseconds(120), cancelled, finished));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        scope.detach();
+    }
+
+    EXPECT_TRUE(waitForFlag(finished, std::chrono::milliseconds(1000)));
+    EXPECT_FALSE(cancelled.load());
 }

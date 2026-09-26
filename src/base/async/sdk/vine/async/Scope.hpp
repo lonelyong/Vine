@@ -89,6 +89,13 @@ DetachedTask runScopeChild(std::shared_ptr<ScopeState> state, Task<T> task)
  * finished. A child may be added after a previous join(); this starts a fresh
  * batch whose failures are collected by the next join().
  *
+ * Environment: the scope owns a std::stop_source and hands its token to every child it adds, so
+ * a child that reads co_await currentStopToken() - or sleeps with an inherited token - can be
+ * asked to stop. Destroying the scope makes that request (see ~Scope); it cannot cancel a child
+ * that does not read the token, and it does not wait for one, so pendingChildren() is what a host
+ * uses to notice a scope that went away with work still running. detach() is how a caller says
+ * "leave this batch alone".
+ *
  * add() and join() must not be called concurrently from different threads:
  * the pending counter and the first-failure slot are batch-level state whose
  * add/join interleaving is intentionally left to the caller to serialize.
@@ -97,6 +104,64 @@ class Scope
 {
   public:
     Scope() = default;
+
+    /**
+     * @brief Asks the children of the current batch to stop, and stops tracking them for stop requests.
+     *
+     * Children that read their environment token (co_await currentStopToken(), or a sleep that
+     * inherits one) observe the request and can finish early; one that never looks is unaffected.
+     * The scope still waits for them in join() - detach() is the call that lets them be ignored.
+     * The next add() starts a fresh batch that is tracked again.
+     */
+    void detach() noexcept
+    {
+        detached_ = true;
+    }
+
+    /**
+     * @brief Asks every child of the current batch to stop.
+     *
+     * A request, not a cancellation: it is recorded in the scope's stop_source, and only a child
+     * that reads the token reacts to it. Calling this is harmless when there are no children, or
+     * when they have all finished.
+     */
+    void requestStop() noexcept
+    {
+        source_.request_stop();
+    }
+
+    /**
+     * @brief Reports how many children of the current batch are still running.
+     *
+     * What a host needs to decide whether a scope that is going away left work behind - the scope
+     * itself cannot do more than ask (a destructor is not a coroutine, so it cannot wait, and
+     * blocking the thread or pumping an event loop would be the host's decision).
+     *
+     * @return Number of added children that have not completed yet.
+     */
+    [[nodiscard]]
+    std::size_t pendingChildren() const noexcept
+    {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        return state_->pending;
+    }
+
+    /**
+     * @brief Asks the children of the current batch to stop, without waiting for them.
+     *
+     * The scope cannot cancel what ignores the token, and it must not wait: waiting would mean
+     * blocking this thread or pumping someone else's event loop, and that is the host's call (the
+     * same reason the module has no global pump). So going away does the only thing that is
+     * universally safe - request stop - and pendingChildren() is how a host turns that into a
+     * diagnostic of its own.
+     */
+    ~Scope()
+    {
+        if (!detached_)
+        {
+            requestStop();
+        }
+    }
 
     Scope(const Scope&) = delete;
     Scope& operator=(const Scope&) = delete;
@@ -119,12 +184,18 @@ class Scope
             std::lock_guard<std::mutex> lock(state_->mutex);
             if (state_->pending == 0)
             {
-                // A fresh batch starts: clear the previous completion state.
+                // A fresh batch starts: clear the previous completion state, and track this batch
+                // again - detach() applied to the batch before it.
                 state_->done.reset();
                 state_->first_exception = nullptr;
+                detached_ = false;
             }
             ++state_->pending;
         }
+        // The child's environment is written before it starts: a lazy Task has not run a line
+        // yet, so this is the last moment at which it can still be told what environment it lives
+        // in (see currentStopToken()).
+        detail::TaskEnvironment::setToken(task, source_.get_token());
         detail::runScopeChild(state_, std::move(task));
     }
 
@@ -190,6 +261,12 @@ class Scope
 
   private:
     std::shared_ptr<detail::ScopeState> state_{ std::make_shared<detail::ScopeState>() };
+
+    /// Environment handed to every child of the scope; see add() and requestStop().
+    std::stop_source source_{};
+
+    /// true while the current batch is exempt from the destructor's stop request; see detach().
+    bool detached_{ false };
 };
 
 VN_ASYNC_NS_END

@@ -3,10 +3,12 @@
 #include "async_global.hpp"
 
 #include <chrono>
+#include <concepts>
 #include <coroutine>
 #include <exception>
 #include <optional>
 #include <semaphore>
+#include <stop_token>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -75,6 +77,67 @@ template<>
 struct TaskPromiseReturn<void>
 {
     void return_void() noexcept {}
+};
+
+/**
+ * @brief Awaiter for a value that is already available: it never suspends.
+ *
+ * The promise answers an environment request with one of these, so the body gets the data the
+ * promise owns without travelling through a coroutine handle it cannot name.
+ *
+ * @tparam T Value type handed to the body.
+ */
+template<typename T>
+class ValueAwaiter
+{
+  public:
+    explicit ValueAwaiter(T value) noexcept : value_(std::move(value)) {}
+
+    [[nodiscard]]
+    bool await_ready() const noexcept
+    {
+        return true; // The value is here: no suspension, nobody to resume.
+    }
+
+    void await_suspend(std::coroutine_handle<>) const noexcept {} // never called
+
+    [[nodiscard]]
+    T await_resume() noexcept
+    {
+        return std::move(value_);
+    }
+
+  private:
+    T value_;
+};
+
+/**
+ * @brief Marker operand for co_await that asks the promise for its environment stop token.
+ *
+ * The marker carries no data: it exists so the promise's await_transform can answer the request
+ * out of its own state. That is the only way a body can reach its environment - a coroutine
+ * cannot name its own promise without a handle, and threading a handle through every await is
+ * what the environment is there to avoid (see currentStopToken()).
+ */
+struct StopTokenRequest
+{
+};
+
+/// Writes the environment of a task that has not started yet; see withStopToken().
+struct TaskEnvironment
+{
+    /**
+     * @brief Stores a stop token in a task's promise, before its body runs.
+     *
+     * A Task is lazy, so a task handed to withStopToken() has not executed a line yet: its
+     * environment is still open, and the body will read the token on its first resume.
+     *
+     * @tparam T Result type of the task.
+     * @param task Task to write into; an empty task is ignored.
+     * @param token Token its body should see as its environment.
+     */
+    template<StorableValue T>
+    static void setToken(Task<T>& task, std::stop_token token) noexcept;
 };
 
 /**
@@ -358,6 +421,38 @@ class [[nodiscard]] Task
 
         /// If the body throws, stash the exception so await_resume can rethrow it.
         void unhandled_exception() noexcept { exception = std::current_exception(); }
+
+        /// Environment of this coroutine: the stop token a caller handed over (empty unless
+        /// someone did). Read through co_await currentStopToken(); see StopToken.hpp.
+        std::stop_token token{};
+
+        /**
+         * @brief Answers the environment request, and passes every other co_await through.
+         *
+         * A promise that defines await_transform intercepts *all* co_await expressions in its
+         * body, so the second overload exists to let everything else behave exactly as before.
+         *
+         * @return The environment token, in an awaiter that never suspends.
+         */
+        [[nodiscard]]
+        detail::ValueAwaiter<std::stop_token> await_transform(detail::StopTokenRequest) noexcept
+        {
+            return detail::ValueAwaiter<std::stop_token>{ token };
+        }
+
+        /**
+         * @brief Leaves every other co_await untouched.
+         *
+         * @tparam A Type of the awaited operand.
+         * @param awaited Operand of the co_await expression.
+         * @return The operand itself, forwarded unchanged.
+         */
+        template<typename A>
+            requires (!std::same_as<std::remove_cvref_t<A>, detail::StopTokenRequest>)
+        A&& await_transform(A&& awaited) noexcept
+        {
+            return std::forward<A>(awaited);
+        }
     };
 
     using handle_type = std::coroutine_handle<promise_type>;
@@ -600,9 +695,24 @@ class [[nodiscard]] Task
         }
     }
 
+    friend struct detail::TaskEnvironment;
+
     /// Owns the coroutine frame.
     handle_type handle_{};
 };
+
+namespace detail {
+
+template<StorableValue T>
+void TaskEnvironment::setToken(Task<T>& task, std::stop_token token) noexcept
+{
+    if (task.handle_)
+    {
+        task.handle_.promise().token = std::move(token);
+    }
+}
+
+} // namespace detail
 
 /**
  * @brief Task with no result value; the C#-style non-generic Task.

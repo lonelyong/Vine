@@ -60,10 +60,29 @@ namespace vn::async {
 
 | 设施 | 取消策略（A 落地后） |
 | --- | --- |
-| `sleepFor(d, token={})` | `token` 为空时用 `stopToken()`；空则永不取消（今天的行为） |
-| `whenAll` / `whenAny` | 同上；**并把令牌继续注入孩子**（孩子才可能收尾） |
-| `Scope::add(task)` | 注入 scope 自己的令牌（见 §2：`Scope` 持有 `stop_source`） |
-| `withTimeout(task, d, token)` | 现状是"超时即销毁孩子"；A 落地后应先 `request_stop` 再等一小段（可选，需单独定；见 §1.5） |
+| `sleepFor(d, token={})` | **不做环境回退**（见下面的更正）：被调用者读不到调用者的环境 |
+| `whenAll` / `whenAny` | 显式 token 优先；**默认是否注入孩子**属于第二阶（会改行为，需重排用例） |
+| `Scope::add(task)` | 注入 scope 自己的令牌（已落地：`Scope` 持有 `stop_source` ✓） |
+| `withTimeout(task, d, token)` | 现状是"超时即销毁孩子"；要做三段式需单独定（见 §1.5） |
+
+**更正（2026-09-26 实测发现，原设计这一格是错的）**：`sleepFor()` 曾经写成"没有显式 token 就用
+`co_await currentStopToken()`"，但那个读的是**它自己的**环境——而它是**被调用者**，调用者的令牌不可能被它看见。
+`await_transform` 只能让一个协程读**自己** promise 上的令牌，所以：
+
+- **环境只能由创建者注入**（`withStopToken(token, child())`），**不能由被调用者回查**；
+- P2300 那边能做到"操作看见调用者的环境"，是因为环境随 receiver 一路**往下传**，不是靠环境变量式的回查；
+  C++20 这套形状没有 receiver，就只能由创建者显式交接（一阶即如此，见下）。
+
+于是正确的用法是两个方向各一句：
+
+```cpp
+// 创建者（框架/组合子）把令牌交给它创建的任务：
+co_await withStopToken(context->stopToken(), plugin->load(context));
+
+// 任务体读自己的环境，并把它交给它 await 的东西：
+const std::stop_token mine = co_await currentStopToken();
+co_await sleepFor(std::chrono::seconds(2), mine);
+```
 
 ### 1.4 不改的东西（兼容性边界）
 
@@ -113,14 +132,15 @@ class Scope
     /// 请求停止（不等待）：析构与显式调用都只做这一件事。
     void requestStop() noexcept;
 
-    /// 不再跟踪当前批次的孩子：明说"我知道它们在跑，别在析构里抱怨"。
+    /// 不再对当前批次请求停止：明说"这批孩子我自己等，别去打断它们"（不影响 join() 仍然等待）。
     void detach() noexcept;
 
     ~Scope();   // debug: pending != 0 且未 detach() ⇒ 断言；release: 一条 warning
 };
 ```
 
-- **析构动作 = `request_stop()` + 断言**（不等待）。`requestStop()` 需要有 `stop_source`；这正是 §1 的环境
+- **析构动作 = `request_stop()`**（不等待、也不断言；`pendingChildren()` 交给宿主决定怎么报——async 只依赖
+  `vn::Global`+`vn::Core`，不为一条诊断引入 logging 依赖）。`requestStop()` 需要有 `stop_source`；这正是 §1 的环境
   令牌的落点：`Scope` 持有 `std::stop_source`，`add()` 把令牌注入孩子（§1.2 第 2 条），于是"析构请求停止"
   对合作式的孩子真的有效果，而 Assert/Detach 只是把"逃逸"变成显式选择。
 - `join(token)` 的语义要写准：**取消只停等待**（现状），**不取消孩子**；要取消孩子就 `requestStop()`。
@@ -159,3 +179,34 @@ class Scope
 2. **§2**（与 §1 同批做，因为都碰 `Scope`；析构只请求停止 + 断言 + `detach()`）；
 3. **§3 挂账**（有数据再动）；
 4. §1.5 的"先请求停止再等"（`withTimeout` 的三段式）留到有真实需求时单独定。
+
+---
+
+## 5. 第一阶已落地（2026-09-26）：可选式环境令牌 + Scope 的停止请求
+
+**落地内容**（`src/base/async/sdk/vine/async/`）：
+
+- `Task.hpp`：promise 新增 `std::stop_token token{}`；`await_transform(CurrentStopTokenRequest)` 用已就绪的
+  `detail::ValueAwaiter<std::stop_token>` 作答，另一个 `await_transform(A&&)` 把**其余所有 co_await 原样透传**
+  （promise 一旦定义 await_transform 就会拦截全部 co_await，这条透传是加钩子的前提）。
+  `detail::TaskEnvironment::setToken(task, token)` 写一个**尚未启动**的惰性任务的 promise（`friend` 访问）。
+- `StopToken.hpp`（新）：`co_await currentStopToken()` 读自己的环境；`withStopToken(token, task)` 由创建者注入。
+- `Scope.hpp`：自持 `std::stop_source`；`add()` 在**启动孩子之前**注入令牌；`~Scope()` 只 `request_stop()`；
+  新增 `pendingChildren()` 与 `detach()`（后者 = 本批次不再请求停止，`join()` 照旧等待）。
+- `Sleep.hpp`：**没有**环境回退（原因见 §1.3 的更正）。
+
+**刻意不做**：`whenAll`/`whenAny` 默认把孩子带进环境——那会让"被取消的组合子里的孩子"从"被销毁"变成"自己收尾"，
+是行为变化，要连着用例一起重排（第二阶）。
+
+**钉子（5 条，`test_async` 145 → 150）**：环境默认空（`ATaskNobodyHandedATokenToSeesAnEmptyEnvironment`）、
+注入可见（`WithStopTokenBecomesTheTasksOwnEnvironment`）、被交接的令牌真能取消深层工作
+（`AHandedOverTokenReachesWorkDeepInsideTheBody`，另一线程 request_stop 后 <300 ms 唤醒）、
+Scope 给孩子令牌且离开时请求停止（`ChildrenRunInTheScopesEnvironmentAndLeavingAsksThemToStop`，
+顺带钉 `pendingChildren()`）、`detach()` 后不再打断孩子（`ADetachedScopeLeavesItsChildrenAlone`）。
+
+**变异（实测）**：`TaskEnvironment::setToken` 变空操作 ⇒ 注入那两条红；`~Scope()` 去掉 `request_stop()` ⇒
+Scope 那条红、`detach` 那条仍绿。恢复后 150/150 绿。
+
+**尚未接线**：appfw 还没有任何调用点用 `withStopToken`（例如把 `PluginLoadContext::stopToken()` 交给插件钩子
+返回的 Task），所以本阶对产品行为**零影响**；接线本身是一个独立的小改动（框架侧一句），接线后插件 body 里的
+`co_await currentStopToken()` 才会看到启动取消。
