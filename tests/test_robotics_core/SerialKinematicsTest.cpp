@@ -6,6 +6,8 @@
 #include <vine/math/Isometry3.hpp>
 #include <vine/robotics/kinematics/DofInfo.hpp>
 #include <vine/robotics/kinematics/Frame.hpp>
+#include <vine/robotics/kinematics/JacobianIKSolver.hpp>
+#include <vine/robotics/kinematics/PieperIKSolver.hpp>
 #include <vine/robotics/kinematics/Q.hpp>
 #include <vine/robotics/kinematics/SerialKinematics.hpp>
 #include <vine/robotics/kinematics/State.hpp>
@@ -89,6 +91,35 @@ TEST(SerialKinematicsTest, BuildsChainFromFrameTree)
     EXPECT_TRUE(kin.solveIK(Isometry3d{}).empty());
     kin.setIKSolverType(IKSolverType::Iterative);
     EXPECT_NE(kin.ikSolver(), nullptr);
+}
+
+TEST(SerialKinematicsTest, SolverInstanceAlwaysMatchesReportedType)
+{
+    // ikSolverType() is the single source of truth: the owned solver must always be of that type,
+    // so a caller can never end up running a solver other than the one it asked for.
+    Frame     base;
+    TestJoint j1(1);
+    TestJoint j2(1);
+    Frame     end;
+    base.addChild(&j1);
+    j1.addChild(&j2);
+    j2.addChild(&end);
+
+    SerialKinematics kin(&base, &end);
+
+    kin.setIKSolverType(IKSolverType::Pieper);
+    EXPECT_EQ(kin.ikSolverType(), IKSolverType::Pieper);
+    ASSERT_NE(kin.ikSolver(), nullptr);
+    EXPECT_NE(dynamic_cast<PieperIKSolver*>(kin.ikSolver()), nullptr);
+
+    kin.setIKSolverType(IKSolverType::Iterative);
+    EXPECT_EQ(kin.ikSolverType(), IKSolverType::Iterative);
+    ASSERT_NE(kin.ikSolver(), nullptr);
+    EXPECT_NE(dynamic_cast<JacobianIKSolver*>(kin.ikSolver()), nullptr);
+
+    kin.setIKSolverType(IKSolverType::None);
+    EXPECT_EQ(kin.ikSolverType(), IKSolverType::None);
+    EXPECT_EQ(kin.ikSolver(), nullptr);
 }
 
 TEST(SerialKinematicsTest, GetSetQ)

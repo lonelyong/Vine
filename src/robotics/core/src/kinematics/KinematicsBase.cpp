@@ -7,6 +7,10 @@ VN_ROBOTICS_KINEMATICS_NS_BEGIN
 void KinematicsBase::setIKSolverType(IKSolverType type)
 {
     default_ik_solver_type_ = type;
+
+    // The type is the only source of truth for which solver runs, so drop any instance that does
+    // not match it; subclasses recreate the solver for the newly selected type.
+    ik_solver_.reset();
 }
 
 void KinematicsBase::validateQ(const Q& q) const

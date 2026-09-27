@@ -10,6 +10,7 @@
 #include <vine/robotics/kinematics/DofInfo.hpp>
 #include <vine/robotics/kinematics/JacobianIKSolver.hpp>
 
+#include <array>
 #include <cmath>
 
 using namespace vn;
@@ -439,4 +440,114 @@ TEST_F(Jacobian6DOFTest, LargeJointAngles_ReturnsSolutions)
         EXPECT_NEAR(p_err.length(), 0.0, 1e-3);
         EXPECT_NEAR(a_err, 0.0, 1e-3);
     }
+}
+
+// =============================================================================
+// Tuning knobs of the iterative interface
+// =============================================================================
+
+TEST(JacobianTuningTest, DefaultsAndSetters)
+{
+    JacobianIKSolver solver({});
+
+    EXPECT_NEAR(solver.maxError(), 1e-6, 1e-12);
+    EXPECT_EQ(solver.maxIterations(), 150);
+    EXPECT_EQ(solver.maxSeeds(), 8);
+    EXPECT_TRUE(solver.isClampToBounds());
+    EXPECT_TRUE(solver.isCheckingJointLimits());
+    EXPECT_EQ(solver.constraintMask(), (std::array<bool, 6>{ true, true, true, true, true, true }));
+
+    solver.setMaxError(1e-3);
+    solver.setMaxIterations(5);
+    solver.setMaxSeeds(1);
+    solver.setClampToBounds(false);
+    solver.setCheckJointLimits(false);
+    solver.setConstraintMask({ false, false, false, true, true, true });
+
+    EXPECT_NEAR(solver.maxError(), 1e-3, 1e-15);
+    EXPECT_EQ(solver.maxIterations(), 5);
+    EXPECT_EQ(solver.maxSeeds(), 1);
+    EXPECT_FALSE(solver.isClampToBounds());
+    EXPECT_FALSE(solver.isCheckingJointLimits());
+    EXPECT_EQ(solver.constraintMask(), (std::array<bool, 6>{ false, false, false, true, true, true }));
+}
+
+TEST_F(JacobianLimitsTest, JointLimitChecksCanBeDisabled)
+{
+    // Target requires joint 0 ≈ 1.5 rad, but the limit is [-1, 1].
+    Isometry3d target = forwardKinematics(dofs_, { 1.5, 0.3 });
+
+    std::vector<Q> solutions;
+    EXPECT_FALSE(solver_->solve(target, solutions));
+
+    // Disabling both the bound check and the clamping lets the solver leave the box.
+    solver_->setClampToBounds(false);
+    solver_->setCheckJointLimits(false);
+
+    solutions.clear();
+    ASSERT_TRUE(solver_->solve(target, solutions));
+    ASSERT_FALSE(solutions.empty());
+
+    // The accepted configuration violates the bound but still reaches the target.
+    EXPECT_GT(std::abs(solutions[0][0]), 1.0);
+    const Isometry3d T = forwardKinematics(dofs_, { solutions[0][0], solutions[0][1] });
+    EXPECT_NEAR((T.translation.asVector() - target.translation.asVector()).length(), 0.0, 1e-4);
+}
+
+TEST_F(Jacobian3DOFTest, PositionOnlyMaskIgnoresOrientation)
+{
+    // A planar 3-DOF arm reaches positions, but never an out-of-plane orientation.
+    Isometry3d target = forwardKinematics(dofs_, { 0.3, 0.8, -0.5 });
+    target.rotation   = Quatd(0.5, 0.0, 0.0, 0.0).normalized(); // π about X: unreachable
+
+    std::vector<Q> solutions;
+    EXPECT_FALSE(solver_->solve(target, solutions));
+
+    // With only the position constrained the reachable part must converge.
+    solver_->setConstraintMask({ true, true, true, false, false, false });
+
+    solutions.clear();
+    ASSERT_TRUE(solver_->solve(target, solutions));
+    ASSERT_FALSE(solutions.empty());
+
+    const Isometry3d T = forwardKinematics(dofs_, { solutions[0][0], solutions[0][1], solutions[0][2] });
+    EXPECT_NEAR((T.translation.asVector() - target.translation.asVector()).length(), 0.0, 1e-4);
+}
+
+TEST_F(Jacobian6DOFTest, SeedAndIterationBudgetsAreHonoured)
+{
+    const std::vector<double> q_far  = { -2.0, 1.5, -2.5, 1.0, -1.0, 0.5 };
+    const Isometry3d          target = forwardKinematics(dofs_, q_far);
+
+    // Default budget: the restarts find a solution.
+    std::vector<Q> solutions;
+    ASSERT_TRUE(solver_->solve(target, solutions));
+
+    // One iteration and one seed cannot get there.
+    solver_->setMaxIterations(1);
+    solver_->setMaxSeeds(1);
+
+    solutions.clear();
+    EXPECT_FALSE(solver_->solve(target, solutions));
+    EXPECT_TRUE(solutions.empty());
+}
+
+TEST_F(Jacobian6DOFTest, MaxErrorIsUsedForConvergence)
+{
+    const std::vector<double> q_target = { 0.3, -0.5, 1.2, 0.7, -0.4, 0.6 };
+    const Isometry3d          target   = forwardKinematics(dofs_, q_target);
+
+    solver_->setMaxError(1e-3);
+
+    std::vector<Q> solutions;
+    ASSERT_TRUE(solver_->solve(target, solutions));
+    ASSERT_FALSE(solutions.empty());
+
+    const Isometry3d T     = forwardKinematics(dofs_, { solutions[0][0], solutions[0][1], solutions[0][2],
+                                                        solutions[0][3], solutions[0][4], solutions[0][5] });
+    const Vec3d      p_err = target.translation.asVector() - T.translation.asVector();
+
+    EXPECT_LT(std::abs(p_err.x), 1e-3);
+    EXPECT_LT(std::abs(p_err.y), 1e-3);
+    EXPECT_LT(std::abs(p_err.z), 1e-3);
 }

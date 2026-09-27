@@ -141,9 +141,9 @@ class VN_ROBOTICS_CORE_API KinematicsBase
     }
 
     /**
-     * @brief Returns the default IK solver type.
+     * @brief Returns the type of the IK solver currently in use.
      *
-     * @return The solver type.
+     * @return The solver type; None means IK solving is disabled.
      */
     IKSolverType ikSolverType() const
     {
@@ -151,21 +151,36 @@ class VN_ROBOTICS_CORE_API KinematicsBase
     }
 
     /**
-     * @brief Sets the default IK solver type.
+     * @brief Sets the IK solver type.
      *
-     * Concrete subclasses may recreate the underlying solver to match;
-     * None disables IK solving.
+     * This is the only way to select a solver: the kinematics object owns it and rebuilds it to
+     * match, so ikSolver() always refers to a solver of this type (null when the type is None).
+     * Handing in a foreign solver instance is deliberately not supported, because a type and an
+     * instance would then be two sources of truth for the same question.
      *
-     * @param type The solver type.
+     * @param type The solver type; None disables IK solving.
      */
     virtual void setIKSolverType(IKSolverType type);
 
     /**
-     * @brief Returns the underlying IK solver (non-owning).
+     * @brief Returns the owned IK solver (non-owning, read-only).
      *
-     * @return The IK solver, or null when not set.
+     * @return The IK solver, or null when none is set.
      */
     raw_ptr<const IKSolver> ikSolver() const
+    {
+        return ik_solver_.get();
+    }
+
+    /**
+     * @brief Returns the owned IK solver for parameter tuning (non-owning).
+     *
+     * Adjust tolerances, iteration budgets or the constraint mask here; the solver itself is still
+     * selected through setIKSolverType().
+     *
+     * @return The IK solver, or null when none is set.
+     */
+    raw_ptr<IKSolver> ikSolver()
     {
         return ik_solver_.get();
     }

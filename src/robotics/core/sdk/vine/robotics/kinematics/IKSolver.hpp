@@ -34,9 +34,30 @@ class VN_ROBOTICS_CORE_API IKSolver {
         return is_valid_;
     };
 
+    /**
+     * @brief Enables or disables joint-limit checking.
+     *
+     * @param check true to discard solutions outside the DofInfo bounds (default), false to accept them.
+     */
+    void setCheckJointLimits(bool check)
+    {
+        check_joint_limits_ = check;
+    }
+
+    /**
+     * @brief Reports whether solve() discards solutions outside the joint bounds.
+     *
+     * @return true when solutions violating the DofInfo limits are rejected.
+     */
+    bool isCheckingJointLimits() const
+    {
+        return check_joint_limits_;
+    }
+
   protected:
     std::vector<DofInfo> dofs_;
     bool                 is_valid_;
+    bool                 check_joint_limits_{ true };
 };
 
 VN_ROBOTICS_KINEMATICS_NS_END

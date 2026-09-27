@@ -18,6 +18,7 @@ namespace
 /* Tolerances */
 constexpr double kEpsAbs   = 1e-8;
 constexpr double kEpsGeom  = 1e-10;
+constexpr double kEpsSin   = 1e-6; // twist parallelism / perpendicularity
 constexpr double kPosTol   = 1e-4;
 constexpr double kRotTol   = 1e-4;
 constexpr double kJointTol = 1e-6;
@@ -28,6 +29,9 @@ constexpr double kAngleTol = 1e-8;
 PieperIKSolver::PieperIKSolver(const std::vector<DofInfo>& dofs)
   : ClosedFormIKSolver(dofs)
 {
+    // Assume "unsupported" until every structural precondition below has passed.
+    is_valid_ = false;
+
     if (dofs.size() != 6)
         return;
 
@@ -40,19 +44,34 @@ PieperIKSolver::PieperIKSolver(const std::vector<DofInfo>& dofs)
 
     // ---- Pieper structural preconditions (MDH convention) ----
 
-    // Spherical wrist: axes 4,5,6 intersect → a₃=a₄=a₅=0
-    if (std::abs(mdh_[3].a) > kEpsGeom || std::abs(mdh_[4].a) > kEpsGeom || std::abs(mdh_[5].a) > kEpsGeom)
+    // Spherical wrist: axes 4, 5 and 6 meet at a single point ⇔ a₃ = a₄ = a₅ = 0 and d₅ = 0.
+    // d₅ (mdh_[4].d) is what makes the origins of frames 4 and 5 coincide, i.e. the very point
+    // solve() reconstructs as (tool position − d₆·z).
+    if (std::abs(mdh_[3].a) > kEpsGeom || std::abs(mdh_[4].a) > kEpsGeom || std::abs(mdh_[5].a) > kEpsGeom ||
+        std::abs(mdh_[4].d) > kEpsGeom)
         return;
 
     // Arm geometry (required by solveArm):
-    //   α₁ ≈ ±90°  – joint 1 perpendicular to joint 2
-    //   α₂ ≈ 0,π   – joint 2 parallel to joint 3
-    //   a₂ ≠ 0     – non-zero link length
-    if (std::abs(std::abs(std::sin(mdh_[1].alpha)) - 1.0) > kEpsGeom) // |sin α₁| ≠ 1
+    //   α₁ ≈ ±90°   – joint 1 perpendicular to joint 2
+    //   α₂ ≈ 0, π   – joint 2 parallel to joint 3
+    //   a₂ ≠ 0      – non-zero link length
+    //   α₃ ≉ 0, π   – joint 3 parallel to joint 4 would make θ₃ redundant
+    //   d₄ ≠ 0      – without it joint 3 cannot move the wrist centre
+    if (std::abs(std::abs(std::sin(mdh_[1].alpha)) - 1.0) > kEpsSin) // |sin α₁| ≠ 1
         return;
-    if (std::abs(std::sin(mdh_[2].alpha)) > kEpsGeom) // sin α₂ ≠ 0
+    if (std::abs(std::sin(mdh_[2].alpha)) > kEpsSin) // sin α₂ ≠ 0
         return;
     if (std::abs(mdh_[2].a) <= kEpsGeom) // a₂ ≈ 0
+        return;
+    if (std::abs(std::sin(mdh_[3].alpha)) <= kEpsSin) // sin α₃ ≈ 0
+        return;
+    if (std::abs(mdh_[3].d) <= kEpsGeom) // d₄ ≈ 0
+        return;
+
+    // Wrist twists: parallel or anti-parallel consecutive wrist axes (sin α = 0) leave the
+    // wrist with only two effective degrees of freedom, so the robot is not a 6-DOF spherical
+    // wrist and the analytic solution would be under-determined.
+    if (std::abs(std::sin(mdh_[4].alpha)) <= kEpsSin || std::abs(std::sin(mdh_[5].alpha)) <= kEpsSin)
         return;
 
     is_valid_ = true;
@@ -154,17 +173,18 @@ void addSolution(std::span<const DHParameter> mdh,
                  const math::Isometry3d&      target,
                  const std::array<double, 6>& q_raw,
                  std::span<const DofInfo>     dofs,
+                 bool                         check_limits,
                  std::vector<Q>&              solutions)
 {
     using namespace math;
 
-    if (!dofs.empty() && !checkJointLimits(q_raw, dofs))
+    if (check_limits && !dofs.empty() && !checkJointLimits(q_raw, dofs))
         return;
 
     std::array<double, 6> q;
     for (int i = 0; i < 6; ++i) {
         const auto& lim = dofs.empty() ? DofInfo{} : dofs[i];
-        q[i]            = snapToLimits(q_raw[i], lim.lower, lim.upper);
+        q[i]            = check_limits ? snapToLimits(q_raw[i], lim.lower, lim.upper) : q_raw[i];
     }
 
     const Isometry3d T06          = fkMdh(mdh, q);
@@ -195,6 +215,7 @@ struct WristContext {
     const math::Isometry3d&      target;
     std::array<double, 3>        arm_q;
     std::span<const DofInfo>     dofs;
+    bool                         check_limits;
     std::array<double, 6>        seed;
     math::Mat3d                  R; // rotation matrix of R_wrist
     double                       ca4, sa4, ca5, sa5;
@@ -231,7 +252,8 @@ void solveWristRegular(WristContext& ctx, double theta5, std::vector<Q>& solutio
     const double s6     = A01 * R(0, 0) + A11 * R(1, 0) + M21 * R(2, 0);
     const double theta6 = std::atan2(s6, c6);
 
-    addSolution(ctx.mdh, ctx.target, { ctx.arm_q[0], ctx.arm_q[1], ctx.arm_q[2], theta4, theta5, theta6 }, ctx.dofs, solutions);
+    addSolution(ctx.mdh, ctx.target, { ctx.arm_q[0], ctx.arm_q[1], ctx.arm_q[2], theta4, theta5, theta6 }, ctx.dofs,
+                ctx.check_limits, solutions);
 }
 
 /* Path A.2: θ₅ singular (s₅ ≈ 0) */
@@ -259,55 +281,8 @@ void solveWristSingular(WristContext& ctx, double theta5, std::vector<Q>& soluti
     }
     const double theta6 = std::atan2(s6, c6);
 
-    addSolution(ctx.mdh, ctx.target, { ctx.arm_q[0], ctx.arm_q[1], ctx.arm_q[2], theta4, theta5, theta6 }, ctx.dofs, solutions);
-}
-
-/* Path B.1: α₄ ≈ 0 or π */
-void solveWristDegenA4(WristContext& ctx, std::vector<Q>& solutions)
-{
-    const auto& R      = ctx.R;
-    // σ = +1 for α₄≈0, −1 for α₄≈π  (from r₃₃·cα₅ sign)
-    const double sigma = (R(2, 2) * ctx.ca5 > 0.0) ? 1.0 : -1.0;
-
-    // θ_sum = θ₄ + σ·θ₅  (observable from col 2)
-    double       theta_sum;
-    const double sa5_eff = std::sqrt(std::max(0.0, 1.0 - (sigma * R(2, 2)) * (sigma * R(2, 2))));
-    if (sa5_eff > kEpsGeom)
-        theta_sum = std::atan2(R(0, 2), -R(1, 2));
-    else
-        theta_sum = std::atan2(R(1, 0), R(0, 0));
-
-    const double theta4 = ctx.seed[3];
-    const double theta5 = sigma * (theta_sum - theta4);
-
-    // Strip Rz(θ_sum) → Rx(α₅_eff)·Rz(θ₆)
-    const double cs = std::cos(theta_sum), ss = std::sin(theta_sum);
-    const double Rp11   = cs * R(0, 0) + ss * R(1, 0);
-    const double Rp12   = cs * R(0, 1) + ss * R(1, 1);
-    const double theta6 = std::atan2(-Rp12, Rp11);
-
-    addSolution(ctx.mdh, ctx.target, { ctx.arm_q[0], ctx.arm_q[1], ctx.arm_q[2], theta4, theta5, theta6 }, ctx.dofs, solutions);
-}
-
-/* Path B.2: α₅ ≈ 0 or π */
-void solveWristDegenA5(WristContext& ctx, std::vector<Q>& solutions)
-{
-    const auto&  R     = ctx.R;
-    const double sigma = (R(2, 2) * ctx.ca4 > 0.0) ? 1.0 : -1.0;
-
-    // θ₄ from col 2 (sa₄ ≠ 0 here)
-    const double theta4 = std::atan2(R(0, 2), -R(1, 2));
-
-    // Strip Rz(θ₄) → Rx(α₄)·Rz(θ₅₆)
-    const double c4 = std::cos(theta4), s4 = std::sin(theta4);
-    const double Rp11    = c4 * R(0, 0) + s4 * R(1, 0);
-    const double Rp31    = R(2, 0);
-    const double theta56 = std::atan2(Rp31 / ctx.sa4, Rp11);
-
-    const double theta6 = ctx.seed[5];
-    const double theta5 = theta56 - sigma * theta6;
-
-    addSolution(ctx.mdh, ctx.target, { ctx.arm_q[0], ctx.arm_q[1], ctx.arm_q[2], theta4, theta5, theta6 }, ctx.dofs, solutions);
+    addSolution(ctx.mdh, ctx.target, { ctx.arm_q[0], ctx.arm_q[1], ctx.arm_q[2], theta4, theta5, theta6 }, ctx.dofs,
+                ctx.check_limits, solutions);
 }
 
 // solveWrist – dispatch
@@ -317,6 +292,7 @@ void solveWrist(const DHParameter*           mdh,
                 const math::Quatd&           q_03,
                 std::span<const DofInfo>     dofs,
                 const std::array<double, 6>& seed,
+                bool                         check_limits,
                 std::vector<Q>&              solutions)
 {
     using namespace math;
@@ -327,81 +303,76 @@ void solveWrist(const DHParameter*           mdh,
     Quatd q_wrist = (q_rx_neg_a3 * q_36).normalized();
 
     WristContext ctx{
-        .mdh    = { mdh, 6 },
-        .target = target,
-        .arm_q  = arm_q,
-        .dofs   = dofs,
-        .seed   = seed,
-        .R      = rotate3x3(q_wrist),
-        .ca4    = std::cos(mdh[4].alpha),
-        .sa4    = std::sin(mdh[4].alpha),
-        .ca5    = std::cos(mdh[5].alpha),
-        .sa5    = std::sin(mdh[5].alpha),
+        .mdh          = { mdh, 6 },
+        .target       = target,
+        .arm_q        = arm_q,
+        .dofs         = dofs,
+        .check_limits = check_limits,
+        .seed         = seed,
+        .R            = rotate3x3(q_wrist),
+        .ca4          = std::cos(mdh[4].alpha),
+        .sa4          = std::sin(mdh[4].alpha),
+        .ca5          = std::cos(mdh[5].alpha),
+        .sa5          = std::sin(mdh[5].alpha),
     };
 
-    const double denom5 = ctx.sa4 * ctx.sa5;
+    // sin α₄ and sin α₅ are non-zero for every robot accepted by the constructor, so cos θ₅
+    // is always recoverable from R_wrist(2,2).
+    double c5 = (ctx.ca4 * ctx.ca5 - ctx.R(2, 2)) / (ctx.sa4 * ctx.sa5);
+    c5        = std::clamp(c5, -1.0, 1.0);
 
-    if (std::abs(denom5) > kEpsGeom) {
-        // Path A: regular
-        double c5               = (ctx.ca4 * ctx.ca5 - ctx.R(2, 2)) / denom5;
-        c5                      = std::clamp(c5, -1.0, 1.0);
-        const double t5_vals[2] = { std::acos(c5), -std::acos(c5) };
-        for (int wb = 0; wb < 2; ++wb) {
-            const double s5 = std::sin(t5_vals[wb]);
-            const double P  = ctx.sa5 * s5;
-            const double Qw = ctx.ca4 * ctx.sa5 * std::cos(t5_vals[wb]) + ctx.sa4 * ctx.ca5;
-            if (P * P + Qw * Qw > kEpsGeom)
-                solveWristRegular(ctx, t5_vals[wb], solutions);
-            else
-                solveWristSingular(ctx, t5_vals[wb], solutions);
-        }
-        return;
+    const double t5_vals[2] = { std::acos(c5), -std::acos(c5) };
+    for (int wb = 0; wb < 2; ++wb) {
+        const double s5 = std::sin(t5_vals[wb]);
+        const double P  = ctx.sa5 * s5;
+        const double Qw = ctx.ca4 * ctx.sa5 * std::cos(t5_vals[wb]) + ctx.sa4 * ctx.ca5;
+        if (P * P + Qw * Qw > kEpsGeom)
+            solveWristRegular(ctx, t5_vals[wb], solutions);
+        else
+            solveWristSingular(ctx, t5_vals[wb], solutions);
     }
-
-    // Path B: α degenerate
-    if (std::abs(ctx.sa4) <= kEpsGeom)
-        solveWristDegenA4(ctx, solutions);
-    else if (std::abs(ctx.sa5) <= kEpsGeom)
-        solveWristDegenA5(ctx, solutions);
 }
 
 // solveArm – position IK: θ₁, θ₂, θ₃
 void solveArm(const DHParameter*           mdh,
+              const math::Isometry3d&      t0_inv,
               const math::Vec3d&           p_w_des,
               const math::Vec3d&           p_w4,
               const math::Isometry3d&      target,
               std::span<const DofInfo>     dofs,
               const std::array<double, 6>& seed,
+              bool                         check_limits,
               std::vector<Q>&              solutions)
 {
     using namespace math;
 
-    const double a1 = mdh[1].a, d1 = mdh[0].d;
+    const double a1 = mdh[1].a;
     const double a2 = mdh[2].a, d2 = mdh[1].d, d3 = mdh[2].d;
     const double d4  = mdh[3].d;
     const double sa1 = std::sin(mdh[1].alpha);
     const double ca3 = std::cos(mdh[3].alpha), sa3 = std::sin(mdh[3].alpha);
+    // α₂ ∈ {0, π} (sin α₂ = 0 guaranteed by the constructor): +1 parallel, −1 anti-parallel.
+    const double ca2 = std::cos(mdh[2].alpha);
 
     const double r2_des = p_w_des.x * p_w_des.x + p_w_des.y * p_w_des.y;
     const double z_des  = p_w_des.z;
 
     // a₁ branch selection (|sin α₁|≈1 guaranteed by constructor)
     const bool a1_nonzero = (std::abs(a1) > kEpsAbs);
-    const bool a1_zero    = !a1_nonzero;
 
     const double sig1  = (sa1 > 0.0) ? 1.0 : -1.0;
-    const double arm_v = (z_des - d1) * sig1;
+    const double arm_v = z_des * sig1; // = sin α₁ · v_z : planar reach coordinate of the wrist centre
 
-    // Wrist centre components in frame 2 (constant for α₂=0)
-    const double wc_x = mdh[3].a;      // a₃
-    const double wc_y = -d4 * sa3;     // −d₄·sinα₃
-    const double wc_z = d4 * ca3 + d3; // d₄·cosα₃ + d₃
-    const double wp_z = wc_z + d2;     // + d₁ (T₁ offset)
+    // Wrist centre components in frame 2 (constant because sin α₂ = 0)
+    const double wc_x = mdh[3].a;        // a₃
+    const double wc_y = -d4 * sa3;       // −d₄·sinα₃
+    const double wc_z = d4 * ca3 + d3;   // d₄·cosα₃ + d₃
+    const double wp_z = d2 + ca2 * wc_z; // signed wrist-centre offset along z
 
     if (a1_nonzero) {
         // ---- |w'|² quadratic in branch ±
         const double p_w4_sq = wc_x * wc_x + d4 * d4;
-        const double Kc      = p_w4_sq + d3 * d3 + 2.0 * d3 * d4 * ca3 + a2 * a2 + d2 * d2 + 2.0 * d2 * (d4 * ca3 + d3);
+        const double Kc      = p_w4_sq + d3 * d3 + 2.0 * d3 * d4 * ca3 + a2 * a2 + d2 * d2 + 2.0 * ca2 * d2 * (d4 * ca3 + d3);
         const double S       = r2_des + arm_v * arm_v - a1 * a1;
         const double abs_a1  = std::abs(a1);
 
@@ -420,12 +391,12 @@ void solveArm(const DHParameter*           mdh,
                 const double theta3 = th3_sol[i3];
                 const double c3 = std::cos(theta3), s3 = std::sin(theta3);
                 const double wx     = a2 + wc_x * c3 - wc_y * s3;
-                const double wy     = wc_x * s3 + wc_y * c3;
+                const double wy     = ca2 * (wc_x * s3 + wc_y * c3); // sign flips when α₂ = π
                 const double denom2 = wx * wx + wy * wy;
                 if (denom2 < kEpsAbs)
                     continue;
 
-                const double U      = (r2_des - a1 * a1 - (wx * wx + wy * wy) - (wp_z * wp_z - arm_v * arm_v)) / (2.0 * a1);
+                const double U      = (r2_des - a1 * a1 - denom2 - (wp_z * wp_z - arm_v * arm_v)) / (2.0 * a1);
                 const double c2     = (wx * U + wy * arm_v) / denom2;
                 const double s2     = (wx * arm_v - wy * U) / denom2;
                 const double r2     = std::sqrt(c2 * c2 + s2 * s2);
@@ -435,11 +406,11 @@ void solveArm(const DHParameter*           mdh,
 
                 const double     q_arm[3] = { theta1, theta2, theta3 };
                 const Isometry3d T03      = fkMdh({ mdh, 3 }, q_arm);
-                const Point3d    pw_pt    = T03 * Point3d(p_w4.x, p_w4.y, p_w4.z);
+                const Point3d    pw_pt    = t0_inv * (T03 * Point3d(p_w4.x, p_w4.y, p_w4.z));
                 const Vec3d      pw_test(pw_pt.x, pw_pt.y, pw_pt.z);
                 if ((pw_test - p_w_des).length2() > kPosTol * kPosTol)
                     continue;
-                solveWrist(mdh, target, { theta1, theta2, theta3 }, T03.rotation, dofs, seed, solutions);
+                solveWrist(mdh, target, { theta1, theta2, theta3 }, T03.rotation, dofs, seed, check_limits, solutions);
             }
         }
     }
@@ -455,7 +426,7 @@ void solveArm(const DHParameter*           mdh,
             const double theta3 = th3_sol[i3];
             const double c3 = std::cos(theta3), s3 = std::sin(theta3);
             const double wx     = a2 + wc_x * c3 - wc_y * s3;
-            const double wy     = wc_x * s3 + wc_y * c3;
+            const double wy     = ca2 * (wc_x * s3 + wc_y * c3); // sign flips when α₂ = π
             const double denom2 = wx * wx + wy * wy;
             if (denom2 < kEpsAbs)
                 continue;
@@ -474,11 +445,11 @@ void solveArm(const DHParameter*           mdh,
 
                 const double     q_arm[3] = { theta1, theta2, theta3 };
                 const Isometry3d T03      = fkMdh({ mdh, 3 }, q_arm);
-                const Point3d    pw_pt    = T03 * Point3d(p_w4.x, p_w4.y, p_w4.z);
+                const Point3d    pw_pt    = t0_inv * (T03 * Point3d(p_w4.x, p_w4.y, p_w4.z));
                 const Vec3d      pw_test(pw_pt.x, pw_pt.y, pw_pt.z);
                 if ((pw_test - p_w_des).length2() > kPosTol * kPosTol)
                     continue;
-                solveWrist(mdh, target, { theta1, theta2, theta3 }, T03.rotation, dofs, seed, solutions);
+                solveWrist(mdh, target, { theta1, theta2, theta3 }, T03.rotation, dofs, seed, check_limits, solutions);
             }
         }
     }
@@ -497,7 +468,9 @@ bool PieperIKSolver::solve(const math::Isometry3d& target, std::vector<Q>& solut
 {
     using namespace math;
 
-    if (!is_valid_)
+    // is_valid_ already covers the DOF count; the size check also guards the
+    // fixed 6-element indexing done below in case a future edit breaks that link.
+    if (!is_valid_ || dofs().size() != 6)
         return false;
 
     const auto&        dof_list = dofs();
@@ -520,7 +493,7 @@ bool PieperIKSolver::solve(const math::Isometry3d& target, std::vector<Q>& solut
     for (size_t i = 0; i < seed.size() && i < 6; ++i) seed_arr[i] = seed[i];
 
     solutions.clear();
-    solveArm(mdh, p_w_des, p_w4, target, dof_list, seed_arr, solutions);
+    solveArm(mdh, T0_inv, p_w_des, p_w4, target, dof_list, seed_arr, isCheckingJointLimits(), solutions);
 
     // Sort by angular distance from seed
     std::sort(solutions.begin(), solutions.end(), [&seed_arr](const Q& a, const Q& b) {

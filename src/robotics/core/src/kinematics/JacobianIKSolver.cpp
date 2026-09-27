@@ -15,17 +15,14 @@ VN_ROBOTICS_KINEMATICS_NS_BEGIN
 namespace
 {
 
-constexpr double kPosTol        = 1e-6;   // position convergence tolerance  (m)
-constexpr double kRotTol        = 1e-6;   // orientation convergence tolerance (rad)
-constexpr double kPosWeight     = 1.0;    // task weight: position error
-constexpr double kRotWeight     = 1.0;    // task weight: orientation error
-constexpr int    kMaxIter       = 150;    // max iterations per seed
-constexpr int    kMaxSeeds      = 8;      // random restart seeds
-constexpr double kMinLambda     = 1e-4;   // min DLS damping
-constexpr double kInitLambda    = 0.1;    // initial DLS damping
-constexpr double kMaxAngularStep = 0.5;   // max revolute step per iteration  (rad)
-constexpr double kMaxLinearStep  = 0.1;   // max prismatic step per iteration  (m)
-constexpr double kMaxLambda     = 10.0;   // damping ceiling
+constexpr double kPosWeight      = 1.0;  // task weight: position error
+constexpr double kRotWeight      = 1.0;  // task weight: orientation error
+constexpr double kMinLambda      = 1e-4; // min DLS damping
+constexpr double kInitLambda     = 0.1;  // initial DLS damping
+constexpr double kMaxAngularStep = 0.5;  // max revolute step per iteration  (rad)
+constexpr double kMaxLinearStep  = 0.1;  // max prismatic step per iteration  (m)
+constexpr double kMaxLambda      = 10.0; // damping ceiling
+constexpr double kJointLimitTol  = 1e-6; // joint-bound check tolerance (rad / m)
 
 /*
  * Orientation error — exact SO(3) logarithmic map.
@@ -90,6 +87,18 @@ bool solve6x6(double A[6][6], double b[6], double x[6])
     return true;
 }
 
+/* True when every joint with a non-empty range lies inside its bounds. */
+bool withinBounds(std::span<const DofInfo> dofs, std::span<const double> q)
+{
+    for (size_t i = 0; i < dofs.size(); ++i) {
+        if (!(dofs[i].lower < dofs[i].upper))
+            continue;
+        if (q[i] < dofs[i].lower - kJointLimitTol || q[i] > dofs[i].upper + kJointLimitTol)
+            return false;
+    }
+    return true;
+}
+
 /*
  * Single-seed DLS IK iteration.
  *
@@ -131,6 +140,7 @@ bool solve6x6(double A[6][6], double b[6], double x[6])
  */
 bool solveFromSeed(std::span<const DofInfo>        dofs,
                    const math::Isometry3d&          target,
+                   const IterativeIKSolver&         settings,
                    std::vector<Q>&                  solutions,
                    std::span<math::Isometry3d>      T_chain,
                    std::span<math::Vec3d>           p_world,
@@ -142,10 +152,13 @@ bool solveFromSeed(std::span<const DofInfo>        dofs,
     const size_t n = dofs.size();
     if (n == 0) return false;
 
+    const std::array<bool, 6>& enabled   = settings.constraintMask();
+    const double               tolerance = settings.maxError();
+
     double lambda   = kInitLambda;
     double prev_err = std::numeric_limits<double>::max();
 
-    for (int iter = 0; iter < kMaxIter; ++iter) {
+    for (int iter = 0; iter < settings.maxIterations(); ++iter) {
         // ---- forward kinematics ----
         math::Isometry3d T;
         for (size_t i = 0; i < n; ++i) {
@@ -170,16 +183,32 @@ bool solveFromSeed(std::span<const DofInfo>        dofs,
         const math::Vec3d pos_err = target.translation.asVector() - T_ee.translation.asVector();
         const math::Vec3d rot_err = orientationError(T_ee.rotation, target.rotation);
 
-        const double pos_norm = pos_err.length();
-        const double rot_norm = rot_err.length();
-        const double err      = kPosWeight * pos_norm + kRotWeight * rot_norm;
+        const double pos_c[3] = { pos_err.x, pos_err.y, pos_err.z };
+        const double rot_c[3] = { rot_err.x, rot_err.y, rot_err.z };
 
-        // ---- convergence ----
-        if (pos_norm < kPosTol && rot_norm < kRotTol) {
-            Q sol;
-            for (size_t i = 0; i < n; ++i) sol.push_back(q[i]);
-            solutions.push_back(std::move(sol));
-            return true;
+        // ---- convergence: every enabled task component within tolerance ----
+        bool   converged = true;
+        double err       = 0.0;
+        for (int c = 0; c < 3; ++c) {
+            if (enabled[c]) {
+                err += pos_c[c] * pos_c[c];
+                if (std::abs(pos_c[c]) > tolerance) converged = false;
+            }
+            if (enabled[c + 3]) {
+                err += rot_c[c] * rot_c[c];
+                if (std::abs(rot_c[c]) > tolerance) converged = false;
+            }
+        }
+
+        if (converged) {
+            // A seed that reaches the target outside the bounds is not a solution.
+            if (!settings.isCheckingJointLimits() || withinBounds(dofs, q)) {
+                Q sol;
+                for (size_t i = 0; i < n; ++i) sol.push_back(q[i]);
+                solutions.push_back(std::move(sol));
+                return true;
+            }
+            return false;
         }
 
         // ---- Jacobian columns (weighted, computed once per iteration) ----
@@ -194,13 +223,21 @@ bool solveFromSeed(std::span<const DofInfo>        dofs,
                 Jw = z_world[i];
             }
             double* col = &Jc[i * 6];
-            col[0] = kPosWeight * Jv.x; col[1] = kPosWeight * Jv.y; col[2] = kPosWeight * Jv.z;
-            col[3] = kRotWeight * Jw.x; col[4] = kRotWeight * Jw.y; col[5] = kRotWeight * Jw.z;
+            col[0] = enabled[0] ? kPosWeight * Jv.x : 0.0;
+            col[1] = enabled[1] ? kPosWeight * Jv.y : 0.0;
+            col[2] = enabled[2] ? kPosWeight * Jv.z : 0.0;
+            col[3] = enabled[3] ? kRotWeight * Jw.x : 0.0;
+            col[4] = enabled[4] ? kRotWeight * Jw.y : 0.0;
+            col[5] = enabled[5] ? kRotWeight * Jw.z : 0.0;
         }
 
-        // ---- error vector (weighted) ----
-        const double e_vec[6] = { kPosWeight * pos_err.x, kPosWeight * pos_err.y, kPosWeight * pos_err.z,
-                                  kRotWeight * rot_err.x, kRotWeight * rot_err.y, kRotWeight * rot_err.z };
+        // ---- error vector (weighted, disabled components zeroed) ----
+        const double e_vec[6] = { enabled[0] ? kPosWeight * pos_err.x : 0.0,
+                                  enabled[1] ? kPosWeight * pos_err.y : 0.0,
+                                  enabled[2] ? kPosWeight * pos_err.z : 0.0,
+                                  enabled[3] ? kRotWeight * rot_err.x : 0.0,
+                                  enabled[4] ? kRotWeight * rot_err.y : 0.0,
+                                  enabled[5] ? kRotWeight * rot_err.z : 0.0 };
 
         // ---- DLS: accumulate J·Jᵀ (6×6) + λ²I ----
         double JJt[6][6] = {};
@@ -242,7 +279,7 @@ bool solveFromSeed(std::span<const DofInfo>        dofs,
 
         for (size_t i = 0; i < n; ++i) {
             q[i] += step * dq[i];
-            if (dofs[i].lower < dofs[i].upper)
+            if (settings.isClampToBounds() && dofs[i].lower < dofs[i].upper)
                 q[i] = std::clamp(q[i], dofs[i].lower, dofs[i].upper);
         }
 
@@ -263,7 +300,7 @@ bool solveFromSeed(std::span<const DofInfo>        dofs,
 /*
  * Public entry point.
  *
- * Tries up to kMaxSeeds random-restart configurations.  Returns as soon
+ * Tries up to maxSeeds() random-restart configurations.  Returns as soon
  * as the first valid IK solution is found — this is the preferred
  * behaviour for real-time control loops where a single feasible
  * configuration is sufficient.  The `solutions` vector receives at most
@@ -296,11 +333,11 @@ bool JacobianIKSolver::solve(const math::Isometry3d& target,
         else
             q[i] = 0.0;
     }
-    if (solveFromSeed(dofs_, target, solutions, T_chain, p_world, z_world, Jc, q, dq))
+    if (solveFromSeed(dofs_, target, *this, solutions, T_chain, p_world, z_world, Jc, q, dq))
         return true;
 
-    // -------- Seeds 1..kMaxSeeds-1: uniform random within limits --------
-    for (int seed = 1; seed < kMaxSeeds; ++seed) {
+    // -------- Seeds 1..maxSeeds()-1: uniform random within limits --------
+    for (int seed = 1; seed < maxSeeds(); ++seed) {
         for (size_t i = 0; i < n; ++i) {
             const double lo = dofs_[i].lower, hi = dofs_[i].upper;
             if (lo < hi) {
@@ -310,7 +347,7 @@ bool JacobianIKSolver::solve(const math::Isometry3d& target,
                 q[i] = dist(rng);
             }
         }
-        if (solveFromSeed(dofs_, target, solutions, T_chain, p_world, z_world, Jc, q, dq))
+        if (solveFromSeed(dofs_, target, *this, solutions, T_chain, p_world, z_world, Jc, q, dq))
             return true;
     }
 

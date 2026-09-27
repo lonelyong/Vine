@@ -9,58 +9,64 @@
 
 VN_ROBOTICS_KINEMATICS_NS_BEGIN
 
-/*
- * PieperIKSolver – analytic inverse kinematics for 6-DOF serial robots
- * with spherical wrist, using the Pieper decoupling method under
- * Modified Denavit-Hartenberg (MDH / Craig) convention.
+/**
+ * @brief Analytic inverse kinematics for 6-DOF serial robots with a spherical wrist.
  *
- * Supported robot type
- * --------------------
- *   dofs  = 6
- *   MDH convention  (Tᵢ = Rx(αᵢ₋₁)·Tx(aᵢ₋₁)·Rz(θᵢ)·Tz(dᵢ))
+ * Implements the Pieper decoupling method under the modified Denavit-Hartenberg
+ * (MDH / Craig) convention: Tᵢ = Rx(αᵢ₋₁)·Tx(aᵢ₋₁)·Rz(θᵢ)·Tz(dᵢ).
  *
- *   Spherical wrist (axes 4,5,6 intersect at one point):
- *     a₃ = 0,  a₄ = 0,  a₅ = 0
+ * Supported class - every requirement is validated in the constructor:
  *
- *   Arm geometry:
- *     α₁ ≈ ±90°   (joint 1 perpendicular to joint 2)
- *     α₂ ≈ 0, π   (joint 2 parallel to joint 3)
- *     a₂ ≠ 0      (non-zero link length)
+ * - exactly 6 joints, each one MDH-representable;
+ * - spherical wrist: a₃ = a₄ = a₅ = 0 and d₅ = 0, so that the axes of joints 4, 5 and 6
+ *   meet at a single point;
+ * - arm geometry: |sin α₁| = 1, sin α₂ = 0 (α₂ = 0 or π), a₂ ≠ 0, sin α₃ ≠ 0 and d₄ ≠ 0,
+ *   so that joint 3 observably moves the wrist centre;
+ * - wrist twists: sin α₄ ≠ 0 and sin α₅ ≠ 0, i.e. no two consecutive wrist axes may be
+ *   parallel or anti-parallel (that would leave the wrist with only two degrees of freedom).
  *
- *   Max solutions: 8  (2 arm branches × 2 elbow configs × 2 wrist flips)
+ * At most 8 solutions are produced (2 shoulder × 2 elbow × 2 wrist branches).
+ * Branches that are unreachable, violate joint limits or fail the internal
+ * forward-kinematics cross-check are discarded, so fewer may be returned.
  *
- * Validation happens in the constructor.  If the robot does not meet
- * the above preconditions, isValid() returns false and every solve()
- * call returns false immediately.
- *
- * The solve(seed) overload sorts results by angular distance from the
- * seed joint configuration, respecting 2π-periodic equivalence.
+ * Robots outside the supported class are rejected: isValid() reports false and
+ * every solve() call returns false immediately.
  */
 class VN_ROBOTICS_CORE_API PieperIKSolver : public ClosedFormIKSolver {
 
   public:
-    /*
-     * Construct from joint descriptors.
-     * Extracts MDH parameters and validates the Pieper preconditions.
-     * Use isValid() afterwards to check whether the robot is supported.
+    /**
+     * @brief Builds the solver from the joint descriptors and validates the Pieper preconditions.
+     *
+     * @param dofs Joint descriptors in base-to-tool order.
      */
     PieperIKSolver(const std::vector<DofInfo>& dofs);
 
   public:
-    /*
-     * Solve IK for target pose.  Solutions are returned unsorted.
-     * Returns true if at least one solution was found.
+    /**
+     * @brief Solves the inverse kinematics for a target pose.
+     *
+     * Equivalent to calling solve(target, solutions, Q{}) : the solutions are ordered by
+     * angular distance from the zero configuration.
+     *
+     * @param target Desired pose of the tool frame (frame 6) in the robot base frame.
+     * @param solutions Receives the solutions in joint space; left empty when none is found.
+     * @return true if at least one solution was found, false otherwise.
      */
     bool solve(const math::Isometry3d& target, std::vector<Q>& solutions) const override;
 
-    /*
-     * Solve IK for target pose, sorted by angular distance from seed.
-     * Each joint in the seed is compared with 2π-periodic wrapping.
+    /**
+     * @brief Solves the inverse kinematics and orders the solutions by distance from a seed.
+     *
+     * @param target Desired pose of the tool frame (frame 6) in the robot base frame.
+     * @param solutions Receives the solutions sorted by increasing angular distance from seed.
+     * @param seed Reference joint configuration; joints are compared with 2π-periodic wrapping.
+     * @return true if at least one solution was found, false otherwise.
      */
     bool solve(const math::Isometry3d& target, std::vector<Q>& solutions, const Q& seed) const;
 
   private:
-    /* Pre-extracted MDH parameters (computed once in constructor). */
+    /** @brief MDH parameters extracted once in the constructor. */
     std::array<DHParameter, 6> mdh_;
 };
 
