@@ -1,3 +1,5 @@
 add_subdirectory(app_shell)
+add_subdirectory(demo_plugin)
+add_subdirectory(model_viewer)
 add_subdirectory(test_plugin)
 add_subdirectory(gfx_backend_vsg)

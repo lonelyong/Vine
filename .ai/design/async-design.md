@@ -157,7 +157,7 @@
 2. **结构化作用域 ⇒ 小改**：`Scope` 在生产代码**0 使用者**，且标准形状是"析构断言、同步点显式 await"
    （stdexec 的 `async_scope`/`counting_scope` 同理）⇒ 析构只做 `request_stop()` + 断言，另加 `detach()`，
    不做"析构里等待"（析构不是协程，等待要么阻塞线程、要么泵循环，那是宿主的策略）。
-3. **帧分配 ⇒ 不做，挂账**：协程体只出现在 appfw/app_shell/test_plugin/vsg 插件各若干处，`src/viz`
+3. **帧分配 ⇒ 不做，挂账**：协程体只出现在 appfw/app_shell/demo_plugin/test_plugin/vsg 插件各若干处，`src/viz`
    渲染路径 **0 个** ⇒ 帧分配不在任何热路径上；判据写在 `async-next.md` §3。
 
 另记一条本轮量到的（不是风险，是"别写没用的守卫"）：`WhenAnyChild::promise_type::return_value()` 里的

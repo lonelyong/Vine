@@ -12,7 +12,7 @@
 |---|---|
 | 启动框上屏 → 首帧 | 7 ms |
 | 插件库加载 + 实例化（`Plugin '…' loaded` 指的是这一步，三阶段生命周期在其后） | 1 ms |
-| `app_shell::load()` 里的 **demo 内容**：两张 cube map（6×256² + 6×512²）读盘 + 解码 + 场景装配 | **1693 ms** |
+| `demo_plugin::load()` 里的 **demo 内容**：两张 cube map（6×256² + 6×512²）读盘 + 解码 + 场景装配 | **1693 ms** |
 | `render_control->init()`：attach + 设备/管线 warm-up（`prewarmFrame()`） | **413 ms** |
 
 结论：那"两秒冻结"里约八成是**内容加载（I/O + 解码）**，不是渲染的一次性开销；两者都在
@@ -190,7 +190,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
 | 拍 0（驱动） | `startupSequence()` | "正在启动" |
 | `startupStart` | `GuiApplication` | "正在显示启动画面"（上框之后、等首帧之前） |
 | `startup` | `PluginManager` | "正在查找插件" → "正在加载插件"（计数，总量 = 插件数）→ "正在收尾插件" |
-| ↳ 单个插件内部 | 插件自己（demo：`app_shell`） | "正在准备功能栏" / "正在准备面板" / "正在建立渲染会话" / "正在接通控制台" |
+| ↳ 单个插件内部 | 插件自己（`app_shell`：功能栏/面板/控制台；`demo_plugin`：演示场景；会话那一拍在 `app_shell::postLoad()` —— 内容插件的骨架装完才建） | "正在准备功能栏" / "正在准备面板" / "正在接通控制台" / "正在准备演示场景" / "正在建立渲染会话" |
 | `startupEnd` | `GuiApplication` | "正在准备主窗口"（主窗上屏、撤框之前） |
 
 - **相位边界一定看得见**：每个相位名都跟着一次 `ProgressHost` 通知，`BootSplash::onStartupChanged()` 在应用线程上
@@ -257,7 +257,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
 
 ## 异步装配：重活换线程、界面留在主线程（2026-09-26 落地）
 
-**实测把 1768 ms 的 `AppShellDemo::install()` 劈开**：`loadDemoCubeMap(256)` 885 ms + `loadDemoCubeMap(512)` 880 ms
+**实测把 1768 ms 的 `DemoScene::install()` 劈开**：`loadDemoCubeMap(256)` 885 ms + `loadDemoCubeMap(512)` 880 ms
 （十二张 2048² JPEG 的读盘 + 解码 + `boxFilterRgba` 降采样），而**其余全部合计只有 3 ms**（场景图、诊断 pass、管线）；
 `render_control->init()`（会话 attach + 设备/管线）另计 223 ms。结论：能上别的线程的只有**纯数据那一大块**，要同步装配的
 几乎为零。
@@ -265,15 +265,17 @@ vn::async::Task<void> GuiApplication::startupEnd()
 形状（**插件自己包**，框架不管插件的线程；`deferStartup` 那一版做过又删了，见"落地顺序"第 2 条）：
 
 ```cpp
-// AppShellDemo：资产 = 纯数据；骨架 = 图形对象
+// DemoScene：资产 = 纯数据；骨架 = 图形对象
 vn::async::Task<DemoCubeImages> loadDemoCubeImagesAsync();      // 十二个面各一个池任务（whenAll 并行，本机 16 核）
-void AppShellDemo::install();                                   // 骨架：场景根/相机/pass/管线（不读资产）
-void AppShellDemo::installContent(const DemoCubeImages&);       // 建 CubeMap + 挂 env_box / sky_box（微秒级）
-void assembleDemoContentLater(std::shared_ptr<AppShellDemo>);   // 自己包的协程（急启动的 DetachedTask）
+void DemoScene::install();                                      // 骨架：场景根/相机/pass/管线（不读资产）
+void DemoScene::installContent(const DemoCubeImages&);          // 建 CubeMap + 挂 env_box / sky_box（微秒级）
+void assembleDemoContentLater(std::shared_ptr<DemoScene>);      // 自己包的协程（急启动的 DetachedTask）
 ```
 
 ```cpp
-// 插件 load()（应用线程）：Ribbon → 停靠布局 → 骨架 → **把资产丢出去** → 会话 init()（223 ms，与它们重叠）
+// 两插件的 load 那一趟（应用线程）：app_shell：Ribbon → 停靠布局（发布控件）→ 控制台日志 sink；
+//                                   demo_plugin：骨架 → **把资产丢出去**；
+// app_shell::postLoad()：全部插件 load 完之后 → 会话 init()（223 ms，与资产那趟重叠）
 // assembleDemoContentLater() 里：
 //     auto images = co_await loadDemoCubeImagesAsync();          // 池上并行；
 //     co_await app->mainThreadDispatcher()->resumeOnMainThread();// 让**应用线程唤醒这次 await**

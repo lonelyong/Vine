@@ -107,6 +107,9 @@ class VN_APPFW_API RenderControl : public Control {
      * view()->scene() and reads the camera via view()->camera() when it
      * assembles an explicit pipeline.
      *
+     * One control holds one session and one view: a document that renders brings its OWN control (and with it
+     * its own surface, device and pipelines - see appfw-document-model.md §9).
+     *
      * @return The view (never null while the control is alive).
      */
     vn::graphics::SceneView* view() const;

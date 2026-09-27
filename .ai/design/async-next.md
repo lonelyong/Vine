@@ -10,7 +10,7 @@
 | 取消的**环境**（stop token 随任务走） | **建议排期**，形状已定（§1 A + C） | appfw 已经手搓了环境（`PluginLoadContext::stopToken()`、`CommandExecutionContext::stopToken()`、`StartupProgress::stopToken()`），而 async 看不见它；子任务要拿令牌只能靠作者手写参数 |
 | 取消的**结果通道**（`set_stopped` 取代异常） | **不做**，只补文档 | cppcoro/folly 也用异常；上层已按 `TaskCancelledException` 分类；代价是 `Task` 结果型别 + 全部组合子 + 145 条用例 |
 | 结构化作用域的**强制** | **小改**（析构 = 请求停止 + 断言，等待永远显式；加 `detach()`） | `Scope` 在生产代码 **0 使用者**（全仓 grep）；stdexec 的 `async_scope`/`counting_scope` 也是"析构断言、同步点显式 await" |
-| **帧分配**（promise `operator new` / 分配器） | **不做**，挂账并写清判据 | 协程体只出现在 appfw(15 文件)/app_shell(10)/test_plugin(6)/vsg 插件(**1 处**)，`src/viz` 渲染路径 **0** 个 ⇒ 帧分配不在任何热路径 |
+| **帧分配**（promise `operator new` / 分配器） | **不做**，挂账并写清判据 | 协程体只出现在 appfw(15 文件)/app_shell(11)/demo_plugin(3)/test_plugin(6)/vsg 插件(**1 处**)，`src/viz` 渲染路径 **0** 个 ⇒ 帧分配不在任何热路径 |
 
 ---
 
@@ -161,8 +161,8 @@ class Scope
 
 - 现状：全模块 0 个 `promise_type::operator new/delete`、0 个 `allocator_arg_t` 构造、0 个
   `get_return_object_on_allocation_failure` ⇒ 每个协程帧走全局 `operator new`。
-- **全仓实测**：协程体只出现在 appfw(15 文件)、app_shell(10)、test_plugin(6)、`gfx_backend_vsg`(1 处，
-  插件自己的钩子)，`src/viz` 渲染路径 **0 个**。
+- **全仓实测**：协程体只出现在 appfw(15 文件)、app_shell(11)、demo_plugin(3)、model_viewer(3)、test_plugin(6)、
+  `gfx_backend_vsg`(1 处，插件自己的钩子)，`src/viz` 渲染路径 **0 个**。
   ⇒ **没有任何热路径在分配协程帧**（启动期几十个、命令执行每次几个、渲染每帧 0 个），池化的收益上限就是
   "启动期少几十次 malloc"，量不出来。
 - 判据（将来出现下列任一条再做）：① 出现"每帧/每事件创建协程"的用法；② profile 里协程帧分配占比可见

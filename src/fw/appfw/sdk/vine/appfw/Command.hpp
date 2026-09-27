@@ -110,6 +110,28 @@ enum class CommandStatus : std::uint8_t
      * @brief The command was cancelled before completing.
      */
     Cancelled,
+
+    /**
+     * @brief The command ran to its end but the request does not apply right now.
+     *
+     * This is an outcome, not a failure: the command understood the request and nothing
+     * went wrong, but the current context has nothing for it to act on - "export the
+     * selected model" with no model selected, "reload the current document" with no
+     * document open. Use it instead of Failed so the host can report it as what it is
+     * (see the note on succeeded()): a Failed result is logged as an error and shown to
+     * the user as "the command failed", which would be a false alarm.
+     *
+     * Set a message explaining what the context was missing; the host shows it. An empty
+     * message means "nothing to say" and is reported as silence rather than as a failure.
+     *
+     * The command decides this itself, by looking at the context it runs in: "the current document
+     * is not a mesh" is a check the command makes (application()->documentManager()->current()
+     * and its typeId()), not something the framework filters for it. The SDK carries no
+     * applicable-document-type metadata on commands on purpose: the filter then lives next to the
+     * logic that needs it, and this class's vtable stays as it is for plugins built against an
+     * earlier ABI.
+     */
+    NotApplicable,
 };
 
 /**
@@ -142,6 +164,10 @@ class VN_APPFW_API CommandResult
 
     /**
      * @brief Returns whether the command completed successfully.
+     *
+     * NotApplicable is not a success, so a caller that has to know whether the work was
+     * done still sees false; a caller deciding whether to report a failure must check the
+     * status itself (the host reports NotApplicable as an explanation, never as an error).
      *
      * @return true if the status is Success.
      */

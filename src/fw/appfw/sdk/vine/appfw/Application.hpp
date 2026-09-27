@@ -22,6 +22,7 @@ class PluginManager;
 class ServiceManager;
 class ConfigManager;
 class ConfigRegistry;
+class DocumentManager;
 class EventBus;
 class MainThreadDispatcher;
 class StartupProgress;
@@ -250,6 +251,35 @@ class VN_APPFW_API Application : public Object {
      * @return The config registry.
      */
     raw_ptr<ConfigRegistry> configRegistry() const;
+
+    /**
+     * @brief Returns the application's document manager.
+     *
+     * The document manager is a singleton that lives with the application and owns the open documents: which
+     * document types are available, which documents are open and which one is current. It is created before the
+     * plugins are loaded, so a plugin that owns a document type (see Document) can register it from its load().
+     *
+     * @return The document manager.
+     */
+    raw_ptr<DocumentManager> documentManager() const;
+
+    /**
+     * @brief Sets the tag registries record as the owner of what is being registered right now.
+     *
+     * The plugin loader sets it around a plugin's registration (its commands, its config items, its document types),
+     * so a registry can say "this came from plugin X" without the plugin repeating its own name at every call - and
+     * without every registry growing its own copy of the tag. A manager panel uses it to attribute what it lists.
+     *
+     * @param owner Name of the plugin that is registering; empty for host registrations.
+     */
+    void setRegistrationOwner(String owner);
+
+    /**
+     * @brief Returns the tag registries record as the owner of what is being registered right now.
+     *
+     * @return A copy of the current tag; empty when nothing is registering, or the host is.
+     */
+    String registrationOwner() const;
 
     /**
      * @brief Enables configuration persistence on the given JSON file.

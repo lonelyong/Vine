@@ -91,13 +91,13 @@ if(VINE_USE_FETCHCONTENT)
         GIT_TAG        v1.1.16
     )
     set(VSG_SUPPORTS_ShaderCompiler ON CACHE BOOL "" FORCE)
-    # vsg caps simultaneous vsg::Device instances at VSG_MAX_DEVICES (default
-    # 1). The backend used to raise that cap because a Qt surface recreation
-    # made it tear its vsg::Window/Device down and build a second one while the
-    # first was still dying. It no longer has to: a recreated host window MOVES
-    # the session (see VsgHostWindow), so no second device is ever created -- and
-    # the default cap is what keeps that honest, because a path that did try to
-    # create one now throws instead of quietly working on this machine.
+    # vsg's vk_buffer is templated on VSG_MAX_DEVICES and picks one of three shapes: <=1 a single value (no
+    # indirection at all), <=4 a fixed std::array, and >4 a std::vector that GROWS on demand. We take the last one:
+    # the number of simultaneous vsg::Device instances is not capped by us at all. That is the point - a document
+    # view brings its OWN render control, and with it its own surface, device and pipelines (see
+    # appfw-document-model.md §9), so "open another model" must not run into a build-time cap. The value itself is
+    # not a limit in that branch (it does not size anything there); it only has to be > 4 to select it.
+    set(VSG_MAX_DEVICES 4 CACHE STRING "" FORCE)
     FetchContent_MakeAvailable(vsg)
     vn_group_targets_folder(${vsg_SOURCE_DIR} third_party)
 

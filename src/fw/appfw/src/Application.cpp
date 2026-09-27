@@ -19,6 +19,7 @@
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/ConfigManager.hpp>
 #include <vine/appfw/ConfigRegistry.hpp>
+#include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/EventBus.hpp>
 #include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/PluginManager.hpp>
@@ -155,6 +156,7 @@ Application::Application(ApplicationData* data, const AppConfig& config, int arg
     dptr()->command_manager = std::make_unique<CommandManager>(this);
     dptr()->config_manager  = std::make_unique<ConfigManager>();
     dptr()->config_registry = std::make_unique<ConfigRegistry>();
+    dptr()->document_manager = std::make_unique<DocumentManager>(this);
     dptr()->main_dispatcher = std::make_unique<MainThreadDispatcher>();
     // The marshaller is injected and outlives the bus (ApplicationData declares it
     // before the bus, so it is destroyed after it).
@@ -549,6 +551,21 @@ raw_ptr<ConfigManager> Application::configManager() const
 raw_ptr<ConfigRegistry> Application::configRegistry() const
 {
     return dptr()->config_registry.get();
+}
+
+raw_ptr<DocumentManager> Application::documentManager() const
+{
+    return dptr()->document_manager.get();
+}
+
+void Application::setRegistrationOwner(String owner)
+{
+    dptr()->registration_owner = std::move(owner);
+}
+
+String Application::registrationOwner() const
+{
+    return dptr()->registration_owner;
 }
 
 raw_ptr<EventBus> Application::eventBus() const

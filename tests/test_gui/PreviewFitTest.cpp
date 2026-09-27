@@ -1,5 +1,5 @@
 /**
- * @brief The letterbox arithmetic of the deferred demo's preview strip (`app_shell/PreviewFit.hpp`).
+ * @brief The letterbox arithmetic of the deferred demo's preview strip (`demo_plugin/PreviewFit.hpp`).
  *
  * WHY IT IS WORTH A TEST. The slot is a fixed box and the G-buffer follows the window, so the copy is
  * isotropic only while the two aspects agree; getting this arithmetic wrong is a picture nobody can grep for
@@ -13,7 +13,7 @@
 
 #include "PreviewFit.hpp"
 
-using vn::app_shell::fitPreviewRect;
+using vn::demo::fitPreviewRect;
 
 TEST(PreviewFitTest, AWiderSourceIsLetterboxedVertically)
 {

@@ -135,15 +135,16 @@ struct VisualUserIO::Impl
     void repromptError(const String& message);
 
     /**
-     * @brief Appends an error message to the console on the application thread.
+     * @brief Appends a command outcome to the console on the application thread.
      *
      * The command completion callback runs on the thread that finished the
      * command, which is not necessarily the application thread; the console panel
      * is a QWidget and may only be touched there.
      *
-     * @param message Message to show.
+     * @param message Message to show; empty messages are ignored by the panel.
+     * @param type    Console message type describing how loud the outcome is.
      */
-    void appendOnApplicationThread(const String& message);
+    void appendOnApplicationThread(const String& message, ConsoleMessageType type);
 
     void completeString(const String& value);
     void completeInt(int value);
@@ -436,13 +437,28 @@ void VisualUserIO::Impl::onLineEntered(const String& text)
                 co_return;
             }
 
+            // "Does not apply here" is a hint, not a failure: the command explained what
+            // the current context was missing, so show that as a warning - and stay quiet
+            // when it did not explain, because "命令执行失败" would be a fault report for
+            // something that never went wrong.
+            if (result.status() == CommandStatus::NotApplicable)
+            {
+                const auto& message = result.message();
+                if (!message.empty())
+                {
+                    self->appendOnApplicationThread(message, ConsoleMessageType::Warning);
+                }
+                co_return;
+            }
+
             const auto& message = result.message();
-            self->appendOnApplicationThread(message.empty() ? String(u8"命令执行失败") : message);
+            self->appendOnApplicationThread(message.empty() ? String(u8"命令执行失败") : message,
+                                            ConsoleMessageType::Error);
         }(this, owner->commandManager()->executeCommandAsync(text));
     }
 }
 
-void VisualUserIO::Impl::appendOnApplicationThread(const String& message)
+void VisualUserIO::Impl::appendOnApplicationThread(const String& message, ConsoleMessageType type)
 {
     if (!console)
     {
@@ -450,7 +466,7 @@ void VisualUserIO::Impl::appendOnApplicationThread(const String& message)
     }
 
     auto* panel = console;
-    onConsolePanel(panel, [message](ConsolePanel* target) { target->append(ConsoleMessageType::Error, message); });
+    onConsolePanel(panel, [message, type](ConsolePanel* target) { target->append(type, message); });
 }
 
 void VisualUserIO::Impl::onEscape()

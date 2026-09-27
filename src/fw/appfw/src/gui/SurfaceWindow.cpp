@@ -265,6 +265,8 @@ struct SurfaceWindow::Impl {
     /// surface's own flags cannot answer, and used as the context menu's parent.
     QWidget* host = nullptr;
     vn::intrusive_ptr<vn::graphics::RenderEngine> engine;
+    /// The interactive primary view bound to the engine (this surface's own: one control holds one session, and a
+    /// document that renders brings its own control - see appfw-document-model.md §9).
     vn::intrusive_ptr<vn::graphics::SceneView> view;
     /// Whether the default backend was already picked (the first init() does it; idempotent).
     bool backend_selected = false;
@@ -272,7 +274,7 @@ struct SurfaceWindow::Impl {
     // backend up?). has_session: is there a session at all (a device and its pipelines built, on
     // session_handle) - which is what keeps the surface following a recreated window after a failed
     // re-announce, and what makes a new handle a re-announce rather than a first attach. backend_live
-    // true always implies has_session true (both are set together in initializeBackend()'s success
+    // true always implies has_session true (both are set together in attach()'s success
     // branch); the reverse does not hold.
     bool has_session = false;
     bool backend_live = false;
@@ -370,6 +372,13 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     // pipeline. Until then the surface stays hidden; after the attach the surface only follows its
     // own window (see handleDestroyed()/handleUpdate()).
     useDefaultBackend();
+
+    // 构造即试一次：QWindow 一 new 出来句柄就有，而"建后端"这件事本来就不需要宿主挑时机。拿不到可用窗口
+    // （句柄还没建、或尺寸还是 0x0）时它会自己退回去，由后面的 resize/show 再试（见 handleUpdate()）——
+    // 也就是"构造时建、显示时自动出帧"这条路，宿主不再必须调 init()（但它仍然可以，幂等）。
+    // 后端插件必须已经注册：插件按依赖关系声明（`VN_DECLARE_PLUGIN(..., { u8"gfx_backend_vsg" })`），
+    // 于是"在 load() 里建控件"也安全。
+    init();
 }
 
 SurfaceWindow::~SurfaceWindow()
@@ -412,53 +421,11 @@ bool SurfaceWindow::init()
     if (d->backend_live && nativeHandle() == d->session_handle) {
         return true;
     }
-    if (d->engine == nullptr) {
-        return false;
-    }
 
-    if (d->state == SurfaceState::Failed) {
-        // An explicit init() is the host saying "try again": clear the verdict and let this
-        // attempt speak for itself.
-        d->failure_reason.clear();
-        setState(SurfaceState::Pending);
-    }
-
-    // Pick the default backend if the host attached none, then attach when the native surface is
-    // usable. If it is not usable yet the attach is deferred and this call reports false: calling
-    // again is the host's retry, and an established session re-attaches by itself when Qt recreates
-    // the platform window, so we never fall back to creating a separate window.
-    useDefaultBackend();
-
-    if (d->engine->backend() == nullptr) {
-        // Nothing to attach to at all: no render backend plugin is registered. Waiting will
-        // not change that, so say it once instead of staying Pending forever.
-        failAttach(u8"no render backend is registered");
-        return false;
-    }
-
-    // Design B: the engine auto-registers no pipeline and is camera-agnostic.
-    // The SceneView owns the primary view (camera + content scene +
-    // manipulator); it registers the minimal default viewer - an order-0
-    // window pass drawing its content through its camera to the backbuffer -
-    // unless an application pass already presents that camera to the window
-    // (e.g. a deferred-lighting main pass carrying the view's camera). Apps
-    // assembling an explicit pipeline via addPass()/RenderPipelineBuilder keep
-    // full control; apps that only add helper / HUD passes (which draw
-    // through their own cameras) still get the default window pass.
-    d->view->ensureWindowPass();
-
-    if (nativeHandle() != nullptr) {
-        initializeBackend();
-    }
-    // Test hatch: force a platform-window recreation after VINE_RECREATE_SURFACE_MS milliseconds, which is
-    // the event the follow path above exists for. See recreateSurface(). Armed by the FIRST init() only:
-    // following a recreated window re-enters init(), and re-arming here would recreate the surface forever.
-    armRecreateHatch();
-    // Nothing is re-checked on a timer here: the surface is drawn into on the events that report a drawable
-    // surface - the container's show (see RenderControl), the container's resize (handleResized()) and the
-    // recreated platform window (noteSurfaceUsable()) - so the backend ends up at the live surface size
-    // without this class guessing when that is.
-    return d->backend_live;
+    // The synchronous form of initAsync(): the backend's initialize() runs inline, so nothing is handed to the
+    // pool and result() never waits on the event loop it is called from (which is what lets a host attach before
+    // it has one). Everything else - the handle, the state, the size, the frame - is attach()'s.
+    return attach(/*initialize_on_pool=*/false).result();
 }
 
 void SurfaceWindow::armRecreateHatch()
@@ -606,13 +573,13 @@ void SurfaceWindow::handleUpdate()
     }
 
     if (handle != d->session_handle) {
-        // The window Qt shows now is not the one the backend is bound to: the platform window was recreated
-        // underneath. An ESTABLISHED session follows it by itself -- that is the surface owning its own
-        // window, not the surface guessing a timing -- while a session that was never established (the host
-        // has not called init(), or its call did not succeed) is left alone: that attach is the host's.
-        if (d->has_session) {
-            init();
-        }
+        // The window Qt shows now is not the one the backend is bound to. Two cases, and both attach here:
+        //  - the platform window was recreated underneath: an ESTABLISHED session follows it by itself - that is the
+        //    surface owning its own window, not the surface guessing a timing;
+        //  - there was never a session, because the constructor's try landed before the layout gave the window a
+        //    size: this is that retry. A surface that reaches a usable window attaches there instead of waiting for
+        //    the host to call init() again.
+        init();
         return;
     }
 
@@ -668,172 +635,163 @@ bool SurfaceWindow::isAttaching() const noexcept
     return d->attaching.load(std::memory_order_acquire);
 }
 
-void SurfaceWindow::initializeBackend()
-{
-    if (!prepareBackendAttach()) {
-        return;
-    }
-
-    // 整段 attach（含 warm-up 那一帧）都算“正在 attach”：装配要等它过去（见 initAsync() 的契约）。
-    const AttachScope attaching(d->attaching);
-    d->backend_live = d->engine->initialize();
-    finishBackendAttach(/*warm_up_here=*/true);
-}
-
 vn::async::Task<bool> SurfaceWindow::initAsync()
 {
-    // Same head and same tail as init(); the only difference is where the backend's own initialize() runs (see the
-    // declaration). Everything that touches Qt - the handle, the state, the view, the frames - stays on this thread.
+    return attach(/*initialize_on_pool=*/true);
+}
+
+vn::async::Task<bool> SurfaceWindow::attach(bool initialize_on_pool)
+{
+    // Everything that touches Qt - the handle, the state, the view, the frames - runs on this thread; the only
+    // difference between the callers is where the backend's own initialize() runs (see the declaration).
     if (d->backend_live && nativeHandle() == d->session_handle) {
-        co_return true;
+        co_return true;  // Already bound to this very surface (backend_live implies has_session).
     }
     if (d->engine == nullptr) {
         co_return false;
     }
+
     if (d->state == SurfaceState::Failed) {
+        // An explicit attach is the caller saying "try again": clear the verdict and let this attempt speak for
+        // itself.
         d->failure_reason.clear();
         setState(SurfaceState::Pending);
     }
+
+    // Pick the default backend if the host attached none, then attach when the native surface is usable. If it is
+    // not usable yet the attach is deferred and this call reports the previous result: calling again is the caller's
+    // retry, and an established session re-attaches by itself when Qt recreates the platform window, so we never
+    // fall back to creating a separate window.
     useDefaultBackend();
+
     if (d->engine->backend() == nullptr) {
+        // Nothing to attach to at all: no render backend plugin is registered. Waiting will not change that, so
+        // say it once instead of staying Pending forever.
         failAttach(u8"no render backend is registered");
         co_return false;
     }
+
+    // Design B: the engine auto-registers no pipeline and is camera-agnostic.
+    // The SceneView owns the primary view (camera + content scene +
+    // manipulator); it registers the minimal default viewer - an order-0
+    // window pass drawing its content through its camera to the backbuffer -
+    // unless an application pass already presents that camera to the window
+    // (e.g. a deferred-lighting main pass carrying the view's camera). Apps
+    // assembling an explicit pipeline via addPass()/RenderPipelineBuilder keep
+    // full control; apps that only add helper / HUD passes (which draw
+    // through their own cameras) still get the default window pass.
     d->view->ensureWindowPass();
+    // Test hatch: force a platform-window recreation after VINE_RECREATE_SURFACE_MS milliseconds, which is the
+    // event the follow path below exists for. See recreateSurface(). Armed by the first attach only: following a
+    // recreated window re-enters here, and re-arming would recreate the surface forever.
     armRecreateHatch();
 
-    if (nativeHandle() == nullptr) {
-        co_return d->backend_live;  // deferred: calling again is the host's retry
-    }
-    if (!prepareBackendAttach()) {
-        co_return d->backend_live;
-    }
-
-    // The one stretch that only needs the handle: the device, the session and every pipeline are built here, on a
-    // pool worker, while the application thread goes back to its loop (that is the point - the boot keeps reporting,
-    // repainting and taking input through it).
-    // Nothing to come back to without an application (and so without an event loop): do the whole attach here, exactly
-    // as init() does.
-    if (Application::current() == nullptr) {
-        // Nothing to come back to (no application, no event loop): do the whole attach here, exactly as init() does.
-        d->backend_live = d->engine->initialize();
-        finishBackendAttach(/*warm_up_here=*/true);
-        co_return d->backend_live;
-    }
-
-    vn::graphics::RenderEngine* const engine_ptr   = d->engine.get();
-    bool                              initialized = false;
-
-    // 整段 attach（直到 warm-up 完成）都在这个作用域里：它是宿主的“现在别动场景”信号。
-    const AttachScope attaching(d->attaching);
-
-    co_await vn::async::run([engine_ptr, &initialized] { initialized = engine_ptr->initialize(); });
-    co_await MainThreadDispatcher::resumeOnMainThread();
-
-    d->backend_live = initialized;
-    finishBackendAttach(/*warm_up_here=*/false);
-
-    // 会话的最后一笔开销：warm-up 那一帧。它只是 engine->frame()（建 pass 图、program slot、编译管线，实测
-    // ~166-184 ms），而要的只有句柄与一个已经建好的会话——所以它也在池上跑，应用线程继续空着。
-    // ⚠️ 它读的是场景图：宿主在 attach 进行中不要去改场景（装内容要等这里返回，见 RenderControl::initAsync()）。
-    if (!isOnScreen()) {
-        vn::graphics::RenderEngine* const warm_engine = d->engine.get();
-        co_await vn::async::run([warm_engine] { warm_engine->frame(); });
-        co_await MainThreadDispatcher::resumeOnMainThread();
-        requestSettleFrames();
-    }
-    co_return d->backend_live;
-}
-
-bool SurfaceWindow::prepareBackendAttach()
-{
-    void* h = nativeHandle();
-    if (d->backend_live && h != nullptr && h == d->session_handle) {
-        // Already bound to this very surface: nothing to do (backend_live implies has_session).
-        return false;
-    }
-    if (h == nullptr || width() <= 0 || height() <= 0) {
-        // No usable native surface yet (Qt destroying/recreating the platform window, or the
-        // window not laid out yet): defer so we never attach to a dead or empty handle. The
-        // surface events that follow (a resize, a recreated surface) bring the caller back.
+    void* const handle = nativeHandle();
+    if (handle == nullptr || width() <= 0 || height() <= 0) {
+        // No usable native surface yet (Qt destroying/recreating the platform window, or the window not laid out
+        // yet): defer so we never attach to a dead or empty handle. The surface events that follow (a resize, a
+        // recreated surface) bring the caller back: a first attach is the caller's retry (see handleUpdate()), an
+        // established session follows the new window by itself.
         if (!d->deferral_logged) {
-            // Once per session: this line is the answer to "why is my render area empty?".
-            // It also says how long the host's own startup kept the surface unusable.
+            // Once per session: this line is the answer to "why is my render area empty?". It also says how long
+            // the caller's own startup kept the surface unusable.
             d->deferral_logged = true;
-            vn::logging::defaultLogger().info("[RenderControl] waiting for a usable surface ({}x{}, {} ms after construction)",
-                                                width(),
-                                                height(),
-                                                elapsedMs(d->created_at));
+            vn::logging::defaultLogger().info(
+                "[RenderControl] waiting for a usable surface ({}x{}, {} ms after construction)",
+                width(),
+                height(),
+                elapsedMs(d->created_at));
         }
-        return false;
+        co_return d->backend_live;
     }
-    if (d->has_session && h != d->session_handle) {
-        // The platform window was recreated and this is the new one. Re-announce the handle instead of
-        // tearing the session down: setWindowHandle is the contract for "follow me onto this surface", so
-        // the backend moves -- the device and every compiled pipeline stay -- and rebuilds the session
-        // itself when it cannot serve the new window (a different swapchain format). Shutting the engine
-        // down here forced the expensive path on every recreation; the vsg backend's windowBuildCount() is
-        // what tells the two apart (flat after a move, +1 after a rebuild).
+    if (d->has_session && handle != d->session_handle) {
+        // The platform window was recreated and this is the new one. Re-announce the handle instead of tearing the
+        // session down: setWindowHandle is the contract for "follow me onto this surface", so the backend moves -
+        // the device and every compiled pipeline stay - and rebuilds the session itself when it cannot serve the
+        // new window (a different swapchain format). Shutting the engine down here forced the expensive path on
+        // every recreation; the vsg backend's windowBuildCount() is what tells the two apart (flat after a move,
+        // +1 after a rebuild).
         vn::logging::defaultLogger().info(
             "[RenderControl] the render surface was recreated: re-announcing the new handle so the backend can follow it");
     }
-    // Give the engine the native window the backend must attach to; the
-    // handle is refreshed here so a re-announce after a surface recreate uses
-    // the new handle (and a backend that can move does exactly that).
-    d->engine->setWindowHandle(h);
-    return true;
-}
+    // Give the engine the native window the backend must attach to; the handle is refreshed here so a re-announce
+    // after a surface recreate uses the new handle (and a backend that can move does exactly that).
+    d->engine->setWindowHandle(handle);
 
-void SurfaceWindow::finishBackendAttach(bool warm_up_here)
-{
-    if (d->backend_live) {
-        d->has_session    = true;
-        d->session_handle = nativeHandle();
-        setState(SurfaceState::Attached);
-        // What the host sees is the widget that holds this surface, and RenderControl keeps it hidden until a frame
-        // is in the surface (see its constructor) - a hidden widget is not painted, so the hole Qt's window
-        // container punches for the embedded window is not there either. The same rule covers a recreated platform
-        // window: it went back to Pending while the new window was being taken over (see handleDestroyed()).
-        // Deliver the current surface size so the view's camera projection
-        // aspect is set on the first frame (undistorted) and the backend
-        // viewport tracks the surface. At a first attach this is the size the platform window happens to
-        // have (the layout has not run yet - measured 160x160 here against the 752x480 of the settled
-        // window), which is why the frame below is the warm-up one when the control is not on screen yet.
-        d->engine->resize(width(), height());
-        d->view->onSurfaceResized(width(), height());
-        if (isOnScreen()) {
-            renderFrame();
+    // The one stretch that only needs the handle: the device, the session and every pipeline are built here, on a
+    // pool worker, while the application thread goes back to its loop (that is the point - the boot keeps reporting,
+    // repainting and taking input through it). Nothing to come back to without an application (and so without an
+    // event loop): the same work runs inline, exactly as it does for a synchronous caller.
+    const bool attach_on_pool = initialize_on_pool && Application::current() != nullptr;
+
+    // 整段 attach（含那一帧）都在这个作用域里：它是宿主的“现在别动场景”信号。
+    const AttachScope attaching(d->attaching);
+    bool              live = false;
+    if (attach_on_pool) {
+        vn::graphics::RenderEngine* const engine_ptr = d->engine.get();
+        co_await vn::async::run([engine_ptr, &live] { live = engine_ptr->initialize(); });
+        if (live) {
+            // The session's one-time frame (pass graphs, program slots, compiled pipelines - measured ~166-184 ms).
+            // It belongs to the attach, not to "some later tick", so it is paid here and on the same worker; what is
+            // left for the application thread is a present.
+            // ⚠️ It reads the scene graph: a host must not mutate the scene while this is in flight (see
+            // RenderControl::initAsync()).
+            co_await vn::async::run([engine_ptr] { engine_ptr->frame(); });
         }
-        else if (warm_up_here) {
-            prewarmFrame();
-        }
-        // 不是自己付 warm-up 的调用方（initAsync 把那一帧丢到池上）在这里不做别的：settle 帧本来就是
-        // "等循环回来"的活，它自己会再请求。
-        // The first attach can land mid-layout (the host calls init() right after embedding the
-        // control, before its dock layout has settled), so the
-        // native surface may still be resized afterwards. Request settle frames
-        // so a few display-synced updates re-sync the swapchain to the final
-        // size and the first content is actually presented (a single present
-        // against a soon-to-resize surface can otherwise be dropped, leaving
-        // the view empty).
-        requestSettleFrames();
+        co_await MainThreadDispatcher::resumeOnMainThread();
     }
-    else if (!d->needs_visible_surface) {
-        // The platform would not build a surface for an unmapped window (Wayland wants the
-        // surface configured first; X11 and Windows accept an unmapped one). Ask the control to put the
-        // surface on screen so the next attach can use it: shown-but-unpresented is the state the hidden-surface
-        // path exists to avoid, so this is the fallback, not the design - and it is said out loud once, because
-        // it also explains a longer startup on that platform. The next attach is the host's init() on a first
-        // attach and the surface's own follow of a recreated window on an established one.
-        d->needs_visible_surface = true;
-        vn::logging::defaultLogger().info(
-            "[RenderControl] attaching to a surface that is not on screen failed: this platform wants a visible window, showing the surface so the next attach can use it");
-        if (on_needs_visible_surface) {
-            on_needs_visible_surface();
-        }
+    else {
+        live = d->engine->initialize();
     }
-    // On failure backend_live stays false, so the call after this one (the host's init(), or the
-    // surface's own when it follows an established session onto a recreated window) tries again.
+
+    d->backend_live = live;
+    if (!live) {
+        // The platform would not build a surface for an unmapped window (Wayland wants the surface configured
+        // first; X11 and Windows accept an unmapped one). Ask the control to put the surface on screen so the next
+        // attach can use it: shown-but-unpresented is the state the hidden-surface path exists to avoid, so this is
+        // the fallback, not the design - and it is said out loud once, because it also explains a longer startup on
+        // that platform. The next attach is the caller's retry on a first attach and the surface's own follow of a
+        // recreated window on an established one.
+        if (!d->needs_visible_surface) {
+            d->needs_visible_surface = true;
+            vn::logging::defaultLogger().info(
+                "[RenderControl] attaching to a surface that is not on screen failed: this platform wants a visible window, showing the surface so the next attach can use it");
+            if (on_needs_visible_surface) {
+                on_needs_visible_surface();
+            }
+        }
+        co_return false;
+    }
+
+    d->has_session    = true;
+    d->session_handle = handle;
+    setState(SurfaceState::Attached);
+    // What the caller sees is the widget that holds this surface, and RenderControl keeps it hidden until a frame is
+    // in the surface (see its constructor) - a hidden widget is not painted, so the hole Qt's window container
+    // punches for the embedded window is not there either. The same rule covers a recreated platform window: it went
+    // back to Pending while the new window was being taken over (see handleDestroyed()).
+    //
+    // The current surface size goes to the backend and the view so the frame below is built at the size the surface
+    // has now (undistorted aspect, viewport tracking the surface). At a first attach that is the size the platform
+    // window happens to have (the layout has not run yet - measured 160x160 here against the 752x480 of the settled
+    // window), which is why the frame below is the warm-up one while the control is not on screen yet.
+    d->engine->resize(width(), height());
+    d->view->onSurfaceResized(width(), height());
+    // The frame the attach owes. On screen it is the present, and the transition to Presenting - the state the
+    // control shows the render area on. Off screen there is nothing to present, so it is the warm-up frame, and only
+    // when this call is the one that has to pay it: the pool already paid it when the attach ran there.
+    if (isOnScreen()) {
+        renderFrame();
+    }
+    else if (!attach_on_pool) {
+        prewarmFrame();
+    }
+    // Settle frames come after every attach: measured, without them the gate's first sample (the window just dragged
+    // to 378x247) is a flat 66.37% background, identically twice - the re-presents after an attach are what makes
+    // the picture at the new size land. An attach's frame count is therefore "warm-up + present + 3 settle", not
+    // redundancy (questioned 2026-09-27, denied by measurement).
+    requestSettleFrames();
+    co_return true;
 }
 
 void SurfaceWindow::fitToScreen()
@@ -888,7 +846,7 @@ void SurfaceWindow::renderFrame()
     // to leave (the window system hands the real one over through the event loop).
     //
     // The surface's own visibility is deliberately NOT part of that question: it is hidden until it has
-    // something in it (see initializeBackend()), so the first frame of a session - the one that fills it -
+    // something in it (see attach()), so the first frame of a session - the one that fills it -
     // is rendered into a hidden surface on purpose.
     void* h = nativeHandle();
     if (h == nullptr) {
@@ -900,16 +858,15 @@ void SurfaceWindow::renderFrame()
     if (d->has_session && h != d->session_handle) {
         // Qt recreated the native surface (new HWND) but no surface/resize
         // notice was observed; rebind to the live window so we never keep
-        // presenting to a dead handle. initializeBackend() hands the new handle
-        // to the backend and renders the first frame on that surface, then
-        // returns.
-        initializeBackend();
+        // presenting to a dead handle. init() hands the new handle to the
+        // backend and renders the first frame on that surface, then returns.
+        init();
         return;
     }
     if (d->backend_live) {
         d->engine->frame();
         // The frame is in the surface, so the surface is what the area should show from now on: this is
-        // where it goes on screen (it stayed hidden until now, see initializeBackend()). A backend that
+        // where it goes on screen (it stayed hidden until now, see attach()). A backend that
         // could not present reports that on the diagnostics channel rather than through this call, which
         // is why the state is "a frame was submitted", not "the swapchain confirmed it". The control shows the
         // area on this transition (the widget visibility rule lives there), so a frame at the current size is

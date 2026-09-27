@@ -35,6 +35,9 @@ class DockRootWidget final : public UIElement {
 struct DockPanelManager::Impl {
     std::unique_ptr<DockingPaneManager> dockingMgr;
     std::unique_ptr<UIElement>          rootElement;
+
+    /// What was last installed through setCentralWidget(); borrowed, never deleted here.
+    UIElement* central = nullptr;
 };
 
 DockPanelManager::DockPanelManager()
@@ -67,7 +70,13 @@ void DockPanelManager::setCentralWidget(UIElement* widget)
 
     if (auto* impl = qobject_cast<QWidget*>(widget->impl())) {
         d->dockingMgr->setClientWidget(impl);
+        d->central = widget;
     }
+}
+
+raw_ptr<UIElement> DockPanelManager::centralWidget() const
+{
+    return d->central;
 }
 
 raw_ptr<UIElement> DockPanelManager::root() const

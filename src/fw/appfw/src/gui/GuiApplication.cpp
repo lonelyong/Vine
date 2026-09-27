@@ -19,6 +19,8 @@
 #endif
 
 #include <vine/appfw/gui/BootSplash.hpp>
+#include <vine/appfw/gui/CentralDocumentHost.hpp>
+#include <vine/appfw/gui/DocumentViewRegistry.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/ProgressPresenter.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
@@ -381,6 +383,12 @@ GuiApplication::~GuiApplication()
         d->boot_splash = nullptr;
     }
 
+    // The document host goes before the window: it hands the central slot back through that window's dock manager.
+    delete d->central_host;
+    d->central_host = nullptr;
+    delete d->view_registry;
+    d->view_registry = nullptr;
+
     delete d->main_window;
     // d is deleted by Application::~Application()
 }
@@ -431,6 +439,17 @@ void GuiApplication::createWindows(const SplashConfig& splash)
     if (auto* status = d->main_window->statusBar()->impl<QStatusBar>()) {
         auto* presenter = new ProgressPresenter();
         status->addPermanentWidget(static_cast<QWidget*>(presenter->impl()));
+    }
+
+    // The view layer. GUI-only by construction: a view is a UIElement, so a headless Application has none, and the
+    // central host below is what makes "the current document is what the middle of the window shows" the framework's
+    // default instead of every host's own three lines. The host installs its container lazily (see its class note), so
+    // a shell that put its own content in the central area keeps it until the first document is presented.
+    d->view_registry = new DocumentViewRegistry();
+    if (auto* documents = documentManager(); documents != nullptr) {
+        if (auto* docks = d->main_window->dockPanelManager(); docks != nullptr) {
+            d->central_host = new CentralDocumentHost(*documents, *d->view_registry, *docks);
+        }
     }
 
     // Created, not shown: the main window goes up in startupEnd(), at the end of the boot, once the whole boot has
@@ -519,6 +538,18 @@ void GuiApplication::setFollowSystemTheme(bool follow)
     if (follow) {
         setTheme(resolveSystemTheme());
     }
+}
+
+raw_ptr<DocumentViewRegistry> GuiApplication::viewRegistry() const
+{
+    const auto* d = static_cast<const GuiApplicationData*>(dptr());
+    return d->view_registry;
+}
+
+raw_ptr<CentralDocumentHost> GuiApplication::centralDocumentHost() const
+{
+    const auto* d = static_cast<const GuiApplicationData*>(dptr());
+    return d->central_host;
 }
 
 bool GuiApplication::followSystemTheme() const

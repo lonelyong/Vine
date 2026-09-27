@@ -190,7 +190,7 @@ fi
 # are built here as well: a stale .so is read with the current PluginInfo layout,
 # which shows up as an ASan global-buffer-overflow inside the plugin's own static
 # metadata and looks like a bug in the host.
-PLUGIN_TARGETS="app_shell test_plugin"
+PLUGIN_TARGETS="app_shell demo_plugin model_viewer test_plugin"
 if [ "$TARGET" = "test_vsg" ]; then
     PLUGIN_TARGETS="$PLUGIN_TARGETS gfx_backend_vsg"
 fi

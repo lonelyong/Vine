@@ -263,9 +263,12 @@ material 值 / 流字节 / cull 全部**不进**。
 
 * **插件源列表是 GLOB**：新增 `core/`/`api/` 的 `.cpp` 要**重新 configure**；`tests/test_vsg/CMakeLists.txt` 要显式加
   两处（`SRC_FILE_LIST` + `target_sources`）。
-* **demo 宿主是插件**（`plugins/vine/app_shelld.so`）：`ninja -C build Vine` **不重建它**；改完 demo 要
-  `ninja -C build app_shell`（门禁跑全量 ninja，所以只有手工改时踩）。
-* **`VSG_MAX_DEVICES` 默认 1 是有意的绊线**：任何"同时两个 device"的路径都该当场抛错；别手工改构建树的这个值。
+* **demo 宿主是插件**（2026-09-27 起是 `plugins/vine/demo_plugind.so`，之前挂在 `app_shelld.so` 里）：
+  `ninja -C build Vine` **不重建它**；改完 demo 要 `ninja -C build demo_plugin`（门禁跑全量 ninja，
+  所以只有手工改时踩）。
+* **`VSG_MAX_DEVICES`**：由 `gfx_backend_vsg/CMakeLists.txt` 显式设为 **4**（一份文档视图一块渲染面，见
+  `appfw-document-model.md` §9）。历史上的"默认 1 当绊线"已作废：`<=4` 是 vsg 里唯一正确的实现档，`>4` 的动态分支
+  在 1.1.16 是坏的。**`<=4` 不查边界 ⇒ 第 5 块面要由我们拒（暂无守卫）。**
 * `vn::String` 是 `std::u8string`（字面量写 `u8"…"`）；`vn::math::Mat4d` 默认构造 = **单位阵**；
   `vsg::Image::vk(deviceID)` 要下标；`vsg::Exception` **不是** `std::exception`（只 catch 后者会漏）。
 * **三份 living 文档**（`gfx_backend_vsg.md`、`docs/backend.md`、`docs/data-flow.md`）受 `check_doc_symbols.py` 管：

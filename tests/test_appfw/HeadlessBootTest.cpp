@@ -46,6 +46,7 @@
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/ConfigManager.hpp>
+#include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/EventBus.hpp>
 #include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/PluginManager.hpp>
@@ -590,5 +591,46 @@ TEST(HeadlessBootTest, ShutdownFromAnotherThreadIsReportedAndStillRuns)
     // 而且它**真的跑过**：总线已经是停的，第二次调用直接复述同一个结果（不是又等一遍）。
     EXPECT_TRUE(app->eventBus()->shutdownGracefully(std::chrono::milliseconds(10)));
 }
+/// 文档类型记下的 owner 来自**宿主的一个标签**（`Application::registrationOwner()`）：插件加载器在插件注册前后设它，
+/// 于是每个注册表不必各留一份相同的事实，管理器面板也能说清“这类文档是谁提供的”。
+TEST(HeadlessBootTest, ARegisteredDocumentTypeRecordsTheRegistrationOwnerTag)
+{
+    QStandardPaths::setTestModeEnabled(true);
 
+    static char  arg0[] = "test_appfw";
+    static char* argv[] = { arg0, nullptr };
+
+    vn::appfw::AppConfig config;
+    config.name           = u8"test_appfw_documents";
+    config.persist_config = false;
+    config.load_plugins   = false; // 这里只钉“标签→注册表”这条线，不加载任何插件
+
+    // 不扫真正的内置插件目录（那里面是 GUI 插件）：给一个空目录。
+    vn::appfw::PluginManager::setBuiltInPluginDirectory(freshPluginDirectory("vine_test_appfw_documents"));
+
+    auto app = std::make_unique<WorkingHostApplication>(config, 1, argv);
+    ASSERT_NE(app, nullptr);
+
+    auto* documents = app->documentManager();
+    ASSERT_NE(documents, nullptr);
+
+    // 没有标签时：宿主自己注册的东西，owner 是空的。
+    vn::appfw::DocumentTypeRegistration host_type;
+    host_type.type_id = u8"host_type";
+    ASSERT_TRUE(documents->registerType(host_type));
+
+    // 插件加载期间：加载器在插件注册前后设这个标签（这里直接设，等价于那一步）。
+    app->setRegistrationOwner(u8"some_plugin");
+    vn::appfw::DocumentTypeRegistration plugin_type;
+    plugin_type.type_id      = u8"plugin_type";
+    plugin_type.display_name = u8"插件提供的类型";
+    ASSERT_TRUE(documents->registerType(plugin_type));
+
+    const std::vector<vn::appfw::DocumentTypeInfo> types = documents->types();
+    ASSERT_EQ(types.size(), 2u);
+    ASSERT_EQ(types[0].type_id, u8"host_type") << "按 id 排序，与注册顺序无关";
+    EXPECT_TRUE(types[0].owner.empty());
+    ASSERT_EQ(types[1].type_id, u8"plugin_type");
+    EXPECT_EQ(types[1].owner, u8"some_plugin") << "注册时读的是 Application 上的那一个标签";
+}
 } // namespace

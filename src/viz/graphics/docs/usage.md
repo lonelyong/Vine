@@ -624,7 +624,7 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 
 ### 4.2 demo 应用的开关
 
-`./build/bin/Vine` 启动应用；`app_shell` 插件负责注册 demo 场景与管线。下面每个开关都是**环境变量**
+`./build/bin/Vine` 启动应用；`app_shell` 插件搭外壳（窗口、停靠布局、控制台），`demo_plugin` 插件负责注册 demo 场景与管线。下面每个开关都是**环境变量**
 （应用不接受命令行参数）：
 
 | 环境变量 | 取值 | 作用 |
@@ -653,7 +653,7 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 另一条着色规则，即给这只盒子自己的 `ShaderProgram`（引擎的 set 只有"按顶点给的方向采样"这一条规则，见 `addCubeMappedBox`
 的注释）。另外 cube map 在这里当 albedo 用、照片本身的天空是白的，所以太阳的明暗在它身上很淡。
 
-叠加场景（延迟路径 `AppShellDemo::buildScene()` 的覆盖层）现在只放**会混合**的内容：半透明盒子和星点 sprite。它的那趟**不写深度**
+叠加场景（延迟路径 `DemoScene::buildScene()` 的覆盖层）现在只放**会混合**的内容：半透明盒子和星点 sprite。它的那趟**不写深度**
 （`DepthMode::TestOnly`，半透明内容的规则），因此 pass 内的 drawable **无法自遮挡** —— 一只不透明的封闭盒子放进去会
 透出自己的背面（看起来像挖了个洞、能看穿进去）。需要不透明封闭体就放进不透明场景（写深度）。
 
@@ -686,7 +686,7 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 | `ShadingPath::Deferred` | `PipelineStage::Geometry` 的 pass 把内容画进**规范 G-buffer**（4 张彩色：albedo RGBA8、view normal+shininess RGBA16F、specular RGBA8、view position RGBA16F，加 D24 深度；发布为 `"GBuffer"`），再用一个 `Shading` 阶段的全屏光照 `ScreenPass` 作为窗口 pass。有叠加场景时，光照结果先与离屏 composite 合成再呈现（`Transparent` → `Present`）。 |
 
 **demo 的内容是一套词汇表、两条装配线。** 两个示例（forward / deferred）画同一批**切片**，各自只加自己确实画得对的
-那些（规则写在 `AppShellDemo::buildScene()` 一处，见 `src/plugins/app_shell/src/AppShellDemo.hpp`）：
+那些（规则写在 `DemoScene::buildScene()` 一处，见 `src/plugins/demo_plugin/src/DemoScene.hpp`）：
 
 | 切片 | forward | deferred |
 | --- | --- | --- |

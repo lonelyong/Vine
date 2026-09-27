@@ -6377,7 +6377,7 @@ const T* findFirst(const ::vsg::Node* node)
 
 TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
 {
-    // The demo's own shape (see AppShellDemo's star_cloud): vertex streams and NO index arena, drawn as
+    // The demo's own shape (see the demo plugin's DemoScene star_cloud): vertex streams and NO index arena, drawn as
     // POINT_LIST. Two things have to hold at once for that picture to exist, which is why they are pinned
     // together:
     //

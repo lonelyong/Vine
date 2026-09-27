@@ -14,9 +14,17 @@ VN_APPFWGUI_NS_BEGIN
 
 class BootSplash;
 class MainWindow;
+class DocumentViewRegistry;
+class CentralDocumentHost;
 
 struct GuiApplicationData : public ApplicationData {
     MainWindow* main_window = nullptr;
+
+    /// Which view presents which document type. GUI-only: a view is a UIElement, so a headless run has no views at all.
+    DocumentViewRegistry* view_registry = nullptr;
+
+    /// Shows the current document in the central client area (see CentralDocumentHost). Created with the registry.
+    CentralDocumentHost* central_host = nullptr;
 
     /// The startup frame, or nullptr when none is shown (disabled, or startup already finished).
     BootSplash* boot_splash = nullptr;

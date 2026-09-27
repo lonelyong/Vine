@@ -9,7 +9,6 @@ VN_APPFW_NS_BEGIN
 namespace gui {
 class MainWindow;
 class ConsolePanel;
-class RenderControl;
 }
 
 /**
@@ -28,37 +27,33 @@ void buildAppShellRibbon(gui::MainWindow* wnd);
 struct AppShellDock {
     /// Console panel created as the bottom dock (owned by the dock manager).
     gui::ConsolePanel* console_panel = nullptr;
-    /// Render view placed in the central client area (owned by the dock manager).
-    gui::RenderControl* render_control = nullptr;
 };
 
 /**
- * @brief Builds the app shell dock layout (left / central / right / bottom) and the demo's skeleton.
+ * @brief Builds the app shell dock layout (left / right / bottom, plus the console).
  *
- * Creates the side panels, the central render view and the bottom console, binds the console panel to the host's visual
- * user I/O, and starts the demo's content load on the pool. It does NOT bring the render session up: that is
- * initAppShellRenderControl(), so that the caller can hand the event loop a turn in between (see AppShellPlugin::load()).
+ * Creates the side panels and the bottom console and binds the console panel to the host's visual user I/O.
  *
- * THE 3D VIEW'S CONTENT IS NOT IN YET. The demo's skeleton (scenes, camera, passes, pipeline) is built here, while its
- * TWO CUBE MAPS are left for later: reading and decoding twelve 2048^2 faces is 1.8 s of the app's start-up (measured
- * 2026-09-26), it is pure data, and doing it inline would freeze the loop (no repaint, no progress) for that long. It is
- * assembleDemoContentLater(), which the plugin starts from here: the shell's own work stays on the application thread -
- * widgets and graphics objects are not built anywhere else - and the heavy half goes to the pool.
+ * THE CENTRAL AREA IS NOT THE SHELL'S ANY MORE (2026-09-27): the shell used to put a render control there and every
+ * content plugin hung its scene on it. A 3D content is a DOCUMENT now, and a document brings its own view and its own
+ * render surface (one document, one view, its own resources - see appfw-document-model.md §7/§9); the shell leaves the
+ * central slot empty and the document host takes it over when a document is shown.
  *
  * @param wnd Target main window.
- * @return The built dock layout (its render control still has to be initialized, its demo still has to get its content).
+ * @return The built dock layout.
  */
 AppShellDock buildAppShellDock(gui::MainWindow* wnd);
 
 /**
- * @brief Brings the 3D view's render session up: attach, device and pipelines.
+ * @brief Opens the document named by the command line, if one was asked for.
  *
- * Must run after buildAppShellDock() (the pipeline is built from the passes the demo's skeleton registered) and adjacent
- * to the main window going up (a session the window system never maps stays unattached - measured on X11).
+ * `Vine --open <type-id>` starts with that document shown. It goes through the SAME path the user's own command goes
+ * through (DocumentManager::create) rather than through anything shell-specific, so a type that has no create factory
+ * simply is not openable this way - and it must run after every plugin has loaded, because that is when the types are
+ * registered. AppShellPlugin::postLoad() is exactly that point.
  *
- * @param wnd  Main window that owns the dock layout.
- * @param dock Layout built by buildAppShellDock().
+ * @param wnd Main window whose document host shows it.
  */
-vn::async::Task<void> initAppShellRenderControl(gui::MainWindow* wnd, const AppShellDock& dock);
+void openDocumentFromCommandLine(gui::MainWindow* wnd);
 
 VN_APPFW_NS_END

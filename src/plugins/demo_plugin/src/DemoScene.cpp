@@ -1,4 +1,4 @@
-#include "AppShellDemo.hpp"
+#include "DemoScene.hpp"
 
 #include "PreviewFit.hpp"
 
@@ -56,7 +56,8 @@
 
 #include <vine/appfw/gui/RenderControl.hpp>
 
-VN_APPFW_NS_BEGIN
+namespace vn::demo
+{
 
 /*
  * Everything in this unit except install() is file-local: the demo's assets, its content slices,
@@ -366,8 +367,8 @@ addCubeMappedBox(vn::graphics::Group* root, vn::intrusive_ptr<vn::graphics::Text
 /**
  * @brief Adds the demo's cube-mapped box to a scene root.
  *
- * Both examples that show it share this slice (AppShellDemo::buildScene: addOpaqueBase, then
- * AppShellDemo::installContent - it is the one piece of the opaque base whose asset arrives late). It belongs
+ * Both examples that show it share this slice (DemoScene::buildScene: addOpaqueBase, then
+ * DemoScene::installContent - it is the one piece of the opaque base whose asset arrives late). It belongs
  * in the opaque scene
  * because the G-buffer geometry stage samples the material's texture like the forward stage does, so
  * the box is shaded correctly AND drawn in the pass that writes depth - which is what lets it occlude
@@ -805,7 +806,7 @@ constexpr BlendedPlacement kOverlayBlended{ { 1.0, -0.9, 1.05 }, { 2.0, 0.1, 1.3
  * Why they are separate from the opaque content at all: a blended drawable needs a DESTINATION to blend
  * against. The Deferred G-buffer pass has none (it writes albedo / normal / specular / view position,
  * not a composite), so the pair must be drawn after the deferred result - a second scene, rendered
- * depth-TEST-only (see AppShellDemo::buildScene). Nothing in that pass may need to occlude itself, which
+ * depth-TEST-only (see DemoScene::buildScene). Nothing in that pass may need to occlude itself, which
  * is also why no opaque body is added to it.
  *
  * @param root Root group receiving the content.
@@ -887,7 +888,7 @@ void addBlendedPair(vn::graphics::Group* root, const BlendedPlacement& at)
  *
  * @param render_control Render view whose engine receives the lights.
  */
-void addDemoLighting(gui::RenderControl* render_control)
+void addDemoLighting(vn::appfw::gui::RenderControl* render_control)
 {
     auto scene = render_control->view()->scene();
     if (scene == nullptr) {
@@ -974,7 +975,7 @@ void addDemoLighting(gui::RenderControl* render_control)
  *
  * @param render_control Render view whose engine receives the passes.
  */
-void addOffscreenValidationPass(gui::RenderControl* render_control)
+void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
 {
     const char* enabled = std::getenv("VINE_VSG_OFFSCREEN");
     if (enabled == nullptr || enabled[0] == '\0') {
@@ -1077,7 +1078,7 @@ void addOffscreenValidationPass(gui::RenderControl* render_control)
  * for backend regression; it intentionally drives the engine directly, not a
  * builder preset.
  */
-void addSlotOverlayDemo(gui::RenderControl* render_control)
+void addSlotOverlayDemo(vn::appfw::gui::RenderControl* render_control)
 {
     if (std::getenv("VINE_VSG_SLOT_DEMO") == nullptr) {
         return;
@@ -1141,7 +1142,7 @@ void addSlotOverlayDemo(gui::RenderControl* render_control)
  * for backend regression; it intentionally drives the engine directly, not a
  * builder preset.
  */
-void addOffscreenMultiSlotDemo(gui::RenderControl* render_control)
+void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
 {
     if (std::getenv("VINE_VSG_OFFSCREEN_MULTISLOT") == nullptr) {
         return;
@@ -1241,7 +1242,7 @@ vn::intrusive_ptr<vn::graphics::RenderTarget> makeGbufferTarget();
  *
  * @param render_control Render view whose engine receives the passes.
  */
-void addGbufferDemo(gui::RenderControl* render_control)
+void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
 {
     if (std::getenv("VINE_VSG_GBUFFER") == nullptr) {
         return;
@@ -1291,32 +1292,6 @@ void addGbufferDemo(gui::RenderControl* render_control)
 }
 
 /**
- * @brief The rectangle a preview draws its source into: the slot's box, letterboxed to the source's aspect.
- *
- * WHY THIS EXISTS. A fullscreen program maps `vine_uv` over the DESTINATION rectangle (see
- * BuiltinShaders::fullscreenVertexProgram), so copying a whole attachment into a rectangle of another
- * aspect squeezes it. The G-buffer follows the window while a preview slot is a fixed box, so widening the
- * window made the four previews look squashed and narrowing it stretched them - the copy is isotropic only
- * while the two aspects agree. Fitting the SOURCE's aspect inside the box keeps the preview undistorted and
- * keeps the slot's size and place, so the four previews stay a row whatever the window does.
- *
- * @param source_width  Source attachment width in pixels (the window's aspect is these two).
- * @param source_height Source attachment height in pixels.
- * @param slot_x        Left edge of the slot.
- * @param slot_y        Top edge of the slot.
- * @param slot_width    Width of the slot (the box the preview fits inside).
- * @param slot_height   Height of the slot.
- * @return The rectangle to draw into, centred in the slot, at least one pixel a side.
- */
-vn::graphics::Viewport fitPreviewRect(int source_width, int source_height, int slot_x, int slot_y, int slot_width,
-                                        int slot_height)
-{
-    // The arithmetic lives in PreviewFit.hpp so it has a unit test of its own (test_gui/PreviewFitTest); this
-    // wrapper keeps the demo's call sites reading as one function of the file.
-    return vn::app_shell::fitPreviewRect(source_width, source_height, slot_x, slot_y, slot_width, slot_height);
-}
-
-/**
  * @brief Renders the engine scene into a G-buffer and lights it in a
  * fullscreen deferred pass (env VINE_VSG_DEFERRED).
  *
@@ -1330,7 +1305,7 @@ vn::graphics::Viewport fitPreviewRect(int source_width, int source_height, int s
  *
  * @param render_control Render view whose engine receives the passes.
  */
-void addDeferredDemo(gui::RenderControl* render_control)
+void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
 {
     if (std::getenv("VINE_VSG_DEFERRED") == nullptr) {
         return;
@@ -1453,7 +1428,7 @@ bool demoUsesDeferred()
  *
  * @param render_control Render view whose engine receives the passes.
  */
-void addDemoPipeline(gui::RenderControl* render_control, vn::intrusive_ptr<vn::graphics::Scene> transparent)
+void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusive_ptr<vn::graphics::Scene> transparent)
 {
     auto* engine = render_control->engine();
     auto* view   = render_control->view();
@@ -1560,18 +1535,18 @@ void addDemoPipeline(gui::RenderControl* render_control, vn::intrusive_ptr<vn::g
     });
 }
 
-// 定义必须在文件内部的匿名 namespace **之外**：它声明在 AppShellDemo.hpp 里、由 AppShellUi.cpp 调用，
+// 定义必须在文件内部的匿名 namespace **之外**：它声明在 DemoScene.hpp 里、由 DemoPlugin.cpp 调用，
 // 而匿名 namespace 里的符号是内部链接——同一个 .so 的两个 TU 也凑不到一起（运行期报 undefined symbol）。
-bool AppShellDemo::sessionAttaching() const noexcept
+bool DemoScene::sessionAttaching() const noexcept
 {
     return control_ != nullptr && control_->isAttaching();
 }
 
-void assembleDemoContentLater(std::shared_ptr<AppShellDemo> demo)
+void assembleDemoContentLater(std::shared_ptr<DemoScene> demo)
 {
     // 协程体写成 lambda 并**立即调用**：`DetachedTask` 是急的，所以这一句就是把下面这段开起来，
     // 之后没人需要它的返回值（没人等它，它也不属于哪一拍——接口已经起来了，内容在它自己的线程上补齐）。
-    [](std::shared_ptr<AppShellDemo> demo) -> vn::async::DetachedTask {
+    [](std::shared_ptr<DemoScene> demo) -> vn::async::DetachedTask {
         // 1. 重活在池上：十二个面并行读盘 + 解码 + 降采样（loadDemoCubeImagesAsync）。应用线程一直空着——
         //    启动框照重绘、进度照上报、取消点得动。
         auto images = co_await loadDemoCubeImagesAsync();
@@ -1588,12 +1563,12 @@ void assembleDemoContentLater(std::shared_ptr<AppShellDemo> demo)
         //    比“同步委托”（invokeOnMainThread）好在：挂起期间池的那条 worker 是自由的（同步委托会把它按住
         //    整段 UI 工作）。什么时候用哪个：整条尾巴都在 UI 上（这里）就用 await；任务要把自己的线程留着、
         //    只借 UI 线程做一段，再用 invokeOnMainThread。
-        if (Application::current() == nullptr) {
+        if (vn::appfw::Application::current() == nullptr) {
             // 没有应用（只有测试会走到这里）：没有应用线程可回，就地做完。
             demo->installContent(images);
             co_return;
         }
-        co_await MainThreadDispatcher::resumeOnMainThread();
+        co_await vn::appfw::MainThreadDispatcher::resumeOnMainThread();
 
         // 4. 在**应用线程上**再确认一次再装：attach 也是在应用线程上开的（插件的 load() 里），所以"检查 + 装"
         //    之间没有挂起点 ⇒ 两者相对 attach 的开启是原子的。只靠上面那次检查不够——它跑在池上，
@@ -1642,11 +1617,11 @@ vn::async::Task<DemoCubeImages> loadDemoCubeImagesAsync()
     co_return std::move(*staged);
 }
 
-AppShellDemo::AppShellDemo(gui::RenderControl* control) : control_(control)
+DemoScene::DemoScene(vn::appfw::gui::RenderControl* control) : control_(control)
 {
 }
 
-vn::intrusive_ptr<vn::graphics::Scene> AppShellDemo::buildScene(bool deferred)
+vn::intrusive_ptr<vn::graphics::Scene> DemoScene::buildScene(bool deferred)
 {
     using vn::intrusive_ptr;
     using vn::graphics::Group;
@@ -1692,7 +1667,7 @@ vn::intrusive_ptr<vn::graphics::Scene> AppShellDemo::buildScene(bool deferred)
     return overlay;
 }
 
-void AppShellDemo::install()
+void DemoScene::install()
 {
     auto* render_control = control_;
 
@@ -1727,7 +1702,7 @@ void AppShellDemo::install()
     }
 }
 
-void AppShellDemo::installContent(const DemoCubeImages& images)
+void DemoScene::installContent(const DemoCubeImages& images)
 {
     using vn::math::Vec3d;
 
@@ -1755,5 +1730,5 @@ void AppShellDemo::installContent(const DemoCubeImages& images)
     }
 }
 
-VN_APPFW_NS_END
+}  // namespace vn::demo
 

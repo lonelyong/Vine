@@ -251,9 +251,9 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      *
      * ONE SPELLING FOR ONE ORDER, and it has to run BEFORE a new session is built: the pieces this drops own
      * GPU objects of the device the session is about to replace, so keeping them alive across a re-initialize
-     * means two `vsg::Device`s at once - which vsg refuses by design (VSG_MAX_DEVICES, deliberately 1 in this
-     * plugin's CMakeLists: a path that does this must throw instead of quietly working). `shutdown()` and
-     * @ref initialize both need it, for the same reason and in the same order.
+     * means holding objects of a dying device (two `vsg::Device`s at once are no longer fatal - the cap is 4,
+     * see this plugin's CMakeLists - but the ordering is the contract, and it did not change with it).
+     * `shutdown()` and @ref initialize both need it, for the same reason and in the same order.
      */
     void releaseContentWorld() noexcept;
 

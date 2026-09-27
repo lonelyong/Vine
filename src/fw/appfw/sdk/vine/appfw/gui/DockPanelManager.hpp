@@ -35,6 +35,9 @@ class VN_APPFW_API DockPanelManager final {
     /** Set the central working-area widget (replaces the default placeholder) */
     void setCentralWidget(UIElement* widget);
 
+    /** Get the element currently installed as the central widget, or nullptr when none was set. */
+    raw_ptr<UIElement> centralWidget() const;
+
     /** Get the root widget to embed in a window's central area */
     raw_ptr<UIElement> root() const;
 

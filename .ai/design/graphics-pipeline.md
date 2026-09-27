@@ -265,7 +265,7 @@ texel 的样子）；去掉 z 反转 ⇒ 影内 196；把 pass 的相机改回�
 | 环节 | 落点 |
 | --- | --- |
 | 路径 | `PipelinePreset`（4 值，含 2 个占位）→ `ShadingPath { Forward, Deferred }`，进 `PipelineOptions::path`；`build(const PipelineOptions&)` 取代 `build(preset, options)` |
-| 阴影 | 占位枚举**删除**，不是改名：请求改由**灯**提出（`Light::castShadow` + `ShadowSettings`），builder 扫 content / transparent 两个场景里 `enabled && castShadow` 的灯，有就报一条 `UnsupportedRequest`（"画面无影"）。**比原来覆盖更广**：以前只有点名 `*Shadowed` 预设才报，宿主直接给灯设标志是**静默**的（app_shell 的 demo 就是这样） |
+| 阴影 | 占位枚举**删除**，不是改名：请求改由**灯**提出（`Light::castShadow` + `ShadowSettings`），builder 扫 content / transparent 两个场景里 `enabled && castShadow` 的灯，有就报一条 `UnsupportedRequest`（"画面无影"）。**比原来覆盖更广**：以前只有点名 `*Shadowed` 预设才报，宿主直接给灯设标志是**静默**的（`demo_plugin` 的 demo 就是这样） |
 | 顺序 | 新增 `PipelineStage` + `pipelineStageOrder()`：`Depth -100 / Geometry -40 / Effect -20 / Shading 0 / Transparent 20 / Present 40 / Overlay 60 / Preview 100`；builder 的每个 pass（含 HUD、含 PiP 配方）都按阶段落位，HUD 的 `order` 降级为**阶段内**堆叠偏移 |
 | 生命周期 | `Pipeline` 改 RAII：`Pipeline(intrusive_ptr<RenderEngine>)`（引擎是构造不变量）+ `addPass()` 注册并记账 + 析构**逐个 `removePass`**；成员 `intrusive_ptr<RenderEngine>` **强持**引擎（无环：引擎不认识 pipeline） |
 | SceneView | 手写的 `removeWindowPass()` 只剩"放开句柄"——那正是 RAII 修掉的那个缺陷：旧版只删 window pass，转 deferred 后 G-buffer / 光照 / 合成 / HUD 全成孤儿 |

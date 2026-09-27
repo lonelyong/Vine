@@ -1,5 +1,6 @@
 ﻿#include "AppShellPlugin.hpp"
 
+#include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/StartupProgress.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/plugin_export.hpp>
@@ -33,20 +34,32 @@ vn::async::Task<void> AppShellPlugin::load(PluginLoadContext* context)
         co_return;
     }
 
-    // 这一拍的四段各自报一次相位：进度按相位跳（每个相位内不再动），所以每一段开始前把“在干什么”说清楚。
+    // 这一拍的三段各自报一次相位：进度按相位跳（每个相位内不再动），所以每一段开始前把“在干什么”说清楚。
     reportPhase(u8"正在准备功能栏");
     buildAppShellRibbon(wnd);
 
     reportPhase(u8"正在准备面板");
-    const AppShellDock dock = buildAppShellDock(wnd);
-
-    // 会话 init()：建视图、绑窗口容器、等后端把交换链接上（启动期最长的一段，中间不报进度）。
-    reportPhase(u8"正在建立渲染会话");
-    co_await initAppShellRenderControl(wnd, dock);
+    dock_ = buildAppShellDock(wnd);
 
     // 控制台日志路由：配置项注册、配置同步与 sink 安装（见 ConsoleLogRouter）。
     reportPhase(u8"正在接通控制台");
-    installConsoleLogSink(dock.console_panel, context);
+    installConsoleLogSink(dock_.console_panel, context);
+    co_return;
+}
+
+vn::async::Task<void> AppShellPlugin::postLoad(PluginLoadContext* context)
+{
+    (void)context;
+
+    auto* wnd = gui::MainWindow::current();
+    if (!wnd) {
+        co_return;
+    }
+
+    // 启动参数指定的那份文档**在启动里**打开（不是启动后第一拍）：打开会建会话，而**在窗口上屏之前**建会话，
+    // 那第一帧才是屏外的预热帧、由线程池渲染（`initAsync()` 的契约）。排到窗口上屏之后，第一帧就由应用线程
+    // 渲染，启动占用判据直接超（实测 204 ms / 限 150 ms）—— 这正是"宿主给时机"要早给的原因。
+    openDocumentFromCommandLine(wnd);
     co_return;
 }
 

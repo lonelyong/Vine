@@ -3,22 +3,22 @@
 #include <array>
 #include <memory>
 
-#include <vine/appfw/appfw_global.hpp>
+#include <vine/async/Task.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/Texture.hpp>
 #include <vine/imaging/Image.hpp>
 #include <vine/intrusive_ptr.hpp>
 
-#include <vine/async/Task.hpp>
-
-VN_APPFW_NS_BEGIN
-
-namespace gui {
+namespace vn::appfw::gui
+{
 class RenderControl;
 }
 
-class AppShellDemo;
+namespace vn::demo
+{
+
+class DemoScene;
 
 /**
  * @brief The demo's cube-map faces, read and decoded but NOT yet a CubeMap.
@@ -28,7 +28,7 @@ class AppShellDemo;
  * 1768 ms install()), and none of it touches a window, a widget or a scene - so it happens off the
  * application thread (see loadDemoCubeImagesAsync()). Turning the images into a CubeMap and hanging it on
  * the scene is a few microseconds and stays on the application thread, where the graphics objects belong
- * (see AppShellDemo::installContent()).
+ * (see DemoScene::installContent()).
  *
  * The arrays are parallel to the face tables (kBoxCubeFaces / kSkyCubeFaces): slot i is face i's image.
  * A face that could not be read is null, and the group is only used when all six are there.
@@ -55,7 +55,7 @@ struct DemoCubeImages {
  * Assets that are not there are reported - once per map - and the map is skipped: a cube map with a white
  * face would read as a shading bug (see the file's asset directory note).
  *
- * @return The staged faces; await it, then hand the result to AppShellDemo::installContent() on the
+ * @return The staged faces; await it, then hand the result to DemoScene::installContent() on the
  *         application thread.
  */
 vn::async::Task<DemoCubeImages> loadDemoCubeImagesAsync();
@@ -64,8 +64,8 @@ vn::async::Task<DemoCubeImages> loadDemoCubeImagesAsync();
  * @brief Finishes the demo's start-up in the background: reads the assets off the application thread, then has the
  * application thread hang them on the skeleton.
  *
- * The shell calls this once the skeleton is built (AppShellDemo::install() + the control's init(), both synchronous and
- * on the application thread) and then returns: the interface is up, and this brings the content in.
+ * The demo plugin calls this once the skeleton is built (DemoScene::install(), synchronous and on the application
+ * thread) and then returns: the interface is up, and this brings the content in.
  *
  * The shape - and why it is the plugin's business rather than the framework's:
  *  1. `co_await loadDemoCubeImagesAsync()` reads, decodes and filters twelve 2048^2 faces CONCURRENTLY on the pool
@@ -82,13 +82,14 @@ vn::async::Task<DemoCubeImages> loadDemoCubeImagesAsync();
  *
  * @param demo The demo whose skeleton is waiting for its content.
  */
-void assembleDemoContentLater(std::shared_ptr<AppShellDemo> demo);
+void assembleDemoContentLater(std::shared_ptr<DemoScene> demo);
 
 /**
- * @brief The default demo the app installs at start-up: content, overlays, diagnostic passes and pipeline.
+ * @brief The demo content a demo plugin hangs on the shell's render control: content, overlays, diagnostic passes
+ * and pipeline.
  *
- * The demo is the app's content vocabulary rather than part of the shell: the shell owns the
- * window, the dock layout and the Ribbon, this class owns what the central 3D view draws.
+ * The demo belongs to a content plugin, not to the shell: the shell owns the window, the dock layout and the Ribbon
+ * (and publishes the 3D view through MainWindow::primaryRenderControl()), while this class owns what that view draws.
  *
  * ONE CONTENT VOCABULARY, TWO COMPOSITIONS. The forward and Deferred examples draw the same content
  * wherever both paths can draw it identically, and each adds the slices only it can use (buildScene is
@@ -106,7 +107,7 @@ void assembleDemoContentLater(std::shared_ptr<AppShellDemo> demo);
  * So a single Scene OBJECT cannot serve both paths, while the vocabulary can and does: what differs is
  * which slices a path may draw, and buildScene decides that in one place.
  */
-class AppShellDemo
+class DemoScene
 {
   public:
     /**
@@ -114,7 +115,7 @@ class AppShellDemo
      *
      * @param control Render control owning the engine, view, camera and scene the demo builds into.
      */
-    explicit AppShellDemo(gui::RenderControl* control);
+    explicit DemoScene(vn::appfw::gui::RenderControl* control);
 
     /**
      * @brief Builds the demo's SKELETON: content and overlay scene roots, camera, diagnostic passes and the
@@ -167,7 +168,7 @@ class AppShellDemo
     vn::intrusive_ptr<vn::graphics::Scene> buildScene(bool deferred);
 
     /// Render control the demo builds into (owned by the shell's dock layout).
-    gui::RenderControl* control_;
+    vn::appfw::gui::RenderControl* control_;
 
     /// Content scene root the cube-mapped box is hung on later (see installContent()); owned by the scene.
     vn::intrusive_ptr<vn::graphics::Group> content_root_;
@@ -177,4 +178,4 @@ class AppShellDemo
     vn::intrusive_ptr<vn::graphics::Group> sky_group_;
 };
 
-VN_APPFW_NS_END
+}  // namespace vn::demo

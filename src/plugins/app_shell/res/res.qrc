@@ -3,6 +3,7 @@
         <file alias="about.svg">icons/about.svg</file>
         <file alias="show_commands.svg">icons/show_commands.svg</file>
         <file alias="show_config.svg">icons/show_config.svg</file>
+        <file alias="show_documents.svg">icons/show_documents.svg</file>
         <file alias="show_help.svg">icons/show_help.svg</file>
         <file alias="show_plugins.svg">icons/show_plugins.svg</file>
     </qresource>

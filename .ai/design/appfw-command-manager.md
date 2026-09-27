@@ -406,6 +406,35 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   （见 `async_global.hpp`）。链的 `runs` 归零前一定已完成弹栈与宿主析构，所以轮询读到的
   零值同样代表"整帧已收尾"。
 
+## 结果状态：`Failed` 与 `NotApplicable` 是两件事（2026-09-27 落地）
+
+`CommandStatus` 现在是四个：`Success` / `Failed` / `Cancelled` / **`NotApplicable`**。
+
+- **`NotApplicable` 的语义**：命令跑到底了，但**当前上下文里没有它能作用的东西**（没选中的模型、没打开的文档、
+  没有当前的工程……）。这不是失败 —— 命令听懂了请求，也没有任何东西出借。
+- **为什么需要它**：今天只能报 `Failed`，而 `Failed` 是**错误**：`logOutcome()` 记 `VN_LOGE`、用户看到
+  "命令执行失败"。那是**假故障**：日志里出现一行红字、控制台弹一句失败，但什么都没有错。
+- **三处用户可见路径都要分开**（四处都要改：只改一处就等于没改）：
+  1. `logOutcome()`：info 级 `Command not applicable: <name>: <message>`；`Failed` 仍是 `VN_LOGE`；
+  2. `executeDetached()`（ribbon 按钮那条 fire-and-forget 路径）：有解释就照实转达（`reportToUser()`），
+     **没解释就什么都不说** —— 绝不补一句"命令执行失败"；
+  3. `VisualUserIO::onLineEntered()` 的控制台回写：`ConsoleMessageType::Warning`（黄）而不是 `Error`（红），
+     同样，空解释则不写任何东西（控制台里只剩用户敲进去那一行的回显）。
+- **`succeeded()` 仍然是 `status == Success`**：调用方要问"活干没干"仍然看到 false；要问"该不该报错"必须自己看状态
+  （框架侧只有上面那三处。嵌套父命令拿到 `NotApplicable` 怎么办是**各类型自己的事**）。
+- **不要用 `setCommandEnabled()` / `disabledCommands()` 表达"不适用"**：那是**用户偏好**，会被持久化进配置；
+  "这个动作当下没有对象"是**临时事实**，两个轴不能共用一根旋钮。
+- **谁来判断"不适用"：命令自己**（2026-09-27 用户拍板）。`execute()` 里自己取上下文判断（例如
+  `context->application()->documentManager()->current()` 再看 `typeId()`），不适用就返回 `NotApplicable`，
+  并把缺的那一句写进 `message()`。**框架不给命令带"适用文档类型"元数据**：不引入 `CommandInfo::document_types`，
+  也不做"按类型过滤 ribbon"那一层 —— 派生的好处是 `Command` 的虚表不动，`VN_APPFW_PLUGIN_ABI_VERSION` 不用
+  7u → 8u（那是插件实现的导出类，加虚函数据就要动 ABI）。UI 少显几个按钮是**观感**问题，正确性由命令自己保证。
+- 钉子：`CommandManager_DetachedNotApplicableIsExplainedAndNotReportedAsAFailure`（含**日志级别**断言：
+  挂了 `LogSink` 抓行，`notApplicable` 不得出在 Error 级、且必须有那一行 info 级的 "not applicable"）、
+  `UserIOTest.NotApplicableTypedInTheConsoleIsAHintNotAnError`（**颜色**断言：拿面板自己刚写的
+  Warning/Error 两行做基准色，不写死色值）。
+- 变异电池三处都验证过：把 `executeDetached` / `logOutcome` / 控制台任一处改回旧行为 ⇒ 对应用例立刻红，恢复后全绿。
+
 ## 命令管理器对话框（`gui::CommandManagerDialog`）
 
 - 文件：`src/fw/appfw/src/gui/CommandManagerDialog.cpp`（窗口标题「命令管理器」），由 app_shell 的
@@ -595,6 +624,11 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   `CommandManager_ExecuteChildBoundsInstanceNesting`（实例形态自我递归同样在 `maxChainDepth()` 处被拒）。
 - 第 6 轮新增：`CommandManager_ReentrantFactoryIsSafe`、`CommandManager_ReentrantEventHandlerIsSafe`（重入注册表/事件回调安全）、
   `CommandManager_ExclusiveCommandsAreSerialized`（并发提交的排他命令不重叠）。
+- 第 11 轮新增（2026-09-27，`NotApplicable`）：`CommandManager_DetachedNotApplicableIsExplainedAndNotReportedAsAFailure`
+  （有解释 ⇒ 照实转达且无"命令执行失败"；**没有**解释 ⇒ 面板什么都没有；历史里记的是 `NotApplicable` 而不是 `Failed`；
+  日志里不得出现 Error 级、必须有 info 级的 "not applicable"）、
+  `UserIOTest.NotApplicableTypedInTheConsoleIsAHintNotAnError`（控制台里同样的两条 + 颜色是警告色不是错误色）。
+  两条都用 `NotApplicableCommand` 这个夹具（`s_message` 控制带不带解释、`s_runs` 确认命令真的跑了）。
 
 ## 有意**未做**的最佳实践项（留档）
 

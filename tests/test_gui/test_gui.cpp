@@ -33,6 +33,7 @@
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTabWidget>
+#include <QTableWidget>
 #include <QToolBar>
 #include <QToolButton>
 #include <QWidget>
@@ -47,6 +48,8 @@
 #include <vine/appfw/ConfigManager.hpp>
 #include <vine/appfw/ConfigRegistry.hpp>
 #include <vine/appfw/ConfigStandard.hpp>
+#include <vine/appfw/Document.hpp>
+#include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/PluginManager.hpp>
@@ -58,6 +61,7 @@
 #include <vine/appfw/gui/Control.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
+#include <vine/appfw/gui/DocumentManagerDialog.hpp>
 
 #include <DockingPaneGeometry.h>
 #include <vine/appfw/gui/GuiApplication.hpp>
@@ -70,6 +74,9 @@
 #include <vine/appfw/gui/VisualUserIO.hpp>
 #include <vine/appfw/gui/ProgressPresenter.hpp>
 #include <vine/appfw/ConsoleProgressReporter.hpp>
+
+#include <vine/logging/Log.hpp>
+#include <vine/logging/LogSink.hpp>
 
 #include "ConsoleUserIO.hpp"
 
@@ -95,10 +102,13 @@
 #include <stdexcept>
 #include <streambuf>
 #include <thread>
+#include <utility>
 
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QTextBlock>
+#include <QTextDocument>
 
 namespace guifw = vn::appfw::gui;
 
@@ -150,6 +160,73 @@ void bindConsole(guifw::GuiApplication* app, guifw::ConsolePanel* panel)
     if (auto* io = vn::obj_cast<guifw::VisualUserIO>(app != nullptr ? app->userIO() : nullptr)) {
         io->setConsolePanel(panel);
     }
+}
+
+// 控制台里含某段文字那一行的**前景色**（取块里第一个 fragment 的格式）。
+//
+// 提示与错误靠颜色区分，所以断言颜色比断言"用了哪个枚举"更接近用户看到的东西；
+// 基准色取自面板自己刚写下的两行，而不是写死的色值（主题可能变）。
+QColor consoleLineColor(QPlainTextEdit* output, const QString& needle)
+{
+    for (QTextBlock block = output->document()->begin(); block.isValid(); block = block.next()) {
+        if (!block.text().contains(needle)) {
+            continue;
+        }
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            return it.fragment().charFormat().foreground().color();
+        }
+    }
+    return {};
+}
+
+/// 一条捕获到的日志行：级别 + 文本。
+using CapturedLine = std::pair<vn::logging::LogLevel, std::string>;
+
+/// 日志行的落地点。
+///
+/// 只追加、不清理：logging 没有“摘掉 sink”的接口，所以 sink 挂上就留到进程结束。
+/// 用例记住起点下标，只看自己那一段（`mark()` / `since()`）。
+struct LogCapture
+{
+    std::mutex                mutex;
+    std::vector<CapturedLine> lines;
+
+    /// @return 当前已捕获的行数，作为“我这段从这里开始”的起点。
+    std::size_t mark()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return lines.size();
+    }
+
+    /// @param from 起点下标（来自 mark()）。
+    /// @return 从起点到现在的那些行。
+    std::vector<CapturedLine> since(std::size_t from)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return { lines.begin() + std::min(from, lines.size()), lines.end() };
+    }
+};
+
+/// @return 进程级的日志捕获缓冲区（只建不挂，挂载在 attachLogCapture() 里）。
+LogCapture& logLines()
+{
+    static LogCapture capture;
+    return capture;
+}
+
+/// 把日志捕获接到 VN_LOG* 宏写入的那个 logger 上（幂等：只挂一次）。
+void attachLogCapture()
+{
+    static const bool attached = [] {
+        vn::logging::defaultLogger().addSink(vn::logging::LogSink::function(
+            [](vn::logging::LogLevel level, const std::string& message) {
+                auto& capture = logLines();
+                std::lock_guard<std::mutex> lock(capture.mutex);
+                capture.lines.emplace_back(level, message);
+            }));
+        return true;
+    }();
+    (void)attached;
 }
 
 // 最小具体命令，用于验证 CommandManager 的 owner 跟踪与按插件报告。
@@ -2663,6 +2740,32 @@ class ThrowingCommand : public vn::appfw::Command {
 
 VN_OBJECT_META_IMPL(ThrowingCommand, vn::appfw::Command)
 
+// "不适用"的命令：明白请求，但当前上下文里没有它能作用的东西（没选中的模型、没打开的
+// 文档……）。用于验证这个结果不会被报成错误（旧行为：任何非 Success 都记 VN_LOGE，并且
+// 给用户弹一句"命令执行失败"）。
+class NotApplicableCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
+
+  public:
+    vn::String name() const override { return u8"notApplicable"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"does not apply to the current context"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
+    {
+        ++s_runs;
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::NotApplicable, s_message);
+    }
+
+    /// 结果里带的解释；为空表示"没什么可说的"。
+    inline static vn::String s_message{ u8"当前上下文没有可作用的东西" };
+    /// 执行次数，用于确认命令真的跑了。
+    inline static std::atomic<int> s_runs{ 0 };
+};
+
+VN_OBJECT_META_IMPL(NotApplicableCommand, vn::appfw::Command)
+
 // Undoable 命令：记录是否真的执行过，用于验证快照回调的先后与拦截。
 class UndoableProbeCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
@@ -4161,6 +4264,77 @@ TEST_F(GuiTest, CommandManager_DetachedFailureIsReportedOnTheApplicationThread)
     ASSERT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
     EXPECT_TRUE(output->toPlainText().contains(u8"boom")) << "消息应已投递到应用线程";
 
+    bindConsole(app, nullptr);
+    cm->clearHistory();
+    cm->unregisterCommand(name);
+}
+
+// "不适用"不是失败：命令说清了当前上下文缺什么，就把那句话照实转达（黄色提示），而不是
+// 编一句"命令执行失败"；它自己不说，就什么都不说。历史里记的也必须是真实结果。
+TEST_F(GuiTest, CommandManager_DetachedNotApplicableIsExplainedAndNotReportedAsAFailure)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name = vn::String(u8"notApplicable");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<NotApplicableCommand>(name));
+
+    guifw::ConsolePanel panel;
+    bindConsole(app, &panel);
+    auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
+    ASSERT_NE(output, nullptr);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const auto run_once = [&] {
+        cm->clearHistory();
+        NotApplicableCommand::s_runs = 0;
+        cm->executeDetached(name);
+        while (cm->historyCount() < 1 && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+        EXPECT_EQ(NotApplicableCommand::s_runs.load(), 1) << "命令真的跑了（这不是被拒绝）";
+        EXPECT_EQ(cm->historyCount(), 1);
+    };
+
+    // ① 带着解释：照实转达，而且绝不出现"命令执行失败"。
+    NotApplicableCommand::s_message = vn::String(u8"当前文档不是模型文档");
+    attachLogCapture();
+    const auto log_mark = logLines().mark();
+    run_once();
+    ASSERT_TRUE(cm->historyAt(0).has_value());
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vn::appfw::CommandStatus::NotApplicable)
+        << "历史里记的是真实结果，不是 Failed";
+    EXPECT_TRUE(output->toPlainText().contains(u8"当前文档不是模型文档"));
+    EXPECT_FALSE(output->toPlainText().contains(u8"命令执行失败")) << "不适用不是错误";
+
+    // 日志那一份也不能是错误级：这个状态码存在的全部意义就是"别记成故障"。
+    bool logged_as_info = false;
+    for (const auto& [level, text] : logLines().since(log_mark)) {
+        if (text.find("notApplicable") == std::string::npos) {
+            continue;
+        }
+        EXPECT_NE(level, vn::logging::LogLevel::Error) << text;
+        if (level == vn::logging::LogLevel::Info && text.find("not applicable") != std::string::npos) {
+            logged_as_info = true;
+        }
+    }
+    EXPECT_TRUE(logged_as_info) << "要有这一行 info 级的\"not applicable\"记录";
+
+    // ② 没有解释：一句话都不说 —— 唯一比沉默更糟的选择是编一句不存在的故障。
+    panel.clear();
+    NotApplicableCommand::s_message = vn::String();
+    const auto silent_mark = logLines().mark();
+    run_once();
+    EXPECT_TRUE(output->toPlainText().isEmpty()) << "没有解释就不该有任何输出";
+    for (const auto& [level, text] : logLines().since(silent_mark)) {
+        EXPECT_NE(level, vn::logging::LogLevel::Error) << text;
+    }
+
+    NotApplicableCommand::s_message = vn::String(u8"当前上下文没有可作用的东西");
     bindConsole(app, nullptr);
     cm->clearHistory();
     cm->unregisterCommand(name);
@@ -6040,6 +6214,66 @@ TEST(UserIOTest, RebindingTheConsoleDoesNotRunALineTwice)
     cm->unregisterCommand(name);
 }
 
+// 控制台里输入的命令返回"不适用"时也一样：黄色提示而不是红色错误（旧行为两种都写成
+// ConsoleMessageType::Error，外加一句"命令执行失败"）。
+TEST(UserIOTest, NotApplicableTypedInTheConsoleIsAHintNotAnError)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name = vn::String(u8"notApplicable");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<NotApplicableCommand>(name));
+    NotApplicableCommand::s_message = vn::String(u8"当前文档不是模型文档");
+
+    guifw::ConsolePanel panel;
+    bindConsole(app, &panel);
+    auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
+    ASSERT_NE(output, nullptr);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const auto run_once = [&] {
+        cm->clearHistory();
+        NotApplicableCommand::s_runs = 0;
+        panel.lineEntered.trigger(name);
+        while (cm->historyCount() < 1 && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+        EXPECT_EQ(NotApplicableCommand::s_runs.load(), 1);
+        EXPECT_EQ(cm->historyCount(), 1);
+    };
+
+    run_once();
+    ASSERT_TRUE(cm->historyAt(0).has_value());
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vn::appfw::CommandStatus::NotApplicable);
+    EXPECT_TRUE(output->toPlainText().contains(u8"当前文档不是模型文档")) << "解释要看得见";
+    EXPECT_FALSE(output->toPlainText().contains(u8"命令执行失败"));
+
+    // 颜色：提示色而不是错误色。基准色由面板自己写，不写死色值。
+    panel.append(guifw::ConsoleMessageType::Warning, vn::String(u8"基准-警告"));
+    panel.append(guifw::ConsoleMessageType::Error, vn::String(u8"基准-错误"));
+    const auto hint  = consoleLineColor(output, QStringLiteral("当前文档不是模型文档"));
+    const auto warn  = consoleLineColor(output, QStringLiteral("基准-警告"));
+    const auto error = consoleLineColor(output, QStringLiteral("基准-错误"));
+    EXPECT_EQ(hint, warn) << "不适用是警告级提示";
+    EXPECT_NE(hint, error) << "不适用不是错误";
+
+    // 没有解释：除了"用户敲进来的那一行"的回显，控制台不写任何东西（连"命令执行失败"都不写）。
+    panel.clear();
+    NotApplicableCommand::s_message = vn::String();
+    run_once();
+    EXPECT_EQ(output->toPlainText().trimmed(), QStringLiteral("notApplicable"))
+        << "除了输入回显，不该有任何输出";
+
+    NotApplicableCommand::s_message = vn::String(u8"当前上下文没有可作用的东西");
+    bindConsole(app, nullptr);
+    cm->clearHistory();
+    cm->unregisterCommand(name);
+}
+
 // 命令集合变化要能通知出去：缓存的列表（控制台补全）靠它刷新。旧的
 // register/unregister 不发任何事件，绑定控制台之后注册的命令永远进不了补全。
 TEST(UserIOTest, CommandsChangedReportsRegistryAndAliasEdits)
@@ -6436,4 +6670,127 @@ TEST_F(GuiTest, CommandManager_ExclusiveCommandsAreSerialized)
 
     cm->clearHistory();
     cm->unregisterCommand(name);
+}
+
+namespace
+{
+
+/// 面板用例用的文档类型：最小实现，dirty 由构造参数给。
+class PanelDocument : public vn::appfw::Document {
+  public:
+    explicit PanelDocument(bool dirty) : dirty_(dirty)
+    {
+    }
+
+    vn::String typeId() const override { return u8"panel_type"; }
+    vn::String title() const override { return u8"面板文档"; }
+    bool       isDirty() const override { return dirty_; }
+
+  private:
+    bool dirty_ = false;
+};
+
+/// 面板用例用的打开载荷：框架只按它的 C++ 类型（它的元数据）匹配，内容是什么由用例与类型自己约定。
+struct PanelPayload : public vn::Object {
+    VN_OBJECT_META_DECL;
+
+    bool dirty = false;
+};
+
+VN_OBJECT_META_IMPL(PanelPayload, vn::Object)
+
+} // namespace
+
+// 文档管理器面板：列表是**注册表**（类型 + 谁注册的 + 能开什么），加上当前打开的文档。
+// 这条用例钉三件最容易悄悄坏掉的事：①“能开什么”真的列了出来（这就是“为什么这个文件打不开”的答案）；
+// ②实时状态（当前文档标记、未保存）跟得上；③面板**只读** —— 没有能改注册表的按钮。
+TEST(DocumentManagerDialogTest, ListsWhatIsRegisteredAndWhatIsOpen)
+{
+    // 独立的管理器：这条用例不需要应用，也不该把类型注册进共享的那一个。
+    vn::appfw::DocumentManager documents;
+
+    vn::appfw::DocumentTypeRegistration creatable;
+    creatable.type_id      = u8"panel_type";
+    creatable.display_name = u8"面板类型";
+    creatable.description  = u8"面板上的一行说明";
+    creatable.create       = [] { return new PanelDocument(false); };
+    ASSERT_TRUE(documents.registerType(creatable));
+
+    vn::appfw::DocumentTypeRegistration open_only;
+    open_only.type_id = u8"panel_open_only";
+    ASSERT_TRUE(documents.registerType(open_only));
+
+    ASSERT_TRUE(documents.registerOpener<PanelPayload>({
+        .type_id       = u8"panel_type",
+        .priority      = 1,
+        .open          = [](const PanelPayload& payload) -> vn::appfw::Document* { return new PanelDocument(payload.dirty); },
+        .source_scheme = u8"file",
+    }));
+
+    vn::appfw::Document* current = documents.create(u8"panel_type");
+    ASSERT_NE(current, nullptr);
+    ASSERT_TRUE(documents.setCurrent(current));
+    PanelPayload dirty_payload;
+    dirty_payload.dirty = true;
+    ASSERT_NE(documents.open(&dirty_payload), nullptr);
+
+    auto* dialog = new guifw::DocumentManagerDialog(&documents);
+    ASSERT_NE(dialog, nullptr);
+    ASSERT_NO_FATAL_FAILURE(dialog->refresh());
+
+    auto* root = dialog->impl<QWidget>();
+    ASSERT_NE(root, nullptr);
+
+    // 两张表：类型表 6 列、文档表 4 列（按列数区分，比按 findChild 顺序稳）。
+    QTableWidget* types_table     = nullptr;
+    QTableWidget* documents_table = nullptr;
+    for (QTableWidget* table : root->findChildren<QTableWidget*>()) {
+        if (table->columnCount() == 6) {
+            types_table = table;
+        }
+        if (table->columnCount() == 4) {
+            documents_table = table;
+        }
+    }
+    ASSERT_NE(types_table, nullptr) << "类型表";
+    ASSERT_NE(documents_table, nullptr) << "文档表";
+
+    ASSERT_EQ(types_table->rowCount(), 2);
+    EXPECT_EQ(types_table->item(0, 0)->text(), QStringLiteral("panel_open_only")) << "按 id 排序";
+    EXPECT_EQ(types_table->item(0, 3)->text(), QStringLiteral("否（只能打开）")) << "没有 create 工厂要如实说";
+    EXPECT_EQ(types_table->item(1, 0)->text(), QStringLiteral("panel_type"));
+    EXPECT_EQ(types_table->item(1, 1)->text(), QStringLiteral("面板类型"));
+    EXPECT_EQ(types_table->item(1, 2)->text(), QStringLiteral("主机")) << "没有注册者标签 ⇒ 主机";
+    EXPECT_EQ(types_table->item(1, 3)->text(), QStringLiteral("是"));
+    EXPECT_TRUE(types_table->item(1, 4)->text().contains(QStringLiteral("PanelPayload")))
+        << "“能开什么”来自打开器，而载荷名来自载荷自己的元数据";
+    EXPECT_EQ(types_table->item(1, 5)->text(), QStringLiteral("file"));
+
+    ASSERT_EQ(documents_table->rowCount(), 2);
+    EXPECT_TRUE(documents_table->item(0, 0)->text().startsWith(QStringLiteral("● "))) << "当前文档有标记";
+    EXPECT_EQ(documents_table->item(0, 1)->text(), QStringLiteral("panel_type"));
+    EXPECT_EQ(documents_table->item(0, 2)->text(), QStringLiteral("—（没有来源）"))
+        << "新建的文档没有来源，面板要说清楚而不是留空";
+    EXPECT_EQ(documents_table->item(0, 3)->text(), QStringLiteral("已保存"));
+    EXPECT_EQ(documents_table->item(1, 3)->text(), QStringLiteral("未保存"));
+    EXPECT_FALSE(documents_table->item(1, 0)->text().startsWith(QStringLiteral("● "))) << "不是当前文档";
+
+    // 过滤器对两张表都生效。
+    auto* filter = root->findChild<QLineEdit*>();
+    ASSERT_NE(filter, nullptr) << "筛选框";
+    filter->setText(QStringLiteral("panel_open_only"));
+    EXPECT_FALSE(types_table->isRowHidden(0));
+    EXPECT_TRUE(types_table->isRowHidden(1)) << "类型表也吃过滤";
+    EXPECT_TRUE(documents_table->isRowHidden(0)) << "文档表也吃过滤";
+
+    // 面板只读：这里没有能改注册表的按钮。
+    const auto buttons = root->findChildren<QPushButton*>();
+    ASSERT_FALSE(buttons.isEmpty());
+    for (QPushButton* button : buttons) {
+        const QString text = button->text();
+        EXPECT_TRUE(text == QStringLiteral("刷新") || text == QStringLiteral("关闭"))
+            << "文档管理器只有刷新与关闭（不该有启用/禁用），实际是: " << text.toStdString();
+    }
+
+    delete dialog;
 }

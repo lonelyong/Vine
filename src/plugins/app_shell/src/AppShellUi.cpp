@@ -1,15 +1,17 @@
 #include "AppShellUi.hpp"
 
+#include <cstring>
 #include <memory>
 
 #include <vine/appfw/Application.hpp>
+#include <vine/appfw/Document.hpp>
+#include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/gui/ConsolePanel.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/Icon.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
-#include <vine/appfw/gui/RenderControl.hpp>
 #include <vine/appfw/gui/RibbonBar.hpp>
 #include <vine/appfw/gui/RibbonButton.hpp>
 #include <vine/appfw/gui/RibbonGroup.hpp>
@@ -18,7 +20,7 @@
 
 #include <vine/logging/Log.hpp>
 
-#include "AppShellDemo.hpp"
+#include <vine/String.hpp>
 
 VN_APPFW_NS_BEGIN
 
@@ -69,6 +71,7 @@ void buildAppShellRibbon(gui::MainWindow* wnd)
     addCommandButton(plugin_group, u8"渲染后端", u8":/icons/show_plugins.svg", u8"show_render_backends");
     addCommandButton(plugin_group, u8"配置管理", u8":/icons/show_config.svg", u8"show_config");
     addCommandButton(help_group, u8"命令管理器", u8":/icons/show_commands.svg", u8"show_commands");
+    addCommandButton(help_group, u8"文档管理器", u8":/icons/show_documents.svg", u8"show_document_types");
     addCommandButton(help_group, u8"帮助", u8":/icons/show_help.svg", u8"show_help");
     addCommandButton(help_group, u8"关于", u8":/icons/about.svg", u8"about");
 }
@@ -82,31 +85,9 @@ AppShellDock buildAppShellDock(gui::MainWindow* wnd)
     auto* left_panel = manager->createDockPanel(u8"项目", gui::DockAreas::Left);
     left_panel->setId(u8"dock_project");
 
-    // Render view in the central client area. The control goes into the window first (its surface starts at the
-    // degenerate size a fresh QWindow has and the layout gives it the real one), then init() brings the backend up
-    // synchronously - device and pipelines built inside load(), instead of in the first turn of the event loop, which is
-    // the window between "the startup frame closes" and "the window can be painted". The size the surface has right now
-    // does not matter: the resize path rebuilds the swapchain at the real size once the layout has run.
-    // The control attaches when it is asked to and not before (see RenderControl: the host owns the timing, the
-    // control only maintains an established session), so this line is the one that decides when the device and
-    // the pipelines are built. The rest of the lifecycle - and its timings - are in RenderControl's log lines and
-    // its state_changed.
-    auto* render_control = new gui::RenderControl();
-    manager->setCentralWidget(render_control);
-
-    // The default demo (content, overlays, diagnostic passes, pipeline) lives in AppShellDemo; the shell only hands it
-    // the render control. install() builds its SKELETON (scenes, camera, passes, pipeline) and must run before the
-    // control is initialized (see initAppShellRenderControl()), which is what creates the orbit manipulator that takes
-    // its home vantage from the camera the demo positioned.
-    auto demo = std::make_shared<AppShellDemo>(render_control);
-    demo->install();
-
-    // 内容（两张 cube map）的重活**现在就出去**：池上并行读/解码/降采样，和随后的会话 init()（设备与管线，~220 ms）
-    // 重叠。等会话建好时它常常已经回来了，所以主窗上屏时场景基本是完整的（实测：两者相差 ~30 ms 以内）。
-    // 界面本身不阻塞：这一步只是把活丢出去（见 AppShellDemo::assembleDemoContentLater()）。
-    assembleDemoContentLater(demo);
-
-    result.render_control = render_control;
+    // 中央客户区**空着**：3D 内容现在是文档（一份文档一个视图、一块自己的渲染面），宿主的文档容器会在有当前文档时
+    // 接管这一格，没文档时它就是窗口自己的背景。外壳不再在这里建 RenderControl / 发布它 —— 那是视图自己的事
+    // （见 DemoView / appfw-document-model.md §7/§9）。
 
     auto* right_panel = manager->createDockPanel(u8"属性", gui::DockAreas::Right);
     right_panel->setId(u8"dock_properties");
@@ -128,26 +109,43 @@ AppShellDock buildAppShellDock(gui::MainWindow* wnd)
     return result;
 }
 
-vn::async::Task<void> initAppShellRenderControl(gui::MainWindow* wnd, const AppShellDock& dock)
+void openDocumentFromCommandLine(gui::MainWindow* wnd)
 {
-    if (wnd == nullptr || dock.render_control == nullptr) {
-        co_return;
+    (void)wnd; // 打开走文档管理器，不经过窗口；参数留着是因为调用点就在外壳里（将来要把它显示出来时就有地方）。
+
+    const char* const* argv = Application::current() != nullptr ? Application::current()->argv() : nullptr;    if (argv == nullptr) {
+        return;
     }
 
-    // 会话（attach + 设备/管线）建在这里，也就是骨架建好之后、主窗上屏之前：管线由 install() 注册的 pass 建，而且
-    // 实测这一句必须贴着主窗上屏（旧序里两者只差 50 ms；提前到插件 load() 开头时，渲染面的原生窗口一直不被 map，
-    // 门禁读到 not viewable）。之所以单独成一个协程：它是一段自己在等的活——设备与管线那一段只要句柄、不要应用线程，
-    // initAsync() 把它丢到池上，应用线程于是回到循环（启动框能重画、消息能到），而取句柄、状态、尺寸、warm-up 这些
-    // 仍然在应用线程上。
-    const bool attached = co_await dock.render_control->initAsync();
-    if (!attached) {
-        // 没建上不是致命：控件保持隐藏，宿主/用户改尺寸或重试时它会自己再试（见 RenderControl::init()）。
-        VN_LOGW("the render session could not be attached yet; the 3D view stays empty until it can");
+    // `--open <type-id>`：找第一个出现在参数里的那个（值在下一个参数里）。值缺失时什么都不做。
+    String type_id;
+    for (const char* const* it = argv; *it != nullptr; ++it) {
+        if (std::strcmp(*it, "--open") == 0) {
+            const char* value = *(it + 1);
+            if (value != nullptr) {
+                type_id = String::fromUtf8(value);
+            }
+            break;
+        }
+    }
+    if (type_id.empty()) {
+        return;
     }
 
-    // Register the 3D view so other plugins (tests/editors) can reach the render engine/scene without depending on app
-    // shell internals.
-    wnd->setPrimaryRenderControl(dock.render_control);
+    auto* documents = Application::current() != nullptr ? Application::current()->documentManager() : nullptr;
+    if (documents == nullptr) {
+        return;
+    }
+
+    // 和用户自己的命令走**同一条**路：能不能建由文档类型自己说了算（没有 create 工厂的类型就是打不开）。
+    Document* document = documents->create(type_id);
+    if (document == nullptr) {
+        // 值可能是任意用户输入，直接当成一段字节打出来（不做任何解释）：它是命令行的回显，不是标识符解析。
+        const std::string_view requested{ reinterpret_cast<const char*>(type_id.data()), type_id.size() };
+        VN_LOGW("app_shell: --open {} could not be opened (no such type, or it cannot be created)", requested);
+        return;
+    }
+    documents->setCurrent(document);
 }
 
 VN_APPFW_NS_END

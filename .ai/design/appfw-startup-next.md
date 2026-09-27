@@ -140,7 +140,9 @@ base `Application` 在 core SDK 里，命名不了 `gui::Window`（`Application.
 
 仍待做：**Windows 一侧同一探针**（HWND + client rect）。判据：启动期日志里出现 `attached to the host window 0x…`
 与 `surface Pending -> Attached`（而不是 `GetClientRect(..) failed` / `-> Failed`）。
-- ⚠️ Release 树 `VSG_MAX_DEVICES=1` 是**有意的绊线**（仓库里任何地方都不设它）⇒ 两棵树都要跑。
+- ~~Release 树 `VSG_MAX_DEVICES=1` 是有意的绊线（仓库里任何地方都不设它）⇒ 两棵树都要跑。~~
+  **2026-09-27 作废**：现在由 `gfx_backend_vsg/CMakeLists.txt` 显式设为 4（一份文档视图一块渲染面），两棵树的这个
+  差别没有了；"两棵树都跑门禁"这条做法本身保留。
 
 交付物：
 

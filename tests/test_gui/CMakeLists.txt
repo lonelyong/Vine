@@ -11,34 +11,39 @@ set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 # 这里只加头文件路径供 static_cast（impl<T>）使用，不用 qobject_cast 断言。
 target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/SARibbon
                                              ${CMAKE_SOURCE_DIR}/third_party/DockingPanes/inc
-                                             # PreviewFit.hpp is a pure-arithmetic helper of the app_shell
-                                             # demo (it lives in the plugin's src/, like the private appfw
+                                             # PreviewFit.hpp is a pure-arithmetic helper of the demo
+                                             # (it lives in the plugin's src/, like the private appfw
                                              # header below) so its unit test can include it directly.
-                                             ${CMAKE_SOURCE_DIR}/src/plugins/app_shell/src
+                                             ${CMAKE_SOURCE_DIR}/src/plugins/demo_plugin/src
+                                             # ModelDocument.hpp / ModelInfoPanel.hpp / TestModelData.hpp of the
+                                             # model_viewer plugin: the info panel is a header-only Control (no
+                                             # metadata, no signals) precisely so this test can drive it without
+                                             # loading the plugin - it wires the panel to a DocumentManager itself,
+                                             # exactly as the plugin's load() does.
+                                             ${CMAKE_SOURCE_DIR}/src/plugins/model_viewer/src
                                              # ConsoleUserIO is appfw-private (it lives in
                                              # src/, not sdk/): the headless progress test
                                              # constructs it directly, like test_asyncqt
                                              # includes the private Qt coroutine glue.
                                              ${CMAKE_SOURCE_DIR}/src/fw/appfw/src)
 
-# vn::ImageIO / vn::System: the PluginLifecycleTest cases load the REAL app_shell
-# plugin, and a plugin installed OUTSIDE the application directory (which is exactly what
-# UserPluginSandbox copies into /tmp/vine_test_plugins) cannot use its own RUNPATH to find
-# anything: the loader only has the libraries the HOST process already loaded, and dlopen
-# reports the plugin itself as "missing dependency: app_shell" without naming the library.
-# app_shell decodes its demo cube map through the image codec and asks Process for the
-# executable's directory to find the shipped assets, so the host that loads it carries both
-# — the same rule that lets the plugin load in Vine, where the copy next to the executable
-# resolves the rest through the plugin directory's own RUNPATH (see
-# cmake/VinePluginHelper.cmake). Linking them explicitly keeps that a stated requirement
-# instead of an accident of what the framework happens to pull in.
+# A plugin loaded from OUTSIDE the application directory (which is exactly what UserPluginSandbox
+# copies into /tmp/vine_test_plugins) cannot use its own RUNPATH to find anything: the loader only
+# has the libraries the HOST process already loaded, and dlopen reports the plugin itself as
+# "missing dependency: <plugin>" without naming the library. The sandbox loads app_shell and
+# test_plugin, and app_shell needs Appfw / Graphics / Qt (:Logging comes through Appfw) - all of
+# which this target links. The demo plugin is NOT loaded here and is the one plugin that needs more
+# (see cmake/VinePluginHelper.cmake): add vn::ImageIO / vn::System to this list if a case ever loads
+# it from a sandbox.
 target_link_libraries(${TEST_NAME}
     vn::Appfw
     vn::Progress
-    vn::ImageIO
-    vn::System
+    vn::Geometry
     vn::Graphics
-    Qt6::Core Qt6::Gui Qt6::Widgets)
+    Qt6::Core Qt6::Gui Qt6::Widgets
+    # The command cases assert on the LOG LEVEL a status is recorded with (a NotApplicable result
+    # must not be an error), so they attach a LogSink - same reason test_appfw links it.
+    vn::Logging)
 
 # Plugins that a current host must refuse, to test the ABI guard end to end: one
 # built before the handshake existed, one built against a newer framework. They live

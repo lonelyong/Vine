@@ -372,7 +372,7 @@ fi
 #
 # All are asserted BEFORE and AFTER the resize, because that is where the swapchain, the off-screen chain and
 # every viewport move at once. The preview geometry (four 160x90 slots at x = 8 + 168*i, y = 8, each holding
-# the source's aspect inside it - see AppShellDemo's fitPreviewRect) is the DEMO's own layout: this stage reads
+# the source's aspect inside it - see the demo plugin's fitPreviewRect) is the DEMO's own layout: this stage reads
 # the demo's evidence, so a demo that moves its previews has to move this recipe with it.
 #
 # THE FIRST SAMPLE'S WINDOW SIZE IS SET BY THE GATE, not inherited from the app: the demo's start-up size
@@ -487,8 +487,12 @@ check_app() {
     # `exec` matters: without it the job is a SUBSHELL, the gate's kill reaches the subshell, and the
     # application keeps its window and keeps drawing into it (see cleanup_app) - which is how the stray
     # windows that made this suite flaky were left behind in the first place.
+    #
+    # `--open demo` is part of the stage: the demo scene is a DOCUMENT now (demo_plugin registers type "demo", and
+    # nothing of it is built until that document is opened - see appfw-document-model.md §12). Without it the app
+    # starts with an empty central area and there would be no 3D picture to judge at all.
     ( cd "$BUILD_DIR" && exec env QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" VINE_VSG_DEBUG_LAYER=1 VINE_BOOT_TIMING=1 \
-        "$app_bin" >"$log" 2>&1 ) &
+        "$app_bin" --open demo >"$log" 2>&1 ) &
     APP_PID=$!
     local app_pid="$APP_PID"
 

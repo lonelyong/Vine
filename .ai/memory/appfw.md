@@ -16,6 +16,77 @@
 > 回来）；`loadAll()` 是给不跑循环的工具/测试用的同步门（`MainThreadDispatcher::runToCompletion()` = async 的 `runToCompletion(task, pump)`，pump 就是
 > `deliverPostedCalls()`，等的时候只派发它——
 > **不能用 `Task::result()`**：它只阻塞不派发，钩子"回到应用线程"那一步会死锁）。管理器**自己不转循环**。
+> **三趟生命周期，`postLoad()` 是"全员 load 完"那一趟（2026-09-27 说准）**：`preLoad()` 全员 → `load()` 全员 →
+> `postLoad()` 全员；声明依赖只决定 `load` 那一趟里的先后（被依赖的先），而 `postLoad` 在整趟 `load` 结束之后 ⇒
+> "内容插件先挂骨架、外壳后建会话"就落在这里：`app_shell` 只搭外壳（窗口/停靠布局/控制台）并在 `load()` 里
+> `setPrimaryRenderControl()` 发布 3D 视图，`demo_plugin` 在**自己的** `load()` 里把 `DemoScene` 骨架挂上去，
+> 会话 attach 在 `app_shell::postLoad()`（管线由内容插件注册的 pass 建，早一拍就会漏；attach 又要贴着主窗上屏）。
+> 顺序也由这条保证：`demo_plugin` 声明依赖 `app_shell` ⇒ 它的 `load()` 在外壳之后。
+> **文档模型（2026-09-27，core + 打开/保存 + 元数据/面板 + 视图层已落）**：框架只定义**文档身份与生命周期**
+> （`Document`：`typeId/title/isDirty/canClose` + `source()`/`save()`；`DocumentManager`：类型注册（带元数据）、
+> **按载荷类型注册的打开器**、`create`/`open`/`close`/`current`、`opened/closed/currentChanged`），进程一份挂在
+> `Application::documentManager()`（建在 `initialize()` 里，**早于插件加载** ⇒ 插件能在 `load()` 里注册类型）。
+> **打开 = `open(payload)`**：载荷是调用方与类型之间的私有协议（`Vfs+path`/剪贴板图/设备句柄/自定义 struct 都行），
+> 登记项是 **`DocumentOpenerRegistration<Payload>` struct**（同 `DocumentTypeRegistration` 的理由：可选字段具名不互串；没有 `open`
+> 的登记会被拒 —— 这条检查必须在包装 lambda **之前**做），载荷类型是模板参数所以回调是强类型的；
+> 框架**只按载荷的 C++ 类型匹配、不解释内容**：载荷派生 `Object`，键就是 `Payload::desc()`（`registerOpener<Payload>` 的
+> `DocumentPayload` 还要求 `&T::desc != &Object::desc`，忘了 meta 就是**编译失败**），而 `open` 只收
+> `raw_ptr<const Object>`（**没有模板重载**：模板参数只是把入参静态类型重说一遍，键其实来自运行时类型；代价是载荷得是左值）；
+> `open` 的文档还写得明白：**框架不处理拷贝逻辑**（“自己拷”归派生类型、“提前拷”归业务；`open()` 路上零拷贝，用例
+> `TheFrameworkDoesNotCopyAPayload` 用带拷贝计数的载荷钉着），**框架不持有载荷对象，但文档可以把它需要的字段拷进自己**
+> （要重读就得自己留下 `Vfs*`+path —— `DocumentSource` 只有两个字符串，装不下引用）⇒ **刷新是类型的 `reload()` 动作位，
+> 不是“重放 open(payload)”**（看 §5.8）。
+> 它与 `EventBus::subscribe<TEvent>` 同一种擦除形状，所以 appfw 只有一套 RTTI。代价：
+> **载荷不能 header-only**（要一处 `VN_OBJECT_META_IMPL`）、**不再是聚合体**（指定初始化器没了）、标量得包 struct。
+> 挑选顺序 = **具体者优先**（登记类型在 `parent()` 链上离载荷自己的类型最近者先 —— 用 `isKindOf` 匹配，所以**登记基类 = 接受
+> 派生，且打开器拿到的是登记的那个类型**，`obj_cast` 在这里才真在干活） → `refine` 分数 > `priority` > 登记顺序 ⇒
+> 登记基类就是“兜底”，分数抢不走具体的那个；一次 `open()` 只看到它开始时的登记表（用户代码会在 `refine`/`open`
+> 里登记新打开器 ⇒ 候选只有下标、callable 先拷一份）；没人受理就明确返回 nullptr（这是“为什么打不开”的答案）。**位置不是 path 而是 `Vfs + 虚拟路径`**（iobase 已有
+> `DirectoryVfs`/`ZipArchive`/`MountVfs`；`robotics::io` 就是 `loadVfs(vfs, path)` 这个形状）。
+> **来源（`DocumentSource`）是值类型、不派生**：变化放 Vfs/打开器/类型三处；“没有来源”= 空值；`save()` 无参数写回自己的
+> 来源、基类默认拒绝 ⇒ **core 不认识 `Vfs`（appfw 不链 iobase）**。三条契约：`Vfs` 借用且必须比文档活得久、`Vfs` 无锁
+> （同一实例不可两线程同碰）、载荷只在 `open()` 期间有效。`create()`/`open()` 发完 `opened` 后要回头确认文档
+> 还在集合里（处理函数可以当场关掉它）⇒ 不在就返回空，不返回已销毁的指针。
+> **元数据/面板**：`DocumentTypeInfo`（含 owner/icon/can_create/payload_types/source_schemes）+
+> `gui::DocumentManagerDialog` + `app_shell` 的 `show_document_types` 命令（**只读**，类型没有启用/禁用开关）；owner 来自
+> `Application::registrationOwner()` 这一个标签（`CommandManager::setRegistrationOwner()` 也写它）。
+> **视图层（2026-09-27 落地，全在 GUI 里）**：`gui::DocumentView`（`Control` 的薄包装 + `document()` + `content()` +
+> `activate()`/`deactivate()`）/ `DocumentViewRegistry`（`type_id → 工厂`，一类型一个，重复/空 id/空工厂都拒）/ `gui::CentralDocumentHost`。
+> **视图按文档实例**（同类型两份文档各一个实例，各自的相机/选择；切回来复用同一个，文档关闭才销毁；没显示过的不建），
+> **`content()` 是“放进中央区的东西”**（2D 视图返回自己、3D 视图返回那块**共享**渲染控件 ⇒ 接真 3D 时视图层/宿主/注册表一行都不改）。
+> 宿主六条契约写在 `CentralDocumentHost.hpp` 类注释里，其中第 6 条是这次唯一的真缺陷：**宿主拥有视图对象、容器拥有页控件**，
+> 交给宿主的视图必须 `owns=false` 包控件 —— 否则控件随容器析构会顺着 `UIElement` 的自毁路径把视图对象再删一次
+> （double free，`gdb` 里同一个 `UIElement::~UIElement` 两帧；`build-asan` 一跑就抓）。接管中央区时把外壳原来的控件
+> **藏起来**（不 delete，退出时还回去 ⇒ 为此给 `DockPanelManager` 加了 `centralWidget()` 读数）。
+> **3D 视图的那一页是"借"的**（2026-09-27）：`content()` 是别人的控件时宿主既不接管所有权也不删它，只在该页没人用时
+> 从容器里摘下来；几条 3D 文档共用同一页（同一页 `setCurrentWidget` 不重父化），切文档只是换呈现的 view。
+> **3D 视图自带渲染面（2026-09-27 用户拍板：一个文档 = 一个视图 = 它自己那份资源）**：视图自己 `new
+> RenderControl`（自己的面/会话/设备/管线）铺在自己的控件里，`content()` 返回**视图自己** ⇒ 宿主只有一条页规则（一实例一页）。
+> 应用级共享的只有 DockPanel/Ribbon 那套外壳。`VSG_MAX_DEVICES` 取 **4**（vsg 里唯一正确的那一档；`>4` 的动态分支在
+> 1.1.16 是坏的：`vk_buffer<std::vector<T>>::size()` 只在写时增长、读会越界，`test_vsg` 当场 abort）—— 所以"同时两个
+> device"不再是错误，而上限是 4；**`<=4` 分支不查边界 ⇒ 第 5 块面必须由我们拒（未做）**。
+> 原来那套"共享会话"的东西（`RenderControl::present()`、`SurfaceWindow` 的 own_view/view 二分、`SceneView::removeWindowPass()`
+> 公开、宿主的"借来的页"规则）**已删**：模型变了就不留无用 API。
+> **视图层只在 `GuiApplication`**（视图是 `UIElement`，无头 `Application` 连控件都没有）：注册表与宿主在建主窗时建好，
+> 插件在 `load()` 里登记（拿不到 `GuiApplication` 就跳过）。三档状态：**文档**（数据/来源/脏）/ **视图**（按**实例**：相机、选择）/ **宿主·面板·ribbon**（按**事件**或按**类型**：同类型切换不重建结构）。
+> **框架不定**：区域数量、标签、单/多文档、展示形态 —— 那些归具体 app（外壳）派生；**一根硬线**：运行时只有一块渲染区
+> （`VSG_MAX_DEVICES=1` 是有意绊线，一个后端实例 = 一个 session = 一个原生窗口 + 一个 device）⇒ 3D 文档只能共享一个会话、
+> 各带一个 `SceneView`。`DockPanelManager` 的中央区是**单槽**且 `setCentralWidget()` 会**重父化**（Qt 会重建原生窗口 ⇒
+> `RenderControl` 走一遍 `Pending -> Attached`）⇒ 中央区放一个容器、只装一次、内部切页（`QStackedWidget`）。
+> 见 `.ai/design/appfw-document-model.md`、`tests/test_appfw/DocumentTest.cpp`（23 条钉子）、
+> `tests/test_gui/test_gui.cpp` 的 `DocumentManagerDialogTest`。
+> **参考实现（2026-09-27 落地）**：`src/plugins/model_viewer/`（**测试插件**，但按真插件的形状写）—— 文档类型 `"model"`
+> （没有 create 工厂）+ **两个打开器**（内存网格 `MeshPayload` / 磁盘网格文件 `MeshFilePayload`，后者在打开器里调 `MeshLoader`）
+> + 右侧 dock 的**模型信息面板**（类型/标题/**顶点数/三角形数**；header-only 的 `gui::Control`，**自己**听 `currentChanged`，不靠宿主编排）
+> + **中央区的模型视图** `ModelRenderView`（**真渲染**：自带的 `RenderControl` + 自己的 `SceneView`；`content()` 返回自己;
+> 几何信息归右侧停靠面板 `ModelInfoPanel`）+ 两条命令
+> （`open_test_model` / `open_mesh_file`；后者写一个最小 STL 再读回来，用来看真加载那段）。
+> 钉子：`tests/test_gui/ModelViewerTest.cpp`（4 条：空状态、两个数跟着**当前**文档换、非模型文档如实说不适用、
+> 插件登记的那个视图确实被宿主放进中央区并显示这份文档的数据）；视图层本身见 `tests/test_gui/DocumentViewTest.cpp`（5 条）；
+> 插件在真应用里加载/卸载干净（门禁 app 阶段 `Plugin 'model_viewer' loaded`，warnings=0）。
+> **它撞出的两个缺口**：①`MeshLoader::load()` 只吃 `std::filesystem::path`（没有字节/`DataStream`/`Vfs` 重载）
+> ⇒ §5 的"位置是 `Vfs + 虚拟路径`"今天**读不进模型**；②**面板注册表不存在** ⇒ 面板只能插件自己建自己挂
+> （视图那一半已经落地，面板这一半等注册表出来才变成一条声明）。
 > **`Application::shutdown()` 是 protected（2026-09-26 说准）**：只有 `run()` 那条收尾路径调它（派生宿主
 > 自己写 `run()` 用同一段）；宿主/命令/插件要停进程用 `exit()`（`cancelStartup()`/`failStartup()` 也走它）。
 > 循环还在跑时调、或从非应用线程调 ⇒ 各留一条**只警告不拒绝**的日志（`run()` 的 `loop_running` 位是判据）。
@@ -202,10 +273,21 @@
 - `LongRunning` = 占串联门 + 建 ambient `ProgressHost`；`Exclusive` = 停**所有**活链并等收尾（超时则
   `Failed("另一个操作仍在收尾，请稍后再试。")`），并且两个 Exclusive 之间靠 `exclusive_busy` 串行。
 - 等待链收尾一律 5ms 切片轮询 `runs`，不用 `AsyncEvent`（有界等待销毁等待者会踩 async 生命周期契约）。
+- **`CommandStatus::NotApplicable`（2026-09-27 新增）**：命令跑到底但“当下没有作用对象”＝**不是失败**。
+  `succeeded()` 仍是 `status == Success`（要报错就必须自己看状态）；三处用户可见路径都要分开：`logOutcome()` 记
+  **info**（`Failed` 仍 `VN_LOGE`）、`executeDetached()`（ribbon）与 `VisualUserIO` 的控制台回写把解释当**提示**转达，
+  **空解释就沉默**（绝不补一句“命令执行失败”）——控制台用 `ConsoleMessageType::Warning`（黄）不是 `Error`（红）。
+  不要用 `setCommandEnabled()` 表达“不适用”（那是**用户偏好**，会持久化）。见 `appfw-command-manager.md`「结果状态」。
+- **“不适用”由命令自己判（2026-09-27 用户拍板）**：`execute()` 里自己取上下文（如 `documentManager()->current()`
+  再看 `typeId()`），不适用就返回 `NotApplicable` 并写清缺了什么。**框架不带“适用文档类型”元数据**
+  （不做 `Command::documentTypes()` / `CommandInfo::document_types`，也不按类型过滤 ribbon）⇒ `Command` 虚表不动，
+  插件 ABI 不必 7u → 8u。
 
 ## 测试
 
-- `tests/test_gui/test_gui.cpp`：`CommandManager_*` 37 例、`UserIOTest.*` 6 例（含工作线程读与历史去载荷）。
+- `tests/test_gui/test_gui.cpp`：`CommandManager_*` 38 例、`UserIOTest.*` 7 例（含工作线程读、历史去载荷、
+  `NotApplicable` 的两条：会话臂与日志级别都断言到）。
+  这个目标现在链 `vn::Logging`：命令用例要拿 `LogSink` 抓日志行（断言某个状态没被记成 error 级）。
 - `tests/test_appfw/HeadlessBootTest.cpp`：8 例（**无头宿主**：只链 `vn::Appfw` + `Qt6::Core`；构造不建上报口、
   启动阶段里有且能用、启动收完后销毁；三拍顺序、取消、失败退出、同步门、uuid 身份告警、shutdown 误用告警）。
   这是 appfw 无头宿主路径唯一的用例集（`test_gui`/`test_vsg` 都只经 builder 造应用、从不跑循环）。

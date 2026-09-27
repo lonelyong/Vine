@@ -114,7 +114,7 @@ QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返�
   见 `.ai/design/appfw-startup-splash.md`（那里有一节专门算这笔账）。
 - `hasPresented()`：留在公开接口上（宿主问“画面出没出来”仍然合法），但它不再是“窗口能不能露”的前置条件 ——
   控件不会把空的原生窗口留在屏幕上。
-- app_shell：`new RenderControl()` → `setCentralWidget()` → demo.install() → `init()`。
+- app_shell：`new RenderControl()` → `setCentralWidget()` → 发布控件（`setPrimaryRenderControl()`）；内容插件（`demo_plugin`）在这里挂骨架 → `postLoad()` 里 `init()`。
 
 ## 实测（本机 xcb + lavapipe，2026-09-18）
 
@@ -180,12 +180,17 @@ QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返�
 **做法：宿主侧一行，框架零新增**：控件先丢进窗口，然后立刻 `init()`：
 
 ```cpp
-// src/plugins/app_shell/src/AppShellUi.cpp
+// src/plugins/app_shell/src/AppShellUi.cpp（外壳那一趟：load()）
 auto* render_control = new gui::RenderControl();
 manager->setCentralWidget(render_control);   // 先进窗口；表面此时的尺寸是退化值，布局稍后给真尺寸
-AppShellDemo demo(render_control);
-demo.install();                              // 内容 + 管线；相机 vantage 必须在 init() 之前（orbit 的 home 取它）
-render_control->init();                      // 设备 + 管线在这个同步调用里建好（load() 内）
+wnd->setPrimaryRenderControl(render_control); // 发布给内容插件
+
+// src/plugins/demo_plugin/src/DemoPlugin.cpp（内容插件那一趟：load()，app_shell 之后）
+auto demo = std::make_shared<DemoScene>(render_control);
+demo->install();                             // 内容 + 管线；相机 vantage 必须在 attach 之前（orbit 的 home 取它）
+
+// src/plugins/app_shell/src/AppShellPlugin.cpp 的 postLoad()：全部插件都 load 完之后
+co_await initAppShellRenderControl(wnd, dock_);  // 设备 + 管线在这一拍建好
 ```
 
 - attach 只要“句柄 + 尺寸 > 0”，而新 QWindow 的退化尺寸（本机实测 **1x1**，不是 0x0）就满足；

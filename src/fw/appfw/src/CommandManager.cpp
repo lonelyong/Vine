@@ -211,6 +211,10 @@ void fireCommandsChanged(CommandManager& manager)
 }
 
 /// Logs a finished execution at the level matching its outcome.
+///
+/// "The request does not apply here" is a normal outcome - the user asked for something
+/// the current context has nothing for - so it is logged as information, not as an error
+/// (the command set a message saying what was missing).
 void logOutcome(const Command& command, const CommandResult& result)
 {
     if (result.succeeded()) {
@@ -218,6 +222,9 @@ void logOutcome(const Command& command, const CommandResult& result)
     }
     else if (result.status() == CommandStatus::Cancelled) {
         VN_LOGW("Command cancelled: {}", toUtf8View(command.name()));
+    }
+    else if (result.status() == CommandStatus::NotApplicable) {
+        VN_LOGI("Command not applicable: {}: {}", toUtf8View(command.name()), toUtf8View(result.message()));
     }
     else {
         VN_LOGE("Command failed: {}: {}", toUtf8View(command.name()), toUtf8View(result.message()));
@@ -1272,6 +1279,16 @@ void CommandManager::executeDetached(const String& name)
             if (result.succeeded() || app == nullptr) {
                 co_return;
             }
+
+            // "Does not apply here" is not a failure: the command explained what the
+            // context was missing, so pass that on as it is - and say nothing at all when
+            // it did not explain, because inventing "the command failed" would report a
+            // fault that did not happen.
+            if (result.status() == CommandStatus::NotApplicable) {
+                reportToUser(*app, result.message());
+                co_return;
+            }
+
             // The command most likely ran to its end on another thread (a timer or an
             // asynchronous read completes it), so this must not touch userIO() directly:
             // the GUI one writes to a QWidget.
@@ -1413,6 +1430,12 @@ bool CommandManager::registerCommand(TypeId command_class, String name, std::fun
 
 void CommandManager::setRegistrationOwner(String owner)
 {
+    // ONE TAG FOR EVERY REGISTRY (Application::registrationOwner()): the plugin loader sets it here once, and a
+    // document registry reads it from the application instead of every registry keeping its own copy of the same fact.
+    if (d->app != nullptr) {
+        d->app->setRegistrationOwner(owner);
+    }
+
     std::lock_guard<std::mutex> lock(d->registry_mutex);
     d->registration_owner = std::move(owner);
 }

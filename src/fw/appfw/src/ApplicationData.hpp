@@ -8,6 +8,7 @@
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/ConfigManager.hpp>
 #include <vine/appfw/ConfigRegistry.hpp>
+#include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/EventBus.hpp>
 #include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/PluginManager.hpp>
@@ -36,6 +37,7 @@ struct ApplicationData {
     std::unique_ptr<EventBus>             event_bus;
     std::unique_ptr<ConfigRegistry>       config_registry;
     std::unique_ptr<ConfigManager>        config_manager;
+    std::unique_ptr<DocumentManager>      document_manager;
     std::unique_ptr<CommandManager>       command_manager;
     std::unique_ptr<ServiceManager>       service_manager;
     std::unique_ptr<PluginManager>        plugin_manager;
@@ -55,6 +57,11 @@ struct ApplicationData {
 
     /// JSON file used to persist the ConfigManager; empty disables persistence.
     std::filesystem::path config_file;
+
+    /// Tag registries record as the owner of what is being registered right now (Application::setRegistrationOwner()):
+    /// the plugin loader sets it around a plugin's registration, and every registry reads it instead of keeping its own
+    /// copy of the same fact.
+    String registration_owner;
 
     /// Whether the framework loads the plugins during the startup phase (AppConfig::load_plugins).
     bool load_plugins = true;

@@ -10,6 +10,8 @@ VN_APPFWGUI_NS_BEGIN
 class MainWindow;
 class BootSplash;
 class Window;
+class DocumentViewRegistry;
+class CentralDocumentHost;
 
 /**
  * @brief Application theme.
@@ -80,6 +82,29 @@ class VN_APPFW_API GuiApplication : public Application {
      * remains valid for the whole application lifetime.
      */
     raw_ptr<MainWindow> mainWindow() const;
+
+    /**
+     * @brief Returns the view registry: which view presents which document type.
+     *
+     * GUI-ONLY, and that is the point: a view is a UIElement, so the headless Application has no registry at all rather
+     * than one nobody could fill. Plugins register their views here (a plugin may register the view of a document type
+     * it does not own), and the central host looks documents up in it.
+     *
+     * @return The registry, owned by this application; never null for a constructed GuiApplication.
+     */
+    raw_ptr<DocumentViewRegistry> viewRegistry() const;
+
+    /**
+     * @brief Returns the host that shows the current document in the central client area.
+     *
+     * The framework's default document GUI behaviour, not an application's: it follows currentChanged/closed and
+     * keeps one view per document instance (see CentralDocumentHost for the five contracts). What stays with the
+     * application is policy - whether opening also selects, whether there are tabs, how many documents may be open.
+     *
+     * @return The host, owned by this application and following its lifetime; nullptr when there is no main window
+     *         (a GuiApplication whose window could not be built).
+     */
+    raw_ptr<CentralDocumentHost> centralDocumentHost() const;
 
     /**
      * @brief Returns the startup frame, or nullptr when none is shown.

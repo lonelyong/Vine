@@ -66,7 +66,7 @@ function(vn_add_plugin target_name_var short_name)
     # names a directory that does not exist from there. The consequence is not a warning but a
     # plugin that quietly fails to load: its dependencies are only found when the HOST happens to
     # have loaded them already, so a plugin that links one more library than the app does (the
-    # app_shell demo's image codec was the first) fails at dlopen. The two levels up land on lib/
+    # demo plugin's image codec was the first) fails at dlopen. The two levels up land on lib/
     # in both trees (build/plugins/vine -> build/lib, <prefix>/plugins/vine -> <prefix>/lib).
     set_target_properties(${target_name} PROPERTIES
         INSTALL_RPATH "$ORIGIN;$ORIGIN/../..;$ORIGIN/../../lib")

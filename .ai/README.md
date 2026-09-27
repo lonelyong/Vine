@@ -19,7 +19,7 @@
   `历史登记` / `不再更新` —— 这类小节里**允许**点名已不存在的东西（那正是它存在的意义）。
 * 必须在**现行**段落里提一个已经不存在的东西时，给那一行加 `<!-- drift-ok -->`。
 
-## design/ —— 完整设计文档（45）
+## design/ —— 完整设计文档（46）
 
 **graphics / vsg（24）**
 - `graphics-design.md` —— Graphics 模块设计（现代化架构）。
@@ -47,7 +47,7 @@
 - `vsg-custom-attributes.md` —— 自定义顶点属性（历史登记）。
 - `vsg-upstream-alignment.md` / `vsg-selection-highlight.md` / `vsg-user-mutation-strategy.md` —— 与上游对齐审查、元素级选择草案、用户端可变策略（均为历史登记）。
 
-**appfw（10）**
+**appfw（11）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
 - `appfw-startup-splash.md` —— 启动框与启动进度（`BootSplash`/`StartupProgress`、显式 `finishStartup()`）。
 - `appfw-startup-next.md` —— 启动流程下一步（启动事件 / 主窗后显示 / 渲染先就绪；待办）。
@@ -58,6 +58,7 @@
 - `appfw-config.md` —— 配置子系统设计。
 - `appfw-progress.md` —— 环境进度（`ProgressHost`：搬迁 + 推送模型）。
 - `appfw-userio.md` —— UserIO 设计。
+- `appfw-document-model.md` —— 文档模型：框架只定"文档"（身份 + 生命周期）与类型注册，区域/单多文档/展示形态归 app。
 
 **base 与其他（11）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则、与 cppcoro/P2300 差异对照、已知风险）。
