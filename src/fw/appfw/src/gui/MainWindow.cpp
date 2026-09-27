@@ -94,6 +94,8 @@ MainWindow::MainWindow()
     impl<itype>()->resize(QSize(800, 600));
     impl<itype>()->setCentralWidget(static_cast<QWidget*>(dptr()->dock_panel_mgr->root()->impl()));
     impl<itype>()->setStatusBar(dptr()->status_bar->impl<QStatusBar>());
+    //impl<itype>()->setFrameBorderEnabled(true);
+    //impl<itype>()->setFrameShadowEnabled(true);
 
     // QMainWindow::setStatusBar takes ownership of the status bar widget, so the
     // wrapper must not delete it (owns_impl=false avoids a double-free with Qt's

@@ -35236,4 +35236,3 @@ void SARibbonApplicationWidget::keyPressEvent(QKeyEvent* ev)
 #pragma warning (pop)
 #pragma pop_macro ("_CRT_SECURE_NO_WARNINGS")
 #endif
-
