@@ -206,12 +206,17 @@ class Scope
      * cancelled while waiting, TaskCancelledException is thrown and the
      * children keep running to completion independently; a later join() waits
      * for them normally (cancellation never leaves the internal event armed).
+     * CancelPolicy::StopAndWait replaces that abandoned wait with the scope's own stop request:
+     * the children are asked to stop (they hold the scope's token) and join() stays parked until
+     * the last of them has finished, then throws TaskCancelledException.
      *
      * @param token Optional cancellation token.
+     * @param policy What to do about the children when the token is cancelled; defaults to
+     *        leaving them alone, which is what makes a cancelled join() always return.
      * @return A task that completes when all children have completed.
      */
     [[nodiscard]]
-    Task<void> join(CancellationToken token = {})
+    Task<void> join(CancellationToken token = {}, CancelPolicy policy = CancelPolicy::Destroy)
     {
         throwIfCancelled(token);
 
@@ -237,12 +242,18 @@ class Scope
 
             if (token.stop_requested())
             {
-                throw TaskCancelledException{};
+                if (policy == CancelPolicy::Destroy)
+                {
+                    throw TaskCancelledException{};
+                }
+                // StopAndWait: ask the children to wind down and keep waiting for them; the
+                // throw after the loop is what reports the cancellation once they are done.
+                requestStop();
             }
 
             co_await state_->done;
 
-            if (token.stop_requested())
+            if (token.stop_requested() && policy == CancelPolicy::Destroy)
             {
                 throw TaskCancelledException{};
             }
@@ -252,6 +263,10 @@ class Scope
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
             ex = state_->first_exception;
+        }
+        if (token.stop_requested() && policy == CancelPolicy::StopAndWait)
+        {
+            throw TaskCancelledException{};
         }
         if (ex)
         {

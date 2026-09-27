@@ -77,7 +77,7 @@
 | `Task<T&>` | cppcoro 支持 | **不支持**，`StorableValue` 在模板边界拒绕（报错清晰，不再落进 `std::optional`） | 结果用 `std::optional` 缓存；支持引用要改 Task/SharedTask/When 三处，收益低。需要引用时返回指针/`std::reference_wrapper` |
 | `Awaitable` 概念 | cppcoro `awaitable_traits` 用 `get_awaiter` 展开成员/非成员 `operator co_await` | 同（`detail::getAwaiter`），并额外校验 `await_ready` 可按语言规则上下文转 bool、`await_suspend` 只能是 `void`/`bool`/`coroutine_handle<>` **值**（引用形式的 handle 被 clang 判错、g++ 目前放过，本概念按标准拒绝） | 只有"像 co_await 一样查找"的概念才能接受本模块自己的 awaitable（Task/SharedTask/AsyncEvent 都靠 `operator co_await`）；返回型别也要查，否则概念会放过编译器会拒绝的写法 |
 | `Generator` 的 ranges 契约 | `std::generator`（C++23）是 input_range | 已补齐 `iterator_concept` + 后置 `++` + `operator->`，实测 `std::ranges::input_range` = true | C++20 ranges 只要求后置 `++`，缺它 `weakly_incrementable` 即失败 |
-| 取消模型 | P2300：环境 stop token（`get_stop_token`），取消必须**请求**后由操作上报 `set_stopped` | 显式传 `CancellationToken`（同 cppcoro），组合子在取消/超时时**直接销毁**未完成的孩子 | 与 cppcoro 一致；但"强制销毁"比 P2300 激进，见 §4 |
+| 取消模型 | P2300：环境 stop token（`get_stop_token`），取消必须**请求**后由操作上报 `set_stopped`；C#：`Task.WhenAll` 自己从不取消，令牌交给任务，然后等全部结束 | 显式传 `CancellationToken`（同 cppcoro），触发时按 **`CancelPolicy`** 收口：`StopAndWait`（`whenAll` 的默认：先 `request_stop()` 再等最后一个孩子收尾）或 `Destroy`（`whenAny`/`withTimeout`/`Scope::join` 的默认：直接销毁） | 两个行业阵营都提供、默认值按各自的适用面选：`async-next.md` §6（2026-09-27 落地，含三枚钉子 + 8 处变异） |
 | 无等待者时的 notify | `std::condition_variable`/folly `Baton` 记为丢失 | `AsyncConditionVariable` 用**粘性标记**保留，下一个 waiter 消费 | "释放 AsyncMutex + 登记等待"无法原子，丢掉会死锁；谓词循环写法下多余唤醒无害。这是**刻意偏离**，不要"修"回去 |
 | 调度器 | `schedule()`/`resumeOn` 语义一致 | 同 | — |
 | `whenAll`/`whenAny` 变参 | P2300 `when_all` 接受 void 子操作（结果里不含 void） | 支持**全 void** 的变参重载（返回 `Task<void>`），混合 void/非 void 仍不支持（用 `vector<AnyTask>` + `discard()`） | 一致地支持混合 void 需要去掉结果 tuple 里的 void 位，属 API 形状改动，未做 |
@@ -97,8 +97,15 @@
    （都以取消线程 id 做断言；后者还钉住"取消只停等待、孩子继续跑"）。
    残留暴露面：`postWake` 的 `deque::push_back` 在 OOM 时会在 `noexcept` 回调里失败——与 `requestAbort()` 的
    `early_.push_back` 是同一处暴露；要清零就得换侵入式队列（见 §8）。
-2. **取消 = 强制销毁**：组合子在取消/超时时销毁未完成的孩子。孩子若正持锁或持有外部资源，就地销毁是危险的；
-   P2300 语义要求先请求停止再等它收尾。头文件已声明是设计选择。
+2. **触发后怎么办：先请求停止再等（`StopAndWait`）／直接销毁（`Destroy`）** —— **2026-09-27 已按策略收口**。
+   `whenAll`（含 typed tuple/vector，以及变参形式）默认 `StopAndWait`：第一个失败或外部取消时，先 `request_stop()`
+   （孩子持有的是组合子注入的环境令牌），再等最后一个孩子收尾才完成/抛出；`whenAny`/`withTimeout`/`Scope::join`
+   默认 `Destroy`（"第一个完成即放弃其余"的场景里等落败者没有意义）。
+   **代价（合同的一部分）**：不读环境令牌的孩子会拖住 `StopAndWait` 组合子——C# 的 `Task.WhenAll` 同样会——钉子
+   `TaskTest.WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken` 就是钉这条；要"绝不挂住"就显式选 `Destroy`。
+   `Destroy` **不**做"先请求再销毁"：请求只会在几微秒后销毁帧时触发一批自己的 `stop_callback`，没有收益、只有风险。
+   注入的令牌只在被组合的那一层可见（包装层如 `discard()` 是独立的协程，不转发就切断通道——与 C# 显式传令牌一致）。
+   细节、未采纳项与变异表见 `async-next.md` §6。
 3. **`TimerService` 故意不析构**（进程级单例 + worker 线程），LSan 不报是因为线程让它可达；不要"顺手"加析构。
 4. **`Scope` 析构不等待/不取消孩子**：孩子自持（`DetachedTask` + 共享状态），必须在 Scope 离开作用域前
    `co_await join()`，否则 `~ScopeState` 的 `AsyncEvent` 断言会炸。
@@ -126,7 +133,7 @@
 
 ## 7. 验证配方（实测可用）
 
-- 常规：`cmake --build build --target test_async && ./build/bin/test_async`（当前 145 条：含 9 条 `static_assert` 概念钉子、4 条并发/变异钉子）。
+- 常规：`cmake --build build --target test_async && ./build/bin/test_async`（当前 156 条）。
 - 门禁：`ctest -R 'test_async|test_asyncqt'`、`QT_QPA_PLATFORM=offscreen ctest -R test_gui`、
   `scripts/check_{include_hygiene,doc_symbols,diagnostic_formats}.py`。
 - 并发：TSan 手工编同一套用例（需要一起编 `src/base/core/src/ThreadPool.cpp`、gtest-all、gtest_main）；

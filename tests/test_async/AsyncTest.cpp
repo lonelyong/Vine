@@ -183,6 +183,44 @@ async::Task<void> awaitEventFlag(async::AsyncEvent& event, bool& ran)
     co_return;
 }
 
+/**
+ * @brief Sleeps in its own environment and records how it ended.
+ *
+ * This is the pattern an environment enables: the body reads the token its creator handed over
+ * (co_await currentStopToken()) and hands it to the operations it awaits. It cannot be the other
+ * way round - an operation cannot look up its caller's environment (see StopToken.hpp) - so the
+ * body is the one that passes it on.
+ *
+ * cancelled is stored only when the sleep was cancelled, and finished always, so a test can tell
+ * "the token reached the sleep" from "the sleep ran to its deadline".
+ */
+async::Task<void> sleepInEnvironment(std::chrono::milliseconds duration,
+                                     std::atomic<bool>& cancelled,
+                                     std::atomic<bool>& finished)
+{
+    const std::stop_token inherited = co_await async::currentStopToken();
+    try
+    {
+        co_await async::sleepFor(duration, inherited);
+    }
+    catch (const async::TaskCancelledException&)
+    {
+        cancelled.store(true, std::memory_order_release);
+    }
+    finished.store(true, std::memory_order_release);
+}
+
+/// Waits (bounded) for a flag another thread sets.
+bool waitForFlag(const std::atomic<bool>& flag, std::chrono::milliseconds budget)
+{
+    const auto deadline = std::chrono::steady_clock::now() + budget;
+    while (!flag.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return flag.load(std::memory_order_acquire);
+}
+
 async::Task<void> eventWaitCount(async::AsyncEvent& event,
                                  std::atomic<int>& registered,
                                  std::atomic<int>& woken)
@@ -816,7 +854,11 @@ async::DetachedTask cancellationProbe(std::vector<async::AnyTask> tasks,
 {
     try
     {
-        co_await async::whenAll(std::move(tasks), token);
+        // Destroy, explicitly: the probe's children park on a task that never reads its environment
+        // token, so under the default StopAndWait the composition would wait for that child forever
+        // (the price pinned by WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken). This probe is
+        // about where the cancellation is observed, not about the policy.
+        co_await async::whenAll(std::move(tasks), token, async::CancelPolicy::Destroy);
     }
     catch (const async::TaskCancelledException&)
     {
@@ -1818,6 +1860,129 @@ TEST(TypedWhenAnyTest, VariadicReturnsFirst)
     auto task = async::whenAny(delayed(1, std::chrono::milliseconds(60)),
                                delayed(2, std::chrono::milliseconds(10)));
     EXPECT_EQ(std::move(task).result(), 2);
+}
+
+/// Returns 7 after sleeping in its own environment, recording how that sleep ended.
+async::Task<int> sleepThenSeven(std::chrono::milliseconds duration,
+                                std::atomic<bool>& cancelled,
+                                std::atomic<bool>& finished)
+{
+    const std::stop_token inherited = co_await async::currentStopToken();
+    try
+    {
+        co_await async::sleepFor(duration, inherited);
+    }
+    catch (const async::TaskCancelledException&)
+    {
+        cancelled.store(true, std::memory_order_release);
+    }
+    finished.store(true, std::memory_order_release);
+    co_return 7;
+}
+
+/// Returns 7 after a plain event is set: it never reads its environment token.
+async::Task<int> valueFromEvent(async::AsyncEvent& release, std::atomic<bool>& finished)
+{
+    co_await release;
+    finished.store(true, std::memory_order_release);
+    co_return 7;
+}
+
+TEST(TypedWhenAnyTest, StopAndWaitWaitsForTheLoserItAskedToStop)
+{
+    // whenAny's default destroys the losers the moment the winner is in; StopAndWait is how a caller
+    // asks for them to be wound down and waited for instead, so the composition is done when nobody
+    // is running rather than when the first one is. The winner is instant and the loser sleeps, so
+    // returning the winner's value before the loser has reported is exactly the bug: the winner's
+    // result alone is not the composition's completion condition any more.
+    std::atomic<bool> cancelled{ false };
+    std::atomic<bool> finished{ false };
+    std::atomic<bool> returned{ false };
+    std::atomic<int>  value{ 0 };
+
+    // An escape hatch only: a composition parked here has already failed the assertions below, and
+    // this cancellation is what unblocks it so the failure can be reported instead of hanging.
+    vn::CancellationSource source;
+
+    std::vector<async::Task<int>> tasks;
+    tasks.push_back(one());
+    tasks.push_back(sleepThenSeven(std::chrono::milliseconds(50), cancelled, finished));
+
+    std::thread runner([&] {
+        try
+        {
+            value.store(async::whenAny(std::move(tasks),
+                                       source.get_token(),
+                                       async::CancelPolicy::StopAndWait)
+                            .result(),
+                        std::memory_order_release);
+        }
+        catch (const async::TaskCancelledException&)
+        {
+        }
+        returned.store(true, std::memory_order_release);
+    });
+
+    if (!waitForFlag(returned, std::chrono::milliseconds(1000)))
+    {
+        source.request_stop();
+    }
+    runner.join();
+
+    EXPECT_TRUE(returned.load());
+    EXPECT_EQ(value.load(std::memory_order_acquire), 1);
+    EXPECT_TRUE(cancelled.load()) << "the loser of the race was never asked to stop";
+    EXPECT_TRUE(finished.load()) << "the winner's value was returned while the loser was still running";
+}
+
+TEST(TypedWhenAnyTest, StopAndWaitIsHeldByALoserItCannotAskToStop)
+{
+    // The half of the rule the test above cannot reach: the loser here never reads its token, so
+    // there is nobody to ask and the composition has to stay parked until the loser reports by
+    // itself. That is the wake only StopAndWait needs - the winner's completion stopped being the
+    // composition's end the moment losers are waited for - and the value it finally returns is
+    // still the winner's.
+    async::AsyncEvent release;
+    std::atomic<bool> loser_finished{ false };
+    std::atomic<bool> returned{ false };
+    std::atomic<int>  value{ 0 };
+
+    // An escape hatch only: a composition parked past the release below has already failed the
+    // assertions, and this cancellation unblocks it so the failure is reported instead of hanging.
+    vn::CancellationSource source;
+
+    std::vector<async::Task<int>> tasks;
+    tasks.push_back(one());
+    tasks.push_back(valueFromEvent(release, loser_finished));
+
+    std::thread runner([&] {
+        try
+        {
+            value.store(async::whenAny(std::move(tasks),
+                                       source.get_token(),
+                                       async::CancelPolicy::StopAndWait)
+                            .result(),
+                        std::memory_order_release);
+        }
+        catch (const async::TaskCancelledException&)
+        {
+        }
+        returned.store(true, std::memory_order_release);
+    });
+
+    EXPECT_FALSE(waitForFlag(returned, std::chrono::milliseconds(200)))
+        << "the winner's completion must not end a StopAndWait composition while a loser is running";
+
+    release.set();
+    if (!waitForFlag(returned, std::chrono::milliseconds(1000)))
+    {
+        source.request_stop();
+    }
+    runner.join();
+
+    EXPECT_TRUE(returned.load());
+    EXPECT_EQ(value.load(std::memory_order_acquire), 1) << "the composition lost the winner's result";
+    EXPECT_TRUE(loser_finished.load());
 }
 
 TEST(SleepTest, SleepsForDuration)
@@ -3344,42 +3509,172 @@ async::Task<void> readEnvironment(std::optional<std::stop_token>& seen)
     seen = co_await async::currentStopToken();
 }
 
-/**
- * @brief Sleeps in its own environment and records how it ended.
- *
- * This is the pattern an environment enables: the body reads the token its creator handed over
- * (co_await currentStopToken()) and hands it to the operations it awaits. It cannot be the other
- * way round - an operation cannot look up its caller's environment (see StopToken.hpp) - so the
- * body is the one that passes it on.
- *
- * cancelled is stored only when the sleep was cancelled, and finished always, so a test can tell
- * "the token reached the sleep" from "the sleep ran to its deadline".
- */
-async::Task<void> sleepInEnvironment(std::chrono::milliseconds duration,
-                                     std::atomic<bool>& cancelled,
-                                     std::atomic<bool>& finished)
+TEST(TaskTest, WhenAllAsksTheSurvivorsToStopAndWaitsForThem)
 {
-    const std::stop_token inherited = co_await async::currentStopToken();
-    try
-    {
-        co_await async::sleepFor(duration, inherited);
-    }
-    catch (const async::TaskCancelledException&)
-    {
-        cancelled.store(true, std::memory_order_release);
-    }
+    // What the default policy promises: the first failure asks the survivors to stop - through the
+    // environment token the composition handed them - and the composition is not done until they
+    // have actually finished. C#'s Task.WhenAll has this shape once the caller hands its token to
+    // the tasks; Trio and Kotlin's coroutineScope cancel the siblings of a failed task.
+    //
+    // The children are pushed unwrapped on purpose: an adapter such as discard() is a coroutine of
+    // its own, so the token stops at it unless it forwards the token it was handed (the same C#
+    // rule - a wrapper that does not pass the token on cuts the channel).
+    std::atomic<bool> cancelled{ false };
+    std::atomic<bool> finished{ false };
+
+    std::vector<async::AnyTask> tasks;
+    tasks.push_back(failTask());
+    tasks.push_back(sleepInEnvironment(std::chrono::milliseconds(2000), cancelled, finished));
+
+    const auto start = std::chrono::steady_clock::now();
+    EXPECT_THROW(async::whenAll(std::move(tasks)).result(), std::runtime_error);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+
+    EXPECT_TRUE(cancelled.load()) << "the survivor never saw a stop request: the composition's "
+                                     "environment token did not reach its body";
+    EXPECT_TRUE(finished.load()) << "the composition returned while a child was still running";
+    EXPECT_LT(elapsed, std::chrono::milliseconds(1000))
+        << "waiting must mean waiting for the child to finish, not for its own deadline";
+}
+
+TEST(TaskTest, WhenAllDestroyPolicyNeverAsksTheSurvivorsToStop)
+{
+    // Destroy changes nothing about All mode's own rule - every child is waited for - it only means
+    // nobody is ever asked to stop, so the wait lasts the survivor's own deadline. Turning that
+    // deadline into a prompt wind-down is the whole difference the StopAndWait default buys.
+    std::atomic<bool> cancelled{ false };
+    std::atomic<bool> finished{ false };
+
+    std::vector<async::AnyTask> tasks;
+    tasks.push_back(failTask());
+    tasks.push_back(sleepInEnvironment(std::chrono::milliseconds(200), cancelled, finished));
+
+    const auto start = std::chrono::steady_clock::now();
+    EXPECT_THROW(
+        async::whenAll(std::move(tasks), vn::CancellationToken{}, async::CancelPolicy::Destroy).result(),
+        std::runtime_error);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+
+    EXPECT_FALSE(cancelled.load()) << "Destroy must not ask anyone to stop";
+    EXPECT_TRUE(finished.load()) << "All mode waits for every child even under Destroy";
+    EXPECT_GE(elapsed, std::chrono::milliseconds(150))
+        << "nothing asked the survivor to wind down, so it ran to its own deadline";
+}
+
+TEST(TaskTest, WhenAllStopAndWaitOnCancellationAsksAndWaits)
+{
+    // The cancellation path, where the two policies differ the most: Destroy reports the
+    // cancellation immediately and abandons the child where it stands (pinned by
+    // WhenAllCancellation), while StopAndWait hands the stop request to the child and reports the
+    // cancellation only once it has finished - the order the code documents as request, wait, throw.
+    std::atomic<bool> cancelled{ false };
+    std::atomic<bool> finished{ false };
+
+    std::vector<async::AnyTask> tasks;
+    tasks.push_back(sleepInEnvironment(std::chrono::milliseconds(2000), cancelled, finished));
+
+    vn::CancellationSource source;
+    std::thread            canceller([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        source.request_stop();
+    });
+
+    const auto start = std::chrono::steady_clock::now();
+    EXPECT_THROW(async::whenAll(std::move(tasks), source.get_token(), async::CancelPolicy::StopAndWait).result(),
+                 async::TaskCancelledException);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    canceller.join();
+
+    EXPECT_TRUE(cancelled.load()) << "the composition's stop request did not reach the child's sleep";
+    EXPECT_TRUE(finished.load()) << "the cancellation was reported before the child had finished";
+    EXPECT_LT(elapsed, std::chrono::milliseconds(1000))
+        << "the child was asked to stop, so the wait is its wind-down and not its deadline";
+}
+
+/// Waits on a plain event and never reads its environment token: a child StopAndWait cannot ask to stop.
+async::Task<void> childThatIgnoresItsToken(async::AsyncEvent& release, std::atomic<bool>& finished)
+{
+    co_await release;
     finished.store(true, std::memory_order_release);
 }
 
-/// Waits (bounded) for a flag another thread sets.
-bool waitForFlag(const std::atomic<bool>& flag, std::chrono::milliseconds budget)
+TEST(TaskTest, WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken)
 {
-    const auto deadline = std::chrono::steady_clock::now() + budget;
-    while (!flag.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+    // The price of StopAndWait, and the reason it is a policy rather than the only behaviour: a
+    // child that never reads its environment token parks the composition until it finishes by
+    // itself. The release below keeps the test bounded - asserted is that the composition was still
+    // parked while the child was.
+    async::AsyncEvent release;
+    std::atomic<bool> child_finished{ false };
+    std::atomic<bool> returned{ false };
+
+    std::vector<async::AnyTask> tasks;
+    tasks.push_back(async::discard(failTask()));
+    tasks.push_back(async::discard(childThatIgnoresItsToken(release, child_finished)));
+
+    std::thread runner([&] {
+        try
+        {
+            async::whenAll(std::move(tasks)).result();
+        }
+        catch (const std::runtime_error&)
+        {
+        }
+        returned.store(true, std::memory_order_release);
+    });
+
+    EXPECT_FALSE(waitForFlag(returned, std::chrono::milliseconds(200)))
+        << "StopAndWait must hold the composition until the child that ignored its token is done";
+
+    release.set();
+    runner.join();
+
+    EXPECT_TRUE(returned.load());
+    EXPECT_TRUE(child_finished.load());
+}
+
+TEST(TaskTest, WhenAnyStopAndWaitIsHeldByALoserItCannotAskToStop)
+{
+    // The erased/void whenAny path, which has its own completion rule from the typed one: the
+    // winner is in immediately and the loser cannot be asked to stop, so the composition may only
+    // end when the loser reports by itself. The escape hatch records whether the composition needed
+    // it, which is what makes "the release alone was enough" observable.
+    async::AsyncEvent release;
+    std::atomic<bool> loser_finished{ false };
+    std::atomic<bool> returned{ false };
+
+    vn::CancellationSource source;
+    bool                   needed_escape{ false };
+
+    std::vector<async::AnyTask> tasks;
+    tasks.push_back(noop());
+    tasks.push_back(childThatIgnoresItsToken(release, loser_finished));
+
+    std::thread runner([&] {
+        try
+        {
+            async::whenAny(std::move(tasks), source.get_token(), async::CancelPolicy::StopAndWait).result();
+        }
+        catch (const async::TaskCancelledException&)
+        {
+        }
+        returned.store(true, std::memory_order_release);
+    });
+
+    EXPECT_FALSE(waitForFlag(returned, std::chrono::milliseconds(200)))
+        << "the winner's completion must not end a StopAndWait whenAny while a loser is running";
+
+    release.set();
+    if (!waitForFlag(returned, std::chrono::milliseconds(1000)))
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        needed_escape = true;
+        source.request_stop();
     }
-    return flag.load(std::memory_order_acquire);
+    runner.join();
+
+    EXPECT_TRUE(returned.load());
+    EXPECT_TRUE(loser_finished.load());
+    EXPECT_FALSE(needed_escape) << "the composition never woke when the last loser reported";
 }
 
 TEST(StopTokenTest, ATaskNobodyHandedATokenToSeesAnEmptyEnvironment)
@@ -3447,6 +3742,34 @@ TEST(ScopeTest, ChildrenRunInTheScopesEnvironmentAndLeavingAsksThemToStop)
 
     EXPECT_TRUE(waitForFlag(finished, std::chrono::milliseconds(1000)));
     EXPECT_TRUE(cancelled.load()) << "the scope's token never reached the child's sleep";
+}
+
+TEST(ScopeTest, JoinStopAndWaitAsksTheChildrenToStopAndWaitsForThem)
+{
+    // The scope's own policy switch: Destroy only abandons the wait (the children keep running),
+    // StopAndWait asks them to stop - they hold the scope's token - and stays parked until the last
+    // of them has reported, then reports the cancellation.
+    async::Scope      scope;
+    std::atomic<bool> cancelled{ false };
+    std::atomic<bool> finished{ false };
+    scope.add(sleepInEnvironment(std::chrono::milliseconds(2000), cancelled, finished));
+
+    vn::CancellationSource source;
+    std::thread            canceller([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        source.request_stop();
+    });
+
+    const auto start = std::chrono::steady_clock::now();
+    EXPECT_THROW(scope.join(source.get_token(), async::CancelPolicy::StopAndWait).result(),
+                 async::TaskCancelledException);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    canceller.join();
+
+    EXPECT_TRUE(cancelled.load()) << "the scope's stop request did not reach the child's sleep";
+    EXPECT_TRUE(finished.load()) << "join() reported the cancellation before the child had finished";
+    EXPECT_LT(elapsed, std::chrono::milliseconds(1000))
+        << "the child was asked to stop, so the wait is its wind-down and not its deadline";
 }
 
 TEST(ScopeTest, ADetachedScopeLeavesItsChildrenAlone)

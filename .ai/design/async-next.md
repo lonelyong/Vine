@@ -179,9 +179,9 @@ class Scope
 2. **§2**（与 §1 同批做，因为都碰 `Scope`；析构只请求停止 + 断言 + `detach()`）；
 3. **§3 挂账**（有数据再动）；
 4. §1.5 的"先请求停止再等"（`withTimeout` 的三段式）留到有真实需求时单独定；
-5. **第二阶的形状已定（§6，2026-09-27）**：`CancelPolicy{Destroy, StopAndWait}`，默认保持今天的
-   `Destroy`；`StopAndWait` 是 Trio/Kotlin/P2300 那一套"请求停止 + 等收尾"，`Scope::join` 一起收。
-   **状态：暂缓（2026-09-27）** —— 形状留档，等出现真实需求再实现（见 §6.6）。
+5. **第二阶（§6，2026-09-27）**：`CancelPolicy{Destroy, StopAndWait}` —— **已落地**，但默认值按适用面分开：
+   `whenAll`（含 typed tuple/vector 与变参）= `StopAndWait`（先请求停止、再等收尾），
+   `whenAny`/`withTimeout`/`Scope::join` = `Destroy`（不变）。详见 §6.6。
 
 ---
 
@@ -279,9 +279,60 @@ enum class CancelPolicy
 - `set_stopped` 独立通道 / `Canceled` 独立状态（P2300/C#）：见 §1.5；
 - **无条件等待**：它会改掉本库"绝不挂住"的承诺 —— Trio/Kotlin 敢这样是因为它们**没有**销毁这条路可选。
 
-### 6.6 状态：暂缓（2026-09-27）
+### 6.6 状态：已落地（2026-09-27）：`whenAll` 默认改成"请求停止 + 等收尾"
 
-行业调研（§6.1）、决定（§6.2）、落地形状（§6.3）、验证配方（§6.4）都已写死，**实现按用户意见暂缓**：
-默认 `Destroy` 就是今天的行为，暂缓不影响任何现有承诺；真正想要 `StopAndWait` 的场景只有一个 ——
-"想让被取消的孩子有机会自己收尾"。等它出现再做，届时照 §6.3/§6.4 执行即可，不必重新调研。
+**触发本轮的原因**：用户明确要"等"的语义（原话"要等呀，c# 等全部"）。C# 的 `Task.WhenAll` 自己从不取消、
+总是等全部，**把令牌交给任务**——把这两句合起来，就是 Trio/Kotlin/P2300 的"请求停止 + 等收尾"（§6.1）。
+
+**实际落地的形状**（`src/base/async/sdk/vine/async/`）：
+
+- `Cancellation.hpp`：新增 `enum class CancelPolicy { Destroy, StopAndWait }`（带两派口径的说明）。
+- `When.hpp`：`detail::WhenState`/`WhenAnyState` 各持 `std::stop_source source` 与 `policy`；孩子在启动前
+  经 `detail::TaskEnvironment::setToken()` 拿到 `source.get_token()`（与 `Scope::add()` 同一机制）；
+  `detail::drainChildren(state)` = `request_stop()` + 手复位事件重臂等 `remaining == 0`；四个驱动
+  （`whenRace`/`whenAllImpl`/typed `whenAll`/typed `whenAny`）在唤醒后按策略排空。
+- `WithTimeout.hpp`：`policy` 参数（默认 `Destroy`，转发给 `whenAny`）；`Scope.hpp`：`join(token, policy)`
+  （默认 `Destroy`；`StopAndWait` 时改成"先 `requestStop()` 再等 pending 归零，然后抛 `TaskCancelledException`"）。
+- **默认值**：`whenAll` 全部形式 = `StopAndWait`；`whenAny`/`withTimeout`/`Scope::join` = `Destroy`。
+  变参形式多了"策略在前"的重载（`whenAll(policy, token, tasks...)` 等 8 个），否则包形式的调用者没地方选策略。
+
+**与 §6.3 的两处偏离（诚实记录）**：
+
+1. `Destroy` **不**发停止请求（§6.2 原计划是"先 `request_stop()` 再销毁"）。理由：请求只会在几微秒后销毁帧时
+   触发一批它自己的 `stop_callback`，对已被销毁的孩子没有意义，只把拆解过程和外线程唤醒搅在一起。
+   好处是 `Destroy` 与今天的行为**逐字相同**，"默认不变"这句话可以验证。
+2. **唤醒规则要分模式**：All 模式原先只在最后一个孩子完成时 `done.set()`，所以 StopAndWait 下"第一个失败"
+   根本唤不醒组合子（无从发停止请求）；Any 模式原先**不递减** `remaining` 也只在第一个完成时唤醒。两处都
+   按策略改了：All 在"首个失败 + StopAndWait"时提前唤醒；Any 现在逐孩子递减，并在"最后一个落败者报告 +
+   StopAndWait"时再次唤醒。
+
+**验证配方（已跑）**：`test_async` 150 → **156**；新钉子 = `WhenAllAsksTheSurvivorsToStopAndWaitsForThem`、
+`WhenAllDestroyPolicyNeverAsksTheSurvivorsToStop`、`WhenAllStopAndWaitOnCancellationAsksAndWaits`、
+`WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken`、`WhenAnyStopAndWaitIsHeldByALoserItCannotAskToStop`、
+`TypedWhenAnyTest.StopAndWaitWaitsForTheLoserItAskedToStop`、`TypedWhenAnyTest.StopAndWaitIsHeldByALoserItCannotAskToStop`、
+`ScopeTest.JoinStopAndWaitAsksTheChildrenToStopAndWaitsForThem`（旧的取消探针改为显式 `Destroy`，它钉的是唤醒线程，不是策略）。
+
+**变异（8/8 命中，恢复后 156/156 绿）**：
+
+| 变异 | 红 |
+| --- | --- |
+| `drainChildren` 不发 `request_stop()` | 3 条 |
+| `drainChildren` 直接 `co_return`（不等） | 4 条 |
+| `composeChild` 不注入令牌 | 2 条 |
+| `composeAnyChild` 不注入令牌 | 1 条 |
+| 擦除路径 Any 分支去掉"最后一个落败者"的唤醒 | 1 条 |
+| typed `whenAny` 去掉同一处唤醒 | 2 条 |
+| All 分支去掉"首个失败"的提前唤醒 | 1 条 |
+| `Scope::join` 的 StopAndWait 不发 `requestStop()` | 1 条 |
+
+**开发中撞到的两个坑（写下来省一轮）**：
+
+1. `async::discard(...)` 是**包装协程**（`co_await inner`），令牌注入落在包装层 ⇒ 内层 body 读到空令牌。这不是缺陷，
+   而是"环境不会自动向内传"的直接后果（§1.3 已证伪过"被调用者读调用者环境"）：包装层不转发就切断通道，
+   与 C# 显式传令牌一致。用例因此直接把子任务放进容器，并在注释里写明理由。
+2. typed `whenAny` 与 `WhenAnyChild` 的**缩进不同**：一次"去掉最后一个落败者唤醒"的变异只命中了擦除路径，typed 路径
+   单独跑才红（并暴露擦除 `whenAny` 那条路原本**没有**钉子 —— 已补）。变异必须按路径分开打，不能只看"文件里有一处"。
+
+**仍然成立的老承诺**：`whenAll` 的默认现在**会等不读令牌的孩子**（C# 也是如此，见 §6.4 钉子 C）；
+`whenAny`/`withTimeout`/`Scope::join` 的默认一个字没变，它们的调用者要改用 `CancelPolicy::StopAndWait` 才进入等待语义。
 
