@@ -28,7 +28,7 @@ class DockPanelManager;
  * THE FIVE CONTRACTS, and each one is a bug somebody writes by hand otherwise:
  *   1. the central slot is filled ONCE. DockPanelManager::setCentralWidget() replaces what is there and the docking
  *      library reparents the widget, which recreates its native window - doing that per document switch is exactly the
- *      `Pending -> Attached` dance a render control must not be dragged through. The host installs its container the
+ *      `Pending -> Presenting` dance a render control must not be dragged through. The host installs its container the
  *      first time it has something to show and then only switches pages inside it;
  *   2. it does not take the central area before it has to: until the first document is presented, whatever the shell put
  *      there (a demo scene, a welcome page) stays visible and untouched;

@@ -146,16 +146,6 @@ class DemoScene
      */
     void installContent(const DemoCubeImages& images);
 
-    /**
-     * @brief Reports whether the render session is still being attached.
-     *
-     * The attach reads the scene graph (pipelines from the registered passes, plus one warm-up frame), so the demo's
-     * content has to be installed after it - see the wait in assembleDemoContentLater().
-     *
-     * @return true while the attach is in flight.
-     */
-    [[nodiscard]] bool sessionAttaching() const noexcept;
-
   private:
     /**
      * @brief Composes the scene content for one path and builds the overlay scene for it.

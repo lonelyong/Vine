@@ -28,25 +28,18 @@ VN_APPFWGUI_NS_BEGIN
 /**
  * @brief The render surface and the render session living on it.
  *
- * The native window a render backend binds to - a QWindow created as a Vulkan surface - plus
- * everything that keeps a session on it: the engine and the interactive primary view, the attach
- * and re-announce rules, the deferred resize path, the display-synced settle frames, and the
- * translation of the Qt events it receives into vn::window events pushed to the view.
+ * The native window a render backend binds to, plus what keeps a session on it: the engine and its view, the
+ * attach / re-announce rules, the deferred resize path, and the Qt events translated into view input. RenderControl
+ * embeds one inside a window container and re-publishes its state_changed; every lifecycle transition is reported
+ * through on_state_changed.
  *
- * RenderControl embeds one of these in its widget tree (QWidget::createWindowContainer) and
- * forwards its public surface to the outside; no decision about the session is taken there. Every
- * lifecycle transition is reported through on_state_changed, which the control re-publishes as
- * its own state_changed.
+ * The surface attaches itself: the constructor tries, and a show/resize of the host retries (see handleUpdate()).
+ * An established session then follows a platform window Qt replaced on its own, and nothing is re-checked on a
+ * timer. The surface does not manage its own visibility - the control shows the container it lives in exactly when
+ * a frame is in the surface.
  *
- * The surface attaches itself as soon as the window it was given is usable: the constructor tries, and the first
- * resize/show after it retries (see handleUpdate()). An established session then follows a platform window Qt
- * destroyed and recreated on its own, and nothing is re-checked on a timer. The surface does NOT manage its own
- * visibility: the widget that holds it (the control's window container) is what the host sees, and RenderControl
- * shows it exactly when a frame is in the surface.
- *
- * @note This is a private header: the class is an implementation detail of RenderControl and is
- * not installed. The lifecycle lines it logs keep the "[RenderControl]" tag - the surface is that
- * control's surface, and the tag is what the log greps and the design notes search for.
+ * @note Private header: an implementation detail of RenderControl, not installed. The lifecycle lines it logs keep
+ * the "[RenderControl]" tag, which is what the log greps search for.
  */
 class SurfaceWindow : public QWindow {
   public:
@@ -55,12 +48,10 @@ class SurfaceWindow : public QWindow {
 
   public:
     /**
-     * @brief Creates the surface and the engine and view that render into it.
+     * @brief Creates the surface, its engine and its view, and tries the attach once.
      *
-     * @param host Widget the surface is embedded in. Asked whether the control is on screen, which
-     *             the surface cannot answer for itself (its own flags report visible while the
-     *             hosting window is hidden); its show is reported here as the moment a frame became
-     *             possible, and it is the parent of the context menu.
+     * @param host Widget the surface is embedded in, and the parent of the context menu. Its show - and the runtime
+     *             container's show/resize - is what the attach is retried on.
      */
     explicit SurfaceWindow(QWidget* host);
     ~SurfaceWindow() override;
@@ -81,79 +72,53 @@ class SurfaceWindow : public QWindow {
     vn::graphics::SceneView* view() const;
 
     /**
-     * @brief Attaches the backend to the live native surface and initializes it.
+     * @brief Attaches the backend to the live native surface and opens the session on it.
      *
-     * The synchronous form of initAsync(): the backend's initialize() - and the one frame the attach owes - run on
-     * the calling thread, so this can be used before there is an event loop, while initAsync() hands that stretch to
-     * the thread pool.
+     * The whole attach: the handle goes to the backend (a re-announce when Qt replaced the platform window), the
+     * backend's initialize() builds the device, the session and every pipeline, the size goes to backend and view,
+     * and the attach's one frame is rendered. Synchronous, on the calling thread, idempotent while the session is
+     * bound to the surface the window reports now.
      *
-     * @return true once the engine initialized successfully, false when the surface was not ready
-     *         yet, no render backend is registered, or the backend refused the attach.
+     * @return true once the session is up; false when the surface is not ready yet (the next update retries, see
+     *         handleUpdate()), no render backend is registered, or the backend refused the attach.
      */
     bool init();
 
     /**
-     * @brief Same attach as init(), with the backend's own initialization on the thread pool.
+     * @brief The awaitable spelling of init(), for a caller that is already a coroutine.
      *
-     * The engine's initialize() - the device, the session and every pipeline - is the expensive half and needs the
-     * native handle, not the Qt thread, so it runs through vn::async::run() here and the application thread is free
-     * while it does (which is what lets a boot keep reporting, repainting and taking input through that stretch).
-     * The warm-up frame follows it on the pool for the same reason (that one frame is where pass graphs, program
-     * slots and pipeline compilation are paid). What has to stay on this thread does: taking the handle, publishing
-     * the state, sizing the view, the settle frames - so the caller must be on the application thread, with an event
-     * loop running to come back to.
-     *
-     * Contract: the attach reads the scene graph (the pipelines are built from the passes that are registered, and
-     * the warm-up frame records them). A host must therefore not mutate the scene while the attach is in flight -
-     * work whose result is installed into the scene has to wait until this returns.
+     * The attach is synchronous, so this completes without suspending. It reads the scene graph (the pipelines come
+     * from the registered passes, and the frame records it), so a host installs its content after it - automatic
+     * here, since the attach returns before the call that started it does.
      *
      * @return A task that completes with the same answer as init().
      */
     vn::async::Task<bool> initAsync();
 
-    /**
-     * @brief Reports whether an attach is running right now (including the warm-up frame).
+    /** @brief Renders one frame through the engine (the attach's own frame is the first one).
      *
-     * The attach reads the scene graph - the pipelines are built from the passes that are registered and the warm-up
-     * frame records them - so work that changes the scene has to wait for it (see initAsync()).
-     *
-     * @return true while init() or initAsync() is in flight.
-     */
-    bool isAttaching() const noexcept;
-
-    /** @brief Renders one frame through the engine. The first frame of a session is also what puts the surface
-     * on screen (it is hidden until then, see attach()). */
+     * The control shows its render area on the transition this publishes, so the surface ends up on screen once a
+     * frame is in it. */
     void renderFrame();
 
-    /** @brief Fits the whole scene into the view (falling back to the home view when the scene is
-     * empty) and renders a frame. */
+    /** @brief Fits the whole scene into the view (home view when the scene is empty) and renders a frame. */
     void fitToScreen();
 
-    /**
-     * @brief Gets where the surface lifecycle currently stands.
-     *
-     * @return The current state.
-     */
+    /** @brief Gets where the surface lifecycle currently stands. */
     SurfaceState state() const;
 
-    /**
-     * @brief Gets why the surface reached Failed, or an empty string otherwise.
-     *
-     * @return The failure summary; empty unless state() is Failed.
-     */
+    /** @brief Gets why the surface reached Failed (empty otherwise). */
     String failureReason() const;
 
   public:
-    /// Fired on every lifecycle transition, on the application thread. The control re-publishes it;
-    /// a surface without a listener simply keeps its own state.
+    /// Fired on every lifecycle transition, on the application thread (RenderControl re-publishes it).
     std::function<void(SurfaceState)> on_state_changed;
 
-    /// Fired when the platform refused to attach to a surface that is not on screen, so the control has to put
-    /// it on screen before the next attempt can work (see attach()).
+    /// Fired when the platform refused a surface that is not on screen, so the control shows it before the retry.
     std::function<void()> on_needs_visible_surface;
 
   protected:
-    /** @brief Reports the platform-surface phases and the display-synced update ticks. */
+    /** @brief Reports the phases of the native platform surface. */
     bool event(QEvent* event) override;
     /** @brief Reports a resize of the window itself. */
     void resizeEvent(QResizeEvent* event) override;
@@ -190,46 +155,15 @@ class SurfaceWindow : public QWindow {
     /** @brief Coalesces and defers a surface update until after Qt's layout pass. */
     void scheduleUpdate();
     /** @brief Settles a deferred surface update: follows a recreated platform window onto its new
-     * surface, or resizes the backend to the final surface size and requests settle frames. */
+     * surface, or resizes the backend to the final surface size and renders one frame. */
     void handleUpdate();
-    /** @brief Renders one display-synced settle frame (UpdateRequest). */
-    void handleUpdateTick();
-    /** @brief Requests a few extra display-synced frames after a resize. */
-    void requestSettleFrames();
-    /**
-     * @brief Attaches the backend to the surface the window reports now and opens the session on it.
-     *
-     * The whole attach in one place: the handle goes to the backend (a re-announce when the platform window was
-     * recreated), the backend's initialize() runs, the session size is delivered to the backend and the view, and
-     * the one frame the attach owes is rendered - a present when the control is on screen, the warm-up frame
-     * otherwise.
-     *
-     * @param initialize_on_pool true to run the backend's initialize() and that frame on the thread pool, which
-     *        needs an application on this thread and an event loop to come back to; false runs both inline.
-     * @return A task that completes true once the session is up.
-     */
-    vn::async::Task<bool> attach(bool initialize_on_pool);
     /** @brief Arms the platform-window recreation test hatch (VINE_RECREATE_SURFACE_MS), once per session. */
     void armRecreateHatch();
 
-    /** @brief Renders the frame that pays a session's one-time build cost, before the control is on screen.
-     *
-     * Called once per attach when the control is not on screen yet (the host calls init() from a plugin's load(),
-     * before the host has run a layout pass): the pass graphs, the program slots and the compiled pipelines are
-     * built here, at whatever size the platform window has at that moment, and the size change that follows is
-     * served in place (see the backend's resize path) - so the first frame the user can see costs a resize and a
-     * record instead of a from-scratch build.
-     *
-     * It publishes nothing and shows nothing: a frame that was not rendered for the size the surface has now is
-     * not something to put on screen, and only this class' state does that (see renderFrame()).
-     */
-    void prewarmFrame();
     /** @brief Picks the first registered render backend unless the host attached one. Idempotent. */
     void useDefaultBackend();
     /** @brief Publishes a lifecycle transition (silent when the state is unchanged). */
     void setState(SurfaceState next);
-    /** @brief Whether the control this surface belongs to is on screen (asked of the host widget). */
-    bool isOnScreen() const;
     /** @brief Records a permanent attach failure and publishes it. */
     void failAttach(String reason);
     /** @brief Pops up the view context menu at the cursor position. */
@@ -237,13 +171,10 @@ class SurfaceWindow : public QWindow {
     /** @brief Gets the native handle of the render surface (HWND on Windows). */
     void* nativeHandle() const;
 
-    /** @brief Recreates the native render surface, forcing the host's follow path.
+    /** @brief Recreates the native render surface, forcing the follow path (test hatch, VINE_RECREATE_SURFACE_MS).
      *
-     * ONLY a test hatch (VINE_RECREATE_SURFACE_MS, see init()): a window-system recreation - a screen
-     * change, a reparent, a dock drag-out - cannot be produced on demand from outside the process,
-     * and the host's answer to it (re-announce the new handle; the backend moves or rebuilds) is the
-     * thing worth gating.
-     */
+     * A window-system recreation cannot be produced on demand from outside the process, and the answer to it
+     * (re-announce the handle) is the thing worth gating. */
     void recreateSurface();
 
     struct Impl;

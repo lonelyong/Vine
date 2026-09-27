@@ -36,15 +36,13 @@ VN_APPFWGUI_NS_BEGIN
  * engine()->setBackend(), the first backend registered in RenderBackendRegistry
  * is used by default.
  *
- * THE HOST GIVES THE TIMING, THE CONTROL MAINTAINS THE SESSION. Nothing is
- * attached until the host calls init(), at the moment it chooses (right after
- * embedding the control, once the engine has the backend and the pipeline it is
- * meant to run); a call that lands before the native window is laid out reports
- * false instead of guessing, and calling again is the host's retry. What the
- * control keeps for itself is an ESTABLISHED session: when Qt destroys and
- * recreates the native platform window (a dock drag, a screen change, a
- * reparent), the new handle is picked up and re-announced to the backend without
- * the host having to notice.
+ * THE CONTROL ATTACHES ITSELF. The surface it embeds has a native handle as soon as it exists, so nothing waits for
+ * the host to pick a moment: the control tries at construction, and when that attempt has nothing to attach to yet
+ * (no native window, no size, or no backend registered - a host that sets its own backend does so after
+ * construction) the first resize/show retries. init() stays as the explicit entry point: idempotent while the
+ * session is bound, a retry otherwise. What the control keeps for itself is an ESTABLISHED session: when Qt
+ * destroys and recreates the native platform window (a dock drag, a screen change, a reparent), the new handle is
+ * picked up and re-announced to the backend without the host having to notice.
  *
  * The area this control occupies shows render output exactly when a frame is in the surface: the widget that holds the
  * surface stays HIDDEN until then, and a hidden widget is not painted at all. That is what makes the window hosting
@@ -53,11 +51,10 @@ VN_APPFWGUI_NS_BEGIN
  * is a hole the desktop shows through, whatever a widget would paint there). What is in its place until the first
  * frame is the window's own background, painted by the widgets around this control. Attaching does not need the
  * surface to be visible (a window system that disagrees fails the attach, and the control falls back to showing the
- * area first - see state()), and the first frame of a session is rendered while the area is still hidden: the host's
- * init() called from a plugin's load() lands before the host has laid its widgets out, and that frame is a WARM-UP -
- * it pays the one-time build (pass graphs, program slots, compiled pipelines) at whatever size the platform window
- * has at that moment, and the size change that follows is served in place. The whole path is observable through
- * state() / state_changed.
+ * area first - see state()), and the first frame of a session is rendered by the attach itself, before the host has
+ * laid its widgets out: it pays the one-time build (pass graphs, program slots, compiled pipelines) at whatever
+ * size the platform window has at that moment, and the size change that follows is served in place. The whole path
+ * is observable through state() / state_changed.
  */
 class VN_APPFW_API RenderControl : public Control {
     VN_OBJECT_META_DECL;
@@ -66,19 +63,16 @@ class VN_APPFW_API RenderControl : public Control {
     /**
      * @brief Lifecycle of the render surface, reported by state().
      *
-     * The order is the order the states are reached in a healthy session:
-     * Pending -> Attached -> Presenting. Failed replaces the tail when the
-     * backend cannot come up at all. A recreated platform window walks the
-     * sequence again from Pending: what changed is the surface, not the session.
+     * The order is the order the states are reached in a healthy session: Pending -> Presenting. Failed replaces
+     * the tail when the backend cannot come up at all. A recreated platform window walks the sequence again from
+     * Pending: what changed is the surface, not the session.
      */
     enum class SurfaceState
     {
-        /// No usable native surface - not laid out yet, or a platform window that is being replaced -
-        /// so nothing is attached to one. The first attach starts here, and a recreation returns here.
+        /// No usable native surface (not laid out yet, or a platform window that is being replaced), or nothing
+        /// rendered into one yet: the area stays hidden. The first attach starts here, and a recreation returns
+        /// here.
         Pending,
-        /// The backend is bound to a live surface, but nothing has reached the screen yet (the surface is off
-        /// screen until it has something to show - see the class comment).
-        Attached,
         /// A frame is in the surface and the surface is on screen from here on: the area shows render output.
         Presenting,
         /// The backend cannot come up at all (no render backend is registered); see failureReason().
@@ -116,19 +110,17 @@ class VN_APPFW_API RenderControl : public Control {
 
     /** @brief Attaches the backend to the native surface and initializes it.
      *
-     * The host's entry point: call it after putting the control into its window, at the moment it
-     * wants the surface up (the engine may still be getting its backend and pipeline). A render
-     * surface can only be attached once its native window exists and has been laid out; a call
-     * that lands earlier reports false rather than guessing a delay, and calling again is the
-     * host's retry - the call is idempotent and cheap when the session is already bound to the
-     * live surface. When no backend was attached via engine()->setBackend(), the first registered
-     * render backend (RenderBackendRegistry) is used by default.
+     * The control attaches itself when it is built: the QWindow it embeds has a native handle as soon as it exists,
+     * so the surface does not need the host to pick a moment for it. This is the explicit entry point - idempotent
+     * while the session is bound to the live surface, and the retry when an earlier call landed before the native
+     * window had been laid out (which reports false rather than guessing a delay). When no backend was attached via
+     * engine()->setBackend(), the first registered render backend (RenderBackendRegistry) is used by default.
      *
-     * A session that is already established maintains itself: when Qt later destroys and recreates
-     * the native platform window, the control re-announces the new handle to the backend on its
-     * own (the backend moves, keeping its device and pipelines, or rebuilds when it cannot serve
-     * the new window). Resize and surface-created handling is deferred until after Qt's layout
-     * pass so the native window is at its final size when the swapchain is rebuilt.
+     * A session that is already established maintains itself: when Qt later destroys and recreates the native
+     * platform window, the control re-announces the new handle to the backend on its own (the backend moves,
+     * keeping its device and pipelines, or rebuilds when it cannot serve the new window). Resize and
+     * surface-created handling is deferred until after Qt's layout pass, so the native window is at its final size
+     * when the swapchain is rebuilt - and the resize presents one frame at that final size.
      *
      * @return true once the engine initialized successfully, false when the surface was not ready
      *         yet, no render backend is registered, or the backend refused the attach (the
@@ -136,31 +128,15 @@ class VN_APPFW_API RenderControl : public Control {
      */
     bool init();
 
-    /** @brief Same attach as init(), with the backend's own initialization moved to the thread pool.
+    /** @brief Same attach as init(), in an awaitable shape.
      *
-     * The engine's initialize() - the device, the session and every pipeline - is the expensive half of an attach and
-     * needs the native handle, not the Qt thread. Here it runs through vn::async::run(), so the application thread goes
-     * back to its event loop for that stretch instead of holding it: a boot keeps reporting, repainting and taking input
-     * while the session comes up. Everything that does need this thread stays on it - taking the handle, publishing the
-     * state, sizing the view, the warm-up frame, the settle frames - so the caller has to be on the application thread
-     * with an event loop to come back to (a host that runs no loop calls init() instead, which does the whole thing on
-     * the calling thread).
+     * The attach itself is synchronous: the native window is the one thing the backend's initialize() needs, and it
+     * exists as soon as the surface does, so the device, the session and every pipeline are built where the surface
+     * is built. This spelling exists for a caller that is already a coroutine, and it completes without suspending.
      *
      * @return A task that completes with the same answer as init().
      */
     vn::async::Task<bool> initAsync();
-
-    /** @brief Reports whether the session is being attached right now (init() or initAsync(), warm-up included).
-     *
-     * The attach reads the scene graph: the pipelines are built from the passes that are registered, and the warm-up
-     * frame records the scene once. A host that builds its own content therefore has this one rule to keep - do not
-     * change the scene while this is true, i.e. install the content after the attach, not during it. Polling it is the
-     * simple form of that (`while (control->isAttaching()) { ... wait ... }`); a host that starts content work early
-     * and installs the result later entirely sidesteps it.
-     *
-     * @return true while an attach is in flight.
-     */
-    bool isAttaching() const noexcept;
 
     /** @brief Renders one frame through the engine. */
     void renderFrame();

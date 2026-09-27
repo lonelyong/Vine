@@ -222,3 +222,37 @@ co_await initAppShellRenderControl(wnd, dock_);  // 设备 + 管线在这一拍�
   present 又要求窗口已映射。本实现取的是它的可行内核：**隐藏时 attach（设备/swapchain），显示后才 present**。
 - **在 QWindow 背后画背景当占位**：未呈现的原生窗口露出什么取决于平台/合成器，画在后面不保证可见；
   控件选择"保持隐藏，让容器自己的背景露出来"。
+
+## 2026-09-28：模型改成"控件自己 attach"（同步），状态减到三个
+
+上面若干条是 2026-09-19/20 那套"**宿主挑时机**"模型的记录（`initializeBackend()`、
+“`Attached` 只到绑上、等首帧才上屏”、`isAttaching()` 握手旗、settle 帧…）。
+本节是现在的契约，与它们冲突时以本节为准（旧条目按日期保留，作为历史）。
+
+- **attach 是同步的、由控件自己发起**：QWindow 一 `new` 出来句柄就有，所以 `SurfaceWindow` 在
+  **构造函数里**就试一次（`init()`），事件循环、宿主、定时器都不参与。句柄为空/尺寸退化/后端还没注册
+  时它退回，等触发再试。
+- **状态只剩三个**：`Pending`（没有可用表面，或还没往里渲过任何东西 ⇒ 区域隐藏）/ `Presenting`
+  （帧在表面里 ⇒ 区域显示）/ `Failed`（后端根本起不来）。**`Attached` 删了**：它在同步模型里
+  永远不驻留（`init()` 里 `setState(Attached)` 之后同一个调用栈就 `renderFrame()` ⇒ `Presenting`），
+  也没有任何读者区分它和 `Pending`。它原来承担的"设备与管线建了多久"改由 `init()` 自己打一行日志：
+  `[RenderControl] session up after N ms (device, session and pipelines)`（"construction -> 首帧"仍在
+  `setState` 那行里）。
+- **一帧就是一帧，没有"预热帧"这种特殊帧**：`renderFrame()` 不再问"控件在不在屏上"，它只剩两个判断
+  ——没有原生窗口、会话绑的不是现在这个窗口（后者重绑）。构造时那一帧是在占位尺寸（实测 160x160）下渲的，
+  它照样把状态推到 `Presenting`；可见性最终由 Qt 的父子链决定（顶层窗口没显示时表面仍然不可见）。
+- **`isAttaching()` 删了**：同步 attach 没有"正在 attach"这个可观察窗口。`AttachScope`、`Impl::attaching`、
+  `RenderControl::isAttaching()`、`DemoScene::sessionAttaching()` 与 demo 装配协程里的两个等待循环一并删。
+  install 的场景图读与写在同一条线程上，天然串行。
+- **settle 帧删了**：`settle_frames` / `requestSettleFrames()` / `handleUpdateTick()` / `event()` 里的
+  `UpdateRequest` 分支。resize 路径现在只出**一帧**（在那个最终尺寸上）。
+- **构造时还没有后端不算失败**：宿主按 SDK 写的次序（构造 ⇒ `engine()->setBackend()` ⇒ `init()`）时，
+  构造那一次只"不动"（保持 `Pending`，不 `failAttach`）；显式的 `init()` 配上没后端才判 `Failed`。
+- **重试触发加了一条：宿主 widget 自己的 show**（`RenderControl` 把事件过滤器同时装在容器和
+  `impl<QWidget>()` 上）。原因：容器在"有帧"之前是**隐藏**的，而 Qt 不给隐藏的子控件发 show —— 
+  只装在容器上时，"构造时没后端、之后才 setBackend()、窗口显示后不 resize"的控件会永远停在 `Pending`
+  （2026-09-28 由 `RenderControlTest.AttachesItselfOnceTheBackendAndWindowAreThere` 抓到）。
+- **测试**：`test_gui` 233 全绿（`RenderControlTest` 9/9）。三个用例按新模型重写：
+  `AttachesItselfOnceTheBackendAndWindowAreThere`（后端后装 + 窗口显示 ⇒ 自己 attach）、
+  `ReportsTheLifecycleThroughStateChanges`（序列 `Pending -> Presenting`）、
+  `TheFrameTheAttachRendersPutsTheSurfaceOnScreen`（一帧即 `Presenting`，上屏仍等窗口显示）。

@@ -1535,13 +1535,6 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     });
 }
 
-// 定义必须在文件内部的匿名 namespace **之外**：它声明在 DemoScene.hpp 里、由 DemoPlugin.cpp 调用，
-// 而匿名 namespace 里的符号是内部链接——同一个 .so 的两个 TU 也凑不到一起（运行期报 undefined symbol）。
-bool DemoScene::sessionAttaching() const noexcept
-{
-    return control_ != nullptr && control_->isAttaching();
-}
-
 void assembleDemoContentLater(std::shared_ptr<DemoScene> demo)
 {
     // 协程体写成 lambda 并**立即调用**：`DetachedTask` 是急的，所以这一句就是把下面这段开起来，
@@ -1551,12 +1544,9 @@ void assembleDemoContentLater(std::shared_ptr<DemoScene> demo)
         //    启动框照重绘、进度照上报、取消点得动。
         auto images = co_await loadDemoCubeImagesAsync();
 
-        // 2. 等会话 attach 结束再装：attach 会读场景图（管线由已注册的 pass 建，还有一帧 warm-up 要 record 它），
-        //    所以装内容赶在它前面就是跟它抢——这不是时序默契，是构造上的顺序（attach 跑在池上，应用线程空着，
-        //    正好就是装配想动手的时候）。等的时候只挂起，池上那条 worker 与主循环都不被占。
-        while (demo->sessionAttaching()) {
-            co_await vn::async::sleepFor(std::chrono::milliseconds(2));
-        }
+        // 2. 装内容不跟 attach 抢：attach 是同步的（控件构造时就跑完了，见 RenderControl::init()），而安装这一段
+        //    与任何后来的 attach（平台窗口被 Qt 重建时的重绑）都在应用线程上 —— 一条线程同一时刻只跑一段，
+        //    所以两者不可能交错，不需要“等 attach 结束”这类握手。
 
         // 3. 让**应用线程唤醒这次 await**（MainThreadDispatcher::resumeOnMainThread()）：它只投递一次 resume，
         //    由应用线程执行 —— 于是 `co_await` 之后的代码天然就跑在应用线程上，CubeMap 与场景节点建在那里。
@@ -1570,13 +1560,7 @@ void assembleDemoContentLater(std::shared_ptr<DemoScene> demo)
         }
         co_await vn::appfw::MainThreadDispatcher::resumeOnMainThread();
 
-        // 4. 在**应用线程上**再确认一次再装：attach 也是在应用线程上开的（插件的 load() 里），所以"检查 + 装"
-        //    之间没有挂起点 ⇒ 两者相对 attach 的开启是原子的。只靠上面那次检查不够——它跑在池上，
-        //    attach 完全可能在那次检查之后、这一句之前开起来。
-        while (demo->sessionAttaching()) {
-            co_await vn::async::sleepFor(std::chrono::milliseconds(2));
-        }
-
+        // 4. 到应用线程了：CubeMap 与场景节点在这里建（这一段与任何 attach 同线程，天然串行）。
         demo->installContent(images);
     }(std::move(demo));
 }
@@ -1728,6 +1712,13 @@ void DemoScene::installContent(const DemoCubeImages& images)
                       makeDemoCubeMap(kSkyCubeSide, kSkyCubeFaces, images.sky,
                                       "sky box 'sky_box' samples it by direction (3-component texcoords)"));
     }
+
+    // The surface renders ON DEMAND, so putting content into the scene produces no frame by itself: without this
+    // the picture stays at whatever the last frame drew - the skeleton - until something else asks for one (the user
+    // moving the mouse, a resize). That is exactly what a LATE install hits: these maps arrive ~1 s after the
+    // document is on screen, long after the layout/show frame that drew the skeleton (2026-09-28: reported as "the
+    // box shows, the sky does not"). Same thread as the install, so nothing else has to be arranged.
+    control_->renderFrame();
 }
 
 }  // namespace vn::demo

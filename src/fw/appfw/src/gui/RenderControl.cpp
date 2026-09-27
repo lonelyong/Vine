@@ -48,10 +48,13 @@ RenderControl::RenderControl()
     // container), so nothing has to be called on the surface itself.
     container->setVisible(false);
 
-    // The container reports its resizes and shows to the surface: a resize of the host is what covers a
-    // maximize, on which the embedded window misses its own resize, and the show is the event that says the
-    // control has reached the screen (which is what allows rendering at all - see SurfaceWindow::renderFrame).
-    container->installEventFilter(data->surface);
+    // The host widget is the one that reports resizes and shows to the surface, and the only one that has to: the
+    // container is laid out to fill it exactly (margins 0), so their sizes never differ, and the native window's own
+    // resize arrives on the window itself (SurfaceWindow::resizeEvent). Watching the host is also what makes a
+    // control that has not attached yet work at all: its container is HIDDEN until a frame is in the surface (see
+    // below), Qt sends no show event to a hidden child, and the host's own show is the "we have reached the screen"
+    // an unattached control waits for.
+    impl<QWidget>()->installEventFilter(data->surface);
 
     // Everything below is forwarding. The state signal is the one part of it that has to be relayed
     // rather than merely passed on: transitions are decided on the surface, and the control re-publishes
@@ -103,11 +106,6 @@ vn::async::Task<bool> RenderControl::initAsync()
     return dptr()->surface->initAsync();
 }
 
-bool RenderControl::isAttaching() const noexcept
-{
-    return dptr()->surface->isAttaching();
-}
-
 void RenderControl::renderFrame()
 {
     dptr()->surface->renderFrame();
@@ -124,7 +122,7 @@ double RenderControl::devicePixelRatio() const
 }
 
 RenderControl::SurfaceState RenderControl::state() const
-{
+{ 
     return dptr()->surface->state();
 }
 

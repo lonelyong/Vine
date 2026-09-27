@@ -305,7 +305,7 @@ free；`gdb` 里表现为同一个 `UIElement::~UIElement` 连续出现两帧（
 - 它落到 `DockingPaneClient::setWidget()`：**删掉旧 layout + `layout()->addWidget(w)` ⇒ 重父化**。中央区是一个
   **单槽**（没有 id/标题/标签/关闭），**可以重复调，但每次都会重父化**；旧控件留在 pane 里无人管理（layout 被删、
   widget 没被 delete）。
-- Qt 重父化会**销毁并重建原生窗口** ⇒ `RenderControl` 走一遍 `Pending -> Attached`（它文档里那条 "a dock drag, a
+- Qt 重父化会**销毁并重建原生窗口** ⇒ `RenderControl` 走一遍 `Pending -> Presenting`（它文档里那条 "a dock drag, a
   screen change, a **reparent**" 路径）。所以**不要每个文档各占一次中央控件**。
 - `DockAreas` 只有 Left/Right/Bottom（**没有 Center**）⇒ 文档视图**不要**放进可拖拽的 dock pane（拖一下就重父化，
   3D 会话被重建一次）；`DockPanel::onClosing()` 那条否决只对**面板**有效，**不覆盖中央区** —— 文档的关闭询问由宿主接。

@@ -147,34 +147,27 @@ class HostedControl
 
 } // namespace
 
-// 控件不自驱：窗口显示、布局落下之后，没人调 init() 就一直是 Pending（后端一次都没被碰过）。
-TEST(RenderControlTest, NothingAttachesBeforeTheHostAsks)
+// 控件自驱：宿主把后端装上、把窗口显示出来就够了 —— 不需要自己挑时机调 init()（它仍然是显式入口，幂等）。
+TEST(RenderControlTest, AttachesItselfOnceTheBackendAndWindowAreThere)
 {
-    HostedControl host;
+    HostedControl host; // 控件先建、后端后装：这正是 SDK 里写的次序（engine()->setBackend() 在 init() 之前）
     host.show();
 
-    EXPECT_FALSE(pumpUntil([&] { return host.control()->state() != RenderControl::SurfaceState::Pending; }, 300));
-    EXPECT_EQ(host.stub()->initialize_calls, 0);
-    ASSERT_NE(host.surface(), nullptr);
-    EXPECT_FALSE(host.surface()->isVisible()); // 还没绑上，表面就不该占屏幕
-
-    // 宿主给出时机：一次 init() 就 attach。控件已经在屏幕上，所以这一帧也在 init() 里落进表面。
-    EXPECT_TRUE(pumpUntil([&] { return host.control()->init(); }, 3000));
+    // 窗口一显示（容器的 show ⇒ 控件自己的重试）会话就起来了，那一帧也落了进去。
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
     EXPECT_GT(host.stub()->initialize_calls, 0);
     EXPECT_NE(host.stub()->last_handle, nullptr);
     EXPECT_GT(host.stub()->width, 0);
     EXPECT_GT(host.stub()->height, 0);
-    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting);
 
-    // 表面跟着首帧上屏：显示的窗口期里它一直是“有东西可看”的，不再是“一个还没画过东西的原生窗口”。
     ASSERT_NE(host.surface(), nullptr);
-    EXPECT_TRUE(host.surface()->isVisible());
+    EXPECT_TRUE(host.surface()->isVisible()); // 有帧可看 ⇒ 表面就位
 }
 
 // 状态序列是 Pending -> Attached -> Presenting，且每个转换只报一次。
-// 异步 attach（initAsync()）：设备/会话/管线与 warm-up 那一帧都在池上，应用线程在它跑着的时候可以回循环——
-// 而“正在 attach”这个状态是**开启时就置位**的，宿主的内容装配靠它排到 attach 之后（见 RenderControl::isAttaching()）。
-TEST(RenderControlTest, InitAsyncAttachesOffTheApplicationThreadAndPublishesWhenAttaching)
+// 同步 attach：设备/会话/管线与那一帧都在建控件的那一段里跑完（句柄在 QWindow 一 new 出来就有），所以
+// initAsync() 不挂起 —— 它返回时 attach 已经结束，宿主的内容装配天然排在它之后，不需要任何等待。
+TEST(RenderControlTest, InitAsyncCompletesWithoutSuspending)
 {
     HostedControl host;
     host.show();
@@ -182,19 +175,15 @@ TEST(RenderControlTest, InitAsyncAttachesOffTheApplicationThreadAndPublishesWhen
     bool done     = false;
     bool attached = false;
 
-    // DetachedTask 是急启动的（
-    // `initial_suspend = suspend_never`），所以这句返回时协程已经跑过“置位并准备第一次挂起”那一小段。
+    // DetachedTask 是急启动的（`initial_suspend = suspend_never`）：这一句返回时整个 attach 已经跑完了。
     auto task = [](RenderControl* control, bool* done, bool* attached) -> vn::async::DetachedTask {
         *attached = co_await control->initAsync();
         *done     = true;
     }(host.control(), &done, &attached);
     static_cast<void>(task);
 
-    EXPECT_TRUE(host.control()->isAttaching()) << "attach 一开始就该说“正在 attach”：内容装配要能在它跑完前就等它";
-
-    EXPECT_TRUE(pumpUntil([&] { return done; }, 3000)) << "initAsync() 必须在循环跑着的时候自己跑完";
+    EXPECT_TRUE(done) << "initAsync() 不该挂起：attach 就在调用它的那一段里做";
     EXPECT_TRUE(attached);
-    EXPECT_FALSE(host.control()->isAttaching()) << "attach 结束后必须归位，否则装配会一直等下去";
     EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting);
     EXPECT_GT(host.stub()->initialize_calls, 0);
 }
@@ -211,10 +200,10 @@ TEST(RenderControlTest, ReportsTheLifecycleThroughStateChanges){
     ASSERT_TRUE(pumpUntil([&] { return host.control()->init(); }, 3000));
     ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
 
-    ASSERT_GE(seen.size(), 2u);
-    EXPECT_EQ(seen[0], RenderControl::SurfaceState::Attached);
-    EXPECT_EQ(seen[1], RenderControl::SurfaceState::Presenting);
-    EXPECT_TRUE(seen.size() <= 3u); // 没有重复转换
+    ASSERT_GE(seen.size(), 1u);
+    // 一帧落进表面就上屏：中间没有“绑上了但还没画面”那一格。
+    EXPECT_EQ(seen[0], RenderControl::SurfaceState::Presenting);
+    EXPECT_TRUE(seen.size() <= 2u); // 没有重复转换
 }
 
 // 后端拒绝 ⇒ init() 报 false、状态停在 Pending，由宿主决定什么时候再试（控件不排重试）。
@@ -262,22 +251,21 @@ TEST(RenderControlTest, ReportsFailedWhenNoRenderBackendIsRegistered)
     EXPECT_FALSE(host.control()->failureReason().empty());
 }
 
-// 控件还没上屏就能先把后端热起来（attach 只需要句柄+尺寸），但表面一直不在屏幕上：
-// 本机推不动帧（推了也没人看得见），而没有帧的表面就是一块洞，不能露。
-TEST(RenderControlTest, WarmsUpWhileInvisibleAndPutsTheSurfaceOnScreenWithItsFirstFrame)
+// 一帧就是一帧：attach 就在调用它的那一段里出一帧，所以窗口还没 show 时 init() 也让表面就位 —— 判据是
+// “有帧可看”，不是“窗口可见”。
+TEST(RenderControlTest, TheFrameTheAttachRendersPutsTheSurfaceOnScreen)
 {
     HostedControl host; // 布局好了，但窗口还没 show()
 
     ASSERT_TRUE(pumpUntil([&] { return host.control()->init(); }, 3000));
 
-    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Attached); // 看不到 ⇒ 不到 Presenting
+    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting);
     EXPECT_GT(host.stub()->initialize_calls, 0);
-    EXPECT_FALSE(host.surface()->isVisible()); // 没有帧就不上屏
+    EXPECT_FALSE(host.surface()->isVisible()); // 顶层窗口还没显示，表面上不了屏
 
-    // 上屏本身就是那个事件：窗口一显示，控件自己的 show 事件把首帧做出来，表面随之出现。
+    // 上屏是窗口的事：窗口一显示，表面就在了（控件早就把区域标成可显示了）。
     host.show();
-    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
-    EXPECT_TRUE(host.surface()->isVisible());
+    ASSERT_TRUE(pumpUntil([&] { return host.surface()->isVisible(); }, 3000));
 }
 
 // 宿主把控件丢进窗口后可以立刻 init()：此刻表面的尺寸还是退化值，真实尺寸等布局下落，
@@ -335,9 +323,8 @@ TEST(RenderControlTest, FollowsARecreatedSurfaceWithoutTheHost)
     EXPECT_GT(host.stub()->handle_calls, handle_calls_before);
     EXPECT_TRUE(surface->isVisible()); // 新窗口里重新落一帧之后才再上屏
 
-    // 重建期间状态回到 Pending（窗口没了就不该声称"在出画面"），然后重新走一遍 Attached -> Presenting。
-    ASSERT_EQ(seen.size(), 3u);
+    // 重建期间状态回到 Pending（窗口没了就不该声称"在出画面"），然后落一帧重新上屏。
+    ASSERT_EQ(seen.size(), 2u);
     EXPECT_EQ(seen[0], RenderControl::SurfaceState::Pending);
-    EXPECT_EQ(seen[1], RenderControl::SurfaceState::Attached);
-    EXPECT_EQ(seen[2], RenderControl::SurfaceState::Presenting);
+    EXPECT_EQ(seen[1], RenderControl::SurfaceState::Presenting);
 }
