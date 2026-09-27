@@ -33,7 +33,7 @@
 - `AsyncMutex::try_lock` / `AsyncSemaphore::try_acquire` 用 snake_case（对齐 std），是仓库 camelCase 规则的**刻意例外**。
 - **阻塞取结果只有两道门**（2026-09-26）：`Task::result()` = 纯阻塞（C# 的 `task.Result`，连死锁坑一样：
   body 下一步若需要调用线程继续转，就自己把自己锁死）/ `runToCompletion(task, pump)` = 同一条驱动 + 每 200 µs
-  一次 `pump()`（泵由调用者传，async **不装全局泵**）。`SyncWait.hpp` 与 `syncWait()` 已删。
+  一次 `pump()`（泵由调用者传，async **不装全局泵**）。`SyncWait.hpp` 与 `syncWait()` 已删。<!-- drift-ok -->
 
 ## 重复实现（已处理）
 

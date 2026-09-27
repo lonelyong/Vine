@@ -8,6 +8,6 @@
 
 | 旧主题 | 新家 |
 | --- | --- |
-| 什么进管线身份（管线键） | `include/vine/vsg/core/Keys.hpp`（决定与理由写在头文件里）+ 设计文档 §5.2 |
+| 什么进管线身份（管线键） | `vine/graphics/backend/Keys.hpp`（决定与理由写在头文件里）+ 设计文档 §5.2 |
 | 变体缓存（编译 / 复用 / 淘汰） | `VariantPool`（容量 65、FIFO；计数 `created()/reused()/evictions()`）+ `ContentPipeline` —— `docs/data-flow.md` §3 |
 | "哪些算兼容必须由键回答完整，视图救不了键" | 设计文档 §5.2（坑） |

@@ -195,6 +195,6 @@ mip 数不在 `[1, mipCapacity]` —— 全部 `std::invalid_argument`。
 
 - `test_graphics`：**191 → 200**（+9 = 8 个 `TextureTest` + 1 个 `MaterialTest`）；
 - 全量 `ninja`：**零 error / 零 warning**；
-- `scripts/vsg_selftest_evidence.sh` → `RESULT: PASS`（45 行与基线**逐字节相同**）；
-- `scripts/gfx_lavapipe_check.sh` → `RESULT: PASS`（0 VUID）；
+- `scripts/vsg_selftest_evidence.sh` → `RESULT: PASS`（45 行与基线**逐字节相同**）； <!-- drift-ok -->
+- `scripts/gfx_lavapipe_check.sh` → `RESULT: PASS`（0 VUID）； <!-- drift-ok -->
 - `scripts/check_diagnostic_formats.py` → 0 suspicious / 22 files。

@@ -1,4 +1,4 @@
-# Bug: 拖 console 停靠成 tab 崩溃 / console 消失（clientWidget 野指针）
+# Bug: 拖 console 停靠成 tab 崩溃 / console 消失（clientWidget 野指针）（历史登记）
 
 - **日期**: 2026-09-02
 - **模块**: third_party/DockingPanes（DockingPaneContainer）

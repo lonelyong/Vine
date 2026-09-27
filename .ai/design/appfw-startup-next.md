@@ -71,7 +71,7 @@ run():  exec()                           先把循环跑起来（此前屏幕上
   于是 `Application::run()` 里 `d->app->exec()` 走的一直是空指针（没炸只因为 `QCoreApplication::exec()` 是静态成员）。
   两份合成一份（base 的 `QCoreApplication* app`）后，GUI 路径也真的存上了。
 - `AppConfig`/`SplashConfig` 搬到 `sdk/vine/appfw/AppConfig.hpp`（`AppBuilder.hpp` 转 include，旧包含路径仍可用）；
-  `AppBuilderSupport.hpp` 与 `applyAppConfig()` 删除，逻辑进 `Application::initialize()`。
+  `AppBuilderSupport.hpp` 与 `applyAppConfig()` 删除，逻辑进 `Application::initialize()`。 <!-- drift-ok -->
 - 钉子（会红）：`test_gui` 的 `GuiApplicationConstructionTest.TheBuilderReturnsAFinishedApplication`
   与 `BootSplashTest.AnEmptyTitleShowsTheApplicationName`、`test_vsg` 的
   `VsgBackendPluginTest.TheConstructorBuildsTheApplicationFromItsConfig`（`persist_config=false` ⇒ `configFile()` 为空）。

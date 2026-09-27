@@ -12,7 +12,7 @@
 > **真实深度遮挡**收进 `RenderPipelineBuilder` 单一 recipe（forward 内容作为 `setTransparentContent` 输入，
 > Deferred 自动升级 composite，Forward 追加深度-on 后段）。
 > 上游：`graphics-mrt-gbuffer.md`（MRT/GBuffer + deferred 主窗）、`graphics-render-pipeline.md`
-> （多 pass/命名产出槽/Scene pass 表含 depth prepass）、`render-pipeline-builder.md`（preset recipe）。
+> （多 pass/命名产出槽/Scene pass 表含 depth prepass）、`graphics-pipeline-builder.md`（preset recipe）。
 > 关联：`vsg-target-unification.md`（统一 Target / (camera, order) 内容槽）、`docs/data-flow.md` §13。
 - 里程碑：**S1 F2**（显式 occlusion，替代 ContentStyle）→ **S2 F1**（program/PiP slot 显式 order）→
   **S3** builder+`Pipeline` composite 升级 → **S4** app_shell 接线瘦身 → **S5** 共享 gbuffer depth
@@ -88,7 +88,7 @@ order 100 present（全幅采样 Composite）→ 窗口（携带 view camera）
   后者来自 clear 的 main_pending）。
 
 ## 5. 后端改动落点
-- `src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp`：
+- `src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp`：
   - render()：内容槽深度从显式 `setDepthMode` 取（`depth_mode`），clear 只标 `presenting`；
     窗口/离屏各备三套 shader set（depth-on / depth test-only / depth-off）。
   - setupContentSlot / drawScreenProgram / drawScreenTexture：统一按 order 插入（F1）；

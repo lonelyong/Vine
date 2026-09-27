@@ -2,7 +2,7 @@
 
 位置: `src/robotics/core/sdk/vine/robotics/proximity/`（10 个纯头文件接口，ns `vn::robotics::proximity`）。
 宏 `VN_ROBOTICS_PROXIMITY_NS_BEGIN/END` 在 `robot_core_global.hpp`。测试: `tests/test_proximity/`（9 用例）。
-设计文档: `docs/robotics-proximity-design.md`。
+设计文档: `.ai/design/robotics-proximity-design.md`。
 
 ## 约束与设计
 - 可依赖 `kinematics`（Frame/State/QState）；**禁止依赖 workcell**。owner 类型 `const vn::INamed*`

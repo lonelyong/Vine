@@ -19,7 +19,11 @@
 #   4. synchronization validation   — again with VK_LAYER_ENABLES=...SYNCHRONIZATION_VALIDATION_EXT:
 #                                     zero `SYNC-HAZARD` lines (skip with --quick).
 #   5. hygiene                      — scripts/check_include_hygiene.py, check_diagnostic_formats.py,
-#                                     check_doc_symbols.py.
+#                                     check_doc_symbols.py, check_export_annotations.py,
+#                                     check_ai_docs.py (the .ai/ index knows the tree),
+#                                     check_vsg_window_surface_state.py + check_vsg_upstream_capabilities.py
+#                                     (the upstream facts the rewrite depends on - they were written for
+#                                     the notes and never run by anything until 2026-09-27).
 #   6. the phase lines              — the `[selftest]` evidence lines the phase table prints, with the
 #                                     contract that a run only ends in `[selftest] done` when every
 #                                     phase passed (see core::PhaseTable).
@@ -297,11 +301,13 @@ else
 fi
 
 # ---- 5. hygiene --------------------------------------------------------------
-run_hygiene() { # name, script
+run_hygiene() { # name, script, [args...]
     local name="$1"
-    local script="$2"
+    shift
+    local script="$1"
+    shift
     local out
-    out="$(python3 "$ROOT/$script" 2>&1)"
+    out="$(python3 "$ROOT/$script" "$@" 2>&1)"
     local status=$?
     local finding
     finding="$(printf '%s\n' "$out" | tail -1)"
@@ -313,6 +319,10 @@ run_hygiene() { # name, script
 run_hygiene "include hygiene" "scripts/check_include_hygiene.py"
 run_hygiene "diagnostic formats" "scripts/check_diagnostic_formats.py"
 run_hygiene "doc symbols" "scripts/check_doc_symbols.py"
+run_hygiene "ai knowledge" "scripts/check_ai_docs.py" --strict
+run_hygiene "vsg window surface" "scripts/check_vsg_window_surface_state.py"
+run_hygiene "vsg upstream facts" "scripts/check_vsg_upstream_capabilities.py"
+run_hygiene "export annotations" "scripts/check_export_annotations.py"
 
 # ---- 6. the phase lines ------------------------------------------------------
 PHASES="$(grep '^\[selftest\]' "$LOG_DIR/suite.log" || true)"

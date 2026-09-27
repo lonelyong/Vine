@@ -784,6 +784,10 @@ pre passes (order < 0)  →  main pass (order 0)  →  post passes (order > 0)  
 
 ### 6.1 分层定位（重要）
 
+> 模块内部还有一层分界：**宿主半**（`vine/graphics/*.hpp`）与**后端半**（`vine/graphics/backend/*.hpp`，
+> 编在同一个 `vn::Graphics` 里）。依赖规则（谁可以 include 哪一半）、三条机器规则，以及“哪一类后端能复用到
+> 哪一半”见 **`.ai/design/graphics-layering.md`**。
+
 `graphics` 是**基础与抽象层**，不绑定任何具体图形 API。渲染后端通过
 `RenderBackend` 接口注入，**vsg 只是其中一种实现**，后续还会有纯手撸
 （如手写 Vulkan/OpenGL）实现。所有后端一律实现同一个 `RenderBackend`
@@ -944,7 +948,6 @@ backend->swapBuffers();
 
 ### 头文件（sdk/vine/graphics/）
 - `graphics_global.hpp` — API 导出和命名空间宏
-- `Drawable.hpp` — 可绘制对象基类
 - `Geometry.hpp` — 几何体类（包装 Shape）
 - `Material.hpp` — 材质定义（纯属性）
 - `MaterialManager.hpp` — 材质管理器抽象基类
@@ -963,7 +966,6 @@ backend->swapBuffers();
 ### 实现文件（src/）
 - `Camera.cpp`
 - `CameraManipulator.cpp`
-- `Drawable.cpp`
 - `Geometry.cpp`
 - `Material.cpp`
 - `MaterialManager.cpp`
@@ -1007,9 +1009,8 @@ backend->swapBuffers();
 - `RenderCommand` 语义升级：携带“已解析”的有效透明度（不再是后端各自再算）。
 - vsg 后端把有效透明度写进逐顶点 alpha（blending 常开），任意一级透明度变化实时
   生效、零重建；具体见 `.ai/design/vsg-design.md` §9。
-8. **拾取增强**：选择框选（框选）、可拾取对象接口（`Pickable.hpp` 设计稿曾有，未实现）
+8. **拾取增强**：选择框选（框选）、可拾取对象接口（`Pickable.hpp` 设计稿曾有，未实现） <!-- drift-ok -->
 9. **视口系统**：独立 `Viewport` 类（设计稿曾有，当前宽高比直接传给 Camera）；
    跨平台窗口与输入事件由 `base/window` 模块（`vn::Window`）提供，`graphics`
    通过 Signal 订阅其事件驱动相机操纵
 10. **纹理加载**：从文件加载纹理资源（当前 `Material` 仅存路径）
-

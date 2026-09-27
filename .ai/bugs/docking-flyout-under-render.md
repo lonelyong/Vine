@@ -1,4 +1,4 @@
-# Bug: auto-hide 临时 flyout 被中央渲染区遮挡
+# Bug: auto-hide 临时 flyout 被中央渲染区遮挡（历史登记）
 
 - **日期**: 2026-09-02
 - **模块**: third_party/DockingPanes（DockingPaneFlyoutWidget）

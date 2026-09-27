@@ -1,7 +1,7 @@
 # RenderPipeline 设计（管子线的形状、效果与生命周期）
 
 > 状态：**设计稿 v1（2026-09-13）**；S1（本设计的“形状与生命周期”部分）落地中，见 §7。
-> 前置：`render-pipeline-builder.md`（Builder 作为薄配方层的定位仍然有效；其 Design C 的
+> 前置：`graphics-pipeline-builder.md`（Builder 作为薄配方层的定位仍然有效；其 Design C 的
 > `PipelinePreset` 枚举由本文 §2 取代）、`graphics-render-pipeline.md`（pass 调度、命名产出槽、
 > `ImageRef` §14）、`graphics-shadow.md`（阴影的语义模型）、`graphics-shader.md` §11（L1/L2/L3
 > 后端无关 ABI）。
@@ -158,7 +158,7 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 3. **阶段取代魔数**：顺序是**意图**（"阴影在所有消费者之前"），不是数字。
 4. **`Pipeline` 持有注册**（RAII）+ 强引用 engine：谁注册谁注销。
 5. **效果不静默降级**：建不出来就报，并说清画面与请求的差距（延续 `UnsupportedRequest` 的口径）。
-6. 本文取代 `render-pipeline-builder.md` 的 Design C 中 `PipelinePreset` 那部分；Builder 作为
+6. 本文取代 `graphics-pipeline-builder.md` 的 Design C 中 `PipelinePreset` 那部分；Builder 作为
    "薄配方层"的定位不变。
 
 ## 8. 落地记录

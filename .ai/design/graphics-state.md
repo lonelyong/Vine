@@ -26,7 +26,7 @@
 >   `collectRenderState/resolveRenderState/effectiveRenderState` 折叠函数（`StateNode.hpp/.cpp`），
 >   GraphicsTest StateNodeTest 8 用例全绿；`RenderCommand.renderState` +
 >   `Scene::collectRenderCommands` 每叶折叠填入（Scene 集成用例全绿）。
-> - **后端消费（本次）**：`src/plugins/gfx_backend_vsg/include/vine/vsg/RenderStateMapper.hpp`
+> - **后端消费（本次）**：`src/plugins/gfx_backend_vsg/include/vine/vsg/support/RenderStateMapper.hpp`
 >   （纯、device-free）：`makeRenderStateObjects(resolved) -> {DepthStencil, Rasterization,
 >   ColorBlend, InputAssembly}` + `applyRenderStateObjects(config, …)` 替换 pipelineStates 对应项；
 >   `SceneBridge::buildGeometry` 按 cmd.renderState 装配管线（替代原 enableBlending 特判）；

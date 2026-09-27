@@ -65,7 +65,7 @@
 ## 第八轮：API / 架构 / 线程安全三轴复核（2026-09-17）
 
 复核方式：读 `CommandManager`/`Command`/`UserIO` 三份头 + 实现 + 本设计文档 + UserIO 文档，写探针实测
-（`/tmp/async_probe2/probe_command_flags.cpp`、`probe_signal_threads.cpp`、`bench_signal.cpp`），基线
+（`/tmp/async_probe2/probe_command_flags.cpp`、`probe_signal_threads.cpp`、`bench_signal.cpp`），基线 <!-- drift-ok -->
 `test_gui` 158/158。结论：**manager 自身的同步面是干净的**（`mutex`/`registry_mutex`/`Chain::mutex`/
 `cancel_generation` + "锁内不跑用户代码" + `admit()` 在临界区外采样 progress 宿主），三处需要动作的地方如下。
 
@@ -95,7 +95,7 @@
 | 单线程重入（handler 内 add/remove/再 `trigger`） | 干净，`outer=2 added=1` | **完全相同** |
 | 一边 `trigger` 一边 `add/remove` | **12 条 data race** | **0 条**（把 `alive` 变异成 `bool` 会回到 1 条） |
 
-代价与收益（`bench_signal.cpp`，2e6 次发火，-O2，`taskset` 绑核交替测量）：
+代价与收益（`bench_signal.cpp`，2e6 次发火，-O2，`taskset` 绑核交替测量）： <!-- drift-ok -->
 
 | handler 数 | trigger 改前（裸表，有竞争） | trigger 改后 | 订阅+注销 改前 → 改后 |
 | --- | --- | --- | --- |
@@ -130,7 +130,7 @@
 TSan 在 `probe_signal_threads` mode1 报 **1 条 data race**（`trigger` 读 / `disconnect` 写），改回 atomic 后 **0 条**；
 而 -O2 基准两者相同（20 handler：60.6 vs 60.0 ns/次）——1 字节 lock-free，acquire load 在 x86 上就是普通 `mov`，
 去掉它换不来性能，只换来 UB。"加锁"两条路都不可行：锁包住整次遍历 ⇒ handler 自注销时自死锁
-（`probe_lock_during_trigger.cpp`，3 秒超时 = 124），锁只包住每次标志检查 ⇒ 每次发火 N 次 `lock/unlock`，
+（`probe_lock_during_trigger.cpp`，3 秒超时 = 124），锁只包住每次标志检查 ⇒ 每次发火 N 次 `lock/unlock`， <!-- drift-ok -->
 且与 `add/remove` 抢同一把锁（发火线程之间也随之串行化）。
 
 #### 表的形状（`vector`）与发布方式（Qt 式原子发布）

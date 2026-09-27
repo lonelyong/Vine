@@ -126,11 +126,11 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
   不再需要一条单独的配方；sceneOnly 的等价物是引擎默认主 pass（本文件 §4 已写明“保持、不替代”）。
 
 
-> **2026-09-13：`PipelinePreset` 枚举已被 `.ai/design/render-pipeline.md` 取代。**
+> **2026-09-13：`PipelinePreset` 枚举已被 `.ai/design/graphics-pipeline.md` 取代。**
 > 那条轴（forward / deferred）现在是 `PipelineOptions::path`（`ShadingPath`），而
 > `*Shadowed` 变体**不再存在**——阴影由灯提出请求（`Light::castShadow`），
 > 顺序由 `PipelineStage` 表达。下面这一节（Design C）保留为历史记录：它描述的是
-> "主窗管线预设"那一代，读"今天怎么做"请看 `render-pipeline.md`。
+> "主窗管线预设"那一代，读"今天怎么做"请看 `graphics-pipeline.md`。
 
 ## Design C 更新（2026-09-08）：主窗管线预设 + SceneView 默认统一
 - ⚠ Design B/C 后：引擎无 masterCamera/setScene、无内置默认管线；主窗“默认 viewer”由 SceneView 引导（ensureWindowPass，hasWindowPass(camera) 抑制重复）。本设计此前“sceneOnly=engine.setScene/setMasterCamera + RenderControl 默认 pass”已过时。

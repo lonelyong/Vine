@@ -11,7 +11,7 @@
 >    正交视图下为 0）；引擎自己的延迟点亮程序**不读它**（它采样 G-buffer 的位置附件），C++ 与 GLSL 两侧都已写明。
 
 > 状态：设计稿 v1（2026-09-03），评审对象。
-> 上游/前身：`vine-shader.md`（后端 vsg 自写内置 shader 的 P0 落地稿；其 §11 为本文前身，以本文为准）。
+> 上游/前身：`graphics-vine-shader.md`（后端 vsg 自写内置 shader 的 P0 落地稿；其 §11 为本文前身，以本文为准）。
 > 关联：`graphics-scene-graph.md`（program 挂点）、`graphics-state.md`（状态参与变体键）、
 > `graphics-render-pipeline.md`（pass 级 program + 命名产出槽）、`vsg-custom-shader.md`。
 >
@@ -149,7 +149,7 @@ location 上”。改一个角色的 location ⇒ 两半一起动，且两处测
 
 ## 9. 分期
 
-- **P0（后端，vine-shader.md）**：自写内置 StandardPhong/FlatShaded 替换 vendored blob——先用
+- **P0（后端，graphics-vine-shader.md）**：自写内置 StandardPhong/FlatShaded 替换 vendored blob——先用
   vsg 内建/近端路径跑通，**内置 shader 从第一版就按 ShaderProgram 形状组织**，为同构铺路。
 - **P1**：SDK `ShaderStage/ShaderProgram/Param` 类型（GLSL 源 + 可选 SPIR-V）+ `compileGlslToSpirv`
   离线辅助 + Geometry/StateNode 挂点（null=默认）；先把 pass 级全屏 shader 打通（SPIR-V 交付）。

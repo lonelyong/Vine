@@ -131,7 +131,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
   （构造函数先设它，覆盖默认）。Application 只在当前 org 为空时才设，不覆盖宿主已设的值。
 - **应用名由每个 app 的 main 提供**（`AppConfig::name`），框架推导其余路径。
 - **持久化默认打开**：`Application::initialize()`（2026-09-26 起；原来是 `applyAppConfig()`，
-  `AppBuilderSupport.hpp` 已删）→ `setConfigFile(config_file 非空 ?
+  `AppBuilderSupport.hpp` 已删）→ `setConfigFile(config_file 非空 ? <!-- drift-ok -->
   config_file : defaultConfigFile())`。`AppConfig::persist_config = false` 则不读不写
   （测试/短命工具）；显式 `config_file` 始终优先。构造里就装上，所以插件 `load()` 注册配置项时配置文件已经读完。
 - 禁用列表存在同一个 ConfigManager 里，键 `PluginManager::disabledConfigKey()` =

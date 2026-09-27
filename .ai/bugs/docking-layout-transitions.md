@@ -1,4 +1,4 @@
-# Bug: 停靠面板布局切换（浮动/停靠/Tab 组合）的一组缺陷
+# Bug: 停靠面板布局切换（浮动/停靠/Tab 组合）的一组缺陷（历史登记）
 
 - **日期**: 2026-09-11
 - **模块**: third_party/DockingPanes + src/fw/appfw（DockPanel / DockPanelManager）

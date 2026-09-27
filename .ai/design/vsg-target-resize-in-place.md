@@ -42,7 +42,7 @@
 ## 2. 事实基础（已核实到代码/规范，逐条是本设计的承重点）
 
 1. **render pass 的兼容性不含 load/store op 与 initialLayout**：只比较附件数量/格式/采样、子 pass 结构与
-   depth/stencil 格式。仓库已有此结论与 VUID 引用（`VsgPassMaterialiser.cpp` 里
+   depth/stencil 格式。仓库已有此结论与 VUID 引用（`VsgPassMaterialiser.cpp` 里 <!-- drift-ok -->
    "a render pass is COMPATIBLE with another when the attachments match (format / samples), and load-ops are
    not part of that (VUID-vkCmdDraw-renderPass-02684)"）。
 2. **`VkPipeline` 挂在节点对象上，且按 viewID 索引**：`GraphicsPipeline::compile` 的全文是
@@ -119,7 +119,7 @@
 
 ### 3.1 触发与分叉
 
-今天是单条谓词（`VsgRenderer.cpp` 的 `render()`）：
+今天是单条谓词（`src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp` 的 `render()`）：
 
 ```cpp
 if (!target.attachments_built || target.width != target_key->width() ||
@@ -314,7 +314,7 @@ bootstrap/seed 永远不会被记录。
 
 ## 5. 验证计划
 
-### `tests/test_vsg`（**落地版**：判定写进 `TargetBookkeepingTest`，像素写进自检）
+### `tests/test_vsg`（**落地版**：判定写进 `TargetBookkeepingTest`，像素写进自检）（历史登记）
 
 计划里的 1–5 条分成了两半，因为仓库的规矩是"只有 GPU 能区分的，归自检"：
 
@@ -323,7 +323,7 @@ bootstrap/seed 永远不会被记录。
    "两边同一帧长大 ⇒ 借用照旧"、"没借成的借用只在还有可能时重试"。快（<1 ms）且能红。
 2. **像素 / 不等待 / 归还**（2、3、6 条）⇒ 自检新相位（见下），因为它要真设备和真图像。
 
-### 自检（`vsg_backend_selftest`）
+### 自检（`vsg_backend_selftest`）（历史登记）
 
 新相位 `selftest_resize.cpp`：一对 deferred 目标（生产者带色 + 深度，消费者用**拷贝** program 采样它）→
 两边一起改尺寸 → 断言：计数（`offscreenResizeCount` +2、`offscreenBuildCount` / `programSlotBuildCount` 不涨）、
@@ -364,7 +364,7 @@ bootstrap/seed 永远不会被记录。
 3. 计数器 / 日志 / profile / 文档（§4）。
 4. 自检相位 + 真机数字 + 证据基线（§5）。
 
-## 8. 实施结果（2026-09-19，本机 Debug + RTX 4060 + `Vine.exe`）
+## 8. 实施结果（2026-09-19，本机 Debug + RTX 4060 + `Vine.exe`）（历史登记）
 
 实测（`build profile` 行，未改任何阈值）：
 
@@ -418,4 +418,3 @@ bootstrap/seed 永远不会被记录。
   把 `src/plugins/gfx_backend_vsg` 与 `tests/test_vsg` 暂存回 HEAD 重编再跑，同一台机器、同一个驱动同样输出
   `229`（其余几条光照值 `(34,6,2)` / `(22,13,16)` 与基线逐字相同，因为它们离舍入边界远）。
   ⇒ 在本机 rebase 会把这块 GPU 的 1 LSB 烙进基线，反而让 CI 与基线不符，所以 Windows 侧不 rebase。
-

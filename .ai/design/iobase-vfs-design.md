@@ -19,7 +19,7 @@
 > 过渡拼写已清（S3b 收尾）：`ZipVfs::openZip`、`Vfs::save` / `serialize`、`ZipArchive::save` 包装全部删除，
 > 调用点已迁到 `open(…, ReadOnly)` / `saveAs` / `toBytes`；同一个动作只剩一个名字。
 > **名字终态（对账说明）**：S3b 曾计划两层（`ZipArchive` 存储层 + 薄层 `ZipVfs`），收尾时合并为**一个**类 —— 终名 **`ZipArchive`**（空状态即内存树）；本文件**历史条目**保留当时的名字，其余章节一律用终名。
-> 流词汇头文件也从 `VfsStream.hpp` 改名 **`Stream.hpp`**（同目录，内容不变）：它是 IOBase 级词汇，
+> 流词汇头文件也从 `VfsStream.hpp` 改名 **`Stream.hpp`**（同目录，内容不变）：它是 IOBase 级词汇， <!-- drift-ok -->
 > 存储层与 VFS 层共用，旧名错误地把它归给了 VFS（论证见 §8）。
 > **条目记录统一（S3b 收口）**：`ZipEntryInfo` **删除** —— 条目信息只有一套词汇，即 `Vfs.hpp` 的 `VfsEntryInfo`
 > （完整虚拟路径 + `is_directory` + 大小，目录不带尾部 `/`；原名 `FileInfo`，同日改名让词汇带上 `Vfs` 前缀）；
@@ -392,7 +392,7 @@ virtual IoError removeAll(const std::filesystem::path& path) = 0;          // �
 **住哪里**：四个类型（`Fragment` / `DataSource` / `DataSink` / `VfsReadStream`）全在 `sdk/vine/io/Stream.hpp`，
 它们是 IOBase 级的**中性词汇**（同 `IoError.hpp`），不是“VFS 专属”：存储层 `ZipArchive` 直接用它拉源头、推送 sink，
 VFS 层的 `openRead` / `read(path, sink)` 落地后也用它。因此**不拆两个头**——`ZipArchive::openRead()` 本身就返回
-`VfsReadStream`，拆完存储层依旧要包含它，拆分只增噪音。（旧名 `VfsStream.hpp` 已改：名字暗示“VFS 的流”，
+`VfsReadStream`，拆完存储层依旧要包含它，拆分只增噪音。（旧名 `VfsStream.hpp` 已改：名字暗示“VFS 的流”， <!-- drift-ok -->
 而当时唯一的包含者就是存储层。）
 
 ### 8.1 读：两种形态（pull 流 / push 回调）
@@ -761,7 +761,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 2. **零 out-parameter**：需要返回值就返回 `Result<T>`（`stat` / `list` / `read` / `readText` / `serialize`），
    不需要就返回 `IoError`。
 3. **派生便利函数写在基类**：`exists` / `isFile` / `isDirectory` / `readText` / `writeText` 都是
-   基于虚函数的**非虚**实现（`IMemoryVfs.cpp`），后端只需实现 15 个原始操作，不必重复写便利逻辑。
+   基于虚函数的**非虚**实现（`Vfs.cpp`），后端只需实现 15 个原始操作，不必重复写便利逻辑。
 4. **命名对照**（旧 → 新）：
 
 | 旧 (`bool`) | 新 |

@@ -683,12 +683,12 @@ warning；`[selftest]` **45 行逐字节相同**；`gfx_lavapipe_check.sh` → `
    `HostPublishedTargetSurvivesTheFrame` 红），且它修的是真缺陷：`publish()` 的宿主能力此前被帧首 `outputs_.clear()`
    吃掉（帧外注册的绑定只在第一帧有效）。
 2. **viewport / lights 是“每次绘制调用”的宣布**：队列由 `beginPass()` 重置，一个 pass 的宣布不继承给下一个
-   （`takeViewport`/`takeLights` 语义，见 `VsgRendererState.hpp`）。
+   （`takeViewport`/`takeLights` 语义，见 `VsgRendererState.hpp`）。 <!-- drift-ok -->
 3. **承诺必须关于“本 pass 真正写进去的 target”**：承诺是“消费者拿到谁的内容”，pass 承诺一张自己没写的 target 时
    接线期报（`promise-mismatch`）——这条修掉了此前 4 个测试用例里“承诺了不写的 target”的写法。
 
 **本批判据（已跑）**：全量 `ninja` 零 error/零 warning；`test_graphics` **185**、`test_vsg` **163** 全绿；
-`scripts/vsg_selftest_evidence.sh` → 45 行 `[selftest]` 证据逐字节相同；`gfx_lavapipe_check.sh` → `RESULT: PASS`
+`scripts/vsg_selftest_evidence.sh` → 45 行 `[selftest]` 证据逐字节相同；`gfx_lavapipe_check.sh` → `RESULT: PASS` <!-- drift-ok -->
 （0 VUID，含 `VINE_VSG_DEFERRED=1` + `VINE_VSG_OFFSCREEN_MULTISLOT=1`）；`check_diagnostic_formats.py` → 0 suspicious。
 
 **步 2：逐帧读 `ImageRef`**（把运行期上报换成图像语义）

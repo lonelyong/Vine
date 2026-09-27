@@ -113,10 +113,10 @@
 
 ## 5. 重复实现与收尾项
 
-- **`SyncWait.hpp` 已删（2026-09-26）**：阻塞驱动的机制（`detail::WaitEvent`/`WaitTask`/`makeWaitTask`）
+- **`SyncWait.hpp` 已删（2026-09-26）**<!-- drift-ok -->：阻塞驱动的机制（`detail::WaitEvent`/`WaitTask`/`makeWaitTask`）
   搬到 `Task.hpp`（`result()` 要用它，而成员只能在自己头文件里定义），`syncWait()` 这个自由函数连同头文件
   一并去掉——同一个动作只留一个名字。全仓库 172 处调用点改成 `x.result()`。
-- ~~`vn::appfw::async::sleep()`~~：**已于 2026-09-17 删除**（`src/fw/appfw/src/async/Sleep.hpp/.cpp`
+- ~~`vn::appfw::async::sleep()`~~：**已于 2026-09-17 删除**（`src/fw/appfw/src/async/Sleep.hpp/.cpp` <!-- drift-ok -->
   连同 `test_asyncqt` 的两个用例一起移除）：与 `vn::async::sleepFor()` 功能重复，且当时全仓库
   （含测试）已无调用者——"怕动导出符号"的顾虑在调用者为 0 时不成立。
   同目录的 `appfw::async::Scheduler` 与 base 模块不重复（Qt 事件循环调度），保留；它仍是私有头、

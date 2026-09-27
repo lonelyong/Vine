@@ -66,7 +66,7 @@
 > - 本文 §2/§3 中关于 Drawable/shape/primitive 的旧描述已被上述实现取代。
 
 > 关联：`graphics-state.md`（StateNode）、`graphics-shader.md`（用户可编程着色）、
-> `graphics-design.md`、`vsg-design.md`、`vine-shader.md`（后端 P0）。
+> `graphics-design.md`、`vsg-design.md`、`graphics-vine-shader.md`（后端 P0）。
 >
 > **一句话**：把 graphics 场景图改成 **OSG/vsg 式节点组合**——`Node`(抽象基) 派生
 > `Group / MatrixNode / StateNode`，`Geometry` 是**叶子 Node**；去掉 `Drawable` 与
@@ -197,8 +197,8 @@ class Geometry : public Node {
 
 ## 8. 与既有文档关系
 
-- 本稿是 **graphics SDK 场景图重构**设计；`vine-shader.md` 是后端（vsg）自写内置 shader 的 P0
-  落地稿，两者互补：本稿定 SDK 形状，vine-shader.md 定后端装配细节。
+- 本稿是 **graphics SDK 场景图重构**设计；`graphics-vine-shader.md` 是后端（vsg）自写内置 shader 的 P0
+  落地稿，两者互补：本稿定 SDK 形状，graphics-vine-shader.md 定后端装配细节。
 - `graphics-design.md` 中关于 Node/Drawable 的旧描述，在重构落地后需同步更新（本稿为后续版本）。
 
 ## 9. 剔除与界的成本结构（2026-09-17 实测）
@@ -232,7 +232,7 @@ Debug 树（`build/`）同比值：被剔节点 ≈3.4 µs、可见 ≈5.2 µs/�
 
 ### 9.2 测量配方（可复现，**不进 CI**）
 
-临时把 `tests/test_graphics/SceneCollectBench.cpp` 加进该目录 `CMakeLists.txt` 的 `SRC_FILE_LIST`（**tab 缩进**），
+临时把 `tests/test_graphics/SceneCollectBench.cpp` 加进该目录 `CMakeLists.txt` 的 `SRC_FILE_LIST`（**tab 缩进**）， <!-- drift-ok -->
 `cmake -S . -B build && ninja -C build test_graphics`（Release 用 `build-release`），再
 `./build/bin/test_graphics --gtest_filter=SceneCollectBench.*`；跑完删文件并还原 `CMakeLists.txt`。
 

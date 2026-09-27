@@ -1,4 +1,4 @@
-# SharedTask 唤醒等待者时 resume 已释放的帧（use-after-free）
+# SharedTask 唤醒等待者时 resume 已释放的帧（use-after-free）（历史登记）
 
 **日期**：2026-09-17 ／ **状态**：已修复 ／ **涉及**：`src/base/async/sdk/vine/async/SharedTask.hpp`、
 `tests/test_async/AsyncTest.cpp`

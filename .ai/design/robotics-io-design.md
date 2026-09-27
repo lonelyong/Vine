@@ -23,7 +23,7 @@
 > **API 现状**：`Vfs`（原 `IMemoryVfs`）已按 `.ai/design/iobase-vfs-design.md` §13 做过“一次断代”重设计 ——
 > 所有读写返回 `IoError` / `Result<T>`，旧 `bool` 家族（`writeFile` / `readFile` / `mountFile` /
 > `save(vector&)`）**已删除**。因此**第 6 / 8 节的接口清单是历史设计稿**，实际签名以
-> `Vfs.hpp`（原 `IMemoryVfs.hpp`）与 `sdk/vine/io/ZipVfs.hpp` 为准。
+> `Vfs.hpp`（原 `IMemoryVfs.hpp`）与 `sdk/vine/io/ZipVfs.hpp` 为准。 <!-- drift-ok -->
 > **命名提醒**：本文（尤其第 6 节与第 2/3 节的类型草图）出现的 `IMemoryVfs` / `ZipMemoryVfs` 是**历史名**，
 > 现名分别为 `Vfs` / `ZipVfs`；`save` / `serialize` / `openZip` 同理是历史拼写，现名 `saveAs` / `toBytes` / `open(…, OpenMode::ReadOnly)`。
 > **ZIP 职责分层（S3b）**：`ZipVfs::open(…, OpenMode::ReadOnly)` 是打开已有包的**唯一入口**（惰性只读），

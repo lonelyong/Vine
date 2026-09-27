@@ -20,7 +20,7 @@
 | 归属 | 目录 | 生成的头文件 | 命名空间 | 谁在用 |
 | --- | --- | --- | --- | --- |
 | graphics SDK（内建 program） | `src/viz/graphics/shaders/` | `vine/graphics/EmbeddedShaders.hpp` | `vn::graphics::shaders` | `BuiltinShaders`（`forwardProgram()` / `flatForwardProgram()` 前向着色 + gbuffer 几何 / 全屏光照）；`RenderPipelineBuilder` 是它的别名 |
-| vsg 后端（自有阶段）—— **已取消（2026-09-13）** | ~~`src/plugins/gfx_backend_vsg/shaders/`~~ 目录已删除 | ~~`vine/vsg/EmbeddedShaders.hpp`~~ | ~~`vn::vsg::shaders`~~ | 全屏三角形与屏幕拷贝现在都是 SDK program（`BuiltinShaders::fullscreenVertexProgram` / `screenCopyProgram`）。**清单只剩一个 owner**：`vine/graphics/EmbeddedShaders.hpp` |
+| vsg 后端（自有阶段）—— **已取消（2026-09-13）** | ~~`src/plugins/gfx_backend_vsg/shaders/`~~ 目录已删除 | ~~`vine/vsg/EmbeddedShaders.hpp`~~ | ~~`vn::vsg::shaders`~~ | 全屏三角形与屏幕拷贝现在都是 SDK program（`BuiltinShaders::fullscreenVertexProgram` / `screenCopyProgram`）。**清单只剩一个 owner**：`vine/graphics/EmbeddedShaders.hpp` | <!-- drift-ok -->
 
 约定：
 

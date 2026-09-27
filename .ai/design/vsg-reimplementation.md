@@ -51,10 +51,12 @@
 `Protocol`（合法性）/ `FrameRecorder` / `FrameCompiler` / `FrameGraph` / `VsgExecutor` / 资源世界（目标、池、缓存）
 + 横切面 = 证据（相位表、计数器、像素）。对象少是刻意的：每个都有一句"它答什么"，边界写在头文件里。
 
-### 2.3 物理边界：`core/` 不许 include vsg
+### 2.3 物理边界：`graphics/backend/` 不许 include vsg
 
-机器校验（`scripts/check_include_hygiene.py` 的 `core_layer_findings()`）：`core/` 用 `vine/graphics/*`（SDK）是允许的，
-`vsg::` 一次都不许出现。这条是"哪些规则可以无设备测试"的物理保证。
+机器校验（`scripts/check_include_hygiene.py` 的 `backend_half_findings()`）：这一层 include `vine/graphics/*`（宿主半的类型）
+是允许的，`vsg::` 一次都不许出现；反向那条（除 `gfx_backend_*`、`test_vsg` 与该层自身外，不许 include
+`vine/graphics/backend/`）由同一脚本的 `host_audience_findings()` 钉住。分层、依赖与“谁能复用到哪一半”
+见 `.ai/design/graphics-layering.md`。这条是"哪些规则可以无设备测试"的物理保证。
 
 ### 2.4 一帧的生命周期
 
@@ -705,7 +707,7 @@ material 值 / 流字节 / cull 全部**不进**。
 * * **相机缺失时的零矩阵**只是“没有视图”的值：pass 照画（几何落在原点）。要不要在上层把“无相机的 pass”
 * 证据：`test_vsg` 全量 **587 用例 / 91 套件全绿**（+5 用例：`ContentPushTest` 5 条、`ContentPipelineTest` +1、 `ContentPassTest` +1 —— 其中 `ContentPushTest` 是第 91 套）；门禁 一条命令 `scripts/vsg_rewrite_gate.sh`：**0 VUID / 0 SYNC-HAZARD**、hygiene 0 / 825 文件、 `check_diagnostic_formats.py` 0 / 39、`check_doc_symbols.py` 通过、相位 9 行 / 2 次运行全收尾。变异反证
 * 形态最有价值：它在“命令发出去了”的情况下仍然红——判据是像素，不是“我发了命令”。
-* §11.16af 让布局跟着声明走，于是“一个声明了 push 的程序”不再是 M8b 那样被 `serveHalf` 一拒了事：范围是 它自己声明的（128B、顶点阶段、`offset = 0`），里面要装什么也是它自己写下的——`projection` 与 `modelView` 两个 `mat4`。而这两份值不是新约定，是**同一对 L1 值的另一个居住地**：本后端把 `VineViewBlock` / `VineDrawBlock` 直接绑成块，而那 128B 的 push 是同一对矩阵的 L2 实现（既有后端的 `VsgPipelineFactory.cpp` 注释写得很清楚：`pc.projection == VineViewBlock.proj`、 `pc.modelView == VineViewBlock.view * VineDrawBlock.model`——同一段话，改写一遍）。所以这一片做的事是 把它**真的填上**：`describeAbi` 在 `create` 就拒“填不了的成员”，pass 在每个绘制命令前把声明的每个范围 按名字填好、按声明的阶段与偏移发给 `PushConstants`。
+* §11.16af 让布局跟着声明走，于是“一个声明了 push 的程序”不再是 M8b 那样被 `serveHalf` 一拒了事：范围是 它自己声明的（128B、顶点阶段、`offset = 0`），里面要装什么也是它自己写下的——`projection` 与 `modelView` 两个 `mat4`。而这两份值不是新约定，是**同一对 L1 值的另一个居住地**：本后端把 `VineViewBlock` / `VineDrawBlock` 直接绑成块，而那 128B 的 push 是同一对矩阵的 L2 实现（既有后端的 `VsgPipelineFactory.cpp` 注释写得很清楚：`pc.projection == VineViewBlock.proj`、 `pc.modelView == VineViewBlock.view * VineDrawBlock.model`——同一段话，改写一遍）。所以这一片做的事是 把它**真的填上**：`describeAbi` 在 `create` 就拒“填不了的成员”，pass 在每个绘制命令前把声明的每个范围 按名字填好、按声明的阶段与偏移发给 `PushConstants`。 <!-- drift-ok -->
 * * 没有相机 ⇒ 写零（与 `buildViewBlock` 同一个 `present` 事实）： “没有视图”是一个值，不是错误。
 
 ### 11.16ah M8c-2a（2026-09-22）：一个声明的集合可以同时装块与采样图（引擎的 set 0）
@@ -989,9 +991,9 @@ material 值 / 流字节 / cull 全部**不进**。
 * - 调用点唯一：`VsgBackend::swapBuffers()`，**录完之后、提交之前**（提交推进停放队；停放必须在推进之前）。
 * **变异 2/2**：图像那一半空转 ⇒ 恰好 `EverythingTheHostDropped…` 红（计数 + `has()` 两条断言）；
 * **变异**：把 kind 从比较里去掉 ⇒ 恰好这两条红。
-* 两半都失效：① `MAPPED_DIRS` + `units_of()` 只枚举**目录直接子项**，而代码搬进了 `src/api|core`、 `include/vine/vsg/api|core` ⇒ 它只看见顶层那 19 个（实测：树里 143 个，**124 个不在门禁范围内**）； ② 点名检查用前缀白名单（`PLUGIN_UNIT_PREFIXES`），它不认任何新名字 ⇒ 文档里写错/写旧了也不会红。 ⇒ "每个单元都要被文档点到"和"文档点到的单元必须存在"两条都成了空话。
+* 两半都失效：① `MAPPED_DIRS` + `units_of()` 只枚举**目录直接子项**，而代码搬进了 `src/internal|src/core`、 `include/vine/vsg/api|core` ⇒ 它只看见顶层那 19 个（实测：树里 143 个，**124 个不在门禁范围内**）； ② 点名检查用前缀白名单（`PLUGIN_UNIT_PREFIXES`），它不认任何新名字 ⇒ 文档里写错/写旧了也不会红。 ⇒ "每个单元都要被文档点到"和"文档点到的单元必须存在"两条都成了空话。
 * - 做法：`units_of` 改递归；点名检查改成"这个名字在本仓（`src`/`tests`/`tools`/`cmake`）里必须真的存在"，
-* 四个单元**没有任何文档点到**，以及 `backend.md:600` 一句仍在点已删除的 `selftest_datarefresh.cpp` （它所在的 §5.3.2 是旧渲染器的内容，已补 `历史登记` 标记）。修完 **145 单元全绿**。
+* 四个单元**没有任何文档点到**，以及 `backend.md:600` 一句仍在点已删除的 `selftest_datarefresh.cpp` （它所在的 §5.3.2 是旧渲染器的内容，已补 `历史登记` 标记）。修完 **145 单元全绿**。 <!-- drift-ok -->
 * - **变异**：把枚举改回只列顶层 ⇒ 立刻红；把 `ContentSweep` 从三份文档里整体改名 ⇒
 * 而 switch 后面就有一段静默尾部；`mapBlendFactor` 的尾部把未知因子变成 `VK_BLEND_FACTOR_ONE`（**不是**"不混合"， 而是另一种混合 ⇒ 静默错图）。两处都改成说真话，并把"未知因子"那条登记为需要"在状态被书写的源头（引擎的 `BlendState`）校验"才算真修（见 §11.16bw）。
 * **doc symbols 145 单元**（修前 19）；五条变异各自咬住目标。**证据边界**：本机没有窗口系统 ⇒ 窗口类用例
@@ -1294,7 +1296,7 @@ material 值 / 流字节 / cull 全部**不进**。
 
 * **登记来自哪里**：§6 的 B6 行把“逐 `Buffer::revision()`”挂在“多通道大网格宿主报上传带宽”上；
   实现前先把“宿主会报多大的带宽”量成曲线。
-* **代码事实**（重新核实过）：`src/api/GeometryFacts.cpp` 里每个通道与索引流的 `key.revision` 都取
+* **代码事实**（重新核实过）：`src/internal/GeometryFacts.cpp` 里每个通道与索引流的 `key.revision` 都取
   `geometry.revision()` ⇒ 一次 `bumpRevision()` 动**所有**流的身份，下一帧整网格重传。
 * **配方**（`VsgBackendTest.MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges`）：512² 网格
   （262144 顶点）× 四个正典通道（位置/法线/色/UV）+ 整索引 buffer；绘制只取索引切片前 6 个

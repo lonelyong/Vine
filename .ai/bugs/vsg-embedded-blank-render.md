@@ -1,4 +1,4 @@
-# Bug: 嵌入式渲染视图空白（SceneBridge 内容不显示）
+# Bug: 嵌入式渲染视图空白（SceneBridge 内容不显示）（历史登记）
 
 - **日期**: 2026-09-02
 - **模块**: gfx_backend_vsg 插件（嵌入式 `SceneBridge` 几何构建路径）
