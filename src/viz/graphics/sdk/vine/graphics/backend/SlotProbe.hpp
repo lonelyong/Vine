@@ -82,7 +82,7 @@ inline constexpr std::uint32_t kAssumedInFlightSlots = 3;
  * @param limit Highest slot count to look for; the probe stops there.
  * @return The count, and whether probing failed (no slot answered at all).
  */
-[[nodiscard]] SlotProbeOutcome probeSlotCount(const std::function<bool(std::uint32_t)>& has_slot,
+[[nodiscard]] VN_GRAPHICS_API SlotProbeOutcome probeSlotCount(const std::function<bool(std::uint32_t)>& has_slot,
                                               std::uint32_t limit = 64) noexcept;
 
 /**

@@ -32,7 +32,7 @@
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 /** @brief One pixel, in the packing the readback API produces. */
-struct Rgba8
+struct VN_GRAPHICS_API Rgba8
 {
     std::uint8_t r{0};    ///< Red.
     std::uint8_t g{0};    ///< Green.

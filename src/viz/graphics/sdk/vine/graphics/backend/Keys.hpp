@@ -73,7 +73,7 @@ enum class ImageLayout : std::uint8_t
  * backend must never invent one by comparing bytes it happens to read: detection would itself become
  * state, and a key that depends on it stops being an identity.
  */
-struct DataKey
+struct VN_GRAPHICS_API DataKey
 {
     const void*   buffer{nullptr};  ///< Buffer the slice lives in.
     std::uint64_t revision{0};      ///< Upstream content revision.
@@ -86,7 +86,7 @@ struct DataKey
 };
 
 /** @brief Identity of a vertex layout: which canonical channels are fed, and at which custom locations. */
-struct VertexLayoutKey
+struct VN_GRAPHICS_API VertexLayoutKey
 {
     std::uint32_t              canonical_mask{0};     ///< Bit set of the canonical roles that are fed.
     std::vector<std::uint32_t> custom_locations;      ///< Custom channel locations, ascending.
@@ -145,7 +145,7 @@ enum class DrawKind : std::uint8_t
  * render pass is undefined behaviour, and the measured run drew the right picture anyway. The validation
  * layer's report is the evidence (and the fix is a key, not a picture).
  */
-struct RenderPassCompatibility
+struct VN_GRAPHICS_API RenderPassCompatibility
 {
     std::vector<vn::graphics::RenderTarget::ColorFormat> color_formats;  ///< One per colour attachment.
     std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format; ///< Absent for colour-only.
@@ -175,7 +175,7 @@ struct RenderPassCompatibility
  * may load the depth an earlier one wrote while the colour is cleared, and because a borrowed depth starts in
  * the layout its lender left it in.
  */
-struct LoadOpVariantKey
+struct VN_GRAPHICS_API LoadOpVariantKey
 {
     LoadOp      color_load{LoadOp::Load};    ///< Every colour attachment: keep what is there, or clear it.
     StoreOp     color_store{StoreOp::Store}; ///< Whether the colour survives the pass.
@@ -194,7 +194,7 @@ struct LoadOpVariantKey
 /**
  * @brief Identity of a compiled content pipeline. Everything in here is "changing it needs a compile".
  */
-struct PipelineKey
+struct VN_GRAPHICS_API PipelineKey
 {
     DrawKind     kind{DrawKind::Content};        ///< Which of the engine's two drawing calls this is.
     const void*  program{nullptr};               ///< Shader program (or the default content program).
@@ -243,7 +243,7 @@ struct VN_GRAPHICS_API PipelineKeyHash
 };
 
 /** @brief Per-draw state delivered with set commands: changing it must never recompile anything. */
-struct DynamicState
+struct VN_GRAPHICS_API DynamicState
 {
     vn::graphics::DepthMode     depth{vn::graphics::DepthMode::TestAndWrite};  ///< Depth test/write policy.
     vn::graphics::CompareOp     compare{vn::graphics::CompareOp::Less};        ///< Distance-semantic compare op; the reverse-Z inversion happens at the Vulkan boundary.
@@ -276,7 +276,7 @@ struct DynamicState
  * @param pass_depth     The pass' depth handling, used when the content authored none.
  * @return The state to deliver with a set command (never part of an identity - see the file note).
  */
-[[nodiscard]] DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state, bool depth_explicit,
+[[nodiscard]] VN_GRAPHICS_API DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state, bool depth_explicit,
                                                vn::graphics::DepthMode pass_depth) noexcept;
 
 /**
@@ -306,6 +306,6 @@ struct KeyAuditEntry
  * A test pins the table's contents: adding a field to a key without deciding its layer fails there,
  * which is where the question "is this identity or data?" gets asked.
  */
-[[nodiscard]] std::span<const KeyAuditEntry> keyAuditTable() noexcept;
+[[nodiscard]] VN_GRAPHICS_API std::span<const KeyAuditEntry> keyAuditTable() noexcept;
 
 VN_GRAPHICSBACKEND_NS_END

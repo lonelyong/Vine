@@ -27,12 +27,26 @@ HALVES = (("src/viz/graphics/sdk/vine/graphics/backend", "src/viz/graphics/src/b
 # rule is what keeps the two from drifting back together.
 PRIVATE_HEADER_ROOTS = ("src/viz/graphics/src",)
 
-OWNER = re.compile(r"\b([A-Za-z_]\w*)::(~?[A-Za-z_]\w*)\s*\(")
+# A member definition. The member name may be an OPERATOR (`VertexLayoutKey::operator==(`), which a
+# `\w+\s*\(` pattern cannot see: that blind spot is how a key's operator== shipped without its export
+# macro and broke the plugin's link, so the operator forms are spelled out here.
+OWNER = re.compile(r"\b([A-Za-z_]\w*)::(?:~?[A-Za-z_]\w*|operator\s*[^\s(]*)\s*\(")
 # The macro sits between the keyword and the name once a declaration IS annotated, so it must be
 # allowed there - otherwise an annotated type is captured as "VN_GRAPHICS_API" and stops being checked.
 DECL = re.compile(r"^\s*(?:class|struct)\s+(?:VN_GRAPHICS_API\s+)?([A-Za-z_]\w*)")
 FUNC_DECL = re.compile(r"^(?!static|inline|template|using|typedef|friend|extern|#|//|/\*|\})"
-                       r"(?:\[\[nodiscard\]\]\s+)?[A-Za-z_][\w:<>,\s*&]*?\b([A-Za-z_]\w*)\s*\(")
+                       r"(?:\[\[nodiscard\]\]\s+)?[A-Za-z_][\w:<>, \s*&]*?\b([A-Za-z_]\w*)\s*\(")
+
+
+def names_a_member(line, name):
+    """Return whether @p name is qualified on @p line, i.e. the line defines a member rather than a
+    free function.
+
+    A free function's RETURN TYPE or PARAMETERS may name a qualified type (`std::size_t size(`,
+    `ReadbackFormat colorReadbackOf(vn::graphics::RenderTarget::ColorFormat)`), and skipping every
+    line containing `::` - the check's second blind spot - dropped exactly those declarations.
+    """
+    return re.search(r"::\s*" + re.escape(name) + r"\s*\(", line) is not None
 
 
 def defined_out_of_line(sources):
@@ -47,7 +61,7 @@ def defined_out_of_line(sources):
                 owners.add(match.group(1))
                 continue
             match = re.match(r"^[A-Za-z_][\w:<>,\s*&]*?\b([A-Za-z_]\w*)\s*\(", line)
-            if match and "::" not in line:
+            if match and not names_a_member(line, match.group(1)):
                 functions.add(match.group(1))
     return owners, functions
 

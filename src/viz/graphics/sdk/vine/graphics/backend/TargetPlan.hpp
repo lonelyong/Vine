@@ -93,7 +93,7 @@ struct VN_GRAPHICS_API TargetShape
 };
 
 /** @brief A target as the frame wants it: an extent plus a shape. */
-struct TargetDesc
+struct VN_GRAPHICS_API TargetDesc
 {
     int         width{0};   ///< Extent in device pixels (0 = not known yet).
     int         height{0};  ///< Extent in device pixels (0 = not known yet).

@@ -138,21 +138,21 @@ struct VN_GRAPHICS_API DeviceFacts
  * @param api_version Version a physical device reports.
  * @return true when it is at least kRequiredApiVersion.
  */
-[[nodiscard]] bool supportsRequiredVersion(std::uint32_t api_version) noexcept;
+[[nodiscard]] VN_GRAPHICS_API bool supportsRequiredVersion(std::uint32_t api_version) noexcept;
 
 /** @brief Counts the required features @p facts is missing.
  *
  * @param facts What the device offers.
  * @return Number of missing features; 0 means every one is present.
  */
-[[nodiscard]] std::size_t missingFeatureCount(const DeviceFacts& facts) noexcept;
+[[nodiscard]] VN_GRAPHICS_API std::size_t missingFeatureCount(const DeviceFacts& facts) noexcept;
 
 /** @brief Counts the required extensions @p facts is missing.
  *
  * @param facts What the device offers.
  * @return Number of missing extensions; 0 means every one is available.
  */
-[[nodiscard]] std::size_t missingExtensionCount(const DeviceFacts& facts) noexcept;
+[[nodiscard]] VN_GRAPHICS_API std::size_t missingExtensionCount(const DeviceFacts& facts) noexcept;
 
 /** @brief The name of @p extension, for a diagnostic a human has to act on.
  *

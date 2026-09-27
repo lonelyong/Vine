@@ -48,7 +48,7 @@ struct ClearPolicy
 };
 
 /** @brief What one colour attachment does at the start of the pass. */
-struct AttachmentClear
+struct VN_GRAPHICS_API AttachmentClear
 {
     LoadOp        load{LoadOp::Load};   ///< Keep what is there, or clear it.
     StoreOp       store{StoreOp::Store};///< Whether the result survives the pass.
@@ -59,7 +59,7 @@ struct AttachmentClear
 };
 
 /** @brief What one depth attachment does at the start of the pass. */
-struct DepthClear
+struct VN_GRAPHICS_API DepthClear
 {
     LoadOp  load{LoadOp::Load};    ///< Keep what is there, or clear it.
     StoreOp store{StoreOp::Store}; ///< Whether the result survives the pass.
@@ -70,7 +70,7 @@ struct DepthClear
 };
 
 /** @brief What every attachment of one pass does, and why the pass clears at all. */
-struct PassClearPlan
+struct VN_GRAPHICS_API PassClearPlan
 {
     std::vector<AttachmentClear> colors;      ///< One per colour attachment (empty for a depth-only target).
     bool                         has_depth{false};  ///< Whether the target has a depth attachment.

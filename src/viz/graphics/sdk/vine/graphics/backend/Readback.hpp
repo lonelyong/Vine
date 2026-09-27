@@ -98,7 +98,7 @@ struct ReadbackResult
 };
 
 /** @brief How one readback format packs its texels, and whether it can be read at all. */
-struct ReadbackFormat
+struct VN_GRAPHICS_API ReadbackFormat
 {
     std::uint32_t bytes_per_texel{0};  ///< Bytes one texel occupies in the copy; 0 when unreadable.
     bool          readable{false};     ///< Whether this backend can read that format.
@@ -120,7 +120,7 @@ struct ReadbackFormat
  * @param refusal The category.
  * @return The name; never null.
  */
-[[nodiscard]] std::string_view refusalName(ReadbackRefusal refusal) noexcept;
+[[nodiscard]] VN_GRAPHICS_API std::string_view refusalName(ReadbackRefusal refusal) noexcept;
 
 /** @brief Gets how a colour format is read back.
  *
@@ -131,7 +131,7 @@ struct ReadbackFormat
  * @param format The attachment's colour format.
  * @return Bytes per texel and whether it can be read.
  */
-[[nodiscard]] ReadbackFormat colorReadbackOf(vn::graphics::RenderTarget::ColorFormat format) noexcept;
+[[nodiscard]] VN_GRAPHICS_API ReadbackFormat colorReadbackOf(vn::graphics::RenderTarget::ColorFormat format) noexcept;
 
 /** @brief Gets how a depth format is read back.
  *
@@ -141,7 +141,7 @@ struct ReadbackFormat
  * @param format The attachment's depth format.
  * @return Bytes per texel and whether it can be read.
  */
-[[nodiscard]] ReadbackFormat depthReadbackOf(vn::graphics::RenderTarget::DepthFormat format) noexcept;
+[[nodiscard]] VN_GRAPHICS_API ReadbackFormat depthReadbackOf(vn::graphics::RenderTarget::DepthFormat format) noexcept;
 
 /** @brief Turns copied depth bytes into the normalised values a probe answers with.
  *
@@ -154,7 +154,7 @@ struct ReadbackFormat
  * @param bytes  The copied bytes, in the tightly packed order the copy produced.
  * @return One value per texel, or empty when the bytes cannot be read as this format.
  */
-[[nodiscard]] std::vector<float> decodeDepth(vn::graphics::RenderTarget::DepthFormat format,
+[[nodiscard]] VN_GRAPHICS_API std::vector<float> decodeDepth(vn::graphics::RenderTarget::DepthFormat format,
                                              std::span<const std::byte>                 bytes);
 
 VN_GRAPHICSBACKEND_NS_END
