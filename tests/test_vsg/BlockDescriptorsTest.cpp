@@ -31,9 +31,9 @@
 #include <vsg/state/PipelineLayout.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/vsg/api/BlockDescriptors.hpp>
-#include <vine/vsg/api/BlockStorage.hpp>
-#include <vine/vsg/api/DeviceProbe.hpp>
+#include <vine/vsg/internal/BlockDescriptors.hpp>
+#include <vine/vsg/internal/BlockStorage.hpp>
+#include <vine/vsg/internal/DeviceProbe.hpp>
 
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;

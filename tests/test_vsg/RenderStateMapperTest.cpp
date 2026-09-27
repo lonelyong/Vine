@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <vine/graphics/StateNode.hpp>
-#include <vine/vsg/RenderStateMapper.hpp>
+#include <vine/vsg/support/RenderStateMapper.hpp>
 
 using namespace vn::graphics;
 using vn::vsg::RenderStateObjects;

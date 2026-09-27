@@ -17,8 +17,8 @@
 #include <vine/graphics/StateNode.hpp>
 #include <vine/graphics/Texture.hpp>
 #include <vine/imaging/Image.hpp>
-#include <vine/vsg/RenderStateMapper.hpp>
-#include <vine/vsg/VsgSceneRules.hpp>
+#include <vine/vsg/support/RenderStateMapper.hpp>
+#include <vine/vsg/support/VsgSceneRules.hpp>
 
 using vn::graphics::AttributeChannel;
 using vn::graphics::BlendFactor;

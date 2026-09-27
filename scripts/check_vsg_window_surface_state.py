@@ -43,7 +43,7 @@ import re
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-OUR_SOURCE = REPO_ROOT / "src/plugins/gfx_backend_vsg/src/VsgHostWindow.cpp"
+OUR_SOURCE = REPO_ROOT / "src/plugins/gfx_backend_vsg/src/support/VsgHostWindow.cpp"
 OUR_FUNCTION = "VsgHostWindow::moveToHostSurface"
 
 # vsg::Window's protected state (vsg 1.1.16, include/vsg/app/Window.h),

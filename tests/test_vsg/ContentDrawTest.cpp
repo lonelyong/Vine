@@ -43,20 +43,20 @@
 #include <vsg/state/DescriptorSetLayout.h>
 #include <vsg/state/PipelineLayout.h>
 
-#include <vine/vsg/VsgDynamicState.hpp>
-#include <vine/vsg/api/ContentDraw.hpp>
-#include <vine/vsg/api/ContentPipeline.hpp>
-#include <vine/vsg/api/StateCommands.hpp>
-#include <vine/vsg/core/StateRegistry.hpp>
-#include <vine/vsg/core/VariantPool.hpp>
+#include <vine/vsg/support/VsgDynamicState.hpp>
+#include <vine/vsg/internal/ContentDraw.hpp>
+#include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/vsg/internal/StateCommands.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 
 using vn::vsg::ContentDraw;
 using vn::vsg::ContentPipeline;
 using vn::vsg::ViewportRect;
-using vn::vsg::core::DynamicState;
-using vn::vsg::core::PipelineKey;
-using vn::vsg::core::StateRegistry;
-using vn::vsg::core::VariantPool;
+using vn::graphics::backend::DynamicState;
+using vn::graphics::backend::PipelineKey;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::VariantPool;
 
 namespace
 {
@@ -424,7 +424,7 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
 
     ContentDraw::ScreenDraw draw;
     static int              program = 0;
-    draw.key.kind                   = vn::vsg::core::DrawKind::Screen;
+    draw.key.kind                   = vn::graphics::backend::DrawKind::Screen;
     draw.key.program                = &program;
     draw.key.revision               = 1U;
     draw.key.compatibility.samples  = 1U;
@@ -480,7 +480,7 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
 
     // An identity of the OTHER kind is refused, not recorded: the layer compiles one descriptor ABI.
     ContentDraw::ScreenDraw wrong_kind = draw;
-    wrong_kind.key.kind                = vn::vsg::core::DrawKind::Content;
+    wrong_kind.key.kind                = vn::graphics::backend::DrawKind::Content;
     EXPECT_EQ(recorder.recordScreen(registry, wrong_kind), nullptr);
     EXPECT_EQ(recorder.refusals(), 1U);
     EXPECT_EQ(recorder.draws(), 2U) << "a refused draw is not a recorded one";

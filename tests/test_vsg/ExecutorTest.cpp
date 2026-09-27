@@ -37,22 +37,22 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
-#include <vine/vsg/api/BlockDescriptors.hpp>
-#include <vine/vsg/api/BlockStorage.hpp>
-#include <vine/vsg/api/ContentDraw.hpp>
-#include <vine/vsg/api/ContentPipeline.hpp>
-#include <vine/vsg/api/Device.hpp>
-#include <vine/vsg/api/OffscreenTarget.hpp>
-#include <vine/vsg/api/StreamUploads.hpp>
-#include <vine/vsg/api/VsgExecutor.hpp>
-#include <vine/vsg/core/FrameCompiler.hpp>
-#include <vine/vsg/core/FrameRecorder.hpp>
-#include <vine/vsg/core/FrameTimeline.hpp>
-#include <vine/vsg/core/RetirementQueue.hpp>
-#include <vine/vsg/core/StateRegistry.hpp>
-#include <vine/vsg/core/Streams.hpp>
-#include <vine/vsg/core/VariantPool.hpp>
-#include <vine/vsg/VsgDynamicState.hpp>
+#include <vine/vsg/internal/BlockDescriptors.hpp>
+#include <vine/vsg/internal/BlockStorage.hpp>
+#include <vine/vsg/internal/ContentDraw.hpp>
+#include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/vsg/internal/Device.hpp>
+#include <vine/vsg/internal/OffscreenTarget.hpp>
+#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/vsg/internal/VsgExecutor.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/Streams.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/vsg/support/VsgDynamicState.hpp>
 
 #include "DevicePhases.hpp"
 
@@ -67,29 +67,29 @@ using vn::vsg::PassContent;
 using vn::vsg::StreamUploads;
 using vn::vsg::ViewportRect;
 using vn::vsg::VsgExecutor;
-using vn::vsg::core::ClearPolicy;
-using vn::vsg::core::CompiledFrame;
-using vn::vsg::core::CompiledPass;
-using vn::vsg::core::Diagnostics;
-using vn::vsg::core::FrameArena;
-using vn::vsg::core::FrameCompiler;
-using vn::vsg::core::FrameFacts;
-using vn::vsg::core::FrameRecorder;
-using vn::vsg::core::FrameTimeline;
-using vn::vsg::core::FrameToken;
-using vn::vsg::core::Observe;
-using vn::vsg::core::PassId;
-using vn::vsg::core::RepairReason;
-using vn::vsg::core::RetirementQueue;
-using vn::vsg::core::Rgba8;
-using vn::vsg::core::StateRegistry;
-using vn::vsg::core::StreamKey;
-using vn::vsg::core::StreamKind;
-using vn::vsg::core::TargetAction;
-using vn::vsg::core::TargetDesc;
-using vn::vsg::core::TargetFacts;
-using vn::vsg::core::TargetShape;
-using vn::vsg::core::VariantPool;
+using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::CompiledFrame;
+using vn::graphics::backend::CompiledPass;
+using vn::graphics::Diagnostics;
+using vn::graphics::backend::FrameArena;
+using vn::graphics::backend::FrameCompiler;
+using vn::graphics::backend::FrameFacts;
+using vn::graphics::backend::FrameRecorder;
+using vn::graphics::backend::FrameTimeline;
+using vn::graphics::backend::FrameToken;
+using vn::graphics::backend::Observe;
+using vn::graphics::backend::PassId;
+using vn::graphics::backend::RepairReason;
+using vn::graphics::backend::RetirementQueue;
+using vn::graphics::backend::Rgba8;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::StreamKey;
+using vn::graphics::backend::StreamKind;
+using vn::graphics::backend::TargetAction;
+using vn::graphics::backend::TargetDesc;
+using vn::graphics::backend::TargetFacts;
+using vn::graphics::backend::TargetShape;
+using vn::graphics::backend::VariantPool;
 
 namespace
 {
@@ -467,7 +467,7 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
     }
     EXPECT_TRUE(target->written()) << "the bootstrapping pass was recorded: the target holds something";
     {
-        const vn::vsg::core::PixelProbe probe = target->probe();
+        const vn::graphics::backend::PixelProbe probe = target->probe();
         ASSERT_TRUE(probe.valid());
         EXPECT_EQ(probe.width(), 8);
         EXPECT_EQ(probe.height(), 4);
@@ -491,7 +491,7 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
     EXPECT_EQ(target->height(), 12U);
     EXPECT_EQ(target->generation(), 1U);
     {
-        const vn::vsg::core::PixelProbe probe = target->probe();
+        const vn::graphics::backend::PixelProbe probe = target->probe();
         ASSERT_TRUE(probe.valid());
         EXPECT_EQ(probe.width(), 16) << "the probe follows the extent the DRIVE's plan asked for";
         EXPECT_EQ(probe.height(), 12);
@@ -530,7 +530,7 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
     EXPECT_TRUE(target->hasDepth());
     EXPECT_EQ(target->generation(), 2U);
     {
-        const vn::vsg::core::PixelProbe probe = target->probe();
+        const vn::graphics::backend::PixelProbe probe = target->probe();
         ASSERT_TRUE(probe.valid());
         const Rgba8 expected{ quantise(kFirst[0]), quantise(kFirst[1]), quantise(kFirst[2]), 255U };
         const Rgba8 sampled = probe.pixel(8, 6);
@@ -538,7 +538,7 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
         EXPECT_TRUE(probe.wholeImageMatches(sampled));
     }
     {
-        const vn::vsg::core::PixelProbe extra = target->probe(1U);
+        const vn::graphics::backend::PixelProbe extra = target->probe(1U);
         ASSERT_TRUE(extra.valid()) << "the rebuilt shape has a second colour attachment, and it is readable";
         EXPECT_EQ(extra.width(), 16);
         EXPECT_EQ(extra.pixel(8, 6).a, 0U) << "an extra colour attachment clears to transparent black";
@@ -622,7 +622,7 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
             // The LEASE, stated the way the target itself reports it: without this the executor cannot know
             // that one target's framebuffer names the other's depth image - and its ordering rule has nothing
             // to order by (measured while writing this phase: the borrower was applied first and refused).
-            const vn::vsg::core::DepthPlan depth = target.depth();
+            const vn::graphics::backend::DepthPlan depth = target.depth();
             entry.depth.has_depth                = depth.has_depth;
             entry.depth.borrowed                 = depth.borrowed;
             entry.depth.source                   = depth.source;
@@ -705,7 +705,7 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
     ++counters.frames;
 
     const auto expects_clear = [](const OffscreenTarget& target, float value, const char* which) {
-        const vn::vsg::core::PixelProbe probe = target.probe();
+        const vn::graphics::backend::PixelProbe probe = target.probe();
         ASSERT_TRUE(probe.valid()) << which;
         EXPECT_EQ(probe.width(), 16) << which;
         EXPECT_EQ(probe.height(), 12) << which;
@@ -1204,8 +1204,8 @@ TEST(ExecutorTest, ATargetThatDidNotFollowItsDescriptionIsNamedInTheReport)
     fixture.recorder.endFrame();
     const CompiledFrame& frame = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ lying });
 
-    vn::vsg::core::FrameTimeline   timeline;
-    vn::vsg::core::RetirementQueue queue(3U);
+    vn::graphics::backend::FrameTimeline   timeline;
+    vn::graphics::backend::RetirementQueue queue(3U);
     const VsgExecutor::TargetApplications applied = fixture.executor.applyTargetPlans(frame, lying, timeline, queue);
     EXPECT_EQ(applied.refused, 1U) << "a lender with a borrower does not rebuild because a plan says so";
     EXPECT_EQ(applied.resized + applied.rebuilt + applied.failed, 0U);

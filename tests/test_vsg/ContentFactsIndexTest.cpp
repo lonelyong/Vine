@@ -26,7 +26,7 @@
 #include <span>
 #include <vector>
 
-#include <vine/vsg/api/ContentFacts.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
 
 using vn::vsg::ChannelFacts;
 using vn::vsg::ContentFacts;
@@ -40,9 +40,9 @@ using vn::vsg::orderMaterialRows;
 using vn::vsg::orderProgramRows;
 using vn::vsg::ProgramFacts;
 using vn::vsg::ProgramVariant;
-using vn::vsg::core::DrawKind;
-using vn::vsg::core::ProgramRef;
-using vn::vsg::core::StreamKind;
+using vn::graphics::backend::DrawKind;
+using vn::graphics::backend::ProgramRef;
+using vn::graphics::backend::StreamKind;
 
 namespace
 {

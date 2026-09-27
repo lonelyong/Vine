@@ -10,9 +10,9 @@
 
 #include <gtest/gtest.h>
 
-#include <vine/vsg/core/Diagnostics.hpp>
+#include <vine/graphics/ReportOnce.hpp>
 
-using vn::vsg::core::ReportOnce;
+using vn::graphics::ReportOnce;
 
 /**
  * @brief The first call of an episode reports; the rest of it does not.

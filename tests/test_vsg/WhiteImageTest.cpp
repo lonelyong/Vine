@@ -18,7 +18,7 @@
 #include <vsg/state/Image.h>
 #include <vsg/state/Sampler.h>
 
-#include <vine/vsg/api/WhiteImage.hpp>
+#include <vine/vsg/internal/WhiteImage.hpp>
 
 using vn::vsg::WhiteImage;
 

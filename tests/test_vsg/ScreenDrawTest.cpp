@@ -47,17 +47,17 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-#include <vine/vsg/VsgVulkanEntryPoints.hpp>
-#include <vine/vsg/api/BlockDescriptors.hpp>
-#include <vine/vsg/api/BlockStorage.hpp>
-#include <vine/vsg/api/ContentDraw.hpp>
-#include <vine/vsg/api/ContentPipeline.hpp>
-#include <vine/vsg/api/ContentSources.hpp>
-#include <vine/vsg/api/Device.hpp>
-#include <vine/vsg/api/OffscreenTarget.hpp>
-#include <vine/vsg/api/StreamUploads.hpp>
-#include <vine/vsg/core/PixelProbe.hpp>
-#include <vine/vsg/core/Streams.hpp>
+#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/vsg/internal/BlockDescriptors.hpp>
+#include <vine/vsg/internal/BlockStorage.hpp>
+#include <vine/vsg/internal/ContentDraw.hpp>
+#include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/vsg/internal/ContentSources.hpp>
+#include <vine/vsg/internal/Device.hpp>
+#include <vine/vsg/internal/OffscreenTarget.hpp>
+#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/graphics/backend/PixelProbe.hpp>
+#include <vine/graphics/backend/Streams.hpp>
 
 using vn::graphics::RenderTarget;
 using vn::vsg::BlockDescriptors;
@@ -70,13 +70,13 @@ using vn::vsg::OffscreenTarget;
 using vn::vsg::ProgramFacts;
 using vn::vsg::StreamUploads;
 using vn::vsg::ViewportRect;
-using vn::vsg::core::DrawKind;
-using vn::vsg::core::PixelProbe;
-using vn::vsg::core::Rgba8;
-using vn::vsg::core::StateRegistry;
-using vn::vsg::core::StreamKey;
-using vn::vsg::core::StreamKind;
-using vn::vsg::core::VariantPool;
+using vn::graphics::backend::DrawKind;
+using vn::graphics::backend::PixelProbe;
+using vn::graphics::backend::Rgba8;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::StreamKey;
+using vn::graphics::backend::StreamKind;
+using vn::graphics::backend::VariantPool;
 
 namespace
 {

@@ -24,8 +24,8 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-#include <vine/vsg/api/ContentFacts.hpp>
-#include <vine/vsg/api/ContentSources.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/vsg/internal/ContentSources.hpp>
 
 using vn::graphics::Material;
 using vn::graphics::ShaderProgram;

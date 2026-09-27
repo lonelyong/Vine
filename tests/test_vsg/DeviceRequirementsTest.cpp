@@ -19,7 +19,7 @@
 
 #include <cstdint>
 
-#include <vine/vsg/VsgBackendUtility.hpp>
+#include <vine/vsg/support/VsgBackendUtility.hpp>
 
 using vn::vsg::detail::kRequiredVulkanVersion;
 using vn::vsg::detail::supportsRequiredVulkanVersion;

@@ -85,25 +85,33 @@ STD_HEADERS = frozenset((
 INCLUDE = re.compile(r'^#include\s*([<"])([^>"]+)[>"]\s*$')
 DEFAULT_PATHS = ("src", "tests", "tools")
 SKIP_PARTS = ("build/", "_deps/", "/vsg_selftest/")
-# The rewritten backend's core layer must stay API-agnostic (see .ai/design/vsg-reimplementation.md
-# §2.3): it may include the graphics SDK and the standard library, but nothing from the render API's own
-# headers and nothing from the plugin's own upper layer. A prose rule ("only the executor touches vsg")
-# decays the moment it is inconvenient; a directory plus this check is what makes it hold.
-CORE_LAYER_DIRS = ("/vine/vsg/core/", "/gfx_backend_vsg/src/core/")
-# Allowed inside the core: its own headers, and the project's global header (the namespace/export
-# macros - the coding guidelines make that one the first include of any file).
-CORE_LAYER_ALLOWED_PREFIXES = ("vine/vsg/core/", "vine/vsg/vsg_global.hpp")
+# The backend half of graphics (`vine/graphics/backend`) must stay API-agnostic (see
+# .ai/design/graphics-layering.md): it may include the host half of graphics and the standard library,
+# but nothing from a render API's own headers and nothing from a backend. It used to live inside
+# gfx_backend_vsg, which is what made it unreachable for a second backend. A prose rule ("only the
+# executor touches vsg") decays the moment it is inconvenient; a directory plus this check is what
+# makes it hold.
+BACKEND_HALF_DIRS = ("/graphics/src/backend/", "/vine/graphics/backend/")
+# Allowed inside it: its own headers plus the project's global header (the namespace macros - the
+# coding guidelines make that one the first include of any file). Allowing only `vine/graphics/backend/`
+# is ALSO what forbids the reverse direction: a `vsg/...` or `vine/vsg/...` include here is a finding,
+# so the backend half can never grow back into one particular backend again.
+BACKEND_HALF_ALLOWED_PREFIXES = ("vine/graphics/backend/",)
+# Who may include the backend half: a backend plugin, the backend half itself, and the backend's own
+# test suite. Everything else - the SDK's host half, appfw, app plugins, other test suites - may not:
+# the half is a backend's tooling, and a host renders through the host half only.
+BACKEND_HALF_AUDIENCE = ("/graphics/src/backend/", "/vine/graphics/backend/", "/gfx_backend_", "/test_vsg/")
 
 
-def is_core_layer(path):
-    """Return whether @p path belongs to the backend's API-agnostic core layer."""
+def is_backend_half(path):
+    """Return whether @p path belongs to the backend half (the API-agnostic half of graphics)."""
     text = str(path).replace("\\", "/")
-    return any(marker in text for marker in CORE_LAYER_DIRS)
+    return any(marker in text for marker in BACKEND_HALF_DIRS)
 
 
-def core_layer_findings(path, lines):
-    """Return the findings that keep the core layer free of the render API and of the layer above it."""
-    if not is_core_layer(path):
+def backend_half_findings(path, lines):
+    """Return the findings that keep the backend half free of the render API and of the layer above it."""
+    if not is_backend_half(path):
         return []
 
     findings = []
@@ -113,10 +121,30 @@ def core_layer_findings(path, lines):
             continue
         header = match.group(2)
         if header.startswith("vsg/"):
-            findings.append((number, f"core layer includes the render API ({header}): {line.strip()}"))
-        elif header.startswith("vine/vsg/") and not header.startswith(CORE_LAYER_ALLOWED_PREFIXES):
-            findings.append((number, f"core layer includes the layer above it ({header}): {line.strip()}"))
+            findings.append((number, f"the backend half includes the render API ({header}): {line.strip()}"))
+        elif header.startswith("vine/vsg/") and not header.startswith(BACKEND_HALF_ALLOWED_PREFIXES):
+            findings.append((number, f"the backend half includes the layer above it ({header}): {line.strip()}"))
     return findings
+
+def host_audience_findings(path, lines):
+    """Return the findings that keep the backend half out of every host's include list.
+
+    `vine/graphics/backend/` is a backend's business (see .ai/design/graphics-layering.md): a host
+    renders through the SDK's host half, so reaching into the backend half is a layering error even
+    though it compiles - and, unchecked, the two halves would drift back into one.
+    """
+    text = str(path).replace("\\", "/")
+    if any(marker in text for marker in BACKEND_HALF_AUDIENCE):
+        return []
+
+    findings = []
+    for number, line in enumerate(lines, start=1):
+        match = INCLUDE.match(line)
+        if match and match.group(2).startswith("vine/graphics/backend/"):
+            findings.append(
+                (number, f"host layer includes the backend half ({match.group(2)}): {line.strip()}"))
+    return findings
+
 
 def group_of(quote, header):
     """Return the include group of one header, or None when it is not grouped."""
@@ -158,7 +186,8 @@ def check_file(path):
             findings.append((number, f"duplicated (also on line {seen[text]}): {text}"))
         else:
             seen[text] = number
-    findings.extend(core_layer_findings(path, lines))
+    findings.extend(backend_half_findings(path, lines))
+    findings.extend(host_audience_findings(path, lines))
     return findings
 
 

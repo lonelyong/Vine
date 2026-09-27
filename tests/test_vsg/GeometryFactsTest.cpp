@@ -28,8 +28,8 @@
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Geometry.hpp>
 
-#include <vine/vsg/api/ContentFacts.hpp>
-#include <vine/vsg/api/GeometryFacts.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/vsg/internal/GeometryFacts.hpp>
 
 using vn::graphics::Geometry;
 using vn::vsg::buildGeometryFacts;
@@ -37,7 +37,7 @@ using vn::vsg::channelsMatchLayout;
 using vn::vsg::ChannelFacts;
 using vn::vsg::FactMiss;
 using vn::vsg::GeometryFacts;
-using vn::vsg::core::StreamKind;
+using vn::graphics::backend::StreamKind;
 
 namespace
 {

@@ -25,8 +25,10 @@ SPEC = re.compile(r"%[-+ #0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?(?:hh|h|ll|l|z|j|t|L)?[
 PLACEHOLDER = re.compile(r"\{[^}]*\}")
 MACROS = ("VN_LOGI", "VN_LOGW", "VN_LOGE", "VN_LOGD")
 DEFAULT_GLOBS = (
-    "src/plugins/gfx_backend_vsg/src/*.cpp",
-    "src/plugins/gfx_backend_vsg/vsg_selftest/*.cpp",
+    # `**` because the plugin's sources live in layers (`src/{shell,internal,support}`): the flat
+    # `src/*.cpp` this used to be went from 7 files to 0 the moment they moved, and the script still
+    # reported "0 suspicious call(s)" - which is why a pattern matching nothing is a finding below.
+    "src/plugins/gfx_backend_vsg/src/**/*.cpp",
 )
 
 
@@ -127,14 +129,25 @@ def check(path):
 
 
 def main(argv):
+    root = pathlib.Path(__file__).resolve().parent.parent
+    findings = []
     if argv:
         paths = [pathlib.Path(arg) for arg in argv]
     else:
-        root = pathlib.Path(__file__).resolve().parent.parent
-        paths = [path for pattern in DEFAULT_GLOBS for path in sorted(root.glob(pattern))]
+        paths = []
+        for pattern in DEFAULT_GLOBS:
+            matched = sorted(root.glob(pattern))
+            if not matched:
+                findings.append(f"{pattern}: matches no file - the check would silently cover nothing")
+            paths.extend(matched)
+        paths = sorted(set(paths))
     suspicious = sum(check(path) for path in paths)
-    print(f"--- {suspicious} suspicious call(s) in {len(paths)} file(s)")
-    return 1 if suspicious else 0
+    for finding in findings:
+        print(finding)
+    total = suspicious + len(findings)
+    extra = f", {len(findings)} discovery finding(s)" if findings else ""
+    print(f"--- {suspicious} suspicious call(s) in {len(paths)} file(s){extra}")
+    return 1 if total else 0
 
 
 if __name__ == "__main__":

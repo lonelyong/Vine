@@ -23,16 +23,16 @@
 
 #include <vine/graphics/RenderTarget.hpp>
 
-#include <vine/vsg/api/DeviceProbe.hpp>
-#include <vine/vsg/api/OffscreenTarget.hpp>
-#include <vine/vsg/api/Session.hpp>
-#include <vine/vsg/api/SessionContent.hpp>
-#include <vine/vsg/api/VsgExecutor.hpp>
-#include <vine/vsg/core/Diagnostics.hpp>
-#include <vine/vsg/core/FrameCompiler.hpp>
-#include <vine/vsg/core/FrameRecorder.hpp>
-#include <vine/vsg/core/Observe.hpp>
-#include <vine/vsg/core/SlotProbe.hpp>
+#include <vine/vsg/internal/DeviceProbe.hpp>
+#include <vine/vsg/internal/OffscreenTarget.hpp>
+#include <vine/vsg/internal/Session.hpp>
+#include <vine/vsg/internal/SessionContent.hpp>
+#include <vine/vsg/internal/VsgExecutor.hpp>
+#include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/graphics/backend/Observe.hpp>
+#include <vine/graphics/backend/SlotProbe.hpp>
 
 #include "FailingStepNode.hpp"
 
@@ -42,21 +42,21 @@ using vn::vsg::VsgExecutor;
 using vn::vsg::api::Session;
 using vn::vsg::api::SessionOptions;
 using vn::vsg::api::probePhysicalDevices;
-using vn::vsg::core::ClearPolicy;
-using vn::vsg::core::CompiledFrame;
-using vn::vsg::core::Diagnostics;
-using vn::vsg::core::FrameArena;
-using vn::vsg::core::FrameCompiler;
-using vn::vsg::core::FrameFacts;
-using vn::vsg::core::FrameRecorder;
-using vn::vsg::core::FrameTimeline;
-using vn::vsg::core::FrameToken;
-using vn::vsg::core::Observe;
-using vn::vsg::core::RetirementQueue;
-using vn::vsg::core::Rgba8;
-using vn::vsg::core::TargetAction;
-using vn::vsg::core::TargetFacts;
-using vn::vsg::core::TargetShape;
+using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::CompiledFrame;
+using vn::graphics::Diagnostics;
+using vn::graphics::backend::FrameArena;
+using vn::graphics::backend::FrameCompiler;
+using vn::graphics::backend::FrameFacts;
+using vn::graphics::backend::FrameRecorder;
+using vn::graphics::backend::FrameTimeline;
+using vn::graphics::backend::FrameToken;
+using vn::graphics::backend::Observe;
+using vn::graphics::backend::RetirementQueue;
+using vn::graphics::backend::Rgba8;
+using vn::graphics::backend::TargetAction;
+using vn::graphics::backend::TargetFacts;
+using vn::graphics::backend::TargetShape;
 
 namespace
 {
@@ -112,7 +112,7 @@ TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEv
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    vn::vsg::core::Diagnostics diagnostics;
+    vn::graphics::Diagnostics diagnostics;
     diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[session-test] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
@@ -171,7 +171,7 @@ TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEv
 
     // The only thing a healthy session may report is the slot-count note, and only when the learned count
     // differs from the one this code was written against.
-    if (session.slots() == vn::vsg::core::kAssumedInFlightSlots)
+    if (session.slots() == vn::graphics::backend::kAssumedInFlightSlots)
     {
         EXPECT_TRUE(diagnostics.clean()) << "learning the expected count is not an event";
     }
@@ -296,10 +296,10 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
     {
         // The graphs that were SUBMITTED are the ones handed over per frame: a session that kept the first
         // frame's graph (or the one before it) would show the earlier clear here.
-        const vn::vsg::core::PixelProbe first = first_target->probe();
+        const vn::graphics::backend::PixelProbe first = first_target->probe();
         ASSERT_TRUE(first.valid());
         EXPECT_NEAR(first.pixel(4, 4).r, quantise(0.4F), 1) << "the third frame's graph is what ran last for it";
-        const vn::vsg::core::PixelProbe second = second_target->probe();
+        const vn::graphics::backend::PixelProbe second = second_target->probe();
         ASSERT_TRUE(second.valid());
         EXPECT_NEAR(second.pixel(4, 4).r, quantise(0.6F), 1);
     }
@@ -401,7 +401,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
         EXPECT_FALSE(target->instance().attachments_invalidated)
             << "a submission that happened leaves nothing to repair";
         {
-            const vn::vsg::core::PixelProbe probe = target->probe();
+            const vn::graphics::backend::PixelProbe probe = target->probe();
             ASSERT_TRUE(probe.valid());
             const Rgba8 sampled  = probe.pixel(4, 4);
             const Rgba8 expected{ quantise(0.25F), quantise(0.5F), quantise(0.75F), 255U };
@@ -534,7 +534,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     ASSERT_EQ(third->passes.size(), 2U);
     bool offscreen_bootstraps = false;
     bool window_bootstraps    = false;
-    for (const vn::vsg::core::CompiledPass& pass : third->passes)
+    for (const vn::graphics::backend::CompiledPass& pass : third->passes)
     {
         if (third->targets[pass.target_index].target == target.get())
         {
@@ -564,7 +564,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     EXPECT_EQ(diagnostics.total(), failures_before + 1U)
         << "the lost frame was the one event, and it was reported exactly once";
     {
-        const vn::vsg::core::PixelProbe probe = target->probe();
+        const vn::graphics::backend::PixelProbe probe = target->probe();
         ASSERT_TRUE(probe.valid());
         const Rgba8 sampled  = probe.pixel(4, 4);
         const Rgba8 expected{ quantise(0.25F), quantise(0.5F), quantise(0.75F), 255U };
@@ -805,7 +805,7 @@ TEST(SessionTest, ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver)
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    vn::vsg::core::Diagnostics diagnostics;
+    vn::graphics::Diagnostics diagnostics;
     Session                        session;
     ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
 
@@ -873,7 +873,7 @@ TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevi
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    vn::vsg::core::Diagnostics diagnostics;
+    vn::graphics::Diagnostics diagnostics;
     diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[session-test] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),

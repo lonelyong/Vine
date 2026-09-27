@@ -33,9 +33,9 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-#include <vine/vsg/api/ContentSources.hpp>
-#include <vine/vsg/api/LightBlock.hpp>
-#include <vine/vsg/api/ProgramAbi.hpp>
+#include <vine/vsg/internal/ContentSources.hpp>
+#include <vine/vsg/internal/LightBlock.hpp>
+#include <vine/vsg/internal/ProgramAbi.hpp>
 
 using vn::graphics::ShaderProgram;
 using vn::vsg::AbiBinding;

@@ -12,12 +12,12 @@
 #include <vine/graphics/Texture.hpp>
 #include <vine/intrusive_ptr.hpp>
 
-#include <vine/vsg/api/ContentFacts.hpp>
-#include <vine/vsg/api/ContentStore.hpp>
-#include <vine/vsg/api/ProgramVariant.hpp>
-#include <vine/vsg/core/FrameCompiler.hpp>
-#include <vine/vsg/core/FrameTimeline.hpp>
-#include <vine/vsg/core/RetirementQueue.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/vsg/internal/ContentStore.hpp>
+#include <vine/vsg/internal/ProgramVariant.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
 
 using vn::graphics::Geometry;
 using vn::graphics::Material;
@@ -34,14 +34,14 @@ using vn::vsg::findProgram;
 using vn::vsg::GeometryFacts;
 using vn::vsg::MaterialFacts;
 using vn::vsg::ProgramVariant;
-using vn::vsg::core::CompiledCommand;
-using vn::vsg::core::CompiledDraw;
-using vn::vsg::core::CompiledFrame;
-using vn::vsg::core::CompiledPass;
-using vn::vsg::core::DrawKind;
-using vn::vsg::core::FrameTimeline;
-using vn::vsg::core::ProgramRef;
-using vn::vsg::core::RetirementQueue;
+using vn::graphics::backend::CompiledCommand;
+using vn::graphics::backend::CompiledDraw;
+using vn::graphics::backend::CompiledFrame;
+using vn::graphics::backend::CompiledPass;
+using vn::graphics::backend::DrawKind;
+using vn::graphics::backend::FrameTimeline;
+using vn::graphics::backend::ProgramRef;
+using vn::graphics::backend::RetirementQueue;
 
 namespace
 {

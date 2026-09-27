@@ -17,8 +17,8 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/appfw/ConfigManager.hpp>
 #include <vine/appfw/Plugin.hpp>
-#include <vine/vsg/api/DeviceProbe.hpp>
-#include <vine/vsg/api/VsgBackend.hpp>
+#include <vine/vsg/internal/DeviceProbe.hpp>
+#include <vine/vsg/internal/VsgBackend.hpp>
 
 #include <vine/Buffer.hpp>
 

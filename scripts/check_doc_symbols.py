@@ -44,7 +44,7 @@ DOCS = [
     PLUGIN / "docs" / "data-flow.md",
 ]
 # Directories whose units the docs are expected to map. RECURSIVE: the rewrite moved the backend into
-# `src/api` + `src/core` (and `include/vine/vsg/api` + `core`), and a walk that stopped at the top level
+# `src/internal` + `src/core` (and `include/vine/vsg/internal` + `core`), and a walk that stopped at the top level
 # would enumerate the seven flat files that are left (19 units) while 143 exist - which is exactly how this
 # script silently stopped covering the new architecture (the finding that put the recursion here).
 MAPPED_DIRS = [PLUGIN / "src", PLUGIN / "include" / "vine" / "vsg"]

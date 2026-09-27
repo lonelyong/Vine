@@ -16,7 +16,7 @@
 #include <cstdint>
 #include <vector>
 
-#include <vine/vsg/api/ContentFacts.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
 
 using vn::vsg::blockFitsAbi;
 using vn::vsg::channelsMatchLayout;
@@ -30,9 +30,9 @@ using vn::vsg::GeometryFacts;
 using vn::vsg::MaterialFacts;
 using vn::vsg::ProgramFacts;
 using vn::vsg::ProgramVariant;
-using vn::vsg::core::DrawKind;
-using vn::vsg::core::ProgramRef;
-using vn::vsg::core::StreamKind;
+using vn::graphics::backend::DrawKind;
+using vn::graphics::backend::ProgramRef;
+using vn::graphics::backend::StreamKind;
 
 namespace
 {

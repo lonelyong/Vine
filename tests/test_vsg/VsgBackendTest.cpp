@@ -15,17 +15,17 @@
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
-#include <vine/vsg/api/BackendContent.hpp>
-#include <vine/vsg/api/ContentAssembly.hpp>
-#include <vine/vsg/api/ContentHalves.hpp>
-#include <vine/vsg/api/ContentSets.hpp>
-#include <vine/vsg/api/ContentStore.hpp>
-#include <vine/vsg/api/DeviceProbe.hpp>
-#include <vine/vsg/api/HostTargets.hpp>
-#include <vine/vsg/api/MaterialImages.hpp>
-#include <vine/vsg/api/VsgBackend.hpp>
-#include <vine/vsg/api/WindowTarget.hpp>
-#include <vine/vsg/core/FrameCompiler.hpp>
+#include <vine/vsg/internal/BackendContent.hpp>
+#include <vine/vsg/internal/ContentAssembly.hpp>
+#include <vine/vsg/internal/ContentHalves.hpp>
+#include <vine/vsg/internal/ContentSets.hpp>
+#include <vine/vsg/internal/ContentStore.hpp>
+#include <vine/vsg/internal/DeviceProbe.hpp>
+#include <vine/vsg/internal/HostTargets.hpp>
+#include <vine/vsg/internal/MaterialImages.hpp>
+#include <vine/vsg/internal/VsgBackend.hpp>
+#include <vine/vsg/internal/WindowTarget.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Camera.hpp>
@@ -56,13 +56,13 @@ using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::vsg::ContentAssembly;
 using vn::vsg::ContentStore;
-using vn::vsg::core::TargetFacts;
-using vn::vsg::core::depthPlan;
+using vn::graphics::backend::TargetFacts;
+using vn::graphics::backend::depthPlan;
 using vn::vsg::BlockStorage;
 using vn::vsg::HostTargets;
 using vn::vsg::PassRegistry;
 using vn::vsg::VsgBackend;
-using vn::vsg::core::VariantPool;
+using vn::graphics::backend::VariantPool;
 using vn::vsg::WindowTarget;
 using vn::vsg::api::probePhysicalDevices;
 using vn::vsg::detail::BackendContentAccess;
@@ -265,7 +265,7 @@ struct EditCostCounters
 /// @param pool     The facade's compiled-pipeline pool.
 /// @return The counters as they are now.
 EditCostCounters readEditCosts(const ContentStore& store, ContentAssembly& assembly,
-                               const vn::vsg::core::VariantPool& pool)
+                               const vn::graphics::backend::VariantPool& pool)
 {
     EditCostCounters counters;
     counters.builds  = store.builds();
@@ -440,6 +440,81 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
 }
 
 #if !defined(_WIN32)
+
+TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameCounters)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+    }
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    ASSERT_TRUE(backend->initialize());
+
+    // An EMPTY frame still answers: the counters exist, and they describe a frame that recorded nothing.
+    // (A backend that kept none would answer false - that distinction is what the bool is for.)
+    backend->beginFrame();
+    backend->endFrame();
+    backend->swapBuffers();
+
+    vn::graphics::FrameCounters counters;
+    ASSERT_TRUE(backend->frameCounters(counters)) << "this backend keeps its own frame counters";
+    EXPECT_EQ(counters.passes, 0U);
+    EXPECT_EQ(counters.draws, 0U);
+    EXPECT_EQ(counters.invalid_schedules, 0U);
+
+    // A DRAWN frame: the numbers a host reads here ARE the backend's own instrumentation (the same ones a
+    // phase table gates on), not a second count taken from outside.
+    const TriangleFixture                         fixture = makeTriangle();
+    const vn::intrusive_ptr<vn::graphics::Camera> camera  = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+
+    backend->beginFrame();
+    backend->beginPass(pass.get());
+    backend->setPassOrder(0);
+    backend->setRenderTarget(nullptr);
+    backend->setClearPolicy(vn::graphics::ClearPolicy{ vn::Color(0, 64, 0, 255), true });
+    backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
+    backend->render(fixture.commands, camera.get());
+    backend->endPass();
+    backend->endFrame();
+    backend->swapBuffers();
+
+    ASSERT_TRUE(backend->frameCounters(counters));
+    EXPECT_EQ(counters.passes, 1U) << "one pass scope ran";
+    EXPECT_EQ(counters.draws, 1U) << "and it recorded one draw";
+    EXPECT_EQ(counters.invalid_schedules, 0U) << "nothing was cyclic";
+
+    // The retention numbers are reachable the same way, and they agree with the backend's own accessor.
+    vn::graphics::RetentionStats stats;
+    ASSERT_TRUE(backend->retentionStats(stats));
+    EXPECT_EQ(stats.device_waits, backend->deviceWaits())
+        << "the counter the host reads is the one the backend counted";
+    EXPECT_EQ(stats.device_waits, 0U) << "the frame path never idles the device";
+
+    // The frame clock, as a host can see it: SUBMITTED is not COMPLETED, and the difference is what is
+    // still in flight. The proof of completion is this backend's own (the command slot was recycled), so
+    // the host reads the session's watermarks rather than assuming a lag.
+    vn::graphics::FrameProgress progress;
+    ASSERT_TRUE(backend->frameProgress(progress)) << "this backend keeps its own frame clock";
+    EXPECT_LE(progress.completed, progress.submitted) << "completion never runs ahead of submission";
+    EXPECT_EQ(progress.inFlight(), progress.submitted - progress.completed);
+
+    // One more frame, drawn this time: it reaches the queue, so the submitted watermark moves by one.
+    backend->beginFrame();
+    backend->beginPass(pass.get());
+    backend->setPassOrder(0);
+    backend->setRenderTarget(nullptr);
+    backend->render(fixture.commands, camera.get());
+    backend->endPass();
+    backend->endFrame();
+    backend->swapBuffers();
+
+    const std::uint64_t submitted_before = progress.submitted;
+    ASSERT_TRUE(backend->frameProgress(progress));
+    EXPECT_EQ(progress.submitted, submitted_before + 1U) << "a drawn frame is handed to the queue";
+    EXPECT_LE(progress.completed, progress.submitted);
+}
 
 TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
 {
@@ -672,7 +747,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     // 5. The pass identity is this layer's bookkeeping: the SDK's releasePass() forgets it (nothing retained
     // is keyed by a pass yet), and a re-announced object is a NEW pass - the plan's numbers are never
     // re-issued, because what they keyed may still be remembered elsewhere (see api/PassRegistry).
-    const vn::vsg::core::PassId first_id = registry.adopt(pass.get());
+    const vn::graphics::backend::PassId first_id = registry.adopt(pass.get());
     backend->releasePass(pass.get());
     EXPECT_FALSE(registry.contains(pass.get()));
     EXPECT_EQ(registry.live(), 0U);
@@ -1395,12 +1470,12 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
     // was built with, and core::depthPlan answers "sampleable" - so a pass that declares the map as an input
     // is offered its depth (see the facade's offer loop). Before this slice the row could not exist at all:
     // the description was refused before anything was built, and the app's lighting pass lost its input.
-    vn::vsg::core::TargetFacts row;
+    vn::graphics::backend::TargetFacts row;
     targets.facts(*shadow_entry, row);
     EXPECT_TRUE(row.depth.has_depth);
     EXPECT_FALSE(row.depth.borrowed);
     EXPECT_TRUE(row.depth.promotion) << "the built target's own policy answers";
-    EXPECT_TRUE(vn::vsg::core::depthPlan(row.depth).sampleable) << "and the plan promises the depth to a shader";
+    EXPECT_TRUE(vn::graphics::backend::depthPlan(row.depth).sampleable) << "and the plan promises the depth to a shader";
 
     // A frame that presents with it held is served silently - the target is part of the frame's world now,
     // and nothing about it needs saying.
@@ -1869,7 +1944,7 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     // B6'S SCALE, MADE A RECIPE. The registry (§6) keeps B6 gated on "a host with a MULTI-CHANNEL mesh
     // reports upload bandwidth", and the mechanism is right there in the code: the stream key of EVERY
     // channel - and of the index stream - carries the GEOMETRY's announced revision (see
-    // src/api/GeometryFacts.cpp), so one `bumpRevision()` moves the identity of all of them and the next
+    // src/internal/GeometryFacts.cpp), so one `bumpRevision()` moves the identity of all of them and the next
     // frame re-sends every byte of the mesh even when the host touched ONE channel. This recipe is the
     // cost curve that gate would be judged against: a 512x512 grid with the four canonical channels
     // (positions, normals, colour, texcoords) and indices, one channel edited per frame - and, for
@@ -1960,7 +2035,7 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     // The index buffer: the two screen-covering triangles FIRST - they are ALL the draw takes (the
     // six-index slice below) - then the full grid triangulation. The frame's raster cost therefore
     // vanishes, while the index STREAM stays the WHOLE buffer: the key normalises to it (see
-    // src/api/GeometryFacts.cpp), which is the part of B6's story this recipe must keep.
+    // src/internal/GeometryFacts.cpp), which is the part of B6's story this recipe must keep.
     const std::vector<float> grid_vertex_data = gridPositions(kSide);
     std::vector<std::uint32_t> index_data{ 0U, static_cast<std::uint32_t>(kSide - 1),
                                            static_cast<std::uint32_t>(kSide * kSide - 1), 0U,
@@ -2886,11 +2961,11 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
 
     BlockStorage* const before = BackendContentAccess::storage(*backend);
     ASSERT_NE(before, nullptr);
-    ASSERT_EQ(before->layout().views.slabs, vn::vsg::core::perFrameCopies(vn::vsg::core::kAssumedInFlightSlots))
+    ASSERT_EQ(before->layout().views.slabs, vn::graphics::backend::perFrameCopies(vn::graphics::backend::kAssumedInFlightSlots))
         << "the session starts on the assumed count; the floor is what create() built";
     const std::uint64_t before_capacity = before->capacityBytes();
 
-    BackendContentAccess::assumeInFlightSlots(*backend, vn::vsg::core::kAssumedInFlightSlots + 1U);
+    BackendContentAccess::assumeInFlightSlots(*backend, vn::graphics::backend::kAssumedInFlightSlots + 1U);
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
@@ -2913,7 +2988,7 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
 
     BlockStorage* const after = BackendContentAccess::storage(*backend);
     ASSERT_NE(after, before) << "replaced, not resized - the same swap growth makes";
-    const std::uint32_t deeper = vn::vsg::core::perFrameCopies(vn::vsg::core::kAssumedInFlightSlots + 1U);
+    const std::uint32_t deeper = vn::graphics::backend::perFrameCopies(vn::graphics::backend::kAssumedInFlightSlots + 1U);
     EXPECT_EQ(after->layout().views.slabs, deeper);
     EXPECT_EQ(after->layout().draws.slabs, deeper) << "every per-frame shape is re-laid out together";
     EXPECT_EQ(after->layout().materials.copies, deeper);

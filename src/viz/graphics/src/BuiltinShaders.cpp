@@ -68,7 +68,7 @@ intrusive_ptr<ShaderProgram> makeProgram(const char8_t* name, std::u8string_view
  * declares the material (0), the optional diffuse map (1) and the lights (2), so the pair takes 3 / 4
  * of the same set. The ORDER is fixed rather than "appended in declaration order" so that a shader
  * text can name its bindings at all: a slot number that depends on how many other things a pipeline
- * happens to have cannot be written down (see .ai/design/render-pipeline.md §9).
+ * happens to have cannot be written down (see .ai/design/graphics-pipeline.md §9).
  *
  * @param set_index     Descriptor set both bindings live in.
  * @param map_binding   Binding the map takes (the block follows it).
@@ -299,7 +299,7 @@ intrusive_ptr<ShaderProgram> makeDeferredLightingProgram(bool with_shadow)
     // edit to the .frag that moves or renames a marker fails a test instead of silently
     // producing a program whose shadow terms are somebody else's code.
     //
-    // The binding numbers are the shadow ABI (see .ai/design/render-pipeline.md §9): a fullscreen
+    // The binding numbers are the shadow ABI (see .ai/design/graphics-pipeline.md §9): a fullscreen
     // program's source occupies 0..color_count-1, its source's depth takes color_count when that
     // one is sampleable, and the shadow map and its block follow at color_count+1 and +2 — 5 and
     // 6 for the canonical 4-colour G-buffer this program is written against.

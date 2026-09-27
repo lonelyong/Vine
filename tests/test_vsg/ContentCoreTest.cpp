@@ -24,17 +24,17 @@
 #include <cstdint>
 #include <vector>
 
-#include <vine/vsg/core/FrameRing.hpp>
-#include <vine/vsg/core/MaterialArena.hpp>
-#include <vine/vsg/core/Streams.hpp>
+#include <vine/graphics/backend/FrameRing.hpp>
+#include <vine/graphics/backend/MaterialArena.hpp>
+#include <vine/graphics/backend/Streams.hpp>
 
-using vn::vsg::core::FrameRing;
-using vn::vsg::core::kAssumedInFlightSlots;
-using vn::vsg::core::MaterialArena;
-using vn::vsg::core::perFrameCopies;
-using vn::vsg::core::SharedStreams;
-using vn::vsg::core::StreamKey;
-using vn::vsg::core::StreamKind;
+using vn::graphics::backend::FrameRing;
+using vn::graphics::backend::kAssumedInFlightSlots;
+using vn::graphics::backend::MaterialArena;
+using vn::graphics::backend::perFrameCopies;
+using vn::graphics::backend::SharedStreams;
+using vn::graphics::backend::StreamKey;
+using vn::graphics::backend::StreamKind;
 
 namespace
 {

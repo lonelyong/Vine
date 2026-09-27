@@ -39,20 +39,20 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-#include <vine/vsg/api/ContentPipeline.hpp>
-#include <vine/vsg/api/ContentSources.hpp>
-#include <vine/vsg/api/ProgramAbi.hpp>
-#include <vine/vsg/core/StateRegistry.hpp>
-#include <vine/vsg/core/VariantPool.hpp>
+#include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/vsg/internal/ContentSources.hpp>
+#include <vine/vsg/internal/ProgramAbi.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 
 using vn::vsg::buildScreenProgramFacts;
 using vn::vsg::ContentPipeline;
 using vn::vsg::FactMiss;
 using vn::vsg::ProgramFacts;
-using vn::vsg::core::DynamicState;
-using vn::vsg::core::PipelineKey;
-using vn::vsg::core::StateRegistry;
-using vn::vsg::core::VariantPool;
+using vn::graphics::backend::DynamicState;
+using vn::graphics::backend::PipelineKey;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::VariantPool;
 
 namespace
 {
@@ -178,7 +178,7 @@ PipelineKey screenKey(std::uint64_t revision, std::uint32_t sampled_colors = 1U)
 {
     static int program = 0;
     PipelineKey key;
-    key.kind                     = vn::vsg::core::DrawKind::Screen;
+    key.kind                     = vn::graphics::backend::DrawKind::Screen;
     key.program                  = &program;
     key.revision                 = revision;
     key.compatibility.samples    = 1U;
@@ -332,7 +332,7 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     // sampler2D`, no set qualifier). A layer that mixed the two would compile a pipeline the draw cannot bind.
     auto layer = screenLayer(screenShaders());
     ASSERT_NE(layer, nullptr) << "the full-screen pair must compile";
-    EXPECT_EQ(layer->kind(), vn::vsg::core::DrawKind::Screen);
+    EXPECT_EQ(layer->kind(), vn::graphics::backend::DrawKind::Screen);
 
     // A CUBE declaration is refused HERE, unlike a content layer's: the full-screen ABI binds the SOURCE's
     // attachments and depth - 2D views, one per binding - so a text declaring a cube asks for an image this
@@ -382,7 +382,7 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     // layer cannot build a pipeline for a descriptor ABI its draws do not bind.
     const std::uint64_t failures_before = layer->failures();
     PipelineKey         content_kind    = screenKey(1U);
-    content_kind.kind                   = vn::vsg::core::DrawKind::Content;
+    content_kind.kind                   = vn::graphics::backend::DrawKind::Content;
     const auto refused                  = layer->acquire(pool, content_kind);
     EXPECT_EQ(refused.pipeline, nullptr);
     EXPECT_EQ(layer->failures(), failures_before + 1U) << "a silently compiled wrong-ABI pipeline is the failure";

@@ -24,12 +24,12 @@
 #include <vsg/core/Data.h>
 
 #include <vine/graphics/ShaderAbi.hpp>
-#include <vine/vsg/api/StreamUploads.hpp>
-#include <vine/vsg/core/Streams.hpp>
+#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/graphics/backend/Streams.hpp>
 
 using vn::vsg::StreamUploads;
-using vn::vsg::core::StreamKey;
-using vn::vsg::core::StreamKind;
+using vn::graphics::backend::StreamKey;
+using vn::graphics::backend::StreamKind;
 
 namespace
 {

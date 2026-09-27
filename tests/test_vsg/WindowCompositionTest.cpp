@@ -62,30 +62,30 @@
 
 #include <vsg/state/ImageView.h>
 
-#include <vine/vsg/VsgVulkanEntryPoints.hpp>
-#include <vine/vsg/api/BlockDescriptors.hpp>
-#include <vine/vsg/api/BlockStorage.hpp>
-#include <vine/vsg/api/ContentDraw.hpp>
-#include <vine/vsg/api/ContentFacts.hpp>
-#include <vine/vsg/api/ContentPass.hpp>
-#include <vine/vsg/api/ContentPipeline.hpp>
-#include <vine/vsg/api/ContentSources.hpp>
-#include <vine/vsg/api/DeviceProbe.hpp>
-#include <vine/vsg/api/GeometryFacts.hpp>
-#include <vine/vsg/api/OffscreenTarget.hpp>
-#include <vine/vsg/api/Session.hpp>
-#include <vine/vsg/api/SessionContent.hpp>
-#include <vine/vsg/api/StreamUploads.hpp>
-#include <vine/vsg/api/ViewBlock.hpp>
-#include <vine/vsg/api/VsgExecutor.hpp>
-#include <vine/vsg/api/WindowTarget.hpp>
-#include <vine/vsg/core/Diagnostics.hpp>
-#include <vine/vsg/core/Observe.hpp>
-#include <vine/vsg/core/FrameCompiler.hpp>
-#include <vine/vsg/core/FrameRecorder.hpp>
-#include <vine/vsg/core/StateRegistry.hpp>
-#include <vine/vsg/core/Streams.hpp>
-#include <vine/vsg/core/VariantPool.hpp>
+#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/vsg/internal/BlockDescriptors.hpp>
+#include <vine/vsg/internal/BlockStorage.hpp>
+#include <vine/vsg/internal/ContentDraw.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/vsg/internal/ContentPass.hpp>
+#include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/vsg/internal/ContentSources.hpp>
+#include <vine/vsg/internal/DeviceProbe.hpp>
+#include <vine/vsg/internal/GeometryFacts.hpp>
+#include <vine/vsg/internal/OffscreenTarget.hpp>
+#include <vine/vsg/internal/Session.hpp>
+#include <vine/vsg/internal/SessionContent.hpp>
+#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/vsg/internal/ViewBlock.hpp>
+#include <vine/vsg/internal/VsgExecutor.hpp>
+#include <vine/vsg/internal/WindowTarget.hpp>
+#include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/backend/Observe.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/Streams.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 
 using vn::graphics::Geometry;
 using vn::graphics::Material;
@@ -118,18 +118,18 @@ using vn::vsg::ProgramFacts;
 using vn::vsg::StreamUploads;
 using vn::vsg::VsgExecutor;
 using vn::vsg::WindowTarget;
-using vn::vsg::core::ClearPolicy;
-using vn::vsg::core::CompiledFrame;
-using vn::vsg::core::Diagnostics;
-using vn::vsg::core::DrawKind;
-using vn::vsg::core::FrameArena;
-using vn::vsg::core::FrameCompiler;
-using vn::vsg::core::FrameFacts;
-using vn::vsg::core::FrameRecorder;
-using vn::vsg::core::StateRegistry;
-using vn::vsg::core::TargetFacts;
-using vn::vsg::core::TargetShape;
-using vn::vsg::core::VariantPool;
+using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::CompiledFrame;
+using vn::graphics::Diagnostics;
+using vn::graphics::backend::DrawKind;
+using vn::graphics::backend::FrameArena;
+using vn::graphics::backend::FrameCompiler;
+using vn::graphics::backend::FrameFacts;
+using vn::graphics::backend::FrameRecorder;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::TargetFacts;
+using vn::graphics::backend::TargetShape;
+using vn::graphics::backend::VariantPool;
 
 namespace
 {
@@ -366,7 +366,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // FOUR passes: the picture (cleared), the off-screen scene pass whose ENGINE shape equals the window's, the
     // window's scene pass (the FIRST window pass - it owns the clear) and the window's overlay pass.
     FrameArena    arena{ 64 * 1024 };
-    vn::vsg::core::Observe observe;
+    vn::graphics::backend::Observe observe;
     FrameRecorder recorder{ arena, diagnostics, observe };
     FrameCompiler compiler{ arena, diagnostics, observe };
 
@@ -423,7 +423,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
 
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 4U) << "a pass that only clears is still a pass (the picture's producer)";
-    const auto pass_of = [&frame](std::uint32_t id) -> const vn::vsg::core::CompiledPass* {
+    const auto pass_of = [&frame](std::uint32_t id) -> const vn::graphics::backend::CompiledPass* {
         for (const auto& pass : frame.passes) {
             if (pass.pass == id) {
                 return &pass;
@@ -442,9 +442,9 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // the registry answers "is this variant already bound?" and a pipeline bound in another pass is not.
     storage->beginFrame();
 
-    const auto state_pass = [&](std::uint32_t id) -> const vn::vsg::core::CompiledPass& {
+    const auto state_pass = [&](std::uint32_t id) -> const vn::graphics::backend::CompiledPass& {
         const auto* found = pass_of(id);
-        static const vn::vsg::core::CompiledPass empty{};
+        static const vn::graphics::backend::CompiledPass empty{};
         return found != nullptr ? *found : empty;
     };
     const auto view_block_for = [&](std::uint32_t pass_id, std::uint32_t width, std::uint32_t height) {
@@ -529,9 +529,9 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
                                     PassContent{ 3U, window_node }, PassContent{ 4U, overlay_node } };
     ASSERT_TRUE(executor.record(frame, command_graph, packets));
     EXPECT_EQ(executor.skipped(), 0U);
-    const std::span<const vn::vsg::core::PassId> placed = executor.recorded();
-    EXPECT_EQ(std::vector<vn::vsg::core::PassId>(placed.begin(), placed.end()),
-              std::vector<vn::vsg::core::PassId>({ 1U, 2U, 3U, 4U }))
+    const std::span<const vn::graphics::backend::PassId> placed = executor.recorded();
+    EXPECT_EQ(std::vector<vn::graphics::backend::PassId>(placed.begin(), placed.end()),
+              std::vector<vn::graphics::backend::PassId>({ 1U, 2U, 3U, 4U }))
         << "the executor places the passes in the plan's order, not in the order they were announced";
 
     ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));

@@ -35,16 +35,16 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
-#include <vine/vsg/api/ContentPass.hpp>
+#include <vine/vsg/internal/ContentPass.hpp>
 
-#include <vine/vsg/core/AllocationGate.hpp>
-#include <vine/vsg/core/ClearPlan.hpp>
-#include <vine/vsg/core/Diagnostics.hpp>
-#include <vine/vsg/core/FrameArena.hpp>
-#include <vine/vsg/core/FrameCompiler.hpp>
-#include <vine/vsg/core/FrameRecorder.hpp>
-#include <vine/vsg/core/PhaseTable.hpp>
-#include <vine/vsg/core/PixelProbe.hpp>
+#include <vine/graphics/backend/AllocationGate.hpp>
+#include <vine/graphics/backend/ClearPlan.hpp>
+#include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/backend/FrameArena.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/graphics/backend/PhaseTable.hpp>
+#include <vine/graphics/backend/PixelProbe.hpp>
 
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::DiagnosticSeverity;
@@ -52,20 +52,20 @@ using vn::graphics::RenderCommand;
 using vn::graphics::RenderDiagnostic;
 using vn::graphics::RenderTarget;
 using vn::graphics::Viewport;
-using vn::vsg::core::AllocationGate;
-using vn::vsg::core::ClearPolicy;
-using vn::vsg::core::Diagnostics;
-using vn::vsg::core::FrameArena;
-using vn::vsg::core::FrameCompiler;
-using vn::vsg::core::FrameRecorder;
-using vn::vsg::core::FrameToken;
-using vn::vsg::core::Observe;
-using vn::vsg::core::Phase;
-using vn::vsg::core::PhaseTable;
-using vn::vsg::core::PixelProbe;
-using vn::vsg::core::ReportOnce;
-using vn::vsg::core::Rgba8;
-using vn::vsg::core::TargetShape;
+using vn::graphics::backend::AllocationGate;
+using vn::graphics::backend::ClearPolicy;
+using vn::graphics::Diagnostics;
+using vn::graphics::backend::FrameArena;
+using vn::graphics::backend::FrameCompiler;
+using vn::graphics::backend::FrameRecorder;
+using vn::graphics::backend::FrameToken;
+using vn::graphics::backend::Observe;
+using vn::graphics::backend::Phase;
+using vn::graphics::backend::PhaseTable;
+using vn::graphics::backend::PixelProbe;
+using vn::graphics::ReportOnce;
+using vn::graphics::backend::Rgba8;
+using vn::graphics::backend::TargetShape;
 
 namespace
 {
@@ -504,8 +504,8 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
     ClearPolicy  policy;
     policy.color         = true;
     const std::uint64_t plan = measure(kCalls, [&]() -> std::uint64_t {
-        const vn::vsg::core::PassClearPlan built =
-            vn::vsg::core::planClearValues(shape, policy, true, false);
+        const vn::graphics::backend::PassClearPlan built =
+            vn::graphics::backend::planClearValues(shape, policy, true, false);
         return built.colors.size();
     });
     EXPECT_LE(plan, 2u * static_cast<std::uint64_t>(kCalls))
@@ -547,18 +547,18 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
     vn::intrusive_ptr<RenderTarget> first(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> second(new RenderTarget());
 
-    vn::vsg::core::TargetFacts first_facts;
+    vn::graphics::backend::TargetFacts first_facts;
     first_facts.target        = first.get();
     first_facts.wanted.width  = 64;
     first_facts.wanted.height = 64;
     first_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     first_facts.current.desc  = first_facts.wanted;
     first_facts.current.built = true;
-    vn::vsg::core::TargetFacts second_facts = first_facts;
+    vn::graphics::backend::TargetFacts second_facts = first_facts;
     second_facts.target                       = second.get();
 
     const std::vector<RenderCommand> one_draw{ RenderCommand{} };
-    const std::vector<vn::vsg::core::TargetFacts> one_target{ first_facts };
+    const std::vector<vn::graphics::backend::TargetFacts> one_target{ first_facts };
 
     // One frame, recorded the way the API layer records it: one pass, two content draws into the same target.
     // `swapBuffers()` is the contract's last call of a frame - it closes the books the next `beginFrame()`
@@ -575,8 +575,8 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
         EXPECT_TRUE(recorder.endFrame());
         EXPECT_TRUE(recorder.swapBuffers());
     };
-    const auto compile_frame = [&](const std::vector<vn::vsg::core::TargetFacts>& facts) {
-        return &compiler.compile(recorder.description(), vn::vsg::core::FrameFacts{ facts });
+    const auto compile_frame = [&](const std::vector<vn::graphics::backend::TargetFacts>& facts) {
+        return &compiler.compile(recorder.description(), vn::graphics::backend::FrameFacts{ facts });
     };
 
     // Warm-up: the plan path grows its own storage over the first frames (measured: the second compile
@@ -673,7 +673,7 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
         [](std::uint64_t before, std::uint64_t after) { return after == before + 1U; },
     });
 
-    const vn::vsg::core::PhaseTable::Report report = table.runAll();
+    const vn::graphics::backend::PhaseTable::Report report = table.runAll();
     for (const std::string& line : report.lines)
     {
         std::cout << line << '\n';  // the evidence line format, printed so a script can freeze it

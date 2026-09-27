@@ -22,12 +22,12 @@
 #include <cstdint>
 #include <vector>
 
-#include <vine/vsg/core/AllocationGate.hpp>
-#include <vine/vsg/core/FrameGraph.hpp>
+#include <vine/graphics/backend/AllocationGate.hpp>
+#include <vine/graphics/backend/FrameGraph.hpp>
 
-using vn::vsg::core::CollectedPass;
-using vn::vsg::core::FrameGraph;
-using vn::vsg::core::FrameSchedule;
+using vn::graphics::backend::CollectedPass;
+using vn::graphics::backend::FrameGraph;
+using vn::graphics::backend::FrameSchedule;
 
 namespace
 {
@@ -78,7 +78,7 @@ TEST(FrameGraphTest, RebuildingAndSchedulingAFrameAsksForNoMemory)
     //
     // The graph's own guard, next to the code: a frame with a real DEPENDENCY is the interesting case,
     // because an edge is what re-allocates when an adjacency row loses its capacity.
-    if (!vn::vsg::core::AllocationGate::countsAvailable())
+    if (!vn::graphics::backend::AllocationGate::countsAvailable())
     {
         GTEST_SKIP() << "this binary does not instrument the allocator";
     }
@@ -94,7 +94,7 @@ TEST(FrameGraphTest, RebuildingAndSchedulingAFrameAsksForNoMemory)
     };
     build();  // warm up: the first frame is allowed to grow the tables
 
-    vn::vsg::core::AllocationGate gate;
+    vn::graphics::backend::AllocationGate gate;
     gate.begin();
     build();
     // The byte delta end() reports is the other half of the gate; this phase asserts the count half (see the message

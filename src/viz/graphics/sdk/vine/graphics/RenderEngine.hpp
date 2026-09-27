@@ -12,7 +12,9 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "Diagnostics.hpp"
 #include "FrameContext.hpp"
+#include "FrameStats.hpp"
 #include "RenderDiagnostic.hpp"
 #include "BuiltinShaders.hpp"
 
@@ -73,59 +75,66 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * The engine keeps a reference to the backend for as long as it is set,
      * so the backend stays alive at least until the engine is destroyed or
      * a different backend (or nullptr) is set. Call before initialize().
-     * Setting the same backend instance again is a no-op. The installed
-     * diagnostic sink (setDiagnosticSink) is applied to the new backend too.
+     * Setting the same backend instance again is a no-op. The new backend is
+     * handed this engine's ONE diagnostic route (see Diagnostics.hpp), so a
+     * host's sink and its single diagnosticCount() cover the backend too.
      *
      * @param backend Backend used for drawing, or null to clear.
      */
     void setBackend(intrusive_ptr<RenderBackend> backend);
 
-    /** @brief Installs the sink that receives backend diagnostics.
+    /** @brief Installs the sink that receives diagnostics.
      *
      * The backend reports what it could not serve (rejected geometry, dropped
-     * channel, shader fallback, off-screen target it could not build) instead
-     * of degrading silently; this is the host's programmatic channel to it
-     * (log / overlay / telemetry). The sink is stored by the engine and
-     * applied to the current backend immediately and to any backend set
-     * later, so a host can install it before setBackend().
+     * channel, shader fallback, off-screen target it could not build) and the
+     * engine reports what it could not wire, both instead of degrading
+     * silently; this is the host's programmatic channel to them (log / overlay
+     * / telemetry). The sink lives in the engine's ONE route (see
+     * Diagnostics.hpp) and the engine hands that route to the backend it
+     * drives, so installing it covers both - and a sink installed before
+     * setBackend() is in place for the backend the moment it is set.
      *
-     * @param sink Callback invoked for every backend diagnostic, or empty.
+     * @param sink Callback invoked for every diagnostic, or empty.
      */
     void setDiagnosticSink(DiagnosticSink sink);
 
     /** @brief Gets the installed diagnostic sink (empty when unset). */
-    const DiagnosticSink& diagnosticSink() const { return diagnostic_sink_; }
+    const DiagnosticSink& diagnosticSink() const { return diagnostics_.sink(); }
 
-    /** @brief Gets how many diagnostics the current BACKEND reported.
+    /** @brief Gets how many diagnostics were reported through this engine's route.
      *
-     * Named for what it counts: the engine's own reports are counted by @ref engineDiagnosticCount, and
-     * an unqualified diagnosticCount() on this class read as "what the engine said" — the one thing it
-     * does not answer. A host that wants the total adds the two.
+     * ONE NUMBER, because there is one route: what the engine itself could not wire (a pass that
+     * declared an input nothing published this frame, and the like) and what the backend could not serve
+     * are counted in the same place. A host that used to add two counts reads this one.
      *
-     * 0 without a backend. Counted by the backend whether or not a sink is
-     * installed, so a host can gate on it without listening.
+     * Counted whether or not a sink is installed, so a host can gate on "did anything unexpected
+     * happen" without listening.
      *
-     * @return Number of diagnostics the backend reported (0 when no backend is set).
+     * @return Total number of diagnostics reported through this engine.
      */
-    std::size_t backendDiagnosticCount() const;
+    [[nodiscard]] std::size_t diagnosticCount() const noexcept;
 
-    /** @brief Gets how many diagnostics the ENGINE itself reported.
+    /** @brief Gets how many diagnostics of @p category were reported through this engine's route.
      *
-     * The backend reports what it could not draw; this counts what the ENGINE
-     * could not wire — currently a pass that declared an input no pass
-     * published this frame, which means the pass draws nothing (the wiring is
-     * something the backend cannot see, and it used to be silent). Reported to
-     * the same host sink as the backend's diagnostics.
-     *
-     * @return Number of diagnostics the engine reported.
+     * @param category Category to count.
+     * @return Number of reported diagnostics in that category.
      */
-    [[nodiscard]] std::size_t engineDiagnosticCount() const noexcept;
+    [[nodiscard]] std::size_t diagnosticCount(DiagnosticCategory category) const noexcept;
+
+    /** @brief Gets whether nothing at all was reported through this engine's route.
+     *
+     * The gate a phase asserts on: a steady run that is expected to be uneventful asks this instead of
+     * reading the log.
+     *
+     * @return true when no diagnostic was reported.
+     */
+    [[nodiscard]] bool diagnosticsClean() const noexcept;
 
     /** @brief Reports one problem the engine, or a helper acting for it, found.
      *
-     * The engine owns the host's sink, so the message reaches the host whether or
+     * The engine owns the route, so the message reaches the host whether or
      * not a backend is set (a wiring problem exists before any backend draws).
-     * Counted in engineDiagnosticCount(). Public because the engine's own builders
+     * Counted in diagnosticCount(). Public because the engine's own builders
      * report through it too — RenderPipelineBuilder tells the host that the content
      * it was given asks for shadows (Light::castShadow) while no shadow pass is
      * built yet, so the picture is unshadowed.
@@ -168,6 +177,35 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @return The current frame context.
      */
     const FrameContext& frameContext() const;
+
+    /** @brief Gets the counters the backend kept for the frame that just ended.
+     *
+     * The backend is the only place that knows how the frame went, so a host (a HUD, a tool, a test)
+     * asks through the engine rather than reaching for the backend object (see
+     * RenderBackend::frameCounters for what the numbers are).
+     *
+     * @param counters Receives the counters when the backend keeps them.
+     * @return true when @p counters was written; false when no backend is set or it keeps none.
+     */
+    bool frameCounters(FrameCounters& counters) const;
+
+    /** @brief Gets the backend's cumulative retention numbers (objects released, device idles).
+     *
+     * @param stats Receives the numbers when the backend keeps them.
+     * @return true when @p stats was written; false when no backend is set or it keeps none.
+     */
+    bool retentionStats(RetentionStats& stats) const;
+
+    /** @brief Gets where the backend's frame clock is (submitted vs provably complete).
+     *
+     * The question a host asks before it decides to skip work or to read a frame back: how far behind
+     * the GPU is. The backend owns the proof of completion, so the engine only forwards (see
+     * RenderBackend::frameProgress).
+     *
+     * @param progress Receives the watermarks when the backend keeps them.
+     * @return true when @p progress was written; false when no backend is set or it keeps no clock.
+     */
+    bool frameProgress(FrameProgress& progress) const;
 
     /** @brief Returns whether a pass currently presents @p camera to the
      * window.
@@ -546,9 +584,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     // ---- Fields ----
     intrusive_ptr<RenderBackend>        backend_;
-    // Stored by the engine (not only forwarded) so a backend set later still
-    // receives the host's diagnostics.
-    DiagnosticSink                      diagnostic_sink_;
+    // The engine's ONE diagnostic route (see Diagnostics.hpp): the host's sink lives inside it, and the
+    // backend the engine drives reports through this very instance (setDiagnosticsRoute), which is what
+    // makes diagnosticCount() the whole truth instead of half of it.
+    Diagnostics                         diagnostics_;
     // The shading a drawable that names no program gets. A named program, not an enum: set once in
     // the constructor to forwardProgram(), replaced by setDefaultContentProgram(), and null means "decline".
     intrusive_ptr<const ShaderProgram>  default_content_program_;
@@ -616,9 +655,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         /// it hands over a real target, or when unpublish() withdraws the name.
         std::set<String> unpublishable_host_names_;
 
-        /// Count of diagnostics this engine reported itself (see
-        /// engineDiagnosticCount).
-        std::size_t engine_diagnostic_count_ = 0;        /// Passes already reported for an unresolved declared input, so a producer
+        /// Passes already reported for an unresolved declared input, so a producer
         /// that stays absent does not produce one message per frame. A pass whose
         /// input resolves again is dropped from the set, so a later breakage is
         /// reported again (pruned with the pass list).

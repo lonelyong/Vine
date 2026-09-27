@@ -35,17 +35,17 @@
 #include <vsg/core/Array.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/vsg/VsgVulkanEntryPoints.hpp>
-#include <vine/vsg/api/BlockDescriptors.hpp>
-#include <vine/vsg/api/BlockStorage.hpp>
-#include <vine/vsg/api/ContentDraw.hpp>
-#include <vine/vsg/api/ContentPipeline.hpp>
-#include <vine/vsg/api/Device.hpp>
-#include <vine/vsg/api/OffscreenTarget.hpp>
-#include <vine/vsg/api/StreamUploads.hpp>
-#include <vine/vsg/core/StateRegistry.hpp>
-#include <vine/vsg/core/Streams.hpp>
-#include <vine/vsg/core/VariantPool.hpp>
+#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/vsg/internal/BlockDescriptors.hpp>
+#include <vine/vsg/internal/BlockStorage.hpp>
+#include <vine/vsg/internal/ContentDraw.hpp>
+#include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/vsg/internal/Device.hpp>
+#include <vine/vsg/internal/OffscreenTarget.hpp>
+#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/Streams.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
@@ -54,12 +54,12 @@ using vn::vsg::ContentPipeline;
 using vn::vsg::OffscreenTarget;
 using vn::vsg::StreamUploads;
 using vn::vsg::ViewportRect;
-using vn::vsg::core::PixelProbe;
-using vn::vsg::core::PipelineKey;
-using vn::vsg::core::StateRegistry;
-using vn::vsg::core::StreamKey;
-using vn::vsg::core::StreamKind;
-using vn::vsg::core::VariantPool;
+using vn::graphics::backend::PixelProbe;
+using vn::graphics::backend::PipelineKey;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::StreamKey;
+using vn::graphics::backend::StreamKind;
+using vn::graphics::backend::VariantPool;
 
 namespace
 {
@@ -288,13 +288,13 @@ Pixel pixelAt(float x_ndc, float y_ndc)
              static_cast<int>((y_ndc + 1.0F) * 0.5F * static_cast<float>(kSize)) };
 }
 
-bool isGreen(const vn::vsg::core::Rgba8& pixel)
+bool isGreen(const vn::graphics::backend::Rgba8& pixel)
 {
     return pixel.g > 200U && pixel.r < 60U && pixel.b < 60U;
 }
 
 /// @brief Whether @p pixel is the target's clear colour (0, 0, 0.25) within a UNORM step.
-bool isClear(const vn::vsg::core::Rgba8& pixel)
+bool isClear(const vn::graphics::backend::Rgba8& pixel)
 {
     const auto near = [](std::uint8_t value, int expected) {
         return std::abs(static_cast<int>(value) - expected) <= 2;

@@ -116,7 +116,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * framing the content with a single orthographic light camera
      * (directionalShadowMatrix), whose view-projection is stated on the map, and
      * which the pass that shades with it declares as an INPUT so the backend
-     * binds it (see .ai/design/render-pipeline.md §9). Deferred declares it on
+     * binds it (see .ai/design/graphics-pipeline.md §9). Deferred declares it on
      * the fullscreen lighting pass, forward on the content pass itself.
      *
      * What a pipeline still cannot do is shade with a map it was given no

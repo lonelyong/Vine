@@ -100,7 +100,7 @@ engine.setBackend(backend);
 - `RenderTarget` —— 若干彩色附件 + 可选深度：`attachColor(fmt)` / `attachDepth(fmt)` / `setSize(w,h)`，
   以及 `shareDepth(source)`（借用别人的深度）与 `setDepthPromotion(bool)`（深度是否变成可采样）。
 - `RenderPipelineBuilder` —— 配方层：`build(const PipelineOptions&)`（结构选择只有一个：
-  `ShadingPath::Forward | Deferred`，其余是效果与选项，见 `.ai/design/render-pipeline.md`）、
+  `ShadingPath::Forward | Deferred`，其余是效果与选项，见 `.ai/design/graphics-pipeline.md`）、
   `addOffscreenToScreen(...)`（离屏 + PiP），并暴露延迟所需的公有件（`defaultGbufferTarget()`、
   `defaultGbufferGeometryProgram()`、`defaultDeferredLightProgram()`）。它装配出来的就是**你手写也会写的
   那些对象**，返回值 `Pipeline` 句柄持有它们（`windowPass()`、`offscreenTarget()`、`resize(w,h)`），
@@ -707,7 +707,7 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 没有可用阴影时程序一次都不采那张图。宿主自己的程序声明了 `shadow_map` 却没带上它时，会**按 drawable** 报一条
 `DiagnosticCategory::UnsupportedRequest`，而不是画出一张"没有阴影的阴影"。两个约定不同、且都写在 ABI 里：矩阵是
 **SDK 裁剪约定**（y 向上、z 0 近 → 1 远），纹理是**后端约定**（reverse-Z、near = 1 → far = 0、v = 0 是世界的"上"），
-着色器里各转一次。判据（三次像素断言 + 逐项变异）见 `.ai/design/render-pipeline.md` §8.2 / §8.3 / §9。内容着色侧
+着色器里各转一次。判据（三次像素断言 + 逐项变异）见 `.ai/design/graphics-pipeline.md` §8.2 / §8.3 / §9。内容着色侧
 **没有保留项**：程序就是唯一入口（见 §3），未实现的着色需要宿主自己写一个 `ShaderProgram`。
 
 ```bash
@@ -751,4 +751,4 @@ deferred、离屏、深度共享、overlay —— 并打印 `[selftest]` 证据�
 | 设计文档（渲染管线 / 状态 / 阴影 / 延迟 / overlay） | `.ai/design/*.md` |
 | 简明模块笔记（坑清单、实测结论、变异证据） | `.ai/memory/graphics.md` |
 | 可执行的契约 | `tests/test_graphics/`、`tests/test_vsg/` |
-| 后端自己的设备无关规则 | `src/plugins/gfx_backend_vsg/include/vine/vsg/VsgSceneRules.hpp` |
+| 后端自己的设备无关规则 | `src/plugins/gfx_backend_vsg/include/vine/vsg/support/VsgSceneRules.hpp` |

@@ -17,16 +17,16 @@
 #include <cstdio>
 #include <string>
 
-#include <vine/vsg/api/DeviceProbe.hpp>
-#include <vine/vsg/core/DeviceRequirements.hpp>
+#include <vine/vsg/internal/DeviceProbe.hpp>
+#include <vine/graphics/backend/DeviceRequirements.hpp>
 
 using vn::vsg::api::probePhysicalDevices;
-using vn::vsg::core::kDeviceFeatureCount;
-using vn::vsg::core::kDeviceExtensionCount;
-using vn::vsg::core::missingExtensionCount;
-using vn::vsg::core::missingFeatureCount;
-using vn::vsg::core::satisfiesRequirements;
-using vn::vsg::core::supportsRequiredVersion;
+using vn::graphics::backend::kDeviceFeatureCount;
+using vn::graphics::backend::kDeviceExtensionCount;
+using vn::graphics::backend::missingExtensionCount;
+using vn::graphics::backend::missingFeatureCount;
+using vn::graphics::backend::satisfiesRequirements;
+using vn::graphics::backend::supportsRequiredVersion;
 
 namespace
 {

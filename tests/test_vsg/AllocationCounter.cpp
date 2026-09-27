@@ -30,7 +30,7 @@
 #include <cstdlib>
 #include <new>
 
-#include <vine/vsg/core/AllocationGate.hpp>
+#include <vine/graphics/backend/AllocationGate.hpp>
 
 #if defined(_MSC_VER)
 #    include <malloc.h>
@@ -39,7 +39,7 @@
 namespace
 {
 
-using vn::vsg::core::AllocationGate;
+using vn::graphics::backend::AllocationGate;
 
 /// @brief Allocates @p bytes with an alignment the allocation functions must honour.
 ///

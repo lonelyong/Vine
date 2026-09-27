@@ -13,7 +13,7 @@
 
 #include <cstddef>
 
-#include <vine/vsg/api/PassRegistry.hpp>
+#include <vine/vsg/internal/PassRegistry.hpp>
 
 using vn::vsg::PassRegistry;
 

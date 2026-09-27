@@ -1,7 +1,6 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -13,6 +12,8 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "Diagnostics.hpp"
+#include "FrameStats.hpp"
 #include "RenderDiagnostic.hpp"
 #include "RenderPass.hpp"
 #include "ShaderProgram.hpp"
@@ -217,6 +218,59 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      */
     virtual bool supportsRenderTargets()
     {
+        return false;
+    }
+
+    /** @brief Gets the counters the backend kept for the frame that just ended.
+     *
+     * The backend is the only place that knows how a frame actually went (how many pass scopes ran,
+     * how many draws they issued, how many cyclic components were skipped), so the host reads ITS
+     * numbers instead of counting a second time from outside - and a gate can assert on the same
+     * numbers the backend's own evidence uses.
+     *
+     * Counters are PER FRAME: the answer describes the frame that just ended, never a running total.
+     *
+     * @param counters Receives the counters when the backend keeps them.
+     * @return true when @p counters was written; false when this backend keeps no counters (zeros
+     *         would be indistinguishable from an empty frame).
+     */
+    virtual bool frameCounters(FrameCounters& counters) const noexcept
+    {
+        (void)counters;
+        return false;
+    }
+
+    /** @brief Gets the backend's cumulative retention numbers.
+     *
+     * Unlike the frame counters these only ever grow: objects released so far, and counted device
+     * idles (the destructive paths - a session move, a shutdown - are the only places that may wait,
+     * so the number is what "the frame path never idles the device" is asserted with).
+     *
+     * @param stats Receives the numbers when the backend keeps them.
+     * @return true when @p stats was written; false when this backend keeps no retention numbers.
+     */
+    virtual bool retentionStats(RetentionStats& stats) const noexcept
+    {
+        (void)stats;
+        return false;
+    }
+
+    /** @brief Gets where the backend's frame clock is (see FrameProgress).
+     *
+     * SUBMITTED IS NOT COMPLETED: `submitted` counts frames this backend handed to the queue, and
+     * `completed` counts frames whose GPU work it can prove is done. A host asks this instead of
+     * guessing a lag from the frame rate - "the GPU is two frames behind" and "the GPU is done with
+     * everything I sent" are different states, and only the backend knows which one it is in.
+     *
+     * Counted whether or not a sink or a counter is installed. A backend that keeps no clock answers
+     * false; a host must not read that as "nothing in flight" (zeros would be a claim, not a silence).
+     *
+     * @param progress Receives the watermarks when the backend keeps them.
+     * @return true when @p progress was written; false when this backend keeps no frame clock.
+     */
+    virtual bool frameProgress(FrameProgress& progress) const noexcept
+    {
+        (void)progress;
         return false;
     }
 
@@ -654,6 +708,19 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
         return nullptr;
     }
 
+    /** @brief Installs the route every diagnostic this backend reports goes through.
+     *
+     * The engine owns the one route (see Diagnostics.hpp) and hands it to the backend it drives, so the
+     * engine's own reports and this backend's reports are counted and forwarded in the same place: a
+     * host that asks the engine "did anything unexpected happen" gets one answer, not half of one.
+     *
+     * A backend driven without an engine (a test, a tool) is never handed one and answers every accessor
+     * below from the private route it was born with - so such a user sees no change at all.
+     *
+     * @param route Route to report through; borrowed, and must outlive this backend's reports.
+     */
+    virtual void setDiagnosticsRoute(Diagnostics& route);
+
     /** @brief Installs the sink that receives backend diagnostics.
      *
      * A backend reports what it could not serve (a rejected geometry, a
@@ -668,26 +735,33 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      * reported, so it must only record and return — calling back into the
      * backend from a sink is unsupported.
      *
+     * The sink belongs to the ACTIVE route, not to this object: once an engine
+     * has installed its route, this call replaces the host's sink for the whole
+     * engine. A host that drives an engine installs it there instead
+     * (RenderEngine::setDiagnosticSink).
+     *
      * @param sink Callback invoked for every diagnostic, or empty to clear.
      */
     virtual void setDiagnosticSink(DiagnosticSink sink);
 
     /** @brief Gets the installed diagnostic sink (empty when unset).
      *
-     * @return The sink a previous setDiagnosticSink() installed.
+     * @return The sink a previous setDiagnosticSink() installed on the active route.
      */
-    const DiagnosticSink& diagnosticSink() const { return diagnostic_sink_; }
+    const DiagnosticSink& diagnosticSink() const;
 
-    /** @brief Gets how many diagnostics this backend has reported.
+    /** @brief Gets how many diagnostics were reported through the active route.
      *
      * Counted whether or not a sink is installed, so a host can gate on
-     * "did anything unexpected happen" without listening.
+     * "did anything unexpected happen" without listening. Once an engine has
+     * installed its route this is the engine's count as well: there is one
+     * route, so there is one number.
      *
-     * @return Total number of reported diagnostics.
+     * @return Total number of diagnostics reported through the active route.
      */
-    std::size_t diagnosticCount() const { return diagnostic_count_; }
+    std::size_t diagnosticCount() const;
 
-    /** @brief Gets how many diagnostics of @p category were reported.
+    /** @brief Gets how many diagnostics of @p category were reported through the active route.
      *
      * @param category Category to count.
      * @return Number of reported diagnostics in that category.
@@ -695,6 +769,16 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
     std::size_t diagnosticCount(DiagnosticCategory category) const;
 
   protected:
+    /** @brief Gets the route this backend reports through (its own, or the engine's).
+     *
+     * For a backend that builds sub-objects which report on their own (a session, an executor): they
+     * must be handed this route rather than a second one, or their reports would be counted elsewhere
+     * and their sentences would never reach the host's sink.
+     *
+     * @return The active diagnostic route.
+     */
+    [[nodiscard]] Diagnostics& diagnosticsRoute() noexcept { return *route_; }
+
     /** @brief Reports one diagnostic to the installed sink and counts it.
      *
      * Backends call this instead of failing silently. The backend keeps its
@@ -711,11 +795,10 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
     RenderBackend() = default;
 
   private:
-    DiagnosticSink diagnostic_sink_;
-    std::size_t    diagnostic_count_ = 0;
-    // Per-category counts, indexed by DiagnosticCategory (sized by its Count).
-    std::array<std::size_t, static_cast<std::size_t>(DiagnosticCategory::Count)>
-        diagnostic_counts_{};
+    /// The route used when no engine handed one over (see setDiagnosticsRoute).
+    Diagnostics  owned_route_;
+    /// The active route: this backend's own until an engine installs its.
+    Diagnostics* route_ = &owned_route_;
 };
 
 VN_GRAPHICS_NS_END

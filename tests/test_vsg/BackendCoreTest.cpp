@@ -25,38 +25,38 @@
 #include <string>
 #include <vector>
 
-#include <vine/vsg/core/DepthProbe.hpp>
-#include <vine/vsg/core/Readback.hpp>
-#include <vine/vsg/core/DeviceRequirements.hpp>
-#include <vine/vsg/core/FrameArena.hpp>
-#include <vine/vsg/core/FrameTimeline.hpp>
-#include <vine/vsg/core/Keys.hpp>
-#include <vine/vsg/core/Observe.hpp>
-#include <vine/vsg/core/PhaseTable.hpp>
-#include <vine/vsg/core/Protocol.hpp>
-#include <vine/vsg/core/RetirementQueue.hpp>
-#include <vine/vsg/core/TargetPlan.hpp>
+#include <vine/graphics/backend/DepthProbe.hpp>
+#include <vine/graphics/backend/Readback.hpp>
+#include <vine/graphics/backend/DeviceRequirements.hpp>
+#include <vine/graphics/backend/FrameArena.hpp>
+#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/backend/Observe.hpp>
+#include <vine/graphics/backend/PhaseTable.hpp>
+#include <vine/graphics/backend/Protocol.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/backend/TargetPlan.hpp>
 
 using vn::graphics::RenderTarget;
-using vn::vsg::core::CallKind;
-using vn::vsg::core::Decision;
-using vn::vsg::core::FrameArena;
-using vn::vsg::core::FrameTimeline;
-using vn::vsg::core::LoadOpVariantKey;
-using vn::vsg::core::Observe;
-using vn::vsg::core::Phase;
-using vn::vsg::core::PhaseTable;
-using vn::vsg::core::PipelineKey;
-using vn::vsg::core::Protocol;
-using vn::vsg::core::RepairReason;
-using vn::vsg::core::RetirementQueue;
-using vn::vsg::core::ReadbackRequest;
-using vn::vsg::core::ReadbackState;
-using vn::vsg::core::TargetAction;
-using vn::vsg::core::TargetDecision;
-using vn::vsg::core::TargetDesc;
-using vn::vsg::core::TargetInstance;
-using vn::vsg::core::Verdict;
+using vn::graphics::backend::CallKind;
+using vn::graphics::backend::Decision;
+using vn::graphics::backend::FrameArena;
+using vn::graphics::backend::FrameTimeline;
+using vn::graphics::backend::LoadOpVariantKey;
+using vn::graphics::backend::Observe;
+using vn::graphics::backend::Phase;
+using vn::graphics::backend::PhaseTable;
+using vn::graphics::backend::PipelineKey;
+using vn::graphics::backend::Protocol;
+using vn::graphics::backend::RepairReason;
+using vn::graphics::backend::RetirementQueue;
+using vn::graphics::backend::ReadbackRequest;
+using vn::graphics::backend::ReadbackState;
+using vn::graphics::backend::TargetAction;
+using vn::graphics::backend::TargetDecision;
+using vn::graphics::backend::TargetDesc;
+using vn::graphics::backend::TargetInstance;
+using vn::graphics::backend::Verdict;
 
 namespace
 {
@@ -212,17 +212,17 @@ struct TargetCase
 };
 
 /// @brief The compatible shape most cases share: one RGBA8 colour attachment, no depth.
-vn::vsg::core::TargetShape singleColorShape()
+vn::graphics::backend::TargetShape singleColorShape()
 {
-    vn::vsg::core::TargetShape shape;
+    vn::graphics::backend::TargetShape shape;
     shape.color_formats.push_back(vn::graphics::RenderTarget::ColorFormat::RGBA8);
     return shape;
 }
 
 /// @brief A shape with a depth attachment, used to move compatibility.
-vn::vsg::core::TargetShape colorAndDepthShape()
+vn::graphics::backend::TargetShape colorAndDepthShape()
 {
-    vn::vsg::core::TargetShape shape = singleColorShape();
+    vn::graphics::backend::TargetShape shape = singleColorShape();
     shape.depth_format                 = vn::graphics::RenderTarget::DepthFormat::D32;
     return shape;
 }
@@ -231,8 +231,8 @@ vn::vsg::core::TargetShape colorAndDepthShape()
 
 TEST(CoreTargetPlanTest, TheActionTableIsDecidedByShapeSizeAndBuildState)
 {
-    const vn::vsg::core::TargetShape single  = singleColorShape();
-    const vn::vsg::core::TargetShape with_d  = colorAndDepthShape();
+    const vn::graphics::backend::TargetShape single  = singleColorShape();
+    const vn::graphics::backend::TargetShape with_d  = colorAndDepthShape();
 
     TargetDesc built_at_512{512, 256, single};
     TargetDesc built_at_1024{1024, 256, single};
@@ -269,7 +269,7 @@ TEST(CoreTargetPlanTest, TheActionTableIsDecidedByShapeSizeAndBuildState)
         instance.built                   = test_case.built;
         instance.attachments_invalidated = test_case.invalidated;
 
-        const TargetDecision decision = vn::vsg::core::planTarget(instance, test_case.wanted);
+        const TargetDecision decision = vn::graphics::backend::planTarget(instance, test_case.wanted);
         EXPECT_EQ(static_cast<int>(decision.action), static_cast<int>(test_case.action)) << test_case.what;
         EXPECT_EQ(static_cast<int>(decision.reason), static_cast<int>(test_case.reason)) << test_case.what;
     }
@@ -283,19 +283,19 @@ TEST(CoreTargetPlanTest, AnUnusableExtentIsDistinguishableFromInvalidatedAttachm
     instance.desc  = TargetDesc{8, 8, singleColorShape()};
     instance.built = true;
 
-    EXPECT_EQ(static_cast<int>(vn::vsg::core::planTarget(instance, TargetDesc{0, 0, {}}).reason),
+    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(instance, TargetDesc{0, 0, {}}).reason),
               static_cast<int>(RepairReason::SizeUnknown));
 
     instance.attachments_invalidated = true;
-    EXPECT_EQ(static_cast<int>(vn::vsg::core::planTarget(instance, instance.desc).reason),
+    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(instance, instance.desc).reason),
               static_cast<int>(RepairReason::Bootstrap));
 }
 
 TEST(CoreTargetPlanTest, DepthPromotionBorrowingAndPreservationAreOneDecision)
 {
-    using vn::vsg::core::DepthFacts;
-    using vn::vsg::core::DepthPlan;
-    using vn::vsg::core::depthPlan;
+    using vn::graphics::backend::DepthFacts;
+    using vn::graphics::backend::DepthPlan;
+    using vn::graphics::backend::depthPlan;
 
     int lender = 0;
 
@@ -539,7 +539,7 @@ TEST(CoreKeysTest, AnExtentIsNotPartOfAPipelineKey)
     b.compatibility.samples       = large.shape.samples;
 
     EXPECT_TRUE(a == b);
-    EXPECT_EQ(static_cast<int>(vn::vsg::core::planTarget(TargetInstance{small, 1, true, false}, large).action),
+    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(TargetInstance{small, 1, true, false}, large).action),
               static_cast<int>(TargetAction::ResizeInPlace));
 }
 
@@ -559,13 +559,13 @@ TEST(CoreKeysTest, CompatibilityIsPartOfTheKeyWhileLoadOpVariantsAreNot)
     // the API's compatibility rule excludes load ops, which is why the bootstrap can swap one in.
     LoadOpVariantKey loaded;
     LoadOpVariantKey cleared;
-    cleared.color_load = vn::vsg::core::LoadOp::Clear;
+    cleared.color_load = vn::graphics::backend::LoadOp::Clear;
     EXPECT_FALSE(loaded == cleared);
 }
 
 TEST(CoreKeysTest, TheAuditTableNamesEveryKeyAndKeepsExtentsOutOfIdentity)
 {
-    const auto audit = vn::vsg::core::keyAuditTable();
+    const auto audit = vn::graphics::backend::keyAuditTable();
     ASSERT_EQ(audit.size(), 8u);
 
     const std::vector<std::string> expected_keys{
@@ -657,7 +657,7 @@ TEST(CorePhaseTableTest, PhasesPrintTheEvidenceFormatAndOnlyCloseWhenEverythingP
 
 TEST(CoreDeviceRequirementsTest, TheVersionFloorIgnoresThePatch)
 {
-    using namespace vn::vsg::core;
+    using namespace vn::graphics::backend;
 
     // Below the floor is refused - including a device whose patch is enormous, because the policy is
     // about major/minor capability and drivers report their patch freely.
@@ -672,7 +672,7 @@ TEST(CoreDeviceRequirementsTest, TheVersionFloorIgnoresThePatch)
 
 TEST(CoreDeviceRequirementsTest, EveryRequiredFeatureIsNamedAndCounted)
 {
-    using namespace vn::vsg::core;
+    using namespace vn::graphics::backend;
 
     DeviceFacts bare;
     bare.api_version = kRequiredApiVersion;
@@ -712,7 +712,7 @@ TEST(CoreDeviceRequirementsTest, EveryRequiredFeatureIsNamedAndCounted)
 
 TEST(CoreDeviceRequirementsTest, AFeatureOffMeansTheDeviceIsRefused)
 {
-    using namespace vn::vsg::core;
+    using namespace vn::graphics::backend;
 
     DeviceFacts facts;
     facts.api_version = makeApiVersion(1, 4);
@@ -754,7 +754,7 @@ TEST(CoreDeviceRequirementsTest, AFeatureOffMeansTheDeviceIsRefused)
 
 TEST(CoreDepthProbeTest, AnInvalidProbeAnswersNothingRatherThanZeroes)
 {
-    using namespace vn::vsg::core;
+    using namespace vn::graphics::backend;
 
     const DepthProbe empty;
     EXPECT_FALSE(empty.valid());
@@ -771,7 +771,7 @@ TEST(CoreDepthProbeTest, AnInvalidProbeAnswersNothingRatherThanZeroes)
 
 TEST(CoreDepthProbeTest, TheValuesAreRowMajorAndCountedWithinATolerance)
 {
-    using namespace vn::vsg::core;
+    using namespace vn::graphics::backend;
 
     std::vector<float> values(4U * 3U, 0.0F);
     values[1U * 4U + 2U] = 0.75F;  // row 1, column 2
@@ -792,9 +792,9 @@ TEST(CoreDepthProbeTest, TheValuesAreRowMajorAndCountedWithinATolerance)
 
 TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
 {
-    using vn::vsg::core::ReadbackKind;
-    using vn::vsg::core::ReadbackRefusal;
-    using vn::vsg::core::readbackOf;
+    using vn::graphics::backend::ReadbackKind;
+    using vn::graphics::backend::ReadbackRefusal;
+    using vn::graphics::backend::readbackOf;
 
     ReadbackState state;
     state.color_attachments = 2U;
@@ -830,9 +830,9 @@ TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
 
 TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
 {
-    using vn::vsg::core::ReadbackKind;
-    using vn::vsg::core::ReadbackRefusal;
-    using vn::vsg::core::readbackOf;
+    using vn::graphics::backend::ReadbackKind;
+    using vn::graphics::backend::ReadbackRefusal;
+    using vn::graphics::backend::readbackOf;
 
     ReadbackState state;
     state.color_attachments = 1U;
@@ -854,17 +854,17 @@ TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
     EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
               static_cast<int>(ReadbackRefusal::UnreadableFormat));
 
-    EXPECT_EQ(vn::vsg::core::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
-    EXPECT_EQ(vn::vsg::core::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
-    EXPECT_EQ(vn::vsg::core::refusalName(ReadbackRefusal::NotCaptured), "not-captured");
-    EXPECT_EQ(vn::vsg::core::refusalName(ReadbackRefusal::None), "none");
+    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
+    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
+    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::NotCaptured), "not-captured");
+    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::None), "none");
 }
 
 TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexel)
 {
-    using vn::vsg::core::colorReadbackOf;
-    using vn::vsg::core::depthReadbackOf;
-    using vn::vsg::core::ReadbackFormat;
+    using vn::graphics::backend::colorReadbackOf;
+    using vn::graphics::backend::depthReadbackOf;
+    using vn::graphics::backend::ReadbackFormat;
 
     // The colour half packs RGBA8 only: the probes are 8-bit probes, and a float attachment converted into one
     // would be a picture of something the GPU never held.
@@ -883,7 +883,7 @@ TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexe
 
 TEST(CoreReadbackTest, TheDepthDecodeIsTheFormatsOwnConversion)
 {
-    using vn::vsg::core::decodeDepth;
+    using vn::graphics::backend::decodeDepth;
 
     // D32 / D32F: the stored bits are the value.
     {

@@ -29,32 +29,32 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/vsg/core/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
 
 using vn::graphics::DepthMode;
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
-using vn::vsg::core::ClearPolicy;
-using vn::vsg::core::CompiledDraw;
-using vn::vsg::core::CompiledFrame;
-using vn::vsg::core::CompiledPass;
-using vn::vsg::core::CompiledShape;
-using vn::vsg::core::DepthFacts;
-using vn::vsg::core::Diagnostics;
-using vn::vsg::core::DrawKind;
-using vn::vsg::core::FrameArena;
-using vn::vsg::core::FrameCompiler;
-using vn::vsg::core::FrameFacts;
-using vn::vsg::core::FrameRecorder;
-using vn::vsg::core::FrameToken;
-using vn::vsg::core::Observe;
-using vn::vsg::core::RepairReason;
-using vn::vsg::core::statedShapeAgrees;
-using vn::vsg::core::TargetAction;
-using vn::vsg::core::TargetFacts;
-using vn::vsg::core::TargetShape;
+using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::CompiledDraw;
+using vn::graphics::backend::CompiledFrame;
+using vn::graphics::backend::CompiledPass;
+using vn::graphics::backend::CompiledShape;
+using vn::graphics::backend::DepthFacts;
+using vn::graphics::Diagnostics;
+using vn::graphics::backend::DrawKind;
+using vn::graphics::backend::FrameArena;
+using vn::graphics::backend::FrameCompiler;
+using vn::graphics::backend::FrameFacts;
+using vn::graphics::backend::FrameRecorder;
+using vn::graphics::backend::FrameToken;
+using vn::graphics::backend::Observe;
+using vn::graphics::backend::RepairReason;
+using vn::graphics::backend::statedShapeAgrees;
+using vn::graphics::backend::TargetAction;
+using vn::graphics::backend::TargetFacts;
+using vn::graphics::backend::TargetShape;
 
 namespace
 {
@@ -138,7 +138,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     r.recorder.setRenderTarget(source.get());
     // The producer pass announces a clear: "a pass that announced them and drew nothing" is still a pass (and a
     // pass with neither is not one - the plan drops it).
-    vn::vsg::core::ClearPolicy fill;
+    vn::graphics::backend::ClearPolicy fill;
     fill.color          = true;
     fill.color_value[0] = 0.25F;
     fill.color_value[3] = 1.0F;

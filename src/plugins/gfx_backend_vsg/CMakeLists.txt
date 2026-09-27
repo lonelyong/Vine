@@ -1,6 +1,6 @@
 # gfx_backend_vsg: VSG render backend delivered as an appfw plugin.
 #
-# The plugin is a MODULE DLL (vn_add_plugin). Its implementation is the rewritten backend under src/api
+# The plugin is a MODULE DLL (vn_add_plugin). Its implementation is the rewritten backend under src/internal
 # and src/core, plus the handful of flat translation units those share (the host window, the scene rules,
 # the vulkan entry points, the dynamic-state mapper and the backend utility layer - see the source list
 # in tests/test_vsg/CMakeLists.txt). When loaded by PluginManager, GfxBackendVsgPlugin::load() registers

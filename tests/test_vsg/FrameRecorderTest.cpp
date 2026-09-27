@@ -29,7 +29,7 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/vsg/core/FrameRecorder.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
 
 using vn::graphics::DepthMode;
 using vn::graphics::DiagnosticCategory;
@@ -37,13 +37,13 @@ using vn::graphics::Light;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
-using vn::vsg::core::ClearPolicy;
-using vn::vsg::core::Diagnostics;
-using vn::vsg::core::FrameArena;
-using vn::vsg::core::FrameDescription;
-using vn::vsg::core::FrameRecorder;
-using vn::vsg::core::FrameToken;
-using vn::vsg::core::Observe;
+using vn::graphics::backend::ClearPolicy;
+using vn::graphics::Diagnostics;
+using vn::graphics::backend::FrameArena;
+using vn::graphics::backend::FrameDescription;
+using vn::graphics::backend::FrameRecorder;
+using vn::graphics::backend::FrameToken;
+using vn::graphics::backend::Observe;
 
 namespace
 {
@@ -173,7 +173,7 @@ TEST(FrameRecorderTest, TheAnnouncedLightsAreCopiedNumbersNotBorrowedPointers)
 
     ASSERT_EQ(description.passes.size(), 1u);
     ASSERT_EQ(description.passes[0].draws.size(), 1u);
-    const std::span<const vn::vsg::core::LightRef> collected = description.passes[0].draws[0].lights;
+    const std::span<const vn::graphics::backend::LightRef> collected = description.passes[0].draws[0].lights;
     ASSERT_EQ(collected.size(), 1u);
     EXPECT_TRUE(collected[0].enabled);
     EXPECT_FLOAT_EQ(collected[0].intensity, 1.0F);  // the value at the call, not the later edit
@@ -204,7 +204,7 @@ TEST(FrameRecorderTest, OneViewportAndLightAnnouncementServesOneDrawingCall)
 
     const FrameDescription& description = r.seal();
     ASSERT_EQ(description.passes.size(), 1u);
-    const std::span<const vn::vsg::core::CollectedDraw> draws = description.passes[0].draws;
+    const std::span<const vn::graphics::backend::CollectedDraw> draws = description.passes[0].draws;
     ASSERT_EQ(draws.size(), 3u);
 
     EXPECT_TRUE(draws[0].has_viewport);
@@ -256,7 +256,7 @@ TEST(FrameRecorderTest, ADrawingCallWithNothingToDrawIsNotADrawAtAll)
     const FrameDescription& description = r.seal();
     ASSERT_EQ(description.passes.size(), 1u);
     EXPECT_TRUE(description.passes[0].has_clear);
-    const std::span<const vn::vsg::core::CollectedDraw> draws = description.passes[0].draws;
+    const std::span<const vn::graphics::backend::CollectedDraw> draws = description.passes[0].draws;
     ASSERT_EQ(draws.size(), 1u) << "the empty call left no draw behind: there was nothing to record";
     EXPECT_EQ(draws[0].commands.size(), 1u);
     EXPECT_FALSE(draws[0].has_viewport) << "the empty call CONSUMED the announcement (one call, one viewport)";
@@ -297,7 +297,7 @@ TEST(FrameRecorderTest, ThePassInputsAreCopiedAndBelongToThePass)
     const FrameDescription& description = r.seal();
 
     ASSERT_EQ(description.passes.size(), 1u);
-    const std::span<const vn::vsg::core::InputRef> collected = description.passes[0].inputs;
+    const std::span<const vn::graphics::backend::InputRef> collected = description.passes[0].inputs;
     ASSERT_EQ(collected.size(), 3u);
     EXPECT_EQ(collected[0].target, first.get());
     EXPECT_EQ(collected[1].target, nullptr);

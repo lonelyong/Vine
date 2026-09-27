@@ -167,7 +167,7 @@ struct VN_GRAPHICS_API FpsOverlayOptions {
  * NOT here — a shadow is requested by the LIGHT that casts it
  * (Light::castShadow) and honoured by the pipeline that draws that light's
  * content, because a light outlives any one pipeline and a scene may be drawn by
- * several (see PipelineStage::Depth and .ai/design/render-pipeline.md §2).
+ * several (see PipelineStage::Depth and .ai/design/graphics-pipeline.md §2).
  */
 struct VN_GRAPHICS_API PipelineOptions {
     /** @brief How the opaque content is shaded (the structural choice). */

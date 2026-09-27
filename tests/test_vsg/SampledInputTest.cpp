@@ -42,23 +42,23 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-#include <vine/vsg/api/BlockDescriptors.hpp>
-#include <vine/vsg/api/BlockStorage.hpp>
-#include <vine/vsg/api/ContentDraw.hpp>
-#include <vine/vsg/api/ContentFacts.hpp>
-#include <vine/vsg/api/ContentPass.hpp>
-#include <vine/vsg/api/ContentPipeline.hpp>
-#include <vine/vsg/api/ContentSources.hpp>
-#include <vine/vsg/api/Device.hpp>
-#include <vine/vsg/api/GeometryFacts.hpp>
-#include <vine/vsg/api/OffscreenTarget.hpp>
-#include <vine/vsg/api/StreamUploads.hpp>
-#include <vine/vsg/api/VsgExecutor.hpp>
-#include <vine/vsg/core/FrameCompiler.hpp>
-#include <vine/vsg/core/FrameRecorder.hpp>
-#include <vine/vsg/core/StateRegistry.hpp>
-#include <vine/vsg/core/VariantPool.hpp>
-#include <vine/vsg/VsgDynamicState.hpp>
+#include <vine/vsg/internal/BlockDescriptors.hpp>
+#include <vine/vsg/internal/BlockStorage.hpp>
+#include <vine/vsg/internal/ContentDraw.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/vsg/internal/ContentPass.hpp>
+#include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/vsg/internal/ContentSources.hpp>
+#include <vine/vsg/internal/Device.hpp>
+#include <vine/vsg/internal/GeometryFacts.hpp>
+#include <vine/vsg/internal/OffscreenTarget.hpp>
+#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/vsg/internal/VsgExecutor.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/vsg/support/VsgDynamicState.hpp>
 
 using vn::graphics::Geometry;
 using vn::graphics::Material;
@@ -86,21 +86,21 @@ using vn::vsg::PassContent;
 using vn::vsg::ProgramFacts;
 using vn::vsg::StreamUploads;
 using vn::vsg::VsgExecutor;
-using vn::vsg::core::ClearPolicy;
-using vn::vsg::core::CompiledFrame;
-using vn::vsg::core::Diagnostics;
-using vn::vsg::core::DrawKind;
-using vn::vsg::core::FrameArena;
-using vn::vsg::core::FrameCompiler;
-using vn::vsg::core::FrameFacts;
-using vn::vsg::core::FrameRecorder;
-using vn::vsg::core::FrameToken;
-using vn::vsg::core::Observe;
-using vn::vsg::core::Rgba8;
-using vn::vsg::core::StateRegistry;
-using vn::vsg::core::TargetFacts;
-using vn::vsg::core::TargetShape;
-using vn::vsg::core::VariantPool;
+using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::CompiledFrame;
+using vn::graphics::Diagnostics;
+using vn::graphics::backend::DrawKind;
+using vn::graphics::backend::FrameArena;
+using vn::graphics::backend::FrameCompiler;
+using vn::graphics::backend::FrameFacts;
+using vn::graphics::backend::FrameRecorder;
+using vn::graphics::backend::FrameToken;
+using vn::graphics::backend::Observe;
+using vn::graphics::backend::Rgba8;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::TargetFacts;
+using vn::graphics::backend::TargetShape;
+using vn::graphics::backend::VariantPool;
 
 namespace
 {
@@ -316,7 +316,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 2U);
     ASSERT_EQ(frame.passes[0].pass, 1U) << "the producer runs first - the sampled edge says so";
-    const vn::vsg::core::CompiledPass& consumer = frame.passes[1];
+    const vn::graphics::backend::CompiledPass& consumer = frame.passes[1];
     ASSERT_EQ(consumer.inputs.size(), 1U) << "the plan carries what the pass declared";
     EXPECT_EQ(consumer.inputs[0].target, static_cast<const void*>(source_handle.get()));
     EXPECT_EQ(consumer.inputs[0].color_attachments, 1U);
@@ -324,7 +324,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     // 4. The content layer records pass 2, offered the images the SOURCE target has.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::vsg::core::DrawKind::Content, program.get(), program_facts.revision,
+        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content, program.get(), program_facts.revision,
                                    geometry_facts.layout, pipelines.get(), &draws } };
     ContentPass::Scope scope;
     scope.entries  = halves;
@@ -531,7 +531,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 2U);
     ASSERT_EQ(frame.passes[0].pass, 1U) << "the producer runs first - the sampled edge says so";
-    const vn::vsg::core::CompiledPass& consumer = frame.passes[1];
+    const vn::graphics::backend::CompiledPass& consumer = frame.passes[1];
     ASSERT_EQ(consumer.draws.size(), 1U);
     ASSERT_EQ(consumer.draws[0].kind, DrawKind::Screen);
     EXPECT_EQ(consumer.draws[0].viewport.width, kPictureInPicture.width) << "the rectangle is the call's own";
@@ -874,7 +874,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
 
     // What the producer wrote, read straight out of the shadow map's depth: 0.5 inside its triangle (the
     // vertex stage puts every fragment there) and the cleared far plane (0.0) outside it.
-    const vn::vsg::core::DepthProbe depth = shadow_map->depthProbe();
+    const vn::graphics::backend::DepthProbe depth = shadow_map->depthProbe();
     ASSERT_TRUE(depth.valid()) << "a D32 depth target is readable";
     const float inside_depth  = depth.depthAt(16, 32);
     const float outside_depth = depth.depthAt(48, 32);

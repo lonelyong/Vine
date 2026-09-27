@@ -31,11 +31,11 @@
 
 #include <vine/math/Matrix4x4.hpp>
 
-#include <vine/vsg/api/ContentPush.hpp>
-#include <vine/vsg/api/ContentSources.hpp>
-#include <vine/vsg/api/ProgramAbi.hpp>
-#include <vine/vsg/api/ViewBlock.hpp>
-#include <vine/vsg/core/FrameRecorder.hpp>
+#include <vine/vsg/internal/ContentPush.hpp>
+#include <vine/vsg/internal/ContentSources.hpp>
+#include <vine/vsg/internal/ProgramAbi.hpp>
+#include <vine/vsg/internal/ViewBlock.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
 
 using vn::graphics::ShaderProgram;
 using vn::math::Mat4d;
@@ -46,7 +46,7 @@ using vn::vsg::canFillPushMember;
 using vn::vsg::contentPushMemberName;
 using vn::vsg::contentPushMemberOf;
 using vn::vsg::ContentPushMember;
-using vn::vsg::core::CameraSnapshot;
+using vn::graphics::backend::CameraSnapshot;
 using vn::vsg::FactMiss;
 using vn::vsg::foldToDeviceClip;
 using vn::vsg::packContentPush;

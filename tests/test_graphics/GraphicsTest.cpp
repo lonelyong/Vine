@@ -2138,6 +2138,61 @@ class MockBackend : public RenderBackend {
     }
 };
 
+TEST(RenderEngineTest, FrameCountersForwardTheBackendsAnswerAndSaySoWhenThereIsNone)
+{
+    // A backend that keeps counters: the engine hands over exactly ITS numbers. The default (a backend
+    // that keeps none) answers false rather than zeros, because an empty frame and an unmeasured one are
+    // different answers - which is what the silent half below pins.
+    class CountingBackend : public MockBackend
+    {
+      public:
+        bool frameCounters(vn::graphics::FrameCounters& counters) const noexcept override
+        {
+            counters.passes = 7;
+            return true;
+        }
+        bool retentionStats(vn::graphics::RetentionStats& stats) const noexcept override
+        {
+            stats.device_waits = 3;
+            return true;
+        }
+        bool frameProgress(vn::graphics::FrameProgress& progress) const noexcept override
+        {
+            progress.submitted = 11;
+            progress.completed = 9;
+            return true;
+        }
+    };
+
+    // 1. No backend: nothing can answer.
+    RenderEngine engine;
+    vn::graphics::FrameCounters  counters;
+    vn::graphics::RetentionStats stats;
+    vn::graphics::FrameProgress  progress;
+    EXPECT_FALSE(engine.frameCounters(counters));
+    EXPECT_FALSE(engine.retentionStats(stats));
+    EXPECT_FALSE(engine.frameProgress(progress));
+
+    // 2. A backend that keeps no counters: the contract's default, and it SAYS so.
+    const vn::intrusive_ptr<RenderBackend> silent(new MockBackend());
+    engine.setBackend(silent);
+    EXPECT_FALSE(engine.frameCounters(counters)) << "the default is \"no counters\", not zeros";
+    EXPECT_FALSE(engine.retentionStats(stats));
+    EXPECT_FALSE(engine.frameProgress(progress)) << "the default is \"no clock\", not \"nothing in flight\"";
+
+    // 3. A backend that keeps them: the values cross the engine unchanged.
+    const vn::intrusive_ptr<RenderBackend> counting(new CountingBackend());
+    engine.setBackend(counting);
+    ASSERT_TRUE(engine.frameCounters(counters));
+    EXPECT_EQ(counters.passes, 7U);
+    ASSERT_TRUE(engine.retentionStats(stats));
+    EXPECT_EQ(stats.device_waits, 3U);
+    ASSERT_TRUE(engine.frameProgress(progress));
+    EXPECT_EQ(progress.submitted, 11U);
+    EXPECT_EQ(progress.completed, 9U);
+    EXPECT_EQ(progress.inFlight(), 2U) << "in flight is the difference, computed once in the vocabulary";
+}
+
 TEST(RenderEngineTest, PassScopeOpensAndClosesOncePerExecutedPass)
 {
     // Every executed pass runs inside its own pass scope: the backend is told
@@ -2396,14 +2451,14 @@ TEST(RenderEngineTest, ABackendThatCannotDrawTargetsIsToldOncePerEpisode)
 
     // This backend honours targets, so the pipeline means what it says and nothing is reported about it.
     engine->frame();
-    const std::size_t quiet            = engine->engineDiagnosticCount();
+    const std::size_t quiet            = engine->diagnosticCount();
     const std::size_t reported_before  = reported.size();
 
     // The same pipeline on a backend that cannot draw into a target: the pass is recorded in the window
     // instead of where the pipeline put it (a wrong picture, not a slow one), so the engine says so.
     backend->supports_targets = false;
     engine->frame();
-    ASSERT_EQ(engine->engineDiagnosticCount(), quiet + 1);
+    ASSERT_EQ(engine->diagnosticCount(), quiet + 1);
     ASSERT_EQ(reported.size(), reported_before + 1);
     const RenderDiagnostic& diagnostic = reported[reported_before];
     EXPECT_EQ(diagnostic.severity, DiagnosticSeverity::Warning);
@@ -2413,15 +2468,15 @@ TEST(RenderEngineTest, ABackendThatCannotDrawTargetsIsToldOncePerEpisode)
 
     // ONCE: a host looping on frames cannot fix this by drawing another one, so it is an episode.
     engine->frame();
-    EXPECT_EQ(engine->engineDiagnosticCount(), quiet + 1);
+    EXPECT_EQ(engine->diagnosticCount(), quiet + 1);
 
     // The ask stops (the pass is skipped), which re-arms the episode: asking again is a new problem.
     pass->setEnabled(false);
     engine->frame();
-    EXPECT_EQ(engine->engineDiagnosticCount(), quiet + 1);
+    EXPECT_EQ(engine->diagnosticCount(), quiet + 1);
     pass->setEnabled(true);
     engine->frame();
-    EXPECT_EQ(engine->engineDiagnosticCount(), quiet + 2);
+    EXPECT_EQ(engine->diagnosticCount(), quiet + 2);
 }
 
 TEST(RenderEngineTest, FrameBeforeInitializeIsNoOp)
@@ -2880,10 +2935,10 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     program_less->addInputName(u8"SceneColor");
     engine3->publish(u8"SceneColor", rt);
     engine3->addPass(program_less, 100);
-    EXPECT_EQ(engine3->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(engine3->diagnosticCount(), 0u);
     engine3->frame();
     EXPECT_EQ(backend3->program_draws, 0);
-    EXPECT_EQ(engine3->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine3->diagnosticCount(), 1u);
     EXPECT_EQ(program_less->sourceTarget(), rt.get());   // it resolved the source, and still drew nothing
 }
 
@@ -3402,7 +3457,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
 
     backend->target_history.clear();
     backend->render_cameras.clear();
-    const std::size_t problems_before = engine->engineDiagnosticCount();
+    const std::size_t problems_before = engine->diagnosticCount();
     engine->frame();
 
     ASSERT_GE(backend->target_history.size(), 2u);
@@ -3432,7 +3487,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
     EXPECT_EQ(shadow_camera->projectionType(), Camera::ProjectionType::Orthographic);
 
     // The map reached the lighting: a declared input nothing produced is reported by the engine.
-    EXPECT_EQ(engine->engineDiagnosticCount(), problems_before);
+    EXPECT_EQ(engine->diagnosticCount(), problems_before);
 }
 
 /**
@@ -3469,7 +3524,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
 
     backend->target_history.clear();
     backend->render_cameras.clear();
-    const std::size_t problems_before = engine->engineDiagnosticCount();
+    const std::size_t problems_before = engine->diagnosticCount();
     engine->frame();
 
     // The frame OPENS with the shadow: it must be recorded before the pass that samples it.
@@ -3499,7 +3554,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
 
     // The hand-off: the content pass no longer declares an input nothing produced. Without that
     // declaration the engine reports it here, which is exactly the failure this test is about.
-    EXPECT_EQ(engine->engineDiagnosticCount(), problems_before);
+    EXPECT_EQ(engine->diagnosticCount(), problems_before);
 }
 
 TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
@@ -5861,12 +5916,13 @@ TEST(SceneTest, TheFoldedStateAgreesWithTheUpWalkingHelpers)
 // ============ Backend diagnostics channel ============
 
 /**
- * @brief The engine forwards the host's diagnostic sink to its backend.
+ * @brief There is ONE route: the engine owns it, the backend reports through it.
  *
- * A host holds the engine (not the backend instance) and may install the sink
- * before or after the backend, so the engine must store it and apply it to
- * whichever backend is current or set later. This is the programmatic channel
- * that replaces "the backend printed something to stderr".
+ * A host holds the engine (not the backend instance) and may install the sink before or after the
+ * backend, so the engine owns the one route (see Diagnostics.hpp) and hands it to whichever backend it
+ * drives - current or later. That is what makes the engine's count the whole truth: what the backend says
+ * and what the engine says land in the same counter, and a backend that goes away does not take the
+ * count with it.
  */
 TEST(DiagnosticsTest, EngineForwardsSinkToCurrentAndFutureBackend)
 {
@@ -5888,24 +5944,27 @@ TEST(DiagnosticsTest, EngineForwardsSinkToCurrentAndFutureBackend)
     engine.setBackend(later);
     EXPECT_TRUE(static_cast<bool>(later->diagnosticSink()));
 
-    // Emitting on the current backend reaches the host, and the engine can
-    // report the count without listening.
+    // Emitting on the current backend reaches the host through that one route, and the engine reports
+    // the count without listening.
     later->emitDiagnostic(DiagnosticSeverity::Warning, DiagnosticCategory::ShaderFallback,
                           u8"synthetic");
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].severity, DiagnosticSeverity::Warning);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ShaderFallback);
     EXPECT_EQ(received[0].message, u8"synthetic");
-    EXPECT_EQ(engine.backendDiagnosticCount(), 1u);
+    EXPECT_EQ(engine.diagnosticCount(), 1u);
+    EXPECT_EQ(later->diagnosticCount(), engine.diagnosticCount())
+        << "one route means one number, seen from either end";
 
-    // Clearing the sink stops delivery but not counting; no backend means 0.
+    // Clearing the sink stops delivery but not counting, and the count belongs to the ENGINE's route: a
+    // backend going away does not un-happen what it said.
     engine.setDiagnosticSink({});
     later->emitDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::GeometryRejected,
                           u8"second");
     EXPECT_EQ(received.size(), 1u);
-    EXPECT_EQ(engine.backendDiagnosticCount(), 2u);
+    EXPECT_EQ(engine.diagnosticCount(), 2u);
     engine.setBackend(nullptr);
-    EXPECT_EQ(engine.backendDiagnosticCount(), 0u);
+    EXPECT_EQ(engine.diagnosticCount(), 2u) << "the route is the engine's, so the count outlives the backend";
 }
 
 // ============ Collected-content memo (D27) ============
@@ -6128,7 +6187,7 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     engine->addPass(consumer, 0);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"GBuffer"), vn::String::npos);
@@ -6137,7 +6196,7 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     // Still missing: reported once, not once per frame.
     engine->frame(0.016);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     EXPECT_EQ(received.size(), 1u);
 
     // A producer publishing that name resolves the input: nothing more to say.
@@ -6148,12 +6207,12 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     producer->setOutputName(u8"GBuffer");
     engine->addPass(producer, -1);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // The producer leaves again: the same problem, so it is reported again.
     engine->removePass(producer.get());
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
 }
 
@@ -6193,24 +6252,24 @@ TEST(RenderEngineTest, TwoProducersUnderOneOutputNameAreReportedOnce)
     engine->addPass(second, -1);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"shared"), vn::String::npos);
 
     // The same collision next frame is the SAME episode: not one message per frame.
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // One producer leaves: the name is wired again, so the report re-arms...
     engine->removePass(second.get());
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // ...and the collision coming back is reported again.
     engine->addPass(second, -1);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
 }
 
@@ -6244,7 +6303,7 @@ TEST(RenderEngineTest, PublishingANameWithoutARenderTargetIsReported)
     engine->addPass(presenter, 0);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"presenter"), vn::String::npos);
@@ -6252,16 +6311,16 @@ TEST(RenderEngineTest, PublishingANameWithoutARenderTargetIsReported)
 
     // The same problem next frame is the same episode: one message, not one per frame.
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // Giving the pass a target makes the publication possible, which ends the episode...
     presenter->setRenderTarget(RenderTargetPtr(new RenderTarget()));
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     // ...so taking it away again is a NEW episode, reported again.
     presenter->setRenderTarget(nullptr);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
 }
 
@@ -6327,7 +6386,7 @@ TEST(RenderEngineTest, TheWiringIsCheckedWhenADeclarationMovesAndNotPerFrame)
     main_pass->setOutputName(u8"SceneColor");
     engine->frame(0.016);
     EXPECT_EQ(engine->wiringValidationCount(), 7u);
-    const std::size_t problems_before = engine->engineDiagnosticCount();
+    const std::size_t problems_before = engine->diagnosticCount();
 
     // ...and the SAME declaration becomes undoable the moment the pass renders into the window instead:
     // the engine publishes sampleable targets, and the backbuffer is not one. Nothing about the pass
@@ -6335,10 +6394,10 @@ TEST(RenderEngineTest, TheWiringIsCheckedWhenADeclarationMovesAndNotPerFrame)
     main_pass->setRenderTarget(nullptr);
     engine->frame(0.016);
     EXPECT_EQ(engine->wiringValidationCount(), 8u);
-    EXPECT_EQ(engine->engineDiagnosticCount(), problems_before + 1u)
+    EXPECT_EQ(engine->diagnosticCount(), problems_before + 1u)
         << "promising an output while rendering into the window is a wiring problem, in-place change or not";
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), problems_before + 1u) << "still one episode, not one per frame";
+    EXPECT_EQ(engine->diagnosticCount(), problems_before + 1u) << "still one episode, not one per frame";
 }
 
 /**
@@ -6423,7 +6482,7 @@ TEST(RenderEngineTest, OneWireIsReportedByOneCheckWhetherDeclaredByNameOrObject)
     engine->addPass(first, -2);
     engine->addPass(second, -1);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_NE(received[0].message.find(u8"claim"), vn::String::npos);
     engine->removePass(first.get());
@@ -6579,7 +6638,7 @@ TEST(RenderEngineTest, ImageDeclaredAsOutputByTwoPassesIsReportedOnce)
     engine->addPass(second, -1);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"GBuffer.color"), vn::String::npos);
@@ -6588,24 +6647,24 @@ TEST(RenderEngineTest, ImageDeclaredAsOutputByTwoPassesIsReportedOnce)
 
     // The same collision next frame is the SAME episode: not one message per frame.
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // One producer leaves: the image has a single writer again, so nothing to report...
     engine->removePass(second.get());
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // ...and the collision coming back is reported again (the episode re-arms).
     engine->addPass(second, -1);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
 
     // Two passes declaring the SAME object are one role, not a collision: only a second, DIFFERENT
     // pass on the image is. The same pass cannot collide with itself.
     engine->removePass(first.get());
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
 }
 
 /**
@@ -6653,7 +6712,7 @@ TEST(RenderEngineTest, TwoImageRefsOfOneAttachmentAreReportedOnce)
     engine->addPass(second, -1);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     // Both declarations are named: the point of the report is that they are one image.
@@ -6663,17 +6722,17 @@ TEST(RenderEngineTest, TwoImageRefsOfOneAttachmentAreReportedOnce)
     EXPECT_NE(received[0].message.find(u8"second"), vn::String::npos);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // One producer leaves: the image has a single writer again, so the episode re-arms...
     engine->removePass(second.get());
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // ...and the collision coming back is reported again.
     engine->addPass(second, -1);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
 }
 
@@ -6719,7 +6778,7 @@ TEST(RenderEngineTest, TwoImagesOfOneTargetWithDifferentAttachmentsAreNotACollis
     engine->addPass(make_pass(u8"light", normal), -1);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(engine->diagnosticCount(), 0u);
     EXPECT_TRUE(received.empty());
 }
 
@@ -6810,7 +6869,7 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
     engine->addPass(consumer, 0);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"light"), vn::String::npos);
@@ -6818,7 +6877,7 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
 
     // Still nobody: reported once, not once per frame.
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // A producer appears BEFORE the consumer, drawing into the very target it promises: the wire is
     // whole, so nothing more to say.
@@ -6829,12 +6888,12 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
     producer->setOutput(image);
     engine->addPass(producer, -1);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // The producer leaves again: the same problem, so it is reported again.
     engine->removePass(producer.get());
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
 }
 
@@ -6883,26 +6942,26 @@ TEST(RenderEngineTest, InputImageProducedByALaterPassIsReported)
     engine->addPass(producer, 5);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"light"), vn::String::npos);
     EXPECT_NE(received[0].message.find(u8"gbuffer"), vn::String::npos);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // The producer moves before the consumer: fixed, and nothing more to say.
     engine->removePass(producer.get());
     engine->addPass(producer, -1);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // It moves back: the same problem, reported again.
     engine->removePass(producer.get());
     engine->addPass(producer, 5);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
 }
 
@@ -6945,7 +7004,7 @@ TEST(RenderEngineTest, PassReadingTheTargetItDrawsIntoIsLeftToTheBackend)
     engine->addPass(pass, 0);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(engine->diagnosticCount(), 0u);
     EXPECT_TRUE(received.empty());
 }
 
@@ -7051,7 +7110,7 @@ TEST(RenderEngineTest, WholeTargetPromiseSatisfiesAFineImageRead)
     engine->addPass(consumer, 10);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(engine->diagnosticCount(), 0u);
     EXPECT_TRUE(received.empty());
 }
 
@@ -7089,14 +7148,14 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
     engine->addPass(light, 0);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"deferred_lighting"), vn::String::npos);
     EXPECT_NE(received[0].message.find(u8"never_written"), vn::String::npos);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // A writer appears (it fills the target; no promise needed): the read is answered.
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
@@ -7105,12 +7164,12 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
     producer->setRenderTarget(orphan);
     engine->addPass(producer, -1);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // The writer leaves: reported again.
     engine->removePass(producer.get());
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
 }
 
 /**
@@ -7156,7 +7215,7 @@ TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
     engine->addPass(consumer, 1);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"Composite.depth"), vn::String::npos);
@@ -7217,12 +7276,12 @@ TEST(RenderEngineTest, AnUnboundDeclaredImageIsReportedAtWiringTime)
 
     // Same problem next frame: one episode, one message (the runtime path stays silent about it).
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // Binding the image wires the wire: the report stops and the consumer samples the target.
     unbound->bind(target, 0);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     EXPECT_EQ(backend->program_draws - draws_before, 1);
     EXPECT_EQ(backend->last_program_source, target.get());
 }
@@ -7275,7 +7334,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAProgramIsReportedAndDrawsNothing)
     engine->addPass(consumer, 1);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"reconstruct"), vn::String::npos);
@@ -7286,7 +7345,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAProgramIsReportedAndDrawsNothing)
 
     // Same problem next frame: one episode, one message.
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     EXPECT_EQ(backend->program_draws, 0);
 
     // Naming a program ends the episode, and the pass draws — depth-only declaration and all, which is
@@ -7294,7 +7353,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAProgramIsReportedAndDrawsNothing)
     auto program = vn::graphics::screenCopyProgram();
     consumer->setProgram(program);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     EXPECT_EQ(backend->program_draws, 1);
     EXPECT_EQ(backend->last_program_source, target.get());
     EXPECT_EQ(backend->last_program, program.get());
@@ -7345,7 +7404,7 @@ TEST(RenderEngineTest, DepthAndColorAttachmentZeroAreDistinctImages)
     engine->addPass(colors, 1);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(engine->diagnosticCount(), 0u);
     EXPECT_TRUE(received.empty());
 }
 
@@ -7391,7 +7450,7 @@ TEST(RenderEngineTest, WholeTargetPromiseCollidingWithAFineOneIsReported)
     engine->addPass(whole, 1);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"fine_owner"), vn::String::npos);
@@ -7399,7 +7458,7 @@ TEST(RenderEngineTest, WholeTargetPromiseCollidingWithAFineOneIsReported)
     EXPECT_NE(received[0].message.find(u8"shared"), vn::String::npos);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 }
 
 /**
@@ -7448,7 +7507,7 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
     engine->addPass(preview, 10);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(engine->diagnosticCount(), 0u);
     EXPECT_EQ(preview->sourceTarget(), source.get());
     EXPECT_EQ(backend->last_program_source, source.get());
 }
@@ -7493,7 +7552,7 @@ TEST(RenderEngineTest, CoarseDeclarationAndTheProgramsBindingPickTheAttachment)
     engine->addPass(pip, 100);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(engine->diagnosticCount(), 0u);
     EXPECT_EQ(pip->sourceTarget(), baked.get());
     EXPECT_EQ(backend->last_program_source, baked.get());
 }
@@ -7539,13 +7598,13 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     engine->addPass(preview, 10);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);   // wired and produced: silent
+    EXPECT_EQ(engine->diagnosticCount(), 0u);   // wired and produced: silent
     const int draws_before_pause = backend->program_draws;
 
     // The producer is paused (a legitimate runtime toggle, not a wiring mistake).
     producer->setEnabled(false);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"preview"), vn::String::npos);
@@ -7555,15 +7614,15 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     // Still paused: one message for this episode, not one per frame.
     engine->frame(0.016);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // It runs again, and breaks again later: a new episode, reported again.
     producer->setEnabled(true);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     producer->setEnabled(false);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
 }
 
 /**
@@ -7609,7 +7668,7 @@ TEST(RenderEngineTest, NameAndObjectDeclarationResolveTheWireOnce)
     engine->addPass(preview, 10);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(engine->diagnosticCount(), 0u);
     EXPECT_EQ(preview->sourceTarget(), source.get());
     EXPECT_EQ(backend->last_program_source, source.get());
 }
@@ -7665,7 +7724,7 @@ TEST(RenderEngineTest, PromiseAboutATargetThePassDoesNotWriteIsReported)
     engine->addPass(fine, 1);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);   // one per declaration form
+    EXPECT_EQ(engine->diagnosticCount(), 2u);   // one per declaration form
     ASSERT_EQ(received.size(), 2u);
     for (const auto& diagnostic : received) {
         EXPECT_EQ(diagnostic.category, DiagnosticCategory::ContentSkipped);
@@ -7676,18 +7735,18 @@ TEST(RenderEngineTest, PromiseAboutATargetThePassDoesNotWriteIsReported)
 
     // The same broken promise next frame is the same episode: one message each, not one per frame.
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
 
     // Promising what it draws into is what the rule asks for: silent.
     coarse->setOutputTarget(drawn_into);
     fine->setRenderTarget(promised_fine);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
 
     // Breaking it again is a new episode.
     coarse->setOutputTarget(promised_coarse);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 3u);
+    EXPECT_EQ(engine->diagnosticCount(), 3u);
 }
 
 /**
@@ -7741,7 +7800,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
 
     for (int frame_index = 0; frame_index < 3; ++frame_index) {
         engine->frame(0.016);
-        EXPECT_EQ(engine->engineDiagnosticCount(), 0u) << "frame " << frame_index;
+        EXPECT_EQ(engine->diagnosticCount(), 0u) << "frame " << frame_index;
     }
     EXPECT_EQ(engine->resolve(u8"External"), external.get());
     EXPECT_EQ(backend->last_program_source, external.get());
@@ -7750,7 +7809,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     engine->unpublish(u8"External");
     EXPECT_EQ(engine->resolve(u8"External"), nullptr);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);   // both consumers now have nothing
+    EXPECT_EQ(engine->diagnosticCount(), 2u);   // both consumers now have nothing
     EXPECT_TRUE(received.empty() || received.size() >= 2u);
 }
 
@@ -7806,7 +7865,7 @@ TEST(RenderEngineTest, ScreenPassWithAProgramAndNoCameraIsReported)
 
     const int draws_before = backend->program_draws;
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"light"), vn::String::npos);
@@ -7816,12 +7875,12 @@ TEST(RenderEngineTest, ScreenPassWithAProgramAndNoCameraIsReported)
 
     // Same problem next frame: one episode, one message.
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // Giving it a camera ends the episode, and the pass draws.
     light->setCamera(camera);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     EXPECT_EQ(backend->program_draws - draws_before, 1);
 }
 
@@ -7848,13 +7907,13 @@ TEST(RenderEngineTest, ScreenPassWithoutAnyInputIsReportedOnce)
     engine->addPass(consumer, 0);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"overlay"), vn::String::npos);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // An input appears (a bound image with a producer registered earlier): the pass can draw, so
     // nothing more to say. The producer matters — an input image nobody produces is its own
@@ -7871,12 +7930,12 @@ TEST(RenderEngineTest, ScreenPassWithoutAnyInputIsReportedOnce)
     producer->setOutput(image);
     engine->addPass(producer, -1);
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // Its input leaves again: the same problem, so it is reported again.
     consumer->clearInputs();
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
 }
 
@@ -7906,7 +7965,7 @@ TEST(RenderEngineTest, ScenePassWithoutInputIsNotReported)
     engine->addPass(pass, 0);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(engine->diagnosticCount(), 0u);
     EXPECT_TRUE(received.empty());
 }
 
@@ -7939,7 +7998,7 @@ TEST(RenderEngineTest, PublishingOneTargetUnderOneNameTwiceIsNotACollision)
     engine->addPass(second.first, second.second);
 
     engine->frame(0.016);
-    EXPECT_EQ(engine->engineDiagnosticCount(), 0u);
+    EXPECT_EQ(engine->diagnosticCount(), 0u);
     EXPECT_TRUE(received.empty());
 }
 

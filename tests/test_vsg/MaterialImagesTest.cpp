@@ -28,7 +28,7 @@
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 
-#include <vine/vsg/api/MaterialImages.hpp>
+#include <vine/vsg/internal/MaterialImages.hpp>
 
 using vn::graphics::CubeMap;
 using vn::graphics::Texture;

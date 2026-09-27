@@ -24,24 +24,24 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
-#include <vine/vsg/api/DrawBlock.hpp>
-#include <vine/vsg/core/FrameCompiler.hpp>
-#include <vine/vsg/core/FrameRecorder.hpp>
+#include <vine/vsg/internal/DrawBlock.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
 
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::math::Mat4d;
 using vn::vsg::packDrawBlock;
-using vn::vsg::core::CompiledCommand;
-using vn::vsg::core::CompiledFrame;
-using vn::vsg::core::Diagnostics;
-using vn::vsg::core::FrameArena;
-using vn::vsg::core::FrameCompiler;
-using vn::vsg::core::FrameFacts;
-using vn::vsg::core::FrameRecorder;
-using vn::vsg::core::FrameToken;
-using vn::vsg::core::Observe;
-using vn::vsg::core::TargetFacts;
+using vn::graphics::backend::CompiledCommand;
+using vn::graphics::backend::CompiledFrame;
+using vn::graphics::Diagnostics;
+using vn::graphics::backend::FrameArena;
+using vn::graphics::backend::FrameCompiler;
+using vn::graphics::backend::FrameFacts;
+using vn::graphics::backend::FrameRecorder;
+using vn::graphics::backend::FrameToken;
+using vn::graphics::backend::Observe;
+using vn::graphics::backend::TargetFacts;
 
 namespace
 {

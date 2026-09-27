@@ -26,9 +26,9 @@
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/StateNode.hpp>
-#include <vine/vsg/core/Keys.hpp>
-#include <vine/vsg/core/StateRegistry.hpp>
-#include <vine/vsg/core/VariantPool.hpp>
+#include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 
 using vn::graphics::BlendState;
 using vn::graphics::CullMode;
@@ -36,10 +36,10 @@ using vn::graphics::DepthMode;
 using vn::graphics::PolygonMode;
 using vn::graphics::RenderTarget;
 using vn::graphics::Topology;
-using vn::vsg::core::DynamicState;
-using vn::vsg::core::PipelineKey;
-using vn::vsg::core::StateRegistry;
-using vn::vsg::core::VariantPool;
+using vn::graphics::backend::DynamicState;
+using vn::graphics::backend::PipelineKey;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::VariantPool;
 
 namespace
 {

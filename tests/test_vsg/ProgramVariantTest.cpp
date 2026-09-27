@@ -19,9 +19,9 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/Texture.hpp>
 
-#include <vine/vsg/api/ContentSources.hpp>
-#include <vine/vsg/api/GeometryFacts.hpp>
-#include <vine/vsg/api/ProgramVariant.hpp>
+#include <vine/vsg/internal/ContentSources.hpp>
+#include <vine/vsg/internal/GeometryFacts.hpp>
+#include <vine/vsg/internal/ProgramVariant.hpp>
 
 using vn::graphics::attributeLocation;
 using vn::graphics::VertexAttribute;
@@ -48,7 +48,7 @@ const void* const kAuthoredBuffer = reinterpret_cast<const void*>(0x11U);
 ChannelFacts channelAt(std::uint32_t location, std::uint32_t components, const void* buffer = kAuthoredBuffer)
 {
     ChannelFacts facts;
-    facts.key.kind       = vn::vsg::core::StreamKind::Vertex;
+    facts.key.kind       = vn::graphics::backend::StreamKind::Vertex;
     facts.key.location   = location;
     facts.key.components = components;
     facts.key.buffer     = buffer;

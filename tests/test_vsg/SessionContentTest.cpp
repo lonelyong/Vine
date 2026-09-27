@@ -37,29 +37,29 @@
 #include <vsg/commands/Command.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/vsg/VsgVulkanEntryPoints.hpp>
-#include <vine/vsg/api/BlockDescriptors.hpp>
-#include <vine/vsg/api/BlockStorage.hpp>
-#include <vine/vsg/api/ContentDraw.hpp>
-#include <vine/vsg/api/ContentFacts.hpp>
-#include <vine/vsg/api/ContentPass.hpp>
-#include <vine/vsg/api/ContentPipeline.hpp>
-#include <vine/vsg/api/ContentSources.hpp>
-#include <vine/vsg/api/DeviceProbe.hpp>
-#include <vine/vsg/api/GeometryFacts.hpp>
-#include <vine/vsg/api/OffscreenTarget.hpp>
-#include <vine/vsg/api/Session.hpp>
-#include <vine/vsg/api/SessionContent.hpp>
-#include <vine/vsg/api/StreamUploads.hpp>
-#include <vine/vsg/api/ViewBlock.hpp>
-#include <vine/vsg/api/VsgExecutor.hpp>
-#include <vine/vsg/api/WindowTarget.hpp>
-#include <vine/vsg/core/Diagnostics.hpp>
-#include <vine/vsg/core/FrameCompiler.hpp>
-#include <vine/vsg/core/FrameRecorder.hpp>
-#include <vine/vsg/core/StateRegistry.hpp>
-#include <vine/vsg/core/Streams.hpp>
-#include <vine/vsg/core/VariantPool.hpp>
+#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/vsg/internal/BlockDescriptors.hpp>
+#include <vine/vsg/internal/BlockStorage.hpp>
+#include <vine/vsg/internal/ContentDraw.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/vsg/internal/ContentPass.hpp>
+#include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/vsg/internal/ContentSources.hpp>
+#include <vine/vsg/internal/DeviceProbe.hpp>
+#include <vine/vsg/internal/GeometryFacts.hpp>
+#include <vine/vsg/internal/OffscreenTarget.hpp>
+#include <vine/vsg/internal/Session.hpp>
+#include <vine/vsg/internal/SessionContent.hpp>
+#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/vsg/internal/ViewBlock.hpp>
+#include <vine/vsg/internal/VsgExecutor.hpp>
+#include <vine/vsg/internal/WindowTarget.hpp>
+#include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/Streams.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Camera.hpp>
@@ -98,18 +98,18 @@ using vn::vsg::WindowTarget;
 using vn::vsg::api::Session;
 using vn::vsg::api::SessionOptions;
 using vn::vsg::api::probePhysicalDevices;
-using vn::vsg::core::ClearPolicy;
-using vn::vsg::core::CompiledFrame;
-using vn::vsg::core::FrameArena;
-using vn::vsg::core::FrameCompiler;
-using vn::vsg::core::FrameFacts;
-using vn::vsg::core::FrameRecorder;
-using vn::vsg::core::StateRegistry;
-using vn::vsg::core::StreamKey;
-using vn::vsg::core::StreamKind;
-using vn::vsg::core::TargetFacts;
-using vn::vsg::core::TargetShape;
-using vn::vsg::core::VariantPool;
+using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::CompiledFrame;
+using vn::graphics::backend::FrameArena;
+using vn::graphics::backend::FrameCompiler;
+using vn::graphics::backend::FrameFacts;
+using vn::graphics::backend::FrameRecorder;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::StreamKey;
+using vn::graphics::backend::StreamKind;
+using vn::graphics::backend::TargetFacts;
+using vn::graphics::backend::TargetShape;
+using vn::graphics::backend::VariantPool;
 
 #if !defined(_WIN32)
 
@@ -202,7 +202,7 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
 
     TestHostWindow window(connection, screen, kWidth, kHeight);
 
-    vn::vsg::core::Diagnostics diagnostics;
+    vn::graphics::Diagnostics diagnostics;
     diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[session-content] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
@@ -370,7 +370,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
 
     TestHostWindow window(connection, screen, kWidth, kHeight);
 
-    vn::vsg::core::Diagnostics diagnostics;
+    vn::graphics::Diagnostics diagnostics;
     diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[session-plan] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
@@ -487,11 +487,11 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
 
     // The plan: one pass into the default framebuffer, whose frame token is the SESSION's.
     FrameArena             arena{ 64 * 1024 };
-    vn::vsg::core::Observe observe;
+    vn::graphics::backend::Observe observe;
     FrameRecorder          recorder{ arena, diagnostics, observe };
     FrameCompiler          compiler{ arena, diagnostics, observe };
 
-    const vn::vsg::core::FrameToken token = session.beginFrame();
+    const vn::graphics::backend::FrameToken token = session.beginFrame();
     ASSERT_TRUE(token) << "the session opens the frame the plan belongs to";
     recorder.beginFrame(token);
     recorder.beginPass(7U);
@@ -513,7 +513,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // frame clock - the extent is the window's, which is the picture the shading reconstructs from.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
-        vn::vsg::core::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
+        vn::graphics::backend::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
         pipelines.get(), &draws } };
     ContentPass::Scope scope;
     scope.entries    = halves;

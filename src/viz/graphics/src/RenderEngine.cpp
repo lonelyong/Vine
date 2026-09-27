@@ -61,39 +61,54 @@ void RenderEngine::setBackend(intrusive_ptr<RenderBackend> backend)
         return;
     }
     backend_ = std::move(backend);
-    // A backend set after the sink was installed still gets it: the engine is
-    // the stable place a host holds, not the backend instance.
+    // The backend reports through THIS engine's one route (see Diagnostics.hpp): attaching it is what
+    // makes the engine's count the whole truth instead of half of it, and it is why a backend set after
+    // the sink was installed needs nothing else done to it - the sink lives in the route, not in a copy.
     if (backend_ != nullptr) {
-        backend_->setDiagnosticSink(diagnostic_sink_);
+        backend_->setDiagnosticsRoute(diagnostics_);
     }
 }
 
 void RenderEngine::setDiagnosticSink(DiagnosticSink sink)
 {
-    diagnostic_sink_ = std::move(sink);
-    if (backend_ != nullptr) {
-        backend_->setDiagnosticSink(diagnostic_sink_);
-    }
+    diagnostics_.setSink(std::move(sink));
 }
 
-std::size_t RenderEngine::backendDiagnosticCount() const
+std::size_t RenderEngine::diagnosticCount() const noexcept
 {
-    return backend_ != nullptr ? backend_->diagnosticCount() : 0u;
+    return static_cast<std::size_t>(diagnostics_.total());
 }
 
-std::size_t RenderEngine::engineDiagnosticCount() const noexcept
+std::size_t RenderEngine::diagnosticCount(DiagnosticCategory category) const noexcept
 {
-    return wiring_.engine_diagnostic_count_;
+    return static_cast<std::size_t>(diagnostics_.count(category));
+}
+
+bool RenderEngine::diagnosticsClean() const noexcept
+{
+    return diagnostics_.clean();
 }
 
 void RenderEngine::reportEngineProblem(vn::graphics::DiagnosticSeverity severity,
                                        vn::graphics::DiagnosticCategory category,
                                        const String&                message)
 {
-    ++wiring_.engine_diagnostic_count_;
-    if (diagnostic_sink_) {
-        diagnostic_sink_(vn::graphics::RenderDiagnostic{ severity, category, message });
-    }
+    diagnostics_.report(severity, category, message);
+}
+
+bool RenderEngine::frameCounters(FrameCounters& counters) const
+{
+    return backend_ != nullptr && backend_->frameCounters(counters);
+}
+
+bool RenderEngine::retentionStats(RetentionStats& stats) const
+{
+    return backend_ != nullptr && backend_->retentionStats(stats);
+}
+
+bool RenderEngine::frameProgress(FrameProgress& progress) const
+{
+    return backend_ != nullptr && backend_->frameProgress(progress);
 }
 
 bool RenderEngine::initialize()

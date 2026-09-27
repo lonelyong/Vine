@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include <vine/vsg/api/Device.hpp>
+#include <vine/vsg/internal/Device.hpp>
 
 /**
  * @brief The device phases: the rewrite's real-device capabilities, expressed ONCE and run as evidence.

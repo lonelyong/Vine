@@ -25,16 +25,16 @@
 #include <string>
 #include <vector>
 
-#include <vine/vsg/api/Device.hpp>
-#include <vine/vsg/core/PhaseTable.hpp>
+#include <vine/vsg/internal/Device.hpp>
+#include <vine/graphics/backend/PhaseTable.hpp>
 
 #include "DevicePhases.hpp"
 
 using vn::vsg::createDevice;
 using vn::vsg::DeviceOptions;
 using vn::vsg::DeviceResult;
-using vn::vsg::core::Phase;
-using vn::vsg::core::PhaseTable;
+using vn::graphics::backend::Phase;
+using vn::graphics::backend::PhaseTable;
 
 namespace
 {
