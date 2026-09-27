@@ -178,7 +178,9 @@ class Scope
    `*::stopToken()` 上下文"接上"async 的组合子；
 2. **§2**（与 §1 同批做，因为都碰 `Scope`；析构只请求停止 + 断言 + `detach()`）；
 3. **§3 挂账**（有数据再动）；
-4. §1.5 的"先请求停止再等"（`withTimeout` 的三段式）留到有真实需求时单独定。
+4. §1.5 的"先请求停止再等"（`withTimeout` 的三段式）留到有真实需求时单独定；
+5. **第二阶的形状已定（§6，2026-09-27）**：`CancelPolicy{Destroy, StopAndWait}`，默认保持今天的
+   `Destroy`；`StopAndWait` 是 Trio/Kotlin/P2300 那一套"请求停止 + 等收尾"，`Scope::join` 一起收。
 
 ---
 
@@ -215,3 +217,63 @@ Scope 那条红、`detach` 那条仍绿。恢复后 150/150 绿。
 `HeadlessBootTest.ACancelledBootEndsCleanlyWithoutFinishingTheBoot` 断言两者为真 —— 空令牌的 `stop_possible()`
 是 false，所以"接线断了"与"令牌没被取消"分得开。变异：把 `load()` 那一处的 `withStopToken` 去掉 ⇒ 该用例红
 （两条断言同时失败），恢复 ⇒ 绿。
+
+---
+
+## 6. 第二阶：组合子的取消策略（按行业规范定，2026-09-27）
+
+### 6.1 五家行业的原文口径
+
+| 体系 | 一个孩子完成/失败时，其余孩子 | 是否等它们 | 取消的性质 |
+| --- | --- | --- | --- |
+| **Trio**（nursery） | "If any task inside the nursery finishes with an unhandled exception, then the nursery **immediately cancels all the tasks inside the nursery**"；取消是 level-triggered、在 checkpoint 抛出 | **等**（"the block does not exit until *all* tasks have completed"） | 合作式（无法强杀：不响应就一直等）+ `shield=True` 给清理开例外 |
+| **Kotlin** `coroutineScope` | "If block or any child coroutine in this scope fails with an exception, the scope fails, **cancelling all the other children**" | **等**（"completes when both the block and all the coroutines launched in the scope complete"） | 合作式；`supervisorScope` 是"各自失败"的出口 |
+| **Rust** `tokio::select!` | "returning when the first branch completes, **cancelling the remaining branches**" —— 实现就是 **drop** | 不等（丢掉就是丢掉） | **析构即取消**；代价写进文档："cancellation safety：被 drop 必须是 no-op" |
+| **Rust** `tokio::join!` | 不取消，等全部 | 等 | — |
+| **C#** `Task.WhenAll` | **不取消任何兄弟**；有 faulted ⇒ 结果 Faulted 且**聚合全部异常**；无故障但有取消 ⇒ 结果 **Canceled** | 等全部 | 取消是**独立状态**（Canceled ≠ Faulted），由调用者用 CTS 自己发起 |
+| **P2300 / asio** | 组合子**请求停止**其余操作，但要等它们自己上报完成（`set_stopped`）；asio `parallel_group` 把"等全部 / 等第一个 / 等第一个错误"做成**完成条件参数**，配 per-operation cancellation | 等 | 合作式；取消是独立通道 |
+
+**两个都合法的极端**（不是"谁对谁错"）：
+
+- **(a) 请求停止 + 等全部** = Trio / Kotlin / P2300。对孩子的要求是"**响应停止**"，否则组合子被它拖住（Trio/Kotlin 接受这一点，因为它们根本没有"强杀"这条路）。
+- **(b) 立即销毁** = Rust `select!`。对孩子的要求是"**被 drop 是 no-op**"（cancellation-safe）。
+
+两派对孩子的**契约要求不同，但都要求把契约写清**——这正是我们目前缺的那一块（只有一句散文"孩子会被销毁"）。C#/Trio 还额外约定"不要丢失败"（聚合）与"取消是独立状态"。
+
+### 6.2 决定：把策略放到参数上，默认不变
+
+```cpp
+enum class CancelPolicy
+{
+    Destroy,      ///< 触发事件后立刻销毁未完成的孩子（今天的语义；孩子必须 cancellation-safe）
+    StopAndWait,  ///< 先请求停止，再等它们收尾（Trio/Kotlin/P2300 的语义；孩子必须响应停止）
+};
+```
+
+- **触发事件不变**：All = 第一个失败或外部取消；Any = 第一个完成或外部取消。
+- `Destroy`：触发后**先 `request_stop()` 再销毁**（一行成本；合作的孩子若恰在收尾仍能看到）。
+- `StopAndWait`：`request_stop()` 后**等 `remaining == 0` 才完成**；孩子的结果照常丢弃、第一个异常照常重抛（**故意不引入 ExceptionGroup**）。
+- 为什么不做成"换一个语义"：今天有一批用例（`whenAny(never(), sleepFor(...))` 之类）依赖"绝不挂住"，而 StopAndWait 的规范语义**就是**会等一个不响应的孩子 —— 把它变成默认等于改掉本库的确定性承诺。名字分开（Rust 用 `join!`/`select!` 分开、Kotlin 用 `coroutineScope`/`supervisorScope` 分开、asio 用完成条件参数分开）才是行业里"两种都提供"的通行做法。
+- 为什么不学 C# 的聚合与独立 Canceled 状态：那需要 `Task` 结果三态 + 全部组合子重写（见 §1.5），收益在这个仓库里很薄；我们保留"取消 = 类型化异常、首个失败胜出"，并在文档里**写明这是有意的偏离**。
+
+### 6.3 落地形状（实现时照这个做）
+
+- `detail::WhenState` 增加 `std::stop_source source`；`WhenChild::start()` / `WhenAnyChild::start()` 用**与 `Scope::add()` 同一套**的 `detail::TaskEnvironment::setToken()` 注入 `source.get_token()`。
+- `whenRace(WhenMode, tasks, token, CancelPolicy)`、`whenAllImpl`、typed `whenAny` 各加一个策略参数（默认 `Destroy`）。
+- `Destroy`：抛/返回之前 `source.request_stop()`。
+- `StopAndWait`：在 `state->done` 醒来后若 `remaining != 0`，**重新 arm 事件继续等**（`AsyncEvent` 是手复位，`Scope::join` 已经是这个写法，照抄）；等完再按原规则抛/返回。
+- 外部取消时同理：`cancelled && policy == StopAndWait` ⇒ 请求停止 → 等收尾 → 抛 `TaskCancelledException`。
+- `Scope::join` 收同一套策略：今天是"取消只停等待"，`StopAndWait` 时改成"先 `requestStop()` 再等"（§2 里那条留待定的语义在此收口）。
+
+### 6.4 验证配方
+
+- 钉子 A（`StopAndWait` 等收尾）：孩子 1 立刻抛、孩子 2 睡 50 ms 后**观察到停止并正常返回** ⇒ 组合子必须在孩子 2 结束后才抛，且孩子 2 看到 `stop_requested()`。
+- 钉子 B（`Destroy` 不等待）：同一场景用默认策略 ⇒ 组合子立刻抛。
+- 钉子 C（把该策略的代价也钉住）：孩子永远挂起 + `StopAndWait` ⇒ 组合子在 200 ms 内**没有**返回（这正是契约；Destroy 那条同样场景会立刻返回）。
+- 变异：`StopAndWait` 改成"请求后立刻销毁" ⇒ 钉子 A 红；去掉 `request_stop()` ⇒ 钉子 A 的"看到停止"断言红。
+
+### 6.5 不做（记录，避免重复讨论）
+
+- `ExceptionGroup` 式聚合（Trio/Kotlin/C#）：要新错误类型 + 改全部组合子；
+- `set_stopped` 独立通道 / `Canceled` 独立状态（P2300/C#）：见 §1.5；
+- **无条件等待**：它会改掉本库"绝不挂住"的承诺 —— Trio/Kotlin 敢这样是因为它们**没有**销毁这条路可选。
