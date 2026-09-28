@@ -3,6 +3,7 @@
 #include "meshio_global.hpp"
 
 #include <filesystem>
+#include <ostream>
 
 #include <vine/geometry/Mesh.hpp>
 
@@ -74,6 +75,22 @@ class VN_MESHIO_API MeshExporter
     void exportAsStl(const vn::geometry::Mesh& mesh, const std::filesystem::path& file_path) const;
 
     /**
+     * @brief Exports a mesh as STL into a stream.
+     *
+     * For callers whose output is not a file: a memory buffer, a network sink, a test. assimp writes a memory blob
+     * rather than a stream, so the bytes exist in full before they are handed over - this entry saves the temporary file,
+     * not the memory. Prefer the path overload when a file is the target.
+     *
+     * A format that writes more than one file does not fit one stream; the OBJ entry below writes assimp's
+     * material-free variant for that reason.
+     *
+     * @param mesh The mesh to export.
+     * @param out The stream to write; it must outlive the call.
+     * @throws std::runtime_error when the export fails, or when the stream refuses the bytes.
+     */
+    void exportAsStl(const vn::geometry::Mesh& mesh, std::ostream& out) const;
+
+    /**
      * @brief Exports a mesh as an OBJ file.
      *
      * @param mesh The mesh to export.
@@ -81,6 +98,20 @@ class VN_MESHIO_API MeshExporter
      * @throws std::runtime_error when the export fails.
      */
     void exportAsObj(const vn::geometry::Mesh& mesh, const std::filesystem::path& file_path) const;
+
+    /**
+     * @brief Exports a mesh as OBJ into a stream.
+     *
+     * The stream form writes assimp's material-free OBJ variant: a material library is a second file, and one stream
+     * holds one file. Everything the text refers to lies inside the stream, so the result parses on its own - ask for
+     * the path overload when the material library is wanted. Like the STL entry, the bytes exist in full before they
+     * are handed over.
+     *
+     * @param mesh The mesh to export.
+     * @param out The stream to write; it must outlive the call.
+     * @throws std::runtime_error when the export fails, or when the stream refuses the bytes.
+     */
+    void exportAsObj(const vn::geometry::Mesh& mesh, std::ostream& out) const;
 
     // 字段区块
   private:

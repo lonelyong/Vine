@@ -80,4 +80,15 @@ vn::intrusive_ptr<vn::geometry::BrepShape> BrepLoader::load(const std::filesyste
     return {};
 }
 
+vn::intrusive_ptr<vn::geometry::BrepShape> BrepLoader::load(std::istream& in, const char* format_hint)
+{
+    // TODO: this is where the backend goes once OpenCASCADE is linked; its readers take a stream directly
+    // (STEPControl_Reader::ReadStream / IGESControl_Reader::ReadStream), so nothing has to be drained here.
+    // Until then the entry answers the way the path entry does, so a caller can be written once and both
+    // entries start working together.
+    static_cast<void>(in);
+    static_cast<void>(format_hint);
+    return {};
+}
+
 VN_BREPIO_NS_END

@@ -5,7 +5,9 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
+#include <istream>
 #include <unordered_map>
+#include <vector>
 
 #include <vine/intrusive_ptr.hpp>
 #include <vine/crypto/ByteSequenceFingerprint.hpp>
@@ -137,6 +139,32 @@ class VN_MESHIO_API MeshLoader
      * @return The loaded mesh, or null on failure.
      */
     vn::intrusive_ptr<vn::geometry::Mesh> load(const std::filesystem::path& file_path);
+
+    /**
+     * @brief Loads a mesh model from a stream.
+     *
+     * assimp parses a memory image rather than a stream, so the stream is drained first: this entry trades the temporary
+     * file for one copy of the model in memory, and it is how a model that lives in a package is loaded without touching
+     * the file system at all (wrap a VfsEntrySource in a vn::io::DataSourceStream to read one). The result is cached by
+     * content fingerprint exactly like the path entry, so the same model loaded either way is parsed once.
+     *
+     * @param in The stream to read; it is read to its end.
+     * @param format_hint The format to parse as (assimp's format id, e.g. "stl" or "obj"); required, because an
+     *        in-memory image carries no file name to infer the format from.
+     * @return The loaded mesh, or null when the stream is empty, broke, or held content assimp cannot read.
+     */
+    vn::intrusive_ptr<vn::geometry::Mesh> load(std::istream& in, const char* format_hint);
+
+    // 方法区块
+  private:
+    /**
+     * @brief Parses an in-memory model image, sharing the cache with the path entry.
+     *
+     * @param bytes The model image; it stays alive for the duration of the call.
+     * @param format_hint The format to parse as.
+     * @return The loaded mesh, or null on failure.
+     */
+    vn::intrusive_ptr<vn::geometry::Mesh> loadImage(std::vector<unsigned char>& bytes, const char* format_hint);
 
     // 类型声明区块
   private:

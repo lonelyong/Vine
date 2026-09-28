@@ -3,6 +3,7 @@
 #include "brepio_global.hpp"
 
 #include <filesystem>
+#include <ostream>
 
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
@@ -32,6 +33,20 @@ class VN_BREPIO_API BrepExporter : public vn::Object, public vn::RefCounted<Brep
      * @return true on success.
      */
     virtual bool save(const std::filesystem::path& path, const vn::geometry::BrepShape& shape) = 0;
+
+    /**
+     * @brief Writes a B-rep solid to a stream.
+     *
+     * The stream entry sits next to the file entry so that every exporter answers both targets: a caller whose output
+     * is a package, a socket or a test needs no temporary file. OpenCASCADE's writers take a stream
+     * (STEPControl_Writer::WriteStream, IGESControl_Writer::Write), so an exporter that can write a file can write a
+     * stream; an exporter that cannot must say so and return false.
+     *
+     * @param out   Stream to write to.
+     * @param shape B-rep solid to export.
+     * @return true on success.
+     */
+    virtual bool save(std::ostream& out, const vn::geometry::BrepShape& shape) = 0;
 
     /**
      * @brief Returns whether this exporter supports the given solid.

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
+#include <istream>
 #include <unordered_map>
 
 #include <vine/intrusive_ptr.hpp>
@@ -113,6 +114,22 @@ class VN_BREPIO_API BrepLoader
      * @return The loaded solid, or null on failure.
      */
     vn::intrusive_ptr<vn::geometry::BrepShape> load(const std::filesystem::path& file_path);
+
+    /**
+     * @brief Loads a B-rep solid from a stream.
+     *
+     * The stream entry mirrors the mesh loader's: a model that lives in a package (a VFS entry, a memory buffer) is
+     * loaded without writing a temporary file first. OpenCASCADE's readers take a stream directly
+     * (STEPControl_Reader::ReadStream), so unlike the mesh loader nothing has to be drained up front.
+     *
+     * @note Not wired in yet: no OpenCASCADE backend is linked, so this returns null exactly like the path entry.
+     *
+     * @param in The stream to read; the reader consumes as much of it as it needs.
+     * @param format_hint The model format, given as a file extension such as ".step" or ".stp"; required, because a
+     *        stream carries no file name to infer the format from.
+     * @return The loaded solid, or null on failure.
+     */
+    vn::intrusive_ptr<vn::geometry::BrepShape> load(std::istream& in, const char* format_hint);
 
     // 类型声明区块
   private:

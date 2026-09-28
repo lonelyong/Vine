@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <ostream>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -142,6 +143,39 @@ void buildAiScene(AiSceneGuard& guard, const Mesh& mesh, const MeshExporter::Opt
     }
 }
 
+/**
+ * @brief Writes a scene into a stream through assimp's memory blob.
+ *
+ * assimp has no stream target: the whole file is built first and handed over afterwards. That is the price of not
+ * naming a file, and the reason the path overloads stay the recommended ones.
+ *
+ * @param exporter The exporter to use; it owns the blob it returns.
+ * @param scene The scene to write.
+ * @param format The assimp format id.
+ * @param out The stream to write; it must outlive the call.
+ * @param what The entry name to report in a failure message.
+ * @throws std::runtime_error when assimp fails, when it writes more than one file, or when the stream refuses the bytes.
+ */
+void writeSceneToStream(Assimp::Exporter& exporter, const aiScene* scene, const char* format, std::ostream& out, const char* what)
+{
+    Assimp::ExportProperties props;
+
+    const aiExportDataBlob* blob = exporter.ExportToBlob(scene, format, 0, &props);
+    if (blob == nullptr) {
+        throw std::runtime_error(std::string(what) + ": failed to export the mesh as " + format + ", "
+                                 + exporter.GetErrorString());
+    }
+    if (blob->next != nullptr) {
+        // One stream holds one file; a format that writes several needs names and places for the others.
+        throw std::runtime_error(std::string(what) + ": the export wrote more than one file");
+    }
+
+    out.write(static_cast<const char*>(blob->data), static_cast<std::streamsize>(blob->size));
+    if (!out) {
+        throw std::runtime_error(std::string(what) + ": writing the exported " + format + " failed");
+    }
+}
+
 } // namespace
 
 MeshExporter::MeshExporter() = default;
@@ -184,6 +218,16 @@ void MeshExporter::exportAsStl(const Mesh& mesh, const std::filesystem::path& fi
     }
 }
 
+void MeshExporter::exportAsStl(const Mesh& mesh, std::ostream& out) const
+{
+    AiSceneGuard guard;
+    buildAiScene(guard, mesh, options_);
+
+    Assimp::Exporter exporter;
+    writeSceneToStream(exporter, guard.get(), options_.format == Options::Format::Ascii ? "stl" : "stlb", out,
+                       "MeshExporter::exportAsStl");
+}
+
 void MeshExporter::exportAsObj(const Mesh& mesh, const std::filesystem::path& file_path) const
 {
     AiSceneGuard guard;
@@ -201,6 +245,17 @@ void MeshExporter::exportAsObj(const Mesh& mesh, const std::filesystem::path& fi
     if (status != AI_SUCCESS) {
         throw std::runtime_error("MeshExporter::exportAsObj: failed to export mesh to obj, " + std::string(exporter.GetErrorString()));
     }
+}
+
+void MeshExporter::exportAsObj(const Mesh& mesh, std::ostream& out) const
+{
+    AiSceneGuard guard;
+    buildAiScene(guard, mesh, options_);
+
+    // "objnomtl" is assimp's material-free OBJ writer. The plain "obj" writer always opens a second file for the
+    // material library, and a stream cannot carry it - the text would then point at a library that was never written.
+    Assimp::Exporter exporter;
+    writeSceneToStream(exporter, guard.get(), "objnomtl", out, "MeshExporter::exportAsObj");
 }
 
 VN_MESHIO_NS_END

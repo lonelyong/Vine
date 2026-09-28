@@ -1,11 +1,14 @@
 ﻿#include <vine/meshio/MeshLoader.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdint>
 #include <set>
+#include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
@@ -26,6 +29,41 @@ using Vec3fArray          = vn::geometry::Vec3fArray;
 
 /** @brief AABB diagonal length above which the source unit is millimeters. */
 constexpr float kMmThreshold = 10.0f;
+
+/** @brief Post-processing every load runs, whichever entry it came in through. */
+constexpr unsigned int kLoadFlags = aiProcess_Triangulate
+    | aiProcess_JoinIdenticalVertices
+    | aiProcess_FindInvalidData
+    | aiProcess_ImproveCacheLocality
+    | aiProcess_FixInfacingNormals
+    | aiProcess_PreTransformVertices
+    | aiProcess_OptimizeMeshes;
+
+/** @brief Bytes the stream entry moves per read while it drains a stream. */
+constexpr std::size_t kDrainChunk = 64U * 1024U;
+
+/**
+ * @brief Reads a whole stream into memory, the way the stream entry has to.
+ *
+ * @param in The stream to read; a failing stream ends the read.
+ * @param out Receives the bytes read so far, appended to what is already there.
+ * @return true when the stream was read to its end, false when it broke.
+ */
+bool drainStream(std::istream& in, std::vector<unsigned char>& out)
+{
+    std::array<char, kDrainChunk> chunk{};
+    while (true) {
+        in.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        const std::streamsize got = in.gcount();
+        if (got > 0) {
+            out.insert(out.end(), chunk.data(), chunk.data() + static_cast<std::size_t>(got));
+        }
+        if (got < static_cast<std::streamsize>(chunk.size())) {
+            break; // the end, or a source that broke - gcount() stops the loop either way
+        }
+    }
+    return !in.bad();
+}
 
 /**
  * @brief Returns the set of supported mesh file extensions.
@@ -220,16 +258,8 @@ vn::intrusive_ptr<Mesh> MeshLoader::load(const std::filesystem::path& file_path)
         }
     }
 
-    Assimp::Importer         importer;
-    constexpr unsigned int  load_flags = aiProcess_Triangulate
-        | aiProcess_JoinIdenticalVertices
-        | aiProcess_FindInvalidData
-        | aiProcess_ImproveCacheLocality
-        | aiProcess_FixInfacingNormals
-        | aiProcess_PreTransformVertices
-        | aiProcess_OptimizeMeshes;
-
-    const aiScene* scene = importer.ReadFile(reinterpret_cast<const char*>(file_path.u8string().data()), load_flags);
+    Assimp::Importer     importer;
+    const aiScene* const scene = importer.ReadFile(reinterpret_cast<const char*>(file_path.u8string().data()), kLoadFlags);
     if (!scene) {
         return {};
     }
@@ -244,6 +274,51 @@ vn::intrusive_ptr<Mesh> MeshLoader::load(const std::filesystem::path& file_path)
         cached.option_shape_map.insert_or_assign(options_, mesh);
         cache_.set(fingerprint, std::move(cached), -1);
     }
+
+    return mesh;
+}
+
+vn::intrusive_ptr<Mesh> MeshLoader::load(std::istream& in, const char* format_hint)
+{
+    std::vector<unsigned char> bytes;
+    if (!drainStream(in, bytes)) {
+        return {}; // a stream that broke is not content assimp should be asked to read
+    }
+    return loadImage(bytes, format_hint);
+}
+
+vn::intrusive_ptr<Mesh> MeshLoader::loadImage(std::vector<unsigned char>& bytes, const char* format_hint)
+{
+    if (bytes.empty()) {
+        return {};
+    }
+    const char* const hint = format_hint != nullptr ? format_hint : "";
+
+    // The same content loaded through either entry hashes to the same fingerprint, so it is parsed once and reused.
+    const vn::crypto::ByteSequenceFingerprint fingerprint(
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
+    if (auto cached = cache_.get(fingerprint)) {
+        const auto& option_map = cached->option_shape_map;
+        const auto  it         = option_map.find(options_);
+        if (it != option_map.end()) {
+            return it->second;
+        }
+    }
+
+    // assimp parses memory rather than a stream, which is why the caller had to hand over an image in the first place.
+    Assimp::Importer    importer;
+    const aiScene*      scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kLoadFlags, hint);
+    if (scene == nullptr) {
+        return {};
+    }
+
+    auto mesh = vn::make_intrusive<IndexedTriangleMesh>();
+    mergeAssimpScene(*mesh, scene);
+    applyScale(options_, *mesh);
+
+    auto cached = cache_.get(fingerprint).value_or(CacheData{});
+    cached.option_shape_map.insert_or_assign(options_, mesh);
+    cache_.set(fingerprint, std::move(cached), -1);
 
     return mesh;
 }
