@@ -139,7 +139,7 @@ class VN_IOBASE_API MountVfs : public Vfs
      * @return The stream, IoError::InvalidPath, IoError::NotFound, or a
      *         failure reported by the owning backend.
      */
-    [[nodiscard]] Result<std::unique_ptr<VfsReadStream>> openRead(const std::filesystem::path& path) const override;
+    [[nodiscard]] Result<std::unique_ptr<VfsEntrySource>> openRead(const std::filesystem::path& path) const override;
 
     /**
      * @brief Adds or replaces a file from a memory block.

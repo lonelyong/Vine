@@ -51,7 +51,7 @@ TEST(VfsCoreTest, ResultCarriesValueOrError)
     vn::io::Result<int> taken{ 9 };
     EXPECT_EQ(taken.take(), 9);
 
-    vn::io::Result<VfsEntryInfo> info{ VfsEntryInfo{ std::filesystem::path(u8"a/b.txt"), false, 3 } };
+    vn::io::Result<VfsEntryInfo> info{ VfsEntryInfo{ std::filesystem::path(u8"a/b.txt"), VfsEntryKind::File, 3 } };
     EXPECT_EQ(info->path, std::filesystem::path(u8"a/b.txt"));
     EXPECT_EQ(info->size, 3u);
 
@@ -77,20 +77,20 @@ TEST(VfsCoreTest, ZipStatReportsKindAndSize)
 
     const auto root = vfs.stat(u8"");
     ASSERT_TRUE(root.ok());
-    EXPECT_TRUE(root->is_directory);
+    EXPECT_EQ(root->kind, VfsEntryKind::Directory);
     EXPECT_EQ(root->path, std::filesystem::path(u8""));
     EXPECT_EQ(root->name(), std::filesystem::path(u8""));
     EXPECT_EQ(root->size, 0u);
 
     const auto geoms = vfs.stat(u8"geoms");
     ASSERT_TRUE(geoms.ok());
-    EXPECT_TRUE(geoms->is_directory);
+    EXPECT_EQ(geoms->kind, VfsEntryKind::Directory);
     EXPECT_EQ(geoms->path, std::filesystem::path(u8"geoms"));
     EXPECT_EQ(geoms->size, 0u);
 
     const auto leaf = vfs.stat(u8"geoms/base.bin");
     ASSERT_TRUE(leaf.ok());
-    EXPECT_FALSE(leaf->is_directory);
+    EXPECT_EQ(leaf->kind, VfsEntryKind::File);
     EXPECT_EQ(leaf->path, std::filesystem::path(u8"geoms/base.bin"));
     EXPECT_EQ(leaf->name(), std::filesystem::path(u8"base.bin"));
     EXPECT_EQ(leaf->size, 4u);
@@ -146,7 +146,7 @@ TEST(VfsCoreTest, ZipStatSizesImportedFiles)
 
     const auto info = vfs.stat(u8"geoms/mesh.bin");
     ASSERT_TRUE(info.ok());
-    EXPECT_FALSE(info->is_directory);
+    EXPECT_EQ(info->kind, VfsEntryKind::File);
     EXPECT_EQ(info->size, 10u);
 
     // An import of something that is not there fails right away.
@@ -166,7 +166,7 @@ TEST(VfsCoreTest, ZipListReportsChildren)
     ASSERT_NE(findInfo(top.value(), std::filesystem::path(u8"a.txt")), nullptr);
     ASSERT_NE(findInfo(top.value(), std::filesystem::path(u8"b")), nullptr);
     EXPECT_EQ(findInfo(top.value(), std::filesystem::path(u8"a.txt"))->size, 1u);
-    EXPECT_TRUE(findInfo(top.value(), std::filesystem::path(u8"b"))->is_directory);
+    EXPECT_EQ(findInfo(top.value(), std::filesystem::path(u8"b"))->kind, VfsEntryKind::Directory);
     EXPECT_EQ(findInfo(top.value(), std::filesystem::path(u8"b"))->size, 0u);
 
     const auto in_b = vfs.list(u8"b");
@@ -232,13 +232,13 @@ TEST(VfsCoreTest, DirectoryStatAndList)
 
     const auto xml = dir->stat(u8"workcell.xml");
     ASSERT_TRUE(xml.ok());
-    EXPECT_FALSE(xml->is_directory);
+    EXPECT_EQ(xml->kind, VfsEntryKind::File);
     EXPECT_EQ(xml->size, 11u);
     EXPECT_EQ(xml->path, std::filesystem::path(u8"workcell.xml"));
 
     const auto root_info = dir->stat(u8"");
     ASSERT_TRUE(root_info.ok());
-    EXPECT_TRUE(root_info->is_directory);
+    EXPECT_EQ(root_info->kind, VfsEntryKind::Directory);
     EXPECT_EQ(dir->stat(u8"nope").error(), IoError::NotFound);
 
     const auto children = dir->list(u8"");
@@ -246,11 +246,11 @@ TEST(VfsCoreTest, DirectoryStatAndList)
     ASSERT_EQ(children->size(), 2u);
     const VfsEntryInfo* geoms = findInfo(children.value(), std::filesystem::path(u8"geoms"));
     ASSERT_NE(geoms, nullptr);
-    EXPECT_TRUE(geoms->is_directory);
+    EXPECT_EQ(geoms->kind, VfsEntryKind::Directory);
     EXPECT_EQ(geoms->size, 0u);
     const VfsEntryInfo* leaf = findInfo(children.value(), std::filesystem::path(u8"workcell.xml"));
     ASSERT_NE(leaf, nullptr);
-    EXPECT_FALSE(leaf->is_directory);
+    EXPECT_EQ(leaf->kind, VfsEntryKind::File);
     EXPECT_EQ(leaf->size, 11u);
 
     const auto in_geoms = dir->list(u8"geoms");
@@ -427,7 +427,7 @@ TEST(VfsCoreTest, ZipRenameMovesAWholeSubtree)
     EXPECT_EQ(leaf->size, 2u);
     const auto sub = vfs.stat(u8"renamed/sub");
     ASSERT_TRUE(sub.ok());
-    EXPECT_TRUE(sub->is_directory);
+    EXPECT_EQ(sub->kind, VfsEntryKind::Directory);
 
     const auto children = vfs.list(u8"renamed");
     ASSERT_TRUE(children.ok());
@@ -472,18 +472,18 @@ TEST(VfsCoreTest, ZipDirectoryEntriesSurviveSaveAndOpen)
 
     const auto empty = opened->stat(u8"empty");
     ASSERT_TRUE(empty.ok());
-    EXPECT_TRUE(empty->is_directory);
+    EXPECT_EQ(empty->kind, VfsEntryKind::Directory);
     const auto deep = opened->stat(u8"nested/deep");
     ASSERT_TRUE(deep.ok());
-    EXPECT_TRUE(deep->is_directory);
+    EXPECT_EQ(deep->kind, VfsEntryKind::Directory);
 
     const auto children = opened->list(u8"");
     ASSERT_TRUE(children.ok());
     ASSERT_EQ(children->size(), 3u);
     ASSERT_NE(findInfo(children.value(), std::filesystem::path(u8"empty")), nullptr);
-    EXPECT_TRUE(findInfo(children.value(), std::filesystem::path(u8"empty"))->is_directory);
+    EXPECT_EQ(findInfo(children.value(), std::filesystem::path(u8"empty"))->kind, VfsEntryKind::Directory);
     ASSERT_NE(findInfo(children.value(), std::filesystem::path(u8"nested")), nullptr);
-    EXPECT_TRUE(findInfo(children.value(), std::filesystem::path(u8"nested"))->is_directory);
+    EXPECT_EQ(findInfo(children.value(), std::filesystem::path(u8"nested"))->kind, VfsEntryKind::Directory);
     EXPECT_EQ(findInfo(children.value(), std::filesystem::path(u8"a.txt"))->size, 1u);
 }
 
@@ -503,14 +503,14 @@ TEST(VfsCoreTest, DirectoryCreateRenameRemove)
     ASSERT_EQ(dir->createDirectories(u8"two/three"), IoError::Ok);
     const auto deep = dir->stat(u8"two/three");
     ASSERT_TRUE(deep.ok());
-    EXPECT_TRUE(deep->is_directory);
+    EXPECT_EQ(deep->kind, VfsEntryKind::Directory);
 
     // Rename a directory, then a file inside it.
     ASSERT_EQ(dir->rename(u8"two", u8"moved"), IoError::Ok);
     EXPECT_EQ(dir->stat(u8"two").error(), IoError::NotFound);
     const auto moved_three = dir->stat(u8"moved/three");
     ASSERT_TRUE(moved_three.ok());
-    EXPECT_TRUE(moved_three->is_directory);
+    EXPECT_EQ(moved_three->kind, VfsEntryKind::Directory);
 
     ASSERT_EQ(dir->addFile(u8"moved/leaf.txt", bytesOf("abc")), IoError::Ok);
     ASSERT_EQ(dir->rename(u8"moved/leaf.txt", u8"moved/renamed.txt"), IoError::Ok);

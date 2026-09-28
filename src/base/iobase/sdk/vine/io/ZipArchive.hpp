@@ -252,16 +252,24 @@ class VN_IOBASE_API ZipArchive : public Vfs
      *
      * @param name Entry name.
      * @return The reader, IoError::NotFound when there is no such entry,
-     *         IoError::IsADirectory when name is a directory.
+     *         IoError::IsADirectory when name is a directory,
+     *         IoError::InvalidPath when name is not a valid virtual path.
      */
-    [[nodiscard]] Result<std::unique_ptr<VfsReadStream>> openRead(const std::filesystem::path& name) const override;
+    [[nodiscard]] Result<std::unique_ptr<VfsEntrySource>> openRead(const std::filesystem::path& name) const override;
 
     /**
      * @brief Adds a whole virtual file whose content comes from a pull source.
      *
      * The source is only read when the archive is persisted, so content that is
      * generated on the fly never has to be materialized first. The archive keeps
-     * the source alive; size() has to match what the source produces.
+     * the source alive.
+     *
+     * A source that states a length (size() != kUnknownSize) has to produce exactly
+     * that many bytes, at saveAs() at the latest.
+     * A source that states none (kUnknownSize) is pulled once, in order, until it
+     * reports the end by returning nothing. Such an entry needs a zip64 header,
+     * because its local header is written before the content is known and the length
+     * is patched in afterwards.
      *
      * @param path The virtual file path.
      * @param source The source to pull from; must not be null.

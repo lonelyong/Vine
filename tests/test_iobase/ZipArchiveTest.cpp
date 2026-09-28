@@ -20,6 +20,7 @@
 
 using vn::String;
 using vn::io::VfsEntryInfo;
+using vn::io::VfsEntryKind;
 using vn::io::IoError;
 using vn::io::Zip;
 using vn::io::ZipArchive;
@@ -59,10 +60,10 @@ std::vector<unsigned char> buildPackage()
 /**
  * @brief Reports whether a child is present with the expected kind and size.
  */
-bool matches(const std::vector<VfsEntryInfo>& children, const std::filesystem::path& path, bool is_directory, std::uint64_t size)
+bool matches(const std::vector<VfsEntryInfo>& children, const std::filesystem::path& path, VfsEntryKind kind, std::uint64_t size)
 {
     const VfsEntryInfo* info = findInfo(children, path);
-    return info != nullptr && info->is_directory == is_directory && info->size == size;
+    return info != nullptr && info->kind == kind && info->size == size;
 }
 
 } // namespace
@@ -91,12 +92,12 @@ TEST(ZipArchiveTest, ArchiveIndexReportsNamesSizesAndKinds)
 
     const VfsEntryInfo* xml = found(std::filesystem::path(u8"workcell.xml"));
     ASSERT_NE(xml, nullptr);
-    EXPECT_FALSE(xml->is_directory);
+    EXPECT_EQ(xml->kind, VfsEntryKind::File);
     EXPECT_EQ(xml->size, 11u);
 
     const VfsEntryInfo* empty = found(std::filesystem::path(u8"empty"));
     ASSERT_NE(empty, nullptr);
-    EXPECT_TRUE(empty->is_directory);
+    EXPECT_EQ(empty->kind, VfsEntryKind::Directory);
     EXPECT_EQ(empty->size, 0u);
 
     EXPECT_NE(xml->crc, 0u); // the archive records a checksum for every file
@@ -158,7 +159,7 @@ TEST(ZipArchiveTest, MatchesTheMemoryBackendForTheSameContent)
         ASSERT_TRUE(lazy_info.ok()) << path.generic_string();
         ASSERT_TRUE(tree_info.ok()) << path.generic_string();
         EXPECT_EQ(lazy_info->path, tree_info->path) << path.generic_string();
-        EXPECT_EQ(lazy_info->is_directory, tree_info->is_directory) << path.generic_string();
+        EXPECT_EQ(lazy_info->kind, tree_info->kind) << path.generic_string();
         EXPECT_EQ(lazy_info->size, tree_info->size) << path.generic_string();
     }
 
@@ -219,7 +220,7 @@ TEST(ZipArchiveTest, OpensBorrowedBytes)
     const TempDir              temp;
     std::vector<unsigned char> bytes = buildPackage(); // the caller keeps owning these
 
-    std::unique_ptr<vn::io::VfsReadStream> reader;
+    std::unique_ptr<vn::io::VfsEntrySource> reader;
     {
         // An lvalue is borrowed, not copied: the archive reads the caller's block.
         auto zip = ZipArchive::open(bytes, ZipArchive::OpenMode::ReadOnly);
@@ -304,20 +305,20 @@ TEST(ZipArchiveTest, ListReportsEveryChildShape)
 
     const auto top = zip->list(u8"");
     ASSERT_TRUE(top.ok());
-    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"workcell.xml"), false, 11u));
-    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"geoms"), true, 0u));
-    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"empty"), true, 0u));
-    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"nested"), true, 0u));
-    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"devices"), true, 0u));
+    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"workcell.xml"), VfsEntryKind::File, 11u));
+    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"geoms"), VfsEntryKind::Directory, 0u));
+    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"empty"), VfsEntryKind::Directory, 0u));
+    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"nested"), VfsEntryKind::Directory, 0u));
+    EXPECT_TRUE(matches(top.value(), std::filesystem::path(u8"devices"), VfsEntryKind::Directory, 0u));
     EXPECT_EQ(top->size(), 5u);
 
     const auto nested = zip->list(u8"nested");
     ASSERT_TRUE(nested.ok());
     ASSERT_EQ(nested->size(), 1u);
-    EXPECT_TRUE(matches(nested.value(), std::filesystem::path(u8"nested/deep"), true, 0u));
+    EXPECT_TRUE(matches(nested.value(), std::filesystem::path(u8"nested/deep"), VfsEntryKind::Directory, 0u));
 
     const auto devices = zip->list(u8"devices");
     ASSERT_TRUE(devices.ok());
     ASSERT_EQ(devices->size(), 1u);
-    EXPECT_TRUE(matches(devices.value(), std::filesystem::path(u8"devices/robot.vdev"), false, 3u));
+    EXPECT_TRUE(matches(devices.value(), std::filesystem::path(u8"devices/robot.vdev"), VfsEntryKind::File, 3u));
 }

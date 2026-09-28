@@ -94,6 +94,29 @@
 > **S4 已落地（2026-09-25）：`MountVfs`（§10）** —— 多后端按前缀拼成一棵树：最长前缀优先且**不回退**；同一前缀按优先级降序成一层 overlay（同优先级按挂载顺序）。读（`stat` / `read` / `openRead`）取组内第一个命中，条目一律报**完整虚拟路径**；`list` 合并组内所有后端（同名先到者胜）并**补出更深处挂载点蕴含的目录**（含多级中间目录与挂载点自身）。写按 §15.2 的裁决收口：路径已存在 → 归**命中者**，命中者不收写就 `ReadOnly`（**不改道**）；不存在 → 组内**第一个可写**（更高优先级优先）；没有任何挂载覆盖该路径 → `ReadOnly`。跨后端 `rename` = 读源（**一次物化一个条目**：目标后端可能把内容拉取推迟到自己的 save，先挂 `DataSource` 再删源会把内容源头抽掉）→ 写目标 → 删源，失败保留源；跨后端目录 `Unsupported`、跨后端占位目标 `AlreadyExists`。`commit()` 扇出到每个可写后端一次（只读跳过），`saveAs` / `toBytes` = `Unsupported`；无挂载的树只读且不解析任何路径。新增用例 8 个（`tests/test_iobase/MountVfsTest.cpp`）：`test_iobase` 66/66 两树，变异 5/5 各自红，门禁见 §14。
 > **S5 已落地（2026-09-25）：内存流 `reserve` + 容量上限（§11）** —— `MemoryStreamBuf` / `ChunkedMemoryStreamBuf` 各得 `reserve(bytes)`（从起点算总容量；超上限或分配失败 → `false` 且缓冲不动）、`setCapacityLimit(max)`（0 = 无限）、`capacityLimit()`；上限约束增长（`overflow` → eof、`xsputn` → 短写 → `badbit`、`seekp` 超限失败、`reserve` 超限 false），现有内容保留、移动带上限。实现要点：单字符写绕过 `overflow()`，所以 put 区终点缩到 `min(容量, 上限)` 且降上限时重发 put 区（else sputc 溜过）；chunked 的 `reserve` 预建空 chunk 再整体接入（失败无半成品，空 chunk 不出现在 `chunks()`）。用例 8 个：`test_core` 140/140 两树，变异 7/7 各自红，两树门禁全阶段干净，ASan `*MemoryStream*` 全过。
 > **S6 已落地（2026-09-25）：并发级别声明 + 跨进程/跨模块复查（§12）** —— 18 个类文档（VFS 契约 4 + 后端 3 + `Zip` + 内存流 12）统一声明 `Threading:`：方法级不线程安全、无内部锁、共享对象/共享存储由调用方同步、互不共享者可并发。跨进程复查：全库无文件锁；`DirectoryVfs` 直写（最后写者胜，崩写留半成品）；`ZipArchive::commit()` 临时文件 + 替换（POSIX 原子；**固定临时名 ⇒ 同一文件的并发 commit 不受支持**，已写进 `commit()` 文档）。跨模块复查：消费者仅 `robotics::io` 与 `tools/urdf2vine`，均无线程、无跨调用缓存 Vfs。证据：`MemoryStream.InstancesRunInParallelOverTheirOwnBuffers` + `ConcurrencyTest.VfsInstancesRunInParallelOverDistinctStorage`（4 线程各自的缓冲 / 目录 / 档案）。
+> **条目信息直接带 `kind`（2026-09-28）**：`VfsEntryInfo::is_directory` 删除，改为 **`VfsEntryKind kind`** 字段，枚举随之移到结构体之前。
+> `VfsEntryKind` 仍是三值（`kindOf()` 要继续用 `Missing` 表达“这次查询没有答案”），但**字段的值域只有 `File` / `Directory`** ——
+> `stat` / `list` 只描述“在那里的条目”，缺失一律走 `Result` 的错误码，所以 `Missing` 到不了 `VfsEntryInfo`；依据是构造点收敛
+> （生产者只有 `stat` / `list` 那几处，全是已知存在的条目），不是类型约束（用户明确选择“直接持有 kind，永不出现 Missing”）。
+> 附带简化：`Vfs::kindOf` 直接转发 `info.kind`；`ZipArchive::entryKindOf` 直接返回表里的 kind；`ZipArchive::stat` 的 switch 用同一个
+> `kind` 填返回值（原先的三元 / 布尔转换消失）。**存储层保持布尔**：`StoredEntry::is_directory`、`LocatedEntry::is_directory` 与
+> `toStoredName(name, bool)` 说的是“名字带不带尾 `/`”，属于 ZIP 词汇；两处转换点（`adoptHandle`、`emit`）就地做 kind ↔ 标志的单向翻译。
+> **流式适配器 S1 落地（2026-09-28）**：读流改名 **`VfsEntrySource` 且派生自 `DataSource`** —— 两者形状本就重合（`read(span<byte>)` 逐字相同、`size()` 相同、`rewind()` = `seek(0)`），
+> 于是“把一个条目搬进另一棵树”不再需要转发类：`dest.addFile(path, source)` 直接收它。为此 `DataSource` 加 **`error()`**（默认 `Ok`，既有实现一条不用改）：
+> 0 字节读以前只能表达“结束”，现在能表达“为什么”——基类 `addFile(source)` 把源自己报的错原样返回（损坏的成员 → `IoFailure`）、短交 → `InvalidData`。
+> 新增 **`kUnknownSize`**：长度不可知的源照此报（不静默写空条目）。本条最初写成“`addFile` 侧一律 `Unsupported`”，
+> **同日改判并落地**：ZIP 其实接得住（zip64 + 写完回填长度），只有“长度钉在不能回填的地方”的后端才该拒 —— 见 §8.5 末条。新增 **`sdk/vine/io/Adapters.hpp`**：
+> `IstreamSource`（可 seek 的 `std::istream` → 源，支持**拉取时逐元素转换**）与 `OstreamSink`（push 侧镜像，`finalize()` 收口）；
+> 元素类型由 **`Conversion<In, Out>`** 值携带（lambda 无法把类型带进构造函数的模板参数）。内存来源复用 core 的 `InputSpanStream` / `OutputSpanStream` / `MemoryStream` 家族，不另造。
+> 新增 **`Vfs::copy(source, from, to)`**（`openRead` + 内容源 `addFile`；目标惰性则延到它自己的 save）。
+> **不做**：`openWrite()`/push 写面、一次读两处用的 tee（无真实需求，见 §15）；`bytesSource`/`fragmentSource`/`fileSource`/`vectorSource` 四个工厂（就是 `addFile` 那四个重载，不另起名字）。
+> **`VfsEntrySource` 归位到 `Vfs.hpp`（同日）**：`Stream.hpp` 至此只放中性字节流词汇（`Fragment` / `DataSource` / `DataSink` / `kUnknownSize`），**一个 Vfs 名字都没有** ——
+> 上一轮那条“何时下沉 core”的判据因此变成“**随时可做**”（等第一个不依赖 iobase 的消费者，大概率是 `MeshIO`）；顺带回答了“`Stream.hpp` 该不该改名”：不该，该挪的是那个异类类型的住处。
+> 门禁见 §14。**2026-09-28 实跑**：`test_iobase` 85/85、`test_meshio` 21/21、`test_brepio` 5/5，iobase 的另一个消费者 `test_robotics_io` 也过；
+> 构建 0 warning；静态门禁（include 卫生 / 导出标注 / ai-docs / 诊断格式 / 文档符号）全 0。
+> **首跑抓到三个真缺陷（均已修）**：① `GeneratorBridge::read` 对“未声明长度”的源把 `read()==0` 一律当结束 ⇒ **截断被静默接受**
+> （现在先问 `error()`：`Ok` = 真的结束，非 `Ok` = 失败）；② `ZipArchive::openRead` 没先规范化路径 ⇒ 非法路径报 `NotFound` 而不是 `InvalidPath`
+> （与 `read` / `stat` / `DirectoryVfs` 不一致，现已一致）；③ `DataSourceStream::error()` 只回自己记下的错误 ⇒ “短读但没读到 0”时看不到源的失败（现在直接问源）。
 > 下一步：`Vfs` 的流式**写**面与 `§15.7` 已如上收口；其余按 §15 的裁决记录（设计内阶段 S1–S6 已全部落地；余下为触发条件挂账，见 §13 / §15）。
 >
 > 关联：外部《VFS 需求设计文档 v2.0》（下称"需求文档"）；第一个消费者
@@ -243,24 +266,24 @@ IoError normalizeVfsPath(const std::filesystem::path& path, std::filesystem::pat
 ## 5. 文件信息：`VfsEntryInfo` + `stat` + `list`
 
 ```cpp
-/// @brief 虚拟文件/目录的最小信息（需求文档 §6.6）。
-struct VN_IOBASE_API VfsEntryInfo
-{
-    std::filesystem::path path;          // 完整规范化路径（空路径是根）
-    bool          is_directory{ false };
-    std::uint64_t size{ 0 };             // 目录恒为 0
-    std::uint32_t crc{ 0 };              // 后端记录的内容校验和（ZIP = CRC-32）；没有记录或尚未写出为 0
-
-    /// @brief 最后一个路径段，即条目自己的名字；根为空串。
-    [[nodiscard]] std::filesystem::path name() const;
-};
-
-/// @brief 路径指向什么（`kindOf` 的返回值）。
+/// @brief 路径指向什么。kindOf() 三值都答；VfsEntryInfo 的 kind 只会是 File / Directory。
 enum class VfsEntryKind : std::uint8_t
 {
     Missing,   // 不存在，或不是合法虚拟路径
     File,      // 文件
     Directory, // 目录（显式，或由更长的路径隐含）
+};
+
+/// @brief 虚拟文件/目录的最小信息（需求文档 §6.6）。
+struct VN_IOBASE_API VfsEntryInfo
+{
+    std::filesystem::path path;                       // 完整规范化路径（空路径是根）
+    VfsEntryKind          kind{ VfsEntryKind::File }; // 这个路径是什么：File / Directory，永不 Missing
+    std::uint64_t         size{ 0 };                  // 目录恒为 0
+    std::uint32_t         crc{ 0 };                   // 后端记录的内容校验和（ZIP = CRC-32）；没有记录或尚未写出为 0
+
+    /// @brief 最后一个路径段，即条目自己的名字；根为空串。
+    [[nodiscard]] std::filesystem::path name() const;
 };
 
 // Vfs（纯虚）
@@ -275,6 +298,11 @@ virtual Result<std::vector<VfsEntryInfo>> list(const std::filesystem::path& dir)
 - **`crc` 是唯一的"后端记账"字段**：后端记录的内容校验和（ZIP = 中央目录里的 CRC-32）；没有记录、或条目还没写出去时为 0
   （它自己不可当强保证 —— `0` 也是合法 CRC，拿它做完整性判断要配合 `stat` 的结果看）；时间/权限等仍**不放进**
   `VfsEntryInfo`，将来加字段是加法（有默认值），不会破坏调用方。
+- **`kind` 取代了 `is_directory`（2026-09-28）**：条目信息直接带 `VfsEntryKind kind`。枚举仍是三值（`kindOf()` 要靠 `Missing`
+  表达“这次查询没有答案”），但**字段的值域只有 `File` / `Directory`** —— `stat` / `list` 只描述“在那里的条目”，缺失一律由
+  `Result` 的错误码承担，`Missing` 到不了这里。依据是构造点收敛（生产者只有 `stat` / `list` 那几处，全是已知存在的条目），
+  不是类型约束。存储层自己的目录标志（`StoredEntry::is_directory`、`LocatedEntry::is_directory`、`toStoredName(name, bool)`）
+  保持布尔：那是“名字带不带尾 `/`”的 ZIP 词汇。
 - `stat` 失败：路径不存在 → `NotFound`；非法 → `InvalidPath`。`IsADirectory` / `NotADirectory`
   只在调用方用错了具体操作时出现，`stat` 本身两类都成功返回。
 - `DirectoryVfs::stat` 对"存在但不是文件也不是目录"（设备、管道）返回 `NotFound`，与 `exists()` 口径一致。
@@ -389,28 +417,45 @@ virtual IoError removeAll(const std::filesystem::path& path) = 0;          // �
 
 不引入 `IStream` 继承体系（§2 已述），按“大块数据从哪里来、到哪里去”只给两种形态。
 
-**住哪里**：四个类型（`Fragment` / `DataSource` / `DataSink` / `VfsReadStream`）全在 `sdk/vine/io/Stream.hpp`，
-它们是 IOBase 级的**中性词汇**（同 `IoError.hpp`），不是“VFS 专属”：存储层 `ZipArchive` 直接用它拉源头、推送 sink，
-VFS 层的 `openRead` / `read(path, sink)` 落地后也用它。因此**不拆两个头**——`ZipArchive::openRead()` 本身就返回
-`VfsReadStream`，拆完存储层依旧要包含它，拆分只增噪音。（旧名 `VfsStream.hpp` 已改：名字暗示“VFS 的流”， <!-- drift-ok -->
-而当时唯一的包含者就是存储层。）
+**住哪里**（2026-09-28 定稿）：三个性质三个头。
+
+| 头 | 装什么 | 谁包含 |
+|---|---|---|
+| `Stream.hpp` | **字节流词汇**：`Fragment` / `DataSource` / `DataSink` / `kUnknownSize`，**一个 Vfs 名字都没有** | 经 `Vfs.hpp` 进每一个后端使用者；存储层 `ZipArchive` 用它拉源头、推 sink（`GeneratorBridge` / `FragmentSource` 整条路径不经过 VFS 接口） |
+| `Vfs.hpp` | **VFS 专属的那一个**：`VfsEntrySource`（与 `VfsEntryInfo` / `VfsEntryKind` / `Vfs` 同头） | 所有后端（它们本来就从 `Vfs.hpp` 取它） |
+| `Adapters.hpp` | **实现**：`IstreamSource` / `OstreamSink` / `Conversion<In, Out>` | 只有真要接流的调用方 |
+
+- **不改名**：本头一度叫 `VfsStream.hpp`，改成 `Stream.hpp` 是对的（旧名暗示“VFS 的流”，而当时唯一的包含者就是存储层）； <!-- drift-ok -->
+  现在更彻底 —— 要按 VFS 归位就把那个 Vfs 类型挪走（`VfsEntrySource` 已挪进 `Vfs.hpp`），而不是把整头改名。
+- **适配器为什么不并进词汇头**：判据是“**谁必须包含**”—— 后端只认 `DataSource` / `DataSink` 接口、永远不要适配器，
+  而 `Vfs.hpp` 会把这个头带进每个后端使用者；适配器头有 .cpp、拖 `<istream>` / `<ostream>` / `<functional>`，该按需包含。
+  哪天反过来（几乎所有消费者都要适配器）再合并（core 的 `MemoryStream.hpp` 一头 12 个类就是这种先例）。
+- **下沉 core 的触发条件**：`Stream.hpp` 已不含 Vfs 名字 ⇒ 当第一个**不依赖 iobase** 的模块要产出 / 消费内容源时
+  （大概率是 `MeshIO`：它的 PUBLIC 依赖是 `Runtime Geometry Crypto`，**没有 iobase**），把整头平移到 core（与
+  `MemoryStream` / `Buffer` / `String` 同级），iobase 只留 `VfsEntrySource` 与适配器。现在不做：今天的消费者全在 iobase 内或已依赖 iobase，
+  而平移要动公开 API 与所有 include。
 
 ### 8.1 读：两种形态（pull 流 / push 回调）
 
 ```cpp
 /// @brief 一次一个条目的顺序读；能力探测见 seekable()。
-class VN_IOBASE_API VfsReadStream
+class VN_IOBASE_API VfsEntrySource : public DataSource
 {
   public:
-    virtual ~VfsReadStream() = default;
+    virtual ~VfsEntrySource() = default;
     /// @brief Reads up to out.size() bytes; 0 means the end.
-    [[nodiscard]] virtual std::size_t read(std::span<std::byte> out) = 0;
-    [[nodiscard]] virtual std::uint64_t size() const noexcept = 0;
+    [[nodiscard]] virtual std::size_t read(std::span<std::byte> out) override = 0;
+    [[nodiscard]] virtual std::uint64_t size() const noexcept override = 0;
+    [[nodiscard]] virtual IoError error() const override = 0; ///< 0 字节时说明原因（S1 与 DataSource 合流）
+    void rewind() override { static_cast<void>(seek(0)); }    ///< DataSource 那一半：回第一字节，顺带重开 CRC 校验
     [[nodiscard]] virtual bool seekable() const noexcept = 0;
     [[nodiscard]] virtual IoError seek(std::uint64_t offset) = 0;
 };
 
-[[nodiscard]] virtual Result<std::unique_ptr<VfsReadStream>> openRead(const std::filesystem::path& path) const = 0;
+[[nodiscard]] virtual Result<std::unique_ptr<VfsEntrySource>> openRead(const std::filesystem::path& path) const = 0;
+
+/// @brief 跨树搬一个条目：读侧 openRead() + 写侧内容源 addFile()，全程不物化（S1）。
+[[nodiscard]] IoError copy(const Vfs& source, const std::filesystem::path& from, const std::filesystem::path& to);
 
 /// @brief Push 变体：后端把数据一块块推给 sink，调用方不拿整条。
 [[nodiscard]] virtual IoError read(const std::filesystem::path& path, DataSink& sink) const = 0;
@@ -424,7 +469,10 @@ class VN_IOBASE_API VfsReadStream
 基类只写一遍：按 64 KiB 分块把 `openRead` 的字节推给 sink，sink 拒绝的那一块原样返回错误、条目末尾的 `stream->error()`
 当作本次调用的结果）。`ZipArchive` 覆写 `openRead`（复用它的 `EntryReadStream`，本就是流式的）；`DirectoryVfs` 覆写为自有
 文件流（`FileReadStream`：ifstream + 开档时捕获的尺寸；`seekable() == true`、越界 seek 答 `OutOfRange`）。读流可以活过 VFS
-（两个实现都自持句柄）。两个派生类各有一条 `using Vfs::read;`——覆写单参 `read` 会遮住基类的 push 重载。门禁见 §14。
+（两个实现都自持句柄）。两个派生类各有一条 `using Vfs::read;`——覆写单参 `read` 会遮住基类的 push 重载。
+**（S1，2026-09-28）**：读流改名 **`VfsEntrySource`** 并派生自 `DataSource`，因此它可以**直接被另一棵树的 `addFile(path, source)` 收下**——
+`ZipArchive` 目标惰性拉（`GeneratorBridge` 按 libzip 要多少拉多少，O(块)）、`DirectoryVfs` 目标当场物化（基类默认实现），
+这就是 `Vfs::copy(source, from, to)` 的全部实现，也是“边读边写”在本层的意思。门禁见 §14。
 ### 8.2 写：只有“回调/来源”这一种零拷贝形态
 
 ```cpp
@@ -458,7 +506,8 @@ class VN_IOBASE_API DataSource
   （`ZIP_SOURCE_STAT` / `READ` / `CLOSE`，由 libzip 在 `zip_close` 时按需调用），push 式写出只有两条下场 ——
   把数据缓冲起来（= 回到整条驻留），或 spool 到临时文件（多一次磁盘往返）。所以“生成式大块”用 `DataSource`。
 - `DataSource` 由 VFS **持有**（`shared_ptr`），生命周期覆盖 `saveAs` / `commit`；回调在**执行保存的那个线程**被调用（§12 要写明）。
-- `size()` 是否允许“未知长度”需实测（libzip 写侧是否要求预先知道长度）；不行就只能 spool 到临时文件。
+- **已实测（2026-09-28）：`size()` 允许“未知长度”，不需要 spool** —— 源不声明长度时 libzip 走 zip64 + 写完回填 local header
+  （见 §8.5 末条）。
 
 
 ### 8.3 零拷贝与峰值内存（为什么必须有流/回调）
@@ -489,18 +538,48 @@ class VN_IOBASE_API DataSource
 交错顶点、量化解码、GPU 映射内存都同理）。理由：模块图是 `vn::IOBase ← vn::RoboticsIO`，IOBase 不得依赖领域类型；
 反过来给 IOBase 加 `MeshSource` 会让它退化成“已知数据形态枚举表”，每来一种数据都要改 IOBase。
 
-通用场景由**工厂函数**覆盖（不新增类型；实现类藏在 .cpp 里）：
+通用场景**不靠领域类型**，而靠两个适配器类（`sdk/vine/io/Adapters.hpp`，S1 落地 2026-09-28）：
 
-| 工厂 | 语义 | 拷贝 |
+| 适配器 | 语义 | 拷贝 |
 |---|---|---|
-| `bufferSource(span<const unsigned char>)` | 连续借用 | 0 |
-| `fragmentSource(span<const Fragment>)` | 分散借用（scatter） | 0 |
-| `fileSource(path, offset, size)` | 磁盘文件，save 时才读 | 0（内存） |
-| `vectorSource(vector&&)` | 移动接管 | 0 |
-| `vectorSink(vector&)` / `ostreamSink(ostream&)` | 整条读的实现 / 流到外部目标 | — |
+| `IstreamSource(std::istream&, size)` | 已有的流（文件 / 网络 / `InputSpanStream` 借用的内存），save 时才拉 | 0 |
+| `IstreamSource(in, count, Conversion<In, Out>{…})` | 同上，且**拉取时逐元素转换**（`double` 数组存成 `float`） | 0 |
+| `OstreamSink(std::ostream&)` | push 侧镜像：条目一路推到流（文件 / 哈希 / `OutputSpanStream` 套住的目标缓冲） | 0 |
+| `OstreamSink(out, Conversion<In, Out>{…})` | 同上，且**推送时逐元素转换**（读 `double` 写 `float`） | 0 |
+| `DataSourceStream(DataSource&)` | **反方向**：把一个源当 `std::istream` 读（`DataSourceStreamBuf` 是 core 那族 streambuf 的第四个成员，但因需要 `DataSource` 而住在 iobase） | 0 |
+| `BufferSliceSource<T>(intrusive_ptr<const Buffer<T>>)` | 把 core 的 `Buffer` 当源：**字节就是 buffer 自己的元素**，且**源自持 buffer** ⇒ “延迟到 save 才拉”的包不需要调用方保住任何东西（这与“借出去的内存/片段”不同）；改过（`bumpRevision`）则拒 `InvalidData`（同 `meshio` 的源） | 0 |
 
-于是 `addFile(path, span)` / `addFile(path, fragments)` / `addFile(path, real)` 都只是“包一个 source 交给同一条 emit 路径”，
-不出现第二套写出逻辑。
+- **为什么是 “持 buffer” 而不是 “借 `Fragment`”**（2026-09-28，S4 定稿）：`Fragment` 是**借用**，`addFile(path, span<Fragment>)` 的契约写明“活到 persist 结束”；一个**延迟**后端（`ZipArchive`）在 save 时才拉 ⇒ 调用方一旦把源数组释放（比如只传了 `mesh->positions()` 这个 view），就是悬垂指针。
+  `BufferSliceSource` 把 **buffer 句柄**（`intrusive_ptr<const Buffer<T>>`）一起收下 ⇒ 零拷贝与“没人再持有它”同时成立。可复用判据：**要零拷贝先看延迟拉取时这块内存归谁**；
+  归属不明就用“持句柄的源”，归属明确（同步写、调用方保证）才用 `Fragment`。
+
+- **为什么还需要 `DataSourceStream`**：VFS 交出来的是 `DataSource`，而外面的解析器只认 `std::istream`（例：`meshio::MeshLoader::load(std::istream&, hint)` 用 assimp 的
+  `ReadFileFromMemory`；`BinStlSource` 生成的字节要读回也要一个流）。有它之后，调用方只需一种拼法（file / 内存 / 网络 / 包内条目都包成流），不必在每个 API 上开两个口。
+- **它的能力面被源的能力面决定**：`seekg(0)` = `rewind()`✓，任意 seek ✗（`DataSource` 只有“长度 + 回绕”）；源不能回绕时 `seekg` 失败而不是静默读到空；
+  源在末尾报的错在流上只能表现为提前 EOF（`std::istream` 没有错误槽）⇒ 要区分就问 `DataSourceStream::error()`。
+
+- **内存来源不必自己造轮子**：core 的 `InputSpanStream`（借用 span、零拷贝、可 seek）/ `OutputSpanStream`（固定窗口）/
+  `MemoryStream` 家族就是“那些数据类型的 stream”，适配器只认 `std::istream` / `std::ostream` ⇒ `IstreamSource` 名副其实。
+- **“直给”的四种形态不需要适配器**：连续字节 / 分散片段 / 真实文件 / 移动接管就是 `addFile` 自己那四个重载（§8.2），
+  本文原稿里的 `bufferSource` / `fragmentSource` / `fileSource` / `vectorSource` / `vectorSink` 工厂因此**不建**（同样形状，少一套名字）。
+- **元素边界归适配器管**：拉取会被切成任意字节块（`zip_fread` 短读、libzip 自己的 chunk 大小），所以转换两侧各留一个“半截元素”的余量缓冲，
+  回调只见到整元素；push 侧另给 `finalize()` 收口（`DataSink` 没有“结束”这个时刻，内容在元素中间结束时报 `InvalidData`）。
+- **`Conversion<In, Out>` 是个值**：lambda 无法把元素类型带进构造函数的模板参数（`In`/`Out` 不在形参表里），
+  元素类型写在一个值里，顺带让回调可以用 `auto` 形参。
+- **流必须可 seek**：源每次 save 前都被 `rewind()`；不可 seek 的流（管道 / socket）当不了源，要先 spool 到可 seek 的东西。
+- **`DataSource::error()`（S1）**：0 字节读说“结束”，它说“为什么”；基类 `addFile(source)` 短交报 `InvalidData`、
+  源自己报 `IoFailure`（损坏的 zip 成员被复制进另一棵树因此不再静默，两条都有用例钉住）。
+- **领域自己的生成式源**：`DataSource` 的第三种实现形态是“**字节现算**” —— 布局归领域，iobase 只给接口。
+  例：meshio 三个源 `BinStlSource` / `AsciiStlSource` / `ObjSource`（共用一个 `MeshSource` 基类）把一棵 mesh 现排成对应格式，
+  binary STL 的 `size() = 84 + 50n` **可算**、两个文本格式报 `kUnknownSize`（长度不再是门槛，见下条）；三者都是“记录序号纯函数”式拉取。
+  因此 **0 驻留 + 能进 ZIP**（长度要不要事先知道，见下条：**不需要**）；ASCII 之类“排完版才知道长度”的格式，
+  要么两遍排版、要么自己写 writer（assimp 帮不上——它的写出面只有“落文件”或“整份 blob”，与 OCCT 的 STEP writer 同款）。
+- **`kUnknownSize`（S1，同日改判）**：长度不可知的源 **`addFile` 接得住** —— 默认物化侧改成“缓冲增长、读到 0 为界”，
+  `ZipArchive` 侧交给 libzip：源不声明 `ZIP_STAT_SIZE` ⇒ libzip 走 `data_length = -1` + `ZIP_FL_FORCE_ZIP64`，
+  写完数据后**回填 local header**（`zip_close.c:348` / `:588`；data descriptor 只给 PKWare 加密用），
+  各装饰层在流末补齐尺寸（`zip_source_crc.c` / `zip_source_compress.c`）。代价：该条目**强制 zip64**、输出必须**可 seek**。
+  原先“ZIP 必须先知长度”是错判（若把 `UINT64_MAX` 当尺寸上报，libzip 会当真）；仍然该拒的场合是“长度钉在不能回填的位置”。
+  `IstreamSource` 传 `kUnknownSize` 时**自己测长度**（要求可 seek）。
 
 **实现者必须遵守的契约**：
 
@@ -724,7 +803,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 
 | 层 | 类 |
 |---|---|
-| VFS 契约 | `Vfs`、`DataSource`、`DataSink`、`VfsReadStream`（`Stream.hpp`） |
+| VFS 契约 | `Vfs`、`VfsEntrySource`（`Vfs.hpp`）、`DataSource` / `DataSink`（`Stream.hpp`）、`IstreamSource` / `OstreamSink`（`Adapters.hpp`） |
 | 后端 | `DirectoryVfs`、`ZipArchive`、`MountVfs` |
 | 一次性工具 | `Zip`（无状态：只碰入参，自带该次调用的句柄 / 缓冲） |
 | 内存流 | `MemoryStreamBuf` / `ChunkedMemoryStreamBuf` / `SpanStreamBuf` 及其三套包装（12 个类，`MemoryStream.hpp`） |
@@ -739,7 +818,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 **跨模块复查**：
 
 - 今天的消费者只有 `robotics::io`（`DeviceIO` / `WorkcellIO` 以 `Vfs&` 入参、随调用存亡）与 `tools/urdf2vine`（CLI）；`src/fw` / `src/app` 不碰 `vn::io`；两边都没有线程（`std::thread|ThreadPool|QtConcurrent|QThread` 为 0）⇒ 现实使用全在“单线程内一步用完”。
-- `VfsReadStream` 既有承诺（流可活过 VFS，依赖底层存储仍可读）继续有效；`MountVfs` 用 `shared_ptr` 挂载 ⇒ “实例互不共享”的默认前提对**共享后端**不成立 —— 声明里“两对象共享的存储由调用方同步”正是为它写的。
+- `VfsEntrySource` 既有承诺（流可活过 VFS，依赖底层存储仍可读）继续有效；`MountVfs` 用 `shared_ptr` 挂载 ⇒ “实例互不共享”的默认前提对**共享后端**不成立 —— 声明里“两对象共享的存储由调用方同步”正是为它写的。
 
 **证据**（正向声明的行为钉；无 TSAN 树，这两例不是竞态证明）：`test_core` 的 `MemoryStream.InstancesRunInParallelOverTheirOwnBuffers`（4 线程各自持有两缓冲、逐字节写 16 KiB 校验）与 `test_iobase` 的 `ConcurrencyTest.VfsInstancesRunInParallelOverDistinctStorage`（4 线程各自真实目录 + 内存 ZIP：写 → 读 → `toBytes` → 接管字节重开 → 再读）。**同对象并发是不支持的用法**，不做（也无法）用测试证明。
 
@@ -828,8 +907,19 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | VFS 析构后 Stream 仍可读 → 生命周期正确 | S3（弱化版：`intrusive_ptr<Buffer>` 存活） |
 | 超出容量上限 → 超出容量 | **已过（分工版）**：缓冲层沿失败路径 —— `overflow` eof / `xsputn` 短写 / `seekp` 超限失败 / `reserve` `false`，STL 层表现为 `badbit`；可区分的 `CapacityExceeded` 留给高层预检（本层不产）：`MemoryStreamBuf.CapacityLimit{ShortWritesAndRefusesOverflow,HoldsSeekAndReserveBack}` / `ChunkedMemoryStreamBuf.CapacityLimitStopsAppends` |
 | seek 越界 → 越界 | **已过**：`MemoryStreamBuf.CapacityLimitHoldsSeekAndReserveBack`（超上限 seekp 失败；流层 failbit） |
-| 内容来源（片段 / 拉取）经 `Vfs&` 可达（默认实现 / override 两条路径） | **已过**：`IoBaseTest.DirectoryVfsAssemblesSourcesThroughTheBaseInterface` / `ZipArchiveKeepsSourcesLazyThroughTheBaseInterface` |
+| 内容来源（片段 / 拉取）经 `Vfs&` 可达（默认实现 / override 两条路径） | **已过**：`IoBaseTest.DirectoryVfsAssemblesSourcesThroughTheBaseInterface` / `ZipArchiveKeepsSourcesLazyThroughTheBaseInterface`。
+  **目录后端已改为流式（S2，2026-09-28）**：`DirectoryVfs::addFile(path, shared_ptr<DataSource>)` 不再走“先物化再写 span”的默认实现，
+  而是边拉边写（先写同级 `.vine-tmp`，干净收尾才 `rename` 就位）；不报长度的源因此也接得住，且“拉到一半失败”不会留下半个文件。
+  用例：`AdaptersTest.DirectoryVfsWritesASourceWhileItIsPulled`（**拉取途中文件已在长**，这是“真的没物化”的直视钉子）、
+  `DirectoryVfsKeepsTheOldContentWhenAStreamingSourceFails`、`DirectoryVfsWritesBorrowedPiecesWithoutAssemblingThem`、
+  `BufferSliceSourceWritesTheBufferItHolds` / `BufferSliceSourceRefusesABufferEditedAfterHandover` |
 | 读侧流式经 `Vfs&` 可达（`openRead` / `read(sink)`；override / 默认两条路径） | **已过**：`IoBaseTest.ZipArchiveStreamsReadsThroughTheBaseInterface` / `DirectoryVfsStreamsReadsThroughTheBaseInterface`（三种拼法同内容：整读 / 流读 / 推 sink；sink 拒绝即停并原样返回错误；损坏成员在 push 末尾报 `IoFailure`，同文件 `ZipArchiveOpensWithoutReadingContent` 的损坏夹具）；越界 seek → `OutOfRange` |
+| 流式适配器（S1）：`IstreamSource` 推进包 / `OstreamSink` 接条目 / `Vfs::copy` / 转换 / `kUnknownSize` / `error()` | **已过**：`AdaptersTest.{IstreamSourcesPullsTheStreamIntoThePackage,IstreamSourceMeasuresAStreamOfUnknownLength,IstreamSourceRefusesAStreamThatCannotSeek,IstreamSourceConvertsWhilePulling,OstreamSinkConvertsWhilePushing,OstreamSinkReportsContentThatEndsInsideAnElement,CopyMovesAnEntryBetweenTrees,CopyOfDamagedContentFailsInsteadOfWritingIt,AddFileTakesASourceThatCannotStateItsLength,AddFileReportsWhyAnUnmeasuredSourceStoppedShort,AddFileReportsWhyASourceStoppedShort,VfsEntrySourceRestartsFromTheBeginning}`（转换用例的块是 3 字节，故意让边界落在元素中间） |
+| `kUnknownSize` 源直接入包（无长度） | **已过**：`AdaptersTest.AddFileTakesASourceThatCannotStateItsLength`（保存前 `stat()->size == kUnknownSize`、重开后是真实长度；zip64 + 回填）、`AdaptersTest.AddFileReportsWhyAnUnmeasuredSourceStoppedShort`（截断/失败不静默）、`IoBaseTest.DirectoryVfsAssemblesSourcesThroughTheBaseInterface`（默认物化侧同场地） |
+| 压缩条目重启（`rewind()` / `seek(0)`） | **已过**：`AdaptersTest.RestartsACompressedEntryOfASavedPackage`（先断言夹具确实压缩）。
+  **坑（2026-09-28 修）**：压缩条目**不能** `zip_fseek`（libzip 手册：只能 seek stored/未加密数据），
+  而**一次被拒的 seek 会毒化它自己的 reader**（后续 `zip_fread` 永远 -1）⇒ 必须先用 `zip_file_is_seekable()` 分流，
+  不可 seek 的就 `zip_fopen_index` 重新打开（向前偏移用读+丢弃）；失败要落进 `error_`，否则 `rewind()` 失败看起来像“干净的开始”。 |
 
 ## 15. 待裁决
 

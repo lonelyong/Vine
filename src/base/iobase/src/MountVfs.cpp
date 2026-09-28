@@ -113,8 +113,8 @@ Result<VfsEntryInfo> MountVfs::stat(const std::filesystem::path& path) const
 
     if (isImpliedDirectory(normalized)) {
         VfsEntryInfo entry;
-        entry.path         = normalized;
-        entry.is_directory = true;
+        entry.path = normalized;
+        entry.kind = VfsEntryKind::Directory;
         return entry;
     }
     return IoError::NotFound;
@@ -136,7 +136,7 @@ Result<std::vector<VfsEntryInfo>> MountVfs::list(const std::filesystem::path& di
         if (!info.ok()) {
             continue;
         }
-        if (!info.value().is_directory) {
+        if (info.value().kind != VfsEntryKind::Directory) {
             return IoError::NotADirectory; // the first hit is what a reader sees
         }
         is_directory = true;
@@ -153,8 +153,8 @@ Result<std::vector<VfsEntryInfo>> MountVfs::list(const std::filesystem::path& di
             continue;
         }
         VfsEntryInfo entry;
-        entry.path         = prefixed(normalized, firstSegment(relativeTo(normalized, mount.prefix)));
-        entry.is_directory = true;
+        entry.path = prefixed(normalized, firstSegment(relativeTo(normalized, mount.prefix)));
+        entry.kind = VfsEntryKind::Directory;
         merged.try_emplace(entry.path.generic_u8string(), entry);
     }
 
@@ -202,7 +202,7 @@ Result<std::vector<unsigned char>> MountVfs::read(const std::filesystem::path& p
     return owner->backend->read(relativeTo(owner->prefix, normalized));
 }
 
-Result<std::unique_ptr<VfsReadStream>> MountVfs::openRead(const std::filesystem::path& path) const
+Result<std::unique_ptr<VfsEntrySource>> MountVfs::openRead(const std::filesystem::path& path) const
 {
     std::filesystem::path normalized;
     const IoError         err = detail::normalizeVfsPath(path, normalized);
@@ -364,7 +364,7 @@ IoError MountVfs::rename(const std::filesystem::path& from, const std::filesyste
     if (!info.ok()) {
         return info.error();
     }
-    if (info.value().is_directory) {
+    if (info.value().kind == VfsEntryKind::Directory) {
         return IoError::Unsupported; // a directory is not copied piecewise
     }
 

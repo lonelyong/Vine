@@ -1,6 +1,7 @@
 ﻿#include <vine/io/ZipArchive.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstring>
 #include <fstream>
@@ -66,19 +67,39 @@ class GeneratorBridge
 
     zip_int64_t read(void* data, zip_uint64_t length)
     {
-        const std::uint64_t promised  = size();
-        const std::uint64_t remaining = produced_ < promised ? promised - produced_ : 0;
-        const zip_uint64_t  wanted    = std::min<zip_uint64_t>(length, remaining);
-        if (wanted == 0) {
-            return 0; // end of content, or nothing left to promise
+        const std::uint64_t stated   = source_->size();
+        const bool          measured = stated != kUnknownSize;
+        if (measured) {
+            const std::uint64_t remaining = produced_ < stated ? stated - produced_ : 0;
+            if (remaining == 0) {
+                // The last byte has been handed over, and a source can only settle its verdict there (a checksum
+                // finishes with it), so the reason is asked for before the entry is declared complete.
+                if (source_->error() != IoError::Ok) {
+                    zip_error_set(&error_, ZIP_ER_READ, 0);
+                    return -1;
+                }
+                return 0;
+            }
+            length = std::min<zip_uint64_t>(length, remaining); // never read past the promise
+        }
+        if (length == 0) {
+            return 0;
         }
 
         const std::size_t got = source_->read(
-            std::span<std::byte>(static_cast<std::byte*>(data), static_cast<std::size_t>(wanted)));
-        if (got == 0 || got > wanted) {
-            // A source that stops early would leave the entry shorter than the
-            // size written into the archive, so this is an error, not an end.
-            zip_error_set(&error_, ZIP_ER_READ, 0);
+            std::span<std::byte>(static_cast<std::byte*>(data), static_cast<std::size_t>(length)));
+        if (got == 0) {
+            // 0 says "the content ends here"; error() tells "that was all" from "that was as far as it got".
+            if (measured || source_->error() != IoError::Ok) {
+                // A source that stops early would leave the entry shorter than the size written into the archive -
+                // or, when it stated no length, would store a silently truncated entry.
+                zip_error_set(&error_, ZIP_ER_READ, 0);
+                return -1;
+            }
+            return 0; // nothing was stated, so returning nothing is how this source reports the end
+        }
+        if (got > length) {
+            zip_error_set(&error_, ZIP_ER_READ, 0); // more than the buffer it was handed
             return -1;
         }
         produced_ += got;
@@ -110,8 +131,13 @@ zip_int64_t generatorCallback(void* userdata, void* data, zip_uint64_t length, z
     case ZIP_SOURCE_STAT: {
         auto* stat = static_cast<struct zip_stat*>(data);
         zip_stat_init(stat);
-        stat->size  = bridge->size();
-        stat->valid = ZIP_STAT_SIZE;
+        if (bridge->size() != kUnknownSize) {
+            stat->size  = bridge->size();
+            stat->valid = ZIP_STAT_SIZE;
+        }
+        // A source that stated no length must not have one invented for it: libzip believes whatever is reported here.
+        // Saying nothing makes it write the entry with a zip64 header and patch the length in once the last byte has
+        // arrived, which is exactly what an unmeasured source needs.
         return sizeof(struct zip_stat);
     }
     case ZIP_SOURCE_ERROR:
@@ -186,12 +212,12 @@ class FragmentSource final : public DataSource
 /**
  * @brief Holds an open source archive; the bytes it borrows live here too.
  */
-class ZipArchive::EntryReadStream final : public VfsReadStream
+class ZipArchive::EntryReadStream final : public VfsEntrySource
 {
   public:
-    EntryReadStream(std::shared_ptr<ArchiveHandle> handle, zip_file_t* file, std::uint64_t size,
+    EntryReadStream(std::shared_ptr<ArchiveHandle> handle, zip_file_t* file, std::uint64_t index, std::uint64_t size,
                     std::uint32_t expected_crc)
-        : handle_(std::move(handle)), file_(file), size_(size), expected_crc_(expected_crc)
+        : handle_(std::move(handle)), file_(file), index_(index), size_(size), expected_crc_(expected_crc)
     {
     }
 
@@ -250,13 +276,17 @@ class ZipArchive::EntryReadStream final : public VfsReadStream
             return IoError::OutOfRange;
         }
         if (file_ == nullptr) {
-            position_ = offset;
+            position_  = offset;
             crc_valid_ = offset == 0;
             crc_       = 0;
             return IoError::Ok;
         }
-        if (zip_fseek(file_, static_cast<zip_int64_t>(offset), SEEK_SET) != 0) {
-            return IoError::OutOfRange;
+
+        const IoError moved = moveTo(offset);
+        if (moved != IoError::Ok) {
+            // A restart that failed must not look like a clean start: the caller asks error() and learns why.
+            error_ = moved;
+            return moved;
         }
         position_ = offset;
         // The running checksum only holds for a straight read, so any seek but a
@@ -267,9 +297,52 @@ class ZipArchive::EntryReadStream final : public VfsReadStream
     }
 
   private:
+    /**
+     * @brief Positions the library's reader at a byte offset.
+     *
+     * A STORED entry can be seeked; a COMPRESSED one cannot - libzip refuses it, and a refused seek leaves its reader
+     * unusable afterwards - so such an entry is opened again instead and a forward move reads and discards what it
+     * skips. That is the slow part the VfsEntrySource contract mentions: seeking a compressed entry costs the
+     * decompression up to the target, and restarting it costs one reopen.
+     *
+     * @param offset Byte offset to reach.
+     * @return IoError::Ok on success, IoError::OutOfRange when a stored entry cannot reach it, IoError::IoFailure when
+     *         the entry cannot be opened again or ends before the offset.
+     */
+    IoError moveTo(std::uint64_t offset)
+    {
+        if (zip_file_is_seekable(file_) != 0) {
+            if (zip_fseek(file_, static_cast<zip_int64_t>(offset), SEEK_SET) != 0) {
+                return IoError::OutOfRange;
+            }
+            return IoError::Ok;
+        }
+
+        zip_file_t* const reopened =
+            zip_fopen_index(static_cast<zip_t*>(handle_->archive), static_cast<zip_uint64_t>(index_), ZIP_FL_UNCHANGED);
+        if (reopened == nullptr) {
+            return IoError::IoFailure;
+        }
+        zip_fclose(file_);
+        file_ = reopened;
+
+        std::array<std::byte, 4096> skipped{};
+        std::uint64_t               at = 0;
+        while (at < offset) {
+            const std::size_t want =
+                static_cast<std::size_t>(std::min<std::uint64_t>(skipped.size(), offset - at));
+            const zip_int64_t got = zip_fread(file_, skipped.data(), want);
+            if (got <= 0) {
+                return IoError::IoFailure; // the entry ends before the offset the directory promised
+            }
+            at += static_cast<std::uint64_t>(got);
+        }
+        return IoError::Ok;
+    }
     std::shared_ptr<ArchiveHandle> handle_; ///< Keeps the source archive alive for this reader.
     std::vector<unsigned char>     bytes_;  ///< Buffered content, when the entry is not source-backed.
     zip_file_t*                    file_{ nullptr };
+    std::uint64_t                  index_{ 0 }; ///< The entry's index in the source archive, so a restart can open it again.
     std::uint64_t                  size_{ 0 };
     std::uint64_t                  position_{ 0 };
     std::uint32_t                  crc_{ 0 };                            ///< Running checksum of what was read.
@@ -324,6 +397,11 @@ IoError ZipArchive::addFile(const std::filesystem::path& path, std::shared_ptr<D
     if (source == nullptr) {
         return IoError::InvalidData;
     }
+    if (const IoError settled = source->error(); settled != IoError::Ok) {
+        return settled; // the source already knows it cannot deliver, so nothing is stored
+    }
+    // A source that cannot state its length is taken as it is: libzip writes the entry with a zip64
+    // header whose length is patched in after the last byte, because the local header is written first.
     std::filesystem::path norm;
     const IoError error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
@@ -357,7 +435,7 @@ bool ZipArchive::insertDirectory(const std::filesystem::path& path)
     }
 
     Entry entry;
-    entry.info.is_directory = true;
+    entry.info.kind = VfsEntryKind::Directory;
     entries_.insert_or_assign(path, std::move(entry));
     return true;
 }
@@ -391,9 +469,9 @@ std::vector<VfsEntryInfo> ZipArchive::index() const
     listed.reserve(entries_.size());
     for (const auto& [name, entry] : entries_) {
         VfsEntryInfo info;
-        info.path         = name;
-        info.is_directory = entry.info.is_directory;
-        if (!info.is_directory) {
+        info.path = name;
+        info.kind = entry.info.kind;
+        if (info.kind != VfsEntryKind::Directory) {
             info.size = entrySize(entry);
             info.crc  = entry.info.crc;
         }
@@ -406,7 +484,7 @@ VfsEntryKind ZipArchive::entryKindOf(const std::filesystem::path& name) const
 {
     const auto it = entries_.find(name);
     if (it != entries_.end()) {
-        return it->second.info.is_directory ? VfsEntryKind::Directory : VfsEntryKind::File;
+        return it->second.info.kind; // the entry table already speaks the virtual vocabulary
     }
     for (const auto& [key, entry] : entries_) {
         (void)entry;
@@ -448,9 +526,11 @@ std::vector<VfsEntryInfo> ZipArchive::children(const std::filesystem::path& dir)
         }
 
         VfsEntryInfo child;
-        child.path         = detail::joinVfs(dir, std::filesystem::path(segment));
-        child.is_directory = !is_leaf || entry.info.is_directory;
-        if (!child.is_directory) {
+        child.path = detail::joinVfs(dir, std::filesystem::path(segment));
+        // A leaf the table holds as a file is one; every other segment is a directory,
+        // because a longer path below it is what put the segment into the listing.
+        child.kind = is_leaf && entry.info.kind == VfsEntryKind::File ? VfsEntryKind::File : VfsEntryKind::Directory;
+        if (child.kind != VfsEntryKind::Directory) {
             child.size = entrySize(entry);
             child.crc  = entry.info.crc;
         }
@@ -470,7 +550,7 @@ std::uint64_t ZipArchive::entrySize(const Entry& entry) const
         return ec ? 0 : static_cast<std::uint64_t>(bytes);
     }
     if (entry.generator != nullptr) {
-        return entry.generator->size();
+        return entry.generator->size(); // kUnknownSize while the content has not been produced yet
     }
     return static_cast<std::uint64_t>(entry.data.size());
 }
@@ -492,19 +572,13 @@ Result<std::vector<unsigned char>> ZipArchive::contentOf(const Entry& entry) con
         return entry.data;
     }
 
-    // A generator is pulled in chunks; the archive only holds its promise.
-    std::vector<unsigned char> bytes(static_cast<std::size_t>(entry.generator->size()));
-    entry.generator->rewind();
-    std::size_t done = 0;
-    while (done < bytes.size()) {
-        const std::size_t got = entry.generator->read(
-            std::span<std::byte>(reinterpret_cast<std::byte*>(bytes.data()) + done, bytes.size() - done));
-        if (got == 0) {
-            return IoError::InvalidData; // shorter than promised
-        }
-        done += got;
+    // A generator is pulled in chunks while the content is assembled; the pull itself is the same one every other
+    // place in the library uses, so a source that stated no length ends the same way here as it does anywhere else.
+    detail::VectorSink sink;
+    if (const IoError pumped = detail::pumpSource(*entry.generator, sink); pumped != IoError::Ok) {
+        return pumped;
     }
-    return bytes;
+    return sink.take();
 }
 
 Result<std::vector<unsigned char>> ZipArchive::read(const std::filesystem::path& path) const
@@ -577,9 +651,17 @@ Result<std::vector<unsigned char>> ZipArchive::readStored(const std::filesystem:
     return bytes;
 }
 
-Result<std::unique_ptr<VfsReadStream>> ZipArchive::openRead(const std::filesystem::path& name) const
+Result<std::unique_ptr<VfsEntrySource>> ZipArchive::openRead(const std::filesystem::path& name) const
 {
-    const VfsEntryKind kind = entryKindOf(name);
+    // Normalized first, like read() and stat() do: a path that is not a valid virtual path is reported as such
+    // instead of being looked up as a name that happens to be missing.
+    std::filesystem::path norm;
+    const IoError normalized = detail::normalizeVfsPath(name, norm);
+    if (normalized != IoError::Ok) {
+        return normalized;
+    }
+
+    const VfsEntryKind kind = entryKindOf(norm);
     if (kind == VfsEntryKind::Missing) {
         return IoError::NotFound;
     }
@@ -587,7 +669,7 @@ Result<std::unique_ptr<VfsReadStream>> ZipArchive::openRead(const std::filesyste
         return IoError::IsADirectory;
     }
 
-    const Entry& entry = entries_.at(name);
+    const Entry& entry = entries_.at(norm);
     if (entry.from_source) {
         if (handle_ == nullptr) {
             return IoError::IoFailure;
@@ -598,14 +680,15 @@ Result<std::unique_ptr<VfsReadStream>> ZipArchive::openRead(const std::filesyste
             return IoError::IoFailure;
         }
         // The handle is held by the reader, so the stream outlives this archive.
-        return std::unique_ptr<VfsReadStream>(new EntryReadStream(handle_, file, entry.info.size, entry.info.crc));
+        return std::unique_ptr<VfsEntrySource>(
+            new EntryReadStream(handle_, file, entry.source_index, entry.info.size, entry.info.crc));
     }
 
     auto bytes = contentOf(entry);
     if (!bytes) {
         return bytes.error();
     }
-    return std::unique_ptr<VfsReadStream>(new EntryReadStream(bytes.take()));
+    return std::unique_ptr<VfsEntrySource>(new EntryReadStream(bytes.take()));
 }
 
 Result<ZipArchive> ZipArchive::open(const std::filesystem::path& path, OpenMode mode)
@@ -735,12 +818,12 @@ IoError ZipArchive::adoptHandle(std::shared_ptr<ArchiveHandle> handle, const std
         }
 
         Entry entry;
-        entry.stored_name       = info.stored; // kept verbatim: a legacy name is written back as it was
-        entry.from_source       = !info.is_directory; // a directory entry has no content to copy through
-        entry.source_index      = i;
-        entry.info.is_directory = info.is_directory;
-        entry.info.size         = info.size;
-        entry.info.crc          = info.crc;
+        entry.stored_name  = info.stored; // kept verbatim: a legacy name is written back as it was
+        entry.from_source  = !info.is_directory; // a directory entry has no content to copy through
+        entry.source_index = i;
+        entry.info.kind    = info.is_directory ? VfsEntryKind::Directory : VfsEntryKind::File;
+        entry.info.size    = info.size;
+        entry.info.crc     = info.crc;
         entries.insert_or_assign(info.name, std::move(entry));
     }
 
@@ -758,11 +841,14 @@ bool ZipArchive::emit(void* target) const
         // An entry that came from an archive is written back under the bytes that archive
         // held, so a legacy name survives a repack; an entry this archive created itself
         // is written in UTF-8, and libzip decides the UTF-8 flag from those bytes.
-        const std::string stored = entry.stored_name.empty() ? detail::toStoredName(name, entry.info.is_directory)
+        // The storage layer still speaks in a flag: this is where the virtual kind is
+        // turned back into the trailing '/' a ZIP marks a directory with.
+        const bool        is_directory = entry.info.kind == VfsEntryKind::Directory;
+        const std::string stored = entry.stored_name.empty() ? detail::toStoredName(name, is_directory)
                                                             : entry.stored_name;
         zip_source_t*     source = nullptr;
 
-        if (entry.info.is_directory) {
+        if (is_directory) {
             source = zip_source_buffer(archive, nullptr, 0, 0);
         }
         else if (entry.from_source) {
@@ -963,14 +1049,15 @@ Result<VfsEntryInfo> ZipArchive::stat(const std::filesystem::path& path) const
         return error;
     }
     if (norm.empty()) {
-        return VfsEntryInfo{ std::filesystem::path{}, true, 0 };
+        return VfsEntryInfo{ std::filesystem::path{}, VfsEntryKind::Directory, 0 };
     }
 
-    switch (entryKindOf(norm)) {
+    const VfsEntryKind kind = entryKindOf(norm);
+    switch (kind) {
     case VfsEntryKind::File:
-        return VfsEntryInfo{ norm, false, sizeOf(norm), crcOf(norm) };
+        return VfsEntryInfo{ norm, kind, sizeOf(norm), crcOf(norm) };
     case VfsEntryKind::Directory:
-        return VfsEntryInfo{ norm, true, 0 };
+        return VfsEntryInfo{ norm, kind, 0 };
     case VfsEntryKind::Missing:
         break;
     }

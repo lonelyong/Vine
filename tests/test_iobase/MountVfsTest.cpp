@@ -16,6 +16,7 @@ using vn::io::IoError;
 using vn::io::MountVfs;
 using vn::io::Result;
 using vn::io::VfsEntryInfo;
+using vn::io::VfsEntryKind;
 using vn::io::ZipArchive;
 
 namespace
@@ -106,7 +107,7 @@ TEST(MountVfsTest, MountRejectsInvalidRequests)
     // Mount points are spelled in the normalized form, so every separator
     // spelling of the prefix reaches the same mount.
     EXPECT_TRUE(tree.stat(u8"ok//path/x").ok());
-    EXPECT_TRUE(tree.stat(u8"ok/path/x")->is_directory);
+    EXPECT_EQ(tree.stat(u8"ok/path/x")->kind, VfsEntryKind::Directory);
 }
 
 TEST(MountVfsTest, MountPriorityShadowsReads)
@@ -152,21 +153,21 @@ TEST(MountVfsTest, MountMergesListsAndSynthesizesIntermediateDirectories)
     const Result<std::vector<VfsEntryInfo>> root_list = tree.list(u8"");
     ASSERT_TRUE(root_list.ok());
     ASSERT_NE(findChild(*root_list, u8"data"), nullptr);
-    EXPECT_TRUE(findChild(*root_list, u8"data")->is_directory);
+    EXPECT_EQ(findChild(*root_list, u8"data")->kind, VfsEntryKind::Directory);
 
     const Result<std::vector<VfsEntryInfo>> data_list = tree.list(u8"data");
     ASSERT_TRUE(data_list.ok());
     EXPECT_EQ(data_list->size(), 3U);
     ASSERT_NE(findChild(*data_list, u8"data/a.txt"), nullptr);
     ASSERT_NE(findChild(*data_list, u8"data/b.txt"), nullptr);
-    EXPECT_FALSE(findChild(*data_list, u8"data/a.txt")->is_directory);
+    EXPECT_EQ(findChild(*data_list, u8"data/a.txt")->kind, VfsEntryKind::File);
     ASSERT_NE(findChild(*data_list, u8"data/deep"), nullptr);
-    EXPECT_TRUE(findChild(*data_list, u8"data/deep")->is_directory);
+    EXPECT_EQ(findChild(*data_list, u8"data/deep")->kind, VfsEntryKind::Directory);
 
     // "data/deep" itself is only implied by the mount at "data/deep/inner".
     const Result<VfsEntryInfo> implied = tree.stat(u8"data/deep");
     ASSERT_TRUE(implied.ok());
-    EXPECT_TRUE(implied->is_directory);
+    EXPECT_EQ(implied->kind, VfsEntryKind::Directory);
     EXPECT_EQ(implied->path, std::filesystem::path(u8"data/deep"));
 
     // Below the implied directory the mounted backend's own entries show up
@@ -175,9 +176,9 @@ TEST(MountVfsTest, MountMergesListsAndSynthesizesIntermediateDirectories)
     ASSERT_TRUE(deep_list.ok());
     EXPECT_EQ(deep_list->size(), 2U);
     ASSERT_NE(findChild(*deep_list, u8"data/deep/inner"), nullptr);
-    EXPECT_TRUE(findChild(*deep_list, u8"data/deep/inner")->is_directory);
+    EXPECT_EQ(findChild(*deep_list, u8"data/deep/inner")->kind, VfsEntryKind::Directory);
     ASSERT_NE(findChild(*deep_list, u8"data/deep/z.txt"), nullptr);
-    EXPECT_FALSE(findChild(*deep_list, u8"data/deep/z.txt")->is_directory);
+    EXPECT_EQ(findChild(*deep_list, u8"data/deep/z.txt")->kind, VfsEntryKind::File);
     EXPECT_EQ(textOf(tree.read(u8"data/deep/z.txt")), "z");
 
     // The empty mount at "data/deep/inner" answers for itself: it lists nothing.
@@ -210,7 +211,7 @@ TEST(MountVfsTest, MountRoutesWritesToTheOwningOrFirstWritableBackend)
     EXPECT_EQ(textOf(tree.read(u8"new.txt")), "fresh");
 
     ASSERT_EQ(tree.createDirectories(u8"newdir/sub"), IoError::Ok);
-    EXPECT_TRUE(overlay->stat(u8"newdir/sub")->is_directory);
+    EXPECT_EQ(overlay->stat(u8"newdir/sub")->kind, VfsEntryKind::Directory);
     EXPECT_EQ(tree.remove(u8"newdir/sub"), IoError::Ok);
 
     // A path the read-only owner holds is refused where it is - it is NOT
@@ -338,7 +339,7 @@ TEST(MountVfsTest, MountLongestPrefixWinsWithoutFallback)
     ASSERT_EQ(tree.mount(u8"data/a/b", leaf), IoError::Ok);
 
     EXPECT_EQ(textOf(tree.read(u8"data/x.txt")), "root-x");
-    EXPECT_TRUE(tree.stat(u8"data/a")->is_directory);
+    EXPECT_EQ(tree.stat(u8"data/a")->kind, VfsEntryKind::Directory);
 
     // The mount at "data/a" answers for its whole subtree, so the deeper entry
     // of the mount at "data" is out of sight - nothing falls back to it.
@@ -347,13 +348,13 @@ TEST(MountVfsTest, MountLongestPrefixWinsWithoutFallback)
     ASSERT_TRUE(hidden_list.ok());
     EXPECT_EQ(hidden_list->size(), 1U);
     ASSERT_NE(findChild(*hidden_list, u8"data/a/b"), nullptr);
-    EXPECT_TRUE(findChild(*hidden_list, u8"data/a/b")->is_directory);
+    EXPECT_EQ(findChild(*hidden_list, u8"data/a/b")->kind, VfsEntryKind::Directory);
     EXPECT_TRUE(data->stat(u8"a/inner.txt").ok());
 
     const Result<std::vector<VfsEntryInfo>> data_list = tree.list(u8"data");
     ASSERT_TRUE(data_list.ok());
     ASSERT_NE(findChild(*data_list, u8"data/a"), nullptr);
-    EXPECT_TRUE(findChild(*data_list, u8"data/a")->is_directory);
+    EXPECT_EQ(findChild(*data_list, u8"data/a")->kind, VfsEntryKind::Directory);
     EXPECT_NE(findChild(*data_list, u8"data/x.txt"), nullptr);
 
     // A write under the deepest prefix lands in its mount.

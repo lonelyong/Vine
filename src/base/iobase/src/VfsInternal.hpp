@@ -1,9 +1,12 @@
 ﻿#pragma once
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <span>
 #include <string>
+#include <vector>
 
 #include <vine/io/IoError.hpp>
 #include <vine/io/io_global.hpp>
@@ -14,6 +17,91 @@ VN_IO_NS_BEGIN
 
 namespace detail
 {
+
+/**
+ * @brief A sink that collects the bytes it is handed in one buffer.
+ */
+class VectorSink final : public DataSink
+{
+  public:
+    /**
+     * @brief Appends the bytes to what was collected.
+     *
+     * @param bytes The bytes to append.
+     * @return IoError::Ok always; a vector only fails by throwing, which the caller sees as such.
+     */
+    IoError write(std::span<const std::byte> bytes) override
+    {
+        const auto* const first = reinterpret_cast<const unsigned char*>(bytes.data());
+        bytes_.insert(bytes_.end(), first, first + bytes.size());
+        return IoError::Ok;
+    }
+
+    /**
+     * @brief Returns what was collected.
+     *
+     * @return The content as it arrived.
+     */
+    [[nodiscard]] const std::vector<unsigned char>& bytes() const noexcept { return bytes_; }
+
+    /**
+     * @brief Hands the collected content over, leaving the sink empty.
+     *
+     * @return The content as it arrived.
+     */
+    [[nodiscard]] std::vector<unsigned char> take() noexcept { return std::move(bytes_); }
+
+  private:
+    std::vector<unsigned char> bytes_;
+};
+
+/**
+ * @brief Pulls a content source into a sink, from its first byte to its last.
+ *
+ * The one implementation of the DataSource contract in this library, so it is the one place that decides what a source's
+ * behaviour means: a source that stated a length has to produce exactly that many bytes (stopping short is
+ * IoError::InvalidData), a source that stated none ends by returning nothing, and the reason a source stopped is asked
+ * for once the last byte has arrived - a checksum can only settle its verdict there.
+ *
+ * @param source The source to pull; it is rewound first, since a pull describes one piece of content from its beginning.
+ * @param sink Receives the bytes as they arrive.
+ * @return IoError::Ok when the content arrived in full, what the sink refused with, the source's own reason when it
+ *         stopped for one, or IoError::InvalidData when it stopped short of the length it stated.
+ */
+inline IoError pumpSource(DataSource& source, DataSink& sink)
+{
+    const std::uint64_t stated   = source.size();
+    const bool          measured = stated != kUnknownSize;
+
+    source.rewind();
+    std::array<std::byte, 64U * 1024U> chunk{};
+    std::uint64_t                      produced = 0;
+    while (true) {
+        const std::size_t want = measured ? static_cast<std::size_t>(std::min<std::uint64_t>(chunk.size(), stated - produced))
+                                          : chunk.size();
+        if (want == 0) {
+            break; // every promised byte has arrived
+        }
+
+        const std::size_t got = source.read(std::span<std::byte>(chunk.data(), want));
+        if (got == 0) {
+            if (measured) {
+                // A source that stops short of its size() promise is an error, not an end - and the source itself may
+                // know why (a stream that failed, content that did not check out).
+                return source.error() != IoError::Ok ? source.error() : IoError::InvalidData;
+            }
+            break; // nothing was stated, so returning nothing is how this source reports the end
+        }
+        if (const IoError refused = sink.write(std::span<const std::byte>(chunk.data(), got)); refused != IoError::Ok) {
+            return refused; // the destination would not take the content
+        }
+        produced += got;
+    }
+
+    // The content arrived, but a source can only settle its verdict at the very end (a checksum finishes with the last
+    // byte), so the reason is asked for once more.
+    return source.error();
+}
 
 /**
  * @brief Converts a filesystem path to the UTF-8 byte form libzip expects.

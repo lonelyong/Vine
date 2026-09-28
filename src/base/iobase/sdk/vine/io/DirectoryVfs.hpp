@@ -100,7 +100,7 @@ class VN_IOBASE_API DirectoryVfs : public Vfs
      *         IoError::InvalidPath when path is not a valid virtual path,
      *         IoError::IoFailure when the file cannot be opened.
      */
-    [[nodiscard]] Result<std::unique_ptr<VfsReadStream>> openRead(const std::filesystem::path& path) const override;
+    [[nodiscard]] Result<std::unique_ptr<VfsEntrySource>> openRead(const std::filesystem::path& path) const override;
 
     /**
      * @brief Adds a whole real file, creating missing parents.
@@ -112,6 +112,40 @@ class VN_IOBASE_API DirectoryVfs : public Vfs
      *         valid virtual path, IoError::IoFailure when writing fails.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes) override;
+
+    /**
+     * @brief Adds a whole virtual file whose content comes from a pull source, streaming it.
+     *
+     * Unlike the default, which materializes the content before writing it, this writes each chunk as it is pulled - so
+     * the file grows on disk while the source produces it, and a source that cannot state its length
+     * (`kUnknownSize`) is taken too: a file needs no length in advance, and the last chunk is simply the last one.
+     *
+     * The bytes go into a sibling temporary file and the target is only replaced once the pull ended cleanly, so a
+     * source that stops halfway leaves what was there before untouched instead of a half-written file.
+     *
+     * @param path The virtual file path.
+     * @param source The source to pull from; must not be null.
+     * @return IoError::Ok on success, IoError::InvalidData when source is null or stopped short of the length it
+     *         stated, the source's own reason when it stopped for one, IoError::IsADirectory when the name is taken by
+     *         a directory, IoError::ReadOnly when the root is read-only, IoError::InvalidPath when path is not a valid
+     *         virtual path, IoError::IoFailure when writing fails.
+     */
+    [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source) override;
+
+    /**
+     * @brief Adds a whole virtual file stored as borrowed byte ranges, streaming them.
+     *
+     * The pieces are written one after another, so publisher data that already lives in more than one buffer reaches
+     * the file without being concatenated in memory first - which is what the default does with the same arguments.
+     *
+     * @param path The virtual file path.
+     * @param fragments The pieces to write, in order; they have to stay alive for the duration of the call.
+     * @return IoError::Ok on success, IoError::InvalidData when a piece claims bytes it does not have,
+     *         IoError::IsADirectory when the name is taken by a directory, IoError::ReadOnly when the root is
+     *         read-only, IoError::InvalidPath when path is not a valid virtual path, IoError::IoFailure when writing
+     *         fails.
+     */
+    [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::span<const Fragment> fragments) override;
 
     /**
      * @brief Creates a real directory under the root.
@@ -222,6 +256,18 @@ class VN_IOBASE_API DirectoryVfs : public Vfs
      */
     [[nodiscard]] IoError resolve(const std::filesystem::path& vfs_path, std::filesystem::path& normalized,
                                   std::filesystem::path& out) const;
+
+    /**
+     * @brief Prepares a real path for a whole file to be written there.
+     *
+     * Every addFile overload needs the same three things: the tree has to be writable, the virtual path has to be valid
+     * and must not name the root or a directory, and the parent directory has to exist (parents are implied).
+     *
+     * @param path The virtual file path.
+     * @param real Receives the mapped real path; untouched on failure.
+     * @return IoError::Ok, or the reason nothing can be written there.
+     */
+    [[nodiscard]] IoError prepareNewFile(const std::filesystem::path& path, std::filesystem::path& real);
 
     std::filesystem::path root_;
 };

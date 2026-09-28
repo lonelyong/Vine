@@ -16,14 +16,34 @@
 VN_IO_NS_BEGIN
 
 /**
+ * @brief What a virtual path refers to.
+ *
+ * kindOf() answers with any of the three: Missing is a query that found nothing, either
+ * because no entry is there or because the path is not a valid virtual path. A
+ * VfsEntryInfo is the answer to a query that succeeded, so the kind it carries is never
+ * Missing - what an entry info describes is something that is there.
+ */
+enum class VfsEntryKind : std::uint8_t
+{
+    Missing,   ///< Nothing is there: the path is absent, or not a valid virtual path.
+    File,      ///< A file: read() works.
+    Directory, ///< A directory, explicit or implied by longer names.
+};
+
+/**
  * @brief What stat() and list() report about one virtual path.
+ *
+ * Only an entry that is there is described here: an absent path, or one that is not a
+ * valid virtual path, comes back from stat()/list() as an IoError instead, so the kind is
+ * always File or Directory. Missing belongs to VfsEntryKind because that is what kindOf()
+ * answers with, not because it can appear here.
  */
 struct VN_IOBASE_API VfsEntryInfo
 {
-    std::filesystem::path path;          ///< Full normalized virtual path; the empty path is the root.
-    bool          is_directory{ false }; ///< true when the path names a directory.
-    std::uint64_t size{ 0 };             ///< Size in bytes; always 0 for a directory.
-    std::uint32_t crc{ 0 };              ///< Content checksum recorded by the backend (a ZIP records CRC-32); 0 when it has none yet.
+    std::filesystem::path path;                       ///< Full normalized virtual path; the empty path is the root.
+    VfsEntryKind          kind{ VfsEntryKind::File }; ///< What the path names: File or Directory, never Missing.
+    std::uint64_t         size{ 0 };                  ///< Size in bytes; 0 for a directory, kUnknownSize when the content has not been produced yet (a source nobody measured).
+    std::uint32_t         crc{ 0 };                   ///< Content checksum recorded by the backend (a ZIP records CRC-32); 0 when it has none yet.
 
     /**
      * @brief The last path segment, i.e. the entry's own name.
@@ -34,13 +54,74 @@ struct VN_IOBASE_API VfsEntryInfo
 };
 
 /**
- * @brief What a virtual path refers to, as kindOf() reports it.
+ * @brief Sequential reader over one entry of a virtual file system.
+ *
+ * A source outlives the tree it came from, so closing or destroying the VFS does
+ * not invalidate it; it does depend on the storage behind the VFS staying
+ * readable (a file that is deleted or replaced breaks in-flight reads). Because it
+ * IS a DataSource, an entry can be handed straight to another tree's addFile() -
+ * that is how content moves between trees without ever being held whole.
+ *
+ * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
+ * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-enum class VfsEntryKind : std::uint8_t
+class VN_IOBASE_API VfsEntrySource : public DataSource
 {
-    Missing,   ///< Nothing is there: the path is absent, or not a valid virtual path.
-    File,      ///< A file: read() works.
-    Directory, ///< A directory, explicit or implied by longer names.
+  public:
+    /**
+     * @brief Reads the next chunk of the entry.
+     *
+     * @param out Buffer to fill.
+     * @return The number of bytes read, or 0 at the end of the entry. A failure also
+     *         reports 0 here - error() tells the two apart.
+     */
+    [[nodiscard]] virtual std::size_t read(std::span<std::byte> out) override = 0;
+
+    /**
+     * @brief Reports a failure that read() cannot express.
+     *
+     * Decompression finishes (and the content is checked) only once the entry is read
+     * past its last byte, so a caller that wants to know whether what it read was
+     * intact looks here after read() returned 0.
+     *
+     * @return IoError::Ok while the entry reads cleanly, IoError::IoFailure when the
+     *         content could not be decoded or did not check out.
+     */
+    [[nodiscard]] virtual IoError error() const override = 0;
+
+    /**
+     * @brief Reports the uncompressed size of the entry.
+     *
+     * @return The size in bytes.
+     */
+    [[nodiscard]] virtual std::uint64_t size() const noexcept override = 0;
+
+    /**
+     * @brief Restarts the entry from its first byte.
+     *
+     * The DataSource half of this class: what a consumer calls before pulling the
+     * entry again. It is seek(0) - and a check that was turned off by an earlier
+     * seek to the middle is turned back on by it.
+     */
+    void rewind() override { static_cast<void>(seek(0)); }
+
+    /**
+     * @brief Reports whether seek() is cheap for this entry.
+     *
+     * A stored entry can be positioned directly; a compressed entry has to be
+     * decompressed up to the target offset, so seeking it is allowed but slow.
+     *
+     * @return true when the reader can position itself without decompressing.
+     */
+    [[nodiscard]] virtual bool seekable() const noexcept = 0;
+
+    /**
+     * @brief Positions the reader at an absolute offset.
+     *
+     * @param offset Target offset, counted from the start of the entry.
+     * @return IoError::Ok on success, IoError::OutOfRange when offset is past the end.
+     */
+    [[nodiscard]] virtual IoError seek(std::uint64_t offset) = 0;
 };
 
 /**
@@ -123,10 +204,12 @@ class VN_IOBASE_API Vfs
      * @brief Opens a chunk-wise reader over one virtual file.
      *
      * The streaming counterpart of read(): the content is pulled in chunks and
-     * never has to be held as one buffer. The reader outlives the tree it came
-     * from (a ZipArchive's reader keeps the source handle alive); it does
-     * depend on the storage staying readable, so a file that is deleted or
-     * replaced breaks in-flight reads.
+     * never has to be held as one buffer. The source outlives the tree it came
+     * from (a ZipArchive's reader keeps the source handle alive); it does depend on
+     * the storage staying readable, so a file that is deleted or replaced breaks
+     * in-flight reads. Being a DataSource, it can be handed straight to another
+     * tree's addFile() - that is how an entry moves between trees without ever
+     * being held whole (see copy()).
      *
      * @param path The virtual file path.
      * @return The reader, or IoError::NotFound when there is no such file,
@@ -134,7 +217,7 @@ class VN_IOBASE_API Vfs
      *         IoError::InvalidPath when path is not a valid virtual path,
      *         IoError::IoFailure when the content cannot be opened.
      */
-    [[nodiscard]] virtual Result<std::unique_ptr<VfsReadStream>> openRead(const std::filesystem::path& path) const = 0;
+    [[nodiscard]] virtual Result<std::unique_ptr<VfsEntrySource>> openRead(const std::filesystem::path& path) const = 0;
 
     /**
      * @brief Pushes a whole virtual file into a sink, chunk by chunk.
@@ -208,9 +291,14 @@ class VN_IOBASE_API Vfs
      * The content is pulled through read(); a backend may pull it right here
      * (the default does, then delegates to addFile(path, span)) or defer the
      * pull to saveAs() (ZipArchive does). Either way the source has to stay
-     * alive until the tree is persisted, and size() has to match what read()
-     * produces: a source that stops short fails the write, here for the default
-     * and at saveAs() for a backend that defers.
+     * alive until the tree is persisted.
+     *
+     * A source that states a length (size() != kUnknownSize) has to produce exactly
+     * that many bytes: stopping short fails the write, here for the default and at
+     * saveAs() for a backend that defers.
+     * A source that states none (kUnknownSize) is pulled once, in order, until it
+     * reports the end by returning nothing; a backend may refuse such a source with
+     * IoError::Unsupported when its storage needs the length up front.
      *
      * @param path The virtual file path.
      * @param source The source to pull from; must not be null.
@@ -350,6 +438,23 @@ class VN_IOBASE_API Vfs
      * @return The kind of the path.
      */
     [[nodiscard]] VfsEntryKind kindOf(const std::filesystem::path& path) const;
+
+    /**
+     * @brief Moves one entry from another tree into this one, chunk by chunk.
+     *
+     * Derived from openRead() on the source and the content-source addFile() here,
+     * so nothing is ever held whole. A backend that keeps content sources lazily
+     * (ZipArchive) pulls the bytes when THIS tree is persisted instead of now -
+     * the source entry and its storage therefore have to stay readable until then.
+     *
+     * @param source The tree to read from; it is not modified.
+     * @param from The entry to copy, named in source.
+     * @param to The path to write in this tree; an existing file is replaced.
+     * @return IoError::Ok on success, or the first error either side reports
+     *         (openRead()'s errors for from, addFile()'s for to).
+     */
+    [[nodiscard]] IoError copy(const Vfs& source, const std::filesystem::path& from,
+                               const std::filesystem::path& to);
 
     /**
      * @brief Checks whether a virtual file or directory exists.

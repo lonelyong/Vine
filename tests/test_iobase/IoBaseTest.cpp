@@ -347,7 +347,7 @@ class RefusingSink final : public vn::io::DataSink
  * @param stream The reader to consume to its end.
  * @return Every byte the reader produced, in order.
  */
-std::vector<unsigned char> drain(vn::io::VfsReadStream& stream)
+std::vector<unsigned char> drain(vn::io::VfsEntrySource& stream)
 {
     std::vector<unsigned char>  out;
     std::array<std::byte, 4096> buffer{};

@@ -25,7 +25,7 @@ namespace detail
  *
  * The name is the stored spelling, where a directory ends with '/', and a file
  * carries the checksum the archive recorded. This stays ZIP-private: callers see
- * the same entry through VfsEntryInfo, which carries the kind in is_directory and
+ * the same entry through VfsEntryInfo, which carries the kind in its own words and
  * never a trailing '/'.
  */
 struct StoredEntry
@@ -270,8 +270,8 @@ inline bool locateEntry(zip_t* archive, const std::filesystem::path& name, Locat
  * @brief Converts a stored directory listing into the record the whole IOBase speaks.
  *
  * The two spellings differ in one way: a ZIP marks a directory by a trailing '/',
- * while a virtual path carries that in is_directory. An entry naming the root is
- * left out - the root always exists, and reporting it would only repeat that.
+ * while a VfsEntryInfo carries the kind. An entry naming the root is left out - the
+ * root always exists, and reporting it would only repeat that.
  *
  * @param stored The entries as the archive stores them.
  * @return The entries as VfsEntryInfo, in the order they were stored.
@@ -286,9 +286,9 @@ inline std::vector<VfsEntryInfo> toEntryInfos(const std::vector<StoredEntry>& st
         }
 
         VfsEntryInfo info;
-        info.path         = entry.name;
-        info.is_directory = entry.is_directory;
-        if (!entry.is_directory) {
+        info.path = entry.name;
+        info.kind = entry.is_directory ? VfsEntryKind::Directory : VfsEntryKind::File;
+        if (info.kind != VfsEntryKind::Directory) {
             info.size = entry.size;
             info.crc  = entry.crc;
         }

@@ -2,12 +2,27 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 
 #include <vine/io/IoError.hpp>
 #include <vine/io/io_global.hpp>
 
 VN_IO_NS_BEGIN
+
+/**
+ * @brief The "length is not known up front" answer of DataSource::size().
+ *
+ * A source that cannot state its byte count - content generated with a data-dependent length, or a stream nobody measured -
+ * reports this instead. It also tells the consumer that the source cannot be pulled twice: rewind() is a no-op and read()
+ * reports the end right away, because only a sequential, single pass is possible.
+ *
+ * A backend may take such a source or refuse it with IoError::Unsupported, and both are honest answers. A ZIP stores it:
+ * the entry then gets a zip64 header whose length is written once the last byte has arrived, which costs a few header
+ * bytes. A backend whose format pins the length somewhere that cannot be patched afterwards has to have it before the
+ * first byte, and a caller whose source was refused has to spool the content to something measurable first.
+ */
+inline constexpr std::uint64_t kUnknownSize = std::numeric_limits<std::uint64_t>::max();
 
 /**
  * @brief One contiguous piece of a fragmented entry.
@@ -42,7 +57,9 @@ class VN_IOBASE_API DataSource
     /**
      * @brief Reports the total number of bytes this source produces.
      *
-     * @return The exact byte count; a save fails when it disagrees with what read() produces.
+     * @return The exact byte count, or kUnknownSize when the length cannot be
+     *         stated up front (then only one sequential pull is possible); a save
+     *         fails when it disagrees with what read() produces.
      */
     [[nodiscard]] virtual std::uint64_t size() const = 0;
 
@@ -50,7 +67,8 @@ class VN_IOBASE_API DataSource
      * @brief Restarts the content from the beginning.
      *
      * Called before every pull, so the same source can feed more than one save.
-     * Implementations that track a read position reset it here.
+     * Implementations that track a read position reset it here. A source whose
+     * size() is kUnknownSize cannot restart and reports the end at once.
      */
     virtual void rewind() = 0;
 
@@ -61,6 +79,19 @@ class VN_IOBASE_API DataSource
      * @return The number of bytes written, or 0 at the end of the content.
      */
     [[nodiscard]] virtual std::size_t read(std::span<std::byte> out) = 0;
+
+    /**
+     * @brief Reports a failure that read() cannot express.
+     *
+     * A 0-byte read says "the content ended"; this says whether it ended because
+     * the source ran out of data or because it could not produce what it promised
+     * (a stream that failed, content that did not check out). A consumer looks here
+     * after read() returned 0.
+     *
+     * @return IoError::Ok while the content reads cleanly, IoError::IoFailure when
+     *         it could not be produced; the default is a clean source.
+     */
+    [[nodiscard]] virtual IoError error() const { return IoError::Ok; }
 };
 
 /**
@@ -86,68 +117,6 @@ class VN_IOBASE_API DataSink
      *         reported by the call that is feeding the sink.
      */
     [[nodiscard]] virtual IoError write(std::span<const std::byte> bytes) = 0;
-};
-
-/**
- * @brief Sequential reader over one entry of a virtual file system.
- *
- * A stream outlives the tree it came from, so closing or destroying the VFS does
- * not invalidate it; it does depend on the storage behind the VFS staying
- * readable (a file that is deleted or replaced breaks in-flight reads).
- *
- * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
- * objects that share nothing (buffer, handle or storage) may be used concurrently.
- */
-class VN_IOBASE_API VfsReadStream
-{
-  public:
-    virtual ~VfsReadStream() = default;
-
-    /**
-     * @brief Reads the next chunk of the entry.
-     *
-     * @param out Buffer to fill.
-     * @return The number of bytes read, or 0 at the end of the entry. A failure also
-     *         reports 0 here - error() tells the two apart.
-     */
-    [[nodiscard]] virtual std::size_t read(std::span<std::byte> out) = 0;
-
-    /**
-     * @brief Reports a failure that read() cannot express.
-     *
-     * Decompression finishes (and the content is checked) only once the entry is read
-     * past its last byte, so a caller that wants to know whether what it read was
-     * intact looks here after read() returned 0.
-     *
-     * @return IoError::Ok while the entry reads cleanly, IoError::IoFailure when the
-     *         content could not be decoded or did not check out.
-     */
-    [[nodiscard]] virtual IoError error() const = 0;
-
-    /**
-     * @brief Reports the uncompressed size of the entry.
-     *
-     * @return The size in bytes.
-     */
-    [[nodiscard]] virtual std::uint64_t size() const noexcept = 0;
-
-    /**
-     * @brief Reports whether seek() is cheap for this entry.
-     *
-     * A stored entry can be positioned directly; a compressed entry has to be
-     * decompressed up to the target offset, so seeking it is allowed but slow.
-     *
-     * @return true when the reader can position itself without decompressing.
-     */
-    [[nodiscard]] virtual bool seekable() const noexcept = 0;
-
-    /**
-     * @brief Positions the reader at an absolute offset.
-     *
-     * @param offset Target offset, counted from the start of the entry.
-     * @return IoError::Ok on success, IoError::OutOfRange when offset is past the end.
-     */
-    [[nodiscard]] virtual IoError seek(std::uint64_t offset) = 0;
 };
 
 VN_IO_NS_END

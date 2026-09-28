@@ -23,7 +23,19 @@ VfsEntryKind Vfs::kindOf(const std::filesystem::path& path) const
     if (!info.ok()) {
         return VfsEntryKind::Missing;
     }
-    return info.value().is_directory ? VfsEntryKind::Directory : VfsEntryKind::File;
+    return info.value().kind; // the entry info only ever carries File or Directory
+}
+
+IoError Vfs::copy(const Vfs& source, const std::filesystem::path& from, const std::filesystem::path& to)
+{
+    Result<std::unique_ptr<VfsEntrySource>> opened = source.openRead(from);
+    if (!opened.ok()) {
+        return opened.error();
+    }
+    // The destination decides how the bytes arrive: a backend that keeps content sources
+    // pulls them when it is persisted, one that does not takes them now - and reports
+    // what went wrong through its own addFile.
+    return addFile(to, std::shared_ptr<DataSource>(opened.take()));
 }
 
 bool Vfs::exists(const std::filesystem::path& path) const
@@ -34,18 +46,18 @@ bool Vfs::exists(const std::filesystem::path& path) const
 bool Vfs::isFile(const std::filesystem::path& path) const
 {
     const Result<VfsEntryInfo> info = stat(path);
-    return info.ok() && !info.value().is_directory;
+    return info.ok() && info.value().kind == VfsEntryKind::File;
 }
 
 bool Vfs::isDirectory(const std::filesystem::path& path) const
 {
     const Result<VfsEntryInfo> info = stat(path);
-    return info.ok() && info.value().is_directory;
+    return info.ok() && info.value().kind == VfsEntryKind::Directory;
 }
 
 IoError Vfs::read(const std::filesystem::path& path, DataSink& sink) const
 {
-    const Result<std::unique_ptr<VfsReadStream>> opened = openRead(path);
+    const Result<std::unique_ptr<VfsEntrySource>> opened = openRead(path);
     if (!opened.ok()) {
         return opened.error();
     }
@@ -99,21 +111,17 @@ IoError Vfs::addFile(const std::filesystem::path& path, std::shared_ptr<DataSour
     if (source == nullptr) {
         return IoError::InvalidData;
     }
-
-    // The default materializes the content right away; a backend that can defer
-    // the pull to saveAs() overrides this and keeps the source instead.
-    std::vector<unsigned char> bytes(static_cast<std::size_t>(source->size()));
-    source->rewind();
-    std::size_t done = 0;
-    while (done < bytes.size()) {
-        const std::size_t got = source->read(
-            std::span<std::byte>(reinterpret_cast<std::byte*>(bytes.data()) + done, bytes.size() - done));
-        if (got == 0) {
-            return IoError::InvalidData; // the source stopped short of its size() promise
-        }
-        done += got;
+    if (const IoError settled = source->error(); settled != IoError::Ok) {
+        return settled; // the source already knows it cannot deliver, so nothing is touched
     }
-    return addFile(path, std::span<const unsigned char>(bytes));
+
+    // The default materializes the content right away; a backend that can defer the pull to saveAs() overrides this and
+    // keeps the source instead. A source that states no length is read the same way - the buffer grows as bytes arrive.
+    detail::VectorSink sink;
+    if (const IoError pumped = detail::pumpSource(*source, sink); pumped != IoError::Ok) {
+        return pumped;
+    }
+    return addFile(path, std::span<const unsigned char>(sink.bytes()));
 }
 
 IoError Vfs::addDirectory(const std::filesystem::path& prefix, const std::filesystem::path& dir)

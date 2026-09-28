@@ -2,15 +2,66 @@
 
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <span>
 #include <string>
 #include <system_error>
 #include <utility>
 
+#include <vine/io/Adapters.hpp>
+
 #include "VfsInternal.hpp"
 
 VN_IO_NS_BEGIN
+
+namespace
+{
+
+/** @brief Suffix of the file a streaming write grows before it replaces the target. */
+constexpr const char* kTemporarySuffix = ".vine-tmp";
+
+/**
+ * @brief Writes a file by streaming into a sibling temporary and publishing it when the content is complete.
+ *
+ * A source can stop halfway (a broken stream, a length it cannot deliver), and a half-written file would look like
+ * content - so the bytes go into a temporary first and the target is replaced at the very end. The target is therefore
+ * either what was there before or the whole new content, never a mixture; ZipArchive::commit publishes its own file the
+ * same way.
+ *
+ * @param real The file to publish; its parent directory must exist.
+ * @param produce Writes the content into the stream; it returns what went wrong, or IoError::Ok when it finished.
+ * @return IoError::Ok on success, or what @p produce reported; nothing is published either way.
+ */
+IoError writeThroughTemporary(const std::filesystem::path& real, const std::function<IoError(std::ostream&)>& produce)
+{
+    std::filesystem::path staging = real;
+    staging += kTemporarySuffix;
+
+    std::error_code ec;
+    std::filesystem::remove(staging, ec); // a leftover from an interrupted run is not content to append to
+    {
+        std::ofstream out(staging, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            return IoError::IoFailure;
+        }
+        const IoError produced = produce(out);
+        out.close();
+        if (produced != IoError::Ok || !out) {
+            std::filesystem::remove(staging, ec);
+            return produced != IoError::Ok ? produced : IoError::IoFailure;
+        }
+    }
+
+    std::filesystem::rename(staging, real, ec);
+    if (ec) {
+        std::filesystem::remove(staging, ec);
+        return IoError::IoFailure;
+    }
+    return IoError::Ok;
+}
+
+} // namespace
 
 DirectoryVfs::DirectoryVfs(const std::filesystem::path& root)
   : root_(root)
@@ -73,7 +124,7 @@ Result<VfsEntryInfo> DirectoryVfs::stat(const std::filesystem::path& path) const
         return IoError::IoFailure;
     }
     if (type == std::filesystem::file_type::directory) {
-        return VfsEntryInfo{ std::move(norm), true, 0 };
+        return VfsEntryInfo{ std::move(norm), VfsEntryKind::Directory, 0 };
     }
     if (type != std::filesystem::file_type::regular) {
         return IoError::NotFound; // a device, socket, pipe or similar
@@ -83,7 +134,7 @@ Result<VfsEntryInfo> DirectoryVfs::stat(const std::filesystem::path& path) const
     if (ec) {
         return IoError::IoFailure;
     }
-    return VfsEntryInfo{ std::move(norm), false, static_cast<std::uint64_t>(bytes) };
+    return VfsEntryInfo{ std::move(norm), VfsEntryKind::File, static_cast<std::uint64_t>(bytes) };
 }
 
 Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const std::filesystem::path& dir) const
@@ -122,8 +173,8 @@ Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const std::filesystem::path
 
         const std::filesystem::path name = entry.path().filename();
         VfsEntryInfo info;
-        info.path         = detail::joinVfs(base, name);
-        info.is_directory = is_dir;
+        info.path = detail::joinVfs(base, name);
+        info.kind = is_dir ? VfsEntryKind::Directory : VfsEntryKind::File;
         if (!is_dir) {
             std::error_code      size_ec;
             const std::uintmax_t bytes = entry.file_size(size_ec);
@@ -412,9 +463,9 @@ namespace
  * @brief A sequential reader over one open real file.
  *
  * The stream owns its handle, which is what lets it outlive the tree (see
- * VfsReadStream); a file that disappears mid-read fails at the next read().
+ * VfsEntrySource); a file that disappears mid-read fails at the next read().
  */
-class FileReadStream final : public VfsReadStream
+class FileReadStream final : public VfsEntrySource
 {
   public:
     /**
@@ -498,7 +549,7 @@ class FileReadStream final : public VfsReadStream
 
 } // namespace
 
-Result<std::unique_ptr<VfsReadStream>> DirectoryVfs::openRead(const std::filesystem::path& path) const
+Result<std::unique_ptr<VfsEntrySource>> DirectoryVfs::openRead(const std::filesystem::path& path) const
 {
     std::filesystem::path norm;
     std::filesystem::path real;
@@ -535,16 +586,82 @@ Result<std::unique_ptr<VfsReadStream>> DirectoryVfs::openRead(const std::filesys
     // The size is captured here and never re-read: like every reader, this one
     // describes the entry as it was opened, so a file that grows underneath it
     // does not silently extend the content.
-    return std::unique_ptr<VfsReadStream>(new FileReadStream(std::move(in), size));
+    return std::unique_ptr<VfsEntrySource>(new FileReadStream(std::move(in), size));
 }
 
 IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes)
+{
+    std::filesystem::path real;
+    if (const IoError prepared = prepareNewFile(path, real); prepared != IoError::Ok) {
+        return prepared;
+    }
+
+    std::ofstream out(real, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        return IoError::IoFailure;
+    }
+    if (!bytes.empty()) {
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+    return out.good() ? IoError::Ok : IoError::IoFailure;
+}
+
+IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source)
+{
+    if (isReadOnly()) {
+        return IoError::ReadOnly;
+    }
+    if (source == nullptr) {
+        return IoError::InvalidData;
+    }
+    if (const IoError settled = source->error(); settled != IoError::Ok) {
+        return settled; // the source already knows it cannot deliver, so nothing is written
+    }
+
+    std::filesystem::path real;
+    if (const IoError prepared = prepareNewFile(path, real); prepared != IoError::Ok) {
+        return prepared;
+    }
+
+    // Streamed, not materialized: the bytes reach the file as they are pulled, so a model that is generated on the fly
+    // (and a source that cannot state its length) never has to exist whole in memory first.
+    return writeThroughTemporary(real, [&source](std::ostream& out) {
+        vn::io::OstreamSink sink(out);
+        return detail::pumpSource(*source, sink);
+    });
+}
+
+IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::span<const Fragment> fragments)
+{
+    for (const Fragment& piece : fragments) {
+        if (piece.data == nullptr && piece.size != 0) {
+            return IoError::InvalidData; // a piece that claims bytes it does not have
+        }
+    }
+
+    std::filesystem::path real;
+    if (const IoError prepared = prepareNewFile(path, real); prepared != IoError::Ok) {
+        return prepared;
+    }
+
+    // Each piece is written where it is, so borrowed data that already lives in more than one buffer is never
+    // concatenated first - which is what the base's default does with the same arguments.
+    return writeThroughTemporary(real, [fragments](std::ostream& out) {
+        for (const Fragment& piece : fragments) {
+            if (piece.size != 0) {
+                out.write(reinterpret_cast<const char*>(piece.data), static_cast<std::streamsize>(piece.size));
+            }
+        }
+        return out.good() ? IoError::Ok : IoError::IoFailure;
+    });
+}
+
+IoError DirectoryVfs::prepareNewFile(const std::filesystem::path& path, std::filesystem::path& real)
 {
     if (isReadOnly()) {
         return IoError::ReadOnly;
     }
     std::filesystem::path norm;
-    std::filesystem::path real;
     const IoError         error = resolve(path, norm, real);
     if (error != IoError::Ok) {
         return error;
@@ -565,15 +682,7 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::span<const
         }
         return IoError::IoFailure;
     }
-
-    std::ofstream out(real, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        return IoError::IoFailure;
-    }
-    if (!bytes.empty()) {
-        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    }
-    return out.good() ? IoError::Ok : IoError::IoFailure;
+    return IoError::Ok;
 }
 
 IoError DirectoryVfs::commit()
