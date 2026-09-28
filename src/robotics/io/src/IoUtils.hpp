@@ -5,11 +5,13 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include <vine/geometry/Array.hpp>
@@ -249,120 +251,139 @@ inline bool endsWith(const String& text, const char* suffix)
     return s.size() <= t.size() && t.compare(t.size() - s.size(), s.size(), s) == 0;
 }
 
-/**
- * @brief Appends a float3 array as a little-endian byte buffer.
- *
- * @param arr The values to write.
- * @param out Receives the bytes.
- */
-inline void vec3ArrayToBytes(std::span<const vn::math::Vec3f> arr, std::vector<unsigned char>& out)
-{
-    out.clear();
-    out.reserve(arr.size() * 3u * sizeof(float));
-    for (const auto& v : arr) {
-        const float       vals[3] = { v.x, v.y, v.z };
-        const auto* const p       = reinterpret_cast<const unsigned char*>(vals);
-        out.insert(out.end(), p, p + sizeof(vals));
-    }
-}
+static_assert(sizeof(vn::math::Vec3f) == 3U * sizeof(float), "a geometry bin holds a packed float3 array");
+static_assert(sizeof(vn::math::Vec2f) == 2U * sizeof(float), "a geometry bin holds a packed float2 array");
 
 /**
- * @brief Appends a float2 array as a little-endian byte buffer.
+ * @brief A sink that appends raw bytes to a typed array.
  *
- * @param arr The values to write.
- * @param out Receives the bytes.
+ * Reading an entry straight into the array it describes needs no byte buffer of its own: the array grows as the bytes
+ * arrive. A byte count that does not end on an element boundary is not content that can be read, so it is reported by
+ * finalize() - the same rule every other sink follows.
+ *
+ * @tparam T The element type; it has to be a plain type, since the bytes are the array's own layout.
  */
-inline void vec2ArrayToBytes(std::span<const vn::math::Vec2f> arr, std::vector<unsigned char>& out)
+template <typename T>
+class ArraySink final : public vn::io::DataSink
 {
-    out.clear();
-    out.reserve(arr.size() * 2u * sizeof(float));
-    for (const auto& v : arr) {
-        const float       vals[2] = { v.x, v.y };
-        const auto* const p       = reinterpret_cast<const unsigned char*>(vals);
-        out.insert(out.end(), p, p + sizeof(vals));
+  public:
+    /**
+     * @brief Builds a sink that fills an array.
+     *
+     * @param out The array to fill; it is cleared.
+     */
+    explicit ArraySink(std::vector<T>& out) : out_(out)
+    {
+        static_assert(std::is_trivially_copyable_v<T>, "an array read from bytes has to be a plain type");
+        static_assert(sizeof(T) <= sizeof(pending_), "the partial element has to fit the buffer");
+        out_.clear();
     }
-}
+
+    /**
+     * @brief Appends one chunk.
+     *
+     * @param bytes The bytes to append.
+     * @return IoError::Ok always; the array only fails by throwing, which the caller sees as such.
+     */
+    vn::io::IoError write(std::span<const std::byte> bytes) override
+    {
+        std::size_t at = 0;
+        if (pending_size_ > 0) {
+            // Completing a partly received element first, so the tail of the previous chunk is not dropped.
+            const std::size_t take = std::min(sizeof(T) - pending_size_, bytes.size());
+            std::memcpy(pending_.data() + pending_size_, bytes.data(), take);
+            pending_size_ += take;
+            at = take;
+            if (pending_size_ == sizeof(T)) {
+                T value{};
+                std::memcpy(&value, pending_.data(), sizeof(T));
+                out_.push_back(value);
+                pending_size_ = 0;
+            }
+        }
+
+        if (at < bytes.size()) {
+            const std::size_t whole = (bytes.size() - at) / sizeof(T);
+            if (whole > 0) {
+                const std::size_t base = out_.size();
+                out_.resize(base + whole);
+                std::memcpy(reinterpret_cast<std::byte*>(out_.data()) + base * sizeof(T), bytes.data() + at,
+                            whole * sizeof(T));
+                at += whole * sizeof(T);
+            }
+            const std::size_t rest = bytes.size() - at;
+            if (rest > 0) {
+                std::memcpy(pending_.data(), bytes.data() + at, rest);
+                pending_size_ = rest;
+            }
+        }
+        return vn::io::IoError::Ok;
+    }
+
+    /**
+     * @brief Reports whether the content ended on an element boundary.
+     *
+     * @return IoError::Ok when it did, IoError::InvalidData when a partial element is left over.
+     */
+    [[nodiscard]] vn::io::IoError finalize() const noexcept
+    {
+        return pending_size_ == 0 ? vn::io::IoError::Ok : vn::io::IoError::InvalidData;
+    }
+
+  private:
+    std::vector<T>&          out_;
+    std::array<std::byte, 16> pending_{};      ///< Bytes of an element that has not arrived whole.
+    std::size_t              pending_size_{ 0 };
+};
 
 /**
- * @brief Appends a uint32 array as a little-endian byte buffer.
+ * @brief Reads exactly as many bytes as the span holds.
  *
- * @param arr The values to write.
+ * @param source The entry being read.
  * @param out Receives the bytes.
+ * @return true when they all arrived, false when the entry ended first.
  */
-inline void uint32ArrayToBytes(std::span<const std::uint32_t> arr, std::vector<unsigned char>& out)
+inline bool readExact(vn::io::VfsEntrySource& source, std::span<std::byte> out)
 {
-    out.clear();
-    out.reserve(arr.size() * sizeof(std::uint32_t));
-    for (const std::uint32_t v : arr) {
-        const auto* const p = reinterpret_cast<const unsigned char*>(&v);
-        out.insert(out.end(), p, p + sizeof(v));
-    }
-}
-
-/**
- * @brief Parses a byte buffer into a float3 array.
- *
- * @param bytes The buffer.
- * @param out Receives the array.
- * @return true when the byte count is a multiple of 12.
- */
-inline bool bytesToVec3Array(const std::vector<unsigned char>& bytes, vn::geometry::Vec3fArray& out)
-{
-    if (bytes.size() % (3u * sizeof(float)) != 0) {
-        return false;
-    }
-    out.clear();
-    out.reserve(bytes.size() / (3u * sizeof(float)));
-    const float*      p     = reinterpret_cast<const float*>(bytes.data());
-    const std::size_t count = bytes.size() / (3u * sizeof(float));
-    for (std::size_t i = 0; i < count; ++i) {
-        out.emplace_back(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+    std::size_t done = 0;
+    while (done < out.size()) {
+        const std::size_t got = source.read(out.subspan(done));
+        if (got == 0) {
+            return false; // the entry ended before the bytes it said it holds
+        }
+        done += got;
     }
     return true;
 }
 
 /**
- * @brief Parses a byte buffer into a float2 array.
+ * @brief Reads exactly one array's bytes out of an entry that is being streamed.
  *
- * @param bytes The buffer.
- * @param out Receives the array.
- * @return true when the byte count is a multiple of 8.
+ * @tparam T The array's element type.
+ * @param source The entry being read.
+ * @param count Elements to read.
+ * @param out Receives the array; it is cleared first.
+ * @return true when the bytes arrived and ended on an element boundary.
  */
-inline bool bytesToVec2Array(const std::vector<unsigned char>& bytes, vn::geometry::Vec2fArray& out)
+template <typename T>
+bool readBlock(vn::io::VfsEntrySource& source, std::uint64_t count, std::vector<T>& out)
 {
-    if (bytes.size() % (2u * sizeof(float)) != 0) {
-        return false;
+    ArraySink<T>  sink(out);
+    std::uint64_t bytes = count * sizeof(T);
+    std::uint64_t done  = 0;
+    std::array<std::byte, 64U * 1024U> chunk{};
+    while (done < bytes) {
+        const std::size_t want = static_cast<std::size_t>(std::min<std::uint64_t>(chunk.size(), bytes - done));
+        const std::size_t got  = source.read(std::span<std::byte>(chunk.data(), want));
+        if (got == 0) {
+            return false;
+        }
+        if (sink.write(std::span<const std::byte>(chunk.data(), got)) != vn::io::IoError::Ok) {
+            return false;
+        }
+        done += got;
     }
-    out.clear();
-    out.reserve(bytes.size() / (2u * sizeof(float)));
-    const float*      p     = reinterpret_cast<const float*>(bytes.data());
-    const std::size_t count = bytes.size() / (2u * sizeof(float));
-    for (std::size_t i = 0; i < count; ++i) {
-        out.emplace_back(p[i * 2], p[i * 2 + 1]);
-    }
-    return true;
-}
-
-/**
- * @brief Parses a byte buffer into a uint32 array.
- *
- * @param bytes The buffer.
- * @param out Receives the array.
- * @return true when the byte count is a multiple of 4.
- */
-inline bool bytesToUInt32Array(const std::vector<unsigned char>& bytes, vn::geometry::UInt32Array& out)
-{
-    if (bytes.size() % sizeof(std::uint32_t) != 0) {
-        return false;
-    }
-    out.clear();
-    out.reserve(bytes.size() / sizeof(std::uint32_t));
-    const std::uint32_t* p     = reinterpret_cast<const std::uint32_t*>(bytes.data());
-    const std::size_t    count = bytes.size() / sizeof(std::uint32_t);
-    for (std::size_t i = 0; i < count; ++i) {
-        out.push_back(p[i]);
-    }
-    return true;
+    return sink.finalize() == vn::io::IoError::Ok;
 }
 
 } // namespace detail

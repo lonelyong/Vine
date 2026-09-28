@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -309,9 +311,9 @@ TEST(PkgIOTest, WorkcellPkgInternalPathsAndMemory)
     io.savePkg(*cell, vfs);
     ASSERT_TRUE(vfs.isFile(std::filesystem::path(u8"workcell.xml")));
     ASSERT_TRUE(vfs.isFile(std::filesystem::path(u8"devices/robot1.vdevpkg")));
-    // Mesh bins live under geoms/ inside the package.
+    // Mesh files live under geoms/ inside the package, one file per mesh.
     ASSERT_TRUE(vfs.isDirectory(std::filesystem::path(u8"geoms")));
-    ASSERT_TRUE(vfs.exists(std::filesystem::path(u8"geoms/mesh0.positions.bin")));
+    ASSERT_TRUE(vfs.exists(std::filesystem::path(u8"geoms/mesh0.stl")));
 
     // Persist to zip bytes and reopen: the whole package round-trips in memory.
     auto zip_bytes = vfs.toBytes();
@@ -374,6 +376,11 @@ TEST(PkgIOTest, IndexedMeshRoundTrip)
     const std::uint32_t v1 = mesh->addVertex(vn::math::Vec3f(1.0f, 0.0f, 0.0f));
     const std::uint32_t v2 = mesh->addVertex(vn::math::Vec3f(0.0f, 1.0f, 0.0f));
     mesh->addTriangle(v0, v1, v2);
+    // Texture coordinates are what a mesh has to have for the self-describing form: binary STL has nowhere to put them.
+    mesh->setTexcoords(vn::geometry::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f),
+                                                vn::math::Vec2f(0.0f, 1.0f) });
+    mesh->setNormals(vn::geometry::Vec3fArray{ vn::math::Vec3f(0.0f, 0.0f, 1.0f), vn::math::Vec3f(0.0f, 0.0f, 1.0f),
+                                               vn::math::Vec3f(0.0f, 0.0f, 1.0f) });
     table->body().visuals().resize(1);
     table->body().visuals()[0].setShape(mesh);
 
@@ -383,10 +390,13 @@ TEST(PkgIOTest, IndexedMeshRoundTrip)
     vn::io::ZipArchive vfs;
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
-    // Indexed mesh writes positions + indices bins.
+    // One file for the mesh, with the header saying which arrays follow - so every array shares it.
     const auto geoms = vfs.list(std::filesystem::path(u8"geoms"));
     ASSERT_TRUE(geoms.ok());
-    EXPECT_EQ(geoms->size(), 2u);
+    ASSERT_EQ(geoms->size(), 1u);
+    EXPECT_EQ(geoms->front().name(), std::filesystem::path(u8"mesh0.vmesh"));
+    // header + positions + normals + texcoords + indices
+    EXPECT_EQ(geoms->front().size, 24u + 3u * 12u + 3u * 12u + 3u * 8u + 3u * 4u);
 
     auto loaded = io.loadPkg(vfs);
     ASSERT_NE(loaded, nullptr);
@@ -399,6 +409,10 @@ TEST(PkgIOTest, IndexedMeshRoundTrip)
     EXPECT_EQ(m->triangleCount(), 1u);
     EXPECT_EQ(m->indices().size(), 3u);
     EXPECT_FLOAT_EQ(m->positions()[1].x, 1.0f);
+    ASSERT_EQ(m->texcoords().size(), 3u);
+    EXPECT_FLOAT_EQ(m->texcoords()[1].x, 1.0f);
+    ASSERT_EQ(m->normals().size(), 3u);
+    EXPECT_FLOAT_EQ(m->normals()[2].z, 1.0f);
 }
 
 TEST(PkgIOTest, SharedMeshStoredOnce)
@@ -419,11 +433,11 @@ TEST(PkgIOTest, SharedMeshStoredOnce)
     WorkcellIO             io;
     io.savePkg(*cell, vfs);
 
-    // The shared mesh is written once: only a single positions bin exists.
+    // The shared mesh is written once: a single mesh file exists, and the second visual points at the same one.
     const auto geoms = vfs.list(std::filesystem::path(u8"geoms"));
     ASSERT_TRUE(geoms.ok());
     ASSERT_EQ(geoms->size(), 1u);
-    EXPECT_EQ(geoms->front().name(), std::filesystem::path(u8"mesh0.positions.bin"));
+    EXPECT_EQ(geoms->front().name(), std::filesystem::path(u8"mesh0.stl"));
 
     // Both visuals round-trip with the mesh.
     auto loaded = io.loadPkg(vfs);
@@ -440,4 +454,415 @@ TEST(PkgIOTest, SharedMeshStoredOnce)
     EXPECT_EQ(m0->vertexCount(), 3u);
     EXPECT_EQ(m1->vertexCount(), 3u);
     EXPECT_FLOAT_EQ(m0->positions()[2].x, 0.0f);
+}
+
+
+TEST(PkgIOTest, DamagedMeshFileIsRefused)
+{
+    auto table = std::make_unique<RigidObject>(u8"table");
+    auto mesh  = vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh>(
+        new vn::geometry::IndexedTriangleMesh());
+    const std::uint32_t v0 = mesh->addVertex(vn::math::Vec3f(0.0f, 0.0f, 0.0f));
+    const std::uint32_t v1 = mesh->addVertex(vn::math::Vec3f(1.0f, 0.0f, 0.0f));
+    const std::uint32_t v2 = mesh->addVertex(vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+    mesh->addTriangle(v0, v1, v2);
+    // Texture coordinates put the mesh in the self-describing form, which is the form this test damages.
+    mesh->setTexcoords(vn::geometry::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f),
+                                                vn::math::Vec2f(0.0f, 1.0f) });
+    table->body().visuals().resize(1);
+    table->body().visuals()[0].setShape(mesh);
+
+    auto cell = std::make_unique<Workcell>();
+    cell->addSceneObject(std::move(table));
+
+    vn::io::ZipArchive vfs;
+    WorkcellIO             io;
+    io.savePkg(*cell, vfs);
+
+    const auto good = vfs.read(std::filesystem::path(u8"geoms/mesh0.vmesh"));
+    ASSERT_TRUE(good.ok());
+    const std::vector<unsigned char> file = good.value();
+
+    // Replaces the mesh file and reports whether the object still comes back with a shape. A damaged file has to
+    // leave the shape out: the alternative - reading as far as the bytes happen to go - is a smaller mesh that
+    // nothing downstream can tell from the real one.
+    const auto shapeSurvives = [&](const std::span<const unsigned char> bytes) {
+        EXPECT_EQ(vfs.addFile(std::filesystem::path(u8"geoms/mesh0.vmesh"), bytes), vn::io::IoError::Ok);
+        auto loaded = io.loadPkg(vfs);
+        EXPECT_NE(loaded, nullptr);
+        if (loaded == nullptr) {
+            return false;
+        }
+        auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
+        if (t == nullptr || t->body().visuals().empty()) {
+            return false;
+        }
+        return t->body().visuals()[0].shape() != nullptr;
+    };
+
+    EXPECT_TRUE(shapeSurvives(file)); // the package this test builds does load its mesh
+
+    {
+        std::vector<unsigned char> damaged = file;
+        damaged[0] = 'X'; // not a mesh file at all
+        EXPECT_FALSE(shapeSurvives(damaged));
+    }
+    {
+        std::vector<unsigned char> damaged(file.begin(), file.end() - 12); // the index block is missing
+        EXPECT_FALSE(shapeSurvives(damaged));
+    }
+    {
+        std::vector<unsigned char> damaged              = file;
+        const std::uint64_t        impossible_triangles = 5; // more than the file has room for
+        std::memcpy(damaged.data() + 16, &impossible_triangles, sizeof(impossible_triangles));
+        EXPECT_FALSE(shapeSurvives(damaged));
+    }
+    {
+        std::vector<unsigned char> damaged = file;
+        damaged.resize(file.size() + 12u); // bytes the header does not know about: the description is not the file
+        EXPECT_FALSE(shapeSurvives(damaged));
+    }
+    {
+        std::vector<unsigned char> damaged = file;
+        std::uint16_t              flags   = 0;
+        std::memcpy(&flags, damaged.data() + 6, sizeof(flags)); // the file carries this machine's own byte order
+        flags |= 0x0100u;                                       // claims the other one
+        std::memcpy(damaged.data() + 6, &flags, sizeof(flags));
+        EXPECT_FALSE(shapeSurvives(damaged));
+    }
+    {
+        std::vector<unsigned char> damaged = file;
+        std::uint16_t              flags   = 0;
+        std::memcpy(&flags, damaged.data() + 6, sizeof(flags));
+        flags |= 0x0020u; // names a block this build has no name for, so its length cannot be worked out
+        std::memcpy(damaged.data() + 6, &flags, sizeof(flags));
+        EXPECT_FALSE(shapeSurvives(damaged));
+    }
+    {
+        std::vector<unsigned char> damaged = file;
+        const std::uint16_t        version = 9; // a version this build does not know
+        std::memcpy(damaged.data() + 4, &version, sizeof(version));
+        EXPECT_FALSE(shapeSurvives(damaged));
+    }
+
+    EXPECT_TRUE(shapeSurvives(file)); // and the refusal was the file's, not a state the package kept
+}
+
+TEST(PkgIOTest, IndexedMeshWithoutTexcoordsIsStoredAsASoup)
+{
+    // Binary STL has no indices, so a mesh that has no texture coordinates is written as one - which means shared vertices
+    // become one copy per triangle. That is the trade: a standard file in exchange for a soup.
+    auto mesh = vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh>(new vn::geometry::IndexedTriangleMesh());
+    const std::uint32_t v0 = mesh->addVertex(vn::math::Vec3f(0.0f, 0.0f, 0.0f));
+    const std::uint32_t v1 = mesh->addVertex(vn::math::Vec3f(1.0f, 0.0f, 0.0f));
+    const std::uint32_t v2 = mesh->addVertex(vn::math::Vec3f(1.0f, 1.0f, 0.0f));
+    const std::uint32_t v3 = mesh->addVertex(vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+    mesh->addTriangle(v0, v1, v2);
+    mesh->addTriangle(v0, v2, v3);
+    ASSERT_EQ(mesh->vertexCount(), 4u);
+
+    auto table = std::make_unique<RigidObject>(u8"table");
+    table->body().visuals().resize(1);
+    table->body().visuals()[0].setShape(mesh);
+
+    auto cell = std::make_unique<Workcell>();
+    cell->addSceneObject(std::move(table));
+
+    vn::io::ZipArchive vfs;
+    WorkcellIO             io;
+    io.savePkg(*cell, vfs);
+
+    const auto geoms = vfs.list(std::filesystem::path(u8"geoms"));
+    ASSERT_TRUE(geoms.ok());
+    ASSERT_EQ(geoms->size(), 1u);
+    EXPECT_EQ(geoms->front().name(), std::filesystem::path(u8"mesh0.stl"));
+    EXPECT_EQ(geoms->front().size, 84u + 50u * 2u); // the STL prefix, then one fixed-size record per triangle
+
+    auto loaded = io.loadPkg(vfs);
+    ASSERT_NE(loaded, nullptr);
+    auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
+    ASSERT_NE(t, nullptr);
+    const auto* const soup = dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
+    ASSERT_NE(soup, nullptr); // a soup, not an indexed mesh, whatever went in
+    EXPECT_EQ(soup->vertexCount(), 6u); // four vertices became six, because two of them are shared by both triangles
+    EXPECT_EQ(soup->triangleCount(), 2u);
+    // The corners stay in the order the triangles named them.
+    EXPECT_FLOAT_EQ(soup->positions()[0].x, 0.0f);
+    EXPECT_FLOAT_EQ(soup->positions()[3].x, 0.0f); // the shared v0, written again for the second triangle
+    EXPECT_FLOAT_EQ(soup->positions()[5].y, 1.0f); // v3
+}
+
+TEST(PkgIOTest, DamagedStlFileIsRefused)
+{
+    auto table = std::make_unique<RigidObject>(u8"table");
+    auto mesh  = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f),
+                      vn::math::Vec3f(1.0f, 1.0f, 0.0f));
+    table->body().visuals().resize(1);
+    table->body().visuals()[0].setShape(mesh);
+
+    auto cell = std::make_unique<Workcell>();
+    cell->addSceneObject(std::move(table));
+
+    vn::io::ZipArchive vfs;
+    WorkcellIO             io;
+    io.savePkg(*cell, vfs);
+
+    const auto good = vfs.read(std::filesystem::path(u8"geoms/mesh0.stl"));
+    ASSERT_TRUE(good.ok());
+    const std::vector<unsigned char> file = good.value();
+    ASSERT_EQ(file.size(), 84u + 50u * 2u);
+
+    // Writes a triangle count into the prefix the way binary STL defines it, which is little-endian on every machine.
+    const auto withCount = [&](std::uint32_t count) {
+        std::vector<unsigned char> damaged = file;
+        for (std::size_t byte = 0; byte < 4; ++byte) {
+            damaged[80u + byte] = static_cast<unsigned char>((count >> (8u * byte)) & 0xFFu);
+        }
+        return damaged;
+    };
+    const auto shapeSurvives = [&](const std::span<const unsigned char> bytes) {
+        EXPECT_EQ(vfs.addFile(std::filesystem::path(u8"geoms/mesh0.stl"), bytes), vn::io::IoError::Ok);
+        auto loaded = io.loadPkg(vfs);
+        EXPECT_NE(loaded, nullptr);
+        if (loaded == nullptr) {
+            return false;
+        }
+        auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
+        if (t == nullptr || t->body().visuals().empty()) {
+            return false;
+        }
+        return t->body().visuals()[0].shape() != nullptr;
+    };
+
+    EXPECT_TRUE(shapeSurvives(file)); // the package this test builds does load its mesh
+
+    {
+        std::vector<unsigned char> damaged(file.begin(), file.end() - 10u); // the second triangle is cut short
+        EXPECT_FALSE(shapeSurvives(damaged));
+    }
+    EXPECT_FALSE(shapeSurvives(withCount(3))); // one triangle more than the file holds
+    EXPECT_FALSE(shapeSurvives(withCount(0))); // a file without triangles holds no mesh
+    {
+        // Nothing but the prefix, and a count of zero: the length adds up to exactly what the count says, so only the
+        // rule that a mesh file has at least one triangle can refuse this one.
+        std::vector<unsigned char> damaged = withCount(0);
+        damaged.resize(84u);
+        EXPECT_FALSE(shapeSurvives(damaged));
+    }
+    {
+        std::vector<unsigned char> damaged = file;
+        damaged.resize(file.size() + 4u); // bytes the file's own count does not account for
+        EXPECT_FALSE(shapeSurvives(damaged));
+    }
+    {
+        // The text form of STL: its length is not what a binary file's count would make it, so it is refused rather than
+        // read as bytes that happen to be there.
+        const std::string text = "solid triangle\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nendloop\nendsolid\n";
+        EXPECT_FALSE(shapeSurvives(std::span<const unsigned char>(
+            reinterpret_cast<const unsigned char*>(text.data()), text.size())));
+    }
+
+    EXPECT_TRUE(shapeSurvives(file)); // and the refusal was the file's, not a state the package kept
+}
+
+TEST(PkgIOTest, TriangleSoupWithTexcoordsUsesTheSelfDescribingForm)
+{
+    // A soup has to take the self-describing form when it carries texture coordinates, and it has to come back as a soup:
+    // this is the non-indexed half of that form, which nothing else in this file covers.
+    auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+    mesh->setTexcoords(vn::geometry::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f),
+                                                vn::math::Vec2f(0.0f, 1.0f) });
+
+    auto table = std::make_unique<RigidObject>(u8"table");
+    table->body().visuals().resize(1);
+    table->body().visuals()[0].setShape(mesh);
+
+    auto cell = std::make_unique<Workcell>();
+    cell->addSceneObject(std::move(table));
+
+    vn::io::ZipArchive vfs;
+    WorkcellIO             io;
+    io.savePkg(*cell, vfs);
+
+    const auto geoms = vfs.list(std::filesystem::path(u8"geoms"));
+    ASSERT_TRUE(geoms.ok());
+    ASSERT_EQ(geoms->size(), 1u);
+    EXPECT_EQ(geoms->front().name(), std::filesystem::path(u8"mesh0.vmesh"));
+    EXPECT_EQ(geoms->front().size, 24u + 3u * 12u + 3u * 8u); // header + positions + texcoords, and no indices
+
+    auto loaded = io.loadPkg(vfs);
+    ASSERT_NE(loaded, nullptr);
+    auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
+    ASSERT_NE(t, nullptr);
+    const auto* const soup = dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
+    ASSERT_NE(soup, nullptr);
+    EXPECT_EQ(soup->vertexCount(), 3u);
+    EXPECT_EQ(soup->triangleCount(), 1u);
+    ASSERT_EQ(soup->texcoords().size(), 3u);
+    EXPECT_FLOAT_EQ(soup->texcoords()[2].y, 1.0f);
+}
+
+/**
+ * @brief Renames the mesh element a package's description carries.
+ *
+ * @param vfs The package to edit.
+ * @param from The element name it has now.
+ * @param to The element name to write.
+ * @return true when the description was found and rewritten.
+ */
+bool retagMeshElement(vn::io::ZipArchive& vfs, const std::string& from, const std::string& to)
+{
+    const auto xml = vfs.read(std::filesystem::path(u8"workcell.xml"));
+    if (!xml.ok()) {
+        return false;
+    }
+    std::string text(xml->begin(), xml->end());
+    const auto  at = text.find(from);
+    if (at == std::string::npos) {
+        return false;
+    }
+    text.replace(at, from.size(), to);
+    const auto bytes = std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(text.data()), text.size());
+    return vfs.addFile(std::filesystem::path(u8"workcell.xml"), bytes) == vn::io::IoError::Ok;
+}
+
+TEST(PkgIOTest, IndexedDescriptionOfAnStlFileIsRefused)
+{
+    // The element describes the file, and binary STL has no index block: an element that promises indices the file cannot
+    // hold is refused rather than read as a soup behind the description's back.
+    auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+
+    auto table = std::make_unique<RigidObject>(u8"table");
+    table->body().visuals().resize(1);
+    table->body().visuals()[0].setShape(mesh);
+
+    auto cell = std::make_unique<Workcell>();
+    cell->addSceneObject(std::move(table));
+
+    vn::io::ZipArchive vfs;
+    WorkcellIO             io;
+    io.savePkg(*cell, vfs);
+    ASSERT_TRUE(retagMeshElement(vfs, "<triangle_mesh", "<indexed_triangle_mesh"));
+
+    auto loaded = io.loadPkg(vfs);
+    ASSERT_NE(loaded, nullptr);
+    auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->body().visuals().size(), 1u);
+    EXPECT_EQ(t->body().visuals()[0].shape(), nullptr);
+}
+
+TEST(PkgIOTest, IndexedDescriptionOfASoupVmeshIsRefused)
+{
+    // The same rule inside one form: the description says indexed, the file has no index block, so the two do not agree.
+    auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+    mesh->setTexcoords(vn::geometry::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f),
+                                                vn::math::Vec2f(0.0f, 1.0f) });
+
+    auto table = std::make_unique<RigidObject>(u8"table");
+    table->body().visuals().resize(1);
+    table->body().visuals()[0].setShape(mesh);
+
+    auto cell = std::make_unique<Workcell>();
+    cell->addSceneObject(std::move(table));
+
+    vn::io::ZipArchive vfs;
+    WorkcellIO             io;
+    io.savePkg(*cell, vfs);
+    ASSERT_TRUE(retagMeshElement(vfs, "<triangle_mesh", "<indexed_triangle_mesh"));
+
+    auto loaded = io.loadPkg(vfs);
+    ASSERT_NE(loaded, nullptr);
+    auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->body().visuals().size(), 1u);
+    EXPECT_EQ(t->body().visuals()[0].shape(), nullptr);
+}
+
+TEST(PkgIOTest, EditedMeshIsRefusedWhenThePackageIsFinallyWritten)
+{
+    // A ZIP records a content source and pulls it while the package is written, so a mesh edited between savePkg() and
+    // the write is a mesh whose promised bytes are gone. Both forms have to refuse it instead of writing the old arrays.
+    const auto refusedAfterEdit = [](const bool with_texcoords) {
+        auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+        mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                          vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+        if (with_texcoords) {
+            mesh->setTexcoords(vn::geometry::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f),
+                                                        vn::math::Vec2f(0.0f, 1.0f) });
+        }
+
+        auto table = std::make_unique<RigidObject>(u8"table");
+        table->body().visuals().resize(1);
+        table->body().visuals()[0].setShape(mesh);
+
+        auto cell = std::make_unique<Workcell>();
+        cell->addSceneObject(std::move(table));
+
+        vn::io::ZipArchive vfs;
+        WorkcellIO             io;
+        io.savePkg(*cell, vfs); // the source is handed over here, and pulled at write time
+
+        // The mesh's own edit contract announces this: a soup is edited by appending a triangle.
+        mesh->addTriangle(vn::math::Vec3f(2.0f, 2.0f, 2.0f), vn::math::Vec3f(3.0f, 2.0f, 2.0f),
+                          vn::math::Vec3f(2.0f, 3.0f, 2.0f));
+
+        return !vfs.toBytes().ok();
+    };
+
+    EXPECT_TRUE(refusedAfterEdit(false)) << "binary STL: the mesh was edited after it was handed over";
+    EXPECT_TRUE(refusedAfterEdit(true)) << "self-describing form: the same, and it is the other source that refuses";
+}
+
+TEST(PkgIOTest, InconsistentMeshesAreRefused)
+{
+    // Two meshes the model lets you build but a file cannot hold: a normal array shorter than the positions, and an index
+    // that names a vertex the mesh does not have. Both are refused rather than written without the offending array.
+    const auto saveFails = [](const vn::intrusive_ptr<vn::geometry::Mesh>& mesh) {
+        auto table = std::make_unique<RigidObject>(u8"table");
+        table->body().visuals().resize(1);
+        table->body().visuals()[0].setShape(mesh);
+
+        auto cell = std::make_unique<Workcell>();
+        cell->addSceneObject(std::move(table));
+
+        vn::io::ZipArchive vfs;
+        WorkcellIO             io;
+        try {
+            io.savePkg(*cell, vfs);
+        }
+        catch (const std::runtime_error&) {
+            return true;
+        }
+        return false;
+    };
+
+    {
+        auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+        mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                          vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+        mesh->setTexcoords(vn::geometry::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f),
+                                                    vn::math::Vec2f(0.0f, 1.0f) });
+        // One normal too few for three vertices: the file would hold a normal array that says something else.
+        mesh->setNormals(vn::geometry::Vec3fArray{ vn::math::Vec3f(0.0f, 0.0f, 1.0f),
+                                                   vn::math::Vec3f(0.0f, 0.0f, 1.0f) });
+        EXPECT_TRUE(saveFails(mesh));
+    }
+    {
+        auto mesh = vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh>(new vn::geometry::IndexedTriangleMesh());
+        const std::uint32_t v0 = mesh->addVertex(vn::math::Vec3f(0.0f, 0.0f, 0.0f));
+        const std::uint32_t v1 = mesh->addVertex(vn::math::Vec3f(1.0f, 0.0f, 0.0f));
+        mesh->addVertex(vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+        mesh->setIndices(vn::geometry::UInt32Array{ v0, v1, 99u }); // 99 names no vertex
+        EXPECT_TRUE(saveFails(mesh));
+    }
 }

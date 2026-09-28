@@ -610,51 +610,103 @@ Vine mesh 数据（`vn::geometry`）：
 - `TriangleMesh`（非索引三角形汤）：`positions`（`Vec3fArray`）、可选 `normals`、可选 `texcoords`；
 - `IndexedTriangleMesh`：`positions`、可选 `normals`、可选 `texcoords` + `indices`（`UInt32Array`）。
 
-**存储方案：原生二进制缓冲 + XML 描述（glTF `.glb` 同款思路）**，不做 OBJ/STL 文本。
+**元素约定（踩过一次，写死在这里）**：三个顶点数组是**每顶点一个元素** —— `Vec3fArray` 的 `size()` 是**顶点数**（不是 float 数，也不是 `3 × 顶点数`），
+`indices` 是**每索引一个元素**。`Buffer<float>` 那一层才是 `3 × 顶点数`（`MeshBinSource` 里 `positions_->size() / 3u` 就是这么来的）。
 
-XML 描述（在 `<geometry>` 内，引用包内二进制条目）：
+**存储方案（2026-09-29）：一个网格一个文件，形式由内容决定**。不拆条（"一条数组一个条目"已经删掉，见本节末），也不做 OBJ 文本。
+
+- **二进制 STL**（默认）：STL 装得下的都装它 —— 逐面法线 + 每个三角形三个顶点，没有索引（汤）。
+- **`.vmesh`**（自描述单文件）：mesh 带 texcoords 时走这个，因为 STL 没有地方放 UV。判据就是这一条：`detail::stlWouldLose()`。
+
+取舍（这条是刻意的）：STL 通用（包里的 `geoms/meshN.stl` 抽出来任何工具都能开）、更小（本资产未压缩 4.93 MB vs 7.31 MB）、代码少（没有版本/位/端序要维护）；代价是**共享顶点变成每三角形一份**（本资产 255415 → 296022 个顶点，+16%）、**索引结构丢失**（读回来是汤）、**逐顶点平滑法线只能留逐面**。带 UV 的模型通常是带贴图、带平滑法线、共享顶点多的模型，所以"有 UV 才走 `.vmesh`"这条规则正好把这三样一起接住了。
+
+XML 描述只留一句指针（包内相对路径）：
 
 ```xml
 <geometry>
-  <!-- 索引网格：顶点 / 法线 / 纹理坐标 / 索引 各一个 bin 条目 -->
-  <indexed_triangle_mesh vertex_count="12" triangle_count="4"
-                         positions="geoms/base.positions.bin"
-                         normals="geoms/base.normals.bin"      <!-- 可选 -->
-                         texcoords="geoms/base.texcoords.bin"  <!-- 可选 -->
-                         indices="geoms/base.indices.bin"/>
-  <!-- 非索引网格（三角形汤）：无 indices -->
-  <triangle_mesh vertex_count="12" triangle_count="4"
-                 positions="geoms/base.positions.bin"
-                 normals="geoms/base.normals.bin"/>
+  <!-- 一个 binary STL 文件：文件是汤，所以元素也写 triangle_mesh，且不写 vertex_count（STL 没有这个概念） -->
+  <triangle_mesh triangle_count="4140" geometry="geoms/mesh0.stl"/>
+  <!-- 带 texcoords 的网格走自描述形式，两个计数都写 -->
+  <indexed_triangle_mesh vertex_count="12" triangle_count="4" geometry="geoms/mesh1.vmesh"/>
 </geometry>
 ```
 
-二进制条目布局（固定、小端、4 字节对齐，与 `Array.hpp` 直接对应，可 memcpy）：
+- 元素描述的是**文件**，不是内存里的形状：形状 `IndexedTriangleMesh` 但没 UV ⇒ 文件是 STL ⇒ 写 `<triangle_mesh>`。
+- **形式由路径后缀决定**（`.stl` ⇒ STL reader，其余 ⇒ `.vmesh` reader），两个 reader 各自严格校验自己的规则 ⇒ 名字与内容不符 = **拒**，不猜。
 
-| 条目 | 元素 | 每顶点/三角形字节数 | 长度校验 |
+`.vmesh` 布局（24 字节头 + 最多 4 段数组，段序固定：positions / normals / texcoords / indices，段内元素连续）：
+
+| 偏移 | 大小 | 字段 | 说明 |
 |---|---|---|---|
-| `positions.bin` | `float32` xyz | 12 | = vertex_count × 12 |
-| `normals.bin` | `float32` xyz（可选） | 12 | = vertex_count × 12 |
-| `texcoords.bin` | `float32` uv（可选） | 8 | = vertex_count × 8 |
-| `indices.bin` | `uint32`（索引网格） | 12（每三角形 3 个） | = triangle_count × 12 |
+| 0 | 4 | magic | `"VMSH"`（`kMeshMagic`） |
+| 4 | 2 | version | `2`（`kMeshVersion`） |
+| 6 | 2 | flags | `MeshFlag`：**位 0..7 = 段**（0 positions、1 normals、2 texcoords、3 indices，位序 = 段序），**位 8..15 = 格式**（8 big-endian） |
+| 8 | 8 | vertex_count | 顶点数：positions/normals/texcoords 各这么多元素 |
+| 16 | 8 | triangle_count | 三角形数：索引段有 `3 × triangle_count` 个 `uint32` |
 
-- 端序：固定 little-endian；加载时按需交换（大端主机罕见，仅在需要时处理）。
+- 元素：`Vec3f`（12 字节）每顶点、`Vec2f`（8 字节）每顶点、`uint32`（4 字节）每索引 —— 就是 `Array.hpp` 的打包布局，段可以整块读。
+- **端序 = 写它的那台机器的端序**，`flags` 位 8 记下来；读的时候与当前主机不同就直接**拒绝**（`parseMeshHeader()` 返回 false），
+  而不是按错的端序解释数字（错的数字比明确的拒绝更糟）。
+- 自描述：`MeshHeader::byteCount()` 由 `flags` 与两个计数算出（`24 + Σ 段字节`），
+  所以“头声明的长度 ≠ 条目实际长度”也被拒（后面多挂一条尾巴同样算不一致）。
+- 计数先按元素大小夹住再分配（`total / sizeof(T)`），损坏的头不可能要求比条目更大的内存。
 
-**写入侧**（`MeshEntity` / `XmlIOBase::exportGeometry`）：
-- 网格数据已在内存（模型持有 `Vec3fArray`/`UInt32Array`）→ 直接 `doc.writeFile(name, bytes)`，
-  无需 `mountFile`。
-- 去重：同一 mesh 被多个 visual/collision 引用时只写一次（按内容指纹，参考 VMR `all_exported_shapes`）。
-- 条目组织：`geoms/<对象名>.<序号>.bin`，与 XML 描述中的相对路径对应。
+二进制 STL 布局（`kStlPrefixSize` / `kStlTriangleSize`）：
 
-**读取侧**：
-- `doc.readFile("geoms/base.positions.bin", buf)` → `memcpy` 进 `Vec3fArray`；
-  用 XML `vertex_count`/`triangle_count` 校验长度。
-- `XmlIOBase::parseGeometry` 按 `<geometry>` 子元素构造 `TriangleMesh` / `IndexedTriangleMesh`。
+| 偏移 | 大小 | 字段 | 说明 |
+|---|---|---|---|
+| 0 | 80 | 自由头 | 文本随写，但**不能以 `solid` 开头**（那是文本形的判据）；本模块写 `"binary STL written by vine::robotics::io"` |
+| 80 | 4 | triangle_count | `uint32` |
+| 84 | 50 × n | 三角形 | 逐面法线 3×float32、三个顶点各 3×float32、2 字节属性计数（写 0） |
 
-**分阶段（可选）**：
-- 阶段 A（改动最小，可本期）：mesh 作**不透明字节条目**（`mountFile(vfs_path, src_path)` 拷文件字节），
-  不解析顶点——包会依赖外部 mesh 格式。
-- 阶段 B（推荐终态）：上述原生 bin + XML 描述——自包含、格式无关、可部分读取。
+- **固定小端**（STL 的定义如此）——本模块唯一不写“自己机器的端序”的地方，大端主机由 `putU32Le()` 显式换序（这条在本机无法实测，只能靠代码与变异验证）。
+- 自描述且**长度唯一确定**：`84 + 50 × n == 条目长度`，不符即拒（截断、多挂尾巴、计数改错都被这一条拦住）；`n == 0` 也拒（没有三角形的文件不是 mesh）。
+- **法线保留模型自己的值**：一个三角形的三个角法线一致时（容差 `kSameNormalTolerance = 1e-4`）写该值，否则由几何算。
+  重算会**悄悄改掉模型说的法线**，甚至按缠绕方向翻面 —— 本资产的 98448/98674 个三角形逐位一致、226 个在 1e-4 内一致（数据是从 STL 那类流程来的）。
+- 文本形 STL 不读：长度对不上 ⇒ 拒。
+
+**写入侧**（`XmlIOBase::exportGeometry` → `writeMeshFile()` → `detail::MeshBinSource` / `detail::StlMeshSource`）：
+- 网格数据已在内存（模型持有 `Vec3fArray`/`UInt32Array`）→ 条目直接指向它们的 `Buffer`，不拷字节。
+- **写入不改写为字节块（2026-09-29 落地）**：两个源都自持 `intrusive_ptr<const Buffer<T>>`，拉一次吐头 + 各数组段；源自持 buffer，所以“包延迟到 save 才拉”时也不需要调用方保住什么。
+  早期实现是“把数组拷成 `std::vector<unsigned char>` 再 `writeFile(bytes)`”，大 mesh 下是**两份**拷贝（byte 块 + 后端条目）。
+  注意：**别用 `Fragment` 借 `mesh->positions()` 这种 view** —— 延迟后端在 save 时才拉，调用方一旦释放 mesh 就是悬垂（见 iobase 设计文档 §8.5 的判据）。
+- 长度都精确可报（`MeshHeader::byteCount()` / `kStlPrefixSize + kStlTriangleSize × n`），所以 ZIP 路径拿到的仍是“知道长度的源”。
+- **段与头必须同源**：每个数组位由**实际写进 `blocks_` 的那一段**设置。曾经出现过“positions 位设了、段没进 `blocks_`”
+  （头报 72、实际只吐 36 字节，读侧 `InvalidData`）——现在头与段不可能对不上。
+- **一个网格只过一道闸门：`detail::MeshArrays::take()`**（2026-09-29 复核后收口）。它取数组时就查完四件事：顶点数组是整数个顶点（`size % 3 == 0`）、
+  索引是整数个三角形、normals/texcoords 要么没有要么正好每顶点一个（"**空数组 = 没有这个数组**"，因为 `Mesh::positionsBuffer()` 这类访问器**永不返回 null**，未设置时是空），
+  以及**每个索引都指向一个存在的顶点**（`cornersAreInRange()`）。任何一条不成立 ⇒ 两个写源都拒（`IoError::InvalidData` ⇒ `savePkg` 抛），
+  而不是"把不合格的那个数组丢掉、其余照写"——那是对内容的静默修改（早先 `.vmesh` 就这么干，而 STL 直接拒，两条路对同一个网格给出不同答案）。
+  角点检查因此只剩**一处**（两个源里各自的那份已删），`MeshBinSource::addBlock()` 的长度核对退化为**第二道防线**
+  （变异显示它已不能单独被触发 —— "守卫存在"不等于"守卫被用例钉住"，见记忆里那条）。
+- 去重：同一 mesh 被多个 visual/collision 引用时只写一次（`ExportContext::mesh_paths`，按 `Shape` 指针）。
+- 条目组织：`geoms/meshN.stl` 或 `geoms/meshN.vmesh`（`writeMeshFile()` 的 `geom_seq` 计数），与 XML 的 `geometry=` 相对路径对应。
+
+**读取侧**（`XmlIOBase::parseGeometry` → `detail::meshFromFile()`）：
+- `readMeshBin()`（`.vmesh`）：先读完头、按条目长度校验计数，再逐段读进 `Vec3fArray`/`Vec2fArray`/`UInt32Array`（`MeshBinData`），最后 `meshFromBin()` 按 `indexed` 建 `IndexedTriangleMesh` / `TriangleMesh`。
+- `readStl()`（`.stl`）：读 84 字节头，用文件自己的计数核对长度，再按 50 字节记录（交错：法线在前）拆进 positions/normals —— 读出来就是汤（每顶点一个 `Vec3f`、法线逐面重复三份、无索引），最后 `meshFromStl()` 建 `TriangleMesh`；描述若说 `indexed_triangle_mesh` 则**拒**（文件不支持这个承诺）。
+- 任何一处不符即返回空 —— 损坏的文件让形状**缺掉**，而不是“能读多少算多少”地变成更小的 mesh。
+- 条目直接流入目标数组：`ArraySink<T>` / `readBlock()`（私有，`IoUtils.hpp`）实现 `vn::io::DataSink`，字节数不落在元素边界上则报 `InvalidData`。
+  更早的实现是“先读成 `std::vector<unsigned char>` 再转数组”，多一份整文件拷贝。`IoUtils.hpp` 里用 `static_assert` 把 `sizeof(Vec3f) == 12` / `sizeof(Vec2f) == 8` 钉住 —— **这条一改，`.vmesh` 格式就变了**。
+
+**拓展策略（2026-09-29 定，先写死规矩，不加机制）**：
+- 位权分工：**位 0..7 是段**（位序 = 段序，新段取下一个空位）；**位 8..15 是格式位**（说的是"怎么读这一段"，不是"有什么段"）。
+  端序位本来在 1<<4（混在段位里），趁仓库里还没有任何已提交的 v2 文件挪到 **1<<8** —— 之后就再不动它。
+- `version` 只在"**老 reader 必须拒**"时才 +1。新段一律**追加位、不复用、不重排**：位不变则老 reader 的行为只有一种 ——
+  拒（`byteCount()` 只数认得的位，`header.byteCount() != total` 直接 false），**不做前向容忍**（`.vmesh` 只活在包里，写读同仓；误读比拒绝贵）。
+- 因此已知的因果：**加一个同类定点属性**（颜色 / 切线 / 二套 UV）⇒ 追加一个段位，`version` 不变；**改索引宽度 / 子网格 / LOD / 材质分组 / 要随机访问** ⇒ `version 3`；
+  段位用满 8 个或需要"任意命名属性"时才把"位 = 段"换成 TLV 表。
+- **未知位 ⇒ 拒**：`parseMeshHeader()` 拿 `header.flags` 比 `kMeshKnownFlags`，多一位就 false —— `flags` 说了什么就必须在文件里兑现，
+  不能"跳过去当没看见"（一个长度算不出来的段没法跳过，半读的 mesh 正是头存在的意义）。
+- **STL 那一侧没有版本位**（标准格式，改不动）：形式的变化只能靠**路径**（换后缀）或走 `.vmesh`。这也是留给"下一次大改"的同一根杠杆：
+  写 `geoms/meshN.vmesh3` 而 `geometry=` 照旧、两个 reader 并存 —— 头布局不必背一辈子的兼容债。
+- 不做的（等真消费者）：`.vmesh` 头里放段偏移表（换"只读 positions"/mmap 随机访问，今天没有部分读的消费者）、每段压缩/分块（外层包本来就是 ZIP）、LOD/子网格。
+
+**v1 拆条形态（历史登记：三文件形式，已删除）**：
+- 曾经：每个 mesh **三个裸 `.bin` 条目**（`meshN.positions.bin` / `.normals.bin` / `.indices.bin`，宿主端序、无头），XML 用 `positions=`/`normals=`/`texcoords=`/`indices=` 四个属性指过去。
+- 2026-09-29：**读取代码整段删除**（`parseGeometry` 的四属性分支、`meshCountsAgree()`、`getAttrCount()`、`readTypedArray()`）。
+  它唯一的使用者是 `test_data/robots/irb_1600_10_145.vdev`，该资产已**转换**成 STL 形态（几何逐位不变、法线保留原值、mesh 元素之外的 XML 逐字节不变，见 `test_data/robots/README.md`），仓库里不再有任何 v1 文件。
+- 记一次教训：这个形态的 `vertex_count`/`triangle_count` 校验曾经按“flat float 数组”写（`positions.size() % 3`），把所有真实 v1 包判成不一致 —— 元素约定是“**每顶点一个元素**”，见本节开头。
 
 ### 6.9 BRep / STEP（本期不实现，设计预留）
 

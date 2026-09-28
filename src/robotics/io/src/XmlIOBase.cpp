@@ -1,5 +1,6 @@
 ﻿#include <vine/robotics/io/XmlIOBase.hpp>
 
+#include <cstring>
 #include <sstream>
 #include <span>
 #include <stdexcept>
@@ -16,9 +17,11 @@
 #include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/Sphere.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
+#include <vine/io/Adapters.hpp>
 #include <vine/io/Vfs.hpp>
 
 #include "IoUtils.hpp"
+#include "MeshBin.hpp"
 
 VN_ROBOTICS_IO_NS_BEGIN
 
@@ -98,48 +101,40 @@ void setAttr(tinyxml2::XMLElement* xe, const char* name, const String& value)
 }
 
 /**
- * @brief Writes mesh arrays as geoms bin entries into a VFS.
+ * @brief Writes a mesh as one geometry file into a VFS.
+ *
+ * A mesh is one file, never one entry per array. Which form that file takes is decided by what it has to hold: binary STL
+ * when STL holds all of it, and the self-describing form when the mesh carries texture coordinates STL has no place for
+ * (see MeshBin.hpp). The arrays are read straight from the buffers that already hold them, so the geometry is not copied
+ * on its way into the package - and the source holds them, so a backend that writes the package later needs nothing kept
+ * alive by the caller.
  *
  * @param vfs The active VFS.
- * @param geom_seq Sequence counter for unique bin names (incremented).
- * @param positions Vertex positions.
- * @param normals Optional per-vertex normals.
- * @param texcoords Optional per-vertex texcoords.
- * @param indices Optional triangle indices (empty for a non-indexed mesh).
- * @return The geoms path prefix ("geoms/meshN") used by the XML description.
+ * @param geom_seq Sequence counter for unique names (incremented).
+ * @param mesh The mesh to write.
+ * @return The virtual path of the file ("geoms/meshN.stl" or "geoms/meshN.vmesh"), which the description points at.
  */
-String writeMeshBins(vn::io::Vfs& vfs, std::size_t& geom_seq,
-                     std::span<const vn::math::Vec3f> positions,
-                     std::span<const vn::math::Vec3f> normals,
-                     std::span<const vn::math::Vec2f> texcoords,
-                     std::span<const std::uint32_t> indices)
+String writeMeshFile(vn::io::Vfs& vfs, std::size_t& geom_seq, const vn::geometry::Mesh& mesh)
 {
     const std::string seq_str = std::to_string(geom_seq++);
     const String      prefix  = String(u8"geoms/mesh") + String::fromUtf8(seq_str);
 
-    const auto write_bin = [&vfs, &prefix](const char8_t* suffix, const std::vector<unsigned char>& bytes) {
-        if (vfs.addFile(detail::vfsPath(prefix + String(suffix)), bytes) != vn::io::IoError::Ok) {
-            throw std::runtime_error("XmlIOBase::writeMeshBins, failed to write mesh geometry into the package: "
-                                     + prefix.as_std_str());
-        }
-    };
+    String                              path;
+    std::shared_ptr<vn::io::DataSource> source;
+    if (detail::stlWouldLose(mesh)) {
+        path   = prefix + String(u8".vmesh");
+        source = std::make_shared<detail::MeshBinSource>(mesh);
+    }
+    else {
+        path   = prefix + String(u8".stl");
+        source = std::make_shared<detail::StlMeshSource>(mesh);
+    }
 
-    std::vector<unsigned char> bin;
-    detail::vec3ArrayToBytes(positions, bin);
-    write_bin(u8".positions.bin", bin);
-    if (!normals.empty()) {
-        detail::vec3ArrayToBytes(normals, bin);
-        write_bin(u8".normals.bin", bin);
+    if (vfs.addFile(detail::vfsPath(path), std::move(source)) != vn::io::IoError::Ok) {
+        throw std::runtime_error("XmlIOBase::exportGeometry, failed to write mesh geometry into the package: "
+                                 + path.as_std_str());
     }
-    if (!texcoords.empty()) {
-        detail::vec2ArrayToBytes(texcoords, bin);
-        write_bin(u8".texcoords.bin", bin);
-    }
-    if (!indices.empty()) {
-        detail::uint32ArrayToBytes(indices, bin);
-        write_bin(u8".indices.bin", bin);
-    }
-    return prefix;
+    return path;
 }
 
 } // namespace
@@ -233,7 +228,6 @@ vn::intrusive_ptr<vn::geometry::Material> XmlIOBase::parseMaterial(ParseContext&
     return {};
 }
 
-
 vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ctx, const tinyxml2::XMLElement* xe)
 {
     const tinyxml2::XMLElement* const child = xe->FirstChildElement();
@@ -283,68 +277,15 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
             detail::appendWarning(ctx.msgs, "XmlIOBase::parseGeometry, mesh requires a package VFS, skipped.");
             return {};
         }
-        const String pos_path = attr(child, "positions");
-        if (pos_path.empty()) {
-            return {};
+        const bool indexed = tag == "indexed_triangle_mesh";
+
+        // The description points at one file per mesh. That file is a binary STL or a .vmesh, and each reader checks
+        // that the bytes are what the path says they are, so a description and its file cannot drift apart silently.
+        const String geometry_path = attr(child, "geometry");
+        if (geometry_path.empty()) {
+            return {}; // a mesh element that names no file has nothing to read
         }
-        const auto bytes = ctx.vfs->read(detail::vfsPath(pos_path));
-        if (!bytes) {
-            return {};
-        }
-        vn::geometry::Vec3fArray positions;
-        if (!detail::bytesToVec3Array(bytes.value(), positions)) {
-            return {};
-        }
-        vn::geometry::Vec3fArray normals;
-        const String               nrm_path = attr(child, "normals");
-        if (!nrm_path.empty()) {
-            const auto nrm_bytes = ctx.vfs->read(detail::vfsPath(nrm_path));
-            if (!nrm_bytes || !detail::bytesToVec3Array(nrm_bytes.value(), normals)) {
-                return {};
-            }
-        }
-        vn::geometry::Vec2fArray texcoords;
-        const String               uv_path = attr(child, "texcoords");
-        if (!uv_path.empty()) {
-            const auto uv_bytes = ctx.vfs->read(detail::vfsPath(uv_path));
-            if (!uv_bytes || !detail::bytesToVec2Array(uv_bytes.value(), texcoords)) {
-                return {};
-            }
-        }
-        if (tag == "triangle_mesh") {
-            auto mesh = vn::make_intrusive<vn::geometry::TriangleMesh>();
-            mesh->setPositions(std::move(positions));
-            if (!normals.empty()) {
-                mesh->setNormals(std::move(normals));
-            }
-            if (!texcoords.empty()) {
-                mesh->setTexcoords(std::move(texcoords));
-            }
-            return mesh;
-        }
-        const String idx_path = attr(child, "indices");
-        if (idx_path.empty()) {
-            return {};
-        }
-        const auto idx_bytes = ctx.vfs->read(detail::vfsPath(idx_path));
-        if (!idx_bytes) {
-            return {};
-        }
-        vn::geometry::UInt32Array indices;
-        if (!detail::bytesToUInt32Array(idx_bytes.value(), indices)) {
-            return {};
-        }
-        auto mesh = vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh>(
-            new vn::geometry::IndexedTriangleMesh());
-        mesh->setPositions(std::move(positions));
-        if (!normals.empty()) {
-            mesh->setNormals(std::move(normals));
-        }
-        if (!texcoords.empty()) {
-            mesh->setTexcoords(std::move(texcoords));
-        }
-        mesh->setIndices(std::move(indices));
-        return mesh;
+        return detail::meshFromFile(*ctx.vfs, detail::vfsPath(geometry_path), indexed);
     }
     detail::appendWarning(ctx.msgs, "XmlIOBase::parseGeometry, unsupported geometry tag [%s], skipped.", tag.c_str());
     return {};
@@ -413,8 +354,9 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& sh
         xe_geom->LinkEndChild(xe_ell);
         break;
     }
-    case vn::geometry::ShapeType::TriangleMesh: {
-        const auto* const mesh = dynamic_cast<const vn::geometry::TriangleMesh*>(&shape);
+    case vn::geometry::ShapeType::TriangleMesh:
+    case vn::geometry::ShapeType::IndexedTriangleMesh: {
+        const auto* const mesh = dynamic_cast<const vn::geometry::Mesh*>(&shape);
         if (mesh == nullptr) {
             return;
         }
@@ -422,63 +364,30 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& sh
             detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, triangle mesh requires a package VFS, skipped.");
             return;
         }
-        String prefix;
+
+        String     path;
         const auto it = ctx.mesh_paths.find(&shape);
         if (it != ctx.mesh_paths.end()) {
-            prefix = it->second;
+            path = it->second; // a mesh several visuals or collisions share is written once
         }
         else {
-            prefix = writeMeshBins(*ctx.vfs, ctx.geom_seq, mesh->positions(), mesh->normals(),
-                                   mesh->texcoords(), {});
-            ctx.mesh_paths[&shape] = prefix;
+            path                   = writeMeshFile(*ctx.vfs, ctx.geom_seq, *mesh);
+            ctx.mesh_paths[&shape] = path;
         }
-        auto xe_mesh = xe->GetDocument()->NewElement("triangle_mesh");
-        const auto vertex_count_str = std::to_string(mesh->vertexCount());
-        const auto triangle_count_str = std::to_string(mesh->triangleCount());
-        xe_mesh->SetAttribute("vertex_count", vertex_count_str.c_str());
+
+        // The element describes the FILE, not the shape in memory: a binary STL file is a soup whatever the mesh is, and
+        // it holds no per-vertex arrays, so only the triangle count is worth stating.
+        const detail::MeshArrays counts       = detail::MeshArrays::take(*mesh);
+        const bool               soup_file    = detail::isStlPath(detail::vfsPath(path));
+        const bool               indexed_file = !soup_file && mesh->shapeType() == vn::geometry::ShapeType::IndexedTriangleMesh;
+        auto xe_mesh = xe->GetDocument()->NewElement(indexed_file ? "indexed_triangle_mesh" : "triangle_mesh");
+        const auto triangle_count_str = std::to_string(counts.triangle_count);
         xe_mesh->SetAttribute("triangle_count", triangle_count_str.c_str());
-        setAttr(xe_mesh, "positions", prefix + String(u8".positions.bin"));
-        if (!mesh->normals().empty()) {
-            setAttr(xe_mesh, "normals", prefix + String(u8".normals.bin"));
+        if (!soup_file) {
+            const auto vertex_count_str = std::to_string(counts.vertex_count);
+            xe_mesh->SetAttribute("vertex_count", vertex_count_str.c_str());
         }
-        if (!mesh->texcoords().empty()) {
-            setAttr(xe_mesh, "texcoords", prefix + String(u8".texcoords.bin"));
-        }
-        xe_geom->LinkEndChild(xe_mesh);
-        break;
-    }
-    case vn::geometry::ShapeType::IndexedTriangleMesh: {
-        const auto* const mesh = dynamic_cast<const vn::geometry::IndexedTriangleMesh*>(&shape);
-        if (mesh == nullptr) {
-            return;
-        }
-        if (ctx.vfs == nullptr) {
-            detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, indexed triangle mesh requires a package VFS, skipped.");
-            return;
-        }
-        String prefix;
-        const auto it = ctx.mesh_paths.find(&shape);
-        if (it != ctx.mesh_paths.end()) {
-            prefix = it->second;
-        }
-        else {
-            prefix = writeMeshBins(*ctx.vfs, ctx.geom_seq, mesh->positions(), mesh->normals(),
-                                   mesh->texcoords(), mesh->indices());
-            ctx.mesh_paths[&shape] = prefix;
-        }
-        auto xe_mesh = xe->GetDocument()->NewElement("indexed_triangle_mesh");
-        const auto vertex_count_str = std::to_string(mesh->vertexCount());
-        const auto triangle_count_str = std::to_string(mesh->triangleCount());
-        xe_mesh->SetAttribute("vertex_count", vertex_count_str.c_str());
-        xe_mesh->SetAttribute("triangle_count", triangle_count_str.c_str());
-        setAttr(xe_mesh, "positions", prefix + String(u8".positions.bin"));
-        if (!mesh->normals().empty()) {
-            setAttr(xe_mesh, "normals", prefix + String(u8".normals.bin"));
-        }
-        if (!mesh->texcoords().empty()) {
-            setAttr(xe_mesh, "texcoords", prefix + String(u8".texcoords.bin"));
-        }
-        setAttr(xe_mesh, "indices", prefix + String(u8".indices.bin"));
+        setAttr(xe_mesh, "geometry", path);
         xe_geom->LinkEndChild(xe_mesh);
         break;
     }

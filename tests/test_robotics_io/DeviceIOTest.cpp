@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <atomic>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -9,7 +11,9 @@
 
 #include <vine/geometry/Box.hpp>
 #include <vine/geometry/ColorMaterial.hpp>
+#include <vine/geometry/Mesh.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
+#include <vine/io/ZipArchive.hpp>
 #include <vine/robotics/io/DeviceIO.hpp>
 #include <vine/robotics/workcell/Device.hpp>
 #include <vine/robotics/workcell/MotionDevice.hpp>
@@ -64,17 +68,45 @@ void writeText(const std::filesystem::path& path, const std::string& text)
 }
 
 /**
- * @brief Writes float values as a raw little-endian binary file.
+ * @brief Writes one triangle as a binary STL file.
+ *
+ * The facet normal is written as it is given rather than worked out from the vertices, so a reader that keeps the file's
+ * own normal can be told apart from one that recomputes it.
  *
  * @param path The file path.
- * @param values The values to write.
+ * @param normal The facet normal to store.
+ * @param a First vertex of the triangle.
+ * @param b Second vertex.
+ * @param c Third vertex.
  */
-void writeFloats(const std::filesystem::path& path, const std::vector<float>& values)
+void writeBinaryStl(const std::filesystem::path& path, const std::array<float, 3>& normal, const std::array<float, 3>& a,
+                    const std::array<float, 3>& b, const std::array<float, 3>& c)
 {
+    static constexpr char kHeader[] = "binary STL written by the test";
+    std::array<char, 84>    prefix{};
+    std::memcpy(prefix.data(), kHeader, sizeof(kHeader) - 1);
+    const std::uint32_t count = 1;
+    std::memcpy(prefix.data() + 80, &count, sizeof(count));
+
     std::ofstream out(path, std::ios::binary);
-    out.write(reinterpret_cast<const char*>(values.data()),
-              static_cast<std::streamsize>(values.size() * sizeof(float)));
+    out.write(prefix.data(), static_cast<std::streamsize>(prefix.size()));
+    for (const auto* const values : { &normal, &a, &b, &c }) {
+        out.write(reinterpret_cast<const char*>(values->data()), static_cast<std::streamsize>(sizeof(float) * 3));
+    }
+    const std::uint16_t attribute = 0;
+    out.write(reinterpret_cast<const char*>(&attribute), static_cast<std::streamsize>(sizeof(attribute)));
     ASSERT_TRUE(out.good());
+}
+
+/**
+ * @brief Locates one of the shared test assets.
+ *
+ * @param relative Path of the asset below the staged test data folder.
+ * @return The absolute path of the asset.
+ */
+std::filesystem::path assetPath(const std::string& relative)
+{
+    return std::filesystem::path(VINE_TEST_DATA_DIR) / relative;
 }
 
 /**
@@ -106,7 +138,7 @@ const char* const kRobotVdev = R"(<device name="UR" kind="Manipulator" version="
 )";
 
 /**
- * @brief A .vdev referencing a loose mesh bin under geoms/.
+ * @brief A .vdev referencing a loose STL file under geoms/.
  */
 const char* const kRobotVdevMesh = R"(<device name="UR" kind="Manipulator" version="1.0">
   <metadata name="UR" length_unit="mm"/>
@@ -114,7 +146,7 @@ const char* const kRobotVdevMesh = R"(<device name="UR" kind="Manipulator" versi
     <visual>
       <origin xyz="0 0 0" quat="0 0 0 1"/>
       <geometry>
-        <triangle_mesh vertex_count="3" triangle_count="1" positions="geoms/mesh0.positions.bin"/>
+        <triangle_mesh triangle_count="1" geometry="geoms/mesh0.stl"/>
       </geometry>
     </visual>
   </link>
@@ -191,8 +223,8 @@ TEST(DeviceIOTest, LoadXmlFromFolderWithMesh)
     const auto    file = temp.path() / "robot.vdev";
     writeText(file, kRobotVdevMesh);
     std::filesystem::create_directories(temp.path() / "geoms");
-    writeFloats(temp.path() / "geoms" / "mesh0.positions.bin",
-                { 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f });
+    writeBinaryStl(temp.path() / "geoms" / "mesh0.stl", { 0.0f, 0.0f, -1.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f },
+                   { 0.0f, 1.0f, 0.0f });
 
     DeviceIO io;
     auto loaded = io.loadXml(file);
@@ -206,6 +238,9 @@ TEST(DeviceIOTest, LoadXmlFromFolderWithMesh)
     EXPECT_EQ(m->vertexCount(), 3u);
     EXPECT_EQ(m->triangleCount(), 1u);
     EXPECT_FLOAT_EQ(m->positions()[2].y, 1.0f);
+    // The normal the file states is the one that arrives: an STL normal is not recomputed from the winding.
+    ASSERT_EQ(m->normals().size(), 3u);
+    EXPECT_FLOAT_EQ(m->normals()[0].z, -1.0f);
 }
 
 TEST(DeviceIOTest, MaterialLibraryRoundTrip)
@@ -266,4 +301,69 @@ TEST(DeviceIOTest, MissingLinksThrows)
     EXPECT_THROW(io.loadXml(file), std::runtime_error);
 
     EXPECT_THROW(io.loadXml(temp.path() / "missing.vdev"), std::runtime_error);
+}
+
+TEST(DeviceIOTest, LoadsCommittedPackage)
+{
+    // The asset holds one binary STL file per mesh; a single refused entry would show up as a missing shape below.
+    DeviceIO   io;
+    const auto dev = io.loadPkg(assetPath("robots/irb_1600_10_145.vdev"));
+    ASSERT_NE(dev, nullptr);
+    EXPECT_EQ(dev->name(), u8"机械臂1");
+
+    std::size_t meshes    = 0;
+    std::size_t vertices  = 0;
+    std::size_t triangles = 0;
+    for (auto* const link : dev->links()) {
+        for (const auto& visual : link->body().visuals()) {
+            const auto* const mesh = dynamic_cast<const vn::geometry::Mesh*>(visual.shape().get());
+            if (mesh != nullptr) {
+                ++meshes;
+                vertices += mesh->vertexCount();
+                triangles += static_cast<const vn::geometry::TriangleMesh*>(mesh)->triangleCount();
+            }
+        }
+        for (const auto& collision : link->body().collisions()) {
+            const auto* const mesh = dynamic_cast<const vn::geometry::Mesh*>(collision.shape().get());
+            if (mesh != nullptr) {
+                ++meshes;
+                vertices += mesh->vertexCount();
+                triangles += static_cast<const vn::geometry::TriangleMesh*>(mesh)->triangleCount();
+            }
+        }
+    }
+    // Seven links carry a visual and a collision each: fourteen mesh references over thirteen files. The files hold
+    // 98674 triangles (the count the asset has always had), and the shared mesh is referenced twice, so the device holds
+    // 101312 of them - three vertices each, since an STL file is a soup.
+    EXPECT_EQ(meshes, 14u);
+    EXPECT_EQ(triangles, 101312u);
+    EXPECT_EQ(vertices, triangles * 3u);
+}
+
+TEST(DeviceIOTest, ResavingTheCommittedPackageMatchesItByteForByte)
+{
+    // The asset is what this writer produces: load it, write it out again, and each mesh file comes back identical. That
+    // holds only because the facet normals of the file are kept rather than worked out from the winding.
+    const auto path = assetPath("robots/irb_1600_10_145.vdev");
+    auto       opened = vn::io::ZipArchive::open(path, vn::io::ZipArchive::OpenMode::ReadOnly);
+    ASSERT_TRUE(opened.ok());
+    auto&      source = opened.value();
+    DeviceIO   io;
+    const auto dev = io.loadPkg(source);
+    ASSERT_NE(dev, nullptr);
+
+    vn::io::ZipArchive written;
+    io.savePkg(*dev, written);
+    const auto geoms = written.list(std::filesystem::path(u8"geoms"));
+    ASSERT_TRUE(geoms.ok());
+    ASSERT_EQ(geoms->size(), 14u); // 13 meshes, one of which two elements name separately
+    for (const auto& entry : geoms.value()) {
+        EXPECT_EQ(entry.path.extension(), std::filesystem::path(u8".stl")) << entry.path.generic_string();
+    }
+
+    const auto before = source.read(std::filesystem::path(u8"geoms/mesh0.stl"));
+    const auto after  = written.read(std::filesystem::path(u8"geoms/mesh0.stl"));
+    ASSERT_TRUE(before.ok());
+    ASSERT_TRUE(after.ok());
+    EXPECT_EQ(*after, *before);
 }
