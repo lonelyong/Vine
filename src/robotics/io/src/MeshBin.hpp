@@ -821,11 +821,16 @@ class StlMeshSource final : public vn::io::DataSource
  * so a file named for the wrong form is refused rather than guessed at.
  *
  * @param path The virtual path of a mesh file.
- * @return true when the path ends in `.stl`.
+ * @return true when the path ends in `.stl`, in any case (`mesh.stl` and `mesh.STL` are the same form).
  */
 [[nodiscard]] inline bool isStlPath(const std::filesystem::path& path) noexcept
 {
-    return path.extension() == std::filesystem::path(u8".stl");
+    const std::u8string extension = path.extension().u8string();
+    if (extension.size() != 4u || extension[0] != u8'.') {
+        return false;
+    }
+    const auto lower = [](char8_t c) noexcept { return static_cast<char8_t>(c | 0x20u); };
+    return lower(extension[1]) == u8's' && lower(extension[2]) == u8't' && lower(extension[3]) == u8'l';
 }
 
 /**
@@ -844,7 +849,8 @@ struct MeshBinData
  *
  * The counts are checked against the entry's own size before a single byte is allocated, so a corrupt header cannot ask
  * for more memory than the file could possibly hold - and a file whose blocks do not add up is refused rather than read
- * as far as it happens to go.
+ * as far as it happens to go. The indices are checked against the vertex count too: a mesh whose indices step outside its
+ * vertices is one nothing downstream can read safely.
  *
  * @param vfs The tree to read from.
  * @param path The virtual path of the mesh file.
@@ -896,6 +902,14 @@ inline bool readMeshBin(vn::io::Vfs& vfs, const std::filesystem::path& path, Mes
     }
     if (header.has(MeshFlag::Indices) && !readBlock(source, header.indexCount(), out.indices)) {
         return false;
+    }
+    // An index that names no vertex would be a mesh no consumer can read without stepping outside the vertices, so a file
+    // that holds one is refused here: the header says these indices belong to these vertices, which is a claim worth
+    // checking rather than passing on (the writer refuses to produce one, this is the other end of the same rule).
+    for (const std::uint32_t index : out.indices) {
+        if (index >= header.vertex_count) {
+            return false;
+        }
     }
     return source.error() == vn::io::IoError::Ok;
 }

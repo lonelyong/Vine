@@ -632,7 +632,7 @@ XML 描述只留一句指针（包内相对路径）：
 ```
 
 - 元素描述的是**文件**，不是内存里的形状：形状 `IndexedTriangleMesh` 但没 UV ⇒ 文件是 STL ⇒ 写 `<triangle_mesh>`。
-- **形式由路径后缀决定**（`.stl` ⇒ STL reader，其余 ⇒ `.vmesh` reader），两个 reader 各自严格校验自己的规则 ⇒ 名字与内容不符 = **拒**，不猜。
+- **形式由路径后缀决定**（`.stl` ⇒ STL reader，其余 ⇒ `.vmesh` reader，后缀**不分大小写** —— `.STL` 也是 STL），两个 reader 各自严格校验自己的规则 ⇒ 名字与内容不符 = **拒**，不猜。
 
 `.vmesh` 布局（24 字节头 + 最多 4 段数组，段序固定：positions / normals / texcoords / indices，段内元素连续）：
 
@@ -683,7 +683,9 @@ XML 描述只留一句指针（包内相对路径）：
 - 条目组织：`geoms/meshN.stl` 或 `geoms/meshN.vmesh`（`writeMeshFile()` 的 `geom_seq` 计数），与 XML 的 `geometry=` 相对路径对应。
 
 **读取侧**（`XmlIOBase::parseGeometry` → `detail::meshFromFile()`）：
-- `readMeshBin()`（`.vmesh`）：先读完头、按条目长度校验计数，再逐段读进 `Vec3fArray`/`Vec2fArray`/`UInt32Array`（`MeshBinData`），最后 `meshFromBin()` 按 `indexed` 建 `IndexedTriangleMesh` / `TriangleMesh`。
+- `readMeshBin()`（`.vmesh`）：先读完头、按条目长度校验计数，再逐段读进 `Vec3fArray`/`Vec2fArray`/`UInt32Array`（`MeshBinData`）；
+  然后**查一遍索引是否都落在顶点范围内**（写侧拒产、读侧拒收，同一条规则的两端 —— 一个索引越界的网格下游没法安全读）；
+  最后 `meshFromBin()` 按 `indexed` 建 `IndexedTriangleMesh` / `TriangleMesh`。
 - `readStl()`（`.stl`）：读 84 字节头，用文件自己的计数核对长度，再按 50 字节记录（交错：法线在前）拆进 positions/normals —— 读出来就是汤（每顶点一个 `Vec3f`、法线逐面重复三份、无索引），最后 `meshFromStl()` 建 `TriangleMesh`；描述若说 `indexed_triangle_mesh` 则**拒**（文件不支持这个承诺）。
 - 任何一处不符即返回空 —— 损坏的文件让形状**缺掉**，而不是“能读多少算多少”地变成更小的 mesh。
 - 条目直接流入目标数组：`ArraySink<T>` / `readBlock()`（私有，`IoUtils.hpp`）实现 `vn::io::DataSink`，字节数不落在元素边界上则报 `InvalidData`。

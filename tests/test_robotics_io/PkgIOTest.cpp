@@ -508,6 +508,14 @@ TEST(PkgIOTest, DamagedMeshFileIsRefused)
         EXPECT_FALSE(shapeSurvives(damaged));
     }
     {
+        // The last four bytes are the file's last index: point it at a vertex the mesh does not have, and the claim the
+        // header makes ("these indices belong to these vertices") no longer holds.
+        std::vector<unsigned char> damaged = file;
+        const std::uint32_t        wild    = 0xFFFFFFFFu;
+        std::memcpy(damaged.data() + damaged.size() - sizeof(wild), &wild, sizeof(wild));
+        EXPECT_FALSE(shapeSurvives(damaged));
+    }
+    {
         std::vector<unsigned char> damaged(file.begin(), file.end() - 12); // the index block is missing
         EXPECT_FALSE(shapeSurvives(damaged));
     }
@@ -865,4 +873,48 @@ TEST(PkgIOTest, InconsistentMeshesAreRefused)
         mesh->setIndices(vn::geometry::UInt32Array{ v0, v1, 99u }); // 99 names no vertex
         EXPECT_TRUE(saveFails(mesh));
     }
+}
+
+TEST(PkgIOTest, StlEntryNamedInCapitalsIsReadAsStl)
+{
+    // The form is what the path says, and the case of an extension is not what anybody means by that: a file named
+    // .STL is the same form as one named .stl.
+    auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+
+    auto table = std::make_unique<RigidObject>(u8"table");
+    table->body().visuals().resize(1);
+    table->body().visuals()[0].setShape(mesh);
+
+    auto cell = std::make_unique<Workcell>();
+    cell->addSceneObject(std::move(table));
+
+    vn::io::ZipArchive vfs;
+    WorkcellIO             io;
+    io.savePkg(*cell, vfs);
+
+    const std::string from = "geoms/mesh0.stl";
+    const std::string to   = "geoms/MESH0.STL";
+    const auto        xml  = vfs.read(std::filesystem::path(u8"workcell.xml"));
+    const auto        stl  = vfs.read(std::filesystem::path(u8"geoms/mesh0.stl"));
+    ASSERT_TRUE(xml.ok());
+    ASSERT_TRUE(stl.ok());
+    std::string text(xml->begin(), xml->end());
+    ASSERT_NE(text.find(from), std::string::npos);
+    text.replace(text.find(from), from.size(), to);
+    ASSERT_EQ(vfs.addFile(std::filesystem::path(u8"geoms/MESH0.STL"),
+                          std::span<const unsigned char>(stl->data(), stl->size())),
+              vn::io::IoError::Ok);
+    ASSERT_EQ(vfs.remove(std::filesystem::path(u8"geoms/mesh0.stl")), vn::io::IoError::Ok);
+    ASSERT_EQ(vfs.addFile(std::filesystem::path(u8"workcell.xml"),
+                          std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(text.data()), text.size())),
+              vn::io::IoError::Ok);
+
+    auto loaded = io.loadPkg(vfs);
+    ASSERT_NE(loaded, nullptr);
+    auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->body().visuals().size(), 1u);
+    EXPECT_NE(t->body().visuals()[0].shape(), nullptr);
 }
