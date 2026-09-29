@@ -15,17 +15,28 @@ target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/
                                              # (it lives in the plugin's src/, like the private appfw
                                              # header below) so its unit test can include it directly.
                                              ${CMAKE_SOURCE_DIR}/src/plugins/demo_plugin/src
-                                             # ModelDocument.hpp / ModelInfoPanel.hpp / TestModelData.hpp of the
-                                             # model_viewer plugin: the info panel is a header-only Control (no
-                                             # metadata, no signals) precisely so this test can drive it without
-                                             # loading the plugin - it wires the panel to a DocumentManager itself,
-                                             # exactly as the plugin's load() does.
+                                             # ModelDocument.hpp / ModelInfoPanel.hpp / TestModelData.hpp /
+                                             # MeshFileOpener.hpp of the model_viewer plugin: the info panel is a
+                                             # header-only Control (no metadata, no signals) and the file opener is
+                                             # a header-only function precisely so this test can drive them
+                                             # without loading the plugin - the plugin's load() registers exactly
+                                             # those functions.
                                              ${CMAKE_SOURCE_DIR}/src/plugins/model_viewer/src
                                              # ConsoleUserIO is appfw-private (it lives in
                                              # src/, not sdk/): the headless progress test
                                              # constructs it directly, like test_asyncqt
                                              # includes the private Qt coroutine glue.
                                              ${CMAKE_SOURCE_DIR}/src/fw/appfw/src)
+
+# The model_viewer cases register the plugin's OWN openers, and registerOpener<T> needs T's metadata
+# (it reads the Type to bind the payload to a document type). A payload type's metadata must exist
+# exactly once per process - a second Type for the same C++ type throws ITEM_ALREADY_EXISTS - so the
+# case takes it from the plugin's source rather than loading the plugin. That is only safe because
+# nothing here dlopens model_viewer (the sandbox cases load app_shell / test_plugin): if one ever
+# does, the payload metadata has to move out of this target again.
+# (test_vsg compiles gfx_backend_vsg sources for the same kind of reason.)
+target_sources(${TEST_NAME}
+    PRIVATE ${CMAKE_SOURCE_DIR}/src/plugins/model_viewer/src/ModelPayload.cpp)
 
 # A plugin loaded from OUTSIDE the application directory (which is exactly what UserPluginSandbox
 # copies into /tmp/vine_test_plugins) cannot use its own RUNPATH to find anything: the loader only
@@ -43,7 +54,11 @@ target_link_libraries(${TEST_NAME}
     Qt6::Core Qt6::Gui Qt6::Widgets
     # The command cases assert on the LOG LEVEL a status is recorded with (a NotApplicable result
     # must not be an error), so they attach a LogSink - same reason test_appfw links it.
-    vn::Logging)
+    vn::Logging
+    # The model_viewer cases drive its OPENERS, and the file opener calls MeshLoader: the plugin's own
+    # registration just forwards to that header-only function, so this is the only extra library the
+    # viewer's "open a model file" path needs here.
+    vn::MeshIO)
 
 # Plugins that a current host must refuse, to test the ABI guard end to end: one
 # built before the handshake existed, one built against a newer framework. They live

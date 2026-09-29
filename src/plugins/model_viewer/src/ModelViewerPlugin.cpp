@@ -10,10 +10,9 @@
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/plugin_export.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/logging/Log.hpp>
-#include <vine/meshio/MeshLoader.hpp>
 
+#include "MeshFileOpener.hpp"
 #include "ModelDocument.hpp"
 #include "ModelInfoPanel.hpp"
 #include "ModelPayload.hpp"
@@ -92,27 +91,8 @@ void ModelViewerPlugin::registerDocumentSurface(vn::appfw::Application& app)
     documents->registerOpener<MeshFilePayload>({
         .type_id = ModelDocument::kTypeId,
         .open    = [](const MeshFilePayload& payload) -> vn::appfw::Document* {
-            if (payload.file_path.empty()) {
-                return nullptr;
-            }
-
-            // 怎么读由**打开器**决定（appfw-document-model.md §5.1）：这里调格式加载器，而谁造载荷谁只需要说清位置。
-            auto mesh = vn::meshio::MeshLoader::defaultInstance().load(payload.file_path);
-            if (mesh == nullptr) {
-                VN_LOGW("model_viewer: could not read '{}'", payload.file_path.string());
-                return nullptr;
-            }
-
-            // 查看器只认三角形网格：三角形数是它才有的概念（顶点数是 Mesh 级的，任何网格都有）。
-            const auto* indexed = vn::obj_cast<vn::geometry::IndexedTriangleMesh>(mesh.get());
-            if (indexed == nullptr) {
-                VN_LOGW("model_viewer: '{}' is not an indexed triangle mesh", payload.file_path.string());
-                return nullptr;
-            }
-
-            // 名字取文件名：位置是载荷给的，怎么显示是文档的事（路径本身不进文档 —— 要重读就自己拷一份，见 §5.8）。
-            return new ModelDocument(vn::String::fromLocal8Bit(payload.file_path.filename().string().c_str()),
-                                     vn::intrusive_ptr<const vn::geometry::IndexedTriangleMesh>(indexed));
+            // 怎么读、用什么选项读，都在这里（header-only，所以用例可以直接拿同一段代码验）。
+            return openMeshFilePayload(payload);
         },
         .source_scheme = u8"file",
     });

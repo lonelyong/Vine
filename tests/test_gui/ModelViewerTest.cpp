@@ -3,8 +3,13 @@
 // 这条用例不加载插件：面板是 header-only 的（没有元数据、没有信号槽），用例直接 include 它、自己接上
 // DocumentManager —— 和插件 load() 里做的是同一件事（followDocumentManager），所以面板的"跟当前文档走"
 // 这一段是被真跑到的，而不是靠人去点。
+//
+// 文件载荷那条路（`MeshFileOpener.hpp`）也是 header-only 的：插件登记的打开器就是那个函数，所以下面那条
+// "文件载荷真的走到渲染几何"的用例验的是**插件自己那段代码**，不是它的复述。
 
 #include <gtest/gtest.h>
+
+#include <filesystem>
 
 #include <QLabel>
 #include <QWidget>
@@ -20,7 +25,12 @@
 #include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
+#include <vine/graphics/Geometry.hpp>
+#include <vine/graphics/Group.hpp>
+#include <vine/graphics/Scene.hpp>
+#include <vine/graphics/SceneView.hpp>
 
+#include "MeshFileOpener.hpp"
 #include "ModelDocument.hpp"
 #include "ModelInfoPanel.hpp"
 #include "ModelRenderView.hpp"
@@ -68,6 +78,18 @@ bool registerModelOpener(vn::appfw::DocumentManager& documents)
     });
 }
 
+/// 文件那条路的打开器：和插件登记的是**同一个函数**（header-only，见 MeshFileOpener.hpp）。
+bool registerMeshFileOpener(vn::appfw::DocumentManager& documents)
+{
+    return documents.registerOpener<vn::model_viewer::MeshFilePayload>({
+        .type_id = kModelType,
+        .open    = [](const vn::model_viewer::MeshFilePayload& payload) -> vn::appfw::Document* {
+            return vn::model_viewer::openMeshFilePayload(payload);
+        },
+        .source_scheme = u8"file",
+    });
+}
+
 /// 开一份模型文档并把它设为当前（"打开就显示这一份"是宿主的策略，用例里这样模拟）。
 vn::appfw::Document* openModel(vn::appfw::DocumentManager& documents, vn::String name,
                                vn::intrusive_ptr<const vn::geometry::IndexedTriangleMesh> mesh)
@@ -81,6 +103,22 @@ vn::appfw::Document* openModel(vn::appfw::DocumentManager& documents, vn::String
         documents.setCurrent(document);
     }
     return document;
+}
+
+/// 几何里存在这一个顶点吗（顺序不保证：加载器会去重顶点、按缓存局部性重排）。
+bool hasVertex(const vn::graphics::Geometry& geometry, float x, float y, float z)
+{
+    const auto* positions = geometry.buffer(0);
+    if (positions == nullptr) {
+        return false;
+    }
+    for (std::size_t i = 0; i < positions->vertexCount(); ++i) {
+        const std::array<float, 3> vertex = positions->xyz(i);
+        if (std::abs(vertex[0] - x) < 1.0e-5f && std::abs(vertex[1] - y) < 1.0e-5f && std::abs(vertex[2] - z) < 1.0e-5f) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -214,4 +252,63 @@ TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
     ASSERT_TRUE(documents.close(documents.current()));
     EXPECT_EQ(host.currentView(), nullptr) << "没有当前文档了";
     EXPECT_EQ(host.viewFor(*box_document), first) << "另一份的视图还带着自己的资源在";
+}
+
+TEST(ModelViewerTest, AFilePayloadReachesTheRenderSceneInTheSourceUnits)
+{
+    // 文件载荷那条路（打开器自己调 MeshLoader）。这条钉两件事：①读出来的模型真的走到**渲染几何**上（而不只是文档
+    // 里有个网格）；②查看器**不做单位换算** —— 屏幕上就是文件里写的坐标。加载器默认的 Auto 会把这份 1 单位的三角形
+    // 放大 1000 倍，而内存载荷那个盒子是 ±1，两份文档会差出三个数量级。
+    const std::filesystem::path stl_path = std::filesystem::temp_directory_path() / "vine_model_viewer_units.stl";
+    vn::model_viewer::writeTriangleStlFile(stl_path);
+
+    vn::appfw::DocumentManager           documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow           window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ASSERT_TRUE(registerModelType(documents));
+    ASSERT_TRUE(registerMeshFileOpener(documents));
+    ASSERT_TRUE(views.registerView(kModelType, vn::model_viewer::createRenderView));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    vn::model_viewer::MeshFilePayload payload;
+    payload.file_path = stl_path;
+
+    vn::appfw::Document* document = documents.open(&payload);
+    ASSERT_NE(document, nullptr) << "读不回来时打开器返回空，这条用例就没有意义了";
+    ASSERT_TRUE(documents.setCurrent(document));
+
+    // 打开器与命令都是读完就丢文件：文档手里是拷下来的网格，之后不再看它（这里模拟命令那一步）。
+    std::filesystem::remove(stl_path);
+
+    auto* view = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());
+    ASSERT_NE(view, nullptr);
+    view->activate(); // 场景是懒建的：上屏（这里显式叫一次）才造
+
+    auto* control = view->renderControl();
+    ASSERT_NE(control, nullptr);
+    auto* scene_view = control->view();
+    ASSERT_NE(scene_view, nullptr);
+    const auto scene = scene_view->scene();
+    ASSERT_NE(scene, nullptr) << "视图必须真的给这份文档建了场景";
+
+    const auto root = scene->root();
+    ASSERT_NE(root, nullptr);
+    const auto* group = dynamic_cast<const vn::graphics::Group*>(root.get());
+    ASSERT_NE(group, nullptr);
+    ASSERT_EQ(group->childrenRef().size(), 1u);
+    const auto* geometry = dynamic_cast<const vn::graphics::Geometry*>(group->childrenRef()[0].get());
+    ASSERT_NE(geometry, nullptr) << "场景里那一个孩子就是网格的几何";
+
+    // 文件里就是一个三角形，坐标就是那三个 —— 没被单位换算碰过。
+    const auto* positions = geometry->buffer(0);
+    ASSERT_NE(positions, nullptr);
+    EXPECT_EQ(positions->vertexCount(), 3u);
+    EXPECT_TRUE(hasVertex(*geometry, 0.0f, 0.0f, 0.0f));
+    EXPECT_TRUE(hasVertex(*geometry, 1.0f, 0.0f, 0.0f));
+    EXPECT_TRUE(hasVertex(*geometry, 0.0f, 1.0f, 0.0f));
 }

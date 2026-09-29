@@ -175,7 +175,10 @@ class InMemoryCache
     struct Entry
     {
         TVal                    value;
-        bool                    forever{ false };
+        // NOT "forever": Qt's qforeach.h defines that as a macro (`forever` -> `for (;;)`), so a
+        // translation unit that includes both a Qt header and this cache (MeshLoader pulls it in,
+        // for one) would not compile at all.
+        bool                    never_expires{ false };
         Clock::time_point       expires_at{};
     };
 
@@ -410,7 +413,7 @@ InMemoryCache<TKey, TVal>::makeExpireAt(int ttl)
 template <typename TKey, typename TVal>
 bool InMemoryCache<TKey, TVal>::isExpired(const Entry& entry, const Clock::time_point& now) const
 {
-    return !entry.forever && now >= entry.expires_at;
+    return !entry.never_expires && now >= entry.expires_at;
 }
 
 template <typename TKey, typename TVal>

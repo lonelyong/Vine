@@ -33,8 +33,10 @@ struct MeshPayload : public vn::Object {
  * 这就是"查看器一种类型吃多种载荷"：两个载荷类型、两个打开器、同一个文档类型。和载荷一放在一起，是为了让
  * "谁解析"这件事看得见 —— **打开器**解析（这里它调 `MeshLoader`），而层上层（谁造载荷）只需要说清楚东西在哪。
  *
- * @note 位置写成 `std::filesystem::path` 而不是 `Vfs + 虚拟路径`：`MeshLoader::load()` 只接受路径，没有字节或
- *       `DataStream` 重载，所以"从 Vfs 读模型"这条设计路今天走不通（见 appfw-document-model.md §5 与 §12）。
+ * @note 位置写成 `std::filesystem::path`：这条载荷表达的就是"磁盘上的一个文件"。**从 Vfs 读模型现在是通的** ——
+ *       `MeshLoader::load(std::istream&, format_hint)` 早就有，`loadModel(std::istream&, format_hint)` 也已落地，
+ *       用 `vn::io::DataSourceStream` 包一个 `VfsEntrySource` 就能读包里的模型；那需要的是**另一条载荷**（带
+ *       Vfs 或字节），不是改这条（见 appfw-document-model.md §5 与 §12）。
  */
 struct MeshFilePayload : public vn::Object {
     VN_OBJECT_META_DECL;

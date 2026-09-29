@@ -37,8 +37,8 @@ namespace vn::model_viewer
  *
  *  - 本视图**自带**渲染控件（自己的原生面、自己的会话/设备、自己编的管线）：两份同类型文档各有各的渲染面，
  *    切文档只是换页，不会把谁的资源借给谁；
- *  - 本视图有自己的 `SceneView`（自己的相机、自己的场景、自己的轨道操纵器）与自己的 `Geometry` 副本，
- *    所以两份文档的相机状态互不影响，切回来还是各自的角度；
+ *  - 场景与 `Geometry` 副本是每份文档自己的：这套东西（相机、场景、轨道操纵器）**随渲染控件**走，
+ *    一个文档一个控件，所以两份文档的相机状态互不影响，切回来还是各自的角度；
  *  - **懒建**：场景与 `SceneView` 在第一次真的上屏时才造（`activate()`），而会话在**第一次被布局过之后**
  *    才 attach（`RenderControl::init()`："宿主给时机、控件维护会话"）；打开十份文档就真的建十份
  *    （vsg 那边的设备数上限已解开，见 `gfx_backend_vsg/CMakeLists.txt` 里的 `VSG_MAX_DEVICES`）。
@@ -95,7 +95,7 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
     vn::appfw::gui::RenderControl* renderControl() const { return control_; }
 
   private:
-    /// 造这份模型的场景与视图（只造一次）。网格为空时不造，`activate()` 会因此什么都不呈现。
+    /// 造这份模型的场景（只造一次）：内容放进控件那个 view 的场景里。网格为空时不造，`activate()` 会因此什么都不呈现。
     void buildScene();
 
     /// 网格 → 引擎能画的 `Geometry`（缺法线就按三角面算一套平滑法线）。
@@ -118,7 +118,7 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
   private:
     ModelDocument*                             model_   = nullptr;
     vn::appfw::gui::RenderControl*             control_ = nullptr;
-    vn::intrusive_ptr<vn::graphics::Scene>     scene_;
+    /// 控件那个 view（借来放场景的，不是本视图造的）：`SceneView` 归渲染面所有，见 `buildScene()`。
     vn::intrusive_ptr<vn::graphics::SceneView> view_;
     bool                                       fitted_ = false;
 };
@@ -213,19 +213,26 @@ inline void ModelRenderView::buildScene()
         return;
     }
 
+    // 场景必须挂在**控件那个 view** 上，不能自己另造一个：`SurfaceWindow` 构造时就造了它唯一的那一个
+    // `SceneView`（在那儿 setEngine，后端也只绑它），挂到别的 `SceneView` 上的东西屏幕上什么都不会有
+    // —— 这正是"打开模型却看不到"的成因（demo_plugin 也是这么写的：`render_control->view()->scene()`）。
+    // "一份文档一份相机"仍然成立：一个文档一个视图，一个视图一个控件，一个控件一个面、一个 view。
+    auto* control_view = control_ != nullptr ? control_->view() : nullptr;
+    if (control_view == nullptr)
+    {
+        return;
+    }
+    view_ = vn::intrusive_ptr<vn::graphics::SceneView>(control_view);
+
     auto root = vn::make_intrusive<vn::graphics::Group>();
     root->setName(u8"model_root");
     root->addChild(geometry);
 
-    scene_ = vn::make_intrusive<vn::graphics::Scene>();
-    scene_->setName(model_ != nullptr ? model_->title() : vn::String());
-    scene_->setRoot(root);
-
-    // 自己的 view：自己的相机与轨道操纵器 ⇒ 两份同类型文档互不影响（切回来还是各自的角度）。
-    // 引擎也是本视图自己的：本视图自带渲染控件，所以这条会话、这个设备只服务这份文档。
-    view_ = vn::make_intrusive<vn::graphics::SceneView>();
-    view_->setScene(scene_);
-    view_->setEngine(control_->engine());
+    // 视图的引擎是面自己设好的（SurfaceWindow 那一段），这里只把内容放进去：内容场景、相机、轨道操纵器都是
+    // 这一份文档自己的。
+    auto scene = view_->scene();
+    scene->setName(model_ != nullptr ? model_->title() : vn::String());
+    scene->setRoot(root);
 }
 
 inline void ModelRenderView::activate()

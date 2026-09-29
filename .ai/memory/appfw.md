@@ -300,3 +300,18 @@
 - `tests/test_gui/RenderControlTest.cpp`：8 例，用假后端（无需 GPU）钉住渲染表面的“宿主给时机 + 已建会话
   自己维护 + 隐藏到绑上为止”状态机（含平台窗口重建后自己跟过去、状态退回 `Pending`）。
 - GUI 用例需要 `QT_QPA_PLATFORM=offscreen`；全量 GUI 套件约 8 s。
+
+## 视图把内容交给渲染只有一个接口（2026-09-29，model_viewer 的"打开了却看不到"）
+
+- **不要自己造 `SceneView`**：`RenderControl` 构造时就把 `SurfaceWindow` 建好了，那个面在构造里造出**它唯一的**
+  `SceneView` 并 `setEngine`（`SurfaceWindow.cpp` 里的 `d->view`），后端只绑这一个。挂到自己另造的 `SceneView` 上的
+  场景，屏幕上什么都不会有（`model_viewer` 原来就是这样：内存载荷与文件载荷都不显示）。
+  正确形状：`render_control->view()->scene()->setRoot(root)`（`demo_plugin/src/DemoScene.cpp` 就是这写法）。
+- **"一份文档一份相机"不需要自己造 view**：一个文档一个视图 ⇒ 一个视图一个控件 ⇒ 一个控件一个面 ⇒ 一个 view，
+  相机与轨道操纵器各是各的。
+- `view()` / `engine()` 在控件构造后即可用，不必等 attach；没注册后端时面只是停在 `Failed`（`init()` 返回 false，
+  下次 `activate()` 再试），内容场景照旧可读 —— 所以无 GPU 的 `test_gui` 也能把"载荷 → 打开器 → 文档 → 视图 →
+  场景 → 几何"整条链走完并断言顶点坐标。
+- 与 Qt 同 TU 的坑：`QtCore/qforeach.h` 把 `forever` 定义成宏（`for (;;)`），所以**任何名为 `forever` 的成员/局部
+  变量都会让"先包含 Qt 头、再包含它"的 TU 编不过**（`InMemoryCache::Entry::forever` 因此改名 `never_expires`；
+  `MeshLoader.hpp` 会把这个 cache 带进来，`test_gui` 里一个 `<QLabel>` 就够触发）。

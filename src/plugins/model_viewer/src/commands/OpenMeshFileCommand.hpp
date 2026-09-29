@@ -12,8 +12,10 @@ namespace vn::model_viewer
  * 存在的理由有两条：①查看器"一种类型吃多种载荷"要有第二条真路；②让"打开器真的调用 `MeshLoader`"这段被真跑到
  * （仓库里没有随包发布的网格文件，所以自己造一个）。
  *
- * 仓库里的加载器只认路径（`MeshLoader::load(const std::filesystem::path&)`），所以这个载荷带的是真实文件路径 ——
- * "Vfs + 虚拟路径"那条设计路要等加载器有字节重载（见 appfw-document-model.md §12）。
+ * 这条载荷说的是**磁盘上的一个文件**（`MeshFilePayload` 就带一个 `std::filesystem::path`）：位置是载荷给的，
+ * 怎么读是打开器的事。加载器本身早就通了字节与流（`load(std::istream&, hint)` / `loadModel(std::istream&, hint)`，
+ * 配 `DataStream` 可以包住 `VfsEntrySource`），"包里的模型"要的是**另一条载荷**，而不是改这条（见
+ * appfw-document-model.md §5.1 与 §12）。
  */
 class OpenMeshFileCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
