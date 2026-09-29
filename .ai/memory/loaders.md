@@ -109,6 +109,31 @@ loaders 在其上）；且 meshio 早就吃 iobase 产的 `zlibstatic`，构建�
 且**一次被拒的 seek 会毒化它自己的 reader**（`zip_fread` 之后永远返回 -1）；旧用例只跑了内存态/未压缩条目，所以一直绿。
 修法：用 `zip_file_is_seekable()` 分流 —— 可 seek 就真 seek，不可 seek 就 `zip_fopen_index` **重新打开**（向前偏移用读并丢弃），失败落进 `error_`。
 
+## 2026-09-29：模型加载 —— `geometry::Model` + `MeshLoader::loadModel`
+
+**问题**：`MeshLoader::load` 把 `aiScene` 压成一个 `IndexedTriangleMesh`，于是材质、名字、节点树、贴图全丢；OBJ 的 `mtllib` 从流入口根本读不到（内存导入没有文件名，assimp 的 `MemoryIOSystem::Open("foo.mtl")` 会转发给默认 IOSystem ⇒ 落到进程 CWD）。
+
+**形状**（用户逐条定稿）：新增 `vn::geometry::Model`，只装对象、不装“文件遗物”：
+
+- `Model::Node{ name, transform(Mat4d), children[], meshes[] }` —— `aiNode` 的镜像；节点带**局部**变换，子节点 / 网格都是**下标**（所以这三个嵌套记录离开 model 没有意义，它们就是 `Model` 的内部类）。
+- `Model::Entry{ intrusive_ptr<Mesh> mesh, intrusive_ptr<Material> material }` —— `aiMesh` + `mMaterialIndex`（下标在加载时解析掉；一份 `aiMaterial` 只 new 一个对象，多个 entry 共享，所以没有材质表也没有索引）。
+- **材质不复用不新建记录**：`geometry::Material` 家族直接用。名字不另存字符串 —— `Shape` / `Material` 现在实现 `vn::INameable`，加载时把名字写进对象本身；贴图路径（`map_kd`）就此不记（要它得给 geometry 加贴图概念，那是 base 的活）。
+- 因此 `Model` 里没有任何格式 / 文件词汇，`loaders/` 的三方依赖不外泄。
+
+**为什么放 `geometry` 而不是 meshio**：它是数据不是 I/O；只想“持有 / 传递”一个加载结果的人链 `geometry`（轻）就够，不必为此链 `MeshIO`（`libviMeshIOd.so` **87.8 MB**，assimp 在内）。也符合既有分工：加载器返回数据模块的类型（`MeshLoader`→`geometry::Mesh`、`BrepLoader`→`geometry::BrepShape`）。
+
+**空间约定**：parts 在**局部空间**（不烘烤），`ScaleMode` 的换算**折进根节点变换**（uniform scale 左乘根节点：顶点与节点间偏移一起放大，不破坏相对位置）。要世界坐标 / 平铺就用 `load` —— 它就是“替你烘烤并拼接”的那个。
+
+**两套 flags**：`loadModel` **不能**带 `aiProcess_PreTransformVertices`（该后处理会删掉节点图、把变换烘进顶点），也不带 `aiProcess_OptimizeMeshes`（会合并 mesh、清空节点）。所以两条入口是**两次解析、两份缓存**（键仍是 (指纹, Options)）。顶点 UV 只在 `loadModel` 侧保留（`load` 路径保持原样：不带上）。
+
+**材质类型的选择**（读 assimp 通用键，不认格式名）：`$mat.metallicFactor|roughnessFactor` → `PbrMaterial`；`$mat.opacity < 1` 也→ `PbrMaterial`（**只有它装得下透明度**，代价是这种材质丢 Ks）；`$clr.specular` / `$mat.shininess` → `PhongMaterial`（MTL 本相）；只有 `$clr.diffuse` → `ColorMaterial`；源里没有材质 → 空指针。消费方按 `materialType()` 分派，别 `obj_cast` 假设具体类型。
+
+**矩阵约定（定稿前已核实，坑记下）**：assimp 的 `aiMatrix4x4` 是**列向量约定 + 平移在第 4 列**（`Translation()` 写 a4/b4/c4，`operator*=` 就是 M·N），与 `math::Matrix4x4`（`y = M * x`、平移第 4 列、`Order=ColMajor`）一致 ⇒ 16 个元素**直接对应，不转置**。
+
+**同轮**：`Shape` / `Material` 实现 `vn::INameable`（`VN_OBJECT_META_IMPL(Shape, vn::Object, vn::INameable)`）—— 几何基类的公开布局变化，消费者需重编。
+
+**实跑**：`test_meshio` **34/34**（新增 `ModelLoadTest` 三条：多部件 + MTL 的名字 / 类型 / UV；流入口“有名字、没参数”；COLLADA 节点平移“变换留在节点上、顶点不烘、`load` 才烘”）；`test_robotics_core` / `test_robotics_io` / `test_graphics` / `test_gui` 全绿；静态门禁全 0。
+
 ## 现状与坑
 
 - **`BrepLoader::load()` 仍是桩**，返回 null（`BrepLoader.cpp` 的 TODO：需要 OpenCASCADE）。
@@ -116,6 +141,8 @@ loaders 在其上）；且 meshio 早就吃 iobase 产的 `zlibstatic`，构建�
   别把"有 BrepLoader" 误读成"能读 STEP"。
 - `brepio` 的加载后端（OCCT）将来以 `PRIVATE` 链进 `brepio` 即可，**mesh-only 消费者不受影响**。
   这正是拆模块要换来的东西。
+- `MeshLoader` 有**两条入口两套缓存**（键都是 (指纹, Options)）：`load()` → 烘平合并的单 mesh；`loadModel()` → 保留结构的 `geometry::Model`。改 `Options` 时 `operator==` 与 `OptionsHash` 必须同时改。
+- **新增 `src/**/*.cpp` 要 `touch` 该模块的 `CMakeLists.txt`**：`vn_add_library` 的 `file(GLOB ...)` 没有 `CONFIGURE_DEPENDS`（测试目标用的是 `CONFIGURE_DEPENDS`，新增测试文件自动生效）。
 - `MeshLoader::load()` 有**按内容指纹的内存缓存**（`Crypto` + `Runtime::InMemoryCache`），
   所以这两条依赖是 **PUBLIC**（缓存类型出现在公开头里）。
 - **新增/移动文件后必须 `cmake -S . -B build`**（`vn_add_library` 的 glob 无 `CONFIGURE_DEPENDS`）。

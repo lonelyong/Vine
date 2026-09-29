@@ -2,7 +2,7 @@
 
 VN_GEOMETRY_NS_BEGIN
 
-VN_OBJECT_META_IMPL(Material, vn::Object)
+VN_OBJECT_META_IMPL(Material, vn::Object, vn::INameable)
 
 Material::Material()
 {}

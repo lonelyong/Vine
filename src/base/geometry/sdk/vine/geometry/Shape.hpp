@@ -2,6 +2,7 @@
 
 #include "geometry_global.hpp"
 
+#include <vine/INameable.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
@@ -48,8 +49,12 @@ enum class ShapeType {
 
 /**
  * @brief Base class for all geometric shapes.
+ *
+ * Every shape carries a name: a loader fills it from the source model, so a
+ * shape that came out of a file can be told apart from its siblings. The name
+ * is free-form and may be empty.
  */
-class VN_GEOMETRY_API Shape : public vn::Object, public vn::RefCounted<Shape> {
+class VN_GEOMETRY_API Shape : public vn::Object, public vn::RefCounted<Shape>, public vn::INameable {
     VN_OBJECT_META_DECL;
 
   protected:
@@ -57,6 +62,26 @@ class VN_GEOMETRY_API Shape : public vn::Object, public vn::RefCounted<Shape> {
     Shape();
 
   public:
+    /**
+     * @brief Returns the shape name.
+     *
+     * @return The name; empty when the shape was never named.
+     */
+    const String& name() const noexcept override
+    {
+        return name_;
+    }
+
+    /**
+     * @brief Sets the shape name.
+     *
+     * @param name The new name; may be empty.
+     */
+    void setName(const String& name) override
+    {
+        name_ = name;
+    }
+
     /**
      * @brief Returns whether the shape holds valid, queryable geometry.
      *
@@ -97,6 +122,9 @@ class VN_GEOMETRY_API Shape : public vn::Object, public vn::RefCounted<Shape> {
     ShapeKind shapeKind() const;
 
   protected:
+    /// Name of the shape; empty when unnamed.
+    String name_;
+
     /// Concrete shape type; assigned by derived class constructors.
     ShapeType shape_type_ = ShapeType::Unknown;
 };

@@ -2,7 +2,7 @@
 
 VN_GEOMETRY_NS_BEGIN
 
-VN_OBJECT_META_IMPL(Shape, vn::Object)
+VN_OBJECT_META_IMPL(Shape, vn::Object, vn::INameable)
 
 Shape::Shape()
 {}

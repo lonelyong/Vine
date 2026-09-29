@@ -2,6 +2,7 @@
 
 #include "geometry_global.hpp"
 
+#include <vine/INameable.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 
@@ -23,14 +24,38 @@ enum class MaterialType {
 
 /**
  * @brief Base class for surface materials applied to shapes.
+ *
+ * Every material carries a name: a loader fills it from the source model, so a
+ * material that came out of a file keeps the identity it was declared with.
+ * The name is free-form and may be empty.
  */
-class VN_GEOMETRY_API Material : public vn::Object, public vn::RefCounted<Material> {
+class VN_GEOMETRY_API Material : public vn::Object, public vn::RefCounted<Material>, public vn::INameable {
     VN_OBJECT_META_DECL;
 
   public:
     Material();
 
   public:
+    /**
+     * @brief Returns the material name.
+     *
+     * @return The name; empty when the material was never named.
+     */
+    const String& name() const noexcept override
+    {
+        return name_;
+    }
+
+    /**
+     * @brief Sets the material name.
+     *
+     * @param name The new name; may be empty.
+     */
+    void setName(const String& name) override
+    {
+        name_ = name;
+    }
+
     /**
      * @brief Returns the concrete material category.
      *
@@ -51,6 +76,9 @@ class VN_GEOMETRY_API Material : public vn::Object, public vn::RefCounted<Materi
     virtual const char* typeName() const = 0;
 
   protected:
+    /// Name of the material; empty when unnamed.
+    String name_;
+
     /// Concrete material category; assigned by derived class constructors.
     MaterialType material_type_ = MaterialType::Unknown;
 };
