@@ -134,6 +134,11 @@ class VN_IOBASE_API VfsEntrySource : public DataSource
  *     IoError::InvalidPath. A path can never escape a backend's own root.
  *   * Results travel back as IoError / Result: there are no out-parameters,
  *     and no failure is reduced to a bare false.
+ *   * A new file needs a free name: addFile() writes neither over a file
+ *     (AlreadyExists) nor over a directory, explicit or implied
+ *     (IsADirectory), refuses a path an ancestor file blocks
+ *     (NotADirectory), and refuses the root. Missing parents are implied, so
+ *     a parent that is not there is not an error.
  *   * Directories are real even where the storage is not: a directory implied
  *     by a path must be visible, and createDirectories() must make an empty
  *     one observable.
@@ -241,14 +246,17 @@ class VN_IOBASE_API Vfs
     /**
      * @brief Adds a whole virtual file whose content is buffered here.
      *
-     * Parent directories are implied, and an existing file is replaced - but a
-     * directory, explicit or implied, is never replaced by a file.
+     * Parent directories are implied, but the name has to be free: no entry is
+     * replaced, so a file or a directory that already owns the name is refused
+     * rather than written over.
      *
      * @param path The virtual file path.
      * @param bytes The bytes to store; may be empty.
-     * @return IoError::Ok on success, IoError::IsADirectory when the name is
-     *         taken by a directory, IoError::ReadOnly when the backend refuses
-     *         writes, IoError::InvalidPath when path is not a valid virtual path.
+     * @return IoError::Ok on success, IoError::AlreadyExists when a file owns
+     *         the name, IoError::IsADirectory when the root or a directory owns
+     *         it, IoError::NotADirectory when an ancestor is a file,
+     *         IoError::ReadOnly when the backend refuses writes,
+     *         IoError::InvalidPath when path is not a valid virtual path.
      */
     [[nodiscard]] virtual IoError addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes) = 0;
 
@@ -257,13 +265,16 @@ class VN_IOBASE_API Vfs
      *
      * The content of real_path becomes readable at path. A backend may read the
      * real file eagerly, or defer the read to saveAs() - so it has to stay
-     * readable until the tree is persisted.
+     * readable until the tree is persisted. Parent directories are implied, and
+     * the name has to be free, like every other addFile().
      *
      * @param path The virtual file path.
      * @param real_path The physical file to bring in.
      * @return IoError::Ok on success, IoError::NotFound when real_path cannot be
-     *         reached, IoError::IsADirectory when the name is taken by a
-     *         directory, IoError::ReadOnly when the backend refuses writes,
+     *         reached, IoError::AlreadyExists when a file owns the name,
+     *         IoError::IsADirectory when the root or a directory owns it,
+     *         IoError::NotADirectory when an ancestor is a file,
+     *         IoError::ReadOnly when the backend refuses writes,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
     [[nodiscard]] virtual IoError addFile(const std::filesystem::path& path, const std::filesystem::path& real_path) = 0;
@@ -279,9 +290,11 @@ class VN_IOBASE_API Vfs
      * @param path The virtual file path.
      * @param fragments The pieces, in order; an empty list adds an empty file.
      * @return IoError::Ok on success, IoError::InvalidData when a non-empty
-     *         piece points at no bytes, IoError::IsADirectory when the name is
-     *         taken by a directory, IoError::ReadOnly when the backend refuses
-     *         writes, IoError::InvalidPath when path is not a valid virtual path.
+     *         piece points at no bytes, IoError::AlreadyExists when a file owns
+     *         the name, IoError::IsADirectory when the root or a directory owns
+     *         it, IoError::NotADirectory when an ancestor is a file,
+     *         IoError::ReadOnly when the backend refuses writes,
+     *         IoError::InvalidPath when path is not a valid virtual path.
      */
     [[nodiscard]] virtual IoError addFile(const std::filesystem::path& path, std::span<const Fragment> fragments);
 
@@ -303,7 +316,9 @@ class VN_IOBASE_API Vfs
      * @param path The virtual file path.
      * @param source The source to pull from; must not be null.
      * @return IoError::Ok on success, IoError::InvalidData when source is null,
-     *         IoError::IsADirectory when the name is taken by a directory,
+     *         IoError::AlreadyExists when a file owns the name,
+     *         IoError::IsADirectory when the root or a directory owns it,
+     *         IoError::NotADirectory when an ancestor is a file,
      *         IoError::ReadOnly when the backend refuses writes,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
@@ -320,7 +335,9 @@ class VN_IOBASE_API Vfs
      * @param prefix The virtual directory to import into; empty means the root.
      * @param dir The physical directory to walk; it is not removed.
      * @return IoError::Ok on success, IoError::NotFound when dir is not a directory,
-     *         or the first failure an import reports.
+     *         or the first failure an import reports - an entry the tree already
+     *         holds (IoError::AlreadyExists) is one of them, since nothing is
+     *         replaced.
      */
     [[nodiscard]] IoError addDirectory(const std::filesystem::path& prefix, const std::filesystem::path& dir);
 
@@ -449,9 +466,11 @@ class VN_IOBASE_API Vfs
      *
      * @param source The tree to read from; it is not modified.
      * @param from The entry to copy, named in source.
-     * @param to The path to write in this tree; an existing file is replaced.
+     * @param to The path to write in this tree; it must be free, since an entry
+     *           is never replaced.
      * @return IoError::Ok on success, or the first error either side reports
-     *         (openRead()'s errors for from, addFile()'s for to).
+     *         (openRead()'s errors for from, addFile()'s for to - IoError::AlreadyExists
+     *         when to is taken).
      */
     [[nodiscard]] IoError copy(const Vfs& source, const std::filesystem::path& from,
                                const std::filesystem::path& to);

@@ -513,9 +513,10 @@ TEST(IoBaseTest, ZipArchiveWritesFragmentedContent)
     ASSERT_EQ(archive.addFile(u8"joined.bin", pieces), vn::io::IoError::Ok);
 
     // The borrowed pieces go through the same gate as a byte span: a path that is
-    // not a virtual path, a name taken by a directory, or no source at all.
+    // not a virtual path, a name that is already taken, or no source at all.
     EXPECT_EQ(archive.addFile(u8"/escaped.bin", pieces), vn::io::IoError::InvalidPath);
-    EXPECT_EQ(archive.addFile(u8"joined.bin", std::shared_ptr<vn::io::DataSource>{}), vn::io::IoError::InvalidData);
+    EXPECT_EQ(archive.addFile(u8"joined.bin", pieces), vn::io::IoError::AlreadyExists) << "an entry is never written over";
+    EXPECT_EQ(archive.addFile(u8"null-source.bin", std::shared_ptr<vn::io::DataSource>{}), vn::io::IoError::InvalidData);
 
     const auto listed = archive.list(u8"");
     ASSERT_TRUE(listed.ok());

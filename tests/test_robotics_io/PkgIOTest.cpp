@@ -485,8 +485,10 @@ TEST(PkgIOTest, DamagedMeshFileIsRefused)
 
     // Replaces the mesh file and reports whether the object still comes back with a shape. A damaged file has to
     // leave the shape out: the alternative - reading as far as the bytes happen to go - is a smaller mesh that
-    // nothing downstream can tell from the real one.
+    // nothing downstream can tell from the real one. An entry is never written over, so editing a package means
+    // dropping the old entry first.
     const auto shapeSurvives = [&](const std::span<const unsigned char> bytes) {
+        EXPECT_EQ(vfs.remove(std::filesystem::path(u8"geoms/mesh0.vmesh")), vn::io::IoError::Ok);
         EXPECT_EQ(vfs.addFile(std::filesystem::path(u8"geoms/mesh0.vmesh"), bytes), vn::io::IoError::Ok);
         auto loaded = io.loadPkg(vfs);
         EXPECT_NE(loaded, nullptr);
@@ -632,6 +634,7 @@ TEST(PkgIOTest, DamagedStlFileIsRefused)
         return damaged;
     };
     const auto shapeSurvives = [&](const std::span<const unsigned char> bytes) {
+        EXPECT_EQ(vfs.remove(std::filesystem::path(u8"geoms/mesh0.stl")), vn::io::IoError::Ok);
         EXPECT_EQ(vfs.addFile(std::filesystem::path(u8"geoms/mesh0.stl"), bytes), vn::io::IoError::Ok);
         auto loaded = io.loadPkg(vfs);
         EXPECT_NE(loaded, nullptr);
@@ -736,6 +739,10 @@ bool retagMeshElement(vn::io::ZipArchive& vfs, const std::string& from, const st
     }
     text.replace(at, from.size(), to);
     const auto bytes = std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(text.data()), text.size());
+    // An entry is never written over, so the description is dropped before it is written back.
+    if (vfs.remove(std::filesystem::path(u8"workcell.xml")) != vn::io::IoError::Ok) {
+        return false;
+    }
     return vfs.addFile(std::filesystem::path(u8"workcell.xml"), bytes) == vn::io::IoError::Ok;
 }
 
@@ -907,6 +914,7 @@ TEST(PkgIOTest, StlEntryNamedInCapitalsIsReadAsStl)
                           std::span<const unsigned char>(stl->data(), stl->size())),
               vn::io::IoError::Ok);
     ASSERT_EQ(vfs.remove(std::filesystem::path(u8"geoms/mesh0.stl")), vn::io::IoError::Ok);
+    ASSERT_EQ(vfs.remove(std::filesystem::path(u8"workcell.xml")), vn::io::IoError::Ok);
     ASSERT_EQ(vfs.addFile(std::filesystem::path(u8"workcell.xml"),
                           std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(text.data()), text.size())),
               vn::io::IoError::Ok);

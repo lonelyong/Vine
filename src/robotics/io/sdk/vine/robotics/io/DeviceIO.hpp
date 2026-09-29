@@ -102,7 +102,9 @@ class VN_ROBOTICS_IO_API DeviceIO : public XmlIOBase
     /**
      * @brief Exports a device's resources into a VFS.
      *
-     * Writes device.xml (and its geoms bins) into the VFS root.
+     * Writes device.xml (and its geoms bins) into the VFS root. The entries are
+     * added, never replaced, so the target must not hold them yet (an existing
+     * entry fails the export with IoError::AlreadyExists).
      *
      * @param dev The device to save.
      * @param vfs The virtual file system to hold the device resources.

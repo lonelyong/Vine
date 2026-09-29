@@ -81,8 +81,12 @@ IoError Vfs::read(const std::filesystem::path& path, DataSink& sink) const
 
 IoError Vfs::addFile(const std::filesystem::path& path, std::span<const Fragment> fragments)
 {
-    if (isReadOnly()) {
-        return IoError::ReadOnly;
+    // The target is judged before the content is touched: the delegated call would answer the same way, but only
+    // after the pieces had been copied into the buffer this default builds, and that copy is what a taken name makes
+    // pointless.
+    std::filesystem::path normalized;
+    if (const IoError blocked = detail::prepareAddFile(*this, path, normalized); blocked != IoError::Ok) {
+        return blocked;
     }
     if (detail::hasDatalessFragment(fragments)) {
         return IoError::InvalidData;
@@ -105,8 +109,11 @@ IoError Vfs::addFile(const std::filesystem::path& path, std::span<const Fragment
 
 IoError Vfs::addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source)
 {
-    if (isReadOnly()) {
-        return IoError::ReadOnly;
+    // The target comes first, so a name that cannot be written is not paid for with a whole pull of a source that
+    // may be large - and both kinds of failure are then reported the same way on every backend.
+    std::filesystem::path normalized;
+    if (const IoError blocked = detail::prepareAddFile(*this, path, normalized); blocked != IoError::Ok) {
+        return blocked;
     }
     if (source == nullptr) {
         return IoError::InvalidData;

@@ -106,7 +106,9 @@ class VN_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
      * @brief Exports a workcell's resources into a VFS.
      *
      * Writes workcell.xml into the VFS root, plus the nested device .vdevpkg
-     * files under devices/ and the geoms bins.
+     * files under devices/ and the geoms bins. The entries are added, never
+     * replaced, so the target must not hold them yet (an existing entry fails
+     * the export with IoError::AlreadyExists).
      *
      * @param cell The workcell.
      * @param vfs The virtual file system to hold the workcell resources.

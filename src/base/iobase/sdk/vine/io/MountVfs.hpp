@@ -26,12 +26,17 @@ VN_IO_NS_BEGIN
  *   has the path; entries are reported with their full virtual path.
  * - list() merges every mount of the group, deduplicating by name in priority
  *   order, and always synthesizes the directories a deeper mount implies.
- * - Writes go where the next read will look: a path that already exists is
- *   written in the mount that holds it - when that mount refuses writes the
+ * - addFile() never writes over an entry: the path is judged on the merged
+ *   tree first, so a path a mount already answers for is refused (a file is
+ *   IoError::AlreadyExists, a directory - a mount point included -
+ *   IoError::IsADirectory) instead of being written behind the reader's back.
+ *   A path that exists nowhere goes to the first writable mount of the group,
+ *   so patching a read-only package is done by copying the file into the
+ *   writable mount first.
+ * - The other writes keep to the mount that owns the path: an entry that
+ *   already exists is changed where it is - when that mount refuses writes the
  *   operation fails with IoError::ReadOnly and does NOT fall through to
- *   another backend. A path that exists nowhere goes to the first writable
- *   mount of the group, so patching a read-only package is done by copying the
- *   file into the writable mount first.
+ *   another backend.
  * - rename() stays native inside one backend. Across backends it copies the
  *   content (one entry at a time, held in memory for the copy) and deletes the
  *   source afterwards - a file only: a directory is refused with
@@ -142,29 +147,35 @@ class VN_IOBASE_API MountVfs : public Vfs
     [[nodiscard]] Result<std::unique_ptr<VfsEntrySource>> openRead(const std::filesystem::path& path) const override;
 
     /**
-     * @brief Adds or replaces a file from a memory block.
+     * @brief Adds a file from a memory block.
+     *
+     * The path is judged on the merged tree before an owner is picked, so the
+     * verdict is what a reader sees (see the class documentation).
      *
      * @param path The virtual path.
      * @param bytes The content.
-     * @return IoError::Ok, IoError::InvalidPath, IoError::ReadOnly when the
-     *         owning mount (or, for a new path, every mount of the group)
-     *         refuses writes, or a failure reported by the target backend.
+     * @return IoError::Ok, IoError::InvalidPath, IoError::AlreadyExists when a
+     *         file owns the path, IoError::IsADirectory when a directory does,
+     *         IoError::NotADirectory when an ancestor is a file,
+     *         IoError::ReadOnly when the path is new and no mount of the group
+     *         accepts writes, or a failure reported by the target backend.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes) override;
 
     /**
-     * @brief Adds or replaces a file by importing a real file.
+     * @brief Adds a file by importing a real file.
      *
      * @param path The virtual path.
      * @param real_path The file to import.
-     * @return IoError::Ok, IoError::InvalidPath, IoError::ReadOnly, or a
-     *         failure reported by the target backend.
+     * @return IoError::Ok, IoError::InvalidPath, IoError::AlreadyExists,
+     *         IoError::IsADirectory, IoError::NotADirectory, IoError::ReadOnly,
+     *         or a failure reported by the target backend.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path,
                                   const std::filesystem::path& real_path) override;
 
     /**
-     * @brief Adds or replaces a file from scattered buffers.
+     * @brief Adds a file from scattered buffers.
      *
      * The target backend decides when the pieces are pulled, so a deferring
      * backend keeps deferring.
@@ -172,20 +183,22 @@ class VN_IOBASE_API MountVfs : public Vfs
      * @param path The virtual path.
      * @param fragments The pieces, in order.
      * @return IoError::Ok, IoError::InvalidPath, IoError::InvalidData for a
-     *         dataless piece, IoError::ReadOnly, or a failure reported by the
-     *         target backend.
+     *         dataless piece, IoError::AlreadyExists, IoError::IsADirectory,
+     *         IoError::NotADirectory, IoError::ReadOnly, or a failure reported
+     *         by the target backend.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::span<const Fragment> fragments) override;
 
     /**
-     * @brief Adds or replaces a file fed by a content source.
+     * @brief Adds a file fed by a content source.
      *
      * @param path The virtual path.
      * @param source The content source; never null, and pulled by the target
      *               backend at its own time.
      * @return IoError::Ok, IoError::InvalidPath, IoError::InvalidData for a
-     *         null source, IoError::ReadOnly, or a failure reported by the
-     *         target backend.
+     *         null source, IoError::AlreadyExists, IoError::IsADirectory,
+     *         IoError::NotADirectory, IoError::ReadOnly, or a failure reported
+     *         by the target backend.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source) override;
 
@@ -313,7 +326,8 @@ class VN_IOBASE_API MountVfs : public Vfs
      * @brief Finds the mount a write to one path has to go through.
      *
      * An existing path is owned by the first hit, writable or not; a new path
-     * belongs to the first writable mount of the group.
+     * belongs to the first writable mount of the group. addFile() only asks it
+     * about a new path - a name that is taken is refused before routing.
      *
      * @param group The candidate mounts, in routing order.
      * @param normalized The normalized path.

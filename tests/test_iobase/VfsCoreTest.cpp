@@ -2,6 +2,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <span>
 #include <sstream>
 #include <vector>
 
@@ -36,6 +38,48 @@ class ReadOnlyProbe : public DirectoryVfs
 
     [[nodiscard]] bool isReadOnly() const noexcept override { return true; }
 };
+
+/**
+ * @brief Runs the addFile target rules against one backend, so two of them can be shown to answer alike.
+ *
+ * @param tree The tree to probe; it must be empty.
+ * @param host_file A real file that exists, for the overload that imports one.
+ */
+void expectSameAddFileTargetRules(vn::io::Vfs& tree, const std::filesystem::path& host_file)
+{
+    // A missing parent is implied rather than demanded.
+    ASSERT_EQ(tree.addFile(u8"a/b/c.txt", bytesOf("1")), IoError::Ok);
+    EXPECT_TRUE(tree.isDirectory(u8"a"));
+    EXPECT_TRUE(tree.isDirectory(u8"a/b"));
+
+    // The name is taken, and what was there is still what a read returns.
+    EXPECT_EQ(tree.addFile(u8"a/b/c.txt", bytesOf("2")), IoError::AlreadyExists);
+    const auto stored = tree.read(u8"a/b/c.txt");
+    ASSERT_TRUE(stored.ok());
+    EXPECT_EQ(stored.value(), bytesOf("1")) << "an entry is never written over";
+
+    // A name a directory owns is taken too - the root and an implied directory included.
+    ASSERT_EQ(tree.createDirectory(u8"empty"), IoError::Ok);
+    EXPECT_EQ(tree.addFile(u8"empty", bytesOf("x")), IoError::IsADirectory);
+    EXPECT_EQ(tree.addFile(u8"a", bytesOf("x")), IoError::IsADirectory) << "\"a\" is implied by a/b/c.txt";
+    EXPECT_EQ(tree.addFile(u8"", bytesOf("x")), IoError::IsADirectory) << "the root is a directory";
+
+    // A file on the way down blocks the path.
+    EXPECT_EQ(tree.addFile(u8"a/b/c.txt/deep.txt", bytesOf("x")), IoError::NotADirectory);
+
+    // The path is folded and judged before anything else, and every overload answers with the same verdict.
+    EXPECT_EQ(tree.addFile(u8"/absolute.txt", bytesOf("x")), IoError::InvalidPath);
+    EXPECT_EQ(tree.addFile(u8"a/b/../b/c.txt", bytesOf("x")), IoError::AlreadyExists) << "the spelling is folded first";
+    EXPECT_EQ(tree.addFile(u8"a/b/c.txt", std::shared_ptr<vn::io::DataSource>{}), IoError::AlreadyExists);
+    EXPECT_EQ(tree.addFile(u8"a/b/c.txt", std::span<const vn::io::Fragment>{}), IoError::AlreadyExists);
+    EXPECT_EQ(tree.addFile(u8"a/b/c.txt", host_file), IoError::AlreadyExists);
+
+    // A free name still takes content, so the rules do not stand in the way of a write.
+    ASSERT_EQ(tree.addFile(u8"a/b/free.txt", bytesOf("3")), IoError::Ok);
+    const auto fresh = tree.read(u8"a/b/free.txt");
+    ASSERT_TRUE(fresh.ok());
+    EXPECT_EQ(fresh.value(), bytesOf("3"));
+}
 
 } // namespace
 
@@ -386,6 +430,26 @@ TEST(VfsCoreTest, ZipWriteOverDirectoryIsRefused)
 
     // The root is a directory as well.
     EXPECT_EQ(vfs.addFile(u8"", bytesOf("x")), IoError::IsADirectory);
+}
+
+TEST(VfsCoreTest, AddFileRefusesEveryTargetThatIsNotFree)
+{
+    const TempDir dir;
+    ASSERT_TRUE(std::filesystem::create_directories(dir.path() / u8"tree"));
+    const auto host_file = dir.path() / u8"host.bin";
+    {
+        std::ofstream out(host_file, std::ios::binary);
+        ASSERT_TRUE(out.good());
+        out << "host";
+    }
+
+    // The same rules have to hold whatever the storage behind the tree is.
+    ZipArchive archive;
+    expectSameAddFileTargetRules(archive, host_file);
+
+    const auto folder = DirectoryVfs::openDirectory(dir.path() / u8"tree");
+    ASSERT_NE(folder, nullptr);
+    expectSameAddFileTargetRules(*folder, host_file);
 }
 
 TEST(VfsCoreTest, ZipRemoveAndRemoveAll)

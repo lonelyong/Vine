@@ -214,15 +214,44 @@ TEST(MountVfsTest, MountRoutesWritesToTheOwningOrFirstWritableBackend)
     EXPECT_EQ(overlay->stat(u8"newdir/sub")->kind, VfsEntryKind::Directory);
     EXPECT_EQ(tree.remove(u8"newdir/sub"), IoError::Ok);
 
-    // A path the read-only owner holds is refused where it is - it is NOT
+    // A path the read side already answers for is refused as taken - it is NOT
     // routed to the writable mount, so a reader cannot lose sight of a write.
-    EXPECT_EQ(tree.addFile(u8"pkg.txt", asBytes("patched")), IoError::ReadOnly);
+    EXPECT_EQ(tree.addFile(u8"pkg.txt", asBytes("patched")), IoError::AlreadyExists);
     EXPECT_EQ(overlay->stat(u8"pkg.txt").error(), IoError::NotFound);
     EXPECT_EQ(textOf(tree.read(u8"pkg.txt")), "original");
 
-    // The patch workflow writes the file where the next read looks.
+    // Overlaying a package is done in the writable mount itself, which the tree then reads through.
     ASSERT_EQ(overlay->addFile(u8"pkg.txt", asBytes("patched")), IoError::Ok);
     EXPECT_EQ(textOf(tree.read(u8"pkg.txt")), "patched");
+}
+
+TEST(MountVfsTest, MountRefusesAnOccupiedPathBeforeRouting)
+{
+    const auto package = readOnlyZip({ { u8"pkg.txt", "original" }, { u8"data/x.txt", "x" } });
+    const auto overlay = writableZip();
+    ASSERT_NE(package, nullptr);
+
+    MountVfs tree;
+    ASSERT_EQ(tree.mount(u8"", package), IoError::Ok);
+    ASSERT_EQ(tree.mount(u8"", overlay, /*priority=*/1), IoError::Ok);
+
+    // A name the read side already answers for is taken, and the writable mount stays untouched: the verdict is the
+    // merged tree's, so a write can never land behind the reader's back.
+    EXPECT_EQ(tree.addFile(u8"pkg.txt", asBytes("patched")), IoError::AlreadyExists);
+    EXPECT_EQ(overlay->stat(u8"pkg.txt").error(), IoError::NotFound);
+    EXPECT_EQ(textOf(tree.read(u8"pkg.txt")), "original");
+
+    // A file blocks the way down, even when the deeper path exists in no backend at all.
+    EXPECT_EQ(tree.addFile(u8"pkg.txt/deep.txt", asBytes("x")), IoError::NotADirectory);
+
+    // A directory is never replaced by a file - a directory implied by a backend's entries no less than the root.
+    EXPECT_EQ(tree.addFile(u8"data", asBytes("x")), IoError::IsADirectory);
+    EXPECT_EQ(tree.addFile(u8"", asBytes("x")), IoError::IsADirectory);
+
+    // Only a free name is routed, and it goes to the first writable mount of the group.
+    ASSERT_EQ(tree.addFile(u8"fresh.txt", asBytes("fresh")), IoError::Ok);
+    EXPECT_TRUE(overlay->stat(u8"fresh.txt").ok());
+    EXPECT_EQ(package->stat(u8"fresh.txt").error(), IoError::NotFound);
 }
 
 TEST(MountVfsTest, MountRenamesWithinAndAcrossBackends)

@@ -286,6 +286,70 @@ inline std::filesystem::path nameOf(const std::filesystem::path& path)
     return path.filename();
 }
 
+/**
+ * @brief Answers the three questions every addFile() asks about its target.
+ *
+ * A new file needs a free name on a path that does not run through a file, and the answer is the same for every
+ * backend: a name an entry holds is never written over, and a parent directory is implied rather than demanded. The
+ * questions are put to stat(), so a backend that stores directories (DirectoryVfs) and one that only implies them
+ * (ZipArchive) both answer with the tree a reader sees - which is what keeps the verdicts identical across backends.
+ *
+ * The path has to be normalized already: this is the check that follows normalizeVfsPath().
+ *
+ * @param tree The tree the file is being added to.
+ * @param normalized The target path, in normalized form.
+ * @return IoError::Ok when a new file may be created there, IoError::AlreadyExists when a file owns the name,
+ *         IoError::IsADirectory when the root or a directory, explicit or implied, owns it (a directory is never
+ *         replaced by a file), IoError::NotADirectory when an ancestor of the path is a file.
+ */
+inline IoError checkNewFileTarget(const Vfs& tree, const std::filesystem::path& normalized)
+{
+    if (normalized.empty()) {
+        return IoError::IsADirectory; // the root is a directory
+    }
+
+    const VfsEntryKind kind = tree.kindOf(normalized);
+    if (kind == VfsEntryKind::File) {
+        return IoError::AlreadyExists; // an entry is never replaced by a file
+    }
+    if (kind == VfsEntryKind::Directory) {
+        return IoError::IsADirectory; // a directory, explicit or implied, is never replaced by a file
+    }
+
+    for (std::filesystem::path ancestor = parentOf(normalized); !ancestor.empty(); ancestor = parentOf(ancestor)) {
+        if (tree.kindOf(ancestor) == VfsEntryKind::File) {
+            return IoError::NotADirectory; // a file owns a name on the way down, so nothing lives below it
+        }
+    }
+    return IoError::Ok; // the parents are implied, so a missing one is not an error
+}
+
+/**
+ * @brief Runs the checks every addFile() overload starts with, in one order.
+ *
+ * The order is the contract: a read-only backend refuses before the path is even read, a path that is not a valid
+ * virtual path is refused before anything is looked up, and the target is judged before the content is touched - so a
+ * name that is taken is reported as such even when the source would have failed too, and no source is ever pulled for a
+ * file that cannot be written anyway.
+ *
+ * @param tree The tree the file is being added to.
+ * @param path The virtual file path, as the caller spelled it.
+ * @param normalized Receives the normalized path; untouched on failure.
+ * @return IoError::Ok when a new file may be created at path, IoError::ReadOnly when the tree refuses writes,
+ *         IoError::InvalidPath when path is not a valid virtual path, or what checkNewFileTarget() answers.
+ */
+inline IoError prepareAddFile(const Vfs& tree, const std::filesystem::path& path, std::filesystem::path& normalized)
+{
+    if (tree.isReadOnly()) {
+        return IoError::ReadOnly;
+    }
+    const IoError error = normalizeVfsPath(path, normalized);
+    if (error != IoError::Ok) {
+        return error;
+    }
+    return checkNewFileTarget(tree, normalized);
+}
+
 } // namespace detail
 
 VN_IO_NS_END

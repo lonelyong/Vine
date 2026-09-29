@@ -150,10 +150,15 @@ class VN_IOBASE_API ZipArchive : public Vfs
     /**
      * @brief Adds a whole virtual file whose content is buffered here.
      *
+     * Parent directories are implied, but the name has to be free: an entry is
+     * never replaced, so a file or a directory that owns the name is refused.
+     *
      * @param path The virtual file path.
      * @param bytes The bytes to store; may be empty.
      * @return IoError::Ok on success, IoError::ReadOnly on a read-only archive,
-     *         IoError::IsADirectory when the name is taken by a directory,
+     *         IoError::AlreadyExists when a file owns the name,
+     *         IoError::IsADirectory when the root or a directory owns it,
+     *         IoError::NotADirectory when an ancestor is a file,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes) override;
@@ -224,7 +229,9 @@ class VN_IOBASE_API ZipArchive : public Vfs
      * @param real_path The physical file to read from.
      * @return IoError::Ok on success, IoError::ReadOnly on a read-only archive,
      *         IoError::NotFound when real_path cannot be reached,
-     *         IoError::IsADirectory when the name is taken by a directory,
+     *         IoError::AlreadyExists when a file owns the name,
+     *         IoError::IsADirectory when the root or a directory owns it,
+     *         IoError::NotADirectory when an ancestor is a file,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path, const std::filesystem::path& real_path) override;
@@ -274,9 +281,10 @@ class VN_IOBASE_API ZipArchive : public Vfs
      * @param path The virtual file path.
      * @param source The source to pull from; must not be null.
      * @return IoError::Ok on success, IoError::ReadOnly on a read-only archive,
-     *         IoError::InvalidData when source is null, IoError::IsADirectory when
-     *         the name is taken by a directory, IoError::InvalidPath when path is
-     *         not a valid virtual path.
+     *         IoError::InvalidData when source is null, IoError::AlreadyExists when
+     *         a file owns the name, IoError::IsADirectory when the root or a
+     *         directory owns it, IoError::NotADirectory when an ancestor is a file,
+     *         IoError::InvalidPath when path is not a valid virtual path.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source) override;
 
@@ -291,7 +299,9 @@ class VN_IOBASE_API ZipArchive : public Vfs
      * @param fragments The pieces, in order; an empty list writes an empty file.
      * @return IoError::Ok on success, IoError::ReadOnly on a read-only archive,
      *         IoError::InvalidData when a non-empty piece points at no bytes,
-     *         IoError::IsADirectory when the name is taken by a directory,
+     *         IoError::AlreadyExists when a file owns the name,
+     *         IoError::IsADirectory when the root or a directory owns it,
+     *         IoError::NotADirectory when an ancestor is a file,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::span<const Fragment> fragments) override;

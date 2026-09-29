@@ -541,21 +541,26 @@ TEST(AdaptersTest, DirectoryVfsWritesASourceWhileItIsPulled)
     EXPECT_EQ(std::string(stored->begin(), stored->end()), payload);
 }
 
-TEST(AdaptersTest, DirectoryVfsKeepsTheOldContentWhenAStreamingSourceFails)
+TEST(AdaptersTest, DirectoryVfsPublishesNothingWhenAStreamingSourceFails)
 {
     const TempDir dir;
     const auto    folder = DirectoryVfs::openDirectory(dir.path());
     ASSERT_NE(folder, nullptr);
     ASSERT_EQ(folder->addFile(u8"blob.bin", bytesOf("the content that was there")), IoError::Ok);
 
-    // The new content never becomes a file: it would otherwise be half of the new and half of the old one.
+    // The name is taken, so the replacement is refused before the source is pulled at all.
     EXPECT_EQ(folder->addFile(u8"blob.bin", std::make_shared<UnmeasuredSource>("replacement that stops", IoError::IoFailure)),
-              IoError::IoFailure);
+              IoError::AlreadyExists);
+    const auto kept = folder->read(u8"blob.bin");
+    ASSERT_TRUE(kept.ok());
+    EXPECT_EQ(std::string(kept->begin(), kept->end()), "the content that was there");
 
-    const auto stored = folder->read(u8"blob.bin");
-    ASSERT_TRUE(stored.ok());
-    EXPECT_EQ(std::string(stored->begin(), stored->end()), "the content that was there");
-    EXPECT_EQ(folder->read(u8"blob.bin.vine-tmp").error(), IoError::NotFound) << "the temporary is not left behind";
+    // A source that stops halfway never becomes a file: the bytes go through a sibling temporary that is dropped, so
+    // half of the content is never published under the target name.
+    EXPECT_EQ(folder->addFile(u8"new.bin", std::make_shared<UnmeasuredSource>("replacement that stops", IoError::IoFailure)),
+              IoError::IoFailure);
+    EXPECT_EQ(folder->read(u8"new.bin").error(), IoError::NotFound);
+    EXPECT_EQ(folder->read(u8"new.bin.vine-tmp").error(), IoError::NotFound) << "the temporary is not left behind";
 }
 
 TEST(AdaptersTest, DirectoryVfsWritesBorrowedPiecesWithoutAssemblingThem)

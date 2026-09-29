@@ -391,7 +391,8 @@ bool ZipArchive::insertFileBacked(const std::filesystem::path& path, const std::
 
 IoError ZipArchive::addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source)
 {
-    if (const IoError blocked = guard(); blocked != IoError::Ok) {
+    std::filesystem::path norm;
+    if (const IoError blocked = detail::prepareAddFile(*this, path, norm); blocked != IoError::Ok) {
         return blocked;
     }
     if (source == nullptr) {
@@ -400,17 +401,9 @@ IoError ZipArchive::addFile(const std::filesystem::path& path, std::shared_ptr<D
     if (const IoError settled = source->error(); settled != IoError::Ok) {
         return settled; // the source already knows it cannot deliver, so nothing is stored
     }
+
     // A source that cannot state its length is taken as it is: libzip writes the entry with a zip64
     // header whose length is patched in after the last byte, because the local header is written first.
-    std::filesystem::path norm;
-    const IoError error = detail::normalizeVfsPath(path, norm);
-    if (error != IoError::Ok) {
-        return error;
-    }
-    if (isDirectoryPath(norm)) {
-        return IoError::IsADirectory; // the root, or a directory, is never replaced by a file
-    }
-
     Entry entry;
     entry.generator = std::move(source);
     entries_.insert_or_assign(norm, std::move(entry));
@@ -419,13 +412,19 @@ IoError ZipArchive::addFile(const std::filesystem::path& path, std::shared_ptr<D
 
 IoError ZipArchive::addFile(const std::filesystem::path& path, std::span<const Fragment> fragments)
 {
-    if (const IoError blocked = guard(); blocked != IoError::Ok) {
+    std::filesystem::path norm;
+    if (const IoError blocked = detail::prepareAddFile(*this, path, norm); blocked != IoError::Ok) {
         return blocked;
     }
     if (detail::hasDatalessFragment(fragments)) {
         return IoError::InvalidData;
     }
-    return addFile(path, std::make_shared<FragmentSource>(fragments));
+
+    // The pieces stay borrowed: they are pulled when this archive is persisted, not here.
+    Entry entry;
+    entry.generator = std::make_shared<FragmentSource>(fragments);
+    entries_.insert_or_assign(norm, std::move(entry));
+    return IoError::Ok;
 }
 
 bool ZipArchive::insertDirectory(const std::filesystem::path& path)
@@ -824,6 +823,12 @@ IoError ZipArchive::adoptHandle(std::shared_ptr<ArchiveHandle> handle, const std
         entry.info.kind    = info.is_directory ? VfsEntryKind::Directory : VfsEntryKind::File;
         entry.info.size    = info.size;
         entry.info.crc     = info.crc;
+
+        // Two entries under one name contradict each other: an archive holds one entry per name, and keeping the last
+        // one would silently drop content the archive went to the trouble of storing. The archive is refused instead.
+        if (entries.find(info.name) != entries.end()) {
+            return IoError::InvalidData;
+        }
         entries.insert_or_assign(info.name, std::move(entry));
     }
 
@@ -1083,16 +1088,9 @@ Result<std::vector<VfsEntryInfo>> ZipArchive::list(const std::filesystem::path& 
 
 IoError ZipArchive::addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes)
 {
-    if (const IoError blocked = guard(); blocked != IoError::Ok) {
-        return blocked;
-    }
     std::filesystem::path norm;
-    const IoError error = detail::normalizeVfsPath(path, norm);
-    if (error != IoError::Ok) {
-        return error;
-    }
-    if (isDirectoryPath(norm)) {
-        return IoError::IsADirectory; // the root, or a directory, is never replaced by a file
+    if (const IoError blocked = detail::prepareAddFile(*this, path, norm); blocked != IoError::Ok) {
+        return blocked;
     }
     return insertBytes(norm, bytes) ? IoError::Ok : IoError::IoFailure;
 }
@@ -1256,16 +1254,9 @@ IoError ZipArchive::removeAll(const std::filesystem::path& path)
 
 IoError ZipArchive::addFile(const std::filesystem::path& path, const std::filesystem::path& real_path)
 {
-    if (const IoError blocked = guard(); blocked != IoError::Ok) {
-        return blocked;
-    }
     std::filesystem::path norm;
-    const IoError error = detail::normalizeVfsPath(path, norm);
-    if (error != IoError::Ok) {
-        return error;
-    }
-    if (isDirectoryPath(norm)) {
-        return IoError::IsADirectory; // the root, or a directory, is never replaced by a file
+    if (const IoError blocked = detail::prepareAddFile(*this, path, norm); blocked != IoError::Ok) {
+        return blocked;
     }
 
     std::error_code                  ec;

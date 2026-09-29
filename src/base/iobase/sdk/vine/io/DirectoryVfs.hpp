@@ -107,9 +107,11 @@ class VN_IOBASE_API DirectoryVfs : public Vfs
      *
      * @param path The virtual file path.
      * @param bytes The bytes to store; may be empty.
-     * @return IoError::Ok on success, IoError::IsADirectory when the name is
-     *         taken by a directory, IoError::InvalidPath when path is not a
-     *         valid virtual path, IoError::IoFailure when writing fails.
+     * @return IoError::Ok on success, IoError::AlreadyExists when a file owns
+     *         the name, IoError::IsADirectory when the root or a directory owns
+     *         it, IoError::NotADirectory when an ancestor is a file,
+     *         IoError::InvalidPath when path is not a valid virtual path,
+     *         IoError::IoFailure when writing fails.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes) override;
 
@@ -126,9 +128,10 @@ class VN_IOBASE_API DirectoryVfs : public Vfs
      * @param path The virtual file path.
      * @param source The source to pull from; must not be null.
      * @return IoError::Ok on success, IoError::InvalidData when source is null or stopped short of the length it
-     *         stated, the source's own reason when it stopped for one, IoError::IsADirectory when the name is taken by
-     *         a directory, IoError::ReadOnly when the root is read-only, IoError::InvalidPath when path is not a valid
-     *         virtual path, IoError::IoFailure when writing fails.
+     *         stated, the source's own reason when it stopped for one, IoError::AlreadyExists when a file owns the
+     *         name, IoError::IsADirectory when the root or a directory owns it, IoError::NotADirectory when an ancestor
+     *         is a file, IoError::InvalidPath when path is not a valid virtual path, IoError::IoFailure when writing
+     *         fails.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source) override;
 
@@ -141,9 +144,9 @@ class VN_IOBASE_API DirectoryVfs : public Vfs
      * @param path The virtual file path.
      * @param fragments The pieces to write, in order; they have to stay alive for the duration of the call.
      * @return IoError::Ok on success, IoError::InvalidData when a piece claims bytes it does not have,
-     *         IoError::IsADirectory when the name is taken by a directory, IoError::ReadOnly when the root is
-     *         read-only, IoError::InvalidPath when path is not a valid virtual path, IoError::IoFailure when writing
-     *         fails.
+     *         IoError::AlreadyExists when a file owns the name, IoError::IsADirectory when the root or a directory owns
+     *         it, IoError::NotADirectory when an ancestor is a file, IoError::InvalidPath when path is not a valid
+     *         virtual path, IoError::IoFailure when writing fails.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path, std::span<const Fragment> fragments) override;
 
@@ -212,8 +215,10 @@ class VN_IOBASE_API DirectoryVfs : public Vfs
      * @param path The virtual file path.
      * @param real_path The physical file to copy in.
      * @return IoError::Ok on success, IoError::NotFound when real_path cannot be
-     *         reached, IoError::IsADirectory when the name is taken by a
-     *         directory, IoError::InvalidPath when path is not a valid virtual path.
+     *         reached, IoError::AlreadyExists when a file owns the name,
+     *         IoError::IsADirectory when the root or a directory owns it,
+     *         IoError::NotADirectory when an ancestor is a file,
+     *         IoError::InvalidPath when path is not a valid virtual path.
      */
     [[nodiscard]] IoError addFile(const std::filesystem::path& path, const std::filesystem::path& real_path) override;
 
@@ -258,16 +263,33 @@ class VN_IOBASE_API DirectoryVfs : public Vfs
                                   std::filesystem::path& out) const;
 
     /**
-     * @brief Prepares a real path for a whole file to be written there.
+     * @brief Checks that a whole file may be written at a virtual path, and maps it to a real path.
      *
-     * Every addFile overload needs the same three things: the tree has to be writable, the virtual path has to be valid
-     * and must not name the root or a directory, and the parent directory has to exist (parents are implied).
+     * Every addFile overload needs the same two things: the tree has to be writable and the virtual path has to be a
+     * valid one whose name is free (neither a file nor a directory owns it, and no ancestor of it is a file, while a
+     * missing parent is fine because parents are implied). Nothing on disk is touched, so a call that fails every check
+     * still leaves no directory behind.
      *
      * @param path The virtual file path.
      * @param real Receives the mapped real path; untouched on failure.
-     * @return IoError::Ok, or the reason nothing can be written there.
+     * @return IoError::Ok, or the reason nothing can be written there: IoError::ReadOnly,
+     *         IoError::InvalidPath, IoError::AlreadyExists for a name a file owns,
+     *         IoError::IsADirectory for the root or a name a directory owns,
+     *         IoError::NotADirectory for a path an ancestor file blocks.
      */
     [[nodiscard]] IoError prepareNewFile(const std::filesystem::path& path, std::filesystem::path& real);
+
+    /**
+     * @brief Creates the parent directory a real path needs, since parents are implied.
+     *
+     * Called once a write is known to have everything it needs, so that a call that fails an earlier check does not
+     * leave empty directories behind.
+     *
+     * @param real The real path a file is about to be written to.
+     * @return IoError::Ok, IoError::PermissionDenied when the parent cannot be created,
+     *         IoError::NotADirectory when a file blocks the way, IoError::IoFailure otherwise.
+     */
+    [[nodiscard]] IoError ensureWriteParent(const std::filesystem::path& real);
 
     std::filesystem::path root_;
 };

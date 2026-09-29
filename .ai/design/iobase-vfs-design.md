@@ -91,7 +91,7 @@
 > **不拒收**"的规则打反：`EncodingTest.HostEncodedNamesSurviveAZipRoundTrip` / `NamesThatAreTextInNoEncodingStayReachable`
 > 在 Linux 上双双红（`addFile` / `read` 报 `InvalidPath`）。修法是按 §4 的规则删掉该闸门——名字是字节，解码规则归
 > 归档层（`detail::fromStoredName`），`isValidUtf8` 仍为它服务（2026-09-26 该判据迁到 core：`vine/String.hpp` 的 `vn::isValidUtf8(std::string_view)`，`constexpr` 内联、不新增导出符号；iobase 侧只留调用，`detail` 里那份连同此前已死的 `detail::fromUtf8` 一起删掉）。修后两棵树 `test_iobase` **58/58**。
-> **S4 已落地（2026-09-25）：`MountVfs`（§10）** —— 多后端按前缀拼成一棵树：最长前缀优先且**不回退**；同一前缀按优先级降序成一层 overlay（同优先级按挂载顺序）。读（`stat` / `read` / `openRead`）取组内第一个命中，条目一律报**完整虚拟路径**；`list` 合并组内所有后端（同名先到者胜）并**补出更深处挂载点蕴含的目录**（含多级中间目录与挂载点自身）。写按 §15.2 的裁决收口：路径已存在 → 归**命中者**，命中者不收写就 `ReadOnly`（**不改道**）；不存在 → 组内**第一个可写**（更高优先级优先）；没有任何挂载覆盖该路径 → `ReadOnly`。跨后端 `rename` = 读源（**一次物化一个条目**：目标后端可能把内容拉取推迟到自己的 save，先挂 `DataSource` 再删源会把内容源头抽掉）→ 写目标 → 删源，失败保留源；跨后端目录 `Unsupported`、跨后端占位目标 `AlreadyExists`。`commit()` 扇出到每个可写后端一次（只读跳过），`saveAs` / `toBytes` = `Unsupported`；无挂载的树只读且不解析任何路径。新增用例 8 个（`tests/test_iobase/MountVfsTest.cpp`）：`test_iobase` 66/66 两树，变异 5/5 各自红，门禁见 §14。
+> **S4 已落地（2026-09-25）：`MountVfs`（§10）** —— 多后端按前缀拼成一棵树：最长前缀优先且**不回退**；同一前缀按优先级降序成一层 overlay（同优先级按挂载顺序）。读（`stat` / `read` / `openRead`）取组内第一个命中，条目一律报**完整虚拟路径**；`list` 合并组内所有后端（同名先到者胜）并**补出更深处挂载点蕴含的目录**（含多级中间目录与挂载点自身）。写按 §15.2 的裁决收口：**2026-09-29 起 `addFile` 只在“路径不存在”时才路由** —— 已存在的路径一律拒（文件 `AlreadyExists` / 目录 `IsADirectory`，命中者只读也不再是 `ReadOnly`），新路径 → 组内**第一个可写**（更高优先级优先）；没有任何挂载覆盖该路径 → `ReadOnly`。其余写操作（`createDirectory` / `createDirectories` / `remove` 等）仍按 §15.2：路径已存在 → 归**命中者**，命中者不收写就 `ReadOnly`（**不改道**）。跨后端 `rename` = 读源（**一次物化一个条目**：目标后端可能把内容拉取推迟到自己的 save，先挂 `DataSource` 再删源会把内容源头抽掉）→ 写目标 → 删源，失败保留源；跨后端目录 `Unsupported`、跨后端占位目标 `AlreadyExists`。`commit()` 扇出到每个可写后端一次（只读跳过），`saveAs` / `toBytes` = `Unsupported`；无挂载的树只读且不解析任何路径。新增用例 8 个（`tests/test_iobase/MountVfsTest.cpp`）：`test_iobase` 66/66 两树，变异 5/5 各自红，门禁见 §14。
 > **S5 已落地（2026-09-25）：内存流 `reserve` + 容量上限（§11）** —— `MemoryStreamBuf` / `ChunkedMemoryStreamBuf` 各得 `reserve(bytes)`（从起点算总容量；超上限或分配失败 → `false` 且缓冲不动）、`setCapacityLimit(max)`（0 = 无限）、`capacityLimit()`；上限约束增长（`overflow` → eof、`xsputn` → 短写 → `badbit`、`seekp` 超限失败、`reserve` 超限 false），现有内容保留、移动带上限。实现要点：单字符写绕过 `overflow()`，所以 put 区终点缩到 `min(容量, 上限)` 且降上限时重发 put 区（else sputc 溜过）；chunked 的 `reserve` 预建空 chunk 再整体接入（失败无半成品，空 chunk 不出现在 `chunks()`）。用例 8 个：`test_core` 140/140 两树，变异 7/7 各自红，两树门禁全阶段干净，ASan `*MemoryStream*` 全过。
 > **S6 已落地（2026-09-25）：并发级别声明 + 跨进程/跨模块复查（§12）** —— 18 个类文档（VFS 契约 4 + 后端 3 + `Zip` + 内存流 12）统一声明 `Threading:`：方法级不线程安全、无内部锁、共享对象/共享存储由调用方同步、互不共享者可并发。跨进程复查：全库无文件锁；`DirectoryVfs` 直写（最后写者胜，崩写留半成品）；`ZipArchive::commit()` 临时文件 + 替换（POSIX 原子；**固定临时名 ⇒ 同一文件的并发 commit 不受支持**，已写进 `commit()` 文档）。跨模块复查：消费者仅 `robotics::io` 与 `tools/urdf2vine`，均无线程、无跨调用缓存 Vfs。证据：`MemoryStream.InstancesRunInParallelOverTheirOwnBuffers` + `ConcurrencyTest.VfsInstancesRunInParallelOverDistinctStorage`（4 线程各自的缓冲 / 目录 / 档案）。
 > **条目信息直接带 `kind`（2026-09-28）**：`VfsEntryInfo::is_directory` 删除，改为 **`VfsEntryKind kind`** 字段，枚举随之移到结构体之前。
@@ -118,6 +118,28 @@
 > （现在先问 `error()`：`Ok` = 真的结束，非 `Ok` = 失败）；② `ZipArchive::openRead` 没先规范化路径 ⇒ 非法路径报 `NotFound` 而不是 `InvalidPath`
 > （与 `read` / `stat` / `DirectoryVfs` 不一致，现已一致）；③ `DataSourceStream::error()` 只回自己记下的错误 ⇒ “短读但没读到 0”时看不到源的失败（现在直接问源）。
 > 下一步：`Vfs` 的流式**写**面与 `§15.7` 已如上收口；其余按 §15 的裁决记录（设计内阶段 S1–S6 已全部落地；余下为触发条件挂账，见 §13 / §15）。
+>
+> **addFile 目标三道闸门 + 覆盖语义取消（2026-09-29，用户决策，破坏性）**：此前 `addFile` 是“静默覆盖”——同一路径第二次写入
+> 把前一份内容悄悄丢掉（`insert_or_assign` / `copy_file(overwrite_existing)`），而“父目录不存在”从不报错（隐式逐级创建）、
+> “祖先被文件挡路”只有 `DirectoryVfs::prepareNewFile` 检、`ZipArchive` 的四个重载一条都不检（`a.txt` 是文件时
+> `addFile("a.txt/b.bin")` 会被接受，树随即自相矛盾：`stat("a.txt")` = File、`list("a.txt")` = `NotADirectory`、
+> 而 `stat("a.txt/b.bin")` = File，且该条目 `list()` 再也走不到）。收敛为一个**共享的非虚守卫** `detail::prepareAddFile()`
+> （`VfsInternal.hpp`：只读先拒 → `normalizeVfsPath` → `detail::checkNewFileTarget`），三道闸门的答案全由 `kindOf()` 给出，
+> 因此**存目录的后端与只隐含目录的后端回答一致**：
+> ① 非法路径 → `InvalidPath`（前导 `/`、`..` 越根、`\`、NUL、`:` 段）；
+> ② 目标已存在 → **拒绝**：文件占名 `AlreadyExists`，目录（显式 / 隐含 / 挂载点）占名 `IsADirectory`，根 `IsADirectory`；
+> ③ 祖先被文件挡路（任意深度）→ `NotADirectory`；缺父目录**不是错误**（仍逐级创建，`ensureWriteParent()` 挪到校验之后，
+> 失败的调用不再留下空目录）；根 → `IsADirectory`。
+> 顺序即契约：**目标先判、内容后碰** —— 名字被占时不再为一次注定失败的写入去拉取整个 `DataSource` / 拼装片段
+> （基类默认实现因此也先过那道闸门，再物化）。
+> `MountVfs` 在**合并后的树**上判，然后才选归属：§15.2 的“路径已存在 → 归命中者”**随之作废** ——
+> 已存在的路径一律拒（命中者只读时是 `AlreadyExists` 而不是 `ReadOnly`），只有**新**路径才轮到“组内第一个可写”。
+> 改条目因此回到两步：`remove()` + `addFile()`（`PkgIOTest` 的三处夹具已改）。
+> 加载侧也补上：`adoptHandle` 遇到源归档里**同名两条目**不再静默后者胜，整个归档报 `InvalidData`。
+> 实测：`test_iobase` **94/94**（新增 `VfsCoreTest.AddFileRefusesEveryTargetThatIsNotFree` 走 `Vfs&` 对两个后端同场地钉三道闸门、
+> 基本四种重载，`MountVfsTest.MountRefusesAnOccupiedPathBeforeRouting`，`ZipArchiveTest.RefusesAnArchiveThatHoldsOneNameTwice`；
+> `AdaptersTest.DirectoryVfsKeepsTheOldContentWhenAStreamingSourceFails` 改名 `DirectoryVfsPublishesNothingWhenAStreamingSourceFails`），
+> `test_robotics_io` / `test_brepio` / `test_imageio` / `test_meshio` 全绿。
 >
 > 关联：外部《VFS 需求设计文档 v2.0》（下称"需求文档"）；第一个消费者
 > `.ai/design/robotics-io-design.md`（`DeviceIO` / `WorkcellIO` 以 `vn::io::Vfs&` 为公共签名）。
@@ -407,6 +429,8 @@ virtual IoError removeAll(const std::filesystem::path& path) = 0;          // �
 - `addFile` 一族碰到已有目录（含隐式）一律**拒绝**（`IsADirectory`），
   否则树里会同时冒出"同名文件"和"同名目录"；反之，`createDirectory` / `createDirectories`
   碰到已有文件返回 `AlreadyExists`，祖先里有文件返回 `NotADirectory`。
+  **2026-09-29 收紧**：文件名占名同样拒绝（`AlreadyExists`）—— 覆盖语义整体取消，
+  三道闸门收敛到 `detail::prepareAddFile()`，见顶部同日条目与 §6。
 - `saveAs` 时显式目录写入 ZIP 目录条目 → 空目录能过 `saveAs` / `open(…, ReadOnly)` 往返；
   `open(…, ReadOnly)` 侧也不再丢弃 `name/` 条目，而是还原成目录标记。
 - 依赖也是懒的：`addFile(path, real_path)` 只记下真实路径并先确认它可读，真正读盘发生在 `saveAs` / `toBytes`。
@@ -884,6 +908,10 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | 根路径操作 → 正确 | **已过**：`stat("")` 为目录（两个后端） |
 | 不存在的文件 / 目录 → 未找到 | **已过**：`stat`/`list` 的 `NotFound` |
 | 创建已存在 → 已存在 | **已过**：`ZipCreateDirectoryIsStrict` / `DirectoryCreateRenameRemove` |
+| `addFile` 目标三道闸门：非法路径 / 已存在（文件 `AlreadyExists`、目录 `IsADirectory`、根 `IsADirectory`）/ 祖先为文件 `NotADirectory`，且四种重载同一判据 | **已过（2026-09-29）**：`VfsCoreTest.AddFileRefusesEveryTargetThatIsNotFree`（同一函数跑 `ZipArchive` 与 `DirectoryVfs` 两个后端：文件 / 显式目录 / 隐含目录 / 根 / 祖先文件 / 前导 `/` / 折叠后的已存在 / 空 source / 空片段 / 真实文件，再验一份自由名字仍写得进） |
+| 缺父目录不是错误（父目录逐级隐含） | **已过**：同上（`a/b/c.txt` 一次写入即得 `a` / `a/b`）；`VfsCoreTest.ZipStatSizesImportedFiles` |
+| 源归档同名两条目 → 拒绝整个归档 | **已过（2026-09-29）**：`ZipArchiveTest.RefusesAnArchiveThatHoldsOneNameTwice`（夹具就地把一条目录记录的名字改写成另一条） |
+| 改条目 = `remove()` + `addFile()`（覆盖语义已取消） | **已过**：`test_robotics_io` 的 `PkgIOTest.{DamagedMeshFileIsRefused,DamagedStlFileIsRefused,IndexedDescriptionOfAnStlFileIsRefused,IndexedDescriptionOfASoupVmeshIsRefused,StlEntryNamedInCapitalsIsReadAsStl}` 三处夹具 |
 | `mkdir -p` 幂等 | **已过**：`ZipCreateDirectoriesMakesTheWholeChain` |
 | 读取目录作为文件 / 枚举文件作为目录 | **部分已过**：`read(目录)` → `IsADirectory`；`list(文件)` → `NotADirectory`；`open` 待 S3 |
 | 重命名到已存在 / 到自己的子树 / 到缺失父目录 | **已过**：`ZipRenameRejectsBadTargets` / `DirectoryCreateRenameRemove` |
@@ -898,7 +926,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
 | 归档索引可供 `stat` / `list` 直接使用 | **已过**：`ZipArchiveTest.ArchiveIndexReportsNamesSizesAndKinds` |
 | Mount 优先级覆盖 → 高优先级胜出 | **已过**：`MountVfsTest.MountPriorityShadowsReads` |
 | Mount 同前缀多后端 `list` → 合并去重（含中间目录） | **已过**：`MountVfsTest.MountMergesListsAndSynthesizesIntermediateDirectories` |
-| Mount 写路由：命中者拥有、只读命中不改道、新路径走第一个可写 | **已过**：`MountVfsTest.MountRoutesWritesToTheOwningOrFirstWritableBackend` |
+| Mount 写路由：已存在一律拒（不再改道）、新路径走第一个可写、未覆盖即 `ReadOnly` | **已过**：`MountVfsTest.MountRoutesWritesToTheOwningOrFirstWritableBackend` / `MountRefusesAnOccupiedPathBeforeRouting`（合并树判据：文件占名 `AlreadyExists`、挂载点与隐含目录 `IsADirectory`、祖先文件 `NotADirectory`，命中者只读也不再是 `ReadOnly`） |
 | Mount 跨后端 `rename`：文件复制 + 删源 / 目录 `Unsupported` / 占用目标 `AlreadyExists` | **已过**：`MountVfsTest.MountRenamesWithinAndAcrossBackends` |
 | Mount 全只读树 → 写立即失败（`isReadOnly`） | **已过**：`MountVfsTest.MountRefusesWritesWhenNoTargetIsWritable` |
 | Mount 嵌套挂载（树挂树） | **已过**：`MountVfsTest.MountNestsInsideAnotherMount` |
@@ -911,7 +939,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
   **目录后端已改为流式（S2，2026-09-28）**：`DirectoryVfs::addFile(path, shared_ptr<DataSource>)` 不再走“先物化再写 span”的默认实现，
   而是边拉边写（先写同级 `.vine-tmp`，干净收尾才 `rename` 就位）；不报长度的源因此也接得住，且“拉到一半失败”不会留下半个文件。
   用例：`AdaptersTest.DirectoryVfsWritesASourceWhileItIsPulled`（**拉取途中文件已在长**，这是“真的没物化”的直视钉子）、
-  `DirectoryVfsKeepsTheOldContentWhenAStreamingSourceFails`、`DirectoryVfsWritesBorrowedPiecesWithoutAssemblingThem`、
+  `DirectoryVfsPublishesNothingWhenAStreamingSourceFails`（名字被占先拒；源停在半路则只留下被丢弃的 `.vine-tmp`，绝不发布半成品）、`DirectoryVfsWritesBorrowedPiecesWithoutAssemblingThem`、
   `BufferSliceSourceWritesTheBufferItHolds` / `BufferSliceSourceRefusesABufferEditedAfterHandover` |
 | 读侧流式经 `Vfs&` 可达（`openRead` / `read(sink)`；override / 默认两条路径） | **已过**：`IoBaseTest.ZipArchiveStreamsReadsThroughTheBaseInterface` / `DirectoryVfsStreamsReadsThroughTheBaseInterface`（三种拼法同内容：整读 / 流读 / 推 sink；sink 拒绝即停并原样返回错误；损坏成员在 push 末尾报 `IoFailure`，同文件 `ZipArchiveOpensWithoutReadingContent` 的损坏夹具）；越界 seek → `OutOfRange` |
 | 流式适配器（S1）：`IstreamSource` 推进包 / `OstreamSink` 接条目 / `Vfs::copy` / 转换 / `kUnknownSize` / `error()` | **已过**：`AdaptersTest.{IstreamSourcesPullsTheStreamIntoThePackage,IstreamSourceMeasuresAStreamOfUnknownLength,IstreamSourceRefusesAStreamThatCannotSeek,IstreamSourceConvertsWhilePulling,OstreamSinkConvertsWhilePushing,OstreamSinkReportsContentThatEndsInsideAnElement,CopyMovesAnEntryBetweenTrees,CopyOfDamagedContentFailsInsteadOfWritingIt,AddFileTakesASourceThatCannotStateItsLength,AddFileReportsWhyAnUnmeasuredSourceStoppedShort,AddFileReportsWhyASourceStoppedShort,VfsEntrySourceRestartsFromTheBeginning}`（转换用例的块是 3 字节，故意让边界落在元素中间） |

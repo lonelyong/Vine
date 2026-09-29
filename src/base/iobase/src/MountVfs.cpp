@@ -220,10 +220,11 @@ Result<std::unique_ptr<VfsEntrySource>> MountVfs::openRead(const std::filesystem
 
 IoError MountVfs::addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes)
 {
+    // The verdict is the merged tree's own, not the target backend's: a path the read side already answers for must not
+    // be written, and a path no mount covers has nowhere to go. Only then is the owner picked.
     std::filesystem::path normalized;
-    const IoError         err = detail::normalizeVfsPath(path, normalized);
-    if (err != IoError::Ok) {
-        return err;
+    if (const IoError blocked = detail::prepareAddFile(*this, path, normalized); blocked != IoError::Ok) {
+        return blocked;
     }
 
     const std::vector<const Mount*> group  = route(normalized);
@@ -237,9 +238,8 @@ IoError MountVfs::addFile(const std::filesystem::path& path, std::span<const uns
 IoError MountVfs::addFile(const std::filesystem::path& path, const std::filesystem::path& real_path)
 {
     std::filesystem::path normalized;
-    const IoError         err = detail::normalizeVfsPath(path, normalized);
-    if (err != IoError::Ok) {
-        return err;
+    if (const IoError blocked = detail::prepareAddFile(*this, path, normalized); blocked != IoError::Ok) {
+        return blocked;
     }
 
     const std::vector<const Mount*> group  = route(normalized);
@@ -253,9 +253,8 @@ IoError MountVfs::addFile(const std::filesystem::path& path, const std::filesyst
 IoError MountVfs::addFile(const std::filesystem::path& path, std::span<const Fragment> fragments)
 {
     std::filesystem::path normalized;
-    const IoError         err = detail::normalizeVfsPath(path, normalized);
-    if (err != IoError::Ok) {
-        return err;
+    if (const IoError blocked = detail::prepareAddFile(*this, path, normalized); blocked != IoError::Ok) {
+        return blocked;
     }
 
     const std::vector<const Mount*> group  = route(normalized);
@@ -269,9 +268,8 @@ IoError MountVfs::addFile(const std::filesystem::path& path, std::span<const Fra
 IoError MountVfs::addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source)
 {
     std::filesystem::path normalized;
-    const IoError         err = detail::normalizeVfsPath(path, normalized);
-    if (err != IoError::Ok) {
-        return err;
+    if (const IoError blocked = detail::prepareAddFile(*this, path, normalized); blocked != IoError::Ok) {
+        return blocked;
     }
 
     const std::vector<const Mount*> group  = route(normalized);

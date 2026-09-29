@@ -58,6 +58,40 @@ std::vector<unsigned char> buildPackage()
 }
 
 /**
+ * @brief Renames one entry in an archive's central directory, in place.
+ *
+ * Two entries under one name cannot be produced through this library - the second addFile() is refused - so a fixture
+ * that holds one has to be written by hand: one of two equally long names is replaced in its directory record, and
+ * nothing in the archive has to move for it.
+ *
+ * @param bytes The archive bytes to rewrite in place.
+ * @param from The name the directory currently holds.
+ * @param to The name to store instead; must have the same length as from.
+ */
+void rewriteNameInDirectory(std::vector<unsigned char>& bytes, const std::string& from, const std::string& to)
+{
+    ASSERT_EQ(from.size(), to.size());
+
+    // A central directory header spells its name length at 28 and its name at 46.
+    int rewritten = 0;
+    for (std::size_t offset = 0; offset + 46 + to.size() <= bytes.size(); ++offset) {
+        const bool is_record = bytes[offset] == 0x50 && bytes[offset + 1] == 0x4B && bytes[offset + 2] == 0x01 &&
+                               bytes[offset + 3] == 0x02;
+        if (!is_record) {
+            continue;
+        }
+        const std::uint16_t length =
+                static_cast<std::uint16_t>(bytes[offset + 28] | static_cast<std::uint16_t>(bytes[offset + 29] << 8));
+        if (length != from.size() || !std::equal(from.begin(), from.end(), bytes.begin() + offset + 46)) {
+            continue;
+        }
+        std::copy(to.begin(), to.end(), bytes.begin() + static_cast<std::ptrdiff_t>(offset + 46));
+        ++rewritten;
+    }
+    ASSERT_EQ(rewritten, 1) << "the name was expected in exactly one directory record";
+}
+
+/**
  * @brief Reports whether a child is present with the expected kind and size.
  */
 bool matches(const std::vector<VfsEntryInfo>& children, const std::filesystem::path& path, VfsEntryKind kind, std::uint64_t size)
@@ -170,6 +204,23 @@ TEST(ZipArchiveTest, MatchesTheMemoryBackendForTheSameContent)
         ASSERT_TRUE(tree_bytes.ok()) << path.generic_string();
         EXPECT_EQ(lazy_bytes.value(), tree_bytes.value()) << path.generic_string();
     }
+}
+
+TEST(ZipArchiveTest, RefusesAnArchiveThatHoldsOneNameTwice)
+{
+    ZipArchive writer;
+    ASSERT_EQ(writer.addFile(u8"a.txt", bytesOf("first")), IoError::Ok);
+    ASSERT_EQ(writer.addFile(u8"b.txt", bytesOf("second")), IoError::Ok);
+    auto bytes = writer.toBytes();
+    ASSERT_TRUE(bytes.ok());
+
+    // Two entries under one name contradict each other, and keeping the last one would silently drop content that the
+    // archive went to the trouble of storing - so the archive as a whole is refused.
+    rewriteNameInDirectory(bytes.value(), "b.txt", "a.txt");
+
+    const auto opened = ZipArchive::open(bytes.value(), ZipArchive::OpenMode::ReadOnly);
+    EXPECT_FALSE(opened.ok());
+    EXPECT_EQ(opened.error(), IoError::InvalidData);
 }
 
 TEST(ZipArchiveTest, ReadsEntriesOnDemand)

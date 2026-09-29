@@ -329,17 +329,9 @@ IoError DirectoryVfs::createDirectories(const std::filesystem::path& path)
 
 IoError DirectoryVfs::addFile(const std::filesystem::path& path, const std::filesystem::path& real_path)
 {
-    if (isReadOnly()) {
-        return IoError::ReadOnly;
-    }
-    std::filesystem::path norm;
     std::filesystem::path real;
-    const IoError         error = resolve(path, norm, real);
-    if (error != IoError::Ok) {
-        return error;
-    }
-    if (norm.empty()) {
-        return IoError::IsADirectory; // the root is a directory
+    if (const IoError prepared = prepareNewFile(path, real); prepared != IoError::Ok) {
+        return prepared;
     }
 
     std::error_code                  ec;
@@ -353,13 +345,8 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, const std::file
     if (type != std::filesystem::file_type::regular) {
         return IoError::NotFound; // only regular files can be brought in
     }
-    if (std::filesystem::status(real, ec).type() == std::filesystem::file_type::directory) {
-        return IoError::IsADirectory; // a directory is never replaced by a file
-    }
-
-    std::filesystem::create_directories(real.parent_path(), ec); // parents are implied
-    if (ec) {
-        return IoError::IoFailure;
+    if (const IoError parent = ensureWriteParent(real); parent != IoError::Ok) {
+        return parent;
     }
 
     // A directory backend copies the file right away, streaming it.
@@ -595,6 +582,9 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::span<const
     if (const IoError prepared = prepareNewFile(path, real); prepared != IoError::Ok) {
         return prepared;
     }
+    if (const IoError parent = ensureWriteParent(real); parent != IoError::Ok) {
+        return parent;
+    }
 
     std::ofstream out(real, std::ios::binary | std::ios::trunc);
     if (!out) {
@@ -608,8 +598,9 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::span<const
 
 IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source)
 {
-    if (isReadOnly()) {
-        return IoError::ReadOnly;
+    std::filesystem::path real;
+    if (const IoError prepared = prepareNewFile(path, real); prepared != IoError::Ok) {
+        return prepared;
     }
     if (source == nullptr) {
         return IoError::InvalidData;
@@ -617,10 +608,8 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::shared_ptr
     if (const IoError settled = source->error(); settled != IoError::Ok) {
         return settled; // the source already knows it cannot deliver, so nothing is written
     }
-
-    std::filesystem::path real;
-    if (const IoError prepared = prepareNewFile(path, real); prepared != IoError::Ok) {
-        return prepared;
+    if (const IoError parent = ensureWriteParent(real); parent != IoError::Ok) {
+        return parent;
     }
 
     // Streamed, not materialized: the bytes reach the file as they are pulled, so a model that is generated on the fly
@@ -633,15 +622,15 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::shared_ptr
 
 IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::span<const Fragment> fragments)
 {
-    for (const Fragment& piece : fragments) {
-        if (piece.data == nullptr && piece.size != 0) {
-            return IoError::InvalidData; // a piece that claims bytes it does not have
-        }
-    }
-
     std::filesystem::path real;
     if (const IoError prepared = prepareNewFile(path, real); prepared != IoError::Ok) {
         return prepared;
+    }
+    if (detail::hasDatalessFragment(fragments)) {
+        return IoError::InvalidData; // a piece that claims bytes it does not have
+    }
+    if (const IoError parent = ensureWriteParent(real); parent != IoError::Ok) {
+        return parent;
     }
 
     // Each piece is written where it is, so borrowed data that already lives in more than one buffer is never
@@ -658,31 +647,31 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::span<const
 
 IoError DirectoryVfs::prepareNewFile(const std::filesystem::path& path, std::filesystem::path& real)
 {
-    if (isReadOnly()) {
-        return IoError::ReadOnly;
-    }
     std::filesystem::path norm;
-    const IoError         error = resolve(path, norm, real);
-    if (error != IoError::Ok) {
-        return error;
-    }
-    if (norm.empty()) {
-        return IoError::IsADirectory; // the root is a directory
+    if (const IoError blocked = detail::prepareAddFile(*this, path, norm); blocked != IoError::Ok) {
+        return blocked;
     }
 
-    std::error_code ec;
-    if (std::filesystem::status(real, ec).type() == std::filesystem::file_type::directory) {
-        return IoError::IsADirectory; // a directory is never replaced by a file
-    }
-
-    std::filesystem::create_directories(real.parent_path(), ec); // parents are implied
-    if (ec) {
-        if (ec == std::errc::not_a_directory || ec == std::errc::file_exists) {
-            return IoError::NotADirectory;
-        }
-        return IoError::IoFailure;
-    }
+    // A normalized virtual path is relative and carries no root name, so joining it can
+    // only extend root_ - it has no spelling left that would replace it.
+    real = root_ / norm;
     return IoError::Ok;
+}
+
+IoError DirectoryVfs::ensureWriteParent(const std::filesystem::path& real)
+{
+    std::error_code ec;
+    std::filesystem::create_directories(real.parent_path(), ec); // parents are implied
+    if (!ec) {
+        return IoError::Ok;
+    }
+    if (ec == std::errc::permission_denied) {
+        return IoError::PermissionDenied;
+    }
+    if (ec == std::errc::not_a_directory || ec == std::errc::file_exists) {
+        return IoError::NotADirectory; // a file blocks the way down
+    }
+    return IoError::IoFailure;
 }
 
 IoError DirectoryVfs::commit()
