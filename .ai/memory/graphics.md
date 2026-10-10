@@ -715,7 +715,7 @@
 **2026-09-13**：占位不再默不作声——`RenderPipelineBuilder::build` 会报一条 `DiagnosticCategory::UnsupportedRequest`；`ShaderPreset`（含 `ShadowedPhong` 那个“保留项”）已删除，内容着色只能显式命名 program（见本文件顶端条目）。
 - **着色模式（2026-10-11）**：`SceneView::Options::Mode{Lit, Flat, Unlit, Normals, Wireframe}` 落在**pass 属性**上
   —— 前四种是窗口 pass 的 **program override**（`RenderPass::setProgramOverride`），第五种再多一个**光栅化覆盖**
-  （`RenderPass::setPolygonMode(PolygonMode::Line)`）⇒ 换模式**零重建**（同一条管线、同一张 pass 表）。
+  （`RenderPass::setPolygonModeOverride(PolygonMode::Line)`）⇒ 换模式**零重建**（同一条管线、同一张 pass 表）。
   四种着色模式是**同一段** `builtin_forward.frag` 文本 + 一个 `#define`：`VINE_FLAT`（已有的逐面法线）/
   `VINE_UNLIT`（只写 albedo × opacity，光照前 return）/ `VINE_NORMALS`（写 `n*0.5+0.5`，alpha 1）；线框用无光照
   程序 + 线填充（wireframe 的惯例：看结构不看明暗）。延迟路径**兑现不了**非 Lit 模式（颜色从 G-buffer 出来、
@@ -725,7 +725,10 @@
   `ProgramAbiTest.EveryModeOfTheForwardProgramDeclaresTheSameAbi` 钉住四者绑定一致（内容集是按 program 绑的）。
 - **pass 级光栅化覆盖（2026-10-11）**：`PolygonMode{ Fill, Line, Point }` 从 `StateNode.hpp` 抽到
   **`PolygonMode.hpp`**（两个作用域共用同一个类型：逐子树的 `StateNode::setPolygonMode` 与逐 pass 的
-  `RenderPass::setPolygonMode`/`clearPolygonMode`/`polygonMode()`）。`std::optional` 表达"没有覆盖"≠"强制 Fill"：
+  `RenderPass::setPolygonModeOverride`/`clearPolygonModeOverride`/`polygonModeOverride()`）。`std::optional` 表达"没有覆盖"≠"强制 Fill"：
   清掉覆盖 = 回到内容自己的状态。应用点就在 `RenderPass::execute()` 里那次"需要自己的命令表"的拷贝（与
   program override 同一处，一次拷贝满足两者）。**零后端改动**：后端早就把多边形模式当 EDS3 **动态状态**
   （`VK_DYNAMIC_STATE_POLYGON_MODE_EXT` + `vkCmdSetPolygonModeEXT`，`fillModeNonSolid` 本来就在 `DeviceFeatures` 里请求）。
+  **命名/优先级规则**（`graphics-state.md` §4.1）：同一个状态两处出现时，pass 级里**赢了内容**的名字带 `Override`
+  （`setProgramOverride` / `setPolygonModeOverride`），pass 级里**会被内容压过**的不带（`setDepthMode`，靠
+  `RenderCommand::depthExplicit`）。线框必须是覆盖：否则内容自己写过的 Line 会把"回实面"这个开关永久钉住。

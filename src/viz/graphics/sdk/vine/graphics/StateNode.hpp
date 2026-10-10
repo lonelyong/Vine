@@ -51,8 +51,11 @@ enum class CullMode
 /**
  * @brief Polygon rasterisation mode for a StateNode subtree.
  *
- * The type lives in its own header (see PolygonMode.hpp) because a PASS can declare the same state for
- * everything it draws (RenderPass::setPolygonMode) - the two are the same idea at two scopes.
+ * CONTENT scope: it says how this subtree's triangles rasterise, and it is what applies when no pass overrides it
+ * (RenderPass::setPolygonModeOverride) - the two are the same idea at two scopes, which is why the type lives in
+ * its own header (PolygonMode.hpp) rather than in one of the two classes. The pass' setter carries "Override" in
+ * its name precisely because the pass BEATS this one; a host that wants the authored state to win simply leaves
+ * the pass' override unset.
  */
 /**
  * @brief Primitive topology of a drawable's vertex stream.

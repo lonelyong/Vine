@@ -8,9 +8,9 @@ VN_GRAPHICS_NS_BEGIN
  *
  * The one rasterisation choice a viewer makes in its menus - "shaded", "wireframe", "points" - and it is
  * a RASTERISER state rather than a shading one: the same geometry, the same program and the same lights
- * produce outlines instead of surfaces. That is why it is not a property of the content (a StateNode may
- * set it for a subtree, see StateNode::setPolygonMode) and not a shading mode: a pass can override it for
- * everything it draws (RenderPass::setPolygonMode), which is what a view's "wireframe" switch uses.
+ * produce outlines instead of surfaces. It is declared at the scope that owns the intent: a StateNode sets it
+ * for its subtree (the CONTENT's own look), and a pass overrides it for everything it draws
+ * (RenderPass::setPolygonModeOverride - a VIEWING decision, which "wireframe" is).
  *
  * ADDING AN ENUMERATOR IS A BACKEND QUESTION, NOT ONLY AN SDK ONE: what a mode means to a device
  * (VK_POLYGON_MODE_FILL / _LINE / _POINT) is derived in the vsg backend

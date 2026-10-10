@@ -141,23 +141,23 @@ void SceneView::applyModeToWindowPass()
     switch (options_.mode) {
         case Options::Mode::Lit:
             window->setProgramOverride(nullptr);
-            window->clearPolygonMode();
+            window->clearPolygonModeOverride();
             break;
         case Options::Mode::Flat:
             window->setProgramOverride(vn::graphics::flatForwardProgram());
-            window->clearPolygonMode();
+            window->clearPolygonModeOverride();
             break;
         case Options::Mode::Unlit:
             window->setProgramOverride(vn::graphics::unlitForwardProgram());
-            window->clearPolygonMode();
+            window->clearPolygonModeOverride();
             break;
         case Options::Mode::Normals:
             window->setProgramOverride(vn::graphics::normalsForwardProgram());
-            window->clearPolygonMode();
+            window->clearPolygonModeOverride();
             break;
         case Options::Mode::Wireframe:
             window->setProgramOverride(vn::graphics::unlitForwardProgram());
-            window->setPolygonMode(PolygonMode::Line);
+            window->setPolygonModeOverride(PolygonMode::Line);
             break;
     }
 }

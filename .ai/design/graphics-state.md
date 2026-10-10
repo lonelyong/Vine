@@ -122,6 +122,26 @@ class StateNode : public Group {
   overlay：depth off、blend on）——可视为"视图根上的默认 StateGroup"。
 - 用户 `StateNode` 在其下覆盖；无用户 StateNode 时行为 = 现状（零回归）。
 
+### 4.1 同一个状态在"逐子树"和"逐 pass"两处出现时：谁赢、叫什么名
+
+有真实用例的状态会出现在**两个作用域**（子树 = 内容的写法，pass = 观看的决定）。这不是重复：
+两处回答不同的问题（"这个东西怎么画" vs "这一幕整体怎么画"），而且 pass 那一侧是**唯一**能让宿主在不改
+宿主内容（场景图归宿主）的前提下改变画面的地方。但两处的**优先级与命名**必须是一条规则，否则同一状态
+在同一个引擎里有两套语义：
+
+| 状态 | pass 级 setter | 与内容的关系 | 为什么 |
+| --- | --- | --- | --- |
+| program | `RenderPass::setProgramOverride` | **pass 赢**（整体替换每条命令的程序） | "用另一套着色把这个内容再画一遍"是它的用途（法线 pass、alt-shading pass），要它是"全部" |
+| polygonMode | `RenderPass::setPolygonModeOverride` | **pass 赢**（改写每条命令的光栅化状态） | 它是**观看开关**："给我看边"。若内容自己写的 Line 能压过它，这个开关就**永远无法**把画面切回实面 |
+| depth | `RenderPass::setDepthMode` | **内容赢**（`RenderCommand::depthExplicit` 的命令不吃它） | 深度是**内容 routinely 声明**的东西（透明体、HUD），pass 给的是"没说过的那些的默认" |
+| 视口 / 清除 | `setViewport` / `setClearEnabled` … | 内容没有对应的状态 | 它们是 pass 自己的几何与目标策略 |
+
+**命名规则（照上表执行）**：pass 级 setter **赢了内容**的，名字里带 **`Override`**
+（`setProgramOverride` / `setPolygonModeOverride`，getter 同名去 `set`）；pass 给的是**可被内容压过的默认**，
+名字不带（`setDepthMode`）。这样读到一个 pass 级 setter 的签名就知道它会不会盖住内容，不用去翻文档。
+**`std::optional` 表达"没设这个覆盖"**：`nullopt` ≠ 强制 Fill —— 清掉覆盖是"回到内容自己的写法"
+（`clearPolygonModeOverride()`），所以"回实面"是"停止覆盖"，不是"把一切按实面硬画"。
+
 ## 5. 管线变体与缓存键
 
 - **变体键 = `(生效状态 + program + 数据特征/图元 + material 相关)`**，后端缓存；

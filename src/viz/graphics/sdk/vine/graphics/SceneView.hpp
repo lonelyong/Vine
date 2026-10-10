@@ -97,7 +97,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
             Flat,      ///< The same lighting with the per-FACE normal (faceted surfaces, no vertex normals read).
             Unlit,     ///< The surface colour alone (material / map / vertex colour), no light term.
             Normals,   ///< View-space normals as colour: which way each surface faces.
-            Wireframe, ///< Edges only (RenderPass::setPolygonMode), in the surface's own colour (unlit lines).
+            Wireframe, ///< Edges only (RenderPass::setPolygonModeOverride), in the surface's own colour.
         };
 
         /** @brief The shading mode (see Mode; default: the full shading). */

@@ -547,7 +547,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 | 内容 | 位置 |
 | --- | --- |
-| 内建前向着色（引擎默认内容程序，`forwardProgram()`；同一段文本 + 一个 `#define` 出 `flatForwardProgram()` / `unlitForwardProgram()` / `normalsForwardProgram()` 三种查看模式，见 `SceneView::Options::Mode`，线框 = 无光照 + `RenderPass::setPolygonMode(Line)`） | `src/viz/graphics/shaders/builtin_forward.*` |
+| 内建前向着色（引擎默认内容程序，`forwardProgram()`；同一段文本 + 一个 `#define` 出 `flatForwardProgram()` / `unlitForwardProgram()` / `normalsForwardProgram()` 三种查看模式，见 `SceneView::Options::Mode`，线框 = 无光照 + `RenderPass::setPolygonModeOverride(Line)`） | `src/viz/graphics/shaders/builtin_forward.*` |
 | 延迟管线的 G-buffer 几何 / 全屏光照 | `src/viz/graphics/shaders/builtin_gbuffer.*` / `builtin_deferred_lighting.frag` |
 | 天空盒（`skyboxProgram()`，无光照 cube map 方向采样） | `src/viz/graphics/shaders/builtin_skybox.*` |
 | 全屏三角形顶点段 / 纯拷贝（`fullscreenVertexProgram()` / `screenCopyProgram()`） | `src/viz/graphics/shaders/builtin_fullscreen.vert` / `builtin_screen_copy.frag` |

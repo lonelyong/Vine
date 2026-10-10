@@ -2775,7 +2775,7 @@ TEST(SceneViewViewportTest, TurningOnAnOverlayThatWasNeverBuiltCostsOneBuild)
 
 TEST(SceneViewViewportTest, ThePassLevelPolygonModeOverridesTheContentAndCanBeClearedBack)
 {
-    // A pass can say "draw everything as edges" (RenderPass::setPolygonMode) - what a view's wireframe mode is.
+    // A pass can say "draw everything as edges" (RenderPass::setPolygonModeOverride) - what a view's wireframe mode is.
     // The two things worth pinning: it really reaches the commands the backend sees, and CLEARING it puts the
     // content's own state back in charge (unset is not "force fill").
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -2801,18 +2801,18 @@ TEST(SceneViewViewportTest, ThePassLevelPolygonModeOverridesTheContentAndCanBeCl
     engine->frame();
     ASSERT_EQ(backend->last_polygon_modes.size(), 1u);
     EXPECT_EQ(backend->last_polygon_modes[0], PolygonMode::Line);
-    EXPECT_FALSE(window->polygonMode().has_value());
+    EXPECT_FALSE(window->polygonModeOverride().has_value());
 
     // Override to Fill: the pass wins over the content ("show me surfaces"), no rebuild involved.
-    window->setPolygonMode(PolygonMode::Fill);
-    ASSERT_EQ(window->polygonMode(), PolygonMode::Fill);
+    window->setPolygonModeOverride(PolygonMode::Fill);
+    ASSERT_EQ(window->polygonModeOverride(), PolygonMode::Fill);
     engine->frame();
     ASSERT_EQ(backend->last_polygon_modes.size(), 1u);
     EXPECT_EQ(backend->last_polygon_modes[0], PolygonMode::Fill);
 
     // Cleared: back to the content's own Line - not to a forced Fill.
-    window->clearPolygonMode();
-    EXPECT_FALSE(window->polygonMode().has_value());
+    window->clearPolygonModeOverride();
+    EXPECT_FALSE(window->polygonModeOverride().has_value());
     engine->frame();
     ASSERT_EQ(backend->last_polygon_modes.size(), 1u);
     EXPECT_EQ(backend->last_polygon_modes[0], PolygonMode::Line);
@@ -2831,13 +2831,13 @@ TEST(SceneViewViewportTest, WireframeIsAnEdgePassWithTheUnlitColourAndNoRebuild)
     RenderPass* const window = pipeline->windowPass();
     ASSERT_NE(window, nullptr);
     const std::size_t pass_count = engine->passCount();
-    ASSERT_FALSE(window->polygonMode().has_value());
+    ASSERT_FALSE(window->polygonModeOverride().has_value());
 
     view->setOptions({ .mode = SceneView::Options::Mode::Wireframe });
     EXPECT_EQ(view->pipeline(), pipeline.get()) << "换到线框不该重建管线";
     EXPECT_EQ(engine->passCount(), pass_count);
-    ASSERT_TRUE(window->polygonMode().has_value());
-    EXPECT_EQ(*window->polygonMode(), PolygonMode::Line);
+    ASSERT_TRUE(window->polygonModeOverride().has_value());
+    EXPECT_EQ(*window->polygonModeOverride(), PolygonMode::Line);
     ASSERT_NE(window->programOverride(), nullptr);
     EXPECT_NE(window->programOverride()->name().find(u8"builtin_forward_unlit"), vn::String::npos)
         << "线框用无光照的表面色（这就是 wireframe 的惯例：看结构，不看明暗）";
@@ -2845,7 +2845,7 @@ TEST(SceneViewViewportTest, WireframeIsAnEdgePassWithTheUnlitColourAndNoRebuild)
     // Back to Lit: BOTH overrides go away (and again with no rebuild).
     view->setOptions({ .mode = SceneView::Options::Mode::Lit });
     EXPECT_EQ(view->pipeline(), pipeline.get());
-    EXPECT_FALSE(window->polygonMode().has_value());
+    EXPECT_FALSE(window->polygonModeOverride().has_value());
     EXPECT_EQ(window->programOverride(), nullptr);
 }
 

@@ -71,7 +71,7 @@
 **两条"不"**：**不让控件碰管线/设置**（§5，零新增配置 API）；**不让视图偷偷装灯**（§4.2，零灯就是零灯）。
 
 **两轴已补（2026-10-11 第二轮）**：**着色模式**（`Options::mode`：Lit/Flat/Unlit/Normals/Wireframe —— 前四种是同一段
-shader 文本 + 一个 define，第五种再加 `RenderPass::setPolygonMode(Line)`，全部落在 pass 属性上 ⇒ **零重建**）；
+shader 文本 + 一个 define，第五种再加 `RenderPass::setPolygonModeOverride(Line)`，全部落在 pass 属性上 ⇒ **零重建**）；
 **连续渲染**（`RenderControl::setContinuousRendering(on, interval_ms)` —— 按需渲染仍是默认，连续是宿主可选的一档，
 未 attach 或表面未 exposed 时滴答免费）。
 
@@ -267,8 +267,9 @@ passes registered here"。构造自驱在后端已注册时**先 attach 了一�
 | **签名即所有权** | 借用 = `raw_ptr` 参数 + 文档"必须活得比我久"；接管 = `intrusive_ptr` 参数（调用点看得见"我把所有权交出去了"）；返回内部对象 = `raw_ptr` | `SceneView::setEngine(raw_ptr<>)` / `RenderEngine::setBackend(intrusive_ptr<>)` / `view->pipeline()` |
 | **操作期间临时加引用** | 借用的成员一旦要"跨操作使用"，入口先 `intrusive_ptr<T>(p, /*add_ref*/ true)`（该 ctor 的第二参数就是这个意思） | R2（视图→引擎，§13）、控件捕获期间→视图（§5）；**同一条通则，两处复用** |
 | **意图用值、变更即重建** | 配方（`Options`）按值进出、无 setter 碎片；改它 = 一次重建 | `setOptions(Options)` / `options()` |
-| **几何用 setters、零重建** | 每帧会变的东西（视口、可见性）只改取值，不碰结构 | `setViewport` / `setStatsVisible` |
-| **能不能 vs 为什么** | "能不能"用返回值（`bool`/`nullopt`）；"为什么"一律走**诊断**（`RenderEngine::setDiagnosticSink`，控件转日志）；**不许静默失败** | `init()` → `bool` + 诊断；HUD 开关失败 → 诊断 |
+| **几何用 setters、零重建** | 每帧会变的东西（视口、可见性、着色模式）只改取值，不碰结构 | `setViewport` / `setStatsVisible` / `Options::mode` |
+| **同名状态两处出现时，赢家的名字带 `Override`** | pass 级 setter **赢了内容**的 → `…Override`（`setProgramOverride` / `setPolygonModeOverride`）；pass 给的是**可被内容压过的默认** → 不带（`setDepthMode`）。判断依据与整张表在 `.ai/design/graphics-state.md` §4.1 | 视图的"线框"开关必须是覆盖：否则内容写过的线框会把它永久钉住 |
+| **能不能 vs 为什么** | "能不能"用返回值（`bool`/`nullopt`）；"为什么"一律走**诊断**（`RenderEngine::setDiagnosticSink`，控件转日志）；**不许静默失败** | `init()` → `bool` + 诊断；HUD 开关 / 延迟路径上的模式 → 诊断 |
 | **一层一个旋钮** | 同一件事不给两个入口；句柄（`pipeline()->gizmo()`）是**微调口**而不是第二配置面，状态仍然只有一份 | 视图不给 `setPipelineOptions()`；`Options` 不含尺寸/偏移 |
 
 ## 4. 最终 API 形态（graphics）
@@ -359,10 +360,10 @@ Unreal 之所以"感觉免费"，是因为它**每帧重建 pass 列表**（我�
 - 反过来：**"用什么程序画"**：`ShadingPath`（Forward/Deferred）是**配方** —— 它换的是**有哪些 pass**，所以变更 = 一次构建；
   但 `Mode`（Lit/Flat/Unlit/Normals/Wireframe）**不是配方**：前四种是**同一个**窗口 pass 上的 `setProgramOverride()`
   （四者出自同一段 `builtin_forward.frag` 文本 + 一个 `define`，见 `BuiltinShaders`），第五种再多一个**光栅化模式**
-  （`RenderPass::setPolygonMode(PolygonMode::Line)`），pass 图完全不变 ⇒ 换模式**零重建**，下一帧就是另一种画法。
+  （`RenderPass::setPolygonModeOverride(PolygonMode::Line)`），pass 图完全不变 ⇒ 换模式**零重建**，下一帧就是另一种画法。
   这条边界（"变的是 pass 图还是 pass 的属性"）是实现时才看清的：第一稿把 `Mode` 归进配方，落地时发现
   `RenderPass::setProgramOverride` 正是为这件事存在的（它的文档原文就举了"re-render the same scene with a different
-  shader (e.g. a wireframe or alternate-shading pass)"），而**线框**走的 `setPolygonMode` 与它是同一个形状
+  shader (e.g. a wireframe or alternate-shading pass)"），而**线框**走的 `setPolygonModeOverride` 与它是同一个形状
   （pass 级覆盖 → 命令的渲染状态；引擎本来就有逐子树的 `StateNode::setPolygonMode`，后端早就把多边形模式当**动态状态**
   发命令，所以线框不需要任何后端改动）。
 - 延迟路径**兑现不了**非 Lit 模式（颜色从 G-buffer 出来、窗口 pass 是全屏光照）⇒ 报一条 `UnsupportedRequest`
@@ -522,7 +523,7 @@ control->setInputRouter([&](int x, int y) {                       // 按下时�
 **线框（Wireframe）落地的路径**（比预估的短）：`StateNode::setPolygonMode` 让 `PolygonMode {Fill, Line, Point}` 早已存在，
 后端也早已把多边形模式当 **EDS3 动态状态**（`VK_DYNAMIC_STATE_POLYGON_MODE_EXT` + `vkCmdSetPolygonModeEXT`，且
 `fillModeNonSolid` 本来就请求了）⇒ 只需把"pass 级覆盖"这一半补上：`PolygonMode.hpp`（类型从 `StateNode.hpp` 抽出来，
-两个作用域共用）、`RenderPass::setPolygonMode()/clearPolygonMode()/polygonMode()`（与 `setProgramOverride` 同形状，
+两个作用域共用）、`RenderPass::setPolygonModeOverride()/clearPolygonModeOverride()/polygonModeOverride()`（与 `setProgramOverride` 同形状，
 应用在 `RenderPass::execute()` 里那次"需要自己的命令表"的拷贝上），**零后端改动**。`Mode::Wireframe` = 无光照程序 +
 `PolygonMode::Line`。
 

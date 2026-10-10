@@ -413,28 +413,34 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     void setProgramOverride(intrusive_ptr<ShaderProgram> program);
 
     /** @brief Gets the pass-level polygon-mode override (`nullopt` when unset). */
-    std::optional<PolygonMode> polygonMode() const;
+    std::optional<PolygonMode> polygonModeOverride() const;
 
     /** @brief Draws everything this pass renders as filled, outlined or point primitives.
      *
-     * The RASTERISATION counterpart of setProgramOverride: the same commands, the same programs and the same
-     * lights, with the triangles rasterised the other way (a "wireframe view" over content that asked for
-     * surfaces). It overrides what the content itself declared (a StateNode's own polygon mode, a geometry's
-     * authored state), which is what a view that says "show me the edges" means.
+     * The RASTERISATION counterpart of setProgramOverride, and named the same way for the same reason: both are
+     * PASS-LEVEL OVERRIDES, applied to every command this pass renders whatever the content itself declared. The
+     * names carry the distinction on purpose - a pass-level setter that BEATS the content says "Override"
+     * (setProgramOverride, setPolygonModeOverride), while the one the content can beat is a plain default
+     * (setDepthMode, which yields to a command that authored its own depth - see DepthMode).
      *
-     * Unset is NOT the same as Fill: unset leaves every command's own effective polygon mode alone, so a
-     * subtree that asked for Line stays outlined. That is what makes "back to shaded" mean "stop overriding"
-     * rather than "force everything to fill".
+     * WHAT IT IS FOR: a viewer's "wireframe" switch, or a debug pass that wants the edges - "show me how this is
+     * built" over content that asked for surfaces. Overriding the authored state is the point: a switch that left
+     * authored wireframe subtrees alone could not show anything as surfaces, and a host that wants the authored
+     * state to win simply does not set this (the StateNode's own mode is what applies then).
      *
-     * It is rasterisation state, not wiring: a change does NOT bump the wiring revision (nothing about what
-     * this pass declares has changed), and the backend picks it up per frame through the commands' state.
+     * Unset is NOT the same as Fill: unset leaves every command's own effective polygon mode alone, so a subtree
+     * that asked for Line stays outlined. That is what makes "back to shaded" mean "stop overriding" rather than
+     * "force everything to fill".
+     *
+     * It is rasterisation state, not wiring: a change does NOT bump the wiring revision (nothing about what this
+     * pass declares has changed), and the backend picks it up per frame through the commands' state.
      *
      * @param mode Rasterisation mode applied to all content of this pass.
      */
-    void setPolygonMode(PolygonMode mode);
+    void setPolygonModeOverride(PolygonMode mode);
 
     /** @brief Removes the polygon-mode override, leaving each command's own state in effect. */
-    void clearPolygonMode();
+    void clearPolygonModeOverride();
     /** @brief Executes this render pass.
      *
      * @param scene   Scene containing drawables.
@@ -475,7 +481,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     std::vector<intrusive_ptr<ImageRef>> input_images_;    // fine input declarations (design §14)
     std::vector<intrusive_ptr<RenderTarget>> input_targets_;   // coarse input declarations (design §14)
     ShaderProgramPtr program_override_;   // null = per-geometry programs
-    std::optional<PolygonMode> polygon_mode_;  // unset = each command's own effective mode
+    std::optional<PolygonMode> polygon_mode_override_;  // unset = each command's own effective mode
     intrusive_ptr<RenderTarget> render_target_;
     intrusive_ptr<Camera> camera_;
     Color clear_color_{ 51, 51, 51, 255 };
