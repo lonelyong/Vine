@@ -609,6 +609,39 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 `Rgba8Unorm` 改成 `Rgba8Srgb` 后天空回到正确亮度（视口带 mean 122.7 → 80.8，门禁判据一行未动）——
 读数与变异证明见 [`.ai/design/vsg-reimplementation.md`](../../../../.ai/design/vsg-reimplementation.md) §11.16cp。
 
+### 3.10 省事的视图：`SceneView::Options`（配方）
+
+上面几节都是"自己搭管线"。**视图层把常见的四件事收成一份配方**，让一个插件三五行就有画面：
+
+```cpp
+// 这个视图怎么画（配方）：结构变了才重建管线
+view->setOptions({ .path = vn::graphics::ShadingPath::Forward,   // 或 Deferred
+                   .mode = vn::graphics::SceneView::Options::Mode::Lit,
+                   .gizmo = true, .stats = true });              // 坐标轴档 + 帧率读数档
+
+// 运行时开关（菜单项 / 快捷键）：只是 pass->setEnabled(false/true)，**零重建**
+view->setStatsVisible(false);
+view->setGizmoVisible(true);   // 配方里没建过这一档？第一次开启会补建一次，之后同样零重建
+
+// 几何（改它**不重建**）：归一化视口是矩形唯一的真相，宽高比 / pass 的设备像素视口 / 清屏范围全由它推
+view->setViewport({ 0.0, 0.0, 0.5, 1.0 });
+view->onSurfaceResized(w, h, dpr);        // 只喂**表面**尺寸 + 比例；"这一块"是视图自己算的
+view->addSurfaceLayout([p](int w, int h, double dpr) { p->resize(w, h, dpr); });  // 自建管线接这里
+```
+
+- **配方 vs 开关**：`Options` 回答"这个视图**有没有**这个档"（`.stats=false` ⇒ 没有读数档），
+  `setStatsVisible()` 回答"现在**看得见吗**"；前者变更 = 一次重建，后者永不重建。
+- **模式（`Options::Mode`）是 pass 属性，不是重建**：`Lit` 用内容自己的 program，`Flat/Unlit/Normals` 是同一段
+  fragment 文本的另一个 `#define`（`setProgramOverride`），`Wireframe` 再加
+  `RenderPass::setPolygonModeOverride(PolygonMode::Line)`。**延迟路径兑现不了非 Lit 模式**：它会记一条 `UnsupportedRequest`
+  诊断，画面保持 Lit（不让开关悄悄失效）。
+- **灯是场景的，不是面的**：`scene->addLighting(vn::graphics::LightRig::studio())`（零灯只有后端
+  `ambient=0.15` 的常量填充 ⇒ 一片平色，看起来像"没装灯"）。
+- 默认窗口管线是**兜底**：引擎里已经有同一个相机的窗口 pass 时它自动让位（宿主的自建管线赢）；要显式要它，
+  调一次 `ensureWindowPass()`（幂等）。
+- 配方/几何/开关三层与"两处同名 vs 一处覆盖"的完整理由见
+  [`.ai/design/appfw-render-view.md`](../../../../.ai/design/appfw-render-view.md) §4.1、§7。
+
 ## 4. 现成例子：怎么构建、怎么跑
 
 ### 4.1 构建
