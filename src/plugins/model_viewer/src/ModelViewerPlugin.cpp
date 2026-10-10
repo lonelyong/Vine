@@ -1,6 +1,9 @@
 #include "ModelViewerPlugin.hpp"
 
+#include <utility>
+
 #include <vine/appfw/Application.hpp>
+#include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/StartupProgress.hpp>
@@ -9,6 +12,10 @@
 #include <vine/appfw/gui/DocumentViewRegistry.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
+#include <vine/appfw/gui/RibbonBar.hpp>
+#include <vine/appfw/gui/RibbonButton.hpp>
+#include <vine/appfw/gui/RibbonGroup.hpp>
+#include <vine/appfw/gui/RibbonTab.hpp>
 #include <vine/appfw/plugin_export.hpp>
 #include <vine/logging/Log.hpp>
 
@@ -17,6 +24,7 @@
 #include "ModelInfoPanel.hpp"
 #include "ModelPayload.hpp"
 #include "ModelRenderView.hpp"
+#include "commands/ShadingModeCommands.hpp"
 
 namespace vn::model_viewer
 {
@@ -96,6 +104,88 @@ void ModelViewerPlugin::registerDocumentSurface(vn::appfw::Application& app)
         },
         .source_scheme = u8"file",
     });
+}
+
+vn::async::Task<void> ModelViewerPlugin::postLoad(vn::appfw::PluginLoadContext* context)
+{
+    auto* app = context != nullptr ? context->application() : nullptr;
+    if (app != nullptr) {
+        installShadingModeRibbon(*app);
+    }
+    co_return;
+}
+
+namespace
+{
+
+/// 登记一条"显示模式"命令：名字被占时不说难听话 —— 插件重载会走到这里第二次，那不是错误。
+template <typename CommandT>
+void registerShadingCommand(vn::appfw::CommandManager& commands, const char8_t* id)
+{
+    const vn::String name(id);
+    if (!commands.registerCommand<CommandT>(name)) {
+        VN_LOGW("model_viewer: the command '{}' was not registered (the name is taken)",
+                reinterpret_cast<const char*>(id));
+    }
+}
+
+} // namespace
+
+void ModelViewerPlugin::installShadingModeRibbon(vn::appfw::Application& app)
+{
+    // 登记命令：一处说得清"这五条属于本插件"（不用 VN_DECLARE_COMMAND 的静态自动登记，见 ShadingModeCommands.hpp
+    // 的说明）。
+    if (auto* commands = app.commandManager(); commands != nullptr) {
+        registerShadingCommand<SetShadingLitCommand>(*commands, kShadingModeLitCommand);
+        registerShadingCommand<SetShadingFlatCommand>(*commands, kShadingModeFlatCommand);
+        registerShadingCommand<SetShadingUnlitCommand>(*commands, kShadingModeUnlitCommand);
+        registerShadingCommand<SetShadingNormalsCommand>(*commands, kShadingModeNormalsCommand);
+        registerShadingCommand<SetShadingWireframeCommand>(*commands, kShadingModeWireframeCommand);
+    }
+
+    auto* wnd = vn::appfw::gui::MainWindow::current();
+    if (wnd == nullptr) {
+        return; // 无头运行：没有 ribbon，命令本身照样能执行。
+    }
+    auto* bar = wnd->ribbonBar();
+    if (bar == nullptr) {
+        return;
+    }
+
+    // 幂等：插件重载会再走一遍 postLoad()，那时候不该多出一个同名 tab（标题就是它的身份）。
+    const vn::String tab_title(u8"模型");
+    for (int i = 0; i < bar->numTabs(); ++i) {
+        if (auto* existing = bar->tabAt(i); existing != nullptr && existing->title() == tab_title) {
+            return;
+        }
+    }
+
+    // 自己的 tab（外壳那几个 tab 是它自己的事）：插件给自家功能挂 UI，与"面板自己建自己挂"同一条规矩。
+    auto* tab = new vn::appfw::gui::RibbonTab();
+    tab->setTitle(tab_title);
+    bar->addTab(tab);
+
+    auto* group = new vn::appfw::gui::RibbonGroup();
+    group->setTitle(u8"显示");
+    tab->addGroup(group);
+
+    // 五档各一个按钮：照片上的东西一眼能看出在哪一档，所以不做"勾选态"（框架今天也没有单选组的概念）。
+    const std::pair<const char8_t*, const char8_t*> entries[] = {
+        { u8"实面", kShadingModeLitCommand },
+        { u8"平面", kShadingModeFlatCommand },
+        { u8"无光照", kShadingModeUnlitCommand },
+        { u8"法线", kShadingModeNormalsCommand },
+        { u8"线框", kShadingModeWireframeCommand },
+    };
+    for (const auto& [label, command] : entries) {
+        auto* button = new vn::appfw::gui::RibbonButton();
+        button->setText(vn::String(label));
+        button->setButtonSize(vn::appfw::gui::RibbonItemSize::Large);
+        button->setCommand(vn::String(command));
+        group->addButton(button);
+    }
+
+    VN_LOGI("model_viewer: the '显示' ribbon group is up (5 shading-mode buttons)");
 }
 
 void ModelViewerPlugin::installInfoPanel(vn::appfw::Application& app)

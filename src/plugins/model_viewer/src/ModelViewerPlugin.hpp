@@ -33,12 +33,25 @@ class ModelViewerPlugin : public vn::appfw::Plugin {
   public:
     vn::async::Task<void> load(vn::appfw::PluginLoadContext* context) override;
 
+    /**
+     * @brief 挂上"显示"那一组按钮（模型的显示模式）。
+     *
+     * 放在 `postLoad()` 而不是 `load()` 里：挂 UI 是"插件之间互相接线"那一档的事，而后加载的外壳可能还要往
+     * ribbon 上加自己的 tab（`postLoad()` 是"所有插件都 load 完了"的第一个时刻，见 `Plugin` 的说明）。
+     * 主窗口本身更早：外壳启动时就建好了（`GuiApplication::startupStart()` → `createWindows()`），所以 window 与
+     * ribbon 一定在。无头运行（没有窗口）时命令照样登记，只是没有按钮。
+     */
+    vn::async::Task<void> postLoad(vn::appfw::PluginLoadContext* context) override;
+
   private:
     /// 登记文档类型与两个打开器（不碰 UI）。
     void registerDocumentSurface(vn::appfw::Application& app);
 
     /// 登记"文档类型 → 视图"（只有 GUI 宿主才有视图注册表）。
     void registerView(vn::appfw::Application& app);
+
+    /** @brief 登记并挂上"显示"那一组按钮（模型的显示模式）。 */
+    void installShadingModeRibbon(vn::appfw::Application& app);
 
     /// 建模型信息面板并挂到右侧 dock；没有主窗口（无头运行）时什么也不做。
     void installInfoPanel(vn::appfw::Application& app);

@@ -436,3 +436,27 @@
   所以按 `scene->hasLights()` 早退，别每次加一遍。
 - 钉子：`tests/test_gui/ModelViewerTest.cpp` 的 `TheSceneCarriesItsOwnLights`（恰好一盏环境光 + ≥2 盏方向光，
   且方向不是零向量）。
+
+## 视图设置怎么接到命令 / 菜单上（2026-10-11，model_viewer 的"显示模式"）
+
+- **通道是"宿主发布的那个当前 3D 视图"**：`MainWindow::setPrimaryRenderControl()` / `primaryRenderControl()`。
+  谁上屏谁发布 —— 插件在 `activate()` 里发布自己控件的指针，在 `deactivate()` 里**只收回自己的那一个**
+  （`ModelRenderView` 与 `DemoView` 同一形状；这是 `DocumentView::deactivate()` 注释里那条"3D 视图要解开它绑的东西"
+  的一半，发布而不收回会让窗口留着一个已经下屏的控件）。命令层因此不必认识任何具体视图类。
+- **作用是"读-改-写"整份配方**：`view->options()` 取出当前 `SceneView::Options`，只改自己那一项再 `setOptions()`。
+  直接送一个只带目标字段的值会把别的设置（帧率读数、坐标轴）关掉 —— 值语义的代价，选项里的每一项都得自己保住。
+- **模式归视图、不归文档**：一份文档一个视图 ⇒ 换文档时它以默认档出现；要让"显示模式"跟着文档走，就得把模式存进
+  文档（编辑器那一档的事）。
+- **命令一道守卫两道**：当前文档不是本插件的类型 ⇒ `NotApplicable`（演示文档的视图不该被查看器的命令改掉）；
+  文档开着但视图还没发布（没显示过）⇒ 同样 `NotApplicable`，而且**要说清原因**（不静默）。
+- **一条命令一个模式**（`set_shading_lit` … `set_shading_wireframe`），不做"循环切换"：菜单上每条名字就是它的结果。
+  按钮不做勾选态 —— 框架今天没有单选组的概念，做了就得自己维护"谁被选中"这份第二真相。
+- **登记是显式的**（插件自己在 `postLoad()` 里按名字 `registerCommand<T>()`），不用 `VN_DECLARE_COMMAND` 的自动
+  登记：那会把 `moduleCommandQueue()` 的依赖带进每个 include 它的 TU，而可执行文件里没有那个符号（链接错误）。
+  名字是头文件里的 `kShadingMode*Command` 常量，插件挂 ribbon 按钮时用的是同一批名字。
+- **挂 UI 放 `postLoad()`**：那是"所有插件都 load 完了"的第一个时刻（`Plugin` 的说明），后加载的外壳可能还要往
+  ribbon 上加自己的 tab。主窗口更早就有（`GuiApplication::startupStart()` → `createWindows()`）。同名 tab 已存在就
+  不再加第二个（插件重载会再走一遍 `postLoad()`）。
+- 钉子：`tests/test_gui/ModelViewerTest.cpp` 的 `TheShadingModeCommandsDriveTheCurrentModelView`（五档各跑一遍，
+  断言 `options().mode` 变了、`stats` 没被顺手关掉、光栅化覆盖只在线框档留下；下屏后 `primaryRenderControl()`
+  回到空、命令如实说 `NotApplicable`）。

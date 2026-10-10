@@ -36,7 +36,12 @@ target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/
 # does, the payload metadata has to move out of this target again.
 # (test_vsg compiles gfx_backend_vsg sources for the same kind of reason.)
 target_sources(${TEST_NAME}
-    PRIVATE ${CMAKE_SOURCE_DIR}/src/plugins/model_viewer/src/ModelPayload.cpp)
+    PRIVATE ${CMAKE_SOURCE_DIR}/src/plugins/model_viewer/src/ModelPayload.cpp
+            # The "display mode" commands: their cases register and run them through the REAL command
+            # manager (app->commandManager()->executeCommandAndWait), which is what the layer they live in
+            # is for, so the classes' metadata has to exist in this target - same reason as the payload
+            # above, and equally safe because nothing here dlopens model_viewer.
+            ${CMAKE_SOURCE_DIR}/src/plugins/model_viewer/src/commands/ShadingModeCommands.cpp)
 
 # A plugin loaded from OUTSIDE the application directory (which is exactly what UserPluginSandbox
 # copies into /tmp/vine_test_plugins) cannot use its own RUNPATH to find anything: the loader only

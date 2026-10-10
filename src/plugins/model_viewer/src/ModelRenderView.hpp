@@ -16,6 +16,7 @@
 
 #include <vine/appfw/Document.hpp>
 #include <vine/appfw/gui/DocumentView.hpp>
+#include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
 
 #include <vine/graphics/FpsOverlay.hpp>
@@ -49,6 +50,9 @@ namespace vn::model_viewer
  *  - **自带灯与帧率读数**：灯挂在场景上（`scene->addLighting(LightRig::studio())`，没人装就只有后端的常量填充，
  *    画面是一片平色），帧率读数由**视图的默认窗口管线**提供（`view->setOptions({ .stats = true })`，尺寸与比例
  *    归视图维护）—— 读数归本视图，因为"这一份文档的帧率"就是这一块渲染面的帧率。
+ *  - **发布"当前 3D 视图"**：上屏时把这块控件发布给窗口（`MainWindow::setPrimaryRenderControl()`），下屏时收回
+ *    （与 `DemoView` 同一形状）—— 于是别的插件（本插件的"显示模式"命令、`test_plugin` 的实时渲染演示）不必认识
+ *    任何具体视图类，就能拿到当前那块渲染面。
  *
  * 几何信息（顶点数/三角形数）归 `ModelInfoPanel` 那个停靠面板，不在中央区里重复。
  *
@@ -93,6 +97,13 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
      * 相机只在第一次对准内容，之后保持使用者调过的视角（这正是"视图按实例"要保住的东西）。
      */
     void activate() override;
+
+    /**
+     * @brief 这份文档下屏：收回发布给窗口的那块"当前 3D 视图"。
+     *
+     * 只收回自己发布的那一个；场景与控件留着（视图是实例的，切回来要保住视角）。
+     */
+    void deactivate() override;
 
     /**
      * @brief 本视图自己的渲染控件（自己的面/会话/设备）。
@@ -309,6 +320,24 @@ inline void ModelRenderView::activate()
         // 只在第一次对准内容：之后再切回来要保住使用者调好的视角（视图是实例的，就该是这个意思）。
         control_->fitToScreen();
         fitted_ = true;
+    }
+
+    // 发布"当前 3D 视图"（见类注释）：谁上屏谁发布，于是别的插件（本插件的显示模式命令、test_plugin 的实时渲染
+    // 演示）不必认识任何具体视图类就能拿到当前那块渲染面。
+    if (auto* window = vn::appfw::gui::MainWindow::current();
+        window != nullptr && window->primaryRenderControl() != control_)
+    {
+        window->setPrimaryRenderControl(control_);
+    }
+}
+
+void ModelRenderView::deactivate()
+{
+    // 下屏时收回去（见类注释）：只收回**自己**发布的那一个，别的视图发布的东西不碰。
+    if (auto* window = vn::appfw::gui::MainWindow::current();
+        window != nullptr && window->primaryRenderControl() == control_)
+    {
+        window->setPrimaryRenderControl(nullptr);
     }
 }
 

@@ -475,6 +475,25 @@ control->setInputRouter([&](int x, int y) {                       // 按下时�
 的策略**，不是预设。`LightRig` 保持"只出预设"（studio/headlight），有自己策略的宿主直接用 `Scene::addLight()`
 （J4：底层永远可用）。新插件 3~5 行得到一个"有光、有 HUD、会跟窗口缩放"的视图。
 
+**把"视图设置"接到命令 / 菜单上**（本轮加的参考实现：model_viewer 的"显示模式"五条命令 + ribbon 一组按钮）：
+
+```cpp
+// 命令只认"宿主发布的那个当前 3D 视图"，不认任何具体视图类（谁上屏谁发布：activate() 里发布、deactivate() 里收回）
+auto* window  = vn::appfw::gui::MainWindow::current();
+auto* control = window != nullptr ? window->primaryRenderControl() : nullptr;
+auto* view    = control != nullptr ? control->view() : nullptr;
+if (view == nullptr) { co_return NotApplicable(u8"还没有活动的 3D 视图：把这份模型显示出来再试"); }
+
+// 读-改-写**整份配方**：只送一个 mode 会把帧率读数、坐标轴那些关掉（值语义的代价）
+auto options = view->options();
+options.mode = vn::graphics::SceneView::Options::Mode::Wireframe;  // 零重建：程序覆盖 + 光栅化覆盖（§4.1）
+view->setOptions(options);
+```
+
+三道规矩：**设置归视图、命令只改视图不改文档**（一份文档一个视图 ⇒ 换文档回默认档）；**守卫说清原因**（当前文档不是
+本插件的类型 ⇒ `NotApplicable`，不静默）；**一条命令一个模式**（不做循环切换，也不做勾选态 —— 框架没有单选组概念，
+做了就要维护"谁选中"这份第二真相）。
+
 ## 7. 不变量
 
 1. **默认不变**：不配置（`SceneView::Options{}`）时仍是 forward、无 HUD、视口铺满 ⇒ 观感与 `passCount()==1`

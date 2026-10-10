@@ -16,6 +16,8 @@
 
 #include <vine/Object.hpp>
 #include <vine/String.hpp>
+#include <vine/appfw/Application.hpp>
+#include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/Document.hpp>
 #include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/gui/CentralDocumentHost.hpp>
@@ -23,6 +25,7 @@
 #include <vine/appfw/gui/DocumentView.hpp>
 #include <vine/appfw/gui/DocumentViewRegistry.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
+#include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
 #include <vine/graphics/Geometry.hpp>
@@ -35,6 +38,7 @@
 #include "ModelInfoPanel.hpp"
 #include "ModelRenderView.hpp"
 #include "TestModelData.hpp"
+#include "commands/ShadingModeCommands.hpp"
 
 namespace
 {
@@ -318,6 +322,97 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
     // 改大小安全：读数的摆位与尺寸由视图在 resize 时算（不再有查看器那套 layout 步）。
     scene_view->onSurfaceResized(400, 300, control->devicePixelRatio());
     EXPECT_TRUE(readout->isEnabled());
+}
+
+TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
+{
+    // 走**真实**那条路：命令管理器执行命令（命令层的用途就是这个），命令通过宿主发布的那个"当前 3D 视图"找到
+    // 要改的视图 —— 所以这条用例用的是**应用自己的**文档管理器与视图注册表（生产里只有一个），而不是用例临时
+    // 造的那一套（那是给不碰命令管道的用例用的）。
+    auto* app = dynamic_cast<vn::appfw::gui::GuiApplication*>(vn::appfw::Application::current());
+    ASSERT_NE(app, nullptr) << "这条用例要在 GUI 应用里跑";
+    auto* documents = app->documentManager();
+    auto* views     = app->viewRegistry();
+    auto* commands  = app->commandManager();
+    ASSERT_NE(documents, nullptr);
+    ASSERT_NE(views, nullptr);
+    ASSERT_NE(commands, nullptr);
+
+    ASSERT_TRUE(registerModelType(*documents));
+    ASSERT_TRUE(registerModelOpener(*documents));
+    ASSERT_TRUE(views->registerView(kModelType, vn::model_viewer::createRenderView));
+
+    vn::appfw::gui::MainWindow window;
+    auto*                      docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+    vn::appfw::gui::CentralDocumentHost host(*documents, *views, *docks);
+
+    // 打开并显示一份模型：宿主显示 ⇒ 视图 activate() ⇒ 把它的控件发布成"当前 3D 视图"。
+    ASSERT_NE(openModel(*documents, u8"立方体", vn::model_viewer::makeBoxMesh()), nullptr);
+    auto* view = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());
+    ASSERT_NE(view, nullptr);
+    auto* control = view->renderControl();
+    ASSERT_NE(control, nullptr);
+    auto* scene_view = control->view();
+    ASSERT_NE(scene_view, nullptr);
+    ASSERT_NE(scene_view->pipeline(), nullptr) << "上屏之后视图该有自己的默认管线";
+    // 命令靠"宿主发布的那个当前 3D 视图"找到要改的东西，所以先把这两件事说清楚：现在的主窗口就是这一个，
+    // 而这份文档的控件被发布在它上面（视图在 activate() 里发布）。
+    ASSERT_EQ(vn::appfw::gui::MainWindow::current(), &window);
+    ASSERT_EQ(window.primaryRenderControl(), control) << "视图上屏时该把自己的控件发布到主窗口（命令层的唯一入口）";
+
+    // 命令按名字注册（插件自己的自动登记队列只在插件模块里 flush，这里是可执行文件 ⇒ 用例显式登记）。
+    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingLitCommand>(
+        vn::String(vn::model_viewer::kShadingModeLitCommand)));
+    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingFlatCommand>(
+        vn::String(vn::model_viewer::kShadingModeFlatCommand)));
+    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingUnlitCommand>(
+        vn::String(vn::model_viewer::kShadingModeUnlitCommand)));
+    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingNormalsCommand>(
+        vn::String(vn::model_viewer::kShadingModeNormalsCommand)));
+    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingWireframeCommand>(
+        vn::String(vn::model_viewer::kShadingModeWireframeCommand)));
+
+    // 五档各跑一遍：每一档都要求"视图的模式真的换了"，而且**别的设置还在**（帧率读数是查看器开的，命令是
+    // 读-改-写，不该顺手把它关掉）。
+    struct Case {
+        const char8_t*                                     command;
+        vn::graphics::SceneView::Options::Mode             mode;
+        bool                                               wireframe;
+    };
+    const Case cases[] = {
+        { vn::model_viewer::kShadingModeLitCommand, vn::graphics::SceneView::Options::Mode::Lit, false },
+        { vn::model_viewer::kShadingModeFlatCommand, vn::graphics::SceneView::Options::Mode::Flat, false },
+        { vn::model_viewer::kShadingModeUnlitCommand, vn::graphics::SceneView::Options::Mode::Unlit, false },
+        { vn::model_viewer::kShadingModeNormalsCommand, vn::graphics::SceneView::Options::Mode::Normals, false },
+        { vn::model_viewer::kShadingModeWireframeCommand, vn::graphics::SceneView::Options::Mode::Wireframe, true },
+    };
+    for (const Case& item : cases) {
+        const auto result = commands->executeCommandAndWait(vn::String(item.command));
+        EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success)
+            << "命令该成功（说清了什么就不算失败：" << result.message().as_std_str() << "）";
+        EXPECT_EQ(scene_view->options().mode, item.mode);
+        EXPECT_TRUE(scene_view->options().stats) << "命令不该把帧率读数顺手关掉";
+        // 线框是"程序 + 光栅化"两个覆盖；其余档不许留下光栅化覆盖。
+        const auto polygon = scene_view->pipeline()->windowPass() != nullptr
+                                 ? scene_view->pipeline()->windowPass()->polygonModeOverride()
+                                 : std::optional<vn::graphics::PolygonMode>{};
+        if (item.wireframe) {
+            ASSERT_TRUE(polygon.has_value());
+            EXPECT_EQ(*polygon, vn::graphics::PolygonMode::Line);
+        }
+        else {
+            EXPECT_FALSE(polygon.has_value()) << "非线框档不该留光栅化覆盖";
+        }
+    }
+
+    // 守卫：当前文档不是模型（这里直接清掉当前文档）⇒ 命令如实说"不适用"，而不是去改别人的视图。
+    ASSERT_TRUE(documents->setCurrent(nullptr));
+    const auto refused = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeWireframeCommand));
+    EXPECT_EQ(refused.status(), vn::appfw::CommandStatus::NotApplicable);
+    EXPECT_FALSE(refused.message().empty()) << "要说清为什么（不静默）";
+    // 下屏的另一半：视图 deactivate() 时把自己发布的那个收回，窗口上不该留下已经下屏的控件。
+    EXPECT_EQ(window.primaryRenderControl(), nullptr) << "下屏时该把发布出去的控件收回去";
 }
 
 TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
