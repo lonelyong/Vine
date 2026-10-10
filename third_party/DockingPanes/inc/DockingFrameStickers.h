@@ -62,6 +62,7 @@ class DockingFrameStickers : public QWidget {
 
   public:
     explicit DockingFrameStickers(QWidget* parent = nullptr);
+    ~DockingFrameStickers() override;
 
   public:
     /**
@@ -86,6 +87,18 @@ class DockingFrameStickers : public QWidget {
      * @return true if any indicator is hit.
      */
     bool getHit(QPoint pos, DockingPosition* dockPos);
+
+    /**
+     * @brief Hit testing limited to the four docking-area edge stickers.
+     *
+     * They sit on the docking-area border, where no pane covers the cursor, so the manager
+     * has to test them independently of the per-pane hit test.
+     *
+     * @param pos     Global cursor position.
+     * @param dockPos Output: frameLeft / frameRight / frameTop / frameBottom.
+     * @return true if an edge sticker is hit.
+     */
+    bool getFrameHit(QPoint pos, DockingPosition* dockPos);
 
   protected:
     void paintEvent(QPaintEvent* event) override;

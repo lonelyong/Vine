@@ -621,7 +621,12 @@ void DockingPaneManager::openFlyout(DockAutoHideButton* button)
     Q_D(DockingPaneManager);
 
     if (d->m_flyoutWidget) {
-        if (button->pane() == d->m_flyoutWidget->pane()) {
+        // Same pane: a *hidden* flyout (focus loss, finished drag) must not short-circuit
+        // here, otherwise the pane can never be popped out again -- treat it as gone and
+        // rebuild below. A visible one is only brought to the front.
+        if (button->pane() == d->m_flyoutWidget->pane() && d->m_flyoutWidget->isVisible()) {
+            d->m_flyoutWidget->raise();
+
             return;
         }
 
@@ -742,6 +747,16 @@ DockingPaneBase* DockingPaneManager::dockPane(DockingPaneBase* paneToDock, DockP
 
             paneToDock->setState(DockingPaneBase::Tabbed);
         }
+        else if (parentContainer == nullptr || parentContainer->state() == DockingPaneBase::Floating || parentContainer->state() == DockingPaneBase::Pinned) {
+            // A tab needs a pane container that lives in the dock tree: the client area, a
+            // splitter, a floating window and an auto-hidden flyout cannot host tabs. Such a
+            // neighbour would reach replacePane() below, which cannot insert a pane outside the
+            // dock tree, so the new tab group would be left as a hidden top level window and
+            // both panes would disappear. Ignore the request so the pane stays untouched.
+            qWarning() << "DockingPaneManager::dockPane: dockTab needs a docked pane or tab group as neighbour, ignoring";
+
+            return (paneToDock);
+        }
         else {
             auto* newContainer = new DockingPaneTabbedContainer(nullptr);
 
@@ -787,6 +802,22 @@ DockingPaneBase* DockingPaneManager::dockPane(DockingPaneBase* paneToDock, DockP
     }
     else {
         parentSplitter = qobject_cast<DockingPaneSplitterContainer*>(getDockingParent(neighbourPane->parentWidget()));
+
+        // A neighbour outside the dock tree (a floating pane, or a pane currently living in
+        // a tab group) cannot say where the new splitter belongs: the splitter below would
+        // be built and never inserted, silently hiding both panes. Fall back to the client
+        // pane (dock against the dock area) and, when even that has no splitter, to the root
+        // so the tree is rebuilt around it.
+        if (parentSplitter == nullptr) {
+            qWarning() << "DockingPaneManager::dockPane: neighbour is not docked, docking against the dock area";
+
+            neighbourPane  = d->m_clientPane;
+            parentSplitter = qobject_cast<DockingPaneSplitterContainer*>(getDockingParent(neighbourPane->parentWidget()));
+
+            if (parentSplitter == nullptr) {
+                neighbourPane = d->m_rootPane;
+            }
+        }
     }
 
     if ((dockPosition == dockLeft) || (dockPosition == dockRight)) {
@@ -1184,6 +1215,11 @@ void DockingPaneManager::floatingPaneMoved(DockingPaneBase* pane, QPoint cursorP
     }
 
     if (!overPane) {
+        // The docking-area edge stickers sit on the border, where no pane covers the cursor.
+        if (handleFrameEdgeHit(cursorPos)) {
+            return;
+        }
+
         // Cursor is not over any pane: clear everything left from a previous
         // position.
         if (d->m_targetWidget) {
@@ -1223,6 +1259,11 @@ void DockingPaneManager::floatingPaneEndMove(DockingPaneBase* pane, QPoint curso
         }
     }
 
+    if (d->m_targetPosition < 0) {
+        handleFrameEdgeHit(cursorPos);
+    }
+
+
     if (d->m_targetWidget) {
         d->m_targetWidget->hide();
     }
@@ -1231,7 +1272,9 @@ void DockingPaneManager::floatingPaneEndMove(DockingPaneBase* pane, QPoint curso
         d->m_dockingStickers->hide();
     }
 
-    if (d->m_targetPane) {
+    // Both anchors dock here: a pane hit (m_targetPane set) and an edge hit (m_targetPane
+    // stays null and the frame cases below remap to the docking-area edge).
+    if (d->m_targetPosition >= 0) {
         switch (d->m_targetPosition) {
         case DockingFrameStickers::paneLeft:
         {
@@ -1777,6 +1820,49 @@ void DockingPaneManager::updateAllSplitters(DockingPaneSplitterContainer* parent
             }
         }
     }
+}
+
+bool DockingPaneManager::handleFrameEdgeHit(QPoint cursorPos)
+{
+    Q_D(DockingPaneManager);
+
+    if (!d->m_dockingStickers) {
+        return (false);
+    }
+
+    DockingFrameStickers::DockingPosition framePosition;
+
+    if (!d->m_dockingStickers->getFrameHit(cursorPos, &framePosition)) {
+        return (false);
+    }
+
+    d->m_targetPosition = framePosition;
+    d->m_targetPane     = nullptr;
+
+    d->m_dockingStickers->show();
+    d->m_dockingStickers->raise();
+
+    if (d->m_targetWidget) {
+        const QRect frameRect(d->m_thisWidget->mapToGlobal(d->m_thisWidget->rect().topLeft()),
+                              d->m_thisWidget->mapToGlobal(d->m_thisWidget->rect().bottomRight()));
+
+        QRect preview(frameRect);
+
+        switch (framePosition) {
+        case DockingFrameStickers::frameLeft: preview.setRight(preview.left() + (frameRect.width() * 0.25)); break;
+        case DockingFrameStickers::frameRight: preview.setLeft(preview.right() - (frameRect.width() * 0.25)); break;
+        case DockingFrameStickers::frameTop: preview.setBottom(preview.top() + (frameRect.height() * 0.25)); break;
+        case DockingFrameStickers::frameBottom: preview.setTop(preview.bottom() - (frameRect.height() * 0.25)); break;
+        default: break;
+        }
+
+        d->m_targetWidget->move(preview.topLeft());
+        d->m_targetWidget->resize(preview.size());
+        d->m_targetWidget->show();
+        d->m_targetWidget->raise();
+    }
+
+    return (true);
 }
 
 bool DockingPaneManager::updateFloatingPane(DockingPaneBase* currentPane, QPoint cursorPos)

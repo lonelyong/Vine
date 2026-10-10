@@ -182,7 +182,12 @@ void DockingPaneTabbedContainer::saveLayout(QDomNode* parentNode, bool includeGe
     QDomElement domElement = doc.createElement(this->metaObject()->className());
 
     domElement.setAttribute("id", this->id());
-    domElement.setAttribute("selectedTab", this->m_paneList[this->m_stackedWidget->currentIndex()]->id());
+    // Clamp: the stack can be empty/-1 while a pane is being closed, and m_paneList[index]
+    // on an out-of-range index is undefined behaviour.
+    const int selectedIndex = m_stackedWidget->currentIndex();
+
+    domElement.setAttribute("selectedTab",
+                            (selectedIndex >= 0 && selectedIndex < m_paneList.count()) ? m_paneList.at(selectedIndex)->id() : QString());
 
     if (includeGeometry) {
         domElement.setAttribute("geometry", (QString)this->saveGeometry().toBase64());
@@ -205,11 +210,21 @@ void DockingPaneTabbedContainer::saveLayout(QDomNode* parentNode, bool includeGe
 
 DockingPaneFlyoutWidget* DockingPaneTabbedContainer::openFlyout(bool hasFocus, QWidget* parent, FlyoutPosition pos, DockingPaneContainer* pane)
 {
+    const int paneIndex = m_paneList.indexOf(pane);
+
+    // A pane that is not part of this group has no widget in the stack; building a flyout
+    // around widget(-1) (null) asserted/crashed while adding it to the flyout layout.
+    if (paneIndex < 0 || m_stackedWidget->widget(paneIndex) == nullptr) {
+        qWarning() << "DockingPaneTabbedContainer::openFlyout: pane is not part of this tab group";
+
+        return (nullptr);
+    }
+
     m_flyoutWidget = new DockingPaneFlyoutWidget(hasFocus,
                                                  this,
                                                  pane,
                                                  static_cast<DockingPaneFlyoutWidget::FlyoutPosition>(pos),
-                                                 m_stackedWidget->widget(m_paneList.indexOf(pane)),
+                                                 m_stackedWidget->widget(paneIndex),
                                                  parent);
 
     connect(m_flyoutWidget, &DockingPaneFlyoutWidget::unpinContainer, this, &DockingPaneTabbedContainer::onUnpinContainer);
@@ -890,6 +905,11 @@ void DockingPaneTabbedContainer::onCloseContainer()
 
     dockingManager()->removePinnedButton(this, pane);
 
+    // The pane left the group, so it must stop claiming Tabbed: showPane() (and the host's
+    // own restore path) treat Tabbed as visible and early-return, which left a pane that
+    // belongs to no group and could never be displayed again. Mirrors closePinnedPane().
+    pane->setState(DockingPaneBase::Hidden);
+
     if (m_paneList.isEmpty()) {
         // All panes closed — delete this tabbed container
         m_flyoutWidget->endDrag();
@@ -902,7 +922,7 @@ void DockingPaneTabbedContainer::onCloseContainer()
     updateMargins();
     update();
 
-    setName(m_paneList.at(m_stackedWidget->currentIndex())->name());
+    setName(m_paneList.at(qBound(0, m_stackedWidget->currentIndex(), m_paneList.count() - 1))->name());
 
     if (m_paneList.count() <= 1) {
         restoreChildWidgets();
@@ -910,6 +930,11 @@ void DockingPaneTabbedContainer::onCloseContainer()
         dockingManager()->updateAutohideButton(this, m_paneList.at(0), m_paneList.at(0), m_paneList.at(0));
 
         m_paneList.at(0)->setState(DockingPaneBase::Pinned);
+
+        // Detach the flyout before this group dies: otherwise the manager keeps a hidden
+        // flyout whose m_container points at the deleted group. Mirrors the empty branch.
+        m_flyoutWidget->endDrag();
+        m_flyoutWidget = nullptr;
 
         m_paneList.clear();
 

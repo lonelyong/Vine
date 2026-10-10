@@ -58,14 +58,28 @@ DockingFrameStickers::DockingFrameStickers(QWidget* parent)
         QPoint((this->width() / 2) - (m_activeStickers.value(Tab).width() / 2), (this->height() / 2) - (m_activeStickers.value(Tab).height() / 2)));
     m_rcTab.setSize(m_activeStickers.value(Tab).size());
 
-    m_frameLeftSticker   = new DockingFrameFrameSticker("frame_left", this);
-    m_frameRightSticker  = new DockingFrameFrameSticker("frame_right", this);
-    m_frameTopSticker    = new DockingFrameFrameSticker("frame_top", this);
-    m_frameBottomSticker = new DockingFrameFrameSticker("frame_bottom", this);
+    // The four edge stickers are their own top-level tool windows (the frame rect they are
+    // placed with is in screen coordinates, and updateCursorPos() maps globals too). As
+    // children of this 89x89 overlay they ended up outside its rect: invisible and never
+    // hit, so docking to a docking-area edge could not be triggered at all.
+    m_frameLeftSticker   = new DockingFrameFrameSticker("frame_left");
+    m_frameRightSticker  = new DockingFrameFrameSticker("frame_right");
+    m_frameTopSticker    = new DockingFrameFrameSticker("frame_top");
+    m_frameBottomSticker = new DockingFrameFrameSticker("frame_bottom");
+}
+
+DockingFrameStickers::~DockingFrameStickers()
+{
+    // The edge stickers have no parent any more, so they are not cleaned up with this widget.
+    delete m_frameLeftSticker;
+    delete m_frameRightSticker;
+    delete m_frameTopSticker;
+    delete m_frameBottomSticker;
 }
 
 void DockingFrameStickers::setFrameRect(QRect rect)
 {
+    // Screen coordinates: the edge stickers are top-level windows of their own.
     m_frameLeftSticker->move(QPoint(rect.left(), rect.center().y() - (m_frameLeftSticker->height() / 2)));
     m_frameTopSticker->move(QPoint(rect.center().x() - (m_frameTopSticker->width() / 2), rect.top()));
     m_frameBottomSticker->move(QPoint(rect.center().x() - (m_frameTopSticker->width() / 2), rect.bottom() - m_frameBottomSticker->height()));
@@ -106,6 +120,35 @@ void DockingFrameStickers::setTabVisible(bool state)
     }
 }
 
+bool DockingFrameStickers::getFrameHit(QPoint pos, DockingFrameStickers::DockingPosition* dockPos)
+{
+    if (m_frameLeftSticker->rect().contains(m_frameLeftSticker->mapFromGlobal(pos))) {
+        *dockPos = frameLeft;
+
+        return (true);
+    }
+
+    if (m_frameRightSticker->rect().contains(m_frameRightSticker->mapFromGlobal(pos))) {
+        *dockPos = frameRight;
+
+        return (true);
+    }
+
+    if (m_frameTopSticker->rect().contains(m_frameTopSticker->mapFromGlobal(pos))) {
+        *dockPos = frameTop;
+
+        return (true);
+    }
+
+    if (m_frameBottomSticker->rect().contains(m_frameBottomSticker->mapFromGlobal(pos))) {
+        *dockPos = frameBottom;
+
+        return (true);
+    }
+
+    return (false);
+}
+
 bool DockingFrameStickers::getHit(QPoint pos, DockingFrameStickers::DockingPosition* dockPos)
 {
     if (m_tabVisible && m_rcTab.contains(this->mapFromGlobal(pos))) {
@@ -138,31 +181,7 @@ bool DockingFrameStickers::getHit(QPoint pos, DockingFrameStickers::DockingPosit
         return (true);
     }
 
-    if (m_frameLeftSticker->rect().contains(m_frameLeftSticker->mapFromGlobal(pos))) {
-        *dockPos = frameLeft;
-
-        return (true);
-    }
-
-    if (m_frameRightSticker->rect().contains(m_frameRightSticker->mapFromGlobal(pos))) {
-        *dockPos = frameRight;
-
-        return (true);
-    }
-
-    if (m_frameTopSticker->rect().contains(m_frameTopSticker->mapFromGlobal(pos))) {
-        *dockPos = frameTop;
-
-        return (true);
-    }
-
-    if (m_frameBottomSticker->rect().contains(m_frameBottomSticker->mapFromGlobal(pos))) {
-        *dockPos = frameBottom;
-
-        return (true);
-    }
-
-    return (false);
+    return (getFrameHit(pos, dockPos));
 }
 
 void DockingFrameStickers::paintEvent(QPaintEvent*)

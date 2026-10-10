@@ -158,3 +158,146 @@
 
 后续建议：如果还要动这个问题，方向应该是“把飞窗变成不受窗口管理器管理的窗口”（X11 下 override-redirect），而**不是**改贴合基准——后者会改变整体外观。
 
+## 八、第四轮：自动隐藏飞窗“点边条按钮显示不出来”（2026-10-10）
+
+现象：停靠面板标题栏点图钉 📌 收起（自动隐藏到侧边条）后，点侧边条上的还原按钮，面板显示不出来（或一闪而过）。
+
+根因（两条，都要修）：
+
+1. 飞窗是本轮改为顶层 `Qt::Tool` 的窗口，弹出时主窗口会短暂失焦：Qt 先发一次 `focusChanged(old, nullptr)`。`DockingPaneFlyoutWidget::onFocusChanged` 把“焦点被清空”当成离开飞窗，立刻 `Q_EMIT flyoutFocusLost()`，管理器随即 `restorePaneWidget() + deleteLater()` 把刚弹出的飞窗拆掉——表现就是“点了没反应、面板看不到”。
+2. `DockingPaneManager::openFlyout` 对“同一面板的飞窗已存在”直接 `return`。若该飞窗已被隐藏（焦点丢失 / 拖动结束），之后每次点边条按钮都被静默吞掉，面板再也弹不出来。
+
+修复：
+
+- `DockingPaneFlyoutWidget::onFocusChanged`：`now == nullptr`（窗口激活切换中）不算离开飞窗，直接返回；只有焦点真的落到飞窗以外的控件才发 `flyoutFocusLost()`。
+- `DockingPaneManager::openFlyout`：同一面板且飞窗**可见**时只 `raise()` 后返回；飞窗已隐藏则按“不存在”处理，先清理再重建。
+
+回归用例（宿主侧新增 `tests/test_gui/TestDockingPanesRestore.cpp`，`DockingPanesRestoreTest.*`）：
+
+- 收起 → 点边条按钮 → 飞窗与面板内容可见（停靠面板 / Tab 组 / 客户端区为真实 `VRenderWidget` 渲染表面各一例）
+- 焦点丢失后再点边条按钮仍能显示；连续点两次仍可见；飞窗图钉还原后边条按钮被清掉
+- 收起（`hidePane`）后重新停靠能显示回来
+- `FlyoutSurvivesTransientFocusClear`：模拟弹出瞬间的 `focusChanged(old, nullptr)`，飞窗不得被拆掉
+
+构建注意：本轮库源码更新时文件时间戳被保留，MSBuild 增量构建不会重编译（`build/third_party/DockingPanes` 下仍是旧 `.obj`），表现为“更新了版本还是不行”。改库后需 touch 源文件或清理该目标再全量构建，否则运行的程序仍是旧实现。
+
+## 九、第五轮：状态机与关键操作审查修复（2026-10-10）
+
+审查范围：停靠/还原/浮动/收起/Tab 切换、位置计算、鼠标事件链路。先写复现用例（`DockingPanesRestoreTest.*`），再按论证结论修复。
+
+### BUG-14 从“收起的 Tab 组”飞窗里关闭一页后，该页再也显示不出来
+
+- 现象：Tab 组收起（图钉）→ 点边条按钮开飞窗 → 点飞窗 ✕ 后，这一页既不在任何 Tab 组里、状态却仍是 `Tabbed`；`showPane()` 找不到所属组，宿主的「还原」也因 `isPaneVisible()==Tabbed` 早退 ⇒ 面板回不来（只能“隐藏→还原”两步手动救回）。
+- 根因：`DockingPaneTabbedContainer::onCloseContainer` 把页从 `m_paneList` 摘掉并归还控件，却**从不设置该页状态**（非 Tab 路径 `closePinnedPane → closePane` 是有 `setState(Hidden)` 的）。
+- 修复：`removePinnedButton()` 之后补 `pane->setState(DockingPaneBase::Hidden)`（两个分支都覆盖）。
+- 用例：`ClosingATabFromPinnedFlyoutLeavesThePaneRestorable`（修复前 4 条断言失败：状态、残留飞窗、两处可见性）。
+
+### BUG-15 关掉 Tab 组飞窗后残留隐藏飞窗（悬垂容器指针）
+
+- 现象：`onCloseContainer` 的 `m_paneList.count() <= 1` 分支缺少 `m_flyoutWidget->endDrag()`（`isEmpty` 分支有），`deletePane(this)` 之后管理器仍持有一个隐藏飞窗，其 `m_container` 指向已删除的标签组。
+- 影响：当前因 `m_dragMode == true` 挡住了 `restorePaneWidget()` 解引用，不会立刻崩，但属于随时可能被后续改动引爆的易碎状态。
+- 修复：在 `deletePane(this)` 前补 `m_flyoutWidget->endDrag(); m_flyoutWidget = nullptr;`，与 `isEmpty` 分支一致（管理器经 `flyoutFocusLost` 清理自己的指针）。
+- 用例：`ClosingATabFromPinnedFlyoutLeavesThePaneRestorable` 中断言 `Flyout(manager) == nullptr`。
+
+### BUG-16 dockTab 的邻居不是面板容器时空指针崩溃
+
+- 现象：`dockPane(pane, dockTab, neighbour)` 的 neighbour 若是客户端面板/分隔器/浮动面板（都不是 `DockingPaneContainer`），会走到 `newContainer->addPane(nullptr)` ⇒ `child->clientWidget()` 解引用空指针。
+- 证据：用例 `DockTabWithNonContainerNeighbourDoesNotCrash` 修复前报 `SEH exception with code 0xc0000005`。
+- 修复：`dockTab` 分支在 `parentContainer == nullptr` 时 `qWarning` 并原样返回，不改动调用方面板。
+
+### BUG-17 以“不在停靠树里的面板”为邻居停靠会让面板静默消失
+
+- 现象：neighbour 是浮动面板（或当前在 Tab 组里、已 `setParent(nullptr)` 的页）时 `getDockingParent()` 返回空 ⇒ 新分隔器照样建、`addPane` 照样搬控件，但**从不插入任何父级** ⇒ 两个面板都不可见；且 `dockPane` 末尾仍把被停靠页置为 `Docked` ⇒ 宿主认为“可见”，「还原」早退 ⇒ 不可恢复。
+- 证据：用例 `DockingAgainstAFloatingNeighbourKeepsPanesVisible` 修复前 4 条可见性断言全失败。
+- 修复：`parentSplitter == nullptr` 时 `qWarning` 并依次回退为「相对客户端面板（停靠区边缘）」→「根面板（重建根分隔器）」；同时不再对调用方传入的邻居做 `setParent(nullptr)` 副作用。
+
+### 论证后被撤回的两条审查结论（保留证据用例）
+
+审查时列为“交互缺口 / 需实测”的两条，写用例实测后被**推翻**，据实撤回：
+
+| 原结论 | 论证结果 |
+|---|---|
+| “无法把浮动面板拖进已有 Tab 组” | **不成立**。`DockingPaneTabbedContainer` 本身派生自 `DockingPaneContainer` 且停靠后 `state()==Docked`，所以它会被 `updateFloatingPane` 命中，组中心就是 Tab 指示器 ⇒ 拖到中心松手会正常并组（`FloatingPaneDroppedOnTabGroupJoinsTheGroup` 通过） |
+| “`Qt::ToolTip` 浮动面板里的输入框拿不到键盘焦点” | **不成立**。同环境对照组（`Qt::Tool`）可拿焦点、浮动面板（`Qt::ToolTip`）里的 `QLineEdit` 同样能拿到 `hasFocus()`（`FloatingPaneInputCanTakeFocus` 通过） |
+
+顺带确认：标签条带（组顶部）不是指示器图标，拖到那里松手不会停靠、也不会破坏面板与目标组——这是“库只认指示器图标”的设计，已由 `FloatingPaneDroppedOnTabStripStaysIntact` 守护（同时纠正了我原先对该区域行为的描述）。
+
+### 其余审查结论（本轮不改，列为遗留）
+
+| 位置 | 问题 |
+|---|---|
+| `DockingPaneManager::floatingPaneEndMove` / `updateFloatingPane` | 忽略命中返回值，按 `m_dockingPaneList` 创建顺序“后中覆盖先中”，重叠面板（Tab 组、0 宽分隔器）落点可能不是视觉目标 |
+| `DockingPaneFlyoutWidget::mouseMoveEvent` | 飞窗缩放 `m_size += delta` 无下限（可为负），仅靠 `setPositionAndSize` 的 `minimumWidth` 兜住显示 |
+| `DockingPaneTabbedContainer::saveLayout` / `openFlyout` | `m_paneList[currentIndex]`、`stackedWidget->widget(indexOf(pane))` 无边界检查（空组/-1 时 UB、`addWidget(nullptr)` 断言） |
+| `DockingPaneManager::dockPane` 尾部 | `dockedPane->setFocus()` 对默认 `NoFocus` 的面板是空操作，停靠后键盘焦点不进入面板 |
+| `DockingPaneManager::floatingPaneEndMove` 的 `default:` 分支 | 注释写“dropping the pane in place”，但没有重置 `m_targetPosition`；当前 9 个指示器值全被映射，属不可达的整洁性问题 |
+| `inc/DockingPaneBase.h` | 库自述 `setState()` 只有赋值、无副作用 ⇒ “以状态为真源”不成立，BUG-14 属这一类；建议后续把状态迁移集中到管理器收口 |
+
+用例：`tests/test_gui/TestDockingPanesRestore.cpp`（15 例），`test_gui` 154/154、`test_scene` 47/47 通过。
+
+## 十、第六轮：停靠区边缘指示器不可用（BUG-18）+ 落点目标复核（2026-10-10）
+
+### BUG-18 拖到停靠区边缘的箭头指示器上松手不会停靠
+
+- 现象：把浮动面板拖到窗口最左/右/上/下边缘的箭头指示器上松手，面板原地飘回——边缘停靠完全不可用（`DockingPaneManager` 里 `frameLeft/Right/Top/Bottom` 那几段分支看起来像死代码）。
+- 根因（三处叠加，缺一不可）：
+  1. 四个边缘贴纸虽是 89×89 指示器覆盖层的**子控件**，却被 `DockingFrameStickers::setFrameRect()` 用**屏幕坐标**摆放（它们的 `updateCursorPos()` 也是按顶层窗口语义写的 `mapFromGlobal`），于是落点在覆盖层之外 ⇒ 既不可见也命中不到。
+  2. `DockingFrameFrameSticker` 构造函数把 `setMaximumSize()` 写了两遍，缺 `setMinimumSize()` ⇒ 贴纸窗口没有确定尺寸，命中矩形与图标不符。
+  3. 边缘贴纸压在停靠区边框上，而客户端面板等是**内缩**的（实测 `client pane` 比停靠区左移 5px）：光标落在边缘带内时不在任何面板里，`updateFloatingPane()` 在 `paneRect.contains()` 就早退 ⇒ 边缘命中分支根本没机会执行。
+- 修复：
+  - 贴纸改为自身顶层工具窗口（无父对象）+ 固定尺寸 = 图标尺寸 + 由覆盖层析构时删除（`~DockingFrameStickers()`），保持 `setFrameRect()` 的屏幕坐标语义。
+  - 新增 `DockingFrameStickers::getFrameHit()`（原 `getHit()` 里的 4 段边缘判定抽出来，`getHit()` 末尾改为委托它，避免两份实现）。
+  - 管理器新增 `handleFrameEdgeHit()`：在「光标不在任何面板内」时独立做边缘命中并设置落点与预览；`floatingPaneEndMove()` 的停靠守卫由 `m_targetPane` 改为 `m_targetPosition >= 0`，使「只命中边缘、无面板锚点」也能落位。
+- 用例：`FloatingPaneDroppedOnFrameEdgeStickerDocksToTheDockAreaEdge`（修复前 `state` 仍是 Floating、面板原地不动；修复后停靠成停靠区最左一列）。
+
+### 落点目标复核：#4“后中覆盖先中”降级为理论风险
+
+`updateFloatingPane()` 只在**指示器图标命中**时才写 `m_targetPane`（BUG-5 的修法），因此“列表顺序覆盖”要发生，需要两个候选面板的**指示器簇相互重叠**（簇居中于各自面板中心）。用例 `FloatingPaneDropTargetsThePaneUnderTheIndicator`：在“左侧标签组 + 右侧面板”布局下把浮动面板丢到右侧面板的顶部指示器，断言落点确实相对**该面板**（同列、位于其上方），当前通过 ⇒ 未观察到错位，结论降级为理论风险并保留该守护用例。
+
+用例：`tests/test_gui/TestDockingPanesRestore.cpp`（17 例），`test_gui` 156/156、`test_scene` 47/47 通过。
+
+## 十一、第七轮：Tab 组飞窗的空控件崩溃（BUG-19）与两项论证结论（2026-10-10）
+
+### BUG-19 给“不在组里”的面板开标签组飞窗会空指针崩溃
+
+- 现象/证据：`DockingPaneTabbedContainer::openFlyout()` 用 `m_stackedWidget->widget(m_paneList.indexOf(pane))` 取内容控件；面板不在组里时 `indexOf` 返回 -1 ⇒ `widget(-1)` 为 null ⇒ 进入飞窗构造函数后 `QGridLayout::addWidget(nullptr)`。用例 `TabbedFlyoutForAForeignPaneIsRejected` 修复前报 `SEH exception with code 0xc0000005`。
+- 修复：`openFlyout()` 先算 `paneIndex`，`paneIndex < 0` 或对应控件为空时 `qWarning` 并返回 `nullptr`（管理器侧对空返回是安全的：连接空对象只会告警，条带按钮的路径本就传的是组内面板）。
+- 用例：同上（修复后断言返回 `nullptr` 且管理器未留飞窗）。
+
+### 同类索引加固（本次未能构造复现，按加固处理）
+
+| 位置 | 处理 |
+|---|---|
+| `DockingPaneTabbedContainer::saveLayout()` | `m_paneList[stackedWidget->currentIndex()]` 改为带范围判断的 `at()`，越界时写空 `selectedTab`（原写法在 0/-1 越界时是 UB） |
+| `DockingPaneTabbedContainer::onCloseContainer()` | `setName(m_paneList.at(currentIndex))` 改为 `qBound(0, currentIndex, count-1)`，与同文件 `closePane()` 的既有写法保持一致 |
+
+两处都无法在现有流程里构造出非法状态（空组会被 `closePane` 直接删除），因此只做防御性收口、未附加“红转绿”用例。
+
+### 论证未成立：飞窗缩放“无下限”（原遗留 #6）
+
+用 `QApplication::sendEvent()` 直接驱动飞窗的鼠标处理验证：左边缘按下 → 向右拖出 `面板宽度 + 600` → 实测 `记录尺寸 = 100`、`显示宽度 = 55`、`最小宽度 = 50`，**记录尺寸始终为正**（Qt 侧已把负值夹住）。按“先论证、再修复”，本轮**不改缩放代码**，只保留守护用例 `FlyoutResizeCannotGoNegative`（断言记录尺寸为正、显示宽度不小于最小宽）。该条留在遗留清单并标注“不可复现”。
+
+用例：`tests/test_gui/TestDockingPanesRestore.cpp`（19 例），`test_gui` 158/158、`test_scene` 47/47 通过。
+
+## 十二、第八轮：把面板以 Tab 方式停靠到浮动面板上会让两个面板一起消失（BUG-20）（2026-10-10）
+
+### BUG-20 dockTab 的邻居不在停靠树里 ⇒ 标签组变成隐藏的孤儿窗口
+
+- 现象（宿主 `VMainWindowBase::showPaneInGroup`）：一个 Tab 组里「设备信息」被收起（隐藏），另一成员「材质列表」被拖成浮动面板；此时还原设备信息 ⇒ 设备信息没有出现，浮动的材质列表也一起从界面上消失（内容没丢，但两个面板都看不见）。
+- 根因（两层叠加）：
+  1. 宿主 `showPaneInGroup()` 只按“可见”在 `group` 里挑 Tab 邻居，而 `isPaneVisible()` 把 `Floating` 也算可见（`VBuilderWindowBase::syncViewActions` 的 Ribbon 勾选依赖这个语义，不能改）⇒ 唯一的可见成员是浮动面板，于是发出 `dockPane(pane, dockTab, floating_pane)`。
+  2. 库 `dockPane()` 的 `dockTab` 分支只挡了“邻居不是容器”（BUG-16）；邻居是容器但不在停靠树里（`Floating` / `Pinned`）会走到 `replacePane(neighbour, newContainer)`，而 `replacePane()` 对既不在分隔器里、又不是根的面板只能 `closePane(oldPane)` ⇒ 浮动面板被关闭，新建的 `DockingPaneTabbedContainer` 是**无父对象的顶层窗口且从未 show**，两个面板都成了这个孤儿窗口里的标签页。
+- 证据：临时诊断打印（修复前）——`paneCount` 由 2 变 3；`DockingPaneTabbedContainer state=Docked vis=0 parent=-`；两个容器都是 `state=Tabbed vis=0`。用例 `ShowPaneInGroupIgnoresFloatingSiblings` 修复前 4 条断言全失败。
+- 修复：
+  - 库（`DockingPaneManager::dockPane`）：`dockTab` 分支把“邻居不在停靠树里”（`Floating` / `Pinned`）与“邻居不是容器”同等对待 —— `qWarning` + 原样返回，不改动任何面板（补齐该分支注释里本来就已经写明的意图）。
+  - 宿主（`VMainWindowBase::showPaneInGroup`）：Tab 邻居只接受 `Docked` / `Tabbed` 的成员；没有合格邻居（全隐藏、或可见成员都已浮动）时回退 `showPaneAt(pane, base_position, nullptr)`，即还原到该面板原来的停靠方位。
+  - 未改 `isPaneVisible()`：它把浮动画板算作可见是 Ribbon 勾选同步依赖的语义。
+- 用例：
+  - `ShowPaneInGroupIgnoresFloatingSiblings`（宿主路径；修复后设备信息回到原停靠列、材质列表仍是可见的浮动面板）。
+  - `DockTabAgainstAFloatingNeighbourIsIgnored`（库路径；直接 `dockPane(hidden, dockTab, floating)` ⇒ 断言 `paneCount` 不变、请求被忽略、浮动面板与其内容仍可见）。
+
+### 本轮移除的用例
+
+`DockedPaneTakesKeyboardFocus` 是“停靠后焦点进入面板内容”的守护用例：本环境的 SARibbon 主窗口内控件拿不到键盘焦点，该例只能整例 `GTEST_SKIP`（无判定力），已删除；对应条目仍留在遗留表（`dockPane` 尾部 `setFocus()` 对默认 `NoFocus` 面板是空操作）。
+
+用例：`tests/test_gui/TestDockingPanesRestore.cpp`（21 例），`test_gui` 160/160、`test_scene` 47/47 通过。

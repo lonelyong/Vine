@@ -32,8 +32,10 @@ DockingFrameFrameSticker::DockingFrameFrameSticker(const QString& image, QWidget
     setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     setAttribute(Qt::WA_TranslucentBackground, true);
 
+    // Fixed size = the icon: the sticker is its own window, so without an explicit size it
+    // would fall back to the default 100x30 and the hit rect would not match the icon.
     this->setBaseSize(m_activeImage.size());
-    this->setMaximumSize(m_activeImage.size());
+    this->setMinimumSize(m_activeImage.size());
     this->setMaximumSize(m_activeImage.size());
 }
 

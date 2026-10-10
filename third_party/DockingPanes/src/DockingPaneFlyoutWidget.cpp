@@ -366,10 +366,23 @@ void DockingPaneFlyoutWidget::leaveEvent(QEvent*)
 void DockingPaneFlyoutWidget::onFocusChanged(QWidget*, QWidget* now)
 {
     setActivePane(this->isAncestorOf(now));
-    if (!m_dragMode) {
-        if (!this->isAncestorOf(now)) {
-            Q_EMIT flyoutFocusLost();
-        }
+
+    if (m_dragMode) {
+        return;
+    }
+
+    // Focus cleared to nothing means the window activation is still in flight (the flyout
+    // has just been shown and the main window is briefly deactivated), not that the user
+    // left the flyout: treating it as a loss tore the flyout down right after it appeared,
+    // so clicking the auto-hide strip button looked like the pane could not be shown.
+    // Consequence: the flyout stays open while another application is in front; the next
+    // focus move inside this application closes it as usual.
+    if (!now) {
+        return;
+    }
+
+    if (!this->isAncestorOf(now)) {
+        Q_EMIT flyoutFocusLost();
     }
 }
 

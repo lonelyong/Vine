@@ -278,6 +278,13 @@ class DockingPaneManager : public QObject {
     void updateAllSplitters(DockingPaneSplitterContainer* parentSplitter = nullptr, bool* containsClient = nullptr);
     bool updateFloatingPane(DockingPaneBase* currentPane, QPoint cursorPos);
 
+    /**
+     * @brief Handles a docking-area edge sticker hit (no pane covers the cursor there).
+     * @param cursorPos Global cursor position.
+     * @return true when an edge sticker was hit and the target was recorded.
+     */
+    bool handleFrameEdgeHit(QPoint cursorPos);
+
   private Q_SLOTS:
     void onAutoDockButtonClicked();
     void onFlyoutFocusLost();

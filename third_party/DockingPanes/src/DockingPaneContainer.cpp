@@ -227,8 +227,10 @@ QWidget* DockingPaneContainer::clientWidget()
 
 void DockingPaneContainer::setClientWidget(QWidget* widget)
 {
-    while (m_clientLayout->count()) {
-        m_clientLayout->takeAt(0);
+    // Take and delete: QLayout::takeAt() hands ownership of the item to the caller, so
+    // dropping it would leak one item per content move.
+    while (QLayoutItem* item = m_clientLayout->takeAt(0)) {
+        delete item;
     }
 
     // Keep the member in sync: m_clientWidget must always be the widget that is
