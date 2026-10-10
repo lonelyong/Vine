@@ -68,6 +68,36 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> forwardProgram();
 VN_GRAPHICS_API intrusive_ptr<ShaderProgram> flatForwardProgram();
 
 /**
+ * @brief The built-in UNLIT program: the surface colour, with no light term at all.
+ *
+ * The same stages as forwardProgram(), and the same material / diffuse map / vertex colour inputs — what
+ * changes is where shading STOPS: the fragment stage writes material.diffuse.rgb (modulated by the diffuse
+ * map and the vertex colour, exactly as the lit program would) with the drawable's opacity, and returns
+ * before the ambient term, the directional lights and the specular highlight.
+ *
+ * It exists to answer a question a viewer gets asked constantly - "is this the shape or the shading?" - and
+ * to show a data-driven preview's authored colour as it was written, with nothing invented on top.
+ *
+ * @return The vertex + fragment program (fresh per call).
+ */
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> unlitForwardProgram();
+
+/**
+ * @brief The built-in NORMALS program: the view-space normal as the pixel colour.
+ *
+ * The same stages again; the fragment stage writes `normalize(n) * 0.5 + 0.5` with alpha 1 and returns
+ * before any lighting, which is the readout every 3D tool carries: it says which way each surface faces
+ * (blue = towards the camera) with no light involved, so a normal that is missing, zero, inside out or
+ * per-face where it should be per-vertex is visible at a glance instead of being inferred from shading.
+ *
+ * The normal it writes is the one the LIT path would shade with, so a VINE_FLAT combination (per-face
+ * derivatives) reads the same facets this program's smooth form hides - see the fragment source.
+ *
+ * @return The vertex + fragment program (fresh per call).
+ */
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> normalsForwardProgram();
+
+/**
  * @brief The built-in G-buffer geometry program (scene -> MRT) of the Deferred preset.
  *
  * @return The vertex + fragment program.

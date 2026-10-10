@@ -336,6 +336,36 @@ TEST(RenderControlTest, ACapturedViewSurvivesTheHostLettingGoOfIt)
         << "捕获期间控件必须替宿主握着这个视图（否则拖拽会作用在已释放的视图上）";
 }
 
+// 按需渲染是默认（每帧都由"有变化"触发），连续渲染是另一档：开着一滴答一帧，关掉就回到按需。
+// 两件事同时被钉住：开着真的会自己出帧（不需要任何输入），关掉之后**一点都不再出**（不是"变慢"）。
+TEST(RenderControlTest, ContinuousRenderingDrivesFramesWithoutInput)
+{
+    HostedControl host;
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+    host.resizeWindow(640, 480);
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->width() > 0; }, 3000));
+
+    // 先安静一会儿：按需模式下没有输入就没有帧（这条本身也是"按需"的判据）。
+    const int idle_before = host.stub()->swaps;
+    pumpUntil([] { return false; }, 150);
+    EXPECT_EQ(host.stub()->swaps, idle_before) << "按需模式：没人输入就不出帧";
+
+    host.control()->setContinuousRendering(true, 10);
+    EXPECT_TRUE(pumpUntil([&] { return host.stub()->swaps >= idle_before + 3; }, 3000))
+        << "连续渲染开着时应当自己出帧（不需要任何输入）";
+
+    // 关掉：帧数必须停住。给足两倍以上的滴答周期，避免把"刚好在跑的那一帧"当成还在继续。
+    host.control()->setContinuousRendering(false);
+    const int stopped_at = host.stub()->swaps;
+    pumpUntil([] { return false; }, 120);
+    EXPECT_EQ(host.stub()->swaps, stopped_at) << "关掉之后不该再出帧";
+
+    // 可以再开一次（幂等：重复调用不叠计时器、换周期按新的跑）。
+    host.control()->setContinuousRendering(true, 5);
+    EXPECT_TRUE(pumpUntil([&] { return host.stub()->swaps >= stopped_at + 2; }, 3000));
+    host.control()->setContinuousRendering(false);
+}
 
 // initAsync() 不挂起 —— 它返回时 attach 已经结束，宿主的内容装配天然排在它之后，不需要任何等待。
 TEST(RenderControlTest, InitAsyncCompletesWithoutSuspending)

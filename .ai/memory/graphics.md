@@ -713,3 +713,12 @@
 `src/viz/graphics/docs/usage.md`（仿 `src/base/math/docs/Eigen.md` 的"模块自带 docs 目录"约定）：分层架构、属性沿树折叠的四条规则、每帧数据流与"顶点被别名而非复制"、生命周期与变更契约（**数据变更一律 `Geometry::setRevision()` 公告**）、最小宿主用法，以及现成例子的**构建与运行方式**（`VINE_PIPELINE=forward|deferred|forward_shadowed|deferred_shadowed`（默认 deferred）、`VINE_VSG_GBUFFER` / `VINE_VSG_DEFERRED` / `VINE_VSG_OFFSCREEN_MULTISLOT` / `VINE_VSG_SLOT_DEMO` / `VINE_SHADER_PRESET`、无头门禁）。
 文档如实标注 **forward_shadowed / deferred_shadowed 目前是占位（等同无阴影预设）**：阴影切片（order<0 深度 pass + 阴影光照）未实现，只有 `Light::castShadow()/shadow()`、`ShadowSettings`、`ShadowFilter` 已就位，计划见 `.ai/design/graphics-shadow.md`。
 **2026-09-13**：占位不再默不作声——`RenderPipelineBuilder::build` 会报一条 `DiagnosticCategory::UnsupportedRequest`；`ShaderPreset`（含 `ShadowedPhong` 那个“保留项”）已删除，内容着色只能显式命名 program（见本文件顶端条目）。
+- **着色模式（2026-10-11）**：`SceneView::Options::Mode{Lit, Flat, Unlit, Normals}` 落在**窗口 pass 的 program override** 上
+  （`RenderPass::setProgramOverride`）⇒ 换模式**零重建**（同一条管线、同一张 pass 表）。四个模式是**同一段**
+  `builtin_forward.frag` 文本 + 一个 `#define`：`VINE_FLAT`（已有的逐面法线）/ `VINE_UNLIT`（只写 albedo × opacity，
+  光照前 return）/ `VINE_NORMALS`（写 `n*0.5+0.5`，alpha 1）。**Wireframe 不是模式**：画线是光栅化状态（fill mode），
+  没有后端暴露它 ⇒ 缝留在 `Options::Mode` 上（多一个值，不是重新设计）。延迟路径**兑现不了**非 Lit 模式
+  （颜色从 G-buffer 出来、窗口 pass 是全屏光照）⇒ 报一条 `UnsupportedRequest`（每视图一次）并保持 Lit。
+  门禁：`test_vsg/GlslCompileTest.EveryBuiltinForwardProgramCompilesToSpirv` **真的用 glslang 编这四个程序**
+  （define 里写坏的 GLSL 会被后端当成"这个预设没有 SDK 程序"而静默退化——flat 一开始就是这么错的），
+  `ProgramAbiTest.EveryModeOfTheForwardProgramDeclaresTheSameAbi` 钉住四者绑定一致（内容集是按 program 绑的）。

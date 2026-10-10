@@ -82,6 +82,29 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
         /** @brief How the opaque content is shaded (the one structural choice). */
         ShadingPath path{ ShadingPath::Forward };
 
+        /** @brief What the surface colour MEANS: lit, faceted, unlit, or a normal readout.
+         *
+         * Every mode is the SAME built-in program text with one define (see BuiltinShaders), applied as the
+         * window pass' program override - so a mode change is a pass property, NOT a pipeline rebuild (see
+         * setOptions). Only the Forward path can honour a mode other than Lit: the Deferred path's colours come
+         * out of the G-buffer and its window pass is a fullscreen lighting program, so a non-Lit mode there is
+         * reported on the engine's diagnostic route and the picture stays lit.
+         *
+         * Wireframe is deliberately NOT a mode: drawing lines instead of triangles is a RASTERISER state (a fill
+         * mode), not a fragment stage, and no backend exposes one yet. When one does, the seam is here - it is
+         * one more value, not a redesign.
+         */
+        enum class Mode
+        {
+            Lit,     ///< The full shading: ambient + directional lights + specular.
+            Flat,    ///< The same lighting with the per-FACE normal (faceted surfaces, no vertex normals read).
+            Unlit,   ///< The surface colour alone (material / map / vertex colour), no light term.
+            Normals, ///< View-space normals as colour: which way each surface faces.
+        };
+
+        /** @brief The shading mode (see Mode; default: the full shading). */
+        Mode mode{ Mode::Lit };
+
         /** @brief Whether this view HAS an axis-gizmo overlay pass (not whether it is visible). */
         bool gizmo{ false };
 
@@ -140,16 +163,20 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /** @brief Gets this view's recipe (Options). */
     const Options& options() const noexcept;
 
-    /** @brief Sets this view's recipe, rebuilding the default window pipeline when one exists.
+    /** @brief Sets this view's recipe, doing the cheapest thing that satisfies the change.
      *
-     * Value semantics: a change REBUILDS this view's default window pipeline (the old one unregisters its
-     * passes, the new one is assembled through the same RenderPipelineBuilder recipe an application would
-     * use). That is ONE pipeline build, not a per-frame cost; on the Deferred path it also reallocates the
-     * G-buffer.
+     * The STRUCTURE (path, gizmo, stats) is what a pipeline build answers: changing any of them REBUILDS this
+     * view's default window pipeline (the old one unregisters its passes, the new one is assembled through the
+     * same RenderPipelineBuilder recipe an application would use). That is ONE pipeline build, not a per-frame
+     * cost; on the Deferred path it also reallocates the G-buffer.
      *
-     * Nothing is built when the view has no default pipeline (the window pass has not been asked for yet, or
-     * an application presents this camera itself): the recipe is remembered and the next ensureWindowPass()
-     * builds from it. That is what makes "configure right after construction" cost nothing at all.
+     * The SHADING MODE is not a structure: every mode is the window pass' program override (see Options::Mode), so
+     * switching between Lit / Flat / Unlit / Normals costs an override and NOT a rebuild - the picture changes on
+     * the next frame with nothing re-registered (measured by the same pipeline() handle).
+     *
+     * Nothing is built when the view has no default pipeline (the window pass has not been asked for yet, or an
+     * application presents this camera itself): the recipe is remembered and the next ensureWindowPass() builds
+     * from it. That is what makes "configure right after construction" cost nothing at all.
      *
      * @param options New recipe; passing the current one is a no-op.
      */
@@ -364,6 +391,9 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /** @brief Drops the default pipeline (if any) and rebuilds it from the current recipe. */
     void rebuildDefaultWindowPass();
 
+    /** @brief Applies the recipe's shading mode to the default pipeline's window pass (an override, no rebuild). */
+    void applyModeToWindowPass();
+
     /** @brief Turns {surface size, viewport, pixel ratio} into this view's rectangle, in one place. */
     void applySurfaceGeometry();
 
@@ -386,6 +416,8 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     double             pixel_ratio_ = 1.0;
     int                surface_width_ = 0;
     int                surface_height_ = 0;
+    // One line per view about a shading mode the chosen path cannot honour (see applyModeToWindowPass).
+    bool mode_unavailable_reported_ = false;
 
     intrusive_ptr<Camera>  camera_;
     intrusive_ptr<Scene>   scene_;

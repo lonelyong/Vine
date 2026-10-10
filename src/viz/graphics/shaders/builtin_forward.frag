@@ -123,6 +123,21 @@ void main()
     // model says it means.
     albedo *= vine_color.rgb;
 #endif
+#ifdef VINE_UNLIT
+    // Unlit: the surface colour IS the answer - no light term, no specular, and the drawable's opacity
+    // unchanged. It is the mode that separates "is this the shape?" from "is this the shading?" (a viewer
+    // that has to answer "why is it flat?" wants to be able to switch the lighting OFF first), and the one
+    // a data-driven preview wants: the authored colour, with nothing invented on top of it.
+    out_color = vec4(albedo, alpha);
+    return;
+#endif
+#ifdef VINE_NORMALS
+    // View-space normals as colour, the debugging view every 3D tool carries: it answers "which way does
+    // this surface face" with no light involved at all (blue = facing the camera). Alpha is 1: the picture
+    // is a readout, not content, so nothing translucent about the content should show through it.
+    out_color = vec4(normalize(n) * 0.5 + 0.5, 1.0);
+    return;
+#endif
     vec3 color = albedo * (lights.ambient.rgb * lights.ambient.a);
     float shininess = max(material.shininess, 1.0);
     // The shadow term below is the SAME text the deferred lighting program inserts, and it reads the

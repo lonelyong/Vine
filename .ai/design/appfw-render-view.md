@@ -58,14 +58,22 @@
   `ensureWindowPass` / `removeWindowPass` / `setOptions`）在入口先 `intrusive_ptr<RenderEngine>(engine_, true)`
   临时持有 ⇒ 顺序自由，宿主提前释放引擎也安全（§13）。
 - **R3 三种状态各有回家路**：**配方**（`Options`：走哪条路、有没有 HUD 档）= 变更即**重建**；**几何**
-  （`setViewport` / `onSurfaceResized`：画在哪块、多大多密）= 只改取值；**开关**（`setStatsVisible` / `setGizmoVisible`
-  ：现在看不看）= 只切 `setEnabled`。后两者**永不重建**（J8）—— 分屏拖动与 F9 切读数不该付构建代价。
+  （`setViewport` / `onSurfaceResized`：画在哪块、多大多密）= 只改取值；**开关与模式**（`setStatsVisible` /
+  `setGizmoVisible` / `Options::mode`：现在看不看、表面颜色是什么含义）= 只改 pass 上的取值
+  （`setEnabled` / `setProgramOverride`）。后两者**永不重建**（J8）—— 分屏拖动、F9 切读数、切着色模式都不该付构建代价。
+  **边界由"变的是 pass 图还是 pass 的属性"划**：`ShadingPath` 换的是**有哪些 pass**（配方，重建）；
+  `mode` 换的是**同一个 pass 用哪个程序**（属性，零重建）—— 这一条是实现时才看清的，见 §4.1。
 
 **三种"多"**（§12）：**多控件 = 多设备**（现状，可接受的过渡）→ **目标态：一设备多交换链**（有触发判据）；
 **一个表面里多视图 = 一设备多视图**（第 1 层已够：`setViewport` + 恰好一个清屏 + 默认 pass 让位）；
 **输入**由控件的**路由回调**按"**按下时路由、松开前捕获**"分发（§12.2）。
 
 **两条"不"**：**不让控件碰管线/设置**（§5，零新增配置 API）；**不让视图偷偷装灯**（§4.2，零灯就是零灯）。
+
+**两轴已补（2026-10-11 第二轮）**：**着色模式**（`Options::mode`：Lit/Flat/Unlit/Normals —— 同一段 shader 文本 + 一个
+define，落在窗口 pass 的 program override 上 ⇒ **零重建**；Wireframe 需要后端 fill mode，缝留着）；**连续渲染**
+（`RenderControl::setContinuousRendering(on, interval_ms)` —— 按需渲染仍是默认，连续是宿主可选的一档，未 attach 或
+表面未 exposed 时滴答免费）。
 
 ## 1. 现状与问题（为什么需要这份设计）
 
@@ -348,8 +356,15 @@ Unreal 之所以"感觉免费"，是因为它**每帧重建 pass 列表**（我�
   不引入第二套构建逻辑）；之后 `options().stats` 如实变成 `true` —— 事实就是"这个档现在存在"。**每个视图每种档最多付这一次**。
 - `options().stats` 回答"**有没有这个档**"，`isStatsVisible()` 回答"**现在看得见吗**" —— 两个问题两个答案，
   不合并成一个含糊的 bool（Unreal 的 show flag 与 `stat fps` 也是两件事）。
-- 反过来：**"用什么程序画"（`ShadingPath`、将来的 `Mode`）永远是配方** —— 它们也**可以运行时切**，
-  代价是一次构建（一次 hitch，不是每帧），与 Maya / Unity 切 shading 的体感一致。
+- 反过来：**"用什么程序画"**：`ShadingPath`（Forward/Deferred）是**配方** —— 它换的是**有哪些 pass**，所以变更 = 一次构建；
+  但 `Mode`（Lit/Flat/Unlit/Normals）**不是配方**：四个模式都是**同一个**窗口 pass 上的 `setProgramOverride()`
+  （四者出自同一段 `builtin_forward.frag` 文本 + 一个 `define`，见 `BuiltinShaders`），pass 图完全不变 ⇒ 换模式
+  **零重建**，下一帧就是另一种画法。这条边界（"变的是 pass 图还是 pass 的属性"）是实现时才看清的：
+  第一稿把 `Mode` 归进配方，落地时发现 `RenderPass::setProgramOverride` 正是为这件事存在的（它的文档原文就举了
+  "re-render the same scene with a different shader (e.g. a wireframe or alternate-shading pass)"）。**Wireframe 还做不到**：
+  画线是光栅化状态（fill mode），没有后端暴露它 ⇒ 缝留在同一个枚举上（多一个值，不是重新设计）。
+  延迟路径**兑现不了**非 Lit 模式（颜色从 G-buffer 出来、窗口 pass 是全屏光照）⇒ 报一条 `UnsupportedRequest`
+  （每视图一次）并保持 Lit（§4.1 已写，用例钉住）。
 - 可见性状态**归视图**，不进 `RenderControl`（控件不碰管线与设置，§5）；菜单/快捷键就是调这两个 setter。
 
 ### 4.2 场景侧的照明：**成套配方（light rig）**
@@ -392,6 +407,7 @@ class VN_GRAPHICS_API Scene {
 | 控件要不要一行工厂 `create(...)` | **不要**。它模糊所有权，而第 3 行本来就属于场景；3 行已经够短（§7） |
 | 控件**表面侧的改动** | 把 `devicePixelRatio()` 与尺寸**一起**推给视图：`view()->onSurfaceResized(w, h, devicePixelRatio())`（两个调用点），并在比例变化时重推 |
 | 控件要不要**输入路由** | **要一个，但只是一个"这一点归谁"的回调**：`setInputRouter(std::function<SceneView*(int x, int y)>)`，默认（未设）= 一切都给自己的 `view()` ⇒ 单视图逐字不变。**放进 `Impl`**（`std::function`，不是 `Signal`）⇒ 公开面零新数据成员、ABI 不动。理由：多视图的**布局是宿主定的**，控件手里只有"表面 + 尺寸"，没有命中知识。**已落地** |
+| 控件要不要**连续渲染** | **要，一档而已**：`setContinuousRendering(on, interval_ms = 16)`。按需渲染仍是默认（attach / resize / 输入 / `renderFrame()` 才出帧），连续是给动画、仿真、要能读的读数用的。它是**帧驱动**不是帧率保证（滴答"要一帧"，一帧该多久多久）；未 attach 或表面未 exposed 时滴答**免费**（写明，不是静默）。**已落地** |
 | 控件的**初始化时机** | **构造只组装**（引擎 + 视图 + 诊断路由），不选后端、不 attach；attach 由宿主显式 `init()`（同步、优先）或第一拍兜底（§2.3、期 S0）。所以"`new` 之后立刻配置"永远有效，控件不新增任何配置 API |
 
 **路由的语义：按下时路由、松开前捕获**（与 VTK `vtkRenderWindowInteractor` 按 viewport 挑 renderer、Blender/Unity 的手柄一致）：
@@ -477,6 +493,7 @@ control->setInputRouter([&](int x, int y) {                       // 按下时�
     顺序自由、宿主提前释放也安全。
 13. **显示 / 隐藏是运行时开关，永不重建**（§4.1）：`setGizmoVisible` / `setStatsVisible` 只切 `setEnabled`；
     档不存在时**按需补建一次**（每个视图每种档最多一次）。要频繁切就在配置窗口里把档都建好（R1 ⇒ 零重建）。
+    着色模式同族：`Options::mode` 只切窗口 pass 的 program override，**零重建**（延迟路径兑现不了时记一条诊断）。
 14. **几何只有一个输入**：`view->viewport()`（归一化）是矩形的**唯一真相**；`onSurfaceResized` 只收**表面**尺寸 + 比例；
     宽高比、pass 的设备像素视口、清屏范围、layout 步收到的尺寸**全部由它推**（宿主不必自己算"一半"）。
 15. **状态只有一份**：HUD 的可见性就是 **pass 的 `isEnabled()`**（`isStatsVisible()` 读它，不存第二份 bool）；
@@ -493,12 +510,18 @@ control->setInputRouter([&](int x, int y) {                       // 按下时�
 | **S3** graphics | `LightRig`（`studio()`/`headlight()` + `addTo()`）+ `Scene::addLighting()/setLighting()` | ①`studio()` 三盏（1 环境 + 2 方向）、方向非零；②追加语义（装两次 = 两套）；③`setLighting()` 覆盖；④`Scene` 原有 `addLight/clearLights` 不动 |
 | **S4** 迁移 | `model_viewer`（灯 + HUD 收口）、`demo_plugin`（灯收口，管线保留） | viewer 的灯/读数用例改成断言新入口；demo 观感不变（截图/日志比对） |
 | **S5** 文档 | 三份互链 + 本文转正 | `check_ai_docs.py` 0 条 |
-| **S6+** 三轴（**缝已定**） | ①`SceneView::Options::mode`（Lit/Unlit/Wireframe/Normals：每条路各一套程序）②连续渲染（宿主计时器调 `renderFrame()`，或控件加一个"连续"模式）③**共享设备 / 一设备多交换链**（§12.1 的目标态，命中判据才做） | 各轴独立，互不阻塞 |
+| **S6+** 二轴（**缝已定**） | ①**共享设备 / 一设备多交换链**（§12.1 的目标态，命中判据才做；会动后端抽象 + 注册表）②`Options::Mode` 上的 **Wireframe**（要后端暴露 fill mode —— 缝已留：多一个枚举值） | 各轴独立，互不阻塞 |
 
-**进度（2026-10-11，第二轮）**：**S0 / S1 / S2 / S3 / S4 + 输入路由（原 S6+②）已落地**，四个套件全绿
-（`test_graphics` 304、`test_gui` 248、`test_appfw` 32、`test_meshio` 34），
+**进度（2026-10-11，第三轮）**：**S0–S4 + 输入路由 + 着色模式 + 连续渲染已落地**；四个套件全绿
+（`test_graphics` 306、`test_gui` 249、`test_appfw` 32、`test_meshio` 34、`test_vsg` 404 通过 / 26 跳过（要设备）），
 `check_ai_docs` / `check_include_hygiene` / `check_export_annotations` / `check_doc_symbols` / `check_diagnostic_formats`
-全 0 条；S4 的 demo 灯一项按 §6 的结论**不改**（第 0 层策略）；其余三轴未动。
+全 0 条；S4 的 demo 灯一项按 §6 的结论**不改**（第 0 层策略）。
+
+第二轮补的两轴落在：`SceneView::Options::Mode` + `applyModeToWindowPass()`（program override，零重建；延迟路径记诊断）、
+`BuiltinShaders::unlitForwardProgram()/normalsForwardProgram()` + `builtin_forward.frag` 的两个 define 分支、
+`RenderControl::setContinuousRendering(on, interval_ms)`（`SurfaceWindow::tickContinuous()`：无会话或表面未 exposed 时不画）、
+以及三道门禁（`GlslCompileTest.EveryBuiltinForwardProgramCompilesToSpirv` 真编 GLSL、
+`ProgramAbiTest.EveryModeOfTheForwardProgramDeclaresTheSameAbi` 绑定一致、`SceneViewViewportTest` 的零重建/诊断两条）。
 
 实现落在：`SceneView`（`Options`/`setOptions`/`options`/`pipeline`/`setViewport`/`viewport`/`setStatsVisible`/
 `setGizmoVisible`/`isStatsVisible`/`isGizmoVisible`/`onSurfaceResized(w,h,ratio)`/三参数 `addSurfaceLayout`）、

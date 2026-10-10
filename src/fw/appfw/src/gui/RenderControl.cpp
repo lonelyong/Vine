@@ -111,6 +111,11 @@ void RenderControl::setInputRouter(std::function<vn::graphics::SceneView*(int x,
     dptr()->surface->setInputRouter(std::move(router));
 }
 
+void RenderControl::setContinuousRendering(bool on, int interval_ms)
+{
+    dptr()->surface->setContinuousRendering(on, interval_ms);
+}
+
 void RenderControl::renderFrame()
 {
     dptr()->surface->renderFrame();

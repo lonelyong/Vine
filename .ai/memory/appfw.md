@@ -221,6 +221,13 @@
   清屏"是后端 **loadOp 整张清**（`OffscreenTarget.cpp:107`）逼出来的约定、且清屏那条 pass 要排最前。**ABI 边界**：
   appfw 公开类加数据成员/`Signal` = bump `VN_APPFW_PLUGIN_ABI_VERSION`（`setInputRouter` 因此放 `Impl`）；graphics 没有
   版本宏，`SceneView` 加成员可行但要写明"插件需重建"。
+- **连续渲染（2026-10-11 已落地）**：`RenderControl::setContinuousRendering(bool on, int interval_ms = 16)`
+  —— 按需渲染仍是**默认**（attach / resize / 输入 / `renderFrame()` 才出帧），连续是宿主可选的一档（动画、仿真、
+  或一个值得读的帧率读数）。它是**帧驱动不是帧率保证**（滴答"要一帧"，一帧该多久多久）。两个"滴答免费"的条件
+  **写明**：还没 attach（没有设备可画，首帧归 attach），或原生表面**未 exposed**（藏起来的 dock 页/最小化窗口不该
+  继续占 GPU）。计时器挂在 `SurfaceWindow`（`QTimer`，首次使用才建、关掉只是 stop）。用例：
+  `RenderControlTest.ContinuousRenderingDrivesFramesWithoutInput`（按需时没人输入就不出帧 → 开着自己出帧 →
+  关掉一帧都不再出 → 再开）。
 - **输入路由（2026-10-11 已落地）**：`RenderControl::setInputRouter(std::function<SceneView*(int x, int y)>)`
   —— **一个**"这一点归谁"的回调（放 `Impl`，公开面零新数据成员 ⇒ ABI 不动）。语义：**指针按下时路由、松开前捕获**
   （拖拽越界不断线；捕获期间控件持一个强引用 ⇒ 宿主中途丢掉自己的引用也不崩）；滚轮按点路由（为此

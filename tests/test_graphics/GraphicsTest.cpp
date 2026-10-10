@@ -2766,8 +2766,67 @@ TEST(SceneViewViewportTest, TurningOnAnOverlayThatWasNeverBuiltCostsOneBuild)
     EXPECT_EQ(engine->passCount(), 2u);
 }
 
-TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps)
+TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
 {
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->ensureWindowPass();
+    ASSERT_NE(view->pipeline(), nullptr);
+
+    Pipeline* const pipeline = view->pipeline();
+    RenderPass* const window = pipeline->windowPass();
+    ASSERT_NE(window, nullptr);
+    const std::size_t pass_count = engine->passCount();
+
+    // Lit is the content's own program: no override at all (the default path is untouched).
+    EXPECT_EQ(view->options().mode, SceneView::Options::Mode::Lit);
+    EXPECT_EQ(window->programOverride(), nullptr);
+
+    // The four modes are three overrides plus Lit - and every one of them is a PASS property: same pipeline, same
+    // registered passes, so the switch costs an assignment instead of a build.
+    for (const auto mode : { SceneView::Options::Mode::Flat, SceneView::Options::Mode::Unlit,
+                             SceneView::Options::Mode::Normals, SceneView::Options::Mode::Lit }) {
+        view->setOptions({ .mode = mode });
+        EXPECT_EQ(view->options().mode, mode);
+        EXPECT_EQ(view->pipeline(), pipeline) << "换着色模式不该重建管线";
+        EXPECT_EQ(engine->passCount(), pass_count) << "换着色模式不该动 pass 表";
+        const bool lit = mode == SceneView::Options::Mode::Lit;
+        EXPECT_EQ(window->programOverride() == nullptr, lit) << "Lit 用内容自己的程序，其余三种是覆盖";
+    }
+
+    // ... and the override is a REAL program (a name the backend diagnostics can name), not an empty placeholder.
+    view->setOptions({ .mode = SceneView::Options::Mode::Unlit });
+    ASSERT_NE(window->programOverride(), nullptr);
+    EXPECT_NE(window->programOverride()->name().find(u8"builtin_forward"), vn::String::npos);
+
+    // Changing a STRUCTURAL field is what still rebuilds (so the two costs stay separated).
+    view->setOptions({ .mode = SceneView::Options::Mode::Unlit, .stats = true });
+    EXPECT_NE(view->pipeline(), pipeline) << "结构变了才重建";
+    EXPECT_EQ(engine->passCount(), pass_count + 1);
+}
+
+TEST(SceneViewViewportTest, AShadingModeOnTheDeferredPathIsReportedInsteadOfSilentlyIgnored)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Normals });
+    view->ensureWindowPass();
+    ASSERT_NE(view->pipeline(), nullptr);
+
+    // The mode cannot apply (the colours come out of the G-buffer), and the host is TOLD - once - instead of
+    // wondering why the switch does nothing.
+    EXPECT_GT(engine->diagnosticCount(), 0u);
+    const std::size_t reported = engine->diagnosticCount();
+    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Unlit });
+    EXPECT_EQ(engine->diagnosticCount(), reported) << "同一个视图只报一次，不刷屏";
+    // Going back to a mode the path can honour leaves the pass with the content's own program.
+    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Lit });
+    EXPECT_EQ(view->pipeline()->windowPass()->programOverride(), nullptr);
+}
+
+TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps){
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());

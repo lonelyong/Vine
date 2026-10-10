@@ -182,6 +182,24 @@ TEST(ProgramAbiTest, TheFlatForwardProgramIsTheSameAbiAndItsDefineComesFromTheTe
     EXPECT_EQ(std::find(expected.begin(), expected.end(), "VINE_FLAT"), expected.end());
 }
 
+TEST(ProgramAbiTest, EveryModeOfTheForwardProgramDeclaresTheSameAbi)
+{
+    // The four modes are one text with one define (see BuiltinShaders::unlitForwardProgram /
+    // normalsForwardProgram): the content set is shared per (target, depth mode) and its bindings come from the
+    // program, so a mode whose text declared one binding fewer would render with an unbound set. Same ABI, four
+    // pictures - which is what makes "switch the mode" one assignment on the pass.
+    const ProgramAbi lit     = scan(*vn::graphics::forwardProgram());
+    const ProgramAbi flat    = scan(*vn::graphics::flatForwardProgram());
+    const ProgramAbi unlit   = scan(*vn::graphics::unlitForwardProgram());
+    const ProgramAbi normals = scan(*vn::graphics::normalsForwardProgram());
+
+    EXPECT_EQ(unlit.bindings.size(), lit.bindings.size());
+    EXPECT_EQ(normals.bindings.size(), lit.bindings.size());
+    EXPECT_EQ(flat.bindings.size(), lit.bindings.size());
+    EXPECT_EQ(unlit.import_defines, lit.import_defines);
+    EXPECT_EQ(normals.import_defines, lit.import_defines);
+}
+
 TEST(ProgramAbiTest, ATextsOwnDefineIsInEffectAndAForeignDeclarationsPositionSaysNothing)
 {
     constexpr const char* kOwnVertex = R"(#version 450

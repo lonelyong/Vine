@@ -183,6 +183,33 @@ class VN_APPFW_API RenderControl : public Control {
      */
     void setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router);
 
+    /** @brief Drives frames on a timer instead of on demand.
+     *
+     * A control (like every appfw surface) renders ON DEMAND: a frame is produced when something changed - an
+     * attach, a resize, an input event, a renderFrame() call. That is what keeps an idle window free, and it is
+     * why the frame-rate readout only moves while the pointer does.
+     *
+     * Continuous rendering is the other mode, for the hosts that need it: an animation, a simulation, a live
+     * camera feed, or simply a frame-rate readout that is worth reading. The control then renders one frame per
+     * tick, for as long as it is enabled:
+     *
+     * @code
+     * control->setContinuousRendering(true, 16);   // ~60 Hz
+     * control->setContinuousRendering(false);      // back to on demand
+     * @endcode
+     *
+     * It is a FRAME DRIVE, not a frame rate guarantee: a tick asks for a frame, and a frame takes as long as it
+     * takes (the interval is a period, not a deadline - use RenderControl::renderFrame() plus the engine's frame
+     * counters if a host needs to measure real cost). Two conditions make a tick free instead of an invisible
+     * cost, both stated rather than silent: no session yet (there is no device to draw with - the attach's own
+     * frame brings the first picture), and a native surface that is not exposed (a hidden dock tab or a minimized
+     * window). A host that wants frames for a hidden surface drives renderFrame() itself.
+     *
+     * @param on          True to render one frame per tick, false to stop (the timer is kept, not destroyed).
+     * @param interval_ms Tick period in milliseconds, at least 1; <= 0 means the default (16 ms, ~60 Hz).
+     */
+    void setContinuousRendering(bool on, int interval_ms = 16);
+
     /** @brief Renders one frame through the engine. */
     void renderFrame();
 

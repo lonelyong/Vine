@@ -231,6 +231,22 @@ intrusive_ptr<ShaderProgram> gbufferGeometryProgram()
     return makeProgram(u8"builtin_gbuffer", shaders::kBuiltinGbufferVert, shaders::kBuiltinGbufferFrag);
 }
 
+intrusive_ptr<ShaderProgram> unlitForwardProgram()
+{
+    // One define on the same text, like the flat preset: the material / map / vertex-colour inputs are the same
+    // expressions, so "unlit" cannot drift from "lit" about what the surface COLOUR is - it only skips the sum.
+    return makeProgram(u8"builtin_forward_unlit", shaders::kBuiltinForwardVert,
+                       withDefine(forwardFragmentSource(), u8"#define VINE_UNLIT 1"));
+}
+
+intrusive_ptr<ShaderProgram> normalsForwardProgram()
+{
+    // Same text again: the normal this writes is the very one the lit path shades with, which is what makes the
+    // readout trustworthy (a separate normal pass could disagree with the lighting and nobody would notice).
+    return makeProgram(u8"builtin_forward_normals", shaders::kBuiltinForwardVert,
+                       withDefine(forwardFragmentSource(), u8"#define VINE_NORMALS 1"));
+}
+
 intrusive_ptr<ShaderProgram> skyboxProgram()
 {
     return makeProgram(u8"builtin_skybox", shaders::kBuiltinSkyboxVert, shaders::kBuiltinSkyboxFrag);

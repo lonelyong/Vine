@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <vector>
+
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
 #include <vsg/state/ShaderStage.h>
@@ -69,6 +72,36 @@ TEST(GlslCompileTest, CompilesShaderProgramStagesToSpirv)
     }
     // Both the vertex and the fragment stage produced SPIR-V.
     EXPECT_EQ(compiled, 2u);
+}
+
+TEST(GlslCompileTest, EveryBuiltinForwardProgramCompilesToSpirv)
+{
+    // The three "same text, one define" forward programs (see BuiltinShaders): a define that turns a
+    // preprocessor branch into GLSL the driver cannot compile would ship silently - the backend treats "no
+    // compiled stage" as "this preset has no SDK program" and shades with its fallback, which is exactly how the
+    // flat preset first came out lit-but-wrong (see withDefine's note). Compiling the real texts here is what
+    // makes adding a mode a compile-time fact instead of a hope.
+    const std::vector<vn::intrusive_ptr<vn::graphics::ShaderProgram>> programs = {
+        vn::graphics::forwardProgram(),
+        vn::graphics::flatForwardProgram(),
+        vn::graphics::unlitForwardProgram(),
+        vn::graphics::normalsForwardProgram(),
+    };
+
+    vsg::ShaderCompiler compiler;
+    ASSERT_TRUE(compiler.supported());
+
+    for (const auto& program : programs) {
+        ASSERT_NE(program, nullptr);
+        ASSERT_FALSE(program->stages().empty());
+        for (const auto& stage : program->stages()) {
+            const std::string source = stage.source.as_std_str();
+            auto vstage = vsg::ShaderStage::create(toVkStage(stage.type), stage.entryPoint.as_std_str(), source);
+            EXPECT_TRUE(compiler.compile(vstage)) << "program '" << program->name().as_std_str() << "' stage failed";
+            ASSERT_NE(vstage->module, nullptr);
+            EXPECT_FALSE(vstage->module->code.empty());
+        }
+    }
 }
 
 }  // namespace

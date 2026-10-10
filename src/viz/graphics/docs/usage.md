@@ -547,7 +547,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 | 内容 | 位置 |
 | --- | --- |
-| 内建前向着色（引擎默认内容程序，`forwardProgram()` / `flatForwardProgram()`） | `src/viz/graphics/shaders/builtin_forward.*` |
+| 内建前向着色（引擎默认内容程序，`forwardProgram()`；同一段文本 + 一个 `#define` 出 `flatForwardProgram()` / `unlitForwardProgram()` / `normalsForwardProgram()` 三种查看模式，见 `SceneView::Options::Mode`） | `src/viz/graphics/shaders/builtin_forward.*` |
 | 延迟管线的 G-buffer 几何 / 全屏光照 | `src/viz/graphics/shaders/builtin_gbuffer.*` / `builtin_deferred_lighting.frag` |
 | 天空盒（`skyboxProgram()`，无光照 cube map 方向采样） | `src/viz/graphics/shaders/builtin_skybox.*` |
 | 全屏三角形顶点段 / 纯拷贝（`fullscreenVertexProgram()` / `screenCopyProgram()`） | `src/viz/graphics/shaders/builtin_fullscreen.vert` / `builtin_screen_copy.frag` |
@@ -558,7 +558,8 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 目标（`gbuffer` 已经说了它写 G-buffer，不必再写 `_geometry`），也不带产品名或 C++ 的词（`vine_` / `vsg_` /
 `std_forward` 都试过并改掉了：后者读起来是 `std::forward`）。生成常量按同一条规则推导
 （`builtin_forward.vert` → `kBuiltinForwardVert`），**内建 program 也叫这个名字**（`builtin_forward`，同一份文件
-出多个 program 时加后缀：`builtin_forward_flat`、`builtin_deferred_lighting_shadowed`），所以一条报出 program
+出多个 program 时加后缀：`builtin_forward_flat`、`builtin_forward_unlit`、`builtin_forward_normals`、
+`builtin_deferred_lighting_shadowed`），所以一条报出 program
 名的 diagnostic 直接告诉你去读哪个文件。默认管线的 pass 用**角色词**（`gbuffer` / `deferred_lighting`，见
 `RenderPipelineBuilder`）而不带前缀：一个 pass 画的是**宿主给它的** program，管它叫"内建"是错的。
 

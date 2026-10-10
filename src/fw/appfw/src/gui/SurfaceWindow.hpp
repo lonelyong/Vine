@@ -113,6 +113,13 @@ class SurfaceWindow : public QWindow {
      */
     void setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router);
 
+    /** @brief Drives frames on a timer instead of on demand (see RenderControl::setContinuousRendering).
+     *
+     * @param on          True to render one frame per tick, false to stop.
+     * @param interval_ms Tick period in milliseconds (clamped to at least 1); ignored when @p on is false.
+     */
+    void setContinuousRendering(bool on, int interval_ms);
+
     /** @brief Gets where the surface lifecycle currently stands. */
     SurfaceState state() const;
 
@@ -154,9 +161,10 @@ class SurfaceWindow : public QWindow {
     void handleScroll(const vn::window::ScrollEvent& event);
     /** @brief Pushes a key event to the routed (or this surface's own) view and refreshes the frame. */
     void handleKey(const vn::window::KeyEvent& event);
+    /** @brief Renders the frame a continuous tick owes, unless there is nothing to draw into or for. */
+    void tickContinuous();
     /** @brief Resolves the view that owns a surface point (the router's answer, vetted; own view otherwise). */
-    vn::graphics::SceneView* routedView(int x, int y);
-    /** @brief Pushes an event to @p target when it is not null (the one place a view is handed an event). */
+    vn::graphics::SceneView* routedView(int x, int y);    /** @brief Pushes an event to @p target when it is not null (the one place a view is handed an event). */
     void pushToView(vn::graphics::SceneView* target, const vn::window::MouseEvent& event);
     void pushToView(vn::graphics::SceneView* target, const vn::window::ScrollEvent& event);
     void pushToView(vn::graphics::SceneView* target, const vn::window::KeyEvent& event);

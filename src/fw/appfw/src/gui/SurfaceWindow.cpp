@@ -234,11 +234,12 @@ struct SurfaceWindow::Impl {
     /// Device pixel ratio that went with them: a scale-factor change is a surface change too.
     double last_ratio = 0.0;
     /// Which view owns which point of the surface (null: everything belongs to this surface's own view).
-    std::function<vn::graphics::SceneView*(int x, int y)> input_router;
-    /// The view a pointer press selected, held until the button comes up (see setInputRouter).
+    std::function<vn::graphics::SceneView*(int x, int y)> input_router;    /// The view a pointer press selected, held until the button comes up (see setInputRouter).
     vn::intrusive_ptr<vn::graphics::SceneView> captured_view;
     /// One line per session about a router that names a view of another engine (see routedView()).
     bool input_router_misuse_reported = false;
+    /// The timer that drives frames when continuous rendering is on (created on first use, owned by this window).
+    QTimer* continuous = nullptr;
     /// For the lifecycle log lines (construction -> attach -> first frame).
     std::chrono::steady_clock::time_point created_at{};
 };
@@ -371,6 +372,44 @@ void SurfaceWindow::setInputRouter(std::function<vn::graphics::SceneView*(int x,
     // The capture belongs to the router that made it: a drag in flight under the old layout must not keep steering
     // a view the new router may not even know about.
     d->captured_view = nullptr;
+}
+
+void SurfaceWindow::setContinuousRendering(bool on, int interval_ms)
+{
+    if (!on) {
+        if (d->continuous != nullptr) {
+            d->continuous->stop();
+        }
+        return;
+    }
+
+    // A tick period of zero/negative would be "as often as the event loop lets you", which is a busy loop, not a
+    // frame rate: the caller states a period and gets at least a millisecond of it.
+    if (interval_ms < 1) {
+        interval_ms = 1;
+    }
+    if (d->continuous == nullptr) {
+        d->continuous = new QTimer(this);
+        QObject::connect(d->continuous, &QTimer::timeout, this, [this] { tickContinuous(); });
+    }
+    d->continuous->setInterval(interval_ms);
+    if (!d->continuous->isActive()) {
+        d->continuous->start();
+    }
+}
+
+void SurfaceWindow::tickContinuous()
+{
+    // Two "nothing to do" cases, both of which make the tick free instead of an invisible cost:
+    //  - no session yet (or one being recreated): there is no device to draw with, and the attach's own frame is
+    //    what brings the first picture, not a timer;
+    //  - the native surface is not exposed: a hidden dock tab or a minimized window would otherwise keep the GPU
+    //    busy drawing frames nobody can see. A host that wants them anyway (a background render target) drives
+    //    renderFrame() itself.
+    if (!d->backend_live || !isExposed()) {
+        return;
+    }
+    renderFrame();
 }
 
 vn::graphics::SceneView* SurfaceWindow::routedView(int x, int y)

@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <vine/graphics/AxisGizmo.hpp>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/CameraManipulator.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
@@ -100,6 +101,46 @@ void SceneView::ensureWindowPass()
     // The pipeline was built at the builder's default geometry: this puts it at the surface size / viewport /
     // ratio the view already knows about (a no-op before the first resize, exactly like today).
     applySurfaceGeometry();
+    // ... and at the recipe's shading mode, which the builder has no option for (it is a pass property, see
+    // applyModeToWindowPass).
+    applyModeToWindowPass();
+}
+
+void SceneView::applyModeToWindowPass()
+{
+    if (default_pipeline_ == nullptr) {
+        return;
+    }
+    RenderPass* const window = default_pipeline_->windowPass();
+    if (window == nullptr) {
+        return;
+    }
+
+    if (options_.path != ShadingPath::Forward) {
+        // A mode lives in the fragment stage of the CONTENT pass, and the Deferred path has no such pass here: its
+        // geometry goes through the G-buffer program and its window pass is a fullscreen lighting program. Saying
+        // so once is the difference between "the switch does nothing" and "the switch cannot apply on this path".
+        window->setProgramOverride(nullptr);
+        if (options_.mode != Options::Mode::Lit && !mode_unavailable_reported_ && engine_ != nullptr) {
+            mode_unavailable_reported_ = true;
+            engine_->reportEngineProblem(
+                DiagnosticSeverity::Warning,
+                DiagnosticCategory::UnsupportedRequest,
+                u8"SceneView: a shading mode other than Lit needs the Forward path (on Deferred the colours come "
+                u8"out of the G-buffer and the window pass is the fullscreen lighting): the view stays lit");
+        }
+        return;
+    }
+    mode_unavailable_reported_ = false;
+
+    // Every mode is the same program text with one define (BuiltinShaders) applied to the whole pass, and Lit is
+    // the per-geometry program the content came with - which is exactly what a null override means.
+    switch (options_.mode) {
+        case Options::Mode::Lit: window->setProgramOverride(nullptr); break;
+        case Options::Mode::Flat: window->setProgramOverride(vn::graphics::flatForwardProgram()); break;
+        case Options::Mode::Unlit: window->setProgramOverride(vn::graphics::unlitForwardProgram()); break;
+        case Options::Mode::Normals: window->setProgramOverride(vn::graphics::normalsForwardProgram()); break;
+    }
 }
 
 void SceneView::rebuildDefaultWindowPass()
@@ -134,15 +175,30 @@ const SceneView::Options& SceneView::options() const noexcept
 
 void SceneView::setOptions(const Options& options)
 {
-    if (options_.path == options.path && options_.gizmo == options.gizmo && options_.stats == options.stats) {
+    const bool unchanged = options_.path == options.path && options_.mode == options.mode &&
+                           options_.gizmo == options.gizmo && options_.stats == options.stats;
+    if (unchanged) {
         return;
     }
-    options_ = options;
-    // A recipe change is a pipeline change - but only when a pipeline exists: before the window pass is asked for,
-    // this is just the recipe the next ensureWindowPass() will build from (see the header).
-    if (default_pipeline_ != nullptr) {
-        rebuildDefaultWindowPass();
+    const Options previous = options_;
+    options_             = options;
+
+    // Before the window pass is asked for, this is just the recipe the next ensureWindowPass() will build from
+    // (see the header), so a change costs nothing here.
+    if (default_pipeline_ == nullptr) {
+        return;
     }
+
+    const bool structure_changed =
+        previous.path != options.path || previous.gizmo != options.gizmo || previous.stats != options.stats;
+    if (structure_changed) {
+        rebuildDefaultWindowPass();
+        return;
+    }
+
+    // Only the shading mode changed: that is the window pass' program override, so the pass graph is untouched
+    // (same pipeline, same registered passes) and the next frame simply shades the other way.
+    applyModeToWindowPass();
 }
 
 const NormalizedViewport& SceneView::viewport() const noexcept
