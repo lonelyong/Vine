@@ -5,15 +5,23 @@
 #include <functional>
 #include <memory>
 
+#include <QAction>
 #include <QColor>
+#include <QDialog>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QScreen>
+#include <QStringList>
+#include <QStyle>
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <QVBoxLayout>
@@ -37,7 +45,7 @@ QColor toQColor(const Color& c)
 }
 
 /**
- * @brief Single-line input routing Up/Down/Tab/Esc to the panel.
+ * @brief Single-line input routing Up/Down/Tab/Esc/Ctrl+O to the panel.
  */
 class InputLine : public QLineEdit {
   public:
@@ -47,6 +55,7 @@ class InputLine : public QLineEdit {
     std::function<void()> onHistoryUp;
     std::function<void()> onHistoryDown;
     std::function<void()> onTab;
+    std::function<void()> onBrowse;
 
   protected:
     void keyPressEvent(QKeyEvent* e) override
@@ -74,6 +83,14 @@ class InputLine : public QLineEdit {
             return;
         default: break;
         }
+
+        // The picker's inline button cannot take focus, so the keyboard needs its own way to it - and only while a read
+        // actually offers one (onBrowse is cleared together with the button).
+        if (onBrowse && e->matches(QKeySequence::Open)) {
+            onBrowse();
+            return;
+        }
+
         QLineEdit::keyPressEvent(e);
     }
 };
@@ -128,6 +145,15 @@ struct ConsolePanel::Impl : public ControlData {
     QPlainTextEdit* output = nullptr;
     InputLine*      input  = nullptr;
 
+    /// Two-pixel line under the input line, shown while a read offers a picker: it marks "this line is answering
+    /// something" without the panel growing a border of its own.
+    QWidget*        accent = nullptr;
+
+    /// Picker the input line offers; kind == None while the line is a plain command line.
+    ConsoleInputAction action;
+    /// The inline button inside the input line (owned by the line edit through the action).
+    QAction* pick_action = nullptr;
+
     /// VS Code-style completion popup (frameless Qt::Tool window, owned here).
     std::unique_ptr<QListWidget> suggest;
     /// Event filter closing the popup on outside clicks.
@@ -160,6 +186,14 @@ struct ConsolePanel::Impl : public ControlData {
     void onHistoryUp();
     void onHistoryDown();
     void onTab();
+    /// Applies the stored ConsoleInputAction to the input line (button, highlight, shortcut).
+    void applyInputAction();
+    /// Opens the dialog the current action asks for and writes what was picked into the input line.
+    void openPicker();
+    /// Writes picked paths into the input line: replacing it for a single answer, appending with ';' for several.
+    void insertPickedPaths(const std::vector<String>& paths, bool append);
+    /// Repaints the pending underline from the current theme.
+    void updateAccentColor();
 
     ~Impl();
 };
@@ -183,6 +217,13 @@ ConsolePanel::ConsolePanel(QWidget* parent)
 
     data->input = new InputLine(root);
 
+    // The pending underline: it marks the input line as "answering something" while a read offers a picker. Hidden by
+    // default and never visible for a plain command line (see applyInputAction()).
+    data->accent = new QWidget(root);
+    data->accent->setFixedHeight(2);
+    data->accent->setAutoFillBackground(true);
+    data->accent->hide();
+
     // VS Code-style completion popup: a frameless Qt::Tool window under the input
     // line. Unlike Qt::Popup it does not grab the mouse (the main window stays
     // draggable and focused); outside clicks are closed by an event filter.
@@ -201,6 +242,7 @@ ConsolePanel::ConsolePanel(QWidget* parent)
 
     layout->addWidget(data->output);
     layout->addWidget(data->input);
+    layout->addWidget(data->accent);
 
     QObject::connect(data->input, &QLineEdit::returnPressed, root, [data] { data->onReturnPressed(); });
     QObject::connect(data->input, &QLineEdit::textChanged, root, [data] { data->onTextChanged(); });
@@ -237,17 +279,24 @@ void ConsolePanel::clear()
     dptr()->output->clear();
 }
 
-void ConsolePanel::beginInput(const String& prompt)
+void ConsolePanel::beginInput(const String& prompt, const String& initial_text)
 {
     auto* data = dptr();
     data->appendFormatted(ConsoleMessageType::Prompt, prompt);
-    data->input->clear();
+    data->input->setText(Convert::toQString(initial_text));
     data->input->setFocus();
 }
 
 void ConsolePanel::clearInput()
 {
     dptr()->input->clear();
+}
+
+void ConsolePanel::setInputAction(const ConsoleInputAction& action)
+{
+    auto* data    = dptr();
+    data->action = action;
+    data->applyInputAction();
 }
 
 void ConsolePanel::setCommandEntries(const std::vector<ConsoleCommandEntry>& entries)
@@ -270,11 +319,153 @@ const ConsoleTheme& ConsolePanel::theme() const
 
 void ConsolePanel::applyAppTheme()
 {
-    const auto* app = obj_cast<GuiApplication>(Application::current());
-    if (app == nullptr) {
+    auto* data = dptr();
+
+    if (const auto* app = obj_cast<GuiApplication>(Application::current())) {
+        data->theme = app->theme() == Theme::Dark ? ConsoleTheme::dark() : ConsoleTheme::light();
+    }
+    data->updateAccentColor();
+}
+
+void ConsolePanel::Impl::updateAccentColor()
+{
+    // The highlight is "this line is answering", so it takes the prompt color - the one role that already means that.
+    QPalette palette = accent->palette();
+    palette.setColor(QPalette::Window, toQColor(theme.prompt));
+    accent->setPalette(palette);
+}
+
+void ConsolePanel::Impl::applyInputAction()
+{
+    const bool offered = action.kind != ConsoleInputKind::None;
+
+    if (pick_action != nullptr) {
+        input->removeAction(pick_action);
+        pick_action->deleteLater();
+        pick_action = nullptr;
+    }
+    input->onBrowse = nullptr;
+
+    if (!offered) {
+        accent->hide();
         return;
     }
-    dptr()->theme = app->theme() == Theme::Dark ? ConsoleTheme::dark() : ConsoleTheme::light();
+
+    const bool directory = action.kind == ConsoleInputKind::Directory || action.kind == ConsoleInputKind::Directories;
+
+    // The icon comes from the style rather than from a resource: appfw ships no icon files, and a standard icon follows
+    // the platform and its palette for free.
+    auto* pick = new QAction(input->style()->standardIcon(directory ? QStyle::SP_DirOpenIcon : QStyle::SP_FileIcon),
+                             QString(), input);
+    pick->setToolTip(Convert::toQString(action.tooltip));
+    QObject::connect(pick, &QAction::triggered, input, [this] { openPicker(); });
+
+    input->addAction(pick, QLineEdit::TrailingPosition);
+    pick_action     = pick;
+    input->onBrowse = [this] { openPicker(); };
+    accent->show();
+}
+
+void ConsolePanel::Impl::openPicker()
+{
+    const ConsoleInputKind opened_for = action.kind;
+    if (opened_for == ConsoleInputKind::None) {
+        return;
+    }
+
+    // Where to start: the input line already points at something (the suggestion), so use it - a directory directly, a
+    // file through its folder.
+    const QString typed = input->text();
+    const QFileInfo typed_info(typed);
+    QString         start = typed_info.isDir() ? typed : typed_info.absolutePath();
+    if (start.isEmpty() || !QFileInfo::exists(start)) {
+        start.clear();
+    }
+
+    const QString     filter = Convert::toQString(action.filter);
+    QWidget* const    parent = input->window();
+    const QString     title  = opened_for == ConsoleInputKind::File        ? QStringLiteral("选择文件")
+                               : opened_for == ConsoleInputKind::Files     ? QStringLiteral("选择文件（可多选）")
+                               : opened_for == ConsoleInputKind::Directory ? QStringLiteral("选择目录")
+                                                                           : QStringLiteral("选择目录（可多选）");
+    QStringList       picked;
+
+    switch (opened_for) {
+    case ConsoleInputKind::File:
+        picked.append(QFileDialog::getOpenFileName(parent, title, start, filter));
+        break;
+    case ConsoleInputKind::Files:
+        picked = QFileDialog::getOpenFileNames(parent, title, start, filter);
+        break;
+    case ConsoleInputKind::Directory:
+        picked.append(QFileDialog::getExistingDirectory(parent, title, start));
+        break;
+    case ConsoleInputKind::Directories: {
+        // A native directory dialog cannot select several directories, so this one case has to be the Qt dialog; every
+        // other case keeps the platform's own.
+        QFileDialog dialog(parent, title, start);
+        dialog.setFileMode(QFileDialog::Directory);
+        dialog.setOption(QFileDialog::ShowDirsOnly, true);
+        dialog.setOption(QFileDialog::DontUseNativeDialog, true);
+        if (dialog.exec() != QDialog::Accepted) {
+            break;
+        }
+        picked = dialog.selectedFiles();
+        break;
+    }
+    case ConsoleInputKind::None:
+        break;
+    }
+
+    // The dialog ran a nested event loop, and calls posted from other threads keep running inside it: the read may be
+    // over by now (even replaced by an idle command line). "Is this still the kind I opened for?" is exactly the
+    // question, and a stale answer is dropped rather than written into a line that no longer asks for it.
+    if (action.kind != opened_for) {
+        return;
+    }
+
+    std::vector<String> paths;
+    paths.reserve(static_cast<std::size_t>(picked.size()));
+    for (const QString& one : picked) {
+        if (one.isEmpty()) {
+            continue;
+        }
+
+        // The dialog hands back '/' separated paths even on Windows (that is how Qt builds them): show them the way the
+        // platform writes them, since this text is what the user sees in the console line. std::filesystem reads both.
+        const String text = Convert::fromQString(QDir::toNativeSeparators(one));
+        if (text.find(u8';') != String::npos) {
+            // ';' separates the answers of a multiple read, so a path containing it cannot be expressed in that line:
+            // say so instead of quietly writing a path that would be cut in half.
+            appendFormatted(ConsoleMessageType::Warning, String(u8"路径含 ';'，无法在这一行里表达: ") + text);
+            continue;
+        }
+        paths.push_back(text);
+    }
+
+    if (paths.empty()) {
+        return;
+    }
+
+    const bool append = action.kind == ConsoleInputKind::Files || action.kind == ConsoleInputKind::Directories;
+    insertPickedPaths(paths, append);
+    input->setFocus();
+}
+
+void ConsolePanel::Impl::insertPickedPaths(const std::vector<String>& paths, bool append)
+{
+    String joined;
+    for (const String& path : paths) {
+        if (!joined.empty()) {
+            joined += u8";";
+        }
+        joined += path;
+    }
+
+    // A multiple read appends: picking twice is "two paths", isomorphic to typing "a;b". A single read replaces, because
+    // two paths are not something it accepts.
+    const String existing = append ? Convert::fromQString(input->text()).trimmed() : String();
+    input->setText(Convert::toQString(existing.empty() ? joined : existing + u8";" + joined));
 }
 
 QColor ConsolePanel::Impl::colorFor(ConsoleMessageType type) const

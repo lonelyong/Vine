@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cmath>
 #include <memory>
+#include <utility>
 
 #include <QPointer>
 #include <QWidget>
@@ -89,7 +90,23 @@ struct VisualUserIO::Impl
         String,
         Int,
         Double,
-        Point
+        Point,
+        File,
+        Files,
+        Dir,
+        Dirs
+    };
+
+    /// What a read shows and what the input line offers while it waits.
+    ///
+    /// Built by the getXxxAsync() entry points, because that is where the options live; the prompt text arrives already
+    /// woven with the requirements so the visual and the headless implementations show the same words.
+    struct ReadUi {
+        ConsoleInputAction action;            ///< Picker the input line offers; kind == None for a plain read.
+        String             prompt;            ///< Prompt text to show.
+        String             initial_text;      ///< Text to pre-fill the input line with (the caller's suggestion).
+        FileReadOptions    file_options;      ///< What the answer has to look like; only the file kinds use it.
+        DirReadOptions     dir_options;       ///< What the answer has to look like; only the directory kinds use it.
     };
 
     /// Releases the interaction slot when the read ends - however it ends,
@@ -107,8 +124,14 @@ struct VisualUserIO::Impl
     /// can write it without capturing this object, which may be gone by the time
     /// the call runs (every other posted call in this file is written the same
     /// way).
+    ///
+    /// The accepted requirements live here too, and for the same reason: the read is started from whatever thread the
+    /// command resumed on, while the answer is parsed on the application thread, so the options may only travel
+    /// through this shared state (a plain member would make the two threads race on it).
     struct PromptState {
-        String current;
+        String          current;
+        FileReadOptions file_options;
+        DirReadOptions  dir_options;
     };
 
     explicit Impl(VisualUserIO* owner) : owner(owner) {}
@@ -127,12 +150,15 @@ struct VisualUserIO::Impl
     void endRead() noexcept;
     /// Waits for the user to answer the prompt; true when a value arrived, false
     /// when the interaction was cancelled.
-    vn::async::Task<bool> waitForInput(PendingRead kind, const String& prompt);
+    vn::async::Task<bool> waitForInput(PendingRead kind, const ReadUi& ui);
 
     void onLineEntered(const String& text);
     void onEscape();
     void parseAndComplete(const String& text);
     void repromptError(const String& message);
+    /// Re-shows the current prompt with the text the user typed still in the input line, so a refusal does not make them
+    /// type the whole thing again.
+    void repromptPathError(const String& message, const String& text);
 
     /**
      * @brief Appends a command outcome to the console on the application thread.
@@ -150,6 +176,8 @@ struct VisualUserIO::Impl
     void completeInt(int value);
     void completeDouble(double value);
     void completePoint(const math::Point3d& value);
+    void completePath(std::filesystem::path value);
+    void completePaths(PathList value);
     void cancelInteraction();
 
     /// The I/O this state belongs to: the command manager and the number parser are its API.
@@ -168,6 +196,8 @@ struct VisualUserIO::Impl
     int           int_result{ 0 };
     double        double_result{ 0.0 };
     math::Point3d point_result;
+    std::filesystem::path path_result;
+    PathList              paths_result;
 
     ConsolePanel* console{ nullptr };
     /// Handlers registered on the bound console, so a rebind can drop them again.
@@ -340,11 +370,20 @@ bool VisualUserIO::Impl::beginRead(PendingRead kind, const String& prompt)
 void VisualUserIO::Impl::endRead() noexcept
 {
     pending.store(PendingRead::None);
+
+    // The picker belongs to the read that asked for it: dropping it here keeps the button from outliving its prompt (and
+    // from being clicked for a read that is over). Reads end on the thread that completed them - for a console read that
+    // is the application thread, where this call runs inline - so this cannot overtake the next read's own setup.
+    if (console != nullptr)
+    {
+        auto* panel = console;
+        onConsolePanel(panel, [](ConsolePanel* target) { target->setInputAction(ConsoleInputAction{}); });
+    }
 }
 
-vn::async::Task<bool> VisualUserIO::Impl::waitForInput(PendingRead kind, const String& prompt)
+vn::async::Task<bool> VisualUserIO::Impl::waitForInput(PendingRead kind, const ReadUi& ui)
 {
-    if (!beginRead(kind, prompt))
+    if (!beginRead(kind, ui.prompt))
     {
         co_return false;
     }
@@ -357,9 +396,12 @@ vn::async::Task<bool> VisualUserIO::Impl::waitForInput(PendingRead kind, const S
         // lives in is only ever touched on the application thread (repromptError()
         // reads it there when the user enters something invalid).
         auto state  = prompt_state;
-        onConsolePanel(panel, [state, prompt](ConsolePanel* target) {
-            state->current = prompt;
-            target->beginInput(prompt);
+        onConsolePanel(panel, [state, ui](ConsolePanel* target) {
+            state->current      = ui.prompt;
+            state->file_options = ui.file_options;
+            state->dir_options  = ui.dir_options;
+            target->setInputAction(ui.action);
+            target->beginInput(ui.prompt, ui.initial_text);
         });
     }
 
@@ -369,7 +411,9 @@ vn::async::Task<bool> VisualUserIO::Impl::waitForInput(PendingRead kind, const S
 
 vn::async::Task<std::optional<String>> VisualUserIO::getStringAsync(const String& prompt)
 {
-    if (!co_await d->waitForInput(Impl::PendingRead::String, prompt))
+    Impl::ReadUi ui;
+    ui.prompt = prompt;
+    if (!co_await d->waitForInput(Impl::PendingRead::String, ui))
     {
         co_return std::nullopt;
     }
@@ -378,7 +422,9 @@ vn::async::Task<std::optional<String>> VisualUserIO::getStringAsync(const String
 
 vn::async::Task<std::optional<int>> VisualUserIO::getIntAsync(const String& prompt)
 {
-    if (!co_await d->waitForInput(Impl::PendingRead::Int, prompt))
+    Impl::ReadUi ui;
+    ui.prompt = prompt;
+    if (!co_await d->waitForInput(Impl::PendingRead::Int, ui))
     {
         co_return std::nullopt;
     }
@@ -387,7 +433,9 @@ vn::async::Task<std::optional<int>> VisualUserIO::getIntAsync(const String& prom
 
 vn::async::Task<std::optional<double>> VisualUserIO::getDoubleAsync(const String& prompt)
 {
-    if (!co_await d->waitForInput(Impl::PendingRead::Double, prompt))
+    Impl::ReadUi ui;
+    ui.prompt = prompt;
+    if (!co_await d->waitForInput(Impl::PendingRead::Double, ui))
     {
         co_return std::nullopt;
     }
@@ -396,11 +444,111 @@ vn::async::Task<std::optional<double>> VisualUserIO::getDoubleAsync(const String
 
 vn::async::Task<std::optional<math::Point3d>> VisualUserIO::getPoint3dAsync(const String& prompt)
 {
-    if (!co_await d->waitForInput(Impl::PendingRead::Point, prompt))
+    Impl::ReadUi ui;
+    ui.prompt = prompt;
+    if (!co_await d->waitForInput(Impl::PendingRead::Point, ui))
     {
         co_return std::nullopt;
     }
     co_return d->point_result;
+}
+
+namespace
+{
+
+/// The Qt name filter for a file read: the accepted patterns under a fixed caption, plus the always-available
+/// "every file" group. The panel hands this to the dialog as it stands.
+///
+/// Takes the pieces instead of the options: the pattern normalization lives in UserIO, which a free function may not
+/// reach into, so the caller (a member of this class) passes the result in.
+String pickerFilter(const std::vector<String>& patterns)
+{
+    if (patterns.empty())
+    {
+        return {};
+    }
+
+    String joined;
+    for (const String& pattern : patterns)
+    {
+        if (!joined.empty())
+        {
+            joined += u8" ";
+        }
+        joined += pattern;
+    }
+
+    // 标题由框架定：读请求说的是"要什么格式"（extensions），给它起名字是选择器的事（与提示文案同源）。
+    return String(u8"支持的格式 (") + joined + u8");;所有文件 (*)";
+}
+
+} // namespace
+
+vn::async::Task<std::optional<std::filesystem::path>> VisualUserIO::getFileAsync(const String&           prompt,
+                                                                                const FileReadOptions& options)
+{
+    Impl::ReadUi ui;
+    ui.action.kind    = ConsoleInputKind::File;
+    ui.action.filter  = pickerFilter(filterPatterns(options));
+    ui.action.tooltip = String(u8"选择文件…") + requirementSummary(options.extensions, /*multiple=*/false);
+    ui.prompt         = promptWithRequirements(prompt, requirementSummary(options.extensions, /*multiple=*/false));
+    ui.initial_text   = String(options.suggested_path.u8string());
+    ui.file_options   = options;
+
+    if (!co_await d->waitForInput(Impl::PendingRead::File, ui))
+    {
+        co_return std::nullopt;
+    }
+    co_return d->path_result;
+}
+
+vn::async::Task<std::optional<UserIO::PathList>> VisualUserIO::getFilesAsync(const String& prompt, const FileReadOptions& options)
+{
+    Impl::ReadUi ui;
+    ui.action.kind    = ConsoleInputKind::Files;
+    ui.action.filter  = pickerFilter(filterPatterns(options));
+    ui.action.tooltip = String(u8"选择文件…") + requirementSummary(options.extensions, /*multiple=*/true);
+    ui.prompt         = promptWithRequirements(prompt, requirementSummary(options.extensions, /*multiple=*/true));
+    ui.initial_text   = String(options.suggested_path.u8string());
+    ui.file_options   = options;
+
+    if (!co_await d->waitForInput(Impl::PendingRead::Files, ui))
+    {
+        co_return std::nullopt;
+    }
+    co_return d->paths_result;
+}
+
+vn::async::Task<std::optional<std::filesystem::path>> VisualUserIO::getDirAsync(const String& prompt, const DirReadOptions& options)
+{
+    Impl::ReadUi ui;
+    ui.action.kind    = ConsoleInputKind::Directory;
+    ui.action.tooltip = String(u8"选择目录…") + requirementSummary({}, /*multiple=*/false);
+    ui.prompt         = promptWithRequirements(prompt, requirementSummary({}, /*multiple=*/false));
+    ui.initial_text   = String(options.suggested_path.u8string());
+    ui.dir_options    = options;
+
+    if (!co_await d->waitForInput(Impl::PendingRead::Dir, ui))
+    {
+        co_return std::nullopt;
+    }
+    co_return d->path_result;
+}
+
+vn::async::Task<std::optional<UserIO::PathList>> VisualUserIO::getDirsAsync(const String& prompt, const DirReadOptions& options)
+{
+    Impl::ReadUi ui;
+    ui.action.kind    = ConsoleInputKind::Directories;
+    ui.action.tooltip = String(u8"选择目录…") + requirementSummary({}, /*multiple=*/true);
+    ui.prompt         = promptWithRequirements(prompt, requirementSummary({}, /*multiple=*/true));
+    ui.initial_text   = String(options.suggested_path.u8string());
+    ui.dir_options    = options;
+
+    if (!co_await d->waitForInput(Impl::PendingRead::Dirs, ui))
+    {
+        co_return std::nullopt;
+    }
+    co_return d->paths_result;
 }
 
 void VisualUserIO::Impl::onLineEntered(const String& text)
@@ -550,9 +698,82 @@ void VisualUserIO::Impl::parseAndComplete(const String& text)
         break;
     }
 
+    case PendingRead::File:
+    {
+        const PathCheck check = checkPath(text, prompt_state->file_options);
+        if (check.ok)
+        {
+            completePath(check.path);
+        }
+        else
+        {
+            repromptPathError(check.message, text);
+        }
+        break;
+    }
+
+    case PendingRead::Files:
+    {
+        const PathLineCheck check = checkPathLine(text, prompt_state->file_options);
+        if (check.ok)
+        {
+            completePaths(check.paths);
+        }
+        else
+        {
+            repromptPathError(check.message, text);
+        }
+        break;
+    }
+
+    case PendingRead::Dir:
+    {
+        const PathCheck check = checkPath(text, prompt_state->dir_options);
+        if (check.ok)
+        {
+            completePath(check.path);
+        }
+        else
+        {
+            repromptPathError(check.message, text);
+        }
+        break;
+    }
+
+    case PendingRead::Dirs:
+    {
+        const PathLineCheck check = checkPathLine(text, prompt_state->dir_options);
+        if (check.ok)
+        {
+            completePaths(check.paths);
+        }
+        else
+        {
+            repromptPathError(check.message, text);
+        }
+        break;
+    }
+
     case PendingRead::None:
         break;
     }
+}
+
+void VisualUserIO::Impl::repromptPathError(const String& message, const String& text)
+{
+    if (!console)
+    {
+        return;
+    }
+
+    auto*        panel  = console;
+    const String prompt = prompt_state->current;
+    onConsolePanel(panel, [message, prompt, text](ConsolePanel* target) {
+        target->append(ConsoleMessageType::Error, message);
+        // The rejected text goes back into the input line: with several paths in one line, clearing it would make the
+        // user retype the ones that were fine.
+        target->beginInput(prompt, text);
+    });
 }
 
 void VisualUserIO::Impl::repromptError(const String& message)
@@ -591,6 +812,18 @@ void VisualUserIO::Impl::completeDouble(double value)
 void VisualUserIO::Impl::completePoint(const math::Point3d& value)
 {
     point_result = value;
+    done.set();
+}
+
+void VisualUserIO::Impl::completePath(std::filesystem::path value)
+{
+    path_result = std::move(value);
+    done.set();
+}
+
+void VisualUserIO::Impl::completePaths(PathList value)
+{
+    paths_result = std::move(value);
     done.set();
 }
 

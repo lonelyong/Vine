@@ -242,4 +242,68 @@ vn::async::Task<std::optional<math::Point3d>> ConsoleUserIO::getPoint3dAsync(con
     co_return point;
 }
 
+vn::async::Task<std::optional<std::filesystem::path>> ConsoleUserIO::readPathAsync(const String&           prompt,
+                                                                                  const FileReadOptions& options,
+                                                                                  bool                   directory)
+{
+    const String requirements = requirementSummary(options.extensions, /*multiple=*/false);
+    const auto   line         = co_await readLineAsync(promptWithRequirements(prompt, requirements));
+    if (!line.has_value()) {
+        co_return std::nullopt;
+    }
+
+    const PathCheck check = directory ? checkPath(*line, DirReadOptions{ options.require_existing, options.suggested_path })
+                                      : checkPath(*line, options);
+    if (!check.ok) {
+        // 无头侧不重提示（那会要求一个人重打）：把原因打出来，读到此为止。
+        putString(check.message);
+        co_return std::nullopt;
+    }
+    co_return check.path;
+}
+
+vn::async::Task<std::optional<UserIO::PathList>> ConsoleUserIO::readPathsAsync(const String& prompt, const FileReadOptions& options)
+{
+    const String requirements = requirementSummary(options.extensions, /*multiple=*/true);
+    const auto   line         = co_await readLineAsync(promptWithRequirements(prompt, requirements));
+    if (!line.has_value()) {
+        co_return std::nullopt;
+    }
+
+    const PathLineCheck check = checkPathLine(*line, options);
+    if (!check.ok) {
+        putString(check.message);
+        co_return std::nullopt;
+    }
+    co_return check.paths;
+}
+
+vn::async::Task<std::optional<std::filesystem::path>> ConsoleUserIO::getFileAsync(const String&           prompt,
+                                                                                 const FileReadOptions& options)
+{
+    co_return co_await readPathAsync(prompt, options, /*directory=*/false);
+}
+
+vn::async::Task<std::optional<UserIO::PathList>> ConsoleUserIO::getFilesAsync(const String& prompt, const FileReadOptions& options)
+{
+    co_return co_await readPathsAsync(prompt, options);
+}
+
+vn::async::Task<std::optional<std::filesystem::path>> ConsoleUserIO::getDirAsync(const String&          prompt,
+                                                                                const DirReadOptions& options)
+{
+    FileReadOptions as_file;
+    as_file.require_existing = options.require_existing;
+    as_file.suggested_path = options.suggested_path;
+    co_return co_await readPathAsync(prompt, as_file, /*directory=*/true);
+}
+
+vn::async::Task<std::optional<UserIO::PathList>> ConsoleUserIO::getDirsAsync(const String& prompt, const DirReadOptions& options)
+{
+    FileReadOptions as_file;
+    as_file.require_existing = options.require_existing;
+    as_file.suggested_path = options.suggested_path;
+    co_return co_await readPathsAsync(prompt, as_file);
+}
+
 VN_APPFW_NS_END

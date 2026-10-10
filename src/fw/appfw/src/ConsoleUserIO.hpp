@@ -45,6 +45,15 @@ class VN_APPFW_API ConsoleUserIO : public UserIO {
     vn::async::Task<std::optional<double>>        getDoubleAsync(const String& prompt = {}) override;
     vn::async::Task<std::optional<math::Point3d>> getPoint3dAsync(const String& prompt = {}) override;
 
+    vn::async::Task<std::optional<std::filesystem::path>> getFileAsync(const String&           prompt = {},
+                                                                     const FileReadOptions& options = {}) override;
+    vn::async::Task<std::optional<PathList>>              getFilesAsync(const String&           prompt = {},
+                                                                      const FileReadOptions& options = {}) override;
+    vn::async::Task<std::optional<std::filesystem::path>> getDirAsync(const String&          prompt = {},
+                                                                     const DirReadOptions& options = {}) override;
+    vn::async::Task<std::optional<PathList>>              getDirsAsync(const String&          prompt = {},
+                                                                     const DirReadOptions& options = {}) override;
+
   private:
     /// State shared with the background reader thread. Both sides hold it through a
     /// shared_ptr, so the thread may still be blocked in std::getline after the
@@ -66,6 +75,12 @@ class VN_APPFW_API ConsoleUserIO : public UserIO {
     /// Waits for the next line of stdin; std::nullopt when the read was cancelled
     /// or the stream ended.
     vn::async::Task<std::optional<String>> readLineAsync(const String& prompt);
+    /// Reads one line and checks it as a single path; a refusal is printed and ends the
+    /// read (no re-prompt: a script has nothing to retype).
+    vn::async::Task<std::optional<std::filesystem::path>> readPathAsync(const String& prompt, const FileReadOptions& options, bool directory);
+    /// Reads one line and checks it as one or more ';'-separated paths, with the same
+    /// report-and-stop behaviour.
+    vn::async::Task<std::optional<PathList>> readPathsAsync(const String& prompt, const FileReadOptions& options);
     /// Writes one line of output.
     ///
     /// Non-virtual on purpose: the progress reporter is a member, so it is still

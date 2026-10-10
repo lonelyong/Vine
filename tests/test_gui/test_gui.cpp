@@ -91,6 +91,7 @@
 
 #include <any>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -98,17 +99,24 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <streambuf>
+#include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
+#include <QAction>
+#include <QFileDialog>
 #include <QListWidget>
+#include <QMetaObject>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QTextBlock>
 #include <QTextDocument>
+#include <QTimer>
 
 namespace guifw = vn::appfw::gui;
 
@@ -2501,6 +2509,32 @@ ScriptedStdinBuf& scriptedStdin()
     return buf;
 }
 
+/// 在临时目录里造一个用例专属目录（名字带序号，重复跑与并行跑都不冲突）。
+std::filesystem::path makeTempCaseDir(const char* tag)
+{
+    static std::atomic<int> counter{ 0 };
+    const auto              dir = std::filesystem::temp_directory_path() / ("vine_test_userio_" + std::string(tag) + "_" + std::to_string(++counter));
+
+    std::error_code error;
+    std::filesystem::remove_all(dir, error);
+    std::filesystem::create_directories(dir, error);
+    return dir;
+}
+
+/// 造一个非空文件：路径读只关心"在不在、叫什么名"，内容无关。
+void touchFile(const std::filesystem::path& path)
+{
+    std::ofstream out(path, std::ios::binary);
+    out << "vine";
+}
+
+/// 路径的 UTF-8 字节：脚本 stdin 与 vn::String 都按 UTF-8 走。
+std::string narrow(const std::filesystem::path& path)
+{
+    const std::u8string text = path.u8string();
+    return std::string(reinterpret_cast<const char*>(text.data()), text.size());
+}
+
 class ConsoleUserIOReadTest : public ::testing::Test {
   protected:
     void SetUp() override
@@ -2606,6 +2640,95 @@ TEST_F(ConsoleUserIOReadTest, CancelFromAnotherThreadUnblocksAndKeepsArrivedLine
     const auto second = io->getStringAsync().result();
     ASSERT_TRUE(second.has_value()) << "取消后的下一个读必须照常工作（取消状态不得泄漏）";
     EXPECT_EQ(*second, vn::String(u8"late"));
+}
+
+// 路径读的契约（无头侧）：提示里带上"要什么"，合法路径原样给出，不合法的只报**一次**原因然后结束。
+// 重提示是 GUI 的交互模型，脚本里没有人可以重打。
+TEST_F(ConsoleUserIOReadTest, FileReadTakesAnExistingFileAndReportsWhyItRefuses)
+{
+    const auto dir = makeTempCaseDir("file");
+    const auto stl = dir / "mesh.stl";
+    const auto txt = dir / "notes.txt";
+    touchFile(stl);
+    touchFile(txt);
+
+    const vn::appfw::UserIO::FileReadOptions options{ { u8".stl" } };
+
+    scriptedStdin().feed(narrow(stl) + "\n");
+    const auto ok = io->getFileAsync(u8"网格> ", options).result();
+    ASSERT_TRUE(ok.has_value());
+    EXPECT_EQ(*ok, stl);
+    EXPECT_NE(captured_.str().find("网格（.stl）> "), std::string::npos) << "提示里要带上接受的后缀";
+
+    // 后缀不符：报原因，读结束（不是重提示）。
+    scriptedStdin().feed(narrow(txt) + "\n");
+    const auto wrong_extension = io->getFileAsync(u8"网格> ", options).result();
+    EXPECT_FALSE(wrong_extension.has_value());
+    EXPECT_NE(captured_.str().find("后缀不支持（仅 .stl）"), std::string::npos);
+
+    // 不存在：同样一行原因。
+    scriptedStdin().feed(narrow(dir / "missing.stl") + "\n");
+    const auto missing = io->getFileAsync(u8"网格> ", options).result();
+    EXPECT_FALSE(missing.has_value());
+    EXPECT_NE(captured_.str().find("文件不存在: "), std::string::npos);
+
+    std::error_code error;
+    std::filesystem::remove_all(dir, error);
+}
+
+// 多个路径写在一行里：';' 分隔、顺序保持、空段忽略；任何一段不合法则整条读失败（绝不部分成功）。
+TEST_F(ConsoleUserIOReadTest, MultiplePathsComeFromOneSemicolonSeparatedLine)
+{
+    const auto dir  = makeTempCaseDir("files");
+    const auto one  = dir / "one.stl";
+    const auto two  = dir / "two.stl";
+    touchFile(one);
+    touchFile(two);
+
+    const vn::appfw::UserIO::FileReadOptions options{ { u8"stl" } };
+
+    // "one.stl;;; two.stl;" —— 空段与首尾空白都无害。
+    scriptedStdin().feed(narrow(one) + ";;; " + narrow(two) + ";\n");
+    const auto ok = io->getFilesAsync(u8"输入> ", options).result();
+    ASSERT_TRUE(ok.has_value());
+    ASSERT_EQ(ok->size(), 2u);
+    EXPECT_EQ((*ok)[0], one);
+    EXPECT_EQ((*ok)[1], two);
+    EXPECT_NE(captured_.str().find("多个用 ; 分隔"), std::string::npos) << "提示里要说明多个怎么给";
+
+    // 第二段不存在：整条读失败，原因指向那一段。
+    scriptedStdin().feed(narrow(one) + ";" + narrow(dir / "missing.stl") + "\n");
+    const auto bad = io->getFilesAsync(u8"输入> ", options).result();
+    EXPECT_FALSE(bad.has_value()) << "一段坏则整条读失败，不给部分成功";
+
+    std::error_code error;
+    std::filesystem::remove_all(dir, error);
+}
+
+// 文件与目录是两种提问：目录读拒绝文件，文件读拒绝目录。
+TEST_F(ConsoleUserIOReadTest, DirReadRejectsAFileAndAcceptsADirectory)
+{
+    const auto dir  = makeTempCaseDir("dir");
+    const auto file = dir / "mesh.stl";
+    touchFile(file);
+
+    scriptedStdin().feed(narrow(dir) + "\n");
+    const auto ok = io->getDirAsync(u8"输出目录> ").result();
+    ASSERT_TRUE(ok.has_value());
+    EXPECT_EQ(*ok, dir);
+
+    scriptedStdin().feed(narrow(file) + "\n");
+    const auto not_a_dir = io->getDirAsync(u8"输出目录> ").result();
+    EXPECT_FALSE(not_a_dir.has_value());
+    EXPECT_NE(captured_.str().find("不是目录"), std::string::npos);
+
+    scriptedStdin().feed(narrow(dir) + "\n");
+    const auto not_a_file = io->getFileAsync(u8"网格> ", vn::appfw::UserIO::FileReadOptions{}).result();
+    EXPECT_FALSE(not_a_file.has_value());
+    EXPECT_NE(captured_.str().find("不是文件"), std::string::npos);
+
+    std::error_code error;
+    std::filesystem::remove_all(dir, error);
 }
 
 TEST(ProgressPresenterTest, CancelButtonRequestsStop)
@@ -6043,6 +6166,356 @@ TEST_F(GuiTest, CommandManager_PendingUserInputBlocksDrainUntilCancelled)
 
     cm->clearHistory();
     cm->unregisterCommand(name);
+}
+
+// 路径校验是基类共享的那一份：两个后端问的是同一个问题，所以它在桌面上钉住，
+// 而不是只靠两个后端各自的用例间接覆盖。
+namespace
+{
+
+/// 只为把基类受保护的校验摊在桌面上（测试不开生产口：子类里转一手就够了）。
+///
+/// 用转发函数而不是 `using`：`using` 会把三个重载一起拉进来，而其中一个（带 directory 参数的那个）是私有的，
+/// 于是"并非所有重载都可访问"。转发只挑得出的那一份。
+struct PathCheckProbe : vn::appfw::UserIO {
+    static PathCheck check(const vn::String& text, const vn::appfw::UserIO::FileReadOptions& options)
+    {
+        return checkPath(text, options);
+    }
+    static PathCheck check(const vn::String& text, const vn::appfw::UserIO::DirReadOptions& options)
+    {
+        return checkPath(text, options);
+    }
+    static PathLineCheck checkLine(const vn::String& text, const vn::appfw::UserIO::FileReadOptions& options)
+    {
+        return checkPathLine(text, options);
+    }
+    static std::vector<vn::String> patterns(const vn::appfw::UserIO::FileReadOptions& options)
+    {
+        return filterPatterns(options);
+    }
+    static vn::String summary(const std::vector<vn::String>& extensions, bool multiple)
+    {
+        return requirementSummary(extensions, multiple);
+    }
+    static vn::String prompt(const vn::String& text, const vn::String& summary)
+    {
+        return promptWithRequirements(text, summary);
+    }
+};
+
+/// 路径的 UTF-8 文本形式（用户就是这样打进来的）。
+vn::String pathText(const std::filesystem::path& path)
+{
+    return vn::String(path.u8string());
+}
+
+/// Qt 文本 → vn::String（面板写进输入行与信号里的是同一串 UTF-8 字节）。
+vn::String fromQString(const QString& text)
+{
+    const QByteArray bytes = text.toUtf8();
+    return vn::String::fromUtf8(std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
+}
+
+} // namespace
+
+TEST(UserIOTest, PathCheckTable)
+{
+    const auto dir   = makeTempCaseDir("check");
+    const auto stl   = dir / "a.stl";
+    const auto upper = dir / "b.STL";
+    const auto multi = dir / "pack.tar.gz";
+    const auto notes = dir / "notes.txt";
+    for (const auto& path : { stl, upper, multi, notes }) {
+        touchFile(path);
+    }
+
+    const auto stl_only = vn::appfw::UserIO::FileReadOptions{ { u8".stl" } };
+
+    // 后缀：大小写不敏感，"stl" / ".stl" / "*.stl" 三种写法等价，多段后缀也认。
+    EXPECT_TRUE(PathCheckProbe::check(pathText(stl), stl_only).ok);
+    EXPECT_TRUE(PathCheckProbe::check(pathText(upper), stl_only).ok);
+    EXPECT_TRUE(PathCheckProbe::check(pathText(stl), vn::appfw::UserIO::FileReadOptions{ { u8"stl" } }).ok);
+    EXPECT_TRUE(PathCheckProbe::check(pathText(stl), vn::appfw::UserIO::FileReadOptions{ { u8"*.stl" } }).ok);
+    EXPECT_TRUE(PathCheckProbe::check(pathText(multi), vn::appfw::UserIO::FileReadOptions{ { u8"tar.gz" } }).ok);
+    EXPECT_FALSE(PathCheckProbe::check(pathText(notes), stl_only).ok);
+    EXPECT_NE(PathCheckProbe::check(pathText(notes), stl_only).message.find(u8"后缀不支持"), vn::String::npos);
+
+    // 空后缀列表 = 不限；存在性由 require_existing 决定（false 是"另存为"）。
+    EXPECT_TRUE(PathCheckProbe::check(pathText(notes), vn::appfw::UserIO::FileReadOptions{}).ok);
+    EXPECT_FALSE(PathCheckProbe::check(pathText(dir / "missing.stl"), vn::appfw::UserIO::FileReadOptions{}).ok);
+
+    vn::appfw::UserIO::FileReadOptions save_as;
+    save_as.require_existing = false;
+    save_as.extensions = { u8".stl" };
+    EXPECT_TRUE(PathCheckProbe::check(pathText(dir / "brand_new.stl"), save_as).ok);
+    EXPECT_FALSE(PathCheckProbe::check(pathText(dir / "brand_new.txt"), save_as).ok) << "名字仍要带对后缀";
+    EXPECT_FALSE(PathCheckProbe::check(pathText(dir), save_as).ok) << "已存在的目录不能当目标文件";
+
+    // 一层成对的引号（从文件管理器复制来的形态）剥掉；空文本有自己的原因，不当成"不存在"。
+    EXPECT_TRUE(PathCheckProbe::check(vn::String(u8"  \"") + pathText(stl) + u8"\"  ", stl_only).ok);
+    EXPECT_EQ(PathCheckProbe::check(vn::String(u8"   "), stl_only).message, vn::String(u8"请输入路径"));
+
+    // 目录读是另一种提问：不吃后缀，但要求是目录。
+    EXPECT_TRUE(PathCheckProbe::check(pathText(dir), vn::appfw::UserIO::DirReadOptions{}).ok);
+    EXPECT_NE(PathCheckProbe::check(pathText(stl), vn::appfw::UserIO::DirReadOptions{}).message.find(u8"不是目录"), vn::String::npos);
+    EXPECT_NE(PathCheckProbe::check(pathText(dir / "nope"), vn::appfw::UserIO::DirReadOptions{}).message.find(u8"目录不存在"),
+              vn::String::npos);
+
+    // 多个：';' 切分、空段忽略、保序；一段坏则整条失败并指向那一段。
+    const auto line = PathCheckProbe::checkLine(pathText(stl) + u8";;" + pathText(upper) + u8";", stl_only);
+    ASSERT_TRUE(line.ok);
+    ASSERT_EQ(line.paths.size(), 2u);
+    EXPECT_EQ(line.paths[0], stl);
+    EXPECT_EQ(line.paths[1], upper);
+    EXPECT_NE(PathCheckProbe::checkLine(pathText(stl) + u8";" + pathText(dir / "missing.stl"), stl_only).message.find(u8"不存在"),
+              vn::String::npos);
+    EXPECT_EQ(PathCheckProbe::checkLine(vn::String(u8"; ;"), stl_only).message, vn::String(u8"请输入路径"));
+
+    // 提示与过滤器的拼法（两个后端共用，所以在这里钉住）。
+    EXPECT_EQ(PathCheckProbe::summary({ u8"stl", u8"*.obj" }, false), vn::String(u8"（.stl .obj）"));
+    EXPECT_EQ(PathCheckProbe::summary({}, true), vn::String(u8"（多个用 ; 分隔）"));
+    EXPECT_EQ(PathCheckProbe::prompt(u8"网格文件: ", u8"（.stl）"), vn::String(u8"网格文件（.stl）: "));
+    EXPECT_EQ(PathCheckProbe::prompt(u8"输入名称> ", u8"（.stl）"), vn::String(u8"输入名称（.stl）> "));
+    const auto patterns = PathCheckProbe::patterns(stl_only);
+    ASSERT_EQ(patterns.size(), 1u);
+    EXPECT_EQ(patterns[0], vn::String(u8"*.stl"));
+
+    std::error_code error;
+    std::filesystem::remove_all(dir, error);
+}
+
+// 文件读在控制台上：提示带上"要什么"，不合法的输入重新提示**并保留原文**（一行里几条路径时，
+// 清空输入行等于让人重打），合法的输入原样返回。
+TEST(UserIOTest, FileReadValidatesAndKeepsTheRejectedTextInTheLine)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* io = vn::obj_cast<guifw::VisualUserIO>(app->userIO());
+    ASSERT_NE(io, nullptr);
+
+    guifw::ConsolePanel panel;
+    bindConsole(app, &panel);
+    auto* input = panel.impl<QWidget>()->findChild<QLineEdit*>();
+    ASSERT_NE(input, nullptr);
+
+    const auto dir   = makeTempCaseDir("guifile");
+    const auto stl   = dir / "mesh.stl";
+    const auto notes = dir / "notes.txt";
+    touchFile(stl);
+    touchFile(notes);
+
+    const auto deadline   = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const auto pump_until = [&](const std::function<bool()>& done) {
+        while (!done()) {
+            EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+            EXPECT_LT(std::chrono::steady_clock::now(), deadline) << "等待控制台超时";
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
+    std::optional<std::filesystem::path> picked;
+    std::thread runner([&] {
+        picked = io->getFileAsync(u8"网格> ", vn::appfw::UserIO::FileReadOptions{ { u8".stl" } }).result();
+    });
+
+    // 提示里带上后缀：键盘用户不该靠悬浮文案才知道要什么。
+    pump_until([&] { return panel.impl<QWidget>()->findChild<QPlainTextEdit*>()->toPlainText().contains(u8"网格（.stl）> "); });
+
+    // 后缀不符：一行原因 + 原文留在输入行里，读仍在等。
+    panel.lineEntered.trigger(pathText(notes));
+    pump_until([&] { return input->text().contains(QStringLiteral("notes.txt")); });
+    EXPECT_FALSE(picked.has_value()) << "拒绝的输入不能让读结束";
+
+    // 合法输入：原样给出，命令读到的是同一个路径。
+    panel.lineEntered.trigger(pathText(stl));
+    runner.join();
+    ASSERT_TRUE(picked.has_value());
+    EXPECT_EQ(*picked, stl);
+
+    bindConsole(app, nullptr);
+    std::error_code error;
+    std::filesystem::remove_all(dir, error);
+}
+
+// 多个文件写在一行里：';' 分隔、顺序保持；多值读用同一个交互槽位（一整条读只有一次输入）。
+TEST(UserIOTest, MultipleFileReadTakesOneSemicolonSeparatedLine)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* io = vn::obj_cast<guifw::VisualUserIO>(app->userIO());
+    ASSERT_NE(io, nullptr);
+
+    guifw::ConsolePanel panel;
+    bindConsole(app, &panel);
+    auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
+    ASSERT_NE(output, nullptr);
+
+    const auto dir = makeTempCaseDir("guifiles");
+    const auto one = dir / "one.stl";
+    const auto two = dir / "two.stl";
+    touchFile(one);
+    touchFile(two);
+
+    const auto deadline   = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const auto pump_until = [&](const std::function<bool()>& done) {
+        while (!done()) {
+            EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+            EXPECT_LT(std::chrono::steady_clock::now(), deadline) << "等待控制台超时";
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
+    std::optional<vn::appfw::UserIO::PathList> picked;
+    std::thread runner([&] { picked = io->getFilesAsync(u8"输入> ", vn::appfw::UserIO::FileReadOptions{ { u8"stl" } }).result(); });
+
+    pump_until([&] { return output->toPlainText().contains(u8"多个用 ; 分隔"); });
+
+    panel.lineEntered.trigger(pathText(one) + u8";" + pathText(two));
+    runner.join();
+    ASSERT_TRUE(picked.has_value());
+    ASSERT_EQ(picked->size(), 2u);
+    EXPECT_EQ((*picked)[0], one);
+    EXPECT_EQ((*picked)[1], two);
+
+    bindConsole(app, nullptr);
+    std::error_code error;
+    std::filesystem::remove_all(dir, error);
+}
+
+// 输入行的选择器：读开始时装上、读结束时撤掉，且只在这段时间里存在（按钮不能活过它的提示）。
+TEST(UserIOTest, InputActionIsOfferedOnlyWhileTheReadWaits)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* io = vn::obj_cast<guifw::VisualUserIO>(app->userIO());
+    ASSERT_NE(io, nullptr);
+
+    guifw::ConsolePanel panel;
+    bindConsole(app, &panel);
+    auto* input = panel.impl<QWidget>()->findChild<QLineEdit*>();
+    ASSERT_NE(input, nullptr);
+    EXPECT_EQ(input->findChild<QToolButton*>(), nullptr) << "命令行的普通状态没有按钮";
+
+    guifw::ConsoleInputAction action;
+    action.kind    = guifw::ConsoleInputKind::File;
+    action.filter  = vn::String(u8"网格文件 (*.stl);;所有文件 (*)");
+    action.tooltip = vn::String(u8"选择文件…（.stl）");
+    panel.setInputAction(action);
+
+    auto* button = input->findChild<QToolButton*>();
+    ASSERT_NE(button, nullptr) << "请求文件时输入行里要有一个选文件的按钮";
+    EXPECT_EQ(button->toolTip(), QString::fromUtf8("选择文件…（.stl）"));
+    EXPECT_FALSE(button->icon().isNull());
+
+    // 目录读换的是图标与文案（同一个按钮位置）。
+    panel.setInputAction(guifw::ConsoleInputAction{ guifw::ConsoleInputKind::Directories, {}, vn::String(u8"选择目录…") });
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    ASSERT_NE(input->findChild<QToolButton*>(), nullptr);
+    EXPECT_EQ(input->findChild<QToolButton*>()->toolTip(), QString::fromUtf8("选择目录…"));
+
+    panel.setInputAction(guifw::ConsoleInputAction{});
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    EXPECT_EQ(input->findChild<QToolButton*>(), nullptr) << "读结束后按钮必须消失";
+
+    bindConsole(app, nullptr);
+}
+
+// 点按钮只是"更快地填那一行"：选中的路径落进输入行、**不自动提交**（回车才算数），而且多值读两次点选是
+// 追加（与手打 "a;b" 同构）。对话框在 offscreen 上是 Qt 自己的，用例用一次性定时器把它关掉。
+TEST(UserIOTest, PickingFilesFillsTheLineWithoutSubmitting)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* io = vn::obj_cast<guifw::VisualUserIO>(app->userIO());
+    ASSERT_NE(io, nullptr);
+
+    guifw::ConsolePanel panel;
+    bindConsole(app, &panel);
+    auto* input = panel.impl<QWidget>()->findChild<QLineEdit*>();
+    ASSERT_NE(input, nullptr);
+
+    const auto dir = makeTempCaseDir("guipick");
+    const auto one = dir / "one.stl";
+    const auto two = dir / "two.stl";
+    touchFile(one);
+    touchFile(two);
+
+    const auto deadline   = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    const auto pump_until = [&](const std::function<bool()>& done) {
+        while (!done()) {
+            EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+            EXPECT_LT(std::chrono::steady_clock::now(), deadline) << "等待控制台超时";
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
+    bool                               dialog_seen = false;
+    const auto                         script_dialog = [&dialog_seen](bool accept, const std::filesystem::path& chosen) {
+        QTimer::singleShot(0, [accept, chosen, &dialog_seen] {
+            auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+            if (dialog == nullptr) {
+                return;
+            }
+            dialog_seen = true;
+            if (accept) {
+                dialog->selectFile(QString::fromStdString(narrow(chosen)));
+                // accept() 在 QFileDialog 里是 protected，所以走元对象调用 —— 校验仍是对话框自己那一条。
+                QMetaObject::invokeMethod(dialog, "accept");
+            }
+            else {
+                dialog->reject();
+            }
+        });
+        // 兜底：万一对话框没按预期出现，也别让用例卡在模态循环里。
+        QTimer::singleShot(5000, [] {
+            if (auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget())) {
+                dialog->reject();
+            }
+        });
+    };
+
+    std::optional<vn::appfw::UserIO::PathList> picked;
+    std::thread runner([&] { picked = io->getFilesAsync(u8"输入> ", vn::appfw::UserIO::FileReadOptions{ { u8"stl" } }).result(); });
+
+    pump_until([&] { return input->findChild<QToolButton*>() != nullptr; });
+    auto* button = input->findChild<QToolButton*>();
+    ASSERT_NE(button, nullptr);
+
+    // 一次点选：路径落进输入行，但读还在等 —— 浏览只是填行。
+    script_dialog(/*accept=*/true, one);
+    button->click();
+    EXPECT_TRUE(dialog_seen) << "点按钮应当打开文件对话框";
+    EXPECT_EQ(input->text(), QString::fromStdString(narrow(one)));
+    EXPECT_FALSE(picked.has_value()) << "浏览不提交：按回车才算数";
+
+    // 再一次点选：多值读追加（"点两次 = 两个路径"）。
+    script_dialog(/*accept=*/true, two);
+    button->click();
+    EXPECT_EQ(input->text(), QString::fromStdString(narrow(one) + ";" + narrow(two)));
+
+    // 取消对话框：输入行与读都不动。
+    const QString before_cancel = input->text();
+    script_dialog(/*accept=*/false, {});
+    button->click();
+    EXPECT_EQ(input->text(), before_cancel);
+    EXPECT_FALSE(picked.has_value());
+
+    // 回车提交：走的是与手打完全同一条校验路径。
+    panel.lineEntered.trigger(fromQString(input->text()));
+    runner.join();
+    ASSERT_TRUE(picked.has_value());
+    ASSERT_EQ(picked->size(), 2u);
+    EXPECT_EQ((*picked)[0], one);
+    EXPECT_EQ((*picked)[1], two);
+
+    // 读结束 ⇒ 按钮撤下（撤下用 deleteLater，所以延迟销毁要自己处理）。
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    EXPECT_EQ(input->findChild<QToolButton*>(), nullptr) << "按钮不能活过它的读";
+
+    bindConsole(app, nullptr);
+    std::error_code error;
+    std::filesystem::remove_all(dir, error);
 }
 
 // 命令的输出来自它恢复时所在的线程（定时器线程、IO 线程）：从工作线程调用

@@ -6,9 +6,11 @@
 #include <filesystem>
 #include <functional>
 #include <istream>
+#include <set>
 #include <unordered_map>
 #include <vector>
 
+#include <vine/String.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/crypto/ByteSequenceFingerprint.hpp>
 #include <vine/geometry/Mesh.hpp>
@@ -118,6 +120,16 @@ class VN_MESHIO_API MeshLoader
      * @return true when the file extension is supported.
      */
     static bool isSupportedFormat(const std::filesystem::path& file_path);
+
+    /**
+     * @brief Returns the file extensions this loader can read.
+     *
+     * The single source of truth for "what can be opened": a file picker builds its filter out of this instead of keeping
+     * a second copy that drifts as soon as a format is added. Extensions are lowercase and carry the leading dot.
+     *
+     * @return The supported extension set, e.g. {".stl", ".obj", ...}.
+     */
+    static const std::set<vn::String>& supportedExtensions();
 
     /**
      * @brief Returns the load options.

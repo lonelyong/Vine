@@ -1,7 +1,9 @@
 ﻿#pragma once
 #include "appfw_global.hpp"
 
+#include <filesystem>
 #include <optional>
+#include <vector>
 
 #include <vine/Object.hpp>
 #include <vine/raw_ptr.hpp>
@@ -15,6 +17,55 @@ class CommandManager;
 
 class VN_APPFW_API UserIO : public Object {
     VN_OBJECT_META_DECL;
+
+  public:
+    /**
+     * @brief Paths a user handed over in one answer.
+     *
+     * A read that accepts several paths answers with one of these. The text is split on ';' (a character a Windows file name
+     * cannot contain) and every entry has to pass on its own, so the list is never a partial success.
+     */
+    using PathList = std::vector<std::filesystem::path>;
+
+    /**
+     * @brief What a file read accepts.
+     *
+     * The options are a requirement, not advice a caller applies afterwards: an implementation checks them itself, because
+     * only it knows how to ask again - a console repeats the prompt, a headless run reports the reason and gives up.
+     *
+     * Nested rather than free in the namespace: these are the parameter types of this class' reads and of nothing else,
+     * which is how the rest of this framework spells a class' own options (MeshLoader::Options, InputBox::Field), and it
+     * keeps a name as generic as "extensions" out of `vn::appfw`.
+     */
+    struct VN_APPFW_API FileReadOptions {
+        /// Accepted extensions, compared case-insensitively against the end of the file name: "stl", ".stl" and "*.stl"
+        /// all mean the same thing, and a multi-part one ("tar.gz") works too. Empty = no restriction.
+        ///
+        /// This is the RULE, not a caption: every implementation enforces it (a headless run has no picker at all and
+        /// still refuses a wrong suffix), so it stays a structured list instead of a display string. A visual picker
+        /// builds its Qt filter from it and captions the group itself.
+        std::vector<String> extensions;
+        /// Whether the path has to be there already. The negation is the "save as" case - `require_existing = false`
+        /// reads as "an existing file is not required", where a name like `must_exist = false` could be misread as "the
+        /// path must NOT exist".
+        bool require_existing{ true };
+        /// Path to start from: a visual implementation pre-fills its input line with it, a headless one only mentions it.
+        /// A path (like what these reads return), not pre-formatted text - it is shown, not parsed.
+        std::filesystem::path suggested_path;
+    };
+
+    /**
+     * @brief What a directory read accepts.
+     *
+     * A directory has no extension, so the extension list has no counterpart here - which is why this is a type of its own
+     * instead of a kind flag on FileReadOptions.
+     */
+    struct VN_APPFW_API DirReadOptions {
+        /// Whether the directory has to be there already; false is the "create it there" case.
+        bool require_existing{ true };
+        /// Path to start from, with the same meaning as FileReadOptions::suggested_path.
+        std::filesystem::path suggested_path;
+    };
 
   public:
     UserIO();
@@ -115,6 +166,57 @@ class VN_APPFW_API UserIO : public Object {
     virtual void cancelPendingInput();
 
     /**
+     * @brief Asynchronously requests one file from the user.
+     *
+     * @param prompt  Prompt text shown to the user; the implementation may add the accepted formats to it.
+     * @param options What to accept: extensions, existence, and the path to start from.
+     * @return A task yielding the path, or std::nullopt if cancelled, if the input did not fit the options, or if the
+     *         implementation has no way to ask (see the note below).
+     *
+     * @note Like every read, only one may wait for the user at a time, and the entry points may be called from any
+     *       thread. An implementation that cannot offer a picker or a line input gives std::nullopt and logs a warning
+     *       instead of pretending the path was read; both implementations in this framework offer it.
+     *
+     * @note Declared after every other virtual, like cancelPendingInput(): this group only ever grows at the end, so a
+     *       plugin compiled against an older header keeps the slots it already used.
+     */
+    virtual vn::async::Task<std::optional<std::filesystem::path>> getFileAsync(const String&           prompt = {},
+                                                                              const FileReadOptions& options = {});
+
+    /**
+     * @brief Asynchronously requests one or more files from the user.
+     *
+     * @param prompt  Prompt text shown to the user.
+     * @param options What to accept; applied to every entry.
+     * @return A task yielding at least one path, or std::nullopt if cancelled or if any entry was refused.
+     *
+     * @note Several paths are typed in one line, separated by ';' - see PathList for why that character.
+     */
+    virtual vn::async::Task<std::optional<PathList>> getFilesAsync(const String&           prompt = {},
+                                                                  const FileReadOptions& options = {});
+
+    /**
+     * @brief Asynchronously requests one directory from the user.
+     *
+     * @param prompt  Prompt text shown to the user.
+     * @param options What to accept: existence and the path to start from.
+     * @return A task yielding the path, or std::nullopt if cancelled or if the input did not fit the options.
+     */
+    virtual vn::async::Task<std::optional<std::filesystem::path>> getDirAsync(const String&          prompt = {},
+                                                                             const DirReadOptions& options = {});
+
+    /**
+     * @brief Asynchronously requests one or more directories from the user.
+     *
+     * @param prompt  Prompt text shown to the user.
+     * @param options What to accept; applied to every entry.
+     * @return A task yielding at least one path, or std::nullopt if cancelled or if any entry was refused.
+     *
+     * @note Several directories are typed in one line, separated by ';'.
+     */
+    virtual vn::async::Task<std::optional<PathList>> getDirsAsync(const String& prompt = {}, const DirReadOptions& options = {});
+
+    /**
      * @brief Returns the bound command manager.
      *
      * @return The command manager, or nullptr if unbound.
@@ -122,6 +224,101 @@ class VN_APPFW_API UserIO : public Object {
     raw_ptr<CommandManager> commandManager() const;
 
   protected:
+    /**
+     * @brief Outcome of checking one text as a path.
+     *
+     * @note The message is the whole interaction contract on the headless side (it is the only thing the user sees) and
+     *       the re-prompt text on the visual side, so both backends report the same words for the same refusal.
+     */
+    struct PathCheck {
+        bool                  ok{ false };  ///< True when the text is a path the options accept.
+        std::filesystem::path path;         ///< The path, valid only when ok.
+        String                message;      ///< Why it was refused; empty when ok.
+    };
+
+    /// Outcome of checking one text that may hold several paths (one per ';').
+    struct PathLineCheck {
+        bool     ok{ false };  ///< True when every entry passed and at least one was there.
+        PathList paths;        ///< The paths, valid only when ok.
+        String   message;      ///< Why it was refused; empty when ok.
+    };
+
+    /**
+     * @brief Checks one text as a single path.
+     *
+     * Leading and trailing whitespace is ignored, and so is one pair of surrounding quotes, because a path copied out of a
+     * file manager usually carries them ("C:\a b.stl"). Nothing else is rewritten: a relative path stays relative and is
+     * resolved by the caller's working directory, like every other loader in this repository.
+     *
+     * @param text    Text to check.
+     * @param options What the read accepts; extensions are ignored here.
+     * @return The path and an empty message, or a reason the user is shown.
+     */
+    static PathCheck checkPath(const String& text, const FileReadOptions& options);
+
+    /**
+     * @brief Checks one text as a single directory.
+     *
+     * @param text    Text to check.
+     * @param options What the read accepts.
+     * @return The path and an empty message, or a reason the user is shown.
+     */
+    static PathCheck checkPath(const String& text, const DirReadOptions& options);
+
+    /**
+     * @brief Checks one text as one or more paths separated by ';'.
+     *
+     * Empty entries are skipped, so a trailing or doubled ';' is harmless; the result keeps the order the user typed and
+     * is not de-duplicated. The first entry that fails ends the check - the caller is shown one reason, not all of them.
+     *
+     * @param text    Text to check.
+     * @param options What the read accepts; the extensions apply to every entry.
+     * @return The paths in order and an empty message, or a reason the user is shown.
+     */
+    static PathLineCheck checkPathLine(const String& text, const FileReadOptions& options);
+
+    /**
+     * @brief Checks one text as one or more directories separated by ';'.
+     *
+     * @param text    Text to check.
+     * @param options What the read accepts.
+     * @return The paths in order and an empty message, or a reason the user is shown.
+     */
+    static PathLineCheck checkPathLine(const String& text, const DirReadOptions& options);
+
+    /**
+     * @brief Turns the accepted extensions into Qt-style patterns.
+     *
+     * Exists so that the pattern spelling ("*.stl") is normalized in exactly one place: a visual picker hands these to its
+     * filter, and checkPath() matches with the same normalization.
+     *
+     * @param options Options whose extensions are converted.
+     * @return One pattern per extension ("stl" and "*.stl" both become "*.stl"), in the order given.
+     */
+    static std::vector<String> filterPatterns(const FileReadOptions& options);
+
+    /**
+     * @brief Summarizes what a read accepts, for the prompt text.
+     *
+     * @param extensions Accepted extensions, if any.
+     * @param multiple   Whether several paths may be given in one answer.
+     * @return Text to place in the prompt - "（.stl .obj，多个用 ; 分隔）" - or an empty string when there is nothing to
+     *         say.
+     */
+    static String requirementSummary(const std::vector<String>& extensions, bool multiple);
+
+    /**
+     * @brief Weaves a requirement summary into a prompt text.
+     *
+     * The summary goes before a trailing separator when the prompt has one ("网格文件: " ⇒ "网格文件（.stl）: "), because
+     * that is where a reader expects the qualification, and is appended otherwise.
+     *
+     * @param prompt  Prompt text as the caller wrote it.
+     * @param summary Requirement summary from requirementSummary(), possibly empty.
+     * @return The prompt to show; the input is returned unchanged when there is no summary to add.
+     */
+    static String promptWithRequirements(const String& prompt, const String& summary);
+
     /**
      * @brief Parses text as an integer that has to fit int.
      *
@@ -138,6 +335,16 @@ class VN_APPFW_API UserIO : public Object {
     static bool parseInt(const String& text, int& value);
 
   private:
+    /**
+     * @brief The one check both options types go through.
+     *
+     * @param text      Text to check.
+     * @param directory Whether a directory is wanted (a file read expects the opposite).
+     * @param options   What the read accepts; extensions are ignored for a directory.
+     * @return The path and an empty message, or a reason the user is shown.
+     */
+    static PathCheck checkPath(const String& text, bool directory, const FileReadOptions& options);
+
     CommandManager* command_manager_{ nullptr };
 };
 

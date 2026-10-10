@@ -126,6 +126,8 @@ loaders 在其上）；且 meshio 早就吃 iobase 产的 `zlibstatic`，构建�
 
 **两套 flags**：`loadModel` **不能**带 `aiProcess_PreTransformVertices`（该后处理会删掉节点图、把变换烘进顶点），也不带 `aiProcess_OptimizeMeshes`（会合并 mesh、清空节点）。所以两条入口是**两次解析、两份缓存**（键仍是 (指纹, Options)）。顶点 UV 只在 `loadModel` 侧保留（`load` 路径保持原样：不带上）。
 
+**法线（2026-10-10）**：两条入口都带 **`aiProcess_GenNormals`** —— 文件没有法线时由 assimp 补**逐面**法线，文件给了就原样保留（assimp 只对"没有法线数组"的 mesh 生成）。加它的理由是实测出来的两种"看起来有、其实没有"：①OBJ 没有 `vn`；②**很多 STL 写出器把面法线写成 0**，而 `aiProcess_FindInvalidData`（两份列表里都有，且跑在 `GenFaceNormals` **之前**）把零长法线判非法后会 `delete[]` 整条数组 —— 所以那种 STL 到我们手里是"完全没法线"，光靠渲染侧兜底就只能平面着色。代价是**顶点会被拆开**：逐面法线不能被顶点周围的多个面共享，而 `aiProcess_JoinIdenticalVertices` 跑在它之后 ⇒ 合并得少（assimp 文档原话："#aiProcess_JoinIdenticalVertices is *senseless* then"）。对 STL（本来就每面独占 3 顶点的三角汤）几乎无损失，对"几何共享但没给法线"的 OBJ 会变平面着色 + 顶点变多 —— 这是认下来的取舍：宁可平面着色，也不要一份"没有法线"的网格。
+
 **材质类型的选择**（读 assimp 通用键，不认格式名）：`$mat.metallicFactor|roughnessFactor` → `PbrMaterial`；`$mat.opacity < 1` 也→ `PbrMaterial`（**只有它装得下透明度**，代价是这种材质丢 Ks）；`$clr.specular` / `$mat.shininess` → `PhongMaterial`（MTL 本相）；只有 `$clr.diffuse` → `ColorMaterial`；源里没有材质 → 空指针。消费方按 `materialType()` 分派，别 `obj_cast` 假设具体类型。
 
 **矩阵约定（定稿前已核实，坑记下）**：assimp 的 `aiMatrix4x4` 是**列向量约定 + 平移在第 4 列**（`Translation()` 写 a4/b4/c4，`operator*=` 就是 M·N），与 `math::Matrix4x4`（`y = M * x`、平移第 4 列、`Order=ColMajor`）一致 ⇒ 16 个元素**直接对应，不转置**。
@@ -142,6 +144,10 @@ loaders 在其上）；且 meshio 早就吃 iobase 产的 `zlibstatic`，构建�
 - `brepio` 的加载后端（OCCT）将来以 `PRIVATE` 链进 `brepio` 即可，**mesh-only 消费者不受影响**。
   这正是拆模块要换来的东西。
 - `MeshLoader` 有**两条入口两套缓存**（键都是 (指纹, Options)）：`load()` → 烘平合并的单 mesh；`loadModel()` → 保留结构的 `geometry::Model`。改 `Options` 时 `operator==` 与 `OptionsHash` 必须同时改。
+- **`MeshLoader::supportedExtensions()` 是静态成员（2026-10-10）**：以前它是 `MeshLoader.cpp` 里匿名命名空间的自由函数，
+  只有 DLL 内部看得见；现在公开，因为**选择器要拿它做过滤器**（`model_viewer` 的 `open_mesh_file` 就是这么用的）——
+  "加载器真能读什么"只能有一个答案，抄一份到插件里迟早与它漂移。返回 `const std::set<vn::String>&`
+  （小写、带前导点；SDK 文本一律 `vn::String`，不对外给 `std::string`）。
 - **新增 `src/**/*.cpp` 要 `touch` 该模块的 `CMakeLists.txt`**：`vn_add_library` 的 `file(GLOB ...)` 没有 `CONFIGURE_DEPENDS`（测试目标用的是 `CONFIGURE_DEPENDS`，新增测试文件自动生效）。
 - `MeshLoader::load()` 有**按内容指纹的内存缓存**（`Crypto` + `Runtime::InMemoryCache`），
   所以这两条依赖是 **PUBLIC**（缓存类型出现在公开头里）。

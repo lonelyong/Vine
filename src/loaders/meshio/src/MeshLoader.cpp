@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cstdint>
 #include <set>
 #include <span>
@@ -39,10 +38,21 @@ using Vec3fArray          = vn::geometry::Vec3fArray;
 /** @brief AABB diagonal length above which the source unit is millimeters. */
 constexpr float kMmThreshold = 10.0f;
 
+// Both lists carry aiProcess_GenNormals, and it is worth knowing why. A file may describe no normals at all (an OBJ
+// without `vn`), or ones that are worse than none: many STL writers store a zero facet normal and expect the reader to
+// derive it - assimp's STL loader passes those through, and aiProcess_FindInvalidData (also in these lists, running
+// BEFORE aiProcess_GenNormals) rejects a zero-length normal and drops the whole array. Either way the mesh would arrive
+// without normals, and assimp fills them only for meshes that have none, so a file that does describe normals keeps them.
+// The price is vertex splitting (a per-face normal cannot be shared by the faces around a vertex), which leaves
+// aiProcess_JoinIdenticalVertices - it runs later - less to merge. That is the right trade: the alternative is a document
+// whose mesh carries no normals at all, and STL - the format this repository's file payloads use - is a triangle soup
+// whose facets are meant to be flat anyway.
+
 /** @brief Post-processing every load runs, whichever entry it came in through. */
 constexpr unsigned int kLoadFlags = aiProcess_Triangulate
     | aiProcess_JoinIdenticalVertices
     | aiProcess_FindInvalidData
+    | aiProcess_GenNormals
     | aiProcess_ImproveCacheLocality
     | aiProcess_FixInfacingNormals
     | aiProcess_PreTransformVertices
@@ -58,6 +68,7 @@ constexpr unsigned int kLoadFlags = aiProcess_Triangulate
 constexpr unsigned int kModelFlags = aiProcess_Triangulate
     | aiProcess_JoinIdenticalVertices
     | aiProcess_FindInvalidData
+    | aiProcess_GenNormals
     | aiProcess_ImproveCacheLocality
     | aiProcess_FixInfacingNormals;
 
@@ -85,20 +96,6 @@ bool drainStream(std::istream& in, std::vector<unsigned char>& out)
         }
     }
     return !in.bad();
-}
-
-/**
- * @brief Returns the set of supported mesh file extensions.
- *
- * @return The extension set.
- */
-const std::set<std::string>& supportedExtensions()
-{
-    static const std::set<std::string> extensions = {
-        ".stl", ".obj", ".gltf", ".3mf", ".3ds", ".dxf",
-        ".ifc", ".ac", ".ac3d", ".lxo", ".fbx", ".dae",
-    };
-    return extensions;
 }
 
 /**
@@ -521,6 +518,15 @@ vn::intrusive_ptr<Model> buildModel(const aiScene& scene, const MeshLoader::Opti
 
 } // namespace
 
+const std::set<String>& MeshLoader::supportedExtensions()
+{
+    static const std::set<String> extensions = {
+        u8".stl", u8".obj", u8".gltf", u8".3mf", u8".3ds", u8".dxf",
+        u8".ifc", u8".ac", u8".ac3d", u8".lxo", u8".fbx", u8".dae",
+    };
+    return extensions;
+}
+
 MeshLoader::MeshLoader() = default;
 
 MeshLoader::~MeshLoader() = default;
@@ -537,11 +543,9 @@ bool MeshLoader::isSupportedFormat(const std::filesystem::path& file_path)
         return false;
     }
 
-    std::string extension = file_path.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-    return supportedExtensions().contains(extension);
+    // Compare in the same spelling the table uses (lowercase, leading dot): the bytes come from the path as they are,
+    // and String::toLower() only folds the ASCII range, which is all an extension needs.
+    return supportedExtensions().contains(String(file_path.extension().u8string()).toLower());
 }
 
 MeshLoader::Options& MeshLoader::options() noexcept
