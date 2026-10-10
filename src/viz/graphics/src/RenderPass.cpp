@@ -223,6 +223,23 @@ void RenderPass::setProgramOverride(intrusive_ptr<ShaderProgram> program)
     bumpWiringRevision();
 }
 
+std::optional<PolygonMode> RenderPass::polygonMode() const
+{
+    return polygon_mode_;
+}
+
+void RenderPass::setPolygonMode(PolygonMode mode)
+{
+    // Deliberately NOT a wiring change: rasterisation is not part of what this pass declares about its
+    // target, inputs or camera (see the declaration), and the backend reads it per frame from the commands.
+    polygon_mode_ = mode;
+}
+
+void RenderPass::clearPolygonMode()
+{
+    polygon_mode_.reset();
+}
+
 std::uint64_t RenderPass::wiringRevision() const noexcept
 {
     return wiring_revision_;
@@ -275,19 +292,23 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
         }
         backend->setLights(light_ptrs);
     }
-    if (program_override_ == nullptr) {
+    if (program_override_ == nullptr && !polygon_mode_.has_value()) {
         if (camera_ != nullptr) {
             backend->render(*commands, camera_.get());
         }
         return;
     }
-    // Pass-level global program override: replace every command's effective
-    // (per-geometry / StateNode) program so the whole content renders with one
-    // program (see setProgramOverride). This is the one caller that needs its own
-    // list, so it is the one that makes one.
+    // Pass-level overrides: replace every command's effective (per-geometry / StateNode) program and / or
+    // rasterisation mode so the whole content renders one way (see setProgramOverride / setPolygonMode). This is
+    // the one caller that needs its own list, so it is the one that makes one.
     auto overridden = std::make_shared<std::vector<RenderCommand>>(*commands);
     for (auto& command : *overridden) {
-        command.program = program_override_;
+        if (program_override_ != nullptr) {
+            command.program = program_override_;
+        }
+        if (polygon_mode_.has_value()) {
+            command.renderState.polygonMode = *polygon_mode_;
+        }
     }
     if (camera_ != nullptr) {
         backend->render(*overridden, camera_.get());

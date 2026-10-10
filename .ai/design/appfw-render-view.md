@@ -70,10 +70,10 @@
 
 **两条"不"**：**不让控件碰管线/设置**（§5，零新增配置 API）；**不让视图偷偷装灯**（§4.2，零灯就是零灯）。
 
-**两轴已补（2026-10-11 第二轮）**：**着色模式**（`Options::mode`：Lit/Flat/Unlit/Normals —— 同一段 shader 文本 + 一个
-define，落在窗口 pass 的 program override 上 ⇒ **零重建**；Wireframe 需要后端 fill mode，缝留着）；**连续渲染**
-（`RenderControl::setContinuousRendering(on, interval_ms)` —— 按需渲染仍是默认，连续是宿主可选的一档，未 attach 或
-表面未 exposed 时滴答免费）。
+**两轴已补（2026-10-11 第二轮）**：**着色模式**（`Options::mode`：Lit/Flat/Unlit/Normals/Wireframe —— 前四种是同一段
+shader 文本 + 一个 define，第五种再加 `RenderPass::setPolygonMode(Line)`，全部落在 pass 属性上 ⇒ **零重建**）；
+**连续渲染**（`RenderControl::setContinuousRendering(on, interval_ms)` —— 按需渲染仍是默认，连续是宿主可选的一档，
+未 attach 或表面未 exposed 时滴答免费）。
 
 ## 1. 现状与问题（为什么需要这份设计）
 
@@ -357,13 +357,15 @@ Unreal 之所以"感觉免费"，是因为它**每帧重建 pass 列表**（我�
 - `options().stats` 回答"**有没有这个档**"，`isStatsVisible()` 回答"**现在看得见吗**" —— 两个问题两个答案，
   不合并成一个含糊的 bool（Unreal 的 show flag 与 `stat fps` 也是两件事）。
 - 反过来：**"用什么程序画"**：`ShadingPath`（Forward/Deferred）是**配方** —— 它换的是**有哪些 pass**，所以变更 = 一次构建；
-  但 `Mode`（Lit/Flat/Unlit/Normals）**不是配方**：四个模式都是**同一个**窗口 pass 上的 `setProgramOverride()`
-  （四者出自同一段 `builtin_forward.frag` 文本 + 一个 `define`，见 `BuiltinShaders`），pass 图完全不变 ⇒ 换模式
-  **零重建**，下一帧就是另一种画法。这条边界（"变的是 pass 图还是 pass 的属性"）是实现时才看清的：
-  第一稿把 `Mode` 归进配方，落地时发现 `RenderPass::setProgramOverride` 正是为这件事存在的（它的文档原文就举了
-  "re-render the same scene with a different shader (e.g. a wireframe or alternate-shading pass)"）。**Wireframe 还做不到**：
-  画线是光栅化状态（fill mode），没有后端暴露它 ⇒ 缝留在同一个枚举上（多一个值，不是重新设计）。
-  延迟路径**兑现不了**非 Lit 模式（颜色从 G-buffer 出来、窗口 pass 是全屏光照）⇒ 报一条 `UnsupportedRequest`
+  但 `Mode`（Lit/Flat/Unlit/Normals/Wireframe）**不是配方**：前四种是**同一个**窗口 pass 上的 `setProgramOverride()`
+  （四者出自同一段 `builtin_forward.frag` 文本 + 一个 `define`，见 `BuiltinShaders`），第五种再多一个**光栅化模式**
+  （`RenderPass::setPolygonMode(PolygonMode::Line)`），pass 图完全不变 ⇒ 换模式**零重建**，下一帧就是另一种画法。
+  这条边界（"变的是 pass 图还是 pass 的属性"）是实现时才看清的：第一稿把 `Mode` 归进配方，落地时发现
+  `RenderPass::setProgramOverride` 正是为这件事存在的（它的文档原文就举了"re-render the same scene with a different
+  shader (e.g. a wireframe or alternate-shading pass)"），而**线框**走的 `setPolygonMode` 与它是同一个形状
+  （pass 级覆盖 → 命令的渲染状态；引擎本来就有逐子树的 `StateNode::setPolygonMode`，后端早就把多边形模式当**动态状态**
+  发命令，所以线框不需要任何后端改动）。
+- 延迟路径**兑现不了**非 Lit 模式（颜色从 G-buffer 出来、窗口 pass 是全屏光照）⇒ 报一条 `UnsupportedRequest`
   （每视图一次）并保持 Lit（§4.1 已写，用例钉住）。
 - 可见性状态**归视图**，不进 `RenderControl`（控件不碰管线与设置，§5）；菜单/快捷键就是调这两个 setter。
 
@@ -510,18 +512,19 @@ control->setInputRouter([&](int x, int y) {                       // 按下时�
 | **S3** graphics | `LightRig`（`studio()`/`headlight()` + `addTo()`）+ `Scene::addLighting()/setLighting()` | ①`studio()` 三盏（1 环境 + 2 方向）、方向非零；②追加语义（装两次 = 两套）；③`setLighting()` 覆盖；④`Scene` 原有 `addLight/clearLights` 不动 |
 | **S4** 迁移 | `model_viewer`（灯 + HUD 收口）、`demo_plugin`（灯收口，管线保留） | viewer 的灯/读数用例改成断言新入口；demo 观感不变（截图/日志比对） |
 | **S5** 文档 | 三份互链 + 本文转正 | `check_ai_docs.py` 0 条 |
-| **S6+** 二轴（**缝已定**） | ①**共享设备 / 一设备多交换链**（§12.1 的目标态，命中判据才做；会动后端抽象 + 注册表）②`Options::Mode` 上的 **Wireframe**（要后端暴露 fill mode —— 缝已留：多一个枚举值） | 各轴独立，互不阻塞 |
+| **S6+** 一轴（**缝已定**） | **共享设备 / 一设备多交换链**（§12.1 的目标态，命中判据才做；会动后端抽象 + 注册表） | 独立，不阻塞 |
 
-**进度（2026-10-11，第三轮）**：**S0–S4 + 输入路由 + 着色模式 + 连续渲染已落地**；四个套件全绿
-（`test_graphics` 306、`test_gui` 249、`test_appfw` 32、`test_meshio` 34、`test_vsg` 404 通过 / 26 跳过（要设备）），
+**进度（2026-10-11，第四轮）**：**S0–S4 + 输入路由 + 着色模式（含 Wireframe）+ 连续渲染已落地**；五个套件全绿
+（`test_graphics` 308、`test_gui` 249、`test_appfw` 32、`test_meshio` 34、`test_vsg` 404 通过 / 26 跳过（要设备）），
 `check_ai_docs` / `check_include_hygiene` / `check_export_annotations` / `check_doc_symbols` / `check_diagnostic_formats`
 全 0 条；S4 的 demo 灯一项按 §6 的结论**不改**（第 0 层策略）。
 
-第二轮补的两轴落在：`SceneView::Options::Mode` + `applyModeToWindowPass()`（program override，零重建；延迟路径记诊断）、
-`BuiltinShaders::unlitForwardProgram()/normalsForwardProgram()` + `builtin_forward.frag` 的两个 define 分支、
-`RenderControl::setContinuousRendering(on, interval_ms)`（`SurfaceWindow::tickContinuous()`：无会话或表面未 exposed 时不画）、
-以及三道门禁（`GlslCompileTest.EveryBuiltinForwardProgramCompilesToSpirv` 真编 GLSL、
-`ProgramAbiTest.EveryModeOfTheForwardProgramDeclaresTheSameAbi` 绑定一致、`SceneViewViewportTest` 的零重建/诊断两条）。
+**线框（Wireframe）落地的路径**（比预估的短）：`StateNode::setPolygonMode` 让 `PolygonMode {Fill, Line, Point}` 早已存在，
+后端也早已把多边形模式当 **EDS3 动态状态**（`VK_DYNAMIC_STATE_POLYGON_MODE_EXT` + `vkCmdSetPolygonModeEXT`，且
+`fillModeNonSolid` 本来就请求了）⇒ 只需把"pass 级覆盖"这一半补上：`PolygonMode.hpp`（类型从 `StateNode.hpp` 抽出来，
+两个作用域共用）、`RenderPass::setPolygonMode()/clearPolygonMode()/polygonMode()`（与 `setProgramOverride` 同形状，
+应用在 `RenderPass::execute()` 里那次"需要自己的命令表"的拷贝上），**零后端改动**。`Mode::Wireframe` = 无光照程序 +
+`PolygonMode::Line`。
 
 实现落在：`SceneView`（`Options`/`setOptions`/`options`/`pipeline`/`setViewport`/`viewport`/`setStatsVisible`/
 `setGizmoVisible`/`isStatsVisible`/`isGizmoVisible`/`onSurfaceResized(w,h,ratio)`/三参数 `addSurfaceLayout`）、

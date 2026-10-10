@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <optional>
 #include <vector>
 
 #include <vine/intrusive_ptr.hpp>
@@ -11,6 +12,7 @@
 
 #include "DepthMode.hpp"
 #include "ImageRef.hpp"
+#include "PolygonMode.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -410,6 +412,29 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     void setProgramOverride(intrusive_ptr<ShaderProgram> program);
 
+    /** @brief Gets the pass-level polygon-mode override (`nullopt` when unset). */
+    std::optional<PolygonMode> polygonMode() const;
+
+    /** @brief Draws everything this pass renders as filled, outlined or point primitives.
+     *
+     * The RASTERISATION counterpart of setProgramOverride: the same commands, the same programs and the same
+     * lights, with the triangles rasterised the other way (a "wireframe view" over content that asked for
+     * surfaces). It overrides what the content itself declared (a StateNode's own polygon mode, a geometry's
+     * authored state), which is what a view that says "show me the edges" means.
+     *
+     * Unset is NOT the same as Fill: unset leaves every command's own effective polygon mode alone, so a
+     * subtree that asked for Line stays outlined. That is what makes "back to shaded" mean "stop overriding"
+     * rather than "force everything to fill".
+     *
+     * It is rasterisation state, not wiring: a change does NOT bump the wiring revision (nothing about what
+     * this pass declares has changed), and the backend picks it up per frame through the commands' state.
+     *
+     * @param mode Rasterisation mode applied to all content of this pass.
+     */
+    void setPolygonMode(PolygonMode mode);
+
+    /** @brief Removes the polygon-mode override, leaving each command's own state in effect. */
+    void clearPolygonMode();
     /** @brief Executes this render pass.
      *
      * @param scene   Scene containing drawables.
@@ -450,6 +475,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     std::vector<intrusive_ptr<ImageRef>> input_images_;    // fine input declarations (design §14)
     std::vector<intrusive_ptr<RenderTarget>> input_targets_;   // coarse input declarations (design §14)
     ShaderProgramPtr program_override_;   // null = per-geometry programs
+    std::optional<PolygonMode> polygon_mode_;  // unset = each command's own effective mode
     intrusive_ptr<RenderTarget> render_target_;
     intrusive_ptr<Camera> camera_;
     Color clear_color_{ 51, 51, 51, 255 };

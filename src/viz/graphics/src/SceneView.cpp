@@ -134,12 +134,31 @@ void SceneView::applyModeToWindowPass()
     mode_unavailable_reported_ = false;
 
     // Every mode is the same program text with one define (BuiltinShaders) applied to the whole pass, and Lit is
-    // the per-geometry program the content came with - which is exactly what a null override means.
+    // the per-geometry program the content came with - which is exactly what a null override means. Wireframe is
+    // the same idea one layer down: the pass RASTERISES the triangles as their edges (the same unlit colour, so
+    // the structure reads instead of the shading), and clearing that override is how every other mode goes back
+    // to surfaces. Both are pass properties: nothing here rebuilds anything.
     switch (options_.mode) {
-        case Options::Mode::Lit: window->setProgramOverride(nullptr); break;
-        case Options::Mode::Flat: window->setProgramOverride(vn::graphics::flatForwardProgram()); break;
-        case Options::Mode::Unlit: window->setProgramOverride(vn::graphics::unlitForwardProgram()); break;
-        case Options::Mode::Normals: window->setProgramOverride(vn::graphics::normalsForwardProgram()); break;
+        case Options::Mode::Lit:
+            window->setProgramOverride(nullptr);
+            window->clearPolygonMode();
+            break;
+        case Options::Mode::Flat:
+            window->setProgramOverride(vn::graphics::flatForwardProgram());
+            window->clearPolygonMode();
+            break;
+        case Options::Mode::Unlit:
+            window->setProgramOverride(vn::graphics::unlitForwardProgram());
+            window->clearPolygonMode();
+            break;
+        case Options::Mode::Normals:
+            window->setProgramOverride(vn::graphics::normalsForwardProgram());
+            window->clearPolygonMode();
+            break;
+        case Options::Mode::Wireframe:
+            window->setProgramOverride(vn::graphics::unlitForwardProgram());
+            window->setPolygonMode(PolygonMode::Line);
+            break;
     }
 }
 

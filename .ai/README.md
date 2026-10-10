@@ -52,7 +52,7 @@
 - `appfw-startup-splash.md` —— 启动框与启动进度（`BootSplash`/`StartupProgress`、显式 `finishStartup()`）。
 - `appfw-startup-next.md` —— 启动流程下一步（启动事件 / 主窗后显示 / 渲染先就绪；待办）。
 - `appfw-render-surface.md` —— 渲染表面生命周期（宿主驱动 attach 的状态机、跟句柄重建、平台回退）。
-- `appfw-render-view.md` —— 渲染视图的最终设计 v2（**已落地 S0–S4 + 输入路由 + 着色模式 + 连续渲染**（2026-10-11）：四层 API 与四条缝、`SceneView::Options` 配方 vs `setViewport` 几何 vs `setStatsVisible`/`Options::mode` 开关与模式、`LightRig`、"构造只组装"的初始化时机、多视图/多窗口立场与所有权分析；余下两轴（共享设备、Wireframe）仍为定缝）。
+- `appfw-render-view.md` —— 渲染视图的最终设计 v2（**已落地 S0–S4 + 输入路由 + 着色模式（含线框）+ 连续渲染**（2026-10-11）：四层 API 与四条缝、`SceneView::Options` 配方 vs `setViewport` 几何 vs `setStatsVisible`/`Options::mode` 开关与模式、`LightRig`、"构造只组装"的初始化时机、多视图/多窗口立场与所有权分析；余下一轴（共享设备）仍为定缝）。
 - `appfw-command-manager.md` —— CommandManager 设计。
 - `appfw-eventbus.md` —— EventBus 设计。
 - `appfw-plugin-system.md` —— 插件系统设计（含禁用与反初始化）。

@@ -2024,6 +2024,8 @@ class MockBackend : public RenderBackend {
     int last_viewport[4] = { 0, 0, 0, 0 };
     // Programs of the commands last passed to render() (per command).
     std::vector<const ShaderProgram*> last_programs;
+    // Rasterisation mode of the commands last passed to render() (per command).
+    std::vector<PolygonMode> last_polygon_modes;
     int light_sets = 0;
     std::size_t last_light_count = 0;
     const Light* last_light = nullptr;
@@ -2085,8 +2087,11 @@ class MockBackend : public RenderBackend {
         render_cameras.push_back(camera);
         last_programs.clear();
         last_programs.reserve(commands.size());
+        last_polygon_modes.clear();
+        last_polygon_modes.reserve(commands.size());
         for (const auto& command : commands) {
             last_programs.push_back(command.program.get());
+            last_polygon_modes.push_back(command.renderState.polygonMode);
         }
     }
     void setViewport(int x, int y, int width, int height) override
@@ -2757,13 +2762,91 @@ TEST(SceneViewViewportTest, TurningOnAnOverlayThatWasNeverBuiltCostsOneBuild)
     EXPECT_EQ(engine->passCount(), 2u);
     EXPECT_TRUE(view->isStatsVisible());
 
-    // From here on it is a flag again: never another build.
-    Pipeline* const pipeline = view->pipeline();
+    // From here on it is a flag again: never another build. The old handle is HELD while the claim is checked, so
+    // "the same pipeline" cannot be a recycled address (a dropped pipeline frees its memory, and the next build
+    // may land on it - which is exactly how a weak identity assertion passes for the wrong reason).
+    auto pipeline = intrusive_ptr<Pipeline>(view->pipeline());
     ASSERT_NE(pipeline, nullptr);
     view->setStatsVisible(false);
     view->setStatsVisible(true);
-    EXPECT_EQ(view->pipeline(), pipeline);
+    EXPECT_EQ(view->pipeline(), pipeline.get());
     EXPECT_EQ(engine->passCount(), 2u);
+}
+
+TEST(SceneViewViewportTest, ThePassLevelPolygonModeOverridesTheContentAndCanBeClearedBack)
+{
+    // A pass can say "draw everything as edges" (RenderPass::setPolygonMode) - what a view's wireframe mode is.
+    // The two things worth pinning: it really reaches the commands the backend sees, and CLEARING it puts the
+    // content's own state back in charge (unset is not "force fill").
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+
+    // Content that asked for outlines itself (a StateNode subtree).
+    auto root = intrusive_ptr<StateNode>(new StateNode());
+    root->setPolygonMode(PolygonMode::Line);
+    root->addChild(makeTriangleNode(Vec3d(0.0, 0.0, -2.0), nullptr, u8"geo"));
+    view->scene()->setRoot(root);
+
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    backend->ok   = true;
+    engine->setBackend(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    view->ensureWindowPass();
+    RenderPass* const window = view->pipeline()->windowPass();
+    ASSERT_NE(window, nullptr);
+
+    // No override: the content's own Line reaches the backend (and the default is exactly that).
+    engine->frame();
+    ASSERT_EQ(backend->last_polygon_modes.size(), 1u);
+    EXPECT_EQ(backend->last_polygon_modes[0], PolygonMode::Line);
+    EXPECT_FALSE(window->polygonMode().has_value());
+
+    // Override to Fill: the pass wins over the content ("show me surfaces"), no rebuild involved.
+    window->setPolygonMode(PolygonMode::Fill);
+    ASSERT_EQ(window->polygonMode(), PolygonMode::Fill);
+    engine->frame();
+    ASSERT_EQ(backend->last_polygon_modes.size(), 1u);
+    EXPECT_EQ(backend->last_polygon_modes[0], PolygonMode::Fill);
+
+    // Cleared: back to the content's own Line - not to a forced Fill.
+    window->clearPolygonMode();
+    EXPECT_FALSE(window->polygonMode().has_value());
+    engine->frame();
+    ASSERT_EQ(backend->last_polygon_modes.size(), 1u);
+    EXPECT_EQ(backend->last_polygon_modes[0], PolygonMode::Line);
+}
+
+TEST(SceneViewViewportTest, WireframeIsAnEdgePassWithTheUnlitColourAndNoRebuild)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->ensureWindowPass();
+    ASSERT_NE(view->pipeline(), nullptr);
+
+    // Held for the length of the test: "the same pipeline" then means the same OBJECT, not the same address.
+    auto pipeline = intrusive_ptr<Pipeline>(view->pipeline());
+    RenderPass* const window = pipeline->windowPass();
+    ASSERT_NE(window, nullptr);
+    const std::size_t pass_count = engine->passCount();
+    ASSERT_FALSE(window->polygonMode().has_value());
+
+    view->setOptions({ .mode = SceneView::Options::Mode::Wireframe });
+    EXPECT_EQ(view->pipeline(), pipeline.get()) << "换到线框不该重建管线";
+    EXPECT_EQ(engine->passCount(), pass_count);
+    ASSERT_TRUE(window->polygonMode().has_value());
+    EXPECT_EQ(*window->polygonMode(), PolygonMode::Line);
+    ASSERT_NE(window->programOverride(), nullptr);
+    EXPECT_NE(window->programOverride()->name().find(u8"builtin_forward_unlit"), vn::String::npos)
+        << "线框用无光照的表面色（这就是 wireframe 的惯例：看结构，不看明暗）";
+
+    // Back to Lit: BOTH overrides go away (and again with no rebuild).
+    view->setOptions({ .mode = SceneView::Options::Mode::Lit });
+    EXPECT_EQ(view->pipeline(), pipeline.get());
+    EXPECT_FALSE(window->polygonMode().has_value());
+    EXPECT_EQ(window->programOverride(), nullptr);
 }
 
 TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
@@ -2774,7 +2857,9 @@ TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
     view->ensureWindowPass();
     ASSERT_NE(view->pipeline(), nullptr);
 
-    Pipeline* const pipeline = view->pipeline();
+    // Held while the "no rebuild" claims are checked: identity here means the same OBJECT, so the claim cannot
+    // pass on a recycled address.
+    auto pipeline = intrusive_ptr<Pipeline>(view->pipeline());
     RenderPass* const window = pipeline->windowPass();
     ASSERT_NE(window, nullptr);
     const std::size_t pass_count = engine->passCount();
@@ -2789,7 +2874,7 @@ TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
                              SceneView::Options::Mode::Normals, SceneView::Options::Mode::Lit }) {
         view->setOptions({ .mode = mode });
         EXPECT_EQ(view->options().mode, mode);
-        EXPECT_EQ(view->pipeline(), pipeline) << "换着色模式不该重建管线";
+        EXPECT_EQ(view->pipeline(), pipeline.get()) << "换着色模式不该重建管线";
         EXPECT_EQ(engine->passCount(), pass_count) << "换着色模式不该动 pass 表";
         const bool lit = mode == SceneView::Options::Mode::Lit;
         EXPECT_EQ(window->programOverride() == nullptr, lit) << "Lit 用内容自己的程序，其余三种是覆盖";
@@ -2800,10 +2885,12 @@ TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
     ASSERT_NE(window->programOverride(), nullptr);
     EXPECT_NE(window->programOverride()->name().find(u8"builtin_forward"), vn::String::npos);
 
-    // Changing a STRUCTURAL field is what still rebuilds (so the two costs stay separated).
+    // Changing a STRUCTURAL field is what still rebuilds (so the two costs stay separated). The old handle is
+    // released first: while it is held, a rebuilt pipeline's predecessor would stay registered (its destructor is
+    // what unregisters the passes), and the pass count below would be measuring the wrong thing.
+    pipeline = nullptr;
     view->setOptions({ .mode = SceneView::Options::Mode::Unlit, .stats = true });
-    EXPECT_NE(view->pipeline(), pipeline) << "结构变了才重建";
-    EXPECT_EQ(engine->passCount(), pass_count + 1);
+    EXPECT_EQ(engine->passCount(), pass_count + 1) << "结构变了才重建（读数档多出一条 pass）";
 }
 
 TEST(SceneViewViewportTest, AShadingModeOnTheDeferredPathIsReportedInsteadOfSilentlyIgnored)

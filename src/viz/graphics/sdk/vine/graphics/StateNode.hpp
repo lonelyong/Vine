@@ -7,6 +7,7 @@
 // Included rather than forward-declared: this class HOLDS an intrusive_ptr<Material>, so every translation
 // unit that destroys a StateNode instantiates the reference-count hooks and needs the complete type.
 #include "Material.hpp"
+#include "PolygonMode.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -49,14 +50,10 @@ enum class CullMode
 
 /**
  * @brief Polygon rasterisation mode for a StateNode subtree.
+ *
+ * The type lives in its own header (see PolygonMode.hpp) because a PASS can declare the same state for
+ * everything it draws (RenderPass::setPolygonMode) - the two are the same idea at two scopes.
  */
-enum class PolygonMode
-{
-    Fill,  ///< Filled polygons (the default).
-    Line,  ///< Wireframe outlines.
-    Point, ///< Points at the polygon vertices.
-};
-
 /**
  * @brief Primitive topology of a drawable's vertex stream.
  *

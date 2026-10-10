@@ -82,24 +82,22 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
         /** @brief How the opaque content is shaded (the one structural choice). */
         ShadingPath path{ ShadingPath::Forward };
 
-        /** @brief What the surface colour MEANS: lit, faceted, unlit, or a normal readout.
+        /** @brief What the surface colour MEANS: lit, faceted, unlit, normals, or edges.
          *
          * Every mode is the SAME built-in program text with one define (see BuiltinShaders), applied as the
-         * window pass' program override - so a mode change is a pass property, NOT a pipeline rebuild (see
-         * setOptions). Only the Forward path can honour a mode other than Lit: the Deferred path's colours come
-         * out of the G-buffer and its window pass is a fullscreen lighting program, so a non-Lit mode there is
-         * reported on the engine's diagnostic route and the picture stays lit.
-         *
-         * Wireframe is deliberately NOT a mode: drawing lines instead of triangles is a RASTERISER state (a fill
-         * mode), not a fragment stage, and no backend exposes one yet. When one does, the seam is here - it is
-         * one more value, not a redesign.
+         * window pass' program override, and Wireframe adds the pass' rasterisation mode on top - so a mode
+         * change is a pass property, NOT a pipeline rebuild (see setOptions). Only the Forward path can honour a
+         * mode other than Lit: the Deferred path's colours come out of the G-buffer and its window pass is a
+         * fullscreen lighting program, so a non-Lit mode there is reported on the engine's diagnostic route and
+         * the picture stays lit.
          */
         enum class Mode
         {
-            Lit,     ///< The full shading: ambient + directional lights + specular.
-            Flat,    ///< The same lighting with the per-FACE normal (faceted surfaces, no vertex normals read).
-            Unlit,   ///< The surface colour alone (material / map / vertex colour), no light term.
-            Normals, ///< View-space normals as colour: which way each surface faces.
+            Lit,       ///< The full shading: ambient + directional lights + specular.
+            Flat,      ///< The same lighting with the per-FACE normal (faceted surfaces, no vertex normals read).
+            Unlit,     ///< The surface colour alone (material / map / vertex colour), no light term.
+            Normals,   ///< View-space normals as colour: which way each surface faces.
+            Wireframe, ///< Edges only (RenderPass::setPolygonMode), in the surface's own colour (unlit lines).
         };
 
         /** @brief The shading mode (see Mode; default: the full shading). */
