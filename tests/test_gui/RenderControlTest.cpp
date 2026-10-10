@@ -336,6 +336,59 @@ TEST(RenderControlTest, ACapturedViewSurvivesTheHostLettingGoOfIt)
         << "捕获期间控件必须替宿主握着这个视图（否则拖拽会作用在已释放的视图上）";
 }
 
+// 两个按钮各拖一个视图：松掉其中一个不能把另一个的拖拽也结束 —— 否则那个视图收不到自己的 release，
+// 操纵器会卡在"正在拖"，之后**纯悬停**也会继续转相机（而没有任何键按下）。
+TEST(RenderControlTest, ReleasingOneButtonDoesNotEndTheOtherButtonsDrag)
+{
+    HostedControl host;
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+    host.resizeWindow(640, 480);
+
+    auto* control = host.control();
+    ASSERT_TRUE(pumpUntil([&] { return control->width() > 0 && control->height() > 0; }, 3000));
+
+    auto own   = vn::intrusive_ptr<vn::graphics::SceneView>(control->view());
+    auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
+    right->setEngine(control->engine());
+    right->ensureWindowPass();
+    right->setViewport({ 0.5, 0.0, 0.5, 1.0 });
+    right->onSurfaceResized(control->width(), control->height(), control->devicePixelRatio());
+
+    control->setInputRouter([&](int x, int) { return x < control->width() / 2 ? own.get() : right.get(); });
+
+    QWindow* const surface = host.surface();
+    ASSERT_NE(surface, nullptr);
+    const auto send = [&](QEvent::Type type, int x, int y, Qt::MouseButton button, Qt::MouseButtons buttons) {
+        QMouseEvent event(type, QPointF(x, y), surface->mapToGlobal(QPoint(x, y)), button, buttons, Qt::NoModifier);
+        QApplication::sendEvent(surface, &event);
+    };
+    const auto moved = [](const vn::math::Vec3d& a, const vn::math::Vec3d& b) { return (a - b).length() > 1.0e-9; };
+
+    const int half = control->width() / 2;
+
+    // 左键在**左半**按下（拖控件自己那个视图）⇒ 左边的相机跟着动。
+    send(QEvent::MouseButtonPress, half / 2, 120, Qt::LeftButton, Qt::LeftButton);
+    const vn::math::Vec3d own_start = own->camera()->eye();
+    send(QEvent::MouseMove, half / 2 + 30, 140, Qt::NoButton, Qt::LeftButton);
+    ASSERT_TRUE(moved(own->camera()->eye(), own_start)) << "左半按下并拖动 ⇒ 左边那个视图接管这次拖拽";
+
+    // 右键在**右半**按下（第二次拖拽：平移右边那个视图），再松开右键。
+    const vn::math::Vec3d right_before = right->camera()->eye();
+    send(QEvent::MouseButtonPress, half + half / 2, 120, Qt::RightButton, Qt::LeftButton | Qt::RightButton);
+    send(QEvent::MouseMove, half + half / 2 + 30, 140, Qt::NoButton, Qt::LeftButton | Qt::RightButton);
+    send(QEvent::MouseButtonRelease, half + half / 2 + 30, 140, Qt::RightButton, Qt::LeftButton);
+    EXPECT_TRUE(moved(right->camera()->eye(), right_before)) << "右键的拖拽该动右边那个视图（不是左边那个）";
+
+    // 左键在**右半**松开（指针漂到别处了）：它必须还给自己那次拖拽的视图，而不是按位置送给右边那个。
+    send(QEvent::MouseButtonRelease, half + 10, 140, Qt::LeftButton, Qt::NoButton);
+
+    // 两次拖拽都结束了 ⇒ 之后没有任何键按下的悬停不许再动相机（左边那个如果没收到的 release，就会继续转）。
+    const vn::math::Vec3d settled = own->camera()->eye();
+    send(QEvent::MouseMove, half / 2 + 60, 160, Qt::NoButton, Qt::NoButton);
+    EXPECT_FALSE(moved(own->camera()->eye(), settled)) << "松手之后纯悬停不该再转相机";
+}
+
 // 按需渲染是默认（每帧都由"有变化"触发），连续渲染是另一档：开着一滴答一帧，关掉就回到按需。
 // 两件事同时被钉住：开着真的会自己出帧（不需要任何输入），关掉之后**一点都不再出**（不是"变慢"）。
 TEST(RenderControlTest, ContinuousRenderingDrivesFramesWithoutInput)

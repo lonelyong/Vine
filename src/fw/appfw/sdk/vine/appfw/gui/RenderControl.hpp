@@ -164,7 +164,10 @@ class VN_APPFW_API RenderControl : public Control {
      * - **a pointer PRESS routes, and the chosen view is CAPTURED until the button is released.** A drag that
      *   leaves that view's rectangle keeps steering it ("hold and drag" cannot be interrupted by a boundary), and
      *   the control holds a reference to the captured view for the duration, so a host dropping its own reference
-     *   mid-drag cannot leave the control steering a freed view.
+     *   mid-drag cannot leave the control steering a freed view. The capture is PER BUTTON: two buttons can drag
+     *   two views at once (rotate one pane with the left while the right pans another), and releasing one of them
+     *   does not end the other's drag - a view that never saw its release would keep steering its camera on hover.
+     *   The release is delivered to the view that STARTED that drag, wherever the pointer is by then.
      * - **hover motion, the wheel and the keyboard** do not capture: they route per event (the wheel), or go to the
      *   captured view when a drag is in flight (motion), or to the captured view, else to the control's own view
      *   (keys - there is no position to route by).

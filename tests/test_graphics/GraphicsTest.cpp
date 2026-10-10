@@ -2747,6 +2747,59 @@ TEST(SceneViewViewportTest, OverlayVisibilityIsASwitchThatNeverRebuilds)
     EXPECT_FALSE(view->isStatsVisible());
 }
 
+// 关掉的档不会因为一次重建又自己亮起来：重建是从**配方**建的（新 pass 天生 enabled），所以"使用者最后一次
+// 说的可见性"要跟着重建重新落上去（见 applyOverlayIntent）。
+TEST(SceneViewViewportTest, AHiddenOverlayStaysHiddenAcrossARebuild)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->setOptions({ .stats = true });
+    view->ensureWindowPass();
+    ASSERT_NE(view->pipeline(), nullptr);
+    ASSERT_TRUE(view->isStatsVisible());
+
+    view->setStatsVisible(false);
+    ASSERT_FALSE(view->isStatsVisible());
+
+    // 1) 补建另一个档（配方里没有 gizmo ⇒ 这一次会重建管线）：关掉的读数不许跟着回来。
+    view->setGizmoVisible(true);
+    EXPECT_TRUE(view->isGizmoVisible());
+    EXPECT_FALSE(view->isStatsVisible()) << "重建不该把使用者关掉的档又打开";
+    ASSERT_NE(view->pipeline(), nullptr);
+    ASSERT_NE(view->pipeline()->fpsOverlay(), nullptr);
+    EXPECT_FALSE(view->pipeline()->fpsOverlay()->isEnabled());
+
+    // 2) 换路径（又一次结构变化）：同样不许回来。
+    view->setOptions({ .path = ShadingPath::Deferred, .gizmo = true, .stats = true });
+    EXPECT_FALSE(view->isStatsVisible()) << "换路径重建之后仍然是关着的";
+    EXPECT_TRUE(view->isGizmoVisible());
+
+    // 3) 说的最后一句才算数：这里说"显示"，它才是显示的。
+    view->setStatsVisible(true);
+    EXPECT_TRUE(view->isStatsVisible());
+}
+
+// 补出自己的 show/hide 之后，档从配方里去掉再回来：可见性是**使用者最后说的那一句**，不是"新 pass 天生可见"。
+TEST(SceneViewViewportTest, AnOverlayRemovedFromTheRecipeAndAddedBackKeepsTheRequestedVisibility)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->setOptions({ .stats = true });
+    view->ensureWindowPass();
+    ASSERT_NE(view->pipeline(), nullptr);
+
+    view->setStatsVisible(false);
+    view->setOptions({ .stats = false });  // 从配方里去掉：pass 消失
+    EXPECT_FALSE(view->isStatsVisible());
+    view->setOptions({ .stats = true });  // 再要回来：新 pass 该按"使用者说过关着"出现
+    EXPECT_FALSE(view->isStatsVisible());
+
+    view->setStatsVisible(true);
+    EXPECT_TRUE(view->isStatsVisible());
+}
+
 TEST(SceneViewViewportTest, TurningOnAnOverlayThatWasNeverBuiltCostsOneBuild)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());

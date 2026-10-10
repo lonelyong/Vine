@@ -39,6 +39,10 @@ namespace
 /// Shorthand for the lifecycle state this implementation works with.
 using State = SurfaceWindow::SurfaceState;
 
+/// One entry (and one bit) per mouse button the window reports: a drag belongs to the button that started it, so
+/// the bookkeeping is per button rather than one "a button is held" flag (see SurfaceWindow::handleMouse).
+constexpr std::size_t kMouseButtonCount = static_cast<std::size_t>(vn::window::MouseButton::XButton2) + 1u;
+
 /** @brief Names a surface state for the log. */
 const char* stateName(State state)
 {
@@ -216,8 +220,6 @@ struct SurfaceWindow::Impl {
     bool needs_visible_surface = false;
     /// Whether the "waiting for a usable surface" line was already said.
     bool deferral_logged = false;
-    /// Whether a mouse button is held (drives the drag refresh).
-    bool mouse_down = false;
     /// Right-press tracking: a release within 6 px is a click (context menu), a drag is a pan.
     bool right_press_active = false;
     double right_press_x = 0.0;
@@ -234,14 +236,58 @@ struct SurfaceWindow::Impl {
     /// Device pixel ratio that went with them: a scale-factor change is a surface change too.
     double last_ratio = 0.0;
     /// Which view owns which point of the surface (null: everything belongs to this surface's own view).
-    std::function<vn::graphics::SceneView*(int x, int y)> input_router;    /// The view a pointer press selected, held until the button comes up (see setInputRouter).
-    vn::intrusive_ptr<vn::graphics::SceneView> captured_view;
+    std::function<vn::graphics::SceneView*(int x, int y)> input_router;
+    /// The view each HELD button's drag belongs to, by MouseButton index - one entry per button, so a second
+    /// button pressed elsewhere starts its own drag instead of taking the first one's, and releasing it cannot end
+    /// the other drag (see setInputRouter).
+    vn::intrusive_ptr<vn::graphics::SceneView> captured_views[kMouseButtonCount];
+    /// Buttons currently held on this surface, one bit per button (see bitFor): "a button is down" is what makes a
+    /// pointer move repaint, and what a key event belongs to (a modifier pressed during a drag is that drag's).
+    unsigned held_buttons = 0;
+    /// The button whose press started the most recent drag: where a MOVE goes while it is still held (an event
+    /// that carries no button of its own).
+    vn::window::MouseButton last_press = vn::window::MouseButton::None;
     /// One line per session about a router that names a view of another engine (see routedView()).
     bool input_router_misuse_reported = false;
     /// The timer that drives frames when continuous rendering is on (created on first use, owned by this window).
     QTimer* continuous = nullptr;
     /// For the lifecycle log lines (construction -> attach -> first frame).
     std::chrono::steady_clock::time_point created_at{};
+
+    /// The bit a button owns in held_buttons: None carries no button, so it owns none.
+    static unsigned bitFor(vn::window::MouseButton button)
+    {
+        const auto index = static_cast<unsigned>(button);
+        return index == 0u ? 0u : 1u << (index - 1u);
+    }
+
+    /// The view one button's drag was captured from: null when that button is not dragging a view (or nothing
+    /// claimed the point under its press).
+    vn::graphics::SceneView* captureFor(vn::window::MouseButton button) const
+    {
+        const auto index = static_cast<std::size_t>(button);
+        if (index == 0u || index >= kMouseButtonCount || (held_buttons & bitFor(button)) == 0u) {
+            return nullptr;
+        }
+        return captured_views[index].get();
+    }
+
+    /// The view the drag in flight belongs to: where an event that carries no button of its own - a pointer move,
+    /// a key - goes. The most recent press' capture when that button is still held, else whichever drag is still
+    /// in flight, else nothing (the caller then routes by position).
+    vn::graphics::SceneView* dragTarget() const
+    {
+        if (vn::graphics::SceneView* const recent = captureFor(last_press); recent != nullptr) {
+            return recent;
+        }
+        for (std::size_t index = 1u; index < kMouseButtonCount; ++index) {
+            const auto button = static_cast<vn::window::MouseButton>(index);
+            if (vn::graphics::SceneView* const captured = captureFor(button); captured != nullptr) {
+                return captured;
+            }
+        }
+        return nullptr;
+    }
 };
 
 SurfaceWindow::SurfaceWindow(QWidget* host)
@@ -369,9 +415,13 @@ void SurfaceWindow::useDefaultBackend()
 void SurfaceWindow::setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router)
 {
     d->input_router = std::move(router);
-    // The capture belongs to the router that made it: a drag in flight under the old layout must not keep steering
-    // a view the new router may not even know about.
-    d->captured_view = nullptr;
+    // The captures belong to the router that made them: a drag in flight under the old layout must not keep
+    // steering a view the new router may not even know about. The buttons stay HELD (the platform still has them
+    // down, so a move keeps repainting and the release still arrives) - what a press captures from here on is the
+    // new router's answer.
+    for (auto& captured : d->captured_views) {
+        captured = nullptr;
+    }
 }
 
 void SurfaceWindow::setContinuousRendering(bool on, int interval_ms)
@@ -485,24 +535,43 @@ void SurfaceWindow::handleMouse(const vn::window::MouseEvent& event)
     const bool is_press   = event.pressed && event.button != vn::window::MouseButton::None;
     const bool is_release = !event.pressed && event.button != vn::window::MouseButton::None;
 
-    // A PRESS decides who gets this drag, and holds it until the button comes up (see setInputRouter): a drag that
-    // leaves the chosen view's rectangle keeps steering it, and the reference keeps that view alive while it is
-    // being steered even if the host lets go of its own.
-    if (is_press && d->input_router != nullptr) {
-        d->captured_view = vn::intrusive_ptr<vn::graphics::SceneView>(routedView(event.x, event.y), true);
+    // A PRESS decides who gets THIS button's drag, and holds it until that button comes up (see setInputRouter): a
+    // drag that leaves the chosen view's rectangle keeps steering it, and the held reference keeps that view alive
+    // while it is being steered even if the host lets go of its own. Per button, because two buttons can drag two
+    // views at once (rotate one pane with the left while the right pans another) - and because one button coming up
+    // must NOT end the other's drag: that view would never see its release, so its manipulator would stay
+    // mid-drag and keep steering the camera on pure hover afterwards.
+    if (is_press) {
+        const auto index                      = static_cast<std::size_t>(event.button);
+        d->held_buttons |= Impl::bitFor(event.button);
+        d->last_press = event.button;
+        d->captured_views[index] =
+            d->input_router != nullptr ? vn::intrusive_ptr<vn::graphics::SceneView>(routedView(event.x, event.y), true)
+                                       : vn::intrusive_ptr<vn::graphics::SceneView>();
     }
 
-    vn::graphics::SceneView* target = d->captured_view != nullptr ? d->captured_view.get() : routedView(event.x, event.y);
+    // Where this event goes: the drag belonging to the button it carries (so a release lands on the view that
+    // STARTED that drag, wherever the pointer has wandered), else the drag in flight, else the point under the
+    // pointer.
+    vn::graphics::SceneView* target = event.button != vn::window::MouseButton::None ? d->captureFor(event.button) : nullptr;
+    if (target == nullptr) {
+        target = d->dragTarget();
+    }
+    if (target == nullptr) {
+        target = routedView(event.x, event.y);
+    }
+
     // The view is render-on-demand: without a frame here, orbit/pan/zoom would move the camera and show nothing.
     // A pure hover (no button held) only refreshes while a drag is in flight.
     pushToView(target, event);
-    if (event.button != vn::window::MouseButton::None) {
-        d->mouse_down = event.pressed;
+    if (is_release) {
+        d->captured_views[static_cast<std::size_t>(event.button)] = nullptr;  // this drag is over: the next press routes again
+        d->held_buttons &= ~Impl::bitFor(event.button);
+        if (d->held_buttons == 0u) {
+            d->last_press = vn::window::MouseButton::None;
+        }
     }
-    if (is_release && !d->mouse_down) {
-        d->captured_view = nullptr;  // the drag is over: the next press routes again
-    }
-    if (event.button != vn::window::MouseButton::None || d->mouse_down) {
+    if (event.button != vn::window::MouseButton::None || d->held_buttons != 0u) {
         renderFrame();
     }
 }
@@ -517,7 +586,7 @@ void SurfaceWindow::handleKey(const vn::window::KeyEvent& event)
 {
     // A key has no position to route by: it goes to the view the pointer captured (a keyboard modifier during a
     // drag belongs to that drag), else to this surface's own view.
-    pushToView(d->captured_view != nullptr ? d->captured_view.get() : d->view.get(), event);
+    pushToView(d->dragTarget() != nullptr ? d->dragTarget() : d->view.get(), event);
     renderFrame();
 }
 

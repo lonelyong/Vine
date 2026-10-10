@@ -516,6 +516,8 @@ view->setOptions(options);
 13. **显示 / 隐藏是运行时开关，永不重建**（§4.1）：`setGizmoVisible` / `setStatsVisible` 只切 `setEnabled`；
     档不存在时**按需补建一次**（每个视图每种档最多一次）。要频繁切就在配置窗口里把档都建好（R1 ⇒ 零重建）。
     着色模式同族：`Options::mode` 只切窗口 pass 的 program override，**零重建**（延迟路径兑现不了时记一条诊断）。
+    **关掉的档不会被一次重建又打开**：重建是从**配方**建的（新 pass 天生 enabled），所以使用者最后一次说的可见性
+    由 `applyOverlayIntent()` 在每次建完之后落回去（换路径、补建另一个档、把档从配方里去掉再要回来，都算）。
 14. **几何只有一个输入**：`view->viewport()`（归一化）是矩形的**唯一真相**；`onSurfaceResized` 只收**表面**尺寸 + 比例；
     宽高比、pass 的设备像素视口、清屏范围、layout 步收到的尺寸**全部由它推**（宿主不必自己算"一半"）。
 15. **状态只有一份**：HUD 的可见性就是 **pass 的 `isEnabled()`**（`isStatsVisible()` 读它，不存第二份 bool）；

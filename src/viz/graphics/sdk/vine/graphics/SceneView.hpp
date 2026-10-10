@@ -216,6 +216,11 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * diagnostic route (the host's own main pipeline owns its overlays - see RenderPipelineBuilder's
      * AxisGizmoOptions).
      *
+     * What this call was last asked for is what a LATER rebuild starts from: a new pass is created enabled, so
+     * without that a readout the user switched off would come back the next time the recipe changed the pipeline
+     * (a path switch, or adding the other overlay). The pass is still the state a reader sees (isGizmoVisible
+     * reads it), and a host that skips this API entirely is unaffected - a fresh view has both overlays visible.
+     *
      * @param on True to show the overlay, false to hide it.
      */
     void setGizmoVisible(bool on);
@@ -404,6 +409,13 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /** @brief Returns whether the overlay pass exists and is enabled. */
     bool isOverlayVisible(bool gizmo) const noexcept;
 
+    /** @brief Puts the last requested overlay visibility back onto a freshly built pipeline's overlays.
+     *
+     * A rebuild (recipe change) creates its overlays ENABLED, so the one thing that has to be carried across is
+     * "the caller asked for this one hidden" - see setGizmoVisible.
+     */
+    void applyOverlayIntent();
+
     // The bound engine is borrowed (the host owns it and keeps it alive).
     raw_ptr<RenderEngine> engine_ = nullptr;
 
@@ -416,6 +428,12 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     int                surface_height_ = 0;
     // One line per view about a shading mode the chosen path cannot honour (see applyModeToWindowPass).
     bool mode_unavailable_reported_ = false;
+
+    // The visibility the caller last ASKED for (setGizmoVisible / setStatsVisible). A reader still reads the pass
+    // (isGizmoVisible), but a rebuilt pipeline creates its overlays enabled, so this is what applyOverlayIntent()
+    // puts back after every build. Both default to visible: a view nobody has switched anything off on.
+    bool gizmo_visible_ = true;
+    bool stats_visible_ = true;
 
     intrusive_ptr<Camera>  camera_;
     intrusive_ptr<Scene>   scene_;

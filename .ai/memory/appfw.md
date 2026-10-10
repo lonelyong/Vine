@@ -235,6 +235,11 @@
   = 回退自己的视图；返回**别的引擎**的视图 = 记一条诊断（`UnsupportedRequest`）并回退。未设回调时一切照旧给
   `view()`（单视图逐字不变）。用例：`RenderControlTest.TheInputRouterSendsEachDragToTheViewUnderTheCursor`、
   `ACapturedViewSurvivesTheHostLettingGoOfIt`。
+  补丁（2026-10-11）：**捕获是按按钮记的**（`Impl::captured_views[]` + `held_buttons` 位掩码），不是"一个按钮布尔"
+  —— 左键拖一个视图、右键同时拖另一个视图是两个拖拽，松开其中一个**不能**结束另一个（被抽掉 release 的那个视图，
+  操纵器会卡在"正在拖"，之后**纯悬停**也继续转相机）。释放事件按"它自己那个按钮的捕获"投递（指针漂到别处也还给
+  发起者），带按钮的位移给"最近一次按下且还在飞的那个拖拽"，滚轮/无按钮悬停按点路由。钉子：
+  `RenderControlTest.ReleasingOneButtonDoesNotEndTheOtherButtonsDrag`（变异验证：把释放改回"清空全部捕获" ⇒ 该用例失败）。
 - **渲染视图 v2 已落地（S0–S4，2026-10-11）**：`SceneView::Options{path,gizmo,stats}` + `setOptions/options` + `pipeline()`；
   **几何** `setViewport(NormalizedViewport)`（视图内一处把 {viewport × 表面尺寸 × 比例} 换算成相机宽高比 / 窗口 pass 视口 /
   离屏与 HUD 尺寸 / layout 步尺寸）+ `onSurfaceResized(w,h,ratio)` 重载 + 三参数 `addSurfaceLayout`；**开关**
@@ -249,6 +254,11 @@
   第一次开启会**补建一次**（每个视图每种档最多一次）⇒ 要频繁切的宿主在配置窗口里把两个档都设 `true`（R1 零重建），
   之后随便切。可见性归**视图**，不进 `RenderControl`，也没有全局开关（多视图各不同）。详见
   `.ai/design/appfw-render-view.md` §4.1。
+  补丁（2026-10-11）：**"使用者最后一次说的可见性"必须跟着重建走** —— 重建是从配方建的，而**新 pass 天生
+  `enabled`**，所以"关掉读数 → 之后补建 gizmo 档 / 换路径"本来会让关掉的读数自己亮回来。现在 `setGizmoVisible/
+  setStatsVisible` 记下请求，`ensureWindowPass()` 末尾用 `applyOverlayIntent()` 落回新建的那几个档上（`isXxxVisible()`
+  仍然只读 pass，不存第二份"可见"）。钉子：`test_graphics` 的
+  `SceneViewViewportTest.AHiddenOverlayStaysHiddenAcrossARebuild` / `AnOverlayRemovedFromTheRecipeAndAddedBackKeepsTheRequestedVisibility`。
 - **多视图 / 多窗口的边界（2026-10-11 查，未落地）**：**多窗口/多 widget = 多个 `RenderControl`，今天就能用**
   —— 一控件一面一引擎一视图，**后端会话每个控件 `factory->create()` 一个 ⇒ 多控件 = 多设备**（同一模型开两窗口
   就上传两遍；`BlockStorage`/`MaterialImages` 归会话）。这是刻意选 Qt/three.js 那条路（隔离、生命周期干净），

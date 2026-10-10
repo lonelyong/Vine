@@ -104,6 +104,22 @@ void SceneView::ensureWindowPass()
     // ... and at the recipe's shading mode, which the builder has no option for (it is a pass property, see
     // applyModeToWindowPass).
     applyModeToWindowPass();
+    // ... and at the visibility the caller last asked for: a fresh overlay pass is created ENABLED, so without
+    // this a rebuild would switch a hidden readout back on (see applyOverlayIntent).
+    applyOverlayIntent();
+}
+
+void SceneView::applyOverlayIntent()
+{
+    if (default_pipeline_ == nullptr) {
+        return;
+    }
+    if (RenderPass* const gizmo = default_pipeline_->gizmo(); gizmo != nullptr && !gizmo_visible_) {
+        gizmo->setEnabled(false);
+    }
+    if (RenderPass* const readout = default_pipeline_->fpsOverlay(); readout != nullptr && !stats_visible_) {
+        readout->setEnabled(false);
+    }
 }
 
 void SceneView::applyModeToWindowPass()
@@ -256,6 +272,9 @@ bool SceneView::isOverlayVisible(bool gizmo) const noexcept
 void SceneView::setOverlayVisible(bool on, bool gizmo)
 {
     bool& wanted = gizmo ? options_.gizmo : options_.stats;
+    // Remember the REQUEST first, whatever path this call takes: it is what a later rebuild starts from
+    // (applyOverlayIntent). `on == false` with no pass yet is normal - it is still what the caller asked for.
+    (gizmo ? gizmo_visible_ : stats_visible_) = on;
 
     if (on && default_pipeline_ != nullptr && !isOverlayVisible(gizmo)) {
         RenderPass* pass = gizmo ? static_cast<RenderPass*>(default_pipeline_->gizmo())
