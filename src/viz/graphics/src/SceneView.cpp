@@ -1,9 +1,13 @@
 ﻿#include <vine/graphics/SceneView.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <utility>
 
+#include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/CameraManipulator.hpp>
+#include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/OrbitCameraManipulator.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
@@ -14,6 +18,25 @@
 #include <vine/window/MouseButton.hpp>
 
 VN_GRAPHICS_NS_BEGIN
+
+namespace
+{
+
+/** @brief The device-pixel rectangle a normalized viewport describes on a logical surface. */
+Viewport deviceViewport(const NormalizedViewport& viewport, int width, int height, double ratio)
+{
+    const double device_w = static_cast<double>(width) * ratio;
+    const double device_h = static_cast<double>(height) * ratio;
+    // Left/top round down, right/bottom round up: two neighbouring viewports then meet exactly, and the
+    // one-pixel overlap that can result is a smaller sin than a seam the cleared background shows through.
+    const int x0 = static_cast<int>(std::floor(viewport.x * device_w));
+    const int y0 = static_cast<int>(std::floor(viewport.y * device_h));
+    const int x1 = static_cast<int>(std::ceil((viewport.x + viewport.width) * device_w));
+    const int y1 = static_cast<int>(std::ceil((viewport.y + viewport.height) * device_h));
+    return Viewport{ x0, y0, x1 - x0, y1 - y0 };
+}
+
+} // namespace
 
 SceneView::SceneView()
   : camera_(make_intrusive<Camera>())
@@ -54,19 +77,238 @@ void SceneView::ensureWindowPass()
     if (engine_->hasWindowPass(camera_.get())) {
         return;
     }
-    // The default viewer is the shared forward path: assembled by the same
-    // recipe RenderPipelineBuilder exposes, so the view default and an
-    // application's explicit main pipeline stay one code path.
+    // The engine is borrowed, and everything below goes to it: hold it for the length of the operation, so a host
+    // that dropped its last reference meanwhile cannot leave a dangling handle behind (R2 in
+    // .ai/design/appfw-render-view.md §13 - "borrowed" means "only alive as long as the operation needs it", not
+    // "length is somebody else's problem").
+    intrusive_ptr<RenderEngine> const keep(engine_, true);
+
+    // The default viewer is the shared preset RenderPipelineBuilder exposes, configured by this view's recipe, so
+    // the view default and an application's explicit main pipeline stay one code path.
+    PipelineOptions pipeline_options;
+    pipeline_options.path                 = options_.path;
+    pipeline_options.gizmo.source_camera  = options_.gizmo ? camera_.get() : nullptr;
+    pipeline_options.gizmo.pixel_ratio    = pixel_ratio_;
+    pipeline_options.fps.enabled          = options_.stats;
+    pipeline_options.fps.pixel_ratio      = pixel_ratio_;
+
     RenderPipelineBuilder builder(engine_);
     builder.setCamera(camera_.get());
     builder.setContent(scene_);
-    default_pipeline_ = builder.build(PipelineOptions{});
+    default_pipeline_ = builder.build(pipeline_options);
+
+    // The pipeline was built at the builder's default geometry: this puts it at the surface size / viewport /
+    // ratio the view already knows about (a no-op before the first resize, exactly like today).
+    applySurfaceGeometry();
+}
+
+void SceneView::rebuildDefaultWindowPass()
+{
+    if (engine_ == nullptr) {
+        return;
+    }
+    // R2: the hold must span the WHOLE operation, not one half of it - dropping the old pipeline can drop the
+    // last reference to the engine (the pipeline was holding it), and the build that follows needs it alive.
+    intrusive_ptr<RenderEngine> const keep(engine_, true);
+    // Drop first, build through ensureWindowPass(): the old pipeline unregisters its passes as it goes away, so
+    // the "does this camera already have a window pass?" test sees the truth about the new pipeline.
+    removeWindowPass();
+    ensureWindowPass();
 }
 
 void SceneView::removeWindowPass()
 {
-    // The handle owns its passes' registration; letting it go is the removal.
+    if (default_pipeline_ == nullptr) {
+        return;  // guarded first: with no pipeline, engine_ may be a host-released (dangling) borrow.
+    }
+    // See rebuildDefaultWindowPass(): the pipeline's own reference is what keeps the engine alive across the
+    // unregistration this drop performs, and this hold keeps it alive if the pipeline was the last holder.
+    intrusive_ptr<RenderEngine> const keep(engine_, true);
     default_pipeline_ = nullptr;
+}
+
+const SceneView::Options& SceneView::options() const noexcept
+{
+    return options_;
+}
+
+void SceneView::setOptions(const Options& options)
+{
+    if (options_.path == options.path && options_.gizmo == options.gizmo && options_.stats == options.stats) {
+        return;
+    }
+    options_ = options;
+    // A recipe change is a pipeline change - but only when a pipeline exists: before the window pass is asked for,
+    // this is just the recipe the next ensureWindowPass() will build from (see the header).
+    if (default_pipeline_ != nullptr) {
+        rebuildDefaultWindowPass();
+    }
+}
+
+const NormalizedViewport& SceneView::viewport() const noexcept
+{
+    return viewport_;
+}
+
+raw_ptr<Pipeline> SceneView::pipeline() const
+{
+    return default_pipeline_.get();
+}
+
+void SceneView::setViewport(const NormalizedViewport& viewport)
+{
+    const NormalizedViewport next = viewport.isValid() ? viewport : NormalizedViewport{};
+    if (next.x == viewport_.x && next.y == viewport_.y && next.width == viewport_.width &&
+        next.height == viewport_.height) {
+        return;
+    }
+    viewport_ = next;
+    // Geometry: no rebuild, only the numbers every consumer reads (see applySurfaceGeometry).
+    applySurfaceGeometry();
+}
+
+bool SceneView::isOverlayVisible(bool gizmo) const noexcept
+{
+    if (default_pipeline_ == nullptr) {
+        return false;
+    }
+    const RenderPass* pass = gizmo ? static_cast<const RenderPass*>(default_pipeline_->gizmo())
+                                   : static_cast<const RenderPass*>(default_pipeline_->fpsOverlay());
+    // The pass IS the state: there is no second bool that could disagree with a host that toggled the handle.
+    return pass != nullptr && pass->isEnabled();
+}
+
+void SceneView::setOverlayVisible(bool on, bool gizmo)
+{
+    bool& wanted = gizmo ? options_.gizmo : options_.stats;
+
+    if (on && default_pipeline_ != nullptr && !isOverlayVisible(gizmo)) {
+        RenderPass* pass = gizmo ? static_cast<RenderPass*>(default_pipeline_->gizmo())
+                                 : static_cast<RenderPass*>(default_pipeline_->fpsOverlay());
+        if (pass == nullptr) {
+            // The pipeline exists but carries no such overlay: the recipe never asked for one. Add it and rebuild
+            // ONCE - from here on this switch is a flag, forever (see the header).
+            wanted = true;
+            rebuildDefaultWindowPass();
+            pass = gizmo ? static_cast<RenderPass*>(default_pipeline_ ? default_pipeline_->gizmo() : nullptr)
+                         : static_cast<RenderPass*>(default_pipeline_ ? default_pipeline_->fpsOverlay() : nullptr);
+        }
+        if (pass != nullptr) {
+            pass->setEnabled(true);
+            return;
+        }
+    }
+
+    if (default_pipeline_ == nullptr) {
+        // Nothing to switch: the view has no default window pipeline. Remember the intent for the pipeline that
+        // may still be built, and SAY SO - a silently ignored show request is the kind of thing that turns into a
+        // bug report about a missing overlay.
+        if (on) {
+            wanted = true;
+        }
+        if (engine_ != nullptr) {
+            engine_->reportEngineProblem(DiagnosticSeverity::Warning,
+                                         DiagnosticCategory::UnsupportedRequest,
+                                         gizmo ? String(u8"SceneView::setGizmoVisible: this view has no default "
+                                                        u8"window pipeline (an application built its own main pass, "
+                                                        u8"or the window pass was never ensured); the overlay was "
+                                                        u8"remembered for the next ensureWindowPass() - an "
+                                                        u8"application pipeline configures its overlays through "
+                                                        u8"RenderPipelineBuilder::PipelineOptions instead")
+                                               : String(u8"SceneView::setStatsVisible: this view has no default "
+                                                        u8"window pipeline (an application built its own main pass, "
+                                                        u8"or the window pass was never ensured); the overlay was "
+                                                        u8"remembered for the next ensureWindowPass() - an "
+                                                        u8"application pipeline configures its overlays through "
+                                                        u8"RenderPipelineBuilder::PipelineOptions instead"));
+        }
+        return;
+    }
+
+    RenderPass* pass = gizmo ? static_cast<RenderPass*>(default_pipeline_->gizmo())
+                             : static_cast<RenderPass*>(default_pipeline_->fpsOverlay());
+    if (pass != nullptr) {
+        pass->setEnabled(on);
+    }
+}
+
+void SceneView::setGizmoVisible(bool on)
+{
+    setOverlayVisible(on, /* gizmo */ true);
+}
+
+void SceneView::setStatsVisible(bool on)
+{
+    setOverlayVisible(on, /* gizmo */ false);
+}
+
+bool SceneView::isGizmoVisible() const noexcept
+{
+    return isOverlayVisible(/* gizmo */ true);
+}
+
+bool SceneView::isStatsVisible() const noexcept
+{
+    return isOverlayVisible(/* gizmo */ false);
+}
+
+void SceneView::paneSize(int& width, int& height) const
+{
+    width  = std::max(1, static_cast<int>(std::lround(viewport_.width * static_cast<double>(surface_width_))));
+    height = std::max(1, static_cast<int>(std::lround(viewport_.height * static_cast<double>(surface_height_))));
+}
+
+void SceneView::applySurfaceGeometry()
+{
+    if (surface_width_ <= 0 || surface_height_ <= 0) {
+        return;
+    }
+
+    int pane_w = 0;
+    int pane_h = 0;
+    paneSize(pane_w, pane_h);
+
+    // 1) This view's rectangle drives the camera/manipulator aspect (the pane's aspect, not the surface's: a
+    //    half-width view of a square surface is 1:2, and a picture drawn with the surface's aspect is distorted).
+    if (CameraManipulator* manip = manipulator(); manip != nullptr) {
+        manip->onResize(vn::window::ResizeEvent{ pane_w, pane_h });
+    } else if (camera_->projectionType() == Camera::ProjectionType::Perspective) {
+        const double aspect = static_cast<double>(pane_w) / static_cast<double>(pane_h);
+        camera_->setProjectionMatrixAsPerspective(camera_->fieldOfView(), aspect,
+                                                  camera_->nearPlane(), camera_->farPlane());
+    }
+
+    // 2) The default pipeline: its off-screen targets and HUD boxes are sized for this view's rectangle, and its
+    //    window pass draws into it. The HUD passes anchor to the corner of their AREA, so they are pointed at the
+    //    rectangle's origin before they are laid out.
+    if (default_pipeline_ != nullptr) {
+        const Viewport device_rect = deviceViewport(viewport_, surface_width_, surface_height_, pixel_ratio_);
+        if (AxisGizmo* gizmo = default_pipeline_->gizmo(); gizmo != nullptr) {
+            gizmo->setAreaOrigin(device_rect.x, device_rect.y);
+        }
+        if (FpsOverlay* fps = default_pipeline_->fpsOverlay(); fps != nullptr) {
+            fps->setAreaOrigin(device_rect.x, device_rect.y);
+        }
+        default_pipeline_->resize(pane_w, pane_h, pixel_ratio_);
+        if (RenderPass* window = default_pipeline_->windowPass(); window != nullptr) {
+            if (viewport_.isFull()) {
+                // The full surface is what a pass without a viewport already means - leaving it unset keeps the
+                // default path byte-for-byte the pipeline it was before viewports existed.
+                window->clearViewport();
+            } else {
+                window->setViewport(device_rect);
+            }
+        }
+    }
+
+    // 3) Creator-managed layout steps: told in THIS view's space (its rectangle), so a pipeline built for a split
+    //    view sizes its targets for the pane without knowing anything about the layout.
+    for (const auto& layout : surface_layouts_) {
+        layout(pane_w, pane_h);
+    }
+    for (const auto& layout : surface_layouts_with_ratio_) {
+        layout(pane_w, pane_h, pixel_ratio_);
+    }
 }
 
 raw_ptr<Camera> SceneView::camera() const
@@ -175,22 +417,22 @@ void SceneView::pushEvent(const vn::window::KeyEvent& event)
 
 void SceneView::onSurfaceResized(int width, int height)
 {
+    onSurfaceResized(width, height, pixel_ratio_);
+}
+
+void SceneView::onSurfaceResized(int width, int height, double pixel_ratio)
+{
     if (width <= 0 || height <= 0) {
         return;
     }
-    // 1) The interactive view camera stays in step with the surface.
-    if (CameraManipulator* manip = manipulator(); manip != nullptr) {
-        manip->onResize(vn::window::ResizeEvent{ width, height });
-    } else if (camera_->projectionType() == Camera::ProjectionType::Perspective) {
-        const double aspect = static_cast<double>(width) / static_cast<double>(height);
-        camera_->setProjectionMatrixAsPerspective(camera_->fieldOfView(), aspect,
-                                                  camera_->nearPlane(), camera_->farPlane());
+    surface_width_  = width;
+    surface_height_ = height;
+    if (pixel_ratio > 0.0) {
+        pixel_ratio_ = pixel_ratio;
     }
-    // 2) Creator-managed layout steps: each pipeline's code updates the
-    // targets / viewports it owns with its own policy.
-    for (const auto& layout : surface_layouts_) {
-        layout(width, height);
-    }
+    // One place turns {surface size, viewport, ratio} into this view's rectangle: the camera aspect, the window
+    // pass viewport, the size the default pipeline and the layout steps are told (see applySurfaceGeometry).
+    applySurfaceGeometry();
 }
 
 void SceneView::addSurfaceLayout(std::function<void(int width, int height)> layout)
@@ -198,9 +440,15 @@ void SceneView::addSurfaceLayout(std::function<void(int width, int height)> layo
     surface_layouts_.push_back(std::move(layout));
 }
 
+void SceneView::addSurfaceLayout(std::function<void(int width, int height, double pixel_ratio)> layout)
+{
+    surface_layouts_with_ratio_.push_back(std::move(layout));
+}
+
 void SceneView::clearSurfaceLayouts()
 {
     surface_layouts_.clear();
+    surface_layouts_with_ratio_.clear();
 }
 
 void SceneView::frame(double dt)

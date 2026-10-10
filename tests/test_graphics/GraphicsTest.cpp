@@ -24,6 +24,7 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/Light.hpp>
+#include <vine/graphics/LightRig.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/Scene.hpp>
@@ -2580,6 +2581,324 @@ TEST(SceneViewTest, EnsureWindowPassSkipsWhenCameraAlreadyPresented)
     view->ensureWindowPass();
     EXPECT_EQ(engine->passCount(), 1u);
     EXPECT_TRUE(engine->hasWindowPass(view->camera()));
+}
+
+TEST(LightRigTest, StudioIsAmbientPlusKeyAndFill)
+{
+    const LightRig rig = LightRig::studio();
+
+    ASSERT_EQ(rig.lights().size(), 3u);
+    // One ambient fill, two directional lights, and every direction actually points somewhere.
+    std::size_t ambient = 0;
+    std::size_t directional = 0;
+    for (const LightRig::Entry& entry : rig.lights()) {
+        if (entry.directional) {
+            ++directional;
+            EXPECT_TRUE(entry.hasDirection());
+        } else {
+            ++ambient;
+        }
+    }
+    EXPECT_EQ(ambient, 1u);
+    EXPECT_EQ(directional, 2u);
+    EXPECT_GE(rig.lights()[1].intensity, rig.lights()[2].intensity);  // key brighter than fill
+}
+
+TEST(LightRigTest, HeadlightFollowsTheDirectionItIsGiven)
+{
+    const LightRig rig = LightRig::headlight(vn::math::Vec3d(0.0, 0.0, 1.0));
+    ASSERT_EQ(rig.lights().size(), 1u);
+    EXPECT_TRUE(rig.lights()[0].directional);
+    EXPECT_DOUBLE_EQ(rig.lights()[0].direction.z, 1.0);
+
+    // A zero direction is a light that would light nothing: the rig falls back to the default view direction.
+    const LightRig fallback = LightRig::headlight(vn::math::Vec3d(0.0, 0.0, 0.0));
+    ASSERT_EQ(fallback.lights().size(), 1u);
+    EXPECT_TRUE(fallback.lights()[0].hasDirection());
+}
+
+TEST(LightRigTest, AddToLightsTheSceneAndCreatesFreshLightsEveryTime)
+{
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    ASSERT_FALSE(scene->hasLights());
+
+    LightRig::studio().addTo(*scene);
+    EXPECT_EQ(scene->lights().size(), 3u);
+
+    // Appending is appending: a second rig adds another set (that is what re-lighting twice means).
+    LightRig::studio().addTo(*scene);
+    EXPECT_EQ(scene->lights().size(), 6u);
+
+    // The rig holds descriptions, so the two sets are different Light objects, not the same three shared twice.
+    EXPECT_NE(scene->lights()[0].get(), scene->lights()[3].get());
+
+    // Weaving the rig through the scene's own entry point is the same thing.
+    scene->clearLights();
+    scene->addLighting(LightRig::studio());
+    EXPECT_EQ(scene->lights().size(), 3u);
+
+    // ... and setLighting() replaces instead of appending (the explicit "this is now the lighting" spelling).
+    scene->setLighting(LightRig::headlight());
+    EXPECT_EQ(scene->lights().size(), 1u);
+    EXPECT_TRUE(scene->lights()[0]->hasDirection());
+}
+
+TEST(LightRigTest, TheOriginalLightApiIsUnchanged)
+{
+    // The rig is a convenience in front of the same mechanism, not a replacement for it.
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto light = intrusive_ptr<Light>(new Light());
+
+    scene->addLight(light);
+    EXPECT_EQ(scene->lights().size(), 1u);
+    scene->addLighting(LightRig::headlight());
+    EXPECT_EQ(scene->lights().size(), 2u);
+    scene->removeLight(light.get());
+    EXPECT_EQ(scene->lights().size(), 1u);
+    scene->clearLights();
+    EXPECT_FALSE(scene->hasLights());
+}
+
+TEST(SceneViewViewportTest, DefaultsAreTheBehaviourBeforeOptionsExisted)
+{
+    // No configuration at all: forward, no HUD, the whole surface - and exactly one window pass, which is what
+    // every existing host and test already relied on (J2).
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+
+    EXPECT_EQ(view->options().path, ShadingPath::Forward);
+    EXPECT_FALSE(view->options().gizmo);
+    EXPECT_FALSE(view->options().stats);
+    EXPECT_TRUE(view->viewport().isFull());
+    EXPECT_FALSE(view->isGizmoVisible());
+    EXPECT_FALSE(view->isStatsVisible());
+
+    view->ensureWindowPass();
+    EXPECT_EQ(engine->passCount(), 1u);
+    ASSERT_NE(view->pipeline(), nullptr);
+    ASSERT_NE(view->pipeline()->windowPass(), nullptr);
+    // A full viewport is what "no viewport" already means: the pass is left without one, so the default path is
+    // byte-for-byte the pipeline it was before viewports existed.
+    EXPECT_FALSE(view->pipeline()->windowPass()->hasViewport());
+}
+
+TEST(SceneViewViewportTest, TheRecipeDecidesWhichOverlayPassesExist)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+
+    view->setOptions({ .path = ShadingPath::Forward, .gizmo = true, .stats = true });
+    view->ensureWindowPass();
+
+    // Window pass + the two overlays, and both are visible as soon as they exist.
+    EXPECT_EQ(engine->passCount(), 3u);
+    ASSERT_NE(view->pipeline(), nullptr);
+    EXPECT_NE(view->pipeline()->gizmo(), nullptr);
+    EXPECT_NE(view->pipeline()->fpsOverlay(), nullptr);
+    EXPECT_TRUE(view->isGizmoVisible());
+    EXPECT_TRUE(view->isStatsVisible());
+
+    // Dropping an overlay from the recipe takes its pass away...
+    view->setOptions({ .path = ShadingPath::Forward, .gizmo = false, .stats = true });
+    EXPECT_EQ(engine->passCount(), 2u);
+    EXPECT_FALSE(view->isGizmoVisible());
+    EXPECT_TRUE(view->isStatsVisible());
+
+    // ... and one rebuild per change leaves no stale registration behind.
+    view->setOptions({ .path = ShadingPath::Forward });
+    EXPECT_EQ(engine->passCount(), 1u);
+    EXPECT_TRUE(engine->hasWindowPass(view->camera()));
+}
+
+TEST(SceneViewViewportTest, OverlayVisibilityIsASwitchThatNeverRebuilds)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->setOptions({ .stats = true });
+    view->ensureWindowPass();
+
+    Pipeline* const pipeline = view->pipeline();
+    ASSERT_NE(pipeline, nullptr);
+    RenderPass* const readout = pipeline->fpsOverlay();
+    ASSERT_NE(readout, nullptr);
+
+    for (int i = 0; i < 10; ++i) {
+        view->setStatsVisible(false);
+        EXPECT_FALSE(view->isStatsVisible());
+        EXPECT_FALSE(readout->isEnabled());
+        view->setStatsVisible(true);
+        EXPECT_TRUE(view->isStatsVisible());
+        EXPECT_TRUE(readout->isEnabled());
+    }
+
+    // Nothing was rebuilt and nothing was re-registered: same handle, same pass count.
+    EXPECT_EQ(view->pipeline(), pipeline);
+    EXPECT_EQ(engine->passCount(), 2u);
+    // The state lives on the pass, so a host toggling through the handle is seen by the view.
+    readout->setEnabled(false);
+    EXPECT_FALSE(view->isStatsVisible());
+}
+
+TEST(SceneViewViewportTest, TurningOnAnOverlayThatWasNeverBuiltCostsOneBuild)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->ensureWindowPass();
+    ASSERT_EQ(engine->passCount(), 1u);
+    ASSERT_FALSE(view->isStatsVisible());
+
+    // The recipe had no readout, so asking for one adds it to the recipe and rebuilds ONCE.
+    view->setStatsVisible(true);
+    EXPECT_TRUE(view->options().stats);
+    EXPECT_EQ(engine->passCount(), 2u);
+    EXPECT_TRUE(view->isStatsVisible());
+
+    // From here on it is a flag again: never another build.
+    Pipeline* const pipeline = view->pipeline();
+    ASSERT_NE(pipeline, nullptr);
+    view->setStatsVisible(false);
+    view->setStatsVisible(true);
+    EXPECT_EQ(view->pipeline(), pipeline);
+    EXPECT_EQ(engine->passCount(), 2u);
+}
+
+TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->setOptions({ .gizmo = true, .stats = true });
+    view->ensureWindowPass();
+    ASSERT_NE(view->pipeline(), nullptr);
+
+    int layout_w = 0;
+    int layout_h = 0;
+    int layout_ratio_calls = 0;
+    double layout_ratio    = 0.0;
+    view->addSurfaceLayout([&](int w, int h) {
+        layout_w = w;
+        layout_h = h;
+    });
+    view->addSurfaceLayout([&](int w, int h, double ratio) {
+        layout_w = w;
+        layout_h = h;
+        ++layout_ratio_calls;
+        layout_ratio = ratio;
+    });
+
+    Pipeline* const pipeline = view->pipeline();
+
+    const std::size_t pass_count_before = engine->passCount();
+
+    // The left quarter of a 1280x720 surface: the host states the split ONCE, in normalized terms, and keeps
+    // feeding the SURFACE size - it never works out "a quarter of 1280" for the view.
+    view->setViewport({ 0.25, 0.0, 0.5, 1.0 });
+    view->onSurfaceResized(1280, 720, 2.0);
+
+    // ... and the geometry follows from it: the layout steps get THIS view's rectangle, the window pass draws
+    // into the same rectangle in device pixels, and the camera aspect is the rectangle's, not the surface's.
+    EXPECT_EQ(layout_w, 640);
+    EXPECT_EQ(layout_h, 720);
+    EXPECT_EQ(layout_ratio_calls, 1);
+    EXPECT_DOUBLE_EQ(layout_ratio, 2.0);
+    RenderPass* const window = pipeline->windowPass();
+    ASSERT_NE(window, nullptr);
+    ASSERT_TRUE(window->hasViewport());
+    EXPECT_EQ(window->viewport().x, 640);        // 0.25 * 1280 * ratio 2
+    EXPECT_EQ(window->viewport().y, 0);
+    EXPECT_EQ(window->viewport().width, 1280);   // 0.5 * 1280 * ratio 2
+    EXPECT_EQ(window->viewport().height, 1440);  // 1.0 * 720 * ratio 2
+    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 640.0 / 720.0);
+
+    // The overlays land INSIDE the rectangle (they anchor to the corner of their area, not of the surface).
+    ASSERT_NE(pipeline->fpsOverlay(), nullptr);
+    const Viewport readout = pipeline->fpsOverlay()->viewport();
+    EXPECT_GT(readout.width, 0);
+    EXPECT_LE(readout.x + readout.width, window->viewport().x + window->viewport().width);
+    EXPECT_LE(readout.y + readout.height, window->viewport().y + window->viewport().height);
+
+    // Geometry is not recipe: no rebuild happened, the very same pipeline is still there and nothing was
+    // re-registered (whatever the recipe's pass count is, it did not change).
+    EXPECT_EQ(view->pipeline(), pipeline);
+    EXPECT_EQ(engine->passCount(), pass_count_before);
+
+    // Going back to the whole surface clears the viewport again (and keeps the same pipeline).
+    view->setViewport({});
+    EXPECT_TRUE(view->viewport().isFull());
+    EXPECT_FALSE(window->hasViewport());
+    EXPECT_EQ(layout_w, 1280);
+    EXPECT_EQ(view->pipeline(), pipeline);
+}
+
+TEST(SceneViewViewportTest, FullViewportKeepsTheOverlayBoxWhereItWas)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->setOptions({ .gizmo = true });
+    view->ensureWindowPass();
+    ASSERT_NE(view->pipeline(), nullptr);
+    ASSERT_NE(view->pipeline()->gizmo(), nullptr);
+
+    view->onSurfaceResized(400, 300, 1.0);
+
+    // The default gizmo still sits in the bottom-left corner of the surface with its 16 px margin: a full
+    // viewport must not move anything.
+    const Viewport box = view->pipeline()->gizmo()->viewport();
+    EXPECT_EQ(box.x, 16);
+    EXPECT_EQ(box.y, 300 - 16 - 96);
+    EXPECT_EQ(box.width, 96);
+}
+
+TEST(SceneViewViewportTest, AnApplicationWindowPassKeepsTheOverlaysToItself)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+
+    // The application presents this camera itself (its own deferred main pass).
+    auto main = intrusive_ptr<RenderPass>(new RenderPass());
+    main->setCamera(intrusive_ptr<Camera>(view->camera()));
+    engine->addPass(main, 0);
+
+    view->setOptions({ .stats = true });
+    view->ensureWindowPass();
+
+    // No default pipeline is built (the default falls back, it does not compete), so the recipe changed nothing
+    // on the engine...
+    EXPECT_EQ(engine->passCount(), 1u);
+    EXPECT_EQ(view->pipeline(), nullptr);
+    EXPECT_FALSE(view->isStatsVisible());
+
+    // ... and the switch SAYS SO instead of silently doing nothing: the host owns that pipeline's overlays.
+    view->setStatsVisible(true);
+    EXPECT_GT(engine->diagnosticCount(), 0u);
+}
+
+TEST(SceneViewViewportTest, RebuildingNowToDeathIsSafeAfterTheHostReleasedTheEngine)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->ensureWindowPass();
+    ASSERT_NE(view->pipeline(), nullptr);
+
+    // The host drops its reference: the view borrows the engine, so from here on the only thing keeping it alive
+    // is the view's own pipeline - and a rebuild drops that pipeline before it builds the next one (R2).
+    engine = nullptr;
+
+    view->setOptions({ .stats = true });
+    ASSERT_NE(view->pipeline(), nullptr);
+    EXPECT_TRUE(view->isStatsVisible());
+    EXPECT_FALSE(view->pipeline()->windowPass()->hasViewport());
+
+    view->setViewport({ 0.0, 0.0, 0.5, 1.0 });
+    view->onSurfaceResized(800, 600, 1.0);
+    EXPECT_TRUE(view->pipeline()->windowPass()->hasViewport());
 }
 
 TEST(SceneViewTest, DefaultManipulatorBindsViewCameraAndScene)

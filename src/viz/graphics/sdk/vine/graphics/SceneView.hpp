@@ -9,6 +9,9 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/window/window_global.hpp>
 
+#include "RenderPipeline.hpp"
+#include "Viewport.hpp"
+
 VN_WINDOW_NS_BEGIN
 struct KeyEvent;
 struct MouseEvent;
@@ -62,6 +65,31 @@ class Scene;
  */
 class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
   public:
+    /**
+     * @brief The recipe of this view: how it draws (not how it is built).
+     *
+     * Deliberately small, and deliberately the ONLY settings object on a view: everything here is a decision
+     * that changes which passes exist, so changing it REBUILDS this view's default window pipeline (see
+     * setOptions). Whatever is geometry rather than recipe is a plain setter instead and never rebuilds
+     * anything (viewport, surface size, overlay visibility - see setViewport / onSurfaceResized /
+     * setGizmoVisible).
+     *
+     * The names follow the show-flag convention the industry uses for exactly these two overlays (Unreal's
+     * ShowFlags.Gizmos, a stats readout toggled separately), and the defaults are the current behaviour:
+     * forward, no HUD.
+     */
+    struct Options {
+        /** @brief How the opaque content is shaded (the one structural choice). */
+        ShadingPath path{ ShadingPath::Forward };
+
+        /** @brief Whether this view HAS an axis-gizmo overlay pass (not whether it is visible). */
+        bool gizmo{ false };
+
+        /** @brief Whether this view HAS a frame-rate readout pass (not whether it is visible). */
+        bool stats{ false };
+    };
+
+  public:
     /** @brief Constructs a view with a default camera and an empty content
      * scene.
      *
@@ -105,6 +133,89 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * application has registered its pipeline.
      */
     void ensureWindowPass();
+
+  public:
+    // ---- Recipe / geometry / overlay visibility ----
+
+    /** @brief Gets this view's recipe (Options). */
+    const Options& options() const noexcept;
+
+    /** @brief Sets this view's recipe, rebuilding the default window pipeline when one exists.
+     *
+     * Value semantics: a change REBUILDS this view's default window pipeline (the old one unregisters its
+     * passes, the new one is assembled through the same RenderPipelineBuilder recipe an application would
+     * use). That is ONE pipeline build, not a per-frame cost; on the Deferred path it also reallocates the
+     * G-buffer.
+     *
+     * Nothing is built when the view has no default pipeline (the window pass has not been asked for yet, or
+     * an application presents this camera itself): the recipe is remembered and the next ensureWindowPass()
+     * builds from it. That is what makes "configure right after construction" cost nothing at all.
+     *
+     * @param options New recipe; passing the current one is a no-op.
+     */
+    void setOptions(const Options& options);
+
+    /** @brief Gets this view's default window pipeline (the one its recipe built), or nullptr.
+     *
+     * For inspection and micro-tuning - `setEnabled()`, `gizmo()`, `fpsOverlay()`, `offscreenTarget()` - and for
+     * the two facts a host may want to check: null means "this view has no default pipeline" (the window pass was
+     * never ensured, or an application presents this camera itself), and `windowPass()` tells it what presents
+     * this view. The pipeline is owned by the view; letting it go is what removes the passes.
+     *
+     * @return The default pipeline, or nullptr when this view has none.
+     */
+    raw_ptr<Pipeline> pipeline() const;
+
+    /** @brief Gets the area of the render surface this view draws into (normalized). */
+    const NormalizedViewport& viewport() const noexcept;
+
+    /** @brief Sets the area of the render surface this view draws into (normalized [0,1]; default: all of it).
+     *
+     * GEOMETRY, not recipe - this never rebuilds the pipeline. It is the ONE input this view derives its
+     * rectangle from: the camera/manipulator aspect, the device-pixel viewport of its window pass, the size its
+     * off-screen targets and HUD boxes are resized to, and the size its surface-layout steps are told. A host
+     * that splits a surface therefore states the split once, in normalized terms, and keeps feeding the
+     * SURFACE size to onSurfaceResized() - it never converts to device pixels itself, and never has to work out
+     * "half the surface" for the view.
+     *
+     * @param viewport Area to draw into; an invalid viewport (non-positive size) resets to the full surface.
+     */
+    void setViewport(const NormalizedViewport& viewport);
+
+    /** @brief Shows or hides the axis-gizmo overlay at runtime.
+     *
+     * A switch, not a recipe change: when the view's pipeline carries the overlay, this is one
+     * RenderPass::setEnabled() and nothing is rebuilt. When it does not (the recipe had Options::gizmo false),
+     * the overlay is added to the recipe and the pipeline is rebuilt ONCE - every later call is free again. A
+     * view with no default window pipeline has nowhere to put an overlay: that is reported on the engine's
+     * diagnostic route (the host's own main pipeline owns its overlays - see RenderPipelineBuilder's
+     * AxisGizmoOptions).
+     *
+     * @param on True to show the overlay, false to hide it.
+     */
+    void setGizmoVisible(bool on);
+
+    /** @brief Shows or hides the frame-rate readout at runtime (same rules as setGizmoVisible).
+     *
+     * @param on True to show the readout, false to hide it.
+     */
+    void setStatsVisible(bool on);
+
+    /** @brief Gets whether the axis-gizmo overlay is currently visible.
+     *
+     * The overlay pass is the single source of truth (its enabled flag), so this stays in step with the
+     * recipe, with setGizmoVisible and with a host that toggles the pass handle itself
+     * (view->pipeline()->gizmo()).
+     *
+     * @return true when the overlay exists and is enabled.
+     */
+    bool isGizmoVisible() const noexcept;
+
+    /** @brief Gets whether the frame-rate readout is currently visible.
+     *
+     * @return true when the readout exists and is enabled.
+     */
+    bool isStatsVisible() const noexcept;
 
   public:
     // ---- Camera / content ----
@@ -180,18 +291,30 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      */
     void pushEvent(const vn::window::KeyEvent& event);
 
-    /** @brief Refreshes the camera projection aspect for a new surface size.
+    /** @brief Refreshes the geometry of this view for a new surface size (keeps the current pixel ratio).
      *
-     * Runs this view's surface-layout steps: the manipulator / camera aspect
-     * first, then every layout callback registered with addSurfaceLayout().
-     * The view does not manage off-screen target sizes or pass viewports
-     * itself - the code that created them registers a callback that updates
-     * them with its own policy (see addSurfaceLayout).
-     *
-     * @param width  New surface width in pixels.
-     * @param height New surface height in pixels.
+     * @param width  New surface width in pixels (logical, as the host reports it).
+     * @param height New surface height in pixels (logical, as the host reports it).
      */
     void onSurfaceResized(int width, int height);
+
+    /** @brief Refreshes the geometry of this view for a new surface size and device pixel ratio.
+     *
+     * The surface size is the whole surface the host renders into, NOT this view's part of it: with a viewport
+     * set (see setViewport), this view's own rectangle - its camera aspect, its window-pass viewport, the size
+     * its targets and HUD boxes get - is derived from the surface size, the viewport and the ratio here, in
+     * one place. Feeding a split view "half the surface" would state the same rectangle twice and let the two
+     * statements disagree.
+     *
+     * Then it runs this view's surface-layout steps, with this view's own rectangle: the manipulator / camera
+     * aspect first, then every callback registered with addSurfaceLayout(). Its default pipeline (when it has
+     * one) is resized here too, so a view that uses the built-in recipe needs no layout step at all.
+     *
+     * @param width        New surface width in logical pixels.
+     * @param height       New surface height in logical pixels.
+     * @param pixel_ratio  Device pixels per logical pixel (devicePixelRatio); <= 0 keeps the current one.
+     */
+    void onSurfaceResized(int width, int height, double pixel_ratio);
 
     /** @brief Registers a creator-managed surface-layout step.
      *
@@ -211,6 +334,19 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      */
     void addSurfaceLayout(std::function<void(int width, int height)> layout);
 
+    /** @brief Registers a creator-managed surface-layout step that also wants the device pixel ratio.
+     *
+     * Same contract as the two-argument overload, with the ratio the host reported added: the one consumer
+     * that needs it is a creator laying out in DEVICE pixels (`pass->setViewport(Viewport{...})`, an off-screen
+     * target at native resolution). Multiplying here is what keeps a layer-1 host from reaching back into
+     * appfw for the ratio (RenderControl::devicePixelRatio()).
+     *
+     * The size is again THIS VIEW's rectangle (its part of the surface), in the host's logical space.
+     *
+     * @param layout Callback taking the view's width, height and the host's pixel ratio.
+     */
+    void addSurfaceLayout(std::function<void(int width, int height, double pixel_ratio)> layout);
+
     /** @brief Removes all registered surface-layout steps. */
     void clearSurfaceLayouts();
 
@@ -225,8 +361,31 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /** @brief Removes the default window pass this view registered, if any. */
     void removeWindowPass();
 
+    /** @brief Drops the default pipeline (if any) and rebuilds it from the current recipe. */
+    void rebuildDefaultWindowPass();
+
+    /** @brief Turns {surface size, viewport, pixel ratio} into this view's rectangle, in one place. */
+    void applySurfaceGeometry();
+
+    /** @brief Gets this view's rectangle in the host's logical pixels (the whole surface when full). */
+    void paneSize(int& width, int& height) const;
+
+    /** @brief Shows/hides an overlay, adding it to the recipe (one rebuild) when it is missing. */
+    void setOverlayVisible(bool on, bool gizmo);
+
+    /** @brief Returns whether the overlay pass exists and is enabled. */
+    bool isOverlayVisible(bool gizmo) const noexcept;
+
     // The bound engine is borrowed (the host owns it and keeps it alive).
     raw_ptr<RenderEngine> engine_ = nullptr;
+
+    // This view's recipe and its geometry. Both are inputs to "what does my pipeline look like", and only the
+    // recipe rebuilds it (see setOptions).
+    Options            options_{};
+    NormalizedViewport viewport_{};
+    double             pixel_ratio_ = 1.0;
+    int                surface_width_ = 0;
+    int                surface_height_ = 0;
 
     intrusive_ptr<Camera>  camera_;
     intrusive_ptr<Scene>   scene_;
@@ -237,6 +396,8 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
 
     // Creator-managed surface-layout steps run on every surface resize.
     std::vector<std::function<void(int width, int height)>> surface_layouts_;
+    // ... and the ones that asked for the ratio too.
+    std::vector<std::function<void(int width, int height, double pixel_ratio)>> surface_layouts_with_ratio_;
 };
 
 VN_GRAPHICS_NS_END

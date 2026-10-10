@@ -168,7 +168,19 @@ void AxisGizmo::onSurfaceResized(int width, int height)
     // handed to the backend rather than a stated decision.
     const int fitted = dev_h - 2 * margin_px_;
     const int side   = fitted > 0 ? (size_px_ > fitted ? fitted : size_px_) : 0;
-    setViewport(margin_px_, dev_h - margin_px_ - side, side, side);
+    setViewport(area_x_ + margin_px_, area_y_ + dev_h - margin_px_ - side, side, side);
+}
+
+void AxisGizmo::setAreaOrigin(int x, int y)
+{
+    if (area_x_ == x && area_y_ == y) {
+        return;
+    }
+    area_x_ = x;
+    area_y_ = y;
+    // Re-lay out inside the new area with the size that is already known, so the overlay is where it belongs
+    // on the very next frame rather than on the next resize.
+    onSurfaceResized(surface_w_, surface_h_);
 }
 
 void AxisGizmo::execute(raw_ptr<Scene> /*scene*/, raw_ptr<RenderBackend> backend)

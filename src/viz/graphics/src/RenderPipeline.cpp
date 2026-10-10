@@ -65,9 +65,11 @@ void Pipeline::resize(int width, int height, double pixel_ratio)
         composite_target_->setSize(device_w, device_h);
     }
     if (gizmo_ != nullptr) {
+        gizmo_->setPixelRatio(ratio);
         gizmo_->onSurfaceResized(width, height);
     }
     if (fps_overlay_ != nullptr) {
+        fps_overlay_->setPixelRatio(ratio);
         fps_overlay_->onSurfaceResized(width, height);
     }
 }

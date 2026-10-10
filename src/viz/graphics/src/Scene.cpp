@@ -10,6 +10,7 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
+#include <vine/graphics/LightRig.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/StateNode.hpp>
@@ -448,6 +449,17 @@ void Scene::removeLight(raw_ptr<Light> light)
 void Scene::clearLights()
 {
     lights_.clear();
+}
+
+void Scene::addLighting(const LightRig& rig)
+{
+    rig.addTo(*this);
+}
+
+void Scene::setLighting(const LightRig& rig)
+{
+    clearLights();
+    rig.addTo(*this);
 }
 
 const std::vector<LightPtr>& Scene::lights() const

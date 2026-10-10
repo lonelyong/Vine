@@ -108,6 +108,17 @@ class VN_GRAPHICS_API AxisGizmo : public RenderPass {
      */
     void onSurfaceResized(int width, int height);
 
+    /** @brief Sets the origin of the area this overlay lays its box out in, in device pixels.
+     *
+     * The overlay anchors to the corner of its AREA (bottom-left for the gizmo, bottom-right for the
+     * readout), and its area starts at (0, 0) by default - the whole surface. A view that draws into a part
+     * of a shared surface (a split view) points this at that part's origin so the overlay lands inside it.
+     *
+     * @param x Area origin x in device pixels.
+     * @param y Area origin y in device pixels.
+     */
+    void setAreaOrigin(int x, int y);
+
     /** @brief Draws the gizmo.
      *
      * Applies the orientation mirror from the configured source camera onto
@@ -140,6 +151,8 @@ class VN_GRAPHICS_API AxisGizmo : public RenderPass {
     int size_px_ = 96;
     int surface_w_ = 0;
     int surface_h_ = 0;
+    int area_x_ = 0;
+    int area_y_ = 0;
 };
 
 using AxisGizmoPtr = intrusive_ptr<AxisGizmo>;

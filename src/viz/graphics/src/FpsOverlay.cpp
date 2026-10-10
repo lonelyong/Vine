@@ -202,11 +202,23 @@ void FpsOverlay::onSurfaceResized(int width, int height)
         return;
     }
 
-    // Bottom-right corner in top-left-origin device coordinates.
-    setViewport(dev_w - margin_px_ - w, dev_h - margin_px_ - h, w, h);
+    // Bottom-right corner of this overlay's area, in top-left-origin device coordinates.
+    setViewport(area_x_ + dev_w - margin_px_ - w, area_y_ + dev_h - margin_px_ - h, w, h);
     // Match the framing projection to the box aspect so the digit row fills
     // the box without distortion.
     camera_->setProjectionMatrixAsPerspective(45.0, static_cast<double>(w) / static_cast<double>(h), 0.05, 20.0);
+}
+
+void FpsOverlay::setAreaOrigin(int x, int y)
+{
+    if (area_x_ == x && area_y_ == y) {
+        return;
+    }
+    area_x_ = x;
+    area_y_ = y;
+    // Re-lay out inside the new area with the size that is already known, so the readout is where it belongs
+    // on the very next frame rather than on the next resize.
+    onSurfaceResized(surface_w_, surface_h_);
 }
 
 void FpsOverlay::execute(raw_ptr<Scene> /*scene*/, raw_ptr<RenderBackend> backend)

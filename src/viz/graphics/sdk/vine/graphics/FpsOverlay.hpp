@@ -168,6 +168,17 @@ class VN_GRAPHICS_API FpsOverlay : public RenderPass {
      */
     void onSurfaceResized(int width, int height);
 
+    /** @brief Sets the origin of the area this readout lays its box out in, in device pixels.
+     *
+     * The readout anchors to the bottom-right corner of its AREA, which starts at (0, 0) by default - the
+     * whole surface. A view that draws into a part of a shared surface (a split view) points this at that
+     * part's origin so the readout lands inside it.
+     *
+     * @param x Area origin x in device pixels.
+     * @param y Area origin y in device pixels.
+     */
+    void setAreaOrigin(int x, int y);
+
     /** @brief Draws the readout.
      *
      * Measures the current frame rate, updates the digit segments, then draws
@@ -222,6 +233,8 @@ class VN_GRAPHICS_API FpsOverlay : public RenderPass {
     int    margin_px_ = 8;
     int    surface_w_ = 0;
     int    surface_h_ = 0;
+    int    area_x_ = 0;
+    int    area_y_ = 0;
 
     // The frame clock the sampler is fed from, the sampler itself, and the value the row currently shows.
     std::chrono::steady_clock::time_point last_tick_{};

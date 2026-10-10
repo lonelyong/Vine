@@ -19,6 +19,7 @@ VN_GRAPHICS_NS_BEGIN
 using vn::math::Aabbd;
 
 class Camera;
+class LightRig;
 struct RenderCommand;
 
 /**
@@ -105,6 +106,26 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
     /** @brief Removes all light sources. */
     void clearLights();
+
+    /** @brief Adds a whole lighting rig: `scene.addLighting(LightRig::studio())`.
+     *
+     * The one-liner that makes a fresh scene lit instead of flat (the backends' ambient fallback is a visibility
+     * safety net, not a lighting decision). The lights already in the scene stay - use setLighting() to replace
+     * them.
+     *
+     * The entry point is on the scene on purpose: the scene is what a host has in hand and what completion
+     * offers, it keeps the mechanism (adding lights) here while the policy (which lights) lives in the rig, and
+     * it mirrors ConsolePanel::setTheme(ConsoleTheme::dark()) on the appfw side.
+     *
+     * @param rig Rig whose lights are added.
+     */
+    void addLighting(const LightRig& rig);
+
+    /** @brief Replaces the scene's lighting with @p rig: drops the current lights, then adds the rig's.
+     *
+     * @param rig Rig whose lights become the scene's lighting.
+     */
+    void setLighting(const LightRig& rig);
 
     /** @brief Gets the scene's light sources. */
     const std::vector<LightPtr>& lights() const;
