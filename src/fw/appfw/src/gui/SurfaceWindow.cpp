@@ -686,6 +686,9 @@ bool SurfaceWindow::init()
                                         elapsedMs(d->created_at));
     d->has_session    = true;
     d->session_handle = handle;
+    // failureReason() is the answer only while the state is Failed: a session that comes up after a failed attempt
+    // clears the old verdict, so a host that reports the reason cannot keep showing one for a running session.
+    d->failure_reason.clear();
     // The size the surface has NOW goes to the backend and the view, so the frame below is built at it (undistorted
     // aspect, viewport tracking). At construction that is a placeholder size (measured 160x160 against the 752x480
     // of the settled window); the layout's real size arrives through handleUpdate() and is served in place.
@@ -738,6 +741,14 @@ void SurfaceWindow::renderFrame()
     }
     if (d->has_session && h != d->session_handle) {
         init();
+        return;
+    }
+    if (!d->backend_live) {
+        // No session (never attached, or the last attempt failed): there is no device to draw with, so this frame
+        // cannot put a picture in the surface - and "a frame is in the surface" is exactly what Presenting means,
+        // and what makes the control show the area. Showing it without one would leave the hole the control's
+        // hasPresented() says it never leaves on screen. The attach's own frame is the first picture; a host that
+        // renders before attaching gets its frames from the attach. Same rule as setContinuousRendering()'s.
         return;
     }
     d->engine->frame();

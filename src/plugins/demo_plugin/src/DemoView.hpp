@@ -78,10 +78,10 @@ inline void DemoView::activate()
         scene_->install();
     }
 
-    // 会话**立刻**开始建（不排到下一拍）：QWindow 一旦 new 出来句柄就可用了，而这一拍文档刚被打开、窗口还没上屏 ——
-    // 于是第一帧是**屏外的预热帧**、走线程池（`initAsync()` 的契约），设备/管线的几百毫秒不落在应用线程上。
-    // 反过来（等窗口上屏再建）第一帧就由应用线程渲染，启动占用直接 200 ms+（实测 204 ms / 限 150 ms）。
-    //
+    // 会话**立刻**开始建（不排到下一拍）：`initAsync()` 不挂起（`co_return init()`，见它的契约与用例
+    // `InitAsyncCompletesWithoutSuspending`），而 `DetachedTask` 是急的 —— 所以 attach 就在这一拍、在应用线程上
+    // 跑完（设备 + 管线 + 那一帧）。这一拍文档刚被打开、表面还没上屏（容器要到 Presenting 才显示出来），所以
+    // 那几百毫秒不会以"半成品"的样子露在屏上；真正被挪到池上的是**资源**（十二张面，见 assembleDemoContentLater()）。
     // TODO(生命周期)：这一支捕获 this —— 文档在 attach 途中被关掉时会悬空（视图与它的控件都随文档消失）。
     // 要定的是"谁替这个异步负责"：宿主驱动（宿主拥有视图，天然知道它什么时候死）或让视图/场景共享控件所有权。
     if (!attach_posted_)

@@ -450,6 +450,37 @@ TEST(RenderControlTest, ReportsFailedWhenNoRenderBackendIsRegistered)
     EXPECT_FALSE(pumpUntil([&] { return host.control()->init(); }, 300));
     EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Failed);
     EXPECT_FALSE(host.control()->failureReason().empty());
+
+    // 之后后端来了（插件晚加载 / 宿主自己设）：下一次 attach 就成功，而**旧判决要一起消失** ——
+    // failureReason() 只在 Failed 那一格上是答案，会话起来了还留着它，宿主会一直显示一个早就不成立的失败原因。
+    auto* late = new StubBackend();
+    host.control()->engine()->setBackend(vn::intrusive_ptr<vn::graphics::RenderBackend>(late));
+
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->init(); }, 3000));
+    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting);
+    EXPECT_TRUE(host.control()->failureReason().empty()) << "会话起来了，旧判决就该清掉";
+}
+
+// 没有会话就没有帧：attach 之前的 fitToScreen() / renderFrame() 不得把表面推到 Presenting —— Presenting 就是
+// "有帧在面里"那一格，也是控件把渲染区域显示出来的依据（没有会话还显示，等于给宿主留一个空洞）。
+TEST(RenderControlTest, AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScreen)
+{
+    HostedControl host; // 有后端，但还没人 attach（构造只组装）
+    host.show();
+
+    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Pending);
+
+    host.control()->fitToScreen();
+    host.control()->renderFrame();
+
+    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Pending) << "没有会话就不算有画面";
+    EXPECT_FALSE(host.surface()->isVisible()) << "区域不该在没画面的时候显示出来";
+    EXPECT_EQ(host.stub()->initialize_calls, 0) << "这两句也不该顺手 attach";
+
+    // 同一句在 attach 之后就真的出帧了：区别只在会话在不在。
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->init(); }, 3000));
+    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting);
+    EXPECT_GE(host.stub()->swaps, 1) << "attach 那一帧就是第一张画面";
 }
 
 // 一帧就是一帧：attach 就在调用它的那一段里出一帧，所以窗口还没 show 时 init() 也让表面就位 —— 判据是

@@ -262,15 +262,26 @@
   VTK `SetViewport` 同口径；**几何，改它不重建**，S1 落地）③清屏策略仍是宿主的（恰好一个视图清，不进 `Options`）。
   多窗口的**目标态**是"一进程一设备、N 交换链"（Filament/VTK/OSG/Unreal/Unity 口径），现状"一控件一设备"是刻意的
   过渡（命中 ①视图数 > 4、②同一内容多窗口、③设备启动开销被乘上窗口数 之一才做）。
-- **初始化时机：构造只组装（2026-10-10 查 + 设计，未落地）**：代码现状与上一条矛盾 —— `SurfaceWindow` 构造末尾有
-  `if (engine->backend() != nullptr) init();`（"构造即试一次"），而后端插件（`gfx_backend_vsg`）在启动期就
-  `registerFactory` ⇒ 真实应用里**构造栈上已经 attach 过**（日志 `surface Pending -> Presenting` 就在构造里），于是
-  `engine()->setBackend()` 的"Call before initialize()"（`RenderEngine.hpp:64`）不可能再遵守（它只是一次赋值，不拆会话），
-  `demo_plugin` 写下的"`install()` 在 attach 之前"（`DemoScene.hpp:124`）也被绕过。设计结论
-  （`.ai/design/appfw-render-view.md` §2.3）：**构造只组装；attach = 宿主显式 `init()`（同步、优先）或第一拍兜底**，
-  `useDefaultBackend()` 的守卫从 `backend_selected` 改成"引擎没有后端时才补"。代价：不显式 `init()` 的宿主要把设备/管线
-  那几百毫秒挪到第一拍（见下条 2026-09-18 的实测）—— 仓库内两个宿主都已经显式 init（`DemoView::activate()` 的
-  `initAsync()`、`ModelRenderView::activate()` 的 `init()`），不受影响。
+- **初始化时机：构造只组装（2026-10-11 已落地）**：原状是 `SurfaceWindow` 构造末尾 `if (engine->backend() != nullptr) init();`
+  （"构造即试一次"），而后端插件（`gfx_backend_vsg`）在启动期就 `registerFactory` ⇒ 真实应用里**构造栈上已经 attach 过**，
+  于是 `engine()->setBackend()` 的"Call before initialize()"（`RenderEngine.hpp:64`）不可能再遵守，
+  `demo_plugin` 写下的"`install()` 在 attach 之前"（`DemoScene.hpp:124`）也被绕过。现在的契约
+  （`.ai/design/appfw-render-view.md` §2.3、`.ai/design/appfw-render-surface.md` 2026-10-11 节）：
+  **构造只组装；attach = 宿主显式 `init()`（同步、幂等、优先）或事件循环第一拍兜底（`QTimer::singleShot(0,…)`）**；
+  `useDefaultBackend()` 的守卫是"引擎没有后端时才补第一个注册的后端"（晚注册的后端下一次 attach 还能被捡起，宿主自己设的永不被覆盖）；
+  `ensureWindowPass()` 提到后端检查**之前**（视图呈现什么是它的配方，不是设备事实）；不显式 `init()` 的宿主要把设备/管线
+  那几百毫秒挪到第一拍 —— 仓库内两个宿主都在 `activate()` 里显式 attach（`DemoView` 的 `initAsync()`、`ModelRenderView` 的
+  `init()`；`initAsync()` 是 `co_return init()`，**不挂起**，所以两者都在那一拍、在应用线程上跑完，见
+  `RenderControlTest.InitAsyncCompletesWithoutSuspending` 与 `DemoView::activate()` 的注释）。
+- **没有会话就没有帧（2026-10-11 落地）**：`Presenting` 的含义就是"帧在面里"，也是控件把渲染区域显示出来的依据 ——
+  所以 `SurfaceWindow::renderFrame()` 在 `backend_live` 为假（还没 attach，或上一次失败）时直接返回，**不推状态**；
+  attach 那一帧才是第一张画面。attach 之前调 `fitToScreen()`（`ModelRenderView::activate()` 里就有这一句）不再能把表面
+  推到 `Presenting`（否则宿主要到一个"有画面"的状态，屏上却是一个空洞）。同一条规则连续渲染那边早就写着
+  （`setContinuousRendering()` 的注释：没有会话的 tick 是免费的）。钉子：
+  `RenderControlTest.AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScreen`。
+- **`failureReason()` 只在 `Failed` 那一格上是答案（2026-10-11 落地）**：attach 成功后清掉旧判决 —— 否则"失败一次、
+  后端晚到、attach 成功"之后，宿主还在显示一个早就不成立的失败原因。钉子：
+  `RenderControlTest.ReportsFailedWhenNoRenderBackendIsRegistered`（后半段：晚到的后端 attach 成功 ⇒ 原因清空）。
 - **渲染后端的初始化可以挪进 `load()`**（2026-09-18）：控件先丢进窗口、再立刻 `init()` ——
   attach 只要求“句柄 + 尺寸 > 0”，而新 QWindow 的退化尺寸（实测 1x1，不是 0x0）就够，真实尺寸随布局
   由 resize/settle 路径补齐。否则设备/管线构建会掉到事件循环第一拍（启动框关掉后那 ~1 s 空屏）。
