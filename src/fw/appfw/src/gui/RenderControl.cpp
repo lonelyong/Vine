@@ -106,6 +106,11 @@ vn::async::Task<bool> RenderControl::initAsync()
     return dptr()->surface->initAsync();
 }
 
+void RenderControl::setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router)
+{
+    dptr()->surface->setInputRouter(std::move(router));
+}
+
 void RenderControl::renderFrame()
 {
     dptr()->surface->renderFrame();

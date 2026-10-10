@@ -386,8 +386,8 @@ engine（外壳持有并共享）+ 每个 3D 文档一个 `SceneView`**，切换
 | 登记文档类型 `"model"` | `registerType`（**没有** create 工厂 ⇒ 面板如实显示"否（只能打开）"） |
 | **两个打开器**：内存网格（`MeshPayload`）/ 磁盘网格文件（`MeshFilePayload`，打开器里调 `MeshLoader`） | 一种类型吃多种载荷（§5.1）；**怎么读由打开器决定** |
 | 右侧 dock 上的**模型信息面板**（类型/标题/**顶点数**/**三角形数**） | 面板是 header-only 的 `gui::Control`，**自己**听 `currentChanged`（见下） |
-| **中央区的模型视图**（`ModelRenderView`，真渲染） | §7/§9：`registerView(u8"model", createRenderView)` —— 视图自带 `RenderControl`，`content()` 返回自己（一实例一页） |
-| 两条命令：`open_test_model` / `open_mesh_file`（写一个最小 STL 再读回来） | 命令 `group` = `模型`；打开后自己 `setCurrent`（**宿主**策略，不是框架的） |
+| **中央区的模型视图**（`ModelRenderView`，真渲染） | §7/§9：`registerView(u8"model", createRenderView)` —— 视图自带 `RenderControl`，`content()` 返回自己（一实例一页）；**场景、灯与帧率读数也是它自己的**：灯是场景的属性（`addLighting(LightRig::studio())` —— 没人装就只有后端的 0.15 常量填充，画面是一片平色），帧率读数在**视图的默认窗口管线**里（`view->setOptions({ .stats = true })`，尺寸/比例/摆位/缩放全归视图，显示隐藏是零重建的开关；见 `.ai/memory/appfw.md`） |
+| 两条命令：`open_test_model` / `open_mesh_file`（**问用户要一个网格文件**再让打开器用加载器读回来） | 命令 `group` = `模型`；打开后自己 `setCurrent`（**宿主**策略，不是框架的）；后者是 `UserIO::getFileAsync` 的仓内第一个调用点（过滤后缀取自 `MeshLoader::supportedExtensions()`，见 appfw-userio.md §1/§7） |
 
 **面板自己听事件**：`ModelInfoPanel::followDocumentManager()` 只接 `currentChanged`（`opened` 不改当前选择，而当前文档
 被关掉时管理器先发 `currentChanged(nullptr)`）。这是"面板自己的内容自己听"那一档；**结构**（谁显示、放哪）仍然归宿主，

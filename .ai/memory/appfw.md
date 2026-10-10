@@ -80,7 +80,8 @@
 > + 右侧 dock 的**模型信息面板**（类型/标题/**顶点数/三角形数**；header-only 的 `gui::Control`，**自己**听 `currentChanged`，不靠宿主编排）
 > + **中央区的模型视图** `ModelRenderView`（**真渲染**：自带的 `RenderControl` + 自己的 `SceneView`；`content()` 返回自己;
 > 几何信息归右侧停靠面板 `ModelInfoPanel`）+ 两条命令
-> （`open_test_model` / `open_mesh_file`；后者写一个最小 STL 再读回来，用来看真加载那段）。
+> （`open_test_model` / `open_mesh_file`；后者**问用户要一个网格文件**（`UserIO::getFileAsync`，GUI 可以点按钮挑）
+> 再让打开器用真加载器读回来）。
 > 钉子：`tests/test_gui/ModelViewerTest.cpp`（4 条：空状态、两个数跟着**当前**文档换、非模型文档如实说不适用、
 > 插件登记的那个视图确实被宿主放进中央区并显示这份文档的数据）；视图层本身见 `tests/test_gui/DocumentViewTest.cpp`（5 条）；
 > 插件在真应用里加载/卸载干净（门禁 app 阶段 `Plugin 'model_viewer' loaded`，warnings=0）。
@@ -168,6 +169,30 @@
   `Command is null` 这类保持英文。
 - `UserIO::parseInt()` 现在委托 `String::toInt()`（范围规则只有一处实现），它比 `toInt` 多出的唯一契约是
   **失败时不写 `value`**（重提示要保留用户已输入的值）。
+- **路径读（2026-10-10）**：`UserIO` 多了四个读 —— `getFileAsync`/`getFilesAsync`/`getDirAsync`/`getDirsAsync`
+  （文件与文件夹分开，单个与多个分开；选项是 `UserIO::FileReadOptions`（后缀表 / `require_existing` / `suggested_path`）
+  与 `UserIO::DirReadOptions`，三个类型都嵌在 `UserIO` 里 —— 它们只服务这个类的四个读）。
+  **字段为什么是这几个**：`extensions` 是**规则**（无头侧没有选择器也照样拒错后缀），标题不属于调用方（框架定，
+  所以没有 filter/label 字段）；`require_existing = false` 读的是"另存为"，比 `must_exist = false` 少一层
+  "必须不存在"的误读；建议值给的是**路径**而不是文本。不做"只留一个 filter 字段自动解析"：那要 Qt-free 的基类
+  去解析 `标题 (模式);;…`（详见 `.ai/design/appfw-userio.md` §1/§6）。
+  三个容易记错的点：
+  ① **多个路径写在一行里、用 `;` 分隔**（Windows 文件名里 `;` 非法，所以无歧义）—— 不是"逐行输入到空行"，
+  于是槽位/取消/行缓冲一行都没改；POSIX 上含 `;` 的路径在多值读里表达不了（单值读整行不切分，可用）。
+  ② **无头侧一次读从不重提示**：非法输入打一行原因（`文件不存在: …`/`不是目录: …`/`后缀不支持（仅 .stl）: …`）
+  然后 `nullopt`；GUI 侧原地重提示并**把原文留在输入行**里。
+  ③ 校验只有一份（`UserIO::checkPath`/`checkPathLine`，protected static）：存在性、类型、后缀（大小写不敏感、
+  比文件名尾部 ⇒ 多段后缀也认）、成对引号剥壳；**绝对化/TOCTOU 刻意不做**（检查是建议性的）。
+  提示文本由实现拼（`promptWithRequirements`，无头与 GUI 同一串），所以"要什么格式"看得见，不用靠悬浮文案。
+- **控制台的选择器（2026-10-10）**：路径读挂起时输入行**内部**长出一个按钮
+  （`QLineEdit::addAction(…, TrailingPosition)` + `style()` 标准图标，appfw 零图标资源；`Ctrl+O` 是它的键盘等价物），
+  下面一条 2px 下划线（取 `ConsoleTheme::prompt`，**没给 `ConsoleTheme` 加字段**：那是公开结构体，加字段要 bump ABI）。
+  **点按钮只是"更快地填那一行"**：路径写进输入行、**不自动提交**（回车才走 `lineEntered` 那条唯一路径），
+  多值读两次点选追加成 `a;b`，对话框在 Windows 上给的 `C:/a/b` 会先过 `QDir::toNativeSeparators`。
+  对话框是**模态嵌套事件循环**，期间投递的回调照跑 ⇒ 返回后先比"当下还是我开对话框时那个 kind 吗"，
+  不是就丢掉结果；读结束时实现下发 `setInputAction({})`，按钮与高亮一起撤（撤下用 `deleteLater`，
+  因为点击回调可能正在栈上）。`ConsolePanel` 的**新增状态全在 `Impl`**、一个 `Signal` 都没加 ⇒ 不用动
+  `VN_APPFW_PLUGIN_ABI_VERSION`。**拖放没做**（设计留在 `appfw-userio.md` §5.4）。
 - **嵌入渲染表面：宿主给时机，控件自维护**（2026-09-19 改）：`RenderControl` 不自己 attach 了 —— 首次
   attach 只有 `init()`（幂等；表面还没布局好就返回 `false`，不猜延时），宿主（app_shell）在
   `new` + `setCentralWidget()` + `demo.install()` 之后立刻调一次。**已建立的会话自己维护**：Qt 重建
@@ -181,6 +206,64 @@
   `setAutoInitialize`/重试阶梯/构造里的首触发已删；`Failed` 现在只有“没注册后端插件”一种来源。
   要知道“什么时候才能出画面”就订阅 `state_changed`（`Pending/Attached/Presenting/Failed`），别用
   `QTimer::singleShot` 猜。
+- **`SceneView` ↔ `RenderEngine` 的持有关系（2026-10-11 查）**：视图**借用**引擎（`raw_ptr<RenderEngine> engine_`，
+  "the host owns it and keeps it alive"），但视图的 `default_pipeline_`（`intrusive_ptr<Pipeline>`）**强引用**引擎
+  ⇒ **"默认管线活着 ⇒ 引擎活着"**，所以 `~SceneView()` 里那次 `removeWindowPass()` 即使宿主先释放了引擎也安全
+  （`SceneView.cpp` 的注释原话："even if the host released it first"）。引擎**反向没有边**：不认识视图、不认识管线
+  （无环）；它只在 `slots_` 里强引用 pass + 内容场景，而 pass 又强引用相机（`setCamera(intrusive_ptr<Camera>)`）
+  —— 那是 pass 的属性，不是"引擎知道视图"。`SurfaceWindow::Impl` 同时强引用两者，且 `engine` 声明在 `view` 之前
+  ⇒ 析构序 view → engine。**实现约束**：`setOptions()` 重建默认管线必须"**先建新的、再丢旧的**"（`Pipeline::engine_`
+  私有且无访问器，视图无法从旧管线借引擎；顺序反了会让 `engine_` 悬空）。详见 `.ai/design/appfw-render-view.md` §13。
+- **框架级复核的三条硬结论（2026-10-11，`appfw-render-view.md` §14）**：①**几何只有一个输入** —— `viewport`（归一化）
+  × 表面尺寸 × 比例才是矩形真相，`onSurfaceResized` 永远只给**表面**尺寸，宿主不必自己算"一半"；②**HUD 可见性的唯一
+  真相是 pass 的 `isEnabled()`**（`Options` 只回答"有没有这个档"），而档属于**默认管线** ⇒ 宿主自建主 pass 时 HUD 开关
+  无档可切（记诊断、不静默）；③**多视图的额外视图要显式 `ensureWindowPass()`**（它没有 attach 事件），而"恰好一个视图
+  清屏"是后端 **loadOp 整张清**（`OffscreenTarget.cpp:107`）逼出来的约定、且清屏那条 pass 要排最前。**ABI 边界**：
+  appfw 公开类加数据成员/`Signal` = bump `VN_APPFW_PLUGIN_ABI_VERSION`（`setInputRouter` 因此放 `Impl`）；graphics 没有
+  版本宏，`SceneView` 加成员可行但要写明"插件需重建"。
+- **输入路由（2026-10-11 已落地）**：`RenderControl::setInputRouter(std::function<SceneView*(int x, int y)>)`
+  —— **一个**"这一点归谁"的回调（放 `Impl`，公开面零新数据成员 ⇒ ABI 不动）。语义：**指针按下时路由、松开前捕获**
+  （拖拽越界不断线；捕获期间控件持一个强引用 ⇒ 宿主中途丢掉自己的引用也不崩）；滚轮按点路由（为此
+  `vn::window::ScrollEvent` 补了 `x`/`y`，逻辑像素、与鼠标同空间）；键盘给"捕获中的 / 自己的"视图；返回 `nullptr`
+  = 回退自己的视图；返回**别的引擎**的视图 = 记一条诊断（`UnsupportedRequest`）并回退。未设回调时一切照旧给
+  `view()`（单视图逐字不变）。用例：`RenderControlTest.TheInputRouterSendsEachDragToTheViewUnderTheCursor`、
+  `ACapturedViewSurvivesTheHostLettingGoOfIt`。
+- **渲染视图 v2 已落地（S0–S4，2026-10-11）**：`SceneView::Options{path,gizmo,stats}` + `setOptions/options` + `pipeline()`；
+  **几何** `setViewport(NormalizedViewport)`（视图内一处把 {viewport × 表面尺寸 × 比例} 换算成相机宽高比 / 窗口 pass 视口 /
+  离屏与 HUD 尺寸 / layout 步尺寸）+ `onSurfaceResized(w,h,ratio)` 重载 + 三参数 `addSurfaceLayout`；**开关**
+  `setStatsVisible/setGizmoVisible`（`pass->setEnabled`，零重建；档不在配方里时补建一次并记诊断）；`AxisGizmo/FpsOverlay`
+  加 `setAreaOrigin`（多视图里 HUD 落在自己那块）；`Pipeline::resize` 连比例一起推给 HUD；`LightRig::studio()/headlight()`
+  + `Scene::addLighting/setLighting`；`SurfaceWindow`：**构造只组装 + 第一拍兜底 attach**、尺寸与比例一起推、
+  `ensureWindowPass()` 提到后端检查之前。四个套件全绿（graphics 304 / gui 246 / appfw 32 / meshio 34）。
+  细节与两条实现教训见 `.ai/design/appfw-render-view.md` 头部"落地记录"。
+- **HUD 的显示 / 隐藏是运行时开关（2026-10-11，已落地）**：`SceneView::Options::gizmo/stats` 只回答"这个视图
+  **有没有**这个档"（配方，变更 = 一次重建）；`setStatsVisible()/setGizmoVisible()`（+ `isStatsVisible/isGizmoVisible`）
+  回答"现在**看得见吗**"——**零重建**（就是 `RenderPass::setEnabled`；引擎在六处跳过 disabled 的 pass）。档还不存在时
+  第一次开启会**补建一次**（每个视图每种档最多一次）⇒ 要频繁切的宿主在配置窗口里把两个档都设 `true`（R1 零重建），
+  之后随便切。可见性归**视图**，不进 `RenderControl`，也没有全局开关（多视图各不同）。详见
+  `.ai/design/appfw-render-view.md` §4.1。
+- **多视图 / 多窗口的边界（2026-10-11 查，未落地）**：**多窗口/多 widget = 多个 `RenderControl`，今天就能用**
+  —— 一控件一面一引擎一视图，**后端会话每个控件 `factory->create()` 一个 ⇒ 多控件 = 多设备**（同一模型开两窗口
+  就上传两遍；`BlockStorage`/`MaterialImages` 归会话）。这是刻意选 Qt/three.js 那条路（隔离、生命周期干净），
+  要保的不变量是"公开面里没有进程唯一的假设 + 设备资源归后端会话"，共享设备（一设备多交换链）落在后端 +
+  `RenderBackendRegistry`，不碰控件/视图 API。**一个表面里多视图（分屏）底层已经够**：`SceneView` 类注释写明
+  "several views may share one engine"，给每个 pass `setViewport`（**设备像素**）+ 恰好一个 `setClearEnabled`，
+  自己建的 pass 一呈现该相机，`ensureWindowPass()` 就不插一脚；视口随表面尺寸更新走 `addSurfaceLayout()`。
+  （2026-10-11 补的设计，见 `.ai/design/appfw-render-view.md` §12）**缺件变成两件已设计 + 一件是策略**：
+  ①输入路由 = `RenderControl::setInputRouter`（**按下时路由、松开前捕获**；默认 = 自己的 `view()`，单视图行为不变；
+  放 `Impl` 里的 `std::function` ⇒ ABI 不动）②视口 = `SceneView::setViewport`（**归一化 [0,1]**，与 Unity `Camera.rect` /
+  VTK `SetViewport` 同口径；**几何，改它不重建**，S1 落地）③清屏策略仍是宿主的（恰好一个视图清，不进 `Options`）。
+  多窗口的**目标态**是"一进程一设备、N 交换链"（Filament/VTK/OSG/Unreal/Unity 口径），现状"一控件一设备"是刻意的
+  过渡（命中 ①视图数 > 4、②同一内容多窗口、③设备启动开销被乘上窗口数 之一才做）。
+- **初始化时机：构造只组装（2026-10-10 查 + 设计，未落地）**：代码现状与上一条矛盾 —— `SurfaceWindow` 构造末尾有
+  `if (engine->backend() != nullptr) init();`（"构造即试一次"），而后端插件（`gfx_backend_vsg`）在启动期就
+  `registerFactory` ⇒ 真实应用里**构造栈上已经 attach 过**（日志 `surface Pending -> Presenting` 就在构造里），于是
+  `engine()->setBackend()` 的"Call before initialize()"（`RenderEngine.hpp:64`）不可能再遵守（它只是一次赋值，不拆会话），
+  `demo_plugin` 写下的"`install()` 在 attach 之前"（`DemoScene.hpp:124`）也被绕过。设计结论
+  （`.ai/design/appfw-render-view.md` §2.3）：**构造只组装；attach = 宿主显式 `init()`（同步、优先）或第一拍兜底**，
+  `useDefaultBackend()` 的守卫从 `backend_selected` 改成"引擎没有后端时才补"。代价：不显式 `init()` 的宿主要把设备/管线
+  那几百毫秒挪到第一拍（见下条 2026-09-18 的实测）—— 仓库内两个宿主都已经显式 init（`DemoView::activate()` 的
+  `initAsync()`、`ModelRenderView::activate()` 的 `init()`），不受影响。
 - **渲染后端的初始化可以挪进 `load()`**（2026-09-18）：控件先丢进窗口、再立刻 `init()` ——
   attach 只要求“句柄 + 尺寸 > 0”，而新 QWindow 的退化尺寸（实测 1x1，不是 0x0）就够，真实尺寸随布局
   由 resize/settle 路径补齐。否则设备/管线构建会掉到事件循环第一拍（启动框关掉后那 ~1 s 空屏）。
@@ -285,8 +368,9 @@
 
 ## 测试
 
-- `tests/test_gui/test_gui.cpp`：`CommandManager_*` 38 例、`UserIOTest.*` 7 例（含工作线程读、历史去载荷、
-  `NotApplicable` 的两条：会话臂与日志级别都断言到）。
+- `tests/test_gui/test_gui.cpp`：`CommandManager_*` 38 例、`UserIOTest.*` 12 例（含工作线程读、
+  "点按钮真开对话框"的端到端路径读）、`ConsoleUserIOReadTest.*` 7 例（行/EOF、解析、单飞、跨线程取消、
+  三条路径读）；`NotApplicable` 的两条：会话臂与日志级别都断言到。
   这个目标现在链 `vn::Logging`：命令用例要拿 `LogSink` 抓日志行（断言某个状态没被记成 error 级）。
 - `tests/test_appfw/HeadlessBootTest.cpp`：8 例（**无头宿主**：只链 `vn::Appfw` + `Qt6::Core`；构造不建上报口、
   启动阶段里有且能用、启动收完后销毁；三拍顺序、取消、失败退出、同步门、uuid 身份告警、shutdown 误用告警）。
@@ -315,3 +399,33 @@
 - 与 Qt 同 TU 的坑：`QtCore/qforeach.h` 把 `forever` 定义成宏（`for (;;)`），所以**任何名为 `forever` 的成员/局部
   变量都会让"先包含 Qt 头、再包含它"的 TU 编不过**（`InMemoryCache::Entry::forever` 因此改名 `never_expires`；
   `MeshLoader.hpp` 会把这个 cache 带进来，`test_gui` 里一个 `<QLabel>` 就够触发）。
+
+## 帧率读数由**视图自己**挂（2026-10-10，model_viewer）
+
+- `FpsOverlay` 是自带 HUD pass，但它是 **opt-in**：`SceneView::ensureWindowPass()` 建的默认窗口管线用的是
+  `PipelineOptions{}`（`fps.enabled = false`），而 `default_pipeline_` 私有、plugin 够不着 ⇒ **谁想要读数谁自己挂**。
+- 查看器的三步接线（`ModelRenderView::attachFpsOverlay()`，与 `FpsOverlay` 文档示例一致）：
+  `setPixelRatio(control->devicePixelRatio())` → `view->addSurfaceLayout([fps](w,h){ fps->onSurfaceResized(w,h); })`
+  → `engine->addPass(fps, kFpsOverlayOrder)`（`kFpsOverlayOrder` = `pipelineStageOrder(Overlay) + 30`，
+  与 `RenderPipelineBuilder::applyOverlays()` 的 `overlay_base + options.fps.order` 同一个算式 ⇒ 与 demo 的读数同层）。
+- **尺寸归创建者维护，而且 `addSurfaceLayout()` 只登记回调、不重放**：控件构造后可能还没布局（0×0，`onSurfaceResized`
+  只认正数），所以挂的时候先报一次当前尺寸，`activate()` 里再补一次（那一刻控件才真的有了大小）。
+- **`activate()` 会重试**（控件没布局好时建场景提前返回、`fpsOverlay()` 可能是空）⇒ `attachFpsOverlay()` 必须先查
+  `fps_ != nullptr` 早退，否则每次上屏叠一个读数。
+- 宿主想关掉：`engine()->removePass(...)`，或者 `setEnabled(false)`（引擎跳过被禁用的 pass）。
+- 钉子：`tests/test_gui/ModelViewerTest.cpp` 的 `TheSceneCarriesItsOwnFrameRateReadout` —— 用"摘得掉"验注册
+  （`removePass` 对没注册的 pass 是空操作，所以 pass 数减一才算真的在里面），并钉住 `activate()` 可重复。
+
+## 灯是场景的属性，不是渲染面的（2026-10-10，model_viewer 的"有画面但没光照"）
+
+- 同一条"一份文档一份场景"的直接后果：**灯也必须每份场景自己装**（`Scene::addLight`）。零灯的场景不会黑，而是
+  **一片平色** —— 后端在 `!has_ambient` 时只补 `ambient = 0.15`（`gfx_backend_vsg/src/internal/LightBlock.cpp`），
+  0 盏方向光 ⇒ 明暗项全为 0、只剩下 albedo×0.15。看起来就是"打开了却没有光照效果"（比"全黑"更像"没装灯"）。
+- 正确形状：`view->scene()` 拿到场景后自己装三盏（`ModelRenderView::addLighting`）：**环境光 0.35 + 世界固定的
+  主方向光 + 背面弱补光**；`demo_plugin` 的 `addDemoLighting()` 是同一套（它还额外开了阴影）。
+- 方向光取**世界固定**方向，不按相机算：否则"明暗"成了视角的函数，同一个模型换个角度就换一套阴影，
+  "这里画得对不对"没有可对照的答案（`DemoScene.cpp` 里那段注释的结论，viewer 沿用）。
+- 装灯的入口要防重复：`activate()` 会重试建场景（控件还没布局好时 `view()` 为空 ⇒ 建场景提前返回），
+  所以按 `scene->hasLights()` 早退，别每次加一遍。
+- 钉子：`tests/test_gui/ModelViewerTest.cpp` 的 `TheSceneCarriesItsOwnLights`（恰好一盏环境光 + ≥2 盏方向光，
+  且方向不是零向量）。

@@ -1,11 +1,14 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <thread>
 #include <vector>
 
 #include <QApplication>
+#include <QMouseEvent>
+#include <QPoint>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QWindow>
@@ -19,6 +22,7 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/SceneView.hpp>
 
 namespace
 {
@@ -164,8 +168,175 @@ TEST(RenderControlTest, AttachesItselfOnceTheBackendAndWindowAreThere)
     EXPECT_TRUE(host.surface()->isVisible()); // 有帧可看 ⇒ 表面就位
 }
 
-// 状态序列是 Pending -> Attached -> Presenting，且每个转换只报一次。
-// 同步 attach：设备/会话/管线与那一帧都在建控件的那一段里跑完（句柄在 QWindow 一 new 出来就有），所以
+// 构造只组装：`new RenderControl()` 返回时**没有** attach（状态停在 Pending），配置写在它之后的同步代码里；
+// 第一拍兜底才 attach —— 而兜底用的正是宿主刚装上的那个后端（不是注册表里的默认）。这就是"配置窗口"，
+// 也是 SDK 写的次序（构造 ⇒ setBackend() ⇒ init()）不再依赖"构造那一刻注册表里有没有后端"的原因。
+TEST(RenderControlTest, ConstructionOnlyComposesAndTheFirstTurnAttaches)
+{
+    HostedControl host; // 后端在构造之后才装
+
+    // 构造返回时：引擎与视图在、会话没开始。
+    ASSERT_NE(host.control()->engine(), nullptr);
+    ASSERT_NE(host.control()->view(), nullptr);
+    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Pending);
+    EXPECT_EQ(host.stub()->initialize_calls, 0);
+
+    // 不 show、不 init()：只让事件循环转一圈，兜底就把会话开起来（"有帧可看"不要求窗口可见）。
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+    EXPECT_GT(host.stub()->initialize_calls, 0);
+    EXPECT_EQ(host.control()->engine()->backend(), host.stub()); // 宿主自己装的后端赢，兜底只是补时机
+}
+
+// 尺寸与比例**一起**到视图：控件把自己的逻辑尺寸与 devicePixelRatio 推给视图，视图再从这一对推出它自己的
+// 矩形（相机宽高比、窗口 pass 视口、离屏目标/HUD 尺寸）—— 宿主一个 DPR 都不用记，也不会出现"只推了尺寸"。
+TEST(RenderControlTest, TheSurfaceSizeAndRatioReachTheViewTogether)
+{
+    HostedControl host;
+
+    bool   got    = false;
+    int    got_w  = 0;
+    int    got_h  = 0;
+    double got_pr = 0.0;
+    host.control()->view()->addSurfaceLayout([&](int w, int h, double ratio) {
+        got    = true;
+        got_w  = w;
+        got_h  = h;
+        got_pr = ratio;
+    });
+
+    host.show();
+    host.resizeWindow(640, 480);
+
+    ASSERT_TRUE(pumpUntil([&] { return got; }, 3000));
+    EXPECT_GT(got_w, 0);
+    EXPECT_GT(got_h, 0);
+    EXPECT_DOUBLE_EQ(got_pr, host.control()->devicePixelRatio());
+}
+
+// 多视图：一个表面、两个视图 —— 输入按"点"归视图。按下时路由、松开前捕获（`RenderControl::setInputRouter`）：
+// 拖拽飞出自己那块矩形也继续由它接管，而 release 之后下一次按会重新路由。
+TEST(RenderControlTest, TheInputRouterSendsEachDragToTheViewUnderTheCursor)
+{
+    HostedControl host;
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+    host.resizeWindow(640, 480);
+
+    auto* control = host.control();
+    // 布局落地：控件拿到真实尺寸（路由按宽度对半分，0 宽会让这条用例失去意义）。
+    ASSERT_TRUE(pumpUntil([&] { return control->width() > 0 && control->height() > 0; }, 3000));
+
+    auto* own_view = control->view();
+    ASSERT_NE(own_view, nullptr);
+
+    // 右边那半：自己的视图 + 挂在**同一个引擎**上（视图属于引擎，不属于控件）+ 自己那条窗口管线。
+    auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
+    right->setEngine(control->engine());
+    right->ensureWindowPass();
+    right->setViewport({ 0.5, 0.0, 0.5, 1.0 });
+    right->onSurfaceResized(control->width(), control->height(), control->devicePixelRatio());
+
+    control->setInputRouter([&](int x, int) { return x < control->width() / 2 ? own_view : right.get(); });
+
+    QWindow* const surface = host.surface();
+    ASSERT_NE(surface, nullptr);
+
+    const auto send_press = [&](int x, int y) {
+        QMouseEvent event(QEvent::MouseButtonPress, QPointF(x, y), surface->mapToGlobal(QPoint(x, y)),
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(surface, &event);
+    };
+    const auto send_move = [&](int x, int y) {
+        QMouseEvent event(QEvent::MouseMove, QPointF(x, y), surface->mapToGlobal(QPoint(x, y)), Qt::NoButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(surface, &event);
+    };
+    const auto send_release = [&](int x, int y) {
+        QMouseEvent event(QEvent::MouseButtonRelease, QPointF(x, y), surface->mapToGlobal(QPoint(x, y)),
+                          Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(surface, &event);
+    };
+    const auto changed = [](const vn::math::Vec3d& a, const vn::math::Vec3d& b) {
+        return (a - b).length() > 1.0e-9;
+    };
+
+    const vn::math::Vec3d own_before   = own_view->camera()->eye();
+    const vn::math::Vec3d right_before = right->camera()->eye();
+
+    // 在**右半**按下并拖动：只有右边那个视图的相机该动。
+    send_press(control->width() * 3 / 4, control->height() / 2);
+    send_move(control->width() * 3 / 4 + 40, control->height() / 2 + 20);
+    // 中途"飞出"自己那一块（越过中线到左半一点点）：捕获仍然属于右边那个视图，拖拽不该断线。
+    send_move(control->width() / 2 - 10, control->height() / 2 + 40);
+    send_release(control->width() / 2 - 10, control->height() / 2 + 40);
+
+    EXPECT_TRUE(changed(right->camera()->eye(), right_before)) << "右半按下 ⇒ 右边那个视图接管这次拖拽";
+    EXPECT_TRUE(std::isfinite(right->camera()->eye().x) && std::isfinite(right->camera()->eye().y) &&
+                std::isfinite(right->camera()->eye().z))
+        << "接管之后那个相机仍然可用（拖过的距离再大也不该把它算成 NaN）";
+    EXPECT_FALSE(changed(own_view->camera()->eye(), own_before)) << "左边那个视图不该收到这次拖拽";
+
+    // 松手之后重新路由：这一次是**左半**，动的是控件自己那个视图（也让"捕获确实被释放"可观察）。
+    const vn::math::Vec3d own_second = own_view->camera()->eye();
+    send_press(control->width() / 8, control->height() / 2);
+    send_move(control->width() / 8 + 40, control->height() / 2 + 20);
+    send_release(control->width() / 8 + 40, control->height() / 2 + 20);
+
+    EXPECT_TRUE(changed(own_view->camera()->eye(), own_second)) << "release 之后按左半 ⇒ 路由重新走一次";
+    EXPECT_EQ(control->view(), own_view);
+}
+
+// 路由给出的视图**可以活不过这次拖拽**：控件在捕获期间持有它（借用 + 操作期间临时加引用，同一条通则）。
+TEST(RenderControlTest, ACapturedViewSurvivesTheHostLettingGoOfIt)
+{
+    HostedControl host;
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+    host.resizeWindow(640, 480);
+
+    auto* control = host.control();
+    ASSERT_TRUE(pumpUntil([&] { return control->width() > 0 && control->height() > 0; }, 3000));
+
+    auto  right   = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
+    right->setEngine(control->engine());
+    right->ensureWindowPass();
+    right->setViewport({ 0.5, 0.0, 0.5, 1.0 });
+    right->onSurfaceResized(control->width(), control->height(), control->devicePixelRatio());
+
+    control->setInputRouter([&](int x, int) { return x < control->width() / 2 ? control->view() : right.get(); });
+
+    QWindow* const surface = host.surface();
+    ASSERT_NE(surface, nullptr);
+
+    // 只留住相机（一个安全可读的观察点）：视图本身的引用马上就被宿主丢掉。
+    auto camera_keep = vn::intrusive_ptr<vn::graphics::Camera>(right->camera());
+    const vn::math::Vec3d before = camera_keep->eye();
+
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(control->width() * 3 / 4, 100),
+                      surface->mapToGlobal(QPoint(control->width() * 3 / 4, 100)), Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QApplication::sendEvent(surface, &press);
+
+    // 宿主丢掉自己的引用：拖拽还在进行，控件必须仍握着一个（引用计数在，视图就不死）。
+    right = nullptr;
+
+    QMouseEvent move(QEvent::MouseMove, QPointF(control->width() * 3 / 4 + 40, 120),
+                     surface->mapToGlobal(QPoint(control->width() * 3 / 4 + 40, 120)), Qt::NoButton, Qt::LeftButton,
+                     Qt::NoModifier);
+    QApplication::sendEvent(surface, &move);
+
+    QMouseEvent release(QEvent::MouseButtonRelease, QPointF(control->width() * 3 / 4 + 40, 120),
+                        surface->mapToGlobal(QPoint(control->width() * 3 / 4 + 40, 120)), Qt::LeftButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QApplication::sendEvent(surface, &release);
+
+    // 视图活着 ⇒ 它的操纵器还在 ⇒ 这次拖动真的转了这个相机。视图若在 `right = nullptr` 那一刻就没了，
+    // 下面这一句读到的要么是没被拖过的旧值（操纵器随视图一起消失），要么根本走不到这里。
+    EXPECT_GT((camera_keep->eye() - before).length(), 1.0e-9)
+        << "捕获期间控件必须替宿主握着这个视图（否则拖拽会作用在已释放的视图上）";
+}
+
+
 // initAsync() 不挂起 —— 它返回时 attach 已经结束，宿主的内容装配天然排在它之后，不需要任何等待。
 TEST(RenderControlTest, InitAsyncCompletesWithoutSuspending)
 {

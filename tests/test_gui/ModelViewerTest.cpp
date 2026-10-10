@@ -204,6 +204,122 @@ TEST(ModelViewerTest, TheInfoPanelSaysSoWhenTheCurrentDocumentIsNotAModel)
     EXPECT_EQ(panel.trianglesText(), QStringLiteral("—（不是模型文档）"));
 }
 
+TEST(ModelViewerTest, TheSceneCarriesItsOwnLights)
+{
+    // 灯是**场景**的属性（`Scene::addLight`），而每个视图有自己的场景：没人给这份文档装灯，它就落在"零灯"
+    // 那一档 —— 后端在没有环境光时只补一个 0.15 常量填充，网格被画成一片平色，看起来就是"没有光照效果"。
+    // 这条钉住"视图自带灯"，以及灯是**世界固定**的方向光（不跟相机走：绕行时明暗只随几何变）。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ASSERT_TRUE(registerModelType(documents));
+    ASSERT_TRUE(registerModelOpener(documents));
+    ASSERT_TRUE(views.registerView(kModelType, vn::model_viewer::createRenderView));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+    ASSERT_NE(openModel(documents, u8"立方体", vn::model_viewer::makeBoxMesh()), nullptr);
+
+    auto* view = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());
+    ASSERT_NE(view, nullptr);
+    view->activate();
+
+    auto* control = view->renderControl();
+    ASSERT_NE(control, nullptr);
+    auto* scene_view = control->view();
+    ASSERT_NE(scene_view, nullptr);
+    const auto scene = scene_view->scene();
+    ASSERT_NE(scene, nullptr);
+
+    const auto& lights = scene->lights();
+    ASSERT_GE(lights.size(), 3u) << "环境光 + 主光 + 补光：少了就只剩平色";
+
+    std::size_t ambient = 0;
+    std::size_t directional = 0;
+    for (const auto& light : lights) {
+        if (light == nullptr || !light->isEnabled()) {
+            continue;
+        }
+        if (light->type() == vn::graphics::LightType::Ambient) {
+            ++ambient;
+        }
+        if (light->type() == vn::graphics::LightType::Directional) {
+            ++directional;
+            // 方向光必须有真实方向（零向量照不出明暗差别）。
+            const auto direction = light->direction();
+            EXPECT_GT(std::abs(direction.x) + std::abs(direction.y) + std::abs(direction.z), 0.0)
+                << "方向光的朝向不能是零向量";
+        }
+    }
+    EXPECT_EQ(ambient, 1u) << "恰好一盏环境光：多了会洗掉明暗";
+    EXPECT_GE(directional, 2u) << "主光 + 背面补光";
+
+    // 视图自己的场景：它给的就是控件那个 view 的场景，不是另外造的一个。
+    EXPECT_EQ(scene.get(), control->view()->scene().get());
+}
+
+TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
+{
+    // 帧率读数现在是**视图默认窗口管线**里的 HUD 档（`view->setOptions({ .stats = true })`）：查看器不再自己造
+    // pass、不再自己接尺寸与比例。这条钉四件事：①读数在、且在画；②它是**视图默认管线**的一部分（不是随手挂在
+    // 引擎上的孤儿）；③`activate()` 可重复（不重建、不叠 pass）；④显示/隐藏是零重建的开关。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ASSERT_TRUE(registerModelType(documents));
+    ASSERT_TRUE(registerModelOpener(documents));
+    ASSERT_TRUE(views.registerView(kModelType, vn::model_viewer::createRenderView));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+    ASSERT_NE(openModel(documents, u8"立方体", vn::model_viewer::makeBoxMesh()), nullptr); // 宿主显示 ⇒ activate()
+
+    auto* view = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());
+    ASSERT_NE(view, nullptr);
+    auto* control = view->renderControl();
+    ASSERT_NE(control, nullptr);
+    auto* engine = control->engine();
+    ASSERT_NE(engine, nullptr);
+
+    auto* scene_view = control->view();
+    ASSERT_NE(scene_view, nullptr);
+    auto* pipeline = scene_view->pipeline();
+    ASSERT_NE(pipeline, nullptr) << "上屏之后视图该有自己的默认窗口管线";
+
+    auto* readout = view->fpsOverlay();
+    ASSERT_NE(readout, nullptr) << "查看器要让视图的默认管线带上帧率读数";
+    EXPECT_EQ(static_cast<const void*>(readout), static_cast<const void*>(pipeline->fpsOverlay()))
+        << "读数必须是默认管线里的那一个，不是另挂在引擎上的孤儿 pass";
+    EXPECT_TRUE(readout->isEnabled());
+    EXPECT_TRUE(scene_view->isStatsVisible());
+
+    // 再上屏几次只该重画：管线不重建、pass 不重复注册。
+    const std::size_t registered = engine->passCount();
+    view->activate();
+    view->activate();
+    EXPECT_EQ(engine->passCount(), registered) << "activate() 可重复：读数不能挂两遍";
+    EXPECT_EQ(scene_view->pipeline(), pipeline);
+
+    // 宿主想关掉读数：开关只切 pass 的 enabled（引擎跳过被禁用的 pass），管线与 pass 表都不动。
+    scene_view->setStatsVisible(false);
+    EXPECT_FALSE(readout->isEnabled());
+    EXPECT_FALSE(view->fpsOverlay()->isEnabled());
+    EXPECT_EQ(engine->passCount(), registered);
+    EXPECT_EQ(scene_view->pipeline(), pipeline) << "开关不该重建管线";
+    scene_view->setStatsVisible(true);
+    EXPECT_TRUE(readout->isEnabled());
+
+    // 改大小安全：读数的摆位与尺寸由视图在 resize 时算（不再有查看器那套 layout 步）。
+    scene_view->onSurfaceResized(400, 300, control->devicePixelRatio());
+    EXPECT_TRUE(readout->isEnabled());
+}
+
 TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
 {
     // 视图层那三段（注册表 / 宿主 / 中央容器）在 DocumentViewTest 里各自被钉过；这条钉的是**插件自己**那一段，
@@ -282,7 +398,8 @@ TEST(ModelViewerTest, AFilePayloadReachesTheRenderSceneInTheSourceUnits)
     ASSERT_NE(document, nullptr) << "读不回来时打开器返回空，这条用例就没有意义了";
     ASSERT_TRUE(documents.setCurrent(document));
 
-    // 打开器与命令都是读完就丢文件：文档手里是拷下来的网格，之后不再看它（这里模拟命令那一步）。
+    // 打开器读完就只留文档手里的网格，之后不再看那个文件：用例自己收拾它（命令那边不再造临时文件了，
+    // 它读的是用户给的文件，而别人的文件不该被命令删掉）。
     std::filesystem::remove(stl_path);
 
     auto* view = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());

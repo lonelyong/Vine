@@ -104,6 +104,15 @@ class SurfaceWindow : public QWindow {
     /** @brief Fits the whole scene into the view (home view when the scene is empty) and renders a frame. */
     void fitToScreen();
 
+    /** @brief Sets which view receives input, by surface position (see RenderControl::setInputRouter).
+     *
+     * A press routes and captures until release; the captured view is held by reference for the duration. An empty
+     * function restores the default (everything to this surface's own view).
+     *
+     * @param router Function taking (x, y) in logical surface pixels and returning the owning view.
+     */
+    void setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router);
+
     /** @brief Gets where the surface lifecycle currently stands. */
     SurfaceState state() const;
 
@@ -138,13 +147,19 @@ class SurfaceWindow : public QWindow {
     void keyReleaseEvent(QKeyEvent* event) override;
 
   private:
-    /** @brief Pushes a mouse event to the view, refreshes the frame, and opens the context menu on
-     * a right-click. */
+    /** @brief Pushes a mouse event to the view that owns the point, refreshes the frame, and opens the context
+     * menu on a right-click. */
     void handleMouse(const vn::window::MouseEvent& event);
-    /** @brief Pushes a scroll event to the view and refreshes the frame. */
+    /** @brief Pushes a scroll event to the view that owns the point and refreshes the frame. */
     void handleScroll(const vn::window::ScrollEvent& event);
-    /** @brief Pushes a key event to the view and refreshes the frame. */
+    /** @brief Pushes a key event to the routed (or this surface's own) view and refreshes the frame. */
     void handleKey(const vn::window::KeyEvent& event);
+    /** @brief Resolves the view that owns a surface point (the router's answer, vetted; own view otherwise). */
+    vn::graphics::SceneView* routedView(int x, int y);
+    /** @brief Pushes an event to @p target when it is not null (the one place a view is handed an event). */
+    void pushToView(vn::graphics::SceneView* target, const vn::window::MouseEvent& event);
+    void pushToView(vn::graphics::SceneView* target, const vn::window::ScrollEvent& event);
+    void pushToView(vn::graphics::SceneView* target, const vn::window::KeyEvent& event);
     /** @brief Reports the client size once per change, whichever object saw it first. */
     void handleResized(int width, int height);
     /** @brief Marks the native surface usable and schedules the update that follows it. */

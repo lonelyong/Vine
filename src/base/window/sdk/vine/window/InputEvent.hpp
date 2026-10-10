@@ -47,6 +47,10 @@ struct VN_WINDOW_API ScrollEvent {
     double      deltaX = 0.0;
     double      deltaY = 0.0;
     ModifierKey modifiers = ModifierKey::None;
+    /// Cursor position the wheel turned at, in the surface's logical pixels (top-left origin).
+    /// A surface shared by several views routes by it; a single-view host ignores it.
+    double x = 0.0;
+    double y = 0.0;
 };
 
 /**

@@ -1544,9 +1544,9 @@ void assembleDemoContentLater(std::shared_ptr<DemoScene> demo)
         //    启动框照重绘、进度照上报、取消点得动。
         auto images = co_await loadDemoCubeImagesAsync();
 
-        // 2. 装内容不跟 attach 抢：attach 是同步的（控件构造时就跑完了，见 RenderControl::init()），而安装这一段
-        //    与任何后来的 attach（平台窗口被 Qt 重建时的重绑）都在应用线程上 —— 一条线程同一时刻只跑一段，
-        //    所以两者不可能交错，不需要“等 attach 结束”这类握手。
+        // 2. 装内容不跟 attach 抢：这一次 attach 是**宿主显式要的**（DemoView::activate() 里的 initAsync()，排在
+        //    DemoScene::install() 之后），而安装这一段与任何后来的 attach（平台窗口被 Qt 重建时的重绑）都在
+        //    应用线程上 —— 一条线程同一时刻只跑一段，所以两者不可能交错，不需要“等 attach 结束”这类握手。
 
         // 3. 让**应用线程唤醒这次 await**（MainThreadDispatcher::resumeOnMainThread()）：它只投递一次 resume，
         //    由应用线程执行 —— 于是 `co_await` 之后的代码天然就跑在应用线程上，CubeMap 与场景节点建在那里。

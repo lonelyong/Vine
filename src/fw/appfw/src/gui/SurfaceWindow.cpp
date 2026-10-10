@@ -9,6 +9,7 @@
 #include <QObject>
 #include <QPlatformSurfaceEvent>
 #include <QResizeEvent>
+#include <QScreen>
 #include <QSurface>
 #include <QTimer>
 #include <QWheelEvent>
@@ -21,6 +22,7 @@
 #include <utility>
 
 #include <vine/graphics/RenderBackendRegistry.hpp>
+#include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/SceneView.hpp>
 #include <vine/intrusive_ptr.hpp>
@@ -184,6 +186,10 @@ vn::window::ScrollEvent toScrollEvent(const QWheelEvent& event)
     e.deltaX    = delta.x() / 120.0;
     e.deltaY    = delta.y() / 120.0;
     e.modifiers = toModifiers(event.modifiers());
+    // Where the wheel turned: logical surface pixels, the same space the mouse events carry. A surface split
+    // between several views routes the zoom by it (a view cannot zoom "the whole surface").
+    e.x         = event.position().x();
+    e.y         = event.position().y();
     return e;
 }
 
@@ -195,8 +201,6 @@ struct SurfaceWindow::Impl {
     vn::intrusive_ptr<vn::graphics::RenderEngine> engine;
     /// This surface's own view: one control holds one session (see appfw-document-model.md §9).
     vn::intrusive_ptr<vn::graphics::SceneView> view;
-    /// Whether the default backend was already picked (idempotent).
-    bool backend_selected = false;
     /// true once a device and its pipelines were built on session_handle: what makes a new handle a re-announce
     /// rather than a first attach, and what keeps the surface following a recreated window.
     bool has_session = false;
@@ -227,6 +231,14 @@ struct SurfaceWindow::Impl {
     /// Last client size reported, by either the host widget or this window (the other one repeats it).
     int last_width = -1;
     int last_height = -1;
+    /// Device pixel ratio that went with them: a scale-factor change is a surface change too.
+    double last_ratio = 0.0;
+    /// Which view owns which point of the surface (null: everything belongs to this surface's own view).
+    std::function<vn::graphics::SceneView*(int x, int y)> input_router;
+    /// The view a pointer press selected, held until the button comes up (see setInputRouter).
+    vn::intrusive_ptr<vn::graphics::SceneView> captured_view;
+    /// One line per session about a router that names a view of another engine (see routedView()).
+    bool input_router_misuse_reported = false;
     /// For the lifecycle log lines (construction -> attach -> first frame).
     std::chrono::steady_clock::time_point created_at{};
 };
@@ -269,12 +281,17 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
         }
     });
 
-    // 构造即试一次：句柄在 QWindow 一 new 出来时就有。拿不到可用窗口（句柄空、尺寸 0x0）或后端还没注册时
-    // 退回去 —— 后端后注册是 SDK 写的正常次序（构造 ⇒ setBackend() ⇒ init()），那不是失败；窗口显示时的
-    // 重试会把它开起来（见 SurfaceWindow::eventFilter 与 RenderControl 装的事件过滤器）。
-    if (d->engine->backend() != nullptr) {
-        init();
-    }
+    // 构造只组装：这里**不选后端、不 attach**。第一次 attach 排在事件循环第一拍（兜底），所以宿主"new 之后
+    // 立刻配置"的同步代码（engine()->setBackend()、view()->setOptions()、装内容）天生排在它前面 —— 这正是
+    // SDK 写的次序（构造 ⇒ setBackend() ⇒ init()），也是"配置窗口"永远打开的原因。
+    //
+    // 兜底不是竞争者：宿主显式调 init()/initAsync()（同步、幂等）就是立刻 attach；窗口事件（show / resize /
+    // 句柄重建）也照旧接力。谁先到谁算。
+    QTimer::singleShot(0, this, [this] { init(); });
+
+    // A window moving to another screen can change the device pixel ratio without changing the logical size: the
+    // deferred update is where both are settled (see handleResized / handleUpdate).
+    QObject::connect(this, &QWindow::screenChanged, this, [this](QScreen*) { noteSurfaceUsable(); });
 }
 
 SurfaceWindow::~SurfaceWindow()
@@ -329,24 +346,82 @@ void SurfaceWindow::armRecreateHatch()
 
 void SurfaceWindow::useDefaultBackend()
 {
-    if (d->backend_selected) {
+    // The default is a FALLBACK, not a decision: it is taken whenever the engine has no backend of its own, so
+    // (a) a host that sets its own through engine()->setBackend() is never overridden, and (b) a backend registered
+    // AFTER an attempt (a plugin loaded late, a host that installs one later) is still picked up by the next
+    // attach instead of being locked out by a decision made too early.
+    if (d->engine->backend() != nullptr) {
         return;
     }
-    d->backend_selected = true;
 
-    // Default to the first registered render backend when none was attached
-    // by the caller through engine()->setBackend().
-    if (d->engine->backend() == nullptr) {
-        const auto entries = vn::graphics::RenderBackendRegistry::instance().entries();
-        if (!entries.empty()) {
-            d->engine->setBackend(
-                entries.front().factory->create());
-        }
+    const auto entries = vn::graphics::RenderBackendRegistry::instance().entries();
+    if (!entries.empty()) {
+        d->engine->setBackend(
+            entries.front().factory->create());
     }
 
     // A default orbit manipulator (bound to the view's camera and scene) is
     // provided lazily by the SceneView on first input / fit; the view forwards
     // window input events to it, so nothing is wired here.
+}
+
+void SurfaceWindow::setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router)
+{
+    d->input_router = std::move(router);
+    // The capture belongs to the router that made it: a drag in flight under the old layout must not keep steering
+    // a view the new router may not even know about.
+    d->captured_view = nullptr;
+}
+
+vn::graphics::SceneView* SurfaceWindow::routedView(int x, int y)
+{
+    if (d->input_router == nullptr) {
+        return d->view.get();
+    }
+
+    vn::graphics::SceneView* const chosen = d->input_router(x, y);
+    if (chosen == nullptr) {
+        // "Not mine" is a legitimate answer (the caller only claims the regions it knows about): the surface stays
+        // interactive instead of silently swallowing the event.
+        return d->view.get();
+    }
+    if (chosen != d->view.get() && chosen->engine() != d->engine.get()) {
+        // Input coordinates only mean something on the surface they came from, so a view bound to another engine
+        // cannot be steered by this one. Say so once, then behave (the contract states it; see setInputRouter).
+        if (!d->input_router_misuse_reported) {
+            d->input_router_misuse_reported = true;
+            if (d->engine != nullptr) {
+                d->engine->reportEngineProblem(
+                    vn::graphics::DiagnosticSeverity::Warning,
+                    vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                    u8"RenderControl::setInputRouter returned a view bound to another engine: input coordinates only "
+                    u8"mean something on the surface they came from (the event went to this control's own view)");
+            }
+        }
+        return d->view.get();
+    }
+    return chosen;
+}
+
+void SurfaceWindow::pushToView(vn::graphics::SceneView* target, const vn::window::MouseEvent& event)
+{
+    if (target != nullptr) {
+        target->pushEvent(event);
+    }
+}
+
+void SurfaceWindow::pushToView(vn::graphics::SceneView* target, const vn::window::ScrollEvent& event)
+{
+    if (target != nullptr) {
+        target->pushEvent(event);
+    }
+}
+
+void SurfaceWindow::pushToView(vn::graphics::SceneView* target, const vn::window::KeyEvent& event)
+{
+    if (target != nullptr) {
+        target->pushEvent(event);
+    }
 }
 
 void SurfaceWindow::handleMouse(const vn::window::MouseEvent& event)
@@ -367,11 +442,26 @@ void SurfaceWindow::handleMouse(const vn::window::MouseEvent& event)
             }
         }
     }
+
+    const bool is_press   = event.pressed && event.button != vn::window::MouseButton::None;
+    const bool is_release = !event.pressed && event.button != vn::window::MouseButton::None;
+
+    // A PRESS decides who gets this drag, and holds it until the button comes up (see setInputRouter): a drag that
+    // leaves the chosen view's rectangle keeps steering it, and the reference keeps that view alive while it is
+    // being steered even if the host lets go of its own.
+    if (is_press && d->input_router != nullptr) {
+        d->captured_view = vn::intrusive_ptr<vn::graphics::SceneView>(routedView(event.x, event.y), true);
+    }
+
+    vn::graphics::SceneView* target = d->captured_view != nullptr ? d->captured_view.get() : routedView(event.x, event.y);
     // The view is render-on-demand: without a frame here, orbit/pan/zoom would move the camera and show nothing.
     // A pure hover (no button held) only refreshes while a drag is in flight.
-    d->view->pushEvent(event);
+    pushToView(target, event);
     if (event.button != vn::window::MouseButton::None) {
         d->mouse_down = event.pressed;
+    }
+    if (is_release && !d->mouse_down) {
+        d->captured_view = nullptr;  // the drag is over: the next press routes again
     }
     if (event.button != vn::window::MouseButton::None || d->mouse_down) {
         renderFrame();
@@ -380,13 +470,15 @@ void SurfaceWindow::handleMouse(const vn::window::MouseEvent& event)
 
 void SurfaceWindow::handleScroll(const vn::window::ScrollEvent& event)
 {
-    d->view->pushEvent(event);
+    // A wheel notch is instantaneous - there is no drag to hold - so it always routes by position.
+    pushToView(routedView(static_cast<int>(event.x), static_cast<int>(event.y)), event);
     renderFrame();
 }
-
 void SurfaceWindow::handleKey(const vn::window::KeyEvent& event)
 {
-    d->view->pushEvent(event);
+    // A key has no position to route by: it goes to the view the pointer captured (a keyboard modifier during a
+    // drag belongs to that drag), else to this surface's own view.
+    pushToView(d->captured_view != nullptr ? d->captured_view.get() : d->view.get(), event);
     renderFrame();
 }
 
@@ -412,11 +504,15 @@ void SurfaceWindow::noteSurfaceUsable()
 
 void SurfaceWindow::handleResized(int width, int height)
 {
-    if (width == d->last_width && height == d->last_height) {
+    // The device pixel ratio is part of "the surface changed": a window dragged to a screen with another scale
+    // factor has to re-announce its geometry even when the logical size is identical.
+    const double ratio = devicePixelRatio();
+    if (width == d->last_width && height == d->last_height && ratio == d->last_ratio) {
         return;
     }
     d->last_width  = width;
     d->last_height = height;
+    d->last_ratio  = ratio;
     noteSurfaceUsable();
 }
 
@@ -457,7 +553,9 @@ void SurfaceWindow::handleUpdate()
     // rejected in favour of never showing a distorted picture (the grown part of the client area is simply filled
     // by this frame). See .ai/memory/graphics.md (2026-09-17).
     d->engine->resize(w, h);
-    d->view->onSurfaceResized(w, h);
+    // Size AND ratio: this view's geometry (its camera aspect, its window-pass viewport, the size its targets and
+    // HUD boxes get) is derived from the two together, in one place (see SceneView::onSurfaceResized).
+    d->view->onSurfaceResized(w, h, devicePixelRatio());
     renderFrame();
 }
 
@@ -477,6 +575,13 @@ bool SurfaceWindow::init()
         setState(SurfaceState::Pending);
     }
 
+    // The view registers the default window pass (an order-0 pass drawing its content through its camera to the
+    // backbuffer) unless the app already presents that camera with a pass of its own. This happens BEFORE the
+    // backend check on purpose: which passes a view presents is its recipe, not a property of the device - a host
+    // with no backend registered still has a view with a pipeline it can inspect (and the pass is what the backend
+    // will draw when it does come up).
+    d->view->ensureWindowPass();
+
     // No backend yet? Take the first registered one; a host that wants its own sets it before this.
     useDefaultBackend();
 
@@ -487,9 +592,6 @@ bool SurfaceWindow::init()
         return false;
     }
 
-    // The view registers the default window pass (an order-0 pass drawing its content through its camera to the
-    // backbuffer) unless the app already presents that camera with a pass of its own.
-    d->view->ensureWindowPass();
     // Test hatch: force a platform-window recreation after VINE_RECREATE_SURFACE_MS, once per session (following a
     // recreated window re-enters here, and re-arming would recreate it forever). See recreateSurface().
     armRecreateHatch();
@@ -549,7 +651,7 @@ bool SurfaceWindow::init()
     // aspect, viewport tracking). At construction that is a placeholder size (measured 160x160 against the 752x480
     // of the settled window); the layout's real size arrives through handleUpdate() and is served in place.
     d->engine->resize(width(), height());
-    d->view->onSurfaceResized(width(), height());
+    d->view->onSurfaceResized(width(), height(), devicePixelRatio());
     // The frame the attach owes - the same frame as any other, and it is what pays the session's one-time build
     // (pass graphs, program slots, compiled pipelines - measured 183.6 ms for the demo's 5 slots).
     renderFrame();

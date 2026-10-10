@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include <functional>
+
 #include <vine/intrusive_ptr.hpp>
 #include <vine/Signal.hpp>
 #include <vine/String.hpp>
@@ -36,13 +38,15 @@ VN_APPFWGUI_NS_BEGIN
  * engine()->setBackend(), the first backend registered in RenderBackendRegistry
  * is used by default.
  *
- * THE CONTROL ATTACHES ITSELF. The surface it embeds has a native handle as soon as it exists, so nothing waits for
- * the host to pick a moment: the control tries at construction, and when that attempt has nothing to attach to yet
- * (no native window, no size, or no backend registered - a host that sets its own backend does so after
- * construction) the first resize/show retries. init() stays as the explicit entry point: idempotent while the
- * session is bound, a retry otherwise. What the control keeps for itself is an ESTABLISHED session: when Qt
- * destroys and recreates the native platform window (a dock drag, a screen change, a reparent), the new handle is
- * picked up and re-announced to the backend without the host having to notice.
+ * CONSTRUCTION ONLY COMPOSES. The control builds its engine and its view and installs the diagnostics route; it does
+ * not pick a backend and does not attach. The first attach happens on the first turn of the event loop (a fallback),
+ * which is exactly what makes "configure right after new" work: engine()->setBackend(), view()->setOptions() and
+ * content assembly are synchronous code and therefore always run BEFORE it. A host that wants the attach inside its
+ * own ordering calls init()/initAsync() itself (synchronous, idempotent) - that call IS the attach, and the fallback
+ * then finds the session already bound. Window events (show, resize, a recreated platform window) keep the session
+ * going afterwards. What the control keeps for itself is an ESTABLISHED session: when Qt destroys and recreates the
+ * native platform window (a dock drag, a screen change, a reparent), the new handle is picked up and re-announced to
+ * the backend without the host having to notice.
  *
  * The area this control occupies shows render output exactly when a frame is in the surface: the widget that holds the
  * surface stays HIDDEN until then, and a hidden widget is not painted at all. That is what makes the window hosting
@@ -110,11 +114,14 @@ class VN_APPFW_API RenderControl : public Control {
 
     /** @brief Attaches the backend to the native surface and initializes it.
      *
-     * The control attaches itself when it is built: the QWindow it embeds has a native handle as soon as it exists,
-     * so the surface does not need the host to pick a moment for it. This is the explicit entry point - idempotent
-     * while the session is bound to the live surface, and the retry when an earlier call landed before the native
-     * window had been laid out (which reports false rather than guessing a delay). When no backend was attached via
-     * engine()->setBackend(), the first registered render backend (RenderBackendRegistry) is used by default.
+     * The explicit attach: the session comes up HERE, in this call, and a host that wants its own timing (before the
+     * window goes on screen, for an off-screen warm-up frame, or after configuring the view) uses this instead of
+     * waiting for the event-loop fallback. This is the entry point promised by the SDK order
+     * (construct -> engine()->setBackend() -> init()): idempotent while the session is bound to the live surface,
+     * and the retry when an earlier call landed before the native window had been laid out (which reports false
+     * rather than guessing a delay). With no backend set through engine()->setBackend(), the first registered render
+     * backend (RenderBackendRegistry) is used by default - and only as a fallback: a backend registered later is
+     * still picked up by the next attach.
      *
      * A session that is already established maintains itself: when Qt later destroys and recreates the native
      * platform window, the control re-announces the new handle to the backend on its own (the backend moves,
@@ -137,6 +144,44 @@ class VN_APPFW_API RenderControl : public Control {
      * @return A task that completes with the same answer as init().
      */
     vn::async::Task<bool> initAsync();
+
+    /** @brief Sets which view receives the surface's input, by position.
+     *
+     * The control hosts ONE surface, and by default that surface's input goes to ONE view: the one this control
+     * built (view()). A host that splits the surface between several views (see SceneView::setViewport) is the only
+     * one who knows the layout, so it states it here - one function answering "this point belongs to whom":
+     *
+     * @code
+     * control->setInputRouter([&](int x, int y) {
+     *     const double nx = double(x) / double(std::max(1, control->width()));
+     *     return nx < 0.5 ? left : right;   // each view knows its own viewport().contains(nx, ny)
+     * });
+     * @endcode
+     *
+     * Semantics (the same the industry uses for a multi-viewport render window - VTK's interactor picks the
+     * renderer under the cursor and then keeps it until the button comes up):
+     *
+     * - **a pointer PRESS routes, and the chosen view is CAPTURED until the button is released.** A drag that
+     *   leaves that view's rectangle keeps steering it ("hold and drag" cannot be interrupted by a boundary), and
+     *   the control holds a reference to the captured view for the duration, so a host dropping its own reference
+     *   mid-drag cannot leave the control steering a freed view.
+     * - **hover motion, the wheel and the keyboard** do not capture: they route per event (the wheel), or go to the
+     *   captured view when a drag is in flight (motion), or to the captured view, else to the control's own view
+     *   (keys - there is no position to route by).
+     * - the coordinates are the surface's LOGICAL pixels, top-left origin - the same space control->width() /
+     *   height() report (the surface fills this control's widget).
+     * - returning nullptr means "not mine": the control falls back to its own view, so a router that is wrong about
+     *   a region still leaves the surface interactive.
+     * - the returned view must belong to this control's engine (view()->engine()). A view bound elsewhere cannot
+     *   receive this surface's coordinates; that is reported on the engine's diagnostic route and the event falls
+     *   back to the control's own view.
+     *
+     * Without a router this is exactly the single-view behaviour it always was: every event goes to view().
+     *
+     * @param router Function taking a point (x, y) in logical surface pixels and returning the view that owns it;
+     *               an empty function restores the default (always view()).
+     */
+    void setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router);
 
     /** @brief Renders one frame through the engine. */
     void renderFrame();

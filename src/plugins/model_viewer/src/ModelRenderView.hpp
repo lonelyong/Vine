@@ -18,9 +18,13 @@
 #include <vine/appfw/gui/DocumentView.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
 
+#include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
+#include <vine/graphics/Light.hpp>
+#include <vine/graphics/LightRig.hpp>
 #include <vine/graphics/Material.hpp>
+#include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
 
@@ -42,6 +46,9 @@ namespace vn::model_viewer
  *  - **懒建**：场景与 `SceneView` 在第一次真的上屏时才造（`activate()`），而会话在**第一次被布局过之后**
  *    才 attach（`RenderControl::init()`："宿主给时机、控件维护会话"）；打开十份文档就真的建十份
  *    （vsg 那边的设备数上限已解开，见 `gfx_backend_vsg/CMakeLists.txt` 里的 `VSG_MAX_DEVICES`）。
+ *  - **自带灯与帧率读数**：灯挂在场景上（`scene->addLighting(LightRig::studio())`，没人装就只有后端的常量填充，
+ *    画面是一片平色），帧率读数由**视图的默认窗口管线**提供（`view->setOptions({ .stats = true })`，尺寸与比例
+ *    归视图维护）—— 读数归本视图，因为"这一份文档的帧率"就是这一块渲染面的帧率。
  *
  * 几何信息（顶点数/三角形数）归 `ModelInfoPanel` 那个停靠面板，不在中央区里重复。
  *
@@ -94,9 +101,39 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
      */
     vn::appfw::gui::RenderControl* renderControl() const { return control_; }
 
+    /**
+     * @brief 右下角的帧率读数（视图默认窗口管线里的 HUD 档）。
+     *
+     * 读数不再由查看器自己造：`SceneView::Options::stats` 让视图的默认管线带上这个 HUD 档，于是**尺寸、比例、
+     * 摆位、窗口缩放**全归视图维护（见 `SceneView::setStatsVisible()` —— 显示/隐藏是零重建的开关）。空文档时
+     * 视图没建管线，这里就是空指针。
+     *
+     * @return 读数 pass；视图还没有默认管线时是空指针。
+     */
+    vn::raw_ptr<vn::graphics::FpsOverlay> fpsOverlay() const
+    {
+        auto* view = view_.get();
+        auto* pipeline = view != nullptr ? view->pipeline() : nullptr;
+        return pipeline != nullptr ? pipeline->fpsOverlay() : nullptr;
+    }
+
   private:
     /// 造这份模型的场景（只造一次）：内容放进控件那个 view 的场景里。网格为空时不造，`activate()` 会因此什么都不呈现。
     void buildScene();
+
+    /**
+     * @brief 给这份文档的场景装灯。
+     *
+     * 灯是**场景**的属性，不是渲染面的：每个视图有自己的场景（见类注释），所以每个视图必须自己带灯，否则这份
+     * 文档会落进"零灯"那一档 —— 后端在没有环境光时只补一个 0.15 的常量填充，网格于是被画成一片平色，看起来
+     * 就是"没有光照效果"。
+     *
+     * 用的是 `LightRig::studio()` 那套（一环境 + 主光 + 补光，方向**世界固定**、不跟相机走）：绕行或自转时明暗
+     * 只随几何变化，同一个模型永远有同一张明暗图，"这里是不是画错了"才有可对照的答案。
+     *
+     * @param scene 这份视图的场景。
+     */
+    static void addLighting(vn::graphics::Scene& scene);
 
     /// 网格 → 引擎能画的 `Geometry`（缺法线就按三角面算一套平滑法线）。
     vn::intrusive_ptr<vn::graphics::Geometry> makeGeometry() const;
@@ -120,6 +157,7 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
     vn::appfw::gui::RenderControl*             control_ = nullptr;
     /// 控件那个 view（借来放场景的，不是本视图造的）：`SceneView` 归渲染面所有，见 `buildScene()`。
     vn::intrusive_ptr<vn::graphics::SceneView> view_;
+    /// 右下角的帧率读数由视图的默认管线提供（`Options::stats`），见 `fpsOverlay()`。
     bool                                       fitted_ = false;
 };
 inline std::vector<vn::math::Vec3f> ModelRenderView::smoothNormals(std::span<const vn::math::Vec3f> positions,
@@ -205,6 +243,18 @@ inline vn::intrusive_ptr<vn::graphics::Geometry> ModelRenderView::makeGeometry()
     return geometry;
 }
 
+inline void ModelRenderView::addLighting(vn::graphics::Scene& scene)
+{
+    if (scene.hasLights())
+    {
+        return; // 场景是本视图自己的，但建场景会重试（控件还没布局好时）：灯只装一次。
+    }
+
+    // 一套 studio 灯（一环境 + 主光 + 补光，方向世界固定）：以前这里手写 25 行，现在是一行 —— 预设的取值与
+    // 原来那三盏一致（环境 0.25、主光 1.0、补光 0.35），所以观感不变。
+    scene.addLighting(vn::graphics::LightRig::studio());
+}
+
 inline void ModelRenderView::buildScene()
 {
     auto geometry = makeGeometry();
@@ -233,6 +283,11 @@ inline void ModelRenderView::buildScene()
     auto scene = view_->scene();
     scene->setName(model_ != nullptr ? model_->title() : vn::String());
     scene->setRoot(root);
+    addLighting(*scene);
+    // 帧率读数：让视图的默认窗口管线带上这个 HUD 档。以前查看器自己造 `FpsOverlay` 挂引擎（pixel ratio、把
+    // 逻辑尺寸转给它、resize 再补一次，31 行），现在尺寸/比例/摆位/缩放全归视图 —— 而且显示与隐藏是零重建的
+    // 开关（`System` 菜单里的"帧率"项调 `view->setStatsVisible()` 即可）。
+    view_->setOptions({ .stats = true });
 }
 
 inline void ModelRenderView::activate()

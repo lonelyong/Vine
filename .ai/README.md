@@ -19,7 +19,7 @@
   `历史登记` / `不再更新` —— 这类小节里**允许**点名已不存在的东西（那正是它存在的意义）。
 * 必须在**现行**段落里提一个已经不存在的东西时，给那一行加 `<!-- drift-ok -->`。
 
-## design/ —— 完整设计文档（46）
+## design/ —— 完整设计文档（47）
 
 **graphics / vsg（24）**
 - `graphics-design.md` —— Graphics 模块设计（现代化架构）。
@@ -47,11 +47,12 @@
 - `vsg-custom-attributes.md` —— 自定义顶点属性（历史登记）。
 - `vsg-upstream-alignment.md` / `vsg-selection-highlight.md` / `vsg-user-mutation-strategy.md` —— 与上游对齐审查、元素级选择草案、用户端可变策略（均为历史登记）。
 
-**appfw（11）**
+**appfw（12）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
 - `appfw-startup-splash.md` —— 启动框与启动进度（`BootSplash`/`StartupProgress`、显式 `finishStartup()`）。
 - `appfw-startup-next.md` —— 启动流程下一步（启动事件 / 主窗后显示 / 渲染先就绪；待办）。
 - `appfw-render-surface.md` —— 渲染表面生命周期（宿主驱动 attach 的状态机、跟句柄重建、平台回退）。
+- `appfw-render-view.md` —— 渲染视图的最终设计 v2（**已落地 S0–S4 + 输入路由**（2026-10-11）：四层 API 与四条缝、`SceneView::Options` 配方 vs `setViewport` 几何 vs `setStatsVisible` 开关、`LightRig`、"构造只组装"的初始化时机、多视图/多窗口立场与所有权分析；其余 S6+ 三轴仍为定缝）。
 - `appfw-command-manager.md` —— CommandManager 设计。
 - `appfw-eventbus.md` —— EventBus 设计。
 - `appfw-plugin-system.md` —— 插件系统设计（含禁用与反初始化）。
