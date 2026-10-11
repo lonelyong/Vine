@@ -19,6 +19,23 @@
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/usage.md`（模块文档一节） |
+| **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：T1 表面尺寸扇出 / T2 M6 / T3 设备夹具探测 / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建） |
+
+
+## 2026-10-11 按"机制/组合"重评待办（`graphics-render-next.md` §5.1）
+
+- **口径（用户 2026-10-11 定）**：底层提供**机制与接口**，复杂场景由业务自己组合、自己控制，交给应用层。
+  已成文为不变量 6（§6）：SDK 配方只保留最常见的两三条（forward / deferred / shadow）；不造 SDK 自用的图，
+  不为某个组合发明引擎政策。判据：删掉任一便利，机制路径（`engine->addPass(desc)` + 自己的 program / target）仍成立。
+- **重评结果**：**M5b 拆两半** —— 机制半边 = **表面尺寸扇出**（T1，进 SDK：今天表面尺寸只喂控件自己那个视图，
+  第二格靠宿主手写 `right->onSurfaceResized(...)`，`RenderControlTest` 四行），组合半边 = 布局树 / 比例 / join /
+  格子生死（T4，**归应用层**；`SplitLayout` 那份定稿作废 —— 原稿把它当 SDK 片是错的）。② 的定案同源
+  （T5：多 transient 互借深度是应用组合）。其余：T2 M6（一设备 N 交换链，等触发）、T3 设备夹具可用性探测
+  （删 `getenv("DISPLAY")` 假门禁，恢复 21 条被误跳的设备用例，其中 2 条本就红）、T6 便利边界（守）、
+  T7 叠层对象跨重建存活（视图的实现细节，等观感需求）。
+- **已落地不需回退**：预设、内建程序 / 目标工厂（`defaultGbufferTarget`、`screenCopyProgram`…）、HUD 内容对象
+  （`AxisGizmo` / `FpsOverlay`）、`addOffscreenToScreen` 都属"**可选便利**"，机制路径始终成立 —— 记为 T6 守边界，
+  每次动它们自查一句"删掉它，机制路径还成立吗"。
 
 
 ## 2026-10-11 M7：Pass 描述符 + 每帧编译的 FramePlan（唯一的大改）

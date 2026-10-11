@@ -571,10 +571,11 @@ G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevisio
   宿主只在需要特殊规则时覆盖。
   **已落地（M5a，2026-10-11）**：后半句成立 —— 默认路由就是按矩形推（`Surface::viewAt`），`setInputRouter`
   只在"矩形说不清"时用；"焦点在哪一格"也答了（表上那一个指针）。
-  **没做的部分（M5b）**：布局的**所有者**还没有 —— 谁 split、谁销毁、每格改矩形时谁通知谁，今天仍是宿主自己
-  把每个视图的矩形写到表面上、把表面尺寸喂给每个视图（两条用例都是这么搭的）。**设计已定、按决定先不落地**
-  （2026-10-11，见 §5 M5b 行）：所有者是 **`vn::graphics::SplitLayout`**（原稿写的"appfw 的分屏容器"作废 —— 它
-  只碰 `RenderSurface` / `SceneView` / `RenderEngine`，不用 Qt 就能验收，而 appfw 公开类带 ABI 握手）。
+  **没做的部分（M5b）—— 2026-10-11 按"机制/组合"重评后分成两半**：**机制半边进 SDK**（表面记住尺寸，
+  把它扇出给表里每一条呈现的视图 —— 今天表面尺寸只喂控件自己那个视图，第二格靠宿主手写；见 §5.1 T1）；
+  **组合半边归应用层**（布局树 / 比例 / join / 格子生死 / 谁持有视图：那是编辑器/查看器的组合，不是引擎政策，
+  原稿把它当 SDK 片是错的；见 §5.1 T4）。SDK 保证的仍只有三条机制：矩形住呈现表（M2d）、输入按矩形推 + 按下
+  即焦点（M5a）、尺寸扇出（T1）。
 
 ## 5. 迁移切片（每片独立可落地、独立验收）
 
@@ -588,7 +589,7 @@ G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevisio
 | **M3** | §3.1 `resolveRenderState` 单点（**已落地 2026-10-11**）：**一个函数**按项合并"内容作者写的"与"pass 说的"（`resolveRenderState(authored, pass)` → 最终值 + 逐项 `StateOrigin`）；命令侧换成 `authoredState`（optional，删掉 `depthExplicit`），pass 侧一次公告（`RenderBackend::setPassState(PassRenderState)`）；光栅化覆盖不再改写命令（只留 program 那条改写路径）；`resolveDynamicState` 只剩纯映射 | ①逐项状态快照 = 优先级表：`RenderStateTest.ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem`（五项逐一 + depth 的**不对称**：pass 给策略、内容给意图，compare 跟着内容走；空内容 ⇒ 五项全 default 且 origin=Default；内容-only 拼写与空 pass 等价）②旗标删除后行为不变：`depthExplicit` / 命令上的解析值全删，**重构前后同一套用例全绿**（`test_graphics` 337→339、`test_vsg` 405，含 M1 那三条光栅化覆盖语义：`FrameCompilerTest.ThePassDepthAppliesOnlyWhereTheContentAuthoredNone`、`SceneViewViewportTest.ThePassLevelPolygonModeOverridesTheContentAndCanBeClearedBack`）③"这一项来自哪一层"可答：`StateOrigin` 逐项返回，用例断言；引擎那一侧新增 `RenderEngineTest.APassAnnouncesItsOwnStateForTheContentItDraws`（announcement = `stateOverrides()`，且命令**没有**被改写）④`graphics-state.md` §4.1 已改写（表格 = 命名习惯 + 一处实现）。变异验证：不公告 pass 状态 ⇒ 2 条失败；解析忽略光栅化覆盖 ⇒ 2 条失败；pass 深度反过来压过内容 ⇒ 2 条失败 | 无 | 中 |
 | **M4** 观测：FramePlan dump（**已落地 2026-10-11**） | `FramePlan.hpp`（`PassPlan` 每 pass 的 order/name/content/camera/target/enabled/clear/viewport/inputs/output + 上一帧的 `record_micros`）+ `RenderEngine::framePlan()`（只读、按执行序）+ `FramePlan::describe()`（一行一 pass 的 key=value 表）+ demo 开关 `VINE_FRAME_PLAN=1`（attach 那一帧之后打一行表格） | ①一条 API/开关打印这一帧的表格（`describe()`；demo 真机输出见 `.ai/memory/graphics.md`）②`test_graphics` 两条改用结构断言替换 `passCount()`/指针身份（`SceneViewViewportTest.TheRecipeDecidesWhichOverlayPassesExist` 改断言 pass 名字序列；`RenderPipelineBuilderTest.ForwardPathBuildsWindowPass` 改断言 plan 那一条的全部事实）③dump 与真实执行一致：`RenderEngineTest.TheFramePlanIsWhatTheFrameActuallyRan` 用记录型后端对照"plan 里 enabled 的那些 pass，按序 == 后端被开过 scope 的那些"④耗时是"上一帧"的且说清楚（`TheFramePlanCarriesWhatEachPassLastCost`：慢 pass ≥ 1000 µs、没跑的 pass = 0） | 无 | 小 |
 | **M5a** 输入路由 + 焦点（**已落地 2026-10-11**） | **焦点住在那张表上**（和矩形、清屏一起）：`RenderSurface::focus(view)` / `focusedView()`（默认第一条呈现；撤掉的、或 pass 已经不在帧里的不算 —— 免得把"当前视图"答成一张没人画的画面）。`SurfaceWindow` 的**默认路由改成问表面**（`viewAt`，逻辑像素 ÷ 表面尺寸 → 归一化），`setInputRouter` 从"唯一通路"降级成**覆盖**（返回 nullptr = 交回矩形）；**按下**即把路由到的视图设为焦点（默认路与 router 一样），按下也**总是**捕获（分屏拖出边界不能断线）；**键盘**改去**焦点**（没有位置可路由）。`RenderControl::focusedView()`（无呈现视图时回退控件自己的视图）；五条显示模式命令改**焦点视图**，`setPrimaryRenderControl` 只用来找**控件**、不再决定改哪个视图 | ①分屏两块各自输入：`RenderControlTest.TheSurfacesRectanglesRouteInputWithNoRouterAtAll`（**一条 router 都不装**，右半拖拽只动右边那格，左半按下动控件自己那个视图；键盘跟着焦点走）②五条命令作用于焦点视图：`ModelViewerTest.TheShadingModeCommandsDriveTheCurrentModelView` 追加的一段（焦点在第二格 ⇒ 命令改第二格、主视图不动；焦点转回 ⇒ 同一条命令改主视图、第二格保持）③`setPrimaryRenderControl` 仍被用来找控件（同两条用例的断言）但焦点来自输入。**变异验证**：默认路由不看矩形 ⇒ 失败；按下不设焦点 ⇒ 失败；键盘绕过焦点 ⇒ 失败；`focusedView` 不看存下的焦点 / 不做存活检查 ⇒ 各自失败；命令改回 `control->view()` ⇒ 失败。（写下的"撤销时清焦点"对*结果*冗余 —— 存活检查已经给出同样答案 —— 它挡的是"指针被后来同地址的视图继承"，用例稳定撞不上，如实记账。） | M2d（已落地） | 中 |
-| **M5b** 分屏布局的所有者（**未落地；设计已定 2026-10-11，按决定先不做**） | **谁 split、谁销毁、谁喂尺寸**收成一处。**已定的形态**：`vn::graphics::SplitLayout`（结构在布局、**几何只在表面那张表**：矩形仍由 `RenderSurface::present/setViewport` 持有，输入路由/清屏/`SceneView::viewport()` 读同一份）；cell 的身份**就是视图**（不引入 `Pane`/`Cell` 类型）；`split(cell, direction, ratio)` 一行做完建视图（同一引擎、继承源格的**内容**、相机抄一份 `setViewMatrixAsLookAt` 的起点）+ 扛默认窗管线 + 写矩形 + 喂尺寸；`join(cell)` 让兄弟吃满父面积；**布局只销毁自己建的视图**，宿主交进来的只 `dismiss` + 复位矩形；比例只有 `setRatio` 这一条程序化入口（**不做鼠标拖动分割条** —— 将来那个 handle 只是调它，零结构改动）；表面尺寸由布局**一次扇出**给每格（每格再按自己的矩形推自己那块，`SceneView::applySurfaceGeometry` 已经是这个语义）。**记录为不做**：窗口级焦点（一窗一控件，`primaryRenderControl()->focusedView()` 已能落到具体那一格）。**钉子（落地时）**：三分屏矩形无缝隙（左/上取整、右/下取整）、`setRatio` 不重建（J8）、`join` 后 `viewAt`/焦点回落、零 router 的分屏输入 | 待定（见 §4） | M5a（已落地） | 中 |
+| **M5b** 分屏布局（**未落地；2026-10-11 按"机制/组合"重评：拆成机制半边（T1，进 SDK）与组合半边（T4，归应用层）**） | 原稿把"谁 split、谁销毁、谁喂尺寸"当成一片。重评后：**要进 SDK 的只有机制** —— 表面记住尺寸并把尺寸扇出给表里每一条呈现的视图（今天表面尺寸只喂控件自己那个视图，第二格靠宿主手写四行）；**结构本身**（布局树 / 比例 / join / 格子生死 / 谁持有视图）是**应用层**的组合，不进 graphics（`SplitLayout` 那份定稿作废）。SDK 保证的三条机制不变：矩形住呈现表（M2d）、输入按矩形推 + 按下即焦点（M5a）、尺寸扇出（T1）。**记录为不做**：窗口级焦点（一窗一控件，`primaryRenderControl()->focusedView()` 已能落到具体那一格） | ①两条既有分屏用例可以删掉手写的那行 `right->onSurfaceResized(...)`；②新加的 pane 无需手喂（present 之后立刻断言它的 pane 尺寸与窗口 pass viewport）；③单视图路径行为不变（`test_gui` 253 绿） | M5a（已落地） | 中 |
 | **M6** | Device / Session 分离：一设备 N 会话 | ①同一模型开两个窗口只上传一份几何（计数/内存断言）；②一个窗口销毁不带走另一个的会话；③`SessionLease` 类型上禁止"会话先死在租约前"；④R2 的"临时加引用"约定删除（该用例改写仍过） | M2 | 大 |
 | **M7** | Pass 描述符 + 每帧 FramePlan（§3.4）（**已落地 2026-10-11**） | ①`wiringRevision()`/`wiringDeclarationsChanged()`/`wiringValidationCount()`/`validateWiring()`（420 行）与那 10 组 seen/reported 集合**删除后全部套件绿**（`test_graphics` **342**、`test_vsg` 407、`test_gui` 253、`test_appfw` 32、`test_meshio` 34、`test_iobase` 94）；②新增一个 pass = **一条描述符**（`RenderEngineTest.APassCanBeDeclaredAsAValueAndRunsLikeAnyOther` 场景档 / `AScreenPassCanBeDeclaredAsAValueToo` 全屏档：零新子类，`stage` 定 order、`tag` 进 plan、`before_draw` 每帧钩子、禁用档不跑钩子）；③transient 目标由编译分配（`ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt`：一个声明一张目标、同身份同形状**共享**、稳态帧指针不变、形状变则**替换**、没人声明就释放 —— 全过程 `transientTargetCount()` 计数断言 + `FramePlan::PassPlan::target` 地址断言）；④dump 与 M4 同形（demo 冒烟 11 pass 表逐列不变，只多一个不打印的 `tag` 字段）。**变异 4/4 红**：①编译不解析输入（12 条用例红）②transient 每帧新建（该用例 4 条断言红）③去掉 episode 比较（14 条报告用例红）④描述符的 `before_draw` 不落地（该用例 2 条红）。**builder 侧（同日续，属同一片）**：普通 pass 全部按描述符声明
 （`RenderEngine::addPass` × 3 与 `Pipeline::addPass(const PassDesc&)` 都**交回注册的结点**，builder 只在自己需要把手的
@@ -641,6 +642,21 @@ G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevisio
   四条语句已经够跑）。鼠标拖动分割条不在范围内（比例只有 `setRatio` 一个入口，拖动条将来只是调它）。
 - M8 **已落地**（2026-10-11）：夹具与两条像素判据都在，触发条件（"观感成为争议点 / 要让 CI 守住它"）自此由
   现成的判据回答，不再是一句"等触发"。
+
+### 5.1 待办清单（2026-10-11 按"机制在底层、组合在应用层"重评，判据见 §6 不变量 6）
+
+分栏口径：**机制** = SDK 该提供的接口，每条都能无头验收；**组合** = 应用层自己拼，SDK 只登记归属、不动手；
+**记账** = 已知的小口子或需要守的边界。
+
+| # | 类型 | 事项 | 动作 | 判据 / 触发 |
+| --- | --- | --- | --- | --- |
+| **T1** | 机制 | **表面尺寸扇出**（M5b 的机制半边） | `RenderSurface` 记住表面尺寸（`resize(w, h, ratio)`），把它扇出给表里每一条**呈现的视图**；新呈现的视图立刻收到；`SceneView::onSurfaceResized` 保留为"视图没有表面时"的独立入口；`SurfaceWindow` 改调表面（控件自己那个视图按"它是否呈现"决定要不要单独喂） | ①两条既有分屏用例可以删掉手写的那行 `right->onSurfaceResized(...)`；②新加的 pane 无需手喂（present 后立刻断言它的 pane 尺寸与窗口 pass 的 viewport）；③单视图路径行为不变（`test_gui` 253 绿）；④变异：扇出不落到新呈现 ⇒ ②红 |
+| **T2** | 机制 | **M6：一设备 N 交换链 / N 会话** | 后端 + `RenderBackendRegistry` 支持同一会话多条交换链（`setSurface(i)`）；设备与资源归属始终在会话；**不碰控件与视图的 API** | 原 M6 判据（同一模型两窗口只上传一份几何 / 一个窗口销毁不带走另一个会话 / `SessionLease` 禁止会话先死在租约前 / R2 的"临时加引用"约定删除）。**触发**：同屏视图稳定 > 4、同一内容要上两块窗口、设备启动开销被窗口数乘 |
+| **T3** | 机制（小） | **设备夹具的可用性探测** | 把"设备真能起 + 离屏像素真能给"的探测做成共享入口（今天 `tests/test_vsg/SdkPixelFixture.hpp` 里已有一份），其余设备用例改用它；删掉 `getenv("DISPLAY")` 这个 X11 假门禁 | ①`SdkPixelTest` 两条仍绿；②被误跳的 21 条设备用例恢复运行（已知 2 条本就红，先记后修：`BlockDescriptorsTest.TheBindCarriesTheOffsetsInBindingOrderAndReusesOneSet`、`SessionTest.ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote`）。**触发**：下次碰 `test_vsg` 的设备用例 |
+| **T4** | 组合 | **分屏布局的所有者**（原 M5b 的组合半边） | **不进 SDK**：布局树 / 比例 / join / 格子生死 / 谁持有视图，是应用层（编辑器、查看器）自己的组合；`SplitLayout` 那份定稿作废 | 归属登记（§4 与 §5 M5b 行已改）。真有人要通用实现时，以"应用层小库"形态出现，不是引擎政策 |
+| **T5** | 组合 | **多 transient 互相借用的配方** | **不进 SDK**（② 定案）：应用声明 transient、`RenderEngine::transientTarget(identity)` 取回当前实例、在自己的钩子/布局回调里重述 `RenderTarget::shareDepth` | 已记（`graphics-deferred-composite.md` 顶部 + `usage.md` §3.13） |
+| **T6** | 记账 | **便利的边界守得住** | SDK 里的预设（Forward / Deferred / Shadow）、内建程序与目标工厂（`defaultGbufferTarget`、`screenCopyProgram` …）、HUD 内容对象（`AxisGizmo` / `FpsOverlay`）、`addOffscreenToScreen`，一律标成**可选便利**：永远可绕过（`engine->addPass(desc)` + 自己的 program / target 就够），**不为它们保留任何引擎政策** | 每次动这些便利时自查：删掉它，机制路径还成立吗？成立才留 |
+| **T7** | 记账 | **叠层对象跨重建存活** | 今天 `setOptions()` 重建会新建叠层对象（FPS 读数窗口被重置）。要它存活得让**视图**持有对象、把对象交给配方（`PipelineOptions` 收对象）——按"机制/组合"看这是**视图的实现细节** | 记录在案（§3.4 第五条、`.ai/memory/graphics.md`）。有真实观感需求再做 |
 
 ## 6. 不变量与兼容策略
 
