@@ -714,12 +714,17 @@
 文档如实标注 **forward_shadowed / deferred_shadowed 目前是占位（等同无阴影预设）**：阴影切片（order<0 深度 pass + 阴影光照）未实现，只有 `Light::castShadow()/shadow()`、`ShadowSettings`、`ShadowFilter` 已就位，计划见 `.ai/design/graphics-shadow.md`。
 **2026-09-13**：占位不再默不作声——`RenderPipelineBuilder::build` 会报一条 `DiagnosticCategory::UnsupportedRequest`；`ShaderPreset`（含 `ShadowedPhong` 那个“保留项”）已删除，内容着色只能显式命名 program（见本文件顶端条目）。
 - **着色模式（2026-10-11）**：`SceneView::Options::Mode{Lit, Flat, Unlit, Normals, Wireframe}` 落在**pass 属性**上
-  —— 前四种是窗口 pass 的 **program override**（`RenderPass::setProgramOverride`），第五种再多一个**光栅化覆盖**
-  （`RenderPass::setPolygonModeOverride(PolygonMode::Line)`）⇒ 换模式**零重建**（同一条管线、同一张 pass 表）。
+  —— 前四种是**画面那条 pass** 的 **program override**（`RenderPass::setProgramOverride`），第五种再多一个**光栅化覆盖**
+  （`RenderPass::setPolygonModeOverride(PolygonMode::Line)`）⇒ 同一条链条上换模式**零重建**（同一条管线、同一张 pass 表）。
   四种着色模式是**同一段** `builtin_forward.frag` 文本 + 一个 `#define`：`VINE_FLAT`（已有的逐面法线）/
   `VINE_UNLIT`（只写 albedo × opacity，光照前 return）/ `VINE_NORMALS`（写 `n*0.5+0.5`，alpha 1）；线框用无光照
-  程序 + 线填充（wireframe 的惯例：看结构不看明暗）。延迟路径**兑现不了**非 Lit 模式（颜色从 G-buffer 出来、
-  窗口 pass 是全屏光照）⇒ 报一条 `UnsupportedRequest`（每视图一次）并保持 Lit。
+  程序 + 线填充（wireframe 的惯例：看结构不看明暗）。
+  **模式作用在几何阶段（M1，2026-10-11 已落地）**：延迟配方的画面是"全屏光照"那条 pass 产出的（没有几何可着色），
+  所以非 Lit 档期间 `SceneView` 把链条按**前向**建（`Options::path` 字段不动 —— 请求归请求、生效归生效；`effectivePath()`），
+  于是四档在两条配方上都能画出来。旧行为（延迟路径报一条 `UnsupportedRequest` 并保持 Lit）与那条诊断一起删除。
+  代价：延迟配方**进出**非 Lit 档是一次重建（链条变了），链条内换档仍零重建；判据
+  `test_graphics` 的 `SceneViewViewportTest.ANonLitModeOnADeferredRecipeBuildsTheForwardChain` +
+  `SwitchingBetweenNonLitModesOnADeferredRecipeKeepsTheChain`（变异：让 `effectivePath()` 恒等于配方 ⇒ 第一条失败）。
   门禁：`test_vsg/GlslCompileTest.EveryBuiltinForwardProgramCompilesToSpirv` **真的用 glslang 编这四个程序**
   （define 里写坏的 GLSL 会被后端当成"这个预设没有 SDK 程序"而静默退化——flat 一开始就是这么错的），
   `ProgramAbiTest.EveryModeOfTheForwardProgramDeclaresTheSameAbi` 钉住四者绑定一致（内容集是按 program 绑的）。

@@ -2946,24 +2946,76 @@ TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
     EXPECT_EQ(engine->passCount(), pass_count + 1) << "结构变了才重建（读数档多出一条 pass）";
 }
 
-TEST(SceneViewViewportTest, AShadingModeOnTheDeferredPathIsReportedInsteadOfSilentlyIgnored)
+// 延迟配方 + 非 Lit 档：模式是**几何阶段**的覆盖，而延迟配方画的最后一步是全屏光照（没有几何可着色）——
+// 所以这一档期间链条按**前向**建（配方字段不动），于是四档在两条配方上都能画出来。切档因此是**一次重建**
+// （链条变了），回到 Lit 再建回延迟；这与"同一链条上换档零重建"是两条规则，各钉一条。
+TEST(SceneViewViewportTest, ANonLitModeOnADeferredRecipeBuildsTheForwardChain)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Normals });
+    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Unlit });
     view->ensureWindowPass();
     ASSERT_NE(view->pipeline(), nullptr);
 
-    // The mode cannot apply (the colours come out of the G-buffer), and the host is TOLD - once - instead of
-    // wondering why the switch does nothing.
-    EXPECT_GT(engine->diagnosticCount(), 0u);
-    const std::size_t reported = engine->diagnosticCount();
-    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Unlit });
-    EXPECT_EQ(engine->diagnosticCount(), reported) << "同一个视图只报一次，不刷屏";
-    // Going back to a mode the path can honour leaves the pass with the content's own program.
+    // 配方是使用者写的那个（Deferred 还在），生效的链条是前向：没有离屏目标、没有 G-buffer，画面由那条
+    // 几何 pass 直接产出。
+    EXPECT_EQ(view->options().path, ShadingPath::Deferred);
+    EXPECT_EQ(view->options().mode, SceneView::Options::Mode::Unlit);
+    EXPECT_EQ(view->pipeline()->offscreenTarget(), nullptr) << "非 Lit 档不需要 G-buffer";
+    RenderPass* const window = view->pipeline()->windowPass();
+    ASSERT_NE(window, nullptr);
+    ASSERT_NE(window->programOverride(), nullptr) << "画面由这条 pass 用无光照程序产出";
+    EXPECT_NE(window->programOverride()->name().find(u8"builtin_forward_unlit"), vn::String::npos);
+
+    // 线框：同一处再叠一个光栅化覆盖（这就是"四级像素之外还画得出边"的那一半）。
+    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Wireframe });
+    ASSERT_NE(view->pipeline(), nullptr);
+    RenderPass* const wire = view->pipeline()->windowPass();
+    ASSERT_NE(wire, nullptr);
+    ASSERT_TRUE(wire->polygonModeOverride().has_value()) << "线框档必须让几何真的画成线";
+    EXPECT_EQ(*wire->polygonModeOverride(), PolygonMode::Line);
+
+    // 回到 Lit ⇒ 链条切回延迟：G-buffer 与离屏目标回来了，pass 上的两个覆盖都清掉。
     view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Lit });
-    EXPECT_EQ(view->pipeline()->windowPass()->programOverride(), nullptr);
+    ASSERT_NE(view->pipeline(), nullptr);
+    EXPECT_NE(view->pipeline()->offscreenTarget(), nullptr) << "Lit 档回到延迟：G-buffer 是它的输入";
+    RenderPass* const lit = view->pipeline()->windowPass();
+    ASSERT_NE(lit, nullptr);
+    EXPECT_EQ(lit->programOverride(), nullptr);
+    EXPECT_FALSE(lit->polygonModeOverride().has_value());
+
+    // 来回切链条走的是"先拆后建"：不该留下重复注册的 pass（拿一个同配置的新视图做对照）。
+    auto fresh_engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto fresh        = intrusive_ptr<SceneView>(new SceneView());
+    fresh->setEngine(fresh_engine.get());
+    fresh->setOptions({ .path = ShadingPath::Deferred });
+    fresh->ensureWindowPass();
+    EXPECT_EQ(engine->passCount(), fresh_engine->passCount()) << "三次切换之后不该有残留的 pass";
+}
+
+// 链条没变时换档**不重建**（延迟配方 + 非 Lit 档之间的切换都在前向链条上）。
+TEST(SceneViewViewportTest, SwitchingBetweenNonLitModesOnADeferredRecipeKeepsTheChain)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Unlit });
+    view->ensureWindowPass();
+    ASSERT_NE(view->pipeline(), nullptr);
+
+    const std::size_t passes     = engine->passCount();
+    auto              pipeline   = intrusive_ptr<Pipeline>(view->pipeline());
+
+    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Normals });
+    EXPECT_EQ(view->pipeline(), pipeline.get()) << "同一条链上换档不该重建";
+    EXPECT_EQ(engine->passCount(), passes);
+    EXPECT_NE(view->pipeline()->windowPass()->programOverride()->name().find(u8"builtin_forward_normals"),
+              vn::String::npos);
+
+    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Wireframe });
+    EXPECT_EQ(view->pipeline(), pipeline.get());
+    EXPECT_EQ(engine->passCount(), passes);
 }
 
 TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps){

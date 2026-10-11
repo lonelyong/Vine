@@ -1,7 +1,8 @@
 # graphics 渲染栈的重新设计提案（next，2026-10-11）
 
-**状态：提案，未落地** —— 一行代码都没动。本文只回答两件事：如果重新设计这一套渲染框架会怎么切，以及
-它怎么一步步落地（每片独立可验收）。落地与否、按什么顺序，看 §5 的触发条件。
+**状态：M1 已落地（2026-10-11）；其余是提案，未落地** —— 本文回答"如果重新设计这一套会怎么切"，并把每条切成能
+独立验收的迁移片。落地的部分按本文自己的规矩**以现状文档为准**（`appfw-render-view.md` §4.1、`.ai/memory/graphics.md`），
+这里只留下"原稿哪里说错了"的记录。
 
 **一句话**：骨架保留（分层 API + 第 0 层逃生口、配方/几何/开关三分、托管与借用分开），**重切四件事**；
 其中三件便宜、立刻消掉真实混乱，第四件是唯一的大改、等触发条件。
@@ -137,15 +138,23 @@ Filament 的 `MaterialInstance` 覆盖链 —— 都是"一个解析函数 + 一
 **行业对照**：OSG（`Camera` + `GraphicsContext`）、VTK（`Renderer` + `RenderWindow` + 交互器）、
 Unity / three.js（`Camera` + target） —— 视图都不自己抢最后一步。
 
-### 3.3 调试覆盖在几何阶段
+### 3.3 调试覆盖在几何阶段 —— **已落地（M1，2026-10-11）**
 
-**目标**：`Options::Mode`（平面/无光照/法线/线框）作用在**几何阶段**（forward 的内容 pass；Deferred 的
-G-buffer program），窗口 pass 只做合成。线框仍是"几何阶段的 program + 光栅化覆盖"两件事。
+**目标**：`Options::Mode`（平面/无光照/法线/线框）作用在**几何阶段**，不贴在最后一步。
 
-**影响面**：`SceneView::applyModeToWindowPass()` 改名/移位；`builtin_forward.frag` 的 define 复用面变宽
-（G-buffer program 也要吃 `VINE_FLAT/VINE_UNLIT/VINE_NORMALS`）；`GlslCompileTest` / `ProgramAbiTest` 的矩阵扩大。
-**风险**：Deferred 的 G-buffer 只存颜色/法线/材质，'法线'档要保证输出通道一致（否则出现"有画面但通道错"）。
-**收益**：Deferred 与 Forward 观感一致，"延迟路径兑现不了"这条诊断及其文档整块删除。
+**落地时改了这条设计的一处（原稿写错的地方）**：原稿说"Deferred 的 G-buffer program 也要吃
+`VINE_FLAT/VINE_UNLIT/VINE_NORMALS`"（当时把它记成 M1 的验收判据 ④）—— **做不到也不该做**：
+延迟配方的画面是"全屏光照"那条 pass 产出的，G-buffer 里写什么颜色都会被光照再算一遍，所以把四个 define 塞进
+G-buffer 程序只会得到"被光照过的无光照画面"。真正的规则是：**非 Lit 档期间，链条按前向建**（`effectivePath()`，
+`Options::path` 字段不动），几何直接进画面 —— 于是四档在两条配方上都能画出来，且**不需要任何新的 shader 变体**。
+代价（落地时才明确）：延迟配方**进出**非 Lit 档是一次重建（链条变了）；链条内换档仍零重建。
+
+**影响面（实际）**：`SceneView::applyModeToWindowPass()` → `applyModeToGeometryPass()`（去掉"路径不匹配就报
+`UnsupportedRequest`"那一支与 `mode_unavailable_reported_`）；`setOptions()` 的结构判据从"配方里的 path 变了"改成
+"**生效的链条**变了"。`GlslCompileTest` / `ProgramAbiTest` 的矩阵**不动**（没有新的 define 变体）。
+
+**判据（已达成）**：见 §5 M1 行。
+**收益（已取得）**：Deferred 与 Forward 四档观感一致，"延迟路径兑现不了"这条诊断、它的文档与它的用例整块删除。
 
 ### 3.4 Pass 描述符 + 每帧 FramePlan（唯一的大改）
 
@@ -177,19 +186,26 @@ FramePlan plan = graph.compile();
 
 | 片 | 内容 | 验收判据 | 依赖 | 代价 |
 | --- | --- | --- | --- | --- |
-| **M1** | §3.3 调试覆盖挪到几何阶段 | ①Deferred + `Mode::Wireframe` 真的画线（截图/像素判据用现有 `VINE_VSG_*` 无头门禁）；②Forward 四档观感与今天逐字一致（同一用例的前后像素对照）；③`UnsupportedRequest` 那条诊断与其文档删除，`AppliesToDeferred` 类用例改成正向断言；④`GlslCompileTest`/`ProgramAbiTest` 覆盖 G-buffer 的四个 define 变体 | 无 | 小 |
+| **M1** | §3.3 调试覆盖挪到几何阶段（**已落地 2026-10-11**） | ①Deferred 配方 + 非 Lit 档 ⇒ 链条按前向建：没有离屏目标、画面那条 pass 带对应 program 覆盖、线框带 Line 覆盖（`test_graphics` `ANonLitModeOnADeferredRecipeBuildsTheForwardChain`；变异：`effectivePath()` 恒等 ⇒ 失败）；②Forward 四档行为逐字不变（既有用例不动）；③回 Lit ⇒ 链条切回延迟（G-buffer 回来了）；④同一链条内换档零重建（`SwitchingBetweenNonLitModesOnADeferredRecipeKeepsTheChain`），三次切换不留残留 pass（与同配置新视图对照）；⑤那条 `UnsupportedRequest` 诊断、它的用例与文档措辞全部删除；⑥真机烟雾：应用 Deferred 默认路径启动照旧 | 无 | 小 |
 | **M2** | §3.2 呈现契约：`Pane` 声明 + presenter 决定最后一步 | ①默认窗口管线仍自动出现（不配置就是今天的样子）；②宿主自建主 pass 时**不再需要**"同一个相机已有窗口 pass"的取消规则（该判断删除，`hasWindowPass` 用例改写）；③重建之后关掉的 HUD 档仍然关着（`applyOverlayIntent` 若被删则该用例必须仍过）；④分屏：两个 pane 各画各的、恰好一次清屏（presenter 断言） | M1 可并行 | 中 |
 | **M3** | §3.1 `resolveRenderState` 单点 | ①逐项状态快照：内容/pass/视图三层各自设过同一项时，最终值 = 优先级表；②`depthExplicit` 类旗标删除后行为不变；③诊断能说出"这一项来自哪一层"；④`graphics-state.md` §4.1 的表从"规则"改成"命名习惯"（文档验收） | 无 | 中 |
 | **M4** | 观测：FramePlan dump | ①一条命令/API 打印这一帧的表格（pass 顺序、目标、输入、clear、状态、耗时）；②`test_graphics` 里至少两条用"结构断言"替换 `passCount()`/指针身份；③dump 与真实执行一致（同一帧的 pass 序列相等） | 无（越早越好，M2/M3 的验收会更硬） | 小 |
 | **M5** | pane 树 + `ViewContext` 命令目标 | ①一个窗口 split 成两个 pane：各自相机/输入/HUD 互不干扰（用例）；②"显示模式"五条命令在多 pane 下作用于**焦点 pane**（同一命令两个 pane 各来一遍）；③`setPrimaryRenderControl` 仍可用但不参与 pane 目标解析 | M2 | 中 |
 | **M6** | Device / Session 分离：一设备 N 会话 | ①同一模型开两个窗口只上传一份几何（计数/内存断言）；②一个窗口销毁不带走另一个的会话；③`SessionLease` 类型上禁止"会话先死在租约前"；④R2 的"临时加引用"约定删除（该用例改写仍过） | M2 | 大 |
 | **M7** | Pass 描述符 + 每帧 FramePlan（§3.4） | ①`wiringRevision()`/`validateWiring()` 删除后全部套件绿；②新增一个 pass = 加一条描述符（无新子类）；③transient 目标由编译分配（显存/目标计数断言）；④FramePlan dump 与 M4 同形 | M4（观测先有） | 大 |
+| **M8** | `test_vsg` 的 **SDK 级设备夹具**（能用 SDK 建引擎/视图/管线并在真设备上探像素） | ①至少一条 view-mode 的**像素**断言（Deferred 配方 + 线框 ⇒ 画面里真的有边；用 `PixelProbe`，同一帧的 forward/line 两版对照）；②夹具本身带一条"没有视图也能渲染"的最小用例，证明它不是为某一条用例特制的 | 无 | 中 |
+
+**M1 验收判据的边界（诚实记账）**：M1 只做**结构判据**（`test_graphics`，设备无关）+ 应用烟雾，**没有**设备级像素
+判据 —— `test_vsg` 今天不碰 SDK 层（`RenderEngine` / `SceneView` / `RenderPipelineBuilder` 一次都没用），它直接对着
+vsg 内部测（`PixelProbe` 在它那里是配合 vsg 内部管线用的）；要"像素上真的画出线"得先给它一个 SDK 级设备夹具，
+那是独立的一片（M8）。这是 M1 与 M8 的分界：**M1 保证"该画的 pass 在画"，M8 保证"画出来的像素对"**。
 
 **触发条件**（不满足就不做，避免为"将来"付费）：
 
 - M6：命中"同一内容要多窗口 / 设备启动开销被窗口数乘 / 视图数 > 4"之一。
 - M7：命中"pass 数或动态图需求上来 / 需要 transient 资源与自动 barrier / M4 的 dump 已经不够用"之一。
 - M1–M3 不需要触发条件：它们消掉的是**今天就在付**的混乱（一条诊断 + 一条取消规则 + 一张命名表）。
+- M8：命中"观感（view mode / HUD 摆位 / 清屏结果）成为争议点，或要让 CI 守住它"之一 —— M1 因此只到结构层为止。
 
 ## 6. 不变量与兼容策略
 

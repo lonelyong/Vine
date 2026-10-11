@@ -367,8 +367,9 @@ Unreal 之所以"感觉免费"，是因为它**每帧重建 pass 列表**（我�
   shader (e.g. a wireframe or alternate-shading pass)"），而**线框**走的 `setPolygonModeOverride` 与它是同一个形状
   （pass 级覆盖 → 命令的渲染状态；引擎本来就有逐子树的 `StateNode::setPolygonMode`，后端早就把多边形模式当**动态状态**
   发命令，所以线框不需要任何后端改动）。
-- 延迟路径**兑现不了**非 Lit 模式（颜色从 G-buffer 出来、窗口 pass 是全屏光照）⇒ 报一条 `UnsupportedRequest`
-  （每视图一次）并保持 Lit（§4.1 已写，用例钉住）。
+- 非 Lit 档**作用在几何阶段**（M1，2026-10-11）：延迟配方配非 Lit 档时，视图把链条按**前向**建（`Options::path` 字段
+  不动 ⇒ "请求"与"生效"分开），于是四档在两条配方上都能画出来 —— 旧行为（延迟路径报一条 `UnsupportedRequest`
+  并保持 Lit）已删除。代价是"进出非 Lit（延迟配方）"是一次**重建**（链条变了），同一条链条上换档仍是零重建。
 - 可见性状态**归视图**，不进 `RenderControl`（控件不碰管线与设置，§5）；菜单/快捷键就是调这两个 setter。
 
 ### 4.2 场景侧的照明：**成套配方（light rig）**
@@ -516,7 +517,8 @@ view->setOptions(options);
     顺序自由、宿主提前释放也安全。
 13. **显示 / 隐藏是运行时开关，永不重建**（§4.1）：`setGizmoVisible` / `setStatsVisible` 只切 `setEnabled`；
     档不存在时**按需补建一次**（每个视图每种档最多一次）。要频繁切就在配置窗口里把档都建好（R1 ⇒ 零重建）。
-    着色模式同族：`Options::mode` 只切窗口 pass 的 program override，**零重建**（延迟路径兑现不了时记一条诊断）。
+    着色模式同族：`Options::mode` 只切**画面那条 pass** 的 program override，同一条链条上换档**零重建**；
+    延迟配方进出非 Lit 档会换链条（前向），那一次是重建（M1，2026-10-11）。
     **关掉的档不会被一次重建又打开**：重建是从**配方**建的（新 pass 天生 enabled），所以使用者最后一次说的可见性
     由 `applyOverlayIntent()` 在每次建完之后落回去（换路径、补建另一个档、把档从配方里去掉再要回来，都算）。
 14. **几何只有一个输入**：`view->viewport()`（归一化）是矩形的**唯一真相**；`onSurfaceResized` 只收**表面**尺寸 + 比例；

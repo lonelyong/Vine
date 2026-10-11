@@ -87,7 +87,7 @@ void SceneView::ensureWindowPass()
     // The default viewer is the shared preset RenderPipelineBuilder exposes, configured by this view's recipe, so
     // the view default and an application's explicit main pipeline stay one code path.
     PipelineOptions pipeline_options;
-    pipeline_options.path                 = options_.path;
+    pipeline_options.path                 = effectivePath();
     pipeline_options.gizmo.source_camera  = options_.gizmo ? camera_.get() : nullptr;
     pipeline_options.gizmo.pixel_ratio    = pixel_ratio_;
     pipeline_options.fps.enabled          = options_.stats;
@@ -102,11 +102,27 @@ void SceneView::ensureWindowPass()
     // ratio the view already knows about (a no-op before the first resize, exactly like today).
     applySurfaceGeometry();
     // ... and at the recipe's shading mode, which the builder has no option for (it is a pass property, see
-    // applyModeToWindowPass).
-    applyModeToWindowPass();
+    // applyModeToGeometryPass).
+    applyModeToGeometryPass();
     // ... and at the visibility the caller last asked for: a fresh overlay pass is created ENABLED, so without
     // this a rebuild would switch a hidden readout back on (see applyOverlayIntent).
     applyOverlayIntent();
+}
+
+ShadingPath SceneView::effectivePath(const Options& options) noexcept
+{
+    // A non-Lit mode is a geometry-stage override: it needs the pass that turns geometry into the picture, and a
+    // deferred recipe has no such pass in the picture's path (its window pass is a fullscreen lighting program
+    // reading the G-buffer). So the chain is built forward while such a mode is active - see the Mode docs.
+    if (options.mode != Options::Mode::Lit && options.path == ShadingPath::Deferred) {
+        return ShadingPath::Forward;
+    }
+    return options.path;
+}
+
+ShadingPath SceneView::effectivePath() const noexcept
+{
+    return effectivePath(options_);
 }
 
 void SceneView::applyOverlayIntent()
@@ -122,32 +138,18 @@ void SceneView::applyOverlayIntent()
     }
 }
 
-void SceneView::applyModeToWindowPass()
+void SceneView::applyModeToGeometryPass()
 {
     if (default_pipeline_ == nullptr) {
         return;
     }
-    RenderPass* const window = default_pipeline_->windowPass();
-    if (window == nullptr) {
+    // The pass that turns geometry into the picture. On the forward chain (which is what a Deferred recipe is
+    // built with while a non-Lit mode is active - see effectivePath()) that IS the window pass: geometry, shading
+    // and present are one pass, so the override here is a geometry-stage one by construction.
+    RenderPass* const picture = default_pipeline_->windowPass();
+    if (picture == nullptr) {
         return;
     }
-
-    if (options_.path != ShadingPath::Forward) {
-        // A mode lives in the fragment stage of the CONTENT pass, and the Deferred path has no such pass here: its
-        // geometry goes through the G-buffer program and its window pass is a fullscreen lighting program. Saying
-        // so once is the difference between "the switch does nothing" and "the switch cannot apply on this path".
-        window->setProgramOverride(nullptr);
-        if (options_.mode != Options::Mode::Lit && !mode_unavailable_reported_ && engine_ != nullptr) {
-            mode_unavailable_reported_ = true;
-            engine_->reportEngineProblem(
-                DiagnosticSeverity::Warning,
-                DiagnosticCategory::UnsupportedRequest,
-                u8"SceneView: a shading mode other than Lit needs the Forward path (on Deferred the colours come "
-                u8"out of the G-buffer and the window pass is the fullscreen lighting): the view stays lit");
-        }
-        return;
-    }
-    mode_unavailable_reported_ = false;
 
     // Every mode is the same program text with one define (BuiltinShaders) applied to the whole pass, and Lit is
     // the per-geometry program the content came with - which is exactly what a null override means. Wireframe is
@@ -156,24 +158,24 @@ void SceneView::applyModeToWindowPass()
     // to surfaces. Both are pass properties: nothing here rebuilds anything.
     switch (options_.mode) {
         case Options::Mode::Lit:
-            window->setProgramOverride(nullptr);
-            window->clearPolygonModeOverride();
+            picture->setProgramOverride(nullptr);
+            picture->clearPolygonModeOverride();
             break;
         case Options::Mode::Flat:
-            window->setProgramOverride(vn::graphics::flatForwardProgram());
-            window->clearPolygonModeOverride();
+            picture->setProgramOverride(vn::graphics::flatForwardProgram());
+            picture->clearPolygonModeOverride();
             break;
         case Options::Mode::Unlit:
-            window->setProgramOverride(vn::graphics::unlitForwardProgram());
-            window->clearPolygonModeOverride();
+            picture->setProgramOverride(vn::graphics::unlitForwardProgram());
+            picture->clearPolygonModeOverride();
             break;
         case Options::Mode::Normals:
-            window->setProgramOverride(vn::graphics::normalsForwardProgram());
-            window->clearPolygonModeOverride();
+            picture->setProgramOverride(vn::graphics::normalsForwardProgram());
+            picture->clearPolygonModeOverride();
             break;
         case Options::Mode::Wireframe:
-            window->setProgramOverride(vn::graphics::unlitForwardProgram());
-            window->setPolygonModeOverride(PolygonMode::Line);
+            picture->setProgramOverride(vn::graphics::unlitForwardProgram());
+            picture->setPolygonModeOverride(PolygonMode::Line);
             break;
     }
 }
@@ -224,16 +226,19 @@ void SceneView::setOptions(const Options& options)
         return;
     }
 
+    // STRUCTURE means "which passes exist": the CHAIN in use (a non-Lit mode on a deferred recipe is built
+    // forward - see effectivePath()) and the two overlays the recipe asks for. A mode that keeps the chain has no
+    // structural consequence: it is a pass property (applyModeToGeometryPass).
     const bool structure_changed =
-        previous.path != options.path || previous.gizmo != options.gizmo || previous.stats != options.stats;
+        effectivePath(previous) != effectivePath(options) || previous.gizmo != options.gizmo || previous.stats != options.stats;
     if (structure_changed) {
         rebuildDefaultWindowPass();
         return;
     }
 
-    // Only the shading mode changed: that is the window pass' program override, so the pass graph is untouched
-    // (same pipeline, same registered passes) and the next frame simply shades the other way.
-    applyModeToWindowPass();
+    // Only the shading mode changed, on the same chain: that is the picture pass' program override, so the pass
+    // graph is untouched (same pipeline, same registered passes) and the next frame simply shades the other way.
+    applyModeToGeometryPass();
 }
 
 const NormalizedViewport& SceneView::viewport() const noexcept

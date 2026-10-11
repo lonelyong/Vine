@@ -633,8 +633,8 @@ view->addSurfaceLayout([p](int w, int h, double dpr) { p->resize(w, h, dpr); });
   `setStatsVisible()` 回答"现在**看得见吗**"；前者变更 = 一次重建，后者永不重建。
 - **模式（`Options::Mode`）是 pass 属性，不是重建**：`Lit` 用内容自己的 program，`Flat/Unlit/Normals` 是同一段
   fragment 文本的另一个 `#define`（`setProgramOverride`），`Wireframe` 再加
-  `RenderPass::setPolygonModeOverride(PolygonMode::Line)`。**延迟路径兑现不了非 Lit 模式**：它会记一条 `UnsupportedRequest`
-  诊断，画面保持 Lit（不让开关悄悄失效）。
+  `RenderPass::setPolygonModeOverride(PolygonMode::Line)`。**模式作用在几何阶段**：延迟配方配非 Lit 档时，视图把链条
+  按**前向**建（配方字段不动）⇒ 四档在两条配方上都能画出来；同一链条上换档零重建，进出非 Lit（延迟配方）是一次重建。
 - **灯是场景的，不是面的**：`scene->addLighting(vn::graphics::LightRig::studio())`（零灯只有后端
   `ambient=0.15` 的常量填充 ⇒ 一片平色，看起来像"没装灯"）。
 - 默认窗口管线是**兜底**：引擎里已经有同一个相机的窗口 pass 时它自动让位（宿主的自建管线赢）；要显式要它，

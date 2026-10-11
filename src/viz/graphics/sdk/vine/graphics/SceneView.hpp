@@ -85,11 +85,13 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
         /** @brief What the surface colour MEANS: lit, faceted, unlit, normals, or edges.
          *
          * Every mode is the SAME built-in program text with one define (see BuiltinShaders), applied as the
-         * window pass' program override, and Wireframe adds the pass' rasterisation mode on top - so a mode
-         * change is a pass property, NOT a pipeline rebuild (see setOptions). Only the Forward path can honour a
-         * mode other than Lit: the Deferred path's colours come out of the G-buffer and its window pass is a
-         * fullscreen lighting program, so a non-Lit mode there is reported on the engine's diagnostic route and
-         * the picture stays lit.
+         * GEOMETRY pass' program override - the pass that turns geometry into the picture - and Wireframe adds
+         * that pass' rasterisation mode on top: a mode change is a pass property, NOT a pipeline rebuild.
+         *
+         * A mode other than Lit needs geometry to shade, and a Deferred recipe's picture is produced by a
+         * fullscreen lighting pass that has none left: so while the mode is not Lit, a deferred recipe is BUILT
+         * FORWARD (the recipe field is untouched - switching back to Lit builds deferred again). That makes the
+         * transition on a deferred recipe a rebuild (the chain changed); on the forward path it never rebuilds.
          */
         enum class Mode
         {
@@ -163,14 +165,17 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
 
     /** @brief Sets this view's recipe, doing the cheapest thing that satisfies the change.
      *
-     * The STRUCTURE (path, gizmo, stats) is what a pipeline build answers: changing any of them REBUILDS this
-     * view's default window pipeline (the old one unregisters its passes, the new one is assembled through the
-     * same RenderPipelineBuilder recipe an application would use). That is ONE pipeline build, not a per-frame
-     * cost; on the Deferred path it also reallocates the G-buffer.
+     * The STRUCTURE is what a pipeline build answers: the CHAIN the recipe ends up in (a non-Lit mode makes a
+     * deferred recipe build forward - see Options::Mode) and the two overlays (gizmo / stats).
+     * Changing any of them REBUILDS this view's default window pipeline (the old one unregisters its passes, the
+     * new one is assembled through the same RenderPipelineBuilder recipe an application would use). That is ONE
+     * pipeline build, not a per-frame cost; on the Deferred path it also reallocates the G-buffer.
      *
-     * The SHADING MODE is not a structure: every mode is the window pass' program override (see Options::Mode), so
-     * switching between Lit / Flat / Unlit / Normals costs an override and NOT a rebuild - the picture changes on
-     * the next frame with nothing re-registered (measured by the same pipeline() handle).
+     * The SHADING MODE is not a structure while the chain stays the same: every mode is the picture pass' program
+     * override (see Options::Mode), so switching between Lit / Flat / Unlit / Normals / Wireframe on the forward
+     * path costs an override and NOT a rebuild - the picture changes on the next frame with nothing re-registered
+     * (measured by the same pipeline() handle). On a DEFERRED recipe, entering or leaving a non-Lit mode changes
+     * the chain, so that transition is a rebuild; staying among the non-Lit modes is not.
      *
      * Nothing is built when the view has no default pipeline (the window pass has not been asked for yet, or an
      * application presents this camera itself): the recipe is remembered and the next ensureWindowPass() builds
@@ -394,8 +399,8 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /** @brief Drops the default pipeline (if any) and rebuilds it from the current recipe. */
     void rebuildDefaultWindowPass();
 
-    /** @brief Applies the recipe's shading mode to the default pipeline's window pass (an override, no rebuild). */
-    void applyModeToWindowPass();
+    /** @brief Applies the recipe's shading mode to the pass that turns geometry into the picture (no rebuild). */
+    void applyModeToGeometryPass();
 
     /** @brief Turns {surface size, viewport, pixel ratio} into this view's rectangle, in one place. */
     void applySurfaceGeometry();
@@ -416,6 +421,19 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      */
     void applyOverlayIntent();
 
+    /** @brief The path the default pipeline is BUILT with (the recipe's, unless a mode needs the forward chain).
+     *
+     * A shading mode is a GEOMETRY-stage override ("what the surface colour means"), and a deferred recipe's
+     * picture comes out of a fullscreen lighting pass that has no geometry left to shade - so while the mode is
+     * something other than Lit, a deferred recipe is built forward instead. The recipe itself is untouched (a
+     * host that asks for Deferred and gets a forwarded picture back on Lit is the point): this is the "what is
+     * actually built" answer, and it is what decides whether a change is a REBUILD or a pass property.
+     */
+    ShadingPath effectivePath() const noexcept;
+
+    /** @brief effectivePath() for an arbitrary recipe (see it for why a mode may change the chain). */
+    static ShadingPath effectivePath(const Options& options) noexcept;
+
     // The bound engine is borrowed (the host owns it and keeps it alive).
     raw_ptr<RenderEngine> engine_ = nullptr;
 
@@ -426,8 +444,6 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     double             pixel_ratio_ = 1.0;
     int                surface_width_ = 0;
     int                surface_height_ = 0;
-    // One line per view about a shading mode the chosen path cannot honour (see applyModeToWindowPass).
-    bool mode_unavailable_reported_ = false;
 
     // The visibility the caller last ASKED for (setGizmoVisible / setStatsVisible). A reader still reads the pass
     // (isGizmoVisible), but a rebuilt pipeline creates its overlays enabled, so this is what applyOverlayIntent()
