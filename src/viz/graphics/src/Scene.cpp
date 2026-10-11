@@ -480,8 +480,7 @@ Aabbd Scene::boundingBox() const
     return root_->boundingBox();
 }
 
-std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsShared(raw_ptr<const Camera> camera,
-                                                                                   double aspect) const
+std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsShared(raw_ptr<const Camera> camera) const
 {
     // The empty answer, shared rather than built: a caller with no camera / an empty scene asks for
     // nothing, and paying an allocation for "nothing" would make the cheap case the expensive one.
@@ -490,9 +489,9 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsSh
     if (camera == nullptr || !visible_ || root_ == nullptr) {
         return kNoCommands;
     }
-    // The shape is part of the view: the projection encodes it, so the memo below (which matches on the
-    // view-projection) cannot answer for one rectangle with another's walk.
-    const Mat4d view_proj = camera->projectionMatrix(aspect) * camera->viewMatrix();
+    // The shape is part of the view: the projection encodes it (the camera states it, see Camera), so the memo
+    // below (which matches on the view-projection) cannot answer for one shape with another's walk.
+    const Mat4d view_proj = camera->projectionMatrix() * camera->viewMatrix();
     const Vec3d eye       = camera->eye();
     // Frame-scoped memo (see setContentFrame): the passes a frame runs over one
     // scene through one camera share a single tree walk. A miss means "this
@@ -571,11 +570,11 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsSh
     return shared;
 }
 
-std::vector<RenderCommand> Scene::collectRenderCommands(raw_ptr<const Camera> camera, double aspect) const
+std::vector<RenderCommand> Scene::collectRenderCommands(raw_ptr<const Camera> camera) const
 {
     // The owning spelling of the same collection (see collectRenderCommandsShared): a caller that wants
     // to keep or edit the list gets its own, and pays exactly one copy of it.
-    return *collectRenderCommandsShared(camera, aspect);
+    return *collectRenderCommandsShared(camera);
 }
 
 void Scene::setContentFrame(std::uint64_t frame)

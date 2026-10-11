@@ -185,6 +185,8 @@ class SurfaceWindow : public QWindow {
     void pushToView(vn::graphics::SceneView* target, const vn::window::KeyEvent& event);
     /** @brief Reports the client size once per change, whichever object saw it first. */
     void handleResized(int width, int height);
+    /** @brief Records the client size on the surface, and on this surface's own view when it stands outside it. */
+    void feedSurfaceSize(int width, int height);
     /** @brief Marks the native surface usable and schedules the update that follows it. */
     void noteSurfaceUsable();
     /** @brief Handles native-surface destruction: marks the surface unusable and takes the state back to

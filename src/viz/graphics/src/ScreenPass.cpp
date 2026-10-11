@@ -48,34 +48,41 @@ void ScreenPass::resolveInputTextures(const std::vector<raw_ptr<RenderTarget>>& 
     }
 }
 
-void ScreenPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
+bool ScreenPass::describe(raw_ptr<Scene> scene, PassDescription& out)
 {
-    if (backend == nullptr || source_ == nullptr) {
-        return;
+    if (source_ == nullptr) {
+        // Nothing was resolved to sample: this pass issues nothing at all, not even a target - which is what
+        // keeps a screen pass whose input never resolved out of the frame entirely (the engine reports it).
+        return false;
     }
-    backend->setRenderTarget(renderTarget());
-    if (hasViewport()) {
-        const Viewport vp = viewport();
-        backend->setViewport(vp.x, vp.y, vp.width, vp.height);
-    }
-    // The clearEnabled guard lives in announceClear (one rule for both kinds of pass).
-    announceClear(backend);
+    // A screen pass is content-agnostic, so a null scene is not its "nothing to issue" - the gate above is. The
+    // output target, the sub-viewport and the clear are the inherited ones (one mapping for both kinds of pass).
+    (void)scene;
+    fillPassFacts(out);
     if (program_ == nullptr || camera() == nullptr) {
         // Nothing to draw with, or no view to build: the ENGINE reports both at wiring time (see
         // RenderEngine::validateWiring), so this path stays silent and draws nothing.
-        return;
+        return true;
     }
+    DrawDescription draw;
+    draw.kind    = DrawDescription::Kind::Screen;
+    draw.camera  = camera();
+    draw.source  = source_;
+    draw.program = program_;
     // Forward the content scene's lights so the backend can push them to the
     // fullscreen fragment program (mirrors how scene passes feed their lights).
+    // A pass with no scene announces NONE rather than an empty list: a screen pass is content-agnostic, and
+    // "there is no scene" is not a statement about the lighting.
     if (scene != nullptr) {
         std::vector<raw_ptr<const Light>> light_ptrs;
         light_ptrs.reserve(scene->lights().size());
         for (const auto& light : scene->lights()) {
             light_ptrs.push_back(light.get());
         }
-        backend->setLights(light_ptrs);
+        draw.lights = std::move(light_ptrs);
     }
-    backend->drawScreenProgram(source_, program_.get(), camera());
+    out.draws.push_back(std::move(draw));
+    return true;
 }
 
 VN_GRAPHICS_NS_END

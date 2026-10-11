@@ -128,13 +128,9 @@ TEST_F(VsgBackendPluginTest, TheConstructorBuildsTheApplicationFromItsConfig)
     EXPECT_TRUE(s_app->configFile().empty());
 }
 
-/// @brief Whether a device case can run at all (a window system and one usable physical device).
+/// @brief Whether a device case can run at all (one usable physical device; the X11 host window is the xcb check below).
 bool deviceCaseAvailable()
 {
-    if (std::getenv("DISPLAY") == nullptr)
-    {
-        return false;
-    }
     const auto probed = vn::vsg::api::probePhysicalDevices();
     return probed.ok && probed.usableCount() != 0;
 }

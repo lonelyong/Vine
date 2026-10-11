@@ -18,21 +18,27 @@ using vn::math::Vec2d;
 using vn::math::Vec3d;
 
 /**
- * @brief Camera: the VIEWING (eye / target / up) and the PROJECTION PARAMETERS (fov, planes, ortho window).
+ * @brief Camera: the VIEWING (eye / target / up), the PROJECTION PARAMETERS (fov, planes, ortho window) and the
+ *        SHAPE of the picture it is projected for (aspectRatio).
  *
- * Camera does NOT hold a projection matrix, and it does not hold an aspect ratio: the projection of a picture
- * depends on how wide that picture is, and that is a fact about the RECTANGLE the picture is drawn into - the
- * window, a pane of a split surface, a shadow map - not about the camera. Asking for the matrix is therefore a
- * question with an argument (projectionMatrix(aspect)), and the argument is derived from the rectangle at render
- * time in ONE place - RenderBackend::viewAspect(), read both by the view block that builds the projection and by
- * the culling that decides what is worth projecting. The same camera may then be drawn into rectangles of
- * different shapes in the same frame: a mirror view, a picture-in-picture of the same eye, an editor's two panes
- * of one scene. A camera that held a size would have to be copied (or nudged) per picture - which is what Unity's
- * Camera.rect forces and what this class exists to avoid.
+ * ONE CAMERA, ONE PICTURE SHAPE. The aspect lives here because the projection is what needs it, and every reader
+ * of the projection then reads the SAME number from the same place: the view block that builds it, the culling
+ * that decides what is worth projecting, and the picking ray. This is the model three.js / Babylon / Godot /
+ * Unity use, and it is the one this module settled on (2026-10-11): a camera is the state of ONE view onto ONE
+ * picture, and a host that wants the same eye at two shapes uses two cameras.
  *
- * The projection PARAMETERS are all state here: fov / near / far and the orthographic WINDOW (kept whole - see
- * setProjectionMatrixAsOrtho). The perspective projection is rebuilt per call (a handful of multiplies, see
- * projectionMatrix); an orthographic one ignores the aspect argument, because its window already carries a shape.
+ * WHAT IS FORBIDDEN, AND WHY IT IS REPORTED. A camera whose shape differs from the picture a pass draws it into
+ * projects a STRETCHED picture - the rectangle's shape and the projection's disagree. That is the case a host
+ * reaches by sharing one camera between two panes of different shapes (or between a pane and a target), and the
+ * engine REPORTS it while compiling the frame instead of letting the picture be quietly wrong (see
+ * RenderEngine's frame-plan problems). What this class replaced derived the aspect from the pass' rectangle at
+ * render time, which made the mismatch impossible - and left the shape a question only the BACKEND could answer,
+ * whose answer depended on what had been announced before it (see `.ai/design/graphics-redesign.md`).
+ *
+ * The projection PARAMETERS are all state here: fov / near / far, the aspect, and the orthographic WINDOW (kept
+ * whole - see setProjectionMatrixAsOrtho). The perspective projection is rebuilt per call (a handful of
+ * multiplies, see projectionMatrix); an orthographic one ignores the aspect, because its window already carries
+ * a shape.
  *
  * WHAT projectionMatrix() IS FOR. The matrix this class builds is the CPU-side one: a right-handed view looking
  * down -Z, and a CLIP SPACE WITH z IN [-1, 1] (the classic OpenGL range). A backend may render with a different
@@ -75,15 +81,33 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
 
     /** @brief Sets the projection parameters of a perspective camera.
      *
-     * NO aspect: how wide the picture is belongs to the rectangle it is drawn into, not to the camera (see the
-     * class note). Supply it where the projection is needed - projectionMatrix(aspect), or the pass' rectangle a
-     * backend derives it from.
+     * The picture's SHAPE is not among them: it is the camera's own state (see setAspect), because it is what the
+     * projection is built with and the same number must be read by everything that projects or culls.
      *
      * @param fovy    Vertical field of view in degrees.
      * @param zNear   Near clipping plane distance (> 0).
      * @param zFar    Far clipping plane distance.
      */
     void setProjectionMatrixAsPerspective(double fovy, double zNear, double zFar);
+
+    /** @brief Gets the shape of the picture this camera is projected for (width / height).
+     *
+     * @return The aspect ratio; 1.0 until a host states one (see setAspect).
+     */
+    double aspectRatio() const;
+
+    /** @brief States the shape of the picture this camera is projected for.
+     *
+     * The ONE number the projection, the culling and the picking ray are built from - so setting it is how a
+     * view says "this is the rectangle I am being drawn into" (SceneView does it from its own rectangle on every
+     * geometry change). Read it back rather than keeping a second copy: a camera whose aspect disagrees with the
+     * picture it is drawn into projects a stretched picture, and the engine reports that while compiling the
+     * frame.
+     *
+     * @param aspect Width / height of the picture; a non-positive value is ignored (1.0 is the state a camera is
+     *               born with, which is right for the square pictures a headless test draws).
+     */
+    void setAspect(double aspect) noexcept;
 
     /** @brief Sets the projection parameters of an orthographic camera.
      *
@@ -156,20 +180,18 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
     /** @brief Gets the view matrix. */
     Mat4d viewMatrix() const;
 
-    /** @brief Gets the projection matrix of a picture of @p aspect.
+    /** @brief Gets the projection matrix for the shape this camera states (see setAspect).
      *
      * The engine's CPU-side projection (clip space with z in [-1, 1]); a backend may render with another
      * convention, so this is the matrix the ENGINE culls and measures with, not a prediction of the picture's
      * clip space (see the class note).
      *
-     * Rebuilt per call from the parameters above - there is no cache to invalidate and no state to keep in step
-     * with a rectangle, which is what makes one camera usable for several pictures of different shapes.
+     * Rebuilt per call from the parameters above - there is no cache to invalidate. An orthographic camera
+     * ignores the aspect, whose window carries its own shape (see setProjectionMatrixAsOrtho).
      *
-     * @param aspect Width / height of the picture (ignored by an orthographic camera, whose window carries its
-     *               own shape - see setProjectionMatrixAsOrtho).
      * @return The view -> clip matrix.
      */
-    Mat4d projectionMatrix(double aspect) const;
+    Mat4d projectionMatrix() const;
 
     /** @brief Converts screen coordinates to a world-space picking ray.
      *
@@ -183,12 +205,9 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      *
      * @param screenPos Normalized screen coordinates in [0, 1]
      *                  (pixel / viewport dimension).
-     * @param aspect    Width / height of the picture the coordinates are in - the same rectangle the
-     *                  projection uses (see the class note): picking with another one would aim at what
-     *                  a differently shaped picture would have shown.
      * @return Ray in world space.
      */
-    Ray screenToWorldRay(const Vec2d& screenPos, double aspect) const;
+    Ray screenToWorldRay(const Vec2d& screenPos) const;
 
   private:
     String         name_;
@@ -198,10 +217,12 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
     Vec3d eye_{ 0.0, 0.0, 5.0 };
     Vec3d center_{ 0.0, 0.0, 0.0 };
     Vec3d up_{ 0.0, 1.0, 0.0 };
-    // The projection PARAMETERS (no matrix and no aspect: both are per-picture, see the class note).
+    // The projection PARAMETERS (no matrix: it is rebuilt per call). The aspect is here because the projection
+    // cannot be built without it and every reader must read the same number (see the class note).
     double near_plane_   = 0.1;
     double far_plane_    = 1000.0;
     double fov_          = 45.0;
+    double aspect_       = 1.0;
     // The orthographic window, kept WHOLE: a backend that rebuilds the projection from parameters (and
     // the picking ray) needs all four bounds, and the height alone cannot express an off-centre one.
     double ortho_left_   = -5.0;

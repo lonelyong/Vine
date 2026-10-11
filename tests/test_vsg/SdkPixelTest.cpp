@@ -77,11 +77,12 @@ bool onSilhouette(const PixelProbe& probe, int x, int y)
 
 /// @brief Skips out of a case when this machine cannot serve the fixture.
 ///
-/// The gate is stated once, for both cases: a device that satisfies the backend's floor, a session that comes
-/// up, and a backend that serves off-screen pixels at all. Everything after it is a failure, not a skip.
+/// `available()` is the shared gate (a device, a session that comes up on it, and off-screen pixels back - see
+/// SdkPixelFixture); the two checks after it guard THIS fixture instance, so everything past the gate is a
+/// failure of the case rather than a skip of the machine.
 #define VINE_SKIP_WITHOUT_SDK_DEVICE(fixture)                                                                    \
     if (!SdkPixelFixture::available()) {                                                                         \
-        GTEST_SKIP() << "no physical device satisfies the render backend's floor";                               \
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";                       \
     }                                                                                                            \
     SdkPixelFixture fixture;                                                                                     \
     if (!fixture.up()) {                                                                                         \

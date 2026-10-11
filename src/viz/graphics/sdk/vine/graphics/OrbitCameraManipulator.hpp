@@ -254,14 +254,15 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     /** @brief Updates the orthographic projection from distance and aspect. */
     void updateOrthoProjection();
 
-    /** @brief Gets the aspect of the viewport this manipulator drives, for the math that needs a shape.
+    /** @brief Gets the aspect of the picture this manipulator's interaction works in.
      *
-     * The interaction's own aspect: orbit gains, framing and the picking ray all work in screen space, so they
-     * need the rectangle the user is pointing at - which is the last onResize() this manipulator was given. It is
-     * NOT read from the camera: a camera holds no aspect (see Camera), and the projection is built from the
-     * rectangle where the picture is drawn, not here.
+     * The interaction works in screen space - orbit gains, framing and the picking ray all resolve there - so it
+     * needs the shape of the picture the user is pointing at, which is the CAMERA's own (see Camera): one number,
+     * read by the projection, the culling and the ray alike, so the interaction cannot disagree with the picture.
+     * Its own last onResize() rectangle is the fallback, and the only answer there is for a manipulator with no
+     * camera.
      *
-     * @return Width / height of the viewport (1 when it has no size yet - an unlaid-out view).
+     * @return Width / height of the picture (1 when it is a manipulator with no camera and no size yet).
      */
     double viewportAspect() const;
 

@@ -236,70 +236,103 @@ void RenderPass::clearPolygonModeOverride()
     polygon_mode_override_.reset();
 }
 
-void RenderPass::announceClear(raw_ptr<RenderBackend> backend) const
+std::optional<ClearPolicy> RenderPass::clearPolicy() const noexcept
 {
     // The ONE place "does this pass clear, and how" is answered: a pass that does not clear
-    // announces nothing, so a backend can tell "clears to this colour" from "draws over what is
+    // says nothing, so a backend can tell "clears to this colour" from "draws over what is
     // already there" — and cannot be told two different things by two call sites.
-    if (backend == nullptr || !clear_enabled_) {
-        return;
+    if (!clear_enabled_) {
+        return std::nullopt;
     }
-    const ClearPolicy policy{ clear_color_, clear_depth_ };
-    backend->setClearPolicy(policy);
+    return ClearPolicy{ clear_color_, clear_depth_ };
 }
 
-void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
+void RenderPass::announceClear(raw_ptr<RenderBackend> backend) const
 {
-    if (backend == nullptr || scene == nullptr) {
+    if (backend == nullptr) {
         return;
     }
-    backend->setRenderTarget(render_target_.get());
-    if (has_viewport_) {
-        backend->setViewport(viewport_.x, viewport_.y, viewport_.width, viewport_.height);
+    if (const std::optional<ClearPolicy> policy = clearPolicy(); policy.has_value()) {
+        backend->setClearPolicy(*policy);
     }
-    announceClear(backend);
+}
+
+void RenderPass::fillPassFacts(PassDescription& out)
+{
+    out.target   = render_target_.get();
+    out.viewport = has_viewport_ ? std::optional<Viewport>(viewport_) : std::nullopt;
+    out.clear    = clearPolicy();
     // This pass' state for the content it draws - its depth policy and its rasterisation override, in one
     // announcement: what a backend needs to resolve each command's FINAL state (StateNode.hpp's
-    // resolveRenderState). Both are pass facts, not per-command rewrites: the pass states them once here.
-    backend->setPassState(stateOverrides());
+    // resolveRenderState). Both are pass facts, not per-command rewrites: the pass states them once.
+    out.state    = stateOverrides();
+    out.draws.clear();
+}
+
+bool RenderPass::describe(raw_ptr<Scene> scene, PassDescription& out)
+{
+    if (scene == nullptr) {
+        // A scene pass with no scene issues nothing AT ALL - not even a target: it used to return before the
+        // first announcement, and a pass that is not drawing must not clear, stack or claim a target.
+        return false;
+    }
+    fillPassFacts(out);
+    if (camera_ == nullptr) {
+        // No view to build: the pass announces what it is and where, and issues no draw. A draw without a camera
+        // used to be a silent no-op at the wire; here it is simply absent.
+        return true;
+    }
+    DrawDescription draw;
+    draw.kind   = DrawDescription::Kind::Scene;
+    draw.camera = camera_.get();
     // The shared list, not a copy of it: every pass of a frame draws the same commands, and the copy this
     // used to make cost an intrusive_ptr increment per command (three of them) plus a command-sized
     // memcpy per pass per frame. What a pass may change is its own VIEW of the list, so the copy happens
     // below — and only for a pass that actually rewrites something.
-    //
-    // The picture's shape is asked for, not invented: the backend was just told the target and the viewport and
-    // owns the sizes (see RenderBackend::viewAspect), so the frustum culled against here is the one the picture
-    // is projected with. Culling with a shape of the engine's own would drop what the rectangle shows.
     const std::shared_ptr<const std::vector<RenderCommand>> commands =
-        scene->collectRenderCommandsShared(camera_.get(), backend->viewAspect());
-    if (camera_ != nullptr) {
-        // The pass lights whatever content scene it renders: forward the
-        // scene's lights so the backend can match this pass's view lighting.
-        std::vector<raw_ptr<const Light>> light_ptrs;
-        light_ptrs.reserve(scene->lights().size());
-        for (const auto& light : scene->lights()) {
-            light_ptrs.push_back(light.get());
-        }
-        backend->setLights(light_ptrs);
+        scene->collectRenderCommandsShared(camera_.get());
+    // The pass lights whatever content scene it renders: forward the
+    // scene's lights so the backend can match this pass's view lighting.
+    // Announced even when there are none: "there are no lights" is what restores a backend's default.
+    std::vector<raw_ptr<const Light>> light_ptrs;
+    light_ptrs.reserve(scene->lights().size());
+    for (const auto& light : scene->lights()) {
+        light_ptrs.push_back(light.get());
     }
+    draw.lights = std::move(light_ptrs);
     // A program override is the one pass-level override that still rewrites commands: replacing the program is not
     // "another state item" but "draw this content with another program", and the rewrite is what keeps a backend's
     // per-command pipeline key valid (see setProgramOverride). The rasterisation override is NOT rewritten any
     // more: it travels with the pass' state (stateOverrides()) and is resolved per command, in one place
     // (StateNode.hpp's resolveRenderState) - so a pass that overrides only rasterisation costs no copy at all.
     if (program_override_ == nullptr) {
-        if (camera_ != nullptr) {
-            backend->render(*commands, camera_.get());
+        draw.commands = commands;
+    }
+    else {
+        auto overridden = std::make_shared<std::vector<RenderCommand>>(*commands);
+        for (auto& command : *overridden) {
+            command.program = program_override_;
         }
+        draw.commands = std::move(overridden);
+    }
+    out.draws.push_back(std::move(draw));
+    return true;
+}
+
+void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
+{
+    if (backend == nullptr) {
         return;
     }
-    auto overridden = std::make_shared<std::vector<RenderCommand>>(*commands);
-    for (auto& command : *overridden) {
-        command.program = program_override_;
+    // Describe, then announce - no interleaving, because the description needs nothing from the backend (the
+    // picture's shape is the camera's), and the mapping is one function shared with the engine's frame loop
+    // (announcePassTo / announceDrawsTo).
+    PassDescription description;
+    if (!describe(scene, description)) {
+        return;
     }
-    if (camera_ != nullptr) {
-        backend->render(*overridden, camera_.get());
-    }
+    announcePassTo(description, backend);
+    announceDrawsTo(description, backend);
 }
 
 VN_GRAPHICS_NS_END

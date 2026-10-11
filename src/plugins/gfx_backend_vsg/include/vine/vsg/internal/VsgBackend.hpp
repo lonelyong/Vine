@@ -111,6 +111,17 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     /** @brief Records the frame and commits it through the session: the one present. */
     void swapBuffers() override;
 
+    /** @brief Runs a frame from its value: the plugin's own translation of the frame the engine compiled.
+     *
+     * The engine hands over the whole frame (see vn::graphics::FrameDescription), so the plugin no longer learns
+     * the frame from a call sequence it has to keep in order - it walks the value and announces each pass through
+     * this backend's own entries (the ones that own the identities, the recorder's collection and the content
+     * store's per-drawing-call bookkeeping), in the order the value states. Same calls, one input.
+     *
+     * @param frame The frame to run, in run order.
+     */
+    void executeFrame(const vn::graphics::FrameDescription& frame) override;
+
     /** @brief Remembers the host's window handle for the next @ref initialize. */
     void setWindowHandle(void* native_handle) override;
 
@@ -131,13 +142,6 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     bool retentionStats(vn::graphics::RetentionStats& stats) const noexcept override;
 
     bool frameProgress(vn::graphics::FrameProgress& progress) const noexcept override;
-
-    /** @brief Answers the shape of the picture the open pass draws into (see the SDK's viewAspect contract).
-     *
-     * Derived from what the pass ANNOUNCED (its viewport, else what it draws into) plus the sizes this backend
-     * owns - the recorder gets the same number for the view block, and the SDK's culling asks for it here.
-     */
-    double viewAspect() const override;
 
     /** @brief Holds the host's target under its own identity; nullptr selects the default framebuffer. */
     void setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target) override;

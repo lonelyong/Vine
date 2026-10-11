@@ -19,19 +19,220 @@
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/usage.md`（模块文档一节） |
-| **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：T1 表面尺寸扇出 / T2 M6 / T3 设备夹具探测 / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建） |
+| **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**已落地**：S1 / A / S2 前半 / S3 前半 / S3 后半之一（`executeFrame`）/ 之二（预热删除）；**剩下的只有**：删那 10 个逐条入口 + `Protocol` 的 8 条顺序规则（纯删，引擎侧读者已经没了） |
+| **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6 / **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-11 S3 前半落地：帧由值驱动（`execute()` 退成宿主直呼）
+
+- **做了什么**：`frame()` 的运行段**不再调 `pass->execute()`**，改为宣告编译期建好的那条 entry
+  （`beginPass` / `setPassOrder(entry.order)` / `setPassInputs(entry.inputs)` /
+  `announcePassTo`/`announceDrawsTo`（`entry.description == nullopt` ⇒ 一个属性都不发）/ `endPass`）；
+  `drawScenePass` 删除。**每条 pass 每帧只被描述一次** ⇒ S2 那条"描述两次"的过渡代价消失，
+  两条 memo 见证回到紧值（1/2、1）。**每条 pass 的耗时改在编译里量**（`buildFrameValue` 包住"钩子 + 输入 + 描述"）：
+  `record_micros` 还是"这条 pass 上一帧的占比"，只是量在**记录**发生的地方（运行那半的耗时是后端的，见 `FrameCounters`）。
+- **契约变化（这一片的实质）**：`RenderPass::execute()` **不再是引擎调用 pass 的方式**，它是"宿主自己驱动一条 pass"
+  （预热 / 测试 / 宿主自绘）的拼写；想让引擎跑的活必须放进 `describe()` 或声明的 `before_draw` 钩子。
+  写进了 `RenderPass::execute()` / `RenderEngine::frame()` / `FramePlan::record_micros` 的文档与 `usage.md` §2.4/§2.5。
+- **判据（实测）**：`test_graphics` 356→**357**（新用例 `TheEngineRunsTheFrameValueAndNeverCallsExecute`：
+  覆写 describe/execute 各计数，两帧后 describes = 2、**executes = 0**，且这条 pass 确实到了线上）。
+  **变异 1/1 红**：运行段改回 `pass->execute(...)` ⇒ 3 条红。`TheFramePlanCarriesWhatEachPassLastCost` 的 `SlowPass`
+  按新事实改写（"覆写 `execute()` 睡觉" → "覆写 `describe()` 睡觉"）；`test_gui` 253 / `test_vsg` 428(+3 skip
+  +2 已知红，**含 SDK 像素夹具 = 真设备上像素不变**) / `test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94；
+  全量 Release 0 error / 0 warning；五个 gate 0 finding。
+- **坑**：这次落地把 S2 记录的那条发现**当场兑现了** —— 把 `frame()` 改成由值驱动的第一版，红的正是
+  `TheFramePlanCarriesWhatEachPassLastCost`（覆写 `execute()` 的 `SlowPass` 静默不跑）。所以"改写这条见证"不是
+  为了绿，而是**契约变化必须记账**：它的睡觉得搬到 `describe()` 里，才继续说明"计划里的耗时是这条 pass 的占比"。
+- **还剩（S3 后半）**：平坦路径本身（10 个方法）+ `backend/Protocol.hpp` 的 8 条顺序规则 +
+  `CoreProtocolTest` 的改写记账（**预热那一拍已删**，见下一条）。
+
+## 2026-10-11 S3 后半：执行计划（3a 已取消，剩 3b / 3c）
+
+- **这一片为什么不能一次做完**：它要求**引擎 / 插件 / 测试三边同时到位**（先删接口后迁移插件，或反过来，中间态都是
+  一棵跑不起来的树 —— §5 禁止的形态）。拆成两步，每步都能独立验收：
+  - **3b 插件吃值**：`VsgBackend::executeFrame` 覆写 = 值的循环 —— `d->passes.adopt(pass.pass)` 取身份 →
+    recorder 的 per-pass/per-draw 入口 + **每 draw 的内容副作用**（`d->store->updateMaterial(...)` 那类，
+    今天在 `VsgBackend::render()` 里）。逐条方法退成薄转发到同一批 helper，供 3c 删。
+    判据：`test_vsg` 全量逐项不变（**含真设备像素夹具**）。
+  - **3c 删契约**：`RenderBackend` 删那 10 个方法、`executeFrame` 变纯虚、`Protocol` 的 8 条规则退场、
+    `CoreProtocolTest` 记账改写。`RenderPass::execute` + `announcePassTo`/`announceDrawsTo` **留在 SDK**
+    （"宿主自己驱动一条 pass"那条路的地基）。
+- **调查结论（省掉一步）**：原计划的"3a 给 recorder 加按值采集入口"**不必要** —— recorder 的入口本来就是
+  per-pass/per-draw 的，且它们**不是契约**（是插件内部的采集层）；值按构造有序，所以"值 → 这些入口"只是换个调用者。
+  而 `PassId` 的所有权在插件（`d->passes.adopt`），"按值采集"反而要往 recorder 里塞 key 函数。
+- **3b 的判据已冻结（2026-10-11，test_graphics 359 绿）**：`TheFrameValueBecomesExactlyThisCallSequence`
+  把"值 → 线上调用"的序列逐项钉死（帧括号 / 每 pass 的 scope〔身份·order·inputs〕/ 它声明的
+  target·viewport·clear·state〔只发它说了的〕/ 每 draw 的 lights + 绘制 / scope 关闭 / 什么都不发的 pass
+  只开合 scope / 被禁用的 pass 不在帧里）。`MockBackend` 加了一条 `wire` 调用日志。
+  **插件自己的 `executeFrame` 必须产出同一序列** —— 这是"不改行为的重构"该有的安全带（先冻结，再动）。
+- **3b 收尾 / 3c 的开工清单（下一次从这里开始）**：
+  1. `VsgBackend.cpp`：把 `beginPass`/`endPass`/`setPassOrder`/`setPassInputs`/`setRenderTarget`/`setViewport`/
+     `setClearPolicy`/`setPassState`/`setLights`/`render`/`drawScreenProgram` 的**体**逐个搬成私有 helper
+     （`applyX(...)`），覆写方法退成一行转发；`executeFrame` 改调 helper。判据：**冻结的
+     `TheFrameValueBecomesExactlyThisCallSequence` + `test_vsg` 全量（含真设备像素夹具）逐项不变**。
+  2. 3c：`RenderBackend` 删那 10 个方法（`beginFrame`/`endFrame`/`beginPass`/`endPass`/`setPassOrder`/
+     `setPassState`/`setClearPolicy`/`setViewport`/`setLights`/`setPassInputs`/`render`/`drawScreenProgram` 中
+     属于契约的那些），`executeFrame` 变纯虚；`backend/Protocol.hpp` 的 8 条顺序规则退场；
+     `CoreProtocolTest` 用例改写/删除并记账；`MockBackend`、`RenderControlTest` 的 stub、`SdkPixelFixture`
+     里逐条驱动的地方同步迁移（**同一提交里改完两侧**）。
+  3. 验收命令：`cmake --build build --config Release --target gfx_backend_vsg test_graphics test_vsg` →
+     `test_graphics`（359）、`test_vsg`（433 = 428 + 3 skip + 2 已知红）、`test_gui --gtest_filter=-UserIOTest.*`（253）、
+     五个 gate。
+
+## 2026-10-11 S3 后半之二落地：预热那一拍删除
+
+- **做了什么**：`RenderEngine::initialize()` 里"每个启用且不清屏的 pass 先执行一遍"的预热**整段删除**（理由留在注释里：
+  它当年是为了"让后端在呈现第一帧前看到整个 pass 集合、并把内容编译好"，当时帧是一串调用、内容惰性构建；
+  现在**一帧就是一个值**，后端动手前就拿到整个 pass 集合，主内容本来就在 `initialize()` 里预热）。
+  于是 `pass->execute()` 在引擎里**一个调用点都不剩**（只剩宿主/测试直呼），与 S3 前半那条契约完全一致。
+- **判据（实测）**：`test_graphics` **358** 与删之前逐项相同；**`test_vsg` 433 = 428 + 3 skip + 2 已知红，
+  与删之前逐项相同** —— 含 **SDK 像素夹具（真设备渲染 + 读回像素）**，即"没有预热的第一帧画面不变"的实测；
+  `test_gui` 253 / `test_appfw` 32 / meshio 34 / iobase 94；五个 gate 0 finding。
+- **风险记账**：这条删除的风险点是"第一帧内容构建"（当年正是它引出预热）。实测（真设备像素夹具 + 全量 vsg）没有回归；
+  若将来第一帧出现构建类回归，先看 `initialize()` 里那条注释。
+
+## 2026-10-11 S3 后半之一落地：整帧交给后端（`executeFrame`）
+
+- **做了什么**：契约新增 `virtual void RenderBackend::executeFrame(const FrameDescription&)`，**默认实现 = 原先那条
+  逐条宣告序列**（每 pass：`beginPass`/`setPassOrder`/`setPassInputs`/pass 自己的事实/它的绘制/`endPass`；
+  `description == nullopt` 的 entry 一个属性都不发）。引擎 `frame()` 里那段逐条循环**整体换成一次调用**
+  `backend_->executeFrame(frame_value_)`。于是**边界上是值**：后端可覆写它直接从值构建（那时逐条调用一份都收不到），
+  不覆写的后端（含 vsg 插件）**行为逐调用不变**（同一个序列，只是从一个输入来）。`RenderBackend.hpp` 的
+  CALL ORDER 段、`usage.md` §2.5 已同步。
+- **判据（实测）**：`test_graphics` 357→**358**（`ABackendIsHandedTheWholeFrameAsOneValue`：覆写 `executeFrame`
+  的后端一帧收到**一次**调用，passes 按运行序带 order 与绘制数、被禁用的不在里面，且
+  `beginPass`/`setPassOrder`/`render`/`drawScreenProgram` **一次都没被调**）；**变异 1/1 红**（引擎改回逐条发）。
+  其余套件全绿（gui 253 / vsg 428 + 3 skip + 2 已知红，**含 SDK 像素夹具 ⇒ 真设备像素不变** / appfw 32 /
+  meshio 34 / iobase 94）；全量 Release 0 error 0 warning。`MockBackend` 补了 `setPassOrder` 记录
+  （`order_sets` / `orders`）。
+- **意义**：那 10 个逐条入口**已经不再有"引擎的运行"这个读者**了（只剩默认实现、宿主自驱一条 pass、后端自己），
+  所以删它们是一次**纯删**。
+- **注意**：跑第一次全量时 `ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt` 红过一次，随后 4 次全绿
+  （单跑也绿）—— 记在这里，若复现再查。
+
+## 2026-10-11 S2 前半落地：帧的值（引擎产出，可观测）
+
+- **做了什么**：`FrameDescription` 有了帧那一层（`FrameDescription::Pass` = pass 身份 / order / 解析后的 inputs +
+  该 pass 自己的 `PassDescription`，nullopt = 这帧什么都不发）；`compileFrame()` 末尾 `buildFrameValue()`
+  按运行序跑每条启用 pass 的 `before_draw` 钩子、告诉它解析好的 inputs、请它描述自己 —— **整帧的值在派发前存在**；
+  `RenderEngine::frameDescription()` 观测它。`announcePassTo`/`announceDrawsTo` 从 `RenderPass.cpp` 匿名命名空间
+  **搬到 `RenderBackend.cpp` 并导出**（声明在 `FrameDescription.hpp`）：描述→平坦调用的映射只有一份。
+  **帧仍由 `execute()` 驱动**（`drawScenePass` 原样）；"帧由值驱动 + 新入口 `executeFrame(desc)`"归 S3/S2 后半。
+  → **同日已由 S3 前半接上**（见上一条）：帧跑的就是这个值，`execute()` 退成"宿主直呼"。
+- **判据（实测）**：`test_graphics` 354→**356**：`TheFrameValueIsEveryPassAndEveryDrawTheFrameRan`
+  （5 条 pass 的帧：值里的 pass 与后端 `beginPass` 的逐条对齐、值声称的绘制数 = 后端收到的 `render`+`drawScreenProgram`；
+  无内容档 = 有 entry 无 description、禁用档 = 没有 entry）、
+  `TheFramesValueIsBuiltAfterThePerFrameHooks`（钩子改内容 ⇒ 值描述的是这一帧的版本）。**变异 2/2 红**
+  （值不填 description ⇒ 4 条红；钩子不跑 ⇒ 4 条红）。其余套件与五个 gate 同前（gui 253 / vsg 428+3skip+2 已知红 /
+  appfw 32 / meshio 34 / iobase 94；全量 Release 0 error 0 warning）。
+- **三个发现**：①**`before_draw` 必须搬进编译期**（钩子写内容 ⇒ 描述要在它之后，否则值描述上一帧的画面；
+  仓库里两条钩子都是"只写内容、不碰后端"，唯一变化是 `record_micros` 不再含钩子耗时）；
+  ②**过渡代价：每条 pass 每帧被描述两次**（编译建值 + 运行 `execute()`）⇒ 两条 memo 见证的 reuse 数变大
+  （树走的次数不变），用例已按新事实改写并注明 S3 会复原；
+  ③**S3 的第一件事是回答"覆写 `execute()` 的 pass 怎么办"** —— `TheFramePlanCarriesWhatEachPassLastCost` 的
+  `SlowPass` 就靠引擎调它的 `execute()` 睡觉来当耗时，帧一旦由值驱动，这个 pass 的工作会**静默消失**
+  （把 `frame()` 改成由值驱动时当场红的就是它）。
+- **坑**：`raw_ptr<T>` 是 `T*`，`.get()` 不存在（自己写用例时踩了两次）；`addInputTarget` 才是"按目标声明输入"
+  （`addInput` 收的是 `ImageRef`）；`setPassInputs` 收的是非 const 指针表，所以值的 inputs 也用
+  `raw_ptr<RenderTarget>`。
+
+## 2026-10-11 A 落地：画面形状回到相机（重新设计的 A 片；取代 S4a，也把 S1 那道缝合掉）
+
+- **口径（用户定）**：**一台相机 = 一张画面**。形状是 `Camera` 自己的状态（`setAspect(h/w 的反)` / `aspectRatio()`；
+  `setAspect` 忽略非正数），投影、剔除、view block、拾取射线**读同一个数**；"同一台相机被两块形状不同的矩形用到"
+  不再是"各自都对"，而是**画面被拉伸、引擎报出来**。行业是分裂的（VTK/Filament/Unreal 从矩形推；
+  three.js/Babylon/Godot/Unity 放在相机上），本仓**文档**曾选前者、**用法**一直是后者 —— 现在统一到后者。
+- **为什么**（评估过程）：M2c 换来的"相机可跨矩形复用"代价是形状成了**只有后端能答、且答案取决于之前公告了什么**的
+  问题（`viewAspect()` 读开着的 scope），S2 在这条依赖解除前写不出来；而"复用"的实测用途（同相机两块矩形）在
+  本仓根本不出现（分屏是每格一台相机）。
+- **落地形态**：`Camera::{setAspect,aspectRatio,projectionMatrix(),screenToWorldRay(pos)}`；`Scene::collectRenderCommands*(camera)`
+  （memo 仍以 view-projection 为键 ⇒ 两种形状两条 memo）；`RenderBackend::viewAspect()` **删除**（纯虚 9→8）；
+  `PassDescription` 无形状字段；`FrameRecorder::setViewAspect` 删除（快照投影读相机）；`RenderPass`/`ScreenPass`
+  合成**一个** `describe(scene, out)` 虚函数（S1 的那道缝没了）；`SceneView::applySurfaceGeometry` 把窗格形状
+  push 给相机（与 `manip->onResize` 同一个矩形，一行）；`AxisGizmo` 声明 1:1、`FpsOverlay` 声明自己 box 的形状；
+  `OrbitCameraManipulator::viewportAspect()` 读相机（无相机才回退自己的矩形 —— 否则交互与拾取射线读两个数）；
+  **新增** `RenderEngine::collectPictureShapeMismatches()`：矩形（viewport 否则目标/表面）vs 画面（perspective =
+  aspect，ortho = 窗口形状），全屏 pass（`ScreenPass`）不参与（它的三角形在 clip space 读不到投影），
+  一条 pass 的错**每 episode 一次**（拖窗格会让句子里的数字变，所以按 pass 记 episode 而不是按句子）。
+- **判据（实测）**：`test_graphics` 349→**354**（新 5 条：报告+episode+修好又坏 / 视口才是矩形且全屏 pass 不参与 /
+  `SceneView` push 形状 / HUD box 形状 / 操纵器读相机；M2c 那三条**反转**：同相机两次 setAspect = 两次走树、
+  `OneCameraCullsWithItsOwnShapeInEveryRectangle` 宽矩形不再变宽视锥且一个相机一次走树、
+  `TheViewBlockIsProjectedForTheCamerasOwnShape`）；`test_gui` 253、`test_vsg` 428(+3 skip +2 已知红)、
+  `test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94 全绿；全量 Release 0 error / 0 warning；五个 gate 0 finding
+  （`--strict` 仍 20 条历史引用）。**变异 4/4 红**（检查永不报 / 矩形不读 viewport / 不 push 相机形状 / 不 push box 形状）。
+- **坑（值得记）**：①**改契约半必须重建插件** —— `viewAspect()` 一删，老 `gfx_backend_vsg.dll` 与新头文件不匹配，
+  `VsgBackendPluginTest` 两条红得像"插件注册丢了"；而且**测试目标不会顺带构建插件**，得显式
+  `--target gfx_backend_vsg`（已写进 redesign 的风险表）。②自己的 episode 状态别"先 rearm 再读" —— 那等于每帧都当新
+  错误报（第一版就踩了：`shape_mismatches_last_frame_` 先统一 `rearm()`，carry-over 时读到的永远是 false）。
+  ③文档同步点很散：`usage.md` 4 处、`graphics-render-next.md` 的 M2c 行（标已回退）、redesign 的 S4a 行/读者表/风险表。
+
+## 2026-10-11 S1 落地：pass 描述它的绘制（重新设计的第一片）
+
+- **做了什么**：新增导出的 `sdk/vine/graphics/FrameDescription.hpp`（`DrawDescription` + `PassDescription`；
+  `ClearPolicy` **从 `RenderBackend.hpp` 移进来** —— 它是"一条 pass 描述自己"的东西，后端是它的读者之一，
+  于是 `RenderBackend.hpp` 反过来 include 它）。`RenderPass` 拆出两个虚拟扩展点
+  `describePass(scene, out)` / `describeDraws(scene, out)`，`execute()` 成为薄壳
+  （描述 → **两半之间**问画面形状 → 描述绘制 → 按契约顺序宣告）；`ScreenPass` 不再覆写 `execute`。
+  **（同日 A 之后：两半合成一个 `describe(scene, out)`，`execute()` 仍是薄壳 —— "描述 → 宣告"）**
+- **判据（实测）**：`test_graphics` 346→**349**（`PassDescriptionTest` 三条：场景档 / 全屏档 / "什么都不发"，
+  每条都把**描述的值**与记录型后端**收到的调用**逐项对照）；`test_gui` **253**、`test_vsg` **428**（+3 skip
+  +2 已知红，逐项与落地前相同）、`test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94 全绿；全量 Release 构建
+  0 error / 0 warning；五个 gate 0 finding。**变异 1/1 红**：`describeDraws` 少填 `lights` ⇒ 只有场景档那条红。
+- **两个坑（都写进设计了）**：①**顺序错了** —— `RenderBackend::viewAspect()` 的答案**取决于之前公告了什么**
+  （读开着的 scope 的 target/viewport），所以"整帧描述在派发前拼好"（S2）在形状不再是后端查询之前**写不出来**：
+  当时拆出 **S4a**（画面形状变编译期字段）并提到 S2 之前 —— **随后被 A 整体取代**（形状回到相机，见上一条）。
+  ②**空场景的 pass 一个调用都不许发** —— 今天它在第一次公告前就返回；门禁必须放在 `describePass`（虚拟，
+  因为"什么算没东西可发"每种 pass 不同），否则会静默多发 `setRenderTarget`/`setPassState`（多宣告 target、
+  多一次清屏归属 = 行为变化）。有用例钉"连目标都不许发"（A 之后这条门禁在 `ScreenPass::describe` 里）。
+
+## 2026-10-11 重新设计提案（**S1 已落地，见上一条；其余未落地**）
+
+- 用户 2026-10-11 定"重构，重新设计"，边界含**后端契约**（`RenderBackend.hpp` + `backend/` 半 + vsg 插件）。
+  文档：`.ai/design/graphics-redesign.md`（S0–S6，每片独立可逆；总判据 = 两棵树逐证据行相同）。
+  **S1 已落地**；落地时把 S4 拆出 **S4a（画面形状变编译期字段）提到 S2 之前** —— 原因见上一条的坑①。
+- 一句话病根（有代码证据）：**帧在引擎里已经是一个值（M7 的 `compileFrame`/`FramePlan`），但在边界上又被打散成
+  ~15 个有顺序的可变调用（`RenderEngine.cpp:192,273-288` + `RenderPass.cpp:248-301`），后端再把它拼回一个值
+  （`backend/FrameRecorder.hpp` 的 `FrameDescription`）。** 连带：窗口烧进帧（**8** 个纯虚里 3 个只有带窗口的后端有用）、
+  顺序靠 `backend/Protocol.hpp` 的 8 条规则 + Allow/Drop/Refuse 兜、"能力/观测"各是 4 个 bool 出参。
+- 本稿作废了 `graphics-render-next.md` §7 的"整块重写否决"（已在那边标作废），并保留其技术内核
+  （配方/几何/开关三分不动）。**还没动一行代码**。
+
+## 2026-10-11 T1 + T3 落地：表面尺寸扇出 / 设备夹具可用性探测（§5.1 的两条机制）
+
+- **T1 表面尺寸扇出（M5b 的机制半边）**：表面尺寸从"宿主逐个喂视图"变成**表面的一件事**。
+  - `RenderSurface::resize(w, h, ratio)` 记住尺寸并扇出给表里每条**呈现的视图**；`present` 把记着的尺寸**立刻**
+    交给新呈现（新加的格子不用手喂）；`SceneView::onSurfaceResized` 在视图挂表面时**转发**给它（不挂表面时才
+    是独立入口），新增 `SceneView::hasSurface()`；`SurfaceWindow::feedSurfaceSize` 改调表面，控件自己那个视图
+    **不呈现**时才单独喂（`SceneView::applySurfaceSize` 是"记下来 + `applySurfaceGeometry()`"那一步，由表面
+    调用 —— `RenderSurface` 是 `SceneView` 的 friend）。
+  - 判据：`test_gui` **253** 绿（单视图路径一字不变）；`test_graphics` 345→**346**
+    （`SceneViewViewportTest.APaneDeclaredOnASizedSurfaceIsSizedAtOnce`：present 后**零手喂**，layout 步收到
+    640×720、窗口 pass viewport = {640, 0, 640, 720}）；`RenderControlTest` 里手写的 `right->onSurfaceResized(...)`
+    全删（原稿说"两条"，实际**四条**分屏用例都有）。**变异 1/1 红**：`present` 不把尺寸给新呈现 ⇒ 那条新用例红。
+- **T3 设备夹具的可用性探测**：`SdkPixelFixture::available()` 从"有台满足下限的物理设备"变成**共享门禁** =
+  "设备 + 会话起得来 + 离屏像素给得回来"（进程内只答一次：`up()` + 一条手搭 pass 画一帧 + `read()`）。
+  `BlockStorageTest` / `BlockDescriptorsTest` / `SessionTest` / `VsgBackendTest` 的**十处**设备门禁改问它；
+  `getenv("DISPLAY")` 的四处假门禁删除（另外 5 处在 X11-only 的文件里、与紧随其后的 `xcb_connect` 重复，一并删）。
+  - 判据：`test_vsg` **407 passed / 26 skipped → 428 passed / 3 skipped / 2 failed**。23 条误跳全部恢复运行，其中
+    2 条**本就红**（`BlockDescriptorsTest.TheBindCarriesTheOffsetsInBindingOrderAndReusesOneSet` /
+    `SessionTest.ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote`，都是这些用例第一次在 Windows 上真跑
+    才暴露的，**未修**，先记）；剩下 3 skip = 计数分配器 2 条 + `HostWindowReadTest` 1 条（X11-only，合理）。
+  - 坑：`available()` 现在**会起一次设备**（静态缓存，整个进程只一次），所以它不再是"随手可调的便宜探测"；
+    X11-only 的用例（`SessionContentTest` / `SessionMoveTest` / `GfxBackendVsgPluginTest` / `WindowCompositionTest`）
+    **保留**各自的门禁 —— 它们本来就要真 X11，`DISPLAY` 对它们不是假代理，删的只是与 `xcb_connect` 重复的那几条。
 
 ## 2026-10-11 按"机制/组合"重评待办（`graphics-render-next.md` §5.1）
 
 - **口径（用户 2026-10-11 定）**：底层提供**机制与接口**，复杂场景由业务自己组合、自己控制，交给应用层。
   已成文为不变量 6（§6）：SDK 配方只保留最常见的两三条（forward / deferred / shadow）；不造 SDK 自用的图，
   不为某个组合发明引擎政策。判据：删掉任一便利，机制路径（`engine->addPass(desc)` + 自己的 program / target）仍成立。
-- **重评结果**：**M5b 拆两半** —— 机制半边 = **表面尺寸扇出**（T1，进 SDK：今天表面尺寸只喂控件自己那个视图，
-  第二格靠宿主手写 `right->onSurfaceResized(...)`，`RenderControlTest` 四行），组合半边 = 布局树 / 比例 / join /
-  格子生死（T4，**归应用层**；`SplitLayout` 那份定稿作废 —— 原稿把它当 SDK 片是错的）。② 的定案同源
+- **重评结果**：**M5b 拆两半** —— 机制半边 = **表面尺寸扇出**（T1，进 SDK：当时表面尺寸只喂控件自己那个视图，
+  第二格靠宿主手写 `right->onSurfaceResized(...)`，`RenderControlTest` 四行；**T1 已落地 2026-10-11，见上一条**），
+  组合半边 = 布局树 / 比例 / join / 格子生死（T4，**归应用层**；`SplitLayout` 那份定稿作废 —— 原稿把它当 SDK 片是错的）。
+  ② 的定案同源
   （T5：多 transient 互借深度是应用组合）。其余：T2 M6（一设备 N 交换链，等触发）、T3 设备夹具可用性探测
-  （删 `getenv("DISPLAY")` 假门禁，恢复 21 条被误跳的设备用例，其中 2 条本就红）、T6 便利边界（守）、
+  （删 `getenv("DISPLAY")` 假门禁，恢复 21 条被误跳的设备用例，其中 2 条本就红；**已落地 2026-10-11，见上一条**）、
+  T6 便利边界（守）、
   T7 叠层对象跨重建存活（视图的实现细节，等观感需求）。
 - **已落地不需回退**：预设、内建程序 / 目标工厂（`defaultGbufferTarget`、`screenCopyProgram`…）、HUD 内容对象
   （`AxisGizmo` / `FpsOverlay`）、`addOffscreenToScreen` 都属"**可选便利**"，机制路径始终成立 —— 记为 T6 守边界，
@@ -873,7 +1074,7 @@
   任一先死都不留悬垂（用例 `APresentedViewThatDiesLeavesTheSurface` / `AViewThatOutlivesItsSurfaceDoesNotCallIntoIt`）。
   全部判据在 `tests/test_graphics/RenderSurfaceTest.cpp`（变异验证：去掉 `applyClear()` 调用 ⇒ 4 条失败；
   去掉 `entry.clears` / 去掉视图重建回调 ⇒ 各 1 条失败；去掉 `~SceneView` 的自解绑 ⇒ 1 条失败）。
-- **aspect 出相机（M2c，2026-10-11 已落地）**：`Camera` 只持**观看**（eye/up/target）+ **投影参数**（fov / near / far /
+- **aspect 出相机（M2c，2026-10-11 已落地；⛔ 同日已回退 —— 见下面 2026-10-11 A 那条，本节只作历史记录）**：`Camera` 只持**观看**（eye/up/target）+ **投影参数**（fov / near / far /
   类型 / 正交盒），**不持 aspect、也不缓存投影矩阵** —— `setProjectionMatrixAsPerspective(fovy, near, far)`
   （少一个形参）、`projectionMatrix(double aspect)` 现算（正交**忽略**该参数：盒自带比例）、`aspectRatio()` 删除、
   `screenToWorldRay(screenPos, aspect)` 多收一个（**提案漏算的第五个读者**）。为什么：view matrix 只依赖眼睛、
@@ -897,6 +1098,14 @@
   `FrameRecorderTest.TheViewBlockIsProjectedForTheShapeTheScopeAnnounced`（公告 2.0 ⇒ 快照投影按 2.0；下一条 pass
   回到默认；0 / NaN 被拒）。变异验证：`execute()` 写死 1.0 ⇒ 1 条失败；memo 去掉 view-proj 项 ⇒ 1 条失败；
   `projectionMatrix` 忽略参数 ⇒ 2 条失败；recorder 固定 1.0 / `beginPass` 不复位 ⇒ 各 1 条失败。
+  **回退后的现状**：`Camera::setAspect/aspectRatio/projectionMatrix()/screenToWorldRay(pos)`、
+  `collectRenderCommands*(camera)`、`RenderBackend` **没有** `viewAspect()`、`FrameRecorder` **没有** `setViewAspect`、
+  `SceneView` 把窗格形状 push 给相机、HUD 相机自己声明形状、矩形与相机不一致由
+  `RenderEngine::collectPictureShapeMismatches()` 报出来（详见上面 2026-10-11 A 那条）。
+  本节以下提到的用例名 `TheProjectionIsBuiltForTheShapeTheCallerNames` /
+  `EachPassCullsWithTheShapeOfItsOwnRectangle` / `TheViewBlockIsProjectedForTheShapeTheScopeAnnounced` 已在 A 里改名或反转
+  （`TheProjectionIsBuiltForTheCamerasOwnShape` / `OneCameraCullsWithItsOwnShapeInEveryRectangle` /
+  `TheViewBlockIsProjectedForTheCamerasOwnShape`）。
 - **状态解析单点（M3，2026-10-11 已落地）**：**一个函数**是优先级表的唯一实现 ——
   `ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass)`
   （`StateNode.hpp`）→ `{state, origin}`，`origin` 逐项回答"这一项是谁给的"（`StateOrigin::Default/Content/Pass`）。

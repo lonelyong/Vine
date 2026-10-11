@@ -341,6 +341,16 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      */
     void pushEvent(const vn::window::KeyEvent& event);
 
+    /** @brief Gets whether this view presents a surface (RenderSurface::present bound it to one).
+     *
+     * The question a host asks when it has a surface of its own and a view of its own: the surface feeds every
+     * view that presents it (RenderSurface::resize), so a view that IS one of its presentations needs nothing
+     * else, and a view that is not (the host declared a pass of its own) is the only one left to feed by hand.
+     *
+     * @return true when this view presents a surface.
+     */
+    [[nodiscard]] bool hasSurface() const noexcept;
+
     /** @brief Refreshes the geometry of this view for a new surface size (keeps the current pixel ratio).
      *
      * @param width  New surface width in pixels (logical, as the host reports it).
@@ -359,6 +369,11 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * Then it runs this view's surface-layout steps, with this view's own rectangle: the manipulator / camera
      * aspect first, then every callback registered with addSurfaceLayout(). Its default pipeline (when it has
      * one) is resized here too, so a view that uses the built-in recipe needs no layout step at all.
+     *
+     * A view that PRESENTS a surface forwards this to RenderSurface::resize: the size of the thing the picture
+     * ends up in is a fact about the SURFACE, which is where it is recorded and fanned out to every view that
+     * presents it (so one call sizes a split, and a pane added later is sized at once). This entry is then the
+     * one for a view that presents nothing - a view used on its own needs no surface to be sized.
      *
      * @param width        New surface width in logical pixels.
      * @param height       New surface height in logical pixels.
@@ -427,6 +442,18 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
 
     /** @brief Applies the recipe's shading mode to the pass that turns geometry into the picture (no rebuild). */
     void applyModeToGeometryPass();
+
+    /** @brief Records the surface size (and ratio) this view derives from, and re-derives its geometry.
+     *
+     * The step RenderSurface::resize fans out to every view that presents it, and the step
+     * onSurfaceResized() takes when this view presents no surface: one place records the size, one place
+     * turns it into this view's rectangle (see applySurfaceGeometry).
+     *
+     * @param width        Surface width in logical pixels.
+     * @param height       Surface height in logical pixels.
+     * @param pixel_ratio  Device pixels per logical pixel; <= 0 keeps the current one.
+     */
+    void applySurfaceSize(int width, int height, double pixel_ratio);
 
     /** @brief Turns {surface size, viewport, pixel ratio} into this view's rectangle, in one place. */
     void applySurfaceGeometry();

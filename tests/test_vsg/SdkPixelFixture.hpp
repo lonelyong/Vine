@@ -31,11 +31,12 @@
  * that back through RenderBackend::readColorBuffer. Nothing here touches a swapchain, a widget or a frame
  * clock: frames in, pictures out.
  *
- * WHY THE GATE IS A DEVICE AND NOT A DISPLAY. The older device cases in this suite ask `getenv("DISPLAY")`,
- * which is a proxy for "is there a window system" - true wherever X11 is, and FALSE on Windows, where a
- * session comes up on a window of its own and serves off-screen pixels like anywhere else. The question this
- * fixture has to answer is "is there a device that satisfies the backend's floor", so that is the question it
- * asks (see available()); a machine that cannot serve the fixture says so by returning false from up().
+ * WHY THE GATE IS A DEVICE AND NOT A DISPLAY. The device cases of this suite used to ask `getenv("DISPLAY")`,
+ * a proxy for "is there a window system" - true wherever X11 is, and FALSE on Windows, where a session comes
+ * up on a window of its own and serves off-screen pixels like anywhere else (that proxy skipped 23 cases
+ * there). So the shared question - is there a device a session comes up on that serves off-screen pixels - is
+ * asked HERE, once (see available()), and the other device cases ask it too instead of the proxy. A machine
+ * that cannot serve the fixture says so by returning false from up().
  */
 class SdkPixelFixture
 {
@@ -43,9 +44,14 @@ class SdkPixelFixture
     /// @brief Side of the picture in pixels: small enough to read whole, big enough to hold edges.
     static constexpr int kSide = 64;
 
-    /// @brief Whether a physical device that satisfies the backend's floor is present (see the file note).
+    /// @brief Whether this machine can serve the fixture: a device, a session on it, and off-screen pixels back.
     ///
-    /// @return true when at least one probed device is usable.
+    /// The one gate the device cases of this suite share (see the file note): a physical device that satisfies
+    /// the backend's floor, a session that comes UP on it, and a picture drawn through the SDK into an announced
+    /// target that reads back. Answered once per process and remembered, because answering it costs a device, a
+    /// session and a frame while the answer cannot change.
+    ///
+    /// @return true when a session comes up here and serves off-screen pixels.
     static bool available();
 
     SdkPixelFixture();

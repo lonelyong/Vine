@@ -11,6 +11,7 @@
 #include <vine/Color.hpp>
 
 #include "DepthMode.hpp"
+#include "FrameDescription.hpp"
 #include "ImageRef.hpp"
 #include "PolygonMode.hpp"
 #include "StateNode.hpp"
@@ -224,6 +225,12 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * The announcement is PER DRAWING CALL (RenderBackend::setViewport): the base execute() announces
      * this rectangle once and draws once, so it covers the whole pass; a subclass that draws more than
      * once must announce the viewport of each draw itself.
+     *
+     * The rectangle does NOT decide the shape the picture is projected with: a camera carries the shape of its
+     * own picture (see Camera), and with it the frustum the content was culled against. For a pass drawing through
+     * a camera that does not have this rectangle's shape the engine reports the mismatch - the drawing is a
+     * STRETCHED picture, not a differently framed one - so a sub-viewport is set together with its camera's shape
+     * (`camera->setAspect(w / h)`).
      *
      * @param viewport Draw rectangle in device pixels (top-left origin).
      */
@@ -459,14 +466,70 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
 
     /** @brief Removes the polygon-mode override, leaving each command's own state in effect. */
     void clearPolygonModeOverride();
-    /** @brief Executes this render pass.
+    /** @brief Describes what this pass issues this frame: its target, its state and its drawing calls.
+     *
+     * THE EXTENSION POINT: what a pass does is data now, and a subclass that draws something else fills in a
+     * different description (ScreenPass draws a full-screen program instead of collected geometry). The
+     * description has no call order to get wrong - which state belongs to the pass and which to one drawing call
+     * is the shape of the value (see PassDescription / DrawDescription) - and the backend receives it through
+     * execute(), which is the shim that turns a description into the wire calls of the day.
+     *
+     * ONE CALL, because nothing here needs the backend: the picture's shape is the CAMERA's (see Camera), the
+     * commands are collected and culled with it, and a description can therefore be built without announcing
+     * anything or asking anybody - which is what makes a whole frame's worth of these assemblable up front.
+     *
+     * A pass that issues NOTHING this frame answers false (a scene pass with no scene, a screen pass with no
+     * resolved source): nothing is announced at all, not even a target, which is what keeps "this pass is not
+     * running" distinguishable from "this pass has no picture". An empty @ref PassDescription::draws is that
+     * second answer - the pass announces its target and state and draws nothing (no camera, no program).
+     *
+     * @param scene Content scene to draw (a scene pass with none issues nothing at all; a content-agnostic pass
+     *              ignores it).
+     * @param out   Receives the description; untouched when this returns false.
+     * @return true when this pass issues anything at all this frame.
+     */
+    virtual bool describe(raw_ptr<Scene> scene, PassDescription& out);
+
+    /** @brief Executes this render pass: describes it, then drives the backend through that description.
+     *
+     * THE PASS' OWN WIRE, and no longer how a frame runs: the engine compiles a frame into a value and announces
+     * THAT (see RenderEngine::frameDescription), so each pass is described once - by the compile - and a pass that
+     * overrides this method is not called by the engine at all. Whoever wants the engine to run the work must put
+     * it where the engine looks:
+     *
+     *   * what the pass ISSUES (its target, its viewport, its draws) belongs in @ref describe - that is the
+     *     extension point S1 introduced;
+     *   * anything that must happen before the frame describes the pass (writing content it then draws) belongs in
+     *     the declaration's hook (PassDesc::before_draw), which the compile runs in run order.
+     *
+     * What remains for this method is a caller that drives a pass itself - a host drawing one pass into its own
+     * backend, the engine's pre-frame warm-up, a test - and it is exactly "describe, then announce", which is the
+     * same mapping the frame uses (announcePassTo / announceDrawsTo), so both spellings cannot drift.
      *
      * @param scene   Scene containing drawables.
      * @param backend Backend to render with.
      */
     virtual void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend);
 
+  protected:
+    /** @brief Fills this pass' own facts (target, viewport, clear, state) into @p out.
+     *
+     * The ONE mapping from the pass' fields to a description, so a subclass states what is DIFFERENT about it
+     * (ScreenPass draws a full-screen program instead of collected geometry) without restating what is the same.
+     * The subclass' own "issues nothing at all" gate lives in its describePass, not here: what counts as nothing
+     * is a property of the kind of pass.
+     *
+     * @param out Receives the facts.
+     */
+    void fillPassFacts(PassDescription& out);
+
   private:
+    /** @brief The clear this pass announces, or nothing when it clears nothing (the ONE rule; see announceClear).
+     *
+     * @return The policy, or nullopt when this pass does not clear.
+     */
+    [[nodiscard]] std::optional<ClearPolicy> clearPolicy() const noexcept;
+
     String name_;
     String output_name_;
     std::vector<String> input_names_;

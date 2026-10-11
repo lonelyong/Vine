@@ -15,10 +15,12 @@
 
 #include "Diagnostics.hpp"
 #include "FrameContext.hpp"
+#include "FrameDescription.hpp"
 #include "FramePlan.hpp"
 #include "FrameStats.hpp"
 #include "PassDesc.hpp"
 #include "RenderDiagnostic.hpp"
+#include "ReportOnce.hpp"
 #include "BuiltinShaders.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -160,12 +162,17 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Releases backend resources. */
     void shutdown();
 
-    /** @brief Renders one frame (begin, ordered passes, end, swap).
+    /** @brief Renders one frame (compile, then announce the compiled value, end, swap).
      *
-     * Nothing is drawn when no pass is registered. Each registered pass is
-     * skipped when disabled (RenderPass::setEnabled); otherwise it resolves
-     * its declared inputs, executes (drawing its bound content when set,
-     * nothing otherwise), and publishes its named output.
+     * Nothing is drawn when no pass is registered. The frame is COMPILED first (compileFrame): the declarations
+     * are read as they stand right now - which pass runs when, what its declared inputs resolve to, what is wrong
+     * with the set - and that same pass produces the frame's VALUE (FrameDescription): per enabled pass, what the
+     * engine knows about it (identity, order, resolved inputs) and what the pass says about itself (its target,
+     * viewport, clear, state and draws).
+     *
+     * What the frame then RUNS is that value: a disabled pass (RenderPass::setEnabled) has no entry and does not
+     * run, and the passes are neither described nor executed a second time. A pass whose work must run therefore
+     * puts it where the compile looks - see RenderPass::execute.
      *
      * @param dt Seconds elapsed since the previous frame (recorded in
      *           frameContext(); reserved for future per-pass updates).
@@ -239,6 +246,17 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @return The plan, in execution order; empty when nothing is registered.
      */
     [[nodiscard]] FramePlan framePlan() const;
+
+    /** @brief Gets the frame the last compile produced, as a value (see FrameDescription).
+     *
+     * THE FRAME THE ENGINE IS ABOUT TO RUN, in the form a backend consumes: every enabled pass in run order with
+     * its identity, its order, its resolved inputs and what it issues - assembled by the compile, before anything
+     * is dispatched (see compileFrame). Read it to see exactly what a frame is made of (a log line, a test, a
+     * viewer); a backend is handed the same thing by RenderBackend::executeFrame once this path drives the frame.
+     *
+     * @return The value, valid until the next compile; empty before the first frame.
+     */
+    [[nodiscard]] const FrameDescription& frameDescription() const noexcept;
 
     /** @brief Gets how many transient targets the current plan hands out (see PassDesc::writes_image).
      *
@@ -482,7 +500,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         intrusive_ptr<Scene>      content;   // may be null (draws nothing)
         int                       order = 0;
         /// How long the last frame's record of this pass took, in microseconds (0: it did not run then).
-        /// Measured by frame(); reported through the frame plan (see FramePlan::PassPlan::record_micros).
+        /// Measured by the compile, where that record happens (see buildFrameValue); reported through the frame
+        /// plan (see FramePlan::PassPlan::record_micros).
         std::uint64_t record_micros = 0;
         /// A label for the plan and for a human reading it ("" when nothing was declared).
         String tag;
@@ -619,13 +638,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         /// over a real target, or when unpublish() withdraws the name.
         std::set<String> unpublishable_host_names_;
     };
-    /** @brief Executes a scene pass against the given content scene.
-     *
-     * @param pass    Pass to execute.
-     * @param content Scene the pass draws.
-     */
-    void drawScenePass(raw_ptr<RenderPass> pass, raw_ptr<Scene> content);
-
     /** @brief Compiles this frame's declarations into the table the frame runs from (see FramePlan).
      *
      * THE ONE PLACE A FRAME IS DECIDED. Compiled every frame - no declaration tells the engine it moved,
@@ -647,6 +659,26 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * of the compile, so the answer is about THIS frame and nothing has to remember that it changed.
      */
     void collectPlanProblems();
+
+    /** @brief Collects this frame's declarations' picture shapes against the cameras that project them.
+     *
+     * The one check that needs both halves: the RECTANGLE a pass draws into (its viewport, or the whole target -
+     * the surface for the window) and the SHAPE its camera's projection is built for (see Camera). Where they
+     * disagree the picture is stretched, and nothing downstream can see it - the backend is handed a rectangle
+     * and a camera snapshot that are each perfectly legal. Reported once per episode per pass, because a host
+     * dragging a pane changes the rectangle with every frame while the mistake stays the same one.
+     */
+    void collectPictureShapeMismatches();
+
+    /** @brief Assembles the frame's value from this compile's rows (see FrameDescription).
+     *
+     * The second thing the compile produces besides the plan: what every pass issues, before anything is
+     * dispatched. It asks each pass to describe itself (RenderPass::describe) - which is cheap and needs nothing
+     * from the backend, because the picture's shape is the camera's - and adds the three facts the engine owns
+     * (identity, order, resolved inputs). A pass that issues nothing at all keeps its entry with no description;
+     * a disabled pass has no entry (it does not run).
+     */
+    void buildFrameValue();
 
     /** @brief Reports the problems the compile found, once per episode, then remembers them.
      *
@@ -817,6 +849,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     /// This frame's compiled rows, in the order they run (reused; one per slot).
     std::vector<PlanRow> plan_rows_;
+    /// This frame as a value, rebuilt by every compile (see buildFrameValue). Reused, so a steady frame keeps its
+    /// storage: the rows of the previous frame are dropped, not their capacity.
+    FrameDescription frame_value_;
     /// The targets this frame had produced when the compile walked to a given row, in production order: what
     /// an object-typed declared input is answered from (a consumer sees what ran BEFORE it). Reused, and keyed
     /// by target only - a target is filled once however many passes draw into it.
@@ -836,6 +871,15 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     bool                         collecting_problems_ = false;
     /// The declared inputs the structural check spoke about in THIS compile (see unusableInputReported).
     std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unusable_inputs_this_frame_;
+    /// The passes whose picture shape was reported, and this compile's rebuild of that list (see
+    /// collectPictureShapeMismatches). The rebuild IS the episode rule for this check: an entry that is not
+    /// carried over re-arms its pass, so the same mismatch after it was fixed is a new report.
+    struct ShapeMismatchEpisode {
+        raw_ptr<const RenderPass> pass     = nullptr;   ///< the pass whose rectangle and camera disagree
+        ReportOnce                reported;             ///< whether that pass' mismatch has been said
+    };
+    std::vector<ShapeMismatchEpisode> shape_mismatches_this_frame_;
+    std::vector<ShapeMismatchEpisode> shape_mismatches_last_frame_;
 };
 
 VN_GRAPHICS_NS_END

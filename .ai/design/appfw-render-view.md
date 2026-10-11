@@ -418,7 +418,7 @@ class VN_GRAPHICS_API Scene {
 | 控件要不要 `Signal`（如 `pipeline_changed`） | **不要**。加数据成员就是 ABI 断；`state_changed` 已覆盖"什么时候可以配置" |
 | 控件替宿主装灯/拥有场景 | **不要**（场景归宿主） |
 | 控件要不要一行工厂 `create(...)` | **不要**。它模糊所有权，而第 3 行本来就属于场景；3 行已经够短（§7） |
-| 控件**表面侧的改动** | 把 `devicePixelRatio()` 与尺寸**一起**推给视图：`view()->onSurfaceResized(w, h, devicePixelRatio())`（两个调用点），并在比例变化时重推 |
+| 控件**表面侧的改动** | 把 `devicePixelRatio()` 与尺寸**一起**推给**表面**：`surface()->resize(w, h, devicePixelRatio())`（两个调用点）——尺寸是表面的事实，表面扇出给每条呈现（`present` 也会立刻量新来的那格）；控件自己那个视图不呈现时才单独喂 `onSurfaceResized`。比例随同一次调用走 |
 | 控件要不要**输入路由** | **要一个，但只是一个"这一点归谁"的回调**：`setInputRouter(std::function<SceneView*(int x, int y)>)`。**放进 `Impl`**（`std::function`，不是 `Signal`）⇒ 公开面零新数据成员、ABI 不动。**已落地**。**M5a 修正（2026-10-11）**：它不再是**唯一**通路 —— 默认路由**问表面**（`RenderSurface::viewAt`，矩形就是路由表，M2d 之后矩形就住在表上），回调降级成"矩形说不清时才写"的**覆盖**（返回 `nullptr` = 交回矩形，不再等于"回退自己的视图"）。原稿写的"控件手里只有表面 + 尺寸、没有命中知识"仍成立：命中知识现在归**表面**那张表（唯一的 owner），不是在控件里再存一份 |
 | 控件要不要**连续渲染** | **要，一档而已**：`setContinuousRendering(on, interval_ms = 16)`。按需渲染仍是默认（attach / resize / 输入 / `renderFrame()` 才出帧），连续是给动画、仿真、要能读的读数用的。它是**帧驱动**不是帧率保证（滴答"要一帧"，一帧该多久多久）；未 attach 或表面未 exposed 时滴答**免费**（写明，不是静默）。**已落地** |
 | 控件的**初始化时机** | **构造只组装**（引擎 + 视图 + 诊断路由），不选后端、不 attach；attach 由宿主显式 `init()`（同步、优先）或第一拍兜底（§2.3、期 S0）。所以"`new` 之后立刻配置"永远有效，控件不新增任何配置 API |
@@ -469,8 +469,8 @@ right->setEngine(control->engine());                              // 视图挂�
 right->setOptions({ .gizmo = true });                             // 各自一条窗口管线
 right->scene()->setRoot(otherRoot);
 right->setViewport({ 0.5, 0.0, 0.5, 1.0 });                       // **唯一**的矩形真相：宽高比/像素/清屏范围都从它推
-control->surface()->present(*right);                              // 在这块表面上声明它（顺带建出那条默认窗口管线）
-right->onSurfaceResized(w, h, dpr);                               // 尺寸永远给**表面**的；"这一块"由视图自己算（§14 F1）
+control->surface()->present(*right);                              // 在这块表面上声明它（顺带建出那条默认窗口管线，并把表面记着的尺寸立刻给它）
+control->surface()->resize(w, h, dpr);                            // 尺寸永远给**表面**的；"这一块"由视图自己算（§14 F1）
 control->setInputRouter([&](int x, int y) {                       // 按下时路由、松开前捕获（§5）
     const double nx = double(x) / double(std::max(1, control->width()));
     return nx < 0.5 ? left : right.get();
@@ -681,7 +681,7 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 
 | 需要 | 现成的东西 / 本轮新增 |
 | --- | --- |
-| 每个视图自己的相机/场景/宽高比 | 一个 `SceneView` = 自己的 `Camera` + `Scene`；`view->onSurfaceResized(pane_w, pane_h)` |
+| 每个视图自己的相机/场景/宽高比 | 一个 `SceneView` = 自己的 `Camera` + `Scene`；喂它的永远是**表面**尺寸（`surface->resize(w, h, ratio)`，T1 之后一块表面只报一次、由表面扇出），它按自己的矩形推 aspect（§14 F1） |
 | 每个视图画在自己那一块 | 现成：`RenderPass::setViewport(Viewport{...})`（**设备像素**）。**新增**：`SceneView::setViewport(归一化矩形)`（§4.1）⇒ 宿主**不必**算 DPR，比例自动跟随表面 |
 | 谁清屏 | 现成：`setClearEnabled` / `setClearColor` / `shouldClearDepth`（**恰好一个** pass 清）；
 **M2b 之后不用宿主自己保证**：`RenderSurface` 把清屏给呈现表第一条、把其余条关掉（§12.2 第 3 条） |
@@ -721,15 +721,18 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 > **目标形态（大改版设计，进行中）**：这一节的"矩形挂在视图上、清屏靠谁先公告、视图去认领窗口、aspect 存在相机里"
 > 是**过渡形态**。按三维规范重写的目标见 `graphics-render-next.md` §3.2：**清屏与顺序归表面**（`RenderSurface` +
 > 呈现表）、**矩形归呈现条目**（`Surface::present(view, rect)`，`SceneView::setViewport` 转发）、
-> **aspect 出相机**，于是同一台相机可以跨矩形复用。分片进度：**M2a 谁呈现 / M2b 清屏归表面 / M2c aspect 出相机 /
-> M2d 矩形放呈现条目 / M5a 输入按矩形推 + 焦点视图 已落地（2026-10-11）**；M5b **2026-10-11 按"机制在底层、
-> 组合在应用层"重评：机制半边（表面尺寸扇出）进 SDK，布局所有者（split/join/比例/生死）归应用层**；
+> **aspect 归相机**（一台相机一张画面），于是分屏的每一格各有一台相机；"同一台相机进两块不同形状的矩形"被引擎
+> 编译期报出来。分片进度：**M2a 谁呈现 / M2b 清屏归表面 / M2d 矩形放呈现条目 / M5a 输入按矩形推 + 焦点视图 已落地
+> （2026-10-11）**；M2c（aspect 出相机）**同日落地又回退**（形状回到相机，见 `graphics-redesign.md` §"已落地：A"）；
+> M5b **2026-10-11 按"机制在底层、组合在应用层"重评：机制半边（表面尺寸扇出）进 SDK，布局所有者
+> （split/join/比例/生死）归应用层**；
 > 所以"谁 split、谁销毁"今天就该是应用自己的事，SDK 欠的只有"表面把尺寸喂给每一格"这一条机制
 > （`graphics-render-next.md` §5.1 T1 / T4）。
-> **落地后本节有四条已过期**：①"aspect 存在相机里"不成立 —— `Camera` 只持观看与投影参数
-> （`projectionMatrix(aspect)` 现算、`aspectRatio()` 删除），形状由后端一处推导
-> （`RenderBackend::viewAspect()`：pass 的 viewport，否则目标 / 表面尺寸），剔除与 view block 读同一个数；
-> ②`SceneView::applySurfaceGeometry()` 不再往相机里推 aspect（矩形照旧由它换算成设备像素）；
+> **落地后本节有四条已过期**：①"形状由后端推导"不成立 —— 形状是**相机自己的状态**
+> （`Camera::setAspect(w / h)` / `aspectRatio()` / `projectionMatrix()`），`RenderBackend::viewAspect()` 已删除，
+> 投影、剔除、view block、拾取射线读同一个数；矩形与相机不一致时引擎在编译期报出来
+> （`RenderEngine::collectPictureShapeMismatches()`）；
+> ②`SceneView::applySurfaceGeometry()` **会**把自己窗格的形状 push 给**自己的**那台相机（矩形照旧由它换算成设备像素）；
 > ③"矩形挂在视图上"只对**没呈现表面**的视图成立 —— 绑了表面的视图把矩形写在表面那张表上（`SceneView::viewport()`
 > 读表），`SceneView::setViewport` 转发；
 > ④"输入未设路由时一切都给自己的 `view()`"不成立 —— 默认路由**按矩形推**（`SurfaceWindow::routedView` 问

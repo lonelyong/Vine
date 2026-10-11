@@ -87,6 +87,10 @@ AxisGizmo::AxisGizmo()
     camera_->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 3.3), vn::math::Vec3d(0.0, 0.0, 0.0),
                                    vn::math::Vec3d(0.0, 1.0, 0.0));
     camera_->setProjectionMatrixAsPerspective(45.0, 0.05, 20.0);
+    // The picture's shape is the camera's (see Camera), and the box this camera frames is a SQUARE
+    // (see onSurfaceResized) - so it is 1:1, stated here where the camera is configured rather than left to
+    // whatever the rectangle it ends up drawing into happens to be.
+    camera_->setAspect(1.0);
     rebuild();
 }
 

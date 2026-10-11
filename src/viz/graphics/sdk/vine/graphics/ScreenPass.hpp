@@ -60,7 +60,7 @@ class VN_GRAPHICS_API ScreenPass : public RenderPass {
      * The pass then draws a full-screen triangle into its output target / sub-viewport, opaque over
      * it (clearing stays disabled). A CAMERA IS REQUIRED: the backend builds the pass' view from it,
      * so a pass without a camera draws nothing at all (the engine reports it once, at wiring time —
-     * ScreenPass::execute returns before asking the backend for anything).
+     * ScreenPass::describeDraws describes no draw).
      *
      * A program that cannot be prepared (no fragment stage, a stage that fails to compile, a binding
      * the source cannot provide) is reported and draws NOTHING: nothing here substitutes a shading the
@@ -79,16 +79,18 @@ class VN_GRAPHICS_API ScreenPass : public RenderPass {
      */
     void resolveInputTextures(const std::vector<raw_ptr<RenderTarget>>& inputs) override;
 
-    /** @brief Executes the screen pass.
+    /** @brief Describes the screen pass: nothing at all until a source resolved, then one full-screen draw.
      *
-     * Binds the output target / sub-viewport / clear state like a regular pass, forwards the content
-     * scene's lights, and asks the backend to draw through the program (see setProgram). A pass
-     * without a program, or without a camera, draws nothing — both are reported at wiring time.
+     * A screen pass is content-agnostic, so a null @p scene is NOT its "nothing to issue" - a pass whose input
+     * never resolved is (its own gate, stated here). Without a program, or without a camera, the pass still
+     * describes what it is and where and issues NO draw: both are reported at wiring time, so the picture is
+     * never a substitute the backend chose.
      *
-     * @param scene   Content scene (only its lights matter here).
-     * @param backend Backend to render with.
+     * @param scene Content scene (only its lights matter here; null announces no lights).
+     * @param out   Receives the description.
+     * @return true when a source resolved to sample; false when this pass issues nothing at all.
      */
-    void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend) override;
+    bool describe(raw_ptr<Scene> scene, PassDescription& out) override;
 
   private:
     /// Source texture sampled by this pass (borrowed; the engine registry keeps it alive).

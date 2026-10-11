@@ -122,17 +122,29 @@ Mat4d Camera::viewMatrix() const
     return view_;
 }
 
-Mat4d Camera::projectionMatrix(double aspect) const
+double Camera::aspectRatio() const
 {
-    // Rebuilt per call: the parameters above are the state, and a rectangle is not one of them. For an
-    // orthographic camera the window already carries the shape, so the aspect is not read at all.
+    return aspect_;
+}
+
+void Camera::setAspect(double aspect) noexcept
+{
+    if (aspect > 0.0) {
+        aspect_ = aspect;
+    }
+}
+
+Mat4d Camera::projectionMatrix() const
+{
+    // Rebuilt per call from the state above. For an orthographic camera the window already carries the shape,
+    // so the aspect is not read at all.
     if (projection_type_ == ProjectionType::Orthographic) {
         return vn::math::ortho<double>(ortho_left_, ortho_right_, ortho_bottom_, ortho_top_, near_plane_, far_plane_);
     }
-    return vn::math::perspective<double>(fov_ * vn::math::DEG_TO_RAD, aspect, near_plane_, far_plane_);
+    return vn::math::perspective<double>(fov_ * vn::math::DEG_TO_RAD, aspect_, near_plane_, far_plane_);
 }
 
-Ray Camera::screenToWorldRay(const Vec2d& screenPos, double aspect) const
+Ray Camera::screenToWorldRay(const Vec2d& screenPos) const
 {
     const double ndc_x = (2.0 * screenPos.x) - 1.0;
     const double ndc_y = 1.0 - (2.0 * screenPos.y);
@@ -159,7 +171,7 @@ Ray Camera::screenToWorldRay(const Vec2d& screenPos, double aspect) const
     // Perspective: unproject through the near plane.
     const double fov_rad = fov_ * vn::math::DEG_TO_RAD;
     const double tan_half = std::tan(fov_rad * 0.5);
-    const double x = ndc_x * tan_half * aspect;
+    const double x = ndc_x * tan_half * aspect_;
     const double y = ndc_y * tan_half;
     const Vec3d dir = (forward + right * x + up * y).normalized();
     return Ray(eye_, dir);

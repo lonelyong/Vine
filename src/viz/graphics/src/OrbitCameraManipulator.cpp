@@ -557,9 +557,9 @@ void OrbitCameraManipulator::onResize(const vn::window::ResizeEvent& event)
     if (cam == nullptr) {
         return;
     }
-    // The CAMERA is not told the shape: it holds no aspect (see Camera), and the projection comes from the
-    // rectangle the pass draws into. What this keeps is the aspect the INTERACTION needs - orbit gains, framing,
-    // picking - which is the viewport this manipulator is bound to (see viewportAspect()).
+    // The camera already holds the shape of its picture (see Camera): the view that owns it pushes the pane's shape
+    // there and calls this with the same rectangle, so what onResize keeps is the PIXEL extent the interaction math
+    // needs (gains per pixel, the pointer's default centre), not a second copy of the aspect (see viewportAspect).
     if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
         updateOrthoProjection();
     }
@@ -576,7 +576,7 @@ void OrbitCameraManipulator::makeScreenRay(double screenX, double screenY,
     }
     const double w = viewport_w_ > 0 ? static_cast<double>(viewport_w_) : 1.0;
     const double h = viewport_h_ > 0 ? static_cast<double>(viewport_h_) : 1.0;
-    const Ray ray = cam->screenToWorldRay(Vec2d(screenX / w, screenY / h), viewportAspect());
+    const Ray ray = cam->screenToWorldRay(Vec2d(screenX / w, screenY / h));
     origin = ray.origin;
     direction = ray.direction;
 }
@@ -761,9 +761,15 @@ void OrbitCameraManipulator::updateOrthoProjection()
 
 double OrbitCameraManipulator::viewportAspect() const
 {
-    // The aspect of the rectangle this manipulator drives: its own last resize, because that IS the picture the
-    // user is looking at. Guarded so an unlaid-out viewport (0 wide, or never resized yet) cannot divide by zero
-    // or produce a degenerate frustum.
+    // The shape of the picture the interaction works in. Under ONE CAMERA, ONE PICTURE SHAPE (see Camera) that is the
+    // CAMERA's own aspect: the same number the projection is built with, the culling uses and the picking ray
+    // (Camera::screenToWorldRay) follows - so orbit gains, framing and the orthographic window cannot disagree with
+    // what the user is pointing at. A manipulator with no camera has nothing to draw through, and falls back to the
+    // rectangle it was last resized to, which is all it has (guarded: an unlaid-out viewport must not divide by
+    // zero or produce a degenerate frustum).
+    if (camera_ != nullptr) {
+        return camera_->aspectRatio();
+    }
     if (viewport_w_ <= 0 || viewport_h_ <= 0) {
         return 1.0;
     }

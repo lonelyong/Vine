@@ -7,9 +7,9 @@
  * frame 1 - which is the whole "completion is evidence, not a guess" claim of the design (D5), exercised
  * against a real device and a real swapchain instead of against a mock timeline.
  *
- * It needs a window system and a usable device, so it SKIPS on a machine without either and never fails
- * for an environment it cannot control. Under the repository's own gate (lavapipe + validation) it runs
- * for real.
+ * It needs a device a session comes up on and serves off-screen pixels from (probed through the shared SDK
+ * fixture, not through "is there a window system"), so it SKIPS on a machine without one and never fails for an
+ * environment it cannot control. Under the repository's own gate (lavapipe + validation) it runs for real.
  */
 
 #include <gtest/gtest.h>
@@ -35,13 +35,13 @@
 #include <vine/graphics/backend/SlotProbe.hpp>
 
 #include "FailingStepNode.hpp"
+#include "SdkPixelFixture.hpp"
 
 using vn::graphics::RenderTarget;
 using vn::vsg::OffscreenTarget;
 using vn::vsg::VsgExecutor;
 using vn::vsg::api::Session;
 using vn::vsg::api::SessionOptions;
-using vn::vsg::api::probePhysicalDevices;
 using vn::graphics::backend::ClearPolicy;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::Diagnostics;
@@ -102,14 +102,9 @@ void setEnvironmentFlag(const char* name, bool on)
 
 TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEvidence)
 {
-    if (std::getenv("DISPLAY") == nullptr)
+    if (!SdkPixelFixture::available())
     {
-        GTEST_SKIP() << "no window system: a session that owns its window cannot come up";
-    }
-    const auto probed_devices = probePhysicalDevices();
-    if (!probed_devices.ok || probed_devices.usableCount() == 0)
-    {
-        GTEST_SKIP() << "no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     vn::graphics::Diagnostics diagnostics;
@@ -188,14 +183,9 @@ TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEv
 
 TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitSubmits)
 {
-    if (std::getenv("DISPLAY") == nullptr)
+    if (!SdkPixelFixture::available())
     {
-        GTEST_SKIP() << "no window system: a session that owns its window cannot come up";
-    }
-    const auto probed_devices = probePhysicalDevices();
-    if (!probed_devices.ok || probed_devices.usableCount() == 0)
-    {
-        GTEST_SKIP() << "no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     Diagnostics diagnostics;
@@ -309,14 +299,9 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
 
 TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
 {
-    if (std::getenv("DISPLAY") == nullptr)
+    if (!SdkPixelFixture::available())
     {
-        GTEST_SKIP() << "no window system: a session that owns its window cannot come up";
-    }
-    const auto probed_devices = probePhysicalDevices();
-    if (!probed_devices.ok || probed_devices.usableCount() == 0)
-    {
-        GTEST_SKIP() << "no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     ClearPolicy window_clear;
@@ -579,14 +564,9 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
 
 TEST(SessionTest, AWindowPlanThatGotTheFormatWrongIsNotRecorded)
 {
-    if (std::getenv("DISPLAY") == nullptr)
+    if (!SdkPixelFixture::available())
     {
-        GTEST_SKIP() << "no window system: a session that owns its window cannot come up";
-    }
-    const auto probed_devices = probePhysicalDevices();
-    if (!probed_devices.ok || probed_devices.usableCount() == 0)
-    {
-        GTEST_SKIP() << "no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     Diagnostics diagnostics;
@@ -667,14 +647,9 @@ TEST(SessionTest, AWindowPlanThatGotTheFormatWrongIsNotRecorded)
 
 TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePlan)
 {
-    if (std::getenv("DISPLAY") == nullptr)
+    if (!SdkPixelFixture::available())
     {
-        GTEST_SKIP() << "no window system: a session that owns its window cannot come up";
-    }
-    const auto probed_devices = probePhysicalDevices();
-    if (!probed_devices.ok || probed_devices.usableCount() == 0)
-    {
-        GTEST_SKIP() << "no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     Diagnostics diagnostics;
@@ -795,14 +770,9 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
 
 TEST(SessionTest, ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver)
 {
-    if (std::getenv("DISPLAY") == nullptr)
+    if (!SdkPixelFixture::available())
     {
-        GTEST_SKIP() << "no window system: a session that owns its window cannot come up";
-    }
-    const auto probed_devices = probePhysicalDevices();
-    if (!probed_devices.ok || probed_devices.usableCount() == 0)
-    {
-        GTEST_SKIP() << "no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     vn::graphics::Diagnostics diagnostics;
@@ -863,14 +833,9 @@ TEST(SessionTest, ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver)
 
 TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevice)
 {
-    if (std::getenv("DISPLAY") == nullptr)
+    if (!SdkPixelFixture::available())
     {
-        GTEST_SKIP() << "no window system: a session that owns its window cannot come up";
-    }
-    const auto probed_devices = probePhysicalDevices();
-    if (!probed_devices.ok || probed_devices.usableCount() == 0)
-    {
-        GTEST_SKIP() << "no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     vn::graphics::Diagnostics diagnostics;

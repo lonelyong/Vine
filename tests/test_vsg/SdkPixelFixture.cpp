@@ -6,10 +6,12 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/Color.hpp>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
+#include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Point3.hpp>
@@ -81,8 +83,29 @@ vn::intrusive_ptr<Scene> makeQuadScene()
 
 bool SdkPixelFixture::available()
 {
-    const vn::vsg::api::ProbeResult probed = vn::vsg::api::probePhysicalDevices();
-    return probed.ok && probed.usableCount() != 0U;
+    // Answered ONCE per process and remembered: the question is about this MACHINE, and answering it costs a
+    // device, a session and a frame. Every device case that cannot serve itself asks it (see this file's note on
+    // why the gate is a device), so re-answering it per case would multiply that cost and never change the answer.
+    static const bool usable = [] {
+        SdkPixelFixture probe;
+        if (!probe.up()) {
+            return false;
+        }
+        // A session that came up is not yet a session that DRAWS: the last step is one picture through the SDK's
+        // own entry points and a read-back, which is the "off-screen pixels are really served" half of the
+        // question. The pass is the minimal one - the fixture's own scene through its own camera - so what this
+        // measures is the path, not a case's scaffolding.
+        const vn::intrusive_ptr<vn::graphics::RenderPass> pass(new vn::graphics::RenderPass());
+        pass->setCamera(probe.camera);
+        pass->setRenderTarget(probe.target);
+        pass->setClearEnabled(true);
+        pass->setClearColor(vn::Color(0, 0, 0));
+        pass->setShouldClearDepth(true);
+        pass->setProgramOverride(vn::graphics::unlitForwardProgram());
+        probe.engine->addPass(pass, probe.scene, 0);
+        return probe.read().valid();
+    }();
+    return usable;
 }
 
 SdkPixelFixture::SdkPixelFixture() = default;

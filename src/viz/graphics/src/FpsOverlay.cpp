@@ -96,9 +96,10 @@ constexpr Colorf kLit{ 0.70f, 1.00f, 0.75f, 1.0f };
 FpsOverlay::FpsOverlay()
 {
     // Framing camera: the digit row lies in the z == 0 plane; the camera
-    // looks down -z from a distance that fits the row. The projection's SHAPE is not set here: the readout draws
-    // into its own box (setViewport below), and that box' aspect is what the picture is projected with (see
-    // Camera - the aspect belongs to the rectangle, and the backend derives it from the viewport).
+    // looks down -z from a distance that fits the row. The shape of the picture belongs to THIS camera (see
+    // Camera) and is the shape of the box the readout draws into, so it is pushed whenever that box is laid out
+    // (see onSurfaceResized) - the box is fitted and scaled there, and a picture projected for a shape the box
+    // does not have is a stretched readout.
     camera_ = make_intrusive<Camera>();
     camera_->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.6), vn::math::Vec3d(0.0, 0.0, 0.0),
                                    vn::math::Vec3d(0.0, 1.0, 0.0));
@@ -209,8 +210,11 @@ void FpsOverlay::onSurfaceResized(int width, int height)
 
     // Bottom-right corner of this overlay's area, in top-left-origin device coordinates.
     box_ = Viewport{ area_x_ + dev_w - margin_px_ - w, area_y_ + dev_h - margin_px_ - h, w, h };
-    // Nothing to do about the projection: the box above IS the picture's shape, and the projection is built from
-    // it where the pass records (a camera holds no aspect - see Camera).
+    // The box above IS the picture's shape, and the projection is built from the camera's (see Camera) - so the
+    // camera is given it here, where the box was last decided. The readout is content laid out for its own box,
+    // not a scene culled against a frustum, so this changes nothing about what it holds - only that the row is
+    // projected for the rectangle it actually draws into.
+    camera_->setAspect(static_cast<double>(w) / static_cast<double>(h));
 }
 
 void FpsOverlay::setAreaOrigin(int x, int y)

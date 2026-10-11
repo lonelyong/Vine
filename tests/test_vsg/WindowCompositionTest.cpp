@@ -172,9 +172,6 @@ bool isColour(const std::array<std::uint8_t, 3>& pixel, double red, double green
 
 TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreenOverlay)
 {
-    if (std::getenv("DISPLAY") == nullptr) {
-        GTEST_SKIP() << "no window system";
-    }
     const auto probed_devices = probePhysicalDevices();
     if (!probed_devices.ok || probed_devices.usableCount() == 0) {
         GTEST_SKIP() << "no device satisfies the requirements";

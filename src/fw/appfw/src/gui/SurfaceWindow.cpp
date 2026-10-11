@@ -662,6 +662,21 @@ void SurfaceWindow::handleResized(int width, int height)
     noteSurfaceUsable();
 }
 
+void SurfaceWindow::feedSurfaceSize(int width, int height)
+{
+    const double ratio = devicePixelRatio();
+    // Size AND ratio, stated once on the SURFACE: the size of the thing the picture ends up in is a fact about
+    // it, so it is recorded there and fanned out to every view that presents it - this control's own view when it
+    // is the presentation (the default), and every pane a host added without the host feeding each one (see
+    // RenderSurface::resize).
+    d->surface->resize(width, height, ratio);
+    // This surface's own view is fed separately ONLY when it does not present (a host declared a main pass of its
+    // own, so nothing fans out to it): its geometry would otherwise stay at whatever it last saw.
+    if (d->view != nullptr && !d->view->hasSurface()) {
+        d->view->onSurfaceResized(width, height, ratio);
+    }
+}
+
 void SurfaceWindow::scheduleUpdate()
 {
     if (d->resize_pending) {
@@ -699,9 +714,7 @@ void SurfaceWindow::handleUpdate()
     // rejected in favour of never showing a distorted picture (the grown part of the client area is simply filled
     // by this frame). See .ai/memory/graphics.md (2026-09-17).
     d->engine->resize(w, h);
-    // Size AND ratio: this view's geometry (its camera aspect, its window-pass viewport, the size its targets and
-    // HUD boxes get) is derived from the two together, in one place (see SceneView::onSurfaceResized).
-    d->view->onSurfaceResized(w, h, devicePixelRatio());
+    feedSurfaceSize(w, h);
     renderFrame();
 }
 
@@ -802,7 +815,7 @@ bool SurfaceWindow::init()
     // aspect, viewport tracking). At construction that is a placeholder size (measured 160x160 against the 752x480
     // of the settled window); the layout's real size arrives through handleUpdate() and is served in place.
     d->engine->resize(width(), height());
-    d->view->onSurfaceResized(width(), height(), devicePixelRatio());
+    feedSurfaceSize(width(), height());
     // The frame the attach owes - the same frame as any other, and it is what pays the session's one-time build
     // (pass graphs, program slots, compiled pipelines - measured 183.6 ms for the demo's 5 slots).
     renderFrame();

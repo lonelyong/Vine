@@ -395,9 +395,15 @@ void SceneView::applySurfaceGeometry()
     int pane_h = 0;
     paneSize(pane_w, pane_h);
 
-    // 1) This view's rectangle drives the manipulator's own aspect (the pane's aspect, not the surface's: a
-    //    half-width view of a square surface is 1:2). The CAMERA is told nothing: it holds no aspect, and the
-    //    projection is built where the picture's shape is known (the pass' rectangle - see Camera).
+    // 1) The camera's shape: this view's rectangle IS the picture its projection is built for (one camera, one
+    //    shape - see Camera), so the shape is pushed where the rectangle is known. The manipulator is told the
+    //    same rectangle for its own aspect (the pane's, not the surface's: a half-width view of a square surface
+    //    is 1:2), which it derives from the size, and it drags the camera rather than holding a shape of its own.
+    //    A camera shared by two views of different shapes is a shape mismatch the engine reports, not a state
+    //    this can arbitrate: whoever applies last wins.
+    if (camera_ != nullptr && pane_w > 0 && pane_h > 0) {
+        camera_->setAspect(static_cast<double>(pane_w) / static_cast<double>(pane_h));
+    }
     if (CameraManipulator* manip = manipulator(); manip != nullptr) {
         manip->onResize(vn::window::ResizeEvent{ pane_w, pane_h });
     }
@@ -539,6 +545,11 @@ void SceneView::pushEvent(const vn::window::KeyEvent& event)
     }
 }
 
+bool SceneView::hasSurface() const noexcept
+{
+    return surface_ != nullptr;
+}
+
 void SceneView::onSurfaceResized(int width, int height)
 {
     onSurfaceResized(width, height, pixel_ratio_);
@@ -549,6 +560,19 @@ void SceneView::onSurfaceResized(int width, int height, double pixel_ratio)
     if (width <= 0 || height <= 0) {
         return;
     }
+    if (surface_ != nullptr) {
+        // While this view presents a surface, the size of the thing the picture ends up in is that SURFACE's
+        // fact: it is recorded there and fanned out to every view that presents it, so a host still spelling the
+        // size this way (the entry a view with no surface uses) still states ONE size for the whole surface - and
+        // the other panes are not left behind.
+        surface_->resize(width, height, pixel_ratio);
+        return;
+    }
+    applySurfaceSize(width, height, pixel_ratio);
+}
+
+void SceneView::applySurfaceSize(int width, int height, double pixel_ratio)
+{
     surface_width_  = width;
     surface_height_ = height;
     if (pixel_ratio > 0.0) {

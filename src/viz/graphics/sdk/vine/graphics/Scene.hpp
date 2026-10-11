@@ -150,15 +150,11 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * only reads it (the engine's own pass path, a backend) hands out the shared
      * list instead (see collectRenderCommandsShared) and pays no copy at all.
      *
-     * @param camera Camera used for culling/ordering.
-     * @param aspect Width / height of the picture this list is for: the frustum culled against is the one the
-     *               projection produces, so a caller culling with a shape its picture does not have would drop
-     *               what is on screen (see Camera - the aspect is a property of the rectangle, not of the
-     *               camera). The engine's own pass path reads it from the backend that is recording the pass
-     *               (RenderBackend::viewAspect).
+     * @param camera Camera used for culling/ordering. Its own aspect is the picture's shape: the frustum culled
+     *               against is the one the projection produces (see Camera - one camera, one picture shape).
      * @return Collected render commands (a copy of this frame's list for this view).
      */
-    std::vector<RenderCommand> collectRenderCommands(raw_ptr<const Camera> camera, double aspect) const;
+    std::vector<RenderCommand> collectRenderCommands(raw_ptr<const Camera> camera) const;
 
     /** @brief Collects render commands as a SHARED, immutable list, for a picture of @p aspect.
      *
@@ -174,14 +170,12 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * and stays valid until the scene changes or the frame ends, so a caller must
      * not hold it past the frame it was collected in.
      *
-     * @param camera Camera used for culling/ordering.
-     * @param aspect Width / height of the picture this list is for (see collectRenderCommands): the memo matches
-     *               on the view-projection it was built with, so one camera drawn into two differently shaped
-     *               rectangles in one frame gets one walk each - and neither can answer for the other.
+     * @param camera Camera used for culling/ordering. The memo matches on the view-projection it was built with,
+     *               which already carries the camera's shape - so a camera whose shape is changed gets its own
+     *               walk, and neither can answer for the other (see Camera).
      * @return Shared list of collected render commands (empty when there is nothing to draw).
      */
-    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommandsShared(raw_ptr<const Camera> camera,
-                                                                                 double aspect) const;
+    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommandsShared(raw_ptr<const Camera> camera) const;
 
     /** @brief Opens the content frame the collected-command memo belongs to.
      *

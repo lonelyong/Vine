@@ -267,22 +267,6 @@ class VN_GRAPHICS_API FrameRecorder
      */
     bool setViewport(int x, int y, int width, int height);
 
-    /** @brief Announces the shape (width / height) of the picture this scope draws into.
-     *
-     * A property of the SCOPE, like the clear and the inputs: it is what the camera's projection is built from
-     * (a camera holds no aspect and no matrix - see Camera), and it comes from the caller that knows the sizes
-     * (the backend: the pass' announced viewport, or the target / surface size - see RenderBackend::viewAspect).
-     *
-     * The recorder does NOT derive it: which rectangle a pass draws into is announced (setRenderTarget /
-     * setViewport), and the sizes behind those announcements are the backend's own. A scope that never announces
-     * one keeps the default (a square picture), which is what a recorder fed by a caller that has no view means -
-     * not a guess at the right shape.
-     *
-     * @param aspect Width / height of the picture (> 0; anything else is ignored).
-     * @return true when it was recorded; false when it was dropped.
-     */
-    bool setViewAspect(double aspect);
-
     /** @brief Announces how the pass' target is cleared before it draws.
      *
      * @param policy The backend-neutral policy (the API layer translates the SDK's spelling).
@@ -397,7 +381,6 @@ class VN_GRAPHICS_API FrameRecorder
     bool        pass_has_clear_{false};          ///< Whether the scope announced a clear.
     ClearPolicy pass_clear_{};                   ///< The announced clear.
     vn::graphics::PassRenderState pass_state_{};  ///< The scope's own state (depth policy + rasterisation override).
-    double      pass_aspect_{1.0};               ///< Shape of the picture this scope draws into (see setViewAspect).
     std::span<const InputRef> pass_inputs_{};    ///< The scope's inputs (a property of the pass).
 
     bool                       pending_has_viewport_{false};  ///< Whether a viewport is waiting for a draw.

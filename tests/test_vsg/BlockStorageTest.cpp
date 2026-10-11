@@ -12,9 +12,10 @@
  * VsgBackend::growBlockStorageIfNeeded).
  *
  * A window is how the backend reaches a device (`Window::create` then `getOrCreateDevice()`, exactly what
- * the session does), so this test creates one instead of inventing a second way to bring up Vulkan. X11 +
- * a device that satisfies the backend's requirements, or it SKIPS: what it checks is this storage's
- * behaviour, not the machine's configuration.
+ * the session does), so this test creates one instead of inventing a second way to bring up Vulkan. A device
+ * that satisfies the backend's requirements - probed through the shared SDK fixture, so "a session comes up and
+ * serves off-screen pixels" is the question rather than "is there a window system" - or it SKIPS: what it checks
+ * is this storage's behaviour, not the machine's configuration.
  */
 
 #include <gtest/gtest.h>
@@ -33,11 +34,11 @@
 #include <vsg/vk/Device.h>
 
 #include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/DeviceProbe.hpp>
 #include <vine/graphics/backend/SlotProbe.hpp>
 
+#include "SdkPixelFixture.hpp"
+
 using vn::vsg::BlockStorage;
-using vn::vsg::api::probePhysicalDevices;
 using vn::graphics::backend::kAssumedInFlightSlots;
 using vn::graphics::backend::perFrameCopies;
 
@@ -48,10 +49,16 @@ namespace
 class Fixture
 {
   public:
-    /** @brief Whether this machine can run the device cases at all. */
+    /** @brief Whether this machine can run the device cases at all.
+     *
+     * The question is "is there a device a session comes up on and serves off-screen pixels", not "is there a
+     * window system" (see SdkPixelFixture::available): the latter is false on Windows, where these cases run.
+     *
+     * @return true when the shared SDK device probe says the machine can serve a session.
+     */
     [[nodiscard]] static bool available()
     {
-        return std::getenv("DISPLAY") != nullptr && probePhysicalDevices().usableCount() > 0;
+        return SdkPixelFixture::available();
     }
 
     /** @brief Creates the window, the device and the storage (in that order). */
@@ -117,7 +124,7 @@ TEST(BlockStorageTest, ANullDeviceYieldsNoStorage)
 TEST(BlockStorageTest, TheRegionsAreLaidOutOnceAndDoNotOverlap)
 {
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     ASSERT_TRUE(fixture.build({})) << "the storage could not be created on this device";
@@ -157,7 +164,7 @@ TEST(BlockStorageTest, TheRegionsAreLaidOutOnceAndDoNotOverlap)
 TEST(BlockStorageTest, EveryBlockIsReadBackFromInsideItsOwnRegion)
 {
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
@@ -264,7 +271,7 @@ TEST(BlockStorageTest, AStorageBuiltFromAShallowLayoutOwnsTheInFlightFloor)
     // The floor at the one place it guards: create(). A shallow layout is BUILT (raised), not refused - a
     // refusal has no channel to explain itself, and the raised storage is the only one that can serve.
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture              fixture;
     BlockStorage::Layout shallow;
@@ -301,7 +308,7 @@ TEST(BlockStorageTest, AStorageBuiltFromAShallowLayoutOwnsTheInFlightFloor)
 TEST(BlockStorageTest, TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightDoNot)
 {
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     BlockStorage::Layout layout;
@@ -327,7 +334,7 @@ TEST(BlockStorageTest, TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightD
 TEST(BlockStorageTest, AFramePastItsBudgetIsRefusedButAsksForAReplacement)
 {
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     BlockStorage::Layout layout;
@@ -401,7 +408,7 @@ TEST(BlockStorageTest, TheGrowthPolicyDoublesWhileItCoversAndTakesABiggerNeed)
 TEST(BlockStorageTest, AnOversizedBlockIsRefusedBeforeItConsumesAnything)
 {
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
@@ -420,7 +427,7 @@ TEST(BlockStorageTest, AnOversizedBlockIsRefusedBeforeItConsumesAnything)
 TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBlock)
 {
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
@@ -468,7 +475,7 @@ TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBloc
 TEST(BlockStorageTest, TheMaterialCopiesRotateSoAnInFlightFrameIsNeverOverwritten)
 {
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     BlockStorage::Layout layout;

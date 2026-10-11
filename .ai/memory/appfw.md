@@ -258,6 +258,10 @@
   + `Scene::addLighting/setLighting`；`SurfaceWindow`：**构造只组装 + 第一拍兜底 attach**、尺寸与比例一起推、
   `ensureWindowPass()` 提到后端检查之前。四个套件全绿（graphics 304 / gui 246 / appfw 32 / meshio 34）。
   细节与两条实现教训见 `.ai/design/appfw-render-view.md` 头部"落地记录"。
+- **表面尺寸 + 比例现在推给**表面**（2026-10-11，T1）**：`SurfaceWindow::feedSurfaceSize` 调
+  `surface->resize(w, h, devicePixelRatio())`，表面记住并**扇出**给每条呈现的视图（`present` 也会把记着的尺寸立刻
+  交给新呈现），所以分屏的每一格不必再手喂。控件自己那个视图**不呈现**时才单独喂 `onSurfaceResized`（视图侧契约
+  不变：它收到的永远是**表面**尺寸；挂在表面上时那句只是转发给 `RenderSurface::resize`）。判据：`test_gui` 253 绿。
 - **HUD 的显示 / 隐藏是运行时开关（2026-10-11，已落地）**：`SceneView::Options::gizmo/stats` 只回答"这个视图
   **有没有**这个档"（配方，变更 = 一次重建）；`setStatsVisible()/setGizmoVisible()`（+ `isStatsVisible/isGizmoVisible`）
   回答"现在**看得见吗**"——**零重建**（就是 `RenderPass::setEnabled`；引擎在六处跳过 disabled 的 pass）。档还不存在时

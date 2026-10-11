@@ -11,7 +11,8 @@
  * than a validation error (`VUID-vkCmdBindDescriptorSets-pDynamicOffsets-01971`). Repointing is pinned as
  * well: a replaced storage keeps the LAYOUT and swaps the set's elements.
  *
- * X11 + a device that satisfies the backend's requirements, or it SKIPS.
+ * A device that satisfies the backend's requirements - probed through the shared SDK fixture, so "a session comes
+ * up and serves off-screen pixels" is the question rather than "is there a window system" - or it SKIPS.
  */
 
 #include <gtest/gtest.h>
@@ -33,11 +34,11 @@
 
 #include <vine/vsg/internal/BlockDescriptors.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/DeviceProbe.hpp>
+
+#include "SdkPixelFixture.hpp"
 
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
-using vn::vsg::api::probePhysicalDevices;
 
 namespace
 {
@@ -46,9 +47,16 @@ namespace
 class Fixture
 {
   public:
+    /** @brief Whether this machine can run the device cases at all.
+     *
+     * The question is "is there a device a session comes up on and serves off-screen pixels", not "is there a
+     * window system" (see SdkPixelFixture::available): the latter is false on Windows, where these cases run.
+     *
+     * @return true when the shared SDK device probe says the machine can serve a session.
+     */
     [[nodiscard]] static bool available()
     {
-        return std::getenv("DISPLAY") != nullptr && probePhysicalDevices().usableCount() > 0;
+        return SdkPixelFixture::available();
     }
 
     bool build(const BlockStorage::Layout& layout)
@@ -103,7 +111,7 @@ class Fixture
 TEST(BlockDescriptorsTest, TheLayoutDeclaresOneDynamicBindingPerBlock)
 {
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
@@ -131,7 +139,7 @@ TEST(BlockDescriptorsTest, TheLayoutDeclaresOneDynamicBindingPerBlock)
 TEST(BlockDescriptorsTest, TheSetBindsOneBlockPerRegionAtOffsetZero)
 {
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
@@ -160,7 +168,7 @@ TEST(BlockDescriptorsTest, TheSetBindsOneBlockPerRegionAtOffsetZero)
 TEST(BlockDescriptorsTest, TheBindCarriesTheOffsetsInBindingOrderAndReusesOneSet)
 {
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
@@ -191,7 +199,7 @@ TEST(BlockDescriptorsTest, TheDeclaredShapeDecidesTheBindingsAndTheOffsets)
     // this object builds is whatever its caller declared, and the offsets follow THAT shape's order - the
     // canonical five would be wrong here, and a set bound with the wrong offsets reads another draw's bytes.
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
@@ -229,7 +237,7 @@ TEST(BlockDescriptorsTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     // declared set, one layout, one bind - which is what lets a program written against that arrangement be
     // served without the backend inventing a second set for the image.
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
@@ -282,7 +290,7 @@ TEST(BlockDescriptorsTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
 TEST(BlockDescriptorsTest, AMisalignedOffsetIsRefusedInsteadOfBound)
 {
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
@@ -307,7 +315,7 @@ TEST(BlockDescriptorsTest, AMisalignedOffsetIsRefusedInsteadOfBound)
 TEST(BlockDescriptorsTest, RepointingKeepsTheLayoutAndSwapsTheSetElements)
 {
     if (!Fixture::available()) {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));

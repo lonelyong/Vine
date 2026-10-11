@@ -33,7 +33,8 @@ graph TB
     Plugin --> VSG
 ```
 
-`RenderEngine` 从不直接调用 Vulkan：它驱动 `RenderPass`、解析各 pass 的目标、逐 pass 调用后端。
+`RenderEngine` 从不直接调用 Vulkan：它把这一帧**编译成一个值**（每条 pass 的目标、状态、绘制与解析好的接线），
+再按顺序把这个值宣告给后端。
 后端**按名字**创建，因此宿主对后端及其第三方库没有编译期依赖：
 
 ```cpp
@@ -52,7 +53,7 @@ engine.setBackend(backend);
 | `MatrixTransform` | `Group` + **场景图里唯一持有变换的地方**（`matrix()` / `setMatrix()`） | 嵌套变换沿 root→leaf 相乘 |
 | `StateNode` | 给子树施加渲染状态，并可覆盖 material / program | 越深的节点优先 |
 | `Geometry` | 叶子：**借用**的属性缓冲 + 可选索引 | `setPositions/setNormals/setTexcoords2/setIndices`、`addBuffer` 加自定义通道、`setRevision()` |
-| `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera, aspect)`（**拥有一份副本**）、`collectRenderCommandsShared(camera, aspect)`（**共享不可变表**，引擎自己的 pass 路径用；要改写就自己 fork） |
+| `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)`（**拥有一份副本**）、`collectRenderCommandsShared(camera)`（**共享不可变表**，引擎自己的 pass 路径用；要改写就自己 fork） |
 
 ### 2.2 属性沿树折叠的规则
 
@@ -97,19 +98,24 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   `shutdown()`。
 - `RenderPass` —— 相机 + 渲染目标 + 渲染状态 + 清屏/深度策略。**没有 renderTarget 的 pass 画进窗口**，
   order 决定先后。
+  - **扩展点有两个，`execute()` 不是其中之一**：这一条 pass 要"发什么"写在 `describe(scene, out)`（引擎编译这一帧时
+    调它一次，填 target / viewport / 清屏 / 状态 / 绘制调用）、要"先做什么"（写内容，比如 HUD 自更新）写在声明的
+    `before_draw` 钩子里。**引擎不调 `execute()`** —— 它是"宿主自己驱动一条 pass"（或预热、测试）时才用的拼写：内部就是
+    "描述 → 按契约宣告"，与帧内部走的是同一段映射（`announcePassTo` / `announceDrawsTo`）。覆写 `execute()` 想让引擎跑的
+    pass 必须把活搬到上面两处，否则它会**静默不跑**。
 - `ScreenPass` —— `RenderPass` 子类，全屏 / 画中画。**必须命名 program**（没有隐式着色，也没有
   隐式拷贝）：
   - 把源的**每一张**彩色附件按 binding 0..N-1 绑成采样纹理，用它画一个全屏三角形；想读哪张附件，
     就在 program 里写 `layout(binding = N)`（`screenCopyProgram(N)` 就是这个）；
   - **纯拷贝 = `BuiltinShaders::screenCopyProgram()`**（SDK 的命名程序，不是后端默认）；
   - **必须有相机**（否则什么都不画，引擎在接线期报一次）；**没有 program 也不画**（同样接线期报一次）。
-- `Camera` —— 观看（eye / target / up）+ 投影**参数**（fov / near / far、类型、正交盒）：`setViewMatrixAsLookAt()`、
-  `setProjectionMatrixAsPerspective(fov, near, far)`、`setProjectionMatrixAsOrtho(...)`、`projectionMatrix(aspect)`
-  （**每次现算**；正交忽略那个参数 —— 盒自带比例）、`screenToWorldRay(pos, aspect)`。
-  **相机不含 aspect**：一张画面的形状属于它被画进的那块矩形，而且只有**一处**推导
-  （`RenderBackend::viewAspect()`：pass 的 viewport，否则它画进的目标/表面尺寸），剔除与投影读的是同一个数 ——
-  于是同一台相机可以同时进**形状不同**的两块矩形（分屏 / 镜像 / 画中画），"矩形变了投影没跟上"这类错在结构上
-  不存在（见 §3.11 与 `RenderSurface`）。
+- `Camera` —— 观看（eye / target / up）+ 投影**参数**（fov / near / far、类型、正交盒）**与画面的形状**：
+  `setViewMatrixAsLookAt()`、`setProjectionMatrixAsPerspective(fov, near, far)`、`setProjectionMatrixAsOrtho(...)`、
+  `setAspect(w / h)` / `aspectRatio()`、`projectionMatrix()`（**每次现算**）、`screenToWorldRay(pos)`。
+  **一台相机 = 一张画面**（2026-10-11 定，见 §3.11）：形状是相机自己的状态，投影、剔除、拾取射线读的都是
+  同这一个数，于是"矩形变了投影没跟上"这类错在结构上不存在。同一台相机放进**形状不同**的两块矩形不再被
+  悄悄拉伸，而是被引擎在编译期**报出来**（`RenderEngine` 的 frame plan 诊断：pass 的矩形 vs 相机的画面形状）；
+  想要同一机位两种形状，用两台相机（`SceneView` 按自己窗格的形状 push 给相机，HUD 子视口相机自己声明形状）。
 - `RenderTarget` —— 若干彩色附件 + 可选深度：`attachColor(fmt)` / `attachDepth(fmt)` / `setSize(w,h)`，
   以及 `shareDepth(source)`（借用别人的深度）与 `setDepthPromotion(bool)`（深度是否变成可采样）。
 - `RenderPipelineBuilder` —— 配方层：`build(const PipelineOptions&)`（结构选择只有一个：
@@ -127,15 +133,23 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 ### 2.5 每帧数据流
 
 1. 宿主调 `RenderEngine::frame(dt)`。
-2. 逐 pass：引擎打开内容帧，向场景要命令 —— `Scene::collectRenderCommands(camera, aspect)` 对
-   **(scene, camera, 画面形状)** 每帧只走一次树，结果记忆到帧末（规则见 §2.2）。那第三个入参就是这条 pass
-   那张画面本来的形状（`RenderBackend::viewAspect()`：pass 的 viewport，否则目标 / 表面尺寸）—— 相机**不持**
-   aspect（见 §2.1 的 `Camera` 段），所以剔除用的视锥与画面用的投影是同一个矩形推出来的，改矩形不可能只改一头。
-   返回的是**视锥剔除后**的列表：
+2. **先编译这一帧**（`compileFrame`）：按声明算出"谁先谁后、每条 pass 声明的输入解析到什么、这一组声明有什么问题"，
+   并**顺手产出这一帧的值**（`FrameDescription`：每条启用的 pass 的身份 / order / 解析后的输入 + 它自己描述出来的
+   绘制），`RenderEngine::frameDescription()` 可以读它。**帧跑的是这个值**，不是"逐条 pass 再问一遍"。
+   编译期跑每条 pass 的 `before_draw` 钩子（HUD 自更新那类"先写内容"的活），再请它描述自己 ——
+   于是**内容收集**发生在编译里，`Scene::collectRenderCommands(camera)` 对 **(scene, camera)** 每帧只走一次树，
+   结果记忆到帧末（规则见 §2.2）。相机自带画面的形状（见 §2.1 的 `Camera` 段），剔除用的视锥与画面用的投影是从
+   **同一个数**推出来的：改相机的形状就是改整个视图（memo 以 view-projection 为键，天然区分两种形状，
+   不会拿一个形状的走树结果去回答另一个）。返回的是**视锥剔除后**的列表：
    `isVisible()` 是硬门，包围盒完全在视锥外（p-vertex 测试）的节点**整棵子树**被剪掉，被剔除的几何体
    根本不在列表里；后端的保留节点则从根上摘下但不销毁，回来时直接复用 —— 离开多久都不会被回收
    （只有宿主自己放手才算删除，细节见 `backend.md` §5.5）。
-3. 后端把每个 `RenderCommand` 物化成后端对象。在 vsg 后端里就是每个 drawable 一条保留的
+   > **一条 pass 每帧只被描述一次**，而且**引擎不会调它的 `execute()`**：想让引擎跑自己的活，就把"发什么"
+   > 放进 `RenderPass::describe()`、把"先做什么"放进声明的 `before_draw` 钩子（见 §2.4 的 `RenderPass` 段）。
+3. 然后把这个值**整帧交给后端**（`RenderBackend::executeFrame(frame)`）：默认实现就是"按顺序把值宣告成逐条调用"
+   （pass 作用域 + 它的 target / viewport / 清屏 / 状态 + 每条绘制调用），所以后端什么都不用改；
+   **想直接从值构建**（保留式渲染器建图、离线渲染器遍历）的后端覆写这一个入口即可，逐条调用它一份都收不到。
+   后端把每个 `RenderCommand` 物化成后端对象。在 vsg 后端里就是每个 drawable 一条保留的
    `MatrixTransform` → `StateGroup` → bind/draw 命令链，只在其输入（`geometry->revision()`、
    material、texture、resolved state、program）变化时重建。
 4. 顶点数据是**别名，不是拷贝**：真的 `vsg::vec3Array` 等直接读 geometry 自己的 buffer，于是模型与
@@ -217,8 +231,9 @@ scene->addLight(Light::createDirectional({ 0.0, 0.0, -1.0 }));  // 一盏方向�
 // ③ 相机。
 CameraPtr camera(new Camera());
 camera->setViewMatrixAsLookAt({ 0.0, 0.0, 3.0 }, { 0.0, 0.0, 0.0 }, { 0.0, 1.0, 0.0 });
-camera->setProjectionMatrixAsPerspective(45.0, 0.1, 100.0);  // 投影的**形状**不在这里：它属于这张画面
-                                                              // 画进的那块矩形（see RenderBackend::viewAspect）
+camera->setProjectionMatrixAsPerspective(45.0, 0.1, 100.0);
+camera->setAspect(16.0 / 9.0);                               // 投影的**形状**就在这里：它是相机自己的状态
+                                                             // （一台相机 = 一张画面，see Camera）
 
 // ④ 引擎 + 后端 + 预设管线。
 // 引擎是**引用计数**对象，管线**强持**它（`Pipeline` 的构造参数就是 `intrusive_ptr<RenderEngine>`）：栈上的引擎会被
@@ -295,8 +310,10 @@ engine.addPass(compose, scene, 0);
 compose->setViewport(surface_w - 320 - 8, 8, 320, 180);
 ```
 
-这条子视口不只决定"画在哪"：它同时是这张画面的**形状**（后端从这里推出 aspect，见 `RenderBackend::viewAspect()`），
-所以那条 pass 的剔除与投影会一起跟着变成 320:180 —— 同一台相机同时全屏呈现 + 画中画时，两块各自的形状都对。
+这条子视口只决定"画在哪"：画面的**形状**是相机自己的（一台相机 = 一张画面，见 `Camera`），所以给这条 pass
+一个子视口时，也把它的相机设成那块矩形的形状（`compose_camera->setAspect(320.0 / 180.0)`）—— 否则引擎会在
+编译期报"pass 的矩形与相机的画面形状不一致 = 画面被拉伸"。同一台相机要同时全屏呈现 + 画中画，就用两台相机
+（各自一个形状），或者两条 pass 各画进与相机同形的一块矩形。
 
 | pass | 相机 | renderTarget | order | 清屏 | 深度 | 输出/输入 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -660,6 +677,7 @@ view->setGizmoVisible(true);   // 配方里没建过这一档？第一次开启�
 // 几何（改它**不重建**）：归一化视口是矩形唯一的真相，宽高比 / pass 的设备像素视口 / 清屏范围全由它推
 view->setViewport({ 0.0, 0.0, 0.5, 1.0 });
 view->onSurfaceResized(w, h, dpr);        // 只喂**表面**尺寸 + 比例；"这一块"是视图自己算的
+                                          // （视图挂在表面上时这句转发给 RenderSurface::resize，见 §3.11）
 view->addSurfaceLayout([p](int w, int h, double dpr) { p->resize(w, h, dpr); });  // 自建管线接这里
 ```
 
@@ -705,8 +723,8 @@ surface->dismiss(pipeline->windowPass());
 // 左右两块，各一个视图（各自的相机/操纵器/HUD —— 视图回答"怎么画"）
 surface->present(*left,  vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });
 surface->present(*right, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 });
-left->onSurfaceResized(1280, 720, dpr);   // 照旧喂**整块表面**的尺寸：各自的矩形由表面算
-right->onSurfaceResized(1280, 720, dpr);
+surface->resize(1280, 720, dpr);          // 尺寸归**表面**：一次扇出给每条呈现，各自的矩形由表面算
+// 新加的格子不用再喂： `present` 把表面记着的尺寸立刻交给它（视图那句 onSurfaceResized 也只是转发到这里）
 
 // 改布局：两种拼写写的是同一块矩形（视图那句转发给表面）
 surface->setViewport(left.get(), vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.25, 1.0 });
@@ -731,8 +749,10 @@ vn::graphics::SceneView* current = surface->focusedView();     // 没人按过 =
   呈现表按它排序；同序保持声明顺序。
 - **矩形也归这张表**：一块表面被切成什么形状是**表面**的事，视图**读**它（`SceneView::viewport()`）。所以同一块
   矩形只有一份：视图那句 `setViewport` 转发到表上，`dismiss()` / 表面析构时表把矩形**还给**视图（接着画同一块
-  地方，只是从"表面的声明"变成"视图自己的声明"）。设备像素那一层仍是视图算的（`onSurfaceResized` 给它整块表面
-  的尺寸，它按自己的矩形换算），**形状**（aspect）由后端从那条 pass 的 viewport 推（见 §2.4 的 `Camera`）。
+  地方，只是从"表面的声明"变成"视图自己的声明"）。**尺寸**也归这张表（`resize`：一块表面只有一个尺寸，报一次就
+  够，其余是扇出；挂在表面上时 `SceneView::onSurfaceResized` 只是转发），设备像素那一层仍是视图算的（它按自己
+  的矩形换算），而**形状**是视图的相机的（`SceneView::applySurfaceGeometry` 把窗格的形状 push 给相机，见 §2.4 的
+  `Camera`：一台相机一张画面，同一台相机被两块不同形状的矩形用到就是引擎会报的那种错）。
   宿主自建的 pass **没有**归一化矩形：它自己给 `pass->setViewport()` 设备像素（它本来就知道尺寸），
   `viewAt()` 也永远不会选中它（它不是视图）。
 - **不装 router 也能分屏**：`RenderControl` 的**默认**路由就是问这张表（`viewAt`）—— 矩形在哪儿，输入就去哪儿
@@ -955,8 +975,11 @@ ctest --test-dir build                # CTest 视角
 是"结构对了、像素不一定对"的那一段：`test_graphics` 能证"该画的 pass 在画"，这里证"画出来的像素对"——
 今天两条：①延迟配方 + 线框档 ⇒ 画面里真的有边，且边落在同一批几何的实体版覆盖的那块轮廓上（同一视图、同一相机、
 同一条 pass，只换光栅化模式）；②夹具本身带一条**没有视图**的最小用例（手搭一条 pass 画同一批内容），证明它不是
-为某一条用例特制的。门禁问的是"有没有一个满足后端下限的设备 / 会话起得起得来"，起不来就 `SKIP` 并说出原因（不假装
-通过）；不靠 `getenv("DISPLAY")` 判"有没有窗口系统"——那在 Windows 上是"没有"，而那里离屏像素照常可读。
+为某一条用例特制的。门禁问的是"有没有一个满足后端下限的设备 / 会话起得起得来 / 离屏像素给不给得回来"，起不来就
+`SKIP` 并说出原因（不假装通过）；不靠 `getenv("DISPLAY")` 判"有没有窗口系统"——那在 Windows 上是"没有"，而那里
+离屏像素照常可读。这一份探测是**共享入口**（`SdkPixelFixture::available()`，一次进程内只答一次）：套件里其余那些
+只需要设备的用例也问它（`BlockStorageTest` / `BlockDescriptorsTest` / `SessionTest` / `VsgBackendTest`），
+只有真正需要 X11 宿主窗口的用例才另外自己 `xcb_connect` 一次并据此 `SKIP`。
 
 后端自检（`./build/bin/vsg_backend_selftest`，上面两个脚本都会跑它）会驱动整条管线 —— forward、
 deferred、离屏、深度共享、overlay —— 并打印 `[selftest]` 证据行。

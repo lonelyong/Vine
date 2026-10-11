@@ -183,9 +183,6 @@ std::vector<std::byte> drawBlock()
 
 TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
 {
-    if (std::getenv("DISPLAY") == nullptr) {
-        GTEST_SKIP() << "no window system";
-    }
     const auto probed_devices = probePhysicalDevices();
     if (!probed_devices.ok || probed_devices.usableCount() == 0) {
         GTEST_SKIP() << "no device satisfies the requirements";
@@ -351,9 +348,6 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // against the extent the test knows) and the camera's world position (cam_pos.x). The camera looks at
     // (0.5, 0, 0) from (0.5, 0, 1.5), so the view pushes the triangle into the LEFT quarter of the window:
     // the right quarter can only be the plan's clear.
-    if (std::getenv("DISPLAY") == nullptr) {
-        GTEST_SKIP() << "no window system";
-    }
     const auto probed_devices = probePhysicalDevices();
     if (!probed_devices.ok || probed_devices.usableCount() == 0) {
         GTEST_SKIP() << "no device satisfies the requirements";

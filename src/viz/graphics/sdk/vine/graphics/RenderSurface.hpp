@@ -77,9 +77,9 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
         /// The area this presentation draws into (normalized), for a presentation that HAS a view.
         ///
         /// Empty for a pass a host declared: a rectangle in normalized terms is a statement relative to the
-        /// surface's size, and this table does not hold that size (the views are told it, see
-        /// SceneView::onSurfaceResized) - such a pass states its own rectangle in device pixels instead
-        /// (RenderPass::setViewport), which is the host's to own because the host is the one that knows the pixels.
+        /// surface's size, and a pass is not fed that size (the views are, see resize) - such a pass states its
+        /// own rectangle in device pixels instead (RenderPass::setViewport), which is the host's to own because
+        /// the host is the one that knows the pixels.
         std::optional<NormalizedViewport> rect{};
     };
 
@@ -190,6 +190,30 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      */
     [[nodiscard]] bool hasPresentation() const noexcept;
 
+    /** @brief Records the size of this surface, keeping the pixel ratio it last saw.
+     *
+     * @param width  Surface width in logical pixels (the unit the host reports; <= 0 is ignored).
+     * @param height Surface height in logical pixels (<= 0 is ignored).
+     */
+    void resize(int width, int height);
+
+    /** @brief Records the size of this surface and gives it to every view that presents it.
+     *
+     * The size of the thing a picture ends up in is a fact about the SURFACE, like the order and the clear: a
+     * host reports it ONCE (its window knows it - see SurfaceWindow), and this table fans it out to every
+     * presented view, each of which derives its own rectangle from it (SceneView::onSurfaceResized is the one
+     * step, and a view never holds a second copy of the surface's size). A view presented LATER receives the
+     * size remembered here at once, so a pane added to a running surface is sized without the host feeding it.
+     *
+     * Presentation is the unit: a pass a host declared itself is not fed - it has no view, and such a pass
+     * states its own rectangle in device pixels (see Presentation::rect).
+     *
+     * @param width        Surface width in logical pixels (<= 0 is ignored, with the ratio).
+     * @param height       Surface height in logical pixels (<= 0 is ignored, with the ratio).
+     * @param pixel_ratio  Device pixels per logical pixel; <= 0 keeps the ratio this surface last saw.
+     */
+    void resize(int width, int height, double pixel_ratio);
+
     /** @brief The presentations of this surface, in the order the engine runs them.
      *
      * The answer describes the frame the engine would draw NOW, not what was once declared: a presentation whose
@@ -204,9 +228,9 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      *
      * The default answer to "which view is the user pointing at": a point belongs to the presentation whose
      * rectangle contains it. Coordinates are the surface's own, in the same normalized terms the rectangles are
-     * stated in - a host that has device pixels (a mouse event) divides them by the surface size it gave the views
-     * (SceneView::onSurfaceResized), because this table does not hold that size (see Presentation::rect). A
-     * host-declared pass is not a view and is never the answer.
+     * stated in - a host that has device pixels (a mouse event) divides them by the surface size it reported
+     * (see resize), which is the size this table fanned out. A host-declared pass is not a view and is never
+     * the answer.
      *
      * Where presentations overlap, the one drawn LAST wins: that is the picture the point is actually on.
      *
@@ -255,7 +279,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
         intrusive_ptr<RenderPass> pass;
         /// The area this entry draws into (normalized). A view presentation always has one (its default is the
         /// whole surface); a pass a host declared has none - a normalized rectangle would have to be converted
-        /// against a surface size this table does not hold (see Presentation::rect).
+        /// against a surface size this table does not give a pass (see Presentation::rect).
         NormalizedViewport        rect{};
         /// The pass this entry was last seen with, and what IT asked for (clears? which colour? depth?). A new pass
         /// means a fresh ask (a rebuild rebuilds its defaults) - and the surface needs the ask it remembered,
@@ -309,6 +333,11 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
 
     /// The engine the presentations are registered on and ordered by (borrowed; must outlive this surface).
     raw_ptr<RenderEngine> engine_;
+    /// The size of this surface as the host reported it (resize), and the ratio that came with it: what every
+    /// presented view derives its rectangle from. Zero until a host reports one.
+    int    width_ = 0;
+    int    height_ = 0;
+    double pixel_ratio_ = 1.0;
     /// The table, in declaration order (presentations() answers in engine order).
     std::vector<Entry> entries_;
     /// The view the input went to (borrowed, and only while it presents this surface): null = nothing focused yet,

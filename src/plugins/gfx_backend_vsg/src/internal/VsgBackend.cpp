@@ -216,13 +216,6 @@ struct VsgBackend::Data
     void* host_handle{nullptr};            ///< The handle the host announced (nullptr = a window of our own).
     int   announced_width{640};            ///< What the next initialize() creates its window at.
     int   announced_height{360};           ///< What the next initialize() creates its window at.
-    /// The picture rectangle of the pass being recorded, as its announcements described it: the viewport when the
-    /// pass named one, else the size of what it draws into (the window target, or the host's target). This is what
-    /// viewAspect() answers from - one derivation, read by the recorder (the view block) and by the SDK's culling.
-    bool               pass_has_viewport{false};
-    vn::graphics::Viewport pass_viewport{};
-    int                pass_target_width{0};
-    int                pass_target_height{0};
     vn::intrusive_ptr<const vn::graphics::ShaderProgram> default_program;  ///< See the header.
 
     std::array<vn::graphics::ReportOnce, kUnservedCount> unserved_reports{};  ///< One episode per entry point.
@@ -409,6 +402,31 @@ void VsgBackend::endFrame()
     d->frame = &d->compiler.compile(d->recorder.description(), core::FrameFacts{ d->facts });
 }
 
+void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame)
+{
+    // THE VALUE, run by the layer that owns the identities: every entry below is this backend's own (see the
+    // header), so a drawing call still reaches the recorder, the content store and the session by the same path
+    // they always did - what changed is only where the frame's shape comes from (one value, not a sequence).
+    for (const vn::graphics::FrameDescription::Pass& pass : frame.passes)
+    {
+        if (pass.pass == nullptr)
+        {
+            continue;  // a frame's entry always names a pass
+        }
+        beginPass(pass.pass);
+        setPassOrder(pass.order);
+        setPassInputs(pass.inputs);
+        if (pass.description.has_value())
+        {
+            // The pass' own facts and its draws, through the ONE mapping the SDK and this plugin share: the
+            // attribute order the recorder's protocol expects is that mapping's business, not this loop's.
+            vn::graphics::announcePassTo(*pass.description, this);
+            vn::graphics::announceDrawsTo(*pass.description, this);
+        }
+        endPass();
+    }
+}
+
 void VsgBackend::swapBuffers()
 {
     if (d->frame == nullptr || !d->session.initialized())
@@ -554,21 +572,12 @@ void VsgBackend::setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
 {
     if (target == nullptr)
     {
-        // The window: its shape is the surface's, which the session follows (no second copy of the size - see
-        // resize). Read here for the pass' aspect, and by the recorder for the same reason.
-        if (WindowTarget* window = detail::SessionContentAccess::windowTarget(d->session))
-        {
-            d->pass_target_width  = static_cast<int>(window->width());
-            d->pass_target_height = static_cast<int>(window->height());
-        }
         if (d->recorder.inPass())
         {
             (void)d->recorder.setRenderTarget(nullptr);  // the default framebuffer, spelled as the plan does
         }
         return;
     }
-    d->pass_target_width  = target->width();
-    d->pass_target_height = target->height();
 
     // The host's own target: its description is copied and its objects are built the first time the description
     // can make them (see HostTargets - the resize / rebuild after that is the plan's answer, applied by the
@@ -629,12 +638,6 @@ void VsgBackend::beginPass(vn::raw_ptr<const vn::graphics::RenderPass> pass)
         return;  // no pass announced: whatever needed a scope is refused and reported by the recorder
     }
     const core::PassId id = d->passes.adopt(pass);
-    // A new scope: the picture rectangle it will announce starts empty, so a pass that names no viewport is
-    // measured by what it draws into (see viewAspect()).
-    d->pass_has_viewport  = false;
-    d->pass_viewport      = vn::graphics::Viewport{};
-    d->pass_target_width  = 0;
-    d->pass_target_height = 0;
     if (d->recorder.inFrame())
     {
         // Refusing (a nested scope) is the protocol's to judge and report; this layer has no rules of its
@@ -667,29 +670,6 @@ void VsgBackend::setViewport(int x, int y, int width, int height)
     {
         (void)d->recorder.setViewport(x, y, width, height);
     }
-    // Remembered for viewAspect(): the rectangle a pass draws a sub-area into IS the shape of its picture, and
-    // the recorder is about to be told the same thing for the view block.
-    d->pass_has_viewport = true;
-    d->pass_viewport     = vn::graphics::Viewport{ x, y, width, height };
-}
-
-double VsgBackend::viewAspect() const
-{
-    int width  = d->pass_target_width;
-    int height = d->pass_target_height;
-    if (d->pass_has_viewport)
-    {
-        // A pass that draws into a sub-rectangle has that rectangle's shape, whatever it draws into.
-        width  = d->pass_viewport.width;
-        height = d->pass_viewport.height;
-    }
-    if (width <= 0 || height <= 0)
-    {
-        // Nothing describes a picture yet (no pass, or a scope that named neither): 1 is "no view", stated rather
-        // than guessed - a projection built with it is a square one, which is what a caller with no rectangle has.
-        return 1.0;
-    }
-    return static_cast<double>(width) / static_cast<double>(height);
 }
 
 void VsgBackend::setLights(const std::vector<vn::raw_ptr<const vn::graphics::Light>>& lights)
@@ -783,11 +763,8 @@ void VsgBackend::render(const std::vector<vn::graphics::RenderCommand>& commands
         // comparison and nothing else.
         d->store->updateMaterial(command.material.get());
     }
-    // The picture's shape goes to the recorder before the drawing call: it is the scope's, and the view block's
-    // projection is built with it (a camera holds none - see Camera). This is the same number viewAspect() answers
-    // the SDK's culling with (the engine asks before the pass collects), so the frustum culled against and the
-    // projection rendered with cannot drift.
-    (void)d->recorder.setViewAspect(viewAspect());
+    // The picture's shape is the CAMERA's (see Camera), and the recorder reads it from the same camera when it
+    // builds the view block - one number, read by culling and projection alike, so they cannot drift.
     (void)d->recorder.render(commands, camera);  // refusing (no scope, a released target) is the protocol's
 }
 

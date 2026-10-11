@@ -40,10 +40,6 @@ namespace
 
 TEST(SessionMoveTest, ASecondHostWindowMovesTheSessionAndTheSameOneKeepsIt)
 {
-    if (std::getenv("DISPLAY") == nullptr)
-    {
-        GTEST_SKIP() << "no window system";
-    }
     const auto probed_devices = probePhysicalDevices();
     if (!probed_devices.ok || probed_devices.usableCount() == 0)
     {

@@ -1,12 +1,19 @@
-#include <vine/graphics/RenderEngine.hpp>
+﻿#include <vine/graphics/RenderEngine.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <string>
 #include <vector>
 
+#include <vine/graphics/Camera.hpp>
 #include <vine/graphics/PassDesc.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderPass.hpp>
+#include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ScreenPass.hpp>
+#include <vine/graphics/Viewport.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -20,6 +27,48 @@ bool sameTransientShape(const TransientShape& left, const TransientShape& right)
 {
     return left.colors == right.colors && left.depth == right.depth &&
            left.depth_promotion == right.depth_promotion;
+}
+
+/// @brief The shape difference between a pass' rectangle and its camera's picture that is rounding, not a mistake.
+///
+/// A pane's rectangle is the pane's logical size scaled by the pixel ratio, and that conversion truncates (see
+/// deviceViewport), so one shape can come out a device pixel off - a fraction of a percent on any real pane. A
+/// mismatch worth reporting is a different RATIO: 16:9 against 4:3 is a third of a picture, and a shared camera
+/// between a pane and a square target is most of one.
+constexpr double kShapeTolerance = 0.02;
+
+/// @brief The shape of the picture an orthographic camera's projection is built for.
+///
+/// An orthographic camera's window carries its own shape and its aspect is not read at all (see Camera), so the
+/// rectangle it draws into is measured against the window.
+///
+/// @param camera Camera to read.
+/// @return The window's width / height, or 1.0 for a window with no area.
+double orthographicShape(const Camera& camera) noexcept
+{
+    const double height = camera.orthographicTop() - camera.orthographicBottom();
+    const double width  = camera.orthographicRight() - camera.orthographicLeft();
+    return (height > 0.0 && width > 0.0) ? width / height : 1.0;
+}
+
+/// @brief Converts SDK-built ASCII digits to the string type a message is assembled from.
+///
+/// @param text ASCII text (the SDK's messages carry every number as digits).
+/// @return The same text as a u8 string.
+std::u8string toU8(const std::string& text)
+{
+    return std::u8string(text.begin(), text.end());
+}
+
+/// @brief Formats a picture shape for a report.
+///
+/// @param shape Width / height of the picture.
+/// @return The shape as digits, e.g. "1.78:1".
+std::string shapeText(double shape)
+{
+    char buffer[32] = {};
+    std::snprintf(buffer, sizeof(buffer), "%.3g:1", shape);
+    return std::string(buffer);
 }
 }  // namespace
 
@@ -96,7 +145,152 @@ void RenderEngine::compileFrame()
         plan_rows_.push_back(std::move(row));
     }
 
+    // The last of the compile's checks, and the only one that reads the FRAME's own facts (a target's size) next
+    // to a declaration's: whether the picture each pass draws is projected for the shape of the rectangle it
+    // lands in (see collectPictureShapeMismatches).
+    collectPictureShapeMismatches();
+
+    // And then the frame itself, as the value a backend consumes (see buildFrameValue): the same descriptions the
+    // passes would have announced one by one, assembled here, before anything is dispatched - the whole point of
+    // the engine's own value (compileFrame) reaching the boundary.
+    buildFrameValue();
+
     collecting_problems_ = false;
+}
+
+void RenderEngine::buildFrameValue()
+{
+    // EVERY ENABLED PASS HAS AN ENTRY, whether it issues anything or not: "this pass ran and had nothing to
+    // issue" is a fact of the frame (its scope opens and closes, and a backend keys per-pass retained state by
+    // it), which is not the same fact as "this pass did not run" - a disabled pass has no entry at all.
+    frame_value_.passes.clear();
+    // Rows and slots are one per index (see compileFrame): the row is the frame's answer about a pass, the slot
+    // is the declaration itself - and the hook the declaration carries belongs to the DECLARATION.
+    for (std::size_t index = 0; index < plan_rows_.size(); ++index) {
+        PlanRow&          row  = plan_rows_[index];
+        RenderPass* const pass = row.pass;
+        if (pass == nullptr || !pass->isEnabled()) {
+            if (index < slots_.size()) {
+                slots_[index].record_micros = 0;   // a pass that does not run costs nothing this frame
+            }
+            continue;
+        }
+        // THIS IS WHAT A PASS COSTS THE FRAME. Under a value-driven frame the work is here: the hook runs, the
+        // inputs are told, the pass describes itself (collecting and culling its content) - and the run then only
+        // announces what came out. The number is what the plan reports per pass (see
+        // FramePlan::PassPlan::record_micros), which is the host-visible half of a frame; the GPU half is the
+        // backend's (see RenderEngine::frameCounters). One clock read per pass, not per draw.
+        const auto pass_started = std::chrono::steady_clock::now();
+        // Content that updates itself per frame (an FPS readout, a mirrored gizmo) does it through the hook its
+        // declaration carried, and it is what the pass is ABOUT TO describe: it writes content, so it happens
+        // here - before the pass is described - and in run order.
+        if (index < slots_.size() && slots_[index].before_draw) {
+            slots_[index].before_draw();
+        }
+        // The declared inputs were resolved by the compile (see compileFrame's rows), and the pass is told them
+        // here: they are what a ScreenPass' effect reads, and they are part of what the pass describes.
+        pass->resolveInputTextures(row.inputs);
+
+        FrameDescription::Pass entry;
+        entry.pass  = pass;
+        entry.order = row.order;
+        entry.inputs.assign(row.inputs.begin(), row.inputs.end());
+        PassDescription described;
+        if (pass->describe(row.content, described)) {
+            entry.description = std::move(described);
+        }
+        if (index < slots_.size()) {
+            slots_[index].record_micros = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -
+                                                                      pass_started)
+                    .count());
+        }
+        frame_value_.passes.push_back(std::move(entry));
+    }
+}
+
+void RenderEngine::collectPictureShapeMismatches()
+{
+    // ONE CAMERA, ONE PICTURE SHAPE (see Camera). A pass' picture is projected with its CAMERA's shape while the
+    // rectangle it lands in is its viewport, or the whole target it draws into (the surface, for the window) - and
+    // the two agreeing is what makes an unstretched picture. Where they disagree the content was culled for one
+    // shape and drawn into another: a stretched picture, and nothing downstream can see it, because the backend
+    // is handed a rectangle and a camera snapshot that are each perfectly legal.
+    //
+    // Who this CANNOT be about:
+    //   * a ScreenPass, whose full-screen triangle is built in clip space and reads no projection (see
+    //     BuiltinShaders::fullscreenVertexProgram): its camera states the view the lighting is computed in, so the
+    //     rectangle cannot stretch what it draws;
+    //   * a pass that is disabled (it draws nothing), has no camera (it draws nothing - see RenderPass::describe),
+    //     or has no content (a scene pass with no scene issues nothing at all);
+    //   * an orthographic camera only in the sense that its SHAPE is its window's, not its aspect (see Camera):
+    //     the window is what the picture is projected for, so that is what the rectangle is measured against.
+    shape_mismatches_this_frame_.clear();
+
+    for (const Slot& slot : slots_) {
+        const RenderPass* const pass = slot.pass.get();
+        if (pass == nullptr || !pass->isEnabled() || slot.content == nullptr || pass->camera() == nullptr) {
+            continue;
+        }
+        if (dynamic_cast<const ScreenPass*>(pass) != nullptr) {
+            continue;
+        }
+
+        // The rectangle: the pass' viewport when it named one, else the whole thing it draws into. A window pass
+        // (no render target) draws into the surface this frame presents, which is what its rectangle is sized
+        // from; a surface nobody has sized yet describes no picture, so there is nothing to check.
+        int width  = frame_ctx_.surface_width;
+        int height = frame_ctx_.surface_height;
+        if (raw_ptr<const RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
+            width  = drawn_into->width();
+            height = drawn_into->height();
+        }
+        if (pass->hasViewport()) {
+            const Viewport viewport = pass->viewport();
+            width                   = viewport.width;
+            height                  = viewport.height;
+        }
+        if (width <= 0 || height <= 0) {
+            continue;
+        }
+
+        const Camera& camera   = *pass->camera();
+        const double  picture  = camera.projectionType() == Camera::ProjectionType::Orthographic
+                                     ? orthographicShape(camera)
+                                     : camera.aspectRatio();
+        const double  rectangle = static_cast<double>(width) / static_cast<double>(height);
+        // A sub-pixel difference is a device-pixel rounding, not a mistake: the rectangle of a pane is the pane's
+        // logical size scaled by the pixel ratio, and that conversion truncates (see deviceViewport). A real
+        // mismatch - 16:9 against 1:1, a pane against a shared camera - is a dozen times this.
+        if (std::abs(rectangle - picture) <= kShapeTolerance * picture) {
+            continue;
+        }
+
+        auto known = std::find_if(shape_mismatches_last_frame_.begin(), shape_mismatches_last_frame_.end(),
+                                  [pass](const ShapeMismatchEpisode& episode) { return episode.pass == pass; });
+        ShapeMismatchEpisode episode;
+        episode.pass = pass;
+        if (known != shape_mismatches_last_frame_.end()) {
+            episode.reported = known->reported;
+        }
+        if (episode.reported.shouldReport()) {
+            // The numbers go in as ASCII digits, like every other message in the SDK (see
+            // RenderPipelineBuilder::reportRequestedShadows).
+            const std::string size_text = std::to_string(width) + "x" + std::to_string(height);
+            noteProblem(String(u8"pass '") + reportedPassName(pass) + String(u8"' draws into a ") +
+                        String(toU8(size_text)) + String(u8" rectangle, but its camera is projected for a picture "
+                                                        u8"of ") +
+                        String(toU8(shapeText(picture))) +
+                        String(u8" - the picture is stretched (the content was culled for one shape and lands in "
+                               u8"another). Give the camera the shape of the rectangle it draws into "
+                               u8"(Camera::setAspect), or draw it into the rectangle the camera is shaped for"));
+        }
+        shape_mismatches_this_frame_.push_back(std::move(episode));
+    }
+
+    shape_mismatches_last_frame_.clear();
+    shape_mismatches_this_frame_.swap(shape_mismatches_last_frame_);
+    shape_mismatches_this_frame_.clear();
 }
 
 void RenderEngine::resolveTransientTarget(Slot& slot)

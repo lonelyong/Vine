@@ -228,7 +228,8 @@ co_await initAppShellRenderControl(wnd, dock_);  // 设备 + 管线在这一拍�
   `view->ensureWindowPass()`，它自带"引擎里已有同一个相机的窗口 pass 就让位"的推断）②`useDefaultBackend()`（只在引擎没有后端时补第一个注册的
   后端；晚注册的还能被下一次 attach 捡起）③没有后端 ⇒ `failAttach("no render backend is registered")` ④句柄空 / 尺寸退化
   ⇒ 记一行日志后返回，等 show/resize/下一次 `activate()` ⑤`setWindowHandle` → `initialize()`（设备 + 会话 + 管线编译）
-  → `resize(w,h)` + `view->onSurfaceResized(w,h,dpr)` → `renderFrame()`（这一帧付掉 pass 图 / program slot / 编译）。
+  → `resize(w,h)` + 把尺寸交给**表面**（`surface->resize(w,h,dpr)`，表面记下并扇出给每条呈现；控件自己那个视图不呈现时才单独喂）
+  → `renderFrame()`（这一帧付掉 pass 图 / program slot / 编译）。
 - **状态仍是三个**（`Pending` / `Presenting` / `Failed`），并加两条不变量：
   **没有会话就没有帧**（`renderFrame()` 在 `backend_live` 为假时不推状态 —— `Presenting` 就是"帧在面里"，也是控件显示
   渲染区域的依据）；**`failureReason()` 非空 ⟺ `state()==Failed`**（attach 成功后清掉旧判决）。

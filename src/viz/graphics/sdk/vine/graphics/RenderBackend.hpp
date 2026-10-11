@@ -13,6 +13,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "Diagnostics.hpp"
+#include "FrameDescription.hpp"
 #include "FrameStats.hpp"
 #include "RenderDiagnostic.hpp"
 #include "RenderPass.hpp"
@@ -51,37 +52,6 @@ enum class ReadbackResult
     Failed,      ///< The copy was attempted and failed (no usable device, submission error).
 };
 
-/** @brief How a pass has its target cleared before it draws.
- *
- * A SCOPE ATTRIBUTE, announced between beginPass() and the pass' draw (setClearPolicy), so it reads
- * as what it is: the pass describes the clear its content expects, and every draw call of that pass
- * gets it. Nothing is cleared at the moment of the call — a backend that clears through its render
- * pass' load-op (which is what the load-op IS for) applies it when the pass records, and the name
- * no longer promises an action that may never happen.
- *
- * ONE COLOUR, because one colour is what a colour ATTACHMENT gets: @ref color is attachment 0's,
- * and every further attachment of an MRT target is left TRANSPARENT BLACK (0,0,0,0) until a
- * fragment writes it. That is the contract, not an omission: it lets a consumer tell "nothing was
- * drawn here" from the stored data itself — the deferred-lighting program reads a stored view
- * position of ~0 as background — so a backend may not clear every attachment uniformly without
- * auditing those consumers, and one that cannot honour this must report it on its diagnostics
- * channel instead of clearing differently.
- *
- * DEPTH IS A FLAG, NOT A VALUE: every backend clears depth to its own far plane (this SDK's
- * backends render reverse-Z, whose far plane is 0 — see Camera), so a value here would be a second
- * place to get the clip convention wrong. @ref depth is honoured for off-screen targets, whose
- * depth content survives frames through a depth-LOAD pass; the WINDOW is the exception — the
- * surface render pass belongs to the windowing system and clears depth whatever this says (a pass
- * that needs a previous frame's depth renders into an off-screen target and composites it).
- */
-struct ClearPolicy
-{
-    /// Colour attachment 0 is cleared to (the only colour a single-attachment target reads).
-    Color color{};
-    /// Whether the depth buffer is cleared too (honoured off-screen; the window always clears depth).
-    bool depth = true;
-};
-
 /**
  * @brief Abstract render backend interface.
  *
@@ -89,18 +59,22 @@ struct ClearPolicy
  * null/test) must implement, and what the engine guarantees in return.
  * Supports both high-level pass execution and low-level command rendering.
  *
- * CALL ORDER. The engine drives a frame one pass at a time, in this order:
+ * CALL ORDER. The engine drives a frame in this order:
  *
  *   1. beginFrame();
- *   2. per enabled pass, in ascending pass order:
- *        beginPass(pass)          announces the pass (its identity) as active;
- *        setPassOrder(order)      where the pass stacks in the target;
- *        setRenderTarget / setViewport / setLights / setPassState / clear
- *                                 optional per-pass state (see beginPass);
- *        render() | drawScreenProgram();
- *        endPass();
+ *   2. executeFrame(frame)      THE FRAME'S BODY: the compiled value, handed over in one call (see
+ *                               FrameDescription). Its default implementation announces it through the per-call
+ *                               entries below - the same order this list used to spell out pass by pass - so a
+ *                               backend that keeps no state of its own needs nothing else, and one that would
+ *                               rather build from the value overrides executeFrame instead.
  *   3. endFrame();
  *   4. swapBuffers();            once per frame — the only call that presents.
+ *
+ * WHAT THE PER-CALL ENTRIES ARE FOR, now that a frame arrives as a value: (a) the default executeFrame
+ * implementation, which is also the spelling a host uses when it drives one pass itself (RenderPass::execute /
+ * announcePassTo / announceDrawsTo), and (b) a backend that wants the calls rather than the value. Inside a pass
+ * scope, in this order: beginPass(pass) (its identity) / setPassOrder(order) / setRenderInputs-resolved inputs /
+ * setRenderTarget / setViewport / setLights / setPassState / clear / render() | drawScreenProgram() / endPass().
  *
  * Everything between the frame pair is optional: a pass may draw several
  * times, set no state, or a backend may leave a call unimplemented (that is
@@ -185,6 +159,23 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      */
     virtual void beginFrame() = 0;
 
+    /** @brief Executes a whole frame from its description (see FrameDescription).
+     *
+     * THE FRAME'S BODY, and the entry a backend should implement: the engine has already compiled the frame
+     * (which pass runs when, what its inputs resolved to, what each pass issues), so this is "run THIS", not "here
+     * is one call at a time, in an order you have to know". A backend that takes the value directly (a retained
+     * renderer building a graph, an offline renderer walking it) overrides this and never sees the per-call
+     * entries.
+     *
+     * The default implementation announces @p frame through those entries, in the order the class contract
+     * documents: one scope per pass (beginPass / setPassOrder / setPassInputs), then that pass' own facts and its
+     * draws, then endPass. A backend that keeps no state of its own needs nothing else - so every backend supports
+     * this from the day it is added, and taking the value directly is an optimization rather than a requirement.
+     *
+     * @param frame The frame to execute, in run order (a pass with no description issues nothing at all).
+     */
+    virtual void executeFrame(const FrameDescription& frame);
+
     /** @brief Ends the frame: flushes what the frame's passes queued.
      *
      * Must not present — presenting is swapBuffers().
@@ -203,25 +194,6 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      * @param target Render target, or nullptr for the default framebuffer.
      */
     virtual void setRenderTarget(RenderTarget* target) = 0;
-
-    /** @brief Gets the shape (width / height) of the picture the pass being recorded is drawing into.
-     *
-     * The ONE place the aspect of a view is decided. A pass announces what it draws into (setRenderTarget) and,
-     * when it draws a sub-rectangle, where in it (setViewport); the backend knows how big those are (its own
-     * surface, the targets it manages), so it - and only it - can answer "what does this picture look like".
-     * Two readers use this same number, which is the point:
-     *
-     *   - the backend's own view block, where the projection is built (a camera holds no aspect: see Camera),
-     *   - the engine's culling, which asks for it just before the pass collects its commands
-     *     (RenderPass::execute), so the frustum culled against IS the frustum the picture is projected with.
-     *
-     * A second derivation would be the place "what you see" and "what was culled" drift apart.
-     *
-     * @return Width / height of the picture (the announced viewport when there is one, else the target's or the
-     *         surface's size); 1 when the backend has no view to describe at all (nothing is being recorded, or
-     *         a backend that draws no picture).
-     */
-    virtual double viewAspect() const = 0;
 
     /** @brief Returns whether off-screen render targets are supported.
      *

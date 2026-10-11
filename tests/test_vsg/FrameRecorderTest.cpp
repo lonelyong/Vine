@@ -221,13 +221,13 @@ TEST(FrameRecorderTest, OneViewportAndLightAnnouncementServesOneDrawingCall)
     EXPECT_EQ(r.observe.counters().draws, 3u);
 }
 
-TEST(FrameRecorderTest, TheViewBlockIsProjectedForTheShapeTheScopeAnnounced)
+TEST(FrameRecorderTest, TheViewBlockIsProjectedForTheCamerasOwnShape)
 {
-    // A camera holds no aspect (see Camera), so the shape of the picture is ANNOUNCED to the recorder - and the
-    // camera snapshot the view block is built from is projected with it. It is a scope attribute like the clear
-    // and the depth mode: the next pass starts from the default again rather than inheriting the last pass'
-    // shape, and something that is not a shape is refused rather than stored (a NaN here would poison every
-    // projection built from it with no way back).
+    // The camera holds the shape of its picture (see Camera), and the recorder takes the projection FROM the
+    // camera: the view block carries the camera's own matrix for the camera's own shape. Nothing announces a
+    // shape next to it, so nothing can hand the view block a shape the camera does not have - and a pass cannot
+    // inherit one from the pass before it either, because the only place a shape is stored is the camera, which
+    // is read per draw.
     Rig r;
     r.open();
 
@@ -235,17 +235,20 @@ TEST(FrameRecorderTest, TheViewBlockIsProjectedForTheShapeTheScopeAnnounced)
     camera.setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                  vn::math::Vec3d(0.0, 1.0, 0.0));
     camera.setProjectionMatrixAsPerspective(60.0, 0.1, 100.0);
+    camera.setAspect(2.0);
+    const vn::math::Mat4d wide = camera.projectionMatrix();
     const std::vector<RenderCommand> commands = oneCommand();
 
     EXPECT_TRUE(r.recorder.beginPass(1));
-    EXPECT_TRUE(r.recorder.setViewAspect(2.0));
-    EXPECT_FALSE(r.recorder.setViewAspect(0.0)) << "not a shape: the scope keeps the one it already has";
-    EXPECT_FALSE(r.recorder.setViewAspect(std::nan("")));
     EXPECT_TRUE(r.recorder.render(commands, &camera));
     EXPECT_TRUE(r.recorder.endPass());
 
+    // The camera is given its other shape between the passes: each draw is a reading of the camera as it was when
+    // the draw was recorded, so the snapshot cannot lag behind it.
+    camera.setAspect(1.0);
+    const vn::math::Mat4d square = camera.projectionMatrix();
     EXPECT_TRUE(r.recorder.beginPass(2));
-    EXPECT_TRUE(r.recorder.render(commands, &camera));  // announces no shape of its own
+    EXPECT_TRUE(r.recorder.render(commands, &camera));
     EXPECT_TRUE(r.recorder.endPass());
 
     const FrameDescription& description = r.seal();
@@ -253,13 +256,11 @@ TEST(FrameRecorderTest, TheViewBlockIsProjectedForTheShapeTheScopeAnnounced)
     ASSERT_EQ(description.passes[0].draws.size(), 1u);
     ASSERT_EQ(description.passes[1].draws.size(), 1u);
 
-    const vn::math::Mat4d wide   = camera.projectionMatrix(2.0);
-    const vn::math::Mat4d square = camera.projectionMatrix(1.0);
     ASSERT_NE(wide.element(0, 0), square.element(0, 0)) << "the two shapes have to differ for this to mean anything";
     EXPECT_DOUBLE_EQ(description.passes[0].draws[0].camera.projection.element(0, 0), wide.element(0, 0))
-        << "the view block is built for the shape the scope announced";
+        << "the view block is built for the shape the camera held";
     EXPECT_DOUBLE_EQ(description.passes[1].draws[0].camera.projection.element(0, 0), square.element(0, 0))
-        << "a scope that announced none is square, not the previous pass' shape";
+        << "and for the next one the camera was given, not the one before it";
     EXPECT_TRUE(r.diagnostics.clean());
 }
 

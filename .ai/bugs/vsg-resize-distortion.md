@@ -42,11 +42,22 @@
 
 窗口缩放后几何体保持正常比例，不再挤压 / 拉伸。
 
-## 后续（M2c，2026-10-11）：这一整类错已结构性消失
+## 后续（M2c，2026-10-11 —— 已回退，被 A 取代，见下）
 
 当时的修法是"**记得**把新尺寸推给相机"（上面第 1、2 条）—— 一份状态两处维护，漏一次就又变形。
-现在 `Camera` **不持 aspect**：投影是 `projectionMatrix(aspect)` 现算，而 aspect 只在**一处**推导
-（`RenderBackend::viewAspect()`：pass 的 viewport，否则目标 / 表面尺寸），剔除与 view block 读同一个数。
-于是"相机里的宽高比过期"这个状态**不存在了**，`pushEvent(ResizeEvent)`、`onResize()` 都不再需要往相机里推尺寸
-（surface 尺寸照旧要推给后端 —— 那是它自己的窗口/交换链，不是投影的形状）。
-见 `graphics-render-next.md` §3.2.3（③）与 `.ai/memory/graphics.md` 的 "aspect 出相机（M2c）" 一条。
+M2c 把 aspect 从相机里拿出去（投影 `projectionMatrix(aspect)` 现算、一处推导 `RenderBackend::viewAspect()`），
+那一版**同日被回退**：见下面"后续二"。
+见 `graphics-render-next.md` §3.2.3（③ 与它的"回退"）与 `.ai/memory/graphics.md` 的 "aspect 出相机（M2c）" 一条。
+
+## 后续二（A，2026-10-11 同日）：形状回到相机，但只有一个来源
+
+`viewAspect()` 那一版把"形状"变成了**只有后端能答、且答案取决于之前公告了什么**的问题（它读开着的 scope 的
+target/viewport），于是"整帧描述在派发前拼好"写不出来。A 把它放回**相机**：`Camera::setAspect(w / h)` 是形状
+唯一的写入口，投影、剔除、view block、拾取射线读同一个数 —— "相机里的宽高比过期"这个状态依然不存在（只有一处
+能写，而且是**同一个**矩形写它：`SceneView::applySurfaceGeometry` 按窗格形状 push），
+而"矩形与相机不一致"（共用一台相机给两块不同形状的矩形）不再被悄悄拉伸，由引擎编译期报出来
+（`RenderEngine::collectPictureShapeMismatches()`）。
+
+**所以这条 bug 的两个"当时"修法都不用回到**：既不需要"记得推给相机"（视图推一次，因为形状确实是它那格的），
+也不需要"问后端"（形状在相机里，编译期就答得出来）。
+见 `.ai/design/graphics-redesign.md` §"已落地：A"与 `.ai/memory/graphics.md` 的 A 那一条。

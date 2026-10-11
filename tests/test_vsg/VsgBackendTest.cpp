@@ -44,6 +44,7 @@
 #    include <xcb/xcb.h>
 #endif
 
+#include "SdkPixelFixture.hpp"
 #include "TestHostWindow.hpp"
 
 using vn::graphics::Geometry;
@@ -64,7 +65,6 @@ using vn::vsg::PassRegistry;
 using vn::vsg::VsgBackend;
 using vn::graphics::backend::VariantPool;
 using vn::vsg::WindowTarget;
-using vn::vsg::api::probePhysicalDevices;
 using vn::vsg::detail::BackendContentAccess;
 
 namespace
@@ -76,15 +76,14 @@ std::string as_bytes(const vn::String& text)
     return std::string(reinterpret_cast<const char*>(text.data()), text.size());
 }
 
-/// @brief Whether a device case can run at all (a window system and one usable physical device).
+/// @brief Whether a device case can run at all (a device, a session on it, and off-screen pixels back).
+///
+/// The question is the SDK device probe's, not "is there a window system": a case that needs an X11 host window
+/// asks for one itself (and skips when xcb refuses), so a case that only needs the device must not be held back
+/// by a proxy that is false on Windows, where the device is right there.
 bool deviceCaseAvailable()
 {
-    if (std::getenv("DISPLAY") == nullptr)
-    {
-        return false;
-    }
-    const auto probed = probePhysicalDevices();
-    return probed.ok && probed.usableCount() != 0;
+    return SdkPixelFixture::available();
 }
 
 /// @brief Whether @p byte is the display server's spelling of @p value.
@@ -308,7 +307,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
 {
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
@@ -445,7 +444,7 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameCounters)
 {
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
@@ -520,7 +519,7 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
 {
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -580,7 +579,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
 {
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -762,7 +761,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
 {
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -951,7 +950,7 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
 {
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -1122,7 +1121,7 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
 {
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -1265,7 +1264,7 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
 {
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -1417,7 +1416,7 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
 {
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -1493,7 +1492,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
 {
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -1656,7 +1655,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     // Run it where the numbers matter: ./build-release/bin/test_vsg --gtest_filter='*MeasureWhatEachKind*'
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -1960,7 +1959,7 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     // per-channel revisions simply would not send).
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -2197,7 +2196,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     // the window stays the clear colour - the drawings really did land nothing.
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -2449,7 +2448,7 @@ TEST(VsgBackendTest, TheTextureCacheDropsTheOldestInsertionAndRebuildsWhatItDrop
     // assertions are the misses counted through has() plus the one A/B pair that tells FIFO from LRU.
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -2589,7 +2588,7 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
     // residue is the material arena's slot handling, which has no release path at all (eviction only).
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -2786,7 +2785,7 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     // unless BOTH draw blocks landed in the replacement's bytes through sets that were repointed.
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -2933,7 +2932,7 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
     // deeper framework reaches.
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -3020,7 +3019,7 @@ TEST(VsgBackendTest, TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsS
     // this case asserts the FACTORS, not merely that blending happens at all.
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;
@@ -3141,7 +3140,7 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
     // asserted.
     if (!deviceCaseAvailable())
     {
-        GTEST_SKIP() << "no window system or no device satisfies the requirements";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     int               screen_index = 0;

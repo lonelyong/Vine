@@ -1,4 +1,4 @@
-#include <vine/graphics/RenderEngine.hpp>
+﻿#include <vine/graphics/RenderEngine.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -134,29 +134,12 @@ bool RenderEngine::initialize()
         if (frame_ctx_.surface_width > 0 && frame_ctx_.surface_height > 0) {
             backend_->resize(frame_ctx_.surface_width, frame_ctx_.surface_height);
         }
-        // Pre-frame warm-up: execute every enabled, non-clearing pass once so
-        // the backend builds and compiles its content before the first frame
-        // is submitted. Such passes (top / HUD content that draws over the
-        // main view, e.g. the axis gizmo) carry their own scene and window
-        // layer; compiling content first encountered mid-frame (i.e. inside
-        // frame()) has proven unreliable in the vsg backend, and the main
-        // content is pre-compiled during backend initialize. Re-execution in
-        // later frames is a no-op for already-built content. Each pass is
-        // opened as a pass scope and announced with its explicit order so the
-        // backend can key / stack its retained per-pass state correctly even
-        // though the warm-up runs non-clearing passes ahead of the clearing
-        // ones.
-        for (const auto& slot : slots_) {
-            RenderPass* pass   = slot.pass.get();
-            Scene*      content = slot.content.get();
-            if (pass == nullptr || content == nullptr || !pass->isEnabled() || pass->isClearEnabled()) {
-                continue;
-            }
-            backend_->beginPass(pass);
-            backend_->setPassOrder(slot.order);
-            pass->execute(content, backend_.get());
-            backend_->endPass();
-        }
+        // NO PRE-FRAME WARM-UP. It used to execute every enabled, non-clearing pass once before the first frame, so
+        // a backend could see its whole pass set before presenting - which mattered when a frame arrived as a
+        // sequence of calls and content was built lazily inside a drawing call. A frame now arrives as ONE value
+        // (RenderBackend::executeFrame), so a backend has the whole pass set before it does anything, and the
+        // engine's own path to the backend is the same one the first frame takes (see frame()). What is left to
+        // pre-build is the backend's own business: the main content is compiled during backend initialize().
     }
     return initialized_;
 }
@@ -237,52 +220,16 @@ void RenderEngine::frame(double dt)
         unsupported_target_reported_ = false;
     }
 
-    // Ordered pipeline in ascending order: negative orders run first (shadow
-    // / depth / g-buffer pre-pass), the window-present pass (master camera,
-    // null render target) conventionally sits at order 0, and positive orders
-    // run after (post-processing / compositing, then top / HUD passes). The
-    // pipeline is exactly what the caller registered - the engine auto-
-    // registers nothing - and the COMPILED plan says what each pass will do
-    // (its resolved inputs and target included), so this loop decides nothing:
-    // it runs the rows. Disabled passes are skipped by the plan's own `enabled`
-    // answer, and their row keeps saying they cost nothing (see
-    // FramePlan::PassPlan::record_micros).
-    for (std::size_t index = 0; index < plan_rows_.size(); ++index) {
-        Slot&         slot = slots_[index];
-        const PlanRow& row = plan_rows_[index];
-        RenderPass*   pass = row.pass;
-        if (pass == nullptr || !pass->isEnabled()) {
-            // A pass that does not run this frame has no cost this frame: its row keeps saying so instead of
-            // showing what it cost the last time it ran.
-            slot.record_micros = 0;
-            continue;
-        }
-        // The pass' own record cost, measured here for the frame plan: this is the host-visible half of a frame
-        // (the GPU half is the backend's, see RenderEngine::frameCounters), and it is what "where does the first
-        // frame's build go" is answered with. One clock read per pass, not per draw.
-        const auto pass_started = std::chrono::steady_clock::now();
-        // Content that updates itself per frame (an FPS readout, a mirrored gizmo) does it here, through the
-        // hook its declaration carried: it writes CONTENT, so it happens before the pass states anything.
-        if (slot.before_draw) {
-            slot.before_draw();
-        }
-        // Pass scope: the backend is told which pass is running (its identity
-        // for retained per-pass GPU state, and that it is active this frame),
-        // runs the whole pass, then the scope is closed so per-pass state a
-        // pass did not consume cannot leak into the next pass.
-        backend_->beginPass(pass);
-        backend_->setPassOrder(row.order);
-        // The pass' inputs were resolved by the compile and are announced before it draws: they are a property
-        // of the pass, so every draw call in it sees the same list (and a pass that declared none announces
-        // none). The pass is told the same list, because the inputs are what an effect reads.
-        pass->resolveInputTextures(row.inputs);
-        backend_->setPassInputs(row.inputs);
-        drawScenePass(pass, row.content);
-        backend_->endPass();
-        slot.record_micros = static_cast<std::uint64_t>(
-            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - pass_started)
-                .count());
-    }
+    // THE FRAME, HANDED OVER AS ONE VALUE. What runs is what the compile produced (see buildFrameValue): one entry
+    // per enabled pass, in run order, with everything that pass is and everything it issues. A disabled pass has no
+    // entry (and its row keeps saying it cost nothing - see FramePlan::PassPlan::record_micros, written by the
+    // compile); a pass whose entry carries no description issues nothing at all, whose scope still opens and closes.
+    //
+    // The per-call entries of this interface still exist and are exactly what a backend's default implementation
+    // of executeFrame announces the value through (see RenderBackend::executeFrame); a backend that would rather
+    // build from the value overrides it - which is what makes the boundary the value rather than the order of the
+    // calls.
+    backend_->executeFrame(frame_value_);
 
     backend_->endFrame();
     backend_->swapBuffers();
@@ -333,6 +280,13 @@ FramePlan RenderEngine::framePlan() const
         plan.passes.push_back(std::move(entry));
     }
     return plan;
+}
+
+const FrameDescription& RenderEngine::frameDescription() const noexcept
+{
+    // What the last compile produced. Before the first frame it is empty: nothing has been decided yet, and an
+    // invented value would be a second answer to "what does this frame do".
+    return frame_value_;
 }
 
 intrusive_ptr<RenderPass> RenderEngine::addPass(intrusive_ptr<RenderPass> pass, int order)
@@ -442,16 +396,6 @@ raw_ptr<Scene> RenderEngine::contentOf(raw_ptr<RenderPass> pass) const
         }
     }
     return nullptr;
-}
-
-void RenderEngine::drawScenePass(raw_ptr<RenderPass> pass, raw_ptr<Scene> content)
-{
-    // The pass decides what a null content means: the base RenderPass draws
-    // nothing (execute returns when the scene is null), while content-agnostic
-    // passes such as ScreenPass still execute against their resolved inputs.
-    if (pass != nullptr) {
-        pass->execute(content, backend_.get());
-    }
 }
 
 raw_ptr<RenderTarget> RenderEngine::resolveDeclaredTarget(raw_ptr<RenderPass> pass, raw_ptr<RenderTarget> target)
