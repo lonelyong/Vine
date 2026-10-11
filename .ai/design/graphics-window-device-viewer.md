@@ -221,9 +221,10 @@
 
 ## 7. 落地切片（每片：动作 / 判据 / 变异 / 依赖）
 
-**贯穿判据**（照 S1–S7 的规矩）：每片结束时全量 Release 0 error / 0 warning；六套件**计数不掉**（`test_graphics`
-360 / `test_gui` 254 / `test_vsg` 426 = 421 + 3 skip + 2 已知红，外加 appfw 32 / meshio 34 / iobase 94，并按片更新记账）；
-五个 gate 0 finding（`--strict` 仍 22 条，同一列表）；**变异 N/N 红**（各自单独实测）；中英文档同步（本文件 + memory + usage）。
+**贯穿判据**（照 S1–S7 的规矩）：每片结束时全量 Release 0 error / 0 warning；六套件**计数不掉**（**2026-10-12 起的一套基线**：
+`test_graphics` 357 / `test_gui` 257 / `test_vsg` **429 = 426 + 3 skip**（两条"已知红"已修，见 §下一条与 memory 顶条）/ appfw 32 /
+meshio 34 / iobase 94，并按片更新记账）；
+五个 gate 0 finding（`--strict` 仍 13 条，同一列表）；**变异 N/N 红**（各自单独实测）；中英文档同步（本文件 + memory + usage）。
 
 | 片 | 内容 | 判据 | 依赖 |
 | --- | --- | --- | --- |

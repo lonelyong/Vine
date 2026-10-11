@@ -15,7 +15,7 @@
 | **模块布局与依赖** | 顶部 2026-09-27 四条：帧机器归属 `core`→`backend` / 诊断路线合并 / 帧时钟查询面 `FrameProgress` / 放置判据与 `frame/` 最终形态；规则全文在 `.ai/design/graphics-layering.md` |
 | **一帧怎么走** | M11h 空绘制调用不是绘制调用 · M11m episode 归半片 · M11o 拒绝报告合并 · M11w 块预算按需增长 · M11x B5 触发规模 · M11i 租约顺序相位 · B8 跨帧差异 · B9 在飞槽数地板 |
 | **着色器与 ABI 契约** | shader 文件命名 `builtin_<角色>.<阶段>` · `vn_`→`vine_` 前缀 · texcoord kind 显式化 · P0.A/P0.B1/P0.C1（前向着色归 SDK / location 表 / L1 块布局） · P12 文件化 + 构建期嵌入 · program 槽 P1 三步 |
-| **证据与门禁** | M7 每帧编译 + 描述符（`PassDesc`）· M8 SDK 级设备夹具 + 像素判据（`SdkPixelTest`） · M11k 背景看写掩码 · M11l 第三条画面判据"整片背景灰" · FPS 窗口真平均 · ASan 两片（余量收口 / 全量 test_vsg 首通） · V3/V4 上游能力门禁 · R5 LSan 抑制 · M11g 计数分配器（**`skipped == 0` 才是跑过设备电池**） · 2026-10-11 修：G-buffer 几何 pass 缺 `program_override`（像素判据抓到，见顶条） |
+| **证据与门禁** | M7 每帧编译 + 描述符（`PassDesc`）· M8 SDK 级设备夹具 + 像素判据（`SdkPixelTest`） · M11k 背景看写掩码 · M11l 第三条画面判据"整片背景灰" · FPS 窗口真平均 · ASan 两片（余量收口 / 全量 test_vsg 首通） · V3/V4 上游能力门禁 · R5 LSan 抑制 · M11g 计数分配器（**`skipped == 0` 才是跑过设备电池**） · 2026-10-11 修：G-buffer 几何 pass 缺 `program_override`（像素判据抓到，见顶条） · **2026-10-12 两条"已知红"清零（`test_vsg` 429 = 426 + 3 skip，见顶条）** |
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/guides/graphics.md`（模块文档一节） |
@@ -24,11 +24,35 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-12 两条"已知红"清掉：都是**测试侧**的锅（机器相关偏移 / 读像素早于完成点）
+
+- **结论**：`test_vsg` 不再有已知红 —— **429 = 426 passed + 3 skip**（此前 424 + 3 skip + 2 failed）。两条都不是产品缺陷，
+  是 T3 把 23 条误跳恢复后才暴露出来的**用例自身**问题：
+  1. `BlockDescriptorsTest.TheBindCarriesTheOffsetsInBindingOrderAndReusesOneSet` 硬写 `{0, 80, 0, 0, 0}` /
+     `{256, 336, 64, 112, 160}` —— 只在"`minUniformBufferOffsetAlignment` 整除 16"的设备上合法（lavapipe 那类），
+     本机 alignment = 64 ⇒ `bind()` 如实**拒绝**并计数（`usableOffset`），用例拿到的第一个绑定就是 nullptr。
+     **修法**：第二组偏移改用存储自己的**区域步长**（`BlockStorage::strides()`，建环时已按设备对齐向上取整），
+     于是"同一角色、再进一块"在**任何设备**上都合法；用例想钉的两件事（一绑定一偏移、按绑定序；两次绑定复用同一个 set）不变。
+  2. `SessionTest.ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote` 在 `commit()` 之后**立刻**探针读像素 ——
+     探针读的是 GPU 的 copy 节点填的**映射缓冲**（`OffscreenTarget::probe` 自己不等待），此时提交还在飞 ⇒ 读到全零。
+     同文件的姊妹用例早就把这条写清楚了（"a frame waits the fence of the slot it enters"），并且用"再驱动几帧"来同步。
+     **修法**：把这一次读取挪到**会话自己停下之后**（`shutdown()` 是这一半唯一现成的完成点），并写明"顺序就是要点"。
+- **判据（实测）**：那两条各自单独跑绿；`test_vsg` **429 = 426 + 3 skip**、0 failed；其余套件不动（graphics 357 / gui 257 /
+  appfw 32 / meshio 34 / iobase 94）；全量 Release 0 error / 0 warning；五个 gate 0 finding（`--strict` 仍 13）。
+- **变异 3/3 各自单独实测红**：① 把对齐检查从 `usableOffset` 拿掉 ⇒ `AMisalignedOffsetIsRefusedInsteadOfBound` 红
+  （证明改偏移用例**没有**把"拒绝"这条契约放松）；② 绑定把 offsets **倒序**写进命令 ⇒ 修好的那条红（+ 声明形状那条），
+  即它现在真的在钉"按绑定序"（挨拒时它什么都钉不住）；③ 把探针读**挪回** stop 之前 ⇒ 那三条 `EXPECT_NEAR` 红
+  （r/g/b 差 64/128/191 = 读到全零），证明绿的原因是顺序而不是别的。
+- **坑**：① 硬写的"魔法偏移"会把**设备能力**（alignment）冻进用例，换台机器就红 —— 偏移要从存储/设备**问出来**；
+  ② 探针读的是**映射内存**，不是"读回即等待"：任何"提交后马上读"的断言都必须先有一个完成点（帧栅栏、设备 idle、
+  或驱动足够多帧），这条在姊妹用例里已经写过一次，这次是第二条用例犯同一错；③ 两条红都在 `test_vsg`（真设备电池），
+  在没设备的机器上会**跳**过 —— 所以"绿"要在**跑过设备电池**的地方才成立（`skipped == 0` 才算）。
+
 ## 2026-10-12 呈递端拆成两层：`PresentTarget`（帧的契约）+ `WindowPresentTarget`（窗口那一面）
 
 - **结论**：`RenderSurfaceTarget` 这个名字下压着两件用途不同的事 —— 帧需要的（尺寸 + `present`）与只有拥有窗口的宿主
   需要的（`setWindowHandle` / `nativeHandle`）。拆成两层、两个头文件：`PresentTarget`（`resize(w,h)` + `present()`，
-  **帧的契约**）与 `WindowPresentTarget : PresentTarget`（加那两条窗口动词）；`RenderSurfaceTarget.hpp` 删除。
+  **帧的契约**）与 `WindowPresentTarget : PresentTarget`（加那两条窗口动词）；`RenderSurfaceTarget.hpp` 删除。 <!-- drift-ok -->
 - **谁认哪一层**：**帧只认基类** —— `RenderFrameExecutor::executeFrame(frame, PresentTarget* present_to)`、
   `RenderPass::execute(scene, backend, present_to)`、`RenderEngine::own_target_`（引擎只在帧尾 `present()`）。
   **窗口那一面归造它 / 持它的两处** —— `RenderDevice::createSurfaceTarget` 答 `raw_ptr<WindowPresentTarget>`，

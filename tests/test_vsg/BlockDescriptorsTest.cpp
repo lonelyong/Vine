@@ -175,17 +175,29 @@ TEST(BlockDescriptorsTest, TheBindCarriesTheOffsetsInBindingOrderAndReusesOneSet
     const auto pipeline_layout = pipelineLayoutFor(fixture.device, fixture.descriptors->layout());
     ASSERT_NE(pipeline_layout, nullptr);
 
-    const BlockDescriptors::Offsets first{ 0, 80, 0, 0, 0 };
-    const BlockDescriptors::Offsets second{ 256, 336, 64, 112, 160 };
+    const BlockDescriptors::Offsets first{ 0, 0, 0, 0, 0 };
+    // A second set of offsets, one BLOCK further: the storage's own region strides, which are multiples of the
+    // device's `minUniformBufferOffsetAlignment` by construction, so they are legal on every device (the offsets
+    // this case used to name - 80, 336, 64, 112, 160 - were only legal where that alignment divides 16, and the
+    // bind then refused them: see AMisalignedOffsetIsRefusedInsteadOfBound).
+    const BlockStorage::Strides strides = fixture.storage->strides();
+    const BlockDescriptors::Offsets second{ strides.view, strides.draw, strides.material, strides.light,
+                                            strides.shadow };
 
     const auto first_bind  = fixture.descriptors->bind(pipeline_layout, first);
     const auto second_bind = fixture.descriptors->bind(pipeline_layout, second);
 
     ASSERT_NE(first_bind, nullptr);
     ASSERT_NE(second_bind, nullptr);
-    EXPECT_EQ(first_bind->dynamicOffsets, (std::vector<std::uint32_t>{ 0, 80, 0, 0, 0 }))
+    EXPECT_EQ(first_bind->dynamicOffsets, (std::vector<std::uint32_t>{ 0, 0, 0, 0, 0 }))
         << "one offset per binding, in binding order (view, draw, material, lights, shadow)";
-    EXPECT_EQ(second_bind->dynamicOffsets, (std::vector<std::uint32_t>{ 256, 336, 64, 112, 160 }));
+    EXPECT_EQ(second_bind->dynamicOffsets,
+              (std::vector<std::uint32_t>{ static_cast<std::uint32_t>(strides.view),
+                                           static_cast<std::uint32_t>(strides.draw),
+                                           static_cast<std::uint32_t>(strides.material),
+                                           static_cast<std::uint32_t>(strides.light),
+                                           static_cast<std::uint32_t>(strides.shadow) }))
+        << "the same roles one block further, still in binding order";
     EXPECT_EQ(first_bind->firstSet, fixture.descriptors->setIndex());
     EXPECT_EQ(first_bind->descriptorSet, second_bind->descriptorSet)
         << "every draw binds the SAME set: the offsets carry the difference";

@@ -385,6 +385,11 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
         EXPECT_EQ(session.deviceWaits(), 0U) << "a frame that goes through does not stop the device";
         EXPECT_FALSE(target->instance().attachments_invalidated)
             << "a submission that happened leaves nothing to repair";
+        // The pixels are read AFTER the session stops, and that order is the point rather than an accident: a probe
+        // reads the mapped buffer the GPU's copy fills (see OffscreenTarget::probe), while right after commit the
+        // submission is still in flight - the session's own stop is the completion point THIS half has (the
+        // lost-frame half below drives frames instead: a frame waits the fence of the slot it enters).
+        session.shutdown();
         {
             const vn::graphics::backend::PixelProbe probe = target->probe();
             ASSERT_TRUE(probe.valid());
@@ -395,7 +400,6 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
             EXPECT_NEAR(sampled.b, expected.b, 1);
             EXPECT_TRUE(probe.wholeImageMatches(sampled));
         }
-        session.shutdown();
     }
 
     // Frames 2 and 3: a session of its own again, because a lost frame leaves the swapchain holding an image
