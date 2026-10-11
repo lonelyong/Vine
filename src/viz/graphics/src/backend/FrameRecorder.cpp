@@ -1,5 +1,6 @@
 #include <vine/graphics/backend/FrameRecorder.hpp>
 
+#include <cmath>
 #include <cstddef>
 #include <string>
 
@@ -146,6 +147,7 @@ bool FrameRecorder::beginPass(PassId pass)
     pass_has_clear_         = false;
     pass_clear_             = ClearPolicy{};
     pass_depth_             = vn::graphics::DepthMode::TestAndWrite;
+    pass_aspect_            = 1.0;
     pass_inputs_            = {};
     pending_has_viewport_   = false;
     pending_viewport_       = {};
@@ -246,6 +248,28 @@ bool FrameRecorder::setViewport(int x, int y, int width, int height)
     }
     pending_has_viewport_ = true;
     pending_viewport_     = vn::graphics::Viewport{ x, y, width, height };
+    return true;
+}
+
+bool FrameRecorder::setViewAspect(double aspect)
+{
+    const Decision decision = protocol_.onCall(CallKind::SetScopeAttribute);
+    if (decision.verdict != Verdict::Allow)
+    {
+        if (decision.report)
+        {
+            reportRefusal(CallKind::SetScopeAttribute);
+        }
+        return false;
+    }
+    // A shape has to be a shape: a non-positive or non-finite number is not recorded, and the scope keeps the
+    // value it had (the default, or an earlier announcement). Silently storing NaN would poison every projection
+    // built from it with no way back.
+    if (!(aspect > 0.0) || !std::isfinite(aspect))
+    {
+        return false;
+    }
+    pass_aspect_ = aspect;
     return true;
 }
 
@@ -535,7 +559,7 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
     return copy;
 }
 
-CameraSnapshot FrameRecorder::snapshotCamera(const vn::graphics::Camera* camera)
+CameraSnapshot FrameRecorder::snapshotCamera(const vn::graphics::Camera* camera) const
 {
     CameraSnapshot snapshot;
     if (camera == nullptr)
@@ -544,7 +568,9 @@ CameraSnapshot FrameRecorder::snapshotCamera(const vn::graphics::Camera* camera)
     }
     snapshot.present    = true;
     snapshot.view       = camera->viewMatrix();
-    snapshot.projection = camera->projectionMatrix();
+    // The scope's announced shape, which the caller derived from what it was told (see setViewAspect and
+    // RenderBackend::viewAspect): the camera holds the viewing and the parameters, the picture holds the shape.
+    snapshot.projection = camera->projectionMatrix(pass_aspect_);
     snapshot.eye        = camera->eye();
     snapshot.target     = camera->target();
     snapshot.up         = camera->up();

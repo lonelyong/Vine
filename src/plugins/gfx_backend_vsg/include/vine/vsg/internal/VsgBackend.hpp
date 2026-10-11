@@ -132,6 +132,13 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
 
     bool frameProgress(vn::graphics::FrameProgress& progress) const noexcept override;
 
+    /** @brief Answers the shape of the picture the open pass draws into (see the SDK's viewAspect contract).
+     *
+     * Derived from what the pass ANNOUNCED (its viewport, else what it draws into) plus the sizes this backend
+     * owns - the recorder gets the same number for the view block, and the SDK's culling asks for it here.
+     */
+    double viewAspect() const override;
+
     /** @brief Holds the host's target under its own identity; nullptr selects the default framebuffer. */
     void setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target) override;
 

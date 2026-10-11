@@ -203,6 +203,25 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      */
     virtual void setRenderTarget(RenderTarget* target) = 0;
 
+    /** @brief Gets the shape (width / height) of the picture the pass being recorded is drawing into.
+     *
+     * The ONE place the aspect of a view is decided. A pass announces what it draws into (setRenderTarget) and,
+     * when it draws a sub-rectangle, where in it (setViewport); the backend knows how big those are (its own
+     * surface, the targets it manages), so it - and only it - can answer "what does this picture look like".
+     * Two readers use this same number, which is the point:
+     *
+     *   - the backend's own view block, where the projection is built (a camera holds no aspect: see Camera),
+     *   - the engine's culling, which asks for it just before the pass collects its commands
+     *     (RenderPass::execute), so the frustum culled against IS the frustum the picture is projected with.
+     *
+     * A second derivation would be the place "what you see" and "what was culled" drift apart.
+     *
+     * @return Width / height of the picture (the announced viewport when there is one, else the target's or the
+     *         surface's size); 1 when the backend has no view to describe at all (nothing is being recorded, or
+     *         a backend that draws no picture).
+     */
+    virtual double viewAspect() const = 0;
+
     /** @brief Returns whether off-screen render targets are supported.
      *
      * Backends that support them honour non-null RenderTargets in

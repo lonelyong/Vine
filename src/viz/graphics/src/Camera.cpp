@@ -9,7 +9,7 @@ VN_OBJECT_META_IMPL(Camera, vn::Object);
 Camera::Camera()
 {
     setViewMatrixAsLookAt(eye_, center_, up_);
-    setProjectionMatrixAsPerspective(fov_, aspect_ratio_, near_plane_, far_plane_);
+    setProjectionMatrixAsPerspective(fov_, near_plane_, far_plane_);
 }
 
 Camera::~Camera() = default;
@@ -39,15 +39,12 @@ void Camera::setViewMatrixAsLookAt(const Vec3d& eye, const Vec3d& center, const 
                                up_);
 }
 
-void Camera::setProjectionMatrixAsPerspective(double fovy, double aspect, double zNear, double zFar)
+void Camera::setProjectionMatrixAsPerspective(double fovy, double zNear, double zFar)
 {
     projection_type_ = ProjectionType::Perspective;
     fov_ = fovy;
-    aspect_ratio_ = aspect;
     near_plane_ = zNear;
     far_plane_ = zFar;
-    const double fov_rad = fovy * vn::math::DEG_TO_RAD;
-    projection_ = vn::math::perspective<double>(fov_rad, aspect, zNear, zFar);
 }
 
 void Camera::setProjectionMatrixAsOrtho(double left, double right, double bottom, double top,
@@ -63,7 +60,6 @@ void Camera::setProjectionMatrixAsOrtho(double left, double right, double bottom
     ortho_top_    = top;
     near_plane_ = zNear;
     far_plane_  = zFar;
-    projection_ = vn::math::ortho<double>(left, right, bottom, top, zNear, zFar);
 }
 
 Vec3d Camera::eye() const
@@ -96,11 +92,6 @@ double Camera::fieldOfView() const
     return fov_;
 }
 
-double Camera::aspectRatio() const
-{
-    return aspect_ratio_;
-}
-
 double Camera::orthographicHeight() const
 {
     return ortho_top_ - ortho_bottom_;
@@ -131,12 +122,17 @@ Mat4d Camera::viewMatrix() const
     return view_;
 }
 
-Mat4d Camera::projectionMatrix() const
+Mat4d Camera::projectionMatrix(double aspect) const
 {
-    return projection_;
+    // Rebuilt per call: the parameters above are the state, and a rectangle is not one of them. For an
+    // orthographic camera the window already carries the shape, so the aspect is not read at all.
+    if (projection_type_ == ProjectionType::Orthographic) {
+        return vn::math::ortho<double>(ortho_left_, ortho_right_, ortho_bottom_, ortho_top_, near_plane_, far_plane_);
+    }
+    return vn::math::perspective<double>(fov_ * vn::math::DEG_TO_RAD, aspect, near_plane_, far_plane_);
 }
 
-Ray Camera::screenToWorldRay(const Vec2d& screenPos) const
+Ray Camera::screenToWorldRay(const Vec2d& screenPos, double aspect) const
 {
     const double ndc_x = (2.0 * screenPos.x) - 1.0;
     const double ndc_y = 1.0 - (2.0 * screenPos.y);
@@ -163,7 +159,7 @@ Ray Camera::screenToWorldRay(const Vec2d& screenPos) const
     // Perspective: unproject through the near plane.
     const double fov_rad = fov_ * vn::math::DEG_TO_RAD;
     const double tan_half = std::tan(fov_rad * 0.5);
-    const double x = ndc_x * tan_half * aspect_ratio_;
+    const double x = ndc_x * tan_half * aspect;
     const double y = ndc_y * tan_half;
     const Vec3d dir = (forward + right * x + up * y).normalized();
     return Ray(eye_, dir);

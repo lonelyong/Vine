@@ -281,7 +281,12 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
     // used to make cost an intrusive_ptr increment per command (three of them) plus a command-sized
     // memcpy per pass per frame. What a pass may change is its own VIEW of the list, so the copy happens
     // below — and only for a pass that actually rewrites something.
-    const std::shared_ptr<const std::vector<RenderCommand>> commands = scene->collectRenderCommandsShared(camera_.get());
+    //
+    // The picture's shape is asked for, not invented: the backend was just told the target and the viewport and
+    // owns the sizes (see RenderBackend::viewAspect), so the frustum culled against here is the one the picture
+    // is projected with. Culling with a shape of the engine's own would drop what the rectangle shows.
+    const std::shared_ptr<const std::vector<RenderCommand>> commands =
+        scene->collectRenderCommandsShared(camera_.get(), backend->viewAspect());
     if (camera_ != nullptr) {
         // The pass lights whatever content scene it renders: forward the
         // scene's lights so the backend can match this pass's view lighting.

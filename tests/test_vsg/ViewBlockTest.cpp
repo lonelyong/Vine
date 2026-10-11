@@ -157,7 +157,7 @@ TEST(ViewBlockTest, TheClipMatricesAreFoldedIntoTheDevicesReverseZAndYDownConven
     CameraSnapshot snapshot;
     snapshot.present    = true;
     snapshot.view       = sdk_camera.viewMatrix();
-    snapshot.projection = sdk_camera.projectionMatrix();
+    snapshot.projection = sdk_camera.projectionMatrix(1.0);  // ORTHOGRAPHIC: the picture's shape is unused
     snapshot.eye        = sdk_camera.eye();
 
     // What the SDK's own matrix says: a VIEW-space point on the near plane (0.5 in front of the eye, i.e.

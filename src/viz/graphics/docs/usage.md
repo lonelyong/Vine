@@ -52,7 +52,7 @@ engine.setBackend(backend);
 | `MatrixTransform` | `Group` + **场景图里唯一持有变换的地方**（`matrix()` / `setMatrix()`） | 嵌套变换沿 root→leaf 相乘 |
 | `StateNode` | 给子树施加渲染状态，并可覆盖 material / program | 越深的节点优先 |
 | `Geometry` | 叶子：**借用**的属性缓冲 + 可选索引 | `setPositions/setNormals/setTexcoords2/setIndices`、`addBuffer` 加自定义通道、`setRevision()` |
-| `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)`（**拥有一份副本**）、`collectRenderCommandsShared(camera)`（**共享不可变表**，引擎自己的 pass 路径用；要改写就自己 fork） |
+| `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera, aspect)`（**拥有一份副本**）、`collectRenderCommandsShared(camera, aspect)`（**共享不可变表**，引擎自己的 pass 路径用；要改写就自己 fork） |
 
 ### 2.2 属性沿树折叠的规则
 
@@ -114,8 +114,11 @@ engine.setBackend(backend);
 ### 2.5 每帧数据流
 
 1. 宿主调 `RenderEngine::frame(dt)`。
-2. 逐 pass：引擎打开内容帧，向场景要命令 —— `Scene::collectRenderCommands(camera)` 对
-   **(scene, camera)** 每帧只走一次树，结果记忆到帧末（规则见 §2.2）。返回的是**视锥剔除后**的列表：
+2. 逐 pass：引擎打开内容帧，向场景要命令 —— `Scene::collectRenderCommands(camera, aspect)` 对
+   **(scene, camera, 画面形状)** 每帧只走一次树，结果记忆到帧末（规则见 §2.2）。那第三个入参就是这条 pass
+   那张画面本来的形状（`RenderBackend::viewAspect()`：pass 的 viewport，否则目标 / 表面尺寸）—— 相机**不持**
+   aspect（见 §2.1 的 `Camera` 段），所以剔除用的视锥与画面用的投影是同一个矩形推出来的，改矩形不可能只改一头。
+   返回的是**视锥剔除后**的列表：
    `isVisible()` 是硬门，包围盒完全在视锥外（p-vertex 测试）的节点**整棵子树**被剪掉，被剔除的几何体
    根本不在列表里；后端的保留节点则从根上摘下但不销毁，回来时直接复用 —— 离开多久都不会被回收
    （只有宿主自己放手才算删除，细节见 `backend.md` §5.5）。
@@ -201,7 +204,8 @@ scene->addLight(Light::createDirectional({ 0.0, 0.0, -1.0 }));  // 一盏方向�
 // ③ 相机。
 CameraPtr camera(new Camera());
 camera->setViewMatrixAsLookAt({ 0.0, 0.0, 3.0 }, { 0.0, 0.0, 0.0 }, { 0.0, 1.0, 0.0 });
-camera->setProjectionMatrixAsPerspective(45.0, 16.0 / 9.0, 0.1, 100.0);
+camera->setProjectionMatrixAsPerspective(45.0, 0.1, 100.0);  // 投影的**形状**不在这里：它属于这张画面
+                                                              // 画进的那块矩形（see RenderBackend::viewAspect）
 
 // ④ 引擎 + 后端 + 预设管线。
 RenderEngine engine;
@@ -274,6 +278,9 @@ engine.addPass(compose, scene, 0);
 ```cpp
 compose->setViewport(surface_w - 320 - 8, 8, 320, 180);
 ```
+
+这条子视口不只决定"画在哪"：它同时是这张画面的**形状**（后端从这里推出 aspect，见 `RenderBackend::viewAspect()`），
+所以那条 pass 的剔除与投影会一起跟着变成 320:180 —— 同一台相机同时全屏呈现 + 画中画时，两块各自的形状都对。
 
 | pass | 相机 | renderTarget | order | 清屏 | 深度 | 输出/输入 |
 | --- | --- | --- | --- | --- | --- | --- |

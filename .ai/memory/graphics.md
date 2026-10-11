@@ -748,8 +748,8 @@
   的全局查询是 M2a 要消掉的推断本身（顺序敏感，且会静默跳过共用一台相机的第二个视图）；`RenderEngine` 新增
   `passOrder(raw_ptr<RenderPass>) const -> std::optional<int>`（顺序住在引擎的槽里，这条查询同时是"这条 pass
   还在不在"）。`SceneView::ensureWindowPass()` 从此不问引擎任何事。
-  一块表面**恰好一口清屏**、矩形归呈现条目、`aspect` 出相机都还是设计（`graphics-render-next.md` §3.2 的
-  M2b/M2c/M2d）—— **其中 M2b 见下条**。
+  一块表面**恰好一口清屏**、矩形归呈现条目都还是设计（`graphics-render-next.md` §3.2 的 M2b/M2d）——
+  **M2b 见下条，M2c 见"aspect 出相机"那条**。
 - **清屏归表面（M2b，2026-10-11 已落地）**：`RenderSurface` 决定**谁**清 —— 呈现表（按引擎执行序）**第一条**保留
   自己的清屏，其余条 `setClearEnabled(false)`（`applyClear()`，私有）。从前是"谁先公告谁赢 + 后端只应用第一条公告"，
   于是第二条的 `clearColor()` 与画面**不符**却没人被告知。**没有** `Surface::setClear(ClearOptions)`：那三样
@@ -765,6 +765,30 @@
   任一先死都不留悬垂（用例 `APresentedViewThatDiesLeavesTheSurface` / `AViewThatOutlivesItsSurfaceDoesNotCallIntoIt`）。
   全部判据在 `tests/test_graphics/RenderSurfaceTest.cpp`（变异验证：去掉 `applyClear()` 调用 ⇒ 4 条失败；
   去掉 `entry.clears` / 去掉视图重建回调 ⇒ 各 1 条失败；去掉 `~SceneView` 的自解绑 ⇒ 1 条失败）。
+- **aspect 出相机（M2c，2026-10-11 已落地）**：`Camera` 只持**观看**（eye/up/target）+ **投影参数**（fov / near / far /
+  类型 / 正交盒），**不持 aspect、也不缓存投影矩阵** —— `setProjectionMatrixAsPerspective(fovy, near, far)`
+  （少一个形参）、`projectionMatrix(double aspect)` 现算（正交**忽略**该参数：盒自带比例）、`aspectRatio()` 删除、
+  `screenToWorldRay(screenPos, aspect)` 多收一个（**提案漏算的第五个读者**）。为什么：view matrix 只依赖眼睛、
+  可跨矩形复用，projection 依赖 fov **和 aspect**、不可 —— 差别就在 aspect，于是"矩形变了投影没跟上"这一整类
+  静默错（`.ai/bugs/vsg-resize-distortion.md` 记的那次）在结构上消失，同一台相机可进两块不同形状的矩形
+  （镜像 / PiP / 立体 / 编辑器两个窗格）。
+  **唯一一处推导**：新契约 `RenderBackend::viewAspect() const`（纯虚）—— pass 的 viewport 优先，否则它画进的
+  目标尺寸，再否则表面尺寸，什么都没有 ⇒ 1（"还没有画面"，不是猜一个）；vsg 后端 `beginPass` 清掉上一条 pass 的
+  矩形，`setRenderTarget`/`setViewport` 填它，`render()` 前 `recorder.setViewAspect(viewAspect())`。
+  **两类读者读同一个数**：①画面 —— `RenderPass::execute()` 在收集命令**之前**问一次（后端刚被告知这条 pass 的
+  目标与矩形），转给 `Scene::collectRenderCommands*(camera, aspect)`；②view block —— `FrameRecorder::setViewAspect()`
+  （scope 属性，像清屏与深度模式；`beginPass` 复位成 1.0；非正 / 非有限拒收）让 `snapshotCamera()` 用
+  `camera->projectionMatrix(pass_aspect_)`。剔除的视锥与画面的投影因此是**同一个矩形**推出来的。
+  `Scene` 的帧内 memo 以 **view-projection** 为键 ⇒ 同一台相机两种形状 = 两条 memo 项、两次走树、互不冒充。
+  `OrbitCameraManipulator` 自持 `viewportAspect()`（`onResize` 不再往相机里塞 aspect）、`SceneView::applySurfaceGeometry`
+  里那段"推 aspect 进相机"删除、`FpsOverlay`/`AxisGizmo` 不再设（它们的 HUD pass 的 viewport 就是形状）、
+  方向光阴影照旧 `projectionMatrix(1.0)`（正交）。
+  判据（`test_graphics` 330 绿、`test_vsg` 405 绿、其余套件计数不变）：`CameraTest.TheProjectionIsBuiltForTheShapeTheCallerNames`、
+  `SceneTest.OneCameraInTwoRectanglesIsTwoPicturesAndTwoWalks`、`RenderEngineTest.EachPassCullsWithTheShapeOfItsOwnRectangle`
+  （同一台相机：1600×600 的那条 pass 画出画面外侧那颗、600×600 的剔掉它）、
+  `FrameRecorderTest.TheViewBlockIsProjectedForTheShapeTheScopeAnnounced`（公告 2.0 ⇒ 快照投影按 2.0；下一条 pass
+  回到默认；0 / NaN 被拒）。变异验证：`execute()` 写死 1.0 ⇒ 1 条失败；memo 去掉 view-proj 项 ⇒ 1 条失败；
+  `projectionMatrix` 忽略参数 ⇒ 2 条失败；recorder 固定 1.0 / `beginPass` 不复位 ⇒ 各 1 条失败。
 
 ## 帧计划：一眼看出这一帧画了什么（M4，2026-10-11）
 

@@ -18,27 +18,28 @@ using vn::math::Vec2d;
 using vn::math::Vec3d;
 
 /**
- * @brief Camera class managing view and projection matrices.
+ * @brief Camera: the VIEWING (eye / target / up) and the PROJECTION PARAMETERS (fov, planes, ortho window).
  *
- * Camera stores complete view and projection matrices. The view matrix is set
- * at once with setViewMatrixAsLookAt(); the projection matrix is set at once
- * with setProjectionMatrixAsPerspective() or setProjectionMatrixAsOrtho().
- * This avoids intermediate inconsistent states and mirrors the OSG camera API.
+ * Camera does NOT hold a projection matrix, and it does not hold an aspect ratio: the projection of a picture
+ * depends on how wide that picture is, and that is a fact about the RECTANGLE the picture is drawn into - the
+ * window, a pane of a split surface, a shadow map - not about the camera. Asking for the matrix is therefore a
+ * question with an argument (projectionMatrix(aspect)), and the argument is derived from the rectangle at render
+ * time in ONE place - RenderBackend::viewAspect(), read both by the view block that builds the projection and by
+ * the culling that decides what is worth projecting. The same camera may then be drawn into rectangles of
+ * different shapes in the same frame: a mirror view, a picture-in-picture of the same eye, an editor's two panes
+ * of one scene. A camera that held a size would have to be copied (or nudged) per picture - which is what Unity's
+ * Camera.rect forces and what this class exists to avoid.
  *
- * WHAT projectionMatrix() IS FOR. The matrices this class builds are the CPU-side
- * ones: a right-handed view looking down -Z, and a CLIP SPACE WITH z IN [-1, 1]
- * (the classic OpenGL range). A backend may render with a different convention —
- * the vsg backend renders Vulkan-style reverse-Z (near maps to 1, far to 0, the Y
- * axis flipped) — and it is expected to: which clip space a GPU wants is a
- * property of the API, not of the camera. So this matrix is the right thing for
- * the engine's own uses (frustum culling, view-dependent size, CPU-side math) and
- * for a consumer that knows the backend it is talking to, but it does NOT predict
- * the picture's clip space.
+ * The projection PARAMETERS are all state here: fov / near / far and the orthographic WINDOW (kept whole - see
+ * setProjectionMatrixAsOrtho). The perspective projection is rebuilt per call (a handful of multiplies, see
+ * projectionMatrix); an orthographic one ignores the aspect argument, because its window already carries a shape.
  *
- * The orthographic WINDOW is kept whole (left/right/bottom/top), not just its
- * height: a backend that rebuilds the projection from these parameters has to use
- * all four or it renders a different frustum than the engine culled with (see
- * orthographicLeft()).
+ * WHAT projectionMatrix() IS FOR. The matrix this class builds is the CPU-side one: a right-handed view looking
+ * down -Z, and a CLIP SPACE WITH z IN [-1, 1] (the classic OpenGL range). A backend may render with a different
+ * convention — the vsg backend renders Vulkan-style reverse-Z (near maps to 1, far to 0, the Y axis flipped) —
+ * and it is expected to: which clip space a GPU wants is a property of the API, not of the camera. So this matrix
+ * is the right thing for the engine's own uses (frustum culling, view-dependent size, CPU-side math) and for a
+ * consumer that knows the backend it is talking to, but it does NOT predict the picture's clip space.
  */
 class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
     VN_OBJECT_META_DECL;
@@ -72,16 +73,22 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      */
     void setViewMatrixAsLookAt(const Vec3d& eye, const Vec3d& center, const Vec3d& up);
 
-    /** @brief Sets the projection matrix from perspective parameters.
+    /** @brief Sets the projection parameters of a perspective camera.
+     *
+     * NO aspect: how wide the picture is belongs to the rectangle it is drawn into, not to the camera (see the
+     * class note). Supply it where the projection is needed - projectionMatrix(aspect), or the pass' rectangle a
+     * backend derives it from.
      *
      * @param fovy    Vertical field of view in degrees.
-     * @param aspect  Aspect ratio (width / height).
      * @param zNear   Near clipping plane distance (> 0).
      * @param zFar    Far clipping plane distance.
      */
-    void setProjectionMatrixAsPerspective(double fovy, double aspect, double zNear, double zFar);
+    void setProjectionMatrixAsPerspective(double fovy, double zNear, double zFar);
 
-    /** @brief Sets the projection matrix from orthographic parameters.
+    /** @brief Sets the projection parameters of an orthographic camera.
+     *
+     * NO aspect: an orthographic window is a rectangle in view space, not a frustum fitted to a picture, so its
+     * shape is already stated by the window itself (projectionMatrix ignores the aspect it is handed).
      *
      * All four window bounds are kept (they are what the projection uses and what a backend that
      * rebuilds it from parameters must take, see the class note), so an off-centre window — a tiled
@@ -114,9 +121,6 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
 
     /** @brief Gets the field of view in degrees (perspective only). */
     double fieldOfView() const;
-
-    /** @brief Gets the aspect ratio (width / height). */
-    double aspectRatio() const;
 
     /** @brief Gets the orthographic view height (top - bottom). */
     double orthographicHeight() const;
@@ -152,15 +156,20 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
     /** @brief Gets the view matrix. */
     Mat4d viewMatrix() const;
 
-    /** @brief Gets the projection matrix.
+    /** @brief Gets the projection matrix of a picture of @p aspect.
      *
-     * The engine's CPU-side projection (clip space with z in [-1, 1]); a backend may render with
-     * another convention, so this is the matrix the ENGINE culls and measures with, not a prediction
-     * of the picture's clip space (see the class note).
+     * The engine's CPU-side projection (clip space with z in [-1, 1]); a backend may render with another
+     * convention, so this is the matrix the ENGINE culls and measures with, not a prediction of the picture's
+     * clip space (see the class note).
      *
-     * @return The view -> clip matrix last set through one of the setters.
+     * Rebuilt per call from the parameters above - there is no cache to invalidate and no state to keep in step
+     * with a rectangle, which is what makes one camera usable for several pictures of different shapes.
+     *
+     * @param aspect Width / height of the picture (ignored by an orthographic camera, whose window carries its
+     *               own shape - see setProjectionMatrixAsOrtho).
+     * @return The view -> clip matrix.
      */
-    Mat4d projectionMatrix() const;
+    Mat4d projectionMatrix(double aspect) const;
 
     /** @brief Converts screen coordinates to a world-space picking ray.
      *
@@ -174,24 +183,25 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      *
      * @param screenPos Normalized screen coordinates in [0, 1]
      *                  (pixel / viewport dimension).
+     * @param aspect    Width / height of the picture the coordinates are in - the same rectangle the
+     *                  projection uses (see the class note): picking with another one would aim at what
+     *                  a differently shaped picture would have shown.
      * @return Ray in world space.
      */
-    Ray screenToWorldRay(const Vec2d& screenPos) const;
+    Ray screenToWorldRay(const Vec2d& screenPos, double aspect) const;
 
   private:
     String         name_;
     Mat4d          view_{ Mat4d() };
-    Mat4d          projection_{ Mat4d() };
     ProjectionType projection_type_ = ProjectionType::Perspective;
     // Copy of the last look-at parameters, used for ray generation.
     Vec3d eye_{ 0.0, 0.0, 5.0 };
     Vec3d center_{ 0.0, 0.0, 0.0 };
     Vec3d up_{ 0.0, 1.0, 0.0 };
-    // Copy of the last projection parameters, used for queries.
+    // The projection PARAMETERS (no matrix and no aspect: both are per-picture, see the class note).
     double near_plane_   = 0.1;
     double far_plane_    = 1000.0;
     double fov_          = 45.0;
-    double aspect_ratio_ = 1.0;
     // The orthographic window, kept WHOLE: a backend that rebuilds the projection from parameters (and
     // the picking ray) needs all four bounds, and the height alone cannot express an off-centre one.
     double ortho_left_   = -5.0;

@@ -86,7 +86,7 @@ AxisGizmo::AxisGizmo()
     // length-1 stick to ~73% of the half box).
     camera_->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 3.3), vn::math::Vec3d(0.0, 0.0, 0.0),
                                    vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera_->setProjectionMatrixAsPerspective(45.0, 1.0, 0.05, 20.0);
+    camera_->setProjectionMatrixAsPerspective(45.0, 0.05, 20.0);
     setCamera(camera_);
 
     // A HUD pass draws over the main content each frame: never clear and no

@@ -53,6 +53,10 @@ class StubBackend : public vn::graphics::RenderBackend
 
     void setRenderTarget(vn::graphics::RenderTarget*) override {}
 
+    /// The shape of the picture a pass of this backend draws into: a SQUARE strip (the stub draws nothing, so
+    /// the number only feeds the engine's culling; a test that wants another shape sets it).
+    double viewAspect() const override { return aspect; }
+
     void render(const std::vector<vn::graphics::RenderCommand>&, const vn::graphics::Camera*) override {}
 
     void swapBuffers() override { ++swaps; }
@@ -82,6 +86,8 @@ class StubBackend : public vn::graphics::RenderBackend
     void* last_handle{ nullptr };
     int   width{ 0 };
     int   height{ 0 };
+    /// Shape of the picture this backend says its passes draw into (RenderBackend::viewAspect).
+    double aspect{ 1.0 };
 };
 
 /// Pumps the event loop until 'done' holds or 'timeout_ms' elapses.

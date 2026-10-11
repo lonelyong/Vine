@@ -96,12 +96,13 @@ constexpr Colorf kLit{ 0.70f, 1.00f, 0.75f, 1.0f };
 FpsOverlay::FpsOverlay()
 {
     // Framing camera: the digit row lies in the z == 0 plane; the camera
-    // looks down -z from a distance that fits the row, with the projection
-    // aspect updated to match the (wide) readout box on every resize.
+    // looks down -z from a distance that fits the row. The projection's SHAPE is not set here: the readout draws
+    // into its own box (setViewport below), and that box' aspect is what the picture is projected with (see
+    // Camera - the aspect belongs to the rectangle, and the backend derives it from the viewport).
     camera_ = make_intrusive<Camera>();
     camera_->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.6), vn::math::Vec3d(0.0, 0.0, 0.0),
                                    vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera_->setProjectionMatrixAsPerspective(45.0, 1.0, 0.05, 20.0);
+    camera_->setProjectionMatrixAsPerspective(45.0, 0.05, 20.0);
     setCamera(camera_);
 
     // A HUD pass draws over the main content each frame: never clear and no
@@ -204,9 +205,8 @@ void FpsOverlay::onSurfaceResized(int width, int height)
 
     // Bottom-right corner of this overlay's area, in top-left-origin device coordinates.
     setViewport(area_x_ + dev_w - margin_px_ - w, area_y_ + dev_h - margin_px_ - h, w, h);
-    // Match the framing projection to the box aspect so the digit row fills
-    // the box without distortion.
-    camera_->setProjectionMatrixAsPerspective(45.0, static_cast<double>(w) / static_cast<double>(h), 0.05, 20.0);
+    // Nothing to do about the projection: the box above IS the picture's shape, and the projection is built from
+    // it where the pass records (a camera holds no aspect - see Camera).
 }
 
 void FpsOverlay::setAreaOrigin(int x, int y)

@@ -261,7 +261,7 @@ bool OrbitCameraManipulator::fitToScreen()
 
     center_ = centre;
     const double fov_rad = cam->fieldOfView() * kDegToRad;
-    const double aspect = std::max(cam->aspectRatio(), 1e-6);
+    const double aspect = viewportAspect();
     const double margin = 1.15;
 
     if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
@@ -557,11 +557,10 @@ void OrbitCameraManipulator::onResize(const vn::window::ResizeEvent& event)
     if (cam == nullptr) {
         return;
     }
-    const double aspect = static_cast<double>(event.width) / static_cast<double>(event.height);
-    if (cam->projectionType() == Camera::ProjectionType::Perspective) {
-        cam->setProjectionMatrixAsPerspective(cam->fieldOfView(), aspect,
-                                              cam->nearPlane(), cam->farPlane());
-    } else {
+    // The CAMERA is not told the shape: it holds no aspect (see Camera), and the projection comes from the
+    // rectangle the pass draws into. What this keeps is the aspect the INTERACTION needs - orbit gains, framing,
+    // picking - which is the viewport this manipulator is bound to (see viewportAspect()).
+    if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
         updateOrthoProjection();
     }
 }
@@ -577,7 +576,7 @@ void OrbitCameraManipulator::makeScreenRay(double screenX, double screenY,
     }
     const double w = viewport_w_ > 0 ? static_cast<double>(viewport_w_) : 1.0;
     const double h = viewport_h_ > 0 ? static_cast<double>(viewport_h_) : 1.0;
-    const Ray ray = cam->screenToWorldRay(Vec2d(screenX / w, screenY / h));
+    const Ray ray = cam->screenToWorldRay(Vec2d(screenX / w, screenY / h), viewportAspect());
     origin = ray.origin;
     direction = ray.direction;
 }
@@ -755,9 +754,20 @@ void OrbitCameraManipulator::updateOrthoProjection()
     }
     const double tan_half = std::tan(cam->fieldOfView() * kDegToRad * 0.5);
     const double half_h = distance_ * tan_half;
-    const double half_w = half_h * std::max(cam->aspectRatio(), 1e-6);
+    const double half_w = half_h * viewportAspect();
     cam->setProjectionMatrixAsOrtho(-half_w, half_w, -half_h, half_h,
                                     cam->nearPlane(), cam->farPlane());
+}
+
+double OrbitCameraManipulator::viewportAspect() const
+{
+    // The aspect of the rectangle this manipulator drives: its own last resize, because that IS the picture the
+    // user is looking at. Guarded so an unlaid-out viewport (0 wide, or never resized yet) cannot divide by zero
+    // or produce a degenerate frustum.
+    if (viewport_w_ <= 0 || viewport_h_ <= 0) {
+        return 1.0;
+    }
+    return std::max(static_cast<double>(viewport_w_) / static_cast<double>(viewport_h_), 1e-6);
 }
 
 VN_GRAPHICS_NS_END

@@ -136,26 +136,31 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     /** @brief Computes the bounding box of the whole scene. */
     Aabbd boundingBox() const;
 
-    /** @brief Collects render commands for the given camera.
+    /** @brief Collects render commands for the given camera, as a picture of @p aspect sees it.
      *
      * The list is built by walking the tree (frustum culling, bounds caching,
      * ordering), so a multi-pass pipeline that draws the same scene through the
      * same camera several times per frame would walk it once per pass. Inside a
      * content frame (see setContentFrame) the result of the first walk is kept
      * and shared — as its own COPY, because a caller may post-process what it
-     * receives — for every later call with the same camera, until the scene
-     * changes or the next frame begins.
+     * receives — for every later call with the same camera and shape, until the
+     * scene changes or the next frame begins.
      *
      * The owning spelling: use it when the list is KEPT or EDITED. A caller that
      * only reads it (the engine's own pass path, a backend) hands out the shared
      * list instead (see collectRenderCommandsShared) and pays no copy at all.
      *
      * @param camera Camera used for culling/ordering.
+     * @param aspect Width / height of the picture this list is for: the frustum culled against is the one the
+     *               projection produces, so a caller culling with a shape its picture does not have would drop
+     *               what is on screen (see Camera - the aspect is a property of the rectangle, not of the
+     *               camera). The engine's own pass path reads it from the backend that is recording the pass
+     *               (RenderBackend::viewAspect).
      * @return Collected render commands (a copy of this frame's list for this view).
      */
-    std::vector<RenderCommand> collectRenderCommands(raw_ptr<const Camera> camera) const;
+    std::vector<RenderCommand> collectRenderCommands(raw_ptr<const Camera> camera, double aspect) const;
 
-    /** @brief Collects render commands as a SHARED, immutable list.
+    /** @brief Collects render commands as a SHARED, immutable list, for a picture of @p aspect.
      *
      * The same collection as collectRenderCommands(), which is defined in terms of
      * it, with the list handed over by reference: the passes of one frame draw the
@@ -170,9 +175,13 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * not hold it past the frame it was collected in.
      *
      * @param camera Camera used for culling/ordering.
+     * @param aspect Width / height of the picture this list is for (see collectRenderCommands): the memo matches
+     *               on the view-projection it was built with, so one camera drawn into two differently shaped
+     *               rectangles in one frame gets one walk each - and neither can answer for the other.
      * @return Shared list of collected render commands (empty when there is nothing to draw).
      */
-    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommandsShared(raw_ptr<const Camera> camera) const;
+    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommandsShared(raw_ptr<const Camera> camera,
+                                                                                 double aspect) const;
 
     /** @brief Opens the content frame the collected-command memo belongs to.
      *

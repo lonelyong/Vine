@@ -71,7 +71,9 @@ Mat4d RenderPipelineBuilder::directionalShadowMatrix(const Light& light, const v
 
     camera.setViewMatrixAsLookAt(eye, eye + forward, up);
     camera.setProjectionMatrixAsOrtho(-radius, radius, -radius, radius, 0.0, depth);
-    return camera.projectionMatrix() * camera.viewMatrix();
+    // Orthographic: the window above carries the shape, and the matrix does not read an aspect at all. The shadow
+    // map is square anyway (the window is -radius..radius on both axes).
+    return camera.projectionMatrix(1.0) * camera.viewMatrix();
 }
 
 intrusive_ptr<RenderTarget> RenderPipelineBuilder::defaultGbufferTarget(int width, int height)

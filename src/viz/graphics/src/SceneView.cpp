@@ -380,14 +380,11 @@ void SceneView::applySurfaceGeometry()
     int pane_h = 0;
     paneSize(pane_w, pane_h);
 
-    // 1) This view's rectangle drives the camera/manipulator aspect (the pane's aspect, not the surface's: a
-    //    half-width view of a square surface is 1:2, and a picture drawn with the surface's aspect is distorted).
+    // 1) This view's rectangle drives the manipulator's own aspect (the pane's aspect, not the surface's: a
+    //    half-width view of a square surface is 1:2). The CAMERA is told nothing: it holds no aspect, and the
+    //    projection is built where the picture's shape is known (the pass' rectangle - see Camera).
     if (CameraManipulator* manip = manipulator(); manip != nullptr) {
         manip->onResize(vn::window::ResizeEvent{ pane_w, pane_h });
-    } else if (camera_->projectionType() == Camera::ProjectionType::Perspective) {
-        const double aspect = static_cast<double>(pane_w) / static_cast<double>(pane_h);
-        camera_->setProjectionMatrixAsPerspective(camera_->fieldOfView(), aspect,
-                                                  camera_->nearPlane(), camera_->farPlane());
     }
 
     // 2) The default pipeline: its off-screen targets and HUD boxes are sized for this view's rectangle, and its
