@@ -4026,7 +4026,9 @@ TEST(RenderEngineTest, ResizeDoesNotManagePassLayout)
     pass->setViewport(10, 20, 100, 50);
     engine->addPass(pass, 5);
 
-    engine->resize(1600, 900);
+    // The size the passes lay themselves out on is the AREA's announcement (see RenderSurface).
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    area->resize(1600, 900);
 
     // The pass's viewport and the target size are untouched by the engine.
     EXPECT_EQ(target->width(), 320);
@@ -8077,7 +8079,8 @@ TEST(RenderEngineTest, ACameraWhoseShapeIsNotThePassRectangleIsReportedOnce)
     pass->setName(u8"window");
     pass->setCamera(camera);
     engine->addPass(pass, scene, 0);
-    engine->resize(800, 600);     // the window pass' rectangle: shape 4:3
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    area->resize(800, 600);       // the window pass' rectangle: shape 4:3
 
     engine->frame(0.016);
     ASSERT_EQ(received.size(), 1u);
@@ -8089,7 +8092,7 @@ TEST(RenderEngineTest, ACameraWhoseShapeIsNotThePassRectangleIsReportedOnce)
     // The same mismatch: said once, not once per frame - even when a resize moves the rectangle, which is the same
     // mistake in a new size, not a new mistake.
     engine->frame(0.016);
-    engine->resize(1600, 1200);
+    area->resize(1600, 1200);
     engine->frame(0.016);
     EXPECT_EQ(received.size(), 1u);
 
@@ -8144,7 +8147,8 @@ TEST(RenderEngineTest, TheRectangleIsThePassViewportAndAScreenPassIsNotMeasured)
     preview->setCamera(camera);
     preview->setViewport(600, 0, 400, 400);   // shape 1.0, the camera's own
     engine->addPass(preview, scene, 0);
-    engine->resize(800, 600);                 // the SURFACE is 4:3, the pass draws into a square
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    area->resize(800, 600);                   // the SURFACE is 4:3, the pass draws into a square
 
     engine->frame(0.016);
     EXPECT_EQ(received.size(), 0u) << "the camera is shaped for the box it draws into, not for the surface";
@@ -8601,7 +8605,8 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setBackend(backend);
     ASSERT_TRUE(engine->initialize());
-    engine->resize(320, 180);
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    area->resize(320, 180);
 
     auto camera = intrusive_ptr<Camera>(new Camera());
     setupLookAtCamera(*camera);
@@ -9303,18 +9308,20 @@ TEST(RenderEngineTest, PassReadingTheTargetItDrawsIntoIsLeftToTheBackend)
  *
  * A host knows its surface size before it has a backend to tell (it sizes its widget first), and the
  * engine used to drop that announcement: the backend was only ever told about resizes that happened
- * after initialization, so the first frames ran at the backend's default size. The engine now keeps
- * the announcement in its frame context (which the passes lay themselves out on) and hands it over
- * as soon as initialization succeeded.
+ * after initialization, so the first frames ran at the backend's default size. The AREA now owns the
+ * announcement (RenderSurface::resize is the one spelling - see RenderEngine, which keeps no size of
+ * its own): it records the numbers in the frame context (which the passes lay themselves out on) and
+ * hands them over as soon as initialization succeeded.
  */
-TEST(RenderEngineTest, SurfaceSizeAnnouncedBeforeInitializeReachesTheBackend)
+TEST(RenderEngineTest, TheAreasSizeAnnouncedBeforeInitializeReachesTheBackend)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setBackend(backend);
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
 
     // Announced first: the backend does not exist yet as far as the size is concerned.
-    engine->resize(800, 600);
+    area->resize(800, 600);
     EXPECT_EQ(backend->surface_half.resize_calls, 0);
     EXPECT_EQ(engine->frameContext().surface_width, 800);
     EXPECT_EQ(engine->frameContext().surface_height, 600);
@@ -9325,7 +9332,7 @@ TEST(RenderEngineTest, SurfaceSizeAnnouncedBeforeInitializeReachesTheBackend)
     EXPECT_EQ(backend->surface_half.last_surface_height, 600);
 
     // A later resize is forwarded directly (one call per announcement, not two).
-    engine->resize(1024, 768);
+    area->resize(1024, 768);
     EXPECT_EQ(backend->surface_half.resize_calls, 2);
     EXPECT_EQ(backend->surface_half.last_surface_width, 1024);
     EXPECT_EQ(backend->surface_half.last_surface_height, 768);
@@ -9334,7 +9341,7 @@ TEST(RenderEngineTest, SurfaceSizeAnnouncedBeforeInitializeReachesTheBackend)
 /**
  * @brief A size announced before initialize is not invented when nobody ever announced one.
  *
- * The engine starts at 0x0 (no announcement), and handing a 0-sized surface to the backend would be
+ * The frame starts at 0x0 (no announcement), and handing a 0-sized surface to the backend would be
  * worse than saying nothing: the backend keeps whatever default its surface has.
  */
 TEST(RenderEngineTest, NoSurfaceSizeAnnouncementIsNotForwarded)
@@ -9342,12 +9349,13 @@ TEST(RenderEngineTest, NoSurfaceSizeAnnouncementIsNotForwarded)
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setBackend(backend);
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
 
     ASSERT_TRUE(engine->initialize());
     EXPECT_EQ(backend->surface_half.resize_calls, 0);
 
     // A non-positive announcement is ignored (the engine does not record it either).
-    engine->resize(0, 0);
+    area->resize(0, 0);
     EXPECT_EQ(backend->surface_half.resize_calls, 0);
     EXPECT_EQ(engine->frameContext().surface_width, 0);
 }

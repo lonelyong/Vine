@@ -244,7 +244,11 @@ camera->setAspect(16.0 / 9.0);                               // 投影的**形�
 // 所以它和别的 SDK 对象一样由 `intrusive_ptr` 持有（`test_vsg/SdkPixelFixture.hpp` 是同一个形态）。
 auto engine = make_intrusive<RenderEngine>();
 engine->setBackend(RenderBackendRegistry::instance().create(u8"vsg"));  // 需插件已加载
-engine->setWindowHandle(window_handle);                                // 宿主窗口的原生句柄
+
+// 窗口与尺寸归**区**（一块表面的表）：句柄在这里公告、尺寸也在这里报一次 —— 引擎不收裸句柄。
+auto area = make_intrusive<RenderSurface>(engine.get());
+area->bindTarget(window_handle);          // 宿主窗口的原生句柄；后端没有窗口那一半时**拒绝 + 报一次**
+area->resize(width, height, dpr);         // 帧上下文 + 窗口那一半 + 每个呈现的视图，一次说清
 if (!engine->initialize()) { return false; }
 
 RenderPipelineBuilder builder(engine.get());
@@ -794,8 +798,9 @@ viewer->addView(right, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }, o
   呈现表按它排序；同序保持声明顺序。
 - **矩形也归这张表**：一块表面被切成什么形状是**表面**的事，视图**读**它（`SceneView::viewport()`）。所以同一块
   矩形只有一份：视图那句 `setViewport` 转发到表上，`dismiss()` / 表面析构时表把矩形**还给**视图（接着画同一块
-  地方，只是从"表面的声明"变成"视图自己的声明"）。**尺寸**也归这张表（`resize`：一块表面只有一个尺寸，报一次就
-  够，其余是扇出；挂在表面上时 `SceneView::onSurfaceResized` 只是转发），而视图**不存第二份**：挂上表面之后
+  地方，只是从"表面的声明"变成"视图自己的声明"）。**尺寸与窗口也归这张表**（`resize`：一块表面只有一个尺寸，报一次就
+  够，其余是扇出；挂在表面上时 `SceneView::onSurfaceResized` 只是转发。`bindTarget`：窗口是这块表面的目标，重公告
+  = 把绑定**搬**到平台重建出来的新窗口，设备与已编译管线都留；没有窗口那一半的后端**拒绝 + 报一次**），而视图**不存第二份**：挂上表面之后
   它向表面问（`SceneView::surfaceWidth()` 一类的读数），自己那份只在"没有表面"时才是依据 —— 尺寸与矩形一样，
   摘下来时由表面**交还**给视图。设备像素那一层仍是视图算的（它按自己的
   矩形换算），而**形状**是视图的相机的（`SceneView::applySurfaceGeometry` 把窗格的形状 push 给相机，见 §2.4 的

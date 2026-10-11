@@ -12,19 +12,29 @@ VN_GRAPHICS_NS_BEGIN
 
 RenderSurface::RenderSurface(raw_ptr<RenderEngine> engine)
   : engine_(engine)
-{}
+{
+    // The engine drives ONE area (see RenderEngine): this is it, and the registration is what lets the engine
+    // replay this area's window when a session comes up without holding a handle of its own.
+    if (engine_ != nullptr) {
+        engine_->adoptArea(this);
+    }
+}
 
 RenderSurface::~RenderSurface()
 {
     // The views are the host's, and they outlive this table whenever the host says so: stop naming it, so a view
     // destroyed later does not call back into a surface that is gone (see SceneView::~SceneView). Each view takes
     // its rectangle back - it keeps drawing into the same area, which is its own statement again from here on.
-    // Nothing here touches the engine - the whole point of doing it in this direction.
     for (const Entry& entry : entries_) {
         if (entry.view != nullptr) {
             entry.view->setSurface(nullptr);
             entry.view->setViewport(entry.rect);
         }
+    }
+    // The registration goes with the area: a borrowed pointer must not outlive what it points at (the engine
+    // keeps no handle of its own to fall back on - see bindTarget).
+    if (engine_ != nullptr) {
+        engine_->releaseArea(this);
     }
 }
 
@@ -195,6 +205,12 @@ void RenderSurface::resize(int width, int height, double pixel_ratio)
     if (pixel_ratio > 0.0) {
         pixel_ratio_ = pixel_ratio;
     }
+    // The frame hears the same ONE announcement: the engine records it (its frame context is what passes lay
+    // themselves out on) and hands it to the backend's window half once there is a session - the engine owns no
+    // size of its own (see RenderEngine).
+    if (engine_ != nullptr) {
+        engine_->announceAreaSize(width, height);
+    }
     // Handed to every view that presents this surface, and only to those: a pass a host declared has no view to
     // feed, and it states its own rectangle in device pixels. The views RE-DERIVE their geometry from the numbers
     // recorded here (they read them - see SceneView::surfaceWidth), so there is one size and no copy to keep in
@@ -210,6 +226,30 @@ void RenderSurface::resize(int width, int height, double pixel_ratio)
 double RenderSurface::pixelRatio() const noexcept
 {
     return pixel_ratio_;
+}
+
+bool RenderSurface::bindTarget(void* native_handle)
+{
+    target_handle_ = native_handle;
+    if (engine_ == nullptr) {
+        // An area with no engine has no frame to be presented in: the announcement is kept on the area, and
+        // nothing can take it. Not a refusal - there is no session to attach (and none can be set later: the
+        // engine is bound at construction).
+        return true;
+    }
+    // The engine is what knows whether a window half exists (it drives the frame), and the announcement - or the
+    // refusal and its one report - happens through it (see RenderEngine's area entries).
+    return engine_->bindAreaTarget(native_handle);
+}
+
+void* RenderSurface::targetHandle() const noexcept
+{
+    return target_handle_;
+}
+
+bool RenderSurface::hasTarget() const noexcept
+{
+    return target_handle_ != nullptr;
 }
 
 std::vector<RenderSurface::Presentation> RenderSurface::presentations() const

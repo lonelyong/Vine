@@ -1,5 +1,4 @@
 ﻿#include <vine/graphics/RenderEngine.hpp>
-
 #include <algorithm>
 #include <chrono>
 #include <functional>
@@ -8,6 +7,7 @@
 #include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderPass.hpp>
+#include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/Scene.hpp>
@@ -64,6 +64,9 @@ void RenderEngine::setBackend(intrusive_ptr<RenderBackend> backend)
     if (backend_ != nullptr) {
         backend_->setDiagnosticsRoute(diagnostics_);
     }
+    // Asked once, here: whether the session will have a window at all is a property of the backend, and
+    // capabilities().presentation answers it (see RenderBackend::surface).
+    backend_presents_ = backend_ != nullptr && backend_->surface() != nullptr;
 }
 
 void RenderEngine::setDiagnosticSink(DiagnosticSink sink)
@@ -104,7 +107,14 @@ Capabilities RenderEngine::capabilities() const noexcept
 {
     // No backend, nothing can be claimed - and a field that is false is the honest answer rather than a
     // missing one (see Capabilities; it is also what a backend that cannot do it answers).
-    return backend_ != nullptr ? backend_->capabilities() : Capabilities{};
+    if (backend_ == nullptr) {
+        return Capabilities{};
+    }
+    Capabilities answer = backend_->capabilities();
+    // The backend describes itself; whether the SESSION can present at all is the window half it has (see the
+    // declaration - one value for a host to read instead of two objects to ask).
+    answer.presentation = backend_presents_;
+    return answer;
 }
 
 FrameReport RenderEngine::frameReport() const noexcept
@@ -119,18 +129,12 @@ bool RenderEngine::initialize()
     if (backend_ == nullptr) {
         return false;
     }
-    if (native_handle_ != nullptr) {
-        if (RenderSurfaceBinding* const surface = backend_->surface()) {
-            surface->setWindowHandle(native_handle_);
-        }
-        else {
-            // The window half is OPTIONAL (see RenderBackend::surface): a host that announced a window to a
-            // backend presenting nothing is wiring the engine cannot serve, and saying nothing would look like
-            // "attached".
-            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
-                                String(u8"a native window was announced to a backend that presents nothing, so "
-                                        u8"the window was not attached"));
-        }
+    // The area's window, once more: an announcement that arrived before this session (or before the backend) can
+    // only reach the window half when there is one, and on a re-attach re-announcing the handle is how the binding
+    // is MOVED onto a window the platform recreated - the device, the session and every compiled pipeline stay
+    // (see RenderSurface::bindTarget). The engine hands over what the AREA says now, never a copy of its own.
+    if (area_ != nullptr && area_->targetHandle() != nullptr) {
+        (void)bindAreaTarget(area_->targetHandle());
     }
     // Forward the default content program before the backend builds its shader sets.
     backend_->setDefaultContentProgram(default_content_program_);
@@ -999,7 +1003,7 @@ intrusive_ptr<const ShaderProgram> RenderEngine::defaultContentProgram() const
     return default_content_program_;
 }
 
-void RenderEngine::resize(int width, int height)
+void RenderEngine::announceAreaSize(int width, int height)
 {
     if (width <= 0 || height <= 0) {
         return;
@@ -1020,9 +1024,49 @@ void RenderEngine::resize(int width, int height)
     // RenderBackend::surface).
 }
 
-void RenderEngine::setWindowHandle(void* native_handle)
+bool RenderEngine::bindAreaTarget(void* native_handle)
 {
-    native_handle_ = native_handle;
+    RenderSurfaceBinding* const window = backend_ != nullptr ? backend_->surface() : nullptr;
+    if (window == nullptr) {
+        if (native_handle == nullptr) {
+            // "No window" is what a backend without a window half already is: nothing to report, and an unbind
+            // ends the episode (a later announcement is a new one).
+            target_refused_.rearm();
+            return true;
+        }
+        if (backend_ == nullptr) {
+            // No session to take it yet: the announcement stays on the AREA, and initialize() replays it once
+            // there is a backend (see the class contract - the engine holds no handle of its own).
+            return true;
+        }
+        if (target_refused_.shouldReport()) {
+            // The window half is OPTIONAL (see RenderBackend::surface): a window announced to a backend that
+            // presents nothing is wiring the engine cannot serve, and saying nothing would look like "attached".
+            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
+                                String(u8"a native window was announced to a backend that presents nothing, so "
+                                        u8"the window was not attached"));
+        }
+        return false;
+    }
+    // Handed over on the spot: the window half takes it (before or after initialize - a re-announcement is how it
+    // is moved onto a recreated window, and the backend decides when that takes effect).
+    window->setWindowHandle(native_handle);
+    target_refused_.rearm();
+    return true;
+}
+
+void RenderEngine::adoptArea(raw_ptr<RenderSurface> area)
+{
+    // One engine drives one area: the last one announced wins (and a previous area's release is a no-op unless it
+    // is still the registered one).
+    area_ = area;
+}
+
+void RenderEngine::releaseArea(raw_ptr<const RenderSurface> area)
+{
+    if (area_ == area) {
+        area_ = nullptr;
+    }
 }
 
 VN_GRAPHICS_NS_END

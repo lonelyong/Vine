@@ -20,9 +20,43 @@
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/usage.md`（模块文档一节） |
 | **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
-| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）已落地**，见下；S9（引擎不拿裸句柄）/ S10（拆 `RenderDevice`，多窗口共享设备）/ S11（登记不做）未落地 |
+| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）与 S9（句柄与尺寸归区：`RenderSurface::bindTarget`，引擎不收裸句柄；`Capabilities::presentation`）已落地**，见下；S10（拆 `RenderDevice`，多窗口共享设备）/ S11（登记不做）未落地 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6 / **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-11 S9 落地：句柄与尺寸归区（引擎不再收裸句柄；`Capabilities` 加 `presentation`）
+
+- **做了什么**：`graphics-window-device-viewer.md` 的第二片（§7 S9，半步、可逆）：`RenderEngine` **删**
+  `setWindowHandle(void*)` 与 `resize(w,h)`；**区**（`RenderSurface`）成为窗口与尺寸的 owner —— 新增
+  `bindTarget(void*)` / `targetHandle()` / `hasTarget()`（`nullptr` = 解绑），`resize(w,h,ratio)` 从"只扇出给视图"
+  变成**唯一**的尺寸公告（先 `engine_->announceAreaSize(w,h)`：帧上下文 + 窗口那一半，再扇出给每条呈现的视图）；
+  引擎留两条**私有**入口（`bindAreaTarget` / `announceAreaSize`，`friend class RenderSurface`）与 1:1 的
+  `adoptArea`/`releaseArea`（区在构造/析构里登记/注销，引擎自己不持句柄）。
+- **判定与报告**：无呈现意图的设备（后端 `surface() == nullptr`）上 `bindTarget` **被拒（false）+ 报一次**
+  （`PassProtocolViolation`，"报一次"是 episode：同一次会话里再公告还是那一条）；**公告本身留在区上**（窗口是宿主的
+  话，能呈现的会话起来时接手）——拒绝说的是"这次会话接不住"，不是"这个区没有窗口"。会话起来时（`initialize()`）
+  按**区当时那个**句柄交出去：公告先到、后端后到也成立，句柄换了（平台重建窗口）**搬移**而不是重建（设备、
+  会话、已编译管线都留）。
+- **`Capabilities::presentation`**：本片由**引擎**答 —— "这个会话能不能上屏"就是"后端有没有窗口那一半"
+  （`setBackend` 时问一次、缓存；`capabilities()` 把这一位填上），**插件不动**（S5 的"调用自己能答的不进
+  Capabilities"在这里的形态：设备成为一等公民（S10 的 `DeviceDesc`）之前，"呈现意图"只能由结构推出来，而引擎是
+  同时驱动那一半的人）。
+- **appfw**：`SurfaceWindow` 不再直接拿句柄调引擎 —— `init()` 里 `surface->bindTarget(handle)`（重公告=移动），
+  尺寸只报一次给区（`feedSurfaceSize`），`Session::session_handle` 那份**句柄副本删掉**，改问
+  `surface->targetHandle()`（S6"一个值只有一个 owner"：控件不再存第二份）。
+- **判据（实测）**：`test_graphics` **362**（360 + 2：`AReAnnouncedHandleMovesTheWindowAndTheDeviceStays` /
+  `TheAttachHandsOverTheAreasCurrentWindow`；S4b 的三条与两条尺寸用例改形到"按区公告"，计数不动）；
+  `test_gui` 259 / `test_vsg` 426（421 + 3 skip + 2 已知红）/ appfw 32 / meshio 34 / iobase 94 全绿；全量 Release
+  0 error / 0 warning；五 gate 0 finding（`--strict` 仍 22）。**变异 4/4 红（各自单独实测）**：① 无窗口那一半也
+  收下（不拒）⇒ 1 条红；② 拒得静默（不报）⇒ 1 条红；③ 引擎留一份自己的句柄副本（重公告时交旧的）⇒ 1 条红；
+  ④ 尺寸不走区（`RenderSurface::resize` 不公告引擎）⇒ 4 条红。
+- **坑 / 记账**：① **引擎的新成员必须给默认值** —— `area_`（借用的区指针）第一版漏了 `= nullptr`，构造函数不碰它，
+  于是随机指针 → `initialize()` 里 `area_->targetHandle()` 把无关测试的堆打烂（SEH 0xc0000005，失败集每次不同、
+  单跑又全绿 —— 典型的野指针）⇒ "新增字段一律带初始化器"这条在这片交了学费；② `setBackend` 现在会问一次
+  `surface()`（缓存 `presentation`），按"问了几次窗口那一半"计数的夹具要把这一次算进去；③ 引擎**读**区的句柄是
+  对的（它是同一块区的另一半），错的是**存**一份自己的（变异③钉着这条）；④ `RenderSurface::resize` 现在也到帧与
+  窗口那一半，所以"视图转发尺寸"（`SceneView::onSurfaceResized` 为没有表面的视图保留的那条路）在挂上表面后也会
+  把尺寸带给窗口那一半 —— 与宿主的直接公告**同值**（同一份尺寸），不是第二份状态。
 
 ## 2026-10-11 S8 落地：appfw 的 `Viewer` 管 N 个 View（一块渲染区一个查看器）
 

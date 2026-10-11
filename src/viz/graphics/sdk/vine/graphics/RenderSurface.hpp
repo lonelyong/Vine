@@ -57,6 +57,14 @@ class SceneView;
  * and a recipe whose window pass does not clear at all (the Deferred present pass draws over the whole surface) is
  * not forced to start clearing by being first.
  *
+ * THE WINDOW IS THE AREA'S TOO. What this area is presented through - the native window the host chose (the
+ * TARGET, in this design's vocabulary) - is a fact about the AREA, exactly like the size: bindTarget() announces
+ * the handle and unbinds it, resize() is the ONE size announcement (the views, the frame the passes lay out on,
+ * the window half), and re-announcing a different handle MOVES the session onto a recreated window instead of
+ * rebuilding it (the device and every compiled pipeline stay - see RenderSurfaceBinding::setWindowHandle). The
+ * engine drives the frame and owns no handle of its own (see RenderEngine); a backend that presents nothing
+ * refuses the announcement, once, instead of pretending to attach.
+ *
  * @note Splitting a surface between several presentations (each with its own rectangle) is the same table read
  * again, and the rectangle per presentation belongs here too: what a surface is divided into is a fact about the
  * SURFACE (a host states the split once, in normalized terms, and the surface answers "who owns this point" -
@@ -209,6 +217,10 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * step, and a view never holds a second copy of the surface's size). A view presented LATER receives the
      * size remembered here at once, so a pane added to a running surface is sized without the host feeding it.
      *
+     * The same ONE announcement serves the frame: the engine records it in the frame context every pass lays
+     * itself out on and hands it to the backend's window half once there is a session (see
+     * RenderEngine - the engine owns no size of its own).
+     *
      * Presentation is the unit: a pass a host declared itself is not fed - it has no view, and such a pass
      * states its own rectangle in device pixels (see Presentation::rect).
      *
@@ -217,6 +229,46 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * @param pixel_ratio  Device pixels per logical pixel; <= 0 keeps the ratio this surface last saw.
      */
     void resize(int width, int height, double pixel_ratio);
+
+    /** @brief Binds the window this area is presented through (its TARGET), or unbinds it with nullptr.
+     *
+     * THE WINDOW BELONGS TO THE AREA. One area is one swapchain and one native window carries one of them, so
+     * the handle that names it is announced HERE - and the engine, which drives the frame, is told through the
+     * area (it owns no handle of its own, see RenderEngine). A backend that presents nothing has no window half
+     * to take the handle (see RenderBackend::surface): the announcement is then REFUSED and reported once, since
+     * accepting a window that can never be attached would look exactly like a successful bind.
+     *
+     * RE-ANNOUNCING MOVES THE BINDING. The platform recreating the window (a reparent, a screen change) is the
+     * same area on a new handle: the backend moves onto it rather than rebuilding, and the device, the session
+     * and every compiled pipeline stay (the move completes when the session is (re-)initialized, which is what a
+     * host that follows a recreated window does anyway - see RenderSurfaceBinding::setWindowHandle). nullptr
+     * unbinds: the area presents nothing from here on, while the session stays up.
+     *
+     * An announcement made before there is a backend is kept on the area and handed over when one comes up
+     * (RenderEngine::initialize replays it - that is where a window half first exists to take it).
+     *
+     * @param native_handle The native window this area is presented through (HWND on Windows), or nullptr to
+     *                      unbind.
+     * @return true when the announcement was taken (or kept until a session can take it); false when the backend
+     *         presents nothing - reported once per episode on the engine's diagnostic route.
+     */
+    bool bindTarget(void* native_handle);
+
+    /** @brief Gets the window this area is bound to, or nullptr when it is bound to none.
+     *
+     * The question a host asks to decide whether to re-announce: this is the handle the session was moved onto,
+     * so comparing it with what the windowing system reports now is how "the platform recreated my window" is
+     * noticed (see bindTarget).
+     *
+     * @return The bound native handle, or nullptr.
+     */
+    [[nodiscard]] void* targetHandle() const noexcept;
+
+    /** @brief Whether this area is bound to a window (see bindTarget).
+     *
+     * @return true when a native window is bound to this area.
+     */
+    [[nodiscard]] bool hasTarget() const noexcept;
 
     /** @brief Gets the device pixel ratio this surface last saw (resize).
      *
@@ -346,6 +398,9 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
 
     /// The engine the presentations are registered on and ordered by (borrowed; must outlive this surface).
     raw_ptr<RenderEngine> engine_;
+    /// The window this area is presented through (see bindTarget): the area's own fact, announced to the engine
+    /// and its backend's window half. nullptr = no window bound.
+    void* target_handle_ = nullptr;
     /// The size of this surface as the host reported it (resize), and the ratio that came with it: what every
     /// presented view derives its rectangle from. Zero until a host reports one.
     int    width_ = 0;

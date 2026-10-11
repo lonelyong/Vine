@@ -125,6 +125,16 @@
 > 实例方法 `postToMain()` 与 `Application::startupProgress()` 都删了（前者是同义词，后者与 `StartupProgress::current()` 重复）。
 > **`Application::d` 已私有**（叶子只走 `dptr()`）；`argv()` 返回 `char* const*`。
 
+## 2026-10-11 S9 落地：句柄与尺寸的公告归区（`RenderControl` 不再存句柄）
+
+- **结论**：图形层的 S9 把窗口与尺寸的 owner 换成**区**（`RenderSurface::bindTarget` / `resize`，见
+  `.ai/memory/graphics.md` 顶部 S9 条），控件跟着改两处：`SurfaceWindow::init()` 里 `surface->bindTarget(handle)`
+  取代 `engine->setWindowHandle(handle)`（重公告 = 把绑定**搬**到新窗口，设备/会话/已编译管线都留），尺寸只报一次给
+  表面（`feedSurfaceSize`）—— `engine->resize(w,h)` 那两处调用随之删掉（尺寸经区到帧上下文与窗口那一半）。
+- **记账**：`SurfaceWindow::Impl::session_handle`（"会话绑在哪个句柄上"的副本）**删掉**：现在问
+  `surface->targetHandle()`（S6 的老规矩：一个值只有一个 owner —— 窗口是区的，控件不存第二份）。
+  判据：`test_gui` 259 全绿（含 `RenderControlTest.FollowsARecreatedSurfaceWithoutTheHost` 那条换窗口的用例）。
+
 ## 2026-10-11 S8 落地：`Viewer` 管一块渲染区里的 N 个 View
 
 - **结论**：一个控件 = 一块渲染区（一个引擎、一个会话、一个设备）**不再等于一个视图**。控件多了一只手

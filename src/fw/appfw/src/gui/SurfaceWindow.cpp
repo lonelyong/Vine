@@ -214,8 +214,8 @@ struct SurfaceWindow::Impl {
     /// The panes of this area and their per-pane requests (see Viewer). Declared after the engine, the view and
     /// the surface so it is destroyed before them: it borrows all three.
     std::unique_ptr<Viewer> viewer;
-    /// true once a device and its pipelines were built on session_handle: what makes a new handle a re-announce
-    /// rather than a first attach, and what keeps the surface following a recreated window.
+    /// true once a device and its pipelines were built on the surface's window: what makes a new handle a
+    /// re-announce rather than a first attach, and what keeps the surface following a recreated window.
     bool has_session = false;
     /// true while the last attach attempt reported success (implies has_session).
     bool backend_live = false;
@@ -237,8 +237,6 @@ struct SurfaceWindow::Impl {
     bool surface_ok = false;
     /// Coalesces resize/surface-created notices into one deferred update.
     bool resize_pending = false;
-    /// The handle the session is bound to.
-    void* session_handle = nullptr;
     /// Last client size reported, by either the host widget or this window (the other one repeats it).
     int last_width = -1;
     int last_height = -1;
@@ -715,8 +713,8 @@ void SurfaceWindow::handleUpdate()
         return;
     }
 
-    if (handle != d->session_handle) {
-        // The window Qt shows now is not the one the backend is bound to: a recreated platform window (which an
+    if (handle != d->surface->targetHandle()) {
+        // The window Qt shows now is not the one this area is bound to: a recreated platform window (which an
         // established session follows), or a first attach that had no usable window yet. Both attach here.
         init();
         return;
@@ -727,7 +725,6 @@ void SurfaceWindow::handleUpdate()
     // samples its source through vine_uv), and the frame that follows snaps it back; that was tried on Windows and
     // rejected in favour of never showing a distorted picture (the grown part of the client area is simply filled
     // by this frame). See .ai/memory/graphics.md (2026-09-17).
-    d->engine->resize(w, h);
     feedSurfaceSize(w, h);
     renderFrame();
 }
@@ -737,7 +734,7 @@ bool SurfaceWindow::init()
     // The one attach, and the entry point: idempotent while the session is bound to the surface the window reports
     // NOW - after Qt recreated the platform window this has to re-attach (a re-announce, so the backend can move)
     // rather than report the old attach as current.
-    if (d->backend_live && nativeHandle() == d->session_handle) {
+    if (d->backend_live && nativeHandle() == d->surface->targetHandle()) {
         return true;  // Already bound to this very surface (backend_live implies has_session).
     }
 
@@ -784,15 +781,17 @@ bool SurfaceWindow::init()
         }
         return d->backend_live;
     }
-    if (d->has_session && handle != d->session_handle) {
-        // The platform window was recreated: re-announce the new handle (RenderSurfaceBinding::setWindowHandle)
-        // instead of tearing the session down, so the device and every compiled pipeline stay.
+    if (d->has_session && handle != d->surface->targetHandle()) {
+        // The platform window was recreated: re-announce the new handle (RenderSurface::bindTarget, which hands it
+        // to the backend's window half - RenderSurfaceBinding::setWindowHandle) instead of tearing the session
+        // down, so the device and every compiled pipeline stay.
         vn::logging::defaultLogger().info(
             "[RenderControl] the render surface was recreated: re-announcing the new handle so the backend can follow it");
     }
-    // Give the engine the native window the backend must attach to; the handle is refreshed here so a re-announce
-    // after a surface recreate uses the new handle (and a backend that can move does exactly that).
-    d->engine->setWindowHandle(handle);
+    // The window this area is presented through belongs to the AREA (RenderSurface::bindTarget): the announcement
+    // is made here, before the session comes up, and re-made whenever the window is replaced - which is how the
+    // binding is moved onto a recreated window rather than rebuilt.
+    (void)d->surface->bindTarget(handle);
 
     // The attachment: the device, the session and every pipeline are built behind this call, on this thread. It
     // returns before its caller does, so nothing can be "in the middle of an attach" - a host installs its content
@@ -817,15 +816,13 @@ bool SurfaceWindow::init()
     // cares about (the frame below is the other half, and the Presenting transition logs it).
     vn::logging::defaultLogger().info("[RenderControl] session up after {} ms (device, session and pipelines)",
                                         elapsedMs(d->created_at));
-    d->has_session    = true;
-    d->session_handle = handle;
+    d->has_session = true;
     // failureReason() is the answer only while the state is Failed: a session that comes up after a failed attempt
     // clears the old verdict, so a host that reports the reason cannot keep showing one for a running session.
     d->failure_reason.clear();
-    // The size the surface has NOW goes to the backend and the view, so the frame below is built at it (undistorted
+    // The size the surface has NOW goes to the frame and the view, so the frame below is built at it (undistorted
     // aspect, viewport tracking). At construction that is a placeholder size (measured 160x160 against the 752x480
     // of the settled window); the layout's real size arrives through handleUpdate() and is served in place.
-    d->engine->resize(width(), height());
     feedSurfaceSize(width(), height());
     // The frame the attach owes - the same frame as any other, and it is what pays the session's one-time build
     // (pass graphs, program slots, compiled pipelines - measured 183.6 ms for the demo's 5 slots).
@@ -872,7 +869,7 @@ void SurfaceWindow::renderFrame()
     if (h == nullptr) {
         return;
     }
-    if (d->has_session && h != d->session_handle) {
+    if (d->has_session && h != d->surface->targetHandle()) {
         init();
         return;
     }

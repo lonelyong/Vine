@@ -25,6 +25,15 @@ struct VN_GRAPHICS_API Capabilities
     /// Off-screen render targets are built, drawn into and sampled (see RenderBackend::setRenderTarget); false
     /// means a non-null target is ignored and the pass draws into the default framebuffer.
     bool render_targets{false};
+
+    /// Frames can be presented somewhere: this session has a window to show a picture through (see
+    /// RenderBackend::surface, and RenderSurface::bindTarget for the window an area is bound to).
+    ///
+    /// False is a first-class state, not an error: a session brought up to draw only into render targets runs
+    /// whole frames and presents nothing (an offline bake, a display-less run). It answers "was this session
+    /// opened with a presentation intent at all" - which is why it is asked before a host plans a frame, rather
+    /// than discovered from a present that did nothing.
+    bool presentation{false};
 };
 
 VN_GRAPHICS_NS_END

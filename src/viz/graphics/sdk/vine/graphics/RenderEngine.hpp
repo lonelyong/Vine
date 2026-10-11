@@ -32,6 +32,7 @@ class RenderPass;
 class ImageRef;
 class RenderTarget;
 class RenderBackend;
+class RenderSurface;
 
 /**
  * @brief High-level render engine managing the frame loop and render state.
@@ -55,14 +56,13 @@ class RenderBackend;
  * platform-independent and delegates actual drawing to a RenderBackend
  * supplied by the caller via setBackend().
  *
- * The engine may be given a host native window (setWindowHandle) so the
- * backend can attach its render surface to it - when the backend HAS a
- * surface: the window half of a backend is optional (see RenderBackend::surface).
- * The host reports surface resizes via resize() and drives camera input through
- * its SceneView. The engine stays platform-independent and owns none of the
- * window objects.
- */
-class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine> {
+ * THE ENGINE KNOWS NO WINDOW. The window an area is presented through belongs to the AREA: RenderSurface owns
+ * the handle that names it (bindTarget) and the surface size a host reports (resize), and the engine holds
+ * neither. What the engine does is drive the frame: it replays the area's window announcement when a session
+ * comes up (a window announced before a backend existed can only be handed over once there is one), and it
+ * presents each frame through the backend's window half at the frame's tail (see RenderBackend::surface). A
+ * backend that has no window half presents nothing, and a frame is complete without one.
+ */class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine> {
     VN_OBJECT_META_DECL;
 
   public:
@@ -197,7 +197,12 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * A host (a tool, a HUD, a test) asks through the engine rather than reaching for the backend object; the
      * engine itself asks the same value where a capability decides how a frame is driven (see `frame()`).
      *
-     * @return The backend's capabilities; everything false when no backend is set (nothing can be claimed).
+     * ONE FIELD IS THE ENGINE'S OWN ANSWER, `presentation`: "can this session show frames somewhere" is exactly
+     * "the backend has a window half" (RenderBackend::surface) until devices become first-class - and the engine
+     * is the party that also drives that half, so a host reads ONE value instead of asking two objects about the
+     * same fact. The backend's own answer describes what IT can do (off-screen targets and the like).
+     *
+     * @return The backend's capabilities, whole; everything false when no backend is set (nothing can be claimed).
      */
     [[nodiscard]] Capabilities capabilities() const noexcept;
 
@@ -450,32 +455,44 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void unpublish(const String& name);
 
-    /** @brief Resizes the rendering surface.
-     *
-     * Records the surface size in the shared frame context and forwards the announcement to the backend's
-     * surface, which is what owns the swapchain being resized (only when the backend is initialized, and only
-     * when it has a surface at all - see RenderBackend::surface). The engine never manages camera / target /
-     * pass-viewport layout: those are maintained by their creators on the new surface size (e.g.
-     * SceneView::addSurfaceLayout and SceneView::onSurfaceResized for the view camera).
-     *
-     * @param width  New surface width in pixels.
-     * @param height New surface height in pixels.
-     */
-    void resize(int width, int height);
-
-    /** @brief Supplies the native window the backend attaches to.
-     *
-     * Stored until initialize(), where it is handed to the backend's surface binding (see
-     * RenderBackend::surface); a backend with no surface presents nothing, and the announcement is then reported
-     * as wiring the engine cannot serve instead of being dropped. The handle value is captured at call time, so
-     * the host must call it again before a re-initialize whenever the native window was recreated. Pass nullptr
-     * to clear.
-     *
-     * @param native_handle Native window handle (HWND on Windows), or nullptr.
-     */
-    void setWindowHandle(void* native_handle);
-
   private:
+    friend class RenderSurface;  // the one area this engine drives announces its window and size through here
+
+    /** @brief Hands the area's window to the backend's window half, or reports once that there is none.
+     *
+     * The announcement the engine cannot serve - a window, and a backend that presents nothing - is said once per
+     * episode instead of being dropped, because "accepted" and "attached" would otherwise look the same (see
+     * RenderBackend::surface). A session that comes up later takes the announcement it finds on its area (see
+     * initialize()).
+     *
+     * @param native_handle The area's window, or nullptr to hand over "no window" (an unbind).
+     * @return true when the announcement was taken; false when the backend presents nothing.
+     */
+    bool bindAreaTarget(void* native_handle);
+
+    /** @brief Records the area's size for the frame (its passes lay themselves out on it) and hands it to the
+     * backend's window half once there is a session to honour it.
+     *
+     * The engine's ONE size announcement (see RenderSurface::resize): recorded even when no backend exists yet,
+     * because the frame context is what the passes read, and replayed by initialize() when a session comes up.
+     *
+     * @param width  Area width in pixels (> 0; the caller refuses the rest).
+     * @param height Area height in pixels (> 0).
+     */
+    void announceAreaSize(int width, int height);
+
+    /** @brief Registers @p area as the one area this engine drives (see RenderSurface - the frame's unit). The
+     * last one announced wins: an engine drives one area.
+     *
+     * @param area Area to register (borrowed; unregistered by ~RenderSurface).
+     */
+    void adoptArea(raw_ptr<RenderSurface> area);
+
+    /** @brief Unregisters @p area (a no-op unless it is the registered one).
+     *
+     * @param area Area going away.
+     */
+    void releaseArea(raw_ptr<const RenderSurface> area);
 
     /** @brief One registered draw slot in the engine's ordered pass list.
      *
@@ -829,8 +846,16 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // it once per pass. 0 = no frame announced yet, which is also what a caller
     // that never renders sees (no memoising at all).
     std::uint64_t                       content_frame_      = 0;
-    void*                               native_handle_      = nullptr;
     bool                                initialized_        = false;
+    // The one area this engine drives (see RenderSurface): register on construction, gone with the area. Borrowed,
+    // and the only place the engine reads a window from - it owns no handle (see the class contract).
+    raw_ptr<RenderSurface>              area_               = nullptr;
+    // Whether the current backend has a window half (asked once, on setBackend: "a property of the backend, not a
+    // state" - see RenderBackend::surface), which is what capabilities().presentation answers.
+    bool                                backend_presents_   = false;
+    // "The area's window has nowhere to go" is one condition, not a per-announcement event (see
+    // bindAreaTarget): the episode ends when an announcement is taken.
+    ReportOnce                          target_refused_;
     // True once the frame reported that the backend cannot draw the off-screen targets the pipeline
     // asks for (see frame()): the report is an EPISODE, so it repeats only after the pipeline stopped
     // asking for one — the flag is cleared the moment no enabled pass needs a target.

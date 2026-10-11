@@ -18,9 +18,10 @@ VN_GRAPHICS_NS_BEGIN
  * contract itself they were exactly that (a headless backend had to stub out four methods it had nothing to say
  * about).
  *
- * WHO DRIVES IT. The engine, on behalf of the host: RenderEngine::setWindowHandle() and RenderEngine::resize()
- * forward to the surface, and RenderEngine::frame() presents the frame it just ran through it. A host that
- * drives a backend itself (a tool, a test) calls the same entries directly.
+ * WHO DRIVES IT. The AREA, on behalf of the host: RenderSurface::bindTarget() announces the window (and moves the
+ * binding onto a recreated one), RenderSurface::resize() announces the size, and the engine presents the frame it
+ * just ran through it at the frame's tail (see RenderEngine::frame). A host that drives a backend itself (a tool,
+ * a test) calls the same entries directly.
  *
  * THREADING and lifetime follow the backend's own rules (see RenderBackend): one thread, serialised calls, and
  * the binding lives as long as the backend's session does.

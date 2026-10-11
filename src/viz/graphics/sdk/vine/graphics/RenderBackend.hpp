@@ -74,9 +74,10 @@ enum class ReadbackResult
  * close it: "this frame is done" is the call returning.
  *
  * THE WINDOW HALF IS OPTIONAL. A backend that has a surface is also a RenderSurfaceBinding (see surface()): the
- * engine announces the host window and the size through it and presents the frame it just ran through it, while
- * a backend that only draws into render targets answers surface() == nullptr and carries none of that - the four
- * window entries are not empty shells on this interface, they are absent from it.
+ * area announces its host window and its size through it (RenderSurface::bindTarget / resize) and the engine
+ * presents the frame it just ran through it, while a backend that only draws into render targets answers
+ * surface() == nullptr and carries none of that - the four window entries are not empty shells on this
+ * interface, they are absent from it.
  *
  * WHAT ELSE A BACKEND IS TOLD, and when - each is a RESOURCE announcement, not a frame call:
  *   * setRenderTarget(target): a target the host will draw into or read back, so the backend can hold it and
@@ -185,10 +186,11 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
     /** @brief Gets the window half of this backend, or nullptr when it has none.
      *
      * A backend that presents through a window answers a RenderSurfaceBinding (itself, or a part of itself), and
-     * the engine drives the host's window and size announcements and the present through it. A backend that only
-     * draws into render targets - an offline baker, a test double, a compute-style consumer - answers nullptr and
-     * does nothing else: there is no window to bind, no size to follow and nothing to present, and no empty
-     * implementation of those four calls to carry.
+     * the AREA that is presented through it drives the host's window and size announcements and the present
+     * through it (see RenderSurface::bindTarget - one area is one window, and the handle that names it belongs to
+     * the area). A backend that only draws into render targets - an offline baker, a test double, a compute-style
+     * consumer - answers nullptr and does nothing else: there is no window to bind, no size to follow and nothing
+     * to present, and no empty implementation of those four calls to carry.
      *
      * The answer is a property of the backend, not a state: it does not change over a session and it is asked
      * from outside, never called back into the backend. The binding it returns stays valid for as long as the

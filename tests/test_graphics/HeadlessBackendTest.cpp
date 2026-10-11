@@ -4,6 +4,7 @@
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
+#include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/raw_ptr.hpp>
@@ -108,19 +109,21 @@ class WindowedBackend : public RenderBackend, public RenderSurfaceBinding
  * a backend that only draws into off-screen targets runs a frame whose pass reaches the target it names, with
  * nothing presented - and nothing reported, because a host with no window is not a fault.
  *
- * What this case can check about the negative is the ASK, so it counts the asks: the size announced before the
- * session came up went through the window half (there is none, so it stayed in the engine's frame context), and
- * the frame asked once more - before presenting, which then had nothing to present with.
+ * What this case can check about the negative is the ASK, so it counts the asks: the size the AREA announced
+ * before the session came up went through the window half (there is none, so it stayed in the frame context),
+ * and the frame asked once more - before presenting, which then had nothing to present with.
  */
 TEST(HeadlessBackendTest, AFrameIsCompleteWithoutASurface)
 {
     auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setBackend(backend);
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
 
-    engine->resize(320, 240);  // a size the passes lay themselves out on - not a surface to follow
+    area->resize(320, 240);  // a size the passes lay themselves out on - not a surface to follow
+    const int asks_before_attach = backend->surface_asked;  // asked once when the backend was set (see capabilities)
     ASSERT_TRUE(engine->initialize());
-    EXPECT_EQ(backend->surface_asked, 1)
+    EXPECT_EQ(backend->surface_asked, asks_before_attach + 1)
         << "the announced size was handed to the window half (there is none: it stays in the frame context)";
 
     auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
@@ -145,17 +148,20 @@ TEST(HeadlessBackendTest, AFrameIsCompleteWithoutASurface)
     EXPECT_EQ(backend->surface_asked, asks_before_frame + 1)
         << "the window half was asked for before presenting - and answered null, so nothing was presented";
     EXPECT_EQ(engine->diagnosticCount(), 0u) << "a windowless host is not a problem";
+    EXPECT_FALSE(engine->capabilities().presentation) << "no window half, nothing to present through: the value says so";
 }
 
 /**
- * @brief A window announced to a windowless backend is refused LOUDLY, not dropped.
+ * @brief A window bound to a windowless backend is REFUSED, loudly, once.
  *
- * The one wiring this split can make unsatisfiable is a host handing a window to a backend that has no window
- * half - the handle has nowhere to go. Saying nothing would look exactly like "attached" (the SDK's standing rule:
- * report what could not be done instead of degrading silently), so the engine reports it and the frame that
- * follows is still the frame - a window is not what a frame needs.
+ * The one wiring this split can make unsatisfiable is a host binding a window to a backend that has no window
+ * half - the handle has nowhere to go (see RenderSurface::bindTarget). Saying nothing would look exactly like
+ * "bound" (the SDK's standing rule: report what could not be done instead of degrading silently), so the bind
+ * reports it once per episode - and the frame that follows is still the frame, because a window is not what a
+ * frame needs. The announcement stays on the AREA (the window is the host's statement, and a session that CAN
+ * present takes it: see RenderEngine::initialize).
  */
-TEST(HeadlessBackendTest, AWindowAnnouncedToAWindowlessBackendIsReported)
+TEST(HeadlessBackendTest, BindingATargetOnAWindowlessBackendIsRefusedOnce)
 {
     auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -164,16 +170,24 @@ TEST(HeadlessBackendTest, AWindowAnnouncedToAWindowlessBackendIsReported)
     std::vector<RenderDiagnostic> reported;
     engine->setDiagnosticSink([&reported](const RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
 
+    auto  area   = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
     int   marker = 0;
     void* handle = &marker;
-    engine->setWindowHandle(handle);
-    ASSERT_TRUE(engine->initialize());
-
+    EXPECT_FALSE(area->bindTarget(handle)) << "no window half to take it: the bind is refused, not accepted";
     ASSERT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u);
     ASSERT_EQ(reported.size(), 1u);
     EXPECT_EQ(reported.front().severity, DiagnosticSeverity::Warning);
     EXPECT_EQ(reported.front().category, DiagnosticCategory::PassProtocolViolation);
 
+    // The same session, asked again: one report per episode, and the announcement stays on the area.
+    EXPECT_FALSE(area->bindTarget(handle));
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u);
+    EXPECT_EQ(area->targetHandle(), handle) << "the AREA remembers the window the host bound";
+    EXPECT_TRUE(area->hasTarget());
+
+    // Attaching replays what the area holds - already said, so the episode does not repeat - and the frame runs.
+    ASSERT_TRUE(engine->initialize());
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u);
     engine->frame();
     EXPECT_EQ(backend->frames, 1) << "the frame is what the backend is for: the window was never part of it";
 }
@@ -183,18 +197,20 @@ TEST(HeadlessBackendTest, AWindowAnnouncedToAWindowlessBackendIsReported)
  *
  * The complement that makes the case above mean something: the engine is not reporting "a window was announced",
  * it is reporting "there is no window half to give it to". Where there IS one, the handle arrives before the
- * session comes up, the size follows live, and every frame the engine runs is presented once.
+ * session comes up, the size follows live, every frame the engine runs is presented once - and the capability
+ * that answers "can this session show frames at all" says so.
  */
-TEST(HeadlessBackendTest, AWindowAnnouncedToAWindowedBackendReachesItUnreported)
+TEST(HeadlessBackendTest, ATargetBoundToAWindowedBackendReachesItUnreported)
 {
     auto backend = intrusive_ptr<WindowedBackend>(new WindowedBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setBackend(backend);
 
+    auto  area   = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
     int   marker = 0;
     void* handle = &marker;
-    engine->setWindowHandle(handle);
-    engine->resize(640, 480);
+    ASSERT_TRUE(area->bindTarget(handle));
+    area->resize(640, 480);
     ASSERT_TRUE(engine->initialize());
 
     EXPECT_EQ(backend->adopted_handle, handle) << "the handle reached the window half before the session came up";
@@ -202,9 +218,80 @@ TEST(HeadlessBackendTest, AWindowAnnouncedToAWindowedBackendReachesItUnreported)
     EXPECT_EQ(backend->last_width, 640);
     EXPECT_EQ(backend->last_height, 480) << "the size announced before initialize is handed over once it can be honoured";
     EXPECT_EQ(engine->diagnosticCount(), 0u);
+    EXPECT_TRUE(engine->capabilities().presentation) << "this session CAN present: the value says so";
 
     engine->frame();
     engine->frame();
     EXPECT_EQ(backend->frames, 2);
     EXPECT_EQ(backend->presents, 2) << "one present per frame, driven by the engine";
+}
+
+/**
+ * @brief A re-announced handle MOVES the window; the device (and what was compiled on it) stays.
+ *
+ * The platform recreating the native window (a reparent, a screen change) is the same area on a new handle: the
+ * announcement reaches the window half, which MOVES onto it rather than rebuilding (see
+ * RenderSurfaceBinding::setWindowHandle), and the session the host re-attaches to is the one it had.
+ */
+TEST(HeadlessBackendTest, AReAnnouncedHandleMovesTheWindowAndTheDeviceStays)
+{
+    auto backend = intrusive_ptr<WindowedBackend>(new WindowedBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    area->resize(320, 240);
+
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    engine->addPass(pass, 42);
+
+    int first  = 0;
+    int second = 0;
+    ASSERT_TRUE(area->bindTarget(&first));
+    ASSERT_TRUE(engine->initialize());
+    engine->frame();
+    EXPECT_EQ(backend->presents, 1);
+    EXPECT_EQ(area->targetHandle(), static_cast<void*>(&first));
+
+    // The window the platform shows now is another one: the same area re-announces, and the binding is moved.
+    ASSERT_TRUE(area->bindTarget(&second));
+    EXPECT_EQ(backend->adopted_handle, static_cast<void*>(&second)) << "the new handle reached the window half";
+    EXPECT_EQ(area->targetHandle(), static_cast<void*>(&second));
+    ASSERT_TRUE(engine->initialize());  // the host re-attaches - the rule for a recreated window
+    engine->frame();
+
+    EXPECT_EQ(backend->nativeHandle(), static_cast<void*>(&second))
+        << "the session was moved onto the NEW window: what is handed over is what the AREA says now";
+    EXPECT_EQ(backend->presents, 2) << "the same session keeps presenting";
+    EXPECT_EQ(engine->passCount(), 1u) << "what was registered on the device is still registered";
+    EXPECT_EQ(engine->backend(), backend.get()) << "the device identity: the same backend, moved onto the new window";
+    EXPECT_EQ(engine->diagnosticCount(), 0u);
+}
+
+/**
+ * @brief The session reads the AREA for the window to move onto - never a copy of the handle of its own.
+ *
+ * A window is announced before a backend exists (the window comes first: an application opens its window and then
+ * picks what renders into it), and the handle may be replaced before that backend is attached. What the window
+ * half is handed at an attach is therefore the area's CURRENT answer, not what was announced first: this is what
+ * "the area owns the window" (RenderSurface::bindTarget) means for the engine, which holds no handle.
+ */
+TEST(HeadlessBackendTest, TheAttachHandsOverTheAreasCurrentWindow)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto area   = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    area->resize(800, 600);
+
+    int first  = 0;
+    int second = 0;
+    ASSERT_TRUE(area->bindTarget(&first)) << "no backend yet: the announcement is kept on the area";
+
+    auto backend = intrusive_ptr<WindowedBackend>(new WindowedBackend());
+    engine->setBackend(backend);
+    ASSERT_TRUE(area->bindTarget(&second)) << "still no session: the area's answer is the new window";
+
+    ASSERT_TRUE(engine->initialize());
+    EXPECT_EQ(backend->adopted_handle, static_cast<void*>(&second))
+        << "the attach handed over the area's CURRENT handle, not the one announced first";
+    EXPECT_EQ(backend->last_width, 800);
+    EXPECT_EQ(backend->last_height, 600);
 }
