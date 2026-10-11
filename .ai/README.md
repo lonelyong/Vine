@@ -37,7 +37,8 @@
 - `graphics-pipeline.md` —— `RenderPipeline` 对象（管线的形状、效果与生命周期）；**与多 Pass 那份不同**：那份定 pass 怎么调度，这份定调用方拿到的管线对象长什么样。
 - `graphics-pipeline-builder.md` —— `RenderPipelineBuilder`（管线配方层，preset → 管线）。
 - `graphics-render-next.md` —— 渲染栈的**重新设计提案**（M1 已落地 2026-10-11，其余未落地）：保留什么、重切四条（调试覆盖挪到几何阶段 ✓ / 呈现契约 Pane+Presenter / `resolveRenderState` 状态单点 / Pass 描述符+FramePlan），横切三条（所有权 Lease、能力查询、观测 dump），以及 M1–M8 迁移切片与逐片验收判据、触发条件。（§7 的"整块重写否决"**已于 2026-10-11 作废**，由下一份接手。）
-- `graphics-redesign.md` —— graphics 的**重新设计**（2026-10-11 定，**提案、未落地**；范围含后端契约 `RenderBackend.hpp` + `backend/` 半 + vsg 插件）：病根是"帧在引擎里已是值（M7），边界上又被打散成 ~15 个有顺序的可变调用，后端再拼回一个值"；目标形态是三张契约（设备 / 帧 / 呈现）与一个 `FrameDescription` 值；六片 S0–S6 独立可逆，总判据 = 两棵树逐字节相同。
+- `graphics-redesign.md` —— graphics 的**重新设计**（2026-10-11 定，**S1–S7 已全部落地**；范围含后端契约 `RenderBackend.hpp` + `backend/` 半 + vsg 插件）：病根是"帧在引擎里已是值（M7），边界上又被打散成 ~15 个有顺序的可变调用，后端再拼回一个值"；目标形态是三张契约（设备 / 帧 / 呈现）与一个 `FrameDescription` 值；每片独立可逆，总判据 = 两棵树逐字节相同。
+- `graphics-window-device-viewer.md` —— **下一轴的目标设计（提案，未落地）**：窗口 / `RenderDevice` / `RenderEngine` / 视图 / 离屏 / 多窗口 / `Viewer` 管多视图 —— 名词与职责、六个问题的裁决（设备要不要窗口、一条帧一个引擎、离屏不是模式、谁管多视图、设备共享策略）、生命周期 10 条、契约变化表、切片 S8–S11、否决清单。
 - `vsg-reimplementation.md` —— vsg 后端"从零重新实现"：契约、坑与实施记录（本仓库最长的设计文档）。
 - `vsg-design.md` —— vsg 渲染后端设计 v5（历史登记）。
 - `vsg-pass-lifecycle.md` —— pass 生命周期与槽身份（历史登记）。

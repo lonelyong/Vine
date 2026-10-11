@@ -760,6 +760,7 @@ appfw 一行未改）、`test_vsg` **426 = 421 + 3 skip + 2 已知红**、`test_
 | 想知道 | 看 |
 | --- | --- |
 | 今天的宿主半是什么样（配方/几何/开关、初始化时机、所有权） | `appfw-render-view.md` |
+| **下一轴（窗口 / Device / Engine / 视图 / 离屏 / 多窗口 / Viewer 管多视图）** | `graphics-window-device-viewer.md`（S7 之后的提案：§3 六个问题的裁决、§7 切片 S8–S11） |
 | 今天的后端契约与 `backend/` 半（放置判据、四个"粘连"单元） | `graphics-layering.md`、`vsg-reimplementation.md` §2/§3 |
 | 本轮之前那套提案（M1–M11 与 T1–T7）的现状 | `graphics-render-next.md`（其中 §7 的"整块重写否决"**已被本稿作废**） |
 | **本稿** | 就是这里；落地一片就移进上面的现状文档 |
