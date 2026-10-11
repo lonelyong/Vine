@@ -3604,7 +3604,7 @@ TEST(SceneViewViewportTest, TheAreaSizeHasOneOwnerAndTheViewReadsIt)
     // number is the one every consumer derives from, and the host feeding the view its own is not read. A view that
     // presents nothing is on its own and behaves exactly as it always did.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
@@ -3682,7 +3682,7 @@ TEST(SceneViewViewportTest, AnApplicationWindowPassLeavesTheViewWithNothingToDec
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
 
     // The application presents this surface itself (its own deferred main pass) and DECLARES it.
     auto main = intrusive_ptr<RenderPass>(new RenderPass());
@@ -3975,7 +3975,7 @@ TEST(RenderEngineTest, ResizeDoesNotManagePassLayout)
     engine->addPass(pass, 5);
 
     // The size the passes lay themselves out on is the AREA's announcement (see RenderSurface).
-    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     area->resize(1600, 900);
 
     // The pass's viewport and the target size are untouched by the engine.
@@ -8047,7 +8047,7 @@ TEST(RenderEngineTest, ACameraWhoseShapeIsNotThePassRectangleIsReportedOnce)
     pass->setName(u8"window");
     pass->setCamera(camera);
     engine->addPass(pass, scene, 0);
-    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     area->resize(800, 600);       // the window pass' rectangle: shape 4:3
 
     engine->frame(0.016);
@@ -8115,7 +8115,7 @@ TEST(RenderEngineTest, TheRectangleIsThePassViewportAndAScreenPassIsNotMeasured)
     preview->setCamera(camera);
     preview->setViewport(600, 0, 400, 400);   // shape 1.0, the camera's own
     engine->addPass(preview, scene, 0);
-    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     area->resize(800, 600);                   // the SURFACE is 4:3, the pass draws into a square
 
     engine->frame(0.016);
@@ -8573,7 +8573,7 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
-    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     area->resize(320, 180);
 
     auto camera = intrusive_ptr<Camera>(new Camera());
@@ -9286,7 +9286,7 @@ TEST(RenderEngineTest, TheAreasSizeAnnouncedBeforeInitializeReachesTheBackend)
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
-    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
 
     // Announced first: the backend does not exist yet as far as the size is concerned.
     area->resize(800, 600);
@@ -9317,7 +9317,7 @@ TEST(RenderEngineTest, NoSurfaceSizeAnnouncementIsNotForwarded)
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
-    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
 
     ASSERT_TRUE(engine->initialize());
     EXPECT_EQ(backend->surface_half.resize_calls, 0);

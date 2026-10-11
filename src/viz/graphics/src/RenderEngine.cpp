@@ -167,6 +167,13 @@ bool RenderEngine::initialize()
 void RenderEngine::shutdown()
 {
     if (device_ != nullptr && initialized_) {
+        // The target belongs to the DEVICE (see RenderDevice::createSurfaceTarget), so the area lets go of it
+        // BEFORE the device takes its objects down: what the device hands out lives until the device is destroyed
+        // or the area is unbound, and this is that unbinding (see RenderSurface::bindTarget). A host that comes
+        // back initializes again and binds a fresh target - the "device lost, rebuild from the bottom" path.
+        if (area_ != nullptr) {
+            area_->bindTarget(nullptr);
+        }
         device_->shutdown();
     }
     initialized_ = false;
@@ -1015,9 +1022,14 @@ intrusive_ptr<const ShaderProgram> RenderEngine::defaultContentProgram() const
     return default_content_program_;
 }
 
-void RenderEngine::announceAreaSize(int width, int height)
+void RenderEngine::announceAreaSize(raw_ptr<const RenderSurface> from, int width, int height)
 {
     if (width <= 0 || height <= 0) {
+        return;
+    }
+    // ONLY the engine's own area feeds the frame context (see adoptArea): a second area was refused when it tried
+    // to register, and letting its resize through would lay this frame's passes out on another window's size.
+    if (from == nullptr || from != area_) {
         return;
     }
     // Recorded even when there is no device yet: the frame context is what the passes lay
@@ -1033,8 +1045,22 @@ void RenderEngine::announceAreaSize(int width, int height)
 
 void RenderEngine::adoptArea(raw_ptr<RenderSurface> area)
 {
-    // One engine drives one area: the last one announced wins (and a previous area's release is a no-op unless it
-    // is still the registered one).
+    if (area_ == area) {
+        return;
+    }
+    // ONE engine drives ONE area (see the class note). A second one is refused rather than silently taking over:
+    // the area that was here first would keep declaring its picture into a frame that no longer resolves it, and
+    // its own size would stop being the one the passes lay out on - both silent, which is the failure mode this
+    // area/pass protocol exists to end.
+    if (area_ != nullptr) {
+        if (area_refused_.shouldReport()) {
+            reportEngineProblem(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
+                                u8"RenderEngine::adoptArea: this engine already drives one render area, so the "
+                                u8"second one was refused - an engine drives one area, and a second window wants "
+                                u8"its own engine (one device may serve several engines)");
+        }
+        return;
+    }
     area_ = area;
 }
 

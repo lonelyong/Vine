@@ -165,9 +165,11 @@ class VN_GRAPHICS_API RenderDevice
      *                      NoPresentation when it has no window half at all).
      * @param why           Receives why no target was created (Ok when one was), or null to ignore; see
      *                      SurfaceTargetResult.
-     * @return The target, or nullptr when this device hands none out (see @p why). The target is BORROWED: the
-     *         device that made it owns it, for as long as the window it presents through is open (a device with
-     *         several windows drops each target when its window closes, see WindowPresentTarget).
+     * @return The target, or nullptr when this device hands none out (see @p why). The target is BORROWED, and the
+     *         device that made it owns it: it lives until that device is DESTROYED or the area is unbound (see
+     *         RenderSurface::bindTarget - RenderEngine::shutdown unbinds before it takes the device down). A window
+     *         closing is the device's own business: it DETACHES the target (the handle is gone, and a resize or a
+     *         present afterwards is a no-op that answers the truth), it does not hand the area a dangling object.
      */
     [[nodiscard]] virtual raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
                                                                          SurfaceTargetResult* why = nullptr)

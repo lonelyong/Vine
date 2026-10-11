@@ -24,6 +24,41 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-12 框架级 API 复核的落地：区/引擎/目标的基数与契约收紧（`graphics-api-review-2026-10-12.md`）
+
+- **结论**：独立会话的只读复核给了 6 条发现，其中 1/2/3 是**同一条链上的同一类错** —— "一条事实有多个持有者，
+  其中一个永远在说'我仍然有效'"，今天全靠"只有一块区、一块窗口、后端把自己当目标"三个巧合成立。四条已修、
+  一条不做（改名并进下次 ABI 变更）、一条改口径。复核全文与"看着可疑但确实合理"的清单见
+  `.ai/design/graphics-api-review-2026-10-12.md`。
+- **发现 1（引擎 : 区 = 1:1 曾是静默顶替）**：`RenderEngine::adoptArea` 现在**拒绝**第二块区并报一次
+  （`UnsupportedRequest`，`ReportOnce`）；`announceAreaSize(raw_ptr<const RenderSurface> from, w, h)` 只认引擎
+  自己那块区（被顶替的区再也不能改写 `frame_ctx_`）；不是引擎的区 `present` 也拒绝 + 报一次。原先"一引擎两区"
+  只在 `RenderSurfaceTest` 里被当作便利使用（尺寸扇出那条），改成"第二块窗口 = 第二个引擎"。
+- **发现 2（`present(RenderPass*)` 不校验 + 呈现永不失效）**：`present(pass)` 要求
+  `engine_->passOrder(pass).has_value()`，否则拒 + 报一次；`presentingPass()` / `hasPresentation()` 按"还在帧里"
+  过滤（`removePass` / 清掉 pass 之后区**不再**说自己在被画）。顺带一条**规则退场**："视图已呈现另一块区"在
+  "一引擎一区 + 视图必须同引擎"之下**不可达**，检查与它的用例一并删除（留一条注释说明为什么不需要）。
+- **发现 3（借来的目标没有撤销点）**：契约定成"**活到设备销毁或区解绑**，窗口关闭只是设备自己的 detach
+  （句柄没了，此后 `resize` / `present` 是 no-op 并如实回答）"；`RenderEngine::shutdown()` 在拆设备**之前**
+  `area_->bindTarget(nullptr)`。后端零改动（`VsgBackend` 仍把自己当目标）。
+- **发现 4（可空引擎的区）**：`RenderSurface(RenderEngine&)`（非空由签名保证，与 `present(SceneView&)` 同款）；
+  调用点 31 处机械替换；`present`/`resize`/析构里的 `engine_ != nullptr` 死分支删掉。
+- **发现 5（公开头注释漂移）**：`SceneView.hpp` 六处"视图自己的矩形"改回事实（一个区一幅画）、`passOrder` 的
+  读者改成宿主/测试、`PresentTarget.hpp` 的 `RenderEngine::render()` 改成 `frame()`、`RenderEngine` 类注释块与
+  `class` 拆行。
+- **判据（实测）**：全量 Release 0 error / 0 warning；`test_graphics` **361**（357 + 5 新用例 − 1 条不可达用例）；
+  `test_gui` **257**、`test_vsg` **429** = 426 + 3 skip、`test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94 不掉；
+  五个 gate 0 finding（`--strict` 仍 13）。新用例：`ASecondAreaOnOneEngineIsRefusedAndReportedOnce` /
+  `OnlyTheEnginesOwnAreaFeedsTheFrameContext` / `APassThatIsNotInTheFrameCannotPresentTheArea` /
+  `APresentationWhosePassLeavesTheFrameStopsPresenting` / `AStoppedEngineUnbindsTheAreasTargetFirst`。
+- **变异 5/5 各自单独实测红**：① `adoptArea` 恢复静默顶替 ⇒ 第二块区那条红；② 去掉 `announceAreaSize` 的
+  "只认自己那块区" ⇒ 帧上下文那条红；③ `present(pass)` 去掉注册校验 ⇒ 未注册 pass 那条红；④ `hasPresentation()` /
+  `presentingPass()` 去掉"在帧里"过滤 ⇒ pass 离开帧那条红；⑤ `shutdown` 不解绑 ⇒ 目标寿命那条红。
+- **坑**：① "一引擎一区"一落地，**另一条规则就没法被构造出来了**（视图已呈现另一块区）——删规则时要连它的用例
+  一起删，别留一条断言恒真的用例；② 现有用例里"顺手建第二块区"的便利写法（`RenderSurfaceTest` 量到尺寸那条）
+  必须改成第二个引擎，否则它测的其实是"死区"；③ 改公开签名（本次：引擎从可空改成引用）之前先数调用点，31 处
+  机械替换比手改稳。
+
 ## 2026-10-12 两条"已知红"清掉：都是**测试侧**的锅（机器相关偏移 / 读像素早于完成点）
 
 - **结论**：`test_vsg` 不再有已知红 —— **429 = 426 passed + 3 skip**（此前 424 + 3 skip + 2 failed）。两条都不是产品缺陷，

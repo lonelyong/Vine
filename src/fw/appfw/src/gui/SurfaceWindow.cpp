@@ -332,7 +332,7 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     // The one thing that knows which passes draw into THIS surface: the control falls back to its own view (see
     // init()), and a host that brought a main pass of its own declares it here (RenderSurface::present).
     d->surface = vn::intrusive_ptr<vn::graphics::RenderSurface>(
-        new vn::graphics::RenderSurface(d->engine.get()));
+        new vn::graphics::RenderSurface(*d->engine));
     // The area's picture (see Viewer): the control's own view, registered with the default request but neither a
     // chain nor a declaration - the first attach is where that becomes a picture, so a host that never touches the
     // viewer pays no build until there is an area to draw into.

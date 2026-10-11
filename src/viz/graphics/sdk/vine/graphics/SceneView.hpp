@@ -44,9 +44,9 @@ class Scene;
  * remains the pure pass scheduler / backend owner, while the view owns the
  * "primary view state" a camera used to be given by the engine. The engine
  * holds no content scene, and neither does this class hold a DRAWING RECIPE: a
- * view is WHAT is drawn (its camera and content) and WHERE (its rectangle and
- * the surface size it derives from), while WHICH passes draw it is a Pipeline
- * it ADOPTS (setPipeline) - built by RenderPipelineBuilder, whose
+ * view is WHAT is drawn (its camera and content) and WHERE (the whole surface it
+ * presents - its area, see RenderSurface), while WHICH passes draw it is a
+ * Pipeline it ADOPTS (setPipeline) - built by RenderPipelineBuilder, whose
  * PipelineOptions carry the recipe (chain, shading mode, overlays). That split
  * is why switching a shading mode or hiding an overlay is a call on the
  * pipeline (Pipeline::setShadingMode / setGizmoVisible) and never something a
@@ -168,7 +168,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * it. What the view derives from the one size is its camera aspect, the size its off-screen targets and HUD
      * boxes get, and the size its surface-layout steps are told.
      *
-     * Then it runs this view's surface-layout steps, with this view's own rectangle: the manipulator / camera
+     * Then it runs this view's surface-layout steps, with the area's size: the manipulator / camera
      * aspect first, then every callback registered with addSurfaceLayout(). The pipeline it adopted (when it has
      * one) is resized here too, so a view that draws through a built pipeline needs no layout step at all.
      *
@@ -208,7 +208,8 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * target at native resolution). Multiplying here is what keeps a layer-1 host from reaching back into
      * appfw for the ratio (RenderControl::devicePixelRatio()).
      *
-     * The size is again THIS VIEW's rectangle (its part of the surface), in the host's logical space.
+     * The size is again the AREA's size (one area draws one picture - see RenderSurface), in the host's logical
+     * space.
      *
      * @param layout Callback taking the view's width, height and the host's pixel ratio.
      */
@@ -285,19 +286,19 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /** @brief Adopts @p pipeline as what draws this view (build one with RenderPipelineBuilder).
      *
      * THE one step that connects a view to a drawing: the view brings what a pipeline cannot know (this view's
-     * camera and content are the builder's inputs, and its rectangle, surface size and layout steps are applied
-     * HERE - the window pass' device rectangle, the off-screen targets' size, the HUD boxes' origin), and the
+     * camera and content are the builder's inputs, and the area's size and its layout steps are applied
+     * HERE - what the off-screen targets are sized to, where the HUD boxes anchor), and the
      * pipeline brings what a view must not own (which passes exist, the shading mode, the overlays).
      *
      * Adopting replaces any previous pipeline, and passing null drops the current one - which is how a view is
      * taken out of the frame: the pipeline unregisters its passes when its last handle goes away, so a dropped
      * view draws nothing instead of leaving passes to run with nobody holding them. A view that presents a
-     * surface (RenderSurface::present) keeps being one across a change: the table resolves the view's pass
+     * surface (RenderSurface::present) keeps being one across a change: the area resolves the view's pass
      * afresh, so a REBUILT pipeline (a recipe change) is followed without re-declaring anything.
      *
-     * The view is drawn where its rectangle says, and it is the CALLER's business to have built a pipeline for
-     * this view: a pipeline built for another camera draws that camera's picture into this view's rectangle (the
-     * engine reports the shape mismatch when the two disagree).
+     * The view is drawn where its area is - the whole of it (see RenderSurface) - and it is the CALLER's business
+     * to have built a pipeline for this view: a pipeline built for another camera draws that camera's picture into
+     * this view's area (the engine reports the shape mismatch when the two disagree).
      *
      * @param pipeline Pipeline that draws this view; null drops the current one.
      */
@@ -369,8 +370,8 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     intrusive_ptr<Scene>   scene_;
     intrusive_ptr<CameraManipulator> manipulator_;
 
-    // The pipeline this view adopted, if any (setPipeline): what draws this view's camera and content into its
-    // rectangle. The handles in it are the pipeline's own - this one only keeps it alive, and dropping it is what
+    // The pipeline this view adopted, if any (setPipeline): what draws this view's camera and content into the
+    // area. The handles in it are the pipeline's own - this one only keeps it alive, and dropping it is what
     // takes the passes out of the frame.
     intrusive_ptr<Pipeline> pipeline_;
 

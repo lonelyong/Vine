@@ -241,7 +241,7 @@ TEST(HeadlessBackendTest, AFrameIsCompleteWithoutATarget)
     auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
-    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
 
     area->resize(320, 240);  // a size the passes lay themselves out on - not a surface to follow
     const int asks_before_attach = backend->targets_asked;
@@ -405,7 +405,7 @@ TEST(HeadlessBackendTest, ATargetTheHostMadeReachesTheFrameUnreported)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
 
-    auto  area   = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto  area   = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     int   marker = 0;
     void* handle = &marker;
 
@@ -437,6 +437,45 @@ TEST(HeadlessBackendTest, ATargetTheHostMadeReachesTheFrameUnreported)
 }
 
 /**
+ * @brief A stopped engine unbinds the area's target BEFORE it takes the device down.
+ *
+ * The target belongs to the DEVICE (see RenderDevice::createSurfaceTarget): what it hands out lives until that device
+ * is destroyed or the area is unbound, and shutdown() is the unbinding - after it, the area names no object the
+ * device is taking down, and nothing the host does afterwards can reach into one (a resize is the cheapest way to
+ * look). A window closing is the device's own business: it detaches, it never leaves a dangling pointer behind.
+ */
+TEST(HeadlessBackendTest, AStoppedEngineUnbindsTheAreasTargetFirst)
+{
+    auto backend = intrusive_ptr<WindowedBackend>(new WindowedBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
+    ASSERT_TRUE(engine->initialize());
+    ASSERT_TRUE(area->hasTarget()) << "the engine asked its device for the area's window target";
+
+    area->resize(320, 240);
+    const int resize_calls_before = backend->resize_calls;
+    ASSERT_EQ(resize_calls_before, 1) << "the area feeds the target while it is bound";
+
+    engine->shutdown();
+
+    EXPECT_FALSE(area->hasTarget()) << "the area does not name an object the device is taking down";
+    area->resize(640, 480);
+    EXPECT_EQ(backend->resize_calls, resize_calls_before) << "and a later resize does not reach the target";
+    EXPECT_EQ(engine->frameContext().surface_width, 640)
+        << "the frame size is still the area's to announce: the device is gone, the area is not";
+
+    // Coming back is the documented path: a host that lost its device initializes again, and the engine asks its
+    // device for a target again rather than resurrecting the object the area let go of. This double hands one window
+    // out once (see createSurfaceTarget), so the second ask is refused - what the host does about that is its own
+    // decision (SurfaceWindow asks its device at every attach).
+    const int creations_before = backend->target_creations;
+    EXPECT_TRUE(engine->initialize());
+    EXPECT_EQ(backend->target_creations, creations_before + 1) << "the engine asks again instead of keeping the old one";
+}
+
+/**
  * @brief A re-announced window MOVES the target; the device (and what was compiled on it) stays.
  *
  * The platform recreating the native window (a reparent, a screen change) is the same area on a new handle: the
@@ -448,7 +487,7 @@ TEST(HeadlessBackendTest, AReAnnouncedWindowMovesTheTargetAndTheDeviceStays)
     auto backend = intrusive_ptr<WindowedBackend>(new WindowedBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
-    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     area->resize(320, 240);
 
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
@@ -492,8 +531,8 @@ TEST(HeadlessBackendTest, OneDeviceServesSeveralAreasWithoutCrossingThem)
     engine_a->setDevice(device);
     engine_b->setDevice(device);
 
-    auto area_a = intrusive_ptr<RenderSurface>(new RenderSurface(engine_a.get()));
-    auto area_b = intrusive_ptr<RenderSurface>(new RenderSurface(engine_b.get()));
+    auto area_a = intrusive_ptr<RenderSurface>(new RenderSurface(*engine_a));
+    auto area_b = intrusive_ptr<RenderSurface>(new RenderSurface(*engine_b));
 
     int handle_a = 0;
     int handle_b = 0;
@@ -532,7 +571,7 @@ TEST(HeadlessBackendTest, OneDeviceServesSeveralAreasWithoutCrossingThem)
 TEST(HeadlessBackendTest, TheDeviceIsAskedForItsOwnTargetOnlyWhenTheAreaHoldsNone)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto area   = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto area   = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     area->resize(800, 600);
 
     auto backend = intrusive_ptr<WindowedBackend>(new WindowedBackend());

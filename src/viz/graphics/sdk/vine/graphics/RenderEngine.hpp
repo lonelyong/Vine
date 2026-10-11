@@ -65,7 +65,10 @@ class PresentTarget;
  * RenderFrameExecutor::executeFrame), and it presents that frame through it at the frame's tail (see
  * PresentTarget::present). A device that presents nothing presents nothing, and a frame is complete without
  * one.
- */class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine> {    VN_OBJECT_META_DECL;
+ */
+class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine>
+{
+    VN_OBJECT_META_DECL;
 
   public:
     /** @brief Constructs an empty engine with no device attached yet.
@@ -164,7 +167,13 @@ class PresentTarget;
      */
     bool initialize();
 
-    /** @brief Releases backend resources. */
+    /** @brief Releases backend resources, and unregisters the area's target with it.
+     *
+     * The device is about to take its own objects down, and the target it handed out is one of them (see
+     * RenderDevice::createSurfaceTarget): the area is unbound FIRST, so nothing is left naming an object that the
+     * device is destroying. A host that comes back calls initialize() again, asks the device for a target and binds
+     * it - which is the "device lost, rebuild from the bottom" path (see the class note on the contracts).
+     */
     void shutdown();
 
     /** @brief Renders one frame (compile, then announce the compiled value, end, swap).
@@ -225,7 +234,10 @@ class PresentTarget;
      * remembers a pass needs: a pass that was removed (its pipeline was dropped, the host called removePass)
      * answers nothing, so an answer IS the pass being in the frame.
      *
-     * The caller this exists for is RenderSurface, whose presentation table is ordered by this schedule.
+     * The caller this exists for is a HOST (and the tests): the area a pass presents is a declaration (see
+     * RenderSurface::present), and this is how a host finds out whether the pass it declared is still in the frame -
+     * a pass that was removed presents nothing, and a presentation that keeps saying otherwise is a lie the reader
+     * would act on (see RenderSurface::presentingPass).
      *
      * @param pass Pass to look up (by pointer; null, like an unregistered pass, answers nothing).
      * @return The pass' order, or nullopt when no such pass is registered (or @p pass is null).
@@ -457,21 +469,29 @@ class PresentTarget;
     void unpublish(const String& name);
 
   private:
-    friend class RenderSurface;  // the one area this engine drives announces its size through here
+    friend class RenderSurface;  // its one area: registers itself, announces its size, and asks whether it is the one
 
     /** @brief Records the area's size for the frame (its passes lay themselves out on it) and replays it to the
      * target once there is a session to honour it.
      *
      * The engine's ONE size announcement (see RenderSurface::resize): recorded even when no device exists yet,
      * because the frame context is what the passes read, and replayed by initialize() when a session comes up.
+     * ONLY the engine's own area is heard: a second area on this engine was refused when it tried to register (see
+     * adoptArea), and its size is not this frame's business - a frame whose passes laid themselves out on another
+     * window's size would be a silent disagreement, not a feature.
      *
+     * @param from   Area announcing (the engine's own is the only one it acts on).
      * @param width  Area width in pixels (> 0; the caller refuses the rest).
      * @param height Area height in pixels (> 0).
      */
-    void announceAreaSize(int width, int height);
+    void announceAreaSize(raw_ptr<const RenderSurface> from, int width, int height);
 
-    /** @brief Registers @p area as the one area this engine drives (see RenderSurface - the frame's unit). The
-     * last one announced wins: an engine drives one area.
+    /** @brief Registers @p area as the one area this engine drives (see RenderSurface - the frame's unit).
+     *
+     * ONE engine drives ONE area: a second one is REFUSED and reported once, because a silent takeover would leave
+     * the first area presenting into a frame that no longer resolves it (its picture never reaches the window) while
+     * its size kept being the one the passes lay out on. A second window wants its own engine; a device may serve
+     * several engines (see RenderDevice).
      *
      * @param area Area to register (borrowed; unregistered by ~RenderSurface).
      */
@@ -839,9 +859,11 @@ class PresentTarget;
     // The one area this engine drives (see RenderSurface): register on construction, gone with the area. Borrowed,
     // and the only place the engine reads a target from - it owns no window and no handle (see the class contract).
     raw_ptr<RenderSurface>              area_               = nullptr;
+    /// "A second area tried to register" is one condition, not a per-call event (see adoptArea).
+    ReportOnce                          area_refused_{};
     // The target the frame path presents through when this engine has NO area (see initialize): what the device
     // made for the window it brought up itself, or nullptr when it presents nothing. Borrowed - the device owns it.
-    raw_ptr<PresentTarget>             own_target_         = nullptr;
+    raw_ptr<PresentTarget>              own_target_         = nullptr;
     // True once the frame reported that the backend cannot draw the off-screen targets the pipeline
     // asks for (see frame()): the report is an EPISODE, so it repeats only after the pipeline stopped
     // asking for one — the flag is cleared the moment no enabled pass needs a target.

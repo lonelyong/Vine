@@ -68,7 +68,7 @@ TEST(RenderSurfaceTest, PresentingAViewDeclaresWhatItDraws)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
 
     EXPECT_FALSE(surface->hasPresentation());
     EXPECT_EQ(surface->presentingPass(), nullptr);
@@ -104,7 +104,7 @@ TEST(RenderSurfaceTest, APassRegisteredOnTheEngineIsNotAPresentation)
     // drawing the default framebuffer presents nothing until somebody says so. A HUD pass is the case that matters -
     // a null-target pass that is not the picture.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     auto hud     = intrusive_ptr<RenderPass>(new RenderPass());
     hud->setName(vn::String(u8"fps_overlay"));
     engine->addPass(hud, 30);
@@ -119,7 +119,7 @@ TEST(RenderSurfaceTest, AHostDeclaredPassIsTheSurfacesPresentation)
     // The declaration a host makes when it built its own main pass (the demo's deferred pipeline does exactly this):
     // the pass presents the area, and there is no view to name.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     auto main    = intrusive_ptr<RenderPass>(new RenderPass());
     main->setName(vn::String(u8"deferred_lighting"));
     engine->addPass(main, 0);
@@ -140,7 +140,7 @@ TEST(RenderSurfaceTest, ThePassFollowsARebuiltPipeline)
     // area naming a pass that left the frame.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     ASSERT_TRUE(surface->present(*view));
     RenderPass* const first = surface->presentingPass();
     ASSERT_NE(first, nullptr);
@@ -160,7 +160,7 @@ TEST(RenderSurfaceTest, AViewWithNoPipelineIsRefusedOutLoud)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
 
     EXPECT_EQ(view->pipeline(), nullptr);
     EXPECT_FALSE(surface->present(*view));
@@ -175,7 +175,7 @@ TEST(RenderSurfaceTest, AViewOnAnotherEngineIsRefusedOutLoud)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto other   = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(other.get());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
 
     ASSERT_NE(view->pipeline(), nullptr);
     EXPECT_FALSE(surface->present(*view));
@@ -184,21 +184,93 @@ TEST(RenderSurfaceTest, AViewOnAnotherEngineIsRefusedOutLoud)
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u);
 }
 
-TEST(RenderSurfaceTest, AViewThatAlreadyPresentsAnotherSurfaceIsRefused)
+TEST(RenderSurfaceTest, ASecondAreaOnOneEngineIsRefusedAndReportedOnce)
 {
-    // One view draws one picture, and its area is the surface it presents: a view that presented a second area would
-    // have two of them and no way to tell which one it draws into.
+    // ONE engine drives ONE area (see RenderEngine::adoptArea): two areas would both declare a picture for one
+    // swapchain (they draw over each other, and only the adopted one's target is the frame's default framebuffer),
+    // while the other one's size quietly drove the passes. The second area is refused, ONCE, and says why: a host
+    // that wants a second window builds a second engine (a device may serve several).
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto view   = viewOn(engine.get());
-    auto first  = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
-    auto second = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto first  = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
+    auto second = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
+    auto third  = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
 
-    ASSERT_TRUE(first->present(*view));
-    EXPECT_FALSE(second->present(*view));
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u)
+        << "one condition, one report - not one per attempt";
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
+
+    // The area that is not the engine's says so instead of pretending: it declares nothing and feeds nothing.
+    auto view = viewOn(engine.get());
+    ASSERT_NE(view->pipeline(), nullptr);
+    EXPECT_FALSE(second->present(*view)) << "a picture declared on a dead area would never reach the frame";
     EXPECT_FALSE(second->hasPresentation());
     EXPECT_EQ(second->presentingPass(), nullptr);
-    EXPECT_EQ(first->presentedView(), view.get());
+    EXPECT_TRUE(first->present(*view)) << "the area the engine drives is unaffected";
+    EXPECT_EQ(engine->diagnosticCount(), 2u) << "the refusal of a presentation is its own report (UnsupportedRequest)";
+    (void)third;
+}
+
+TEST(RenderSurfaceTest, OnlyTheEnginesOwnAreaFeedsTheFrameContext)
+{
+    // The frame context is what the passes lay themselves out on, so it is fed by the area the engine DRIVES - a
+    // second area's resize must not re-lay-out this frame (that is how one window's picture ends up shaped by
+    // another window's size).
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto first  = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
+    auto second = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
+
+    first->resize(800, 600);
+    EXPECT_EQ(engine->frameContext().surface_width, 800);
+    EXPECT_EQ(engine->frameContext().surface_height, 600);
+
+    second->resize(320, 240);
+    EXPECT_EQ(engine->frameContext().surface_width, 800) << "the area the engine does not drive is not heard";
+    EXPECT_EQ(engine->frameContext().surface_height, 600);
+
+    first->resize(1024, 768);
+    EXPECT_EQ(engine->frameContext().surface_width, 1024) << "the engine's own area still is";
+    EXPECT_EQ(engine->frameContext().surface_height, 768);
+}
+
+TEST(RenderSurfaceTest, APassThatIsNotInTheFrameCannotPresentTheArea)
+{
+    // "Declared, but nothing is drawn" is the silence this area exists to end: a pass the engine does not run draws
+    // nothing here, so declaring it is refused and reported once - the demo and every host register their pass first
+    // (RenderEngine::addPass, which a pipeline does itself when it is built).
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
+    auto pass    = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setName(vn::String(u8"deferred_lighting"));
+
+    EXPECT_FALSE(surface->present(pass.get())) << "a pass the engine never registered draws nothing here";
+    EXPECT_FALSE(surface->hasPresentation());
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
+    EXPECT_FALSE(surface->present(pass.get())) << "and trying again is not a second report";
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
+
+    engine->addPass(pass, 0);
+    EXPECT_TRUE(surface->present(pass.get())) << "registered first, declared second - the host order";
+    EXPECT_TRUE(surface->hasPresentation());
+    EXPECT_EQ(surface->presentingPass(), pass.get());
+}
+
+TEST(RenderSurfaceTest, APresentationWhosePassLeavesTheFrameStopsPresenting)
+{
+    // The other half of the same rule: a declared pass can leave the frame (RenderEngine::removePass, a pipeline that
+    // was thrown away), and then the area presents NOTHING - "declared" is not "drawn". Answering otherwise would keep
+    // a default path from building its own picture (Viewer::takeArea) while the window stayed empty.
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
+    auto pass    = intrusive_ptr<RenderPass>(new RenderPass());
+    engine->addPass(pass, 0);
+    ASSERT_TRUE(surface->present(pass.get()));
+    EXPECT_TRUE(surface->hasPresentation());
+
+    engine->removePass(pass.get());
+    EXPECT_FALSE(surface->hasPresentation()) << "a pass that is not in the frame presents nothing";
+    EXPECT_EQ(surface->presentingPass(), nullptr);
+    EXPECT_TRUE(surface->dismiss(pass.get())) << "and the declaration can still be taken back";
 }
 
 TEST(RenderSurfaceTest, OneAreaDrawsOnePicture)
@@ -208,7 +280,7 @@ TEST(RenderSurfaceTest, OneAreaDrawsOnePicture)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto first   = viewOn(engine.get());
     auto second  = viewOn(engine.get());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     ASSERT_TRUE(surface->present(*first));
 
     EXPECT_FALSE(surface->present(*second)) << "a second view is not a split - it is a second picture";
@@ -236,7 +308,7 @@ TEST(RenderSurfaceTest, TheAreaOwnsTheSizeAndTheViewReadsIt)
     // from it). A view presented LATER gets the remembered size at once - the host does not have to feed it.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     ASSERT_TRUE(surface->present(*view));
 
     surface->resize(800, 600, 2.0);
@@ -248,9 +320,11 @@ TEST(RenderSurfaceTest, TheAreaOwnsTheSizeAndTheViewReadsIt)
     EXPECT_FALSE(surface->presentingPass()->hasViewport())
         << "a full-area picture is what a pass without a viewport already means";
 
-    // State the size before anything is presented: the view that comes later is laid out with it at once.
-    auto later   = viewOn(engine.get());
-    auto other   = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    // State the size before anything is presented: the view that comes later is laid out with it at once. A second
+    // WINDOW is a second engine (see RenderEngine::adoptArea), which is what this half uses.
+    auto other_engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto other        = intrusive_ptr<RenderSurface>(new RenderSurface(*other_engine));
+    auto later        = viewOn(other_engine.get());
     other->resize(400, 400, 1.0);
     ASSERT_TRUE(other->present(*later));
     EXPECT_EQ(later->surfaceWidth(), 400);
@@ -265,7 +339,7 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
     // attachment wins) is exactly the swapchain's own: one area, one picture, one clear.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     RenderPass* const window = view->pipeline()->windowPass();
     ASSERT_NE(window, nullptr);
     EXPECT_TRUE(window->isClearEnabled());
@@ -288,7 +362,7 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
     PipelineOptions deferred;
     deferred.path = ShadingPath::Deferred;
     auto deferred_view = viewOn(deferred_engine.get(), deferred);
-    auto deferred_area = intrusive_ptr<RenderSurface>(new RenderSurface(deferred_engine.get()));
+    auto deferred_area = intrusive_ptr<RenderSurface>(new RenderSurface(*deferred_engine));
     ASSERT_TRUE(deferred_area->present(*deferred_view));
     ASSERT_NE(deferred_view->pipeline()->windowPass(), nullptr);
     EXPECT_FALSE(deferred_view->pipeline()->windowPass()->isClearEnabled());
@@ -300,7 +374,7 @@ TEST(RenderSurfaceTest, APresentedViewThatDiesLeavesTheSurface)
     // the view leaves the area itself, in its own destructor, while the area is still there to be told.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     ASSERT_TRUE(surface->present(*view));
     RenderPass* const window = surface->presentingPass();
 
@@ -317,7 +391,7 @@ TEST(RenderSurfaceTest, AViewThatOutlivesItsSurfaceDoesNotCallIntoIt)
     // naming it - it is going away, and a view that outlived it must not reach back into it.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     ASSERT_TRUE(surface->present(*view));
     surface->resize(320, 240, 1.0);
     ASSERT_EQ(view->surfaceWidth(), 320);
@@ -338,7 +412,7 @@ TEST(RenderSurfaceTest, DismissingAViewStopsFeedingItTheSize)
     // reach it any more: what it derives from is its own last-known size, which the dismissal hands back to it.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
     ASSERT_TRUE(surface->present(*view));
     surface->resize(640, 480, 1.0);
     ASSERT_EQ(view->surfaceWidth(), 640);

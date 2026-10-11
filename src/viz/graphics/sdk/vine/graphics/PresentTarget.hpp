@@ -16,7 +16,7 @@ VN_GRAPHICS_NS_BEGIN
  * asks them. A presenter that encodes and sends a frame, or that captures it to a file, implements this contract and
  * nothing else: the frame, the area and the engine never learn which kind they were handed.
  *
- * WHO DRIVES ONE. The frame's driver calls present() once per frame it ran (see RenderEngine::render(), which is the
+ * WHO DRIVES ONE. The frame's driver calls present() once per frame it ran (see RenderEngine::frame(), which is the
  * engine's own tail, and RenderPass::execute(), which is a host driving one pass). A device that presents nothing
  * hands out no presenter at all (RenderDevice::createSurfaceTarget answers "no presentation" - see
  * Capabilities::presentation), and a frame that names none presents nowhere: a first-class state (an offline bake, a

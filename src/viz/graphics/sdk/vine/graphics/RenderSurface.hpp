@@ -45,6 +45,10 @@ class SceneView;
  * the clear rule is the same fact seen from the other side - the swapchain render pass expresses ONE clear, so the
  * presentation that draws the area is the one whose clear policy the frame starts with.
  *
+ * ONE AREA, ONE ENGINE: the engine this area is built on drives it, and only it (see RenderEngine::adoptArea) - a
+ * second area on the same engine is refused, so two windows never end up sharing one frame, and the size this area
+ * announces is always the size that frame's passes lay themselves out on.
+ *
  * THE WINDOW IS THE AREA'S TOO. What this area is presented through - the native window the host chose (the
  * TARGET, in this design's vocabulary) - is a fact about the AREA, exactly like the size: bindTarget() holds the
  * object the DEVICE made for that window (a device that presents nothing refuses there, once, instead of
@@ -63,10 +67,15 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
   public:
     /** @brief Creates the presentation of one surface rendered through @p engine.
      *
-     * @param engine Engine the presentation is registered on (borrowed; must outlive this surface). Null is
-     *               accepted and presents nothing: find the engine first.
+     * The registration happens here: an area is the engine's from the moment it exists (see
+     * RenderEngine::adoptArea - the engine drives ONE area, and a second one that tries to register is refused and
+     * reported, so an area can never be half-attached).
+     *
+     * @param engine Engine the presentation is registered on and that drives it (borrowed; must outlive this
+     *               surface). Required: an area without an engine could not present anything, has no way to find one
+     *               and says nothing about it, which is a state worth not having.
      */
-    explicit RenderSurface(raw_ptr<RenderEngine> engine);
+    explicit RenderSurface(RenderEngine& engine);
 
     /** @brief Destroys the area.
      *
@@ -85,9 +94,12 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * the host believing a window is being drawn into while nothing draws.
      *
      * Refused and reported, each for its own reason: a view that draws through ANOTHER engine (its passes are
-     * registered on that engine's frame, so it could never present this surface), a view that already presents
-     * ANOTHER surface (one view draws one picture), and a second presentation of any kind (one area draws one
-     * picture - see the class note).
+     * registered on that engine's frame, so it could never present this surface), an area that is not the one its
+     * engine drives (the second area on one engine - see the class note), and a second presentation of any kind (one
+     * area draws one picture).
+     *
+     * "A view that already presents another surface" needs no rule of its own: an engine drives one area, so a view
+     * can only ever present the area of the engine it is bound to (see the class note and RenderEngine::adoptArea).
      *
      * @param view View to present; must have adopted a pipeline, be bound to this surface's engine, present no
      *             other surface, and be the area's only presentation.
@@ -105,9 +117,15 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * The pass is NOT adopted: the pipeline that built it owns it (and the engine holds it while registered). This
      * area keeps its own reference so what it reports cannot outlive what it describes.
      *
-     * @param pass Pass that presents this surface; null is a no-op.
+     * Refused and reported when it draws nothing here: the pass has to be one of THIS engine's registered passes
+     * (RenderEngine::addPass - a pipeline registers its own when it is built). A pass that is not in the frame is
+     * the same silence present(SceneView&) refuses, and a host that declared one would be told the window is being
+     * drawn into while nothing runs.
+     *
+     * @param pass Pass that presents this surface; null is a no-op, and a pass that is not registered on this
+     *             surface's engine is refused.
      * @return true when this declared the area's presentation; false when @p pass already presented this surface,
-     *         or a presentation was already there.
+     *         was not the engine's, or a presentation was already there.
      */
     bool present(raw_ptr<RenderPass> pass);
 
@@ -128,20 +146,25 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      */
     bool dismiss(raw_ptr<RenderPass> pass);
 
-    /** @brief Whether anything declares this surface.
+    /** @brief Whether anything PRESENTS this surface (not merely "something was declared").
      *
-     * The question the default-path host asks before falling back to its own view (see the class docs).
+     * The question the default-path host asks before falling back to its own view (see the class docs). A declaration
+     * whose pass has left the frame (RenderEngine::removePass, a cleared pass list) presents nothing, and it answers
+     * false for it: the host then builds its own picture instead of leaving the window to a pass that does not run.
      *
-     * @return true when this surface is presented.
+     * @return true when a presentation is in the frame.
      */
     [[nodiscard]] bool hasPresentation() const noexcept;
 
     /** @brief Gets the pass that draws this surface now, or null when nothing presents it.
      *
      * Resolved on every read, never remembered: a view's window pass is a NEW pass each time a recipe change
-     * rebuilds its pipeline, and this is what a host asks to name the pass the engine runs (see the class note).
+     * rebuilds its pipeline, and this is what a host asks to name the pass the engine runs (see the class note). A
+     * declared pass that is no longer registered on the engine answers null as well - "declared" is not "drawn", and
+     * this is the one answer the area must never invent.
      *
-     * @return The presenting pass, or null (nothing presents this surface, or the view has no window pass yet).
+     * @return The presenting pass, or null (nothing presents this surface, the view has no window pass yet, or the
+     *         declared pass left the frame).
      */
     [[nodiscard]] raw_ptr<RenderPass> presentingPass() const;
 
@@ -205,10 +228,14 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * window: the previous one is left behind (its device is what owns it - see RenderDevice::shutdown).
      *
      * nullptr unbinds: the area presents nothing from here on, while the session stays up. A boundary case a host
-     * sets up before its device exists is simply kept: the target is an object, so nothing has to take it.
+     * sets up before its device exists is simply kept: the target is an object, so nothing has to take it. The
+     * ENGINE unbinds on shutdown(), before it takes the device down (see RenderEngine::shutdown): what the device
+     * handed out lives until the DEVICE is destroyed or the area is unbound, so a window closing is the device's
+     * business and never leaves this pointer dangling.
      *
      * @param target The target this area is presented through (from its device), or nullptr to unbind. BORROWED:
-     *               the device that made it owns it, and it must outlive the area's use of it.
+     *               the device that made it owns it, and it lives until that device is destroyed or this area is
+     *               unbound (the engine unbinds it on shutdown - see RenderEngine::shutdown).
      */
     void bindTarget(raw_ptr<WindowPresentTarget> target);
 
@@ -249,6 +276,8 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     int                            height_ = 0;
     double                         pixel_ratio_ = 1.0;
     ReportOnce                     refused_{};
+    ReportOnce                     unregistered_{};
+    ReportOnce                     not_the_engines_{};
 };
 
 VN_GRAPHICS_NS_END
