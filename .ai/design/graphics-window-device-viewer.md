@@ -247,6 +247,8 @@
 | `Viewer` 存第二份视图集合/矩形 | 表已经是事实的唯一 owner（S6 的教训）；**2026-10-11 晚起这条更强**：多格下线，区只呈现一个视图，`Viewer` 只有一条请求可存 |
 | 把 `ViewerOptions` 并进 `PipelineOptions` | 意图（"我要坐标轴"）与接线（program 对象、源相机原始指针、像素比）是两个问题；两个值 + 一处单向映射 |
 | SDK 提供全局设备注册表 | 进程唯一状态（§12.1 不变量 1）；设备表是应用策略 |
+| 一对改名 `RenderTargetWindow` / `RenderTargetOffscreen`（2026-10-11 问） | 这两者**不同族**，同前缀会承诺接口没有的对称：`RenderTarget` 是一份**描述**（格式 / 尺寸 / 附件 / depthSource / readback，`HostTargets` 那句"stays a logical description"），`RenderSurfaceTarget` 是一个**活着的可呈递对象**（`setWindowHandle` / `nativeHandle` / `resize` / `present`，设备造、区借用、可被搬到新窗口）；没有共同基类也不该有。另外 `Offscreen` 在本 SDK 是冗余信息（**所有** `RenderTarget` 都离屏，屏幕那半从来不是它），却要动 944 处（src+tests，72 文件）+ 文档 113 处；`*Window` 又已经是 vsg 后端内部那个会话侧对象的名字。真要改只改窗口那半、且取"呈递"轴的词（`PresentTarget` 一类），或者按 Qt RHI 那样**先造出共同基类**再谈同族命名 |
+| 把 `RenderSurface` 通用化成"离屏 / 云渲染的入口" | 云渲染要的三件东西各有落点，都不是区：① 离屏画面 + 取回像素 = `RenderTarget`（描述）+ pass 的目标 + `RenderDevice::readColorBuffer` / `readDepthBuffer`（**不要窗口、不要区**也能跑完整帧：`executeFrame(frame, nullptr)` + `Capabilities::presentation == false` 是一等状态）；② 远端鼠标 = `SceneView::pushEvent(MouseEvent/ScrollEvent/KeyEvent)`（公开、事件是纯值结构），接网络是**业务层**的事，区已不管输入；③ 分区 = 应用层组合（一块离屏目标上多 pass 各给 `pass->setViewport()`，或一帧多次 copy 分块编码）——"一块区只画一幅画"约束的只是**默认帧缓冲 / 交换链**，离屏目标上多 pass 互不相干。区的定位是"**画面变得可见的那一端**"（窗口 / 嵌入式宿主 / 将来的流出缓冲），不是"渲染的入口"；云端真正缺的是**第二个呈递端**（编码 / 网络）与 `present()` 平级，见 §9 第 6 条 |
 
 ---
 
@@ -268,6 +270,14 @@
 5. **`present` 归谁**（S9 遗留 → S10a 的裁决）：`RenderSurfaceTarget::present()` 是**机制**，帧尾调用它的是**帧的
    驱动者**（引擎，或一个自己驱动一格的宿主）。§5 规则 8 的"执行器自持帧尾 present"与 S10b 的 N 目标一起落，
    否则今天 `executeFrame` 里 present 会让直接驱动者（test_vsg 那 50 处）present 两次。
+6. **第二个呈递端（云渲染 / 远端呈递）**：本文今天只有一个呈递端 —— 窗口（`RenderSurfaceTarget`：handle /
+   resize / present）。云渲染要的"这一帧的成品 → 编码 → 发送"与它**平级**：一条新的可呈递对象（或设备上的一个
+   capture / encode 出口），由宿主演进来，而不是把 `RenderSurface` 通用化（理由见 §8 最后两行）。
+   **触发条件**（命中一条再落）：① 出现"没有窗口但要把帧交出去"的目标宿主（编码器 / 网络 / 共享内存缓冲），并且它也
+   要 handle + resize + present 这四条语义；② 该宿主需要**多客户端分区**（同一帧切成 N 块各自编码）—— 那时分区仍在
+   **应用层**（自己算矩形、给 pass 子视口、自己决定哪条清屏），SDK 只提供"帧 + 目标 + 呈递端"这三样机制；
+   ③ 呈递端多到"改名 / 分家"能省掉真实困惑时（`RenderSurfaceTarget` → `PresentTarget` 一类），再连同 §8 第 5 行一起改。
+   在那之前不动：今天的离屏路径（`RenderTarget` + readback + `executeFrame(frame, nullptr)`）已经能跑完"渲染但不显示"。
 
 ---
 
