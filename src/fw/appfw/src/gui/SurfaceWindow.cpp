@@ -24,6 +24,7 @@
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
+#include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/SceneView.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/logging/Log.hpp>
@@ -205,6 +206,9 @@ struct SurfaceWindow::Impl {
     vn::intrusive_ptr<vn::graphics::RenderEngine> engine;
     /// This surface's own view: one control holds one session (see appfw-document-model.md §9).
     vn::intrusive_ptr<vn::graphics::SceneView> view;
+    /// Which passes draw into this surface, and in which order (see RenderSurface). Declared after the engine so it
+    /// is DESTROYED before it: the surface borrows that engine.
+    vn::intrusive_ptr<vn::graphics::RenderSurface> surface;
     /// true once a device and its pipelines were built on session_handle: what makes a new handle a re-announce
     /// rather than a first attach, and what keeps the surface following a recreated window.
     bool has_session = false;
@@ -309,6 +313,10 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     d->view = vn::intrusive_ptr<vn::graphics::SceneView>(
         new vn::graphics::SceneView());
     d->view->setEngine(d->engine.get());
+    // The one thing that knows which passes draw into THIS surface: the control falls back to its own view (see
+    // init()), and a host that brought a main pass of its own declares it here (RenderSurface::present).
+    d->surface = vn::intrusive_ptr<vn::graphics::RenderSurface>(
+        new vn::graphics::RenderSurface(d->engine.get()));
 
     // Backend diagnostics become log records: a windowed app never shows stderr, and a rejected geometry, a
     // fallback shader or an off-screen target that could not be built would otherwise go unseen.
@@ -354,6 +362,11 @@ vn::graphics::RenderEngine* SurfaceWindow::engine() const
 vn::graphics::SceneView* SurfaceWindow::view() const
 {
     return d->view.get();
+}
+
+vn::graphics::RenderSurface* SurfaceWindow::surface() const
+{
+    return d->surface.get();
 }
 
 void* SurfaceWindow::nativeHandle() const
@@ -683,12 +696,14 @@ bool SurfaceWindow::init()
         setState(SurfaceState::Pending);
     }
 
-    // The view registers the default window pass (an order-0 pass drawing its content through its camera to the
-    // backbuffer) unless the app already presents that camera with a pass of its own. This happens BEFORE the
-    // backend check on purpose: which passes a view presents is its recipe, not a property of the device - a host
-    // with no backend registered still has a view with a pipeline it can inspect (and the pass is what the backend
-    // will draw when it does come up).
-    d->view->ensureWindowPass();
+    // The surface's presentations: this control's own view presents it unless something else already does. That
+    // happens BEFORE the backend check on purpose: which passes a view presents is its recipe, not a property of
+    // the device - a host with no backend registered still has a view with a pipeline it can inspect (and the pass
+    // is what the backend will draw when it does come up). A host that brought its own main pass declared it
+    // already (RenderSurface::present(pass)), and then no default window pass is built at all.
+    if (!d->surface->hasPresentation()) {
+        d->surface->present(*d->view);
+    }
 
     // No backend yet? Take the first registered one; a host that wants its own sets it before this.
     useDefaultBackend();

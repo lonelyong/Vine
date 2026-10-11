@@ -28,7 +28,7 @@
 | 四层 API + 第 0 层逃生口（`engine->addPass`、自写 shader、自建 builder） | "三五行出画面"和"完全自己接"能同时存在，靠的就是每层都能单独用 |
 | **配方 / 几何 / 开关** 三分（`SceneView::Options` / `setViewport`+`onSurfaceResized` / `setEnabled`） | 换设置才重建、开关永不重建、几何只改取值 —— 这是"配置窗口"能被信任的前提 |
 | "**赢了内容才叫 Override**"的命名规则 | 优先级住在类型名字里，比藏在文档里强（`graphics-state.md` §4.1） |
-| 默认窗口管线**让位**给宿主自建主 pass（**意图保留，机制换成显式声明**：宿主自建主 pass 并 `present()` 它，视图就不建默认管线 —— M2a） | 兜底而非竞争，宿主永远赢；但今天读的是"引擎里有没有这条相机"的全局查询，顺序敏感且无人拥有"谁呈现" |
+| 默认窗口管线**让位**给宿主自建主 pass（**M2a 已落地**：意图保留，机制从"读引擎的 pass 表"换成"宿主显式声明"—— 宿主 `present()` 自己的 pass，视图就不建默认管线） | 兜底而非竞争，宿主永远赢 |
 | 文档 → 视图 → 控件 → 面 的 1:1 链 + `DocumentView::deactivate()` 的收回约定 | 隔离干净、视角按实例保住、切文档回默认态天然正确 |
 
 **重切四条**（编号即 §3 的小节号）：
@@ -36,7 +36,7 @@
 | # | 一句话 | 代价 | 立刻消掉什么 |
 | --- | --- | --- | --- |
 | 3.3 | 调试覆盖（线框/法线/无光照/平面）挪到**几何阶段**，不贴在窗口 pass | 小 | Deferred 上四档全部可用（今天报 `UnsupportedRequest`）；窗口 pass 变成纯合成 |
-| 3.2 | **呈现与分屏**：`Surface`（唯一清屏 + 呈现表 + 矩形）/ `Camera`（观看 + 投影参数，**不含 aspect**）/ `View`（配方 + 管线）；`SceneView` 退成单矩形门面 | 大（唯一动公开形态的一刀） | 全局让位规则 `hasWindowPass(camera)`、靠发言顺序的清屏、`SceneView` 三件事捏一起、**aspect 锁在相机里**（相机整台不可复用） |
+| 3.2 | **呈现与分屏**：`Surface`（唯一清屏 + 呈现表 + 矩形）/ `Camera`（观看 + 投影参数，**不含 aspect**）/ `View`（配方 + 管线）；`SceneView` 退成单矩形门面 —— **M2a（呈现表的 owner）已落地 2026-10-11** | 大（唯一动公开形态的一刀） | 全局让位规则 `hasWindowPass(camera)`（已删）、靠发言顺序的清屏、`SceneView` 三件事捏一起、**aspect 锁在相机里**（相机整台不可复用） |
 | 3.1 | **状态解析单点** `resolveRenderState(...)` | 中 | "同一个设置两处"这类争论从命名问题变成类型问题 |
 | 3.4 | Pass 从"子类 + 就地声明"变成**描述符 + 每帧 FramePlan** | 大 | `wiringRevision()` + `validateWiring()` 这套"谁动了声明"的事后重查 |
 
@@ -52,11 +52,13 @@
   那张"谁赢谁叫 Override"的表 + `RenderCommand::depthExplicit` 这类旗标对齐。`RenderPass::execute()` 的
   拷贝路径就是三个来源的汇总点，但它不做优先级决策 —— 决策分散在各自的 setter 里。
   *根因*：优先级没有落成一个可测函数。
-- **F2 呈现是运行时争夺**。`SceneView::ensureWindowPass()` 用 `engine_->hasWindowPass(camera_)` 决定"我要不要
+- **F2 呈现是运行时争夺**（**M2a 已落地删除，见 §3.2.1 落地记**）。`SceneView::ensureWindowPass()` 用
+  `engine_->hasWindowPass(camera_)` 决定"我要不要
   建默认窗口 pass"；`RenderPipelineBuilder` 里还得写注释解释"render target 为空的 pass 也算占位"。
   于是"谁负责最后一步"是**发现**出来的，不是声明的；配套补丁就是"重建之后要把使用者关掉的档再关回去"
   （`applyOverlayIntent()`）。*根因*：视图既描述"场景长什么样"，又偷偷拥有"最后一步"。
-- **F3 调试覆盖贴在最后一步**。`applyModeToWindowPass()` 把"内容怎么着色"写在**窗口 pass** 上，于是
+- **F3 调试覆盖贴在最后一步**（**M1 已落地，见 §3.3**）。`applyModeToWindowPass()`（M1 已改名
+  `applyModeToGeometryPass()`）把"内容怎么着色"写在**窗口 pass** 上，于是
   Deferred 上四档天生兑现不了（G-buffer 出颜色 + 全屏光照合成）⇒ 只能报 `UnsupportedRequest` 并保持 Lit。
   *根因*：调试覆盖的作用域选错了阶段（应该是几何阶段：两条路径都从那儿开始）。
 - **F4 声明就地可变 ⇒ 引擎只能事后重查**。`RenderPass` 同时是"声明"（目标/输入输出/程序/启用）、"状态"
@@ -133,10 +135,10 @@ Filament 的 `MaterialInstance` 覆盖链 —— 都是"一个解析函数 + 一
 
 #### 3.2.1 今天的两条隐式规则（事实）
 
-**A1「谁呈现」是全局发现式。** 视图建默认窗口管线之前先问引擎："有人已经用我这台相机呈现了吗？"
+**A1「谁呈现」是全局发现式 —— M2a 已落地删除（2026-10-11）**。视图建默认窗口管线之前先问引擎："有人已经用我这台相机呈现了吗？"
 
 ```
-// SceneView::ensureWindowPass()（当前实现）
+// SceneView::ensureWindowPass()（M2a 之前的实现）
 if (engine_->hasWindowPass(camera_.get())) { return; }   // 有人占了 ⇒ 我让位
 ```
 
@@ -146,9 +148,19 @@ if (engine_->hasWindowPass(camera_.get())) { return; }   // 有人占了 ⇒ 我
 | **顺序敏感**：`addPass()` 的先后决定谁不建 | 规则读的是当时的引擎 pass 表，没有"谁声明要呈现"这一层 |
 | 两台视图共用一台相机（镜像 / 概览 / VR 双眼）⇒ 第二个被**静默跳过** | 同上；`hasWindowPass()` 只是查询，不回答"这块表面上的这一块是谁" |
 
-它同时是一条成文承诺（`SceneView.hpp` 里"an application that built its own main pass…"那段）和 demo 的依赖：
+它同时是一条成文承诺（`SceneView.hpp` 里"an application that built its own main pass…"那段 —— **M2a 把这句承诺
+搬到了 `RenderSurface`**：声明自己的 pass 仍然"永远赢"，但赢的方式是说出来，不是视图去让位）和 demo 的依赖：
 `DemoScene::install()` 建自己的管线（用视图那台相机），靠这条让位规则让宿主那次 attach 不重复建 pass。
 即：**"谁呈现"今天没有 owner，只有一条全局查询 + 一个巧合**。
+
+> **M2a 落地（2026-10-11）**：这条规则与 `RenderEngine::hasWindowPass(camera)` 一起删除。取而代之是
+> **`RenderSurface`**（一块表面的呈现表）：`present(SceneView&)` / `present(raw_ptr<RenderPass>)` /
+> `dismiss` / `hasPresentation()` / `presentations()`（按引擎执行序的 `{pass, view}`）；`SceneView::ensureWindowPass()`
+> 不再问引擎任何事，是否该建由**表面**说（`SurfaceWindow::init()` 的 `if (!hasPresentation()) present(*view)`，
+> 仍在后端检查之前）；宿主自建主 pass 的写法变成 `surface->present(pipeline->windowPass())`（`demo_plugin`
+> 就这么改的）。`RenderEngine` 新增 `passOrder(pass) -> std::optional<int>`（顺序住在引擎的槽里，同时是"这条
+> pass 还在不在"）。钉子：`tests/test_graphics/RenderSurfaceTest.cpp`（六条）+ `test_gui`
+> 的 `TheControlsSurfacePresentsItsOwnViewByDefault`。
 
 **A2「谁清屏」靠发言顺序，而且静默失效。** `RenderPass::announceClear()` 是唯一公告点，后端按 attachment
 **只应用第一条**公告：
@@ -361,7 +373,7 @@ appfw/src/gui/
 
 | 片 | 内容 | 验收判据 |
 | --- | --- | --- |
-| **M2a** 谁呈现（不碰几何/清屏） | `RenderSurface`（先是"presenter"，只管"这块表面的最后一步是谁"）+ `RenderEngine::passOrder()` 只读查询 + 删掉 `ensureWindowPass()` 的全局让位规则 + `RenderControl::surface()`；demo 显式 `present(pipeline)` | ①默认路径行为不变（`test_gui` 全绿）②宿主自建主 pass 且**未**声明 ⇒ 视图的默认窗口管线**会**建；显式声明 ⇒ 不建（两条用例）③`applyOverlayIntent` 行为不回退④demo 冒烟零 error/warn |
+| **M2a** 谁呈现（**已落地 2026-10-11**） | `RenderSurface`（"这块表面的最后一步是谁"：呈现表 + `present/dismiss/presentations`）+ `RenderEngine::passOrder()` 只读查询 + 删掉 `hasWindowPass(camera)` 与 `ensureWindowPass()` 的全局让位规则 + `RenderControl::surface()` / `SurfaceWindow::surface()`；demo 显式 `present(pipeline->windowPass())` | ①默认路径行为不变（`test_gui` 253 绿）②宿主自建主 pass 且**未**声明 ⇒ 视图的默认窗口管线**会**建；显式声明 ⇒ 不建（`RenderSurfaceTest` 两条 + `SceneViewTest.EnsureWindowPassDoesNotStandDownForSomebodyElsesPass`）③`applyOverlayIntent` 行为不回退（`AnApplicationWindowPassKeepsTheOverlaysToItself` 改写后仍钉住）④demo 冒烟零 error/warn |
 | **M2b** 清屏归表面 | `Surface::setClear/ClearOptions`；后端那条"只应用第一条公告"从此由表面保证唯一（呈现表第一条清，其余条不参与） | ①一块表面里只有一条呈现 pass 带清屏（其余条 `isClearEnabled()` 为 false）②撤掉第一条 ⇒ 清屏按声明回到剩下那条③颜色生效（无头像素判据，走 M8 的夹具；在此之前用结构判据） |
 | **M2c** ③：**aspect 出相机**（正确性 + 复用） | `Camera` 只持观看与投影**参数**；`projectionMatrix(aspect)`；四处传参（view block 在 `FrameRecorder` 由 pass 的 viewport + 目标尺寸算 aspect、`Scene::collectRenderCommandsShared` 多收一个 aspect 且**帧内 memo 的键带上它**、操纵器由视图喂 aspect、`aspectRatio()` 删除） | ①同一台相机进两条呈现、两块不同矩形：两张画面各自的 aspect 都对（今天必然错一张）②剔除与画面一致：`rect` 改窄之后被剔掉的对象正是画面外那些（用剔除结果对照）③`FrameRecorder` 的 view block 与 pass 的 viewport 同源（判据：一个用例改 viewport ⇒ 快照里的 projection 跟着变）④方向光阴影相机（正交）行为不变⑤`test_vsg` 全绿（后端只看矩阵，不受影响） |
 | **M2d** ③：**矩形放呈现条目** | `Surface::present(view, rect)` + `Surface::setViewport(view, rect)`；`SceneView::setViewport` 转发（无表面时留在自己身上）；旧的"矩形由视图持有"退成单矩形门面 | ①分屏：两条呈现各占半张、各自 aspect 正确（同一台相机也允许）②`SceneView::setViewport` 老写法仍可用③改矩形**不重建**任何管线（`pipeline()` 句柄不变）④`Surface::viewAt(x,y)` 与矩形一致（默认输入路由） |
@@ -441,7 +453,7 @@ FramePlan plan = graph.compile();
 | 片 | 内容 | 验收判据 | 依赖 | 代价 |
 | --- | --- | --- | --- | --- |
 | **M1** | §3.3 调试覆盖挪到几何阶段（**已落地 2026-10-11**） | ①Deferred 配方 + 非 Lit 档 ⇒ 链条按前向建：没有离屏目标、画面那条 pass 带对应 program 覆盖、线框带 Line 覆盖（`test_graphics` `ANonLitModeOnADeferredRecipeBuildsTheForwardChain`；变异：`effectivePath()` 恒等 ⇒ 失败）；②Forward 四档行为逐字不变（既有用例不动）；③回 Lit ⇒ 链条切回延迟（G-buffer 回来了）；④同一链条内换档零重建（`SwitchingBetweenNonLitModesOnADeferredRecipeKeepsTheChain`），三次切换不留残留 pass（与同配置新视图对照）；⑤那条 `UnsupportedRequest` 诊断、它的用例与文档措辞全部删除；⑥真机烟雾：应用 Deferred 默认路径启动照旧 | 无 | 小 |
-| **M2a** | §3.2.5 谁呈现（不碰几何/清屏）：`RenderSurface` 只管"这块表面的最后一步是谁" + `RenderEngine::passOrder()` 只读查询 + 删掉全局让位规则 + `RenderControl::surface()`；demo 显式 `present(pipeline)` | ①默认路径行为不变（`test_gui` 全绿）；②宿主自建主 pass 且**未**声明 ⇒ 视图的默认窗口管线**会**建；显式声明 ⇒ 不建（两条用例）；③`applyOverlayIntent` 行为不回退；④demo 冒烟零 error/warn | 无 | 中 |
+| **M2a** | §3.2.5 谁呈现（**已落地 2026-10-11**）：`RenderSurface` + `RenderEngine::passOrder()` + 删掉 `hasWindowPass(camera)` 与全局让位规则 + `RenderControl::surface()`；demo 显式 `present(pipeline->windowPass())` | ①默认路径行为不变（`test_gui` 253 绿）；②宿主自建主 pass 且**未**声明 ⇒ 视图的默认窗口管线**会**建；显式声明 ⇒ 不建；③`applyOverlayIntent` 行为不回退；④demo 冒烟零 error/warn | 无 | 中 |
 | **M2b** | §3.2.5 清屏归表面：`Surface::setClear`（后端"只应用第一条公告"从此由表面保证唯一） | ①一块表面里只有一条呈现 pass 带清屏（其余条 `isClearEnabled()` 为 false）；②撤掉第一条 ⇒ 清屏按声明回到剩下那条；③颜色生效（像素判据等 M8，之前用结构判据） | M2a | 中 |
 | **M2c** | §3.2.5 **aspect 出相机**（**破坏性**）：`Camera` 只留观看 + 投影参数，`projectionMatrix(aspect)`；四处传参（view block / 剔除+memo 键 / 操纵器 / 删 `aspectRatio()`） | ①同一相机两条呈现两块矩形：两边 aspect 都对；②剔除与画面一致（改窄矩形后被剔掉的正是画面外的）；③view block 与 pass 的 viewport 同源；④正交（阴影）行为不变；⑤`test_vsg` 全绿 | M2a/M2b + M4（先有 dump） | 大 |
 | **M2d** | §3.2.5 **矩形放呈现条目**：`Surface::present(view, rect)` / `setViewport(view, rect)`，`SceneView::setViewport` 转发 | ①分屏两条呈现各占半张、aspect 各自正确；②`SceneView::setViewport` 老写法仍可用；③改矩形不重建管线；④`viewAt(x,y)` 与矩形一致 | M2a | 中 |

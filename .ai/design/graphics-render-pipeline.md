@@ -7,7 +7,8 @@
 > 内容 Scene、manipulator、尺寸/aspect 全部移到新增的 **`SceneView`**（graphics，组合借用 engine，
 > `scene()` 返回 owning `intrusive_ptr<Scene>`）。内容一律 per-pass 显式绑定
 > （`addPass(pass, content, order)` / `bindPassContent`）。`hasWindowPass()` 改
-> `hasWindowPass(raw_ptr<Camera>)`；“窗口 pass” = 携带某 view camera 且 RT==null 的注册 pass。
+> `hasWindowPass(raw_ptr<Camera>)`（**M2a，2026-10-11 起这条查询已删** —— "谁呈现这块表面"改成宿主在
+> `RenderSurface` 上声明；“窗口 pass”仍然是"携带某 view camera 且 RT==null 的注册 pass"这个事实）。
 > RenderControl 持有 engine + SceneView；输入/尺寸推给 view；AppShell/Builder 用
 > view->camera()/scene() 显式绑定内容。详见 .ai/memory/graphics.md 顶部 Design C 条目。
 >

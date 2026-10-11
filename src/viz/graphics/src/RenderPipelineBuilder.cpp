@@ -473,9 +473,10 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     pipeline.addPass(transparent, transparent_, pipelineStageOrder(PipelineStage::Transparent));
 
     // Present the baked composite to the window (order 2). Carrying the view
-    // camera with a null render target keeps hasWindowPass(camera) true, so
-    // RenderControl / SceneView add no default forward pass; the HUD overlays
-    // (orders 10 / 30) stack above it.
+    // camera with a null render target is what makes it a window pass; a host
+    // that built this pipeline declares it as the surface's presentation
+    // (RenderSurface::present), which is what keeps a default forward pass from
+    // being added beside it. The HUD overlays (orders 10 / 30) stack above it.
     auto present = make_intrusive<ScreenPass>();
     present->setName(u8"present");
     present->setCamera(intrusive_ptr<Camera>(camera_));

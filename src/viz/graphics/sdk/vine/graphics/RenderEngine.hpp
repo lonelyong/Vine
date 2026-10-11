@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -20,7 +21,6 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-class Camera;
 class Light;
 class Scene;
 class RenderPass;
@@ -44,7 +44,9 @@ class RenderBackend;
  * in a SceneView that borrows this engine; the pass presenting that view's
  * camera
  * to the window is simply a registered pass carrying the view's camera with
- * a null render target (see hasWindowPass). The engine is
+ * a null render target. Which pass draws into which SURFACE is a fact the
+ * surface owns (see RenderSurface), not something the engine infers. The
+ * engine is
  * platform-independent and delegates actual drawing to a RenderBackend
  * supplied by the caller via setBackend().
  *
@@ -207,21 +209,19 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     bool frameProgress(FrameProgress& progress) const;
 
-    /** @brief Returns whether a pass currently presents @p camera to the
-     * window.
+    /** @brief Gets the order a registered pass runs at in this engine's frame.
      *
-     * A pass presents the camera to the window when it is enabled, carries
-     * @p camera and renders to the default framebuffer (null render target).
-     * A SceneView uses this (see SceneView::ensureWindowPass) to decide
-     * whether it must register its default window pass: a pipeline that only
-     * registers helper / HUD passes (which draw through their own cameras)
-     * still needs one, while a pipeline that already presents the view's
-     * camera keeps full control.
+     * The order lives in the ENGINE (addPass places the pass in its slot list), not on the pass, so this is the
+     * one way to ask where a pass sits in the frame - and an answer doubles as the liveness query a caller that
+     * remembers a pass needs: a pass that was removed (its pipeline was dropped, the host called removePass)
+     * answers nothing, so an answer IS the pass being in the frame.
      *
-     * @param camera The view camera to test for window presentation.
-     * @return true when an enabled pass presents @p camera to the window.
+     * The caller this exists for is RenderSurface, whose presentation table is ordered by this schedule.
+     *
+     * @param pass Pass to look up (by pointer; null, like an unregistered pass, answers nothing).
+     * @return The pass' order, or nullopt when no such pass is registered (or @p pass is null).
      */
-    bool hasWindowPass(raw_ptr<Camera> camera) const;
+    std::optional<int> passOrder(raw_ptr<RenderPass> pass) const;
 
     /** @brief Sets the DEFAULT program for content: what a drawable naming none of its own gets.
      *

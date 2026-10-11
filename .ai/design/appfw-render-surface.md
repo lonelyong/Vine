@@ -223,8 +223,9 @@ co_await initAppShellRenderControl(wnd, dock_);  // 设备 + 管线在这一拍�
 - **attach 两个入口，语义相同**：`init()`（同步、幂等：会话已绑在当前句柄上就直接 `true`）与 `initAsync()`
   （`co_return init()`，**不挂起**，只是给协程调用方的拼法）。仓库内两个宿主都在文档上屏那一拍要它：
   `DemoView::activate()` 的 `initAsync()`、`ModelRenderView::activate()` 的 `init()`。
-- **`init()` 内部的次序**（前两条是这一轮定的）：①`view->ensureWindowPass()`（**在后端检查之前**：视图呈现什么是它的
-  配方，不是设备事实；引擎里已有同一个相机的窗口 pass 就让位）②`useDefaultBackend()`（只在引擎没有后端时补第一个注册的
+- **`init()` 内部的次序**（前两条是这一轮定的）：①**这块表面的呈现声明**（`if (!d->surface->hasPresentation()) d->surface->present(*d->view);`
+  —— **在后端检查之前**：谁画这块表面是组成，不是设备事实；宿主自建的 pass 已在 `surface->present(pass)` 里声明过，此时就一条都不建。M2a 之前这里是
+  `view->ensureWindowPass()`，它自带"引擎里已有同一个相机的窗口 pass 就让位"的推断）②`useDefaultBackend()`（只在引擎没有后端时补第一个注册的
   后端；晚注册的还能被下一次 attach 捡起）③没有后端 ⇒ `failAttach("no render backend is registered")` ④句柄空 / 尺寸退化
   ⇒ 记一行日志后返回，等 show/resize/下一次 `activate()` ⑤`setWindowHandle` → `initialize()`（设备 + 会话 + 管线编译）
   → `resize(w,h)` + `view->onSurfaceResized(w,h,dpr)` → `renderFrame()`（这一帧付掉 pass 图 / program slot / 编译）。

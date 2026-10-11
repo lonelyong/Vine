@@ -26,6 +26,7 @@
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/LightRig.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -62,6 +63,23 @@ using vn::math::Aabbf;
 
 namespace
 {
+
+/**
+ * @brief Whether @p pass presents @p camera to the window: it draws through that camera and has no render target,
+ * so it draws to the default framebuffer.
+ *
+ * This is the fact a presentation used to be INFERRED from (the removed RenderEngine::hasWindowPass, which asked
+ * the engine whether any pass carried a camera and a null target). Which pass draws into which surface is now
+ * declared on the surface (RenderSurface) - these tests ask the pass they got, about the fact itself.
+ *
+ * @param pass   Pass to describe.
+ * @param camera Camera it should draw through.
+ * @return true when the pass draws through the camera to the window.
+ */
+bool drawsToWindow(vn::graphics::RenderPass* pass, vn::graphics::Camera* camera)
+{
+    return pass != nullptr && pass->isEnabled() && pass->camera() == camera && pass->renderTarget() == nullptr;
+}
 
 /**
  * @brief Makes a source image that matches a texture's description.
@@ -2331,33 +2349,29 @@ TEST(RenderEngineTest, ClearPassesReleasesEveryRegisteredPass)
     EXPECT_EQ(backend->pass_releases, 2);
 }
 
-TEST(RenderEngineTest, HasWindowPassReflectsCameraPresentation)
+TEST(RenderEngineTest, PassOrderAnswersWhereARegisteredPassRuns)
 {
-    // hasWindowPass(camera) tells a view whether its camera is already
-    // presented to the window, so a view only registers its default window
-    // pass when none exists (helper / HUD passes draw through their own
-    // cameras and must not suppress it).
+    // The order lives in the ENGINE (addPass places the pass in its slot list), so this is the only way to ask
+    // where a pass sits in the frame - and an answer doubles as "this pass is registered at all", which is what
+    // RenderSurface's presentation table is ordered by and what a handle somebody remembers needs to know.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto view_cam = intrusive_ptr<Camera>(new Camera());
-    EXPECT_FALSE(engine->hasWindowPass(view_cam.get()));
+    auto camera  = intrusive_ptr<Camera>(new Camera());
+    auto pass    = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setCamera(camera);
 
-    // A HUD pass drawing through its own camera is not a window pass for the
-    // view camera.
-    auto hud_cam = intrusive_ptr<Camera>(new Camera());
-    auto hud     = intrusive_ptr<RenderPass>(new RenderPass());
-    hud->setCamera(hud_cam);
-    engine->addPass(hud, 10);
-    EXPECT_FALSE(engine->hasWindowPass(view_cam.get()));
+    EXPECT_FALSE(engine->passOrder(pass.get()).has_value());
+    EXPECT_FALSE(engine->passOrder(nullptr).has_value());
 
-    // A pass presenting the view camera to the backbuffer is.
-    auto window = intrusive_ptr<RenderPass>(new RenderPass());
-    window->setCamera(view_cam);
-    engine->addPass(window, 0);
-    EXPECT_TRUE(engine->hasWindowPass(view_cam.get()));
+    engine->addPass(pass, 7);
+    ASSERT_TRUE(engine->passOrder(pass.get()).has_value());
+    EXPECT_EQ(*engine->passOrder(pass.get()), 7);
 
-    // A disabled window pass is not counted (it draws nothing).
-    window->setEnabled(false);
-    EXPECT_FALSE(engine->hasWindowPass(view_cam.get()));
+    // A disabled pass is still in the frame's schedule: it is skipped, not unregistered.
+    pass->setEnabled(false);
+    EXPECT_EQ(*engine->passOrder(pass.get()), 7);
+
+    engine->removePass(pass.get());
+    EXPECT_FALSE(engine->passOrder(pass.get()).has_value());
 }
 TEST(RenderEngineTest, AddSamePassTwiceKeepsSingleSlot)
 {
@@ -2555,26 +2569,31 @@ TEST(SceneViewTest, SurfaceLayoutStepsRunOnResize)
     EXPECT_FALSE(called);
 }
 
-TEST(SceneViewTest, EnsureWindowPassRegistersOrder0WhenCameraNotPresented)
+TEST(SceneViewTest, EnsureWindowPassBuildsTheDefaultWindowPass)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
-    EXPECT_FALSE(engine->hasWindowPass(view->camera()));
+    EXPECT_EQ(view->pipeline(), nullptr);
     view->ensureWindowPass();
     EXPECT_EQ(engine->passCount(), 1u);
-    EXPECT_TRUE(engine->hasWindowPass(view->camera()));
+    ASSERT_NE(view->pipeline(), nullptr);
+    ASSERT_NE(view->pipeline()->windowPass(), nullptr);
+    // The pass IS the window pass: it draws this view's camera to the backbuffer.
+    EXPECT_TRUE(drawsToWindow(view->pipeline()->windowPass(), view->camera()));
 
     // Registering again is a no-op while the window pass is present.
     view->ensureWindowPass();
     EXPECT_EQ(engine->passCount(), 1u);
 }
 
-TEST(SceneViewTest, EnsureWindowPassSkipsWhenCameraAlreadyPresented)
+TEST(SceneViewTest, EnsureWindowPassDoesNotStandDownForSomebodyElsesPass)
 {
-    // An application main pass carrying the view's camera (e.g. a deferred
-    // lighting pass to the window) suppresses the default window pass.
+    // "Whoever speaks first presents" is gone: a pass carrying this view's camera with a null target used to
+    // suppress the default window pass, inferred from the engine's pass list (global, order-sensitive, and it
+    // dropped the SECOND view sharing a camera). Which pass presents which SURFACE is declared on the surface
+    // now (RenderSurface) - so the view builds its own pass, and the surface's table is what says whose it is.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
@@ -2584,8 +2603,8 @@ TEST(SceneViewTest, EnsureWindowPassSkipsWhenCameraAlreadyPresented)
     engine->addPass(main, 0);
 
     view->ensureWindowPass();
-    EXPECT_EQ(engine->passCount(), 1u);
-    EXPECT_TRUE(engine->hasWindowPass(view->camera()));
+    EXPECT_EQ(engine->passCount(), 2u) << "nothing declared a presentation, so the view's own window pass is built";
+    EXPECT_TRUE(drawsToWindow(view->pipeline()->windowPass(), view->camera()));
 }
 
 TEST(LightRigTest, StudioIsAmbientPlusKeyAndFill)
@@ -2714,7 +2733,8 @@ TEST(SceneViewViewportTest, TheRecipeDecidesWhichOverlayPassesExist)
     // ... and one rebuild per change leaves no stale registration behind.
     view->setOptions({ .path = ShadingPath::Forward });
     EXPECT_EQ(engine->passCount(), 1u);
-    EXPECT_TRUE(engine->hasWindowPass(view->camera()));
+    ASSERT_NE(view->pipeline(), nullptr);
+    EXPECT_TRUE(drawsToWindow(view->pipeline()->windowPass(), view->camera()));
 }
 
 TEST(SceneViewViewportTest, OverlayVisibilityIsASwitchThatNeverRebuilds)
@@ -3107,17 +3127,23 @@ TEST(SceneViewViewportTest, FullViewportKeepsTheOverlayBoxWhereItWas)
 
 TEST(SceneViewViewportTest, AnApplicationWindowPassKeepsTheOverlaysToItself)
 {
-    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
 
-    // The application presents this camera itself (its own deferred main pass).
+    // The application presents this surface itself (its own deferred main pass) and DECLARES it. The declaration -
+    // not the mere existence of a pass carrying this camera - is what keeps the view's default window pipeline
+    // from being built, which is why the guard the host runs is spelled out here (SurfaceWindow::init, verbatim).
     auto main = intrusive_ptr<RenderPass>(new RenderPass());
     main->setCamera(intrusive_ptr<Camera>(view->camera()));
     engine->addPass(main, 0);
+    surface->present(main.get());
+    if (!surface->hasPresentation()) {
+        surface->present(*view);
+    }
 
     view->setOptions({ .stats = true });
-    view->ensureWindowPass();
 
     // No default pipeline is built (the default falls back, it does not compete), so the recipe changed nothing
     // on the engine...
@@ -3858,7 +3884,7 @@ TEST(RenderPipelineBuilderTest, ForwardPathBuildsWindowPass)
     EXPECT_EQ(engine->passCount(), 1u);
     // The single window pass presents the view camera and draws the bound
     // content, exactly like the SceneView default viewer.
-    EXPECT_TRUE(engine->hasWindowPass(cam.get()));
+    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
     EXPECT_EQ(engine->contentOf(pipeline->windowPass()), content.get());
     EXPECT_EQ(pipeline->offscreenTarget(), nullptr);
 }
@@ -3905,10 +3931,9 @@ TEST(RenderPipelineBuilderTest, DroppingThePipelineUnregistersItsPasses)
         auto pipeline         = builder.build(opts);
         ASSERT_NE(pipeline, nullptr);
         EXPECT_EQ(engine->passCount(), 2u); // G-buffer + lighting
-        EXPECT_TRUE(engine->hasWindowPass(cam.get()));
+        EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
     }
     EXPECT_EQ(engine->passCount(), 0u) << "a dropped pipeline must not leave its passes registered";
-    EXPECT_FALSE(engine->hasWindowPass(cam.get()));
 }
 
 TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
@@ -4150,9 +4175,9 @@ TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
     ASSERT_NE(pipeline, nullptr);
     // G-buffer (order < 0) + fullscreen lighting window pass (order 0).
     EXPECT_EQ(engine->passCount(), 2u);
-    // The lighting pass presents the view camera, so RenderControl / SceneView
-    // must not add a second forward window pass.
-    EXPECT_TRUE(engine->hasWindowPass(cam.get()));
+    // The lighting pass presents the view camera, so a host that declares it owns the surface's presentation
+    // (RenderSurface) - no second forward window pass beside it.
+    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
 
     RenderPass* window = pipeline->windowPass();
     ASSERT_NE(window, nullptr);
@@ -4280,7 +4305,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)
 
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->passCount(), 2u);
-    EXPECT_TRUE(engine->hasWindowPass(cam.get()));
+    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
     // The lighting window pass received the built-in default fragment program.
     auto* light = dynamic_cast<ScreenPass*>(pipeline->windowPass());
     ASSERT_NE(light, nullptr);
@@ -4326,7 +4351,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsCompos
     // four registered passes (the opaque scene is rasterised once — the
     // composite reuses the G-buffer depth instead of re-rendering it).
     EXPECT_EQ(engine->passCount(), 4u);
-    EXPECT_TRUE(engine->hasWindowPass(cam.get()));
+    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
 
     // Both off-screen stages exist: the G-buffer (sampled by the lighting) and
     // the composite (baked off-screen, then presented to the window).
@@ -4377,8 +4402,8 @@ TEST(RenderPipelineBuilderTest, ForwardPresetWithTransparentContentStacksDepthOn
     ASSERT_NE(pipeline, nullptr);
     // Main order-0 window content pass + order-1 transparent content pass.
     EXPECT_EQ(engine->passCount(), 2u);
-    EXPECT_TRUE(engine->hasWindowPass(cam.get()));
     ASSERT_NE(pipeline->windowPass(), nullptr);
+    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
     EXPECT_EQ(engine->contentOf(pipeline->windowPass()), content.get());
     // Forward composites nothing off-screen: no composite target.
     EXPECT_EQ(pipeline->compositeTarget(), nullptr);
@@ -4455,7 +4480,7 @@ TEST(RenderPipelineBuilderTest, GizmoOverlayConfiguredOnPreset)
     ASSERT_NE(pipeline->gizmo(), nullptr);
     // Window pass + the gizmo HUD pass.
     EXPECT_EQ(engine->passCount(), 2u);
-    EXPECT_TRUE(engine->hasWindowPass(cam.get()));
+    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
 
     // resize() re-anchors the gizmo even without an off-screen target; a
     // frame draws both the window and the gizmo without crashing.

@@ -133,10 +133,13 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
 > "主窗管线预设"那一代，读"今天怎么做"请看 `graphics-pipeline.md`。
 
 ## Design C 更新（2026-09-08）：主窗管线预设 + SceneView 默认统一
-- ⚠ Design B/C 后：引擎无 masterCamera/setScene、无内置默认管线；主窗“默认 viewer”由 SceneView 引导（ensureWindowPass，hasWindowPass(camera) 抑制重复）。本设计此前“sceneOnly=engine.setScene/setMasterCamera + RenderControl 默认 pass”已过时。
+- ⚠ Design B/C 后：引擎无 masterCamera/setScene、无内置默认管线；主窗“默认 viewer”由 SceneView 引导（`ensureWindowPass`）。
+  **M2a（2026-10-11）起**：抑制重复不再靠 `hasWindowPass(camera)`（已删），而是**声明** —— 宿主自建主 pass 时
+  `control->surface()->present(pipeline->windowPass())`；没有声明时 `RenderControl::init()` 用 `present(*view)` 兜底。
+  本设计此前“sceneOnly=engine.setScene/setMasterCamera + RenderControl 默认 pass”已过时。
 - 落地：`RenderPipelineBuilder::build(PipelinePreset, PipelineOptions)` → `intrusive_ptr<Pipeline>`（新 RenderPipeline.hpp/.cpp）。
   - Forward（含 ForwardShadowed 占位）：order-0 窗口场景 pass（camera+content）。
-  - Deferred（含 DeferredShadowed 占位）：order-3 gbuffer 场景 pass（MRT：albedo RGBA8 / view-normal+shininess RGBA16F / spec RGBA8 / view-pos RGBA16F + D24；发布 "GBuffer"；program override）→ order-0 全屏延迟光照 ScreenPass（采样 GBuffer、带 camera、绑 content 转发 scene 灯光）即窗口 pass → 使 hasWindowPass(camera)=true，SceneView/RenderControl 不再叠 forward。
+  - Deferred（含 DeferredShadowed 占位）：order-3 gbuffer 场景 pass（MRT：albedo RGBA8 / view-normal+shininess RGBA16F / spec RGBA8 / view-pos RGBA16F + D24；发布 "GBuffer"；program override）→ order-0 全屏延迟光照 ScreenPass（采样 GBuffer、带 camera、绑 content 转发 scene 灯光）即窗口 pass → **这条 pass 被 `surface->present(pipeline->windowPass())` 声明之后**，SceneView/RenderControl 不再叠 forward（M2a 之前是 `hasWindowPass(camera)` 为真就抑制）。
   - Deferred **默认自带临时 shader**（builder 公共静态 `defaultGbufferGeometryProgram()`/`defaultDeferredLightProgram()`）与 **canonical G-buffer target**（公共静态 `defaultGbufferTarget(w,h)`，builder 与 A/B 预览共用），调用方零 GLSL；PipelineOptions 的 gbuffer/lighting program 为可选覆盖（自定义着色）。缺 camera/content → 返回 null 且不注册。
   - 注：内置 GLSL 是**临时默认**（vsg-ABI 具体），后续应由 vsg 后端提供内置 deferred 着色集，届时 builder 默认改为向后端取、移除 SDK 内 GLSL。
   - **2026-09-13 校**：内容着色已改为**显式命名 program**（`forwardProgram()` / `flatForwardProgram()`；枚举 `ShaderPreset` 删除），且两个 shadowed 占位预设现在会报一条 `DiagnosticCategory::UnsupportedRequest`（见 `vsg-custom-shader.md` §11.10）。

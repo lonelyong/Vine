@@ -5,7 +5,7 @@
 > **2026-09-16 状态更新（替下面正文里的“已落地”措辞纠偏）**：本文写于叠加层**按相机键保留窗口层**的那一轮，其中两条**已不成立**：
 > ① `RenderBackend::releaseWindowLayer`（以及更早的 `releaseOverlay`）**已删除** —— P17 之后“作用域是唯一驱动方式”，后端不再为窗口层保留视图，保留身份是 `SlotKey::ownerPass(pass)`（见 `.ai/design/vsg-pass-lifecycle.md`）；下文 §“配套改动”“已实现文件”“vsg 后端落地”里凡出现 `releaseWindowLayer` / `window_layers[camera]` 的行，读作**当时**的设计，不再是可调用的接口。
 > ② “按 `Camera*` 键的 `window_layers` 表”**已不存在**：现在是每个输出目标一张槽表、每个 pass 一个内容槽（`VsgRenderTargetEntry` + `SlotKey`）。
-> **仍然成立**：顶部 pass = 普通 pass（`RenderPass` + 引擎单列表）、`CameraMirror` 组件、`AxisGizmo : RenderPass`、`hasWindowPass()`，以及“不要为叠加层单独建第二个 window render pass（CLEAR 会显灰底）”这条结论 —— 这些仍是当前模型的依据。
+> **仍然成立**：顶部 pass = 普通 pass（`RenderPass` + 引擎单列表）、`CameraMirror` 组件、`AxisGizmo : RenderPass`，以及“不要为叠加层单独建第二个 window render pass（CLEAR 会显灰底）”这条结论 —— 这些仍是当前模型的依据。**`hasWindowPass()` 已不在**（M2a 删除，换成表面上的声明 `RenderSurface`：谁是"顶部那条 pass"由宿主说出来，不再由视图去引擎里推断）。
 
 ## 目标
 

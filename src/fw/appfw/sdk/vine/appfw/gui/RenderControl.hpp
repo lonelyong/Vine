@@ -13,6 +13,7 @@
 namespace vn::graphics
 {
 class RenderEngine;
+class RenderSurface;
 class SceneView;
 }
 
@@ -111,6 +112,24 @@ class VN_APPFW_API RenderControl : public Control {
      * @return The view (never null while the control is alive).
      */
     vn::graphics::SceneView* view() const;
+
+    /** @brief Gets the presentation table of the surface this control renders into.
+     *
+     * Which passes draw into this surface, and in which order: the ONE place that answers "who presents this
+     * surface". By default the control's own view does (init() declares it there), and a host that builds its own
+     * main pass declares THAT pass instead - which is what keeps the default window pass from being built beside
+     * it:
+     *
+     * @code
+     * auto pipeline = builder.build(options);
+     * control->surface()->present(pipeline->windowPass());   // before the first attach (install is synchronous)
+     * @endcode
+     *
+     * The control keeps the same fallback it always had: with nothing declared, its own view presents the surface.
+     *
+     * @return The control's render surface presentation table (never null while the control is alive).
+     */
+    vn::graphics::RenderSurface* surface() const;
 
     /** @brief Attaches the backend to the native surface and initializes it.
      *

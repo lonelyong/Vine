@@ -146,8 +146,8 @@ deferred 光照 pass 复刻当前 phong 产出（与现在画面一致 A/B）。
     普通非内容槽（PiP）仍 INT_MAX；`drawScreenProgram` 建槽时**头插**进窗口 children → 全屏光照
     结果作为窗口"底层"，HUD 内容槽(10+) 叠在其上。默认模式无 program_slots → 行为零变化。
   * demo（addDeferredMain）：gbuffer 几何 pass(order -3, engine 场景) + 全窗口光照 ScreenPass
-    (order 0, camera=master, RT=null, 采样 GBuffer 全部附件)。光照 pass camera=master+RT null →
-    `RenderEngine::hasWindowPass()` 为真 → RenderControl::init **不再注册 forward 主窗 pass**，
+    (order 0, camera=master, RT=null, 采样 GBuffer 全部附件)。光照 pass camera=master+RT null →（**M2a 起**：
+    这条 pass 被 `surface->present(pipeline->windowPass())` 声明）→ RenderControl::init **不再注册 forward 主窗 pass**，
     窗口主画面即 deferred lit。光照全屏 0,0 全表面。
   * 验证：llvmpipe "deferred fullscreen program 640x360 -> 0,0 378x234 attached" 零错误；test_graphics
     117 / test_vsg 10；7 种冒烟（默认/offscreen/multislot/slot/gbuffer/deferred/deferred_full）全干净，

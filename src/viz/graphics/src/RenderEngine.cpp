@@ -328,16 +328,14 @@ const FrameContext& RenderEngine::frameContext() const
     return frame_ctx_;
 }
 
-bool RenderEngine::hasWindowPass(raw_ptr<Camera> camera) const
+std::optional<int> RenderEngine::passOrder(raw_ptr<RenderPass> pass) const
 {
     for (const auto& slot : slots_) {
-        RenderPass* pass = slot.pass.get();
-        if (pass != nullptr && pass->isEnabled() && pass->camera() == camera
-            && pass->renderTarget() == nullptr) {
-            return true;
+        if (slot.pass == pass) {
+            return slot.order;
         }
     }
-    return false;
+    return std::nullopt;
 }
 
 void RenderEngine::addPass(intrusive_ptr<RenderPass> pass, int order)

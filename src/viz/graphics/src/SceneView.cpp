@@ -72,12 +72,6 @@ void SceneView::ensureWindowPass()
     if (engine_ == nullptr || default_pipeline_ != nullptr) {
         return;
     }
-    // The application may already present this view's camera to the window
-    // (e.g. a deferred-lighting main pass carrying this camera); in that case
-    // no default window pass is needed.
-    if (engine_->hasWindowPass(camera_.get())) {
-        return;
-    }
     // The engine is borrowed, and everything below goes to it: hold it for the length of the operation, so a host
     // that dropped its last reference meanwhile cannot leave a dangling handle behind (R2 in
     // .ai/design/appfw-render-view.md §13 - "borrowed" means "only alive as long as the operation needs it", not
@@ -189,7 +183,7 @@ void SceneView::rebuildDefaultWindowPass()
     // last reference to the engine (the pipeline was holding it), and the build that follows needs it alive.
     intrusive_ptr<RenderEngine> const keep(engine_, true);
     // Drop first, build through ensureWindowPass(): the old pipeline unregisters its passes as it goes away, so
-    // the "does this camera already have a window pass?" test sees the truth about the new pipeline.
+    // the rebuild leaves exactly the new pipeline's passes registered (no stale slot, no double registration).
     removeWindowPass();
     ensureWindowPass();
 }

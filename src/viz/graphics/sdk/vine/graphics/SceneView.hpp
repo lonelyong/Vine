@@ -45,10 +45,12 @@ class Scene;
  * "primary view state" a camera used to be given by the engine. The engine
  * holds no content scene: the view keeps its content and binds it explicitly
  * to the passes that draw it (its default window pass binds it on
- * ensureWindowPass()). When attached, ensureWindowPass() registers an
- * order-0 window pass that presents this view's camera to the backbuffer -
- * unless the application already registered such a pass (e.g. a
- * deferred-lighting main pass that carries this view's camera).
+ * ensureWindowPass()). ensureWindowPass() registers an order-0 window pass
+ * that presents this view's camera to the backbuffer. Whether that pass is
+ * what a SURFACE draws is the surface's own declaration (RenderSurface): a
+ * host whose own main pass presents the surface says so THERE (present(pass)),
+ * and a view is never suppressed because some pass elsewhere happens to carry
+ * its camera.
  *
  * Several views may share one engine, but each view's DEFAULT window pass
  * clears the whole surface and draws full-surface: with two such passes the
@@ -142,18 +144,20 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /** @brief Gets the bound engine, or nullptr when unset. */
     raw_ptr<RenderEngine> engine() const;
 
-    /** @brief Registers an order-0 window pass presenting this view's camera
-     * to the backbuffer, drawing this view's content scene.
+    /** @brief Registers the default window pass: an order-0 pass presenting this view's camera to the backbuffer,
+     * drawing this view's content scene.
      *
      * The default viewer is the shared Forward preset (RenderPipelineBuilder):
      * the view assembles it through the same recipe an application would use
-     * for an explicit forward pipeline. The pass is only added when the
-     * engine does not already present this view's camera to the window (see
-     * RenderEngine::hasWindowPass), so an application that built its own main
-     * pass with this view's camera (e.g. a Deferred lighting pass) keeps full
-     * control. Calling this twice is a no-op while the pipeline is
-     * registered. A host convenience layer calls this once after the
-     * application has registered its pipeline.
+     * for an explicit forward pipeline. It is built on the first call and kept
+     * from then on: calling this twice is a no-op while the pipeline is
+     * registered (a recipe change rebuilds it - see setOptions).
+     *
+     * This says nothing about a surface. A view asked to present one is what
+     * puts this pass in that surface's table (see RenderSurface::present);
+     * an application that built its own main pass declares THAT pass as the
+     * surface's presentation, which is what keeps this pass from being built
+     * at all (RenderSurface::present(SceneView&) is the one that builds it).
      */
     void ensureWindowPass();
 
@@ -177,9 +181,10 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * (measured by the same pipeline() handle). On a DEFERRED recipe, entering or leaving a non-Lit mode changes
      * the chain, so that transition is a rebuild; staying among the non-Lit modes is not.
      *
-     * Nothing is built when the view has no default pipeline (the window pass has not been asked for yet, or an
-     * application presents this camera itself): the recipe is remembered and the next ensureWindowPass() builds
-     * from it. That is what makes "configure right after construction" cost nothing at all.
+     * Nothing is built when the view has no default pipeline (it was never asked to present a surface, or an
+     * application presents this view's camera with a pipeline of its own): the recipe is remembered and the next
+     * ensureWindowPass() builds from it. That is what makes "configure right after construction" cost nothing at
+     * all.
      *
      * @param options New recipe; passing the current one is a no-op.
      */

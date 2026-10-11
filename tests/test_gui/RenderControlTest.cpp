@@ -21,6 +21,7 @@
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderEngine.hpp>
+#include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/SceneView.hpp>
 
@@ -168,6 +169,28 @@ TEST(RenderControlTest, AttachesItselfOnceTheBackendAndWindowAreThere)
     EXPECT_TRUE(host.surface()->isVisible()); // 有帧可看 ⇒ 表面就位
 }
 
+// 这块表面由**谁**画：控件把自己的视图声明在表面自己的呈现表上（`RenderControl::surface()`）。这条表是
+// "谁呈现"的唯一记录（今天只有一条；分屏就是多声明几条），宿主要接手时也声明在这里。
+TEST(RenderControlTest, TheControlsSurfacePresentsItsOwnViewByDefault)
+{
+    HostedControl host;
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+
+    auto* control = host.control();
+    auto* surface = control->surface();
+    ASSERT_NE(surface, nullptr);
+    ASSERT_TRUE(surface->hasPresentation());
+
+    const std::vector<vn::graphics::RenderSurface::Presentation> table = surface->presentations();
+    ASSERT_EQ(table.size(), 1u);
+    EXPECT_EQ(table[0].view, control->view());
+
+    // 表里那条 pass 就是该视图默认管线里那条窗口 pass（视图重建时表跟着走 —— 见 RenderSurfaceTest）。
+    ASSERT_NE(control->view()->pipeline(), nullptr);
+    EXPECT_EQ(table[0].pass, control->view()->pipeline()->windowPass());
+}
+
 // 构造只组装：`new RenderControl()` 返回时**没有** attach（状态停在 Pending），配置写在它之后的同步代码里；
 // 第一拍兜底才 attach —— 而兜底用的正是宿主刚装上的那个后端（不是注册表里的默认）。这就是"配置窗口"，
 // 也是 SDK 写的次序（构造 ⇒ setBackend() ⇒ init()）不再依赖"构造那一刻注册表里有没有后端"的原因。
@@ -230,9 +253,11 @@ TEST(RenderControlTest, TheInputRouterSendsEachDragToTheViewUnderTheCursor)
     ASSERT_NE(own_view, nullptr);
 
     // 右边那半：自己的视图 + 挂在**同一个引擎**上（视图属于引擎，不属于控件）+ 自己那条窗口管线。
+    // 声明在这块表面上（`RenderSurface::present`）：它顺带把那条默认窗口管线建出来，同时"这块表面由谁画"
+    // 有了唯一的记录（分屏的下一步 —— 矩形与输入路由 —— 都要读这张表）。
     auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
     right->setEngine(control->engine());
-    right->ensureWindowPass();
+    control->surface()->present(*right);
     right->setViewport({ 0.5, 0.0, 0.5, 1.0 });
     right->onSurfaceResized(control->width(), control->height(), control->devicePixelRatio());
 
@@ -299,7 +324,7 @@ TEST(RenderControlTest, ACapturedViewSurvivesTheHostLettingGoOfIt)
 
     auto  right   = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
     right->setEngine(control->engine());
-    right->ensureWindowPass();
+    control->surface()->present(*right);
     right->setViewport({ 0.5, 0.0, 0.5, 1.0 });
     right->onSurfaceResized(control->width(), control->height(), control->devicePixelRatio());
 
@@ -351,7 +376,7 @@ TEST(RenderControlTest, ReleasingOneButtonDoesNotEndTheOtherButtonsDrag)
     auto own   = vn::intrusive_ptr<vn::graphics::SceneView>(control->view());
     auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
     right->setEngine(control->engine());
-    right->ensureWindowPass();
+    control->surface()->present(*right);
     right->setViewport({ 0.5, 0.0, 0.5, 1.0 });
     right->onSurfaceResized(control->width(), control->height(), control->devicePixelRatio());
 

@@ -20,6 +20,7 @@ class QWidget;
 namespace vn::graphics
 {
 class RenderEngine;
+class RenderSurface;
 class SceneView;
 }
 
@@ -70,6 +71,17 @@ class SurfaceWindow : public QWindow {
      * @return The view (never null while the surface is alive).
      */
     vn::graphics::SceneView* view() const;
+
+    /**
+     * @brief Gets the presentation table of this surface.
+     *
+     * Which passes draw into this surface, and in which order: the control declares its own view here by default
+     * (see init()), and a host that builds its own main pass declares that pass instead - which is what keeps the
+     * default one from being built.
+     *
+     * @return The surface's presentation table (never null while the surface is alive).
+     */
+    vn::graphics::RenderSurface* surface() const;
 
     /**
      * @brief Attaches the backend to the live native surface and opens the session on it.

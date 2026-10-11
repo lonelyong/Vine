@@ -217,7 +217,8 @@
 - **框架级复核的三条硬结论（2026-10-11，`appfw-render-view.md` §14）**：①**几何只有一个输入** —— `viewport`（归一化）
   × 表面尺寸 × 比例才是矩形真相，`onSurfaceResized` 永远只给**表面**尺寸，宿主不必自己算"一半"；②**HUD 可见性的唯一
   真相是 pass 的 `isEnabled()`**（`Options` 只回答"有没有这个档"），而档属于**默认管线** ⇒ 宿主自建主 pass 时 HUD 开关
-  无档可切（记诊断、不静默）；③**多视图的额外视图要显式 `ensureWindowPass()`**（它没有 attach 事件），而"恰好一个视图
+  无档可切（记诊断、不静默）；③**多视图的额外视图要显式声明在这块表面上**（`control->surface()->present(*view)`，
+  它顺带把那条默认窗口管线建出来；视图自己没有 attach 事件），而"恰好一个视图
   清屏"是后端 **loadOp 整张清**（`OffscreenTarget.cpp:107`）逼出来的约定、且清屏那条 pass 要排最前。**ABI 边界**：
   appfw 公开类加数据成员/`Signal` = bump `VN_APPFW_PLUGIN_ABI_VERSION`（`setInputRouter` 因此放 `Impl`）；graphics 没有
   版本宏，`SceneView` 加成员可行但要写明"插件需重建"。
@@ -265,7 +266,7 @@
   要保的不变量是"公开面里没有进程唯一的假设 + 设备资源归后端会话"，共享设备（一设备多交换链）落在后端 +
   `RenderBackendRegistry`，不碰控件/视图 API。**一个表面里多视图（分屏）底层已经够**：`SceneView` 类注释写明
   "several views may share one engine"，给每个 pass `setViewport`（**设备像素**）+ 恰好一个 `setClearEnabled`，
-  自己建的 pass 一呈现该相机，`ensureWindowPass()` 就不插一脚；视口随表面尺寸更新走 `addSurfaceLayout()`。
+  自己建的 pass 在表面上声明后默认窗口管线就不被建（`RenderSurface`，见 2026-10-11 M2a 条）；视口随表面尺寸更新走 `addSurfaceLayout()`。
   （2026-10-11 补的设计，见 `.ai/design/appfw-render-view.md` §12）**缺件变成两件已设计 + 一件是策略**：
   ①输入路由 = `RenderControl::setInputRouter`（**按下时路由、松开前捕获**；默认 = 自己的 `view()`，单视图行为不变；
   放 `Impl` 里的 `std::function` ⇒ ABI 不动）②视口 = `SceneView::setViewport`（**归一化 [0,1]**，与 Unity `Camera.rect` /
@@ -279,7 +280,7 @@
   （`.ai/design/appfw-render-view.md` §2.3、`.ai/design/appfw-render-surface.md` 2026-10-11 节）：
   **构造只组装；attach = 宿主显式 `init()`（同步、幂等、优先）或事件循环第一拍兜底（`QTimer::singleShot(0,…)`）**；
   `useDefaultBackend()` 的守卫是"引擎没有后端时才补第一个注册的后端"（晚注册的后端下一次 attach 还能被捡起，宿主自己设的永不被覆盖）；
-  `ensureWindowPass()` 提到后端检查**之前**（视图呈现什么是它的配方，不是设备事实）；不显式 `init()` 的宿主要把设备/管线
+  `ensureWindowPass()`/呈现声明提到后端检查**之前**（谁画这块表面是组成，不是设备事实；见 2026-10-11 M2a 条）；不显式 `init()` 的宿主要把设备/管线
   那几百毫秒挪到第一拍 —— 仓库内两个宿主都在 `activate()` 里显式 attach（`DemoView` 的 `initAsync()`、`ModelRenderView` 的
   `init()`；`initAsync()` 是 `co_return init()`，**不挂起**，所以两者都在那一拍、在应用线程上跑完，见
   `RenderControlTest.InitAsyncCompletesWithoutSuspending` 与 `DemoView::activate()` 的注释）。
@@ -481,3 +482,24 @@
 - 钉子：`tests/test_gui/ModelViewerTest.cpp` 的 `TheShadingModeCommandsDriveTheCurrentModelView`（五档各跑一遍，
   断言 `options().mode` 变了、`stats` 没被顺手关掉、光栅化覆盖只在线框档留下；下屏后 `primaryRenderControl()`
   回到空、命令如实说 `NotApplicable`）。
+
+## 「谁呈现这块表面」有了 owner（M2a，2026-10-11）
+
+- **新类 `vn::graphics::RenderSurface`**（`sdk/vine/graphics/RenderSurface.hpp`，`RefCounted`）：一块表面的
+  **呈现表** —— `present(SceneView&)` / `present(raw_ptr<RenderPass>)` / `dismiss(...)` / `hasPresentation()` /
+  `presentations()`（按**引擎执行序**返回 `Presentation{pass, view}`，加了声明序做同序的稳定次序）。
+  引擎是**借用**的（`RenderSurface` 必须晚于它析构；`SurfaceWindow::Impl` 里就按 engine → view → surface 声明）。
+- **删掉 `RenderEngine::hasWindowPass(camera)`**（全局发现式查询，唯一的消费者就是被删掉的那条让位规则）；
+  换成 `RenderEngine::passOrder(raw_ptr<RenderPass>) const -> std::optional<int>` —— 顺序住在引擎（`addPass` 的槽），
+  这条查询同时就是"我记的那条 pass 还在不在"。
+- **`SceneView::ensureWindowPass()` 不再问引擎**："有人用我这台相机呈现了吗"这个推断删掉了（全局、顺序敏感，
+  而且会**静默跳过**共用一台相机的第二个视图）。它现在就是"把默认窗口管线建出来"，是否该建由**表面**决定：
+  `SurfaceWindow::init()` 一句 `if (!d->surface->hasPresentation()) d->surface->present(*d->view);`（仍在后端检查**之前**）。
+- **谁要接手就得说**：宿主自建主 pass（`demo_plugin` 的 `addDemoPipeline`）在 `pipeline` 建好后
+  `surface->present(pipeline->windowPass())` —— 声明在 attach 之前（`DemoScene::install()` 与 `initAsync()` 同一拍、
+  在其前），所以默认窗口管线一条都不建。视图挂在**别的引擎**上时 `present` 明确拒绝 + 记一条 `PassProtocolViolation`
+  （它永远不会呈现这块表面），不是静默。
+- 钉子：`tests/test_graphics/RenderSurfaceTest.cpp` 六条（建默认管线 / 只注册不声明 ⇒ 仍然建 / 声明了 ⇒ 不建 /
+  执行序 / 表跟着重建走 / 别的引擎 ⇒ 拒绝），`GraphicsTest` 的 `SceneViewTest.EnsureWindowPassDoesNotStandDownForSomebodyElsesPass`、
+  `RenderEngineTest.PassOrderAnswersWhereARegisteredPassRuns`，`test_gui` 的
+  `TheControlsSurfacePresentsItsOwnViewByDefault`。套件：graphics 317 / gui 253 / appfw 32 / vsg 404。

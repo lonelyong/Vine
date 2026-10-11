@@ -1,6 +1,7 @@
 set(TEST_NAME test_graphics)
 set(SRC_FILE_LIST
 	GraphicsTest.cpp
+	RenderSurfaceTest.cpp
 	ChannelSliceTest.cpp
 	EmbeddedShadersTest.cpp
 	ShaderAbiTest.cpp

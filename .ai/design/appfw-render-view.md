@@ -12,6 +12,12 @@
 >    不是设备的事实 —— 没有后端注册的宿主也该有能检查的 `pipeline()`（也正是这条让用例能在无后端下断言读数）。
 > 3. **滚轮事件原本没有坐标**（`vn::window::ScrollEvent` 只有 delta）：多视图按"点"路由在滚轮这一项上无从下手，
 >    于是给该事件加了 `x`/`y`（逻辑像素，与鼠标事件同空间），由 Qt 侧的翻译补上。
+> 4. **"谁呈现"改成声明（M2a，2026-10-11）**：`RenderEngine::hasWindowPass(camera)` 与 `ensureWindowPass()` 的
+>    "有人占了我就让位"一起删除，换成 `RenderSurface`（一块表面的呈现表，`RenderControl::surface()` 拿得到）：
+>    `init()` 的那一步现在是 `if (!d->surface->hasPresentation()) d->surface->present(*d->view);`，宿主自建主 pass
+>    的写法是 `surface->present(pipeline->windowPass())`（`demo_plugin` 就是这么改的）。本文里凡出现
+>    "让位规则 / `hasWindowPass` / '该相机已有窗口 pass 就不建'"的句子，读作**M2a 之前**的行为
+>    （§2.2 那两行、§4.2、§5、§12.2 与不变量 2/16 已就地改写）。目标形态与分片见 `graphics-render-next.md` §3.2。
 >
 > **v2 相对 v1 的四处升级**（都是"消掉一类记账/陷阱"，不是加功能）：
 > ① **初始化时机**：控件构造只组装，attach 走"宿主显式 `init()`"或"第一拍兜底"（§2.3、R1）；
@@ -66,7 +72,7 @@
   `mode` 换的是**同一个 pass 用哪个程序**（属性，零重建）—— 这一条是实现时才看清的，见 §4.1。
 
 **三种"多"**（§12）：**多控件 = 多设备**（现状，可接受的过渡）→ **目标态：一设备多交换链**（有触发判据）；
-**一个表面里多视图 = 一设备多视图**（第 1 层已够：`setViewport` + 恰好一个清屏 + 默认 pass 让位）；
+**一个表面里多视图 = 一设备多视图**（第 1 层已够：`setViewport` + 恰好一个清屏 + 默认 pass 的兜底声明）；
 **输入**由控件的**路由回调**按"**按下时路由、松开前捕获**"分发（§12.2）。
 
 **两条"不"**：**不让控件碰管线/设置**（§5，零新增配置 API）；**不让视图偷偷装灯**（§4.2，零灯就是零灯）。
@@ -125,9 +131,10 @@ RenderControl（Impl = SurfaceWindow）
                                └─ 注册 ──> passes（归引擎的 pass 表 slots_）
 ```
 
-**所有权方向：控件 → 引擎，不是引擎 → 控件**。引擎没有任何回指（它不认识控件与视图）；它唯一的"上向"知识是
-`hasWindowPass(camera)`，而那是查**自己的 pass 表**（`pass->camera() == camera && pass->isEnabled() && pass->renderTarget() == nullptr`
-⇒ "这个相机被某个窗口 pass 呈现了"）—— 那是 pass 的属性，不是视图的。后端也不回指引擎（`gfx_backend_vsg` 里没有
+**所有权方向：控件 → 引擎，不是引擎 → 控件**。引擎没有任何回指（它不认识控件与视图）；它唯一曾经有的"上向"知识
+是 `hasWindowPass(camera)`（查自己的 pass 表：`pass->camera() == camera && pass->isEnabled() && pass->renderTarget() == nullptr`），
+而它随 M2a（2026-10-11）**删除**了 —— 那条查询是"谁呈现"的推断本身，现在由**表面**声明（`RenderSurface`，
+见 §12.2 与 `graphics-render-next.md` §3.2）。后端也不回指引擎（`gfx_backend_vsg` 里没有
 `RenderEngine*` 成员）。**引擎是可独立存在的服务**（`test_graphics` 里到处 `new RenderEngine()`，无窗口、无控件）。
 逐边的精确分析（谁强引用谁、为什么、有什么顺序约束）见 **§13**。
 
@@ -140,7 +147,7 @@ RenderControl（Impl = SurfaceWindow）
 | 引擎 | `d->engine = new RenderEngine()` | **构造即建** |
 | 视图 | `d->view = new SceneView()` + `view->setEngine(engine)` | **构造即建** |
 | 会话（attach） | `if (d->engine->backend() != nullptr) init();` | **构造里试一次**，但**只有后端已注册时才开始**（后端没注册时退回，窗口显示/尺寸变化时重试） |
-| **默认窗口管线** | `init()` 里第 5 步 `d->view->ensureWindowPass();`（**跑在"句柄/尺寸可用性"检查之前**） | **只要后端在，构造里就建**（Forward、无 HUD）；后端不在 ⇒ 不建，且 state 直接 `Failed("no render backend is registered")` |
+| **默认窗口管线** | `init()` 里那一步 `if (!d->surface->hasPresentation()) d->surface->present(*d->view);`（**跑在"句柄/尺寸可用性"检查之前**；M2a 之前写的是 `d->view->ensureWindowPass()`，它自带让位查询） | **只要后端在，构造里就建**（Forward、无 HUD）；后端不在 ⇒ 不建，且 state 直接 `Failed("no render backend is registered")` |
 
 推论（都是可观察的）：
 
@@ -148,14 +155,15 @@ RenderControl（Impl = SurfaceWindow）
   并且 attach 已经尝试过（日志里 `surface Pending -> Presenting` 就发生在构造那一刻）。
 - 无后端的宿主（`test_gui`）：引擎/视图在、state `Failed`、**默认管线不存在** —— 上一轮探针里 `before ensureWindowPass: 1`
   的那一个 pass 是"我们自己挂的帧率读数"，不是窗口 pass。
-- `ensureWindowPass()` 是**幂等**的（`default_pipeline_ != nullptr` 或"该相机已有窗口 pass"就返回），所以重复调用不会叠管线。
+- `ensureWindowPass()` 是**幂等**的（`default_pipeline_ != nullptr` 就返回；它不再看引擎里"该相机有没有窗口 pass"——
+  那是 M2a 删掉的推断），所以重复调用不会叠管线。`RenderSurface::present(view)` 同样幂等，而且它就是"该建了"的判据。
 
 **变更设置 = 重建吗？**
 
 | | 今天 | 本设计（S1 之后） |
 | --- | --- | --- |
 | 改默认管线的选项 | **做不到**：选项写死 `PipelineOptions{}`；`removeWindowPass()` 是 **private**（`SceneView.hpp:226`），宿主连"逼一次重建"都做不到 | `view->setOptions(...)`：**值语义、变更即重建**（内部正是那个私有原语 `removeWindowPass() + ensureWindowPass()`） |
-| 想换管线 | **只能替换**：自建一条呈现同一相机的管线，默认那条自动让位（§3 缝 1） | 替换照旧；或者换设置（第 2 层） |
+| 想换管线 | **只能替换**：自建一条呈现同一相机的管线，默认那条自动让位（§3 缝 1；**M2a 之后**：替换要显式声明 `surface->present(pass)`） | 替换照旧；或者换设置（第 2 层） |
 | 代价 | — | 一次管线构建；Forward 便宜，Deferred 会连带重新分配 G-buffer（设备侧）。**不是每帧成本** |
 | 零多余重建 | — | **可以**：默认管线是懒建的 ⇒ 若设置发生在**管线还不存在时**（后端还没注册、或还没 attach），`setOptions()` **只记设置**，等 `init()` 时按设置建 |
 
@@ -352,7 +360,7 @@ Unreal 之所以"感觉免费"，是因为它**每帧重建 pass 列表**（我�
 | 这个视图**有没有**帧率 / 坐标轴档 | `Options::stats` / `Options::gizmo`（配方） | 变更 = **一次重建** |
 | 现在**看不看得见** | `setStatsVisible()` / `setGizmoVisible()`（开关） | **零重建**（`setEnabled`） |
 | 想频繁切 | 在配置窗口里把两个档都设 `true`（R1 ⇒ 零重建），之后随便切 | **0** |
-| 宿主**自建了主 pass**（第 1 层） | 视图的默认管线**根本不存在**（让位规则）⇒ HUD 开关没有档可切：`setStatsVisible` 记一条**诊断**并保持不可见（不许静默），HUD 归宿主的 `builder` 配（`PipelineOptions::fps/gizmo` + 句柄） | — |
+| 宿主**自建了主 pass**（第 1 层） | 视图的默认管线**根本不存在**（他在表面上声明了自己的 pass）⇒ HUD 开关没有档可切：`setStatsVisible` 记一条**诊断**并保持不可见（不许静默），HUD 归宿主的 `builder` 配（`PipelineOptions::fps/gizmo` + 句柄） | — |
 
 - `setStatsVisible(true)` 而档还不存在（`Options::stats == false`）⇒ **按需补建一次**（复用 `setOptions` 那条路，
   不引入第二套构建逻辑）；之后 `options().stats` 如实变成 `true` —— 事实就是"这个档现在存在"。**每个视图每种档最多付这一次**。
@@ -446,7 +454,7 @@ control->view()->setGizmoVisible(true);    // 打开坐标轴档；若配置窗�
 // ── 扩展（第 0 层，1 行）：不换整条管线，只加一个自己的 pass
 control->engine()->addPass(mySsaoPass, vn::graphics::pipelineStageOrder(vn::graphics::PipelineStage::Effect));
 
-// ── 自定义（第 1 层）：自己的 pass 图；默认管线自动让位；维护自己接线（1 行）；appfw 对这段代码不可见
+// ── 自定义（第 1 层）：自己的 pass 图；在表面上声明这条呈现（默认窗口管线就不建）；维护自己接线（1 行）；appfw 对这段代码不可见
 vn::graphics::RenderPipelineBuilder builder(engine);
 builder.setCamera(view->camera());
 builder.setContent(view->scene());
@@ -458,10 +466,10 @@ auto* left = control->view();                                     // 控件顺�
 left->setViewport({ 0.0, 0.0, 0.5, 1.0 });                        // 几何：改它**不重建**
 auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
 right->setEngine(control->engine());                              // 视图挂在**引擎**上，不挂在控件上
-right->setOptions({ .gizmo = true });                             // 各自一条窗口管线（默认让位规则照旧）
+right->setOptions({ .gizmo = true });                             // 各自一条窗口管线
 right->scene()->setRoot(otherRoot);
 right->setViewport({ 0.5, 0.0, 0.5, 1.0 });                       // **唯一**的矩形真相：宽高比/像素/清屏范围都从它推
-right->ensureWindowPass();                                        // 宿主的**额外**视图：默认管线要显式要（控件自己的那个由 attach 触发）
+control->surface()->present(*right);                              // 在这块表面上声明它（顺带建出那条默认窗口管线）
 right->onSurfaceResized(w, h, dpr);                               // 尺寸永远给**表面**的；"这一块"由视图自己算（§14 F1）
 control->setInputRouter([&](int x, int y) {                       // 按下时路由、松开前捕获（§5）
     const double nx = double(x) / double(std::max(1, control->width()));
@@ -500,7 +508,7 @@ view->setOptions(options);
 
 1. **默认不变**：不配置（`SceneView::Options{}`）时仍是 forward、无 HUD、视口铺满 ⇒ 观感与 `passCount()==1`
    一类既有用例不动。
-2. **兜底而非竞争**：默认窗口管线只在"该相机没有任何窗口 pass"时存在；宿主自建主 pass 时它自动让位。
+2. **兜底而非竞争**：默认窗口管线只在**没有任何呈现声明**时存在；宿主自建主 pass 时它自动让位（**M2a**：声明是显式的 —— 宿主 `surface->present(pass)`，而不是视图去引擎里查"这台相机有没有窗口 pass"）。
 3. **谁构建谁接线**：默认那条由视图 resize（含比例）；自建那条由构建者接（一行 layout 步）。
 4. **尺寸与比例同生共死**：比例只随 `onSurfaceResized(w,h,ratio)` 走，不存在孤立的 DPR 状态。
 5. **无隐式装灯**：零灯就是零灯（后端的 `ambient=0.15` 是可见性兜底，不是照明策略）。
@@ -525,7 +533,8 @@ view->setOptions(options);
     宽高比、pass 的设备像素视口、清屏范围、layout 步收到的尺寸**全部由它推**（宿主不必自己算"一半"）。
 15. **状态只有一份**：HUD 的可见性就是 **pass 的 `isEnabled()`**（`isStatsVisible()` 读它，不存第二份 bool）；
     `Options` 是**意图**，"有档 ⇔ 有那条 pass"。允许的唯一不一致：宿主自建了主 pass（那时默认管线不存在，开关记诊断）。
-16. **默认管线要显式要**：控件自己的视图由 attach 触发 `ensureWindowPass()`；宿主的额外视图自己调一次（幂等）。
+16. **默认管线要显式要**：控件自己的视图在 `init()` 里由表面的兜底声明触发（`if (!hasPresentation()) present(*view)`）；
+    宿主的额外视图自己声明一次（`control->surface()->present(*view)`，幂等，它顺带建出那条默认窗口管线）。
 
 ## 8. 路线图（S0–S6+：每一步都能独立落地、独立验收）
 
@@ -568,7 +577,7 @@ HUD 档）、`Scene`+`LightRig`、`SurfaceWindow`（S0 的兜底 attach、比例
 | 一进程一设备、N 交换链 | Filament（`Engine`+`Renderer`+`SwapChain`）、VTK（一 renderer 多 render window）、OSG（一 `Viewer` 多 `GraphicsWindow`） | **目标态**（§12.1）；现状是"一控件一设备"（Qt / three.js 口径） |
 | 多视图的输入分发 | VTK `vtkRenderWindowInteractor` 按 viewport 挑 renderer（按下路由、拖动捕获）；Blender/Unity 手柄同语义 | `RenderControl::setInputRouter`：按下路由、松开前捕获（§5、§12.2） |
 | **多窗口** | Unreal 一 RHI 设备 N 窗口；OSG 一 `Viewer` 多 `GraphicsWindow`；VTK 一个 renderer 可挂多个 render window；**Qt / three.js：每窗口一上下文** | **每控件一设备**（Qt/three.js 路线，§12.1）；共享设备是后端的缝 |
-| **一表面多视图（分屏）** | Maya/Blender 一窗口四分屏；Unity 每相机 `viewportRect`；Unreal split screen（一个 `FSceneViewFamily`） | 第 1 层已够（`setViewport` + `setClearEnabled` + `hasWindowPass` 让位）；默认路径不做（§12.2） |
+| **一表面多视图（分屏）** | Maya/Blender 一窗口四分屏；Unity 每相机 `viewportRect`；Unreal split screen（一个 `FSceneViewFamily`） | 第 1 层已够（`setViewport` + `setClearEnabled` + 在表面上声明各条呈现）；默认路径不做（§12.2） |
 | 视图组的配方/设置资源 | Unreal `FSceneViewFamily`、Unity **URP Asset**、Godot `Environment`、three.js `EffectComposer`、Qt3D framegraph | `Pipeline` + `PipelineOptions`（值语义、变更即重建） |
 | 场景图 + 灯 | three.js/Godot/OSG：灯在**场景**；Unity `RenderSettings`/Godot `Environment` 是场景级设置；VTK 有 `vtkLightKit` | `Scene` + `LightRig` |
 | HUD / 统计 / gizmo | ImGui 叠 pass、Stats.js 在 DOM、Unity gizmo overlay、Unreal **ShowFlags** | `AxisGizmo` / `FpsOverlay`（= `Options` 的两个 show flag） |
@@ -609,7 +618,8 @@ HUD 档）、`Scene`+`LightRig`、`SurfaceWindow`（S0 的兜底 attach、比例
 3. **`setOptions()` 的生效时机**（构建前 / 构建后）都要定义清楚；不要留"设置了但不生效"的静默窗口。
    判据即 §2.2 那一句：**管线已存在 ⇒ 重建生效；管线还不存在 ⇒ 只记设置、等 attach 时按设置建**。所以要保证
    `setOptions()` 之后的第一个可观察状态（无论是 `passCount()` 还是画出来的第一帧）已经体现新设置。
-4. **重建与 `hasWindowPass` 的交互**：宿主有主 pass 时重建会跳过，看起来像"设置了没生效" ⇒ 文档 + S1 第⑤条写明。
+4. **重建与"谁呈现"的交互**（**M2a 已消掉**）：宿主有主 pass 时，旧规则让重建整条跳过，看起来像"设置了没生效"。
+   现在重建永远重建（`ensureWindowPass()` 不再问引擎），要不要那条默认管线由表面的呈现表回答。
 5. **迁移面**：graphics 2 个文件（`SceneView` + `Scene`/`LightRig`）、appfw 2 个调用点、`model_viewer` 1 个文件、
    `demo_plugin` 灯那一处；`PipelineOptions`/`Pipeline`/`RenderControl` 的**公开 API 不变**（除新增），故 ABI 不受影响。
 6. **S0 改的是可观察时序**：`new RenderControl()` 之后 `state()` 从"可能立刻 Presenting"变成"一定 Pending"。
@@ -673,7 +683,8 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 | 每个视图自己的相机/场景/宽高比 | 一个 `SceneView` = 自己的 `Camera` + `Scene`；`view->onSurfaceResized(pane_w, pane_h)` |
 | 每个视图画在自己那一块 | 现成：`RenderPass::setViewport(Viewport{...})`（**设备像素**）。**新增**：`SceneView::setViewport(归一化矩形)`（§4.1）⇒ 宿主**不必**算 DPR，比例自动跟随表面 |
 | 谁清屏 | 现成：`setClearEnabled` / `setClearColor` / `shouldClearDepth`（**恰好一个** pass 清，其余关） |
-| 别让默认窗 pass 捣乱 | 现成：`hasWindowPass(camera)` —— 宿主自建的 pass 一旦呈现该相机，`ensureWindowPass()` 就**不插一脚**（缝 1） |
+| 别让默认窗 pass 捣乱 | 现成（**M2a 起是声明**）：宿主自建的 pass 在表面上说一声（`control->surface()->present(pass)`），
+`RenderControl::init()` 的兜底声明就不建默认那条（缝 1） |
 | 操作哪一块 | **新增**：`RenderControl::setInputRouter(fn)` —— **按下时路由、松开前捕获**（§5） |
 
 **两件已设计 + 一件仍然是宿主的策略**：
@@ -703,8 +714,10 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 > M2c aspect 出相机 / M2d 矩形放呈现条目，输入与焦点视图并入 M5。本节其余内容在该设计落地前仍然为真。
 
 **额外视图要显式要默认管线**：`ensureWindowPass()` 是"**我要**这条默认管线"的动作，`setOptions()` 只改配方。
-控件**自己**那个视图由 attach 触发（§2.2）；宿主新建的视图没有 attach 事件 ⇒ 自己调一次 `ensureWindowPass()`
-（一行，幂等）。这也是缝 1 的另一半：**你要主 pass，我就不插一脚；你不要，我说一声就建**。
+控件**自己**那个视图由 attach + 表面的兜底声明触发（§2.2）；宿主新建的视图没有 attach 事件 ⇒ 自己声明一次
+`control->surface()->present(*view)`（一行，幂等，它顺带建出那条默认窗口管线；`ensureWindowPass()` 仍然可用，
+只是它不再回答"这块表面上有没有别人"）。这也是缝 1 的另一半：**你要主 pass，就在表面上说一声（`present(pass)`），
+我不建；你什么都不说，我就用自己那个视图建一条**。
 
 ## 13. 所有权：`SceneView` ↔ `RenderEngine`（本轮补）
 
@@ -764,7 +777,7 @@ RenderEngine
 | 交互 → 命中 → 捕获 → release | ✅（缝） | 契约三条本轮补齐（§5）：`nullptr` 回退自己的视图 / 必须本引擎的视图 / 捕获期持强引用 |
 | 换屏（句柄重建）→ 再 attach | ✅ | `ensureWindowPass()` 幂等 ⇒ 管线沿用、后端移动会话；`init()` 之后补一次尺寸 |
 | 销毁 | ✅ | 控件 `Impl` 反序（view → engine）；视图 dtor 注销自己的 pass；R2 保"注销那一刻引擎活着" |
-| 多视图的 attach | ⚠️→✅ | **本轮修**：宿主的额外视图没有 attach 事件 ⇒ 必须显式 `ensureWindowPass()`（不变量 16、§12.2） |
+| 多视图的 attach | ⚠️→✅ | **本轮修**：宿主的额外视图没有 attach 事件 ⇒ 在表面上显式声明（`control->surface()->present(*view)`，不变量 16、§12.2） |
 | 多视图的清屏 | ⚠️（刻意接受） | **后端逼出来的约定**：loadOp 整张清、没有按矩形清 ⇒ "恰好一个清 + 它排最前"（§12.2） |
 
 ### 14.2 API 范式

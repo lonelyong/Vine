@@ -637,10 +637,41 @@ view->addSurfaceLayout([p](int w, int h, double dpr) { p->resize(w, h, dpr); });
   按**前向**建（配方字段不动）⇒ 四档在两条配方上都能画出来；同一链条上换档零重建，进出非 Lit（延迟配方）是一次重建。
 - **灯是场景的，不是面的**：`scene->addLighting(vn::graphics::LightRig::studio())`（零灯只有后端
   `ambient=0.15` 的常量填充 ⇒ 一片平色，看起来像"没装灯"）。
-- 默认窗口管线是**兜底**：引擎里已经有同一个相机的窗口 pass 时它自动让位（宿主的自建管线赢）；要显式要它，
-  调一次 `ensureWindowPass()`（幂等）。
+- **谁呈现这块表面是声明的**（`RenderSurface`，见 §3.11）：默认窗口管线是**兜底** —— 没有任何呈现声明时它才存在；
+  宿主自建主 pass 时在那块表面上说一声，默认那条就**不建**（`ensureWindowPass()` 单独调用仍然可用，幂等）。
 - 配方/几何/开关三层与"两处同名 vs 一处覆盖"的完整理由见
   [`.ai/design/appfw-render-view.md`](../../../../.ai/design/appfw-render-view.md) §4.1、§7。
+
+### 3.11 一块表面由谁画：`RenderSurface`
+
+`SceneView` 回答"**怎么画**"，`RenderSurface` 回答"**谁在这块表面上画**"（一块表面 = 一个交换链 / 宿主的
+原生窗口）。它是一张**有序的呈现表**，顺序按**引擎的执行序**（`addPass()` 的槽）：
+
+```cpp
+// 表面的默认呈现：控件自己的视图（appfw 的 RenderControl::init() 就是这么兜底的）
+auto* surface = control->surface();
+if (!surface->hasPresentation()) {
+    surface->present(*control->view());          // 顺带把该视图的默认窗口管线建出来
+}
+
+// 宿主自建主 pass 时：声明自己的那条，默认窗口管线一条都不建
+auto pipeline = builder.build(options);
+surface->present(pipeline->windowPass());
+
+// 读回来：`{pass, view}` 列表，按引擎执行序（引擎已经不认识的 pass 不在里面 —— 它不是这一帧的事实）
+for (const vn::graphics::RenderSurface::Presentation& entry : surface->presentations()) { ... }
+
+// 撤掉一条呈现（视图的管线仍然是视图的，pass 仍然归引擎）
+surface->dismiss(pipeline->windowPass());
+```
+
+- **为什么要有它**：以前"谁呈现"是**推断**出来的（视图问引擎"有没有哪条 pass 携带我这台相机且没有 render target"），
+  推断是全局的、顺序敏感的，而且会**静默跳过**共用一台相机的第二个视图。现在它是宿主的一句话。
+- **顺序的真相在引擎**：`RenderEngine::passOrder(pass)` 返回某条已注册 pass 的执行序（同时回答了"它还在不在"），
+  呈现表按它排序；同序保持声明顺序。分屏（每条呈现一块矩形、恰好一条清屏）是这张表的下一步，见
+  [`.ai/design/graphics-render-next.md`](../../../../.ai/design/graphics-render-next.md) §3.2。
+- **跨引擎的声明会被拒**：视图挂在别的引擎上时 `present(view)` 返回 false 并记一条 `PassProtocolViolation`
+  （它的 pass 注册在另一帧上，永远画不到这块表面），不静默。
 
 ## 4. 现成例子：怎么构建、怎么跑
 

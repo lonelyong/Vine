@@ -41,6 +41,7 @@
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -1422,9 +1423,9 @@ bool demoUsesDeferred()
  *
  * An axis gizmo mirroring the view camera is always added (configurable via
  * PipelineOptions::gizmo) and - together with any Deferred G-buffer - is kept
- * in step with the window by a single surface-layout step. Because the main
- * window pass carries the view camera, RenderControl does not add a second
- * forward pass.
+ * in step with the window by a single surface-layout step. This pipeline's
+ * window pass is DECLARED as the surface's presentation (RenderSurface), which
+ * is what keeps RenderControl from adding a default forward pass beside it.
  *
  * @param render_control Render view whose engine receives the passes.
  */
@@ -1470,6 +1471,14 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     auto pipeline               = builder.build(options);
     if (pipeline == nullptr) {
         return;
+    }
+
+    // This pipeline presents the surface. Saying so is what keeps the control from building its own default window
+    // pass beside it (see RenderSurface): the main pass of this pipeline draws to the backbuffer, so two such
+    // passes would draw over each other. Declared here rather than in the control because the demo - not the
+    // control - owns this pipeline.
+    if (auto* surface = render_control->surface(); surface != nullptr) {
+        surface->present(pipeline->windowPass());
     }
 
     // Deferred preset: the builder's G-buffer pass published its MRT target

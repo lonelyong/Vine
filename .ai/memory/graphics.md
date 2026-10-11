@@ -737,3 +737,16 @@
   **命名/优先级规则**（`graphics-state.md` §4.1）：同一个状态两处出现时，pass 级里**赢了内容**的名字带 `Override`
   （`setProgramOverride` / `setPolygonModeOverride`），pass 级里**会被内容压过**的不带（`setDepthMode`，靠
   `RenderCommand::depthExplicit`）。线框必须是覆盖：否则内容自己写过的 Line 会把"回实面"这个开关永久钉住。
+- **「谁呈现这块表面」有了 owner（M2a，2026-10-11 已落地）**：新类 `vn::graphics::RenderSurface`
+  （`sdk/vine/graphics/RenderSurface.hpp`，`RefCounted`，**借用**引擎 ⇒ 必须晚于引擎析构）持一块表面的
+  **呈现表**：`present(SceneView&)`（顺带 `ensureWindowPass()`）/ `present(raw_ptr<RenderPass>)` / `dismiss` /
+  `hasPresentation()` / `presentations()` —— 后者返回 `Presentation{pass, view}`，按**引擎执行序**排序
+  （`std::stable_sort`，同序保持声明序；引擎不认识的 pass 落选，所以答案描述的是"现在这一帧谁在画"）。
+  视图那条呈现**按需解析** `view->pipeline()->windowPass()`（每次读），所以视图重建后表自动跟着走
+  （钉子 `RenderSurfaceTest.TheTableFollowsARebuiltPipeline`）。
+  **同时删掉 `RenderEngine::hasWindowPass(camera)`**：那条"任何携带这台相机、RT==null 的 pass 都算有人占了"
+  的全局查询是 M2a 要消掉的推断本身（顺序敏感，且会静默跳过共用一台相机的第二个视图）；`RenderEngine` 新增
+  `passOrder(raw_ptr<RenderPass>) const -> std::optional<int>`（顺序住在引擎的槽里，这条查询同时是"这条 pass
+  还在不在"）。`SceneView::ensureWindowPass()` 从此不问引擎任何事。
+  一块表面**恰好一口清屏**、矩形归呈现条目、`aspect` 出相机都还是设计（`graphics-render-next.md` §3.2 的
+  M2b/M2c/M2d）。

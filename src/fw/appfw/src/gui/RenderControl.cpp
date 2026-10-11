@@ -3,6 +3,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <vine/graphics/RenderSurface.hpp>
+
 #include "ControlData.hpp"
 #include "SurfaceWindow.hpp"
 
@@ -94,6 +96,11 @@ vn::graphics::RenderEngine* RenderControl::engine() const
 vn::graphics::SceneView* RenderControl::view() const
 {
     return dptr()->surface->view();
+}
+
+vn::graphics::RenderSurface* RenderControl::surface() const
+{
+    return dptr()->surface->surface();
 }
 
 bool RenderControl::init()
