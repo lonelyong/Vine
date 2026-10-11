@@ -195,7 +195,9 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
 
     /** @brief Gets this view's default window pipeline (the one its recipe built), or nullptr.
      *
-     * For inspection and micro-tuning - `setEnabled()`, `gizmo()`, `fpsOverlay()`, `offscreenTarget()` - and for
+     * For inspection and micro-tuning - `setEnabled()`, `gizmoPass()` / `fpsOverlayPass()` (the passes: their
+     * state IS the overlay's visibility), `gizmo()` / `fpsOverlay()` (the content objects), `offscreenTarget()` -
+     * and for
      * the two facts a host may want to check: null means "this view has no default pipeline" (the window pass was
      * never ensured, or an application presents this camera itself), and `windowPass()` tells it what presents
      * this view. The pipeline is owned by the view; letting it go is what removes the passes.
@@ -253,7 +255,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *
      * The overlay pass is the single source of truth (its enabled flag), so this stays in step with the
      * recipe, with setGizmoVisible and with a host that toggles the pass handle itself
-     * (view->pipeline()->gizmo()).
+     * (view->pipeline()->gizmoPass()).
      *
      * @return true when the overlay exists and is enabled.
      */

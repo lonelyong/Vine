@@ -217,3 +217,10 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
 - **证据**：`test_graphics` 344（+2 用例：`TheRecipeIsAWrittenDeclarationAndThePlanSaysSo` 断言 4 行的 tag/order、
   `ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise` 断言 clear 三态）；其余五套件同基线；
   变异 4/4 红（clear 无条件落地 / `Pipeline::addPass(desc)` 不记账 / present 的 stage 写错 / `tag` 不落地）。
+- **HUD 叠层也搬成声明了（同日续）**：`AxisGizmo` / `FpsOverlay` 不再是 pass 子类，而是**内容对象**（自己的
+  scene + 取景相机 + 盒子 `boxViewport()` + 每帧 `update()`）；`applyOverlays` 声明两条 HUD pass（tag `Hud`、
+  Overlay 档、不洗屏、`depth_mode = Disabled`、`before_draw` 调 `update()`），并把**对象与结点两个把手**交给
+  `Pipeline`（`setGizmo(object, pass)`）。`Pipeline::resize` 因此在告知对象尺寸后把盒子**重述**到 pass 上 ——
+  这是"盒子跟表面走"在"结点是声明"之后要补的那一行；可见性仍读结点（`gizmoPass()`），摆位仍问对象（`gizmo()`）。
+  **证据**：`test_graphics` **345**（`TheHudOverlaysAreDeclarationsToo`：plan 行的 tag/order/clears/camera/content，
+  加"跑一帧就镜像"证明钩子是活的）；变异 3/3 红。

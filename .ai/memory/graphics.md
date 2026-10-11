@@ -49,7 +49,7 @@
 - **builder 侧（同片续做）**：`RenderEngine::addPass` 三个重载 + `Pipeline::addPass(const PassDesc&)` 都**交回注册的结点**，
   builder 的普通 pass（shadow / forward main / transparent / gbuffer / lighting / present / preview）已按描述符声明，
   order 一律由 `stage` 决定；结点只留在真要调的地方（`setWindowPass` / `setOffscreenTarget` / `setCompositeTarget`）。
-  未做：HUD 叠层（`AxisGizmo`/`FpsOverlay` 仍是 `RenderPass` 子类：自带内容 + 视口跟 surface）与宿主持有的 G-buffer。
+  当时未做（其中 HUD 叠层随后续做，见下条）：HUD 叠层与宿主持有的 G-buffer。
   **新用例**：`TheRecipeIsAWrittenDeclarationAndThePlanSaysSo`（4 行的 tag/order = `GBuffer`/`Lighting`/`Transparent`/`Present`
   且 order == `pipelineStageOrder(stage)`）、`ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise`（描述符不写 clear 就
   跟 kind：Screen 不洗、Scene 洗且洗到 `51,51,51`；写了就压过 kind）。**变异 4/4 红**：①clear 无条件落地（3 条红）
@@ -57,8 +57,18 @@
 - **一处默认值纠正**：`PassDesc` 的 `clear_enabled`/`clear_color`/`clear_depth` 改成 `optional` —— **不写就跟随 kind 自己的
   策略**。原因是 `ScreenPass` 构造里 `setClearEnabled(false)`/`setShouldClearDepth(false)`，描述符原来的 `true` 默认值会把
   它翻掉（搬 builder 时两条既有用例立刻变红）；描述符不能有第二套默认值。
-- **剩余半边（同片未做，记在 §5 M7 行）**：HUD 叠层的内容归属、G-buffer 交给 transient —— 两件都要先回答一个问题，
-  都不动公开面（`windowPass()` / `offscreenTarget()` / `setWindowPass` 一字未改）。
+- **剩余半边（同片未做，记在 §5 M7 行）**：G-buffer 交给 transient —— 能力与判据（③）都在，builder 还没用；
+  搬过去要新增一条"按身份问引擎"的查询（`RenderEngine::transientTarget(identity)`），并且 `Pipeline::offscreenTarget()`
+  的诚实行为变化是"第一帧编译之前回答 null"。
+- **叠层那一续（2026-10-11，① 完成）**：`AxisGizmo` / `FpsOverlay` 不再是 `RenderPass` 子类，降为**内容对象**
+  （`Object + RefCounted`：自己的 scene、取景相机、盒子 `boxViewport()`、每帧 `update()`），由配方声明成一条
+  HUD 档的 pass（`content`/`camera`/`viewport`/`clear_enabled = false`/`depth_mode = Disabled`/`before_draw`）——
+  `PassDesc::before_draw` 注释里点名的两个用例到这一刻才真的用上。句柄分两个：`gizmo()`/`fpsOverlay()` 给对象，
+  `gizmoPass()`/`fpsOverlayPass()` 给结点（可见性读结点）。盒子是值，布局它的地方（`Pipeline::resize`）在告知
+  对象尺寸后把它重述到 pass 上。**一处行为变化**：盒子初值是零面积矩形（还没人报过尺寸），后端按空矩形跳过 ——
+  从前那种 pass 没有 viewport，会整屏画一遍叠层。**如实记账**：叠层对象仍由 builder 每次构建时新建，`setOptions()`
+  重建会重置 FPS 读数窗口。证据：`test_graphics` **345**、其余五套件同基线、demo 冒烟 plan 表逐列不变（HUD 两行的
+  `content` 由 `-` 变成它自己的 scene）、变异 3/3 红。
 
 ## 2026-10-11 M8：SDK 级设备夹具 + 像素判据（`tests/test_vsg/SdkPixelFixture.hpp` / `SdkPixelFixture.cpp` / `SdkPixelTest.cpp`）
 

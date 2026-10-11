@@ -30,6 +30,7 @@
 #include <vine/appfw/gui/RenderControl.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
+#include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -297,11 +298,14 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
     auto* pipeline = scene_view->pipeline();
     ASSERT_NE(pipeline, nullptr) << "上屏之后视图该有自己的默认窗口管线";
 
+    // 读数（内容对象）与画它的 pass 是两件事：可见性问 pass（enabled 是声明状态），内容归对象。
     auto* readout = view->fpsOverlay();
     ASSERT_NE(readout, nullptr) << "查看器要让视图的默认管线带上帧率读数";
     EXPECT_EQ(static_cast<const void*>(readout), static_cast<const void*>(pipeline->fpsOverlay()))
         << "读数必须是默认管线里的那一个，不是另挂在引擎上的孤儿 pass";
-    EXPECT_TRUE(readout->isEnabled());
+    auto* readout_pass = pipeline->fpsOverlayPass();
+    ASSERT_NE(readout_pass, nullptr);
+    EXPECT_TRUE(readout_pass->isEnabled());
     EXPECT_TRUE(scene_view->isStatsVisible());
 
     // 再上屏几次只该重画：管线不重建、pass 不重复注册。
@@ -313,16 +317,16 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
 
     // 宿主想关掉读数：开关只切 pass 的 enabled（引擎跳过被禁用的 pass），管线与 pass 表都不动。
     scene_view->setStatsVisible(false);
-    EXPECT_FALSE(readout->isEnabled());
-    EXPECT_FALSE(view->fpsOverlay()->isEnabled());
+    EXPECT_FALSE(readout_pass->isEnabled());
+    EXPECT_FALSE(pipeline->fpsOverlayPass()->isEnabled());
     EXPECT_EQ(engine->passCount(), registered);
     EXPECT_EQ(scene_view->pipeline(), pipeline) << "开关不该重建管线";
     scene_view->setStatsVisible(true);
-    EXPECT_TRUE(readout->isEnabled());
+    EXPECT_TRUE(readout_pass->isEnabled());
 
     // 改大小安全：读数的摆位与尺寸由视图在 resize 时算（不再有查看器那套 layout 步）。
     scene_view->onSurfaceResized(400, 300, control->devicePixelRatio());
-    EXPECT_TRUE(readout->isEnabled());
+    EXPECT_TRUE(readout_pass->isEnabled());
 }
 
 TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)

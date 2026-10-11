@@ -47,6 +47,16 @@ raw_ptr<FpsOverlay> Pipeline::fpsOverlay() const
     return fps_overlay_.get();
 }
 
+raw_ptr<RenderPass> Pipeline::gizmoPass() const
+{
+    return gizmo_pass_.get();
+}
+
+raw_ptr<RenderPass> Pipeline::fpsOverlayPass() const
+{
+    return fps_overlay_pass_.get();
+}
+
 void Pipeline::resize(int width, int height, double pixel_ratio)
 {
     if (width <= 0 || height <= 0) {
@@ -64,13 +74,22 @@ void Pipeline::resize(int width, int height, double pixel_ratio)
     if (composite_target_ != nullptr) {
         composite_target_->setSize(device_w, device_h);
     }
+    // The overlays own their box (the object computes it from the surface size and its area origin); the pass
+    // that draws it is a DECLARATION, so the box it states is restated here - this is the one place that lays
+    // an overlay out for a new surface size (see setGizmo).
     if (gizmo_ != nullptr) {
         gizmo_->setPixelRatio(ratio);
         gizmo_->onSurfaceResized(width, height);
+        if (gizmo_pass_ != nullptr) {
+            gizmo_pass_->setViewport(gizmo_->boxViewport());
+        }
     }
     if (fps_overlay_ != nullptr) {
         fps_overlay_->setPixelRatio(ratio);
         fps_overlay_->onSurfaceResized(width, height);
+        if (fps_overlay_pass_ != nullptr) {
+            fps_overlay_pass_->setViewport(fps_overlay_->boxViewport());
+        }
     }
 }
 
@@ -114,14 +133,16 @@ void Pipeline::setCompositeTarget(intrusive_ptr<RenderTarget> target)
     composite_target_ = std::move(target);
 }
 
-void Pipeline::setGizmo(intrusive_ptr<AxisGizmo> gizmo)
+void Pipeline::setGizmo(intrusive_ptr<AxisGizmo> gizmo, intrusive_ptr<RenderPass> pass)
 {
-    gizmo_ = std::move(gizmo);
+    gizmo_      = std::move(gizmo);
+    gizmo_pass_ = std::move(pass);
 }
 
-void Pipeline::setFpsOverlay(intrusive_ptr<FpsOverlay> fps)
+void Pipeline::setFpsOverlay(intrusive_ptr<FpsOverlay> fps, intrusive_ptr<RenderPass> pass)
 {
-    fps_overlay_ = std::move(fps);
+    fps_overlay_      = std::move(fps);
+    fps_overlay_pass_ = std::move(pass);
 }
 
 VN_GRAPHICS_NS_END

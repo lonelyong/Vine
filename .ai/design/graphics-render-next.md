@@ -509,7 +509,7 @@ depth_mode / enabled / `before_draw`），`kind`（`Scene` / `Screen`）决定**
 不再有"谁知道声明动过"：读声明**就是**编译（旧的 `RenderPass::wiringRevision()` + `wiringDeclarationsChanged()`
 门 + 那 10 组 seen/reported 集合整块删除）。
 
-**落地时改了三处（记账）**：
+**落地时改了五处（记账）**（前三条是 M7 本体，第四条与第五条随 builder/叠层那一续）：
 
 1. **"一次一集"按句子比，不按结构化 key 比**。原稿说问题列要结构化（pass × identity × 类别）。落地后**问题就是它那句
    话**：episode = "上一帧编译出现过同一句话"，一集规则整块塌成一次比较（`previous_problems_`），而且不需要第二套
@@ -534,6 +534,17 @@ depth_mode / enabled / `before_draw`），`kind`（`Scene` / `Screen`）决定**
     （`RenderSurfaceTest.ARecipeWithNoClearOfItsOwnIsNotMadeToClear`、`DeferredPresetWithTransparentContentBuildsComposite`）
     立刻变红，正是这个"描述符自带第二套默认值"的错。现在描述符与结点只有**一套**默认值，"描述符声明的 pass 就是手搭的
     pass"这句话才真的成立；`ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise` 把它钉住。
+5. **HUD 叠层的内容归属（①，2026-10-11 落地）**：`AxisGizmo` / `FpsOverlay` 从 `RenderPass` 子类降为 **内容对象**
+   （`Object + RefCounted`：自己的 scene、自己的取景相机、自己的盒子 `boxViewport()`、每帧工作 `update()`），
+   画它们的是一条普通声明（`content` / `camera` / `viewport` / `clear_enabled = false` / `depth_mode = Disabled` /
+   `before_draw = [o]{ o->update(); }` / `tag = "Hud"`）。**它们正是 `PassDesc::before_draw` 注释里点名的两个用例**，
+   到这一刻才真的用上；"全屏 pass 自更新 + 画自己的 scene + 忽略引擎给的 scene"那套 `execute()` 整块消失。
+   盒子是**值**：布局的两处（`Pipeline::resize`、`SceneView::applySurfaceGeometry` 走前者）在告知对象尺寸后把它
+   重述到 pass 上。句柄因此分两个：`Pipeline::gizmo()/fpsOverlay()` 给对象，`Pipeline::gizmoPass()/fpsOverlayPass()`
+   给结点（可见性读的就是结点，与"pass 即状态"一致）。**一处行为变化（更诚实）**：盒子的初值是**零面积矩形**
+   （还没人报过表面尺寸时），后端按空矩形规则跳过 —— 从前那种 pass 没有 viewport，会**整屏**画一遍叠层。
+   **如实记账**：叠层对象仍由 builder 每次构建时新建，所以 `setOptions()` 重建会重置 FPS 读数窗口（要让读数跨
+   重建存活得让视图持有对象，那是另一个决定）。
 
 **收益（已取得）**：一条 pass 的声明是一个值（`Scene`/`Screen` 两种 kind，零新子类）；帧的真相是**编译出来的一张表**，
 报告是"这一帧真的发现了什么"（不再有"谁动过"这套记账）；transient 目标由编译分配（判据③），宿主不必再持有
@@ -587,7 +598,7 @@ G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevisio
 `RenderEngineTest.ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise`（不写 clear 就跟 kind 走、写了就压过 kind）；
 `test_graphics` **344**，其余五套件不变（`test_vsg` 407 / `test_gui` 253 / `test_appfw` 32 / `test_meshio` 34 /
 `test_iobase` 94）；**变异 4/4 红**：①clear 策略无条件落地（3 条红）②`Pipeline::addPass(desc)` 不记账（8 条红）
-③present 的 stage 写错（1 条红）④描述符的 `tag` 不落地（2 条红） | M4（观测先有） | 大 |
+③present 的 stage 写错（1 条红）④描述符的 `tag` 不落地（2 条红）。**叠层那一续（同日续做，① 完成）**：`AxisGizmo` / `FpsOverlay` 降为**内容对象**（scene + 取景相机 + 盒子 `boxViewport()` + 每帧 `update()`；不再是 `RenderPass`），画它们的 pass 由配方声明（tag `Hud`、Overlay 档、`clear_enabled = false`、`depth_mode = Disabled`、`before_draw = [o]{ o->update(); }`），句柄分两个（`gizmo()`/`gizmoPass()`）；`test_graphics` **345**（新增 `TheHudOverlaysAreDeclarationsToo`：plan 行的 tag/order/clears/camera/content + **跑一帧就镜像**证明钩子是活的）、其余五套件同基线（407/253/32/34/94）；demo 冒烟 plan 表逐列不变（只剩 HUD 两行的 `content` 由 `-` 变成它自己的 scene —— 诚实的变化）；**变异 3/3 红**：①`before_draw` 不落地（1 条红）②`resize` 不把盒子重述回 pass（2 条红）③叠层声明丢掉"不洗屏"（1 条红） | M4（观测先有） | 大 |
 
 | **M8** | `test_vsg` 的 **SDK 级设备夹具**（**已落地 2026-10-11**，`tests/test_vsg/SdkPixelFixture.hpp` / `SdkPixelFixture.cpp` / `SdkPixelTest.cpp`） | ①**像素**断言（`SdkPixelTest.AWireframeModeDrawsTheEdgesOfTheSameGeometry`：延迟配方 + 非 Lit 档 ⇒ 链条前向；同一视图/相机/pass/目标只换光栅化模式，实测 filled=1296 / lines=180，180 条边**全部**落在实体版覆盖块的一个像素之内，实体版 140 个轮廓像素**全部**有边走过）；②"没有视图也能渲染"的最小用例（`TheFixtureAlsoDrawsContentWithNoViewAtAll`：手搭一条 pass，实测覆盖 3364/4096 ≈ 82%，四角仍是清屏色） | 无 | 中 |
 
@@ -612,12 +623,11 @@ G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevisio
 **触发条件**（不满足就不做，避免为"将来"付费）：
 
 - M6：命中"同一内容要多窗口 / 设备启动开销被窗口数乘 / 视图数 > 4"之一。
-- M7 **已落地**（2026-10-11）：描述符、每帧编译、transient 目标与"一次一集"都换成编译模型（§3.4 的四处记账）。
+- M7 **已落地**（2026-10-11）：描述符、每帧编译、transient 目标与"一次一集"都换成编译模型（§3.4 的五处记账）。
   `addPass` 三个重载现在都**交回注册的结点**，builder 的普通 pass 已是描述符（shadow / forward main / transparent /
-  gbuffer / lighting / present / preview），公开面（`windowPass()` / `offscreenTarget()` / `setWindowPass`）一字未改。
-  **剩余半边**（不另开片，下次碰这两处时做）：①HUD 叠层 `AxisGizmo` / `FpsOverlay` 仍是 `RenderPass` 子类（视口跟
-  surface 走，`Pipeline::resize` 重新锚定；搬成描述符要先决定叠层的**内容归属**）；②G-buffer 仍由宿主持有（③ 的能力
-  与判据都在，builder 还没用它）。
+  gbuffer / lighting / present / preview），公开面（`windowPass()` / `offscreenTarget()` / `setWindowPass`）一字未改；
+  **HUD 叠层也已搬成声明**（`AxisGizmo` / `FpsOverlay` 是内容对象，`gizmoPass()` / `fpsOverlayPass()` 是结点）。
+  **剩余半边**（不另开片）：G-buffer 仍由宿主持有（③ 的能力与判据都在，builder 还没用它）。
 - M1 / M2a / M2b / M2c / M2d / M3 / M5a 不需要触发条件：它们消掉的是**今天就在付**的混乱（一条诊断 + 一条全局
   让位规则 + 一口没有 owner 的清屏 + 一张命名表 + "相机的 aspect 和它被画进的矩形不一定一致" + "矩形与视图各说
   各话" + "输入路由只能由宿主手写"）。

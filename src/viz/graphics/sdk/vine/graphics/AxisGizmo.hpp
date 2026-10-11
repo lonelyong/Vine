@@ -1,11 +1,12 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <vine/Object.hpp>
+#include <vine/RefCounted.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
-#include "CameraMirror.hpp"
-#include "RenderPass.hpp"
+#include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -13,27 +14,37 @@ class Camera;
 class Scene;
 
 /**
- * @brief A small world-orientation indicator drawn as a HUD render pass.
+ * @brief The axis-gizmo HUD's CONTENT: three coloured sticks, and the camera that frames them.
  *
- * AxisGizmo is a self-contained HUD pass: it owns a content scene with three
- * coloured sticks along +X (red), +Y (green) and +Z (blue), rendered into a
- * square sub-viewport in the bottom-left corner of the surface, and mirrors a
- * source camera's orientation (MirrorMode::Orientation) on every execute()
- * while keeping its own framing distance. Register it like any other pass,
- * with an order above the main view's (RenderEngine::addPass); the engine
- * draws it on top of lower-order passes. Surface layout is creator-managed:
- * the code that owns the gizmo reports the surface size on every resize by
- * calling onSurfaceResized(w, h) (e.g. via a SceneView layout step).
+ * What this owns is the half a pass cannot: its content scene (three sticks along +X red, +Y green, +Z blue),
+ * the framing camera they are drawn with, and the BOX (a device-pixel rectangle in the bottom-left corner of the
+ * area it belongs to) they are projected into. It is deliberately NOT a pass: a pass is a DECLARATION now (see
+ * PassDesc), so whoever shows this gizmo declares one - `content` = this object's scene, `camera` = this object's
+ * camera, `viewport` = boxViewport(), `before_draw` = update(), which mirrors the source camera's orientation
+ * (MirrorMode::Orientation) onto the framing one and keeps its own framing distance.
+ *
+ * Surface layout is creator-managed: the object's owner reports the surface size on every resize
+ * (onSurfaceResized) and points it at the corner of the area it lays out in (setAreaOrigin). The pipeline does
+ * both for the standard case (Pipeline::resize), and a view states the area origin (SceneView).
  *
  * Example:
  * \code
  * auto gizmo = make_intrusive<AxisGizmo>();
- * gizmo->setSourceCamera(view->camera());   // the view's primary camera
- * view->addSurfaceLayout([gizmo](int w, int h) { gizmo->onSurfaceResized(w, h); });
- * engine->addPass(gizmo, 10);               // draws on top of the order-0 window pass
+ * gizmo->setSourceCamera(view->camera());          // the camera it mirrors
+ * PassDesc hud;
+ * hud.name            = u8"axis_gizmo";
+ * hud.tag             = u8"Hud";                   // a HUD pass declared like any other
+ * hud.stage           = PipelineStage::Overlay;
+ * hud.camera          = intrusive_ptr<Camera>(gizmo->camera());
+ * hud.content         = intrusive_ptr<Scene>(gizmo->content());
+ * hud.viewport        = gizmo->boxViewport();
+ * hud.clear_enabled   = false;
+ * hud.depth_mode      = DepthMode::Disabled;
+ * hud.before_draw     = [gizmo] { gizmo->update(); };
+ * engine->addPass(hud);
  * \endcode
  */
-class VN_GRAPHICS_API AxisGizmo : public RenderPass {
+class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo> {
     VN_OBJECT_META_DECL;
 
   public:
@@ -93,6 +104,18 @@ class VN_GRAPHICS_API AxisGizmo : public RenderPass {
     /** @brief Gets the content scene drawn by the gizmo. */
     raw_ptr<Scene> content() const;
 
+    /** @brief Gets the camera that frames the sticks (the one a declaration states as its camera). */
+    raw_ptr<Camera> camera() const;
+
+    /** @brief Gets the device-pixel rectangle the sticks are drawn into (the viewport a declaration states).
+     *
+     * The box follows the surface (onSurfaceResized) and the area origin (setAreaOrigin); a zero-area box means
+     * "this overlay does not fit in the area right now" and is skipped by the backend's empty-rectangle rule.
+     *
+     * @return The box, in device pixels, top-left origin.
+     */
+    [[nodiscard]] Viewport boxViewport() const;
+
     /** @brief Re-anchors the gizmo viewport to the bottom-left corner for a
      * new surface size.
      *
@@ -119,17 +142,12 @@ class VN_GRAPHICS_API AxisGizmo : public RenderPass {
      */
     void setAreaOrigin(int x, int y);
 
-    /** @brief Draws the gizmo.
+    /** @brief Does the gizmo's per-frame work: mirror the source camera's orientation.
      *
-     * Applies the orientation mirror from the configured source camera onto
-     * the framing camera, then draws the gizmo's own content scene through
-     * the base pass machinery (camera, disabled clearing, sub-viewport). The
-     * scene supplied by the engine is ignored: the gizmo is self-contained.
-     *
-     * @param scene   Ignored (the gizmo draws its own content scene).
-     * @param backend Backend to render with.
+     * The one thing that must happen before the gizmo is drawn, and the reason the declaration that shows it has
+     * a `before_draw` hook at all (PassDesc). It writes this object's framing camera and touches no backend.
      */
-    void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend) override;
+    void update();
 
   private:
     /** @brief Applies the orientation mirror onto the framing camera. */
@@ -138,10 +156,12 @@ class VN_GRAPHICS_API AxisGizmo : public RenderPass {
     /** @brief Rebuilds the axis content from the current geometry settings. */
     void rebuild();
 
-    /// Owned framing camera (kept alive for this pass' raw camera pointer).
+    /// Owned framing camera (the one a declaration states; the gizmo keeps it alive).
     intrusive_ptr<Camera> camera_;
     /// Content scene holding the three sticks (owned).
     intrusive_ptr<Scene> content_;
+    /// The box the sticks are drawn into, in device pixels (see boxViewport).
+    Viewport box_{};
     /// Source camera followed each frame (non-owning).
     raw_ptr<Camera> source_camera_ = nullptr;
     double axis_length_ = 1.0;

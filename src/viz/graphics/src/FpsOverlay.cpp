@@ -14,7 +14,7 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-VN_OBJECT_META_IMPL(FpsOverlay, RenderPass);
+VN_OBJECT_META_IMPL(FpsOverlay, Object);
 
 namespace
 {
@@ -103,16 +103,20 @@ FpsOverlay::FpsOverlay()
     camera_->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.6), vn::math::Vec3d(0.0, 0.0, 0.0),
                                    vn::math::Vec3d(0.0, 1.0, 0.0));
     camera_->setProjectionMatrixAsPerspective(45.0, 0.05, 20.0);
-    setCamera(camera_);
-
-    // A HUD pass draws over the main content each frame: never clear and no
-    // depth occlusion (always on top).
-    setClearEnabled(false);
-    setDepthMode(DepthMode::Disabled);
     rebuild();
 }
 
 FpsOverlay::~FpsOverlay() = default;
+
+raw_ptr<Camera> FpsOverlay::camera() const
+{
+    return camera_.get();
+}
+
+Viewport FpsOverlay::boxViewport() const
+{
+    return box_;
+}
 
 void FpsOverlay::setPixelRatio(double ratio)
 {
@@ -204,7 +208,7 @@ void FpsOverlay::onSurfaceResized(int width, int height)
     }
 
     // Bottom-right corner of this overlay's area, in top-left-origin device coordinates.
-    setViewport(area_x_ + dev_w - margin_px_ - w, area_y_ + dev_h - margin_px_ - h, w, h);
+    box_ = Viewport{ area_x_ + dev_w - margin_px_ - w, area_y_ + dev_h - margin_px_ - h, w, h };
     // Nothing to do about the projection: the box above IS the picture's shape, and the projection is built from
     // it where the pass records (a camera holds no aspect - see Camera).
 }
@@ -221,18 +225,16 @@ void FpsOverlay::setAreaOrigin(int x, int y)
     onSurfaceResized(surface_w_, surface_h_);
 }
 
-void FpsOverlay::execute(raw_ptr<Scene> /*scene*/, raw_ptr<RenderBackend> backend)
+void FpsOverlay::update()
 {
     // Measure the actual render-loop frame rate from the wall clock between
-    // executes and (throttled) refresh the readout before drawing.
+    // calls and (throttled) refresh the readout before it is drawn.
     const auto now = std::chrono::steady_clock::now();
     if (last_tick_.time_since_epoch().count() != 0) {
         const double dt = std::chrono::duration<double>(now - last_tick_).count();
         updateReadout(dt);
     }
     last_tick_ = now;
-
-    RenderPass::execute(content_.get(), backend);
 }
 
 void FpsOverlay::updateReadout(double dt)

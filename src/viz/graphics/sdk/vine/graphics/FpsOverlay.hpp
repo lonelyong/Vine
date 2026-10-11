@@ -11,7 +11,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "Geometry.hpp"
-#include "RenderPass.hpp"
+#include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -19,15 +19,16 @@ class Camera;
 class Scene;
 
 /**
- * @brief A frame-rate readout drawn as a HUD render pass in a corner.
+ * @brief The frame-rate readout's CONTENT: a 3-digit seven-segment row, the camera that frames it, and its box.
  *
- * FpsOverlay is a self-contained HUD pass (like AxisGizmo): it owns a content
- * scene holding a 3-digit seven-segment display built from thin bars, rendered
- * into a sub-viewport anchored to the BOTTOM-RIGHT corner of the surface
- * (device pixels). Each execute() it feeds the wall-clock frame delta to its
- * @ref Sampler, which counts FRAMES over a window of wall time (default
- * 0.5 s) and publishes a figure about twice a second; a new figure rewrites
- * the row of bars.
+ * What this owns is the half a pass cannot: the content scene (thin bars, one geometry for all three digits),
+ * the static framing camera, the BOX (a device-pixel rectangle anchored to the bottom-right corner of the area
+ * it belongs to) and the measurement. It is deliberately NOT a pass - whoever shows it declares one (see
+ * PassDesc): `content` = content(), `camera` = camera(), `viewport` = boxViewport(), `before_draw` = update().
+ *
+ * update() feeds the wall-clock frame delta between calls to the @ref Sampler, which counts FRAMES over a window
+ * of wall time (default 0.5 s) and publishes a figure about twice a second; a new figure rewrites the row of
+ * bars. No source camera is needed: the digits stay pinned to their corner while the scene camera orbits.
  *
  * WHY THE FIGURE IS A WINDOW AVERAGE, AND NOTHING IS BLENDED INTO IT. The first version smoothed the
  * instantaneous rate 1/dt with a per-frame EMA (weight 0.2) and repainted every 0.15 s. That reports a
@@ -60,21 +61,24 @@ class Scene;
  *
  * The overlay needs no source camera: it uses its own static framing camera,
  * so the digits stay pinned to the corner while the scene camera orbits.
- * Register it like any other pass with an order above the main view's
- * (RenderEngine::addPass); surface layout is creator-managed — report the
- * surface size on every resize by calling onSurfaceResized(w, h) (e.g. via a
- * Pipeline::resize() / SceneView surface-layout step), which re-anchors the
- * sub-viewport to the bottom-right corner.
+ * Surface layout is creator-managed — report the surface size on every resize
+ * by calling onSurfaceResized(w, h) (e.g. via a Pipeline::resize() / SceneView
+ * surface-layout step), which re-anchors the box to the bottom-right corner.
  *
  * Example:
  * \code
  * auto fps = make_intrusive<FpsOverlay>();
  * fps->setPixelRatio(view->devicePixelRatio());
- * view->addSurfaceLayout([fps](int w, int h) { fps->onSurfaceResized(w, h); });
- * engine->addPass(fps, 30);             // draws above the order-0 window pass
+ * PassDesc hud;
+ * hud.name = u8"fps_overlay"; hud.tag = u8"Hud"; hud.stage = PipelineStage::Overlay;
+ * hud.camera = intrusive_ptr<Camera>(fps->camera());
+ * hud.content = intrusive_ptr<Scene>(fps->content());
+ * hud.viewport = fps->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;
+ * hud.before_draw = [fps] { fps->update(); };
+ * engine->addPass(hud);
  * \endcode
  */
-class VN_GRAPHICS_API FpsOverlay : public RenderPass {
+class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay> {
     VN_OBJECT_META_DECL;
 
   public:
@@ -113,6 +117,18 @@ class VN_GRAPHICS_API FpsOverlay : public RenderPass {
 
     /** @brief Gets the content scene drawn by the overlay. */
     raw_ptr<Scene> content() const;
+
+    /** @brief Gets the camera that frames the digits (the one a declaration states as its camera). */
+    raw_ptr<Camera> camera() const;
+
+    /** @brief Gets the device-pixel rectangle the digits are drawn into (the viewport a declaration states).
+     *
+     * The box follows the surface (onSurfaceResized) and the area origin (setAreaOrigin), and is scaled down when
+     * the area is too small to hold it.
+     *
+     * @return The box, in device pixels, top-left origin.
+     */
+    [[nodiscard]] Viewport boxViewport() const;
 
     /** @brief Turns a stream of frame deltas into the figure the readout shows.
      *
@@ -179,17 +195,13 @@ class VN_GRAPHICS_API FpsOverlay : public RenderPass {
      */
     void setAreaOrigin(int x, int y);
 
-    /** @brief Draws the readout.
+    /** @brief Does the overlay's per-frame work: measure the frame rate and repaint the digits.
      *
-     * Measures the current frame rate, updates the digit segments, then draws
-     * the overlay's own content scene through the base pass machinery
-     * (camera, disabled clearing, bottom-right sub-viewport). The scene
-     * supplied by the engine is ignored: the overlay is self-contained.
-     *
-     * @param scene   Ignored (the overlay draws its own content scene).
-     * @param backend Backend to render with.
+     * Measures the wall clock since the previous call and feeds it to the sampler (see the class note), then
+     * writes the figures that changed. It touches no backend, which is what lets the pipeline state it as the
+     * `before_draw` hook of a declaration (PassDesc).
      */
-    void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend) override;
+    void update();
 
   private:
     /** @brief Rebuilds the seven-segment content scene. */
@@ -215,10 +227,12 @@ class VN_GRAPHICS_API FpsOverlay : public RenderPass {
      */
     void writePattern(std::uint32_t pattern);
 
-    // Framing camera (owned so the pass' raw camera pointer never dangles).
+    // Framing camera (owned, and stated by the declaration that shows this overlay).
     intrusive_ptr<Camera> camera_;
     // Content scene holding the row of bars (owned).
     intrusive_ptr<Scene> content_;
+    // The box the digits are drawn into, in device pixels (see boxViewport).
+    Viewport box_{};
     // The row itself: all three digits' bars in ONE geometry (see the class note). Held so a change can
     // rewrite its positions without walking the scene.
     intrusive_ptr<Geometry> readout_;

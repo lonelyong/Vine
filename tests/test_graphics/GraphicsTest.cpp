@@ -3042,7 +3042,7 @@ TEST(SceneViewViewportTest, OverlayVisibilityIsASwitchThatNeverRebuilds)
 
     Pipeline* const pipeline = view->pipeline();
     ASSERT_NE(pipeline, nullptr);
-    RenderPass* const readout = pipeline->fpsOverlay();
+    RenderPass* const readout = pipeline->fpsOverlayPass();
     ASSERT_NE(readout, nullptr);
 
     for (int i = 0; i < 10; ++i) {
@@ -3083,7 +3083,7 @@ TEST(SceneViewViewportTest, AHiddenOverlayStaysHiddenAcrossARebuild)
     EXPECT_FALSE(view->isStatsVisible()) << "重建不该把使用者关掉的档又打开";
     ASSERT_NE(view->pipeline(), nullptr);
     ASSERT_NE(view->pipeline()->fpsOverlay(), nullptr);
-    EXPECT_FALSE(view->pipeline()->fpsOverlay()->isEnabled());
+    EXPECT_FALSE(view->pipeline()->fpsOverlayPass()->isEnabled());
 
     // 2) 换路径（又一次结构变化）：同样不许回来。
     view->setOptions({ .path = ShadingPath::Deferred, .gizmo = true, .stats = true });
@@ -3421,7 +3421,7 @@ TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps){
 
     // The overlays land INSIDE the rectangle (they anchor to the corner of their area, not of the surface).
     ASSERT_NE(pipeline->fpsOverlay(), nullptr);
-    const Viewport readout = pipeline->fpsOverlay()->viewport();
+    const Viewport readout = pipeline->fpsOverlayPass()->viewport();
     EXPECT_GT(readout.width, 0);
     EXPECT_LE(readout.x + readout.width, window->viewport().x + window->viewport().width);
     EXPECT_LE(readout.y + readout.height, window->viewport().y + window->viewport().height);
@@ -3503,7 +3503,7 @@ TEST(SceneViewViewportTest, FullViewportKeepsTheOverlayBoxWhereItWas)
 
     // The default gizmo still sits in the bottom-left corner of the surface with its 16 px margin: a full
     // viewport must not move anything.
-    const Viewport box = view->pipeline()->gizmo()->viewport();
+    const Viewport box = view->pipeline()->gizmoPass()->viewport();
     EXPECT_EQ(box.x, 16);
     EXPECT_EQ(box.y, 300 - 16 - 96);
     EXPECT_EQ(box.width, 96);
@@ -4823,6 +4823,86 @@ TEST(RenderPipelineBuilderTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
     }
 }
 
+/**
+ * @brief The HUD overlays are DECLARATIONS too: what SHOWS them is a pass, what they ARE is content.
+ *
+ * The axis gizmo and the frame-rate readout used to be RenderPass subclasses whose execute() drew their own scene
+ * and ignored the one the engine handed them. They are the two motivating users of PassDesc::before_draw, so this
+ * pins the whole shape: the pass carries the overlay's own camera and content, a HUD tag, the HUD stage's order
+ * and no clear; the per-frame work is the declaration's hook, and it runs when the FRAME runs.
+ */
+TEST(RenderPipelineBuilderTest, TheHudOverlaysAreDeclarationsToo)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    engine->setBackend(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+
+    PipelineOptions opts;
+    opts.path                = ShadingPath::Forward;
+    opts.gizmo.source_camera = cam.get();
+    opts.gizmo.box_size      = 96;
+    opts.fps.enabled         = true;
+
+    RenderPipelineBuilder builder(engine.get());
+    builder.setCamera(cam.get());
+    builder.setContent(content);
+    auto pipeline = builder.build(opts);
+    ASSERT_NE(pipeline, nullptr);
+
+    // Two handles per overlay, and they answer different questions (see Pipeline::gizmo/gizmoPass).
+    AxisGizmo* const  gizmo        = pipeline->gizmo();
+    FpsOverlay* const readout      = pipeline->fpsOverlay();
+    RenderPass* const gizmo_pass   = pipeline->gizmoPass();
+    RenderPass* const readout_pass = pipeline->fpsOverlayPass();
+    ASSERT_NE(gizmo, nullptr);
+    ASSERT_NE(readout, nullptr);
+    ASSERT_NE(gizmo_pass, nullptr);
+    ASSERT_NE(readout_pass, nullptr);
+
+    const FramePlan plan      = engine->framePlan();
+    const PassPlan* gizmo_row = nullptr;
+    const PassPlan* readout_row = nullptr;
+    for (const PassPlan& row : plan.passes) {
+        if (row.name == vn::String(u8"axis_gizmo")) {
+            gizmo_row = &row;
+        }
+        if (row.name == vn::String(u8"fps_overlay")) {
+            readout_row = &row;
+        }
+    }
+    ASSERT_NE(gizmo_row, nullptr);
+    ASSERT_NE(readout_row, nullptr);
+
+    // The declaration says what the pass IS: the overlay's own camera and scene (it used to draw them behind the
+    // engine's back), a HUD tag, the HUD stage's order, and no clear.
+    EXPECT_EQ(gizmo_row->tag, vn::String(u8"Hud"));
+    EXPECT_EQ(readout_row->tag, vn::String(u8"Hud"));
+    EXPECT_EQ(gizmo_row->order, pipelineStageOrder(PipelineStage::Overlay) + opts.gizmo.order);
+    EXPECT_EQ(readout_row->order, pipelineStageOrder(PipelineStage::Overlay) + opts.fps.order);
+    EXPECT_FALSE(gizmo_row->clears) << "a HUD draws over the picture it is on, it never washes it out";
+    EXPECT_EQ(gizmo_row->camera, gizmo->camera());
+    EXPECT_EQ(gizmo_row->content, gizmo->content());
+    EXPECT_EQ(readout_row->camera, readout->camera());
+    EXPECT_EQ(readout_row->content, readout->content());
+    EXPECT_EQ(gizmo_pass->depthMode(), DepthMode::Disabled) << "a HUD is always on top";
+
+    // And the per-frame hook is LIVE: the mirror happens because the FRAME runs (PassDesc::before_draw), not
+    // because somebody remembered to call update().
+    cam->setViewMatrixAsLookAt(vn::math::Vec3d(2.0, 3.0, 6.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+                               vn::math::Vec3d(0.0, 1.0, 0.0));
+    engine->frame(0.016);
+
+    const Vec3d source_forward = (cam->target() - cam->eye()).normalized();
+    const Vec3d shown_forward  = (gizmo->camera()->target() - gizmo->camera()->eye()).normalized();
+    EXPECT_NEAR(shown_forward.x, source_forward.x, 1.0e-6);
+    EXPECT_NEAR(shown_forward.y, source_forward.y, 1.0e-6);
+    EXPECT_NEAR(shown_forward.z, source_forward.z, 1.0e-6);
+}
+
 TEST(RenderPipelineBuilderTest, ForwardPresetWithTransparentContentStacksDepthOnPass)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -4952,6 +5032,10 @@ TEST(RenderPipelineBuilderTest, ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumer
     ASSERT_NE(gbuffer, nullptr);
     AxisGizmo* gizmo = pipeline->gizmo();
     ASSERT_NE(gizmo, nullptr);
+    // The overlay's BOX is stated on the pass that draws it (a declaration, see PassDesc): the content object
+    // computes it from the surface size, the pass states it, and this is where a reader sees what the frame does.
+    RenderPass* const gizmo_pass = pipeline->gizmoPass();
+    ASSERT_NE(gizmo_pass, nullptr);
 
     // ONE call states the surface size the host HAS (logical - the number Qt reports and the number a
     // SceneView layout step hands over) plus the ratio, and the handle gives each consumer the space it
@@ -4967,8 +5051,8 @@ TEST(RenderPipelineBuilderTest, ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumer
     EXPECT_EQ(gbuffer->width(), 1600);
     EXPECT_EQ(gbuffer->height(), 1200);
 
-    ASSERT_TRUE(gizmo->hasViewport());
-    const Viewport gizmo_rect = gizmo->viewport();
+    ASSERT_TRUE(gizmo_pass->hasViewport());
+    const Viewport gizmo_rect = gizmo_pass->viewport();
     EXPECT_EQ(gizmo_rect.width, 128) << "the box is stated in device pixels and must not be scaled twice";
     EXPECT_EQ(gizmo_rect.x, 16);
     EXPECT_EQ(gizmo_rect.y, 600 * 2 - 16 - 128) << "anchored on the LOGICAL surface (600), ratio applied once";
@@ -5080,9 +5164,9 @@ TEST(FpsOverlayTest, TheReadoutIsASingleCommandAndBlankUntilItHasAValue)
     // measurement is not what this asks -- only that a value did.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     overlay->sampler().window_seconds = 0.05;
-    overlay->execute(nullptr, backend.get());
+    overlay->update();
     std::this_thread::sleep_for(std::chrono::milliseconds(80));
-    overlay->execute(nullptr, backend.get());
+    overlay->update();
 
     const auto commands = commandsOf(overlay->content()->root(), camera);
     ASSERT_EQ(commands.size(), 1u);
@@ -5262,8 +5346,8 @@ TEST(AxisGizmoTest, BuildsThreeColouredSticks)
         ASSERT_EQ(group->children().size(), 1u);
     }
     EXPECT_NE(gizmo->camera(), nullptr);
-    // A HUD pass never clears the surface it draws over.
-    EXPECT_FALSE(gizmo->isClearEnabled());
+    // A HUD overlay draws over the main content: what says so is the DECLARATION that shows it (no clear, depth
+    // disabled), which the builder writes - see RenderPipelineBuilderTest.TheHudOverlaysAreDeclarationsToo.
 }
 
 TEST(AxisGizmoTest, ViewportPlacedBottomLeft)
@@ -5271,7 +5355,7 @@ TEST(AxisGizmoTest, ViewportPlacedBottomLeft)
     auto gizmo = intrusive_ptr<AxisGizmo>(new AxisGizmo());
     gizmo->onSurfaceResized(800, 600);
 
-    const Viewport vp = gizmo->viewport();
+    const Viewport vp = gizmo->boxViewport();
     EXPECT_EQ(vp.width, 96);
     EXPECT_EQ(vp.height, 96);
     EXPECT_EQ(vp.x, 16);
@@ -5287,13 +5371,13 @@ TEST(AxisGizmoTest, ASurfaceTooSmallForTheBoxNeverYieldsANegativeViewport)
     auto gizmo = intrusive_ptr<AxisGizmo>(new AxisGizmo());
     gizmo->onSurfaceResized(100, 30);
 
-    const Viewport vp = gizmo->viewport();
+    const Viewport vp = gizmo->boxViewport();
     EXPECT_EQ(vp.width, 0);
     EXPECT_EQ(vp.height, 0);
 
     // A surface that DOES fit the box still gets it: the clamp only bites where the box cannot fit.
     gizmo->onSurfaceResized(100, 128);
-    const Viewport fitted = gizmo->viewport();
+    const Viewport fitted = gizmo->boxViewport();
     EXPECT_EQ(fitted.width, 96);
     EXPECT_EQ(fitted.height, 96);
     EXPECT_EQ(fitted.y, 128 - 16 - 96);
@@ -5305,9 +5389,9 @@ TEST(AxisGizmoTest, OrientationMirrorTracksSource)
     auto src = intrusive_ptr<Camera>(new Camera());
     src->setViewMatrixAsLookAt(Vec3d(2, 3, 6), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
     gizmo->setSourceCamera(src.get());
-    // The mirror is applied at draw time (execute()); no backend is needed to
-    // observe the framing camera update.
-    gizmo->execute(nullptr, nullptr);
+    // The mirror is applied by update() (the hook the declaration that shows the gizmo calls); no backend is
+    // needed to observe the framing camera update.
+    gizmo->update();
 
     Camera* cam = gizmo->camera();
     const Vec3d sf = (src->target() - src->eye()).normalized();

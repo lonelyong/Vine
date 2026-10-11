@@ -420,11 +420,17 @@ builder.addOffscreenToScreen(u8"preview", 512, 288,
                              RenderTarget::DepthFormat::D24,
                              viewport_x, viewport_y, 320, 180);
 
-// 也可以自己加 HUD pass：AxisGizmo / FpsOverlay 本身就是 RenderPass。
+// 也可以自己加 HUD：叠层是**内容对象**（自己带 scene + 取景相机 + 盒子），画的是一条普通 pass 声明。
 auto gizmo = make_intrusive<AxisGizmo>();
 gizmo->setSourceCamera(camera.get());
 gizmo->onSurfaceResized(surface_w, surface_h);
-engine.addPass(gizmo, 10);
+PassDesc hud;
+hud.name = u8"axis_gizmo"; hud.tag = u8"Hud"; hud.stage = PipelineStage::Overlay; hud.order = 10;
+hud.camera = intrusive_ptr<Camera>(gizmo->camera());
+hud.content = intrusive_ptr<Scene>(gizmo->content());
+hud.viewport = gizmo->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;
+hud.before_draw = [gizmo] { gizmo->update(); };   // 每帧镜像源相机朝向
+engine.addPass(hud);
 ```
 
 **手动 vs builder 对照**
@@ -440,8 +446,11 @@ engine.addPass(gizmo, 10);
 
 ### 3.6 例：HUD 叠加与"叠加场景"
 
-- **HUD**：`AxisGizmo` / `FpsOverlay` 是自带 pass，`engine.addPass(gizmo, 10)` 即可；用
-  `Pipeline::setGizmo()/setFpsOverlay()` 让句柄持有它们，`resize()` 会顺带通知它们窗口尺寸。
+- **HUD**：`AxisGizmo` / `FpsOverlay` 是**内容对象**（自带 scene、取景相机与盒子），画它们的是一条 HUD 档的
+  pass 声明（`tag = "Hud"`、`stage = Overlay`、不洗屏、`depth_mode = Disabled`、`before_draw` 调对象的
+  `update()`）—— 配方自己就这么声明（`PipelineOptions::gizmo` / `fps`）。句柄分两个：`Pipeline::gizmo()` /
+  `fpsOverlay()` 拿对象（摆位、尺寸、内容），`Pipeline::gizmoPass()` / `fpsOverlayPass()` 拿 pass（可见性开关
+  读的就是它的 `enabled`）；`resize()` 会顺带通知它们窗口尺寸并重述盒子。
 - **半透明叠加场景**：`builder.setTransparentContent(overlay_scene)`。forward 下它是在主 pass 之后、
   同一窗口 pass 里**带深度**的一笔；deferred 下它先与不透明结果在离屏 composite 里合成再呈现 ——
   于是"半透明物体被不透明物体挡住"是正确的，而不是无深度地画在最上面。

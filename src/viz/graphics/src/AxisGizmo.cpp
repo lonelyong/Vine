@@ -5,17 +5,17 @@
 
 #include <vine/Colorf.hpp>
 #include <vine/graphics/Camera.hpp>
+#include <vine/graphics/CameraMirror.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Node.hpp>
-#include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/geometry/Array.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
-VN_OBJECT_META_IMPL(AxisGizmo, RenderPass);
+VN_OBJECT_META_IMPL(AxisGizmo, Object);
 
 namespace
 {
@@ -87,16 +87,20 @@ AxisGizmo::AxisGizmo()
     camera_->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 3.3), vn::math::Vec3d(0.0, 0.0, 0.0),
                                    vn::math::Vec3d(0.0, 1.0, 0.0));
     camera_->setProjectionMatrixAsPerspective(45.0, 0.05, 20.0);
-    setCamera(camera_);
-
-    // A HUD pass draws over the main content each frame: never clear and no
-    // depth occlusion (always on top).
-    setClearEnabled(false);
-    setDepthMode(DepthMode::Disabled);
     rebuild();
 }
 
 AxisGizmo::~AxisGizmo() = default;
+
+raw_ptr<Camera> AxisGizmo::camera() const
+{
+    return camera_.get();
+}
+
+Viewport AxisGizmo::boxViewport() const
+{
+    return box_;
+}
 
 void AxisGizmo::setAxisLength(double length)
 {
@@ -168,7 +172,7 @@ void AxisGizmo::onSurfaceResized(int width, int height)
     // handed to the backend rather than a stated decision.
     const int fitted = dev_h - 2 * margin_px_;
     const int side   = fitted > 0 ? (size_px_ > fitted ? fitted : size_px_) : 0;
-    setViewport(area_x_ + margin_px_, area_y_ + dev_h - margin_px_ - side, side, side);
+    box_ = Viewport{ area_x_ + margin_px_, area_y_ + dev_h - margin_px_ - side, side, side };
 }
 
 void AxisGizmo::setAreaOrigin(int x, int y)
@@ -183,10 +187,9 @@ void AxisGizmo::setAreaOrigin(int x, int y)
     onSurfaceResized(surface_w_, surface_h_);
 }
 
-void AxisGizmo::execute(raw_ptr<Scene> /*scene*/, raw_ptr<RenderBackend> backend)
+void AxisGizmo::update()
 {
     applyMirror();
-    RenderPass::execute(content_.get(), backend);
 }
 
 void AxisGizmo::applyMirror()

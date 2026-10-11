@@ -165,16 +165,30 @@ bool RenderPipelineBuilder::applyOverlays(Pipeline& pipeline, const PipelineOpti
     // Pipeline::resize.
     if (options.gizmo.source_camera != nullptr) {
         auto gizmo = make_intrusive<AxisGizmo>();
-        // Named like every other pass this builder assembles: a name is what makes a frame plan's row (and a
-        // diagnostic) say which pass it is talking about.
-        gizmo->setName(u8"axis_gizmo");
         gizmo->setSourceCamera(options.gizmo.source_camera);
         gizmo->setPixelRatio(options.gizmo.pixel_ratio);
         gizmo->setBoxSize(options.gizmo.box_size);
         gizmo->setAxisLength(options.gizmo.axis_length);
         gizmo->setThickness(options.gizmo.thickness);
-        pipeline.addPass(gizmo, nullptr, overlay_base + options.gizmo.order);
-        pipeline.setGizmo(std::move(gizmo));
+
+        // The gizmo is CONTENT (its scene, its framing camera, its box); the pass that draws it is a
+        // declaration like every other one - which is why the name, the HUD placement and the per-frame work
+        // are stated here instead of being inherited from a pass subclass (see PassDesc).
+        PassDesc desc;
+        desc.name          = u8"axis_gizmo";
+        desc.tag           = u8"Hud";
+        desc.stage         = PipelineStage::Overlay;
+        desc.order         = overlay_base + options.gizmo.order;
+        desc.camera        = intrusive_ptr<Camera>(gizmo->camera());
+        desc.content       = intrusive_ptr<Scene>(gizmo->content());
+        desc.viewport      = gizmo->boxViewport();
+        // A HUD draws over the main content each frame: never clears, and no depth occlusion (always on top).
+        desc.clear_enabled = false;
+        desc.depth_mode    = DepthMode::Disabled;
+        // The one thing that must happen before it draws: mirror the source camera's orientation onto the
+        // framing one.
+        desc.before_draw   = [gizmo] { gizmo->update(); };
+        pipeline.setGizmo(gizmo, pipeline.addPass(desc));
     }
 
     // A frame-rate readout (bottom-right corner). It measures the actual
@@ -182,11 +196,22 @@ bool RenderPipelineBuilder::applyOverlays(Pipeline& pipeline, const PipelineOpti
     // FpsOverlayOptions::enabled.
     if (options.fps.enabled) {
         auto fps = make_intrusive<FpsOverlay>();
-        fps->setName(u8"fps_overlay");
         fps->setPixelRatio(options.fps.pixel_ratio);
         fps->setSize(options.fps.width_px, options.fps.height_px);
-        pipeline.addPass(fps, nullptr, overlay_base + options.fps.order);
-        pipeline.setFpsOverlay(std::move(fps));
+
+        PassDesc desc;
+        desc.name          = u8"fps_overlay";
+        desc.tag           = u8"Hud";
+        desc.stage         = PipelineStage::Overlay;
+        desc.order         = overlay_base + options.fps.order;
+        desc.camera        = intrusive_ptr<Camera>(fps->camera());
+        desc.content       = intrusive_ptr<Scene>(fps->content());
+        desc.viewport      = fps->boxViewport();
+        desc.clear_enabled = false;
+        desc.depth_mode    = DepthMode::Disabled;
+        // Measure the frame rate and repaint the digits (see FpsOverlay::update).
+        desc.before_draw   = [fps] { fps->update(); };
+        pipeline.setFpsOverlay(fps, pipeline.addPass(desc));
     }
     return true;
 }

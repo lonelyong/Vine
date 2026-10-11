@@ -47,6 +47,22 @@ engine->addPass(gizmo, 10);                 // 画在 order-0 窗口 pass 之上
 gizmo->setEnabled(false);                   // 需要时隐藏
 ```
 
+## 2026-10-11 校（M7 续 ②）：叠层不再是 pass 子类 —— 内容归对象，pass 是声明
+
+下面这条"已实现文件（新形态）"是那一轮的历史记录，其中"`AxisGizmo : public RenderPass` 自包含 HUD pass"**已过期**：
+
+- `AxisGizmo` / `FpsOverlay` 现在是**内容对象**（`Object + RefCounted`）：自己的内容 `Scene`、自己的取景
+  `Camera`、自己的盒子（设备像素矩形，`boxViewport()`）、以及每帧工作 `update()`（gizmo 镜像源相机朝向；
+  读数测帧率并重画数字）。它们**不再有 `execute()`**，也不再"忽略引擎传入的 scene"——因为现在那个 scene
+  就是它们自己的。
+- 画它们的是一条**普通 pass 声明**（`PassDesc`）：`content` / `camera` / `viewport` / `clear_enabled = false` /
+  `depth_mode = Disabled` / `tag = "Hud"` / `stage = Overlay`，加 `before_draw = [o]{ o->update(); }` ——
+  `PassDesc::before_draw` 的注释里点名的两个用例（"FPS 读数、镜像的坐标轴"）到这一刻才真的用上。
+- 句柄分两个：`Pipeline::gizmo()` / `fpsOverlay()` 给**对象**（摆位、尺寸、内容），`Pipeline::gizmoPass()` /
+  `fpsOverlayPass()` 给**结点**（可见性开关读的就是它的 `enabled`，与"pass 即状态"一致）。
+- 盒子是**值**：布局它的地方（`Pipeline::resize`，由 `SceneView::applySurfaceGeometry` 调）在告知对象尺寸后
+  把它重述到 pass 上；盒子还没人报过时是**零面积矩形**（后端按空矩形规则跳过），而不是"没有 viewport"。
+
 ## 相机跟随 = 独立镜像组件（CameraMirror）
 
 “谁跟随谁”不再属于叠加层：`sdk/vine/graphics/CameraMirror.hpp` 提供命名空间级

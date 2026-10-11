@@ -98,9 +98,10 @@ constexpr int pipelineStageOrder(PipelineStage stage) noexcept
 /**
  * @brief Optional HUD overlay: a world-orientation axis gizmo.
  *
- * The gizmo is a self-contained HUD pass (AxisGizmo) stacked above the window
- * pass; it mirrors the source camera's orientation each frame. When
- * @ref source_camera is null the overlay is disabled and nothing is added.
+ * The overlay's CONTENT is an AxisGizmo (its scene, its framing camera, its box) and the recipe declares the pass
+ * that shows it (a HUD-tagged PassDesc - see RenderPipelineBuilder): it is stacked above the window pass and
+ * mirrors the source camera's orientation each frame. When @ref source_camera is null the overlay is disabled and
+ * nothing is added.
  */
 struct VN_GRAPHICS_API AxisGizmoOptions {
     /** @brief Camera the gizmo mirrors (e.g. the view's primary camera).
@@ -137,9 +138,9 @@ struct VN_GRAPHICS_API AxisGizmoOptions {
  * @brief Optional HUD overlay: a frame-rate readout in the bottom-right
  * corner.
  *
- * The readout is a self-contained HUD pass (FpsOverlay) stacked above the
- * window pass; it measures the actual render-loop frame rate and needs no
- * source camera. Like the axis gizmo it is opt-in per application — set @ref
+ * The readout's CONTENT is an FpsOverlay and the recipe declares the pass that shows it (a HUD-tagged
+ * PassDesc), stacked above the window pass; it measures the actual render-loop frame rate and needs no source
+ * camera. Like the axis gizmo it is opt-in per application — set @ref
  * enabled to true to draw it (the app-shell demo enables it by default).
  */
 struct VN_GRAPHICS_API FpsOverlayOptions {
@@ -280,23 +281,44 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
      */
     raw_ptr<RenderTarget> compositeTarget() const;
 
-    /** @brief Gets the configured axis-gizmo overlay, if any.
+    /** @brief Gets the configured axis-gizmo overlay's CONTENT, if any.
      *
-     * @return The gizmo HUD pass, or null when no gizmo was configured.
+     * The object holds the half a pass cannot (its scene, its framing camera and the box it is laid out in - see
+     * AxisGizmo); the pass that draws it is gizmoPass(). A reader that wants to know whether the gizmo is ON
+     * (and that can toggle it) wants the pass; a caller that moves or reshapes it wants this.
+     *
+     * @return The gizmo, or null when no gizmo was configured.
      */
     raw_ptr<AxisGizmo> gizmo() const;
 
-    /** @brief Gets the configured frame-rate overlay, if any.
+    /** @brief Gets the pass that draws the axis gizmo (see gizmo()).
      *
-     * @return The FPS HUD pass, or null when the readout was disabled.
+     * @return The HUD pass (its state is the gizmo's visible/hidden - RenderPass::setEnabled), or null when no
+     *         gizmo was configured.
+     */
+    raw_ptr<RenderPass> gizmoPass() const;
+
+    /** @brief Gets the configured frame-rate overlay's CONTENT, if any (see gizmo()).
+     *
+     * @return The readout, or null when the readout was disabled.
      */
     raw_ptr<FpsOverlay> fpsOverlay() const;
+
+    /** @brief Gets the pass that draws the frame-rate readout (see fpsOverlay()).
+     *
+     * @return The HUD pass, or null when the readout was disabled.
+     */
+    raw_ptr<RenderPass> fpsOverlayPass() const;
 
     /** @brief Resizes the off-screen targets and re-anchors the HUD overlays for a new surface size.
      *
      * Creator-maintained sizing: the host calls this on surface changes (e.g. from a
      * SceneView::addSurfaceLayout step) so a deferred G-buffer tracks the window (the backend rebuilds the
      * off-screen attachments on the next frame) and an axis-gizmo overlay stays pinned to its corner.
+     *
+     * The overlays own their box (the object computes it from the surface size and the area origin it was
+     * pointed at); the BOX the pass states is restated here, which is the one place an overlay is laid out for a
+     * new surface size (see gizmoPass).
      *
      * ONE call carries the surface size AND the ratio, because this handle's consumers read the same number
      * in two different spaces: the off-screen targets are sized in DEVICE pixels (they are sampled 1:1 with
@@ -347,11 +369,11 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
      * content). */
     void setCompositeTarget(intrusive_ptr<RenderTarget> target);
 
-    /** @brief Sets the axis-gizmo overlay (optional). */
-    void setGizmo(intrusive_ptr<AxisGizmo> gizmo);
+    /** @brief Sets the axis-gizmo overlay and the pass that draws it (optional). */
+    void setGizmo(intrusive_ptr<AxisGizmo> gizmo, intrusive_ptr<RenderPass> pass);
 
-    /** @brief Sets the frame-rate overlay (optional). */
-    void setFpsOverlay(intrusive_ptr<FpsOverlay> fps);
+    /** @brief Sets the frame-rate overlay and the pass that draws it (optional). */
+    void setFpsOverlay(intrusive_ptr<FpsOverlay> fps, intrusive_ptr<RenderPass> pass);
 
     // The engine the passes were registered on, held strongly (see the class
     // comment). Declared with a forward declaration and destroyed by the
@@ -365,6 +387,10 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     intrusive_ptr<RenderTarget> composite_target_;
     intrusive_ptr<AxisGizmo> gizmo_;
     intrusive_ptr<FpsOverlay> fps_overlay_;
+    // The declarations that draw them: the overlay object owns the CONTENT (its scene, camera, box), these are
+    // what the frame runs and what carries "is it on" (see gizmo()/gizmoPass()).
+    intrusive_ptr<RenderPass> gizmo_pass_;
+    intrusive_ptr<RenderPass> fps_overlay_pass_;
 };
 
 VN_GRAPHICS_NS_END

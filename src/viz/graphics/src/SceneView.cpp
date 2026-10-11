@@ -137,10 +137,12 @@ void SceneView::applyOverlayIntent()
     if (default_pipeline_ == nullptr) {
         return;
     }
-    if (RenderPass* const gizmo = default_pipeline_->gizmo(); gizmo != nullptr && !gizmo_visible_) {
+    // Visibility is the PASS' state (a declaration's `enabled`), not the content object's: there is no second
+    // bool that could disagree with a host that toggled the handle (see Pipeline::gizmoPass).
+    if (RenderPass* const gizmo = default_pipeline_->gizmoPass(); gizmo != nullptr && !gizmo_visible_) {
         gizmo->setEnabled(false);
     }
-    if (RenderPass* const readout = default_pipeline_->fpsOverlay(); readout != nullptr && !stats_visible_) {
+    if (RenderPass* const readout = default_pipeline_->fpsOverlayPass(); readout != nullptr && !stats_visible_) {
         readout->setEnabled(false);
     }
 }
@@ -293,8 +295,7 @@ bool SceneView::isOverlayVisible(bool gizmo) const noexcept
     if (default_pipeline_ == nullptr) {
         return false;
     }
-    const RenderPass* pass = gizmo ? static_cast<const RenderPass*>(default_pipeline_->gizmo())
-                                   : static_cast<const RenderPass*>(default_pipeline_->fpsOverlay());
+    const RenderPass* pass = gizmo ? default_pipeline_->gizmoPass() : default_pipeline_->fpsOverlayPass();
     // The pass IS the state: there is no second bool that could disagree with a host that toggled the handle.
     return pass != nullptr && pass->isEnabled();
 }
@@ -307,15 +308,13 @@ void SceneView::setOverlayVisible(bool on, bool gizmo)
     (gizmo ? gizmo_visible_ : stats_visible_) = on;
 
     if (on && default_pipeline_ != nullptr && !isOverlayVisible(gizmo)) {
-        RenderPass* pass = gizmo ? static_cast<RenderPass*>(default_pipeline_->gizmo())
-                                 : static_cast<RenderPass*>(default_pipeline_->fpsOverlay());
+        RenderPass* pass = gizmo ? default_pipeline_->gizmoPass() : default_pipeline_->fpsOverlayPass();
         if (pass == nullptr) {
             // The pipeline exists but carries no such overlay: the recipe never asked for one. Add it and rebuild
             // ONCE - from here on this switch is a flag, forever (see the header).
             wanted = true;
             rebuildDefaultWindowPass();
-            pass = gizmo ? static_cast<RenderPass*>(default_pipeline_ ? default_pipeline_->gizmo() : nullptr)
-                         : static_cast<RenderPass*>(default_pipeline_ ? default_pipeline_->fpsOverlay() : nullptr);
+            pass = gizmo ? default_pipeline_->gizmoPass() : default_pipeline_->fpsOverlayPass();
         }
         if (pass != nullptr) {
             pass->setEnabled(true);
@@ -349,8 +348,7 @@ void SceneView::setOverlayVisible(bool on, bool gizmo)
         return;
     }
 
-    RenderPass* pass = gizmo ? static_cast<RenderPass*>(default_pipeline_->gizmo())
-                             : static_cast<RenderPass*>(default_pipeline_->fpsOverlay());
+    RenderPass* pass = gizmo ? default_pipeline_->gizmoPass() : default_pipeline_->fpsOverlayPass();
     if (pass != nullptr) {
         pass->setEnabled(on);
     }
