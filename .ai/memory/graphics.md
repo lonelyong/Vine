@@ -19,8 +19,49 @@
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/usage.md`（模块文档一节） |
-| **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**已落地**：S1 / A / S2 前半 / S3 前半 / S3 后半之一（`executeFrame`）/ 之二（预热删除）；**剩下的只有**：删那 10 个逐条入口 + `Protocol` 的 8 条顺序规则（纯删，引擎侧读者已经没了） |
+| **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**已落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）；**剩下的片**：S4b 拆出呈现 / S5 能力与观测各收成一个值 / S6 宿主侧 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6 / **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
+
+
+## 2026-10-11 S3 后半收口落地：平坦路径与 `Protocol` 一起退场
+
+- **做了什么**：契约**只留一个帧入口** —— `RenderBackend::executeFrame(frame)` 变**纯虚**，
+  `beginFrame`/`endFrame`/`beginPass`/`endPass`/`setPassOrder`/`setPassState`/`setClearPolicy`/`setViewport`/
+  `setLights`/`setPassInputs`/`render`/`drawScreenProgram` **12 个全删**（`RenderBackend.hpp` 的 CALL ORDER 一节
+  整段消失：值里没有调用序列可写）。`setRenderTarget` **留下但改义**："pass 画进哪张目标"在值里
+  （`PassDescription::target`），它只剩"宿主宣布一张它要用/回读的目标"（持握 + 懒建 + 上报）；
+  `RenderPass::announceClear`、`announcePassTo`/`announceDrawsTo`、"默认 `executeFrame`"随平坦路径删除。
+  **宿主自己驱动一条 pass** 落成 `singlePassFrame(pass, order, inputs, description)`（`FrameDescription.hpp`
+  + `RenderBackend.cpp`）：`RenderPass::execute()` = 描述它 + 把这一帧交给后端 —— **引擎与宿主同一个入口、同一个形状**。
+  引擎 `frame()` 去掉 `beginFrame()`/`endFrame()`（帧的身体在 `executeFrame` 里），`swapBuffers()` 仍是唯一呈现。
+- **插件**：`beginFrame`/`endFrame` 的体 → 私有 `openFrameBooks`/`closeFrameBooks`；逐条入口的体 → 私有 helper
+  （`openPassScope`/`closePassScope`/`announcePassOrder`/`announcePassInputs`/`announceTarget`/`announceClear`/
+  `announcePassState`/`announceLights`/`collectContentDraw`/`collectScreenDraw`；目标那两半共享
+  `adoptHostTarget`+`reportUnbuildableTarget`）；`executeFrame` 按值走它们。**"description 缺席 ⇒ 一个属性都不发"
+  仍成立**（S1 那条门禁原地不动）。
+- **`Protocol` 退场**：`backend/Protocol.hpp` + `Protocol.cpp` 删除。`FrameRecorder` 只留书（帧/scope 开合）
+  与契约里**唯一不能被值表达**的规则 —— **被释放的目标**（scope 公告的目标被 `releaseRenderTarget` 掉 ⇒
+  该 scope 的效果丢弃、绘制**跳过而不改画到窗口**；另外半条"释放别的目标不影响本 scope"从 `CoreProtocolTest`
+  搬进 `FrameRecorderTest`）。**顺序判决 + 那套 per-episode 上报（含 `PassProtocolViolation` 的三句话）一并删除**：
+  值按构造有序，"没有 scope 可归属的调用"不是错误而是**没有去处**（不生效、返回 false、不上报）。
+- **判据（实测）**：`test_graphics` **357**（359 − 2：值→线序列冻结那条与"整帧一个值"那条被值驱动本身取代）、
+  `test_gui` **253**（`--gtest_filter=-UserIOTest.PickingFilesFillsTheLineWithoutSubmitting`）、
+  `test_vsg` **426 = 421 + 3 skip + 2 已知红**（433 − 7 = `CoreProtocolTest` 的 7 条；**含 SDK 像素夹具 ⇒
+  真设备像素不变**）、`test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94 全绿；全量 Release 构建
+  0 error / 0 warning；五个 gate 0 finding（`check_ai_docs --strict` 仍 20 条历史引用）。
+- **测试怎么改的**：`GraphicsTest` 的 `MockBackend` 改成**从值记录**（同一批见证量 + 新增 `frames_executed` /
+  `pass_entries` / `entries_closed`）；`VsgBackendTest` 的平坦驱动改成**值驱动**（新增测试头
+  `tests/test_vsg/TestFrame.hpp`：把"开 scope / 公告 / 绘制"的老拼写换成同一批事实的链式写法，两个测试文件共用）；
+  `FrameRecorderTest` 5 条把上报断言改成"不生效、无上报"；`test_gui/RenderControlTest.cpp` 的 stub 换成
+  `executeFrame`；`CoreProtocolTest` 7 条删除并记账（上一条"开工清单"里列的 3c 到此做完）。
+- **坑（三条，都进设计）**：
+  1. **`announcePassTo`/`announceDrawsTo` 不是"那条路的地基"**（3c 行原话如此）：它们是"描述 → 逐条调用"的映射，
+     逐条调用没了，它们就没有读者 —— 宿主自驱一条 pass 只需要"造一个单 pass 的帧"。
+  2. **X11 那半边的用例早已编译不过**：`VsgBackendTest.cpp` 里 `#if !defined(_WIN32)` 的 2800 行在 Windows 上不编译，
+     而它们**自 M3 起**还在调已删的 `RenderBackend::setDepthMode()` —— Linux 上 `test_vsg` 从那时起不编译。
+     本片顺手把这批驱动改成值（`TestFrame`）；**这台机器上没有 X display，它们仍无法在此编译/运行**（Linux 才验）。
+  3. **`ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt` 偶发红的原因查明**：它断言"新实例 ≠ 旧指针地址"，
+     而被释放的 `RenderTarget` 的**地址会被复用**（十几次里抓到一次）；已改成"活着的实例只有一张 + extent 是新形状"。
 
 
 ## 2026-10-11 S3 前半落地：帧由值驱动（`execute()` 退成宿主直呼）

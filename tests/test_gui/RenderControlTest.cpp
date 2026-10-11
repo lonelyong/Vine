@@ -51,12 +51,15 @@ class StubBackend : public vn::graphics::RenderBackend
 
     void shutdown() override { ++shutdown_calls; }
 
-    void beginFrame() override {}
-    void endFrame() override {}
+    void executeFrame(const vn::graphics::FrameDescription& frame) override
+    {
+        ++frames;
+        for (const vn::graphics::FrameDescription::Pass& entry : frame.passes) {
+            draws += entry.description.has_value() ? entry.description->draws.size() : 0u;
+        }
+    }
 
     void setRenderTarget(vn::graphics::RenderTarget*) override {}
-
-    void render(const std::vector<vn::graphics::RenderCommand>&, const vn::graphics::Camera*) override {}
 
     void swapBuffers() override { ++swaps; }
 
@@ -82,6 +85,10 @@ class StubBackend : public vn::graphics::RenderBackend
     int   handle_calls{ 0 };
     int   resize_calls{ 0 };
     int   swaps{ 0 };
+    /// How many frames the control's views ran, and how many drawing calls they carried: the stub's own reading
+    /// of the value the engine handed over (see RenderBackend::executeFrame).
+    int   frames{ 0 };
+    std::size_t draws{ 0 };
     void* last_handle{ nullptr };
     int   width{ 0 };
     int   height{ 0 };

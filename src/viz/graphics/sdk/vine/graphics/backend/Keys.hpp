@@ -111,8 +111,8 @@ struct VN_GRAPHICS_API VertexLayoutKey
  */
 enum class DrawKind : std::uint8_t
 {
-    Content,   ///< render(): the pass' content, one instance per collected command.
-    Screen,    ///< drawScreenProgram(): a full-screen triangle sampling a target's attachments.
+    Content,   ///< A content drawing call: the pass' content, one instance per collected command.
+    Screen,    ///< A screen drawing call: a full-screen triangle sampling a target's attachments.
 };
 
 /**

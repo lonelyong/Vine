@@ -13,14 +13,10 @@
 | SDK 方法 | 实际发生 | 宿主看到的 |
 | --- | --- | --- |
 | `initialize()` | 由公告（宿主句柄、尺寸、默认程序）建会话；失败时**自己清理半成品** | `true/false` + 诊断；`false` 后没有会话 |
-| `beginFrame()` | 会话开帧（取交换链图、推进槽位时钟）+ 录制器开一帧 | 反复调用被协议拒绝并上报 |
-| `render(commands, camera)` | 逐命令**查三张表**（几何/材质/程序）→ 记进当帧描述；表里没有 ⇒ 拒绝该命令并计数 | `description()` 里有它；计数与诊断说拒绝 |
-| `drawScreenProgram(source, program, camera)` | 记一次全屏调用（源 = pass 声明的第一个输入） | 同上 |
-| `beginPass/endPass` | scope 属性（target/order/depth/clear）**属于该 pass**，`endPass` 丢弃 | 无 scope 的绘制被拒绝并上报 |
-| `setRenderTarget` | 离屏目标描述送进 `HostTargets`（**快照**，稳态零分配） | 目标懒建；拒绝原因分说 |
-| `setClearPolicy/setDepthMode/setViewport/setLights/setPassInputs` | 记进当帧描述（"每次绘制属性"只服务下一个绘制调用） | 与计划一致与否在执行段核对 |
-| `endFrame()` | 描述定稿 → **编译**（依赖求值、缺省解析、合法性判定） | 计划进 `CompiledFrame`；环会被跳过并计数 |
+| `executeFrame(value)` | **一帧的整个身体**（`beginFrame()`/`endFrame()` 的那两半现在都在这里）：会话开帧（取交换链图、推进槽位时钟）+ 录制器开一帧 → 按值走每条 pass（身份 / order / 输入 → 它的 target、viewport、清屏、状态与每条绘制调用，内容副作用在绘制那一层）+ 描述定稿 → **编译** | 没有会话时上报一次；值里的顺序就是线上顺序 |
 | `swapBuffers()` | **关帧**：录制命令图 + 提交 + 呈递 | `framesPresented()` +1；丢帧会被点名为诊断 |
+| `setRenderTarget(target)` | 宿主的**目标公告**：离屏目标描述送进 `HostTargets`（**快照**，稳态零分配）。pass 画进哪张目标写在帧值里，不走这条 | 目标懒建；拒绝原因分说 |
+| `setClearPolicy` 等 per-pass 入口 | **已删**：清屏 / 视口 / 灯 / pass 状态 / 输入全部随帧值到达（见上） | 与计划一致与否在执行段核对 |
 | `setWindowHandle/resize` | 采纳宿主表面 / 跟随表面（**停一次设备，计数**） | `deviceWaits()` |
 | `supportsRenderTargets()` | `true` | 离屏路径可用 |
 | `releasePass/releaseRenderTarget` | 释放该 pass 的会话身份 / 目标对象（停靠后销毁） | 保留态不随帧数增长 |
@@ -43,7 +39,7 @@
 
 **拒绝**（都是**一次**纪律 + 计数，不是静默）：
 
-* 无 scope 的绘制、没在帧里的调用 → 协议拒绝（每条一次）。
+* 帧里没有一条 pass（空帧）→ 照常编译、提交、呈现（"取到的图必须还回去"）。
 * 命令点名了表里没有的对象 → 拒绝该命令；几何的"通道与布局对不上"是 Malformed（同一条规则在查找里）。
 * pass 的输入与计划逐项对不上（项数/每项彩色数）→ **整趟拒绝**并说出是哪一项。
 * 计划与资源世界的形状/格式不一致 → 执行段报，且**不画**（按错形状建的管线与宿主要的画面无关）。
@@ -53,7 +49,7 @@
 
 | 频率 | 发生的事 |
 | --- | --- |
-| 每帧恰好一次 | `beginFrame` / `endFrame`（编译）/ `swapBuffers`（提交+呈递）；一帧一次 present |
+| 每帧恰好一次 | `executeFrame`（开帧 + 按值走 pass + 编译）/ `swapBuffers`（提交+呈递）；一帧一次 present |
 | 每 pass 一次 | 绑定该 pass 的管线变体（**只在变体变了**）、动态状态块（**只在值变了**）、采样输入集（一趟 pass 一条） |
 | 每次变化一次（稳态 0 次） | 材质 touch 后的**块写**（比较相同就不写）；几何 revision 变化后的流上传；push（按声明）；一次 `vkCmdSet*` |
 | 结构性变化才发生 | 目标 resize/rebuild、管线编译（新**变体**——新 program、新拓扑类、新采样计数）、会话移动（停一次设备）、块预算撞顶后的**存储替换**（新 buffer；旧 storage 与旧描述符集都停放，一条 Info 说清原因） |
@@ -76,12 +72,12 @@
 
 ## 5. 生命周期与所有权
 
-* **帧份额**：`render()` 里点名的对象由内容世界**持一份**（计划/已录制的帧仍然命名它们），回归稳态后
+* **帧份额**：绘制调用里点名的对象由内容世界**持一份**（计划/已录制的帧仍然命名它们），回归稳态后
   通过 **compare**（不是时间）判断是否要重新构建行。
 * **替换 = 停靠**：被顶替的行/流/变体/目标进出**退役队列**（窗口 `slots + 1` 帧）；槽数还没学会时
   `retire()` 返回 false，调用方退回**计数过的** device wait（不许猜窗口）。
 * **块预算撞顶 = 换存储**：某一帧写超预算仍**按帧**拒绝（有报告 + 计数），但 storage 记住"最坏一帧试了多少"；
-  下一次 `beginFrame()` 用新 buffer（`max(need, 2×budget)`）整体替换，旧 storage 与**被换下的描述符集**都进退役队列
+  下一次 `executeFrame()` 用新 buffer（`max(need, 2×budget)`）整体替换，旧 storage 与**被换下的描述符集**都进退役队列
   （后者是 `03047` 的根因：池会把释放 set 的句柄发回，而新 set 在下一帧才编译）。帧内绝不搬字节。
 * **销毁只有两条合法路径**（契约）：整会话替换（前置一次计数过的 device idle）或退役出队。
 * **宿主的东西归宿主**：宿主表面/句柄由宿主销毁；后端只采纳与跟随（`setWindowHandle`/`resize`）。

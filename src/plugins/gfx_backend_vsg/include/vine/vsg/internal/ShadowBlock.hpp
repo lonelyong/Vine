@@ -8,7 +8,7 @@
  * @brief Packing the shadow block a drawing call shades with (`VineShadowBlock`) from the plan's own facts.
  *
  * THE MAP ARRIVES AS A SAMPLED INPUT; THIS BLOCK IS WHAT MAKES IT A SHADOW. A pass samples a shadow by declaring the
- * target the map was rendered into (see the engine's `setPassInputs`), which the sampling path already binds. What
+ * target the map was rendered into (the frame value's resolved `inputs`), which the sampling path already binds. What
  * the shader cannot get from a texture is WHERE a fragment lands in it: the map belongs to a LIGHT, its pixels were
  * rasterised by that light's camera, and the consuming pass draws from its own camera - so the block carries the one
  * matrix that takes a VIEW-space position into the producer's clip space (`light_vp * inverse(view)`) plus the

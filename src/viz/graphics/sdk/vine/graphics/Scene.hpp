@@ -92,7 +92,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     /** @brief Adds a light source to the scene.
      *
      * The scene keeps a reference to the light. Passes rendering this scene
-     * light their content with the scene's lights (RenderBackend::setLights).
+     * light their content with the scene's lights (a drawing call announces them: DrawDescription::lights).
      *
      * @param light Light to add.
      */

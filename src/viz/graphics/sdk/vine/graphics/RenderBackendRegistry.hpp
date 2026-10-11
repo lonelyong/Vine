@@ -86,8 +86,8 @@ class VN_GRAPHICS_API RenderBackendFactory {
      *
      * The engine owns the pipeline and drives content per pass, so a backend
      * is not bound to a Vine scene or camera: its content slots are created
-     * lazily from the per-pass render() calls the engine drives, keyed by the
-     * pass announced through beginPass().
+     * lazily from the drawing calls a frame's value carries, keyed by the
+     * pass identity its entry names (see FrameDescription::Pass).
      *
      * @return Newly created backend; the caller owns the returned reference.
      */

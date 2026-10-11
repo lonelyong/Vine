@@ -4,56 +4,21 @@ VN_GRAPHICS_NS_BEGIN
 
 VN_OBJECT_META_IMPL(RenderBackend, vn::Object);
 
-void announcePassTo(const PassDescription& description, raw_ptr<RenderBackend> backend)
+FrameDescription singlePassFrame(raw_ptr<const RenderPass> pass, int order,
+                                 std::vector<raw_ptr<RenderTarget>> inputs,
+                                 std::optional<PassDescription> description)
 {
-    backend->setRenderTarget(description.target);
-    if (description.viewport.has_value()) {
-        const Viewport& viewport = *description.viewport;
-        backend->setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
-    }
-    if (description.clear.has_value()) {
-        backend->setClearPolicy(*description.clear);
-    }
-    backend->setPassState(description.state);
-}
-
-void announceDrawsTo(const PassDescription& description, raw_ptr<RenderBackend> backend)
-{
-    for (const DrawDescription& draw : description.draws) {
-        if (draw.lights.has_value()) {
-            backend->setLights(*draw.lights);
-        }
-        if (draw.camera == nullptr) {
-            continue;
-        }
-        if (draw.kind == DrawDescription::Kind::Screen) {
-            backend->drawScreenProgram(draw.source, draw.program.get(), draw.camera);
-        }
-        else if (draw.commands != nullptr) {
-            backend->render(*draw.commands, draw.camera);
-        }
-    }
-}
-
-void RenderBackend::executeFrame(const FrameDescription& frame)
-{
-    // The default frame body: the value, announced through the per-call entries in the order this interface
-    // documents. Every backend that keeps no state it wants to build from the whole frame gets exactly the
-    // sequence it always got, from ONE input - so adding the value to the contract changed nothing for them, and
-    // a backend that would rather build from the value overrides this instead of implementing the entries twice.
-    for (const FrameDescription::Pass& pass : frame.passes) {
-        if (pass.pass == nullptr) {
-            continue;   // a frame's entry always names a pass; a null one is nothing to run
-        }
-        beginPass(pass.pass);
-        setPassOrder(pass.order);
-        setPassInputs(pass.inputs);
-        if (pass.description.has_value()) {
-            announcePassTo(*pass.description, this);
-            announceDrawsTo(*pass.description, this);
-        }
-        endPass();
-    }
+    // The ONE place a frame value is assembled outside the engine's compile, so a host that drives one pass
+    // (RenderPass::execute) cannot build a shape of its own - there is one value in this SDK (see
+    // RenderBackend::executeFrame).
+    FrameDescription frame;
+    FrameDescription::Pass entry;
+    entry.pass        = pass;
+    entry.order       = order;
+    entry.inputs      = std::move(inputs);
+    entry.description = std::move(description);
+    frame.passes.push_back(std::move(entry));
+    return frame;
 }
 
 void RenderBackend::setDiagnosticsRoute(Diagnostics& route)

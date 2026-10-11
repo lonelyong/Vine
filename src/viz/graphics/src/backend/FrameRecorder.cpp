@@ -2,7 +2,6 @@
 
 #include <cmath>
 #include <cstddef>
-#include <string>
 
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -10,31 +9,6 @@ using vn::graphics::FrameCounters;
 
 namespace
 {
-
-/// @brief Names one call in the sentence a refusal produces.
-const char* callName(CallKind kind) noexcept
-{
-    switch (kind)
-    {
-    case CallKind::BeginFrame:
-        return "beginFrame()";
-    case CallKind::EndFrame:
-        return "endFrame()";
-    case CallKind::BeginPass:
-        return "beginPass()";
-    case CallKind::EndPass:
-        return "endPass()";
-    case CallKind::SetScopeAttribute:
-        return "an announced scope attribute";
-    case CallKind::Draw:
-        return "a drawing call";
-    case CallKind::SwapBuffers:
-        return "swapBuffers()";
-    case CallKind::ReleaseRenderTarget:
-        return "releaseRenderTarget()";
-    }
-    return "a call";
-}
 
 /// @brief Pairs a borrowed program with the revision it is at.
 ProgramRef programRef(const vn::graphics::ShaderProgram* program) noexcept
@@ -64,24 +38,22 @@ FrameRecorder::FrameRecorder(FrameArena& arena, Diagnostics& diagnostics, Observ
 
 bool FrameRecorder::beginFrame(FrameToken token)
 {
-    const Decision decision = protocol_.onCall(CallKind::BeginFrame);
-    if (decision.verdict != Verdict::Allow)
+    if (frame_open_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::BeginFrame);
-        }
-        return false;
+        return false;  // one frame at a time: nothing may be collected into two
     }
+    frame_open_ = true;
 
     // The frame boundary is the ONE moment a span handed out earlier may die (see FrameArena).
     arena_.reset();
-    token_       = token;
-    pass_open_   = false;
-    pass_inputs_ = {};
-    pending_has_viewport_ = false;
-    pending_viewport_     = {};
-    pending_lights_       = {};
+    token_                 = token;
+    pass_open_             = false;
+    scope_target_          = nullptr;
+    scope_target_released_ = false;
+    pass_inputs_           = {};
+    pending_has_viewport_  = false;
+    pending_viewport_      = {};
+    pending_lights_        = {};
     open_draws_.clear();
     passes_.clear();
 
@@ -93,14 +65,9 @@ bool FrameRecorder::beginFrame(FrameToken token)
 
 bool FrameRecorder::endFrame()
 {
-    const Decision decision = protocol_.onCall(CallKind::EndFrame);
-    if (decision.verdict != Verdict::Allow)
+    if (!frame_open_ || pass_open_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::EndFrame);
-        }
-        return false;
+        return false;  // nothing to close, or a scope still open
     }
 
     // The pass records are published in one arena array: the compiler reads them after this frame's calls
@@ -116,29 +83,21 @@ bool FrameRecorder::endFrame()
 
 bool FrameRecorder::swapBuffers()
 {
-    const Decision decision = protocol_.onCall(CallKind::SwapBuffers);
-    if (decision.verdict != Verdict::Allow)
+    if (!frame_open_ || pass_open_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::SwapBuffers);
-        }
-        return false;
+        return false;  // the present closes a committed frame, and never an open scope
     }
+    frame_open_ = false;
     return true;
 }
 
 bool FrameRecorder::beginPass(PassId pass)
 {
-    const Decision decision = protocol_.onCall(CallKind::BeginPass);
-    if (decision.verdict != Verdict::Allow)
+    if (!frame_open_ || pass_open_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::BeginPass);
-        }
-        return false;
+        return false;  // no frame to belong to, or a scope is already open (the outer one keeps its state)
     }
+    pass_open_ = true;
 
     pass_open_              = true;
     pass_id_                = pass;
@@ -157,14 +116,9 @@ bool FrameRecorder::beginPass(PassId pass)
 
 bool FrameRecorder::endPass()
 {
-    const Decision decision = protocol_.onCall(CallKind::EndPass);
-    if (decision.verdict != Verdict::Allow)
+    if (!pass_open_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::EndPass);
-        }
-        return false;
+        return false;  // nothing to close
     }
 
     // A scope enters the plan when it can have an effect: it drew something, or it announced a clear (a
@@ -193,7 +147,9 @@ bool FrameRecorder::endPass()
         ++observe_.counters().passes;
     }
 
-    pass_open_   = false;
+    pass_open_                 = false;
+    scope_target_              = nullptr;
+    scope_target_released_     = false;
     open_draws_.clear();
     pass_inputs_ = {};
     return true;
@@ -201,14 +157,9 @@ bool FrameRecorder::endPass()
 
 bool FrameRecorder::setPassOrder(int order)
 {
-    const Decision decision = protocol_.onCall(CallKind::SetScopeAttribute);
-    if (decision.verdict != Verdict::Allow)
+    if (!pass_open_ || scope_target_released_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::SetScopeAttribute);
-        }
-        return false;
+        return false;  // no scope to fill, or the scope's target is gone (see the file note)
     }
     order_ = order;
     return true;
@@ -216,34 +167,22 @@ bool FrameRecorder::setPassOrder(int order)
 
 bool FrameRecorder::setRenderTarget(const void* target)
 {
-    const Decision decision = protocol_.onCall(CallKind::SetScopeAttribute);
-    if (decision.verdict != Verdict::Allow)
+    if (!pass_open_ || scope_target_released_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::SetScopeAttribute);
-        }
-        return false;
+        return false;  // no scope to fill, or the scope's target is gone (see the file note)
     }
 
-    // The protocol holds the "this scope's target was released" fact, and a new announcement is what ends
-    // that episode (see Protocol::noteAnnouncedTarget) - so the note is not bookkeeping the recorder keeps
-    // on its own.
-    pass_target_ = target;
-    protocol_.noteAnnouncedTarget(target);
+    pass_target_               = target;
+    scope_target_              = target;
+    scope_target_released_     = false;  // a new announcement is the target the scope draws into now (see the file note)
     return true;
 }
 
 bool FrameRecorder::setViewport(int x, int y, int width, int height)
 {
-    const Decision decision = protocol_.onCall(CallKind::SetScopeAttribute);
-    if (decision.verdict != Verdict::Allow)
+    if (!pass_open_ || scope_target_released_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::SetScopeAttribute);
-        }
-        return false;
+        return false;  // no scope to fill, or the scope's target is gone (see the file note)
     }
     pending_has_viewport_ = true;
     pending_viewport_     = vn::graphics::Viewport{ x, y, width, height };
@@ -252,14 +191,9 @@ bool FrameRecorder::setViewport(int x, int y, int width, int height)
 
 bool FrameRecorder::setClearPolicy(const ClearPolicy& policy)
 {
-    const Decision decision = protocol_.onCall(CallKind::SetScopeAttribute);
-    if (decision.verdict != Verdict::Allow)
+    if (!pass_open_ || scope_target_released_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::SetScopeAttribute);
-        }
-        return false;
+        return false;  // no scope to fill, or the scope's target is gone (see the file note)
     }
     pass_has_clear_ = true;
     pass_clear_     = policy;
@@ -268,14 +202,9 @@ bool FrameRecorder::setClearPolicy(const ClearPolicy& policy)
 
 bool FrameRecorder::setPassState(const vn::graphics::PassRenderState& state)
 {
-    const Decision decision = protocol_.onCall(CallKind::SetScopeAttribute);
-    if (decision.verdict != Verdict::Allow)
+    if (!pass_open_ || scope_target_released_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::SetScopeAttribute);
-        }
-        return false;
+        return false;  // no scope to fill, or the scope's target is gone (see the file note)
     }
     pass_state_ = state;
     return true;
@@ -283,14 +212,9 @@ bool FrameRecorder::setPassState(const vn::graphics::PassRenderState& state)
 
 bool FrameRecorder::setPassInputs(std::span<const vn::graphics::RenderTarget* const> inputs)
 {
-    const Decision decision = protocol_.onCall(CallKind::SetScopeAttribute);
-    if (decision.verdict != Verdict::Allow)
+    if (!pass_open_ || scope_target_released_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::SetScopeAttribute);
-        }
-        return false;
+        return false;  // no scope to fill, or the scope's target is gone (see the file note)
     }
 
     // COPIED, not held: the engine's resolved-input vector is a reused member that the next pass refills
@@ -306,14 +230,9 @@ bool FrameRecorder::setPassInputs(std::span<const vn::graphics::RenderTarget* co
 
 bool FrameRecorder::setLights(std::span<const vn::graphics::Light* const> lights)
 {
-    const Decision decision = protocol_.onCall(CallKind::SetScopeAttribute);
-    if (decision.verdict != Verdict::Allow)
+    if (!pass_open_ || scope_target_released_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::SetScopeAttribute);
-        }
-        return false;
+        return false;  // no scope to fill, or the scope's target is gone (see the file note)
     }
     snapshotLights(lights);
     return true;
@@ -322,14 +241,9 @@ bool FrameRecorder::setLights(std::span<const vn::graphics::Light* const> lights
 bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands,
                            const vn::graphics::Camera*                    camera)
 {
-    const Decision decision = protocol_.onCall(CallKind::Draw);
-    if (decision.verdict != Verdict::Allow)
+    if (!pass_open_ || scope_target_released_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::Draw);
-        }
-        return false;
+        return false;  // no scope to draw in, or its target is gone: nothing is redirected
     }
 
     // A CALL WITH NOTHING TO DRAW IS NOT A DRAW. The engine really announces one, and it is not exotic: the
@@ -365,14 +279,9 @@ bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands
 bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program,
                                       const vn::graphics::Camera* camera)
 {
-    const Decision decision = protocol_.onCall(CallKind::Draw);
-    if (decision.verdict != Verdict::Allow)
+    if (!pass_open_ || scope_target_released_)
     {
-        if (decision.report)
-        {
-            reportRefusal(CallKind::Draw);
-        }
-        return false;
+        return false;  // no scope to draw in, or its target is gone: nothing is redirected
     }
 
     CollectedDraw draw;
@@ -395,8 +304,8 @@ bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::Sh
 
 bool FrameRecorder::setDefaultContentProgram(const vn::graphics::ShaderProgram* program)
 {
-    // Frame-level, and legal in every state - there is no question for the protocol to answer here (see
-    // the file note). The setting outlives the frame it was made in, so it is kept next to the token.
+    // Frame-level, and legal in every state (see the file note). The setting outlives the frame it was made
+    // in, so it is kept next to the token.
     default_program_             = programRef(program);
     description_.default_program = default_program_;
     return true;
@@ -404,10 +313,15 @@ bool FrameRecorder::setDefaultContentProgram(const vn::graphics::ShaderProgram* 
 
 bool FrameRecorder::releaseRenderTarget(const void* target)
 {
-    // Always legal, whenever it arrives (the contract says so): the caller is telling the backend a target
-    // is going away, and the announcement an open scope may still hold is dropped by the note below.
-    (void)protocol_.onCall(CallKind::ReleaseRenderTarget);
-    protocol_.noteTargetReleased(target);
+    // Always legal, whenever it arrives (the contract says so): the caller is telling the backend a target is
+    // going away. An open scope that announced it may not keep that pointer, so the announcement is dropped
+    // here and the scope is done - its remaining effects are dropped and its draws are skipped rather than
+    // redirected to the default framebuffer (see the file note).
+    if (pass_open_ && scope_target_ == target)
+    {
+        scope_target_              = nullptr;
+        scope_target_released_     = true;
+    }
     return true;
 }
 
@@ -418,74 +332,12 @@ const FrameDescription& FrameRecorder::description() const noexcept
 
 bool FrameRecorder::inFrame() const noexcept
 {
-    return protocol_.frameOpen();
+    return frame_open_;
 }
 
 bool FrameRecorder::inPass() const noexcept
 {
-    return protocol_.scopeOpen();
-}
-
-const Protocol& FrameRecorder::protocol() const noexcept
-{
-    return protocol_;
-}
-
-void FrameRecorder::reportRefusal(CallKind kind)
-{
-    const bool dead_scope = protocol_.scopeOpen() && protocol_.announcedTargetReleased();
-
-    std::string message = "frame " + std::to_string(token_.frame) + ": ";
-    if (dead_scope && kind == CallKind::Draw)
-    {
-        message += "a drawing call would have used the render target released while this scope was open: it "
-                   "is skipped rather than redirected to the default framebuffer, so the content is missing "
-                   "instead of drawn where the caller never asked for it";
-    }
-    else if (dead_scope)
-    {
-        message += std::string(callName(kind)) +
-                   " arrives for a scope whose announced render target was released: it is dropped, so "
-                   "nothing it configures can reach a draw";
-    }
-    else
-    {
-        switch (kind)
-        {
-        case CallKind::BeginFrame:
-            message += "beginFrame() arrives while a frame is already open: the open frame keeps its state";
-            break;
-        case CallKind::EndFrame:
-            message += "endFrame() does not close a frame: it arrives with no frame open, or while a pass "
-                       "scope is still open";
-            break;
-        case CallKind::BeginPass:
-            message += "beginPass() arrives with no frame open, or while a pass scope is still open: the "
-                       "announced pass does not run, and the state the caller expects will not apply";
-            break;
-        case CallKind::EndPass:
-            message += "endPass() closes no scope: it arrives with no pass scope open (a nested beginPass() "
-                       "was refused earlier, so the caller's bookkeeping is off by one scope)";
-            break;
-        case CallKind::SetScopeAttribute:
-            message += "an announced scope attribute arrives with no pass scope open: it is dropped, and the "
-                       "next pass starts from an empty request";
-            break;
-        case CallKind::Draw:
-            message += "a drawing call arrives with no pass scope open: it is refused and nothing is drawn, "
-                       "rather than drawn with the previous pass' state";
-            break;
-        case CallKind::SwapBuffers:
-            message += "swapBuffers() cannot present: it arrives with no frame open, or with a pass scope "
-                       "still open";
-            break;
-        case CallKind::ReleaseRenderTarget:
-            break;
-        }
-    }
-
-    diagnostics_.report(vn::graphics::DiagnosticSeverity::Error,
-                        vn::graphics::DiagnosticCategory::PassProtocolViolation, vn::String::fromUtf8(message));
+    return pass_open_;
 }
 
 void FrameRecorder::snapshotLights(std::span<const vn::graphics::Light* const> lights)

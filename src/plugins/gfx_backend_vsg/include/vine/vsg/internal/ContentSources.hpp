@@ -76,9 +76,9 @@ VN_VSG_NS_BEGIN
  * VERTEX stage is the engine's canonical full-screen triangle (`BuiltinShaders::fullscreenVertexProgram` -
  * three vertices generated from `gl_VertexIndex`, `vine_uv` at location 0, no vertex buffer and no
  * vertex-side constants). A vertex stage the program happens to carry is IGNORED, because that is what the
- * contract says (`RenderBackend::drawScreenProgram`: "vertex stage, if any, is ignored - the backend provides
- * the fullscreen vertex stage"): honouring one would compile a triangle the engine's fragment stages are not
- * written against.
+ * contract says (`DrawDescription` with `Kind::Screen`: the draw's `program` is its FRAGMENT stage - the
+ * backend provides the fullscreen vertex stage): honouring one would compile a triangle the engine's fragment
+ * stages are not written against.
  *
  * The entry's identity is the program and its revision, so the plan's `program` names it exactly as a content
  * program does.

@@ -33,13 +33,10 @@
 #include <vine/graphics/backend/Keys.hpp>
 #include <vine/graphics/backend/Observe.hpp>
 #include <vine/graphics/backend/PhaseTable.hpp>
-#include <vine/graphics/backend/Protocol.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/graphics/backend/TargetPlan.hpp>
 
 using vn::graphics::RenderTarget;
-using vn::graphics::backend::CallKind;
-using vn::graphics::backend::Decision;
 using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameTimeline;
 using vn::graphics::backend::LoadOpVariantKey;
@@ -47,7 +44,6 @@ using vn::graphics::backend::Observe;
 using vn::graphics::backend::Phase;
 using vn::graphics::backend::PhaseTable;
 using vn::graphics::backend::PipelineKey;
-using vn::graphics::backend::Protocol;
 using vn::graphics::backend::RepairReason;
 using vn::graphics::backend::RetirementQueue;
 using vn::graphics::backend::ReadbackRequest;
@@ -56,145 +52,6 @@ using vn::graphics::backend::TargetAction;
 using vn::graphics::backend::TargetDecision;
 using vn::graphics::backend::TargetDesc;
 using vn::graphics::backend::TargetInstance;
-using vn::graphics::backend::Verdict;
-
-namespace
-{
-
-/// @brief One line of the protocol's transition table: a call, and what it must answer.
-struct ProtocolStep
-{
-    CallKind kind;
-    Verdict  verdict;
-    bool     report;
-};
-
-/// @brief Plays @p steps against a fresh protocol and checks every answer.
-void expectProtocol(const std::vector<ProtocolStep>& steps)
-{
-    Protocol protocol;
-    int      index = 0;
-    for (const ProtocolStep& step : steps)
-    {
-        const Decision decision = protocol.onCall(step.kind);
-        EXPECT_EQ(static_cast<int>(decision.verdict), static_cast<int>(step.verdict))
-            << "step " << index << " verdict";
-        EXPECT_EQ(decision.report, step.report) << "step " << index << " report";
-        ++index;
-    }
-}
-
-}  // namespace
-
-TEST(CoreProtocolTest, AHealthyFrameIsAllowedThroughout)
-{
-    // The order the engine drives: frame, scope, state, draw, close, present.
-    expectProtocol({
-        {CallKind::BeginFrame, Verdict::Allow, false},
-        {CallKind::BeginPass, Verdict::Allow, false},
-        {CallKind::SetScopeAttribute, Verdict::Allow, false},
-        {CallKind::Draw, Verdict::Allow, false},
-        {CallKind::EndPass, Verdict::Allow, false},
-        {CallKind::EndFrame, Verdict::Allow, false},
-        {CallKind::SwapBuffers, Verdict::Allow, false},
-    });
-}
-
-TEST(CoreProtocolTest, ADrawOutsideAScopeIsRefusedOncePerFrameNotOncePerCall)
-{
-    // The host that lost track of its scopes hits this on every pass, so the report is per frame.
-    expectProtocol({
-        {CallKind::BeginFrame, Verdict::Allow, false},
-        {CallKind::Draw, Verdict::Refuse, true},   // first: reported
-        {CallKind::Draw, Verdict::Refuse, false},  // same episode: refused, silent
-        {CallKind::SwapBuffers, Verdict::Allow, false},
-        {CallKind::BeginFrame, Verdict::Allow, false},
-        {CallKind::Draw, Verdict::Refuse, true},   // new frame: the episode re-armed
-    });
-}
-
-TEST(CoreProtocolTest, SettersOutsideAScopeAreInertNotViolations)
-{
-    // The contract is explicit: state announced with no scope open is inert. Reporting it as misuse
-    // would be noise on a legal call.
-    Protocol protocol;
-    EXPECT_EQ(static_cast<int>(protocol.onCall(CallKind::SetScopeAttribute).verdict),
-              static_cast<int>(Verdict::Drop));
-    EXPECT_FALSE(protocol.onCall(CallKind::SetScopeAttribute).report);
-    EXPECT_EQ(protocol.refusalCount(), 0u);  // dropped, but not refused
-}
-
-TEST(CoreProtocolTest, ANestedScopeIsRefusedWithoutClosingTheOuterOne)
-{
-    Protocol protocol;
-    (void)protocol.onCall(CallKind::BeginFrame);
-    EXPECT_EQ(static_cast<int>(protocol.onCall(CallKind::BeginPass).verdict), static_cast<int>(Verdict::Allow));
-    EXPECT_EQ(static_cast<int>(protocol.onCall(CallKind::BeginPass).verdict), static_cast<int>(Verdict::Refuse));
-    EXPECT_TRUE(protocol.scopeOpen());  // the outer scope is still the open one
-    EXPECT_EQ(static_cast<int>(protocol.onCall(CallKind::EndPass).verdict), static_cast<int>(Verdict::Allow));
-}
-
-TEST(CoreProtocolTest, AnUnpairedEndPassAndASwapInsideAScopeAreBothRefused)
-{
-    Protocol protocol;
-    (void)protocol.onCall(CallKind::BeginFrame);
-    EXPECT_EQ(static_cast<int>(protocol.onCall(CallKind::EndPass).verdict), static_cast<int>(Verdict::Refuse));
-    (void)protocol.onCall(CallKind::BeginPass);
-    EXPECT_EQ(static_cast<int>(protocol.onCall(CallKind::SwapBuffers).verdict),
-              static_cast<int>(Verdict::Refuse));  // a scope is still open
-}
-
-TEST(CoreProtocolTest, AReleasedAnnouncedTargetIsDroppedAndTheScopeDiesOnce)
-{
-    int target = 0;
-
-    Protocol protocol;
-    (void)protocol.onCall(CallKind::BeginFrame);
-    (void)protocol.onCall(CallKind::BeginPass);
-    protocol.noteAnnouncedTarget(&target);
-
-    (void)protocol.onCall(CallKind::ReleaseRenderTarget);
-    protocol.noteTargetReleased(&target);
-
-    // The contract: the announcement is DROPPED (the pointer may be destroyed), and the scope is dead
-    // rather than redirected to the window.
-    EXPECT_EQ(protocol.announcedTarget(), nullptr);
-    EXPECT_TRUE(protocol.announcedTargetReleased());
-
-    const Decision first_attr = protocol.onCall(CallKind::SetScopeAttribute);
-    EXPECT_EQ(static_cast<int>(first_attr.verdict), static_cast<int>(Verdict::Drop));
-    EXPECT_TRUE(first_attr.report);  // reported for this scope, once
-
-    const Decision second_attr = protocol.onCall(CallKind::SetScopeAttribute);
-    EXPECT_FALSE(second_attr.report);  // same episode
-
-    const Decision draw = protocol.onCall(CallKind::Draw);
-    EXPECT_EQ(static_cast<int>(draw.verdict), static_cast<int>(Verdict::Refuse));
-    EXPECT_FALSE(draw.report);  // the scope already reported its condition
-
-    // A new scope is a new episode: the shell is gone, but the rule still holds.
-    (void)protocol.onCall(CallKind::EndPass);
-    (void)protocol.onCall(CallKind::BeginPass);
-    protocol.noteAnnouncedTarget(&target);
-    protocol.noteTargetReleased(&target);
-    EXPECT_TRUE(protocol.onCall(CallKind::Draw).report);
-}
-
-TEST(CoreProtocolTest, ReleasingSomeOtherTargetLeavesTheScopeAlone)
-{
-    int announced = 0;
-    int other     = 0;
-
-    Protocol protocol;
-    (void)protocol.onCall(CallKind::BeginFrame);
-    (void)protocol.onCall(CallKind::BeginPass);
-    protocol.noteAnnouncedTarget(&announced);
-    protocol.noteTargetReleased(&other);
-
-    EXPECT_EQ(protocol.announcedTarget(), &announced);
-    EXPECT_FALSE(protocol.announcedTargetReleased());
-    EXPECT_EQ(static_cast<int>(protocol.onCall(CallKind::Draw).verdict), static_cast<int>(Verdict::Allow));
-}
 
 namespace
 {

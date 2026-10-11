@@ -91,21 +91,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     void setCamera(intrusive_ptr<Camera> camera);
 
-    /** @brief Announces this pass' clear policy to the backend, if it clears at all.
-     *
-     * The ONE place a pass' three clear settings (isClearEnabled / clearColor / shouldClearDepth)
-     * become the backend's announcement, so the base pass and a subclass that overrides execute()
-     * cannot disagree about what "this pass clears" means. It is a no-op when isClearEnabled() is
-     * false: a pass that does not clear announces nothing, which is how a backend tells "clears to
-     * this colour" from "draws over what is there".
-     *
-     * A backend call does not depend on it, so callers need no backend to ask the policy itself
-     * (see clearColor / shouldClearDepth).
-     *
-     * @param backend Backend to announce to (may be null, in which case nothing happens).
-     */
-    void announceClear(raw_ptr<RenderBackend> backend) const;
-
     /** @brief Gets the clear color.
      *
      * The default is an opaque dark grey (51, 51, 51, 255): the value the main WINDOW pass was
@@ -114,7 +99,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * wants one says so itself — otherwise attachment 0 of an off-screen target clears to that window
      * grey. (Attachments 1 and beyond are not this value at all: the backend clears them to transparent
      * black by contract, so a consumer can tell "nothing drawn here" from data — see
-     * RenderBackend::ClearPolicy.)
+     * ClearPolicy.)
      *
      * @return The colour this pass clears attachment 0 to when it clears.
      */
@@ -139,7 +124,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     /** @brief Sets whether the depth buffer is cleared before this pass.
      *
      * Controls the depth flag of the ClearPolicy announced to the backend when
-     * this pass clears (see setClearEnabled / announceClear). Whether a false
+     * this pass clears (see setClearEnabled / ClearPolicy). Whether a false
      * value actually preserves the previous depth depends on the target: it is
      * honoured for off-screen targets (their depth survives via a depth-LOAD
      * pass), but a pass rendering into the window / main surface always gets a
@@ -222,9 +207,9 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * exception - one that cleared its target filled it whatever it announced, so this rectangle was
      * silently dropped - and the two kinds of pass honour it alike now.
      *
-     * The announcement is PER DRAWING CALL (RenderBackend::setViewport): the base execute() announces
-     * this rectangle once and draws once, so it covers the whole pass; a subclass that draws more than
-     * once must announce the viewport of each draw itself.
+     * The rectangle is a fact of the PASS (PassDescription::viewport), not of one drawing call: every draw the
+     * pass issues is placed inside it. The base pass describes it once and draws once, so it covers the whole
+     * pass; a subclass that draws more than once describes each draw itself.
      *
      * The rectangle does NOT decide the shape the picture is projected with: a camera carries the shape of its
      * own picture (see Camera), and with it the frustum the content was culled against. For a pass drawing through
@@ -425,7 +410,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * collected command, so the same content scene can be re-rendered with a
      * different shader (e.g. a wireframe or alternate-shading pass over the
      * same scene). The pass is its own retained slot in the backend (keyed by
-     * the pass, see RenderBackend::beginPass), so an override and the
+     * the pass, see FrameDescription::Pass), so an override and the
      * per-geometry pass never collapse into one slot; use setViewport /
      * setClearEnabled to control where each one lands.
      * The pass keeps a reference.
@@ -457,7 +442,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *
      * It is rasterisation state, not wiring: a change does NOT bump the wiring revision (nothing about what this
      * pass declares has changed), and the backend picks it up per frame from the pass' state (stateOverrides(),
-     * announced through RenderBackend::setPassState) - the same place its depth policy goes, so a pass states its
+     * announced through PassDescription::state) - the same place its depth policy goes, so a pass states its
      * state ONCE and a backend resolves a command without asking anybody else (see StateNode.hpp).
      *
      * @param mode Rasterisation mode applied to all content of this pass.
@@ -471,8 +456,9 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * THE EXTENSION POINT: what a pass does is data now, and a subclass that draws something else fills in a
      * different description (ScreenPass draws a full-screen program instead of collected geometry). The
      * description has no call order to get wrong - which state belongs to the pass and which to one drawing call
-     * is the shape of the value (see PassDescription / DrawDescription) - and the backend receives it through
-     * execute(), which is the shim that turns a description into the wire calls of the day.
+     * is the shape of the value (see PassDescription / DrawDescription) - and it is what a backend is handed: the
+     * engine puts it in the frame it runs (see RenderEngine::frameDescription), and execute() hands over the same
+     * shape for a pass a host drives itself.
      *
      * ONE CALL, because nothing here needs the backend: the picture's shape is the CAMERA's (see Camera), the
      * commands are collected and culled with it, and a description can therefore be built without announcing
@@ -490,21 +476,22 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     virtual bool describe(raw_ptr<Scene> scene, PassDescription& out);
 
-    /** @brief Executes this render pass: describes it, then drives the backend through that description.
+    /** @brief Executes this render pass: describes it, then hands the backend the frame that says so.
      *
-     * THE PASS' OWN WIRE, and no longer how a frame runs: the engine compiles a frame into a value and announces
-     * THAT (see RenderEngine::frameDescription), so each pass is described once - by the compile - and a pass that
-     * overrides this method is not called by the engine at all. Whoever wants the engine to run the work must put
-     * it where the engine looks:
+     * THE HOST'S OWN WIRE, and no longer how a frame runs: the engine compiles a frame into a value and hands
+     * THAT over (see RenderEngine::frameDescription), so each pass is described once - by the compile - and a pass
+     * that overrides this method is not called by the engine at all. Whoever wants the engine to run the work must
+     * put it where the engine looks:
      *
      *   * what the pass ISSUES (its target, its viewport, its draws) belongs in @ref describe - that is the
      *     extension point S1 introduced;
      *   * anything that must happen before the frame describes the pass (writing content it then draws) belongs in
      *     the declaration's hook (PassDesc::before_draw), which the compile runs in run order.
      *
-     * What remains for this method is a caller that drives a pass itself - a host drawing one pass into its own
-     * backend, the engine's pre-frame warm-up, a test - and it is exactly "describe, then announce", which is the
-     * same mapping the frame uses (announcePassTo / announceDrawsTo), so both spellings cannot drift.
+     * What remains for this method is a caller that drives one pass itself - a host drawing a pass into its own
+     * backend, a test - and it is exactly "describe, then execute a frame with one pass in it" (see
+     * singlePassFrame): the same shape the engine hands over, through the same entry, so the two spellings cannot
+     * drift. A pass that issues nothing issues nothing here either: no frame is handed over at all.
      *
      * @param scene   Scene containing drawables.
      * @param backend Backend to render with.
@@ -516,7 +503,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *
      * The ONE mapping from the pass' fields to a description, so a subclass states what is DIFFERENT about it
      * (ScreenPass draws a full-screen program instead of collected geometry) without restating what is the same.
-     * The subclass' own "issues nothing at all" gate lives in its describePass, not here: what counts as nothing
+     * The subclass' own "issues nothing at all" gate lives in its describe, not here: what counts as nothing
      * is a property of the kind of pass.
      *
      * @param out Receives the facts.
@@ -524,7 +511,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     void fillPassFacts(PassDescription& out);
 
   private:
-    /** @brief The clear this pass announces, or nothing when it clears nothing (the ONE rule; see announceClear).
+    /** @brief The clear this pass announces, or nothing when it clears nothing (the ONE rule).
      *
      * @return The policy, or nullopt when this pass does not clear.
      */

@@ -382,15 +382,17 @@ TEST(FrameRecorderTest, AScopeThatDrewNothingIsDroppedUnlessItAnnouncedAClear)
     EXPECT_EQ(r.observe.counters().passes, 1u);
 }
 
-TEST(FrameRecorderTest, ScopeAttributesOutsideAScopeAreDroppedRatherThanReported)
+TEST(FrameRecorderTest, ScopeAttributesOutsideAScopeTakeNoEffect)
 {
     Rig r;
     r.open();
 
     const std::vector<RenderCommand> commands = oneCommand();
 
-    // The host may announce state before it opens a scope; the calls are inert, not mistakes. Nothing is
-    // drawn with them, and nothing is reported.
+    // A call with nothing to fill takes NO effect: the recorder answers false and records nothing. There is
+    // nothing to report either - the value the plugin walks states every pass' facts inside that pass (see
+    // FrameDescription), so an announcement with no scope is its driver's bug rather than a picture that came out
+    // wrong, and the driver's own tests are where that is caught.
     EXPECT_FALSE(r.recorder.setPassOrder(4));
     EXPECT_FALSE(r.recorder.setViewport(0, 0, 1, 1));
     EXPECT_FALSE(r.recorder.setClearPolicy(ClearPolicy{}));
@@ -398,8 +400,6 @@ TEST(FrameRecorderTest, ScopeAttributesOutsideAScopeAreDroppedRatherThanReported
     EXPECT_FALSE(r.recorder.setPassInputs(std::span<const RenderTarget* const>{}));
     EXPECT_FALSE(r.recorder.setLights(std::span<const Light* const>{}));
 
-    EXPECT_EQ(r.recorder.protocol().droppedCount(), 6u);
-    EXPECT_EQ(r.recorder.protocol().refusalCount(), 0u);
     EXPECT_TRUE(r.diagnostics.clean());
 
     // ...and the next pass starts from an empty request: none of it leaked.
@@ -415,7 +415,7 @@ TEST(FrameRecorderTest, ScopeAttributesOutsideAScopeAreDroppedRatherThanReported
     EXPECT_TRUE(description.passes[0].inputs.empty());
 }
 
-TEST(FrameRecorderTest, ADrawingCallWithNoScopeIsRefusedAndReportedOncePerFrame)
+TEST(FrameRecorderTest, ADrawingCallWithNoScopeRecordsNothingAtAll)
 {
     Rig r;
     r.open();
@@ -424,19 +424,20 @@ TEST(FrameRecorderTest, ADrawingCallWithNoScopeIsRefusedAndReportedOncePerFrame)
 
     EXPECT_FALSE(r.recorder.render(commands, nullptr));
     EXPECT_FALSE(r.recorder.render(commands, nullptr));
-    EXPECT_EQ(r.recorder.protocol().refusalCount(), 2u);
-    EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::PassProtocolViolation), 1u);  // once per FRAME
-    EXPECT_EQ(r.observe.counters().draws, 0u);  // a refused draw is not counted as a draw
+    EXPECT_EQ(r.observe.counters().draws, 0u);  // a draw with no scope is not a draw
+    EXPECT_TRUE(r.diagnostics.clean());
 
-    // A new frame is a new episode: a host that still has not fixed its bookkeeping is told again.
+    // A new frame is not a new answer either: what has no scope to belong to takes no effect, however often it
+    // arrives - and the frame it arrived in still presents.
     EXPECT_TRUE(r.recorder.endFrame());
     EXPECT_TRUE(r.recorder.swapBuffers());
     r.open(2);
     EXPECT_FALSE(r.recorder.render(commands, nullptr));
-    EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::PassProtocolViolation), 2u);
+    EXPECT_EQ(r.observe.counters().draws, 0u);
+    EXPECT_TRUE(r.diagnostics.clean());
 }
 
-TEST(FrameRecorderTest, ANestedBeginPassIsRefusedAndTheOuterScopeKeepsItsState)
+TEST(FrameRecorderTest, ANestedBeginPassLeavesTheOuterScopeInCharge)
 {
     Rig r;
     r.open();
@@ -445,7 +446,7 @@ TEST(FrameRecorderTest, ANestedBeginPassIsRefusedAndTheOuterScopeKeepsItsState)
 
     EXPECT_TRUE(r.recorder.beginPass(1));
     EXPECT_TRUE(r.recorder.setPassOrder(2));
-    EXPECT_FALSE(r.recorder.beginPass(2));  // refused: the inner pass does not open
+    EXPECT_FALSE(r.recorder.beginPass(2));  // the inner pass does not open
     EXPECT_TRUE(r.recorder.inPass());
 
     // The caller's bookkeeping is off by one scope, so what it says now belongs to the OUTER scope - and
@@ -459,17 +460,16 @@ TEST(FrameRecorderTest, ANestedBeginPassIsRefusedAndTheOuterScopeKeepsItsState)
     ASSERT_EQ(description.passes.size(), 1u);
     EXPECT_EQ(description.passes[0].pass, 1u);
     EXPECT_EQ(description.passes[0].order, 5);
-    EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::PassProtocolViolation), 1u);
 }
 
-TEST(FrameRecorderTest, AnUnpairedEndPassIsRefusedAndReported)
+TEST(FrameRecorderTest, AnUnpairedEndPassTakesNoEffect)
 {
     Rig r;
     r.open();
 
     EXPECT_FALSE(r.recorder.endPass());
-    EXPECT_EQ(r.recorder.protocol().refusalCount(), 1u);
-    EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::PassProtocolViolation), 1u);
+    EXPECT_FALSE(r.recorder.inPass());
+    EXPECT_TRUE(r.diagnostics.clean());
 }
 
 TEST(FrameRecorderTest, AReleasedAnnouncedTargetKillsTheScopeAndNothingIsRedirected)
@@ -483,24 +483,28 @@ TEST(FrameRecorderTest, AReleasedAnnouncedTargetKillsTheScopeAndNothingIsRedirec
 
     EXPECT_TRUE(r.recorder.beginPass(1));
     EXPECT_TRUE(r.recorder.setRenderTarget(&target));
+
+    // A target this scope did NOT announce is somebody else's business: the scope keeps drawing.
+    EXPECT_TRUE(r.recorder.releaseRenderTarget(&other));
+    EXPECT_TRUE(r.recorder.render(commands, nullptr));
+
     EXPECT_TRUE(r.recorder.releaseRenderTarget(&target));  // the announcement is dropped here
-    EXPECT_EQ(r.recorder.protocol().announcedTarget(), nullptr);
 
     // The contract: a call that would still have used the released target is SKIPPED, never redirected to
     // the default framebuffer (the content is missing rather than drawn where nobody asked for it).
     EXPECT_FALSE(r.recorder.render(commands, nullptr));
     EXPECT_FALSE(r.recorder.render(commands, nullptr));
 
-    // A new announcement does not revive the scope: the protocol's rule is that the dropped announcement
-    // ends the scope's useful life, and the recorder honours the verdict instead of working around it.
+    // A new announcement does not revive the scope: the dropped announcement ends the scope's useful life, and
+    // what it configures can never reach a draw of this scope.
     EXPECT_FALSE(r.recorder.setRenderTarget(&other));
 
-    EXPECT_TRUE(r.recorder.endPass());  // the scope drew nothing, so it enters no plan
+    EXPECT_TRUE(r.recorder.endPass());
     const FrameDescription& description = r.seal();
-    EXPECT_TRUE(description.passes.empty());
-    EXPECT_EQ(r.observe.counters().draws, 0u);
-    EXPECT_EQ(r.recorder.protocol().refusalCount(), 2u);
-    EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::PassProtocolViolation), 1u);  // once for this scope
+    ASSERT_EQ(description.passes.size(), 1u) << "the scope still enters the plan: it drew before the release";
+    EXPECT_EQ(description.passes[0].draws.size(), 1u) << "and what arrived after the release is not in it";
+    EXPECT_EQ(r.observe.counters().draws, 1u) << "one draw was collected, and no more";
+    EXPECT_TRUE(r.diagnostics.clean());
 }
 
 TEST(FrameRecorderTest, AnEmptyFrameIsStillAFrameWithItsOwnToken)
@@ -517,13 +521,12 @@ TEST(FrameRecorderTest, AnEmptyFrameIsStillAFrameWithItsOwnToken)
     EXPECT_TRUE(r.recorder.swapBuffers());
     EXPECT_FALSE(r.recorder.inFrame());
 
-    // A second present with no frame open is refused: the contract makes swapBuffers the frame's last call
-    // exactly once.
+    // A second present with no frame open takes no effect: the swap closes the frame it committed, once.
     EXPECT_FALSE(r.recorder.swapBuffers());
-    EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::PassProtocolViolation), 1u);
+    EXPECT_TRUE(r.diagnostics.clean());
 }
 
-TEST(FrameRecorderTest, SwapBuffersInsideAnOpenScopeIsRefused)
+TEST(FrameRecorderTest, SwapBuffersInsideAnOpenScopeTakesNoEffect)
 {
     Rig r;
     r.open();
@@ -531,7 +534,7 @@ TEST(FrameRecorderTest, SwapBuffersInsideAnOpenScopeIsRefused)
     EXPECT_TRUE(r.recorder.beginPass(1));
     EXPECT_FALSE(r.recorder.swapBuffers());
     EXPECT_TRUE(r.recorder.inFrame());  // the frame is still open, and the scope still needs its endPass
-    EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::PassProtocolViolation), 1u);
+    EXPECT_TRUE(r.diagnostics.clean());
 }
 
 TEST(FrameRecorderTest, TheDefaultProgramIsAFrameLevelFactTheCompilerResolves)

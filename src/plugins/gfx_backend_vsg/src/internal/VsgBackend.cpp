@@ -225,7 +225,7 @@ struct VsgBackend::Data
     std::size_t released_textures{0};
     std::size_t released_streams{0};
     std::vector<core::TargetFacts>            facts;          ///< This frame's target table (borrowed rows).
-    std::vector<const vn::graphics::Light*> light_scratch;  ///< Reused by setLights (no per-call allocation).
+    std::vector<const vn::graphics::Light*> light_scratch;  ///< Reused by announceLights (no per-call allocation).
     std::vector<InputImages>                  input_scratch;  ///< Reused per content pass (see recordContent).
     /// One colour-view list per declared input, reused per pass: the InputImages spans point into these, so
     /// they must outlive the record call and must not be reallocated while it runs (see recordContent).
@@ -356,13 +356,8 @@ void VsgBackend::shutdown()
     d->session.shutdown();
 }
 
-void VsgBackend::beginFrame()
+void VsgBackend::openFrameBooks()
 {
-    if (!d->session.initialized())
-    {
-        reportUnserved(kUnservedNoSession);
-        return;
-    }
     // The per-frame storage is brought up to what this frame needs HERE - between frames, where no recording
     // is in progress and the previous frame's bytes can be left behind safely: a storage a frame outgrew is
     // replaced (see the growth note), and so is one the session has LEARNED to be too shallow for the
@@ -375,12 +370,8 @@ void VsgBackend::beginFrame()
     (void)d->recorder.beginFrame(token);  // a protocol violation is the recorder's to report (see its note)
 }
 
-void VsgBackend::endFrame()
+void VsgBackend::closeFrameBooks()
 {
-    if (!d->session.initialized())
-    {
-        return;  // beginFrame() already said so, once
-    }
     (void)d->recorder.endFrame();
     (void)d->recorder.swapBuffers();  // closes the frame's books: endFrame() alone only leaves the pass scope
 
@@ -404,27 +395,62 @@ void VsgBackend::endFrame()
 
 void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame)
 {
-    // THE VALUE, run by the layer that owns the identities: every entry below is this backend's own (see the
-    // header), so a drawing call still reaches the recorder, the content store and the session by the same path
-    // they always did - what changed is only where the frame's shape comes from (one value, not a sequence).
-    for (const vn::graphics::FrameDescription::Pass& pass : frame.passes)
+    if (!d->session.initialized())
     {
-        if (pass.pass == nullptr)
-        {
-            continue;  // a frame's entry always names a pass
-        }
-        beginPass(pass.pass);
-        setPassOrder(pass.order);
-        setPassInputs(pass.inputs);
-        if (pass.description.has_value())
-        {
-            // The pass' own facts and its draws, through the ONE mapping the SDK and this plugin share: the
-            // attribute order the recorder's protocol expects is that mapping's business, not this loop's.
-            vn::graphics::announcePassTo(*pass.description, this);
-            vn::graphics::announceDrawsTo(*pass.description, this);
-        }
-        endPass();
+        reportUnserved(kUnservedNoSession);
+        return;  // nothing runs and nothing presents: the session that would record it is not up
     }
+
+    // THE VALUE, run by the layer that owns the identities, in the order the value states. What the engine
+    // compiled arrives as data (see FrameDescription), so the frame's own shape is what drives this loop - and
+    // every call below is this backend's own piece of work, which is why the picture (and the plan) come out the
+    // same whether the frame came from the engine or from a host driving one pass (RenderPass::execute).
+    openFrameBooks();
+    for (const vn::graphics::FrameDescription::Pass& entry : frame.passes)
+    {
+        if (entry.pass == nullptr)
+        {
+            continue;  // a frame's entry always names a pass; a null one is nothing to run
+        }
+        openPassScope(entry.pass);
+        announcePassOrder(entry.order);
+        announcePassInputs(entry.inputs);
+        if (entry.description.has_value())
+        {
+            const vn::graphics::PassDescription& description = *entry.description;
+            announceTarget(description.target);
+            if (description.viewport.has_value())
+            {
+                announceViewport(*description.viewport);
+            }
+            if (description.clear.has_value())
+            {
+                announceClear(*description.clear);
+            }
+            announcePassState(description.state);
+            for (const vn::graphics::DrawDescription& draw : description.draws)
+            {
+                if (draw.lights.has_value())
+                {
+                    announceLights(*draw.lights);
+                }
+                if (draw.camera == nullptr)
+                {
+                    continue;  // a drawing call with no view is no call at all (see DrawDescription)
+                }
+                if (draw.kind == vn::graphics::DrawDescription::Kind::Screen)
+                {
+                    collectScreenDraw(draw.source, draw.program.get(), draw.camera);
+                }
+                else if (draw.commands != nullptr)
+                {
+                    collectContentDraw(*draw.commands, draw.camera);
+                }
+            }
+        }
+        closePassScope();
+    }
+    closeFrameBooks();
 }
 
 void VsgBackend::swapBuffers()
@@ -572,6 +598,22 @@ void VsgBackend::setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
 {
     if (target == nullptr)
     {
+        return;  // the default framebuffer needs no announcement: a frame that names no target draws into it
+    }
+
+    // The host's own target, configured before any frame draws into it: held, and built as far as its description
+    // allows (see HostTargets - the resize / rebuild after that is the plan's answer, applied by the executor).
+    // OUTSIDE a frame this is CONFIGURATION and says nothing: a borrow whose lender is announced later in that
+    // setup is order, not failure (the engine's own pipeline does exactly that - measured on the demo, the
+    // composite arrives before its G-buffer). A frame that then draws into a target no objects were made for is
+    // reported by the pass that names it (see announceTarget), where a picture depends on it.
+    (void)adoptHostTarget(target, /*picture_depends*/ false);
+}
+
+void VsgBackend::announceTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
+{
+    if (target == nullptr)
+    {
         if (d->recorder.inPass())
         {
             (void)d->recorder.setRenderTarget(nullptr);  // the default framebuffer, spelled as the plan does
@@ -579,59 +621,63 @@ void VsgBackend::setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
         return;
     }
 
-    // The host's own target: its description is copied and its objects are built the first time the description
-    // can make them (see HostTargets - the resize / rebuild after that is the plan's answer, applied by the
-    // executor). A target this backend cannot build is REPORTED once rather than silently redirected to the
-    // window: a picture drawn where the host never asked for it is worse than one that did not arrive (the
-    // same rule the SDK's releaseRenderTarget note states for a target that went away mid-scope).
-    const HostTargets::Ensured ensured =
-        d->targets.ensure(*target, detail::SessionContentAccess::device(d->session));
-    if (ensured.state == HostTargets::State::Ready)
-    {
-        ensured.entry->report.rearm();  // the condition ended: the same breakage reports again
-    }
-    else if (ensured.state != HostTargets::State::NotBuilt && d->recorder.inFrame() &&
-             ensured.entry->report.shouldReport())
-    {
-        // NOT "NotBuilt", which is not a failure: a host configures a target before it draws into it (and the
-        // executor reports the passes that needed one that was never completed). What is reported is the
-        // description that cannot become objects at all - a missing lender, or a build that failed - and it is
-        // reported INSIDE a frame, where it blocks the picture. OUTSIDE one the announcement is configuration:
-        // the engine announces the window pass' target before the passes that write its lender (measured: the
-        // demo's composite arrives before its G-buffer), and a borrow whose lender comes later in the setup is
-        // order, not failure - a frame that then needs it is reported by the executor. The targets are NAMED
-        // (the SDK's own label, see RenderTarget::setName): "a target could not be built" is a sentence a
-        // host cannot act on, and the pipeline builder names everything it creates.
-        std::string message;
-        if (ensured.state == HostTargets::State::DepthSourceMissing)
-        {
-            // The lender is read from the target itself (shareDepth keeps it alive), so this works whether or
-            // not it was ever announced - which is exactly the case being reported.
-            message = nameOf(target) + " borrows its depth from " + nameOf(target->depthSource()) +
-                      ", which this backend does not hold: it is not built, and the passes that draw into it "
-                      "are skipped (the lender must be announced first)";
-        }
-        else
-        {
-            message = nameOf(target) +
-                      " could not be built (its images, render pass or readback buffer failed to create, or "
-                      "its description is not a target): the passes that draw into it are skipped";
-        }
-        reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
-                         vn::graphics::DiagnosticCategory::TargetBuildFailed, vn::String::fromUtf8(message));
-    }
-
-    if (ensured.entry->target != nullptr)
-    {
-        d->executor.addTarget(target, ensured.entry->target.get(), target->name().as_std_str().c_str());
-    }
+    // A pass of THIS frame draws into it, so a description that cannot become objects at all blocks the picture
+    // and is reported once (see adoptHostTarget). The target is held either way, whether or not it could be
+    // built yet.
+    (void)adoptHostTarget(target, d->recorder.inFrame());
     if (d->recorder.inPass())
     {
         (void)d->recorder.setRenderTarget(target);  // the plan's identity for it: the host's own object
     }
 }
 
-void VsgBackend::beginPass(vn::raw_ptr<const vn::graphics::RenderPass> pass)
+bool VsgBackend::adoptHostTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, bool picture_depends)
+{
+    const HostTargets::Ensured ensured = d->targets.ensure(*target, detail::SessionContentAccess::device(d->session));
+    if (ensured.state == HostTargets::State::Ready)
+    {
+        ensured.entry->report.rearm();  // the condition ended: the same breakage reports again
+    }
+    else if (ensured.state != HostTargets::State::NotBuilt && picture_depends &&
+             ensured.entry->report.shouldReport())
+    {
+        reportUnbuildableTarget(target, ensured.state == HostTargets::State::DepthSourceMissing);
+    }
+
+    if (ensured.entry->target != nullptr)
+    {
+        d->executor.addTarget(target, ensured.entry->target.get(), target->name().as_std_str().c_str());
+    }
+    return ensured.entry->target != nullptr;
+}
+
+void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, bool depth_source_missing)
+{
+    // What is reported is the description that cannot become objects at all - a missing lender, or a build that
+    // failed - and never "NotBuilt", which is not a failure: a host configures a target before it draws into it
+    // (and the executor reports the passes that needed one that was never completed). The targets are NAMED (the
+    // SDK's own label, see RenderTarget::setName): "a target could not be built" is a sentence a host cannot act
+    // on, and the pipeline builder names everything it creates.
+    std::string message;
+    if (depth_source_missing)
+    {
+        // The lender is read from the target itself (shareDepth keeps it alive), so this works whether or
+        // not it was ever announced - which is exactly the case being reported.
+        message = nameOf(target) + " borrows its depth from " + nameOf(target->depthSource()) +
+                  ", which this backend does not hold: it is not built, and the passes that draw into it "
+                  "are skipped (the lender must be announced first)";
+    }
+    else
+    {
+        message = nameOf(target) +
+                  " could not be built (its images, render pass or readback buffer failed to create, or "
+                  "its description is not a target): the passes that draw into it are skipped";
+    }
+    reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                     vn::graphics::DiagnosticCategory::TargetBuildFailed, vn::String::fromUtf8(message));
+}
+
+void VsgBackend::openPassScope(vn::raw_ptr<const vn::graphics::RenderPass> pass)
 {
     if (pass == nullptr)
     {
@@ -640,23 +686,19 @@ void VsgBackend::beginPass(vn::raw_ptr<const vn::graphics::RenderPass> pass)
     const core::PassId id = d->passes.adopt(pass);
     if (d->recorder.inFrame())
     {
-        // Refusing (a nested scope) is the protocol's to judge and report; this layer has no rules of its
-        // own (see the header).
         (void)d->recorder.beginPass(id);
     }
-    // With no frame open nothing is collected: that is the engine's pre-frame warm-up, whose pass scopes
-    // are inert by contract (see the SDK's beginPass note) - the identity above is what survives it.
 }
 
-void VsgBackend::endPass()
+void VsgBackend::closePassScope()
 {
     if (d->recorder.inFrame())
     {
-        (void)d->recorder.endPass();  // a scope-less endPass is the protocol's to report
+        (void)d->recorder.endPass();
     }
 }
 
-void VsgBackend::setPassOrder(int order)
+void VsgBackend::announcePassOrder(int order)
 {
     if (d->recorder.inPass())
     {
@@ -664,28 +706,28 @@ void VsgBackend::setPassOrder(int order)
     }
 }
 
-void VsgBackend::setViewport(int x, int y, int width, int height)
+void VsgBackend::announceViewport(const vn::graphics::Viewport& viewport)
 {
     if (d->recorder.inPass())
     {
-        (void)d->recorder.setViewport(x, y, width, height);
+        (void)d->recorder.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
     }
 }
 
-void VsgBackend::setLights(const std::vector<vn::raw_ptr<const vn::graphics::Light>>& lights)
+void VsgBackend::announceLights(const std::vector<vn::raw_ptr<const vn::graphics::Light>>& lights)
 {
     if (!d->recorder.inPass())
     {
         return;
     }
-    // raw_ptr<T> IS T* (see vine/raw_ptr.hpp), so the announcement's pointers are the plan's spelling as
+    // raw_ptr<T> IS T* (see vine/raw_ptr.hpp), so the draw's pointers are the plan's spelling as
     // they are - only the container has to become a span, and the scratch vector keeps that from being an
     // allocation per pass per frame.
     d->light_scratch.assign(lights.begin(), lights.end());
     (void)d->recorder.setLights(d->light_scratch);
 }
 
-void VsgBackend::setPassInputs(const std::vector<vn::raw_ptr<vn::graphics::RenderTarget>>& inputs)
+void VsgBackend::announcePassInputs(const std::vector<vn::raw_ptr<vn::graphics::RenderTarget>>& inputs)
 {
     if (!d->recorder.inPass())
     {
@@ -706,7 +748,7 @@ void VsgBackend::setPassInputs(const std::vector<vn::raw_ptr<vn::graphics::Rende
     (void)d->recorder.setPassInputs(inputs);
 }
 
-void VsgBackend::setPassState(const vn::graphics::PassRenderState& state)
+void VsgBackend::announcePassState(const vn::graphics::PassRenderState& state)
 {
     if (d->recorder.inPass())
     {
@@ -714,7 +756,7 @@ void VsgBackend::setPassState(const vn::graphics::PassRenderState& state)
     }
 }
 
-void VsgBackend::setClearPolicy(const vn::graphics::ClearPolicy& policy)
+void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
 {
     if (!d->recorder.inPass())
     {
@@ -734,12 +776,12 @@ void VsgBackend::setClearPolicy(const vn::graphics::ClearPolicy& policy)
     (void)d->recorder.setClearPolicy(translated);
 }
 
-void VsgBackend::render(const std::vector<vn::graphics::RenderCommand>& commands,
-                        const vn::graphics::Camera*                      camera)
+void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
+                                    const vn::graphics::Camera*                      camera)
 {
     if (!d->recorder.inFrame())
     {
-        return;  // the engine's pre-frame warm-up executes pass scopes outside any frame: nothing to collect
+        return;  // nothing is collected outside a frame
     }
     if (d->store == nullptr)
     {
@@ -748,7 +790,7 @@ void VsgBackend::render(const std::vector<vn::graphics::RenderCommand>& commands
         reportUnserved(kUnservedDraw);
         return;
     }
-    // What the commands name becomes the store's live content: the objects are borrowed for the call, and
+    // What the commands name becomes the store's live content: the objects are borrowed for the frame, and
     // the tables must answer for them when the plan (which copies their identities) is recorded - including
     // after the host has dropped its own handle (the store owns a share, see its note).
     for (const vn::graphics::RenderCommand& command : commands)
@@ -765,16 +807,16 @@ void VsgBackend::render(const std::vector<vn::graphics::RenderCommand>& commands
     }
     // The picture's shape is the CAMERA's (see Camera), and the recorder reads it from the same camera when it
     // builds the view block - one number, read by culling and projection alike, so they cannot drift.
-    (void)d->recorder.render(commands, camera);  // refusing (no scope, a released target) is the protocol's
+    (void)d->recorder.render(commands, camera);  // refusing (a released target) is the recorder's to report
 }
 
-void VsgBackend::drawScreenProgram(vn::graphics::RenderTarget*                     source,
+void VsgBackend::collectScreenDraw(vn::graphics::RenderTarget*                     source,
                                    vn::raw_ptr<const vn::graphics::ShaderProgram> program,
                                    vn::raw_ptr<const vn::graphics::Camera>        camera)
 {
     if (!d->recorder.inFrame())
     {
-        return;  // the engine's warm-up executes pass scopes outside any frame: nothing to collect
+        return;  // nothing is collected outside a frame
     }
     if (d->store != nullptr)
     {
@@ -783,7 +825,7 @@ void VsgBackend::drawScreenProgram(vn::graphics::RenderTarget*                  
         trackProgram(d->store.get(), vn::intrusive_ptr<const vn::graphics::ShaderProgram>(program));
     }
     // The source is an IDENTITY here, exactly like a content draw's program: which images it offers was
-    // announced with the pass' inputs (setPassInputs), and the content layer resolves it among them.
+    // announced with the pass' inputs (the value's resolved `inputs`), and the content layer resolves it among them.
     (void)d->recorder.drawScreenProgram(source, program, camera);
 }
 

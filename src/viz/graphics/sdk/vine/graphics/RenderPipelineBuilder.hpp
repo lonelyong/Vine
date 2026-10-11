@@ -267,7 +267,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * directionalShadowMatrix, states that matrix on the map (RenderTarget::setProducerViewProjection)
      * and draws the content at PipelineStage::Depth, so it runs before anything that samples it. The
      * caller declares the map as an INPUT on the pass that shades with it, which is what makes the
-     * backend bind it (RenderEngine::resolvePassInputs -> RenderBackend::setPassInputs).
+     * backend bind it (the engine resolves the declaration into the frame value's inputs).
      *
      * @param pipeline      Pipeline the pass is registered on.
      * @param shadow_light  The light that casts it (enabled, castShadow, directional).

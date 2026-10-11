@@ -34,7 +34,7 @@ graph TB
 ```
 
 `RenderEngine` 从不直接调用 Vulkan：它把这一帧**编译成一个值**（每条 pass 的目标、状态、绘制与解析好的接线），
-再按顺序把这个值宣告给后端。
+再把**整个值一次**交给后端（`RenderBackend::executeFrame`）。
 后端**按名字**创建，因此宿主对后端及其第三方库没有编译期依赖：
 
 ```cpp
@@ -100,8 +100,8 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   order 决定先后。
   - **扩展点有两个，`execute()` 不是其中之一**：这一条 pass 要"发什么"写在 `describe(scene, out)`（引擎编译这一帧时
     调它一次，填 target / viewport / 清屏 / 状态 / 绘制调用）、要"先做什么"（写内容，比如 HUD 自更新）写在声明的
-    `before_draw` 钩子里。**引擎不调 `execute()`** —— 它是"宿主自己驱动一条 pass"（或预热、测试）时才用的拼写：内部就是
-    "描述 → 按契约宣告"，与帧内部走的是同一段映射（`announcePassTo` / `announceDrawsTo`）。覆写 `execute()` 想让引擎跑的
+    `before_draw` 钩子里。**引擎不调 `execute()`** —— 它是"宿主自己驱动一条 pass"（或测试）时才用的拼写：内部就是
+    "描述 → 把只含这一条 pass 的帧值交给后端"（`singlePassFrame`），与引擎整帧交出去的是**同一个形状**。覆写 `execute()` 想让引擎跑的
     pass 必须把活搬到上面两处，否则它会**静默不跑**。
 - `ScreenPass` —— `RenderPass` 子类，全屏 / 画中画。**必须命名 program**（没有隐式着色，也没有
   隐式拷贝）：
@@ -127,7 +127,8 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   只持有引用会让被丢掉的 pass 继续每帧执行）。
 - **顺序用阶段说**（`PipelineStage` + `pipelineStageOrder`）：阴影深度、几何、效果、着色、透明、
   呈现、HUD、预览各占一个档位，效果按"我在谁之前"进入，不去抢别人的魔数。
-- `RenderBackend` —— 设备边界（窗口层、逐 pass `render()`、回读、诊断）。`RenderBackendRegistry` /
+- `RenderBackend` —— 设备边界（窗口层、整帧 `executeFrame()`、回读、诊断；目标/资源公告与观测入口见
+  `.ai/design/graphics-redesign.md`）。`RenderBackendRegistry` /
   `RenderBackendFactory` 让插件自注册、宿主按名字创建。
 
 ### 2.5 每帧数据流
@@ -146,9 +147,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
    （只有宿主自己放手才算删除，细节见 `backend.md` §5.5）。
    > **一条 pass 每帧只被描述一次**，而且**引擎不会调它的 `execute()`**：想让引擎跑自己的活，就把"发什么"
    > 放进 `RenderPass::describe()`、把"先做什么"放进声明的 `before_draw` 钩子（见 §2.4 的 `RenderPass` 段）。
-3. 然后把这个值**整帧交给后端**（`RenderBackend::executeFrame(frame)`）：默认实现就是"按顺序把值宣告成逐条调用"
-   （pass 作用域 + 它的 target / viewport / 清屏 / 状态 + 每条绘制调用），所以后端什么都不用改；
-   **想直接从值构建**（保留式渲染器建图、离线渲染器遍历）的后端覆写这一个入口即可，逐条调用它一份都收不到。
+3. 然后把这个值**整帧交给后端**（`RenderBackend::executeFrame(frame)`）：后端拿到的就是全部 —— 每条 pass 的身份、
+   order、解析好的输入，以及它发出的 target / viewport / 清屏 / 状态与每一条绘制调用。**没有 per-call 的平坦入口、
+   也没有"没开 scope 时设置是惰性"这套顺序规则**：值的形状就是帧的形状，宣告不出岔子。
    后端把每个 `RenderCommand` 物化成后端对象。在 vsg 后端里就是每个 drawable 一条保留的
    `MatrixTransform` → `StateGroup` → bind/draw 命令链，只在其输入（`geometry->revision()`、
    material、texture、resolved state、program）变化时重建。

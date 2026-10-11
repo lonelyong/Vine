@@ -18,7 +18,6 @@
 #include <vine/graphics/backend/FrameArena.hpp>
 #include <vine/graphics/backend/Keys.hpp>
 #include <vine/graphics/backend/Observe.hpp>
-#include <vine/graphics/backend/Protocol.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**
@@ -38,10 +37,19 @@
  *     by who called whom (see FrameCompiler), so what arrives has to survive until the end of the frame
  *     even though the host's containers do not.
  *
- * WHAT THIS TYPE DECIDES: whether a call is legal and whether it takes effect (that question belongs to
- * Protocol, which this type holds), and what the call means as data. WHAT IT NEVER DECIDES: rebuilds,
- * resizes, borrowing, scheduling, caching, or what any of it costs - those are the compiler's and the
- * resource manager's answers, and a recorder that started giving them would be the second backend.
+ * WHAT THIS TYPE DECIDES: what the call means as data, and whether there is a place for it (a frame to belong
+ * to, a scope to fill). WHAT IT NEVER DECIDES: rebuilds, resizes, borrowing, scheduling, caching, or what any of
+ * it costs - those are the compiler's and the resource manager's answers, and a recorder that started giving them
+ * would be the second backend.
+ *
+ * WHAT IT NO LONGER JUDGES. A frame is a VALUE now (FrameDescription), so the sequence this type is driven with
+ * cannot be wrong: the layer that drives it - the plugin's own walk over the value - states each pass once, in run
+ * order, which is exactly the shape of the entries below. There is therefore no state machine here and no
+ * reporting: a call that has no frame or no scope to belong to takes NO EFFECT (and answers false, so a caller
+ * that cares can see it), and nothing about it is a mistake to report - the call is either the value's own shape
+ * or a bug in its driver, and the driver's tests are where that is caught. The one rule kept is the contract's
+ * about a RELEASED TARGET: a scope whose announced target was released no longer has a picture to record, so its
+ * remaining effects are dropped and its draws are skipped rather than redirected to the default framebuffer.
  *
  * THE CONSUMPTION RULES (from the contract, and the reason the pictures come out right):
  *   * SCOPE ATTRIBUTES belong to the pass and are dropped at endPass(): the render target, the stacking
@@ -59,13 +67,12 @@
  *   * PASS INPUTS are a property of the pass (the engine announces them once per pass and says so), so
  *     they are not consumed by a drawing call.
  *
- * FRAME-LEVEL SETTINGS ARE NOT PUT THROUGH THE STATE MACHINE. setDefaultContentProgram() is legal in
- * every state, so there is no question for Protocol to answer; asking would add a CallKind that can only
- * ever answer "Allow". Everything whose legality DOES depend on the state - the pass scope, the drawing
- * calls, releasing a target - goes through Protocol first.
+ * FRAME-LEVEL SETTINGS ARE LEGAL IN EVERY STATE. setDefaultContentProgram() is a fact the compiler resolves, and
+ * releasing a target is the caller telling this layer a resource is going away - neither is about a scope, so
+ * neither is refused; releasing one a scope announced drops that announcement (see above).
  *
  * WHAT IT COUNTS: the pass scopes that enter the plan and the drawing calls collected (Observe, the one
- * place a phase gates on), plus whatever Protocol counted. There is deliberately no second tally here.
+ * place a phase gates on). There is deliberately no second tally here.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -92,7 +99,8 @@ struct InputRef
 
 /** @brief One light as the frame remembers it: its numbers, never the borrowed pointer.
  *
- * A light is borrowed for the duration of setLights(), so a plan that kept the pointer would read freed
+ * A light is borrowed for the duration of the call that announces it (a drawing call's lights), and a plan that
+ * kept the pointer would read freed
  * memory - the host is free to destroy the light, and the scene it belongs to, before the frame is
  * recorded. The fields here are what the shading block is built from (see VsgLights).
  */
@@ -210,10 +218,10 @@ class VN_GRAPHICS_API FrameRecorder
     FrameRecorder(const FrameRecorder&)            = delete;
     FrameRecorder& operator=(const FrameRecorder&) = delete;
 
-    /** @brief Opens a frame: resets the arena, re-arms the protocol's per-frame episodes.
+    /** @brief Opens a frame: resets the arena and starts the frame's own books.
      *
      * @param token Token the timeline minted for this frame.
-     * @return true when the frame opened; false when one was already open (refused and reported).
+     * @return true when the frame opened; false when one was already open (the call takes no effect).
      */
     bool beginFrame(FrameToken token);
 
@@ -232,7 +240,8 @@ class VN_GRAPHICS_API FrameRecorder
     /** @brief Opens a pass scope.
      *
      * @param pass Identity of the pass about to run.
-     * @return true when the scope opened; false when it was refused (no frame, or a scope already open).
+     * @return true when the scope opened; false when there is no frame to belong to or a scope is already open
+     *         (the inner scope does not open, and the outer one keeps its state).
      */
     bool beginPass(PassId pass);
 
@@ -307,7 +316,7 @@ class VN_GRAPHICS_API FrameRecorder
      */
     bool render(std::span<const vn::graphics::RenderCommand> commands, const vn::graphics::Camera* camera);
 
-    /** @brief Collects a full-screen program drawing call (the SDK's drawScreenProgram()).
+    /** @brief Collects a full-screen program drawing call (the screen kind of a frame's draw).
      *
      * @param source  Target whose colour attachments are sampled.
      * @param program Fragment program to draw with.
@@ -346,14 +355,8 @@ class VN_GRAPHICS_API FrameRecorder
     /** @brief Gets whether a pass scope is open. */
     [[nodiscard]] bool inPass() const noexcept;
 
-    /** @brief Gets the state machine that judged these calls (refusals, drops, the released target). */
-    [[nodiscard]] const Protocol& protocol() const noexcept;
-
 
   private:
-    /** @brief Reports a refusal through the one route, with the numbers involved. */
-    void reportRefusal(CallKind kind);
-
     /** @brief Copies @p lights into the arena and makes them the pending announcement. */
     void snapshotLights(std::span<const vn::graphics::Light* const> lights);
 
@@ -369,12 +372,14 @@ class VN_GRAPHICS_API FrameRecorder
     FrameArena& arena_;         ///< The frame's storage (reset in beginFrame).
     Diagnostics& diagnostics_;  ///< The one diagnostic route.
     Observe&    observe_;       ///< The counters a phase gates on.
-    Protocol    protocol_;      ///< The state machine every state-dependent call goes through.
+    bool        frame_open_{false};            ///< A frame is being collected (see beginFrame / swapBuffers).
+    bool        pass_open_{false};             ///< A pass scope is open (see beginPass / endPass).
+    const void* scope_target_{nullptr};        ///< The target the open scope announced, or nullptr.
+    bool        scope_target_released_{false}; ///< That target was released while the scope was open.
 
     FrameToken  token_{};                        ///< The open frame.
     ProgramRef  default_program_{};              ///< Frame-level default program (kept across frames).
 
-    bool        pass_open_{false};               ///< Whether a scope is being collected.
     PassId      pass_id_{0};                     ///< Identity of the open scope's pass.
     int         order_{0};                       ///< Order announced for the open scope.
     const void* pass_target_{nullptr};           ///< Target announced for the open scope.

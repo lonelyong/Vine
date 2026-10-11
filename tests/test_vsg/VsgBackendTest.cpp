@@ -45,6 +45,7 @@
 #endif
 
 #include "SdkPixelFixture.hpp"
+#include "TestFrame.hpp"
 #include "TestHostWindow.hpp"
 
 using vn::graphics::Geometry;
@@ -322,8 +323,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     // 1. Nothing is up before initialize(), and a frame asked for anyway SAYS so instead of vanishing.
     EXPECT_FALSE(backend->initialized());
     EXPECT_EQ(backend->nativeHandle(), nullptr) << "this backend owns its window: there is no host surface";
-    backend->beginFrame();
-    backend->endFrame();
+    backend->executeFrame(vn::graphics::FrameDescription{});
     backend->swapBuffers();
     EXPECT_EQ(backend->framesPresented(), 0U);
     EXPECT_EQ(backend->diagnosticCount(), 1U) << "one report for the frame that had no session";
@@ -335,8 +335,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     EXPECT_TRUE(backend->initialized());
     for (int index = 0; index < 3; ++index)
     {
-        backend->beginFrame();
-        backend->endFrame();
+        backend->executeFrame(vn::graphics::FrameDescription{});
         backend->swapBuffers();
     }
     EXPECT_EQ(backend->framesPresented(), 3U);
@@ -392,17 +391,15 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     EXPECT_EQ(BackendContentAccess::targets(*backend).live(), 0U);
     EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U) << "holding and releasing a target is served";
 
-    // 5. The protocol still judges: a DRAWING call with no scope open has nothing to belong to, so the
-    // plan's recorder refuses it and says so - once per frame, because a host that lost its scopes hits this
-    // on every pass. The frame is still a frame (it presents), it just has nothing in it.
-    backend->beginFrame();
-    backend->render({}, nullptr);
-    backend->render({}, nullptr);
-    backend->endFrame();
+    // 5. A pass that issues NOTHING is an entry with no description: the frame still runs and presents, and
+    //    nothing is reported - there is no call sequence left to lose track of (see RenderBackend::executeFrame).
+    //    A pass that was never announced to the engine is exactly this shape.
+    const vn::intrusive_ptr<RenderPass> quiet(new RenderPass());
+    backend->executeFrame(TestFrame().pass(quiet.get()).value());
     backend->swapBuffers();
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U + 1U)
-        << "the first scope-less draw is refused out loud, the second is the same episode";
-    EXPECT_EQ(backend->framesPresented(), 4U) << "a frame whose draws were all refused still presents";
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U)
+        << "a pass that issues nothing is not a mistake, and nothing needs saying about it";
+    EXPECT_EQ(backend->framesPresented(), 4U) << "and the frame it was part of still presents";
 
     // 6. The announced size is the SURFACE's, and this backend FOLLOWS the surface it is on (the SDK's
     // authority order: surface > announcement > default). Following re-reads the window and rebuilds its
@@ -411,7 +408,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     // the only way this layer can apply it to a window of its own (see the registered limit in the design
     // notes).
     backend->resize(320, 180);
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U + 1U) << "a live resize is served now";
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U) << "a live resize is served now";
     EXPECT_EQ(backend->deviceWaits(), 1U) << "following the surface rebuilds the swapchain, and that stops it";
 
     ASSERT_TRUE(backend->initialize()) << "re-initializing tears the old session down first (the SDK's contract)";
@@ -420,8 +417,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     ASSERT_NE(window, nullptr);
     EXPECT_EQ(window->width(), 320U) << "the announcement is what the new session's window came up at";
     EXPECT_EQ(window->height(), 180U);
-    backend->beginFrame();
-    backend->endFrame();
+    backend->executeFrame(vn::graphics::FrameDescription{});
     backend->swapBuffers();
     EXPECT_EQ(backend->framesPresented(), 1U);
 
@@ -431,8 +427,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     EXPECT_FALSE(backend->initialized());
     backend->shutdown();
     ASSERT_TRUE(backend->initialize());
-    backend->beginFrame();
-    backend->endFrame();
+    backend->executeFrame(vn::graphics::FrameDescription{});
     backend->swapBuffers();
     EXPECT_EQ(backend->framesPresented(), 1U);
     backend->shutdown();
@@ -452,8 +447,7 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameCounters)
 
     // An EMPTY frame still answers: the counters exist, and they describe a frame that recorded nothing.
     // (A backend that kept none would answer false - that distinction is what the bool is for.)
-    backend->beginFrame();
-    backend->endFrame();
+    backend->executeFrame(vn::graphics::FrameDescription{});
     backend->swapBuffers();
 
     vn::graphics::FrameCounters counters;
@@ -468,15 +462,14 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameCounters)
     const vn::intrusive_ptr<vn::graphics::Camera> camera  = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
 
-    backend->beginFrame();
-    backend->beginPass(pass.get());
-    backend->setPassOrder(0);
-    backend->setRenderTarget(nullptr);
-    backend->setClearPolicy(vn::graphics::ClearPolicy{ vn::Color(0, 64, 0, 255), true });
-    backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
-    backend->render(fixture.commands, camera.get());
-    backend->endPass();
-    backend->endFrame();
+    backend->executeFrame(TestFrame()
+        .pass(pass.get())
+        .order(0)
+        .target(nullptr)
+        .clear(vn::graphics::ClearPolicy{ vn::Color(0, 64, 0, 255), true })
+        .depth(vn::graphics::DepthMode::TestAndWrite)
+        .content(fixture.commands, camera.get())
+        .value());
     backend->swapBuffers();
 
     ASSERT_TRUE(backend->frameCounters(counters));
@@ -500,13 +493,12 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameCounters)
     EXPECT_EQ(progress.inFlight(), progress.submitted - progress.completed);
 
     // One more frame, drawn this time: it reaches the queue, so the submitted watermark moves by one.
-    backend->beginFrame();
-    backend->beginPass(pass.get());
-    backend->setPassOrder(0);
-    backend->setRenderTarget(nullptr);
-    backend->render(fixture.commands, camera.get());
-    backend->endPass();
-    backend->endFrame();
+    backend->executeFrame(TestFrame()
+        .pass(pass.get())
+        .order(0)
+        .target(nullptr)
+        .content(fixture.commands, camera.get())
+        .value());
     backend->swapBuffers();
 
     const std::uint64_t submitted_before = progress.submitted;
@@ -549,8 +541,7 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
     EXPECT_EQ(backend->nativeHandle(), host.handle());
     for (int index = 0; index < 2; ++index)
     {
-        backend->beginFrame();
-        backend->endFrame();
+        backend->executeFrame(vn::graphics::FrameDescription{});
         backend->swapBuffers();
     }
     EXPECT_EQ(backend->framesPresented(), 2U);
@@ -563,8 +554,7 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
     backend->setWindowHandle(second.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->nativeHandle(), second.handle());
-    backend->beginFrame();
-    backend->endFrame();
+    backend->executeFrame(vn::graphics::FrameDescription{});
     backend->swapBuffers();
     EXPECT_EQ(backend->framesPresented(), 3U) << "a move keeps the session: the frames it presented are still there";
     EXPECT_TRUE(host.alive()) << "the window the session moved OFF is the host's, and stays the host's";
@@ -657,15 +647,14 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     const vn::graphics::ClearPolicy clear{ vn::Color(0, 64, 0, 255), true };
 
     const auto drive = [&](const vn::graphics::Camera* frame_camera) {
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->setClearPolicy(clear);
-        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
-        backend->render(commands, frame_camera);
-        backend->endPass();
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(nullptr)
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::TestAndWrite)
+            .content(commands, frame_camera)
+            .value());
         backend->swapBuffers();
     };
     // The display path lags the session's presents, so a picture is read after a couple more frames that
@@ -677,36 +666,27 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
         drive(frame_camera);
     };
 
-    // 1. The engine's PRE-FRAME WARM-UP: every enabled non-clearing pass executes once with NO frame open so
-    // a backend can prepare its retained state. That is designed, not a protocol error - nothing is
-    // collected and nothing is reported - and the pass' identity survives it into the frames that follow.
-    backend->beginPass(pass.get());
-    backend->setPassOrder(-1);
-    backend->setRenderTarget(nullptr);
-    backend->setClearPolicy(clear);
-    backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
-    backend->render(commands, camera_a.get());
-    backend->endPass();
-    EXPECT_EQ(backend->diagnosticCount(), 0U) << "a warm-up is designed, not a protocol error";
-    EXPECT_EQ(backend->framesPresented(), 0U) << "it draws nothing: no frame was open";
-    EXPECT_EQ(seen, 0U);
-
     PassRegistry&    registry = BackendContentAccess::passes(*backend);
     ContentAssembly* assembly = BackendContentAccess::assembly(*backend);
     ASSERT_NE(assembly, nullptr) << "a live session owns the content world its frames assemble";
-    EXPECT_TRUE(registry.contains(pass.get())) << "the warm-up's pass is known before any frame";
-    EXPECT_EQ(registry.live(), 1U);
+    EXPECT_FALSE(registry.contains(pass.get())) << "nothing knows the pass before a frame names it";
+    EXPECT_EQ(registry.live(), 0U);
+    EXPECT_EQ(backend->framesPresented(), 0U);
 
-    // 2. A real frame, the SDK's order: the triangle through camera A lands LEFT of centre (the camera looks
-    // half a unit to its right). Every object the command names is tracked when the call arrives, so the
-    // tables answer for all of them when the plan records.
+    // 1. A frame, the SDK's order: the triangle through camera A lands LEFT of centre (the camera looks
+    // half a unit to its right). Every object the command names is tracked when the frame is run, so the
+    // tables answer for all of them when the plan records - and the pass' identity is the frame's, adopted
+    // from the entry that named it (the engine's pre-frame warm-up, which used to register it before any
+    // frame, is gone: the frame IS the moment a pass is known).
     drive(camera_a.get());
     EXPECT_EQ(backend->framesPresented(), 1U);
-    EXPECT_EQ(backend->diagnosticCount(), 0U) << "the pass protocol and the content path are served now";
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "the pass path and the content path are served now";
+    EXPECT_TRUE(registry.contains(pass.get())) << "the frame's entry made the pass known";
+    EXPECT_EQ(registry.live(), 1U);
     const auto& recorded = BackendContentAccess::executor(*backend).recorded();
     ASSERT_EQ(recorded.size(), 1U);
     EXPECT_EQ(recorded[0], registry.adopt(pass.get()))
-        << "the frame records the pass the warm-up announced, under the same identity";
+        << "the frame records the pass its entry named, under that identity";
 
     settle(camera_a.get());
     const auto left_a = host.waitForPixel(kWidth / 4, kHeight / 2, arrived,
@@ -750,8 +730,8 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     backend->releasePass(pass.get());
     EXPECT_FALSE(registry.contains(pass.get()));
     EXPECT_EQ(registry.live(), 0U);
-    backend->beginPass(pass.get());
-    EXPECT_NE(registry.adopt(pass.get()), first_id) << "a re-announced pass gets a new identity";
+    EXPECT_NE(registry.adopt(pass.get()), first_id)
+        << "a pass announced again (a frame naming it once more) gets a new identity";
 
     backend->shutdown();
     EXPECT_TRUE(host.alive());
@@ -821,25 +801,19 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     const vn::graphics::ClearPolicy window_clear{ vn::Color(0, 0, 64, 255), true };
 
     const auto drive = [&]() {
-        backend->beginFrame();
-        backend->beginPass(offscreen_pass.get());
-        backend->setPassOrder(-1);
-        backend->setRenderTarget(offscreen.get());
-        backend->setClearPolicy(offscreen_clear);
-        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
-        backend->render(triangle.commands, camera.get());
-        backend->endPass();
-
-        backend->beginPass(window_pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->setPassInputs({ offscreen.get() });
-        backend->setClearPolicy(window_clear);
-        backend->setDepthMode(vn::graphics::DepthMode::Disabled);
-        backend->drawScreenProgram(offscreen.get(), copy_program.get(), camera.get());
-        backend->endPass();
-
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+                                  .pass(offscreen_pass.get(), -1)
+                                  .target(offscreen.get())
+                                  .clear(offscreen_clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .content(triangle.commands, camera.get())
+                                  .pass(window_pass.get())
+                                  .target(nullptr)
+                                  .inputs({ offscreen.get() })
+                                  .clear(window_clear)
+                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .screen(offscreen.get(), copy_program.get(), camera.get())
+                                  .value());
         backend->swapBuffers();
     };
     const auto settle = [&] {
@@ -927,18 +901,26 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     backend->setRenderTarget(lenderless.get());
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "outside a frame nothing is said: this is configuration";
     EXPECT_EQ(targets.find(lenderless.get())->target, nullptr) << "and nothing was built for it";
-    backend->beginFrame();
-    backend->setRenderTarget(lenderless.get());
+    // A PASS that draws into it, on the other hand, needs it: the frame's entry is where a picture depends on
+    // the target, so the description that cannot become objects is reported there - once, and only once.
+    backend->executeFrame(TestFrame().pass(offscreen_pass.get()).target(lenderless.get()).value());
     EXPECT_EQ(backend->diagnosticCount(), 1U) << "inside a frame the missing lender is reported, once";
     // ... and the sentence NAMES both targets (the SDK's own label): "a render target could not be built" is
     // not something a host can act on, and the engine's builder names everything it creates.
     ASSERT_FALSE(messages.empty());
     EXPECT_NE(messages.back().find("'composite'"), std::string::npos) << messages.back();
     EXPECT_NE(messages.back().find("'gbuffer'"), std::string::npos) << messages.back();
-    backend->setRenderTarget(lenderless.get());
-    backend->setRenderTarget(lenderless.get());
+    // Three entries naming it are still one episode: what is reported is the target's own condition, not the
+    // number of passes that ran into it.
+    backend->executeFrame(TestFrame()
+                              .pass(offscreen_pass.get())
+                              .target(lenderless.get())
+                              .pass(window_pass.get())
+                              .target(lenderless.get())
+                              .pass(offscreen_pass.get())
+                              .target(lenderless.get())
+                              .value());
     EXPECT_EQ(backend->diagnosticCount(), 1U) << "three announcements are one episode";
-    backend->endFrame();
     backend->swapBuffers();
     backend->releaseRenderTarget(lenderless.get());
 
@@ -990,15 +972,14 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     const vn::graphics::ClearPolicy                 clear{ vn::Color(0, 64, 0, 255), true };
 
     const auto drive = [&]() {
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(target.get());
-        backend->setClearPolicy(clear);
-        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
-        backend->render(triangle.commands, camera.get());
-        backend->endPass();
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(target.get())
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::TestAndWrite)
+            .content(triangle.commands, camera.get())
+            .value());
         backend->swapBuffers();
     };
 
@@ -1201,15 +1182,14 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
 
     const auto drive_into = [&](RenderTarget* where, double camera_x) {
         const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(camera_x);
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(where);
-        backend->setClearPolicy(clear);
-        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
-        backend->render(commands, camera.get());
-        backend->endPass();
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(where)
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::TestAndWrite)
+            .content(commands, camera.get())
+            .value());
         backend->swapBuffers();
     };
 
@@ -1340,15 +1320,14 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     const vn::graphics::ClearPolicy                 clear{ vn::Color(0, 64, 0, 255), true };
 
     const auto drive = [&] {
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->setClearPolicy(clear);
-        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
-        backend->render(commands, camera.get());
-        backend->endPass();
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(nullptr)
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::TestAndWrite)
+            .content(commands, camera.get())
+            .value());
         backend->swapBuffers();
     };
     const auto settle = [&] {
@@ -1478,8 +1457,7 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
 
     // A frame that presents with it held is served silently - the target is part of the frame's world now,
     // and nothing about it needs saying.
-    backend->beginFrame();
-    backend->endFrame();
+    backend->executeFrame(vn::graphics::FrameDescription{});
     backend->swapBuffers();
     EXPECT_EQ(backend->framesPresented(), 1U);
     EXPECT_EQ(backend->diagnosticCount(), 0U);
@@ -1569,15 +1547,14 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     const vn::graphics::ClearPolicy                 clear{ vn::Color(0, 64, 0, 255), true };
 
     const auto drive = [&] {
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->setClearPolicy(clear);
-        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
-        backend->render(commands, camera.get());
-        backend->endPass();
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(nullptr)
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::TestAndWrite)
+            .content(commands, camera.get())
+            .value());
         backend->swapBuffers();
     };
     const auto settle = [&] {
@@ -1745,15 +1722,15 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     // that is what tells a backend cost from a presentation cost.
     const auto drive = [&]() {
         const auto began = std::chrono::steady_clock::now();
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->setClearPolicy(clear);
-        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
-        backend->render(commands, camera.get());
-        backend->endPass();
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(nullptr)
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::TestAndWrite)
+            .content(commands, camera.get())
+            .value());
+        backend->swapBuffers();
         const auto recorded  = std::chrono::steady_clock::now();
         backend->swapBuffers();
         const auto committed = std::chrono::steady_clock::now();
@@ -2076,15 +2053,15 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
 
     const auto drive = [&]() {
         const auto began = std::chrono::steady_clock::now();
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->setClearPolicy(clear);
-        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
-        backend->render(commands, camera.get());
-        backend->endPass();
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(nullptr)
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::TestAndWrite)
+            .content(commands, camera.get())
+            .value());
+        backend->swapBuffers();
         const auto recorded  = std::chrono::steady_clock::now();
         backend->swapBuffers();
         const auto committed = std::chrono::steady_clock::now();
@@ -2285,15 +2262,15 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
 
     const auto drive = [&]() {
         const auto began = std::chrono::steady_clock::now();
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->setClearPolicy(clear);
-        backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
-        backend->render(commands, camera.get());
-        backend->endPass();
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(nullptr)
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::TestAndWrite)
+            .content(commands, camera.get())
+            .value());
+        backend->swapBuffers();
         const auto recorded  = std::chrono::steady_clock::now();
         backend->swapBuffers();
         const auto committed = std::chrono::steady_clock::now();
@@ -2625,15 +2602,14 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
     std::vector<RenderCommand> commands;
 
     const auto drive = [&]() {
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->setClearPolicy(clear);
-        backend->setDepthMode(vn::graphics::DepthMode::Disabled);
-        backend->render(commands, camera.get());
-        backend->endPass();
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(nullptr)
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::Disabled)
+            .content(commands, camera.get())
+            .value());
         backend->swapBuffers();
     };
 
@@ -2864,16 +2840,15 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
 
     const auto drive = [&] {
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->setClearPolicy(clear);
-        // Depth off, so the second drawing call is simply the one whose colour the probe sees.
-        backend->setDepthMode(vn::graphics::DepthMode::Disabled);
-        backend->render(commands, camera.get());
-        backend->endPass();
-        backend->endFrame();
+        // Depth off, so the second drawing call is simply the one whose colour the probe sees - the pass states it
+        // once, for its whole content (see PassRenderState).
+        backend->executeFrame(TestFrame()
+                                  .pass(pass.get())
+                                  .target(nullptr)
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .content(commands, camera.get())
+                                  .value());
         backend->swapBuffers();
     };
 
@@ -2971,15 +2946,14 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
     const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
     const std::vector<RenderCommand>              no_commands;
     const auto                                    drive = [&] {
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->setClearPolicy(clear);
-        backend->setDepthMode(vn::graphics::DepthMode::Disabled);
-        backend->render(no_commands, camera.get());
-        backend->endPass();
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(nullptr)
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::Disabled)
+            .content(no_commands, camera.get())
+            .value());
         backend->swapBuffers();
     };
 
@@ -3083,15 +3057,14 @@ TEST(VsgBackendTest, TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsS
     const vn::graphics::ClearPolicy clear{ vn::Color(0, 0, 255, 255), true };
 
     const auto drive = [&] {
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->setClearPolicy(clear);
-        backend->setDepthMode(vn::graphics::DepthMode::Disabled);
-        backend->render(commands, camera.get());
-        backend->endPass();
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(nullptr)
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::Disabled)
+            .content(commands, camera.get())
+            .value());
         backend->swapBuffers();
     };
 
@@ -3212,15 +3185,15 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
 
     const auto drive = [&]() {
         const auto began = std::chrono::steady_clock::now();
-        backend->beginFrame();
-        backend->beginPass(pass.get());
-        backend->setPassOrder(0);
-        backend->setRenderTarget(nullptr);
-        backend->setClearPolicy(clear);
-        backend->setDepthMode(vn::graphics::DepthMode::Disabled);
-        backend->render(commands, camera.get());
-        backend->endPass();
-        backend->endFrame();
+        backend->executeFrame(TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(nullptr)
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::Disabled)
+            .content(commands, camera.get())
+            .value());
+        backend->swapBuffers();
         const auto recorded  = std::chrono::steady_clock::now();
         backend->swapBuffers();
         const auto committed = std::chrono::steady_clock::now();

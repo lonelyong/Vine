@@ -152,8 +152,8 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      *
      * Geometry, not recipe: nothing is rebuilt. The view is told (it re-derives the numbers that follow from its
      * rectangle - its window pass' device viewport, its off-screen targets, its HUD boxes) and so is the shape its
-     * picture is projected with, because that follows from the same rectangle where the pass is recorded
-     * (RenderBackend::viewAspect).
+     * picture is projected with, because that follows from the same rectangle where the pass is recorded (the
+     * camera the pass draws through carries the shape, see Camera::setAspect).
      *
      * Same call as SceneView::setViewport, which is the spelling a host that thinks in views uses; this one is the
      * spelling for a host that thinks in terms of the surface's layout - it is the same rectangle either way.

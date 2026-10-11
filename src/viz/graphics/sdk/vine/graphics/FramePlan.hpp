@@ -50,7 +50,7 @@ struct VN_GRAPHICS_API PassPlan
     raw_ptr<const RenderTarget> target = nullptr;
     /// Whether it runs this frame. A disabled pass is LISTED (its row is part of the picture) and skipped.
     bool enabled = true;
-    /// Whether it announces a clear before it draws (RenderPass::announceClear).
+    /// Whether it clears its target before it draws (see ClearPolicy: the pass' own clear, not "a clear happened").
     bool clears = false;
     /// The colour attachment 0 is cleared to when @ref clears is true.
     Color clear_color{};

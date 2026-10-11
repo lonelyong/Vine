@@ -9,9 +9,9 @@
 /**
  * @brief The pass identities a frame's plan is keyed by: the SDK's `RenderPass` objects, turned into ids.
  *
- * WHY THE MAPPING EXISTS AT ALL. The SDK's identity of a pass is the OBJECT - `beginPass()` says so in as
- * many words ("the pass is the pass's identity to the backend: a backend that retains per-pass GPU state
- * keys that state by this object") - while everything this backend records keys passes by a small number
+ * WHY THE MAPPING EXISTS AT ALL. The SDK's identity of a pass is the OBJECT - the frame's own entry says so
+ * (see `FrameDescription::Pass`: "the pass (its identity: what a backend keys retained per-pass state by)")
+ * - while everything this backend records keys passes by a small number
  * (`core::PassId`): the compiled plan carries it, the executor matches content to a pass by it, and a
  * per-pass record is filed under it. One layer has to turn one spelling into the other, and it has to
  * answer the SAME number for the same object for as long as the object can be announced, or a pass'

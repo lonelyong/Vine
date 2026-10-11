@@ -75,7 +75,7 @@
 
 | 组 | 单元 |
 | --- | --- |
-| 协议与帧 | `Protocol` `FrameRecorder` `FrameCompiler` `FrameGraph` `FrameArena` `FrameRing` `FrameTimeline` `RetirementQueue` |
+| 协议与帧 | `FrameRecorder` `FrameCompiler` `FrameGraph` `FrameArena` `FrameRing` `FrameTimeline` `RetirementQueue` |
 | 键与状态 | `Keys` `StateRegistry` `VariantPool`（声明在 core） `ClearPlan` `TargetPlan` `DepthProbe` |
 | 内容身份与存储 | `Streams` `MaterialArena` `FactResult` |
 | 设备约束 | `DeviceRequirements` `AllocationGate` |

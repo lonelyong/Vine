@@ -247,16 +247,6 @@ std::optional<ClearPolicy> RenderPass::clearPolicy() const noexcept
     return ClearPolicy{ clear_color_, clear_depth_ };
 }
 
-void RenderPass::announceClear(raw_ptr<RenderBackend> backend) const
-{
-    if (backend == nullptr) {
-        return;
-    }
-    if (const std::optional<ClearPolicy> policy = clearPolicy(); policy.has_value()) {
-        backend->setClearPolicy(*policy);
-    }
-}
-
 void RenderPass::fillPassFacts(PassDescription& out)
 {
     out.target   = render_target_.get();
@@ -324,15 +314,15 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
     if (backend == nullptr) {
         return;
     }
-    // Describe, then announce - no interleaving, because the description needs nothing from the backend (the
-    // picture's shape is the camera's), and the mapping is one function shared with the engine's frame loop
-    // (announcePassTo / announceDrawsTo).
+    // Describe, then hand the backend the frame that says so - there is no interleaving and no second wire: what
+    // this pass issues is a value (the description needs nothing from the backend - the picture's shape is the
+    // camera's), and a pass a host drives itself is a frame with one pass in it (see singlePassFrame), which is
+    // the same shape the engine builds for a whole frame.
     PassDescription description;
     if (!describe(scene, description)) {
         return;
     }
-    announcePassTo(description, backend);
-    announceDrawsTo(description, backend);
+    backend->executeFrame(singlePassFrame(this, /*order*/ 0, /*inputs*/ {}, std::move(description)));
 }
 
 VN_GRAPHICS_NS_END

@@ -40,9 +40,12 @@ enum class DiagnosticCategory : std::uint8_t
     TargetBuildFailed, ///< An off-screen RenderTarget could not be built: passes using it draw nothing.
     ContentSkipped,    ///< A pass' content could not be prepared: that pass draws nothing this frame.
     InitFailed,        ///< The backend did not come up: nothing can be drawn at all.
-    PassProtocolViolation, ///< The host misused the pass protocol: the announced state did not apply
-                           ///< (a nested / unpaired beginPass/endPass, or a target released while
-                           ///< it was still announced).
+    PassProtocolViolation, ///< A pipeline statement that cannot be honoured was refused: a presentation the
+                           ///< surface cannot serve (a view on another engine, a second surface), a target
+                           ///< released while a frame still named it, a pass whose sampled inputs do not
+                           ///< match the plan. The shape a frame is driven with cannot break this one - a
+                           ///< frame is a value (see RenderBackend::executeFrame) - so what is left here is
+                           ///< wiring the host declared.
     UnsupportedRequest,    ///< The host asked for something that is not implemented yet: a documented
                            ///< stand-in was assembled instead, so the picture is not what was asked
                            ///< for.

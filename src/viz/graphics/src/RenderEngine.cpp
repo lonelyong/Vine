@@ -172,7 +172,6 @@ void RenderEngine::frame(double dt)
         return;
     }
     frame_ctx_.dt = dt;
-    backend_->beginFrame();
 
     // Announce the content frame BEFORE the passes run: every scene this frame
     // renders may then memoise the command list it collects (see
@@ -223,15 +222,13 @@ void RenderEngine::frame(double dt)
     // THE FRAME, HANDED OVER AS ONE VALUE. What runs is what the compile produced (see buildFrameValue): one entry
     // per enabled pass, in run order, with everything that pass is and everything it issues. A disabled pass has no
     // entry (and its row keeps saying it cost nothing - see FramePlan::PassPlan::record_micros, written by the
-    // compile); a pass whose entry carries no description issues nothing at all, whose scope still opens and closes.
+    // compile); a pass whose entry carries no description issues nothing at all.
     //
-    // The per-call entries of this interface still exist and are exactly what a backend's default implementation
-    // of executeFrame announces the value through (see RenderBackend::executeFrame); a backend that would rather
-    // build from the value overrides it - which is what makes the boundary the value rather than the order of the
-    // calls.
+    // The backend's own frame (acquiring the presentable image, recording, reaching the state a present can hand
+    // back) happens inside this ONE call; swapBuffers() is what makes the frame visible (see
+    // RenderBackend::executeFrame).
     backend_->executeFrame(frame_value_);
 
-    backend_->endFrame();
     backend_->swapBuffers();
 }
 

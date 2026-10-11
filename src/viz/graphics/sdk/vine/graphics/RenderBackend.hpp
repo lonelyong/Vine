@@ -57,51 +57,42 @@ enum class ReadbackResult
  *
  * Defines the contract that concrete graphics backends (vsg/Vulkan, OpenGL,
  * null/test) must implement, and what the engine guarantees in return.
- * Supports both high-level pass execution and low-level command rendering.
  *
- * CALL ORDER. The engine drives a frame in this order:
+ * ONE WIRE: THE FRAME IS A VALUE. A frame reaches a backend in ONE call - executeFrame(FrameDescription) - with
+ * every pass of it in the order it runs, each entry carrying the pass' identity, its order, its resolved inputs
+ * and everything the pass issues (see FrameDescription / PassDescription / DrawDescription). There is no pass
+ * scope, no incremental state setter and no call order to keep: what a frame ran and what it drew is the SHAPE of
+ * the value, so the sequence rules this interface used to document cannot be violated - they cannot be expressed.
+ * The engine compiles the frame and hands that value over (see RenderEngine::frameDescription); a host that drives
+ * one pass itself builds the same shape (RenderPass::execute -> singlePassFrame).
  *
- *   1. beginFrame();
- *   2. executeFrame(frame)      THE FRAME'S BODY: the compiled value, handed over in one call (see
- *                               FrameDescription). Its default implementation announces it through the per-call
- *                               entries below - the same order this list used to spell out pass by pass - so a
- *                               backend that keeps no state of its own needs nothing else, and one that would
- *                               rather build from the value overrides executeFrame instead.
- *   3. endFrame();
- *   4. swapBuffers();            once per frame — the only call that presents.
+ * A FRAME IS A PARAMETER, NOT AN INTERVAL. executeFrame() does the frame's whole body: it acquires the next
+ * presentable image when it has a surface (that is what "this is a frame" means to a windowed backend), records
+ * the value, and leaves the backend in the state swapBuffers() presents. There is no beginFrame() to pair it
+ * with, and no endFrame() to close it: "this frame is done" is the call returning.
  *
- * WHAT THE PER-CALL ENTRIES ARE FOR, now that a frame arrives as a value: (a) the default executeFrame
- * implementation, which is also the spelling a host uses when it drives one pass itself (RenderPass::execute /
- * announcePassTo / announceDrawsTo), and (b) a backend that wants the calls rather than the value. Inside a pass
- * scope, in this order: beginPass(pass) (its identity) / setPassOrder(order) / setRenderInputs-resolved inputs /
- * setRenderTarget / setViewport / setLights / setPassState / clear / render() | drawScreenProgram() / endPass().
+ * WHAT ELSE A BACKEND IS TOLD, and when - each is a RESOURCE announcement, not a frame call:
+ *   * setWindowHandle / resize: the surface the frames are presented through;
+ *   * setRenderTarget(target): a target the host will draw into or read back, so the backend can hold it and
+ *     build its attachments before any frame names it (null selects the default framebuffer, which needs none);
+ *   * releasePass / releaseRenderTarget: the pass / target is going away - free what it owns (see each entry);
+ *   * setDefaultContentProgram: the program content with no program of its own is drawn with;
+ *   * setDiagnosticsRoute / setDiagnosticSink: where this backend's reports go.
  *
- * Everything between the frame pair is optional: a pass may draw several
- * times, set no state, or a backend may leave a call unimplemented (that is
- * what the no-op defaults are for). Before the first beginFrame() the engine
- * runs a warm-up: every enabled, non-clearing pass executes once, so a backend
- * sees its whole pass set before it ever presents a frame and can place each
- * pass' retained state in its final position. beginFrame() may acquire the
- * next presentable image, so a driven frame must end in swapBuffers(); a
- * backend must not present from endFrame().
+ * BORROWED ARGUMENTS. Every pointer or reference INSIDE a FrameDescription (camera, commands, lights, target,
+ * program) is borrowed for the duration of executeFrame() and never owned: the producer keeps them alive while the
+ * call runs, and the engine reuses its own storage for them (a pass' resolved input vector, a scene's command
+ * list) as soon as the call returns. A backend that needs the data later must copy or upload it and must never
+ * keep such a pointer - which includes a backend that retains the whole frame (a render-graph builder, an offline
+ * renderer): it copies what it keeps, at the moment it is called.
  *
- * BORROWED ARGUMENTS. Every pointer or reference argument (camera, commands,
- * lights, target, program) is borrowed for the duration of the call and never
- * owned; the pass announced by beginPass() is borrowed for its scope. The host
- * may destroy any of them as soon as the call returns — or, for a pass, as soon
- * as its scope closes or it is removed from the engine, which releasePass() /
- * releaseRenderTarget() announce. A backend that needs the data later must
- * copy or upload it and must never keep such a pointer.
+ * WHAT MAY BE RETAINED. Retained GPU state (a content view, a compiled pipeline, a sampling slot, a texture
+ * cache) is expected, but it must be keyed by the lifetime of what it serves (a pass' identity, the target's
+ * object), released by the matching release* call, and must not grow with the frame count: a long-running session
+ * has to reach a steady state. A backend must never require the host to call a release* method for correctness -
+ * the host calls them because a pass or target is gone.
  *
- * WHAT MAY BE RETAINED. Retained GPU state (a content view, a compiled
- * pipeline, a sampling slot, a texture cache) is expected, but it must be
- * keyed by the lifetime of what it serves (see beginPass), released by the
- * matching release* call, and must not grow with the frame count: a long-
- * running session has to reach a steady state. A backend must never require
- * the host to call a release* method for correctness — the host calls them
- * because a pass or target is gone.
- *
- * THREADING. The engine drives one pass at a time from one thread, so calls
+ * THREADING. The engine drives one frame at a time from one thread, so calls
  * into a backend are serialised, never concurrent and never reentrant. A
  * backend may therefore keep its state unsynchronised, but must not assume it
  * stays on the same thread across an initialize()/shutdown() pair. The
@@ -152,46 +143,40 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      */
     virtual void shutdown() = 0;
 
-    /** @brief Begins a frame.
+    /** @brief Executes a whole frame from its value (see FrameDescription).
      *
-     * May acquire the next presentable image of the surface, which the frame
-     * must hand back through swapBuffers() (see the class contract).
+     * THE FRAME'S BODY, and the one frame entry this interface has: the engine has already compiled the frame
+     * (which pass runs when, what its inputs resolved to, what each pass issues), so this is "run THIS", not
+     * "here is one call at a time, in an order you have to know". Nothing is announced to the backend before or
+     * after this call that is about the frame - the acquisition of the next presentable image (for a backend with
+     * a surface) happens inside it, and swapBuffers() is what hands that image back.
+     *
+     * WHAT IT MUST DO, in the order a frame means: take the value's passes as they come (an entry with a null
+     * pass is nothing to run; an entry whose description is empty is a pass that ran and issued nothing - the
+     * backend keys per-pass retained state by its identity, so that is a fact it must not confuse with "the pass
+     * was not in the frame"), and make the frame's content reach the target each pass names. How is the backend's
+     * business: the vsg backend walks the value into its own collection stage and its session, a retained
+     * renderer builds a graph from it, an offline renderer traverses it - the value says what ran, never how.
+     *
+     * The value is valid for the duration of this call (see the class contract), and a backend that keeps any of
+     * it beyond the call copies what it keeps.
+     *
+     * @param frame The frame to execute, in run order (see FrameDescription).
      */
-    virtual void beginFrame() = 0;
+    virtual void executeFrame(const FrameDescription& frame) = 0;
 
-    /** @brief Executes a whole frame from its description (see FrameDescription).
+    /** @brief Sets a render target the host will use.
      *
-     * THE FRAME'S BODY, and the entry a backend should implement: the engine has already compiled the frame
-     * (which pass runs when, what its inputs resolved to, what each pass issues), so this is "run THIS", not "here
-     * is one call at a time, in an order you have to know". A backend that takes the value directly (a retained
-     * renderer building a graph, an offline renderer walking it) overrides this and never sees the per-call
-     * entries.
+     * The host's announcement of a target it is about to draw into or read back - a RESOURCE announcement, not a
+     * frame call: which pass draws into which target travels inside the frame value (see
+     * PassDescription::target), and this is how a host configures a target BEFORE any frame names it, which is
+     * what the backend builds the target's GPU attachments from (lazily, and again when its description
+     * changes).
      *
-     * The default implementation announces @p frame through those entries, in the order the class contract
-     * documents: one scope per pass (beginPass / setPassOrder / setPassInputs), then that pass' own facts and its
-     * draws, then endPass. A backend that keeps no state of its own needs nothing else - so every backend supports
-     * this from the day it is added, and taking the value directly is an optimization rather than a requirement.
+     * nullptr selects the default framebuffer, which needs no announcement: a frame that names no target draws
+     * into it.
      *
-     * @param frame The frame to execute, in run order (a pass with no description issues nothing at all).
-     */
-    virtual void executeFrame(const FrameDescription& frame);
-
-    /** @brief Ends the frame: flushes what the frame's passes queued.
-     *
-     * Must not present — presenting is swapBuffers().
-     */
-    virtual void endFrame() = 0;
-
-    /** @brief Sets the active render target.
-     *
-     * Pass nullptr to render into the default (window) framebuffer. When the
-     * backend reports supportsRenderTargets() and a valid off-screen target
-     * is passed, the backend creates and manages the target's GPU
-     * attachments (created lazily on first bind, rebuilt when the target is
-     * resized) and renders into it until another target is set. The backend
-     * owns the attachments; the RenderTarget stays a logical description.
-     *
-     * @param target Render target, or nullptr for the default framebuffer.
+     * @param target Render target the host will use, or nullptr for the default framebuffer.
      */
     virtual void setRenderTarget(RenderTarget* target) = 0;
 
@@ -266,121 +251,6 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
         return false;
     }
 
-    /** @brief Opens a pass scope: announces the pass about to be executed.
-     *
-     * The engine calls this once per enabled registered pass, immediately
-     * before that pass's per-pass state (setRenderTarget / setViewport /
-     * setLights / setPassState / clear / setPassOrder) and its draw call
-     * (render / drawScreenProgram); endPass() follows
-     * once the pass ran.
-     *
-     * WHAT THE SCOPE MEANS. The scope makes the pass explicit, so "which call
-     * means what" no longer depends on the call order:
-     *   * scope attributes — setRenderTarget, setPassOrder, setPassState and
-     *     the clear() marker — describe the pass, so every draw call of the
-     *     scope sees them (a pass that draws twice keeps its stacking order,
-     *     state and target for both) and they are dropped at endPass()
-     *     instead of leaking into the next pass;
-     *   * per-draw-call attributes — setViewport and setLights — are consumed
-     *     by the draw call that follows them.
-     * The scope is the ONLY way a pass runs. Between the frame pair a host may
-     * announce state with no scope open — those calls are inert (the next
-     * beginPass() starts from an empty request) — but a DRAWING call (render /
-     * clear / drawScreenProgram) with no pass announced has nothing to belong
-     * to, so it is refused and reported (PassProtocolViolation) instead of
-     * drawing with state that pass never announced.
-     *
-     * The pass is the pass's identity to the backend: a backend that retains
-     * per-pass GPU state (a content view, a compiled pipeline, a sampling
-     * slot) keys that state by this object, so two passes never alias each
-     * other even when they share a camera and an order. Announcing the pass
-     * also marks it active for the current frame: a backend may retire the
-     * retained state of any pass it was not asked to draw this frame, which
-     * is what makes disabling a pass (RenderPass::setEnabled) or changing its
-     * camera / render target / depth mode take effect instead of leaving
-     * stale content on screen.
-     *
-     * The default no-op keeps backends without retained per-pass state working
-     * unchanged.
-     *
-     * @param pass The pass about to execute (borrowed for the scope).
-     */
-    virtual void beginPass(raw_ptr<const RenderPass> pass)
-    {
-        (void)pass;
-    }
-
-    /** @brief Closes the pass scope opened by beginPass().
-     *
-     * Called after the pass's draw call. Per-pass state queued by this scope
-     * that no draw call consumed (a pass that set a render target but then
-     * drew nothing) is discarded here, so it can never leak into the next
-     * pass. A backend must not retain any per-pass state beyond this call
-     * except the GPU resources it owns for the pass itself.
-     *
-     * Call it exactly once per beginPass(): a nested beginPass() or an endPass()
-     * with no open scope means the protocol is out of step, so the state the
-     * caller expected to apply did not — a backend should report that on its
-     * diagnostics channel (DiagnosticCategory::PassProtocolViolation) rather
-     * than silently drawing something else.
-     */
-    virtual void endPass() {}
-
-    /** @brief Draws a full-screen pass through a fragment program, sampling the source's colour attachments.
-     *
-     * The ONE full-screen draw: a plain copy, a deferred lighting pass and a host post-process are
-     * all this call with different programs (see BuiltinShaders::screenCopyProgram /
-     * deferredLightProgram, and ScreenPass::setProgram for the contract the fragment stage
-     * compiles against).
-     *
-     * Draws a full-screen triangle whose fragment stage is @p program's, written into the CURRENT
-     * target (see setRenderTarget, nullptr = the default framebuffer) within the sub-viewport set by
-     * setViewport(). Each colour attachment of @p source is bound as a sampled texture at
-     * descriptor binding 0..N-1 (so binding i reads attachment i), so a G-buffer producer's
-     * textures (albedo / normal / position) reach the pass in one draw. Lights set by the most
-     * recent setLights() and the pass camera are forwarded as per-frame push-constant parameters
-     * (the lights pre-transformed to the camera's view space). The default no-op lets backends
-     * without texture-input support ignore the call.
-     *
-     * @param source  Target whose colour attachments are sampled.
-     * @param program Fragment-stage program to draw with (vertex stage, if any, is ignored — the
-     *                backend provides the fullscreen vertex stage, BuiltinShaders::fullscreenVertexProgram).
-     * @param camera  Camera whose view transforms the pushed lights; also the key for the retained
-     *                fullscreen slot. Without one the draw is refused: there is no view to build.
-     *
-     * A program that cannot be prepared (no fragment stage, a stage that fails to compile, a binding
-     * the source cannot provide) is reported and draws NOTHING — never a substituted picture.
-     */
-    virtual void drawScreenProgram(vn::graphics::RenderTarget*  source,
-                                   vn::raw_ptr<const vn::graphics::ShaderProgram> program,
-                                   vn::raw_ptr<const vn::graphics::Camera> camera)
-    {
-        (void)source;
-        (void)program;
-        (void)camera;
-    }
-
-    /** @brief Notifies the backend of the order of the pass about to render.
-     *
-     * The engine calls this right before each registered pass executes, with
-     * the order the caller passed to addPass() — the explicit pipeline order
-     * that already drives pass execution. A backend that keeps several
-     * retained content slots under one target uses it as the slot's STACKING
-     * position (ascending), so the draw order inside the target always equals
-     * the user-set pipeline order regardless of when each slot was created
-     * (a pre-frame warm-up pass may create a higher-order slot before a
-     * lower-order one has run). The slot's IDENTITY, in contrast, is the pass
-     * announced by beginPass(), so two passes never share a slot. The value is
-     * consumed by the following render() call. The default no-op lets backends
-     * without per-slot ordering ignore it.
-     *
-     * @param order The current pass's explicit pipeline order.
-     */
-    virtual void setPassOrder(int order)
-    {
-        (void)order;
-    }
-
     /** @brief Releases the backend GPU resources a pass owns.
      *
      * Called by the engine just before a removed pass is dropped. The backend
@@ -391,7 +261,7 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      * itself stays a logical description owned by the caller. It is separate
      * from releaseRenderTarget(): a pass may own a render target (freed by
      * both), while the retained per-pass GPU state is only known to the
-     * backend and is keyed by the pass announced via beginPass().
+     * backend and is keyed by the pass identity a frame's entry names (see FrameDescription::Pass).
      *
      * The default no-op lets backends that keep no per-pass GPU state ignore
      * the call.
@@ -414,10 +284,10 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      * ignore the call.
      *
      * The call also announces that the caller may destroy @p target now, so a
-     * backend holding an announcement of it — the setRenderTarget() of the scope
-     * being executed (see beginPass) — must DROP that announcement rather than keep
-     * the pointer. A call that would still have used it cannot be
-     * honoured: it must be skipped and reported (with the reason) instead of
+     * backend holding the target anywhere — the target it built objects for (see
+     * setRenderTarget), a pass it is about to run that names it — must drop what it holds rather than keep
+     * the pointer. A frame that would still have used it cannot be
+     * honoured: what it drew into that target must be skipped and reported (with the reason) instead of
      * being silently redirected to the default framebuffer, which would draw
      * the content where the caller never asked for it.
      *
@@ -497,115 +367,11 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
         return false;
     }
 
-    /** @brief Renders a list of commands.
-     *
-     * Draws the current pass' content. The commands are this frame's
-     * transients and are borrowed (see the class contract): a backend must not
-     * keep a reference to them, or to @p camera, past the call. The backend
-     * reconciles its retained scene against them, so the call is incremental —
-     * a frame whose commands did not change structurally must neither
-     * re-upload geometry nor recompile pipelines.
-     *
-     * @param commands Render commands to draw.
-     * @param camera   Camera used for view/projection.
-     */
-    virtual void render(const std::vector<RenderCommand>& commands, const Camera* camera) = 0;
-
-    /** @brief Sets the light sources for the NEXT drawing call of this pass scope.
-     *
-     * Called by RenderPass::execute() from the pass's content scene before
-     * render(), so every pass lights whatever scene it renders. Backends that
-     * support scene lights replace any view-level default light (e.g. a
-     * headlight) with the given lights; an empty list restores the backend
-     * default. Lights are borrowed for the duration of the call.
-     *
-     * ONE announcement serves ONE drawing call: a pass that draws more than once in one scope (a
-     * custom pass placing several pictures-in-picture, say) announces again before each draw, and a
-     * draw with no fresh announcement uses the backend default (for lights) / the whole surface (for
-     * the viewport). beginPass() resets both.
-     *
-     * @param lights Lights of the content scene, or empty for the backend
-     *               default.
-     */
-    virtual void setLights(const std::vector<raw_ptr<const Light>>& lights)
-    {
-        (void)lights;
-    }
-
-    /** @brief Sets the resolved input targets for the NEXT drawing call of this pass scope.
-     *
-     * The pass' declared inputs (RenderPass::addInput / addInputTarget / addInputName), resolved
-     * for THIS frame — null where nothing produced one — in the pass' declaration order. This is
-     * how an effect that reads what an earlier pass wrote reaches the shading: a shadow map, a
-     * screen-space occlusion buffer, a baked image. The pass states WHAT it reads and the backend
-     * binds each entry where its shader's ABI says it goes; the order is the pass' own.
-     *
-     * Called by the engine between beginPass() and the pass' execute(), after the declared inputs
-     * were resolved, so every draw call of that pass sees the same list (a pass is one draw of the
-     * scene, and its inputs are a property of the pass, not of one drawable).
-     *
-     * An input a backend cannot consume is not an error it may paper over: the pass declared it, so
-     * silently ignoring it means the picture differs from the one the pass asked for. A backend
-     * either binds it or reports (see the diagnostic sink).
-     *
-     * Default: nothing — a backend that consumes no pass inputs needs no code for them, and the
-     * engine's call is a no-op for it.
-     *
-     * @param inputs Resolved input targets, in the pass' declaration order.
-     */
-    virtual void setPassInputs(const std::vector<raw_ptr<RenderTarget>>& inputs)
-    {
-        (void)inputs;
-    }
-
-    /** @brief Announces the pass' own state for the content it draws.
-     *
-     * The pass side of the state priority table (see StateNode.hpp): its depth POLICY (for content that authored
-     * none) and its rasterisation OVERRIDE (for every command). Announced before the pass' draw, once per pass,
-     * and it says everything a backend needs to resolve each command's final state:
-     *
-     * ```
-     *   resolveRenderState(command.authoredState, pass_state)
-     * ```
-     *
-     * Replacing the program is deliberately NOT part of it (RenderPass::setProgramOverride rewrites commands
-     * instead, which keeps a backend's per-command pipeline key valid).
-     *
-     * A backend that consumes no per-object state needs no code for it - the default no-op, like the other scope
-     * attributes.
-     *
-     * @param state The depth policy and rasterisation override of the pass being recorded.
-     */
-    virtual void setPassState(const PassRenderState& state)
-    {
-        (void)state;
-    }
-
-    /** @brief Announces how this pass' target is cleared before it draws.
-     *
-     * The scope attribute for clearing (see ClearPolicy for what a policy means and which parts of
-     * it a target can honour): call it between beginPass() and the pass' draw, before the draw that
-     * should see the cleared target. Applies to the target selected with setRenderTarget(); null
-     * (the default) means the window / main surface.
-     *
-     * NOT CALLING IT LEAVES THE TARGET UNCLEARED. That is the whole difference from the three
-     * pass-side clear setters on RenderPass (clearColor / shouldClearDepth / clearEnabled): those
-     * describe a policy, this announces it, and a pass that never announces one draws over whatever
-     * the target already holds.
-     *
-     * The default no-op lets a backend that cannot clear ignore it (its diagnostics channel is where
-     * it says so — a silently different clear is a picture the pass did not ask for).
-     *
-     * @param policy How to clear: the colour of attachment 0 and whether depth is cleared too.
-     */
-    virtual void setClearPolicy(const ClearPolicy& policy)
-    {
-        (void)policy;
-    }
-
     /** @brief Presents the rendered frame.
      *
-     * The only call that presents, and the last call of a driven frame.
+     * The only call that presents, and the last call of a frame the backend ran: executeFrame() acquired the
+     * next presentable image when it had a surface, so handing it back here is what makes the frame visible.
+     * Each executeFrame() is closed by one swapBuffers() (see the class contract).
      */
     virtual void swapBuffers() = 0;
 
@@ -658,32 +424,6 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      */
     virtual void resize(int width, int height)
     {
-        (void)width;
-        (void)height;
-    }
-
-    /** @brief Restricts the NEXT drawing call of this pass scope to a sub-rectangle of the surface.
-     *
-     * Called by RenderPass::execute() before drawing a pass that owns a
-     * sub-viewport (e.g. an axis gizmo in a screen corner). Backends should
-     * combine the viewport and scissor to that rectangle. The default no-op
-     * keeps drawing to the full surface, which is correct for backends that
-     * do not support sub-viewports yet.
-     *
-     * ONE announcement serves ONE drawing call (see setLights): the base RenderPass announces its
-     * declared viewport once and draws once, while a pass that draws several times announces the
-     * viewport of each draw — which is what lets one scope place several pictures-in-picture.
-     * beginPass() resets the announcement.
-     *
-     * @param x      Viewport origin x in device pixels.
-     * @param y      Viewport origin y in device pixels (top-left origin).
-     * @param width  Viewport width in device pixels.
-     * @param height Viewport height in device pixels.
-     */
-    virtual void setViewport(int x, int y, int width, int height)
-    {
-        (void)x;
-        (void)y;
         (void)width;
         (void)height;
     }

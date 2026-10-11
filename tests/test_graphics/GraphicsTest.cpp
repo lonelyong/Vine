@@ -2139,7 +2139,6 @@ TEST(RenderTargetTest, MultipleColorAttachments)
 class MockBackend : public RenderBackend {
   public:
     bool ok = false;
-    int begin_calls = 0;
 
     /// Emits one diagnostic through the backend contract (test hook for the
     /// engine's sink pass-through; reportDiagnostic is protected).
@@ -2149,23 +2148,22 @@ class MockBackend : public RenderBackend {
         reportDiagnostic(severity, category, message);
     }
 
-    int end_calls = 0;
     int swap_calls = 0;
     int render_calls = 0;
     int clear_calls = 0;
-    /// Policy of the last setClearPolicy() call, so a test can assert WHAT was announced.
+    /// Policy of the last clear the frame stated, so a test can assert WHAT the pass asked for.
     ClearPolicy last_clear_policy{};
     int viewport_sets = 0;
     const Camera* last_camera = nullptr;
-    /// Camera of every render() call, in call order (a pass' own camera, not just the last one).
+    /// Camera of every content draw the frame carried, in run order (a pass' own camera, not just the last one).
     std::vector<const Camera*> render_cameras;
-    /// How many commands every render() call was handed, in call order (next to render_cameras): after a frame
+    /// How many commands every content draw carried, in run order (next to render_cameras): after a frame
     /// that ran several passes this says which pass drew what.
     std::vector<std::size_t> render_command_counts;
     int last_viewport[4] = { 0, 0, 0, 0 };
-    // Programs of the commands last passed to render() (per command).
+    // Programs of the commands of the last content draw (per command).
     std::vector<const ShaderProgram*> last_programs;
-    // Rasterisation mode of the commands last passed to render() (per command).
+    // Rasterisation mode of the commands of the last content draw (per command).
     std::vector<PolygonMode> last_polygon_modes;
     int light_sets = 0;
     std::size_t last_light_count = 0;
@@ -2180,8 +2178,6 @@ class MockBackend : public RenderBackend {
         ++default_content_program_sets;
     }
     void shutdown() override { ok = false; }
-    void beginFrame() override { ++begin_calls; note(u8"beginFrame"); }
-    void endFrame() override { ++end_calls; note(u8"endFrame"); }
     void resize(int width, int height) override
     {
         ++resize_calls;
@@ -2191,40 +2187,108 @@ class MockBackend : public RenderBackend {
     int resize_calls         = 0;
     int last_surface_width   = 0;
     int last_surface_height  = 0;
-    void setRenderTarget(RenderTarget* target) override { target_history.push_back(target); note(u8"target"); }
+    void setRenderTarget(RenderTarget* target) override { target_history.push_back(target); }
     std::vector<RenderTarget*> target_history;
-    void setPassInputs(const std::vector<vn::raw_ptr<RenderTarget>>& inputs) override
-    {
-        ++pass_input_sets;
-        last_pass_inputs.assign(inputs.begin(), inputs.end());
-        note(u8"inputs");
-    }
-    int                     pass_input_sets = 0;
+    int                        pass_input_sets = 0;
     std::vector<RenderTarget*> last_pass_inputs;
 
-    void setLights(const std::vector<vn::raw_ptr<const Light>>& lights) override
-    {
-        ++light_sets;
-        note(u8"lights");
-        last_light_count = lights.size();
-        last_light = lights.empty() ? nullptr : lights.front();
-    }
+    /// The pass' own state, as the frame states it (see PassDescription::state).
+    vn::graphics::PassRenderState pass_state{};
+    /// What each command of the last content draw AUTHORS for its rasterisation mode (unset = "the content said
+    /// nothing"): next to last_polygon_modes, which is what the pass state makes of it.
+    std::vector<std::optional<vn::graphics::PolygonMode>> last_commands_authored_polygon_modes;
     int program_draws = 0;
     RenderTarget* last_program_source = nullptr;
     const ShaderProgram* last_program = nullptr;
     const Camera* last_program_camera = nullptr;
-    void drawScreenProgram(RenderTarget* source, const ShaderProgram* program, const Camera* camera) override
+    /// What this double reports for RenderBackend::supportsRenderTargets: TRUE by default, because the
+    /// double honours every target it is handed (a pass test is not asking about target support).
+    /// A test that wants the other answer flips this and the engine reports the pipeline it cannot serve.
+    bool supports_targets = true;
+    bool supportsRenderTargets() override { return supports_targets; }
+    void swapBuffers() override { ++swap_calls; }
+
+    /// The pass identities the frame named, in RUN ORDER (see FrameDescription::Pass::pass): what the engine's
+    /// compile decided, as the backend sees it. `entries` counts the passes walked, and `entries_closed` how many
+    /// of them the walk finished - equal once a frame is over, which is what makes "every entry is consumed" (and
+    /// not silently dropped) checkable.
+    std::vector<const RenderPass*> pass_entries;
+    int entries = 0;
+    int entries_closed = 0;
+    /// How many pass entries carried an order, and the order of every entry, in run order.
+    int order_sets = 0;
+    std::vector<int> orders;
+
+    /// How many frames were handed over (one executeFrame per frame the engine ran, see RenderBackend).
+    int frames_executed = 0;
+
+    /// THE FRAME, WALKED BY THIS DOUBLE (see RenderBackend::executeFrame): one entry per pass, in run order -
+    /// the identity, the order, the resolved inputs, then everything the pass issues (its target, the viewport /
+    /// clear / state it stated, and each of its draws with the lights that belong to it). Every witness below is
+    /// filled from HERE, which is what makes the other cases' assertions ("the backend was handed this clear",
+    /// "this camera drew") read as "the engine's frame value said so".
+    void executeFrame(const FrameDescription& frame) override
     {
-        ++program_draws;
-        note(u8"screen");
-        last_program_source = source;
-        last_program = program;
-        last_program_camera = camera;
+        ++frames_executed;
+        for (const FrameDescription::Pass& entry : frame.passes) {
+            if (entry.pass == nullptr) {
+                continue;   // a frame's entry always names a pass; a null one is nothing to run
+            }
+            ++entries;
+            pass_entries.push_back(entry.pass);
+            ++order_sets;
+            orders.push_back(entry.order);
+            ++pass_input_sets;
+            last_pass_inputs.assign(entry.inputs.begin(), entry.inputs.end());
+            if (entry.description.has_value()) {
+                consume(*entry.description);
+            }
+            ++entries_closed;
+        }
     }
-    void render(const std::vector<RenderCommand>& commands, const Camera* camera) override
+
+  private:
+    /// @brief Records one pass' own facts and its drawing calls (the inside of the walk above).
+    void consume(const PassDescription& description)
+    {
+        target_history.push_back(description.target);
+        if (description.viewport.has_value()) {
+            ++viewport_sets;
+            last_viewport[0] = description.viewport->x;
+            last_viewport[1] = description.viewport->y;
+            last_viewport[2] = description.viewport->width;
+            last_viewport[3] = description.viewport->height;
+        }
+        if (description.clear.has_value()) {
+            ++clear_calls;
+            last_clear_policy = *description.clear;
+        }
+        pass_state = description.state;
+        for (const DrawDescription& draw : description.draws) {
+            if (draw.lights.has_value()) {
+                ++light_sets;
+                last_light_count = draw.lights->size();
+                last_light = draw.lights->empty() ? nullptr : (*draw.lights).front();
+            }
+            if (draw.camera == nullptr) {
+                continue;   // a drawing call with no view is no call at all
+            }
+            if (draw.kind == DrawDescription::Kind::Screen) {
+                ++program_draws;
+                last_program_source = draw.source;
+                last_program = draw.program.get();
+                last_program_camera = draw.camera;
+            }
+            else if (draw.commands != nullptr) {
+                consumeCommands(*draw.commands, draw.camera);
+            }
+        }
+    }
+
+    /// @brief Records one content drawing call's commands (the scene kind of the two).
+    void consumeCommands(const std::vector<RenderCommand>& commands, const Camera* camera)
     {
         ++render_calls;
-        note(u8"render");
         last_camera = camera;
         render_cameras.push_back(camera);
         render_command_counts.push_back(commands.size());
@@ -2244,67 +2308,8 @@ class MockBackend : public RenderBackend {
                 resolveRenderState(command.authoredState, pass_state).state.polygonMode);
         }
     }
-    /// The pass' own state, as announced through RenderBackend::setPassState.
-    vn::graphics::PassRenderState pass_state{};
-    void setPassState(const vn::graphics::PassRenderState& state) override { pass_state = state; note(u8"state"); }
-    /// What each command of the last draw AUTHORS for its rasterisation mode (unset = "the content said nothing"):
-    /// next to last_polygon_modes, which is what the pass state makes of it.
-    std::vector<std::optional<vn::graphics::PolygonMode>> last_commands_authored_polygon_modes;
-    void setViewport(int x, int y, int width, int height) override
-    {
-        ++viewport_sets;
-        note(u8"viewport");
-        last_viewport[0] = x;
-        last_viewport[1] = y;
-        last_viewport[2] = width;
-        last_viewport[3] = height;
-    }
-    void setClearPolicy(const ClearPolicy& policy) override
-    {
-        ++clear_calls;
-        note(u8"clear");
-        last_clear_policy = policy;
-    }
-    /// What this double reports for RenderBackend::supportsRenderTargets: TRUE by default, because the
-    /// double honours every target it is handed (a pass test is not asking about target support).
-    /// A test that wants the other answer flips this and the engine reports the pipeline it cannot serve.
-    bool supports_targets = true;
-    bool supportsRenderTargets() override { return supports_targets; }
-    void swapBuffers() override { ++swap_calls; note(u8"swap"); }
 
-    // Pass-scope recording: the engine opens/closes one scope per executed
-    // pass, announcing the pass itself (the backend's per-pass state key).
-    std::vector<const RenderPass*> began;
-    std::vector<const RenderPass*> ended;
-    int begin_passes = 0;
-    int end_passes = 0;
-    /// THE WIRE, IN CALL ORDER: one label per announcement. What a frame's value BECOMES (see
-    /// RenderBackend::executeFrame), asserted as a sequence by the case that freezes that mapping - labels carry
-    /// the call and not its payload, because the payloads have their own witnesses next to them (orders, inputs,
-    /// last_viewport, last_clear_policy, ...).
-    std::vector<vn::String> wire;
-    void                    note(const char8_t* what) { wire.push_back(vn::String(what)); }
-    void beginPass(vn::raw_ptr<const RenderPass> pass) override
-    {
-        ++begin_passes;
-        began.push_back(pass);
-        note(u8"beginPass");
-    }
-    void endPass() override
-    {
-        ++end_passes;
-        note(u8"endPass");
-    }
-    /// How many times a pass' stacking order was announced (see RenderBackend::setPassOrder).
-    int order_sets = 0;
-    /// The stacking order of every announcement, in call order.
-    std::vector<int> orders;
-    void setPassOrder(int order) override
-    {
-        ++order_sets;
-        orders.push_back(order);
-        note(u8"order");
-    }
+  public:
 
     // Closed-loop release recording (removePass/clearPasses -> backend).
     int target_releases = 0;
@@ -2378,13 +2383,12 @@ TEST(RenderEngineTest, FrameCountersForwardTheBackendsAnswerAndSaySoWhenThereIsN
     EXPECT_EQ(progress.inFlight(), 2U) << "in flight is the difference, computed once in the vocabulary";
 }
 
-TEST(RenderEngineTest, PassScopeOpensAndClosesOncePerExecutedPass)
+TEST(RenderEngineTest, EveryExecutedPassReachesTheBackendOnceAndADisabledOneDoesNot)
 {
-    // Every executed pass runs inside its own pass scope: the backend is told
-    // which pass is running (its identity for retained per-pass GPU state and
-    // the marker of "active this frame"), and the scope is closed afterwards
-    // so un-consumed per-pass state cannot leak into the next pass. A disabled
-    // pass is not executed and therefore opens no scope.
+    // Every executed pass is ONE entry of the frame's value: the backend is told which pass it is (its identity
+    // for retained per-pass GPU state and the marker of "active this frame", see FrameDescription::Pass), and
+    // every entry is walked to its end, so nothing a pass carried is dropped on the way. A disabled pass is not
+    // executed and therefore has no entry.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setBackend(backend);
@@ -2406,21 +2410,20 @@ TEST(RenderEngineTest, PassScopeOpensAndClosesOncePerExecutedPass)
 
     engine->frame(0.016);
 
-    ASSERT_EQ(backend->began.size(), 2u);
-    EXPECT_EQ(backend->began[0], pass_a.get());
-    EXPECT_EQ(backend->began[1], pass_b.get());
-    EXPECT_EQ(backend->began.back(), pass_b.get());
-    EXPECT_EQ(backend->end_passes, 2);
-    EXPECT_EQ(backend->begin_passes, backend->end_passes);
+    ASSERT_EQ(backend->pass_entries.size(), 2u);
+    EXPECT_EQ(backend->pass_entries[0], pass_a.get());
+    EXPECT_EQ(backend->pass_entries[1], pass_b.get());
+    EXPECT_EQ(backend->entries, 2);
+    EXPECT_EQ(backend->entries_closed, backend->entries);
 
-    // Enabling the pass again brings its scope (and drawing) back.
+    // Enabling the pass again brings its entry (and drawing) back.
     hidden->setEnabled(true);
     engine->frame(0.016);
-    ASSERT_EQ(backend->began.size(), 5u);
-    EXPECT_EQ(backend->began[2], pass_a.get());
-    EXPECT_EQ(backend->began[3], pass_b.get());
-    EXPECT_EQ(backend->began[4], hidden.get());
-    EXPECT_EQ(backend->end_passes, 5);
+    ASSERT_EQ(backend->pass_entries.size(), 5u);
+    EXPECT_EQ(backend->pass_entries[2], pass_a.get());
+    EXPECT_EQ(backend->pass_entries[3], pass_b.get());
+    EXPECT_EQ(backend->pass_entries[4], hidden.get());
+    EXPECT_EQ(backend->entries_closed, backend->entries);
 }
 
 TEST(RenderEngineTest, RemovePassReleasesBackendPerPassState)
@@ -2621,11 +2624,11 @@ TEST(RenderEngineTest, TheFramePlanIsWhatTheFrameActuallyRan)
             planned.push_back(pass.pass);
         }
     }
-    EXPECT_EQ(planned, backend->began) << "the plan's running passes, in order, are what ran";
-    ASSERT_EQ(backend->began.size(), 3u);
-    EXPECT_EQ(backend->began[0], early.get());
-    EXPECT_EQ(backend->began[1], main.get());
-    EXPECT_EQ(backend->began[2], late.get());
+    EXPECT_EQ(planned, backend->pass_entries) << "the plan's running passes, in order, are what ran";
+    ASSERT_EQ(backend->pass_entries.size(), 3u);
+    EXPECT_EQ(backend->pass_entries[0], early.get());
+    EXPECT_EQ(backend->pass_entries[1], main.get());
+    EXPECT_EQ(backend->pass_entries[2], late.get());
 }
 
 TEST(RenderEngineTest, TheFramePlanCarriesWhatEachPassLastCost)
@@ -2744,8 +2747,8 @@ TEST(RenderEngineTest, FrameRunsPipeline)
 
     engine->frame();
 
-    EXPECT_EQ(backend->begin_calls, 1);
-    EXPECT_EQ(backend->end_calls, 1);
+    EXPECT_EQ(backend->pass_entries.size(), 1u) << "the pass arrived in the frame's value";
+    EXPECT_EQ(backend->entries_closed, backend->entries);
     EXPECT_EQ(backend->swap_calls, 1);
     EXPECT_GE(backend->clear_calls, 1);
 }
@@ -2839,8 +2842,8 @@ TEST(RenderEngineTest, FrameBeforeInitializeIsNoOp)
 
     // Not initialized: frame should do nothing.
     engine->frame();
-    EXPECT_EQ(backend->begin_calls, 0);
     EXPECT_EQ(backend->swap_calls, 0);
+    EXPECT_TRUE(backend->pass_entries.empty());
 }
 
 TEST(RenderEngineTest, EngineStartsEmpty)
@@ -4060,12 +4063,10 @@ TEST(PassDescriptionTest, WhatAScenePassDescribesIsWhatItAnnounces)
     pass->setPolygonModeOverride(PolygonMode::Line);
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());  // 走"改写命令"那条路
 
-    // 线上的一遍
-    backend->beginPass(pass.get());
+    // 线上的一遍：宿主自己驱一条 pass —— 描述 + 只含这一条 pass 的帧值（见 RenderPass::execute）
     pass->execute(scene.get(), backend.get());
 
-    // 值：同一件事描述成 PassDescription。两步是接口的形状（见 RenderPass::describePass）—— 第一半不需要
-    // 画面形状，中间才问它，第二半拿它收集命令。
+    // 值：同一件事描述成 PassDescription。
     vn::graphics::PassDescription described;
     ASSERT_TRUE(pass->describe(scene.get(), described));
 
@@ -4103,7 +4104,6 @@ TEST(PassDescriptionTest, WhatAScenePassDescribesIsWhatItAnnounces)
     EXPECT_EQ(draw.commands->front().program, pass->programOverride());
     ASSERT_FALSE(backend->last_programs.empty());
     EXPECT_EQ(backend->last_programs.front(), pass->programOverride());
-    backend->endPass();
 }
 
 TEST(PassDescriptionTest, WhatAScreenPassDescribesIsWhatItAnnounces)
@@ -4127,7 +4127,6 @@ TEST(PassDescriptionTest, WhatAScreenPassDescribesIsWhatItAnnounces)
     pass->setViewport(0, 0, 16, 16);
     pass->resolveInputTextures({ source.get() });
 
-    backend->beginPass(pass.get());
     pass->execute(nullptr, backend.get());  // 没有场景：只有灯会读到它
 
     vn::graphics::PassDescription described;
@@ -4150,7 +4149,6 @@ TEST(PassDescriptionTest, WhatAScreenPassDescribesIsWhatItAnnounces)
     // 清屏在构造里就关了：描述里没有 clear，线上也没收到 setClearPolicy（0 值不是"清了黑色"）
     EXPECT_FALSE(described.clear.has_value());
     EXPECT_EQ(backend->clear_calls, 0);
-    backend->endPass();
 }
 
 // "这条 pass 什么都不发"与"发了目标但没画"是两件事，且都要与今天一模一样：前者一个调用都不许发（连目标都不许 ——
@@ -4189,14 +4187,12 @@ TEST(PassDescriptionTest, APassWithNothingToIssueAnnouncesNothingAtAll)
     auto scene     = intrusive_ptr<Scene>(new Scene());
     auto no_camera = intrusive_ptr<RenderPass>(new RenderPass());
     no_camera->setRenderTarget(target);
-    backend->beginPass(no_camera.get());
     no_camera->execute(scene.get(), backend.get());
     EXPECT_EQ(backend->target_history.size(), 1u) << "它还在这一帧里：目标照发";
     EXPECT_EQ(backend->render_calls, 0) << "没有相机就没有绘制，也不会变成别的东西的绘制";
     vn::graphics::PassDescription camera_less;
     ASSERT_TRUE(no_camera->describe(scene.get(), camera_less));
     EXPECT_TRUE(camera_less.draws.empty()) << "描述用空 draws 说同一件事";
-    backend->endPass();
 }
 
 TEST(RenderEngineTest, ShutdownReleasesBackend)
@@ -7773,9 +7769,8 @@ TEST(RenderEngineTest, TheFramesValueIsBuiltAfterThePerFrameHooks)
  * The frame is a value inside the engine (compileFrame decides the order, the wiring and the problems), and this
  * is that value at the boundary - assembled BEFORE anything is dispatched, which is what the camera holding the
  * shape of its own picture made possible (a description asks the backend nothing). The criterion is the strong
- * one: what the value says and what the backend was TOLD have to line up item for item, so a field the value does
- * not carry (or a pass it does not have) cannot hide - which is what makes deleting the flat path a later,
- * mechanical step instead of a leap.
+ * one: what the value says and what the backend's own walk received have to line up item for item, so a field the
+ * value does not carry (or a pass it does not have) cannot hide.
  */
 TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
 {
@@ -7831,10 +7826,12 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     ASSERT_EQ(value.passes.size(), 4u) << "the four enabled passes; the disabled one does not run";
 
     // THE PASSES, in run order and with the identity the backend was handed (its per-pass state key).
-    ASSERT_EQ(backend->began.size(), 4u);
+    ASSERT_EQ(backend->pass_entries.size(), 4u);
+    EXPECT_EQ(backend->frames_executed, 1) << "the whole frame arrives in ONE call (see RenderBackend::executeFrame)";
+    EXPECT_EQ(backend->entries_closed, backend->entries) << "every entry is walked to its end";
     for (std::size_t index = 0; index < value.passes.size(); ++index) {
-        EXPECT_EQ(value.passes[index].pass, backend->began[index])
-            << "entry " << index << " is the pass the backend was told was running";
+        EXPECT_EQ(value.passes[index].pass, backend->pass_entries[index])
+            << "entry " << index << " is the pass the backend's walk reached";
     }
 
     // ① the scene pass: its target, its viewport, its state and its one draw, with the rewritten commands.
@@ -7884,154 +7881,6 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
 }
 
 /**
- * @brief A backend is handed the whole frame as ONE value, and never through the per-call entries.
- *
- * THE BOUNDARY IS THE VALUE (see RenderBackend::executeFrame): the engine compiles the frame and hands it over -
- * pass identities, order, resolved inputs and what each pass issues, in run order - so a backend that wants to
- * build from it (a retained renderer making a graph, an offline renderer walking it) needs no knowledge of a call
- * sequence. The default implementation announces that same value through the per-call entries, which is what
- * every other backend keeps using; this pins that an override sees the value and sees nothing else.
- */
-TEST(RenderEngineTest, ABackendIsHandedTheWholeFrameAsOneValue)
-{
-    class ValueBackend : public MockBackend
-    {
-      public:
-        int                            frames = 0;
-        std::vector<const RenderPass*> frame_passes;
-        std::vector<int>               frame_orders;
-        std::size_t                    frame_draws = 0;
-        int                            frame_unnamed_entries = 0;
-        void executeFrame(const FrameDescription& frame) override
-        {
-            ++frames;
-            for (const FrameDescription::Pass& pass : frame.passes) {
-                if (pass.pass == nullptr) {
-                    ++frame_unnamed_entries;
-                    continue;
-                }
-                frame_passes.push_back(pass.pass);
-                frame_orders.push_back(pass.order);
-                frame_draws += pass.description.has_value() ? pass.description->draws.size() : 0u;
-            }
-        }
-    };
-
-    auto backend = intrusive_ptr<ValueBackend>(new ValueBackend());
-    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
-    ASSERT_TRUE(engine->initialize());
-
-    auto scene  = intrusive_ptr<Scene>(new Scene());
-    setIdentityRoot(*scene)->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
-    auto camera = intrusive_ptr<Camera>(new Camera());
-    setupLookAtCamera(*camera);
-
-    auto target = RenderTargetPtr(new RenderTarget());
-    target->setSize(320, 180);
-    auto first = intrusive_ptr<RenderPass>(new RenderPass());
-    first->setName(u8"scene");
-    first->setCamera(camera);
-    first->setRenderTarget(target);
-    auto second = intrusive_ptr<ScreenPass>(new ScreenPass());
-    second->setName(u8"composite");
-    second->setCamera(camera);
-    second->setProgram(vn::graphics::screenCopyProgram());
-    second->addInputTarget(target);
-    auto disabled = intrusive_ptr<RenderPass>(new RenderPass());
-    disabled->setName(u8"disabled");
-    disabled->setCamera(camera);
-    disabled->setEnabled(false);
-
-    engine->addPass(first, scene, 0);
-    engine->addPass(second, scene, 3);
-    engine->addPass(disabled, scene, 5);
-    engine->frame(0.016);
-
-    EXPECT_EQ(backend->frames, 1) << "the whole frame arrives in ONE call";
-    EXPECT_EQ(backend->frame_unnamed_entries, 0);
-    ASSERT_EQ(backend->frame_passes.size(), 2u) << "the two enabled passes; the disabled one is not in the frame";
-    EXPECT_EQ(backend->frame_passes[0], first.get());
-    EXPECT_EQ(backend->frame_passes[1], second.get());
-    ASSERT_EQ(backend->frame_orders.size(), 2u);
-    EXPECT_EQ(backend->frame_orders[0], 0);
-    EXPECT_EQ(backend->frame_orders[1], 3) << "each pass arrives with the order it runs at";
-    EXPECT_EQ(backend->frame_draws, 2u) << "and with the draws it issues";
-    // Nothing came in through the per-call entries: the value is not a second spelling of them, it replaces them
-    // for a backend that takes it.
-    EXPECT_EQ(backend->began.size(), 0u);
-    EXPECT_EQ(backend->render_calls, 0);
-    EXPECT_EQ(backend->program_draws, 0);
-    EXPECT_EQ(backend->order_sets, 0);
-}
-
-/**
- * @brief What a frame's value BECOMES on the wire: the call sequence, frozen.
- *
- * THE MAPPING A VALUE IS (see RenderBackend::executeFrame), asserted as a sequence because "the value reaches the
- * wire" is only true if EVERY field of it does: the frame's brackets, then per enabled pass its scope (identity,
- * order, resolved inputs), then the pass' own facts (target, viewport, clear, state - only the ones it stated), then
- * its draws (lights with the drawing call they belong to), then the scope closes. A pass that issues nothing keeps
- * its scope open and closed with no attribute announced at all.
- *
- * Frozen here because it is what a backend that takes the value directly must still produce: the vsg plugin's own
- * executeFrame drives its recorder through exactly this order (see the redesign's S3), and any reordering shows up
- * as a picture that differs rather than as a failure.
- */
-TEST(RenderEngineTest, TheFrameValueBecomesExactlyThisCallSequence)
-{
-    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
-    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
-    ASSERT_TRUE(engine->initialize());
-    backend->wire.clear();   // what initialize announced is not part of a frame
-
-    auto scene  = intrusive_ptr<Scene>(new Scene());
-    setIdentityRoot(*scene)->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
-    auto camera = intrusive_ptr<Camera>(new Camera());
-    setupLookAtCamera(*camera);
-
-    auto target = RenderTargetPtr(new RenderTarget());
-    target->setSize(320, 180);
-    auto first = intrusive_ptr<RenderPass>(new RenderPass());   // target + viewport + clear + state + one draw
-    first->setName(u8"scene");
-    first->setCamera(camera);
-    first->setRenderTarget(target);
-    first->setViewport(0, 0, 160, 90);
-    auto second = intrusive_ptr<ScreenPass>(new ScreenPass());  // a screen draw, and it clears nothing
-    second->setName(u8"composite");
-    second->setCamera(camera);
-    second->setProgram(vn::graphics::screenCopyProgram());
-    second->addInputTarget(target);
-    auto empty = intrusive_ptr<RenderPass>(new RenderPass());   // no content: issues nothing at all
-    empty->setName(u8"noscene");
-    empty->setCamera(camera);
-    auto disabled = intrusive_ptr<RenderPass>(new RenderPass());
-    disabled->setName(u8"disabled");
-    disabled->setEnabled(false);
-
-    engine->addPass(first, scene, 0);
-    engine->addPass(second, scene, 3);
-    engine->addPass(empty, nullptr, 4);
-    engine->addPass(disabled, scene, 5);
-    engine->frame(0.016);
-
-    const std::vector<vn::String> expected = {
-        u8"beginFrame",
-        // ① the scene pass: scope, then where it draws, with what, and its one drawing call.
-        u8"beginPass", u8"order", u8"inputs", u8"target", u8"viewport", u8"clear", u8"state", u8"lights", u8"render",
-        u8"endPass",
-        // ② the screen pass: the same shape, with a screen draw - and no clear announcement (it clears nothing).
-        u8"beginPass", u8"order", u8"inputs", u8"target", u8"state", u8"lights", u8"screen", u8"endPass",
-        // ③ a pass that issues nothing: the scope opens and closes, and not one attribute of it is announced.
-        u8"beginPass", u8"order", u8"inputs", u8"endPass",
-        // The disabled pass is not in the frame at all.
-        u8"endFrame", u8"swap",
-    };
-    EXPECT_EQ(backend->wire, expected);
-}
-
-/**
  * @brief The engine runs the frame's VALUE: each pass is described once per frame, and never asked to execute.
  *
  * THE CONTRACT CHANGE OF A VALUE-DRIVEN FRAME, named. The compile describes every enabled pass once
@@ -8078,8 +7927,8 @@ TEST(RenderEngineTest, TheEngineRunsTheFrameValueAndNeverCallsExecute)
 
     EXPECT_EQ(pass->describes - describes_before, 2) << "once per frame, by the compile";
     EXPECT_EQ(pass->executes - executes_before, 0) << "the engine announces the value instead";
-    // And the pass really did reach the wire - from the value, with its camera and its content.
-    ASSERT_EQ(backend->began.size(), 2u) << "one scope per frame";
+    // And the pass really did reach the backend - from the value, with its camera and its content.
+    ASSERT_EQ(backend->pass_entries.size(), 2u) << "one entry per frame";
     EXPECT_EQ(backend->render_calls, 2);
     ASSERT_EQ(backend->render_cameras.size(), 2u);
     EXPECT_EQ(backend->render_cameras[1], camera.get());
@@ -8707,8 +8556,12 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
     EXPECT_FALSE(second->hasDepth()) << "and the declared attachment set is the built one";
     EXPECT_EQ(engine->transientTarget(u8"gbuffer"), second)
         << "a new shape is a NEW instance, and the query answers with the live one";
-    EXPECT_NE(engine->transientTarget(u8"gbuffer"), first)
-        << "which is exactly why a handle kept across a resize describes a target the compile has let go";
+    // The released instance is NOT witnessed by its ADDRESS: a freed target's memory may be handed straight back
+    // to the next one (measured 2026-10-11: the same pointer came back once in a few runs, which made this line a
+    // test of the allocator). What the engine promises is the live instance's extent and that only ONE exists -
+    // which is exactly why a handle kept across a resize describes a target the compile has let go.
+    EXPECT_EQ(engine->transientTargetCount(), 1u);
+    EXPECT_EQ(engine->transientTarget(u8"gbuffer")->width(), 640);
 }
 
 /**

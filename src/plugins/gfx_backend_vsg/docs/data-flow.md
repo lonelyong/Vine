@@ -8,25 +8,31 @@
 >
 > SceneBridge 时代的数据映射叙述已删（全文在 git 历史）；本文只描述重写版。
 
-## 0. 全景：一帧是"两次调用 + 三段"
+## 0. 全景：一帧是"一次调用 + 三段"
 
 ```
 宿主/引擎                 后端（门面：VsgBackend）
-beginFrame()      ──▶   Session.beginFrame（取图、推进槽位时钟）+ FrameRecorder 开帧
-render / beginPass … ──▶  FrameRecorder：只记"事实"（合法性 + 数据），不碰资源
-endFrame()        ──▶  FrameCompiler + FrameGraph：依赖求值、缺省解析、合法性判定 → CompiledFrame
-swapBuffers()     ──▶  ContentAssembly（事实表 + 流 + 块）→ ContentPass 录制 → VsgExecutor 提交/呈递
+executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟）+ FrameRecorder 开帧
+                     ──▶  按值走每条 pass：FrameRecorder 只记"事实"（数据），不碰资源
+                     ──▶  FrameCompiler + FrameGraph：依赖求值、缺省解析、合法性判定 → CompiledFrame
+swapBuffers()       ──▶  ContentAssembly（事实表 + 流 + 块）→ ContentPass 录制 → VsgExecutor 提交/呈递
 ```
 
-三段的分工是**固定的**：**收集**只回答"这次调用合法吗、它记成什么数据"；**编译**是唯一做决定的地方
+帧的**值**（`vn::graphics::FrameDescription`）就是引擎给的一切：每条 pass 的身份、order、解析好的输入，
+以及它发出的 target / viewport / 清屏 / 状态与每条绘制调用 —— **没有一长串必须按顺序发的调用**，也没有
+"没开 scope 时设置是惰性"这类顺序规则（值里没有顺序可错，见 `RenderBackend::executeFrame`）。
+
+三段的分工是**固定的**：**收集**只回答"这次调用记成什么数据"（顺序由帧值给定，值的驱动者按值走）；
+**编译**是唯一做决定的地方
 （每 pass / 每 draw 一个终态）；**执行**只做机械落地（把已经决定好的事实变成 GPU 操作）。
 
 ## 1. 收集段（`FrameRecorder`）
 
-* 引擎把 `RenderCommand`（几何 + 材质 + 程序 + 模型矩阵 + `ResolvedRenderState` + opacity）交给
-  `render(commands, camera)`；全屏调用走 `drawScreenProgram(source, program, camera)`。
+* 帧值里的每条绘制调用（内容档 = 几何 + 材质 + 程序 + 模型矩阵 + 作者状态 + opacity；全屏档 = 源 + 程序）由
+  门面在走值的时候交给 `render(commands, camera)` / `drawScreenProgram(source, program, camera)`。
 * 录制器**当场快照**借用的一切（相机矩阵、灯、命令、pass 属性），因为引擎的容器是复用成员。
-* 它不判资源、不建对象、不选管线；"无 scope / 不在帧里"是协议（`Protocol`）的答案。
+* 它不判资源、不建对象、不选管线；"没有帧 / 没有 scope"不是错误而是**没有去处**（调用不生效，返回 false）——
+  帧值由构造带顺序，能发出来的形状就是值的形状。
 * 一帧的"描述"是值：`FrameDescription`（`FrameArena` 上分配），跨帧不合法。
 
 ## 2. 编译段（`FrameGraph` + `FrameCompiler`）
@@ -102,7 +108,7 @@ SDK 侧内容释放入口（A3）、`Material` revision（A4）、逐 buffer rev
 ## 8. 一帧时序与成本
 
 ```
-beginFrame → [render/beginPass/endPass …] → endFrame(编译) → swapBuffers(内容世界→录制→提交→呈递)
+executeFrame(值：每条 pass 的 scope 与其绘制) → [编译] → swapBuffers(内容世界→录制→提交→呈递)
 ```
 每帧成本：**record 半段**（facts/计划/块/流）在 1 drawable 的配方里是 7–19 µs（Release，四类编辑都一样平），
 **commit 半段**（录制/提交/呈递，lavapipe）是 0.8–1.0 ms，唯一花毫秒的编辑是**新 program 的第一帧**

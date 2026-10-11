@@ -1,6 +1,7 @@
 # graphics 的重新设计（2026-10-11 定，提案）
 
-**状态：提案，未落地。** 用户 2026-10-11 定"重构，重新设计"，边界划到**含后端契约**
+**状态：S1 / A / S2 / S3（含 3c 收口）已落地（2026-10-11）；剩下的片：S4b（拆出呈现）/ S5（能力与观测各收成一个值）/
+S6（宿主侧）。** 用户 2026-10-11 定"重构，重新设计"，边界划到**含后端契约**
 （`RenderBackend.hpp` + `sdk/vine/graphics/backend/` 半 + `gfx_backend_vsg` 插件）。
 
 **这一稿作废了两条已登记的决定（记账，谁在什么时候改的主意）：**
@@ -231,7 +232,7 @@ class VN_GRAPHICS_API RenderSurfaceBinding
 | **S1** | **pass 描述它的绘制**（唯一的结构改动）— **已落地 2026-10-11，见下** | … | … | done |
 | **A** | **画面形状回到相机**（**已落地 2026-10-11，见下**；取代 S4a，也把 S1 的那道缝合掉） | `Camera` 持 `aspect`（`setAspect`/`aspectRatio`/`projectionMatrix()`/`screenToWorldRay(pos)`）；`RenderBackend::viewAspect()` 从契约里**删除**；`collectRenderCommands*(camera)`；`SceneView` 把窗格的形状 push 给相机；HUD 子视口相机自己声明形状；引擎在编译期报"pass 的矩形 ≠ 相机的画面形状" | 见下"已落地：A" | S1 |
 | **S2** | **引擎产出整帧的值**（窄口，不破宿主 API）— **前半已落地 2026-10-11，见下**（值 + 观测面） | `compileFrame()` 之后组装 `FrameDescription`；`executeFrame(desc)` 作为**新增**入口；能力位 `Capabilities::frameAsValue`；老路保留 | **两棵树逐字节相同**（selftest + demo 冒烟 + 三套件）；变异：值里漏一条 pass / 漏一条 draw ⇒ 像素判据红 | S1 + A |
-| **S3** | **删平坦路径与 `Protocol` 的顺序规则** — **已落地 2026-10-11：帧由值驱动 + 整帧交给后端 `executeFrame`；剩下的 10 个逐条入口与 `Protocol` 的 8 条规则现在是纯删** | 删 `beginPass`/`endPass`/`setPassOrder`/`setPassState`/`setClearPolicy`/`setViewport`/`setLights`/`setPassInputs`/`beginFrame`/`endFrame`；`Protocol` 只留 `ReleaseRenderTarget` 一条（"目标被释放时丢掉公告"）或整体删；预热那一拍删 | **先回答"覆写 `execute()` 的 pass 怎么办"**（见 S2 落地记录第 3 条：仓库里就有这样一条见证）；`Protocol` 的 7 条 `CoreProtocolTest` 用例改写或删除并记账；三套件计数**只许减该删的**；两棵树逐字节相同（此时只剩一棵） | S2 |
+| **S3** | **删平坦路径与 `Protocol` 的顺序规则** — **已落地 2026-10-11：帧由值驱动 + 整帧交给后端 `executeFrame`（前半）＋ 平坦路径与 `Protocol` 删除（收口，见下）** | 删 `beginPass`/`endPass`/`setPassOrder`/`setPassState`/`setClearPolicy`/`setViewport`/`setLights`/`setPassInputs`/`beginFrame`/`endFrame`；`Protocol` 删（只留"目标被释放"那一条规则，落在 recorder）；预热那一拍删 | **先回答"覆写 `execute()` 的 pass 怎么办"**（见 S2 落地记录第 3 条：仓库里就有这样一条见证）；`Protocol` 的 7 条 `CoreProtocolTest` 用例删除并记账（433 → 426）；三套件计数**只许减该删的**；两棵树逐字节相同（此时只剩一棵） | S2 |
 | **S4b** | **拆出呈现**（窗口成为可选依赖） | `RenderSurfaceBinding`（`nativeHandle`/`setWindowHandle`/`resize`/`present`/`format`） | **新增能力用例**：一个**只离屏**的后端（`surface()==nullptr`）用一条 pass 画进 `RenderTarget` 并读回 —— 今天它必须实现 4 个空壳。 | S2 |
 | **S5** | **能力与观测各收成一个值** | `Capabilities`、`FrameReport`；删 4 个 bool 出参；引擎/后端/诊断三套数收成"一条路 + 一个值" | `test_vsg` 的 counters/progress/retention 用例改写（语义等价）；gate 里的数字逐项对照 | S3 |
 | **S6** | **宿主侧**（可与 S1–S5 并行） | 尺寸唯一 owner；`SceneView` 六角色分组命名 + 三条"内部入口"标注；presentation 知识收进呈现表 | `test_gui` 253 不变；`SceneViewViewportTest` 增一条"视图不持有第二份尺寸" | 无 |
@@ -300,7 +301,7 @@ meshio 34 / iobase 94）；全量 Release 0 error / 0 warning；五个 gate 0 fi
 它们的读者只剩"默认实现"、"宿主自己驱动一条 pass"与后端自己，所以删除它们是一次**纯删**。
 **预热那一拍已删（见下）**，它不在剩下的清单里。
 
-### S3 后半（**下一步**）：删那 10 个逐条入口 + `Protocol` 的 8 条规则 —— 执行计划
+### S3 后半（**已按下面的收口条落地**）：删那 10 个逐条入口 + `Protocol` 的 8 条规则 —— 执行计划
 
 写清楚，因为这一片**要求两侧同时到位**（改一半就是一棵跑不起来的树，正是 §5 禁止的形态）。三步，每步都能独立验收：
 
@@ -332,6 +333,61 @@ per-pass / per-draw 的（`beginPass(PassId)` / `setPassOrder` / `setPassInputs`
 `drawScreenProgram` / `endPass`），它们**不是契约**、而是插件内部的采集层 —— 值按构造就是有序的，所以
 "值 → 这些入口"只是换个调用者，不需要一层翻译；而 `PassId` 的所有权在插件（`d->passes.adopt`），
 "按值采集"反而要往 recorder 里塞一个 key 函数。**结论：把值喂给 recorder 就是 3b 的插件循环本身。**
+
+### 已落地（2026-10-11）：S3 后半（收口）—— 平坦路径与 `Protocol` 一起退场
+
+**动作**：
+
+1. **契约只留一个帧入口**：`RenderBackend::executeFrame(frame)` 变**纯虚**；`beginFrame` / `endFrame` /
+   `beginPass` / `endPass` / `setPassOrder` / `setPassState` / `setClearPolicy` / `setViewport` / `setLights` /
+   `setPassInputs` / `render` / `drawScreenProgram` **全部删除**（12 个）—— `RenderBackend.hpp` 的 CALL ORDER
+   一节整段消失（值里没有调用序列可写）。`setRenderTarget` **留下并改述**：pass 画进哪张目标写在帧值里
+   （`PassDescription::target`），于是它只剩"宿主宣布一张它将使用/回读的目标"这一半（持握 + 懒建 + 上报），
+   与 `releaseRenderTarget` 同类；`announceClear`（`RenderPass` 的便捷入口）与 `announcePassTo` / `announceDrawsTo`
+   （"描述 → 逐条调用"的映射）随平坦路径一起删除。
+2. **"宿主自己驱动一条 pass"落成一个单 pass 的帧**：新增 `singlePassFrame(pass, order, inputs, description)`
+   （`FrameDescription.hpp`，实现与唯一使用者在 `RenderBackend.cpp`），`RenderPass::execute()` = 描述它 +
+   把这一帧交给后端 —— 于是**引擎与宿主走同一个入口、交出同一个形状**（§3 的"顺序不可表达"到此完全兑现）。
+3. **引擎**：`frame()` 去掉 `beginFrame()` / `endFrame()` 两次调用：帧的身体（取图、录制、编译）都在
+   `executeFrame` 里，`swapBuffers()` 仍是唯一的呈现（S4b 会把它移进呈现绑定）。
+4. **插件**：`beginFrame()` / `endFrame()` 的体变成私有 `openFrameBooks()` / `closeFrameBooks()`；逐条入口的体
+   变成私有 helper（`openPassScope` / `closePassScope` / `announcePassOrder` / `announcePassInputs` /
+   `announceTarget` / `announceClear` / `announcePassState` / `announceLights` / `collectContentDraw` /
+   `collectScreenDraw`，目标那两半共享 `adoptHostTarget` / `reportUnbuildableTarget`），`executeFrame()` 按值
+   走它们（**A 项检查仍在**：值里 `description` 缺席 ⇒ 一个属性都不发）；`setRenderTarget` 留下的是"宿主宣布
+   目标"，pass 的目标由值带来（同一批 ensure/报告逻辑，`picture_depends` 区分两者）。
+5. **`Protocol` 退场**：`backend/Protocol.hpp` + `Protocol.cpp` 删除；`FrameRecorder` 只保留它需要的书
+   （帧 / scope 的开合）与契约里**唯一不能被值表达**的规则 —— **被释放的目标**：scope 公告的目标被
+   `releaseRenderTarget` 掉之后，该 scope 的其余效果丢弃、绘制**跳过而不改画到窗口**（`FrameRecorderTest`
+   的 `AReleasedAnnouncedTargetKillsTheScopeAndNothingIsRedirected` 钉它，另加"释放**别的**目标不影响本 scope"
+   这一半，原在 `CoreProtocolTest` 里）。**顺序判决与那一套报告（含 `PassProtocolViolation` 的那三句话）一起删除**：
+   值按构造有序，"一个没有 scope 可归属的调用"不是错误而是**没有去处**（不生效、返回 false、不上报）。
+6. **测试**：`CoreProtocolTest` **7 条删除**（记账：`test_vsg` 433 → **426**；逐条对照后没有丢证据 ——
+   其余六条规则要么随状态机消失，要么原本就在 `FrameRecorderTest` 上有对应用例）；`FrameRecorderTest` 5 条把
+   **上报断言**改成"不生效、无上报"（行为断言不变）；`VsgBackendTest` 的平坦驱动改成**值驱动**（新增测试头
+   `tests/test_vsg/TestFrame.hpp`：把"开 scope / 公告 / 绘制"的老拼写换成同一批事实的链式写法），
+   `GraphicsTest` 的 `MockBackend` 改成**从值记录**（同一批见证量，新增 `frames_executed` / `pass_entries` /
+   `entries_closed`），`tests/test_gui/RenderControlTest.cpp` 的 stub 换成 `executeFrame`。
+
+**判据（实测）**：`test_graphics` **357**（359 − 2：`TheFrameValueBecomesExactlyThisCallSequence` 与
+`ABackendIsHandedTheWholeFrameAsOneValue` 被值驱动本身取代 —— "值 → 线"的序列不再存在，而**每条引擎用例都在读值**）、
+`test_gui` **253**、`test_vsg` **426 = 421 + 3 skip + 2 已知红**（433 − 7；**含 SDK 像素夹具 ⇒ 真设备像素不变**）、
+`test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94 全绿；全量 Release 构建 0 error / 0 warning；五个 gate
+0 finding（`check_ai_docs --strict` 仍 20 条历史引用，不增）。
+
+**落地时发现（都进设计）**：
+
+1. **`announcePassTo` / `announceDrawsTo` 不是"那条路的地基"** —— 3c 行原话是"必须留在 SDK 里"。真删的时候它们
+   **没有读者**：它们是"描述 → 逐条调用"的映射，而逐条调用没了；宿主自己驱动一条 pass 需要的只是"造一个单 pass
+   的帧"（`singlePassFrame`）。**这条更正了上面 3c 那一行的风险判断**：宿主侧那一半不是"留着映射"，而是"同一个入口"。
+2. **X11 那半边的用例早已编译不过，而且没人知道**：`VsgBackendTest.cpp` 里 `#if !defined(_WIN32)` 的 2800 行
+   在 Windows 上不编译，而它们**自 M3 起**还在调 `RenderBackend::setDepthMode()`（M3 已经删了它）—— 也就是说
+   Linux 上 `test_vsg` 从那时起就不编译。本片把那批驱动逐条改成值（`TestFrame`），**顺手修好了**；但
+   **这台机器上没有 X display，它们仍然无法编译/运行**（Linux 上才验），如实记账。
+3. **`ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt` 的偶发红查明**：那条断言"新形状的实例 ≠
+   旧指针地址"，而被释放的 `RenderTarget` 的**地址会被下一次分配复用**（实测：十几次里抓到一次同一地址）——
+   它测的是分配器而不是引擎。`test_graphics` 里那条断言改成"活着的实例只有一张 + 它的 extent 是新形状"。
+   （上一轮记的"红过一次、随后 4 次全绿"到这里有了原因。）
 
 ### 已落地（2026-10-11）：S3 后半之二 —— 预热那一拍删除
 

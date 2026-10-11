@@ -28,6 +28,7 @@
 #    include <xcb/xcb.h>
 #endif
 
+#include "TestFrame.hpp"
 #include "TestHostWindow.hpp"
 
 #include <algorithm>
@@ -279,23 +280,20 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->nativeHandle(), host.handle()) << "the session adopted the host's window";
 
-    backend->beginFrame();
-    backend->beginPass(pass.get());
-    backend->setPassOrder(0);
-    backend->setRenderTarget(nullptr);
-    backend->setClearPolicy(clear);
-    backend->setDepthMode(vn::graphics::DepthMode::TestAndWrite);
-    backend->render(commands, camera.get());
-    backend->endPass();
-    backend->endFrame();
+    backend->executeFrame(TestFrame()
+                              .pass(pass.get())
+                              .target(nullptr)
+                              .clear(clear)
+                              .depth(vn::graphics::DepthMode::TestAndWrite)
+                              .content(commands, camera.get())
+                              .value());
     backend->swapBuffers();
 
     // A presentation reaches the display server asynchronously: two plan-free frames re-present the picture
     // before it is read (the settle the rewrite's own device cases use).
     for (int index = 0; index < 2; ++index)
     {
-        backend->beginFrame();
-        backend->endFrame();
+        backend->executeFrame(vn::graphics::FrameDescription{});
         backend->swapBuffers();
     }
 

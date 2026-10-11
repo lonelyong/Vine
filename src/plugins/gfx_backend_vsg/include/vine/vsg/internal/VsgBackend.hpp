@@ -14,37 +14,31 @@
  * WHERE THIS SITS (design §2.2). Every other `api/` type is one piece a frame is made of - the session, the
  * store, the assembly, the executor - and this is the seam the ENGINE talks to: it implements the SDK's
  * `RenderBackend` methods and drives those pieces through them, deciding nothing of its own. That is why it
- * is allowed to be thin: `initialize()` builds the session, a frame is `beginFrame()` -> `endFrame()` ->
- * `swapBuffers()` over the pieces that exist, and every call it cannot serve yet is REPORTED (the SDK's own
+ * is allowed to be thin: `initialize()` builds the session, a frame is `executeFrame(value)` -> `swapBuffers()`
+ * over the pieces that exist, and every call it cannot serve yet is REPORTED (the SDK's own
  * rule: report what could not be done instead of answering with nothing).
  *
  * WHAT IS SERVED TODAY (the facade's slices, §11.16bd-§11.16bh):
  *   * the session lifecycle - up, down, up again, `shutdown()` idempotent and safe before any
  *     `initialize()`, exactly what the SDK's contract demands of a backend whose surface is recreated;
- *   * the frame protocol - an EMPTY frame is compiled, recorded and presented (the session's own rule:
- *     opening a frame may acquire an image, and the only call that hands it back is the present), and a
- *     frame with passes goes the whole way: the pass protocol below collects the plan, the content world
- *     records it, and the session presents it;
- *   * the PASS PROTOCOL, which is where the drawing half starts: `beginPass()`/`endPass()` open and close
- *     a scope, `setPassOrder()`/`setRenderTarget(nullptr)`/`setViewport()`/`setClearPolicy()`/
- *     `setPassState()`/`setLights()` announce its state, and `render()` collects the commands. The calls
- *     are turned into the plan's own spelling (the SDK's clear policy into the plan's, the pass object
- *     into a `core::PassId` through api/PassRegistry) and handed to the collection stage; what the
- *     protocol REFUSES is the recorder's to judge and report, so this layer has no rules of its own.
- *     Calls that arrive OUTSIDE a frame - the engine's pre-frame warm-up, which executes every enabled
- *     non-clearing pass once so a backend can prepare its retained state - are inert by contract (see
- *     the SDK's note) except for the pass identity, which is registered: the warm-up's pass keeps its
- *     number in the frames that follow;
- *   * CONTENT DRAWING: `render()` tracks the commands' own objects (geometry, material, program - and
- *     the default program from `setDefaultContentProgram()`) into api/ContentStore and snapshots the call
+ *   * THE FRAME, RUN FROM ITS VALUE - the one frame entry the SDK has (RenderBackend::executeFrame): the frame's
+ *     books are opened (the storage a frame needs is brought up to what it takes, the session mints the token and
+ *     acquires the image, the collection stage opens the plan for that token), every pass of the value is walked
+ *     in the order it states - identity through api/PassRegistry, then the facts and the draws it carries, each
+ *     turned into the plan's own spelling (the SDK's clear policy into the plan's) - and the books are closed
+ *     (the plan compiles against the frame's target facts). An EMPTY frame is still a frame: it is compiled,
+ *     recorded and presented (the session's own rule: opening a frame may acquire an image, and the only call
+ *     that hands it back is the present), and `swapBuffers()` presents what the frame left;
+ *   * CONTENT DRAWING: the value's drawing calls track the commands' own objects (geometry, material, program -
+ *     and the default program from `setDefaultContentProgram()`) into api/ContentStore and snapshot the call
  *     into the plan; `swapBuffers()` assembles the frame's content (api/ContentAssembly) and records it
  *     into the passes the plan asked for, with the view block built from the pass' own camera and the
  *     frame's clock - the host's picture, drawn by the pieces that already existed;
  *   * the OFF-SCREEN HALF: `supportsRenderTargets()` answers true, `setRenderTarget()` holds the host's
  *     targets in api/HostTargets (the description is COPIED, the objects are built lazily, and the resize /
- *     rebuild after that is the plan's answer applied by the executor), `setPassInputs()` announces what a
- *     pass reads - and the images of those inputs are what the content recording binds - and
- *     `drawScreenProgram()` records the full-screen call whose source is one of them. `releaseRenderTarget()`
+ *     rebuild after that is the plan's answer applied by the executor), a pass' declared inputs (the value's
+ *     `inputs`) announce what it reads - and the images of those inputs are what the content recording binds -
+ *     and a draw of `Kind::Screen` is the full-screen call whose source is one of them. `releaseRenderTarget()`
  *     drops everything held for a target the host is about to destroy;
  *   * the READBACK: `readColorBuffer()`/`readDepthBuffer()` stop the device (a counted wait), submit the
  *     target's own copy commands ONCE and fence them, so the pixels / depths the host gets are the ones the
@@ -102,21 +96,18 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     /** @brief Tears the session down: idempotent, and initializable again (the SDK's contract). */
     void shutdown() override;
 
-    /** @brief Opens the frame on the session; the frame's plan starts empty. */
-    void beginFrame() override;
-
-    /** @brief Closes the frame: the plan is closed and compiled against what the frame draws into. */
-    void endFrame() override;
-
     /** @brief Records the frame and commits it through the session: the one present. */
     void swapBuffers() override;
 
     /** @brief Runs a frame from its value: the plugin's own translation of the frame the engine compiled.
      *
      * The engine hands over the whole frame (see vn::graphics::FrameDescription), so the plugin no longer learns
-     * the frame from a call sequence it has to keep in order - it walks the value and announces each pass through
-     * this backend's own entries (the ones that own the identities, the recorder's collection and the content
-     * store's per-drawing-call bookkeeping), in the order the value states. Same calls, one input.
+     * the frame from a call sequence it has to keep in order - it walks the value and applies each entry to its own
+     * pieces (see the file note): the frame's books open (storage, token, acquisition, the plan's frame), every
+     * pass is collected in the order the value states, and the books close (the plan compiles against what the
+     * frame draws into). `swapBuffers()` is what presents it.
+     *
+     * A frame with no session is reported once per episode and runs nothing (see the file note).
      *
      * @param frame The frame to run, in run order.
      */
@@ -143,41 +134,12 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
 
     bool frameProgress(vn::graphics::FrameProgress& progress) const noexcept override;
 
-    /** @brief Holds the host's target under its own identity; nullptr selects the default framebuffer. */
+    /** @brief Holds the host's target and builds what its description can make; nullptr needs no announcement.
+     *
+     * Which pass draws into which target travels inside the frame value, so this is the host's own announcement:
+     * the target it is about to draw into or read back, configured before any frame names it (see the file note).
+     */
     void setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target) override;
-
-    /** @brief Opens the pass scope, under the pass' own number (see the file note). */
-    void beginPass(vn::raw_ptr<const vn::graphics::RenderPass> pass) override;
-
-    /** @brief Closes the pass scope (the recorder drops what no draw consumed). */
-    void endPass() override;
-
-    /** @brief Announces the pass' stacking order. */
-    void setPassOrder(int order) override;
-
-    /** @brief Announces the sub-rectangle for the next drawing call of this scope. */
-    void setViewport(int x, int y, int width, int height) override;
-
-    /** @brief Announces the lights for the next drawing call of this scope. */
-    void setLights(const std::vector<vn::raw_ptr<const vn::graphics::Light>>& lights) override;
-
-    /** @brief Announces the pass' resolved inputs, in declaration order. */
-    void setPassInputs(const std::vector<vn::raw_ptr<vn::graphics::RenderTarget>>& inputs) override;
-
-    /** @brief Announces how this pass' content handles the target's current depth. */
-    void setPassState(const vn::graphics::PassRenderState& state) override;
-
-    /** @brief Announces the pass' clear policy (translated into the plan's spelling). */
-    void setClearPolicy(const vn::graphics::ClearPolicy& policy) override;
-
-    /** @brief Collects a content drawing call, and tracks the objects it names (see the file note). */
-    void render(const std::vector<vn::graphics::RenderCommand>& commands,
-                const vn::graphics::Camera*                      camera) override;
-
-    /** @brief Records a full-screen call whose source is one of the pass' declared inputs. */
-    void drawScreenProgram(vn::graphics::RenderTarget*                     source,
-                           vn::raw_ptr<const vn::graphics::ShaderProgram> program,
-                           vn::raw_ptr<const vn::graphics::Camera>        camera) override;
 
     /** @brief Forgets the pass' identity: the SDK's announcement that the pass is going away. */
     void releasePass(vn::raw_ptr<const vn::graphics::RenderPass> pass) override;
@@ -226,6 +188,86 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     [[nodiscard]] std::size_t releasedStreams() const noexcept;
 
   private:
+    /** @brief Opens the frame's books: storage, token, acquisition, and the plan's own frame.
+     *
+     * The first half of what used to be `beginFrame()` (the SDK's frame is one call now - see
+     * RenderBackend::executeFrame): the per-frame storage is brought up to what this frame needs HERE, between
+     * frames, where no recording is in progress and the previous frame's bytes can be left behind safely, and
+     * then the session mints the frame's token and advances the viewer's clock - the recorder opens the plan for
+     * the same token, so the description and the session's frame cannot disagree about which frame it is.
+     */
+    void openFrameBooks();
+
+    /** @brief Closes the frame's books: the plan is closed and compiled against what the frame draws into.
+     *
+     * The second half of the old `endFrame()`: the collection stage's frame closes and swaps its buffers, and the
+     * plan is compiled against the facts the frame is answered for - the window as the default framebuffer (from
+     * the target itself) plus one row per host target this backend holds, built or not, because the plan has to be
+     * able to say "this one has no objects yet" and because the compiler resolves a pass' declared INPUTS from
+     * that same table (see HostTargets::facts).
+     */
+    void closeFrameBooks();
+
+    /** @brief Opens a pass' scope under the pass' own number (see api/PassRegistry). */
+    void openPassScope(vn::raw_ptr<const vn::graphics::RenderPass> pass);
+
+    /** @brief Closes the pass scope (the recorder drops what no draw consumed). */
+    void closePassScope();
+
+    /** @brief Announces the pass' stacking order (see FrameDescription::Pass::order). */
+    void announcePassOrder(int order);
+
+    /** @brief Announces the pass' resolved inputs, in declaration order (see FrameDescription::Pass::inputs). */
+    void announcePassInputs(const std::vector<vn::raw_ptr<vn::graphics::RenderTarget>>& inputs);
+
+    /** @brief Announces the target a pass draws into, and reports it when it cannot be built at all.
+     *
+     * null means the default framebuffer, which the plan spells the same way. A non-null target goes through the
+     * host-target half (held, built as far as its description allows) and, INSIDE a frame where a pass draws into
+     * it, a description that cannot become objects is REPORTED once per episode - a picture drawn where the host
+     * never asked for it is worse than one that did not arrive (see HostTargets).
+     */
+    void announceTarget(vn::raw_ptr<vn::graphics::RenderTarget> target);
+
+    /** @brief Announces the pass' sub-rectangle (see PassDescription::viewport). */
+    void announceViewport(const vn::graphics::Viewport& viewport);
+
+    /** @brief Announces the pass' clear policy, translated into the plan's spelling (see PassDescription::clear). */
+    void announceClear(const vn::graphics::ClearPolicy& policy);
+
+    /** @brief Announces the pass' own state for the content it draws (see PassDescription::state). */
+    void announcePassState(const vn::graphics::PassRenderState& state);
+
+    /** @brief Announces the lights of one drawing call (see DrawDescription::lights). */
+    void announceLights(const std::vector<vn::raw_ptr<const vn::graphics::Light>>& lights);
+
+    /** @brief Collects one content drawing call, and tracks the objects it names (see the file note). */
+    void collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
+                            const vn::graphics::Camera*                      camera);
+
+    /** @brief Collects one full-screen drawing call whose source is one of the pass' declared inputs. */
+    void collectScreenDraw(vn::graphics::RenderTarget*                     source,
+                           vn::raw_ptr<const vn::graphics::ShaderProgram> program,
+                           vn::raw_ptr<const vn::graphics::Camera>        camera);
+
+    /** @brief Holds the host's target and builds what its description can make (the half setRenderTarget shares).
+     *
+     * @param target          The host's target (never null).
+     * @param picture_depends Whether a pass of the frame being run draws into it: a description that cannot become
+     *                        objects at all is REPORTED then (inside a frame, where it blocks the picture) and is
+     *                        silent otherwise, because a host configures a target before it draws into it and a
+     *                        borrow whose lender arrives later in that setup is order rather than failure.
+     * @return true when the target is held (see HostTargets::State for what its objects are).
+     */
+    bool adoptHostTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, bool picture_depends);
+
+    /** @brief Reports why @p target could not be built, once per episode (its lender missing picks the sentence).
+     *
+     * @param target               The target the host announced (named in the sentence).
+     * @param depth_source_missing Whether the reason is a borrowed depth whose lender this backend does not hold.
+     */
+    void reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, bool depth_source_missing);
+
     /** @brief Replaces the frame's block storage when a frame outgrew it or the learned in-flight count did.
      *
      * Two requests ask for it - a frame that ran out of budget (see BlockStorage's file note) and rings too

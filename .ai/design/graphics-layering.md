@@ -147,7 +147,7 @@ R2 是关键的一条：没有它，"两半"只是目录约定；有了它，宿
 * 这一层的**全部 include** 只有标准库 + `vine/graphics/*` + `vine/math/*`（**没有任何图形 API 头**）；
 * `Vk*` 只出现在**注释**里，格式/layout/load-op 用的是 Vine 自己的枚举。
 
-所以"它像 Vulkan"是"**契约**像 Vulkan（`RenderBackend::ClearPolicy` 的 load-op/附件模型、`RenderTarget`
+所以"它像 Vulkan"是"**契约**像 Vulkan（`ClearPolicy` 的 load-op/附件模型、`RenderTarget`
 的格式/采样）"的必然结果；要舒服地支持 GL 家族，要动的是契约，而不是这一层放在哪。
 
 **待办**：等第二个**家族**（GL）真的立项时，把 B/C 桶整体下沉到"家族工具层"或具体后端——今天只有一个

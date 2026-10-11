@@ -26,8 +26,8 @@ class ShaderProgram;
 /**
  * @brief How a pass has its target cleared before it draws.
  *
- * A SCOPE ATTRIBUTE, announced between beginPass() and the pass' draw (setClearPolicy), so it reads as what it
- * is: the pass describes the clear its content expects, and every draw call of that pass gets it. Nothing is
+ * A PASS' OWN FACT, and a field of the pass' description (PassDescription::clear), applied when the pass draws: it
+ * reads as what it is - the pass describes the clear its content expects, and every draw call of that pass gets it. Nothing is
  * cleared at the moment of the call - a backend that clears through its render pass' load-op (which is what the
  * load-op IS for) applies it when the pass records, and the name no longer promises an action that may never
  * happen.
@@ -75,8 +75,8 @@ struct VN_GRAPHICS_API DrawDescription
     /// Which drawing call this is (the two the contract has; they take different arguments).
     enum class Kind : std::uint8_t
     {
-        Scene,  ///< Draw collected geometry through a camera (RenderBackend::render).
-        Screen, ///< Draw a full-screen program over a source target (RenderBackend::drawScreenProgram).
+        Scene,  ///< Draw collected geometry through a camera (a content drawing call).
+        Screen, ///< Draw a full-screen program over a source target (a screen drawing call).
     };
 
     /// Which of the two calls this describes.
@@ -156,12 +156,14 @@ struct VN_GRAPHICS_API FrameDescription
     /** @brief One pass of a frame: what the ENGINE knows about it, and what the pass says about itself. */
     struct Pass
     {
-        /// The pass (its identity: what a backend keys retained per-pass state by, see beginPass).
+        /// The pass (its identity: what a backend keys retained per-pass state by - the one object two passes never
+        /// share, whatever else they have in common).
         raw_ptr<const RenderPass> pass = nullptr;
-        /// Where this pass stacks in its target (see setPassOrder).
+        /// Where this pass stacks in its target (the explicit pipeline order its declaration gave).
         int order = 0;
         /// What its declared inputs resolved to this frame, in declaration order (null where nothing produced
-        /// it) - exactly what the pass and the backend are handed (see setPassInputs).
+        /// it) - exactly what the pass and the backend are handed, and the shape the backend binds the pass'
+        /// sampled inputs from.
         std::vector<raw_ptr<RenderTarget>> inputs;
         /// What the pass issues, or nullopt when it issues NOTHING AT ALL this frame (a scene pass with no
         /// scene, a screen pass with no resolved source): the scope still opens, and no attribute of it - not
@@ -174,27 +176,20 @@ struct VN_GRAPHICS_API FrameDescription
 };
 
 /**
- * @brief Announces a pass' own facts on the backend's flat wire, in the order the contract documents.
+ * @brief The frame value for ONE pass a host drives itself: identity, order, resolved inputs, description.
  *
- * THE ONE MAPPING from a description to those calls (see RenderBackend's CALL ORDER): no pass of any kind can
- * announce its target without its state, or in a different order from its sibling. Both callers go through it -
- * RenderPass::execute() (the compatibility wire a host calls directly) and the engine's frame loop, which
- * announces the descriptions its compile built (see RenderEngine::frameDescription).
+ * The spelling RenderPass::execute() hands a backend (see RenderBackend::executeFrame), and the reason the SDK
+ * needs no second wire: a host that drives one pass is running a frame with one pass in it, so it builds the same
+ * value the engine builds for a whole frame and there is nothing left that could reach a backend in another order.
  *
- * @param description Pass to announce.
- * @param backend     Backend to announce to (borrowed; must not be null).
+ * @param pass        The pass (its identity; borrowed like every value in this module).
+ * @param order       Where the pass stacks in its target (0 for a host driving one pass).
+ * @param inputs      What its declared inputs resolved to, or empty (nothing resolved them).
+ * @param description What the pass issues, or nullopt when it issues nothing at all (see Pass).
+ * @return The frame to hand to RenderBackend::executeFrame.
  */
-void VN_GRAPHICS_API announcePassTo(const PassDescription& description, raw_ptr<RenderBackend> backend);
-
-/**
- * @brief Announces a pass' drawing calls on the backend's flat wire, in the order they happen.
- *
- * The drawing half of announcePassTo (one place, so a pass' draws cannot reach the wire in another order):
- * the lights go with the drawing call that follows them, and a drawing call with no view is no call at all.
- *
- * @param description The pass whose draws to announce.
- * @param backend     Backend to announce to (borrowed; must not be null).
- */
-void VN_GRAPHICS_API announceDrawsTo(const PassDescription& description, raw_ptr<RenderBackend> backend);
+FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass, int order,
+                                                 std::vector<raw_ptr<RenderTarget>> inputs,
+                                                 std::optional<PassDescription> description);
 
 VN_GRAPHICS_NS_END
