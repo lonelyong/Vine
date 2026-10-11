@@ -1,7 +1,7 @@
 # graphics 的重新设计（2026-10-11 定，提案）
 
-**状态：S1 / A / S2 / S3（含 3c 收口）/ S4b 已落地（2026-10-11）；剩下的片：S5（能力与观测各收成一个值）/
-S6（宿主侧）。** 用户 2026-10-11 定"重构，重新设计"，边界划到**含后端契约**
+**状态：S1 / A / S2 / S3（含 3c 收口）/ S4b / S5 已落地（2026-10-11）；剩下的片：S6（宿主侧）。**
+用户 2026-10-11 定"重构，重新设计"，边界划到**含后端契约**
 （`RenderBackend.hpp` + `sdk/vine/graphics/backend/` 半 + `gfx_backend_vsg` 插件）。
 
 **这一稿作废了两条已登记的决定（记账，谁在什么时候改的主意）：**
@@ -234,7 +234,7 @@ class VN_GRAPHICS_API RenderSurfaceBinding
 | **S2** | **引擎产出整帧的值**（窄口，不破宿主 API）— **前半已落地 2026-10-11，见下**（值 + 观测面） | `compileFrame()` 之后组装 `FrameDescription`；`executeFrame(desc)` 作为**新增**入口；能力位 `Capabilities::frameAsValue`；老路保留 | **两棵树逐字节相同**（selftest + demo 冒烟 + 三套件）；变异：值里漏一条 pass / 漏一条 draw ⇒ 像素判据红 | S1 + A |
 | **S3** | **删平坦路径与 `Protocol` 的顺序规则** — **已落地 2026-10-11：帧由值驱动 + 整帧交给后端 `executeFrame`（前半）＋ 平坦路径与 `Protocol` 删除（收口，见下）** | 删 `beginPass`/`endPass`/`setPassOrder`/`setPassState`/`setClearPolicy`/`setViewport`/`setLights`/`setPassInputs`/`beginFrame`/`endFrame`；`Protocol` 删（只留"目标被释放"那一条规则，落在 recorder）；预热那一拍删 | **先回答"覆写 `execute()` 的 pass 怎么办"**（见 S2 落地记录第 3 条：仓库里就有这样一条见证）；`Protocol` 的 7 条 `CoreProtocolTest` 用例删除并记账（433 → 426）；三套件计数**只许减该删的**；两棵树逐字节相同（此时只剩一棵） | S2 |
 | **S4b** | **拆出呈现**（窗口成为可选依赖）— **已落地 2026-10-11，见下** | 新增导出 `RenderSurfaceBinding`（`nativeHandle`/`setWindowHandle`/`resize`/`present`；**`format` 取消**，见落地记录第 2 条）；`RenderBackend` 删那 4 个入口、加 `surface()`（默认 null） | 见下"已落地（2026-10-11）：S4b" | S2 |
-| **S5** | **能力与观测各收成一个值** | `Capabilities`、`FrameReport`；删 4 个 bool 出参；引擎/后端/诊断三套数收成"一条路 + 一个值" | `test_vsg` 的 counters/progress/retention 用例改写（语义等价）；gate 里的数字逐项对照 | S3 |
+| **S5** | **能力与观测各收成一个值** — **已落地 2026-10-11，见下** | `Capabilities`（`Capabilities.hpp`）、`FrameReport`（`FrameStats.hpp`）；`supportsRenderTargets()`/`frameCounters`/`retentionStats`/`frameProgress` 删，`capabilities()`/`frameReport()` 顶上 | 见下"已落地（2026-10-11）：S5" | S3 |
 | **S6** | **宿主侧**（可与 S1–S5 并行） | 尺寸唯一 owner；`SceneView` 六角色分组命名 + 三条"内部入口"标注；presentation 知识收进呈现表 | `test_gui` 253 不变；`SceneViewViewportTest` 增一条"视图不持有第二份尺寸" | 无 |
 
 **建议的第一刀就是 S1**：它是唯一一处真改结构的地方，无宿主 API 变动、无两棵树需求、判据是
@@ -561,6 +561,48 @@ VTK 那一派、**用法**却是 three.js 那一派（每个视图一台相机�
    真设备上的读回由 `test_vsg` 的既有用例兜住（它们都带窗口，不适用本片的能力形态）。
 4. **X11 那半边的用例仍然是"改了但没编译"**：本片把 54 处窗口调用改成 `surface()->…` 是**纯机械替换**
    （同一对象、同一批参数），但这台机器上没有 X display，**无法编译验证**，如实记账（S3 已记过同一条）。
+
+### 已落地（2026-10-11）：S5 —— 能力与观测各收成一个值
+
+**动作**：
+
+1. **能力**：`RenderBackend::supportsRenderTargets()` → `capabilities()`，答案是新导出值
+   `sdk/vine/graphics/Capabilities.hpp`（今天一个字段 `render_targets`）。**它单独成头，是依赖问题不是风格问题**：
+   引擎的 `capabilities()` 按值返回它，而 `RenderEngine.hpp` **只前置声明** `RenderBackend`（不包含契约）——
+   值必须能独立到达读者，否则每个包含引擎头的宿主 TU 都要被拖进整张后端契约（`RenderPass`/`StateNode`/…）。
+2. **观测**：三个出参方法（`frameCounters`/`retentionStats`/`frameProgress`）→ **一个值** `FrameReport`
+   （`FrameStats.hpp`），三部分各自 `std::optional`：**"不保留"＝不 engage**。原来的三个 bool 连同"哪一半写了、
+   哪一半没写"的可能一起消失 —— 一次构造完的答案没有中途状态（调用方不再需要记住哪个 bool 管哪个出参）。
+3. **引擎**：`frameCounters`/`retentionStats`/`frameProgress` 三条转发 → `capabilities()` + `frameReport()`
+   （无后端＝能力全假、报告三部分全不 engage）；`frame()` 里"后端能不能画离屏"改读 `capabilities().render_targets`
+   （**仍然每帧问**：能力是属性，但"宿主按哪张描述计划了这一帧"要当场成立）。
+4. **归属判据写进文档**（`Capabilities.hpp` 与契约的类注记）：能力＝"初始化期间不变、宿主在计划一帧之前必须知道"
+   的属性；**调用自己能答的不进这里**（能不能读回 → `ReadbackResult::Unsupported`，宿主按它 gate），
+   否则就是同一件事的第二处拼写。
+5. **插件**：`capabilities()` 答 `render_targets = true`；`frameReport()` 从两处拼出一个答案
+   （`d->observe` 的帧计数与保留 + `Session::timeline()` 的两个水位）。
+6. **引用改名**：`EngineCompile.cpp`/`RenderEngine.hpp`/`backend/Observe.hpp`/`FrameStats.hpp` 的注释、
+   插件 `backend.md` 的能力行、`graphics-layering.md` 的两处通路叙述（那是"现役"文档，直接改）；
+   **老 memory 条目里点名的旧符号与旧用例名按本仓规矩加 `<!-- drift-ok -->`**（记账，不改写记录）。
+
+**判据（实测）**：`test_graphics` **360**（不变：`FrameCountersForwardTheBackendsAnswerAndSaySoWhenThereIsNone`
+改写为 `TheFrameReportCrossesTheEngineWholeAndAbsentPartsStayAbsent`，断言从"三个 bool"升成
+"三部分 engage 与否 + 值原样穿过引擎 + 能力同样穿过"）、`test_gui` **253**、`test_vsg` **426 = 421 + 3 skip +
+2 已知红**（设备那条用例改名 `TheHostReadsTheBackendsOwnFrameReport` 并把三段读改成一段 ——
+**它在 `#if !defined(_WIN32)` 里，本机不编译**，同前记账）、`test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94
+全绿；全量 Release 构建 0 error / 0 warning；五个 gate 0 finding（`--strict` 仍 22 条，同一列表）。
+**变异 3/3 红（各自单独实测，都是那一条新用例红）**：① 引擎不转发报告（`return {}`）⇒ 红；
+② 引擎忘记能力（`capabilities()` 恒 `{}`）⇒ 红；③ 契约默认"说零"而不是"沉默"
+（`FrameReport{FrameCounters{},…}`）⇒ 红。
+
+**落地时发现 / 记账**：
+
+1. **"值放哪个头"是有判据的**：`Capabilities` 本可以跟 `ReadbackResult` 一起放契约头里（都是"契约的机器答案"），
+   但那样 `RenderEngine.hpp` 就得包含整张后端契约。**能不能独立到达读者**比"概念上属于哪一类"更硬——
+   S6 的呈现表会再撞一次同样的选择。
+2. **收成一个值之后，"沉默"从约定变成类型**：以前"第二个写了、第三个没写"是可能的中间状态，现在不可能存在；
+   而"不保留"这件事仍然说得出来（不 engage），所以没有丢信息 —— 这正是 §2.2 那条"删 4 个 bool 出参"想删掉的
+   东西：不是删掉"没保留"这个答案，而是删掉"三个各写一半"这种形态。
 
 ## 5. 否决与否决理由
 

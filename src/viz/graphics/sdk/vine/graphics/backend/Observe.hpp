@@ -34,7 +34,7 @@
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 // The two aggregates live at the module's public level (vine/graphics/FrameStats.hpp): a HUD, a tool
-// and a gate read them through RenderEngine::frameCounters, and the backend fills the SAME structs
+// and a gate read them through RenderEngine::frameReport, and the backend fills the SAME structs
 // here, so neither side keeps a second spelling of a number.
 
 /**

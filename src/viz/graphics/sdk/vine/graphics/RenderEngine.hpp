@@ -13,6 +13,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "Capabilities.hpp"
 #include "Diagnostics.hpp"
 #include "FrameContext.hpp"
 #include "FrameDescription.hpp"
@@ -191,34 +192,25 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     const FrameContext& frameContext() const;
 
-    /** @brief Gets the counters the backend kept for the frame that just ended.
+    /** @brief Gets what the backend can do, as one value (see `RenderBackend::capabilities`).
      *
-     * The backend is the only place that knows how the frame went, so a host (a HUD, a tool, a test)
-     * asks through the engine rather than reaching for the backend object (see
-     * RenderBackend::frameCounters for what the numbers are).
+     * A host (a tool, a HUD, a test) asks through the engine rather than reaching for the backend object; the
+     * engine itself asks the same value where a capability decides how a frame is driven (see `frame()`).
      *
-     * @param counters Receives the counters when the backend keeps them.
-     * @return true when @p counters was written; false when no backend is set or it keeps none.
+     * @return The backend's capabilities; everything false when no backend is set (nothing can be claimed).
      */
-    bool frameCounters(FrameCounters& counters) const;
+    [[nodiscard]] Capabilities capabilities() const noexcept;
 
-    /** @brief Gets the backend's cumulative retention numbers (objects released, device idles).
+    /** @brief Gets the backend's own report about its frames (see `RenderBackend::frameReport`).
      *
-     * @param stats Receives the numbers when the backend keeps them.
-     * @return true when @p stats was written; false when no backend is set or it keeps none.
+     * The backend is the only place that knows how a frame went, so a host (a HUD, a tool, a test) asks
+     * through the engine rather than reaching for the backend object. One question, one answer: the frame
+     * that just ended, what is retained, and where the frame clock is - with the parts this backend does not
+     * keep left disengaged rather than reading as zeros.
+     *
+     * @return The report; all parts disengaged when no backend is set (nothing is measured).
      */
-    bool retentionStats(RetentionStats& stats) const;
-
-    /** @brief Gets where the backend's frame clock is (submitted vs provably complete).
-     *
-     * The question a host asks before it decides to skip work or to read a frame back: how far behind
-     * the GPU is. The backend owns the proof of completion, so the engine only forwards (see
-     * RenderBackend::frameProgress).
-     *
-     * @param progress Receives the watermarks when the backend keeps them.
-     * @return true when @p progress was written; false when no backend is set or it keeps no clock.
-     */
-    bool frameProgress(FrameProgress& progress) const;
+    [[nodiscard]] FrameReport frameReport() const noexcept;
 
     /** @brief Gets the order a registered pass runs at in this engine's frame.
      *
@@ -780,7 +772,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Returns the first enabled pass that needs a target this backend cannot draw into.
      *
      * A backend reporting no off-screen support IGNORES a non-null target (see
-     * RenderBackend::supportsRenderTargets), so such a pass draws into the window instead of where the
+     * RenderBackend::capabilities), so such a pass draws into the window instead of where the
      * pipeline expects it, and nothing else in the frame would notice (see frame(), the one caller).
      *
      * @return The first enabled pass with a non-null render target, or null when the backend supports

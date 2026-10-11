@@ -179,7 +179,7 @@ void RenderEngine::buildFrameValue()
         // inputs are told, the pass describes itself (collecting and culling its content) - and the run then only
         // announces what came out. The number is what the plan reports per pass (see
         // FramePlan::PassPlan::record_micros), which is the host-visible half of a frame; the GPU half is the
-        // backend's (see RenderEngine::frameCounters). One clock read per pass, not per draw.
+        // backend's (see RenderEngine::frameReport). One clock read per pass, not per draw.
         const auto pass_started = std::chrono::steady_clock::now();
         // Content that updates itself per frame (an FPS readout, a mirrored gizmo) does it through the hook its
         // declaration carried, and it is what the pass is ABOUT TO describe: it writes content, so it happens

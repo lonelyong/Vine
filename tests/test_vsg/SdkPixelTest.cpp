@@ -88,7 +88,7 @@ bool onSilhouette(const PixelProbe& probe, int x, int y)
     if (!fixture.up()) {                                                                                         \
         GTEST_SKIP() << "the SDK session cannot come up on this machine (see the diagnostics above)";            \
     }                                                                                                            \
-    if (!fixture.backend->supportsRenderTargets()) {                                                             \
+    if (!fixture.backend->capabilities().render_targets) {                                                       \
         GTEST_SKIP() << "this device cannot serve off-screen pixels";                                            \
     }
 }  // namespace

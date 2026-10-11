@@ -12,6 +12,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "Capabilities.hpp"
 #include "Diagnostics.hpp"
 #include "FrameDescription.hpp"
 #include "FrameStats.hpp"
@@ -83,6 +84,17 @@ enum class ReadbackResult
  *   * releasePass / releaseRenderTarget: the pass / target is going away - free what it owns (see each entry);
  *   * setDefaultContentProgram: the program content with no program of its own is drawn with;
  *   * setDiagnosticsRoute / setDiagnosticSink: where this backend's reports go.
+ *
+ * WHAT A BACKEND IS ASKED, and what each answer is:
+ *   * capabilities(): what it can do, as ONE value (Capabilities) - asked before a frame is driven, because a
+ *     capability decides how it is driven;
+ *   * frameReport(): how its frames are going, as ONE value (FrameReport) - the frame that just ended, what is
+ *     retained, where the clock is; what the backend does not keep stays disengaged rather than reading as zero;
+ *   * readColorBuffer / readDepthBuffer: a target's pixels (or depths), or the machine-readable reason there are
+ *     none (see ReadbackResult - `Unsupported` is the expected answer for "this backend cannot", which is what a
+ *     host gates the feature on);
+ *   * diagnosticCount() / diagnosticsClean(): what it had to say, counted on the ONE route the engine handed
+ *     over (setDiagnosticsRoute), so the host's sink and this backend's own evidence read the same numbers.
  *
  * BORROWED ARGUMENTS. Every pointer or reference INSIDE a FrameDescription (camera, commands, lights, target,
  * program) is borrowed for the duration of executeFrame() and never owned: the producer keeps them alive while the
@@ -204,75 +216,37 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      */
     virtual void setRenderTarget(RenderTarget* target) = 0;
 
-    /** @brief Returns whether off-screen render targets are supported.
+    /** @brief Gets what this backend can do (see Capabilities).
      *
-     * Backends that support them honour non-null RenderTargets in
-     * setRenderTarget() by creating and binding GPU attachments. Backends
-     * that do not support them only accept nullptr (the default framebuffer)
-     * and should ignore off-screen targets.
+     * The engine asks this where a capability decides how a frame is driven - before a pass staged through a
+     * target is handed over, and once per frame, because a capability that changes under a running session
+     * would mean the host planned the last frame against a stale description (see RenderEngine::frame).
      *
-     * The engine ASKS this once per frame (see RenderEngine::frame), so declining is a state the host
-     * is told about — a pass staged through a target the backend cannot draw would otherwise be
-     * recorded where the pipeline never put it, which is a wrong picture rather than a slow one.
+     * A backend that can do nothing extra says so by the DEFAULT (every field false, see Capabilities); a
+     * backend that can do something overrides this and answers its own description.
      *
-     * @return true when setRenderTarget() accepts off-screen targets.
+     * @return The capabilities of this backend, whole.
      */
-    virtual bool supportsRenderTargets()
+    [[nodiscard]] virtual Capabilities capabilities() const noexcept
     {
-        return false;
+        return {};
     }
 
-    /** @brief Gets the counters the backend kept for the frame that just ended.
+    /** @brief Gets this backend's own report about its frames (see FrameReport).
      *
-     * The backend is the only place that knows how a frame actually went (how many pass scopes ran,
-     * how many draws they issued, how many cyclic components were skipped), so the host reads ITS
-     * numbers instead of counting a second time from outside - and a gate can assert on the same
-     * numbers the backend's own evidence uses.
+     * The backend is the only place that knows how a frame actually went (how many pass scopes ran, how many
+     * draws they issued, what is retained and what letting go cost, and where the frame clock is), so a host,
+     * a HUD and a gate read ITS numbers instead of counting a second time from outside - and the report is
+     * ONE answer, so "how is it going" is one question rather than three with three written-or-not flags.
      *
-     * Counters are PER FRAME: the answer describes the frame that just ended, never a running total.
+     * What the backend does not keep, it leaves DISENGAGED rather than zero: "no counters" and "a frame that
+     * counted nothing" are different answers (see FrameReport).
      *
-     * @param counters Receives the counters when the backend keeps them.
-     * @return true when @p counters was written; false when this backend keeps no counters (zeros
-     *         would be indistinguishable from an empty frame).
+     * @return The report, with the parts this backend keeps engaged.
      */
-    virtual bool frameCounters(FrameCounters& counters) const noexcept
+    [[nodiscard]] virtual FrameReport frameReport() const noexcept
     {
-        (void)counters;
-        return false;
-    }
-
-    /** @brief Gets the backend's cumulative retention numbers.
-     *
-     * Unlike the frame counters these only ever grow: objects released so far, and counted device
-     * idles (the destructive paths - a session move, a shutdown - are the only places that may wait,
-     * so the number is what "the frame path never idles the device" is asserted with).
-     *
-     * @param stats Receives the numbers when the backend keeps them.
-     * @return true when @p stats was written; false when this backend keeps no retention numbers.
-     */
-    virtual bool retentionStats(RetentionStats& stats) const noexcept
-    {
-        (void)stats;
-        return false;
-    }
-
-    /** @brief Gets where the backend's frame clock is (see FrameProgress).
-     *
-     * SUBMITTED IS NOT COMPLETED: `submitted` counts frames this backend handed to the queue, and
-     * `completed` counts frames whose GPU work it can prove is done. A host asks this instead of
-     * guessing a lag from the frame rate - "the GPU is two frames behind" and "the GPU is done with
-     * everything I sent" are different states, and only the backend knows which one it is in.
-     *
-     * Counted whether or not a sink or a counter is installed. A backend that keeps no clock answers
-     * false; a host must not read that as "nothing in flight" (zeros would be a claim, not a silence).
-     *
-     * @param progress Receives the watermarks when the backend keeps them.
-     * @return true when @p progress was written; false when this backend keeps no frame clock.
-     */
-    virtual bool frameProgress(FrameProgress& progress) const noexcept
-    {
-        (void)progress;
-        return false;
+        return {};
     }
 
     /** @brief Releases the backend GPU resources a pass owns.

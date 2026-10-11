@@ -79,7 +79,7 @@ vn::graphics                          一个模块、一个 target、一个依�
 |---|---|---|
 | `ClearPlan` | 策略（该不该清、谁 bootstrap）/ 应用（load-op 变体、layout） | 策略 → SDK；应用 → `backend/`（家族形状） |
 | `TargetPlan` | 策略（resize/rebuild/借深度，纯函数）/ 应用（真的去建、搬附件） | 策略 + `TargetShape`（数据）→ SDK；应用 → `backend/` |
-| `FrameTimeline` | 查询（在飞行几帧、某帧完成了吗）/ 账本 | **已做（2026-09-27）**：查询面上 A 段成 `FrameProgress`（`FrameStats.hpp`，与 `FrameCounters`/`RetentionStats` 同形：`submitted`/`completed` + `inFlight()`）＋ `RenderBackend::frameProgress()`（默认 false =“不记账”）＋ `RenderEngine::frameProgress()`；**账本**（`begin/submitted/abandoned/completeUpTo`）与 `FrameToken` 留 `backend/`——**宿主今天拿不到 token**（`Session::beginFrame()` 是插件内部的），提一个拿不到的值类型等于凭空开一个面 |
+| `FrameTimeline` | 查询（在飞行几帧、某帧完成了吗）/ 账本 | **已做（2026-09-27）**：查询面上 A 段成 `FrameProgress`（`FrameStats.hpp`，与 `FrameCounters`/`RetentionStats` 同形：`submitted`/`completed` + `inFlight()`）＋ `RenderBackend::frameReport()`（**S5（2026-10-11）后并入 `FrameReport`：不记账＝该部分不 engage，别拿零当空帧**）＋ `RenderEngine::frameReport()`；**账本**（`begin/submitted/abandoned/completeUpTo`）与 `FrameToken` 留 `backend/`——**宿主今天拿不到 token**（`Session::beginFrame()` 是插件内部的），提一个拿不到的值类型等于凭空开一个面 |
 | `Diagnostics` | `ReportOnce`（通用去重工具）/ 收集器 | **已做（2026-09-27）**：两个类型都上 A 段（`ReportOnce.hpp` 自此是独立的头，规则与收集器本来就不是一件事），并**合并路线**——引擎持有唯一的 `Diagnostics`，后端经 `RenderBackend::setDiagnosticsRoute()` 拿同一实例 |
 
 **顺序（别把搬迁做两遍）**：
@@ -89,11 +89,12 @@ vn::graphics                          一个模块、一个 target、一个依�
    按上面四条判据否决；名字判据见本节末）；
 3. 把“要给宿主看的数据”提到模块公共 + 引擎开口 —— **部分已做（2026-09-27）**：
    `FrameCounters`/`RetentionStats` 已在 `vine/graphics/FrameStats.hpp`（模块公共、随 SDK 安装）；
-   通路是 `RenderBackend::frameCounters()/retentionStats()`（默认返回 **false ＝“不保留计数”**，别拿零当空帧）
-   ＋ `RenderEngine::frameCounters()/retentionStats()`；vsg 后端从自己的 `Observe` 回答同一批数字。
+   通路是 `RenderBackend::frameReport()`（**S5（2026-10-11）把三个出参收成一个值**：`FrameReport` 的三部分
+   各自 optional，**不 engage ＝“不保留计数”**，别拿零当空帧）
+   ＋ `RenderEngine::frameReport()`；vsg 后端从自己的 `Observe` 回答同一批数字。
    钉子：引擎转发/不回答各一条（`test_graphics`），后端自答一条（`test_vsg`，含变异反证：把计数来源改成 `{}` ⇒ 红）。
    **同日追加**：帧时钟的查询面 `FrameProgress`（`submitted`/`completed`/`inFlight()`）走同一条通路
-   （`RenderBackend::frameProgress()` 默认 false ＋ `RenderEngine::frameProgress()`，vsg 从 `Session::timeline()` 回答）。
+   （**S5 后与上面两样一起由 `frameReport()` 答出**，vsg 从 `Session::timeline()` 回答）。
    变异反证做了两处：引擎不转发 ⇒ `test_graphics` 红；后端改回 false ⇒ `test_vsg` 红。
    **未做**：引擎自己那 6 组手写"seen / reported"集合改用 `ReportOnce`（行为中性，单独一轮）；
    `TargetShape` / 计划数据（与 S3/S4/S5 的通路一起）；

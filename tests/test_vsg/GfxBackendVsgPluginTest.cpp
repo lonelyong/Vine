@@ -188,7 +188,7 @@ TEST_F(VsgBackendPluginTest, CreateBackendByName)
     ASSERT_NE(backend, nullptr);
     EXPECT_NE(dynamic_cast<vn::vsg::VsgBackend*>(backend.get()), nullptr)
         << "the registered 'vsg' backend is the rewrite's facade, not the implementation it replaces";
-    EXPECT_TRUE(backend->supportsRenderTargets());
+    EXPECT_TRUE(backend->capabilities().render_targets);
     EXPECT_EQ(backend->surface()->nativeHandle(), nullptr) << "no surface was announced on this instance";
 }
 

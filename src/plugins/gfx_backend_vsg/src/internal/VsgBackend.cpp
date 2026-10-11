@@ -566,39 +566,29 @@ void VsgBackend::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::
     trackProgram(d->store.get(), d->default_program);
 }
 
-bool VsgBackend::supportsRenderTargets()
+vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
 {
     // The off-screen half is served now: a non-null target is held (api/HostTargets), drawn into by the
-    // passes that announce it, and read back through the readback entry points (which are still reported as
-    // not served - see the header).
-    return true;
+    // passes that announce it, and read back through the readback entry points.
+    return vn::graphics::Capabilities{ .render_targets = true };
 }
 
-bool VsgBackend::frameCounters(vn::graphics::FrameCounters& counters) const noexcept
+vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
 {
-    // The backend's own instrumentation is the answer (frame/Observe.hpp). A host reads these
-    // numbers through RenderEngine::frameCounters, and a phase table reads the same ones, so neither
-    // side keeps a second spelling of "what shape was this frame".
-    counters = d->observe.counters();
-    return true;
-}
-
-bool VsgBackend::retentionStats(vn::graphics::RetentionStats& stats) const noexcept
-{
-    stats = d->observe.retention();
-    return true;
-}
-
-bool VsgBackend::frameProgress(vn::graphics::FrameProgress& progress) const noexcept
-{
-    // The session's frame clock (core/FrameTimeline) is the answer: SUBMITTED is what reached the queue,
-    // COMPLETED is what has proof (the command slot that recorded it was recycled and its fence waited).
-    // Both watermarks are the session's own, so a host reads the same numbers the retirement window is
-    // dated against instead of guessing a lag.
+    // ONE ANSWER from the two places that know (see FrameReport): the backend's own instrumentation
+    // (frame/Observe.hpp) answers the frame that just ended and what is retained, and the session's frame
+    // clock answers where the frames are - SUBMITTED is what reached the queue, COMPLETED is what has proof
+    // (the command slot that recorded it was recycled and its fence waited). Both watermarks are the
+    // session's own, so a host reads the same numbers the retirement window is dated against instead of
+    // guessing a lag.
     const core::FrameTimeline& timeline = d->session.timeline();
-    progress.submitted                 = timeline.submittedFrame();
-    progress.completed                 = timeline.completedFrame();
-    return true;
+
+    vn::graphics::FrameReport report;
+    report.counters  = d->observe.counters();
+    report.retention = d->observe.retention();
+    report.progress  = vn::graphics::FrameProgress{ .submitted = timeline.submittedFrame(),
+                                                   .completed = timeline.completedFrame() };
+    return report;
 }
 
 void VsgBackend::setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)

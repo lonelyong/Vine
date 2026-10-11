@@ -19,7 +19,7 @@
 | `setClearPolicy` 等 per-pass 入口 | **已删**：清屏 / 视口 / 灯 / pass 状态 / 输入全部随帧值到达（见上） | 与计划一致与否在执行段核对 |
 | `surface()` | 答 `this`：本后端**有**窗口那一半（`RenderSurfaceBinding`），引擎经它驱动句柄/尺寸/呈现 | 只离屏的后端答 null，四个窗口入口一个都不必实现 |
 | `surface()->setWindowHandle/resize` | 采纳宿主表面 / 跟随表面（**停一次设备，计数**） | `deviceWaits()` |
-| `supportsRenderTargets()` | `true` | 离屏路径可用 |
+| `capabilities()` | 能力收成一个值：`render_targets = true`（离屏路径可用） | 引擎每帧读一次这张值（见 `RenderBackend::capabilities`） |
 | `releasePass/releaseRenderTarget` | 释放该 pass 的会话身份 / 目标对象（停靠后销毁） | 保留态不随帧数增长 |
 | `readColorBuffer/readDepthBuffer` | **分类先于任何工作**，再复制回读 | 分类表逐条说原因（见 §2） |
 | `shutdown()` | 破坏性路径：**一次计数过的 device idle** → 内容世界 → 会话 | 之后再 `initialize()` 是合法重来 |

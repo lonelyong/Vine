@@ -19,9 +19,31 @@
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/usage.md`（模块文档一节） |
-| **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**已落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）**；**剩下的片**：S5 能力与观测各收成一个值 / S6 宿主侧 |
+| **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**已落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）**；**剩下的片**：S6 宿主侧 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6 / **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-11 S5 落地：能力与观测各收成一个值（`Capabilities` / `FrameReport`）
+
+- **做了什么**：`RenderBackend` **删** `supportsRenderTargets()` 与三个出参
+  （`frameCounters`/`retentionStats`/`frameProgress`），**换成两个值**：`capabilities()`
+  （新头 `sdk/vine/graphics/Capabilities.hpp`，今天一个字段 `render_targets`）与 `frameReport()`
+  （`FrameStats.hpp` 新增 `FrameReport`：三个部分各自 `std::optional`，**不保留＝不 engage**）。
+  引擎同样两条（`capabilities()`/`frameReport()` 原样转发；无后端＝能力全假、报告全不 engage），
+  `frame()` 改读 `capabilities().render_targets`（**仍然每帧问**）。插件答
+  `{ .render_targets = true }`，报告由 `d->observe` + `Session::timeline()` 拼出。
+- **两条判据（写进文档）**：① **能力是属性**（初始化期间不变、宿主计划一帧前必须知道）；**调用自己能答的不进
+  `Capabilities`**（能不能读回 → `ReadbackResult::Unsupported`），否则是同一件事的第二处拼写。
+  ② **"值放哪个头"看能否独立到达读者**：`Capabilities` 若跟 `ReadbackResult` 一起放契约头，
+  引擎头就得包含整张后端契约（它今天只前置声明 `RenderBackend`）——所以它单独成头。
+- **判据（实测）**：`test_graphics` **360**（不变；`FrameCountersForward…` 改写为
+  `TheFrameReportCrossesTheEngineWholeAndAbsentPartsStayAbsent`：三部分 engage 与否 + 值穿过引擎 + 能力穿过）、
+  `test_gui` **253**、`test_vsg` **426 = 421 + 3 skip + 2 已知红**（设备用例改名
+  `TheHostReadsTheBackendsOwnFrameReport`；**在 `#if !defined(_WIN32)` 里，本机不编译**）、appfw 32 /
+  meshio 34 / iobase 94 全绿；全量 Release 0 error / 0 warning；五个 gate 0 finding（`--strict` 仍 22 条，同一列表）。
+  **变异 3/3 红**（各自单独实测）：引擎不转发报告 ⇒ 红；引擎忘记能力 ⇒ 红；契约默认"说零"而不是"沉默" ⇒ 红。
+- **坑 / 记账**：收成一个值之后"三个各写一半"的中间状态**从存在变成不可能**，而"不保留"仍说得出来
+  （不 engage）—— 删的是形态而不是信息。老条目里点名的旧符号/旧用例名按本仓规矩加 `<!-- drift-ok -->`。
 
 ## 2026-10-11 S4b 落地：窗口成为可选依赖（呈现拆成 `RenderSurfaceBinding`）
 
@@ -438,7 +460,7 @@
 - 按"谁在签名里命名它"逐个量了 backend 半 **24 个头**：宿主半的引用**全部为 0** ⇒ 没有一个是硬需求（R2 不红）。
   于是只剩"值不值得开面"：结论是 **1 个该做、2 个等触发器、21 个不做**。
 - **该做的那 1 个**：`FrameProgress`（`sdk/vine/graphics/FrameStats.hpp`，与 `FrameCounters`/`RetentionStats` 同形）
-  ＝ `submitted`/`completed` + `inFlight()`；通路 `RenderBackend::frameProgress()`（默认 **false ＝“不记账”**，
+  ＝ `submitted`/`completed` + `inFlight()`；通路 `RenderBackend::frameProgress()`（默认 **false ＝“不记账”**，  <!-- drift-ok: S5 把这三个出参收成 frameReport() / 用例改名 -->
   别拿零当"没有在飞行"）＋ `RenderEngine::frameProgress()`；vsg 从 `Session::timeline()` 的两个水位回答。
   行业对照：`VkFence`/`vkWaitForFences`、swapchain images-in-flight、`ID3D12Fence::GetCompletedValue`、
   Unity `GraphicsFence`——**同步与计时是公开面**，而编译/图/缓存/竞技场/家族细节一律私有。
@@ -449,7 +471,7 @@
   `FrameArena`/`FrameRing`/`MaterialArena`/`Streams`/`DeviceRequirements`/`SessionMove`/`SlotProbe`/
   `AllocationGate`/`DepthProbe`/`PixelProbe`/`RetirementQueue`（机制、家族词汇或测试工具）。
   另外 `Readback` 不必再开面——宿主面（`ReadbackResult` + `readColorBuffer/readDepthBuffer`）早就在 `RenderBackend.hpp`。
-- **变异反证（两处，都要红）**：引擎 `frameProgress` 直接 `return false` ⇒ `test_graphics` 红；
+- **变异反证（两处，都要红）**：引擎 `frameProgress` 直接 `return false` ⇒ `test_graphics` 红；  <!-- drift-ok: S5 把这三个出参收成 frameReport() / 用例改名 -->
   vsg 后端 `return false` ⇒ `test_vsg` 红。恢复后 292 / 453 全绿。
 - **坑（本轮）**：搬走/新增 `src/*.cpp` 后，**Debug 树的 CMake 源文件表是陈旧的**（glob 不含 `CONFIGURE_DEPENDS`）⇒
   `ninja` 报 "`<搬动前的路径>.cpp` missing and no known rule to make it"。修法：`cmake -S . -B build` 重新配置（14.7 s），
@@ -490,10 +512,10 @@
 #### 同日：A 段提级（帧计数进宿主 API）
 
 - `FrameCounters` / `RetentionStats` → **`vine/graphics/FrameStats.hpp`**（模块公共、随 SDK 安装）；
-  通路 = `RenderBackend::frameCounters()/retentionStats()`（**默认返回 false ＝“不保留计数”**，与“空帧”区分）
+  通路 = `RenderBackend::frameCounters()/retentionStats()`（**默认返回 false ＝“不保留计数”**，与“空帧”区分）  <!-- drift-ok: S5 把这三个出参收成 frameReport() / 用例改名 -->
   ＋ `RenderEngine::frameCounters()/retentionStats()`；vsg 后端从 `frame/evidence/Observe` 回答**同一批数字**
   （不再是第二处拼写）。
-- 钉子：`RenderEngineTest.FrameCountersForwardTheBackendsAnswerAndSaySoWhenThereIsNone`（无后端 / 不保留 /
+- 钉子：`RenderEngineTest.FrameCountersForwardTheBackendsAnswerAndSaySoWhenThereIsNone`（无后端 / 不保留 /  <!-- drift-ok: S5 把这三个出参收成 frameReport() / 用例改名 -->
   转发各一条），`VsgBackendTest.TheHostReadsTheBackendsOwnFrameCounters`（真设备：空帧全零 → 画一帧
   `passes=1 draws=1`；**变异**：把 `counters = d->observe.counters();` 改成 `{}` ⇒ 红 ⇒ 证明测的是**值**）。
 - **A 段未做**：`ReportOnce`（接进引擎要“每站点一个 episode”，且会改诊断流量 ⇒ 独立一轮）；

@@ -34,7 +34,7 @@
  *     into the plan; `present()` assembles the frame's content (api/ContentAssembly) and records it
  *     into the passes the plan asked for, with the view block built from the pass' own camera and the
  *     frame's clock - the host's picture, drawn by the pieces that already existed;
- *   * the OFF-SCREEN HALF: `supportsRenderTargets()` answers true, `setRenderTarget()` holds the host's
+ *   * the OFF-SCREEN HALF: `capabilities()` answers `render_targets = true`, `setRenderTarget()` holds the host's
  *     targets in api/HostTargets (the description is COPIED, the objects are built lazily, and the resize /
  *     rebuild after that is the plan's answer applied by the executor), a pass' declared inputs (the value's
  *     `inputs`) announce what it reads - and the images of those inputs are what the content recording binds -
@@ -127,17 +127,14 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::gra
     /** @brief Records the frame and commits it through the session: the one present. */
     void present() override;
 
+    /** @brief Answers what this backend can do: off-screen targets, whole (see `RenderBackend::capabilities`). */
+    [[nodiscard]] vn::graphics::Capabilities capabilities() const noexcept override;
+
+    /** @brief Answers the ONE report: frame counters, retention, and the session's frame clock (see the file note). */
+    [[nodiscard]] vn::graphics::FrameReport frameReport() const noexcept override;
+
     /** @brief Remembers the default content program, tells the plan, and tracks it (see the file note). */
     void setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program) override;
-
-    /** @brief Answers true: off-screen targets are held, drawn into and sampled (see setRenderTarget). */
-    bool supportsRenderTargets() override;
-
-    bool frameCounters(vn::graphics::FrameCounters& counters) const noexcept override;
-
-    bool retentionStats(vn::graphics::RetentionStats& stats) const noexcept override;
-
-    bool frameProgress(vn::graphics::FrameProgress& progress) const noexcept override;
 
     /** @brief Holds the host's target and builds what its description can make; nullptr needs no announcement.
      *

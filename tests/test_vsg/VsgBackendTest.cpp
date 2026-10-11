@@ -374,7 +374,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
 
     EXPECT_FALSE(backend->readColorBuffer(nullptr, 0, pixels, &why));
     EXPECT_EQ(why, vn::graphics::ReadbackResult::Invalid) << "no target was given, so the request is wrong";
-    EXPECT_TRUE(backend->supportsRenderTargets()) << "the off-screen half is served now";
+    EXPECT_TRUE(backend->capabilities().render_targets) << "the off-screen half is served now";
 
     // An off-screen target is HELD from the moment it is announced - even before it can be built, because a
     // host configures a target before it draws into it - and the release announcement drops it, which is what
@@ -435,7 +435,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
 
 #if !defined(_WIN32)
 
-TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameCounters)
+TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
 {
     if (!deviceCaseAvailable())
     {
@@ -445,16 +445,16 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameCounters)
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     ASSERT_TRUE(backend->initialize());
 
-    // An EMPTY frame still answers: the counters exist, and they describe a frame that recorded nothing.
-    // (A backend that kept none would answer false - that distinction is what the bool is for.)
+    // An EMPTY frame still answers: the counters are kept, and they describe a frame that recorded nothing.
+    // (A backend that kept none would leave the part DISENGAGED - that distinction is what the report is for.)
     backend->executeFrame(vn::graphics::FrameDescription{});
     backend->surface()->present();
 
-    vn::graphics::FrameCounters counters;
-    ASSERT_TRUE(backend->frameCounters(counters)) << "this backend keeps its own frame counters";
-    EXPECT_EQ(counters.passes, 0U);
-    EXPECT_EQ(counters.draws, 0U);
-    EXPECT_EQ(counters.invalid_schedules, 0U);
+    vn::graphics::FrameReport report = backend->frameReport();
+    ASSERT_TRUE(report.counters.has_value()) << "this backend keeps its own frame counters";
+    EXPECT_EQ(report.counters->passes, 0U);
+    EXPECT_EQ(report.counters->draws, 0U);
+    EXPECT_EQ(report.counters->invalid_schedules, 0U);
 
     // A DRAWN frame: the numbers a host reads here ARE the backend's own instrumentation (the same ones a
     // phase table gates on), not a second count taken from outside.
@@ -472,25 +472,24 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameCounters)
         .value());
     backend->surface()->present();
 
-    ASSERT_TRUE(backend->frameCounters(counters));
-    EXPECT_EQ(counters.passes, 1U) << "one pass scope ran";
-    EXPECT_EQ(counters.draws, 1U) << "and it recorded one draw";
-    EXPECT_EQ(counters.invalid_schedules, 0U) << "nothing was cyclic";
+    report = backend->frameReport();
+    ASSERT_TRUE(report.counters.has_value());
+    EXPECT_EQ(report.counters->passes, 1U) << "one pass scope ran";
+    EXPECT_EQ(report.counters->draws, 1U) << "and it recorded one draw";
+    EXPECT_EQ(report.counters->invalid_schedules, 0U) << "nothing was cyclic";
 
-    // The retention numbers are reachable the same way, and they agree with the backend's own accessor.
-    vn::graphics::RetentionStats stats;
-    ASSERT_TRUE(backend->retentionStats(stats));
-    EXPECT_EQ(stats.device_waits, backend->deviceWaits())
+    // The retention numbers come out of the SAME answer, and they agree with the backend's own accessor.
+    ASSERT_TRUE(report.retention.has_value());
+    EXPECT_EQ(report.retention->device_waits, backend->deviceWaits())
         << "the counter the host reads is the one the backend counted";
-    EXPECT_EQ(stats.device_waits, 0U) << "the frame path never idles the device";
+    EXPECT_EQ(report.retention->device_waits, 0U) << "the frame path never idles the device";
 
     // The frame clock, as a host can see it: SUBMITTED is not COMPLETED, and the difference is what is
     // still in flight. The proof of completion is this backend's own (the command slot was recycled), so
     // the host reads the session's watermarks rather than assuming a lag.
-    vn::graphics::FrameProgress progress;
-    ASSERT_TRUE(backend->frameProgress(progress)) << "this backend keeps its own frame clock";
-    EXPECT_LE(progress.completed, progress.submitted) << "completion never runs ahead of submission";
-    EXPECT_EQ(progress.inFlight(), progress.submitted - progress.completed);
+    ASSERT_TRUE(report.progress.has_value()) << "this backend keeps its own frame clock";
+    EXPECT_LE(report.progress->completed, report.progress->submitted) << "completion never runs ahead of submission";
+    EXPECT_EQ(report.progress->inFlight(), report.progress->submitted - report.progress->completed);
 
     // One more frame, drawn this time: it reaches the queue, so the submitted watermark moves by one.
     backend->executeFrame(TestFrame()
@@ -501,10 +500,14 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameCounters)
         .value());
     backend->surface()->present();
 
-    const std::uint64_t submitted_before = progress.submitted;
-    ASSERT_TRUE(backend->frameProgress(progress));
-    EXPECT_EQ(progress.submitted, submitted_before + 1U) << "a drawn frame is handed to the queue";
-    EXPECT_LE(progress.completed, progress.submitted);
+    const std::uint64_t submitted_before = report.progress->submitted;
+    report                               = backend->frameReport();
+    ASSERT_TRUE(report.progress.has_value());
+    EXPECT_EQ(report.progress->submitted, submitted_before + 1U) << "a drawn frame is handed to the queue";
+    EXPECT_LE(report.progress->completed, report.progress->submitted);
+
+    // And the capability the SDK asks before it plans an off-screen pass is answered by the same value.
+    EXPECT_TRUE(backend->capabilities().render_targets) << "the off-screen half is served";
 }
 
 TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
@@ -770,7 +773,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     });
     backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
-    ASSERT_TRUE(backend->supportsRenderTargets()) << "the off-screen half is served";
+    ASSERT_TRUE(backend->capabilities().render_targets) << "the off-screen half is served";
 
     // The host's own target, described the way a pipeline builder describes one: one RGBA8 attachment, 64x64.
     // The objects behind it are the backend's (the SDK's own contract: "the RenderTarget stays a logical

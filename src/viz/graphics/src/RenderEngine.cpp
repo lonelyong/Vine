@@ -100,19 +100,18 @@ void RenderEngine::reportEngineProblem(vn::graphics::DiagnosticSeverity severity
     diagnostics_.report(severity, category, message);
 }
 
-bool RenderEngine::frameCounters(FrameCounters& counters) const
+Capabilities RenderEngine::capabilities() const noexcept
 {
-    return backend_ != nullptr && backend_->frameCounters(counters);
+    // No backend, nothing can be claimed - and a field that is false is the honest answer rather than a
+    // missing one (see Capabilities; it is also what a backend that cannot do it answers).
+    return backend_ != nullptr ? backend_->capabilities() : Capabilities{};
 }
 
-bool RenderEngine::retentionStats(RetentionStats& stats) const
+FrameReport RenderEngine::frameReport() const noexcept
 {
-    return backend_ != nullptr && backend_->retentionStats(stats);
-}
-
-bool RenderEngine::frameProgress(FrameProgress& progress) const
-{
-    return backend_ != nullptr && backend_->frameProgress(progress);
+    // No backend, nothing is measured: every part stays disengaged rather than reading as zeros (see
+    // FrameReport - absent is not zero).
+    return backend_ != nullptr ? backend_->frameReport() : FrameReport{};
 }
 
 bool RenderEngine::initialize()
@@ -166,7 +165,7 @@ void RenderEngine::shutdown()
 
 raw_ptr<const RenderPass> RenderEngine::passNeedingAnUnsupportedTarget() const
 {
-    if (backend_ == nullptr || backend_->supportsRenderTargets()) {
+    if (backend_ == nullptr || backend_->capabilities().render_targets) {
         return nullptr;
     }
     // Only ENABLED passes matter: a disabled pass is skipped, so its target is never asked for.
@@ -209,9 +208,9 @@ void RenderEngine::frame(double dt)
     // found is not said again, and what is gone is forgotten (see reportPlanProblems).
     reportPlanProblems();
 
-    // A backend reporting no off-screen target support IGNORES a non-null target, so a pass staged
+    // A backend whose capabilities say "no off-screen targets" IGNORES a non-null target, so a pass staged
     // through one is recorded where the pipeline never put it — a WRONG PICTURE rather than a slow one,
-    // and silent unless the engine asks (see RenderBackend::supportsRenderTargets). Asked here, once per
+    // and silent unless the engine asks (see RenderBackend::capabilities). Asked here, once per
     // frame, and reported as an EPISODE: the pass is still run (its content is the host's to place), but
     // the host is told that the pipeline it built cannot mean what it says.
     if (raw_ptr<const RenderPass> unsupported = passNeedingAnUnsupportedTarget(); unsupported != nullptr) {

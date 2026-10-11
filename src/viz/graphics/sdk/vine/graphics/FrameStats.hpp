@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 #include "graphics_global.hpp"
 
@@ -10,7 +11,7 @@ VN_GRAPHICS_NS_BEGIN
  * @brief Counters about one frame's RECORDING: the pass scopes, the draws, the skipped components.
  *
  * This is the SDK's vocabulary for "what shape was this frame", so a host, a HUD and a gate can ask
- * the same question of any backend (see RenderEngine::frameCounters) and read the SAME numbers the
+ * the same question of any backend (see RenderEngine::frameReport) and read the SAME numbers the
  * backend's own evidence uses, instead of counting a second time from outside.
  *
  * Per frame: an answer describes the frame that just ended, never a running total (RetentionStats is
@@ -61,6 +62,30 @@ struct VN_GRAPHICS_API FrameProgress
     {
         return submitted > completed ? submitted - completed : 0;
     }
+};
+
+/**
+ * @brief What a backend can say about its frames, as ONE answer (see RenderBackend::frameReport).
+ *
+ * ONE QUESTION, ONE VALUE. The three parts used to be three calls with three out-parameters and three bools,
+ * so a host asking "how is it going" made three calls and kept three "did it answer" flags beside them - and
+ * a caller that stopped after the second could not tell whether the third had been written. They are one
+ * value because they describe the same thing from three distances: the frame that just ENDED (FrameCounters),
+ * what is RETAINED and what it cost to let go (RetentionStats), and where the clock is (FrameProgress).
+ *
+ * ABSENT IS NOT ZERO - that is why every part is optional. "This backend keeps no such number" and "it keeps
+ * it, and the number is 0" are different answers: an unmeasured frame must not read like an empty one, and a
+ * clock that is not kept must not read as "nothing in flight". Zeros would be a claim; a disengaged part is
+ * the silence, and it is distinguishable at the type level rather than by a flag beside it.
+ *
+ * The whole answer is asked once (RenderEngine::frameReport hands it over unchanged), so a host reads the
+ * same numbers the backend's own evidence uses instead of counting a second time from outside.
+ */
+struct VN_GRAPHICS_API FrameReport
+{
+    std::optional<FrameCounters>  counters;  ///< The frame that just ended; disengaged when none are kept.
+    std::optional<RetentionStats> retention; ///< Cumulative retention; disengaged when none are kept.
+    std::optional<FrameProgress>  progress;  ///< Where the frame clock is; disengaged when none is kept.
 };
 
 VN_GRAPHICS_NS_END

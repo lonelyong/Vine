@@ -55,7 +55,8 @@ class HeadlessBackend : public RenderBackend
 
     void setRenderTarget(RenderTarget*) override {}
 
-    bool supportsRenderTargets() override { return true; }
+    /// Answers the capability the frame path is driven by: this double honours every target it is handed.
+    [[nodiscard]] Capabilities capabilities() const noexcept override { return Capabilities{ .render_targets = true }; }
 
     bool ok = false;
     int  frames = 0;
@@ -78,7 +79,9 @@ class WindowedBackend : public RenderBackend, public RenderSurfaceBinding
     void executeFrame(const FrameDescription&) override { ++frames; }
 
     void setRenderTarget(RenderTarget*) override {}
-    bool supportsRenderTargets() override { return true; }
+
+    /// Same capability as the windowless double: a target named by a pass is drawn into (see the frame case).
+    [[nodiscard]] Capabilities capabilities() const noexcept override { return Capabilities{ .render_targets = true }; }
 
     void setWindowHandle(void* handle) override { adopted_handle = handle; }
     [[nodiscard]] void* nativeHandle() const override { return adopted_handle; }

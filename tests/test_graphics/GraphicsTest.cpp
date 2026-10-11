@@ -2226,11 +2226,14 @@ class MockBackend : public RenderBackend {
     RenderTarget* last_program_source = nullptr;
     const ShaderProgram* last_program = nullptr;
     const Camera* last_program_camera = nullptr;
-    /// What this double reports for RenderBackend::supportsRenderTargets: TRUE by default, because the
-    /// double honours every target it is handed (a pass test is not asking about target support).
+    /// What this double reports for RenderBackend::capabilities: off-screen targets TRUE by default, because
+    /// the double honours every target it is handed (a pass test is not asking about target support).
     /// A test that wants the other answer flips this and the engine reports the pipeline it cannot serve.
     bool supports_targets = true;
-    bool supportsRenderTargets() override { return supports_targets; }
+    [[nodiscard]] Capabilities capabilities() const noexcept override
+    {
+        return Capabilities{ .render_targets = supports_targets };
+    }
 
     /// The pass identities the frame named, in RUN ORDER (see FrameDescription::Pass::pass): what the engine's
     /// compile decided, as the backend sees it. `entries` counts the passes walked, and `entries_closed` how many
@@ -2352,59 +2355,59 @@ class MockBackend : public RenderBackend {
     }
 };
 
-TEST(RenderEngineTest, FrameCountersForwardTheBackendsAnswerAndSaySoWhenThereIsNone)
+TEST(RenderEngineTest, TheFrameReportCrossesTheEngineWholeAndAbsentPartsStayAbsent)
 {
-    // A backend that keeps counters: the engine hands over exactly ITS numbers. The default (a backend
-    // that keeps none) answers false rather than zeros, because an empty frame and an unmeasured one are
-    // different answers - which is what the silent half below pins.
-    class CountingBackend : public MockBackend
+    // A backend that keeps numbers: the engine hands over exactly ITS report. A backend that keeps none
+    // answers with those parts DISENGAGED rather than zeroed, because "no counters" and "a frame that
+    // counted nothing" are different answers - which is what the silent half below pins.
+    class ReportingBackend : public MockBackend
     {
       public:
-        bool frameCounters(vn::graphics::FrameCounters& counters) const noexcept override
+        [[nodiscard]] FrameReport frameReport() const noexcept override
         {
-            counters.passes = 7;
-            return true;
-        }
-        bool retentionStats(vn::graphics::RetentionStats& stats) const noexcept override
-        {
-            stats.device_waits = 3;
-            return true;
-        }
-        bool frameProgress(vn::graphics::FrameProgress& progress) const noexcept override
-        {
-            progress.submitted = 11;
-            progress.completed = 9;
-            return true;
+            FrameReport report;
+            report.counters.emplace();
+            report.counters->passes = 7;
+            report.retention.emplace();
+            report.retention->device_waits = 3;
+            report.progress.emplace();
+            report.progress->submitted = 11;
+            report.progress->completed = 9;
+            return report;
         }
     };
 
-    // 1. No backend: nothing can answer.
+    // 1. No backend: nothing is measured and nothing can be claimed, so no part is engaged.
     RenderEngine engine;
-    vn::graphics::FrameCounters  counters;
-    vn::graphics::RetentionStats stats;
-    vn::graphics::FrameProgress  progress;
-    EXPECT_FALSE(engine.frameCounters(counters));
-    EXPECT_FALSE(engine.retentionStats(stats));
-    EXPECT_FALSE(engine.frameProgress(progress));
+    FrameReport  report = engine.frameReport();
+    EXPECT_FALSE(report.counters.has_value());
+    EXPECT_FALSE(report.retention.has_value());
+    EXPECT_FALSE(report.progress.has_value());
+    EXPECT_FALSE(engine.capabilities().render_targets);
 
-    // 2. A backend that keeps no counters: the contract's default, and it SAYS so.
+    // 2. A backend that keeps none: the contract's default, and it SAYS so (disengaged, not zeros).
     const vn::intrusive_ptr<RenderBackend> silent(new MockBackend());
     engine.setBackend(silent);
-    EXPECT_FALSE(engine.frameCounters(counters)) << "the default is \"no counters\", not zeros";
-    EXPECT_FALSE(engine.retentionStats(stats));
-    EXPECT_FALSE(engine.frameProgress(progress)) << "the default is \"no clock\", not \"nothing in flight\"";
+    report = engine.frameReport();
+    EXPECT_FALSE(report.counters.has_value()) << "the default is \"no counters\", not an empty frame";
+    EXPECT_FALSE(report.retention.has_value());
+    EXPECT_FALSE(report.progress.has_value()) << "the default is \"no clock\", not \"nothing in flight\"";
 
-    // 3. A backend that keeps them: the values cross the engine unchanged.
-    const vn::intrusive_ptr<RenderBackend> counting(new CountingBackend());
-    engine.setBackend(counting);
-    ASSERT_TRUE(engine.frameCounters(counters));
-    EXPECT_EQ(counters.passes, 7U);
-    ASSERT_TRUE(engine.retentionStats(stats));
-    EXPECT_EQ(stats.device_waits, 3U);
-    ASSERT_TRUE(engine.frameProgress(progress));
-    EXPECT_EQ(progress.submitted, 11U);
-    EXPECT_EQ(progress.completed, 9U);
-    EXPECT_EQ(progress.inFlight(), 2U) << "in flight is the difference, computed once in the vocabulary";
+    // 3. A backend that keeps them: the whole report crosses the engine unchanged.
+    const vn::intrusive_ptr<RenderBackend> reporting(new ReportingBackend());
+    engine.setBackend(reporting);
+    report = engine.frameReport();
+    ASSERT_TRUE(report.counters.has_value());
+    EXPECT_EQ(report.counters->passes, 7U);
+    ASSERT_TRUE(report.retention.has_value());
+    EXPECT_EQ(report.retention->device_waits, 3U);
+    ASSERT_TRUE(report.progress.has_value());
+    EXPECT_EQ(report.progress->submitted, 11U);
+    EXPECT_EQ(report.progress->completed, 9U);
+    EXPECT_EQ(report.progress->inFlight(), 2U) << "in flight is the difference, computed once in the vocabulary";
+
+    // 4. Capabilities cross the same way: the engine's answer IS the backend's value, whole.
+    EXPECT_TRUE(engine.capabilities().render_targets);
 }
 
 TEST(RenderEngineTest, EveryExecutedPassReachesTheBackendOnceAndADisabledOneDoesNot)
