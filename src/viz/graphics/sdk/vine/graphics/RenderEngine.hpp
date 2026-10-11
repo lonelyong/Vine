@@ -250,6 +250,22 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     [[nodiscard]] std::size_t transientTargetCount() const noexcept;
 
+    /** @brief Gets the transient target a declaration asked for, by the identity it declared (PassDesc::writes_image).
+     *
+     * The other half of transientTargetCount(): a declared transient is owned by the compile, so this is how its
+     * OWNER reaches it - to preview it, to read it back, or to state a relationship the declaration cannot ("this
+     * target borrows that transient's depth" is a composition, and RenderTarget::shareDepth is its mechanism).
+     *
+     * The answer is the instance that is live NOW, and it is the caller's job to re-ask after a shape change: a
+     * transient is REPLACED when its declared shape moves (see PassDesc::writes_shape), so a handle a caller
+     * kept across a resize describes a target the compile has already let go.
+     *
+     * @param identity Identity a pass declared (its `writes_image`).
+     * @return The target, or null when nothing declares that identity - which includes every call before the
+     *         first compiled frame: a transient is the compile's product, not the build's.
+     */
+    [[nodiscard]] raw_ptr<RenderTarget> transientTarget(const String& identity) const;
+
     /** @brief Sets the DEFAULT program for content: what a drawable naming none of its own gets.
      *
      * A default, not an override: a drawable's own program (RenderCommand::program,

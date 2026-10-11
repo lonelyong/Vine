@@ -98,7 +98,9 @@ struct VN_GRAPHICS_API PassDesc
     ///
     /// A transient is the pass saying WHAT it needs instead of the host creating it: the compile allocates it
     /// at writes_shape, hands it to this pass, and shares it with every other pass declaring the same
-    /// identity and shape (see RenderEngine::transientTargetCount).
+    /// identity and shape (see RenderEngine::transientTargetCount). Its owner reaches it by this identity
+    /// (RenderEngine::transientTarget), and a handle across a shape change is stale on purpose: a replaced
+    /// transient is a new target.
     String writes_image;
     /// The shape writes_image is built at (ignored when writes_image is empty).
     TransientShape writes_shape;

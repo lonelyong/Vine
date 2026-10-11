@@ -57,9 +57,14 @@
 - **一处默认值纠正**：`PassDesc` 的 `clear_enabled`/`clear_color`/`clear_depth` 改成 `optional` —— **不写就跟随 kind 自己的
   策略**。原因是 `ScreenPass` 构造里 `setClearEnabled(false)`/`setShouldClearDepth(false)`，描述符原来的 `true` 默认值会把
   它翻掉（搬 builder 时两条既有用例立刻变红）；描述符不能有第二套默认值。
-- **剩余半边（同片未做，记在 §5 M7 行）**：G-buffer 交给 transient —— 能力与判据（③）都在，builder 还没用；
-  搬过去要新增一条"按身份问引擎"的查询（`RenderEngine::transientTarget(identity)`），并且 `Pipeline::offscreenTarget()`
-  的诚实行为变化是"第一帧编译之前回答 null"。
+- **② 的定案（2026-10-11，同一轮）**：G-buffer 不再"等搬"，**保持宿主创建就是对的**。把 deferred 配方
+  （composite 借 G-buffer 深度那条）搬成"SDK 造两张 transient 互相借用"违反"机制在底层、组合在应用层"
+  （`graphics-render-next.md` §6 不变量 6）：`PassDesc` 能声明"我要一张图"，表达不了"我这辆的深度是那辆的"，
+  而那条组合是配方自己的事。SDK 这侧补齐**机制缺口**：新增 `RenderEngine::transientTarget(identity)`
+  —— 拿回自己声明的那张图（"此刻活着的那一张"，形状一变即作废；这正是不该把实例长留在应用手里的原因）。
+  用例：`ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt` 追加四条断言（首帧前 null / 首帧后等于
+  plan 里那张 / 未声明的身份回答 null / 形状变后回答新实例且不再是旧的），变异 1/1 红（查询不看身份 ⇒ 该用例红）。
+  用法（应用自己组 transient 配方）写进 `usage.md` §3.13。
 - **叠层那一续（2026-10-11，① 完成）**：`AxisGizmo` / `FpsOverlay` 不再是 `RenderPass` 子类，降为**内容对象**
   （`Object + RefCounted`：自己的 scene、取景相机、盒子 `boxViewport()`、每帧 `update()`），由配方声明成一条
   HUD 档的 pass（`content`/`camera`/`viewport`/`clear_enabled = false`/`depth_mode = Disabled`/`before_draw`）——

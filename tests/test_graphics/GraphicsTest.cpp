@@ -7826,10 +7826,16 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
 
     // Declared with no explicit extent: the shape follows the surface the frame is presenting.
     declare(u8"gbuffer_pass", 0, 0, true);
+    EXPECT_EQ(engine->transientTarget(u8"gbuffer"), nullptr)
+        << "before the first compiled frame there is no transient: it is the compile's product, not the build's";
     engine->frame(0.016);
     ASSERT_EQ(engine->transientTargetCount(), 1u) << "one declaration, one target";
     const RenderTarget* const first = engine->framePlan().passes[0].target;
     ASSERT_NE(first, nullptr) << "the declare-then-draw hand-off gives the pass the target it asked for";
+    EXPECT_EQ(engine->transientTarget(u8"gbuffer"), first)
+        << "the owner reaches the instance through the identity it declared";
+    EXPECT_EQ(engine->transientTarget(u8"nothing_declares_this"), nullptr)
+        << "an identity nobody declared is not a target, it is nothing";
     EXPECT_EQ(first->width(), 320);
     EXPECT_EQ(first->height(), 180);
     EXPECT_TRUE(first->hasDepth()) << "the declaration asked for a depth attachment";
@@ -7854,6 +7860,7 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
     engine->clearPasses();
     engine->frame(0.016);
     EXPECT_EQ(engine->transientTargetCount(), 0u) << "nothing declares it any more, so the compile let it go";
+    EXPECT_EQ(engine->transientTarget(u8"gbuffer"), nullptr) << "and the query answers with what is live now";
 
     declare(u8"gbuffer_pass", 640, 360, false);
     engine->frame(0.016);
@@ -7863,6 +7870,10 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
     EXPECT_EQ(second->width(), 640) << "the declared extent is the built extent";
     EXPECT_EQ(second->height(), 360);
     EXPECT_FALSE(second->hasDepth()) << "and the declared attachment set is the built one";
+    EXPECT_EQ(engine->transientTarget(u8"gbuffer"), second)
+        << "a new shape is a NEW instance, and the query answers with the live one";
+    EXPECT_NE(engine->transientTarget(u8"gbuffer"), first)
+        << "which is exactly why a handle kept across a resize describes a target the compile has let go";
 }
 
 /**

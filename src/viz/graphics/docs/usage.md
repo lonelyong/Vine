@@ -808,6 +808,11 @@ desc.writes_shape.depth  = RenderTarget::DepthFormat::D24;
 ```
 
   计数/复用可以用 `RenderEngine::transientTargetCount()` 直接断言（一张声明一张目标；稳态帧不重建；形状变则**替换**而不是新增）。
+  **要拿回自己声明的那张图**（做预览、回读，或自己组一条声明表达不了的接线）：`engine->transientTarget(u8"gbuffer")`
+  —— 它回答**此刻活着**的那一张；形状一变实例就被替换，所以跨 resize 留着的句柄是作废的，要重新问。
+  这就是"机制在底层、组合在应用层"的分界：SDK 给声明、按身份取回、`RenderTarget::shareDepth`、
+  `RenderPass` 的输入解析这些**机制**；像"composite 借 G-buffer 的深度"这种**组合**由你自己的配方搭
+  （在自己那口 `before_draw` 里把借用重述到当前实例，或干脆自己持有那些 target）。
 - **clear 三件套不写就跟随 kind**：`clear_enabled` / `clear_color` / `clear_depth` 都是 `optional` —— 不写时用那种 kind 自己的策略
   （`Screen` 是叠在已有内容上的全屏档，从不洗、也不洗深度；`Scene` 档洗，默认洗到 `51,51,51,255`）。要覆盖就在声明里写出来。
 - **返回的是结点**：`addPass` 的三个重载都交回**已注册的那个执行结点**（重复注册则返回 null），于是"我声明了什么"与

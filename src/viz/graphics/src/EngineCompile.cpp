@@ -171,6 +171,19 @@ std::size_t RenderEngine::transientTargetCount() const noexcept
     return transients_.size();
 }
 
+raw_ptr<RenderTarget> RenderEngine::transientTarget(const String& identity) const
+{
+    if (identity.empty()) {
+        return nullptr;
+    }
+    for (const TransientTarget& transient : transients_) {
+        if (transient.identity == identity) {
+            return transient.target.get();
+        }
+    }
+    return nullptr;
+}
+
 void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<raw_ptr<RenderTarget>>& out)
 {
     out.clear();

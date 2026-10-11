@@ -627,7 +627,12 @@ G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevisio
   `addPass` 三个重载现在都**交回注册的结点**，builder 的普通 pass 已是描述符（shadow / forward main / transparent /
   gbuffer / lighting / present / preview），公开面（`windowPass()` / `offscreenTarget()` / `setWindowPass`）一字未改；
   **HUD 叠层也已搬成声明**（`AxisGizmo` / `FpsOverlay` 是内容对象，`gizmoPass()` / `fpsOverlayPass()` 是结点）。
-  **剩余半边**（不另开片）：G-buffer 仍由宿主持有（③ 的能力与判据都在，builder 还没用它）。
+- **剩余半边 ②（2026-10-11 定案：不属于 SDK，按设计保持现状）**：G-buffer 由宿主持有**是对的**，不是没做完。
+  把 deferred 配方（尤其 composite 借 G-buffer 深度那条）搬成"SDK 替应用搭若干 transient 互相借用"，
+  违反"**机制在底层、组合在应用层**"：`PassDesc` 能声明"我要一张图"，表达不了"我这辆的深度是那辆的"——
+  而那条组合正是配方自己的事，不是引擎该知道的政策。SDK 这一侧补齐的是**机制缺口**：新增
+  `RenderEngine::transientTarget(identity)`（拿回自己声明的那张图；诚实语义是"此刻活着的那一张"，形状一变即作废），
+  加上已有的 `writes_image`/`writes_shape` 与 `RenderTarget::shareDepth`，应用要自己组就能组出来（用法见 `usage.md` §3.13）。
 - M1 / M2a / M2b / M2c / M2d / M3 / M5a 不需要触发条件：它们消掉的是**今天就在付**的混乱（一条诊断 + 一条全局
   让位规则 + 一口没有 owner 的清屏 + 一张命名表 + "相机的 aspect 和它被画进的矩形不一定一致" + "矩形与视图各说
   各话" + "输入路由只能由宿主手写"）。
@@ -649,6 +654,12 @@ G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevisio
    无头（`VINE_VSG_*`）或结构断言，不靠人眼看。
 5. **文档同步是验收的一部分**：动到 `appfw-render-view.md` / `graphics-state.md` / `appfw-render-surface.md`
    的结论，就同一提交里改（这三份是"现状为真"的文档）。
+6. **机制在底层，组合在应用层**（2026-10-11 定，② 的定案依据）：SDK 提供**机制与接口** —— 声明一个 pass、
+   声明一张 transient（`writes_image`/`writes_shape`）、按身份拿回它（`RenderEngine::transientTarget`）、
+   两个目标共用一份深度（`RenderTarget::shareDepth`）、输入按名/按对象解析 ——
+   **不替应用搭组合**。多张 transient 互相借用、配方之外的自定义图、某个业务特有的多趟结构，都是应用层自己
+   拼、自己控制；SDK 的配方只保留最常见的那两三条（forward / deferred / 阴影）。判据：SDK 里没有一张"必须在
+   某个配方里才成立"的图，也没有一条引擎政策是为某个组合发明的。
 
 ## 7. 行业对照与备选
 
