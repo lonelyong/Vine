@@ -696,9 +696,10 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 重复记账，也会把"谁清屏"变成控件的事）。
 
 > **目标形态（大改版设计，未落地）**：这一节的"矩形挂在视图上、清屏靠谁先公告、视图去认领窗口"是**过渡形态**。
-> 按三维规范重写的目标（`Surface`（唯一清屏 + present）→ `Pane`（矩形 + 相机 + 内容）→ `View`（配方/管线），
-> 以及"一个 pane 一台相机"）见 `graphics-render-next.md` §3.2；分四步落地（M2a/M2b/M2c + 并入 M5 的输入与焦点 pane）。
-> 本节其余内容在该设计落地前仍然为真。
+> 按三维规范重写的目标见 `graphics-render-next.md` §3.2：**清屏与顺序归表面**（`RenderSurface` + 呈现表）、
+> **viewport 矩形归相机**（`Camera::setViewport`，Unity `Camera.rect` / OSG 口径 ⇒ 分屏 = 多台相机，
+> "一块矩形一台相机"是结构事实）、**配方与内容留在视图**；不新增"格子"类。分三步落地（M2a 谁呈现 / M2b 清屏归表面 /
+> M2c 矩形回相机），输入与焦点视图并入 M5。本节其余内容在该设计落地前仍然为真。
 
 **额外视图要显式要默认管线**：`ensureWindowPass()` 是"**我要**这条默认管线"的动作，`setOptions()` 只改配方。
 控件**自己**那个视图由 attach 触发（§2.2）；宿主新建的视图没有 attach 事件 ⇒ 自己调一次 `ensureWindowPass()`
