@@ -1,12 +1,12 @@
 # 离屏目标：尺寸变化的"原地化"（resize in place）设计
 
 状态：**已实现（2026-09-19，旧实现）**。**2026-09-25 注**：§1–§7 的设计理由与上游先例仍然成立
-（新实现 = `TargetPlan` / `applyTargetPlans`，见 `docs/data-flow.md` §4、`.ai/design/vsg-reimplementation.md` §5.6）；
+（新实现 = `TargetPlan` / `applyTargetPlans`，见 `docs/guides/vsg-data-flow.md` §4、`.ai/design/vsg-reimplementation.md` §5.6）；
 **§8 的实施记录针对已删除的旧实现，只作历史**（全文在 git 历史：`git show 248c3f3:.ai/design/vsg-target-resize-in-place.md`）。
 门禁（现在）：`tests/test_vsg` 的目标 / 执行器用例（`MrtTargetTest`、`HostTargetsTest`、`OffscreenTargetTest`、
 `ExecutorTest`）+ 门禁应用阶段的画面判据（`scripts/vsg_rewrite_gate.sh`）。
 前置阅读：`.ai/design/vsg-reimplementation.md` §5.6（目标、寿命与设备空闲）、
-`docs/backend.md` §5（生命周期与所有权）、`.ai/memory/graphics-perf-backlog.md` 2026-09-19 条目。
+`docs/guides/vsg-backend.md` §5（生命周期与所有权）、`.ai/memory/graphics-perf-backlog.md` 2026-09-19 条目。
 
 ## 0. 一句话
 
@@ -393,7 +393,7 @@ bootstrap/seed 永远不会被记录。
    未命中时再在**全部** `_implementation` 里找 pipeline states 相等的实现对象复用，**比较里不含 render pass**；
    保节点/保 View ⇒ 早退。旁证：一次真正的"新 View"槽要 ~26 ms（启动 `view compiles 5 = 137 ms`），
    而 `rebind compiles` 与"空转 compile"（1.0–1.6 ms）同量级。因此"保留槽 ≠ 不建管线"那句是错的，
-   已从 `data-flow.md` D41 与 `docs/backend.md` 改掉。
+   已从 `docs/guides/vsg-data-flow.md` D41 与 `docs/guides/vsg-backend.md` 改掉。
 
 剩余工作（不在本次范围）：
 

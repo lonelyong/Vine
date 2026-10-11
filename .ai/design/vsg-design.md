@@ -5,4 +5,4 @@
 `git show 0b2f58c:.ai/design/vsg-design.md`。
 
 新架构的唯一入口：`.ai/design/vsg-reimplementation.md` §2（两个流、六个核心对象、物理边界）
-与 `gfx_backend_vsg.md`（导航与文件地图）。
+与 `docs/guides/vsg-plugin.md`（导航与文件地图）。

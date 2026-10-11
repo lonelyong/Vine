@@ -6,4 +6,4 @@
 
 新世界的同一问题：**几何自己的通道顺序（`location` 升序）= 绑定顺序**（`ContentFacts`；
 设计与坑在 `.ai/design/vsg-reimplementation.md` §5.5）；"按名字声明才算数、按 L1 类型名认领块"
-见 `docs/data-flow.md` §6；变体进键见 §5.2。
+见 `docs/guides/vsg-data-flow.md` §6；变体进键见 §5.2。

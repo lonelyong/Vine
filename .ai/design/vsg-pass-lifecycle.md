@@ -8,11 +8,11 @@
 
 | 旧主题 | 新家 |
 | --- | --- |
-| 帧 / pass 生命周期、槽位时钟 | `Session` / `FrameTimeline` —— `docs/data-flow.md` §4 |
+| 帧 / pass 生命周期、槽位时钟 | `Session` / `FrameTimeline` —— `docs/guides/vsg-data-flow.md` §4 |
 | pass 协议的显式化、无 scope 拒绝、`swapBuffers` 关帧 | 设计文档 §5.1（`Protocol`） |
-| 诊断通道（severity × category、episode 规则） | `docs/backend.md` §6（`Diagnostics`） |
+| 诊断通道（severity × category、episode 规则） | `docs/guides/vsg-backend.md` §6（`Diagnostics`） |
 | 缓存骨架、槽身份、退役 | 设计文档 §5.2 / §5.6（`ContentStore`、`RetirementQueue`） |
-| 缺陷表 D8/D14/D16/D22…（旧 `docs/data-flow.md` §13 的编号） | 只存在于旧文（git 历史） |
+| 缺陷表 D8/D14/D16/D22…（旧 `docs/guides/vsg-data-flow.md` §13 的编号） | 只存在于旧文（git 历史） |
 
 > 文中"过程与脚本"类教训（闸门脚本、整包 build、切割脚本护栏、CMake tab、clang 瞬时崩溃、
 > 本机 proxy / glslang 环境）已并入 `.ai/design/vsg-reimplementation.md` §5.9。

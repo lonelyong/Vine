@@ -4,6 +4,6 @@
 逃生口（2026-09-08）。旧实现已删除，**本文不再更新**；全文在 git 历史：
 `git show b58aba7:.ai/design/vsg-user-mutation-strategy.md`。
 
-新世界把同一问题收敛成一句话：**能被动态化的东西绝不进键**。逐类处理见 `docs/backend.md` §4
+新世界把同一问题收敛成一句话：**能被动态化的东西绝不进键**。逐类处理见 `docs/guides/vsg-backend.md` §4
 （材质 compare-and-write / 几何 revision 公告 / 状态 diff / 程序新变体 / 目标计划），
 判据与实测见设计文档 §5.2 与 §11.16cq。

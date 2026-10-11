@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Checks that the vsg backend's docs only name units that exist, and name every unit.
 
-The module keeps three living documents (``gfx_backend_vsg.md``, ``docs/backend.md``,
-``docs/data-flow.md``) beside the code they describe, and they rot in one direction: a unit is
+The vsg backend keeps three living documents (``vsg-plugin.md``, ``vsg-backend.md``,
+``vsg-data-flow.md``), which the repository's unified docs folder ``docs/guides/`` holds (they sat
+beside the code until the docs were unified there on 2026-10-11), and they rot in one direction: a unit is
 renamed or deleted and the sentence that named it survives. That is not compile-checked, and it
 is not visible in review, so it accumulates until a reader follows a pointer that leads nowhere
 (``drawScreenTexture`` outlived the function by two weeks; ``renderOffscreenTarget`` and
@@ -39,9 +40,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "src" / "plugins" / "gfx_backend_vsg"
 DOCS = [
-    PLUGIN / "gfx_backend_vsg.md",
-    PLUGIN / "docs" / "backend.md",
-    PLUGIN / "docs" / "data-flow.md",
+    ROOT / "docs" / "guides" / "vsg-plugin.md",
+    ROOT / "docs" / "guides" / "vsg-backend.md",
+    ROOT / "docs" / "guides" / "vsg-data-flow.md",
 ]
 # Directories whose units the docs are expected to map. RECURSIVE: the rewrite moved the backend into
 # `src/internal` + `src/core` (and `include/vine/vsg/internal` + `core`), and a walk that stopped at the top level

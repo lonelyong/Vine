@@ -1,12 +1,12 @@
 # gfx_backend_vsg：模块说明（重写版）
 
 > **一句话**：注册名 `vsg` 创建的是**重写版门面** `VsgBackend`（由 `VsgRenderBackendFactory` 注册），它按
-> [`.ai/design/vsg-reimplementation.md`](../../../.ai/design/vsg-reimplementation.md) 的设计实现
+> [`.ai/design/vsg-reimplementation.md`](../../.ai/design/vsg-reimplementation.md) 的设计实现
 > `vn::graphics::RenderBackend`。那份设计文档是本模块**契约、坑与实施记录**的唯一权威。
 >
 > **本文只回答**：这个插件是什么、文件在哪、怎么构建、怎么跑、证据在哪、哪件事该看哪份文档。
-> 行为细节（服务/拒绝、调用次数、更新策略）见 [`docs/backend.md`](./docs/backend.md)；逐帧数据流与
-> L0/L1 映射见 [`docs/data-flow.md`](./docs/data-flow.md)。
+> 行为细节（服务/拒绝、调用次数、更新策略）见 [`vsg-backend.md`](vsg-backend.md)；逐帧数据流与
+> L0/L1 映射见 [`vsg-data-flow.md`](vsg-data-flow.md)。
 >
 > **已退场的旧渲染器**（`VsgRenderer` 一路：场景桥、相机桥、材质管理器、槽模型）连同它的文档叙述一起删掉了；
 > 考古用 git 历史（`git log -- src/plugins/gfx_backend_vsg`），设计与删除记录见设计文档 §11.16bt。
@@ -90,8 +90,8 @@
 **测试与工具**：`tests/test_vsg/`（本模块的集成测试；MODULE 库不能链，测试**直接编实现源文件**）、
 `scripts/vsg_rewrite_gate.sh`（门禁）、`scripts/xwin2ppm.py` / `ppmprobe.py` / `xwinresize.py`（读窗口与断言）。
 
-**文档**：本文件（导航）、[`docs/backend.md`](./docs/backend.md)（运行时行为）、
-[`docs/data-flow.md`](./docs/data-flow.md)（数据流与映射）、设计文档（契约 / 坑 / 实施记录）。
+**文档**：本文件（导航）、[`vsg-backend.md`](vsg-backend.md)（运行时行为）、
+[`vsg-data-flow.md`](vsg-data-flow.md)（数据流与映射）、设计文档（契约 / 坑 / 实施记录）。
 
 ## 3. 构建与依赖
 
@@ -122,10 +122,10 @@ bash scripts/vsg_rewrite_gate.sh build                   # 完整门禁（Debug�
 | 主题 | 唯一权威 |
 | --- | --- |
 | 契约、设计决定（D1–D8）、**坑**、实施记录与登记 | `.ai/design/vsg-reimplementation.md` |
-| 运行时行为：服务/拒绝、每帧调用次数、更新策略、诊断、验证 | 本文 §4 + [`docs/backend.md`](./docs/backend.md) |
-| 逐帧数据流、L0/L1 与 ShaderSet 映射、支持矩阵 | [`docs/data-flow.md`](./docs/data-flow.md) |
-| 自定义着色：作者视角 / 后端 ABI / 名字地图 / 引擎契约 | `src/viz/graphics/docs/usage.md`、`.ai/design/vsg-reimplementation.md` §5.4、`docs/data-flow.md` §6、`.ai/design/graphics-shader.md` |
-| 引擎侧使用文档（宿主视角） | `src/viz/graphics/docs/usage.md` |
+| 运行时行为：服务/拒绝、每帧调用次数、更新策略、诊断、验证 | 本文 §4 + [`vsg-backend.md`](vsg-backend.md) |
+| 逐帧数据流、L0/L1 与 ShaderSet 映射、支持矩阵 | [`vsg-data-flow.md`](vsg-data-flow.md) |
+| 自定义着色：作者视角 / 后端 ABI / 名字地图 / 引擎契约 | `docs/guides/graphics.md`、`.ai/design/vsg-reimplementation.md` §5.4、`vsg-data-flow.md` §6、`.ai/design/graphics-shader.md` |
+| 引擎侧使用文档（宿主视角） | `docs/guides/graphics.md` |
 | 构建树 / 工具约定 | 仓库根 `CMakeLists.txt` 与 `cmake/`、`scripts/vsg_rewrite_gate.sh`、`.ai/memory/graphics.md` |
 
 > 早期设计历史（vsg-design、vsg-pass-lifecycle、vsg-pipeline-sharing、vsg-target-unification、

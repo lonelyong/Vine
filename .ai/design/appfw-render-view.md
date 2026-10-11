@@ -49,7 +49,7 @@
 > **下文怎么读**：凡写 `SceneView::Options` / `setOptions()` / `options()` / `ensureWindowPass()` /
 > `rebuildDefaultWindowPass()` / 内部 `default_pipeline_` 的段落，都是 **S7 之前**的形态 —— 它们是这一路设计的
 > 记录（"当时为什么这么定"仍有效），改写成新形态的地方见上表；**当前 API 以头文件与
-> `src/viz/graphics/docs/usage.md` §3.10/§3.11 为准**。
+> `docs/guides/graphics.md` §3.10/§3.11 为准**。
 >
 > ---
 >

@@ -2,9 +2,9 @@
 
 > 本文覆盖**运行时行为**：SDK 的每个方法落到哪、**服务什么 / 拒绝什么**、一帧的**调用次数**、
 > **更新策略**、**生命周期与所有权**、**诊断与验证**。
-> 契约、设计决定与**坑**在 [`.ai/design/vsg-reimplementation.md`](../../../../.ai/design/vsg-reimplementation.md)
-> （不在这里重复）；文件地图与构建见 [`../gfx_backend_vsg.md`](../gfx_backend_vsg.md)；逐帧数据流与
-> L0/L1 映射见 [`data-flow.md`](./data-flow.md)。
+> 契约、设计决定与**坑**在 [`.ai/design/vsg-reimplementation.md`](../../.ai/design/vsg-reimplementation.md)
+> （不在这里重复）；文件地图与构建见 [`vsg-plugin.md`](vsg-plugin.md)；逐帧数据流与
+> L0/L1 映射见 [`vsg-data-flow.md`](vsg-data-flow.md)。
 >
 > 旧 `VsgRenderer`（SceneBridge）时代的运行时叙述已删，全文在 git 历史里；本文只描述重写版。
 

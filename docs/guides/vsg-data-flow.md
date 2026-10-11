@@ -2,9 +2,9 @@
 
 > 本文覆盖：**一帧的数据怎么流**（引擎对象 → 事实 → 计划 → 录制 → 执行），每一层点名负责的单元，
 > 以及 L0/L1 契约映射与**支持矩阵**（唯一一份）。
-> 契约、设计决定与**坑**见 [`.ai/design/vsg-reimplementation.md`](../../../../.ai/design/vsg-reimplementation.md)；
-> 运行时行为（服务/拒绝、调用次数）见 [`backend.md`](./backend.md)；文件地图与构建见
-> [`../gfx_backend_vsg.md`](../gfx_backend_vsg.md)。
+> 契约、设计决定与**坑**见 [`.ai/design/vsg-reimplementation.md`](../../.ai/design/vsg-reimplementation.md)；
+> 运行时行为（服务/拒绝、调用次数）见 [`vsg-backend.md`](vsg-backend.md)；文件地图与构建见
+> [`vsg-plugin.md`](vsg-plugin.md)。
 >
 > SceneBridge 时代的数据映射叙述已删（全文在 git 历史）；本文只描述重写版。
 
@@ -93,7 +93,7 @@ present()           ──▶  ContentAssembly（事实表 + 流 + 块）→ Con
   `VineShadowBlock` / push 结构），**不是**按 binding 序号。
 * **变体是事实的一部分**：`VINE_DIFFUSE_MAP`（材质有图）、`VINE_VERTEX_COLOR`（几何自己写了颜色通道）、
   `VINE_TEXCOORD_CUBE|UV` 由 `ProgramVariant` 从事实算出，进管线键。
-* 引擎自带程序的声明与实测 ABI 逐条钉在 `tests/test_vsg/ProgramAbiTest.cpp`；自定义程序的后端契约见设计文档 §5.4（作者视角见 `src/viz/graphics/docs/usage.md`）。
+* 引擎自带程序的声明与实测 ABI 逐条钉在 `tests/test_vsg/ProgramAbiTest.cpp`；自定义程序的后端契约见设计文档 §5.4（作者视角见 `docs/guides/graphics.md`）。
 
 ## 7. 支持矩阵（唯一一份）
 

@@ -169,7 +169,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
   `~SceneView → removeWindowPass → ~Pipeline → free`，报 `0xC0000374`（堆损坏）；而在崩溃之前，每一步
   `HeapValidate(GetProcessHeap())` 都是好的 —— 因为引擎被删了**第二次**（成员析构时再析构一遍），坏的是那一遍里的
   `std::string`/vector。
-- 收口：`test_vsg/SdkPixelFixture.hpp` 改成 `intrusive_ptr<RenderEngine>`；`usage.md` §3.1 的样例原来写的是栈上的
+- 收口：`test_vsg/SdkPixelFixture.hpp` 改成 `intrusive_ptr<RenderEngine>`；`docs/guides/graphics.md` §3.1 的样例原来写的是栈上的
   `RenderEngine engine;` + `builder.build()`（教了一个必崩的形态），一并改成 `make_intrusive<RenderEngine>()`。
 - 判据：`SdkPixelTest.AWireframeModeDrawsTheEdgesOfTheSameGeometry` / `TheFixtureAlsoDrawsContentWithNoViewAtAll`
   两条在真设备上跑完并**干净退出**（栈引擎那版在同一处崩，exit `0xC0000374`）。

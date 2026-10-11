@@ -6,9 +6,9 @@
 > 与 vsg 内建 ShaderSet 参考档案、§11 的旧落地记录、2026-09-18 校注）属于已删除的旧后端，全文在
 > git 历史：`git show 0b2f58c:.ai/design/vsg-custom-shader.md`。
 >
-> **自定义着色的活契约（四份）**：作者视角 = `src/viz/graphics/docs/usage.md`；后端侧 ABI
+> **自定义着色的活契约（四份）**：作者视角 = `docs/guides/graphics.md`；后端侧 ABI
 > （声明即绑定、push、变体、`(set, binding)` 规则）= `.ai/design/vsg-reimplementation.md` §5.4；
-> 名字地图 = `docs/data-flow.md` §6；引擎侧着色契约 = `.ai/design/graphics-shader.md`。
+> 名字地图 = `docs/guides/vsg-data-flow.md` §6；引擎侧着色契约 = `.ai/design/graphics-shader.md`。
 
 ## 10. 着色器文件与嵌入方式（2026-09-13 落地）
 
@@ -89,5 +89,5 @@ vs.source = String(shaders::kBuiltinGbufferVert);
 3. 在 C++ 里 `#include <vine/.../EmbeddedShaders.hpp>`，用 `kXxxVert`。
 4. `cmake -S . -B build`（新文件要重新 configure），然后 `scripts/vine_shader_check.sh`。
 
-> 自定义着色的活契约：`src/viz/graphics/docs/usage.md`（作者视角）、
-> `.ai/design/vsg-reimplementation.md` §5.4（后端 ABI）、`docs/data-flow.md` §6（名字即绑定）。
+> 自定义着色的活契约：`docs/guides/graphics.md`（作者视角）、
+> `.ai/design/vsg-reimplementation.md` §5.4（后端 ABI）、`docs/guides/vsg-data-flow.md` §6（名字即绑定）。

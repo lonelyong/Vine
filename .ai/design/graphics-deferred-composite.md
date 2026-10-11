@@ -13,13 +13,13 @@
 > Deferred 自动升级 composite，Forward 追加深度-on 后段）。
 > 上游：`graphics-mrt-gbuffer.md`（MRT/GBuffer + deferred 主窗）、`graphics-render-pipeline.md`
 > （多 pass/命名产出槽/Scene pass 表含 depth prepass）、`graphics-pipeline-builder.md`（preset recipe）。
-> 关联：`vsg-target-unification.md`（统一 Target / (camera, order) 内容槽）、`docs/data-flow.md` §13。
+> 关联：`vsg-target-unification.md`（统一 Target / (camera, order) 内容槽）、`docs/guides/vsg-data-flow.md` §13。
 >
 > **2026-10-11 校（M7 续，② 的定案）**：这条 composite 配方里的"借深度"是**应用层的组合**，不是引擎政策 ——
 > `RenderTarget::shareDepth` 只绑**实例**（后端在建 GPU 目标时读 `depthSource()`），而 M7 的 transient 会在形状
 > 变化时**替换实例**。所以：①今天的 builder 配方继续**自己持有** G-buffer / composite（简单、可读，也是这一稿
 > 的形状）；②要自己组 transient 版本的应用，得在自己那口 `before_draw`（或布局回调）里把借用**重述到当前实例**
-> ——`RenderEngine::transientTarget(identity)` 就是拿回"此刻活着的那一张"的机制（`usage.md` §3.13）。
+> ——`RenderEngine::transientTarget(identity)` 就是拿回"此刻活着的那一张"的机制（`docs/guides/graphics.md` §3.13）。
 > SDK 不替应用搭这条组合（`graphics-render-next.md` §6 不变量 6）。
 - 里程碑：**S1 F2**（显式 occlusion，替代 ContentStyle）→ **S2 F1**（program/PiP slot 显式 order）→
   **S3** builder+`Pipeline` composite 升级 → **S4** app_shell 接线瘦身 → **S5** 共享 gbuffer depth

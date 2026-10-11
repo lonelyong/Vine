@@ -2,8 +2,10 @@
 
 ## Project Layout & Documentation
 
-* `docs/` is reserved for the GitHub Pages site (contains `index.html`, `CNAME`).
-  Do NOT place design docs or notes there.
+* `docs/` is the unified repository documentation folder AND the GitHub Pages
+  site root: user/developer-facing docs live under `docs/guides/` (so the site
+  can serve them later), while `index.html` + `CNAME` at `docs/` are the site
+  itself. Do NOT place design docs or notes there — those belong in `.ai/`.
 * `.ai/` holds AI-visible, repo-versioned knowledge:
   * `.ai/design/` — full module design docs (e.g. `robotics-io-design.md`,
     `robotics-proximity-design.md`).

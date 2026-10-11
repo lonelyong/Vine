@@ -15,7 +15,7 @@
 ## 0. 已核实的机制（避免重复调研）
 
 > **R6 已落地（2026-09-19）：设备侧逐 pass GPU 时间。** 开关 `VINE_VSG_PROFILE=1`（会话建立时读），
-> 值出口 `VsgRenderer::gpuProfile()`，机制与判据见 `src/plugins/gfx_backend_vsg/docs/backend.md` §5.7。
+> 值出口 `VsgRenderer::gpuProfile()`，机制与判据见 `docs/guides/vsg-backend.md` §5.7。
 > **做任何 GPU 侧结论前先用它**。两条实测前提：①样本**永远落后几帧**（回读不等待设备，`age_frames ≥ 1`）；
 > ②**软件设备上每个 render pass 自身就有 ≈2 ms 固定开销** —— 1 个全屏 quad ≈2.1 ms、1024 个全屏 quad
 > ≈7.7–8.6 ms（×3.6–4.0），而 64 个落在噪声里（×0.8）：**测 GPU 工作量差异要拉开一个数量级**，
@@ -44,13 +44,13 @@
 > · **交互上限（H2 目视项降级的根据）**：本显示上窗口被放在 `(-32768,-32768)`（Weston 无输入后端），`XMoveWindow` 立即被还原 ⇒ XTEST 指针事件到不了窗口；合成 `XSendEvent` 点击可**部分**被 Qt 处理（唤起了一个惰性窗口，但从未映射）。⇒ “边缩放边点菜单”留真实桌面一次目视；缩放后的画面跟随本身已由 app 门禁覆盖（resize + 判图）。
 > · 复现：ctypes 三件套（窗口树/`XdndAware` 读取、假 XDND 源、`XSendEvent`/XTEST 点击，探针跑完即弃）+ `scripts/xwinresize.py` / `scripts/xwin2ppm.py`。
 | **R5** | appfw 的插件注册表在 LSan 下**每次都报**（后端门禁里唯一的报告） | `vn::runtime::DynamicLibraryLoader` 单例（`.cpp:76` 构造、`:190` load）→ `PluginManager::loadAll`：跑完 `test_vsg` 报 808 B / 16 次分配，栈里**零 vsg 帧** | 二选一：让 loader 在退出时释放，或把它声明为“进程生命周期保留”并进 `scripts/asan_leaks.supp` —— **但那份文件自己的规则写着“框架自己的分配不许抑制”** ⇒ 更可能要改代码 | 属 appfw，不在后端范围 | **已结（2026-09-16）：抑制，但把“为什么是有意的”写进允许清单**。查证：`~DynamicLibraryLoader` 的 `d.release()` **是有意的**（注释写明：在静态析构期 dlclose 掉插件代码，而 CommandManager / RenderBackendRegistry 还持着指进插件的 callable/工厂指针 ⇒ exit 时 SIGSEGV）⇒ 这是**保留决定**，不是忘记释放。处置：`asan_leaks.supp` 顶部规则加一条例外（“有意保留 + 决定写在代码里”可入表），新增 `leak:vn::runtime::DynamicLibrary` 并附实测数字。**证据**：`print_suppressions=1` ⇒ `count 16 bytes 808 template vn::runtime::DynamicLibrary`（**只**这一类被匹配）；此后后端两条跑法（套件 + 设备自检）都用**全或无**泄漏判据 PASS，`VINE_ASAN_LEAK_SCOPE` 降级为“还没excuse 的泄漏”的备用手段 |
-| **V2** | 靠 `protected` 的池做出上游没有的 `remove(view)` | `detail::VsgCompileManager : vsg::CompileManager`，用 `protected` 的池实现 `forget(view)`（`VsgViewCompiler.hpp:26`、`docs/backend.md:54`）；HEAD 实测 `forget` 93 次 | 低—中：依赖 vsg 的 protected 布局，但比打补丁干净 | 不改；把"升级 vsg 时同时复核 V1 + V2"写进升级清单 | 待办（仅登记） |
+| **V2** | 靠 `protected` 的池做出上游没有的 `remove(view)` | `detail::VsgCompileManager : vsg::CompileManager`，用 `protected` 的池实现 `forget(view)`（`VsgViewCompiler.hpp:26`、`docs/guides/vsg-backend.md:54`）；HEAD 实测 `forget` 93 次 | 低—中：依赖 vsg 的 protected 布局，但比打补丁干净 | 不改；把"升级 vsg 时同时复核 V1 + V2"写进升级清单 | 待办（仅登记） |
 | **V3** | 拿不到 `VkPipelineCache`（D28） | vsg 的 `GraphicsPipeline::compile` 不接受 `VkPipelineCache` ⇒ 跨会话/磁盘的 PSO 复用做不到；两条路都堵（等上游 / 自建管线，后者不推荐） | 中 | **优先级应上调**：H7/H8 刚量出"编译"是启动成本的大头（但**应用只编一次** ⇒ 受益集中在冷启动与换会话）。把那些测量数字挂到这条上，作为推上游的理由 | **2026-09-17 收口：前提从"假设"升级为"有门禁的事实"，测量挂上（不改代码）**。① **"拿不到"现在是有出处的三处**：pinned v1.1.16 与**上游 master（2026-09-17 现抓）**都是 `vkCreateGraphicsPipelines(*device, `**`VK_NULL_HANDLE`**`, …)`（`src/vsg/state/GraphicsPipeline.cpp:260`；compute `ComputePipeline.cpp:110`、ray tracing `RayTracingPipeline.cpp:168` 同样）；vsg 自己的代码里除 Vulkan 头文件外**根本不出现 `VkPipelineCache`**，也不存在 `PipelineCache` 类型 ⇒ **升到 master 也拿不到**（"等上游"变成核实过的结论）。② **门禁**：新增 `scripts/check_vsg_upstream_capabilities.py`（7 条断言；无 vsg 树则 SKIP 退 0），把上面的话变成可红的检查，**变异 4 条全红**：让 vsg 传一个真 cache 句柄 / 在 vsg 头里加 `VkPipelineCache` / 往 `RenderGraph.cpp` 塞 `vkCmdBeginRendering` / 造一个 `PipelineCache.h`。③ **要挂的测量（H7/H8）**：编译的钱几乎全在 glslang 重解内建符号表（每次 ≈ **50 ms**；会话重建 ⇒ 17 / 29 / 31 个 epoch），而 PSO 只在首次为 (program, material, state) 变体建一次；**交付的应用只编一次**（25 s 里 `init=2 finalize=1`）⇒ 收益集中在**冷启动**与**换会话/换窗口重建**（自检那种负载），不在稳定帧率上。④ **推上游的最小形状**（照 vsg 自己的先例）：`Context` 已有 `getOrCreateShaderCompiler()`（`include/vsg/vk/Context.h:88`），要的等价物就是一个 `getOrCreatePipelineCache()`，`Implementation` 里把那第三个实参从字面量换成它、默认仍是 `VK_NULL_HANDLE` ⇒ 零破坏，且**跨会话/落盘复用**随之可用（D28 的"`pipelineCacheUUID` 不匹配必须安全丢弃"跟着生效）。⑤ 拿到注入点之前**不改**：路线 B（自建管线）仍不推荐（会与 vsg 的 state 装配/记录路径分叉） |
 | **V4** | 合并每 pass 的 `beginRenderPass`（dynamic rendering，§9.4） | vsg 的记录路径只有 `vkCmdBeginRenderPass`（全树无 `vkCmdBeginRendering`）⇒ 无法在它的遍历里插一个 | — | 保持"被上游阻塞"，不动 | **2026-09-17 收口：前提同样变成有门禁的事实**。pinned 与**上游 master** 的 vsg 记录路径都**没有** `vkCmdBeginRendering`（`src/` 全树），只有 `vkCmdBeginRenderPass`（`src/vsg/app/RenderGraph.cpp`）；这两条由 `scripts/check_vsg_upstream_capabilities.py` 盯着（变异：塞一个 `vkCmdBeginRendering` ⇒ 红）。⇒ 结论不变（被上游阻塞、不动），但"为什么"不再只活在话里 |
 ### 2026-09-19 登记：启动/改尺寸的"现造的东西"值多少（一条已做、一条已否决）
 
 > 量具：`VsgBuildProfile` + `reportBuildProfile()`（`VsgRendererState::build_profile`；行格式与用法见
-> `src/plugins/gfx_backend_vsg/docs/backend.md` 顶部）。数字是本机 Debug + RTX 4060 + `Vine.exe`（默认 deferred + shadowed 管道），
+> `docs/guides/vsg-backend.md` 顶部）。数字是本机 Debug + RTX 4060 + `Vine.exe`（默认 deferred + shadowed 管道），
 > 只在该帧真造了东西或总耗时 > 5 ms 时打一行，稳态帧不打。
 - **已做（2026-09-19）**：全屏 program 的 SPIR-V 按 (fragment 源码, entry point) **进程级缓存**
 - **顺带把数字挂给 V3**：一次改尺寸的 6 个槽 = 6 次 `vkCreateGraphicsPipelines` + 6 套 pipeline/descriptor 布局 +

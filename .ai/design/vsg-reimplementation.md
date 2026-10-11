@@ -271,7 +271,7 @@ material 值 / 流字节 / cull 全部**不进**。
   在 1.1.16 是坏的。**`<=4` 不查边界 ⇒ 第 5 块面要由我们拒（暂无守卫）。**
 * `vn::String` 是 `std::u8string`（字面量写 `u8"…"`）；`vn::math::Mat4d` 默认构造 = **单位阵**；
   `vsg::Image::vk(deviceID)` 要下标；`vsg::Exception` **不是** `std::exception`（只 catch 后者会漏）。
-* **三份 living 文档**（`gfx_backend_vsg.md`、`docs/backend.md`、`docs/data-flow.md`）受 `check_doc_symbols.py` 管：
+* **三份 living 文档**（`docs/guides/vsg-plugin.md`、`docs/guides/vsg-backend.md`、`docs/guides/vsg-data-flow.md`）受 `check_doc_symbols.py` 管：
   文档点名的单元必须存在；`src/` 与 `include/vine/vsg/` 下每个单元都必须被点名；段落标题含"历史登记"可整段免检；
   必须点名不存在的单元时行尾加**裸的** `<!-- drift-ok -->`。
 
@@ -981,7 +981,7 @@ material 值 / 流字节 / cull 全部**不进**。
 * （`vkQueueSubmit` 后把命令缓冲、池、状态的保管交给 `RetirementQueue`，不 `vkWaitForFences`）。想法本身 （FIFO 队列保证它在后续帧之前执行；持有到窗口到位即可，无需等待）没问题，但**建图像的那一刻根本没有可 以提交的东西**：`vsg::Image` / `ImageView` 是 create-info，`vk()` 要等 `vsg::Context` 编译（帧循环里的 compile 步）才有效——在 `OffscreenTarget::buildAttachments` 里录的屏障会指着空句柄。实现过、量过（应用 VUID 一条没少）、随即整体回退；结论写在这里：**要在"提交前"把某张图弄进声明布局，只有两条路——让它带 DATA 走传输步，或让它已经被编译过。**
 
 ### 11.16bt M10k（2026-09-24）：老渲染器退场——删掉 22 个 TU、31 个头、30 个用例、自检目标与两个脚本
-* 老渲染器那些章（§1 文件地图、§2.4/§3.1/§4.1/§5.1/§5.7 等）标题改标 **（历史登记）**，让 `scripts/check_doc_symbols.py` 的"历史段落不参与漂移检查"这条规则接住它们；`gfx_backend_vsg.md` 的两处 （§11.1 类布局、§14.2 头文件纪律）同样标历史，§10 里那句指向 `VsgTargetBookkeeping.cpp` 的清屏值改指 `core/TargetPlan`；`data-flow.md` 过时提示里的两个单元名用 `<!-- drift-ok -->`（那行**就是**在说被删掉的 东西）。
+* 老渲染器那些章（§1 文件地图、§2.4/§3.1/§4.1/§5.1/§5.7 等）标题改标 **（历史登记）**，让 `scripts/check_doc_symbols.py` 的"历史段落不参与漂移检查"这条规则接住它们；`docs/guides/vsg-plugin.md` 的两处 （§11.1 类布局、§14.2 头文件纪律）同样标历史，§10 里那句指向 `VsgTargetBookkeeping.cpp` 的清屏值改指 `core/TargetPlan`；`docs/guides/vsg-data-flow.md` 过时提示里的两个单元名用 `<!-- drift-ok -->`（那行**就是**在说被删掉的 东西）。
 
 ### 11.16bu M10l（2026-09-24）：收尾四件——图像名字、顺序用例、指名的报告、letterbox 单测
 * 同时钉了三层——编译出来的计划顺序、`executor.recorded()` 的顺序、**以及像素**（谁最后跑）。§11.16bo 的登记 已过时，本片只做确认（不新增重复用例）。
@@ -996,7 +996,7 @@ material 值 / 流字节 / cull 全部**不进**。
 * **变异**：把 kind 从比较里去掉 ⇒ 恰好这两条红。
 * 两半都失效：① `MAPPED_DIRS` + `units_of()` 只枚举**目录直接子项**，而代码搬进了 `src/internal|src/core`、 `include/vine/vsg/api|core` ⇒ 它只看见顶层那 19 个（实测：树里 143 个，**124 个不在门禁范围内**）； ② 点名检查用前缀白名单（`PLUGIN_UNIT_PREFIXES`），它不认任何新名字 ⇒ 文档里写错/写旧了也不会红。 ⇒ "每个单元都要被文档点到"和"文档点到的单元必须存在"两条都成了空话。
 * - 做法：`units_of` 改递归；点名检查改成"这个名字在本仓（`src`/`tests`/`tools`/`cmake`）里必须真的存在"，
-* 四个单元**没有任何文档点到**，以及 `backend.md:600` 一句仍在点已删除的 `selftest_datarefresh.cpp` （它所在的 §5.3.2 是旧渲染器的内容，已补 `历史登记` 标记）。修完 **145 单元全绿**。 <!-- drift-ok -->
+* 四个单元**没有任何文档点到**，以及 `docs/guides/vsg-backend.md:600` 一句仍在点已删除的 `selftest_datarefresh.cpp` （它所在的 §5.3.2 是旧渲染器的内容，已补 `历史登记` 标记）。修完 **145 单元全绿**。 <!-- drift-ok -->
 * - **变异**：把枚举改回只列顶层 ⇒ 立刻红；把 `ContentSweep` 从三份文档里整体改名 ⇒
 * 而 switch 后面就有一段静默尾部；`mapBlendFactor` 的尾部把未知因子变成 `VK_BLEND_FACTOR_ONE`（**不是**"不混合"， 而是另一种混合 ⇒ 静默错图）。两处都改成说真话，并把"未知因子"那条登记为需要"在状态被书写的源头（引擎的 `BlendState`）校验"才算真修（见 §11.16bw）。
 * **doc symbols 145 单元**（修前 19）；五条变异各自咬住目标。**证据边界**：本机没有窗口系统 ⇒ 窗口类用例
@@ -1180,7 +1180,7 @@ material 值 / 流字节 / cull 全部**不进**。
 * **A4** `Material` revision（**已实测：§11.16cq**——一次材质编辑 = 每帧 +1 行重建、**0 上传、0 变体**；record 半段 7–19 µs/帧（Release, 1 drawable）） — 每帧的上界：demo 规模 11 趟 × 42 命令 ≈ **460 次 64 B 比较 ≈ 10 µs/帧 ≈ 0.06%**（由 M10f 实测的 2 ms/帧内容层推） | 新公开 API + 文档 | **不值得**：数字比噪声还小
 * **B4 的修**（reserve + 就地置换） — 省掉倍增重分配与 ~400 KB 搬运 ≈ **1.05 ms 里的 5–8%**（M11p 实测） | 引擎侧改动 + 顺序用例 | 不在本轮（触发点只到 6% 帧预算）
 * **A6** LRU / 容量上界 — 只在"同屏活纹理逼近 256"时才有面（demo 不成立） | 淘汰键改造 | 保持登记
-* **D3** 色彩空间契约（**已做：§11.16cp**，M11t） — demo 的天空从亮一个 gamma 回到正确亮度（视口带 mean 122.7 → 80.8），门禁判据一行不动 | 文档 + demo 三处声明；起作用的映射早有用例 pin | **已做**：契约写进四处 SDK 注释 + `usage.md` §3.9；③（`acquire` 的 Info）以"引擎分不出颜色/数据"为由不做
+* **D3** 色彩空间契约（**已做：§11.16cp**，M11t） — demo 的天空从亮一个 gamma 回到正确亮度（视口带 mean 122.7 → 80.8），门禁判据一行不动 | 文档 + demo 三处声明；起作用的映射早有用例 pin | **已做**：契约写进四处 SDK 注释 + `docs/guides/graphics.md` §3.9；③（`acquire` 的 Info）以"引擎分不出颜色/数据"为由不做
 * ②**两条句子的用例**（最便宜的守卫补齐）；③**D3 写契约**（便宜），其余按各自触发器。
 * **会话侧"画面已落地"** — 把窗口读那条链**从"测试碰运气"变成"宿主可查的事实"**（测试侧已 4/12 → 0/12，剩下的价值在宿主 API） | WSI present fence（中等） | 中的：下一个真宿主接窗口时做
 

@@ -42,7 +42,7 @@ constexpr double kQuadZ = 0.5;
 /// `PixelProbe::nonBlackPixels()` - no assertion here has to know a colour space, an encoding or a byte order.
 ///
 /// WHY POSITIONS AND NORMALS. The channels a geometry declares are the ones the built-in programs read
-/// (position at location 0, normal at 1 - see usage.md §3.8), and a geometry that declares fewer channels than
+/// (position at location 0, normal at 1 - see `docs/guides/graphics.md` §3.8), and a geometry that declares fewer channels than
 /// the program reads is a draw the backend refuses rather than a picture with a warning. The texcoord channel
 /// is deliberately absent: none of the shading modes used here samples a map.
 ///

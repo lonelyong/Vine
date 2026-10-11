@@ -18,7 +18,7 @@
 | **证据与门禁** | M7 每帧编译 + 描述符（`PassDesc`）· M8 SDK 级设备夹具 + 像素判据（`SdkPixelTest`） · M11k 背景看写掩码 · M11l 第三条画面判据"整片背景灰" · FPS 窗口真平均 · ASan 两片（余量收口 / 全量 test_vsg 首通） · V3/V4 上游能力门禁 · R5 LSan 抑制 · M11g 计数分配器（**`skipped == 0` 才是跑过设备电池**） |
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
-| **面向使用者** | `docs/usage.md`（模块文档一节） |
+| **面向使用者** | `docs/guides/graphics.md`（模块文档一节） |
 | **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
 | **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**S10b（插件会话→设备：窗口与交换链 1:N、缓存上移、`DeviceDesc`）**/ S11（登记不做）未落地 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6 / **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
@@ -294,7 +294,7 @@
   `record_micros` 还是"这条 pass 上一帧的占比"，只是量在**记录**发生的地方（运行那半的耗时是后端的，见 `FrameCounters`）。
 - **契约变化（这一片的实质）**：`RenderPass::execute()` **不再是引擎调用 pass 的方式**，它是"宿主自己驱动一条 pass"
   （预热 / 测试 / 宿主自绘）的拼写；想让引擎跑的活必须放进 `describe()` 或声明的 `before_draw` 钩子。
-  写进了 `RenderPass::execute()` / `RenderEngine::frame()` / `FramePlan::record_micros` 的文档与 `usage.md` §2.4/§2.5。
+  写进了 `RenderPass::execute()` / `RenderEngine::frame()` / `FramePlan::record_micros` 的文档与 `docs/guides/graphics.md` §2.4/§2.5。
 - **判据（实测）**：`test_graphics` 356→**357**（新用例 `TheEngineRunsTheFrameValueAndNeverCallsExecute`：
   覆写 describe/execute 各计数，两帧后 describes = 2、**executes = 0**，且这条 pass 确实到了线上）。
   **变异 1/1 红**：运行段改回 `pass->execute(...)` ⇒ 3 条红。`TheFramePlanCarriesWhatEachPassLastCost` 的 `SlowPass`
@@ -359,7 +359,7 @@
   `description == nullopt` 的 entry 一个属性都不发）。引擎 `frame()` 里那段逐条循环**整体换成一次调用**
   `backend_->executeFrame(frame_value_)`。于是**边界上是值**：后端可覆写它直接从值构建（那时逐条调用一份都收不到），
   不覆写的后端（含 vsg 插件）**行为逐调用不变**（同一个序列，只是从一个输入来）。`RenderBackend.hpp` 的
-  CALL ORDER 段、`usage.md` §2.5 已同步。
+  CALL ORDER 段、`docs/guides/graphics.md` §2.5 已同步。
 - **判据（实测）**：`test_graphics` 357→**358**（`ABackendIsHandedTheWholeFrameAsOneValue`：覆写 `executeFrame`
   的后端一帧收到**一次**调用，passes 按运行序带 order 与绘制数、被禁用的不在里面，且
   `beginPass`/`setPassOrder`/`render`/`drawScreenProgram` **一次都没被调**）；**变异 1/1 红**（引擎改回逐条发）。
@@ -425,7 +425,7 @@
   `VsgBackendPluginTest` 两条红得像"插件注册丢了"；而且**测试目标不会顺带构建插件**，得显式
   `--target gfx_backend_vsg`（已写进 redesign 的风险表）。②自己的 episode 状态别"先 rearm 再读" —— 那等于每帧都当新
   错误报（第一版就踩了：`shape_mismatches_last_frame_` 先统一 `rearm()`，carry-over 时读到的永远是 false）。
-  ③文档同步点很散：`usage.md` 4 处、`graphics-render-next.md` 的 M2c 行（标已回退）、redesign 的 S4a 行/读者表/风险表。
+  ③文档同步点很散：`docs/guides/graphics.md` 4 处、`graphics-render-next.md` 的 M2c 行（标已回退）、redesign 的 S4a 行/读者表/风险表。
 
 ## 2026-10-11 S1 落地：pass 描述它的绘制（重新设计的第一片）
 
@@ -543,7 +543,7 @@
   —— 拿回自己声明的那张图（"此刻活着的那一张"，形状一变即作废；这正是不该把实例长留在应用手里的原因）。
   用例：`ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt` 追加四条断言（首帧前 null / 首帧后等于
   plan 里那张 / 未声明的身份回答 null / 形状变后回答新实例且不再是旧的），变异 1/1 红（查询不看身份 ⇒ 该用例红）。
-  用法（应用自己组 transient 配方）写进 `usage.md` §3.13。
+  用法（应用自己组 transient 配方）写进 `docs/guides/graphics.md` §3.13。
 - **叠层那一续（2026-10-11，① 完成）**：`AxisGizmo` / `FpsOverlay` 不再是 `RenderPass` 子类，降为**内容对象**
   （`Object + RefCounted`：自己的 scene、取景相机、盒子 `boxViewport()`、每帧 `update()`），由配方声明成一条
   HUD 档的 pass（`content`/`camera`/`viewport`/`clear_enabled = false`/`depth_mode = Disabled`/`before_draw`）——
@@ -570,7 +570,7 @@
 - **坑一：引擎是引用计数对象，`Pipeline` 强持它 ⇒ 栈上的引擎会被管线析构时 `delete`**。症状不发生在那一刻：第一版夹具把
   `RenderEngine` 做成夹具的值成员，结果每次都崩在 `~SceneView → removeWindowPass → free`，报 `0xC0000374`（堆损坏），
   而崩溃前每一步 `HeapValidate(GetProcessHeap())` 都是好的 —— 引擎被成员析构**删了第二遍**。夹具已改
-  `intrusive_ptr<RenderEngine>`；`usage.md` §3.1 的样例原来写的是栈上的 `RenderEngine engine;` + `builder.build()`
+  `intrusive_ptr<RenderEngine>`；`docs/guides/graphics.md` §3.1 的样例原来写的是栈上的 `RenderEngine engine;` + `builder.build()`
   （教了一个必崩的形态），一并改成 `make_intrusive<RenderEngine>()`。详见 `graphics-pipeline-builder.md` 同日校。
 - **坑二：判据要容一个像素**。填充光栅器按**像素中心**覆盖、线光栅器按**线段触到的像素**覆盖，边界上两者选不同的像素
   （实测：轮廓那一圈整整齐齐落在实体块外一步，180 条边里只有斜边那 36 个在块里）。所以"同一批几何"写成"每个边像素都
@@ -861,7 +861,7 @@
 > · 登记：`Material::specular()` 文档写"A 是强度"，但**没有着色器读它**（前向与 G-buffer 都只读 `.rgb`）。
 >   选**接线**（改文档会留一个哑字段）：前向 `... * material.specular.rgb * clamp(material.specular.a,0,1) * ndl`；
 >   G-buffer `out_specular = vec4(rgb * a, 1.0)`（把强度折进彩色 ⇒ 光照侧一行不改，两条路按构造同乘积）。
-> · 文档同步：`Material.hpp` 的 `@brief`、`usage.md` 的规范 G-buffer 清单。
+> · 文档同步：`Material.hpp` 的 `@brief`、`docs/guides/graphics.md` 的规范 G-buffer 清单。
 > · 证据：新真设备用例 `ContentPassTest.ASpecularIntensityScalesWhatTheSurfaceReflects` —— 材质选成
 >   "答案只差一次乘法"（albedo 全黑、高光白、太阳在镜头后方 ⇒ `dot(n,h)=1`、`pow=1`），四趟里三档读数
 >   （前向 α=0 ⇒ 0、前向 α=0.25 ⇒ 0.125、G-buffer→光照 α=0.25 ⇒ 0.125）。变异 2/2 红（两条路各去掉强度 ⇒
@@ -907,7 +907,7 @@
 >   的**写过的**像素当成背景 ⇒ 固定的 0.06 色洞。新判据 = G-buffer 位置附件的 **w**：写过的像素
 >   `w = 1`（`builtin_gbuffer.frag` 本来就这么写），没写过的保持**透明黑**（后端 `core::planClearValues`
 >   Rule 4：只有附件 0 收到 pass 颜色，其余彩色附件保持构造值）⇒ `if (pos4.a < 0.5) 背景;`。
-> · **契约的两半**写进两个 shader 的注释 + `usage.md` §3.4 手搭延迟管线清单（位置的 w 不是备用通道）。
+> · **契约的两半**写进两个 shader 的注释 + `docs/guides/graphics.md` §3.4 手搭延迟管线清单（位置的 w 不是备用通道）。
 > · 证据：新真设备用例 `ContentPassTest.TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritten` ——
 >   **手写** G-buffer writer 覆盖左半、位置**精确**写成 `vec4(0,0,0,1)`（光栅化几何不可能可靠落在
 >   `|pos|² < 1e-6` 上，所以必须手写值），右半保留清除；两探针：写过的贴脸像素 = `albedo × ambient` =
@@ -1280,7 +1280,7 @@
 
 ## 模块文档（面向使用者）
 
-`src/viz/graphics/docs/usage.md`（仿 `src/base/math/docs/Eigen.md` 的"模块自带 docs 目录"约定）：分层架构、属性沿树折叠的四条规则、每帧数据流与"顶点被别名而非复制"、生命周期与变更契约（**数据变更一律 `Geometry::setRevision()` 公告**）、最小宿主用法，以及现成例子的**构建与运行方式**（`VINE_PIPELINE=forward|deferred|forward_shadowed|deferred_shadowed`（默认 deferred）、`VINE_VSG_GBUFFER` / `VINE_VSG_DEFERRED` / `VINE_VSG_OFFSCREEN_MULTISLOT` / `VINE_VSG_SLOT_DEMO` / `VINE_SHADER_PRESET`、无头门禁）。
+`docs/guides/graphics.md`（2026-10-11 起面向使用者的文档统一在 `docs/guides/`；此前是各模块自带的 `docs/` 目录）：分层架构、属性沿树折叠的四条规则、每帧数据流与"顶点被别名而非复制"、生命周期与变更契约（**数据变更一律 `Geometry::setRevision()` 公告**）、最小宿主用法，以及现成例子的**构建与运行方式**（`VINE_PIPELINE=forward|deferred|forward_shadowed|deferred_shadowed`（默认 deferred）、`VINE_VSG_GBUFFER` / `VINE_VSG_DEFERRED` / `VINE_VSG_OFFSCREEN_MULTISLOT` / `VINE_VSG_SLOT_DEMO` / `VINE_SHADER_PRESET`、无头门禁）。
 文档如实标注 **forward_shadowed / deferred_shadowed 目前是占位（等同无阴影预设）**：阴影切片（order<0 深度 pass + 阴影光照）未实现，只有 `Light::castShadow()/shadow()`、`ShadowSettings`、`ShadowFilter` 已就位，计划见 `.ai/design/graphics-shadow.md`。
 **2026-09-13**：占位不再默不作声——`RenderPipelineBuilder::build` 会报一条 `DiagnosticCategory::UnsupportedRequest`；`ShaderPreset`（含 `ShadowedPhong` 那个“保留项”）已删除，内容着色只能显式命名 program（见本文件顶端条目）。
 - **着色模式（2026-10-11）**：`SceneView::Options::Mode{Lit, Flat, Unlit, Normals, Wireframe}` 落在**pass 属性**上

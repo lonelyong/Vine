@@ -6,5 +6,5 @@ Vine Scene/Camera）。旧实现已删除，**本文不再更新**；全文在 g
 
 结论仍然成立（且就是今天 SDK 的样子）：`initialize()` 无参、不绑场景；宿主句柄与尺寸靠**公告**
 交上来；那批公共 API 破坏性变更已落进 `RenderBackend.hpp`。目标模型的新家 =
-`docs/data-flow.md` §4（`WindowTarget` / `OffscreenTarget` / `HostTargets`；计划与应用）
+`docs/guides/vsg-data-flow.md` §4（`WindowTarget` / `OffscreenTarget` / `HostTargets`；计划与应用）
 与设计文档 §5.6。

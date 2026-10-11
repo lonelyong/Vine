@@ -285,7 +285,7 @@ class VN_GRAPHICS_API RenderSurfaceBinding
 
 **契约变化（这一片的实质）**：`RenderPass::execute()` **不再是引擎调用 pass 的方式**，它是"宿主自己驱动一条 pass"
 （预热、测试、宿主自绘）时才用的拼写；想让引擎跑的活必须放进 `describe()` 或声明的 `before_draw` 钩子。
-这条写进了 `RenderPass::execute()` 的文档、`RenderEngine::frame()` 的文档与 `usage.md`。
+这条写进了 `RenderPass::execute()` 的文档、`RenderEngine::frame()` 的文档与 `docs/guides/graphics.md`。
 
 **判据（实测）**：`test_graphics` 356 → **357**，新增 `TheEngineRunsTheFrameValueAndNeverCallsExecute`
 （覆写 `describe()` 与 `execute()` 各计一次数：两帧后 describes = 2〔每帧一次〕、**executes = 0**，
@@ -518,7 +518,7 @@ VTK 那一派、**用法**却是 three.js 那一派（每个视图一台相机�
    **可选依赖**：只画离屏的后端答 null，四个入口一个都不实现"）。于是"窗口"从**每个后端都要背的四个空壳**变成
    **要么有、要么没有**的一半。
 2. **`format()` 取消（决策，记账）**：设计 §4 的 S4b 行括号里写了它，但全仓**找不到读者** —— 窗口的*实际*格式今天
-   由插件的 `WindowTarget` 从平台读（`usage.md` §7 那句"窗口 target 的格式由后端按 surface 的实际格式决定"就是这件事），
+   由插件的 `WindowTarget` 从平台读（`docs/guides/graphics.md` §7 那句"窗口 target 的格式由后端按 surface 的实际格式决定"就是这件事），
    宿主从没问过"我要不要 sRGB"。按 S0 的冻结（新需求只用"改形状"两片解决）与"不落地没有读者的入口"，**取消**；
    真要问的那天，加在 `RenderSurfaceBinding` 上是一行 —— 这正是拆开的好处。
 3. **引擎**：`initialize()` 把句柄交给 `backend_->surface()`（有才交）、把初始化前公告的尺寸也交给它；`resize()`
@@ -531,7 +531,7 @@ VTK 那一派、**用法**却是 three.js 那一派（每个视图一台相机�
    宿主对一张只离屏的表面报尺寸是合法的 —— 两条公告一个报、一个不报，用例各钉一条。
 5. **插件**：`VsgBackend` 同时实现 `RenderBackend` + `RenderSurfaceBinding`，`surface()` 答 `this`（它一直有窗口：
    宿主的，或自己建的）；`swapBuffers()` **更名 `present()`** 并归入表面那一半（体一行未改）；文件注记、插件文档
-   （`backend.md` 的入口表、`data-flow.md` 的三处）与 `FrameTimeline`/`VsgHostWindow`/appfw 注释里的引用一并更新。
+   （`docs/guides/vsg-backend.md` 的入口表、`docs/guides/vsg-data-flow.md` 的三处）与 `FrameTimeline`/`VsgHostWindow`/appfw 注释里的引用一并更新。
 6. **测试**：`GraphicsTest` 的 `MockBackend` 与 `RenderControlTest` 的 `StubBackend` 各自长出**嵌套表面**
    （`surface_half`：present 计数、尺寸、句柄都落在那儿 —— "帧的见证"与"窗口的见证"从此分家）；`VsgBackendTest`（54 处）
    与 `GfxBackendVsgPluginTest`（5 处）的窗口调用改成 `backend->surface()->…`；**新增
@@ -584,7 +584,7 @@ VTK 那一派、**用法**却是 three.js 那一派（每个视图一台相机�
 5. **插件**：`capabilities()` 答 `render_targets = true`；`frameReport()` 从两处拼出一个答案
    （`d->observe` 的帧计数与保留 + `Session::timeline()` 的两个水位）。
 6. **引用改名**：`EngineCompile.cpp`/`RenderEngine.hpp`/`backend/Observe.hpp`/`FrameStats.hpp` 的注释、
-   插件 `backend.md` 的能力行、`graphics-layering.md` 的两处通路叙述（那是"现役"文档，直接改）；
+   插件 `docs/guides/vsg-backend.md` 的能力行、`graphics-layering.md` 的两处通路叙述（那是"现役"文档，直接改）；
    **老 memory 条目里点名的旧符号与旧用例名按本仓规矩加 `<!-- drift-ok -->`**（记账，不改写记录）。
 
 **判据（实测）**：`test_graphics` **360**（不变：`FrameCountersForwardTheBackendsAnswerAndSaySoWhenThereIsNone`

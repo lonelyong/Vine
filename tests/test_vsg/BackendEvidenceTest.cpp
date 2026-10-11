@@ -473,7 +473,7 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
     // `.ai/design/vsg-reimplementation.md` rather than paid for with an abstraction.
     //
     // This test is the TRIPWIRE: if either number grows, something started allocating per pass and §0.3 of
-    // `docs/backend.md` has to be re-argued against the new number.
+    // `docs/guides/vsg-backend.md` has to be re-argued against the new number.
     ASSERT_TRUE(AllocationGate::countsAvailable())
         << "this binary must instrument the allocator (see AllocationGate's file note)";
 

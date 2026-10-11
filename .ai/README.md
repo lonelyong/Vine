@@ -1,7 +1,10 @@
 # .ai/ —— AI 辅助目录
 
 存放面向 AI 助手（Copilot 等）的仓库内知识，随 git 版本化、团队可见。
-`docs/` 保留给 GitHub Pages 项目站点，不在其中放置设计文档/笔记。
+`docs/` 既是 GitHub Pages 项目站点的根，也是仓库统一文档目录：
+面向使用者的文档都在 `docs/guides/`（也随站点发布）；设计文档/笔记仍放 `.ai/`，不放 `docs/`。
+2026-10-11 把这六份从各模块自带的 `docs/` 目录搬进 `docs/guides/`（那份目录里自带的说明是索引），
+引用一并改成 `docs/guides/` 下的新路径，`check_ai_docs.py --strict` 的存量引用因此从 22 条降到 13 条。
 
 **索引由机器钉住**（`scripts/check_ai_docs.py`，门禁阶段 `ai knowledge`）：
 ① `.ai/` 下每一份 `.md` 必须在本文里被点名（存在却没被点名 ⇒ 红）；

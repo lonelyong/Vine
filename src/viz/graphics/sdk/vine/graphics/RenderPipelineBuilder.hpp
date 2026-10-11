@@ -129,7 +129,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      *
      * Deferred requires a content scene and a camera; when either is missing
      * nothing is registered and null is returned (no silent substitution; the backend
-     * applies the same rule, see "服务与拒绝" in `src/plugins/gfx_backend_vsg/docs/backend.md`).
+     * applies the same rule, see "服务与拒绝" in `docs/guides/vsg-backend.md`).
      *
      * @param options The pipeline's description (see PipelineOptions).
      * @return The built pipeline, or null when the requested path cannot be built.
