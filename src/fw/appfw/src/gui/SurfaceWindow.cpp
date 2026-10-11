@@ -227,7 +227,7 @@ struct SurfaceWindow::Impl {
     /// Which passes draw into this surface, and in which order (see RenderSurface). Declared after the engine so it
     /// is DESTROYED before it: the surface borrows that engine.
     vn::intrusive_ptr<vn::graphics::RenderSurface> surface;
-    /// The panes of this area and their per-pane requests (see Viewer). Declared after the engine, the view and
+    /// The request this area's picture is built from (see Viewer). Declared after the engine, the view and
     /// the surface so it is destroyed before them: it borrows all three.
     std::unique_ptr<Viewer> viewer;
     /// true once a device and its pipelines were built on the surface's window: what makes a new handle a
@@ -258,11 +258,10 @@ struct SurfaceWindow::Impl {
     int last_height = -1;
     /// Device pixel ratio that went with them: a scale-factor change is a surface change too.
     double last_ratio = 0.0;
-    /// Which view owns which point of the surface (null: everything belongs to this surface's own view).
-    std::function<vn::graphics::SceneView*(int x, int y)> input_router;
+    /// Which view owns which point of the surface: ONE area, one picture (see routedView).
     /// The view each HELD button's drag belongs to, by MouseButton index - one entry per button, so a second
     /// button pressed elsewhere starts its own drag instead of taking the first one's, and releasing it cannot end
-    /// the other drag (see setInputRouter).
+    /// the other drag (see routedView).
     vn::intrusive_ptr<vn::graphics::SceneView> captured_views[kMouseButtonCount];
     /// Buttons currently held on this surface, one bit per button (see bitFor): "a button is down" is what makes a
     /// pointer move repaint, and what a key event belongs to (a modifier pressed during a drag is that drag's).
@@ -270,8 +269,6 @@ struct SurfaceWindow::Impl {
     /// The button whose press started the most recent drag: where a MOVE goes while it is still held (an event
     /// that carries no button of its own).
     vn::window::MouseButton last_press = vn::window::MouseButton::None;
-    /// One line per session about a router that names a view of another engine (see routedView()).
-    bool input_router_misuse_reported = false;
     /// The timer that drives frames when continuous rendering is on (created on first use, owned by this window).
     QTimer* continuous = nullptr;
     /// For the lifecycle log lines (construction -> attach -> first frame).
@@ -336,9 +333,9 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     // init()), and a host that brought a main pass of its own declares it here (RenderSurface::present).
     d->surface = vn::intrusive_ptr<vn::graphics::RenderSurface>(
         new vn::graphics::RenderSurface(d->engine.get()));
-    // The panes of this area (see Viewer): the control's own view is the first one, registered with the default
-    // request but neither a chain nor a declaration - the first attach is where that becomes a picture, so a
-    // host that never touches the viewer pays no build until there is an area to draw into.
+    // The area's picture (see Viewer): the control's own view, registered with the default request but neither a
+    // chain nor a declaration - the first attach is where that becomes a picture, so a host that never touches the
+    // viewer pays no build until there is an area to draw into.
     d->viewer = std::make_unique<Viewer>(d->engine.get(), d->surface.get(), d->view);
 
     // Backend diagnostics become log records: a windowed app never shows stderr, and a rejected geometry, a
@@ -453,18 +450,6 @@ void SurfaceWindow::useDefaultBackend()
     // window input events to it, so nothing is wired here.
 }
 
-void SurfaceWindow::setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router)
-{
-    d->input_router = std::move(router);
-    // The captures belong to the router that made them: a drag in flight under the old layout must not keep
-    // steering a view the new router may not even know about. The buttons stay HELD (the platform still has them
-    // down, so a move keeps repainting and the release still arrives) - what a press captures from here on is the
-    // new router's answer.
-    for (auto& captured : d->captured_views) {
-        captured = nullptr;
-    }
-}
-
 void SurfaceWindow::setContinuousRendering(bool on, int interval_ms)
 {
     if (!on) {
@@ -503,49 +488,14 @@ void SurfaceWindow::tickContinuous()
     renderFrame();
 }
 
-vn::graphics::SceneView* SurfaceWindow::routedView(int x, int y)
+vn::graphics::SceneView* SurfaceWindow::routedView(int, int)
 {
-    if (d->input_router != nullptr) {
-        vn::graphics::SceneView* const chosen = d->input_router(x, y);
-        if (chosen == nullptr) {
-            // "Not mine" is a legitimate answer (the caller only claims the regions it knows about): the surface
-            // stays interactive instead of silently swallowing the event.
-            return d->view.get();
-        }
-        if (chosen != d->view.get() && chosen->engine() != d->engine.get()) {
-            // Input coordinates only mean something on the surface they came from, so a view bound to another engine
-            // cannot be steered by this one. Say so once, then behave (the contract states it; see setInputRouter).
-            if (!d->input_router_misuse_reported) {
-                d->input_router_misuse_reported = true;
-                if (d->engine != nullptr) {
-                    d->engine->reportEngineProblem(
-                        vn::graphics::DiagnosticSeverity::Warning,
-                        vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                        u8"RenderControl::setInputRouter returned a view bound to another engine: input coordinates "
-                        u8"only mean something on the surface they came from (the event went to this control's own "
-                        u8"view)");
-                }
-            }
-            return d->view.get();
-        }
-        return chosen;
-    }
-
-    // No host router: the SURFACE answers, from the rectangles its presentations were declared with
-    // (RenderSurface::viewAt) - a split states where each pane is once (RenderSurface::present(view, rect)) and
-    // input follows, with no second statement of the layout to keep in step. The table holds normalized
-    // rectangles and no surface size, so the conversion is here, where the logical size the events come in is.
-    if (d->surface != nullptr && d->last_width > 0 && d->last_height > 0) {
-        const double nx = static_cast<double>(x) / static_cast<double>(d->last_width);
-        const double ny = static_cast<double>(y) / static_cast<double>(d->last_height);
-        if (vn::graphics::SceneView* const owner = d->surface->viewAt(nx, ny)) {
-            return owner;
-        }
-    }
-    // Nobody owns the point (outside every pane, or the surface has not been laid out yet): this surface's own
-    // view, which is the single-view behaviour this has always been.
+    // ONE AREA, ONE PICTURE: this surface draws through the one view it hosts, so every event belongs to it and
+    // there is nothing to route. (A host that wants several pictures at once brings its own passes and their own
+    // sub-viewports - the engine never manages layout.)
     return d->view.get();
 }
+
 
 void SurfaceWindow::pushToView(vn::graphics::SceneView* target, const vn::window::MouseEvent& event)
 {
@@ -590,30 +540,20 @@ void SurfaceWindow::handleMouse(const vn::window::MouseEvent& event)
     const bool is_press   = event.pressed && event.button != vn::window::MouseButton::None;
     const bool is_release = !event.pressed && event.button != vn::window::MouseButton::None;
 
-    // A PRESS decides who gets THIS button's drag, and holds it until that button comes up (see setInputRouter): a
-    // drag that leaves the chosen view's rectangle keeps steering it, and the held reference keeps that view alive
-    // while it is being steered even if the host lets go of its own. Per button, because two buttons can drag two
-    // views at once (rotate one pane with the left while the right pans another) - and because one button coming up
-    // must NOT end the other's drag: that view would never see its release, so its manipulator would stay
-    // mid-drag and keep steering the camera on pure hover afterwards.
+    // A PRESS captures the view, and holds it until every button is up: a drag that leaves the surface keeps
+    // steering it, and the held reference keeps that view alive while it is being steered even if the host lets go
+    // of its own. Per button, so one button coming up does not end another button's drag (a view that never saw its
+    // release would keep steering its camera on pure hover afterwards) - both steer the same view, which is what
+    // "one area, one picture" means for input.
     if (is_press) {
-        const auto index                      = static_cast<std::size_t>(event.button);
+        const auto index = static_cast<std::size_t>(event.button);
         d->held_buttons |= Impl::bitFor(event.button);
         d->last_press = event.button;
-        // A press always captures the view it routed to - now that a pane can be one of several, a drag that
-        // wanders out of its rectangle must keep steering it (and the held reference keeps that view alive while
-        // it is being steered even if the host lets go of its own). It is also what focus means: where the user
-        // last pressed is the pane a key or a command talks about (see RenderSurface::focus).
-        vn::graphics::SceneView* const pressed = routedView(event.x, event.y);
-        if (d->surface != nullptr) {
-            (void)d->surface->focus(pressed);
-        }
-        d->captured_views[index] = vn::intrusive_ptr<vn::graphics::SceneView>(pressed, true);
+        d->captured_views[index] = vn::intrusive_ptr<vn::graphics::SceneView>(d->view.get(), true);
     }
 
-    // Where this event goes: the drag belonging to the button it carries (so a release lands on the view that
-    // STARTED that drag, wherever the pointer has wandered), else the drag in flight, else the point under the
-    // pointer.
+    // Where this event goes: the view a held button captured (so a release lands on the view that STARTED that
+    // drag, wherever the pointer has wandered), else the surface's own view.
     vn::graphics::SceneView* target = event.button != vn::window::MouseButton::None ? d->captureFor(event.button) : nullptr;
     if (target == nullptr) {
         target = d->dragTarget();
@@ -626,7 +566,7 @@ void SurfaceWindow::handleMouse(const vn::window::MouseEvent& event)
     // A pure hover (no button held) only refreshes while a drag is in flight.
     pushToView(target, event);
     if (is_release) {
-        d->captured_views[static_cast<std::size_t>(event.button)] = nullptr;  // this drag is over: the next press routes again
+        d->captured_views[static_cast<std::size_t>(event.button)] = nullptr;  // this drag is over
         d->held_buttons &= ~Impl::bitFor(event.button);
         if (d->held_buttons == 0u) {
             d->last_press = vn::window::MouseButton::None;
@@ -639,19 +579,15 @@ void SurfaceWindow::handleMouse(const vn::window::MouseEvent& event)
 
 void SurfaceWindow::handleScroll(const vn::window::ScrollEvent& event)
 {
-    // A wheel notch is instantaneous - there is no drag to hold - so it always routes by position.
+    // A wheel notch is instantaneous - there is no drag to hold - so it goes to the area's view.
     pushToView(routedView(static_cast<int>(event.x), static_cast<int>(event.y)), event);
     renderFrame();
 }
 void SurfaceWindow::handleKey(const vn::window::KeyEvent& event)
 {
-    // A key has no position to route by: it goes to the view the pointer captured (a keyboard modifier during a
-    // drag belongs to that drag), else to the FOCUSED pane (the one the user last pressed in - a key is about the
-    // view the user is working in, not about where the pointer happens to hover), else to this surface's own view.
+    // A key has no position: it goes to the view the pointer captured (a keyboard modifier during a drag belongs
+    // to that drag), else to the area's view.
     vn::graphics::SceneView* target = d->dragTarget();
-    if (target == nullptr && d->surface != nullptr) {
-        target = d->surface->focusedView();
-    }
     pushToView(target != nullptr ? target : d->view.get(), event);
     renderFrame();
 }
@@ -694,9 +630,7 @@ void SurfaceWindow::feedSurfaceSize(int width, int height)
 {
     const double ratio = devicePixelRatio();
     // Size AND ratio, stated once on the SURFACE: the size of the thing the picture ends up in is a fact about
-    // it, so it is recorded there and fanned out to every view that presents it - this control's own view when it
-    // is the presentation (the default), and every pane a host added without the host feeding each one (see
-    // RenderSurface::resize).
+    // it, so it is recorded there and fanned out to the view that presents it (see RenderSurface::resize).
     d->surface->resize(width, height, ratio);
     // This surface's own view is fed separately ONLY when it does not present (a host declared a main pass of its
     // own, so nothing fans out to it): its geometry would otherwise stay at whatever it last saw.
@@ -761,8 +695,8 @@ bool SurfaceWindow::init()
         setState(SurfaceState::Pending);
     }
 
-    // The area's presentations: this control's viewer presents it with its panes unless a pass the host declared
-    // presents it instead (see Viewer::takeArea). That happens BEFORE the backend check on purpose: which passes
+    // The area's picture: this control's viewer declares it unless a pass the host declared presents it instead
+    // (see Viewer::takeArea). That happens BEFORE the backend check on purpose: which passes
     // draw a view is decided by the pipeline it adopted, not by a device - a host with no backend registered still
     // has a view with a pipeline it can inspect (and the pass is what the backend will draw when it does come up).
     d->viewer->takeArea();

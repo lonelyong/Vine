@@ -20,9 +20,43 @@
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/guides/graphics.md`（模块文档一节） |
 | **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
-| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**S10b（插件会话→设备：窗口与交换链 1:N、缓存上移、`DeviceDesc`）**/ S11（登记不做）未落地 |
+| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**2026-10-11 晚裁决推翻 S8 一半：多格下线，一块区只画一幅画**（见顶条与 Q5 的后续裁决）；**S10b（插件会话→设备：窗口与交换链 1:N、缓存上移、`DeviceDesc`）**/ S11（登记不做）未落地 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-11 多格下线：`RenderSurface` 收成"一条呈现 + 尺寸 + 目标"（S8/S9 的表与路由删掉）
+
+- **结论**：区不再是一张表，而是"**哪条 pass 画这块窗口**"这一条声明 + 尺寸 + 目标：
+  `present(SceneView&)` / `present(RenderPass*)` / `dismiss(view|pass)` / `hasPresentation()` /
+  **`presentingPass()`**（解析出来的那条 pass，视图重建后自动跟上）/ **`presentedView()`** / `resize(w,h[,ratio])` /
+  `pixelRatio()` / `bindTarget`·`target`·`hasTarget`。删掉：`present(view, rect)`、`setViewport`、`presentations()`、
+  `Presentation`、`viewAt`、`focus`/`focusedView`、`viewportOf`、`applyClear`（清屏合并）、`Entry`/`Resolved` 那套；
+  `SceneView` 删掉自己的矩形（`viewport()/setViewport`、`paneSize`、`deviceViewport`）—— 它的画面就是这块区，
+  `applySurfaceGeometry` 只从区尺寸推：相机 aspect、管线 resize、布局步，**不再给窗口 pass 设视口**（全幅 = pass 不设
+  viewport 的默认含义）。**归一化矩形这个类型一起删**（`Viewport.hpp` 的 `NormalizedViewport`：修完之后一个使用者都
+  没有），`SceneView.hpp` 顺带去掉那个已经没人用的 `#include "Viewport.hpp"`。
+- **两条新硬规则**：**一块区只画一幅画** —— 第二条呈现（不论视图还是 pass）**被拒 + 报一次**（`ReportOnce`，撤掉第一条后
+  再报是新一轮）；但"同一个东西再来一次"不算第二条（`present` 同一视图 / 命名它自己的 window pass ⇒ 返回 false 不报）。
+- **为什么可以删掉清屏合并**：一次只画一幅画 ⇒ "谁第一"没有歧义，条目的 ask 就是它的 ask（旧 `applyClear` 在单条情形下
+  本来就是恒等变换）；**区从此不碰呈现者的清屏策略**（有判据：`present` 前后 `isClearEnabled()` 不变，重建后的新 pass 也
+  带着它自己的默认 ask）。
+- **判据（实测）**：全量 Release 0 error / 0 warning；`test_graphics` **356**（364 − 8）、`test_gui` **257**（261 − 4）、
+  `test_vsg` **429** 未动（424 + 3 skip + 2 已知红）、`test_appfw` 32、`test_meshio` 34、`test_iobase` 94；
+  `RenderSurfaceTest` 13 条（原 19）覆盖：声明的解析与幂等、宿主 pass、pass 随重建走、三种拒绝（别的引擎 / 已有区 /
+  无 pipeline）、一块区一幅画、尺寸唯一 owner（含"挂上时立刻拿到"与"摘掉后不再被喂"）、不碰清屏、
+  视图先死 / 区先死两种生命周期。五个 gate 0 finding（`check_ai_docs --strict` 仍 13 条既有路径漂移）。
+  文档同步：`docs/guides/graphics.md` §3.10/§3.11 与 `docs/guides/render-views.md` 整篇（单幅画面 + "要多幅画面自己
+  接线"），设计记录里给 §12.2 与 S8 两条加了"已下线"抬头。
+- **变异 5/5 各自单独实测红**：① 重建不搬活链的运行期选择（`stats_was_hidden = false`）⇒
+  `RenderControlTest.ARebuildCarriesTheLiveChainsRuntimeChoices` 红；② `Viewer::release` 不撤声明 ⇒
+  `ReleasingTheViewTakesItOutOfTheArea` + `AHostPassTakesTheAreaAndTheViewerStandsDown` 红（后者正因为接管要两步）；
+  ③ 第二条呈现"报道后照样落座" ⇒ `RenderSurfaceTest.OneAreaDrawsOnePicture` 红（同套件另 12 条绿）；④ 拒得静默
+  （`reportSecondPresentation()` 空转）⇒ 同一条红在诊断计数上（0 vs 1、0 vs 2）；⑤ `Viewer::isActive()` 改成读记忆
+  （`view != nullptr`）⇒ `AHostPassTakesTheAreaAndTheViewerStandsDown` 红。
+- **坑**：① 删除"表"时必须一起删**读它的两半**（appfw 的 `Viewer` 与 `SurfaceWindow` 的输入路由），否则会留下"表面
+  路由"的死代码路径 —— 输入现在只有一条路：`SurfaceWindow::routedView()` 返回控件那个视图；② 删实现容易漏赋值
+  （见 `.ai/memory/appfw.md` 同条坑 ①）；③ `SceneView::surfaceWidth/Height/PixelRatio` 提成公开读法：宿主与用例都要
+  问"我按哪个尺寸算画面"，而它现在是"有区时读区、没区时读自己的公告"这**一个**答案。
 
 ## 2026-10-11 修：延迟预设的 G-buffer 几何 pass 从来没拿到过自己的几何程序（默认 demo 后三格预览全黑）
 
@@ -131,6 +165,10 @@
   把尺寸带给窗口那一半 —— 与宿主的直接公告**同值**（同一份尺寸），不是第二份状态。
 
 ## 2026-10-11 S8 落地：appfw 的 `Viewer` 管 N 个 View（一块渲染区一个查看器）
+
+> **已被取代（2026-10-11 同日，"多格下线"）**：本条的"每格"面（`addView` / `views()` / `setPaneRect` / 每格的请求与档、
+> 表面侧的呈现表与矩形）**已从代码里删除**，现役形态见本节最上面"多格下线：`RenderSurface` 收成'一条呈现 + 尺寸 +
+> 目标'"。本条留作那一片的落地记录，里面的 API 名不要再当现状引用。
 
 - **做了什么**：`graphics-window-device-viewer.md` 的第一片（§3 Q5 的裁决）：appfw 多了一个导出的 `Viewer`
   （`sdk/vine/appfw/gui/Viewer.hpp`，实现在 `src/fw/appfw/src/gui/Viewer.cpp`）—— 视图集合与矩形**读 `RenderSurface` 的呈现表**

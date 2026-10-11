@@ -1,6 +1,6 @@
 # appfw 渲染视图（最终设计 v2，2026-10-11）
 
-> 状态：**已落地 S0–S4 + 输入路由（S6+②）+ S7 改形 + S8 改形（多视图归 `Viewer`）+ S10a 改形（窗口那一半由设备造）**（2026-10-11；其余 S6+ 三轴仍为"缝已定、未实现"）。本文**取代此前各稿**（那些是本设计的推演过程，结论以本文为准）；
+> 状态：**已落地 S0–S4 + 输入路由（S6+②）+ S7 改形 + S8 改形（多视图归 `Viewer`）+ S10a 改形（窗口那一半由设备造）；S8 之后"多格"下线（一块区只画一幅画）**（2026-10-11；其余 S6+ 三轴仍为"缝已定、未实现"）。本文**取代此前各稿**（那些是本设计的推演过程，结论以本文为准）；
 > 相关文档：`appfw-render-surface.md`（表面生命周期）、`graphics-pipeline-builder.md`（配方层）、`graphics-pipeline.md`（pass 调度）、
 > `graphics-render-next.md`（**如果重新设计这一套栈会怎么切**：提案，含 M1–M7 迁移切片与触发条件 —— 本文是"现在是什么"，那份是"要变成什么"）。
 >
@@ -17,14 +17,22 @@
 > `graphics-window-device-viewer.md` §3 Q1/Q2、§4、§7 的 S10a 行。
 >
 > **S8 改形（2026-10-11，最新的一条，先读它）**：**多视图归 appfw 的 `Viewer`**（`RenderControl::viewer()`）。
-> 一个控件 = 一块渲染区（一个引擎、一个会话、一个设备）**不再等于一个视图**：`Viewer` 管这块区里的每格 ——
-> `addView(view, rect, options)`（按请求建链 + 采纳 + 在表上声明）/ `removeView` = `release` / `views()`（**读呈现表**）/
-> `setPaneRect`（转发 `RenderSurface::setViewport`）/ 每格 `setShadingMode` / `isActive()`（表里有宿主自建的 pass ⇒ false）/
-> `takeArea()`（attach 时给没有链的格子建链再声明；有宿主 pass 就让位）。事实仍在 `RenderSurface`：查看器不存视图清单、
-> 不存矩形，只存"每格的请求"（`ViewerOptions`）。`SurfaceWindow` 只剩原生面/会话/尺寸/输入/状态机 + 一行
-> `viewer()->takeArea()`；老三条（`viewerOptions` / `setViewerOptions` / `setShadingMode`）保留为"作用于第一格"的转发。
-> 落地记录与判据见 `.ai/memory/graphics.md` / `.ai/memory/appfw.md` 顶部 S8 条，设计依据见
-> `graphics-window-device-viewer.md` §3 Q5 与 §7 的 S8 行。
+> 一个控件 = 一块渲染区（一个引擎、一个会话、一个设备）**不再等于一个视图**：`Viewer` 管这块区 —— 一条请求
+> （`ViewerOptions`：链 / 档 / 两个档在不在 / 离屏尺寸）+ 建链/采纳/声明/重建搬运行期选择；
+> `setViewerOptions(options)`（建链 + 采纳 + 在区上声明，**一块区只画一幅画**：第二条呈现被拒并报一次）/
+> `setShadingMode(mode)`（先试链上的开关，链表达不了才带档重建）/ `release(view)`（把视图还给宿主）/ `isActive()` +
+> `view()`（读区：`RenderSurface::presentedView()`）/ `takeArea()`（attach 时给没有链的视图建链再声明；有宿主 pass
+> 就让位）。事实仍在 `RenderSurface`（一条呈现 + 尺寸 + 目标），查看器不存第二份。`SurfaceWindow` 只剩原生面/
+> 会话/尺寸/输入/状态机 + 一行 `viewer()->takeArea()`；老三条（`viewerOptions` / `setViewerOptions` /
+> `setShadingMode`）保留为转发。
+>
+> **多格已下线（2026-10-11，S8 之后的裁决）**：`addView(view, rect, options)` / `removeView` / `views()` /
+> `setPaneRect` / 每格 `setShadingMode(view, …)`、以及表面侧的 `present(view, rect)` / `setViewport` /
+> `presentations()` / `viewAt` / `focus` / `focusedView`、控件侧的 `focusedView` / `setInputRouter` 与
+> "按第一条呈现仲裁清屏"**全部删除**（用户裁决"去掉，先不做多窗格"：这块复杂度应该由需要它的业务层自己说清，
+> 不该让引擎/表面替所有人挑默认）。要多幅画面（分屏 / PiP / 叠加）由应用自己算矩形、给 pass 子视口、
+> 自己决定哪条清屏 —— 见 `docs/guides/render-views.md` §6。落地记录与判据见 `.ai/memory/graphics.md` /
+> `.ai/memory/appfw.md` 顶部"S8 多格下线"条。
 >
 > ---
 >
@@ -733,6 +741,15 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 > 剩下的"会话带多条交换链 / 缓存上移"（设备从今天的三面一体里独立出来）就是 **S10b**，它**不碰控件**。
 
 ### 12.2 单表面多视图：底层已经够，本轮把两个入口设计出来
+
+> **已下线（2026-10-11，先读这条）**：用户裁决"**去掉，先不做多窗格**"（"这不应该是 RenderSurface 的职责，
+> 引擎最好也不要管这种复杂业务场景；应该交给业务层，由需要的话，自己控制"）。本节设计的两个入口
+> （`SceneView::setViewport(归一化矩形)` / `RenderSurface::present(view, rect)` / `viewAt` / `focus` /
+> `RenderControl::setInputRouter`）与"表面按第一条呈现仲裁清屏"**已从代码里删除**，本节的文字是**当时的设计推演**，
+> 不要再当成现状引用（现役形态见本文件头部 S8 条与 `docs/guides/render-views.md`）。留下的判断仍然有效：
+> **"谁 split、谁销毁、谁清屏"归应用层**，SDK 只欠"表面把尺寸喂给每一格"这一条机制（今天由
+> `RenderSurface::resize` 扇出给**唯一**那条呈现的视图）。要多幅画面：自己算矩形、给 pass 子视口
+> （`RenderPass::setViewport`，设备像素）、自己决定哪条清屏（`setClearEnabled`）。
 
 | 需要 | 现成的东西 / 本轮新增 |
 | --- | --- |

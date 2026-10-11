@@ -10,7 +10,6 @@
 #include <vine/window/window_global.hpp>
 
 #include "RenderPipeline.hpp"
-#include "Viewport.hpp"
 
 VN_WINDOW_NS_BEGIN
 struct KeyEvent;
@@ -58,23 +57,20 @@ class Scene;
  * THERE (present(pass)), and a view is never suppressed because some pass
  * elsewhere happens to carry its camera.
  *
- * Several views may share one engine, but a pipeline built for two of them
- * clears the whole surface and draws full-surface: with two such passes the
- * second erases the first. Side-by-side views therefore need explicit layout -
- * give each pass a sub-viewport (RenderPass::setViewport) and disable clearing
- * on all but one (setClearEnabled), or build the pipeline yourself with
- * RenderPipelineBuilder. The engine never manages viewport layout.
+ * Several views may share one engine, and each area draws ONE of them (see RenderSurface): one area, one picture.
+ * A host that wants more than one picture at a time owns the layout that produces them - its own passes with their
+ * own sub-viewports (RenderPass::setViewport) and their own clear policy - and the engine never manages layout.
  *
  * FIVE ROLES, ONE CLASS. The public surface is grouped by what a method is FOR, in this order: CAMERA AND
- * CONTENT (what it draws), NAVIGATION (the manipulator and the two camera moves), GEOMETRY (the rectangle it
- * draws into, the surface size it derives from, and the layout steps told about both) and INPUT (the window
- * events it forwards), then PRESENTATION (the engine it borrows, the pipeline it adopts, the surface it
- * presents through, and the frame drive).
+ * CONTENT (what it draws), NAVIGATION (the manipulator and the two camera moves), GEOMETRY (the surface size it
+ * derives its picture from, and the layout steps told about it) and INPUT (the window events it forwards), then
+ * PRESENTATION (the engine it borrows, the pipeline it adopts, the surface it presents through, and the frame
+ * drive).
  *
- * TWO OF ITS STEPS ARE NOT HOST API - a presentation table drives them, and a host calling one by hand would
- * make that table believe in a presentation nobody declared:
- *   - setSurface: binds this view and takes the size back on unbind (RenderSurface::present / dismiss);
- *   - applySurfaceGeometry: re-derives the rectangle after the surface size changed (RenderSurface::resize).
+ * TWO OF ITS STEPS ARE NOT HOST API - a presentation drives them, and a host calling one by hand would make that
+ * presentation believe in a view nobody declared:
+ *   - setSurface: binds this view to the area it presents (RenderSurface::present / dismiss);
+ *   - applySurfaceGeometry: re-derives its picture after the surface size changed (RenderSurface::resize).
  *
  * The engine stays camera- and content-agnostic: it forwards no mouse /
  * scroll / key input, holds no camera and no content scene. The host pushes
@@ -83,7 +79,7 @@ class Scene;
  * camera projection correct.
  */
 class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
-    friend class RenderSurface;  // binds this view to the surface it presents, re-states the surface's clear, and hands its size back on unbind
+    friend class RenderSurface;  // binds this view to the area it presents, and hands its size back on unbind
 
   public:
     /** @brief Constructs a view with a default camera and an empty content
@@ -158,27 +154,6 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
   public:
     // ---- Geometry ----
 
-    /** @brief Gets the area of the render surface this view draws into (normalized). */
-    NormalizedViewport viewport() const noexcept;
-
-    /** @brief Sets the area of the render surface this view draws into (normalized [0,1]; default: all of it).
-     *
-     * GEOMETRY, not recipe - this never rebuilds the pipeline. It is the ONE input this view derives its
-     * rectangle from: the manipulator's aspect, the device-pixel viewport of its window pass, the size its
-     * off-screen targets and HUD boxes are resized to, and the size its surface-layout steps are told. A host
-     * that splits a surface therefore states the split once, in normalized terms, and keeps feeding the
-     * SURFACE size to onSurfaceResized() - it never converts to device pixels itself, and never has to work out
-     * "half the surface" for the view.
-     *
-     * A view that PRESENTS a surface states its rectangle there (this call forwards to
-     * RenderSurface::setViewport): the split is a fact about the surface, and the surface is where a host reads
-     * it back - who draws where, who clears, who a point belongs to (see RenderSurface::viewAt). A view that
-     * presents nothing keeps the rectangle here, so a view used on its own needs no surface to be sized.
-     *
-     * @param viewport Area to draw into; an invalid viewport (non-positive size) resets to the full surface.
-     */
-    void setViewport(const NormalizedViewport& viewport);
-
     /** @brief Refreshes the geometry of this view for a new surface size (keeps the current pixel ratio).
      *
      * @param width  New surface width in pixels (logical, as the host reports it).
@@ -188,19 +163,18 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
 
     /** @brief Refreshes the geometry of this view for a new surface size and device pixel ratio.
      *
-     * The surface size is the whole surface the host renders into, NOT this view's part of it: with a viewport
-     * set (see setViewport), this view's own rectangle - its camera aspect, its window-pass viewport, the size
-     * its targets and HUD boxes get - is derived from the surface size, the viewport and the ratio here, in
-     * one place. Feeding a split view "half the surface" would state the same rectangle twice and let the two
-     * statements disagree.
+     * The size is the whole surface the host renders into: this view's area IS that surface (one area draws one
+     * picture - see RenderSurface), so there is no second rectangle to state and nothing that could disagree with
+     * it. What the view derives from the one size is its camera aspect, the size its off-screen targets and HUD
+     * boxes get, and the size its surface-layout steps are told.
      *
      * Then it runs this view's surface-layout steps, with this view's own rectangle: the manipulator / camera
      * aspect first, then every callback registered with addSurfaceLayout(). The pipeline it adopted (when it has
      * one) is resized here too, so a view that draws through a built pipeline needs no layout step at all.
      *
      * A view that PRESENTS a surface forwards this to RenderSurface::resize: the size of the thing the picture
-     * ends up in is a fact about the SURFACE, which is where it is recorded and fanned out to every view that
-     * presents it (so one call sizes a split, and a pane added later is sized at once). This entry is then the
+     * ends up in is a fact about the SURFACE, which is where it is recorded and fanned out to the view that
+     * presents it (so one call sizes the picture, and a view that presents later is sized at once). This entry is then the
      * one for a view that presents nothing - a view used on its own needs no surface to be sized.
      *
      * @param width        New surface width in logical pixels.
@@ -242,6 +216,21 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
 
     /** @brief Removes all registered surface-layout steps. */
     void clearSurfaceLayouts();
+
+    /** @brief The surface width (logical px) this view derives its picture from.
+     *
+     * The SURFACE's while this view presents one, this view's own announcement otherwise (see onSurfaceResized):
+     * the size has one owner, and a presenting view asks it rather than holding a second copy that could drift.
+     *
+     * @return Surface width in logical pixels, 0 when nobody has sized anything yet.
+     */
+    [[nodiscard]] int surfaceWidth() const noexcept;
+
+    /** @brief The surface height (logical px) this view derives its picture from (see surfaceWidth). */
+    [[nodiscard]] int surfaceHeight() const noexcept;
+
+    /** @brief The device pixel ratio this view derives its picture from (see surfaceWidth). */
+    [[nodiscard]] double surfacePixelRatio() const noexcept;
 
   public:
     // ---- Input ----
@@ -354,49 +343,24 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      */
     void setOwnSurfaceSize(int width, int height, double pixel_ratio);
 
-    /** @brief The surface width (logical px) this view derives from.
-     *
-     * The SURFACE's while this view presents one, this view's own announcement otherwise (see setOwnSurfaceSize):
-     * the size has one owner, and a presenting view asks it rather than holding a second copy that could drift.
-     *
-     * @return Surface width in logical pixels, 0 when nobody has sized anything yet.
-     */
-    [[nodiscard]] int surfaceWidth() const noexcept;
-
-    /** @brief The surface height (logical px) this view derives from (see surfaceWidth). */
-    [[nodiscard]] int surfaceHeight() const noexcept;
-
-    /** @brief The device pixel ratio this view derives from (see surfaceWidth). */
-    [[nodiscard]] double surfacePixelRatio() const noexcept;
-
-    /** @brief Turns {surface size, viewport, pixel ratio} into this view's rectangle, in one place.
-     *
-     * The step RenderSurface::resize fans out to every view that presents it (the views are what a size is FOR),
-     * and the step this view runs on its own when it presents nothing - not host API either way: the announcement
-     * that leads here is onSurfaceResized() / RenderSurface::resize.
+    /** @brief Turns {surface size, pixel ratio} into this view's picture, in one place.     *
+     * The step RenderSurface::resize fans out to the view that presents it (the view is what a size is FOR), and
+     * the step this view runs on its own when it presents nothing - not host API either way: the announcement that
+     * leads here is onSurfaceResized() / RenderSurface::resize.
      */
     void applySurfaceGeometry();
-
-    /** @brief Gets this view's rectangle in the host's logical pixels (the whole surface when full). */
-    void paneSize(int& width, int& height) const;
 
     // The bound engine is borrowed (the host owns it and keeps it alive).
     raw_ptr<RenderEngine> engine_ = nullptr;
 
     // The surface this view presents, while one says so (RenderSurface::present). Borrowed, and unbound from
-    // either side: a dropped pipeline has to tell the surface to re-state its clear on what is left, and the
-    // surface must not be reached once it is gone (see ~SceneView and ~RenderSurface).
+    // either side: the surface must not be reached once it is gone, and it must stop naming this view when the
+    // view goes (see ~SceneView and ~RenderSurface).
     raw_ptr<RenderSurface> surface_ = nullptr;
 
-    // This view's geometry. The RECTANGLE is what every consumer reads (with the size it comes out of, see
-    // surfaceWidth): it is the one input to "where does this view draw", and the pipeline this view adopted is
-    // laid out from it (see applySurfaceGeometry).
-    /// The rectangle this view draws into when it presents NO surface (while it presents one, the surface's table
-    /// holds it - see viewport() and RenderSurface::viewportOf).
-    NormalizedViewport viewport_{};
-    /// The surface size and ratio this view derives from while it presents NO surface (the host's announcement).
-    /// A view that presents one reads the SURFACE's numbers instead (see surfaceWidth / RenderSurface::resize):
-    /// the size of the thing the picture ends up in has one owner, and it is not the view.
+    // The size this view lays its picture out with while it presents NO surface (the host's announcement). A view
+    // that presents one reads the SURFACE's numbers instead (see surfaceWidth / RenderSurface::resize): the size of
+    // the thing the picture ends up in has one owner, and it is not the view.
     int    own_width_       = 0;
     int    own_height_      = 0;
     double own_pixel_ratio_ = 1.0;

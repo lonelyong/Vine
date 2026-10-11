@@ -32,7 +32,7 @@ class Viewer;
  * @brief The render surface and the render session living on it.
  *
  * The native window a render backend binds to, plus what keeps a session on it: the engine and its viewer (see
- * Viewer - the panes of this area and their per-pane requests), the attach / re-announce rules, the deferred
+ * Viewer - the request the area's picture is built from), the attach / re-announce rules, the deferred
  * resize path, and the Qt events translated into view input. RenderControl embeds one inside a window container
  * and re-publishes its state_changed; every lifecycle transition is reported through on_state_changed.
  *
@@ -75,20 +75,20 @@ class SurfaceWindow : public QWindow {
     vn::graphics::SceneView* view() const;
 
     /**
-     * @brief Gets the presentation table of this surface.
+     * @brief Gets the render surface of this window.
      *
-     * Which passes draw into this surface, and in which order: the viewer declares its panes here (see Viewer),
+     * What draws into it, how big it is and which window it is: the viewer declares the picture here (see Viewer),
      * and a host that builds its own main pass declares that pass instead - which is what keeps the default
      * pipeline from being built beside it.
      *
-     * @return The surface's presentation table (never null while the surface is alive).
+     * @return The surface (never null while the surface is alive).
      */
     vn::graphics::RenderSurface* surface() const;
 
     /**
-     * @brief Gets the viewer managing this area's panes (see Viewer).
+     * @brief Gets the viewer managing this area's picture (see Viewer).
      *
-     * It owns the per-pane requests, the build/adopt/declare of each pane and the area's default presentation;
+     * It owns the request, the build/adopt/declare of the area's view and the area's default presentation;
      * RenderControl hands it out as viewer().
      *
      * @return The viewer (never null while the surface is alive).
@@ -127,18 +127,6 @@ class SurfaceWindow : public QWindow {
 
     /** @brief Fits the whole scene into the view (home view when the scene is empty) and renders a frame. */
     void fitToScreen();
-
-    /** @brief Sets which view receives input, by surface position (see RenderControl::setInputRouter).
-     *
-     * A press routes, moves the focus to the view it routed to and captures it until release; the captured view is
-     * held by reference for the duration. Without a router the surface's own presentation rectangles decide
-     * (RenderSurface::viewAt), and a point no pane holds goes to this surface's own view; an empty function
-     * restores that default.
-     *
-     * @param router Function taking (x, y) in logical surface pixels and returning the owning view; nullptr from it
-     *               means "not mine" and hands the point back to the rectangles.
-     */
-    void setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router);
 
     /** @brief Drives frames on a timer instead of on demand (see RenderControl::setContinuousRendering).
      *

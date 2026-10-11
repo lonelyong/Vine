@@ -36,7 +36,7 @@ class Viewer;
  * tree and forwards the public interface below. The surface itself - the native
  * QWindow a backend binds to, the RenderEngine, the SceneView (the interactive
  * primary view holding the camera, content scene and orbit manipulator) and the
- * Viewer that manages the area's panes and their requests - lives in the private
+ * Viewer that owns the area's request - lives in the private
  * SurfaceWindow (src/gui/SurfaceWindow.hpp), together with the attach rules, the
  * deferred resize path and the translation of Qt events into view input. Unless
  * a backend was attached via engine()->setDevice(), the first backend registered
@@ -121,71 +121,69 @@ class VN_APPFW_API RenderControl : public Control {
      */
     vn::graphics::SceneView* view() const;
 
-    /** @brief Gets the viewer managing the panes of this control's render area (see Viewer).
+    /** @brief Gets the viewer that draws this control's render area (see Viewer).
      *
-     * ONE control hosts ONE area, and an area may be divided between several views - each with its own request
-     * (ViewerOptions), its own rectangle and its own chain, all drawing in the SAME frame on one device. This is
-     * the object that manages them: addView() builds a pane's chain from its request and declares it, views()
-     * reads which views present this area (from the surface's presentation table), release() gives a pane back
-     * to a host that draws it itself. The three calls below (viewerOptions / setViewerOptions / setShadingMode)
-     * are the single-pane shortcuts: they address this control's own view, the area's first pane.
+     * ONE control hosts ONE area, and one area draws ONE picture: this is the object that turns "how the host wants
+     * it drawn" (ViewerOptions) into the chain that draws it, builds it, adopts it on this control's view and
+     * declares the picture on the area. release() gives the view back to a host that draws it itself. The three
+     * calls below (viewerOptions / setViewerOptions / setShadingMode) are that same request, addressed to this
+     * control's view.
      *
-     * A host that never splits its area never has to touch it.
+     * A host that never reconfigures its picture never has to touch it.
      *
      * @return The viewer (never null while the control is alive).
      */
     Viewer* viewer() const;
 
-    /** @brief Gets how this control's own view (the area's first pane) draws (see ViewerOptions).
+    /** @brief Gets how this control's view draws (see ViewerOptions).
      *
-     * @return The request that pane is built from (the defaults until a host changes them).
+     * @return The request that view's chain is built from (the defaults until a host changes them).
      */
     ViewerOptions viewerOptions() const;
 
-    /** @brief Changes how this control's own view (the area's first pane) draws, rebuilding its chain.
+    /** @brief Changes how this control's view draws, rebuilding its chain.
      *
      * The one call a host needs to shape the default picture: a chain, an overlay's existence and the mode the
      * chain must express are build decisions (see ViewerOptions), so this is one pipeline build - at construction
      * time, before the first attach, it is also what a viewer's settings should be made with (the attach's first
-     * frame then already draws the intended picture). It is the shortcut to Viewer::setViewerOptions on the
-     * area's first pane; a host with several panes states each pane's request there.
+     * frame then already draws the intended picture). It is the shortcut to Viewer::setViewerOptions.
      *
-     * @param options How the pane draws from now on.
+     * @param options How the view draws from now on.
      * @return true when the chain was built and adopted; false when the builder refused @p options (the previous
      *         chain then stays in place). Before the first attach there is nothing to refuse it against - a
      *         build that succeeds is adopted and the attach draws with it.
      */
     bool setViewerOptions(const ViewerOptions& options);
 
-    /** @brief Switches the shading mode of this control's own view (the area's first pane).
+    /** @brief Switches the shading mode of this control's view.
      *
      * The cheap switch: a mode the built chain can express is one override on the live pipeline, taking effect on
-     * the next frame with no rebuild. When the chain cannot express it, the pane is rebuilt from the current
-     * request carrying the requested mode. It is the shortcut to Viewer::setShadingMode on the area's first pane.
+     * the next frame with no rebuild. When the chain cannot express it, the picture is rebuilt from the current
+     * request carrying the requested mode. It is the shortcut to Viewer::setShadingMode.
      *
      * @param mode The viewing mode to switch to.
-     * @return true when the pane now shades in @p mode; false when the rebuild failed (the previous pipeline stays
-     *         in place). With no chain yet the call builds the pane from its request first, so it is also the way
+     * @return true when the view now shades in @p mode; false when the rebuild failed (the previous pipeline stays
+     *         in place). With no chain yet the call builds the chain from its request first, so it is also the way
      *         to state a mode before the first attach.
      */
     bool setShadingMode(vn::graphics::ShadingMode mode);
 
-    /** @brief Gets the presentation table of the surface this control renders into.
+    /** @brief Gets the surface this control renders into (see RenderSurface).
      *
-     * Which passes draw into this surface, and in which order: the ONE place that answers "who presents this
-     * surface". By default the control's viewer does (its first pane - the control's own view - draws it), and a
-     * host that builds its own main pass declares THAT pass instead - which is what keeps the default pipeline from
-     * being built beside it:
+     * The pass that draws this surface, and the window it is presented through: the ONE place that answers "who
+     * presents this surface". By default the control's viewer does (the control's own view draws it), and a host
+     * that builds its own main pass declares THAT pass instead - which is what keeps the default chain from being
+     * built beside it:
      *
      * @code
      * auto pipeline = builder.build(options);
      * control->surface()->present(pipeline->windowPass());   // before the first attach (install is synchronous)
      * @endcode
      *
-     * The control keeps the same fallback it always had: with nothing declared (and no pass declared by a host),
-     * the viewer's first pane presents the surface.
+     * The control keeps the same fallback it always had: with nothing declared, the viewer's view presents the
+     * surface.
      *
-     * @return The control's render surface presentation table (never null while the control is alive).
+     * @return The control's render surface (never null while the control is alive).
      */
     vn::graphics::RenderSurface* surface() const;
 
@@ -221,65 +219,6 @@ class VN_APPFW_API RenderControl : public Control {
      * @return A task that completes with the same answer as init().
      */
     vn::async::Task<bool> initAsync();
-
-    /** @brief Gets the view the user is working in: the surface's FOCUS (see RenderSurface::focus).
-     *
-     * A press decides it - the pane the pointer went down in, whether the point was routed by the surface's
-     * rectangles (the default) or by a router this host installed - and it stays until another press moves it, so
-     * a key, a command or a menu action can ask "which view does this mean" without a position to route by.
-     *
-     * This is the answer for that question; it is NOT a second input router (nothing here routes events). A
-     * control whose surface has no view presentation at all (a host that presented its own main pass) answers with
-     * its own view - the same fallback input uses.
-     *
-     * @return The focused view, or this control's own view when nothing (drawable) is focused.
-     */
-    vn::graphics::SceneView* focusedView() const;
-
-    /** @brief Sets which view receives the surface's input, by position.
-     *
-     * The control hosts ONE surface, and by default that surface's input goes to the view whose RECTANGLE holds the
-     * point: a host that splits the surface states each pane once - `surface()->present(view, rect)` - and input
-     * follows from it (RenderSurface::viewAt), with no second statement of the layout to keep in step. A point that
-     * no pane holds (or a surface that is not laid out yet) goes to the one view this control built (view()).
-     *
-     * A host with a rule the rectangles cannot state (an irregular layout, a view that owns a widget's border, a
-     * pane that must be inert) overrides that here - one function answering "this point belongs to whom":
-     *
-     * @code
-     * // The rectangles are the layout; this only says where the layout is not enough (a strip that stays inert):
-     * control->setInputRouter([&](int x, int y) {
-     *     return is_reserved_strip(x, y) ? control->view() : nullptr;   // nullptr = "not mine"
-     * });
-     * @endcode
-     *
-     * Semantics (the same the industry uses for a multi-viewport render window - VTK's interactor picks the
-     * renderer under the cursor and then keeps it until the button comes up):
-     *
-     * - **a pointer PRESS routes, and the chosen view is CAPTURED until the button is released.** A drag that
-     *   leaves that view's rectangle keeps steering it ("hold and drag" cannot be interrupted by a boundary), and
-     *   the control holds a reference to the captured view for the duration, so a host dropping its own reference
-     *   mid-drag cannot leave the control steering a freed view. The capture is PER BUTTON: two buttons can drag
-     *   two views at once (rotate one pane with the left while the right pans another), and releasing one of them
-     *   does not end the other's drag - a view that never saw its release would keep steering its camera on hover.
-     *   The release is delivered to the view that STARTED that drag, wherever the pointer is by then.
-     * - **the press also moves the FOCUS** (see focusedView): the pane the user pressed in is the pane a key or a
-     *   command means from then on. It moves for a routed press and for a routed-by-router one alike.
-     * - **hover motion, the wheel and the keyboard** do not capture: they route per event (the wheel), or go to the
-     *   captured view when a drag is in flight (motion), or to the focused view, else to the control's own view
-     *   (keys - there is no position to route by).
-     * - the coordinates are the surface's LOGICAL pixels, top-left origin - the same space control->width() /
-     *   height() report (the surface fills this control's widget).
-     * - returning nullptr means "not mine": the default routing by rectangle applies, so a router that only claims
-     *   the regions it knows about leaves the rest of the surface interactive.
-     * - the returned view must belong to this control's engine (view()->engine()). A view bound elsewhere cannot
-     *   receive this surface's coordinates; that is reported on the engine's diagnostic route and the event falls
-     *   back to the control's own view.
-     *
-     * @param router Function taking a point (x, y) in logical surface pixels and returning the view that owns it;
-     *               an empty function restores the default (the surface's rectangles).
-     */
-    void setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router);
 
     /** @brief Drives frames on a timer instead of on demand.
      *

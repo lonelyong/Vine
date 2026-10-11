@@ -125,6 +125,29 @@
 > 实例方法 `postToMain()` 与 `Application::startupProgress()` 都删了（前者是同义词，后者与 `StartupProgress::current()` 重复）。
 > **`Application::d` 已私有**（叶子只走 `dptr()`）；`argv()` 返回 `char* const*`。
 
+## 2026-10-11 多格下线：一块渲染区只画一幅画（S8 的 `Viewer` 收成"一条请求"）
+
+- **结论**：用户裁决"先不做多窗格" ⇒ `RenderControl`/`SurfaceWindow`/`Viewer` 上的多格面全部删掉：
+  `Viewer::addView(view, rect, options)` / `removeView` / `views()` / `setPaneRect` / 带 `view` 参数的
+  `viewerOptions(view)`·`setViewerOptions(view, …)`·`setShadingMode(view, …)` → 换成 `setViewerOptions(options)` /
+  `viewerOptions()` / `setShadingMode(mode)` / `release(view)` / **`view()`** / `isActive()` / `takeArea()`；
+  `RenderControl::setInputRouter` 与 `focusedView()` 删除（输入只有一个去处：控件那个视图，见 `SurfaceWindow::routedView`），
+  老三条 `viewerOptions/setViewerOptions/setShadingMode` 保留，直接作用在这个视图上。
+- **接管改成显式两步**：一块区只画一幅画（第二条呈现被 `RenderSurface` 拒 + 报一次），所以"宿主自建主 pass"要么**声明先落**
+  （attach 之前 `surface->present(pass)`，`takeArea()` 就让位），要么**先 `viewer->release(view)` 再声明** —— 从前那种
+  "上线后再声明一条 pass 顶掉默认链"现在会被拒（用例 `AHostPassTakesTheAreaAndTheViewerStandsDown` 钉着两步法）。
+- **判据（实测）**：全量 Release 0 error / 0 warning；`test_gui` **257**（261 − 4：删掉 3 条路由/分屏用例、两条输入用例
+  合成 1 条"事件到这个视图 + 按下捕获"）；`test_graphics` **356**（364 − 8：`RenderSurfaceTest` 19→13 条，删掉分屏/矩形/
+  `viewAt`/焦点/清屏合并那几条，新增"一块区只画一幅画（第二次呈现被拒 + 报一次）"与"区不碰呈现者的清屏策略"；
+  `SceneViewViewportTest` 删掉分屏与"新格立刻拿到尺寸"两条，改成"区尺寸驱动 aspect/布局步"与"区尺寸唯一 owner"）；
+  `test_vsg` 429（424 + 3 skip + 2 已知红，未动）。五个 gate 0 finding（`--strict` 仍 13 条既有路径漂移）。
+  变异 5/5 各自单独实测红，逐条见 `.ai/memory/graphics.md` 同条（其中的 appfw 三条：重建不搬活链的运行期选择 /
+  `release` 不撤声明 / `isActive()` 读记忆而不是读区）。
+- **坑**：① `RenderSurface` 少了 `view_ = &view` 那一句时**它能编译、能返回 true，但表是空的** —— 三条用例同时红才暴露
+  （"写实现时把赋值行连注释一起删掉"这种错，结构断言的价值就在这里）；② 多格面的**删法比加法贵**：判据里那些
+  "路由/焦点/清屏合并"的用例是**成对**的，删一条要同时调整旁边那条的语义（否则用例还在、断言成了空话）；
+  ③ `SceneView::surfaceWidth/Height/PixelRatio` 从私有提成公开读法（用例与宿主都要"我按哪个尺寸算画面"这一个数）。
+
 ## 2026-10-11 S10a 落地：窗口那一半由**设备**造，控件只把它绑到区上
 
 - **结论**：图形层的 S10a 把 `RenderBackend` 拆成三张契约（设备 / 执行器 / 目标，见 `.ai/memory/graphics.md` 顶部），
@@ -154,6 +177,10 @@
   判据：`test_gui` 259 全绿（含 `RenderControlTest.FollowsARecreatedSurfaceWithoutTheHost` 那条换窗口的用例）。
 
 ## 2026-10-11 S8 落地：`Viewer` 管一块渲染区里的 N 个 View
+
+> **已被取代（2026-10-11 同日，"多格下线"）**：本条的"每格"面（`addView` / `views()` / `setPaneRect` / 带 `view`
+> 参数的请求与档、多格路由与焦点、表面侧的矩形与清屏合并）**已从代码里删除**，现役形态见上面"多格下线：一块渲染区
+> 只画一幅画"。本条留作那一片的落地记录，里面的 API 名不要再当现状引用。
 
 - **结论**：一个控件 = 一块渲染区（一个引擎、一个会话、一个设备）**不再等于一个视图**。控件多了一只手
   `RenderControl::viewer()`（导出的 `vn::appfw::gui::Viewer`：`sdk/vine/appfw/gui/Viewer.hpp` +

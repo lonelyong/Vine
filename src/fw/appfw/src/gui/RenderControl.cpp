@@ -112,33 +112,18 @@ Viewer* RenderControl::viewer() const
 
 ViewerOptions RenderControl::viewerOptions() const
 {
-    // The area's FIRST pane (this control's own view): a control hosts one render area, and the request of every
-    // other pane belongs to the viewer (see RenderControl::viewer).
-    return viewer()->viewerOptions(view());
+    // This control's own view: one control hosts one render area, and one area draws one picture (see Viewer).
+    return viewer()->viewerOptions();
 }
 
 bool RenderControl::setViewerOptions(const ViewerOptions& options)
 {
-    return viewer()->setViewerOptions(view(), options);
+    return viewer()->setViewerOptions(options);
 }
 
 bool RenderControl::setShadingMode(vn::graphics::ShadingMode mode)
 {
-    return viewer()->setShadingMode(view(), mode);
-}
-
-vn::graphics::SceneView* RenderControl::focusedView() const
-{
-    // The surface's focus is the pane the user last pressed in (RenderSurface::focus): a split answers with the
-    // view the user is working in, and a surface nothing has been pressed in answers with its first presentation.
-    // A surface with no view presentation at all (a host that presented its own main pass) has no pane to name,
-    // so the control's own view is the answer - the same fallback input uses.
-    if (vn::graphics::RenderSurface* const table = dptr()->surface->surface(); table != nullptr) {
-        if (vn::graphics::SceneView* const focused = table->focusedView(); focused != nullptr) {
-            return focused;
-        }
-    }
-    return view();
+    return viewer()->setShadingMode(mode);
 }
 
 bool RenderControl::init()
@@ -149,11 +134,6 @@ bool RenderControl::init()
 vn::async::Task<bool> RenderControl::initAsync()
 {
     return dptr()->surface->initAsync();
-}
-
-void RenderControl::setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router)
-{
-    dptr()->surface->setInputRouter(std::move(router));
 }
 
 void RenderControl::setContinuousRendering(bool on, int interval_ms)

@@ -428,38 +428,23 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
         }
     }
 
-    // 分屏下"改哪一格"：命令改的是**焦点视图** —— 用户最后按过的那一格 —— 而不是宿主发布的那块控件自己那个
-    // 视图（发布回答"窗口的 3D 区在哪块控件上"，不再回答"改哪一格"：焦点来自输入）。同一表面上的第二格就是
-    // 另一条呈现（矩形写在表面上，M2d），它也是这份模型文档的一个视图。
-    auto second = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
-    second->setEngine(control->engine());
-    // 这一格的链由**宿主**建（这里就是用例自己）：控件只对自己那个视图负责，别人搭的链别人管 —— 命令碰上它时
-    // 也只问那条链能不能换档，不替它重建。
+    // 命令改的是**这个控件的视图**（一块区只画一幅画，多格已下线）：`primaryRenderControl()` 找到窗口上那块 3D 控件，
+    // 命令就作用在它的视图上 —— 不需要焦点、也不需要认识任何具体视图类。
+    EXPECT_EQ(scene_view, control->view()) << "这份文档的视图就是控件那个视图";
+
+    // 宿主自己搭的链：命令碰上它时只问那条链能不能换档，不替它重建（"别人搭的链别人管"）。把控件自己那个视图的链
+    // 换成宿主的，就能看见这一条路。
     {
         vn::graphics::RenderPipelineBuilder builder(control->engine());
-        builder.setCamera(second->camera());
-        builder.setContent(second->scene());
-        second->setPipeline(builder.build({}));
+        builder.setCamera(scene_view->camera());
+        builder.setContent(scene_view->scene());
+        scene_view->setPipeline(builder.build({}));
     }
-    ASSERT_NE(second->pipeline(), nullptr) << "宿主自己那一格也要有一条链，呈现它才有东西可指";
-    ASSERT_TRUE(control->surface()->present(*second, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }));
-    ASSERT_EQ(control->focusedView(), scene_view) << "没有人按过 ⇒ 焦点是第一条呈现（控件自己那个视图）";
-
-    // 焦点在第二格：命令改第二格，而主视图保持上一轮那条命令留下的档（"改的是焦点"才看得出来）。
-    ASSERT_TRUE(control->surface()->focus(second.get()));
-    const auto focused_run = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeLitCommand));
-    EXPECT_EQ(focused_run.status(), vn::appfw::CommandStatus::Success)
-        << "命令该成功：" << focused_run.message().as_std_str();
-    EXPECT_EQ(second->pipeline()->shadingMode(), vn::graphics::ShadingMode::Lit) << "焦点在第二格 ⇒ 改它";
-    EXPECT_EQ(scene_view->pipeline()->shadingMode(), vn::graphics::ShadingMode::Wireframe)
-        << "没被点过的那一格不该变（上一轮留下的是线框）";
-
-    // 焦点回到第一格：同一条命令改的是它（同一命令在两块各来一遍）。
-    ASSERT_TRUE(control->surface()->focus(scene_view));
-    const auto back_run = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeUnlitCommand));
-    EXPECT_EQ(back_run.status(), vn::appfw::CommandStatus::Success);
-    EXPECT_EQ(scene_view->pipeline()->shadingMode(), vn::graphics::ShadingMode::Unlit);
-    EXPECT_EQ(second->pipeline()->shadingMode(), vn::graphics::ShadingMode::Lit) << "另一格保持";
+    ASSERT_NE(scene_view->pipeline(), nullptr);
+    const auto host_chain_run = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeUnlitCommand));
+    EXPECT_EQ(host_chain_run.status(), vn::appfw::CommandStatus::Success);
+    EXPECT_EQ(scene_view->pipeline()->shadingMode(), vn::graphics::ShadingMode::Unlit)
+        << "宿主搭的链也换得了这一档（命令问的就是那条链）";
 
     // 守卫：当前文档不是模型（这里直接清掉当前文档）⇒ 命令如实说"不适用"，而不是去改别人的视图。
     ASSERT_TRUE(documents->setCurrent(nullptr));

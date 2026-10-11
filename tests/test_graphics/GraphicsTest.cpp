@@ -3129,7 +3129,7 @@ TEST(SceneViewViewportTest, ADefaultBuildIsTheBehaviourBeforeAnyOptions)
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
-    EXPECT_TRUE(view->viewport().isFull());
+
 
     auto pipeline = buildFor(*view, engine.get());
     ASSERT_NE(pipeline, nullptr);
@@ -3530,7 +3530,12 @@ TEST(SceneViewViewportTest, SwitchingBetweenNonLitModesOnADeferredRecipeKeepsThe
     EXPECT_EQ(engine->passCount(), passes);
 }
 
-TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps){
+TEST(SceneViewViewportTest, TheAreaSizeDrivesAspectAndLayoutSteps)
+{
+    // One area, one picture: what the host reports is the AREA's size, and everything this view derives comes out of
+    // that one number - the layout steps, the camera's shape, the overlays' boxes. There is no second rectangle
+    // anywhere (that was the multi-pane half, dropped: a host that wants two pictures brings its own passes and
+    // their own sub-viewports).
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
@@ -3540,9 +3545,9 @@ TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps){
     auto pipeline               = buildFor(*view, engine.get(), options);
     ASSERT_NE(pipeline, nullptr);
 
-    int layout_w = 0;
-    int layout_h = 0;
-    int layout_ratio_calls = 0;
+    int    layout_w = 0;
+    int    layout_h = 0;
+    int    layout_ratio_calls = 0;
     double layout_ratio    = 0.0;
     view->addSurfaceLayout([&](int w, int h) {
         layout_w = w;
@@ -3557,181 +3562,98 @@ TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps){
 
     const std::size_t pass_count_before = engine->passCount();
 
-    // The left quarter of a 1280x720 surface: the host states the split ONCE, in normalized terms, and keeps
-    // feeding the SURFACE size - it never works out "a quarter of 1280" for the view.
-    // ... and the geometry follows from it: the layout steps get THIS view's rectangle, the window pass draws
-    // into the same rectangle in device pixels, and the picture's SHAPE is that rectangle's - the camera holds no
-    // aspect at all (Camera::projectionMatrix is handed one), so there is nothing left that could keep a stale
-    // shape of its own next to the surface's.
-    view->setViewport({ 0.25, 0.0, 0.5, 1.0 });
     view->onSurfaceResized(1280, 720, 2.0);
 
-    EXPECT_EQ(layout_w, 640);
+    EXPECT_EQ(layout_w, 1280);
     EXPECT_EQ(layout_h, 720);
     EXPECT_EQ(layout_ratio_calls, 1);
     EXPECT_DOUBLE_EQ(layout_ratio, 2.0);
+    // The picture's SHAPE is the area's (one camera, one shape - see Camera).
+    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 1280.0 / 720.0);
+
+    // The picture IS the area: the window pass keeps no rectangle of its own (what a pass without a viewport already
+    // means), so the default path is byte-for-byte the pipeline it was before viewports existed. A host that wants a
+    // sub-rectangle states one on the pass itself, in device pixels (RenderPass::setViewport).
     RenderPass* const window = pipeline->windowPass();
     ASSERT_NE(window, nullptr);
-    ASSERT_TRUE(window->hasViewport());
-    EXPECT_EQ(window->viewport().x, 640);        // 0.25 * 1280 * ratio 2
-    EXPECT_EQ(window->viewport().y, 0);
-    EXPECT_EQ(window->viewport().width, 1280);   // 0.5 * 1280 * ratio 2
-    EXPECT_EQ(window->viewport().height, 1440);  // 1.0 * 720 * ratio 2
-    // The shape a backend derives for this pass is the rectangle's: 1280x1440 device pixels IS 640/720, one
-    // ratio stated in whichever unit the reader holds.
-    EXPECT_DOUBLE_EQ(static_cast<double>(window->viewport().width) / window->viewport().height, 640.0 / 720.0);
+    EXPECT_FALSE(window->hasViewport());
 
-    // The overlays land INSIDE the rectangle (they anchor to the corner of their area, not of the surface).
+    // The overlays land inside the AREA (they anchor to the corner of their area, in device pixels).
     ASSERT_NE(pipeline->fpsOverlay(), nullptr);
     const Viewport readout = pipeline->fpsOverlayPass()->viewport();
     EXPECT_GT(readout.width, 0);
-    EXPECT_LE(readout.x + readout.width, window->viewport().x + window->viewport().width);
-    EXPECT_LE(readout.y + readout.height, window->viewport().y + window->viewport().height);
+    EXPECT_LE(readout.x + readout.width, 1280 * 2);
+    EXPECT_LE(readout.y + readout.height, 720 * 2);
 
     // Geometry is not recipe: no rebuild happened, the very same pipeline is still there and nothing was
     // re-registered (whatever the recipe's pass count is, it did not change).
     EXPECT_EQ(view->pipeline(), pipeline.get());
     EXPECT_EQ(engine->passCount(), pass_count_before);
 
-    // Going back to the whole surface clears the viewport again (and keeps the same pipeline).
-    view->setViewport({});
-    EXPECT_TRUE(view->viewport().isFull());
-    EXPECT_FALSE(window->hasViewport());
-    EXPECT_EQ(layout_w, 1280);
+    // A second announcement goes through the same one path (and keeps the same pipeline).
+    view->onSurfaceResized(800, 600, 1.0);
+    EXPECT_EQ(layout_w, 800);
+    EXPECT_EQ(layout_h, 600);
+    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 800.0 / 600.0);
     EXPECT_EQ(view->pipeline(), pipeline.get());
 }
 
-TEST(SceneViewViewportTest, ASurfaceSplitStatesEachViewsRectangleAndNothingIsRebuilt)
+TEST(SceneViewViewportTest, TheAreaSizeHasOneOwnerAndTheViewReadsIt)
 {
-    // ① + ③：一台表面被切成两块，每条呈现自己的矩形；矩形写在**表面那张表**上（呈现条目），视图读它，
-    // 换算出来的设备矩形进各自的窗口 pass —— 于是 M2c 的推导让每块画面拿到的形状都是自己那块矩形的。
+    // One owner for the size of the thing a picture ends up in (S6/S9): while a view presents an area, the AREA's
+    // number is the one every consumer derives from, and the host feeding the view its own is not read. A view that
+    // presents nothing is on its own and behaves exactly as it always did.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
-
-    auto tall = intrusive_ptr<SceneView>(new SceneView());
-    tall->setEngine(engine.get());
-    auto wide = intrusive_ptr<SceneView>(new SceneView());
-    wide->setEngine(engine.get());
-
-    // 呈现要指向一条 pass，所以视图先采纳链（宿主的顺序：建、采纳、声明；表只记"谁的 pass 画这块面"）。
-    ASSERT_NE(buildFor(*tall, engine.get()), nullptr);
-    ASSERT_NE(buildFor(*wide, engine.get()), nullptr);
-
-    surface->present(*tall, NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });   // half the width of the surface
-    surface->present(*wide, NormalizedViewport{ 0.5, 0.0, 0.5, 0.5 });   // the top-right quarter
-    ASSERT_NE(tall->pipeline(), nullptr);
-    ASSERT_NE(wide->pipeline(), nullptr);
-
-    tall->onSurfaceResized(1280, 720, 1.0);
-    wide->onSurfaceResized(1280, 720, 1.0);
-
-    RenderPass* const tall_pass = tall->pipeline()->windowPass();
-    RenderPass* const wide_pass = wide->pipeline()->windowPass();
-    ASSERT_NE(tall_pass, nullptr);
-    ASSERT_NE(wide_pass, nullptr);
-    ASSERT_TRUE(tall_pass->hasViewport());
-    ASSERT_TRUE(wide_pass->hasViewport());
-    EXPECT_EQ(tall_pass->viewport().x, 0);
-    EXPECT_EQ(tall_pass->viewport().width, 640);
-    EXPECT_EQ(tall_pass->viewport().height, 720);
-    EXPECT_EQ(wide_pass->viewport().x, 640);
-    EXPECT_EQ(wide_pass->viewport().height, 360);
-    // 两块形状不同（分别是 640:720 与 640:360）：这就是每块画面各自投影用的形状（M2c 从这条 pass 的
-    // viewport 推出来），所以同一帧里两块不可能借用彼此的形状。
-    EXPECT_NE(640.0 / 720.0, 640.0 / 360.0);
-
-    // ③ 改矩形**只改几何**：管线句柄不变、pass 数不变，变的只是那条 pass 的 viewport 与视图自己的换算。
-    auto const        tall_pipeline = intrusive_ptr<Pipeline>(tall->pipeline());
-    const std::size_t passes        = engine->passCount();
-    EXPECT_TRUE(surface->setViewport(tall.get(), NormalizedViewport{ 0.0, 0.0, 0.25, 1.0 }));
-    EXPECT_EQ(tall->pipeline(), tall_pipeline.get()) << "矩形是几何：不重建";
-    EXPECT_EQ(engine->passCount(), passes);
-    EXPECT_EQ(tall_pass->viewport().width, 320);
-    EXPECT_DOUBLE_EQ(tall->viewport().width, 0.25) << "视图从表面那张表读回自己的矩形";
-
-    // ④ 点在谁那块归谁（设备像素由宿主自己除：表里只有归一化矩形，它不持有表面尺寸）。
-    EXPECT_EQ(surface->viewAt(0.1, 0.5), static_cast<SceneView*>(tall.get()));
-    EXPECT_EQ(surface->viewAt(0.75, 0.25), static_cast<SceneView*>(wide.get()));
-    EXPECT_EQ(surface->viewAt(0.75, 0.75), nullptr) << "右下角没有呈现（那块没被任何矩形覆盖）";
-}
-
-TEST(SceneViewViewportTest, APaneDeclaredOnASizedSurfaceIsSizedAtOnce)
-{
-    // 表面自己记着尺寸 ⇒ **新呈现的视图在 present 那一刻就拿到它**，宿主一行都不用喂：分屏的"机制半边"就是
-    // 这句。尺寸的到达做成可观察的 —— 先给新视图登记一个 layout 步（它收到的正是这一格的 pane 尺寸），再 present。
-    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
-
-    auto left = intrusive_ptr<SceneView>(new SceneView());
-    left->setEngine(engine.get());
-    ASSERT_NE(buildFor(*left, engine.get()), nullptr);
-    surface->present(*left, NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });
-    surface->resize(1280, 720, 1.0);  // 宿主只报一次**表面**尺寸，两块矩形都在表面那张表上
-
-    // 链先采纳（呈现要指向一条 pass），layout 步在 present 之前登记：下面收到的尺寸只可能来自 present。
-    auto right = intrusive_ptr<SceneView>(new SceneView());
-    right->setEngine(engine.get());
-    ASSERT_NE(buildFor(*right, engine.get()), nullptr);
-    int pane_w = 0;
-    int pane_h = 0;
-    right->addSurfaceLayout([&](int w, int h) {
-        pane_w = w;
-        pane_h = h;
-    });
-
-    ASSERT_TRUE(surface->present(*right, NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }));
-
-    // present 之后**立刻**：没有一行手喂，右半已经量好了 —— pane 是 640x720，窗口 pass 画的正是它。
-    EXPECT_EQ(pane_w, 640) << "新呈现的那格没拿到表面记着的尺寸（扇出只到老呈现）";
-    EXPECT_EQ(pane_h, 720);
-    EXPECT_DOUBLE_EQ(right->viewport().width, 0.5) << "矩形从表面那张表读回，视图不存第二份";
-    RenderPass* const right_pass = right->pipeline()->windowPass();
-    ASSERT_NE(right_pass, nullptr);
-    ASSERT_TRUE(right_pass->hasViewport());
-    EXPECT_EQ(right_pass->viewport().x, 640);
-    EXPECT_EQ(right_pass->viewport().width, 640);
-    EXPECT_EQ(right_pass->viewport().height, 720);
-}
-
-TEST(SceneViewViewportTest, AViewReadsTheSurfaceSizeAndHoldsNoSecondCopyOfIt)
-{
-    // 尺寸只有一个 owner（S6）：视图挂上表面之后，它**自己那份**（给"没有表面的视图"用的那个值）不再参与任何计算。
-    // 这条把两件事分开：**表面一变、视图的几何就跟着变，而视图没有被喂过一行** —— 如果视图还留着一份自己的拷贝，
-    // 下面的形状会一直停在它自己那份上。
-    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
-
-    auto view = intrusive_ptr<SceneView>(new SceneView());
+    auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
-    // 1) 没有表面：自己的那份就是唯一的尺寸（视图单独用是合法配置，行为不变）。
+    // 1) No area: the host's own announcement is the only size (a view used on its own is a legal configuration).
     view->onSurfaceResized(100, 100, 1.0);
-    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 1.0) << "单独使用时按宿主报的尺寸";
+    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 1.0);
 
-    // 2) 挂上表面：视图改用表面记着的那份（800x400 = 2:1），不再看自己那份（1:1）。
+    // 2) Presented: the area's number wins (800x400 = 2:1), the view's own 100x100 stops being read.
     ASSERT_NE(buildFor(*view, engine.get()), nullptr);
     surface->resize(800, 400, 1.0);
     ASSERT_TRUE(surface->present(*view));
-    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 2.0)
-        << "挂上之后读的是表面的尺寸（挂之前那句 100x100 不再是它的依据）";
+    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 2.0);
+    EXPECT_EQ(view->surfaceWidth(), 800);
+    EXPECT_EQ(view->surfaceHeight(), 400);
+    EXPECT_DOUBLE_EQ(view->surfacePixelRatio(), 1.0);
 
-    // 3) 表面再变：视图没有被喂过一行，几何照样跟着走 —— 这就是"没有第二份"的实测形状。
+    // 3) The area changes: the view was fed nothing and follows anyway - the measured form of "no second copy".
     surface->resize(320, 400, 1.0);
     EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 0.8);
 
-    // 4) 摘下来：表面把尺寸交回给视图（与矩形同一条规矩，见 RenderSurface::dismiss），于是它继续画在同一块地方
-    //    （320x400 的半个宽 = 0.4），而不是跳回挂之前那份 100x100。
+    // 4) Dismissed: the area hands its last size over to the view, which keeps drawing where it was rather than
+    //    jumping back to the number from before it was presented.
     ASSERT_TRUE(surface->dismiss(view.get()));
-    view->setViewport(NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });  // 改矩形 = 几何立刻重算
-    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 0.4) << "摘下来那一刻，尺寸从表面交到了视图自己手上";
+    EXPECT_EQ(view->surfaceWidth(), 320);
+    EXPECT_EQ(view->surfaceHeight(), 400);
+    surface->resize(1280, 720, 1.0);
+    EXPECT_EQ(view->surfaceWidth(), 320) << "an area no longer feeds a view it does not present";
 
-    // 5) 之后自己那份重新是唯一的尺寸：宿主直接喂，按它算。
-    view->setViewport(NormalizedViewport{});
+    // 5) Its own announcement is the size again.
     view->onSurfaceResized(300, 600, 1.0);
-    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 0.5) << "摘下来之后自己那份重新是唯一的尺寸";
+    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 0.5);
+
+    // 6) A view presented on an already-sized area is laid out at once - the host feeds nothing (the area remembers,
+    //    and present() is what makes the view read it).
+    auto later   = intrusive_ptr<SceneView>(new SceneView());
+    later->setEngine(engine.get());
+    ASSERT_NE(buildFor(*later, engine.get()), nullptr);
+    int later_w = 0;
+    int later_h = 0;
+    later->addSurfaceLayout([&](int w, int h) {
+        later_w = w;
+        later_h = h;
+    });
+    ASSERT_TRUE(surface->present(*later));
+    EXPECT_EQ(later_w, 1280) << "the layout step receives the area's size at the moment the view is presented";
+    EXPECT_EQ(later_h, 720);
 }
 
-TEST(SceneViewViewportTest, FullViewportKeepsTheOverlayBoxWhereItWas)
+TEST(SceneViewViewportTest, TheOverlayBoxSitsInTheAreaCorner)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
@@ -3799,9 +3721,11 @@ TEST(SceneViewViewportTest, RebuildingAfterTheHostReleasedTheEngineIsSafe)
     EXPECT_TRUE(rebuilt->isStatsVisible());
     EXPECT_FALSE(rebuilt->windowPass()->hasViewport());
 
-    view->setViewport({ 0.0, 0.0, 0.5, 1.0 });
+    // The view is sized without the engine being asked (its own announcement is the size it derives from).
     view->onSurfaceResized(800, 600, 1.0);
-    EXPECT_TRUE(rebuilt->windowPass()->hasViewport());
+    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 800.0 / 600.0);
+    EXPECT_EQ(view->surfaceWidth(), 800);
+    EXPECT_FALSE(rebuilt->windowPass()->hasViewport()) << "the picture is the area: no rectangle of its own";
 }
 
 TEST(SceneViewTest, DefaultManipulatorBindsViewCameraAndScene)

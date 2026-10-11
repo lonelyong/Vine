@@ -24,21 +24,7 @@ VN_GRAPHICS_NS_BEGIN
 namespace
 {
 
-/** @brief The device-pixel rectangle a normalized viewport describes on a logical surface. */
-Viewport deviceViewport(const NormalizedViewport& viewport, int width, int height, double ratio)
-{
-    const double device_w = static_cast<double>(width) * ratio;
-    const double device_h = static_cast<double>(height) * ratio;
-    // Left/top round down, right/bottom round up: two neighbouring viewports then meet exactly, and the
-    // one-pixel overlap that can result is a smaller sin than a seam the cleared background shows through.
-    const int x0 = static_cast<int>(std::floor(viewport.x * device_w));
-    const int y0 = static_cast<int>(std::floor(viewport.y * device_h));
-    const int x1 = static_cast<int>(std::ceil((viewport.x + viewport.width) * device_w));
-    const int y1 = static_cast<int>(std::ceil((viewport.y + viewport.height) * device_h));
-    return Viewport{ x0, y0, x1 - x0, y1 - y0 };
-}
-
-} // namespace
+}  // namespace
 
 SceneView::SceneView()
   : camera_(make_intrusive<Camera>())
@@ -47,10 +33,9 @@ SceneView::SceneView()
 
 SceneView::~SceneView()
 {
-    // Leave the surface first, and while the adopted pipeline is still there to hold the engine alive: the surface
-    // re-states its clear on the presentations that remain, and that reads the engine's schedule (see
-    // RenderSurface::applyClear). The surface also stops naming this view, so the other order - the surface
-    // destroyed first - leaves this pointer null and nothing to do.
+    // Leave the surface first, and while the adopted pipeline is still there to hold the engine alive. The surface
+    // also stops naming this view, so the other order - the surface destroyed first - leaves this pointer null and
+    // nothing to do.
     if (surface_ != nullptr) {
         surface_->dismiss(this);
     }
@@ -63,9 +48,9 @@ SceneView::~SceneView()
 void SceneView::setSurface(raw_ptr<RenderSurface> surface) noexcept
 {
     if (surface == nullptr && surface_ != nullptr) {
-        // The size the surface owned becomes this view's own statement - exactly what happens to the rectangle
-        // (see RenderSurface::dismiss): a view that stops presenting keeps drawing where it was, so it must keep
-        // being sizeable by its host from here on, and the surface is not there to be asked any more.
+        // The size the surface owned becomes this view's own statement (see RenderSurface::dismiss): a view that
+        // stops presenting must keep being sizeable by its host from here on, and the surface is not there to be
+        // asked any more.
         own_width_       = surface_->width_;
         own_height_      = surface_->height_;
         own_pixel_ratio_ = surface_->pixel_ratio_;
@@ -89,17 +74,6 @@ raw_ptr<RenderEngine> SceneView::engine() const
     return engine_;
 }
 
-NormalizedViewport SceneView::viewport() const noexcept
-{
-    // While this view presents a surface, that surface's table holds the rectangle (RenderSurface::setViewport
-    // is where it is stated, and the surface is what a host reads the split from): reading it HERE rather than
-    // keeping a second copy is what makes "the view's rectangle" and "the surface's split" the same fact.
-    if (surface_ != nullptr) {
-        return surface_->viewportOf(this);
-    }
-    return viewport_;
-}
-
 raw_ptr<Pipeline> SceneView::pipeline() const
 {
     return pipeline_.get();
@@ -111,40 +85,10 @@ void SceneView::setPipeline(intrusive_ptr<Pipeline> pipeline)
         return;
     }
     pipeline_ = std::move(pipeline);
-    // The view brings what a pipeline cannot know: this view's rectangle, the surface size it comes out of, and
-    // the pixel ratio. Everything else (which passes exist, the shading mode, the overlays) is the pipeline's,
-    // which is why adopting one is one call and why a pipeline change never has to re-state any of it.
+    // The view brings what a pipeline cannot know: the surface size it comes out of and the pixel ratio.
+    // Everything else (which passes exist, the shading mode, the overlays) is the pipeline's, which is why adopting
+    // one is one call and why a pipeline change never has to re-state any of it.
     applySurfaceGeometry();
-    // A new pipeline's window pass is a NEW pass (created enabled): the ONE clear of a surface belongs to the
-    // presentation that draws first, so the table that lets this view present has to state that again.
-    if (surface_ != nullptr) {
-        surface_->applyClear();
-    }
-}
-
-void SceneView::setViewport(const NormalizedViewport& viewport)
-{
-    const NormalizedViewport next = viewport.isValid() ? viewport : NormalizedViewport{};
-    if (surface_ != nullptr) {
-        // Forwarded: the surface states the rectangle and hands the geometry back through
-        // applySurfaceGeometry(), so the one place the split is written stays one place.
-        surface_->setViewport(this, next);
-        return;
-    }
-    if (next.x == viewport_.x && next.y == viewport_.y && next.width == viewport_.width &&
-        next.height == viewport_.height) {
-        return;
-    }
-    viewport_ = next;
-    // Geometry: no rebuild, only the numbers every consumer reads (see applySurfaceGeometry).
-    applySurfaceGeometry();
-}
-
-void SceneView::paneSize(int& width, int& height) const
-{
-    const NormalizedViewport rect = viewport();
-    width  = std::max(1, static_cast<int>(std::lround(rect.width * static_cast<double>(surfaceWidth()))));
-    height = std::max(1, static_cast<int>(std::lround(rect.height * static_cast<double>(surfaceHeight()))));
 }
 
 int SceneView::surfaceWidth() const noexcept
@@ -171,57 +115,31 @@ void SceneView::applySurfaceGeometry()
         return;
     }
 
-    // The rectangle this view draws into: its own, or - while it presents a surface - the one that surface's
-    // table states (see viewport()). Read once here: everything below is a use of this ONE value.
-    const NormalizedViewport rect = viewport();
-
-    int pane_w = 0;
-    int pane_h = 0;
-    paneSize(pane_w, pane_h);
-
-    // 1) The camera's shape: this view's rectangle IS the picture its projection is built for (one camera, one
-    //    shape - see Camera), so the shape is pushed where the rectangle is known. The manipulator is told the
-    //    same rectangle for its own aspect (the pane's, not the surface's: a half-width view of a square surface
-    //    is 1:2), which it derives from the size, and it drags the camera rather than holding a shape of its own.
-    //    A camera shared by two views of different shapes is a shape mismatch the engine reports, not a state
-    //    this can arbitrate: whoever applies last wins.
-    if (camera_ != nullptr && pane_w > 0 && pane_h > 0) {
-        camera_->setAspect(static_cast<double>(pane_w) / static_cast<double>(pane_h));
+    // 1) The camera's shape: the surface IS the picture this view's projection is built for (one camera, one shape
+    //    - see Camera), so the shape is pushed where the size is known. The manipulator is told the same size for
+    //    its own aspect, and it drags the camera rather than holding a shape of its own. A camera shared by two
+    //    views is a shape mismatch the engine reports, not a state this can arbitrate: whoever applies last wins.
+    if (camera_ != nullptr) {
+        camera_->setAspect(static_cast<double>(surface_w) / static_cast<double>(surface_h));
     }
     if (CameraManipulator* manip = manipulator(); manip != nullptr) {
-        manip->onResize(vn::window::ResizeEvent{ pane_w, pane_h });
+        manip->onResize(vn::window::ResizeEvent{ surface_w, surface_h });
     }
 
-    // 2) The adopted pipeline: its off-screen targets and HUD boxes are sized for this view's rectangle, and its
-    //    window pass draws into it. The HUD passes anchor to the corner of their AREA, so they are pointed at the
-    //    rectangle's origin before they are laid out.
+    // 2) The adopted pipeline: its off-screen targets and HUD boxes are sized for the surface, and its window pass
+    //    draws the whole of it (a pass with no viewport of its own - the view states none: one area draws one
+    //    picture, and its rectangle is the area).
     if (pipeline_ != nullptr) {
-        const Viewport device_rect = deviceViewport(rect, surface_w, surface_h, ratio);
-        if (AxisGizmo* gizmo = pipeline_->gizmo(); gizmo != nullptr) {
-            gizmo->setAreaOrigin(device_rect.x, device_rect.y);
-        }
-        if (FpsOverlay* fps = pipeline_->fpsOverlay(); fps != nullptr) {
-            fps->setAreaOrigin(device_rect.x, device_rect.y);
-        }
-        pipeline_->resize(pane_w, pane_h, ratio);
-        if (RenderPass* window = pipeline_->windowPass(); window != nullptr) {
-            if (rect.isFull()) {
-                // The full surface is what a pass without a viewport already means - leaving it unset keeps the
-                // default path byte-for-byte the pipeline it was before viewports existed.
-                window->clearViewport();
-            } else {
-                window->setViewport(device_rect);
-            }
-        }
+        pipeline_->resize(surface_w, surface_h, ratio);
     }
 
-    // 3) Creator-managed layout steps: told in THIS view's space (its rectangle), so a pipeline built for a split
-    //    view sizes its targets for the pane without knowing anything about the layout.
+    // 3) Creator-managed layout steps: told the surface size, so a pipeline built for it sizes its targets without
+    //    knowing anything about this view's own business.
     for (const auto& layout : surface_layouts_) {
-        layout(pane_w, pane_h);
+        layout(surface_w, surface_h);
     }
     for (const auto& layout : surface_layouts_with_ratio_) {
-        layout(pane_w, pane_h, ratio);
+        layout(surface_w, surface_h, ratio);
     }
 }
 

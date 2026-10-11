@@ -676,7 +676,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 宿主**建**它、**采纳**它（`SceneView::setPipeline`），视图从此画的就是它 —— 视图自己不记配方，也没有"默认管线"
 这回事（不采纳就不画）。
 
-> 这一层往上的一整套（`Viewer` 管几格、一格一个视图的 surface 是谁、多窗口怎么办、基数关系）见
+> 这一层往上的一整套（`Viewer` 管什么、一个视图的 surface 是谁、多窗口怎么办、基数关系）见
 > [`render-views.md`](render-views.md) —— 那份是**模块说明**（架构图 / 类关系图 / 简单 demo），本文是逐个入口的参考。
 
 ```cpp
@@ -697,8 +697,8 @@ pipeline->setStatsVisible(false);        // pass->setEnabled(false) —— 没�
 pipeline->setGizmoVisible(true);
 pipeline->setShadingMode(vn::graphics::ShadingMode::Wireframe);  // 见下
 
-// 几何（改它**不重建**）：归一化视口是矩形唯一的真相，宽高比 / pass 的设备像素视口 / 清屏范围全由它推
-view->setViewport({ 0.0, 0.0, 0.5, 1.0 });
+// 几何（改它**不重建**）：视图的画面就是它呈现的那块区 —— 尺寸归区（`RenderSurface::resize` 一次扇出），
+// 相机宽高比与管线尺寸都从它推；**不设** pass 的设备像素视口 ⇒ 全幅（要多幅画面自己给 pass 设子视口）
 view->onSurfaceResized(w, h, dpr);        // 只喂**表面**尺寸 + 比例；"这一块"是视图自己算的
                                           // （视图挂在表面上时这句转发给 RenderSurface::resize，见 §3.11）
 ```
@@ -713,36 +713,40 @@ view->onSurfaceResized(w, h, dpr);        // 只喂**表面**尺寸 + 比例；"
   于是四档在两条请求上都能画出来；同一条链上换档零重建，而"延迟请求 + 非 Lit 档"期间选回 `Lit` 是一次建链
   （回到延迟链 —— 这就是那句 `effectivePath()` 公开成静态的用途）。
 - **重建之后谁把运行期选择搬过去**：重建的那一方（appfw 的 `Viewer`：读活着的链、在新链上重新落一遍 ——
-  `isGizmoVisible()` / `isStatsVisible()`；档由每格的请求记着）。链自己只知道选项说了什么。
+  `isGizmoVisible()` / `isStatsVisible()`；档由请求记着）。链自己只知道选项说了什么。
 - **灯是场景的，不是面的**：`scene->addLighting(vn::graphics::LightRig::studio())`（零灯只有后端
   `ambient=0.15` 的常量填充 ⇒ 一片平色，看起来像"没装灯"）。
 - **谁呈现这块表面是声明的**（`RenderSurface`，见 §3.11）：表只**解析**声明（视图的声明 → 它采纳的那条链的窗口
   pass），它不建任何东西。宿主自建主 pass 时声明自己那条，视图那条就一句都不建（**不采纳就没有默认链**：
   "没有任何声明就建默认链"这条兜底归 appfw 的 `Viewer::takeArea()`）。
-- **宿主那一层（appfw）**：`RenderControl::viewer()`（`vn::appfw::gui::Viewer`）管**一块渲染区里的每格** ——
-  视图集合与矩形**读表面的呈现表**（`views()` / `setPaneRect`），它自己只存"每格的请求"
-  （`vn::appfw::gui::ViewerOptions`：链 / 档 / 两个档在不在 / 离屏尺寸）+ 建链时补上的上下文字段
-  （gizmo 的源相机 = 该格的相机、两个 HUD 的像素比 = 表面比例）；`addView(view, rect, options)` = 建链 + 采纳 +
-  在表上声明，每格 `setShadingMode()` 先试链上的开关、链表达不了才带档重建；`isActive()` 读表（表里有宿主自建的
-  pass ⇒ 宿主接管，false），`release(view)` 把一格还给宿主。
-  `RenderControl::viewerOptions()/setViewerOptions()/setShadingMode()` 保留为**作用于第一格**（控件自己的视图）
-  的转发，单视图宿主一个字都不用改。
+- **宿主那一层（appfw）**：`RenderControl::viewer()`（`vn::appfw::gui::Viewer`）管**这块区画成什么样** ——
+  一条请求（`vn::appfw::gui::ViewerOptions`：链 / 档 / 两个档在不在 / 离屏尺寸）+ 建链时补上的上下文字段
+  （gizmo 的源相机 = 视图的相机、两个 HUD 的像素比 = 区比例）；`setViewerOptions(options)` = 建链 + 采纳 +
+  在区上声明（**一块区只画一幅画**：第二条呈现会被拒并报一次），`setShadingMode(mode)` 先试链上的开关、
+  链表达不了才带档重建，`release(view)` 把视图还给宿主。`isActive()` / `view()` 读的是**区**
+  （`presentedView()`），查看器自己不存第二份答案。
+  `RenderControl` 上的三条同名入口（`viewerOptions()/setViewerOptions()/setShadingMode()`）就是它的转发。
 - 配方/几何/开关三层与"两处同名 vs 一处覆盖"的完整理由见
   [`.ai/design/appfw-render-view.md`](../../.ai/design/appfw-render-view.md) §4.1、§7、§12，落地记录见
   [`.ai/design/graphics-redesign.md`](../../.ai/design/graphics-redesign.md) S7 与
   [`.ai/design/graphics-window-device-viewer.md`](../../.ai/design/graphics-window-device-viewer.md) S8。
 
-### 3.11 一块表面由谁画：`RenderSurface`
+### 3.11 一块窗口由谁画：`RenderSurface`
 
-`SceneView` 回答"**怎么画**"，`RenderSurface` 回答"**谁在这块表面上画**"（一块表面 = 一个交换链 / 宿主的
-原生窗口）。它是一张**有序的呈现表**，顺序按**引擎的执行序**（`addPass()` 的槽）：
+`SceneView` 回答"**怎么画**"，`RenderSurface` 回答"**这块窗口由哪条 pass 画、多大、挂在哪个窗口上**"
+（一块区 = 一个交换链 / 宿主的一个原生窗口）。它**不是** framebuffer，一个像素都不持有（窗口的图像属于目标，
+离屏的属于 `RenderTarget`）。它记三件事：
+
+1. **一条呈现**：哪条 pass 画这块窗口 —— 视图版的 `present(*view)`（解析成它采纳那条链的窗口 pass）或宿主
+   自己那条 pass 的 `present(pass)`；**一块区只画一幅画**，第二条会被拒并报一次；
+2. **尺寸与像素比**（`resize`）：唯一的 owner，一次公告扇出给视图、帧上下文与窗口那半；
+3. **窗口**（`bindTarget`/`target`）：设备为这个原生窗口造的那把目标，借用。
 
 ```cpp
-// 表面的默认呈现：控件自己的视图（appfw 的 Viewer::takeArea() 在每次 attach 时这么兜底 —— 表里有宿主自建的
-// pass 就让位，一条默认链都不建）
+// 默认呈现：控件自己的视图（appfw 的 Viewer::takeArea() 在每次 attach 时这么兜底 —— 有宿主自建的 pass 就让位）
 auto* surface = control->surface();
 if (!surface->hasPresentation()) {
-    surface->present(*control->view());   // 声明它采纳的那条链的窗口 pass —— 先建链、先采纳，才有东西可指
+    surface->present(*control->view());   // 先建链、先采纳，才有东西可指
 }
 
 // 窗口那一半由**设备**造（S10a）：句柄是造目标时的输入，区收的是那把目标对象（借用）；设备"不呈现"就答
@@ -754,87 +758,42 @@ if (vn::raw_ptr<vn::graphics::RenderSurfaceTarget> target = device->createSurfac
 // 平台重建窗口：在**同一把目标**上重公告（设备、缓存与已编译管线都留），不是第二把目标
 surface->target()->setWindowHandle(new_handle);
 
-// 宿主自建主 pass 时：声明自己的那条，视图那条一条都不建
+// 接管这块窗口：宿主自建主 pass 时声明自己的那条（attach 之前声明，默认链一条都不建；已经上线的先让查看器
+// release(view)，再声明 —— 一块区一次只画一幅画）
 auto pipeline = builder.build(options);
 surface->present(pipeline->windowPass());
-
-// 读回来：`{pass, view, rect}` 列表，按引擎执行序（引擎已经不认识的 pass 不在里面 —— 它不是这一帧的事实）
-for (const vn::graphics::RenderSurface::Presentation& entry : surface->presentations()) { ... }
-
-// 撤掉一条呈现（视图的管线仍然是视图的，pass 仍然归引擎）
-surface->dismiss(pipeline->windowPass());
 ```
-
-**分屏：每条呈现一块矩形**（归一化坐标，改它**不重建任何东西** —— 矩形是几何）：
 
 ```cpp
-// 左右两块，各一个视图（各自的相机/操纵器/HUD —— 视图回答"怎么画"）
-surface->present(*left,  vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });
-surface->present(*right, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 });
-surface->resize(1280, 720, dpr);          // 尺寸归**表面**：一次扇出给每条呈现，各自的矩形由表面算
-// 新加的格子不用再喂： `present` 把表面记着的尺寸立刻交给它（视图那句 onSurfaceResized 也只是转发到这里）
+// 读回来：哪条 pass、哪个视图（宿主自建的 pass 没有视图，所以 presentedView() 为 null）
+vn::raw_ptr<vn::graphics::RenderPass> which = surface->presentingPass();   // 视图重建后自动跟上（每次读都重解析）
+vn::raw_ptr<vn::graphics::SceneView> who    = surface->presentedView();
 
-// 改布局：两种拼写写的是同一块矩形（视图那句转发给表面）
-surface->setViewport(left.get(), vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.25, 1.0 });
-left->setViewport(vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.25, 1.0 });   // 同一件事
-left->viewport();                        // 读回来的也是表面上那块（视图不存第二份）
-
-// 这一点归谁（默认输入路由就是这么算的；坐标是**归一化**的 —— 表里没有表面尺寸）
-vn::graphics::SceneView* under = surface->viewAt(0.75, 0.5);   // 右半 = right
-
-// 用户在哪儿（焦点）：按下时由输入路径写入，命令层拿它回答"当前视图是哪个"
-surface->focus(right.get());                                  // 也可以传 nullptr：清掉显式焦点
-vn::graphics::SceneView* current = surface->focusedView();     // 没人按过 = 第一条呈现
+// 撤掉呈现（视图的管线仍然是视图的，pass 仍然归引擎）
+surface->dismiss(surface->presentedView());
 ```
-
-**appfw 那一层（一块控件里的分屏）**：每格一条请求，查看器把"建链 + 采纳 + 声明"一次做齐 —— 矩形照旧写在表面上
-（`views()` 读的就是它），查看器不存第二份：
-
-```cpp
-auto* viewer = control->viewer();
-viewer->setPaneRect(control->view(), vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });  // 第一格也要半张
-
-auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
-right->setEngine(control->engine());                          // 同一个引擎 = 同一个设备、同一条帧
-vn::appfw::gui::ViewerOptions options;                        // 这一格的请求（链 / 档 / 两个档 / 离屏尺寸）
-options.stats = true;
-viewer->addView(right, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }, options);
-// 每格自己的链：control->view()->pipeline() 与 right->pipeline() 是两条（各自的档各自建）
-// 每格自己的档：viewer->setShadingMode(right.get(), vn::graphics::ShadingMode::Wireframe);
-```
-
-`RenderControl::focusedView()` 是控件层的那句话（表面没有呈现视图时回退控件自己的视图），五条"显示模式"命令
-改的就是它 —— 分屏时命令作用于**用户正在用的那一格**，而 `MainWindow::setPrimaryRenderControl()` 只回答
-"窗口的 3D 区在哪块控件上"。
 
 - **为什么要有它**：以前"谁呈现"是**推断**出来的（视图问引擎"有没有哪条 pass 携带我这台相机且没有 render target"），
-  推断是全局的、顺序敏感的，而且会**静默跳过**共用一台相机的第二个视图。现在它是宿主的一句话。
-- **顺序的真相在引擎**：`RenderEngine::passOrder(pass)` 返回某条已注册 pass 的执行序（同时回答了"它还在不在"），
-  呈现表按它排序；同序保持声明顺序。
-- **矩形也归这张表**：一块表面被切成什么形状是**表面**的事，视图**读**它（`SceneView::viewport()`）。所以同一块
-  矩形只有一份：视图那句 `setViewport` 转发到表上，`dismiss()` / 表面析构时表把矩形**还给**视图（接着画同一块
-  地方，只是从"表面的声明"变成"视图自己的声明"）。**尺寸与窗口也归这张表**（`resize`：一块表面只有一个尺寸，报一次就
-  够，其余是扇出；挂在表面上时 `SceneView::onSurfaceResized` 只是转发。`bindTarget`：窗口是这块表面的目标，重公告
-  = 把绑定**搬**到平台重建出来的新窗口，设备与已编译管线都留；没有窗口那一半的后端**拒绝 + 报一次**），而视图**不存第二份**：挂上表面之后
-  它向表面问（`SceneView::surfaceWidth()` 一类的读数），自己那份只在"没有表面"时才是依据 —— 尺寸与矩形一样，
-  摘下来时由表面**交还**给视图。设备像素那一层仍是视图算的（它按自己的
-  矩形换算），而**形状**是视图的相机的（`SceneView::applySurfaceGeometry` 把窗格的形状 push 给相机，见 §2.4 的
-  `Camera`：一台相机一张画面，同一台相机被两块不同形状的矩形用到就是引擎会报的那种错）。
-  宿主自建的 pass **没有**归一化矩形：它自己给 `pass->setViewport()` 设备像素（它本来就知道尺寸），
-  `viewAt()` 也永远不会选中它（它不是视图）。
-- **不装 router 也能分屏**：`RenderControl` 的**默认**路由就是问这张表（`viewAt`）—— 矩形在哪儿，输入就去哪儿
-  （逻辑像素 ÷ 表面尺寸 → 归一化）；只有"矩形说不清"的规则（一条必须保持惰性的边、不规则布局）才用
-  `setInputRouter` 覆盖，它返回 `nullptr` 表示"交回矩形"。按下时**总是**捕获（拖出自己那一格不断线），并且把
-  **焦点**移到那一格：键盘（没有位置可路由）与"当前视图"这类问题都问焦点。
-- **清屏也归这张表**：后端只应用**第一条**清屏公告（其余静默丢弃），所以表面让**第一条呈现**保留自己的清屏、
-  把其余条 `setClearEnabled(false)`。它只决定**谁**清：清成什么颜色、要不要清深度仍由那条 pass 说（延迟配方那条
-  `present` 屏 pass 自己说不清，就照样不清）。要换背景色改那条 pass 的 `setClearColor` 就行 —— 没有第二份状态。
-  顺序变了（撤掉第一条、或某条呈现重建了管线）表面会自己重放这个决定，不用宿主操心。
-- **生命周期**：视图与表面互相**借用**（都不是对方的所有者）—— 视图先死就自己从表里退出去，表面先死就把视图那一侧的
-  指回清掉（并把矩形交回视图）。所以扔掉视图 = 撤掉它的呈现，`dismiss()` 是显式写法。
-- **被拒的声明**（都返回 false，不静默）：视图挂在别的引擎上（它的 pass 注册在另一帧上，永远画不到这块表面）；
-  视图已经在呈现**另一块**表面（一个视图画一张画，而它的矩形是向它呈现的那块表读的）。两种都记一条
-  `PassProtocolViolation`。
+  推断是全局的、顺序敏感的，而且会**静默跳过**共用一台相机的第二个视图（HUD 那种没 target 的 pass 也分不出来）。
+  现在它是宿主的一句话，写在唯一有资格回答的对象上。
+- **一块区只画一幅画**：一帧里两条都画默认帧缓冲的 pass 会互相擦，而"谁第一、谁清屏"只有**静默**的默认行为
+  （后端只认每个附件的第一条清屏公告）。所以第二条呈现被拒 + 报一次；**要多幅画面**（分屏 / PiP / 叠加）由应用
+  自己说清接线：自己算矩形、给 pass 子视口（`pass->setViewport(Viewport{...})`，设备像素）、自己决定哪条清屏
+  （`setClearEnabled(false)` 关掉其余）。见 `render-views.md` §6。
+- **顺序的真相在引擎**：`RenderEngine::passOrder(pass)` 返回某条已注册 pass 的执行序（同时回答了"它还在不在"）。
+- **尺寸与窗口也归它**：一块区只有一个尺寸，报一次就够，其余是扇出（`SceneView::onSurfaceResized` 只是转发）。
+  挂上之前视图用自己的公告，摘下来时区把尺寸**交还**给视图（`setSurface(nullptr)` 快照）。设备像素那一层仍是视图
+  算的（按区的尺寸 × 比例），而**形状**是视图相机的（`SceneView::applySurfaceGeometry` 把区的形状 push 给相机）。
+  宿主自建的 pass **没有**视图可喂：它自己给 `pass->setViewport()` 设备像素（它本来就知道尺寸）。
+- **输入只有一个去处**：这块区的那条呈现有视图时就是它（`SurfaceWindow::routedView()`）；没有视图（宿主自建 pass）
+  时 input 什么也不做。按下**总是**捕获（拖出控件不断线），松手之前那次拖拽一直是同一个视图 —— 见
+  `RenderControlTest.TheViewReceivesInputAndADragKeepsSteeringIt`。
+- **清屏不归它管**：区不碰呈现者的清屏策略（一条呈现没有"谁第一"的歧义）。清成什么颜色、要不要清深度由那条 pass
+  说；换背景色改 `pass->setClearColor()` 就行。
+- **生命周期**：视图与区互相**借用**（都不是对方的所有者）—— 视图先死就自己从区上退出去（区回到"还没有呈现"），
+  区先死就把视图那一侧指回清掉（并把尺寸交回视图）。所以扔掉视图 = 撤掉它的呈现，`dismiss()` 是显式写法。
+- **被拒的声明**（记一条 `PassProtocolViolation`，不静默）：视图挂在**别的引擎**上（它的 pass 注册在另一帧上，
+  永远画不到这块区）；区上**已经有**别的呈现（一块区只画一幅画）；视图已经服务着**另一块**区。
 
 ### 3.12 看一眼这一帧：`RenderEngine::framePlan()`
 

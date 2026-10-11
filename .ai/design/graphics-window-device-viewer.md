@@ -128,9 +128,9 @@
 目标**；没有目标就没有解析、没有取像、没有 present。S4b 已经让"窗口"在后端契约里可选（#3、#7），本文只是
 把这件事在**设备**这一层也说清（`presentation == false` 是一等形态，不是错误）。
 
-### Q5 谁管多视图？——**appfw 的 `Viewer` 管 N 个 `View`；事实留在 `RenderSurface`**（**已落地 2026-10-11：S8**）
+### Q5 谁管多视图？——**先按"一块区 N 个 View"落地（S8），当晚裁决：多格下线，一块区只画一幅画**
 
-- **为什么需要一个"管多个视图"的对象**：预设今天挂在**控件**上 ⇒ "四分屏每格各自预设"只能变成四控件 = 四设备
+- **为什么需要一个"管多个视图"的对象**（S8 的原始动机）：预设今天挂在**控件**上 ⇒ "四分屏每格各自预设"只能变成四控件 = 四设备
   （与 §12.1 冲突）。多格预设今天**无处可放**。
 - **为什么它不能变成第二个 owner**：视图集合与矩形的事实已经在 `RenderSurface`（#5）⇒ `Viewer` **读表**拿
   视图集合与矩形，自己不存第二份（S6 的教训）；它只持"**每格的请求**"（`ViewerOptions`）+ 路由策略 + 比例来源。
@@ -145,6 +145,20 @@
   pass ⇒ false）/ `takeArea()`（attach 时给没有链的格子建链再声明；有宿主 pass 就让位，什么都不建）。
   `RenderControl::viewer()` 把它交出去，老三条（`viewerOptions`/`setViewerOptions`/`setShadingMode`）保留为"作用于
   第一格"的转发。判据与变异见 `.ai/memory/appfw.md` / `.ai/memory/graphics.md` 顶部 S8 条。
+- **后续裁决（2026-10-11 晚，推翻上面一半）：多格下线，一块区只画一幅画。** 理由与取舍：
+  - **一帧里两条都画默认帧缓冲的 pass 会互相擦**；"谁第一、谁清屏"的合并只有**静默**的默认行为（后端只认第一条公告），
+    而"点归谁、谁有焦点"这两件事在真实需求里还没出现（当前只有一块窗口、一幅画面）。
+  - 留什么：**"哪条 pass 画这块窗口"仍是显式声明**（`present(SceneView&)` / `present(RenderPass*)`）—— 它防的正是
+    §1 那条"全局猜、第二个共用相机的视图被静默丢掉"；**尺寸的唯一 owner**（`resize`）；**目标（窗口）的持有**
+    （`bindTarget/target`）。删什么：`present(view, rect)`、`setViewport`、`presentations()`、`Presentation::rect`、
+    `viewAt`、`focus`/`focusedView`、`RenderControl::setInputRouter`/`focusedView`、`Viewer` 的多格入口
+    （`addView(rect,...)`/`removeView`/`views()`/`setPaneRect`/带 `view` 参数的三个入口）、`SceneView` 自己的矩形
+    （`viewport()/setViewport`：区就是它的画面，一个矩形说得清）。
+  - 新增的两条硬规则：**一块区只画一幅画**（第二条呈现被拒 + 报一次）；**接管要显式**（先 `viewer()->release(view)`
+    再声明宿主自己的 pass，或声明先落再 attach —— 见 `takeArea`）。
+  - 要多幅画面的应用**自己说清接线**（自己算矩形、自己给 pass 子视口、自己决定哪条清屏）：见
+    `docs/guides/render-views.md` §6。判据与坑见 `.ai/memory/graphics.md` / `.ai/memory/appfw.md` 顶部"多格下线"条。
+
 
 ### Q6 设备共享与多 GPU 谁决定？——**应用层策略；SDK 不注册表**
 
@@ -199,7 +213,7 @@
 | Device : Engine | 1 : N | 共享显存/编译 |
 | Engine : 区（`RenderSurface` + `Viewer`） | 1 : 1 | 帧的单位 |
 | View : Engine | **N : 1** | 多格必须同帧 |
-| Viewer : View | 1 : N | 区的视图集合 |
+| Viewer : View | **1 : 1**（2026-10-11 晚：多格下线，早先的 1:N 已推翻，见 Q5） | 区的那一条请求 |
 | View : Pipeline | N : 1 允许，默认 1 : 1 | 一条链给两格 = 两格同一幅画（显式） |
 | View : Target（经链） | N : M | 离屏目标属于链 |
 
@@ -213,7 +227,7 @@
 
 | 片 | 内容 | 判据 | 依赖 |
 | --- | --- | --- | --- |
-| **S8（appfw）** | **已落地 2026-10-11**：`Viewer` 管 N 个 `View`：每格预设（`ViewerOptions`）、建链/采纳/重建搬运行期选择、路由与焦点、`isActive()` / `release(view)`；`RenderControl` 收窄成"原生面 + 会话 + 尺寸/DPR + 帧驱动 + `viewer()`"，老三条保留为"作用于第一格"的转发；`SurfaceWindow` 把 viewer 那一段与状态搬出去 | **实测**：`test_gui` 259（254 + 5 条新用例：同表面两格各自预设〔设备/引擎数不变〕/ 宿主自建 pass 声明后 `isActive() == false`〔声明先落 + 上线后接管两种次序〕/ `release(view)` 后表里没有它 / 重建搬运行期选择 / 两格的路由与焦点）；其余套件计数不掉（graphics 360 / vsg 426 = 421+3 skip+2 已知红 / appfw 32 / meshio 34 / iobase 94）；全量 Release 0 error / 0 warning；五 gate 0 finding。**变异 5/5 红**：重建不搬运行期选择 / 两格共用一份请求 / `release` 不撤声明 / `views()` 不读表 / `takeArea` 不让位 ⇒ 各自单独实测，只有目标用例红 | 无 |
+| **S8（appfw）** | **已落地 2026-10-11；当晚按 Q5 的后续裁决收窄（多格下线，一块区只画一幅画）**：`Viewer` 管这块区的**一条请求**（`ViewerOptions`）、建链/采纳/声明/重建搬运行期选择、`isActive()` / `view()` / `release(view)` / `takeArea()`；`RenderControl` 收窄成"原生面 + 会话 + 尺寸/DPR + 帧驱动 + `viewer()`"，老三条保留为转发；`SurfaceWindow` 把 viewer 那一段与状态搬出去 | **S8 当时的实测**：`test_gui` 259（254 + 5 条新用例：同表面两格各自预设〔设备/引擎数不变〕/ 宿主自建 pass 声明后 `isActive() == false` / `release(view)` 后表里没有它 / 重建搬运行期选择 / 两格的路由与焦点）；graphics 360 / vsg 426 = 421+3 skip+2 已知红；**变异 5/5 红**（重建不搬运行期选择 / 两格共用一份请求 / `release` 不撤声明 / `views()` 不读表 / `takeArea` 不让位）。**收窄后的实测（取代上面这一行）**：`test_gui` **257**（261 − 4：删 3 条路由/分屏用例、两条输入用例合成 1 条）、`test_graphics` **356**（364 − 8：删分屏/矩形/`viewAt`/焦点/清屏合并，新增"一块区只画一幅画"与"区不碰呈现者的清屏策略"）、`test_vsg` **429** 未动（424 + 3 skip + 2 已知红）、appfw 32 / meshio 34 / iobase 94 不掉；全量 Release 0 error / 0 warning；五 gate 0 finding（`--strict` 仍 13 条既有路径漂移）。当时那 5 条变异里仍成立的两条（重建不搬运行期选择 / `release` 不撤声明）在收窄后照旧红，另两条（两格共用一份请求 / `views()` 不读表）随面一起删 | 无 |
 | **S9（graphics 半步，可逆）** | **已落地 2026-10-11**：引擎公开面拿掉裸句柄（`setWindowHandle`/`resize` 删），改由区绑目标（`RenderSurface::bindTarget` / `targetHandle` / `hasTarget`；`RenderSurface::resize` 成为**唯一**的尺寸公告：帧上下文 + 窗口那一半）；契约注释写入 §5 的规则（区域:窗口 1:1、重公告=搬移、解绑、帧尾 present）；`Capabilities` 加 `presentation`（本片由引擎按"后端有没有窗口那一半"答出：插件不动） | **实测**：`test_graphics` **362**（360 + 2：`AReAnnouncedHandleMovesTheWindowAndTheDeviceStays` / `TheAttachHandsOverTheAreasCurrentWindow`；S4b 的三条改形为按区公告，两条尺寸用例改形到区）；无呈现意图的设备上绑目标**被拒 + 报一次**（连报也只一条）；离屏设备上 `executeFrame` 仍成立；其余套件计数不掉（gui 259 / vsg 426 = 421+3 skip+2 已知红 / appfw 32 / meshio 34 / iobase 94）；全量 Release 0 error / 0 warning；五 gate 0 finding（`--strict` 22）。**变异 4/4 红**：① 不拒（无窗口那一半也收下）⇒ `BindingATargetOnAWindowlessBackendIsRefusedOnce` 红；② 不报（拒得静默）⇒ 同条红；③ 引擎仍读自己那份句柄 ⇒ `AReAnnouncedHandleMovesTheWindowAndTheDeviceStays` 红；④ 尺寸不走区 ⇒ 4 条红 | 无（插件不动） |
 | **S10a（graphics + appfw + 插件半步，已落地 2026-10-11）** | 拆 `RenderDevice` / `RenderFrameExecutor` / `RenderSurfaceTarget` 三张契约（各自一个头文件；`RenderBackend` 退成"三面一体的聚合"，仍然是工厂返回、引擎收取、测试双实现的类型）；目标改由**设备**造（`RenderDevice::createSurfaceTarget(handle, why)`，`SurfaceTargetResult` 三因：`NoPresentation` 静默答 / `UnsupportedSurface` / `WindowOccupied` **报一次**），区收**对象**（`RenderSurface::bindTarget`/`target`/`hasTarget`，句柄只是创建输入；重建窗口是**在目标上重公告** `setWindowHandle`，不是第二把目标）；`executeFrame(frame, present_to)` 落地并默认 `nullptr`＝不指名宿主目标（帧的"默认帧缓冲"解析为它；离屏＝没有目标）；引擎改 `setDevice`，`capabilities().presentation` 由设备自己答，尺寸的窗口那一半改由**区→目标**直推（引擎只记帧上下文）；插件仍单窗口、缓存不动（会话→设备的提升是 S10b），但 `createSurfaceTarget` 如实拒第二把并报一次、帧命名外来目标也报一次 | **实测**：全量 Release 0 error / 0 warning；`test_graphics` **364**（362 + 2：`ADeviceThatPresentsNothingAnswersNoTargetSilently` / `AWindowAlreadyServedIsRefusedWithItsReasonOnce` / `OneDeviceServesSeveralAreasWithoutCrossingThem`＋两条 S9 用例改形为设备工厂语义，共 7 条在 `HeadlessBackendTest`）；`test_gui` **261**（259 + 2：控件向设备要窗口的目标〔`target_calls == 1`、句柄是创建输入、帧的 `present_to` 就是区那把目标、帧尾 present 走它〕/ 设备"不呈现"⇒ attach 以理由失败）；`test_vsg` **428** = 423 + 3 skip + 2 已知红（+2：`TheOneWindowADeviceServesIsHandedOutOnceAndTheSecondAskSaysWhy`〔第二次问 ⇒ `WindowOccupied` + 一条 Warning，再问仍一条〕/ `AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce`〔外来目标：不记录、报一次、自己的目标照常 present〕）；appfw 32 / meshio 34 / iobase 94 不掉；五 gate 0 finding（`--strict` 仍 22）。**变异 4/4 红**（各自单独实测）：① 引擎不认区那把目标（只交自己的）⇒ 3 条红；② 区不把尺寸推给目标 ⇒ `OneDeviceServesSeveralAreasWithoutCrossingThem` 红；③ 插件"窗口已被占用"不报 ⇒ `TheOneWindowADeviceServesIsHandedOutOnceAndTheSecondAskSaysWhy` 红；④ 区已有目标时引擎仍去要一把 ⇒ 4 条红。**坑**：`raw_ptr<T>` 就是裸 `T*`（`RenderSurface::target_` 少了 `= nullptr` ⇒ 非确定性 0xc0000005，与 S9 的 `RenderEngine::area_` 同一课）；`intrusive_ptr<RenderSurfaceTarget>` 需要该静态类型的 ADL 计数钩子，而目标由各自的设备拥有 ⇒ **借用指针**（设备拥有、区借用），与 `executor()` 一致 | S9；触发条件命中一条（视图数 >4 / 同内容 2+ 窗口 / 启动开销 × 窗口数 / 跨 GPU 拖动） |
 | **S10b（插件：会话→设备）—— 已推迟（2026-10-11，登记为后期优化项，等触发）** | **推迟理由**：当前应用只有一块窗口 —— 触发条件（视图数 >4 / 同内容 2+ 窗口 / 启动开销 × 窗口数 / 跨 GPU 拖动）**一条都没命中**，命中再落。内容：`VsgBackend` 把 `Session` 的**设备**抽出来成一等设备：窗口与交换链 1:N、`BlockStorage` / `MaterialImages` 上移到设备、时间线/回收随之（现在 `Session` 是"一个窗口、一个设备、一条交换链"，内容世界挂在它那个设备上）；`DeviceDesc{presentation: None\|Handle\|Probe}` 作为创建输入（`None` ⇒ `capabilities().presentation == false`，且 `createSurfaceTarget` 答 `NoPresentation`）；执行器自持帧尾 present（§5 规则 8） | 真设备电池（本机只能跑部分：无头判据先上，设备电池在有 lavapipe 的地方跑并如实记账）；结构判据：两个区共享一个 Device 时只编译一次程序、只上传一份块 | S10a |
@@ -230,7 +244,7 @@
 | 一个窗口多个 Device | 无收益（显存/队列各一份）且要抢窗口独占（平台 1:1） |
 | 设备两段式初始化（先建后"加上"呈现） | Vulkan 队列族不可逆 |
 | 布局树进 SDK | T4：布局归应用层；`Viewer` 只收归一化矩形 |
-| `Viewer` 存第二份视图集合/矩形 | 表已经是事实的唯一 owner（S6 的教训） |
+| `Viewer` 存第二份视图集合/矩形 | 表已经是事实的唯一 owner（S6 的教训）；**2026-10-11 晚起这条更强**：多格下线，区只呈现一个视图，`Viewer` 只有一条请求可存 |
 | 把 `ViewerOptions` 并进 `PipelineOptions` | 意图（"我要坐标轴"）与接线（program 对象、源相机原始指针、像素比）是两个问题；两个值 + 一处单向映射 |
 | SDK 提供全局设备注册表 | 进程唯一状态（§12.1 不变量 1）；设备表是应用策略 |
 
