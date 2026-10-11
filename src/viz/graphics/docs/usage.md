@@ -693,9 +693,17 @@ surface->setViewport(left.get(), vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.2
 left->setViewport(vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.25, 1.0 });   // 同一件事
 left->viewport();                        // 读回来的也是表面上那块（视图不存第二份）
 
-// 这一点归谁（默认输入路由的原料；坐标是**归一化**的 —— 表里没有表面尺寸）
+// 这一点归谁（默认输入路由就是这么算的；坐标是**归一化**的 —— 表里没有表面尺寸）
 vn::graphics::SceneView* under = surface->viewAt(0.75, 0.5);   // 右半 = right
+
+// 用户在哪儿（焦点）：按下时由输入路径写入，命令层拿它回答"当前视图是哪个"
+surface->focus(right.get());                                  // 也可以传 nullptr：清掉显式焦点
+vn::graphics::SceneView* current = surface->focusedView();     // 没人按过 = 第一条呈现
 ```
+
+`RenderControl::focusedView()` 是控件层的那句话（表面没有呈现视图时回退控件自己的视图），五条"显示模式"命令
+改的就是它 —— 分屏时命令作用于**用户正在用的那一格**，而 `MainWindow::setPrimaryRenderControl()` 只回答
+"窗口的 3D 区在哪块控件上"。
 
 - **为什么要有它**：以前"谁呈现"是**推断**出来的（视图问引擎"有没有哪条 pass 携带我这台相机且没有 render target"），
   推断是全局的、顺序敏感的，而且会**静默跳过**共用一台相机的第二个视图。现在它是宿主的一句话。
@@ -707,6 +715,10 @@ vn::graphics::SceneView* under = surface->viewAt(0.75, 0.5);   // 右半 = right
   的尺寸，它按自己的矩形换算），**形状**（aspect）由后端从那条 pass 的 viewport 推（见 §2.4 的 `Camera`）。
   宿主自建的 pass **没有**归一化矩形：它自己给 `pass->setViewport()` 设备像素（它本来就知道尺寸），
   `viewAt()` 也永远不会选中它（它不是视图）。
+- **不装 router 也能分屏**：`RenderControl` 的**默认**路由就是问这张表（`viewAt`）—— 矩形在哪儿，输入就去哪儿
+  （逻辑像素 ÷ 表面尺寸 → 归一化）；只有"矩形说不清"的规则（一条必须保持惰性的边、不规则布局）才用
+  `setInputRouter` 覆盖，它返回 `nullptr` 表示"交回矩形"。按下时**总是**捕获（拖出自己那一格不断线），并且把
+  **焦点**移到那一格：键盘（没有位置可路由）与"当前视图"这类问题都问焦点。
 - **清屏也归这张表**：后端只应用**第一条**清屏公告（其余静默丢弃），所以表面让**第一条呈现**保留自己的清屏、
   把其余条 `setClearEnabled(false)`。它只决定**谁**清：清成什么颜色、要不要清深度仍由那条 pass 说（延迟配方那条
   `present` 屏 pass 自己说不清，就照样不清）。要换背景色改那条 pass 的 `setClearColor` 就行 —— 没有第二份状态。

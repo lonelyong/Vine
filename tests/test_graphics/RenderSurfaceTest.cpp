@@ -316,6 +316,47 @@ TEST(RenderSurfaceTest, AViewThatAlreadyPresentsAnotherSurfaceIsRefused)
     EXPECT_DOUBLE_EQ(second->presentations()[0].rect->width, 0.5);
 }
 
+TEST(RenderSurfaceTest, TheFocusIsThePaneTheInputWentTo)
+{
+    // Which pane the user is working in is a fact about this surface, like the rectangles and the clear: the input
+    // path says which view it routed to, and the table answers "which view does a key / a command mean" - a
+    // question with no position in it, so it cannot be answered by routing again.
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto left    = viewOn(engine.get());
+    auto right   = viewOn(engine.get());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    surface->present(*left, NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });
+    surface->present(*right, NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 });
+
+    // Nothing has been pressed yet: the FIRST presentation is the answer, so a surface always names a view.
+    EXPECT_EQ(surface->focusedView(), left.get());
+
+    EXPECT_TRUE(surface->focus(right.get()));
+    EXPECT_EQ(surface->focusedView(), right.get());
+
+    // A view that presents nothing here is not a pane of this surface (its rectangle could not be read), so it
+    // cannot take the focus - and the focus does not move.
+    auto stranger = viewOn(engine.get());
+    EXPECT_FALSE(surface->focus(stranger.get()));
+    EXPECT_EQ(surface->focusedView(), right.get());
+
+    // Clearing the explicit focus brings the default back.
+    EXPECT_TRUE(surface->focus(nullptr));
+    EXPECT_EQ(surface->focusedView(), left.get());
+
+    // The focused pane going away leaves no dangling answer.
+    EXPECT_TRUE(surface->focus(right.get()));
+    EXPECT_TRUE(surface->dismiss(right.get()));
+    EXPECT_EQ(surface->focusedView(), left.get()) << "the dismissed pane's focus goes with it";
+
+    // ... and neither does a presentation whose pass left the frame (the pipeline that built it was dropped): it
+    // is still declared here, but it draws nothing, so it cannot be what "the current view" means.
+    EXPECT_TRUE(surface->focus(left.get()));
+    engine->removePass(left->pipeline()->windowPass());
+    EXPECT_EQ(surface->focusedView(), nullptr) << "no live presentation has a view left";
+}
+
 /**
  * @brief The ONE clear of a surface: the first presentation announces it, and the surface does not own a colour.
  *

@@ -164,16 +164,34 @@ class VN_APPFW_API RenderControl : public Control {
      */
     vn::async::Task<bool> initAsync();
 
+    /** @brief Gets the view the user is working in: the surface's FOCUS (see RenderSurface::focus).
+     *
+     * A press decides it - the pane the pointer went down in, whether the point was routed by the surface's
+     * rectangles (the default) or by a router this host installed - and it stays until another press moves it, so
+     * a key, a command or a menu action can ask "which view does this mean" without a position to route by.
+     *
+     * This is the answer for that question; it is NOT a second input router (nothing here routes events). A
+     * control whose surface has no view presentation at all (a host that presented its own main pass) answers with
+     * its own view - the same fallback input uses.
+     *
+     * @return The focused view, or this control's own view when nothing (drawable) is focused.
+     */
+    vn::graphics::SceneView* focusedView() const;
+
     /** @brief Sets which view receives the surface's input, by position.
      *
-     * The control hosts ONE surface, and by default that surface's input goes to ONE view: the one this control
-     * built (view()). A host that splits the surface between several views (see SceneView::setViewport) is the only
-     * one who knows the layout, so it states it here - one function answering "this point belongs to whom":
+     * The control hosts ONE surface, and by default that surface's input goes to the view whose RECTANGLE holds the
+     * point: a host that splits the surface states each pane once - `surface()->present(view, rect)` - and input
+     * follows from it (RenderSurface::viewAt), with no second statement of the layout to keep in step. A point that
+     * no pane holds (or a surface that is not laid out yet) goes to the one view this control built (view()).
+     *
+     * A host with a rule the rectangles cannot state (an irregular layout, a view that owns a widget's border, a
+     * pane that must be inert) overrides that here - one function answering "this point belongs to whom":
      *
      * @code
+     * // The rectangles are the layout; this only says where the layout is not enough (a strip that stays inert):
      * control->setInputRouter([&](int x, int y) {
-     *     const double nx = double(x) / double(std::max(1, control->width()));
-     *     return nx < 0.5 ? left : right;   // each view knows its own viewport().contains(nx, ny)
+     *     return is_reserved_strip(x, y) ? control->view() : nullptr;   // nullptr = "not mine"
      * });
      * @endcode
      *
@@ -187,21 +205,21 @@ class VN_APPFW_API RenderControl : public Control {
      *   two views at once (rotate one pane with the left while the right pans another), and releasing one of them
      *   does not end the other's drag - a view that never saw its release would keep steering its camera on hover.
      *   The release is delivered to the view that STARTED that drag, wherever the pointer is by then.
+     * - **the press also moves the FOCUS** (see focusedView): the pane the user pressed in is the pane a key or a
+     *   command means from then on. It moves for a routed press and for a routed-by-router one alike.
      * - **hover motion, the wheel and the keyboard** do not capture: they route per event (the wheel), or go to the
-     *   captured view when a drag is in flight (motion), or to the captured view, else to the control's own view
+     *   captured view when a drag is in flight (motion), or to the focused view, else to the control's own view
      *   (keys - there is no position to route by).
      * - the coordinates are the surface's LOGICAL pixels, top-left origin - the same space control->width() /
      *   height() report (the surface fills this control's widget).
-     * - returning nullptr means "not mine": the control falls back to its own view, so a router that is wrong about
-     *   a region still leaves the surface interactive.
+     * - returning nullptr means "not mine": the default routing by rectangle applies, so a router that only claims
+     *   the regions it knows about leaves the rest of the surface interactive.
      * - the returned view must belong to this control's engine (view()->engine()). A view bound elsewhere cannot
      *   receive this surface's coordinates; that is reported on the engine's diagnostic route and the event falls
      *   back to the control's own view.
      *
-     * Without a router this is exactly the single-view behaviour it always was: every event goes to view().
-     *
      * @param router Function taking a point (x, y) in logical surface pixels and returning the view that owns it;
-     *               an empty function restores the default (always view()).
+     *               an empty function restores the default (the surface's rectangles).
      */
     void setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router);
 

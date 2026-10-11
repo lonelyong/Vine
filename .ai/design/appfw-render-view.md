@@ -419,7 +419,7 @@ class VN_GRAPHICS_API Scene {
 | 控件替宿主装灯/拥有场景 | **不要**（场景归宿主） |
 | 控件要不要一行工厂 `create(...)` | **不要**。它模糊所有权，而第 3 行本来就属于场景；3 行已经够短（§7） |
 | 控件**表面侧的改动** | 把 `devicePixelRatio()` 与尺寸**一起**推给视图：`view()->onSurfaceResized(w, h, devicePixelRatio())`（两个调用点），并在比例变化时重推 |
-| 控件要不要**输入路由** | **要一个，但只是一个"这一点归谁"的回调**：`setInputRouter(std::function<SceneView*(int x, int y)>)`，默认（未设）= 一切都给自己的 `view()` ⇒ 单视图逐字不变。**放进 `Impl`**（`std::function`，不是 `Signal`）⇒ 公开面零新数据成员、ABI 不动。理由：多视图的**布局是宿主定的**，控件手里只有"表面 + 尺寸"，没有命中知识。**已落地** |
+| 控件要不要**输入路由** | **要一个，但只是一个"这一点归谁"的回调**：`setInputRouter(std::function<SceneView*(int x, int y)>)`。**放进 `Impl`**（`std::function`，不是 `Signal`）⇒ 公开面零新数据成员、ABI 不动。**已落地**。**M5a 修正（2026-10-11）**：它不再是**唯一**通路 —— 默认路由**问表面**（`RenderSurface::viewAt`，矩形就是路由表，M2d 之后矩形就住在表上），回调降级成"矩形说不清时才写"的**覆盖**（返回 `nullptr` = 交回矩形，不再等于"回退自己的视图"）。原稿写的"控件手里只有表面 + 尺寸、没有命中知识"仍成立：命中知识现在归**表面**那张表（唯一的 owner），不是在控件里再存一份 |
 | 控件要不要**连续渲染** | **要，一档而已**：`setContinuousRendering(on, interval_ms = 16)`。按需渲染仍是默认（attach / resize / 输入 / `renderFrame()` 才出帧），连续是给动画、仿真、要能读的读数用的。它是**帧驱动**不是帧率保证（滴答"要一帧"，一帧该多久多久）；未 attach 或表面未 exposed 时滴答**免费**（写明，不是静默）。**已落地** |
 | 控件的**初始化时机** | **构造只组装**（引擎 + 视图 + 诊断路由），不选后端、不 attach；attach 由宿主显式 `init()`（同步、优先）或第一拍兜底（§2.3、期 S0）。所以"`new` 之后立刻配置"永远有效，控件不新增任何配置 API |
 
@@ -604,7 +604,7 @@ HUD 档）、`Scene`+`LightRig`、`SurfaceWindow`（S0 的兜底 attach、比例
 | 把表面/窗口搬进 graphics | **不做**：graphics 保持 Qt-free；表面由 appfw + 后端分职 |
 | `SceneView::Options` 上加预设工厂（`shaded()`/`withHud()`） | **不做**：聚合 + 指定初始化器已经够（`{ .gizmo = true, .stats = true }`），少一批名字 |
 | 把视口 / 尺寸 / 比例**塞进 `Options`**（"一层一个旋钮"顺手统一） | **不做**：那会把**每帧都可能变**的几何挂上"变更即重建"的代价（J8）；配方与几何分开是行业口径（Unity `Camera.rect` vs URP Asset） |
-| 让 `RenderControl` 自己按视口做命中测试（控件存一份视图列表） | **不做**：控件的布局知识不如宿主，而且会与引擎的 pass 表重复记账；用 `setInputRouter`（§5，ABI 安全） |
+| 让 `RenderControl` 自己按视口做命中测试（控件存一份视图列表） | **不做**：控件的布局知识不如宿主，而且会与引擎的 pass 表重复记账；用 `setInputRouter`（§5，ABI 安全）。**M5a 之后更清楚的边界**：控件**不存**视图列表，它问的是**表面**那张呈现表（`viewAt`）—— 命中知识只有一个 owner（表面），控件只是转发者；宿主仍可用回调覆盖 |
 | 给输入路由加 `Signal`（`pointerPicked` 之类） | **不做**：`Signal` 是数据成员 ⇒ ABI 断；`Impl` 里的 `std::function` 已经够，而且"谁定点"是一次同步问答，不是事件广播 |
 | 把 HUD 的显示 / 隐藏做成"改 `Options` 再重建" | **不做**：把最轻的操作挂上最重的代价。保留式管线的行业口径是"可见性 = 持久对象上的运行时标志"（VTK `SetVisibility` / Qt3D framegraph `setEnabled` / Blender overlay 开关）（§4.1） |
 | 让 `RenderControl` 管 HUD 开关（`control->showFps(true)`） | **不做**：HUD 是**视图**的属性（一块分屏一处读数、多视图各不同），而且控件不碰管线与设置（§5） |
@@ -694,7 +694,14 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 1. **视口（几何，S1 落地）**：归一化矩形 `{x,y,w,h}` ∈ [0,1]，默认 `{0,0,1,1}` = 铺满 = 今天的行为。
    改它**不重建管线**（J8）；默认窗 pass 只把归一化矩形换算成设备像素写进自己那条 pass。
    代价为零，收益是把"分屏拖动"从"每帧重建"里救出来。
-2. **输入路由（已落地）**：控件里一个"这一点归谁"的回调；未设时一切都给自己的 `view()`，单视图行为逐字不变；分屏时宿主两行命中（`view->viewport().contains(nx, ny)`）。语义：**按下时路由、松开前捕获**，捕获期间控件持有那个视图；滚轮按点路由（为此 `ScrollEvent` 补了 `x`/`y`）；键盘给"捕获中的 / 自己的"视图。返回 `nullptr` = 回退自己的视图；返回别的引擎的视图 = 记一条诊断并回退。
+2. **输入路由（已落地；M5a 起默认由矩形推）**：**默认**问表面那张呈现表（`RenderSurface::viewAt`：分屏只要
+   `present(view, rect)`，命中知识只有一个 owner），没命中才回退控件自己的 `view()`；"矩形说不清"时用
+   `setInputRouter`（`std::function`，放 `Impl`）覆盖，返回 `nullptr` = 交回矩形。语义：**按下时路由、松开前捕获**
+   （按下**总是**捕获 —— 分屏拖拽越界不断线），捕获期间控件持有那个视图；滚轮按点路由（为此 `ScrollEvent` 补了
+   `x`/`y`）；**键盘给焦点视图**（M5a：没有位置可路由，所以给"用户最后按过的那一格" —— `RenderSurface::focus`
+   / `focusedView()`，默认第一条呈现）。返回别的引擎的视图 = 记一条诊断并回退。
+   给命令层的接口是 `RenderControl::focusedView()`（五条显示模式命令改的就是它；`primaryRenderControl()` 只回答
+   "窗口的 3D 区在哪块控件上"）。钉子 `RenderControlTest.TheSurfacesRectanglesRouteInputWithNoRouterAtAll`。
 3. **清屏策略（宿主的；而且是后端逼出来的）**：后端用 **attachment loadOp 整张清**（`OffscreenTarget.cpp:107`、
    `WindowTarget::prepare(policy)`），**没有按矩形清**（`vkCmdClearAttachments` + rect）⇒ 分屏必须**恰好一个**视图清，
    而且**它的 pass 要排在最前**（清屏发生在其它 pane 画之前；pane 的几何被 scissor 限在自己矩形里，所以
@@ -715,13 +722,17 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 > 是**过渡形态**。按三维规范重写的目标见 `graphics-render-next.md` §3.2：**清屏与顺序归表面**（`RenderSurface` +
 > 呈现表）、**矩形归呈现条目**（`Surface::present(view, rect)`，`SceneView::setViewport` 转发）、
 > **aspect 出相机**，于是同一台相机可以跨矩形复用。分片进度：**M2a 谁呈现 / M2b 清屏归表面 / M2c aspect 出相机 /
-> M2d 矩形放呈现条目 已落地（2026-10-11）**，输入路由与焦点视图并入 M5。
-> **落地后本节有三条已过期**：①"aspect 存在相机里"不成立 —— `Camera` 只持观看与投影参数
+> M2d 矩形放呈现条目 / M5a 输入按矩形推 + 焦点视图 已落地（2026-10-11）**；M5b（分屏布局的所有者 + 窗口级焦点）
+> 仍未落地 —— 所以"谁 split、谁销毁、谁给每格喂尺寸"今天仍是宿主的事。
+> **落地后本节有四条已过期**：①"aspect 存在相机里"不成立 —— `Camera` 只持观看与投影参数
 > （`projectionMatrix(aspect)` 现算、`aspectRatio()` 删除），形状由后端一处推导
 > （`RenderBackend::viewAspect()`：pass 的 viewport，否则目标 / 表面尺寸），剔除与 view block 读同一个数；
 > ②`SceneView::applySurfaceGeometry()` 不再往相机里推 aspect（矩形照旧由它换算成设备像素）；
 > ③"矩形挂在视图上"只对**没呈现表面**的视图成立 —— 绑了表面的视图把矩形写在表面那张表上（`SceneView::viewport()`
-> 读表），`SceneView::setViewport` 转发。本节其余内容仍然为真。
+> 读表），`SceneView::setViewport` 转发；
+> ④"输入未设路由时一切都给自己的 `view()`"不成立 —— 默认路由**按矩形推**（`SurfaceWindow::routedView` 问
+> `RenderSurface::viewAt`），按下即焦点（`focusedView()`）；`setInputRouter` 只是覆盖。
+> 本节其余内容仍然为真。
 
 **额外视图要显式要默认管线**：`ensureWindowPass()` 是"**我要**这条默认管线"的动作，`setOptions()` 只改配方。
 控件**自己**那个视图由 attach + 表面的兜底声明触发（§2.2）；宿主新建的视图没有 attach 事件 ⇒ 自己声明一次

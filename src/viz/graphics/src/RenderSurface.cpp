@@ -129,6 +129,13 @@ bool RenderSurface::dismiss(raw_ptr<SceneView> view)
     }
     const NormalizedViewport rect = entry->rect;
     entries_.erase(entry);
+    if (focused_ == view) {
+        // The focused pane is gone: forget it. What it buys is not the answer (the search in focusedView() could not
+        // find a dismissed entry either, and that is what makes the two of them agree) but SAFETY: the pointer must
+        // not stay around to be compared with a view allocated later at the same address, which would hand a fresh
+        // pane a focus nobody gave it.
+        focused_ = nullptr;
+    }
     // Called from ~SceneView as well: the view stops naming this surface (it may be half gone - nothing here
     // touches it beyond this pointer), and what is left of the table re-states its clear. The rectangle goes back
     // to the view - it must come off the surface BEFORE the view is told, or the view would read the rectangle
@@ -193,6 +200,45 @@ NormalizedViewport RenderSurface::viewportOf(raw_ptr<const SceneView> view) cons
         }
     }
     return NormalizedViewport{};
+}
+
+bool RenderSurface::focus(raw_ptr<SceneView> view)
+{
+    if (view == nullptr) {
+        focused_ = nullptr;
+        return true;
+    }
+    // Focus is a pane of THIS surface: a view that presents nothing here has no rectangle to be focused in (it is
+    // the host's own view drawing through a pass it declared, say), so remembering it would answer later questions
+    // - which view does this key belong to, which view does this command mean - with a view this table cannot
+    // describe.
+    for (const Entry& entry : entries_) {
+        if (entry.view == view) {
+            focused_ = view;
+            return true;
+        }
+    }
+    return false;
+}
+
+raw_ptr<SceneView> RenderSurface::focusedView() const
+{
+    const std::vector<Resolved> live = resolvedEntries();
+    // The focused view has to be a presentation of the frame the engine would draw NOW: a pump that dropped the
+    // pass (a disabled recipe, a dismissed presentation) must not keep the focus on a picture nobody draws.
+    if (focused_ != nullptr) {
+        for (const Resolved& entry : live) {
+            if (entries_[entry.index].view == focused_) {
+                return focused_;
+            }
+        }
+    }
+    for (const Resolved& entry : live) {
+        if (entries_[entry.index].view != nullptr) {
+            return entries_[entry.index].view;
+        }
+    }
+    return nullptr;
 }
 
 std::vector<RenderSurface::Resolved> RenderSurface::resolvedEntries() const

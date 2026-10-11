@@ -35,7 +35,10 @@ vn::async::Task<vn::appfw::CommandResult> ShadingModeCommand::execute(vn::appfw:
     // 守卫二：模式是**视图**的设置，而视图只在真的被显示过之后才存在/才算数。
     auto* window  = vn::appfw::gui::MainWindow::current();
     auto* control = window != nullptr ? window->primaryRenderControl() : nullptr;
-    auto* view    = control != nullptr ? control->view() : nullptr;
+    // 改的是**焦点视图**：用户最后按下过的那一格（分屏就是多条呈现里被他点中的那一条）。没有任何输入时控制器
+    // 的回答是自己的视图，所以单视图那条路一字未变；`primaryRenderControl()` 只回答"窗口的 3D 区在哪块控件上"，
+    // 不再决定改哪个视图（见 ShadingModeCommands.hpp 的说明）。
+    auto* view = control != nullptr ? control->focusedView() : nullptr;
     if (view == nullptr) {
         co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::NotApplicable,
                                            vn::String(u8"还没有活动的 3D 视图：把这份模型显示出来再试"));

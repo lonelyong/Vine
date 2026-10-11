@@ -477,32 +477,46 @@ void SurfaceWindow::tickContinuous()
 
 vn::graphics::SceneView* SurfaceWindow::routedView(int x, int y)
 {
-    if (d->input_router == nullptr) {
-        return d->view.get();
+    if (d->input_router != nullptr) {
+        vn::graphics::SceneView* const chosen = d->input_router(x, y);
+        if (chosen == nullptr) {
+            // "Not mine" is a legitimate answer (the caller only claims the regions it knows about): the surface
+            // stays interactive instead of silently swallowing the event.
+            return d->view.get();
+        }
+        if (chosen != d->view.get() && chosen->engine() != d->engine.get()) {
+            // Input coordinates only mean something on the surface they came from, so a view bound to another engine
+            // cannot be steered by this one. Say so once, then behave (the contract states it; see setInputRouter).
+            if (!d->input_router_misuse_reported) {
+                d->input_router_misuse_reported = true;
+                if (d->engine != nullptr) {
+                    d->engine->reportEngineProblem(
+                        vn::graphics::DiagnosticSeverity::Warning,
+                        vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                        u8"RenderControl::setInputRouter returned a view bound to another engine: input coordinates "
+                        u8"only mean something on the surface they came from (the event went to this control's own "
+                        u8"view)");
+                }
+            }
+            return d->view.get();
+        }
+        return chosen;
     }
 
-    vn::graphics::SceneView* const chosen = d->input_router(x, y);
-    if (chosen == nullptr) {
-        // "Not mine" is a legitimate answer (the caller only claims the regions it knows about): the surface stays
-        // interactive instead of silently swallowing the event.
-        return d->view.get();
-    }
-    if (chosen != d->view.get() && chosen->engine() != d->engine.get()) {
-        // Input coordinates only mean something on the surface they came from, so a view bound to another engine
-        // cannot be steered by this one. Say so once, then behave (the contract states it; see setInputRouter).
-        if (!d->input_router_misuse_reported) {
-            d->input_router_misuse_reported = true;
-            if (d->engine != nullptr) {
-                d->engine->reportEngineProblem(
-                    vn::graphics::DiagnosticSeverity::Warning,
-                    vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                    u8"RenderControl::setInputRouter returned a view bound to another engine: input coordinates only "
-                    u8"mean something on the surface they came from (the event went to this control's own view)");
-            }
+    // No host router: the SURFACE answers, from the rectangles its presentations were declared with
+    // (RenderSurface::viewAt) - a split states where each pane is once (RenderSurface::present(view, rect)) and
+    // input follows, with no second statement of the layout to keep in step. The table holds normalized
+    // rectangles and no surface size, so the conversion is here, where the logical size the events come in is.
+    if (d->surface != nullptr && d->last_width > 0 && d->last_height > 0) {
+        const double nx = static_cast<double>(x) / static_cast<double>(d->last_width);
+        const double ny = static_cast<double>(y) / static_cast<double>(d->last_height);
+        if (vn::graphics::SceneView* const owner = d->surface->viewAt(nx, ny)) {
+            return owner;
         }
-        return d->view.get();
     }
-    return chosen;
+    // Nobody owns the point (outside every pane, or the surface has not been laid out yet): this surface's own
+    // view, which is the single-view behaviour this has always been.
+    return d->view.get();
 }
 
 void SurfaceWindow::pushToView(vn::graphics::SceneView* target, const vn::window::MouseEvent& event)
@@ -558,9 +572,15 @@ void SurfaceWindow::handleMouse(const vn::window::MouseEvent& event)
         const auto index                      = static_cast<std::size_t>(event.button);
         d->held_buttons |= Impl::bitFor(event.button);
         d->last_press = event.button;
-        d->captured_views[index] =
-            d->input_router != nullptr ? vn::intrusive_ptr<vn::graphics::SceneView>(routedView(event.x, event.y), true)
-                                       : vn::intrusive_ptr<vn::graphics::SceneView>();
+        // A press always captures the view it routed to - now that a pane can be one of several, a drag that
+        // wanders out of its rectangle must keep steering it (and the held reference keeps that view alive while
+        // it is being steered even if the host lets go of its own). It is also what focus means: where the user
+        // last pressed is the pane a key or a command talks about (see RenderSurface::focus).
+        vn::graphics::SceneView* const pressed = routedView(event.x, event.y);
+        if (d->surface != nullptr) {
+            (void)d->surface->focus(pressed);
+        }
+        d->captured_views[index] = vn::intrusive_ptr<vn::graphics::SceneView>(pressed, true);
     }
 
     // Where this event goes: the drag belonging to the button it carries (so a release lands on the view that
@@ -598,8 +618,13 @@ void SurfaceWindow::handleScroll(const vn::window::ScrollEvent& event)
 void SurfaceWindow::handleKey(const vn::window::KeyEvent& event)
 {
     // A key has no position to route by: it goes to the view the pointer captured (a keyboard modifier during a
-    // drag belongs to that drag), else to this surface's own view.
-    pushToView(d->dragTarget() != nullptr ? d->dragTarget() : d->view.get(), event);
+    // drag belongs to that drag), else to the FOCUSED pane (the one the user last pressed in - a key is about the
+    // view the user is working in, not about where the pointer happens to hover), else to this surface's own view.
+    vn::graphics::SceneView* target = d->dragTarget();
+    if (target == nullptr && d->surface != nullptr) {
+        target = d->surface->focusedView();
+    }
+    pushToView(target != nullptr ? target : d->view.get(), event);
     renderFrame();
 }
 

@@ -241,6 +241,15 @@
   操纵器会卡在"正在拖"，之后**纯悬停**也继续转相机）。释放事件按"它自己那个按钮的捕获"投递（指针漂到别处也还给
   发起者），带按钮的位移给"最近一次按下且还在飞的那个拖拽"，滚轮/无按钮悬停按点路由。钉子：
   `RenderControlTest.ReleasingOneButtonDoesNotEndTheOtherButtonsDrag`（变异验证：把释放改回"清空全部捕获" ⇒ 该用例失败）。
+  补丁（M5a，2026-10-11）：**默认路由改成问表面** —— 没有 router 时 `routedView()` 用 `RenderSurface::viewAt()`
+  （逻辑像素 ÷ 表面尺寸 → 归一化；表里只有归一化矩形，因为表面不持尺寸），**矩形就是路由表**：分屏只要
+  `surface()->present(view, rect)`，一条回调都不用写；`setInputRouter` 从"唯一通路"降级成**覆盖**（返回 `nullptr`
+  = 交回矩形，不再等于"回退控件自己的视图"）。**按下总是捕获**（以前只在装了 router 时才捕获）：分屏的拖拽越出
+  自己那格不能断线。**按下即焦点**：`RenderSurface::focus(view)`（`focusedView()` 默认第一条呈现、撤掉的或 pass
+  不在帧里的不算），**键盘**因此改去**焦点视图**而不是"捕获中的 / 自己的"视图；`RenderControl::focusedView()`
+  = 表面的焦点，没有呈现视图时回退控件自己的视图。钉子：`RenderControlTest.TheSurfacesRectanglesRouteInputWithNoRouterAtAll`
+  （不装 router：右半拖拽只动右边那格、左半按下动自己的视图、键盘跟着焦点走；变异验证：默认路由不看矩形 / 按下不设
+  焦点 / 键盘绕过焦点 ⇒ 各自失败）。
 - **渲染视图 v2 已落地（S0–S4，2026-10-11）**：`SceneView::Options{path,gizmo,stats}` + `setOptions/options` + `pipeline()`；
   **几何** `setViewport(NormalizedViewport)`（视图内一处把 {viewport × 表面尺寸 × 比例} 换算成相机宽高比 / 窗口 pass 视口 /
   离屏与 HUD 尺寸 / layout 步尺寸）+ `onSurfaceResized(w,h,ratio)` 重载 + 三参数 `addSurfaceLayout`；**开关**
@@ -268,9 +277,10 @@
   "several views may share one engine"，给每个 pass `setViewport`（**设备像素**）+ 恰好一个 `setClearEnabled`，
   自己建的 pass 在表面上声明后默认窗口管线就不被建（`RenderSurface`，见 2026-10-11 M2a 条）；视口随表面尺寸更新走 `addSurfaceLayout()`。
   （2026-10-11 补的设计，见 `.ai/design/appfw-render-view.md` §12）**缺件变成两件已设计 + 一件是策略**：
-  ①输入路由 = `RenderControl::setInputRouter`（**按下时路由、松开前捕获**；默认 = 自己的 `view()`，单视图行为不变；
-  放 `Impl` 里的 `std::function` ⇒ ABI 不动）②视口 = `SceneView::setViewport`（**归一化 [0,1]**，与 Unity `Camera.rect` /
-  VTK `SetViewport` 同口径；**几何，改它不重建**，S1 落地）③清屏策略仍是宿主的（恰好一个视图清，不进 `Options`）。
+  ①输入路由 = `RenderControl::setInputRouter`（**按下时路由、松开前捕获**；放 `Impl` 里的 `std::function` ⇒ ABI
+  不动；**M5a 起它只是覆盖** —— 默认按矩形推，见上面的 M5a 条）②视口 = `SceneView::setViewport`（**归一化 [0,1]**，
+  与 Unity `Camera.rect` / VTK `SetViewport` 同口径；**几何，改它不重建**，S1 落地）③清屏策略仍是宿主的
+  （恰好一个视图清，不进 `Options`）。
   多窗口的**目标态**是"一进程一设备、N 交换链"（Filament/VTK/OSG/Unreal/Unity 口径），现状"一控件一设备"是刻意的
   过渡（命中 ①视图数 > 4、②同一内容多窗口、③设备启动开销被乘上窗口数 之一才做）。
 - **初始化时机：构造只组装（2026-10-11 已落地）**：原状是 `SurfaceWindow` 构造末尾 `if (engine->backend() != nullptr) init();`

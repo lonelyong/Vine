@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <QApplication>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPoint>
 #include <QVBoxLayout>
@@ -17,6 +18,7 @@
 
 #include <vine/async/DetachedTask.hpp>
 #include <vine/graphics/Camera.hpp>
+#include <vine/graphics/CameraManipulator.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderCommand.hpp>
@@ -24,6 +26,7 @@
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/SceneView.hpp>
+#include <vine/window/InputEvent.hpp>
 
 namespace
 {
@@ -107,6 +110,36 @@ bool pumpUntil(const std::function<bool()>& done, int timeout_ms)
     QApplication::processEvents();
     return done();
 }
+
+/// 记录型操纵器：只回答"哪些事件到了这个视图"。分屏那两条用例用它把**路由**变成可断言的事实 —— 相机怎么动是
+/// OrbitCameraManipulator 自己的用例的事，这里问的是"这条输入到底去了哪一格"。
+class RecordingManipulator : public vn::graphics::CameraManipulator
+{
+  public:
+    /// 需要一个相机（基类要它）：用哪个都行 —— 这个双只是"事件到了没有"的记录器，不驱动任何相机。
+    explicit RecordingManipulator(vn::raw_ptr<vn::graphics::Camera> camera)
+      : vn::graphics::CameraManipulator(camera)
+    {}
+
+  public:
+    void apply() override {}
+    void onMousePress(const vn::window::MouseEvent&) override { ++mouse_presses; }
+    void onMouseMove(const vn::window::MouseEvent&) override { ++mouse_moves; }
+    void onMouseRelease(const vn::window::MouseEvent&) override { ++mouse_releases; }
+    void onScroll(const vn::window::ScrollEvent&) override { ++scrolls; }
+    void onKeyDown(const vn::window::KeyEvent&) override { ++key_downs; }
+    void onKeyUp(const vn::window::KeyEvent&) override { ++key_ups; }
+    void onResize(const vn::window::ResizeEvent&) override { ++resizes; }
+
+  public:
+    int mouse_presses{ 0 };
+    int mouse_moves{ 0 };
+    int mouse_releases{ 0 };
+    int scrolls{ 0 };
+    int key_downs{ 0 };
+    int key_ups{ 0 };
+    int resizes{ 0 };
+};
 
 /// Hosts a RenderControl in a window, with a stub backend unless asked not to have one.
 class HostedControl
@@ -327,6 +360,89 @@ TEST(RenderControlTest, TheInputRouterSendsEachDragToTheViewUnderTheCursor)
 
     EXPECT_TRUE(changed(own_view->camera()->eye(), own_second)) << "release 之后按左半 ⇒ 路由重新走一次";
     EXPECT_EQ(control->view(), own_view);
+}
+
+// 分屏的**默认**路由：矩形写在表面上（`RenderSurface::present(view, rect)`），输入照它走 —— 一条 router 都
+// 不用装。按下还会把**焦点**移到那一格：随后没有位置的输入（键盘）与"当前视图"这类问题都问焦点。
+TEST(RenderControlTest, TheSurfacesRectanglesRouteInputWithNoRouterAtAll)
+{
+    HostedControl host;
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+    host.resizeWindow(640, 480);
+
+    auto* control = host.control();
+    ASSERT_TRUE(pumpUntil([&] { return control->width() > 0 && control->height() > 0; }, 3000));
+
+    auto* own_view = control->view();
+    ASSERT_NE(own_view, nullptr);
+    EXPECT_EQ(control->focusedView(), own_view) << "还没有人按过：焦点是第一条呈现（控件自己那个视图）";
+
+    // 右边那半：第二条呈现。**布局就是路由表** —— 这条用例一次都不调 setInputRouter。
+    auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
+    right->setEngine(control->engine());
+    ASSERT_TRUE(control->surface()->present(*right, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }));
+    right->onSurfaceResized(control->width(), control->height(), control->devicePixelRatio());
+
+    QWindow* const surface = host.surface();
+    ASSERT_NE(surface, nullptr);
+    const auto send_press = [&](int x, int y) {
+        QMouseEvent event(QEvent::MouseButtonPress, QPointF(x, y), surface->mapToGlobal(QPoint(x, y)), Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(surface, &event);
+    };
+    const auto send_move = [&](int x, int y) {
+        QMouseEvent event(QEvent::MouseMove, QPointF(x, y), surface->mapToGlobal(QPoint(x, y)), Qt::NoButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(surface, &event);
+    };
+    const auto send_release = [&](int x, int y) {
+        QMouseEvent event(QEvent::MouseButtonRelease, QPointF(x, y), surface->mapToGlobal(QPoint(x, y)), Qt::LeftButton,
+                          Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(surface, &event);
+    };
+    const auto send_key = [&] {
+        QKeyEvent event(QEvent::KeyPress, Qt::Key_Left, Qt::NoModifier);
+        QApplication::sendEvent(surface, &event);
+    };
+    const auto changed = [](const vn::math::Vec3d& a, const vn::math::Vec3d& b) {
+        return (a - b).length() > 1.0e-9;
+    };
+
+    const vn::math::Vec3d own_before   = own_view->camera()->eye();
+    const vn::math::Vec3d right_before = right->camera()->eye();
+
+    // 右半按下并拖动（用的还是各自的默认操纵器）：只有右边那格动，而且焦点跟着按下走。
+    send_press(control->width() * 3 / 4, control->height() / 2);
+    send_move(control->width() * 3 / 4 + 40, control->height() / 2 + 20);
+    send_release(control->width() * 3 / 4 + 40, control->height() / 2 + 20);
+
+    EXPECT_TRUE(changed(right->camera()->eye(), right_before)) << "矩形说右半归它 ⇒ 拖拽该到它手里";
+    EXPECT_FALSE(changed(own_view->camera()->eye(), own_before)) << "左半那格不该收到这次拖拽";
+    EXPECT_EQ(control->focusedView(), right.get()) << "按下即焦点";
+
+    // 换成记录型操纵器：接着要问的是"键盘去了哪一格"，而不是"相机怎么动"。
+    auto own_keys   = vn::intrusive_ptr<RecordingManipulator>(new RecordingManipulator(own_view->camera()));
+    auto right_keys = vn::intrusive_ptr<RecordingManipulator>(new RecordingManipulator(right->camera()));
+    own_view->setManipulator(own_keys);
+    right->setManipulator(right_keys);
+
+    // 键盘没有位置：它去**焦点**（刚在右半按过），不是去控件自己那个视图。
+    send_key();
+    EXPECT_EQ(right_keys->key_downs, 1) << "焦点在右格 ⇒ 键盘去右格";
+    EXPECT_EQ(own_keys->key_downs, 0);
+
+    // 左半按下：焦点回到控件自己的视图（整块表面那条呈现）。
+    send_press(control->width() / 8, control->height() / 2);
+    send_move(control->width() / 8 + 40, control->height() / 2 + 20);
+    send_release(control->width() / 8 + 40, control->height() / 2 + 20);
+
+    EXPECT_EQ(own_keys->mouse_presses, 1) << "左半归控件自己的视图 ⇒ 拖拽该到它手里";
+    EXPECT_EQ(control->focusedView(), own_view);
+
+    send_key();
+    EXPECT_EQ(own_keys->key_downs, 1) << "焦点跟着按下回了左格";
+    EXPECT_EQ(right_keys->key_downs, 1) << "右格不该再收到";
 }
 
 // 路由给出的视图**可以活不过这次拖拽**：控件在捕获期间持有它（借用 + 操作期间临时加引用，同一条通则）。

@@ -216,6 +216,34 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      */
     [[nodiscard]] raw_ptr<SceneView> viewAt(double nx, double ny) const;
 
+    /** @brief Says that input went to @p view: this surface's FOCUS.
+     *
+     * A press is what decides where the user's attention is, so the path that routed the event says so here - and
+     * this table answers the two questions that follow: which view a later event without a position belongs to
+     * (a key), and which view a command about "the current view" means. Same reasoning as viewAt: what a surface
+     * is divided into, and which piece of it the user is working in, are facts about the SURFACE.
+     *
+     * Only a view that PRESENTS this surface can hold the focus (a view is focused in the pane it draws), so a
+     * view that presents nothing here is ignored rather than remembered. Null clears the explicit focus, which
+     * makes focusedView() answer its default again (the first presentation).
+     *
+     * @param view View the input went to, or null to clear.
+     * @return true when @p view presents this surface (the focus is now it, or cleared for null); false when it
+     *         does not.
+     */
+    bool focus(raw_ptr<SceneView> view);
+
+    /** @brief The presentation the input went to, or the first one when nothing has been focused yet.
+     *
+     * The default is the first presentation - the pass that draws first, which for the whole-surface case is the
+     * only one - so a surface that never saw a press still answers "which view is this" (and a split answers with
+     * its first pane rather than nothing). A presentation that was dismissed, or whose pass left the frame, is not
+     * the answer: what this reports is a presentation of the frame the engine would draw now.
+     *
+     * @return The focused view, or null when no presentation of this surface has a view.
+     */
+    [[nodiscard]] raw_ptr<SceneView> focusedView() const;
+
   private:
     friend class SceneView;  // reads the rectangle it draws into, and re-states the surface's clear after a rebuild
 
@@ -283,6 +311,9 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     raw_ptr<RenderEngine> engine_;
     /// The table, in declaration order (presentations() answers in engine order).
     std::vector<Entry> entries_;
+    /// The view the input went to (borrowed, and only while it presents this surface): null = nothing focused yet,
+    /// so focusedView() answers with the first presentation.
+    raw_ptr<SceneView> focused_ = nullptr;
 };
 
 VN_GRAPHICS_NS_END

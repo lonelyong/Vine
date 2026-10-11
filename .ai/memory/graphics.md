@@ -789,6 +789,19 @@
   `FrameRecorderTest.TheViewBlockIsProjectedForTheShapeTheScopeAnnounced`（公告 2.0 ⇒ 快照投影按 2.0；下一条 pass
   回到默认；0 / NaN 被拒）。变异验证：`execute()` 写死 1.0 ⇒ 1 条失败；memo 去掉 view-proj 项 ⇒ 1 条失败；
   `projectionMatrix` 忽略参数 ⇒ 2 条失败；recorder 固定 1.0 / `beginPass` 不复位 ⇒ 各 1 条失败。
+- **输入按矩形走 + 焦点视图（M5a，2026-10-11 已落地）**：分屏的两半都落在这张**表面**的表上 ——
+  * **焦点**：`RenderSurface::focus(view)` / `focusedView()`。它和矩形、清屏住在一起，因为三件事问的是同一个问题
+    （"这块表面被分成什么、谁在画、用户在哪儿"）。默认（没人按过）= **第一条呈现**，所以一个表面永远答得出"当前
+    视图"；`focus` 只接受**确实呈现这块表面**的视图（不在表里 = 没有矩形可聚焦）；`focusedView()` 还要**验活**：
+    撤掉的呈现、或 pass 已经不在引擎帧里的呈现都不算（否则"当前视图"会答成一张没人画的画面）。
+    `dismiss` 顺手清掉 `focused_` —— 对*结果*冗余（存活检查给同样答案），挡的是"指针留着、被后来同地址的视图继承"。
+  * **输入路由**：`SurfaceWindow::routedView` 没装 router 时问表面（`viewAt`，逻辑像素 ÷ 表面尺寸），
+    **按下即焦点**且**按下总是捕获**（分屏拖拽越界不断线），**键盘**去焦点（没有位置可路由）；
+    `setInputRouter` 降级成覆盖。`RenderControl::focusedView()` = 表面焦点，表面没有呈现视图时回退控件自己的视图。
+  * **命令**：五条显示模式命令改 `control->focusedView()` —— `setPrimaryRenderControl` 只回答"窗口的 3D 区在哪块
+    控件上"。钉子：`RenderControlTest.TheSurfacesRectanglesRouteInputWithNoRouterAtAll`、
+    `ModelViewerTest.TheShadingModeCommandsDriveTheCurrentModelView`（追加一段：焦点在第二格 ⇒ 命令改第二格、
+    主视图不动；转回来再改一次）。六处变异全部被杀（见 `graphics-render-next.md` §5 的 M5a 行）。
 - **矩形放呈现条目（M2d，2026-10-11 已落地）**：**分屏**是这张表的下一层 —— 每条呈现带自己的**归一化**矩形
   （`Presentation::rect`，`optional`），矩形由**表面**持有、**视图读**它：
   `RenderSurface::present(view, rect)` / `present(view)`（沿用视图当前那块）/ `setViewport(view, rect)`；

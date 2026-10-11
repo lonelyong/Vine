@@ -30,6 +30,7 @@
 #include <vine/appfw/gui/RenderControl.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
+#include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
 
@@ -405,6 +406,31 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
             EXPECT_FALSE(polygon.has_value()) << "非线框档不该留光栅化覆盖";
         }
     }
+
+    // 分屏下"改哪一格"：命令改的是**焦点视图** —— 用户最后按过的那一格 —— 而不是宿主发布的那块控件自己那个
+    // 视图（发布回答"窗口的 3D 区在哪块控件上"，不再回答"改哪一格"：焦点来自输入）。同一表面上的第二格就是
+    // 另一条呈现（矩形写在表面上，M2d），它也是这份模型文档的一个视图。
+    auto second = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
+    second->setEngine(control->engine());
+    ASSERT_TRUE(control->surface()->present(*second, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }));
+    ASSERT_NE(second->pipeline(), nullptr) << "声明呈现顺带把它那条默认窗口管线建出来";
+    ASSERT_EQ(control->focusedView(), scene_view) << "没有人按过 ⇒ 焦点是第一条呈现（控件自己那个视图）";
+
+    // 焦点在第二格：命令改第二格，而主视图保持上一轮那条命令留下的档（"改的是焦点"才看得出来）。
+    ASSERT_TRUE(control->surface()->focus(second.get()));
+    const auto focused_run = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeLitCommand));
+    EXPECT_EQ(focused_run.status(), vn::appfw::CommandStatus::Success)
+        << "命令该成功：" << focused_run.message().as_std_str();
+    EXPECT_EQ(second->options().mode, vn::graphics::SceneView::Options::Mode::Lit) << "焦点在第二格 ⇒ 改它";
+    EXPECT_EQ(scene_view->options().mode, vn::graphics::SceneView::Options::Mode::Wireframe)
+        << "没被点过的那一格不该变（上一轮留下的是线框）";
+
+    // 焦点回到第一格：同一条命令改的是它（同一命令在两块各来一遍）。
+    ASSERT_TRUE(control->surface()->focus(scene_view));
+    const auto back_run = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeUnlitCommand));
+    EXPECT_EQ(back_run.status(), vn::appfw::CommandStatus::Success);
+    EXPECT_EQ(scene_view->options().mode, vn::graphics::SceneView::Options::Mode::Unlit);
+    EXPECT_EQ(second->options().mode, vn::graphics::SceneView::Options::Mode::Lit) << "另一格保持";
 
     // 守卫：当前文档不是模型（这里直接清掉当前文档）⇒ 命令如实说"不适用"，而不是去改别人的视图。
     ASSERT_TRUE(documents->setCurrent(nullptr));

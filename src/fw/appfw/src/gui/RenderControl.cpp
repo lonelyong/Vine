@@ -103,6 +103,20 @@ vn::graphics::RenderSurface* RenderControl::surface() const
     return dptr()->surface->surface();
 }
 
+vn::graphics::SceneView* RenderControl::focusedView() const
+{
+    // The surface's focus is the pane the user last pressed in (RenderSurface::focus): a split answers with the
+    // view the user is working in, and a surface nothing has been pressed in answers with its first presentation.
+    // A surface with no view presentation at all (a host that presented its own main pass) has no pane to name,
+    // so the control's own view is the answer - the same fallback input uses.
+    if (vn::graphics::RenderSurface* const table = dptr()->surface->surface(); table != nullptr) {
+        if (vn::graphics::SceneView* const focused = table->focusedView(); focused != nullptr) {
+            return focused;
+        }
+    }
+    return view();
+}
+
 bool RenderControl::init()
 {
     return dptr()->surface->init();

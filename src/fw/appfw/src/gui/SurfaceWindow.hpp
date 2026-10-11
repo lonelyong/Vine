@@ -118,10 +118,13 @@ class SurfaceWindow : public QWindow {
 
     /** @brief Sets which view receives input, by surface position (see RenderControl::setInputRouter).
      *
-     * A press routes and captures until release; the captured view is held by reference for the duration. An empty
-     * function restores the default (everything to this surface's own view).
+     * A press routes, moves the focus to the view it routed to and captures it until release; the captured view is
+     * held by reference for the duration. Without a router the surface's own presentation rectangles decide
+     * (RenderSurface::viewAt), and a point no pane holds goes to this surface's own view; an empty function
+     * restores that default.
      *
-     * @param router Function taking (x, y) in logical surface pixels and returning the owning view.
+     * @param router Function taking (x, y) in logical surface pixels and returning the owning view; nullptr from it
+     *               means "not mine" and hands the point back to the rectangles.
      */
     void setInputRouter(std::function<vn::graphics::SceneView*(int x, int y)> router);
 
