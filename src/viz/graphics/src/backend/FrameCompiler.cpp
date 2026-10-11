@@ -229,7 +229,7 @@ const CompiledFrame& FrameCompiler::compile(const FrameDescription& description,
         pass.pass            = source.pass;
         pass.schedule_index  = schedule_index;
         pass.target_index    = slot;
-        pass.depth           = source.depth;
+        pass.state           = source.state;
         pass.clear           = source.clear;
         pass.viewport        = vn::graphics::Viewport{ 0, 0, targets_[slot].width, targets_[slot].height };
         pass.depth_preserved = target.depth.preserve;
@@ -362,17 +362,18 @@ std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass&  
         draw.lights   = source.lights;
         draw.source   = source.source;
         draw.program  = source.program;
-        draw.commands = resolveCommands(source, default_program, pass.depth);
+        draw.commands = resolveCommands(source, default_program, pass.state);
 
         if (source.kind == DrawKind::Screen)
         {
-            // A full-screen draw has no commands to carry per-draw state, so the plan resolves its state here:
-            // the defaults a screen program does not edit (no culling, fill, triangles, the engine's blend
-            // factors) with the depth policy the call's own definition gives it (see CompiledDraw::dynamic -
-            // the canonical triangle lies at the reverse-Z far plane, where any depth test rejects it).
-            const vn::graphics::ResolvedRenderState screen_state{};
-            draw.dynamic =
-                resolveDynamicState(screen_state, /*depth_explicit*/ false, vn::graphics::DepthMode::Disabled);
+            // A full-screen draw has no commands to carry per-draw state, so the plan resolves its state here: the
+            // defaults a screen program does not edit (no culling, fill, triangles, the engine's blend factors) with
+            // the depth policy the call's own definition gives it (see CompiledDraw::dynamic - the canonical
+            // triangle lies at the reverse-Z far plane, where any depth test rejects it).
+            const vn::graphics::RenderState       screen_authored{};
+            const vn::graphics::PassRenderState   screen_pass{ .depth = vn::graphics::DepthMode::Disabled };
+            draw.dynamic = resolveDynamicState(
+                resolveRenderState(screen_authored, screen_pass).state);
         }
     }
     return draws;
@@ -380,7 +381,7 @@ std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass&  
 
 std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedDraw& source,
                                                                 const ProgramRef&    default_program,
-                                                                vn::graphics::DepthMode pass_depth)
+                                                                const vn::graphics::PassRenderState& pass_state)
 {
     const std::span<CompiledCommand> commands = arena_.makeArray<CompiledCommand>(source.commands.size());
     for (std::size_t index = 0; index < source.commands.size(); ++index)
@@ -393,7 +394,8 @@ std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedD
         out.material          = command.material;
         out.model             = command.model;
         out.opacity           = command.opacity;
-        out.dynamic           = resolveDynamicState(command.state, command.depth_explicit, pass_depth);
+        // The ONE resolution: what the content authored, weighed against what the pass says (StateNode.hpp).
+        out.dynamic = resolveDynamicState(resolveRenderState(command.authoredState, pass_state).state);
 
         // A command that names no program of its own is shaded by the frame's default - resolved here so the
         // executor never has to ask "and what if it is null?" (see the design's D2 table).

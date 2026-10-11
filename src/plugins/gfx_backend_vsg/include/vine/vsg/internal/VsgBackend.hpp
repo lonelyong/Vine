@@ -27,7 +27,7 @@
  *     records it, and the session presents it;
  *   * the PASS PROTOCOL, which is where the drawing half starts: `beginPass()`/`endPass()` open and close
  *     a scope, `setPassOrder()`/`setRenderTarget(nullptr)`/`setViewport()`/`setClearPolicy()`/
- *     `setDepthMode()`/`setLights()` announce its state, and `render()` collects the commands. The calls
+ *     `setPassState()`/`setLights()` announce its state, and `render()` collects the commands. The calls
  *     are turned into the plan's own spelling (the SDK's clear policy into the plan's, the pass object
  *     into a `core::PassId` through api/PassRegistry) and handed to the collection stage; what the
  *     protocol REFUSES is the recorder's to judge and report, so this layer has no rules of its own.
@@ -161,7 +161,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     void setPassInputs(const std::vector<vn::raw_ptr<vn::graphics::RenderTarget>>& inputs) override;
 
     /** @brief Announces how this pass' content handles the target's current depth. */
-    void setDepthMode(vn::graphics::DepthMode mode) override;
+    void setPassState(const vn::graphics::PassRenderState& state) override;
 
     /** @brief Announces the pass' clear policy (translated into the plan's spelling). */
     void setClearPolicy(const vn::graphics::ClearPolicy& policy) override;

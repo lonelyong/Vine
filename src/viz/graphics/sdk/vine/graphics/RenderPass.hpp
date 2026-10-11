@@ -13,6 +13,7 @@
 #include "DepthMode.hpp"
 #include "ImageRef.hpp"
 #include "PolygonMode.hpp"
+#include "StateNode.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -161,9 +162,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     void setClearEnabled(bool enabled);
 
-    /** @brief Returns how this pass's content handles depth.
+    /** @brief Returns how this pass's content handles depth (the pass' own value).
      *
-     * @return The depth mode (DepthMode::TestAndWrite by default).
+     * @return The depth mode (DepthMode::TestAndWrite by default). It is the pass' POLICY for content that
+     *         authored none - see stateOverrides() and StateNode.hpp's resolveRenderState for the decision.
      */
     DepthMode depthMode() const;
 
@@ -177,9 +179,23 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * lighting. A translucent pass drawn into a target whose depth an earlier
      * pass wrote uses TestOnly and disables only the clear.
      *
+     * It is a POLICY, not an override: a command that authored a depth state of its own keeps it (depth is
+     * something scene content routinely declares), so this decides for the content that did not.
+     *
      * @param mode The depth mode.
      */
     void setDepthMode(DepthMode mode);
+
+    /** @brief What this pass says about the state of the content it draws.
+     *
+     * The pass side of the state priority table: its depth policy (depthMode()) and its rasterisation override
+     * (polygonModeOverride()), in one value. Announced to the backend before the pass draws, so a backend can
+     * resolve each command's FINAL state in one place - `resolveRenderState(command.authoredState,
+     * pass.stateOverrides())`, see StateNode.hpp.
+     *
+     * @return The pass' state for its content.
+     */
+    PassRenderState stateOverrides() const;
 
     /** @brief Returns whether this pass is drawn by the engine this frame. */
     bool isEnabled() const;
@@ -433,7 +449,9 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * "force everything to fill".
      *
      * It is rasterisation state, not wiring: a change does NOT bump the wiring revision (nothing about what this
-     * pass declares has changed), and the backend picks it up per frame through the commands' state.
+     * pass declares has changed), and the backend picks it up per frame from the pass' state (stateOverrides(),
+     * announced through RenderBackend::setPassState) - the same place its depth policy goes, so a pass states its
+     * state ONCE and a backend resolves a command without asking anybody else (see StateNode.hpp).
      *
      * @param mode Rasterisation mode applied to all content of this pass.
      */

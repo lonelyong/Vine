@@ -726,11 +726,11 @@ void VsgBackend::setPassInputs(const std::vector<vn::raw_ptr<vn::graphics::Rende
     (void)d->recorder.setPassInputs(inputs);
 }
 
-void VsgBackend::setDepthMode(vn::graphics::DepthMode mode)
+void VsgBackend::setPassState(const vn::graphics::PassRenderState& state)
 {
     if (d->recorder.inPass())
     {
-        (void)d->recorder.setDepthMode(mode);
+        (void)d->recorder.setPassState(state);
     }
 }
 

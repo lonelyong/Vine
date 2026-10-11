@@ -257,27 +257,19 @@ struct VN_GRAPHICS_API DynamicState
 };
 
 /**
- * @brief Resolves the dynamic layer of one instance from what the host authored.
+ * @brief The dynamic layer of one instance, from the command's FINAL state.
  *
- * THE ONE PLACE THE TWO DEPTH INTENTS ARE WEIGHED. A command whose depth came from a StateNode wins
- * (`depth_explicit`), and content that authored none follows the pass it was drawn by
- * (RenderPass::depthMode) - finer-grained intent over the pass default. Getting this backwards is silent
- * in both directions: a HUD overlay drawn with the scene's depth policy writes depth over everything
- * after it, and translucent content drawn with the pass default writes depth it was never meant to.
+ * A pure mapping, deliberately: the two depth intents (what the content authored and what the pass pipes in) were
+ * already weighed by the ONE resolution function - `resolveRenderState(command.authoredState,
+ * pass.stateOverrides())` in StateNode.hpp - so what arrives here is the answer, not two claims to compare. The
+ * compare op is distance-semantic ("closer wins") and travels unchanged; the reverse-Z inversion happens at the
+ * Vulkan boundary (`RenderStateMapper::mapCompareOp`), so the default Less maps to GREATER and a scene without
+ * StateNodes stays on the pipeline it was on before.
  *
- * Everything else in the dynamic layer has one source, so it is copied: culling, polygon mode, topology,
- * blending and the compare operation come from the resolved state and nowhere else. The compare op is
- * distance-semantic - "closer wins" - so it travels unchanged and the reverse-Z inversion happens at the
- * Vulkan boundary (`RenderStateMapper::mapCompareOp`): the default Less maps to GREATER, which keeps a
- * scene without StateNodes on the same pipeline as before.
- *
- * @param state          Resolved per-object state (`RenderCommand::renderState`).
- * @param depth_explicit Whether that state's depth item came from a StateNode.
- * @param pass_depth     The pass' depth handling, used when the content authored none.
+ * @param state The command's resolved state.
  * @return The state to deliver with a set command (never part of an identity - see the file note).
  */
-[[nodiscard]] VN_GRAPHICS_API DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state, bool depth_explicit,
-                                               vn::graphics::DepthMode pass_depth) noexcept;
+[[nodiscard]] VN_GRAPHICS_API DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state) noexcept;
 
 /**
  * @brief The per-frame data of one draw: written into a buffer, never part of an identity.

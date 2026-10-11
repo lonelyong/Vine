@@ -6,6 +6,7 @@
 #include "Group.hpp"
 // Included rather than forward-declared: this class HOLDS an intrusive_ptr<Material>, so every translation
 // unit that destroys a StateNode instantiates the reference-count hooks and needs the complete type.
+#include "DepthMode.hpp"
 #include "Material.hpp"
 #include "PolygonMode.hpp"
 
@@ -211,6 +212,81 @@ inline bool operator!=(const ResolvedRenderState& lhs, const ResolvedRenderState
 }
 
 /**
+ * @brief Which layer decided one resolved state item.
+ *
+ * Every item of a resolved state came from exactly one place, and saying which one is what turns "why is this
+ * drawn in Line?" from a code-reading exercise into a fact (see resolveRenderState).
+ */
+enum class StateOrigin
+{
+    Default,   ///< Nobody said: the engine's default for that item.
+    Content,   ///< A StateNode on the command's path authored it (the content's own word).
+    Pass,      ///< The pass that draws it (see PassRenderState).
+};
+
+/** @brief The origin of every item of a resolved state (one per item, in the same order as ResolvedRenderState). */
+struct VN_GRAPHICS_API RenderStateOrigin
+{
+    StateOrigin depth{StateOrigin::Default};        ///< Where the depth state came from.
+    StateOrigin cullMode{StateOrigin::Default};     ///< Where the cull mode came from.
+    StateOrigin blend{StateOrigin::Default};        ///< Where the blend state came from.
+    StateOrigin polygonMode{StateOrigin::Default};  ///< Where the rasterisation mode came from.
+    StateOrigin topology{StateOrigin::Default};     ///< Where the topology came from.
+};
+
+/**
+ * @brief What a PASS says about the content it draws.
+ *
+ * The pass side of the state priority table (see resolveRenderState): everything a pass decides about its
+ * content's state, in one value, so a backend can resolve a command without asking the pass anything else.
+ *
+ * The two items behave differently ON PURPOSE (the table in `.ai/design/graphics-state.md` §4.1):
+ *
+ *  - `depth` is a POLICY for content that authored none ("this slot tests and writes", "this slot is translucent
+ *    over what is already there", "this slot is an overlay"). Content that authored a depth state of its own
+ *    keeps it: depth is something scene content routinely declares (a transparent body, a HUD), so the pass
+ *    supplies the default rather than the last word.
+ *  - `polygonMode` is an OVERRIDE: it rewrites every command the pass draws, including one that authored Line.
+ *    It is a viewing switch ("show me the edges"), and a switch a content-authored Line could veto would never be
+ *    able to take the picture back to Fill.
+ *
+ * `program` is deliberately NOT here: replacing the program is not "another state item" but "draw this content
+ * with another program", and the engine does it by rewriting each command, which is what keeps a backend's
+ * per-command pipeline key valid (RenderPass::setProgramOverride).
+ */
+struct VN_GRAPHICS_API PassRenderState
+{
+    DepthMode                  depth{DepthMode::TestAndWrite};  ///< Depth policy for content that authored none.
+    std::optional<PolygonMode> polygonMode{};                   ///< Rasterisation override for every command.
+};
+
+/** @brief One command's FINAL state in one pass, and the layer each item came from. */
+struct VN_GRAPHICS_API ResolvedCommandState
+{
+    ResolvedRenderState state;   ///< The final state (defaults filled in).
+    RenderStateOrigin   origin;  ///< Which layer decided each item of it.
+};
+
+/**
+ * @brief Resolves the final render state of content drawn by a pass: the ONE implementation of the priority table.
+ *
+ * ```
+ *   pass override  >  content (the folded StateNodes)  >  defaults
+ * ```
+ *
+ * One place, one test table, and a caller that wants to know WHY an item has the value it has reads `origin`
+ * instead of reconstructing the layering. Everything that consumes state goes through here: the geometry/state
+ * a backend bakes into a pipeline variant, the dynamic state it diffs per command, and any diagnostic that has
+ * to explain a picture.
+ *
+ * @param authored The state the CONTENT authored (RenderCommand::authoredState): every item left unset is
+ *                 "nobody on the path said anything about it", which is not the same as "set to the default".
+ * @param pass     What the pass drawing it overrides (RenderPass::stateOverrides).
+ * @return The final state and the origin of each item.
+ */
+VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass);
+
+/**
  * @brief Scene-graph node applying render state to its subtree.
  *
  * StateNode is a Node that contributes optional render-state items (depth,
@@ -347,6 +423,10 @@ VN_GRAPHICS_API RenderState collectRenderState(raw_ptr<const Node> node);
 
 /**
  * @brief Applies default values to a folded optional state block.
+ *
+ * The content-only spelling of the priority table (resolveRenderState(authored, pass)): a pass that overrides
+ * nothing resolves exactly like this, so a caller that has the content's word and no pass to draw it with (a
+ * tool, a test, a host reading its own scene) uses it directly.
  *
  * @param state Folded optional state (see collectRenderState).
  * @return Concrete state with defaults applied, usable as a pipeline-variant

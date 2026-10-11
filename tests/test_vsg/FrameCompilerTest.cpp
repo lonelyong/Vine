@@ -172,7 +172,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     const CompiledDraw& content = consumer.draws[1];
     EXPECT_EQ(content.kind, DrawKind::Content);
     ASSERT_EQ(content.commands.size(), 1u) << "the content call of the same pass is unchanged";
-    EXPECT_EQ(content.commands[0].dynamic.depth, consumer.depth)
+    EXPECT_EQ(content.commands[0].dynamic.depth, consumer.state.depth)
         << "and a content command still takes the pass' depth policy";
 }
 
@@ -482,23 +482,22 @@ TEST(FrameCompilerTest, ThePassDepthAppliesOnlyWhereTheContentAuthoredNone)
 
     // A command that authored its own depth state (a StateNode set it) and one that did not.
     RenderCommand authored;
-    authored.depthExplicit = true;  // ResolvedRenderState's default is test + write
-    RenderCommand inherited;
-    inherited.depthExplicit = false;
+    authored.authoredState.depth = vn::graphics::DepthState{};  // test + write, as a StateNode would state it
+    RenderCommand inherited;                                    // nothing authored: the pass' policy applies
 
     const std::vector<RenderCommand> commands{ authored, inherited };
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(target.get());
-    r.recorder.setDepthMode(DepthMode::Disabled);  // the pass draws HUD content
+    r.recorder.setPassState(vn::graphics::PassRenderState{ .depth = DepthMode::Disabled });  // HUD pass
     r.recorder.render(commands, nullptr);
     r.recorder.endPass();
     r.recorder.endFrame();
 
     const CompiledFrame& frame = r.compile();
     ASSERT_EQ(frame.passes.size(), 1u);
-    EXPECT_EQ(frame.passes[0].depth, DepthMode::Disabled);
+    EXPECT_EQ(frame.passes[0].state.depth, DepthMode::Disabled);
     ASSERT_EQ(frame.passes[0].draws.size(), 1u);
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 2u);
 
@@ -517,10 +516,9 @@ TEST(FrameCompilerTest, TheAuthoredCompareOpTravelsIntoTheDynamicState)
     // left the default. The resolve copies what the content said and leaves the
     // reverse-Z inversion to the Vulkan boundary.
     RenderCommand authored;
-    authored.depthExplicit             = true;
-    authored.renderState.depth.compare = vn::graphics::CompareOp::LessEqual;
+    authored.authoredState.depth         = vn::graphics::DepthState{};
+    authored.authoredState.depth->compare = vn::graphics::CompareOp::LessEqual;
     RenderCommand inherited;
-    inherited.depthExplicit = false;
 
     const std::vector<RenderCommand> commands{ authored, inherited };
 

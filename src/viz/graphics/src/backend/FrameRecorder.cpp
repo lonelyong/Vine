@@ -146,7 +146,7 @@ bool FrameRecorder::beginPass(PassId pass)
     pass_target_            = nullptr;
     pass_has_clear_         = false;
     pass_clear_             = ClearPolicy{};
-    pass_depth_             = vn::graphics::DepthMode::TestAndWrite;
+    pass_state_             = vn::graphics::PassRenderState{};
     pass_aspect_            = 1.0;
     pass_inputs_            = {};
     pending_has_viewport_   = false;
@@ -181,7 +181,7 @@ bool FrameRecorder::endPass()
         record.inputs    = pass_inputs_;
         record.has_clear = pass_has_clear_;
         record.clear     = pass_clear_;
-        record.depth     = pass_depth_;
+        record.state     = pass_state_;
 
         const std::span<CollectedDraw> draws = arena_.makeArray<CollectedDraw>(open_draws_.size());
         for (std::size_t i = 0; i < open_draws_.size(); ++i)
@@ -289,7 +289,7 @@ bool FrameRecorder::setClearPolicy(const ClearPolicy& policy)
     return true;
 }
 
-bool FrameRecorder::setDepthMode(vn::graphics::DepthMode mode)
+bool FrameRecorder::setPassState(const vn::graphics::PassRenderState& state)
 {
     const Decision decision = protocol_.onCall(CallKind::SetScopeAttribute);
     if (decision.verdict != Verdict::Allow)
@@ -300,7 +300,7 @@ bool FrameRecorder::setDepthMode(vn::graphics::DepthMode mode)
         }
         return false;
     }
-    pass_depth_ = mode;
+    pass_state_ = state;
     return true;
 }
 
@@ -552,9 +552,8 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
         target.program           = programRef(source.program.get());
         target.material          = source.material.get();
         target.model             = source.modelMatrix;
-        target.opacity           = source.opacity;
-        target.state             = source.renderState;
-        target.depth_explicit    = source.depthExplicit;
+        target.opacity       = source.opacity;
+        target.authoredState = source.authoredState;
     }
     return copy;
 }

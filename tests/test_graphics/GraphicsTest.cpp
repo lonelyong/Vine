@@ -1828,8 +1828,10 @@ TEST(GeometryTest, CountsStayDataStatsUnderPointsTopology)
     setupLookAtCamera(cam);
     auto commands = scene.collectRenderCommands(&cam, kSceneAspect);
     ASSERT_EQ(commands.size(), 1u);
-    // The draw topology rides the resolved state; the data counts stay.
-    EXPECT_EQ(commands[0].renderState.topology, Topology::Points);
+    // The draw topology rides the content's state (and the pass drawing it decides the rest - see
+    // resolveRenderState); the data counts stay.
+    ASSERT_TRUE(commands[0].authoredState.topology.has_value());
+    EXPECT_EQ(*commands[0].authoredState.topology, Topology::Points);
     EXPECT_EQ(commands[0].geometry->vertexCount(), 3u);
 }
 
@@ -2182,11 +2184,24 @@ class MockBackend : public RenderBackend {
         last_programs.reserve(commands.size());
         last_polygon_modes.clear();
         last_polygon_modes.reserve(commands.size());
+        last_commands_authored_polygon_modes.clear();
+        last_commands_authored_polygon_modes.reserve(commands.size());
         for (const auto& command : commands) {
             last_programs.push_back(command.program.get());
-            last_polygon_modes.push_back(command.renderState.polygonMode);
+            last_commands_authored_polygon_modes.push_back(command.authoredState.polygonMode);
+            // The EFFECTIVE mode, resolved the way a real backend does it: what the content authored, weighed
+            // against the pass that draws it (the rasterisation override travels with the pass' state, not in the
+            // commands - see StateNode.hpp's resolveRenderState).
+            last_polygon_modes.push_back(
+                resolveRenderState(command.authoredState, pass_state).state.polygonMode);
         }
     }
+    /// The pass' own state, as announced through RenderBackend::setPassState.
+    vn::graphics::PassRenderState pass_state{};
+    void setPassState(const vn::graphics::PassRenderState& state) override { pass_state = state; }
+    /// What each command of the last draw AUTHORS for its rasterisation mode (unset = "the content said nothing"):
+    /// next to last_polygon_modes, which is what the pass state makes of it.
+    std::vector<std::optional<vn::graphics::PolygonMode>> last_commands_authored_polygon_modes;
     void setViewport(int x, int y, int width, int height) override
     {
         ++viewport_sets;
@@ -3169,6 +3184,41 @@ TEST(SceneViewViewportTest, ThePassLevelPolygonModeOverridesTheContentAndCanBeCl
     engine->frame();
     ASSERT_EQ(backend->last_polygon_modes.size(), 1u);
     EXPECT_EQ(backend->last_polygon_modes[0], PolygonMode::Line);
+}
+
+TEST(RenderEngineTest, APassAnnouncesItsOwnStateForTheContentItDraws)
+{
+    // The pass side of the state table travels as ONE announcement (RenderBackend::setPassState): its depth policy
+    // and its rasterisation override together. That is what lets a backend resolve each command's final state
+    // without asking the pass anything (StateNode.hpp), and what lets a rasterisation switch cost no command
+    // rewrite at all.
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto scene  = intrusive_ptr<Scene>(new Scene());
+    setIdentityRoot(*scene)->addChild(makeTriangleNode(Vec3d(0.0, 0.0, -2.0), nullptr, u8"geo"));
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setCamera(intrusive_ptr<Camera>(new Camera()));
+    pass->setDepthMode(DepthMode::TestOnly);
+    pass->setPolygonModeOverride(PolygonMode::Line);
+    engine->addPass(pass, scene, 0);
+
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    engine->setBackend(backend);
+    ASSERT_TRUE(engine->initialize());
+    engine->frame();
+
+    EXPECT_EQ(backend->pass_state.depth, DepthMode::TestOnly);
+    ASSERT_TRUE(backend->pass_state.polygonMode.has_value());
+    EXPECT_EQ(*backend->pass_state.polygonMode, PolygonMode::Line);
+
+    // ... and the announcement IS the state: `stateOverrides()` is what the engine sends, not a second copy.
+    EXPECT_EQ(pass->stateOverrides().depth, backend->pass_state.depth);
+    EXPECT_EQ(pass->stateOverrides().polygonMode, backend->pass_state.polygonMode);
+    // The content authored no rasterisation, so the pass' override is what the command resolves to - and the
+    // command itself was NOT rewritten to say so (nothing to rewrite: the pass state is what decides).
+    ASSERT_EQ(backend->last_polygon_modes.size(), 1u);
+    EXPECT_EQ(backend->last_polygon_modes[0], PolygonMode::Line);
+    EXPECT_FALSE(backend->last_commands_authored_polygon_modes[0].has_value())
+        << "the command still says what the CONTENT said (nothing)";
 }
 
 TEST(SceneViewViewportTest, WireframeIsAnEdgePassWithTheUnlitColourAndNoRebuild)
@@ -5686,6 +5736,69 @@ TEST(SceneTest, CollectCommandsCarriesEffectiveProgram)
     EXPECT_EQ(plain_commands[0].program, nullptr);
 }
 
+TEST(RenderStateTest, ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem)
+{
+    // THE table: pass override > content (the folded StateNodes) > default, item by item, with the layer that
+    // decided each one reported next to the value. One function, one place (StateNode.hpp's resolveRenderState),
+    // so "why is this drawn in Line?" is a fact rather than an exercise in reading three files.
+    RenderState content;
+    content.cullMode    = CullMode::Back;
+    content.blend       = BlendState{ .enabled = true };
+    content.polygonMode = PolygonMode::Line;
+    content.topology    = Topology::Lines;
+
+    PassRenderState pass;
+    pass.polygonMode = PolygonMode::Point;
+
+    const ResolvedCommandState resolved = resolveRenderState(content, pass);
+
+    // What the content authored is kept, and it says so.
+    EXPECT_EQ(resolved.state.cullMode, CullMode::Back);
+    EXPECT_EQ(resolved.origin.cullMode, StateOrigin::Content);
+    EXPECT_TRUE(resolved.state.blend.enabled);
+    EXPECT_EQ(resolved.origin.blend, StateOrigin::Content);
+    EXPECT_EQ(resolved.state.topology, Topology::Lines);
+    EXPECT_EQ(resolved.origin.topology, StateOrigin::Content);
+    // ... except the one item the pass OVERRIDES: rasterisation is a viewing switch, so it wins even over a
+    // content-authored Line (otherwise "back to shaded" could never be reached).
+    EXPECT_EQ(resolved.state.polygonMode, PolygonMode::Point);
+    EXPECT_EQ(resolved.origin.polygonMode, StateOrigin::Pass);
+
+    // Depth is the asymmetric one: the pass states a POLICY for content that authored none...
+    const ResolvedCommandState from_pass = resolveRenderState(RenderState{}, PassRenderState{ .depth = DepthMode::TestOnly });
+    EXPECT_TRUE(from_pass.state.depth.test);
+    EXPECT_FALSE(from_pass.state.depth.write);
+    EXPECT_EQ(from_pass.origin.depth, StateOrigin::Pass);
+    // ... and the CONTENT's word wins where it has one, compare op included (the pass has no opinion about it).
+    DepthState authored_depth;
+    authored_depth.compare = CompareOp::Always;
+    RenderState depth_content;
+    depth_content.depth = authored_depth;
+    const ResolvedCommandState authored = resolveRenderState(depth_content, PassRenderState{ .depth = DepthMode::Disabled });
+    EXPECT_TRUE(authored.state.depth.test) << "an authored depth is kept even where the pass says 'no depth'";
+    EXPECT_EQ(authored.state.depth.compare, CompareOp::Always);
+    EXPECT_EQ(authored.origin.depth, StateOrigin::Content);
+
+    // Nobody said anything: the engine's defaults, and the origins say so (per item).
+    const ResolvedCommandState defaults = resolveRenderState(RenderState{}, PassRenderState{});
+    EXPECT_TRUE(defaults.state.depth.test);
+    EXPECT_TRUE(defaults.state.depth.write);
+    EXPECT_EQ(defaults.state.depth.compare, CompareOp::Less);
+    EXPECT_EQ(defaults.state.cullMode, CullMode::None);
+    EXPECT_FALSE(defaults.state.blend.enabled);
+    EXPECT_EQ(defaults.state.polygonMode, PolygonMode::Fill);
+    EXPECT_EQ(defaults.state.topology, Topology::Triangles);
+    EXPECT_EQ(defaults.origin.cullMode, StateOrigin::Default);
+    EXPECT_EQ(defaults.origin.blend, StateOrigin::Default);
+    EXPECT_EQ(defaults.origin.polygonMode, StateOrigin::Default);
+    EXPECT_EQ(defaults.origin.topology, StateOrigin::Default);
+
+    // The content-only spelling answers exactly like the same call with a pass that overrides nothing.
+    const ResolvedRenderState alone = resolveRenderState(content);
+    const ResolvedCommandState with_empty_pass = resolveRenderState(content, PassRenderState{});
+    EXPECT_EQ(alone, with_empty_pass.state);
+}
+
 TEST(SceneTest, CollectCommandsCarriesStateFromAncestorStateNode)
 {
     Scene scene;
@@ -5704,9 +5817,14 @@ TEST(SceneTest, CollectCommandsCarriesStateFromAncestorStateNode)
     auto commands = scene.collectRenderCommands(&cam, kSceneAspect);
 
     ASSERT_EQ(commands.size(), 1u);
-    EXPECT_EQ(commands[0].renderState.cullMode, CullMode::Back);
-    EXPECT_TRUE(commands[0].renderState.depth.test);
-    EXPECT_FALSE(commands[0].renderState.depth.write);
+    // The command carries what the CONTENT authored; the pass completes it (and the default pass state changes
+    // nothing here, so the resolution below is the whole picture).
+    const auto resolved = resolveRenderState(commands[0].authoredState, PassRenderState{});
+    EXPECT_EQ(resolved.state.cullMode, CullMode::Back);
+    EXPECT_EQ(resolved.origin.cullMode, StateOrigin::Content);
+    EXPECT_TRUE(resolved.state.depth.test);
+    EXPECT_FALSE(resolved.state.depth.write);
+    EXPECT_EQ(resolved.origin.depth, StateOrigin::Content);
 }
 
 TEST(SceneTest, CollectCommandsDeeperStateNodeOverrides)
@@ -5728,7 +5846,8 @@ TEST(SceneTest, CollectCommandsDeeperStateNodeOverrides)
     auto commands = scene.collectRenderCommands(&cam, kSceneAspect);
 
     ASSERT_EQ(commands.size(), 1u);
-    EXPECT_EQ(commands[0].renderState.polygonMode, PolygonMode::Point);
+    ASSERT_TRUE(commands[0].authoredState.polygonMode.has_value());
+    EXPECT_EQ(*commands[0].authoredState.polygonMode, PolygonMode::Point) << "the deeper StateNode authored it";
 }
 
 TEST(SceneTest, CollectCommandsDefaultsStateWithoutStateNode)
@@ -5742,10 +5861,16 @@ TEST(SceneTest, CollectCommandsDefaultsStateWithoutStateNode)
     auto commands = scene.collectRenderCommands(&cam, kSceneAspect);
 
     ASSERT_EQ(commands.size(), 1u);
-    EXPECT_TRUE(commands[0].renderState.depth.test);
-    EXPECT_TRUE(commands[0].renderState.depth.write);
-    EXPECT_EQ(commands[0].renderState.cullMode, CullMode::None);
-    EXPECT_EQ(commands[0].renderState.polygonMode, PolygonMode::Fill);
+    // "Nobody said anything" is a fact of its own, and it is NOT the same as "said the default": the command
+    // carries empty items, and the defaults appear in the resolution (where a pass could have said something).
+    EXPECT_TRUE(commands[0].authoredState.empty());
+    const auto resolved = resolveRenderState(commands[0].authoredState, PassRenderState{});
+    EXPECT_TRUE(resolved.state.depth.test);
+    EXPECT_TRUE(resolved.state.depth.write);
+    EXPECT_EQ(resolved.state.cullMode, CullMode::None);
+    EXPECT_EQ(resolved.state.polygonMode, PolygonMode::Fill);
+    EXPECT_EQ(resolved.origin.cullMode, StateOrigin::Default) << "and it says so, per item";
+    EXPECT_EQ(resolved.origin.topology, StateOrigin::Default);
 }
 
 TEST(GeometryTest, RawPositionsDriveCountsAndBounds)
@@ -6819,17 +6944,21 @@ TEST(SceneTest, TheFoldedStateAgreesWithTheUpWalkingHelpers)
     const RenderCommand& command = commands[0];
 
     // The folded state, item by item, against the SDK's own up-walking spelling.
-    const RenderState           folded   = collectRenderState(geometry.get());
-    const ResolvedRenderState   expected = effectiveRenderState(geometry.get());
-    EXPECT_EQ(command.renderState.cullMode, expected.cullMode) << "the DEEPER StateNode's cull mode wins";
-    EXPECT_EQ(command.renderState.cullMode, CullMode::Front);
-    EXPECT_EQ(command.renderState.depth.test, expected.depth.test);
-    EXPECT_EQ(command.renderState.depth.write, expected.depth.write);
-    EXPECT_EQ(command.renderState.depth.compare, expected.depth.compare);
-    EXPECT_EQ(command.renderState.polygonMode, expected.polygonMode);
-    EXPECT_EQ(command.renderState.blend.enabled, expected.blend.enabled);
-    EXPECT_EQ(command.renderState.topology, expected.topology);
-    EXPECT_EQ(command.depthExplicit, folded.depth.has_value()) << "explicit depth is authored on a StateNode";
+    const RenderState         folded   = collectRenderState(geometry.get());
+    const ResolvedRenderState expected = effectiveRenderState(geometry.get());
+    EXPECT_EQ(command.authoredState, folded) << "the command carries exactly what the fold said";
+    const ResolvedCommandState resolved = resolveRenderState(command.authoredState, PassRenderState{});
+    EXPECT_EQ(resolved.state.cullMode, expected.cullMode) << "the DEEPER StateNode's cull mode wins";
+    EXPECT_EQ(resolved.state.cullMode, CullMode::Front);
+    EXPECT_EQ(resolved.origin.cullMode, StateOrigin::Content);
+    EXPECT_EQ(resolved.state.depth.test, expected.depth.test);
+    EXPECT_EQ(resolved.state.depth.write, expected.depth.write);
+    EXPECT_EQ(resolved.state.depth.compare, expected.depth.compare);
+    EXPECT_EQ(resolved.state.polygonMode, expected.polygonMode);
+    EXPECT_EQ(resolved.state.blend.enabled, expected.blend.enabled);
+    EXPECT_EQ(resolved.state.topology, expected.topology);
+    EXPECT_TRUE(command.authoredState.depth.has_value()) << "explicit depth is authored on a StateNode";
+    EXPECT_EQ(resolved.origin.depth, StateOrigin::Content);
 
     // The single-valued items: the leaf's own material wins over every ancestor's, the program comes from
     // the nearest ancestor that has one.

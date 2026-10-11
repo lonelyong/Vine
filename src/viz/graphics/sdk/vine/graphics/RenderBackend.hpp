@@ -17,6 +17,7 @@
 #include "RenderDiagnostic.hpp"
 #include "RenderPass.hpp"
 #include "ShaderProgram.hpp"
+#include "StateNode.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -94,7 +95,7 @@ struct ClearPolicy
  *   2. per enabled pass, in ascending pass order:
  *        beginPass(pass)          announces the pass (its identity) as active;
  *        setPassOrder(order)      where the pass stacks in the target;
- *        setRenderTarget / setViewport / setLights / setDepthMode / clear
+ *        setRenderTarget / setViewport / setLights / setPassState / clear
  *                                 optional per-pass state (see beginPass);
  *        render() | drawScreenProgram();
  *        endPass();
@@ -297,16 +298,16 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      *
      * The engine calls this once per enabled registered pass, immediately
      * before that pass's per-pass state (setRenderTarget / setViewport /
-     * setLights / setDepthMode / clear / setPassOrder) and its draw call
+     * setLights / setPassState / clear / setPassOrder) and its draw call
      * (render / drawScreenProgram); endPass() follows
      * once the pass ran.
      *
      * WHAT THE SCOPE MEANS. The scope makes the pass explicit, so "which call
      * means what" no longer depends on the call order:
-     *   * scope attributes — setRenderTarget, setPassOrder, setDepthMode and
+     *   * scope attributes — setRenderTarget, setPassOrder, setPassState and
      *     the clear() marker — describe the pass, so every draw call of the
      *     scope sees them (a pass that draws twice keeps its stacking order,
-     *     depth policy and target for both) and they are dropped at endPass()
+     *     state and target for both) and they are dropped at endPass()
      *     instead of leaking into the next pass;
      *   * per-draw-call attributes — setViewport and setLights — are consumed
      *     by the draw call that follows them.
@@ -585,22 +586,27 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
         (void)inputs;
     }
 
-    /** @brief Sets how the upcoming render()'s content handles the target's
-     * current depth.
+    /** @brief Announces the pass' own state for the content it draws.
      *
-     * TestAndWrite depth-tests and writes (opaque scene content); TestOnly
-     * depth-tests without writing (translucent content over already-written
-     * depth); Disabled draws on top with no depth (HUD overlays). This is the
-     * content slot's depth style and is independent of clearing and of
-     * lighting: the backend chooses the light source from the content scene,
-     * not from this setting. The default no-op lets backends without a
-     * per-slot depth state ignore it.
+     * The pass side of the state priority table (see StateNode.hpp): its depth POLICY (for content that authored
+     * none) and its rasterisation OVERRIDE (for every command). Announced before the pass' draw, once per pass,
+     * and it says everything a backend needs to resolve each command's final state:
      *
-     * @param mode The depth handling for the next render() content.
+     * ```
+     *   resolveRenderState(command.authoredState, pass_state)
+     * ```
+     *
+     * Replacing the program is deliberately NOT part of it (RenderPass::setProgramOverride rewrites commands
+     * instead, which keeps a backend's per-command pipeline key valid).
+     *
+     * A backend that consumes no per-object state needs no code for it - the default no-op, like the other scope
+     * attributes.
+     *
+     * @param state The depth policy and rasterisation override of the pass being recorded.
      */
-    virtual void setDepthMode(DepthMode mode)
+    virtual void setPassState(const PassRenderState& state)
     {
-        (void)mode;
+        (void)state;
     }
 
     /** @brief Announces how this pass' target is cleared before it draws.

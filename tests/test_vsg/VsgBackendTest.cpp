@@ -1879,14 +1879,14 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     //    the mesh, which is what shows the flip reached the rasteriser instead of a local variable.
     {
         const auto [before, after] = run("state: cull mode flipped", kFramesPerRegime, [&](int frame) {
-            commands[0].renderState.cullMode =
+            commands[0].authoredState.cullMode =
                 (frame % 2 == 0) ? vn::graphics::CullMode::Back : vn::graphics::CullMode::None;
         });
         const EditCostDelta change = editCostDelta(before, after);
         EXPECT_EQ(change.builds, 0) << "a state change is not content: no row is built";
         EXPECT_EQ(change.uploads, 0) << "and nothing is uploaded";
         EXPECT_EQ(change.created, 0) << "cull is dynamic state: the pipeline key cannot see it (core/Keys.hpp)";
-        commands[0].renderState.cullMode = vn::graphics::CullMode::Back;
+        commands[0].authoredState.cullMode = vn::graphics::CullMode::Back;
         drive();
         const auto pixel = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
         EXPECT_TRUE(isColourByte(pixel[0], 0.54)) << "Back-face culling kept the mesh visible";
@@ -1923,7 +1923,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     //    edit that really is identity, in this very setup.
     {
         const EditCostCounters before    = readEditCosts(*store, *assembly, pool);
-        commands[0].renderState.topology = vn::graphics::Topology::Lines;
+        commands[0].authoredState.topology = vn::graphics::Topology::Lines;
         drive();
         const EditCostCounters after = readEditCosts(*store, *assembly, pool);
         EXPECT_EQ(after.created - before.created, 1U)

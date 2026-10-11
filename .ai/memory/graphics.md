@@ -789,6 +789,23 @@
   `FrameRecorderTest.TheViewBlockIsProjectedForTheShapeTheScopeAnnounced`（公告 2.0 ⇒ 快照投影按 2.0；下一条 pass
   回到默认；0 / NaN 被拒）。变异验证：`execute()` 写死 1.0 ⇒ 1 条失败；memo 去掉 view-proj 项 ⇒ 1 条失败；
   `projectionMatrix` 忽略参数 ⇒ 2 条失败；recorder 固定 1.0 / `beginPass` 不复位 ⇒ 各 1 条失败。
+- **状态解析单点（M3，2026-10-11 已落地）**：**一个函数**是优先级表的唯一实现 ——
+  `ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass)`
+  （`StateNode.hpp`）→ `{state, origin}`，`origin` 逐项回答"这一项是谁给的"（`StateOrigin::Default/Content/Pass`）。
+  命令侧只带**内容作者写的那份**（`RenderCommand::authoredState`，每项 optional；`renderState` 的解析值 +
+  `depthExplicit` 旗标都删了），pass 侧只带**它自己那份**（`RenderPass::stateOverrides()` →
+  `RenderBackend::setPassState()`）。**合并规则**：光栅化覆盖（pass）> 内容 > 默认；**depth 不对称** —— pass 给
+  test/write **策略**（`DepthMode` 没有 compare），内容写过就整项归内容（compare 一起），compare 否则跟
+  内容/默认走。`program` **不在状态里**（换程序是"用另一套程序画这份内容"，引擎仍旧逐命令改写 ⇒ 后端
+  "每条命令一个管线键"的口径不动）；光栅化覆盖**不再改写命令**（跟着 pass 状态走、按命令解析，于是"只切线框"
+  的 pass 一次拷贝都不付）。后端侧：`resolveDynamicState(state)` 只剩纯映射，
+  `CollectedPass::state` / `CollectedCommand::authoredState` 记的就是这两份真相。
+  **行为不变的证据**：既有用例**一条没改语义**就跑绿（`test_graphics` 339、`test_vsg` 405、`test_gui` 253…），
+  含 M1 那三条光栅化覆盖用例与 `FrameCompilerTest.ThePassDepthAppliesOnlyWhereTheContentAuthoredNone`；
+  新增 `RenderStateTest.ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem`（五项逐一 + depth 不对称 + 空内容
+  ⇒ 全 default 且 origin 说 default）、`RenderEngineTest.APassAnnouncesItsOwnStateForTheContentItDraws`
+  （公告 == `stateOverrides()`，且命令**没**被改写）。变异验证：不公告 pass 状态 ⇒ 2 条失败；解析忽略光栅化
+  覆盖 ⇒ 2 条失败；pass 深度反过来压过内容 ⇒ 2 条失败。
 - **输入按矩形走 + 焦点视图（M5a，2026-10-11 已落地）**：分屏的两半都落在这张**表面**的表上 ——
   * **焦点**：`RenderSurface::focus(view)` / `focusedView()`。它和矩形、清屏住在一起，因为三件事问的是同一个问题
     （"这块表面被分成什么、谁在画、用户在哪儿"）。默认（没人按过）= **第一条呈现**，所以一个表面永远答得出"当前

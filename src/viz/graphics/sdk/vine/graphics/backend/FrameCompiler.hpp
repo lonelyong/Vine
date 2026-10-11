@@ -144,7 +144,7 @@ struct CompiledPass
     std::uint32_t schedule_index{0};          ///< Position in the execution order (0 = first).
     std::uint32_t target_index{0};            ///< Index into CompiledFrame::targets (the pass' target).
     vn::graphics::Viewport viewport{};      ///< Whole-target rectangle, for the draw calls that announced none.
-    vn::graphics::DepthMode depth{vn::graphics::DepthMode::TestAndWrite};  ///< The pass' depth policy.
+    vn::graphics::PassRenderState state{};  ///< The pass' own state (depth policy + rasterisation override).
     ClearPolicy   clear{};                    ///< The effective clear policy (announced, or the default).
     bool          bootstrap{false};           ///< First writer of freshly built attachments: it must clear.
     bool          depth_preserved{false};     ///< A later pass reads the depth this one writes: never clear it.
@@ -272,7 +272,7 @@ class VN_GRAPHICS_API FrameCompiler
     /** @brief Resolves one drawing call's instances (program and dynamic state made explicit). */
     [[nodiscard]] std::span<const CompiledCommand> resolveCommands(const CollectedDraw& draw,
                                                                    const ProgramRef& default_program,
-                                                                   vn::graphics::DepthMode pass_depth);
+                                                                   const vn::graphics::PassRenderState& pass_state);
 
     /** @brief Resolves one pass' declared inputs into the facts a binding layer needs.
      *

@@ -89,6 +89,14 @@ void RenderPass::setDepthMode(DepthMode mode)
     depth_mode_ = mode;
 }
 
+PassRenderState RenderPass::stateOverrides() const
+{
+    PassRenderState state;
+    state.depth       = depth_mode_;
+    state.polygonMode = polygon_mode_override_;
+    return state;
+}
+
 bool RenderPass::isEnabled() const
 {
     return enabled_;
@@ -272,11 +280,10 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
         backend->setViewport(viewport_.x, viewport_.y, viewport_.width, viewport_.height);
     }
     announceClear(backend);
-    // Depth handling is explicit (DepthMode), never inferred from the clear
-    // flag: depth test/write are independent of whether the pass clears and of
-    // how it is lit (the content scene decides the lights). Forwarded so the
-    // backend's render() picks the right content-slot depth state.
-    backend->setDepthMode(depth_mode_);
+    // This pass' state for the content it draws - its depth policy and its rasterisation override, in one
+    // announcement: what a backend needs to resolve each command's FINAL state (StateNode.hpp's
+    // resolveRenderState). Both are pass facts, not per-command rewrites: the pass states them once here.
+    backend->setPassState(stateOverrides());
     // The shared list, not a copy of it: every pass of a frame draws the same commands, and the copy this
     // used to make cost an intrusive_ptr increment per command (three of them) plus a command-sized
     // memcpy per pass per frame. What a pass may change is its own VIEW of the list, so the copy happens
@@ -297,23 +304,20 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend)
         }
         backend->setLights(light_ptrs);
     }
-    if (program_override_ == nullptr && !polygon_mode_override_.has_value()) {
+    // A program override is the one pass-level override that still rewrites commands: replacing the program is not
+    // "another state item" but "draw this content with another program", and the rewrite is what keeps a backend's
+    // per-command pipeline key valid (see setProgramOverride). The rasterisation override is NOT rewritten any
+    // more: it travels with the pass' state (stateOverrides()) and is resolved per command, in one place
+    // (StateNode.hpp's resolveRenderState) - so a pass that overrides only rasterisation costs no copy at all.
+    if (program_override_ == nullptr) {
         if (camera_ != nullptr) {
             backend->render(*commands, camera_.get());
         }
         return;
     }
-    // Pass-level overrides: replace every command's effective (per-geometry / StateNode) program and / or
-    // rasterisation mode so the whole content renders one way (see setProgramOverride /
-    // setPolygonModeOverride). This is the one caller that needs its own list, so it is the one that makes one.
     auto overridden = std::make_shared<std::vector<RenderCommand>>(*commands);
     for (auto& command : *overridden) {
-        if (program_override_ != nullptr) {
-            command.program = program_override_;
-        }
-        if (polygon_mode_override_.has_value()) {
-            command.renderState.polygonMode = *polygon_mode_override_;
-        }
+        command.program = program_override_;
     }
     if (camera_ != nullptr) {
         backend->render(*overridden, camera_.get());

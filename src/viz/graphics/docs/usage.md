@@ -63,7 +63,7 @@ engine.setBackend(backend);
 | --- | --- |
 | 变换 | **相乘**；折好的结果烘焙进 `RenderCommand::modelMatrix` |
 | `opacity` | **相乘**：scene × 各层祖先 × 自身，在叶子处夹取到 `[0, 1]`。**它是引擎唯一的透明度通道**：内置前向着色的片元 alpha 就是它，不乘材质/纹理的 alpha（材质是共享的，乘进去会让所有用它的 drawable 一起半透明，而排序用的是这个值） |
-| 渲染状态（blend / depth / cull / topology） | **最深者覆盖** |
+| 渲染状态（blend / depth / cull / polygon / topology） | **最深者覆盖**（折叠进 `RenderCommand::authoredState`，**每项 optional**：没有 StateNode 说过某一项，那它在这里就是"没人说"，而不是"设成了默认值"） |
 | material / program | 叶子自己的优先，否则取最近的祖先 `StateNode` |
 | `isVisible` | **硬门**：不可见子树整棵不收集 |
 
@@ -71,6 +71,12 @@ engine.setBackend(backend);
 整个折叠是**一次自顶向下**的遍历（世界矩阵 / 透明度 / 状态 / material / program 一起往下传），
 `StateNode.hpp` 的 `effectiveRenderState/effectiveMaterial/effectiveProgram`（从叶子往上走）是同一规则的
 公开拼写，两者由测试钉住一致。
+
+**折叠出来的只是"内容作者写的那份"**：一条命令画出来是什么状态，还要加上**画它的那条 pass** 说的
+（depth 策略 + 光栅化覆盖）—— 两者由**一个函数**合并，`resolveRenderState(cmd.authoredState,
+pass.stateOverrides())`（`StateNode.hpp`），它按项回答"最终值 + 这一项是谁给的"（`StateOrigin`）。
+优先级一句话：**pass 的光栅化覆盖赢过内容，内容的 depth 赢过 pass 的 depth 策略**（pass 给的是"没写过
+depth 的那些的默认"），其余没有别的层 —— 视图的模式在**建管线时**就已经变成 pass 级覆盖（那是配方的事）。
 
 ### 2.3 资源
 
@@ -372,7 +378,9 @@ engine.addPass(present, 2);
 - **顺序**：负数在窗口 pass 之前。G-buffer 必须在光照之前 ⇒ `-3`。
 - **谁清屏**：每个 target 的**第一笔**清屏（`gbuffer` 清自己、`composite` 由①的 light 清），后面压上去的
   必须 `setClearEnabled(false)`。
-- **深度**：不透明 `TestAndWrite`；压在不透明结果上的半透明 `TestOnly`；HUD/覆盖层 `Disabled`。
+- **深度**：不透明 `TestAndWrite`；压在不透明结果上的半透明 `TestOnly`；HUD/覆盖层 `Disabled`。这是 pass 的
+  **策略**：内容自己用 `StateNode::setDepth` 写过 depth 的命令不吃它（见 §2.2 的合并规则与
+  `resolveRenderState`）。
 - **MRT**：目标侧 `attachColor()` 调四次；程序侧输出按附件序号写；`ScreenPass` 的 program 会把源的每张
   彩色附件绑成纹理 0..N-1。
 - **借深度**：`shareDepth()` 之后**只有当两边尺寸一致**才是同一张图；源 target 重建（换尺寸）会让借用方

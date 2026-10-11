@@ -56,24 +56,17 @@ struct VN_GRAPHICS_API RenderCommand {
     /** Effective opacity in [0, 1]: scene x nodes x leaf geometry. */
     float opacity = 1.0f;
 
-    /** Effective resolved render state for this command.
+    /** The render state the CONTENT authored for this command (every item optional).
      *
-     * Computed at collection time by folding every StateNode from the scene
-     * root down to the geometry and applying defaults. A backend uses it to
-     * select the matching pipeline variant; backends that do not consume
-     * per-object state ignore it.
+     * Computed at collection time by folding every StateNode from the scene root down to the geometry. An unset
+     * item means "nobody on the path said anything about it" - NOT "set to the default": the final state of the
+     * command depends on the pass drawing it as well, and the ONE place that answers that is
+     * `resolveRenderState(authoredState, pass.stateOverrides())` (see StateNode.hpp, which also says which item a
+     * pass overrides and which one it only supplies a default for). A backend consumes the resolved state to
+     * select a pipeline variant and to diff its dynamic state; backends that consume no per-object state ignore
+     * this.
      */
-    ResolvedRenderState renderState;
-
-    /** Whether @ref renderState's depth item came from a StateNode.
-     *
-     * False when no StateNode on the path set depth, so @ref renderState only
-     * carries the defaults. A backend uses this to honour the pass-level depth
-     * policy (RenderPass::depthMode) for content that does not ask for a
-     * specific depth handling of its own, while an explicit StateNode depth
-     * still wins (finer-grained intent over the pass default).
-     */
-    bool depthExplicit = false;
+    RenderState authoredState;
 
     /** @brief Default constructor. */
     RenderCommand() = default;

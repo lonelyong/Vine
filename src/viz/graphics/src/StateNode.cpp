@@ -191,6 +191,54 @@ ResolvedRenderState resolveRenderState(const RenderState& state)
     return resolved;
 }
 
+ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass)
+{
+    ResolvedCommandState resolved;
+
+    // The content's word first, item by item: what a StateNode authored is kept (and says so), everything it did
+    // not author is still the "nobody said" case the defaults below answer.
+    if (authored.cullMode) {
+        resolved.state.cullMode = *authored.cullMode;
+        resolved.origin.cullMode = StateOrigin::Content;
+    }
+    if (authored.blend) {
+        resolved.state.blend = *authored.blend;
+        resolved.origin.blend = StateOrigin::Content;
+    }
+    if (authored.polygonMode) {
+        resolved.state.polygonMode = *authored.polygonMode;
+        resolved.origin.polygonMode = StateOrigin::Content;
+    }
+    if (authored.topology) {
+        resolved.state.topology = *authored.topology;
+        resolved.origin.topology = StateOrigin::Content;
+    }
+
+    // Depth: the pass states a POLICY, the content may state an intent. An authored depth wins (finer-grained
+    // intent over the pass default); where the content authored none, the pass decides whether depth is used at
+    // all - and the COMPARE stays whatever the content resolved to (the pass has no opinion about it, see
+    // PassRenderState).
+    if (authored.depth) {
+        resolved.state.depth        = *authored.depth;
+        resolved.origin.depth       = StateOrigin::Content;
+    }
+    else {
+        resolved.state.depth.test    = pass.depth != DepthMode::Disabled;
+        resolved.state.depth.write   = pass.depth == DepthMode::TestAndWrite;
+        resolved.origin.depth        = StateOrigin::Pass;
+    }
+
+    // Rasterisation is an OVERRIDE, so it comes last and wins even over a content-authored mode: it is the
+    // "show me the edges" switch, and a switch a content-authored Line could veto would never take the picture
+    // back to Fill (see PassRenderState).
+    if (pass.polygonMode) {
+        resolved.state.polygonMode = *pass.polygonMode;
+        resolved.origin.polygonMode = StateOrigin::Pass;
+    }
+
+    return resolved;
+}
+
 ResolvedRenderState effectiveRenderState(raw_ptr<const Node> node)
 {
     return resolveRenderState(collectRenderState(node));

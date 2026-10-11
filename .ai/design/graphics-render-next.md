@@ -1,6 +1,6 @@
 # graphics 渲染栈的重新设计提案（next，2026-10-11）
 
-**状态：M1 已落地（2026-10-11）；M2 的 M2a/M2b/M2c/M2d 与观测片 M4 已落地（2026-10-11）；M5 拆成 M5a（已落地，输入按矩形 + 焦点）/ M5b（未落地，分屏布局的所有者）；其余是提案，未落地** ——
+**状态：M1 已落地（2026-10-11）；M2 的 M2a/M2b/M2c/M2d 与观测片 M4 已落地（2026-10-11）；M3（状态解析单点）已落地；M5 拆成 M5a（已落地，输入按矩形 + 焦点）/ M5b（未落地，分屏布局的所有者）；其余是提案，未落地** ——
 本文回答"如果重新设计这一套会怎么切"，并把每条切成能独立验收的迁移片。落地的部分按本文自己的规矩**以现状文档为准**
 （`appfw-render-view.md` §4.1、`.ai/memory/graphics.md`），这里只留下"原稿哪里说错了"的记录。**本文允许大改**：
 §3.2 是按行业口径重写的（`Surface` + 呈现表 / `Camera` + viewport 矩形 / `View` 配方），不迁就当前实现。
@@ -37,7 +37,7 @@
 | --- | --- | --- | --- |
 | 3.3 | 调试覆盖（线框/法线/无光照/平面）挪到**几何阶段**，不贴在窗口 pass | 小 | Deferred 上四档全部可用（今天报 `UnsupportedRequest`）；窗口 pass 变成纯合成 |
 | 3.2 | **呈现与分屏**：`Surface`（唯一清屏 + 呈现表 + 矩形）/ `Camera`（观看 + 投影参数，**不含 aspect**）/ `View`（配方 + 管线）；`SceneView` 退成单矩形门面 —— **M2a（呈现表的 owner）+ M2b（清屏归表面）+ M2c（aspect 出相机）+ M2d（矩形放呈现条目）已落地 2026-10-11** | 大（唯一动公开形态的一刀） | 全局让位规则 `hasWindowPass(camera)`（已删）、靠发言顺序的清屏（已归表面）、`SceneView` 三件事捏一起、**aspect 锁在相机里**（已出相机）、**矩形与视图的换算各说各话**（已归表面那张表） |
-| 3.1 | **状态解析单点** `resolveRenderState(...)` | 中 | "同一个设置两处"这类争论从命名问题变成类型问题 |
+| 3.1 | **状态解析单点** `resolveRenderState(...)` —— **已落地 2026-10-11** | 中 | "同一个设置两处"这类争论从命名问题变成类型问题（内容一份、pass 一份、**一处**合并） |
 | 3.4 | Pass 从"子类 + 就地声明"变成**描述符 + 每帧 FramePlan** | 大 | `wiringRevision()` + `validateWiring()` 这套"谁动了声明"的事后重查 |
 
 **横切三条**（§2 的契约表）：所有权（Device → Session → Lease，取代 R2 的"操作期间临时加引用"）、
@@ -112,20 +112,35 @@ appfw/src/gui/
 
 ## 3. 四条重切
 
-### 3.1 状态解析单点（`resolveRenderState`）
+### 3.1 状态解析单点（`resolveRenderState`）—— **已落地（M3，2026-10-11）**
 
-**目标 API**（提案）：
+**落地 API**（`StateNode.hpp`）：
 
 ```
-RenderState resolveRenderState(const RenderCommand& cmd, const RenderPass& pass, const ViewOverrides& view);
-// 优先级（一张表，一处实现，一处测试）：
-//   view 调试覆盖  >  pass 级覆盖  >  内容自己（StateNode 折叠后）  >  引擎默认
-// 返回值自带"这一项是谁给的"（来源枚举），诊断与测试因此能说清"为什么是 Line"
+ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass);
+// ResolvedCommandState{ ResolvedRenderState state; RenderStateOrigin origin; }
+//   origin 逐项回答"这一项是谁给的"（Default / Content / Pass）
+// 优先级（一张表，一处实现，一处测试）：pass 覆盖 > 内容自己（StateNode 折叠后） > 引擎默认
 ```
 
-**影响面**：`graphics-state.md` §4.1 的命名表从"实现规则"降级成"API 命名习惯"；`RenderCommand` 的
-`depthExplicit` 这类旗标被来源枚举取代；后端的 `SetDynamicState` 路径不变（它收的还是最终状态）。
-**风险**：一次性改动所有状态消费点，容易出现"看起来一样但少了一项"；因此验收必须包括逐项的状态快照对照。
+**与原稿的三处偏差（落地时修正）**：
+
+1. 原稿写"**view** 调试覆盖 > pass 级覆盖 > 内容自己 > 引擎默认"四层。落地是**三层**：**视图那一层在解析
+   时不存在** —— 视图的模式是**配方**，建管线时就已经被翻译成 pass 级覆盖（M1：`SceneView::applyModeToGeometryPass`
+   把 mode 落成几何 pass 的 program 覆盖 + 光栅化覆盖），而"画什么"那条 pass 归宿主。假装存在一个独立的视图
+   层，等于让建管线的人和解析的人都有话说。
+2. 原稿把 `program` 算进状态里。落地**不**算：替换程序是"用另一套程序画这份内容"，引擎仍旧逐命令改写
+   （`RenderPass::execute` 只保留这一条改写路径），这样后端"每条命令一个管线键"的口径不动。
+3. 原稿没提 `DepthMode` 与 `DepthState` 的**粒度差**。落地把它写进了函数：pass 说的是**策略**（test/write，
+   没有 compare），内容说的是**意图**（`DepthState` 三项齐全）—— 内容作者写过 depth 就整项归它（compare 一起），
+   没写过就由 pass 决定 test/write、compare 仍是内容/默认那条。
+
+**影响面**：`graphics-state.md` §4.1 的命名表从"实现规则"降级成"API 命名习惯"；`RenderCommand::depthExplicit`
+与命令上的"解析值"一起删除，改成**内容作者写的那份 optional 状态**（`RenderCommand::authoredState`）；后端合约
+`setDepthMode(DepthMode)` 换成 `setPassState(PassRenderState)`（一次公告说清 pass 那一侧的全部）；
+`resolveDynamicState(state)` 只剩纯映射。**风险**（原稿点到的）用两条挡住：①既有 337 条 `test_graphics` +
+405 条 `test_vsg` 在重构前后**同一套用例全绿**（含 M1 那三条光栅化覆盖语义的用例）；②新增逐项优先级矩阵用例
+（`RenderStateTest.ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem`）+ 变体验证。
 **行业对照**：Unreal 的 material override / base pass 覆盖、Unity 的 per-pass `RenderStateBlock`、
 Filament 的 `MaterialInstance` 覆盖链 —— 都是"一个解析函数 + 一张优先级表"。
 
@@ -519,7 +534,7 @@ FramePlan plan = graph.compile();
 | **M2b** | §3.2.5 清屏归表面（**已落地 2026-10-11**）：呈现表第一条保留自己的清屏，其余条关掉（`setClearEnabled(false)`）；每条呈现的 ask 被记住，第一条走掉时下一条恢复；视图重建后由视图回调表面重放（`friend`）。没有 `Surface::setClear`（值仍住那条 pass 上，一份真相） | ①一块表面里只有一条呈现 pass 带清屏；②撤掉第一条 ⇒ 清屏回到剩下那条；③延迟配方那条"自己不清"的 pass 不被逼着清；④视图重建后不变式仍在；⑤视图/表面任一先死都不悬垂 | M2a | 中 |
 | **M2c** | §3.2.5 **aspect 出相机**（**已落地 2026-10-11**，**破坏性**）：`Camera` 只留观看 + 投影参数（`projectionMatrix(aspect)` / 删 `aspectRatio()` / `screenToWorldRay(pos, aspect)`）；**一处推导** = `RenderBackend::viewAspect()`，剔除与 view block 读同一个数；`collectRenderCommands*(camera, aspect)`；操纵器自持 `viewportAspect()` | ①同一相机两条呈现两块矩形：两边 aspect 都对（`TheProjectionIsBuiltForTheShapeTheCallerNames` + `OneCameraInTwoRectanglesIsTwoPicturesAndTwoWalks`）；②剔除与画面一致（`EachPassCullsWithTheShapeOfItsOwnRectangle`：宽 pass 画外侧那颗、方 pass 剔掉；变异：写死 1.0 ⇒ 失败）；③view block 与 pass 的 viewport 同源（`TheViewBlockIsProjectedForTheShapeTheScopeAnnounced`；变异：固定 1.0 / 不在 `beginPass` 复位 ⇒ 各自失败）；④正交（阴影）行为不变；⑤`test_vsg` 405 绿、`test_graphics` 330 绿 | M2a/M2b + M4（先有 dump） | 大 |
 | **M2d** | §3.2.5 **矩形放呈现条目**（**已落地 2026-10-11**）：`Surface::present(view, rect)` / `present(view)` / `setViewport(view, rect)`，`SceneView::setViewport` 转发、`SceneView::viewport()` 读表；`dismiss`/表面析构把矩形还给视图；`Surface::viewAt(nx, ny)` **归一化**坐标（表面不持尺寸）；一个视图不能呈现两块表面 | ①分屏两块各按自己的矩形（640×720 与 640×360，形状不同）；②`SceneView::setViewport` 两种路径都可用且写同一块矩形；③改矩形不重建管线（句柄 + pass 数不变）；④`viewAt` 与矩形一致（共享边归东/南邻、重叠时最后画的赢、宿主自建 pass 不中选）；⑤`dismiss` 后视图接着画同一块；⑥重复呈现另一块表面被拒（诊断一条）。变异验证：视图不读表 ⇒ 2 条失败；`viewAt` 不看矩形 ⇒ 2 条失败；`viewAt` 正序 ⇒ 1 条失败；`dismiss` 不还矩形 ⇒ 1 条失败；去掉"已在别的表面"的拒绝 ⇒ 1 条失败；`SceneView::setViewport` 不转发 ⇒ 1 条失败 | M2a | 中 |
-| **M3** | §3.1 `resolveRenderState` 单点 | ①逐项状态快照：内容/pass/视图三层各自设过同一项时，最终值 = 优先级表；②`depthExplicit` 类旗标删除后行为不变；③诊断能说出"这一项来自哪一层"；④`graphics-state.md` §4.1 的表从"规则"改成"命名习惯"（文档验收） | 无 | 中 |
+| **M3** | §3.1 `resolveRenderState` 单点（**已落地 2026-10-11**）：**一个函数**按项合并"内容作者写的"与"pass 说的"（`resolveRenderState(authored, pass)` → 最终值 + 逐项 `StateOrigin`）；命令侧换成 `authoredState`（optional，删掉 `depthExplicit`），pass 侧一次公告（`RenderBackend::setPassState(PassRenderState)`）；光栅化覆盖不再改写命令（只留 program 那条改写路径）；`resolveDynamicState` 只剩纯映射 | ①逐项状态快照 = 优先级表：`RenderStateTest.ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem`（五项逐一 + depth 的**不对称**：pass 给策略、内容给意图，compare 跟着内容走；空内容 ⇒ 五项全 default 且 origin=Default；内容-only 拼写与空 pass 等价）②旗标删除后行为不变：`depthExplicit` / 命令上的解析值全删，**重构前后同一套用例全绿**（`test_graphics` 337→339、`test_vsg` 405，含 M1 那三条光栅化覆盖语义：`FrameCompilerTest.ThePassDepthAppliesOnlyWhereTheContentAuthoredNone`、`SceneViewViewportTest.ThePassLevelPolygonModeOverridesTheContentAndCanBeClearedBack`）③"这一项来自哪一层"可答：`StateOrigin` 逐项返回，用例断言；引擎那一侧新增 `RenderEngineTest.APassAnnouncesItsOwnStateForTheContentItDraws`（announcement = `stateOverrides()`，且命令**没有**被改写）④`graphics-state.md` §4.1 已改写（表格 = 命名习惯 + 一处实现）。变异验证：不公告 pass 状态 ⇒ 2 条失败；解析忽略光栅化覆盖 ⇒ 2 条失败；pass 深度反过来压过内容 ⇒ 2 条失败 | 无 | 中 |
 | **M4** 观测：FramePlan dump（**已落地 2026-10-11**） | `FramePlan.hpp`（`PassPlan` 每 pass 的 order/name/content/camera/target/enabled/clear/viewport/inputs/output + 上一帧的 `record_micros`）+ `RenderEngine::framePlan()`（只读、按执行序）+ `FramePlan::describe()`（一行一 pass 的 key=value 表）+ demo 开关 `VINE_FRAME_PLAN=1`（attach 那一帧之后打一行表格） | ①一条 API/开关打印这一帧的表格（`describe()`；demo 真机输出见 `.ai/memory/graphics.md`）②`test_graphics` 两条改用结构断言替换 `passCount()`/指针身份（`SceneViewViewportTest.TheRecipeDecidesWhichOverlayPassesExist` 改断言 pass 名字序列；`RenderPipelineBuilderTest.ForwardPathBuildsWindowPass` 改断言 plan 那一条的全部事实）③dump 与真实执行一致：`RenderEngineTest.TheFramePlanIsWhatTheFrameActuallyRan` 用记录型后端对照"plan 里 enabled 的那些 pass，按序 == 后端被开过 scope 的那些"④耗时是"上一帧"的且说清楚（`TheFramePlanCarriesWhatEachPassLastCost`：慢 pass ≥ 1000 µs、没跑的 pass = 0） | 无 | 小 |
 | **M5a** 输入路由 + 焦点（**已落地 2026-10-11**） | **焦点住在那张表上**（和矩形、清屏一起）：`RenderSurface::focus(view)` / `focusedView()`（默认第一条呈现；撤掉的、或 pass 已经不在帧里的不算 —— 免得把"当前视图"答成一张没人画的画面）。`SurfaceWindow` 的**默认路由改成问表面**（`viewAt`，逻辑像素 ÷ 表面尺寸 → 归一化），`setInputRouter` 从"唯一通路"降级成**覆盖**（返回 nullptr = 交回矩形）；**按下**即把路由到的视图设为焦点（默认路与 router 一样），按下也**总是**捕获（分屏拖出边界不能断线）；**键盘**改去**焦点**（没有位置可路由）。`RenderControl::focusedView()`（无呈现视图时回退控件自己的视图）；五条显示模式命令改**焦点视图**，`setPrimaryRenderControl` 只用来找**控件**、不再决定改哪个视图 | ①分屏两块各自输入：`RenderControlTest.TheSurfacesRectanglesRouteInputWithNoRouterAtAll`（**一条 router 都不装**，右半拖拽只动右边那格，左半按下动控件自己那个视图；键盘跟着焦点走）②五条命令作用于焦点视图：`ModelViewerTest.TheShadingModeCommandsDriveTheCurrentModelView` 追加的一段（焦点在第二格 ⇒ 命令改第二格、主视图不动；焦点转回 ⇒ 同一条命令改主视图、第二格保持）③`setPrimaryRenderControl` 仍被用来找控件（同两条用例的断言）但焦点来自输入。**变异验证**：默认路由不看矩形 ⇒ 失败；按下不设焦点 ⇒ 失败；键盘绕过焦点 ⇒ 失败；`focusedView` 不看存下的焦点 / 不做存活检查 ⇒ 各自失败；命令改回 `control->view()` ⇒ 失败。（写下的"撤销时清焦点"对*结果*冗余 —— 存活检查已经给出同样答案 —— 它挡的是"指针被后来同地址的视图继承"，用例稳定撞不上，如实记账。） | M2d（已落地） | 中 |
 | **M5b** 分屏布局的所有者（**未落地**） | **谁 split、谁销毁、谁改矩形**：splitter 树 / 布局对象（每格一台相机 + 矩形 + 可选 HUD），把"宿主自己给每个视图喂表面尺寸、自己写矩形"这摊事收成一处；**窗口级焦点**（今天的焦点是**每表面**一个，多控件多窗格时要先回答"哪块控件有焦点"）；`ViewContext{ window, focus_view, selection }` 的 `selection` 一轴 | 待定（见 §4） | M5a（已落地） | 中 |

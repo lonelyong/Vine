@@ -120,6 +120,9 @@ class StateNode : public Group {
 
 - 视图/pass 提供**基底默认状态**（主视图：depth test/write on、cull none、blend 随 opacity；
   overlay：depth off、blend on）——可视为"视图根上的默认 StateGroup"。
+- **落地形态（M3，2026-10-11）**：那层"基底"就是 `PassRenderState`（pass 的 depth POLICY + 光栅化覆盖，
+  见 §4.1），与内容折叠出来的 `RenderState` 一起交给**同一个** `resolveRenderState(...)`；没有第三份状态、
+  也没有"谁先公告谁赢"。
 - 用户 `StateNode` 在其下覆盖；无用户 StateNode 时行为 = 现状（零回归）。
 
 ### 4.1 同一个状态在"逐子树"和"逐 pass"两处出现时：谁赢、叫什么名
@@ -131,10 +134,23 @@ class StateNode : public Group {
 
 | 状态 | pass 级 setter | 与内容的关系 | 为什么 |
 | --- | --- | --- | --- |
-| program | `RenderPass::setProgramOverride` | **pass 赢**（整体替换每条命令的程序） | "用另一套着色把这个内容再画一遍"是它的用途（法线 pass、alt-shading pass），要它是"全部" |
-| polygonMode | `RenderPass::setPolygonModeOverride` | **pass 赢**（改写每条命令的光栅化状态） | 它是**观看开关**："给我看边"。若内容自己写的 Line 能压过它，这个开关就**永远无法**把画面切回实面 |
-| depth | `RenderPass::setDepthMode` | **内容赢**（`RenderCommand::depthExplicit` 的命令不吃它） | 深度是**内容 routinely 声明**的东西（透明体、HUD），pass 给的是"没说过的那些的默认" |
+| program | `RenderPass::setProgramOverride` | **pass 赢**（pass 整体替换每条命令的程序） | "用另一套着色把这个内容再画一遍"是它的用途（法线 pass、alt-shading pass），要它是"全部" |
+| polygonMode | `RenderPass::setPolygonModeOverride` | **pass 赢**（覆盖每条命令的光栅化状态） | 它是**观看开关**："给我看边"。若内容自己写的 Line 能压过它，这个开关就**永远无法**把画面切回实面 |
+| depth | `RenderPass::setDepthMode` | **内容赢**（内容作者写过 depth 的命令不吃它） | 深度是**内容 routinely 声明**的东西（透明体、HUD），pass 给的是"没说过的那些的默认" |
 | 视口 / 清除 | `setViewport` / `setClearEnabled` … | 内容没有对应的状态 | 它们是 pass 自己的几何与目标策略 |
+
+**这张表现在是"命名习惯"，不是"实现规则"**（M3，2026-10-11）：上表的三条优先级由**一个函数**实现
+—— `resolveRenderState(const RenderState& authored, const PassRenderState& pass)`（`StateNode.hpp`）——
+它按项回答"最终值 + 这一项是谁给的"（`ResolvedCommandState{state, origin}`）。命令侧只带**内容作者写的
+那份**（`RenderCommand::authoredState`，每项 optional），pass 侧只带**它自己那份**
+（`RenderPass::stateOverrides()` → `RenderBackend::setPassState()`），两边都不做合并；后端（以及任何要解释
+画面的人）调同一个函数。于是"看的不等于画的不等于报告的不"这一整类错没有地方可藏，而下面那条命名规则
+也从此只是**读起来自解释**的约定（实现不再依赖谁的名字里有 `Override`）。
+
+**一条刻意的不对称**：`program` **不在** `PassRenderState` 里。替换程序不是"又一个状态项"，而是"用另一套
+程序画这份内容"，引擎仍旧逐命令改写（`RenderPass::execute`）—— 这样后端"每条命令一个管线键"的口径不动
+（`RenderPass::setProgramOverride`）。光栅化覆盖则**不再改写命令**：它跟着 pass 状态走，由上面那个函数
+按命令解析（因此"只改线框"的 pass 一次拷贝都不付）。
 
 **命名规则（照上表执行）**：pass 级 setter **赢了内容**的，名字里带 **`Override`**
 （`setProgramOverride` / `setPolygonModeOverride`，getter 同名去 `set`）；pass 给的是**可被内容压过的默认**，

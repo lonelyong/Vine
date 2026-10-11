@@ -138,8 +138,7 @@ struct CollectedCommand
     const void*   material{nullptr};            ///< Material identity, or nullptr.
     vn::math::Mat4d model{};                  ///< World-space model matrix.
     float         opacity{1.0F};                ///< Effective opacity (the engine's only transparency channel).
-    vn::graphics::ResolvedRenderState state{};  ///< Resolved per-object state (the dynamic layer's source).
-    bool          depth_explicit{false};        ///< Whether the depth in `state` came from a StateNode.
+    vn::graphics::RenderState authoredState{};  ///< What the CONTENT authored, item by item (see the resolution).
 };
 
 /**
@@ -178,7 +177,7 @@ struct CollectedPass
     std::span<const InputRef> inputs{};    ///< The pass' resolved inputs, in declaration order.
     bool          has_clear{false};        ///< Whether the host announced a clear policy for this scope.
     ClearPolicy   clear{};                 ///< The announced policy (meaningful when has_clear).
-    vn::graphics::DepthMode depth{vn::graphics::DepthMode::TestAndWrite};  ///< The pass' depth mode.
+    vn::graphics::PassRenderState state{}; ///< The pass' own state: depth policy + rasterisation override.
     std::span<const CollectedDraw> draws{};///< Drawing calls that arrived in the scope, in call order.
 };
 
@@ -291,12 +290,16 @@ class VN_GRAPHICS_API FrameRecorder
      */
     bool setClearPolicy(const ClearPolicy& policy);
 
-    /** @brief Announces how this pass' content handles the target's current depth.
+    /** @brief Announces the pass' own state for the content it draws (depth policy + rasterisation override).
      *
-     * @param mode Depth handling for the scope.
+     * The pass side of the state priority table: recorded per scope, and what the compiler resolves every command
+     * against (see `resolveRenderState` in StateNode.hpp). A scope that announces nothing is recorded with the
+     * defaults.
+     *
+     * @param state Depth policy and rasterisation override of the scope.
      * @return true when it was recorded; false when it was dropped.
      */
-    bool setDepthMode(vn::graphics::DepthMode mode);
+    bool setPassState(const vn::graphics::PassRenderState& state);
 
     /** @brief Announces the pass' resolved inputs (a property of the pass, not of one drawing call).
      *
@@ -393,7 +396,7 @@ class VN_GRAPHICS_API FrameRecorder
     const void* pass_target_{nullptr};           ///< Target announced for the open scope.
     bool        pass_has_clear_{false};          ///< Whether the scope announced a clear.
     ClearPolicy pass_clear_{};                   ///< The announced clear.
-    vn::graphics::DepthMode pass_depth_{vn::graphics::DepthMode::TestAndWrite};  ///< The scope's depth mode.
+    vn::graphics::PassRenderState pass_state_{};  ///< The scope's own state (depth policy + rasterisation override).
     double      pass_aspect_{1.0};               ///< Shape of the picture this scope draws into (see setViewAspect).
     std::span<const InputRef> pass_inputs_{};    ///< The scope's inputs (a property of the pass).
 

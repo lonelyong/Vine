@@ -301,11 +301,11 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
         cmd.opacity = effective;
         // Render state folds along the node path: every StateNode from the
         // scene root to this geometry contributes, deeper nodes overriding.
-        // The fold arrives already computed, so the backend can also tell whether
-        // the depth item was explicitly authored (an explicit StateNode depth
-        // wins over the pass-level depth policy, see RenderCommand::depthExplicit).
-        cmd.renderState   = resolveRenderState(subtree.state);
-        cmd.depthExplicit = subtree.state.depth.has_value();
+        // What arrives here is the CONTENT's word (every item optional, so
+        // "nobody said" and "said the default" stay different facts); the pass
+        // drawing it completes the picture, in one place (see StateNode.hpp's
+        // resolveRenderState and RenderPass::stateOverrides).
+        cmd.authoredState = subtree.state;
         // Shading program resolves leaf-first then ancestor StateNodes.
         cmd.program = geometry->program() != nullptr ? ShaderProgramPtr(geometry->program())
                                                      : ShaderProgramPtr(subtree.program);

@@ -6464,7 +6464,7 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     command.geometry             = geometry;
     command.material             = material;
     command.program              = program;
-    command.renderState.topology = vn::graphics::Topology::Points;
+    command.authoredState.topology = vn::graphics::Topology::Points;
     const std::vector<RenderCommand> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });

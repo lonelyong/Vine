@@ -47,32 +47,17 @@ bool DynamicState::operator==(const DynamicState& other) const noexcept
            polygon_mode == other.polygon_mode && topology == other.topology && blend == other.blend;
 }
 
-DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state, bool depth_explicit,
-                                 vn::graphics::DepthMode pass_depth) noexcept
+DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state) noexcept
 {
     DynamicState resolved;
+    resolved.depth        = state.depth.test ? (state.depth.write ? vn::graphics::DepthMode::TestAndWrite
+                                                                 : vn::graphics::DepthMode::TestOnly)
+                                            : vn::graphics::DepthMode::Disabled;
     resolved.compare      = state.depth.compare;
     resolved.cull_mode    = state.cullMode;
     resolved.polygon_mode = state.polygonMode;
     resolved.topology     = state.topology;
     resolved.blend        = state.blend;
-
-    // The command's own depth state wins where it has one; where it does not, the pass decides for the
-    // content it draws (see the declaration for the two pictures the wrong choice produces).
-    if (!depth_explicit)
-    {
-        resolved.depth = pass_depth;
-        return resolved;
-    }
-    if (!state.depth.test)
-    {
-        resolved.depth = vn::graphics::DepthMode::Disabled;
-    }
-    else
-    {
-        resolved.depth = state.depth.write ? vn::graphics::DepthMode::TestAndWrite
-                                           : vn::graphics::DepthMode::TestOnly;
-    }
     return resolved;
 }
 
