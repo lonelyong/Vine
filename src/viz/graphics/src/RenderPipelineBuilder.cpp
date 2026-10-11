@@ -453,7 +453,12 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     gbuf_desc.camera        = camera_;
     gbuf_desc.content       = content_;
     gbuf_desc.writes        = gbuffer;
-    gbuf_desc.program       = std::move(gbuf_program);
+    // The program is a SCENE pass' override (`PassDesc::program_override`): `PassDesc::program` is the
+    // full-screen field a Screen pass draws through, so naming it here left the G-buffer pass with no program at
+    // all - every body then drew with its own (or the engine's forward) program, which writes ONE colour output:
+    // the geometry landed in albedo and the normal / specular / position attachments kept their transparent-black
+    // clear, so the lighting read nothing and a PiP of either of those three was black.
+    gbuf_desc.program_override = std::move(gbuf_program);
     gbuf_desc.output_name   = u8"GBuffer";
     // The same wire, declared at object level: this pass is the G-buffer's ONLY writer, so it owns the
     // hand-off and promises the whole target (one line instead of one per colour attachment — the

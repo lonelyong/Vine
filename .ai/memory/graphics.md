@@ -15,7 +15,7 @@
 | **模块布局与依赖** | 顶部 2026-09-27 四条：帧机器归属 `core`→`backend` / 诊断路线合并 / 帧时钟查询面 `FrameProgress` / 放置判据与 `frame/` 最终形态；规则全文在 `.ai/design/graphics-layering.md` |
 | **一帧怎么走** | M11h 空绘制调用不是绘制调用 · M11m episode 归半片 · M11o 拒绝报告合并 · M11w 块预算按需增长 · M11x B5 触发规模 · M11i 租约顺序相位 · B8 跨帧差异 · B9 在飞槽数地板 |
 | **着色器与 ABI 契约** | shader 文件命名 `builtin_<角色>.<阶段>` · `vn_`→`vine_` 前缀 · texcoord kind 显式化 · P0.A/P0.B1/P0.C1（前向着色归 SDK / location 表 / L1 块布局） · P12 文件化 + 构建期嵌入 · program 槽 P1 三步 |
-| **证据与门禁** | M7 每帧编译 + 描述符（`PassDesc`）· M8 SDK 级设备夹具 + 像素判据（`SdkPixelTest`） · M11k 背景看写掩码 · M11l 第三条画面判据"整片背景灰" · FPS 窗口真平均 · ASan 两片（余量收口 / 全量 test_vsg 首通） · V3/V4 上游能力门禁 · R5 LSan 抑制 · M11g 计数分配器（**`skipped == 0` 才是跑过设备电池**） |
+| **证据与门禁** | M7 每帧编译 + 描述符（`PassDesc`）· M8 SDK 级设备夹具 + 像素判据（`SdkPixelTest`） · M11k 背景看写掩码 · M11l 第三条画面判据"整片背景灰" · FPS 窗口真平均 · ASan 两片（余量收口 / 全量 test_vsg 首通） · V3/V4 上游能力门禁 · R5 LSan 抑制 · M11g 计数分配器（**`skipped == 0` 才是跑过设备电池**） · 2026-10-11 修：G-buffer 几何 pass 缺 `program_override`（像素判据抓到，见顶条） |
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/guides/graphics.md`（模块文档一节） |
@@ -23,6 +23,38 @@
 | **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**S10b（插件会话→设备：窗口与交换链 1:N、缓存上移、`DeviceDesc`）**/ S11（登记不做）未落地 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-11 修：延迟预设的 G-buffer 几何 pass 从来没拿到过自己的几何程序（默认 demo 后三格预览全黑）
+
+- **结论**：`RenderPipelineBuilder::buildDeferredPath` 把 G-buffer 几何程序写进了 `PassDesc::program`，而那是
+  **Screen pass 的字段**（`RenderEngine::addPass(PassDesc)` 只对 `PassKind::Screen` 用它，Scene pass 只读
+  `PassDesc::program_override`）⇒ 那条 pass **一个程序都没有**：每个物体退回自己的 program（没有的退引擎默认的
+  `forwardProgram()`），而前向程序只写 **一张** 颜色输出 ⇒ 几何只落进 albedo，法线 / specular / 视图位置三张附件
+  停在**透明黑**清屏值上。用户看到的就是默认 demo 左上的**后三格全黑**。改成 `gbuf_desc.program_override = ...`
+  一行即修（程序选择本身没变、pass 表没变、`PipelineOptions::gbuffer_program` 的语义没变）。
+- **判据（实测，无头像素夹具 `test_vsg`）**：修前四格复制回来 `albedo=(38,38,38,255)`（= 清屏色，几何根本没画进来）、
+  `法线=specular=位置=(0,0,0,0)`；修后 `(255,255,255,255)` / `(0,0,255,32)` / `(127,127,127,255)` / `(21,0,0,255)`
+  —— 法线格的蓝拉满 + alpha=32（默认 `shininess` 32 ⇒ `32/256`）正是"附件 1 就是法线+光泽"的指纹。同一台机器上
+  手工搭一条 `setProgramOverride(...)` 的 pass 写同一张目标，四格**当场全是真数据** ⇒ 断点在这条**声明**的字段上，
+  不在交付链上（这条对照就是把范围一刀切开的那个实验）。
+- **同一个 bug 的更大一半（主画面）**：附件 3 没写 ⇒ 光照程序对**每个**像素都走 `pos4.a < 0.5` 的 background 分支
+  （固定 `0.06` 灰；夹具实测主画面 `(15,15,15)` = `0.06*255`），阴影、光照全落空 —— 所以"后三格预览黑"只是这个 bug
+  最容易看见的那一面（夹具里连 albedo 都停在清屏色：四张附件的 pass 配一支**只写一张输出**的前向程序，几何一张都没
+  落进去）；修完四格预览与主画面**一起**变对。
+- **变异 3/3 红**（各自单独实测）：A 把这一行改回 `program` ⇒ 接线用例与像素用例**都红**（像素回到 38 / 0,0,0,0）；
+  B 屏内 ABI 的绑定恒取附件 0（`source->colors[0]`）⇒ **只有**像素用例红（四格复制回来全一样），接线用例仍绿，两条
+  判据互不代劳；C 在 `EngineCompile::addPass(PassDesc)` 里把 `program` 当成 Scene pass 的 override ⇒ 两条都红。
+- **坑**：① `PassDesc` 有两个程序字段、**按 pass 种类二选一**，写错了**不报错**——Scene pass 静默忽略 `program`，
+  于是症状落在"少写了几张附件"而不是"程序没生效"，这是本仓库最难从结构断言里看出来的那一类；② 后三格的**透明黑**
+  骗人：MRT 的额外附件清屏值就是 `(0,0,0,0)`（见 `core/ClearPlan`），而全屏复制**不混合**（`draws_content=false`
+  ⇒ `ONE/ZERO`），所以"黑"只说明**源是清屏值**，不说明"复制没发生"——判"附件写没写"要选一张**内容不可能为黑**的
+  （法线格的蓝、albedo 格的颜色）；③ 视图位置格**天生就暗**（视图空间的 z 为负，8 位窗口钳成 0），别把数据本身当缺陷。
+- **判据（套件 / 门禁）**：全量 Release **0 error / 0 warning**；`test_graphics` **364**（条数不变；`DeferredPresetBuildsGbufferAndLightingPasses`
+  加了接线断言：几何 pass 的 `programOverride()` 就是请求的那支程序、lighting 是 Screen pass 所以程序在它自己的
+  `program()` 上、G-buffer 是 4 张彩色附件）；`test_vsg` **429** = 424 + 3 skip + 2 已知红（+1：`SdkPixelTest.TheDeferredPresetFillsEveryGbufferAttachment`
+  —— 按 demo 的写法发四格复制并读像素）；五个 gate 0 finding（`--strict` 13）。文档侧：`docs/guides/graphics.md`
+  的"默认 demo"一节补了四格预览各是什么、怎么看懂"黑"，§4.2 开头补上"**demo 是启动后打开的一份文档**"
+  （`Vine --open demo` 或控制台 `open_demo`：只启动外壳既不建场景也不建管线），运行配方也带上 `--open demo`。
 
 ## 2026-10-11 S10a 落地：三张契约（设备 / 执行器 / 目标）+ 目标由设备造（插件仍单窗口）
 

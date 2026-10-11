@@ -6,15 +6,23 @@
 #include <cstdint>
 #include <cstdio>
 
+#include <array>
+
 #include <vine/graphics/BuiltinShaders.hpp>
+#include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
+#include <vine/graphics/RenderPipeline.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/SceneView.hpp>
 
 using vn::graphics::PipelineOptions;
 using vn::graphics::RenderPass;
 using vn::graphics::RenderPipelineBuilder;
+using vn::graphics::RenderTarget;
+using vn::graphics::ScreenPass;
 using vn::graphics::SceneView;
 using vn::graphics::ShadingMode;
 using vn::graphics::ShadingPath;
@@ -221,4 +229,82 @@ TEST(SdkPixelTest, TheFixtureAlsoDrawsContentWithNoViewAtAll)
     EXPECT_FALSE(covered(picture.pixel(0, 0))) << "左上角在四边形之外";
     EXPECT_TRUE(covered(picture.pixel(SdkPixelFixture::kSide / 2, SdkPixelFixture::kSide / 2)))
         << "画面正中在四边形之内";
+}
+
+// 延迟预设的 G-buffer：四张彩色附件都必须真的被几何 pass 写进去。
+//
+// WHY IT IS A PIXEL CASE. "The preset's G-buffer pass carries the G-buffer program" is a wiring fact, and it is
+// asserted where wiring lives (test_graphics). What a host sees is one step further and this is where it is
+// caught: the pass can carry the program and still leave three attachments at their clear, and the demo's
+// default scene showed exactly that - the last three G-buffer previews were BLACK rectangles, because the
+// geometry pass drew every body through a one-output program (albedo landed, normal / specular / position kept
+// their transparent-black clear). So the copies below are the demo's own declarations - the SDK's
+// screenCopyProgram(n) over an ImageRef bound to (target, n) - and the assertion is on what they land.
+TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
+{
+    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+
+    PipelineOptions options;
+    options.path = ShadingPath::Deferred;
+    RenderPipelineBuilder builder(fixture.engine.get());
+    builder.setCamera(fixture.camera.get());
+    builder.setContent(fixture.scene);
+    vn::intrusive_ptr<vn::graphics::Pipeline> pipeline = builder.build(options);
+    ASSERT_NE(pipeline, nullptr) << "延迟预设必须建得起来";
+
+    // 夹具的"窗口"是后端自己开的，读不回来：把画面那条 pass 指到夹具的目标上，预览才有东西可叠。
+    RenderPass* const picture = pipeline->windowPass();
+    ASSERT_NE(picture, nullptr);
+    picture->setRenderTarget(fixture.target);
+    picture->setClearEnabled(true);
+    picture->setClearColor(vn::Color(0, 0, 0));
+    picture->setShouldClearDepth(true);
+
+    RenderTarget* const gbuffer = pipeline->offscreenTarget();
+    ASSERT_NE(gbuffer, nullptr);
+    ASSERT_EQ(gbuffer->colorCount(), 4) << "延迟预设的 G-buffer 是四张彩色附件（见 defaultGbufferTarget）";
+
+    // 四格预览 = demo 默认场景里那四条的写法：同一张源、每格一个换了下标的屏程序、一个 12x12 的视口。
+    constexpr int kSlot     = 2;
+    constexpr int kSlotStep = 15;
+    constexpr int kSlotSide = 12;
+    for (int attachment = 0; attachment < 4; ++attachment) {
+        vn::intrusive_ptr<ScreenPass> preview(new ScreenPass());
+        preview->setName(vn::String(u8"gbuffer_preview"));
+        preview->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(fixture.camera));
+        preview->setProgram(vn::graphics::screenCopyProgram(attachment));
+        preview->addInputName(u8"GBuffer");
+        vn::intrusive_ptr<vn::graphics::ImageRef> image(new vn::graphics::ImageRef(u8"GBuffer.preview"));
+        image->bind(vn::intrusive_ptr<RenderTarget>(gbuffer), attachment);
+        preview->addInput(image);
+        preview->setRenderTarget(fixture.target);
+        preview->setClearEnabled(false);
+        preview->setShouldClearDepth(false);
+        preview->setViewport(kSlot + attachment * kSlotStep, kSlot, kSlotSide, kSlotSide);
+        fixture.engine->addPass(preview, 120 + attachment);
+    }
+
+    const PixelProbe read_back = fixture.read();
+    ASSERT_TRUE(read_back.valid()) << "这一帧必须读得回来";
+
+    // 每格取正中一个像素：四边形在夹具相机里盖住画面中央，所以这个点一定在几何上（否则下面的断言量的是清屏色）。
+    std::array<Rgba8, 4> copies{};
+    for (int attachment = 0; attachment < 4; ++attachment) {
+        copies[static_cast<std::size_t>(attachment)] =
+            read_back.pixel(kSlot + attachment * kSlotStep + kSlotSide / 2, kSlot + kSlotSide / 2);
+        std::printf("[sdk-pixels] gbuffer attachment %d copy: r=%u g=%u b=%u a=%u\n", attachment,
+                    copies[static_cast<std::size_t>(attachment)].r, copies[static_cast<std::size_t>(attachment)].g,
+                    copies[static_cast<std::size_t>(attachment)].b, copies[static_cast<std::size_t>(attachment)].a);
+    }
+
+    for (int attachment = 0; attachment < 4; ++attachment) {
+        EXPECT_TRUE(covered(copies[static_cast<std::size_t>(attachment)]))
+            << "第 " << attachment
+            << " 格是透明黑：那张附件留着清屏色 = 几何 pass 没写它（正是后三格全黑的那个失败）";
+    }
+    // 附件下标真的换了东西：四格里读到的不是同一张附件（绑定恒为 0 会让下面两条红），而且法线那张确实是法线
+    // ——夹具的四边形法向 (0,0,1)，写进去的 z 就是蓝通道拉满。
+    EXPECT_NE(copies[1], copies[0]) << "法线格与 albedo 格必须不是同一个像素值";
+    EXPECT_GT(copies[1].b, copies[1].r) << "法线格以蓝为主（(0,0,1) 的法向写进 F16 的目标再复制回来）";
+    EXPECT_GT(copies[1].b, copies[1].g);
 }

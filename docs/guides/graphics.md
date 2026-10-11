@@ -925,8 +925,10 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 
 ### 4.2 demo 应用的开关
 
-`./build/bin/Vine` 启动应用；`app_shell` 插件搭外壳（窗口、停靠布局、控制台），`demo_plugin` 插件负责注册 demo 场景与管线。下面每个开关都是**环境变量**
-（应用不接受命令行参数）：
+`./build/bin/Vine` 启动应用；`app_shell` 插件搭外壳（窗口、停靠布局、控制台），`demo_plugin` 插件负责注册 demo 场景与管线。
+**demo 是启动后打开的一份文档**：`Vine --open demo` 在启动时打开它，或者启动后在控制台跑 `open_demo` 命令
+（`app_shell` 的唯一命令行参数就是 `--open <文档类型>`）—— 不打开就只有一个空外壳：没有场景、没有管线，也就没有画面。
+下面每个开关都是**环境变量**（除 `--open` 外应用不接受其它命令行参数）：
 
 | 环境变量 | 取值 | 作用 |
 | --- | --- | --- |
@@ -954,6 +956,14 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 就是容易被读成"看到盒子里面"的那种观感）。这是 cube probe 的定义，不是缺陷；想要 `reflect(view_dir, n)` 的镜面观感需要
 另一条着色规则，即给这只盒子自己的 `ShaderProgram`（引擎的 set 只有"按顶点给的方向采样"这一条规则，见 `addCubeMappedBox`
 的注释）。另外 cube map 在这里当 albedo 用、照片本身的天空是白的，所以太阳的明暗在它身上很淡。
+
+延迟（默认）路径还在左上角画**四格 G-buffer 预览**：按顺序是 albedo、视图法线+光泽（法线装在 rgb、`shininess/256` 装在
+alpha）、specular、视图位置。每格是一次全屏复制（`screenCopyProgram(n)`，n 就是**附件下标**），源是那条管线自己的
+G-buffer。判"有没有画"的看法线格和 albedo 格：法线格应是场景的法线（夹具那只 `(0,0,1)` 的四边形复制回来是**纯蓝**），
+albedo 格应是场景的颜色。位置格**天生就暗**——视图位置的 z 是负的（视图朝向的那根轴），复制进 8 位窗口时钳成 0 ——
+那不是"没画"。后三格**停在透明黑**（`(0,0,0,0)`，即附件的清屏值）才是接线断了：G-buffer 那道几何 pass 必须带
+`program_override`（见 §3 的"配方与 pass 属性"一节），否则每个物体用自己的/前向的程序画，只写 albedo 一张附件，其余
+三张就停在清屏值上（2026-10-11 修掉的那个：默认 demo 的后三格全黑）。
 
 叠加场景（延迟路径 `DemoScene::buildScene()` 的覆盖层）现在只放**会混合**的内容：半透明盒子和星点 sprite。它的那趟**不写深度**
 （`DepthMode::TestOnly`，半透明内容的规则），因此 pass 内的 drawable **无法自遮挡** —— 一只不透明的封闭盒子放进去会
@@ -1013,12 +1023,12 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 **没有保留项**：程序就是唯一入口（见 §3），未实现的着色需要宿主自己写一个 `ShaderProgram`。
 
 ```bash
-./build/bin/Vine                                # deferred（默认）
-VINE_PIPELINE=forward  ./build/bin/Vine         # forward
-VINE_VSG_GBUFFER=1     ./build/bin/Vine         # + G-buffer 预览
-VINE_VSG_DEFERRED=1    ./build/bin/Vine         # + 独立延迟光照 pass
-VINE_VSG_OFFSCREEN_MULTISLOT=1 ./build/bin/Vine # 离屏 + PiP
-VINE_PIPELINE=forward_shadowed ./build/bin/Vine # 接受；与 forward 完全相同（阴影已是默认）
+./build/bin/Vine --open demo                                # deferred（默认）
+VINE_PIPELINE=forward  ./build/bin/Vine --open demo         # forward
+VINE_VSG_GBUFFER=1     ./build/bin/Vine --open demo         # + G-buffer 预览
+VINE_VSG_DEFERRED=1    ./build/bin/Vine --open demo         # + 独立延迟光照 pass
+VINE_VSG_OFFSCREEN_MULTISLOT=1 ./build/bin/Vine --open demo # 离屏 + PiP
+VINE_PIPELINE=forward_shadowed ./build/bin/Vine --open demo # 接受；与 forward 完全相同（阴影已是默认）
 ```
 
 ### 4.4 无头验证（仓库门禁跑的就是这些）

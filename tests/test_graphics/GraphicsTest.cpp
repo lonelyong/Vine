@@ -4989,12 +4989,28 @@ TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
     EXPECT_EQ(window->camera(), cam.get());
     EXPECT_EQ(window->renderTarget(), nullptr);
 
+    // The G-buffer pass draws the content THROUGH the G-buffer program, and it is a SCENE pass: the program
+    // rides on that pass' OVERRIDE. `PassDesc::program` is the field only a Screen pass draws through, so a
+    // scene declaration that names it is a scene pass with NO program at all - every body then draws with its
+    // own program (or the engine's forward one) which writes ONE colour output: the geometry lands in albedo
+    // and the normal / specular / position attachments keep their transparent-black clear, which is exactly
+    // what made the demo's three G-buffer previews black (see SdkPixelTest's deferred case for the pixels).
+    const FramePlan plan = engine->framePlan();
+    ASSERT_EQ(plan.passes.size(), 2U);
+    const RenderPass* const geometry_pass = plan.passes.front().pass;
+    ASSERT_NE(geometry_pass, nullptr);
+    EXPECT_EQ(plan.passes.front().order, -40) << "几何 pass 在光照之前";
+    EXPECT_EQ(geometry_pass->programOverride(), gbuf_prog.get()) << "G-buffer 那条 pass 必须带着 MRT 的几何程序";
+    EXPECT_EQ(window->programOverride(), nullptr) << "lighting 是 fullscreen pass：程序在它自己的 program 上";
+    EXPECT_EQ(static_cast<ScreenPass*>(window)->program(), light_prog.get());
+
     RenderTarget* gbuffer = pipeline->offscreenTarget();
     ASSERT_NE(gbuffer, nullptr);
     EXPECT_EQ(gbuffer->width(), 640);
     EXPECT_EQ(gbuffer->height(), 360);
     EXPECT_TRUE(gbuffer->hasColor());
     EXPECT_TRUE(gbuffer->hasDepth());
+    EXPECT_EQ(gbuffer->colorCount(), 4) << "延迟预设的 G-buffer 是四张彩色附件（见 defaultGbufferTarget）";
 
     // Creator-maintained sizing: the handle resizes the G-buffer target (a ratio of 1 keeps the surface
     // size and the target size the same number; the space split itself is pinned by
