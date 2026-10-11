@@ -1,6 +1,6 @@
 # graphics 渲染栈的重新设计提案（next，2026-10-11）
 
-**状态：M1 已落地（2026-10-11）；M2 的 M2a/M2b/M2c 与观测片 M4 已落地（2026-10-11）；其余是提案，未落地** ——
+**状态：M1 已落地（2026-10-11）；M2 的 M2a/M2b/M2c/M2d 与观测片 M4 已落地（2026-10-11）；其余是提案，未落地** ——
 本文回答"如果重新设计这一套会怎么切"，并把每条切成能独立验收的迁移片。落地的部分按本文自己的规矩**以现状文档为准**
 （`appfw-render-view.md` §4.1、`.ai/memory/graphics.md`），这里只留下"原稿哪里说错了"的记录。**本文允许大改**：
 §3.2 是按行业口径重写的（`Surface` + 呈现表 / `Camera` + viewport 矩形 / `View` 配方），不迁就当前实现。
@@ -36,7 +36,7 @@
 | # | 一句话 | 代价 | 立刻消掉什么 |
 | --- | --- | --- | --- |
 | 3.3 | 调试覆盖（线框/法线/无光照/平面）挪到**几何阶段**，不贴在窗口 pass | 小 | Deferred 上四档全部可用（今天报 `UnsupportedRequest`）；窗口 pass 变成纯合成 |
-| 3.2 | **呈现与分屏**：`Surface`（唯一清屏 + 呈现表 + 矩形）/ `Camera`（观看 + 投影参数，**不含 aspect**）/ `View`（配方 + 管线）；`SceneView` 退成单矩形门面 —— **M2a（呈现表的 owner）+ M2b（清屏归表面）+ M2c（aspect 出相机）已落地 2026-10-11** | 大（唯一动公开形态的一刀） | 全局让位规则 `hasWindowPass(camera)`（已删）、靠发言顺序的清屏（已归表面）、`SceneView` 三件事捏一起、**aspect 锁在相机里**（相机整台不可复用 —— 已出相机） |
+| 3.2 | **呈现与分屏**：`Surface`（唯一清屏 + 呈现表 + 矩形）/ `Camera`（观看 + 投影参数，**不含 aspect**）/ `View`（配方 + 管线）；`SceneView` 退成单矩形门面 —— **M2a（呈现表的 owner）+ M2b（清屏归表面）+ M2c（aspect 出相机）+ M2d（矩形放呈现条目）已落地 2026-10-11** | 大（唯一动公开形态的一刀） | 全局让位规则 `hasWindowPass(camera)`（已删）、靠发言顺序的清屏（已归表面）、`SceneView` 三件事捏一起、**aspect 锁在相机里**（已出相机）、**矩形与视图的换算各说各话**（已归表面那张表） |
 | 3.1 | **状态解析单点** `resolveRenderState(...)` | 中 | "同一个设置两处"这类争论从命名问题变成类型问题 |
 | 3.4 | Pass 从"子类 + 就地声明"变成**描述符 + 每帧 FramePlan** | 大 | `wiringRevision()` + `validateWiring()` 这套"谁动了声明"的事后重查 |
 
@@ -300,8 +300,8 @@ Surface                        交换链 + present + 这块表面**唯一一口�
 
 | 归属 | 今天在 | 目标 | 理由（行业） |
 | --- | --- | --- | --- |
-| 矩形（viewport） | `SceneView::setViewport` | **呈现条目**（`Surface::present(view, rect)`；`SceneView::setViewport` 的转发保留） | 矩形是"表面怎么分"；矩形放相机（Unity）会连 aspect 一起锁进相机，放绑定上（VTK/Filament）才能复用相机 |
-| 矩形的**换算**（归一化 → 设备像素 + aspect） | `SceneView::applySurfaceGeometry()` | **`Surface`**：`rect × 表面尺寸 × 像素比` 一处推完（pass 视口、HUD 尺寸、layout 步、**aspect**） | 只有表面知道"这块表面多大、像素比多少"；相机与视图都不该知道 |
+| 矩形（viewport） | `SceneView::setViewport` | **呈现条目**（`Surface::present(view, rect)`；`SceneView::setViewport` 的转发保留）—— **已落地（M2d，2026-10-11）** | 矩形是"表面怎么分"；矩形放相机（Unity）会连 aspect 一起锁进相机，放绑定上（VTK/Filament）才能复用相机 |
+| 矩形的**换算**（归一化 → 设备像素） | `SceneView::applySurfaceGeometry()` | **`Surface`**：`rect × 表面尺寸 × 像素比` 一处推完（pass 视口、HUD 尺寸、layout 步） —— **M2d 只搬了矩形，没搬尺寸**：表里只有归一化矩形，表面尺寸仍在视图上（见 §3.2.5 M2d 的"边界"） | 只有表面知道"这块表面多大、像素比多少"；相机与视图都不该知道 |
 | **aspect** | `Camera::aspect_ratio_`（相机状态） | **渲染时输入**（见上表四处） | view matrix 可复用、projection 不可 —— 差别只在 aspect |
 | 投影矩阵 | `Camera` 缓存 | `projectionMatrix(aspect)` 现算（缓存要按 aspect 键） | 投影是"参数 + 尺寸"的函数，不是相机的状态 |
 | 清屏 | `RenderPass` 的开关（谁先公告谁赢） | `Surface::setClear`（唯一一处） | Unity / three.js / Filament 都由 renderer 持有 |
@@ -309,12 +309,17 @@ Surface                        交换链 + present + 这块表面**唯一一口�
 | 相机 | `SceneView::camera()` | 仍在 `Camera`（视图默认带一台，**可跨呈现复用**） | 相机就是相机 |
 | 内容 | `SceneView::scene()` | 留在 View（**共享内容 = 多块呈现引用同一 Scene**） | VTK 可把同一 actor 加进多个 Renderer |
 | 配方 + 管线 | `SceneView` | 留在 View | "怎么画"与"画到哪"无关 |
-| 输入 | `RenderControl::setInputRouter`（宿主写回调） | 默认由矩形推（`Surface::viewAt(x, y)`），宿主仍可覆盖 | VTK 的 interactor 按 renderer 的矩形路由 |
+| 输入 | `RenderControl::setInputRouter`（宿主写回调） | 默认由矩形推（`Surface::viewAt(nx, ny)`），宿主仍可覆盖 | VTK 的 interactor 按 renderer 的矩形路由 |
 
 **三条硬规则**（要大改就得先认下来）：
 
 1. **相机可复用**：一台相机能进多条呈现（同一眼睛、不同矩形），因为 aspect 不在相机里 —— 这是 ③ 换来的。
    **但操纵器仍每块一个**（它要把鼠标位移换成角度，必须有 aspect）。
+   **已落地（M2c，2026-10-11）**：相机只持观看 + 投影参数（`aspectRatio()` 删除、`projectionMatrix(aspect)`）；
+   同一个相机进两条不同形状的矩形，各自剔除与投影都对（`RenderEngineTest.EachPassCullsWithTheShapeOfItsOwnRectangle`）。
+   **要注意**：**视图**级别的相机共享还差一个入口 —— `SceneView::camera()` 只读，一台相机进两个视图需要
+   `SceneView::setCamera`（配方级：相机被建进 pass）。今天"一台相机两块矩形"走的是宿主自建 pass 那条路
+   （`pass->setCamera(shared)`），它已经成立。
 2. **一块表面恰好一口清屏**，由 Surface 持有；呈现表里的第一条才有颜色/深度清屏，其余条声明"不参与"
    （默认如此，且由 Surface 保证）。后端按 attachment 只应用第一条公告这一事实，从此变成"由 Surface 保证
    只有一条"，而不是"靠顺序祈祷"。
@@ -335,8 +340,10 @@ class RenderSurface {
     explicit RenderSurface(intrusive_ptr<RenderEngine> engine);
 
     // —— 呈现（分屏就是多调几次；每条带自己的矩形；顺序 = 绘制序） ——
-    /** @brief 让这个视图呈现这块表面（幂等；`rect` 默认铺满 —— 分屏就是每条给一块）。 */
-    bool present(SceneView& view, const NormalizedViewport& rect = {});
+    // **已落地（M2d，2026-10-11）**：两个重载（不带矩形 = 沿用视图当前那块；带矩形 = 表面说了算），
+    // 矩形进 `Presentation::rect`（`optional`：宿主自建的 pass 没有归一化矩形，见下）。
+    bool present(SceneView& view);
+    bool present(SceneView& view, const NormalizedViewport& rect);
     /** @brief 宿主自建管线接手：这条 pass 是这块表面的最后一步（视图的默认窗口管线不会被建）。 */
     bool present(intrusive_ptr<RenderPass> pass);
     bool dismiss(raw_ptr<SceneView> view);
@@ -352,7 +359,10 @@ class RenderSurface {
     // const ClearOptions& clear() const;
 
     // —— 默认输入路由：按矩形自动回答"这一点归谁"（宿主仍可覆盖） ——
-    raw_ptr<SceneView> viewAt(int x, int y) const;
+    // **已落地（M2d，2026-10-11）**，但坐标是归一化的：`viewAt(double nx, double ny)`。提案写的 `int x, y`
+    // 要求表面持有自己的尺寸，而尺寸这一片没搬（见 §3.2.5 M2d 的"边界"）—— 多一份尺寸正是本设计要消的病。
+    // 宿主有像素（鼠标事件），除以它喂给视图的表面尺寸即可。
+    raw_ptr<SceneView> viewAt(double nx, double ny) const;
 };
 
 // graphics：相机 = 观看 + 投影参数，**不含 aspect**（③）—— 因此可跨矩形复用
@@ -411,7 +421,7 @@ appfw/src/gui/
 | **M2a** 谁呈现（**已落地 2026-10-11**） | `RenderSurface`（"这块表面的最后一步是谁"：呈现表 + `present/dismiss/presentations`）+ `RenderEngine::passOrder()` 只读查询 + 删掉 `hasWindowPass(camera)` 与 `ensureWindowPass()` 的全局让位规则 + `RenderControl::surface()` / `SurfaceWindow::surface()`；demo 显式 `present(pipeline->windowPass())` | ①默认路径行为不变（`test_gui` 253 绿）②宿主自建主 pass 且**未**声明 ⇒ 视图的默认窗口管线**会**建；显式声明 ⇒ 不建（`RenderSurfaceTest` 两条 + `SceneViewTest.EnsureWindowPassDoesNotStandDownForSomebodyElsesPass`）③`applyOverlayIntent` 行为不回退（`AnApplicationWindowPassKeepsTheOverlaysToItself` 改写后仍钉住）④demo 冒烟零 error/warn |
 | **M2b** 清屏归表面（**已落地 2026-10-11**） | 表面决定**谁**清：呈现表第一条保留自己的清屏，其余条被 `setClearEnabled(false)`（不再是"公告了却被后端静默丢弃"）；每条呈现自己的"ask"（清不清）被记住，撤掉第一条时下一条恢复；视图重建后用友元回调让表面把决定落回新建的 pass 上。**没有** `Surface::setClear` —— 值仍住在 pass 上（一份真相），理由见 §3.2.4 那一段 | ①一块表面里只有一条呈现 pass 带清屏（其余条 `isClearEnabled()` 为 false）②撤掉第一条 ⇒ 清屏回到剩下那条自己的 ask ③延迟配方的 `present` 屏 pass（自己不清）不会被"第一条"逼着清 ④视图重建（`setOptions`）之后仍然只有一条 ⑤第一次呈现 → 下一条挤进来 → 第一条走掉，三种事件下不变式都成立；⑥表面先死/视图先死都不留悬垂 | M2a | 中 |
 | **M2c** ③：**aspect 出相机**（**已落地 2026-10-11**）（正确性 + 复用） | `Camera` 只持观看与投影**参数**（`setProjectionMatrixAsPerspective(fovy, near, far)`、`projectionMatrix(aspect)`、`aspectRatio()` 删除、`screenToWorldRay(pos, aspect)`）；**aspect 只有一处推导** —— `RenderBackend::viewAspect()`（pass 的 viewport，否则目标/表面尺寸），剔除（`RenderPass::execute` 收集前问一次）与 view block（`FrameRecorder::setViewAspect`，vsg 在每次 `render()` 前公告同一个数）读同一个；`Scene::collectRenderCommands*(camera, aspect)`（帧内 memo 以 view-projection 为键，天然区分两种视锥）；`OrbitCameraManipulator` 自持 `viewportAspect()`，`onResize` 不再往相机里塞 aspect | ①同一台相机进两块不同矩形：两张画面各自的 aspect 都对（`CameraTest.TheProjectionIsBuiltForTheShapeTheCallerNames`：同一相机两次投影只差水平缩放；`SceneTest.OneCameraInTwoRectanglesIsTwoPicturesAndTwoWalks`：同一帧两种形状 = 两次走树、两份结果）②剔除与画面一致：**同一台相机**、一条 1600×600 的 pass 与一条 600×600 的 pass，前者画出画面外侧那颗、后者剔掉（`RenderEngineTest.EachPassCullsWithTheShapeOfItsOwnRectangle`；变异：`execute()` 里写死 1.0 ⇒ 失败）③view block 与 pass 的 viewport 同源：`FrameRecorderTest.TheViewBlockIsProjectedForTheShapeTheScopeAnnounced`（公告 2.0 ⇒ 快照投影按 2.0；下一条 pass 回到默认，不继承上一条；0/NaN 被拒）④正交（阴影）行为不变：`CameraTest.TheOrthographicWindowIsKeptWhole` + `TheProjectionIsBuiltForTheShapeTheCallerNames` 后半（正交忽略 aspect）⑤`test_vsg` 405 绿（后端只看矩阵，不受影响）⑥全套 `test_graphics` 330 绿（92 处 `collectRenderCommands` 逐处补上形状，原判据不动） | M2a/M2b + M4（先有 dump） | 大 |
-| **M2d** ③：**矩形放呈现条目** | `Surface::present(view, rect)` + `Surface::setViewport(view, rect)`；`SceneView::setViewport` 转发（无表面时留在自己身上）；旧的"矩形由视图持有"退成单矩形门面 | ①分屏：两条呈现各占半张、各自 aspect 正确（同一台相机也允许）②`SceneView::setViewport` 老写法仍可用③改矩形**不重建**任何管线（`pipeline()` 句柄不变）④`Surface::viewAt(x,y)` 与矩形一致（默认输入路由） |
+| **M2d** ③：**矩形放呈现条目**（**已落地 2026-10-11**） | 矩形住在表面那张表上（`Presentation::rect`），视图**读**它：`Surface::present(view, rect)` / `present(view)`（沿用视图当前那块）/ `Surface::setViewport(view, rect)`；`SceneView::setViewport` 转发（**无表面时留在自己身上**，一个视图单独用也不需要表面）；`dismiss`/`~RenderSurface` 把矩形**还给**视图（接着画同一块地方）；`SceneView::viewport()` 改成**按值**返回（绑定期间读表）；顺带 `Surface::viewAt(nx, ny)` 与"一个视图呈现两块表面"的拒绝（一个视图画一张画）。**边界**（本片不做，理由见下）：表面**尺寸**没搬进这张表（表里只有归一化矩形）⇒ 宿主自建的 pass 没有归一化矩形（它自己给 `pass->setViewport` 设备像素 —— 它本来就知道尺寸），`viewAt` 用**归一化**坐标（宿主有像素，除以它喂给视图的表面尺寸即可）。要把尺寸也搬进表，得先回答"尺寸在表面与视图**哪一份**"：两份就是本设计要消掉的病，而没有任何验收判据需要它 | ①分屏：两块呈现各占一块、几何/设备视口各按自己的矩形（`SceneViewViewportTest.ASurfaceSplitStatesEachViewsRectangleAndNothingIsRebuilt`：半宽 = 640×720、右上四分之一 = 640×360，两块形状不同）②`SceneView::setViewport` 老写法仍可用（不绑表面那条：既有 `TheViewportDrivesAspectWindowRectAndLayoutSteps` 不动；绑了表面那条：`RenderSurfaceTest.TheSurfaceOwnsTheRectangleAndTheViewReadsIt` 断言两种拼写写的是**同一块**矩形）③改矩形**不重建**（同一用例：`pipeline()` 句柄与 `passCount()` 都不变，只有 pass 的 viewport 与视图的换算跟着走）④`viewAt` 与矩形一致（`AViewIsFoundByThePointItsRectangleHolds`：共享边归东/南邻、右/下边缘无主、宿主自建的 pass 永不中选；`ThePointGoesToThePresentationDrawnLast`：重叠时最后画的那条赢）⑤矩形交接：`dismiss` 之后视图接着画同一块（同一用例，且用的值（0.7）视图自己从没存过）⑥一个视图不能呈现两块表面（`AViewThatAlreadyPresentsAnotherSurfaceIsRefused`，诊断一条） | M2a | 中 |
 | **M2e**（并入 §5 的 **M5**） | 默认输入路由 = 按矩形推（`Surface::viewAt(x, y)`，`setInputRouter` 可覆盖）+ 命令的焦点视图 | 见 §5 M5 行 |
 
 **与其它三条的接口**：M2a 只依赖"引擎能说出 pass 的 order"（3.2.1 A4）；M2b 依赖 M2a 的呈现表；
@@ -491,10 +501,10 @@ FramePlan plan = graph.compile();
 | **M2a** | §3.2.5 谁呈现（**已落地 2026-10-11**）：`RenderSurface` + `RenderEngine::passOrder()` + 删掉 `hasWindowPass(camera)` 与全局让位规则 + `RenderControl::surface()`；demo 显式 `present(pipeline->windowPass())` | ①默认路径行为不变（`test_gui` 253 绿）；②宿主自建主 pass 且**未**声明 ⇒ 视图的默认窗口管线**会**建；显式声明 ⇒ 不建；③`applyOverlayIntent` 行为不回退；④demo 冒烟零 error/warn | 无 | 中 |
 | **M2b** | §3.2.5 清屏归表面（**已落地 2026-10-11**）：呈现表第一条保留自己的清屏，其余条关掉（`setClearEnabled(false)`）；每条呈现的 ask 被记住，第一条走掉时下一条恢复；视图重建后由视图回调表面重放（`friend`）。没有 `Surface::setClear`（值仍住那条 pass 上，一份真相） | ①一块表面里只有一条呈现 pass 带清屏；②撤掉第一条 ⇒ 清屏回到剩下那条；③延迟配方那条"自己不清"的 pass 不被逼着清；④视图重建后不变式仍在；⑤视图/表面任一先死都不悬垂 | M2a | 中 |
 | **M2c** | §3.2.5 **aspect 出相机**（**已落地 2026-10-11**，**破坏性**）：`Camera` 只留观看 + 投影参数（`projectionMatrix(aspect)` / 删 `aspectRatio()` / `screenToWorldRay(pos, aspect)`）；**一处推导** = `RenderBackend::viewAspect()`，剔除与 view block 读同一个数；`collectRenderCommands*(camera, aspect)`；操纵器自持 `viewportAspect()` | ①同一相机两条呈现两块矩形：两边 aspect 都对（`TheProjectionIsBuiltForTheShapeTheCallerNames` + `OneCameraInTwoRectanglesIsTwoPicturesAndTwoWalks`）；②剔除与画面一致（`EachPassCullsWithTheShapeOfItsOwnRectangle`：宽 pass 画外侧那颗、方 pass 剔掉；变异：写死 1.0 ⇒ 失败）；③view block 与 pass 的 viewport 同源（`TheViewBlockIsProjectedForTheShapeTheScopeAnnounced`；变异：固定 1.0 / 不在 `beginPass` 复位 ⇒ 各自失败）；④正交（阴影）行为不变；⑤`test_vsg` 405 绿、`test_graphics` 330 绿 | M2a/M2b + M4（先有 dump） | 大 |
-| **M2d** | §3.2.5 **矩形放呈现条目**：`Surface::present(view, rect)` / `setViewport(view, rect)`，`SceneView::setViewport` 转发 | ①分屏两条呈现各占半张、aspect 各自正确；②`SceneView::setViewport` 老写法仍可用；③改矩形不重建管线；④`viewAt(x,y)` 与矩形一致 | M2a | 中 |
+| **M2d** | §3.2.5 **矩形放呈现条目**（**已落地 2026-10-11**）：`Surface::present(view, rect)` / `present(view)` / `setViewport(view, rect)`，`SceneView::setViewport` 转发、`SceneView::viewport()` 读表；`dismiss`/表面析构把矩形还给视图；`Surface::viewAt(nx, ny)` **归一化**坐标（表面不持尺寸）；一个视图不能呈现两块表面 | ①分屏两块各按自己的矩形（640×720 与 640×360，形状不同）；②`SceneView::setViewport` 两种路径都可用且写同一块矩形；③改矩形不重建管线（句柄 + pass 数不变）；④`viewAt` 与矩形一致（共享边归东/南邻、重叠时最后画的赢、宿主自建 pass 不中选）；⑤`dismiss` 后视图接着画同一块；⑥重复呈现另一块表面被拒（诊断一条）。变异验证：视图不读表 ⇒ 2 条失败；`viewAt` 不看矩形 ⇒ 2 条失败；`viewAt` 正序 ⇒ 1 条失败；`dismiss` 不还矩形 ⇒ 1 条失败；去掉"已在别的表面"的拒绝 ⇒ 1 条失败；`SceneView::setViewport` 不转发 ⇒ 1 条失败 | M2a | 中 |
 | **M3** | §3.1 `resolveRenderState` 单点 | ①逐项状态快照：内容/pass/视图三层各自设过同一项时，最终值 = 优先级表；②`depthExplicit` 类旗标删除后行为不变；③诊断能说出"这一项来自哪一层"；④`graphics-state.md` §4.1 的表从"规则"改成"命名习惯"（文档验收） | 无 | 中 |
 | **M4** 观测：FramePlan dump（**已落地 2026-10-11**） | `FramePlan.hpp`（`PassPlan` 每 pass 的 order/name/content/camera/target/enabled/clear/viewport/inputs/output + 上一帧的 `record_micros`）+ `RenderEngine::framePlan()`（只读、按执行序）+ `FramePlan::describe()`（一行一 pass 的 key=value 表）+ demo 开关 `VINE_FRAME_PLAN=1`（attach 那一帧之后打一行表格） | ①一条 API/开关打印这一帧的表格（`describe()`；demo 真机输出见 `.ai/memory/graphics.md`）②`test_graphics` 两条改用结构断言替换 `passCount()`/指针身份（`SceneViewViewportTest.TheRecipeDecidesWhichOverlayPassesExist` 改断言 pass 名字序列；`RenderPipelineBuilderTest.ForwardPathBuildsWindowPass` 改断言 plan 那一条的全部事实）③dump 与真实执行一致：`RenderEngineTest.TheFramePlanIsWhatTheFrameActuallyRan` 用记录型后端对照"plan 里 enabled 的那些 pass，按序 == 后端被开过 scope 的那些"④耗时是"上一帧"的且说清楚（`TheFramePlanCarriesWhatEachPassLastCost`：慢 pass ≥ 1000 µs、没跑的 pass = 0） | 无 | 小 |
-| **M5** | 分屏布局 + 按矩形推的默认输入路由 + `ViewContext` 命令目标（= §3.2.5 的 M2e） | ①一个窗口 split 成两块分屏：各自相机/输入/HUD 互不干扰（用例）；②"显示模式"五条命令在多分屏下作用于**焦点视图**（同一命令两块各来一遍）；③`setPrimaryRenderControl` 仍可用但不参与焦点解析 | M2c/M2d | 中 |
+| **M5** | 分屏布局 + 按矩形推的默认输入路由（`Surface::viewAt(nx, ny)`，M2d 已给出这条查询）+ `ViewContext` 命令目标（= §3.2.5 的 M2e） | ①一个窗口 split 成两块分屏：各自相机/输入/HUD 互不干扰（用例）；②"显示模式"五条命令在多分屏下作用于**焦点视图**（同一命令两块各来一遍）；③`setPrimaryRenderControl` 仍可用但不参与焦点解析 | M2d（已落地） | 中 |
 | **M6** | Device / Session 分离：一设备 N 会话 | ①同一模型开两个窗口只上传一份几何（计数/内存断言）；②一个窗口销毁不带走另一个的会话；③`SessionLease` 类型上禁止"会话先死在租约前"；④R2 的"临时加引用"约定删除（该用例改写仍过） | M2 | 大 |
 | **M7** | Pass 描述符 + 每帧 FramePlan（§3.4） | ①`wiringRevision()`/`validateWiring()` 删除后全部套件绿；②新增一个 pass = 加一条描述符（无新子类）；③transient 目标由编译分配（显存/目标计数断言）；④FramePlan dump 与 M4 同形 | M4（观测先有） | 大 |
 | **M8** | `test_vsg` 的 **SDK 级设备夹具**（能用 SDK 建引擎/视图/管线并在真设备上探像素） | ①至少一条 view-mode 的**像素**断言（Deferred 配方 + 线框 ⇒ 画面里真的有边；用 `PixelProbe`，同一帧的 forward/line 两版对照）；②夹具本身带一条"没有视图也能渲染"的最小用例，证明它不是为某一条用例特制的 | 无 | 中 |

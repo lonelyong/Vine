@@ -97,6 +97,13 @@ engine.setBackend(backend);
     就在 program 里写 `layout(binding = N)`（`screenCopyProgram(N)` 就是这个）；
   - **纯拷贝 = `BuiltinShaders::screenCopyProgram()`**（SDK 的命名程序，不是后端默认）；
   - **必须有相机**（否则什么都不画，引擎在接线期报一次）；**没有 program 也不画**（同样接线期报一次）。
+- `Camera` —— 观看（eye / target / up）+ 投影**参数**（fov / near / far、类型、正交盒）：`setViewMatrixAsLookAt()`、
+  `setProjectionMatrixAsPerspective(fov, near, far)`、`setProjectionMatrixAsOrtho(...)`、`projectionMatrix(aspect)`
+  （**每次现算**；正交忽略那个参数 —— 盒自带比例）、`screenToWorldRay(pos, aspect)`。
+  **相机不含 aspect**：一张画面的形状属于它被画进的那块矩形，而且只有**一处**推导
+  （`RenderBackend::viewAspect()`：pass 的 viewport，否则它画进的目标/表面尺寸），剔除与投影读的是同一个数 ——
+  于是同一台相机可以同时进**形状不同**的两块矩形（分屏 / 镜像 / 画中画），"矩形变了投影没跟上"这类错在结构上
+  不存在（见 §3.11 与 `RenderSurface`）。
 - `RenderTarget` —— 若干彩色附件 + 可选深度：`attachColor(fmt)` / `attachDepth(fmt)` / `setSize(w,h)`，
   以及 `shareDepth(source)`（借用别人的深度）与 `setDepthPromotion(bool)`（深度是否变成可采样）。
 - `RenderPipelineBuilder` —— 配方层：`build(const PipelineOptions&)`（结构选择只有一个：
@@ -665,26 +672,50 @@ if (!surface->hasPresentation()) {
 auto pipeline = builder.build(options);
 surface->present(pipeline->windowPass());
 
-// 读回来：`{pass, view}` 列表，按引擎执行序（引擎已经不认识的 pass 不在里面 —— 它不是这一帧的事实）
+// 读回来：`{pass, view, rect}` 列表，按引擎执行序（引擎已经不认识的 pass 不在里面 —— 它不是这一帧的事实）
 for (const vn::graphics::RenderSurface::Presentation& entry : surface->presentations()) { ... }
 
 // 撤掉一条呈现（视图的管线仍然是视图的，pass 仍然归引擎）
 surface->dismiss(pipeline->windowPass());
 ```
 
+**分屏：每条呈现一块矩形**（归一化坐标，改它**不重建任何东西** —— 矩形是几何）：
+
+```cpp
+// 左右两块，各一个视图（各自的相机/操纵器/HUD —— 视图回答"怎么画"）
+surface->present(*left,  vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });
+surface->present(*right, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 });
+left->onSurfaceResized(1280, 720, dpr);   // 照旧喂**整块表面**的尺寸：各自的矩形由表面算
+right->onSurfaceResized(1280, 720, dpr);
+
+// 改布局：两种拼写写的是同一块矩形（视图那句转发给表面）
+surface->setViewport(left.get(), vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.25, 1.0 });
+left->setViewport(vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.25, 1.0 });   // 同一件事
+left->viewport();                        // 读回来的也是表面上那块（视图不存第二份）
+
+// 这一点归谁（默认输入路由的原料；坐标是**归一化**的 —— 表里没有表面尺寸）
+vn::graphics::SceneView* under = surface->viewAt(0.75, 0.5);   // 右半 = right
+```
+
 - **为什么要有它**：以前"谁呈现"是**推断**出来的（视图问引擎"有没有哪条 pass 携带我这台相机且没有 render target"），
   推断是全局的、顺序敏感的，而且会**静默跳过**共用一台相机的第二个视图。现在它是宿主的一句话。
 - **顺序的真相在引擎**：`RenderEngine::passOrder(pass)` 返回某条已注册 pass 的执行序（同时回答了"它还在不在"），
-  呈现表按它排序；同序保持声明顺序。分屏（每条呈现一块矩形）是这张表的下一步，见
-  [`.ai/design/graphics-render-next.md`](../../../../.ai/design/graphics-render-next.md) §3.2。
+  呈现表按它排序；同序保持声明顺序。
+- **矩形也归这张表**：一块表面被切成什么形状是**表面**的事，视图**读**它（`SceneView::viewport()`）。所以同一块
+  矩形只有一份：视图那句 `setViewport` 转发到表上，`dismiss()` / 表面析构时表把矩形**还给**视图（接着画同一块
+  地方，只是从"表面的声明"变成"视图自己的声明"）。设备像素那一层仍是视图算的（`onSurfaceResized` 给它整块表面
+  的尺寸，它按自己的矩形换算），**形状**（aspect）由后端从那条 pass 的 viewport 推（见 §2.4 的 `Camera`）。
+  宿主自建的 pass **没有**归一化矩形：它自己给 `pass->setViewport()` 设备像素（它本来就知道尺寸），
+  `viewAt()` 也永远不会选中它（它不是视图）。
 - **清屏也归这张表**：后端只应用**第一条**清屏公告（其余静默丢弃），所以表面让**第一条呈现**保留自己的清屏、
   把其余条 `setClearEnabled(false)`。它只决定**谁**清：清成什么颜色、要不要清深度仍由那条 pass 说（延迟配方那条
   `present` 屏 pass 自己说不清，就照样不清）。要换背景色改那条 pass 的 `setClearColor` 就行 —— 没有第二份状态。
   顺序变了（撤掉第一条、或某条呈现重建了管线）表面会自己重放这个决定，不用宿主操心。
 - **生命周期**：视图与表面互相**借用**（都不是对方的所有者）—— 视图先死就自己从表里退出去，表面先死就把视图那一侧的
-  指回清掉。所以扔掉视图 = 撤掉它的呈现，`dismiss()` 是显式写法。
-- **跨引擎的声明会被拒**：视图挂在别的引擎上时 `present(view)` 返回 false 并记一条 `PassProtocolViolation`
-  （它的 pass 注册在另一帧上，永远画不到这块表面），不静默。
+  指回清掉（并把矩形交回视图）。所以扔掉视图 = 撤掉它的呈现，`dismiss()` 是显式写法。
+- **被拒的声明**（都返回 false，不静默）：视图挂在别的引擎上（它的 pass 注册在另一帧上，永远画不到这块表面）；
+  视图已经在呈现**另一块**表面（一个视图画一张画，而它的矩形是向它呈现的那块表读的）。两种都记一条
+  `PassProtocolViolation`。
 
 ### 3.12 看一眼这一帧：`RenderEngine::framePlan()`
 

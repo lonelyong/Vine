@@ -254,8 +254,14 @@ void SceneView::setOptions(const Options& options)
     applyModeToGeometryPass();
 }
 
-const NormalizedViewport& SceneView::viewport() const noexcept
+NormalizedViewport SceneView::viewport() const noexcept
 {
+    // While this view presents a surface, that surface's table holds the rectangle (RenderSurface::setViewport
+    // is where it is stated, and the surface is what a host reads the split from): reading it HERE rather than
+    // keeping a second copy is what makes "the view's rectangle" and "the surface's split" the same fact.
+    if (surface_ != nullptr) {
+        return surface_->viewportOf(this);
+    }
     return viewport_;
 }
 
@@ -267,6 +273,12 @@ raw_ptr<Pipeline> SceneView::pipeline() const
 void SceneView::setViewport(const NormalizedViewport& viewport)
 {
     const NormalizedViewport next = viewport.isValid() ? viewport : NormalizedViewport{};
+    if (surface_ != nullptr) {
+        // Forwarded: the surface states the rectangle and hands the geometry back through
+        // applySurfaceGeometry(), so the one place the split is written stays one place.
+        surface_->setViewport(this, next);
+        return;
+    }
     if (next.x == viewport_.x && next.y == viewport_.y && next.width == viewport_.width &&
         next.height == viewport_.height) {
         return;
@@ -366,8 +378,9 @@ bool SceneView::isStatsVisible() const noexcept
 
 void SceneView::paneSize(int& width, int& height) const
 {
-    width  = std::max(1, static_cast<int>(std::lround(viewport_.width * static_cast<double>(surface_width_))));
-    height = std::max(1, static_cast<int>(std::lround(viewport_.height * static_cast<double>(surface_height_))));
+    const NormalizedViewport rect = viewport();
+    width  = std::max(1, static_cast<int>(std::lround(rect.width * static_cast<double>(surface_width_))));
+    height = std::max(1, static_cast<int>(std::lround(rect.height * static_cast<double>(surface_height_))));
 }
 
 void SceneView::applySurfaceGeometry()
@@ -375,6 +388,10 @@ void SceneView::applySurfaceGeometry()
     if (surface_width_ <= 0 || surface_height_ <= 0) {
         return;
     }
+
+    // The rectangle this view draws into: its own, or - while it presents a surface - the one that surface's
+    // table states (see viewport()). Read once here: everything below is a use of this ONE value.
+    const NormalizedViewport rect = viewport();
 
     int pane_w = 0;
     int pane_h = 0;
@@ -391,7 +408,7 @@ void SceneView::applySurfaceGeometry()
     //    window pass draws into it. The HUD passes anchor to the corner of their AREA, so they are pointed at the
     //    rectangle's origin before they are laid out.
     if (default_pipeline_ != nullptr) {
-        const Viewport device_rect = deviceViewport(viewport_, surface_width_, surface_height_, pixel_ratio_);
+        const Viewport device_rect = deviceViewport(rect, surface_width_, surface_height_, pixel_ratio_);
         if (AxisGizmo* gizmo = default_pipeline_->gizmo(); gizmo != nullptr) {
             gizmo->setAreaOrigin(device_rect.x, device_rect.y);
         }
@@ -400,7 +417,7 @@ void SceneView::applySurfaceGeometry()
         }
         default_pipeline_->resize(pane_w, pane_h, pixel_ratio_);
         if (RenderPass* window = default_pipeline_->windowPass(); window != nullptr) {
-            if (viewport_.isFull()) {
+            if (rect.isFull()) {
                 // The full surface is what a pass without a viewport already means - leaving it unset keeps the
                 // default path byte-for-byte the pipeline it was before viewports existed.
                 window->clearViewport();

@@ -205,16 +205,21 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     raw_ptr<Pipeline> pipeline() const;
 
     /** @brief Gets the area of the render surface this view draws into (normalized). */
-    const NormalizedViewport& viewport() const noexcept;
+    NormalizedViewport viewport() const noexcept;
 
     /** @brief Sets the area of the render surface this view draws into (normalized [0,1]; default: all of it).
      *
      * GEOMETRY, not recipe - this never rebuilds the pipeline. It is the ONE input this view derives its
-     * rectangle from: the camera/manipulator aspect, the device-pixel viewport of its window pass, the size its
+     * rectangle from: the manipulator's aspect, the device-pixel viewport of its window pass, the size its
      * off-screen targets and HUD boxes are resized to, and the size its surface-layout steps are told. A host
      * that splits a surface therefore states the split once, in normalized terms, and keeps feeding the
      * SURFACE size to onSurfaceResized() - it never converts to device pixels itself, and never has to work out
      * "half the surface" for the view.
+     *
+     * A view that PRESENTS a surface states its rectangle there (this call forwards to
+     * RenderSurface::setViewport): the split is a fact about the surface, and the surface is where a host reads
+     * it back - who draws where, who clears, who a point belongs to (see RenderSurface::viewAt). A view that
+     * presents nothing keeps the rectangle here, so a view used on its own needs no surface to be sized.
      *
      * @param viewport Area to draw into; an invalid viewport (non-positive size) resets to the full surface.
      */
@@ -464,6 +469,8 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     // This view's recipe and its geometry. Both are inputs to "what does my pipeline look like", and only the
     // recipe rebuilds it (see setOptions).
     Options            options_{};
+    /// The rectangle this view draws into when it presents NO surface (while it presents one, the surface's table
+    /// holds it - see viewport() and RenderSurface::viewportOf).
     NormalizedViewport viewport_{};
     double             pixel_ratio_ = 1.0;
     int                surface_width_ = 0;

@@ -3389,6 +3389,56 @@ TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps){
     EXPECT_EQ(view->pipeline(), pipeline);
 }
 
+TEST(SceneViewViewportTest, ASurfaceSplitStatesEachViewsRectangleAndNothingIsRebuilt)
+{
+    // ① + ③：一台表面被切成两块，每条呈现自己的矩形；矩形写在**表面那张表**上（呈现条目），视图读它，
+    // 换算出来的设备矩形进各自的窗口 pass —— 于是 M2c 的推导让每块画面拿到的形状都是自己那块矩形的。
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    auto tall = intrusive_ptr<SceneView>(new SceneView());
+    tall->setEngine(engine.get());
+    auto wide = intrusive_ptr<SceneView>(new SceneView());
+    wide->setEngine(engine.get());
+
+    surface->present(*tall, NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });   // half the width, full height
+    surface->present(*wide, NormalizedViewport{ 0.5, 0.0, 0.5, 0.5 });   // the top-right quarter
+    ASSERT_NE(tall->pipeline(), nullptr);
+    ASSERT_NE(wide->pipeline(), nullptr);
+
+    tall->onSurfaceResized(1280, 720, 1.0);
+    wide->onSurfaceResized(1280, 720, 1.0);
+
+    RenderPass* const tall_pass = tall->pipeline()->windowPass();
+    RenderPass* const wide_pass = wide->pipeline()->windowPass();
+    ASSERT_NE(tall_pass, nullptr);
+    ASSERT_NE(wide_pass, nullptr);
+    ASSERT_TRUE(tall_pass->hasViewport());
+    ASSERT_TRUE(wide_pass->hasViewport());
+    EXPECT_EQ(tall_pass->viewport().x, 0);
+    EXPECT_EQ(tall_pass->viewport().width, 640);
+    EXPECT_EQ(tall_pass->viewport().height, 720);
+    EXPECT_EQ(wide_pass->viewport().x, 640);
+    EXPECT_EQ(wide_pass->viewport().height, 360);
+    // 两块形状不同（分别是 640:720 与 640:360）：这就是每块画面各自投影用的形状（M2c 从这条 pass 的
+    // viewport 推出来），所以同一帧里两块不可能借用彼此的形状。
+    EXPECT_NE(640.0 / 720.0, 640.0 / 360.0);
+
+    // ③ 改矩形**只改几何**：管线句柄不变、pass 数不变，变的只是那条 pass 的 viewport 与视图自己的换算。
+    auto const        tall_pipeline = intrusive_ptr<Pipeline>(tall->pipeline());
+    const std::size_t passes        = engine->passCount();
+    EXPECT_TRUE(surface->setViewport(tall.get(), NormalizedViewport{ 0.0, 0.0, 0.25, 1.0 }));
+    EXPECT_EQ(tall->pipeline(), tall_pipeline.get()) << "矩形是几何：不重建";
+    EXPECT_EQ(engine->passCount(), passes);
+    EXPECT_EQ(tall_pass->viewport().width, 320);
+    EXPECT_DOUBLE_EQ(tall->viewport().width, 0.25) << "视图从表面那张表读回自己的矩形";
+
+    // ④ 点在谁那块归谁（设备像素由宿主自己除：表里只有归一化矩形，它不持有表面尺寸）。
+    EXPECT_EQ(surface->viewAt(0.1, 0.5), static_cast<SceneView*>(tall.get()));
+    EXPECT_EQ(surface->viewAt(0.75, 0.25), static_cast<SceneView*>(wide.get()));
+    EXPECT_EQ(surface->viewAt(0.75, 0.75), nullptr) << "右下角没有呈现（那块没被任何矩形覆盖）";
+}
+
 TEST(SceneViewViewportTest, FullViewportKeepsTheOverlayBoxWhereItWas)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());

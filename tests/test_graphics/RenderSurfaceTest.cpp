@@ -179,6 +179,143 @@ TEST(RenderSurfaceTest, AViewOnAnotherEngineIsRefusedOutLoud)
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u);
 }
 
+TEST(RenderSurfaceTest, TheSurfaceOwnsTheRectangleAndTheViewReadsIt)
+{
+    // The split belongs HERE, with the clear and the order: a host states it once, in normalized terms, and the
+    // view draws into what the table says instead of holding a second copy that could disagree (see
+    // SceneView::viewport). Both spellings write the same rectangle - the view's forwards to the table.
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view    = viewOn(engine.get());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    // A view that was already drawing into part of the surface keeps that part when it is presented.
+    view->setViewport(NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });
+    EXPECT_TRUE(surface->present(*view));
+    ASSERT_EQ(surface->presentations().size(), 1u);
+    ASSERT_TRUE(surface->presentations()[0].rect.has_value());
+    EXPECT_DOUBLE_EQ(surface->presentations()[0].rect->width, 0.5);
+    EXPECT_DOUBLE_EQ(view->viewport().width, 0.5) << "the view reads its rectangle from the table";
+
+    view->setViewport(NormalizedViewport{ 0.5, 0.0, 0.5, 0.25 });
+    ASSERT_TRUE(surface->presentations()[0].rect.has_value());
+    EXPECT_DOUBLE_EQ(surface->presentations()[0].rect->x, 0.5) << "the view's spelling writes the table";
+    EXPECT_DOUBLE_EQ(surface->presentations()[0].rect->height, 0.25);
+
+    EXPECT_TRUE(surface->setViewport(view.get(), NormalizedViewport{ 0.0, 0.0, 0.25, 1.0 }));
+    EXPECT_DOUBLE_EQ(view->viewport().width, 0.25) << "the surface's spelling writes the view's rectangle";
+
+    // An invalid rectangle means the whole surface, whichever spelling asked (see SceneView::setViewport).
+    EXPECT_TRUE(surface->setViewport(view.get(), NormalizedViewport{ 0.0, 0.0, 0.0, 0.0 }));
+    EXPECT_TRUE(view->viewport().isFull());
+
+    // A view that presents nothing here has no rectangle to state: the surface says so rather than inventing one.
+    auto stranger = viewOn(engine.get());
+    EXPECT_FALSE(surface->setViewport(stranger.get(), NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 }));
+
+    // Dismissing hands the rectangle BACK to the view: it keeps drawing into the same area, now as its own
+    // statement rather than this surface's. The area is stated by the SURFACE here (0.7 - a value this view's own
+    // field never held), so the assertion below can only pass if the surface really handed it over.
+    EXPECT_TRUE(surface->setViewport(view.get(), NormalizedViewport{ 0.0, 0.0, 0.7, 1.0 }));
+    EXPECT_TRUE(surface->dismiss(view.get()));
+    EXPECT_DOUBLE_EQ(view->viewport().width, 0.7) << "the view keeps the rectangle it was drawn into";
+    EXPECT_TRUE(surface->viewAt(0.25, 0.5) == nullptr) << "and the table no longer describes any split";
+}
+
+TEST(RenderSurfaceTest, PresentingAViewWithARectangleStatesTheSplitInOneCall)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view    = viewOn(engine.get());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    EXPECT_TRUE(surface->present(*view, NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }));
+    EXPECT_DOUBLE_EQ(view->viewport().x, 0.5) << "the view draws into the stated half";
+
+    // Declaring the same view twice is still ONE presentation, and the rectangle that stands is the one already
+    // stated (a host that wants to move it calls setViewport - the geometry call).
+    EXPECT_FALSE(surface->present(*view, NormalizedViewport{ 0.0, 0.0, 1.0, 1.0 }));
+    EXPECT_EQ(surface->presentations().size(), 1u);
+    EXPECT_DOUBLE_EQ(view->viewport().x, 0.5);
+
+    // An invalid rectangle is the whole surface, and a presentation with no rectangle at all is the whole surface
+    // too: that is the shape the default path had before splits existed.
+    auto plain = viewOn(engine.get());
+    EXPECT_TRUE(surface->present(*plain));
+    ASSERT_TRUE(surface->presentations()[1].rect.has_value());
+    EXPECT_TRUE(surface->presentations()[1].rect->isFull());
+}
+
+TEST(RenderSurfaceTest, AViewIsFoundByThePointItsRectangleHolds)
+{
+    // The default answer to "which view is the cursor over": the presentation whose rectangle contains the point.
+    // A pass a host declared is not a view, so it is never the answer (it states its own viewport in device
+    // pixels - see Presentation::rect).
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto left    = viewOn(engine.get());
+    auto right   = viewOn(engine.get());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    surface->present(*left, NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });
+    surface->present(*right, NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 });
+
+    EXPECT_EQ(surface->viewAt(0.0, 0.0), left.get());
+    EXPECT_EQ(surface->viewAt(0.25, 0.5), left.get());
+    EXPECT_EQ(surface->viewAt(0.75, 0.5), right.get());
+    // The shared edge belongs to the east neighbour (NormalizedViewport::contains), so neighbouring areas never
+    // both claim a point - and the lower/right edge of the surface belongs to nobody.
+    EXPECT_EQ(surface->viewAt(0.5, 0.5), right.get());
+    EXPECT_EQ(surface->viewAt(1.0, 1.0), nullptr);
+
+    auto host_pass = intrusive_ptr<RenderPass>(new RenderPass());
+    host_pass->setCamera(intrusive_ptr<Camera>(left->camera()));
+    engine->addPass(host_pass, 5);
+    auto other = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    ASSERT_TRUE(other->present(host_pass.get()));
+    EXPECT_EQ(other->viewAt(0.5, 0.5), nullptr) << "a host's pass is not a view";
+}
+
+TEST(RenderSurfaceTest, ThePointGoesToThePresentationDrawnLast)
+{
+    // Overlapping presentations (a preview in a corner of a full-surface view): the point belongs to the picture
+    // that is actually on it, which is the one drawn last.
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto under   = viewOn(engine.get());
+    auto over    = viewOn(engine.get());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    surface->present(*under);                                            // the whole surface
+    surface->present(*over, NormalizedViewport{ 0.0, 0.0, 0.25, 0.25 });  // the corner preview
+
+    EXPECT_EQ(surface->viewAt(0.1, 0.1), over.get());
+    EXPECT_EQ(surface->viewAt(0.5, 0.5), under.get()) << "outside the preview the full-surface view is the one";
+}
+
+TEST(RenderSurfaceTest, AViewThatAlreadyPresentsAnotherSurfaceIsRefused)
+{
+    // One view draws ONE picture, and its rectangle is read from the surface it presents: a second presentation
+    // would leave it with two rectangles and no way to tell which one it draws into. Refused out loud, like the
+    // other-engine case.
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = viewOn(engine.get());
+    auto first  = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    auto second = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    ASSERT_TRUE(first->present(*view, NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 }));
+    EXPECT_FALSE(second->present(*view));
+    EXPECT_FALSE(second->hasPresentation());
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u);
+
+    // Nothing moved: the first surface still states the rectangle the view draws into...
+    ASSERT_TRUE(first->presentations()[0].rect.has_value());
+    EXPECT_DOUBLE_EQ(first->presentations()[0].rect->width, 0.5);
+    EXPECT_DOUBLE_EQ(view->viewport().width, 0.5);
+
+    // ... and dismissing it there frees the view for the other surface (with the rectangle it was drawing into).
+    EXPECT_TRUE(first->dismiss(view.get()));
+    EXPECT_TRUE(second->present(*view));
+    ASSERT_TRUE(second->presentations()[0].rect.has_value());
+    EXPECT_DOUBLE_EQ(second->presentations()[0].rect->width, 0.5);
+}
+
 /**
  * @brief The ONE clear of a surface: the first presentation announces it, and the surface does not own a colour.
  *

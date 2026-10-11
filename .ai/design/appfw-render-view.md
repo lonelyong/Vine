@@ -714,13 +714,14 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 > **目标形态（大改版设计，进行中）**：这一节的"矩形挂在视图上、清屏靠谁先公告、视图去认领窗口、aspect 存在相机里"
 > 是**过渡形态**。按三维规范重写的目标见 `graphics-render-next.md` §3.2：**清屏与顺序归表面**（`RenderSurface` +
 > 呈现表）、**矩形归呈现条目**（`Surface::present(view, rect)`，`SceneView::setViewport` 转发）、
-> **aspect 出相机**，于是同一台相机可以跨矩形复用。分片进度：**M2a 谁呈现 / M2b 清屏归表面 / M2c aspect 出相机
-> 已落地（2026-10-11）**，M2d 矩形放呈现条目仍未落地，输入与焦点视图并入 M5。
-> **M2c 落地后本节有两条已过期**：①"aspect 存在相机里"不成立 —— `Camera` 只持观看与投影参数
+> **aspect 出相机**，于是同一台相机可以跨矩形复用。分片进度：**M2a 谁呈现 / M2b 清屏归表面 / M2c aspect 出相机 /
+> M2d 矩形放呈现条目 已落地（2026-10-11）**，输入路由与焦点视图并入 M5。
+> **落地后本节有三条已过期**：①"aspect 存在相机里"不成立 —— `Camera` 只持观看与投影参数
 > （`projectionMatrix(aspect)` 现算、`aspectRatio()` 删除），形状由后端一处推导
 > （`RenderBackend::viewAspect()`：pass 的 viewport，否则目标 / 表面尺寸），剔除与 view block 读同一个数；
-> ②`SceneView::applySurfaceGeometry()` 不再往相机里推 aspect（矩形照旧由它换算成设备像素）。
-> 本节其余内容仍然为真。
+> ②`SceneView::applySurfaceGeometry()` 不再往相机里推 aspect（矩形照旧由它换算成设备像素）；
+> ③"矩形挂在视图上"只对**没呈现表面**的视图成立 —— 绑了表面的视图把矩形写在表面那张表上（`SceneView::viewport()`
+> 读表），`SceneView::setViewport` 转发。本节其余内容仍然为真。
 
 **额外视图要显式要默认管线**：`ensureWindowPass()` 是"**我要**这条默认管线"的动作，`setOptions()` 只改配方。
 控件**自己**那个视图由 attach + 表面的兜底声明触发（§2.2）；宿主新建的视图没有 attach 事件 ⇒ 自己声明一次

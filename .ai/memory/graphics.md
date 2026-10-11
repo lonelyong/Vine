@@ -789,6 +789,29 @@
   `FrameRecorderTest.TheViewBlockIsProjectedForTheShapeTheScopeAnnounced`（公告 2.0 ⇒ 快照投影按 2.0；下一条 pass
   回到默认；0 / NaN 被拒）。变异验证：`execute()` 写死 1.0 ⇒ 1 条失败；memo 去掉 view-proj 项 ⇒ 1 条失败；
   `projectionMatrix` 忽略参数 ⇒ 2 条失败；recorder 固定 1.0 / `beginPass` 不复位 ⇒ 各 1 条失败。
+- **矩形放呈现条目（M2d，2026-10-11 已落地）**：**分屏**是这张表的下一层 —— 每条呈现带自己的**归一化**矩形
+  （`Presentation::rect`，`optional`），矩形由**表面**持有、**视图读**它：
+  `RenderSurface::present(view, rect)` / `present(view)`（沿用视图当前那块）/ `setViewport(view, rect)`；
+  `SceneView::setViewport` 在**绑了表面时转发**到表上（没绑时留在自己身上 —— 一个视图单独用不需要表面），
+  `SceneView::viewport()` 由 `const NormalizedViewport&` 改成**按值**返回并按需读表（`viewportOf`）：
+  一份矩形，两处拼写。`dismiss` / `~RenderSurface` 把矩形**还给**视图（它接着画同一块地方，只是从"表面的声明"
+  变成"视图自己的声明"），`~RenderSurface` 的顺序仍是"先解绑再交矩形"（否则视图会去一张已经没有它条目的表里读）。
+  `present(view, rect)` 里的矩形经 `applySurfaceGeometry()` 落成设备像素（窗口 pass 的 viewport、targets、HUD 盒、
+  layout 步）—— 形状（aspect）不用另说：后端从那条 pass 的 viewport 推（M2c）。
+  **同时**：`RenderSurface::viewAt(nx, ny)`（点归哪条呈现；**归一化**坐标，反序扫描 ⇒ 重叠时**最后画的**赢，
+  `NormalizedViewport::contains` 让东/南邻拥有共享边；宿主自建的 pass 不中选）；"一个视图呈现两块表面"被拒
+  （一个视图画一张画，而它的矩形是向它呈现的那块表读的）—— 与"跨引擎"同一条诊断。
+  **边界（本片不做）**：表里**没有表面尺寸**（只有归一化矩形）⇒ 宿主自建的 pass 没有归一化矩形（它自己给
+  `pass->setViewport()` 设备像素），`viewAt` 用归一化坐标。把尺寸也搬进表要先回答"尺寸在表面与视图哪一份"——
+  两份正是本设计要消的病，而没有验收判据需要它。
+  判据（`test_graphics` 336 绿）：`RenderSurfaceTest.TheSurfaceOwnsTheRectangleAndTheViewReadsIt`（两种拼写写同一块；
+  invalid ⇒ 铺满；没呈现的视图 `setViewport` 返回 false；`dismiss` 之后视图接着画同一块 —— 用的值 0.7 视图自己
+  从没存过）、`PresentingAViewWithARectangleStatesTheSplitInOneCall`、`AViewIsFoundByThePointItsRectangleHolds`、
+  `ThePointGoesToThePresentationDrawnLast`、`AViewThatAlreadyPresentsAnotherSurfaceIsRefused`、
+  `SceneViewViewportTest.ASurfaceSplitStatesEachViewsRectangleAndNothingIsRebuilt`（半宽 = 640×720、右上四分之一 =
+  640×360：两块形状不同；改矩形不重建（句柄 + pass 数不变））。变异验证：视图不读表 ⇒ 2 条失败；`viewAt` 不看矩形
+  ⇒ 2 条失败；`viewAt` 正序 ⇒ 1 条失败；`dismiss` 不还矩形 ⇒ 1 条失败；去掉"已在别的表面"的拒绝 ⇒ 1 条失败；
+  `SceneView::setViewport` 不转发 ⇒ 1 条失败。
 
 ## 帧计划：一眼看出这一帧画了什么（M4，2026-10-11）
 

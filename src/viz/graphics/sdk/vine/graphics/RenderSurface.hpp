@@ -2,11 +2,14 @@
 #include "graphics_global.hpp"
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include <vine/RefCounted.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
+
+#include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -53,7 +56,10 @@ class SceneView;
  * not forced to start clearing by being first.
  *
  * @note Splitting a surface between several presentations (each with its own rectangle) is the same table read
- * again; the rectangle per presentation belongs to the surface too. That lands on top of this table, not beside it.
+ * again, and the rectangle per presentation belongs here too: what a surface is divided into is a fact about the
+ * SURFACE (a host states the split once, in normalized terms, and the surface answers "who owns this point" -
+ * see viewAt). The view that presents through an entry keeps drawing into the rectangle the entry states: it reads
+ * it here instead of holding a second copy (see SceneView::viewport).
  */
 class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
   public:
@@ -68,6 +74,13 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
         raw_ptr<RenderPass> pass = nullptr;
         /// The view this presentation came from, or null when a host declared the pass.
         raw_ptr<SceneView> view = nullptr;
+        /// The area this presentation draws into (normalized), for a presentation that HAS a view.
+        ///
+        /// Empty for a pass a host declared: a rectangle in normalized terms is a statement relative to the
+        /// surface's size, and this table does not hold that size (the views are told it, see
+        /// SceneView::onSurfaceResized) - such a pass states its own rectangle in device pixels instead
+        /// (RenderPass::setViewport), which is the host's to own because the host is the one that knows the pixels.
+        std::optional<NormalizedViewport> rect{};
     };
 
   public:
@@ -87,19 +100,39 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     ~RenderSurface();
 
   public:
-    /** @brief Declares that @p view draws this surface, and makes sure it has a default window pass.
+    /** @brief Declares that @p view draws this surface, into the rectangle @p view already draws into.
      *
      * The declaration a host makes when it has no main pass of its own: this surface is presented by the view's
      * default window pipeline, which is built here (SceneView::ensureWindowPass) if it does not exist yet.
      * Declaring the same view twice is one presentation. A view that draws through ANOTHER engine (or none) is
      * refused and reported: its window pass is registered on that engine's frame, so it could never present this
-     * surface, and a host that is told nothing would be looking at an empty area.
+     * surface, and a host that is told nothing would be looking at an empty area. A view that already presents
+     * ANOTHER surface is refused for the same reason (one view draws one picture).
      *
-     * @param view View to present; must be bound to this surface's engine.
+     * The view's current rectangle (SceneView::viewport) becomes this presentation's rectangle: a view that was
+     * already drawing into part of the surface keeps that part once it is presented. Use the overload below to
+     * state a different one.
+     *
+     * @param view View to present; must be bound to this surface's engine, and present no other surface.
      * @return true when this added a presentation; false when @p view already presented this surface, or could
      *         not.
      */
     bool present(SceneView& view);
+
+    /** @brief Declares that @p view draws @p rect of this surface.
+     *
+     * The whole point of a split: a host says once, in normalized terms, where each presentation draws ("the left
+     * half", "the corner preview"), and the rectangle lives HERE - with the clear and the order, in the one place
+     * that describes what this surface is made of. The view derives everything it needs from it (its window pass'
+     * device rectangle, its off-screen targets, its HUD boxes, the shape its picture is projected with), so
+     * there is no second statement to keep in step.
+     *
+     * @param view View to present; same requirements as the overload above.
+     * @param rect The area it draws into (normalized); an invalid rectangle means the whole surface.
+     * @return true when this added a presentation; false when @p view already presented this surface, or could
+     *         not.
+     */
+    bool present(SceneView& view, const NormalizedViewport& rect);
 
     /** @brief Declares that @p pass draws this surface.
      *
@@ -115,10 +148,27 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      */
     bool present(raw_ptr<RenderPass> pass);
 
+    /** @brief States the area of this surface that @p view draws into (normalized).
+     *
+     * Geometry, not recipe: nothing is rebuilt. The view is told (it re-derives the numbers that follow from its
+     * rectangle - its window pass' device viewport, its off-screen targets, its HUD boxes) and so is the shape its
+     * picture is projected with, because that follows from the same rectangle where the pass is recorded
+     * (RenderBackend::viewAspect).
+     *
+     * Same call as SceneView::setViewport, which is the spelling a host that thinks in views uses; this one is the
+     * spelling for a host that thinks in terms of the surface's layout - it is the same rectangle either way.
+     *
+     * @param view View whose area to state; must present this surface.
+     * @param rect The area it draws into (normalized); an invalid rectangle means the whole surface.
+     * @return true when @p view presents this surface (its area was stated); false when it does not.
+     */
+    bool setViewport(raw_ptr<SceneView> view, const NormalizedViewport& rect);
+
     /** @brief Drops the presentation @p view declared.
      *
      * The view keeps its pipeline (that is the view's), and the passes stay registered: what leaves is the
-     * statement that this surface is theirs.
+     * statement that this surface is theirs. The rectangle goes with the view - it keeps drawing into the same
+     * area, which is now its own statement rather than this surface's.
      *
      * @param view View whose presentation to drop.
      * @return true when a presentation was dropped.
@@ -150,8 +200,24 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      */
     [[nodiscard]] std::vector<Presentation> presentations() const;
 
+    /** @brief Gets the view that draws the point (@p nx, @p ny) of this surface, or null.
+     *
+     * The default answer to "which view is the user pointing at": a point belongs to the presentation whose
+     * rectangle contains it. Coordinates are the surface's own, in the same normalized terms the rectangles are
+     * stated in - a host that has device pixels (a mouse event) divides them by the surface size it gave the views
+     * (SceneView::onSurfaceResized), because this table does not hold that size (see Presentation::rect). A
+     * host-declared pass is not a view and is never the answer.
+     *
+     * Where presentations overlap, the one drawn LAST wins: that is the picture the point is actually on.
+     *
+     * @param nx Point x as a fraction of the surface width.
+     * @param ny Point y as a fraction of the surface height.
+     * @return The view that owns the point, or null when none does (outside every rectangle, or no views here).
+     */
+    [[nodiscard]] raw_ptr<SceneView> viewAt(double nx, double ny) const;
+
   private:
-    friend class SceneView;  // a presented view re-states this surface's clear after it rebuilt its pipeline
+    friend class SceneView;  // reads the rectangle it draws into, and re-states the surface's clear after a rebuild
 
     /** @brief One declared presentation: a view (its window pass is resolved when the table is read) or a pass a
      * host declared itself.
@@ -159,6 +225,10 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     struct Entry {
         raw_ptr<SceneView>        view = nullptr;
         intrusive_ptr<RenderPass> pass;
+        /// The area this entry draws into (normalized). A view presentation always has one (its default is the
+        /// whole surface); a pass a host declared has none - a normalized rectangle would have to be converted
+        /// against a surface size this table does not hold (see Presentation::rect).
+        NormalizedViewport        rect{};
         /// The pass this entry was last seen with, and what IT asked for (clears? which colour? depth?). A new pass
         /// means a fresh ask (a rebuild rebuilds its defaults) - and the surface needs the ask it remembered,
         /// because the surface is the one that takes clearing away from everything but the first presentation.
@@ -189,6 +259,17 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * @return The pass, or nullptr when there is none to resolve (no pipeline yet, no window pass).
      */
     raw_ptr<RenderPass> passOf(const Entry& entry) const;
+
+    /** @brief The area @p view draws into, as this surface states it.
+     *
+     * The rectangle a presented view reads while it presents this surface (SceneView::viewport): the surface's
+     * table is the ONE place the split is stated, so the view holds no second copy of it. A view that presents
+     * nothing here answers with the whole surface.
+     *
+     * @param view View to look up.
+     * @return The normalized rectangle, or the whole surface when @p view is not in the table.
+     */
+    [[nodiscard]] NormalizedViewport viewportOf(raw_ptr<const SceneView> view) const noexcept;
 
     /** @brief Puts the ONE clear of this surface on the pass that draws first, and off every other one.
      *

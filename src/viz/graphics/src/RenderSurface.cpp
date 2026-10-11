@@ -17,16 +17,25 @@ RenderSurface::RenderSurface(raw_ptr<RenderEngine> engine)
 RenderSurface::~RenderSurface()
 {
     // The views are the host's, and they outlive this table whenever the host says so: stop naming it, so a view
-    // destroyed later does not call back into a surface that is gone (see SceneView::~SceneView). Nothing here
-    // touches the engine - the whole point of doing it in this direction.
+    // destroyed later does not call back into a surface that is gone (see SceneView::~SceneView). Each view takes
+    // its rectangle back - it keeps drawing into the same area, which is its own statement again from here on.
+    // Nothing here touches the engine - the whole point of doing it in this direction.
     for (const Entry& entry : entries_) {
         if (entry.view != nullptr) {
             entry.view->setSurface(nullptr);
+            entry.view->setViewport(entry.rect);
         }
     }
 }
 
 bool RenderSurface::present(SceneView& view)
+{
+    // The view's own rectangle (what it draws into while it presents nothing) becomes the presentation's: a view
+    // that was already drawing into part of a surface keeps that part once it is presented.
+    return present(view, view.viewport());
+}
+
+bool RenderSurface::present(SceneView& view, const NormalizedViewport& rect)
 {
     for (const Entry& entry : entries_) {
         if (entry.view == &view) {
@@ -49,7 +58,19 @@ bool RenderSurface::present(SceneView& view)
         return false;
     }
 
-    entries_.push_back(Entry{ &view, nullptr });
+    // One view draws ONE picture, and its rectangle lives in the table of the surface it presents: a view that
+    // already presents another surface would have two rectangles and no way to tell which one it draws into (it
+    // reads its rectangle from the surface it presents - see SceneView::viewport).
+    if (view.surface_ != nullptr && view.surface_ != this) {
+        engine_->reportEngineProblem(
+            DiagnosticSeverity::Warning,
+            DiagnosticCategory::PassProtocolViolation,
+            u8"RenderSurface::present: this view already presents another surface, and a view draws one picture "
+            u8"(its rectangle is read from the surface it presents); dismiss it there first");
+        return false;
+    }
+
+    entries_.push_back(Entry{ &view, nullptr, rect.isValid() ? rect : NormalizedViewport{} });
     // The view and the surface name each other while the presentation stands: the surface resolves the view's
     // window pass from it, and the view tells the surface when it rebuilt that pass.
     view.setSurface(this);
@@ -57,6 +78,9 @@ bool RenderSurface::present(SceneView& view)
     // table resolves to (a host that meant to present a pass of its own declares that pass - see the other
     // overload, and then this one is never called).
     view.ensureWindowPass();
+    // ... and the view's geometry follows the rectangle THIS table now states (its window pass' device rectangle,
+    // its targets, its HUD boxes): a use of the rectangle, never a second copy of it.
+    view.applySurfaceGeometry();
     applyClear();
     return true;
 }
@@ -76,6 +100,25 @@ bool RenderSurface::present(raw_ptr<RenderPass> pass)
     return true;
 }
 
+bool RenderSurface::setViewport(raw_ptr<SceneView> view, const NormalizedViewport& rect)
+{
+    const NormalizedViewport next = rect.isValid() ? rect : NormalizedViewport{};
+    for (Entry& entry : entries_) {
+        if (entry.view != view) {
+            continue;
+        }
+        entry.rect = next;
+        if (view != nullptr) {
+            // The view re-derives what follows from this one rectangle - its window pass' device rectangle, the
+            // size its targets and HUD boxes get, the shape its picture is projected with (the backend derives
+            // that from the pass' viewport at render time). Geometry: nothing is rebuilt (see the header).
+            view->applySurfaceGeometry();
+        }
+        return true;
+    }
+    return false;
+}
+
 bool RenderSurface::dismiss(raw_ptr<SceneView> view)
 {
     const auto entry = std::find_if(entries_.begin(), entries_.end(), [view](const Entry& candidate) {
@@ -84,11 +127,15 @@ bool RenderSurface::dismiss(raw_ptr<SceneView> view)
     if (entry == entries_.end()) {
         return false;
     }
+    const NormalizedViewport rect = entry->rect;
     entries_.erase(entry);
     // Called from ~SceneView as well: the view stops naming this surface (it may be half gone - nothing here
-    // touches it beyond this pointer), and what is left of the table re-states its clear.
+    // touches it beyond this pointer), and what is left of the table re-states its clear. The rectangle goes back
+    // to the view - it must come off the surface BEFORE the view is told, or the view would read the rectangle
+    // from a table that no longer holds its entry.
     if (view != nullptr) {
         view->setSurface(nullptr);
+        view->setViewport(rect);
     }
     applyClear();
     return true;
@@ -116,9 +163,36 @@ std::vector<RenderSurface::Presentation> RenderSurface::presentations() const
 {
     std::vector<Presentation> ordered;
     for (const Resolved& entry : resolvedEntries()) {
-        ordered.push_back(Presentation{ entry.pass, entries_[entry.index].view });
+        const Entry& source = entries_[entry.index];
+        // A host-declared pass has no rectangle here: it states its own in device pixels (see Presentation::rect).
+        const std::optional<NormalizedViewport> rect =
+            source.view != nullptr ? std::optional<NormalizedViewport>(source.rect) : std::nullopt;
+        ordered.push_back(Presentation{ entry.pass, source.view, rect });
     }
     return ordered;
+}
+
+raw_ptr<SceneView> RenderSurface::viewAt(double nx, double ny) const
+{
+    const std::vector<Resolved> entries = resolvedEntries();
+    // Backwards: the entry drawn LAST is the picture the point is on when rectangles overlap.
+    for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
+        const Entry& entry = entries_[it->index];
+        if (entry.view != nullptr && entry.rect.contains(nx, ny)) {
+            return entry.view;
+        }
+    }
+    return nullptr;
+}
+
+NormalizedViewport RenderSurface::viewportOf(raw_ptr<const SceneView> view) const noexcept
+{
+    for (const Entry& entry : entries_) {
+        if (entry.view == view) {
+            return entry.rect;
+        }
+    }
+    return NormalizedViewport{};
 }
 
 std::vector<RenderSurface::Resolved> RenderSurface::resolvedEntries() const
