@@ -524,7 +524,16 @@ depth_mode / enabled / `before_draw`），`kind`（`Scene` / `Screen`）决定**
    `removePass` / `clearPasses` 都读它），第二个容器就是第二份真相。编译是引擎对自己那张表的一次投影，
    `FramePlan`（M4 的 dump）就是它的可读形态（判据④：打印列一字未变，只多了一个不打印的 `tag` 字段）。
    `Pipeline` / `RenderPipelineBuilder` 内部仍以**结点**为把手（`windowPass()` / `offscreenTarget()` / `setWindowPass`），
-   把 builder 也搬成描述符需要"交回结点"的入口 —— 记在 §5 的 M7 行待办里。
+   于是 `addPass` 三个重载都**交回注册的结点**（`RenderEngine::addPass` × 3 + `Pipeline::addPass(const PassDesc&)`），
+   builder 的普通 pass（shadow / forward main / transparent / gbuffer / lighting / present / preview）已按描述符改写；
+   **未做**：HUD 叠层（`AxisGizmo` / `FpsOverlay` 仍是 `RenderPass` 子类：它们的视口跟着 surface 走）与宿主持有的
+   G-buffer（③ 的能力与判据都在，builder 还没用它）—— 记在 §5 的 M7 行待办里。
+4. **一处默认值纠正（更诚实）**：描述符的 clear 三件套（`clear_enabled` / `clear_color` / `clear_depth`）改成
+    `optional` —— **不写就是那种 kind 自己的策略**。原因是 `ScreenPass` 的构造里 `setClearEnabled(false)`（全屏 pass
+    是叠在已有内容上的），一个 `true` 的默认值会把这件事翻掉：把 builder 搬成描述符时两条既有用例
+    （`RenderSurfaceTest.ARecipeWithNoClearOfItsOwnIsNotMadeToClear`、`DeferredPresetWithTransparentContentBuildsComposite`）
+    立刻变红，正是这个"描述符自带第二套默认值"的错。现在描述符与结点只有**一套**默认值，"描述符声明的 pass 就是手搭的
+    pass"这句话才真的成立；`ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise` 把它钉住。
 
 **收益（已取得）**：一条 pass 的声明是一个值（`Scene`/`Screen` 两种 kind，零新子类）；帧的真相是**编译出来的一张表**，
 报告是"这一帧真的发现了什么"（不再有"谁动过"这套记账）；transient 目标由编译分配（判据③），宿主不必再持有
@@ -569,7 +578,15 @@ G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevisio
 | **M5a** 输入路由 + 焦点（**已落地 2026-10-11**） | **焦点住在那张表上**（和矩形、清屏一起）：`RenderSurface::focus(view)` / `focusedView()`（默认第一条呈现；撤掉的、或 pass 已经不在帧里的不算 —— 免得把"当前视图"答成一张没人画的画面）。`SurfaceWindow` 的**默认路由改成问表面**（`viewAt`，逻辑像素 ÷ 表面尺寸 → 归一化），`setInputRouter` 从"唯一通路"降级成**覆盖**（返回 nullptr = 交回矩形）；**按下**即把路由到的视图设为焦点（默认路与 router 一样），按下也**总是**捕获（分屏拖出边界不能断线）；**键盘**改去**焦点**（没有位置可路由）。`RenderControl::focusedView()`（无呈现视图时回退控件自己的视图）；五条显示模式命令改**焦点视图**，`setPrimaryRenderControl` 只用来找**控件**、不再决定改哪个视图 | ①分屏两块各自输入：`RenderControlTest.TheSurfacesRectanglesRouteInputWithNoRouterAtAll`（**一条 router 都不装**，右半拖拽只动右边那格，左半按下动控件自己那个视图；键盘跟着焦点走）②五条命令作用于焦点视图：`ModelViewerTest.TheShadingModeCommandsDriveTheCurrentModelView` 追加的一段（焦点在第二格 ⇒ 命令改第二格、主视图不动；焦点转回 ⇒ 同一条命令改主视图、第二格保持）③`setPrimaryRenderControl` 仍被用来找控件（同两条用例的断言）但焦点来自输入。**变异验证**：默认路由不看矩形 ⇒ 失败；按下不设焦点 ⇒ 失败；键盘绕过焦点 ⇒ 失败；`focusedView` 不看存下的焦点 / 不做存活检查 ⇒ 各自失败；命令改回 `control->view()` ⇒ 失败。（写下的"撤销时清焦点"对*结果*冗余 —— 存活检查已经给出同样答案 —— 它挡的是"指针被后来同地址的视图继承"，用例稳定撞不上，如实记账。） | M2d（已落地） | 中 |
 | **M5b** 分屏布局的所有者（**未落地**） | **谁 split、谁销毁、谁改矩形**：splitter 树 / 布局对象（每格一台相机 + 矩形 + 可选 HUD），把"宿主自己给每个视图喂表面尺寸、自己写矩形"这摊事收成一处；**窗口级焦点**（今天的焦点是**每表面**一个，多控件多窗格时要先回答"哪块控件有焦点"）；`ViewContext{ window, focus_view, selection }` 的 `selection` 一轴 | 待定（见 §4） | M5a（已落地） | 中 |
 | **M6** | Device / Session 分离：一设备 N 会话 | ①同一模型开两个窗口只上传一份几何（计数/内存断言）；②一个窗口销毁不带走另一个的会话；③`SessionLease` 类型上禁止"会话先死在租约前"；④R2 的"临时加引用"约定删除（该用例改写仍过） | M2 | 大 |
-| **M7** | Pass 描述符 + 每帧 FramePlan（§3.4）（**已落地 2026-10-11**） | ①`wiringRevision()`/`wiringDeclarationsChanged()`/`wiringValidationCount()`/`validateWiring()`（420 行）与那 10 组 seen/reported 集合**删除后全部套件绿**（`test_graphics` **342**、`test_vsg` 407、`test_gui` 253、`test_appfw` 32、`test_meshio` 34、`test_iobase` 94）；②新增一个 pass = **一条描述符**（`RenderEngineTest.APassCanBeDeclaredAsAValueAndRunsLikeAnyOther` 场景档 / `AScreenPassCanBeDeclaredAsAValueToo` 全屏档：零新子类，`stage` 定 order、`tag` 进 plan、`before_draw` 每帧钩子、禁用档不跑钩子）；③transient 目标由编译分配（`ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt`：一个声明一张目标、同身份同形状**共享**、稳态帧指针不变、形状变则**替换**、没人声明就释放 —— 全过程 `transientTargetCount()` 计数断言 + `FramePlan::PassPlan::target` 地址断言）；④dump 与 M4 同形（demo 冒烟 11 pass 表逐列不变，只多一个不打印的 `tag` 字段）。**变异 4/4 红**：①编译不解析输入（12 条用例红）②transient 每帧新建（该用例 4 条断言红）③去掉 episode 比较（14 条报告用例红）④描述符的 `before_draw` 不落地（该用例 2 条红）| M4（观测先有） | 大 |
+| **M7** | Pass 描述符 + 每帧 FramePlan（§3.4）（**已落地 2026-10-11**） | ①`wiringRevision()`/`wiringDeclarationsChanged()`/`wiringValidationCount()`/`validateWiring()`（420 行）与那 10 组 seen/reported 集合**删除后全部套件绿**（`test_graphics` **342**、`test_vsg` 407、`test_gui` 253、`test_appfw` 32、`test_meshio` 34、`test_iobase` 94）；②新增一个 pass = **一条描述符**（`RenderEngineTest.APassCanBeDeclaredAsAValueAndRunsLikeAnyOther` 场景档 / `AScreenPassCanBeDeclaredAsAValueToo` 全屏档：零新子类，`stage` 定 order、`tag` 进 plan、`before_draw` 每帧钩子、禁用档不跑钩子）；③transient 目标由编译分配（`ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt`：一个声明一张目标、同身份同形状**共享**、稳态帧指针不变、形状变则**替换**、没人声明就释放 —— 全过程 `transientTargetCount()` 计数断言 + `FramePlan::PassPlan::target` 地址断言）；④dump 与 M4 同形（demo 冒烟 11 pass 表逐列不变，只多一个不打印的 `tag` 字段）。**变异 4/4 红**：①编译不解析输入（12 条用例红）②transient 每帧新建（该用例 4 条断言红）③去掉 episode 比较（14 条报告用例红）④描述符的 `before_draw` 不落地（该用例 2 条红）。**builder 侧（同日续，属同一片）**：普通 pass 全部按描述符声明
+（`RenderEngine::addPass` × 3 与 `Pipeline::addPass(const PassDesc&)` 都**交回注册的结点**，builder 只在自己需要把手的
+地方留下它：`setWindowPass` / `setOffscreenTarget` / `setCompositeTarget`）；新增
+`RenderPipelineBuilderTest.TheRecipeIsAWrittenDeclarationAndThePlanSaysSo`（4 行的 tag = `GBuffer`/`Lighting`/`Transparent`/
+`Present`、order 与 `pipelineStageOrder` 逐个相等）与
+`RenderEngineTest.ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise`（不写 clear 就跟 kind 走、写了就压过 kind）；
+`test_graphics` **344**，其余五套件不变（`test_vsg` 407 / `test_gui` 253 / `test_appfw` 32 / `test_meshio` 34 /
+`test_iobase` 94）；**变异 4/4 红**：①clear 策略无条件落地（3 条红）②`Pipeline::addPass(desc)` 不记账（8 条红）
+③present 的 stage 写错（1 条红）④描述符的 `tag` 不落地（2 条红） | M4（观测先有） | 大 |
 
 | **M8** | `test_vsg` 的 **SDK 级设备夹具**（**已落地 2026-10-11**，`tests/test_vsg/SdkPixelFixture.hpp` / `SdkPixelFixture.cpp` / `SdkPixelTest.cpp`） | ①**像素**断言（`SdkPixelTest.AWireframeModeDrawsTheEdgesOfTheSameGeometry`：延迟配方 + 非 Lit 档 ⇒ 链条前向；同一视图/相机/pass/目标只换光栅化模式，实测 filled=1296 / lines=180，180 条边**全部**落在实体版覆盖块的一个像素之内，实体版 140 个轮廓像素**全部**有边走过）；②"没有视图也能渲染"的最小用例（`TheFixtureAlsoDrawsContentWithNoViewAtAll`：手搭一条 pass，实测覆盖 3364/4096 ≈ 82%，四角仍是清屏色） | 无 | 中 |
 
@@ -594,11 +611,12 @@ G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevisio
 **触发条件**（不满足就不做，避免为"将来"付费）：
 
 - M6：命中"同一内容要多窗口 / 设备启动开销被窗口数乘 / 视图数 > 4"之一。
-- M7 **已落地**（2026-10-11）：描述符、每帧编译、transient 目标与"一次一集"都换成编译模型（§3.4 的三处记账）。
-  **剩余半边**（属同一片、未做）：`RenderPipelineBuilder` / `Pipeline` 内部仍以结点组装（`windowPass()` /
-  `offscreenTarget()` / `setWindowPass` 这些公开把手的形态决定的），把 builder 也搬成描述符要么给
-  `addPass(PassDesc)` 一条"交回结点"的返回、要么改 `Pipeline` 的公开面；G-buffer 也仍由宿主持有（③的能力与判据都在，
-  builder 还没用它）。这两件都在"下次碰 builder / Pipeline 公开面"时做，不另开片。
+- M7 **已落地**（2026-10-11）：描述符、每帧编译、transient 目标与"一次一集"都换成编译模型（§3.4 的四处记账）。
+  `addPass` 三个重载现在都**交回注册的结点**，builder 的普通 pass 已是描述符（shadow / forward main / transparent /
+  gbuffer / lighting / present / preview），公开面（`windowPass()` / `offscreenTarget()` / `setWindowPass`）一字未改。
+  **剩余半边**（不另开片，下次碰这两处时做）：①HUD 叠层 `AxisGizmo` / `FpsOverlay` 仍是 `RenderPass` 子类（视口跟
+  surface 走，`Pipeline::resize` 重新锚定；搬成描述符要先决定叠层的**内容归属**）；②G-buffer 仍由宿主持有（③ 的能力
+  与判据都在，builder 还没用它）。
 - M1 / M2a / M2b / M2c / M2d / M3 / M5a 不需要触发条件：它们消掉的是**今天就在付**的混乱（一条诊断 + 一条全局
   让位规则 + 一口没有 owner 的清屏 + 一张命名表 + "相机的 aspect 和它被画进的矩形不一定一致" + "矩形与视图各说
   各话" + "输入路由只能由宿主手写"）。

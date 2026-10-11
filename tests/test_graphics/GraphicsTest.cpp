@@ -4778,6 +4778,51 @@ TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsCompos
     EXPECT_EQ(pipeline->compositeTarget()->height(), 720);
 }
 
+/**
+ * @brief What a recipe writes down is what the plan says: the tags, and the stages that place the passes.
+ *
+ * The builder's ordinary passes are DECLARATIONS now (see PassDesc), so this pins the part a reader of a plan
+ * depends on: every row is labelled by the tag the recipe gave it, and the order of the rows is the order the
+ * declared STAGES imply rather than a number the builder picked out of the air.
+ */
+TEST(RenderPipelineBuilderTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto overlay = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+
+    PipelineOptions opts;
+    opts.path             = ShadingPath::Deferred;
+    opts.offscreen_width  = 640;
+    opts.offscreen_height = 360;
+
+    RenderPipelineBuilder builder(engine.get());
+    builder.setCamera(cam.get());
+    builder.setContent(content);
+    builder.setTransparentContent(overlay);
+    auto pipeline = builder.build(opts);
+    ASSERT_NE(pipeline, nullptr);
+
+    const FramePlan plan = engine->framePlan();
+    ASSERT_EQ(plan.passes.size(), 4u);
+    EXPECT_EQ(plan.passes[0].tag, vn::String(u8"GBuffer"));
+    EXPECT_EQ(plan.passes[1].tag, vn::String(u8"Lighting"));
+    EXPECT_EQ(plan.passes[2].tag, vn::String(u8"Transparent"));
+    EXPECT_EQ(plan.passes[3].tag, vn::String(u8"Present"));
+    // The stage is what ordered them: the numbers below are the stage orders, not choices of the recipe's.
+    EXPECT_EQ(plan.passes[0].order, pipelineStageOrder(PipelineStage::Geometry));
+    EXPECT_EQ(plan.passes[1].order, pipelineStageOrder(PipelineStage::Shading));
+    EXPECT_EQ(plan.passes[2].order, pipelineStageOrder(PipelineStage::Transparent));
+    EXPECT_EQ(plan.passes[3].order, pipelineStageOrder(PipelineStage::Present));
+    // Every row is still a pass with a name, a camera and a place to draw: a declaration did not cost the plan
+    // anything (see the deferred preset test above for what the passes themselves are).
+    for (const PassPlan& row : plan.passes) {
+        EXPECT_FALSE(row.name.empty());
+        EXPECT_EQ(row.camera, cam.get());
+    }
+}
+
 TEST(RenderPipelineBuilderTest, ForwardPresetWithTransparentContentStacksDepthOnPass)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -7610,6 +7655,53 @@ TEST(RenderEngineTest, AScreenPassCanBeDeclaredAsAValueToo)
     EXPECT_EQ(plan.passes[1].inputs.size(), 1u);
     EXPECT_EQ(plan.passes[1].inputs[0], vn::String(u8"SceneColor"))
         << "the plan lists what the pass DECLARED (the resolved address is the frame's business)";
+}
+
+/**
+ * @brief A declaration states a clear policy only when it HAS one; otherwise the pass' kind decides.
+ *
+ * The descriptor is not a second set of defaults to keep in step with the node's: silence means "the kind's
+ * policy", which is the only reading that keeps a declared pass and a hand-built one the same pass. It matters
+ * most where the kinds disagree - a Screen pass composites over what is already there, so a `clear_enabled`
+ * default of true would repaint the target it was about to draw over.
+ */
+TEST(RenderEngineTest, ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto camera = intrusive_ptr<Camera>(new Camera());
+
+    // Silently declared screen pass: it keeps the kind's "never clears" and the kind's depth policy.
+    PassDesc copy;
+    copy.name    = u8"copy";
+    copy.kind    = PassKind::Screen;
+    copy.camera  = camera;
+    copy.program = screenCopyProgram();
+    const auto copy_node = engine->addPass(copy);
+    ASSERT_NE(copy_node, nullptr);
+    EXPECT_FALSE(copy_node->isClearEnabled()) << "a silent declaration must not turn a screen pass' clear on";
+    EXPECT_FALSE(copy_node->shouldClearDepth());
+
+    // Silently declared scene pass: the other way round, and it clears to the colour a hand-built pass does.
+    PassDesc opaque;
+    opaque.name   = u8"opaque";
+    opaque.camera = camera;
+    const auto opaque_node = engine->addPass(opaque);
+    ASSERT_NE(opaque_node, nullptr);
+    EXPECT_TRUE(opaque_node->isClearEnabled());
+    EXPECT_EQ(opaque_node->clearColor(), Color(51, 51, 51, 255));
+
+    // A declaration that states the policy wins over the kind, on each of the three axes on its own.
+    PassDesc tinted;
+    tinted.name          = u8"tinted";
+    tinted.camera        = camera;
+    tinted.clear_enabled = true;
+    tinted.clear_color   = Color(10, 20, 30, 255);
+    tinted.clear_depth   = false;
+    const auto tinted_node = engine->addPass(tinted);
+    ASSERT_NE(tinted_node, nullptr);
+    EXPECT_TRUE(tinted_node->isClearEnabled());
+    EXPECT_EQ(tinted_node->clearColor(), Color(10, 20, 30, 255));
+    EXPECT_FALSE(tinted_node->shouldClearDepth());
 }
 
 /**

@@ -33,7 +33,7 @@
   `RenderEngine::wiringDeclarationsChanged()`、`wiring_validated_`、`wiring_validation_count_`、`wiringValidationCount()`、
   `validateWiring()`（420 行）、`WiringState` 里 10 组 seen/reported 集合、每帧的名字注册表（`outputs_`/`produced_targets_`
   变成编译期的一次走表：`plan_rows_` / `plan_produced_` / `plan_published_`）。
-- **判据（实测）**：`test_graphics` **342**（341 旧 + 3 新，一条旧用例改写：`TheWiringIsCheckedWhenADeclarationMovesAndNotPerFrame`
+- **判据（实测）**：`test_graphics` **344**（341 旧 + 3 新 + builder 侧 2 条见下、一条旧用例改写：`TheWiringIsCheckedWhenADeclarationMovesAndNotPerFrame`
   → `ADeclarationChangeLandsInTheFrameThatFollowsIt`）、`test_vsg` 407、`test_gui` 253、`test_appfw` 32、`test_meshio` 34、
   `test_iobase` 94 全绿；demo 两条冒烟 11 pass 表**逐列与基线相同**、0 error/warn（判据④）；五个 gate 0 finding
   （`--strict` 仍 20 条基线）。
@@ -46,8 +46,19 @@
 - **两处记账（详见 `graphics-render-next.md` §3.4）**：①"一次一集"按**句子**比（问题就是它那句话；跨检查的那个抑制用一个
   per-compile 集合，语义与旧代码逐字相同）；②**一处行为变化**：旧代码在"两个 pass 抢一张未绑定图"那一集里把图记成"已报告"
   却从未说出口，于是碰撞消失后"图没绑定"永远不会被说 —— 编译模型里 episode 是"真的报过什么"，现在会说（用例已改写并注明）。
-- **剩余半边（同片未做，记在 §5 M7 行）**：`RenderPipelineBuilder`/`Pipeline` 内部仍以结点组装（公开把手是结点），
-  G-buffer 仍由宿主持有 —— 搬过去要动 `Pipeline` 的公开面或让 `addPass(PassDesc)` 交回结点。
+- **builder 侧（同片续做）**：`RenderEngine::addPass` 三个重载 + `Pipeline::addPass(const PassDesc&)` 都**交回注册的结点**，
+  builder 的普通 pass（shadow / forward main / transparent / gbuffer / lighting / present / preview）已按描述符声明，
+  order 一律由 `stage` 决定；结点只留在真要调的地方（`setWindowPass` / `setOffscreenTarget` / `setCompositeTarget`）。
+  未做：HUD 叠层（`AxisGizmo`/`FpsOverlay` 仍是 `RenderPass` 子类：自带内容 + 视口跟 surface）与宿主持有的 G-buffer。
+  **新用例**：`TheRecipeIsAWrittenDeclarationAndThePlanSaysSo`（4 行的 tag/order = `GBuffer`/`Lighting`/`Transparent`/`Present`
+  且 order == `pipelineStageOrder(stage)`）、`ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise`（描述符不写 clear 就
+  跟 kind：Screen 不洗、Scene 洗且洗到 `51,51,51`；写了就压过 kind）。**变异 4/4 红**：①clear 无条件落地（3 条红）
+  ②`Pipeline::addPass(desc)` 不记账（8 条红）③present 的 stage 写错（1 条红）④`tag` 不落地（2 条红）。
+- **一处默认值纠正**：`PassDesc` 的 `clear_enabled`/`clear_color`/`clear_depth` 改成 `optional` —— **不写就跟随 kind 自己的
+  策略**。原因是 `ScreenPass` 构造里 `setClearEnabled(false)`/`setShouldClearDepth(false)`，描述符原来的 `true` 默认值会把
+  它翻掉（搬 builder 时两条既有用例立刻变红）；描述符不能有第二套默认值。
+- **剩余半边（同片未做，记在 §5 M7 行）**：HUD 叠层的内容归属、G-buffer 交给 transient —— 两件都要先回答一个问题，
+  都不动公开面（`windowPass()` / `offscreenTarget()` / `setWindowPass` 一字未改）。
 
 ## 2026-10-11 M8：SDK 级设备夹具 + 像素判据（`tests/test_vsg/SdkPixelFixture.hpp` / `SdkPixelFixture.cpp` / `SdkPixelTest.cpp`）
 

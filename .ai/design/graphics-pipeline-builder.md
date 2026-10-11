@@ -189,3 +189,31 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
 - G-buffer 同理：它是 deferred 配方里最适合交给 transient 的那一个目标（身份 + 形状都是声明里能说的），今天仍由
   builder 创建、由 `Pipeline::resize` 跟着表面尺寸改 —— 搬过去会动 `Pipeline::offscreenTarget()` / `resize` 的语义，
   同样留在那半边。
+
+## 2026-10-11 校（M7 续）：builder 也写描述符 —— `addPass` 交回结点
+
+上面那条"builder 内部仍是结点"指的是**内部组装手法**，不是公开面：把手（`windowPass()` / `offscreenTarget()` /
+`setWindowPass`）本来就是"结点是拿来调的对象"，不该为搬迁而改。真正的缺口只有一处 —— 描述符路径不交回结点，
+于是 builder 拿不到"我声明的那个 pass"来 `setWindowPass`。补法选了当年列的第一个选项：
+
+- `RenderEngine::addPass` **三个重载都交回注册的结点**（`intrusive_ptr<RenderPass>`；已经注册过则 null）。同一个
+  结点实例就是刚登记的那个，所以调用者拿到的是**它声明的东西本身**，不是副本。`Pipeline::addPass(const PassDesc&)`
+  是描述符侧的兄弟：登记（经引擎）+ 记账（`passes_`，`~Pipeline` 照样全部注销）两件事一次做完，返回结点。
+  "登记了就必须记得"这条老不变量没有松动：引擎不可能登记成功而不交回结点。
+- builder 的普通 pass 全部改成**声明**：shadow（`Depth`/`Shadow`）、forward main（`Shading`/`Opaque`）、
+  forward transparent（`Transparent`/`Transparent`）、gbuffer（`Geometry`/`GBuffer`）、lighting（`Shading`/`Lighting`，
+  无透明内容时它同时是 window pass）、present（`Present`/`Present`）、preview（`Geometry`+`Preview` 与 `Preview`+`Preview`
+  那一对）。order 一律由 `stage` 决定 —— builder 里那些 `pipelineStageOrder(...)` 调用点只剩叠层那一处（见下）。
+- **一直留在结点上的两处**，各自有理由：①HUD 叠层（`AxisGizmo` / `FpsOverlay`）是 `RenderPass` 子类，视口跟着
+  surface 走、由 `Pipeline::resize` 重新锚定，而且它们**自带内容**（几何 + 相机都在对象里）—— 搬成描述符要先回答
+  "叠层内容归谁"，那是另一个决定；②叠层的 order 是 `overlay_base + options.xxx.order`（相对偏移），描述符的 stage
+  没有对应表达，本来也不该有。
+- **踩到的坑（值得记住）**：`PassDesc` 的 clear 三件套原来是 `bool`/`Color` + 默认值，于是 builder 换成描述符后
+  两条既有用例立刻变红 —— `ScreenPass` 的构造里 `setClearEnabled(false)`/`setShouldClearDepth(false)`（全屏 pass 叠在
+  已有内容上），而描述符"不写就等于 true"把它翻掉了；默认 clear 色也从 `51,51,51` 变成白。修法不是给 builder 补两行，
+  而是**取消描述符的第二套默认值**：三个字段改成 `optional`，不写就跟 kind 走。描述符与结点只有一套默认值，
+  "描述符声明的 pass 与手搭的 pass 是同一个东西"才站得住（用例：
+  `RenderEngineTest.ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise`）。
+- **证据**：`test_graphics` 344（+2 用例：`TheRecipeIsAWrittenDeclarationAndThePlanSaysSo` 断言 4 行的 tag/order、
+  `ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise` 断言 clear 三态）；其余五套件同基线；
+  变异 4/4 红（clear 无条件落地 / `Pipeline::addPass(desc)` 不记账 / present 的 stage 写错 / `tag` 不落地）。

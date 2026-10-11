@@ -14,6 +14,9 @@ VN_GRAPHICS_NS_BEGIN
 class AxisGizmo;
 class Camera;
 class FpsOverlay;
+// Declared rather than included: PassDesc is a declaration OF a pass, so it includes this header for
+// PipelineStage, and a pipeline only ever passes one straight on to the engine (Pipeline::addPass).
+struct PassDesc;
 class RenderEngine;
 class RenderPass;
 class RenderTarget;
@@ -322,6 +325,17 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
      * @param order   Pass order (see pipelineStageOrder).
      */
     void addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order);
+
+    /** @brief Registers a DECLARED pass on the engine and remembers what it became.
+     *
+     * The declared half of addPass() above, for the recipes: the declaration says what each pass IS (its kind,
+     * stage, tag, target, inputs), the engine makes the node, and the pipeline keeps it - so the recipe reads as
+     * declarations while the pipeline holds the same one handle it always did (see RenderEngine::addPass).
+     *
+     * @param desc The declaration (see PassDesc).
+     * @return The node the declaration became, or null when that pass was already registered.
+     */
+    intrusive_ptr<RenderPass> addPass(const PassDesc& desc);
 
     /** @brief Sets the window-presenting pass. */
     void setWindowPass(intrusive_ptr<RenderPass> pass);

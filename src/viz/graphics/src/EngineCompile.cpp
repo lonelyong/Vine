@@ -323,16 +323,16 @@ void RenderEngine::reportPlanProblems()
     plan_problems_.clear();
 }
 
-void RenderEngine::insertSlot(Slot slot)
+intrusive_ptr<RenderPass> RenderEngine::insertSlot(Slot slot)
 {
     if (slot.pass == nullptr) {
-        return;
+        return nullptr;
     }
     // Registering the same pass instance twice is ignored: it would otherwise run twice per frame. To rebind
     // content use bindPassContent(); to change the order remove the pass and re-add it.
     for (const auto& existing : slots_) {
         if (existing.pass.get() == slot.pass.get()) {
-            return;
+            return nullptr;
         }
     }
     // Keep the slots ascending by order; equal orders preserve insertion order (stable), so ties are resolved
@@ -340,10 +340,11 @@ void RenderEngine::insertSlot(Slot slot)
     const int order = slot.order;
     const auto it   = std::find_if(slots_.begin(), slots_.end(),
                                    [order](const Slot& existing) { return existing.order > order; });
-    slots_.insert(it, std::move(slot));
+    const auto registered = slots_.insert(it, std::move(slot));
+    return registered->pass;
 }
 
-void RenderEngine::addPass(const PassDesc& desc)
+intrusive_ptr<RenderPass> RenderEngine::addPass(const PassDesc& desc)
 {
     // The declaration is turned into the execution node of its kind ONCE, and that node is the only storage of
     // it: a descriptor-declared pass and a hand-built one cannot drift apart, because by the time the engine
@@ -363,9 +364,18 @@ void RenderEngine::addPass(const PassDesc& desc)
     if (desc.writes != nullptr) {
         node->setRenderTarget(desc.writes);
     }
-    node->setClearEnabled(desc.clear_enabled);
-    node->setClearColor(desc.clear_color);
-    node->setShouldClearDepth(desc.clear_depth);
+    // The clear policy is applied only where the declaration states one: an unstated policy leaves the kind's
+    // own (a Screen pass never clears, a Scene pass does), which is what keeps a descriptor and a hand-built
+    // pass the same pass (see PassDesc::clear_enabled).
+    if (desc.clear_enabled.has_value()) {
+        node->setClearEnabled(*desc.clear_enabled);
+    }
+    if (desc.clear_color.has_value()) {
+        node->setClearColor(*desc.clear_color);
+    }
+    if (desc.clear_depth.has_value()) {
+        node->setShouldClearDepth(*desc.clear_depth);
+    }
     node->setDepthMode(desc.depth_mode);
     node->setProgramOverride(desc.program_override);
     if (desc.polygon_mode.has_value()) {
@@ -395,7 +405,7 @@ void RenderEngine::addPass(const PassDesc& desc)
     slot.writes_image = desc.writes_image;
     slot.writes_shape = desc.writes_shape;
     slot.before_draw  = desc.before_draw;
-    insertSlot(std::move(slot));
+    return insertSlot(std::move(slot));
 }
 
 VN_GRAPHICS_NS_END

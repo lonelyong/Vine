@@ -335,18 +335,20 @@ FramePlan RenderEngine::framePlan() const
     return plan;
 }
 
-void RenderEngine::addPass(intrusive_ptr<RenderPass> pass, int order)
+intrusive_ptr<RenderPass> RenderEngine::addPass(intrusive_ptr<RenderPass> pass, int order)
 {
-    addPass(std::move(pass), nullptr, order);
+    return addPass(std::move(pass), nullptr, order);
 }
 
-void RenderEngine::addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order)
+intrusive_ptr<RenderPass> RenderEngine::addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order)
 {
     Slot slot;
     slot.pass    = std::move(pass);
     slot.content = std::move(content);
     slot.order   = order;
-    insertSlot(std::move(slot));
+    // What comes back is the node the engine registered - the same instance, or null when it was already there
+    // (see addPass(PassDesc), which explains why a caller wants a handle at all).
+    return insertSlot(std::move(slot));
 }
 
 void RenderEngine::removePass(raw_ptr<RenderPass> pass)

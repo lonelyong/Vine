@@ -299,8 +299,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @param pass  Pass to add (the engine keeps a reference).
      * @param order Execution order (ascending; any integer allowed).
+     * @return The pass the engine registered, or null when it was already registered.
      */
-    void addPass(intrusive_ptr<RenderPass> pass, int order);
+    intrusive_ptr<RenderPass> addPass(intrusive_ptr<RenderPass> pass, int order);
 
     /** @brief Registers a scene render pass bound to explicit content.
      *
@@ -314,8 +315,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *                null leaves the pass without content (a base scene pass
      *                then draws nothing).
      * @param order   Execution order (ascending; any integer allowed).
+     * @return The pass the engine registered, or null when it was already registered.
      */
-    void addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order);
+    intrusive_ptr<RenderPass> addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order);
 
     /** @brief Registers a pass declared as a VALUE (see PassDesc).
      *
@@ -329,9 +331,15 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * the TRANSIENT it needs (so no host has to own the target - see PassDesc::writes_image) and the per-frame
      * hook its content updates itself through. A caller therefore adds a pass without adding a type.
      *
+     * WHAT THE RETURN IS FOR. A declaration says what a pass IS; the node it became is how a host CHANGES what
+     * it does without re-declaring it - a program override (a view mode), a viewport that follows the surface,
+     * a clear policy a surface re-states. That is the one handle a caller ever needs, so this hands it back
+     * instead of making it reach into the pass list (see Pipeline, which keeps the node for exactly this).
+     *
      * @param desc The declaration (see PassDesc; a null camera draws nothing, as any pass does).
+     * @return The execution node the declaration became, or null when that pass was already registered.
      */
-    void addPass(const PassDesc& desc);
+    intrusive_ptr<RenderPass> addPass(const PassDesc& desc);
 
     /** @brief Removes a previously added pass.
      *
@@ -637,8 +645,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * registration sequence). A pass instance already registered is ignored: it would otherwise run twice.
      *
      * @param slot Slot to insert (moved in when it is not a duplicate).
+     * @return The pass the engine registered, or null when that pass was already registered.
      */
-    void insertSlot(Slot slot);
+    intrusive_ptr<RenderPass> insertSlot(Slot slot);
 
     /** @brief Builds the target a transient declaration asks for (see resolveTransientTarget).
      *

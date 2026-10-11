@@ -799,6 +799,11 @@ desc.writes_shape.depth  = RenderTarget::DepthFormat::D24;
 ```
 
   计数/复用可以用 `RenderEngine::transientTargetCount()` 直接断言（一张声明一张目标；稳态帧不重建；形状变则**替换**而不是新增）。
+- **clear 三件套不写就跟随 kind**：`clear_enabled` / `clear_color` / `clear_depth` 都是 `optional` —— 不写时用那种 kind 自己的策略
+  （`Screen` 是叠在已有内容上的全屏档，从不洗、也不洗深度；`Scene` 档洗，默认洗到 `51,51,51,255`）。要覆盖就在声明里写出来。
+- **返回的是结点**：`addPass` 的三个重载都交回**已注册的那个执行结点**（重复注册则返回 null），于是"我声明了什么"与
+  "我接下来要调什么"是同一个对象：present 那一类配方把它记下来交给 `Pipeline::setWindowPass` 就行。builder 内部正是这样写的 ——
+  它的普通 pass（shadow / gbuffer / lighting / transparent / present / preview）全是描述符，order 一律由 `stage` 决定。
 - 逃生口不变：`engine->addPass(pass, content, order)` 仍然收一个手搭的 pass（需要结点本身时用它），描述符只是把"声明"
   变成数据。
 

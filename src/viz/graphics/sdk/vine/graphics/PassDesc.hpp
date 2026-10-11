@@ -115,12 +115,15 @@ struct VN_GRAPHICS_API PassDesc
     /// Name-based declared inputs, in declaration order: the sugar over the object-typed ones.
     std::vector<String> input_names;
 
-    /// Whether this pass clears its target (the surface's own rule decides for a presented pass).
-    bool clear_enabled{ true };
-    /// The colour its target is cleared to.
-    Color clear_color{};
-    /// Whether the depth attachment is cleared with it.
-    bool clear_depth{ true };
+    /// Whether this pass clears its target, or unset for the KIND's own policy: a Screen pass never clears
+    /// (it composites over what is already there), a Scene pass does. Stating one is how a declaration
+    /// overrides that (the transparent pass tests depth without clearing, for instance).
+    std::optional<bool> clear_enabled;
+    /// The colour its target is cleared to, or unset for the kind's own default (51,51,51, the colour a
+    /// hand-built pass clears to — a surface that has its own colour states it here).
+    std::optional<Color> clear_color;
+    /// Whether the depth attachment is cleared with it, or unset for the kind's own policy.
+    std::optional<bool> clear_depth;
 
     /// A sub-rectangle of the target to draw into (unset = the whole of it).
     std::optional<Viewport> viewport;

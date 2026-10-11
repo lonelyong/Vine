@@ -86,6 +86,19 @@ void Pipeline::addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> cont
     engine_->addPass(std::move(pass), std::move(content), order);
 }
 
+intrusive_ptr<RenderPass> Pipeline::addPass(const PassDesc& desc)
+{
+    // The engine makes the node (see RenderEngine::addPass): remembering it here is the same contract as the
+    // overload above - a pass this pipeline registered is a pass this pipeline unregisters - and the node goes
+    // back to the caller because that is the handle a recipe needs (the window pass it presents, a pass a mode
+    // override is applied to).
+    intrusive_ptr<RenderPass> node = engine_->addPass(desc);
+    if (node != nullptr) {
+        passes_.push_back(node);
+    }
+    return node;
+}
+
 void Pipeline::setWindowPass(intrusive_ptr<RenderPass> pass)
 {
     window_pass_ = std::move(pass);
