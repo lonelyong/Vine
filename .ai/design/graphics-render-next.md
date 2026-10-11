@@ -568,8 +568,10 @@ depth_mode / enabled / `before_draw`），`kind`（`Scene` / `Screen`）决定**
    重述到 pass 上。句柄因此分两个：`Pipeline::gizmo()/fpsOverlay()` 给对象，`Pipeline::gizmoPass()/fpsOverlayPass()`
    给结点（可见性读的就是结点，与"pass 即状态"一致）。**一处行为变化（更诚实）**：盒子的初值是**零面积矩形**
    （还没人报过表面尺寸时），后端按空矩形规则跳过 —— 从前那种 pass 没有 viewport，会**整屏**画一遍叠层。
-   **如实记账**：叠层对象仍由 builder 每次构建时新建，所以 `setOptions()` 重建会重置 FPS 读数窗口（要让读数跨
-   重建存活得让视图持有对象，那是另一个决定）。
+   **如实记账**：叠层对象仍由 builder 每次构建时新建，所以重建（`setViewerOptions`，或延迟链上换非 Lit 档/再回 Lit）
+   会重置 FPS 读数窗口。**2026-10-12 复核：就让它这样（T7 不做）** —— 重建罕见、本身已付新 pass/新目标的代价；
+   跨链继承读数会把旧链的帧混进新链的采样窗，与 `FpsOverlay` 已定的性质（每个数字是自己区间的真值）顶牛。
+   详见 §5.1 的 T7 行。
 
 **收益（已取得）**：一条 pass 的声明是一个值（`Scene`/`Screen` 两种 kind，零新子类）；帧的真相是**编译出来的一张表**，
 报告是"这一帧真的发现了什么"（不再有"谁动过"这套记账）；transient 目标由编译分配（判据③），宿主不必再持有
@@ -683,7 +685,7 @@ G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevisio
 | **T4** | 组合 | **分屏布局的所有者**（原 M5b 的组合半边） | **不进 SDK**：布局树 / 比例 / join / 格子生死 / 谁持有视图，是应用层（编辑器、查看器）自己的组合；`SplitLayout` 那份定稿作废 | 归属登记（§4 与 §5 M5b 行已改）。真有人要通用实现时，以"应用层小库"形态出现，不是引擎政策 |
 | **T5** | 组合 | **多 transient 互相借用的配方** | **不进 SDK**（② 定案）：应用声明 transient、`RenderEngine::transientTarget(identity)` 取回当前实例、在自己的钩子/布局回调里重述 `RenderTarget::shareDepth` | 已记（`graphics-deferred-composite.md` 顶部 + `docs/guides/graphics.md` §3.13） |
 | **T6** | 记账 | **便利的边界守得住** | SDK 里的预设（Forward / Deferred / Shadow）、内建程序与目标工厂（`defaultGbufferTarget`、`screenCopyProgram` …）、HUD 内容对象（`AxisGizmo` / `FpsOverlay`）、`addOffscreenToScreen`，一律标成**可选便利**：永远可绕过（`engine->addPass(desc)` + 自己的 program / target 就够），**不为它们保留任何引擎政策** | 每次动这些便利时自查：删掉它，机制路径还成立吗？成立才留 |
-| **T7** | 记账 | **叠层对象跨重建存活** | 今天 `setOptions()` 重建会新建叠层对象（FPS 读数窗口被重置）。要它存活得让**视图**持有对象、把对象交给配方（`PipelineOptions` 收对象）——按"机制/组合"看这是**视图的实现细节** | 记录在案（§3.4 第五条、`.ai/memory/graphics.md`）。有真实观感需求再做 |
+| **T7** | 记账 | **叠层对象跨重建存活** —— **2026-10-12 复核：不做（仍登记）** | 今天重建（`setViewerOptions`，或延迟链上换非 Lit 档/再回 Lit）会新建叠层对象（`AxisGizmo` / `FpsOverlay`），于是 FPS 读数清零（数字先隐藏约一个采样窗，默认 0.5 s）。要它存活得让**视图**持有对象、把对象交给配方（`PipelineOptions` 收对象）——按"机制/组合"看这是**视图的实现细节** | **不做**，理由三条：① 重建是罕见的**结构**变化（换链/增删档/换引擎/宿主自建链），且它本身已付"新 pass + 新 program + 新离屏目标"的代价，读数那 0.5 s 是零头；② 跨链继承读数会把旧链的帧混进新链的采样窗，与 `FpsOverlay` 已经定死的性质（"每个数字必须是它自己那个区间的真值"）顶牛 —— 新链报自己的平均才是对的；③ 记录里的做法要新增"值 + 对象"的配方、builder 的造/采纳两条路、以及**同一对象进两条链**的规则，属于本文件 §8 反复否掉的"第二个配置面"。**真要有需求从最小开始**：把 `window_seconds` 作为**值**加进 `FpsOverlayOptions`（一个字段 + 一处透传，零所有权规则）——今天只有一条用例设过它，没有产品宿主。记录在 §3.4 第五条、`.ai/memory/graphics.md` |
 
 ## 6. 不变量与兼容策略
 
