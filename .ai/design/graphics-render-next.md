@@ -79,7 +79,7 @@
 L0  设备 / 会话     RenderDevice（能力查询 + 资源缓存）→ Session（surface + swapchain）；一设备 N 会话
 L1  图 / 帧         PassDesc（描述符）→ FramePlan（每帧编译：顺序、目标、输入、clear/load、barrier、transient 分配）
 L2  配方           buildRecipe(graph, options)：forward / deferred / shadowed …（今天 RenderPipelineBuilder 的位置）
-L3  视图 / 面板     Pane（矩形 + 相机 + 内容 + 清屏开关）+ View（配方 path/mode/HUD + 默认管线）+ 交互器
+L3  视图 / 分屏块   Pane（矩形 + 相机 + 内容 + 清屏开关）+ View（配方 path/mode/HUD + 默认管线）+ 交互器
 L4  呈现 / 宿主     Surface（交换链 + **唯一一口清屏** + present）+ 输入路由 + HUD 作为带 tag 的普通 pass
 L5  应用 / 文档     文档 / 视图 / 控件链；命令带 ViewContext；pane 布局归宿主
 ```
@@ -190,12 +190,26 @@ addPass() call sequence"*；但**没有任何公开查询**能读出某条 pass 
 
 #### 3.2.3 目标对象模型与所有权（大改版）
 
+> **术语：这里的 pane 指什么**（先消歧，仓库里 "pane" 已经被另一个意思用过）
+>
+> - **本设计里的 pane = 表面上的**一块分屏区域**（一个可渲染的矩形格子），对应行业里的 `vtkRenderer`（VTK 把矩形和
+>   背景色放在它身上）、Unreal 的 `FSceneViewport`、Unity 的 `Camera.rect` 所描述的那一块、OSG 的
+>   `Camera::setViewport`、Filament 的 `Viewport`。词源是 "window pane"（窗格）—— 一扇窗玻璃分成几格，每格一块。
+> - **它不是**：OS 窗口（那是 `MainWindow` / `SurfaceWindow`）、控件容器（`RenderControl`）、文档视图
+>   （`DocumentView`）、也不是 pass（`RenderPass`；一个 pane 的画面可以由多条 pass 产出）。
+> - **今天代码里它已经以名字存在**：`SceneView::paneSize(w, h)`（"this view's rectangle in the host's logical
+>   pixels"）算的就是这一块的大小，`SceneView::setViewport(NormalizedViewport)` 给的就是这一块的矩形，
+>   `RenderControl::setInputRouter` 分的就是"这一点归哪一块"。本设计只是把这些**散在一个视图上的职责收成一个对象**。
+> - **与 appfw 的 "pane" 撞词**：`DockPanel` 的文档里 "pane" 指的是**停靠面板**（`DockingPaneManager`、"the pane
+>   content"）。两处是不同的东西 ⇒ 中文一律写**"分屏块"**（停靠面板继续叫面板），英文类名在 graphics 里叫 `Pane`
+>   （与既有的 `paneSize()` 一致）；若落地时觉得容易混，改成 `RenderPane` 也在命名规则内（`Render*` 家族）。
+
 ```
 Surface                        交换链 + present + 这块表面**唯一一口清屏**      ← 今天的 SurfaceWindow 后半 + presenter
-  ├ Pane                       归一化矩形 + 清屏开关（画到这块表面的哪一块）      ← 新（VTK Renderer 的位置）
-  │   ├ Camera                 投影 + 变换 + aspect（由 pane 的矩形与表面尺寸推）
-  │   ├ Content (Scene)        画什么 —— 每 pane 一份（可引用同一份，见"共享"一行）
-  │   └ Interactor             输入：每 pane 一个，含"按下路由、松开前捕获"       ← 今天 setInputRouter 的进化
+  ├ Pane（分屏块）              归一化矩形 + 清屏开关（画到这块表面的哪一块）      ← 新（VTK Renderer 的位置）
+  │   ├ Camera                 投影 + 变换 + aspect（由分屏块的矩形与表面尺寸推）
+  │   ├ Content (Scene)        画什么 —— 每块一份（可引用同一份，见"共享"一行）
+  │   └ Interactor             输入：每块一个，含"按下路由、松开前捕获"           ← 今天 setInputRouter 的进化
   └ View / Recipe              path / mode / HUD 的配方 + 默认管线（"怎么画"）    ← 今天 SceneView 的另一半
 ```
 
@@ -207,15 +221,15 @@ Surface                        交换链 + present + 这块表面**唯一一口�
 | 矩形 | `SceneView::setViewport` | `Pane::setViewport` | VTK Renderer / Unreal Viewport / Unity Camera.rect |
 | 清屏 | `RenderPass` 的开关（谁先公告谁赢） | `Surface::setClear` + `Pane::setClearEnabled` | Unity / three.js / Filament 都由 renderer 持有 |
 | 呈现 | `SceneView::ensureWindowPass()` 的让位 | `Surface::present(...)` | VTK RenderWindow / Qt3D RenderSurfaceSelector |
-| 相机 | `SceneView::camera()` | `Pane::setCamera()`（**一个 pane 一台相机**） | aspect 是 pane 的函数 ⇒ 相机不能共享 |
+| 相机 | `SceneView::camera()` | `Pane::setCamera()`（**一个分屏块一台相机**） | aspect 是分屏块的函数 ⇒ 相机不能共享 |
 | 内容 | `SceneView::scene()` | `Pane::setContent()`（默认仍是自己的） | VTK 可把同一 actor 加进多个 Renderer |
 | 配方 + 管线 | `SceneView` | 留在 View（收成显式对象，或让 `SceneView` 退成"单 pane 便捷门面"） | "怎么画"与"画到哪"无关 |
 
 **两条硬规则**（要大改就得先认下来）：
 
-1. **一个 pane 一台相机**。同一台相机同时给两个 pane ⇒ aspect 变成共享状态（今天的 `SceneView` 就是这么坏掉的）。
-   行业一律每块一台相机；共享的是**内容**（同一 Scene 加进两个 pane），不是相机。
-2. **一块表面恰好一口清屏**，由 Surface 持有；pane 只能声明"我要不要参与"（默认：第一块清，其余不清）。
+1. **一个分屏块一台相机**。同一台相机同时给两块 ⇒ aspect 变成共享状态（今天的 `SceneView` 就是这么坏掉的）。
+   行业一律每块一台相机；共享的是**内容**（同一 Scene 加进两块），不是相机。
+2. **一块表面恰好一口清屏**，由 Surface 持有；分屏块只能声明"我要不要参与"（默认：第一块清，其余不清）。
    后端按 attachment 只应用第一条公告这一事实，从此变成"由 Surface 保证只有一条"，而不是"靠顺序祈祷"。
 
 #### 3.2.4 API 草案（贴仓库三条既有规矩：Qt 风格 getter / 赢家才叫 Override / 值语义 + 幂等）
