@@ -19,9 +19,9 @@
   `历史登记` / `不再更新` —— 这类小节里**允许**点名已不存在的东西（那正是它存在的意义）。
 * 必须在**现行**段落里提一个已经不存在的东西时，给那一行加 `<!-- drift-ok -->`。
 
-## design/ —— 完整设计文档（47）
+## design/ —— 完整设计文档（48）
 
-**graphics / vsg（24）**
+**graphics / vsg（25）**
 - `graphics-design.md` —— Graphics 模块设计（现代化架构）。
 - `graphics-layering.md` —— graphics 的两半：契约与后端工具层（分层、依赖方向、机器规则 R1/R2/R3）。
 - `graphics-render-pipeline.md` —— 多 Pass 渲染管线设计（pass 调度 / 命名产出槽 / 与内容关联）。
@@ -36,6 +36,7 @@
 - `graphics-vsg-audit.md` —— graphics / vsg 后端审查（历史登记）。
 - `graphics-pipeline.md` —— `RenderPipeline` 对象（管线的形状、效果与生命周期）；**与多 Pass 那份不同**：那份定 pass 怎么调度，这份定调用方拿到的管线对象长什么样。
 - `graphics-pipeline-builder.md` —— `RenderPipelineBuilder`（管线配方层，preset → 管线）。
+- `graphics-render-next.md` —— 渲染栈的**重新设计提案**（未落地）：保留什么、重切四条（调试覆盖挪到几何阶段 / 呈现契约 Pane+Presenter / `resolveRenderState` 状态单点 / Pass 描述符+FramePlan），横切三条（所有权 Lease、能力查询、观测 dump），以及 M1–M7 迁移切片与逐片验收判据、触发条件。
 - `vsg-reimplementation.md` —— vsg 后端"从零重新实现"：契约、坑与实施记录（本仓库最长的设计文档）。
 - `vsg-design.md` —— vsg 渲染后端设计 v5（历史登记）。
 - `vsg-pass-lifecycle.md` —— pass 生命周期与槽身份（历史登记）。

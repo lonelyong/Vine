@@ -1,7 +1,8 @@
 # appfw 渲染视图（最终设计 v2，2026-10-11）
 
 > 状态：**已落地 S0–S4 + 输入路由（S6+②）**（2026-10-11；其余 S6+ 三轴仍为"缝已定、未实现"）。本文**取代此前各稿**（那些是本设计的推演过程，结论以本文为准）；
-> 相关文档：`appfw-render-surface.md`（表面生命周期）、`graphics-pipeline-builder.md`（配方层）、`graphics-pipeline.md`（pass 调度）。
+> 相关文档：`appfw-render-surface.md`（表面生命周期）、`graphics-pipeline-builder.md`（配方层）、`graphics-pipeline.md`（pass 调度）、
+> `graphics-render-next.md`（**如果重新设计这一套栈会怎么切**：提案，含 M1–M7 迁移切片与触发条件 —— 本文是"现在是什么"，那份是"要变成什么"）。
 >
 > **落地记录（实现时发现的三条，值得记住）**：
 > 1. **R2 的"临时加引用"必须罩住整个操作**：只在 `ensureWindowPass()` 里持有的话，`rebuildDefaultWindowPass()` 里
