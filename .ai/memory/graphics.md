@@ -749,4 +749,19 @@
   `passOrder(raw_ptr<RenderPass>) const -> std::optional<int>`（顺序住在引擎的槽里，这条查询同时是"这条 pass
   还在不在"）。`SceneView::ensureWindowPass()` 从此不问引擎任何事。
   一块表面**恰好一口清屏**、矩形归呈现条目、`aspect` 出相机都还是设计（`graphics-render-next.md` §3.2 的
-  M2b/M2c/M2d）。
+  M2b/M2c/M2d）—— **其中 M2b 见下条**。
+- **清屏归表面（M2b，2026-10-11 已落地）**：`RenderSurface` 决定**谁**清 —— 呈现表（按引擎执行序）**第一条**保留
+  自己的清屏，其余条 `setClearEnabled(false)`（`applyClear()`，私有）。从前是"谁先公告谁赢 + 后端只应用第一条公告"，
+  于是第二条的 `clearColor()` 与画面**不符**却没人被告知。**没有** `Surface::setClear(ClearOptions)`：那三样
+  （enabled/color/depth）已经住在 `RenderPass` 上且是**一份真相**（`announceClear()` 从那儿读），搬一份上去就是
+  "同一个状态两处"+ 三态优先级；表面只搬**决定**，值留在 pass（延迟配方那条 `present` 屏 pass 自己说不清 ⇒
+  照样不清，不会被"第一条"逼出一次多余清屏）。
+  每条呈现自己的"ask"（清不清）被记住（`Entry::asked_of` + `Entry::clears`），所以①第一条被 `dismiss` ⇒ 下一条
+  恢复自己的 ask；②视图**重建**（`setOptions` 换了管线）⇒ 新窗口 pass 又是 enabled，靠视图回调
+  `surface_->applyClear()`（`SceneView` ↔ `RenderSurface` 互为 `friend`）把决定落回去；③同一个 pass 被两条呈现
+  指到（视图那条 + 直接声明那条）只算一次决定。
+  **生命周期**：视图与表面互持 `raw_ptr`，两边都自己解绑 —— `~SceneView` 先 `surface_->dismiss(this)`（此时它的
+  `default_pipeline_` 还握着引擎，`dismiss` 里要读引擎的执行序）；`~RenderSurface` 把每个视图的 `surface_` 清空。
+  任一先死都不留悬垂（用例 `APresentedViewThatDiesLeavesTheSurface` / `AViewThatOutlivesItsSurfaceDoesNotCallIntoIt`）。
+  全部判据在 `tests/test_graphics/RenderSurfaceTest.cpp`（变异验证：去掉 `applyClear()` 调用 ⇒ 4 条失败；
+  去掉 `entry.clears` / 去掉视图重建回调 ⇒ 各 1 条失败；去掉 `~SceneView` 的自解绑 ⇒ 1 条失败）。

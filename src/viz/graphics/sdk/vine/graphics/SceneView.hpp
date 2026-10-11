@@ -25,6 +25,7 @@ class CameraManipulator;
 class Pipeline;
 class RenderEngine;
 class RenderPass;
+class RenderSurface;
 class Scene;
 
 /**
@@ -66,6 +67,8 @@ class Scene;
  * camera projection correct.
  */
 class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
+    friend class RenderSurface;  // binds this view to the surface it presents, and re-states the surface's clear
+
   public:
     /**
      * @brief The recipe of this view: how it draws (not how it is built).
@@ -398,6 +401,17 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     void frame(double dt = 0.0);
 
   private:
+    /** @brief Binds this view to the surface it presents, or unbinds it (RenderSurface::present / dismiss).
+     *
+     * Not host API: the door is RenderSurface::present, and this pointer is what that table uses to find this
+     * view's window pass again - a host that set it by hand would make the surface believe in a presentation
+     * nobody declared. Binds both directions of the pair (the surface names the view, the view names the surface),
+     * and both are borrowed: they are unbound when either one goes away.
+     *
+     * @param surface Surface this view presents (borrowed), or null when it presents none.
+     */
+    void setSurface(raw_ptr<RenderSurface> surface) noexcept;
+
     /** @brief Removes the default window pass this view registered, if any. */
     void removeWindowPass();
 
@@ -441,6 +455,11 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
 
     // The bound engine is borrowed (the host owns it and keeps it alive).
     raw_ptr<RenderEngine> engine_ = nullptr;
+
+    // The surface this view presents, while one says so (RenderSurface::present). Borrowed, and unbound from
+    // either side: a rebuild has to tell the surface to re-state its clear on the new passes, and the surface
+    // must not be reached once it is gone (see ~SceneView and ~RenderSurface).
+    raw_ptr<RenderSurface> surface_ = nullptr;
 
     // This view's recipe and its geometry. Both are inputs to "what does my pipeline look like", and only the
     // recipe rebuilds it (see setOptions).

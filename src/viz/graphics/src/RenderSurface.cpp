@@ -14,7 +14,17 @@ RenderSurface::RenderSurface(raw_ptr<RenderEngine> engine)
   : engine_(engine)
 {}
 
-RenderSurface::~RenderSurface() = default;
+RenderSurface::~RenderSurface()
+{
+    // The views are the host's, and they outlive this table whenever the host says so: stop naming it, so a view
+    // destroyed later does not call back into a surface that is gone (see SceneView::~SceneView). Nothing here
+    // touches the engine - the whole point of doing it in this direction.
+    for (const Entry& entry : entries_) {
+        if (entry.view != nullptr) {
+            entry.view->setSurface(nullptr);
+        }
+    }
+}
 
 bool RenderSurface::present(SceneView& view)
 {
@@ -40,10 +50,14 @@ bool RenderSurface::present(SceneView& view)
     }
 
     entries_.push_back(Entry{ &view, nullptr });
+    // The view and the surface name each other while the presentation stands: the surface resolves the view's
+    // window pass from it, and the view tells the surface when it rebuilt that pass.
+    view.setSurface(this);
     // Declaring a view as what presents this surface IS asking for its default window pass: that is the pass the
     // table resolves to (a host that meant to present a pass of its own declares that pass - see the other
     // overload, and then this one is never called).
     view.ensureWindowPass();
+    applyClear();
     return true;
 }
 
@@ -58,6 +72,7 @@ bool RenderSurface::present(raw_ptr<RenderPass> pass)
         }
     }
     entries_.push_back(Entry{ nullptr, intrusive_ptr<RenderPass>(pass) });
+    applyClear();
     return true;
 }
 
@@ -70,6 +85,12 @@ bool RenderSurface::dismiss(raw_ptr<SceneView> view)
         return false;
     }
     entries_.erase(entry);
+    // Called from ~SceneView as well: the view stops naming this surface (it may be half gone - nothing here
+    // touches it beyond this pointer), and what is left of the table re-states its clear.
+    if (view != nullptr) {
+        view->setSurface(nullptr);
+    }
+    applyClear();
     return true;
 }
 
@@ -82,6 +103,7 @@ bool RenderSurface::dismiss(raw_ptr<RenderPass> pass)
         return false;
     }
     entries_.erase(entry);
+    applyClear();
     return true;
 }
 
@@ -92,38 +114,66 @@ bool RenderSurface::hasPresentation() const noexcept
 
 std::vector<RenderSurface::Presentation> RenderSurface::presentations() const
 {
-    // Ordered by the ENGINE's schedule rather than by declaration: the first entry is the pass that draws first on
-    // this surface - the one a clear would have to land on. Ties (one pass order, two presentations) keep
-    // declaration order.
-    struct Placed {
-        int          order = 0;
-        Presentation entry{};
-    };
-
-    std::vector<Placed> placed;
-    if (engine_ != nullptr) {
-        placed.reserve(entries_.size());
-        for (const Entry& entry : entries_) {
-            raw_ptr<RenderPass> const pass = passOf(entry);
-            // A pass the engine does not know does not run: leaving it out is what makes this answer describe the
-            // frame the engine would draw now instead of what was once declared.
-            const std::optional<int> order = engine_->passOrder(pass);
-            if (!order.has_value()) {
-                continue;
-            }
-            placed.push_back(Placed{ *order, Presentation{ pass, entry.view } });
-        }
-        std::stable_sort(placed.begin(), placed.end(), [](const Placed& left, const Placed& right) {
-            return left.order < right.order;
-        });
-    }
-
     std::vector<Presentation> ordered;
-    ordered.reserve(placed.size());
-    for (const Placed& entry : placed) {
-        ordered.push_back(entry.entry);
+    for (const Resolved& entry : resolvedEntries()) {
+        ordered.push_back(Presentation{ entry.pass, entries_[entry.index].view });
     }
     return ordered;
+}
+
+std::vector<RenderSurface::Resolved> RenderSurface::resolvedEntries() const
+{
+    // Ordered by the ENGINE's schedule rather than by declaration: the first entry is the pass that draws first on
+    // this surface - the one the clear lands on. Ties (one pass order, two presentations) keep declaration order.
+    std::vector<Resolved> placed;
+    if (engine_ == nullptr) {
+        return placed;
+    }
+
+    placed.reserve(entries_.size());
+    for (std::size_t index = 0; index < entries_.size(); ++index) {
+        raw_ptr<RenderPass> const pass = passOf(entries_[index]);
+        // A pass the engine does not know does not run: leaving it out is what makes this answer describe the
+        // frame the engine would draw now instead of what was once declared.
+        const std::optional<int> order = engine_->passOrder(pass);
+        if (!order.has_value()) {
+            continue;
+        }
+        placed.push_back(Resolved{ index, pass, *order });
+    }
+    std::stable_sort(placed.begin(), placed.end(), [](const Resolved& left, const Resolved& right) {
+        return left.order < right.order;
+    });
+    return placed;
+}
+
+void RenderSurface::applyClear()
+{
+    std::vector<raw_ptr<RenderPass>> claimed;
+    for (const Resolved& resolved : resolvedEntries()) {
+        Entry&              entry = entries_[resolved.index];
+        raw_ptr<RenderPass> pass  = resolved.pass;
+        // The same pass can be reached twice (a view's window pass, declared as a pass of its own as well): one
+        // pass, one decision - the first entry that names it speaks for it.
+        if (std::find(claimed.begin(), claimed.end(), pass) != claimed.end()) {
+            continue;
+        }
+        claimed.push_back(pass);
+
+        // A pass this entry has not been seen with before is a FRESH ask (a rebuilt pipeline's window pass is a new
+        // pass, created enabled): read what it asks for itself - before this surface takes anything away.
+        if (entry.asked_of != pass) {
+            entry.asked_of = intrusive_ptr<RenderPass>(pass);
+            entry.clears   = pass->isClearEnabled();
+        }
+
+        // The first presentation announces the clear; every other one is told to stop claiming to clear, because
+        // the backend applies the first announcement per attachment and silently drops the rest. The colour and the
+        // depth are NOT decided here: they stay on the pass that asked for them, so a surface clears to what its
+        // first presentation said, and a presentation that does not want a clear (a Deferred present pass draws
+        // over the whole surface) is not made to want one by being first.
+        pass->setClearEnabled(claimed.size() == 1u && entry.clears);
+    }
 }
 
 raw_ptr<RenderPass> RenderSurface::passOf(const Entry& entry) const

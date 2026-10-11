@@ -14,6 +14,7 @@
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderPipeline.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/window/InputEvent.hpp>
 #include <vine/window/MouseButton.hpp>
@@ -46,11 +47,23 @@ SceneView::SceneView()
 
 SceneView::~SceneView()
 {
+    // Leave the surface first, and while the default pipeline is still there to hold the engine alive: the surface
+    // re-states its clear on the presentations that remain, and that reads the engine's schedule (see
+    // RenderSurface::applyClear). The surface also stops naming this view, so the other order - the surface
+    // destroyed first - leaves this pointer null and nothing to do.
+    if (surface_ != nullptr) {
+        surface_->dismiss(this);
+    }
     // Drop the window pass this view registered. Dropping the handle is all it
     // takes: the pipeline unregisters every pass it registered, and it holds the
     // engine strongly, so the engine is still there to be unregistered from even
     // if the host released it first (see Pipeline).
     removeWindowPass();
+}
+
+void SceneView::setSurface(raw_ptr<RenderSurface> surface) noexcept
+{
+    surface_ = surface;
 }
 
 void SceneView::setEngine(raw_ptr<RenderEngine> engine)
@@ -186,6 +199,12 @@ void SceneView::rebuildDefaultWindowPass()
     // the rebuild leaves exactly the new pipeline's passes registered (no stale slot, no double registration).
     removeWindowPass();
     ensureWindowPass();
+    // ... and tell the surface this view presents: the ONE clear of that surface belongs to its first presentation,
+    // and this rebuild created NEW passes, each with its own defaults (a window pass clears). Without this the
+    // surface's decision would be undone on every recipe change.
+    if (surface_ != nullptr) {
+        surface_->applyClear();
+    }
 }
 
 void SceneView::removeWindowPass()

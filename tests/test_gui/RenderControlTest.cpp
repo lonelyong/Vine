@@ -189,6 +189,18 @@ TEST(RenderControlTest, TheControlsSurfacePresentsItsOwnViewByDefault)
     // 表里那条 pass 就是该视图默认管线里那条窗口 pass（视图重建时表跟着走 —— 见 RenderSurfaceTest）。
     ASSERT_NE(control->view()->pipeline(), nullptr);
     EXPECT_EQ(table[0].pass, control->view()->pipeline()->windowPass());
+    // 这块表面的**唯一一口清屏**落在那条 pass 上（默认画面照旧清成窗口灰）。
+    EXPECT_TRUE(table[0].pass->isClearEnabled());
+
+    // 同一块表面上再挂一个视图：它照样呈现，但清屏仍然只有第一条（表面说了算 —— 后端本来也只应用第一条公告，
+    // 只是从前第二条会**静默**丢掉自己那个 clearColor）。
+    auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
+    right->setEngine(control->engine());
+    EXPECT_TRUE(surface->present(*right));
+    EXPECT_EQ(surface->presentations().size(), 2u);
+    EXPECT_TRUE(table[0].pass->isClearEnabled());
+    EXPECT_FALSE(right->pipeline()->windowPass()->isClearEnabled());
+    control->renderFrame();
 }
 
 // 构造只组装：`new RenderControl()` 返回时**没有** attach（状态停在 Pending），配置写在它之后的同步代码里；

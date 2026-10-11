@@ -10,6 +10,20 @@
 
 using namespace vn::graphics;
 using vn::intrusive_ptr;
+using vn::Color;
+
+namespace
+{
+
+/** @brief A view bound to @p engine, ready to present (the engine outlives the view in these tests). */
+intrusive_ptr<SceneView> viewOn(RenderEngine* engine)
+{
+    auto view = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine);
+    return view;
+}
+
+}  // namespace
 
 /**
  * @brief A surface's presentation table: what draws into it, in which order, and who decides.
@@ -163,4 +177,139 @@ TEST(RenderSurfaceTest, AViewOnAnotherEngineIsRefusedOutLoud)
     EXPECT_EQ(view->pipeline(), nullptr) << "the refusal comes before anything is built";
     EXPECT_EQ(other->passCount(), 0u);
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u);
+}
+
+/**
+ * @brief The ONE clear of a surface: the first presentation announces it, and the surface does not own a colour.
+ *
+ * The backend applies the first clear announcement per attachment and silently drops the rest, so two clearing
+ * presentations used to mean "the second pass' clearColor() is not what the picture shows", decided by pass
+ * registration order and told to nobody. The surface decides WHO clears; the values stay on the pass that asked.
+ */
+TEST(RenderSurfaceTest, OnlyTheFirstPresentationClearsTheSurface)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto left    = viewOn(engine.get());
+    auto right   = viewOn(engine.get());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    surface->present(*left);
+    surface->present(*right);
+
+    RenderPass* const first  = left->pipeline()->windowPass();
+    RenderPass* const second = right->pipeline()->windowPass();
+    EXPECT_TRUE(first->isClearEnabled());
+    EXPECT_FALSE(second->isClearEnabled())
+        << "the second presentation stops claiming a clear the backend would have dropped";
+
+    // ... and the surface invented nothing: the colour is still the one the pass asked for (one copy of it).
+    EXPECT_EQ(first->clearColor(), Color(51, 51, 51, 255));
+    EXPECT_TRUE(first->shouldClearDepth());
+    EXPECT_TRUE(second->clearColor() == Color(51, 51, 51, 255) || !second->isClearEnabled())
+        << "a presentation that does not clear does not need its colour touched either";
+}
+
+TEST(RenderSurfaceTest, TheClearMovesToThePresentationThatIsFirstNext)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto left    = viewOn(engine.get());
+    auto right   = viewOn(engine.get());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    surface->present(*left);
+    surface->present(*right);
+    RenderPass* const second = right->pipeline()->windowPass();
+    ASSERT_FALSE(second->isClearEnabled());
+
+    // The presentation that was drawing first leaves: the one behind it is now what draws first, and it gets the
+    // clear it asked for back (it was told to stand down while it was second).
+    EXPECT_TRUE(surface->dismiss(left.get()));
+    EXPECT_TRUE(second->isClearEnabled());
+}
+
+TEST(RenderSurfaceTest, APresentationThatRebuildsGetsTheSurfacesClearDecisionBack)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto left    = viewOn(engine.get());
+    auto right   = viewOn(engine.get());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    surface->present(*left);
+    surface->present(*right);
+    ASSERT_FALSE(right->pipeline()->windowPass()->isClearEnabled());
+
+    // A recipe change rebuilds the view's pipeline, and its window pass is a NEW pass, created enabled: the surface
+    // has to put its decision back on it (the view tells the surface - see SceneView::rebuildDefaultWindowPass).
+    right->setOptions({ .gizmo = true });
+    ASSERT_NE(right->pipeline(), nullptr);
+    EXPECT_EQ(engine->passCount(), 3u) << "left's window pass, plus the rebuilt pair";
+    EXPECT_FALSE(right->pipeline()->windowPass()->isClearEnabled())
+        << "a rebuild must not quietly hand the surface a second clear";
+}
+
+TEST(RenderSurfaceTest, ARecipeWithNoClearOfItsOwnIsNotMadeToClear)
+{
+    // Deferred: the picture is a fullscreen pass over the whole surface, whose program is a ScreenPass and therefore
+    // asks for no clear. The surface decides WHO clears, not WHETHER one is needed - being the first presentation
+    // does not make a pass want a clear.
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view    = viewOn(engine.get());
+    view->setOptions({ .path = ShadingPath::Deferred });
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    EXPECT_TRUE(surface->present(*view));
+    ASSERT_NE(view->pipeline(), nullptr);
+    ASSERT_NE(view->pipeline()->windowPass(), nullptr);
+    EXPECT_FALSE(view->pipeline()->windowPass()->isClearEnabled());
+}
+
+TEST(RenderSurfaceTest, TheSamePassReachedTwiceStillClearsOnce)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view    = viewOn(engine.get());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    surface->present(*view);
+    RenderPass* const window = view->pipeline()->windowPass();
+    EXPECT_TRUE(surface->present(window));
+    EXPECT_EQ(surface->presentations().size(), 2u) << "two declarations, both naming the same pass";
+    EXPECT_TRUE(window->isClearEnabled()) << "one pass is one decision, not one decision per declaration";
+}
+
+TEST(RenderSurfaceTest, APresentedViewThatDiesLeavesTheSurface)
+{
+    // The surface borrows its views (they are the host's), so a host that drops one must not leave the table
+    // pointing at it: the view leaves the table itself, and the clear moves to what remains - all in that order, in
+    // one destructor.
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto left    = viewOn(engine.get());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    surface->present(*left);
+    RenderPass* const left_window = left->pipeline()->windowPass();
+
+    auto right = viewOn(engine.get());
+    surface->present(*right);
+    ASSERT_EQ(surface->presentations().size(), 2u);
+    ASSERT_FALSE(right->pipeline()->windowPass()->isClearEnabled());
+
+    right = nullptr;
+    EXPECT_EQ(surface->presentations().size(), 1u) << "a view that is gone cannot stay presented";
+    EXPECT_TRUE(left_window->isClearEnabled());
+}
+
+TEST(RenderSurfaceTest, AViewThatOutlivesItsSurfaceDoesNotCallIntoIt)
+{
+    // A hosted view can outlive the table (the host destroys the surface first, or drops the whole control): the
+    // surface stops naming its views as it goes, so the view's destructor has nothing to call. A dangling call here
+    // would be a use-after-free, not a wrong picture.
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = viewOn(engine.get());
+    {
+        auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+        surface->present(*view);
+        ASSERT_EQ(engine->passCount(), 1u);
+    }
+
+    view = nullptr;
+    EXPECT_EQ(engine->passCount(), 0u) << "the view's destructor ran to the end (its window pass is unregistered)";
 }

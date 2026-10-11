@@ -41,9 +41,19 @@ class SceneView;
  * The table is ordered by the ENGINE's schedule (presentations()): the first entry is the pass that draws first
  * on this surface. Ties - two presentations at the same pass order - keep declaration order.
  *
+ * The clear belongs here too, and for the same reason: the backend applies the FIRST clear announcement per
+ * attachment and silently drops the rest, so "two views on one surface both clear" used to mean "the second pass'
+ * clearColor() is not what the picture shows" - decided by pass registration order, told to nobody. This table
+ * gives that decision an owner: the FIRST presentation announces the clear, and every other one is told to stop
+ * claiming to clear (RenderPass::setClearEnabled(false)). What the surface owns is the DECISION (who clears); the
+ * colour and the depth stay on the pass that asked for them, so there is still one copy of them (the same rule the
+ * HUD switches follow - see appfw-render-view.md §7 invariant 15). Each presentation's own ask is remembered, so a
+ * presentation that becomes the first one later (the one ahead of it was dismissed) clears the way it asked to,
+ * and a recipe whose window pass does not clear at all (the Deferred present pass draws over the whole surface) is
+ * not forced to start clearing by being first.
+ *
  * @note Splitting a surface between several presentations (each with its own rectangle) is the same table read
- * again; the rectangle per presentation belongs to the surface too, and so does the ONE clear a surface gets.
- * Those land on top of this table, not beside it.
+ * again; the rectangle per presentation belongs to the surface too. That lands on top of this table, not beside it.
  */
 class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
   public:
@@ -68,8 +78,11 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      */
     explicit RenderSurface(raw_ptr<RenderEngine> engine);
 
-    /** @brief Destroys the table. The presentations are declarations, not owners: the passes stay registered on
-     * the engine and the views keep their pipelines.
+    /** @brief Destroys the table.
+     *
+     * The presentations are declarations, not owners: the passes stay registered on the engine and the views keep
+     * their pipelines. What does happen is that the views stop naming this surface - it is going away, and a view
+     * that outlives it must not reach back into it (see SceneView::~SceneView).
      */
     ~RenderSurface();
 
@@ -138,13 +151,37 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     [[nodiscard]] std::vector<Presentation> presentations() const;
 
   private:
+    friend class SceneView;  // a presented view re-states this surface's clear after it rebuilt its pipeline
+
     /** @brief One declared presentation: a view (its window pass is resolved when the table is read) or a pass a
      * host declared itself.
      */
     struct Entry {
         raw_ptr<SceneView>        view = nullptr;
         intrusive_ptr<RenderPass> pass;
+        /// The pass this entry was last seen with, and what IT asked for (clears? which colour? depth?). A new pass
+        /// means a fresh ask (a rebuild rebuilds its defaults) - and the surface needs the ask it remembered,
+        /// because the surface is the one that takes clearing away from everything but the first presentation.
+        intrusive_ptr<RenderPass> asked_of;
+        bool                      clears = false;
     };
+
+    /** @brief One entry that is in the frame right now, with the pass it resolves to and where the engine runs it.
+     *
+     * An index rather than a pointer: presentations() is const and answers with copies, while the clear rule writes
+     * to the entry it is looking at.
+     */
+    struct Resolved {
+        std::size_t         index = 0;
+        raw_ptr<RenderPass> pass = nullptr;
+        int                 order = 0;
+    };
+
+    /** @brief The entries the engine would draw now, in the order it runs them (a stale entry is left out).
+     *
+     * @return The resolved entries, first-drawn first.
+     */
+    [[nodiscard]] std::vector<Resolved> resolvedEntries() const;
 
     /** @brief The pass an entry presents now: its declared pass, or the window pass of its view's live pipeline.
      *
@@ -152,6 +189,14 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * @return The pass, or nullptr when there is none to resolve (no pipeline yet, no window pass).
      */
     raw_ptr<RenderPass> passOf(const Entry& entry) const;
+
+    /** @brief Puts the ONE clear of this surface on the pass that draws first, and off every other one.
+     *
+     * Called whenever the table or the order it is read in can have moved: a presentation was added or dismissed,
+     * and a presented view rebuilt its pipeline (its window pass is a new pass, created ENABLED - see
+     * SceneView::rebuildDefaultWindowPass, which calls this through the friendship above).
+     */
+    void applyClear();
 
     /// The engine the presentations are registered on and ordered by (borrowed; must outlive this surface).
     raw_ptr<RenderEngine> engine_;

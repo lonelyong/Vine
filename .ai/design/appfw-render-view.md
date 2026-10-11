@@ -475,7 +475,8 @@ control->setInputRouter([&](int x, int y) {                       // 按下时�
     const double nx = double(x) / double(std::max(1, control->width()));
     return nx < 0.5 ? left : right.get();
 });
-// 清屏：后端是 attachment loadOp 的**整张清** ⇒ 必须"恰好一个视图清"，且它的 pass 排在最前（§12.2）
+// 清屏：后端是 attachment loadOp 的**整张清** ⇒ 从前必须"恰好一个视图清"、且它的 pass 排在最前；
+// **M2b 之后这条由表面保证**（呈现表第一条保留自己的清屏，其余条被关掉），宿主不必自己排顺序。
 ```
 
 **落地实测**：**model_viewer 56 行 → 2 行**（手写三盏灯 25 行 → `scene->addLighting(LightRig::studio())`；
@@ -682,7 +683,8 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 | --- | --- |
 | 每个视图自己的相机/场景/宽高比 | 一个 `SceneView` = 自己的 `Camera` + `Scene`；`view->onSurfaceResized(pane_w, pane_h)` |
 | 每个视图画在自己那一块 | 现成：`RenderPass::setViewport(Viewport{...})`（**设备像素**）。**新增**：`SceneView::setViewport(归一化矩形)`（§4.1）⇒ 宿主**不必**算 DPR，比例自动跟随表面 |
-| 谁清屏 | 现成：`setClearEnabled` / `setClearColor` / `shouldClearDepth`（**恰好一个** pass 清，其余关） |
+| 谁清屏 | 现成：`setClearEnabled` / `setClearColor` / `shouldClearDepth`（**恰好一个** pass 清）；
+**M2b 之后不用宿主自己保证**：`RenderSurface` 把清屏给呈现表第一条、把其余条关掉（§12.2 第 3 条） |
 | 别让默认窗 pass 捣乱 | 现成（**M2a 起是声明**）：宿主自建的 pass 在表面上说一声（`control->surface()->present(pass)`），
 `RenderControl::init()` 的兜底声明就不建默认那条（缝 1） |
 | 操作哪一块 | **新增**：`RenderControl::setInputRouter(fn)` —— **按下时路由、松开前捕获**（§5） |
@@ -696,7 +698,10 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 3. **清屏策略（宿主的；而且是后端逼出来的）**：后端用 **attachment loadOp 整张清**（`OffscreenTarget.cpp:107`、
    `WindowTarget::prepare(policy)`），**没有按矩形清**（`vkCmdClearAttachments` + rect）⇒ 分屏必须**恰好一个**视图清，
    而且**它的 pass 要排在最前**（清屏发生在其它 pane 画之前；pane 的几何被 scissor 限在自己矩形里，所以
-   "一块清、余下各自画"是**正确**的）。这条**不会**进 `Options`（它是多视图之间的**约定**，不是单视图的配方）。
+   "一块清、余下各自画"是**正确**的）。这条**不会**进 `Options`（它是多视图之间的约定，不是单视图的配方）。
+   **M2b（2026-10-11）之后这条约定由表面保证**：`RenderSurface` 让**呈现表第一条**保留自己的清屏、把其余条
+   `setClearEnabled(false)`（"谁排最前"仍然是引擎的执行序，但不再需要宿主自己去排 —— 后端本来也只应用第一条公告，
+   从前第二条是**静默**丢掉的）。它也不是"表面强加一口清屏"：延迟配方那条 `present` 屏 pass 自己说不清，就照样不清。
    将来的改进落在后端侧（加按矩形清），SDK 侧最多多一个 `RenderPass::setClearRect`（或让 `setViewport` 兼任清屏范围）。
    默认路径不会"变聪明"：**默认是兜底，不是竞争者**。
 
@@ -778,7 +783,7 @@ RenderEngine
 | 换屏（句柄重建）→ 再 attach | ✅ | `ensureWindowPass()` 幂等 ⇒ 管线沿用、后端移动会话；`init()` 之后补一次尺寸 |
 | 销毁 | ✅ | 控件 `Impl` 反序（view → engine）；视图 dtor 注销自己的 pass；R2 保"注销那一刻引擎活着" |
 | 多视图的 attach | ⚠️→✅ | **本轮修**：宿主的额外视图没有 attach 事件 ⇒ 在表面上显式声明（`control->surface()->present(*view)`，不变量 16、§12.2） |
-| 多视图的清屏 | ⚠️（刻意接受） | **后端逼出来的约定**：loadOp 整张清、没有按矩形清 ⇒ "恰好一个清 + 它排最前"（§12.2） |
+| 多视图的清屏 | ✅（M2b，2026-10-11） | 以前是"后端逼出来的约定：loadOp 整张清 ⇒ 恰好一个清 + 它排最前"；现在由**表面**保证：呈现表第一条保留自己的清屏，其余条被关掉，第一条走掉时下一条的 ask 恢复（§12.2 第 3 条） |
 
 ### 14.2 API 范式
 
@@ -792,7 +797,7 @@ RenderEngine
 | --- | --- |
 | 矩形 / 尺寸 / 比例 | 本轮收敛成**一个输入**（不变量 14）；同步改了 §4.1 的注释与 §6 的示例（去掉宿主自己算的 `w/2`） |
 | HUD 可见性 | 唯一真相 = **pass 的 `isEnabled()`**（不变量 15）；`Options` 只回答"有没有这个档" |
-| 清屏 | 唯一真相 = 每个 pass 的清屏档 + "恰好一个清"的约定；**顺序依赖**写进 §12.2 与风险表 |
+| 清屏 | 唯一真相 = 每个 pass 的清屏档；**"谁清"由表面决定**（M2b：呈现表第一条），值不再有第二份（§12.2 第 3 条） |
 | 所有权 | §13 五条边 + R2；`Pipeline` 是"引擎活着"的锚；**无环** |
 | 术语 | 去掉 "primary view"（与 `MainWindow::primaryRenderControl` 撞词）⇒ 统一叫"**控件自己的视图**" |
 | ABI | J7 重述：appfw 公开类加数据成员 = bump `VN_APPFW_PLUGIN_ABI_VERSION` ⇒ `setInputRouter` 一定进 `Impl`；graphics 无版本宏 ⇒ 布局改动允许，但要写明"插件需重建" |

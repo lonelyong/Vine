@@ -483,7 +483,7 @@
   断言 `options().mode` 变了、`stats` 没被顺手关掉、光栅化覆盖只在线框档留下；下屏后 `primaryRenderControl()`
   回到空、命令如实说 `NotApplicable`）。
 
-## 「谁呈现这块表面」有了 owner（M2a，2026-10-11）
+## 「谁呈现这块表面」与「谁清屏」有了 owner（M2a/M2b，2026-10-11）
 
 - **新类 `vn::graphics::RenderSurface`**（`sdk/vine/graphics/RenderSurface.hpp`，`RefCounted`）：一块表面的
   **呈现表** —— `present(SceneView&)` / `present(raw_ptr<RenderPass>)` / `dismiss(...)` / `hasPresentation()` /
@@ -499,7 +499,12 @@
   `surface->present(pipeline->windowPass())` —— 声明在 attach 之前（`DemoScene::install()` 与 `initAsync()` 同一拍、
   在其前），所以默认窗口管线一条都不建。视图挂在**别的引擎**上时 `present` 明确拒绝 + 记一条 `PassProtocolViolation`
   （它永远不会呈现这块表面），不是静默。
-- 钉子：`tests/test_graphics/RenderSurfaceTest.cpp` 六条（建默认管线 / 只注册不声明 ⇒ 仍然建 / 声明了 ⇒ 不建 /
+- 钉子：`tests/test_graphics/RenderSurfaceTest.cpp`（M2a 六条：建默认管线 / 只注册不声明 ⇒ 仍然建 / 声明了 ⇒ 不建 /
   执行序 / 表跟着重建走 / 别的引擎 ⇒ 拒绝），`GraphicsTest` 的 `SceneViewTest.EnsureWindowPassDoesNotStandDownForSomebodyElsesPass`、
   `RenderEngineTest.PassOrderAnswersWhereARegisteredPassRuns`，`test_gui` 的
   `TheControlsSurfacePresentsItsOwnViewByDefault`。套件：graphics 317 / gui 253 / appfw 32 / vsg 404。
+- **清屏也归这块表面（M2b，2026-10-11）**：`RenderControl::surface()` 的呈现表决定**谁**清 —— **第一条**保留自己的
+  清屏，其余条被关掉（后端只应用第一条公告，从前第二条是静默丢掉的）。宿主侧**没有新 API**：要换背景色照旧改
+  那条 pass 的 `setClearColor`（自建 pass 时本来就有这个入口），值不复制第二份。默认路径行为逐字不变
+  （前向窗口 pass 的清屏就是它自己的默认清屏；延迟那条 `present` 屏 pass 自己不清 ⇒ 照样不清）。
+  细节、生命周期（视图与表面互相解绑）与变异验证见 `.ai/memory/graphics.md` 的 M2b 条。
