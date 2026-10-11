@@ -33,7 +33,7 @@ class ImageRef;
 class RenderTarget;
 class RenderBackend;
 class RenderSurface;
-class RenderSurfaceTarget;
+class PresentTarget;
 
 /**
  * @brief High-level render engine managing the frame loop and render state.
@@ -63,7 +63,7 @@ class RenderSurfaceTarget;
  * device for a target when its area has none (a device that brings up its own window answers one, a device that
  * presents nothing answers none), it names the area's target in the frame it hands over (see
  * RenderFrameExecutor::executeFrame), and it presents that frame through it at the frame's tail (see
- * RenderSurfaceTarget::present). A device that presents nothing presents nothing, and a frame is complete without
+ * PresentTarget::present). A device that presents nothing presents nothing, and a frame is complete without
  * one.
  */class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine> {    VN_OBJECT_META_DECL;
 
@@ -841,7 +841,7 @@ class RenderSurfaceTarget;
     raw_ptr<RenderSurface>              area_               = nullptr;
     // The target the frame path presents through when this engine has NO area (see initialize): what the device
     // made for the window it brought up itself, or nullptr when it presents nothing. Borrowed - the device owns it.
-    raw_ptr<RenderSurfaceTarget>        own_target_         = nullptr;
+    raw_ptr<PresentTarget>             own_target_         = nullptr;
     // True once the frame reported that the backend cannot draw the off-screen targets the pipeline
     // asks for (see frame()): the report is an EPISODE, so it repeats only after the pipeline stopped
     // asking for one — the flag is cleared the moment no enabled pass needs a target.

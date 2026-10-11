@@ -6,7 +6,7 @@
 #include <vine/RefCounted.hpp>
 
 #include "RenderDiagnostic.hpp"
-#include "RenderSurfaceTarget.hpp"
+#include "WindowPresentTarget.hpp"
 #include "ReportOnce.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -51,7 +51,7 @@ class SceneView;
  * pretending to attach - see RenderDevice::createSurfaceTarget), resize() is the ONE size announcement (the view,
  * the frame the passes lay out on, and the target's own window half), and a recreated window is announced on that
  * target (which MOVES an established session instead of rebuilding it: the device and every compiled pipeline stay
- * - see RenderSurfaceTarget::setWindowHandle). The engine drives the frame and owns no handle of its own (see
+ * - see WindowPresentTarget::setWindowHandle). The engine drives the frame and owns no handle of its own (see
  * RenderEngine).
  *
  * WHAT THIS OBJECT DOES NOT DO. It is not a framebuffer and holds no pixel: the window's images belong to the
@@ -170,7 +170,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      *
      * The same ONE announcement serves the frame: the engine records it in the frame context every pass lays itself
      * out on, and the window half of it - the swapchain, what hangs off the extent - is the TARGET's own call, made
-     * here (see RenderSurfaceTarget::resize - the engine owns no size of its own, the area owns the target).
+     * here (see PresentTarget::resize - the engine owns no size of its own, the area owns the target).
      *
      * A pass a host declared itself is not fed - it has no view, and such a pass states its own rectangle in device
      * pixels (see RenderPass::setViewport).
@@ -195,12 +195,12 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * THE WINDOW BELONGS TO THE AREA, and the TARGET is what names it: the area holds the object its DEVICE made
      * for that window (RenderDevice::createSurfaceTarget, which is where a device that presents nothing refuses
      * and says why), and everything the window half is told - a recreated handle, the size, the frame's present -
-     * goes to that object (see RenderSurfaceTarget). The engine, which drives the frame, reads the target from
+     * goes to that object (see WindowPresentTarget). The engine, which drives the frame, reads the target from
      * here (it owns no handle of its own, see RenderEngine).
      *
      * RE-ANNOUNCING MOVES A WINDOW, IT DOES NOT REBIND IT. The platform recreating the window (a reparent, a
      * screen change) is the same area on a new handle: a host announces it ON THE TARGET
-     * (RenderSurfaceTarget::setWindowHandle), which is what moves an established session onto the new window while
+     * (WindowPresentTarget::setWindowHandle), which is what moves an established session onto the new window while
      * the device, its caches and every compiled pipeline stay. Binding a DIFFERENT target instead is a different
      * window: the previous one is left behind (its device is what owns it - see RenderDevice::shutdown).
      *
@@ -210,17 +210,17 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * @param target The target this area is presented through (from its device), or nullptr to unbind. BORROWED:
      *               the device that made it owns it, and it must outlive the area's use of it.
      */
-    void bindTarget(raw_ptr<RenderSurfaceTarget> target);
+    void bindTarget(raw_ptr<WindowPresentTarget> target);
 
     /** @brief Gets the target this area is presented through, or nullptr when it is bound to none.
      *
      * The question a host asks to decide whether to re-announce: the native handle the session was moved onto is
-     * the TARGET's own answer (RenderSurfaceTarget::nativeHandle), so comparing it with what the windowing system
+     * the TARGET's own answer (WindowPresentTarget::nativeHandle), so comparing it with what the windowing system
      * reports now is how "the platform recreated my window" is noticed.
      *
      * @return The bound target, or nullptr.
      */
-    [[nodiscard]] RenderSurfaceTarget* target() const noexcept;
+    [[nodiscard]] WindowPresentTarget* target() const noexcept;
 
     /** @brief Whether this area is bound to a window (see bindTarget).
      *
@@ -244,7 +244,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     raw_ptr<RenderEngine>          engine_;
     raw_ptr<SceneView>             view_ = nullptr;
     intrusive_ptr<RenderPass>      pass_;
-    raw_ptr<RenderSurfaceTarget>   target_ = nullptr;
+    raw_ptr<WindowPresentTarget>   target_ = nullptr;
     int                            width_ = 0;
     int                            height_ = 0;
     double                         pixel_ratio_ = 1.0;

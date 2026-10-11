@@ -48,7 +48,7 @@ graph TB
     subgraph contract["后端契约（SDK 的设备面）"]
         DEV["RenderDevice<br/>能力 / 资源 / 目标工厂"]
         EXE["RenderFrameExecutor<br/>executeFrame(frame, present_to)"]
-        TGT["RenderSurfaceTarget<br/>句柄 / 尺寸跟随 / present"]
+        TGT["WindowPresentTarget<br/>句柄 / 尺寸跟随 / present"]
     end
 
     subgraph plugin["后端插件"]
@@ -74,7 +74,7 @@ graph TB
 
 - **appfw**：把"窗口"这一件平台的事收进 `RenderControl` / `SurfaceWindow`（attach、尺寸、输入、失败状态机），把"这块区怎么画"收进 `Viewer`。
 - **graphics SDK**：帧的单位是引擎（`RenderEngine`）；视图只采纳链（`SceneView` + `Pipeline`）；"谁画这块窗口"是区自己的呈现（`RenderSurface`）。
-- **后端契约**：设备（`RenderDevice`）造目标（`RenderSurfaceTarget`）、跑帧（`RenderFrameExecutor`）；三者今天由插件的一个对象同时实现（`RenderBackend` 是那个聚合）。
+- **后端契约**：设备（`RenderDevice`）造目标（`WindowPresentTarget`，即 `PresentTarget` 的窗口实现）、跑帧（`RenderFrameExecutor`）；三者今天由插件的一个对象同时实现（`RenderBackend` 是那个聚合）。**帧只认 `PresentTarget`**（`resize` + `present`）：窗口那两条动词（`setWindowHandle` / `nativeHandle`）只属于拥有窗口的宿主。
 - **插件**：Vulkan 的会话、录制与提交，宿主不直接碰。
 
 ## 3. 类关系图
@@ -138,7 +138,14 @@ classDiagram
         +setGizmoVisible(bool)
         +setStatsVisible(bool)
     }
-    class RenderSurfaceTarget
+    class WindowPresentTarget {
+        +setWindowHandle(handle)
+        +nativeHandle() void*
+    }
+    class PresentTarget {
+        +resize(w, h)
+        +present()
+    }
     class RenderDevice
 
     RenderControl *-- SurfaceWindow : 拥有
@@ -153,8 +160,9 @@ classDiagram
     SceneView "N" --> "0..1" Pipeline : 采纳
     RenderEngine "1" --> "1" RenderSurface : 驱动
     RenderEngine "N" --> "1" RenderDevice : 设置（共享引用）
-    RenderSurface "1" --> "0..1" RenderSurfaceTarget : 借用（设备造）
-    RenderDevice ..> RenderSurfaceTarget : 造
+    RenderSurface "1" --> "0..1" WindowPresentTarget : 借用（设备造）
+    RenderDevice ..> WindowPresentTarget : 造
+    WindowPresentTarget --|> PresentTarget : 窗口那一面（帧只认基类）
 ```
 
 关系上的四条要点：

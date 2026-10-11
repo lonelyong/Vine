@@ -45,7 +45,7 @@
  *     last submitted frame left (api/HostReadback). A refusal answers the SDK's machine-readable result and
  *     says its reason once per episode;
  *   * the surface facts - `setWindowHandle()`/`nativeHandle()` for a host surface, `resize()` and the present:
- *     this backend HAS a window half, so it implements `vn::graphics::RenderSurfaceTarget` and hands itself out
+ *     this backend HAS a window half, so it implements `vn::graphics::WindowPresentTarget` and hands itself out
  *     from `createSurfaceTarget()` (a device that draws only into render targets answers none at all, see
  *     RenderDevice::createSurfaceTarget). ONE window is served per backend: a second ask is refused with
  *     `WindowOccupied` and said once, because one live swapchain per window is a platform constraint. The
@@ -80,7 +80,7 @@ class BackendContentAccess;
 }  // namespace detail
 
 /** @brief The SDK's render device, driven by the rewrite's session (see the file note). */
-class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::graphics::RenderSurfaceTarget
+class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::graphics::WindowPresentTarget
 {
   public:
     VsgBackend();
@@ -114,7 +114,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::gra
      * @param why           Receives why no target was handed out (Ok when one was), or null to ignore.
      * @return This object, or nullptr when a window is already being served.
      */
-    [[nodiscard]] vn::raw_ptr<vn::graphics::RenderSurfaceTarget>
+    [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget>
     createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why = nullptr) override;
 
     /** @brief Runs a frame from its value: the plugin's own translation of the frame the engine compiled.
@@ -137,7 +137,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::gra
      * @param present_to Target the frame's default framebuffer resolves to, or nullptr to present nowhere.
      */
     virtual void executeFrame(const vn::graphics::FrameDescription& frame,
-                              vn::graphics::RenderSurfaceTarget*      present_to = nullptr) override;
+                              vn::graphics::PresentTarget*           present_to = nullptr) override;
 
     /** @brief Remembers the host's window handle for the next @ref initialize. */
     void setWindowHandle(void* native_handle) override;

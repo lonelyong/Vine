@@ -14,7 +14,7 @@
 #include "FrameDescription.hpp"
 #include "ImageRef.hpp"
 #include "PolygonMode.hpp"
-#include "RenderSurfaceTarget.hpp"
+#include "PresentTarget.hpp"
 #include "StateNode.hpp"
 #include "Viewport.hpp"
 
@@ -505,7 +505,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *                   through a surface of the device's own (see RenderFrameExecutor::executeFrame).
      */
     virtual void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend,
-                         raw_ptr<RenderSurfaceTarget> present_to = nullptr);
+                         raw_ptr<PresentTarget> present_to = nullptr);
 
   protected:
     /** @brief Fills this pass' own facts (target, viewport, clear, state) into @p out.

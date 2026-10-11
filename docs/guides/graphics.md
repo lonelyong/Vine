@@ -129,8 +129,10 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   呈现、HUD、预览各占一个档位，效果按"我在谁之前"进入，不去抢别人的魔数。
 - `RenderBackend` —— **三面一体的聚合**（工厂返回、引擎收、测试双实现，2026-10-11 S10a 起）：整帧 `executeFrame()`
   在 `RenderFrameExecutor` 那面，**窗口是可选的另一半** → `RenderDevice::createSurfaceTarget(handle, why)` 交出一把
-  `RenderSurfaceTarget`（句柄重公告、尺寸跟随、`present()`），只画离屏的设备**继承默认答案**（`NoPresentation`，
-  一个窗口入口都不实现）；`RenderDevice` 还有能力（`capabilities()`，含 `presentation`）、资源公告与诊断。
+  `WindowPresentTarget`（`PresentTarget` + 窗口自己的两个问题：句柄重公告、读回句柄；尺寸跟随与 `present()` 在基类
+  `PresentTarget` 上）。**帧只认基类** —— `executeFrame(frame, present_to)` 与 `RenderPass::execute(..., present_to)` 收
+  `PresentTarget*`，所以"呈递端"不必是窗口（编码器 / 网络出口是另一个实现）；只画离屏的设备**继承默认答案**
+  （`NoPresentation`，一个呈现端都不实现）；`RenderDevice` 还有能力（`capabilities()`，含 `presentation`）、资源公告与诊断。
   `RenderBackendRegistry` / `RenderBackendFactory` 让插件自注册、宿主按名字创建。
 
 ### 2.5 每帧数据流
@@ -248,7 +250,7 @@ engine->setDevice(RenderBackendRegistry::instance().create(u8"vsg"));  // 需插
 // 窗口与尺寸归**区**（一块表面的表）：窗口那一半由**设备**造（S10a），尺寸在这里报一次 —— 引擎不收裸句柄。
 auto area = make_intrusive<RenderSurface>(engine.get());
 vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
-vn::raw_ptr<vn::graphics::RenderSurfaceTarget> target = engine->device()->createSurfaceTarget(window_handle, &why);
+vn::raw_ptr<vn::graphics::WindowPresentTarget> target = engine->device()->createSurfaceTarget(window_handle, &why);
 if (target == nullptr) { return false; }  // 无呈现能力 / 服务不了这块 surface / 窗口已被占用（见 @p why）
 area->bindTarget(target);                 // 区持有目标对象；平台重建窗口 = target->setWindowHandle(new)
 area->resize(width, height, dpr);         // 帧上下文 + 目标（窗口那一半）+ 每个呈现的视图，一次说清
@@ -752,7 +754,7 @@ if (!surface->hasPresentation()) {
 // 窗口那一半由**设备**造（S10a）：句柄是造目标时的输入，区收的是那把目标对象（借用）；设备"不呈现"就答
 // NoPresentation，窗口已被占用就答 WindowOccupied（各有一句话），宿主照着 failAttach。
 vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
-if (vn::raw_ptr<vn::graphics::RenderSurfaceTarget> target = device->createSurfaceTarget(handle, &why)) {
+if (vn::raw_ptr<vn::graphics::WindowPresentTarget> target = device->createSurfaceTarget(handle, &why)) {
     surface->bindTarget(target);
 }
 // 平台重建窗口：在**同一把目标**上重公告（设备、缓存与已编译管线都留），不是第二把目标

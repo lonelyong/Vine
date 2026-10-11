@@ -15,7 +15,7 @@
 #include "RenderDevice.hpp"
 #include "RenderFrameExecutor.hpp"
 #include "RenderPass.hpp"
-#include "RenderSurfaceTarget.hpp"
+#include "WindowPresentTarget.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -26,7 +26,7 @@ class RenderTarget;
  *
  * WHY IT STILL EXISTS. The three questions a renderer answers are separate contracts - what a GPU has
  * (RenderDevice), how a frame comes out (RenderFrameExecutor), and how a window is presented
- * (RenderSurfaceTarget, created by the device) - and they are separate because they change for different reasons
+ * (WindowPresentTarget, created by the device) - and they are separate because they change for different reasons
  * and live for different times: a device outlives every window on top of it, and a window outlives no frame it is
  * not named by. Today one object is all three, and this type is that aggregate: what a RenderBackendFactory
  * returns, what the engine is handed (RenderEngine::setDevice), and what a test double implements. Splitting the

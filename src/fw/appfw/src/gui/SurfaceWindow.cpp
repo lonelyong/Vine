@@ -595,7 +595,7 @@ void SurfaceWindow::handleKey(const vn::window::KeyEvent& event)
 void SurfaceWindow::handleDestroyed()
 {
     // Qt replaces the native platform window (layout change, screen change, reparent) - the session is NOT torn
-    // down with it: the new handle is re-announced (RenderSurfaceTarget::setWindowHandle), so the device
+    // down with it: the new handle is re-announced (WindowPresentTarget::setWindowHandle), so the device
     // and every compiled pipeline stay. Marking the surface unusable keeps frames off the dead window.
     d->surface_ok = false;
 
@@ -732,7 +732,7 @@ bool SurfaceWindow::init()
         return d->backend_live;
     }
     if (d->has_session && handle != nativeTargetHandle()) {
-        // The platform window was recreated: re-announce the new handle on the TARGET (RenderSurfaceTarget::
+        // The platform window was recreated: re-announce the new handle on the TARGET (WindowPresentTarget::
         // setWindowHandle) instead of tearing the session down, so the device and every compiled pipeline stay.
         vn::logging::defaultLogger().info(
             "[RenderControl] the render surface was recreated: re-announcing the new handle so the backend can follow it");
@@ -744,7 +744,7 @@ bool SurfaceWindow::init()
     // the target the area already holds - the device, its caches and every compiled pipeline stay behind that.
     if (d->surface->target() == nullptr) {
         vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
-        if (vn::raw_ptr<vn::graphics::RenderSurfaceTarget> target =
+        if (vn::raw_ptr<vn::graphics::WindowPresentTarget> target =
                 d->engine->device()->createSurfaceTarget(handle, &why);
             target != nullptr) {
             d->surface->bindTarget(target);
@@ -886,7 +886,7 @@ void SurfaceWindow::setState(SurfaceState next)
 
 void* SurfaceWindow::nativeTargetHandle() const
 {
-    const vn::raw_ptr<vn::graphics::RenderSurfaceTarget> target = d->surface->target();
+    const vn::raw_ptr<vn::graphics::WindowPresentTarget> target = d->surface->target();
     return target != nullptr ? target->nativeHandle() : nullptr;
 }
 

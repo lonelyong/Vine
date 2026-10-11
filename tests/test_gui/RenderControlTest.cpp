@@ -47,7 +47,7 @@ class StubBackend : public vn::graphics::RenderBackend
   public:
     /// The WINDOW HALF of the stub (see vn::graphics::RenderDevice::createSurfaceTarget): everything the control
     /// asks about the surface - the window the target was made for, the size it was told, the presents it drove.
-    class StubSurface : public vn::graphics::RenderSurfaceTarget
+    class StubSurface : public vn::graphics::WindowPresentTarget
     {
       public:
         void setWindowHandle(void* handle) override
@@ -82,7 +82,7 @@ class StubBackend : public vn::graphics::RenderBackend
     void shutdown() override { ++shutdown_calls; }
 
     void executeFrame(const vn::graphics::FrameDescription& frame,
-                      vn::graphics::RenderSurfaceTarget* present_to = nullptr) override
+                      vn::graphics::PresentTarget* present_to = nullptr) override
     {
         ++frames;
         present_targets.push_back(present_to);
@@ -98,7 +98,7 @@ class StubBackend : public vn::graphics::RenderBackend
     /// Hands out the one window half this stub has (see RenderDevice::createSurfaceTarget): the window the control
     /// asks for is remembered, so "the target was made for THIS window" is checkable without a GPU. A stub whose
     /// `presents_nothing` is set answers the way a display-less device does, without a report.
-    [[nodiscard]] vn::raw_ptr<vn::graphics::RenderSurfaceTarget>
+    [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget>
     createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why = nullptr) override
     {
         ++target_calls;
@@ -132,7 +132,7 @@ class StubBackend : public vn::graphics::RenderBackend
     /// RenderFrameExecutor::executeFrame).
     int   frames{ 0 };
     std::size_t draws{ 0 };
-    std::vector<vn::graphics::RenderSurfaceTarget*> present_targets;
+    std::vector<vn::graphics::PresentTarget*> present_targets;
 };
 
 /// Pumps the event loop until 'done' holds or 'timeout_ms' elapses.

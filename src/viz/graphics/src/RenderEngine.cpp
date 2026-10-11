@@ -134,7 +134,7 @@ bool RenderEngine::initialize()
     // a target when the device presents through a window of its own.
     if (area_ != nullptr && !area_->hasTarget()) {
         SurfaceTargetResult why = SurfaceTargetResult::Ok;
-        if (raw_ptr<RenderSurfaceTarget> own = device_->createSurfaceTarget(nullptr, &why); own != nullptr) {
+        if (raw_ptr<WindowPresentTarget> own = device_->createSurfaceTarget(nullptr, &why); own != nullptr) {
             area_->bindTarget(own);
         }
     }
@@ -248,7 +248,7 @@ void RenderEngine::frame(double dt)
     // draws into (see RenderFrameExecutor::executeFrame); an engine with no area names the target its device made
     // for itself, and a device that presents nothing leaves the frame with no target at all - a first-class state
     // (an offline bake, a display-less device), not an error.
-    RenderSurfaceTarget* const present_to =
+    PresentTarget* const present_to =
         (area_ != nullptr && area_->target() != nullptr) ? area_->target() : own_target_;
 
     // The device's own frame (acquiring the presentable image, recording, reaching the state a present can hand
@@ -256,7 +256,7 @@ void RenderEngine::frame(double dt)
     device_->executor().executeFrame(frame_value_, present_to);
 
     // The frame's tail - committing what was collected, and showing it - is the TARGET's own call (see
-    // RenderSurfaceTarget::present). A frame that named no target presents nothing, and it is complete when
+    // WindowPresentTarget::present). A frame that named no target presents nothing, and it is complete when
     // executeFrame() returned.
     if (present_to != nullptr) {
         present_to->present();

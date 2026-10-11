@@ -13,7 +13,7 @@
 #include "Diagnostics.hpp"
 #include "RenderDiagnostic.hpp"
 #include "RenderPass.hpp"
-#include "RenderSurfaceTarget.hpp"
+#include "WindowPresentTarget.hpp"
 #include "ShaderProgram.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -51,7 +51,7 @@ enum class ReadbackResult
  * a device that never presents (plan no window at all), a surface this device cannot serve (the window belongs to
  * this device but not to this surface: a cross-GPU drag, a kind it does not decode - the host either keeps drawing
  * off-screen or brings up a device that can), and a window already occupied (the host asked for a second target on
- * a window that has one - one live swapchain per window is a platform constraint, see RenderSurfaceTarget). Like
+ * a window that has one - one live swapchain per window is a platform constraint, see WindowPresentTarget). Like
  * ReadbackResult, the machine answer travels in an out-parameter and the sentence travels on the diagnostics
  * channel; "this device presents nothing" is answered SILENTLY, because a display-less device is a first-class
  * state rather than a failure (see Capabilities::presentation).
@@ -68,7 +68,7 @@ enum class SurfaceTargetResult
  * @brief The DEVICE half of a backend: what one GPU has, what it remembers, and the windows it can hand out.
  *
  * WHY A CONTRACT OF ITS OWN. A device is the longest-lived thing in the stack: windows come and go on top of it
- * (RenderSurfaceTarget), frames are run by it or for it (RenderFrameExecutor), and one host may present through
+ * (WindowPresentTarget), frames are run by it or for it (RenderFrameExecutor), and one host may present through
  * several windows while keeping ONE copy of what it uploaded and compiled. That is what this face answers: what
  * the GPU can do (capabilities), what it retains for the host (targets, passes, content programs, transfers), and
  * where its reports go (diagnostics). It is also the exchange-chain FACTORY - a target is created by the device
@@ -86,7 +86,7 @@ enum class SurfaceTargetResult
  * WHAT A DEVICE IS ASKED, and what each answer is:
  *   * capabilities(): what it can do, as ONE value (Capabilities) - asked before a frame is driven, because a
  *     capability decides how it is driven;
- *   * createSurfaceTarget(): the window half, one target per window (RenderSurfaceTarget), or the machine-readable
+ *   * createSurfaceTarget(): the window half, one target per window (WindowPresentTarget), or the machine-readable
  *     reason it handed none out (see SurfaceTargetResult);
  *   * readColorBuffer / readDepthBuffer: a target's pixels (or depths), or the machine-readable reason there are
  *     none (see ReadbackResult - `Unsupported` is the expected answer for "this device cannot", which is what a
@@ -148,13 +148,13 @@ class VN_GRAPHICS_API RenderDevice
      */
     [[nodiscard]] virtual RenderFrameExecutor& executor() = 0;
 
-    /** @brief Creates a target this device presents a window through (see RenderSurfaceTarget).
+    /** @brief Creates a target this device presents a window through (see WindowPresentTarget).
      *
      * THE WINDOW HALF, created where the swapchain will live: one live target per window, because a window
-     * carries one live swapchain (a platform constraint, not a choice - see RenderSurfaceTarget). The handle is a
+     * carries one live swapchain (a platform constraint, not a choice - see WindowPresentTarget). The handle is a
      * CREATION input rather than a later announcement, which is what a device needs before it comes up: a Vulkan
      * device is built with the surface it will present to (see the axis' Q1), so a host names the window here and
-     * the target is what a recreated window is later re-announced on (RenderSurfaceTarget::setWindowHandle).
+     * the target is what a recreated window is later re-announced on (WindowPresentTarget::setWindowHandle).
      *
      * A device that presents nothing answers nullptr with NoPresentation and NO report: a display-less device is a
      * first-class state rather than a failure. The other two refusals are reported once per episode on the
@@ -167,9 +167,9 @@ class VN_GRAPHICS_API RenderDevice
      *                      SurfaceTargetResult.
      * @return The target, or nullptr when this device hands none out (see @p why). The target is BORROWED: the
      *         device that made it owns it, for as long as the window it presents through is open (a device with
-     *         several windows drops each target when its window closes, see RenderSurfaceTarget).
+     *         several windows drops each target when its window closes, see WindowPresentTarget).
      */
-    [[nodiscard]] virtual raw_ptr<RenderSurfaceTarget> createSurfaceTarget(void* native_handle,
+    [[nodiscard]] virtual raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
                                                                          SurfaceTargetResult* why = nullptr)
     {
         (void)native_handle;

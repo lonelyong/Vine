@@ -367,7 +367,7 @@ vn::graphics::RenderFrameExecutor& VsgBackend::executor()
     return *this;
 }
 
-vn::raw_ptr<vn::graphics::RenderSurfaceTarget>
+vn::raw_ptr<vn::graphics::WindowPresentTarget>
 VsgBackend::createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why)
 {
     // ONE WINDOW, one live swapchain (see the header): the first ask is the window this device serves - the
@@ -434,14 +434,14 @@ void VsgBackend::closeFrameBooks()
 }
 
 void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
-                              vn::graphics::RenderSurfaceTarget* present_to)
+                              vn::graphics::PresentTarget* present_to)
 {
     // THE FRAME'S TARGET. This device has one window half and it is this object (see createSurfaceTarget), so a
     // frame that names another target is wiring it could not have produced: nothing is recorded and the reason is
     // said once per episode instead of being drawn into someone else's window. A null target is a frame that
     // presents NOWHERE (the off-screen half of the frame protocol, see RenderFrameExecutor::executeFrame): the
     // passes that name their own render targets run as they always did, and nothing is presented.
-    if (present_to != nullptr && present_to != static_cast<vn::graphics::RenderSurfaceTarget*>(this)) {
+    if (present_to != nullptr && present_to != static_cast<vn::graphics::PresentTarget*>(this)) {
         if (d->foreign_target_report.shouldReport()) {
             reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
                              vn::graphics::DiagnosticCategory::UnsupportedRequest,
@@ -589,7 +589,7 @@ void VsgBackend::resize(int width, int height)
     d->announced_height = height;
     if (d->session.initialized())
     {
-        // THE SURFACE OWNS ITS SIZE (RenderSurfaceTarget::resize's authority order: surface > announcement >
+        // THE SURFACE OWNS ITS SIZE (PresentTarget::resize's authority order: surface > announcement >
         // default), so a live announcement is served by FOLLOWING the surface: the session re-reads the one
         // it is on and rebuilds its swapchain when that surface changed, and what hangs off the size (the
         // render area, the window target's shape, each pass' view block) is derived from the window when the

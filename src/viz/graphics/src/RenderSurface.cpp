@@ -206,7 +206,7 @@ void RenderSurface::resize(int width, int height, double pixel_ratio)
         engine_->announceAreaSize(width, height);
     }
     // And the WINDOW's own half of it goes to the target, which is the object that owns the swapchain (see
-    // RenderSurfaceTarget::resize): the surface is what owns its size, and the target is what follows it.
+    // PresentTarget::resize): the surface is what owns its size, and the target is what follows it.
     if (target_ != nullptr) {
         target_->resize(width, height);
     }
@@ -223,15 +223,15 @@ double RenderSurface::pixelRatio() const noexcept
     return pixel_ratio_;
 }
 
-void RenderSurface::bindTarget(raw_ptr<RenderSurfaceTarget> target)
+void RenderSurface::bindTarget(raw_ptr<WindowPresentTarget> target)
 {
     // The area holds the object its device made (see RenderDevice::createSurfaceTarget): nothing has to be handed
     // on, refused or reported here - a device that presents nothing never made one, and said so where it was
-    // asked. What a recreated window is announced on is the target itself (RenderSurfaceTarget::setWindowHandle).
+    // asked. What a recreated window is announced on is the target itself (WindowPresentTarget::setWindowHandle).
     target_ = target;
 }
 
-RenderSurfaceTarget* RenderSurface::target() const noexcept
+WindowPresentTarget* RenderSurface::target() const noexcept
 {
     return target_;
 }

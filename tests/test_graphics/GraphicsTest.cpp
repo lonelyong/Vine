@@ -2166,7 +2166,7 @@ class MockBackend : public RenderBackend {
     /// The WINDOW HALF of this double (see RenderDevice::createSurfaceTarget): what the engine forwarded to the
     /// target (a window announcement, a size) and the presents it drove. Frame cases count the present through it,
     /// and a double that wants no window half at all flips `has_surface` below.
-    class MockSurface : public RenderSurfaceTarget
+    class MockSurface : public WindowPresentTarget
     {
       public:
         void setWindowHandle(void* handle) override
@@ -2209,7 +2209,7 @@ class MockBackend : public RenderBackend {
     MockSurface surface_half;
     /// How many targets were asked for (see createSurfaceTarget), and the one this double handed out.
     int         target_creations = 0;
-    [[nodiscard]] vn::raw_ptr<RenderSurfaceTarget> createSurfaceTarget(void* native_handle,
+    [[nodiscard]] vn::raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
                                                                       SurfaceTargetResult* why = nullptr) override
     {
         ++target_creations;
@@ -2295,14 +2295,14 @@ class MockBackend : public RenderBackend {
     /// and what each of them named as the target its default framebuffer resolves to (the area's target, or
     /// nullptr for a frame that presents nowhere).
     int frames_executed = 0;
-    std::vector<RenderSurfaceTarget*> present_targets;
+    std::vector<PresentTarget*> present_targets;
 
     /// THE FRAME, WALKED BY THIS DOUBLE (see RenderFrameExecutor::executeFrame): one entry per pass, in run order -
     /// the identity, the order, the resolved inputs, then everything the pass issues (its target, the viewport /
     /// clear / state it stated, and each of its draws with the lights that belong to it). Every witness below is
     /// filled from HERE, which is what makes the other cases' assertions ("the backend was handed this clear",
     /// "this camera drew") read as "the engine's frame value said so".
-    void executeFrame(const FrameDescription& frame, RenderSurfaceTarget* present_to = nullptr) override
+    void executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
     {
         ++frames_executed;
         present_targets.push_back(present_to);
@@ -7983,7 +7983,7 @@ TEST(RenderEngineTest, TheEngineRunsTheFrameValueAndNeverCallsExecute)
             return RenderPass::describe(scene, out);
         }
         void execute(vn::raw_ptr<Scene>, vn::raw_ptr<RenderBackend>,
-                     vn::raw_ptr<RenderSurfaceTarget>) override
+                     vn::raw_ptr<PresentTarget>) override
         {
             ++executes;
         }

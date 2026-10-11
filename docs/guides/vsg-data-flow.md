@@ -16,7 +16,7 @@ executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟�
                      ──▶  按值走每条 pass：FrameRecorder 只记"事实"（数据），不碰资源
                      ──▶  FrameCompiler + FrameGraph：依赖求值、缺省解析、合法性判定 → CompiledFrame
 present()           ──▶  ContentAssembly（事实表 + 流 + 块）→ ContentPass 录制 → VsgExecutor 提交/呈递
-（目标那一半，见 RenderSurfaceTarget）
+（目标那一半，见 WindowPresentTarget）
 ```
 
 帧的**值**（`vn::graphics::FrameDescription`）就是引擎给的一切：每条 pass 的身份、order、解析好的输入，

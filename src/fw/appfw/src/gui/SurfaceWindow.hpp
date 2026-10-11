@@ -199,7 +199,7 @@ class SurfaceWindow : public QWindow {
     void handleUpdate();
     /** @brief Gets the native handle of the window this area is presented through, or nullptr when it has none.
      *
-     * The handle belongs to the TARGET the area holds (RenderSurfaceTarget::nativeHandle), never to this control:
+     * The handle belongs to the TARGET the area holds (WindowPresentTarget::nativeHandle), never to this control:
      * "the window Qt shows now is not the one the session is on" is asked here, and re-announcing that window is
      * what the target follows.
      *

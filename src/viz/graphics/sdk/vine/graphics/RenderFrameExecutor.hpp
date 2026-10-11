@@ -3,7 +3,7 @@
 
 #include "FrameDescription.hpp"
 #include "FrameStats.hpp"
-#include "RenderSurfaceTarget.hpp"
+#include "PresentTarget.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -66,7 +66,7 @@ class VN_GRAPHICS_API RenderFrameExecutor
      * "here is one call at a time, in an order you have to know". Nothing is announced to the executor before or
      * after this call that is about the frame - the acquisition of the next presentable image happens inside it
      * for the target the frame names, and presenting that image is the target's own call (see
-     * RenderSurfaceTarget::present), which the frame's driver makes when the frame's tail is reached.
+     * WindowPresentTarget::present), which the frame's driver makes when the frame's tail is reached.
      *
      * WHAT IT MUST DO, in the order a frame means: take the value's passes as they come (an entry with a null
      * pass is nothing to run; an entry whose description is empty is a pass that ran and issued nothing - the
@@ -84,7 +84,7 @@ class VN_GRAPHICS_API RenderFrameExecutor
      *                   the host's behalf (an off-screen frame, see the class contract). A device whose frame path
      *                   owns a surface of its own keeps drawing into that one - it IS its surface.
      */
-    virtual void executeFrame(const FrameDescription& frame, RenderSurfaceTarget* present_to = nullptr) = 0;
+    virtual void executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) = 0;
 
     /** @brief Gets this executor's own report about its frames (see FrameReport).
      *

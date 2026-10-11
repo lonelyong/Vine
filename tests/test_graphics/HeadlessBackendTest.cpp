@@ -6,7 +6,8 @@
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderSurface.hpp>
-#include <vine/graphics/RenderSurfaceTarget.hpp>
+#include <vine/graphics/PresentTarget.hpp>
+#include <vine/graphics/WindowPresentTarget.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/raw_ptr.hpp>
@@ -42,14 +43,14 @@ class HeadlessBackend : public RenderBackend
     [[nodiscard]] RenderFrameExecutor& executor() override { return *this; }
 
     /// The answer that makes this device windowless, counted: it presents nothing, through anything.
-    [[nodiscard]] raw_ptr<RenderSurfaceTarget> createSurfaceTarget(void* native_handle,
+    [[nodiscard]] raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
                                                                  SurfaceTargetResult* why = nullptr) override
     {
         ++targets_asked;
         return RenderDevice::createSurfaceTarget(native_handle, why);
     }
 
-    void executeFrame(const FrameDescription& frame, RenderSurfaceTarget* present_to = nullptr) override
+    void executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
     {
         ++frames;
         present_targets.push_back(present_to);
@@ -72,7 +73,7 @@ class HeadlessBackend : public RenderBackend
     /// How many times the device was asked for a window half (see createSurfaceTarget).
     int targets_asked = 0;
     std::vector<raw_ptr<RenderTarget>> targets;
-    std::vector<RenderSurfaceTarget*>  present_targets;  ///< What each frame named (see executeFrame).
+    std::vector<PresentTarget*>        present_targets;  ///< What each frame named (see executeFrame).
     std::size_t                        draws = 0;
 };
 
@@ -83,7 +84,7 @@ class HeadlessBackend : public RenderBackend
  * episode - which is what the real backend answers too, and what a host has to hear rather than discover as a
  * picture that never appears. A refusal is reported ONCE per episode; the first ask is answered silently.
  */
-class WindowedBackend : public RenderBackend, public RenderSurfaceTarget
+class WindowedBackend : public RenderBackend, public WindowPresentTarget
 {
   public:
     bool initialize() override
@@ -95,7 +96,7 @@ class WindowedBackend : public RenderBackend, public RenderSurfaceTarget
 
     [[nodiscard]] RenderFrameExecutor& executor() override { return *this; }
 
-    [[nodiscard]] raw_ptr<RenderSurfaceTarget> createSurfaceTarget(void* native_handle,
+    [[nodiscard]] raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
                                                                  SurfaceTargetResult* why = nullptr) override
     {
         ++target_creations;
@@ -117,7 +118,7 @@ class WindowedBackend : public RenderBackend, public RenderSurfaceTarget
         return this;
     }
 
-    void executeFrame(const FrameDescription&, RenderSurfaceTarget* present_to = nullptr) override
+    void executeFrame(const FrameDescription&, PresentTarget* present_to = nullptr) override
     {
         ++frames;
         present_targets.push_back(present_to);
@@ -150,7 +151,7 @@ class WindowedBackend : public RenderBackend, public RenderSurfaceTarget
     int   last_height      = 0;
     void* adopted_handle   = nullptr;
     bool  target_taken     = false;
-    std::vector<RenderSurfaceTarget*> present_targets;  ///< What each frame named (see executeFrame).
+    std::vector<PresentTarget*>       present_targets;  ///< What each frame named (see executeFrame).
 
   private:
     ReportOnce occupied_reports;
@@ -167,7 +168,7 @@ class WindowedBackend : public RenderBackend, public RenderSurfaceTarget
 class FleetBackend : public RenderBackend
 {
   public:
-    class FleetTarget : public RenderSurfaceTarget
+    class FleetTarget : public WindowPresentTarget
     {
       public:
         explicit FleetTarget(void* handle) : handle_(handle) {}
@@ -197,7 +198,7 @@ class FleetBackend : public RenderBackend
     void shutdown() override {}
     [[nodiscard]] RenderFrameExecutor& executor() override { return *this; }
 
-    [[nodiscard]] raw_ptr<RenderSurfaceTarget> createSurfaceTarget(void* native_handle,
+    [[nodiscard]] raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
                                                                  SurfaceTargetResult* why = nullptr) override
     {
         targets.push_back(std::make_unique<FleetTarget>(native_handle));
@@ -207,7 +208,7 @@ class FleetBackend : public RenderBackend
         return targets.back().get();
     }
 
-    void executeFrame(const FrameDescription&, RenderSurfaceTarget* present_to = nullptr) override
+    void executeFrame(const FrameDescription&, PresentTarget* present_to = nullptr) override
     {
         ++frames;
         present_targets.push_back(present_to);
@@ -222,7 +223,7 @@ class FleetBackend : public RenderBackend
     int                                       frames      = 0;
     int                                       initializes = 0;
     std::vector<std::unique_ptr<FleetTarget>> targets;  ///< What this device made (it owns them).
-    std::vector<RenderSurfaceTarget*>         present_targets;
+    std::vector<PresentTarget*>               present_targets;
 };
 
 }  // namespace
@@ -274,6 +275,52 @@ TEST(HeadlessBackendTest, AFrameIsCompleteWithoutATarget)
         << "the frame named no target: there was nothing to resolve, acquire or present";
     EXPECT_EQ(engine->diagnosticCount(), 0u) << "a windowless device is not a problem";
     EXPECT_FALSE(engine->capabilities().presentation) << "the DEVICE answers it: nothing to present through";
+}
+
+/**
+ * @brief A presenter that is NOT a window can be named by a frame (PresentTarget vs WindowPresentTarget).
+ *
+ * What a FRAME needs from the thing a picture is handed to is two verbs: the announced size and the present. That is
+ * the whole of `PresentTarget`, and a presenter that has no window - an encoder, a network sink, a host recording its
+ * own frames - implements exactly those, so the frame path never asks it about a native handle: the window's own two
+ * questions (which handle, re-announce it) live on `WindowPresentTarget`, which a host that OWNS a window asks.
+ *
+ * A host that drives one pass itself is the shortest path to that: it hands its presenter over
+ * (RenderPass::execute) and the pass presents through it - no window, no device factory, no area.
+ */
+TEST(HeadlessBackendTest, APresenterThatIsNotAWindowIsNamedByTheFrameItsHostDrives)
+{
+    class RecordingSink : public PresentTarget
+    {
+      public:
+        void resize(int width, int height) override
+        {
+            (void)width;
+            (void)height;
+            ++resizes;
+        }
+        void present() override { ++presents; }
+
+        int resizes  = 0;
+        int presents = 0;
+    };
+
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    auto scene   = intrusive_ptr<Scene>(new Scene());
+    auto camera  = intrusive_ptr<Camera>(new Camera());
+    camera->setAspect(16.0 / 9.0);
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setCamera(camera);
+
+    RecordingSink sink;
+    pass->execute(scene.get(), backend.get(), &sink);
+
+    EXPECT_EQ(backend->frames, 1) << "the pass handed the device the frame its host built";
+    ASSERT_EQ(backend->present_targets.size(), 1u);
+    EXPECT_EQ(backend->present_targets.front(), static_cast<PresentTarget*>(&sink))
+        << "the frame named the presenter it was given";
+    EXPECT_EQ(sink.presents, 1) << "the driver's tail presented through it - there is no window in this path";
+    EXPECT_EQ(sink.resizes, 0) << "a size comes from whoever owns the surface, not from the frame's tail";
 }
 
 /**
@@ -363,7 +410,7 @@ TEST(HeadlessBackendTest, ATargetTheHostMadeReachesTheFrameUnreported)
     void* handle = &marker;
 
     SurfaceTargetResult          why    = SurfaceTargetResult::Ok;
-    raw_ptr<RenderSurfaceTarget> target = backend->createSurfaceTarget(handle, &why);
+    raw_ptr<WindowPresentTarget> target = backend->createSurfaceTarget(handle, &why);
     ASSERT_NE(target, nullptr);
     EXPECT_EQ(why, SurfaceTargetResult::Ok);
     area->bindTarget(target);
@@ -393,7 +440,7 @@ TEST(HeadlessBackendTest, ATargetTheHostMadeReachesTheFrameUnreported)
  * @brief A re-announced window MOVES the target; the device (and what was compiled on it) stays.
  *
  * The platform recreating the native window (a reparent, a screen change) is the same area on a new handle: the
- * host announces it ON THE TARGET (RenderSurfaceTarget::setWindowHandle), which is what moves an established
+ * host announces it ON THE TARGET (WindowPresentTarget::setWindowHandle), which is what moves an established
  * session onto the new window - not a second target, and not a rebuilt device.
  */
 TEST(HeadlessBackendTest, AReAnnouncedWindowMovesTheTargetAndTheDeviceStays)

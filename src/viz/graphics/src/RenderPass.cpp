@@ -310,7 +310,7 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDescription& out)
 }
 
 void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend,
-                         raw_ptr<RenderSurfaceTarget> present_to)
+                         raw_ptr<PresentTarget> present_to)
 {
     if (backend == nullptr) {
         return;
@@ -320,12 +320,12 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend,
     // is the camera's), and a pass a host drives itself is a frame with one pass in it (see singlePassFrame),
     // which is the same shape the engine builds for a whole frame. The target is what its default framebuffer row
     // resolves to (see RenderFrameExecutor::executeFrame); presenting it is the driver's own call
-    // (RenderSurfaceTarget::present), exactly as it is for the engine.
+    // (WindowPresentTarget::present), exactly as it is for the engine.
     PassDescription description;
     if (!describe(scene, description)) {
         return;
     }
-    RenderSurfaceTarget* const target = present_to;
+    PresentTarget* const target = present_to;
     backend->executor().executeFrame(singlePassFrame(this, /*order*/ 0, /*inputs*/ {}, std::move(description)),
                                     target);
     if (target != nullptr) {

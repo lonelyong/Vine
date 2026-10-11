@@ -20,9 +20,35 @@
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/guides/graphics.md`（模块文档一节） |
 | **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
-| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**2026-10-11 晚裁决推翻 S8 一半：多格下线，一块区只画一幅画**（见顶条与 Q5 的后续裁决）；**同日再定两条**：命名不改（`RenderTargetWindow` / `RenderTargetOffscreen` 一对被否，理由在 §8）、云渲染的落点是"**第二个呈递端**"而不是把区通用化（§8 末条 + §9 第 6 条，带触发条件）；**S10b（插件会话→设备：窗口与交换链 1:N、缓存上移、`DeviceDesc`）**/ S11（登记不做）未落地 |
+| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**2026-10-11 晚裁决推翻 S8 一半：多格下线，一块区只画一幅画**（见顶条与 Q5 的后续裁决）；**2026-10-12 又两条**：呈递端拆成 `PresentTarget`（帧的契约）+ `WindowPresentTarget`（窗口那一面，见顶条），命名仍否掉 `RenderTargetWindow` / `RenderTargetOffscreen` 一对（`RenderTarget` 是描述、不是同族，理由在 §8）、云渲染的落点是"**第二个呈递端**"而不是把区通用化（§8 末条 + §9 第 6 条，带触发条件）；**S10b（插件会话→设备：窗口与交换链 1:N、缓存上移、`DeviceDesc`）**/ S11（登记不做）未落地 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-12 呈递端拆成两层：`PresentTarget`（帧的契约）+ `WindowPresentTarget`（窗口那一面）
+
+- **结论**：`RenderSurfaceTarget` 这个名字下压着两件用途不同的事 —— 帧需要的（尺寸 + `present`）与只有拥有窗口的宿主
+  需要的（`setWindowHandle` / `nativeHandle`）。拆成两层、两个头文件：`PresentTarget`（`resize(w,h)` + `present()`，
+  **帧的契约**）与 `WindowPresentTarget : PresentTarget`（加那两条窗口动词）；`RenderSurfaceTarget.hpp` 删除。
+- **谁认哪一层**：**帧只认基类** —— `RenderFrameExecutor::executeFrame(frame, PresentTarget* present_to)`、
+  `RenderPass::execute(scene, backend, present_to)`、`RenderEngine::own_target_`（引擎只在帧尾 `present()`）。
+  **窗口那一面归造它 / 持它的两处** —— `RenderDevice::createSurfaceTarget` 答 `raw_ptr<WindowPresentTarget>`，
+  `RenderSurface::bindTarget/target()/target_` 是 `WindowPresentTarget`（宿主在平台重建窗口时经它重公告句柄）。
+  appfw 的逻辑一字未改（只换类型名）；`SurfaceTargetResult` 名字不动（它答的是"这把窗口的目标造没造出来"）。
+- **所以"第二个呈递端"（云渲染 / 编码 / 网络出口）从"要改契约"降成"纯实现"**：一个只实现 `resize` + `present` 的对象
+  就能被帧命名、被宿主驱动（见新用例）。
+- **判据（实测）**：全量 Release 0 error / 0 warning；`test_graphics` **357**（356 + 1 新用例）、`test_gui` **257**、
+  `test_vsg` **429** = 424 + 3 skip + 2 已知红（未动）、appfw 32 / meshio 34 / iobase 94 不掉；五个 gate 0 finding
+  （`--strict` 仍 13，同一批既有路径漂移）。
+- **新用例**：`HeadlessBackendTest.APresenterThatIsNotAWindowIsNamedByTheFrameItsHostDrives` —— 一个只有
+  `resize` / `present` 的 sink 被 `RenderPass::execute` 命名、并被那次驱动的帧尾 present（整条路径不问一个句柄问题）。
+- **契约级变异（实测）**：把 `RenderPass::execute` 的参数改回 `WindowPresentTarget*`（声明与定义两处一起改，并换 include）
+  ⇒ **新用例编译不过**（C2664：`RecordingSink*` 不能转 `WindowPresentTarget*`），另有一处用例内的 `CountingPass::execute`
+  override 失配（C3668）。即"帧收基类"这条是**编译期**钉住的，别的用例替不了它。
+- **坑**：① 纯改名也要认"哪半"：`RenderSurfaceTarget` 在 20 个文件里出现 114 次，其中约 20 处属于帧那半、其余属于窗口那半；
+  机械全替成窗口面**能编译**（派生 → 基类永远隐式可转），只有"基类用在窗口处"才报错 ⇒ 批量替换抓不出"帧该收哪种"，
+  要靠上面的新用例钉；② 同一文件里 `executeFrame` override 的文本可能完全相同（`HeadlessBackendTest` 有三个双实现），
+  批量替换必须按出现次序逐个确认（`replace(..., 1)` 一次只替一处）；③ 漏改一个 override = 派生类没实现纯虚 ⇒
+  `C2259 无法实例化抽象类`；④ `raw_ptr<T>` 是裸 `T*`：`RenderPass::execute` 收 `Scene*`，`intrusive_ptr` 要 `.get()`。
 
 ## 2026-10-11 多格下线：`RenderSurface` 收成"一条呈现 + 尺寸 + 目标"（S8/S9 的表与路由删掉）
 
@@ -94,20 +120,20 @@
 
 - **结论**：`RenderBackend` 那一个对象今天起拆成**三张契约**（各自一个头文件，公开面）：
   `RenderDevice`（`initialize`/`shutdown`/`capabilities`/`executor`/`createSurfaceTarget`/资源公告 + 诊断路线）、
-  `RenderFrameExecutor`（`executeFrame(frame, present_to)` + `frameReport`）、`RenderSurfaceTarget`（原
-  `RenderSurfaceBinding` 改名：`setWindowHandle`/`nativeHandle`/`resize`/`present`）。`RenderBackend` **退成"三面一体的
-  聚合"**（`Object + RefCounted<RenderBackend> + RenderDevice + RenderFrameExecutor`）——工厂返回它、引擎收它、
+  `RenderFrameExecutor`（`executeFrame(frame, present_to)` + `frameReport`）、`RenderSurfaceTarget`（当时一个类型带四条
+  动词：`setWindowHandle`/`nativeHandle`/`resize`/`present`；**2026-10-12 拆成 `PresentTarget` + `WindowPresentTarget`**，
+  见顶条）。`RenderBackend` **退成"三面一体的聚合"**（`Object + RefCounted<RenderBackend> + RenderDevice + RenderFrameExecutor`）——工厂返回它、引擎收它、
   测试双实现它，所以"一个对象什么都会"的实现不必先拆开；`RenderDevice` 的**窗口那半**是可选的（默认答
   "无呈现"，一个字都不用写），这是 S4b 那条"窗口是可选依赖"在设备层的同一句话。
 - **目标由设备造（§9 待决 1 的裁决落地）**：`RenderDevice::createSurfaceTarget(void* handle, SurfaceTargetResult*)`
-  → 借用的 `RenderSurfaceTarget*`；三因 `NoPresentation`（**静默**答，显示无关设备是一等形态）/ `UnsupportedSurface`
+  → 借用的 `WindowPresentTarget*`；三因 `NoPresentation`（**静默**答，显示无关设备是一等形态）/ `UnsupportedSurface`
   / `WindowOccupied`（**报一次**）。区收**对象**：`RenderSurface::bindTarget(target)` / `target()` / `hasTarget()`；
   句柄只是造它的输入，`targetHandle()` 删掉；重建窗口是**在旧目标上重公告**（`target->setWindowHandle`），
   不是第二把目标；尺寸的窗口那一半由**区→目标**直推（`RenderSurface::resize` 一并 `target_->resize`），引擎只记
   帧上下文。
 - **帧命名目标**：`executeFrame(frame, present_to = nullptr)`；引擎交的是**区**那把目标（没有区时是设备为自己造的
   那把，`own_target_`），`nullptr` ⇒ 不解析、不取像、不 present（离屏一等形态）。**present 仍由驱动者在帧尾经目标
-  调用**（`RenderSurfaceTarget::present`）：执行器自持帧尾 present 会让直接驱动者（test_vsg 那几十处
+  调用**（`PresentTarget::present`）：执行器自持帧尾 present 会让直接驱动者（test_vsg 那几十处
   `executeFrame` + `present`）present 两次 ⇒ 与 S10b 的 N 目标一起落（§9 待决 5）。
 - **`Capabilities::presentation` 换答题人**：由**设备**自己答（引擎不再算"后端有没有窗口那一半"）。
   插件今天答 `true`（它有窗口那半），无头双答 `false`（S9 的行为不变）。
@@ -124,7 +150,7 @@
   引擎仍去要一把 ⇒ 4 条红。
 - **坑（今天又交了一次学费）**：`raw_ptr<T>` **就是裸 `T*`**（`using raw_ptr = T*`），`RenderSurface::target_` 少了
   `= nullptr` ⇒ 非确定性 `0xc0000005`（老测试一起崩）——与 S9 的 `RenderEngine::area_` 同一课：**新增字段一律带
-  初始化值**。另一条：`intrusive_ptr<RenderSurfaceTarget>` 需要**该静态类型**的 ADL 计数钩子，而目标由各自的设备
+  初始化值**。另一条：`intrusive_ptr<WindowPresentTarget>` 需要**该静态类型**的 ADL 计数钩子，而目标由各自的设备
   拥有（窗口关了设备放掉）⇒ 目标用**借用指针**（与 `RenderDevice::executor()` 一致），别给它第二个 `RefCounted` 基
   （两个计数器 = 双重删除）。
 - **契约上的可观察变化**（给下一个片）：`RenderEngine::backend()` → `device()`，`setBackend()` → `setDevice()`；

@@ -3279,7 +3279,7 @@ TEST(VsgBackendTest, TheOneWindowADeviceServesIsHandedOutOnceAndTheSecondAskSays
     int second = 0;
 
     vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
-    vn::raw_ptr<vn::graphics::RenderSurfaceTarget> target = backend->createSurfaceTarget(nullptr, &why);
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> target = backend->createSurfaceTarget(nullptr, &why);
     ASSERT_NE(target, nullptr);
     EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
     EXPECT_EQ(target->nativeHandle(), nullptr) << "nothing is attached before a session comes up";
@@ -3314,7 +3314,7 @@ TEST(VsgBackendTest, AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce)
     // and this device can only serve the window it handed out: a frame naming another device's target is wiring
     // this backend could not have produced, so nothing is recorded and the reason is said once per episode
     // instead of being drawn into someone else's window.
-    class ForeignTarget : public vn::graphics::RenderSurfaceTarget
+    class ForeignTarget : public vn::graphics::WindowPresentTarget
     {
       public:
         void setWindowHandle(void*) override {}
@@ -3332,7 +3332,7 @@ TEST(VsgBackendTest, AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce)
     });
 
     vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
-    vn::raw_ptr<vn::graphics::RenderSurfaceTarget> own = backend->createSurfaceTarget(nullptr, &why);
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> own = backend->createSurfaceTarget(nullptr, &why);
     ASSERT_NE(own, nullptr);
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "a healthy session reports nothing";
@@ -3353,7 +3353,7 @@ TEST(VsgBackendTest, AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce)
     backend->executeFrame(vn::graphics::FrameDescription{}, own);
     backend->present();
     EXPECT_EQ(backend->framesPresented(), before + 1U);
-    EXPECT_EQ(own, static_cast<vn::graphics::RenderSurfaceTarget*>(backend.get()))
+    EXPECT_EQ(own, static_cast<vn::graphics::WindowPresentTarget*>(backend.get()))
         << "the target this device hands out IS its own window half: the frame went through it";
 
     backend->shutdown();
