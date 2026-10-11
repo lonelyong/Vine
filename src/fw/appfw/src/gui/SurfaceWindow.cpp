@@ -21,9 +21,11 @@
 #include <string>
 #include <utility>
 
+#include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
+#include <vine/graphics/RenderPipelineBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/SceneView.hpp>
 #include <vine/intrusive_ptr.hpp>
@@ -209,6 +211,9 @@ struct SurfaceWindow::Impl {
     /// Which passes draw into this surface, and in which order (see RenderSurface). Declared after the engine so it
     /// is DESTROYED before it: the surface borrows that engine.
     vn::intrusive_ptr<vn::graphics::RenderSurface> surface;
+    /// How the viewer pipeline is built (see ViewerOptions): the host-facing half of the recipe, while the
+    /// contextual fields (the gizmo's camera, the pixel ratio both overlays take) are filled in at build time.
+    ViewerOptions viewer_options;
     /// true once a device and its pipelines were built on session_handle: what makes a new handle a re-announce
     /// rather than a first attach, and what keeps the surface following a recreated window.
     bool has_session = false;
@@ -308,8 +313,8 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     d->created_at = std::chrono::steady_clock::now();
     d->engine     = vn::intrusive_ptr<vn::graphics::RenderEngine>(
         new vn::graphics::RenderEngine());
-    // The engine is a pure scheduler (no passes, camera-agnostic); the view owns the camera, the content scene,
-    // the orbit manipulator and the window pass that presents them.
+    // The engine is a pure scheduler (no passes, camera-agnostic); the view owns the camera, the content scene
+    // and the orbit manipulator, and the pipeline it has adopted owns the passes that present them.
     d->view = vn::intrusive_ptr<vn::graphics::SceneView>(
         new vn::graphics::SceneView());
     d->view->setEngine(d->engine.get());
@@ -367,6 +372,89 @@ vn::graphics::SceneView* SurfaceWindow::view() const
 vn::graphics::RenderSurface* SurfaceWindow::surface() const
 {
     return d->surface.get();
+}
+
+const ViewerOptions& SurfaceWindow::viewerOptions() const
+{
+    return d->viewer_options;
+}
+
+bool SurfaceWindow::setViewerOptions(const ViewerOptions& options)
+{
+    return buildViewerPipeline(options);
+}
+
+bool SurfaceWindow::setShadingMode(vn::graphics::ShadingMode mode)
+{
+    // The cheap path first, and it has to check the REQUEST, not just the mode: a non-Lit mode is realized on the
+    // forward chain while the request still says Deferred (see effectivePath), so "the chain is live and can express
+    // this mode" is only the cheap path when the live chain is the one this request resolves to. Picking Lit again
+    // after such a mode therefore REBUILDS the deferred chain - which is what the host asked for all along.
+    vn::graphics::PipelineOptions request;
+    request.path                          = d->viewer_options.path;
+    request.mode                          = mode;
+    vn::graphics::Pipeline* const pipeline = d->view->pipeline();
+    if (pipeline != nullptr && pipeline->shadingPath() == vn::graphics::RenderPipelineBuilder::effectivePath(request) &&
+        pipeline->setShadingMode(mode)) {
+        d->viewer_options.mode = mode;  // remembered: the next build (any structural change) starts from here
+        return true;
+    }
+    // The chain cannot express it (a Deferred picture has no geometry pass to shade): the request itself has to
+    // change, and the builder then assembles the chain that CAN express it.
+    ViewerOptions options = d->viewer_options;
+    options.mode          = mode;
+    return buildViewerPipeline(options);
+}
+
+bool SurfaceWindow::buildViewerPipeline(const ViewerOptions& options)
+{
+    if (d->engine == nullptr || d->view == nullptr) {
+        return false;
+    }
+
+    // A rebuild changes the STRUCTURE, never the picture: whether the user has an overlay showing is a runtime
+    // choice that lives on the live pipeline (Pipeline::setStatsVisible), so it is read from there and re-stated on
+    // the new one. Only an overlay that WAS there and was hidden is carried - one this call adds comes up showing,
+    // because nothing has hidden it yet.
+    vn::graphics::Pipeline* const previous         = d->view->pipeline();
+    const bool                    gizmo_was_hidden = previous != nullptr && previous->gizmo() != nullptr &&
+                                                     !previous->isGizmoVisible();
+    const bool stats_was_hidden = previous != nullptr && previous->fpsOverlay() != nullptr && !previous->isStatsVisible();
+
+    // The host-facing knobs are the builder's; the CONTEXTUAL ones are filled in HERE, because this is the party
+    // that knows them: the gizmo mirrors this surface's camera (an overlay with no camera to mirror is exactly what
+    // "no overlay" means), and the overlays are laid out in device pixels, so they take this surface's ratio.
+    const double ratio = devicePixelRatio() > 0.0 ? devicePixelRatio() : 1.0;
+
+    vn::graphics::PipelineOptions pipeline_options;
+    pipeline_options.path                 = options.path;
+    pipeline_options.mode                 = options.mode;
+    pipeline_options.offscreen_width      = options.offscreen_width;
+    pipeline_options.offscreen_height     = options.offscreen_height;
+    pipeline_options.gizmo.source_camera  = options.gizmo ? d->view->camera() : nullptr;
+    pipeline_options.gizmo.pixel_ratio    = ratio;
+    pipeline_options.fps.enabled          = options.stats;
+    pipeline_options.fps.pixel_ratio      = ratio;
+
+    vn::graphics::RenderPipelineBuilder builder(d->engine.get());
+    builder.setCamera(d->view->camera());
+    builder.setContent(d->view->scene());
+    vn::intrusive_ptr<vn::graphics::Pipeline> pipeline = builder.build(pipeline_options);
+    if (pipeline == nullptr) {
+        return false;  // the builder reports what it refused (see RenderPipelineBuilder::build)
+    }
+    if (gizmo_was_hidden) {
+        (void)pipeline->setGizmoVisible(false);
+    }
+    if (stats_was_hidden) {
+        (void)pipeline->setStatsVisible(false);
+    }
+    // Adopting the pipeline is what gives the view its picture: its rectangle, the surface size behind it and the
+    // layout steps are applied by the view itself, and a surface this view presents keeps resolving its pass from
+    // the new pipeline (see SceneView::setPipeline).
+    d->view->setPipeline(std::move(pipeline));
+    d->viewer_options = options;
+    return true;
 }
 
 void* SurfaceWindow::nativeHandle() const
@@ -734,13 +822,21 @@ bool SurfaceWindow::init()
         setState(SurfaceState::Pending);
     }
 
-    // The surface's presentations: this control's own view presents it unless something else already does. That
-    // happens BEFORE the backend check on purpose: which passes a view presents is its recipe, not a property of
-    // the device - a host with no backend registered still has a view with a pipeline it can inspect (and the pass
-    // is what the backend will draw when it does come up). A host that brought its own main pass declared it
-    // already (RenderSurface::present(pass)), and then no default window pass is built at all.
+    // The surface's presentations: this control's own viewer presents it unless something else already does. That
+    // happens BEFORE the backend check on purpose: which passes a view presents is decided by the pipeline it
+    // adopted, not by a device - a host with no backend registered still has a view with a pipeline it can inspect
+    // (and the pass is what the backend will draw when it does come up). A host that brought its own main pass
+    // declared it already (RenderSurface::present(pass)), and then no viewer pipeline is built at all.
     if (!d->surface->hasPresentation()) {
-        d->surface->present(*d->view);
+        // The viewer pipeline: built for the view if nobody adopted one (a host that did owns its drawing), then
+        // declared. A view with no pipeline cannot be declared (the table would have no pass to resolve), so the
+        // build has to have succeeded for this to mean anything.
+        if (d->view->pipeline() == nullptr) {
+            (void)buildViewerPipeline(d->viewer_options);
+        }
+        if (d->view->pipeline() != nullptr) {
+            d->surface->present(*d->view);
+        }
     }
 
     // No backend yet? Take the first registered one; a host that wants its own sets it before this.

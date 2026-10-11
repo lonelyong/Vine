@@ -2,7 +2,7 @@
 
 #include <vine/String.hpp>
 #include <vine/appfw/Command.hpp>
-#include <vine/graphics/SceneView.hpp>
+#include <vine/graphics/ShadingMode.hpp>
 
 namespace vn::model_viewer
 {
@@ -21,7 +21,8 @@ inline constexpr const char8_t* kShadingModeWireframeCommand = u8"set_shading_wi
  * @brief "显示模式"命令的共同部分：把**当前视图**的着色模式设成某一种。
  *
  * 一条命令一个模式（而不是一条"循环切换"）：菜单里每条都有说得清的名字，用户不必先点两下才知道现在在哪一档。
- * 模式本身是 `SceneView::Options::Mode`（graphics 那一层的东西，五档见那里），这里只负责"找到该改哪个视图"。
+ * 模式本身是 `vn::graphics::ShadingMode`（graphics 那一层的东西，五档见那里），这里只负责"找到该改哪个视图"，
+ * 再把这档交给视图**那条链**（`Pipeline::setShadingMode()` —— 见下面的"改哪条链"）。
  *
  * **登记方式**：这五个类**不用** `VN_DECLARE_COMMAND` 的自动登记（那会把 `moduleCommandQueue()` 依赖带进每个
  * include 它的翻译单元，连带把"哪些命令属于本插件"这件事藏进静态初始化）—— 插件在自己的 `load()` 里按名字逐个
@@ -36,23 +37,28 @@ inline constexpr const char8_t* kShadingModeWireframeCommand = u8"set_shading_wi
  *  - 当前文档不是模型文档 ⇒ `NotApplicable`：演示文档的视图不该被模型查看器的命令改掉；
  *  - 还没有视图上屏（文档开着但没显示过）⇒ 同样 `NotApplicable`，并说清原因（不静默）。
  *
+ * **改哪条链**：视图的配方（哪条链、带不带坐标轴、带不带帧率读数）归 `Pipeline`，模式则是链**已经建好之后**
+ * 还能改的那一项（见 `Pipeline::setShadingMode()`）。所以这里分两条路：
+ *
+ *  - 焦点视图**就是控件自己的视图** ⇒ 交给 `RenderControl::setShadingMode()`：控件知道这条链是不是它建的，
+ *    能改就直接改（零重建），改不了就带着新档重建一次（延迟链没有可改的几何趟，重建时按实面那条前置链搭）；
+ *  - 焦点视图是**宿主自己搭的**（别的插件把自己的 `Pipeline` 采纳到了那一格）⇒ 直接问那条链，它说不行就是
+ *    `NotApplicable` 并说清原因 —— 别人建的链怎么重建是别人的事，本命令不去替它做决定。
+ *
  * **模式归视图、不归文档**：每份文档自带视图，所以换一份文档时它以默认（实面）出现。想让它跟着文档走就得把模式
  * 存进文档 —— 那是编辑器那一档的事（文档只拿数据，见 ModelDocument 的说明）。
- *
- * 改的时候是"读-改-写"（`view->options()` 拿当前配方再改 mode），所以帧率读数、坐标轴这些别的设置原样保留 ——
- * `setOptions()` 收的是整个配方，直接给一个只带 mode 的值会把它们关掉。
  */
 class ShadingModeCommand : public vn::appfw::Command {
   public:
     vn::String            group() const override { return u8"显示"; }
     vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
 
-    /// 执行：设当前视图的着色模式（见类注释里的两道守卫与"读-改-写"）。
+    /// 执行：设当前视图那条链的着色模式（见类注释里的两道守卫与"改哪条链"）。
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override;
 
   protected:
     /// 这条命令设的模式。
-    virtual vn::graphics::SceneView::Options::Mode mode() const = 0;
+    virtual vn::graphics::ShadingMode mode() const = 0;
 };
 
 /// 实面：完整光照（默认档）。
@@ -64,7 +70,7 @@ class SetShadingLitCommand : public ShadingModeCommand {
     vn::String description() const override { return u8"实面：环境光 + 主光 + 补光（默认）"; }
 
   protected:
-    vn::graphics::SceneView::Options::Mode mode() const override { return vn::graphics::SceneView::Options::Mode::Lit; }
+    vn::graphics::ShadingMode mode() const override { return vn::graphics::ShadingMode::Lit; }
 };
 
 /// 平面：同样的光照，法线取三角面（没有逐顶点法线的数据也看得出形状）。
@@ -76,7 +82,7 @@ class SetShadingFlatCommand : public ShadingModeCommand {
     vn::String description() const override { return u8"平面：逐面法线（同一个三角形的每个像素一个朝向）"; }
 
   protected:
-    vn::graphics::SceneView::Options::Mode mode() const override { return vn::graphics::SceneView::Options::Mode::Flat; }
+    vn::graphics::ShadingMode mode() const override { return vn::graphics::ShadingMode::Flat; }
 };
 
 /// 无光照：只画表面色（材质 / 贴图 / 顶点色），没有任何光照项。
@@ -88,7 +94,7 @@ class SetShadingUnlitCommand : public ShadingModeCommand {
     vn::String description() const override { return u8"无光照：只画表面色 —— 分清是形状不对还是光照不对"; }
 
   protected:
-    vn::graphics::SceneView::Options::Mode mode() const override { return vn::graphics::SceneView::Options::Mode::Unlit; }
+    vn::graphics::ShadingMode mode() const override { return vn::graphics::ShadingMode::Unlit; }
 };
 
 /// 法线：把视图空间法线当颜色画（蓝 = 朝着相机）。
@@ -100,7 +106,7 @@ class SetShadingNormalsCommand : public ShadingModeCommand {
     vn::String description() const override { return u8"法线：视图空间法线当颜色（看朝向、缺失或内外翻的法线）"; }
 
   protected:
-    vn::graphics::SceneView::Options::Mode mode() const override { return vn::graphics::SceneView::Options::Mode::Normals; }
+    vn::graphics::ShadingMode mode() const override { return vn::graphics::ShadingMode::Normals; }
 };
 
 /// 线框：只画三角面的边，用无光照的表面色。
@@ -112,7 +118,7 @@ class SetShadingWireframeCommand : public ShadingModeCommand {
     vn::String description() const override { return u8"线框：只画三角面的边（看网格怎么连的）"; }
 
   protected:
-    vn::graphics::SceneView::Options::Mode mode() const override { return vn::graphics::SceneView::Options::Mode::Wireframe; }
+    vn::graphics::ShadingMode mode() const override { return vn::graphics::ShadingMode::Wireframe; }
 };
 
 } // namespace vn::model_viewer

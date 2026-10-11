@@ -1,6 +1,7 @@
 ﻿#include <vine/graphics/RenderPipeline.hpp>
 
 #include <vine/graphics/AxisGizmo.hpp>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
@@ -55,6 +56,114 @@ raw_ptr<RenderPass> Pipeline::gizmoPass() const
 raw_ptr<RenderPass> Pipeline::fpsOverlayPass() const
 {
     return fps_overlay_pass_.get();
+}
+
+ShadingPath Pipeline::shadingPath() const noexcept
+{
+    return path_;
+}
+
+ShadingMode Pipeline::shadingMode() const noexcept
+{
+    return mode_;
+}
+
+bool Pipeline::setShadingMode(ShadingMode mode)
+{
+    if (mode != ShadingMode::Lit && path_ == ShadingPath::Deferred) {
+        // A Deferred picture comes out of a fullscreen lighting pass: there is no geometry pass left to
+        // override, so this mode has to be ASSEMBLED for (PipelineOptions::mode) - nothing here can make the
+        // picture mean it. Reported once per episode, because the alternative is a host that believes it
+        // switched something.
+        if (mode_refused_.shouldReport()) {
+            engine_->reportEngineProblem(
+                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                String(u8"this pipeline's Deferred chain has no geometry pass to shade, so the shading mode was "
+                       u8"not changed: build with PipelineOptions::mode (a non-Lit mode is built on the forward "
+                       u8"chain, see RenderPipelineBuilder::effectivePath)"));
+        }
+        return false;
+    }
+    mode_refused_.rearm();  // the condition is over: the next refusal is a new episode
+
+    RenderPass* const picture = windowPass();
+    if (picture == nullptr) {
+        return false;  // nothing draws: there is no picture pass to override
+    }
+    // Every mode is the same built-in program text with one define, applied to the WHOLE picture pass, and
+    // Lit is the per-geometry program the content came with - which is exactly what a null override means.
+    // Wireframe is the same idea one layer down: the pass RASTERISES the triangles as their edges (unlit, so
+    // the structure reads instead of the shading), and clearing that override is how every other mode goes
+    // back to surfaces. Both are pass properties: nothing here rebuilds anything.
+    switch (mode) {
+        case ShadingMode::Lit:
+            picture->setProgramOverride(nullptr);
+            picture->clearPolygonModeOverride();
+            break;
+        case ShadingMode::Flat:
+            picture->setProgramOverride(vn::graphics::flatForwardProgram());
+            picture->clearPolygonModeOverride();
+            break;
+        case ShadingMode::Unlit:
+            picture->setProgramOverride(vn::graphics::unlitForwardProgram());
+            picture->clearPolygonModeOverride();
+            break;
+        case ShadingMode::Normals:
+            picture->setProgramOverride(vn::graphics::normalsForwardProgram());
+            picture->clearPolygonModeOverride();
+            break;
+        case ShadingMode::Wireframe:
+            picture->setProgramOverride(vn::graphics::unlitForwardProgram());
+            picture->setPolygonModeOverride(PolygonMode::Line);
+            break;
+    }
+    mode_ = mode;
+    return true;
+}
+
+bool Pipeline::setGizmoVisible(bool on)
+{
+    if (gizmo_pass_ == nullptr) {
+        // A switch that silently did nothing would leave a host believing the overlay was just hidden: its
+        // existence is a build decision (PipelineOptions::gizmo). Once per episode, because a host may ask every
+        // frame and the condition - not the call - is the news.
+        if (overlay_refused_.shouldReport()) {
+            engine_->reportEngineProblem(
+                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                String(u8"this pipeline has no axis-gizmo overlay, so there was nothing to show or hide: build with "
+                       u8"PipelineOptions::gizmo to get one"));
+        }
+        return false;
+    }
+    overlay_refused_.rearm();
+    gizmo_pass_->setEnabled(on);
+    return true;
+}
+
+bool Pipeline::setStatsVisible(bool on)
+{
+    if (fps_overlay_pass_ == nullptr) {
+        if (overlay_refused_.shouldReport()) {
+            engine_->reportEngineProblem(
+                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                String(u8"this pipeline has no frame-rate readout, so there was nothing to show or hide: build with "
+                       u8"PipelineOptions::fps to get one"));
+        }
+        return false;
+    }
+    overlay_refused_.rearm();
+    fps_overlay_pass_->setEnabled(on);
+    return true;
+}
+
+bool Pipeline::isGizmoVisible() const noexcept
+{
+    return gizmo_pass_ != nullptr && gizmo_pass_->isEnabled();
+}
+
+bool Pipeline::isStatsVisible() const noexcept
+{
+    return fps_overlay_pass_ != nullptr && fps_overlay_pass_->isEnabled();
 }
 
 void Pipeline::resize(int width, int height, double pixel_ratio)

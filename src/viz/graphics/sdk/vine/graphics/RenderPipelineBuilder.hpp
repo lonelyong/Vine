@@ -136,6 +136,21 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      */
     intrusive_ptr<Pipeline> build(const PipelineOptions& options);
 
+    /** @brief The chain a build with @p options assembles, given what the requested mode needs.
+     *
+     * A shading mode is a GEOMETRY-stage override ("what the surface colour means"), and a Deferred picture
+     * comes out of a fullscreen lighting pass that has no geometry left to shade - so a non-Lit mode can only be
+     * expressed by the FORWARD chain, and a Deferred request carrying one is built forward for it (the
+     * requested path in @p options is untouched: switching back to Lit builds deferred again).
+     *
+     * Public because it is the rule a host reasons about: `options.path` is what a host ASKS for, this is what
+     * it gets, and Pipeline::shadingPath() answers which one a live pipeline was built as.
+     *
+     * @param options The pipeline request.
+     * @return The chain the build assembles.
+     */
+    [[nodiscard]] static ShadingPath effectivePath(const PipelineOptions& options) noexcept;
+
     /** @brief The light camera a directional shadow is rendered with.
      *
      * Orthographic, looking along @p light's direction, framing @p bounds: the eye is pulled back

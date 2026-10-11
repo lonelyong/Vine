@@ -133,7 +133,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
 > "主窗管线预设"那一代，读"今天怎么做"请看 `graphics-pipeline.md`。
 
 ## Design C 更新（2026-09-08）：主窗管线预设 + SceneView 默认统一
-- ⚠ Design B/C 后：引擎无 masterCamera/setScene、无内置默认管线；主窗“默认 viewer”由 SceneView 引导（`ensureWindowPass`）。
+- ⚠ Design B/C 后：引擎无 masterCamera/setScene、无内置默认管线；主窗“默认 viewer”由 `SceneView` 的**配方**引导（当时的入口是 `ensureWindowPass()` —— `<!-- drift-ok -->` S7（2026-10-11）起配方归 `Pipeline`、视图只采纳，见 `graphics-redesign.md` S7）。
   **M2a（2026-10-11）起**：抑制重复不再靠 `hasWindowPass(camera)`（已删），而是**声明** —— 宿主自建主 pass 时
   `control->surface()->present(pipeline->windowPass())`；没有声明时 `RenderControl::init()` 用 `present(*view)` 兜底。
   本设计此前“sceneOnly=engine.setScene/setMasterCamera + RenderControl 默认 pass”已过时。
@@ -144,7 +144,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
   - 注：内置 GLSL 是**临时默认**（vsg-ABI 具体），后续应由 vsg 后端提供内置 deferred 着色集，届时 builder 默认改为向后端取、移除 SDK 内 GLSL。
   - **2026-09-13 校**：内容着色已改为**显式命名 program**（`forwardProgram()` / `flatForwardProgram()`；枚举 `ShaderPreset` 删除），且两个 shadowed 占位预设现在会报一条 `DiagnosticCategory::UnsupportedRequest`（见 `vsg-custom-shader.md` §11.10）。
   - G-buffer 尺寸：options.offscreen_* → engine surface → 640×360 兜底；`Pipeline::resize(w,h)` 由宿主维护（可挂 SceneView::addSurfaceLayout）。
-- SceneView::ensureWindowPass 改走同一 Forward preset（不再手搓 pass）：全仓主窗管线只有一套 recipe。内部持 `default_pipeline_`（intrusive_ptr<Pipeline>），dtor/setEngine 经 removeWindowPass() 移除。
+- SceneView::ensureWindowPass 改走同一 Forward preset（不再手搓 pass）：全仓主窗管线只有一套 recipe。内部持 `default_pipeline_`（intrusive_ptr<Pipeline>），dtor/setEngine 经 removeWindowPass() 移除。**`<!-- drift-ok -->` S7（2026-10-11）起这两样都退场**：配方归 `Pipeline`、视图只采纳（`SceneView::setPipeline`），"主窗管线只有一套 recipe"由 appfw 的 `ViewerOptions` 保证。
 - 可配 gizmo overlay：`PipelineOptions::gizmo`（AxisGizmoOptions：source_camera(null=禁用)/pixel_ratio/box_size/axis_length/thickness/order）。build() 挂 AxisGizmo HUD pass；Pipeline::resize(w,h) 一并重锚 gizmo（一次 surface-layout 管 gbuffer+gizmo）。AppShell 默认（无 env）也经 builder Forward preset 装配，gizmo 随 options 配置。
 - AppShell（2026-09-08）：demo 收拢。`VINE_PIPELINE`（forward|deferred|forward_shadowed|deferred_shadowed）选主窗 preset（addDemoPipeline；旧 VINE_VSG_DEFERRED_FULL=deferred 别名）；deferred 用 `pipeline->offscreenTarget()!=nullptr` 判定并挂 addSurfaceLayout→resize 随窗。`VINE_VSG_GBUFFER` 逐附件预览已基于 canonical 重建（默认 program+target，4 个 ScreenPass 预览 0..3）。SlotOverlay/MultiSlot 等后端机制验证器保留（标注非 preset 示例）。
 - 阴影占位：ForwardShadowed/DeferredShadowed 现=无阴影版，预留 order<0 depth-only + 阴影化采样点。

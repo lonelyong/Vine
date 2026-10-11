@@ -142,16 +142,36 @@ intrusive_ptr<Pipeline> RenderPipelineBuilder::build(const PipelineOptions& opti
     auto pipeline = make_intrusive<Pipeline>(intrusive_ptr<RenderEngine>(engine_));
     // A builder is reusable in principle, and the report is about THIS build.
     shadows_built_ = 0;
-    const bool ok = (options.path == ShadingPath::Forward) ? buildForwardPath(*pipeline)
-                                                           : buildDeferredPath(*pipeline, options);
+    // The chain the REQUEST assembles is not always the chain it names: a mode that needs the geometry pass
+    // decides it (see effectivePath). The pipeline records what it was built as, because "can this chain
+    // express that mode" is what a later setShadingMode() is answered from.
+    const ShadingPath path = effectivePath(options);
+    const bool        ok   = (path == ShadingPath::Forward) ? buildForwardPath(*pipeline)
+                                                            : buildDeferredPath(*pipeline, options);
     if (!ok) {
         return nullptr;
     }
+    pipeline->path_ = path;
     reportRequestedShadows();
     if (!applyOverlays(*pipeline, options)) {
         return nullptr;
     }
+    // The build's mode lands as the same override a live switch applies (one place knows what a mode means),
+    // and it always succeeds here: the chain was chosen to be able to express it.
+    (void)pipeline->setShadingMode(options.mode);
     return pipeline;
+}
+
+ShadingPath RenderPipelineBuilder::effectivePath(const PipelineOptions& options) noexcept
+{
+    // A non-Lit mode is a geometry-stage override: it needs the pass that turns geometry into the picture, and a
+    // deferred recipe has no such pass in the picture's path (its window pass is a fullscreen lighting program
+    // reading the G-buffer). So the chain is built forward while such a mode is active - and the REQUEST is left
+    // untouched, so switching back to Lit builds deferred again.
+    if (options.mode != ShadingMode::Lit && options.path == ShadingPath::Deferred) {
+        return ShadingPath::Forward;
+    }
+    return options.path;
 }
 
 bool RenderPipelineBuilder::applyOverlays(Pipeline& pipeline, const PipelineOptions& options)

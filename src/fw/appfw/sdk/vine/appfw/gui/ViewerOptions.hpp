@@ -1,0 +1,50 @@
+#pragma once
+
+#include <vine/graphics/ShadingMode.hpp>
+#include <vine/graphics/ShadingPath.hpp>
+
+#include <vine/appfw/appfw_global.hpp>
+
+VN_APPFWGUI_NS_BEGIN
+
+/**
+ * @brief How a render control's DEFAULT VIEWER draws: the recipe of the pipeline it builds for its view.
+ *
+ * WHAT THIS IS. A render control gives a host a 3D area it does not have to wire itself: it owns a view, an
+ * engine and a surface, and it builds the pipeline that draws the view (RenderPipelineBuilder with the options
+ * derived from here). This is the host-facing half of that recipe - the choices a viewer has - while the
+ * CONTEXTUAL fields of PipelineOptions (the gizmo's source camera = the view's camera, the pixel ratio both
+ * overlays want) are filled by the control, which is the only party that knows them.
+ *
+ * WHAT IT IS NOT. It is not the pipeline contract: a host that wants more (its own G-buffer or lighting
+ * programs, a chain of its own) builds a Pipeline with RenderPipelineBuilder and adopts it (SceneView::setPipeline)
+ * - that view's drawing is then the host's, and this preset no longer applies to it.
+ *
+ * CHANGING IT REBUILDS. A chain, an overlay's existence and the shading mode the chain must be able to express
+ * are all build decisions (see PipelineOptions), so a change here is one pipeline build per view - not a
+ * per-frame cost, but not free either. What costs nothing is a mode the built chain can express and the
+ * visibility of an overlay it has: those are Pipeline::setShadingMode / setGizmoVisible / setStatsVisible, calls
+ * on the live pipeline.
+ */
+struct VN_APPFW_API ViewerOptions
+{
+    /// How the opaque content is shaded (the structural choice; see ShadingPath).
+    vn::graphics::ShadingPath path{ vn::graphics::ShadingPath::Forward };
+
+    /// What the picture MEANS (see ShadingMode). A non-Lit mode is a geometry-stage override, so a Deferred
+    /// request carrying one is built FORWARD for it (RenderPipelineBuilder::effectivePath) - the requested path
+    /// is kept, so switching back to Lit builds deferred again.
+    vn::graphics::ShadingMode mode{ vn::graphics::ShadingMode::Lit };
+
+    /// Whether the viewer HAS an axis-gizmo overlay (its visibility is a switch on the built pipeline).
+    bool gizmo{false};
+
+    /// Whether the viewer HAS a frame-rate readout (its visibility is a switch on the built pipeline).
+    bool stats{false};
+
+    /// Deferred G-buffer size in pixels; 0 (the default) is the current surface size.
+    int offscreen_width{0};
+    int offscreen_height{0};
+};
+
+VN_APPFWGUI_NS_END

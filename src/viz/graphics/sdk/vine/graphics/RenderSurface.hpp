@@ -9,6 +9,8 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "RenderDiagnostic.hpp"
+#include "ReportOnce.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -102,18 +104,20 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
   public:
     /** @brief Declares that @p view draws this surface, into the rectangle @p view already draws into.
      *
-     * The declaration a host makes when it has no main pass of its own: this surface is presented by the view's
-     * default window pipeline, which is built here (SceneView::ensureWindowPass) if it does not exist yet.
-     * Declaring the same view twice is one presentation. A view that draws through ANOTHER engine (or none) is
-     * refused and reported: its window pass is registered on that engine's frame, so it could never present this
-     * surface, and a host that is told nothing would be looking at an empty area. A view that already presents
+     * The declaration a host makes when it has no main pass of its own: this surface is presented by the pass of
+     * the pipeline the VIEW adopted (SceneView::setPipeline). The table never builds one - it resolves the pass
+     * back through the view - so a view with no pipeline is refused and reported: a declaration without one would
+     * leave the host believing a window is being drawn into while nothing draws. Declaring the same view twice is
+     * one presentation. A view that draws through ANOTHER engine (or none) is refused and reported: its passes are
+     * registered on that engine's frame, so it could never present this surface. A view that already presents
      * ANOTHER surface is refused for the same reason (one view draws one picture).
      *
      * The view's current rectangle (SceneView::viewport) becomes this presentation's rectangle: a view that was
      * already drawing into part of the surface keeps that part once it is presented. Use the overload below to
      * state a different one.
      *
-     * @param view View to present; must be bound to this surface's engine, and present no other surface.
+     * @param view View to present; must have adopted a pipeline, be bound to this surface's engine, and present no
+     *             other surface.
      * @return true when this added a presentation; false when @p view already presented this surface, or could
      *         not.
      */
@@ -326,8 +330,8 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     /** @brief Puts the ONE clear of this surface on the pass that draws first, and off every other one.
      *
      * Called whenever the table or the order it is read in can have moved: a presentation was added or dismissed,
-     * and a presented view rebuilt its pipeline (its window pass is a new pass, created ENABLED - see
-     * SceneView::rebuildDefaultWindowPass, which calls this through the friendship above).
+     * and a presented view adopted another pipeline (its window pass is a new pass, created ENABLED - see
+     * SceneView::setPipeline, which calls this through the friendship above).
      */
     void applyClear();
 
@@ -343,6 +347,8 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     /// The view the input went to (borrowed, and only while it presents this surface): null = nothing focused yet,
     /// so focusedView() answers with the first presentation.
     raw_ptr<SceneView> focused_ = nullptr;
+    /// "A declaration was refused" is one condition, not a per-call event (see present(SceneView&)).
+    ReportOnce refused_;
 };
 
 VN_GRAPHICS_NS_END

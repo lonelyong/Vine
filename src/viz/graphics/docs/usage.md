@@ -601,7 +601,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 | 内容 | 位置 |
 | --- | --- |
-| 内建前向着色（引擎默认内容程序，`forwardProgram()`；同一段文本 + 一个 `#define` 出 `flatForwardProgram()` / `unlitForwardProgram()` / `normalsForwardProgram()` 三种查看模式，见 `SceneView::Options::Mode`，线框 = 无光照 + `RenderPass::setPolygonModeOverride(Line)`） | `src/viz/graphics/shaders/builtin_forward.*` |
+| 内建前向着色（引擎默认内容程序，`forwardProgram()`；同一段文本 + 一个 `#define` 出 `flatForwardProgram()` / `unlitForwardProgram()` / `normalsForwardProgram()` 三种查看模式，见 `vn::graphics::ShadingMode`，线框 = 无光照 + `RenderPass::setPolygonModeOverride(Line)`） | `src/viz/graphics/shaders/builtin_forward.*` |
 | 延迟管线的 G-buffer 几何 / 全屏光照 | `src/viz/graphics/shaders/builtin_gbuffer.*` / `builtin_deferred_lighting.frag` |
 | 天空盒（`skyboxProgram()`，无光照 cube map 方向采样） | `src/viz/graphics/shaders/builtin_skybox.*` |
 | 全屏三角形顶点段 / 纯拷贝（`fullscreenVertexProgram()` / `screenCopyProgram()`） | `src/viz/graphics/shaders/builtin_fullscreen.vert` / `builtin_screen_copy.frag` |
@@ -663,39 +663,59 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 `Rgba8Unorm` 改成 `Rgba8Srgb` 后天空回到正确亮度（视口带 mean 122.7 → 80.8，门禁判据一行未动）——
 读数与变异证明见 [`.ai/design/vsg-reimplementation.md`](../../../../.ai/design/vsg-reimplementation.md) §11.16cp。
 
-### 3.10 省事的视图：`SceneView::Options`（配方）
+### 3.10 省事的视图：`Pipeline` 是配方，视图只采纳（appfw 的 `ViewerOptions` 是宿主那一层）
 
-上面几节都是"自己搭管线"。**视图层把常见的四件事收成一份配方**，让一个插件三五行就有画面：
+上面几节都是"自己搭管线"。**图形层把"配方"收进 `Pipeline`**：一条链就是它的选项建出来的（`PipelineOptions`），
+宿主**建**它、**采纳**它（`SceneView::setPipeline`），视图从此画的就是它 —— 视图自己不记配方，也没有"默认管线"
+这回事（不采纳就不画）。
 
 ```cpp
-// 这个视图怎么画（配方）：结构变了才重建管线
-view->setOptions({ .path = vn::graphics::ShadingPath::Forward,   // 或 Deferred
-                   .mode = vn::graphics::SceneView::Options::Mode::Lit,
-                   .gizmo = true, .stats = true });              // 坐标轴档 + 帧率读数档
+// 这个视图怎么画：选项 → 建 → 采纳（结构变了才有第二次建链）
+vn::graphics::PipelineOptions options;
+options.path = vn::graphics::ShadingPath::Forward;               // 或 Deferred
+options.mode = vn::graphics::ShadingMode::Lit;                   // 见下："档"是选项也是运行期开关
+options.gizmo.source_camera = view->camera();                    // 有源相机 = 有这个档
+options.fps.enabled = true;                                      // 帧率读数档
+vn::graphics::RenderPipelineBuilder builder(engine);
+builder.setCamera(view->camera());
+builder.setContent(view->scene());
+view->setPipeline(builder.build(options));
 
-// 运行时开关（菜单项 / 快捷键）：只是 pass->setEnabled(false/true)，**零重建**
-view->setStatsVisible(false);
-view->setGizmoVisible(true);   // 配方里没建过这一档？第一次开启会补建一次，之后同样零重建
+// 运行期：都是**那条链**上的开关/覆盖，零重建、零重新注册
+vn::graphics::Pipeline* pipeline = view->pipeline();
+pipeline->setStatsVisible(false);        // pass->setEnabled(false) —— 没有这一档时如实拒绝 + 报一次
+pipeline->setGizmoVisible(true);
+pipeline->setShadingMode(vn::graphics::ShadingMode::Wireframe);  // 见下
 
 // 几何（改它**不重建**）：归一化视口是矩形唯一的真相，宽高比 / pass 的设备像素视口 / 清屏范围全由它推
 view->setViewport({ 0.0, 0.0, 0.5, 1.0 });
 view->onSurfaceResized(w, h, dpr);        // 只喂**表面**尺寸 + 比例；"这一块"是视图自己算的
                                           // （视图挂在表面上时这句转发给 RenderSurface::resize，见 §3.11）
-view->addSurfaceLayout([p](int w, int h, double dpr) { p->resize(w, h, dpr); });  // 自建管线接这里
 ```
 
-- **配方 vs 开关**：`Options` 回答"这个视图**有没有**这个档"（`.stats=false` ⇒ 没有读数档），
-  `setStatsVisible()` 回答"现在**看得见吗**"；前者变更 = 一次重建，后者永不重建。
-- **模式（`Options::Mode`）是 pass 属性，不是重建**：`Lit` 用内容自己的 program，`Flat/Unlit/Normals` 是同一段
+- **建链的选项 vs 链上的开关**：`PipelineOptions` 回答"这条链**有没有**这个档、走哪条链"（变更 = 一次建链），
+  `setStatsVisible()` / `setShadingMode()` 回答"现在画成什么样"（永不重建）。**"有没有"与"看不看得见"是两件事**：
+  一条链没有读数档时 `setStatsVisible(true)` 返回 false 并报出来（静默的开关最坏）。
+- **档（`ShadingMode`）是 pass 属性，不是重建**：`Lit` 用内容自己的 program，`Flat/Unlit/Normals` 是同一段
   fragment 文本的另一个 `#define`（`setProgramOverride`），`Wireframe` 再加
-  `RenderPass::setPolygonModeOverride(PolygonMode::Line)`。**模式作用在几何阶段**：延迟配方配非 Lit 档时，视图把链条
-  按**前向**建（配方字段不动）⇒ 四档在两条配方上都能画出来；同一链条上换档零重建，进出非 Lit（延迟配方）是一次重建。
+  `RenderPass::setPolygonModeOverride(PolygonMode::Line)`。**档作用在几何阶段**：延迟的请求配非 Lit 档时，
+  `RenderPipelineBuilder::effectivePath()` 把链建成**前向**（选项字段不动，`Pipeline::shadingPath()` 记的是**实际建成**的那条），
+  于是四档在两条请求上都能画出来；同一条链上换档零重建，而"延迟请求 + 非 Lit 档"期间选回 `Lit` 是一次建链
+  （回到延迟链 —— 这就是那句 `effectivePath()` 公开成静态的用途）。
+- **重建之后谁把运行期选择搬过去**：重建的那一方（appfw 的 `SurfaceWindow::buildViewerPipeline` 读活着的链、
+  在新链上重新落一遍）。链自己只知道选项说了什么。
 - **灯是场景的，不是面的**：`scene->addLighting(vn::graphics::LightRig::studio())`（零灯只有后端
   `ambient=0.15` 的常量填充 ⇒ 一片平色，看起来像"没装灯"）。
-- **谁呈现这块表面是声明的**（`RenderSurface`，见 §3.11）：默认窗口管线是**兜底** —— 没有任何呈现声明时它才存在；
-  宿主自建主 pass 时在那块表面上说一声，默认那条就**不建**（`ensureWindowPass()` 单独调用仍然可用，幂等）。
+- **谁呈现这块表面是声明的**（`RenderSurface`，见 §3.11）：表只**解析**声明（视图的声明 → 它采纳的那条链的窗口
+  pass），它不建任何东西。宿主自建主 pass 时声明自己那条，视图那条就一句都不建（**不采纳就没有默认链**：
+  "没有任何声明就建默认链"这条兜底归 appfw 的 `RenderControl`）。
+- **宿主那一层（appfw）**：`RenderControl::viewerOptions()/setViewerOptions()/setShadingMode()` 是"省事的视图"在
+  应用侧的化身 —— `vn::appfw::gui::ViewerOptions`（链 / 档 / 两个档在不在 / 离屏尺寸）加上控件补上的上下文字段
+  （gizmo 的源相机 = 视图相机、两个 HUD 的像素比 = 表面比例）；`setViewerOptions()` = 一次建链 + 采纳，
+  `setShadingMode()` 先试链上的开关、链表达不了才带档重建。
 - 配方/几何/开关三层与"两处同名 vs 一处覆盖"的完整理由见
-  [`.ai/design/appfw-render-view.md`](../../../../.ai/design/appfw-render-view.md) §4.1、§7。
+  [`.ai/design/appfw-render-view.md`](../../../../.ai/design/appfw-render-view.md) §4.1、§7，落地记录见
+  [`.ai/design/graphics-redesign.md`](../../../../.ai/design/graphics-redesign.md) S7。
 
 ### 3.11 一块表面由谁画：`RenderSurface`
 
@@ -703,13 +723,13 @@ view->addSurfaceLayout([p](int w, int h, double dpr) { p->resize(w, h, dpr); });
 原生窗口）。它是一张**有序的呈现表**，顺序按**引擎的执行序**（`addPass()` 的槽）：
 
 ```cpp
-// 表面的默认呈现：控件自己的视图（appfw 的 RenderControl::init() 就是这么兜底的）
+// 表面的默认呈现：控件自己的视图（appfw 的 SurfaceWindow::init() 就是这么兜底的）
 auto* surface = control->surface();
 if (!surface->hasPresentation()) {
-    surface->present(*control->view());          // 顺带把该视图的默认窗口管线建出来
+    surface->present(*control->view());   // 声明它采纳的那条链的窗口 pass —— 先建链、先采纳，才有东西可指
 }
 
-// 宿主自建主 pass 时：声明自己的那条，默认窗口管线一条都不建
+// 宿主自建主 pass 时：声明自己的那条，视图那条一条都不建
 auto pipeline = builder.build(options);
 surface->present(pipeline->windowPass());
 

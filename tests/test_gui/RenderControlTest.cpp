@@ -23,6 +23,7 @@
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderEngine.hpp>
+#include <vine/graphics/RenderPipelineBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -201,6 +202,28 @@ class HostedControl
     QWindow*                     surface_{ nullptr };
 };
 
+/**
+ * @brief A second pane on @p engine: its own view with the chain a HOST builds for it, adopted.
+ *
+ * The order a host has on a surface of its own is build -> adopt -> declare: RenderSurface::present resolves a
+ * view's declaration to the window pass of the pipeline the view adopted and builds nothing itself (a pane whose
+ * chain nobody built has nothing to point at, and is refused). The control does this for ITS view (see
+ * RenderControl::viewerOptions); a pane the test adds is the test's own.
+ *
+ * @param engine Engine the pane's passes are registered on (the control's, in these tests).
+ * @return The view, ready to present.
+ */
+vn::intrusive_ptr<vn::graphics::SceneView> secondPane(vn::graphics::RenderEngine* engine)
+{
+    auto view = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
+    view->setEngine(engine);
+    vn::graphics::RenderPipelineBuilder builder(engine);
+    builder.setCamera(view->camera());
+    builder.setContent(view->scene());
+    view->setPipeline(builder.build({}));
+    return view;
+}
+
 } // namespace
 
 // 控件自驱：宿主把后端装上、把窗口显示出来就够了 —— 不需要自己挑时机调 init()（它仍然是显式入口，幂等）。
@@ -245,8 +268,7 @@ TEST(RenderControlTest, TheControlsSurfacePresentsItsOwnViewByDefault)
 
     // 同一块表面上再挂一个视图：它照样呈现，但清屏仍然只有第一条（表面说了算 —— 后端本来也只应用第一条公告，
     // 只是从前第二条会**静默**丢掉自己那个 clearColor）。
-    auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
-    right->setEngine(control->engine());
+    auto right = secondPane(control->engine());
     EXPECT_TRUE(surface->present(*right));
     EXPECT_EQ(surface->presentations().size(), 2u);
     EXPECT_TRUE(table[0].pass->isClearEnabled());
@@ -254,8 +276,50 @@ TEST(RenderControlTest, TheControlsSurfacePresentsItsOwnViewByDefault)
     control->renderFrame();
 }
 
-// 构造只组装：`new RenderControl()` 返回时**没有** attach（状态停在 Pending），配置写在它之后的同步代码里；
-// 第一拍兜底才 attach —— 而兜底用的正是宿主刚装上的那个后端（不是注册表里的默认）。这就是"配置窗口"，
+// 查看器预设与运行期换档是两件事：预设说"走哪条链、哪些档、档要能表达什么"，换档问的是"这条链能不能表达、
+// 以及**这个请求**是不是就该由它来画"。延迟预设 + 非 Lit 档 ⇒ 链按前向建（effectivePath）；这时选回 Lit，
+// 前向链当然表达得了 Lit，但这个请求要的是延迟 ⇒ **建回延迟**（老规矩，见 RenderPipelineBuilder::effectivePath）。
+TEST(RenderControlTest, ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt)
+{
+    HostedControl host;
+    auto*         control = host.control();
+    ASSERT_NE(control, nullptr);
+
+    vn::appfw::gui::ViewerOptions options;  // 预设：延迟（宿主写的就是它，链只是它的实现）
+    options.path = vn::graphics::ShadingPath::Deferred;
+    ASSERT_TRUE(control->setViewerOptions(options));
+    auto* pipeline = control->view()->pipeline();
+    ASSERT_NE(pipeline, nullptr);
+    EXPECT_EQ(pipeline->shadingPath(), vn::graphics::ShadingPath::Deferred);
+    EXPECT_NE(pipeline->offscreenTarget(), nullptr) << "延迟链的输入是 G-buffer";
+    EXPECT_EQ(control->viewerOptions().path, vn::graphics::ShadingPath::Deferred) << "预设仍是宿主写的那个";
+
+    // 非 Lit 档：延迟链表达不了它（没有几何趟可改）⇒ 换档就是**重建**，链变前向、G-buffer 退场。
+    ASSERT_TRUE(control->setShadingMode(vn::graphics::ShadingMode::Unlit));
+    auto* forward = control->view()->pipeline();
+    ASSERT_NE(forward, nullptr);
+    EXPECT_NE(forward, pipeline) << "重建了：链不一样了";
+    EXPECT_EQ(forward->shadingPath(), vn::graphics::ShadingPath::Forward);
+    EXPECT_EQ(forward->shadingMode(), vn::graphics::ShadingMode::Unlit);
+    EXPECT_EQ(forward->offscreenTarget(), nullptr) << "非 Lit 档不需要 G-buffer";
+    EXPECT_EQ(control->viewerOptions().mode, vn::graphics::ShadingMode::Unlit) << "运行期那一档要记进预设";
+
+    // 同一条（前向）链上表达得了的另一档：零重建 —— 预设跟着走（否则下次读-改-写会把旧档带回来）。
+    auto held = vn::intrusive_ptr<vn::graphics::Pipeline>(forward);
+    EXPECT_TRUE(control->setShadingMode(vn::graphics::ShadingMode::Wireframe));
+    EXPECT_EQ(control->view()->pipeline(), held.get()) << "同一条链上换档不该重建";
+    EXPECT_EQ(control->viewerOptions().mode, vn::graphics::ShadingMode::Wireframe);
+
+    // 选回 Lit：链能表达它，但请求要的是延迟 ⇒ 建回延迟，且 G-buffer 回来。
+    EXPECT_TRUE(control->setShadingMode(vn::graphics::ShadingMode::Lit));
+    auto* deferred = control->view()->pipeline();
+    ASSERT_NE(deferred, nullptr);
+    EXPECT_EQ(deferred->shadingPath(), vn::graphics::ShadingPath::Deferred) << "请求说了算：回到延迟";
+    EXPECT_NE(deferred->offscreenTarget(), nullptr);
+    EXPECT_EQ(control->viewerOptions().mode, vn::graphics::ShadingMode::Lit);
+}
+
+// 构造只组装：`new RenderControl()` 返回时**没有** attach（状态停在 Pending），配置写在它之后的同步代码里；// 第一拍兜底才 attach —— 而兜底用的正是宿主刚装上的那个后端（不是注册表里的默认）。这就是"配置窗口"，
 // 也是 SDK 写的次序（构造 ⇒ setBackend() ⇒ init()）不再依赖"构造那一刻注册表里有没有后端"的原因。
 TEST(RenderControlTest, ConstructionOnlyComposesAndTheFirstTurnAttaches)
 {
@@ -315,11 +379,10 @@ TEST(RenderControlTest, TheInputRouterSendsEachDragToTheViewUnderTheCursor)
     auto* own_view = control->view();
     ASSERT_NE(own_view, nullptr);
 
-    // 右边那半：自己的视图 + 挂在**同一个引擎**上（视图属于引擎，不属于控件）+ 自己那条窗口管线。
-    // 声明在这块表面上（`RenderSurface::present`）：它顺带把那条默认窗口管线建出来，同时"这块表面由谁画"
-    // 有了唯一的记录（分屏的下一步 —— 矩形与输入路由 —— 都要读这张表）。
-    auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
-    right->setEngine(control->engine());
+    // 右边那半：自己的视图 + 挂在**同一个引擎**上（视图属于引擎，不属于控件）+ 自己那条窗口管线（宿主建、宿主
+    // 采纳）。声明在这块表面上（`RenderSurface::present`）："这块表面由谁画"于是有了唯一的记录（分屏的下一步 ——
+    // 矩形与输入路由 —— 都要读这张表）。
+    auto right = secondPane(control->engine());
     control->surface()->present(*right);
     right->setViewport({ 0.5, 0.0, 0.5, 1.0 });
     // 尺寸不用手喂：声明在这块表面上就等于"这一格在表面上"，表面自己记着的尺寸（控件那次 resize 报的）在 present
@@ -392,8 +455,7 @@ TEST(RenderControlTest, TheSurfacesRectanglesRouteInputWithNoRouterAtAll)
     EXPECT_EQ(control->focusedView(), own_view) << "还没有人按过：焦点是第一条呈现（控件自己那个视图）";
 
     // 右边那半：第二条呈现。**布局就是路由表** —— 这条用例一次都不调 setInputRouter。
-    auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
-    right->setEngine(control->engine());
+    auto right = secondPane(control->engine());
     ASSERT_TRUE(control->surface()->present(*right, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }));
     // 尺寸随 present 一起来，不用手喂（见上一条用例）。
 
@@ -469,8 +531,7 @@ TEST(RenderControlTest, ACapturedViewSurvivesTheHostLettingGoOfIt)
     auto* control = host.control();
     ASSERT_TRUE(pumpUntil([&] { return control->width() > 0 && control->height() > 0; }, 3000));
 
-    auto  right   = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
-    right->setEngine(control->engine());
+    auto  right   = secondPane(control->engine());
     control->surface()->present(*right);
     right->setViewport({ 0.5, 0.0, 0.5, 1.0 });
     // 尺寸随 present 一起来，不用手喂（见上一条用例）。
@@ -521,8 +582,7 @@ TEST(RenderControlTest, ReleasingOneButtonDoesNotEndTheOtherButtonsDrag)
     ASSERT_TRUE(pumpUntil([&] { return control->width() > 0 && control->height() > 0; }, 3000));
 
     auto own   = vn::intrusive_ptr<vn::graphics::SceneView>(control->view());
-    auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
-    right->setEngine(control->engine());
+    auto right = secondPane(control->engine());
     control->surface()->present(*right);
     right->setViewport({ 0.5, 0.0, 0.5, 1.0 });
     // 尺寸随 present 一起来，不用手喂（见上一条用例）。

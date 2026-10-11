@@ -9,10 +9,14 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
+#include <vine/graphics/RenderPipelineBuilder.hpp>
 #include <vine/graphics/SceneView.hpp>
 
+using vn::graphics::PipelineOptions;
 using vn::graphics::RenderPass;
+using vn::graphics::RenderPipelineBuilder;
 using vn::graphics::SceneView;
+using vn::graphics::ShadingMode;
 using vn::graphics::ShadingPath;
 using vn::graphics::backend::PixelProbe;
 using vn::graphics::backend::Rgba8;
@@ -108,8 +112,13 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
 
     // Built once, with the options that are in force for the first picture: the chain forward, so the picture
     // pass is the scene pass itself.
-    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Unlit });
-    view->ensureWindowPass();
+    PipelineOptions options;
+    options.path = ShadingPath::Deferred;      // 延迟的**请求**……
+    options.mode = ShadingMode::Unlit;         // ……配上非 Lit 档 ⇒ 建成的链是前向的（effectivePath）
+    RenderPipelineBuilder builder(fixture.engine.get());
+    builder.setCamera(view->camera());
+    builder.setContent(view->scene());
+    view->setPipeline(builder.build(options));
     ASSERT_NE(view->pipeline(), nullptr);
 
     // The picture pass draws into the fixture's off-screen target instead of the window: the SDK's own pass
@@ -129,7 +138,7 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
     // 同一帧的另一版：只换档。链条没变 ⇒ 不该重建 ⇒ 还是那条 pass（目标没被换掉），相机当然也没动。
     // 这里**不判**"pass 上多了个 PolygonMode::Line 覆盖"：那是 M1 在 test_graphics 的结构判据；这一条判的是像素，
     // 覆盖没到光栅器就该由画面来说（否则结构断言会先红，抢掉像素判据的那一刀）。
-    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Wireframe });
+    EXPECT_TRUE(view->pipeline()->setShadingMode(ShadingMode::Wireframe));
     ASSERT_EQ(view->pipeline()->windowPass(), picture) << "链条内换档不重建（M1 的另一半）";
 
     const PixelProbe lines = fixture.read();

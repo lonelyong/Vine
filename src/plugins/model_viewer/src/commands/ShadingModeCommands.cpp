@@ -4,6 +4,8 @@
 #include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
+#include <vine/graphics/RenderPipeline.hpp>
+#include <vine/graphics/SceneView.hpp>
 
 #include "../ModelDocument.hpp"
 
@@ -44,10 +46,28 @@ vn::async::Task<vn::appfw::CommandResult> ShadingModeCommand::execute(vn::appfw:
                                            vn::String(u8"还没有活动的 3D 视图：把这份模型显示出来再试"));
     }
 
-    // 读-改-写：`setOptions()` 收的是整个配方，只送一个 mode 会顺手把帧率读数、坐标轴那些关掉。
-    vn::graphics::SceneView::Options options = view->options();
-    options.mode                             = mode();
-    view->setOptions(options);
+    // 模式是这条链**建好之后**还能改的那一项（见 Pipeline::setShadingMode()）。焦点视图就是控件自己的视图时交给
+    // 控件：它知道链是不是它建的 —— 能直接改就是零重建，链表达不了就带着新档重建一次（延迟链没有可改的几何趟，
+    // 重建时按实面那条前置链搭，见 RenderPipelineBuilder::effectivePath）。
+    if (view == control->view()) {
+        if (!control->setShadingMode(mode())) {
+            co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed,
+                                               vn::String(u8"这一档没能生效：图形层拒绝了这次重建（见诊断）"));
+        }
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success, description());
+    }
+
+    // 焦点视图是**宿主自己搭的**（别的插件把自己的 Pipeline 采纳到了那一格）：直接问那条链，本命令不替别人决定
+    // 怎么重建 —— 它说表达不了，这里就是 NotApplicable 并说清原因（不静默）。
+    auto* pipeline = view->pipeline();
+    if (pipeline == nullptr) {
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::NotApplicable,
+                                           vn::String(u8"这一格还没有链：它还没有画过，或绘制被宿主拿走了"));
+    }
+    if (!pipeline->setShadingMode(mode())) {
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::NotApplicable,
+                                           vn::String(u8"这一格的链表达不了这一档：延迟链上只有实面可改"));
+    }
 
     co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success, description());
 }

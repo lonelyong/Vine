@@ -103,6 +103,21 @@ vn::graphics::RenderSurface* RenderControl::surface() const
     return dptr()->surface->surface();
 }
 
+ViewerOptions RenderControl::viewerOptions() const
+{
+    return dptr()->surface->viewerOptions();
+}
+
+bool RenderControl::setViewerOptions(const ViewerOptions& options)
+{
+    return dptr()->surface->setViewerOptions(options);
+}
+
+bool RenderControl::setShadingMode(vn::graphics::ShadingMode mode)
+{
+    return dptr()->surface->setShadingMode(mode);
+}
+
 vn::graphics::SceneView* RenderControl::focusedView() const
 {
     // The surface's focus is the pane the user last pressed in (RenderSurface::focus): a split answers with the

@@ -1,4 +1,4 @@
-﻿#include <vine/graphics/SceneView.hpp>
+#include <vine/graphics/SceneView.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -47,18 +47,17 @@ SceneView::SceneView()
 
 SceneView::~SceneView()
 {
-    // Leave the surface first, and while the default pipeline is still there to hold the engine alive: the surface
+    // Leave the surface first, and while the adopted pipeline is still there to hold the engine alive: the surface
     // re-states its clear on the presentations that remain, and that reads the engine's schedule (see
     // RenderSurface::applyClear). The surface also stops naming this view, so the other order - the surface
     // destroyed first - leaves this pointer null and nothing to do.
     if (surface_ != nullptr) {
         surface_->dismiss(this);
     }
-    // Drop the window pass this view registered. Dropping the handle is all it
-    // takes: the pipeline unregisters every pass it registered, and it holds the
-    // engine strongly, so the engine is still there to be unregistered from even
-    // if the host released it first (see Pipeline).
-    removeWindowPass();
+    // Drop the pipeline this view adopted. Dropping the handle is all it takes: the pipeline unregisters every
+    // pass it registered, and it holds the engine strongly, so the engine is still there to be unregistered from
+    // even if the host released it first (see Pipeline).
+    setPipeline(nullptr);
 }
 
 void SceneView::setSurface(raw_ptr<RenderSurface> surface) noexcept
@@ -79,189 +78,15 @@ void SceneView::setEngine(raw_ptr<RenderEngine> engine)
     if (engine_ == engine) {
         return;
     }
-    removeWindowPass();
+    // The adopted pipeline's passes live in the OLD engine's frame: dropping the handle takes them out of it
+    // (see Pipeline), and the host adopts one built on the new engine if it wants this view to keep drawing.
+    setPipeline(nullptr);
     engine_ = engine;
 }
 
 raw_ptr<RenderEngine> SceneView::engine() const
 {
     return engine_;
-}
-
-void SceneView::ensureWindowPass()
-{
-    if (engine_ == nullptr || default_pipeline_ != nullptr) {
-        return;
-    }
-    // The engine is borrowed, and everything below goes to it: hold it for the length of the operation, so a host
-    // that dropped its last reference meanwhile cannot leave a dangling handle behind (R2 in
-    // .ai/design/appfw-render-view.md §13 - "borrowed" means "only alive as long as the operation needs it", not
-    // "length is somebody else's problem").
-    intrusive_ptr<RenderEngine> const keep(engine_, true);
-
-    // The default viewer is the shared preset RenderPipelineBuilder exposes, configured by this view's recipe, so
-    // the view default and an application's explicit main pipeline stay one code path.
-    PipelineOptions pipeline_options;
-    pipeline_options.path                 = effectivePath();
-    pipeline_options.gizmo.source_camera  = options_.gizmo ? camera_.get() : nullptr;
-    pipeline_options.gizmo.pixel_ratio    = surfacePixelRatio();
-    pipeline_options.fps.enabled          = options_.stats;
-    pipeline_options.fps.pixel_ratio      = surfacePixelRatio();
-
-    RenderPipelineBuilder builder(engine_);
-    builder.setCamera(camera_.get());
-    builder.setContent(scene_);
-    default_pipeline_ = builder.build(pipeline_options);
-
-    // The pipeline was built at the builder's default geometry: this puts it at the surface size / viewport /
-    // ratio the view already knows about (a no-op before the first resize, exactly like today).
-    applySurfaceGeometry();
-    // ... and at the recipe's shading mode, which the builder has no option for (it is a pass property, see
-    // applyModeToGeometryPass).
-    applyModeToGeometryPass();
-    // ... and at the visibility the caller last asked for: a fresh overlay pass is created ENABLED, so without
-    // this a rebuild would switch a hidden readout back on (see applyOverlayIntent).
-    applyOverlayIntent();
-}
-
-ShadingPath SceneView::effectivePath(const Options& options) noexcept
-{
-    // A non-Lit mode is a geometry-stage override: it needs the pass that turns geometry into the picture, and a
-    // deferred recipe has no such pass in the picture's path (its window pass is a fullscreen lighting program
-    // reading the G-buffer). So the chain is built forward while such a mode is active - see the Mode docs.
-    if (options.mode != Options::Mode::Lit && options.path == ShadingPath::Deferred) {
-        return ShadingPath::Forward;
-    }
-    return options.path;
-}
-
-ShadingPath SceneView::effectivePath() const noexcept
-{
-    return effectivePath(options_);
-}
-
-void SceneView::applyOverlayIntent()
-{
-    if (default_pipeline_ == nullptr) {
-        return;
-    }
-    // Visibility is the PASS' state (a declaration's `enabled`), not the content object's: there is no second
-    // bool that could disagree with a host that toggled the handle (see Pipeline::gizmoPass).
-    if (RenderPass* const gizmo = default_pipeline_->gizmoPass(); gizmo != nullptr && !gizmo_visible_) {
-        gizmo->setEnabled(false);
-    }
-    if (RenderPass* const readout = default_pipeline_->fpsOverlayPass(); readout != nullptr && !stats_visible_) {
-        readout->setEnabled(false);
-    }
-}
-
-void SceneView::applyModeToGeometryPass()
-{
-    if (default_pipeline_ == nullptr) {
-        return;
-    }
-    // The pass that turns geometry into the picture. On the forward chain (which is what a Deferred recipe is
-    // built with while a non-Lit mode is active - see effectivePath()) that IS the window pass: geometry, shading
-    // and present are one pass, so the override here is a geometry-stage one by construction.
-    RenderPass* const picture = default_pipeline_->windowPass();
-    if (picture == nullptr) {
-        return;
-    }
-
-    // Every mode is the same program text with one define (BuiltinShaders) applied to the whole pass, and Lit is
-    // the per-geometry program the content came with - which is exactly what a null override means. Wireframe is
-    // the same idea one layer down: the pass RASTERISES the triangles as their edges (the same unlit colour, so
-    // the structure reads instead of the shading), and clearing that override is how every other mode goes back
-    // to surfaces. Both are pass properties: nothing here rebuilds anything.
-    switch (options_.mode) {
-        case Options::Mode::Lit:
-            picture->setProgramOverride(nullptr);
-            picture->clearPolygonModeOverride();
-            break;
-        case Options::Mode::Flat:
-            picture->setProgramOverride(vn::graphics::flatForwardProgram());
-            picture->clearPolygonModeOverride();
-            break;
-        case Options::Mode::Unlit:
-            picture->setProgramOverride(vn::graphics::unlitForwardProgram());
-            picture->clearPolygonModeOverride();
-            break;
-        case Options::Mode::Normals:
-            picture->setProgramOverride(vn::graphics::normalsForwardProgram());
-            picture->clearPolygonModeOverride();
-            break;
-        case Options::Mode::Wireframe:
-            picture->setProgramOverride(vn::graphics::unlitForwardProgram());
-            picture->setPolygonModeOverride(PolygonMode::Line);
-            break;
-    }
-}
-
-void SceneView::rebuildDefaultWindowPass()
-{
-    if (engine_ == nullptr) {
-        return;
-    }
-    // R2: the hold must span the WHOLE operation, not one half of it - dropping the old pipeline can drop the
-    // last reference to the engine (the pipeline was holding it), and the build that follows needs it alive.
-    intrusive_ptr<RenderEngine> const keep(engine_, true);
-    // Drop first, build through ensureWindowPass(): the old pipeline unregisters its passes as it goes away, so
-    // the rebuild leaves exactly the new pipeline's passes registered (no stale slot, no double registration).
-    removeWindowPass();
-    ensureWindowPass();
-    // ... and tell the surface this view presents: the ONE clear of that surface belongs to its first presentation,
-    // and this rebuild created NEW passes, each with its own defaults (a window pass clears). Without this the
-    // surface's decision would be undone on every recipe change.
-    if (surface_ != nullptr) {
-        surface_->applyClear();
-    }
-}
-
-void SceneView::removeWindowPass()
-{
-    if (default_pipeline_ == nullptr) {
-        return;  // guarded first: with no pipeline, engine_ may be a host-released (dangling) borrow.
-    }
-    // See rebuildDefaultWindowPass(): the pipeline's own reference is what keeps the engine alive across the
-    // unregistration this drop performs, and this hold keeps it alive if the pipeline was the last holder.
-    intrusive_ptr<RenderEngine> const keep(engine_, true);
-    default_pipeline_ = nullptr;
-}
-
-const SceneView::Options& SceneView::options() const noexcept
-{
-    return options_;
-}
-
-void SceneView::setOptions(const Options& options)
-{
-    const bool unchanged = options_.path == options.path && options_.mode == options.mode &&
-                           options_.gizmo == options.gizmo && options_.stats == options.stats;
-    if (unchanged) {
-        return;
-    }
-    const Options previous = options_;
-    options_             = options;
-
-    // Before the window pass is asked for, this is just the recipe the next ensureWindowPass() will build from
-    // (see the header), so a change costs nothing here.
-    if (default_pipeline_ == nullptr) {
-        return;
-    }
-
-    // STRUCTURE means "which passes exist": the CHAIN in use (a non-Lit mode on a deferred recipe is built
-    // forward - see effectivePath()) and the two overlays the recipe asks for. A mode that keeps the chain has no
-    // structural consequence: it is a pass property (applyModeToGeometryPass).
-    const bool structure_changed =
-        effectivePath(previous) != effectivePath(options) || previous.gizmo != options.gizmo || previous.stats != options.stats;
-    if (structure_changed) {
-        rebuildDefaultWindowPass();
-        return;
-    }
-
-    // Only the shading mode changed, on the same chain: that is the picture pass' program override, so the pass
-    // graph is untouched (same pipeline, same registered passes) and the next frame simply shades the other way.
-    applyModeToGeometryPass();
 }
 
 NormalizedViewport SceneView::viewport() const noexcept
@@ -277,7 +102,24 @@ NormalizedViewport SceneView::viewport() const noexcept
 
 raw_ptr<Pipeline> SceneView::pipeline() const
 {
-    return default_pipeline_.get();
+    return pipeline_.get();
+}
+
+void SceneView::setPipeline(intrusive_ptr<Pipeline> pipeline)
+{
+    if (pipeline_.get() == pipeline.get()) {
+        return;
+    }
+    pipeline_ = std::move(pipeline);
+    // The view brings what a pipeline cannot know: this view's rectangle, the surface size it comes out of, and
+    // the pixel ratio. Everything else (which passes exist, the shading mode, the overlays) is the pipeline's,
+    // which is why adopting one is one call and why a pipeline change never has to re-state any of it.
+    applySurfaceGeometry();
+    // A new pipeline's window pass is a NEW pass (created enabled): the ONE clear of a surface belongs to the
+    // presentation that draws first, so the table that lets this view present has to state that again.
+    if (surface_ != nullptr) {
+        surface_->applyClear();
+    }
 }
 
 void SceneView::setViewport(const NormalizedViewport& viewport)
@@ -296,90 +138,6 @@ void SceneView::setViewport(const NormalizedViewport& viewport)
     viewport_ = next;
     // Geometry: no rebuild, only the numbers every consumer reads (see applySurfaceGeometry).
     applySurfaceGeometry();
-}
-
-bool SceneView::isOverlayVisible(bool gizmo) const noexcept
-{
-    if (default_pipeline_ == nullptr) {
-        return false;
-    }
-    const RenderPass* pass = gizmo ? default_pipeline_->gizmoPass() : default_pipeline_->fpsOverlayPass();
-    // The pass IS the state: there is no second bool that could disagree with a host that toggled the handle.
-    return pass != nullptr && pass->isEnabled();
-}
-
-void SceneView::setOverlayVisible(bool on, bool gizmo)
-{
-    bool& wanted = gizmo ? options_.gizmo : options_.stats;
-    // Remember the REQUEST first, whatever path this call takes: it is what a later rebuild starts from
-    // (applyOverlayIntent). `on == false` with no pass yet is normal - it is still what the caller asked for.
-    (gizmo ? gizmo_visible_ : stats_visible_) = on;
-
-    if (on && default_pipeline_ != nullptr && !isOverlayVisible(gizmo)) {
-        RenderPass* pass = gizmo ? default_pipeline_->gizmoPass() : default_pipeline_->fpsOverlayPass();
-        if (pass == nullptr) {
-            // The pipeline exists but carries no such overlay: the recipe never asked for one. Add it and rebuild
-            // ONCE - from here on this switch is a flag, forever (see the header).
-            wanted = true;
-            rebuildDefaultWindowPass();
-            pass = gizmo ? default_pipeline_->gizmoPass() : default_pipeline_->fpsOverlayPass();
-        }
-        if (pass != nullptr) {
-            pass->setEnabled(true);
-            return;
-        }
-    }
-
-    if (default_pipeline_ == nullptr) {
-        // Nothing to switch: the view has no default window pipeline. Remember the intent for the pipeline that
-        // may still be built, and SAY SO - a silently ignored show request is the kind of thing that turns into a
-        // bug report about a missing overlay.
-        if (on) {
-            wanted = true;
-        }
-        if (engine_ != nullptr) {
-            engine_->reportEngineProblem(DiagnosticSeverity::Warning,
-                                         DiagnosticCategory::UnsupportedRequest,
-                                         gizmo ? String(u8"SceneView::setGizmoVisible: this view has no default "
-                                                        u8"window pipeline (an application built its own main pass, "
-                                                        u8"or the window pass was never ensured); the overlay was "
-                                                        u8"remembered for the next ensureWindowPass() - an "
-                                                        u8"application pipeline configures its overlays through "
-                                                        u8"RenderPipelineBuilder::PipelineOptions instead")
-                                               : String(u8"SceneView::setStatsVisible: this view has no default "
-                                                        u8"window pipeline (an application built its own main pass, "
-                                                        u8"or the window pass was never ensured); the overlay was "
-                                                        u8"remembered for the next ensureWindowPass() - an "
-                                                        u8"application pipeline configures its overlays through "
-                                                        u8"RenderPipelineBuilder::PipelineOptions instead"));
-        }
-        return;
-    }
-
-    RenderPass* pass = gizmo ? default_pipeline_->gizmoPass() : default_pipeline_->fpsOverlayPass();
-    if (pass != nullptr) {
-        pass->setEnabled(on);
-    }
-}
-
-void SceneView::setGizmoVisible(bool on)
-{
-    setOverlayVisible(on, /* gizmo */ true);
-}
-
-void SceneView::setStatsVisible(bool on)
-{
-    setOverlayVisible(on, /* gizmo */ false);
-}
-
-bool SceneView::isGizmoVisible() const noexcept
-{
-    return isOverlayVisible(/* gizmo */ true);
-}
-
-bool SceneView::isStatsVisible() const noexcept
-{
-    return isOverlayVisible(/* gizmo */ false);
 }
 
 void SceneView::paneSize(int& width, int& height) const
@@ -434,19 +192,19 @@ void SceneView::applySurfaceGeometry()
         manip->onResize(vn::window::ResizeEvent{ pane_w, pane_h });
     }
 
-    // 2) The default pipeline: its off-screen targets and HUD boxes are sized for this view's rectangle, and its
+    // 2) The adopted pipeline: its off-screen targets and HUD boxes are sized for this view's rectangle, and its
     //    window pass draws into it. The HUD passes anchor to the corner of their AREA, so they are pointed at the
     //    rectangle's origin before they are laid out.
-    if (default_pipeline_ != nullptr) {
+    if (pipeline_ != nullptr) {
         const Viewport device_rect = deviceViewport(rect, surface_w, surface_h, ratio);
-        if (AxisGizmo* gizmo = default_pipeline_->gizmo(); gizmo != nullptr) {
+        if (AxisGizmo* gizmo = pipeline_->gizmo(); gizmo != nullptr) {
             gizmo->setAreaOrigin(device_rect.x, device_rect.y);
         }
-        if (FpsOverlay* fps = default_pipeline_->fpsOverlay(); fps != nullptr) {
+        if (FpsOverlay* fps = pipeline_->fpsOverlay(); fps != nullptr) {
             fps->setAreaOrigin(device_rect.x, device_rect.y);
         }
-        default_pipeline_->resize(pane_w, pane_h, ratio);
-        if (RenderPass* window = default_pipeline_->windowPass(); window != nullptr) {
+        pipeline_->resize(pane_w, pane_h, ratio);
+        if (RenderPass* window = pipeline_->windowPass(); window != nullptr) {
             if (rect.isFull()) {
                 // The full surface is what a pass without a viewport already means - leaving it unset keeps the
                 // default path byte-for-byte the pipeline it was before viewports existed.
@@ -483,11 +241,11 @@ void SceneView::setScene(intrusive_ptr<Scene> scene)
         return;
     }
     scene_ = std::move(scene);
-    // The default window pass was built with the scene that was current then,
-    // and the pass' content is bound to the pass, not to this view: without
-    // re-binding it the viewer would keep drawing the replaced scene.
-    if (default_pipeline_ != nullptr && engine_ != nullptr) {
-        if (RenderPass* window = default_pipeline_->windowPass(); window != nullptr) {
+    // The adopted pipeline's window pass was built with the scene that was current then, and the pass' content
+    // is bound to the pass, not to this view: without re-binding it the view would keep drawing the replaced
+    // scene.
+    if (pipeline_ != nullptr && engine_ != nullptr) {
+        if (RenderPass* window = pipeline_->windowPass(); window != nullptr) {
             engine_->bindPassContent(window, scene_);
         }
     }

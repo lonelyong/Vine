@@ -9,6 +9,7 @@
 #include <vine/async/Task.hpp>
 
 #include "Control.hpp"
+#include "ViewerOptions.hpp"
 
 namespace vn::graphics
 {
@@ -101,10 +102,14 @@ class VN_APPFW_API RenderControl : public Control {
     /** @brief Gets the interactive primary view created by this control.
      *
      * The view owns this control's camera, content scene and orbit
-     * manipulator, and registers the window pass that presents them (see
-     * SceneView). Application code fills the content scene via
+     * manipulator. Application code fills the content scene via
      * view()->scene() and reads the camera via view()->camera() when it
      * assembles an explicit pipeline.
+     *
+     * What the view DRAWS is the pipeline it has adopted, and by default that is this control's viewer pipeline: the
+     * control builds it (see ViewerOptions) and adopts it on the view before the first attach, so a host that never
+     * touches pipelines nevertheless gets a picture. A host that assembles its own adopts it instead
+     * (view()->setPipeline(...)) and from then on owns that view's drawing - including rebuilding it (see Pipeline).
      *
      * One control holds one session and one view: a document that renders brings its OWN control (and with it
      * its own surface, device and pipelines - see appfw-document-model.md §9).
@@ -113,12 +118,48 @@ class VN_APPFW_API RenderControl : public Control {
      */
     vn::graphics::SceneView* view() const;
 
+    /** @brief Gets how this control's own viewer draws (see ViewerOptions).
+     *
+     * @return The viewer options currently in effect (the defaults until a host changes them).
+     */
+    ViewerOptions viewerOptions() const;
+
+    /** @brief Changes how this control's own viewer draws, rebuilding its pipeline and adopting it on the view.
+     *
+     * The one call a host needs to shape the default picture: a chain, an overlay's existence and the mode the
+     * chain must express are build decisions (see ViewerOptions), so this is one pipeline build - at construction
+     * time, before the first attach, it is also what a viewer's settings should be made with (the attach's first
+     * frame then already draws the intended picture).
+     *
+     * The contextual parts of the recipe (the gizmo mirrors this control's camera, the overlays take this control's
+     * device pixel ratio) are filled in here, which is what keeps the host out of the pipeline options that only
+     * the control can answer.
+     *
+     * @param options How the viewer draws from now on.
+     * @return true when the pipeline was built and adopted; false when the builder refused @p options (the previous
+     *         pipeline then stays in place). Before the first attach there is nothing to refuse it against - a
+     *         build that succeeds is adopted and the attach draws with it.
+     */
+    bool setViewerOptions(const ViewerOptions& options);
+
+    /** @brief Switches the shading mode of this control's own viewer.
+     *
+     * The cheap switch: a mode the built chain can express is one override on the live pipeline, taking effect on
+     * the next frame with no rebuild. When the chain cannot express it, the viewer is rebuilt from the current
+     * options carrying the requested mode.
+     *
+     * @param mode The viewing mode to switch to.
+     * @return true when the viewer now shades in @p mode; false when the rebuild failed (the previous pipeline stays
+     *         in place).
+     */
+    bool setShadingMode(vn::graphics::ShadingMode mode);
+
     /** @brief Gets the presentation table of the surface this control renders into.
      *
      * Which passes draw into this surface, and in which order: the ONE place that answers "who presents this
-     * surface". By default the control's own view does (init() declares it there), and a host that builds its own
-     * main pass declares THAT pass instead - which is what keeps the default window pass from being built beside
-     * it:
+     * surface". By default the control's own viewer does (the control builds its pipeline, adopts it on the view and
+     * declares the view here), and a host that builds its own main pass declares THAT pass instead - which is what
+     * keeps the default pipeline from being built beside it:
      *
      * @code
      * auto pipeline = builder.build(options);

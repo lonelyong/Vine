@@ -31,6 +31,7 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/RenderPass.hpp>
+#include <vine/graphics/RenderPipelineBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -269,9 +270,10 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnLights)
 
 TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
 {
-    // 帧率读数现在是**视图默认窗口管线**里的 HUD 档（`view->setOptions({ .stats = true })`）：查看器不再自己造
-    // pass、不再自己接尺寸与比例。这条钉四件事：①读数在、且在画；②它是**视图默认管线**的一部分（不是随手挂在
-    // 引擎上的孤儿）；③`activate()` 可重复（不重建、不叠 pass）；④显示/隐藏是零重建的开关。
+    // 帧率读数现在是**控件查看器预设**里的 HUD 档（`control->setViewerOptions({ .stats = true })`，见
+    // ModelRenderView::buildScene）：查看器不再自己造 pass、不再自己接尺寸与比例。这条钉四件事：①读数在、且在画；
+    // ②它是**查看器那条链**的一部分（不是随手挂在引擎上的孤儿）；③`activate()` 可重复（不重建、不叠 pass）；
+    // ④显示/隐藏是零重建的开关。
     vn::appfw::DocumentManager          documents;
     vn::appfw::gui::DocumentViewRegistry views;
     vn::appfw::gui::MainWindow          window;
@@ -296,37 +298,52 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
     auto* scene_view = control->view();
     ASSERT_NE(scene_view, nullptr);
     auto* pipeline = scene_view->pipeline();
-    ASSERT_NE(pipeline, nullptr) << "上屏之后视图该有自己的默认窗口管线";
+    ASSERT_NE(pipeline, nullptr) << "上屏之后查看器该给视图一条链";
+    // 预设说的是"这条链有没有读数"（结构决定），读数在不在是链上的 pass 说了算。
+    EXPECT_TRUE(control->viewerOptions().stats) << "查看器的预设要带这个 HUD 档";
 
     // 读数（内容对象）与画它的 pass 是两件事：可见性问 pass（enabled 是声明状态），内容归对象。
     auto* readout = view->fpsOverlay();
-    ASSERT_NE(readout, nullptr) << "查看器要让视图的默认管线带上帧率读数";
+    ASSERT_NE(readout, nullptr) << "查看器要让链带上帧率读数";
     EXPECT_EQ(static_cast<const void*>(readout), static_cast<const void*>(pipeline->fpsOverlay()))
-        << "读数必须是默认管线里的那一个，不是另挂在引擎上的孤儿 pass";
+        << "读数必须是那条链里的一个，不是另挂在引擎上的孤儿 pass";
     auto* readout_pass = pipeline->fpsOverlayPass();
     ASSERT_NE(readout_pass, nullptr);
     EXPECT_TRUE(readout_pass->isEnabled());
-    EXPECT_TRUE(scene_view->isStatsVisible());
+    EXPECT_TRUE(pipeline->isStatsVisible());
 
-    // 再上屏几次只该重画：管线不重建、pass 不重复注册。
+    // 再上屏几次只该重画：链不重建、pass 不重复注册。
     const std::size_t registered = engine->passCount();
     view->activate();
     view->activate();
     EXPECT_EQ(engine->passCount(), registered) << "activate() 可重复：读数不能挂两遍";
     EXPECT_EQ(scene_view->pipeline(), pipeline);
 
-    // 宿主想关掉读数：开关只切 pass 的 enabled（引擎跳过被禁用的 pass），管线与 pass 表都不动。
-    scene_view->setStatsVisible(false);
+    // 宿主想关掉读数：开关只切 pass 的 enabled（引擎跳过被禁用的 pass），链与 pass 表都不动。
+    EXPECT_TRUE(pipeline->setStatsVisible(false));
     EXPECT_FALSE(readout_pass->isEnabled());
     EXPECT_FALSE(pipeline->fpsOverlayPass()->isEnabled());
     EXPECT_EQ(engine->passCount(), registered);
-    EXPECT_EQ(scene_view->pipeline(), pipeline) << "开关不该重建管线";
-    scene_view->setStatsVisible(true);
+    EXPECT_EQ(scene_view->pipeline(), pipeline) << "开关不该重建链";
+    EXPECT_TRUE(pipeline->setStatsVisible(true));
     EXPECT_TRUE(readout_pass->isEnabled());
 
-    // 改大小安全：读数的摆位与尺寸由视图在 resize 时算（不再有查看器那套 layout 步）。
+    // 关掉之后**重建**（预设加一个坐标轴 ⇒ 一条新链）不该把它偷偷点亮：重建读的是活着那条链的运行期选择。
+    vn::intrusive_ptr<vn::graphics::Pipeline> old_pipeline(pipeline);  // 拿住它：地址会因为回收而被重用，比对象才作数
+    auto options = control->viewerOptions();
+    EXPECT_TRUE(pipeline->setStatsVisible(false));
+    options.gizmo = true;
+    ASSERT_TRUE(control->setViewerOptions(options)) << "结构变化 = 一次建链";
+    auto* rebuilt = scene_view->pipeline();
+    ASSERT_NE(rebuilt, nullptr);
+    ASSERT_NE(rebuilt, old_pipeline.get()) << "结构变了，链是新的";
+    EXPECT_TRUE(rebuilt->isGizmoVisible()) << "新要的坐标轴亮着";
+    EXPECT_FALSE(rebuilt->isStatsVisible()) << "使用者关掉的读数不许跟着重建回来";
+    EXPECT_TRUE(rebuilt->setStatsVisible(true));
+
+    // 改大小安全：读数的摆位与尺寸由链在 resize 时算（不再有查看器那套 layout 步）。
     scene_view->onSurfaceResized(400, 300, control->devicePixelRatio());
-    EXPECT_TRUE(readout_pass->isEnabled());
+    EXPECT_TRUE(scene_view->pipeline()->fpsOverlayPass()->isEnabled());
 }
 
 TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
@@ -378,26 +395,26 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
     ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingWireframeCommand>(
         vn::String(vn::model_viewer::kShadingModeWireframeCommand)));
 
-    // 五档各跑一遍：每一档都要求"视图的模式真的换了"，而且**别的设置还在**（帧率读数是查看器开的，命令是
-    // 读-改-写，不该顺手把它关掉）。
+    // 五档各跑一遍：每一档都要求"视图那条链真的换了档"，而且**别的设置还在**（帧率读数是查看器开的，命令走的是链上
+    // 那一处开关，不该顺手把它关掉）。
     struct Case {
-        const char8_t*                                     command;
-        vn::graphics::SceneView::Options::Mode             mode;
-        bool                                               wireframe;
+        const char8_t*            command;
+        vn::graphics::ShadingMode mode;
+        bool                      wireframe;
     };
     const Case cases[] = {
-        { vn::model_viewer::kShadingModeLitCommand, vn::graphics::SceneView::Options::Mode::Lit, false },
-        { vn::model_viewer::kShadingModeFlatCommand, vn::graphics::SceneView::Options::Mode::Flat, false },
-        { vn::model_viewer::kShadingModeUnlitCommand, vn::graphics::SceneView::Options::Mode::Unlit, false },
-        { vn::model_viewer::kShadingModeNormalsCommand, vn::graphics::SceneView::Options::Mode::Normals, false },
-        { vn::model_viewer::kShadingModeWireframeCommand, vn::graphics::SceneView::Options::Mode::Wireframe, true },
+        { vn::model_viewer::kShadingModeLitCommand, vn::graphics::ShadingMode::Lit, false },
+        { vn::model_viewer::kShadingModeFlatCommand, vn::graphics::ShadingMode::Flat, false },
+        { vn::model_viewer::kShadingModeUnlitCommand, vn::graphics::ShadingMode::Unlit, false },
+        { vn::model_viewer::kShadingModeNormalsCommand, vn::graphics::ShadingMode::Normals, false },
+        { vn::model_viewer::kShadingModeWireframeCommand, vn::graphics::ShadingMode::Wireframe, true },
     };
     for (const Case& item : cases) {
         const auto result = commands->executeCommandAndWait(vn::String(item.command));
         EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success)
             << "命令该成功（说清了什么就不算失败：" << result.message().as_std_str() << "）";
-        EXPECT_EQ(scene_view->options().mode, item.mode);
-        EXPECT_TRUE(scene_view->options().stats) << "命令不该把帧率读数顺手关掉";
+        EXPECT_EQ(scene_view->pipeline()->shadingMode(), item.mode);
+        EXPECT_TRUE(scene_view->pipeline()->isStatsVisible()) << "命令不该把帧率读数顺手关掉";
         // 线框是"程序 + 光栅化"两个覆盖；其余档不许留下光栅化覆盖。
         const auto polygon = scene_view->pipeline()->windowPass() != nullptr
                                  ? scene_view->pipeline()->windowPass()->polygonModeOverride()
@@ -416,8 +433,16 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
     // 另一条呈现（矩形写在表面上，M2d），它也是这份模型文档的一个视图。
     auto second = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
     second->setEngine(control->engine());
+    // 这一格的链由**宿主**建（这里就是用例自己）：控件只对自己那个视图负责，别人搭的链别人管 —— 命令碰上它时
+    // 也只问那条链能不能换档，不替它重建。
+    {
+        vn::graphics::RenderPipelineBuilder builder(control->engine());
+        builder.setCamera(second->camera());
+        builder.setContent(second->scene());
+        second->setPipeline(builder.build({}));
+    }
+    ASSERT_NE(second->pipeline(), nullptr) << "宿主自己那一格也要有一条链，呈现它才有东西可指";
     ASSERT_TRUE(control->surface()->present(*second, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }));
-    ASSERT_NE(second->pipeline(), nullptr) << "声明呈现顺带把它那条默认窗口管线建出来";
     ASSERT_EQ(control->focusedView(), scene_view) << "没有人按过 ⇒ 焦点是第一条呈现（控件自己那个视图）";
 
     // 焦点在第二格：命令改第二格，而主视图保持上一轮那条命令留下的档（"改的是焦点"才看得出来）。
@@ -425,16 +450,16 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
     const auto focused_run = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeLitCommand));
     EXPECT_EQ(focused_run.status(), vn::appfw::CommandStatus::Success)
         << "命令该成功：" << focused_run.message().as_std_str();
-    EXPECT_EQ(second->options().mode, vn::graphics::SceneView::Options::Mode::Lit) << "焦点在第二格 ⇒ 改它";
-    EXPECT_EQ(scene_view->options().mode, vn::graphics::SceneView::Options::Mode::Wireframe)
+    EXPECT_EQ(second->pipeline()->shadingMode(), vn::graphics::ShadingMode::Lit) << "焦点在第二格 ⇒ 改它";
+    EXPECT_EQ(scene_view->pipeline()->shadingMode(), vn::graphics::ShadingMode::Wireframe)
         << "没被点过的那一格不该变（上一轮留下的是线框）";
 
     // 焦点回到第一格：同一条命令改的是它（同一命令在两块各来一遍）。
     ASSERT_TRUE(control->surface()->focus(scene_view));
     const auto back_run = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeUnlitCommand));
     EXPECT_EQ(back_run.status(), vn::appfw::CommandStatus::Success);
-    EXPECT_EQ(scene_view->options().mode, vn::graphics::SceneView::Options::Mode::Unlit);
-    EXPECT_EQ(second->options().mode, vn::graphics::SceneView::Options::Mode::Lit) << "另一格保持";
+    EXPECT_EQ(scene_view->pipeline()->shadingMode(), vn::graphics::ShadingMode::Unlit);
+    EXPECT_EQ(second->pipeline()->shadingMode(), vn::graphics::ShadingMode::Lit) << "另一格保持";
 
     // 守卫：当前文档不是模型（这里直接清掉当前文档）⇒ 命令如实说"不适用"，而不是去改别人的视图。
     ASSERT_TRUE(documents->setCurrent(nullptr));

@@ -19,9 +19,56 @@
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/usage.md`（模块文档一节） |
-| **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** |
+| **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6 / **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-11 S7 落地：配方归 `Pipeline`，视图只采纳（删掉 `ensureWindowPass` 那一层）
+
+- **起因（用户点名的那条"不清不白"）**：`SceneView::ensureWindowPass()` 一个名字干两件事 —— ①它是**配方**
+  （建哪条链、带哪些档），②它还是**表**要的默认 pass 入口（`RenderSurface::present()` 反过来调它）。于是
+  "什么时候该调用"没有答案，而它内部还带着"引擎里已有同相机的窗口 pass 就让位"的旧推断。三选一（① 改名+查询 /
+  ② 声明式结构 / ③ **删掉这一层**）里用户选了 ③：**结构归 `Pipeline`，视图只采纳一个**。
+- **分层判据（本片的核心结论）**：配方的字段按"**它在建链时决定什么**"分成两类 ——
+  **结构性**（走哪条链 / 非 Lit 档要求几何趟 / 哪些档**存在** / 离屏尺寸 / 程序）进 `PipelineOptions`；
+  **运行期**（同一条链上能表达的档、档的**显示/隐藏**）归 `Pipeline` 的 setter（零重建、零重新注册）。
+  两个枚举各自成叶子头：`ShadingMode.hpp`（原 `SceneView::Options::Mode`）、`ShadingPath.hpp`（原在
+  `RenderPipeline.hpp` 里）—— 与 S5 同一条判据：读者该能独立拿到值，不被拖进整张契约。
+- **`Pipeline` 记下自己是哪条链**：`shadingPath()` 答的是**实际建成**的那条（延迟请求配非 Lit 档 ⇒ 前向，
+  见 `RenderPipelineBuilder::effectivePath()`，它现在公开成静态，宿主也能问"这个请求会建成哪条链"）；
+  `shadingMode()`/`setShadingMode()` 换档是 pass 上的覆盖；**链表达不了就如实拒绝 + 报一次**（`ReportOnce`），
+  `setGizmoVisible()/setStatsVisible()` 在没有那一档时同样拒绝 + 报一次（以前是静默 `false`）。
+- **`SceneView` 删掉整层配方**：`Options`/`setOptions()`/`options()`/`ensureWindowPass()`/`effectivePath()`/
+  `applyModeToGeometryPass()`/`applyOverlayIntent()`/`setOverlayVisible()`/`isOverlayVisible()`/
+  `rebuildDefaultWindowPass()`/`removeWindowPass()`/`default_pipeline_` 全删，换成一条
+  `setPipeline(intrusive_ptr<Pipeline>)`（采纳 = 应用矩形几何 + 让表面重述清屏；传 null = 这个视图不画）。
+  `setScene()` 改为"重绑**已采纳那条链**的窗口 pass 的内容"（行为不变）。
+- **`RenderSurface` 不再建任何东西**：`present(view)` 只把声明**解析**成"视图采纳的那条链的窗口 pass"，
+  没有链的视图被**拒绝并报出来**；宿主顺序因此固定成**先建链 → 采纳 → 声明**。
+- **appfw 拿走"查看器"这一层**：新 `gui/ViewerOptions.hpp`（`path`/`mode`/`gizmo`/`stats`/离屏尺寸 = 宿主面对的
+  那一份预设）+ `RenderControl`/`SurfaceWindow` 各三个入口（`viewerOptions` / `setViewerOptions` /
+  `setShadingMode`）；**上下文字段由控件补**（gizmo 源相机 = 视图相机、两个 HUD 的像素比 = 表面比例）。
+  `setShadingMode()` 的两条路：活着的链 == 这个请求会建成的链（`effectivePath` 比一次）⇒ 只在链上换档；
+  否则**带着档重建**（所以"延迟请求 + 非 Lit 档"期间选回 Lit 会建回延迟 —— 老行为，靠这条比较才成立）。
+- **重建保住运行期选择**：`buildViewerPipeline()` 重建前读活着的链（档由预设记着、显示/隐藏读
+  `isGizmoVisible()`/`isStatsVisible()`），在新链上重新落一遍 —— 与 S6 同一条判据：**一个值只有一个 owner，
+  重建的那一方负责搬**。（"从预设里删掉再加回来仍然保持隐藏"这条老规则随之消失：一条**从来没有过**那一档的链
+  没有"使用者关过它"可言，记账。）
+- **判据（实测）**：`test_graphics` **360**（‑1：`TurningOnAnOverlayThatWasNeverBuiltCostsOneBuild` 与
+  `AnOverlayRemovedFromTheRecipeAndAddedBackKeepsTheRequestedVisibility` 并成
+  `AddingAnOverlayIsABuildOptionAndShowingItIsNot`，"关掉的档不因重建复活"改成**控件级**、挪进
+  `ModelViewerTest.TheSceneCarriesItsOwnFrameRateReadout` 后半，所以那个套件计数不动）、
+  `test_gui` **254**（253 + 新用例 `RenderControlTest.ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt`：
+  延迟预设 ⇒ 非 Lit 档重建前向 ⇒ 选回 Lit **建回延迟** ⇒ 预设跟着运行期那一档走）、`test_vsg` **426**
+  （421 + 3 skip + 2 已知红；`SdkPixelTest` 那条真设备用例按新顺序改写后仍绿 —— 像素是这套改动的端到端证据）、
+  appfw 32 / meshio 34 / iobase 94 / robotics_core 95 / robotics_io 27 / brepio 5 全绿；全量 Release
+  0 error / 0 warning；五个 gate 0 finding（`--strict` 仍 22 条）。**变异 5/5 红**：① 换档不落覆盖 ⇒ test_graphics
+  4 条红；② 拒绝呈现时不报 ⇒ 1 条红；③ 建链用 `options.path` 而不走 `effectivePath` ⇒ 2 条红；
+  ④ 重建不搬"关掉的档" ⇒ test_gui 1 条红；⑤ `setShadingMode` 只问"链能不能表达"、不比请求 ⇒ 1 条红。
+- **坑 / 记账**：① 视图不再有"默认管线"，于是**每个**声明呈现的宿主都要自己建链（`RenderControl` 替自己的视图
+  做了，别人加的格子归别人）——好处是"谁建的谁负责"，代价是旧的 `present(view)` 顺手建链不见了；
+  ② 那条"延迟请求 + 非 Lit 档"的比较**必须连链一起比**：只比"档能不能表达"的话，前向链表达得了 Lit，
+  于是永远回不到延迟链（这个坑是本片唯一一处"看起来多余的比较"，变异是它的判据）。
 
 ## 2026-10-11 S6 落地：宿主侧收口（尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）
 
@@ -35,6 +82,8 @@
 - **三条"不是宿主 API"点名**：`setSurface`（表绑/摘视图 + 交回尺寸）、`applySurfaceGeometry`（表在尺寸变化后
   让视图重算）、`ensureWindowPass`（表要的默认窗口 pass；**保持公开**，因为"没有表面的视图"是合法配置）。
   呈现知识（哪条 pass 呈现 / 矩形 / 清屏 / 顺序 / 尺寸）本来就全在 `RenderSurface`，本片只把它写进文档。
+  **记账（S7 之后）**：第三条已在 S7 删除（配方归 `Pipeline`、视图只采纳，`present(view)` 只解析不再建）——
+  上面这句是 S6 当天的形态。
 - **判据（实测）**：`test_graphics` **361**（360 + 新用例
   `SceneViewViewportTest.AViewReadsTheSurfaceSizeAndHoldsNoSecondCopyOfIt`）、`test_gui` **253**（不变，appfw 一行未改）、
   `test_vsg` 426（421 + 3 skip + 2 已知红）、appfw 32 / meshio 34 / iobase 94 全绿；全量 Release 0 error / 0 warning；

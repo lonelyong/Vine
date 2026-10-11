@@ -1,6 +1,7 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
+#include <vine/graphics/RenderPipelineBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/SceneView.hpp>
 
@@ -15,11 +16,37 @@ using vn::Color;
 namespace
 {
 
-/** @brief A view bound to @p engine, ready to present (the engine outlives the view in these tests). */
-intrusive_ptr<SceneView> viewOn(RenderEngine* engine)
+/**
+ * @brief Builds a pipeline for @p view from @p options and adopts it: the two steps a host does for a view.
+ *
+ * A view no longer carries a recipe - a pipeline IS the recipe (see RenderPipelineBuilder and
+ * SceneView::setPipeline) - so a test that wants "this view, drawn this way" states the options here and hands the
+ * result over. The builder is given the view's own camera and scene, which is what every caller in the app does.
+ *
+ * @param view    View the pipeline is built for; it adopts the result.
+ * @param engine  Engine the passes are registered on.
+ * @param options The build options (chain, mode, overlays; see PipelineOptions).
+ * @return The pipeline that was built and adopted; null when the builder refused @p options.
+ */
+intrusive_ptr<Pipeline> buildFor(const intrusive_ptr<SceneView>& view, RenderEngine* engine,
+                                 const PipelineOptions& options = {})
+{
+    RenderPipelineBuilder builder(engine);
+    builder.setCamera(view->camera());
+    builder.setContent(view->scene());
+    intrusive_ptr<Pipeline> pipeline = builder.build(options);
+    if (pipeline != nullptr) {
+        view->setPipeline(pipeline);
+    }
+    return pipeline;
+}
+
+/** @brief A view bound to @p engine and drawing @p options (the engine outlives the view in these tests). */
+intrusive_ptr<SceneView> viewOn(RenderEngine* engine, const PipelineOptions& options = {})
 {
     auto view = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine);
+    buildFor(view, engine, options);
     return view;
 }
 
@@ -29,26 +56,31 @@ intrusive_ptr<SceneView> viewOn(RenderEngine* engine)
  * @brief A surface's presentation table: what draws into it, in which order, and who decides.
  *
  * "Who presents this surface" used to be inferred - a view asked the engine whether ANY registered pass carried
- * its camera with a null target (the removed RenderEngine::hasWindowPass) and stood down when one did. These tests
- * pin the replacement: the SURFACE owns the answer, a host declares it, and the view's default window pass is only
- * built when nothing was declared.
+ * its camera with a null target (the removed RenderEngine::hasWindowPass) and stood down when one did, and this
+ * table used to build the view's default window pass on demand. These tests pin the replacement: the SURFACE owns
+ * the answer, a HOST declares it, and a declaration resolves to a pass (a view's declaration points at the pipeline
+ * the view adopted; a host with its own pass declares that one) - the table never builds anything.
  */
-TEST(RenderSurfaceTest, PresentingAViewBuildsItsDefaultWindowPass)
+TEST(RenderSurfaceTest, PresentingAViewDeclaresWhatItDraws)
 {
+    // The declaration a host makes when it has no main pass of its own: this surface is presented by the pass of the
+    // pipeline the VIEW adopted. The table resolves the pass back through the view (it builds nothing), so the host
+    // order is: build, adopt, declare.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
     auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
 
     EXPECT_FALSE(surface->hasPresentation());
+    auto pipeline = buildFor(view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
     EXPECT_TRUE(surface->present(*view));
     EXPECT_TRUE(surface->hasPresentation());
-    EXPECT_EQ(engine->passCount(), 1u);
-    ASSERT_NE(view->pipeline(), nullptr);
+    EXPECT_EQ(engine->passCount(), 1u) << "one pass: the window pass of the pipeline that was adopted";
 
     const std::vector<RenderSurface::Presentation> table = surface->presentations();
     ASSERT_EQ(table.size(), 1u);
-    EXPECT_EQ(table[0].pass, view->pipeline()->windowPass());
+    EXPECT_EQ(table[0].pass, pipeline->windowPass());
     EXPECT_EQ(table[0].view, view.get());
 
     // Declaring the same view twice is ONE presentation.
@@ -63,11 +95,11 @@ TEST(RenderSurfaceTest, PresentingAViewBuildsItsDefaultWindowPass)
     EXPECT_EQ(engine->passCount(), 1u);
 }
 
-TEST(RenderSurfaceTest, AHostPassRegisteredOnTheEngineDoesNotSuppressTheDefaultWindowPass)
+TEST(RenderSurfaceTest, AHostPassRegisteredOnTheEngineIsNotAPresentation)
 {
-    // The fallback the control runs (see SurfaceWindow::init): with nothing DECLARED, the control's own view
-    // presents the surface - even when a pass carrying that very camera is registered on the engine. Merely
-    // existing is not a presentation (that inference is what M2a removed).
+    // Merely existing is not a presentation (that inference is what M2a removed): a pass carrying this very camera
+    // can sit in the frame while the surface knows of nothing. The view draws whatever pipeline it adopted, and the
+    // table answers only what the HOST declared - so the two are independent facts.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
@@ -77,16 +109,21 @@ TEST(RenderSurfaceTest, AHostPassRegisteredOnTheEngineDoesNotSuppressTheDefaultW
     host_pass->setCamera(intrusive_ptr<Camera>(view->camera()));
     engine->addPass(host_pass, 0);
 
-    ASSERT_FALSE(surface->hasPresentation());
+    EXPECT_FALSE(surface->hasPresentation());
+    auto pipeline = buildFor(view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
+    EXPECT_EQ(engine->passCount(), 2u) << "the host's pass, beside the window pass the view adopted";
+    EXPECT_FALSE(surface->hasPresentation()) << "the host's pass draws this surface only if the host says so";
+
     EXPECT_TRUE(surface->present(*view));
-    ASSERT_NE(view->pipeline(), nullptr);
-    EXPECT_EQ(engine->passCount(), 2u) << "the host's pass, plus the view's default window pass";
+    EXPECT_EQ(surface->presentations()[0].pass, pipeline->windowPass());
 }
 
 TEST(RenderSurfaceTest, AHostDeclaredPassIsTheSurfacesPresentation)
 {
-    // The other direction: a host that says which pass presents the surface gets no default window pass built
-    // beside it (the demo declares its own main pass exactly like this - see DemoScene::addDemoPipeline).
+    // The other direction: what a host DECLARES is what presents the surface (the demo declares its own main pass
+    // exactly like this - see DemoScene::addDemoPipeline). The table never builds one, so a host that brings its own
+    // is the whole answer: nothing is created behind it, and the entry belongs to no view.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
@@ -97,17 +134,15 @@ TEST(RenderSurfaceTest, AHostDeclaredPassIsTheSurfacesPresentation)
     engine->addPass(host_pass, 0);
     EXPECT_TRUE(surface->present(host_pass.get()));
 
-    // The control's guard, verbatim: nothing to declare means nothing to build.
-    if (!surface->hasPresentation()) {
-        surface->present(*view);
-    }
-    EXPECT_EQ(view->pipeline(), nullptr) << "a declared pass keeps the view's default pipeline from being built";
-    EXPECT_EQ(engine->passCount(), 1u);
-
+    EXPECT_EQ(engine->passCount(), 1u) << "the host's pass is the presentation; nothing was built beside it";
     const std::vector<RenderSurface::Presentation> table = surface->presentations();
     ASSERT_EQ(table.size(), 1u);
     EXPECT_EQ(table[0].pass, host_pass.get());
     EXPECT_EQ(table[0].view, nullptr) << "a pass a host declared belongs to no view";
+
+    // The view adopted nothing, so it has nothing to declare: its declaration needs a pass to point at.
+    EXPECT_FALSE(surface->present(*view));
+    EXPECT_EQ(surface->presentations().size(), 1u);
 }
 
 TEST(RenderSurfaceTest, PresentationsComeBackInEngineOrder)
@@ -124,6 +159,7 @@ TEST(RenderSurfaceTest, PresentationsComeBackInEngineOrder)
     overlay->setCamera(intrusive_ptr<Camera>(view->camera()));
     engine->addPass(overlay, 30);          // declared FIRST, runs LAST
     EXPECT_TRUE(surface->present(overlay.get()));
+    ASSERT_NE(buildFor(view, engine.get()), nullptr);
     EXPECT_TRUE(surface->present(*view));  // declared second, runs first (the window pass sits at the shading stage)
 
     const std::vector<RenderSurface::Presentation> table = surface->presentations();
@@ -146,14 +182,16 @@ TEST(RenderSurfaceTest, TheTableFollowsARebuiltPipeline)
     view->setEngine(engine.get());
     auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
 
+    ASSERT_NE(buildFor(view, engine.get()), nullptr);
     EXPECT_TRUE(surface->present(*view));
     ASSERT_NE(view->pipeline(), nullptr);
     EXPECT_EQ(surface->presentations()[0].pass, view->pipeline()->windowPass());
 
-    // A recipe change rebuilds the view's pipeline, and the window pass of the new one is a NEW pass: the entry
-    // names the VIEW, and the pass is resolved when the table is read, so the answer moves with the rebuild.
-    view->setOptions({ .gizmo = true });
-    ASSERT_NE(view->pipeline(), nullptr);
+    // A structural change rebuilds the pipeline, and the window pass of the new one is a NEW pass: the entry names
+    // the VIEW, and the pass is resolved when the table is read, so the answer moves with the rebuild.
+    PipelineOptions with_gizmo;
+    with_gizmo.gizmo.source_camera = view->camera();
+    ASSERT_NE(buildFor(view, engine.get(), with_gizmo), nullptr);
     EXPECT_EQ(engine->passCount(), 2u) << "one rebuild: window pass + gizmo, no stale registration";
 
     const std::vector<RenderSurface::Presentation> table = surface->presentations();
@@ -168,14 +206,13 @@ TEST(RenderSurfaceTest, AViewOnAnotherEngineIsRefusedOutLoud)
     // refusal says so instead of leaving a host looking at an empty area.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto other   = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto view    = intrusive_ptr<SceneView>(new SceneView());
-    view->setEngine(other.get());
+    auto view    = viewOn(other.get());
     auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
 
+    ASSERT_NE(view->pipeline(), nullptr);
     EXPECT_FALSE(surface->present(*view));
     EXPECT_FALSE(surface->hasPresentation());
-    EXPECT_EQ(view->pipeline(), nullptr) << "the refusal comes before anything is built";
-    EXPECT_EQ(other->passCount(), 0u);
+    EXPECT_EQ(engine->passCount(), 0u) << "nothing of that view was ever registered on this surface's engine";
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u);
 }
 
@@ -416,9 +453,11 @@ TEST(RenderSurfaceTest, APresentationThatRebuildsGetsTheSurfacesClearDecisionBac
     surface->present(*right);
     ASSERT_FALSE(right->pipeline()->windowPass()->isClearEnabled());
 
-    // A recipe change rebuilds the view's pipeline, and its window pass is a NEW pass, created enabled: the surface
-    // has to put its decision back on it (the view tells the surface - see SceneView::rebuildDefaultWindowPass).
-    right->setOptions({ .gizmo = true });
+    // A structural change rebuilds the pipeline, and its window pass is a NEW pass, created enabled: the surface has
+    // to put its decision back on it (adopting a pipeline tells the surface - see SceneView::setPipeline).
+    PipelineOptions with_gizmo;
+    with_gizmo.gizmo.source_camera = right->camera();
+    ASSERT_NE(buildFor(right, engine.get(), with_gizmo), nullptr);
     ASSERT_NE(right->pipeline(), nullptr);
     EXPECT_EQ(engine->passCount(), 3u) << "left's window pass, plus the rebuilt pair";
     EXPECT_FALSE(right->pipeline()->windowPass()->isClearEnabled())
@@ -431,9 +470,10 @@ TEST(RenderSurfaceTest, ARecipeWithNoClearOfItsOwnIsNotMadeToClear)
     // asks for no clear. The surface decides WHO clears, not WHETHER one is needed - being the first presentation
     // does not make a pass want a clear.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto view    = viewOn(engine.get());
-    view->setOptions({ .path = ShadingPath::Deferred });
-    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+    PipelineOptions deferred;
+    deferred.path = ShadingPath::Deferred;
+    auto view     = viewOn(engine.get(), deferred);
+    auto surface  = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
 
     EXPECT_TRUE(surface->present(*view));
     ASSERT_NE(view->pipeline(), nullptr);

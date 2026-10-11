@@ -44,8 +44,9 @@
   全屏光照整屏覆盖，无碍），而非共享 gbuffer 的 depth image（需改 gbuffer depth finalLayout +
   跨 target framebuffer 深度别名，成本高，留 S5 优化）。
 - 窗口语义标记须保持：present pass 携带 view camera 且 RT==null，并在表面上声明（`RenderSurface::present`；
-  这条标记 M2a 之前是给 `RenderEngine::hasWindowPass(camera)` 看的，那条查询已删）→ `SceneView::ensureWindowPass`
-  （RenderControl::init）不追加默认 Forward（见 graphics-mrt-gbuffer §1 同款机制）。
+  这条标记 M2a 之前是给 `RenderEngine::hasWindowPass(camera)` 看的，那条查询已删）→ 当日由
+  `SceneView::ensureWindowPass`（RenderControl::init）决定不追加默认 Forward（见 graphics-mrt-gbuffer §1 同款机制）。
+  `<!-- drift-ok -->` S7（2026-10-11）起 `ensureWindowPass` 已删：链归 `Pipeline`、视图只采纳，表只解析声明。
 
 ## 3. Pass 图（transparent 存在时 Deferred 自动升级为 composite）
 ```

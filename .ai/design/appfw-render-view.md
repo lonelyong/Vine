@@ -1,8 +1,35 @@
 # appfw 渲染视图（最终设计 v2，2026-10-11）
 
-> 状态：**已落地 S0–S4 + 输入路由（S6+②）**（2026-10-11；其余 S6+ 三轴仍为"缝已定、未实现"）。本文**取代此前各稿**（那些是本设计的推演过程，结论以本文为准）；
+> 状态：**已落地 S0–S4 + 输入路由（S6+②）+ S7 改形**（2026-10-11；其余 S6+ 三轴仍为"缝已定、未实现"）。本文**取代此前各稿**（那些是本设计的推演过程，结论以本文为准）；
 > 相关文档：`appfw-render-surface.md`（表面生命周期）、`graphics-pipeline-builder.md`（配方层）、`graphics-pipeline.md`（pass 调度）、
 > `graphics-render-next.md`（**如果重新设计这一套栈会怎么切**：提案，含 M1–M7 迁移切片与触发条件 —— 本文是"现在是什么"，那份是"要变成什么"）。
+>
+> ---
+>
+> **S7 改形（2026-10-11，最新的一条，先读它）**：**配方离开 `SceneView`，归 `Pipeline`；视图只采纳一个**。
+> 起因是用户点了 `ensureWindowPass()` 的名（"什么时候该调用"没有答案）—— 它一个名字同时是**配方**和**表要的默认
+> pass 入口**。落地记录与判据见 `graphics-redesign.md` S7、要点见 `.ai/memory/graphics.md` 顶部。
+>
+> **新的归属**（这张表就是 S7 之后"谁是什么"）：
+>
+> | 谁 | 拥有 | 不再拥有 |
+> | --- | --- | --- |
+> | `Pipeline`（`RenderPipelineBuilder` 建） | **配方**：走哪条链（`PipelineOptions::path` / `shadingPath()`）、哪些档**存在**（`gizmo`/`fps`）、**运行期**的档与档可见性（`setShadingMode` / `setGizmoVisible` / `setStatsVisible`） | —— |
+> | `SceneView` | 相机、内容场景、操纵器、二维组与输入、**采纳的那条链**（`setPipeline` / `pipeline()`）、矩形与表面归属 | 配方、`Options`、`setOptions`、`ensureWindowPass`、`default_pipeline_` |
+> | `RenderSurface` | 呈现表（谁画这块表面、矩形、清屏、顺序、尺寸）—— 只**解析**声明，不建任何东西 | 顺手建视图的默认链（`present(view)` 现在要求视图**先采纳**一条链，否则拒绝 + 报一次） |
+> | appfw `RenderControl` / `SurfaceWindow` | **查看器**这一层：`viewerOptions()` / `setViewerOptions()` / `setShadingMode()`（`gui/ViewerOptions.hpp` = 链 / 档 / 两个档在不在 / 离屏尺寸；上下文字段——gizmo 源相机、两个 HUD 的像素比——由控件补） | ——（"没有任何声明就建默认链"这条兜底现在在 `SurfaceWindow::init()`） |
+>
+> **一条判据（S7 新增）**：**"有没有这一档"与"看不看得见"是两件事** —— 选项回答前者（变更 = 一次建链），
+> `Pipeline` 的 setter 回答后者（零重建）；答不出时**拒绝 + 报一次**（不静默）。
+> **一条坑（S7 新增）**：换档的判据不是"这条链能不能表达这个档"，而是"**这个请求**会建成哪条链"
+> （`RenderPipelineBuilder::effectivePath()` —— 所以"延迟请求 + 非 Lit 档"期间选回 Lit 会建回延迟链）。
+>
+> **下文怎么读**：凡写 `SceneView::Options` / `setOptions()` / `options()` / `ensureWindowPass()` /
+> `rebuildDefaultWindowPass()` / 内部 `default_pipeline_` 的段落，都是 **S7 之前**的形态 —— 它们是这一路设计的
+> 记录（"当时为什么这么定"仍有效），改写成新形态的地方见上表；**当前 API 以头文件与
+> `src/viz/graphics/docs/usage.md` §3.10/§3.11 为准**。
+>
+> ---
 >
 > **落地记录（实现时发现的三条，值得记住）**：
 > 1. **R2 的"临时加引用"必须罩住整个操作**：只在 `ensureWindowPass()` 里持有的话，`rebuildDefaultWindowPass()` 里
@@ -26,9 +53,9 @@
 > ④ **借用 + 操作期间临时加引用**：顺序自由、宿主提前释放引擎也安全（§13、R2）。
 > 另：`ViewOptions` 更名 **`SceneView::Options`**（嵌套在消费它的类里，与 `UserIO::FileReadOptions` 同惯例）。
 >
-> **一句话**：**视图**（相机 + 内容 + 配方 + 视口）自己拥有并维护它的窗口管线；**控件**只提供"表面 + 会话 +
-> 尺寸/比例 + 输入路由"；**场景**自己拥有一套可替换的照明；这三件事**各有"快速入口"与"底层入口"，
-> 且低层出现时高层让位**。
+> **一句话**：**视图**（相机 + 内容 + 视口）持有它**采纳**的那条链并维护它的几何；**链**（`Pipeline`）持有配方；
+> **控件**只提供"表面 + 会话 + 尺寸/比例 + 输入路由 + 查看器预设"；**场景**自己拥有一套可替换的照明；这些事
+> **各有"快速入口"与"底层入口"，且低层出现时高层让位**（S7 之后"配方"那一层从视图搬到了链上）。
 
 ## 0. 判据（这份设计要同时满足的东西）
 

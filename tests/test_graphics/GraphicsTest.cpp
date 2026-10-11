@@ -95,6 +95,31 @@ bool drawsToWindow(vn::graphics::RenderPass* pass, vn::graphics::Camera* camera)
 }
 
 /**
+ * @brief Builds a pipeline for @p view and adopts it: the two steps a host does for a view.
+ *
+ * A view no longer carries a recipe - a pipeline IS the recipe (see RenderPipelineBuilder and
+ * SceneView::setPipeline) - so a test that wants "this view, drawn this way" states the options here and hands the
+ * result over. The builder is given the view's own camera and scene, which is what every caller in the app does:
+ * the view owns both, the pipeline owns the passes.
+ *
+ * @param view    View the pipeline is built for; it adopts the result.
+ * @param engine  Engine the passes are registered on.
+ * @param options The build options (chain, mode, overlays; see PipelineOptions).
+ * @return The pipeline that was built and adopted; null when the builder refused @p options.
+ */
+intrusive_ptr<Pipeline> buildFor(SceneView& view, RenderEngine* engine, const PipelineOptions& options = {})
+{
+    RenderPipelineBuilder builder(engine);
+    builder.setCamera(view.camera());
+    builder.setContent(view.scene());
+    intrusive_ptr<Pipeline> pipeline = builder.build(options);
+    if (pipeline != nullptr) {
+        view.setPipeline(pipeline);
+    }
+    return pipeline;
+}
+
+/**
  * @brief Makes a source image that matches a texture's description.
  *
  * @param texture   Texture whose size, format and mip count the image is built to match.
@@ -2951,31 +2976,37 @@ TEST(SceneViewTest, ResizingTellsTheCameraTheShapeOfThePictureItDraws)
     EXPECT_DOUBLE_EQ(view.camera()->aspectRatio(), 600.0 / 800.0) << "a surface with no extent states no shape";
 }
 
-TEST(SceneViewTest, EnsureWindowPassBuildsTheDefaultWindowPass)
+TEST(SceneViewTest, AViewDrawsThePipelineItAdopted)
 {
+    // A view holds no recipe: a chain IS a pipeline (built by RenderPipelineBuilder, which is where the options
+    // live) and a view only adopts one (SceneView::setPipeline). So "this view presents a picture" is that two
+    // steps and nothing else - before them there is no pass at all, after them exactly the pass that was built.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
     EXPECT_EQ(view->pipeline(), nullptr);
-    view->ensureWindowPass();
-    EXPECT_EQ(engine->passCount(), 1u);
-    ASSERT_NE(view->pipeline(), nullptr);
-    ASSERT_NE(view->pipeline()->windowPass(), nullptr);
-    // The pass IS the window pass: it draws this view's camera to the backbuffer.
-    EXPECT_TRUE(drawsToWindow(view->pipeline()->windowPass(), view->camera()));
+    EXPECT_EQ(engine->passCount(), 0u);
 
-    // Registering again is a no-op while the window pass is present.
-    view->ensureWindowPass();
+    auto pipeline = buildFor(*view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
+    EXPECT_EQ(engine->passCount(), 1u);
+    EXPECT_EQ(view->pipeline(), pipeline.get());
+    // The pass IS the window pass: it draws this view's camera to the backbuffer (both were given to the builder).
+    ASSERT_NE(pipeline->windowPass(), nullptr);
+    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), view->camera()));
+
+    // Adopting the pipeline it already has is one pipeline, and nothing is re-registered.
+    view->setPipeline(pipeline);
     EXPECT_EQ(engine->passCount(), 1u);
 }
 
-TEST(SceneViewTest, EnsureWindowPassDoesNotStandDownForSomebodyElsesPass)
+TEST(SceneViewTest, AdoptingAPipelineDoesNotStandDownForSomebodyElsesPass)
 {
     // "Whoever speaks first presents" is gone: a pass carrying this view's camera with a null target used to
-    // suppress the default window pass, inferred from the engine's pass list (global, order-sensitive, and it
-    // dropped the SECOND view sharing a camera). Which pass presents which SURFACE is declared on the surface
-    // now (RenderSurface) - so the view builds its own pass, and the surface's table is what says whose it is.
+    // suppress the view's default window pass, inferred from the engine's pass list (global, order-sensitive, and it
+    // dropped the SECOND view sharing a camera). Which pass presents which SURFACE is declared on the surface now
+    // (RenderSurface) - so a view draws the pipeline it adopted, and the engine's list is only where passes live.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
@@ -2984,9 +3015,10 @@ TEST(SceneViewTest, EnsureWindowPassDoesNotStandDownForSomebodyElsesPass)
     main->setCamera(intrusive_ptr<Camera>(view->camera()));
     engine->addPass(main, 0);
 
-    view->ensureWindowPass();
-    EXPECT_EQ(engine->passCount(), 2u) << "nothing declared a presentation, so the view's own window pass is built";
-    EXPECT_TRUE(drawsToWindow(view->pipeline()->windowPass(), view->camera()));
+    auto pipeline = buildFor(*view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
+    EXPECT_EQ(engine->passCount(), 2u) << "the adopted pipeline registers its passes beside whatever is there";
+    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), view->camera()));
 }
 
 TEST(LightRigTest, StudioIsAmbientPlusKeyAndFill)
@@ -3065,31 +3097,32 @@ TEST(LightRigTest, TheOriginalLightApiIsUnchanged)
     EXPECT_FALSE(scene->hasLights());
 }
 
-TEST(SceneViewViewportTest, DefaultsAreTheBehaviourBeforeOptionsExisted)
+TEST(SceneViewViewportTest, ADefaultBuildIsTheBehaviourBeforeAnyOptions)
 {
-    // No configuration at all: forward, no HUD, the whole surface - and exactly one window pass, which is what
-    // every existing host and test already relied on (J2).
+    // No options at all: forward, no HUD, the whole surface - and exactly one window pass, which is what every
+    // existing host and test already relied on (J2). The view holds none of it: it holds a pipeline, or nothing.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
-    EXPECT_EQ(view->options().path, ShadingPath::Forward);
-    EXPECT_FALSE(view->options().gizmo);
-    EXPECT_FALSE(view->options().stats);
     EXPECT_TRUE(view->viewport().isFull());
-    EXPECT_FALSE(view->isGizmoVisible());
-    EXPECT_FALSE(view->isStatsVisible());
 
-    view->ensureWindowPass();
+    auto pipeline = buildFor(*view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->passCount(), 1u);
-    ASSERT_NE(view->pipeline(), nullptr);
-    ASSERT_NE(view->pipeline()->windowPass(), nullptr);
+    EXPECT_EQ(pipeline->shadingPath(), ShadingPath::Forward);
+    EXPECT_EQ(pipeline->shadingMode(), ShadingMode::Lit);
+    EXPECT_EQ(pipeline->gizmo(), nullptr);
+    EXPECT_EQ(pipeline->fpsOverlay(), nullptr);
+    EXPECT_FALSE(pipeline->isGizmoVisible());
+    EXPECT_FALSE(pipeline->isStatsVisible());
     // A full viewport is what "no viewport" already means: the pass is left without one, so the default path is
     // byte-for-byte the pipeline it was before viewports existed.
-    EXPECT_FALSE(view->pipeline()->windowPass()->hasViewport());
+    ASSERT_NE(pipeline->windowPass(), nullptr);
+    EXPECT_FALSE(pipeline->windowPass()->hasViewport());
 }
 
-TEST(SceneViewViewportTest, TheRecipeDecidesWhichOverlayPassesExist)
+TEST(SceneViewViewportTest, TheBuildOptionsDecideWhichOverlayPassesExist)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
@@ -3104,29 +3137,35 @@ TEST(SceneViewViewportTest, TheRecipeDecidesWhichOverlayPassesExist)
         return names;
     };
 
-    view->setOptions({ .path = ShadingPath::Forward, .gizmo = true, .stats = true });
-    view->ensureWindowPass();
+    PipelineOptions both;
+    both.gizmo.source_camera = view->camera();
+    both.fps.enabled         = true;
+    auto pipeline            = buildFor(*view, engine.get(), both);
+    ASSERT_NE(pipeline, nullptr);
 
     // Window pass + the two overlays, and both are visible as soon as they exist.
     EXPECT_EQ(pass_names(), (std::vector<String>{ u8"main", u8"axis_gizmo", u8"fps_overlay" }));
-    ASSERT_NE(view->pipeline(), nullptr);
-    EXPECT_NE(view->pipeline()->gizmo(), nullptr);
-    EXPECT_NE(view->pipeline()->fpsOverlay(), nullptr);
-    EXPECT_TRUE(view->isGizmoVisible());
-    EXPECT_TRUE(view->isStatsVisible());
+    EXPECT_NE(pipeline->gizmo(), nullptr);
+    EXPECT_NE(pipeline->fpsOverlay(), nullptr);
+    EXPECT_TRUE(pipeline->isGizmoVisible());
+    EXPECT_TRUE(pipeline->isStatsVisible());
 
-    // Dropping an overlay from the recipe takes its pass away...
-    view->setOptions({ .path = ShadingPath::Forward, .gizmo = false, .stats = true });
+    // Dropping an overlay from the options takes its pass away: the next build is a different pipeline, and the one
+    // it replaced takes its own registrations with it.
+    PipelineOptions readout_only;
+    readout_only.fps.enabled = true;
+    pipeline                 = buildFor(*view, engine.get(), readout_only);
+    ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(pass_names(), (std::vector<String>{ u8"main", u8"fps_overlay" }));
-    EXPECT_FALSE(view->isGizmoVisible());
-    EXPECT_TRUE(view->isStatsVisible());
+    EXPECT_EQ(pipeline->gizmo(), nullptr);
+    EXPECT_TRUE(pipeline->isStatsVisible());
 
-    // ... and one rebuild per change leaves no stale registration behind.
-    view->setOptions({ .path = ShadingPath::Forward });
+    // ... and one build with no overlays leaves exactly the window pass.
+    pipeline = buildFor(*view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(pass_names(), (std::vector<String>{ u8"main" }))
         << "one pass, still the window pass, and nothing else left over";
-    ASSERT_NE(view->pipeline(), nullptr);
-    EXPECT_TRUE(drawsToWindow(view->pipeline()->windowPass(), view->camera()));
+    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), view->camera()));
 }
 
 TEST(SceneViewViewportTest, OverlayVisibilityIsASwitchThatNeverRebuilds)
@@ -3134,107 +3173,98 @@ TEST(SceneViewViewportTest, OverlayVisibilityIsASwitchThatNeverRebuilds)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    view->setOptions({ .stats = true });
-    view->ensureWindowPass();
-
-    Pipeline* const pipeline = view->pipeline();
+    PipelineOptions with_readout;
+    with_readout.fps.enabled = true;
+    auto pipeline            = buildFor(*view, engine.get(), with_readout);
     ASSERT_NE(pipeline, nullptr);
+
     RenderPass* const readout = pipeline->fpsOverlayPass();
     ASSERT_NE(readout, nullptr);
 
     for (int i = 0; i < 10; ++i) {
-        view->setStatsVisible(false);
-        EXPECT_FALSE(view->isStatsVisible());
+        EXPECT_TRUE(pipeline->setStatsVisible(false));
+        EXPECT_FALSE(pipeline->isStatsVisible());
         EXPECT_FALSE(readout->isEnabled());
-        view->setStatsVisible(true);
-        EXPECT_TRUE(view->isStatsVisible());
+        EXPECT_TRUE(pipeline->setStatsVisible(true));
+        EXPECT_TRUE(pipeline->isStatsVisible());
         EXPECT_TRUE(readout->isEnabled());
     }
 
     // Nothing was rebuilt and nothing was re-registered: same handle, same pass count.
-    EXPECT_EQ(view->pipeline(), pipeline);
+    EXPECT_EQ(view->pipeline(), pipeline.get());
     EXPECT_EQ(engine->passCount(), 2u);
-    // The state lives on the pass, so a host toggling through the handle is seen by the view.
+    // The state lives on the pass, so a host toggling through the handle is seen by the pipeline.
     readout->setEnabled(false);
-    EXPECT_FALSE(view->isStatsVisible());
+    EXPECT_FALSE(pipeline->isStatsVisible());
+
+    // A chain that has no readout says so - once - instead of silently doing nothing.
+    auto bare                     = buildFor(*view, engine.get());
+    const std::size_t diagnostics = engine->diagnosticCount();
+    ASSERT_NE(bare, nullptr);
+    EXPECT_FALSE(bare->setStatsVisible(true));
+    EXPECT_FALSE(bare->setGizmoVisible(true));
+    EXPECT_EQ(engine->diagnosticCount(), diagnostics + 1u) << "one episode, one report (the second call is quiet)";
+    EXPECT_FALSE(bare->isStatsVisible());
 }
 
 // 关掉的档不会因为一次重建又自己亮起来：重建是从**配方**建的（新 pass 天生 enabled），所以"使用者最后一次
 // 说的可见性"要跟着重建重新落上去（见 applyOverlayIntent）。
-TEST(SceneViewViewportTest, AHiddenOverlayStaysHiddenAcrossARebuild)
+// 关掉的档记在**那条链**上：一条全新的链天生是亮着的（它按选项建，选项里没有"使用者关过它"这件事）。让它在重建
+// 之后仍然关着归**重建的那一方**（谁拆谁建谁负责把运行期选择重新落上去 —— 见 SurfaceWindow::buildViewerPipeline，
+// 它重建前读的正是这条活着的链）。
+TEST(SceneViewViewportTest, AHiddenOverlayIsHiddenOnTheChainItWasStatedOnAndNowhereElse)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    view->setOptions({ .stats = true });
-    view->ensureWindowPass();
-    ASSERT_NE(view->pipeline(), nullptr);
-    ASSERT_TRUE(view->isStatsVisible());
+    PipelineOptions options;
+    options.fps.enabled = true;
 
-    view->setStatsVisible(false);
-    ASSERT_FALSE(view->isStatsVisible());
+    auto pipeline = buildFor(*view, engine.get(), options);
+    ASSERT_NE(pipeline, nullptr);
+    ASSERT_TRUE(pipeline->isStatsVisible());
 
-    // 1) 补建另一个档（配方里没有 gizmo ⇒ 这一次会重建管线）：关掉的读数不许跟着回来。
-    view->setGizmoVisible(true);
-    EXPECT_TRUE(view->isGizmoVisible());
-    EXPECT_FALSE(view->isStatsVisible()) << "重建不该把使用者关掉的档又打开";
-    ASSERT_NE(view->pipeline(), nullptr);
-    ASSERT_NE(view->pipeline()->fpsOverlay(), nullptr);
-    EXPECT_FALSE(view->pipeline()->fpsOverlayPass()->isEnabled());
+    EXPECT_TRUE(pipeline->setStatsVisible(false));
+    EXPECT_FALSE(pipeline->isStatsVisible());
+    ASSERT_NE(pipeline->fpsOverlayPass(), nullptr);
+    EXPECT_FALSE(pipeline->fpsOverlayPass()->isEnabled());
 
-    // 2) 换路径（又一次结构变化）：同样不许回来。
-    view->setOptions({ .path = ShadingPath::Deferred, .gizmo = true, .stats = true });
-    EXPECT_FALSE(view->isStatsVisible()) << "换路径重建之后仍然是关着的";
-    EXPECT_TRUE(view->isGizmoVisible());
-
-    // 3) 说的最后一句才算数：这里说"显示"，它才是显示的。
-    view->setStatsVisible(true);
-    EXPECT_TRUE(view->isStatsVisible());
+    // 一条新链（同样的选项）是亮着的，而被关掉的那条链原样留着 —— "关过"是它自己的状态。
+    auto rebuilt = buildFor(*view, engine.get(), options);
+    ASSERT_NE(rebuilt, nullptr);
+    EXPECT_TRUE(rebuilt->isStatsVisible()) << "重建是按选项建的：链不知道使用者关过什么";
+    EXPECT_FALSE(pipeline->isStatsVisible()) << "被关掉的那条链没有被动过";
+    EXPECT_EQ(view->pipeline(), rebuilt.get());
 }
 
 // 补出自己的 show/hide 之后，档从配方里去掉再回来：可见性是**使用者最后说的那一句**，不是"新 pass 天生可见"。
-TEST(SceneViewViewportTest, AnOverlayRemovedFromTheRecipeAndAddedBackKeepsTheRequestedVisibility)
+// 加一个档是**选项**（多一条 pass、一次建链），加完之后开关是**零重建**的旗标：两件事各钉一次。
+TEST(SceneViewViewportTest, AddingAnOverlayIsABuildOptionAndShowingItIsNot)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    view->setOptions({ .stats = true });
-    view->ensureWindowPass();
-    ASSERT_NE(view->pipeline(), nullptr);
 
-    view->setStatsVisible(false);
-    view->setOptions({ .stats = false });  // 从配方里去掉：pass 消失
-    EXPECT_FALSE(view->isStatsVisible());
-    view->setOptions({ .stats = true });  // 再要回来：新 pass 该按"使用者说过关着"出现
-    EXPECT_FALSE(view->isStatsVisible());
-
-    view->setStatsVisible(true);
-    EXPECT_TRUE(view->isStatsVisible());
-}
-
-TEST(SceneViewViewportTest, TurningOnAnOverlayThatWasNeverBuiltCostsOneBuild)
-{
-    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto view   = intrusive_ptr<SceneView>(new SceneView());
-    view->setEngine(engine.get());
-    view->ensureWindowPass();
-    ASSERT_EQ(engine->passCount(), 1u);
-    ASSERT_FALSE(view->isStatsVisible());
-
-    // The recipe had no readout, so asking for one adds it to the recipe and rebuilds ONCE.
-    view->setStatsVisible(true);
-    EXPECT_TRUE(view->options().stats);
-    EXPECT_EQ(engine->passCount(), 2u);
-    EXPECT_TRUE(view->isStatsVisible());
-
-    // From here on it is a flag again: never another build. The old handle is HELD while the claim is checked, so
-    // "the same pipeline" cannot be a recycled address (a dropped pipeline frees its memory, and the next build
-    // may land on it - which is exactly how a weak identity assertion passes for the wrong reason).
-    auto pipeline = intrusive_ptr<Pipeline>(view->pipeline());
+    auto pipeline = buildFor(*view, engine.get());
     ASSERT_NE(pipeline, nullptr);
-    view->setStatsVisible(false);
-    view->setStatsVisible(true);
-    EXPECT_EQ(view->pipeline(), pipeline.get());
+    ASSERT_EQ(engine->passCount(), 1u);
+    EXPECT_FALSE(pipeline->isStatsVisible());
+
+    // 这条链没有读数，所以"要一个"是**另建一条**：多一条 pass，多一次建链。旧的句柄先放掉，这样 pass 表里只有
+    // 新的那条链（放掉的那条析构时把自己的 pass 摘掉）。
+    pipeline = nullptr;
+    PipelineOptions with_readout;
+    with_readout.fps.enabled = true;
+    auto readout             = buildFor(*view, engine.get(), with_readout);
+    ASSERT_NE(readout, nullptr);
+    EXPECT_EQ(engine->passCount(), 2u);
+    EXPECT_TRUE(readout->isStatsVisible());
+
+    // 从这里开始又是旗标了：再也不会建链。"还是同一条管线"不能拿地址比（放掉的那条会把内存还回去，下一条可能正好落在
+    // 那个地址上 —— 弱身份断言就是这样错的），所以这里拿住句柄比对象。
+    EXPECT_TRUE(readout->setStatsVisible(false));
+    EXPECT_TRUE(readout->setStatsVisible(true));
+    EXPECT_EQ(view->pipeline(), readout.get());
     EXPECT_EQ(engine->passCount(), 2u);
 }
 
@@ -3258,8 +3288,9 @@ TEST(SceneViewViewportTest, ThePassLevelPolygonModeOverridesTheContentAndCanBeCl
     engine->setBackend(backend);
     ASSERT_TRUE(engine->initialize());
 
-    view->ensureWindowPass();
-    RenderPass* const window = view->pipeline()->windowPass();
+    auto pipeline            = buildFor(*view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
+    RenderPass* const window = pipeline->windowPass();
     ASSERT_NE(window, nullptr);
 
     // No override: the content's own Line reaches the backend (and the default is exactly that).
@@ -3323,17 +3354,16 @@ TEST(SceneViewViewportTest, WireframeIsAnEdgePassWithTheUnlitColourAndNoRebuild)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    view->ensureWindowPass();
-    ASSERT_NE(view->pipeline(), nullptr);
+    auto pipeline = buildFor(*view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
 
     // Held for the length of the test: "the same pipeline" then means the same OBJECT, not the same address.
-    auto pipeline = intrusive_ptr<Pipeline>(view->pipeline());
     RenderPass* const window = pipeline->windowPass();
     ASSERT_NE(window, nullptr);
     const std::size_t pass_count = engine->passCount();
     ASSERT_FALSE(window->polygonModeOverride().has_value());
 
-    view->setOptions({ .mode = SceneView::Options::Mode::Wireframe });
+    EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Wireframe));
     EXPECT_EQ(view->pipeline(), pipeline.get()) << "换到线框不该重建管线";
     EXPECT_EQ(engine->passCount(), pass_count);
     ASSERT_TRUE(window->polygonModeOverride().has_value());
@@ -3343,7 +3373,7 @@ TEST(SceneViewViewportTest, WireframeIsAnEdgePassWithTheUnlitColourAndNoRebuild)
         << "线框用无光照的表面色（这就是 wireframe 的惯例：看结构，不看明暗）";
 
     // Back to Lit: BOTH overrides go away (and again with no rebuild).
-    view->setOptions({ .mode = SceneView::Options::Mode::Lit });
+    EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Lit));
     EXPECT_EQ(view->pipeline(), pipeline.get());
     EXPECT_FALSE(window->polygonModeOverride().has_value());
     EXPECT_EQ(window->programOverride(), nullptr);
@@ -3354,113 +3384,124 @@ TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    view->ensureWindowPass();
-    ASSERT_NE(view->pipeline(), nullptr);
+    auto pipeline = buildFor(*view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
 
     // Held while the "no rebuild" claims are checked: identity here means the same OBJECT, so the claim cannot
     // pass on a recycled address.
-    auto pipeline = intrusive_ptr<Pipeline>(view->pipeline());
     RenderPass* const window = pipeline->windowPass();
     ASSERT_NE(window, nullptr);
     const std::size_t pass_count = engine->passCount();
 
     // Lit is the content's own program: no override at all (the default path is untouched).
-    EXPECT_EQ(view->options().mode, SceneView::Options::Mode::Lit);
+    EXPECT_EQ(pipeline->shadingMode(), ShadingMode::Lit);
     EXPECT_EQ(window->programOverride(), nullptr);
 
     // The four modes are three overrides plus Lit - and every one of them is a PASS property: same pipeline, same
     // registered passes, so the switch costs an assignment instead of a build.
-    for (const auto mode : { SceneView::Options::Mode::Flat, SceneView::Options::Mode::Unlit,
-                             SceneView::Options::Mode::Normals, SceneView::Options::Mode::Lit }) {
-        view->setOptions({ .mode = mode });
-        EXPECT_EQ(view->options().mode, mode);
+    for (const auto mode : { ShadingMode::Flat, ShadingMode::Unlit, ShadingMode::Normals, ShadingMode::Lit }) {
+        EXPECT_TRUE(pipeline->setShadingMode(mode));
+        EXPECT_EQ(pipeline->shadingMode(), mode);
         EXPECT_EQ(view->pipeline(), pipeline.get()) << "换着色模式不该重建管线";
         EXPECT_EQ(engine->passCount(), pass_count) << "换着色模式不该动 pass 表";
-        const bool lit = mode == SceneView::Options::Mode::Lit;
+        const bool lit = mode == ShadingMode::Lit;
         EXPECT_EQ(window->programOverride() == nullptr, lit) << "Lit 用内容自己的程序，其余三种是覆盖";
     }
 
     // ... and the override is a REAL program (a name the backend diagnostics can name), not an empty placeholder.
-    view->setOptions({ .mode = SceneView::Options::Mode::Unlit });
+    EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Unlit));
     ASSERT_NE(window->programOverride(), nullptr);
     EXPECT_NE(window->programOverride()->name().find(u8"builtin_forward"), vn::String::npos);
 
-    // Changing a STRUCTURAL field is what still rebuilds (so the two costs stay separated). The old handle is
-    // released first: while it is held, a rebuilt pipeline's predecessor would stay registered (its destructor is
-    // what unregisters the passes), and the pass count below would be measuring the wrong thing.
+    // Changing the STRUCTURE is what costs a build (so the two costs stay separated). The old handle is released
+    // first, because while it is held the replaced pipeline keeps its own passes registered (its destructor is what
+    // unregisters them) and the pass count below would be measuring the wrong thing.
     pipeline = nullptr;
-    view->setOptions({ .mode = SceneView::Options::Mode::Unlit, .stats = true });
-    EXPECT_EQ(engine->passCount(), pass_count + 1) << "结构变了才重建（读数档多出一条 pass）";
+    PipelineOptions with_readout;
+    with_readout.fps.enabled = true;
+    auto rebuilt             = buildFor(*view, engine.get(), with_readout);
+    ASSERT_NE(rebuilt, nullptr);
+    EXPECT_EQ(engine->passCount(), pass_count + 1) << "结构变了才建链（读数档多出一条 pass）";
+    EXPECT_EQ(rebuilt->shadingMode(), ShadingMode::Lit) << "重建是按选项建的：运行期那一档不跟着走";
 }
 
 // 延迟配方 + 非 Lit 档：模式是**几何阶段**的覆盖，而延迟配方画的最后一步是全屏光照（没有几何可着色）——
 // 所以这一档期间链条按**前向**建（配方字段不动），于是四档在两条配方上都能画出来。切档因此是**一次重建**
 // （链条变了），回到 Lit 再建回延迟；这与"同一链条上换档零重建"是两条规则，各钉一条。
+// 延迟选项 + 非 Lit 档：模式是**几何阶段**的覆盖，而延迟链画的最后一步是全屏光照（没有几何可着色）——所以这一档
+// 期间链按**前向**建（选项字段不动，`shadingPath()` 记的是**实际建成的**那条链），回到 Lit 就再建回延迟。这是
+// "选项 → 链"的一次性决定（RenderPipelineBuilder::effectivePath），与"同一条链上换档零重建"是两条规则，各钉一条。
 TEST(SceneViewViewportTest, ANonLitModeOnADeferredRecipeBuildsTheForwardChain)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Unlit });
-    view->ensureWindowPass();
-    ASSERT_NE(view->pipeline(), nullptr);
 
-    // 配方是使用者写的那个（Deferred 还在），生效的链条是前向：没有离屏目标、没有 G-buffer，画面由那条
-    // 几何 pass 直接产出。
-    EXPECT_EQ(view->options().path, ShadingPath::Deferred);
-    EXPECT_EQ(view->options().mode, SceneView::Options::Mode::Unlit);
-    EXPECT_EQ(view->pipeline()->offscreenTarget(), nullptr) << "非 Lit 档不需要 G-buffer";
-    RenderPass* const window = view->pipeline()->windowPass();
+    PipelineOptions options;
+    options.path  = ShadingPath::Deferred;
+    options.mode  = ShadingMode::Unlit;
+    auto pipeline = buildFor(*view, engine.get(), options);
+    ASSERT_NE(pipeline, nullptr);
+
+    // 选项还是用户写的那个（Deferred），建成的链是前向：没有离屏目标、没有 G-buffer，画面由那条几何 pass 直接产出。
+    EXPECT_EQ(pipeline->shadingPath(), ShadingPath::Forward) << "记的是实际建成的链，不是选项里写的那个";
+    EXPECT_EQ(pipeline->shadingMode(), ShadingMode::Unlit);
+    EXPECT_EQ(pipeline->offscreenTarget(), nullptr) << "非 Lit 档不需要 G-buffer";
+    RenderPass* const window = pipeline->windowPass();
     ASSERT_NE(window, nullptr);
     ASSERT_NE(window->programOverride(), nullptr) << "画面由这条 pass 用无光照程序产出";
     EXPECT_NE(window->programOverride()->name().find(u8"builtin_forward_unlit"), vn::String::npos);
 
     // 线框：同一处再叠一个光栅化覆盖（这就是"四级像素之外还画得出边"的那一半）。
-    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Wireframe });
-    ASSERT_NE(view->pipeline(), nullptr);
-    RenderPass* const wire = view->pipeline()->windowPass();
-    ASSERT_NE(wire, nullptr);
-    ASSERT_TRUE(wire->polygonModeOverride().has_value()) << "线框档必须让几何真的画成线";
-    EXPECT_EQ(*wire->polygonModeOverride(), PolygonMode::Line);
+    EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Wireframe));
+    ASSERT_TRUE(window->polygonModeOverride().has_value()) << "线框档必须让几何真的画成线";
+    EXPECT_EQ(*window->polygonModeOverride(), PolygonMode::Line);
 
-    // 回到 Lit ⇒ 链条切回延迟：G-buffer 与离屏目标回来了，pass 上的两个覆盖都清掉。
-    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Lit });
-    ASSERT_NE(view->pipeline(), nullptr);
-    EXPECT_NE(view->pipeline()->offscreenTarget(), nullptr) << "Lit 档回到延迟：G-buffer 是它的输入";
-    RenderPass* const lit = view->pipeline()->windowPass();
+    // 回到 Lit ⇒ 链切回延迟：G-buffer 与离屏目标回来了，pass 上的两个覆盖都清掉。旧的句柄先放掉：链析构会把自己的
+    // pass 摘掉，这样下面数的才只是新那条链。
+    pipeline      = nullptr;
+    options.mode  = ShadingMode::Lit;
+    auto deferred = buildFor(*view, engine.get(), options);
+    ASSERT_NE(deferred, nullptr);
+    EXPECT_EQ(deferred->shadingPath(), ShadingPath::Deferred);
+    EXPECT_NE(deferred->offscreenTarget(), nullptr) << "Lit 档回到延迟：G-buffer 是它的输入";
+    RenderPass* const lit = deferred->windowPass();
     ASSERT_NE(lit, nullptr);
     EXPECT_EQ(lit->programOverride(), nullptr);
     EXPECT_FALSE(lit->polygonModeOverride().has_value());
 
-    // 来回切链条走的是"先拆后建"：不该留下重复注册的 pass（拿一个同配置的新视图做对照）。
+    // 来回切链走的是"先拆后建"：不该留下重复注册的 pass（拿一个同配置的新视图做对照）。
     auto fresh_engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto fresh        = intrusive_ptr<SceneView>(new SceneView());
     fresh->setEngine(fresh_engine.get());
-    fresh->setOptions({ .path = ShadingPath::Deferred });
-    fresh->ensureWindowPass();
-    EXPECT_EQ(engine->passCount(), fresh_engine->passCount()) << "三次切换之后不该有残留的 pass";
+    ASSERT_NE(buildFor(*fresh, fresh_engine.get(), options), nullptr);
+    EXPECT_EQ(engine->passCount(), fresh_engine->passCount()) << "几次切换之后不该有残留的 pass";
 }
 
 // 链条没变时换档**不重建**（延迟配方 + 非 Lit 档之间的切换都在前向链条上）。
+// 链没变时换档**不重建**（延迟选项 + 非 Lit 档之间：链都是那条前向的几何链，`shadingPath()` 说了这件事）。
 TEST(SceneViewViewportTest, SwitchingBetweenNonLitModesOnADeferredRecipeKeepsTheChain)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Unlit });
-    view->ensureWindowPass();
-    ASSERT_NE(view->pipeline(), nullptr);
 
-    const std::size_t passes     = engine->passCount();
-    auto              pipeline   = intrusive_ptr<Pipeline>(view->pipeline());
+    PipelineOptions options;
+    options.path  = ShadingPath::Deferred;
+    options.mode  = ShadingMode::Unlit;
+    auto pipeline = buildFor(*view, engine.get(), options);
+    ASSERT_NE(pipeline, nullptr);
+    ASSERT_EQ(pipeline->shadingPath(), ShadingPath::Forward);
 
-    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Normals });
+    const std::size_t passes = engine->passCount();
+
+    EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Normals));
     EXPECT_EQ(view->pipeline(), pipeline.get()) << "同一条链上换档不该重建";
     EXPECT_EQ(engine->passCount(), passes);
-    EXPECT_NE(view->pipeline()->windowPass()->programOverride()->name().find(u8"builtin_forward_normals"),
+    EXPECT_NE(pipeline->windowPass()->programOverride()->name().find(u8"builtin_forward_normals"),
               vn::String::npos);
 
-    view->setOptions({ .path = ShadingPath::Deferred, .mode = SceneView::Options::Mode::Wireframe });
+    EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Wireframe));
     EXPECT_EQ(view->pipeline(), pipeline.get());
     EXPECT_EQ(engine->passCount(), passes);
 }
@@ -3469,9 +3510,11 @@ TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps){
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    view->setOptions({ .gizmo = true, .stats = true });
-    view->ensureWindowPass();
-    ASSERT_NE(view->pipeline(), nullptr);
+    PipelineOptions options;
+    options.gizmo.source_camera = view->camera();
+    options.fps.enabled         = true;
+    auto pipeline               = buildFor(*view, engine.get(), options);
+    ASSERT_NE(pipeline, nullptr);
 
     int layout_w = 0;
     int layout_h = 0;
@@ -3487,8 +3530,6 @@ TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps){
         ++layout_ratio_calls;
         layout_ratio = ratio;
     });
-
-    Pipeline* const pipeline = view->pipeline();
 
     const std::size_t pass_count_before = engine->passCount();
 
@@ -3525,7 +3566,7 @@ TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps){
 
     // Geometry is not recipe: no rebuild happened, the very same pipeline is still there and nothing was
     // re-registered (whatever the recipe's pass count is, it did not change).
-    EXPECT_EQ(view->pipeline(), pipeline);
+    EXPECT_EQ(view->pipeline(), pipeline.get());
     EXPECT_EQ(engine->passCount(), pass_count_before);
 
     // Going back to the whole surface clears the viewport again (and keeps the same pipeline).
@@ -3533,7 +3574,7 @@ TEST(SceneViewViewportTest, TheViewportDrivesAspectWindowRectAndLayoutSteps){
     EXPECT_TRUE(view->viewport().isFull());
     EXPECT_FALSE(window->hasViewport());
     EXPECT_EQ(layout_w, 1280);
-    EXPECT_EQ(view->pipeline(), pipeline);
+    EXPECT_EQ(view->pipeline(), pipeline.get());
 }
 
 TEST(SceneViewViewportTest, ASurfaceSplitStatesEachViewsRectangleAndNothingIsRebuilt)
@@ -3548,7 +3589,11 @@ TEST(SceneViewViewportTest, ASurfaceSplitStatesEachViewsRectangleAndNothingIsReb
     auto wide = intrusive_ptr<SceneView>(new SceneView());
     wide->setEngine(engine.get());
 
-    surface->present(*tall, NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });   // half the width, full height
+    // 呈现要指向一条 pass，所以视图先采纳链（宿主的顺序：建、采纳、声明；表只记"谁的 pass 画这块面"）。
+    ASSERT_NE(buildFor(*tall, engine.get()), nullptr);
+    ASSERT_NE(buildFor(*wide, engine.get()), nullptr);
+
+    surface->present(*tall, NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });   // half the width of the surface
     surface->present(*wide, NormalizedViewport{ 0.5, 0.0, 0.5, 0.5 });   // the top-right quarter
     ASSERT_NE(tall->pipeline(), nullptr);
     ASSERT_NE(wide->pipeline(), nullptr);
@@ -3595,11 +3640,14 @@ TEST(SceneViewViewportTest, APaneDeclaredOnASizedSurfaceIsSizedAtOnce)
 
     auto left = intrusive_ptr<SceneView>(new SceneView());
     left->setEngine(engine.get());
+    ASSERT_NE(buildFor(*left, engine.get()), nullptr);
     surface->present(*left, NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });
     surface->resize(1280, 720, 1.0);  // 宿主只报一次**表面**尺寸，两块矩形都在表面那张表上
 
+    // 链先采纳（呈现要指向一条 pass），layout 步在 present 之前登记：下面收到的尺寸只可能来自 present。
     auto right = intrusive_ptr<SceneView>(new SceneView());
     right->setEngine(engine.get());
+    ASSERT_NE(buildFor(*right, engine.get()), nullptr);
     int pane_w = 0;
     int pane_h = 0;
     right->addSurfaceLayout([&](int w, int h) {
@@ -3637,6 +3685,7 @@ TEST(SceneViewViewportTest, AViewReadsTheSurfaceSizeAndHoldsNoSecondCopyOfIt)
     EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 1.0) << "单独使用时按宿主报的尺寸";
 
     // 2) 挂上表面：视图改用表面记着的那份（800x400 = 2:1），不再看自己那份（1:1）。
+    ASSERT_NE(buildFor(*view, engine.get()), nullptr);
     surface->resize(800, 400, 1.0);
     ASSERT_TRUE(surface->present(*view));
     EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 2.0)
@@ -3663,72 +3712,72 @@ TEST(SceneViewViewportTest, FullViewportKeepsTheOverlayBoxWhereItWas)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    view->setOptions({ .gizmo = true });
-    view->ensureWindowPass();
-    ASSERT_NE(view->pipeline(), nullptr);
-    ASSERT_NE(view->pipeline()->gizmo(), nullptr);
+    PipelineOptions options;
+    options.gizmo.source_camera = view->camera();
+    auto pipeline               = buildFor(*view, engine.get(), options);
+    ASSERT_NE(pipeline, nullptr);
+    ASSERT_NE(pipeline->gizmo(), nullptr);
 
     view->onSurfaceResized(400, 300, 1.0);
 
     // The default gizmo still sits in the bottom-left corner of the surface with its 16 px margin: a full
     // viewport must not move anything.
-    const Viewport box = view->pipeline()->gizmoPass()->viewport();
+    const Viewport box = pipeline->gizmoPass()->viewport();
     EXPECT_EQ(box.x, 16);
     EXPECT_EQ(box.y, 300 - 16 - 96);
     EXPECT_EQ(box.width, 96);
 }
 
-TEST(SceneViewViewportTest, AnApplicationWindowPassKeepsTheOverlaysToItself)
+// 应用自己上屏时，视图**不被建链** —— 那条"表里有声明就不建自己的链"的规则归渲染控件（SurfaceWindow::init 先看
+// 表），于是这个视图什么也不画。而把**没有链**的视图声明为呈现是**被拒**的（表把声明解析成"视图采纳的那条链的
+// pass"，没有链就没有东西可指），拒绝会说出来 —— 不然宿主会以为窗口正在被画。
+TEST(SceneViewViewportTest, AnApplicationWindowPassLeavesTheViewWithNothingToDeclare)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
     auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
 
-    // The application presents this surface itself (its own deferred main pass) and DECLARES it. The declaration -
-    // not the mere existence of a pass carrying this camera - is what keeps the view's default window pipeline
-    // from being built, which is why the guard the host runs is spelled out here (SurfaceWindow::init, verbatim).
+    // The application presents this surface itself (its own deferred main pass) and DECLARES it.
     auto main = intrusive_ptr<RenderPass>(new RenderPass());
     main->setCamera(intrusive_ptr<Camera>(view->camera()));
     engine->addPass(main, 0);
-    surface->present(main.get());
-    if (!surface->hasPresentation()) {
-        surface->present(*view);
-    }
+    ASSERT_TRUE(surface->present(main.get()));
+    ASSERT_TRUE(surface->hasPresentation());
 
-    view->setOptions({ .stats = true });
-
-    // No default pipeline is built (the default falls back, it does not compete), so the recipe changed nothing
-    // on the engine...
+    // The view adopted nothing, so nothing was built for it and there is no picture of its own.
     EXPECT_EQ(engine->passCount(), 1u);
     EXPECT_EQ(view->pipeline(), nullptr);
-    EXPECT_FALSE(view->isStatsVisible());
 
-    // ... and the switch SAYS SO instead of silently doing nothing: the host owns that pipeline's overlays.
-    view->setStatsVisible(true);
-    EXPECT_GT(engine->diagnosticCount(), 0u);
+    const std::size_t diagnostics = engine->diagnosticCount();
+    EXPECT_FALSE(surface->present(*view)) << "a declaration has to point at a pass of the pipeline the view adopted";
+    EXPECT_GT(engine->diagnosticCount(), diagnostics) << "and it says so instead of silently accepting";
 }
 
-TEST(SceneViewViewportTest, RebuildingNowToDeathIsSafeAfterTheHostReleasedTheEngine)
+TEST(SceneViewViewportTest, RebuildingAfterTheHostReleasedTheEngineIsSafe)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    view->ensureWindowPass();
-    ASSERT_NE(view->pipeline(), nullptr);
+    auto pipeline = buildFor(*view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
 
-    // The host drops its reference: the view borrows the engine, so from here on the only thing keeping it alive
-    // is the view's own pipeline - and a rebuild drops that pipeline before it builds the next one (R2).
-    engine = nullptr;
+    // The host drops its reference: the view borrows the engine, so from here on the only thing keeping it alive is
+    // the pipeline the view adopted (a Pipeline holds its engine strongly - its passes live in that engine's list).
+    auto* borrowed = view->engine();
+    engine         = nullptr;
 
-    view->setOptions({ .stats = true });
-    ASSERT_NE(view->pipeline(), nullptr);
-    EXPECT_TRUE(view->isStatsVisible());
-    EXPECT_FALSE(view->pipeline()->windowPass()->hasViewport());
+    PipelineOptions with_readout;
+    with_readout.fps.enabled = true;
+    auto rebuilt             = buildFor(*view, borrowed, with_readout);
+    ASSERT_NE(rebuilt, nullptr);
+    EXPECT_EQ(view->pipeline(), rebuilt.get());
+    EXPECT_TRUE(rebuilt->isStatsVisible());
+    EXPECT_FALSE(rebuilt->windowPass()->hasViewport());
 
     view->setViewport({ 0.0, 0.0, 0.5, 1.0 });
     view->onSurfaceResized(800, 600, 1.0);
-    EXPECT_TRUE(view->pipeline()->windowPass()->hasViewport());
+    EXPECT_TRUE(rebuilt->windowPass()->hasViewport());
 }
 
 TEST(SceneViewTest, DefaultManipulatorBindsViewCameraAndScene)
@@ -3752,7 +3801,7 @@ TEST(SceneViewTest, DefaultManipulatorBindsViewCameraAndScene)
 TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
 {
     // Replacing the view's scene must reach BOTH consumers the view created:
-    // the default window pass (whose content is bound to the PASS, not to the
+    // the adopted pipeline's window pass (whose content is bound to the PASS, not to the
     // view) and a scene-aware manipulator, which holds a NON-OWNING scene
     // pointer and would otherwise navigate a scene the host may have dropped
     // (a use-after-free once its last reference goes away).
@@ -3768,7 +3817,8 @@ TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
     auto original = view->scene();
     original->setRoot(intrusive_ptr<Group>(new Group()));
 
-    view->ensureWindowPass();
+    auto pipeline = buildFor(*view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
     ASSERT_EQ(engine->passCount(), 1u);
     auto* orbit = dynamic_cast<OrbitCameraManipulator*>(view->manipulator());
     ASSERT_NE(orbit, nullptr);
@@ -3782,7 +3832,7 @@ TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
     EXPECT_EQ(view->scene().get(), replacement.get());
     EXPECT_EQ(orbit->scene(), replacement.get());
 
-    // One frame: the default window pass must now walk the REPLACEMENT scene
+    // One frame: the pipeline's window pass must now walk the REPLACEMENT scene
     // (its bound content) and no longer the scene it replaced.
     ASSERT_TRUE(engine->initialize());
     engine->frame(0.016);

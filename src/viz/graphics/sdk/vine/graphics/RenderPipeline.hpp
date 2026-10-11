@@ -7,7 +7,10 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "ReportOnce.hpp"
 #include "ShaderProgram.hpp"
+#include "ShadingMode.hpp"
+#include "ShadingPath.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -21,24 +24,6 @@ class RenderEngine;
 class RenderPass;
 class RenderTarget;
 class Scene;
-
-/**
- * @brief How a pipeline shades its opaque content.
- *
- * The ONE structural choice a pipeline makes: a forward path draws the content
- * straight into the lit image (one scene pass), a deferred path first writes a
- * G-buffer off-screen and then shades it fullscreen.
- *
- * It is an OPTION rather than a type because the two carry the same behaviour —
- * a list of passes — and differ only in that data; and because the other things
- * a host wants (shadows, screen-space effects) are ORTHOGONAL to it: they add
- * passes and inputs to whichever path is chosen (see PipelineStage), so making
- * the path a type would need one subclass per combination.
- */
-enum class ShadingPath {
-    Forward,  ///< One window scene pass drawing the content.
-    Deferred, ///< A G-buffer pass (offscreen MRT) + a fullscreen lighting pass.
-};
 
 /**
  * @brief Where a pass enters the frame's order.
@@ -176,6 +161,15 @@ struct VN_GRAPHICS_API FpsOverlayOptions {
 struct VN_GRAPHICS_API PipelineOptions {
     /** @brief How the opaque content is shaded (the structural choice). */
     ShadingPath path = ShadingPath::Forward;
+
+    /** @brief What the picture MEANS (the viewing mode the pipeline is built for; see ShadingMode).
+     *
+     * A mode is a pass property, so this is not a second structural knob: what it decides at BUILD time is
+     * whether the chain has to be assembled differently to be able to express it - a non-Lit mode needs the
+     * geometry pass, so a Deferred request is built FORWARD for it (see effectivePath). Switching among the
+     * modes the built chain CAN express is one override on a live pipeline (Pipeline::setShadingMode).
+     */
+    ShadingMode mode = ShadingMode::Lit;
 
     /** @brief Off-screen G-buffer size in pixels for the Deferred path.
      *
@@ -335,6 +329,72 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
      */
     void resize(int width, int height, double pixel_ratio);
 
+    /** @brief Gets the chain this pipeline was built as (see RenderPipelineBuilder::effectivePath).
+     *
+     * The EFFECTIVE path, not the requested one: a Deferred request carrying a non-Lit mode is built Forward,
+     * and this answers what was built - which is what "can this chain express that mode" is decided on
+     * (see setShadingMode).
+     *
+     * @return The path the chain was assembled as.
+     */
+    [[nodiscard]] ShadingPath shadingPath() const noexcept;
+
+    /** @brief Gets the mode this pipeline's picture is currently drawn with.
+     *
+     * @return The current mode (Lit until one is set - a fresh pipeline is the full shading).
+     */
+    [[nodiscard]] ShadingMode shadingMode() const noexcept;
+
+    /** @brief Sets what the picture MEANS on a LIVE pipeline (see ShadingMode).
+     *
+     * The picture pass' program override (and, for Wireframe, its rasterisation mode) - a pass property, so a
+     * mode this chain can express costs one override and NOT a rebuild: the next frame draws differently with
+     * nothing re-registered.
+     *
+     * A mode this chain CANNOT express is answered false and changes nothing: a Deferred picture comes out of a
+     * fullscreen lighting pass with no geometry left to shade, so its non-Lit modes have to be ASSEMBLED for
+     * (build with PipelineOptions::mode, which builds the chain that can express it - see effectivePath). The
+     * false answer is reported once per episode, because a host that ignored it would be looking at a picture
+     * that did not change and would call that "switched".
+     *
+     * @param mode Mode to draw with.
+     * @return true when this pipeline's picture now means @p mode (its picture pass was overridden); false when
+     *         this chain cannot express it (nothing changed - rebuild with PipelineOptions::mode instead).
+     */
+    bool setShadingMode(ShadingMode mode);
+
+    /** @brief Shows or hides the axis-gizmo overlay (a switch, never a rebuild).
+     *
+     * The overlay's EXISTENCE is a build decision (PipelineOptions::gizmo); this is the runtime switch over it
+     * (the pass' enabled flag - the one state a reader sees, see isGizmoVisible). A pipeline with no gizmo
+     * answers false and says so once per episode: a switch that silently did nothing would leave a host believing
+     * the overlay was just hidden.
+     *
+     * @param on True to show the overlay, false to hide it.
+     * @return true when this pipeline HAS the overlay (its visibility is now @p on); false when it has none -
+     *         build with PipelineOptions::gizmo to get one.
+     */
+    bool setGizmoVisible(bool on);
+
+    /** @brief Shows or hides the frame-rate readout (same rules as setGizmoVisible).
+     *
+     * @param on True to show the readout, false to hide it.
+     * @return true when this pipeline HAS the readout; false when it has none (PipelineOptions::fps).
+     */
+    bool setStatsVisible(bool on);
+
+    /** @brief Gets whether the axis-gizmo overlay is currently visible.
+     *
+     * The overlay pass is the single source of truth (its enabled flag), so this stays in step with
+     * setGizmoVisible and with a host that toggles gizmoPass() itself.
+     *
+     * @return true when the overlay exists and is enabled.
+     */
+    [[nodiscard]] bool isGizmoVisible() const noexcept;
+
+    /** @brief Gets whether the frame-rate readout is currently visible (see isGizmoVisible). */
+    [[nodiscard]] bool isStatsVisible() const noexcept;
+
   private:
     /** @brief Registers a pass on the engine and remembers it.
      *
@@ -391,6 +451,15 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     // what the frame runs and what carries "is it on" (see gizmo()/gizmoPass()).
     intrusive_ptr<RenderPass> gizmo_pass_;
     intrusive_ptr<RenderPass> fps_overlay_pass_;
+    // The chain this pipeline was built as (the EFFECTIVE one) and the mode its picture means: what
+    // setShadingMode decides "can this be expressed" on, and what a rebuild would start from. Set by the
+    // builder, which is the only thing that builds chains.
+    ShadingPath path_{ShadingPath::Forward};
+    ShadingMode mode_{ShadingMode::Lit};
+    // "This chain cannot express that mode" is one condition, not a per-call event (see setShadingMode), and so is
+    // "this chain has no such overlay" (see setGizmoVisible / setStatsVisible).
+    ReportOnce mode_refused_;
+    ReportOnce overlay_refused_;
 };
 
 VN_GRAPHICS_NS_END

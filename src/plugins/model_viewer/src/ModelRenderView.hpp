@@ -48,8 +48,8 @@ namespace vn::model_viewer
  *    才 attach（`RenderControl::init()`："宿主给时机、控件维护会话"）；打开十份文档就真的建十份
  *    （vsg 那边的设备数上限已解开，见 `gfx_backend_vsg/CMakeLists.txt` 里的 `VSG_MAX_DEVICES`）。
  *  - **自带灯与帧率读数**：灯挂在场景上（`scene->addLighting(LightRig::studio())`，没人装就只有后端的常量填充，
- *    画面是一片平色），帧率读数由**视图的默认窗口管线**提供（`view->setOptions({ .stats = true })`，尺寸与比例
- *    归视图维护）—— 读数归本视图，因为"这一份文档的帧率"就是这一块渲染面的帧率。
+ *    画面是一片平色），帧率读数由**控件的查看器预设**提供（`control_->setViewerOptions(... .stats = true)`，
+ *    尺寸与比例归链维护）—— 读数归本视图，因为"这一份文档的帧率"就是这一块渲染面的帧率。
  *  - **发布"当前 3D 视图"**：上屏时把这块控件发布给窗口（`MainWindow::setPrimaryRenderControl()`），下屏时收回
  *    （与 `DemoView` 同一形状）—— 于是别的插件（本插件的"显示模式"命令、`test_plugin` 的实时渲染演示）不必认识
  *    任何具体视图类，就能拿到当前那块渲染面。
@@ -113,13 +113,13 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
     vn::appfw::gui::RenderControl* renderControl() const { return control_; }
 
     /**
-     * @brief 右下角的帧率读数（视图默认窗口管线里的 HUD 档）。
+     * @brief 右下角的帧率读数（查看器的链里的 HUD 档）。
      *
-     * 读数不再由查看器自己造：`SceneView::Options::stats` 让视图的默认管线带上这个 HUD 档，于是**尺寸、比例、
-     * 摆位、窗口缩放**全归视图维护（见 `SceneView::setStatsVisible()` —— 显示/隐藏是零重建的开关）。空文档时
-     * 视图没建管线，这里就是空指针。
+     * 读数不再由查看器自己造：查看器预设里的 `stats` 让链带上这个 HUD 档，于是**尺寸、比例、摆位、窗口缩放**
+     * 全归链维护（见 `Pipeline`），显示/隐藏是链上的零重建开关（`Pipeline::setStatsVisible()`）。空文档时视图
+     * 还没建链，这里就是空指针。
      *
-     * @return 读数 pass；视图还没有默认管线时是空指针。
+     * @return 读数 pass；视图还没有链时是空指针。
      */
     vn::raw_ptr<vn::graphics::FpsOverlay> fpsOverlay() const
     {
@@ -168,7 +168,7 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
     vn::appfw::gui::RenderControl*             control_ = nullptr;
     /// 控件那个 view（借来放场景的，不是本视图造的）：`SceneView` 归渲染面所有，见 `buildScene()`。
     vn::intrusive_ptr<vn::graphics::SceneView> view_;
-    /// 右下角的帧率读数由视图的默认管线提供（`Options::stats`），见 `fpsOverlay()`。
+    /// 右下角的帧率读数由查看器预设提供（`ViewerOptions::stats`），见 `fpsOverlay()`。
     bool                                       fitted_ = false;
 };
 inline std::vector<vn::math::Vec3f> ModelRenderView::smoothNormals(std::span<const vn::math::Vec3f> positions,
@@ -295,10 +295,13 @@ inline void ModelRenderView::buildScene()
     scene->setName(model_ != nullptr ? model_->title() : vn::String());
     scene->setRoot(root);
     addLighting(*scene);
-    // 帧率读数：让视图的默认窗口管线带上这个 HUD 档。以前查看器自己造 `FpsOverlay` 挂引擎（pixel ratio、把
-    // 逻辑尺寸转给它、resize 再补一次，31 行），现在尺寸/比例/摆位/缩放全归视图 —— 而且显示与隐藏是零重建的
-    // 开关（`System` 菜单里的"帧率"项调 `view->setStatsVisible()` 即可）。
-    view_->setOptions({ .stats = true });
+    // 帧率读数：让控件的查看器预设带上这个 HUD 档 —— 读-改-写，`setViewerOptions()` 收的是整个预设，只送 stats
+    // 会把链、坐标轴那些关掉。以前查看器自己造 `FpsOverlay` 挂引擎（pixel ratio、把逻辑尺寸转给它、resize 再补
+    // 一次，31 行），现在尺寸/比例/摆位/窗口缩放全归链自己维护（见 Pipeline）—— 而显示与隐藏是零重建的开关
+    // （`Pipeline::setStatsVisible()`，`System` 菜单里的"帧率"项就是它）。
+    vn::appfw::gui::ViewerOptions options = control_->viewerOptions();
+    options.stats                         = true;
+    control_->setViewerOptions(options);
 }
 
 inline void ModelRenderView::activate()

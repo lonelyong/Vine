@@ -44,34 +44,37 @@ class Scene;
  * A SceneView is not a RenderEngine. It borrows one (setEngine): the engine
  * remains the pure pass scheduler / backend owner, while the view owns the
  * "primary view state" a camera used to be given by the engine. The engine
- * holds no content scene: the view keeps its content and binds it explicitly
- * to the passes that draw it (its default window pass binds it on
- * ensureWindowPass()). ensureWindowPass() registers an order-0 window pass
- * that presents this view's camera to the backbuffer. Whether that pass is
- * what a SURFACE draws is the surface's own declaration (RenderSurface): a
- * host whose own main pass presents the surface says so THERE (present(pass)),
- * and a view is never suppressed because some pass elsewhere happens to carry
- * its camera.
+ * holds no content scene, and neither does this class hold a DRAWING RECIPE: a
+ * view is WHAT is drawn (its camera and content) and WHERE (its rectangle and
+ * the surface size it derives from), while WHICH passes draw it is a Pipeline
+ * it ADOPTS (setPipeline) - built by RenderPipelineBuilder, whose
+ * PipelineOptions carry the recipe (chain, shading mode, overlays). That split
+ * is why switching a shading mode or hiding an overlay is a call on the
+ * pipeline (Pipeline::setShadingMode / setGizmoVisible) and never something a
+ * view rebuilds, and why a view with no pipeline simply draws nothing.
  *
- * Several views may share one engine, but each view's DEFAULT window pass
+ * Whether a pass presents a SURFACE is the surface's own declaration
+ * (RenderSurface): a host whose own main pass presents the surface says so
+ * THERE (present(pass)), and a view is never suppressed because some pass
+ * elsewhere happens to carry its camera.
+ *
+ * Several views may share one engine, but a pipeline built for two of them
  * clears the whole surface and draws full-surface: with two such passes the
  * second erases the first. Side-by-side views therefore need explicit layout -
  * give each pass a sub-viewport (RenderPass::setViewport) and disable clearing
  * on all but one (setClearEnabled), or build the pipeline yourself with
  * RenderPipelineBuilder. The engine never manages viewport layout.
  *
- * SIX ROLES, ONE CLASS. The public surface is grouped by what a method is FOR, in this order: the RECIPE (how
- * this view draws - the one settings object, whose structure a change rebuilds), CAMERA AND CONTENT (what it
- * draws), NAVIGATION (the manipulator and the two camera moves), GEOMETRY (the rectangle it draws into, the
- * surface size it derives from, and the layout steps told about both), INPUT (the window events it forwards)
- * and PRESENTATION (the engine it borrows, the pipeline its recipe built, the window pass, and the frame drive).
+ * FIVE ROLES, ONE CLASS. The public surface is grouped by what a method is FOR, in this order: CAMERA AND
+ * CONTENT (what it draws), NAVIGATION (the manipulator and the two camera moves), GEOMETRY (the rectangle it
+ * draws into, the surface size it derives from, and the layout steps told about both) and INPUT (the window
+ * events it forwards), then PRESENTATION (the engine it borrows, the pipeline it adopts, the surface it
+ * presents through, and the frame drive).
  *
- * THREE OF ITS STEPS ARE NOT HOST API - a presentation table drives them, and a host calling one by hand would
+ * TWO OF ITS STEPS ARE NOT HOST API - a presentation table drives them, and a host calling one by hand would
  * make that table believe in a presentation nobody declared:
  *   - setSurface: binds this view and takes the size back on unbind (RenderSurface::present / dismiss);
- *   - applySurfaceGeometry: re-derives the rectangle after the surface size changed (RenderSurface::resize);
- *   - ensureWindowPass: the default window pass, asked for when a view becomes what presents a surface. It is
- *     public because the OTHER configuration exists - a view with no surface at all is driven directly.
+ *   - applySurfaceGeometry: re-derives the rectangle after the surface size changed (RenderSurface::resize).
  *
  * The engine stays camera- and content-agnostic: it forwards no mouse /
  * scroll / key input, holds no camera and no content scene. The host pushes
@@ -83,136 +86,21 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     friend class RenderSurface;  // binds this view to the surface it presents, re-states the surface's clear, and hands its size back on unbind
 
   public:
-    /**
-     * @brief The recipe of this view: how it draws (not how it is built).
-     *
-     * Deliberately small, and deliberately the ONLY settings object on a view: everything here is a decision
-     * that changes which passes exist, so changing it REBUILDS this view's default window pipeline (see
-     * setOptions). Whatever is geometry rather than recipe is a plain setter instead and never rebuilds
-     * anything (viewport, surface size, overlay visibility - see setViewport / onSurfaceResized /
-     * setGizmoVisible).
-     *
-     * The names follow the show-flag convention the industry uses for exactly these two overlays (Unreal's
-     * ShowFlags.Gizmos, a stats readout toggled separately), and the defaults are the current behaviour:
-     * forward, no HUD.
-     */
-    struct Options {
-        /** @brief How the opaque content is shaded (the one structural choice). */
-        ShadingPath path{ ShadingPath::Forward };
-
-        /** @brief What the surface colour MEANS: lit, faceted, unlit, normals, or edges.
-         *
-         * Every mode is the SAME built-in program text with one define (see BuiltinShaders), applied as the
-         * GEOMETRY pass' program override - the pass that turns geometry into the picture - and Wireframe adds
-         * that pass' rasterisation mode on top: a mode change is a pass property, NOT a pipeline rebuild.
-         *
-         * A mode other than Lit needs geometry to shade, and a Deferred recipe's picture is produced by a
-         * fullscreen lighting pass that has none left: so while the mode is not Lit, a deferred recipe is BUILT
-         * FORWARD (the recipe field is untouched - switching back to Lit builds deferred again). That makes the
-         * transition on a deferred recipe a rebuild (the chain changed); on the forward path it never rebuilds.
-         */
-        enum class Mode
-        {
-            Lit,       ///< The full shading: ambient + directional lights + specular.
-            Flat,      ///< The same lighting with the per-FACE normal (faceted surfaces, no vertex normals read).
-            Unlit,     ///< The surface colour alone (material / map / vertex colour), no light term.
-            Normals,   ///< View-space normals as colour: which way each surface faces.
-            Wireframe, ///< Edges only (RenderPass::setPolygonModeOverride), in the surface's own colour.
-        };
-
-        /** @brief The shading mode (see Mode; default: the full shading). */
-        Mode mode{ Mode::Lit };
-
-        /** @brief Whether this view HAS an axis-gizmo overlay pass (not whether it is visible). */
-        bool gizmo{ false };
-
-        /** @brief Whether this view HAS a frame-rate readout pass (not whether it is visible). */
-        bool stats{ false };
-    };
-
-  public:
     /** @brief Constructs a view with a default camera and an empty content
      * scene.
      *
-     * The view is not attached to an engine until setEngine() is called.
+     * The view is not attached to an engine until setEngine() is called, and it
+     * draws nothing until a pipeline is adopted (setPipeline).
      */
     SceneView();
 
-    /** @brief Destroys the view, removing its default window pass from the
-     * bound engine (when this view registered one).
+    /** @brief Destroys the view, dropping the pipeline it adopted and leaving the
+     * surface it presents through (the pipeline's own destructor unregisters its
+     * passes from the engine it was built on).
      *
      * The bound engine must outlive the view.
      */
     ~SceneView();
-
-  public:
-    // ---- Recipe ----
-
-    /** @brief Gets this view's recipe (Options). */
-    const Options& options() const noexcept;
-
-    /** @brief Sets this view's recipe, doing the cheapest thing that satisfies the change.
-     *
-     * The STRUCTURE is what a pipeline build answers: the CHAIN the recipe ends up in (a non-Lit mode makes a
-     * deferred recipe build forward - see Options::Mode) and the two overlays (gizmo / stats).
-     * Changing any of them REBUILDS this view's default window pipeline (the old one unregisters its passes, the
-     * new one is assembled through the same RenderPipelineBuilder recipe an application would use). That is ONE
-     * pipeline build, not a per-frame cost; on the Deferred path it also reallocates the G-buffer.
-     *
-     * The SHADING MODE is not a structure while the chain stays the same: every mode is the picture pass' program
-     * override (see Options::Mode), so switching between Lit / Flat / Unlit / Normals / Wireframe on the forward
-     * path costs an override and NOT a rebuild - the picture changes on the next frame with nothing re-registered
-     * (measured by the same pipeline() handle). On a DEFERRED recipe, entering or leaving a non-Lit mode changes
-     * the chain, so that transition is a rebuild; staying among the non-Lit modes is not.
-     *
-     * Nothing is built when the view has no default pipeline (it was never asked to present a surface, or an
-     * application presents this view's camera with a pipeline of its own): the recipe is remembered and the next
-     * ensureWindowPass() builds from it. That is what makes "configure right after construction" cost nothing at
-     * all.
-     *
-     * @param options New recipe; passing the current one is a no-op.
-     */
-    void setOptions(const Options& options);
-
-    /** @brief Shows or hides the axis-gizmo overlay at runtime.
-     *
-     * A switch, not a recipe change: when the view's pipeline carries the overlay, this is one
-     * RenderPass::setEnabled() and nothing is rebuilt. When it does not (the recipe had Options::gizmo false),
-     * the overlay is added to the recipe and the pipeline is rebuilt ONCE - every later call is free again. A
-     * view with no default window pipeline has nowhere to put an overlay: that is reported on the engine's
-     * diagnostic route (the host's own main pipeline owns its overlays - see RenderPipelineBuilder's
-     * AxisGizmoOptions).
-     *
-     * What this call was last asked for is what a LATER rebuild starts from: a new pass is created enabled, so
-     * without that a readout the user switched off would come back the next time the recipe changed the pipeline
-     * (a path switch, or adding the other overlay). The pass is still the state a reader sees (isGizmoVisible
-     * reads it), and a host that skips this API entirely is unaffected - a fresh view has both overlays visible.
-     *
-     * @param on True to show the overlay, false to hide it.
-     */
-    void setGizmoVisible(bool on);
-
-    /** @brief Shows or hides the frame-rate readout at runtime (same rules as setGizmoVisible).
-     *
-     * @param on True to show the readout, false to hide it.
-     */
-    void setStatsVisible(bool on);
-
-    /** @brief Gets whether the axis-gizmo overlay is currently visible.
-     *
-     * The overlay pass is the single source of truth (its enabled flag), so this stays in step with the
-     * recipe, with setGizmoVisible and with a host that toggles the pass handle itself
-     * (view->pipeline()->gizmoPass()).
-     *
-     * @return true when the overlay exists and is enabled.
-     */
-    bool isGizmoVisible() const noexcept;
-
-    /** @brief Gets whether the frame-rate readout is currently visible.
-     *
-     * @return true when the readout exists and is enabled.
-     */
-    bool isStatsVisible() const noexcept;
 
   public:
     // ---- Camera and content ----
@@ -307,8 +195,8 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * statements disagree.
      *
      * Then it runs this view's surface-layout steps, with this view's own rectangle: the manipulator / camera
-     * aspect first, then every callback registered with addSurfaceLayout(). Its default pipeline (when it has
-     * one) is resized here too, so a view that uses the built-in recipe needs no layout step at all.
+     * aspect first, then every callback registered with addSurfaceLayout(). The pipeline it adopted (when it has
+     * one) is resized here too, so a view that draws through a built pipeline needs no layout step at all.
      *
      * A view that PRESENTS a surface forwards this to RenderSurface::resize: the size of the thing the picture
      * ends up in is a fact about the SURFACE, which is where it is recorded and fanned out to every view that
@@ -391,34 +279,40 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /** @brief Gets the bound engine, or nullptr when unset. */
     raw_ptr<RenderEngine> engine() const;
 
-    /** @brief Gets this view's default window pipeline (the one its recipe built), or nullptr.
+    /** @brief Gets the pipeline this view adopted (setPipeline), or nullptr.
      *
-     * For inspection and micro-tuning - `setEnabled()`, `gizmoPass()` / `fpsOverlayPass()` (the passes: their
-     * state IS the overlay's visibility), `gizmo()` / `fpsOverlay()` (the content objects), `offscreenTarget()` -
-     * and for
-     * the two facts a host may want to check: null means "this view has no default pipeline" (the window pass was
-     * never ensured, or an application presents this camera itself), and `windowPass()` tells it what presents
-     * this view. The pipeline is owned by the view; letting it go is what removes the passes.
+     * The handle for inspection and micro-tuning - `windowPass()` (what presents this view),
+     * `gizmoPass()` / `fpsOverlayPass()` (their state IS the overlay's visibility), `gizmo()` / `fpsOverlay()`
+     * (the content objects), `offscreenTarget()`, `setShadingMode()` - and the answer to "is this view drawing
+     * anything at all": null means no pipeline was adopted, and a view with none draws nothing.
      *
-     * @return The default pipeline, or nullptr when this view has none.
+     * The view holds the pipeline (adopting shares ownership), so it stays alive while the view draws through
+     * it; letting it go is what removes its passes from the frame.
+     *
+     * @return The adopted pipeline, or nullptr when this view has none.
      */
     raw_ptr<Pipeline> pipeline() const;
 
-    /** @brief Registers the default window pass: an order-0 pass presenting this view's camera to the backbuffer,
-     * drawing this view's content scene.
+    /** @brief Adopts @p pipeline as what draws this view (build one with RenderPipelineBuilder).
      *
-     * The default viewer is the shared Forward preset (RenderPipelineBuilder):
-     * the view assembles it through the same recipe an application would use
-     * for an explicit forward pipeline. It is built on the first call and kept
-     * from then on: calling this twice is a no-op while the pipeline is
-     * registered (a recipe change rebuilds it - see setOptions).
+     * THE one step that connects a view to a drawing: the view brings what a pipeline cannot know (this view's
+     * camera and content are the builder's inputs, and its rectangle, surface size and layout steps are applied
+     * HERE - the window pass' device rectangle, the off-screen targets' size, the HUD boxes' origin), and the
+     * pipeline brings what a view must not own (which passes exist, the shading mode, the overlays).
      *
-     * The window pass is the PRESENTATION table's knowledge, not this view's: a view asked to present a surface
-     * gets its pass from there (RenderSurface::present is the one that calls this, and the table is what resolves
-     * the pass again later - see RenderSurface::presentations). The direct call is for the other configuration -
-     * a view used with no surface at all, where there is no table to declare anything through.
+     * Adopting replaces any previous pipeline, and passing null drops the current one - which is how a view is
+     * taken out of the frame: the pipeline unregisters its passes when its last handle goes away, so a dropped
+     * view draws nothing instead of leaving passes to run with nobody holding them. A view that presents a
+     * surface (RenderSurface::present) keeps being one across a change: the table resolves the view's pass
+     * afresh, so a REBUILT pipeline (a recipe change) is followed without re-declaring anything.
+     *
+     * The view is drawn where its rectangle says, and it is the CALLER's business to have built a pipeline for
+     * this view: a pipeline built for another camera draws that camera's picture into this view's rectangle (the
+     * engine reports the shape mismatch when the two disagree).
+     *
+     * @param pipeline Pipeline that draws this view; null drops the current one.
      */
-    void ensureWindowPass();
+    void setPipeline(intrusive_ptr<Pipeline> pipeline);
 
     /** @brief Gets whether this view presents a surface (RenderSurface::present bound it to one).
      *
@@ -447,15 +341,6 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * @param surface Surface this view presents (borrowed), or null when it presents none.
      */
     void setSurface(raw_ptr<RenderSurface> surface) noexcept;
-
-    /** @brief Removes the default window pass this view registered, if any. */
-    void removeWindowPass();
-
-    /** @brief Drops the default pipeline (if any) and rebuilds it from the current recipe. */
-    void rebuildDefaultWindowPass();
-
-    /** @brief Applies the recipe's shading mode to the pass that turns geometry into the picture (no rebuild). */
-    void applyModeToGeometryPass();
 
     /** @brief Records the surface size (and ratio) a view with NO surface derives from.
      *
@@ -495,43 +380,17 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /** @brief Gets this view's rectangle in the host's logical pixels (the whole surface when full). */
     void paneSize(int& width, int& height) const;
 
-    /** @brief Shows/hides an overlay, adding it to the recipe (one rebuild) when it is missing. */
-    void setOverlayVisible(bool on, bool gizmo);
-
-    /** @brief Returns whether the overlay pass exists and is enabled. */
-    bool isOverlayVisible(bool gizmo) const noexcept;
-
-    /** @brief Puts the last requested overlay visibility back onto a freshly built pipeline's overlays.
-     *
-     * A rebuild (recipe change) creates its overlays ENABLED, so the one thing that has to be carried across is
-     * "the caller asked for this one hidden" - see setGizmoVisible.
-     */
-    void applyOverlayIntent();
-
-    /** @brief The path the default pipeline is BUILT with (the recipe's, unless a mode needs the forward chain).
-     *
-     * A shading mode is a GEOMETRY-stage override ("what the surface colour means"), and a deferred recipe's
-     * picture comes out of a fullscreen lighting pass that has no geometry left to shade - so while the mode is
-     * something other than Lit, a deferred recipe is built forward instead. The recipe itself is untouched (a
-     * host that asks for Deferred and gets a forwarded picture back on Lit is the point): this is the "what is
-     * actually built" answer, and it is what decides whether a change is a REBUILD or a pass property.
-     */
-    ShadingPath effectivePath() const noexcept;
-
-    /** @brief effectivePath() for an arbitrary recipe (see it for why a mode may change the chain). */
-    static ShadingPath effectivePath(const Options& options) noexcept;
-
     // The bound engine is borrowed (the host owns it and keeps it alive).
     raw_ptr<RenderEngine> engine_ = nullptr;
 
     // The surface this view presents, while one says so (RenderSurface::present). Borrowed, and unbound from
-    // either side: a rebuild has to tell the surface to re-state its clear on the new passes, and the surface
-    // must not be reached once it is gone (see ~SceneView and ~RenderSurface).
+    // either side: a dropped pipeline has to tell the surface to re-state its clear on what is left, and the
+    // surface must not be reached once it is gone (see ~SceneView and ~RenderSurface).
     raw_ptr<RenderSurface> surface_ = nullptr;
 
-    // This view's recipe and its geometry. Both are inputs to "what does my pipeline look like", and only the
-    // recipe rebuilds it (see setOptions).
-    Options            options_{};
+    // This view's geometry. The RECTANGLE is what every consumer reads (with the size it comes out of, see
+    // surfaceWidth): it is the one input to "where does this view draw", and the pipeline this view adopted is
+    // laid out from it (see applySurfaceGeometry).
     /// The rectangle this view draws into when it presents NO surface (while it presents one, the surface's table
     /// holds it - see viewport() and RenderSurface::viewportOf).
     NormalizedViewport viewport_{};
@@ -542,18 +401,14 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     int    own_height_      = 0;
     double own_pixel_ratio_ = 1.0;
 
-    // The visibility the caller last ASKED for (setGizmoVisible / setStatsVisible). A reader still reads the pass
-    // (isGizmoVisible), but a rebuilt pipeline creates its overlays enabled, so this is what applyOverlayIntent()
-    // puts back after every build. Both default to visible: a view nobody has switched anything off on.
-    bool gizmo_visible_ = true;
-    bool stats_visible_ = true;
-
     intrusive_ptr<Camera>  camera_;
     intrusive_ptr<Scene>   scene_;
     intrusive_ptr<CameraManipulator> manipulator_;
 
-    // The default (Forward) window pipeline this view registered, if any.
-    intrusive_ptr<Pipeline> default_pipeline_;
+    // The pipeline this view adopted, if any (setPipeline): what draws this view's camera and content into its
+    // rectangle. The handles in it are the pipeline's own - this one only keeps it alive, and dropping it is what
+    // takes the passes out of the frame.
+    intrusive_ptr<Pipeline> pipeline_;
 
     // Creator-managed surface-layout steps run on every surface resize.
     std::vector<std::function<void(int width, int height)>> surface_layouts_;

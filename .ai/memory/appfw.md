@@ -250,6 +250,25 @@
   = 表面的焦点，没有呈现视图时回退控件自己的视图。钉子：`RenderControlTest.TheSurfacesRectanglesRouteInputWithNoRouterAtAll`
   （不装 router：右半拖拽只动右边那格、左半按下动自己的视图、键盘跟着焦点走；变异验证：默认路由不看矩形 / 按下不设
   焦点 / 键盘绕过焦点 ⇒ 各自失败）。
+- **S7：配方离开 `SceneView`，归 `Pipeline`（2026-10-11，已落地）**：用户点了 `SceneView::ensureWindowPass()` 的名
+  （"什么时候该调用"没有答案），三选一（① 改名+查询 / ② 声明式结构 / ③ **删掉这一层**）选了 ③。
+  **归属**：配方（走哪条链、哪些档**存在**、档要能表达什么）→ `PipelineOptions` + `Pipeline`；**运行期**的档与档
+  可见性 → `Pipeline` 的 setter（`setShadingMode` / `setGizmoVisible` / `setStatsVisible`，零重建，答不出时
+  **拒绝 + 报一次**）；视图只剩 `setPipeline()` / `pipeline()`（采纳 = 应用矩形几何 + 让表面重述清屏；传 null =
+  不画）；`RenderSurface::present(view)` **只解析不建**（没有链的视图被拒绝 + 报一次 ⇒ 宿主顺序固定成**先建链、
+  再采纳、再声明**）；appfw 拿走"查看器"这一层：`gui/ViewerOptions.hpp`（`path`/`mode`/`gizmo`/`stats`/离屏尺寸，
+  上下文字段——gizmo 源相机、两个 HUD 的像素比——由控件补）+ `RenderControl::viewerOptions()/setViewerOptions()/
+  setShadingMode()`。"有没有这一档"（选项）与"看不看得见"（setter）从此是两个问题两个答案。
+  **一条坑**：换档的判据是"**这个请求**会建成哪条链"（`RenderPipelineBuilder::effectivePath()` 公开成静态就是
+  给它用的），不是"这条链能不能表达这个档" —— 少了这半句，前向链表达得了 Lit，于是永远回不到延迟链。
+  **重建**由重建的那一方把运行期选择搬过去（`SurfaceWindow::buildViewerPipeline` 读活着的链、在新链上重落一遍；
+  与 S6"一个值一个 owner"同一条）。判据：graphics 360 / gui 254 / vsg 426（421+3 skip+2 已知红）+ appfw 32 /
+  meshio 34 / iobase 94 全绿、全量 0 error / 0 warning、五 gate 0 finding；**变异 5/5 红**。
+  落地记录见 `.ai/design/graphics-redesign.md` S7。
+  **下文两条（"渲染视图 v2 已落地"与" HUD 的显示 / 隐藏是运行时开关"）读作 S7 之前**：它们写的
+  `SceneView::Options` / `setOptions` / `ensureWindowPass` / `applyOverlayIntent` 都已随 S7 退场（当时的口径与
+  教训仍有效，`AHiddenOverlayStaysHiddenAcrossARebuild` 那条钉子改成控件级的
+  `ModelViewerTest.TheSceneCarriesItsOwnFrameRateReadout` 后半）。
 - **渲染视图 v2 已落地（S0–S4，2026-10-11）**：`SceneView::Options{path,gizmo,stats}` + `setOptions/options` + `pipeline()`；
   **几何** `setViewport(NormalizedViewport)`（视图内一处把 {viewport × 表面尺寸 × 比例} 换算成相机宽高比 / 窗口 pass 视口 /
   离屏与 HUD 尺寸 / layout 步尺寸）+ `onSurfaceResized(w,h,ratio)` 重载 + 三参数 `addSurfaceLayout`；**开关**

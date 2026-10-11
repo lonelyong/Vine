@@ -218,14 +218,17 @@ co_await initAppShellRenderControl(wnd, dock_);  // 设备 + 管线在这一拍�
 
 - **构造只组装**：`RenderControl` 建面 + 引擎 + 视图 + 容器；`SurfaceWindow` 建引擎与视图（`setEngine`）、挂诊断 sink、
   接 `screenChanged`，**不选后端、不 attach**。构造返回时 `state()==Pending`、`engine()->backend()==nullptr`、
-  无 pass、无管线 —— 这就是"配置窗口"：`setBackend()` / `view()->setOptions()` / 装内容都排在第一次 attach 之前，
-  而且**零重建**。兜底是 `QTimer::singleShot(0, this, [this]{ init(); })`。
+  无 pass、无管线 —— 这就是"配置窗口"：`setBackend()` / `setViewerOptions()` / 装内容都排在第一次 attach 之前，
+  而且**零重建**（S7 之后配方的入口是 `RenderControl::setViewerOptions()`；S7 之前是 `view()->setOptions()`）。
+  兜底是 `QTimer::singleShot(0, this, [this]{ init(); })`。
 - **attach 两个入口，语义相同**：`init()`（同步、幂等：会话已绑在当前句柄上就直接 `true`）与 `initAsync()`
   （`co_return init()`，**不挂起**，只是给协程调用方的拼法）。仓库内两个宿主都在文档上屏那一拍要它：
   `DemoView::activate()` 的 `initAsync()`、`ModelRenderView::activate()` 的 `init()`。
-- **`init()` 内部的次序**（前两条是这一轮定的）：①**这块表面的呈现声明**（`if (!d->surface->hasPresentation()) d->surface->present(*d->view);`
-  —— **在后端检查之前**：谁画这块表面是组成，不是设备事实；宿主自建的 pass 已在 `surface->present(pass)` 里声明过，此时就一条都不建。M2a 之前这里是
-  `view->ensureWindowPass()`，它自带"引擎里已有同一个相机的窗口 pass 就让位"的推断）②`useDefaultBackend()`（只在引擎没有后端时补第一个注册的
+- **`init()` 内部的次序**（前两条是这一轮定的）：①**这块表面的呈现声明**（`if (!d->surface->hasPresentation())`
+  —— **在后端检查之前**：谁画这块表面是组成，不是设备事实；宿主自建的 pass 已在 `surface->present(pass)` 里声明过，
+  此时就一条都不建。**S7 之后这一步还要先保证视图有一条链**（没有就按 `ViewerOptions` 建一条默认预设并采纳），
+  因为表把声明**解析**成"视图采纳的那条链的窗口 pass"，它自己不建；M2a 之前这里是 `view->ensureWindowPass()`，
+  它自带"引擎里已有同一个相机的窗口 pass 就让位"的推断）②`useDefaultBackend()`（只在引擎没有后端时补第一个注册的
   后端；晚注册的还能被下一次 attach 捡起）③没有后端 ⇒ `failAttach("no render backend is registered")` ④句柄空 / 尺寸退化
   ⇒ 记一行日志后返回，等 show/resize/下一次 `activate()` ⑤`setWindowHandle` → `initialize()`（设备 + 会话 + 管线编译）
   → `resize(w,h)` + 把尺寸交给**表面**（`surface->resize(w,h,dpr)`，表面记下并扇出给每条呈现；控件自己那个视图不呈现时才单独喂）

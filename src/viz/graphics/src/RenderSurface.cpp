@@ -74,10 +74,22 @@ bool RenderSurface::present(SceneView& view, const NormalizedViewport& rect)
     // The view and the surface name each other while the presentation stands: the surface resolves the view's
     // window pass from it, and the view tells the surface when it rebuilt that pass.
     view.setSurface(this);
-    // Declaring a view as what presents this surface IS asking for its default window pass: that is the pass the
-    // table resolves to (a host that meant to present a pass of its own declares that pass - see the other
-    // overload, and then this one is never called).
-    view.ensureWindowPass();
+    // DECLARING A VIEW IS DECLARING ITS PIPELINE. What presents this surface is the pass of the pipeline the view
+    // ADOPTED (SceneView::setPipeline - built by RenderPipelineBuilder), and this table reads it back through the
+    // view, so it never has to know a recipe, a chain or an overlay: a view with no pipeline has nothing to
+    // resolve, and a declaration without one would leave a host believing a window is being drawn into.
+    if (view.pipeline() == nullptr) {
+        entries_.pop_back();
+        view.setSurface(nullptr);
+        if (refused_.shouldReport()) {
+            engine_->reportEngineProblem(
+                DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
+                u8"RenderSurface::present: this view has no pipeline to draw with, so nothing could declare this "
+                u8"surface: build one (RenderPipelineBuilder) and adopt it (SceneView::setPipeline) first");
+        }
+        return false;
+    }
+    refused_.rearm();  // the condition is over: the next refusal is a new episode
     // The size this surface last saw reaches the new presentation AT ONCE (the view reads it from here): a pane
     // added to a running surface is sized without the host feeding it (that is what makes the surface the ONE
     // owner of the size). Its geometry follows the rectangle THIS table now states (its window pass' device
