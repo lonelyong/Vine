@@ -15,11 +15,48 @@
 | **模块布局与依赖** | 顶部 2026-09-27 四条：帧机器归属 `core`→`backend` / 诊断路线合并 / 帧时钟查询面 `FrameProgress` / 放置判据与 `frame/` 最终形态；规则全文在 `.ai/design/graphics-layering.md` |
 | **一帧怎么走** | M11h 空绘制调用不是绘制调用 · M11m episode 归半片 · M11o 拒绝报告合并 · M11w 块预算按需增长 · M11x B5 触发规模 · M11i 租约顺序相位 · B8 跨帧差异 · B9 在飞槽数地板 |
 | **着色器与 ABI 契约** | shader 文件命名 `builtin_<角色>.<阶段>` · `vn_`→`vine_` 前缀 · texcoord kind 显式化 · P0.A/P0.B1/P0.C1（前向着色归 SDK / location 表 / L1 块布局） · P12 文件化 + 构建期嵌入 · program 槽 P1 三步 |
-| **证据与门禁** | M11k 背景看写掩码 · M11l 第三条画面判据"整片背景灰" · FPS 窗口真平均 · ASan 两片（余量收口 / 全量 test_vsg 首通） · V3/V4 上游能力门禁 · R5 LSan 抑制 · M11g 计数分配器（**`skipped == 0` 才是跑过设备电池**） |
+| **证据与门禁** | M8 SDK 级设备夹具 + 像素判据（`SdkPixelTest`） · M11k 背景看写掩码 · M11l 第三条画面判据"整片背景灰" · FPS 窗口真平均 · ASan 两片（余量收口 / 全量 test_vsg 首通） · V3/V4 上游能力门禁 · R5 LSan 抑制 · M11g 计数分配器（**`skipped == 0` 才是跑过设备电池**） |
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/usage.md`（模块文档一节） |
 
+
+## 2026-10-11 M8：SDK 级设备夹具 + 像素判据（`tests/test_vsg/SdkPixelFixture.hpp` / `SdkPixelFixture.cpp` / `SdkPixelTest.cpp`）
+
+- **做了什么**：`test_vsg` 原来只对着 vsg 内部测（`RenderEngine`/`SceneView`/`RenderPipelineBuilder` 一次没用过），
+  于是"该画的 pass 在画"（结构）与"画出来的像素对"之间没人守。M8 补那一段：夹具用 **SDK 自己的入口**（引擎 + 视图 +
+  管线 + 一条配方）在**真设备**上画一帧到**离屏** `RenderTarget`（64×64，RGBA8+D24，清屏**黑**、内容**白** ⇒
+  "覆盖" = `PixelProbe::nonBlackPixels()`），再用 `RenderBackend::readColorBuffer` 读回来判。
+- **两条用例与实测数字**：
+  - `SdkPixelTest.AWireframeModeDrawsTheEdgesOfTheSameGeometry`：**延迟配方 + 非 Lit 档**（链条按前向建）⇒
+    `Mode::Unlit` 一版 filled=1296（36×36 的实心块），换 `Mode::Wireframe` 一版 lines=180 —— 同一个视图、同一台相机、
+    **同一条 `windowPass()` 对象**、同一张目标，唯一变的是光栅化模式。180 条边**全部**落在实体块的一个像素之内；
+    实体版 140 个轮廓像素**全部**有边走过。
+  - `SdkPixelTest.TheFixtureAlsoDrawsContentWithNoViewAtAll`：**不经视图**、手搭一条 pass 画同一批内容 ⇒ 覆盖
+    3364/4096 ≈ 82%（正交窗 81% 的预期），四角仍是清屏色（既证"画进去了"也证"没涂满整张"）。
+- **坑一：引擎是引用计数对象，`Pipeline` 强持它 ⇒ 栈上的引擎会被管线析构时 `delete`**。症状不发生在那一刻：第一版夹具把
+  `RenderEngine` 做成夹具的值成员，结果每次都崩在 `~SceneView → removeWindowPass → free`，报 `0xC0000374`（堆损坏），
+  而崩溃前每一步 `HeapValidate(GetProcessHeap())` 都是好的 —— 引擎被成员析构**删了第二遍**。夹具已改
+  `intrusive_ptr<RenderEngine>`；`usage.md` §3.1 的样例原来写的是栈上的 `RenderEngine engine;` + `builder.build()`
+  （教了一个必崩的形态），一并改成 `make_intrusive<RenderEngine>()`。详见 `graphics-pipeline-builder.md` 同日校。
+- **坑二：判据要容一个像素**。填充光栅器按**像素中心**覆盖、线光栅器按**线段触到的像素**覆盖，边界上两者选不同的像素
+  （实测：轮廓那一圈整整齐齐落在实体块外一步，180 条边里只有斜边那 36 个在块里）。所以"同一批几何"写成"每个边像素都
+  **紧贴**实体块"（另一个形状、或整体挪两个像素的同一形状都会红），而不是"像素集合包含"。
+- **门禁问能力，不问 `getenv("DISPLAY")`**：老设备用例用 `DISPLAY` 代理"有没有窗口系统"，在 Windows 上恒为"没有"。
+  新夹具问"有满足后端下限的设备 + 会话起得来 + 本后端服务离屏像素"，不满足就 `SKIP` 并说出原因。**实测把老那条放开**：
+  这台机器 405/26 → **426 passed / 3 skipped / 2 failed**（`BlockDescriptorsTest.TheBindCarriesTheOffsetsInBindingOrderAndReusesOneSet`
+  少了 bind、`SessionTest.ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote` 读回全黑）——两条都是这些用例
+  **第一次在 Windows 上真跑**才暴露的，**未修**（待办：按平台收窄或修实现）。
+- **变异 3/3 都被像素判据杀**：①删 `SceneView::applyModeToGeometryPass()` 里 Wireframe 的
+  `setPolygonModeOverride(Line)` ⇒ lines=1296 == filled ⇒ 红；②`SceneView::effectivePath()` 恒等（非 Lit 档不切前向）
+  ⇒ 画面变成全屏光照 pass（4096/4096、轮廓=0）⇒ 红；③后端 `StateCommands.cpp::mapPolygon` 把 `Line` 也映成 `Fill`
+  ⇒ lines=1296 == filled ⇒ 红（这一条证明**后端那一段**也在判据里）。**第一版用例里那句结构断言
+  （`polygonModeOverride().has_value()`）会先红、抢掉像素那一刀，已删** —— 这一条只判像素，结构判据归 M1。
+- **门禁**：`test_vsg` 407 passed / 26 skipped / 0 failed（基线 405 + 两条新用例；26 skipped 是设备/窗口环境的既有
+  skip）；`test_graphics` 339、`test_gui` 253（扣掉既有挂死的 `UserIOTest.PickingFilesFillsTheLineWithoutSubmitting`）、
+  `test_appfw` 32、`test_meshio` 34、`test_iobase` 94 全绿；五个 gate：`check_ai_docs` 0 finding（`--strict` 仍 20 条
+  基线）、`check_doc_symbols` 95 单元一致、`check_include_hygiene` 878 文件、`check_export_annotations` 57/57、
+  `check_diagnostic_formats` 43 文件；两条 demo 烟雾（`--open demo` 与 `VINE_FRAME_PLAN=1`）11 pass、0 error/warn。
 
 ## 2026-09-27 帧机器的归属：`gfx_backend_vsg/core` → `vine/graphics/backend`
 

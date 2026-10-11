@@ -158,3 +158,19 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
 - 门禁：`RenderPipelineBuilderTest.ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumerNeeds`（`ratio = 2`，断言 gbuffer `1600×1200`、且 gizmo 按**逻辑** 600 定位）——把 device 尺寸喂给 HUD 的旧实现会红。
 - 顺带修的同类混用：`addOffscreenValidationPass` 的 PiP 锚点（device 矩形 + 逻辑 `surface_width` ⇒ 高 DPI 下画到窗口中间而不是角落）。文档原来集体写"device 像素"（`FrameContext::surface_*`、`SceneView::addSurfaceLayout`、`AxisGizmo`/`FpsOverlay::onSurfaceResized`、`RenderControl::surfaceWidth`），全部改成事实：**宿主报什么就是什么；要 device 的消费者自己乘 ratio**。
 - 未决（更大的一步，**要动公开 API**，本轮没做）：让宿主只报一种空间（device）——`RenderControl` announce device，`AxisGizmo`/`FpsOverlay` 不再自己乘（`setPixelRatio` 与 `PipelineOptions::gizmo/fps.pixel_ratio` 随之删除），`Pipeline::resize` 回到 `(w, h)`（本轮的 ratio 参数也一起消失）。那会**删掉 2 个公开 setter + 2 个 option 字段**，属于公开 API 变更，需明确要求。
+
+## 2026-10-11 校：管线**强持**引擎 —— 引擎必须由 `intrusive_ptr` 持有（像素夹具实测到的坑）
+
+- 事实：`RenderPipelineBuilder` 只借一个 `raw_ptr<RenderEngine>`（构造参数），但 `build()` 把它转手给 `Pipeline`，而
+  `Pipeline(intrusive_ptr<RenderEngine>)` 是**强引用**（"the engine is held strongly"，且 `~Pipeline` 靠它活着才能反注册
+  pass）。于是"引擎放栈上、管线在栈下的地方建"这一形态，会在**管线析构时**把引擎 `delete` 掉：`RefCounted` 在最后一个
+  引用松手时删对象，删的却是别人的栈/成员内存，而 `RefCounted` 的析构函数是 protected —— 这层保护只挡 `delete`，挡不住
+  "先被 intrusive_ptr 收编"。
+- 症状**不在这一刻**：实测 `test_vsg/SdkPixelTest` 第一版（夹具把引擎做成值成员）每次都崩在
+  `~SceneView → removeWindowPass → ~Pipeline → free`，报 `0xC0000374`（堆损坏）；而在崩溃之前，每一步
+  `HeapValidate(GetProcessHeap())` 都是好的 —— 因为引擎被删了**第二次**（成员析构时再析构一遍），坏的是那一遍里的
+  `std::string`/vector。
+- 收口：`test_vsg/SdkPixelFixture.hpp` 改成 `intrusive_ptr<RenderEngine>`；`usage.md` §3.1 的样例原来写的是栈上的
+  `RenderEngine engine;` + `builder.build()`（教了一个必崩的形态），一并改成 `make_intrusive<RenderEngine>()`。
+- 判据：`SdkPixelTest.AWireframeModeDrawsTheEdgesOfTheSameGeometry` / `TheFixtureAlsoDrawsContentWithNoViewAtAll`
+  两条在真设备上跑完并**干净退出**（栈引擎那版在同一处崩，exit `0xC0000374`）。

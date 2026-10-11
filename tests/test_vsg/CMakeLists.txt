@@ -58,6 +58,8 @@ set(SRC_FILE_LIST
 	ReportOnceTest.cpp
 	DeviceRequirementsTest.cpp
 	SceneRulesTest.cpp
+	# The SDK-level device fixture: the engine, a view and a picture a probe can read (see SdkPixelFixture.hpp).
+	SdkPixelTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
@@ -103,6 +105,9 @@ if(vsg_FOUND)
 	target_link_libraries(${TEST_NAME} vsg::vsg)
 endif()
 target_sources(${TEST_NAME} PRIVATE
+	# The SDK-level device fixture the pixel cases share (see SdkPixelFixture.hpp): the engine, the
+	# off-screen target and the content, brought up on the same real device the device phases use.
+	${CMAKE_CURRENT_SOURCE_DIR}/SdkPixelFixture.cpp
 	# The harness' own support: this binary replaces the global allocation functions so
 	# AllocationGate's COUNTING half has an instrumenter (see the file's note). It must be part of this target
 	# and not of the library: replacing the allocator is the host's choice to make, not the backend's.

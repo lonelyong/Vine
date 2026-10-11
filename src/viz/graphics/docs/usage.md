@@ -221,12 +221,15 @@ camera->setProjectionMatrixAsPerspective(45.0, 0.1, 100.0);  // 投影的**形�
                                                               // 画进的那块矩形（see RenderBackend::viewAspect）
 
 // ④ 引擎 + 后端 + 预设管线。
-RenderEngine engine;
-engine.setBackend(RenderBackendRegistry::instance().create(u8"vsg"));  // 需插件已加载
-engine.setWindowHandle(window_handle);                                // 宿主窗口的原生句柄
-if (!engine.initialize()) { return false; }
+// 引擎是**引用计数**对象，管线**强持**它（`Pipeline` 的构造参数就是 `intrusive_ptr<RenderEngine>`）：栈上的引擎会被
+// "最后放手的那条管线"删掉 —— `delete` 的是别人的栈/成员内存，症状不在这一刻，而是**之后某次无关的 free 报堆损坏**。
+// 所以它和别的 SDK 对象一样由 `intrusive_ptr` 持有（`test_vsg/SdkPixelFixture.hpp` 是同一个形态）。
+auto engine = make_intrusive<RenderEngine>();
+engine->setBackend(RenderBackendRegistry::instance().create(u8"vsg"));  // 需插件已加载
+engine->setWindowHandle(window_handle);                                // 宿主窗口的原生句柄
+if (!engine->initialize()) { return false; }
 
-RenderPipelineBuilder builder(&engine);
+RenderPipelineBuilder builder(engine.get());
 builder.setContent(scene).setCamera(camera.get());
 PipelineOptions options;                      // 默认 = forward 路径
 auto pipeline = builder.build(options);      // 或 options.path = ShadingPath::Deferred
@@ -234,9 +237,9 @@ if (pipeline == nullptr) { return false; }
 
 // ⑤ 帧循环。
 pipeline->resize(width, height, dpr);   // 离屏/合成 target 按 device 像素，HUD 叠加按逻辑像素（ratio 一次说清）
-engine.frame(dt);                  // 收集 → 录制 → 提交 → present
+engine->frame(dt);                  // 收集 → 录制 → 提交 → present
 
-engine.shutdown();
+engine->shutdown();
 ```
 
 ### 3.2 改数据（唯一需要公告的地方）
@@ -881,6 +884,7 @@ VINE_PIPELINE=forward_shadowed ./build/bin/Vine # 接受；与 forward 完全相
 ```bash
 ./build/bin/test_graphics            # 设备无关的模块契约
 ./build/bin/test_vsg                 # 后端契约（桥 / pass / 查表）
+./build/bin/test_vsg --gtest_filter=SdkPixelTest.*   # SDK 级**像素**判据（真设备；见下）
 ./build/bin/test_core                # buffer、math、io
 
 bash scripts/gfx_lavapipe_check.sh    # 真帧 + lavapipe：0 VUID / 0 validation error，**并且** app 阶段要看到 demo
@@ -890,6 +894,14 @@ bash scripts/vsg_selftest_evidence.sh           # 后端自检，与基线逐字
 bash scripts/vine_shader_check.sh     # 每个 shader × define 变体过 glslangValidator + 嵌入副本同步
 ctest --test-dir build                # CTest 视角
 ```
+
+**SDK 级像素判据**（`test_vsg/SdkPixelFixture.hpp` + `SdkPixelTest.cpp`）：用 SDK 自己的入口（引擎 + 视图 + 管线 +
+一 pass 配方）在**真设备**上画一帧到离屏 `RenderTarget`，再用 `readColorBuffer` + `PixelProbe` 读回来判。它补的
+是"结构对了、像素不一定对"的那一段：`test_graphics` 能证"该画的 pass 在画"，这里证"画出来的像素对"——
+今天两条：①延迟配方 + 线框档 ⇒ 画面里真的有边，且边落在同一批几何的实体版覆盖的那块轮廓上（同一视图、同一相机、
+同一条 pass，只换光栅化模式）；②夹具本身带一条**没有视图**的最小用例（手搭一条 pass 画同一批内容），证明它不是
+为某一条用例特制的。门禁问的是"有没有一个满足后端下限的设备 / 会话起得起得来"，起不来就 `SKIP` 并说出原因（不假装
+通过）；不靠 `getenv("DISPLAY")` 判"有没有窗口系统"——那在 Windows 上是"没有"，而那里离屏像素照常可读。
 
 后端自检（`./build/bin/vsg_backend_selftest`，上面两个脚本都会跑它）会驱动整条管线 —— forward、
 deferred、离屏、深度共享、overlay —— 并打印 `[selftest]` 证据行。
