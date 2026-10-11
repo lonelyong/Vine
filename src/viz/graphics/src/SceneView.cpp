@@ -63,6 +63,14 @@ SceneView::~SceneView()
 
 void SceneView::setSurface(raw_ptr<RenderSurface> surface) noexcept
 {
+    if (surface == nullptr && surface_ != nullptr) {
+        // The size the surface owned becomes this view's own statement - exactly what happens to the rectangle
+        // (see RenderSurface::dismiss): a view that stops presenting keeps drawing where it was, so it must keep
+        // being sizeable by its host from here on, and the surface is not there to be asked any more.
+        own_width_       = surface_->width_;
+        own_height_      = surface_->height_;
+        own_pixel_ratio_ = surface_->pixel_ratio_;
+    }
     surface_ = surface;
 }
 
@@ -96,9 +104,9 @@ void SceneView::ensureWindowPass()
     PipelineOptions pipeline_options;
     pipeline_options.path                 = effectivePath();
     pipeline_options.gizmo.source_camera  = options_.gizmo ? camera_.get() : nullptr;
-    pipeline_options.gizmo.pixel_ratio    = pixel_ratio_;
+    pipeline_options.gizmo.pixel_ratio    = surfacePixelRatio();
     pipeline_options.fps.enabled          = options_.stats;
-    pipeline_options.fps.pixel_ratio      = pixel_ratio_;
+    pipeline_options.fps.pixel_ratio      = surfacePixelRatio();
 
     RenderPipelineBuilder builder(engine_);
     builder.setCamera(camera_.get());
@@ -377,13 +385,31 @@ bool SceneView::isStatsVisible() const noexcept
 void SceneView::paneSize(int& width, int& height) const
 {
     const NormalizedViewport rect = viewport();
-    width  = std::max(1, static_cast<int>(std::lround(rect.width * static_cast<double>(surface_width_))));
-    height = std::max(1, static_cast<int>(std::lround(rect.height * static_cast<double>(surface_height_))));
+    width  = std::max(1, static_cast<int>(std::lround(rect.width * static_cast<double>(surfaceWidth()))));
+    height = std::max(1, static_cast<int>(std::lround(rect.height * static_cast<double>(surfaceHeight()))));
+}
+
+int SceneView::surfaceWidth() const noexcept
+{
+    return surface_ != nullptr ? surface_->width_ : own_width_;
+}
+
+int SceneView::surfaceHeight() const noexcept
+{
+    return surface_ != nullptr ? surface_->height_ : own_height_;
+}
+
+double SceneView::surfacePixelRatio() const noexcept
+{
+    return surface_ != nullptr ? surface_->pixel_ratio_ : own_pixel_ratio_;
 }
 
 void SceneView::applySurfaceGeometry()
 {
-    if (surface_width_ <= 0 || surface_height_ <= 0) {
+    const int    surface_w = surfaceWidth();
+    const int    surface_h = surfaceHeight();
+    const double ratio     = surfacePixelRatio();
+    if (surface_w <= 0 || surface_h <= 0) {
         return;
     }
 
@@ -412,14 +438,14 @@ void SceneView::applySurfaceGeometry()
     //    window pass draws into it. The HUD passes anchor to the corner of their AREA, so they are pointed at the
     //    rectangle's origin before they are laid out.
     if (default_pipeline_ != nullptr) {
-        const Viewport device_rect = deviceViewport(rect, surface_width_, surface_height_, pixel_ratio_);
+        const Viewport device_rect = deviceViewport(rect, surface_w, surface_h, ratio);
         if (AxisGizmo* gizmo = default_pipeline_->gizmo(); gizmo != nullptr) {
             gizmo->setAreaOrigin(device_rect.x, device_rect.y);
         }
         if (FpsOverlay* fps = default_pipeline_->fpsOverlay(); fps != nullptr) {
             fps->setAreaOrigin(device_rect.x, device_rect.y);
         }
-        default_pipeline_->resize(pane_w, pane_h, pixel_ratio_);
+        default_pipeline_->resize(pane_w, pane_h, ratio);
         if (RenderPass* window = default_pipeline_->windowPass(); window != nullptr) {
             if (rect.isFull()) {
                 // The full surface is what a pass without a viewport already means - leaving it unset keeps the
@@ -437,7 +463,7 @@ void SceneView::applySurfaceGeometry()
         layout(pane_w, pane_h);
     }
     for (const auto& layout : surface_layouts_with_ratio_) {
-        layout(pane_w, pane_h, pixel_ratio_);
+        layout(pane_w, pane_h, ratio);
     }
 }
 
@@ -552,7 +578,7 @@ bool SceneView::hasSurface() const noexcept
 
 void SceneView::onSurfaceResized(int width, int height)
 {
-    onSurfaceResized(width, height, pixel_ratio_);
+    onSurfaceResized(width, height, surfacePixelRatio());
 }
 
 void SceneView::onSurfaceResized(int width, int height, double pixel_ratio)
@@ -568,15 +594,15 @@ void SceneView::onSurfaceResized(int width, int height, double pixel_ratio)
         surface_->resize(width, height, pixel_ratio);
         return;
     }
-    applySurfaceSize(width, height, pixel_ratio);
+    setOwnSurfaceSize(width, height, pixel_ratio);
 }
 
-void SceneView::applySurfaceSize(int width, int height, double pixel_ratio)
+void SceneView::setOwnSurfaceSize(int width, int height, double pixel_ratio)
 {
-    surface_width_  = width;
-    surface_height_ = height;
+    own_width_  = width;
+    own_height_ = height;
     if (pixel_ratio > 0.0) {
-        pixel_ratio_ = pixel_ratio;
+        own_pixel_ratio_ = pixel_ratio;
     }
     // One place turns {surface size, viewport, ratio} into this view's rectangle: the camera aspect, the window
     // pass viewport, the size the default pipeline and the layout steps are told (see applySurfaceGeometry).

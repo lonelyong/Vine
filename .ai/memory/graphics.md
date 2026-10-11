@@ -19,9 +19,29 @@
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/usage.md`（模块文档一节） |
-| **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**已落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）**；**剩下的片**：S6 宿主侧 |
+| **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6 / **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-11 S6 落地：宿主侧收口（尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）
+
+- **尺寸唯一 owner**：`SceneView` 不再存表面尺寸的副本 —— `surface_width_/surface_height_/pixel_ratio_` 改名
+  `own_*`（含义＝"**没有表面时**这个视图的尺寸"），挂上表面后几何**问**表面
+  （`surfaceWidth()/surfaceHeight()/surfacePixelRatio()`）；`RenderSurface::resize`/`present` 不再推三个数，
+  而是让视图重算矩形（`applySurfaceGeometry()`）；**摘下来时表面把尺寸交还**给视图（同矩形那条规矩）。
+  `onSurfaceResized` 语义不变（挂着转发 / 没挂记自己那份）。
+- **六角色分组**：`SceneView` 公开面按 recipe / camera and content / navigation / geometry / input / presentation
+  重排并命名（对齐文件里既有的 `// ---- … ----` 分段，写进类注记）；**不改行为、不动 ABI**。
+- **三条"不是宿主 API"点名**：`setSurface`（表绑/摘视图 + 交回尺寸）、`applySurfaceGeometry`（表在尺寸变化后
+  让视图重算）、`ensureWindowPass`（表要的默认窗口 pass；**保持公开**，因为"没有表面的视图"是合法配置）。
+  呈现知识（哪条 pass 呈现 / 矩形 / 清屏 / 顺序 / 尺寸）本来就全在 `RenderSurface`，本片只把它写进文档。
+- **判据（实测）**：`test_graphics` **361**（360 + 新用例
+  `SceneViewViewportTest.AViewReadsTheSurfaceSizeAndHoldsNoSecondCopyOfIt`）、`test_gui` **253**（不变，appfw 一行未改）、
+  `test_vsg` 426（421 + 3 skip + 2 已知红）、appfw 32 / meshio 34 / iobase 94 全绿；全量 Release 0 error / 0 warning；
+  五个 gate 0 finding（`--strict` 仍 22 条）。**变异 3/3 红**：视图读自己那份 ⇒ 3 条红；表面不扇出 ⇒ 2 条红；
+  摘下来不交还 ⇒ 1 条红。
+- **坑 / 记账**：两份实现在正常路径**行为等价**，所以判据只能是"挂上之前喂给视图的话在挂上之后失效"；同理
+  "交还尺寸"只在"摘下来后改矩形"这条路上可观察（`setViewport` 对相同矩形提前返回）。
 
 ## 2026-10-11 S5 落地：能力与观测各收成一个值（`Capabilities` / `FrameReport`）
 

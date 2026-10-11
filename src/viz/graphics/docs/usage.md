@@ -753,8 +753,10 @@ vn::graphics::SceneView* current = surface->focusedView();     // 没人按过 =
 - **矩形也归这张表**：一块表面被切成什么形状是**表面**的事，视图**读**它（`SceneView::viewport()`）。所以同一块
   矩形只有一份：视图那句 `setViewport` 转发到表上，`dismiss()` / 表面析构时表把矩形**还给**视图（接着画同一块
   地方，只是从"表面的声明"变成"视图自己的声明"）。**尺寸**也归这张表（`resize`：一块表面只有一个尺寸，报一次就
-  够，其余是扇出；挂在表面上时 `SceneView::onSurfaceResized` 只是转发），设备像素那一层仍是视图算的（它按自己
-  的矩形换算），而**形状**是视图的相机的（`SceneView::applySurfaceGeometry` 把窗格的形状 push 给相机，见 §2.4 的
+  够，其余是扇出；挂在表面上时 `SceneView::onSurfaceResized` 只是转发），而视图**不存第二份**：挂上表面之后
+  它向表面问（`SceneView::surfaceWidth()` 一类的读数），自己那份只在"没有表面"时才是依据 —— 尺寸与矩形一样，
+  摘下来时由表面**交还**给视图。设备像素那一层仍是视图算的（它按自己的
+  矩形换算），而**形状**是视图的相机的（`SceneView::applySurfaceGeometry` 把窗格的形状 push 给相机，见 §2.4 的
   `Camera`：一台相机一张画面，同一台相机被两块不同形状的矩形用到就是引擎会报的那种错）。
   宿主自建的 pass **没有**归一化矩形：它自己给 `pass->setViewport()` 设备像素（它本来就知道尺寸），
   `viewAt()` 也永远不会选中它（它不是视图）。

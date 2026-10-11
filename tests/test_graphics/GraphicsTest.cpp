@@ -3621,6 +3621,43 @@ TEST(SceneViewViewportTest, APaneDeclaredOnASizedSurfaceIsSizedAtOnce)
     EXPECT_EQ(right_pass->viewport().height, 720);
 }
 
+TEST(SceneViewViewportTest, AViewReadsTheSurfaceSizeAndHoldsNoSecondCopyOfIt)
+{
+    // 尺寸只有一个 owner（S6）：视图挂上表面之后，它**自己那份**（给"没有表面的视图"用的那个值）不再参与任何计算。
+    // 这条把两件事分开：**表面一变、视图的几何就跟着变，而视图没有被喂过一行** —— 如果视图还留着一份自己的拷贝，
+    // 下面的形状会一直停在它自己那份上。
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto surface = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
+
+    auto view = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+
+    // 1) 没有表面：自己的那份就是唯一的尺寸（视图单独用是合法配置，行为不变）。
+    view->onSurfaceResized(100, 100, 1.0);
+    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 1.0) << "单独使用时按宿主报的尺寸";
+
+    // 2) 挂上表面：视图改用表面记着的那份（800x400 = 2:1），不再看自己那份（1:1）。
+    surface->resize(800, 400, 1.0);
+    ASSERT_TRUE(surface->present(*view));
+    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 2.0)
+        << "挂上之后读的是表面的尺寸（挂之前那句 100x100 不再是它的依据）";
+
+    // 3) 表面再变：视图没有被喂过一行，几何照样跟着走 —— 这就是"没有第二份"的实测形状。
+    surface->resize(320, 400, 1.0);
+    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 0.8);
+
+    // 4) 摘下来：表面把尺寸交回给视图（与矩形同一条规矩，见 RenderSurface::dismiss），于是它继续画在同一块地方
+    //    （320x400 的半个宽 = 0.4），而不是跳回挂之前那份 100x100。
+    ASSERT_TRUE(surface->dismiss(view.get()));
+    view->setViewport(NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });  // 改矩形 = 几何立刻重算
+    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 0.4) << "摘下来那一刻，尺寸从表面交到了视图自己手上";
+
+    // 5) 之后自己那份重新是唯一的尺寸：宿主直接喂，按它算。
+    view->setViewport(NormalizedViewport{});
+    view->onSurfaceResized(300, 600, 1.0);
+    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 0.5) << "摘下来之后自己那份重新是唯一的尺寸";
+}
+
 TEST(SceneViewViewportTest, FullViewportKeepsTheOverlayBoxWhereItWas)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());

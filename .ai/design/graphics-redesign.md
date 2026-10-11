@@ -1,6 +1,6 @@
 # graphics 的重新设计（2026-10-11 定，提案）
 
-**状态：S1 / A / S2 / S3（含 3c 收口）/ S4b / S5 已落地（2026-10-11）；剩下的片：S6（宿主侧）。**
+**状态：S1 / A / S2 / S3（含 3c 收口）/ S4b / S5 / S6 全部落地（2026-10-11）—— 六片迁移做完，逐片记录见下。**
 用户 2026-10-11 定"重构，重新设计"，边界划到**含后端契约**
 （`RenderBackend.hpp` + `sdk/vine/graphics/backend/` 半 + `gfx_backend_vsg` 插件）。
 
@@ -235,7 +235,7 @@ class VN_GRAPHICS_API RenderSurfaceBinding
 | **S3** | **删平坦路径与 `Protocol` 的顺序规则** — **已落地 2026-10-11：帧由值驱动 + 整帧交给后端 `executeFrame`（前半）＋ 平坦路径与 `Protocol` 删除（收口，见下）** | 删 `beginPass`/`endPass`/`setPassOrder`/`setPassState`/`setClearPolicy`/`setViewport`/`setLights`/`setPassInputs`/`beginFrame`/`endFrame`；`Protocol` 删（只留"目标被释放"那一条规则，落在 recorder）；预热那一拍删 | **先回答"覆写 `execute()` 的 pass 怎么办"**（见 S2 落地记录第 3 条：仓库里就有这样一条见证）；`Protocol` 的 7 条 `CoreProtocolTest` 用例删除并记账（433 → 426）；三套件计数**只许减该删的**；两棵树逐字节相同（此时只剩一棵） | S2 |
 | **S4b** | **拆出呈现**（窗口成为可选依赖）— **已落地 2026-10-11，见下** | 新增导出 `RenderSurfaceBinding`（`nativeHandle`/`setWindowHandle`/`resize`/`present`；**`format` 取消**，见落地记录第 2 条）；`RenderBackend` 删那 4 个入口、加 `surface()`（默认 null） | 见下"已落地（2026-10-11）：S4b" | S2 |
 | **S5** | **能力与观测各收成一个值** — **已落地 2026-10-11，见下** | `Capabilities`（`Capabilities.hpp`）、`FrameReport`（`FrameStats.hpp`）；`supportsRenderTargets()`/`frameCounters`/`retentionStats`/`frameProgress` 删，`capabilities()`/`frameReport()` 顶上 | 见下"已落地（2026-10-11）：S5" | S3 |
-| **S6** | **宿主侧**（可与 S1–S5 并行） | 尺寸唯一 owner；`SceneView` 六角色分组命名 + 三条"内部入口"标注；presentation 知识收进呈现表 | `test_gui` 253 不变；`SceneViewViewportTest` 增一条"视图不持有第二份尺寸" | 无 |
+| **S6** | **宿主侧**（可与 S1–S5 并行）— **已落地 2026-10-11，见下** | 尺寸唯一 owner（视图读表面）；`SceneView` 六角色分组命名 + 三条"内部入口"标注；呈现知识归表（记账） | 见下"已落地（2026-10-11）：S6" | 无 |
 
 **建议的第一刀就是 S1**：它是唯一一处真改结构的地方，无宿主 API 变动、无两棵树需求、判据是
 "描述 == 今天的调用序列"这种可以逐项对照的强判据 —— 而且它是 S2–S5 的前置，做完之后剩下的都是搬运。
@@ -603,6 +603,56 @@ VTK 那一派、**用法**却是 three.js 那一派（每个视图一台相机�
 2. **收成一个值之后，"沉默"从约定变成类型**：以前"第二个写了、第三个没写"是可能的中间状态，现在不可能存在；
    而"不保留"这件事仍然说得出来（不 engage），所以没有丢信息 —— 这正是 §2.2 那条"删 4 个 bool 出参"想删掉的
    东西：不是删掉"没保留"这个答案，而是删掉"三个各写一半"这种形态。
+
+### 已落地（2026-10-11）：S6 —— 宿主侧（尺寸唯一 owner、六角色分组、呈现知识归表）
+
+**动作**：
+
+1. **尺寸唯一 owner**：`SceneView` 不再保存表面尺寸的副本 —— `surface_width_/surface_height_/pixel_ratio_`
+   改名 `own_width_/own_height_/own_pixel_ratio_`，含义收紧成"**没有表面时**这个视图的尺寸"；挂上表面后几何
+   从表面**问**（`surfaceWidth()/surfaceHeight()/surfacePixelRatio()`：表面在就用表面的三个数，否则用自己那份）。
+   扇出随之改形：`RenderSurface::resize` / `present` 不再把三个数**推**给视图（推的那一份就是"第二份"的来源），
+   而是让视图**重算自己的矩形**（`applySurfaceGeometry()`）。摘下来时表面把尺寸**交还**给视图（与矩形同一条
+   规矩，见 `dismiss` / `~RenderSurface`），于是"接着画同一块地方"在尺寸上也成立。`onSurfaceResized` 的两条语义
+   不变：挂着转发给表面，没挂记在自己那份上。
+2. **六角色分组**：`SceneView` 的公开面按角色重排并命名 —— recipe / camera and content / navigation / geometry /
+   input / presentation（文件里本来就有三处 `// ---- … ----` 分组标记，本片把它们对齐成这六段，并把这六段各管
+   什么、边界在哪写进类注记）。**不改行为、不动 ABI**：动的是声明顺序与文档。
+3. **三条"不是宿主 API"的入口点名**（类注记列出）：`setSurface`（呈现表绑视图 / 摘视图，并把尺寸交回）、
+   `applySurfaceGeometry`（表在尺寸变化后让视图重算矩形）、`ensureWindowPass`（视图成为"呈现这块表面的那一个"时，
+   表要的默认窗口 pass）。前两条本来就在 `private:`；第三条**保持公开**，因为"没有表面的视图"是合法配置 ——
+   那条路上没有表可以声明，直接调用就是那条路的入口（`ensureWindowPass()` 的文档现在直接说清这两条路）。
+4. **呈现知识归表（记账，无行为改动）**：`RenderSurface` 早已是 owner（哪条 pass 呈现、矩形、清屏、顺序、尺寸），
+   且**就是它**在 `present()` 里调用 `ensureWindowPass()`（`passOf()` 再把 pass 解析回来）；appfw 侧本来就只在
+   "视图没有表面"时喂尺寸、从不造窗口 pass。本片把这件事写进两边的文档，并点名上面那三条入口。
+
+**判据（实测）**：`test_graphics` **360 → 361**（新增
+`SceneViewViewportTest.AViewReadsTheSurfaceSizeAndHoldsNoSecondCopyOfIt`：没有表面时按自己那份 / 挂上之后按表面的 /
+表面再变而视图没被喂过一行也跟着 / 摘下来时尺寸交还 / 之后自己那份重新是唯一依据）、`test_gui` **253**（不变，
+appfw 一行未改）、`test_vsg` **426 = 421 + 3 skip + 2 已知红**、`test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94
+全绿；全量 Release 构建 0 error / 0 warning；五个 gate 0 finding（`--strict` 仍 22 条，同一列表）。
+**变异 3/3 红（各自单独实测）**：① 视图继续读自己那份 ⇒ **3 条红**（新用例 +
+`ASurfaceSplitStatesEachViewsRectangleAndNothingIsRebuilt` + `APaneDeclaredOnASizedSurfaceIsSizedAtOnce`）；
+② 表面不再扇出 ⇒ 2 条红（新用例 + 分屏那条）；③ 摘下来不交还尺寸 ⇒ 1 条红（新用例）。
+
+**落地时发现 / 记账**：
+
+1. **"没有第二份"只能用"它自己那份失效了"来测**：两份实现在正常路径上**行为等价**（这正是重构要的），所以判据
+   必须挑一个只有单 owner 才成立的读数 —— "挂上之前喂给视图的那句话，挂上之后不再是它的依据"。同理，**交还尺寸**
+   只在"摘下来之后改矩形"这条路上可观察（`setViewport` 对相同矩形提前返回，摘下来那一刻本身不会重算）。
+2. **"六段命名"落在既有的分组标记与类注记上**：这个头文件本来就用 `// ---- … ----` 分段，本片是把它们对齐成
+   设计里那六个名字并补全归属，而不是引入一类新的区块注释。
+
+### 六片落地之后与 §2.1 草图的偏差（记账，2026-10-11）
+
+§2.1 画的是"三张契约"：`RenderDevice` / `RenderFrameExecutor` / `RenderSurfaceBinding`。六片做完之后对了一遍：
+`RenderSurfaceBinding` 是**独立类型**（S4b ✓）、能力与观测是**两个值**（S5 ✓）、帧入口是一条纯虚
+`RenderBackend::executeFrame()`（S3 ✓）—— 但**没有**把设备与会话（`RenderDevice`）和帧入口
+（`RenderFrameExecutor`）拆成两个类：`RenderBackend` 今天同时是这两者。
+**理由（不是遗漏）**：切片表里从来没有这一刀，而这张草图要消掉的东西（帧协议里的顺序、窗口、bool 出参）
+已经被 S3 / S4b / S5 用"值 + 独立类型"消掉了；再拆一层只省下"名字仍同时指点设备与帧入口"这件事，今天没有
+任何读者会因此少写一行。要拆是一次纯机械的改名（`RenderFrameExecutor` 与 `RenderDevice` 各自前向声明），
+**不做**，在这里记账。
 
 ## 5. 否决与否决理由
 

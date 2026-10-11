@@ -269,7 +269,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     [[nodiscard]] raw_ptr<SceneView> focusedView() const;
 
   private:
-    friend class SceneView;  // reads the rectangle it draws into, and re-states the surface's clear after a rebuild
+    friend class SceneView;  // reads the size and the rectangle it draws into, and re-states the surface's clear after a rebuild
 
     /** @brief One declared presentation: a view (its window pass is resolved when the table is read) or a pass a
      * host declared itself.

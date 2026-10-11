@@ -78,16 +78,11 @@ bool RenderSurface::present(SceneView& view, const NormalizedViewport& rect)
     // table resolves to (a host that meant to present a pass of its own declares that pass - see the other
     // overload, and then this one is never called).
     view.ensureWindowPass();
-    // The size this surface last saw goes to the new presentation AT ONCE: a pane added to a running surface is
-    // sized without the host feeding it (that is what makes the surface the ONE owner of the size). Until a host
-    // reports one, the view's geometry follows the rectangle THIS table now states (its window pass' device
+    // The size this surface last saw reaches the new presentation AT ONCE (the view reads it from here): a pane
+    // added to a running surface is sized without the host feeding it (that is what makes the surface the ONE
+    // owner of the size). Its geometry follows the rectangle THIS table now states (its window pass' device
     // rectangle, its targets, its HUD boxes): a use of the rectangle, never a second copy of it.
-    if (width_ > 0 && height_ > 0) {
-        view.applySurfaceSize(width_, height_, pixel_ratio_);
-    }
-    else {
-        view.applySurfaceGeometry();
-    }
+    view.applySurfaceGeometry();
     applyClear();
     return true;
 }
@@ -189,11 +184,13 @@ void RenderSurface::resize(int width, int height, double pixel_ratio)
         pixel_ratio_ = pixel_ratio;
     }
     // Handed to every view that presents this surface, and only to those: a pass a host declared has no view to
-    // feed, and it states its own rectangle in device pixels. One call therefore sizes a split, and the next
-    // present() gets the same numbers through the entry it adds (see present(SceneView&, const NormalizedViewport&)).
+    // feed, and it states its own rectangle in device pixels. The views RE-DERIVE their geometry from the numbers
+    // recorded here (they read them - see SceneView::surfaceWidth), so there is one size and no copy to keep in
+    // step. One call therefore sizes a split, and the next present() gets the same numbers through the entry it
+    // adds (see present(SceneView&, const NormalizedViewport&)).
     for (const Entry& entry : entries_) {
         if (entry.view != nullptr) {
-            entry.view->applySurfaceSize(width_, height_, pixel_ratio_);
+            entry.view->applySurfaceGeometry();
         }
     }
 }
