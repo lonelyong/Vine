@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <functional>
 
@@ -39,12 +39,12 @@ class Viewer;
  * Viewer that manages the area's panes and their requests - lives in the private
  * SurfaceWindow (src/gui/SurfaceWindow.hpp), together with the attach rules, the
  * deferred resize path and the translation of Qt events into view input. Unless
- * a backend was attached via engine()->setBackend(), the first backend registered
+ * a backend was attached via engine()->setDevice(), the first backend registered
  * in RenderBackendRegistry is used by default.
  *
  * CONSTRUCTION ONLY COMPOSES. The control builds its engine, its view and its viewer and installs the diagnostics
  * route; it does not pick a backend and does not attach. The first attach happens on the first turn of the event loop
- * (a fallback), which is exactly what makes "configure right after new" work: engine()->setBackend(),
+ * (a fallback), which is exactly what makes "configure right after new" work: engine()->setDevice(),
  * viewer()->setViewerOptions() (or a host's own view()->setPipeline()) and content assembly are synchronous code and
  * therefore always run BEFORE it. A host that wants the attach inside its
  * own ordering calls init()/initAsync() itself (synchronous, idempotent) - that call IS the attach, and the fallback
@@ -95,7 +95,7 @@ class VN_APPFW_API RenderControl : public Control {
   public:
     /** @brief Gets the render engine created by this control.
      *
-     * The caller attaches a render backend to it (engine()->setBackend(...))
+     * The caller attaches a render backend to it (engine()->setDevice(...))
      * before calling init().
      *
      * @return The engine, or nullptr when creation failed.
@@ -194,9 +194,9 @@ class VN_APPFW_API RenderControl : public Control {
      * The explicit attach: the session comes up HERE, in this call, and a host that wants its own timing (before the
      * window goes on screen, for an off-screen warm-up frame, or after configuring the view) uses this instead of
      * waiting for the event-loop fallback. This is the entry point promised by the SDK order
-     * (construct -> engine()->setBackend() -> init()): idempotent while the session is bound to the live surface,
+     * (construct -> engine()->setDevice() -> init()): idempotent while the session is bound to the live surface,
      * and the retry when an earlier call landed before the native window had been laid out (which reports false
-     * rather than guessing a delay). With no backend set through engine()->setBackend(), the first registered render
+     * rather than guessing a delay). With no backend set through engine()->setDevice(), the first registered render
      * backend (RenderBackendRegistry) is used by default - and only as a fallback: a backend registered later is
      * still picked up by the next attach.
      *

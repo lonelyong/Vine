@@ -3,7 +3,7 @@
 /**
  * @brief A platform window that ADOPTS a host window and can move to another one.
  *
- * WHY IT EXISTS. The host hands the backend a native window it owns (see RenderSurfaceBinding::setWindowHandle --
+ * WHY IT EXISTS. The host hands the backend a native window it owns (see RenderSurfaceTarget::setWindowHandle --
  * a Qt QWindow's handle) and replaces it when the windowing system recreates it. A window class that
  * insists on its own window cannot serve that: vsg's platform windows adopt a handle and then DESTROY it in
  * their destructor (`xcb_destroy_window` / `::DestroyWindow`), so a backend built on one would either
@@ -91,7 +91,7 @@ using VsgHostHandle = xcb_window_t;
  * `void*` is the handle's own value, which @ref hostHandleValue has already reduced to an integer.
  *
  * @param handle Handle in the type the platform's vsg window reads out of the traits.
- * @return The handle as this backend passes it around (what `RenderSurfaceBinding::setWindowHandle` is given).
+ * @return The handle as this backend passes it around (what `RenderSurfaceTarget::setWindowHandle` is given).
  */
 [[nodiscard]] inline void* hostHandleToVoid(VsgHostHandle handle) noexcept
 {
@@ -103,7 +103,7 @@ using VsgHostHandle = xcb_window_t;
  * The inverse of @ref hostHandleToVoid; see that function and @ref hostHandleValue for why the platform
  * branch below is the only one in the handle path.
  *
- * @param handle Handle as this backend passes it around (what `RenderSurfaceBinding::setWindowHandle` is given).
+ * @param handle Handle as this backend passes it around (what `RenderSurfaceTarget::setWindowHandle` is given).
  * @return The handle in the type the platform's vsg window reads out of the traits.
  */
 [[nodiscard]] inline VsgHostHandle hostHandleFromVoid(void* handle) noexcept

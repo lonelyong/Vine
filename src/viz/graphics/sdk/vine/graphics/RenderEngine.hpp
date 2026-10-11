@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "graphics_global.hpp"
 
 #include <cstddef>
@@ -33,6 +33,7 @@ class ImageRef;
 class RenderTarget;
 class RenderBackend;
 class RenderSurface;
+class RenderSurfaceTarget;
 
 /**
  * @brief High-level render engine managing the frame loop and render state.
@@ -53,44 +54,45 @@ class RenderSurface;
  * a null render target. Which pass draws into which SURFACE is a fact the
  * surface owns (see RenderSurface), not something the engine infers. The
  * engine is
- * platform-independent and delegates actual drawing to a RenderBackend
- * supplied by the caller via setBackend().
+ * platform-independent and delegates actual drawing to a RenderDevice
+ * supplied by the caller via setDevice().
  *
- * THE ENGINE KNOWS NO WINDOW. The window an area is presented through belongs to the AREA: RenderSurface owns
- * the handle that names it (bindTarget) and the surface size a host reports (resize), and the engine holds
- * neither. What the engine does is drive the frame: it replays the area's window announcement when a session
- * comes up (a window announced before a backend existed can only be handed over once there is one), and it
- * presents each frame through the backend's window half at the frame's tail (see RenderBackend::surface). A
- * backend that has no window half presents nothing, and a frame is complete without one.
- */class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine> {
-    VN_OBJECT_META_DECL;
+ * THE ENGINE KNOWS NO WINDOW. The window an area is presented through belongs to the AREA: the area holds the
+ * TARGET its device made for it (RenderSurface::bindTarget) and the surface size a host reports (resize), and the
+ * engine holds neither a handle nor a size of its own. What the engine does is drive the frame: it asks the
+ * device for a target when its area has none (a device that brings up its own window answers one, a device that
+ * presents nothing answers none), it names the area's target in the frame it hands over (see
+ * RenderFrameExecutor::executeFrame), and it presents that frame through it at the frame's tail (see
+ * RenderSurfaceTarget::present). A device that presents nothing presents nothing, and a frame is complete without
+ * one.
+ */class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine> {    VN_OBJECT_META_DECL;
 
   public:
-    /** @brief Constructs an empty engine with no backend attached yet.
+    /** @brief Constructs an empty engine with no device attached yet.
      *
      * The engine starts with no registered pass; the caller configures the
      * pipeline explicitly (see addPass()) or through a RenderPipelineBuilder.
-     * Call setBackend() before initialize().
+     * Call setDevice() before initialize().
      */
     RenderEngine();
     ~RenderEngine();
 
   public:
-    /** @brief Gets the bound render backend, or nullptr when unset. */
-    raw_ptr<RenderBackend> backend() const;
+    /** @brief Gets the bound device, or nullptr when unset. */
+    raw_ptr<RenderBackend> device() const;
 
-    /** @brief Sets the render backend used for drawing.
+    /** @brief Sets the device used for drawing (see RenderDevice / RenderFrameExecutor).
      *
-     * The engine keeps a reference to the backend for as long as it is set,
-     * so the backend stays alive at least until the engine is destroyed or
-     * a different backend (or nullptr) is set. Call before initialize().
-     * Setting the same backend instance again is a no-op. The new backend is
+     * The engine keeps a reference to the device for as long as it is set,
+     * so the device stays alive at least until the engine is destroyed or
+     * a different device (or nullptr) is set. Call before initialize().
+     * Setting the same device instance again is a no-op. The new device is
      * handed this engine's ONE diagnostic route (see Diagnostics.hpp), so a
-     * host's sink and its single diagnosticCount() cover the backend too.
+     * host's sink and its single diagnosticCount() cover the device too.
      *
-     * @param backend Backend used for drawing, or null to clear.
+     * @param device Device used for drawing, or null to clear.
      */
-    void setBackend(intrusive_ptr<RenderBackend> backend);
+    void setDevice(intrusive_ptr<RenderBackend> device);
 
     /** @brief Installs the sink that receives diagnostics.
      *
@@ -101,7 +103,7 @@ class RenderSurface;
      * / telemetry). The sink lives in the engine's ONE route (see
      * Diagnostics.hpp) and the engine hands that route to the backend it
      * drives, so installing it covers both - and a sink installed before
-     * setBackend() is in place for the backend the moment it is set.
+     * setDevice() is in place for the device the moment it is set.
      *
      * @param sink Callback invoked for every diagnostic, or empty.
      */
@@ -192,26 +194,25 @@ class RenderSurface;
      */
     const FrameContext& frameContext() const;
 
-    /** @brief Gets what the backend can do, as one value (see `RenderBackend::capabilities`).
+    /** @brief Gets what the device can do, as one value (see `RenderDevice::capabilities`).
      *
-     * A host (a tool, a HUD, a test) asks through the engine rather than reaching for the backend object; the
+     * A host (a tool, a HUD, a test) asks through the engine rather than reaching for the device object; the
      * engine itself asks the same value where a capability decides how a frame is driven (see `frame()`).
      *
-     * ONE FIELD IS THE ENGINE'S OWN ANSWER, `presentation`: "can this session show frames somewhere" is exactly
-     * "the backend has a window half" (RenderBackend::surface) until devices become first-class - and the engine
-     * is the party that also drives that half, so a host reads ONE value instead of asking two objects about the
-     * same fact. The backend's own answer describes what IT can do (off-screen targets and the like).
+     * THE ANSWER IS THE DEVICE'S OWN, `presentation` included: "can this session show frames somewhere" is a
+     * property of the device (a device built to present has a window half, one built for off-screen work has
+     * none), so a host reads ONE value from ONE object instead of asking two about the same fact.
      *
-     * @return The backend's capabilities, whole; everything false when no backend is set (nothing can be claimed).
+     * @return The device's capabilities, whole; everything false when no device is set (nothing can be claimed).
      */
     [[nodiscard]] Capabilities capabilities() const noexcept;
 
-    /** @brief Gets the backend's own report about its frames (see `RenderBackend::frameReport`).
+    /** @brief Gets the device's own report about its frames (see `RenderFrameExecutor::frameReport`).
      *
-     * The backend is the only place that knows how a frame went, so a host (a HUD, a tool, a test) asks
-     * through the engine rather than reaching for the backend object. One question, one answer: the frame
-     * that just ended, what is retained, and where the frame clock is - with the parts this backend does not
-     * keep left disengaged rather than reading as zeros.
+     * The frame half of the device is the only place that knows how a frame went, so a host (a HUD, a tool, a
+     * test) asks through the engine rather than reaching for the device object. One question, one answer: the
+     * frame that just ended, what is retained, and where the frame clock is - with the parts this device does
+     * not keep left disengaged rather than reading as zeros.
      *
      * @return The report; all parts disengaged when no backend is set (nothing is measured).
      */
@@ -251,7 +252,7 @@ class RenderSurface;
      * THE FRAME THE ENGINE IS ABOUT TO RUN, in the form a backend consumes: every enabled pass in run order with
      * its identity, its order, its resolved inputs and what it issues - assembled by the compile, before anything
      * is dispatched (see compileFrame). Read it to see exactly what a frame is made of (a log line, a test, a
-     * viewer); a backend is handed the same thing by RenderBackend::executeFrame once this path drives the frame.
+     * viewer); a backend is handed the same thing by RenderFrameExecutor::executeFrame once this path drives the frame.
      *
      * @return The value, valid until the next compile; empty before the first frame.
      */
@@ -377,9 +378,9 @@ class RenderSurface;
     /** @brief Removes a previously added pass.
      *
      * The pass is dropped from the ordered list. Its backend resources are
-     * released: the retained per-pass GPU state (RenderBackend::releasePass,
+     * released: the retained per-pass GPU state (RenderDevice::releasePass,
      * keyed by the pass itself), plus any off-screen render target the pass
-     * owns (RenderBackend::releaseRenderTarget).
+     * owns (RenderDevice::releaseRenderTarget).
      *
      * @param pass Pass to remove (by pointer).
      */
@@ -456,24 +457,12 @@ class RenderSurface;
     void unpublish(const String& name);
 
   private:
-    friend class RenderSurface;  // the one area this engine drives announces its window and size through here
+    friend class RenderSurface;  // the one area this engine drives announces its size through here
 
-    /** @brief Hands the area's window to the backend's window half, or reports once that there is none.
+    /** @brief Records the area's size for the frame (its passes lay themselves out on it) and replays it to the
+     * target once there is a session to honour it.
      *
-     * The announcement the engine cannot serve - a window, and a backend that presents nothing - is said once per
-     * episode instead of being dropped, because "accepted" and "attached" would otherwise look the same (see
-     * RenderBackend::surface). A session that comes up later takes the announcement it finds on its area (see
-     * initialize()).
-     *
-     * @param native_handle The area's window, or nullptr to hand over "no window" (an unbind).
-     * @return true when the announcement was taken; false when the backend presents nothing.
-     */
-    bool bindAreaTarget(void* native_handle);
-
-    /** @brief Records the area's size for the frame (its passes lay themselves out on it) and hands it to the
-     * backend's window half once there is a session to honour it.
-     *
-     * The engine's ONE size announcement (see RenderSurface::resize): recorded even when no backend exists yet,
+     * The engine's ONE size announcement (see RenderSurface::resize): recorded even when no device exists yet,
      * because the frame context is what the passes read, and replayed by initialize() when a session comes up.
      *
      * @param width  Area width in pixels (> 0; the caller refuses the rest).
@@ -789,7 +778,7 @@ class RenderSurface;
     /** @brief Returns the first enabled pass that needs a target this backend cannot draw into.
      *
      * A backend reporting no off-screen support IGNORES a non-null target (see
-     * RenderBackend::capabilities), so such a pass draws into the window instead of where the
+     * RenderDevice::capabilities), so such a pass draws into the window instead of where the
      * pipeline expects it, and nothing else in the frame would notice (see frame(), the one caller).
      *
      * @return The first enabled pass with a non-null render target, or null when the backend supports
@@ -830,7 +819,7 @@ class RenderSurface;
     void reportUnproducedInput(raw_ptr<RenderPass> pass, const OutputIdentity& identity, const String& what);
 
     // ---- Fields ----
-    intrusive_ptr<RenderBackend>        backend_;
+    intrusive_ptr<RenderBackend>        device_;
     // The engine's ONE diagnostic route (see Diagnostics.hpp): the host's sink lives inside it, and the
     // backend the engine drives reports through this very instance (setDiagnosticsRoute), which is what
     // makes diagnosticCount() the whole truth instead of half of it.
@@ -848,14 +837,11 @@ class RenderSurface;
     std::uint64_t                       content_frame_      = 0;
     bool                                initialized_        = false;
     // The one area this engine drives (see RenderSurface): register on construction, gone with the area. Borrowed,
-    // and the only place the engine reads a window from - it owns no handle (see the class contract).
+    // and the only place the engine reads a target from - it owns no window and no handle (see the class contract).
     raw_ptr<RenderSurface>              area_               = nullptr;
-    // Whether the current backend has a window half (asked once, on setBackend: "a property of the backend, not a
-    // state" - see RenderBackend::surface), which is what capabilities().presentation answers.
-    bool                                backend_presents_   = false;
-    // "The area's window has nowhere to go" is one condition, not a per-announcement event (see
-    // bindAreaTarget): the episode ends when an announcement is taken.
-    ReportOnce                          target_refused_;
+    // The target the frame path presents through when this engine has NO area (see initialize): what the device
+    // made for the window it brought up itself, or nullptr when it presents nothing. Borrowed - the device owns it.
+    raw_ptr<RenderSurfaceTarget>        own_target_         = nullptr;
     // True once the frame reported that the backend cannot draw the off-screen targets the pipeline
     // asks for (see frame()): the report is an EPISODE, so it repeats only after the pipeline stopped
     // asking for one — the flag is cleared the moment no enabled pass needs a target.

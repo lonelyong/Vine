@@ -125,6 +125,24 @@
 > 实例方法 `postToMain()` 与 `Application::startupProgress()` 都删了（前者是同义词，后者与 `StartupProgress::current()` 重复）。
 > **`Application::d` 已私有**（叶子只走 `dptr()`）；`argv()` 返回 `char* const*`。
 
+## 2026-10-11 S10a 落地：窗口那一半由**设备**造，控件只把它绑到区上
+
+- **结论**：图形层的 S10a 把 `RenderBackend` 拆成三张契约（设备 / 执行器 / 目标，见 `.ai/memory/graphics.md` 顶部），
+  宿主侧的动作随之从"把句柄交给引擎/后端"变成 **"向设备要这个窗口的目标"**：
+  `SurfaceWindow::init()` 里 `device->createSurfaceTarget(handle, &why)` → 成功则 `surface->bindTarget(target)`，
+  失败则 `failAttach(理由)`（`NoPresentation` / `UnsupportedSurface` / `WindowOccupied` 三种理由各有说法）。
+  重建窗口 = 在**同一把目标**上重公告（`surface->target()->setWindowHandle(new)`），设备、缓存与已编译管线都留；
+  控件的幂等判断改问 `nativeTargetHandle()`（`surface->target()->nativeHandle()`），不再有 `session_handle`。
+- **引擎侧的两条**（宿主读得到）：`engine()->setDevice()`（原 `setBackend()`）、`engine()->device()`（原 `backend()`）；
+  `Capabilities::presentation` 由设备自己答。引擎在 attach 时**只在区没有目标时**才向设备要一把（自己开窗的设备
+  答得出），所以宿主绑过的那把永远不会被覆盖。
+- **记账**：`test_gui` **261**（259 + 2：控件向设备要窗口的目标〔`target_calls == 1`、句柄是创建输入、一帧的
+  `present_to` 就是区那把目标、帧尾 present 走它〕/ 设备"不呈现"⇒ attach 以理由失败且不起会话）；全量 Release
+  0 error / 0 warning；五 gate 0 finding（`--strict` 22）。变异：引擎不认区那把目标（只交自己的）⇒ 3 条红；
+  区已有目标时仍去要一把 ⇒ 4 条红（见图形层那条完整 4/4）。
+- **坑**：`surface->target()` 是**借用**（设备拥有），控件不能存着它跨 `shutdown()`；为什么是借用而不是
+  `intrusive_ptr`（目标给不了该静态类型的 ADL 计数钩子）见图形层同条。
+
 ## 2026-10-11 S9 落地：句柄与尺寸的公告归区（`RenderControl` 不再存句柄）
 
 - **结论**：图形层的 S9 把窗口与尺寸的 owner 换成**区**（`RenderSurface::bindTarget` / `resize`，见

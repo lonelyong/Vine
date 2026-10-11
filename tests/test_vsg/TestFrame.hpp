@@ -14,7 +14,7 @@
 #include <vine/graphics/ShaderProgram.hpp>
 
 /**
- * @brief Builds the frame a case drives a backend with, one pass at a time (see RenderBackend::executeFrame).
+ * @brief Builds the frame a case drives a backend with, one pass at a time (see RenderFrameExecutor::executeFrame).
  *
  * THE VALUE'S OWN SHAPE, SPELLED FOR A TEST. A case that used to drive the backend flat - open a pass, announce
  * its order, its target, its clear and its depth, draw, close, end the frame - names the same facts here and the
@@ -28,7 +28,7 @@
  *
  * ```cpp
  *   backend->executeFrame(TestFrame().pass(pass.get()).target(nullptr).clear(clear).content(commands, camera));
- *   backend->surface()->present();
+ *   backend->present();
  * ```
  */
 class TestFrame
@@ -155,7 +155,7 @@ class TestFrame
         return *this;
     }
 
-    /** @brief Gets the frame as it stands, ready for RenderBackend::executeFrame.
+    /** @brief Gets the frame as it stands, ready for RenderFrameExecutor::executeFrame.
      *
      * @return The value a backend is handed.
      */

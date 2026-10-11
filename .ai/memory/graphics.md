@@ -20,9 +20,49 @@
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/usage.md`（模块文档一节） |
 | **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
-| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）与 S9（句柄与尺寸归区：`RenderSurface::bindTarget`，引擎不收裸句柄；`Capabilities::presentation`）已落地**，见下；S10（拆 `RenderDevice`，多窗口共享设备）/ S11（登记不做）未落地 |
+| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**S10b（插件会话→设备：窗口与交换链 1:N、缓存上移、`DeviceDesc`）**/ S11（登记不做）未落地 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6 / **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-11 S10a 落地：三张契约（设备 / 执行器 / 目标）+ 目标由设备造（插件仍单窗口）
+
+- **结论**：`RenderBackend` 那一个对象今天起拆成**三张契约**（各自一个头文件，公开面）：
+  `RenderDevice`（`initialize`/`shutdown`/`capabilities`/`executor`/`createSurfaceTarget`/资源公告 + 诊断路线）、
+  `RenderFrameExecutor`（`executeFrame(frame, present_to)` + `frameReport`）、`RenderSurfaceTarget`（原
+  `RenderSurfaceBinding` 改名：`setWindowHandle`/`nativeHandle`/`resize`/`present`）。`RenderBackend` **退成"三面一体的
+  聚合"**（`Object + RefCounted<RenderBackend> + RenderDevice + RenderFrameExecutor`）——工厂返回它、引擎收它、
+  测试双实现它，所以"一个对象什么都会"的实现不必先拆开；`RenderDevice` 的**窗口那半**是可选的（默认答
+  "无呈现"，一个字都不用写），这是 S4b 那条"窗口是可选依赖"在设备层的同一句话。
+- **目标由设备造（§9 待决 1 的裁决落地）**：`RenderDevice::createSurfaceTarget(void* handle, SurfaceTargetResult*)`
+  → 借用的 `RenderSurfaceTarget*`；三因 `NoPresentation`（**静默**答，显示无关设备是一等形态）/ `UnsupportedSurface`
+  / `WindowOccupied`（**报一次**）。区收**对象**：`RenderSurface::bindTarget(target)` / `target()` / `hasTarget()`；
+  句柄只是造它的输入，`targetHandle()` 删掉；重建窗口是**在旧目标上重公告**（`target->setWindowHandle`），
+  不是第二把目标；尺寸的窗口那一半由**区→目标**直推（`RenderSurface::resize` 一并 `target_->resize`），引擎只记
+  帧上下文。
+- **帧命名目标**：`executeFrame(frame, present_to = nullptr)`；引擎交的是**区**那把目标（没有区时是设备为自己造的
+  那把，`own_target_`），`nullptr` ⇒ 不解析、不取像、不 present（离屏一等形态）。**present 仍由驱动者在帧尾经目标
+  调用**（`RenderSurfaceTarget::present`）：执行器自持帧尾 present 会让直接驱动者（test_vsg 那几十处
+  `executeFrame` + `present`）present 两次 ⇒ 与 S10b 的 N 目标一起落（§9 待决 5）。
+- **`Capabilities::presentation` 换答题人**：由**设备**自己答（引擎不再算"后端有没有窗口那一半"）。
+  插件今天答 `true`（它有窗口那半），无头双答 `false`（S9 的行为不变）。
+- **插件（仍单窗口、缓存不动）**：`VsgBackend` 实现三面（`executor()` 答自己、`createSurfaceTarget` 答自己）；第二把
+  目标 ⇒ `WindowOccupied` + 一次 Warning；帧命名**外来目标** ⇒ 不记录 + 一次 Warning（`sweep`/帧账一笔不动）。
+  `Data` 里多了 `target_taken` + 两个 `ReportOnce`。
+- **判据（实测）**：全量 Release **0 error / 0 warning**；`test_graphics` **364**（362 + 2 新增：设备"无呈现"静默答
+  / 窗口已被占用报一次；另有 S9 的用例改形为设备工厂语义，`HeadlessBackendTest` 共 7 条，含"一台设备服务两个区、
+  各自的目标不串"的结构判据）；`test_gui` **261**（259 + 2：控件向设备要窗口的目标、帧的 `present_to` 就是区那把、
+  设备"不呈现"⇒ attach 以理由失败）；`test_vsg` **428** = 423 + 3 skip + 2 已知红（+2：单窗口的交付与占用拒绝 /
+  外来目标拒绝且自己的目标照常 present）；appfw 32 / meshio 34 / iobase 94 不掉；五 gate 0 finding（`--strict` 22）。
+- **变异 4/4 红（各自单独实测）**：① 引擎不认区那把目标（只交 `own_target_`）⇒ 3 条红；② 区不把尺寸推给目标 ⇒
+  `OneDeviceServesSeveralAreasWithoutCrossingThem` 红；③ 插件"窗口已被占用"不报 ⇒ test_vsg 那条红；④ 区已有目标时
+  引擎仍去要一把 ⇒ 4 条红。
+- **坑（今天又交了一次学费）**：`raw_ptr<T>` **就是裸 `T*`**（`using raw_ptr = T*`），`RenderSurface::target_` 少了
+  `= nullptr` ⇒ 非确定性 `0xc0000005`（老测试一起崩）——与 S9 的 `RenderEngine::area_` 同一课：**新增字段一律带
+  初始化值**。另一条：`intrusive_ptr<RenderSurfaceTarget>` 需要**该静态类型**的 ADL 计数钩子，而目标由各自的设备
+  拥有（窗口关了设备放掉）⇒ 目标用**借用指针**（与 `RenderDevice::executor()` 一致），别给它第二个 `RefCounted` 基
+  （两个计数器 = 双重删除）。
+- **契约上的可观察变化**（给下一个片）：`RenderEngine::backend()` → `device()`，`setBackend()` → `setDevice()`；
+  `RenderPass::execute(scene, backend, present_to = nullptr)`（自己驱动一格的人现在说得出它 present 到哪）。
 
 ## 2026-10-11 S9 落地：句柄与尺寸归区（引擎不再收裸句柄；`Capabilities` 加 `presentation`）
 

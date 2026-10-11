@@ -45,7 +45,7 @@ enum class DiagnosticCategory : std::uint8_t
                            ///< announced to a backend that has no surface, a target released while a frame
                            ///< still named it, a pass whose sampled inputs do not match the plan. The shape a
                            ///< frame is driven with cannot break this one - a frame is a value (see
-                           ///< RenderBackend::executeFrame) - so what is left here is wiring the host declared.
+                           ///< RenderFrameExecutor::executeFrame) - so what is left here is wiring the host declared.
     UnsupportedRequest,    ///< The host asked for something that is not implemented yet: a documented
                            ///< stand-in was assembled instead, so the picture is not what was asked
                            ///< for.

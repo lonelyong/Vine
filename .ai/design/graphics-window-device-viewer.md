@@ -159,13 +159,13 @@
 
 | 今天 | 目标 | 备注 |
 | --- | --- | --- |
-| `RenderEngine::setWindowHandle(void*)` + `resize(w,h)` | **退场**；引擎 `setDevice(RenderDevice&)` | 句柄与尺寸归目标与区（**S9 已落前半：两个入口都删了，句柄与尺寸归 `RenderSurface`；`setDevice` 留给 S10**） |
-| `RenderBackend`（设备 + 执行器 + 目标，同一个对象） | 拆成 `RenderDevice` / `RenderFrameExecutor` / `RenderSurfaceTarget` 三张契约 | 本文 §2 的三行；`RenderBackend` 今天同时是这三者 |
-| `executeFrame(frame)`（隐含"画到那一个窗口"） | `executeFrame(frame, RenderSurfaceTarget* present_to)` | 帧里"默认帧缓冲"那一行解析为它 |
-| `Capabilities`（今天只有 `render_targets`） | 加 `presentation` | 设备创建意图的可观察答案 |
-| `RenderSurface`（表）+ `RenderSurfaceBinding`（后端半片） | `RenderSurface`（区）+ `RenderSurfaceTarget`（可呈现的半片，**由设备创建**） | 命名对齐；"窗口"在 SDK 只有这一处 |
-| 每控件一个后端实例（= 一个设备） | 每控件一个引擎；**设备可由多个区共享** | §7 的 S10 |
-| 预设挂在控件 | 预设挂在 `Viewer` 的每一格 | §7 的 S8 |
+| `RenderEngine::setWindowHandle(void*)` + `resize(w,h)` | **退场**；引擎 `setDevice(RenderDevice&)` | 句柄与尺寸归目标与区（**S9 落前半**：两个入口都删了，句柄与尺寸归 `RenderSurface`；**S10a 收 `setDevice(intrusive_ptr<RenderBackend>)`** —— 今天唯一的一等设备就是那个聚合对象，设备独立成对象后（S10b）改成借用 `RenderDevice&`） |
+| `RenderBackend`（设备 + 执行器 + 目标，同一个对象） | 拆成 `RenderDevice` / `RenderFrameExecutor` / `RenderSurfaceTarget` 三张契约 | **S10a 已落**：三张契约各自一个头文件，`RenderBackend` 退成"三面一体的聚合"（工厂返回它、引擎收它、测试双实现它）；插件今天仍然一体 |
+| `executeFrame(frame)`（隐含"画到那一个窗口"） | `executeFrame(frame, RenderSurfaceTarget* present_to)` | **S10a 已落**（默认 nullptr＝这一帧不指名宿主的目标）：帧里"默认帧缓冲"那一行解析为它，引擎交的是**区**那把目标；`nullptr` ⇒ 不解析、不取像、不 present（离屏是一等形态）。present 仍由帧的驱动者在帧尾经目标调用（`RenderSurfaceTarget::present`），"执行器自持帧尾 present"留给 S10b 的 N 目标 |
+| `Capabilities`（今天只有 `render_targets`） | 加 `presentation` | **S9 落了字段，S10a 换了答题人**：由**设备**自己答（`capabilities()` 直通），不再是引擎替它算"后端有没有窗口那一半" |
+| `RenderSurface`（表）+ `RenderSurfaceBinding`（后端半片） | `RenderSurface`（区）+ `RenderSurfaceTarget`（可呈现的半片，**由设备创建**） | **S10a 已落**：改名 `RenderSurfaceTarget`，`surface()` 退场，改 `RenderDevice::createSurfaceTarget(handle, why)`（设备工厂，§9 待决 1 的裁决）；区持有的是**目标对象**（`RenderSurface::bindTarget`/`target`），句柄只是造它时的输入；三因拒绝 `SurfaceTargetResult`（无呈现 / 这设备服务不了这块 surface / 窗口已被占用），"无呈现"静默答，"占用"报一次 |
+| 每控件一个后端实例（= 一个设备） | 每控件一个引擎；**设备可由多个区共享** | **S10a 落了契约面**（Device : Target = 1 : N、Device : Engine = 1 : N 上无第二份副本；无头结构判据已测）；插件把会话提升成设备（缓存上移、窗口 1:N）是 **S10b** |
+| 预设挂在控件 | 预设挂在 `Viewer` 的每一格 | §7 的 S8（已落地） |
 
 ---
 
@@ -174,12 +174,16 @@
 1. **建设备**：`DeviceDesc{ presentation: None | Handle | Probe }`；`None` ⇒ `capabilities().presentation == false`。
 2. **第一个窗口通常先于设备**（UI 应用）：句柄作为创建输入（今天的顺序已经如此，只是入口该从引擎搬到设备）。
 3. **新增窗口**：`device.createSurfaceTarget(handle)` → 成功则绑给区（`surface.bindTarget(target)`）；失败分三类
-   原因如实报出：本设备无呈现能力 / 本设备不支持这块 surface / 窗口已被占用。
-4. **同刻一个窗口一个 Target**；第二次创建**拒绝 + 报一次**，不做排队抢占。
+   原因如实报出：本设备无呈现能力 / 本设备不支持这块 surface / 窗口已被占用。**S10a 已落**（`SurfaceTargetResult`；
+   "无呈现"静默答，"占用"由设备报一次）。
+4. **同刻一个窗口一个 Target**；第二次创建**拒绝 + 报一次**，不做排队抢占。**S10a 已落**（插件仍单窗口：第二把
+   一律 `WindowOccupied`；S10b 起按窗口记账）。
 5. **窗口重建**：`target.setWindowHandle(new_handle)` ⇒ 重建交换链，**设备与已编译管线保留**（今天的规则）。
+   **S10a 已落**（区把新句柄公告在**旧目标**上；引擎不再回放句柄，因为它已经不是句柄的持有者）。
 6. **窗口关闭**：区解绑、Target 销毁；设备与资源留着（可给下一个窗口用）。
 7. **窗口尺寸/比例变化**：`target.resize(w,h,dpr)` → 区扇出 → 视图重算几何（已有）。
-8. **present** 归执行器的帧尾；目标只是机制（取像/呈现）。
+8. **present** 归执行器的帧尾；目标只是机制（取像/呈现）。**S10a 落在"驱动者"这一步**：帧尾 present 经**区那把目标**
+   调用（引擎或直接驱动一格的宿主）；"执行器自持"与 N 目标一起落（见 §9 待决 5）。
 9. **跨 GPU**：拒绝是**正确行为**，应用换设备（新 Device + 新 Target + 重建该区的引擎与链）。
 10. **设备丢失/重建设备**：自下而上重建（Device → Target → Engine → 链），Target 与 Engine 都是可重建的。
 
@@ -211,7 +215,8 @@
 | --- | --- | --- | --- |
 | **S8（appfw）** | **已落地 2026-10-11**：`Viewer` 管 N 个 `View`：每格预设（`ViewerOptions`）、建链/采纳/重建搬运行期选择、路由与焦点、`isActive()` / `release(view)`；`RenderControl` 收窄成"原生面 + 会话 + 尺寸/DPR + 帧驱动 + `viewer()`"，老三条保留为"作用于第一格"的转发；`SurfaceWindow` 把 viewer 那一段与状态搬出去 | **实测**：`test_gui` 259（254 + 5 条新用例：同表面两格各自预设〔设备/引擎数不变〕/ 宿主自建 pass 声明后 `isActive() == false`〔声明先落 + 上线后接管两种次序〕/ `release(view)` 后表里没有它 / 重建搬运行期选择 / 两格的路由与焦点）；其余套件计数不掉（graphics 360 / vsg 426 = 421+3 skip+2 已知红 / appfw 32 / meshio 34 / iobase 94）；全量 Release 0 error / 0 warning；五 gate 0 finding。**变异 5/5 红**：重建不搬运行期选择 / 两格共用一份请求 / `release` 不撤声明 / `views()` 不读表 / `takeArea` 不让位 ⇒ 各自单独实测，只有目标用例红 | 无 |
 | **S9（graphics 半步，可逆）** | **已落地 2026-10-11**：引擎公开面拿掉裸句柄（`setWindowHandle`/`resize` 删），改由区绑目标（`RenderSurface::bindTarget` / `targetHandle` / `hasTarget`；`RenderSurface::resize` 成为**唯一**的尺寸公告：帧上下文 + 窗口那一半）；契约注释写入 §5 的规则（区域:窗口 1:1、重公告=搬移、解绑、帧尾 present）；`Capabilities` 加 `presentation`（本片由引擎按"后端有没有窗口那一半"答出：插件不动） | **实测**：`test_graphics` **362**（360 + 2：`AReAnnouncedHandleMovesTheWindowAndTheDeviceStays` / `TheAttachHandsOverTheAreasCurrentWindow`；S4b 的三条改形为按区公告，两条尺寸用例改形到区）；无呈现意图的设备上绑目标**被拒 + 报一次**（连报也只一条）；离屏设备上 `executeFrame` 仍成立；其余套件计数不掉（gui 259 / vsg 426 = 421+3 skip+2 已知红 / appfw 32 / meshio 34 / iobase 94）；全量 Release 0 error / 0 warning；五 gate 0 finding（`--strict` 22）。**变异 4/4 红**：① 不拒（无窗口那一半也收下）⇒ `BindingATargetOnAWindowlessBackendIsRefusedOnce` 红；② 不报（拒得静默）⇒ 同条红；③ 引擎仍读自己那份句柄 ⇒ `AReAnnouncedHandleMovesTheWindowAndTheDeviceStays` 红；④ 尺寸不走区 ⇒ 4 条红 | 无（插件不动） |
-| **S10（M6 整步）** | 拆 `RenderDevice` / `RenderFrameExecutor` / `RenderSurfaceTarget`；插件把会话提升成设备（窗口与交换链 1:N，`BlockStorage`/`MaterialImages` 上移到设备）；多窗口共享一个设备 | 真设备电池（本机只能跑部分：无头判据先上，设备电池在有 lavapipe 的地方跑并如实记账）；结构判据：两个区共享一个 Device 时只编译一次程序、只上传一份块 | S9；触发条件命中一条（视图数 >4 / 同内容 2+ 窗口 / 启动开销 × 窗口数 / 跨 GPU 拖动） |
+| **S10a（graphics + appfw + 插件半步，已落地 2026-10-11）** | 拆 `RenderDevice` / `RenderFrameExecutor` / `RenderSurfaceTarget` 三张契约（各自一个头文件；`RenderBackend` 退成"三面一体的聚合"，仍然是工厂返回、引擎收取、测试双实现的类型）；目标改由**设备**造（`RenderDevice::createSurfaceTarget(handle, why)`，`SurfaceTargetResult` 三因：`NoPresentation` 静默答 / `UnsupportedSurface` / `WindowOccupied` **报一次**），区收**对象**（`RenderSurface::bindTarget`/`target`/`hasTarget`，句柄只是创建输入；重建窗口是**在目标上重公告** `setWindowHandle`，不是第二把目标）；`executeFrame(frame, present_to)` 落地并默认 `nullptr`＝不指名宿主目标（帧的"默认帧缓冲"解析为它；离屏＝没有目标）；引擎改 `setDevice`，`capabilities().presentation` 由设备自己答，尺寸的窗口那一半改由**区→目标**直推（引擎只记帧上下文）；插件仍单窗口、缓存不动（会话→设备的提升是 S10b），但 `createSurfaceTarget` 如实拒第二把并报一次、帧命名外来目标也报一次 | **实测**：全量 Release 0 error / 0 warning；`test_graphics` **364**（362 + 2：`ADeviceThatPresentsNothingAnswersNoTargetSilently` / `AWindowAlreadyServedIsRefusedWithItsReasonOnce` / `OneDeviceServesSeveralAreasWithoutCrossingThem`＋两条 S9 用例改形为设备工厂语义，共 7 条在 `HeadlessBackendTest`）；`test_gui` **261**（259 + 2：控件向设备要窗口的目标〔`target_calls == 1`、句柄是创建输入、帧的 `present_to` 就是区那把目标、帧尾 present 走它〕/ 设备"不呈现"⇒ attach 以理由失败）；`test_vsg` **428** = 423 + 3 skip + 2 已知红（+2：`TheOneWindowADeviceServesIsHandedOutOnceAndTheSecondAskSaysWhy`〔第二次问 ⇒ `WindowOccupied` + 一条 Warning，再问仍一条〕/ `AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce`〔外来目标：不记录、报一次、自己的目标照常 present〕）；appfw 32 / meshio 34 / iobase 94 不掉；五 gate 0 finding（`--strict` 仍 22）。**变异 4/4 红**（各自单独实测）：① 引擎不认区那把目标（只交自己的）⇒ 3 条红；② 区不把尺寸推给目标 ⇒ `OneDeviceServesSeveralAreasWithoutCrossingThem` 红；③ 插件"窗口已被占用"不报 ⇒ `TheOneWindowADeviceServesIsHandedOutOnceAndTheSecondAskSaysWhy` 红；④ 区已有目标时引擎仍去要一把 ⇒ 4 条红。**坑**：`raw_ptr<T>` 就是裸 `T*`（`RenderSurface::target_` 少了 `= nullptr` ⇒ 非确定性 0xc0000005，与 S9 的 `RenderEngine::area_` 同一课）；`intrusive_ptr<RenderSurfaceTarget>` 需要该静态类型的 ADL 计数钩子，而目标由各自的设备拥有 ⇒ **借用指针**（设备拥有、区借用），与 `executor()` 一致 | S9；触发条件命中一条（视图数 >4 / 同内容 2+ 窗口 / 启动开销 × 窗口数 / 跨 GPU 拖动） |
+| **S10b（插件：会话→设备，待落）** | `VsgBackend` 把 `Session` 的**设备**抽出来成一等设备：窗口与交换链 1:N、`BlockStorage` / `MaterialImages` 上移到设备、时间线/回收随之（现在 `Session` 是"一个窗口、一个设备、一条交换链"，内容世界挂在它那个设备上）；`DeviceDesc{presentation: None\|Handle\|Probe}` 作为创建输入（`None` ⇒ `capabilities().presentation == false`，且 `createSurfaceTarget` 答 `NoPresentation`）；执行器自持帧尾 present（§5 规则 8） | 真设备电池（本机只能跑部分：无头判据先上，设备电池在有 lavapipe 的地方跑并如实记账）；结构判据：两个区共享一个 Device 时只编译一次程序、只上传一份块 | S10a |
 | **S11（登记不做）** | 一帧跨多窗口（pass 带目标 + `setSurface(i)`） | — | 只有"一场画面铺满两块屏"这类需求才做 |
 
 ---
@@ -235,14 +240,20 @@
 
 1. **`RenderSurfaceTarget` 的创建者**：本文选"设备工厂"（`device.createSurfaceTarget(handle)`）。备选是"区自己
    从句柄建"（那要求区能问设备要交换链，等于绕一层）。落地时若插件侧更顺，可改成 `device` 的静态工厂 + 区只收
-   结果，语义不变。
+   结果，语义不变。**S10a 按"设备工厂"落地**：`RenderDevice::createSurfaceTarget(void* handle, SurfaceTargetResult*)`
+   答三因（无呈现 / 服务不了这块 surface / 窗口已被占用），区收的是一把**借用**的目标对象（设备拥有，窗口关了设备
+   放掉）——所以目标不需要自己的引用计数。
 2. **`executeFrame` 的目标参数**：本文选"帧名默认帧缓冲 ⇒ 解析为本区的目标"（一帧一个目标）。若将来要"一帧
-   多目标"（S11），参数会从"一个目标"变成"帧内的目标表"，届时再改。
+   多目标"（S11），参数会从"一个目标"变成"帧内的目标表"，届时再改。**S10a 落地并补一条**：参数默认 `nullptr`
+   ＝"这一帧不指名宿主的目标"（离屏，不解析/不取像/不 present）；执行器自己拥有的窗口（插件今天那条）不受它影响。
 3. **`RenderControl` 的老三条（`viewerOptions`/`setViewerOptions`/`setShadingMode`）**：本文选"保留为作用于第一
    格的转发"（不变量 1：公开面不删入口）。**S8 已按这条落地**（转发到 `Viewer` 上"第一格" = 控件自己的视图那组
    入口）—— 库外有调用方（`model_viewer` 的读-改-写），所以三个入口都留着。
 4. **`Viewer` 是否导出**（SDK 可见）：本文按"导出"（appfw 的宿主都要用它），若最终只有一个宿主用，可退成内部
    类型。**S8 按这条落地：导出**（`vn::appfw::gui::Viewer`，`RenderControl::viewer()` 把它交出去）。
+5. **`present` 归谁**（S9 遗留 → S10a 的裁决）：`RenderSurfaceTarget::present()` 是**机制**，帧尾调用它的是**帧的
+   驱动者**（引擎，或一个自己驱动一格的宿主）。§5 规则 8 的"执行器自持帧尾 present"与 S10b 的 N 目标一起落，
+   否则今天 `executeFrame` 里 present 会让直接驱动者（test_vsg 那 50 处）present 两次。
 
 ---
 

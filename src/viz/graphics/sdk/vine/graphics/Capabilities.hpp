@@ -4,7 +4,7 @@
 VN_GRAPHICS_NS_BEGIN
 
 /**
- * @brief What a backend can do, as ONE value (see RenderBackend::capabilities).
+ * @brief What a backend can do, as ONE value (see RenderDevice::capabilities).
  *
  * WHY A VALUE. Every "can you do X" question used to be its own bool on the contract, with its own default
  * and its own sentence per backend that does not do it - `supportsRenderTargets()` was the last one left.
@@ -22,12 +22,12 @@ VN_GRAPHICS_NS_BEGIN
  */
 struct VN_GRAPHICS_API Capabilities
 {
-    /// Off-screen render targets are built, drawn into and sampled (see RenderBackend::setRenderTarget); false
+    /// Off-screen render targets are built, drawn into and sampled (see RenderDevice::setRenderTarget); false
     /// means a non-null target is ignored and the pass draws into the default framebuffer.
     bool render_targets{false};
 
     /// Frames can be presented somewhere: this session has a window to show a picture through (see
-    /// RenderBackend::surface, and RenderSurface::bindTarget for the window an area is bound to).
+    /// RenderDevice::createSurfaceTarget, and RenderSurface::bindTarget for the window an area is bound to).
     ///
     /// False is a first-class state, not an error: a session brought up to draw only into render targets runs
     /// whole frames and presents nothing (an offline bake, a display-less run). It answers "was this session

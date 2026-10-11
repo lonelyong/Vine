@@ -10,6 +10,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "RenderDiagnostic.hpp"
+#include "RenderSurfaceTarget.hpp"
 #include "ReportOnce.hpp"
 #include "Viewport.hpp"
 
@@ -58,12 +59,13 @@ class SceneView;
  * not forced to start clearing by being first.
  *
  * THE WINDOW IS THE AREA'S TOO. What this area is presented through - the native window the host chose (the
- * TARGET, in this design's vocabulary) - is a fact about the AREA, exactly like the size: bindTarget() announces
- * the handle and unbinds it, resize() is the ONE size announcement (the views, the frame the passes lay out on,
- * the window half), and re-announcing a different handle MOVES the session onto a recreated window instead of
- * rebuilding it (the device and every compiled pipeline stay - see RenderSurfaceBinding::setWindowHandle). The
- * engine drives the frame and owns no handle of its own (see RenderEngine); a backend that presents nothing
- * refuses the announcement, once, instead of pretending to attach.
+ * TARGET, in this design's vocabulary) - is a fact about the AREA, exactly like the size: bindTarget() holds the
+ * object the DEVICE made for that window (a device that presents nothing refuses there, once, instead of
+ * pretending to attach - see RenderDevice::createSurfaceTarget), resize() is the ONE size announcement (the views,
+ * the frame the passes lay out on, and the target's own window half), and a recreated window is announced on that
+ * target (which MOVES an established session instead of rebuilding it: the device and every compiled pipeline stay
+ * - see RenderSurfaceTarget::setWindowHandle). The engine drives the frame and owns no handle of its own (see
+ * RenderEngine).
  *
  * @note Splitting a surface between several presentations (each with its own rectangle) is the same table read
  * again, and the rectangle per presentation belongs here too: what a surface is divided into is a fact about the
@@ -218,8 +220,9 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * size remembered here at once, so a pane added to a running surface is sized without the host feeding it.
      *
      * The same ONE announcement serves the frame: the engine records it in the frame context every pass lays
-     * itself out on and hands it to the backend's window half once there is a session (see
-     * RenderEngine - the engine owns no size of its own).
+     * itself out on, and the window half of it - the swapchain, what hangs off the extent - is the TARGET's own
+     * call, made here (see RenderSurfaceTarget::resize - the engine owns no size of its own, the area owns the
+     * target).
      *
      * Presentation is the unit: a pass a host declared itself is not fed - it has no view, and such a pass
      * states its own rectangle in device pixels (see Presentation::rect).
@@ -230,43 +233,41 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      */
     void resize(int width, int height, double pixel_ratio);
 
-    /** @brief Binds the window this area is presented through (its TARGET), or unbinds it with nullptr.
+    /** @brief Binds the target this area is presented through (its window), or unbinds it with nullptr.
      *
-     * THE WINDOW BELONGS TO THE AREA. One area is one swapchain and one native window carries one of them, so
-     * the handle that names it is announced HERE - and the engine, which drives the frame, is told through the
-     * area (it owns no handle of its own, see RenderEngine). A backend that presents nothing has no window half
-     * to take the handle (see RenderBackend::surface): the announcement is then REFUSED and reported once, since
-     * accepting a window that can never be attached would look exactly like a successful bind.
+     * THE WINDOW BELONGS TO THE AREA, and the TARGET is what names it: the area holds the object its DEVICE made
+     * for that window (RenderDevice::createSurfaceTarget, which is where a device that presents nothing refuses
+     * and says why), and everything the window half is told - a recreated handle, the size, the frame's present -
+     * goes to that object (see RenderSurfaceTarget). The engine, which drives the frame, reads the target from
+     * here (it owns no handle of its own, see RenderEngine).
      *
-     * RE-ANNOUNCING MOVES THE BINDING. The platform recreating the window (a reparent, a screen change) is the
-     * same area on a new handle: the backend moves onto it rather than rebuilding, and the device, the session
-     * and every compiled pipeline stay (the move completes when the session is (re-)initialized, which is what a
-     * host that follows a recreated window does anyway - see RenderSurfaceBinding::setWindowHandle). nullptr
-     * unbinds: the area presents nothing from here on, while the session stays up.
+     * RE-ANNOUNCING MOVES A WINDOW, IT DOES NOT REBIND IT. The platform recreating the window (a reparent, a
+     * screen change) is the same area on a new handle: a host announces it ON THE TARGET
+     * (RenderSurfaceTarget::setWindowHandle), which is what moves an established session onto the new window while
+     * the device, its caches and every compiled pipeline stay. Binding a DIFFERENT target instead is a different
+     * window: the previous one is left behind (its device is what owns it - see RenderDevice::shutdown).
      *
-     * An announcement made before there is a backend is kept on the area and handed over when one comes up
-     * (RenderEngine::initialize replays it - that is where a window half first exists to take it).
+     * nullptr unbinds: the area presents nothing from here on, while the session stays up. A boundary case a host
+     * sets up before its device exists is simply kept: the target is an object, so nothing has to take it.
      *
-     * @param native_handle The native window this area is presented through (HWND on Windows), or nullptr to
-     *                      unbind.
-     * @return true when the announcement was taken (or kept until a session can take it); false when the backend
-     *         presents nothing - reported once per episode on the engine's diagnostic route.
+     * @param target The target this area is presented through (from its device), or nullptr to unbind. BORROWED:
+     *               the device that made it owns it, and it must outlive the area's use of it.
      */
-    bool bindTarget(void* native_handle);
+    void bindTarget(raw_ptr<RenderSurfaceTarget> target);
 
-    /** @brief Gets the window this area is bound to, or nullptr when it is bound to none.
+    /** @brief Gets the target this area is presented through, or nullptr when it is bound to none.
      *
-     * The question a host asks to decide whether to re-announce: this is the handle the session was moved onto,
-     * so comparing it with what the windowing system reports now is how "the platform recreated my window" is
-     * noticed (see bindTarget).
+     * The question a host asks to decide whether to re-announce: the native handle the session was moved onto is
+     * the TARGET's own answer (RenderSurfaceTarget::nativeHandle), so comparing it with what the windowing system
+     * reports now is how "the platform recreated my window" is noticed.
      *
-     * @return The bound native handle, or nullptr.
+     * @return The bound target, or nullptr.
      */
-    [[nodiscard]] void* targetHandle() const noexcept;
+    [[nodiscard]] RenderSurfaceTarget* target() const noexcept;
 
     /** @brief Whether this area is bound to a window (see bindTarget).
      *
-     * @return true when a native window is bound to this area.
+     * @return true when a target is bound to this area.
      */
     [[nodiscard]] bool hasTarget() const noexcept;
 
@@ -398,9 +399,10 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
 
     /// The engine the presentations are registered on and ordered by (borrowed; must outlive this surface).
     raw_ptr<RenderEngine> engine_;
-    /// The window this area is presented through (see bindTarget): the area's own fact, announced to the engine
-    /// and its backend's window half. nullptr = no window bound.
-    void* target_handle_ = nullptr;
+    /// The target this area is presented through (see bindTarget): the area's own fact, made by its device and
+    /// handed to it (BORROWED - the device owns it). nullptr = no window bound (a frame run for this area presents
+    /// nothing).
+    raw_ptr<RenderSurfaceTarget> target_ = nullptr;
     /// The size of this surface as the host reported it (resize), and the ratio that came with it: what every
     /// presented view derives its rectangle from. Zero until a host reports one.
     int    width_ = 0;

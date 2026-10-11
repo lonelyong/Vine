@@ -140,7 +140,7 @@ struct VN_GRAPHICS_API PassDescription
  * THE FRAME IS ALREADY A VALUE INSIDE THE ENGINE (compileFrame() decides the order, the wiring and the
  * problems), so this is that value in the form a backend consumes - see `.ai/design/graphics-redesign.md`:
  * the engine assembles it BEFORE anything is dispatched, and a backend can then run a whole frame without the
- * flat announce-call sequence (RenderBackend::executeFrame).
+ * flat announce-call sequence (RenderFrameExecutor::executeFrame).
  *
  * A PASS THAT ISSUES NOTHING IS STILL AN ENTRY. "This pass ran and had nothing to issue" is a fact of the frame
  * (its scope opens and closes, the backend keys per-pass retained state by it), and it is a DIFFERENT fact from
@@ -178,7 +178,7 @@ struct VN_GRAPHICS_API FrameDescription
 /**
  * @brief The frame value for ONE pass a host drives itself: identity, order, resolved inputs, description.
  *
- * The spelling RenderPass::execute() hands a backend (see RenderBackend::executeFrame), and the reason the SDK
+ * The spelling RenderPass::execute() hands a backend (see RenderFrameExecutor::executeFrame), and the reason the SDK
  * needs no second wire: a host that drives one pass is running a frame with one pass in it, so it builds the same
  * value the engine builds for a whole frame and there is nothing left that could reach a backend in another order.
  *
@@ -186,7 +186,7 @@ struct VN_GRAPHICS_API FrameDescription
  * @param order       Where the pass stacks in its target (0 for a host driving one pass).
  * @param inputs      What its declared inputs resolved to, or empty (nothing resolved them).
  * @param description What the pass issues, or nullopt when it issues nothing at all (see Pass).
- * @return The frame to hand to RenderBackend::executeFrame.
+ * @return The frame to hand to RenderFrameExecutor::executeFrame.
  */
 FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass, int order,
                                                  std::vector<raw_ptr<RenderTarget>> inputs,

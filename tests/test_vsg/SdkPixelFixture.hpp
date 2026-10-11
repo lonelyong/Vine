@@ -28,7 +28,7 @@
  *
  * WHY OFF-SCREEN. The window's own pixels belong to the display server (the XCB instrument reads those), so a
  * case that wants a picture on any platform draws into a RenderTarget it announced to the backend and reads
- * that back through RenderBackend::readColorBuffer. Nothing here touches a swapchain, a widget or a frame
+ * that back through RenderDevice::readColorBuffer. Nothing here touches a swapchain, a widget or a frame
  * clock: frames in, pictures out.
  *
  * WHY THE GATE IS A DEVICE AND NOT A DISPLAY. The device cases of this suite used to ask `getenv("DISPLAY")`,

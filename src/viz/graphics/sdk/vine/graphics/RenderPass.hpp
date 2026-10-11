@@ -14,6 +14,7 @@
 #include "FrameDescription.hpp"
 #include "ImageRef.hpp"
 #include "PolygonMode.hpp"
+#include "RenderSurfaceTarget.hpp"
 #include "StateNode.hpp"
 #include "Viewport.hpp"
 
@@ -489,14 +490,22 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *     the declaration's hook (PassDesc::before_draw), which the compile runs in run order.
      *
      * What remains for this method is a caller that drives one pass itself - a host drawing a pass into its own
-     * backend, a test - and it is exactly "describe, then execute a frame with one pass in it" (see
+     * device, a test - and it is exactly "describe, then execute a frame with one pass in it" (see
      * singlePassFrame): the same shape the engine hands over, through the same entry, so the two spellings cannot
      * drift. A pass that issues nothing issues nothing here either: no frame is handed over at all.
      *
-     * @param scene   Scene containing drawables.
-     * @param backend Backend to render with.
+     * The TARGET is the third thing such a caller says, because a frame's "default framebuffer" has to resolve to
+     * one (see RenderFrameExecutor::executeFrame): the target the host presents through, or nullptr for a pass
+     * whose work is off-screen (a pass that draws into its own render target needs no window, and a caller with no
+     * window at all draws none).
+     *
+     * @param scene      Scene containing drawables.
+     * @param backend    Device to render with.
+     * @param present_to Target the pass' default framebuffer resolves to, or nullptr when the caller presents
+     *                   through a surface of the device's own (see RenderFrameExecutor::executeFrame).
      */
-    virtual void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend);
+    virtual void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend,
+                         raw_ptr<RenderSurfaceTarget> present_to = nullptr);
 
   protected:
     /** @brief Fills this pass' own facts (target, viewport, clear, state) into @p out.

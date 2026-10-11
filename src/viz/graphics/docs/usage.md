@@ -19,7 +19,7 @@ graph TB
     Engine["RenderEngine<br/>pass · target · 接线校验 · 诊断"]
     Scene["场景模型<br/>Node / Group / MatrixTransform / StateNode / Geometry"]
     Builder["RenderPipelineBuilder<br/>配方：forward · deferred · 离屏+PiP"]
-    BackendIface["RenderBackend（接口，设备边界）"]
+    BackendIface["RenderBackend（三面一体：设备 / 执行器 / 目标工厂）"]
     Plugin["gfx_backend_vsg 插件<br/>SceneBridge · VsgRenderer"]
     VSG["VulkanSceneGraph → Vulkan"]
 
@@ -34,12 +34,12 @@ graph TB
 ```
 
 `RenderEngine` 从不直接调用 Vulkan：它把这一帧**编译成一个值**（每条 pass 的目标、状态、绘制与解析好的接线），
-再把**整个值一次**交给后端（`RenderBackend::executeFrame`）。
+再把**整个值一次**交给后端（`RenderFrameExecutor::executeFrame`）。
 后端**按名字**创建，因此宿主对后端及其第三方库没有编译期依赖：
 
 ```cpp
 auto backend = vn::graphics::RenderBackendRegistry::instance().create(u8"vsg");  // 需插件已加载
-engine.setBackend(backend);
+engine.setDevice(backend);
 ```
 
 ## 2. 场景模型
@@ -127,11 +127,11 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   只持有引用会让被丢掉的 pass 继续每帧执行）。
 - **顺序用阶段说**（`PipelineStage` + `pipelineStageOrder`）：阴影深度、几何、效果、着色、透明、
   呈现、HUD、预览各占一个档位，效果按"我在谁之前"进入，不去抢别人的魔数。
-- `RenderBackend` —— 设备边界（整帧 `executeFrame()`、回读、诊断；目标/资源公告与观测入口见
-  `.ai/design/graphics-redesign.md`）。**窗口是可选的另一半**：后端有窗口时同时实现
-  `RenderSurfaceBinding` 并由 `surface()` 交出来（句柄、尺寸跟随、`present()`），只画离屏的后端
-  `surface()` 答 null、四个窗口入口一个都不实现。`RenderBackendRegistry` /
-  `RenderBackendFactory` 让插件自注册、宿主按名字创建。
+- `RenderBackend` —— **三面一体的聚合**（工厂返回、引擎收、测试双实现，2026-10-11 S10a 起）：整帧 `executeFrame()`
+  在 `RenderFrameExecutor` 那面，**窗口是可选的另一半** → `RenderDevice::createSurfaceTarget(handle, why)` 交出一把
+  `RenderSurfaceTarget`（句柄重公告、尺寸跟随、`present()`），只画离屏的设备**继承默认答案**（`NoPresentation`，
+  一个窗口入口都不实现）；`RenderDevice` 还有能力（`capabilities()`，含 `presentation`）、资源公告与诊断。
+  `RenderBackendRegistry` / `RenderBackendFactory` 让插件自注册、宿主按名字创建。
 
 ### 2.5 每帧数据流
 
@@ -149,7 +149,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
    （只有宿主自己放手才算删除，细节见 `backend.md` §5.5）。
    > **一条 pass 每帧只被描述一次**，而且**引擎不会调它的 `execute()`**：想让引擎跑自己的活，就把"发什么"
    > 放进 `RenderPass::describe()`、把"先做什么"放进声明的 `before_draw` 钩子（见 §2.4 的 `RenderPass` 段）。
-3. 然后把这个值**整帧交给后端**（`RenderBackend::executeFrame(frame)`）：后端拿到的就是全部 —— 每条 pass 的身份、
+3. 然后把这个值**整帧交给后端**（`RenderFrameExecutor::executeFrame(frame, present_to)`，`present_to` = 本区那把目标）：后端拿到的就是全部 —— 每条 pass 的身份、
    order、解析好的输入，以及它发出的 target / viewport / 清屏 / 状态与每一条绘制调用。**没有 per-call 的平坦入口、
    也没有"没开 scope 时设置是惰性"这套顺序规则**：值的形状就是帧的形状，宣告不出岔子。
    后端把每个 `RenderCommand` 物化成后端对象。在 vsg 后端里就是每个 drawable 一条保留的
@@ -243,12 +243,15 @@ camera->setAspect(16.0 / 9.0);                               // 投影的**形�
 // "最后放手的那条管线"删掉 —— `delete` 的是别人的栈/成员内存，症状不在这一刻，而是**之后某次无关的 free 报堆损坏**。
 // 所以它和别的 SDK 对象一样由 `intrusive_ptr` 持有（`test_vsg/SdkPixelFixture.hpp` 是同一个形态）。
 auto engine = make_intrusive<RenderEngine>();
-engine->setBackend(RenderBackendRegistry::instance().create(u8"vsg"));  // 需插件已加载
+engine->setDevice(RenderBackendRegistry::instance().create(u8"vsg"));  // 需插件已加载
 
-// 窗口与尺寸归**区**（一块表面的表）：句柄在这里公告、尺寸也在这里报一次 —— 引擎不收裸句柄。
+// 窗口与尺寸归**区**（一块表面的表）：窗口那一半由**设备**造（S10a），尺寸在这里报一次 —— 引擎不收裸句柄。
 auto area = make_intrusive<RenderSurface>(engine.get());
-area->bindTarget(window_handle);          // 宿主窗口的原生句柄；后端没有窗口那一半时**拒绝 + 报一次**
-area->resize(width, height, dpr);         // 帧上下文 + 窗口那一半 + 每个呈现的视图，一次说清
+vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
+vn::raw_ptr<vn::graphics::RenderSurfaceTarget> target = engine->device()->createSurfaceTarget(window_handle, &why);
+if (target == nullptr) { return false; }  // 无呈现能力 / 服务不了这块 surface / 窗口已被占用（见 @p why）
+area->bindTarget(target);                 // 区持有目标对象；平台重建窗口 = target->setWindowHandle(new)
+area->resize(width, height, dpr);         // 帧上下文 + 目标（窗口那一半）+ 每个呈现的视图，一次说清
 if (!engine->initialize()) { return false; }
 
 RenderPipelineBuilder builder(engine.get());
@@ -738,6 +741,15 @@ auto* surface = control->surface();
 if (!surface->hasPresentation()) {
     surface->present(*control->view());   // 声明它采纳的那条链的窗口 pass —— 先建链、先采纳，才有东西可指
 }
+
+// 窗口那一半由**设备**造（S10a）：句柄是造目标时的输入，区收的是那把目标对象（借用）；设备"不呈现"就答
+// NoPresentation，窗口已被占用就答 WindowOccupied（各有一句话），宿主照着 failAttach。
+vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
+if (vn::raw_ptr<vn::graphics::RenderSurfaceTarget> target = device->createSurfaceTarget(handle, &why)) {
+    surface->bindTarget(target);
+}
+// 平台重建窗口：在**同一把目标**上重公告（设备、缓存与已编译管线都留），不是第二把目标
+surface->target()->setWindowHandle(new_handle);
 
 // 宿主自建主 pass 时：声明自己的那条，视图那条一条都不建
 auto pipeline = builder.build(options);

@@ -14,14 +14,14 @@
  * WHERE THIS SITS (design §2.2). Every other `api/` type is one piece a frame is made of - the session, the
  * store, the assembly, the executor - and this is the seam the ENGINE talks to: it implements the SDK's
  * `RenderBackend` methods and drives those pieces through them, deciding nothing of its own. That is why it
- * is allowed to be thin: `initialize()` builds the session, a frame is `executeFrame(value)` -> `present()` over
- * the pieces that exist, and every call it cannot serve yet is REPORTED (the SDK's own
+ * is allowed to be thin: `initialize()` builds the session, a frame is `executeFrame(value, target)` ->
+ * `present()` over the pieces that exist, and every call it cannot serve yet is REPORTED (the SDK's own
  * rule: report what could not be done instead of answering with nothing).
  *
  * WHAT IS SERVED TODAY (the facade's slices, §11.16bd-§11.16bh):
  *   * the session lifecycle - up, down, up again, `shutdown()` idempotent and safe before any
  *     `initialize()`, exactly what the SDK's contract demands of a backend whose surface is recreated;
- *   * THE FRAME, RUN FROM ITS VALUE - the one frame entry the SDK has (RenderBackend::executeFrame): the frame's
+ *   * THE FRAME, RUN FROM ITS VALUE - the one frame entry the SDK has (RenderFrameExecutor::executeFrame): the frame's
  *     books are opened (the storage a frame needs is brought up to what it takes, the session mints the token and
  *     acquires the image, the collection stage opens the plan for that token), every pass of the value is walked
  *     in the order it states - identity through api/PassRegistry, then the facts and the draws it carries, each
@@ -45,8 +45,10 @@
  *     last submitted frame left (api/HostReadback). A refusal answers the SDK's machine-readable result and
  *     says its reason once per episode;
  *   * the surface facts - `setWindowHandle()`/`nativeHandle()` for a host surface, `resize()` and the present:
- *     this backend HAS a window half, so it implements `vn::graphics::RenderSurfaceBinding` and `surface()`
- *     answers this object (a backend drawing only into render targets answers null and carries none of it). The
+ *     this backend HAS a window half, so it implements `vn::graphics::RenderSurfaceTarget` and hands itself out
+ *     from `createSurfaceTarget()` (a device that draws only into render targets answers none at all, see
+ *     RenderDevice::createSurfaceTarget). ONE window is served per backend: a second ask is refused with
+ *     `WindowOccupied` and said once, because one live swapchain per window is a platform constraint. The
  *     surface OWNS its size (the SDK's authority order), so a live announcement makes the session FOLLOW the
  *     surface it is on (re-read it, rebuild the swapchain when it changed - one COUNTED device stop), while
  *     the announced numbers are what the next `initialize()` creates a window at;
@@ -77,8 +79,8 @@ namespace detail
 class BackendContentAccess;
 }  // namespace detail
 
-/** @brief The SDK's render backend, driven by the rewrite's session (see the file note). */
-class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::graphics::RenderSurfaceBinding
+/** @brief The SDK's render device, driven by the rewrite's session (see the file note). */
+class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::graphics::RenderSurfaceTarget
 {
   public:
     VsgBackend();
@@ -98,8 +100,22 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::gra
     /** @brief Tears the session down: idempotent, and initializable again (the SDK's contract). */
     void shutdown() override;
 
-    /** @brief Answers this object: this backend presents through its own window half (see the file note). */
-    [[nodiscard]] vn::graphics::RenderSurfaceBinding* surface() override;
+    /** @brief Answers this object: this device's frame half is its own (see RenderDevice::executor). */
+    [[nodiscard]] vn::graphics::RenderFrameExecutor& executor() override;
+
+    /** @brief Hands out this object as the one window half this backend has (see the file note).
+     *
+     * ONE WINDOW is served: the first ask takes it (the handle is what the next initialize() adopts, or moves an
+     * established session onto - see core::planSessionMove), and a SECOND ask is refused with WindowOccupied and
+     * said once, because a window carries one live swapchain and this implementation has one session to give.
+     *
+     * @param native_handle Host window to present through, or nullptr when the host names none (this backend then
+     *                      brings up a window of its own).
+     * @param why           Receives why no target was handed out (Ok when one was), or null to ignore.
+     * @return This object, or nullptr when a window is already being served.
+     */
+    [[nodiscard]] vn::raw_ptr<vn::graphics::RenderSurfaceTarget>
+    createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why = nullptr) override;
 
     /** @brief Runs a frame from its value: the plugin's own translation of the frame the engine compiled.
      *
@@ -109,11 +125,19 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::gra
      * pass is collected in the order the value states, and the books close (the plan compiles against what the
      * frame draws into). `present()` is what presents it.
      *
+     * The TARGET is what the frame's "default framebuffer" row resolves to (see
+     * vn::graphics::RenderFrameExecutor::executeFrame): this backend's own window half is the only one it can
+     * serve, so a frame that names another target is refused and reported ONCE (nothing was recorded), while
+     * nullptr is a frame that presents nowhere - the off-screen half, where the passes that name their own render
+     * targets still run.
+     *
      * A frame with no session is reported once per episode and runs nothing (see the file note).
      *
-     * @param frame The frame to run, in run order.
+     * @param frame      The frame to run, in run order.
+     * @param present_to Target the frame's default framebuffer resolves to, or nullptr to present nowhere.
      */
-    void executeFrame(const vn::graphics::FrameDescription& frame) override;
+    virtual void executeFrame(const vn::graphics::FrameDescription& frame,
+                              vn::graphics::RenderSurfaceTarget*      present_to = nullptr) override;
 
     /** @brief Remembers the host's window handle for the next @ref initialize. */
     void setWindowHandle(void* native_handle) override;
@@ -127,7 +151,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::gra
     /** @brief Records the frame and commits it through the session: the one present. */
     void present() override;
 
-    /** @brief Answers what this backend can do: off-screen targets, whole (see `RenderBackend::capabilities`). */
+    /** @brief Answers what this backend can do: off-screen targets, whole (see `RenderDevice::capabilities`). */
     [[nodiscard]] vn::graphics::Capabilities capabilities() const noexcept override;
 
     /** @brief Answers the ONE report: frame counters, retention, and the session's frame clock (see the file note). */
@@ -193,7 +217,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::gra
     /** @brief Opens the frame's books: storage, token, acquisition, and the plan's own frame.
      *
      * The first half of what used to be `beginFrame()` (the SDK's frame is one call now - see
-     * RenderBackend::executeFrame): the per-frame storage is brought up to what this frame needs HERE, between
+     * RenderFrameExecutor::executeFrame): the per-frame storage is brought up to what this frame needs HERE, between
      * frames, where no recording is in progress and the previous frame's bytes can be left behind safely, and
      * then the session mints the frame's token and advances the viewer's clock - the recorder opens the plan for
      * the same token, so the description and the session's frame cannot disagree about which frame it is.

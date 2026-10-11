@@ -1,4 +1,4 @@
-﻿#include <vine/graphics/BuiltinShaders.hpp>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/CameraManipulator.hpp>
 #include <vine/graphics/OrbitCameraManipulator.hpp>
@@ -2163,10 +2163,10 @@ TEST(RenderTargetTest, MultipleColorAttachments)
  */
 class MockBackend : public RenderBackend {
   public:
-    /// The WINDOW HALF of this double (see RenderBackend::surface): what the engine forwarded to the surface
-    /// (a window announcement, a size) and the presents it drove. Frame cases count the present through it,
+    /// The WINDOW HALF of this double (see RenderDevice::createSurfaceTarget): what the engine forwarded to the
+    /// target (a window announcement, a size) and the presents it drove. Frame cases count the present through it,
     /// and a double that wants no window half at all flips `has_surface` below.
-    class MockSurface : public RenderSurfaceBinding
+    class MockSurface : public RenderSurfaceTarget
     {
       public:
         void setWindowHandle(void* handle) override
@@ -2202,11 +2202,31 @@ class MockBackend : public RenderBackend {
         reportDiagnostic(severity, category, message);
     }
 
-    /// Whether this double has a surface: TRUE by default (a frame test is about a backend that presents
-    /// through a window, and the present is one of the witnesses below).
+    /// Whether this double hands a window half out at all (see RenderDevice::createSurfaceTarget): TRUE by
+    /// default (a frame test is about a device that presents through a window, and the present is one of the
+    /// witnesses below). A double that wants none flips `has_surface`.
     bool        has_surface = true;
     MockSurface surface_half;
-    [[nodiscard]] RenderSurfaceBinding* surface() override { return has_surface ? &surface_half : nullptr; }
+    /// How many targets were asked for (see createSurfaceTarget), and the one this double handed out.
+    int         target_creations = 0;
+    [[nodiscard]] vn::raw_ptr<RenderSurfaceTarget> createSurfaceTarget(void* native_handle,
+                                                                      SurfaceTargetResult* why = nullptr) override
+    {
+        ++target_creations;
+        if (!has_surface) {
+            if (why != nullptr) {
+                *why = SurfaceTargetResult::NoPresentation;   // a device that presents nothing answers silently.
+            }
+            return nullptr;
+        }
+        surface_half.setWindowHandle(native_handle);
+        if (why != nullptr) {
+            *why = SurfaceTargetResult::Ok;
+        }
+        return &surface_half;
+    }
+    /// The frame half of this double is the double itself (see RenderDevice::executor).
+    [[nodiscard]] RenderFrameExecutor& executor() override { return *this; }
 
     int render_calls = 0;
     int clear_calls = 0;
@@ -2251,7 +2271,7 @@ class MockBackend : public RenderBackend {
     RenderTarget* last_program_source = nullptr;
     const ShaderProgram* last_program = nullptr;
     const Camera* last_program_camera = nullptr;
-    /// What this double reports for RenderBackend::capabilities: off-screen targets TRUE by default, because
+    /// What this double reports for RenderDevice::capabilities: off-screen targets TRUE by default, because
     /// the double honours every target it is handed (a pass test is not asking about target support).
     /// A test that wants the other answer flips this and the engine reports the pipeline it cannot serve.
     bool supports_targets = true;
@@ -2271,17 +2291,21 @@ class MockBackend : public RenderBackend {
     int order_sets = 0;
     std::vector<int> orders;
 
-    /// How many frames were handed over (one executeFrame per frame the engine ran, see RenderBackend).
+    /// How many frames were handed over (one executeFrame per frame the engine ran, see RenderFrameExecutor),
+    /// and what each of them named as the target its default framebuffer resolves to (the area's target, or
+    /// nullptr for a frame that presents nowhere).
     int frames_executed = 0;
+    std::vector<RenderSurfaceTarget*> present_targets;
 
-    /// THE FRAME, WALKED BY THIS DOUBLE (see RenderBackend::executeFrame): one entry per pass, in run order -
+    /// THE FRAME, WALKED BY THIS DOUBLE (see RenderFrameExecutor::executeFrame): one entry per pass, in run order -
     /// the identity, the order, the resolved inputs, then everything the pass issues (its target, the viewport /
     /// clear / state it stated, and each of its draws with the lights that belong to it). Every witness below is
     /// filled from HERE, which is what makes the other cases' assertions ("the backend was handed this clear",
     /// "this camera drew") read as "the engine's frame value said so".
-    void executeFrame(const FrameDescription& frame) override
+    void executeFrame(const FrameDescription& frame, RenderSurfaceTarget* present_to = nullptr) override
     {
         ++frames_executed;
+        present_targets.push_back(present_to);
         for (const FrameDescription::Pass& entry : frame.passes) {
             if (entry.pass == nullptr) {
                 continue;   // a frame's entry always names a pass; a null one is nothing to run
@@ -2412,7 +2436,7 @@ TEST(RenderEngineTest, TheFrameReportCrossesTheEngineWholeAndAbsentPartsStayAbse
 
     // 2. A backend that keeps none: the contract's default, and it SAYS so (disengaged, not zeros).
     const vn::intrusive_ptr<RenderBackend> silent(new MockBackend());
-    engine.setBackend(silent);
+    engine.setDevice(silent);
     report = engine.frameReport();
     EXPECT_FALSE(report.counters.has_value()) << "the default is \"no counters\", not an empty frame";
     EXPECT_FALSE(report.retention.has_value());
@@ -2420,7 +2444,7 @@ TEST(RenderEngineTest, TheFrameReportCrossesTheEngineWholeAndAbsentPartsStayAbse
 
     // 3. A backend that keeps them: the whole report crosses the engine unchanged.
     const vn::intrusive_ptr<RenderBackend> reporting(new ReportingBackend());
-    engine.setBackend(reporting);
+    engine.setDevice(reporting);
     report = engine.frameReport();
     ASSERT_TRUE(report.counters.has_value());
     EXPECT_EQ(report.counters->passes, 7U);
@@ -2443,7 +2467,7 @@ TEST(RenderEngineTest, EveryExecutedPassReachesTheBackendOnceAndADisabledOneDoes
     // executed and therefore has no entry.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto camera = intrusive_ptr<Camera>(new Camera());
@@ -2485,7 +2509,7 @@ TEST(RenderEngineTest, RemovePassReleasesBackendPerPassState)
     // window-layer call.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
 
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     engine->addPass(pass, 0);
@@ -2501,7 +2525,7 @@ TEST(RenderEngineTest, RemovePassReleasesBackendRenderTarget)
     // the backend to free that target's GPU resources before the target dies.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
 
     auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
     auto pass   = intrusive_ptr<RenderPass>(new RenderPass());
@@ -2520,7 +2544,7 @@ TEST(RenderEngineTest, RemovePassReleasesBackendStateAndTarget)
     // owns.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
 
     auto camera  = intrusive_ptr<Camera>(new Camera());
     auto target  = intrusive_ptr<RenderTarget>(new RenderTarget());
@@ -2543,7 +2567,7 @@ TEST(RenderEngineTest, ClearPassesReleasesEveryRegisteredPass)
     // needed).
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
 
     auto cam_a   = intrusive_ptr<Camera>(new Camera());
     auto pass_a  = intrusive_ptr<RenderPass>(new RenderPass());
@@ -2650,7 +2674,7 @@ TEST(RenderEngineTest, TheFramePlanIsWhatTheFrameActuallyRan)
     // story, which is worse than no dump at all.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto scene = intrusive_ptr<Scene>(new Scene());
@@ -2705,7 +2729,7 @@ TEST(RenderEngineTest, TheFramePlanCarriesWhatEachPassLastCost)
 
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto slow    = intrusive_ptr<SlowPass>(new SlowPass());
@@ -2774,18 +2798,18 @@ TEST(RenderEngineTest, InitializeCallsBackend)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
 
     EXPECT_TRUE(engine->initialize());
     EXPECT_TRUE(backend->ok);
-    EXPECT_EQ(engine->backend(), backend.get());
+    EXPECT_EQ(engine->device(), backend.get());
 }
 
 TEST(RenderEngineTest, FrameRunsPipeline)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     // An explicit pipeline: a window pass (order 0, null render target)
@@ -2809,7 +2833,7 @@ TEST(RenderEngineTest, APassAnnouncesItsClearPolicyToTheBackend)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -2844,7 +2868,7 @@ TEST(RenderEngineTest, ABackendThatCannotDrawTargetsIsToldOncePerEpisode)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     std::vector<RenderDiagnostic> reported;
@@ -2890,7 +2914,7 @@ TEST(RenderEngineTest, FrameBeforeInitializeIsNoOp)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
 
     // Not initialized: frame should do nothing.
     engine->frame();
@@ -2904,7 +2928,7 @@ TEST(RenderEngineTest, EngineStartsEmpty)
     // no registered pass until the caller binds everything explicitly.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
 
     EXPECT_EQ(engine->passCount(), 0u);
 }
@@ -3285,7 +3309,7 @@ TEST(SceneViewViewportTest, ThePassLevelPolygonModeOverridesTheContentAndCanBeCl
 
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     backend->ok   = true;
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto pipeline            = buildFor(*view, engine.get());
@@ -3330,7 +3354,7 @@ TEST(RenderEngineTest, APassAnnouncesItsOwnStateForTheContentItDraws)
     engine->addPass(pass, scene, 0);
 
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
     engine->frame();
 
@@ -3807,7 +3831,7 @@ TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
     // (a use-after-free once its last reference goes away).
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
 
     auto view = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
@@ -3856,7 +3880,7 @@ TEST(RenderEngineTest, DefaultContentProgramForwardedToBackend)
     engine->setDefaultContentProgram(flat);
     EXPECT_EQ(engine->defaultContentProgram(), flat);
 
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     EXPECT_TRUE(engine->initialize());
     EXPECT_EQ(backend->default_content_program_sets, 1);
     EXPECT_EQ(backend->last_default_content_program, flat);
@@ -3873,7 +3897,7 @@ TEST(RenderEngineTest, RegisteredPassesRunInAscendingOrder)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     // Passes are explicit: one content scene bound to three registered scene
@@ -3923,7 +3947,7 @@ TEST(RenderEngineTest, PassContentBindingManagedByEngine)
     // unbound pass has none and draws nothing.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     auto sceneA = intrusive_ptr<Scene>(new Scene());
@@ -4013,7 +4037,7 @@ TEST(RenderEngineTest, ResizeDoesNotManagePassLayout)
     // (e.g. via SceneView layout steps).
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
@@ -4045,7 +4069,7 @@ TEST(RenderEngineTest, NamedOutputRegistryPublishResolve)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     auto rt = intrusive_ptr<RenderTarget>(new RenderTarget());
@@ -4067,7 +4091,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     // An explicit producer pass: it renders into the off-screen target it
@@ -4114,7 +4138,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     // Without a producer nothing resolves, so the ScreenPass draws nothing.
     auto engine2  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto backend2 = intrusive_ptr<MockBackend>(new MockBackend());
-    engine2->setBackend(backend2);
+    engine2->setDevice(backend2);
     engine2->initialize();
     auto orphan = intrusive_ptr<ScreenPass>(new ScreenPass());
     orphan->setCamera(cam);
@@ -4129,7 +4153,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     // engine says so (once) instead of a backend picking a shading for it.
     auto engine3  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto backend3 = intrusive_ptr<MockBackend>(new MockBackend());
-    engine3->setBackend(backend3);
+    engine3->setDevice(backend3);
     engine3->initialize();
     auto program_less = intrusive_ptr<ScreenPass>(new ScreenPass());
     program_less->setCamera(cam);
@@ -4151,7 +4175,7 @@ TEST(PassDescriptionTest, WhatAScenePassDescribesIsWhatItAnnounces)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     // 内容：一颗三角形 + 一组非空的灯（灯非空才有意义：空列表也会被公告一次）
@@ -4226,7 +4250,7 @@ TEST(PassDescriptionTest, WhatAScreenPassDescribesIsWhatItAnnounces)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto cam = intrusive_ptr<Camera>(new Camera());
@@ -4273,7 +4297,7 @@ TEST(PassDescriptionTest, APassWithNothingToIssueAnnouncesNothingAtAll)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
@@ -4315,7 +4339,7 @@ TEST(RenderEngineTest, ShutdownReleasesBackend)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
     EXPECT_TRUE(backend->ok);
 
@@ -4327,7 +4351,7 @@ TEST(RenderEngineTest, ScreenPassProgramCarriesTheAttachmentItReads)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
     auto cam = intrusive_ptr<Camera>(new Camera());
 
@@ -4380,7 +4404,7 @@ TEST(RenderEngineTest, ScreenPassProgramSamplesMrtForDeferredLighting)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
     auto cam = intrusive_ptr<Camera>(new Camera());
 
@@ -4563,7 +4587,7 @@ TEST(RenderEngineTest, ShadowPassIsJustARegisteredScenePass)
     // the window pass by order alone.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -4607,7 +4631,7 @@ TEST(RenderPipelineBuilderTest, OffscreenToScreenBuildsExpectedPipeline)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     // The off-screen recipe needs an explicit view camera and explicit content
@@ -4806,7 +4830,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -4880,7 +4904,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -5034,7 +5058,7 @@ TEST(RenderPipelineBuilderTest, DeclaredPassInputsReachTheBackend)
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize()) << "a frame runs nothing until the engine is initialized";
 
     RenderPipelineBuilder builder(engine.get());
@@ -5224,7 +5248,7 @@ TEST(RenderPipelineBuilderTest, TheHudOverlaysAreDeclarationsToo)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -5366,7 +5390,7 @@ TEST(RenderPipelineBuilderTest, GizmoOverlayConfiguredOnPreset)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -5453,7 +5477,7 @@ TEST(HudPassTest, EngineDrawsPassesInOrderAndSkipsDisabled)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     // A clearing window pass (explicit content scene) below the HUD passes, as
@@ -5496,7 +5520,7 @@ TEST(HudPassTest, SubViewportAndClearPolicy)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->initialize();
 
     // A clearing window pass below the HUD pass (as a real viewer registers).
@@ -7542,7 +7566,7 @@ TEST(DiagnosticsTest, EngineForwardsSinkToCurrentAndFutureBackend)
     });
 
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
-    engine.setBackend(backend);
+    engine.setDevice(backend);
 
     // The backend received the stored sink (installed after setBackend, the
     // engine applies it to the backend it currently holds).
@@ -7550,7 +7574,7 @@ TEST(DiagnosticsTest, EngineForwardsSinkToCurrentAndFutureBackend)
 
     // A backend set later gets it too.
     auto later = intrusive_ptr<MockBackend>(new MockBackend());
-    engine.setBackend(later);
+    engine.setDevice(later);
     EXPECT_TRUE(static_cast<bool>(later->diagnosticSink()));
 
     // Emitting on the current backend reaches the host through that one route, and the engine reports
@@ -7572,7 +7596,7 @@ TEST(DiagnosticsTest, EngineForwardsSinkToCurrentAndFutureBackend)
                           u8"second");
     EXPECT_EQ(received.size(), 1u);
     EXPECT_EQ(engine.diagnosticCount(), 2u);
-    engine.setBackend(nullptr);
+    engine.setDevice(nullptr);
     EXPECT_EQ(engine.diagnosticCount(), 2u) << "the route is the engine's, so the count outlives the backend";
 }
 
@@ -7724,7 +7748,7 @@ TEST(RenderEngineTest, PassesSharingSceneAndCameraCollectOncePerCameraPerFrame)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto scene = intrusive_ptr<Scene>(new Scene());
@@ -7772,7 +7796,7 @@ TEST(RenderEngineTest, OneCameraCullsWithItsOwnShapeInEveryRectangle)
     // rectangle buys is a different frustum or a walk of its own: the culling and the walk follow the CAMERA.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto scene = intrusive_ptr<Scene>(new Scene());
@@ -7833,7 +7857,7 @@ TEST(RenderEngineTest, TheFramesValueIsBuiltAfterThePerFrameHooks)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto scene  = intrusive_ptr<Scene>(new Scene());
@@ -7892,7 +7916,7 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto scene = intrusive_ptr<Scene>(new Scene());
@@ -7943,7 +7967,7 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
 
     // THE PASSES, in run order and with the identity the backend was handed (its per-pass state key).
     ASSERT_EQ(backend->pass_entries.size(), 4u);
-    EXPECT_EQ(backend->frames_executed, 1) << "the whole frame arrives in ONE call (see RenderBackend::executeFrame)";
+    EXPECT_EQ(backend->frames_executed, 1) << "the whole frame arrives in ONE call (see RenderFrameExecutor::executeFrame)";
     EXPECT_EQ(backend->entries_closed, backend->entries) << "every entry is walked to its end";
     for (std::size_t index = 0; index < value.passes.size(); ++index) {
         EXPECT_EQ(value.passes[index].pass, backend->pass_entries[index])
@@ -8018,12 +8042,16 @@ TEST(RenderEngineTest, TheEngineRunsTheFrameValueAndNeverCallsExecute)
             ++describes;
             return RenderPass::describe(scene, out);
         }
-        void execute(vn::raw_ptr<Scene>, vn::raw_ptr<RenderBackend>) override { ++executes; }
+        void execute(vn::raw_ptr<Scene>, vn::raw_ptr<RenderBackend>,
+                     vn::raw_ptr<RenderSurfaceTarget>) override
+        {
+            ++executes;
+        }
     };
 
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto scene  = intrusive_ptr<Scene>(new Scene());
@@ -8065,7 +8093,7 @@ TEST(RenderEngineTest, ACameraWhoseShapeIsNotThePassRectangleIsReportedOnce)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -8130,7 +8158,7 @@ TEST(RenderEngineTest, TheRectangleIsThePassViewportAndAScreenPassIsNotMeasured)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -8202,7 +8230,7 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -8264,7 +8292,7 @@ TEST(RenderEngineTest, TwoProducersUnderOneOutputNameAreReportedOnce)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -8322,7 +8350,7 @@ TEST(RenderEngineTest, PublishingANameWithoutARenderTargetIsReported)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -8374,7 +8402,7 @@ TEST(RenderEngineTest, ADeclarationChangeLandsInTheFrameThatFollowsIt)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto camera = intrusive_ptr<Camera>(new Camera());
@@ -8436,7 +8464,7 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto camera = intrusive_ptr<Camera>(new Camera());
@@ -8501,7 +8529,7 @@ TEST(RenderEngineTest, AScreenPassCanBeDeclaredAsAValueToo)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
     auto camera = intrusive_ptr<Camera>(new Camera());
@@ -8603,7 +8631,7 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
     auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
     area->resize(320, 180);
@@ -8695,7 +8723,7 @@ TEST(RenderEngineTest, PublishingANullTargetIsReported)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -8733,7 +8761,7 @@ TEST(RenderEngineTest, OneWireIsReportedByOneCheckWhetherDeclaredByNameOrObject)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -8895,7 +8923,7 @@ TEST(RenderEngineTest, ImageDeclaredAsOutputByTwoPassesIsReportedOnce)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -8976,7 +9004,7 @@ TEST(RenderEngineTest, TwoImageRefsOfOneAttachmentAreReportedOnce)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9044,7 +9072,7 @@ TEST(RenderEngineTest, TwoImagesOfOneTargetWithDifferentAttachmentsAreNotACollis
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9093,7 +9121,7 @@ TEST(RenderEngineTest, TwoDistinctUnboundImagesAreNotACollision)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9140,7 +9168,7 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9205,7 +9233,7 @@ TEST(RenderEngineTest, InputImageProducedByALaterPassIsReported)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9273,7 +9301,7 @@ TEST(RenderEngineTest, PassReadingTheTargetItDrawsIntoIsLeftToTheBackend)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9317,7 +9345,7 @@ TEST(RenderEngineTest, TheAreasSizeAnnouncedBeforeInitializeReachesTheBackend)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
 
     // Announced first: the backend does not exist yet as far as the size is concerned.
@@ -9348,7 +9376,7 @@ TEST(RenderEngineTest, NoSurfaceSizeAnnouncementIsNotForwarded)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     auto area = intrusive_ptr<RenderSurface>(new RenderSurface(engine.get()));
 
     ASSERT_TRUE(engine->initialize());
@@ -9373,7 +9401,7 @@ TEST(RenderEngineTest, WholeTargetPromiseSatisfiesAFineImageRead)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9424,7 +9452,7 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9483,7 +9511,7 @@ TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9535,7 +9563,7 @@ TEST(RenderEngineTest, AnUnboundDeclaredImageIsReportedAtWiringTime)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9602,7 +9630,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAProgramIsReportedAndDrawsNothing)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9669,7 +9697,7 @@ TEST(RenderEngineTest, DepthAndColorAttachmentZeroAreDistinctImages)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9718,7 +9746,7 @@ TEST(RenderEngineTest, WholeTargetPromiseCollidingWithAFineOneIsReported)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9771,7 +9799,7 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9823,7 +9851,7 @@ TEST(RenderEngineTest, CoarseDeclarationAndTheProgramsBindingPickTheAttachment)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9867,7 +9895,7 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9935,7 +9963,7 @@ TEST(RenderEngineTest, NameAndObjectDeclarationResolveTheWireOnce)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -9984,7 +10012,7 @@ TEST(RenderEngineTest, PromiseAboutATargetThePassDoesNotWriteIsReported)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -10061,7 +10089,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -10132,7 +10160,7 @@ TEST(RenderEngineTest, ScreenPassWithAProgramAndNoCameraIsReported)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -10187,7 +10215,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAnyInputIsReportedOnce)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -10248,7 +10276,7 @@ TEST(RenderEngineTest, ScenePassWithoutInputIsNotReported)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });
@@ -10272,7 +10300,7 @@ TEST(RenderEngineTest, PublishingOneTargetUnderOneNameTwiceIsNotACollision)
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto                          engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([&received](const RenderDiagnostic& diagnostic) {
         received.push_back(diagnostic);
     });

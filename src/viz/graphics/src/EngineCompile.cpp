@@ -352,12 +352,12 @@ intrusive_ptr<RenderTarget> RenderEngine::makeTransientTarget(const String& iden
 
 void RenderEngine::releaseTransientTarget(const intrusive_ptr<RenderTarget>& target)
 {
-    if (target == nullptr || backend_ == nullptr) {
+    if (target == nullptr || device_ == nullptr) {
         return;
     }
     // The SDK's announcement that the caller may destroy it now: the backend drops what it built for it (and
     // retires anything still in flight), exactly as removePass() does for a pass' own target.
-    backend_->releaseRenderTarget(target.get());
+    device_->releaseRenderTarget(target.get());
 }
 
 std::size_t RenderEngine::transientTargetCount() const noexcept

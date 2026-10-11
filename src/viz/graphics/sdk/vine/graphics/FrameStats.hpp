@@ -65,7 +65,7 @@ struct VN_GRAPHICS_API FrameProgress
 };
 
 /**
- * @brief What a backend can say about its frames, as ONE answer (see RenderBackend::frameReport).
+ * @brief What a backend can say about its frames, as ONE answer (see RenderFrameExecutor::frameReport).
  *
  * ONE QUESTION, ONE VALUE. The three parts used to be three calls with three out-parameters and three bools,
  * so a host asking "how is it going" made three calls and kept three "did it answer" flags beside them - and

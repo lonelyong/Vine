@@ -220,6 +220,11 @@ struct VsgBackend::Data
 
     std::array<vn::graphics::ReportOnce, kUnservedCount> unserved_reports{};  ///< One episode per entry point.
     std::array<vn::graphics::ReportOnce, kReadbackReportCount> readback_reports{};  ///< The unresolved-target episodes.
+    /// Whether the one window this device serves was handed out (see createSurfaceTarget): a second ask is the
+    /// "window occupied" episode, said once.
+    bool                     target_taken{false};
+    vn::graphics::ReportOnce occupied_report{};       ///< The "second target asked" episode (see createSurfaceTarget).
+    vn::graphics::ReportOnce foreign_target_report{};  ///< The "a frame named someone else's target" episode.
     /// What the frame's sweeps have let go (see api/ContentSweep); zero while the host holds everything.
     std::size_t released_objects{0};
     std::size_t released_textures{0};
@@ -356,10 +361,38 @@ void VsgBackend::shutdown()
     d->session.shutdown();
 }
 
-vn::graphics::RenderSurfaceBinding* VsgBackend::surface()
+vn::graphics::RenderFrameExecutor& VsgBackend::executor()
 {
-    // The window half of a backend is optional (see RenderBackend::surface): this one always has it - it
-    // presents through a window, the host's or one it created for itself - so its binding is itself.
+    // The frame half of this device is its own (see RenderDevice::executor): the aggregate answers both faces.
+    return *this;
+}
+
+vn::raw_ptr<vn::graphics::RenderSurfaceTarget>
+VsgBackend::createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why)
+{
+    // ONE WINDOW, one live swapchain (see the header): the first ask is the window this device serves - the
+    // handle the next initialize() adopts, or moves an established session onto (see core::planSessionMove) - and
+    // a second one is refused, once per episode, because a host that asked has to hear it rather than discover a
+    // picture that never appears.
+    if (d->target_taken) {
+        if (why != nullptr) {
+            *why = vn::graphics::SurfaceTargetResult::WindowOccupied;
+        }
+        if (d->occupied_report.shouldReport()) {
+            reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                             vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                             vn::String::fromUtf8("a second surface target was asked of a device that serves one "
+                                                  "window: the window it already serves was left alone (see "
+                                                  "createSurfaceTarget, and .ai/design/graphics-window-device-"
+                                                  "viewer.md)"));
+        }
+        return nullptr;
+    }
+    d->target_taken = true;
+    d->host_handle  = native_handle;
+    if (why != nullptr) {
+        *why = vn::graphics::SurfaceTargetResult::Ok;
+    }
     return this;
 }
 
@@ -400,8 +433,24 @@ void VsgBackend::closeFrameBooks()
     d->frame = &d->compiler.compile(d->recorder.description(), core::FrameFacts{ d->facts });
 }
 
-void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame)
+void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
+                              vn::graphics::RenderSurfaceTarget* present_to)
 {
+    // THE FRAME'S TARGET. This device has one window half and it is this object (see createSurfaceTarget), so a
+    // frame that names another target is wiring it could not have produced: nothing is recorded and the reason is
+    // said once per episode instead of being drawn into someone else's window. A null target is a frame that
+    // presents NOWHERE (the off-screen half of the frame protocol, see RenderFrameExecutor::executeFrame): the
+    // passes that name their own render targets run as they always did, and nothing is presented.
+    if (present_to != nullptr && present_to != static_cast<vn::graphics::RenderSurfaceTarget*>(this)) {
+        if (d->foreign_target_report.shouldReport()) {
+            reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                             vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                             vn::String::fromUtf8("a frame named a surface target this device did not hand out: "
+                                                  "nothing was recorded (a device serves the window it created, "
+                                                  "see createSurfaceTarget)"));
+        }
+        return;
+    }
     if (!d->session.initialized())
     {
         reportUnserved(kUnservedNoSession);
@@ -540,7 +589,7 @@ void VsgBackend::resize(int width, int height)
     d->announced_height = height;
     if (d->session.initialized())
     {
-        // THE SURFACE OWNS ITS SIZE (RenderSurfaceBinding::resize's authority order: surface > announcement >
+        // THE SURFACE OWNS ITS SIZE (RenderSurfaceTarget::resize's authority order: surface > announcement >
         // default), so a live announcement is served by FOLLOWING the surface: the session re-reads the one
         // it is on and rebuilds its swapchain when that surface changed, and what hangs off the size (the
         // render area, the window target's shape, each pass' view block) is derived from the window when the
@@ -568,9 +617,10 @@ void VsgBackend::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::
 
 vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
 {
-    // The off-screen half is served now: a non-null target is held (api/HostTargets), drawn into by the
-    // passes that announce it, and read back through the readback entry points.
-    return vn::graphics::Capabilities{ .render_targets = true };
+    // Both halves are served: frames are presented through the window this device handed out (so a host can plan
+    // for a picture), and a non-null target is held (api/HostTargets), drawn into by the passes that announce it,
+    // and read back through the readback entry points.
+    return vn::graphics::Capabilities{ .render_targets = true, .presentation = true };
 }
 
 vn::graphics::FrameReport VsgBackend::frameReport() const noexcept

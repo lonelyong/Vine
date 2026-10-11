@@ -1,4 +1,4 @@
-﻿#include <vine/graphics/RenderEngine.hpp>
+#include <vine/graphics/RenderEngine.hpp>
 #include <algorithm>
 #include <chrono>
 #include <functional>
@@ -46,27 +46,24 @@ RenderEngine::~RenderEngine()
     shutdown();
 }
 
-raw_ptr<RenderBackend> RenderEngine::backend() const
+raw_ptr<RenderBackend> RenderEngine::device() const
 {
-    return backend_.get();
+    return device_.get();
 }
 
-void RenderEngine::setBackend(intrusive_ptr<RenderBackend> backend)
+void RenderEngine::setDevice(intrusive_ptr<RenderBackend> device)
 {
-    // Re-assigning the same backend is a no-op (idempotent).
-    if (backend_ == backend) {
+    // Re-assigning the same device is a no-op (idempotent).
+    if (device_ == device) {
         return;
     }
-    backend_ = std::move(backend);
-    // The backend reports through THIS engine's one route (see Diagnostics.hpp): attaching it is what
-    // makes the engine's count the whole truth instead of half of it, and it is why a backend set after
+    device_ = std::move(device);
+    // The device reports through THIS engine's one route (see Diagnostics.hpp): attaching it is what
+    // makes the engine's count the whole truth instead of half of it, and it is why a device set after
     // the sink was installed needs nothing else done to it - the sink lives in the route, not in a copy.
-    if (backend_ != nullptr) {
-        backend_->setDiagnosticsRoute(diagnostics_);
+    if (device_ != nullptr) {
+        device_->setDiagnosticsRoute(diagnostics_);
     }
-    // Asked once, here: whether the session will have a window at all is a property of the backend, and
-    // capabilities().presentation answers it (see RenderBackend::surface).
-    backend_presents_ = backend_ != nullptr && backend_->surface() != nullptr;
 }
 
 void RenderEngine::setDiagnosticSink(DiagnosticSink sink)
@@ -105,71 +102,79 @@ void RenderEngine::reportEngineProblem(vn::graphics::DiagnosticSeverity severity
 
 Capabilities RenderEngine::capabilities() const noexcept
 {
-    // No backend, nothing can be claimed - and a field that is false is the honest answer rather than a
-    // missing one (see Capabilities; it is also what a backend that cannot do it answers).
-    if (backend_ == nullptr) {
+    // No device, nothing can be claimed - and a field that is false is the honest answer rather than a
+    // missing one (see Capabilities; it is also what a device that cannot do it answers).
+    if (device_ == nullptr) {
         return Capabilities{};
     }
-    Capabilities answer = backend_->capabilities();
-    // The backend describes itself; whether the SESSION can present at all is the window half it has (see the
-    // declaration - one value for a host to read instead of two objects to ask).
-    answer.presentation = backend_presents_;
-    return answer;
+    // One answer, from the party that knows: the DEVICE describes itself, and whether it can present at all
+    // (Capabilities::presentation) is part of that description - which is what makes a display-less device a
+    // first-class state rather than a failure.
+    return device_->capabilities();
 }
 
 FrameReport RenderEngine::frameReport() const noexcept
 {
-    // No backend, nothing is measured: every part stays disengaged rather than reading as zeros (see
-    // FrameReport - absent is not zero).
-    return backend_ != nullptr ? backend_->frameReport() : FrameReport{};
+    // No device, nothing is measured: every part stays disengaged rather than reading as zeros (see
+    // FrameReport - absent is not zero). The frame half of the device is what has the numbers.
+    return device_ != nullptr ? device_->executor().frameReport() : FrameReport{};
 }
 
 bool RenderEngine::initialize()
 {
-    if (backend_ == nullptr) {
+    if (device_ == nullptr) {
         return false;
     }
-    // The area's window, once more: an announcement that arrived before this session (or before the backend) can
-    // only reach the window half when there is one, and on a re-attach re-announcing the handle is how the binding
-    // is MOVED onto a window the platform recreated - the device, the session and every compiled pipeline stay
-    // (see RenderSurface::bindTarget). The engine hands over what the AREA says now, never a copy of its own.
-    if (area_ != nullptr && area_->targetHandle() != nullptr) {
-        (void)bindAreaTarget(area_->targetHandle());
+    // A device that brings up a window of its OWN (the host named none) is asked for that target here, once:
+    // the frame path has to have something to present through, and the device is the party that knows whether
+    // it presents at all (see RenderDevice::createSurfaceTarget). A device that presents nothing answers
+    // nullptr with NoPresentation and NO report - a display-less device is a first-class state, and the frame
+    // path then presents nowhere. An AREA that holds one keeps it (a host that bound a target is never
+    // overridden); an engine with no area at all keeps the answer here, because its frames still have to name
+    // a target when the device presents through a window of its own.
+    if (area_ != nullptr && !area_->hasTarget()) {
+        SurfaceTargetResult why = SurfaceTargetResult::Ok;
+        if (raw_ptr<RenderSurfaceTarget> own = device_->createSurfaceTarget(nullptr, &why); own != nullptr) {
+            area_->bindTarget(own);
+        }
     }
-    // Forward the default content program before the backend builds its shader sets.
-    backend_->setDefaultContentProgram(default_content_program_);
-    initialized_ = backend_->initialize();
+    else if (area_ == nullptr) {
+        SurfaceTargetResult why = SurfaceTargetResult::Ok;
+        own_target_             = device_->createSurfaceTarget(nullptr, &why);
+    }
+    // Forward the default content program before the device builds its shader sets.
+    device_->setDefaultContentProgram(default_content_program_);
+    initialized_ = device_->initialize();
     if (initialized_) {
-        // A size announced before initialization (a host sizes its widget before it has a backend)
-        // never reached the backend: it can only honour the announcement once it has a surface.
+        // A size announced before initialization (a host sizes its widget before it has a device)
+        // never reached the target: it can only honour the announcement once it has a surface.
         // Hand it over BEFORE the warm-up, so the content compiled there is built at the right size
-        // instead of the backend's default.
-        if (frame_ctx_.surface_width > 0 && frame_ctx_.surface_height > 0) {
-            if (RenderSurfaceBinding* const surface = backend_->surface()) {
-                surface->resize(frame_ctx_.surface_width, frame_ctx_.surface_height);
-            }
+        // instead of the device's default.
+        if (frame_ctx_.surface_width > 0 && frame_ctx_.surface_height > 0 &&
+            area_ != nullptr && area_->hasTarget()) {
+            area_->target()->resize(frame_ctx_.surface_width, frame_ctx_.surface_height);
         }
         // NO PRE-FRAME WARM-UP. It used to execute every enabled, non-clearing pass once before the first frame, so
         // a backend could see its whole pass set before presenting - which mattered when a frame arrived as a
         // sequence of calls and content was built lazily inside a drawing call. A frame now arrives as ONE value
-        // (RenderBackend::executeFrame), so a backend has the whole pass set before it does anything, and the
+        // (RenderFrameExecutor::executeFrame), so a backend has the whole pass set before it does anything, and the
         // engine's own path to the backend is the same one the first frame takes (see frame()). What is left to
-        // pre-build is the backend's own business: the main content is compiled during backend initialize().
+        // pre-build is the backend's own business: the main content is compiled during device initialize().
     }
     return initialized_;
 }
 
 void RenderEngine::shutdown()
 {
-    if (backend_ != nullptr && initialized_) {
-        backend_->shutdown();
+    if (device_ != nullptr && initialized_) {
+        device_->shutdown();
     }
     initialized_ = false;
 }
 
 raw_ptr<const RenderPass> RenderEngine::passNeedingAnUnsupportedTarget() const
 {
-    if (backend_ == nullptr || backend_->capabilities().render_targets) {
+    if (device_ == nullptr || device_->capabilities().render_targets) {
         return nullptr;
     }
     // Only ENABLED passes matter: a disabled pass is skipped, so its target is never asked for.
@@ -183,7 +188,7 @@ raw_ptr<const RenderPass> RenderEngine::passNeedingAnUnsupportedTarget() const
 
 void RenderEngine::frame(double dt)
 {
-    if (!initialized_ || backend_ == nullptr) {
+    if (!initialized_ || device_ == nullptr) {
         return;
     }
     frame_ctx_.dt = dt;
@@ -214,7 +219,7 @@ void RenderEngine::frame(double dt)
 
     // A backend whose capabilities say "no off-screen targets" IGNORES a non-null target, so a pass staged
     // through one is recorded where the pipeline never put it — a WRONG PICTURE rather than a slow one,
-    // and silent unless the engine asks (see RenderBackend::capabilities). Asked here, once per
+    // and silent unless the engine asks (see RenderDevice::capabilities). Asked here, once per
     // frame, and reported as an EPISODE: the pass is still run (its content is the host's to place), but
     // the host is told that the pipeline it built cannot mean what it says.
     if (raw_ptr<const RenderPass> unsupported = passNeedingAnUnsupportedTarget(); unsupported != nullptr) {
@@ -239,15 +244,22 @@ void RenderEngine::frame(double dt)
     // entry (and its row keeps saying it cost nothing - see FramePlan::PassPlan::record_micros, written by the
     // compile); a pass whose entry carries no description issues nothing at all.
     //
-    // The backend's own frame (acquiring the presentable image, recording, reaching the state a present can hand
-    // back) happens inside this ONE call (see RenderBackend::executeFrame).
-    backend_->executeFrame(frame_value_);
+    // THE FRAME NAMES THE SURFACE IT RESOLVES TO. The area's target is what the frame's "default framebuffer" row
+    // draws into (see RenderFrameExecutor::executeFrame); an engine with no area names the target its device made
+    // for itself, and a device that presents nothing leaves the frame with no target at all - a first-class state
+    // (an offline bake, a display-less device), not an error.
+    RenderSurfaceTarget* const present_to =
+        (area_ != nullptr && area_->target() != nullptr) ? area_->target() : own_target_;
 
-    // The window half of the frame - committing what was collected, and showing it - belongs to the SURFACE when
-    // the backend has one (see RenderBackend::surface). A backend that only draws into render targets presents
-    // nothing, and the frame is complete when executeFrame() returned.
-    if (RenderSurfaceBinding* const surface = backend_->surface()) {
-        surface->present();
+    // The device's own frame (acquiring the presentable image, recording, reaching the state a present can hand
+    // back) happens inside this ONE call (see RenderFrameExecutor::executeFrame).
+    device_->executor().executeFrame(frame_value_, present_to);
+
+    // The frame's tail - committing what was collected, and showing it - is the TARGET's own call (see
+    // RenderSurfaceTarget::present). A frame that named no target presents nothing, and it is complete when
+    // executeFrame() returned.
+    if (present_to != nullptr) {
+        present_to->present();
     }
 }
 
@@ -339,14 +351,14 @@ void RenderEngine::removePass(raw_ptr<RenderPass> pass)
 
     // A pass is registered at most once, so any removal drops its only user:
     // release the backend state it retained — keyed by the pass itself (see
-    // RenderBackend::releasePass) — plus any off-screen target the pass owns. A
+    // RenderDevice::releasePass) — plus any off-screen target the pass owns. A
     // TRANSIENT it declared is not its own (this engine owns it, and the next compile lets it go when nothing
     // declares it any more), so it is not released here: that would hand the backend a target the engine still
     // holds for another pass declaring the same one.
-    if (backend_ != nullptr && pass != nullptr && slots_.size() != old_size) {
-        backend_->releasePass(pass);
+    if (device_ != nullptr && pass != nullptr && slots_.size() != old_size) {
+        device_->releasePass(pass);
         if (raw_ptr<RenderTarget> target = pass->renderTarget(); target != nullptr && target != transient_owned) {
-            backend_->releaseRenderTarget(target);
+            device_->releaseRenderTarget(target);
         }
     }
 }
@@ -354,7 +366,7 @@ void RenderEngine::removePass(raw_ptr<RenderPass> pass)
 void RenderEngine::clearPasses()
 {
     // Snapshot the registered passes (and the transients they declared), drop all slots, then release the
-    // backend resources each removed pass owned (see RenderBackend::releasePass). A transient is this engine's,
+    // backend resources each removed pass owned (see RenderDevice::releasePass). A transient is this engine's,
     // not the pass': the compile lets it go when nothing declares it any more.
     std::vector<raw_ptr<RenderPass>> removed;
     removed.reserve(slots_.size());
@@ -372,19 +384,19 @@ void RenderEngine::clearPasses()
 
     slots_.clear();
 
-    if (backend_ != nullptr) {
+    if (device_ != nullptr) {
         for (RenderPass* pass : removed) {
             if (pass != nullptr) {
-                backend_->releasePass(pass);
+                device_->releasePass(pass);
             }
             raw_ptr<RenderTarget> target = (pass != nullptr) ? pass->renderTarget() : nullptr;
             const bool            owned  = std::find(transients.begin(), transients.end(), target) != transients.end();
             if (target != nullptr && !owned) {
-                backend_->releaseRenderTarget(target);
+                device_->releaseRenderTarget(target);
             }
         }
         for (const raw_ptr<RenderTarget> transient : transients) {
-            backend_->releaseRenderTarget(transient);
+            device_->releaseRenderTarget(transient);
         }
     }
 }
@@ -990,11 +1002,11 @@ void RenderEngine::unpublish(const String& name)
 void RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program)
 {
     default_content_program_ = std::move(program);
-    if (backend_ != nullptr) {
+    if (device_ != nullptr) {
         // Forwarded straight away: the backend treats a call before initialize() as the session
         // decision and one after it as a live switch (rebuild the window sets, drop the slots), so
         // the engine's accessor and the picture cannot disagree.
-        backend_->setDefaultContentProgram(default_content_program_);
+        device_->setDefaultContentProgram(default_content_program_);
     }
 }
 
@@ -1008,51 +1020,15 @@ void RenderEngine::announceAreaSize(int width, int height)
     if (width <= 0 || height <= 0) {
         return;
     }
-    // Recorded even when there is no backend yet: the frame context is what the passes lay
-    // themselves out on, and the announcement is handed to the backend at initialize().
+    // Recorded even when there is no device yet: the frame context is what the passes lay
+    // themselves out on, and the announcement is replayed to the target at initialize().
     frame_ctx_.surface_width  = width;
     frame_ctx_.surface_height = height;
-    if (initialized_ && backend_ != nullptr) {
-        if (RenderSurfaceBinding* const surface = backend_->surface()) {
-            surface->resize(width, height);
-        }
-    }
-    // No layout fan-out here: target sizes, pass viewports and camera
+    // No layout fan-out here, and no window half either: target sizes, pass viewports and camera
     // projections are maintained by their creators on the surface size
-    // (e.g. SceneView::addSurfaceLayout). The engine only records the surface
-    // size; the swapchain being resized is the surface's own (see
-    // RenderBackend::surface).
-}
-
-bool RenderEngine::bindAreaTarget(void* native_handle)
-{
-    RenderSurfaceBinding* const window = backend_ != nullptr ? backend_->surface() : nullptr;
-    if (window == nullptr) {
-        if (native_handle == nullptr) {
-            // "No window" is what a backend without a window half already is: nothing to report, and an unbind
-            // ends the episode (a later announcement is a new one).
-            target_refused_.rearm();
-            return true;
-        }
-        if (backend_ == nullptr) {
-            // No session to take it yet: the announcement stays on the AREA, and initialize() replays it once
-            // there is a backend (see the class contract - the engine holds no handle of its own).
-            return true;
-        }
-        if (target_refused_.shouldReport()) {
-            // The window half is OPTIONAL (see RenderBackend::surface): a window announced to a backend that
-            // presents nothing is wiring the engine cannot serve, and saying nothing would look like "attached".
-            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
-                                String(u8"a native window was announced to a backend that presents nothing, so "
-                                        u8"the window was not attached"));
-        }
-        return false;
-    }
-    // Handed over on the spot: the window half takes it (before or after initialize - a re-announcement is how it
-    // is moved onto a recreated window, and the backend decides when that takes effect).
-    window->setWindowHandle(native_handle);
-    target_refused_.rearm();
-    return true;
+    // (e.g. SceneView::addSurfaceLayout), and the WINDOW's own half of the size belongs to the AREA's target,
+    // which the area announces to directly (see RenderSurface::resize). The engine only records the surface
+    // size the passes read.
 }
 
 void RenderEngine::adoptArea(raw_ptr<RenderSurface> area)

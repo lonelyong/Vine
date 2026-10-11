@@ -200,6 +200,22 @@ vn::window::ScrollEvent toScrollEvent(const QWheelEvent& event)
     return e;
 }
 
+/** @brief Says why a device handed out no surface target, in words a host can act on. */
+String targetRefusalReason(vn::graphics::SurfaceTargetResult why)
+{
+    switch (why) {
+        case vn::graphics::SurfaceTargetResult::NoPresentation:
+            return u8"the render backend presents nothing, so this window has no target to draw through";
+        case vn::graphics::SurfaceTargetResult::UnsupportedSurface:
+            return u8"the render backend cannot serve this window (it is not a surface it presents through)";
+        case vn::graphics::SurfaceTargetResult::WindowOccupied:
+            return u8"this window already has a live surface target (one window carries one swapchain)";
+        case vn::graphics::SurfaceTargetResult::Ok:
+            break;
+    }
+    return u8"the render backend handed out no surface target";
+}
+
 }  // namespace
 
 struct SurfaceWindow::Impl {
@@ -344,8 +360,8 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     });
 
     // 构造只组装：这里**不选后端、不 attach**。第一次 attach 排在事件循环第一拍（兜底），所以宿主"new 之后
-    // 立刻配置"的同步代码（engine()->setBackend()、view()->setOptions()、装内容）天生排在它前面 —— 这正是
-    // SDK 写的次序（构造 ⇒ setBackend() ⇒ init()），也是"配置窗口"永远打开的原因。
+    // 立刻配置"的同步代码（engine()->setDevice()、view()->setOptions()、装内容）天生排在它前面 —— 这正是
+    // SDK 写的次序（构造 ⇒ setDevice() ⇒ init()），也是"配置窗口"永远打开的原因。
     //
     // 兜底不是竞争者：宿主显式调 init()/initAsync()（同步、幂等）就是立刻 attach；窗口事件（show / resize /
     // 句柄重建）也照旧接力。谁先到谁算。
@@ -419,16 +435,16 @@ void SurfaceWindow::armRecreateHatch()
 void SurfaceWindow::useDefaultBackend()
 {
     // The default is a FALLBACK, not a decision: it is taken whenever the engine has no backend of its own, so
-    // (a) a host that sets its own through engine()->setBackend() is never overridden, and (b) a backend registered
+    // (a) a host that sets its own through engine()->setDevice() is never overridden, and (b) a backend registered
     // AFTER an attempt (a plugin loaded late, a host that installs one later) is still picked up by the next
     // attach instead of being locked out by a decision made too early.
-    if (d->engine->backend() != nullptr) {
+    if (d->engine->device() != nullptr) {
         return;
     }
 
     const auto entries = vn::graphics::RenderBackendRegistry::instance().entries();
     if (!entries.empty()) {
-        d->engine->setBackend(
+        d->engine->setDevice(
             entries.front().factory->create());
     }
 
@@ -643,7 +659,7 @@ void SurfaceWindow::handleKey(const vn::window::KeyEvent& event)
 void SurfaceWindow::handleDestroyed()
 {
     // Qt replaces the native platform window (layout change, screen change, reparent) - the session is NOT torn
-    // down with it: the new handle is re-announced (RenderSurfaceBinding::setWindowHandle), so the device
+    // down with it: the new handle is re-announced (RenderSurfaceTarget::setWindowHandle), so the device
     // and every compiled pipeline stay. Marking the surface unusable keeps frames off the dead window.
     d->surface_ok = false;
 
@@ -713,7 +729,7 @@ void SurfaceWindow::handleUpdate()
         return;
     }
 
-    if (handle != d->surface->targetHandle()) {
+    if (handle != nativeTargetHandle()) {
         // The window Qt shows now is not the one this area is bound to: a recreated platform window (which an
         // established session follows), or a first attach that had no usable window yet. Both attach here.
         init();
@@ -734,7 +750,7 @@ bool SurfaceWindow::init()
     // The one attach, and the entry point: idempotent while the session is bound to the surface the window reports
     // NOW - after Qt recreated the platform window this has to re-attach (a re-announce, so the backend can move)
     // rather than report the old attach as current.
-    if (d->backend_live && nativeHandle() == d->surface->targetHandle()) {
+    if (d->backend_live && nativeHandle() == nativeTargetHandle()) {
         return true;  // Already bound to this very surface (backend_live implies has_session).
     }
 
@@ -754,7 +770,7 @@ bool SurfaceWindow::init()
     // No backend yet? Take the first registered one; a host that wants its own sets it before this.
     useDefaultBackend();
 
-    if (d->engine->backend() == nullptr) {
+    if (d->engine->device() == nullptr) {
         // Nothing to attach to at all: no render backend plugin is registered. Waiting will not change that, so
         // say it once instead of staying Pending forever.
         failAttach(u8"no render backend is registered");
@@ -781,17 +797,32 @@ bool SurfaceWindow::init()
         }
         return d->backend_live;
     }
-    if (d->has_session && handle != d->surface->targetHandle()) {
-        // The platform window was recreated: re-announce the new handle (RenderSurface::bindTarget, which hands it
-        // to the backend's window half - RenderSurfaceBinding::setWindowHandle) instead of tearing the session
-        // down, so the device and every compiled pipeline stay.
+    if (d->has_session && handle != nativeTargetHandle()) {
+        // The platform window was recreated: re-announce the new handle on the TARGET (RenderSurfaceTarget::
+        // setWindowHandle) instead of tearing the session down, so the device and every compiled pipeline stay.
         vn::logging::defaultLogger().info(
             "[RenderControl] the render surface was recreated: re-announcing the new handle so the backend can follow it");
     }
-    // The window this area is presented through belongs to the AREA (RenderSurface::bindTarget): the announcement
-    // is made here, before the session comes up, and re-made whenever the window is replaced - which is how the
-    // binding is moved onto a recreated window rather than rebuilt.
-    (void)d->surface->bindTarget(handle);
+    // The window this area is presented through belongs to the AREA, and the DEVICE is what makes the target that
+    // names it (RenderDevice::createSurfaceTarget): the device is the party that knows whether it presents at all
+    // and whether this window is already taken, and it answers why when it hands none out. A FIRST attach asks for
+    // one (before the session comes up, which is what a Vulkan device needs); a window Qt recreated is MOVED onto
+    // the target the area already holds - the device, its caches and every compiled pipeline stay behind that.
+    if (d->surface->target() == nullptr) {
+        vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
+        if (vn::raw_ptr<vn::graphics::RenderSurfaceTarget> target =
+                d->engine->device()->createSurfaceTarget(handle, &why);
+            target != nullptr) {
+            d->surface->bindTarget(target);
+        }
+        else {
+            failAttach(targetRefusalReason(why));
+            return false;
+        }
+    }
+    else {
+        d->surface->target()->setWindowHandle(handle);
+    }
 
     // The attachment: the device, the session and every pipeline are built behind this call, on this thread. It
     // returns before its caller does, so nothing can be "in the middle of an attach" - a host installs its content
@@ -869,7 +900,7 @@ void SurfaceWindow::renderFrame()
     if (h == nullptr) {
         return;
     }
-    if (d->has_session && h != d->surface->targetHandle()) {
+    if (d->has_session && h != nativeTargetHandle()) {
         init();
         return;
     }
@@ -917,6 +948,12 @@ void SurfaceWindow::setState(SurfaceState next)
     if (on_state_changed) {
         on_state_changed(next);
     }
+}
+
+void* SurfaceWindow::nativeTargetHandle() const
+{
+    const vn::raw_ptr<vn::graphics::RenderSurfaceTarget> target = d->surface->target();
+    return target != nullptr ? target->nativeHandle() : nullptr;
 }
 
 void SurfaceWindow::failAttach(String reason)

@@ -113,7 +113,7 @@ SdkPixelFixture::SdkPixelFixture() = default;
 SdkPixelFixture::~SdkPixelFixture()
 {
     // Hand the target back BEFORE the session goes: while the session is up the backend holds the announced
-    // target (by pointer, see RenderBackend::setRenderTarget), so a target destroyed under a live backend is
+    // target (by pointer, see RenderDevice::setRenderTarget), so a target destroyed under a live backend is
     // a dangling handle rather than a released resource.
     if (backend != nullptr && backend->initialized()) {
         backend->setRenderTarget(nullptr);
@@ -127,7 +127,7 @@ bool SdkPixelFixture::up()
 {
     backend = vn::intrusive_ptr<vn::vsg::VsgBackend>(new vn::vsg::VsgBackend());
     engine  = vn::intrusive_ptr<vn::graphics::RenderEngine>(new vn::graphics::RenderEngine());
-    engine->setBackend(backend);
+    engine->setDevice(backend);
     engine->setDiagnosticSink([](const RenderDiagnostic& diagnostic) {
         std::printf("[sdk-pixels] diagnostic: severity=%d category=%d message=%s\n",
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),

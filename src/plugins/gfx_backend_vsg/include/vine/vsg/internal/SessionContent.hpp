@@ -75,7 +75,7 @@ class SessionContentAccess
 
     /** @brief Re-reads the surface the session is on and rebuilds its swapchain when the surface moved.
      *
-     * The surface owns its size (`RenderSurfaceBinding::resize`'s authority order), so this is what a live
+     * The surface owns its size (`RenderSurfaceTarget::resize`'s authority order), so this is what a live
      * announcement is served with; what hangs off the size is derived from the window when the next frame
      * records, so nothing else is brought up to date here.
      *

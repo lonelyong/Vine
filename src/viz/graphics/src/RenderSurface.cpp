@@ -13,8 +13,8 @@ VN_GRAPHICS_NS_BEGIN
 RenderSurface::RenderSurface(raw_ptr<RenderEngine> engine)
   : engine_(engine)
 {
-    // The engine drives ONE area (see RenderEngine): this is it, and the registration is what lets the engine
-    // replay this area's window when a session comes up without holding a handle of its own.
+    // The engine drives ONE area (see RenderEngine): this is it, and the registration is what lets the engine read
+    // this area's TARGET - the frame it hands over names it, and the engine holds no handle of its own.
     if (engine_ != nullptr) {
         engine_->adoptArea(this);
     }
@@ -32,7 +32,7 @@ RenderSurface::~RenderSurface()
         }
     }
     // The registration goes with the area: a borrowed pointer must not outlive what it points at (the engine
-    // keeps no handle of its own to fall back on - see bindTarget).
+    // reads the area's target and keeps none of its own - see bindTarget).
     if (engine_ != nullptr) {
         engine_->releaseArea(this);
     }
@@ -205,11 +205,15 @@ void RenderSurface::resize(int width, int height, double pixel_ratio)
     if (pixel_ratio > 0.0) {
         pixel_ratio_ = pixel_ratio;
     }
-    // The frame hears the same ONE announcement: the engine records it (its frame context is what passes lay
-    // themselves out on) and hands it to the backend's window half once there is a session - the engine owns no
-    // size of its own (see RenderEngine).
+    // The frame hears the same ONE announcement: the engine records it, and its frame context is what passes lay
+    // themselves out on (the engine owns no size of its own - see RenderEngine).
     if (engine_ != nullptr) {
         engine_->announceAreaSize(width, height);
+    }
+    // And the WINDOW's own half of it goes to the target, which is the object that owns the swapchain (see
+    // RenderSurfaceTarget::resize): the surface is what owns its size, and the target is what follows it.
+    if (target_ != nullptr) {
+        target_->resize(width, height);
     }
     // Handed to every view that presents this surface, and only to those: a pass a host declared has no view to
     // feed, and it states its own rectangle in device pixels. The views RE-DERIVE their geometry from the numbers
@@ -228,28 +232,22 @@ double RenderSurface::pixelRatio() const noexcept
     return pixel_ratio_;
 }
 
-bool RenderSurface::bindTarget(void* native_handle)
+void RenderSurface::bindTarget(raw_ptr<RenderSurfaceTarget> target)
 {
-    target_handle_ = native_handle;
-    if (engine_ == nullptr) {
-        // An area with no engine has no frame to be presented in: the announcement is kept on the area, and
-        // nothing can take it. Not a refusal - there is no session to attach (and none can be set later: the
-        // engine is bound at construction).
-        return true;
-    }
-    // The engine is what knows whether a window half exists (it drives the frame), and the announcement - or the
-    // refusal and its one report - happens through it (see RenderEngine's area entries).
-    return engine_->bindAreaTarget(native_handle);
+    // The area holds the object its device made (see RenderDevice::createSurfaceTarget): nothing has to be handed
+    // on, refused or reported here - a device that presents nothing never made one, and said so where it was
+    // asked. What a recreated window is announced on is the target itself (RenderSurfaceTarget::setWindowHandle).
+    target_ = target;
 }
 
-void* RenderSurface::targetHandle() const noexcept
+RenderSurfaceTarget* RenderSurface::target() const noexcept
 {
-    return target_handle_;
+    return target_;
 }
 
 bool RenderSurface::hasTarget() const noexcept
 {
-    return target_handle_ != nullptr;
+    return target_ != nullptr;
 }
 
 std::vector<RenderSurface::Presentation> RenderSurface::presentations() const

@@ -45,9 +45,9 @@ using vn::appfw::gui::RenderControl;
 class StubBackend : public vn::graphics::RenderBackend
 {
   public:
-    /// The WINDOW HALF of the stub (see vn::graphics::RenderBackend::surface): everything the control asks
-    /// about the surface - the handle it was handed, the size it was told, the presents it drove.
-    class StubSurface : public vn::graphics::RenderSurfaceBinding
+    /// The WINDOW HALF of the stub (see vn::graphics::RenderDevice::createSurfaceTarget): everything the control
+    /// asks about the surface - the window the target was made for, the size it was told, the presents it drove.
+    class StubSurface : public vn::graphics::RenderSurfaceTarget
     {
       public:
         void setWindowHandle(void* handle) override
@@ -81,9 +81,11 @@ class StubBackend : public vn::graphics::RenderBackend
 
     void shutdown() override { ++shutdown_calls; }
 
-    void executeFrame(const vn::graphics::FrameDescription& frame) override
+    void executeFrame(const vn::graphics::FrameDescription& frame,
+                      vn::graphics::RenderSurfaceTarget* present_to = nullptr) override
     {
         ++frames;
+        present_targets.push_back(present_to);
         for (const vn::graphics::FrameDescription::Pass& entry : frame.passes) {
             draws += entry.description.has_value() ? entry.description->draws.size() : 0u;
         }
@@ -91,7 +93,27 @@ class StubBackend : public vn::graphics::RenderBackend
 
     void setRenderTarget(vn::graphics::RenderTarget*) override {}
 
-    [[nodiscard]] vn::graphics::RenderSurfaceBinding* surface() override { return &surface_half; }
+    [[nodiscard]] vn::graphics::RenderFrameExecutor& executor() override { return *this; }
+
+    /// Hands out the one window half this stub has (see RenderDevice::createSurfaceTarget): the window the control
+    /// asks for is remembered, so "the target was made for THIS window" is checkable without a GPU. A stub whose
+    /// `presents_nothing` is set answers the way a display-less device does, without a report.
+    [[nodiscard]] vn::raw_ptr<vn::graphics::RenderSurfaceTarget>
+    createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why = nullptr) override
+    {
+        ++target_calls;
+        if (presents_nothing) {
+            if (why != nullptr) {
+                *why = vn::graphics::SurfaceTargetResult::NoPresentation;
+            }
+            return nullptr;
+        }
+        surface_half.setWindowHandle(native_handle);
+        if (why != nullptr) {
+            *why = vn::graphics::SurfaceTargetResult::Ok;
+        }
+        return &surface_half;
+    }
 
   public:
     StubSurface surface_half;
@@ -99,12 +121,18 @@ class StubBackend : public vn::graphics::RenderBackend
     /// How many initialize() calls should report failure.
     int failures{ 0 };
 
+    /// Set to make this stub a device that presents nothing (see createSurfaceTarget).
+    bool presents_nothing{ false };
+
     int   initialize_calls{ 0 };
     int   shutdown_calls{ 0 };
-    /// How many frames the control's views ran, and how many drawing calls they carried: the stub's own reading
-    /// of the value the engine handed over (see RenderBackend::executeFrame).
+    int   target_calls{ 0 };
+    /// How many frames the control's views ran, how many drawing calls they carried, and what each frame named as
+    /// the surface it resolves to: the stub's own reading of the value the engine handed over (see
+    /// RenderFrameExecutor::executeFrame).
     int   frames{ 0 };
     std::size_t draws{ 0 };
+    std::vector<vn::graphics::RenderSurfaceTarget*> present_targets;
 };
 
 /// Pumps the event loop until 'done' holds or 'timeout_ms' elapses.
@@ -178,7 +206,7 @@ class HostedControl
 
         if (with_backend) {
             stub_ = new StubBackend();
-            control_->engine()->setBackend(vn::intrusive_ptr<vn::graphics::RenderBackend>(stub_));
+            control_->engine()->setDevice(vn::intrusive_ptr<vn::graphics::RenderBackend>(stub_));
         }
 
         window_.resize(320, 240);
@@ -246,7 +274,7 @@ vn::intrusive_ptr<vn::graphics::SceneView> barePane(vn::graphics::RenderEngine* 
 // 控件自驱：宿主把后端装上、把窗口显示出来就够了 —— 不需要自己挑时机调 init()（它仍然是显式入口，幂等）。
 TEST(RenderControlTest, AttachesItselfOnceTheBackendAndWindowAreThere)
 {
-    HostedControl host; // 控件先建、后端后装：这正是 SDK 里写的次序（engine()->setBackend() 在 init() 之前）
+    HostedControl host; // 控件先建、后端后装：这正是 SDK 里写的次序（engine()->setDevice() 在 init() 之前）
     host.show();
 
     // 窗口一显示（容器的 show ⇒ 控件自己的重试）会话就起来了，那一帧也落了进去。
@@ -337,7 +365,7 @@ TEST(RenderControlTest, ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt)
 }
 
 // 构造只组装：`new RenderControl()` 返回时**没有** attach（状态停在 Pending），配置写在它之后的同步代码里；// 第一拍兜底才 attach —— 而兜底用的正是宿主刚装上的那个后端（不是注册表里的默认）。这就是"配置窗口"，
-// 也是 SDK 写的次序（构造 ⇒ setBackend() ⇒ init()）不再依赖"构造那一刻注册表里有没有后端"的原因。
+// 也是 SDK 写的次序（构造 ⇒ setDevice() ⇒ init()）不再依赖"构造那一刻注册表里有没有后端"的原因。
 TEST(RenderControlTest, ConstructionOnlyComposesAndTheFirstTurnAttaches)
 {
     HostedControl host; // 后端在构造之后才装
@@ -351,7 +379,7 @@ TEST(RenderControlTest, ConstructionOnlyComposesAndTheFirstTurnAttaches)
     // 不 show、不 init()：只让事件循环转一圈，兜底就把会话开起来（"有帧可看"不要求窗口可见）。
     ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
     EXPECT_GT(host.stub()->initialize_calls, 0);
-    EXPECT_EQ(host.control()->engine()->backend(), host.stub()); // 宿主自己装的后端赢，兜底只是补时机
+    EXPECT_EQ(host.control()->engine()->device(), host.stub()); // 宿主自己装的后端赢，兜底只是补时机
 }
 
 // 尺寸与比例**一起**到视图：控件把自己的逻辑尺寸与 devicePixelRatio 推给视图，视图再从这一对推出它自己的
@@ -756,7 +784,7 @@ TEST(RenderControlTest, ReportsFailedWhenNoRenderBackendIsRegistered)
     // 之后后端来了（插件晚加载 / 宿主自己设）：下一次 attach 就成功，而**旧判决要一起消失** ——
     // failureReason() 只在 Failed 那一格上是答案，会话起来了还留着它，宿主会一直显示一个早就不成立的失败原因。
     auto* late = new StubBackend();
-    host.control()->engine()->setBackend(vn::intrusive_ptr<vn::graphics::RenderBackend>(late));
+    host.control()->engine()->setDevice(vn::intrusive_ptr<vn::graphics::RenderBackend>(late));
 
     ASSERT_TRUE(pumpUntil([&] { return host.control()->init(); }, 3000));
     EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting);
@@ -1108,4 +1136,43 @@ TEST(RenderControlTest, TheViewersPanesRouteInputAndFocusByTheirRectangles)
     send_key();
     EXPECT_EQ(own_keys->key_downs, 1);
     EXPECT_EQ(right_keys->key_downs, 1);
+}
+
+// S10a：窗口那一半由**设备**造（RenderDevice::createSurfaceTarget），控件把它绑到区上 —— 区持有的是一把
+// 目标对象（RenderSurface::target），句柄只是造它时的输入；引擎在帧里把区那把目标解析给执行器。
+TEST(RenderControlTest, TheControlAsksItsDeviceForTheTargetOfTheWindowItGot)
+{
+    HostedControl host;
+    auto*         control = host.control();
+    ASSERT_TRUE(pumpUntil([&] { return control->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+
+    auto* surface = control->surface();
+    ASSERT_NE(surface, nullptr);
+    ASSERT_NE(surface->target(), nullptr) << "区持有设备为这个窗口造的那把目标";
+    EXPECT_EQ(surface->target(), &host.stub()->surface_half);
+    EXPECT_EQ(host.stub()->target_calls, 1) << "只问一次：控件所在的这个窗口";
+    EXPECT_EQ(host.stub()->surface_half.handle_calls, 1) << "窗口句柄是造目标时的输入";
+    EXPECT_NE(surface->target()->nativeHandle(), nullptr) << "设备拿到的就是宿主这个窗口";
+
+    // 一帧解析到的是**区**那把目标：引擎交给执行器的 present_to 就是它，帧尾的 present 也走它。
+    control->renderFrame();
+    ASSERT_FALSE(host.stub()->present_targets.empty());
+    EXPECT_EQ(host.stub()->present_targets.back(), surface->target());
+    EXPECT_GE(host.stub()->surface_half.presents, 1);
+}
+
+// 造不出目标就是挂不上：设备"不呈现"的答案（SurfaceTargetResult::NoPresentation）变成控件的失败理由，
+// 而不是一个永远看不见的画面。
+TEST(RenderControlTest, ADeviceThatPresentsNothingFailsTheAttachWithItsReason)
+{
+    HostedControl host;
+    auto*         control = host.control();
+    host.stub()->presents_nothing = true;  // 这台设备没有窗口那一半（构造只组装，所以这一句赶在 attach 前）
+
+    ASSERT_TRUE(pumpUntil([&] { return control->state() == RenderControl::SurfaceState::Failed; }, 3000));
+    EXPECT_EQ(host.stub()->target_calls, 1) << "控件向设备要过目标：它问的就是这个窗口";
+    EXPECT_EQ(host.stub()->initialize_calls, 0) << "没有窗口就没有会话：设备不白起一次";
+    EXPECT_EQ(host.stub()->surface_half.presents, 0);
+    EXPECT_NE(control->failureReason().as_std_str().find("presents nothing"), std::string::npos)
+        << "宿主读到的理由说了为什么（无呈现能力）";
 }

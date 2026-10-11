@@ -1,10 +1,20 @@
 # appfw 渲染视图（最终设计 v2，2026-10-11）
 
-> 状态：**已落地 S0–S4 + 输入路由（S6+②）+ S7 改形 + S8 改形（多视图归 `Viewer`）**（2026-10-11；其余 S6+ 三轴仍为"缝已定、未实现"）。本文**取代此前各稿**（那些是本设计的推演过程，结论以本文为准）；
+> 状态：**已落地 S0–S4 + 输入路由（S6+②）+ S7 改形 + S8 改形（多视图归 `Viewer`）+ S10a 改形（窗口那一半由设备造）**（2026-10-11；其余 S6+ 三轴仍为"缝已定、未实现"）。本文**取代此前各稿**（那些是本设计的推演过程，结论以本文为准）；
 > 相关文档：`appfw-render-surface.md`（表面生命周期）、`graphics-pipeline-builder.md`（配方层）、`graphics-pipeline.md`（pass 调度）、
 > `graphics-render-next.md`（**如果重新设计这一套栈会怎么切**：提案，含 M1–M7 迁移切片与触发条件 —— 本文是"现在是什么"，那份是"要变成什么"）。
 >
 > ---
+>
+> **S10a 改形（2026-10-11，最新的一条，先读它）**：**窗口那一半不再由"把句柄交给后端"产生，而由设备造一把目标**
+> （`RenderDevice::createSurfaceTarget(handle, why)` → `RenderSurface::bindTarget(target)`；三因拒绝
+> `NoPresentation` / `UnsupportedSurface` / `WindowOccupied`，前者静默答、后两者报一次）。控件因此改三处：
+> attach 时**向设备要窗口的目标**（失败 ⇒ `failAttach(理由)`）、重建窗口在**同一把目标**上重公告
+> （`surface->target()->setWindowHandle(new)`）、控件的幂等判断问 `nativeTargetHandle()`。引擎侧：
+> `engine()->setDevice()` / `engine()->device()`（原 `setBackend` / `backend`），`Capabilities::presentation` 由设备自己
+> 答；引擎**只在区没有目标时**才向设备要一把，所以宿主绑过的那把永不被覆盖。判据见
+> `.ai/memory/appfw.md` / `.ai/memory/graphics.md` 顶部 S10a 条，设计依据见
+> `graphics-window-device-viewer.md` §3 Q1/Q2、§4、§7 的 S10a 行。
 >
 > **S8 改形（2026-10-11，最新的一条，先读它）**：**多视图归 appfw 的 `Viewer`**（`RenderControl::viewer()`）。
 > 一个控件 = 一块渲染区（一个引擎、一个会话、一个设备）**不再等于一个视图**：`Viewer` 管这块区里的每格 ——
@@ -29,7 +39,7 @@
 > | `Pipeline`（`RenderPipelineBuilder` 建） | **配方**：走哪条链（`PipelineOptions::path` / `shadingPath()`）、哪些档**存在**（`gizmo`/`fps`）、**运行期**的档与档可见性（`setShadingMode` / `setGizmoVisible` / `setStatsVisible`） | —— |
 > | `SceneView` | 相机、内容场景、操纵器、二维组与输入、**采纳的那条链**（`setPipeline` / `pipeline()`）、矩形与表面归属 | 配方、`Options`、`setOptions`、`ensureWindowPass`、`default_pipeline_` |
 > | `RenderSurface` | 呈现表（谁画这块表面、矩形、清屏、顺序、尺寸）—— 只**解析**声明，不建任何东西 | 顺手建视图的默认链（`present(view)` 现在要求视图**先采纳**一条链，否则拒绝 + 报一次） |
-> | appfw `RenderControl` / `SurfaceWindow` / `Viewer` | **查看器**这一层（**S8 之后归 `Viewer`**）：视图集合与矩形读表面、每格一条请求（`gui/ViewerOptions.hpp` = 链 / 档 / 两个档在不在 / 离屏尺寸）、建链/采纳/重建搬运行期选择；上下文字段（gizmo 源相机 = 该格相机、两个 HUD 的像素比 = 表面比例）在建链时补 | ——（"没有任何声明就建默认链"这条兜底现在在 `Viewer::takeArea()`，`SurfaceWindow::init()` 每次 attach 调它） |
+> | appfw `RenderControl` / `SurfaceWindow` / `Viewer` | **查看器**这一层（**S8 之后归 `Viewer`**）：视图集合与矩形读表面、每格一条请求（`gui/ViewerOptions.hpp` = 链 / 档 / 两个档在不在 / 离屏尺寸）、建链/采纳/重建搬运行期选择；上下文字段（gizmo 源相机 = 该格相机、两个 HUD 的像素比 = 表面比例）在建链时补。**S10a 之后**：attach 时向**设备**要这个窗口的目标并把对象绑给区（失败带理由），重建窗口在那把目标上重公告；控件不存句柄 | ——（"没有任何声明就建默认链"这条兜底现在在 `Viewer::takeArea()`，`SurfaceWindow::init()` 每次 attach 调它） |
 >
 > **一条判据（S7 新增）**：**"有没有这一档"与"看不看得见"是两件事** —— 选项回答前者（变更 = 一次建链），
 > `Pipeline` 的 setter 回答后者（零重建）；答不出时**拒绝 + 报一次**（不静默）。
@@ -694,7 +704,7 @@ HUD 档）、`Scene`+`LightRig`、`SurfaceWindow`（S0 的兜底 attach、比例
 | --- | --- | --- | --- |
 | ① 多个 widget / 多个窗口（**各一个** `RenderControl`） | **能，已经在工作**（多文档窗口就是这条路） | 一控件 = 一面 = 一引擎 = 一视图 = 一后端会话 = **一个设备**；同一份内容出现在两个窗口 = **两份显存 + 两遍编译** | **不新增任何东西**，只保不变量（§12.1） |
 | ② **一个表面里多视图**（四分屏 / 并排对比） | **底层缝已经在**（`SceneView` 类注释明说"several views may share one engine"），**默认路径不做** | 1 设备、N 相机、N 条 pass；显存只一份 | 第 1 层自建 + 两条新设计的入口（归一化视口、输入路由，§12.2） |
-| ③ **同一份内容**出现在多个窗口 | 结构上支持 | 图形对象（`Scene`/`Geometry`/`Material`/`ImageRef`）是**后端无关**的 Node；GPU 副本归**后端会话**（`BlockStorage`/`MaterialImages`）⇒ 每个窗口一份 | 支持，但显存 N 份；跨窗口共享设备见 §12.1 的**目标态** |
+| ③ **同一份内容**出现在多个窗口 | 结构上支持 | 图形对象（`Scene`/`Geometry`/`Material`/`ImageRef`）是**后端无关**的 Node；GPU 副本归**后端会话**（`BlockStorage`/`MaterialImages`）⇒ 每个窗口一份（**S10b** 把它上移到设备：一设备多窗口共享一份） | 支持，但显存 N 份；跨窗口共享设备见 §12.1 的**目标态** |
 
 ### 12.1 多窗口：现状是过渡，目标态是"一设备多交换链"
 
@@ -710,11 +720,17 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 **目标态**：一设备多交换链。**触发判据**（命中任意一条就该做）：① 同时活着的渲染视图稳定 > 4；② 需要把**同一份
 内容**显示在 2 个以上窗口；③ 设备启动开销（首帧那几百毫秒）成了可感知的启动延迟而被乘上窗口数。
 
-**迁移路径（现在就要保证的事）**：它落在**后端 + `RenderBackendRegistry`**（会话带多条交换链 `setSurface(i)`），
-**不碰控件与视图的 API** —— 控件对后端的要求只有"引擎 + 句柄 + 尺寸"三样。为此要保三条不变量：
+**迁移路径（现在就要保证的事）**：它落在**后端 + `RenderBackendRegistry`**（会话带多条交换链），
+**不碰控件与视图的 API** —— 控件对后端的要求只有"引擎 + 窗口的目标 + 尺寸"三样。为此要保三条不变量：
 1. 引擎 / 视图 / 控件的公开面里**没有"进程唯一"的假设**（今天确实没有全局可变状态）；
 2. 设备与资源的归属始终是**后端会话**，不是控件（今天就是这样：`SessionContentAccess::device(session)`）；
 3. `RenderEngine` 可以多实例、可以换后端（今天就是这样）。
+
+> **S10a 的修正（2026-10-11）**：这条迁移路径的**契约面已经先落**（`graphics-window-device-viewer.md` §7 S10a）：
+> 窗口那一半不再是"控件把句柄交给引擎/后端"，而是**设备造一把目标**（`RenderDevice::createSurfaceTarget`）、
+> **区持有它**（`RenderSurface::bindTarget`）。所以"不碰控件与视图的 API"要读成"**不碰视图的 API，控件的窗口
+> 那一句改一次**"：控件 attach 时向设备要目标、失败带理由（`failAttach`），重建窗口在旧目标上重公告。
+> 剩下的"会话带多条交换链 / 缓存上移"（设备从今天的三面一体里独立出来）就是 **S10b**，它**不碰控件**。
 
 ### 12.2 单表面多视图：底层已经够，本轮把两个入口设计出来
 

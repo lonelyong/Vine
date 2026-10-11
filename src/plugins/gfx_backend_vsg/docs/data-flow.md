@@ -16,12 +16,12 @@ executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟�
                      ──▶  按值走每条 pass：FrameRecorder 只记"事实"（数据），不碰资源
                      ──▶  FrameCompiler + FrameGraph：依赖求值、缺省解析、合法性判定 → CompiledFrame
 present()           ──▶  ContentAssembly（事实表 + 流 + 块）→ ContentPass 录制 → VsgExecutor 提交/呈递
-（表面那一半，见 RenderSurfaceBinding）
+（目标那一半，见 RenderSurfaceTarget）
 ```
 
 帧的**值**（`vn::graphics::FrameDescription`）就是引擎给的一切：每条 pass 的身份、order、解析好的输入，
 以及它发出的 target / viewport / 清屏 / 状态与每条绘制调用 —— **没有一长串必须按顺序发的调用**，也没有
-"没开 scope 时设置是惰性"这类顺序规则（值里没有顺序可错，见 `RenderBackend::executeFrame`）。
+"没开 scope 时设置是惰性"这类顺序规则（值里没有顺序可错，见 `RenderFrameExecutor::executeFrame`）。
 
 三段的分工是**固定的**：**收集**只回答"这次调用记成什么数据"（顺序由帧值给定，值的驱动者按值走）；
 **编译**是唯一做决定的地方

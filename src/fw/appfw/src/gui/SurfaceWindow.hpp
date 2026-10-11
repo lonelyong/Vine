@@ -209,6 +209,15 @@ class SurfaceWindow : public QWindow {
     /** @brief Settles a deferred surface update: follows a recreated platform window onto its new
      * surface, or resizes the backend to the final surface size and renders one frame. */
     void handleUpdate();
+    /** @brief Gets the native handle of the window this area is presented through, or nullptr when it has none.
+     *
+     * The handle belongs to the TARGET the area holds (RenderSurfaceTarget::nativeHandle), never to this control:
+     * "the window Qt shows now is not the one the session is on" is asked here, and re-announcing that window is
+     * what the target follows.
+     *
+     * @return The bound window handle, or nullptr (no target, or a target that owns its own window).
+     */
+    void* nativeTargetHandle() const;
     /** @brief Arms the platform-window recreation test hatch (VINE_RECREATE_SURFACE_MS), once per session. */
     void armRecreateHatch();
 
