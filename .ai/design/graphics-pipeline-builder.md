@@ -160,7 +160,6 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
 - 未决（更大的一步，**要动公开 API**，本轮没做）：让宿主只报一种空间（device）——`RenderControl` announce device，`AxisGizmo`/`FpsOverlay` 不再自己乘（`setPixelRatio` 与 `PipelineOptions::gizmo/fps.pixel_ratio` 随之删除），`Pipeline::resize` 回到 `(w, h)`（本轮的 ratio 参数也一起消失）。那会**删掉 2 个公开 setter + 2 个 option 字段**，属于公开 API 变更，需明确要求。
 
 ## 2026-10-11 校：管线**强持**引擎 —— 引擎必须由 `intrusive_ptr` 持有（像素夹具实测到的坑）
-
 - 事实：`RenderPipelineBuilder` 只借一个 `raw_ptr<RenderEngine>`（构造参数），但 `build()` 把它转手给 `Pipeline`，而
   `Pipeline(intrusive_ptr<RenderEngine>)` 是**强引用**（"the engine is held strongly"，且 `~Pipeline` 靠它活着才能反注册
   pass）。于是"引擎放栈上、管线在栈下的地方建"这一形态，会在**管线析构时**把引擎 `delete` 掉：`RefCounted` 在最后一个
@@ -174,3 +173,19 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
   `RenderEngine engine;` + `builder.build()`（教了一个必崩的形态），一并改成 `make_intrusive<RenderEngine>()`。
 - 判据：`SdkPixelTest.AWireframeModeDrawsTheEdgesOfTheSameGeometry` / `TheFixtureAlsoDrawsContentWithNoViewAtAll`
   两条在真设备上跑完并**干净退出**（栈引擎那版在同一处崩，exit `0xC0000374`）。
+
+## 2026-10-11 校（M7）：调用者写**描述符**，builder 内部仍是结点
+
+- 事实：`RenderEngine::addPass(const PassDesc&)` 是 M7 之后"新增一个 pass"的入口 —— 一条值声明（name / tag / stage /
+  kind / camera / content / writes(`writes_image`+`writes_shape`) / output_name / output_target / inputs / clear· /
+  viewport / program / polygon_mode / depth_mode / enabled / `before_draw`），`kind`（`Scene` / `Screen`）决定引擎用哪种
+  执行结点，调用者**不需要新子类**；`stage` 由 `pipelineStageOrder()` 变成 order，`tag` 进 `FramePlan`（人类读的那一列之外，
+  结构里可断言），`before_draw` 是"内容每帧自己更新"的钩子（HUD 读数、镜像的坐标轴），`writes_image` + `writes_shape`
+  是 transient 声明（编译分配/共享/形状变则替换/没人声明就释放，见 `RenderEngine::transientTargetCount`）。
+- builder 内部为什么还没搬：`Pipeline` 的公开把手是**结点**（`windowPass()` / `offscreenTarget()` / `setWindowPass`），
+  `RenderPipelineBuilder::build()` 交付的正是那个对象，而描述符路径不交出结点。要搬需要二选一：给
+  `addPass(PassDesc)` 一条"交回结点"的返回（例如返回 `intrusive_ptr<RenderPass>`），或改 `Pipeline` 的公开面
+  （例如 `windowPassDesc()`）。两件都是公开形态变更，属 M7 的剩余半边（`graphics-render-next.md` §5 M7 行）。
+- G-buffer 同理：它是 deferred 配方里最适合交给 transient 的那一个目标（身份 + 形状都是声明里能说的），今天仍由
+  builder 创建、由 `Pipeline::resize` 跟着表面尺寸改 —— 搬过去会动 `Pipeline::offscreenTarget()` / `resize` 的语义，
+  同样留在那半边。

@@ -1,4 +1,4 @@
-﻿#include <vine/graphics/RenderPass.hpp>
+#include <vine/graphics/RenderPass.hpp>
 
 #include <memory>
 
@@ -35,7 +35,6 @@ raw_ptr<RenderTarget> RenderPass::renderTarget() const
 void RenderPass::setRenderTarget(intrusive_ptr<RenderTarget> target)
 {
     render_target_ = std::move(target);
-    bumpWiringRevision();
 }
 
 raw_ptr<Camera> RenderPass::camera() const
@@ -46,7 +45,6 @@ raw_ptr<Camera> RenderPass::camera() const
 void RenderPass::setCamera(intrusive_ptr<Camera> camera)
 {
     camera_ = std::move(camera);
-    bumpWiringRevision();
 }
 
 Color RenderPass::clearColor() const
@@ -105,7 +103,6 @@ bool RenderPass::isEnabled() const
 void RenderPass::setEnabled(bool enabled)
 {
     enabled_ = enabled;
-    bumpWiringRevision();
 }
 
 void RenderPass::setViewport(int x, int y, int width, int height)
@@ -137,7 +134,6 @@ void RenderPass::clearViewport()
 void RenderPass::setOutputName(const String& name)
 {
     output_name_ = name;
-    bumpWiringRevision();
 }
 
 String RenderPass::outputName() const
@@ -148,7 +144,6 @@ String RenderPass::outputName() const
 void RenderPass::setOutput(intrusive_ptr<ImageRef> image)
 {
     output_image_ = std::move(image);
-    bumpWiringRevision();
 }
 
 raw_ptr<ImageRef> RenderPass::output() const
@@ -159,7 +154,6 @@ raw_ptr<ImageRef> RenderPass::output() const
 void RenderPass::setOutputTarget(intrusive_ptr<RenderTarget> target)
 {
     output_target_ = std::move(target);
-    bumpWiringRevision();
 }
 
 raw_ptr<RenderTarget> RenderPass::outputTarget() const
@@ -171,7 +165,6 @@ void RenderPass::addInputName(const String& name)
 {
     if (!name.empty()) {
         input_names_.push_back(name);
-        bumpWiringRevision();
     }
 }
 
@@ -183,14 +176,12 @@ const std::vector<String>& RenderPass::inputNames() const
 void RenderPass::clearInputNames()
 {
     input_names_.clear();
-    bumpWiringRevision();
 }
 
 void RenderPass::addInput(intrusive_ptr<ImageRef> image)
 {
     if (image != nullptr) {
         input_images_.push_back(std::move(image));
-        bumpWiringRevision();
     }
 }
 
@@ -203,7 +194,6 @@ void RenderPass::addInputTarget(intrusive_ptr<RenderTarget> target)
 {
     if (target != nullptr) {
         input_targets_.push_back(std::move(target));
-        bumpWiringRevision();
     }
 }
 
@@ -216,7 +206,6 @@ void RenderPass::clearInputs()
 {
     input_images_.clear();
     input_targets_.clear();
-    bumpWiringRevision();
 }
 
 
@@ -228,7 +217,6 @@ raw_ptr<ShaderProgram> RenderPass::programOverride() const
 void RenderPass::setProgramOverride(intrusive_ptr<ShaderProgram> program)
 {
     program_override_ = std::move(program);
-    bumpWiringRevision();
 }
 
 std::optional<PolygonMode> RenderPass::polygonModeOverride() const
@@ -246,16 +234,6 @@ void RenderPass::setPolygonModeOverride(PolygonMode mode)
 void RenderPass::clearPolygonModeOverride()
 {
     polygon_mode_override_.reset();
-}
-
-std::uint64_t RenderPass::wiringRevision() const noexcept
-{
-    return wiring_revision_;
-}
-
-void RenderPass::bumpWiringRevision() noexcept
-{
-    ++wiring_revision_;
 }
 
 void RenderPass::announceClear(raw_ptr<RenderBackend> backend) const

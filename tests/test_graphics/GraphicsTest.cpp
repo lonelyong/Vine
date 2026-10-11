@@ -7429,16 +7429,17 @@ TEST(RenderEngineTest, PublishingANameWithoutARenderTargetIsReported)
 }
 
 /**
- * @brief The wiring is checked when a declaration MOVES, not on every frame.
+ * @brief A declaration change lands in the frame that follows it, with nothing to notify.
  *
- * The checks read declarations (targets, promises, inputs, cameras, programs, the enabled flag) so that
- * a structural mistake is reported before anything runs. Running them per frame meant building a map of
- * who fills what and a set of who claims what for every pass and every attachment on every frame, to
- * answer a question whose answer had not changed. The gate is each pass' own wiring revision (every
- * wiring setter bumps it) plus the host's bindings, and this pins both halves: a steady frame stream
- * re-checks nothing, and every way of moving a declaration re-checks once.
+ * What this replaces: the checks used to run only when a declaration "moved" (every pass had a wiring
+ * revision for the engine to compare, and the host's bindings had a flag), because running them per frame
+ * meant building a map of who fills what for every pass and every attachment to answer a question whose answer
+ * had not changed. The frame is COMPILED from the declarations now, so the same work answers a question about
+ * THIS frame - and there is no revision to bump, no gate to forget and no host-side flag to keep in step. What
+ * this pins is the pair of facts that replaced the gate: a declaration is read by the next frame, and a wrong
+ * one is still an EPISODE (once while it lasts, again when it comes back).
  */
-TEST(RenderEngineTest, TheWiringIsCheckedWhenADeclarationMovesAndNotPerFrame)
+TEST(RenderEngineTest, ADeclarationChangeLandsInTheFrameThatFollowsIt)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -7452,56 +7453,240 @@ TEST(RenderEngineTest, TheWiringIsCheckedWhenADeclarationMovesAndNotPerFrame)
     main_pass->setCamera(camera);
     engine->addPass(main_pass, 0);
 
+    // A steady frame stream says nothing, and stays that way when a declaration moves LEGALLY: the frame
+    // simply uses the new declaration.
     engine->frame(0.016);
-    EXPECT_EQ(engine->wiringValidationCount(), 1u) << "the first frame has to check what it was given";
     engine->frame(0.016);
+    const std::size_t quiet = engine->diagnosticCount();
+    auto              first_target = RenderTargetPtr(new RenderTarget());
+    main_pass->setRenderTarget(first_target);
     engine->frame(0.016);
-    EXPECT_EQ(engine->wiringValidationCount(), 1u) << "nothing moved: nothing to re-check";
+    EXPECT_EQ(engine->diagnosticCount(), quiet) << "a pass drawing into a target is not a problem to report";
 
-    // A pass re-declared IN PLACE (the host holds it and calls a setter between two frames).
-    main_pass->setRenderTarget(RenderTargetPtr(new RenderTarget()));
-    engine->frame(0.016);
-    EXPECT_EQ(engine->wiringValidationCount(), 2u) << "a re-wired pass has to be re-judged";
-
-    // A pass added / removed changes the declaration list itself.
-    auto extra = intrusive_ptr<RenderPass>(new RenderPass());
-    extra->setCamera(camera);
-    extra->setRenderTarget(RenderTargetPtr(new RenderTarget()));
-    engine->addPass(extra, 1);
-    engine->frame(0.016);
-    EXPECT_EQ(engine->wiringValidationCount(), 3u);
-    engine->removePass(extra.get());
-    engine->frame(0.016);
-    EXPECT_EQ(engine->wiringValidationCount(), 4u);
-
-    // The host's own bindings: publish() and unpublish() have no pass to state a revision through, so
-    // the engine marks them (and a declared input addressing one is answered from it — which is why a
-    // publish is a declaration the checks read).
-    engine->publish(u8"Host", RenderTargetPtr(new RenderTarget()));
-    engine->frame(0.016);
-    EXPECT_EQ(engine->wiringValidationCount(), 5u);
-    engine->unpublish(u8"Host");
-    engine->frame(0.016);
-    EXPECT_EQ(engine->wiringValidationCount(), 6u);
-
-    // And the checks still DO their job when they run: a declaration that becomes wrong in place is
-    // reported (the point of validating at all), once, not once per frame. The pass renders into its own
-    // target here, so promising an output name is fine...
+    // A declaration that becomes WRONG in place is reported by the frame that sees it - no setter had to tell
+    // the engine it moved - and it stays ONE episode while it lasts.
     main_pass->setOutputName(u8"SceneColor");
     engine->frame(0.016);
-    EXPECT_EQ(engine->wiringValidationCount(), 7u);
     const std::size_t problems_before = engine->diagnosticCount();
-
-    // ...and the SAME declaration becomes undoable the moment the pass renders into the window instead:
-    // the engine publishes sampleable targets, and the backbuffer is not one. Nothing about the pass
-    // changed except the one setter, which is why the checks have to run when it moves.
-    main_pass->setRenderTarget(nullptr);
+    main_pass->setRenderTarget(nullptr);   // publishes an output name while rendering into the window
     engine->frame(0.016);
-    EXPECT_EQ(engine->wiringValidationCount(), 8u);
     EXPECT_EQ(engine->diagnosticCount(), problems_before + 1u)
-        << "promising an output while rendering into the window is a wiring problem, in-place change or not";
+        << "promising an output while rendering into the window is reported by the next frame";
     engine->frame(0.016);
     EXPECT_EQ(engine->diagnosticCount(), problems_before + 1u) << "still one episode, not one per frame";
+
+    // Fixed, then broken again: that is a NEW episode (the compile forgot the problem when it went away).
+    main_pass->setRenderTarget(first_target);
+    engine->frame(0.016);
+    main_pass->setRenderTarget(nullptr);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->diagnosticCount(), problems_before + 2u) << "a wire that breaks again is reported again";
+
+    // The host's bindings are declarations the compile reads as well, and publish()/unpublish() have no pass to
+    // state a revision through: what a frame resolves through a name is decided by the compile, so withdrawing
+    // a binding is felt by the next frame with nothing to mark.
+    auto host_target = RenderTargetPtr(new RenderTarget());
+    engine->publish(u8"Host", host_target);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->resolve(u8"Host"), host_target.get()) << "the compile reads the binding every frame";
+    engine->unpublish(u8"Host");
+    EXPECT_EQ(engine->resolve(u8"Host"), nullptr) << "and stops answering it as soon as the host withdraws it";
+}
+
+/**
+ * @brief A pass declared as a VALUE: no subclass, no setter chain, and the plan says what it was.
+ *
+ * The point of the descriptor entry (M7's "adding a pass is adding a descriptor"): a caller that wants a pass
+ * writes one, and the engine decides how to execute it. What the plan reports is the declaration as the frame
+ * saw it - including the STAGE it asked for, which is the order it runs at, and the TAG, which is the label a
+ * human reads (a name says which pass it is, a tag says what it is for).
+ */
+TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto scene  = intrusive_ptr<Scene>(new Scene());
+    auto target = RenderTargetPtr(new RenderTarget());
+
+    int enabled_calls  = 0;
+    int disabled_calls = 0;
+    PassDesc desc;
+    desc.name          = u8"declared_pass";
+    desc.tag           = u8"Lighting";
+    desc.stage         = PipelineStage::Shading;
+    desc.kind          = PassKind::Scene;
+    desc.camera        = camera;
+    desc.content       = scene;
+    desc.writes        = target;
+    desc.output_name   = u8"SceneColor";
+    desc.clear_enabled = true;
+    desc.before_draw   = [&enabled_calls] { ++enabled_calls; };
+    engine->addPass(desc);
+
+    engine->frame(0.016);
+    EXPECT_EQ(enabled_calls, 1) << "the hook the declaration carried runs before the pass does";
+
+    const FramePlan plan = engine->framePlan();
+    ASSERT_EQ(plan.passes.size(), 1u);
+    EXPECT_EQ(plan.passes[0].name, vn::String(u8"declared_pass"));
+    EXPECT_EQ(plan.passes[0].tag, vn::String(u8"Lighting")) << "the tag is what the plan carries for a human";
+    EXPECT_EQ(plan.passes[0].order, pipelineStageOrder(PipelineStage::Shading))
+        << "the stage is the order: nobody picks an order number for a declared pass";
+    EXPECT_EQ(plan.passes[0].target, target.get());
+    EXPECT_TRUE(plan.passes[0].clears);
+    EXPECT_EQ(engine->resolve(u8"SceneColor"), target.get()) << "and it published the name it declared";
+
+    // A DISABLED declaration keeps its row and costs nothing - the hook included.
+    PassDesc disabled;
+    disabled.name        = u8"declared_pass_disabled";
+    disabled.kind        = PassKind::Scene;
+    disabled.camera      = camera;
+    disabled.content     = scene;
+    disabled.enabled     = false;
+    disabled.before_draw = [&disabled_calls] { ++disabled_calls; };
+    engine->addPass(disabled);
+    engine->frame(0.016);
+    EXPECT_EQ(disabled_calls, 0) << "a pass that does not run does not update its content either";
+    EXPECT_EQ(enabled_calls, 2) << "while the one that runs keeps updating its own";
+    const FramePlan with_disabled = engine->framePlan();
+    ASSERT_EQ(with_disabled.passes.size(), 2u);
+    EXPECT_FALSE(with_disabled.passes[1].enabled);
+}
+
+/**
+ * @brief The same value entry declares a SCREEN pass: the kind picks the execution, the declaration the picture.
+ *
+ * Before M7 this was the one pass kind a host had to have a class for (ScreenPass), and its program/inputs had
+ * to be wired by hand. Now the kind says how it executes and everything else is the declaration - so a
+ * compositing step is a value like any other, and the mock backend can be asked whether the draw happened with
+ * the source the compile RESOLVED (not the source the caller guessed).
+ */
+TEST(RenderEngineTest, AScreenPassCanBeDeclaredAsAValueToo)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto scene  = intrusive_ptr<Scene>(new Scene());
+    auto source = RenderTargetPtr(new RenderTarget());
+
+    // The producer: an ordinary scene pass that publishes what the screen pass samples.
+    PassDesc producer;
+    producer.name        = u8"scene";
+    producer.kind        = PassKind::Scene;
+    producer.camera      = camera;
+    producer.content     = scene;
+    producer.writes      = source;
+    producer.output_name = u8"SceneColor";
+    engine->addPass(producer);
+
+    // The consumer: a screen pass that samples the published name through a program.
+    PassDesc compose;
+    compose.name        = u8"compose";
+    compose.tag         = u8"Compositing";
+    compose.stage       = PipelineStage::Transparent;
+    compose.kind        = PassKind::Screen;
+    compose.camera      = camera;
+    compose.program     = screenCopyProgram();
+    compose.input_names = { vn::String(u8"SceneColor") };
+    engine->addPass(compose);
+
+    engine->frame(0.016);
+    EXPECT_EQ(backend->program_draws, 1u) << "the declared screen pass drew through its program";
+    EXPECT_EQ(backend->last_program_source, source.get()) << "with the target the compile resolved for it";
+    EXPECT_EQ(backend->last_program_camera, camera.get());
+
+    const FramePlan plan = engine->framePlan();
+    ASSERT_EQ(plan.passes.size(), 2u);
+    EXPECT_EQ(plan.passes[1].name, vn::String(u8"compose"));
+    EXPECT_EQ(plan.passes[1].inputs.size(), 1u);
+    EXPECT_EQ(plan.passes[1].inputs[0], vn::String(u8"SceneColor"))
+        << "the plan lists what the pass DECLARED (the resolved address is the frame's business)";
+}
+
+/**
+ * @brief A transient target is declared, allocated, shared, replaced and let go of - by the compile.
+ *
+ * The pass says which IMAGE it needs and what shape it must have; the frame owns the target. What this pins is
+ * the whole lifetime, which is what "no host has to own the G-buffer anymore" rests on: one target per declared
+ * identity (a second declaration of the same identity and shape SHARES it), the SAME target across a steady
+ * frame stream (nothing is reallocated per frame), a REPLACEMENT when the declared shape changes, and nothing
+ * left behind when the declaration goes away.
+ */
+TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    ASSERT_TRUE(engine->initialize());
+    engine->resize(320, 180);
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto scene  = intrusive_ptr<Scene>(new Scene());
+
+    const auto declare = [&](const vn::String& name, int width, int height, bool depth) {
+        PassDesc desc;
+        desc.name         = name;
+        desc.kind         = PassKind::Scene;
+        desc.camera       = camera;
+        desc.content      = scene;
+        desc.writes_image = u8"gbuffer";
+        desc.writes_shape.width  = width;
+        desc.writes_shape.height = height;
+        desc.writes_shape.colors = { RenderTarget::ColorFormat::RGBA8 };
+        desc.writes_shape.depth  = depth ? std::optional<RenderTarget::DepthFormat>(RenderTarget::DepthFormat::D24)
+                                         : std::nullopt;
+        engine->addPass(desc);
+    };
+
+    // Declared with no explicit extent: the shape follows the surface the frame is presenting.
+    declare(u8"gbuffer_pass", 0, 0, true);
+    engine->frame(0.016);
+    ASSERT_EQ(engine->transientTargetCount(), 1u) << "one declaration, one target";
+    const RenderTarget* const first = engine->framePlan().passes[0].target;
+    ASSERT_NE(first, nullptr) << "the declare-then-draw hand-off gives the pass the target it asked for";
+    EXPECT_EQ(first->width(), 320);
+    EXPECT_EQ(first->height(), 180);
+    EXPECT_TRUE(first->hasDepth()) << "the declaration asked for a depth attachment";
+
+    for (int frame = 0; frame < 4; ++frame) {
+        engine->frame(0.016);
+        ASSERT_EQ(engine->transientTargetCount(), 1u);
+        EXPECT_EQ(engine->framePlan().passes[0].target, first) << "a steady frame stream reallocates nothing";
+    }
+
+    // A second pass declaring the SAME image and shape shares the target: one image, one attachment.
+    declare(u8"gbuffer_second", 0, 0, true);
+    engine->frame(0.016);
+    EXPECT_EQ(engine->transientTargetCount(), 1u);
+    ASSERT_EQ(engine->framePlan().passes.size(), 2u);
+    EXPECT_EQ(engine->framePlan().passes[1].target, first) << "the same declaration is the same target";
+    engine->removePass(const_cast<RenderPass*>(engine->framePlan().passes[1].pass));
+    engine->frame(0.016);
+    EXPECT_EQ(engine->transientTargetCount(), 1u) << "the first declaration still needs it";
+
+    // A DIFFERENT shape is a different target: the attachments of a built one cannot change.
+    engine->clearPasses();
+    engine->frame(0.016);
+    EXPECT_EQ(engine->transientTargetCount(), 0u) << "nothing declares it any more, so the compile let it go";
+
+    declare(u8"gbuffer_pass", 640, 360, false);
+    engine->frame(0.016);
+    ASSERT_EQ(engine->transientTargetCount(), 1u);
+    const RenderTarget* const second = engine->framePlan().passes[0].target;
+    EXPECT_NE(second, nullptr);
+    EXPECT_EQ(second->width(), 640) << "the declared extent is the built extent";
+    EXPECT_EQ(second->height(), 360);
+    EXPECT_FALSE(second->hasDepth()) << "and the declared attachment set is the built one";
 }
 
 /**
@@ -7753,22 +7938,34 @@ TEST(RenderEngineTest, ImageDeclaredAsOutputByTwoPassesIsReportedOnce)
     engine->frame(0.016);
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
-    // One producer leaves: the image has a single writer again, so nothing to report...
+    // One producer leaves: the collision is over, and what is left is the promise of an UNBOUND image - which
+    // the same compile sees and now says out loud. (The old episode bookkeeping could not: it marked the image
+    // as "already accounted for" in the frame that reported the COLLISION, so the declaration stayed silent
+    // afterwards even though nothing had ever been said about it. In the compile, an episode is what was
+    // actually reported, so a problem that was never spoken about is not treated as one that was.)
     engine->removePass(second.get());
     engine->frame(0.016);
-    EXPECT_EQ(engine->diagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 2u);
+    ASSERT_EQ(received.size(), 2u);
+    EXPECT_NE(received[1].message.find(u8"not bound to a target"), vn::String::npos);
+    EXPECT_NE(received[1].message.find(u8"first"), vn::String::npos);
 
-    // ...and the collision coming back is reported again (the episode re-arms).
+    // The collision coming back is reported again (the episode re-arms), and it takes the place of the
+    // unbound-promise message: one image, one message, whichever of the two rules speaks for it.
     engine->addPass(second, -1);
     engine->frame(0.016);
-    EXPECT_EQ(engine->diagnosticCount(), 2u);
-    EXPECT_EQ(received.size(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 3u);
+    EXPECT_EQ(received.size(), 3u);
+    EXPECT_NE(received[2].message.find(u8"declared as the output of two passes"), vn::String::npos);
 
     // Two passes declaring the SAME object are one role, not a collision: only a second, DIFFERENT
     // pass on the image is. The same pass cannot collide with itself.
     engine->removePass(first.get());
     engine->frame(0.016);
-    EXPECT_EQ(engine->diagnosticCount(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 4u) << "the remaining promise is about an unbound image, and says so";
+    ASSERT_EQ(received.size(), 4u);
+    EXPECT_NE(received[3].message.find(u8"not bound to a target"), vn::String::npos);
+    EXPECT_NE(received[3].message.find(u8"second"), vn::String::npos);
 }
 
 /**

@@ -1,4 +1,4 @@
-﻿#include <vine/graphics/ScreenPass.hpp>
+#include <vine/graphics/ScreenPass.hpp>
 
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/RenderBackend.hpp>
@@ -35,7 +35,6 @@ void ScreenPass::setProgram(intrusive_ptr<ShaderProgram> program)
     program_ = std::move(program);
     // A program is a wiring declaration here (the engine reports a ScreenPass that has none, because such
     // a pass draws nothing): the base class cannot see this setter, so the subclass announces it.
-    bumpWiringRevision();
 }
 
 void ScreenPass::resolveInputTextures(const std::vector<raw_ptr<RenderTarget>>& inputs)

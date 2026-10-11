@@ -15,11 +15,39 @@
 | **模块布局与依赖** | 顶部 2026-09-27 四条：帧机器归属 `core`→`backend` / 诊断路线合并 / 帧时钟查询面 `FrameProgress` / 放置判据与 `frame/` 最终形态；规则全文在 `.ai/design/graphics-layering.md` |
 | **一帧怎么走** | M11h 空绘制调用不是绘制调用 · M11m episode 归半片 · M11o 拒绝报告合并 · M11w 块预算按需增长 · M11x B5 触发规模 · M11i 租约顺序相位 · B8 跨帧差异 · B9 在飞槽数地板 |
 | **着色器与 ABI 契约** | shader 文件命名 `builtin_<角色>.<阶段>` · `vn_`→`vine_` 前缀 · texcoord kind 显式化 · P0.A/P0.B1/P0.C1（前向着色归 SDK / location 表 / L1 块布局） · P12 文件化 + 构建期嵌入 · program 槽 P1 三步 |
-| **证据与门禁** | M8 SDK 级设备夹具 + 像素判据（`SdkPixelTest`） · M11k 背景看写掩码 · M11l 第三条画面判据"整片背景灰" · FPS 窗口真平均 · ASan 两片（余量收口 / 全量 test_vsg 首通） · V3/V4 上游能力门禁 · R5 LSan 抑制 · M11g 计数分配器（**`skipped == 0` 才是跑过设备电池**） |
+| **证据与门禁** | M7 每帧编译 + 描述符（`PassDesc`）· M8 SDK 级设备夹具 + 像素判据（`SdkPixelTest`） · M11k 背景看写掩码 · M11l 第三条画面判据"整片背景灰" · FPS 窗口真平均 · ASan 两片（余量收口 / 全量 test_vsg 首通） · V3/V4 上游能力门禁 · R5 LSan 抑制 · M11g 计数分配器（**`skipped == 0` 才是跑过设备电池**） |
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/usage.md`（模块文档一节） |
 
+
+## 2026-10-11 M7：Pass 描述符 + 每帧编译的 FramePlan（唯一的大改）
+
+- **做了什么**：帧的真相从"声明动了才校验 + 运行时逐 pass 解析"换成**每帧编译**。`PassDesc`（一个值：name / tag / stage /
+  kind / camera / content / writes(`writes_image`+`writes_shape`) / output_name / output_target / inputs / input_names /
+  clear· / viewport / program / program_override / polygon_mode / depth_mode / enabled / `before_draw`）由
+  `RenderEngine::addPass(const PassDesc&)` **一次性**变成那种 kind 的执行结点（`Scene`→`RenderPass`、`Screen`→`ScreenPass`），
+  结点即声明的唯一存储；`compileFrame()`（新文件 `src/viz/graphics/src/EngineCompile.cpp`）在录制前把这一帧定下来：
+  行（pass/content/order/解析后的 inputs）、transient 目标、以及这组声明的问题；`frame()` 只执行行。
+- **删掉的东西（判据①）**：`RenderPass::wiringRevision()` + `bumpWiringRevision()`（12 个 setter 里）、
+  `RenderEngine::wiringDeclarationsChanged()`、`wiring_validated_`、`wiring_validation_count_`、`wiringValidationCount()`、
+  `validateWiring()`（420 行）、`WiringState` 里 10 组 seen/reported 集合、每帧的名字注册表（`outputs_`/`produced_targets_`
+  变成编译期的一次走表：`plan_rows_` / `plan_produced_` / `plan_published_`）。
+- **判据（实测）**：`test_graphics` **342**（341 旧 + 3 新，一条旧用例改写：`TheWiringIsCheckedWhenADeclarationMovesAndNotPerFrame`
+  → `ADeclarationChangeLandsInTheFrameThatFollowsIt`）、`test_vsg` 407、`test_gui` 253、`test_appfw` 32、`test_meshio` 34、
+  `test_iobase` 94 全绿；demo 两条冒烟 11 pass 表**逐列与基线相同**、0 error/warn（判据④）；五个 gate 0 finding
+  （`--strict` 仍 20 条基线）。
+- **判据②③④ 的用例**：`APassCanBeDeclaredAsAValueAndRunsLikeAnyOther`（场景档：stage→order、tag 进 plan、`before_draw`
+  每帧跑、禁用档不跑、output_name 当帧生效）；`AScreenPassCanBeDeclaredAsAValueToo`（全屏档：program + 名字输入，
+  mock 后端看到 `last_program_source` 就是编译**解析出来的**那张目标）；`ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt`
+  （一个声明一张目标、同身份同形状共享、稳态 4 帧指针不变、形状变则替换、`clearPasses` 后计数归零）。
+- **变异 4/4 红**：①编译不解析输入（12 条红）②transient 每帧新建（4 条断言红）③去掉 episode 比较（14 条报告用例红）
+  ④描述符的 `before_draw` 不落地（2 条红）。
+- **两处记账（详见 `graphics-render-next.md` §3.4）**：①"一次一集"按**句子**比（问题就是它那句话；跨检查的那个抑制用一个
+  per-compile 集合，语义与旧代码逐字相同）；②**一处行为变化**：旧代码在"两个 pass 抢一张未绑定图"那一集里把图记成"已报告"
+  却从未说出口，于是碰撞消失后"图没绑定"永远不会被说 —— 编译模型里 episode 是"真的报过什么"，现在会说（用例已改写并注明）。
+- **剩余半边（同片未做，记在 §5 M7 行）**：`RenderPipelineBuilder`/`Pipeline` 内部仍以结点组装（公开把手是结点），
+  G-buffer 仍由宿主持有 —— 搬过去要动 `Pipeline` 的公开面或让 `addPass(PassDesc)` 交回结点。
 
 ## 2026-10-11 M8：SDK 级设备夹具 + 像素判据（`tests/test_vsg/SdkPixelFixture.hpp` / `SdkPixelFixture.cpp` / `SdkPixelTest.cpp`）
 

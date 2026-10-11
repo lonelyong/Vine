@@ -36,6 +36,12 @@ struct VN_GRAPHICS_API PassPlan
     int order = 0;
     /// The pass' name (empty when it has none - a name is what makes a row greppable, see RenderPass::setName).
     String name;
+    /// The label its DECLARATION gave it, or empty (see PassDesc::tag).
+    ///
+    /// Where a name says which pass this is, a tag says what it is FOR ("GBuffer", "Lighting", "Hud") - the
+    /// answer a host reading a plan usually wants, and the one a viewer's own naming cannot be trusted to give
+    /// (a viewer names passes after its slots, not after what they mean).
+    String tag;
     /// The content it draws, or null (a content-agnostic pass: a screen pass, a HUD).
     raw_ptr<const Scene> content = nullptr;
     /// The camera it draws through, or null (a fullscreen / screen-space pass).

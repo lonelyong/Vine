@@ -17,6 +17,7 @@
 #include "FrameContext.hpp"
 #include "FramePlan.hpp"
 #include "FrameStats.hpp"
+#include "PassDesc.hpp"
 #include "RenderDiagnostic.hpp"
 #include "BuiltinShaders.hpp"
 
@@ -226,9 +227,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     /** @brief Gets what a frame of this engine consists of: the passes it will run, in the order it runs them.
      *
-     * The plan is built from the registered passes as they stand NOW, so it is the answer before the next frame
-     * and the same answer that frame will use (a pass added or removed in between makes it a different plan; the
-     * engine reads its slots at frame time, and so does this).
+     * The plan is COMPILED from the registered passes (see compileFrame): every frame compiles its own, so the
+     * answer here is the last frame's plan - the table that frame actually ran from - or, before any frame has
+     * run, the plan the current declarations would compile to. Both are the same compile, so a report written
+     * against a pipeline cannot disagree with what the engine draws.
      *
      * What it is for: a test that wants to assert the SHAPE of a frame instead of counting passes or comparing
      * pointers (see `test_graphics`, which does both), a dev switch that prints one table, and a host that wants
@@ -237,6 +239,16 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @return The plan, in execution order; empty when nothing is registered.
      */
     [[nodiscard]] FramePlan framePlan() const;
+
+    /** @brief Gets how many transient targets the current plan hands out (see PassDesc::writes_image).
+     *
+     * The witness of the compile owning transient storage: the number is one per DISTINCT transient a frame
+     * declares (the same identity and shape is ONE target, shared), it does not grow with the frame count, and
+     * it replaces rather than adds when a declared shape changes.
+     *
+     * @return Number of live transient targets.
+     */
+    [[nodiscard]] std::size_t transientTargetCount() const noexcept;
 
     /** @brief Sets the DEFAULT program for content: what a drawable naming none of its own gets.
      *
@@ -304,6 +316,22 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @param order   Execution order (ascending; any integer allowed).
      */
     void addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order);
+
+    /** @brief Registers a pass declared as a VALUE (see PassDesc).
+     *
+     * The declaration is turned into the execution node of its kind ONCE (`PassKind::Scene` -> RenderPass,
+     * `PassKind::Screen` -> ScreenPass) and registered like any other pass, so a descriptor-declared pass and a
+     * hand-built one are the same thing to the frame by the time the frame runs: nothing downstream knows which
+     * way it arrived, and no second mechanism has to be kept in step with this one.
+     *
+     * WHAT THE DESCRIPTOR ADDS OVER THE SETTERS. The declaration carries what a pass could not say before:
+     * the STAGE it belongs to (so its order follows from intent, see pipelineStageOrder), a TAG for the plan,
+     * the TRANSIENT it needs (so no host has to own the target - see PassDesc::writes_image) and the per-frame
+     * hook its content updates itself through. A caller therefore adds a pass without adding a type.
+     *
+     * @param desc The declaration (see PassDesc; a null camera draws nothing, as any pass does).
+     */
+    void addPass(const PassDesc& desc);
 
     /** @brief Removes a previously added pass.
      *
@@ -412,85 +440,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void setWindowHandle(void* native_handle);
 
-    /** @brief Gets how many times the engine re-checked the pass wiring.
-     *
-     * The witness of that check being DECLARATION-driven (see RenderEngine::validateWiring): it is
-     * expected to stay at 1 for a steady frame stream, and to rise exactly once per change of a
-     * declaration the wiring checks read (a pass added, removed or re-wired, a host binding published).
-     *
-     * @return Number of validateWiring() runs since this engine was constructed.
-     */
-    [[nodiscard]] std::uint64_t wiringValidationCount() const noexcept;
-
   private:
-    /** @brief Executes a scene pass against the given content scene. */
-    void drawScenePass(raw_ptr<RenderPass> pass, raw_ptr<Scene> content);
-
-    /** @brief Returns whether any declaration the wiring checks read has moved since they last ran.
-     *
-     * The gate in front of validateWiring() (see it): the pass revisions in @ref wiring_validated_ are
-     * compared with the registered passes', and the host's bindings are marked by publish()/unpublish().
-     * When it answers true the remembered list is rebuilt, so the next frame compares against what was
-     * just validated.
-     *
-     * @return true when the wiring must be re-checked this frame.
-     */
-    bool wiringDeclarationsChanged();
-
-    /** @brief Resolves a pass' declared inputs for this frame into @ref resolved_inputs_.
-     *
-     * The result is a REUSED member rather than a return value: this runs once per registered pass per
-     * frame, so a fresh vector here was one heap allocation per pass in a frame that otherwise allocates
-     * nothing — and the caller then copied it again to announce it (see RenderBackend::setPassInputs).
-     * The pass is still told the result (the pass' inputs are what an effect reads), and the backend is
-     * handed the same vector.
-     *
-     * @param pass Pass whose declarations are resolved.
-     */
-    void resolvePassInputs(raw_ptr<RenderPass> pass);
-
-    /** @brief Returns the first enabled pass that needs a target this backend cannot draw into.
-     *
-     * A backend reporting no off-screen support IGNORES a non-null target (see
-     * RenderBackend::supportsRenderTargets), so such a pass draws into the window instead of where the
-     * pipeline expects it, and nothing else in the frame would notice (see frame(), the one caller).
-     *
-     * @return The first enabled pass with a non-null render target, or null when the backend supports
-     *         targets or no pass asks for one.
-     */
-    [[nodiscard]] raw_ptr<const RenderPass> passNeedingAnUnsupportedTarget() const;
-
-    /** @brief Reports the structural wiring problems the pass declarations themselves carry.
-     *
-     * Every pass on its own is valid, so nothing else can see these, and they are all properties of
-     * the DECLARATION (design §14.4):
-     *   * an image (or an output name) TWO passes declare as their output;
-     *   * a declared input image nobody produces, or whose producer is registered after its
-     *     consumer (the structural half of "the pass draws nothing");
-     *   * a ScreenPass that declares no input at all and therefore can never draw.
-     *
-     * Reported once per episode, from the declarations rather than from a frame — the backend only
-     * ever sees "a pass with nothing to draw".
-     */
-    void validateWiring();
-
-    /** @brief Publishes a pass's output target under its output name.
-     *
-     * Called just after executing a pass. When the pass declares a non-empty
-     * output name (RenderPass::setOutputName) and renders into a non-null
-     * RenderTarget, that target is registered for THIS frame's consumers — a pass publication is
-     * per frame, unlike a host binding (publish).
-     *
-     * @param pass Pass whose output to publish.
-     */
-    void publishPassOutput(raw_ptr<RenderPass> pass);
-
-    /** @brief Publishes a pass's output for this frame (the per-frame half of the registry).
-     *
-     * @param name   Slot name the pass declares.
-     * @param target Target the pass rendered into.
-     */
-    void publishFrameOutput(const String& name, intrusive_ptr<RenderTarget> target);
 
     /** @brief One registered draw slot in the engine's ordered pass list.
      *
@@ -498,6 +448,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * base scene pass then draws nothing). Disabled passes
      * (RenderPass::setEnabled) are skipped. Top / HUD passes are ordinary
      * slots whose @p order sits above the main view.
+     *
+     * The last four fields are what a PassDesc declared and a hand-built pass cannot say: where the pass
+     * belongs in a human-reading table (@p tag), the transient it needs (@p writes_image / @p writes_shape) and
+     * the content update it runs once per frame (@p before_draw).
      */
     struct Slot {
         intrusive_ptr<RenderPass> pass;
@@ -506,6 +460,16 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         /// How long the last frame's record of this pass took, in microseconds (0: it did not run then).
         /// Measured by frame(); reported through the frame plan (see FramePlan::PassPlan::record_micros).
         std::uint64_t record_micros = 0;
+        /// A label for the plan and for a human reading it ("" when nothing was declared).
+        String tag;
+        /// The transient image this pass declares it needs ("" = it writes what it holds).
+        String writes_image;
+        /// The shape writes_image is built at.
+        TransientShape writes_shape;
+        /// The transient the compile allocated for this pass (null when it declares none).
+        intrusive_ptr<RenderTarget> transient;
+        /// The content update this pass runs once per frame, before it draws.
+        std::function<void()> before_draw;
     };
 
     /** @brief WHICH image a declared output is, as the wiring check compares it (design §14.4).
@@ -570,6 +534,204 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         bool operator<(const OutputIdentity& other) const noexcept;
     };
 
+    /// The transient targets this engine allocated for a frame that declared one (see resolveTransientTarget).
+    /// Keyed by the identity the declaration names plus the shape it asked for: two passes declaring the same
+    /// transient SHARE one target, and a shape change REPLACES rather than adds.
+    struct TransientTarget {
+        String                      identity;          ///< the declared identity (PassDesc::writes_image)
+        TransientShape              shape;             ///< the shape it was built at
+        intrusive_ptr<RenderTarget> target;            ///< the target itself
+        bool                        declared_now{false}; ///< whether this compile saw the declaration
+    };
+
+    /** @brief One row of the compiled frame: what a pass will do, decided before the frame runs.
+     *
+     * The row is the frame's OWN answer, not a reason to re-read the declarations: the inputs are resolved
+     * once, here, and the frame loop hands them to the pass and to the backend. The vector lives in a REUSED
+     * list (one row per slot) and each row's input list is assigned into, so a steady frame allocates nothing.
+     */
+    struct PlanRow {
+        raw_ptr<RenderPass>                pass{ nullptr };
+        raw_ptr<Scene>                     content{ nullptr };
+        int                                order{ 0 };
+        /// The declared inputs, resolved for this frame: one entry per declaration, in declaration order,
+        /// null where nothing produced it (exactly what the pass and the backend are handed).
+        std::vector<raw_ptr<RenderTarget>> inputs;
+    };
+
+    /** @brief One problem a compile found, as the sentence a report would carry.
+     *
+     * The problem carries its own sentence because that IS the problem's identity as far as a host is concerned:
+     * the episode rule compares sentences (see reportPlanProblems), and nothing has to be kept in step with the
+     * wording. The cost is paid only by a frame that has a problem - a healthy frame builds none, which is the
+     * case the frame loop must not pay for - and the message names its subject ("pass 'lighting' ..."), so two
+     * frames saying the same sentence really are the same problem.
+     */
+    struct PlanProblem {
+        String message;   ///< the sentence a report would carry
+    };
+
+    /**
+     * @brief What the compile owns besides the plan itself: the host's bindings and the problems the PREVIOUS
+     * compile found.
+     *
+     * The wiring logic used to be declaration-driven and therefore needed ten sets of "seen this frame /
+     * already reported" to keep its reports episodes (see the deleted validateWiring). Now that the frame is
+     * compiled from the declarations every frame, the episode rule is ONE comparison - the problems of this
+     * compile against the problems of the last - and the problems are kept as the SENTENCES they would print:
+     * a problem IS what the host would read, so "the same problem again" is "the same sentence again", and the
+     * comparison needs no second vocabulary (no kinds, no subjects) that could drift from the message.
+     *
+     * What is left here is the state that has no frame to be rebuilt from: the host's standing bindings and the
+     * last compile's problem list.
+     */
+    struct WiringState {
+        /// Standing host bindings (RenderEngine::publish): they have no producer to re-publish them each
+        /// frame, so they survive the per-frame rebuild until unpublish() removes them. They are the only
+        /// entries of the name registry the compile does not derive from the passes.
+        std::map<String, intrusive_ptr<RenderTarget>> host_outputs_;
+        /// Host bindings currently refused because publish() was given no target. A host has no frame to
+        /// re-publish from, so the episode is the name itself: it leaves the set when a publish() for it hands
+        /// over a real target, or when unpublish() withdraws the name.
+        std::set<String> unpublishable_host_names_;
+    };
+    /** @brief Executes a scene pass against the given content scene.
+     *
+     * @param pass    Pass to execute.
+     * @param content Scene the pass draws.
+     */
+    void drawScenePass(raw_ptr<RenderPass> pass, raw_ptr<Scene> content);
+
+    /** @brief Compiles this frame's declarations into the table the frame runs from (see FramePlan).
+     *
+     * THE ONE PLACE A FRAME IS DECIDED. Compiled every frame - no declaration tells the engine it moved,
+     * because reading the declarations IS the compile (a steady frame costs the same walk, and nothing has to
+     * be kept in step with a revision). Two things come out of it, and both are the frame's own:
+     *
+     *   * the ORDER and the WIRING: which pass runs when, which target a pass' declared inputs resolve to,
+     *     which targets a transient declaration allocates (see PassDesc::writes_image);
+     *   * the PROBLEMS this set of declarations has - reported once per episode, by comparing this compile's
+     *     problems with the previous one's (see reportPlanProblems), which is the whole of the episode rule.
+     */
+    void compileFrame();
+
+    /** @brief Collects the problems this frame's declarations carry (see PlanProblem).
+     *
+     * The checks that used to run when a declaration "moved" (the deleted validateWiring): every pass on its
+     * own is valid, so only the whole table can see a promise about a target the pass never writes, two
+     * claimants of one image, a declared input no one fills, or a screen pass that can never draw. Run as part
+     * of the compile, so the answer is about THIS frame and nothing has to remember that it changed.
+     */
+    void collectPlanProblems();
+
+    /** @brief Reports the problems the compile found, once per episode, then remembers them.
+     *
+     * A problem is an episode, not a per-frame stream: what was already found by the previous compile is not
+     * said again, and a problem that is gone is forgotten, so the same breakage later is a new episode.
+     */
+    void reportPlanProblems();
+
+    /** @brief Inserts a slot in the pass list, keeping it ascending by order.
+     *
+     * The one place the slot list is ordered (equal orders keep insertion order, so ties are resolved by the
+     * registration sequence). A pass instance already registered is ignored: it would otherwise run twice.
+     *
+     * @param slot Slot to insert (moved in when it is not a duplicate).
+     */
+    void insertSlot(Slot slot);
+
+    /** @brief Builds the target a transient declaration asks for (see resolveTransientTarget).
+     *
+     * @param identity Name to give the target (diagnostics and the plan read it).
+     * @param width    Extent in device pixels.
+     * @param height   Extent in device pixels.
+     * @param shape    Attachment set the declaration asked for.
+     * @return The target, configured but not yet built (the backend builds it when a pass draws into it).
+     */
+    [[nodiscard]] intrusive_ptr<RenderTarget> makeTransientTarget(const String& identity, int width, int height,
+                                                                  const TransientShape& shape);
+
+    /** @brief Makes sure the transient target a slot declares exists, at the shape it declares.
+     *
+     * @param slot Slot whose declaration is served (its pass gets the target when it changed).
+     */
+    void resolveTransientTarget(Slot& slot);
+
+    /** @brief Whether two problems are the same episode (see reportPlanProblems).
+     *
+     * @param other Problem to compare with.
+     * @return true when both describe the same problem of the same subject.
+     */
+    [[nodiscard]] bool sameProblem(const PlanProblem& other) const noexcept;
+
+    /** @brief Records a problem the compile found, once per subject (see PlanProblem).
+     *
+     * The one place a finding becomes data. Two checks can reach the same subject (a third pass claiming an
+     * image two others already claim), and the frame should say it once: the episode rule then decides whether
+     * it is said OUT LOUD at all (see reportPlanProblems).
+     *
+     * @param message The sentence a report would carry (it names its subject).
+     */
+    void noteProblem(String message);
+
+    /** @brief Returns whether the structural check already spoke about this declared input.
+     *
+     * One wire, one message: a declared input the structural check already reported (no producer at all, or a
+     * producer registered too late) is not repeated in frame terms by the resolution.
+     *
+     * @param pass     Consumer that declared the input.
+     * @param identity Image the input addresses.
+     * @return true when the structural check reported that wire for this frame.
+     */
+    [[nodiscard]] bool unusableInputReported(raw_ptr<const RenderPass> pass,
+                                             const OutputIdentity& identity) const noexcept;
+
+    /** @brief Resolves one pass' declared inputs into @p out, for this frame (see compileFrame).
+     *
+     * @param pass Pass whose declarations are resolved.
+     * @param out  Receives the resolved inputs in declaration order (cleared first).
+     */
+    void resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<raw_ptr<RenderTarget>>& out);
+
+    /** @brief Publishes a pass' output name for the rest of this frame (see compileFrame).
+     *
+     * @param pass Pass whose output to publish.
+     */
+    void publishRowOutput(raw_ptr<RenderPass> pass);
+
+    /** @brief Resolves a published name for this frame: a pass' publication, else the host's binding.
+     *
+     * @param name Slot name to resolve.
+     * @return The target the name serves, or null when nothing produced it this frame.
+     */
+    [[nodiscard]] raw_ptr<RenderTarget> resolveCompiled(const String& name) const;
+
+    /** @brief Releases a transient target nobody declared this frame.
+     *
+     * @param target Target to let go of (the backend is told, so it can retire what it built for it).
+     */
+    void releaseTransientTarget(const intrusive_ptr<RenderTarget>& target);
+
+    /** @brief Returns the name a pass is reported under (its own, or a readable fallback).
+     *
+     * @param pass Pass to name.
+     * @return The pass' name, or an unnamed-pass marker when it has none.
+     */
+    [[nodiscard]] static String reportedPassName(raw_ptr<const RenderPass> pass);
+
+    /** @brief Returns the first enabled pass that needs a target this backend cannot draw into.
+     *
+     * A backend reporting no off-screen support IGNORES a non-null target (see
+     * RenderBackend::supportsRenderTargets), so such a pass draws into the window instead of where the
+     * pipeline expects it, and nothing else in the frame would notice (see frame(), the one caller).
+     *
+     * @return The first enabled pass with a non-null render target, or null when the backend supports
+     *         targets or no pass asks for one.
+     */
+    [[nodiscard]] raw_ptr<const RenderPass> passNeedingAnUnsupportedTarget() const;
+
+
+
     /** @brief Resolves one declared input image: the target it addresses, or null when nothing
      * produced it this frame.
      *
@@ -610,9 +772,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // the constructor to forwardProgram(), replaced by setDefaultContentProgram(), and null means "decline".
     intrusive_ptr<const ShaderProgram>  default_content_program_;
     std::vector<Slot>                   slots_;         // uniform ordered draw registry
-    // Reused buffer of the pass' resolved declared inputs (see resolvePassInputs): one pass' worth at a
-    // time, refilled in place every frame, so the frame loop allocates nothing in a steady state.
-    std::vector<raw_ptr<RenderTarget>>  resolved_inputs_;
     FrameContext                        frame_ctx_;
     // Monotonic content-frame token, announced to every rendered scene each
     // frame (Scene::setContentFrame): the passes of one frame that draw the same
@@ -627,126 +786,31 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // asking for one — the flag is cleared the moment no enabled pass needs a target.
     bool                                unsupported_target_reported_ = false;
 
-    /**
-     * @brief Everything the wiring checks own: this frame's registry, and what they have reported.
-     *
-     * The wiring logic (design §14.4) is about pass DECLARATIONS, and its reports are EPISODES
-     * rather than per-frame streams: a problem that stops happening must re-arm, so "what was
-     * reported" is pruned to "what this frame still sees". That rule is stated once — in
-     * beginFrame()/endFrame() — and every set it works on lives here, so "what the engine draws"
-     * (slots_) and "what it has said about the wiring" do not read as one pile of state.
-     *
-     * Kept as a nested struct rather than a separate type because the sets are keyed by the
-     * engine's own declarations (OutputIdentity, the pass objects it registered); nothing outside
-     * this class can interpret them.
-     */
-    struct WiringState {
-        /// This frame's pass publications: the name a pass published under and the target it published,
-        /// in publication order. A REUSED vector, not a map: it holds one entry per publishing pass (a
-        /// handful), is rebuilt every frame, and a map paid a node allocation and a tree walk per
-        /// producer per frame in a loop that otherwise allocates nothing after this warms up.
-        std::vector<std::pair<String, intrusive_ptr<RenderTarget>>> outputs_;
-        /// Standing host bindings (RenderEngine::publish): they have no producer to re-publish them each
-        /// frame, so they survive the per-frame clear until unpublish() removes them. Seeded into the
-        /// frame's produced targets, so an object-typed input addressing one is answered as well.
-        std::map<String, intrusive_ptr<RenderTarget>> host_outputs_;
-
-        /// Output names TWO passes published with DIFFERENT targets this frame (a collision: every
-        /// consumer resolving the name silently gets whichever pass ran last). Rebuilt per frame and
-        /// copied into the reported set below, which is what makes the message an episode instead of
-        /// a per-frame stream.
-        std::set<String> duplicate_outputs_seen_this_frame_;
-        /// Output names whose collision has already been reported: pruned to the names that are still
-        /// colliding, so a name that breaks again after a clean frame is reported again.
-        std::set<String> duplicate_outputs_reported_;
-
-        /// Passes that asked to publish an output name while having NO render target (they render into
-        /// the window): the registry maps a name to a sampleable target, so there is nothing to publish.
-        /// Rebuilt per frame and pruned into the reported set below, like the collision above — and for
-        /// the same reason: dropping the declaration silently leaves a consumer of that name reporting
-        /// "nothing produced it", which accuses the consumer of the producer's mistake.
-        std::set<raw_ptr<const RenderPass>> unpublishable_passes_seen_this_frame_;
-        /// Those of them already reported (pruned to the passes still declaring it).
-        std::set<raw_ptr<const RenderPass>> unpublishable_passes_reported_;
-        /// Host bindings currently refused because publish() was given no target. A host has no frame
-        /// to re-publish from, so the episode is the name itself: it leaves the set when a publish() for
-        /// it hands over a real target, or when unpublish() withdraws the name.
-        std::set<String> unpublishable_host_names_;
-
-        /// Passes already reported for an unresolved declared input, so a producer
-        /// that stays absent does not produce one message per frame. A pass whose
-        /// input resolves again is dropped from the set, so a later breakage is
-        /// reported again (pruned with the pass list).
-        std::set<raw_ptr<const RenderPass>> unresolved_inputs_reported_;
-        /// Images two passes declared as their output (a structural collision), keyed by ADDRESS: pruned
-        /// to the images still colliding each frame, so a collision that goes away is reported again if
-        /// it comes back (see validateWiring).
-        std::set<OutputIdentity> output_collisions_reported_;
-        /// Promises about a target the pass does not write, keyed by (pass, declared image): a promise is
-        /// a claim about the content a consumer gets, so it has to be about what the pass draws into.
-        /// Pruned the same way (see validateWiring).
-        std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> mismatched_promises_reported_;
-        /// Declared input images a pass cannot draw from, keyed by (consumer, image): the image has no
-        /// producer at all, or its producer is registered after the consumer. Pruned the same way, so a
-        /// wire that is fixed and breaks again is reported again (see validateWiring).
-        std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unusable_inputs_reported_;
-
-        /// Targets a pass actually drew into THIS frame: what a declared input is answered from (a
-        /// promise says whose content a consumer gets, a filled target says what is there). A reused
-        /// vector for the same reason as outputs_: up to one entry per pass, rebuilt every frame.
-        std::vector<raw_ptr<const RenderTarget>> produced_targets_;
-        /// Declared inputs nothing produced this frame, collected while the passes run so the report is
-        /// an episode: seen this frame / already reported (the same prune-and-re-arm rule as the rest).
-        std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unproduced_inputs_seen_this_frame_;
-        std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unproduced_inputs_reported_;
-        /// ScreenPasses that declare no input at all and therefore can never draw (pruned the same
-        /// way; see validateWiring).
-        std::set<raw_ptr<const RenderPass>> missing_inputs_reported_;
-
-        /// ScreenPasses with NO program: there is no implicit shading for them (see
-        /// BuiltinShaders::screenCopyProgram), so such a pass draws nothing. Pruned the same way as the
-        /// reports above, so a pass that is given a program is re-armed.
-        std::set<raw_ptr<const RenderPass>> screen_passes_without_program_reported_;
-
-        /// ScreenPasses that carry a fullscreen program but no camera: the program path builds the
-        /// pass' view from the camera, so such a pass draws nothing at all. Pruned the same way, so a
-        /// pass that is given a camera is re-armed.
-        std::set<raw_ptr<const RenderPass>> program_without_camera_reported_;
-
-        /// Declared images (an output promise or a declared input) that nobody BOUND to a target: an
-        /// unbound identity has no address, so nothing can be delivered through it, and the promise
-        /// check has nothing to compare with the rendered target either. Keyed by the IMAGE, because a
-        /// producer and its consumers share the same unbound object; pruned every frame (the set is
-        /// rebuilt from what this frame saw), so binding it re-arms the report.
-        std::set<raw_ptr<const ImageRef>> unbound_declared_images_reported_;
-
-        /** @brief Opens a frame: forgets this frame's registry and re-collects the standing bindings.
-         *
-         * The per-frame half of the episode rule, and the ONLY place the frame-scoped sets are
-         * cleared. Host bindings (publish) have no producer to re-publish them, so they are seeded
-         * into this frame's produced targets — a declared input addressing one is answered.
-         */
-        void beginFrame();
-
-        /** @brief Closes a frame: each "seen this frame" set BECOMES the reported set.
-         *
-         * The other half of the episode rule: an episode that did not happen this frame drops out
-         * of the reported set, so a problem that comes back is reported again. One place, so no
-         * report can be forgotten into a silent state (or a per-frame stream by accident).
-         */
-        void endFrame();
-    };
 
     WiringState wiring_;
 
-    /// Per registered pass, the wiring declaration revision that was last VALIDATED (in slots_ order),
-    /// so a steady frame stream can tell "nothing the checks read has moved" without rebuilding what they
-    /// read. The vector is reused in place: a frame recomputes it only when it has to validate.
-    std::vector<std::pair<raw_ptr<const RenderPass>, std::uint64_t>> wiring_validated_;
-    /// Runs of validateWiring(), the witness of the rule above (see wiringValidationCount).
-    std::uint64_t wiring_validation_count_ = 0;
-    /// Set when something OTHER than a pass setter invalidated the picture (publish / unpublish).
-    bool wiring_dirty_ = true;
+
+    /// This frame's compiled rows, in the order they run (reused; one per slot).
+    std::vector<PlanRow> plan_rows_;
+    /// The targets this frame had produced when the compile walked to a given row, in production order: what
+    /// an object-typed declared input is answered from (a consumer sees what ran BEFORE it). Reused, and keyed
+    /// by target only - a target is filled once however many passes draw into it.
+    std::vector<raw_ptr<const RenderTarget>> plan_produced_;
+    /// The publications this frame made so far, in publication order, keyed by the PASS that made them: the
+    /// name is read off the pass, so a steady frame copies no strings to answer `resolve(name)`.
+    std::vector<std::pair<raw_ptr<const RenderPass>, raw_ptr<RenderTarget>>> plan_published_;
+
+
+    std::vector<TransientTarget> transients_;
+    /// This frame's problems and the previous frame's, swapped after each compile: the episode rule.
+    std::vector<PlanProblem>     plan_problems_;
+    std::vector<PlanProblem>     previous_problems_;
+    /// Whether a compile is running: while it is, the checks' reports are COLLECTED rather than emitted (see
+    /// reportPlanProblems). One flag, because every check keeps calling reportEngineProblem() as it always did
+    /// - the compile decides what becomes an episode, not each check.
+    bool                         collecting_problems_ = false;
+    /// The declared inputs the structural check spoke about in THIS compile (see unusableInputReported).
+    std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unusable_inputs_this_frame_;
 };
 
 VN_GRAPHICS_NS_END

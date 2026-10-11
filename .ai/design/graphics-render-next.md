@@ -1,6 +1,6 @@
 # graphics 渲染栈的重新设计提案（next，2026-10-11）
 
-**状态：M1 已落地（2026-10-11）；M2 的 M2a/M2b/M2c/M2d 与观测片 M4 已落地（2026-10-11）；M3（状态解析单点）已落地；M5 拆成 M5a（已落地，输入按矩形 + 焦点）/ M5b（未落地，分屏布局的所有者）；M8（SDK 级设备夹具 + 像素判据）已落地（2026-10-11）；其余是提案，未落地** ——
+**状态：M1 已落地（2026-10-11）；M2 的 M2a/M2b/M2c/M2d 与观测片 M4 已落地（2026-10-11）；M3（状态解析单点）已落地；M5 拆成 M5a（已落地，输入按矩形 + 焦点）/ M5b（未落地，分屏布局的所有者）；M8（SDK 级设备夹具 + 像素判据）已落地（2026-10-11）；M7（Pass 描述符 + 每帧 FramePlan，唯一的大改）已落地（2026-10-11）；其余是提案，未落地** ——
 本文回答"如果重新设计这一套会怎么切"，并把每条切成能独立验收的迁移片。落地的部分按本文自己的规矩**以现状文档为准**
 （`appfw-render-view.md` §4.1、`.ai/memory/graphics.md`），这里只留下"原稿哪里说错了"的记录。**本文允许大改**：
 §3.2 是按行业口径重写的（`Surface` + 呈现表 / `Camera` + viewport 矩形 / `View` 配方），不迁就当前实现。
@@ -486,7 +486,7 @@ G-buffer 程序只会得到"被光照过的无光照画面"。真正的规则是
 **判据（已达成）**：见 §5 M1 行。
 **收益（已取得）**：Deferred 与 Forward 四档观感一致，"延迟路径兑现不了"这条诊断、它的文档与它的用例整块删除。
 
-### 3.4 Pass 描述符 + 每帧 FramePlan（唯一的大改）
+### 3.4 Pass 描述符 + 每帧 FramePlan —— **已落地（M7，2026-10-11）**
 
 **目标**：pass 是一份描述符（stage / tag / camera / target / inputs / outputs / state），图每帧编译成 FramePlan；
 transient 目标分配、clear/load op、依赖排序由编译负责；调试时能 dump 出这一帧的完整表格。
@@ -496,12 +496,42 @@ graph.add(PassDesc{ .stage = Overlay, .tag = Hud, .camera = cam, .writes = backb
 FramePlan plan = graph.compile();
 ```
 
-**影响面**：`RenderPass` 退化成一个具体的执行结点（或保留为"老式 pass"以兼容 `engine->addPass` 逃生口）；
-`FpsOverlay`、`AxisGizmo`、`ScreenPass` 变成"带 tag 的普通 pass"；`wiringRevision()` + `validateWiring()` 整块删除
-（声明每帧重建，谁都不需要"通知我你变了"）。
-**风险与理由**：这是唯一会碰所有 pass 的改动，收益（自动资源/自动 barrier/可观测）只有在 pass 数、动态图
-需求或显存压力上来之后才兑现 —— **所以它等触发条件**（§5 的 M7）。
-**行业对照**：Qt3D 的 declarative framegraph、Unreal RDG、Filament FrameGraph。
+**落地形态**（`PassDesc.hpp` + `RenderEngine::addPass(const PassDesc&)` + `src/viz/graphics/src/EngineCompile.cpp`）：
+pass 的声明是**一个值**（`PassDesc`：name / tag / stage / kind / camera / content / writes(`writes_image`+`writes_shape`) /
+output_name / output_target / inputs / input_names / clear· / viewport / program / program_override / polygon_mode /
+depth_mode / enabled / `before_draw`），`kind`（`Scene` / `Screen`）决定**怎么执行** —— 于是"新增一个 pass"是填一条
+描述符，不需要新子类（判据②）。引擎把它**一次性**变成那种 kind 的执行结点（`Scene`→`RenderPass`、`Screen`→`ScreenPass`），
+结点就是声明的唯一存储：描述符声明的 pass 与手搭的 pass 到帧运行那一刻是同一个东西，两条路不会各自漂移；
+`engine->addPass(pass, content, order)` 仍是逃生口（不变量 3）。
+
+**每帧编译**（`compileFrame`，`frame()` 的第一步）：这一帧跑什么、每个声明输入解析到谁（"它**之前**跑过的"，
+与原运行时同一条规则）、transient 目标是谁、以及**这组声明有什么问题** —— 全部在录制之前定下来，帧循环只是执行行。
+不再有"谁知道声明动过"：读声明**就是**编译（旧的 `RenderPass::wiringRevision()` + `wiringDeclarationsChanged()`
+门 + 那 10 组 seen/reported 集合整块删除）。
+
+**落地时改了三处（记账）**：
+
+1. **"一次一集"按句子比，不按结构化 key 比**。原稿说问题列要结构化（pass × identity × 类别）。落地后**问题就是它那句
+   话**：episode = "上一帧编译出现过同一句话"，一集规则整块塌成一次比较（`previous_problems_`），而且不需要第二套
+   词汇（kind/subject）与措辞保持同步。代价只在**有问题的那一帧**付（稳态帧不拼字符串）；一个跨检查的抑制（结构检查
+   说过"没有生产者/生产者在后"就不再说"本帧没人产出"）用一个 per-compile 的集合（`unusable_inputs_this_frame_`）
+   表达，语义与旧代码逐字相同。
+2. **一处行为变化（更诚实）**：旧实现把"声明了未绑定的 ImageRef"记进集合并**在同一帧的尾巴无条件替换** reported 集合，
+   于是"两个 pass 抢一张未绑定图"那一集里，碰撞消息报过之后，**剩下一个生产者时"这张图没绑定"永远不会被说** ——
+   因为它在从未被报告的情况下被记成"已报告"。编译模型里 episode 是"真的报过什么"，所以那张图在碰撞消失后会被说
+   出来（`ImageDeclaredAsOutputByTwoPassesIsReportedOnce` 已按新行为改写并注明）。
+3. **描述符不是 `RenderGraph`**：没有引入独立的图对象 —— 引擎已经持有那张表（`slots_` / `passCount` / `passOrder` /
+   `removePass` / `clearPasses` 都读它），第二个容器就是第二份真相。编译是引擎对自己那张表的一次投影，
+   `FramePlan`（M4 的 dump）就是它的可读形态（判据④：打印列一字未变，只多了一个不打印的 `tag` 字段）。
+   `Pipeline` / `RenderPipelineBuilder` 内部仍以**结点**为把手（`windowPass()` / `offscreenTarget()` / `setWindowPass`），
+   把 builder 也搬成描述符需要"交回结点"的入口 —— 记在 §5 的 M7 行待办里。
+
+**收益（已取得）**：一条 pass 的声明是一个值（`Scene`/`Screen` 两种 kind，零新子类）；帧的真相是**编译出来的一张表**，
+报告是"这一帧真的发现了什么"（不再有"谁动过"这套记账）；transient 目标由编译分配（判据③），宿主不必再持有
+G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevision` 那套整块删除（判据①）。
+
+**判据（已达成）**：见 §5 M7 行。
+
 
 ## 4. 上层：命令上下文与分屏布局
 
@@ -539,7 +569,8 @@ FramePlan plan = graph.compile();
 | **M5a** 输入路由 + 焦点（**已落地 2026-10-11**） | **焦点住在那张表上**（和矩形、清屏一起）：`RenderSurface::focus(view)` / `focusedView()`（默认第一条呈现；撤掉的、或 pass 已经不在帧里的不算 —— 免得把"当前视图"答成一张没人画的画面）。`SurfaceWindow` 的**默认路由改成问表面**（`viewAt`，逻辑像素 ÷ 表面尺寸 → 归一化），`setInputRouter` 从"唯一通路"降级成**覆盖**（返回 nullptr = 交回矩形）；**按下**即把路由到的视图设为焦点（默认路与 router 一样），按下也**总是**捕获（分屏拖出边界不能断线）；**键盘**改去**焦点**（没有位置可路由）。`RenderControl::focusedView()`（无呈现视图时回退控件自己的视图）；五条显示模式命令改**焦点视图**，`setPrimaryRenderControl` 只用来找**控件**、不再决定改哪个视图 | ①分屏两块各自输入：`RenderControlTest.TheSurfacesRectanglesRouteInputWithNoRouterAtAll`（**一条 router 都不装**，右半拖拽只动右边那格，左半按下动控件自己那个视图；键盘跟着焦点走）②五条命令作用于焦点视图：`ModelViewerTest.TheShadingModeCommandsDriveTheCurrentModelView` 追加的一段（焦点在第二格 ⇒ 命令改第二格、主视图不动；焦点转回 ⇒ 同一条命令改主视图、第二格保持）③`setPrimaryRenderControl` 仍被用来找控件（同两条用例的断言）但焦点来自输入。**变异验证**：默认路由不看矩形 ⇒ 失败；按下不设焦点 ⇒ 失败；键盘绕过焦点 ⇒ 失败；`focusedView` 不看存下的焦点 / 不做存活检查 ⇒ 各自失败；命令改回 `control->view()` ⇒ 失败。（写下的"撤销时清焦点"对*结果*冗余 —— 存活检查已经给出同样答案 —— 它挡的是"指针被后来同地址的视图继承"，用例稳定撞不上，如实记账。） | M2d（已落地） | 中 |
 | **M5b** 分屏布局的所有者（**未落地**） | **谁 split、谁销毁、谁改矩形**：splitter 树 / 布局对象（每格一台相机 + 矩形 + 可选 HUD），把"宿主自己给每个视图喂表面尺寸、自己写矩形"这摊事收成一处；**窗口级焦点**（今天的焦点是**每表面**一个，多控件多窗格时要先回答"哪块控件有焦点"）；`ViewContext{ window, focus_view, selection }` 的 `selection` 一轴 | 待定（见 §4） | M5a（已落地） | 中 |
 | **M6** | Device / Session 分离：一设备 N 会话 | ①同一模型开两个窗口只上传一份几何（计数/内存断言）；②一个窗口销毁不带走另一个的会话；③`SessionLease` 类型上禁止"会话先死在租约前"；④R2 的"临时加引用"约定删除（该用例改写仍过） | M2 | 大 |
-| **M7** | Pass 描述符 + 每帧 FramePlan（§3.4） | ①`wiringRevision()`/`validateWiring()` 删除后全部套件绿；②新增一个 pass = 加一条描述符（无新子类）；③transient 目标由编译分配（显存/目标计数断言）；④FramePlan dump 与 M4 同形 | M4（观测先有） | 大 |
+| **M7** | Pass 描述符 + 每帧 FramePlan（§3.4）（**已落地 2026-10-11**） | ①`wiringRevision()`/`wiringDeclarationsChanged()`/`wiringValidationCount()`/`validateWiring()`（420 行）与那 10 组 seen/reported 集合**删除后全部套件绿**（`test_graphics` **342**、`test_vsg` 407、`test_gui` 253、`test_appfw` 32、`test_meshio` 34、`test_iobase` 94）；②新增一个 pass = **一条描述符**（`RenderEngineTest.APassCanBeDeclaredAsAValueAndRunsLikeAnyOther` 场景档 / `AScreenPassCanBeDeclaredAsAValueToo` 全屏档：零新子类，`stage` 定 order、`tag` 进 plan、`before_draw` 每帧钩子、禁用档不跑钩子）；③transient 目标由编译分配（`ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt`：一个声明一张目标、同身份同形状**共享**、稳态帧指针不变、形状变则**替换**、没人声明就释放 —— 全过程 `transientTargetCount()` 计数断言 + `FramePlan::PassPlan::target` 地址断言）；④dump 与 M4 同形（demo 冒烟 11 pass 表逐列不变，只多一个不打印的 `tag` 字段）。**变异 4/4 红**：①编译不解析输入（12 条用例红）②transient 每帧新建（该用例 4 条断言红）③去掉 episode 比较（14 条报告用例红）④描述符的 `before_draw` 不落地（该用例 2 条红）| M4（观测先有） | 大 |
+
 | **M8** | `test_vsg` 的 **SDK 级设备夹具**（**已落地 2026-10-11**，`tests/test_vsg/SdkPixelFixture.hpp` / `SdkPixelFixture.cpp` / `SdkPixelTest.cpp`） | ①**像素**断言（`SdkPixelTest.AWireframeModeDrawsTheEdgesOfTheSameGeometry`：延迟配方 + 非 Lit 档 ⇒ 链条前向；同一视图/相机/pass/目标只换光栅化模式，实测 filled=1296 / lines=180，180 条边**全部**落在实体版覆盖块的一个像素之内，实体版 140 个轮廓像素**全部**有边走过）；②"没有视图也能渲染"的最小用例（`TheFixtureAlsoDrawsContentWithNoViewAtAll`：手搭一条 pass，实测覆盖 3364/4096 ≈ 82%，四角仍是清屏色） | 无 | 中 |
 
 **M1 的验收判据在 M8 里补齐（诚实记账，两份都留）**：M1 当时只有**结构判据**（`test_graphics`，设备无关）+ 应用
@@ -563,7 +594,11 @@ FramePlan plan = graph.compile();
 **触发条件**（不满足就不做，避免为"将来"付费）：
 
 - M6：命中"同一内容要多窗口 / 设备启动开销被窗口数乘 / 视图数 > 4"之一。
-- M7：命中"pass 数或动态图需求上来 / 需要 transient 资源与自动 barrier / M4 的 dump 已经不够用"之一。
+- M7 **已落地**（2026-10-11）：描述符、每帧编译、transient 目标与"一次一集"都换成编译模型（§3.4 的三处记账）。
+  **剩余半边**（属同一片、未做）：`RenderPipelineBuilder` / `Pipeline` 内部仍以结点组装（`windowPass()` /
+  `offscreenTarget()` / `setWindowPass` 这些公开把手的形态决定的），把 builder 也搬成描述符要么给
+  `addPass(PassDesc)` 一条"交回结点"的返回、要么改 `Pipeline` 的公开面；G-buffer 也仍由宿主持有（③的能力与判据都在，
+  builder 还没用它）。这两件都在"下次碰 builder / Pipeline 公开面"时做，不另开片。
 - M1 / M2a / M2b / M2c / M2d / M3 / M5a 不需要触发条件：它们消掉的是**今天就在付**的混乱（一条诊断 + 一条全局
   让位规则 + 一口没有 owner 的清屏 + 一张命名表 + "相机的 aspect 和它被画进的矩形不一定一致" + "矩形与视图各说
   各话" + "输入路由只能由宿主手写"）。

@@ -764,8 +764,44 @@ frame plan: 11 pass(es)
 - `target=window` = 画到窗口（没有离屏目标）；`clear=-` = 这条 pass 不清屏；`viewport=full` = 铺满目标。
 - `last=` 是**上一帧**这条 pass 的记录耗时（微秒）：计划讲的是下一帧会发生什么，只有这个数讲过去，所以它单独标出来；
   没跑的 pass 是 0。
-- 它只读**当前注册表**：不编译图、不分配临时资源（那是 `.ai/design/graphics-render-next.md` §3.4 的目标形态）。
+- 自 M7 起这张表是**编译出来的那一帧**（`RenderEngine::compileFrame`）：帧循环执行的就是它，所以"表里写的"与"这一帧画的"
+  是同一个答案，而不是事后的观察。
 - demo 有现成开关：`VINE_FRAME_PLAN=1` 会在 attach 那一帧之后把它打进日志（见 §4.2）。
+
+### 3.13 一条描述符声明一个 pass：`PassDesc`（含 transient 目标）
+
+一条 pass 的声明是**一个值**：填 `PassDesc` 交给引擎，不必派生类、不必按顺序调十几个 setter——
+
+```cpp
+vn::graphics::PassDesc desc;
+desc.name          = u8"compose";              // 诊断与计划表里的名字
+desc.tag           = u8"Compositing";          // 给人看的标签（"这条 pass 是干什么的"）
+desc.stage         = PipelineStage::Transparent;// 位置由意图决定：pipelineStageOrder() 变成 order
+desc.kind          = PassKind::Screen;         // 怎么执行：Scene（画一个内容场景）/ Screen（全屏三角形 + program）
+desc.camera        = camera.get();
+desc.program       = vn::graphics::screenCopyProgram();
+desc.input_names   = { vn::String(u8"Composite") };   // 声明的输入（名字／ImageRef／target 三种写法与 RenderPass 相同）
+desc.output_name   = u8"Presented";
+desc.before_draw   = [&hud] { hud.update(); };  // 每帧跑一次的内容更新钩子（不需要钩子就留空）
+engine->addPass(desc);
+```
+
+- **位置**由 `stage` 决定；要精确插到某个数就用 `desc.order`（逃生口，见 `PipelineStage` 的刻度）。
+- **`before_draw`** 是"内容每帧自己更新"的唯一钩子（FPS 读数、镜像的坐标轴）：它写**内容**，所以在 pass 记录任何状态之前跑，
+  禁用的 pass 不跑。
+- **transient 目标**：不写 `desc.writes` 而是声明你需要哪张图、什么形状，帧的编译就替你分配、复用、并在没人再声明时释放：
+
+```cpp
+desc.writes_image      = u8"gbuffer";                  // 身份：同身份同形状 = **同一张**目标
+desc.writes_shape.colors = { RenderTarget::ColorFormat::RGBA8 };
+desc.writes_shape.depth  = RenderTarget::DepthFormat::D24;
+// 宽高留 0 ⇒ 跟着这一帧呈现的表面尺寸（engine->resize() 报的那个）
+```
+
+  计数/复用可以用 `RenderEngine::transientTargetCount()` 直接断言（一张声明一张目标；稳态帧不重建；形状变则**替换**而不是新增）。
+- 逃生口不变：`engine->addPass(pass, content, order)` 仍然收一个手搭的 pass（需要结点本身时用它），描述符只是把"声明"
+  变成数据。
+
 
 ## 4. 现成例子：怎么构建、怎么跑
 
