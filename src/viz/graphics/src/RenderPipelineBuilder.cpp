@@ -162,6 +162,9 @@ bool RenderPipelineBuilder::applyOverlays(Pipeline& pipeline, const PipelineOpti
     // Pipeline::resize.
     if (options.gizmo.source_camera != nullptr) {
         auto gizmo = make_intrusive<AxisGizmo>();
+        // Named like every other pass this builder assembles: a name is what makes a frame plan's row (and a
+        // diagnostic) say which pass it is talking about.
+        gizmo->setName(u8"axis_gizmo");
         gizmo->setSourceCamera(options.gizmo.source_camera);
         gizmo->setPixelRatio(options.gizmo.pixel_ratio);
         gizmo->setBoxSize(options.gizmo.box_size);
@@ -176,6 +179,7 @@ bool RenderPipelineBuilder::applyOverlays(Pipeline& pipeline, const PipelineOpti
     // FpsOverlayOptions::enabled.
     if (options.fps.enabled) {
         auto fps = make_intrusive<FpsOverlay>();
+        fps->setName(u8"fps_overlay");
         fps->setPixelRatio(options.fps.pixel_ratio);
         fps->setSize(options.fps.width_px, options.fps.height_px);
         pipeline.addPass(fps, nullptr, overlay_base + options.fps.order);

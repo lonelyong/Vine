@@ -15,6 +15,7 @@
 
 #include "Diagnostics.hpp"
 #include "FrameContext.hpp"
+#include "FramePlan.hpp"
 #include "FrameStats.hpp"
 #include "RenderDiagnostic.hpp"
 #include "BuiltinShaders.hpp"
@@ -222,6 +223,20 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @return The pass' order, or nullopt when no such pass is registered (or @p pass is null).
      */
     std::optional<int> passOrder(raw_ptr<RenderPass> pass) const;
+
+    /** @brief Gets what a frame of this engine consists of: the passes it will run, in the order it runs them.
+     *
+     * The plan is built from the registered passes as they stand NOW, so it is the answer before the next frame
+     * and the same answer that frame will use (a pass added or removed in between makes it a different plan; the
+     * engine reads its slots at frame time, and so does this).
+     *
+     * What it is for: a test that wants to assert the SHAPE of a frame instead of counting passes or comparing
+     * pointers (see `test_graphics`, which does both), a dev switch that prints one table, and a host that wants
+     * to know what a pipeline it was handed actually registered.
+     *
+     * @return The plan, in execution order; empty when nothing is registered.
+     */
+    [[nodiscard]] FramePlan framePlan() const;
 
     /** @brief Sets the DEFAULT program for content: what a drawable naming none of its own gets.
      *
@@ -488,6 +503,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         intrusive_ptr<RenderPass> pass;
         intrusive_ptr<Scene>      content;   // may be null (draws nothing)
         int                       order = 0;
+        /// How long the last frame's record of this pass took, in microseconds (0: it did not run then).
+        /// Measured by frame(); reported through the frame plan (see FramePlan::PassPlan::record_micros).
+        std::uint64_t record_micros = 0;
     };
 
     /** @brief WHICH image a declared output is, as the wiring check compares it (design §14.4).

@@ -108,7 +108,7 @@ appfw/src/gui/
 | 所有权 | 一律"父持有子"：Device → Session → 资源/pass；借用一律 `Lease`/句柄，且**会话必须晚于它的租约销毁**（在类型上表达，不靠约定） | R2 的手工加引用 |
 | 状态 | 一个函数决定一个 draw 的最终状态，输入是 (命令, pass, 视图覆盖)，优先级是一张表 | 分散的 setter + 命名规则 |
 | 能力 | `session->supports(feature)` / `featureLevel()`，可查询、可在建管线之前问 | 事后 `reportEngineProblem` + 文档 |
-| 观测 | 每帧一份 FramePlan（可 dump、可断言结构），替代 `passCount()`/指针身份当替身 | 隐式结构 |
+| 观测 | 每帧一份 FramePlan（可 dump、可断言结构），替代 `passCount()`/指针身份当替身 —— **M4 已落地（2026-10-11）**：`RenderEngine::framePlan()` 返回 `FramePlan{passes}`，`describe()` 出一张表 | 隐式结构 |
 
 ## 3. 四条重切
 
@@ -469,7 +469,7 @@ FramePlan plan = graph.compile();
 | **M2c** | §3.2.5 **aspect 出相机**（**破坏性**）：`Camera` 只留观看 + 投影参数，`projectionMatrix(aspect)`；四处传参（view block / 剔除+memo 键 / 操纵器 / 删 `aspectRatio()`） | ①同一相机两条呈现两块矩形：两边 aspect 都对；②剔除与画面一致（改窄矩形后被剔掉的正是画面外的）；③view block 与 pass 的 viewport 同源；④正交（阴影）行为不变；⑤`test_vsg` 全绿 | M2a/M2b + M4（先有 dump） | 大 |
 | **M2d** | §3.2.5 **矩形放呈现条目**：`Surface::present(view, rect)` / `setViewport(view, rect)`，`SceneView::setViewport` 转发 | ①分屏两条呈现各占半张、aspect 各自正确；②`SceneView::setViewport` 老写法仍可用；③改矩形不重建管线；④`viewAt(x,y)` 与矩形一致 | M2a | 中 |
 | **M3** | §3.1 `resolveRenderState` 单点 | ①逐项状态快照：内容/pass/视图三层各自设过同一项时，最终值 = 优先级表；②`depthExplicit` 类旗标删除后行为不变；③诊断能说出"这一项来自哪一层"；④`graphics-state.md` §4.1 的表从"规则"改成"命名习惯"（文档验收） | 无 | 中 |
-| **M4** | 观测：FramePlan dump | ①一条命令/API 打印这一帧的表格（pass 顺序、目标、输入、clear、状态、耗时）；②`test_graphics` 里至少两条用"结构断言"替换 `passCount()`/指针身份；③dump 与真实执行一致（同一帧的 pass 序列相等） | 无（越早越好，M2/M3 的验收会更硬） | 小 |
+| **M4** 观测：FramePlan dump（**已落地 2026-10-11**） | `FramePlan.hpp`（`PassPlan` 每 pass 的 order/name/content/camera/target/enabled/clear/viewport/inputs/output + 上一帧的 `record_micros`）+ `RenderEngine::framePlan()`（只读、按执行序）+ `FramePlan::describe()`（一行一 pass 的 key=value 表）+ demo 开关 `VINE_FRAME_PLAN=1`（attach 那一帧之后打一行表格） | ①一条 API/开关打印这一帧的表格（`describe()`；demo 真机输出见 `.ai/memory/graphics.md`）②`test_graphics` 两条改用结构断言替换 `passCount()`/指针身份（`SceneViewViewportTest.TheRecipeDecidesWhichOverlayPassesExist` 改断言 pass 名字序列；`RenderPipelineBuilderTest.ForwardPathBuildsWindowPass` 改断言 plan 那一条的全部事实）③dump 与真实执行一致：`RenderEngineTest.TheFramePlanIsWhatTheFrameActuallyRan` 用记录型后端对照"plan 里 enabled 的那些 pass，按序 == 后端被开过 scope 的那些"④耗时是"上一帧"的且说清楚（`TheFramePlanCarriesWhatEachPassLastCost`：慢 pass ≥ 1000 µs、没跑的 pass = 0） | 无 | 小 |
 | **M5** | 分屏布局 + 按矩形推的默认输入路由 + `ViewContext` 命令目标（= §3.2.5 的 M2e） | ①一个窗口 split 成两块分屏：各自相机/输入/HUD 互不干扰（用例）；②"显示模式"五条命令在多分屏下作用于**焦点视图**（同一命令两块各来一遍）；③`setPrimaryRenderControl` 仍可用但不参与焦点解析 | M2c/M2d | 中 |
 | **M6** | Device / Session 分离：一设备 N 会话 | ①同一模型开两个窗口只上传一份几何（计数/内存断言）；②一个窗口销毁不带走另一个的会话；③`SessionLease` 类型上禁止"会话先死在租约前"；④R2 的"临时加引用"约定删除（该用例改写仍过） | M2 | 大 |
 | **M7** | Pass 描述符 + 每帧 FramePlan（§3.4） | ①`wiringRevision()`/`validateWiring()` 删除后全部套件绿；②新增一个 pass = 加一条描述符（无新子类）；③transient 目标由编译分配（显存/目标计数断言）；④FramePlan dump 与 M4 同形 | M4（观测先有） | 大 |

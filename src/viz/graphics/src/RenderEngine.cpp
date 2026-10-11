@@ -1,7 +1,9 @@
 ﻿#include <vine/graphics/RenderEngine.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <functional>
+#include <utility>
 
 #include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/RenderBackend.hpp>
@@ -249,11 +251,18 @@ void RenderEngine::frame(double dt)
     // skipped. The pass's explicit order is announced to the backend before
     // it runs so the backend can stack its retained content slots by that
     // order (equal orders keep registration order).
-    for (const auto& slot : slots_) {
+    for (auto& slot : slots_) {
         RenderPass* pass = slot.pass.get();
         if (pass == nullptr || !pass->isEnabled()) {
+            // A pass that does not run this frame has no cost this frame: its row keeps saying so (see
+            // FramePlan::PassPlan::record_micros) instead of showing what it cost the last time it ran.
+            slot.record_micros = 0;
             continue;
         }
+        // The pass' own record cost, measured here for the frame plan: this is the host-visible half of a frame
+        // (the GPU half is the backend's, see RenderEngine::frameCounters), and it is what "where does the first
+        // frame's build go" is answered with. One clock read per pass, not per draw.
+        const auto pass_started = std::chrono::steady_clock::now();
         raw_ptr<Scene> content = slot.content.get();
         // Pass scope: the backend is told which pass is running (its identity
         // for retained per-pass GPU state, and that it is active this frame),
@@ -278,6 +287,9 @@ void RenderEngine::frame(double dt)
         }
         publishPassOutput(pass);
         backend_->endPass();
+        slot.record_micros = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - pass_started)
+                .count());
     }
 
     // Each "seen this frame" set becomes the reported set: an episode that did not
@@ -336,6 +348,37 @@ std::optional<int> RenderEngine::passOrder(raw_ptr<RenderPass> pass) const
         }
     }
     return std::nullopt;
+}
+
+FramePlan RenderEngine::framePlan() const
+{
+    FramePlan plan;
+    plan.passes.reserve(slots_.size());
+    for (const Slot& slot : slots_) {
+        const RenderPass* const pass = slot.pass.get();
+        if (pass == nullptr) {
+            continue;
+        }
+        PassPlan entry;
+        entry.pass          = pass;
+        entry.order         = slot.order;
+        entry.name          = pass->name();
+        entry.content       = slot.content.get();
+        entry.camera        = pass->camera();
+        entry.target        = pass->renderTarget();
+        entry.enabled       = pass->isEnabled();
+        entry.clears        = pass->isClearEnabled();
+        entry.clear_color   = pass->clearColor();
+        entry.clears_depth  = pass->shouldClearDepth();
+        entry.inputs        = pass->inputNames();
+        entry.output        = pass->outputName();
+        entry.record_micros = slot.record_micros;
+        if (pass->hasViewport()) {
+            entry.viewport = pass->viewport();
+        }
+        plan.passes.push_back(std::move(entry));
+    }
+    return plan;
 }
 
 void RenderEngine::addPass(intrusive_ptr<RenderPass> pass, int order)

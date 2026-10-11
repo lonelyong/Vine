@@ -14,6 +14,7 @@
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/CameraMirror.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
+#include <vine/graphics/FramePlan.hpp>
 #include <vine/graphics/Ray.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
@@ -51,6 +52,7 @@
 
 using namespace vn::graphics;
 using vn::intrusive_ptr;
+using vn::String;
 using vn::Colorf;
 using vn::Color;
 using vn::imaging::Image;
@@ -2349,6 +2351,163 @@ TEST(RenderEngineTest, ClearPassesReleasesEveryRegisteredPass)
     EXPECT_EQ(backend->pass_releases, 2);
 }
 
+/**
+ * @brief The frame plan: what a frame of this pipeline consists of, and whether it is telling the truth.
+ *
+ * The plan is the answer to a question tests used to assemble by hand out of `passCount()` and pointer
+ * comparisons - and, more importantly, the thing a human (or a bug report) reads to see a frame's shape.
+ */
+TEST(RenderEngineTest, FramePlanDescribesThePassesInTheOrderTheyWillRun)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto camera  = intrusive_ptr<Camera>(new Camera());
+    auto target  = intrusive_ptr<RenderTarget>(new RenderTarget());
+
+    auto offscreen = intrusive_ptr<RenderPass>(new RenderPass());
+    offscreen->setName(u8"gbuffer");
+    offscreen->setCamera(camera);
+    offscreen->setRenderTarget(target);
+    offscreen->setViewport(Viewport{ 10, 20, 30, 40 });
+    offscreen->setClearEnabled(false);
+    offscreen->addInputName(u8"SceneColor");
+    offscreen->setOutputName(u8"GBuffer");
+
+    auto present = intrusive_ptr<RenderPass>(new RenderPass());
+    present->setName(u8"present");
+    present->setCamera(camera);
+    present->setClearColor(Color(1, 2, 3, 255));
+    present->setShouldClearDepth(false);
+
+    auto hud = intrusive_ptr<RenderPass>(new RenderPass());
+    hud->setName(u8"hud");
+    hud->setEnabled(false);
+
+    engine->addPass(offscreen, content, -40);
+    engine->addPass(present, content, 0);
+    engine->addPass(hud, 60);
+
+    const FramePlan plan = engine->framePlan();
+    ASSERT_EQ(plan.passes.size(), 3u);
+
+    // Every fact the pass holds about itself, in the shape a reader wants it: what it draws into, through what,
+    // with which content, clearing what, over which rectangle, reading and producing what.
+    EXPECT_EQ(plan.passes[0].pass, offscreen.get());
+    EXPECT_EQ(plan.passes[0].order, -40);
+    EXPECT_EQ(plan.passes[0].name, u8"gbuffer");
+    EXPECT_EQ(plan.passes[0].content, content.get());
+    EXPECT_EQ(plan.passes[0].camera, camera.get());
+    EXPECT_EQ(plan.passes[0].target, target.get());
+    EXPECT_TRUE(plan.passes[0].enabled);
+    EXPECT_FALSE(plan.passes[0].clears);
+    ASSERT_TRUE(plan.passes[0].viewport.has_value());
+    EXPECT_EQ(plan.passes[0].viewport->width, 30);
+    ASSERT_EQ(plan.passes[0].inputs.size(), 1u);
+    EXPECT_EQ(plan.passes[0].inputs[0], u8"SceneColor");
+    EXPECT_EQ(plan.passes[0].output, u8"GBuffer");
+    EXPECT_EQ(plan.passes[0].record_micros, 0u) << "nothing has run yet, and the plan does not pretend otherwise";
+
+    // A pass with no target draws to the WINDOW - said by a null target, exactly as the pass itself says it.
+    EXPECT_EQ(plan.passes[1].name, u8"present");
+    EXPECT_EQ(plan.passes[1].target, nullptr);
+    EXPECT_TRUE(plan.passes[1].clears);
+    EXPECT_EQ(plan.passes[1].clear_color, Color(1, 2, 3, 255));
+    EXPECT_FALSE(plan.passes[1].clears_depth);
+    EXPECT_FALSE(plan.passes[1].viewport.has_value()) << "no viewport: the whole target";
+
+    // A disabled pass is part of the frame's picture and says it will not run.
+    EXPECT_EQ(plan.passes[2].name, u8"hud");
+    EXPECT_FALSE(plan.passes[2].enabled);
+
+    // ... and the table a human reads says the same things, one line per pass.
+    const std::string text = plan.describe().as_std_str();
+    EXPECT_NE(text.find("frame plan: 3 pass(es) (1 disabled)"), std::string::npos);
+    EXPECT_NE(text.find("name='gbuffer'"), std::string::npos);
+    EXPECT_NE(text.find("DISABLED"), std::string::npos);
+    EXPECT_NE(text.find("clear=rgba(1,2,3,255)"), std::string::npos) << "no depth in the clear: the pass said so";
+    EXPECT_NE(text.find("viewport=[10,20 30x40]"), std::string::npos);
+    EXPECT_EQ(std::count(text.begin(), text.end(), '\n'), 3) << "one line per pass, plus the header";
+}
+
+TEST(RenderEngineTest, TheFramePlanIsWhatTheFrameActuallyRan)
+{
+    // The plan is not a second opinion about the frame: the passes it lists as running, in the order it lists
+    // them, are exactly the passes the backend was opened scopes for. Without this the dump would be a plausible
+    // story, which is worse than no dump at all.
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto early = intrusive_ptr<RenderPass>(new RenderPass());
+    early->setName(u8"gbuffer");
+    auto main = intrusive_ptr<RenderPass>(new RenderPass());
+    main->setName(u8"main");
+    auto hidden = intrusive_ptr<RenderPass>(new RenderPass());
+    hidden->setEnabled(false);
+    auto late = intrusive_ptr<RenderPass>(new RenderPass());
+    late->setName(u8"hud");
+
+    engine->addPass(late, 60);
+    engine->addPass(hidden, 40);
+    engine->addPass(main, scene, 0);
+    engine->addPass(early, scene, -40);
+
+    engine->frame(0.016);
+
+    std::vector<const RenderPass*> planned;
+    for (const PassPlan& pass : engine->framePlan().passes) {
+        if (pass.enabled) {
+            planned.push_back(pass.pass);
+        }
+    }
+    EXPECT_EQ(planned, backend->began) << "the plan's running passes, in order, are what ran";
+    ASSERT_EQ(backend->began.size(), 3u);
+    EXPECT_EQ(backend->began[0], early.get());
+    EXPECT_EQ(backend->began[1], main.get());
+    EXPECT_EQ(backend->began[2], late.get());
+}
+
+TEST(RenderEngineTest, TheFramePlanCarriesWhatEachPassLastCost)
+{
+    // A plan cannot know the future, so the one number that is about the past says so: how long the LAST frame's
+    // record of that pass took. A pass that did not run last frame reports none.
+    class SlowPass : public RenderPass
+    {
+      public:
+        void execute(vn::raw_ptr<Scene>, vn::raw_ptr<RenderBackend>) override
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setBackend(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto slow    = intrusive_ptr<SlowPass>(new SlowPass());
+    slow->setName(u8"slow");
+    auto skipped = intrusive_ptr<RenderPass>(new RenderPass());
+    skipped->setName(u8"skipped");
+    skipped->setEnabled(false);
+
+    engine->addPass(slow, 0);
+    engine->addPass(skipped, 10);
+
+    const FramePlan before = engine->framePlan();
+    ASSERT_EQ(before.passes.size(), 2u);
+    EXPECT_EQ(before.passes[0].record_micros, 0u);
+
+    engine->frame(0.016);
+
+    const FramePlan after = engine->framePlan();
+    ASSERT_EQ(after.passes.size(), 2u);
+    EXPECT_GE(after.passes[0].record_micros, 1000u) << "the slow pass really did take about 2 ms";
+    EXPECT_EQ(after.passes[1].record_micros, 0u) << "a pass that did not run has no cost this frame";
+}
+
 TEST(RenderEngineTest, PassOrderAnswersWhereARegisteredPassRuns)
 {
     // The order lives in the ENGINE (addPass places the pass in its slot list), so this is the only way to ask
@@ -2713,11 +2872,20 @@ TEST(SceneViewViewportTest, TheRecipeDecidesWhichOverlayPassesExist)
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
+    // The frame's SHAPE, not a count of it: which passes exist is the question, and the plan answers it by name.
+    const auto pass_names = [&engine] {
+        std::vector<String> names;
+        for (const PassPlan& pass : engine->framePlan().passes) {
+            names.push_back(pass.name);
+        }
+        return names;
+    };
+
     view->setOptions({ .path = ShadingPath::Forward, .gizmo = true, .stats = true });
     view->ensureWindowPass();
 
     // Window pass + the two overlays, and both are visible as soon as they exist.
-    EXPECT_EQ(engine->passCount(), 3u);
+    EXPECT_EQ(pass_names(), (std::vector<String>{ u8"main", u8"axis_gizmo", u8"fps_overlay" }));
     ASSERT_NE(view->pipeline(), nullptr);
     EXPECT_NE(view->pipeline()->gizmo(), nullptr);
     EXPECT_NE(view->pipeline()->fpsOverlay(), nullptr);
@@ -2726,13 +2894,14 @@ TEST(SceneViewViewportTest, TheRecipeDecidesWhichOverlayPassesExist)
 
     // Dropping an overlay from the recipe takes its pass away...
     view->setOptions({ .path = ShadingPath::Forward, .gizmo = false, .stats = true });
-    EXPECT_EQ(engine->passCount(), 2u);
+    EXPECT_EQ(pass_names(), (std::vector<String>{ u8"main", u8"fps_overlay" }));
     EXPECT_FALSE(view->isGizmoVisible());
     EXPECT_TRUE(view->isStatsVisible());
 
     // ... and one rebuild per change leaves no stale registration behind.
     view->setOptions({ .path = ShadingPath::Forward });
-    EXPECT_EQ(engine->passCount(), 1u);
+    EXPECT_EQ(pass_names(), (std::vector<String>{ u8"main" }))
+        << "one pass, still the window pass, and nothing else left over";
     ASSERT_NE(view->pipeline(), nullptr);
     EXPECT_TRUE(drawsToWindow(view->pipeline()->windowPass(), view->camera()));
 }
@@ -3882,9 +4051,17 @@ TEST(RenderPipelineBuilderTest, ForwardPathBuildsWindowPass)
     ASSERT_NE(pipeline, nullptr);
     ASSERT_NE(pipeline->windowPass(), nullptr);
     EXPECT_EQ(engine->passCount(), 1u);
-    // The single window pass presents the view camera and draws the bound
-    // content, exactly like the SceneView default viewer.
-    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
+    // One pass, and the plan says what it is: the window pass drawing the bound content through the pipeline's
+    // camera to the backbuffer, clearing the window grey - the frame's shape in one line instead of three
+    // assertions about a handle.
+    const FramePlan plan = engine->framePlan();
+    ASSERT_EQ(plan.passes.size(), 1u);
+    EXPECT_EQ(plan.passes[0].pass, pipeline->windowPass());
+    EXPECT_EQ(plan.passes[0].name, u8"main");
+    EXPECT_EQ(plan.passes[0].content, content.get());
+    EXPECT_EQ(plan.passes[0].camera, cam.get());
+    EXPECT_EQ(plan.passes[0].target, nullptr) << "no target: the window";
+    EXPECT_TRUE(plan.passes[0].clears);
     EXPECT_EQ(engine->contentOf(pipeline->windowPass()), content.get());
     EXPECT_EQ(pipeline->offscreenTarget(), nullptr);
 }

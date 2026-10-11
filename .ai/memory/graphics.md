@@ -765,3 +765,28 @@
   任一先死都不留悬垂（用例 `APresentedViewThatDiesLeavesTheSurface` / `AViewThatOutlivesItsSurfaceDoesNotCallIntoIt`）。
   全部判据在 `tests/test_graphics/RenderSurfaceTest.cpp`（变异验证：去掉 `applyClear()` 调用 ⇒ 4 条失败；
   去掉 `entry.clears` / 去掉视图重建回调 ⇒ 各 1 条失败；去掉 `~SceneView` 的自解绑 ⇒ 1 条失败）。
+
+## 帧计划：一眼看出这一帧画了什么（M4，2026-10-11）
+
+- **新单元 `FramePlan.hpp/.cpp`**：`struct PassPlan`（`pass` 指针 + `order`/`name`/`content`/`camera`/`target`/
+  `enabled`/`clears`/`clear_color`/`clears_depth`/`viewport`（`optional`，空 = 铺满）/`inputs`/`output`/`record_micros`）
+  + `struct FramePlan{ passes, describe() }` —— 全是**值的拷贝**（两个指针是借用的），也**不回答**"这条 pass 是不是
+  某块表面的呈现"（那是 `RenderSurface` 的事，引擎不认识表面）。
+- **`RenderEngine::framePlan() const`**：按执行序读一遍注册表，只读、不建任何东西。它是"测试别再数 `passCount()`、
+  别比指针身份"的替代品，也是打印给人看的那份。
+- **`Slot::record_micros`**：`frame()` 里每个 pass 的整个 scope（`beginPass` → `endPass`）前后各读一次
+  `steady_clock`（每 pass 一次，不是每次 draw）；**没跑的 pass 清零**。计划讲的是"下一帧会发生什么"，唯一一个讲过去的
+  数就是它，所以它旁边写着 `last=` 而不是混在别的列里。
+- **`describe()`**：一行一 pass 的 key=value 表（`target=window` = 画到窗口，`clear=-` = 它不清屏，
+  `viewport=full` = 铺满）。真机实测（demo 默认 Deferred，`VINE_FRAME_PLAN=1`）11 条：
+  `shadow`(-100) → `gbuffer`(-40) → `deferred_lighting`(0) → `forward_transparent`(20) → `present`(40，唯一画到窗口的那条)
+  → `axis_gizmo`(70) → `fps_overlay`(90) → 四个 `gbuffer_preview`(120..123)；每条的上一帧记录耗时 4~436 µs 同表可见。
+- **顺手给两条内建 HUD pass 起名**（`axis_gizmo` / `fps_overlay`，与 `main` / `gbuffer` / `present` 一致）：没有名字的表里
+  那两行只写得出 `(unnamed)`，也就没法拿"名字序列"当结构断言。
+- 钉子：`RenderEngineTest.FramePlanDescribesThePassesInTheOrderTheyWillRun`（每项事实 + `describe()` 的文本）、
+  `TheFramePlanIsWhatTheFrameActuallyRan`（**plan 里 enabled 的序列 == 记录型后端被开过 scope 的序列** —— 这条让 dump
+  不可能变成"另一个故事"）、`TheFramePlanCarriesWhatEachPassLastCost`（2 ms 的慢 pass ≥ 1000 µs、没跑的 = 0）；
+  另两条老用例改成结构断言：`SceneViewViewportTest.TheRecipeDecidesWhichOverlayPassesExist`（断言 pass 名字序列）、
+  `RenderPipelineBuilderTest.ForwardPathBuildsWindowPass`（断言 plan 那一条的全部事实）。
+- **边界**：M4 只读**当前注册表** —— 不编译图、不分配 transient、不做依赖排序（那是 M7 的 FramePlan 编译）；
+  `describe()` 是文本，结构性断言请直接读 `passes`。

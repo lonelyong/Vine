@@ -679,6 +679,33 @@ surface->dismiss(pipeline->windowPass());
 - **跨引擎的声明会被拒**：视图挂在别的引擎上时 `present(view)` 返回 false 并记一条 `PassProtocolViolation`
   （它的 pass 注册在另一帧上，永远画不到这块表面），不静默。
 
+### 3.12 看一眼这一帧：`RenderEngine::framePlan()`
+
+"这个管线到底画了什么、按什么序、清在哪"以前只能靠数 `passCount()` 或者翻日志猜。现在引擎能把它交出来：
+
+```cpp
+// 结构：按执行序的一组 PassPlan（order / name / content / camera / target / enabled / clear /
+// viewport / inputs / output / record_micros）
+for (const vn::graphics::PassPlan& pass : engine->framePlan().passes) { ... }
+
+// 文本：一行一 pass 的表，直接丢进日志
+VN_LOGI("{}", engine->framePlan().describe().as_std_str());
+```
+
+```
+frame plan: 11 pass(es)
+  [0] order=-100 name='shadow' target=0x2815952fe20 camera=0x281550ad220 content=0x281550b0270 clear=rgba(51,51,51,255,depth) viewport=full inputs=- output='-' last=436us
+  [1] order=-40  name='gbuffer' target=0x2815952ff60 camera=0x281550ada60 content=0x281550b0270 clear=rgba(51,51,51,255,depth) viewport=full inputs=- output='GBuffer' last=376us
+  ...
+  [4] order=40   name='present' target=window     camera=0x281550ada60 content=-               clear=- viewport=full inputs=Composite output='-' last=7us
+```
+
+- `target=window` = 画到窗口（没有离屏目标）；`clear=-` = 这条 pass 不清屏；`viewport=full` = 铺满目标。
+- `last=` 是**上一帧**这条 pass 的记录耗时（微秒）：计划讲的是下一帧会发生什么，只有这个数讲过去，所以它单独标出来；
+  没跑的 pass 是 0。
+- 它只读**当前注册表**：不编译图、不分配临时资源（那是 `.ai/design/graphics-render-next.md` §3.4 的目标形态）。
+- demo 有现成开关：`VINE_FRAME_PLAN=1` 会在 attach 那一帧之后把它打进日志（见 §4.2）。
+
 ## 4. 现成例子：怎么构建、怎么跑
 
 ### 4.1 构建
@@ -702,6 +729,7 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 | --- | --- | --- |
 | `VINE_PIPELINE` | `forward` / `deferred` / `forward_shadowed` / `deferred_shadowed` | 选主窗口**路径**（`forward` / `deferred`）。**默认 `deferred`**；`*_shadowed` 两个取值只为兼容旧脚本保留，选的是与**同名无后缀**完全相同的那条路径 —— 阴影现在两条路径都会建（`addDemoLighting` 给主方向光设了 `castShadow`），后缀不再代表"另一条管线" |
 | `VINE_SHADER_PRESET` | 任意值 | 把内容程序换成 `flatForwardProgram()`（验证平直着色通路） |
+| `VINE_FRAME_PLAN` | 任意值 | attach 那一帧之后把**帧计划**打进日志：一行一 pass（顺序、目标、相机、清屏、视口、输入输出、**上一帧各自的记录耗时**）—— 见 §3.12 |
 | `VINE_VSG_GBUFFER` | 任意值 | 加一个 G-buffer 彩色附件（albedo / normal / specular / view position）的 PiP 预览 |
 | `VINE_VSG_DEFERRED` | 任意值 | 加一条独立的"全屏延迟光照"pass（读 G-buffer 显示光照结果），用于 A/B 对照 |
 | `VINE_VSG_OFFSCREEN_MULTISLOT` | 任意值 | 把一个离屏 target 烘成两个内容槽（主场景 + 顶层叠加）并以 PiP 显示 |

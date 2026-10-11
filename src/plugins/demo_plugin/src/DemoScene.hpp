@@ -146,6 +146,17 @@ class DemoScene
      */
     void installContent(const DemoCubeImages& images);
 
+    /**
+     * @brief Dev switch (`VINE_FRAME_PLAN`): logs the plan of the frame that just rendered.
+     *
+     * One line per pass - order, target, camera, content, clear, viewport, inputs / output, and how long THAT
+     * PASS took to record last frame (see RenderEngine::framePlan). The answer to "what is this pipeline
+     * actually drawing, in what order", without a debugger: the passes are whatever the switches above built.
+     *
+     * Call it after the first frame (the control's attach renders one), or every pass' timing reads zero.
+     */
+    void logFramePlan() const;
+
   private:
     /**
      * @brief Composes the scene content for one path and builds the overlay scene for it.
