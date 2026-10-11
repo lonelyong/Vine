@@ -3,6 +3,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <vine/appfw/gui/Viewer.hpp>
+
 #include <vine/graphics/RenderSurface.hpp>
 
 #include "ControlData.hpp"
@@ -103,19 +105,26 @@ vn::graphics::RenderSurface* RenderControl::surface() const
     return dptr()->surface->surface();
 }
 
+Viewer* RenderControl::viewer() const
+{
+    return dptr()->surface->viewer();
+}
+
 ViewerOptions RenderControl::viewerOptions() const
 {
-    return dptr()->surface->viewerOptions();
+    // The area's FIRST pane (this control's own view): a control hosts one render area, and the request of every
+    // other pane belongs to the viewer (see RenderControl::viewer).
+    return viewer()->viewerOptions(view());
 }
 
 bool RenderControl::setViewerOptions(const ViewerOptions& options)
 {
-    return dptr()->surface->setViewerOptions(options);
+    return viewer()->setViewerOptions(view(), options);
 }
 
 bool RenderControl::setShadingMode(vn::graphics::ShadingMode mode)
 {
-    return dptr()->surface->setShadingMode(mode);
+    return viewer()->setShadingMode(view(), mode);
 }
 
 vn::graphics::SceneView* RenderControl::focusedView() const

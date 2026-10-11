@@ -20,8 +20,41 @@
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/usage.md`（模块文档一节） |
 | **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
+| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）已落地**，见下；S9（引擎不拿裸句柄）/ S10（拆 `RenderDevice`，多窗口共享设备）/ S11（登记不做）未落地 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6 / **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-11 S8 落地：appfw 的 `Viewer` 管 N 个 View（一块渲染区一个查看器）
+
+- **做了什么**：`graphics-window-device-viewer.md` 的第一片（§3 Q5 的裁决）：appfw 多了一个导出的 `Viewer`
+  （`sdk/vine/appfw/gui/Viewer.hpp`，实现在 `src/fw/appfw/src/gui/Viewer.cpp`）—— 视图集合与矩形**读 `RenderSurface` 的呈现表**
+  （`views()` 就是 `presentations()` 里带视图的那些，按引擎执行序；矩形只经 `setPaneRect` →
+  `RenderSurface::setViewport` 写表，查看器一个矩形都不存）；查看器自己只存**每格一条请求**（`ViewerOptions`）+
+  建链/采纳/重建（S7 的 `SurfaceWindow::buildViewerPipeline` 整段搬进去，运行期选择照旧从活着的链搬：档由请求记着，
+  两个 HUD 档读 `isGizmoVisible/isStatsVisible`）。`addView` = 建/采纳 + 在表上声明；`removeView` = `release`（撤声明 +
+  忘请求 + 放引用，链留在视图上）；每格 `setShadingMode` 的两条路（链上覆盖 / 带档重建）一字未改地跟着走。
+- **归属怎么切**：`RenderControl` 收窄成"一块窗口渲染区"（原生面 + 会话 attach/状态机 + 尺寸/DPR + 帧驱动 +
+  `viewer()`）；`SurfaceWindow` 只剩原生面/会话/尺寸/输入/状态机 + `init()` 里一行 `viewer()->takeArea()`；老三条
+  （`viewerOptions` / `setViewerOptions` / `setShadingMode`）**保留为"作用于第一格"**（= 控件自己的视图）的转发，
+  所以 `model_viewer` 的调用点一行未改。
+- **`isActive()` 与 `takeArea()` 是一对，而且都读表**：`isActive()` = 自己的格子至少有一条在表上、且表里没有
+  **宿主自建的 pass**（`view == nullptr` 的呈现 ⇒ 宿主接管，false）；`takeArea()` 在每次 attach（`SurfaceWindow::init()`）
+  被调：表里有宿主 pass 就**什么都不做**（默认链一条都不建 —— demo_plugin 那条路一字未改，已实测），否则给还没有链的
+  格子按请求建链、再逐个声明（幂等）。**"查看器是不是主人"不是一个标志位**，是表的事实（S6/S7 同一条：不存第二份）。
+- **上下文从哪儿来**：gizmo 源相机 = 每格自己的相机；两个 HUD 的像素比 = **表面比例** ⇒ `RenderSurface` 新增读数
+  `pixelRatio()`（比例本来就只有表面这一份 owner —— T1 把它和尺寸一起收在表面；查看器不存副本）。
+- **判据（实测）**：`test_gui` **259**（254 + 5 条新用例：两格各自预设〔设备/引擎数不变〕/ 宿主 pass 接管
+  〔声明先落 + 上线后接管两种次序〕/ `release` 撤声明 / 重建搬运行期选择 / 两格路由与焦点）；`test_graphics` 360、
+  `test_vsg` 426（421 + 3 skip + 2 已知红）、appfw 32 / meshio 34 / iobase 94 全绿；全量 Release 0 error / 0 warning；
+  五 gate 0 finding（`--strict` 仍 22）。**变异 5/5 红（各自单独实测，只有该条用例红）**：① 重建不搬运行期选择 ⇒
+  `ARebuildCarriesTheLiveChainsRuntimeChoices` 红；② 两格共用一份请求 ⇒ `TheViewersPanesEachDrawFromTheirOwnPreset` 红；
+  ③ `release` 不撤声明 ⇒ `ReleasingAPaneTakesItOutOfTheArea` 红；④ `views()` 存第二份（不读表）⇒ 同 ② 红；
+  ⑤ `takeArea` 不因宿主 pass 让位 ⇒ `AHostPassTakesTheAreaAndTheViewerStandsDown` 红。
+- **坑 / 记账**：① `release(view)` 与 `removeView(view)` 是**同一个动作的两个拼法**（`addView` 的逆 / 接管的口径）；
+  ② `addView` 只吃绑在本引擎上的视图（别的视图报一次 `UnsupportedRequest` 后拒绝），表的声明被拒时把视图**还原**
+  （链与请求都还回去，不留半个格子）；③ `views()` 因此**包含宿主自己声明的格**（它是"这块区有哪些视图"，不是
+  "我的格子清单"），`setShadingMode` 只认自己的格（别人的如实回 false）；④ 导出的 `Viewer` 用 PImpl（数据成员只在
+  `Viewer.cpp` 里），查看器在 `SurfaceWindow::Impl` 里声明在 engine → view → surface **之后**（借用三者，先析构）。
 
 ## 2026-10-11 S7 落地：配方归 `Pipeline`，视图只采纳（删掉 `ensureWindowPass` 那一层）
 

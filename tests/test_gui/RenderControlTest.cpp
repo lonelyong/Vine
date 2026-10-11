@@ -15,6 +15,7 @@
 #include <QWindow>
 
 #include <vine/appfw/gui/RenderControl.hpp>
+#include <vine/appfw/gui/Viewer.hpp>
 
 #include <vine/async/DetachedTask.hpp>
 #include <vine/graphics/Camera.hpp>
@@ -221,6 +222,22 @@ vn::intrusive_ptr<vn::graphics::SceneView> secondPane(vn::graphics::RenderEngine
     builder.setCamera(view->camera());
     builder.setContent(view->scene());
     view->setPipeline(builder.build({}));
+    return view;
+}
+
+/**
+ * @brief A pane that waits for its chain: a view bound to @p engine, with nothing adopted and nothing declared.
+ *
+ * The shape Viewer::addView takes (it builds the pane from its request itself), so the test states a request and
+ * lets the viewer own the build rather than pre-building a chain the way secondPane does.
+ *
+ * @param engine Engine the pane's chain will be registered on (the control's, in these tests).
+ * @return The view, ready to be added to a viewer.
+ */
+vn::intrusive_ptr<vn::graphics::SceneView> barePane(vn::graphics::RenderEngine* engine)
+{
+    auto view = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
+    view->setEngine(engine);
     return view;
 }
 
@@ -844,4 +861,251 @@ TEST(RenderControlTest, FollowsARecreatedSurfaceWithoutTheHost)
     ASSERT_EQ(seen.size(), 2u);
     EXPECT_EQ(seen[0], RenderControl::SurfaceState::Pending);
     EXPECT_EQ(seen[1], RenderControl::SurfaceState::Presenting);
+}
+
+// S8：查看器（`RenderControl::viewer()`）管一块渲染区里的 N 个视图，**每格一条自己的请求**（ViewerOptions）：
+// 一格建一条链，全部挂在同一个引擎上、还是那一个设备（会话）。视图集合与矩形读表面的呈现表 —— 查看器不存第二份。
+TEST(RenderControlTest, TheViewersPanesEachDrawFromTheirOwnPreset)
+{
+    HostedControl host;
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+
+    auto* control = host.control();
+    auto* viewer  = control->viewer();
+    auto* surface = control->surface();
+    ASSERT_NE(viewer, nullptr);
+    ASSERT_NE(surface, nullptr);
+    EXPECT_TRUE(viewer->isActive()) << "默认路径：这块表面由查看器的格子呈现";
+
+    const int sessions_before = host.stub()->initialize_calls;  // 设备 = 会话：多一格不该多一个设备
+
+    // 第一格（控件自己的视图）要坐标轴、不要读数；第二格反过来 —— 两条请求各自成立。
+    vn::appfw::gui::ViewerOptions first;
+    first.gizmo = true;
+    ASSERT_TRUE(viewer->setViewerOptions(control->view(), first));
+
+    auto right = barePane(control->engine());
+    vn::appfw::gui::ViewerOptions second;
+    second.stats = true;
+    ASSERT_TRUE(viewer->addView(right, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }, second));
+
+    // 每格一条**自己的**链，挂在同一个引擎上（视图属于引擎，不属于控件）。
+    auto* first_pipeline  = control->view()->pipeline();
+    auto* second_pipeline = right->pipeline();
+    ASSERT_NE(first_pipeline, nullptr);
+    ASSERT_NE(second_pipeline, nullptr);
+    EXPECT_NE(first_pipeline, second_pipeline);
+    EXPECT_EQ(right->engine(), control->engine());
+    EXPECT_NE(first_pipeline->gizmo(), nullptr) << "第一格的请求要的是坐标轴";
+    EXPECT_EQ(first_pipeline->fpsOverlay(), nullptr) << "第一格没有读数这一档";
+    EXPECT_EQ(second_pipeline->gizmo(), nullptr) << "第二格没有坐标轴这一档";
+    EXPECT_NE(second_pipeline->fpsOverlay(), nullptr) << "第二格的请求要的是读数";
+
+    // 集合与矩形读**表**：两格各自的位置写在表面的呈现表里。
+    const auto views = viewer->views();
+    ASSERT_EQ(views.size(), 2u);
+    EXPECT_EQ(views[0], control->view());
+    EXPECT_EQ(views[1], right.get());
+    const auto table = surface->presentations();
+    ASSERT_EQ(table.size(), 2u);
+    ASSERT_TRUE(table[1].rect.has_value());
+    EXPECT_DOUBLE_EQ(table[1].rect->x, 0.5) << "矩形是 addView 那条，写在表里";
+
+    // 宿主自己声明的另一格（不经查看器）也在集合里：这个集合归表面，不归查看器自己记的那一份。
+    auto extra = secondPane(control->engine());
+    ASSERT_TRUE(surface->present(*extra, vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.25, 0.25 }));
+    EXPECT_EQ(viewer->views().size(), 3u);
+
+    // 设备与引擎都没有多出来：一格一条链，不是一格一个设备。
+    EXPECT_EQ(host.stub()->initialize_calls, sessions_before);
+    control->renderFrame();
+}
+
+// 宿主自建 pass 就是"接管这块表面"（见 RenderSurface）：查看器一条都不声明（次序 = demo_plugin 那样，声明先落、
+// attach 后到），已经上线之后再接管也立刻为 false —— 判据是表，不是查看器自己记的一个开关。
+TEST(RenderControlTest, AHostPassTakesTheAreaAndTheViewerStandsDown)
+{
+    // 前半：声明先落、attach 后到 —— 查看器连链都不建（默认画面不许在主人的 pass 旁边再画一遍）。
+    HostedControl host;
+    auto*         control = host.control();
+    auto*         surface = control->surface();
+    auto*         view    = control->view();
+    ASSERT_NE(control->viewer(), nullptr);
+
+    vn::graphics::RenderPipelineBuilder builder(control->engine());
+    builder.setCamera(view->camera());
+    builder.setContent(view->scene());
+    auto host_pipeline = builder.build({});
+    ASSERT_NE(host_pipeline, nullptr);
+    ASSERT_TRUE(surface->present(host_pipeline->windowPass()));
+
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return control->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+    EXPECT_FALSE(control->viewer()->isActive()) << "有宿主自建的 pass 在 ⇒ 查看器不是这块表面的呈现者";
+    const auto table = surface->presentations();
+    ASSERT_EQ(table.size(), 1u) << "查看器一条都没声明（不是'声明了再撤'）";
+    EXPECT_EQ(table[0].view, nullptr);
+    EXPECT_EQ(view->pipeline(), nullptr) << "主人自己搭 pass 时，默认链不该被建出来";
+
+    // 后半：先让查看器上线，再接管一次 —— 判据是表，所以这一次也立刻为 false。
+    HostedControl live;
+    live.show();
+    ASSERT_TRUE(pumpUntil([&] { return live.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+    EXPECT_TRUE(live.control()->viewer()->isActive());
+
+    auto* live_view = live.control()->view();
+    vn::graphics::RenderPipelineBuilder live_builder(live.control()->engine());
+    live_builder.setCamera(live_view->camera());
+    live_builder.setContent(live_view->scene());
+    auto taken_over = live_builder.build({});
+    ASSERT_NE(taken_over, nullptr);
+    ASSERT_TRUE(live.control()->surface()->present(taken_over->windowPass()));
+    EXPECT_FALSE(live.control()->viewer()->isActive()) << "接管之后：表里出现一条宿主自建的 pass";
+}
+
+// release(view)：撤掉查看器为这一格做的那条声明 —— 表里没有它，views() 里也没有（两者读的是同一张表）。
+// 还给宿主的只是"这一格"：它采纳的那条链仍是它的（链属于视图）。
+TEST(RenderControlTest, ReleasingAPaneTakesItOutOfTheArea)
+{
+    HostedControl host;
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+
+    auto* control = host.control();
+    auto* viewer  = control->viewer();
+    auto* surface = control->surface();
+
+    auto right = barePane(control->engine());
+    ASSERT_TRUE(viewer->addView(right, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }, {}));
+    ASSERT_EQ(surface->presentations().size(), 2u);
+    ASSERT_EQ(viewer->views().size(), 2u);
+
+    EXPECT_TRUE(viewer->release(right.get())) << "这一格是查看器的";
+    const auto table = surface->presentations();
+    ASSERT_EQ(table.size(), 1u) << "撤掉的就是它那条声明";
+    EXPECT_EQ(table[0].view, control->view());
+    const auto views = viewer->views();
+    ASSERT_EQ(views.size(), 1u);
+    EXPECT_EQ(views[0], control->view());
+    EXPECT_FALSE(viewer->setPaneRect(right.get(), vn::graphics::NormalizedViewport{}))
+        << "它不再呈现这块表面，矩形也没地方可写";
+    EXPECT_NE(right->pipeline(), nullptr) << "链是视图的：还给宿主的是那一格，不是它的画";
+    EXPECT_FALSE(viewer->release(right.get())) << "已经不是查看器的格子了";
+    EXPECT_FALSE(viewer->removeView(right.get())) << "removeView 是 release 的另一个拼法（addView 的逆）";
+}
+
+// 重建把运行期选择搬到新链（S7 的账，现在记在查看器的每一格上）：档由请求记着（换档 = 改请求），两个 HUD 档的
+// 可见性读**活着那条链** —— 使用者关掉的读数不许因重建复活。
+TEST(RenderControlTest, ARebuildCarriesTheLiveChainsRuntimeChoices)
+{
+    HostedControl host;
+    auto*         control = host.control();
+    auto*         viewer  = control->viewer();
+    ASSERT_NE(viewer, nullptr);
+
+    vn::appfw::gui::ViewerOptions options;  // 延迟链 + 两个档都要：坐标轴 + 读数
+    options.path = vn::graphics::ShadingPath::Deferred;
+    options.gizmo = true;
+    options.stats = true;
+    ASSERT_TRUE(control->setViewerOptions(options));  // 控件的老入口 = 作用于第一格
+    auto* first = control->view()->pipeline();
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first->shadingPath(), vn::graphics::ShadingPath::Deferred);
+    ASSERT_NE(first->gizmo(), nullptr);
+    ASSERT_NE(first->fpsOverlay(), nullptr);
+
+    // 运行期：把读数关掉（零重建的开关）。
+    ASSERT_TRUE(first->setStatsVisible(false));
+
+    // 结构变化（非 Lit 档：延迟链表达不了它）⇒ 重建 —— 关掉的读数必须跟着走，没动过的坐标轴照旧亮着。
+    vn::intrusive_ptr<vn::graphics::Pipeline> held(first);
+    ASSERT_TRUE(viewer->setShadingMode(control->view(), vn::graphics::ShadingMode::Unlit));
+    auto* rebuilt = control->view()->pipeline();
+    ASSERT_NE(rebuilt, nullptr);
+    ASSERT_NE(rebuilt, held.get()) << "延迟链表达不了这一档 ⇒ 换档就是重建（链变前向）";
+    EXPECT_EQ(rebuilt->shadingPath(), vn::graphics::ShadingPath::Forward);
+    EXPECT_TRUE(rebuilt->isGizmoVisible()) << "没被动过的档照旧亮着";
+    EXPECT_FALSE(rebuilt->isStatsVisible()) << "使用者关掉的读数不许跟着重建回来";
+
+    // 档记在**请求**里：下一次从请求重建照样是那一档，运行期选择照样跟着搬。
+    EXPECT_EQ(viewer->viewerOptions(control->view()).mode, vn::graphics::ShadingMode::Unlit);
+    EXPECT_EQ(viewer->viewerOptions(control->view()).path, vn::graphics::ShadingPath::Deferred);
+    ASSERT_TRUE(viewer->setViewerOptions(control->view(), viewer->viewerOptions(control->view())));
+    auto* again = control->view()->pipeline();
+    ASSERT_NE(again, nullptr);
+    ASSERT_NE(again, held.get());
+    EXPECT_EQ(again->shadingMode(), vn::graphics::ShadingMode::Unlit);
+    EXPECT_FALSE(again->isStatsVisible()) << "重建读的是活着的链，不是请求里的字段";
+}
+
+// 两格的路由与焦点（S8）：分屏只在查看器说一次（矩形写在表里），输入按矩形路由、按下即焦点 ——
+// 控件的 focusedView() 读的就是表面那张表的焦点。
+TEST(RenderControlTest, TheViewersPanesRouteInputAndFocusByTheirRectangles)
+{
+    HostedControl host;
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+    host.resizeWindow(640, 480);
+
+    auto* control = host.control();
+    auto* viewer  = control->viewer();
+    auto* surface = control->surface();
+    ASSERT_TRUE(pumpUntil([&] { return control->width() > 0 && control->height() > 0; }, 3000));
+
+    // 两格都由查看器管：控件自己那一格要左半（`setPaneRect` 转发表面的 `setViewport`），新一格要右半。
+    auto* own = control->view();
+    ASSERT_TRUE(viewer->setPaneRect(own, vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 }));
+    auto right = barePane(control->engine());
+    ASSERT_TRUE(viewer->addView(right, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }, {}));
+
+    // 表回答"这一点归谁"（归一化坐标，与矩形同一空间）。
+    EXPECT_EQ(surface->viewAt(0.25, 0.5), own);
+    EXPECT_EQ(surface->viewAt(0.75, 0.5), right.get());
+    EXPECT_EQ(control->focusedView(), own) << "还没人按过：焦点是第一条呈现";
+
+    auto own_keys   = vn::intrusive_ptr<RecordingManipulator>(new RecordingManipulator(own->camera()));
+    auto right_keys = vn::intrusive_ptr<RecordingManipulator>(new RecordingManipulator(right->camera()));
+    own->setManipulator(own_keys);
+    right->setManipulator(right_keys);
+
+    QWindow* const window = host.surface();
+    ASSERT_NE(window, nullptr);
+    const auto send_press = [&](int x, int y) {
+        QMouseEvent event(QEvent::MouseButtonPress, QPointF(x, y), window->mapToGlobal(QPoint(x, y)), Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(window, &event);
+    };
+    const auto send_release = [&](int x, int y) {
+        QMouseEvent event(QEvent::MouseButtonRelease, QPointF(x, y), window->mapToGlobal(QPoint(x, y)), Qt::LeftButton,
+                          Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(window, &event);
+    };
+    const auto send_key = [&] {
+        QKeyEvent event(QEvent::KeyPress, Qt::Key_Left, Qt::NoModifier);
+        QApplication::sendEvent(window, &event);
+    };
+
+    // 右半按下：事件与**焦点**都去右边那一格。
+    send_press(control->width() * 3 / 4, control->height() / 2);
+    EXPECT_EQ(right_keys->mouse_presses, 1);
+    EXPECT_EQ(own_keys->mouse_presses, 0);
+    EXPECT_EQ(surface->focusedView(), right.get());
+    EXPECT_EQ(control->focusedView(), right.get()) << "控件的焦点 = 表面的焦点";
+    send_release(control->width() * 3 / 4, control->height() / 2);
+
+    // 键盘没有位置：它跟着焦点走（刚在右半按过）。
+    send_key();
+    EXPECT_EQ(right_keys->key_downs, 1);
+    EXPECT_EQ(own_keys->key_downs, 0);
+
+    // 换左半按下：焦点跟着回来，键盘也换过去。
+    send_press(control->width() / 4, control->height() / 2);
+    EXPECT_EQ(own_keys->mouse_presses, 1);
+    EXPECT_EQ(right_keys->mouse_presses, 1) << "右边那格不该收到这次按下";
+    EXPECT_EQ(control->focusedView(), own);
+    send_release(control->width() / 4, control->height() / 2);
+    send_key();
+    EXPECT_EQ(own_keys->key_downs, 1);
+    EXPECT_EQ(right_keys->key_downs, 1);
 }

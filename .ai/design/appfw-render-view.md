@@ -1,12 +1,24 @@
 # appfw 渲染视图（最终设计 v2，2026-10-11）
 
-> 状态：**已落地 S0–S4 + 输入路由（S6+②）+ S7 改形**（2026-10-11；其余 S6+ 三轴仍为"缝已定、未实现"）。本文**取代此前各稿**（那些是本设计的推演过程，结论以本文为准）；
+> 状态：**已落地 S0–S4 + 输入路由（S6+②）+ S7 改形 + S8 改形（多视图归 `Viewer`）**（2026-10-11；其余 S6+ 三轴仍为"缝已定、未实现"）。本文**取代此前各稿**（那些是本设计的推演过程，结论以本文为准）；
 > 相关文档：`appfw-render-surface.md`（表面生命周期）、`graphics-pipeline-builder.md`（配方层）、`graphics-pipeline.md`（pass 调度）、
 > `graphics-render-next.md`（**如果重新设计这一套栈会怎么切**：提案，含 M1–M7 迁移切片与触发条件 —— 本文是"现在是什么"，那份是"要变成什么"）。
 >
 > ---
 >
-> **S7 改形（2026-10-11，最新的一条，先读它）**：**配方离开 `SceneView`，归 `Pipeline`；视图只采纳一个**。
+> **S8 改形（2026-10-11，最新的一条，先读它）**：**多视图归 appfw 的 `Viewer`**（`RenderControl::viewer()`）。
+> 一个控件 = 一块渲染区（一个引擎、一个会话、一个设备）**不再等于一个视图**：`Viewer` 管这块区里的每格 ——
+> `addView(view, rect, options)`（按请求建链 + 采纳 + 在表上声明）/ `removeView` = `release` / `views()`（**读呈现表**）/
+> `setPaneRect`（转发 `RenderSurface::setViewport`）/ 每格 `setShadingMode` / `isActive()`（表里有宿主自建的 pass ⇒ false）/
+> `takeArea()`（attach 时给没有链的格子建链再声明；有宿主 pass 就让位）。事实仍在 `RenderSurface`：查看器不存视图清单、
+> 不存矩形，只存"每格的请求"（`ViewerOptions`）。`SurfaceWindow` 只剩原生面/会话/尺寸/输入/状态机 + 一行
+> `viewer()->takeArea()`；老三条（`viewerOptions` / `setViewerOptions` / `setShadingMode`）保留为"作用于第一格"的转发。
+> 落地记录与判据见 `.ai/memory/graphics.md` / `.ai/memory/appfw.md` 顶部 S8 条，设计依据见
+> `graphics-window-device-viewer.md` §3 Q5 与 §7 的 S8 行。
+>
+> ---
+>
+> **S7 改形（2026-10-11，S8 之前的那一条）**：**配方离开 `SceneView`，归 `Pipeline`；视图只采纳一个**。
 > 起因是用户点了 `ensureWindowPass()` 的名（"什么时候该调用"没有答案）—— 它一个名字同时是**配方**和**表要的默认
 > pass 入口**。落地记录与判据见 `graphics-redesign.md` S7、要点见 `.ai/memory/graphics.md` 顶部。
 >
@@ -17,7 +29,7 @@
 > | `Pipeline`（`RenderPipelineBuilder` 建） | **配方**：走哪条链（`PipelineOptions::path` / `shadingPath()`）、哪些档**存在**（`gizmo`/`fps`）、**运行期**的档与档可见性（`setShadingMode` / `setGizmoVisible` / `setStatsVisible`） | —— |
 > | `SceneView` | 相机、内容场景、操纵器、二维组与输入、**采纳的那条链**（`setPipeline` / `pipeline()`）、矩形与表面归属 | 配方、`Options`、`setOptions`、`ensureWindowPass`、`default_pipeline_` |
 > | `RenderSurface` | 呈现表（谁画这块表面、矩形、清屏、顺序、尺寸）—— 只**解析**声明，不建任何东西 | 顺手建视图的默认链（`present(view)` 现在要求视图**先采纳**一条链，否则拒绝 + 报一次） |
-> | appfw `RenderControl` / `SurfaceWindow` | **查看器**这一层：`viewerOptions()` / `setViewerOptions()` / `setShadingMode()`（`gui/ViewerOptions.hpp` = 链 / 档 / 两个档在不在 / 离屏尺寸；上下文字段——gizmo 源相机、两个 HUD 的像素比——由控件补） | ——（"没有任何声明就建默认链"这条兜底现在在 `SurfaceWindow::init()`） |
+> | appfw `RenderControl` / `SurfaceWindow` / `Viewer` | **查看器**这一层（**S8 之后归 `Viewer`**）：视图集合与矩形读表面、每格一条请求（`gui/ViewerOptions.hpp` = 链 / 档 / 两个档在不在 / 离屏尺寸）、建链/采纳/重建搬运行期选择；上下文字段（gizmo 源相机 = 该格相机、两个 HUD 的像素比 = 表面比例）在建链时补 | ——（"没有任何声明就建默认链"这条兜底现在在 `Viewer::takeArea()`，`SurfaceWindow::init()` 每次 attach 调它） |
 >
 > **一条判据（S7 新增）**：**"有没有这一档"与"看不看得见"是两件事** —— 选项回答前者（变更 = 一次建链），
 > `Pipeline` 的 setter 回答后者（零重建）；答不出时**拒绝 + 报一次**（不静默）。
@@ -766,11 +778,12 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 > `RenderSurface::viewAt`），按下即焦点（`focusedView()`）；`setInputRouter` 只是覆盖。
 > 本节其余内容仍然为真。
 
-**额外视图要显式要默认管线**：`ensureWindowPass()` 是"**我要**这条默认管线"的动作，`setOptions()` 只改配方。
-控件**自己**那个视图由 attach + 表面的兜底声明触发（§2.2）；宿主新建的视图没有 attach 事件 ⇒ 自己声明一次
-`control->surface()->present(*view)`（一行，幂等，它顺带建出那条默认窗口管线；`ensureWindowPass()` 仍然可用，
-只是它不再回答"这块表面上有没有别人"）。这也是缝 1 的另一半：**你要主 pass，就在表面上说一声（`present(pass)`），
-我不建；你什么都不说，我就用自己那个视图建一条**。
+**额外视图怎么上屏（2026-10-11 更新）**：正文原话是"`ensureWindowPass()` 是'**我要**这条默认管线'的动作 …… 宿主新建的
+视图没有 attach 事件 ⇒ 自己声明一次 `control->surface()->present(*view)`"。S7 把那个动作删了（配方归 `Pipeline`、
+视图只采纳），S8 又给了它一个正道：**`control->viewer()->addView(view, rect, options)`** —— 建链 + 采纳 + 在表上声明
+一次做齐，多格各自的预设也归它（矩形与视图集合读表，查看器不存第二份）。控件自己那个视图（第一格）的默认链与声明
+由查看器在 attach 时落（`Viewer::takeArea()`，`SurfaceWindow::init()` 调）。缝 1 的另一半没变：**你要主 pass，就在
+表面上说一声（`present(pass)`），查看器一条都不建**。<!-- drift-ok: 上面引用的是 S7/S8 之前的写法 -->
 
 ## 13. 所有权：`SceneView` ↔ `RenderEngine`（本轮补）
 
@@ -779,15 +792,20 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 ```
 SurfaceWindow::Impl（宿主 = 控件）
   ├─ intrusive_ptr<RenderEngine> engine    ← 强引用（声明在前）
-  └─ intrusive_ptr<SceneView>    view      ← 强引用（声明在后 ⇒ 析构序：view 先、engine 后）
+  ├─ intrusive_ptr<SceneView>    view      ← 强引用（声明在后 ⇒ 析构序：view 先、engine 后）
+  ├─ intrusive_ptr<RenderSurface> surface  ← （S8 的现状：还在 view 之后）
+  └─ unique_ptr<Viewer>          viewer    ← （S8 的现状：最后声明 ⇒ 最先析构 —— 它把上面三者都借了一遍）
 SceneView
   ├─ raw_ptr<RenderEngine>       engine_   ← 借用（接口意图：不延长寿命）
-  └─ intrusive_ptr<Pipeline>     default_pipeline_
+  └─ intrusive_ptr<Pipeline>     default_pipeline_   ← S7 之后叫 pipeline_（采纳的那条链）
                        └─ intrusive_ptr<RenderEngine> engine_   ← 强引用（同一条引擎，私有、无访问器）
 RenderEngine
   └─ slots_: { intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content }
                        └─ RenderPass: intrusive_ptr<Camera>（"The pass KEEPS the camera alive"）
 ```
+
+<!-- drift-ok: 上面那条 `default_pipeline_` 是 S7 之前的名字；本节其余结论（借用 + 一条强引用兜底、R2、两个方向
+的解说）在 S7/S8 之后照旧成立 —— 只是"视图呈现出画面"那一步现在要它**先采纳一条链**（`setPipeline`）。 -->
 
 | 边 | 强度 | 依据 |
 | --- | --- | --- |
@@ -830,7 +848,7 @@ RenderEngine
 | 交互 → 命中 → 捕获 → release | ✅（缝） | 契约三条本轮补齐（§5）：`nullptr` 回退自己的视图 / 必须本引擎的视图 / 捕获期持强引用 |
 | 换屏（句柄重建）→ 再 attach | ✅ | `ensureWindowPass()` 幂等 ⇒ 管线沿用、后端移动会话；`init()` 之后补一次尺寸 |
 | 销毁 | ✅ | 控件 `Impl` 反序（view → engine）；视图 dtor 注销自己的 pass；R2 保"注销那一刻引擎活着" |
-| 多视图的 attach | ⚠️→✅ | **本轮修**：宿主的额外视图没有 attach 事件 ⇒ 在表面上显式声明（`control->surface()->present(*view)`，不变量 16、§12.2） |
+| 多视图的 attach | ✅（M2a；S8 起有正道） | 宿主的额外视图没有 attach 事件 ⇒ 在表面上显式声明（`control->surface()->present(*view)`，不变量 16、§12.2）；**S8 之后**这条归 `Viewer`：`control->viewer()->addView(view, rect, options)` 一次做齐建链 + 采纳 + 声明，控件自己那一格由 `Viewer::takeArea()` 在 attach 时落 |
 | 多视图的清屏 | ✅（M2b，2026-10-11） | 以前是"后端逼出来的约定：loadOp 整张清 ⇒ 恰好一个清 + 它排最前"；现在由**表面**保证：呈现表第一条保留自己的清屏，其余条被关掉，第一条走掉时下一条的 ask 恢复（§12.2 第 3 条） |
 
 ### 14.2 API 范式

@@ -125,6 +125,35 @@
 > 实例方法 `postToMain()` 与 `Application::startupProgress()` 都删了（前者是同义词，后者与 `StartupProgress::current()` 重复）。
 > **`Application::d` 已私有**（叶子只走 `dptr()`）；`argv()` 返回 `char* const*`。
 
+## 2026-10-11 S8 落地：`Viewer` 管一块渲染区里的 N 个 View
+
+- **结论**：一个控件 = 一块渲染区（一个引擎、一个会话、一个设备）**不再等于一个视图**。控件多了一只手
+  `RenderControl::viewer()`（导出的 `vn::appfw::gui::Viewer`：`sdk/vine/appfw/gui/Viewer.hpp` +
+  `src/fw/appfw/src/gui/Viewer.cpp`），管这一块区里的每格：`addView(view, rect, options)`（建链 + 采纳 + 在表上声明）、
+  `removeView`（= `release`：撤声明 + 忘请求 + 放引用）、`views()`、`setPaneRect`、`setShadingMode(view, mode)`、
+  `viewerOptions(view)` / `setViewerOptions(view, options)`、`isActive()`、`takeArea()`。
+- **事实只有一份（S6/S7 同一条）**：视图集合与矩形**读表面的呈现表**（`views()` = `presentations()` 里的视图项，
+  按引擎执行序；矩形只写在表里，`setPaneRect` 转发 `RenderSurface::setViewport`）；查看器自己只存"每格的请求"。
+  `isActive()` 也读表：表里有**宿主自建 pass**（`view == nullptr` 的呈现）⇒ 宿主接管，false；自己的格子一条都没
+  呈现也 false。`takeArea()`（`SurfaceWindow::init()` 每次 attach 调一次）在表里有宿主 pass 时**什么都不做**
+  —— demo_plugin 那条"声明自己的主 pass、控件就一条默认链都不建"的路因此一字未改（已实测：声明先落时
+  `view()->pipeline()` 仍为空、表里只有那条 pass）。
+- **老三条是"作用于第一格"的转发**（不变量 1：公开面不删入口）：`RenderControl::viewerOptions()` /
+  `setViewerOptions()` / `setShadingMode()` 现在都走 `viewer()` + `view()`；`model_viewer` 的调用点因此没改。
+  `SurfaceWindow` 里 `viewer_options` 状态、那三条入口与 `buildViewerPipeline()` 整段搬进 `Viewer`
+  （重建搬运行期选择的账照旧，只是记在查看器身上）。
+- **判据（实测）**：`test_gui` **259**（254 + 5：`TheViewersPanesEachDrawFromTheirOwnPreset` /
+  `AHostPassTakesTheAreaAndTheViewerStandsDown` / `ReleasingAPaneTakesItOutOfTheArea` /
+  `ARebuildCarriesTheLiveChainsRuntimeChoices` / `TheViewersPanesRouteInputAndFocusByTheirRectangles`）；
+  `test_graphics` 360 / `test_vsg` 426（421 + 3 skip + 2 已知红）/ appfw 32 / meshio 34 / iobase 94 全绿；全量 Release
+  0 error / 0 warning；五 gate 0 finding（`--strict` 仍 22）。**变异 5/5 红**（重建不搬运行期选择 / 两格共用一份请求 /
+  `release` 不撤声明 / `views()` 不读表 / `takeArea` 不让位）。
+- **坑 / 记账**：① 图形层加了一个读数 `RenderSurface::pixelRatio()`（HUD 的像素比 = 表面比例，查看器不存副本；
+  S6/T1 之后比例只有表面这一份 owner）；② `release` 与 `removeView` 是同一个动作的两个拼法（"撤声明"的接管口径 /
+  `addView` 的逆），链留在视图上（采纳是单向的，谁采纳谁拥有）；③ 导出的 `Viewer` 用 PImpl，实例由 `SurfaceWindow`
+  持有、声明在 engine → view → surface **之后**（它借用三者，先析构）；④ 视图与矩形的事实仍在表面，所以
+  `views()` **包含宿主自己声明的格**（它是"这块区有哪些视图"），`setShadingMode` 只认自己的格。
+
 ## 三条横切规则
 
 1. **线程**：命令在它**恢复时所在的线程**上继续（定时器/IO/线程池），所以
@@ -258,10 +287,10 @@
   不画）；`RenderSurface::present(view)` **只解析不建**（没有链的视图被拒绝 + 报一次 ⇒ 宿主顺序固定成**先建链、
   再采纳、再声明**）；appfw 拿走"查看器"这一层：`gui/ViewerOptions.hpp`（`path`/`mode`/`gizmo`/`stats`/离屏尺寸，
   上下文字段——gizmo 源相机、两个 HUD 的像素比——由控件补）+ `RenderControl::viewerOptions()/setViewerOptions()/
-  setShadingMode()`。"有没有这一档"（选项）与"看不看得见"（setter）从此是两个问题两个答案。
+  setShadingMode()`（**S8 之后归查看器管**：这三条是 `Viewer` 上同一组入口的"第一格"转发，见上面 S8 那条）。"有没有这一档"（选项）与"看不看得见"（setter）从此是两个问题两个答案。
   **一条坑**：换档的判据是"**这个请求**会建成哪条链"（`RenderPipelineBuilder::effectivePath()` 公开成静态就是
   给它用的），不是"这条链能不能表达这个档" —— 少了这半句，前向链表达得了 Lit，于是永远回不到延迟链。
-  **重建**由重建的那一方把运行期选择搬过去（`SurfaceWindow::buildViewerPipeline` 读活着的链、在新链上重落一遍；
+  **重建**由重建的那一方把运行期选择搬过去（**S8 之后在 `Viewer` 的建链那一步**：读活着的链、在新链上重落一遍；
   与 S6"一个值一个 owner"同一条）。判据：graphics 360 / gui 254 / vsg 426（421+3 skip+2 已知红）+ appfw 32 /
   meshio 34 / iobase 94 全绿、全量 0 error / 0 warning、五 gate 0 finding；**变异 5/5 红**。
   落地记录见 `.ai/design/graphics-redesign.md` S7。
@@ -449,10 +478,12 @@
 
 ## 视图把内容交给渲染只有一个接口（2026-09-29，model_viewer 的"打开了却看不到"）
 
-- **不要自己造 `SceneView`**：`RenderControl` 构造时就把 `SurfaceWindow` 建好了，那个面在构造里造出**它唯一的**
+- **不要自己造 `SceneView`**：`RenderControl` 构造时就把 `SurfaceWindow` 建好了，那个面在构造里造出**它自己的**
   `SceneView` 并 `setEngine`（`SurfaceWindow.cpp` 里的 `d->view`），后端只绑这一个。挂到自己另造的 `SceneView` 上的
   场景，屏幕上什么都不会有（`model_viewer` 原来就是这样：内存载荷与文件载荷都不显示）。
-  正确形状：`render_control->view()->scene()->setRoot(root)`（`demo_plugin/src/DemoScene.cpp` 就是这写法）。
+  正确形状：`render_control->view()->scene()->setRoot(root)`（`demo_plugin/src/DemoScene.cpp` 就是这写法）；
+  **S8 之后"自己另造的视图"有了正道**：`control->viewer()->addView(view, rect, options)` 一次做齐建链 + 采纳 + 声明，
+  于是它真的会画（这条老教训的下一形态见上面 S8 那条）。
 - **"一份文档一份相机"不需要自己造 view**：一个文档一个视图 ⇒ 一个视图一个控件 ⇒ 一个控件一个面 ⇒ 一个 view，
   相机与轨道操纵器各是各的。
 - `view()` / `engine()` 在控件构造后即可用，不必等 attach；没注册后端时面只是停在 `Failed`（`init()` 返回 false，
@@ -527,7 +558,9 @@
   这条查询同时就是"我记的那条 pass 还在不在"。
 - **`SceneView::ensureWindowPass()` 不再问引擎**："有人用我这台相机呈现了吗"这个推断删掉了（全局、顺序敏感，
   而且会**静默跳过**共用一台相机的第二个视图）。它现在就是"把默认窗口管线建出来"，是否该建由**表面**决定：
-  `SurfaceWindow::init()` 一句 `if (!d->surface->hasPresentation()) d->surface->present(*d->view);`（仍在后端检查**之前**）。
+  `SurfaceWindow::init()` 一句 `if (!d->surface->hasPresentation()) d->surface->present(*d->view);`（仍在后端检查**之前**；
+  **S8 之后这句展开成 `d->viewer->takeArea();`** —— 判定从"表里有没有东西"收紧成"表里有没有**宿主自建的 pass**"，
+  见上面 S8 那条）。
 - **谁要接手就得说**：宿主自建主 pass（`demo_plugin` 的 `addDemoPipeline`）在 `pipeline` 建好后
   `surface->present(pipeline->windowPass())` —— 声明在 attach 之前（`DemoScene::install()` 与 `initAsync()` 同一拍、
   在其前），所以默认窗口管线一条都不建。视图挂在**别的引擎**上时 `present` 明确拒绝 + 记一条 `PassProtocolViolation`

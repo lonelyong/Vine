@@ -702,20 +702,25 @@ view->onSurfaceResized(w, h, dpr);        // 只喂**表面**尺寸 + 比例；"
   `RenderPipelineBuilder::effectivePath()` 把链建成**前向**（选项字段不动，`Pipeline::shadingPath()` 记的是**实际建成**的那条），
   于是四档在两条请求上都能画出来；同一条链上换档零重建，而"延迟请求 + 非 Lit 档"期间选回 `Lit` 是一次建链
   （回到延迟链 —— 这就是那句 `effectivePath()` 公开成静态的用途）。
-- **重建之后谁把运行期选择搬过去**：重建的那一方（appfw 的 `SurfaceWindow::buildViewerPipeline` 读活着的链、
-  在新链上重新落一遍）。链自己只知道选项说了什么。
+- **重建之后谁把运行期选择搬过去**：重建的那一方（appfw 的 `Viewer`：读活着的链、在新链上重新落一遍 ——
+  `isGizmoVisible()` / `isStatsVisible()`；档由每格的请求记着）。链自己只知道选项说了什么。
 - **灯是场景的，不是面的**：`scene->addLighting(vn::graphics::LightRig::studio())`（零灯只有后端
   `ambient=0.15` 的常量填充 ⇒ 一片平色，看起来像"没装灯"）。
 - **谁呈现这块表面是声明的**（`RenderSurface`，见 §3.11）：表只**解析**声明（视图的声明 → 它采纳的那条链的窗口
   pass），它不建任何东西。宿主自建主 pass 时声明自己那条，视图那条就一句都不建（**不采纳就没有默认链**：
-  "没有任何声明就建默认链"这条兜底归 appfw 的 `RenderControl`）。
-- **宿主那一层（appfw）**：`RenderControl::viewerOptions()/setViewerOptions()/setShadingMode()` 是"省事的视图"在
-  应用侧的化身 —— `vn::appfw::gui::ViewerOptions`（链 / 档 / 两个档在不在 / 离屏尺寸）加上控件补上的上下文字段
-  （gizmo 的源相机 = 视图相机、两个 HUD 的像素比 = 表面比例）；`setViewerOptions()` = 一次建链 + 采纳，
-  `setShadingMode()` 先试链上的开关、链表达不了才带档重建。
+  "没有任何声明就建默认链"这条兜底归 appfw 的 `Viewer::takeArea()`）。
+- **宿主那一层（appfw）**：`RenderControl::viewer()`（`vn::appfw::gui::Viewer`）管**一块渲染区里的每格** ——
+  视图集合与矩形**读表面的呈现表**（`views()` / `setPaneRect`），它自己只存"每格的请求"
+  （`vn::appfw::gui::ViewerOptions`：链 / 档 / 两个档在不在 / 离屏尺寸）+ 建链时补上的上下文字段
+  （gizmo 的源相机 = 该格的相机、两个 HUD 的像素比 = 表面比例）；`addView(view, rect, options)` = 建链 + 采纳 +
+  在表上声明，每格 `setShadingMode()` 先试链上的开关、链表达不了才带档重建；`isActive()` 读表（表里有宿主自建的
+  pass ⇒ 宿主接管，false），`release(view)` 把一格还给宿主。
+  `RenderControl::viewerOptions()/setViewerOptions()/setShadingMode()` 保留为**作用于第一格**（控件自己的视图）
+  的转发，单视图宿主一个字都不用改。
 - 配方/几何/开关三层与"两处同名 vs 一处覆盖"的完整理由见
-  [`.ai/design/appfw-render-view.md`](../../../../.ai/design/appfw-render-view.md) §4.1、§7，落地记录见
-  [`.ai/design/graphics-redesign.md`](../../../../.ai/design/graphics-redesign.md) S7。
+  [`.ai/design/appfw-render-view.md`](../../../../.ai/design/appfw-render-view.md) §4.1、§7、§12，落地记录见
+  [`.ai/design/graphics-redesign.md`](../../../../.ai/design/graphics-redesign.md) S7 与
+  [`.ai/design/graphics-window-device-viewer.md`](../../../../.ai/design/graphics-window-device-viewer.md) S8。
 
 ### 3.11 一块表面由谁画：`RenderSurface`
 
@@ -723,7 +728,8 @@ view->onSurfaceResized(w, h, dpr);        // 只喂**表面**尺寸 + 比例；"
 原生窗口）。它是一张**有序的呈现表**，顺序按**引擎的执行序**（`addPass()` 的槽）：
 
 ```cpp
-// 表面的默认呈现：控件自己的视图（appfw 的 SurfaceWindow::init() 就是这么兜底的）
+// 表面的默认呈现：控件自己的视图（appfw 的 Viewer::takeArea() 在每次 attach 时这么兜底 —— 表里有宿主自建的
+// pass 就让位，一条默认链都不建）
 auto* surface = control->surface();
 if (!surface->hasPresentation()) {
     surface->present(*control->view());   // 声明它采纳的那条链的窗口 pass —— 先建链、先采纳，才有东西可指
@@ -760,6 +766,22 @@ vn::graphics::SceneView* under = surface->viewAt(0.75, 0.5);   // 右半 = right
 // 用户在哪儿（焦点）：按下时由输入路径写入，命令层拿它回答"当前视图是哪个"
 surface->focus(right.get());                                  // 也可以传 nullptr：清掉显式焦点
 vn::graphics::SceneView* current = surface->focusedView();     // 没人按过 = 第一条呈现
+```
+
+**appfw 那一层（一块控件里的分屏）**：每格一条请求，查看器把"建链 + 采纳 + 声明"一次做齐 —— 矩形照旧写在表面上
+（`views()` 读的就是它），查看器不存第二份：
+
+```cpp
+auto* viewer = control->viewer();
+viewer->setPaneRect(control->view(), vn::graphics::NormalizedViewport{ 0.0, 0.0, 0.5, 1.0 });  // 第一格也要半张
+
+auto right = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
+right->setEngine(control->engine());                          // 同一个引擎 = 同一个设备、同一条帧
+vn::appfw::gui::ViewerOptions options;                        // 这一格的请求（链 / 档 / 两个档 / 离屏尺寸）
+options.stats = true;
+viewer->addView(right, vn::graphics::NormalizedViewport{ 0.5, 0.0, 0.5, 1.0 }, options);
+// 每格自己的链：control->view()->pipeline() 与 right->pipeline() 是两条（各自的档各自建）
+// 每格自己的档：viewer->setShadingMode(right.get(), vn::graphics::ShadingMode::Wireframe);
 ```
 
 `RenderControl::focusedView()` 是控件层的那句话（表面没有呈现视图时回退控件自己的视图），五条"显示模式"命令

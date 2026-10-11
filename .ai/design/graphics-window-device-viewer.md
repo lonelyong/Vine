@@ -1,6 +1,6 @@
 # 窗口 · 设备 · 引擎 · 视图 · 离屏 · 多窗口 —— 目标设计（提案，2026-10-11）
 
-> 状态：**提案（未落地）**。本文是 S7（配方归 `Pipeline`、视图只采纳）落地之后，用户逐条追问的设计收敛结果：
+> 状态：**S8 已落地（2026-10-11），S9–S11 仍为提案**。本文是 S7（配方归 `Pipeline`、视图只采纳）落地之后，用户逐条追问的设计收敛结果：
 > "`RenderControl` 职责是不是复杂了？要不要 `ViewerBase/AAAViewer`？" → "Viewer 管理多个 View" → "引擎不该接受
 > `WindowHandle`，应该接受 Device？一个 Viewer 一个 Engine 还是一个 View 一个 Engine？" → "无窗口怎么初始化
 > Device？新增窗口怎么绑到窗口 surface？"。
@@ -124,7 +124,7 @@
 目标**；没有目标就没有解析、没有取像、没有 present。S4b 已经让"窗口"在后端契约里可选（#3、#7），本文只是
 把这件事在**设备**这一层也说清（`presentation == false` 是一等形态，不是错误）。
 
-### Q5 谁管多视图？——**appfw 的 `Viewer` 管 N 个 `View`；事实留在 `RenderSurface`**
+### Q5 谁管多视图？——**appfw 的 `Viewer` 管 N 个 `View`；事实留在 `RenderSurface`**（**已落地 2026-10-11：S8**）
 
 - **为什么需要一个"管多个视图"的对象**：预设今天挂在**控件**上 ⇒ "四分屏每格各自预设"只能变成四控件 = 四设备
   （与 §12.1 冲突）。多格预设今天**无处可放**。
@@ -135,6 +135,12 @@
 - **为什么不做基类**：`ViewerBase → AAAViewer/BBBViewer` 没有可覆写的行为（viewer 之间的差别是**值**）；
   "哪种 viewer"的真实扩展点是 `DocumentView` + 插件（`ModelRenderView` / `DemoView` 已经在做）。
 - **窗口相关的能力归谁**：`Viewer` 借（引擎、视图、区），**不持**设备/会话/原生面；attach 与 DPR 归控件。
+- **落地形态（S8）**：`vn::appfw::gui::Viewer`（`sdk/vine/appfw/gui/Viewer.hpp`）：`addView`（建链 + 采纳 + 在表上
+  声明）/ `removeView` = `release` / `views()`（读表）/ `setPaneRect`（转发 `RenderSurface::setViewport`）/
+  每格 `setShadingMode` / `viewerOptions(view)` / `setViewerOptions(view, options)` / `isActive()`（表里有宿主自建的
+  pass ⇒ false）/ `takeArea()`（attach 时给没有链的格子建链再声明；有宿主 pass 就让位，什么都不建）。
+  `RenderControl::viewer()` 把它交出去，老三条（`viewerOptions`/`setViewerOptions`/`setShadingMode`）保留为"作用于
+  第一格"的转发。判据与变异见 `.ai/memory/appfw.md` / `.ai/memory/graphics.md` 顶部 S8 条。
 
 ### Q6 设备共享与多 GPU 谁决定？——**应用层策略；SDK 不注册表**
 
@@ -199,7 +205,7 @@
 
 | 片 | 内容 | 判据 | 依赖 |
 | --- | --- | --- | --- |
-| **S8（appfw）** | `Viewer` 管 N 个 `View`：每格预设（`ViewerOptions`）、建链/采纳/重建搬运行期选择、路由与焦点、`isActive()` / `release(view)`；`RenderControl` 收窄成"原生面 + 会话 + 尺寸/DPR + 帧驱动 + `viewer()`"，老三条保留为"作用于第一格"的转发；`SurfaceWindow` 把 viewer 那一段与状态搬出去 | 新用例：同表面两格各自预设（设备数/引擎数不变）；宿主声明后该格 `isActive() == false`；`release(view)` 后表里没有它；两格路由与焦点；重建搬运行期选择。变异：不搬运行期选择 / 两格共用一份预设 / `release` 不撤声明 ⇒ 各自红 | 无 |
+| **S8（appfw）** | **已落地 2026-10-11**：`Viewer` 管 N 个 `View`：每格预设（`ViewerOptions`）、建链/采纳/重建搬运行期选择、路由与焦点、`isActive()` / `release(view)`；`RenderControl` 收窄成"原生面 + 会话 + 尺寸/DPR + 帧驱动 + `viewer()`"，老三条保留为"作用于第一格"的转发；`SurfaceWindow` 把 viewer 那一段与状态搬出去 | **实测**：`test_gui` 259（254 + 5 条新用例：同表面两格各自预设〔设备/引擎数不变〕/ 宿主自建 pass 声明后 `isActive() == false`〔声明先落 + 上线后接管两种次序〕/ `release(view)` 后表里没有它 / 重建搬运行期选择 / 两格的路由与焦点）；其余套件计数不掉（graphics 360 / vsg 426 = 421+3 skip+2 已知红 / appfw 32 / meshio 34 / iobase 94）；全量 Release 0 error / 0 warning；五 gate 0 finding。**变异 5/5 红**：重建不搬运行期选择 / 两格共用一份请求 / `release` 不撤声明 / `views()` 不读表 / `takeArea` 不让位 ⇒ 各自单独实测，只有目标用例红 | 无 |
 | **S9（graphics 半步，可逆）** | 引擎公开面拿掉裸句柄：`setWindowHandle`/`resize` 退场，改由区绑目标（`RenderSurface::bindTarget`）；契约注释写入 §5 的规则；`Capabilities` 加 `presentation` | 新用例：无呈现意图的设备上 `present`/建目标被拒 + 报一次；句柄变了设备身份不变；离屏设备上 `executeFrame` 仍成立。变异：不拒 / 不报 / 引擎仍读句柄 ⇒ 各自红 | 无（插件不动） |
 | **S10（M6 整步）** | 拆 `RenderDevice` / `RenderFrameExecutor` / `RenderSurfaceTarget`；插件把会话提升成设备（窗口与交换链 1:N，`BlockStorage`/`MaterialImages` 上移到设备）；多窗口共享一个设备 | 真设备电池（本机只能跑部分：无头判据先上，设备电池在有 lavapipe 的地方跑并如实记账）；结构判据：两个区共享一个 Device 时只编译一次程序、只上传一份块 | S9；触发条件命中一条（视图数 >4 / 同内容 2+ 窗口 / 启动开销 × 窗口数 / 跨 GPU 拖动） |
 | **S11（登记不做）** | 一帧跨多窗口（pass 带目标 + `setSurface(i)`） | — | 只有"一场画面铺满两块屏"这类需求才做 |
@@ -229,10 +235,10 @@
 2. **`executeFrame` 的目标参数**：本文选"帧名默认帧缓冲 ⇒ 解析为本区的目标"（一帧一个目标）。若将来要"一帧
    多目标"（S11），参数会从"一个目标"变成"帧内的目标表"，届时再改。
 3. **`RenderControl` 的老三条（`viewerOptions`/`setViewerOptions`/`setShadingMode`）**：本文选"保留为作用于第一
-   格的转发"（不变量 1：公开面不删入口）。若库外没有调用方，也可以在 S8 一并改成 `viewer()` 一个入口 —— 落地
-   前确认一次。
+   格的转发"（不变量 1：公开面不删入口）。**S8 已按这条落地**（转发到 `Viewer` 上"第一格" = 控件自己的视图那组
+   入口）—— 库外有调用方（`model_viewer` 的读-改-写），所以三个入口都留着。
 4. **`Viewer` 是否导出**（SDK 可见）：本文按"导出"（appfw 的宿主都要用它），若最终只有一个宿主用，可退成内部
-   类型。
+   类型。**S8 按这条落地：导出**（`vn::appfw::gui::Viewer`，`RenderControl::viewer()` 把它交出去）。
 
 ---
 

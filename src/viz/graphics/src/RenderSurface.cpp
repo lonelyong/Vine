@@ -207,6 +207,11 @@ void RenderSurface::resize(int width, int height, double pixel_ratio)
     }
 }
 
+double RenderSurface::pixelRatio() const noexcept
+{
+    return pixel_ratio_;
+}
+
 std::vector<RenderSurface::Presentation> RenderSurface::presentations() const
 {
     std::vector<Presentation> ordered;

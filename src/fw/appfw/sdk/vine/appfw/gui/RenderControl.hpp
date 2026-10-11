@@ -20,6 +20,8 @@ class SceneView;
 
 VN_APPFWGUI_NS_BEGIN
 
+class Viewer;
+
 /**
  * @brief Render view control: hosts a native QWindow render surface inside a
  * QWidget container and drives a RenderEngine.
@@ -32,18 +34,19 @@ VN_APPFWGUI_NS_BEGIN
  *
  * This class is the widget-side wrapper: it embeds the surface in its widget
  * tree and forwards the public interface below. The surface itself - the native
- * QWindow a backend binds to, the RenderEngine and the SceneView (the
- * interactive primary view holding the camera, content scene and orbit
- * manipulator), the attach rules, the deferred resize path and the translation
- * of Qt events into view input - lives in the private SurfaceWindow
- * (src/gui/SurfaceWindow.hpp). Unless a backend was attached via
- * engine()->setBackend(), the first backend registered in RenderBackendRegistry
- * is used by default.
+ * QWindow a backend binds to, the RenderEngine, the SceneView (the interactive
+ * primary view holding the camera, content scene and orbit manipulator) and the
+ * Viewer that manages the area's panes and their requests - lives in the private
+ * SurfaceWindow (src/gui/SurfaceWindow.hpp), together with the attach rules, the
+ * deferred resize path and the translation of Qt events into view input. Unless
+ * a backend was attached via engine()->setBackend(), the first backend registered
+ * in RenderBackendRegistry is used by default.
  *
- * CONSTRUCTION ONLY COMPOSES. The control builds its engine and its view and installs the diagnostics route; it does
- * not pick a backend and does not attach. The first attach happens on the first turn of the event loop (a fallback),
- * which is exactly what makes "configure right after new" work: engine()->setBackend(), view()->setOptions() and
- * content assembly are synchronous code and therefore always run BEFORE it. A host that wants the attach inside its
+ * CONSTRUCTION ONLY COMPOSES. The control builds its engine, its view and its viewer and installs the diagnostics
+ * route; it does not pick a backend and does not attach. The first attach happens on the first turn of the event loop
+ * (a fallback), which is exactly what makes "configure right after new" work: engine()->setBackend(),
+ * viewer()->setViewerOptions() (or a host's own view()->setPipeline()) and content assembly are synchronous code and
+ * therefore always run BEFORE it. A host that wants the attach inside its
  * own ordering calls init()/initAsync() itself (synchronous, idempotent) - that call IS the attach, and the fallback
  * then finds the session already bound. Window events (show, resize, a recreated platform window) keep the session
  * going afterwards. What the control keeps for itself is an ESTABLISHED session: when Qt destroys and recreates the
@@ -107,8 +110,8 @@ class VN_APPFW_API RenderControl : public Control {
      * assembles an explicit pipeline.
      *
      * What the view DRAWS is the pipeline it has adopted, and by default that is this control's viewer pipeline: the
-     * control builds it (see ViewerOptions) and adopts it on the view before the first attach, so a host that never
-     * touches pipelines nevertheless gets a picture. A host that assembles its own adopts it instead
+     * control's Viewer builds it (see ViewerOptions) and adopts it on the view before the first attach, so a host
+     * that never touches pipelines nevertheless gets a picture. A host that assembles its own adopts it instead
      * (view()->setPipeline(...)) and from then on owns that view's drawing - including rebuilding it (see Pipeline).
      *
      * One control holds one session and one view: a document that renders brings its OWN control (and with it
@@ -118,55 +121,69 @@ class VN_APPFW_API RenderControl : public Control {
      */
     vn::graphics::SceneView* view() const;
 
-    /** @brief Gets how this control's own viewer draws (see ViewerOptions).
+    /** @brief Gets the viewer managing the panes of this control's render area (see Viewer).
      *
-     * @return The viewer options currently in effect (the defaults until a host changes them).
+     * ONE control hosts ONE area, and an area may be divided between several views - each with its own request
+     * (ViewerOptions), its own rectangle and its own chain, all drawing in the SAME frame on one device. This is
+     * the object that manages them: addView() builds a pane's chain from its request and declares it, views()
+     * reads which views present this area (from the surface's presentation table), release() gives a pane back
+     * to a host that draws it itself. The three calls below (viewerOptions / setViewerOptions / setShadingMode)
+     * are the single-pane shortcuts: they address this control's own view, the area's first pane.
+     *
+     * A host that never splits its area never has to touch it.
+     *
+     * @return The viewer (never null while the control is alive).
+     */
+    Viewer* viewer() const;
+
+    /** @brief Gets how this control's own view (the area's first pane) draws (see ViewerOptions).
+     *
+     * @return The request that pane is built from (the defaults until a host changes them).
      */
     ViewerOptions viewerOptions() const;
 
-    /** @brief Changes how this control's own viewer draws, rebuilding its pipeline and adopting it on the view.
+    /** @brief Changes how this control's own view (the area's first pane) draws, rebuilding its chain.
      *
      * The one call a host needs to shape the default picture: a chain, an overlay's existence and the mode the
      * chain must express are build decisions (see ViewerOptions), so this is one pipeline build - at construction
      * time, before the first attach, it is also what a viewer's settings should be made with (the attach's first
-     * frame then already draws the intended picture).
+     * frame then already draws the intended picture). It is the shortcut to Viewer::setViewerOptions on the
+     * area's first pane; a host with several panes states each pane's request there.
      *
-     * The contextual parts of the recipe (the gizmo mirrors this control's camera, the overlays take this control's
-     * device pixel ratio) are filled in here, which is what keeps the host out of the pipeline options that only
-     * the control can answer.
-     *
-     * @param options How the viewer draws from now on.
-     * @return true when the pipeline was built and adopted; false when the builder refused @p options (the previous
-     *         pipeline then stays in place). Before the first attach there is nothing to refuse it against - a
+     * @param options How the pane draws from now on.
+     * @return true when the chain was built and adopted; false when the builder refused @p options (the previous
+     *         chain then stays in place). Before the first attach there is nothing to refuse it against - a
      *         build that succeeds is adopted and the attach draws with it.
      */
     bool setViewerOptions(const ViewerOptions& options);
 
-    /** @brief Switches the shading mode of this control's own viewer.
+    /** @brief Switches the shading mode of this control's own view (the area's first pane).
      *
      * The cheap switch: a mode the built chain can express is one override on the live pipeline, taking effect on
-     * the next frame with no rebuild. When the chain cannot express it, the viewer is rebuilt from the current
-     * options carrying the requested mode.
+     * the next frame with no rebuild. When the chain cannot express it, the pane is rebuilt from the current
+     * request carrying the requested mode. It is the shortcut to Viewer::setShadingMode on the area's first pane.
      *
      * @param mode The viewing mode to switch to.
-     * @return true when the viewer now shades in @p mode; false when the rebuild failed (the previous pipeline stays
-     *         in place).
+     * @return true when the pane now shades in @p mode; false when the rebuild failed (the previous pipeline stays
+     *         in place). With no chain yet the call builds the pane from its request first, so it is also the way
+     *         to state a mode before the first attach.
      */
     bool setShadingMode(vn::graphics::ShadingMode mode);
 
     /** @brief Gets the presentation table of the surface this control renders into.
      *
      * Which passes draw into this surface, and in which order: the ONE place that answers "who presents this
-     * surface". By default the control's own viewer does (the control builds its pipeline, adopts it on the view and
-     * declares the view here), and a host that builds its own main pass declares THAT pass instead - which is what
-     * keeps the default pipeline from being built beside it:
+     * surface". By default the control's viewer does (its first pane - the control's own view - draws it), and a
+     * host that builds its own main pass declares THAT pass instead - which is what keeps the default pipeline from
+     * being built beside it:
      *
      * @code
      * auto pipeline = builder.build(options);
      * control->surface()->present(pipeline->windowPass());   // before the first attach (install is synchronous)
      * @endcode
      *
-     * The control keeps the same fallback it always had: with nothing declared, its own view presents the surface.
+     * The control keeps the same fallback it always had: with nothing declared (and no pass declared by a host),
+     * the viewer's first pane presents the surface.
      *
      * @return The control's render surface presentation table (never null while the control is alive).
      */

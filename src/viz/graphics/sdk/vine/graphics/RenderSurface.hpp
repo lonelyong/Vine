@@ -218,6 +218,15 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      */
     void resize(int width, int height, double pixel_ratio);
 
+    /** @brief Gets the device pixel ratio this surface last saw (resize).
+     *
+     * The ratio is a fact about the surface, like its size: a reader that lays something out in device pixels
+     * (an overlay, a preview rectangle) reads it HERE rather than holding a second copy that could drift.
+     *
+     * @return Device pixels per logical pixel; 1.0 until a host reports one.
+     */
+    [[nodiscard]] double pixelRatio() const noexcept;
+
     /** @brief The presentations of this surface, in the order the engine runs them.
      *
      * The answer describes the frame the engine would draw NOW, not what was once declared: a presentation whose

@@ -26,13 +26,15 @@ class SceneView;
 
 VN_APPFWGUI_NS_BEGIN
 
+class Viewer;
+
 /**
  * @brief The render surface and the render session living on it.
  *
- * The native window a render backend binds to, plus what keeps a session on it: the engine and its view, the
- * attach / re-announce rules, the deferred resize path, and the Qt events translated into view input. RenderControl
- * embeds one inside a window container and re-publishes its state_changed; every lifecycle transition is reported
- * through on_state_changed.
+ * The native window a render backend binds to, plus what keeps a session on it: the engine and its viewer (see
+ * Viewer - the panes of this area and their per-pane requests), the attach / re-announce rules, the deferred
+ * resize path, and the Qt events translated into view input. RenderControl embeds one inside a window container
+ * and re-publishes its state_changed; every lifecycle transition is reported through on_state_changed.
  *
  * The surface attaches itself: the constructor tries, and a show/resize of the host retries (see handleUpdate()).
  * An established session then follows a platform window Qt replaced on its own, and nothing is re-checked on a
@@ -75,47 +77,23 @@ class SurfaceWindow : public QWindow {
     /**
      * @brief Gets the presentation table of this surface.
      *
-     * Which passes draw into this surface, and in which order: the control builds its viewer pipeline, adopts it on
-     * its own view and declares that view here by default (see init()), and a host that builds its own main pass
-     * declares that pass instead - which is what keeps the default one from being built.
+     * Which passes draw into this surface, and in which order: the viewer declares its panes here (see Viewer),
+     * and a host that builds its own main pass declares that pass instead - which is what keeps the default
+     * pipeline from being built beside it.
      *
      * @return The surface's presentation table (never null while the surface is alive).
      */
     vn::graphics::RenderSurface* surface() const;
 
     /**
-     * @brief Gets the options this surface's own view's pipeline is built from (see ViewerOptions).
+     * @brief Gets the viewer managing this area's panes (see Viewer).
      *
-     * @return The current viewer options (the defaults until a host changes them).
+     * It owns the per-pane requests, the build/adopt/declare of each pane and the area's default presentation;
+     * RenderControl hands it out as viewer().
+     *
+     * @return The viewer (never null while the surface is alive).
      */
-    const ViewerOptions& viewerOptions() const;
-
-    /**
-     * @brief Rebuilds this surface's own view's pipeline from @p options and adopts it on the view.
-     *
-     * The structural call: a chain, an overlay's existence and the mode the chain must be able to express are build
-     * decisions, so this costs one pipeline build. Cheap while nothing is built yet - the first call (the default
-     * preset, made by the first attach) is what gives the view its pipeline at all.
-     *
-     * @param options How the viewer draws from now on.
-     * @return true when the pipeline was built and adopted; false when the builder refused @p options (e.g. a
-     *         deferred request with no G-buffer program available) - the previous pipeline then stays in place.
-     */
-    bool setViewerOptions(const ViewerOptions& options);
-
-    /**
-     * @brief Switches the shading mode of this surface's own view's pipeline.
-     *
-     * The cheap call: a mode the built chain can express is one override on the live pipeline (no rebuild, no
-     * device work). When it cannot express @p mode (a deferred chain asked for a non-Lit mode), the viewer is
-     * rebuilt from the current options carrying @p mode - see ViewerOptions and RenderPipelineBuilder::effectivePath.
-     *
-     * @param mode The viewing mode to switch to.
-     * @return true when the view's pipeline now shades in @p mode; false when the rebuild failed (the previous
-     *         pipeline then stays in place). With no pipeline yet the call builds the viewer from the current
-     *         options first, so it is also the way to state a mode before the first attach.
-     */
-    bool setShadingMode(vn::graphics::ShadingMode mode);
+    Viewer* viewer() const;
 
     /**
      * @brief Attaches the backend to the live native surface and opens the session on it.
@@ -237,9 +215,6 @@ class SurfaceWindow : public QWindow {
     /** @brief Picks the first registered render backend unless the host attached one. Idempotent. */
     void useDefaultBackend();
 
-    /// Builds the viewer pipeline from @p options for this surface's own view and adopts it (see
-    /// SurfaceWindow::setViewerOptions): the one place a ViewerOptions becomes the builder's PipelineOptions.
-    bool buildViewerPipeline(const ViewerOptions& options);
     /** @brief Publishes a lifecycle transition (silent when the state is unchanged). */
     void setState(SurfaceState next);
     /** @brief Records a permanent attach failure and publishes it. */
