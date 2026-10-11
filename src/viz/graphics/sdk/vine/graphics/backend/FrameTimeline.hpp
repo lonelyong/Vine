@@ -30,7 +30,7 @@
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
-/** @brief Identity of one frame between beginFrame() and swapBuffers(). */
+/** @brief Identity of one frame between executeFrame() and present(). */
 struct FrameToken
 {
     std::uint64_t frame{0};  ///< 1-based frame number; 0 means "no frame".
@@ -47,9 +47,9 @@ class VN_GRAPHICS_API FrameTimeline
   public:
     /** @brief Opens a frame and mints its token.
      *
-     * Called from beginFrame(). Opening a frame while one is already open is a caller bug rather than
+     * Called from executeFrame(). Opening a frame while one is already open is a caller bug rather than
      * a condition to absorb, so the open frame is kept and its token returned again - the caller gets
-     * a usable token either way, and the protocol layer is where the mismatch is reported.
+     * a usable token either way.
      *
      * @return The token of the frame now open.
      */
@@ -57,7 +57,7 @@ class VN_GRAPHICS_API FrameTimeline
 
     /** @brief Marks the open frame as submitted.
      *
-     * Called from swapBuffers() after the queue submission returned. A token that does not name the
+     * Called from present() after the queue submission returned. A token that does not name the
      * open frame is ignored: the timeline never moves backwards on behalf of a stale caller.
      *
      * @param token Token returned by begin().
@@ -95,7 +95,7 @@ class VN_GRAPHICS_API FrameTimeline
     /** @brief Gets how many frames are provably complete. */
     [[nodiscard]] std::uint64_t completedFrame() const noexcept;
 
-    /** @brief Gets whether a frame is open (between begin() and swapBuffers()). */
+    /** @brief Gets whether a frame is open (between executeFrame() and present()). */
     [[nodiscard]] bool hasOpenFrame() const noexcept;
 
     /** @brief Gets whether a token names the open frame. */

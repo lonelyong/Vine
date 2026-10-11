@@ -631,7 +631,7 @@ void SurfaceWindow::handleKey(const vn::window::KeyEvent& event)
 void SurfaceWindow::handleDestroyed()
 {
     // Qt replaces the native platform window (layout change, screen change, reparent) - the session is NOT torn
-    // down with it: the new handle is re-announced to the backend (RenderBackend::setWindowHandle), so the device
+    // down with it: the new handle is re-announced (RenderSurfaceBinding::setWindowHandle), so the device
     // and every compiled pipeline stay. Marking the surface unusable keeps frames off the dead window.
     d->surface_ok = false;
 
@@ -774,8 +774,8 @@ bool SurfaceWindow::init()
         return d->backend_live;
     }
     if (d->has_session && handle != d->session_handle) {
-        // The platform window was recreated: re-announce the new handle (RenderBackend::setWindowHandle) instead
-        // of tearing the session down, so the device and every compiled pipeline stay.
+        // The platform window was recreated: re-announce the new handle (RenderSurfaceBinding::setWindowHandle)
+        // instead of tearing the session down, so the device and every compiled pipeline stay.
         vn::logging::defaultLogger().info(
             "[RenderControl] the render surface was recreated: re-announcing the new handle so the backend can follow it");
     }

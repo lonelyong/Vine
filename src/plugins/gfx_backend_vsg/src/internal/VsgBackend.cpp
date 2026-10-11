@@ -94,7 +94,7 @@ void trackProgram(ContentStore* store, const vn::intrusive_ptr<const vn::graphic
 }
 
 /// @brief The content of every pass the frame's targets can be served for, one packet per pass that has any
-/// (see swapBuffers).
+/// (see present).
 ///
 /// WHICH TARGET decides the shape and the extent: a pass drawing into the window is compatible with the
 /// window's own shape and reconstructs from the window's extent, and a pass drawing into one of the host's
@@ -356,6 +356,13 @@ void VsgBackend::shutdown()
     d->session.shutdown();
 }
 
+vn::graphics::RenderSurfaceBinding* VsgBackend::surface()
+{
+    // The window half of a backend is optional (see RenderBackend::surface): this one always has it - it
+    // presents through a window, the host's or one it created for itself - so its binding is itself.
+    return this;
+}
+
 void VsgBackend::openFrameBooks()
 {
     // The per-frame storage is brought up to what this frame needs HERE - between frames, where no recording
@@ -367,7 +374,7 @@ void VsgBackend::openFrameBooks()
     // The session mints the frame's token and advances the viewer's clock; the recorder opens the plan for
     // the same token, so the description and the session's frame cannot disagree about which frame it is.
     const core::FrameToken token = d->session.beginFrame();
-    (void)d->recorder.beginFrame(token);  // a protocol violation is the recorder's to report (see its note)
+    (void)d->recorder.beginFrame(token);  // it answers whether the frame's books could be opened (see its note)
 }
 
 void VsgBackend::closeFrameBooks()
@@ -453,11 +460,11 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame)
     closeFrameBooks();
 }
 
-void VsgBackend::swapBuffers()
+void VsgBackend::present()
 {
     if (d->frame == nullptr || !d->session.initialized())
     {
-        return;  // no frame was closed: beginFrame/endFrame said what was missing
+        return;  // no frame is open (executeFrame closed none, and says why), or the session is down
     }
 
     if (d->frame->passes.empty())
@@ -533,7 +540,7 @@ void VsgBackend::resize(int width, int height)
     d->announced_height = height;
     if (d->session.initialized())
     {
-        // THE SURFACE OWNS ITS SIZE (RenderBackend::resize's authority order: surface > announcement >
+        // THE SURFACE OWNS ITS SIZE (RenderSurfaceBinding::resize's authority order: surface > announcement >
         // default), so a live announcement is served by FOLLOWING the surface: the session re-reads the one
         // it is on and rebuilds its swapchain when that surface changed, and what hangs off the size (the
         // render area, the window target's shape, each pass' view block) is derived from the window when the

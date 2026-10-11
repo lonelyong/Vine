@@ -55,9 +55,11 @@ class RenderBackend;
  * supplied by the caller via setBackend().
  *
  * The engine may be given a host native window (setWindowHandle) so the
- * backend can attach its render surface to it; the host reports surface
- * resizes via resize() and drives camera input through its SceneView. The
- * engine stays platform-independent and owns none of the window objects.
+ * backend can attach its render surface to it - when the backend HAS a
+ * surface: the window half of a backend is optional (see RenderBackend::surface).
+ * The host reports surface resizes via resize() and drives camera input through
+ * its SceneView. The engine stays platform-independent and owns none of the
+ * window objects.
  */
 class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine> {
     VN_OBJECT_META_DECL;
@@ -458,12 +460,11 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     /** @brief Resizes the rendering surface.
      *
-     * Records the surface size in the shared frame context and rebuilds the
-     * backend swapchain (only when the backend is initialized). The engine
-     * never manages camera / target / pass-viewport layout: those are
-     * maintained by their creators on the new surface size (e.g.
-     * SceneView::addSurfaceLayout and SceneView::onSurfaceResized for the
-     * view camera).
+     * Records the surface size in the shared frame context and forwards the announcement to the backend's
+     * surface, which is what owns the swapchain being resized (only when the backend is initialized, and only
+     * when it has a surface at all - see RenderBackend::surface). The engine never manages camera / target /
+     * pass-viewport layout: those are maintained by their creators on the new surface size (e.g.
+     * SceneView::addSurfaceLayout and SceneView::onSurfaceResized for the view camera).
      *
      * @param width  New surface width in pixels.
      * @param height New surface height in pixels.
@@ -472,10 +473,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     /** @brief Supplies the native window the backend attaches to.
      *
-     * Stored until initialize(); the backend reads the handle from it to
-     * attach its render surface (e.g. a Qt QWindow). The handle value is
-     * captured at call time, so the host must call it again before a
-     * re-initialize whenever the native window was recreated. Pass nullptr
+     * Stored until initialize(), where it is handed to the backend's surface binding (see
+     * RenderBackend::surface); a backend with no surface presents nothing, and the announcement is then reported
+     * as wiring the engine cannot serve instead of being dropped. The handle value is captured at call time, so
+     * the host must call it again before a re-initialize whenever the native window was recreated. Pass nullptr
      * to clear.
      *
      * @param native_handle Native window handle (HWND on Windows), or nullptr.

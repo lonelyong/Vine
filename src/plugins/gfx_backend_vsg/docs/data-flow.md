@@ -15,7 +15,8 @@
 executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟）+ FrameRecorder 开帧
                      ──▶  按值走每条 pass：FrameRecorder 只记"事实"（数据），不碰资源
                      ──▶  FrameCompiler + FrameGraph：依赖求值、缺省解析、合法性判定 → CompiledFrame
-swapBuffers()       ──▶  ContentAssembly（事实表 + 流 + 块）→ ContentPass 录制 → VsgExecutor 提交/呈递
+present()           ──▶  ContentAssembly（事实表 + 流 + 块）→ ContentPass 录制 → VsgExecutor 提交/呈递
+（表面那一半，见 RenderSurfaceBinding）
 ```
 
 帧的**值**（`vn::graphics::FrameDescription`）就是引擎给的一切：每条 pass 的身份、order、解析好的输入，
@@ -38,7 +39,7 @@ swapBuffers()       ──▶  ContentAssembly（事实表 + 流 + 块）→ Con
 ## 2. 编译段（`FrameGraph` + `FrameCompiler`）
 
 * **依赖求值**：pass 之间按声明的输入求序；环 = 不变式违规 ⇒ 跳过该分量 + 报一次 + `invalid_schedules` 计数，
-  其余照跑，帧仍以 `swapBuffers()` 收尾。
+  其余照跑，帧仍以 `present()`（表面的那一半）收尾。
 * **缺省解析**：视口（未公告 = 整目标）、程序（未点名 = 帧默认）、动态层（`resolveDynamicState`：
   显式 StateNode 赢 pass 深度）、清屏（有效 policy + `bootstrap`/`depth_preserved` 两个**执行器推不出来**的事实）。
 * **形状与格式**：`TargetPlan`（`None/Repair/ResizeInPlace/Rebuild`）与 `DepthProbe` 的答案从**同一份目标事实**
@@ -108,7 +109,7 @@ SDK 侧内容释放入口（A3）、`Material` revision（A4）、逐 buffer rev
 ## 8. 一帧时序与成本
 
 ```
-executeFrame(值：每条 pass 的 scope 与其绘制) → [编译] → swapBuffers(内容世界→录制→提交→呈递)
+executeFrame(值：每条 pass 的 scope 与其绘制) → [编译] → present(内容世界→录制→提交→呈递)
 ```
 每帧成本：**record 半段**（facts/计划/块/流）在 1 drawable 的配方里是 7–19 µs（Release，四类编辑都一样平），
 **commit 半段**（录制/提交/呈递，lavapipe）是 0.8–1.0 ms，唯一花毫秒的编辑是**新 program 的第一帧**

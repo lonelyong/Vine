@@ -14,8 +14,8 @@
  * WHERE THIS SITS (design §2.2). Every other `api/` type is one piece a frame is made of - the session, the
  * store, the assembly, the executor - and this is the seam the ENGINE talks to: it implements the SDK's
  * `RenderBackend` methods and drives those pieces through them, deciding nothing of its own. That is why it
- * is allowed to be thin: `initialize()` builds the session, a frame is `executeFrame(value)` -> `swapBuffers()`
- * over the pieces that exist, and every call it cannot serve yet is REPORTED (the SDK's own
+ * is allowed to be thin: `initialize()` builds the session, a frame is `executeFrame(value)` -> `present()` over
+ * the pieces that exist, and every call it cannot serve yet is REPORTED (the SDK's own
  * rule: report what could not be done instead of answering with nothing).
  *
  * WHAT IS SERVED TODAY (the facade's slices, §11.16bd-§11.16bh):
@@ -28,10 +28,10 @@
  *     turned into the plan's own spelling (the SDK's clear policy into the plan's) - and the books are closed
  *     (the plan compiles against the frame's target facts). An EMPTY frame is still a frame: it is compiled,
  *     recorded and presented (the session's own rule: opening a frame may acquire an image, and the only call
- *     that hands it back is the present), and `swapBuffers()` presents what the frame left;
+ *     that hands it back is the present), and the surface's `present()` presents what the frame left;
  *   * CONTENT DRAWING: the value's drawing calls track the commands' own objects (geometry, material, program -
  *     and the default program from `setDefaultContentProgram()`) into api/ContentStore and snapshot the call
- *     into the plan; `swapBuffers()` assembles the frame's content (api/ContentAssembly) and records it
+ *     into the plan; `present()` assembles the frame's content (api/ContentAssembly) and records it
  *     into the passes the plan asked for, with the view block built from the pass' own camera and the
  *     frame's clock - the host's picture, drawn by the pieces that already existed;
  *   * the OFF-SCREEN HALF: `supportsRenderTargets()` answers true, `setRenderTarget()` holds the host's
@@ -44,7 +44,9 @@
  *     target's own copy commands ONCE and fence them, so the pixels / depths the host gets are the ones the
  *     last submitted frame left (api/HostReadback). A refusal answers the SDK's machine-readable result and
  *     says its reason once per episode;
- *   * the surface facts - `setWindowHandle()`/`nativeHandle()` for a host surface, and `resize()`: the
+ *   * the surface facts - `setWindowHandle()`/`nativeHandle()` for a host surface, `resize()` and the present:
+ *     this backend HAS a window half, so it implements `vn::graphics::RenderSurfaceBinding` and `surface()`
+ *     answers this object (a backend drawing only into render targets answers null and carries none of it). The
  *     surface OWNS its size (the SDK's authority order), so a live announcement makes the session FOLLOW the
  *     surface it is on (re-read it, rebuild the swapchain when it changed - one COUNTED device stop), while
  *     the announced numbers are what the next `initialize()` creates a window at;
@@ -76,7 +78,7 @@ class BackendContentAccess;
 }  // namespace detail
 
 /** @brief The SDK's render backend, driven by the rewrite's session (see the file note). */
-class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
+class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::graphics::RenderSurfaceBinding
 {
   public:
     VsgBackend();
@@ -96,8 +98,8 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     /** @brief Tears the session down: idempotent, and initializable again (the SDK's contract). */
     void shutdown() override;
 
-    /** @brief Records the frame and commits it through the session: the one present. */
-    void swapBuffers() override;
+    /** @brief Answers this object: this backend presents through its own window half (see the file note). */
+    [[nodiscard]] vn::graphics::RenderSurfaceBinding* surface() override;
 
     /** @brief Runs a frame from its value: the plugin's own translation of the frame the engine compiled.
      *
@@ -105,7 +107,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      * the frame from a call sequence it has to keep in order - it walks the value and applies each entry to its own
      * pieces (see the file note): the frame's books open (storage, token, acquisition, the plan's frame), every
      * pass is collected in the order the value states, and the books close (the plan compiles against what the
-     * frame draws into). `swapBuffers()` is what presents it.
+     * frame draws into). `present()` is what presents it.
      *
      * A frame with no session is reported once per episode and runs nothing (see the file note).
      *
@@ -121,6 +123,9 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
 
     /** @brief Announces a surface size: applied by the next @ref initialize, followed live (see the file note). */
     void resize(int width, int height) override;
+
+    /** @brief Records the frame and commits it through the session: the one present. */
+    void present() override;
 
     /** @brief Remembers the default content program, tells the plan, and tracks it (see the file note). */
     void setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program) override;

@@ -693,10 +693,10 @@ void SessionContentAccess::followResizedSurface(api::Session& session) noexcept
         return;  // nothing is on a surface: there is nothing to follow
     }
     // The window's own resize() re-reads the geometry of the surface it is on and rebuilds the swapchain
-    // against it - that IS the service, because the surface owns its size (RenderBackend::resize's authority
-    // order: surface > announcement > default). Everything hanging off the size is derived from the window
-    // when the next frame records (the render area through WindowTarget::prepare / prepareWithoutClear, the
-    // window target's shape, each pass' view block), so nothing else has to be brought up to date here.
+    // against it - that IS the service, because the surface owns its size (RenderSurfaceBinding::resize's
+    // authority order: surface > announcement > default). Everything hanging off the size - the window target's
+    // shape, each pass' view block, the render area through WindowTarget::prepare / prepareWithoutClear - is
+    // derived from the window when the next frame records, so nothing else has to be brought up to date here.
     //
     // ONE READ, AND NO SECOND GUESS. The read is the PLATFORM's own geometry, so a platform that has not
     // applied the host's resize yet answers the size it used to be - and asking again would be a second

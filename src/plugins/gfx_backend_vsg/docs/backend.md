@@ -14,10 +14,11 @@
 | --- | --- | --- |
 | `initialize()` | 由公告（宿主句柄、尺寸、默认程序）建会话；失败时**自己清理半成品** | `true/false` + 诊断；`false` 后没有会话 |
 | `executeFrame(value)` | **一帧的整个身体**（`beginFrame()`/`endFrame()` 的那两半现在都在这里）：会话开帧（取交换链图、推进槽位时钟）+ 录制器开一帧 → 按值走每条 pass（身份 / order / 输入 → 它的 target、viewport、清屏、状态与每条绘制调用，内容副作用在绘制那一层）+ 描述定稿 → **编译** | 没有会话时上报一次；值里的顺序就是线上顺序 |
-| `swapBuffers()` | **关帧**：录制命令图 + 提交 + 呈递 | `framesPresented()` +1；丢帧会被点名为诊断 |
+| `present()` | **关帧**：录制命令图 + 提交 + 呈递（表面那一半，见 `vn::graphics::RenderSurfaceBinding`） | `framesPresented()` +1；丢帧会被点名为诊断 |
 | `setRenderTarget(target)` | 宿主的**目标公告**：离屏目标描述送进 `HostTargets`（**快照**，稳态零分配）。pass 画进哪张目标写在帧值里，不走这条 | 目标懒建；拒绝原因分说 |
 | `setClearPolicy` 等 per-pass 入口 | **已删**：清屏 / 视口 / 灯 / pass 状态 / 输入全部随帧值到达（见上） | 与计划一致与否在执行段核对 |
-| `setWindowHandle/resize` | 采纳宿主表面 / 跟随表面（**停一次设备，计数**） | `deviceWaits()` |
+| `surface()` | 答 `this`：本后端**有**窗口那一半（`RenderSurfaceBinding`），引擎经它驱动句柄/尺寸/呈现 | 只离屏的后端答 null，四个窗口入口一个都不必实现 |
+| `surface()->setWindowHandle/resize` | 采纳宿主表面 / 跟随表面（**停一次设备，计数**） | `deviceWaits()` |
 | `supportsRenderTargets()` | `true` | 离屏路径可用 |
 | `releasePass/releaseRenderTarget` | 释放该 pass 的会话身份 / 目标对象（停靠后销毁） | 保留态不随帧数增长 |
 | `readColorBuffer/readDepthBuffer` | **分类先于任何工作**，再复制回读 | 分类表逐条说原因（见 §2） |
@@ -49,7 +50,7 @@
 
 | 频率 | 发生的事 |
 | --- | --- |
-| 每帧恰好一次 | `executeFrame`（开帧 + 按值走 pass + 编译）/ `swapBuffers`（提交+呈递）；一帧一次 present |
+| 每帧恰好一次 | `executeFrame`（开帧 + 按值走 pass + 编译）/ `present`（提交+呈递）；一帧一次 present |
 | 每 pass 一次 | 绑定该 pass 的管线变体（**只在变体变了**）、动态状态块（**只在值变了**）、采样输入集（一趟 pass 一条） |
 | 每次变化一次（稳态 0 次） | 材质 touch 后的**块写**（比较相同就不写）；几何 revision 变化后的流上传；push（按声明）；一次 `vkCmdSet*` |
 | 结构性变化才发生 | 目标 resize/rebuild、管线编译（新**变体**——新 program、新拓扑类、新采样计数）、会话移动（停一次设备）、块预算撞顶后的**存储替换**（新 buffer；旧 storage 与旧描述符集都停放，一条 Info 说清原因） |
@@ -80,7 +81,8 @@
   下一次 `executeFrame()` 用新 buffer（`max(need, 2×budget)`）整体替换，旧 storage 与**被换下的描述符集**都进退役队列
   （后者是 `03047` 的根因：池会把释放 set 的句柄发回，而新 set 在下一帧才编译）。帧内绝不搬字节。
 * **销毁只有两条合法路径**（契约）：整会话替换（前置一次计数过的 device idle）或退役出队。
-* **宿主的东西归宿主**：宿主表面/句柄由宿主销毁；后端只采纳与跟随（`setWindowHandle`/`resize`）。
+* **宿主的东西归宿主**：宿主表面/句柄由宿主销毁；后端只采纳与跟随（`RenderSurfaceBinding` 的
+  `setWindowHandle`/`resize`，经 `surface()` 到达）。
 * **`VSG_MAX_DEVICES` = 4（我们显式设）**：一份文档视图 = 一块自己的渲染面 = 自己的 `vsg::Device`，vsg 那边能同时
   存在的数量就由这个常量决定。三档实现里只有 `<=4` 的**固定数组**是对的；`>4` 的动态分支在 vsg 1.1.16 **是坏的**
   （`vk_buffer<std::vector<T>>::size()` 只在写时增长、读会越界，实测断言），所以"无上限"今天做不到。

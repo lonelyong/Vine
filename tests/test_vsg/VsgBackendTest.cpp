@@ -322,9 +322,9 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
 
     // 1. Nothing is up before initialize(), and a frame asked for anyway SAYS so instead of vanishing.
     EXPECT_FALSE(backend->initialized());
-    EXPECT_EQ(backend->nativeHandle(), nullptr) << "this backend owns its window: there is no host surface";
+    EXPECT_EQ(backend->surface()->nativeHandle(), nullptr) << "this backend owns its window: there is no host surface";
     backend->executeFrame(vn::graphics::FrameDescription{});
-    backend->swapBuffers();
+    backend->surface()->present();
     EXPECT_EQ(backend->framesPresented(), 0U);
     EXPECT_EQ(backend->diagnosticCount(), 1U) << "one report for the frame that had no session";
     EXPECT_EQ(seen, backend->diagnosticCount()) << "the sink sees every counted diagnostic";
@@ -336,7 +336,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     for (int index = 0; index < 3; ++index)
     {
         backend->executeFrame(vn::graphics::FrameDescription{});
-        backend->swapBuffers();
+        backend->surface()->present();
     }
     EXPECT_EQ(backend->framesPresented(), 3U);
     EXPECT_EQ(backend->deviceWaits(), 0U) << "the frame path never stops the device";
@@ -396,7 +396,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     //    A pass that was never announced to the engine is exactly this shape.
     const vn::intrusive_ptr<RenderPass> quiet(new RenderPass());
     backend->executeFrame(TestFrame().pass(quiet.get()).value());
-    backend->swapBuffers();
+    backend->surface()->present();
     EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U)
         << "a pass that issues nothing is not a mistake, and nothing needs saying about it";
     EXPECT_EQ(backend->framesPresented(), 4U) << "and the frame it was part of still presents";
@@ -407,7 +407,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     // size event is served now. The announcement is what the NEXT initialize() creates a window at, which is
     // the only way this layer can apply it to a window of its own (see the registered limit in the design
     // notes).
-    backend->resize(320, 180);
+    backend->surface()->resize(320, 180);
     EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U) << "a live resize is served now";
     EXPECT_EQ(backend->deviceWaits(), 1U) << "following the surface rebuilds the swapchain, and that stops it";
 
@@ -418,7 +418,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     EXPECT_EQ(window->width(), 320U) << "the announcement is what the new session's window came up at";
     EXPECT_EQ(window->height(), 180U);
     backend->executeFrame(vn::graphics::FrameDescription{});
-    backend->swapBuffers();
+    backend->surface()->present();
     EXPECT_EQ(backend->framesPresented(), 1U);
 
     // 7. shutdown() is safe twice and leaves the backend initializable again (the SDK's contract for a
@@ -428,7 +428,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     backend->shutdown();
     ASSERT_TRUE(backend->initialize());
     backend->executeFrame(vn::graphics::FrameDescription{});
-    backend->swapBuffers();
+    backend->surface()->present();
     EXPECT_EQ(backend->framesPresented(), 1U);
     backend->shutdown();
 }
@@ -448,7 +448,7 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameCounters)
     // An EMPTY frame still answers: the counters exist, and they describe a frame that recorded nothing.
     // (A backend that kept none would answer false - that distinction is what the bool is for.)
     backend->executeFrame(vn::graphics::FrameDescription{});
-    backend->swapBuffers();
+    backend->surface()->present();
 
     vn::graphics::FrameCounters counters;
     ASSERT_TRUE(backend->frameCounters(counters)) << "this backend keeps its own frame counters";
@@ -470,7 +470,7 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameCounters)
         .depth(vn::graphics::DepthMode::TestAndWrite)
         .content(fixture.commands, camera.get())
         .value());
-    backend->swapBuffers();
+    backend->surface()->present();
 
     ASSERT_TRUE(backend->frameCounters(counters));
     EXPECT_EQ(counters.passes, 1U) << "one pass scope ran";
@@ -499,7 +499,7 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameCounters)
         .target(nullptr)
         .content(fixture.commands, camera.get())
         .value());
-    backend->swapBuffers();
+    backend->surface()->present();
 
     const std::uint64_t submitted_before = progress.submitted;
     ASSERT_TRUE(backend->frameProgress(progress));
@@ -536,13 +536,13 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
     // The handle is announced BEFORE initialize() (the SDK's order) and adopted there: the SDK's question
     // "which surface am I on" then has an answer, and the host's window survives the session (a backend that
     // destroyed it would be a backend drawing into somebody else's memory).
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
-    EXPECT_EQ(backend->nativeHandle(), host.handle());
+    EXPECT_EQ(backend->surface()->nativeHandle(), host.handle());
     for (int index = 0; index < 2; ++index)
     {
         backend->executeFrame(vn::graphics::FrameDescription{});
-        backend->swapBuffers();
+        backend->surface()->present();
     }
     EXPECT_EQ(backend->framesPresented(), 2U);
     EXPECT_TRUE(host.alive());
@@ -551,11 +551,11 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
     // device and every compiled pipeline (core::planSessionMove), so the presented count goes ON instead of
     // starting over - which is exactly what a rebuilt session would do.
     TestHostWindow second(connection, screen, 128, 96);
-    backend->setWindowHandle(second.handle());
+    backend->surface()->setWindowHandle(second.handle());
     ASSERT_TRUE(backend->initialize());
-    EXPECT_EQ(backend->nativeHandle(), second.handle());
+    EXPECT_EQ(backend->surface()->nativeHandle(), second.handle());
     backend->executeFrame(vn::graphics::FrameDescription{});
-    backend->swapBuffers();
+    backend->surface()->present();
     EXPECT_EQ(backend->framesPresented(), 3U) << "a move keeps the session: the frames it presented are still there";
     EXPECT_TRUE(host.alive()) << "the window the session moved OFF is the host's, and stays the host's";
     EXPECT_TRUE(second.alive());
@@ -594,7 +594,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "a healthy session brings the content world up silently";
 
@@ -655,7 +655,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, frame_camera)
             .value());
-        backend->swapBuffers();
+        backend->surface()->present();
     };
     // The display path lags the session's presents, so a picture is read after a couple more frames that
     // carry the SAME picture. A plan-free frame is not a settle: it repaints the window with the session's
@@ -768,7 +768,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     ASSERT_TRUE(backend->supportsRenderTargets()) << "the off-screen half is served";
 
@@ -814,7 +814,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
                                   .depth(vn::graphics::DepthMode::Disabled)
                                   .screen(offscreen.get(), copy_program.get(), camera.get())
                                   .value());
-        backend->swapBuffers();
+        backend->surface()->present();
     };
     const auto settle = [&] {
         drive();
@@ -921,7 +921,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
                               .target(lenderless.get())
                               .value());
     EXPECT_EQ(backend->diagnosticCount(), 1U) << "three announcements are one episode";
-    backend->swapBuffers();
+    backend->surface()->present();
     backend->releaseRenderTarget(lenderless.get());
 
     backend->shutdown();
@@ -955,7 +955,7 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
 
     // The target the frame draws into: one RGBA8 colour attachment and a D32F depth - the format that has a
@@ -980,7 +980,7 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(triangle.commands, camera.get())
             .value());
-        backend->swapBuffers();
+        backend->surface()->present();
     };
 
     drive();
@@ -1127,7 +1127,7 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
 
     const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
@@ -1190,7 +1190,7 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, camera.get())
             .value());
-        backend->swapBuffers();
+        backend->surface()->present();
     };
 
     // 帧 1..5：相机 0.95..0.75（红通道类 1）；末帧 0.1（类 0）——它的输出留在 target 上。
@@ -1269,7 +1269,7 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
@@ -1328,7 +1328,7 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, camera.get())
             .value());
-        backend->swapBuffers();
+        backend->surface()->present();
     };
     const auto settle = [&] {
         drive();
@@ -1356,13 +1356,13 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     // reported, because this is served. A 0x0 announcement is not a size a surface can have: it costs
     // nothing, not even that stop.
     const std::size_t waits_before = backend->deviceWaits();
-    backend->resize(0, 0);
+    backend->surface()->resize(0, 0);
     EXPECT_EQ(backend->deviceWaits(), waits_before) << "a size no surface can have is not followed";
 
     ASSERT_TRUE(host.resize(96, 64))
         << "the platform must have the new size before it is announced: the backend follows the surface by "
            "reading it once (see TestHostWindow::resize)";
-    backend->resize(96, 64);
+    backend->surface()->resize(96, 64);
     EXPECT_EQ(backend->deviceWaits(), waits_before + 1U)
         << "following the surface rebuilds the swapchain, and that stops the device";
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "a live size event is served now";
@@ -1420,7 +1420,7 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
 
     // THE ENGINE'S SHADOW MAP, as a target: attachDepth with NO colour attachment, and its depth promoted so
@@ -1458,7 +1458,7 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
     // A frame that presents with it held is served silently - the target is part of the frame's world now,
     // and nothing about it needs saying.
     backend->executeFrame(vn::graphics::FrameDescription{});
-    backend->swapBuffers();
+    backend->surface()->present();
     EXPECT_EQ(backend->framesPresented(), 1U);
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
@@ -1495,7 +1495,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
@@ -1555,7 +1555,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, camera.get())
             .value());
-        backend->swapBuffers();
+        backend->surface()->present();
     };
     const auto settle = [&] {
         drive();
@@ -1660,7 +1660,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
                     static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
 
     // The two programs: both shade with the material's own diffuse colour, so the picture cannot tell them
@@ -1730,9 +1730,9 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, camera.get())
             .value());
-        backend->swapBuffers();
+        backend->surface()->present();
         const auto recorded  = std::chrono::steady_clock::now();
-        backend->swapBuffers();
+        backend->surface()->present();
         const auto committed = std::chrono::steady_clock::now();
         const auto micros    = [](auto from, auto to) {
             return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(to - from).count();
@@ -1957,7 +1957,7 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
@@ -2061,9 +2061,9 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, camera.get())
             .value());
-        backend->swapBuffers();
+        backend->surface()->present();
         const auto recorded  = std::chrono::steady_clock::now();
-        backend->swapBuffers();
+        backend->surface()->present();
         const auto committed = std::chrono::steady_clock::now();
         const auto micros    = [](auto from, auto to) {
             return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(to - from).count();
@@ -2193,7 +2193,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
@@ -2270,9 +2270,9 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, camera.get())
             .value());
-        backend->swapBuffers();
+        backend->surface()->present();
         const auto recorded  = std::chrono::steady_clock::now();
-        backend->swapBuffers();
+        backend->surface()->present();
         const auto committed = std::chrono::steady_clock::now();
         const auto micros    = [](auto from, auto to) {
             return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(to - from).count();
@@ -2443,7 +2443,7 @@ TEST(VsgBackendTest, TheTextureCacheDropsTheOldestInsertionAndRebuildsWhatItDrop
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
 
     vn::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
@@ -2583,7 +2583,7 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
 
     ContentStore*    store    = BackendContentAccess::store(*backend);
@@ -2610,7 +2610,7 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
             .depth(vn::graphics::DepthMode::Disabled)
             .content(commands, camera.get())
             .value());
-        backend->swapBuffers();
+        backend->surface()->present();
     };
 
     constexpr int kCycles = 12;
@@ -2783,7 +2783,7 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     backend->setDiagnosticSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
         messages.push_back(as_bytes(diagnostic.message));
     });
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
@@ -2849,7 +2849,7 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
                                   .depth(vn::graphics::DepthMode::Disabled)
                                   .content(commands, camera.get())
                                   .value());
-        backend->swapBuffers();
+        backend->surface()->present();
     };
 
     // Put the drive on a storage that fits ONE draw block: the frame below will ask for two.
@@ -2929,7 +2929,7 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
     backend->setDiagnosticSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
         messages.push_back(as_bytes(diagnostic.message));
     });
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
@@ -2954,7 +2954,7 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
             .depth(vn::graphics::DepthMode::Disabled)
             .content(no_commands, camera.get())
             .value());
-        backend->swapBuffers();
+        backend->surface()->present();
     };
 
     drive();  // its beginFrame() finds the rings too shallow for the stated count
@@ -3011,7 +3011,7 @@ TEST(VsgBackendTest, TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsS
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
@@ -3065,7 +3065,7 @@ TEST(VsgBackendTest, TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsS
             .depth(vn::graphics::DepthMode::Disabled)
             .content(commands, camera.get())
             .value());
-        backend->swapBuffers();
+        backend->surface()->present();
     };
 
     // The display path lags the session's presents: present the SAME picture once more, then read (a
@@ -3136,7 +3136,7 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
     backend->setDiagnosticSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
         messages.push_back(as_bytes(diagnostic.message));
     });
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
@@ -3193,9 +3193,9 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
             .depth(vn::graphics::DepthMode::Disabled)
             .content(commands, camera.get())
             .value());
-        backend->swapBuffers();
+        backend->surface()->present();
         const auto recorded  = std::chrono::steady_clock::now();
-        backend->swapBuffers();
+        backend->surface()->present();
         const auto committed = std::chrono::steady_clock::now();
         const auto millis    = [](auto from, auto to) {
             return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(to - from).count();

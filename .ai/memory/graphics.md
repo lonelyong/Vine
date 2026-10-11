@@ -19,9 +19,31 @@
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/usage.md`（模块文档一节） |
-| **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**已落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）；**剩下的片**：S4b 拆出呈现 / S5 能力与观测各收成一个值 / S6 宿主侧 |
+| **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**已落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）**；**剩下的片**：S5 能力与观测各收成一个值 / S6 宿主侧 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6 / **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建）；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-11 S4b 落地：窗口成为可选依赖（呈现拆成 `RenderSurfaceBinding`）
+
+- **做了什么**：`RenderBackend` **删** `setWindowHandle`/`nativeHandle`/`resize`/`swapBuffers`，**新增** `surface()`
+  （默认 null —— "窗口是可选依赖：只画离屏的后端答 null，四个入口一个都不实现"）；窗口那一半成了一张新契约
+  `vn::graphics::RenderSurfaceBinding`（`setWindowHandle`/`nativeHandle`/`resize`/`present`），插件 `VsgBackend`
+  同时实现两张契约、`surface()` 答 `this`（它一直有窗口：宿主的或自己建的），`swapBuffers()` 更名 `present()`。
+  引擎把句柄与尺寸转发给它、`frame()` 末尾 `if (surface) surface->present()`；**宿主 API 与 appfw 一行未改**。
+- **新可见性**：句柄公告给 `surface()==nullptr` 的后端 = 接线错误 → `PassProtocolViolation` **上报一次**
+  （分裂前这个形态根本表达不出来：入口在契约上、人人有空壳）；反向的**尺寸公告不报**（它仍进引擎 frame context，
+  pass 按它排布 —— 宿主对一张只离屏的表面报尺寸是合法的）。
+- **判据（实测）**：`test_graphics` **360**（357 + 3，新增 `tests/test_graphics/HeadlessBackendTest.cpp`：只离屏后端
+  **零窗口代码**跑完整帧 + 帧真的到达 pass 声明的那张 `RenderTarget` + 一处 present 都没有 / 句柄公告给它的上报 /
+  **有**窗口那一半的同批公告静默到达 + 每帧一次 present〔对照组〕）；`test_gui` **253**、`test_vsg` **426**
+  （421 + 3 skip + 2 已知红，**含 SDK 像素夹具 ⇒ 真设备上 present 路径逐项不变**）、appfw 32 / meshio 34 / iobase 94
+  全绿；全量 Release 0 error / 0 warning；五个 gate 0 finding（`--strict` 22 条，与改动前同一列表）。
+  **变异 3/3 红（各自单独实测）**：不问 `surface()` 也无 present ⇒ 3 条红；句柄收了却不交给表面 ⇒ 1 条红；
+  句柄公告改回静默 ⇒ 1 条红。
+- **坑 / 决策**：设计里那个 `format()` **取消**（全仓找不到读者：窗口的*实际*格式由插件的 `WindowTarget` 从平台读，
+  宿主从没问过）—— 真要问的那天，加在 `RenderSurfaceBinding` 上是一行。判据里"并读回"那半句改成"帧到达 pass 声明的
+  `RenderTarget`"（用双打读自己写下的字节只证明双打；真设备读回由 `test_vsg` 的既有窗口用例兜住）。X11 那半边的
+  54 处窗口调用是**纯机械替换**，Windows 上不编译，未验（同 S3 的记账）。
 
 ## 2026-10-11 S3 后半收口落地：平坦路径与 `Protocol` 一起退场
 

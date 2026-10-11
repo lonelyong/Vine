@@ -189,7 +189,7 @@ TEST_F(VsgBackendPluginTest, CreateBackendByName)
     EXPECT_NE(dynamic_cast<vn::vsg::VsgBackend*>(backend.get()), nullptr)
         << "the registered 'vsg' backend is the rewrite's facade, not the implementation it replaces";
     EXPECT_TRUE(backend->supportsRenderTargets());
-    EXPECT_EQ(backend->nativeHandle(), nullptr) << "no surface was announced on this instance";
+    EXPECT_EQ(backend->surface()->nativeHandle(), nullptr) << "no surface was announced on this instance";
 }
 
 #if !defined(_WIN32)
@@ -276,9 +276,9 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
     const vn::graphics::ClearPolicy      clear{ vn::Color(0, 64, 0, 255), true };
 
-    backend->setWindowHandle(host.handle());
+    backend->surface()->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
-    EXPECT_EQ(backend->nativeHandle(), host.handle()) << "the session adopted the host's window";
+    EXPECT_EQ(backend->surface()->nativeHandle(), host.handle()) << "the session adopted the host's window";
 
     backend->executeFrame(TestFrame()
                               .pass(pass.get())
@@ -287,14 +287,14 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
                               .depth(vn::graphics::DepthMode::TestAndWrite)
                               .content(commands, camera.get())
                               .value());
-    backend->swapBuffers();
+    backend->surface()->present();
 
     // A presentation reaches the display server asynchronously: two plan-free frames re-present the picture
     // before it is read (the settle the rewrite's own device cases use).
     for (int index = 0; index < 2; ++index)
     {
         backend->executeFrame(vn::graphics::FrameDescription{});
-        backend->swapBuffers();
+        backend->surface()->present();
     }
 
     const auto left  = host.pixel(kWidth / 4, kHeight / 2);

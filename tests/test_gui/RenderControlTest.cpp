@@ -43,6 +43,34 @@ using vn::appfw::gui::RenderControl;
 class StubBackend : public vn::graphics::RenderBackend
 {
   public:
+    /// The WINDOW HALF of the stub (see vn::graphics::RenderBackend::surface): everything the control asks
+    /// about the surface - the handle it was handed, the size it was told, the presents it drove.
+    class StubSurface : public vn::graphics::RenderSurfaceBinding
+    {
+      public:
+        void setWindowHandle(void* handle) override
+        {
+            last_handle = handle;
+            ++handle_calls;
+        }
+        [[nodiscard]] void* nativeHandle() const override { return last_handle; }
+        void resize(int w, int h) override
+        {
+            width  = w;
+            height = h;
+            ++resize_calls;
+        }
+        void present() override { ++presents; }
+
+      public:
+        int   handle_calls{ 0 };
+        int   resize_calls{ 0 };
+        int   presents{ 0 };
+        void* last_handle{ nullptr };
+        int   width{ 0 };
+        int   height{ 0 };
+    };
+
     bool initialize() override
     {
         ++initialize_calls;
@@ -61,37 +89,20 @@ class StubBackend : public vn::graphics::RenderBackend
 
     void setRenderTarget(vn::graphics::RenderTarget*) override {}
 
-    void swapBuffers() override { ++swaps; }
-
-    void setWindowHandle(void* handle) override
-    {
-        last_handle = handle;
-        ++handle_calls;
-    }
-
-    void resize(int w, int h) override
-    {
-        width  = w;
-        height = h;
-        ++resize_calls;
-    }
+    [[nodiscard]] vn::graphics::RenderSurfaceBinding* surface() override { return &surface_half; }
 
   public:
+    StubSurface surface_half;
+
     /// How many initialize() calls should report failure.
     int failures{ 0 };
 
     int   initialize_calls{ 0 };
     int   shutdown_calls{ 0 };
-    int   handle_calls{ 0 };
-    int   resize_calls{ 0 };
-    int   swaps{ 0 };
     /// How many frames the control's views ran, and how many drawing calls they carried: the stub's own reading
     /// of the value the engine handed over (see RenderBackend::executeFrame).
     int   frames{ 0 };
     std::size_t draws{ 0 };
-    void* last_handle{ nullptr };
-    int   width{ 0 };
-    int   height{ 0 };
 };
 
 /// Pumps the event loop until 'done' holds or 'timeout_ms' elapses.
@@ -201,9 +212,9 @@ TEST(RenderControlTest, AttachesItselfOnceTheBackendAndWindowAreThere)
     // 窗口一显示（容器的 show ⇒ 控件自己的重试）会话就起来了，那一帧也落了进去。
     ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
     EXPECT_GT(host.stub()->initialize_calls, 0);
-    EXPECT_NE(host.stub()->last_handle, nullptr);
-    EXPECT_GT(host.stub()->width, 0);
-    EXPECT_GT(host.stub()->height, 0);
+    EXPECT_NE(host.stub()->surface_half.last_handle, nullptr);
+    EXPECT_GT(host.stub()->surface_half.width, 0);
+    EXPECT_GT(host.stub()->surface_half.height, 0);
 
     ASSERT_NE(host.surface(), nullptr);
     EXPECT_TRUE(host.surface()->isVisible()); // 有帧可看 ⇒ 表面就位
@@ -561,23 +572,23 @@ TEST(RenderControlTest, ContinuousRenderingDrivesFramesWithoutInput)
     ASSERT_TRUE(pumpUntil([&] { return host.control()->width() > 0; }, 3000));
 
     // 先安静一会儿：按需模式下没有输入就没有帧（这条本身也是"按需"的判据）。
-    const int idle_before = host.stub()->swaps;
+    const int idle_before = host.stub()->surface_half.presents;
     pumpUntil([] { return false; }, 150);
-    EXPECT_EQ(host.stub()->swaps, idle_before) << "按需模式：没人输入就不出帧";
+    EXPECT_EQ(host.stub()->surface_half.presents, idle_before) << "按需模式：没人输入就不出帧";
 
     host.control()->setContinuousRendering(true, 10);
-    EXPECT_TRUE(pumpUntil([&] { return host.stub()->swaps >= idle_before + 3; }, 3000))
+    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.presents >= idle_before + 3; }, 3000))
         << "连续渲染开着时应当自己出帧（不需要任何输入）";
 
     // 关掉：帧数必须停住。给足两倍以上的滴答周期，避免把"刚好在跑的那一帧"当成还在继续。
     host.control()->setContinuousRendering(false);
-    const int stopped_at = host.stub()->swaps;
+    const int stopped_at = host.stub()->surface_half.presents;
     pumpUntil([] { return false; }, 120);
-    EXPECT_EQ(host.stub()->swaps, stopped_at) << "关掉之后不该再出帧";
+    EXPECT_EQ(host.stub()->surface_half.presents, stopped_at) << "关掉之后不该再出帧";
 
     // 可以再开一次（幂等：重复调用不叠计时器、换周期按新的跑）。
     host.control()->setContinuousRendering(true, 5);
-    EXPECT_TRUE(pumpUntil([&] { return host.stub()->swaps >= stopped_at + 2; }, 3000));
+    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.presents >= stopped_at + 2; }, 3000));
     host.control()->setContinuousRendering(false);
 }
 
@@ -694,7 +705,7 @@ TEST(RenderControlTest, AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScre
     // 同一句在 attach 之后就真的出帧了：区别只在会话在不在。
     ASSERT_TRUE(pumpUntil([&] { return host.control()->init(); }, 3000));
     EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting);
-    EXPECT_GE(host.stub()->swaps, 1) << "attach 那一帧就是第一张画面";
+    EXPECT_GE(host.stub()->surface_half.presents, 1) << "attach 那一帧就是第一张画面";
 }
 
 // 一帧就是一帧：attach 就在调用它的那一段里出一帧，所以窗口还没 show 时 init() 也让表面就位 —— 判据是
@@ -730,9 +741,9 @@ TEST(RenderControlTest, HostCanAttachRightAfterEmbeddingBeforeTheLayoutSettles)
     // 布局落下后尺寸被对齐：swapchain 按真实尺寸重建，随后首帧呈现。
     host.resizeWindow(640, 480);
     ASSERT_TRUE(pumpUntil([&] {
-        return host.stub()->width == host.surface()->width() && host.stub()->height == host.surface()->height();
+        return host.stub()->surface_half.width == host.surface()->width() && host.stub()->surface_half.height == host.surface()->height();
     }, 3000));
-    EXPECT_GT(host.stub()->width, 1);
+    EXPECT_GT(host.stub()->surface_half.width, 1);
     EXPECT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
 }
 
@@ -747,9 +758,9 @@ TEST(RenderControlTest, FollowsARecreatedSurfaceWithoutTheHost)
     ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
     ASSERT_NE(host.surface(), nullptr);
 
-    void* first_handle = host.stub()->last_handle;
+    void* first_handle = host.stub()->surface_half.last_handle;
     ASSERT_NE(first_handle, nullptr);
-    const int handle_calls_before = host.stub()->handle_calls;
+    const int handle_calls_before = host.stub()->surface_half.handle_calls;
 
     std::vector<RenderControl::SurfaceState> seen;
     auto subscription = host.control()->state_changed.connect([&seen](RenderControl::SurfaceState state) {
@@ -763,10 +774,10 @@ TEST(RenderControlTest, FollowsARecreatedSurfaceWithoutTheHost)
     surface->show();
 
     ASSERT_TRUE(pumpUntil([&] {
-        return host.stub()->last_handle != first_handle
+        return host.stub()->surface_half.last_handle != first_handle
                && host.control()->state() == RenderControl::SurfaceState::Presenting;
     }, 3000));
-    EXPECT_GT(host.stub()->handle_calls, handle_calls_before);
+    EXPECT_GT(host.stub()->surface_half.handle_calls, handle_calls_before);
     EXPECT_TRUE(surface->isVisible()); // 新窗口里重新落一帧之后才再上屏
 
     // 重建期间状态回到 Pending（窗口没了就不该声称"在出画面"），然后落一帧重新上屏。

@@ -17,6 +17,7 @@
 #include "FrameStats.hpp"
 #include "RenderDiagnostic.hpp"
 #include "RenderPass.hpp"
+#include "RenderSurfaceBinding.hpp"
 #include "ShaderProgram.hpp"
 #include "StateNode.hpp"
 
@@ -68,11 +69,15 @@ enum class ReadbackResult
  *
  * A FRAME IS A PARAMETER, NOT AN INTERVAL. executeFrame() does the frame's whole body: it acquires the next
  * presentable image when it has a surface (that is what "this is a frame" means to a windowed backend), records
- * the value, and leaves the backend in the state swapBuffers() presents. There is no beginFrame() to pair it
- * with, and no endFrame() to close it: "this frame is done" is the call returning.
+ * the value, and leaves it ready to be presented. There is no beginFrame() to pair it with, and no endFrame() to
+ * close it: "this frame is done" is the call returning.
+ *
+ * THE WINDOW HALF IS OPTIONAL. A backend that has a surface is also a RenderSurfaceBinding (see surface()): the
+ * engine announces the host window and the size through it and presents the frame it just ran through it, while
+ * a backend that only draws into render targets answers surface() == nullptr and carries none of that - the four
+ * window entries are not empty shells on this interface, they are absent from it.
  *
  * WHAT ELSE A BACKEND IS TOLD, and when - each is a RESOURCE announcement, not a frame call:
- *   * setWindowHandle / resize: the surface the frames are presented through;
  *   * setRenderTarget(target): a target the host will draw into or read back, so the backend can hold it and
  *     build its attachments before any frame names it (null selects the default framebuffer, which needs none);
  *   * releasePass / releaseRenderTarget: the pass / target is going away - free what it owns (see each entry);
@@ -121,7 +126,7 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
     /** @brief Initializes the backend: device, surface, pipelines, caches.
      *
      * Called once per session, after the host announced the native window
-     * (setWindowHandle) and the default content program (setDefaultContentProgram). A backend
+     * (RenderSurfaceBinding::setWindowHandle) and the default content program (setDefaultContentProgram). A backend
      * that is already initialized tears the previous session down first, so
      * this may be called again on a recreated surface.
      *
@@ -149,7 +154,7 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      * (which pass runs when, what its inputs resolved to, what each pass issues), so this is "run THIS", not
      * "here is one call at a time, in an order you have to know". Nothing is announced to the backend before or
      * after this call that is about the frame - the acquisition of the next presentable image (for a backend with
-     * a surface) happens inside it, and swapBuffers() is what hands that image back.
+     * a surface) happens inside it, and presenting that image is the surface binding's job (see surface()).
      *
      * WHAT IT MUST DO, in the order a frame means: take the value's passes as they come (an entry with a null
      * pass is nothing to run; an entry whose description is empty is a pass that ran and issued nothing - the
@@ -164,6 +169,25 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
      * @param frame The frame to execute, in run order (see FrameDescription).
      */
     virtual void executeFrame(const FrameDescription& frame) = 0;
+
+    /** @brief Gets the window half of this backend, or nullptr when it has none.
+     *
+     * A backend that presents through a window answers a RenderSurfaceBinding (itself, or a part of itself), and
+     * the engine drives the host's window and size announcements and the present through it. A backend that only
+     * draws into render targets - an offline baker, a test double, a compute-style consumer - answers nullptr and
+     * does nothing else: there is no window to bind, no size to follow and nothing to present, and no empty
+     * implementation of those four calls to carry.
+     *
+     * The answer is a property of the backend, not a state: it does not change over a session and it is asked
+     * from outside, never called back into the backend. The binding it returns stays valid for as long as the
+     * backend is initialized (see RenderSurfaceBinding for its own contract).
+     *
+     * @return The surface binding this backend presents through, or nullptr when it presents nothing.
+     */
+    [[nodiscard]] virtual RenderSurfaceBinding* surface()
+    {
+        return nullptr;
+    }
 
     /** @brief Sets a render target the host will use.
      *
@@ -367,14 +391,6 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
         return false;
     }
 
-    /** @brief Presents the rendered frame.
-     *
-     * The only call that presents, and the last call of a frame the backend ran: executeFrame() acquired the
-     * next presentable image when it had a surface, so handing it back here is what makes the frame visible.
-     * Each executeFrame() is closed by one swapBuffers() (see the class contract).
-     */
-    virtual void swapBuffers() = 0;
-
     /** @brief Selects the DEFAULT program for content: what a drawable naming none of its own gets.
      *
      * A default, not an override: a drawable's own program still wins, and so does a pass' program
@@ -394,55 +410,6 @@ class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBac
     virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program)
     {
         (void)program;
-    }
-
-    /** @brief Binds a host native window the backend may render into.
-     *
-     * Called by RenderEngine before initialize() when the host provides an
-     * existing native window (e.g. a Qt QWindow handle). The backend attaches
-     * to it instead of creating its own window. Default no-op.
-     *
-     * @param native_handle Native window handle (HWND on Windows), or nullptr.
-     */
-    virtual void setWindowHandle(void* native_handle)
-    {
-        (void)native_handle;
-    }
-
-    /** @brief Announces a change of the rendering surface size.
-     *
-     * The surface itself owns its size, so the authority order is surface > announcement > default:
-     * a backend whose surface belongs to a window system (an embedded host window, a swapchain)
-     * FOLLOWS THAT SURFACE and uses this call to re-derive what hangs off the size, whereas a
-     * backend that owns its surface (headless, or it created the window itself) applies the
-     * announcement. Either way the announced numbers are what the engine keeps in its frame context
-     * for the passes that lay themselves out on the surface size (see RenderEngine::resize), so the
-     * two sides never disagree about it.
-     *
-     * @param width  Announced surface width in pixels.
-     * @param height Announced surface height in pixels.
-     */
-    virtual void resize(int width, int height)
-    {
-        (void)width;
-        (void)height;
-    }
-
-    /** @brief Gets the native handle the backend is currently attached to.
-     *
-     * Returns the native window handle (HWND on Windows) the backend bound
-     * its render surface to during initialize(), or nullptr when the backend
-     * is not attached to a host surface (standalone window or not yet
-     * initialized). It answers "which surface am I on" for a host that has to notice the windowing
-     * system recreating that surface underneath the backend: re-announcing through
-     * setWindowHandle() is how the backend is moved to the new one, and this is how a host decides
-     * whether that is necessary.
-     *
-     * @return The attached native handle, or nullptr.
-     */
-    virtual void* nativeHandle() const
-    {
-        return nullptr;
     }
 
     /** @brief Installs the route every diagnostic this backend reports goes through.

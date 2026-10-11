@@ -121,7 +121,17 @@ bool RenderEngine::initialize()
         return false;
     }
     if (native_handle_ != nullptr) {
-        backend_->setWindowHandle(native_handle_);
+        if (RenderSurfaceBinding* const surface = backend_->surface()) {
+            surface->setWindowHandle(native_handle_);
+        }
+        else {
+            // The window half is OPTIONAL (see RenderBackend::surface): a host that announced a window to a
+            // backend presenting nothing is wiring the engine cannot serve, and saying nothing would look like
+            // "attached".
+            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
+                                String(u8"a native window was announced to a backend that presents nothing, so "
+                                        u8"the window was not attached"));
+        }
     }
     // Forward the default content program before the backend builds its shader sets.
     backend_->setDefaultContentProgram(default_content_program_);
@@ -132,7 +142,9 @@ bool RenderEngine::initialize()
         // Hand it over BEFORE the warm-up, so the content compiled there is built at the right size
         // instead of the backend's default.
         if (frame_ctx_.surface_width > 0 && frame_ctx_.surface_height > 0) {
-            backend_->resize(frame_ctx_.surface_width, frame_ctx_.surface_height);
+            if (RenderSurfaceBinding* const surface = backend_->surface()) {
+                surface->resize(frame_ctx_.surface_width, frame_ctx_.surface_height);
+            }
         }
         // NO PRE-FRAME WARM-UP. It used to execute every enabled, non-clearing pass once before the first frame, so
         // a backend could see its whole pass set before presenting - which mattered when a frame arrived as a
@@ -225,11 +237,15 @@ void RenderEngine::frame(double dt)
     // compile); a pass whose entry carries no description issues nothing at all.
     //
     // The backend's own frame (acquiring the presentable image, recording, reaching the state a present can hand
-    // back) happens inside this ONE call; swapBuffers() is what makes the frame visible (see
-    // RenderBackend::executeFrame).
+    // back) happens inside this ONE call (see RenderBackend::executeFrame).
     backend_->executeFrame(frame_value_);
 
-    backend_->swapBuffers();
+    // The window half of the frame - committing what was collected, and showing it - belongs to the SURFACE when
+    // the backend has one (see RenderBackend::surface). A backend that only draws into render targets presents
+    // nothing, and the frame is complete when executeFrame() returned.
+    if (RenderSurfaceBinding* const surface = backend_->surface()) {
+        surface->present();
+    }
 }
 
 const FrameContext& RenderEngine::frameContext() const
@@ -994,12 +1010,15 @@ void RenderEngine::resize(int width, int height)
     frame_ctx_.surface_width  = width;
     frame_ctx_.surface_height = height;
     if (initialized_ && backend_ != nullptr) {
-        backend_->resize(width, height);
+        if (RenderSurfaceBinding* const surface = backend_->surface()) {
+            surface->resize(width, height);
+        }
     }
     // No layout fan-out here: target sizes, pass viewports and camera
     // projections are maintained by their creators on the surface size
-    // (e.g. SceneView::addSurfaceLayout). The engine only rebuilds its own
-    // swapchain and records the surface size.
+    // (e.g. SceneView::addSurfaceLayout). The engine only records the surface
+    // size; the swapchain being resized is the surface's own (see
+    // RenderBackend::surface).
 }
 
 void RenderEngine::setWindowHandle(void* native_handle)

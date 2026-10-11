@@ -2138,6 +2138,35 @@ TEST(RenderTargetTest, MultipleColorAttachments)
  */
 class MockBackend : public RenderBackend {
   public:
+    /// The WINDOW HALF of this double (see RenderBackend::surface): what the engine forwarded to the surface
+    /// (a window announcement, a size) and the presents it drove. Frame cases count the present through it,
+    /// and a double that wants no window half at all flips `has_surface` below.
+    class MockSurface : public RenderSurfaceBinding
+    {
+      public:
+        void setWindowHandle(void* handle) override
+        {
+            adopted_handle = handle;
+            handle_sets.push_back(handle);
+        }
+        [[nodiscard]] void* nativeHandle() const override { return adopted_handle; }
+        void resize(int width, int height) override
+        {
+            ++resize_calls;
+            last_surface_width  = width;
+            last_surface_height = height;
+        }
+        void present() override { ++present_calls; }
+
+      public:
+        int                present_calls       = 0;
+        int                resize_calls        = 0;
+        int                last_surface_width  = 0;
+        int                last_surface_height = 0;
+        void*              adopted_handle      = nullptr;
+        std::vector<void*> handle_sets;
+    };
+
     bool ok = false;
 
     /// Emits one diagnostic through the backend contract (test hook for the
@@ -2148,7 +2177,12 @@ class MockBackend : public RenderBackend {
         reportDiagnostic(severity, category, message);
     }
 
-    int swap_calls = 0;
+    /// Whether this double has a surface: TRUE by default (a frame test is about a backend that presents
+    /// through a window, and the present is one of the witnesses below).
+    bool        has_surface = true;
+    MockSurface surface_half;
+    [[nodiscard]] RenderSurfaceBinding* surface() override { return has_surface ? &surface_half : nullptr; }
+
     int render_calls = 0;
     int clear_calls = 0;
     /// Policy of the last clear the frame stated, so a test can assert WHAT the pass asked for.
@@ -2178,15 +2212,6 @@ class MockBackend : public RenderBackend {
         ++default_content_program_sets;
     }
     void shutdown() override { ok = false; }
-    void resize(int width, int height) override
-    {
-        ++resize_calls;
-        last_surface_width  = width;
-        last_surface_height = height;
-    }
-    int resize_calls         = 0;
-    int last_surface_width   = 0;
-    int last_surface_height  = 0;
     void setRenderTarget(RenderTarget* target) override { target_history.push_back(target); }
     std::vector<RenderTarget*> target_history;
     int                        pass_input_sets = 0;
@@ -2206,7 +2231,6 @@ class MockBackend : public RenderBackend {
     /// A test that wants the other answer flips this and the engine reports the pipeline it cannot serve.
     bool supports_targets = true;
     bool supportsRenderTargets() override { return supports_targets; }
-    void swapBuffers() override { ++swap_calls; }
 
     /// The pass identities the frame named, in RUN ORDER (see FrameDescription::Pass::pass): what the engine's
     /// compile decided, as the backend sees it. `entries` counts the passes walked, and `entries_closed` how many
@@ -2749,7 +2773,7 @@ TEST(RenderEngineTest, FrameRunsPipeline)
 
     EXPECT_EQ(backend->pass_entries.size(), 1u) << "the pass arrived in the frame's value";
     EXPECT_EQ(backend->entries_closed, backend->entries);
-    EXPECT_EQ(backend->swap_calls, 1);
+    EXPECT_EQ(backend->surface_half.present_calls, 1) << "the engine presents the frame it ran, through the surface";
     EXPECT_GE(backend->clear_calls, 1);
 }
 
@@ -2842,7 +2866,7 @@ TEST(RenderEngineTest, FrameBeforeInitializeIsNoOp)
 
     // Not initialized: frame should do nothing.
     engine->frame();
-    EXPECT_EQ(backend->swap_calls, 0);
+    EXPECT_EQ(backend->surface_half.present_calls, 0);
     EXPECT_TRUE(backend->pass_entries.empty());
 }
 
@@ -9201,20 +9225,20 @@ TEST(RenderEngineTest, SurfaceSizeAnnouncedBeforeInitializeReachesTheBackend)
 
     // Announced first: the backend does not exist yet as far as the size is concerned.
     engine->resize(800, 600);
-    EXPECT_EQ(backend->resize_calls, 0);
+    EXPECT_EQ(backend->surface_half.resize_calls, 0);
     EXPECT_EQ(engine->frameContext().surface_width, 800);
     EXPECT_EQ(engine->frameContext().surface_height, 600);
 
     ASSERT_TRUE(engine->initialize());
-    EXPECT_EQ(backend->resize_calls, 1);
-    EXPECT_EQ(backend->last_surface_width, 800);
-    EXPECT_EQ(backend->last_surface_height, 600);
+    EXPECT_EQ(backend->surface_half.resize_calls, 1);
+    EXPECT_EQ(backend->surface_half.last_surface_width, 800);
+    EXPECT_EQ(backend->surface_half.last_surface_height, 600);
 
     // A later resize is forwarded directly (one call per announcement, not two).
     engine->resize(1024, 768);
-    EXPECT_EQ(backend->resize_calls, 2);
-    EXPECT_EQ(backend->last_surface_width, 1024);
-    EXPECT_EQ(backend->last_surface_height, 768);
+    EXPECT_EQ(backend->surface_half.resize_calls, 2);
+    EXPECT_EQ(backend->surface_half.last_surface_width, 1024);
+    EXPECT_EQ(backend->surface_half.last_surface_height, 768);
 }
 
 /**
@@ -9230,11 +9254,11 @@ TEST(RenderEngineTest, NoSurfaceSizeAnnouncementIsNotForwarded)
     engine->setBackend(backend);
 
     ASSERT_TRUE(engine->initialize());
-    EXPECT_EQ(backend->resize_calls, 0);
+    EXPECT_EQ(backend->surface_half.resize_calls, 0);
 
     // A non-positive announcement is ignored (the engine does not record it either).
     engine->resize(0, 0);
-    EXPECT_EQ(backend->resize_calls, 0);
+    EXPECT_EQ(backend->surface_half.resize_calls, 0);
     EXPECT_EQ(engine->frameContext().surface_width, 0);
 }
 

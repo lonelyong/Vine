@@ -1,6 +1,6 @@
 # graphics 的重新设计（2026-10-11 定，提案）
 
-**状态：S1 / A / S2 / S3（含 3c 收口）已落地（2026-10-11）；剩下的片：S4b（拆出呈现）/ S5（能力与观测各收成一个值）/
+**状态：S1 / A / S2 / S3（含 3c 收口）/ S4b 已落地（2026-10-11）；剩下的片：S5（能力与观测各收成一个值）/
 S6（宿主侧）。** 用户 2026-10-11 定"重构，重新设计"，边界划到**含后端契约**
 （`RenderBackend.hpp` + `sdk/vine/graphics/backend/` 半 + `gfx_backend_vsg` 插件）。
 
@@ -233,7 +233,7 @@ class VN_GRAPHICS_API RenderSurfaceBinding
 | **A** | **画面形状回到相机**（**已落地 2026-10-11，见下**；取代 S4a，也把 S1 的那道缝合掉） | `Camera` 持 `aspect`（`setAspect`/`aspectRatio`/`projectionMatrix()`/`screenToWorldRay(pos)`）；`RenderBackend::viewAspect()` 从契约里**删除**；`collectRenderCommands*(camera)`；`SceneView` 把窗格的形状 push 给相机；HUD 子视口相机自己声明形状；引擎在编译期报"pass 的矩形 ≠ 相机的画面形状" | 见下"已落地：A" | S1 |
 | **S2** | **引擎产出整帧的值**（窄口，不破宿主 API）— **前半已落地 2026-10-11，见下**（值 + 观测面） | `compileFrame()` 之后组装 `FrameDescription`；`executeFrame(desc)` 作为**新增**入口；能力位 `Capabilities::frameAsValue`；老路保留 | **两棵树逐字节相同**（selftest + demo 冒烟 + 三套件）；变异：值里漏一条 pass / 漏一条 draw ⇒ 像素判据红 | S1 + A |
 | **S3** | **删平坦路径与 `Protocol` 的顺序规则** — **已落地 2026-10-11：帧由值驱动 + 整帧交给后端 `executeFrame`（前半）＋ 平坦路径与 `Protocol` 删除（收口，见下）** | 删 `beginPass`/`endPass`/`setPassOrder`/`setPassState`/`setClearPolicy`/`setViewport`/`setLights`/`setPassInputs`/`beginFrame`/`endFrame`；`Protocol` 删（只留"目标被释放"那一条规则，落在 recorder）；预热那一拍删 | **先回答"覆写 `execute()` 的 pass 怎么办"**（见 S2 落地记录第 3 条：仓库里就有这样一条见证）；`Protocol` 的 7 条 `CoreProtocolTest` 用例删除并记账（433 → 426）；三套件计数**只许减该删的**；两棵树逐字节相同（此时只剩一棵） | S2 |
-| **S4b** | **拆出呈现**（窗口成为可选依赖） | `RenderSurfaceBinding`（`nativeHandle`/`setWindowHandle`/`resize`/`present`/`format`） | **新增能力用例**：一个**只离屏**的后端（`surface()==nullptr`）用一条 pass 画进 `RenderTarget` 并读回 —— 今天它必须实现 4 个空壳。 | S2 |
+| **S4b** | **拆出呈现**（窗口成为可选依赖）— **已落地 2026-10-11，见下** | 新增导出 `RenderSurfaceBinding`（`nativeHandle`/`setWindowHandle`/`resize`/`present`；**`format` 取消**，见落地记录第 2 条）；`RenderBackend` 删那 4 个入口、加 `surface()`（默认 null） | 见下"已落地（2026-10-11）：S4b" | S2 |
 | **S5** | **能力与观测各收成一个值** | `Capabilities`、`FrameReport`；删 4 个 bool 出参；引擎/后端/诊断三套数收成"一条路 + 一个值" | `test_vsg` 的 counters/progress/retention 用例改写（语义等价）；gate 里的数字逐项对照 | S3 |
 | **S6** | **宿主侧**（可与 S1–S5 并行） | 尺寸唯一 owner；`SceneView` 六角色分组命名 + 三条"内部入口"标注；presentation 知识收进呈现表 | `test_gui` 253 不变；`SceneViewViewportTest` 增一条"视图不持有第二份尺寸" | 无 |
 
@@ -505,6 +505,62 @@ VTK 那一派、**用法**却是 three.js 那一派（每个视图一台相机�
 
 **留下的记账**：S4a 整片**取消**（A 就是它要的东西，只是把形状放在相机而不是 `PassDescription`）；
 `RenderBackend.hpp` 的 include 与 `ClearPolicy` 的位置不变（S1 已搬）；S2 的前置依赖现在是 **A（已落地）**。
+
+### 已落地（2026-10-11）：S4b —— 拆出呈现（窗口成为可选依赖）
+
+**动作**：
+
+1. **新增一张契约、删掉四个入口**：新增导出 `sdk/vine/graphics/RenderSurfaceBinding.hpp`（`setWindowHandle` /
+   `nativeHandle` / `resize` / `present`，4 个纯虚）；`RenderBackend` **删** `setWindowHandle` / `nativeHandle` /
+   `resize` / `swapBuffers`，**新增** `virtual RenderSurfaceBinding* surface()`（非纯虚，默认 null；文档写明"窗口是
+   **可选依赖**：只画离屏的后端答 null，四个入口一个都不实现"）。于是"窗口"从**每个后端都要背的四个空壳**变成
+   **要么有、要么没有**的一半。
+2. **`format()` 取消（决策，记账）**：设计 §4 的 S4b 行括号里写了它，但全仓**找不到读者** —— 窗口的*实际*格式今天
+   由插件的 `WindowTarget` 从平台读（`usage.md` §7 那句"窗口 target 的格式由后端按 surface 的实际格式决定"就是这件事），
+   宿主从没问过"我要不要 sRGB"。按 S0 的冻结（新需求只用"改形状"两片解决）与"不落地没有读者的入口"，**取消**；
+   真要问的那天，加在 `RenderSurfaceBinding` 上是一行 —— 这正是拆开的好处。
+3. **引擎**：`initialize()` 把句柄交给 `backend_->surface()`（有才交）、把初始化前公告的尺寸也交给它；`resize()`
+   把尺寸转发给它；`frame()` = `executeFrame(值)` + `if (surface) surface->present()`。**宿主 API 不动**：
+   `RenderEngine::setWindowHandle`/`resize` 的签名与语义（记录 + 转发）保持原样，appfw 的 `SurfaceWindow`
+   **一行没改**（它今天就是"公告句柄 + `initialize()`"）。
+4. **一条新的上报**：句柄公告给 **`surface()==nullptr`** 的后端 = 接线错误（`PassProtocolViolation`，一次），
+   不是静默丢弃 —— 分裂**之前**这个形态根本表达不出来（入口在契约上、人人有空壳），所以这是本片新增的可见性：
+   "点了句柄"与"真的接上了"从此长得不一样。**尺寸公告给同一后端不报**：它仍进引擎的 frame context（pass 按它排布），
+   宿主对一张只离屏的表面报尺寸是合法的 —— 两条公告一个报、一个不报，用例各钉一条。
+5. **插件**：`VsgBackend` 同时实现 `RenderBackend` + `RenderSurfaceBinding`，`surface()` 答 `this`（它一直有窗口：
+   宿主的，或自己建的）；`swapBuffers()` **更名 `present()`** 并归入表面那一半（体一行未改）；文件注记、插件文档
+   （`backend.md` 的入口表、`data-flow.md` 的三处）与 `FrameTimeline`/`VsgHostWindow`/appfw 注释里的引用一并更新。
+6. **测试**：`GraphicsTest` 的 `MockBackend` 与 `RenderControlTest` 的 `StubBackend` 各自长出**嵌套表面**
+   （`surface_half`：present 计数、尺寸、句柄都落在那儿 —— "帧的见证"与"窗口的见证"从此分家）；`VsgBackendTest`（54 处）
+   与 `GfxBackendVsgPluginTest`（5 处）的窗口调用改成 `backend->surface()->…`；**新增
+   `tests/test_graphics/HeadlessBackendTest.cpp`（3 条）**：只离屏后端（`surface()==nullptr`，**零窗口代码**）
+   跑完整帧、帧真的到达 pass 声明的那张离屏目标、present 一处都没有；句柄公告给它的上报；**有**窗口那一半的同批
+   公告静默到达 + 每帧一次 present（对照组 —— 没有它，"上报"证明不了什么）。
+
+**判据（实测）**：`test_graphics` **357 → 360**（+3 新用例）、`test_gui` **253**（不变）、`test_vsg`
+**426 = 421 + 3 skip + 2 已知红**（**含 SDK 像素夹具 ⇒ 真设备上 present 路径逐项不变**；真设备上的门面用例现在
+真的走 `surface()->present()`）、`test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94 全绿；全量 Release 构建
+0 error / 0 warning；五个 gate 0 finding（`check_ai_docs --strict` **22 条，与本片改动前同一列表** —— 在 HEAD 的主检出里
+实测也是 22，本片一条没加，列表里没有一条提到本片动的名字）。
+**变异 3/3 红（各自单独实测）**：① `frame()` 不问 `surface()`、也不 present ⇒ **3 条红**
+（`RenderEngineTest.FrameRunsPipeline`、`HeadlessBackendTest.AFrameIsCompleteWithoutASurface`〔问的次数〕、
+`AWindowAnnouncedToAWindowedBackendReachesItUnreported`〔present 计数〕）；② `initialize()` 收了句柄但不交给表面
+⇒ **1 条红**（`AWindowAnnouncedToAWindowedBackendReachesItUnreported`）；③ 句柄公告给没窗口的后端改回静默
+⇒ **1 条红**（`AWindowAnnouncedToAWindowlessBackendIsReported`）。
+
+**落地时发现 / 记账（都进设计）**：
+
+1. **"空壳"是契约问题，不是实现问题** —— 本片真正的价值不是少写四个方法，而是**"没有窗口"第一次可以被说出来**：
+   `surface()` 的 null 是**类型上**的答案，空壳是**实现上**的谎言（一个不接窗口的后端照样"实现了"接窗口，
+   只是什么都不做）。上面第 4 条那条上报只能在这个形态下存在。
+2. **present 的执行者换人之后，"一帧"的边界反而更清楚了**：`executeFrame` 是"这一帧的身体"（取图、收集、编译），
+   `present` 是"把它变成真的"（录制、提交、呈递），而引擎只负责**把两拍按顺序驱动一次**。S5 要收的"一帧一个值"
+   （`FrameReport`）就落在这两拍之间。
+3. **判据里那半句"并读回"没有照做**：`readColorBuffer` 是后端自己的实现，用双打读自己写下的字节只证明双打；
+   改为断言**帧真的到达了 pass 声明的那张 `RenderTarget`**（`targets.front() == target`）—— 那才是引擎侧可验的一半。
+   真设备上的读回由 `test_vsg` 的既有用例兜住（它们都带窗口，不适用本片的能力形态）。
+4. **X11 那半边的用例仍然是"改了但没编译"**：本片把 54 处窗口调用改成 `surface()->…` 是**纯机械替换**
+   （同一对象、同一批参数），但这台机器上没有 X display，**无法编译验证**，如实记账（S3 已记过同一条）。
 
 ## 5. 否决与否决理由
 

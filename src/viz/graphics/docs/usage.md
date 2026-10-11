@@ -127,8 +127,10 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   只持有引用会让被丢掉的 pass 继续每帧执行）。
 - **顺序用阶段说**（`PipelineStage` + `pipelineStageOrder`）：阴影深度、几何、效果、着色、透明、
   呈现、HUD、预览各占一个档位，效果按"我在谁之前"进入，不去抢别人的魔数。
-- `RenderBackend` —— 设备边界（窗口层、整帧 `executeFrame()`、回读、诊断；目标/资源公告与观测入口见
-  `.ai/design/graphics-redesign.md`）。`RenderBackendRegistry` /
+- `RenderBackend` —— 设备边界（整帧 `executeFrame()`、回读、诊断；目标/资源公告与观测入口见
+  `.ai/design/graphics-redesign.md`）。**窗口是可选的另一半**：后端有窗口时同时实现
+  `RenderSurfaceBinding` 并由 `surface()` 交出来（句柄、尺寸跟随、`present()`），只画离屏的后端
+  `surface()` 答 null、四个窗口入口一个都不实现。`RenderBackendRegistry` /
   `RenderBackendFactory` 让插件自注册、宿主按名字创建。
 
 ### 2.5 每帧数据流

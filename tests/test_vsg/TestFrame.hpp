@@ -28,7 +28,7 @@
  *
  * ```cpp
  *   backend->executeFrame(TestFrame().pass(pass.get()).target(nullptr).clear(clear).content(commands, camera));
- *   backend->swapBuffers();
+ *   backend->surface()->present();
  * ```
  */
 class TestFrame
