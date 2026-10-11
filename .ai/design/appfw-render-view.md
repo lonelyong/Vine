@@ -723,7 +723,10 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 > 呈现表）、**矩形归呈现条目**（`Surface::present(view, rect)`，`SceneView::setViewport` 转发）、
 > **aspect 出相机**，于是同一台相机可以跨矩形复用。分片进度：**M2a 谁呈现 / M2b 清屏归表面 / M2c aspect 出相机 /
 > M2d 矩形放呈现条目 / M5a 输入按矩形推 + 焦点视图 已落地（2026-10-11）**；M5b（分屏布局的所有者 + 窗口级焦点）
-> 仍未落地 —— 所以"谁 split、谁销毁、谁给每格喂尺寸"今天仍是宿主的事。
+> **未落地** —— 所以"谁 split、谁销毁、谁给每格喂尺寸"今天仍是宿主的事（`RenderControlTest` 那两条分屏用例手写
+> 四条语句）。**该片的 API 已论证定稿（2026-10-11）：`vn::graphics::SplitLayout`，布局持有它创建的 pane 视图、
+> 矩形仍写在表面那张表上、尺寸由布局一次扇出；窗口级焦点（一窗一控件）记录为不做。决定是"先不落地"，落点与
+> 判据记在 `graphics-render-next.md` §5 M5b 行。**
 > **落地后本节有四条已过期**：①"aspect 存在相机里"不成立 —— `Camera` 只持观看与投影参数
 > （`projectionMatrix(aspect)` 现算、`aspectRatio()` 删除），形状由后端一处推导
 > （`RenderBackend::viewAspect()`：pass 的 viewport，否则目标 / 表面尺寸），剔除与 view block 读同一个数；
