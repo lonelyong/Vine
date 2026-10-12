@@ -6425,6 +6425,14 @@ TEST(UserIOTest, InputActionIsOfferedOnlyWhileTheReadWaits)
 // 追加（与手打 "a;b" 同构）。对话框在 offscreen 上是 Qt 自己的，用例用一次性定时器把它关掉。
 TEST(UserIOTest, PickingFilesFillsTheLineWithoutSubmitting)
 {
+    // 无头平台驱动不了真实文件对话框：这条用例的判法是"替用户点一下对话框"（拿 activeModalWidget 当 QFileDialog 去脚本它），
+    // offscreen/minimal 下那个模态窗口根本不会出现，等它的人只会空转到死 —— CTest 一律用 offscreen
+    // （见 tests/test_gui/CMakeLists.txt），所以这里如实跳过，而不是让仓库门禁自己超时。
+    const QString platform = QGuiApplication::platformName();
+    if (platform == QLatin1String("offscreen") || platform == QLatin1String("minimal")) {
+        GTEST_SKIP() << "无头平台没有可脚本化的文件对话框（平台：" << platform.toStdString() << "）";
+    }
+
     auto* app = GuiEnv::app.get();
     ASSERT_NE(app, nullptr);
     auto* io = vn::obj_cast<guifw::VisualUserIO>(app->userIO());

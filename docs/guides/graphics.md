@@ -1107,8 +1107,14 @@ deferred、离屏、深度共享、overlay —— 并打印 `[selftest]` 证据�
 `scripts/vsg_selftest_evidence.sh` 是渲染改动的主要回归门禁：**逐字节相同否则失败**（`--update` 重设
 基线）。用 `VINE_SELFTEST_FRAMES` 可以加大每个相位的帧数做压力跑。
 
-本环境里有三个套件是**既有失败**、与本模块无关（`test_cppstd` / `test_runtime` / `test_system`）；上面
-列的 graphics / vsg 套件才是它的门禁。
+仓库有 **24 个 CTest 套件**（`ctest --test-dir build -C Release`），2026-10-13 实测 **24/24 通过**：
+早先在这里登记为"既有失败"的 `test_cppstd`（5）/ `test_runtime`（28）/ `test_system`（12 + 1 skip）现在都是绿的。
+`test_gui` 在 CTest 下用 `QT_QPA_PLATFORM=offscreen`（见 `tests/test_gui/CMakeLists.txt`）：那条**脚本化真实文件对话框**的
+用例（`UserIOTest.PickingFilesFillsTheLineWithoutSubmitting`）在无头平台自动 `GTEST_SKIP`，因为无头平台没有
+可脚本化的模态窗口；offscreen 插件由测试目标自己部署（Release 树里 windeployqt 只带宿主平台插件，
+少了它 Qt 会在任何用例跑起来之前 abort）。手跑这个套件时（**Windows 原生对话框**下那条用例今天仍会红，
+脚本拿不到 `QFileDialog`）按约定加
+`--gtest_filter=-UserIOTest.PickingFilesFillsTheLineWithoutSubmitting`：`test_gui` 259 条全绿。
 
 ## 5. 延伸阅读
 

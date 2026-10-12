@@ -25,6 +25,26 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-13 门禁口径：`ctest` 全量 24/24（修前 23/24，`test_gui` 直接 abort）
+
+- **结论**：`docs/guides/graphics.md` §4.4 把 `ctest --test-dir build` 列进门禁，而它**修前是红的**：
+  `ctest -R test_gui` = **Exit code 0xc0000409（3.34 s）**（Qt：`Could not find the Qt platform plugin "offscreen"`）。
+  根因是**部署缺口**，不是用例错：`windeployqt` 只带宿主平台插件（`qwindows.dll`），而 CTest 给 `test_gui`
+  强制 `QT_QPA_PLATFORM=offscreen`（`tests/test_gui/CMakeLists.txt`，为了 WSLg / 远程桌面不弹窗）；
+  `cmake/VineDeployQt.cmake` 里那段"把 offscreen 插件复制过去"的代码**从来没被跑过** —— `DeployQt` 是自定义目标，
+  无 preset、无依赖、也不是 `ALL`。
+- **修法**：插件发现提成 `vn_find_qt_offscreen_plugin_dir()`（Release/Debug 两种拼写**都查磁盘**），
+  `tests/test_gui` 给测试目标挂 POST_BUILD 复制（插件与 Qt 库同目录 = 测试可执行文件旁边）；
+  那条**脚本化真实文件对话框**的用例在 `offscreen`/`minimal` 下 `GTEST_SKIP()`（无头平台没有可脚本化的模态窗口，
+  等它的人只会空转到死）；§4.4 的"三个套件既有失败"过期句按实测改掉（那三个今天 5/5、28/28、12+1 skip 全绿）。
+- **判据（实测）**：`ctest -R test_gui` **Passed 15.33 s**；全量 `ctest --test-dir build -C Release` **24/24 通过**
+  （含 `test_cppstd` 36.6 s / `test_vsg` 18.5 s / `test_gui` 15.6 s）；手跑本模块套件仍按约定加
+  `--gtest_filter=-UserIOTest.PickingFilesFillsTheLineWithoutSubmitting`（**Windows 原生对话框**下那条今天仍会红，
+  脚本拿不到 `QFileDialog`），259 条全绿。
+- **坑**：①`if(EXISTS)` **吃不了生成器表达式** —— 原来的 Windows 分支靠 `WIN32 OR` 绕过检查就是这个原因，
+  所以"插件文件名带 `$<CONFIG:Debug>`"时只能两种拼写都查磁盘；②`DeployQt` 这种"只改部署、不产出文件"的
+  自定义目标**没人记得跑**，凡是被门禁依赖的部署都要挂在门禁真正构建的目标上（POST_BUILD）。
+
 ## 2026-10-13 同一 pass 内的画序：`Node::setDrawOrder`（对象模型缺口 1 落地）
 
 - **结论**：`Node::setDrawOrder(int)` / `drawOrder()`（`std::optional`，只答"本节点声明了什么"）/ `clearDrawOrder()`，

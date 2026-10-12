@@ -30,61 +30,72 @@ else ()
     message(STATUS "DeployQt: no Qt deployment needed on ${CMAKE_SYSTEM_NAME} (windeployqt is Windows-only)")
 endif ()
 
-# windeployqt only deploys the platform plugin of the host platform (qwindows*.dll
-# on Windows), but test_gui runs from ctest with QT_QPA_PLATFORM=offscreen. Without
-# a deployed offscreen plugin Qt aborts before any test runs:
-#   qt.qpa.plugin: Could not find the Qt platform plugin "offscreen" in ""
-# So copy that plugin next to the one windeployqt placed (Windows) or next to the
-# framework library (Linux/macOS, where Qt additionally looks for plugins).
+# Locates the offscreen platform plugin of the Qt in use.
 #
-# The plugin directory is looked up as: the layout Qt itself reports, then the
-# SDK layout relative to Qt6_DIR, then the layouts used by Linux distributions.
-set(VN_QT_PLATFORM_PLUGIN_DIR "")
-
-set(VN_QT_PLUGIN_CANDIDATES "")
-if (DEFINED QT6_INSTALL_PREFIX AND DEFINED QT6_INSTALL_PLUGINS)
-    list(APPEND VN_QT_PLUGIN_CANDIDATES "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_PLUGINS}/platforms")
-endif()
-if (Qt6_DIR)
-    get_filename_component(VINE_QT_PREFIX "${Qt6_DIR}/../../.." ABSOLUTE)
-    list(APPEND VN_QT_PLUGIN_CANDIDATES
-            "${VINE_QT_PREFIX}/plugins/platforms"
-            "${VINE_QT_PREFIX}/lib/qt6/plugins/platforms"
-            "${VINE_QT_PREFIX}/qt6/plugins/platforms")
-    unset(VINE_QT_PREFIX)
-endif()
-
-foreach (_candidate IN LISTS VN_QT_PLUGIN_CANDIDATES)
-    if (NOT VN_QT_PLATFORM_PLUGIN_DIR AND EXISTS "${_candidate}")
-        set(VN_QT_PLATFORM_PLUGIN_DIR "${_candidate}")
+# ctest runs test_gui with QT_QPA_PLATFORM=offscreen while windeployqt only deploys the host
+# platform plugin (qwindows*.dll on Windows), so the offscreen plugin has to be copied next to the
+# Qt libraries by hand. Both the deploy target below and tests/test_gui/CMakeLists.txt need the same
+# answer, so the lookup lives here.
+#
+# The plugin directory is looked up as: the layout Qt itself reports, then the SDK layout relative
+# to Qt6_DIR, then the layouts used by Linux distributions.
+#
+# @param out_dir Plugin directory holding the offscreen plugin, or empty when it was not found.
+function(vn_find_qt_offscreen_plugin_dir out_dir)
+    set(_plugin_dirs "")
+    if (DEFINED QT6_INSTALL_PREFIX AND DEFINED QT6_INSTALL_PLUGINS)
+        list(APPEND _plugin_dirs "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_PLUGINS}/platforms")
     endif()
-endforeach()
-unset(VN_QT_PLUGIN_CANDIDATES)
-unset(_candidate)
+    if (Qt6_DIR)
+        get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
+        list(APPEND _plugin_dirs
+                "${_qt_prefix}/plugins/platforms"
+                "${_qt_prefix}/lib/qt6/plugins/platforms"
+                "${_qt_prefix}/qt6/plugins/platforms")
+    endif()
 
+    # Both spellings are looked for on disk: the release/debug choice rides in a generator
+    # expression ($<$<CONFIG:Debug>:d>), which if(EXISTS) cannot evaluate.
+    if (WIN32)
+        set(_names "qoffscreen.dll" "qoffscreend.dll")
+    elseif (APPLE)
+        set(_names "libqoffscreen.dylib" "libqoffscreend.dylib")
+    else ()
+        set(_names "libqoffscreen.so" "libqoffscreend.so")
+    endif()
+
+    set(_plugin_dir "")
+    foreach (_candidate IN LISTS _plugin_dirs)
+        foreach (_name IN LISTS _names)
+            if (NOT _plugin_dir AND EXISTS "${_candidate}/${_name}")
+                set(_plugin_dir "${_candidate}")
+            endif()
+        endforeach()
+    endforeach()
+
+    set(${out_dir} "${_plugin_dir}" PARENT_SCOPE)
+endfunction()
+
+# The file name to copy, Debug Qt kits being 'd'-suffixed (qoffscreend.dll).
 if (WIN32)
-    # MSVC Debug Qt kits ship 'd'-suffixed plugins (qoffscreend.dll); the other
-    # configurations link the release Qt, whose plugin is named qoffscreen.dll.
-    set(VN_OFFSCREEN_PLUGIN "qoffscreen$<$<CONFIG:Debug>:d>.dll")
+    set(VN_QT_OFFSCREEN_PLUGIN_NAME "qoffscreen$<$<CONFIG:Debug>:d>.dll")
 elseif (APPLE)
-    set(VN_OFFSCREEN_PLUGIN "libqoffscreen.dylib")
+    set(VN_QT_OFFSCREEN_PLUGIN_NAME "libqoffscreen$<$<CONFIG:Debug>:d>.dylib")
 else ()
-    set(VN_OFFSCREEN_PLUGIN "libqoffscreen.so")
-endif ()
+    set(VN_QT_OFFSCREEN_PLUGIN_NAME "libqoffscreen$<$<CONFIG:Debug>:d>.so")
+endif()
 
-if (VN_QT_PLATFORM_PLUGIN_DIR AND (WIN32 OR EXISTS "${VN_QT_PLATFORM_PLUGIN_DIR}/${VN_OFFSCREEN_PLUGIN}"))
+vn_find_qt_offscreen_plugin_dir(VN_QT_PLATFORM_PLUGIN_DIR)
+
+if (VN_QT_PLATFORM_PLUGIN_DIR)
     add_custom_command(
             TARGET DeployQt
             POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:vn::Appfw>/platforms"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${VN_QT_PLATFORM_PLUGIN_DIR}/${VN_OFFSCREEN_PLUGIN}"
+                    "${VN_QT_PLATFORM_PLUGIN_DIR}/${VN_QT_OFFSCREEN_PLUGIN_NAME}"
                     "$<TARGET_FILE_DIR:vn::Appfw>/platforms/"
             COMMENT "--------Deploy the offscreen platform plugin (ctest uses QT_QPA_PLATFORM=offscreen)")
-elseif (VN_QT_PLATFORM_PLUGIN_DIR)
-    message(WARNING "No offscreen platform plugin ('${VN_OFFSCREEN_PLUGIN}') in "
-            "'${VN_QT_PLATFORM_PLUGIN_DIR}'; ctest runs with QT_QPA_PLATFORM=offscreen "
-            "will fall back to the plugin Qt finds by itself")
 else ()
     message(WARNING "Qt platform plugin directory not found for '${Qt6_DIR}'; "
             "test_gui will not start under ctest (QT_QPA_PLATFORM=offscreen)")

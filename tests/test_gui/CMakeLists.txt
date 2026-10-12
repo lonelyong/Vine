@@ -95,3 +95,22 @@ add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 # 否则 WSLg / 远程桌面里会弹出一堆窗口（被中断时会留下卡死的窗口）。
 # 手跑时仍可自己指定：QT_QPA_PLATFORM=offscreen ./bin/test_gui
 set_tests_properties(${TEST_NAME} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# offscreen 插件得真在树里，否则 Qt 在**任何用例跑起来之前**就 abort
+# （qt.qpa.plugin: Could not find the Qt platform plugin "offscreen"），下面那条 CTest 永远红 ——
+# 实测：本机 Release 树只有 windeployqt 部署的 qwindows.dll，DeployQt 那个目标没人跑。
+# 所以这里自己带上它：插件与 Qt 库同目录（测试可执行文件旁边），不依赖"有人记得跑 DeployQt"。
+vn_find_qt_offscreen_plugin_dir(VN_QT_OFFSCREEN_PLUGIN_DIR)
+if (VN_QT_OFFSCREEN_PLUGIN_DIR)
+    add_custom_command(
+            TARGET ${TEST_NAME}
+            POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${TEST_NAME}>/platforms"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${VN_QT_OFFSCREEN_PLUGIN_DIR}/${VN_QT_OFFSCREEN_PLUGIN_NAME}"
+                    "$<TARGET_FILE_DIR:${TEST_NAME}>/platforms/"
+            COMMENT "--------Deploy the offscreen platform plugin (ctest uses QT_QPA_PLATFORM=offscreen)")
+else ()
+    message(WARNING "${TEST_NAME}: no offscreen platform plugin found; ctest will not start this suite "
+            "(QT_QPA_PLATFORM=offscreen)")
+endif ()
