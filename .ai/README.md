@@ -44,6 +44,7 @@
 - `graphics-window-device-viewer.md` —— **下一轴的目标设计**（**S8、S9、S10a 已落地 2026-10-11，其余为提案**）：窗口 / `RenderDevice` / `RenderEngine` / 视图 / 离屏 / 多窗口 / `Viewer` 管多视图 —— 名词与职责、六个问题的裁决（设备要不要窗口、一条帧一个引擎、离屏不是模式、谁管多视图、设备共享策略）、生命周期 10 条、契约变化表、切片 S8–S11、否决清单。
 - `graphics-api-review-2026-10-12.md` —— **框架级 API 复核（骨架与抽象，2026-10-12）**：一次独立会话的只读复核的 6 条发现与处置（引擎 : 区 = 1:1 的静默顶替 / `present(pass)` 不校验 + 呈现永不失效 / 借来的目标没有撤销点 / 可空引擎的区 / 公开头注释漂移 / appfw 布尔 getter 命名）、"看着可疑但确实合理"清单、"值得做但现在不做"与总体判断（最脆 = 区 / 引擎 / 目标的所有权与基数）。落地记录见 `.ai/memory/graphics.md` 顶部同日条。
 - `graphics-object-model-vs-3d-frameworks.md` —— **对象模型 vs 3D 框架口径（2026-10-12）**：把 graphics 的公开对象逐个对到 VTK / OSG / three.js / Filament / Qt3D（场景图、相机、视图、pass、命令、表面/目标、材质、HUD、操纵器），标出**刻意偏离**（一区一幅画、相机带 aspect，含代价）与**能力缺口**（同 pass 内优先级、实例化、LOD/空间划分、`Pipeline` ≠ PSO 的命名风险，含触发条件）。不要求改任何东西。
+- `graphics-layers.md` —— **层与分层渲染（2026-10-12 设计定稿，未落地）**：**L1 内容掩码**（对象 flags + pass mask 两级；收集与**记忆化 memo key** 的坑；API 与判据）与 **L2 数组/切片目标**（L2a 逐切片先落、L2b 一次写完等触发），两者的行业依据（Ogre-Next 的三级掩码 + slice/array 目标 + render queue 子组）、与既有裁决的关系、以及"不做的话今天的替代与代价"。
 - `vsg-reimplementation.md` —— vsg 后端"从零重新实现"：契约、坑与实施记录（本仓库最长的设计文档）。
 - `vsg-design.md` —— vsg 渲染后端设计 v5（历史登记）。
 - `vsg-pass-lifecycle.md` —— pass 生命周期与槽身份（历史登记）。

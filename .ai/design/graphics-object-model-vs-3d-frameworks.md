@@ -63,10 +63,12 @@ VTK 那代的"renderer 里挂 actor、顺序由遍历决定"是它要解决的�
 
 | # | 缺口 | 行业对应 | 今天的替代 | 触发条件 |
 | --- | --- | --- | --- | --- |
-| 1 | **同 pass 内没有逐对象优先级 / 渲染队列** | three.js `renderOrder`、OSG render bin、VTK prop 优先级、Ogre render queue group | pass 阶段（`PipelineStage`）+ pass 内按遍历序 + 透明内容走单独的 forward pass | 需要在**同一 pass 内**做覆盖式绘制（描边、贴花、后画的 HUD 元素） |
-| 2 | **没有实例化 / 批处理抽象** | `InstancedMesh` / `DrawIndexedInstanced` | 一条 `RenderCommand` 一个几何 | 同一几何 N 份（粒子、植被）—— 模型上加一个字段 + 后端能力就够 |
+| 1 | **同 pass 内没有逐对象优先级 / 渲染队列** | three.js `renderOrder`、OSG render bin、VTK prop 优先级、Ogre render queue group + 子组（`Renderable::setRenderQueueSubGroup`） | pass 阶段（`PipelineStage`）+ pass 内按遍历序 + 透明内容走单独的 forward pass | 需要在**同一 pass 内**做覆盖式绘制（描边、贴花、后画的 HUD 元素） |
+| 2 | **没有实例化 / 批处理抽象** | `InstancedMesh` / `DrawIndexedInstanced` | 一条 `RenderCommand` 一个几何 | 同一几何 N 份（粒子、植被）—— 模型上加一个字段 + 后端能力就够；**与 `graphics-layers.md` 的 L2b（一次写完多层）同源，建议同一触发条件一起评** |
 | 3 | **没有 LOD / 空间划分** | LOD 节点、八叉树 / 可见性集合 | `Node` 自带包围盒，引擎按相机做视锥剔除（移动相机不重算子树盒） | 大型场景（节点数或几何量到"每帧收集本身成为瓶颈"） |
 | 4 | **命名风险：`Pipeline` ≠ PSO** | Unreal / Unity 的 "pipeline state" | — | 不改名（S7 已定）；**对外文档首次出现该词时补一句"它是 pass 链条的编译产物，不是图形 API 的 pipeline state"** |
+| 5 | **没有内容掩码**（哪些对象被这条 pass 画） | Unity Layer + `cullingMask`、Qt3D `QLayer`/`QLayerFilter`、OSG `NodeMask` + cull mask、Ogre-Next 三级掩码 | 拆成两个 `Scene` 或整棵子树 `setVisible` | **已定形**：`graphics-layers.md` L1（对象 flags + pass mask 两级，收集与 memo key 的坑写在那里） |
+| 6 | **没有数组/切片目标**（分层渲染） | Ogre-Next 的 slice/array 目标（`TextureGpu::getNumSlices`）、Vulkan layered rendering | 多个 2D 目标 + 多次 pass + 自己合成 | **已定形**：`graphics-layers.md` L2（先逐切片 L2a，再一次写完 L2b），触发条件写在那里 |
 
 ## 4. 与既有文档的关系
 
