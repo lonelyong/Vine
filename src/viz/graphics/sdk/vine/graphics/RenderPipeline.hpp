@@ -7,6 +7,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "Node.hpp"
 #include "ReportOnce.hpp"
 #include "ShaderProgram.hpp"
 #include "ShadingMode.hpp"
@@ -180,6 +181,20 @@ struct VN_GRAPHICS_API PipelineOptions {
      */
     int offscreen_width = 0;
     int offscreen_height = 0;
+
+    /** @brief Which layers of the CONTENT the built chain draws (see Node::setLayers / RenderPass::setLayerMask).
+     *
+     * Stamped on every pass of the chain that walks this content (shadow, forward opaque, forward transparent,
+     * G-buffer, deferred transparent, preview): one recipe, one mask, so "this chain draws only casters" is a
+     * property of the recipe rather than of each pass the builder happens to create. The two fullscreen
+     * lighting passes are NOT stamped - their content scene is where their lights come from, not something
+     * they walk - and neither are the HUD / gizmo overlays: they are UI, and a content selection must not
+     * hide the reader's own tools.
+     *
+     * kAllLayers (the default) draws every layer, which is what a host that never heard of layers gets. A
+     * mask of 0 draws no content at all (reported once as a frame-plan problem).
+     */
+    std::uint32_t layer_mask = kAllLayers;
 
     /** @brief Deferred G-buffer geometry program (one scene traversal -> MRT).
      *

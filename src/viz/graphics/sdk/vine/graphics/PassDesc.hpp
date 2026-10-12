@@ -138,6 +138,15 @@ struct VN_GRAPHICS_API PassDesc
     std::optional<PolygonMode> polygon_mode;
     /// The pass-scoped depth policy.
     DepthMode depth_mode{ DepthMode::TestAndWrite };
+    /// Which layers of the CONTENT this pass draws (see Node::setLayers): a node whose layers do not
+    /// intersect the mask is left out of the walk that fills this pass. kAllLayers (the default) draws
+    /// everything - including the content that declares no layers (kDefaultLayer) - which is why a
+    /// declaration that says nothing is unchanged by layers existing.
+    ///
+    /// A mask instead of a layer or a list: it is what one AND answers for a node, and what makes "these two"
+    /// as cheap as "one". A mask of 0 selects nothing - legal, and reported once as a frame-plan problem,
+    /// because a content pass that draws nothing is nearly always a mistake (see .ai/design/graphics-layers.md).
+    std::uint32_t layer_mask{ kAllLayers };
 
     /// Whether this pass runs at all (a disabled pass keeps its declaration, costs nothing, and still counts
     /// as a declaration for the wiring checks).

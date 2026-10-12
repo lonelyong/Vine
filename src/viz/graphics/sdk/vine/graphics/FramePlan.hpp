@@ -8,7 +8,7 @@
 #include <vine/Color.hpp>
 #include <vine/String.hpp>
 #include <vine/raw_ptr.hpp>
-
+#include "Node.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -46,6 +46,11 @@ struct VN_GRAPHICS_API PassPlan
     raw_ptr<const Scene> content = nullptr;
     /// The camera it draws through, or null (a fullscreen / screen-space pass).
     raw_ptr<const Camera> camera = nullptr;
+    /// Which layers of the content it draws (see RenderPass::setLayerMask), kAllLayers by default.
+    ///
+    /// Per pass rather than per frame, because it is the pass that decides what it draws: a frame with a
+    /// shadow pass (casters only) and a main pass (everything) says so here, one row each.
+    std::uint32_t layer_mask = kAllLayers;
     /// The off-screen target it draws into, or null: the WINDOW (the default framebuffer).
     raw_ptr<const RenderTarget> target = nullptr;
     /// Whether it runs this frame. A disabled pass is LISTED (its row is part of the picture) and skipped.

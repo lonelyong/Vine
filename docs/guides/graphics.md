@@ -67,6 +67,7 @@ engine.setDevice(backend);
 | 渲染状态（blend / depth / cull / polygon / topology） | **最深者覆盖**（折叠进 `RenderCommand::authoredState`，**每项 optional**：没有 StateNode 说过某一项，那它在这里就是"没人说"，而不是"设成了默认值"） |
 | material / program | 叶子自己的优先，否则取最近的祖先 `StateNode` |
 | `isVisible` | **硬门**：不可见子树整棵不收集 |
+| 层（`Node::setLayers`） | **最深者覆盖**：最近的声明赢，`clearLayers()` 回到继承；没声明过的节点在 `kDefaultLayer`（bit 0）。判定在**可绘制节点**上（容器是结构，不是内容），所以 `Group` 上的声明管的是它下面的内容 |
 
 `cmd.isTransparent` 由有效 opacity 推出，它决定这个 drawable 走管线的透明部分。
 整个折叠是**一次自顶向下**的遍历（世界矩阵 / 透明度 / 状态 / material / program 一起往下传），
@@ -819,6 +820,7 @@ frame plan: 11 pass(es)
 ```
 
 - `target=window` = 画到窗口（没有离屏目标）；`clear=-` = 这条 pass 不清屏；`viewport=full` = 铺满目标。
+- `layers=` 只在 pass 说了非默认的层掩码时出现（`layers=0x2`）：这是这条 pass 画的**内容选择**（见 §3.14）。
 - `last=` 是**上一帧**这条 pass 的记录耗时（微秒）：计划讲的是下一帧会发生什么，只有这个数讲过去，所以它单独标出来；
   没跑的 pass 是 0。
 - 自 M7 起这张表是**编译出来的那一帧**（`RenderEngine::compileFrame`）：帧循环执行的就是它，所以"表里写的"与"这一帧画的"
@@ -868,6 +870,37 @@ desc.writes_shape.depth  = RenderTarget::DepthFormat::D24;
   它的普通 pass（shadow / gbuffer / lighting / transparent / present / preview）全是描述符，order 一律由 `stage` 决定。
 - 逃生口不变：`engine->addPass(pass, content, order)` 仍然收一个手搭的 pass（需要结点本身时用它），描述符只是把"声明"
   变成数据。
+
+
+### 3.14 分层：让一条 pass 只画它要的内容
+
+**两个值，一条 AND**：内容声明自己在哪一层（`Node::setLayers`），pass 说它要哪几层（`RenderPass::setLayerMask`）。
+一条命令被收集的条件是 `节点可见 && (层集合 & 掩码) != 0`。
+
+```cpp
+// 内容侧：标出少数"另属一层"的东西（子树继承，最近的声明赢）
+caster->setLayers(1u << 1);        // 这根子树归 layer 1
+group->clearLayers();              // 撤掉声明，改回继承祖先
+
+// pass 侧：这条 pass 只要 layer 1
+shadow_pass->setLayerMask(1u << 1);
+
+// 配方侧：整条链一次给（builder 会盖在这条链的每个内容 pass 上；HUD / 全屏灯照不盖）
+vn::graphics::PipelineOptions options;
+options.layer_mask = 1u << 1;                       // appfw 里就是 ViewerOptions::layer_mask
+```
+
+- **默认什么都不用管**：节点不声明 ⇒ 在 `kDefaultLayer`（bit 0）；pass 不声明 ⇒ 掩码是 `kAllLayers`。
+  两者相乘，今天的行为**逐位不变**，所以分层是"需要时才声明少数节点"的能力，而不是给每个物体贴标签。
+- **为什么要两层**：一行内容要被两条 pass 用不同方式画（阴影只画 caster、主 pass 画全部），
+  掩码就是**这条 pass 的内容选择**；只想要一幅画的投影，用 `setVisible` 就够。
+- **掩码进收集的记忆化键**：同一相机同一帧、两条不同掩码的 pass 各自走一次树（同掩码才复用）——
+  自己驱动收集时（`Scene::collectRenderCommands(camera, mask)`）注意这一点：掩码是参数，也是键。
+- **写 0 会空画**：掩码 0（或整棵树的层集合与掩码不相交）⇒ 这条 pass 一条命令都不发出。那是合法声明，
+  但内容 pass 的掩码 0 会被引擎**报一次**（帧计划问题，`ContentSkipped`），因为那几乎总是笔误。
+- **判定在可绘制节点上**：`Group` 上的声明管的是它下面的内容，掩码**不会**在某个"没声明层的组"上把子树剪掉 ——
+  否则声明了层的子内容就再也画不出来了（这条是落地时被用例抓到的）。
+- 看一眼结果：`engine->framePlan()` 里 `PassPlan::layer_mask` 是这条 pass 的选择，`describe()` 只在非默认时打 `layers=0x..`。
 
 
 ## 4. 现成例子：怎么构建、怎么跑

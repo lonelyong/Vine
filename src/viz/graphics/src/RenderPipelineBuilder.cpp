@@ -142,6 +142,8 @@ intrusive_ptr<Pipeline> RenderPipelineBuilder::build(const PipelineOptions& opti
     auto pipeline = make_intrusive<Pipeline>(intrusive_ptr<RenderEngine>(engine_));
     // A builder is reusable in principle, and the report is about THIS build.
     shadows_built_ = 0;
+    // This build's content selection: every pass that walks the content states it (see PipelineOptions::layer_mask).
+    content_layers_ = options.layer_mask;
     // The chain the REQUEST assembles is not always the chain it names: a mode that needs the geometry pass
     // decides it (see effectivePath). The pipeline records what it was built as, because "can this chain
     // express that mode" is what a later setShadingMode() is answered from.
@@ -334,6 +336,10 @@ intrusive_ptr<RenderTarget> RenderPipelineBuilder::buildShadowPass(Pipeline& pip
     desc.stage         = PipelineStage::Depth;
     desc.camera        = light_camera;
     desc.content       = content_;
+    // The recipe's content selection, on every pass that walks this content (see PipelineOptions::layer_mask):
+    // what the picture does not show does not cast either, which is the whole point of drawing one content
+    // through several passes.
+    desc.layer_mask    = content_layers_;
     desc.writes        = shadow_map;
     // Its only writer owns the hand-off: the pass that samples it declares this target as an input,
     // and the engine answers that from the passes that DREW into it.
@@ -367,6 +373,7 @@ bool RenderPipelineBuilder::buildForwardPath(Pipeline& pipeline)
     main_desc.stage   = PipelineStage::Shading;
     main_desc.camera  = intrusive_ptr<Camera>(camera_);
     main_desc.content = content_;
+    main_desc.layer_mask = content_layers_;
     if (shadow_map != nullptr) {
         main_desc.input_targets = { shadow_map };
     }
@@ -381,6 +388,7 @@ bool RenderPipelineBuilder::buildForwardPath(Pipeline& pipeline)
         transparent_desc.stage   = PipelineStage::Transparent;
         transparent_desc.camera  = camera_;
         transparent_desc.content = transparent_;
+        transparent_desc.layer_mask = content_layers_;
         // Translucent / overlay content: depth-TESTS against the opaque depth
         // the main content pass just wrote, but does NOT write depth (standard
         // alpha-blend rule) and does not clear.
@@ -452,6 +460,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     gbuf_desc.stage         = PipelineStage::Geometry;
     gbuf_desc.camera        = camera_;
     gbuf_desc.content       = content_;
+    gbuf_desc.layer_mask    = content_layers_;
     gbuf_desc.writes        = gbuffer;
     // The program is a SCENE pass' override (`PassDesc::program_override`): `PassDesc::program` is the
     // full-screen field a Screen pass draws through, so naming it here left the G-buffer pass with no program at
@@ -542,6 +551,7 @@ bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const Pipeline
     transparent_desc.stage   = PipelineStage::Transparent;
     transparent_desc.camera  = intrusive_ptr<Camera>(camera_);
     transparent_desc.content = transparent_;
+    transparent_desc.layer_mask = content_layers_;
     transparent_desc.writes  = composite;
     transparent_desc.clear_enabled = false;
     transparent_desc.depth_mode    = DepthMode::TestOnly;
@@ -610,6 +620,7 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
     preview_desc.stage         = PipelineStage::Geometry;
     preview_desc.camera        = intrusive_ptr<Camera>(camera);
     preview_desc.content       = content_;
+    preview_desc.layer_mask    = content_layers_;
     preview_desc.writes        = target;
     preview_desc.output_name   = output_slot;
     preview_desc.output_target = target;   // its only writer: it owns the hand-off

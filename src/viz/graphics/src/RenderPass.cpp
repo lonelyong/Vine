@@ -131,6 +131,16 @@ void RenderPass::clearViewport()
     has_viewport_ = false;
 }
 
+std::uint32_t RenderPass::layerMask() const
+{
+    return layer_mask_;
+}
+
+void RenderPass::setLayerMask(std::uint32_t mask)
+{
+    layer_mask_ = mask;
+}
+
 void RenderPass::setOutputName(const String& name)
 {
     output_name_ = name;
@@ -280,7 +290,7 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDescription& out)
     // memcpy per pass per frame. What a pass may change is its own VIEW of the list, so the copy happens
     // below — and only for a pass that actually rewrites something.
     const std::shared_ptr<const std::vector<RenderCommand>> commands =
-        scene->collectRenderCommandsShared(camera_.get());
+        scene->collectRenderCommandsShared(camera_.get(), layer_mask_);
     // The pass lights whatever content scene it renders: forward the
     // scene's lights so the backend can match this pass's view lighting.
     // Announced even when there are none: "there are no lights" is what restores a backend's default.

@@ -872,4 +872,45 @@ TEST(RenderControlTest, ADeviceThatPresentsNothingFailsTheAttachWithItsReason)
         << "宿主读到的理由说了为什么（无呈现能力）";
 }
 
+// 内容掩码（`.ai/design/graphics-layers.md` 的 L1）在 appfw 这一侧的入口：`ViewerOptions::layer_mask` 原样进配方，
+// 于是这条链的**内容** pass 都带它 —— 而 HUD 档（坐标轴 / 帧率读数）不受内容选择影响：藏内容不该把读者的工具
+// 一起藏掉。这是"一块区画什么"的请求之一，所以它和 path / mode 一样是一次建链（见 ViewerOptions）。
+TEST(RenderControlTest, TheViewerOptionsLayerMaskReachesTheContentPassesAndNotTheHud)
+{
+    HostedControl host;
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+
+    auto* control = host.control();
+    auto* viewer  = control->viewer();
+    auto* engine  = control->engine();
+    ASSERT_NE(viewer, nullptr);
+    ASSERT_NE(engine, nullptr);
+    EXPECT_EQ(viewer->viewerOptions().layer_mask, vn::graphics::kAllLayers) << "默认不选层：一切照旧";
+
+    vn::appfw::gui::ViewerOptions wanted;
+    wanted.layer_mask = 1u << 1;
+    wanted.gizmo      = true;  // 两个 HUD 档，用来钉"内容选择不碰 UI"
+    wanted.stats      = true;
+    ASSERT_TRUE(viewer->setViewerOptions(wanted));
+    EXPECT_EQ(viewer->viewerOptions().layer_mask, 1u << 1) << "请求被记着：下一次重建从它开始";
+
+    std::size_t content_passes = 0;
+    std::size_t hud_passes     = 0;
+    for (const vn::graphics::PassPlan& pass : engine->framePlan().passes) {
+        if (pass.tag == u8"Hud") {
+            EXPECT_EQ(pass.layer_mask, vn::graphics::kAllLayers) << "HUD 是 UI，不受内容选择影响";
+            ++hud_passes;
+            continue;
+        }
+        if (pass.content != nullptr) {
+            EXPECT_EQ(pass.layer_mask, 1u << 1) << "内容 pass 带的是配方的选择";
+            ++content_passes;
+        }
+    }
+    EXPECT_EQ(content_passes, 1u) << "前向路径只有那条窗口 pass 画内容";
+    EXPECT_EQ(hud_passes, 2u) << "请求了坐标轴与读数，两条都在";
+    control->renderFrame();
+}
+
 

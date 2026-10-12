@@ -584,6 +584,7 @@ intrusive_ptr<RenderPass> RenderEngine::addPass(const PassDesc& desc)
         node->setShouldClearDepth(*desc.clear_depth);
     }
     node->setDepthMode(desc.depth_mode);
+    node->setLayerMask(desc.layer_mask);
     node->setProgramOverride(desc.program_override);
     if (desc.polygon_mode.has_value()) {
         node->setPolygonModeOverride(*desc.polygon_mode);

@@ -48,6 +48,14 @@ std::string listText(const std::vector<String>& names)
     return text;
 }
 
+/** @brief A layer mask as the plan prints it ("0x3"). */
+std::string layerMaskText(std::uint32_t mask)
+{
+    char buffer[2 + sizeof(std::uint32_t) * 2 + 1]{};
+    std::snprintf(buffer, sizeof(buffer), "0x%x", static_cast<unsigned>(mask));
+    return buffer;
+}
+
 /** @brief A pass' viewport rectangle, or `full` when it draws the whole target. */
 std::string viewportText(const PassPlan& pass)
 {
@@ -85,6 +93,11 @@ String FramePlan::describe() const
         text += " target=" + (pass.target != nullptr ? pointerText(pass.target) : std::string("window"));
         text += " camera=" + pointerText(pass.camera);
         text += " content=" + pointerText(pass.content);
+        // Only when it is NOT the default: every line carrying the mask would make the common case noisier, and
+        // "which layers" is a fact most passes never state (see .ai/design/graphics-layers.md).
+        if (pass.layer_mask != kAllLayers) {
+            text += " layers=" + layerMaskText(pass.layer_mask);
+        }
         text += " clear=" + clearText(pass);
         text += " viewport=" + viewportText(pass);
         text += " inputs=" + listText(pass.inputs);

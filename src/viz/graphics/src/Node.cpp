@@ -122,6 +122,21 @@ void Node::setVisible(bool visible)
     visible_ = visible;
 }
 
+std::optional<std::uint32_t> Node::layers() const
+{
+    return layers_;
+}
+
+void Node::setLayers(std::uint32_t layers)
+{
+    layers_ = layers;
+}
+
+void Node::clearLayers()
+{
+    layers_.reset();
+}
+
 float Node::opacity() const
 {
     return opacity_;

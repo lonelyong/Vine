@@ -152,9 +152,12 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *
      * @param camera Camera used for culling/ordering. Its own aspect is the picture's shape: the frustum culled
      *               against is the one the projection produces (see Camera - one camera, one picture shape).
+     * @param layer_mask Layers this picture draws (see Node::setLayers): content whose resolved layers do not
+     *                   intersect the mask is left out of the walk. kAllLayers (the default) draws everything.
      * @return Collected render commands (a copy of this frame's list for this view).
      */
-    std::vector<RenderCommand> collectRenderCommands(raw_ptr<const Camera> camera) const;
+    std::vector<RenderCommand> collectRenderCommands(raw_ptr<const Camera> camera,
+                                                     std::uint32_t layer_mask = kAllLayers) const;
 
     /** @brief Collects render commands as a SHARED, immutable list, for a picture of @p aspect.
      *
@@ -173,9 +176,12 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * @param camera Camera used for culling/ordering. The memo matches on the view-projection it was built with,
      *               which already carries the camera's shape - so a camera whose shape is changed gets its own
      *               walk, and neither can answer for the other (see Camera).
+     * @param layer_mask Layers this picture draws (see Node::setLayers); part of the memo's key, because two
+     *                   passes drawing the same view with different masks do NOT draw the same list.
      * @return Shared list of collected render commands (empty when there is nothing to draw).
      */
-    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommandsShared(raw_ptr<const Camera> camera) const;
+    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommandsShared(
+        raw_ptr<const Camera> camera, std::uint32_t layer_mask = kAllLayers) const;
 
     /** @brief Opens the content frame the collected-command memo belongs to.
      *

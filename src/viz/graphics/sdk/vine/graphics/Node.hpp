@@ -1,6 +1,9 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <cstdint>
+#include <optional>
+
 #include <vine/intrusive_ptr.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
@@ -15,6 +18,18 @@ using vn::math::Mat4d;
 using vn::math::Aabbd;
 
 class Group;
+
+/// Every layer: the default on the pass side (a mask that states nothing draws every layer), so a scene whose
+/// nodes say nothing about layers is drawn exactly as it was before layers existed.
+inline constexpr std::uint32_t kAllLayers = 0xFFFFFFFFu;
+
+/// The layer a node is in when it declares none (see Node::layers): the ordinary picture.
+///
+/// A DEFAULT BIT rather than "every layer", which is the choice three.js / Unity / Qt3D made and the one this
+/// SDK needs: a selective mask exists to LEAVE CONTENT OUT (the shadow pass drawing only casters), and with
+/// "undeclared = every layer" every non-caster would have to be declared before it could be excluded. Here,
+/// declaring the few items that ARE in a named layer is enough.
+inline constexpr std::uint32_t kDefaultLayer = 1u << 0;
 
 /**
  * @brief Base class of every scene-graph node.
@@ -58,6 +73,37 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
     /** @brief Sets whether this subtree is visible. */
     void setVisible(bool visible);
+
+    /** @brief Gets the layers this subtree declares.
+     *
+     * This node's OWN declaration, not the resolved one: nullopt means "this node says nothing", so its
+     * subtree is in the layer its ancestors declared (kDefaultLayer when nobody did). The resolution
+     * happens once, in the collection walk, which is why there is no second (up-walking) spelling here -
+     * the question "why was this not drawn" is asked by a PASS, and it is answered while collecting (see
+     * Scene::collectRenderCommands and .ai/design/graphics-layers.md).
+     *
+     * @return The declared layer set, or nullopt when this node declares none.
+     */
+    [[nodiscard]] std::optional<std::uint32_t> layers() const;
+
+    /** @brief Declares which layers this subtree belongs to.
+     *
+     * A pass draws the content whose layers intersect its mask (see RenderPass::setLayerMask), so this is
+     * how content is kept out of a pass that draws other layers: a shadow pass drawing only casters, two
+     * passes showing different parts of one scene. Independent of visibility - setVisible(false) is
+     * "temporarily off", this is "which layers it is a part of".
+     *
+     * The declaration covers the whole subtree and the NEAREST declaration wins, exactly like the shading
+     * state a StateNode passes down: a child that declares its own set replaces what it inherited, and
+     * clearLayers() puts it back to inheriting.
+     *
+     * @param layers Layer set (a node that declares none is in kDefaultLayer; 0 means "in no layer", so no
+     *               pass draws this subtree - a legal authoring state, not an error).
+     */
+    void setLayers(std::uint32_t layers);
+
+    /** @brief Withdraws this node's own layer declaration, so its subtree inherits its ancestors' again. */
+    void clearLayers();
 
     /** @brief Gets the subtree opacity multiplier in [0, 1]. */
     float opacity() const;
@@ -145,6 +191,8 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
   private:
     String name_;
     bool visible_ = true;
+    /// This node's own layer declaration, or nullopt when it says nothing and inherits (see setLayers).
+    std::optional<std::uint32_t> layers_;
     float opacity_ = 1.0f;
     raw_ptr<Node> parent_ = nullptr;
 

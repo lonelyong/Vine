@@ -13,6 +13,7 @@
 #include "DepthMode.hpp"
 #include "FrameDescription.hpp"
 #include "ImageRef.hpp"
+#include "Node.hpp"
 #include "PolygonMode.hpp"
 #include "PresentTarget.hpp"
 #include "StateNode.hpp"
@@ -246,6 +247,27 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
 
     /** @brief Clears any configured sub-viewport (pass renders to the full surface). */
     void clearViewport();
+
+    /** @brief Returns which layers of the content this pass draws (see Node::setLayers).
+     *
+     * @return The mask (kAllLayers by default, which draws every layer).
+     */
+    std::uint32_t layerMask() const;
+
+    /** @brief Sets which layers of the content this pass draws.
+     *
+     * The content selection of one pass: the collection leaves out every node whose resolved layers do not
+     * intersect this mask, so one scene can feed several passes that each draw a different part of it (a
+     * shadow pass drawing casters, a main pass drawing everything) - without splitting the scene in two and
+     * without a second walk per pass that only the mask differs in (the mask is part of the collected
+     * list's key, see Scene::collectRenderCommandsShared).
+     *
+     * It is a declaration about CONTENT, not about the pass: an overlay pass drawing its own HUD scene
+     * states its own mask if it wants one, and a pass with no content is unaffected.
+     *
+     * @param mask Layer mask (kAllLayers draws every layer; 0 draws no content at all).
+     */
+    void setLayerMask(std::uint32_t mask);
 
     /** @brief Sets the name this pass publishes its output under.
      *
@@ -544,6 +566,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     bool enabled_ = true;
     bool has_viewport_ = false;
     Viewport viewport_;
+    std::uint32_t layer_mask_ = kAllLayers;
 };
 
 using RenderPassPtr = intrusive_ptr<RenderPass>;

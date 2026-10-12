@@ -19,11 +19,41 @@
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
 | **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` |
 | **面向使用者** | `docs/guides/graphics.md`（模块文档一节） |
-| **对象模型与行业口径** | `.ai/design/graphics-object-model-vs-3d-frameworks.md`（2026-10-12）：逐个对象对到 VTK / OSG / three.js / Filament / Qt3D；**刻意偏离**（一区一幅画、相机带 aspect，含代价）与**能力缺口**（同 pass 内优先级 / 实例化 / LOD·空间划分 / `Pipeline` ≠ PSO 的命名风险 / 内容掩码 / 数组切片目标），各带触发条件；后两条的定形见 `graphics-layers.md`（L1 内容掩码 / L2 数组切片，L2 分两步） |
+| **对象模型与行业口径** | `.ai/design/graphics-object-model-vs-3d-frameworks.md`（2026-10-12）：逐个对象对到 VTK / OSG / three.js / Filament / Qt3D；**刻意偏离**（一区一幅画、相机带 aspect，含代价）与**能力缺口**（同 pass 内优先级 / 实例化 / LOD·空间划分 / `Pipeline` ≠ PSO 的命名风险 / 内容掩码 / 目标层），各带触发条件；后两条的定形见 `graphics-layers.md`（L1 内容掩码 `Node::setLayers` + `PassDesc::layer_mask` / L2 目标层 `layerCount` + 层区间，L2 分两步、读侧先行） |
 | **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
 | **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**2026-10-11 晚裁决推翻 S8 一半：多格下线，一块区只画一幅画**（见顶条与 Q5 的后续裁决）；**2026-10-12 又两条**：呈递端拆成 `PresentTarget`（帧的契约）+ `WindowPresentTarget`（窗口那一面，见顶条），命名仍否掉 `RenderTargetWindow` / `RenderTargetOffscreen` 一对（`RenderTarget` 是描述、不是同族，理由在 §8）、云渲染的落点是"**第二个呈递端**"而不是把区通用化（§8 末条 + §9 第 6 条，带触发条件）；**S10b（插件会话→设备：窗口与交换链 1:N、缓存上移、`DeviceDesc`）**/ S11（登记不做）未落地 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-12 内容掩码（分层渲染 L1）落地：一条 pass 只画它要的层（`graphics-layers.md`）
+
+- **结论**：内容选择是**两个值** —— 对象侧 `Node::setLayers/clearLayers/layers`（子树继承，最近的声明赢；`clearLayers()` 回到继承），
+  pass 侧 `PassDesc::layer_mask` / `RenderPass::setLayerMask()`；判定是**一条 AND**，落在**可绘制节点**上。默认（掩码 `kAllLayers`
+  + 未声明节点在 `kDefaultLayer`）⇒ 今天的行为**逐位不变**。同一份设计里的 **L2（目标层）仍只到设计**，触发条件见文档 §6。
+- **两个常量一个 owner**：`kAllLayers`（掩码默认）与 `kDefaultLayer`（未声明节点的层，bit 0）都在 `Node.hpp`；需要它的公共头
+  直接 include（`FramePlan.hpp` / `RenderPass.hpp` / `RenderPipeline.hpp` 各加了一行，hygiene gate 要直接 include）。
+- **掩码进 memo key**（`ContentMemo::Entry::layer_mask`）：同一相机、同一帧、两条不同掩码的 pass **各走一次**（`+content_collect_count_`），
+  同掩码则复用 —— 这是本片最容易错的一处：不进 key 就会"画面看着对、只是多了/少了几个物体"。
+- **帧值如实但进对的地方**：掩码进 `FramePlan::PassPlan::layer_mask`（`describe()` 只在非默认时打 `layers=0x..`），**不进**
+  `PassDescription` —— 后者是后端消费的绘制形状（目标/视口/清屏/状态/绘制），掩码是**选择的理由**。
+- **配方入口**：`PipelineOptions::layer_mask`（`build()` 开头取一份 `content_layers_`，与 `shadows_built_` 同款"一次 build 一个值"），
+  六个走收集的内容 pass 各盖一次（阴影 / 前向主 / 前向透明 / G-buffer / 延迟透明 / 预览）；**两条 Screen 灯照 pass 不盖**
+  （content 只用来取灯，盖了是假话）、**gizmo / 帧率 overlay 不盖**（UI 不该被内容选择藏掉）；appfw `ViewerOptions::layer_mask` 原样转发。
+- **掩码 0**：合法（选不中任何内容）⇒ 内容 pass 零绘制，并且 compile 报一次（`ContentSkipped` + episode 规则）——
+  "跑了但没东西"而不是静默空画面。
+- **坑 1（第一版错、被新用例抓到）**：掩码**不能在遍历里剪枝容器**。第一版在 `collectNodeCommands` 入口判 AND ⇒ 根 `Group`
+  未声明（bit 0）⇒ `(bit0 & 0x2) == 0` ⇒ 整棵树被剪掉，**声明了层的子内容不可达**。现在只对 `Geometry` 判（容器是结构、不是内容），
+  与"Unity 的层在渲染器上"一致。
+- **坑 2（默认层的选择）**：未声明节点取 `kDefaultLayer`（bit 0）而**不是**"所有层"：选择性掩码的用处是**排除**没声明的内容
+  （阴影只画 caster 时不必给其它所有物体声明层）。three.js / Unity / Qt3D 都是这个默认层模型；Ogre-Next 两边全 1，**刻意不跟**。
+- **读侧刻意不对称**：`Node::layers()` 只回答"本节点声明了什么"（`std::optional`），**不做上溯解析** —— 与 `StateNode` 的两套读法
+  不同，理由写在文档 §2.2（问"为什么没画"的是 pass，答案在收集时算一次，第二份实现只会漂移）。
+- **已给后续留的入口**：L2 的读侧先行（`ImageRef` 带层 + 回读带层）写在 `graphics-layers.md` §3.3；缺口的行业依据（Ogre-Next
+  的 `getNumSlices` / 层级 render pass 描述）见 §7。
+- **判据（实测）**：全量 Release **0 error / 0 warning**；`test_graphics` **368**（361 + 7 新用例）、`test_gui` **258**（257 + 1）；
+  `test_vsg` **429** = 426 + 3 skip、`test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94 不掉；五 gate 0 finding，`--strict` 仍 **13**。
+- **变异 5/5 各自单独红**：① 掩码不进 memo key ⇒ 复用那条红（C1 仍绿）；② 掩码收下但不过滤 ⇒ C1/C2/C3/C4/C7 红；
+  ③ 继承不生效 ⇒ C1/C3/C4 红；④ 不进 `PassPlan` ⇒ C5/C6/C7 红；⑤ overlay 也盖掩码 ⇒ C8（graphics 配方那条与 appfw 那条）红。
 
 ## 2026-10-12 框架级 API 复核的落地：区/引擎/目标的基数与契约收紧（`graphics-api-review-2026-10-12.md`）
 

@@ -325,6 +325,10 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
     /// Shadow passes THIS build created: a requested shadow that WAS built is not a gap to report
     /// (see reportRequestedShadows).
     std::size_t shadows_built_ = 0;
+    /// This build's content selection, taken from PipelineOptions::layer_mask. A member because the paths
+    /// (and the shadow pass they share) do not all take the options by parameter, and because the value is
+    /// one per BUILD - like the counter above, it is set at the start of build().
+    std::uint32_t content_layers_ = kAllLayers;
 };
 
 VN_GRAPHICS_NS_END

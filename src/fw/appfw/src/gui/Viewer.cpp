@@ -51,6 +51,7 @@ struct Viewer::Impl {
         pipeline_options.mode                = options.mode;
         pipeline_options.offscreen_width     = options.offscreen_width;
         pipeline_options.offscreen_height    = options.offscreen_height;
+        pipeline_options.layer_mask          = options.layer_mask;
         pipeline_options.gizmo.source_camera = options.gizmo ? view->camera() : nullptr;
         pipeline_options.gizmo.pixel_ratio   = ratio;
         pipeline_options.fps.enabled         = options.stats;

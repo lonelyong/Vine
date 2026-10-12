@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+
+#include <vine/graphics/Node.hpp>
 #include <vine/graphics/ShadingMode.hpp>
 #include <vine/graphics/ShadingPath.hpp>
 
@@ -46,6 +49,13 @@ struct VN_APPFW_API ViewerOptions
     /// Deferred G-buffer size in pixels; 0 (the default) is the current surface size.
     int offscreen_width{0};
     int offscreen_height{0};
+
+    /// Which layers of the content the area draws (see Node::setLayers / PipelineOptions::layer_mask).
+    ///
+    /// The area's own content selection, stated on every pass of the chain that walks the content: an area
+    /// showing one part of a scene while another area (or another pass) shows the rest. kAllLayers (the
+    /// default) draws every layer, so a host that never heard of layers is unaffected.
+    std::uint32_t layer_mask{ vn::graphics::kAllLayers };
 };
 
 VN_APPFWGUI_NS_END

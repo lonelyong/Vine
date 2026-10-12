@@ -201,9 +201,10 @@ int main(int argc, char** argv)
     control->view()->setScene(scene);          // 内容（相机是视图自带的）
 
     // ③ 一条请求 = 一条链：建好、采纳、在区上声明，一次做完（默认路径本来就有它，这一步只是改要求）
-    vn::appfw::gui::ViewerOptions request;     // 链 / 档 / HUD / 离屏尺寸
+    vn::appfw::gui::ViewerOptions request;     // 链 / 档 / HUD / 离屏尺寸 / 内容分层
     request.path  = vn::graphics::ShadingPath::Deferred;   // 默认就是它
     request.gizmo = true;                      // 左下角坐标轴
+    // request.layer_mask = 1u << 1;           // 这块区只画 layer 1 的内容（见 §6 的分层一条）
     control->setViewerOptions(request);        // 控件的老入口 = 作用于它那个视图
 
     // ④ 显示：第一拍兜底自动 attach（"配置窗口"：构造之后的同步代码都赶得上）
@@ -241,6 +242,11 @@ vn::raw_ptr<vn::graphics::RenderPass> which = control->surface()->presentingPass
 
 **自己说清接线**，SDK 不替你猜：
 
+- **一条 pass 只画一部分内容**：内容分层（`Node::setLayers`）＋ pass 的掩码（`RenderPass::setLayerMask`，或用配方
+  `PipelineOptions::layer_mask` / `ViewerOptions::layer_mask` 一次给整条链）。一条命令是否被收集 = `isVisible()`
+  且它的层与掩码按位与非 0；没声明层的节点在 `kDefaultLayer`，掩码默认 `kAllLayers`（⇒ 不说就一切照旧）。例：
+  阴影 caster 标 `caster->setLayers(1u << 1)`，阴影 pass 掩码 `1u << 1`，其余内容一个字都不用改。细节见
+  `docs/guides/graphics.md` §3.14。
 - **PiP / 画中画**：给那条 pass 一个子矩形（`pass->setViewport(Viewport{...})`，设备像素）、并让它的输入是另一张**离屏目标**
   （`RenderTarget`，作为 pass 的输入声明）。`VINE_VSG_*` 那几个 demo 开关走的就是这条路。
 - **两块并排**：两支 pass，各自一个子矩形、各自读自己的离屏目标；**清屏只有一条**（`setClearEnabled(false)` 关掉其余的，

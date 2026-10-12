@@ -7675,6 +7675,273 @@ TEST(SceneContentCacheTest, EachCallerGetsItsOwnCopyOfTheMemoisedList)
     EXPECT_EQ(scene.contentCollectReuseCount(), 1u);
 }
 
+// ============ Content layers (which layers a pass draws) ============
+
+/**
+ * @brief The mask decides which nodes reach a picture: one AND per node, and a pass is free to draw a part.
+ *
+ * Layers are the content selection a pass draws with (see Node::setLayers / RenderPass::setLayerMask and
+ * `.ai/design/graphics-layers.md`): the mask names layers, a node declares which it is in, and a node that
+ * declares none is in kDefaultLayer - so declaring the FEW items of a named layer is enough to keep them out
+ * of a pass that draws the rest (a shadow pass drawing casters, two passes showing different parts).
+ */
+TEST(ContentLayersTest, TheMaskDecidesWhichNodesAreCollected)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"ordinary"));
+    auto caster = makeTriangleNode(Vec3d(1, 0, -2), nullptr, u8"caster");
+    caster->setLayers(1u << 1);
+    root->addChild(caster);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    EXPECT_EQ(caster->layers().value_or(0u), 1u << 1) << "setLayers() stores the declaration on the node";
+
+    // The default mask draws EVERY layer, so a scene that says nothing about layers draws as it always did.
+    EXPECT_EQ(scene.collectRenderCommands(&cam).size(), 2u) << "kAllLayers is what a caller naming no mask gets";
+    EXPECT_EQ(scene.collectRenderCommands(&cam, kAllLayers).size(), 2u);
+
+    // A selective mask leaves the ordinary content (kDefaultLayer) out, which is what makes it worth having: the
+    // few nodes that ARE in the named layer are the ones that had to be declared.
+    const auto only_casters = scene.collectRenderCommands(&cam, 1u << 1);
+    ASSERT_EQ(only_casters.size(), 1u);
+    EXPECT_EQ(only_casters[0].geometry->name(), u8"caster");
+
+    const auto only_ordinary = scene.collectRenderCommands(&cam, kDefaultLayer);
+    ASSERT_EQ(only_ordinary.size(), 1u);
+    EXPECT_EQ(only_ordinary[0].geometry->name(), u8"ordinary");
+
+    // Several layers are one mask, not a list of calls.
+    EXPECT_EQ(scene.collectRenderCommands(&cam, kDefaultLayer | (1u << 1)).size(), 2u);
+
+    // A mask no node intersects selects nothing - the honest answer, not "everything".
+    EXPECT_TRUE(scene.collectRenderCommands(&cam, 1u << 20).empty());
+}
+
+/**
+ * @brief The mask is part of what the frame's memo is keyed on.
+ *
+ * Two passes may draw the SAME view through the same camera and still want different lists, so a cache keyed
+ * on the view alone would serve one pass the other pass' content - a picture that is right except for a few
+ * swapped objects, which is the kind of bug nothing points at.
+ */
+TEST(ContentLayersTest, TheMaskIsPartOfWhatTheMemoIsKeyedOn)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"ordinary"));
+    Camera cam;
+    setupLookAtCamera(cam);
+    scene.setContentFrame(1);
+
+    // One mask, asked twice: the frame's memo answers the second time (one walk per view per frame).
+    EXPECT_EQ(scene.collectRenderCommands(&cam, kDefaultLayer).size(), 1u);
+    EXPECT_EQ(scene.collectRenderCommands(&cam, kDefaultLayer).size(), 1u);
+    EXPECT_EQ(scene.contentCollectCount(), 1u);
+    EXPECT_EQ(scene.contentCollectReuseCount(), 1u);
+
+    // A DIFFERENT mask over the same view is a different list: the walk happens again, for its own entry.
+    EXPECT_TRUE(scene.collectRenderCommands(&cam, 1u << 20).empty());
+    EXPECT_EQ(scene.contentCollectCount(), 2u) << "one walk per (view, mask)";
+    EXPECT_EQ(scene.contentCollectReuseCount(), 1u);
+
+    // And each key keeps its own answer afterwards, in any order.
+    EXPECT_TRUE(scene.collectRenderCommands(&cam, 1u << 20).empty());
+    EXPECT_EQ(scene.collectRenderCommands(&cam, kDefaultLayer).size(), 1u);
+    EXPECT_EQ(scene.contentCollectCount(), 2u);
+    EXPECT_EQ(scene.contentCollectReuseCount(), 3u);
+}
+
+/**
+ * @brief A declaration covers the subtree, the nearest one wins, and withdrawing it inherits again.
+ *
+ * The same rule the shading state follows (see StateNode / Scene.cpp's InheritedState): one fold, computed on
+ * the way down, so a subtree can be re-declared in one call and un-declared in another.
+ */
+TEST(ContentLayersTest, TheNearestDeclarationCoversItsSubtree)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  group = intrusive_ptr<Group>(new Group());
+    group->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"inherited"));
+    auto overridden = makeTriangleNode(Vec3d(1, 0, -2), nullptr, u8"redeclared");
+    overridden->setLayers(1u << 2);
+    group->addChild(overridden);
+    group->setLayers(1u << 1);
+    root->addChild(group);
+    root->addChild(makeTriangleNode(Vec3d(-1, 0, -2), nullptr, u8"outside"));
+
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    // The parent's declaration covers the child that says nothing; the child that declares its own replaces it.
+    EXPECT_EQ(scene.collectRenderCommands(&cam).size(), 3u) << "the default mask still draws all of them";
+    auto in_parent_layer = scene.collectRenderCommands(&cam, 1u << 1);
+    ASSERT_EQ(in_parent_layer.size(), 1u);
+    EXPECT_EQ(in_parent_layer[0].geometry->name(), u8"inherited");
+    auto in_child_layer = scene.collectRenderCommands(&cam, 1u << 2);
+    ASSERT_EQ(in_child_layer.size(), 1u);
+    EXPECT_EQ(in_child_layer[0].geometry->name(), u8"redeclared");
+    auto ordinary = scene.collectRenderCommands(&cam, kDefaultLayer);
+    ASSERT_EQ(ordinary.size(), 1u);
+    EXPECT_EQ(ordinary[0].geometry->name(), u8"outside") << "a node outside the declared subtree is untouched";
+
+    // Withdrawing the declaration puts the subtree back to what it inherited (here: the default layer).
+    group->clearLayers();
+    EXPECT_EQ(group->layers(), std::nullopt);
+    auto after_withdrawal = scene.collectRenderCommands(&cam, kDefaultLayer);
+    EXPECT_EQ(after_withdrawal.size(), 2u) << "the group's own child is ordinary content again";
+    EXPECT_TRUE(scene.collectRenderCommands(&cam, 1u << 1).empty()) << "and nothing is left in that layer";
+}
+
+/**
+ * @brief Visibility and layers are two questions, and neither answers the other.
+ *
+ * setVisible(false) is "temporarily off" (a host toggle, a LOD swap); a layer is "which part of the content
+ * this is" (a property of the content, stated once). A pass draws what is visible AND in its layers.
+ */
+TEST(ContentLayersTest, VisibilityAndLayersAreTwoQuestions)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  node = makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"only");
+    node->setLayers(1u << 1);
+    root->addChild(node);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    EXPECT_EQ(scene.collectRenderCommands(&cam, 1u << 1).size(), 1u);
+
+    node->setVisible(false);
+    EXPECT_TRUE(scene.collectRenderCommands(&cam, 1u << 1).empty()) << "hidden wins over the layer";
+
+    node->setVisible(true);
+    EXPECT_EQ(scene.collectRenderCommands(&cam, 1u << 1).size(), 1u) << "the layer survived the toggle";
+    EXPECT_TRUE(scene.collectRenderCommands(&cam, kDefaultLayer).empty()) << "and the declaration still holds";
+}
+
+/**
+ * @brief The declaration carries the mask onto the pass it builds, and the plan says so.
+ *
+ * The mask travels the same way every other pass fact does: `PassDesc` -> the pass the engine registered ->
+ * the compiled frame's row. That is what lets a host read a frame and see which layers each pass draws
+ * instead of having to remember how the chain was built.
+ */
+TEST(ContentLayersTest, TheDeclarationCarriesTheMaskOntoThePassAndIntoThePlan)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+
+    RenderPass direct;
+    direct.setName(u8"direct");
+    EXPECT_EQ(direct.layerMask(), kAllLayers) << "an unstated mask is every layer";
+    direct.setLayerMask(0x3u);
+    EXPECT_EQ(direct.layerMask(), 0x3u);
+
+    PassDesc desc;
+    desc.name       = u8"declared";
+    desc.layer_mask = 0x9u;
+    engine->addPass(desc);
+
+    const FramePlan plan = engine->framePlan();
+    ASSERT_EQ(plan.passes.size(), 1u);
+    EXPECT_EQ(plan.passes[0].pass->layerMask(), 0x9u) << "the descriptor's mask is the pass' mask";
+    EXPECT_EQ(plan.passes[0].layer_mask, 0x9u) << "and the frame's row states it";
+
+    // The dump carries it for a pass that says something other than the default, and stays quiet for the rest.
+    const std::string one_pass = plan.describe().as_std_str();
+    EXPECT_NE(one_pass.find("layers=0x9"), std::string::npos) << one_pass;
+    engine->clearPasses();
+    engine->addPass(RenderPassPtr(new RenderPass()), 0);
+    EXPECT_EQ(engine->framePlan().describe().as_std_str().find("layers="), std::string::npos)
+        << "a pass drawing every layer says nothing about them";
+}
+
+/**
+ * @brief A recipe states its content selection once, and the chain's content passes all draw it.
+ *
+ * The shadow pass is why this is a property of the RECIPE and not of each pass: what the picture does not show
+ * must not cast either, and a chain where one content pass forgot the mask would draw a shadow of content the
+ * picture leaves out.
+ */
+TEST(ContentLayersTest, ARecipeStampsItsMaskOnEveryContentPassButNotOnTheOverlays)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto content = intrusive_ptr<Scene>(new Scene());
+    setIdentityRoot(*content)->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"only"));
+    auto cam = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*cam);
+
+    PipelineOptions options;
+    options.layer_mask = 1u << 1;
+    options.gizmo.source_camera = cam.get();
+
+    RenderPipelineBuilder builder(engine.get());
+    builder.setCamera(cam.get());
+    builder.setContent(content);
+    auto pipeline = builder.build(options);
+    ASSERT_NE(pipeline, nullptr);
+
+    std::size_t content_passes = 0;
+    std::size_t overlay_passes = 0;
+    for (const PassPlan& pass : engine->framePlan().passes) {
+        if (pass.pass == pipeline->gizmoPass()) {
+            EXPECT_EQ(pass.layer_mask, kAllLayers) << "an overlay is UI: the content selection must not hide it";
+            ++overlay_passes;
+            continue;
+        }
+        if (pass.content == content.get()) {
+            EXPECT_EQ(pass.layer_mask, 1u << 1) << "a content pass of the chain draws the recipe's layers";
+            ++content_passes;
+        }
+    }
+    EXPECT_EQ(content_passes, 1u) << "the forward path's window pass";
+    EXPECT_EQ(overlay_passes, 1u) << "the gizmo overlay the recipe asked for";
+}
+
+/**
+ * @brief A content pass whose mask selects nothing is legal, draws nothing, and says so once.
+ *
+ * The declaration is the host's to make (0 selects no layer), so the frame runs it and issues no command -
+ * "it ran and had nothing" rather than a silent empty picture. What it does NOT do is repeat itself: the frame
+ * plan's problems are reported once per episode, so a steady frame says nothing.
+ */
+TEST(ContentLayersTest, APassThatSelectsNoLayerDrawsNothingAndSaysSoOnce)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    setIdentityRoot(*scene)->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"only"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setName(u8"blind");
+    pass->setCamera(camera);
+    pass->setLayerMask(0u);
+    engine->addPass(pass, scene, 0);
+
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 0u) << "nothing ran yet";
+
+    engine->frame(0.016);
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1u);
+    ASSERT_FALSE(backend->render_command_counts.empty());
+    EXPECT_EQ(backend->render_command_counts.back(), 0u)
+        << "the pass ran and issued a drawing call with no command in it";
+
+    // The same declaration, the same frame: the episode has been said.
+    engine->frame(0.016);
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1u) << "one condition, one report";
+
+    ASSERT_EQ(engine->framePlan().passes.size(), 1u);
+    EXPECT_EQ(engine->framePlan().passes[0].layer_mask, 0u) << "the plan still states the declaration";
+}
+
 /**
  * @brief Several passes over one scene share one walk per view per frame.
  *

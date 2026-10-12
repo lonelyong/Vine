@@ -301,6 +301,7 @@ FramePlan RenderEngine::framePlan() const
         entry.tag           = slot.tag;
         entry.content       = slot.content.get();
         entry.camera        = pass->camera();
+        entry.layer_mask    = pass->layerMask();
         entry.target        = pass->renderTarget();
         entry.enabled       = pass->isEnabled();
         entry.clears        = pass->isClearEnabled();
@@ -627,6 +628,18 @@ void RenderEngine::collectPlanProblems()
         // afterwards. This is the physical fact the input rules below are answered from.
         if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
             filled.emplace(drawn_into, Declaration{ nullptr, drawn_into, pass, index });
+        }
+
+        // A content pass whose mask selects nothing. Legal (see PassDesc::layer_mask), and nearly always a
+        // mistake, so it is said once per episode instead of showing up later as an empty picture with no
+        // reason attached. The sentence states the declaration, not an outcome: what a pass does with a
+        // content scene is the pass' own business (a screen pass uses one for its lights, not for a walk).
+        if (pass->layerMask() == 0 && slots_[index].content != nullptr) {
+            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::ContentSkipped,
+                                String(u8"pass '") + reportedPassName(pass) +
+                                    String(u8"' has a layer mask of 0, so no layer of its content is selected —"
+                                           u8" state the layers it draws (RenderPass::setLayerMask / Node::setLayers)"));
         }
 
         if (!pass->isEnabled()) {
