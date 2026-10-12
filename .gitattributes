@@ -15,3 +15,8 @@
 # reason as the shaders above: the working tree has to match what the tool reads.
 scripts/vsg_selftest_evidence.txt text eol=lf
 *.sh text eol=lf
+
+# The public-docs baseline is data written back by scripts/check_public_docs.py
+# --update and read line by line by the gate. LF keeps that write byte-identical on
+# every platform, so a Windows checkout cannot turn the whole file into a diff.
+scripts/public_docs_baseline.txt text eol=lf

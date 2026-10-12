@@ -319,6 +319,7 @@ run_hygiene() { # name, script, [args...]
 run_hygiene "include hygiene" "scripts/check_include_hygiene.py"
 run_hygiene "diagnostic formats" "scripts/check_diagnostic_formats.py"
 run_hygiene "doc symbols" "scripts/check_doc_symbols.py"
+run_hygiene "public docs" "scripts/check_public_docs.py"
 run_hygiene "ai knowledge" "scripts/check_ai_docs.py" --strict
 run_hygiene "vsg window surface" "scripts/check_vsg_window_surface_state.py"
 run_hygiene "vsg upstream facts" "scripts/check_vsg_upstream_capabilities.py"

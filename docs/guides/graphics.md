@@ -1083,13 +1083,19 @@ VINE_PIPELINE=forward_shadowed ./build/bin/Vine --open demo # 接受；与 forwa
 ./build/bin/test_vsg --gtest_filter=SdkPixelTest.*   # SDK 级**像素**判据（真设备；见下）
 ./build/bin/test_core                # buffer、math、io
 
-bash scripts/gfx_lavapipe_check.sh    # 真帧 + lavapipe：0 VUID / 0 validation error，**并且** app 阶段要看到 demo
-                                      # 自己的证据行（app_shell 加载 / cube map 从素材装载 / shadow_map 建立）——
-                                      # "没报错"不算过：demo 没建起来、或素材不在，这条门禁必须红
-bash scripts/vsg_selftest_evidence.sh           # 后端自检，与基线逐字节比对（自写前向着色 = 唯一路径）
+bash scripts/vsg_rewrite_gate.sh      # 一条命令的后端门禁：构建 + 全套件（设备用例不许 SKIP）+ validation 层
+                                      # 0 VUID + 同步验证 0 SYNC-HAZARD + 卫生脚本 + 自检相位行逐字节 + 真窗口读像素
 bash scripts/vine_shader_check.sh     # 每个 shader × define 变体过 glslangValidator + 嵌入副本同步
-ctest --test-dir build                # CTest 视角
+ctest --test-dir build                # CTest 视角（24 个套件；见下面那段的口径）
 ```
+
+**卫生脚本**（`vsg_rewrite_gate.sh` 第 5 阶段，也可以单独跑）：
+`scripts/check_include_hygiene.py`、`check_diagnostic_formats.py`、`check_doc_symbols.py`、
+**`check_public_docs.py`**（公开 SDK 头的 `@brief` / `@param` / `@return` 基线门禁：新增的公开声明必须带文档，
+补文档只会让基线条目变 `stale` 而不变红，`--update` 才是降基线的那一步）、`check_ai_docs.py --strict`、
+`check_vsg_window_surface_state.py`、`check_vsg_upstream_capabilities.py`、`check_export_annotations.py`。
+2026-10-13 对账：这一段早先还点名过 `scripts/gfx_lavapipe_check.sh` 与 `scripts/vsg_selftest_evidence.sh`，
+两个脚本在树里**已不存在**（能力并进了 `vsg_rewrite_gate.sh`），别再照那两行跑。
 
 **SDK 级像素判据**（`test_vsg/SdkPixelFixture.hpp` + `SdkPixelTest.cpp`）：用 SDK 自己的入口（引擎 + 视图 + 管线 +
 一 pass 配方）在**真设备**上画一帧到离屏 `RenderTarget`，再用 `readColorBuffer` + `PixelProbe` 读回来判。它补的
