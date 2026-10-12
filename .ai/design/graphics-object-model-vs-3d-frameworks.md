@@ -63,7 +63,7 @@ VTK 那代的"renderer 里挂 actor、顺序由遍历决定"是它要解决的�
 
 | # | 缺口 | 行业对应 | 今天的替代 | 触发条件 |
 | --- | --- | --- | --- | --- |
-| 1 | **同 pass 内没有逐对象优先级 / 渲染队列** | three.js `renderOrder`、OSG render bin、VTK prop 优先级、Ogre render queue group + 子组（`Renderable::setRenderQueueSubGroup`） | pass 阶段（`PipelineStage`）+ pass 内按遍历序 + 透明内容走单独的 forward pass | 需要在**同一 pass 内**做覆盖式绘制（描边、贴花、后画的 HUD 元素） |
+| 1 | **同 pass 内没有逐对象优先级 / 渲染队列** | three.js `renderOrder`、OSG render bin、VTK prop 优先级、Ogre render queue group + 子组（`Renderable::setRenderQueueSubGroup`） | pass 阶段（`PipelineStage`）+ pass 内按遍历序 + 透明内容走单独的 forward pass | **已落地（2026-10-13）**：`Node::setDrawOrder`（高=后画、子树继承、pass 内为**外键**，越得过透明批次）+ `RenderCommand::drawOrder`；判据与 4 条变异见 `.ai/memory/graphics.md` 顶条 |
 | 2 | **没有实例化 / 批处理抽象** | `InstancedMesh` / `DrawIndexedInstanced` | 一条 `RenderCommand` 一个几何 | 同一几何 N 份（粒子、植被）—— 模型上加一个字段 + 后端能力就够；**与 `graphics-layers.md` 的 L2b（一次写完多层）同源，建议同一触发条件一起评** |
 | 3 | **没有 LOD / 空间划分** | LOD 节点、八叉树 / 可见性集合 | `Node` 自带包围盒，引擎按相机做视锥剔除（移动相机不重算子树盒） | 大型场景（节点数或几何量到"每帧收集本身成为瓶颈"） |
 | 4 | **命名风险：`Pipeline` ≠ PSO** | Unreal / Unity 的 "pipeline state" | — | 不改名（S7 已定）；**对外文档首次出现该词时补一句"它是 pass 链条的编译产物，不是图形 API 的 pipeline state"** |

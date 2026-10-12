@@ -56,6 +56,15 @@ struct VN_GRAPHICS_API RenderCommand {
     /** Effective opacity in [0, 1]: scene x nodes x leaf geometry. */
     float opacity = 1.0f;
 
+    /** Where this command's draw sits in the order of the pass drawing it (see Node::setDrawOrder).
+     *
+     * The OUTER sort key of the list a pass draws: a higher value is recorded later, so it lands on top of the
+     * earlier draws. INSIDE one value the order is the picture the collection has always produced - opaque
+     * front-to-back, then transparent back-to-front - which is what keeps alpha content correctly ordered among
+     * the commands that share a draw order. 0 is the default and means "nobody declared one".
+     */
+    int drawOrder = 0;
+
     /** The render state the CONTENT authored for this command (every item optional).
      *
      * Computed at collection time by folding every StateNode from the scene root down to the geometry. An unset

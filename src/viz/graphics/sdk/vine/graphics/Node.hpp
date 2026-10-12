@@ -105,6 +105,38 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     /** @brief Withdraws this node's own layer declaration, so its subtree inherits its ancestors' again. */
     void clearLayers();
 
+    /** @brief Gets the draw order this subtree declares.
+     *
+     * This node's OWN declaration (nullopt when it says nothing, so its subtree inherits - see setDrawOrder).
+     *
+     * @return The declared order, or nullopt when this node declares none.
+     */
+    [[nodiscard]] std::optional<int> drawOrder() const;
+
+    /** @brief Declares where this subtree's draws sit in the order of the pass that draws them.
+     *
+     * WITHIN one pass, and only there: a higher order is drawn LATER, which is how content that must land ON TOP
+     * of what is already in the target is expressed - a selection outline, a decal, a highlight overlay. It does
+     * not move anything between passes: which passes exist and in what order they run is the recipe's
+     * (`PassDesc::order` / `PipelineStage`), and this value has no effect on it.
+     *
+     * The order is the OUTER sort key of the list a pass draws, so a declared order really does leapfrog the
+     * default batches: content at order 1 is drawn after every draw at order 0, opaque or not. INSIDE one order
+     * the picture is what it always was - opaque front-to-back first, then transparent back-to-front (see
+     * Scene::collectRenderCommands) - which is what keeps a higher order from breaking alpha ordering among the
+     * content that shares it.
+     *
+     * The declaration covers the whole subtree and the NEAREST declaration wins, exactly like the layer
+     * declaration beside it: a child that declares its own order replaces what it inherited, and clearDrawOrder()
+     * puts it back to inheriting.
+     *
+     * @param order Sort key of this subtree's draws inside one pass (0 is the default; higher = later).
+     */
+    void setDrawOrder(int order);
+
+    /** @brief Withdraws this node's own draw-order declaration, so its subtree inherits again. */
+    void clearDrawOrder();
+
     /** @brief Gets the subtree opacity multiplier in [0, 1]. */
     float opacity() const;
 
@@ -193,6 +225,8 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     bool visible_ = true;
     /// This node's own layer declaration, or nullopt when it says nothing and inherits (see setLayers).
     std::optional<std::uint32_t> layers_;
+    /// This node's own draw order, or nullopt when it says nothing and inherits (see setDrawOrder).
+    std::optional<int> draw_order_;
     float opacity_ = 1.0f;
     raw_ptr<Node> parent_ = nullptr;
 

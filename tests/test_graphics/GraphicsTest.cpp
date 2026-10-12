@@ -7942,6 +7942,193 @@ TEST(ContentLayersTest, APassThatSelectsNoLayerDrawsNothingAndSaysSoOnce)
     EXPECT_EQ(engine->framePlan().passes[0].layer_mask, 0u) << "the plan still states the declaration";
 }
 
+// ============ Draw order (where a subtree's draws sit inside one pass) ============
+
+/**
+ * @brief The declared draw order is the outer key of the sort: higher is drawn later, whatever the tree says.
+ *
+ * With nothing declared the picture is the one this collection has always produced (the traversal order, kept
+ * by a stable sort), and a declaration only says WHERE in that list a subtree's draws belong - which is how
+ * content that must land on top of the rest (an outline, a decal, a highlight) is expressed without a pass of
+ * its own.
+ */
+TEST(DrawOrderTest, TheDeclaredOrderIsTheOuterKeyOfTheSort)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    // All three at the SAME depth, so the declaration is the only thing that can move them.
+    auto first  = makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"first");
+    auto second = makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"second");
+    auto third  = makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"third");
+    root->addChild(first);
+    root->addChild(second);
+    root->addChild(third);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto order = [](const std::vector<RenderCommand>& commands) {
+        std::string text;
+        for (const RenderCommand& command : commands) {
+            if (!text.empty()) {
+                text += ",";
+            }
+            text += command.geometry->name().as_std_str();
+        }
+        return text;
+    };
+
+    EXPECT_EQ(order(scene.collectRenderCommands(&cam)), "first,second,third")
+        << "nobody declared one: the traversal order decides, and the sort is stable";
+
+    // A higher order is drawn LATER - the subtree added first comes out last.
+    first->setDrawOrder(2);
+    EXPECT_EQ(order(scene.collectRenderCommands(&cam)), "second,third,first");
+    EXPECT_EQ(scene.collectRenderCommands(&cam).back().drawOrder, 2) << "the command carries the resolved order";
+
+    // A lower one is drawn EARLIER (negative orders are as legal as positive ones).
+    third->setDrawOrder(-1);
+    EXPECT_EQ(order(scene.collectRenderCommands(&cam)), "third,second,first");
+
+    // Withdrawing the declarations puts the picture back where it started.
+    first->clearDrawOrder();
+    third->clearDrawOrder();
+    EXPECT_EQ(order(scene.collectRenderCommands(&cam)), "first,second,third");
+}
+
+/**
+ * @brief A declared order leapfrogs the batches, because it is the OUTER key.
+ *
+ * The collection draws opaque content before transparent content (transparent needs painter's order), so an
+ * opaque draw could never land on top of a transparent one - which is exactly what a highlight or an outline
+ * must do. INSIDE one order the old picture still holds; the leapfrog is what the declaration buys.
+ */
+TEST(DrawOrderTest, ADrawOrderLeapfrogsTheTransparentBatch)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  plain = makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"plain");
+    auto  glass = makeTriangleNode(Vec3d(0, 0, -4), nullptr, u8"glass");
+    glass->setOpacity(0.5f);
+    auto highlight = makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"highlight");
+    root->addChild(plain);
+    root->addChild(glass);
+    root->addChild(highlight);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto order = [](const std::vector<RenderCommand>& commands) {
+        std::string text;
+        for (const RenderCommand& command : commands) {
+            if (!text.empty()) {
+                text += ",";
+            }
+            text += command.geometry->name().as_std_str();
+        }
+        return text;
+    };
+
+    EXPECT_EQ(order(scene.collectRenderCommands(&cam)), "plain,highlight,glass")
+        << "no declarations: opaque (near to far), then transparent";
+
+    highlight->setDrawOrder(1);
+    EXPECT_EQ(order(scene.collectRenderCommands(&cam)), "plain,glass,highlight")
+        << "the highlight is opaque and still lands AFTER the transparent draw - that is the point of the key";
+
+    // Inside one order nothing changed: the transparent draw is still last among its own order.
+    glass->setDrawOrder(0);
+    EXPECT_EQ(order(scene.collectRenderCommands(&cam)), "plain,glass,highlight");
+}
+
+/**
+ * @brief The declaration covers the subtree, the nearest one wins, and withdrawing it inherits again.
+ *
+ * The same fold the layers and the shading state follow (see Scene.cpp's InheritedState): one rule, one
+ * implementation, so a group can be moved as a unit and a child can still say otherwise.
+ */
+TEST(DrawOrderTest, TheNearestDeclarationCoversItsSubtree)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  group = intrusive_ptr<Group>(new Group());
+    auto  inherited = makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"inherited");
+    auto  overridden = makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"overridden");
+    group->addChild(inherited);
+    group->addChild(overridden);
+    root->addChild(group);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto resolved_order = [&scene, &cam](vn::raw_ptr<const Geometry> geometry) {
+        for (const RenderCommand& command : scene.collectRenderCommands(&cam)) {
+            if (command.geometry.get() == geometry) {
+                return command.drawOrder;
+            }
+        }
+        return -999;
+    };
+    const auto geometry_of = [](const intrusive_ptr<MatrixTransform>& node) {
+        vn::raw_ptr<const Geometry> geometry = nullptr;
+        for (const auto& child : node->childrenRef()) {
+            if (const auto* leaf = dynamic_cast<const Geometry*>(child.get())) {
+                geometry = leaf;
+            }
+        }
+        return geometry;
+    };
+
+    group->setDrawOrder(3);
+    EXPECT_EQ(group->drawOrder().value_or(0), 3) << "the declaration is on the group";
+    EXPECT_EQ(resolved_order(geometry_of(inherited)), 3) << "the child that says nothing inherits it";
+    EXPECT_EQ(resolved_order(geometry_of(overridden)), 3);
+
+    overridden->setDrawOrder(-2);
+    EXPECT_EQ(resolved_order(geometry_of(inherited)), 3) << "the group is untouched by its child's declaration";
+    EXPECT_EQ(resolved_order(geometry_of(overridden)), -2) << "the nearest declaration wins";
+
+    overridden->clearDrawOrder();
+    EXPECT_EQ(resolved_order(geometry_of(overridden)), 3) << "withdrawn: it inherits again";
+    EXPECT_EQ(overridden->drawOrder(), std::nullopt);
+
+    group->clearDrawOrder();
+    EXPECT_EQ(resolved_order(geometry_of(inherited)), 0) << "nothing declared anywhere: the default";
+}
+
+/**
+ * @brief The declaration also works ON the drawable, which is where a single object's order belongs.
+ *
+ * The value is a `Node`'s, not a group's: a leaf that declares one is drawn where it says, and being inside a
+ * group that declared another one is not a contradiction - the nearest declaration wins, so the leaf's own is
+ * the answer. (This is the shape a highlight uses: one geometry, not a subtree.)
+ */
+TEST(DrawOrderTest, TheDeclarationAppliesAtTheDrawableToo)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  plain = makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"plain");
+    auto  marked = makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"marked");
+    // The geometry is the drawn node; the helper's MatrixTransform is its parent. Declaring on the LEAF itself
+    // is what this pins (the cases above declare on a parent and read the inherited value).
+    vn::raw_ptr<const Geometry> marked_geometry = nullptr;
+    for (const auto& child : marked->childrenRef()) {
+        if (const auto* leaf = dynamic_cast<const Geometry*>(child.get())) {
+            marked_geometry = leaf;
+        }
+    }
+    ASSERT_NE(marked_geometry, nullptr);
+    const_cast<Geometry*>(marked_geometry)->setDrawOrder(5);
+
+    root->addChild(plain);
+    root->addChild(marked);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands.size(), 2u);
+    EXPECT_EQ(commands[0].geometry->name(), u8"plain") << "the marked one is drawn later, by its own declaration";
+    EXPECT_EQ(commands[1].geometry->name(), u8"marked");
+    EXPECT_EQ(commands[1].drawOrder, 5) << "the leaf's own declaration is the command's order";
+}
+
 /**
  * @brief Several passes over one scene share one walk per view per frame.
  *

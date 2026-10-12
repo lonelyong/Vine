@@ -146,6 +146,10 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * receives — for every later call with the same camera and shape, until the
      * scene changes or the next frame begins.
      *
+     * The order is: the content's declared draw order first (Node::setDrawOrder - higher is drawn later,
+     * so content that must land on top says so), and inside one order the picture the collection has always
+     * produced — opaque front-to-back, then transparent back-to-front.
+     *
      * The owning spelling: use it when the list is KEPT or EDITED. A caller that
      * only reads it (the engine's own pass path, a backend) hands out the shared
      * list instead (see collectRenderCommandsShared) and pays no copy at all.

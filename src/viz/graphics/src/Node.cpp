@@ -137,6 +137,21 @@ void Node::clearLayers()
     layers_.reset();
 }
 
+std::optional<int> Node::drawOrder() const
+{
+    return draw_order_;
+}
+
+void Node::setDrawOrder(int order)
+{
+    draw_order_ = order;
+}
+
+void Node::clearDrawOrder()
+{
+    draw_order_.reset();
+}
+
 float Node::opacity() const
 {
     return opacity_;

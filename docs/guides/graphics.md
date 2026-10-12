@@ -68,6 +68,7 @@ engine.setDevice(backend);
 | material / program | 叶子自己的优先，否则取最近的祖先 `StateNode` |
 | `isVisible` | **硬门**：不可见子树整棵不收集 |
 | 层（`Node::setLayers`） | **最深者覆盖**：最近的声明赢，`clearLayers()` 回到继承；没声明过的节点在 `kDefaultLayer`（bit 0）。判定在**可绘制节点**上（容器是结构，不是内容），所以 `Group` 上的声明管的是它下面的内容 |
+| 画序（`Node::setDrawOrder`） | **最深者覆盖**：最近的声明赢，`clearDrawOrder()` 回到继承，默认 0。**高 = 后画**（压在上面）；它是 pass 内那张列表的**外键** —— 同序之内仍是"不透明 前→后、透明 后→前"，所以它能越过透明批次、也能被同序的深度规则保护 |
 
 `cmd.isTransparent` 由有效 opacity 推出，它决定这个 drawable 走管线的透明部分。
 整个折叠是**一次自顶向下**的遍历（世界矩阵 / 透明度 / 状态 / material / program 一起往下传），
@@ -906,6 +907,25 @@ options.layer_mask = 1u << 1;                       // appfw 里就是 ViewerOpt
 - **判定在可绘制节点上**：`Group` 上的声明管的是它下面的内容，掩码**不会**在某个"没声明层的组"上把子树剪掉 ——
   否则声明了层的子内容就再也画不出来了（这条是落地时被用例抓到的）。
 - 看一眼结果：`engine->framePlan()` 里 `PassPlan::layer_mask` 是这条 pass 的选择，`describe()` 只在非默认时打 `layers=0x..`。
+
+
+### 3.15 同一 pass 内的画序：`Node::setDrawOrder`（描边 / 贴花 / 高亮）
+
+一条 pass 的列表默认按"内容作者写的形状"排：不透明 前→后，然后透明 后→前（透明要画家序）。要让某件东西**压在已经画好的
+上面**（选中描边、贴花、高亮遮罩），给它一个更**高**的画序就够了，不必为它单开一条 pass：
+
+```cpp
+outline->setDrawOrder(1);   // 高 = 后画 = 压在上面（子树继承；clearDrawOrder() 回到继承；默认 0）
+```
+
+- **它是 pass 内那张列表的外键**：画序先分档，档内还是老画面。所以一个**不透明**的描边可以越过**透明**批次画在最后 ——
+  这正是"同一 pass 内覆盖式绘制"能做到、而"为它多加一条 pass"又要重开清屏 / 深度的地方。
+- **与 pass 的顺序无关**：谁先谁后是配方的事（`PassDesc::order` / `PipelineStage`），这个值不会把内容搬到别的 pass 里。
+- **要不要关深度看目的**：想"永远压在上面"就给那条 pass `DepthMode::Disabled`（或给几何一点偏移）；想"被挡住就不该看见"
+  就让它照常测深度。**共面**的两件东西若开着深度，后画的那件会被深度拒绝（同深度 `LESS` 不成立）—— 那时量到的是深度，不是画序。
+- 自己驱动收集 / 后处理命令表时，`RenderCommand::drawOrder` 就是这个命令的档。
+- 默认 0 ⇒ 不声明就与老画面逐位相同；判据是 `test_graphics` 的 `DrawOrderTest` 四条（外键 / 越过透明批次 / 继承 / 叶子声明）
+  加真设备像素用例 `SdkPixelTest.ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop`。
 
 
 ## 4. 现成例子：怎么构建、怎么跑

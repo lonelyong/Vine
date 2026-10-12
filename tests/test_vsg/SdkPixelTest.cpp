@@ -8,8 +8,14 @@
 
 #include <array>
 
+#include <vine/Buffer.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
+#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/Geometry.hpp>
+#include <vine/graphics/Group.hpp>
 #include <vine/graphics/ImageRef.hpp>
+#include <vine/graphics/Material.hpp>
+#include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderPipeline.hpp>
@@ -17,6 +23,7 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/SceneView.hpp>
+#include <vine/graphics/StateNode.hpp>
 
 using vn::graphics::PipelineOptions;
 using vn::graphics::RenderPass;
@@ -307,4 +314,102 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
     EXPECT_NE(copies[1], copies[0]) << "法线格与 albedo 格必须不是同一个像素值";
     EXPECT_GT(copies[1].b, copies[1].r) << "法线格以蓝为主（(0,0,1) 的法向写进 F16 的目标再复制回来）";
     EXPECT_GT(copies[1].b, copies[1].g);
+}
+
+namespace
+{
+
+/// @brief 造一张共面四边形（同一 z），带自己的材质颜色，作为 @p parent 的子节点。
+///
+/// 用的就是夹具那张 quad 的顶点（`[-0.9, 0.9]` 的方块、法向 +z、两个三角形），只是颜色归调用方给 —— 两张叠在
+/// 一起的四边形是"谁在上面"这件事唯一能读出来的形状。
+vn::intrusive_ptr<vn::graphics::MatrixTransform> makeCoplanarQuad(const vn::intrusive_ptr<vn::graphics::Group>& parent,
+                                                                  const vn::Colorf& colour)
+{
+    const float half = 0.9F;
+    const float z    = 0.0F;
+    const vn::intrusive_ptr<vn::graphics::Geometry> geometry(new vn::graphics::Geometry());
+    geometry->setPositions(vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -half, -half, z, half, -half, z, half, half, z, -half, half, z })));
+    geometry->setNormals(vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F,
+                                                  1.0F })));
+    geometry->setIndices(vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+    geometry->setRevision(1U);
+
+    const vn::intrusive_ptr<vn::graphics::Material> material(new vn::graphics::Material());
+    material->setDiffuse(colour);
+
+    const vn::intrusive_ptr<vn::graphics::StateNode> state(new vn::graphics::StateNode());
+    state->setMaterial(material);
+    state->addChild(geometry);
+
+    const vn::intrusive_ptr<vn::graphics::MatrixTransform> transform(new vn::graphics::MatrixTransform());
+    transform->setMatrix(vn::math::Mat4d());
+    transform->addChild(state);
+    parent->addChild(transform);
+    return transform;
+}
+
+/// @brief 这个像素是否以 @p channel 为主（无光照档下材质色直接落地，颜色空间由平台决定）。
+bool dominantly(const vn::graphics::backend::Rgba8& pixel, char channel)
+{
+    const auto& r = pixel.r;
+    const auto& g = pixel.g;
+    const auto& b = pixel.b;
+    if (channel == 'r') {
+        return r > 128U && g < 64U && b < 64U;
+    }
+    return g > 128U && r < 64U && b < 64U;
+}
+
+}  // namespace
+
+// 同一 pass 内的画序**是像素**，不是列表次序：两张**共面**的四边形、颜色一红一绿、pass 关掉深度（共面时只有顺序
+// 能决定谁留下），于是"后画的赢"这句话可以直接读出来。默认没有声明时赢的是树里靠后的那个（稳定排序），而一句
+// `setDrawOrder(1)` 就把它翻过来 —— 描边 / 贴花 / 高亮那一类"必须压在已经画好的东西上面"的声明就靠这个。
+TEST(SdkPixelTest, ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop)
+{
+    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+
+    const vn::intrusive_ptr<vn::graphics::Group> root(new vn::graphics::Group());
+    const auto red   = makeCoplanarQuad(root, vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+    const auto green = makeCoplanarQuad(root, vn::Colorf(0.0F, 1.0F, 0.0F, 1.0F));
+
+    const vn::intrusive_ptr<vn::graphics::Scene> scene(new vn::graphics::Scene());
+    scene->setRoot(root);
+
+    vn::intrusive_ptr<RenderPass> pass(new RenderPass());
+    pass->setName(vn::String(u8"draw_order_picture"));
+    pass->setCamera(fixture.camera);
+    pass->setRenderTarget(fixture.target);
+    pass->setClearEnabled(true);
+    pass->setClearColor(vn::Color(0, 0, 0));
+    pass->setShouldClearDepth(true);
+    // 共面 ⇒ 深度测试会让"后画的"被拒（同深度 LESS 不成立），而这条要量的正是**顺序**，所以把深度关掉：
+    // pass 里只剩顺序这一个决定谁留下的因素。
+    pass->setDepthMode(vn::graphics::DepthMode::Disabled);
+    // 无光照档：没有灯的环境里跑默认前向程序会得到"被算黑"的画面，而这条判的是覆盖顺序，不是光照。
+    pass->setProgramOverride(vn::graphics::unlitForwardProgram());
+    fixture.engine->addPass(pass, scene, 0);
+
+    const PixelProbe first = fixture.read();
+    ASSERT_TRUE(first.valid());
+    const auto& centre_before = first.pixel(SdkPixelFixture::kSide / 2, SdkPixelFixture::kSide / 2);
+    std::printf("[sdk-pixels] draw order: default centre=(%u,%u,%u)\n", centre_before.r, centre_before.g,
+                centre_before.b);
+    EXPECT_TRUE(dominantly(centre_before, 'g'))
+        << "没有声明时，树里**靠后**那张（绿）后画 ⇒ 它在上面（稳定排序保住了遍历序）";
+
+    // 一句声明把它翻过来：红的那张画在最后。
+    red->setDrawOrder(1);
+    const PixelProbe second = fixture.read();
+    ASSERT_TRUE(second.valid());
+    const auto& centre_after = second.pixel(SdkPixelFixture::kSide / 2, SdkPixelFixture::kSide / 2);
+    std::printf("[sdk-pixels] draw order: declared centre=(%u,%u,%u)\n", centre_after.r, centre_after.g,
+                centre_after.b);
+    EXPECT_TRUE(dominantly(centre_after, 'r'))
+        << "红的那张声明了更高的画序 ⇒ 它后画、压在上面（这正是高亮 / 描边的做法）";
+    EXPECT_NE(centre_before.r, centre_after.r) << "同一个像素真的换了主人，不是两次读到同一张残影";
 }

@@ -247,6 +247,7 @@ struct InheritedState
     raw_ptr<Material>      material;               ///< Nearest StateNode material above this node, or null.
     raw_ptr<ShaderProgram> program;                ///< Nearest StateNode program above this node, or null.
     std::uint32_t          layers = kDefaultLayer;    ///< Nearest layer declaration above, resolved (see Node::setLayers).
+    int                    draw_order = 0;            ///< Nearest draw-order declaration above (see Node::setDrawOrder).
 };
 
 /**
@@ -259,8 +260,8 @@ struct InheritedState
  * Node::setLayers - the test is one bitwise AND per command, and it is taken at
  * the DRAWN node: a mask excludes content, not the structure it sits in). The world matrix is
  * accumulated top-down (one product per node), each node's world bound is
- * computed at most once per pass (see BoundsCache), and so is the state — shading
- * and layers — a subtree inherits (see InheritedState), so the cost is linear in the node
+ * computed at most once per pass (see BoundsCache), and so is the state — shading,
+ * layers, draw order — a subtree inherits (see InheritedState), so the cost is linear in the node
  * count instead of quadratic.
  *
  * @param node       Root node to traverse.
@@ -284,6 +285,8 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
     // stands for structure, not for content, so letting a mask prune a subtree at a group would make content
     // that declares a layer UNREACHABLE under a group that declares none.
     const std::uint32_t layers = node->layers().value_or(inherited.layers);
+    // Where this subtree's draws sit inside the pass that draws them (see Node::setDrawOrder): folded the same
+    // way, and read by the sort that orders the collected list.
     if (frustum.isOutside(bounds.worldBound(node, world))) {
         return;
     }
@@ -297,6 +300,7 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
     // items, which is why a non-null material / program simply replaces what was inherited.
     InheritedState subtree = inherited;
     subtree.layers         = layers;
+    subtree.draw_order     = node->drawOrder().value_or(inherited.draw_order);
     if (const auto* state_node = dynamic_cast<const StateNode*>(node)) {
         subtree.state.merge(state_node->renderState());
         if (raw_ptr<Material> material = state_node->material()) {
@@ -322,6 +326,7 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
             intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)),
             material, world);
         cmd.opacity = effective;
+        cmd.drawOrder = subtree.draw_order;
         // Render state folds along the node path: every StateNode from the
         // scene root to this geometry contributes, deeper nodes overriding.
         // What arrives here is the CONTENT's word (every item optional, so
@@ -553,8 +558,9 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsSh
     BoundsCache bounds;
     collectNodeCommands(root_.get(), root_->worldMatrix(), frustum, opacity_, InheritedState{}, layer_mask, bounds,
                         commands);
-    // Sort: opaque front-to-back (near first), transparent back-to-front
-    // (far first) after the opaque batch. Transparent objects need painter's
+    // Where the sort puts things, in one sentence: the draw order the CONTENT declared is the outer key (see
+    // Node::setDrawOrder - higher is drawn later), and inside one order: opaque front-to-back (near first),
+    // transparent back-to-front (far first) after the opaque batch. Transparent objects need painter's
     // order for correct alpha blending.
     //
     // The sort key is computed once per command instead of inside the
@@ -573,6 +579,14 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsSh
     std::stable_sort(keyed.begin(), keyed.end(),
                      [](const std::pair<double, RenderCommand*>& lhs,
                         const std::pair<double, RenderCommand*>& rhs) {
+                         // The draw order DECLARED on the content is the outer key (see Node::setDrawOrder): a
+                         // higher order is drawn later, which is how content that must land on top of the rest
+                         // - an outline, a decal, a highlight - is expressed without its own pass. Equal orders
+                         // fall through to the ordering the collection has always produced, so the default
+                         // (everybody at 0) is bit for bit the picture it was.
+                         if (lhs.second->drawOrder != rhs.second->drawOrder) {
+                             return lhs.second->drawOrder < rhs.second->drawOrder;
+                         }
                          if (lhs.second->isTransparent() != rhs.second->isTransparent()) {
                              return !lhs.second->isTransparent();
                          }
