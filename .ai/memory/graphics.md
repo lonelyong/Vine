@@ -25,6 +25,33 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-12 设备槽位用尽：两扇门都答成理由，而不是把 vsg 的异常丢给宿主（`VSG_MAX_DEVICES`）
+
+- **结论**：本 build 的同时渲染设备数**就是 4**（vsg 的 `VSG_MAX_DEVICES`），而"一块渲染面 = 一次 attach = 一个设备"
+  （`RenderControl` 每开一个 3D 文档一个）⇒ 开第 5 块面是**用户真会撞上的边界**。现在两扇门都把它答成**理由**：
+  无窗 seam（`createDevice`，无头相位/测试走它）返回 `ok == false` + 句子；会话（`Session::initialize`，应用走它）
+  报 `InitFailed` + 同一句子并返回 false ⇒ 控件的 `Failed` + `failureReason()`。
+- **坑 1（这次的真病根）**：vsg 拒绝创建设备的方式是**抛** `vsg::Exception`，而它**不是** `std::exception`
+  （裸 struct：message + result；`gfx_backend_vsg` 自己的注释在 `submitViewerTasks` 里早就写明了这一点）——
+  `Session::initialize()` 的 `catch (const std::exception&)` 接不住它，异常会逃出 SDK 进 Qt 事件循环（= 崩）。
+  修法：`Session::initialize()` 前面加 `catch (const ::vsg::Exception&)`；`createDevice()` 里把 `Device::create`
+  包进 try/catch（这一处原来只处理"返回 nullptr"）。
+- **一句话一个 owner**：`deviceFailureMessage(const ::vsg::Exception&)`（`vine/vsg/internal/Device.hpp` 导出）——
+  vsg 的原话在前（driver 拒了什么只有它知道），后面接本 build 的固定事实（上限数字取自
+  `vsg::Device::maxNumDevices()`，**不硬编码 4**）+ 宿主能做什么（"一块视图一个设备，先关一个视图"）。两扇门共用它，
+  所以宿主读到的句子与哪道门无关。
+- **坑 2（文档三方矛盾，一并收口）**：`gfx_backend_vsg/CMakeLists.txt` 的注释声称"取 `>4` 的动态分支、设备数不受限"
+  ——**假话**（值就是 4，选中的是 `<=4` 的固定 `std::array` 分支；`>4` 分支在 1.1.16 坏在 **const** `operator[]`
+  不增长、`size()` 只反映写过的槽）；`ModelViewerPlugin.hpp` 说 `VSG_MAX_DEVICES=1`（旧值）；`ModelRenderView.hpp`
+  说"设备数上限已解开"（假）。三处按事实改写，`.ai/memory/appfw.md` 那条"必须由我们拒（未做）"改成"已落地"。
+- **判据（实测）**：全量 Release 0 error / 0 warning；`test_vsg` **430**（429 + 1 新用例
+  `VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException`：填满上限 ⇒ 无窗 seam 与**会话**都答理由、
+  句子含上限数字；放掉一个槽 ⇒ 下一次创建成功）；其余套件计数不动；五 gate 0 finding、`check_ai_docs --strict` 仍 13。
+- **变异（各自单独红）**：① 去掉 `createDevice` 的 catch ⇒ 用例在第一步就带着 vsg 异常中止；② 去掉 `Session` 的
+  `vsg::Exception` catch（恢复成只接 `std::exception`）⇒ 用例在第二步（会话门）抛出去。
+- **副产品**：`VsgBackend::initialize()` 注释里"re-initialize 会同时要两个设备，vsg 拒绝"这句现在有了明确的失败
+  面（同一句话），不必再靠推断。
+
 ## 2026-10-12 内容掩码（分层渲染 L1）落地：一条 pass 只画它要的层（`graphics-layers.md`）
 
 - **结论**：内容选择是**两个值** —— 对象侧 `Node::setLayers/clearLayers/layers`（子树继承，最近的声明赢；`clearLayers()` 回到继承），

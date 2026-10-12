@@ -63,8 +63,9 @@
 > **3D 视图自带渲染面（2026-09-27 用户拍板：一个文档 = 一个视图 = 它自己那份资源）**：视图自己 `new
 > RenderControl`（自己的面/会话/设备/管线）铺在自己的控件里，`content()` 返回**视图自己** ⇒ 宿主只有一条页规则（一实例一页）。
 > 应用级共享的只有 DockPanel/Ribbon 那套外壳。`VSG_MAX_DEVICES` 取 **4**（vsg 里唯一正确的那一档；`>4` 的动态分支在
-> 1.1.16 是坏的：`vk_buffer<std::vector<T>>::size()` 只在写时增长、读会越界，`test_vsg` 当场 abort）—— 所以"同时两个
-> device"不再是错误，而上限是 4；**`<=4` 分支不查边界 ⇒ 第 5 块面必须由我们拒（未做）**。
+> 1.1.16 是坏的：`vk_buffer<std::vector<T>>::size()`/const `operator[]` 只在写时增长、读会越界）—— 所以"同时两个
+> device"不再是错误，而上限**就是 4**（vsg 的 `Device` 构造在超过 `VSG_MAX_DEVICES` 时**抛异常**）；
+> **第 5 块面由后端拒，且答成理由（2026-10-12 已落地，见 `graphics.md` 顶条）**。
 > 原来那套"共享会话"的东西（`RenderControl::present()`、`SurfaceWindow` 的 own_view/view 二分、`SceneView::removeWindowPass()`
 > 公开、宿主的"借来的页"规则）**已删**：模型变了就不留无用 API。
 > **视图层只在 `GuiApplication`**（视图是 `UIElement`，无头 `Application` 连控件都没有）：注册表与宿主在建主窗时建好，

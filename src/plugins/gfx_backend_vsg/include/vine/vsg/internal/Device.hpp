@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include <vsg/core/ref_ptr.h>
+#include <vsg/core/Exception.h>
 #include <vsg/vk/Device.h>
 #include <vsg/vk/Instance.h>
 
@@ -45,7 +46,25 @@ struct DeviceResult
  *
  * @param options Whether to enable validation.
  * @return The device (and its instance and queue family), or `ok == false` with a reason.
+ *         Never throws: vsg's own failure is caught and answered as a reason (see deviceFailureMessage).
  */
 [[nodiscard]] DeviceResult createDevice(const DeviceOptions& options = {});
+
+/** @brief The sentence a device that could not be created is reported with.
+ *
+ * vsg's device layer refuses a creation by THROWING a `vsg::Exception` (it is NOT a `std::exception`, so a
+ * catch that names only that one lets it escape), and the failure a host actually hits is the device CAP: a
+ * build supports `vsg::Device::maxNumDevices()` simultaneous devices, and a host that keeps one per render
+ * area (one view = one control = one session, see appfw's document model) reaches it by opening one more.
+ *
+ * The reason states vsg's own words - it is the party that knows what the driver refused - and then the
+ * standing fact about this build's cap and what a host can do about it. Both the window-less seam
+ * (`createDevice`) and the session (which creates its device through a window) report through this ONE
+ * sentence, so what a host reads does not depend on which door the failure came through.
+ *
+ * @param error The exception vsg threw.
+ * @return The reason, in this SDK's words (never empty).
+ */
+[[nodiscard]] vn::String deviceFailureMessage(const ::vsg::Exception& error);
 
 VN_VSG_NS_END

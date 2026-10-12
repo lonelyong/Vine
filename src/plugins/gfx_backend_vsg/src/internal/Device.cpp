@@ -17,6 +17,21 @@ constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
 
 }  // namespace
 
+vn::String deviceFailureMessage(const ::vsg::Exception& error)
+{
+    // vsg's words first: it is the party that knows what the driver refused (the cap case is vsg's own
+    // sentence naming the number). Then the standing fact about THIS build, which is what turns "a device
+    // could not be created" into something a host can act on - and the action is the same for every cause
+    // that is actually a slot shortage: a render area holds a device for as long as the view is open.
+    vn::String message(u8"the render device could not be created: ");
+    message += vn::String::fromUtf8(error.message);
+    message += u8" — this build allows at most ";
+    message += vn::String::fromUtf8(std::to_string(::vsg::Device::maxNumDevices()));
+    message += u8" simultaneous render devices (VSG_MAX_DEVICES): a host that keeps one device per render area"
+               u8" must close a view before opening another";
+    return message;
+}
+
 DeviceResult createDevice(const DeviceOptions& options)
 {
     DeviceResult result;
@@ -118,8 +133,21 @@ DeviceResult createDevice(const DeviceOptions& options)
     const ::vsg::QueueSettings queue_settings{ ::vsg::QueueSetting{ queue_family, std::vector<float>{ 1.0F } } };
     // The extensions the pipeline layer declares dynamic state from (see requiredDeviceExtensions): passing
     // an empty list here is what makes a "dynamic state" the driver may never be told about.
-    result.device = ::vsg::Device::create(chosen.get(), queue_settings, layers, requiredDeviceExtensions(),
-                                         feature_chain);
+    //
+    // vsg REFUSES a creation by THROWING (a `vsg::Exception`, which is not a `std::exception`), and the
+    // refusal a caller actually meets is the device cap (see deviceFailureMessage): this seam answers with a
+    // reason like every other failure it can have, because "a device could not be created" is a value here,
+    // never an exception out of a caller's back.
+    try
+    {
+        result.device = ::vsg::Device::create(chosen.get(), queue_settings, layers, requiredDeviceExtensions(),
+                                             feature_chain);
+    }
+    catch (const ::vsg::Exception& error)
+    {
+        result.error = deviceFailureMessage(error);
+        return result;
+    }
     if (result.device == nullptr)
     {
         result.error = vn::String(u8"the device could not be created with the required features");

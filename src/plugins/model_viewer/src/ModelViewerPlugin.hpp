@@ -20,7 +20,9 @@ namespace vn::model_viewer
  *   - 把自己的面板挂到右侧 dock 上，并让它跟着当前文档走（面板自己听 `currentChanged`，见 ModelInfoPanel）。
  *
  * 文档只拿数据、不碰渲染（appfw-document-model.md §5.8）：这里没有渲染会话 —— 把模型画出来是视图层（§7）的事，
- * 而 `VSG_MAX_DEVICES=1` 决定了同一时刻只有一块渲染区。
+ * 而一块视图自带一份资源（每个 3D 文档一个 `RenderControl` = 一个设备），本 build 的同时设备上限是 vsg 的
+ * `VSG_MAX_DEVICES`（4）：开得比它多时那一次 attach 会**以理由失败**（拒绝在 `gfx_backend_vsg` 里，见
+ * `VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException`），不是把异常丢进事件循环。
  *
  * 面板"谁该看见"今天是插件自己建自己挂（框架还没有面板注册表，§12）；有了之后这一段变成一条声明。
  */

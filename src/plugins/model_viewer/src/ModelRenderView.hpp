@@ -45,8 +45,10 @@ namespace vn::model_viewer
  *  - 场景与 `Geometry` 副本是每份文档自己的：这套东西（相机、场景、轨道操纵器）**随渲染控件**走，
  *    一个文档一个控件，所以两份文档的相机状态互不影响，切回来还是各自的角度；
  *  - **懒建**：场景与 `SceneView` 在第一次真的上屏时才造（`activate()`），而会话在**第一次被布局过之后**
- *    才 attach（`RenderControl::init()`："宿主给时机、控件维护会话"）；打开十份文档就真的建十份
- *    （vsg 那边的设备数上限已解开，见 `gfx_backend_vsg/CMakeLists.txt` 里的 `VSG_MAX_DEVICES`）。
+ *    才 attach（`RenderControl::init()`："宿主给时机、控件维护会话"）；打开十份文档就真的建十份设备，而本 build
+ *    的同时设备上限是 vsg 的 `VSG_MAX_DEVICES`（4）—— 超出的那一次 attach 以理由失败（`RenderControl` 会进
+ *    `Failed` 并给出 `failureReason()`，拒绝在 `gfx_backend_vsg` 里，见
+ *    `VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException`）。
  *  - **自带灯与帧率读数**：灯挂在场景上（`scene->addLighting(LightRig::studio())`，没人装就只有后端的常量填充，
  *    画面是一片平色），帧率读数由**控件的查看器预设**提供（`control_->setViewerOptions(... .stats = true)`，
  *    尺寸与比例归链维护）—— 读数归本视图，因为"这一份文档的帧率"就是这一块渲染面的帧率。

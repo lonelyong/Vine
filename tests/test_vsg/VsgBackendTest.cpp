@@ -20,6 +20,7 @@
 #include <vine/vsg/internal/ContentHalves.hpp>
 #include <vine/vsg/internal/ContentSets.hpp>
 #include <vine/vsg/internal/ContentStore.hpp>
+#include <vine/vsg/internal/Device.hpp>
 #include <vine/vsg/internal/DeviceProbe.hpp>
 #include <vine/vsg/internal/HostTargets.hpp>
 #include <vine/vsg/internal/MaterialImages.hpp>
@@ -3357,4 +3358,62 @@ TEST(VsgBackendTest, AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce)
         << "the target this device hands out IS its own window half: the frame went through it";
 
     backend->shutdown();
+}
+
+// 设备槽位用尽是**应用真会撞上的一道边界**：一块渲染面 = 一次 attach = 一个设备（`RenderControl` 每开一个 3D 文档
+// 就是一个），而本 build 的同时设备数是 vsg 的编译期常量（`VSG_MAX_DEVICES`）。vsg 那边用**抛异常**拒绝（`vsg::Exception`
+// 不是 `std::exception`，所以只写 `catch (std::exception)` 是接不住的），于是这件事有两个门要看清：无窗的 seam
+// （`createDevice`，无头相位与测试走它）和会话（应用走它）。这条用例把"两扇门都答成理由、而且理由说得出上限"钉住。
+TEST(VsgBackendTest, ADeviceCapThatIsReachedIsAReasonAndNotAnException)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    const std::uint32_t cap = ::vsg::Device::maxNumDevices();
+    ASSERT_GT(cap, 0U) << "a build that allows no device at all cannot run this suite";
+
+    // 1. The window-less seam: fill this build's slots, then ask for one more.
+    std::vector<vn::vsg::DeviceResult> held;
+    held.reserve(cap);
+    for (std::uint32_t index = 0; index < cap; ++index)
+    {
+        held.push_back(vn::vsg::createDevice());
+        ASSERT_TRUE(held.back().ok) << "slot " << index << ": " << as_bytes(held.back().error);
+    }
+
+    const vn::vsg::DeviceResult refused = vn::vsg::createDevice();
+    EXPECT_FALSE(refused.ok) << "the cap is reached: the seam answers, it does not throw";
+    EXPECT_EQ(refused.device, nullptr) << "a refused creation hands out no device";
+    const std::string seam_reason = as_bytes(refused.error);
+    EXPECT_NE(seam_reason.find("at most"), std::string::npos) << seam_reason;
+    EXPECT_NE(seam_reason.find(std::to_string(cap)), std::string::npos)
+        << "the reason names the cap by vsg's own number (it stays true if the build changes it): " << seam_reason;
+
+    // 2. The session door, which is the one a host meets: with every slot taken it fails like every other
+    //    attach failure - false plus a reason (the control's Failed state and its failureReason), not an
+    //    exception out of a Qt event loop.
+    {
+        vn::intrusive_ptr<VsgBackend>               backend(new VsgBackend());
+        std::vector<vn::graphics::RenderDiagnostic> reported;
+        backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) {
+            reported.push_back(diagnostic);
+        });
+
+        EXPECT_FALSE(backend->initialize()) << "a session cannot come up without a device";
+        EXPECT_FALSE(backend->initialized());
+        ASSERT_FALSE(reported.empty()) << "the failure is reported, not swallowed";
+        EXPECT_EQ(reported.back().severity, vn::graphics::DiagnosticSeverity::Error);
+        EXPECT_EQ(reported.back().category, vn::graphics::DiagnosticCategory::InitFailed);
+        const std::string session_reason = as_bytes(reported.back().message);
+        EXPECT_NE(session_reason.find("at most"), std::string::npos) << session_reason;
+        EXPECT_NE(session_reason.find(std::to_string(cap)), std::string::npos) << session_reason;
+    }
+
+    // 3. A slot comes back when a device goes: the refusal is about devices ALIVE, not about a counter that
+    //    can only go up. (vsg reuses a released id, and the seam must not answer "cap reached" afterwards.)
+    held.pop_back();
+    const vn::vsg::DeviceResult reused = vn::vsg::createDevice();
+    EXPECT_TRUE(reused.ok) << as_bytes(reused.error);
 }

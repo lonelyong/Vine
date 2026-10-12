@@ -92,11 +92,19 @@ if(VINE_USE_FETCHCONTENT)
     )
     set(VSG_SUPPORTS_ShaderCompiler ON CACHE BOOL "" FORCE)
     # vsg's vk_buffer is templated on VSG_MAX_DEVICES and picks one of three shapes: <=1 a single value (no
-    # indirection at all), <=4 a fixed std::array, and >4 a std::vector that GROWS on demand. We take the last one:
-    # the number of simultaneous vsg::Device instances is not capped by us at all. That is the point - a document
-    # view brings its OWN render control, and with it its own surface, device and pipelines (see
-    # appfw-document-model.md §9), so "open another model" must not run into a build-time cap. The value itself is
-    # not a limit in that branch (it does not size anything there); it only has to be > 4 to select it.
+    # indirection at all), <=4 a FIXED std::array, and >4 a std::vector that grows on the WRITE path only
+    # (its const operator[] reads whatever was written, and size() reports what was written, so a read of a
+    # slot nobody wrote walks off the end - the branch is broken in vsg 1.1.16 and picking it aborted
+    # test_vsg). This build therefore takes the FIXED shape, and with it vsg's own cap on simultaneous
+    # vsg::Device instances: its Device ctor throws past VSG_MAX_DEVICES (see vsg's Device.cpp, and
+    # vsg::Device::maxNumDevices() for the number).
+    #
+    # WHY THAT IS ACCEPTABLE RATHER THAN A LIMIT WE HIDE: one device per render area IS the document model's
+    # shape (a view brings its own control - see appfw-document-model.md §9), so the cap is reached by
+    # opening one more area than the build allows, and the backend answers THAT by refusing the attach with a
+    # reason instead of letting vsg's exception leave the event loop (gfx_backend_vsg/src/internal/Device.cpp
+    # + Session.cpp, pinned by test_vsg's
+    # VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException).
     set(VSG_MAX_DEVICES 4 CACHE STRING "" FORCE)
     FetchContent_MakeAvailable(vsg)
     vn_group_targets_folder(${vsg_SOURCE_DIR} third_party)

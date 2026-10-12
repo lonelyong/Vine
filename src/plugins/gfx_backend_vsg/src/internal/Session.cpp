@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdlib>
 
+#include <vine/vsg/internal/Device.hpp>
 #include <vine/vsg/internal/DeviceFeatures.hpp>
 #include <vine/vsg/internal/SessionContent.hpp>
 #include <vine/vsg/internal/WindowTarget.hpp>
@@ -305,6 +306,17 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
         impl->frame_seconds = 0.0F;
         ++impl->generation;
         return true;
+    }
+    catch (const ::vsg::Exception& error)
+    {
+        // vsg's own failure vocabulary, caught HERE or it leaves the SDK: `vsg::Exception` is NOT a
+        // `std::exception` (a plain struct with message + result), so the catch below would let it through -
+        // and the one a host actually meets is the device cap (one device per render area, see
+        // deviceFailureMessage), which must read as "this attach failed, here is why" rather than leave a
+        // C++ exception on a Qt event loop.
+        diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed, deviceFailureMessage(error));
+        shutdown();
+        return false;
     }
     catch (const std::exception& error)
     {
