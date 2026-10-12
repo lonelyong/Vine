@@ -29,7 +29,10 @@
 
 - **结论**：内容选择是**两个值** —— 对象侧 `Node::setLayers/clearLayers/layers`（子树继承，最近的声明赢；`clearLayers()` 回到继承），
   pass 侧 `PassDesc::layer_mask` / `RenderPass::setLayerMask()`；判定是**一条 AND**，落在**可绘制节点**上。默认（掩码 `kAllLayers`
-  + 未声明节点在 `kDefaultLayer`）⇒ 今天的行为**逐位不变**。同一份设计里的 **L2（目标层）仍只到设计**，触发条件见文档 §6。
+  + 未声明节点在 `kDefaultLayer`）⇒ 今天的行为**逐位不变**。
+- **同一份设计的 L2（目标层）裁决：现阶段不做**（2026-10-12，登记在 `graphics-layers.md` §6 开头）：没有消费者（无点光立方体阴影 / CSM / 双眼），
+  替代派（N 张 2D 目标）字节数一样，而 L2a **省不了收集与提交**（每层一台相机 ⇒ 每层一次 walk）—— 省钱的那半是 L2b/`multiview`，
+  且三条语义（清屏只洗"本条 pass 写的层"、深度层数一致、读侧带层）该由第一个消费者拍板。触发条件与落地顺序见 §6。
 - **两个常量一个 owner**：`kAllLayers`（掩码默认）与 `kDefaultLayer`（未声明节点的层，bit 0）都在 `Node.hpp`；需要它的公共头
   直接 include（`FramePlan.hpp` / `RenderPass.hpp` / `RenderPipeline.hpp` 各加了一行，hygiene gate 要直接 include）。
 - **掩码进 memo key**（`ContentMemo::Entry::layer_mask`）：同一相机、同一帧、两条不同掩码的 pass **各走一次**（`+content_collect_count_`），
