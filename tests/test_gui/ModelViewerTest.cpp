@@ -30,10 +30,13 @@
 #include <vine/appfw/gui/RenderControl.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
+#include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/Scene.hpp>
+#include <vine/window/InputEvent.hpp>
+#include <vine/window/MouseButton.hpp>
 #include <vine/graphics/SceneView.hpp>
 
 #include "MeshFileOpener.hpp"
@@ -563,4 +566,123 @@ TEST(ModelViewerTest, AFilePayloadReachesTheRenderSceneInTheSourceUnits)
     EXPECT_TRUE(hasVertex(*geometry, 0.0f, 0.0f, 0.0f));
     EXPECT_TRUE(hasVertex(*geometry, 1.0f, 0.0f, 0.0f));
     EXPECT_TRUE(hasVertex(*geometry, 0.0f, 1.0f, 0.0f));
+}
+
+// 点击选中：视图自己带一个拾取型操纵器（`ModelPickManipulator`），导航原样转发、点击交回视图 —— 选择是**业务**
+// （住在这份视图里），框架里没有"选择"这个概念。这条钉四件事：① 装的确实是拾取型操纵器；② 点在模型上 ⇒ 命中并
+// 换上高亮材质；③ 点空白 ⇒ 取消选择、**原来那份材质原样还回去**（不是重造一份）；④ 拖拽（按下与松开不在一处）
+// 不选中 —— 没有这条松弛量，转完相机就会顺手选中一个东西。
+TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
+{
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ASSERT_TRUE(registerModelType(documents));
+    ASSERT_TRUE(registerModelOpener(documents));
+    ASSERT_TRUE(views.registerView(kModelType, vn::model_viewer::createRenderView));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+    ASSERT_NE(openModel(documents, u8"立方体", vn::model_viewer::makeBoxMesh()), nullptr);
+
+    auto* view = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());
+    ASSERT_NE(view, nullptr);
+    auto* control = view->renderControl();
+    ASSERT_NE(control, nullptr);
+    auto* scene_view = control->view();
+    ASSERT_NE(scene_view, nullptr);
+
+    // 相机与视口由用例定死：这条判的是拾取与高亮，不是"视图自己怎么对准内容"（那条归 fitToScreen）。
+    // 站位刻意留了余量：立方体是 2×2×2（半边长 1），相机拉到 z=7、fov 30 ⇒ 画面角落那条射线在 z=1 平面上
+    // 偏出 1.6 左右，**真的落空**（判"点空白"必须真的落空，否则量到的是别的东西）。
+    auto* camera = scene_view->camera();
+    ASSERT_NE(camera, nullptr);
+    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 7.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera->setProjectionMatrixAsPerspective(30.0, 0.1, 100.0);
+    camera->setAspect(1.0);
+    scene_view->onSurfaceResized(400, 400, 1.0);
+
+    // ① 视图装的操纵器是自己的拾取型（不是默认那个裸轨道操纵器）。
+    auto* manipulator = scene_view->manipulator();
+    ASSERT_NE(manipulator, nullptr);
+    EXPECT_NE(dynamic_cast<vn::model_viewer::ModelPickManipulator*>(manipulator), nullptr)
+        << "视图必须把点击交回自己（ModelPickManipulator）";
+
+    const auto scene = scene_view->scene();
+    ASSERT_NE(scene, nullptr);
+    const auto root = scene->root();
+    ASSERT_NE(root, nullptr);
+    const auto* group = dynamic_cast<const vn::graphics::Group*>(root.get());
+    ASSERT_NE(group, nullptr);
+    ASSERT_EQ(group->childrenRef().size(), 1u);
+    auto* geometry = dynamic_cast<vn::graphics::Geometry*>(group->childrenRef()[0].get());
+    ASSERT_NE(geometry, nullptr);
+    const vn::graphics::Material* const original = geometry->material();
+    ASSERT_NE(original, nullptr) << "模型几何自带那份中灰材质（见 makeGeometry()）";
+    EXPECT_EQ(view->selectedGeometry(), nullptr) << "一开始没有选中任何东西";
+
+    const auto click = [&](double x, double y) {
+        vn::window::MouseEvent press;
+        press.button  = vn::window::MouseButton::Left;
+        press.x       = x;
+        press.y       = y;
+        press.pressed = true;
+        manipulator->onMousePress(press);
+        vn::window::MouseEvent release = press;
+        release.pressed                = false;
+        manipulator->onMouseRelease(release);
+    };
+
+    // ② 点画面正中（相机就是照原点的 ⇒ 射线命中那个立方体）：选中 + 高亮材质。
+    click(200.0, 200.0);
+    EXPECT_EQ(view->selectedGeometry(), geometry) << "命中的就是场景里那件几何";
+    ASSERT_NE(geometry->material(), nullptr);
+    EXPECT_NE(geometry->material(), original) << "选中要看得见：材质换成了高亮那份";
+    const vn::graphics::Material* const highlight_material = geometry->material();
+    const vn::Colorf highlight_colour = geometry->material()->diffuse();
+    EXPECT_GT(highlight_colour.r, highlight_colour.b) << "高亮是暖色（橙），与中灰的模型分得开";
+
+    // ③ 点空白（角落）：取消选择，材质**原样**还回去。
+    // 角落必须真的落空（见上面站位的余量），否则这条量到的是"点中了别的东西"。
+    click(4.0, 4.0);
+    EXPECT_EQ(view->selectedGeometry(), nullptr) << "点空白 = 取消选择";
+    EXPECT_EQ(geometry->material(), original) << "还回去的必须是原来那一份，不是一件复制品";
+
+    // ④ 拖拽不选中，且**导航照旧**：按下与松开不在一处（超过松弛量）⇒ 不拾取；
+    //    中间那几个移动事件原样转发给内层轨道操纵器 ⇒ 相机确实动了（拾取那一半没有把导航吃掉）。
+    const vn::math::Vec3d eye_before = camera->eye();
+    {
+        vn::window::MouseEvent press;
+        press.button  = vn::window::MouseButton::Left;
+        press.x       = 200.0;
+        press.y       = 200.0;
+        press.pressed = true;
+        manipulator->onMousePress(press);
+
+        vn::window::MouseEvent move = press;
+        move.x                      = 230.0;
+        move.y                      = 240.0;
+        manipulator->onMouseMove(move);
+        move.x = 260.0;
+        move.y = 240.0;
+        manipulator->onMouseMove(move);
+
+        vn::window::MouseEvent release = move;
+        release.pressed                = false;
+        manipulator->onMouseRelease(release);
+    }
+    EXPECT_NE(camera->eye().x, eye_before.x) << "拖拽仍然是转相机（事件转发给了轨道操纵器）";
+    EXPECT_EQ(view->selectedGeometry(), nullptr) << "转相机不是选东西：拖拽结束不拾取";
+    EXPECT_EQ(geometry->material(), original);
+
+    // ⑤ 再点一次仍然选中同一件，且用的还是那份高亮材质（视图只备一份，不每次拾取再造一件）。
+    click(200.0, 200.0);
+    EXPECT_EQ(view->selectedGeometry(), geometry);
+    ASSERT_NE(geometry->material(), nullptr);
+    EXPECT_EQ(geometry->material(), highlight_material) << "高亮材质是视图自己那一份，跨次拾取复用";
+    EXPECT_EQ(geometry->material()->diffuse().r, highlight_colour.r);
 }

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -12,6 +13,7 @@
 
 #include <vine/Colorf.hpp>
 #include <vine/intrusive_ptr.hpp>
+#include <vine/math/Vector2.hpp>
 #include <vine/math/Vector3.hpp>
 
 #include <vine/appfw/Document.hpp>
@@ -19,20 +21,110 @@
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
 
+#include <vine/graphics/Camera.hpp>
+#include <vine/graphics/CameraManipulator.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/LightRig.hpp>
 #include <vine/graphics/Material.hpp>
+#include <vine/graphics/OrbitCameraManipulator.hpp>
+#include <vine/graphics/Ray.hpp>
+#include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
+#include <vine/window/InputEvent.hpp>
 
 #include "ModelDocument.hpp"
 
 namespace vn::model_viewer
 {
+
+/**
+ * @brief 这份视图的操纵器：**导航照旧，另外把"点击"交出来**。
+ *
+ * 为什么是操纵器而不是别的地方：拾取要的是"光标下的那条射线 + 谁被射中"，而**输入进到视图的唯一通道就是操纵器**
+ * （`SceneView` 把窗口事件推给它的操纵器，见 CameraManipulator 的注释）。选择是**业务**（哪一份文档选中了谁、
+ * 选中长什么样都是本插件的事），所以这里只做一件事：把每个事件原样转给内层那个轨道操纵器（导航行为一字不变），
+ * 同时在"按下与松开落在同一点附近"时把**归一化**坐标回调出去 —— 归一化是因为 `Camera::screenToWorldRay()`
+ * 收的就是 [0, 1] 的屏幕坐标，而视口尺寸只有操纵器知道（它在 `onResize` 里拿到）。
+ *
+ * 判"点击"的松弛量（`kClickSlopPixels`）是刻意的：拖拽结束也算一次松手，没有这个松弛量，转完相机就会顺手选中
+ * 一个东西 —— 那是"导航坏了"的观感，不是选择。
+ */
+class ModelPickManipulator final : public vn::graphics::CameraManipulator
+{
+  public:
+    /// @brief 点击允许的位移（设备像素）：按下与松开的距离超过它就算拖拽，不拾取。
+    static constexpr double kClickSlopPixels = 4.0;
+
+    /**
+     * @brief 造一个转发型操纵器。
+     *
+     * @param camera 这份视图的相机（内层轨道操纵器也绑它）。
+     * @param on_click 点击回调，收**归一化**屏幕坐标（[0, 1]，左上角原点）。
+     */
+    ModelPickManipulator(vn::raw_ptr<vn::graphics::Camera> camera, std::function<void(double, double)> on_click)
+      : vn::graphics::CameraManipulator(camera)
+      , on_click_(std::move(on_click))
+      , inner_(vn::make_intrusive<vn::graphics::OrbitCameraManipulator>(camera))
+    {
+    }
+
+  public:
+    void apply() override { inner_->apply(); }
+
+    bool fitToScreen() override { return inner_->fitToScreen(); }
+
+    void home() override { inner_->home(); }
+
+    void onMousePress(const vn::window::MouseEvent& event) override
+    {
+        pressed_   = true;
+        press_x_   = event.x;
+        press_y_   = event.y;
+        inner_->onMousePress(event);
+    }
+
+    void onMouseMove(const vn::window::MouseEvent& event) override { inner_->onMouseMove(event); }
+
+    void onMouseRelease(const vn::window::MouseEvent& event) override
+    {
+        inner_->onMouseRelease(event);
+        const double moved = std::abs(event.x - press_x_) + std::abs(event.y - press_y_);
+        const bool   click = pressed_ && moved <= kClickSlopPixels;
+        pressed_           = false;
+        if (click && on_click_ && viewport_w_ > 0.0 && viewport_h_ > 0.0)
+        {
+            on_click_(event.x / viewport_w_, event.y / viewport_h_);
+        }
+    }
+
+    void onScroll(const vn::window::ScrollEvent& event) override { inner_->onScroll(event); }
+
+    void onKeyDown(const vn::window::KeyEvent& event) override { inner_->onKeyDown(event); }
+
+    void onKeyUp(const vn::window::KeyEvent& event) override { inner_->onKeyUp(event); }
+
+    void onResize(const vn::window::ResizeEvent& event) override
+    {
+        // 视口尺寸是拾取那一半需要的（归一化），导航那一半自己也会从同一个事件里读。
+        viewport_w_ = event.width > 0 ? static_cast<double>(event.width) : 0.0;
+        viewport_h_ = event.height > 0 ? static_cast<double>(event.height) : 0.0;
+        inner_->onResize(event);
+    }
+
+  private:
+    std::function<void(double, double)>            on_click_;
+    vn::intrusive_ptr<vn::graphics::OrbitCameraManipulator> inner_;
+    bool                                           pressed_    = false;
+    double                                         press_x_    = 0.0;
+    double                                         press_y_    = 0.0;
+    double                                         viewport_w_ = 0.0;
+    double                                         viewport_h_ = 0.0;
+};
 
 /**
  * @brief 模型文档的视图：**真的把这份模型渲染出来**（不是显示两个数的替身）。
@@ -55,6 +147,10 @@ namespace vn::model_viewer
  *  - **发布"当前 3D 视图"**：上屏时把这块控件发布给窗口（`MainWindow::setPrimaryRenderControl()`），下屏时收回
  *    （与 `DemoView` 同一形状）—— 于是别的插件（本插件的"显示模式"命令、`test_plugin` 的实时渲染演示）不必认识
  *    任何具体视图类，就能拿到当前那块渲染面。
+ *  - **点击选中**：本视图自己带一个拾取型操纵器（`ModelPickManipulator`：导航原样转发给轨道操纵器，另外把"点击"
+ *    交回本视图），点到谁就把谁的材质换成**高亮材质**（原来那份留着，落空或换选时原样还回去）。选择是**业务**（住
+ *    在这份视图里），图形层只提供射线拾取（`Camera::screenToWorldRay` + `RayIntersection`）与材质 —— 框架里没有
+ *    "选择"这个概念，也不需要加一个。
  *
  * 几何信息（顶点数/三角形数）归 `ModelInfoPanel` 那个停靠面板，不在中央区里重复。
  *
@@ -115,6 +211,16 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
     vn::appfw::gui::RenderControl* renderControl() const { return control_; }
 
     /**
+     * @brief 当前选中的几何（点击命中的那一个），没选中时为空。
+     *
+     * 选择住在**本视图**里（一个文档一个视图，切文档切视图都各有各的选择）：框架里没有这个概念，所以这里就是
+     * 它的读法。
+     *
+     * @return 选中的几何，或 nullptr。
+     */
+    vn::raw_ptr<vn::graphics::Geometry> selectedGeometry() const { return selected_.get(); }
+
+    /**
      * @brief 右下角的帧率读数（查看器的链里的 HUD 档）。
      *
      * 读数不再由查看器自己造：查看器预设里的 `stats` 让链带上这个 HUD 档，于是**尺寸、比例、摆位、窗口缩放**
@@ -133,6 +239,21 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
   private:
     /// 造这份模型的场景（只造一次）：内容放进控件那个 view 的场景里。网格为空时不造，`activate()` 会因此什么都不呈现。
     void buildScene();
+
+    /**
+     * @brief 在一次点击处拾取并选中（见 ModelPickManipulator）。
+     *
+     * 射线用 `Camera::screenToWorldRay` 造（视图自己的相机、相机自己的画面形状），命中取最近的那一件
+     * （`RayIntersection::intersectScene`）；命中就把它的材质换成高亮材质，落空就取消选择。没有命中任何东西
+     * 也算一次合法的"点空白"。
+     *
+     * @param nx 归一化屏幕横坐标（[0, 1]，左上角原点）。
+     * @param ny 归一化屏幕纵坐标（[0, 1]，左上角原点）。
+     */
+    void selectAt(double nx, double ny);
+
+    /// 取消选择：把选中前那份材质原样还回去，并把选择清空。
+    void clearSelection();
 
     /**
      * @brief 给这份文档的场景装灯。
@@ -172,6 +293,12 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
     vn::intrusive_ptr<vn::graphics::SceneView> view_;
     /// 右下角的帧率读数由查看器预设提供（`ViewerOptions::stats`），见 `fpsOverlay()`。
     bool                                       fitted_ = false;
+    /// 当前选中的几何（空 = 没选中）。选择是本视图的（框架里没有这个概念，见类注释）。
+    vn::intrusive_ptr<vn::graphics::Geometry>  selected_;
+    /// 选中前那份材质（`makeGeometry()` 造的中灰）：取消选择时原样还回去，而不是重造一份。
+    vn::intrusive_ptr<vn::graphics::Material>  selected_material_;
+    /// 高亮材质（第一次选中时才造）：橙色、低高光，与中灰的模型放在一起一眼能认出"选中的是它"。
+    vn::intrusive_ptr<vn::graphics::Material>  highlight_;
 };
 inline std::vector<vn::math::Vec3f> ModelRenderView::smoothNormals(std::span<const vn::math::Vec3f> positions,
                                                                    std::span<const std::uint32_t>  indices)
@@ -256,6 +383,53 @@ inline vn::intrusive_ptr<vn::graphics::Geometry> ModelRenderView::makeGeometry()
     return geometry;
 }
 
+inline void ModelRenderView::clearSelection()
+{
+    if (selected_ == nullptr)
+    {
+        return;
+    }
+    // 原来那份材质**原样还回去**（而不是重造一份一样的）：材质是内容的属性，视图只是临时换了它。
+    selected_->setMaterial(std::move(selected_material_));
+    selected_material_ = nullptr;
+    selected_         = nullptr;
+}
+
+inline void ModelRenderView::selectAt(double nx, double ny)
+{
+    if (view_ == nullptr || view_->camera() == nullptr || view_->scene() == nullptr)
+    {
+        return;
+    }
+
+    const vn::graphics::Ray ray = view_->camera()->screenToWorldRay(vn::math::Vec2d(nx, ny));
+    const vn::graphics::RayIntersectionResult hit =
+        vn::graphics::RayIntersection::intersectScene(ray, view_->scene().get());
+
+    if (!hit.hit || hit.geometry == nullptr)
+    {
+        clearSelection(); // 点空白 = 取消选择（合法的选择动作，不是"什么都没发生"）
+    }
+    else if (hit.geometry.get() != selected_.get())
+    {
+        clearSelection(); // 换选：先把上一件的材质还回去
+        if (highlight_ == nullptr)
+        {
+            highlight_ = vn::make_intrusive<vn::graphics::Material>();
+            highlight_->setDiffuse(vn::Colorf(1.0f, 0.55f, 0.12f, 1.0f));
+            highlight_->setSpecular(vn::Colorf(0.10f, 0.10f, 0.10f, 1.0f));
+            highlight_->setShininess(16.0f);
+        }
+        selected_material_ = hit.geometry->material();
+        hit.geometry->setMaterial(highlight_);
+        selected_ = hit.geometry;
+    }
+
+    // 按需出帧的控件也要把这一笔画出来（连续出帧时多要一帧无害）。后端每帧都会重新读命令里的材质
+    // （见 ContentStore::updateMaterial 的"touch"），所以这里不需要任何"通知后端"的调用。
+    control_->renderFrame();
+}
+
 inline void ModelRenderView::addLighting(vn::graphics::Scene& scene)
 {
     if (scene.hasLights())
@@ -286,6 +460,11 @@ inline void ModelRenderView::buildScene()
         return;
     }
     view_ = vn::intrusive_ptr<vn::graphics::SceneView>(control_view);
+
+    // 拾取型操纵器：导航一字不改（每个事件转发给内层轨道操纵器），点击交回本视图（见 ModelPickManipulator 的注释）。
+    // 相机由 view 提供（`SceneView::camera()`），视口尺寸由 onResize 那条路进来 —— 两者都在操纵器手里。
+    view_->setManipulator(vn::make_intrusive<ModelPickManipulator>(
+        view_->camera(), [this](double nx, double ny) { selectAt(nx, ny); }));
 
     auto root = vn::make_intrusive<vn::graphics::Group>();
     root->setName(u8"model_root");

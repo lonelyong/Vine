@@ -59,6 +59,17 @@ VTK 那代的"renderer 里挂 actor、顺序由遍历决定"是它要解决的�
 - 可呈递端：`PresentTarget`（尺寸 + present，帧的契约）与 `WindowPresentTarget`（加句柄两条）分开，
   于是"离屏 / 编码 / 网络出口"都是一个只实现两条动词的对象。
 
+### 2.5 拾取是机制（已有）、选择是业务（不在框架里）
+
+`Camera::screenToWorldRay`（收归一化屏幕坐标）+ `RayIntersection::intersectScene/intersectSceneAll` 就是拾取的全部机制 ——
+"点中谁"这个问题 SDK 已经能答。**没给的是选择**：没有选中集合、没有描边/高亮 pass、没有框选、没有"渲染外框"的设备路径。
+
+行业位置与我们一致：picker / intersector 在那边同样是**库**而不是核心 —— VTK `vtkCellPicker` 用的是同一套射线数学、
+OSG 的 intersector 住在 `osgUtil`、three.js 是 `Raycaster` + 用户代码；Unity / Unreal 的 "selection outline" 也在编辑器层。
+所以"选中态 + 长什么样"归业务（第一个调用点：`model_viewer` 的点击选中 + 换高亮材质，2026-10-13 落地，
+判据见 `.ai/memory/appfw.md` 顶条）。**触发条件**（真内建时才评）：多处调用点各自重写同一套选择与高亮
+（描边 pass / 框选 / 多选），或面板/命令需要"当前选择"这个跨模块读数。
+
 ## 3. 能力缺口（都不是模型错；写清触发条件）
 
 | # | 缺口 | 行业对应 | 今天的替代 | 触发条件 |

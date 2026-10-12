@@ -68,6 +68,9 @@
 > **第 5 块面由后端拒，且答成理由（2026-10-12 已落地，见 `graphics.md` 顶条）**。
 > 原来那套"共享会话"的东西（`RenderControl::present()`、`SurfaceWindow` 的 own_view/view 二分、`SceneView::removeWindowPass()`
 > 公开、宿主的"借来的页"规则）**已删**：模型变了就不留无用 API。
+> **输入进到视图只有一条通道**（2026-10-13）：`SceneView` 把窗口事件推给它的**操纵器**（`CameraManipulator`）——
+> 宿主/插件想在画面上做交互（拾取、拖拽、框选）就是换一个操纵器，没有第二条路；**选择/高亮是业务**
+> （框架里没有选中态），参考实现与判据见本文 `2026-10-13` 那一条。
 > **视图层只在 `GuiApplication`**（视图是 `UIElement`，无头 `Application` 连控件都没有）：注册表与宿主在建主窗时建好，
 > 插件在 `load()` 里登记（拿不到 `GuiApplication` 就跳过）。三档状态：**文档**（数据/来源/脏）/ **视图**（按**实例**：相机、选择）/ **宿主·面板·ribbon**（按**事件**或按**类型**：同类型切换不重建结构）。
 > **框架不定**：区域数量、标签、单/多文档、展示形态 —— 那些归具体 app（外壳）派生；**一根硬线**：运行时只有一块渲染区
@@ -83,8 +86,9 @@
 > 几何信息归右侧停靠面板 `ModelInfoPanel`）+ 两条命令
 > （`open_test_model` / `open_mesh_file`；后者**问用户要一个网格文件**（`UserIO::getFileAsync`，GUI 可以点按钮挑）
 > 再让打开器用真加载器读回来）。
-> 钉子：`tests/test_gui/ModelViewerTest.cpp`（4 条：空状态、两个数跟着**当前**文档换、非模型文档如实说不适用、
-> 插件登记的那个视图确实被宿主放进中央区并显示这份文档的数据）；视图层本身见 `tests/test_gui/DocumentViewTest.cpp`（5 条）；
+> 钉子：`tests/test_gui/ModelViewerTest.cpp`（**9 条**，2026-10-13 计：空状态、两个数跟着**当前**文档换、非模型文档如实说不适用、
+> 宿主把登记的那个视图放进中央区并显示当前文档的数据、自带灯、自带帧率读数、显示模式命令、每个视图自带渲染面、
+> 点击选中 + 高亮）；视图层本身见 `tests/test_gui/DocumentViewTest.cpp`（5 条）；
 > 插件在真应用里加载/卸载干净（门禁 app 阶段 `Plugin 'model_viewer' loaded`，warnings=0）。
 > **它撞出的两个缺口**：①`MeshLoader::load()` 只吃 `std::filesystem::path`（没有字节/`DataStream`/`Vfs` 重载）
 > ⇒ §5 的"位置是 `Vfs + 虚拟路径`"今天**读不进模型**；②**面板注册表不存在** ⇒ 面板只能插件自己建自己挂
@@ -125,6 +129,35 @@
 > resumeOnMainThread`；实例上只剩 `deliverPostedCalls()` 这个泵——它是 EventBus 手里那个 marshaller 的用法）；
 > 实例方法 `postToMain()` 与 `Application::startupProgress()` 都删了（前者是同义词，后者与 `StartupProgress::current()` 重复）。
 > **`Application::d` 已私有**（叶子只走 `dptr()`）；`argv()` 返回 `char* const*`。
+
+## 2026-10-13 点中谁：拾取在 SDK、选择在业务（`model_viewer` 的点击选中 + 高亮）
+
+- **结论**：拾取这一半**本来就有**（`Camera::screenToWorldRay` 收 **[0, 1] 的屏幕坐标** + `RayIntersection::intersectScene`
+  取最近命中，先于本片就在 SDK 里）；缺的是"谁被选中"这条**业务**语义 ⇒ **不给框架加选择概念**（没有选中集合、
+  没有描边/高亮 pass、没有框选），参考实现落在 `src/plugins/model_viewer/src/ModelRenderView.hpp`。
+  落地的形状是：**输入进到视图的唯一通道是操纵器**（`SceneView::setManipulator`，见 `CameraManipulator` 的注释），
+  所以拾取 = 换一个操纵器：`ModelPickManipulator` 把每个事件**原样转发**给内层 `OrbitCameraManipulator`（导航一字不改），
+  只在"按下与松开的距离 ≤ 松弛量"时把那次松手当成一次**点击**回调出去（`kClickSlopPixels = 4.0` 设备像素）。
+- **四条契约**：①回调坐标是**归一化**的（视口尺寸只有操纵器在 `onResize` 里知道，而射线要的就是归一化坐标）；
+  ②命中取最近 ⇒ 命中换材质、**落空 = 取消选择**（点空白是合法动作，不是"什么都没发生"）；③取消时把选中前那份材质
+  **原样还回去**（`selected_material_` 一直留着它，不重造一份一样的 —— 用例断言的是**指针**相同）；
+  ④高亮材质视图**只备一份**（`highlight_`，跨次拾取复用）。
+- **坑**：①**换材质不需要通知后端**：后端每帧对着命令 `ContentStore::updateMaterial(command.material.get())` 逐条 touch
+  （比较出差异才重建），所以这条路不碰 revision 也不碰 memo（内容帧的 memo 每帧就丢）；该做的只有
+  `RenderControl::renderFrame()`（按需出帧的控件也要把这一笔画出来）。②**"点空白"的用例必须让那条射线真的落空**：
+  第一版把相机放在 z=3 / fov 45，立方体是 2×2×2，画面角落那条射线在 z=1 平面上只偏出 ~0.19 ⇒ 仍在盒子里 ⇒
+  那条断言量到的是"点中了别的东西"（红得莫名其妙）；站位拉到 z=7 / fov 30（角落偏出 ≈1.2）才真的落空。
+  ③**拖拽结束也算一次松手** ⇒ 没有松弛量就会"转完相机顺手选中一个"，那是导航坏了的手感，不是选择。
+- **判据（实测）**：`tests/test_gui/ModelViewerTest.cpp` 的 `AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt`
+  五条（①操纵器是拾取型 ②正中点击 ⇒ 选中 + 暖色高亮材质 ③点空白 ⇒ 取消 + 材质**原指针**还回 ④拖拽 ⇒ 不选中**且相机真的动了**
+  ⑤再点同一件 ⇒ 还是那份高亮材质）。`test_gui` **258 → 259**；全量 Release **0 error / 0 warning**；
+  `test_graphics` 372 / `test_vsg` 431（428 + 3 skip）/ `test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94 不变；
+  五个门禁 0 finding（`--strict` 仍 **13**）。**变异 5 条各自单独实测红**：松弛量 → 1e9 ⇒ 只 ④ 红；
+  `clearSelection()` 不还材质 ⇒ ③ 先红（连带 ④）；坐标原样传（不归一化）⇒ ② 红；换成裸 `OrbitCameraManipulator`
+  （不装拾取型）⇒ ① 红；`onMouseMove` 不转发 ⇒ 只有"相机真的动了"那条红。
+- **行业同源**：picker / intersector 在行业里也是**库**而不是核心（VTK `vtkCellPicker` 用的是同一套射线数学、
+  OSG 的 intersector 住 `osgUtil`、three.js 是 `Raycaster` + 用户代码）⇒ 我们的位置与他们一致，定形写进
+  `.ai/design/graphics-object-model-vs-3d-frameworks.md` §2.5；"怎么接"的用法见 `docs/guides/graphics.md` §3.16。
 
 ## 2026-10-11 多格下线：一块渲染区只画一幅画（S8 的 `Viewer` 收成"一条请求"）
 

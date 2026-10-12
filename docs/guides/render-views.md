@@ -288,3 +288,4 @@ second->view()->setScene(control->view()->scene());   // 内容可以共享：�
 | 相机 / 内容能共享吗？ | 内容（`Scene`）可以（`setScene`）；相机不共享，是每个视图自带的。 |
 | 宿主自建了主 pass，默认画面去哪了？ | 让位：`viewer->isActive() == false`，`takeArea()` 什么都不建；已经上线的要先 `viewer->release(view)` 再声明（一块区一次只画一幅画，第二条呈现会被拒并说出来）。 |
 | 怎么知道"谁在画这块窗口"？ | `surface->presentingPass()`（哪条 pass）与 `surface->presentedView()`（哪个视图，宿主自建 pass 时为 null）。 |
+| 点击选中 / 高亮怎么接？ | 输入只到**操纵器**（`SceneView::setManipulator`）：换一个操纵器，把点击变成 `Camera::screenToWorldRay` + `RayIntersection::intersectScene` 的拾取。**选中态与高亮是业务**（框架里没有这个概念），参考实现见 `model_viewer`；用法与坑见 `graphics.md` §3.16。 |

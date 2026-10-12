@@ -928,6 +928,31 @@ outline->setDrawOrder(1);   // 高 = 后画 = 压在上面（子树继承；clea
   加真设备像素用例 `SdkPixelTest.ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop`。
 
 
+### 3.16 点中谁：一条射线 + `RayIntersection`
+
+相机能把屏幕上的一个点变成世界里的**射线**（`Camera::screenToWorldRay` 收 **[0, 1] 的屏幕坐标** —— 归一化是调用方的事，
+相机读自己的画面形状），场景能回答"这条射线先撞到谁"（`RayIntersection::intersectScene` 返回最近的命中，
+`intersectSceneAll` 要全部命中、每条带 `geometry` / `distance` / `normal`）：
+
+```cpp
+const vn::graphics::Ray ray = camera->screenToWorldRay(vn::math::Vec2d(nx, ny));  // nx / ny ∈ [0, 1]
+const vn::graphics::RayIntersectionResult hit = vn::graphics::RayIntersection::intersectScene(ray, scene.get());
+if (hit.hit) { /* hit.geometry / hit.distance / hit.normal */ }
+```
+
+- **"选中"不在框架里**：没有选中集合、没有描边/高亮 pass、没有框选 —— picker / intersector 在行业里也是**库**而不是核心
+  （VTK 的 `vtkCellPicker` 用的是同一套射线数学、OSG 的 intersector 住在 `osgUtil`、three.js 是 `Raycaster` + 用户代码）。
+  "谁被选中、选中长什么样"是业务：参考实现见
+  [ModelRenderView.hpp](../../src/plugins/model_viewer/src/ModelRenderView.hpp)（点击选中 + 换高亮材质）。
+- **落空是一个合法答案**：点空白 = 取消选择。用例若要量"点的是空白"，得先确认那条射线**真的落空**（相机站位留够余量），
+  否则量到的是"点中了别的东西"。
+- **换材质不用通知谁**：后端每帧逐条命令重新读材质（比较出差异才重建那份状态），运行期换一次材质不需要 bump revision、
+  也不需要额外的"通知渲染器"调用；要让这一笔上屏仍然得走帧驱动（按需出帧的控件是 `RenderControl::renderFrame()`）。
+- **想让它压住共面的内容**：给高亮那件 `Node::setDrawOrder` 一个更高的档，或给那条 pass `DepthMode::Disabled`（见 §3.15）。
+- **输入进到视图只有一条通道：操纵器**（`SceneView::setManipulator`）。想在画面上做交互就换一个操纵器，把点击变成上面的射线
+  与拾取：`model_viewer` 的 `ModelPickManipulator` 就是"导航原样转发给轨道操纵器 + 按下与松开落在同一点附近才算点击"。
+
+
 ## 4. 现成例子：怎么构建、怎么跑
 
 ### 4.1 构建
