@@ -916,6 +916,12 @@
   `FrameToken` / `TargetShape` / 计划数据（与 S3/S4/S5 一起）。**B/C 段（Keys/设备/存储）不可提级**——
   它们是家族形状与设备机制，见 `.ai/design/graphics-layering.md` §4。
 
+  > 对账注（2026-10-13）：上面"A 段未做"这几项**已被后续片用别的路走完，别再按当时的形状理解**：`ReportOnce`
+  > 现在就是各站的 episode 工具（后端 `ContentPass`/`HostTargets`/`VsgBackend`/`VsgExecutor` 各持一枚，引擎侧
+  > 由"计划问题按句子比较 episode"承担 —— 见 `.ai/design/graphics-api-review-2026-10-12.md` 与顶条）；
+  > `FrameToken` 已存在（`backend/FrameTimeline.hpp`）；"计划数据"就是 S3/S5 之后的
+  > `FrameDescription` / `FramePlan`。**B/C 段那条约束仍然成立**，那一半不用再对账。
+
 #### 同日：`frame/` 最终形态 = **扁平一个目录**（判据记在 layering §1.5）
 
 - 结论：**25 个单元平铺在 `frame/` 下**，不分组、也不提为 `frame/` 的同级。四条判据逐条否决拆分：
@@ -1104,6 +1110,9 @@
 > · 门禁两棵树 `cases=436 failed=0 vuid=0 hazard=0 skipped=0`、应用 `vuid=0 warnings=0`。
 > · 未做（登记）：`lights_dropped_episode` / `empty_rectangle_episode` 的管线只有代码审查，没有自己的
 >   用例（触发要真设备 + 一次"灯装不下"/"矩形为空"的计划）。
+>
+>   对账注（2026-10-13）：**这条已过期** —— `ContentPassTest.cpp` 里 `recordOneFrame(frame, empty_rectangle,
+>   too_many_lights)` 那一条就是它（真设备、按相位驱动、"第二帧静默 / 重臂后再报"都断言了）。
 
 > 2026-09-25 **M11l：门禁的应用阶段有了第三条画面判据——"整片背景灰"（设计 §11.16ch）**
 > · 起因 = M11k 里那条 M3 登记：D4 契约的另一半（G-buffer 写 `w = 1`）没有用例看着 —— 把 `w` 改成 0，
@@ -1161,6 +1170,10 @@
 >   重跑 12 次不红——那时服务端已不迟到）⇒ 速率对比是**跨时段**量的，机制由探针直接测到。
 > · 未做（登记）：产品侧"画面已落地"的事实（会话 presented/displayed 计数或 present 完成事件）；构造的等待只
 >   保证"呈递发生在窗口可用之后"，不保证"读的时候画面已落地"。
+>
+>   核对（2026-10-13）：**仍然成立，且这次核过前提** —— 本仓的 `framesPresented()` 是"我们调了几次 present"的计数
+>   （`VsgBackend` → `Session`），而 pinned 的 vsg 1.1.16 不暴露"真的上屏了"的计数/完成事件（`Window.h` 里没有），
+>   所以这个事实今天仍无处可取，等它真需要时再选"我们自己数 `present` 完成"还是"上游暴露"。
 
 > 2026-09-24 **M11h：空绘制调用不是绘制调用 —— 应用日志最后一条 warning 消失（设计 §11.16cd）**
 > · 定位手法：在 `ContentAssembly::record` / `ContentHalves::halvesFor` / `ContentPass::record` 的拒绝点插 `[probe]`，

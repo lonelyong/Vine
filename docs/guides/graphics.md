@@ -679,6 +679,11 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 宿主**建**它、**采纳**它（`SceneView::setPipeline`），视图从此画的就是它 —— 视图自己不记配方，也没有"默认管线"
 这回事（不采纳就不画）。
 
+> **名字的坑**：这个 `Pipeline` **不是**图形 API 的 pipeline state（Vulkan 的 `VkPipeline`，通常叫 PSO）——它是**一条
+> pass 链条的编译产物**（帧图编译的结果：谁画、按什么顺序、读谁写谁），一个视图/一块区一份。后端那种"管线状态"在本仓另
+> 有一套：`core::VariantPool` 按 `core::PipelineKey`（程序与其 revision、拓扑、采样颜色/深度数…，键里还带
+> `ProgramVariant` 着色器变体）缓存 `VkPipeline`。两个名字像，层次完全不同。
+
 > 这一层往上的一整套（`Viewer` 管什么、一个视图的 surface 是谁、多窗口怎么办、基数关系）见
 > [`render-views.md`](render-views.md) —— 那份是**模块说明**（架构图 / 类关系图 / 简单 demo），本文是逐个入口的参考。
 
