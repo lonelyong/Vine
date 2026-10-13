@@ -12,30 +12,29 @@
  * @brief What has to happen to a render target this frame, as a pure function of what it is and what
  * the frame wants - and the depth plan that goes with it.
  *
- * WHY A FUNCTION AND NOT A CODE PATH. "The target changed" hides three different events whose costs
- * differ by two orders of magnitude, and only one of them may lose anything:
- *
- *   * the SHAPE changed (attachment count / colour formats / depth format / samples / subpass): render
+ * @details
+ * - WHY A FUNCTION AND NOT A CODE PATH. "The target changed" hides three different events whose costs
+ *   differ by two orders of magnitude, and only one of them may lose anything:
+ *   - the SHAPE changed (attachment count / colour formats / depth format / samples / subpass): render
  *     pass compatibility really changed, so the pass graph, the framebuffer and the pipelines that
  *     were compiled against it must be rebuilt;
- *   * the EXTENT changed: the only thing that actually has to be replaced is the images and the views,
+ *   - the EXTENT changed: the only thing that actually has to be replaced is the images and the views,
  *     plus whatever names those views (framebuffers, descriptor sets) - the render pass, the pass
  *     graph, the content slots and the full-screen program slots must NOT be rebuilt, because a
  *     viewport is dynamic state and every full-screen fragment stage samples by uv. Rebuilding them is
  *     what a resize used to cost (measured: ~26 ms per program slot, ~133 ms for a maximize);
- *   * nothing usable arrived yet (a target laid out at 0x0, or a target whose attachments were
+ *   - nothing usable arrived yet (a target laid out at 0x0, or a target whose attachments were
  *     invalidated): it must not be drawn into, and the condition must be distinguishable from "the
  *     target is gone".
- *
- * Written as a decision function, the caller cannot accidentally take the expensive path (the value
- * has to say Rebuild), the "resize must not recompile" requirement becomes observable - a resize phase
- * asserts the rebuild counters do not move - and the whole table is testable without a device.
- *
- * DEPTH IS THE OTHER HALF, and it is derived rather than stored because three facts interact:
- * promotion (the depth may be sampled), borrowing (another target's depth image is used as this one's
- * attachment) and preservation (a pass LOADs the depth an earlier pass wrote). All three change the
- * attachment's initial layout, and a target whose promotion was revoked by any depth-preserving pass
- * must stop being bindable as a texture. One function decides all three, so the three cannot disagree.
+ * - Written as a decision function, the caller cannot accidentally take the expensive path (the value
+ *   has to say Rebuild), the "resize must not recompile" requirement becomes observable - a resize
+ *   phase asserts the rebuild counters do not move - and the whole table is testable without a device.
+ * - DEPTH IS THE OTHER HALF, and it is derived rather than stored because three facts interact:
+ *   promotion (the depth may be sampled), borrowing (another target's depth image is used as this
+ *   one's attachment) and preservation (a pass LOADs the depth an earlier pass wrote). All three change
+ *   the attachment's initial layout, and a target whose promotion was revoked by any depth-preserving
+ *   pass must stop being bindable as a texture. One function decides all three, so the three cannot
+ *   disagree.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -53,20 +52,22 @@ enum class RepairReason : std::uint8_t
 {
     None,          ///< Not a repair.
     SizeUnknown,   ///< The extent is not usable (0 in either dimension), so nothing can be built.
-    Bootstrap,     ///< Freshly built or invalidated: the first pass in must clear (an UNDEFINED image cannot be loaded).
+    Bootstrap,     ///< Freshly built or invalidated: the first pass in must clear (an UNDEFINED image cannot be
+                   ///< loaded).
 };
 
 /**
  * @brief The target properties that are part of render-pass COMPATIBILITY, and therefore of a pipeline's key.
  *
- * What a resize may NOT be allowed to hide here is an extent: pixel size is a runtime resource, not an
- * identity. What it MUST contain is everything a rebuild really depends on: attachment formats, the
- * depth format (or its absence), the sample count and the subpass structure.
- *
- * The device formats are carried next to the engine's spelling because only the device layer can fill them
- * and only they can tell two render passes apart that the engine's vocabulary calls the same thing (an sRGB
- * surface and a linear RGBA8 image are both "RGBA8"; see RenderPassCompatibility). 0, the device's
- * UNDEFINED, means "no such attachment" - and, for a shape that never learned them, "not known".
+ * @details
+ * - What a resize may NOT be allowed to hide here is an extent: pixel size is a runtime resource, not
+ *   an identity. What it MUST contain is everything a rebuild really depends on: attachment formats,
+ *   the depth format (or its absence), the sample count and the subpass structure.
+ * - The device formats are carried next to the engine's spelling because only the device layer can
+ *   fill them and only they can tell two render passes apart that the engine's vocabulary calls the
+ *   same thing (an sRGB surface and a linear RGBA8 image are both "RGBA8"; see
+ *   RenderPassCompatibility). 0, the device's UNDEFINED, means "no such attachment" - and, for a shape
+ *   that never learned them, "not known".
  */
 struct VN_GRAPHICS_API TargetShape
 {
@@ -82,10 +83,12 @@ struct VN_GRAPHICS_API TargetShape
 
     /** @brief Gets the compatibility half of a pipeline key for a target that has this shape.
      *
-     * One spelling for one fact: a pipeline is compiled against exactly the render pass its target owns, so
-     * the key's compatibility half IS this shape's compatibility-relevant half - built here rather than by
-     * every caller, because a caller that built it by hand could drop the device formats and silently hand
-     * one compiled pipeline to two render passes that are not compatible (see RenderPassCompatibility).
+     * @details
+     * - One spelling for one fact: a pipeline is compiled against exactly the render pass its target
+     *   owns, so the key's compatibility half IS this shape's compatibility-relevant half - built here
+     *   rather than by every caller, because a caller that built it by hand could drop the device
+     *   formats and silently hand one compiled pipeline to two render passes that are not compatible
+     *   (see RenderPassCompatibility).
      *
      * @return The shape's compatibility, device formats included.
      */
@@ -121,11 +124,12 @@ struct TargetDecision
 
 /** @brief Decides what has to happen to @p current so it can serve @p wanted.
  *
- * Precedence is deliberate: an unusable extent decides before a shape change (there is nothing to
- * rebuild for a 0x0 target), a shape change decides before a resize (compatibility wins over
- * extent), and a shape change also decides before the load-op repairs - "the first pass in clears"
- * is an instruction about attachments, and a rebuild replaces the pass those attachments belong
- * to (its fresh attachments answer Bootstrap on the next plan).
+ * @details
+ * - Precedence is deliberate: an unusable extent decides before a shape change (there is nothing to
+ *   rebuild for a 0x0 target), a shape change decides before a resize (compatibility wins over extent),
+ *   and a shape change also decides before the load-op repairs - "the first pass in clears" is an
+ *   instruction about attachments, and a rebuild replaces the pass those attachments belong to (its
+ *   fresh attachments answer Bootstrap on the next plan).
  *
  * @param current What the backend has now.
  * @param wanted What this frame wants.
@@ -140,7 +144,8 @@ struct DepthFacts
     bool        promotion{false};                 ///< The host asked for a sampleable depth.
     bool        borrowed{false};                  ///< The depth attachment is another target's image.
     const void* source{nullptr};                  ///< The lender, when borrowed.
-    bool        any_pass_preserves_depth{false};  ///< Some pass of this target depth-LOADs what an earlier pass wrote.
+    bool        any_pass_preserves_depth{false};  ///< Some pass of this target depth-LOADs what an earlier pass
+                                                  ///< wrote.
 };
 
 /** @brief The depth plan for one target. */

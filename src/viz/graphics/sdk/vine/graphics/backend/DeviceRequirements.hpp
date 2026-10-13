@@ -8,28 +8,26 @@
 /**
  * @brief The device a session may run on: the policy, checkable without a graphics API.
  *
- * WHY THE POLICY IS SEPARATE FROM THE PROBE. "Which device will we run on" has two halves with very
- * different testability: what the backend REQUIRES (a version floor and a handful of features, all of
- * them decisions this backend made) and what a machine OFFERS (a driver's answer, only obtainable on a
- * machine with a loader). Mixed together, the requirements can only be exercised on a machine that has
- * the device - which is exactly the machine where a mistake in them does not show up. Split, the
- * requirements are a table a device-free test pins (a device at 1.3 is refused, 1.4 is accepted, a
- * missing blend feature is named), and the probe is a thin adapter whose only job is to fill the facts
- * in.
- *
- * THE FLOOR IS A POLICY, NOT A HABIT. This backend delivers most of its pipeline state dynamically and
- * relies on core dynamic-state entry points; the floor is set at 1.4 so that anything below it can be
- * refused with a reason instead of being served on the subset of the contract that happens to work.
- * A refused device is reported, never quietly attempted.
- *
- * PATCH VERSIONS ARE IGNORED, and that is deliberate: drivers report their patch freely (and some
- * report nonsense), while the policy is about major/minor capability. Comparing the packed integer
- * would make a 1.4.0 device fail a 1.4.3 floor over a number nobody promised anything about.
- *
- * NO API HEADERS HERE, on purpose: the version is packed the way the API's own headers pack it (so the
- * values are comparable with what a driver reports) but the arithmetic is spelled out, and the feature
- * set is an enum of this layer's own. That is what keeps the whole file testable on a machine with no
- * Vulkan loader at all.
+ * @details
+ * - WHY THE POLICY IS SEPARATE FROM THE PROBE. "Which device will we run on" has two halves with very
+ *   different testability: what the backend REQUIRES (a version floor and a handful of features, all of
+ *   them decisions this backend made) and what a machine OFFERS (a driver's answer, only obtainable on a
+ *   machine with a loader). Mixed together, the requirements can only be exercised on a machine that has
+ *   the device - which is exactly the machine where a mistake in them does not show up. Split, the
+ *   requirements are a table a device-free test pins (a device at 1.3 is refused, 1.4 is accepted, a
+ *   missing blend feature is named), and the probe is a thin adapter whose only job is to fill the facts
+ *   in.
+ * - THE FLOOR IS A POLICY, NOT A HABIT. This backend delivers most of its pipeline state dynamically and
+ *   relies on core dynamic-state entry points; the floor is set at 1.4 so that anything below it can be
+ *   refused with a reason instead of being served on the subset of the contract that happens to work.
+ *   A refused device is reported, never quietly attempted.
+ * - PATCH VERSIONS ARE IGNORED, and that is deliberate: drivers report their patch freely (and some
+ *   report nonsense), while the policy is about major/minor capability. Comparing the packed integer
+ *   would make a 1.4.0 device fail a 1.4.3 floor over a number nobody promised anything about.
+ * - NO API HEADERS HERE, on purpose: the version is packed the way the API's own headers pack it (so the
+ *   values are comparable with what a driver reports) but the arithmetic is spelled out, and the feature
+ *   set is an enum of this layer's own. That is what keeps the whole file testable on a machine with no
+ *   Vulkan loader at all.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -51,7 +49,8 @@ inline constexpr std::uint32_t kRequiredApiVersion = makeApiVersion(1, 4);
 
 /** @brief The device features a session requires (all of them, or the device is refused).
  *
- * What each one buys, so a reader can tell a real requirement from a preference:
+ * @details
+ * - What each one buys, so a reader can tell a real requirement from a preference:
  *   * FillModeNonSolid - wireframe rendering (a polygon mode of Line);
  *   * IndependentBlend - MRT pipelines whose attachments blend differently (a G-buffer);
  *   * SamplerAnisotropy - the samplers ask for it, so not requesting the feature is a validation error,
@@ -77,12 +76,13 @@ inline constexpr std::size_t kDeviceFeatureCount = static_cast<std::size_t>(Devi
 
 /** @brief The device EXTENSIONS a session requires (all of them, or the device is refused).
  *
- * An extension is a requirement of its own, separate from the features it carries, because the two fail
- * differently: a feature bit that is off means "this state cannot be delivered", while an extension that was
- * never ENABLED means the create-info was invalid and the calls expected through it have no defined effect at
- * all - a pipeline that declares a dynamic state nobody may set. Keeping the names in the policy (and not only
- * at the creation site) is what lets the probe refuse a device that cannot deliver them and a device-free test
- * pin the list.
+ * @details
+ * - An extension is a requirement of its own, separate from the features it carries, because the two
+ *   fail differently: a feature bit that is off means "this state cannot be delivered", while an
+ *   extension that was never ENABLED means the create-info was invalid and the calls expected through
+ *   it have no defined effect at all - a pipeline that declares a dynamic state nobody may set.
+ * - Keeping the names in the policy (and not only at the creation site) is what lets the probe refuse a
+ *   device that cannot deliver them and a device-free test pin the list.
  */
 enum class DeviceExtension : std::uint8_t
 {
