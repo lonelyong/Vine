@@ -564,7 +564,6 @@ src/fw/appfw/sdk/vine/appfw/ServiceManager.hpp	param|ServiceManager::service/1
 src/fw/appfw/sdk/vine/appfw/ServiceManager.hpp	return|ServiceManager::registerService
 src/fw/appfw/sdk/vine/appfw/ServiceManager.hpp	return|ServiceManager::service
 src/fw/appfw/sdk/vine/appfw/StartupProgress.hpp	brief|StartupProgress::StartupProgress
-src/fw/appfw/sdk/vine/appfw/UserIO.hpp	brief|UserIO::UserIO
 src/fw/appfw/sdk/vine/appfw/gui/AboutDialog.hpp	brief|AboutDialog::AboutDialog
 src/fw/appfw/sdk/vine/appfw/gui/AboutDialog.hpp	brief|AboutDialog::appName
 src/fw/appfw/sdk/vine/appfw/gui/AboutDialog.hpp	brief|AboutDialog::copyright

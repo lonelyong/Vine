@@ -76,13 +76,15 @@ function(vn_find_qt_offscreen_plugin_dir out_dir)
     set(${out_dir} "${_plugin_dir}" PARENT_SCOPE)
 endfunction()
 
-# The file name to copy, Debug Qt kits being 'd'-suffixed (qoffscreend.dll).
+# The file name to copy. The 'd' infix is the MSVC debug convention on Windows (qoffscreend.dll);
+# Qt's Linux and macOS packages ship ONE library per configuration, so the plain name is the one
+# that exists there - a Debug build of the tree still presents through the release-named plugin.
 if (WIN32)
     set(VN_QT_OFFSCREEN_PLUGIN_NAME "qoffscreen$<$<CONFIG:Debug>:d>.dll")
 elseif (APPLE)
-    set(VN_QT_OFFSCREEN_PLUGIN_NAME "libqoffscreen$<$<CONFIG:Debug>:d>.dylib")
+    set(VN_QT_OFFSCREEN_PLUGIN_NAME "libqoffscreen.dylib")
 else ()
-    set(VN_QT_OFFSCREEN_PLUGIN_NAME "libqoffscreen$<$<CONFIG:Debug>:d>.so")
+    set(VN_QT_OFFSCREEN_PLUGIN_NAME "libqoffscreen.so")
 endif()
 
 vn_find_qt_offscreen_plugin_dir(VN_QT_PLATFORM_PLUGIN_DIR)

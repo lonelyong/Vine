@@ -200,9 +200,10 @@ TEST_F(VsgBackendPluginTest, CreateBackendByName)
  * @brief The backend the plugin REGISTERS comes up on the host's surface and draws through the SDK.
  *
  * `CreateBackendByName` proves the name resolves; this case proves the object it resolves to is a working
- * backend when driven the way the engine drives it: an announced host surface, a session, a pass with one
- * draw, the present - and the picture read back out of the HOST'S OWN window. That is the production path
- * (plugin load -> registry -> create) end to end, and the switch of the name is only proven by its end.
+ * backend when driven the way the engine drives it: the target the device hands out for the host's window, a
+ * session, a pass with one draw, the present through that target - and the picture read back out of the
+ * HOST'S OWN window. That is the production path (plugin load -> registry -> create) end to end, and the
+ * switch of the name is only proven by its end.
  */
 TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraws)
 {
@@ -278,25 +279,32 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
     const vn::graphics::ClearPolicy      clear{ vn::Color(0, 64, 0, 255), true };
 
-    backend->setWindowHandle(host.handle());
-    ASSERT_TRUE(backend->initialize());
-    EXPECT_EQ(backend->nativeHandle(), host.handle()) << "the session adopted the host's window";
+    // The window half is the DEVICE's to hand out (RenderDevice::createSurfaceTarget): the host's handle is the creation
+    // input, and the target that comes back is what the frames below resolve to and present through.
+    vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::NoPresentation;
+    auto target = backend->createSurfaceTarget(host.handle(), &why);
+    ASSERT_NE(target, nullptr) << "the registered device has a window half: it must hand a target out";
+    EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
 
-    backend->executeFrame(TestFrame()
-                              .pass(pass.get())
-                              .target(nullptr)
-                              .clear(clear)
-                              .depth(vn::graphics::DepthMode::TestAndWrite)
-                              .content(commands, camera.get())
-                              .value());
-    backend->present();
+    ASSERT_TRUE(backend->initialize());
+    EXPECT_EQ(target->nativeHandle(), host.handle()) << "the session adopted the host's window";
+
+    backend->executor().executeFrame(TestFrame()
+                                         .pass(pass.get())
+                                         .target(nullptr)
+                                         .clear(clear)
+                                         .depth(vn::graphics::DepthMode::TestAndWrite)
+                                         .content(commands, camera.get())
+                                         .value(),
+                                     target);
+    target->present();
 
     // A presentation reaches the display server asynchronously: two plan-free frames re-present the picture
     // before it is read (the settle the rewrite's own device cases use).
     for (int index = 0; index < 2; ++index)
     {
-        backend->executeFrame(vn::graphics::FrameDescription{});
-        backend->present();
+        backend->executor().executeFrame(vn::graphics::FrameDescription{}, target);
+        target->present();
     }
 
     const auto left  = host.pixel(kWidth / 4, kHeight / 2);

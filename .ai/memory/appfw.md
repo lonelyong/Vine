@@ -289,7 +289,9 @@
   **失败时不写 `value`**（重提示要保留用户已输入的值）。
 - **路径读（2026-10-10）**：`UserIO` 多了四个读 —— `getFileAsync`/`getFilesAsync`/`getDirAsync`/`getDirsAsync`
   （文件与文件夹分开，单个与多个分开；选项是 `UserIO::FileReadOptions`（后缀表 / `require_existing` / `suggested_path`）
-  与 `UserIO::DirReadOptions`，三个类型都嵌在 `UserIO` 里 —— 它们只服务这个类的四个读）。
+  与 `UserIO::DirReadOptions`）。**这两个类型定义在 `vn::appfw::detail`，`UserIO` 里只是同名别名**（不是词法嵌套）：
+  四个读的 `options = {}` 默认参数不得使用"同类的嵌套类"的默认成员初始化器，clang/gcc 都拒绝（只有 MSVC 接受），
+  别名保住了 `UserIO::FileReadOptions` 的对外写法 —— 它们只服务这个类的四个读）。
   **字段为什么是这几个**：`extensions` 是**规则**（无头侧没有选择器也照样拒错后缀），标题不属于调用方（框架定，
   所以没有 filter/label 字段）；`require_existing = false` 读的是"另存为"，比 `must_exist = false` 少一层
   "必须不存在"的误读；建议值给的是**路径**而不是文本。不做"只留一个 filter 字段自动解析"：那要 Qt-free 的基类

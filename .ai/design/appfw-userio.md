@@ -214,16 +214,14 @@
 
 **对外是四个分开的名字**：文件与文件夹各一个单个、一个多个，调用方谁也不传 "kind"（用户要求）。
 选项也**分成两个结构**，因为字段集合本来就不一样：目录读没有"后缀"这一项，
-所以那个组合在类型上就不存在。三个类型都**嵌在 `UserIO` 里**（`UserIO::FileReadOptions` 等）：
-它们是这个类四个读的形参类型、别处不用，而"类自己的选项"在本仓就是这么放的（`MeshLoader::Options`、`InputBox::Field`），
-顺带把 `extensions` 这种通用名字关在类里，不占用 `vn::appfw`。
+所以那个组合在类型上就不存在。两个选项类型对外的名字都在 `UserIO` 里（`UserIO::FileReadOptions`、`UserIO::DirReadOptions`），
+定义则放在 `vn::appfw::detail`、类里是同名别名：四个读的 `options = {}` 默认参数在类作用域就要用到这个类型的
+默认成员初始化器，而 clang/gcc 都拒绝“使用词法嵌套在同一个类里的类的默认成员初始化器”（只有 MSVC 接受），
+别名是保住 `UserIO::FileReadOptions` 写法与聚合布局的代价最小形式（嵌套形式已在 clang/gcc 上编译失败过一次）。
+名字仍然只服务这个类的四个读，不占用 `vn::appfw`。
 
 ```cpp
-class UserIO : public Object {
-  public:
-    /// 一次回答里交过来的路径表（';' 切分后的结果）。
-    using PathList = std::vector<std::filesystem::path>;
-
+namespace detail {
     /// 文件读取的要求：实现按它校验，GUI 的浏览对话框按它设过滤器。
     struct FileReadOptions {
         /// 允许的后缀：**规则**，不是标题 —— 每个实现都拿它校验（无头侧根本没有选择器，照样拒错后缀），
@@ -244,6 +242,16 @@ class UserIO : public Object {
         /// 建议路径，语义同 FileReadOptions::suggested_path。
         std::filesystem::path suggested_path;
     };
+} // namespace detail
+
+class UserIO : public Object {
+  public:
+    /// 一次回答里交过来的路径表（';' 切分后的结果）。
+    using PathList = std::vector<std::filesystem::path>;
+
+    /// 对外的名字（定义在 detail，原因见正文）。
+    using FileReadOptions = detail::FileReadOptions;
+    using DirReadOptions  = detail::DirReadOptions;
 ```
 
 ```cpp

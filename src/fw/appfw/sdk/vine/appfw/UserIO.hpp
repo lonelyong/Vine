@@ -15,6 +15,46 @@ VN_APPFW_NS_BEGIN
 
 class CommandManager;
 
+namespace detail {
+
+/**
+ * @brief What a file read accepts.
+ *
+ * The options are a requirement, not advice a caller applies afterwards: an implementation checks them itself, because
+ * only it knows how to ask again - a console repeats the prompt, a headless run reports the reason and gives up.
+ */
+struct VN_APPFW_API FileReadOptions {
+    /// Accepted extensions, compared case-insensitively against the end of the file name: "stl", ".stl" and "*.stl"
+    /// all mean the same thing, and a multi-part one ("tar.gz") works too. Empty = no restriction.
+    ///
+    /// This is the RULE, not a caption: every implementation enforces it (a headless run has no picker at all and
+    /// still refuses a wrong suffix), so it stays a structured list instead of a display string. A visual picker
+    /// builds its Qt filter from it and captions the group itself.
+    std::vector<String> extensions;
+    /// Whether the path has to be there already. The negation is the "save as" case - `require_existing = false`
+    /// reads as "an existing file is not required", where a name like `must_exist = false` could be misread as "the
+    /// path must NOT exist".
+    bool require_existing{ true };
+    /// Path to start from: a visual implementation pre-fills its input line with it, a headless one only mentions it.
+    /// A path (like what these reads return), not pre-formatted text - it is shown, not parsed.
+    std::filesystem::path suggested_path;
+};
+
+/**
+ * @brief What a directory read accepts.
+ *
+ * A directory has no extension, so the extension list has no counterpart here - which is why this is a type of its own
+ * instead of a kind flag on FileReadOptions.
+ */
+struct VN_APPFW_API DirReadOptions {
+    /// Whether the directory has to be there already; false is the "create it there" case.
+    bool require_existing{ true };
+    /// Path to start from, with the same meaning as FileReadOptions::suggested_path.
+    std::filesystem::path suggested_path;
+};
+
+} // namespace detail
+
 class VN_APPFW_API UserIO : public Object {
     VN_OBJECT_META_DECL;
 
@@ -28,46 +68,32 @@ class VN_APPFW_API UserIO : public Object {
     using PathList = std::vector<std::filesystem::path>;
 
     /**
-     * @brief What a file read accepts.
+     * @brief What a file read accepts; the type of the `options` parameter of the file reads below.
      *
-     * The options are a requirement, not advice a caller applies afterwards: an implementation checks them itself, because
-     * only it knows how to ask again - a console repeats the prompt, a headless run reports the reason and gives up.
+     * Named here rather than free in the namespace: these are the parameter types of this class' reads and of nothing
+     * else, which is how the rest of this framework spells a class' own options (MeshLoader::Options, InputBox::Field),
+     * and it keeps a name as generic as "extensions" out of `vn::appfw`.
      *
-     * Nested rather than free in the namespace: these are the parameter types of this class' reads and of nothing else,
-     * which is how the rest of this framework spells a class' own options (MeshLoader::Options, InputBox::Field), and it
-     * keeps a name as generic as "extensions" out of `vn::appfw`.
+     * Defined in the detail namespace instead of lexically nested, because the `options = {}` defaults below need the
+     * type's default member initializers at class scope, and Clang and GCC both refuse to use those of a class nested
+     * in the class that declares the default argument (only MSVC accepts the nested form). The alias keeps the
+     * `UserIO::FileReadOptions` spelling and the aggregate layout; see detail::FileReadOptions for the fields.
      */
-    struct VN_APPFW_API FileReadOptions {
-        /// Accepted extensions, compared case-insensitively against the end of the file name: "stl", ".stl" and "*.stl"
-        /// all mean the same thing, and a multi-part one ("tar.gz") works too. Empty = no restriction.
-        ///
-        /// This is the RULE, not a caption: every implementation enforces it (a headless run has no picker at all and
-        /// still refuses a wrong suffix), so it stays a structured list instead of a display string. A visual picker
-        /// builds its Qt filter from it and captions the group itself.
-        std::vector<String> extensions;
-        /// Whether the path has to be there already. The negation is the "save as" case - `require_existing = false`
-        /// reads as "an existing file is not required", where a name like `must_exist = false` could be misread as "the
-        /// path must NOT exist".
-        bool require_existing{ true };
-        /// Path to start from: a visual implementation pre-fills its input line with it, a headless one only mentions it.
-        /// A path (like what these reads return), not pre-formatted text - it is shown, not parsed.
-        std::filesystem::path suggested_path;
-    };
+    using FileReadOptions = detail::FileReadOptions;
 
     /**
-     * @brief What a directory read accepts.
+     * @brief What a directory read accepts; the type of the `options` parameter of the directory reads below.
      *
-     * A directory has no extension, so the extension list has no counterpart here - which is why this is a type of its own
-     * instead of a kind flag on FileReadOptions.
+     * A sibling of FileReadOptions, defined in detail for the same reason; see detail::DirReadOptions for the fields.
      */
-    struct VN_APPFW_API DirReadOptions {
-        /// Whether the directory has to be there already; false is the "create it there" case.
-        bool require_existing{ true };
-        /// Path to start from, with the same meaning as FileReadOptions::suggested_path.
-        std::filesystem::path suggested_path;
-    };
+    using DirReadOptions = detail::DirReadOptions;
 
   public:
+    /**
+     * @brief Constructs the base; an implementation adds the interaction state it needs.
+     *
+     * The base itself holds only the command-manager binding, which starts empty (see setCommandManager).
+     */
     UserIO();
 
   public:
