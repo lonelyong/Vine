@@ -24,55 +24,54 @@
  * @brief The frame's COLLECTION stage: every API call is turned into a self-contained record here, and
  * nothing else happens.
  *
- * WHY A STAGE AND NOT STRAIGHT TO THE GPU. Two facts about the contract make "record as you are called"
- * impossible, and both are properties of the host, not choices of this backend:
- *
- *   * EVERY ARGUMENT IS BORROWED. The camera, the command list, the lights, the target and the program
- *     are valid for the duration of the call; the engine's resolved-input vector is a REUSED MEMBER that
- *     the next pass clears and refills, so a plan holding a span into it would be reading the following
- *     pass' data by the time it is recorded (see FrameArena's note). The record therefore copies what it
- *     needs, at the moment it is called, into the frame's arena - and a test drives the engine's exact
- *     reuse pattern to prove it.
- *   * THE DRAW ORDER IS NOT THE CALL ORDER. Which pass runs first is decided by the dependency graph, not
- *     by who called whom (see FrameCompiler), so what arrives has to survive until the end of the frame
- *     even though the host's containers do not.
- *
- * WHAT THIS TYPE DECIDES: what the call means as data, and whether there is a place for it (a frame to belong
- * to, a scope to fill). WHAT IT NEVER DECIDES: rebuilds, resizes, borrowing, scheduling, caching, or what any of
- * it costs - those are the compiler's and the resource manager's answers, and a recorder that started giving them
- * would be the second backend.
- *
- * WHAT IT NO LONGER JUDGES. A frame is a VALUE now (FrameDescription), so the sequence this type is driven with
- * cannot be wrong: the layer that drives it - the plugin's own walk over the value - states each pass once, in run
- * order, which is exactly the shape of the entries below. There is therefore no state machine here and no
- * reporting: a call that has no frame or no scope to belong to takes NO EFFECT (and answers false, so a caller
- * that cares can see it), and nothing about it is a mistake to report - the call is either the value's own shape
- * or a bug in its driver, and the driver's tests are where that is caught. The one rule kept is the contract's
- * about a RELEASED TARGET: a scope whose announced target was released no longer has a picture to record, so its
- * remaining effects are dropped and its draws are skipped rather than redirected to the default framebuffer.
- *
- * THE CONSUMPTION RULES (from the contract, and the reason the pictures come out right):
- *   * SCOPE ATTRIBUTES belong to the pass and are dropped at endPass(): the render target, the stacking
- *     order, the clear policy and the depth mode. A pass that announced them and drew nothing leaves no
- *     trace, so they cannot leak into the next pass.
- *   * ONE ANNOUNCEMENT SERVES ONE DRAWING CALL for the viewport and the lights: a pass that draws twice
- *     in one scope announces again before the second draw, and a draw with no fresh announcement gets the
- *     whole target (viewport) or the backend default (lights). Consuming them here is what makes that
- *     rule mechanical instead of remembered - and the consumed values are recorded ON the drawing call, so
- *     a compiled draw never has to look back at a scope to find them. A CALL WITH NOTHING TO DRAW IS STILL
- *     A CALL: it consumes its announcements exactly like a call that draws, but it is NOT recorded as a
- *     drawing call - there is nothing in it, and a plan carrying it would describe work that does not exist
- *     (measured 2026-09-24: the engine's axis-gizmo pass calls with an empty list while its surface size is
- *     unknown, and that empty draw was what the content layer refused a whole pass - clear included - over).
- *   * PASS INPUTS are a property of the pass (the engine announces them once per pass and says so), so
+ * @details
+ * - WHY A STAGE AND NOT STRAIGHT TO THE GPU. Two facts about the contract make "record as you are
+ *   called" impossible, and both are properties of the host, not choices of this backend:
+ *   - EVERY ARGUMENT IS BORROWED. The camera, the command list, the lights, the target and the
+ *     program are valid for the duration of the call; the engine's resolved-input vector is a REUSED
+ *     MEMBER that the next pass clears and refills, so a plan holding a span into it would be reading
+ *     the following pass' data by the time it is recorded (see FrameArena's note). The record
+ *     therefore copies what it needs, at the moment it is called, into the frame's arena - and a test
+ *     drives the engine's exact reuse pattern to prove it.
+ *   - THE DRAW ORDER IS NOT THE CALL ORDER. Which pass runs first is decided by the dependency graph,
+ *     not by who called whom (see FrameCompiler), so what arrives has to survive until the end of the
+ *     frame even though the host's containers do not.
+ * - WHAT THIS TYPE DECIDES: what the call means as data, and whether there is a place for it (a frame
+ *   to belong to, a scope to fill). WHAT IT NEVER DECIDES: rebuilds, resizes, borrowing, scheduling,
+ *   caching, or what any of it costs - those are the compiler's and the resource manager's answers,
+ *   and a recorder that started giving them would be the second backend.
+ * - WHAT IT NO LONGER JUDGES. A frame is a VALUE now (FrameDescription), so the sequence this type is
+ *   driven with cannot be wrong: the layer that drives it - the plugin's own walk over the value -
+ *   states each pass once, in run order, which is exactly the shape of the entries below. There is
+ *   therefore no state machine here and no reporting: a call that has no frame or no scope to belong
+ *   to takes NO EFFECT (and answers false, so a caller that cares can see it), and nothing about it is
+ *   a mistake to report - the call is either the value's own shape or a bug in its driver, and the
+ *   driver's tests are where that is caught. The one rule kept is the contract's about a RELEASED
+ *   TARGET: a scope whose announced target was released no longer has a picture to record, so its
+ *   remaining effects are dropped and its draws are skipped rather than redirected to the default
+ *   framebuffer.
+ * - THE CONSUMPTION RULES (from the contract, and the reason the pictures come out right):
+ *   - SCOPE ATTRIBUTES belong to the pass and are dropped at endPass(): the render target, the
+ *     stacking order, the clear policy and the depth mode. A pass that announced them and drew nothing
+ *     leaves no trace, so they cannot leak into the next pass.
+ *   - ONE ANNOUNCEMENT SERVES ONE DRAWING CALL for the viewport and the lights: a pass that draws
+ *     twice in one scope announces again before the second draw, and a draw with no fresh announcement
+ *     gets the whole target (viewport) or the backend default (lights). Consuming them here is what
+ *     makes that rule mechanical instead of remembered - and the consumed values are recorded ON the
+ *     drawing call, so a compiled draw never has to look back at a scope to find them. A CALL WITH
+ *     NOTHING TO DRAW IS STILL A CALL: it consumes its announcements exactly like a call that draws,
+ *     but it is NOT recorded as a drawing call - there is nothing in it, and a plan carrying it would
+ *     describe work that does not exist (measured 2026-09-24: the engine's axis-gizmo pass calls with
+ *     an empty list while its surface size is unknown, and that empty draw was what the content layer
+ *     refused a whole pass - clear included - over).
+ *   - PASS INPUTS are a property of the pass (the engine announces them once per pass and says so), so
  *     they are not consumed by a drawing call.
- *
- * FRAME-LEVEL SETTINGS ARE LEGAL IN EVERY STATE. setDefaultContentProgram() is a fact the compiler resolves, and
- * releasing a target is the caller telling this layer a resource is going away - neither is about a scope, so
- * neither is refused; releasing one a scope announced drops that announcement (see above).
- *
- * WHAT IT COUNTS: the pass scopes that enter the plan and the drawing calls collected (Observe, the one
- * place a phase gates on). There is deliberately no second tally here.
+ * - FRAME-LEVEL SETTINGS ARE LEGAL IN EVERY STATE. setDefaultContentProgram() is a fact the compiler
+ *   resolves, and releasing a target is the caller telling this layer a resource is going away -
+ *   neither is about a scope, so neither is refused; releasing one a scope announced drops that
+ *   announcement (see above).
+ * - WHAT IT COUNTS: the pass scopes that enter the plan and the drawing calls collected (Observe, the
+ *   one place a phase gates on). There is deliberately no second tally here.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -88,9 +87,10 @@ struct ProgramRef
 
 /** @brief One pass input as the frame remembers it: the identity of the target it reads.
  *
- * Identity only, and deliberately so: what the executor needs to bind an input - its built images and
- * views - belongs to the target's own bookkeeping (the API layer), which is keyed by this identity.
- * Copying a target's GPU objects into a frame record would be a second owner of them.
+ * @details
+ * - Identity only, and deliberately so: what the executor needs to bind an input - its built images and
+ *   views - belongs to the target's own bookkeeping (the API layer), which is keyed by this identity.
+ *   Copying a target's GPU objects into a frame record would be a second owner of them.
  */
 struct InputRef
 {
@@ -99,10 +99,11 @@ struct InputRef
 
 /** @brief One light as the frame remembers it: its numbers, never the borrowed pointer.
  *
- * A light is borrowed for the duration of the call that announces it (a drawing call's lights), and a plan that
- * kept the pointer would read freed
- * memory - the host is free to destroy the light, and the scene it belongs to, before the frame is
- * recorded. The fields here are what the shading block is built from (see VsgLights).
+ * @details
+ * - A light is borrowed for the duration of the call that announces it (a drawing call's lights), and
+ *   a plan that kept the pointer would read freed memory - the host is free to destroy the light, and
+ *   the scene it belongs to, before the frame is recorded. The fields here are what the shading block
+ *   is built from (see VsgLights).
  */
 struct LightRef
 {
@@ -118,14 +119,18 @@ struct LightRef
     float                      intensity{1.0F};                   ///< Intensity multiplier.
     bool                       has_direction{false};              ///< Whether direction() means anything.
     vn::math::Vec3d          direction{};                       ///< World-space direction (directional lights).
-    bool                       cast_shadow{false};                ///< Light::castShadow: the switch that makes it a caster.
-    float                      shadow_bias{0.0F};                 ///< ShadowSettings::bias: the map comparison's depth bias.
+    bool                       cast_shadow{false};                ///< Light::castShadow: the switch that makes it a
+                                                                  ///< caster.
+    float                      shadow_bias{0.0F};                 ///< ShadowSettings::bias: the map comparison's
+                                                                  ///< depth bias.
 };
 
 /** @brief A camera as the frame remembers it: its matrices and eye, not the borrowed pointer.
  *
- * The view block and the CPU-side light transform both need the camera's numbers, and both are written
- * after the call returns; the engine owns the camera and may retarget or destroy it in between.
+ * @details
+ * - The view block and the CPU-side light transform both need the camera's numbers, and both are
+ *   written after the call returns; the engine owns the camera and may retarget or destroy it in
+ *   between.
  */
 struct CameraSnapshot
 {
@@ -152,10 +157,11 @@ struct CollectedCommand
 /**
  * @brief ONE DRAWING CALL: what the host announced for it, and what it draws.
  *
- * The granularity is the call, not the command, because that is the granularity the contract consumes
- * announcements at ("one announcement serves one drawing call") and the granularity the depth mode and the
- * viewport are meaningful at. The commands of a content call share the call's announcements, which is also
- * why the camera is recorded once per call instead of once per command.
+ * @details
+ * - The granularity is the call, not the command, because that is the granularity the contract
+ *   consumes announcements at ("one announcement serves one drawing call") and the granularity the
+ *   depth mode and the viewport are meaningful at. The commands of a content call share the call's
+ *   announcements, which is also why the camera is recorded once per call instead of once per command.
  */
 struct CollectedDraw
 {
@@ -172,10 +178,12 @@ struct CollectedDraw
 /**
  * @brief One pass scope, as the frame remembers it: its scope attributes and its drawing calls.
  *
- * `has_clear` is a fact rather than a default: "the host never announced a clear" and "the host announced
- * a clear to black" are different pictures, and only the pass' own announcement can tell them apart. The
- * compiler resolves the viewport and the clear colour that were never announced; the recorder must not,
- * because resolving here would hide the difference between "unresolved" and "explicitly the whole target".
+ * @details
+ * - `has_clear` is a fact rather than a default: "the host never announced a clear" and "the host
+ *   announced a clear to black" are different pictures, and only the pass' own announcement can tell
+ *   them apart. The compiler resolves the viewport and the clear colour that were never announced; the
+ *   recorder must not, because resolving here would hide the difference between "unresolved" and
+ *   "explicitly the whole target".
  */
 struct CollectedPass
 {
