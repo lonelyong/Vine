@@ -79,10 +79,12 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
     /** @brief Returns whether this subtree is visible.
      *
-     * This node's OWN flag, not a folded value: a hidden ancestor is not reported here, it is applied as
-     * a gate while walking. The gate is absolute - an invisible node takes its whole subtree out of the
-     * collection (nothing below becomes a draw), the ray walks (nothing below is pickable) and
-     * Scene::boundingBox (nothing below is measured).
+     * @details
+     * - This node's OWN flag, not a folded value: a hidden ancestor is not reported here, it is applied
+     *   as a gate while walking.
+     * - The gate is absolute - an invisible node takes its whole subtree out of the collection (nothing
+     *   below becomes a draw), the ray walks (nothing below is pickable) and Scene::boundingBox
+     *   (nothing below is measured).
      *
      * @return true when this node's own flag is set.
      */
@@ -90,9 +92,10 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
     /** @brief Sets whether this subtree is visible: false takes the whole subtree out of the picture.
      *
-     * The host's "temporarily off" switch (a toggle, an LOD swap) - "which part of the content this is"
-     * is the layer declaration instead, and the two are independent (see setLayers). The scene has the
-     * same switch at the top of the tree (Scene::setVisible).
+     * @details
+     * - The host's "temporarily off" switch (a toggle, an LOD swap) - "which part of the content this
+     *   is" is the layer declaration instead, and the two are independent (see setLayers).
+     * - The scene has the same switch at the top of the tree (Scene::setVisible).
      *
      * @param visible false hides this node and every node below it.
      */
@@ -163,11 +166,12 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
     /** @brief Gets this node's OWN opacity multiplier in [0, 1].
      *
-     * Not the folded value: a drawable's effective opacity is scene.opacity() x every ancestor's
-     * opacity() x its own, clamped to [0, 1] at the drawn leaf (see RenderCommand::opacity). It is the
-     * engine's only transparency channel - built-in forward shading writes it as the fragment alpha, and
-     * a material does not contribute (a shared material's alpha would make every drawable using it
-     * translucent).
+     * @details
+     * - Not the folded value: a drawable's effective opacity is scene.opacity() x every ancestor's
+     *   opacity() x its own, clamped to [0, 1] at the drawn leaf (see RenderCommand::opacity).
+     * - The engine's only transparency channel: built-in forward shading writes it as the fragment
+     *   alpha, and a material does not contribute (a shared material's alpha would make every drawable
+     *   using it translucent).
      *
      * @return This node's own multiplier.
      */

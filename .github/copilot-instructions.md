@@ -154,10 +154,14 @@ Headers with special requirements (e.g. `GL.h` which must be included first) may
 * Public interfaces must use Doxygen-style comments.
 * Do not create section comments.
 * Use `/** @brief ... */` format with `@`-prefixed tags.
-* Every public function must document:
-  * `@brief` — one-line summary of the function's purpose.
+* Structure a comment in labelled sections, so the key facts are obvious at a glance:
+  * `@brief` — one line: what the function does, plus its most important premise or failure mode.
+  * `@details` — the facts a caller needs (mechanism, defaults, ranges, limits, cross-references), as `- ` bullets.
+  * `@warning` — hazards only: thread safety, unchecked input, settings that must change together. Never boilerplate.
+  * `@note` — non-obvious facts that do not warn: why it is designed this way, what it replaces, what it deliberately does not do.
   * `@param` — one tag per parameter, describing its meaning and any constraints.
   * `@return` — the return value / success semantics (required for every non-void return).
+* A section appears only when it carries content: never leave one empty, and never fill one with a restatement of the code.
 * Constructors and destructors use `@brief` only; use `@param` only for parameters with non-obvious meaning.
 * Comments must use `@param` for EVERY parameter of a function, never omit one.
 * Prefer multi-line comments; do not condense them into a single line.
@@ -167,13 +171,24 @@ Example:
 
 ```cpp
 /**
- * @brief Loads mesh data from a file.
+ * @brief Sets the depth range the clip-space depth is remapped into [min_depth, max_depth].
  *
- * @param file_path  Path to the mesh file.
- * @param scale_mode Vertex scaling strategy.
- * @return true if loading succeeds, false otherwise.
+ * @details
+ * - The range maps the values a projection produces; it is state, applied to draws recorded after the call.
+ * - It can be used together with Reverse-Z: that convention flips this range, the comparison function
+ *   and the clear value together.
+ *
+ * @warning
+ * - A reversed range needs the device's depth-clamp behaviour checked before it is used.
+ * - The clear value must match the range's far end, or the first frame reads depth from stale values.
+ *
+ * @note
+ * - A depth range is not a depth comparison mode: the test itself belongs to the pass' depth state.
+ *
+ * @param min_depth Value mapped to the near plane (0.0 by default; 1.0 under Reverse-Z).
+ * @param max_depth Value mapped to the far plane (1.0 by default; 0.0 under Reverse-Z).
  */
-bool loadMesh(const std::filesystem::path& file_path, ScaleMode scale_mode);
+void setDepthRange(float min_depth, float max_depth);
 ```
 
 * Comments should explain design intent, constraints, and non-obvious logic.
