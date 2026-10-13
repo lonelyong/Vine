@@ -11,30 +11,26 @@
 /**
  * @brief The compiled variants of one content scope: identity in, variant out, and nothing else.
  *
- * WHY A POOL AND NOT A CACHE NEXT TO EACH PROGRAM. A pipeline is compiled against a whole identity - the
- * program and its revision, the vertex layout, the render-pass compatibility, and whether a depth texture or
- * a shadow map is bound (see PipelineKey). Two drawables that agree on all of it must share ONE pipeline, and
- * one that differs in any of it must not: the pool is the single place that decides which is which, so the
- * answer cannot depend on which code path happened to ask.
- *
- * WHAT MUST NEVER REACH IT. Anything deliverable with a set command (cull, polygon, blend, depth policy,
- * topology) or written into a buffer (matrices, opacities, material bytes). Those live in @ref DynamicState
- * and @ref InstanceSlot, and they cost a command or a write rather than a compile. The two historical
- * failure families in this backend are exactly this mistake - a host state change that recompiled a pipeline,
- * a resize that rebuilt every full-screen slot - which is why the key's allowed inputs are pinned by the key
- * audit and why the churn phases assert that the variant count does not move.
- *
- * WHAT EVICTION MEANS (and does not). Past the capacity the OLDEST entry leaves the map. That stops the pool
- * from handing the variant out again, and a later acquire of the same identity compiles a new one; it does
- * NOT mean the GPU object may be destroyed - the holder still owns it, and only the retirement queue's
- * timeline decides when it dies. Keeping "the lookup left" and "the object may die" apart is what makes this
- * class device-free.
- *
- * AN ENTRY HOLDS ITS KEY. The key carries owned storage (the layout's locations, the compatibility's
- * formats), so a variant stays answerable after the caller's key object is gone - a lookup does not need the
- * caller to keep anything alive.
- *
- * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
+ * @details
+ * - WHY A POOL AND NOT A CACHE NEXT TO EACH PROGRAM. A pipeline is compiled against a whole identity - the program
+ *   and its revision, the vertex layout, the render-pass compatibility, and whether a depth texture or a shadow map
+ *   is bound (see PipelineKey). Two drawables that agree on all of it must share ONE pipeline, and one that differs
+ *   in any of it must not: the pool is the single place that decides which is which, so the answer cannot depend on
+ *   which code path happened to ask.
+ * - WHAT MUST NEVER REACH IT. Anything deliverable with a set command (cull, polygon, blend, depth policy, topology)
+ *   or written into a buffer (matrices, opacities, material bytes). Those live in @ref DynamicState and @ref
+ *   InstanceSlot, and they cost a command or a write rather than a compile. The two historical failure families in
+ *   this backend are exactly this mistake - a host state change that recompiled a pipeline, a resize that rebuilt
+ *   every full-screen slot - which is why the key's allowed inputs are pinned by the key audit and why the churn
+ *   phases assert that the variant count does not move.
+ * - WHAT EVICTION MEANS (and does not). Past the capacity the OLDEST entry leaves the map. That stops the pool from
+ *   handing the variant out again, and a later acquire of the same identity compiles a new one; it does NOT mean the
+ *   GPU object may be destroyed - the holder still owns it, and only the retirement queue's timeline decides when it
+ *   dies. Keeping "the lookup left" and "the object may die" apart is what makes this class device-free.
+ * - AN ENTRY HOLDS ITS KEY. The key carries owned storage (the layout's locations, the compatibility's formats), so a
+ *   variant stays answerable after the caller's key object is gone - a lookup does not need the caller to keep
+ *   anything alive.
+ * - NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -79,8 +75,9 @@ class VN_GRAPHICS_API VariantPool
 
     /** @brief Gets whether the pool still answers a variant.
      *
-     * A stale id - one that was evicted - is reported as absent, which is how a caller learns that its
-     * variant may leave with the object it holds and has to be built again.
+     * @details
+     * - A stale id - one that was evicted - is reported as absent, which is how a caller learns that its variant may
+     *   leave with the object it holds and has to be built again.
      *
      * @param id Variant id.
      * @return true when the pool has a variant with this id.

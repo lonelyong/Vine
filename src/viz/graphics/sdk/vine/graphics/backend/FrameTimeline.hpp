@@ -8,9 +8,22 @@
  * @brief The frame clock: one timeline for every deferred action in the backend.
  *
  * @details
- * - WHY ONE TIMELINE. Three different things in this backend are deferred to a later frame: a replaced GPU object is parked until the command buffer that could still name it has been re-recorded, a pass that was not announced this frame has its view detached, and the load-op variant a bootstrap left behind is swapped back. Each of them, given its own countdown, can drift a frame away from the others - and a frame of drift is exactly the width of the bug class this design exists to remove ("destroyed an object a submitted command buffer still named", "cleared a target that was still being read"). So they all read one counter.
- * - SUBMITTED IS NOT COMPLETED, and conflating them is the last silent failure available here. `submittedFrame()` counts frames handed to the queue; `completedFrame()` counts frames whose GPU work is provably done. In this backend the proof does not come from a timeline semaphore - it comes from the command-buffer slot being recycled: vsg waits that slot's fence before it re-records it (`vsg 1.1.16 - src/vsg/app/RecordAndSubmitTask.cpp - RecordAndSubmitTask::start()`), so "the slot that could still name this object has been reused" IS the completion evidence. The executor reports that by calling completeUpTo(); an executor that stops waiting on slot fences loses the evidence and must fall back to a counted device wait instead of assuming.
- * - The slot count is a property of the viewer (`numBuffers`, 3 in this vsg) and is not part of the public API, so it is probed once at session start and passed in here - `retirePoint()` is why the number is needed: a parked object must outlive the slot that recorded it, hence slots + 1.
+ * - WHY ONE TIMELINE. Three different things in this backend are deferred to a later frame: a replaced GPU object is
+ *   parked until the command buffer that could still name it has been re-recorded, a pass that was not announced this
+ *   frame has its view detached, and the load-op variant a bootstrap left behind is swapped back. Each of them, given
+ *   its own countdown, can drift a frame away from the others - and a frame of drift is exactly the width of the bug
+ *   class this design exists to remove ("destroyed an object a submitted command buffer still named", "cleared a
+ *   target that was still being read"). So they all read one counter.
+ * - SUBMITTED IS NOT COMPLETED, and conflating them is the last silent failure available here. `submittedFrame()`
+ *   counts frames handed to the queue; `completedFrame()` counts frames whose GPU work is provably done. In this
+ *   backend the proof does not come from a timeline semaphore - it comes from the command-buffer slot being recycled:
+ *   vsg waits that slot's fence before it re-records it (`vsg 1.1.16 - src/vsg/app/RecordAndSubmitTask.cpp -
+ *   RecordAndSubmitTask::start()`), so "the slot that could still name this object has been reused" IS the completion
+ *   evidence. The executor reports that by calling completeUpTo(); an executor that stops waiting on slot fences
+ *   loses the evidence and must fall back to a counted device wait instead of assuming.
+ * - The slot count is a property of the viewer (`numBuffers`, 3 in this vsg) and is not part of the public API, so it
+ *   is probed once at session start and passed in here - `retirePoint()` is why the number is needed: a parked object
+ *   must outlive the slot that recorded it, hence slots + 1.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -32,7 +45,9 @@ class VN_GRAPHICS_API FrameTimeline
     /** @brief Opens a frame and mints its token.
      *
      * @details
-     * - Called from executeFrame(). Opening a frame while one is already open is a caller bug rather than a condition to absorb, so the open frame is kept and its token returned again - the caller gets a usable token either way.
+     * - Called from executeFrame(). Opening a frame while one is already open is a caller bug rather than a condition
+     *   to absorb, so the open frame is kept and its token returned again - the caller gets a usable token either
+     *   way.
      *
      * @return The token of the frame now open.
      */
@@ -41,7 +56,8 @@ class VN_GRAPHICS_API FrameTimeline
     /** @brief Marks the open frame as submitted.
      *
      * @details
-     * - Called from present() after the queue submission returned. A token that does not name the open frame is ignored: the timeline never moves backwards on behalf of a stale caller.
+     * - Called from present() after the queue submission returned. A token that does not name the open frame is
+     *   ignored: the timeline never moves backwards on behalf of a stale caller.
      *
      * @param token Token returned by begin().
      */
@@ -50,7 +66,11 @@ class VN_GRAPHICS_API FrameTimeline
     /** @brief Marks the open frame as OVER without having been submitted.
      *
      * @details
-     * - The frame is consumed exactly like a submitted one - it cannot be retried (its swapchain image was acquired and its graph was recorded), so begin() has to be able to open the next one - but nothing was handed to the queue, so the submitted watermark does NOT move. That keeps the watermark a count of SUBMISSIONS rather than a count of frames, and it is the honest dating for anything parked during such a frame: nothing in flight names it, so it is dated against the last frame that really was submitted.
+     * - The frame is consumed exactly like a submitted one - it cannot be retried (its swapchain image was acquired
+     *   and its graph was recorded), so begin() has to be able to open the next one - but nothing was handed to the
+     *   queue, so the submitted watermark does NOT move. That keeps the watermark a count of SUBMISSIONS rather than
+     *   a count of frames, and it is the honest dating for anything parked during such a frame: nothing in flight
+     *   names it, so it is dated against the last frame that really was submitted.
      *
      * @param token Token returned by begin() (a stale one is ignored, like in submitted()).
      */
@@ -59,7 +79,8 @@ class VN_GRAPHICS_API FrameTimeline
     /** @brief Advances the completion watermark (the slot that recorded @p frame was recycled).
      *
      * @details
-     * - Monotonic: a lower value than the current watermark is ignored, because completion is a fact about the past that a later report cannot un-do.
+     * - Monotonic: a lower value than the current watermark is ignored, because completion is a fact about the past
+     *   that a later report cannot un-do.
      *
      * @param frame Highest frame whose GPU work is provably done.
      */

@@ -30,9 +30,15 @@ class Scene;
  * @brief Where a pass enters the frame's order.
  *
  * @details
- * - A pipeline is a list of passes the engine runs in ascending order, and a pass an EFFECT adds has to enter at the right place without knowing the numbers the passes around it happened to use: a shadow map belongs before every pass that samples it, a screen-space effect between the geometry that produced its inputs and the shading that consumes them.
- * - A stage names that place by intent — pipelineStageOrder() turns it into the number the engine sorts by, and passes inside one stage run in the order they were planned (the engine resolves equal orders by registration order).
- * - The scale is documented rather than private so a host that registers its own pass (RenderEngine::addPass) can place it by intent too, instead of guessing where the gaps are.
+ * - A pipeline is a list of passes the engine runs in ascending order, and a pass an EFFECT adds has to enter at the
+ *   right place without knowing the numbers the passes around it happened to use: a shadow map belongs before every
+ *   pass that samples it, a screen-space effect between the geometry that produced its inputs and the shading that
+ *   consumes them.
+ * - A stage names that place by intent — pipelineStageOrder() turns it into the number the engine sorts by, and
+ *   passes inside one stage run in the order they were planned (the engine resolves equal orders by registration
+ *   order).
+ * - The scale is documented rather than private so a host that registers its own pass (RenderEngine::addPass) can
+ *   place it by intent too, instead of guessing where the gaps are.
  */
 enum class PipelineStage {
     Depth,       ///< Produces depth for later sampling: shadow maps, depth prepasses.
@@ -49,8 +55,10 @@ enum class PipelineStage {
  * @brief The order the engine sorts a pass of @p stage by.
  *
  * @details
- * - Effects state where they belong relative to the stage they serve, and this table is the one place that turns intent into the engine's sort key.
- * - The bands are spaced so a stage can gain passes later without renumbering any other; a pass inside one stage runs by registration order, so a stage needs exactly one number.
+ * - Effects state where they belong relative to the stage they serve, and this table is the one place that turns
+ *   intent into the engine's sort key.
+ * - The bands are spaced so a stage can gain passes later without renumbering any other; a pass inside one stage runs
+ *   by registration order, so a stage needs exactly one number.
  *
  * @param stage Stage to place.
  * @return The pass order of @p stage.
@@ -75,7 +83,9 @@ constexpr int pipelineStageOrder(PipelineStage stage) noexcept
  * @brief Optional HUD overlay: a world-orientation axis gizmo.
  *
  * @details
- * - The overlay's CONTENT is an AxisGizmo (its scene, its framing camera, its box) and the recipe declares the pass that shows it (a HUD-tagged PassDesc - see RenderPipelineBuilder): it is stacked above the window pass and mirrors the source camera's orientation each frame.
+ * - The overlay's CONTENT is an AxisGizmo (its scene, its framing camera, its box) and the recipe declares the pass
+ *   that shows it (a HUD-tagged PassDesc - see RenderPipelineBuilder): it is stacked above the window pass and
+ *   mirrors the source camera's orientation each frame.
  * - When source_camera is null the overlay is disabled and nothing is added.
  */
 struct VN_GRAPHICS_API AxisGizmoOptions {
@@ -102,7 +112,9 @@ struct VN_GRAPHICS_API AxisGizmoOptions {
 
     /** @brief Stacking offset inside the HUD stage (default 10).
      *
-     * @note Relative to the other HUD overlay, not to the scene: the pipeline places every overlay at PipelineStage::Overlay and adds this offset, so the HUD stays above the passes it annotates no matter what orders they took.
+     * @note Relative to the other HUD overlay, not to the scene: the pipeline places every overlay at
+     *       PipelineStage::Overlay and adds this offset, so the HUD stays above the passes it annotates no matter
+     *       what orders they took.
      */
     int order = 10;
 };
@@ -111,8 +123,10 @@ struct VN_GRAPHICS_API AxisGizmoOptions {
  * @brief Optional HUD overlay: a frame-rate readout in the bottom-right corner.
  *
  * @details
- * - The readout's CONTENT is an FpsOverlay and the recipe declares the pass that shows it (a HUD-tagged PassDesc), stacked above the window pass; it measures the actual render-loop frame rate and needs no source camera.
- * - Like the axis gizmo it is opt-in per application — set enabled to true to draw it (the app-shell demo enables it by default).
+ * - The readout's CONTENT is an FpsOverlay and the recipe declares the pass that shows it (a HUD-tagged PassDesc),
+ *   stacked above the window pass; it measures the actual render-loop frame rate and needs no source camera.
+ * - Like the axis gizmo it is opt-in per application — set enabled to true to draw it (the app-shell demo enables it
+ *   by default).
  */
 struct VN_GRAPHICS_API FpsOverlayOptions {
     /** @brief Whether the readout is drawn. Disabled by default. */
@@ -138,8 +152,11 @@ struct VN_GRAPHICS_API FpsOverlayOptions {
  * @brief Options controlling RenderPipelineBuilder::build().
  *
  * @details
- * - The description of a pipeline: the ONE structural choice (path) plus the per-pass options of the passes the path and the overlays need.
- * - Shadows are NOT here — a shadow is requested by the LIGHT that casts it (Light::castShadow) and honoured by the pipeline that draws that light's content, because a light outlives any one pipeline and a scene may be drawn by several (see PipelineStage::Depth and .ai/design/graphics-pipeline.md §2).
+ * - The description of a pipeline: the ONE structural choice (path) plus the per-pass options of the passes the path
+ *   and the overlays need.
+ * - Shadows are NOT here — a shadow is requested by the LIGHT that casts it (Light::castShadow) and honoured by the
+ *   pipeline that draws that light's content, because a light outlives any one pipeline and a scene may be drawn by
+ *   several (see PipelineStage::Depth and .ai/design/graphics-pipeline.md §2).
  */
 struct VN_GRAPHICS_API PipelineOptions {
     /** @brief How the opaque content is shaded (the structural choice). */
@@ -148,16 +165,21 @@ struct VN_GRAPHICS_API PipelineOptions {
     /** @brief What the picture MEANS (the viewing mode the pipeline is built for; see ShadingMode).
      *
      * @details
-     * - A mode is a pass property, so this is not a second structural knob: what it decides at BUILD time is whether the chain has to be assembled differently to be able to express it - a non-Lit mode needs the geometry pass, so a Deferred request is built FORWARD for it (see effectivePath).
-     * - Switching among the modes the built chain CAN express is one override on a live pipeline (Pipeline::setShadingMode).
+     * - A mode is a pass property, so this is not a second structural knob: what it decides at BUILD time is whether
+     *   the chain has to be assembled differently to be able to express it - a non-Lit mode needs the geometry pass,
+     *   so a Deferred request is built FORWARD for it (see effectivePath).
+     * - Switching among the modes the built chain CAN express is one override on a live pipeline
+     *   (Pipeline::setShadingMode).
      */
     ShadingMode mode = ShadingMode::Lit;
 
     /** @brief Off-screen G-buffer size in pixels for the Deferred path.
      *
      * @details
-     * - 0 (the default) uses the engine's current surface size, falling back to a fixed 640 x 360 when the surface is not known yet.
-     * - The host keeps the G-buffer in step with the surface via Pipeline::resize() (e.g. from a SceneView surface-layout step).
+     * - 0 (the default) uses the engine's current surface size, falling back to a fixed 640 x 360 when the surface is
+     *   not known yet.
+     * - The host keeps the G-buffer in step with the surface via Pipeline::resize() (e.g. from a SceneView
+     *   surface-layout step).
      */
     int offscreen_width = 0;
     int offscreen_height = 0;
@@ -165,16 +187,22 @@ struct VN_GRAPHICS_API PipelineOptions {
     /** @brief Which layers of the CONTENT the built chain draws (see Node::setLayers / RenderPass::setLayerMask).
      *
      * @details
-     * - Stamped on every pass of the chain that walks this content (shadow, forward opaque, forward transparent, G-buffer, deferred transparent, preview): one recipe, one mask, so "this chain draws only casters" is a property of the recipe rather than of each pass the builder happens to create.
-     * - The two fullscreen lighting passes are NOT stamped - their content scene is where their lights come from, not something they walk - and neither are the HUD / gizmo overlays: they are UI, and a content selection must not hide the reader's own tools.
-     * - kAllLayers (the default) draws every layer, which is what a host that never heard of layers gets. A mask of 0 draws no content at all (reported once as a frame-plan problem).
+     * - Stamped on every pass of the chain that walks this content (shadow, forward opaque, forward transparent,
+     *   G-buffer, deferred transparent, preview): one recipe, one mask, so "this chain draws only casters" is a
+     *   property of the recipe rather than of each pass the builder happens to create.
+     * - The two fullscreen lighting passes are NOT stamped - their content scene is where their lights come from, not
+     *   something they walk - and neither are the HUD / gizmo overlays: they are UI, and a content selection must not
+     *   hide the reader's own tools.
+     * - kAllLayers (the default) draws every layer, which is what a host that never heard of layers gets. A mask of 0
+     *   draws no content at all (reported once as a frame-plan problem).
      */
     std::uint32_t layer_mask = kAllLayers;
 
     /** @brief Deferred G-buffer geometry program (one scene traversal -> MRT).
      *
      * @details
-     * - Must write the canonical four outputs the builder's G-buffer declares (albedo / view normal + shininess / specular / view position; see the builder docs).
+     * - Must write the canonical four outputs the builder's G-buffer declares (albedo / view normal + shininess /
+     *   specular / view position; see the builder docs).
      * - Optional: when omitted, RenderPipelineBuilder::build() supplies its built-in temporary default program.
      */
     intrusive_ptr<ShaderProgram> gbuffer_program;
@@ -204,9 +232,16 @@ struct VN_GRAPHICS_API PipelineOptions {
  * @brief The main-window pipeline produced by RenderPipelineBuilder::build().
  *
  * @details
- * - Owns the passes it created AND their registration: it registers them on the engine as they are planned and unregisters them when it dies, so dropping the handle takes the passes out of the frame instead of leaving them to run with nobody holding them (RenderEngine::addPass keeps its own reference, so a reference alone would keep a dropped pipeline's passes alive and drawing).
- * - It also keeps the engine ALIVE (a strong reference, not a borrow): the passes live in that engine's list, so "this pipeline is still alive" is exactly "its engine must still be". There is no cycle — the engine does not know its pipelines.
- * - Exposes the window-presenting pass, and for deferred paths the off-screen G-buffer, whose size its owner maintains through resize() (the backend rebuilds the off-screen attachments whenever the target size changes between frames).
+ * - Owns the passes it created AND their registration: it registers them on the engine as they are planned and
+ *   unregisters them when it dies, so dropping the handle takes the passes out of the frame instead of leaving them
+ *   to run with nobody holding them (RenderEngine::addPass keeps its own reference, so a reference alone would keep a
+ *   dropped pipeline's passes alive and drawing).
+ * - It also keeps the engine ALIVE (a strong reference, not a borrow): the passes live in that engine's list, so
+ *   "this pipeline is still alive" is exactly "its engine must still be". There is no cycle — the engine does not
+ *   know its pipelines.
+ * - Exposes the window-presenting pass, and for deferred paths the off-screen G-buffer, whose size its owner
+ *   maintains through resize() (the backend rebuilds the off-screen attachments whenever the target size changes
+ *   between frames).
  */
 class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     friend class RenderPipelineBuilder;
@@ -215,7 +250,8 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     /** @brief Constructs a pipeline that registers its passes on @p engine.
      *
      * @details
-     * - The engine is a constructor argument rather than a setter because a pipeline without one could not do the ONE thing this class does with a pass (register it, and later take it back).
+     * - The engine is a constructor argument rather than a setter because a pipeline without one could not do the ONE
+     *   thing this class does with a pass (register it, and later take it back).
      *
      * @param engine Engine the pipeline's passes are registered on (held strongly; must not be null).
      */
@@ -240,7 +276,9 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     /** @brief Gets the off-screen composite target of a composite pipeline.
      *
      * @details
-     * - A Deferred pipeline that also receives forward-only (transparent / overlay) content bakes an off-screen composite target holding the lit opaque image plus the opaque depth the forward content occludes against; the window pass then presents that composite.
+     * - A Deferred pipeline that also receives forward-only (transparent / overlay) content bakes an off-screen
+     *   composite target holding the lit opaque image plus the opaque depth the forward content occludes against; the
+     *   window pass then presents that composite.
      * - Null when the pipeline has no transparent content.
      *
      * @return The composite target, or null when none was created.
@@ -250,8 +288,10 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     /** @brief Gets the configured axis-gizmo overlay's CONTENT, if any.
      *
      * @details
-     * - The object holds the half a pass cannot (its scene, its framing camera and the box it is laid out in - see AxisGizmo); the pass that draws it is gizmoPass().
-     * - A reader that wants to know whether the gizmo is ON (and that can toggle it) wants the pass; a caller that moves or reshapes it wants this.
+     * - The object holds the half a pass cannot (its scene, its framing camera and the box it is laid out in - see
+     *   AxisGizmo); the pass that draws it is gizmoPass().
+     * - A reader that wants to know whether the gizmo is ON (and that can toggle it) wants the pass; a caller that
+     *   moves or reshapes it wants this.
      *
      * @return The gizmo, or null when no gizmo was configured.
      */
@@ -279,10 +319,19 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     /** @brief Resizes the off-screen targets and re-anchors the HUD overlays for a new surface size.
      *
      * @details
-     * - Creator-maintained sizing: the host calls this on surface changes (e.g. from a SceneView::addSurfaceLayout step) so a deferred G-buffer tracks the window (the backend rebuilds the off-screen attachments on the next frame) and an axis-gizmo overlay stays pinned to its corner.
-     * - The overlays own their box (the object computes it from the surface size and the area origin it was pointed at); the BOX the pass states is restated here, which is the one place an overlay is laid out for a new surface size (see gizmoPass).
-     * - ONE call carries the surface size AND the ratio, because this handle's consumers read the same number in two different spaces: the off-screen targets are sized in DEVICE pixels (they are sampled 1:1 with the swapchain), while the HUD passes are laid out on the LOGICAL surface the host has - they apply the ratio themselves (see AxisGizmo::onSurfaceResized).
-     * - The host owns the surface, so it is the only party that knows the ratio. Handing both consumers the same number is what this used to do, and it laid a gizmo out on the device size (twice its box on a high-DPI display) until the host undid it with a second call.
+     * - Creator-maintained sizing: the host calls this on surface changes (e.g. from a SceneView::addSurfaceLayout
+     *   step) so a deferred G-buffer tracks the window (the backend rebuilds the off-screen attachments on the next
+     *   frame) and an axis-gizmo overlay stays pinned to its corner.
+     * - The overlays own their box (the object computes it from the surface size and the area origin it was pointed
+     *   at); the BOX the pass states is restated here, which is the one place an overlay is laid out for a new
+     *   surface size (see gizmoPass).
+     * - ONE call carries the surface size AND the ratio, because this handle's consumers read the same number in two
+     *   different spaces: the off-screen targets are sized in DEVICE pixels (they are sampled 1:1 with the
+     *   swapchain), while the HUD passes are laid out on the LOGICAL surface the host has - they apply the ratio
+     *   themselves (see AxisGizmo::onSurfaceResized).
+     * - The host owns the surface, so it is the only party that knows the ratio. Handing both consumers the same
+     *   number is what this used to do, and it laid a gizmo out on the device size (twice its box on a high-DPI
+     *   display) until the host undid it with a second call.
      *
      * @param width       New surface width in LOGICAL pixels (<= 0 is ignored), as reported to SceneView::resize.
      * @param height      New surface height in LOGICAL pixels (<= 0 is ignored).
@@ -293,7 +342,9 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     /** @brief Gets the chain this pipeline was built as (see RenderPipelineBuilder::effectivePath).
      *
      * @details
-     * - The EFFECTIVE path, not the requested one: a Deferred request carrying a non-Lit mode is built Forward, and this answers what was built - which is what "can this chain express that mode" is decided on (see setShadingMode).
+     * - The EFFECTIVE path, not the requested one: a Deferred request carrying a non-Lit mode is built Forward, and
+     *   this answers what was built - which is what "can this chain express that mode" is decided on (see
+     *   setShadingMode).
      *
      * @return The path the chain was assembled as.
      */
@@ -308,23 +359,32 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     /** @brief Sets what the picture MEANS on a LIVE pipeline (see ShadingMode).
      *
      * @details
-     * - The picture pass' program override (and, for Wireframe, its rasterisation mode) - a pass property, so a mode this chain can express costs one override and NOT a rebuild: the next frame draws differently with nothing re-registered.
-     * - A mode this chain CANNOT express is answered false and changes nothing: a Deferred picture comes out of a fullscreen lighting pass with no geometry left to shade, so its non-Lit modes have to be ASSEMBLED for (build with PipelineOptions::mode, which builds the chain that can express it - see effectivePath).
-     * - The false answer is reported once per episode, because a host that ignored it would be looking at a picture that did not change and would call that "switched".
+     * - The picture pass' program override (and, for Wireframe, its rasterisation mode) - a pass property, so a mode
+     *   this chain can express costs one override and NOT a rebuild: the next frame draws differently with nothing
+     *   re-registered.
+     * - A mode this chain CANNOT express is answered false and changes nothing: a Deferred picture comes out of a
+     *   fullscreen lighting pass with no geometry left to shade, so its non-Lit modes have to be ASSEMBLED for (build
+     *   with PipelineOptions::mode, which builds the chain that can express it - see effectivePath).
+     * - The false answer is reported once per episode, because a host that ignored it would be looking at a picture
+     *   that did not change and would call that "switched".
      *
      * @param mode Mode to draw with.
-     * @return true when this pipeline's picture now means @p mode (its picture pass was overridden); false when this chain cannot express it (nothing changed - rebuild with PipelineOptions::mode instead).
+     * @return true when this pipeline's picture now means @p mode (its picture pass was overridden); false when this
+     *         chain cannot express it (nothing changed - rebuild with PipelineOptions::mode instead).
      */
     bool setShadingMode(ShadingMode mode);
 
     /** @brief Shows or hides the axis-gizmo overlay (a switch, never a rebuild).
      *
      * @details
-     * - The overlay's EXISTENCE is a build decision (PipelineOptions::gizmo); this is the runtime switch over it (the pass' enabled flag - the one state a reader sees, see isGizmoVisible).
-     * - A pipeline with no gizmo answers false and says so once per episode: a switch that silently did nothing would leave a host believing the overlay was just hidden.
+     * - The overlay's EXISTENCE is a build decision (PipelineOptions::gizmo); this is the runtime switch over it (the
+     *   pass' enabled flag - the one state a reader sees, see isGizmoVisible).
+     * - A pipeline with no gizmo answers false and says so once per episode: a switch that silently did nothing would
+     *   leave a host believing the overlay was just hidden.
      *
      * @param on True to show the overlay, false to hide it.
-     * @return true when this pipeline HAS the overlay (its visibility is now @p on); false when it has none - build with PipelineOptions::gizmo to get one.
+     * @return true when this pipeline HAS the overlay (its visibility is now @p on); false when it has none - build
+     *         with PipelineOptions::gizmo to get one.
      */
     bool setGizmoVisible(bool on);
 
@@ -351,7 +411,8 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     /** @brief Registers a pass on the engine and remembers it.
      *
      * @details
-     * - The two halves are one call on purpose: a pass registered without being remembered is a pass nothing will ever unregister (the defect this method exists to make impossible).
+     * - The two halves are one call on purpose: a pass registered without being remembered is a pass nothing will
+     *   ever unregister (the defect this method exists to make impossible).
      *
      * @param pass    Pass to register (the pipeline keeps it alive).
      * @param content Content scene the pass draws, or null for none.
@@ -362,7 +423,9 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     /** @brief Registers a DECLARED pass on the engine and remembers what it became.
      *
      * @details
-     * - The declared half of addPass() above, for the recipes: the declaration says what each pass IS (its kind, stage, tag, target, inputs), the engine makes the node, and the pipeline keeps it - so the recipe reads as declarations while the pipeline holds the same one handle it always did (see RenderEngine::addPass).
+     * - The declared half of addPass() above, for the recipes: the declaration says what each pass IS (its kind,
+     *   stage, tag, target, inputs), the engine makes the node, and the pipeline keeps it - so the recipe reads as
+     *   declarations while the pipeline holds the same one handle it always did (see RenderEngine::addPass).
      *
      * @param desc The declaration (see PassDesc).
      * @return The node the declaration became, or null when that pass was already registered.

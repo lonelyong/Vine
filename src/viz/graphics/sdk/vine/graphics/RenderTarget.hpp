@@ -20,7 +20,8 @@ using vn::math::Mat4d;
  * @brief Render target managing color and depth buffers.
  *
  * @details
- * - Represents an off-screen frame buffer. Supports various color and depth formats and provides buffer readback for post-processing or export.
+ * - Represents an off-screen frame buffer. Supports various color and depth formats and provides buffer readback for
+ *   post-processing or export.
  */
 class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarget> {
     VN_OBJECT_META_DECL;
@@ -48,7 +49,8 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     /** @brief Returns the render target name.
      *
      * @details
-     * - An optional identity label used for diagnostics and logs (a pipeline builder names the targets it creates, e.g. the Deferred G-buffer).
+     * - An optional identity label used for diagnostics and logs (a pipeline builder names the targets it creates,
+     *   e.g. the Deferred G-buffer).
      *
      * @return The target name (empty when unset).
      */
@@ -64,7 +66,8 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     /** @brief Appends a color attachment (attachment index = current count).
      *
      * @details
-     * - A render target may carry several color attachments (MRT / G-buffer): each is an independent texture written by fragment output location @p i and later sampleable on its own (see colorFormat(int) / colorCount()).
+     * - A render target may carry several color attachments (MRT / G-buffer): each is an independent texture written
+     *   by fragment output location @p i and later sampleable on its own (see colorFormat(int) / colorCount()).
      * - Single-attachment callers are unaffected: attaching once keeps the historical one-color behaviour.
      *
      * @param format Color buffer format.
@@ -86,8 +89,10 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     /** @brief Sets whether the backend may end this target's depth in a sampleable (SHADER_READ_ONLY) layout.
      *
      * @details
-     * - False keeps the depth as a plain depth attachment so ANOTHER target can borrow it for a later depth test in the same frame (see shareDepth); such a depth must not be sampled.
-     * - The deferred G-buffer usually needs its depth only for that later occlusion, so the pipeline builder turns promotion off when a composite shares it.
+     * - False keeps the depth as a plain depth attachment so ANOTHER target can borrow it for a later depth test in
+     *   the same frame (see shareDepth); such a depth must not be sampled.
+     * - The deferred G-buffer usually needs its depth only for that later occlusion, so the pipeline builder turns
+     *   promotion off when a composite shares it.
      *
      * @param promote True to keep the depth sampleable (the default).
      */
@@ -102,8 +107,11 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     /** @brief Makes this target reuse @p source's depth attachment instead of allocating its own.
      *
      * @details
-     * - Lets two off-screen targets share one depth buffer within a frame: the source renders first (its depth is preserved via a depth-LOAD pass here) and this target draws against the same depth (a deferred-lit composite testing forward content against the G-buffer depth).
-     * - Constraints: both targets are off-screen and equally sized, the source renders earlier in the frame, and the source's depth is not promoted to a sampled texture (see setDepthPromotion).
+     * - Lets two off-screen targets share one depth buffer within a frame: the source renders first (its depth is
+     *   preserved via a depth-LOAD pass here) and this target draws against the same depth (a deferred-lit composite
+     *   testing forward content against the G-buffer depth).
+     * - Constraints: both targets are off-screen and equally sized, the source renders earlier in the frame, and the
+     *   source's depth is not promoted to a sampled texture (see setDepthPromotion).
      * - The reference keeps the source alive.
      *
      * @param source The target whose depth is reused.
@@ -118,7 +126,8 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
 
     /** @brief Sets the render target dimensions.
      *
-     * @note The size is maintained by the target's owner at the appropriate time (e.g. on a surface resize the code that created the target calls this with the size it wants).
+     * @note The size is maintained by the target's owner at the appropriate time (e.g. on a surface resize the code
+     *       that created the target calls this with the size it wants).
      *
      * @param w Width in pixels.
      * @param h Height in pixels.
@@ -130,7 +139,8 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
 
     /** @brief Returns whether a depth attachment is configured.
      *
-     * @note True for an own depth attachment or one borrowed via shareDepth(); readback of a borrowed depth goes through the source target (see RenderBackend::readDepthBuffer).
+     * @note True for an own depth attachment or one borrowed via shareDepth(); readback of a borrowed depth goes
+     *       through the source target (see RenderBackend::readDepthBuffer).
      */
     bool hasDepth() const;
 
@@ -159,8 +169,10 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     /** @brief Returns whether this is a usable off-screen buffer.
      *
      * @details
-     * - A target is valid when it has at least one attachment and positive dimensions; a valid (non-null) target passed to a backend means "render into this off-screen buffer" as opposed to the default framebuffer.
-     * - A depth borrowed via shareDepth() is not an OWN attachment: a target that borrows depth still needs at least one attachment of its own (a colour attachment) to be valid — it has to render something.
+     * - A target is valid when it has at least one attachment and positive dimensions; a valid (non-null) target
+     *   passed to a backend means "render into this off-screen buffer" as opposed to the default framebuffer.
+     * - A depth borrowed via shareDepth() is not an OWN attachment: a target that borrows depth still needs at least
+     *   one attachment of its own (a colour attachment) to be valid — it has to render something.
      *
      * @return true when the target has an attachment and a positive size.
      */
@@ -169,8 +181,14 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     /** @brief States the view-projection this target's producer rendered with.
      *
      * @details
-     * - A target is not only an image: when a pass renders it from a CAMERA whose space a later consumer must map its own fragments into, the matrix that does it belongs to the producer's statement, not to the consumer's guess. The shadow map is the working example — the shading samples it by projecting the fragment through `light_vp * inverse(view)` — and stating it here keeps the ONE derivation (the pipeline that built the light camera) as the only one, whether the consumer is a fullscreen pass or a content slot that has to fill a block (see ShaderAbi.hpp VineShadowBlock).
-     * - Left as the identity when nobody states one, which is what "this target is not a projected image" means: a consumer reading it gets the identity, not a plausible-looking wrong matrix.
+     * - A target is not only an image: when a pass renders it from a CAMERA whose space a later consumer must map its
+     *   own fragments into, the matrix that does it belongs to the producer's statement, not to the consumer's guess.
+     *   The shadow map is the working example — the shading samples it by projecting the fragment through
+     *   `light_vp * inverse(view)` — and stating it here keeps the ONE derivation (the pipeline that built the light
+     *   camera) as the only one, whether the consumer is a fullscreen pass or a content slot that has to fill a block
+     *   (see ShaderAbi.hpp VineShadowBlock).
+     * - Left as the identity when nobody states one, which is what "this target is not a projected image" means: a
+     *   consumer reading it gets the identity, not a plausible-looking wrong matrix.
      *
      * @param view_projection The producer's projection * view matrix.
      */
@@ -185,8 +203,11 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     /** @brief Whether a producer ever STATED a view-projection for this target.
      *
      * @details
-     * - The matrix alone cannot answer this (an unset one IS the identity), and the answer is what separates a target a camera-driven producer published - a shadow map is exactly that: the shadow pass writes the light camera's view-projection onto it - from one that merely happens to have a depth attachment.
-     * - A consumer looking for a shadow map has to ask this rather than trust the order a pass declares its inputs in.
+     * - The matrix alone cannot answer this (an unset one IS the identity), and the answer is what separates a target
+     *   a camera-driven producer published - a shadow map is exactly that: the shadow pass writes the light camera's
+     *   view-projection onto it - from one that merely happens to have a depth attachment.
+     * - A consumer looking for a shadow map has to ask this rather than trust the order a pass declares its inputs
+     *   in.
      *
      * @return true once setProducerViewProjection() has been called.
      */
@@ -195,9 +216,14 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     /** @brief States that this target IS the shadow map of @p light; gets whose map it is.
      *
      * @details
-     * - A fact about the MAP, which is where the pairing belongs. The pass that reads it stays a generic consumer - it declares targets as its inputs and nothing else - and no consumer has to infer from declaration order which of its inputs is a shadow map, because a G-buffer has a depth too.
-     * - A target is a light's shadow map for as long as that light says it casts (Light::castShadow, the runtime switch, next to the ShadowSettings a consumer reads the bias from).
-     * - The target HOLDS the light: a map is useless without the light it belongs to, and both the map and its consumer can outlive the scene that built them (a retained backend target outliving a phase is exactly how a borrowed pointer here became a dangling one).
+     * - A fact about the MAP, which is where the pairing belongs. The pass that reads it stays a generic consumer -
+     *   it declares targets as its inputs and nothing else - and no consumer has to infer from declaration order
+     *   which of its inputs is a shadow map, because a G-buffer has a depth too.
+     * - A target is a light's shadow map for as long as that light says it casts (Light::castShadow, the runtime
+     *   switch, next to the ShadowSettings a consumer reads the bias from).
+     * - The target HOLDS the light: a map is useless without the light it belongs to, and both the map and its
+     *   consumer can outlive the scene that built them (a retained backend target outliving a phase is exactly how a
+     *   borrowed pointer here became a dangling one).
      *
      * @param light Light this target is the shadow of (null: this target is not a shadow map).
      */

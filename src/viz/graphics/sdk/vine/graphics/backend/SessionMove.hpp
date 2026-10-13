@@ -8,12 +8,24 @@
  * @brief What to do when the host announces a window: keep the session, move it, or build a new one.
  *
  * @details
- * - WHY THIS IS A DECISION TABLE. "The host handed us a new window" has four answers whose costs differ by two orders of magnitude, and the cheap ones are easy to miss:
- *   - KEEP - the host re-announced the window this session is already on (a show, a resize, a repaint). Answering anything but "kept" here starts a fresh session and costs the instance, the device and every compiled pipeline; the host did not ask for any of that.
- *   - MOVE - the windowing system destroyed the host's window and made a new one. The surface and the swapchain are recreated on the instance the window already owns, and the device, the render pass and every pipeline compiled against them survive. This is the case the whole "the host gives the timing, the control maintains the session" contract exists for.
- *   - REBUILD - there is nothing to move (no live session, no announced window, or a session on a window of this backend's own), or the move was attempted and refused. The session starts over, and the cost is real, so it is REPORTED with its reason rather than applied quietly.
- * - Written as data, the caller cannot take the expensive path by accident, and the reasons a host can act on ("your new window presents a different swapchain format") are one table instead of three branches inside the setup code. The table is device-free: what it decides on is what the caller knows before it touches anything.
- * - WHAT IS NOT IN HERE: whether the new surface's FORMAT can serve the current render pass. That answer only exists once the new window has been created and asked, so it is the move attempt's own result (see MoveAttemptResult), not a fact the caller could have supplied up front.
+ * - WHY THIS IS A DECISION TABLE. "The host handed us a new window" has four answers whose costs differ by two orders
+ *   of magnitude, and the cheap ones are easy to miss:
+ *   - KEEP - the host re-announced the window this session is already on (a show, a resize, a repaint). Answering
+ *     anything but "kept" here starts a fresh session and costs the instance, the device and every compiled pipeline;
+ *     the host did not ask for any of that.
+ *   - MOVE - the windowing system destroyed the host's window and made a new one. The surface and the swapchain are
+ *     recreated on the instance the window already owns, and the device, the render pass and every pipeline compiled
+ *     against them survive. This is the case the whole "the host gives the timing, the control maintains the session"
+ *     contract exists for.
+ *   - REBUILD - there is nothing to move (no live session, no announced window, or a session on a window of this
+ *     backend's own), or the move was attempted and refused. The session starts over, and the cost is real, so it is
+ *     REPORTED with its reason rather than applied quietly.
+ * - Written as data, the caller cannot take the expensive path by accident, and the reasons a host can act on ("your
+ *   new window presents a different swapchain format") are one table instead of three branches inside the setup code.
+ *   The table is device-free: what it decides on is what the caller knows before it touches anything.
+ * - WHAT IS NOT IN HERE: whether the new surface's FORMAT can serve the current render pass. That answer only exists
+ *   once the new window has been created and asked, so it is the move attempt's own result (see MoveAttemptResult),
+ *   not a fact the caller could have supplied up front.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 

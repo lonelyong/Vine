@@ -15,10 +15,23 @@
  * @brief The one diagnostic route of a render engine: counting, then forwarding to the host's sink.
  *
  * @details
- * - ONE ROUTE, BECAUSE A SECOND ROUTE LIES. Every report has to end up in the same place for two reasons that have both bitten this engine: the host installs ONE sink (so a module reporting straight to its own log is invisible to `diagnosticCount()`), and the counts are what a phase gates on (so a report that bypasses the counter makes "nothing unexpected happened" unfalsifiable). Whoever reports - the engine about its wiring, a backend about what it could not serve, a pass about content it skipped - hands the sentence to the same instance instead of writing it itself.
- * - WHO OWNS IT: the engine, and the backend it drives is HANDED that instance (see RenderBackend::setDiagnosticsRoute) instead of keeping a second one. That is what makes RenderEngine::diagnosticCount() the whole truth instead of half of it, and it is why a host needs no rule of the form "add the two counts". A backend driven without an engine (a test, a tool) is never handed one and keeps the private route it was born with; every accessor answers from whichever route is active, so such a user sees exactly the old behaviour.
- * - WHAT IT NEVER DOES: decide. A report describes what something could not serve; it never substitutes a different picture, and it never turns a refusal into a silent fallback. Severities and categories are the SDK's vocabulary (`RenderDiagnostic.hpp`) because the host switches on them.
- * - "Report once per episode" is the type next door (`ReportOnce.hpp`): the rule is shared, the episode's boundary is each site's decision.
+ * - ONE ROUTE, BECAUSE A SECOND ROUTE LIES. Every report has to end up in the same place for two reasons that have
+ *   both bitten this engine: the host installs ONE sink (so a module reporting straight to its own log is invisible
+ *   to `diagnosticCount()` ), and the counts are what a phase gates on (so a report that bypasses the counter makes
+ *   "nothing unexpected happened" unfalsifiable). Whoever reports - the engine about its wiring, a backend about what
+ *   it could not serve, a pass about content it skipped - hands the sentence to the same instance instead of writing
+ *   it itself.
+ * - WHO OWNS IT: the engine, and the backend it drives is HANDED that instance (see
+ *   RenderBackend::setDiagnosticsRoute) instead of keeping a second one. That is what makes
+ *   RenderEngine::diagnosticCount() the whole truth instead of half of it, and it is why a host needs no rule of the
+ *   form "add the two counts". A backend driven without an engine (a test, a tool) is never handed one and keeps the
+ *   private route it was born with; every accessor answers from whichever route is active, so such a user sees
+ *   exactly the old behaviour.
+ * - WHAT IT NEVER DOES: decide. A report describes what something could not serve; it never substitutes a different
+ *   picture, and it never turns a refusal into a silent fallback. Severities and categories are the SDK's vocabulary
+ *   (`RenderDiagnostic.hpp`) because the host switches on them.
+ * - "Report once per episode" is the type next door (`ReportOnce.hpp`): the rule is shared, the episode's boundary is
+ *   each site's decision.
  */
 VN_GRAPHICS_NS_BEGIN
 /**
@@ -68,7 +81,8 @@ class VN_GRAPHICS_API Diagnostics
     /** @brief Gets whether nothing at all was reported.
      *
      * @details
-     * - The gate a phase asserts on: a steady run that is expected to be uneventful asks this instead of reading the log.
+     * - The gate a phase asserts on: a steady run that is expected to be uneventful asks this instead of reading the
+     *   log.
      */
     [[nodiscard]] bool clean() const noexcept;
 

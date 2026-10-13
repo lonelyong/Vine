@@ -12,7 +12,8 @@ VN_GRAPHICS_NS_BEGIN
  * @brief How bad a backend diagnostic is.
  *
  * @details
- * - A backend that cannot serve a request must say so instead of degrading silently: the severity tells the host whether content is missing (Error) or was adapted (Warning / Info).
+ * - A backend that cannot serve a request must say so instead of degrading silently: the severity tells the host
+ *   whether content is missing (Error) or was adapted (Warning / Info).
  */
 enum class DiagnosticSeverity : std::uint8_t
 {
@@ -25,8 +26,10 @@ enum class DiagnosticSeverity : std::uint8_t
  * @brief What a backend diagnostic is about.
  *
  * @details
- * - Deliberately machine-matchable: hosts and tests switch on the category instead of parsing the message, so editing a message never breaks a caller.
- * - The categories are split by CONSEQUENCE (what the host must know), not by cause, and severity is orthogonal to them.
+ * - Deliberately machine-matchable: hosts and tests switch on the category instead of parsing the message, so editing
+ *   a message never breaks a caller.
+ * - The categories are split by CONSEQUENCE (what the host must know), not by cause, and severity is orthogonal to
+ *   them.
  * - Append a new value before Count so existing switches keep their meaning.
  */
 enum class DiagnosticCategory : std::uint8_t
@@ -61,14 +64,17 @@ struct VN_GRAPHICS_API RenderDiagnostic
 {
     DiagnosticSeverity severity = DiagnosticSeverity::Error;          ///< How bad it is.
     DiagnosticCategory category = DiagnosticCategory::GeometryRejected; ///< What it is about.
-    String             message;                                       ///< Human-readable detail, with the numbers involved.
+    String             message;                                       ///< Human-readable detail, with the numbers
+                                                                      ///< involved.
 };
 
 /**
  * @brief Callback a host installs to receive backend diagnostics.
  *
  * @details
- * - An empty sink (the default) means "nobody is listening": the backend still counts what happened (RenderBackend::diagnosticCount()) and keeps its own stderr tracing, so a host that installs no sink loses nothing but the programmatic channel.
+ * - An empty sink (the default) means "nobody is listening": the backend still counts what happened
+ *   (RenderBackend::diagnosticCount()) and keeps its own stderr tracing, so a host that installs no sink loses
+ *   nothing but the programmatic channel.
  */
 using DiagnosticSink = std::function<void(const RenderDiagnostic&)>;
 

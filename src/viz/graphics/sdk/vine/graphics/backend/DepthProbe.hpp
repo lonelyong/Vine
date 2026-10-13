@@ -10,8 +10,15 @@
  * @brief A depth attachment read back to the CPU, as the numbers the pass actually wrote.
  *
  * @details
- * - WHY THE DEPTH IS READ AND NOT INFERRED. A colour picture can only say what survived the depth test ("this fragment is hidden"), never what the depth holds: the same picture comes out of a depth buffer that was never written, one that was written too far away, and one whose load op did the wrong thing - and the three need different fixes. Reading the depth turns each of those into a number: a clear that never happened shows up as garbage instead of the clear value, a borrowed depth shows the LENDER's value at the lender's geometry, and a depth written by the wrong pass shows a value no pass of this frame wrote.
- * - FORMAT HONESTY is the other half: the values here are normalised depth in [0, 1] for the formats that can be read (D32 as its raw float, D16 divided by its full scale), and a format that cannot be read yields no probe at all rather than a plausible-looking conversion (see the target's depth capture).
+ * - WHY THE DEPTH IS READ AND NOT INFERRED. A colour picture can only say what survived the depth test ("this
+ *   fragment is hidden"), never what the depth holds: the same picture comes out of a depth buffer that was never
+ *   written, one that was written too far away, and one whose load op did the wrong thing - and the three need
+ *   different fixes. Reading the depth turns each of those into a number: a clear that never happened shows up as
+ *   garbage instead of the clear value, a borrowed depth shows the LENDER's value at the lender's geometry, and a
+ *   depth written by the wrong pass shows a value no pass of this frame wrote.
+ * - FORMAT HONESTY is the other half: the values here are normalised depth in [0, 1] for the formats that can be read
+ *   (D32 as its raw float, D16 divided by its full scale), and a format that cannot be read yields no probe at all
+ *   rather than a plausible-looking conversion (see the target's depth capture).
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -50,7 +57,9 @@ class VN_GRAPHICS_API DepthProbe
     /** @brief Counts the texels whose depth is within @p tolerance of @p value.
      *
      * @details
-     * - The comparison is the one a pass makes: a clear is uniform, so the count says whether the whole attachment holds it, and a tolerance is required because a clear value and a written depth arrive through different paths (a clear value is converted by the driver, a written depth by the shader).
+     * - The comparison is the one a pass makes: a clear is uniform, so the count says whether the whole attachment
+     *   holds it, and a tolerance is required because a clear value and a written depth arrive through different
+     *   paths (a clear value is converted by the driver, a written depth by the shader).
      *
      * @param value Expected depth.
      * @param tolerance Allowed absolute difference.
@@ -61,7 +70,8 @@ class VN_GRAPHICS_API DepthProbe
     /** @brief Gets the normalised values the probe wraps (row-major, one per texel).
      *
      * @details
-     * - For the caller that hands the depths ON rather than probes them - the SDK's readback copies the values out of here.
+     * - For the caller that hands the depths ON rather than probes them - the SDK's readback copies the values out of
+     *   here.
      *
      * @return The values, exactly `width() * height()` of them when valid.
      */

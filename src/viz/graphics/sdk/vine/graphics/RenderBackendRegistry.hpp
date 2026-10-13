@@ -20,7 +20,8 @@ class Camera;
  * @brief Graphics API families a render backend can use.
  *
  * @details
- * - A backend may support several families simultaneously (e.g. OGRE renders through OpenGL, Direct3D or Vulkan at runtime), so the values are bit flags: combine with `|` and test with vn::testFlag().
+ * - A backend may support several families simultaneously (e.g. OGRE renders through OpenGL, Direct3D or Vulkan at
+ *   runtime), so the values are bit flags: combine with `|` and test with vn::testFlag().
  */
 enum class RenderApi : std::uint32_t {
     None     = 0,
@@ -44,7 +45,8 @@ VN_GRAPHICS_API String renderApiToString(RenderApi api);
  * @brief Static metadata describing a render backend implementation.
  *
  * @details
- * - One backend plugin may register several factories (e.g. different GL versions); each factory carries its own RenderBackendInfo.
+ * - One backend plugin may register several factories (e.g. different GL versions); each factory carries its own
+ *   RenderBackendInfo.
  */
 struct VN_GRAPHICS_API RenderBackendInfo {
     String name;          // Unique backend name (identifier), e.g. "vsg", "opengl3".
@@ -59,7 +61,9 @@ struct VN_GRAPHICS_API RenderBackendInfo {
  * @brief Factory creating a concrete render backend.
  *
  * @details
- * - Concrete backends (vsg, hand-written Vulkan, OpenGL, ...) implement this interface and self-register into RenderBackendRegistry, so the application can create a backend by name without a compile-time dependency on the backend module or its third-party libraries.
+ * - Concrete backends (vsg, hand-written Vulkan, OpenGL, ...) implement this interface and self-register into
+ *   RenderBackendRegistry, so the application can create a backend by name without a compile-time dependency on the
+ *   backend module or its third-party libraries.
  * - A single backend plugin can register several factories, one per implementation.
  */
 class VN_GRAPHICS_API RenderBackendFactory {
@@ -81,7 +85,9 @@ class VN_GRAPHICS_API RenderBackendFactory {
     /** @brief Creates a backend instance.
      *
      * @details
-     * - The engine owns the pipeline and drives content per pass, so a backend is not bound to a Vine scene or camera: its content slots are created lazily from the drawing calls a frame's value carries, keyed by the pass identity its entry names (see FrameDescription::Pass).
+     * - The engine owns the pipeline and drives content per pass, so a backend is not bound to a Vine scene or
+     *   camera: its content slots are created lazily from the drawing calls a frame's value carries, keyed by the
+     *   pass identity its entry names (see FrameDescription::Pass).
      *
      * @return Newly created backend; the caller owns the returned reference.
      */
@@ -92,7 +98,8 @@ class VN_GRAPHICS_API RenderBackendFactory {
  * @brief Registry of render backend factories.
  *
  * @details
- * - Backend modules self-register a RenderBackendFactory here (typically via a static Registrar object in the backend's translation unit).
+ * - Backend modules self-register a RenderBackendFactory here (typically via a static Registrar object in the
+ *   backend's translation unit).
  * - The application then creates a backend by name without depending on the backend module at compile time.
  */
 class VN_GRAPHICS_API RenderBackendRegistry {
@@ -128,7 +135,8 @@ class VN_GRAPHICS_API RenderBackendRegistry {
     /** @brief Gets a snapshot of all registered backends.
      *
      * @details
-     * - Safe to call concurrently; the returned snapshot is independent of the registry's internal state. Use it to iterate and query the registered backends, e.g. to list available backends or inspect their factories.
+     * - Safe to call concurrently; the returned snapshot is independent of the registry's internal state. Use it to
+     *   iterate and query the registered backends, e.g. to list available backends or inspect their factories.
      *
      * @return One entry per registered backend, ordered by name.
      */
