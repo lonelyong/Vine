@@ -35,11 +35,14 @@ enum class ShadowFilter {
 /**
  * @brief Per-light shadow-map settings (value type).
  *
- * `resolution` and `bias` are consumed by the renderers that build and sample a shadow map;
- * `filter` is RESERVED — no renderer reads it yet (the shadow term does one depth compare, see
- * ShaderAbi.hpp's VineShadowBlock), so setting it changes nothing today. It is kept so a host can
- * state the intent a future PCF implementation will honour, and marked here so it cannot be
- * mistaken for a working quality knob.
+ * @details
+ * - `resolution` and `bias` are consumed by the renderers that build and sample a shadow map.
+ *
+ * @note
+ * - `filter` is RESERVED: no renderer reads it yet (the shadow term does one depth compare - see
+ *   ShaderAbi.hpp's VineShadowBlock), so setting it changes nothing today. It is kept so a host can state
+ *   the intent a future PCF implementation will honour, and marked here so it cannot be mistaken for a
+ *   working quality knob.
  */
 struct VN_GRAPHICS_API ShadowSettings {
     uint32_t     resolution = 1024;                    ///< Shadow-map side length in texels.
@@ -50,10 +53,10 @@ struct VN_GRAPHICS_API ShadowSettings {
 /**
  * @brief A light source attached to a Scene.
  *
- * Lights live at scene level (not on a pass or on a geometry node): a pass
- * lights whatever scene it renders, so the same content lit identically in
- * the main, off-screen or shadow passes. v4 ships Ambient and Directional
- * lights; Point/Spot and attachable (node-level) lights are planned later.
+ * @details
+ * - Lights live at SCENE level (not on a pass or a geometry node): a pass lights whatever scene it renders,
+ *   so the same content is lit identically in the main, off-screen and shadow passes.
+ * - Ambient and Directional are shipped; Point / Spot and attachable (node-level) lights are planned later.
  */
 class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
     VN_OBJECT_META_DECL;
@@ -63,7 +66,10 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
     /** @brief Constructs an ambient light (white, full intensity). */
     Light();
 
-    /** @brief Creates an ambient light. */
+    /** @brief Creates an ambient light.
+     *
+     * @return The new light (white, full intensity, enabled).
+     */
     static LightPtr createAmbient();
 
     /** @brief Creates a directional light.
@@ -73,7 +79,10 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
     static LightPtr createDirectional(const vn::math::Vec3d& direction = vn::math::Vec3d(0.0, 0.0, -1.0));
 
   public:
-    /** @brief Gets the light name. */
+    /** @brief Gets the light name.
+     *
+     * @return The name (empty when never set).
+     */
     String name() const;
 
     /** @brief Sets the light name.
@@ -82,10 +91,16 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      */
     void setName(const String& name);
 
-    /** @brief Gets the light's type. */
+    /** @brief Gets the light's type.
+     *
+     * @return The light type (see LightType).
+     */
     LightType type() const;
 
-    /** @brief Returns whether the light contributes to shading. */
+    /** @brief Returns whether the light contributes to shading.
+     *
+     * @return true when the light is enabled.
+     */
     bool isEnabled() const;
 
     /** @brief Sets whether the light contributes to shading.
@@ -94,7 +109,10 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      */
     void setEnabled(bool enabled);
 
-    /** @brief Gets the light colour (RGB, A ignored). */
+    /** @brief Gets the light colour (RGB, A ignored).
+     *
+     * @return The colour.
+     */
     Colorf color() const;
 
     /** @brief Sets the light colour.
@@ -103,7 +121,10 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      */
     void setColor(const Colorf& color);
 
-    /** @brief Gets the light intensity multiplier. */
+    /** @brief Gets the light intensity multiplier.
+     *
+     * @return The multiplier (1 is neutral).
+     */
     float intensity() const;
 
     /** @brief Sets the light intensity multiplier.
@@ -112,12 +133,18 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      */
     void setIntensity(float intensity);
 
-    /** @brief Returns whether the light is directional (has a direction). */
+    /** @brief Returns whether the light is directional (has a direction).
+     *
+     * @return true for directional lights.
+     */
     bool hasDirection() const;
 
     /** @brief Gets the light propagation direction (world space).
      *
-     * Only meaningful for directional lights.
+     * @details
+     * - Only meaningful for directional lights.
+     *
+     * @return The direction.
      */
     vn::math::Vec3d direction() const;
 
@@ -127,22 +154,29 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      */
     void setDirection(const vn::math::Vec3d& direction);
 
-    /** @brief Returns whether the light casts a shadow (directional, v4b). */
+    /** @brief Returns whether the light casts a shadow (directional, v4b).
+     *
+     * @return true when shadow casting is requested.
+     */
     bool castShadow() const;
 
     /** @brief Sets whether the light casts a shadow.
      *
-     * Read by RenderPipelineBuilder, which builds ONE depth-only pass for the FIRST enabled,
-     * shadow-casting directional light of the content it was given (the further ones, and any
-     * content rendered by passes it did not create, stay unshadowed and are reported on the host's
-     * diagnostic channel). The engine itself schedules nothing: a shadow pass is an ordinary
-     * registered pass at PipelineStage::Depth.
+     * @details
+     * - Read by RenderPipelineBuilder, which builds ONE depth-only pass for the FIRST enabled, shadow-casting
+     *   directional light of the content it was given (further ones, and content rendered by passes it did not
+     *   create, stay unshadowed and are reported on the host's diagnostic channel).
+     * - The engine itself schedules nothing: a shadow pass is an ordinary registered pass at
+     *   PipelineStage::Depth.
      *
      * @param cast True to request shadow casting.
      */
     void setCastShadow(bool cast);
 
-    /** @brief Gets the shadow-map settings (resolution / bias / filter). */
+    /** @brief Gets the shadow-map settings (resolution / bias / filter).
+     *
+     * @return The current settings.
+     */
     const ShadowSettings& shadowSettings() const;
 
     /** @brief Sets the shadow-map settings.

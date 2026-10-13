@@ -10,7 +10,8 @@ using vn::math::Vec3d;
 /**
  * @brief Ray struct for picking and collision detection.
  *
- * Represents a ray in 3D space defined by an origin point and a direction.
+ * @details
+ * - A ray in 3D space: an origin point and a direction (unit vector).
  */
 struct VN_GRAPHICS_API Ray {
     /** Ray origin point. */

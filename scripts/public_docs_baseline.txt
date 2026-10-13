@@ -1056,17 +1056,7 @@ src/viz/graphics/sdk/vine/graphics/Geometry.hpp	return|Geometry::normalCount
 src/viz/graphics/sdk/vine/graphics/Geometry.hpp	return|Geometry::positionCount
 src/viz/graphics/sdk/vine/graphics/Geometry.hpp	return|Geometry::texcoordComponents
 src/viz/graphics/sdk/vine/graphics/Geometry.hpp	return|Geometry::texcoordCount
-src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::castShadow
-src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::color
-src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::createAmbient
 src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::createDirectional
-src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::direction
-src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::hasDirection
-src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::intensity
-src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::isEnabled
-src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::name
-src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::shadowSettings
-src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::type
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onKeyDown/1
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onKeyUp/1
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onMouseMove/1
