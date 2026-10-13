@@ -26,7 +26,9 @@ class Scene;
 /**
  * @brief Result of ray-geometry intersection test.
  *
- * Contains detailed information about the intersection point, if any.
+ * @details
+ * - Everything a consumer needs from one hit: whether it happened, where (point / normal / distance),
+ *   which geometry, and which triangle (max() when not applicable).
  */
 struct VN_GRAPHICS_API RayIntersectionResult {
     /** Whether the ray hit the geometry. */
@@ -51,8 +53,8 @@ struct VN_GRAPHICS_API RayIntersectionResult {
 /**
  * @brief Ray-geometry intersection computation.
  *
- * Provides static methods for computing ray-geometry intersections,
- * supporting both single geometry and full scene queries.
+ * @details
+ * - Static queries against one geometry or a whole scene.
  */
 class VN_GRAPHICS_API RayIntersection {
   public:
@@ -62,28 +64,27 @@ class VN_GRAPHICS_API RayIntersection {
         AllHits,  ///< Every triangle intersection, sorted near to far.
     };
 
-    /** @brief Tests ray intersection with a single geometry.
+    /** @brief Tests ray intersection with a single geometry (closest hit only).
      *
-     * Returns the closest intersection only.
-     *
-     * A geometry whose @p world is SINGULAR (a zero scale on any axis, so the
-     * transform loses a dimension) has no volume to intersect: it is reported
-     * as a miss rather than tested in a space it does not have.
+     * @details
+     * - A geometry whose @p world is SINGULAR (a zero scale on any axis, so the transform loses a
+     *   dimension) has no volume to intersect: it is reported as a miss rather than tested in a space it
+     *   does not have.
      *
      * @param ray      The ray to test.
      * @param geometry The geometry to intersect with.
      * @param world    World transform of the geometry (must be invertible to be picked).
-     * @return Intersection result. hit=false if no intersection.
+     * @return Intersection result; hit=false when there is no intersection.
      */
     static RayIntersectionResult intersect(const Ray& ray, raw_ptr<Geometry> geometry,
                                            const Mat4d& world);
 
     /** @brief Tests ray intersection with a single geometry for a given mode.
      *
-     * Nearest returns at most the closest hit; AllHits returns every triangle
-     * hit of the geometry (front and back faces), each tagged with the
-     * geometry, in no particular order — sort by distance when ordering is
-     * needed.
+     * @details
+     * - Nearest returns at most the closest hit; AllHits returns every triangle hit of the geometry
+     *   (front and back faces), each tagged with the geometry, in no particular order - sort by distance
+     *   when ordering is needed.
      *
      * @param ray      The ray to test.
      * @param geometry The geometry to intersect with.
@@ -94,32 +95,30 @@ class VN_GRAPHICS_API RayIntersection {
     static std::vector<RayIntersectionResult> intersect(const Ray& ray, raw_ptr<Geometry> geometry,
                                                         const Mat4d& world, Mode mode);
 
-    /** @brief Tests ray intersection with all geometries in a scene.
+    /** @brief Tests ray intersection with all geometries in a scene (closest hit only).
      *
-     * Returns only the closest intersection.
-     *
-     * The @p layer_mask selects like the collection does (see Scene::collectRenderCommands): a visible
-     * geometry whose resolved layers do not intersect the mask is left out of the query. A node that
-     * re-declares its layers is picked under its own declaration (containers are structure - the test is
-     * taken at the drawn geometry); kAllLayers (the default) picks everything visible, exactly as before.
+     * @details
+     * - The @p layer_mask selects like the collection does (see Scene::collectRenderCommands): a visible
+     *   geometry whose resolved layers do not intersect the mask is left out of the query; a node that
+     *   re-declares its layers is picked under its own declaration (containers are structure - the test is
+     *   taken at the drawn geometry); kAllLayers (the default) picks everything visible, exactly as before.
      *
      * @param ray        The ray to test.
      * @param scene      The scene containing geometries.
      * @param layer_mask Layers this query picks (see Node::setLayers).
-     * @return Intersection result. hit=false if no intersection.
+     * @return Intersection result; hit=false when there is no intersection.
      */
     static RayIntersectionResult intersectScene(const Ray& ray, raw_ptr<Scene> scene,
                                                 std::uint32_t layer_mask = kAllLayers);
 
-    /** @brief Tests ray intersection with all geometries in a scene.
+    /** @brief Tests ray intersection with all geometries in a scene, for a given mode.
      *
-     * Results are sorted by distance (near to far). Nearest returns the
-     * closest hit of every geometry; AllHits returns every triangle hit in
-     * the scene (multiple hits per geometry, including back faces).
-     *
-     * The @p layer_mask selects like the collection does (see Scene::collectRenderCommands): a visible
-     * geometry whose resolved layers do not intersect the mask is left out. A node that re-declares its
-     * layers is picked under its own declaration; kAllLayers (the default) picks everything visible.
+     * @details
+     * - Results are sorted by distance (near to far). Nearest returns the closest hit of every geometry;
+     *   AllHits returns every triangle hit in the scene (multiple hits per geometry, including back faces).
+     * - The @p layer_mask selects like the collection does (see Scene::collectRenderCommands): a visible
+     *   geometry whose resolved layers do not intersect the mask is left out; a re-declaration counts;
+     *   kAllLayers (the default) picks everything visible.
      *
      * @param ray        The ray to test.
      * @param scene      The scene containing geometries.

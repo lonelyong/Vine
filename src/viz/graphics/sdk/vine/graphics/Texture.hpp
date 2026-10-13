@@ -18,24 +18,18 @@ VN_GRAPHICS_NS_BEGIN
 /**
  * @brief A texture the renderer samples: a description plus the CPU images that fill it.
  *
- * WHAT IT HOLDS. The sampling-facing facts — kind, size, pixel format, mip count — and the source images
- * that fill it, one per face.
- * The description exists on its own so a texture can be created once and filled face by face, and it is the
- * description that a source image must match: a mismatch is rejected where it is made, not discovered at
- * upload time.
- *
- * WHY IT IS NOT AN `imaging::Image`. An `Image` is pixels in CPU memory and knows nothing about sampling;
- * a `Texture` is what the renderer samples and need not have pixels at all yet. Neither expresses the other:
- * a read-back image has no sampling role, and a texture is what a source image has to agree with.
- *
- * WHY IT IS NOT THE GPU OBJECT EITHER. Like `RenderTarget`, this is a LOGICAL description: it owns no GPU
- * resource and no device handle.
- * The backend that can create textures owns them and materialises this description — the same division that
- * lets a pipeline be built, validated and tested with no device present.
- *
- * KINDS. `D2` is one 2D image; `Cube` is six, each a 2D image of its own with its own mip chain.
- * Larger kinds (1D, 3D, arrays) are deliberately absent until something needs them, and adding one means
- * answering what `faceCount()` means for it.
+ * @details
+ * - Holds the sampling-facing facts (kind, size, pixel format, mip count) and the source images that fill
+ *   it, one per face. The description stands on its own so a texture can be created once and filled face
+ *   by face, and a source image must MATCH the description - a mismatch is rejected where it is made, not
+ *   discovered at upload time.
+ * - Not an `imaging::Image` (pixels in CPU memory, knowing nothing about sampling), and not the GPU object
+ *   either: like `RenderTarget`, this is a LOGICAL description that owns no GPU resource and no device
+ *   handle - the backend that can create textures materialises it, which is what lets a pipeline be built,
+ *   validated and tested with no device present.
+ * - KINDS: `D2` is one 2D image; `Cube` is six, each a 2D image with its own mip chain. Larger kinds
+ *   (1D, 3D, arrays) are deliberately absent until something needs them - adding one means answering what
+ *   `faceCount()` means for it.
  */
 class VN_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
     VN_OBJECT_META_DECL;
@@ -51,12 +45,14 @@ class VN_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
     /**
      * @brief Describes a texture, with every face left unfilled.
      *
-     * The texture starts incomplete: a description is not content, and the faces are filled separately.
+     * @details
+     * - The texture starts incomplete: a description is not content, and the faces are filled separately.
      *
-     * PROTECTED, because a kind is a TYPE here rather than a constructor argument. A public constructor
-     * taking a kind would let a caller describe a cube through a path that skips whatever invariants the
-     * named type carries — that its faces are square, that they are addressed by name rather than by an
-     * index whose meaning only Vulkan's layer order defines.
+     * @note
+     * - PROTECTED because a kind is a TYPE here rather than a constructor argument: a public kind-taking
+     *   constructor would let a caller describe a cube through a path that skips whatever invariants the
+     *   named type carries (square faces; faces addressed by name rather than by an index whose meaning
+     *   only Vulkan's layer order defines).
      *
      * @param kind      How many images the texture is made of.
      * @param width     Width in pixels of every face; must be positive.
@@ -217,8 +213,9 @@ class VN_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
 /**
  * @brief A texture of one 2D image.
  *
- * The named form of `Kind::D2`. It takes no layer index at all, because a 2D texture has exactly one image
- * and an index that can only ever be 0 is a mistake waiting to be written.
+ * @details
+ * - The named form of `Kind::D2`; it takes no layer index at all, because a 2D texture has exactly one
+ *   image and an index that can only ever be 0 is a mistake waiting to be written.
  */
 class VN_GRAPHICS_API Texture2D : public Texture {
     VN_OBJECT_META_DECL;
@@ -263,12 +260,13 @@ class VN_GRAPHICS_API Texture2D : public Texture {
 /**
  * @brief A texture of six 2D images forming a cube, one per face.
  *
- * The faces are NAMED rather than numbered, because the numbering is not a free choice: Vulkan fixes the
- * layer order to +X, -X, +Y, -Y, +Z, -Z, so a caller passing "4" would have to know that order to fill the
- * face it meant.
- *
- * The faces are square by construction: a cube map with non-square faces is a description no sampling
- * hardware accepts, so the size is stated once rather than width and height being two chances to disagree.
+ * @details
+ * - The faces are NAMED rather than numbered, because the numbering is not a free choice: Vulkan fixes
+ *   the layer order to +X, -X, +Y, -Y, +Z, -Z, so a caller passing "4" would have to know that order to
+ *   fill the face it meant.
+ * - The faces are square by construction: a cube map with non-square faces is a description no sampling
+ *   hardware accepts, so the size is stated once rather than width and height being two chances to
+ *   disagree.
  */
 class VN_GRAPHICS_API CubeMap : public Texture {
     VN_OBJECT_META_DECL;
