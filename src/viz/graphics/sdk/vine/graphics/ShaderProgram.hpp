@@ -25,10 +25,10 @@ enum class ShaderStageType
 /**
  * @brief One shader stage: a GLSL source with an entry point.
  *
- * A value type aggregating the authored source of a single stage. The SDK is
- * backend-agnostic and never compiles; the render backend compiles the GLSL
- * to SPIR-V at run time (vsg ShaderCompiler, glslang) or consumes
- * pre-compiled SPIR-V supplied through the program.
+ * @details
+ * - A value type aggregating the authored source of a single stage. The SDK is backend-agnostic and never
+ *   compiles; the render backend compiles the GLSL to SPIR-V at run time (vsg ShaderCompiler, glslang) or
+ *   consumes pre-compiled SPIR-V supplied through the program.
  */
 struct VN_GRAPHICS_API ShaderStage
 {
@@ -40,25 +40,32 @@ struct VN_GRAPHICS_API ShaderStage
 /**
  * @brief Backend-agnostic, user-authored shader program (a set of stages).
  *
- * ShaderProgram is the thin programmable-shading handle: it simply groups the
- * GLSL sources of the stages (vertex + fragment today) that replace the
- * engine's default program for the objects it is bound to. Parameters,
- * texture slots and pass-level inputs are layered on later (see
- * .ai/design/graphics-shader.md). A Geometry whose program() is null uses the
- * session's default content program (material driven) — zero regression.
+ * @details
+ * - The thin programmable-shading handle: it groups the GLSL sources of the stages (vertex + fragment
+ *   today) that replace the engine's default program for the objects it is bound to. Parameters, texture
+ *   slots and pass-level inputs are layered on later (see .ai/design/graphics-shader.md).
+ * - A Geometry whose program() is null uses the session's default content program (material driven) -
+ *   zero regression.
  */
 class VN_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderProgram> {
     VN_OBJECT_META_DECL;
 
   public:
+    /** @brief Constructs an empty program (no stages). */
     ShaderProgram();
     ~ShaderProgram();
 
   public:
-    /** @brief Gets the program name. */
+    /** @brief Gets the program name.
+     *
+     * @return The name (empty when never set).
+     */
     String name() const;
 
-    /** @brief Sets the program name. */
+    /** @brief Sets the program name.
+     *
+     * @param name New program name.
+     */
     void setName(const String& name);
 
     /** @brief Appends a shader stage.
@@ -75,20 +82,20 @@ class VN_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderPro
      */
     void clearStages();
 
-    /** @brief Replaces all stages at once.
+    /** @brief Replaces all stages at once (bumps the content revision).
      *
-     * Bumps the content revision. This is the edit-path entry point for
-     * hot-reloading an authored shader (the backend keys its cached compiled
-     * ShaderSet / pipeline variants by this revision).
+     * @details
+     * - The edit-path entry point for hot-reloading an authored shader: the backend keys its cached compiled
+     *   ShaderSet / pipeline variants by this revision.
      *
      * @param stages New stage list.
      */
     void replaceStages(const std::vector<ShaderStage>& stages);
 
-    /** @brief Replaces the stage at @p index.
+    /** @brief Replaces the stage at @p index (bumps the content revision).
      *
-     * Bumps the content revision. Lets an editor patch a single stage's source
-     * without rebuilding the stage list.
+     * @details
+     * - Lets an editor patch a single stage's source without rebuilding the stage list.
      *
      * @param index Index of the stage to replace.
      * @param stage Replacement stage.
@@ -98,16 +105,19 @@ class VN_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderPro
 
     /** @brief Gets the program's content revision.
      *
-     * Bumped by every stage mutation (addStage / clearStages / replaceStages /
-     * setStage). Backends use it to detect that a retained program object's
-     * content changed, so compiled shader sets / pipeline variants built from
-     * the old content are rebuilt.
+     * @details
+     * - Bumped by every stage mutation (addStage / clearStages / replaceStages / setStage). Backends use it
+     *   to detect that a retained program object's content changed, so compiled shader sets / pipeline
+     *   variants built from the old content are rebuilt.
      *
      * @return Monotonic content revision (starts at 0).
      */
     std::uint64_t revision() const;
 
-    /** @brief Gets the number of stages in the program. */
+    /** @brief Gets the number of stages in the program.
+     *
+     * @return The stage count.
+     */
     std::size_t stageCount() const;
 
     /** @brief Gets the stage at @p index.
@@ -117,7 +127,10 @@ class VN_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderPro
      */
     const ShaderStage* stage(std::size_t index) const;
 
-    /** @brief Gets all stages (read-only). */
+    /** @brief Gets all stages (read-only).
+     *
+     * @return The stages, in addition order.
+     */
     const std::vector<ShaderStage>& stages() const;
 
   private:

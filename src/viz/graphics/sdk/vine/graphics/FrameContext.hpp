@@ -4,12 +4,12 @@
 VN_GRAPHICS_NS_BEGIN
 
 /**
- * @brief Per-frame shared context (skeleton).
+ * @brief Per-frame shared context.
  *
- * Carries values that many passes / overlays need during one frame, updated
- * by RenderEngine each frame: elapsed time and the current surface size.
- * Later extensions: previous-frame view-projection matrices (for temporal
- * effects such as motion vectors / TAA) and the active light list.
+ * @details
+ * - Values many passes / overlays need during one frame, updated by RenderEngine each frame: elapsed time
+ *   and the current surface size. Later extensions: previous-frame view-projection matrices (temporal
+ *   effects) and the active light list.
  */
 struct VN_GRAPHICS_API FrameContext {
     double dt = 0.0;  ///< Seconds elapsed since the previous frame.

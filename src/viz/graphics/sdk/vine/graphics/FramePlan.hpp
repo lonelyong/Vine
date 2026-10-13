@@ -21,12 +21,12 @@ class Scene;
 /**
  * @brief One pass of a frame plan: which pass runs, and the facts the engine knows about it.
  *
- * A DESCRIPTION, not a handle: everything here is a copy of a value the pass or the engine's slot already
- * holds, so a plan can be handed to a log line, a test or a HUD without keeping anything alive (the two
- * pointers are borrowed, like every raw_ptr in this module).
- *
- * What it deliberately does NOT carry: whether this pass presents a SURFACE. That is the surface's table
- * (RenderSurface) - the engine draws whatever is registered, and "who this is for" is not its to know.
+ * @details
+ * - A DESCRIPTION, not a handle: everything is a copy of a value the pass or the engine's slot already holds,
+ *   so a plan can be handed to a log line, a test or a HUD without keeping anything alive (the two pointers
+ *   are borrowed).
+ * - What it deliberately does NOT carry: whether this pass presents a SURFACE - that is the surface's table
+ *   (RenderSurface); the engine draws whatever is registered, and "who this is for" is not its to know.
  */
 struct VN_GRAPHICS_API PassPlan
 {
@@ -81,12 +81,13 @@ struct VN_GRAPHICS_API PassPlan
 /**
  * @brief A frame's plan: the passes the engine will run, in the order it will run them.
  *
- * The answer to "what does a frame of this pipeline consist of", which used to have to be assembled from
- * `passCount()` and pointer comparisons (or read out of a log after the fact). Every pass appears exactly
- * once, in execution order, with the facts about it - so a test asserts on the SHAPE of a frame instead of on
- * a count, and a host can print one line per pass without reaching into the engine's slots.
+ * @details
+ * - The answer to "what does a frame of this pipeline consist of", which used to have to be assembled from
+ *   `passCount()` and pointer comparisons (or read out of a log after the fact). Every pass appears exactly
+ *   once, in execution order, with the facts about it - a test asserts on the SHAPE of a frame instead of on
+ *   a count, and a host can print one line per pass without reaching into the engine's slots.
  *
- * See RenderEngine::framePlan().
+ * @see RenderEngine::framePlan
  */
 struct VN_GRAPHICS_API FramePlan
 {

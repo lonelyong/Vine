@@ -26,28 +26,22 @@ class ShaderProgram;
 /**
  * @brief How a pass has its target cleared before it draws.
  *
- * A PASS' OWN FACT, and a field of the pass' description (PassDescription::clear), applied when the pass draws: it
- * reads as what it is - the pass describes the clear its content expects, and every draw call of that pass gets it. Nothing is
- * cleared at the moment of the call - a backend that clears through its render pass' load-op (which is what the
- * load-op IS for) applies it when the pass records, and the name no longer promises an action that may never
- * happen.
- *
- * ONE COLOUR, because one colour is what a colour ATTACHMENT gets: @ref color is attachment 0's, and every
- * further attachment of an MRT target is left TRANSPARENT BLACK (0,0,0,0) until a fragment writes it. That is
- * the contract, not an omission: it lets a consumer tell "nothing was drawn here" from the stored data itself -
- * the deferred-lighting program reads a stored view position of ~0 as background - so a backend may not clear
- * every attachment uniformly without auditing those consumers, and one that cannot honour this must report it on
- * its diagnostics channel instead of clearing differently.
- *
- * DEPTH IS A FLAG, NOT A VALUE: every backend clears depth to its own far plane (this SDK's backends render
- * reverse-Z, whose far plane is 0 - see Camera), so a value here would be a second place to get the clip
- * convention wrong. @ref depth is honoured for off-screen targets, whose depth content survives frames through a
- * depth-LOAD pass; the WINDOW is the exception - the surface render pass belongs to the windowing system and
- * clears depth whatever this says (a pass that needs a previous frame's depth renders into an off-screen target
- * and composites it).
- *
- * WHERE IT LIVES: with the rest of a pass' description, not with the backend interface - it is what a pass
- * states about itself, and a backend is one of its readers (RenderBackend::setClearPolicy).
+ * @details
+ * - A PASS' OWN FACT, a field of its description (PassDescription::clear): the pass describes the clear its
+ *   content expects and every draw of that pass gets it. Nothing is cleared at call time - a backend that
+ *   clears through its render pass' load-op applies it when the pass records.
+ * - ONE COLOUR: @ref color is attachment 0's; every further attachment of an MRT target is left TRANSPARENT
+ *   BLACK (0,0,0,0) until a fragment writes it. That is the contract, not an omission - it lets a consumer
+ *   tell "nothing was drawn here" from the stored data itself (the deferred-lighting program reads a stored
+ *   view position of ~0 as background), so a backend may not clear every attachment uniformly without
+ *   auditing those consumers; one that cannot honour this must report it instead of clearing differently.
+ * - DEPTH IS A FLAG, NOT A VALUE: every backend clears depth to its own far plane (reverse-Z here, far = 0 -
+ *   see Camera), so a value here would be a second place to get the clip convention wrong. @ref depth is
+ *   honoured for off-screen targets (whose depth survives frames through a depth-LOAD pass); the WINDOW is
+ *   the exception - its render pass clears depth whatever this says, so a pass needing a previous frame's
+ *   depth renders into an off-screen target and composites it.
+ * - It lives with the rest of a pass' description, not with the backend interface: a backend is one of its
+ *   readers (RenderBackend::setClearPolicy).
  */
 struct ClearPolicy
 {
@@ -60,15 +54,17 @@ struct ClearPolicy
 /**
  * @brief ONE DRAWING CALL of a pass: what it draws, through what, and with what announced for it.
  *
- * The value a pass produces instead of CALLING the backend (see PassDescription). Everything here is either a
- * borrowed pointer (valid for the call, like every raw_ptr in this module) or a shared or owned handle kept
- * alive by this value, so a description is only ever read while its producer is alive.
+ * @details
+ * - The value a pass produces instead of CALLING the backend (see PassDescription). Everything here is either
+ *   a borrowed pointer (valid for the call) or a handle kept alive by this value, so a description is only
+ *   ever read while its producer is alive.
  *
- * WHY THE ORDER IS NOT HERE. Today's wire makes the backend infer meaning from call order (a state setter is an
- * attribute of the scope that is open; a viewport/the lights are consumed by the NEXT draw). A description has
- * no order: which state belongs to a pass and which belongs to one draw is the SHAPE of these two structs
- * (PassDescription's fields belong to the pass, DrawDescription's to this draw), so the rules cannot be broken
- * by calling something at the wrong moment.
+ * @note
+ * - Why the ORDER is not here: the old wire made the backend infer meaning from call order (state setters as
+ *   the open scope's attribute; viewport / lights consumed by the NEXT draw). A description has no order -
+ *   which state belongs to a pass and which to one draw is the SHAPE of these structs (PassDescription's
+ *   fields belong to the pass, DrawDescription's to this draw), so the rules cannot be broken by calling
+ *   something at the wrong moment.
  */
 struct VN_GRAPHICS_API DrawDescription
 {

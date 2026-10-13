@@ -1068,11 +1068,4 @@ src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp	return|RenderTarget::height
 src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp	return|RenderTarget::width
 src/viz/graphics/sdk/vine/graphics/SceneView.hpp	return|SceneView::camera
 src/viz/graphics/sdk/vine/graphics/SceneView.hpp	return|SceneView::engine
-src/viz/graphics/sdk/vine/graphics/ScreenPass.hpp	return|ScreenPass::program
-src/viz/graphics/sdk/vine/graphics/ScreenPass.hpp	return|ScreenPass::sourceTarget
-src/viz/graphics/sdk/vine/graphics/ShaderProgram.hpp	brief|ShaderProgram::ShaderProgram
-src/viz/graphics/sdk/vine/graphics/ShaderProgram.hpp	param|ShaderProgram::setName/1
-src/viz/graphics/sdk/vine/graphics/ShaderProgram.hpp	return|ShaderProgram::name
-src/viz/graphics/sdk/vine/graphics/ShaderProgram.hpp	return|ShaderProgram::stageCount
-src/viz/graphics/sdk/vine/graphics/ShaderProgram.hpp	return|ShaderProgram::stages
 src/viz/graphics/sdk/vine/graphics/Viewport.hpp	return|Viewport::isValid

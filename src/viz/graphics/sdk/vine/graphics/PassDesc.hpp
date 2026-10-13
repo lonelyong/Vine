@@ -24,9 +24,10 @@ VN_GRAPHICS_NS_BEGIN
 /**
  * @brief How a declared pass turns its declarations into a picture (see PassDesc).
  *
- * A CLOSED SET, and deliberately small: the kind picks the ONE execution the engine knows how to run, so a
- * caller adds a pass by naming a kind instead of deriving a class. Everything a pass DOES within its kind
- * (which program, which content, where it lands) is a field of the declaration.
+ * @details
+ * - A CLOSED SET, and deliberately small: the kind picks the ONE execution the engine knows how to run, so
+ *   a caller adds a pass by naming a kind instead of deriving a class. Everything a pass DOES within its
+ *   kind (which program, which content, where it lands) is a field of the declaration.
  */
 enum class PassKind : std::uint8_t
 {
@@ -37,9 +38,10 @@ enum class PassKind : std::uint8_t
 /**
  * @brief The shape a transient target is built at (see PassDesc::writes_image).
  *
- * A transient is declared rather than created: the pass says what IMAGE it needs, and the frame's compile
- * allocates the attachment, keys it by (identity, shape), reuses it while the declaration holds, and lets it
- * go when the declaration goes away (see RenderEngine::transientTargetCount).
+ * @details
+ * - A transient is declared rather than created: the pass says what IMAGE it needs, and the frame's compile
+ *   allocates the attachment, keys it by (identity, shape), reuses it while the declaration holds, and lets
+ *   it go when the declaration goes away (see RenderEngine::transientTargetCount).
  */
 struct TransientShape
 {
@@ -58,21 +60,23 @@ struct TransientShape
 /**
  * @brief What a pass IS, as one value.
  *
- * WHY A VALUE AND NOT A CLASS. A pass used to be a `RenderPass` (or a subclass of it) configured by a dozen
- * setters: adding a kind of pass meant deriving a class, and nothing could read the whole declaration at once
- * (each setter had to announce that it had moved - see the deleted wiring revision). A descriptor is the
- * declaration read as data: the engine can look at every pass of a frame together - which is what makes a
- * COMPILED frame possible (RenderEngine::framePlan) - and a caller writes a pass without adding a type.
+ * @details
+ * - What the engine does with it: `RenderEngine::addPass(const PassDesc&)` turns the descriptor into the
+ *   execution node for its kind (Scene -> RenderPass, Screen -> ScreenPass) ONCE, and that node is the
+ *   single storage of the declaration - a descriptor and a hand-built pass cannot drift apart, because a
+ *   descriptor IS a hand-built pass by the time the engine sees it.
+ * - `engine->addPass(RenderPass, content, order)` stays the escape hatch for a pass that needs something
+ *   the kinds cannot express.
+ * - What is NOT here: a descriptor cannot invent an execution (that is PassKind), cannot be a subtree of
+ *   content (Scene), and cannot decide how a backend draws (the program's own ABI). The state it states is
+ *   the pass-scoped half of the ONE resolution table (see .ai/design/graphics-state.md §4).
  *
- * WHAT THE ENGINE DOES WITH IT. `RenderEngine::addPass(const PassDesc&)` turns the descriptor into the
- * execution node for its kind (Scene -> RenderPass, Screen -> ScreenPass) ONCE, and that node is the single
- * storage of the declaration: a descriptor and a hand-built pass cannot drift apart, because a descriptor
- * IS a hand-built pass by the time the engine sees it. `engine->addPass(RenderPass, content, order)` stays
- * the escape hatch for a pass that needs to do something the kinds cannot express (invariant: 逃生口永远在).
- *
- * WHAT IS NOT HERE. A descriptor cannot invent an execution (that is PassKind), cannot be a subtree of
- * content (that is Scene), and cannot decide how a backend draws (that is the program's own ABI). The state
- * it states is the pass-scoped half of the ONE resolution table (see .ai/design/graphics-state.md §4).
+ * @note
+ * - Why a value and not a class: a pass used to be a configured `RenderPass` subclass, so adding a kind
+ *   meant deriving a class and nothing could read the whole declaration at once (each setter had to
+ *   announce it moved). A descriptor is the declaration read AS DATA - the engine can look at every pass
+ *   of a frame together (which is what makes a COMPILED frame possible - RenderEngine::framePlan) and a
+ *   caller writes a pass without adding a type.
  */
 struct VN_GRAPHICS_API PassDesc
 {
@@ -140,12 +144,11 @@ struct VN_GRAPHICS_API PassDesc
     DepthMode depth_mode{ DepthMode::TestAndWrite };
     /// Which layers of the CONTENT this pass draws (see Node::setLayers): a node whose layers do not
     /// intersect the mask is left out of the walk that fills this pass. kAllLayers (the default) draws
-    /// everything - including the content that declares no layers (kDefaultLayer) - which is why a
-    /// declaration that says nothing is unchanged by layers existing.
-    ///
-    /// A mask instead of a layer or a list: it is what one AND answers for a node, and what makes "these two"
-    /// as cheap as "one". A mask of 0 selects nothing - legal, and reported once as a frame-plan problem,
-    /// because a content pass that draws nothing is nearly always a mistake (see .ai/design/graphics-layers.md).
+    /// everything - including content that declares no layers (kDefaultLayer) - so saying nothing is
+    /// unchanged by layers existing. A mask instead of a layer or a list: one AND answers for a node, and
+    /// "these two" is as cheap as "one". A mask of 0 selects nothing - legal, and reported once as a
+    /// frame-plan problem, because a content pass that draws nothing is nearly always a mistake
+    /// (see .ai/design/graphics-layers.md).
     std::uint32_t layer_mask{ kAllLayers };
 
     /// Whether this pass runs at all (a disabled pass keeps its declaration, costs nothing, and still counts

@@ -15,17 +15,15 @@ class ShaderProgram;
 /**
  * @brief A full-screen (screen-space) pass: it draws a published target's images through a PROGRAM.
  *
- * A ScreenPass renders no scene geometry. It resolves a source RenderTarget from the named-output
- * registry (see RenderPass::addInputName / resolveInputTextures), then draws a full-screen triangle
- * through its fragment program (see setProgram) into this pass's output target — or the backbuffer
- * when no target is set, optionally into a sub-viewport picture-in-picture rectangle (see
- * setViewport).
- *
- * A PROGRAM IS REQUIRED, and there is no implicit one: a pass with no program draws NOTHING (the
- * engine reports it once, at wiring time). The common cases have SDK programs —
- * BuiltinShaders::screenCopyProgram for a plain copy, BuiltinShaders::deferredLightProgram for
- * deferred lighting — and anything else is a program the host writes. That is what makes the picture
- * a pass draws something the host stated rather than something a backend filled in.
+ * @details
+ * - It renders no scene geometry: it resolves a source RenderTarget from the named-output registry (see
+ *   RenderPass::addInputName / resolveInputTextures) and draws a full-screen triangle through its fragment
+ *   program (setProgram) into this pass's output target - or the backbuffer when no target is set -
+ *   optionally into a sub-viewport rectangle (setViewport).
+ * - A PROGRAM IS REQUIRED and there is no implicit one: a pass with no program draws NOTHING (reported once
+ *   at wiring time). The common cases have SDK programs (BuiltinShaders::screenCopyProgram for a copy,
+ *   deferredLightProgram for deferred lighting); anything else is a program the host writes - the picture is
+ *   something the host stated, never something a backend filled in.
  */
 class VN_GRAPHICS_API ScreenPass : public RenderPass {
     VN_OBJECT_META_DECL;
@@ -41,30 +39,31 @@ class VN_GRAPHICS_API ScreenPass : public RenderPass {
     ~ScreenPass() override;
 
   public:
-    /** @brief Gets the resolved source target this pass samples. */
+    /** @brief Gets the resolved source target this pass samples.
+     *
+     * @return The source, or null when nothing resolved yet.
+     */
     raw_ptr<RenderTarget> sourceTarget() const;
 
-    /** @brief Gets the pass's fullscreen fragment program (null when unset). */
+    /** @brief Gets the pass's fullscreen fragment program.
+     *
+     * @return The program, or null when unset.
+     */
     raw_ptr<ShaderProgram> program() const;
 
-    /** @brief Names the fragment program the pass draws through — the ONE way its picture is chosen.
+    /** @brief Names the fragment program the pass draws through - the ONE way its picture is chosen.
      *
-     * The fragment stage compiles against the full-screen ABI (see
-     * BuiltinShaders::fullscreenVertexProgram): `vine_uv` arrives at location 0 spanning [0, 1] with the
-     * top row first, it writes its own `layout(location = 0) out vec4` colour, and the resolved
-     * source's colour attachments are bound as sampled textures at binding 0..N-1 — so binding i
-     * reads attachment i, and a program that wants one specific attachment declares that binding
-     * (BuiltinShaders::screenCopyProgram(n) does exactly this). The content scene's lights (see
-     * setCamera / the pass camera) arrive as push-constant parameters.
-     *
-     * The pass then draws a full-screen triangle into its output target / sub-viewport, opaque over
-     * it (clearing stays disabled). A CAMERA IS REQUIRED: the backend builds the pass' view from it,
-     * so a pass without a camera draws nothing at all (the engine reports it once, at wiring time —
-     * ScreenPass::describeDraws describes no draw).
-     *
-     * A program that cannot be prepared (no fragment stage, a stage that fails to compile, a binding
-     * the source cannot provide) is reported and draws NOTHING: nothing here substitutes a shading the
-     * host did not name. Passing null takes the picture away instead of choosing one.
+     * @details
+     * - The fragment stage compiles against the full-screen ABI (see BuiltinShaders::fullscreenVertexProgram):
+     *   `vine_uv` arrives at location 0 spanning [0, 1] top row first, the stage writes its own
+     *   `layout(location = 0) out vec4`, and the resolved source's colour attachments bind as sampled
+     *   textures at binding 0..N-1 - binding i reads attachment i (BuiltinShaders::screenCopyProgram(n) does
+     *   exactly this). The content scene's lights (setCamera / the pass camera) arrive as push constants.
+     * - A CAMERA IS REQUIRED: the backend builds the pass' view from it, so a camera-less pass draws nothing
+     *   (reported once at wiring time).
+     * - A program that cannot be prepared (no fragment stage, a failed compile, a binding the source cannot
+     *   provide) is reported and draws NOTHING - nothing substitutes a shading the host did not name.
+     *   Passing null takes the picture away instead of choosing one.
      *
      * @param program Fragment-stage program to draw with, or null for none (the pass draws nothing).
      */
@@ -79,12 +78,13 @@ class VN_GRAPHICS_API ScreenPass : public RenderPass {
      */
     void resolveInputTextures(const std::vector<raw_ptr<RenderTarget>>& inputs) override;
 
-    /** @brief Describes the screen pass: nothing at all until a source resolved, then one full-screen draw.
+    /** @brief Describes the screen pass: nothing until a source resolved, then one full-screen draw.
      *
-     * A screen pass is content-agnostic, so a null @p scene is NOT its "nothing to issue" - a pass whose input
-     * never resolved is (its own gate, stated here). Without a program, or without a camera, the pass still
-     * describes what it is and where and issues NO draw: both are reported at wiring time, so the picture is
-     * never a substitute the backend chose.
+     * @details
+     * - A screen pass is content-agnostic, so a null @p scene is NOT its "nothing to issue" - a pass whose
+     *   input never resolved is (its own gate, stated here). Without a program or a camera it still
+     *   describes what it is and where, and issues NO draw: both are reported at wiring time, so the
+     *   picture is never a substitute the backend chose.
      *
      * @param scene Content scene (only its lights matter here; null announces no lights).
      * @param out   Receives the description.
