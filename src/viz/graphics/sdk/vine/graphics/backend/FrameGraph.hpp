@@ -11,35 +11,34 @@
 /**
  * @brief Who must execute before whom inside one frame, and the order that follows - cycles included.
  *
- * WHY A GRAPH AND NOT "JUST RUN THEM IN ORDER". The host announces its passes in registration order, but
- * what a pass READS decides when it may run: a lighting pass that samples a G-buffer must run after the
- * pass that wrote it. Nothing upstream orders them - the engine resolves a pass' declared inputs and
- * checks who announced what (validateWiring), and it has no cycle detection at all - so the backend is
- * the only place that can see a cycle.
- *
- * WHAT A CYCLE MEANS HERE, AND WHY IT IS NOT "KEEP THE CURRENT ORDER". A cycle is a declaration no
- * execution order can satisfy: A reads what B writes while B reads what A writes. The three candidate
- * answers are all wrong except one. Run them in call order anyway: the consumer samples an attachment
- * nobody wrote this frame, and the picture is wrong in a way nothing explains. Drop the whole frame: one
- * cycle between two auxiliary passes blacks out the main picture. SKIP THE CYCLE AND SAY SO: every pass
- * of a cyclic component is left out (`FrameSchedule::skipped`), every other pass still runs, and the
- * frame still presents - which is what this type implements. The host is told (FrameCompiler reports it)
- * and the counter that a phase gates on moves.
- *
- * THE SCHEDULE IS STABLE, NOT MERELY VALID. Among the passes that may run next, the one with the smallest
- * announced order goes first, and passes with equal orders keep their call order - the contract's own
- * rule ("per enabled pass, in ascending pass order", equal orders keep registration order). A topological
- * sort that ignored the announced order would silently re-stack a picture whose passes overlap.
- *
- * WORKING MEMORY, NOT PLAN STORAGE. The graph is rebuilt every frame and holds no GPU object, no host
- * pointer and no arena span - the plan the executor reads is arena-backed (see FrameCompiler) - so plain
- * vectors are the right storage here. WHAT THAT DOES NOT LICENCE is building them per frame: the first
- * version constructed its Tarjan tables and its ready-queue as LOCALS, so one steady frame allocated ~27
- * blocks for a one-pass pipeline (measured with `AllocationGate`'s counting half, which exists
- * because the heap-byte reading cannot see allocate/free churn). Every table below is therefore a MEMBER,
- * filled in place with `assign`/`clear` so its capacity survives from frame to frame, and the ready-queue
- * is a heap over one of them (`std::push_heap`/`std::pop_heap` are in-place) rather than a
- * `std::priority_queue`, whose backing vector is built when the queue is.
+ * @details
+ * - WHY A GRAPH AND NOT "JUST RUN THEM IN ORDER". The host announces its passes in registration order,
+ *   but what a pass READS decides when it may run: a lighting pass that samples a G-buffer must run
+ *   after the pass that wrote it. Nothing upstream orders them - the engine resolves a pass' declared
+ *   inputs and checks who announced what (validateWiring), and it has no cycle detection at all - so
+ *   the backend is the only place that can see a cycle.
+ * - WHAT A CYCLE MEANS HERE, AND WHY IT IS NOT "KEEP THE CURRENT ORDER". A cycle is a declaration no
+ *   execution order can satisfy: A reads what B writes while B reads what A writes. The three candidate
+ *   answers are all wrong except one. Run them in call order anyway: the consumer samples an attachment
+ *   nobody wrote this frame, and the picture is wrong in a way nothing explains. Drop the whole frame:
+ *   one cycle between two auxiliary passes blacks out the main picture. SKIP THE CYCLE AND SAY SO: every
+ *   pass of a cyclic component is left out (`FrameSchedule::skipped`), every other pass still runs, and
+ *   the frame still presents - which is what this type implements. The host is told (FrameCompiler
+ *   reports it) and the counter that a phase gates on moves.
+ * - THE SCHEDULE IS STABLE, NOT MERELY VALID. Among the passes that may run next, the one with the
+ *   smallest announced order goes first, and passes with equal orders keep their call order - the
+ *   contract's own rule ("per enabled pass, in ascending pass order", equal orders keep registration
+ *   order). A topological sort that ignored the announced order would silently re-stack a picture whose
+ *   passes overlap.
+ * - WORKING MEMORY, NOT PLAN STORAGE. The graph is rebuilt every frame and holds no GPU object, no host
+ *   pointer and no arena span - the plan the executor reads is arena-backed (see FrameCompiler) - so
+ *   plain vectors are the right storage here. WHAT THAT DOES NOT LICENCE is building them per frame: the
+ *   first version constructed its Tarjan tables and its ready-queue as LOCALS, so one steady frame
+ *   allocated ~27 blocks for a one-pass pipeline (measured with `AllocationGate`'s counting half, which
+ *   exists because the heap-byte reading cannot see allocate/free churn). Every table below is therefore
+ *   a MEMBER, filled in place with `assign`/`clear` so its capacity survives from frame to frame, and the
+ *   ready-queue is a heap over one of them (`std::push_heap`/`std::pop_heap` are in-place) rather than a
+ *   `std::priority_queue`, whose backing vector is built when the queue is.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -65,8 +64,9 @@ class VN_GRAPHICS_API FrameGraph
   public:
     /** @brief Rebuilds the graph: one node per pass, in the order the passes were announced.
      *
-     * Node indices ARE the pass indices of the description, so an edge is written in the caller's own
-     * terms. Priorities come from each pass' announced order and its position in the list.
+     * @details
+     * - Node indices ARE the pass indices of the description, so an edge is written in the caller's own
+     *   terms. Priorities come from each pass' announced order and its position in the list.
      *
      * @param passes Pass scopes as the recorder collected them.
      */
@@ -74,9 +74,10 @@ class VN_GRAPHICS_API FrameGraph
 
     /** @brief Adds "before executes before after", ignoring an exact duplicate.
      *
-     * A self-edge is kept: it says the pass must run before itself, which only a cyclic declaration can
-     * mean, and it is treated as one. The compiler never produces one - a pass that names its own target
-     * as an input is the feedback pattern, which the executor judges (see FrameCompiler).
+     * @details
+     * - A self-edge is kept: it says the pass must run before itself, which only a cyclic declaration
+     *   can mean, and it is treated as one. The compiler never produces one - a pass that names its own
+     *   target as an input is the feedback pattern, which the executor judges (see FrameCompiler).
      *
      * @param before Node that produces.
      * @param after  Node that consumes.
@@ -85,7 +86,8 @@ class VN_GRAPHICS_API FrameGraph
 
     /** @brief Takes a node out of the schedule (the caller could not serve its pass this frame).
      *
-     * Its edges go with it: an excluded node neither orders nor blocks anything.
+     * @details
+     * - Its edges go with it: an excluded node neither orders nor blocks anything.
      *
      * @param node Node index.
      */

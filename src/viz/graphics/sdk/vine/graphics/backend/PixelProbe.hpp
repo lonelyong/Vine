@@ -8,26 +8,24 @@
 #include <vine/graphics/graphics_global.hpp>
 
 /**
- * @brief A read-back image plus the questions a phase asks about it - the fixture half of every pixel
- * assertion.
+ * @brief A read-back image plus the questions a phase asks about it - the fixture half of every pixel assertion.
  *
- * WHY A FIXTURE AND NOT "memcmp THE BUFFER". A backend's pixel phases do not ask "is this the exact
- * image?" (a GPU's rounding, a driver's dithering or a different sample count would fail that forever);
- * they ask the questions a picture has to answer: is anything drawn at all (the non-black fraction), is
- * the copy inside its rectangle while the target centre kept the clear colour (counts inside a
- * sub-rectangle), did the shadowed ground end up measurably darker (a comparison between two
- * rectangles). Those questions are the same in every phase, and writing them out per phase is how one
- * of them ends up subtly different (row stride vs tightly packed, inclusive vs exclusive bounds) and
- * the difference is read as a rendering regression.
- *
- * PACKING IS THE CONTRACT THE READBACK API PROMISES: tightly packed RGBA8, row-major, width * height *
- * 4 bytes, no stride padding. A probe built from anything else fails `valid()` instead of quietly
- * reading the wrong pixel - which matters because "the picture is wrong" and "the buffer is not what I
- * think it is" are different bugs.
- *
- * RECTANGLES ARE DEVICE PIXELS, top-left origin, in the SDK's `Viewport` shape, and they are CLAMPED to
- * the image: a phase that asks about a rectangle larger than the surface gets the overlap counted, not
- * an out-of-range read.
+ * @details
+ * - WHY A FIXTURE AND NOT "memcmp THE BUFFER". A backend's pixel phases do not ask "is this the exact
+ *   image?" (a GPU's rounding, a driver's dithering or a different sample count would fail that
+ *   forever); they ask the questions a picture has to answer: is anything drawn at all (the non-black
+ *   fraction), is the copy inside its rectangle while the target centre kept the clear colour (counts
+ *   inside a sub-rectangle), did the shadowed ground end up measurably darker (a comparison between two
+ *   rectangles). Those questions are the same in every phase, and writing them out per phase is how one
+ *   of them ends up subtly different (row stride vs tightly packed, inclusive vs exclusive bounds) and
+ *   the difference is read as a rendering regression.
+ * - PACKING IS THE CONTRACT THE READBACK API PROMISES: tightly packed RGBA8, row-major, width * height *
+ *   4 bytes, no stride padding. A probe built from anything else fails `valid()` instead of quietly
+ *   reading the wrong pixel - which matters because "the picture is wrong" and "the buffer is not what
+ *   I think it is" are different bugs.
+ * - RECTANGLES ARE DEVICE PIXELS, top-left origin, in the SDK's `Viewport` shape, and they are CLAMPED
+ *   to the image: a phase that asks about a rectangle larger than the surface gets the overlap counted,
+ *   not an out-of-range read.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -80,8 +78,9 @@ class VN_GRAPHICS_API PixelProbe
 
     /** @brief Counts pixels whose colour channels are not all zero (alpha ignored).
      *
-     * "Is anything on screen" as a number, which is the only form a phase can gate on: a
-     * validation-clean run that drew nothing must fail, and this is how it fails.
+     * @details
+     * - "Is anything on screen" as a number, which is the only form a phase can gate on: a
+     *   validation-clean run that drew nothing must fail, and this is how it fails.
      */
     [[nodiscard]] std::size_t nonBlackPixels() const noexcept;
 
@@ -98,7 +97,8 @@ class VN_GRAPHICS_API PixelProbe
 
     /** @brief Counts pixels NOT equal to @p color inside @p rect (clamped to the image).
      *
-     * The complementary question, and the one a "this part must be untouched" assertion needs.
+     * @details
+     * - The complementary question, and the one a "this part must be untouched" assertion needs.
      *
      * @param color Colour the region must not show.
      * @param rect Rectangle to look in.
@@ -108,9 +108,10 @@ class VN_GRAPHICS_API PixelProbe
 
     /** @brief Gets the packed RGBA8 rows the probe wraps.
      *
-     * For the caller that hands the picture ON rather than probes it - the SDK's readback copies the
-     * bytes out of here - so the probe is not forced to answer pixel by pixel through a channel interface
-     * it does not promise.
+     * @details
+     * - For the caller that hands the picture ON rather than probes it - the SDK's readback copies the
+     *   bytes out of here - so the probe is not forced to answer pixel by pixel through a channel
+     *   interface it does not promise.
      *
      * @return The bytes, exactly `width() * height() * 4` of them when valid.
      */

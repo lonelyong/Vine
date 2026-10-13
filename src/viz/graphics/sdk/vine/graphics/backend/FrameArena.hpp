@@ -10,25 +10,24 @@
 /**
  * @brief The storage a frame's plan lives in, owned by the frame and nothing else.
  *
- * WHY THIS TYPE EXISTS. A frame plan is a graph of small records - pass scopes, resolved inputs,
- * lights, draws - that must stay valid from the call that collected it (inside RenderBackend::render,
- * where every argument is BORROWED) until the executor has recorded it at the end of the frame. Spans
- * into the host's containers do not survive that window: the engine's own resolved-input vector is a
- * reused member that is cleared and refilled per pass, so a plan holding a span into it would be
- * reading the NEXT pass's data by the time it is recorded. One arena per frame, reset at beginFrame(),
- * makes the rule mechanical: every span in the plan points here, and the only moment a span may die
- * is the frame boundary.
- *
- * GROWTH ADDS A CHUNK, IT NEVER MOVES ONE. A single resizable buffer would be simpler and wrong: the
- * moment it reallocated, every span handed out so far would point into freed memory - and the whole
- * point of the arena is that a plan's spans stay readable until the frame ends. So the storage is a
- * list of chunks: an allocation that does not fit the current chunk uses the next one, or starts a new
- * one, and the blocks already handed out never move. `allocations()` counts the chunks STARTED since
- * construction (a steady frame starts none); only reset() invalidates a span, and that is the frame
- * boundary by definition.
- *
- * ALIGNMENT LIMIT: chunks come from `new std::byte[]`, so the arena serves alignments up to
- * `alignof(std::max_align_t)`. Anything more is refused rather than served misaligned.
+ * @details
+ * - WHY THIS TYPE EXISTS. A frame plan is a graph of small records - pass scopes, resolved inputs,
+ *   lights, draws - that must stay valid from the call that collected it (inside RenderBackend::render,
+ *   where every argument is BORROWED) until the executor has recorded it at the end of the frame. Spans
+ *   into the host's containers do not survive that window: the engine's own resolved-input vector is a
+ *   reused member that is cleared and refilled per pass, so a plan holding a span into it would be
+ *   reading the NEXT pass's data by the time it is recorded. One arena per frame, reset at beginFrame(),
+ *   makes the rule mechanical: every span in the plan points here, and the only moment a span may die is
+ *   the frame boundary.
+ * - GROWTH ADDS A CHUNK, IT NEVER MOVES ONE. A single resizable buffer would be simpler and wrong: the
+ *   moment it reallocated, every span handed out so far would point into freed memory - and the whole
+ *   point of the arena is that a plan's spans stay readable until the frame ends. So the storage is a
+ *   list of chunks: an allocation that does not fit the current chunk uses the next one, or starts a
+ *   new one, and the blocks already handed out never move. `allocations()` counts the chunks STARTED
+ *   since construction (a steady frame starts none); only reset() invalidates a span, and that is the
+ *   frame boundary by definition.
+ * - ALIGNMENT LIMIT: chunks come from `new std::byte[]`, so the arena serves alignments up to
+ *   `alignof(std::max_align_t)`. Anything more is refused rather than served misaligned.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -40,8 +39,9 @@ class VN_GRAPHICS_API FrameArena
   public:
     /** @brief Creates an arena whose chunks are @p chunk_size bytes each.
      *
-     * The first chunk is created here as a RESERVATION and does not count as an allocation, so a frame
-     * that fits in it leaves allocations() at 0.
+     * @details
+     * - The first chunk is created here as a RESERVATION and does not count as an allocation, so a
+     *   frame that fits in it leaves allocations() at 0.
      *
      * @param chunk_size Bytes in the first chunk, and the minimum size of any chunk started later.
      */
@@ -53,8 +53,9 @@ class VN_GRAPHICS_API FrameArena
 
     /** @brief Ends the frame: the allocation cursor returns to the start.
      *
-     * The ONE place a span handed out earlier may be invalidated. Capacity is kept, so the next frame
-     * reuses the same memory.
+     * @details
+     * - The ONE place a span handed out earlier may be invalidated. Capacity is kept, so the next frame
+     *   reuses the same memory.
      */
     void reset() noexcept;
 
@@ -88,8 +89,9 @@ class VN_GRAPHICS_API FrameArena
 
     /** @brief Copies @p source into the arena.
      *
-     * The way a borrowed span enters a plan: the host may destroy its own storage as soon as the call
-     * returns, so anything a plan needs to keep is copied here.
+     * @details
+     * - The way a borrowed span enters a plan: the host may destroy its own storage as soon as the call
+     *   returns, so anything a plan needs to keep is copied here.
      *
      * @param source Values to copy.
      * @return The copy, valid until the next reset().
@@ -129,7 +131,8 @@ class VN_GRAPHICS_API FrameArena
 
     /** @brief Gets how many chunks the arena STARTED after the one it was constructed with.
      *
-     * The steady-state gate: a frame whose content did not change must leave this unchanged.
+     * @details
+     * - The steady-state gate: a frame whose content did not change must leave this unchanged.
      */
     [[nodiscard]] std::size_t allocations() const noexcept;
 

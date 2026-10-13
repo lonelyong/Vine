@@ -13,41 +13,38 @@
 /**
  * @brief What a readback request produces, and why it may not produce anything - ONE table.
  *
- * WHY A TABLE AND NOT A PREDICATE PER CALL SITE. A readback has entry points (a colour probe, a depth
- * probe, the readback node a frame records) and every one of them has to answer the same question: can
- * this be served at all? Written out per entry point, the answers drift - one call refuses an unreadable
- * depth format while another hands out a copy that copies nothing, and the caller cannot tell which of
- * them it is talking to. Here the answer is a function of the FACTS (the target's extent, its attachment
- * formats, whether a copy was ever handed out for recording) and the REQUEST, so every entry point gets
- * the same classification from the same place.
- *
- * WHY THE CLASSIFICATION COMES BEFORE ANY WORK. A refused readback must not stop the device or copy
- * anything first: a caller asking for pixels that cannot exist gets a category, not a device idle
- * followed by an empty buffer. The categories are also split by what a caller can DO about them:
- *   * `NotCaptured` - this backend can serve it once a frame records the copy, so a caller may retry
+ * @details
+ * - WHY A TABLE AND NOT A PREDICATE PER CALL SITE. A readback has entry points (a colour probe, a depth
+ *   probe, the readback node a frame records) and every one of them has to answer the same question: can
+ *   this be served at all? Written out per entry point, the answers drift - one call refuses an
+ *   unreadable depth format while another hands out a copy that copies nothing, and the caller cannot
+ *   tell which of them it is talking to. Here the answer is a function of the FACTS (the target's
+ *   extent, its attachment formats, whether a copy was ever handed out for recording) and the REQUEST,
+ *   so every entry point gets the same classification from the same place.
+ * - WHY THE CLASSIFICATION COMES BEFORE ANY WORK. A refused readback must not stop the device or copy
+ *   anything first: a caller asking for pixels that cannot exist gets a category, not a device idle
+ *   followed by an empty buffer. The categories are also split by what a caller can DO about them:
+ *   - `NotCaptured` - this backend can serve it once a frame records the copy, so a caller may retry
  *     after the next frame;
- *   * `UnreadableFormat` - this backend will never serve it for this target, whatever frames run (a
+ *   - `UnreadableFormat` - this backend will never serve it for this target, whatever frames run (a
  *     combined depth/stencil attachment has no plain depth copy, and the colour half packs RGBA8 only);
- *   * `UnknownAttachment` - the request names something the target does not have.
- * "Not yet" and "never" are different answers, and a phase that reports the wrong one sends its reader
- * looking for a bug in the wrong place.
- *
- * WHAT IS DELIBERATELY NOT HERE: a "nothing has been laid out yet" category. A target of no size cannot
- * exist - `create` refuses a zero extent, and before a target exists at all the LIFECYCLE plan answers
- * `Repair(SizeUnknown)` for it (`planTarget`, which is where the surface's size authority and the
- * hidden / not-yet-laid-out cases live). A refusal arm nothing can reach reads as a covered case while
- * covering none.
- *
- * PRECEDENCE is deliberate and tested: the request's own existence first, then the format (a property of
- * the target), then the extent (a fact about now), then whether the copy has been recorded. A caller that
- * asks for an attachment that does not exist gets `UnknownAttachment` even if the target is also empty -
- * the strongest permanent reason wins, so the answer does not change from frame to frame for a request
- * that can never be served.
- *
- * WHAT THIS FILE DOES NOT DO: it does not touch the pixels. Deciding that a readback is servable and
- * handing out the bytes are different halves (the bytes belong to the device layer); the only pixel-level
- * thing here is the FORMAT table, because "how many bytes is one texel" and "may this format be read at
- * all" are the same fact that decides servability.
+ *   - `UnknownAttachment` - the request names something the target does not have.
+ * - "Not yet" and "never" are different answers, and a phase that reports the wrong one sends its reader
+ *   looking for a bug in the wrong place.
+ * - WHAT IS DELIBERATELY NOT HERE: a "nothing has been laid out yet" category. A target of no size
+ *   cannot exist - `create` refuses a zero extent, and before a target exists at all the LIFECYCLE plan
+ *   answers `Repair(SizeUnknown)` for it (`planTarget`, which is where the surface's size authority and
+ *   the hidden / not-yet-laid-out cases live). A refusal arm nothing can reach reads as a covered case
+ *   while covering none.
+ * - PRECEDENCE is deliberate and tested: the request's own existence first, then the format (a property
+ *   of the target), then the extent (a fact about now), then whether the copy has been recorded. A
+ *   caller that asks for an attachment that does not exist gets `UnknownAttachment` even if the target
+ *   is also empty - the strongest permanent reason wins, so the answer does not change from frame to
+ *   frame for a request that can never be served.
+ * - WHAT THIS FILE DOES NOT DO: it does not touch the pixels. Deciding that a readback is servable and
+ *   handing out the bytes are different halves (the bytes belong to the device layer); the only
+ *   pixel-level thing here is the FORMAT table, because "how many bytes is one texel" and "may this
+ *   format be read at all" are the same fact that decides servability.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -124,9 +121,10 @@ struct VN_GRAPHICS_API ReadbackFormat
 
 /** @brief Gets how a colour format is read back.
  *
- * The readback packs RGBA8 only, and that is the contract the probes are built on: a 16-bit or 32-bit
- * float attachment has no CPU-side packing here, so it is refused rather than converted into something
- * that looks like a picture and is not the one the GPU holds.
+ * @details
+ * - The readback packs RGBA8 only, and that is the contract the probes are built on: a 16-bit or 32-bit
+ *   float attachment has no CPU-side packing here, so it is refused rather than converted into something
+ *   that looks like a picture and is not the one the GPU holds.
  *
  * @param format The attachment's colour format.
  * @return Bytes per texel and whether it can be read.
@@ -135,8 +133,9 @@ struct VN_GRAPHICS_API ReadbackFormat
 
 /** @brief Gets how a depth format is read back.
  *
- * The zero is the honest half: a combined depth/stencil image has no plain depth copy layout, and reading
- * its first bytes as floats produces numbers that look like depths and are not.
+ * @details
+ * - The zero is the honest half: a combined depth/stencil image has no plain depth copy layout, and
+ *   reading its first bytes as floats produces numbers that look like depths and are not.
  *
  * @param format The attachment's depth format.
  * @return Bytes per texel and whether it can be read.
@@ -145,10 +144,12 @@ struct VN_GRAPHICS_API ReadbackFormat
 
 /** @brief Turns copied depth bytes into the normalised values a probe answers with.
  *
- * D32 / D32F arrive as their raw float, D16 as an unsigned integer divided by its full scale (65535) -
- * the conversion the format defines, not an approximation of it. An unreadable format or a buffer that
- * does not hold a whole number of texels yields an EMPTY result rather than a partial one: a probe built
- * from half an image would answer "this region is empty", which is a picture claim nobody can trust.
+ * @details
+ * - D32 / D32F arrive as their raw float, D16 as an unsigned integer divided by its full scale (65535) -
+ *   the conversion the format defines, not an approximation of it. An unreadable format or a buffer that
+ *   does not hold a whole number of texels yields an EMPTY result rather than a partial one: a probe
+ *   built from half an image would answer "this region is empty", which is a picture claim nobody can
+ *   trust.
  *
  * @param format The attachment's depth format.
  * @param bytes  The copied bytes, in the tightly packed order the copy produced.
