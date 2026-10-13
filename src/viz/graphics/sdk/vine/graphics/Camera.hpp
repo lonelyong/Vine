@@ -21,31 +21,27 @@ using vn::math::Vec3d;
  * @brief Camera: the VIEWING (eye / target / up), the PROJECTION PARAMETERS (fov, planes, ortho window) and the
  *        SHAPE of the picture it is projected for (aspectRatio).
  *
- * ONE CAMERA, ONE PICTURE SHAPE. The aspect lives here because the projection is what needs it, and every reader
- * of the projection then reads the SAME number from the same place: the view block that builds it, the culling
- * that decides what is worth projecting, and the picking ray. This is the model three.js / Babylon / Godot /
- * Unity use, and it is the one this module settled on (2026-10-11): a camera is the state of ONE view onto ONE
- * picture, and a host that wants the same eye at two shapes uses two cameras.
+ * @details
+ * - ONE CAMERA, ONE PICTURE SHAPE: the aspect lives here because the projection is what needs it, and every
+ *   reader of the projection then reads the SAME number from the same place - the view block that builds
+ *   it, the culling that decides what is worth projecting, and the picking ray. A host that wants the same
+ *   eye at two shapes uses two cameras.
+ * - A camera whose shape differs from the picture a pass draws it into projects a STRETCHED picture; the
+ *   engine REPORTS that while compiling the frame (see RenderEngine's frame-plan problems) instead of
+ *   letting the picture be quietly wrong. What this replaced derived the aspect from the pass' rectangle at
+ *   render time - a shape only the BACKEND could answer, depending on what had been announced before it
+ *   (see `.ai/design/graphics-redesign.md`).
+ * - The projection PARAMETERS are all state here: fov / near / far, the aspect, and the orthographic
+ *   WINDOW (kept whole - see setProjectionMatrixAsOrtho). The perspective projection is rebuilt per call;
+ *   an orthographic one ignores the aspect, because its window already carries a shape.
  *
- * WHAT IS FORBIDDEN, AND WHY IT IS REPORTED. A camera whose shape differs from the picture a pass draws it into
- * projects a STRETCHED picture - the rectangle's shape and the projection's disagree. That is the case a host
- * reaches by sharing one camera between two panes of different shapes (or between a pane and a target), and the
- * engine REPORTS it while compiling the frame instead of letting the picture be quietly wrong (see
- * RenderEngine's frame-plan problems). What this class replaced derived the aspect from the pass' rectangle at
- * render time, which made the mismatch impossible - and left the shape a question only the BACKEND could answer,
- * whose answer depended on what had been announced before it (see `.ai/design/graphics-redesign.md`).
- *
- * The projection PARAMETERS are all state here: fov / near / far, the aspect, and the orthographic WINDOW (kept
- * whole - see setProjectionMatrixAsOrtho). The perspective projection is rebuilt per call (a handful of
- * multiplies, see projectionMatrix); an orthographic one ignores the aspect, because its window already carries
- * a shape.
- *
- * WHAT projectionMatrix() IS FOR. The matrix this class builds is the CPU-side one: a right-handed view looking
- * down -Z, and a CLIP SPACE WITH z IN [-1, 1] (the classic OpenGL range). A backend may render with a different
- * convention — the vsg backend renders Vulkan-style reverse-Z (near maps to 1, far to 0, the Y axis flipped) —
- * and it is expected to: which clip space a GPU wants is a property of the API, not of the camera. So this matrix
- * is the right thing for the engine's own uses (frustum culling, view-dependent size, CPU-side math) and for a
- * consumer that knows the backend it is talking to, but it does NOT predict the picture's clip space.
+ * @note
+ * - projectionMatrix() is the CPU-side matrix: a right-handed view looking down -Z with clip space z in
+ *   [-1, 1] (the classic OpenGL range). A backend may render with another convention - the vsg backend
+ *   renders Vulkan-style reverse-Z (near maps to 1, far to 0, Y flipped) - and that is expected: which clip
+ *   space a GPU wants is a property of the API, not of the camera. So this matrix serves the engine's own
+ *   uses (frustum culling, view-dependent size, CPU-side math) and does NOT predict the picture's clip
+ *   space.
  */
 class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
     VN_OBJECT_META_DECL;
@@ -58,17 +54,27 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
     };
 
   public:
+    /** @brief Constructs a camera with a default view and a 1.0 aspect. */
     Camera();
     ~Camera();
 
   public:
-    /** @brief Gets the camera name. */
+    /** @brief Gets the camera name.
+     *
+     * @return The name (empty when never set).
+     */
     String name() const;
 
-    /** @brief Sets the camera name. */
+    /** @brief Sets the camera name.
+     *
+     * @param name New camera name.
+     */
     void setName(const String& name);
 
-    /** @brief Gets the current projection type. */
+    /** @brief Gets the current projection type.
+     *
+     * @return Perspective or Orthographic.
+     */
     ProjectionType projectionType() const;
 
     /** @brief Sets the view matrix from a look-at specification.
@@ -81,8 +87,10 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
 
     /** @brief Sets the projection parameters of a perspective camera.
      *
-     * The picture's SHAPE is not among them: it is the camera's own state (see setAspect), because it is what the
-     * projection is built with and the same number must be read by everything that projects or culls.
+     * @details
+     * - The picture's SHAPE is not among them: it is the camera's own state (see setAspect), because it is
+     *   what the projection is built with and the same number must be read by everything that projects or
+     *   culls.
      *
      * @param fovy    Vertical field of view in degrees.
      * @param zNear   Near clipping plane distance (> 0).
@@ -98,26 +106,26 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
 
     /** @brief States the shape of the picture this camera is projected for.
      *
-     * The ONE number the projection, the culling and the picking ray are built from - so setting it is how a
-     * view says "this is the rectangle I am being drawn into" (SceneView does it from its own rectangle on every
-     * geometry change). Read it back rather than keeping a second copy: a camera whose aspect disagrees with the
-     * picture it is drawn into projects a stretched picture, and the engine reports that while compiling the
-     * frame.
+     * @details
+     * - The ONE number the projection, the culling and the picking ray are built from: setting it is how a
+     *   view says "this is the rectangle I am being drawn into" (SceneView does it from its own rectangle on
+     *   every geometry change). Read it back rather than keeping a second copy: a camera whose aspect
+     *   disagrees with the picture it is drawn into projects a stretched picture, and the engine reports
+     *   that while compiling the frame.
      *
-     * @param aspect Width / height of the picture; a non-positive value is ignored (1.0 is the state a camera is
-     *               born with, which is right for the square pictures a headless test draws).
+     * @param aspect Width / height of the picture; a non-positive value is ignored (1.0 is the state a
+     *               camera is born with, which is right for the square pictures a headless test draws).
      */
     void setAspect(double aspect) noexcept;
 
     /** @brief Sets the projection parameters of an orthographic camera.
      *
-     * NO aspect: an orthographic window is a rectangle in view space, not a frustum fitted to a picture, so its
-     * shape is already stated by the window itself (projectionMatrix ignores the aspect it is handed).
-     *
-     * All four window bounds are kept (they are what the projection uses and what a backend that
-     * rebuilds it from parameters must take, see the class note), so an off-centre window — a tiled
-     * view, one eye of a stereo pair, a shifted shadow frustum — survives the round trip instead of
-     * being silently centred.
+     * @details
+     * - NO aspect: an orthographic window is a rectangle in view space, not a frustum fitted to a picture, so
+     *   its shape is already stated by the window itself (projectionMatrix ignores the aspect it is handed).
+     * - All four window bounds are kept (what the projection uses and what a backend that rebuilds it from
+     *   parameters must take, see the class note), so an off-centre window - a tiled view, one eye of a
+     *   stereo pair, a shifted shadow frustum - survives the round trip instead of being silently centred.
      *
      * @param left   Left clipping plane.
      * @param right  Right clipping plane.
@@ -128,25 +136,46 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      */
     void setProjectionMatrixAsOrtho(double left, double right, double bottom, double top, double zNear, double zFar);
 
-    /** @brief Gets the camera eye position (last set via setViewMatrixAsLookAt). */
+    /** @brief Gets the camera eye position (last set via setViewMatrixAsLookAt).
+     *
+     * @return The eye point (world space).
+     */
     Vec3d eye() const;
 
-    /** @brief Gets the camera target/center point (last set via setViewMatrixAsLookAt). */
+    /** @brief Gets the camera target/center point (last set via setViewMatrixAsLookAt).
+     *
+     * @return The target point (world space).
+     */
     Vec3d target() const;
 
-    /** @brief Gets the up vector (last set via setViewMatrixAsLookAt). */
+    /** @brief Gets the up vector (last set via setViewMatrixAsLookAt).
+     *
+     * @return The up vector.
+     */
     Vec3d up() const;
 
-    /** @brief Gets the near clipping plane distance. */
+    /** @brief Gets the near clipping plane distance.
+     *
+     * @return The near plane distance.
+     */
     double nearPlane() const;
 
-    /** @brief Gets the far clipping plane distance. */
+    /** @brief Gets the far clipping plane distance.
+     *
+     * @return The far plane distance.
+     */
     double farPlane() const;
 
-    /** @brief Gets the field of view in degrees (perspective only). */
+    /** @brief Gets the field of view in degrees (perspective only).
+     *
+     * @return The vertical field of view.
+     */
     double fieldOfView() const;
 
-    /** @brief Gets the orthographic view height (top - bottom). */
+    /** @brief Gets the orthographic view height (top - bottom).
+     *
+     * @return The window height in view space.
+     */
     double orthographicHeight() const;
 
     /** @brief Gets the orthographic window's left bound.

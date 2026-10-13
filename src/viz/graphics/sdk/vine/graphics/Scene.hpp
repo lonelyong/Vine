@@ -25,37 +25,50 @@ struct RenderCommand;
 /**
  * @brief Scene container owning one root subtree plus lights.
  *
- * A scene holds exactly one root node of the scene graph (an empty scene has
- * no root and renders nothing), the scene's light sources, and provides tree
- * queries: bounding box computation, name-based search, and render command
- * collection. Content is composed under the root through Group; the root is
- * typically a Group holding the world's top-level subtrees.
+ * @details
+ * - Exactly one root node (an empty scene has no root and renders nothing), the scene's light sources, and
+ *   the tree queries: bounding box, name-based search, render-command collection. Content is composed
+ *   under the root through Group (typically a Group holding the world's top-level subtrees).
  */
 class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     VN_OBJECT_META_DECL;
     VN_DISABLE_COPY_MOVE(Scene);
 
   public:
+    /** @brief Constructs an empty scene (no root, no lights). */
     Scene();
     ~Scene();
 
   public:
-    /** @brief Gets the scene name. */
+    /** @brief Gets the scene name.
+     *
+     * @return The name (empty when never set).
+     */
     String name() const;
 
-    /** @brief Sets the scene name. */
+    /** @brief Sets the scene name.
+     *
+     * @param name New scene name.
+     */
     void setName(const String& name);
 
-    /** @brief Returns whether the whole scene is rendered. */
+    /** @brief Returns whether the whole scene is rendered.
+     *
+     * @return true when the scene is visible.
+     */
     bool isVisible() const;
 
-    /** @brief Sets whether the whole scene is rendered. */
+    /** @brief Sets whether the whole scene is rendered.
+     *
+     * @param visible false takes the whole scene out of the picture (see Node::setVisible for the gate).
+     */
     void setVisible(bool visible);
 
     /** @brief Gets the scene-level opacity multiplier in [0, 1].
      *
-     * The top of the opacity fold: a drawable's effective opacity multiplies this value with every
-     * node's own multiplier on the way down (see Node::opacity).
+     * @details
+     * - The top of the opacity fold: a drawable's effective opacity multiplies this value with every
+     *   node's own multiplier on the way down (see Node::opacity).
      *
      * @return The scene-level multiplier.
      */
@@ -69,8 +82,9 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
     /** @brief Gets the root node of the scene.
      *
-     * A scene renders exactly one root subtree; content is composed under it
-     * through Group. Returns null for an empty scene (nothing is rendered).
+     * @details
+     * - A scene renders exactly one root subtree; content is composed under it through Group. Null for an
+     *   empty scene (nothing is rendered).
      *
      * @return The scene root node, or null.
      */
@@ -78,8 +92,9 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
     /** @brief Sets the root node of the scene.
      *
-     * Replaces any previous root. Content is composed by attaching subtrees
-     * under @p root (typically a Group) before rendering.
+     * @details
+     * - Replaces any previous root; content is composed by attaching subtrees under @p root (typically a
+     *   Group) before rendering.
      *
      * @param root Root node to render; null empties the scene.
      */
@@ -100,8 +115,9 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
     /** @brief Adds a light source to the scene.
      *
-     * The scene keeps a reference to the light. Passes rendering this scene
-     * light their content with the scene's lights (a drawing call announces them: DrawDescription::lights).
+     * @details
+     * - The scene keeps a reference. Passes rendering this scene light their content with the scene's
+     *   lights (a drawing call announces them: DrawDescription::lights).
      *
      * @param light Light to add.
      */
@@ -118,13 +134,13 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
     /** @brief Adds a whole lighting rig: `scene.addLighting(LightRig::studio())`.
      *
-     * The one-liner that makes a fresh scene lit instead of flat (the backends' ambient fallback is a visibility
-     * safety net, not a lighting decision). The lights already in the scene stay - use setLighting() to replace
-     * them.
-     *
-     * The entry point is on the scene on purpose: the scene is what a host has in hand and what completion
-     * offers, it keeps the mechanism (adding lights) here while the policy (which lights) lives in the rig, and
-     * it mirrors ConsolePanel::setTheme(ConsoleTheme::dark()) on the appfw side.
+     * @details
+     * - The one-liner that makes a fresh scene lit instead of flat (the backends' ambient fallback is a
+     *   visibility safety net, not a lighting decision); the lights already in the scene stay - use
+     *   setLighting() to replace them.
+     * - The entry point lives on the scene on purpose: the scene is what a host has in hand and what
+     *   completion offers; it keeps the MECHANISM (adding lights) here while the POLICY (which lights)
+     *   lives in the rig, mirroring ConsolePanel::setTheme(ConsoleTheme::dark()) in appfw.
      *
      * @param rig Rig whose lights are added.
      */
@@ -136,73 +152,71 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      */
     void setLighting(const LightRig& rig);
 
-    /** @brief Gets the scene's light sources. */
+    /** @brief Gets the scene's light sources.
+     *
+     * @return The lights, in the order they were added.
+     */
     const std::vector<LightPtr>& lights() const;
 
-    /** @brief Returns whether the scene has at least one light source. */
+    /** @brief Returns whether the scene has at least one light source.
+     *
+     * @return true when at least one light is present.
+     */
     bool hasLights() const;
 
     /** @brief Computes the bounding box of the visible scene, as the picture with @p layer_mask sees it.
      *
-     * Hidden content contributes nothing, at any depth: an invisible node prunes its whole subtree from the
-     * union, the same rule the collection and ray walks apply. Empty when the scene itself is hidden, has no
-     * root, or the root is hidden.
-     *
-     * @p layer_mask selects like the collection does (see collectRenderCommands): a drawn node whose resolved
-     * layers do not intersect the mask contributes nothing, and a node that re-declares its layers counts
-     * under its own declaration (containers are structure - the test is taken at the drawn node). kAllLayers
-     * (the default) measures everything visible, exactly as before. The per-node query (Node::boundingBox)
-     * stays purely geometric - this is the scene's own fold, answering for what it would draw.
+     * @details
+     * - Hidden content contributes nothing at any depth: an invisible node prunes its whole subtree from the
+     *   union, the same rule the collection and ray walks apply. Empty when the scene itself is hidden, has
+     *   no root, or the root is hidden.
+     * - @p layer_mask selects like the collection does (see collectRenderCommands): a drawn node whose
+     *   resolved layers do not intersect the mask contributes nothing; a node that re-declares its layers
+     *   counts under its own declaration (containers are structure); kAllLayers (the default) measures
+     *   everything visible. The per-node query (Node::boundingBox) stays purely geometric - this is the
+     *   scene's own fold, answering for what it would draw.
      *
      * @param layer_mask Layers this query measures (see Node::setLayers).
      * @return World-space AABB of the selected visible content (empty when there is none).
      */
     Aabbd boundingBox(std::uint32_t layer_mask = kAllLayers) const;
 
-    /** @brief Collects render commands for the given camera, as a picture of @p aspect sees it.
+    /** @brief Collects render commands for the given camera, as a picture of the camera's aspect sees it.
      *
-     * The list is built by walking the tree (frustum culling, bounds caching,
-     * ordering), so a multi-pass pipeline that draws the same scene through the
-     * same camera several times per frame would walk it once per pass. Inside a
-     * content frame (see setContentFrame) the result of the first walk is kept
-     * and shared — as its own COPY, because a caller may post-process what it
-     * receives — for every later call with the same camera and shape, until the
-     * scene changes or the next frame begins.
+     * @details
+     * - The list is built by walking the tree (frustum culling, bounds caching, ordering). Inside a content
+     *   frame (see setContentFrame) the first walk's result is kept and shared - as a COPY, because a caller
+     *   may post-process what it receives - for every later call with the same camera and shape, until the
+     *   scene changes or the next frame begins.
+     * - The order: the content's declared draw order first (Node::setDrawOrder - higher is drawn later),
+     *   and inside one order the picture the collection has always produced - opaque front-to-back, then
+     *   transparent back-to-front.
+     * - The owning spelling: use it when the list is KEPT or EDITED. A caller that only reads it hands out
+     *   the shared list instead (collectRenderCommandsShared) and pays no copy at all.
      *
-     * The order is: the content's declared draw order first (Node::setDrawOrder - higher is drawn later,
-     * so content that must land on top says so), and inside one order the picture the collection has always
-     * produced — opaque front-to-back, then transparent back-to-front.
-     *
-     * The owning spelling: use it when the list is KEPT or EDITED. A caller that
-     * only reads it (the engine's own pass path, a backend) hands out the shared
-     * list instead (see collectRenderCommandsShared) and pays no copy at all.
-     *
-     * @param camera Camera used for culling/ordering. Its own aspect is the picture's shape: the frustum culled
-     *               against is the one the projection produces (see Camera - one camera, one picture shape).
-     * @param layer_mask Layers this picture draws (see Node::setLayers): content whose resolved layers do not
-     *                   intersect the mask is left out of the walk. kAllLayers (the default) draws everything.
+     * @param camera Camera used for culling/ordering. Its own aspect is the picture's shape (see Camera -
+     *               one camera, one picture shape).
+     * @param layer_mask Layers this picture draws (see Node::setLayers); kAllLayers (the default) draws
+     *                   everything.
      * @return Collected render commands (a copy of this frame's list for this view).
      */
     std::vector<RenderCommand> collectRenderCommands(raw_ptr<const Camera> camera,
                                                      std::uint32_t layer_mask = kAllLayers) const;
 
-    /** @brief Collects render commands as a SHARED, immutable list, for a picture of @p aspect.
+    /** @brief Collects render commands as a SHARED, immutable list.
      *
-     * The same collection as collectRenderCommands(), which is defined in terms of
-     * it, with the list handed over by reference: the passes of one frame draw the
-     * SAME commands, so copying the list per pass spent an intrusive_ptr
-     * increment (three per command) and a command-sized memcpy on every pass of
-     * every frame, for a list nobody was going to change. A caller that has to
-     * change something makes its own copy of what it needs (RenderPass::execute
-     * does exactly that, and only when a program override is set).
+     * @details
+     * - The same collection as collectRenderCommands(), which is defined in terms of it, with the list handed
+     *   over by reference: the passes of one frame draw the SAME commands, and copying the list per pass
+     *   spent an intrusive_ptr increment per command and a memcpy on every pass of every frame for a list
+     *   nobody was going to change. A caller that has to change something makes its own copy of what it
+     *   needs (RenderPass::execute does exactly that, and only when a program override is set).
+     * - The list is immutable by contract (treat it as const) and stays valid until the scene changes or the
+     *   frame ends - do not hold it past the frame it was collected in.
      *
-     * The list is immutable by contract — treat it as const, which its type says —
-     * and stays valid until the scene changes or the frame ends, so a caller must
-     * not hold it past the frame it was collected in.
-     *
-     * @param camera Camera used for culling/ordering. The memo matches on the view-projection it was built with,
-     *               which already carries the camera's shape - so a camera whose shape is changed gets its own
-     *               walk, and neither can answer for the other (see Camera).
+     * @param camera Camera used for culling/ordering. The memo matches on the view-projection it was built
+     *               with, which already carries the camera's shape - a camera whose shape changes gets its
+     *               own walk (see Camera).
      * @param layer_mask Layers this picture draws (see Node::setLayers); part of the memo's key, because two
      *                   passes drawing the same view with different masks do NOT draw the same list.
      * @return Shared list of collected render commands (empty when there is nothing to draw).
@@ -212,14 +226,12 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
     /** @brief Opens the content frame the collected-command memo belongs to.
      *
-     * The engine announces one content frame per rendered frame, so several
-     * passes of one frame drawing the same scene through the same camera share
-     * a single tree walk (see collectRenderCommands). Nothing is memoised until
-     * a frame has been opened, so a caller that drives the collection itself
-     * keeps the plain "walk on every call" behaviour.
-     *
-     * Idempotent: announcing the same token again does nothing, so any number
-     * of passes may announce it.
+     * @details
+     * - The engine announces one content frame per rendered frame, so several passes of one frame drawing
+     *   the same scene through the same camera share a single tree walk (see collectRenderCommands).
+     *   Nothing is memoised until a frame has been opened, so a caller that drives the collection itself
+     *   keeps the plain "walk on every call" behaviour.
+     * - Idempotent: announcing the same token again does nothing, so any number of passes may announce it.
      *
      * @param frame Opaque frame token; the same token means the same frame.
      */
@@ -227,22 +239,27 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
     /** @brief Drops the memoised collected commands.
      *
-     * The scene invalidates itself when its own content changes (root,
-     * visibility, opacity), and every frame boundary ends the memo. A node
-     * edited DIRECTLY (a transform, a material, a drawable's attributes) cannot
-     * be observed by the scene, so such an edit made between two passes of one
-     * frame is picked up by the next frame — call this to pick it up at once.
-     *
-     * The CACHED BOUNDS (Node::invalidateBounds) are reset with it: the built-in setters announce
-     * themselves, and this call reaches the edits they could not see, so the next collection also
-     * re-derives every box before it culls with one.
+     * @details
+     * - The scene invalidates itself when its own content changes (root, visibility, opacity), and every
+     *   frame boundary ends the memo. A node edited DIRECTLY (a transform, a material, a drawable's
+     *   attributes) cannot be observed by the scene, so such an edit made between two passes of one frame
+     *   is picked up by the next frame - call this to pick it up at once.
+     * - The CACHED BOUNDS (Node::invalidateBounds) are reset with it: the built-in setters announce
+     *   themselves, and this call reaches the edits they could not see, so the next collection re-derives
+     *   every box before it culls with one.
      */
     void invalidateContent();
 
-    /** @brief Gets how many times the tree was walked to collect commands. */
+    /** @brief Gets how many times the tree was walked to collect commands.
+     *
+     * @return The walk count since construction.
+     */
     [[nodiscard]] std::uint64_t contentCollectCount() const noexcept;
 
-    /** @brief Gets how many collected lists came from the frame's memo. */
+    /** @brief Gets how many collected lists came from the frame's memo.
+     *
+     * @return The reuse count since construction.
+     */
     [[nodiscard]] std::uint64_t contentCollectReuseCount() const noexcept;
 
   private:
