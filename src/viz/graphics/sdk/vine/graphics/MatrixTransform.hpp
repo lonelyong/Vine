@@ -12,24 +12,26 @@ using vn::math::Mat4d;
 /**
  * @brief Scene-graph node placing its subtree with a local transform.
  *
- * MatrixTransform is the OSG/vsg-style transform node and the ONLY holder of
- * a transform in the scene graph: the matrices of nested MatrixTransforms
- * multiply along the root-to-leaf path (Node::worldMatrix()) to place
- * geometry in world space, and render command collection bakes that chain
- * into each command's world model matrix. As a Group it also aggregates
- * children (typically leaf Geometries or nested transforms), and its
- * world-space bounding box is inherited from Group (children already answer
- * in world space, including this matrix).
+ * @details
+ * - The ONLY holder of a transform in the scene graph: nested MatrixTransforms multiply along the
+ *   root-to-leaf path (Node::worldMatrix()) to place geometry in world space, and command collection bakes
+ *   that chain into each command's world model matrix.
+ * - As a Group it also aggregates children (typically leaf Geometries or nested transforms); its world-space
+ *   box is inherited from Group (children already answer in world space, this matrix included).
  */
 class VN_GRAPHICS_API MatrixTransform : public Group {
     VN_OBJECT_META_DECL;
 
   public:
+    /** @brief Constructs a transform node with an identity local matrix. */
     MatrixTransform();
     ~MatrixTransform();
 
   public:
-    /** @brief Gets the local transform of this node. */
+    /** @brief Gets the local transform of this node.
+     *
+     * @return The local matrix (identity by default).
+     */
     Mat4d matrix() const;
 
     /** @brief Sets the local transform of this node.

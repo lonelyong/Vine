@@ -34,57 +34,56 @@ inline constexpr std::uint32_t kDefaultLayer = 1u << 0;
 /**
  * @brief Base class of every scene-graph node.
  *
- * Node is the OSG/vsg-style base of the scene hierarchy. Concrete kinds
- * derive from it: Group aggregates children, MatrixTransform places a
- * subtree with a local matrix, StateNode applies render state to a subtree,
- * and Geometry is a leaf carrying vertex data. Node itself provides only the
- * shared identity: the node name, a subtree-level visibility/opacity
- * multiplier, the parent link, and world-matrix / bounding-box queries. It is
- * NOT a container and holds no transform of its own: attach children through
- * Group and place a subtree through MatrixTransform. The world-space
- * boundingBox() of a subtree is computed by walking the parent chain, so any
- * node answers in world space regardless of depth.
- *
- * WHAT A NODE PASSES DOWN to its subtree - the fold rules (the full table, including the StateNode
- * items, is in docs/guides/graphics.md):
- *  - visibility is a HARD GATE, not a folded value: an invisible node takes its whole subtree out of
- *    the collection, the ray walks and the scene's box (see isVisible);
- *  - opacity MULTIPLIES: scene x every ancestor x the node's own, clamped to [0, 1] at the drawn
- *    leaf (see opacity);
- *  - layers and drawOrder take the NEAREST declaration: a node that declares its own replaces what it
- *    inherited, and clearing the declaration goes back to inheriting (see setLayers / setDrawOrder).
- *
- * BOUNDS ARE CACHED PER NODE (see .ai/design/graphics-scene-graph.md §10.2): the collection walk keeps
- * each subtree's box in the node's OWN frame, so a camera move recomputes nothing and a culled subtree
- * costs one transformed box instead of a walk. The cache lives by ANNOUNCEMENT: every built-in mutation
- * (MatrixTransform::setMatrix, Group::addChild / removeChild, the geometry setters) calls
- * invalidateBounds(), and a node whose placement or extent is computed OUTSIDE those paths must call it
- * too - that is its explicit invalidation hook. A node that answers only in world space (an overridden
- * boundingBox()) is left uncached and its ancestors compute from scratch, which is always sound (see
- * subtreeBounds).
+ * @details
+ * - The OSG/vsg-style base of the scene hierarchy: Group aggregates children, MatrixTransform places a
+ *   subtree with a local matrix, StateNode applies render state, Geometry carries vertex data. Node itself
+ *   provides only the shared identity - name, subtree visibility / opacity, the parent link, world-matrix /
+ *   bounds queries - and is NOT a container: it holds no transform of its own (attach children through Group,
+ *   place a subtree through MatrixTransform). Its boundingBox() answers in world space at any depth, by
+ *   walking the parent chain.
+ * - WHAT A NODE PASSES DOWN (the fold rules; the full table is in docs/guides/graphics.md):
+ *   - visibility is a HARD GATE, not a folded value: an invisible node takes its whole subtree out of the
+ *     collection, the ray walks and the scene's box (see isVisible);
+ *   - opacity MULTIPLIES: scene x every ancestor x the node's own, clamped to [0, 1] at the drawn leaf
+ *     (see opacity);
+ *   - layers and drawOrder take the NEAREST declaration: a node that declares its own replaces what it
+ *     inherited, and clearing goes back to inheriting (see setLayers / setDrawOrder).
+ * - BOUNDS ARE CACHED PER NODE (see .ai/design/graphics-scene-graph.md §10.2): the collection walk keeps each
+ *   subtree's box in the node's OWN frame, so a camera move recomputes nothing and a culled subtree costs
+ *   one transformed box instead of a walk. The cache lives by ANNOUNCEMENT: every built-in mutation
+ *   (MatrixTransform::setMatrix, Group::addChild / removeChild, the geometry setters) calls
+ *   invalidateBounds(), and a node whose placement or extent is computed OUTSIDE those paths must call it
+ *   too. A node that answers only in world space (an overridden boundingBox()) is left uncached - its
+ *   ancestors compute from scratch, which is always sound (see subtreeBounds).
  */
 class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     VN_OBJECT_META_DECL;
 
   public:
+    /** @brief Constructs a node: visible, fully opaque, unattached. */
     Node();
     ~Node();
 
   public:
-    /** @brief Gets the node name. */
+    /** @brief Gets the node name.
+     *
+     * @return The name (empty when never set - names exist for lookup and debugging, not for identity).
+     */
     String name() const;
 
-    /** @brief Sets the node name. */
+    /** @brief Sets the node name.
+     *
+     * @param name New node name.
+     */
     void setName(const String& name);
 
-    /** @brief Returns whether this subtree is visible.
+    /** @brief Gets whether this subtree is visible.
      *
      * @details
-     * - This node's OWN flag, not a folded value: a hidden ancestor is not reported here, it is applied
-     *   as a gate while walking.
-     * - The gate is absolute - an invisible node takes its whole subtree out of the collection (nothing
-     *   below becomes a draw), the ray walks (nothing below is pickable) and Scene::boundingBox
-     *   (nothing below is measured).
+     * - This node's OWN flag, not a folded value: a hidden ancestor is not reported here, it is a gate
+     *   applied while walking.
+     * - The gate is absolute: an invisible node leaves the collection (nothing below draws), the ray walks
+     *   (nothing below is pickable) and Scene::boundingBox (nothing below is measured).
      *
      * @return true when this node's own flag is set.
      */
@@ -93,8 +92,8 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     /** @brief Sets whether this subtree is visible: false takes the whole subtree out of the picture.
      *
      * @details
-     * - The host's "temporarily off" switch (a toggle, an LOD swap) - "which part of the content this
-     *   is" is the layer declaration instead, and the two are independent (see setLayers).
+     * - The "temporarily off" toggle (a hide, an LOD swap); "which part of the content this is" is the
+     *   layer declaration instead, and the two are independent (see setLayers).
      * - The scene has the same switch at the top of the tree (Scene::setVisible).
      *
      * @param visible false hides this node and every node below it.
@@ -103,11 +102,12 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
     /** @brief Gets the layers this subtree declares.
      *
-     * This node's OWN declaration, not the resolved one: nullopt means "this node says nothing", so its
-     * subtree is in the layer its ancestors declared (kDefaultLayer when nobody did). The resolution
-     * happens once, in the collection walk, which is why there is no second (up-walking) spelling here -
-     * the question "why was this not drawn" is asked by a PASS, and it is answered while collecting (see
-     * Scene::collectRenderCommands and .ai/design/graphics-layers.md).
+     * @details
+     * - This node's OWN declaration, not the resolved one: nullopt means "this node says nothing", so its
+     *   subtree is in the layer its ancestors declared (kDefaultLayer when nobody did).
+     * - Resolution happens once, in the collection walk - which is why there is no up-walking spelling
+     *   here; "why was this not drawn" is asked by a pass and answered while collecting (see
+     *   Scene::collectRenderCommands and .ai/design/graphics-layers.md).
      *
      * @return The declared layer set, or nullopt when this node declares none.
      */
@@ -115,17 +115,15 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
     /** @brief Declares which layers this subtree belongs to.
      *
-     * A pass draws the content whose layers intersect its mask (see RenderPass::setLayerMask), so this is
-     * how content is kept out of a pass that draws other layers: a shadow pass drawing only casters, two
-     * passes showing different parts of one scene. Independent of visibility - setVisible(false) is
-     * "temporarily off", this is "which layers it is a part of".
+     * @details
+     * - A pass draws the content whose layers intersect its mask (see RenderPass::setLayerMask) - this is
+     *   how content is kept out of a pass that draws other layers (a shadow pass drawing only casters; two
+     *   passes showing different parts of one scene). Independent of visibility.
+     * - It covers the whole subtree and the NEAREST declaration wins, exactly like the state a StateNode
+     *   passes down; clearLayers() goes back to inheriting.
      *
-     * The declaration covers the whole subtree and the NEAREST declaration wins, exactly like the shading
-     * state a StateNode passes down: a child that declares its own set replaces what it inherited, and
-     * clearLayers() puts it back to inheriting.
-     *
-     * @param layers Layer set (a node that declares none is in kDefaultLayer; 0 means "in no layer", so no
-     *               pass draws this subtree - a legal authoring state, not an error).
+     * @param layers Layer set (0 means "in no layer", so no pass draws this subtree - a legal authoring
+     *               state, not an error; a node that declares none is in kDefaultLayer).
      */
     void setLayers(std::uint32_t layers);
 
@@ -142,20 +140,17 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
     /** @brief Declares where this subtree's draws sit in the order of the pass that draws them.
      *
-     * WITHIN one pass, and only there: a higher order is drawn LATER, which is how content that must land ON TOP
-     * of what is already in the target is expressed - a selection outline, a decal, a highlight overlay. It does
-     * not move anything between passes: which passes exist and in what order they run is the recipe's
-     * (`PassDesc::order` / `PipelineStage`), and this value has no effect on it.
-     *
-     * The order is the OUTER sort key of the list a pass draws, so a declared order really does leapfrog the
-     * default batches: content at order 1 is drawn after every draw at order 0, opaque or not. INSIDE one order
-     * the picture is what it always was - opaque front-to-back first, then transparent back-to-front (see
-     * Scene::collectRenderCommands) - which is what keeps a higher order from breaking alpha ordering among the
-     * content that shares it.
-     *
-     * The declaration covers the whole subtree and the NEAREST declaration wins, exactly like the layer
-     * declaration beside it: a child that declares its own order replaces what it inherited, and clearDrawOrder()
-     * puts it back to inheriting.
+     * @details
+     * - WITHIN one pass, and only there: a higher order is drawn LATER - how content that must land ON TOP
+     *   (a selection outline, a decal, a highlight overlay) is expressed. It never moves content between
+     *   passes: which passes exist and in what order they run is the recipe's (`PassDesc::order` /
+     *   `PipelineStage`).
+     * - The order is the OUTER sort key of the pass's draw list, so a declared order leapfrogs the default
+     *   batches (order 1 is drawn after every draw at order 0, opaque or not); INSIDE one order the usual
+     *   picture holds - opaque front-to-back, then transparent back-to-front (see
+     *   Scene::collectRenderCommands) - which keeps alpha ordering intact among content that shares it.
+     * - It covers the whole subtree and the NEAREST declaration wins, like the layer declaration beside it;
+     *   clearDrawOrder() goes back to inheriting.
      *
      * @param order Sort key of this subtree's draws inside one pass (0 is the default; higher = later).
      */
@@ -183,20 +178,21 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      */
     void setOpacity(float opacity);
 
-    /** @brief Gets the parent node (null for root nodes). */
+    /** @brief Gets the parent node.
+     *
+     * @return The parent, or null for a root node (a child does not own its parent).
+     */
     raw_ptr<Node> parent() const;
 
     /** @brief Computes the world-space bounding box of this subtree.
      *
-     * Every node answers in world space: leaf Geometry boxes are the bound
-     * of their vertex data transformed by the enclosing MatrixTransforms;
-     * Group/MatrixTransform boxes union their children's boxes (which are
-     * already world-space). Base Node (never used as a renderable or
-     * container) returns an empty box.
-     *
-     * Visibility is NOT folded here: a hidden node still answers with its subtree's box - this is the
-     * pure geometry query. Scene::boundingBox is the one that answers for the VISIBLE content: it prunes
-     * hidden subtrees at any depth.
+     * @details
+     * - Every node answers in world space: a Geometry's box is the bound of its vertex data transformed by
+     *   the enclosing MatrixTransforms; Group / MatrixTransform union their children's boxes (which are
+     *   already world-space); base Node (never a renderable or container) answers empty.
+     * - Visibility is NOT folded here - a hidden node still answers (the pure geometry query).
+     *   Scene::boundingBox is the one that answers for the VISIBLE content: it prunes hidden subtrees at
+     *   any depth.
      *
      * @return World-space AABB of this subtree.
      */
@@ -204,50 +200,50 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
     /** @brief Gets the accumulated world matrix of this node.
      *
-     * The product, from the scene root downwards, of the local matrices of
-     * every enclosing MatrixTransform (identity for every non-transform
-     * node). For a leaf Geometry this places its local vertex data in world
-     * space; for a MatrixTransform it also includes its own matrix.
-     *
-     * This walks the ancestor chain, so a traversal should prefer
-     * accumulating from the root with localTransformMatrix() (one product per
-     * node) over calling this once per node (one product per ancestor).
+     * @details
+     * - The product, from the scene root downwards, of every enclosing MatrixTransform's local matrix
+     *   (identity for every other node); for a MatrixTransform it includes its own. For a leaf Geometry it
+     *   places the local vertex data in world space.
+     * - This walks the ancestor chain: a traversal should accumulate top-down with localTransformMatrix()
+     *   (one product per node) instead of calling this once per node (one product per ancestor).
      *
      * @return World-space transform.
      */
     Mat4d worldMatrix() const;
 
-    /** @brief Gets this node's own local matrix contribution.
+    /** @brief Gets this node's own local matrix contribution (identity unless a MatrixTransform).
      *
-     * Identity for every node that is not a MatrixTransform. Public so a
-     * traversal can accumulate world matrices top-down:
-     * `child_world = parent_world * child.localTransformMatrix()`.
+     * @details
+     * - Public so a traversal can accumulate world matrices top-down:
+     *   `child_world = parent_world * child.localTransformMatrix()`.
      *
-     * @return This node's local matrix (identity unless a MatrixTransform).
+     * @return This node's local matrix.
      */
     virtual Mat4d localTransformMatrix() const;
 
     /** @brief Announces that this subtree's bound may have changed.
      *
-     * The scene's collection caches every subtree's bound in the node's own frame, and a cached box is
-     * served until something announces a change: this call bumps the node's bounds stamp AND every
-     * ancestor's (an ancestor's box is a union of its children's, so a change here reaches up; a change
-     * ABOVE cannot stale a box below, because a subtree box lives in the node's own frame - see
-     * subtreeBounds). Every built-in mutation announces through it; a node whose local matrix or extent
-     * is computed by code the engine cannot see must call this after changing, exactly like a raw data
-     * writer announces through Geometry::bumpRevision().
+     * @details
+     * - The collection caches every subtree's bound in the node's own frame, and a cached box is served
+     *   until something announces a change: this bumps the node's stamp AND every ancestor's (a box unions
+     *   its children's). A change ABOVE cannot stale a box below - a subtree box lives in the node's own
+     *   frame (see subtreeBounds).
+     * - Every built-in mutation announces through it; code the engine cannot see that changes a local
+     *   matrix or an extent must call it, exactly like a raw data writer announces through
+     *   Geometry::bumpRevision().
      */
     void invalidateBounds() noexcept;
 
     /** @brief Gets this subtree's box in THIS node's own frame, served from the per-node cache.
      *
-     * "Own frame" is the frame this node's worldMatrix() maps to world: a container's box is its
-     * children's boxes transformed by each child's localTransformMatrix(), so a change above the node
-     * cannot stale the cache - only a change inside the subtree can, which invalidateBounds() announces.
+     * @details
+     * - "Own frame" is the frame this node's worldMatrix() maps to world: a container's box is its
+     *   children's boxes transformed by each child's localTransformMatrix(), so a change above cannot
+     *   stale the cache - only a change inside the subtree can, which invalidateBounds() announces.
      *
      * @param box Receives the box when one is known (possibly genuinely empty).
-     * @return true when the box is known; false when the subtree cannot be answered in this frame - what
-     *         a node that only overrides boundingBox() (world space) yields, and what a plain Node (no
+     * @return true when the box is known; false when the subtree cannot be answered in this frame - what a
+     *         node that only overrides boundingBox() (world space) yields, and what a plain Node (no
      *         content, no children) avoids by answering empty. A false answer tells the walk to compute
      *         from scratch, which stays sound for any node class.
      */
@@ -255,10 +251,11 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
     /** @brief Gets how many times this subtree's box was RECOMPUTED from its children.
      *
-     * The witness of the cache above, the way Geometry::localBoundsComputationCount() witnesses its data
-     * box: a steady scene (a moving camera included - world boxes do not depend on it) recomputes
-     * nothing after the first collect, and a count that keeps rising while nothing announces a change
-     * means a stamp is too eager.
+     * @details
+     * - The witness of the cache above, the way Geometry::localBoundsComputationCount() witnesses its data
+     *   box: a steady scene (a moving camera included - world boxes do not depend on it) recomputes
+     *   nothing after the first collect, and a count that keeps rising while nothing announces a change
+     *   means a stamp is too eager.
      *
      * @return Number of recomputes since construction.
      */
@@ -291,10 +288,11 @@ using NodePtr = intrusive_ptr<Node>;
 /**
  * @brief Places a local-space AABB with @p world into a world-space AABB.
  *
- * The one spelling of "place an axis-aligned box": all eight corners are transformed and the result is
- * re-boxed. A node's own `boundingBox()` uses it, and so does the scene's collection walk with the matrix
- * IT accumulated - the two must agree (a test pins `boundingBox() == transformBox(localBounds(),
- * worldMatrix())` on a nested chain), which is why this helper lives here rather than once per caller.
+ * @details
+ * - The one spelling of "place an axis-aligned box": all eight corners are transformed and the result is
+ *   re-boxed. A node's own `boundingBox()` uses it, and so does the collection walk with the matrix IT
+ *   accumulated - the two must agree (a test pins `boundingBox() == transformBox(localBounds(),
+ *   worldMatrix())` on a nested chain), which is why this helper lives here rather than once per caller.
  *
  * @param local Box in the node's own frame.
  * @param world World transform to place it with.

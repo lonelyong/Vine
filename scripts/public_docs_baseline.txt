@@ -1056,8 +1056,6 @@ src/viz/graphics/sdk/vine/graphics/Geometry.hpp	return|Geometry::normalCount
 src/viz/graphics/sdk/vine/graphics/Geometry.hpp	return|Geometry::positionCount
 src/viz/graphics/sdk/vine/graphics/Geometry.hpp	return|Geometry::texcoordComponents
 src/viz/graphics/sdk/vine/graphics/Geometry.hpp	return|Geometry::texcoordCount
-src/viz/graphics/sdk/vine/graphics/Group.hpp	brief|Group::Group
-src/viz/graphics/sdk/vine/graphics/Group.hpp	return|Group::children
 src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::castShadow
 src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::color
 src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::createAmbient
@@ -1077,12 +1075,6 @@ src/viz/graphics/sdk/vine/graphics/Material.hpp	return|Material::diffuse
 src/viz/graphics/sdk/vine/graphics/Material.hpp	return|Material::name
 src/viz/graphics/sdk/vine/graphics/Material.hpp	return|Material::shininess
 src/viz/graphics/sdk/vine/graphics/Material.hpp	return|Material::specular
-src/viz/graphics/sdk/vine/graphics/MatrixTransform.hpp	brief|MatrixTransform::MatrixTransform
-src/viz/graphics/sdk/vine/graphics/MatrixTransform.hpp	return|MatrixTransform::matrix
-src/viz/graphics/sdk/vine/graphics/Node.hpp	brief|Node::Node
-src/viz/graphics/sdk/vine/graphics/Node.hpp	param|Node::setName/1
-src/viz/graphics/sdk/vine/graphics/Node.hpp	return|Node::name
-src/viz/graphics/sdk/vine/graphics/Node.hpp	return|Node::parent
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onKeyDown/1
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onKeyUp/1
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onMouseMove/1

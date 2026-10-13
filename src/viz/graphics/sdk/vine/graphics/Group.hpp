@@ -13,30 +13,30 @@ VN_GRAPHICS_NS_BEGIN
 /**
  * @brief Scene-graph node that aggregates child nodes.
  *
- * Group is the OSG/vsg-style container node: it adds no state or transform of
- * its own, it simply holds child nodes (nested Groups, MatrixTransforms,
- * StateNodes and leaf Geometries) and keeps each child's parent link in sync.
- * Scene-graph kinds that apply something to their subtree (a
- * MatrixTransform's transform, a StateNode's render state) derive from Group
- * so they remain ordinary containers. A Group's world-space bounding box is
- * the union of its children's boxes (each child already answers in world
- * space, so enclosing transforms need no special handling here).
+ * @details
+ * - The OSG/vsg-style container: it adds no state or transform of its own, only children (nested Groups,
+ *   MatrixTransforms, StateNodes and leaf Geometries), and keeps each child's parent link in sync. Kinds that
+ *   apply something to their subtree (a transform, render state) derive from Group so they stay ordinary
+ *   containers.
+ * - Its world-space box is the union of its children's boxes (each child already answers in world space, so
+ *   enclosing transforms need no special handling here).
  */
 class VN_GRAPHICS_API Group : public Node {
     VN_OBJECT_META_DECL;
 
   public:
+    /** @brief Constructs an empty group (no children). */
     Group();
     ~Group();
 
   public:
     /** @brief Adds a child node.
      *
-     * The node keeps a reference to the child and detaches it from any
-     * previous parent, so the graph stays a tree. An add that would close a
-     * cycle (the child is this node or one of its ancestors) is rejected and
-     * the child is left untouched: a cyclic graph makes every tree traversal
-     * (command collection, bounds, picking, find) recurse forever.
+     * @details
+     * - The group keeps a reference and detaches the child from any previous parent, so the graph stays a
+     *   tree. An add that would close a cycle (the child is this node or one of its ancestors) is rejected
+     *   and the child is left untouched: a cyclic graph makes every tree traversal (command collection,
+     *   bounds, picking, find) recurse forever.
      *
      * @param child Child to add (null is ignored).
      */
@@ -50,27 +50,31 @@ class VN_GRAPHICS_API Group : public Node {
 
     /** @brief Gets all child nodes.
      *
-     * Returns a copy: use childrenRef() on hot paths (per-frame traversal,
-     * picking) to avoid copying the list and bumping every child's reference
-     * count.
+     * @details
+     * - Returns a copy: use childrenRef() on hot paths (per-frame traversal, picking) to avoid copying the
+     *   list and bumping every child's reference count.
+     *
+     * @return The children, in insertion order.
      */
     std::vector<NodePtr> children() const;
 
     /** @brief Borrows the child list without copying it.
      *
-     * The reference is valid until the group's children change, so it must not
-     * be held across an addChild() / removeChild().
+     * @details
+     * - The reference is valid until the group's children change: do not hold it across an
+     *   addChild() / removeChild().
      *
      * @return The children, in insertion order.
      */
     const std::vector<NodePtr>& childrenRef() const noexcept;
 
-    /** @brief Computes the world-space bounding box of this subtree.
+    /** @brief Computes the world-space bounding box of this subtree (the union of the children's; empty when
+     * childless).
      *
-     * Union of the children's world-space boxes (empty when childless).
-     * Containers derive their bound from their children, so a subclass that
-     * wants a different extent must contribute it through a leaf instead of
-     * overriding this (the per-frame bounds pass unions children directly).
+     * @details
+     * - Containers derive their bound from their children: a subclass that wants a different extent must
+     *   contribute it through a leaf instead of overriding this (the per-frame bounds pass unions children
+     *   directly).
      *
      * @return World-space AABB of this subtree.
      */
