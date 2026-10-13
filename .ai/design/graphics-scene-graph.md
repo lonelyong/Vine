@@ -362,3 +362,24 @@ void invalidateBounds() noexcept;                 // 上行 bump（自己 + 祖�
    `Node::invalidateBounds()` 显式公告口；"漏失效"由 5 条防火墙测试 + 4 条变异电池钉住（见 §10.2）。
 3. 余量：unknown 子树（自定义节点未公告）会让其祖先退回从零推；若真实负载出现"自定义摆放 + 大子树"的组合，
    再做按类型的公告适配（或要求这类节点显式 opt-in），不动当前契约。
+## 11. 遍历架构：直写 walk vs OSG 式 visitor（**登记：不做 + 触发器，2026-10-13 评估**）
+
+现状是若干**手写 walk**：收集（`Scene.cpp` 的 `collectNodeCommands`）、拾取三个遍历器（`intersectNode` /
+`collectNodeNearest` / `collectNodeHits`）、`findNode`、`invalidateBoundsUnder`、`visibleWorldBox`、
+`subtreeBounds` 的 Group 分支。曾评估“引入 OSG 式 `accept(NodeVisitor&)` 双派发 + `NodeMask` 语义，
+让 AABB / OBB / 剔除等算法独立、可替换”，结论**不做**：
+
+- **难点不在遍历骨架**：复杂度在缓存与失效契约（§10 的 `subtreeBounds` 持久缓存 + `invalidateBounds()` 公告、
+  每 pass 的 `BoundsCache`、收集 memo 的 key）。visitor 换的是入口，这些原样存在——“可替换”要替换的其实是它们；
+- **热路径代价**：每节点 `accept` + `apply` 两次虚派发 + 逐孩子迭代；收集是每 pass 每帧最热的路径，先量再谈。
+  `Node::accept` 一旦进 SDK 就是 ABI 承诺——新节点类型要照顾所有 visitor；
+- **通用性未兑现**：OSG 的 visitor/mask 是给“多宿主、多消费者”的通用工具箱付的钱；本仓只有“一条绘制路径 + 一份拾取”；
+- **`NodeMask` 语义已被取代**：L1 的刻意选择是“对象带层、消费者带掩码；只在可绘制节点判定、不剪结构”
+  （见 `graphics-layers.md` §2.1 / §9.3）——per-node mask 会把“后代不可达”与“mask 兼作隐藏”带回来；
+- **运行时可替换无证据**：这类替换（AABB↔OBB、剔除策略）通常编译期决定；OBB 真正的课题是 bounds 类型 +
+  缓存失效，不是遍历入口。
+
+**触发器**（命中任一条再评，且先量再改）：① 出现第二个真正需要**可插拔**的遍历消费者（宿主自定义遍历 / LOD /
+动画-关节更新），且手写 walk 的重复成为维护负担；② 剖析证明每节点派发代价可接受、且能换回真实收益。
+**轻量替代**（重复成为痛点时可先做）：一个**内部**遍历原语（回调式 walk）收敛重复（如三份射线递归）——
+不进 SDK、不加虚派发、不动缓存契约。

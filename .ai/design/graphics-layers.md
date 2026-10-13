@@ -45,8 +45,9 @@
   而"未声明 = 全 1"会让每个不画的物体都得先声明一次。这条跟 three.js / Unity / Qt3D 的默认层走，
   Ogre-Next（两边都是 0xFFFFFFFF）**刻意不跟**。`kDefaultLayer` 与 `kAllLayers` 两个常量都在 `Node.hpp`（一个 owner）。
 - **掩码测试落在可绘制节点上（容器是结构）**：判定写在遍历里"发一条命令"的地方，而不是节点入口 —— 在容器上剪枝
-  会让"声明了层的子内容"在"没声明层的组"下**不可达**（第一版就是这样，被 §5 的 C1 抓到）。与行业口径一致：
-  Unity 的层在 GameObject（渲染器）上，Qt3D / OSG 的掩码也按可绘制对象判。
+  会让“声明了层的子内容”在“没声明层的组”下**不可达**（第一版就是这样，被 §5 的 C1 抓到）。行业口径大体一致
+  （Unity 的层在 GameObject 上，Qt3D 的 `QLayer` 也挂在对象上）；**OSG 是例外**——`NodeMask` 在每个节点判定、
+  不匹配即剪整棵子树，代价正是“后代不可达”，本片刻意不跟（见 §9.3）。
 - **为什么只两级**：Ogre-Next 是三级（对象 flags / viewport mask / compositor pass mask）。我们没有 viewport 概念，
   "一次绘制声明"就是 pass ⇒ **pass 级掩码是那条 viewport 级掩码的等价物**，不需要再造一层。
 
