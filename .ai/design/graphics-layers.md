@@ -253,3 +253,49 @@ PassDesc::first_layer { 0 } + PassDesc::layer_count { 1 }
 | --- | --- | --- |
 | 某条 pass 只画一部分对象 | 把对象拆到两个 `Scene`，或整棵子树 `setVisible(false)` 再恢复 | 拆场景 = 内容重复与同步；`setVisible` = 两处互相影响（多视角下必错） |
 | 立方体面 / 多级阴影 | 多个 2D 目标 + 多次 pass + 自己合成 | N 份显存与 N 次收集；点光源阴影在今天的阴影实现里根本没有入口 |
+
+## 9. 后续消费者：拾取与包围盒（**登记：形状 + 触发器；未落地，2026-10-13 设计**）
+
+层是场景图上的**选择字段**，收集只是它的第一个消费者。两个已点名的后续消费者把形状先定死，等触发器命中再做。
+两条共同前提，落地时不再重新讨论：
+
+- **谓词只有一处**：`(解析层 & 掩码) == 0` 的折叠与判定，与收集**同一行代码、同一判定点**（§2.1：可绘制节点，
+  容器是结构——祖先的声明不能把后代变成不可达）；收集 / 拾取 / 包围盒三条 walk 共享一个内部折叠助手，
+  不允许第二份实现。
+- **默认逐位不变**：两条消费者都带默认参数 `kAllLayers`（未声明 = `kDefaultLayer` ⊂ `kAllLayers`），不传＝今天的行为，
+  既有用例全绿即是证明。
+
+### 9.1 拾取按层过滤（`RayIntersection`）
+
+- **形状**：scene 级两个入口加掩码；单几何的 `intersect(ray, geometry, world)` **不加**（"选哪些对象"的语义属于
+  跨树查询，单几何已由调用者选好）：
+  - `intersectScene(ray, scene, layer_mask = kAllLayers)`
+  - `intersectSceneAll(ray, scene, mode, layer_mask = kAllLayers)`
+- **语义**：`isVisible` 硬门不变（先过）；层测试在**被画的 Geometry** 上；三个遍历器
+  （`intersectNode` / `collectNodeNearest` / `collectNodeHits`）各加一个向下折叠的层参数。
+- **判据**：① 不传掩码＝老行为逐位不变（既有拾取用例）；② 掩码排除一个声明过的子树 ⇒ 拾不到（正反两面各一条）；
+  ③ 子树内**重声明**进掩码的对象仍拾得到（叶子判定、不剪结构）；④ 隐藏仍然优先。
+- **落点**：`OrbitCameraManipulator::pickAt` 保持默认；"只拾地形"这类模式化选择由宿主操纵器在调用点传掩码
+  —— 拾取是机制、选择是业务（见 `graphics-object-model-vs-3d-frameworks.md` §2.5）。
+- **触发器**：宿主出现第一个"按层拾取"的真实需求（工具模式 / 多类内容分开拾）。
+
+### 9.2 包围盒按层计算（`Scene::boundingBox`）
+
+- **形状**：`Aabbd boundingBox(std::uint32_t layer_mask = kAllLayers) const;` —— "可见场景的盒"升级为
+  "**用这条掩码画的那部分内容**的盒"。
+- **语义**：`visibleWorldBox` 加层折叠与叶子判定；容器仍是结构（同本章共同前提）。
+- **判据**：① 默认参数 ⇒ 现有场景盒用例（`BoundingBoxAggregates` / `InvisibleNodeExcludedFromBoundingBox` /
+  `HiddenSubtreeContributesNothingToTheSceneBox`）全绿；② 掩码排除声明过的子树 ⇒ 盒收缩（正反两面）；
+  ③ 重声明对象仍计入；④ 全部排除 ⇒ 空盒（合法输入，不报警）。
+- **落点**：① **阴影视锥拟合** —— `RenderPipelineBuilder` 的
+  `directionalShadowMatrix(..., content_->boundingBox(掩码), ...)`，让影子盒贴合"这条 pass 真正会画的内容"
+  （今天是整棵可见树）；② 取景/夹持 —— 宿主不想 helper 进"框住全部"时传排除掩码。
+- **触发器**：① 实测"阴影分辨率被不参与的内容摊薄"；② 宿主报"框住全部把不该看的也框进来"。
+
+### 9.3 相关的"整段跳过"（登记：形状）
+
+掩码现在**不剪结构**（判定点在可绘制节点上，§2.1）。若将来"按掩码排除大子树"的遍历成本进入剖析前列，
+加的是**子树层并集**的保守判定：每个节点带 `subtree_layers`（子树内所有节点**解析层**的并集；超额近似——
+只会少剪、不会误剪），公告点与 `invalidateBounds()` 同款（`setLayers` / `clearLayers` / `addChild` /
+`removeChild`），三条 walk 同一行：`if ((subtree_layers & 掩码) == 0) return;`。它**语义零变化**、老用例全绿，
+是纯增量优化。**不要**退化成 OSG 式"节点自身层剪枝"（后代重声明会变不可达，破坏 §2.1 的语义）。
