@@ -133,7 +133,13 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     /** @brief Returns whether the scene has at least one light source. */
     bool hasLights() const;
 
-    /** @brief Computes the bounding box of the whole scene. */
+    /** @brief Computes the bounding box of the visible scene.
+     *
+     * Hidden content contributes nothing, at any depth: an invisible node prunes its whole subtree from the
+     * union, the same rule the collection and ray walks apply. Empty when the scene itself is hidden, has no
+     * root, or the root is hidden. The per-node query (Node::boundingBox) stays purely geometric - this is
+     * the scene's own fold, answering for what it would draw.
+     */
     Aabbd boundingBox() const;
 
     /** @brief Collects render commands for the given camera, as a picture of @p aspect sees it.

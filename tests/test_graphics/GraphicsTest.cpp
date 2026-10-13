@@ -265,6 +265,40 @@ TEST(SceneTest, InvisibleNodeExcludedFromBoundingBox)
     EXPECT_TRUE(box.isEmpty());
 }
 
+TEST(SceneTest, HiddenSubtreeContributesNothingToTheSceneBox)
+{
+    // The scene box answers for what the scene would DRAW: a node hidden at ANY depth prunes its whole
+    // subtree from the union (the collection walk's rule). The node-level query stays purely geometric.
+    Scene scene;
+    auto  root      = setIdentityRoot(scene);
+    auto  near_geom = geometryOf(*makeUnitTriangle()); // 0..1 box at the origin
+
+    auto far_group = intrusive_ptr<Group>(new Group());
+    auto far_place = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    far_place->setMatrix(vn::math::translate(Vec3d(10.0, 0.0, 0.0)));
+    far_place->addChild(geometryOf(*makeUnitTriangle())); // 10..11 box
+    far_group->addChild(far_place);
+    root->addChild(near_geom);
+    root->addChild(far_group);
+
+    Aabbd box = scene.boundingBox();
+    ASSERT_TRUE(box.isValid());
+    EXPECT_NEAR(box.max().x, 11.0, 1e-9) << "both subtrees are visible, so both are measured";
+
+    // Hiding a MIDDLE-level group prunes the whole 10..11 subtree, not just the group's own box.
+    far_group->setVisible(false);
+    box = scene.boundingBox();
+    ASSERT_TRUE(box.isValid());
+    EXPECT_NEAR(box.max().x, 1.0, 1e-9) << "a hidden subtree contributes nothing";
+
+    // The node-level query stays geometric: the hidden subtree still answers for itself.
+    EXPECT_FALSE(far_group->boundingBox().isEmpty());
+
+    // Hiding what is left answers an empty box, like a hidden scene or a hidden root.
+    near_geom->setVisible(false);
+    EXPECT_TRUE(scene.boundingBox().isEmpty());
+}
+
 // ============ RenderCommand collection / culling ============
 
 /**

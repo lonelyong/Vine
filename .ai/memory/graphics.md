@@ -25,6 +25,19 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-13 `Scene::boundingBox` 语义补齐：可见性按层级剪（此前只盖场景/根两级）
+
+- **结论**：`Scene::boundingBox()` 现在回答"**可见**场景"的盒：`Scene.cpp` 新增 `visibleWorldBox()`，
+  场景内**任何层级** `setVisible(false)` 的节点**整棵子树不贡献**（与收集/拾取遍历同一条规则）。
+  `Node::boundingBox()` 保持**纯几何**（设计与文档原文不改，Node.hpp 加了"可见性不在此折叠"的交叉引用）；
+  空盒情形不变：场景隐藏 / 无根 / 根隐藏。
+- **此前**：只在顶层"场景可见 / 有根 / 根可见"三个门口剪，树内隐藏节点仍贡献盒 —— 与用例名
+  `InvisibleNodeExcludedFromBoundingBox`、以及"取景/夹持/阴影拟合只应看可见内容"的消费方
+  （`OrbitCameraManipulator`、`RenderPipelineBuilder`）不一致。
+- **判据**：新用例 `SceneTest.HiddenSubtreeContributesNothingToTheSceneBox`（中间层隐藏 → 盒从 0..11
+  缩回 0..1；全部隐藏 → 空盒；同用例钉住 node 级仍非空）；`test_graphics` 373 用例全绿；文档门禁
+  `check_public_docs` / `check_doc_symbols` / `check_include_hygiene` 全绿。
+
 ## 2026-10-13 门禁口径：`ctest` 全量 24/24（修前 23/24，`test_gui` 直接 abort）
 
 - **结论**：`docs/guides/graphics.md` §4.4 把 `ctest --test-dir build` 列进门禁，而它**修前是红的**：

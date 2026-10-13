@@ -42,6 +42,8 @@
 >   MatrixTransform 链（`worldMatrix()`）；Group/MatrixTransform = children 世界盒并集（自洽，
 >   无需要求逐层变换盒）。Scene/视锥/Ray 直接测 `boundingBox()`，收集/拾取在叶子处烤
 >   `node->worldMatrix()` 到 modelMatrix。
+>   （2026-10-13 修订：`Scene::boundingBox` 改为回答**可见**场景——任何层级隐藏的子树都被剪掉，
+>   实现是 `Scene.cpp` 的 `visibleWorldBox`；node 级仍是纯几何，见 `.ai/memory/graphics.md`。）
 > - **消费者已迁移**：`Scene::collectRenderCommands`/`findNode`、`RayIntersection`（三遍历器）、
 >   `AxisGizmo`、`SceneBridge`（命令直接带 `Geometry*`，无需 dynamic_cast）、`VsgRenderer` 的
 >   no-cull walker、`app_shell::addBox`、`test_plugin::TestRenderLiveCommand`、`GraphicsTest.cpp`

@@ -221,6 +221,37 @@ void invalidateBoundsUnder(Node& node)
 }
 
 /**
+ * @brief Unions the world-space boxes of a subtree's VISIBLE content.
+ *
+ * The scene's box answers for what it would DRAW (see Scene::boundingBox), so an invisible node prunes
+ * its whole subtree - the same rule the collection walk (collectNodeCommands below) and the ray walks
+ * (RayIntersection) apply. Groups are read as structure: what a group contributes is what its children
+ * do. Every other node answers through its own boundingBox(), which stays the purely GEOMETRIC query
+ * (see Node::boundingBox) - the pruning is this query's own fold, not a change to what a node says about
+ * itself.
+ *
+ * @param node Subtree root to measure.
+ * @return World-space union of the visible content, empty when nothing in it is visible.
+ */
+Aabbd visibleWorldBox(const Node& node)
+{
+    if (!node.isVisible()) {
+        return Aabbd::empty();
+    }
+    if (const auto* group = dynamic_cast<const Group*>(&node)) {
+        Aabbd box = Aabbd::empty();
+        for (const auto& child : group->childrenRef()) {
+            const Aabbd child_box = visibleWorldBox(*child);
+            if (child_box.isValid()) {
+                box.expandBy(child_box);
+            }
+        }
+        return box;
+    }
+    return node.boundingBox();
+}
+
+/**
  * @brief The state a node INHERITS from the nodes above it.
  *
  * The fold is computed once on the way DOWN the traversal, which is where the ancestors already are. The
@@ -507,10 +538,10 @@ bool Scene::hasLights() const
 
 Aabbd Scene::boundingBox() const
 {
-    if (!visible_ || root_ == nullptr || !root_->isVisible()) {
+    if (!visible_ || root_ == nullptr) {
         return Aabbd::empty();
     }
-    return root_->boundingBox();
+    return visibleWorldBox(*root_);
 }
 
 std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsShared(raw_ptr<const Camera> camera,

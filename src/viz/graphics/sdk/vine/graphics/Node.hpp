@@ -154,6 +154,10 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      * already world-space). Base Node (never used as a renderable or
      * container) returns an empty box.
      *
+     * Visibility is NOT folded here: a hidden node still answers with its subtree's box - this is the
+     * pure geometry query. Scene::boundingBox is the one that answers for the VISIBLE content: it prunes
+     * hidden subtrees at any depth.
+     *
      * @return World-space AABB of this subtree.
      */
     virtual Aabbd boundingBox() const;
