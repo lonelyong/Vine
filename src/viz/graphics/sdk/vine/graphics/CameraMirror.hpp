@@ -19,16 +19,14 @@ enum class MirrorMode {
 
 /** @brief Applies a mirror mode onto a target camera from a source camera.
  *
- * Mirroring is the independent camera-follow component behind HUD content
- * such as an axis gizmo: a small view keeps facing the same way as the
- * interactive main camera while it rotates. It operates on plain cameras only
- * and knows nothing about passes or the render engine, so it can run anywhere
- * a frame is driven (e.g. inside a pass' execute()).
- *
- * Orientation keeps the target camera's own framing distance and rebuilds an
- * un-rolled up basis perpendicular to the source view direction; the target
- * content is expected to be centred on its local origin. FullView adopts the
- * source eye / target / up completely.
+ * @details
+ * - Mirroring is the independent camera-follow component behind HUD content such as an axis gizmo: a
+ *   small view keeps facing the same way as the interactive main camera while it rotates. It operates
+ *   on plain cameras only and knows nothing about passes or the render engine, so it can run anywhere
+ *   a frame is driven (e.g. inside a pass' execute()).
+ * - Orientation keeps the target camera's own framing distance and rebuilds an un-rolled up basis
+ *   perpendicular to the source view direction; the target content is expected to be centred on its
+ *   local origin. FullView adopts the source eye / target / up completely.
  *
  * @param dst  Target camera whose view matrix is rewritten.
  * @param src  Source camera to follow.

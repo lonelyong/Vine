@@ -16,16 +16,18 @@ class Scene;
 /**
  * @brief The axis-gizmo HUD's CONTENT: three coloured sticks, and the camera that frames them.
  *
- * What this owns is the half a pass cannot: its content scene (three sticks along +X red, +Y green, +Z blue),
- * the framing camera they are drawn with, and the BOX (a device-pixel rectangle in the bottom-left corner of the
- * area it belongs to) they are projected into. It is deliberately NOT a pass: a pass is a DECLARATION now (see
- * PassDesc), so whoever shows this gizmo declares one - `content` = this object's scene, `camera` = this object's
- * camera, `viewport` = boxViewport(), `before_draw` = update(), which mirrors the source camera's orientation
- * (MirrorMode::Orientation) onto the framing one and keeps its own framing distance.
- *
- * Surface layout is creator-managed: the object's owner reports the surface size on every resize
- * (onSurfaceResized) and points it at the corner of the area it lays out in (setAreaOrigin). The pipeline does
- * both for the standard case (Pipeline::resize), and a view states the area origin (SceneView).
+ * @details
+ * - What this owns is the half a pass cannot: its content scene (three sticks along +X red, +Y green,
+ *   +Z blue), the framing camera they are drawn with, and the BOX (a device-pixel rectangle in the
+ *   bottom-left corner of the area it belongs to) they are projected into. It is deliberately NOT a
+ *   pass: a pass is a DECLARATION now (see PassDesc), so whoever shows this gizmo declares one -
+ *   `content` = this object's scene, `camera` = this object's camera, `viewport` = boxViewport(),
+ *   `before_draw` = update(), which mirrors the source camera's orientation (MirrorMode::Orientation)
+ *   onto the framing one and keeps its own framing distance.
+ * - Surface layout is creator-managed: the object's owner reports the surface size on every resize
+ *   (onSurfaceResized) and points it at the corner of the area it lays out in (setAreaOrigin). The
+ *   pipeline does both for the standard case (Pipeline::resize), and a view states the area origin
+ *   (SceneView).
  *
  * Example:
  * \code
@@ -50,9 +52,9 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo> {
   public:
     /** @brief Constructs a gizmo with three unit axis sticks.
      *
-     * The pass never clears (it draws over the previous content). Its
-     * sub-viewport defaults to a 96px box at the origin corner until its
-     * owner reports a surface size (see onSurfaceResized).
+     * @details
+     * - The pass never clears (it draws over the previous content). Its sub-viewport defaults to a
+     *   96px box at the origin corner until its owner reports a surface size (see onSurfaceResized).
      */
     AxisGizmo();
 
@@ -79,10 +81,10 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo> {
 
     /** @brief Sets the ratio between logical surface size and device pixels.
      *
-     * The gizmo is positioned in device pixels because the render backend
-     * draws into a native surface sized in device pixels. Qt reports logical
-     * sizes, so hosts on high-DPI displays must supply their devicePixelRatio
-     * (default 1).
+     * @details
+     * - The gizmo is positioned in device pixels because the render backend draws into a native surface
+     *   sized in device pixels. Qt reports logical sizes, so hosts on high-DPI displays must supply
+     *   their devicePixelRatio (default 1).
      *
      * @param ratio Device pixel ratio (> 0).
      */
@@ -90,9 +92,9 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo> {
 
     /** @brief Sets the camera the gizmo mirrors (non-owning).
      *
-     * Usually the camera of the SceneView presenting the main content (e.g.
-     * view->camera()). The gizmo follows @p camera's orientation each time it
-     * executes; pass nullptr to stop following.
+     * @details
+     * - Usually the camera of the SceneView presenting the main content (e.g. view->camera()). The
+     *   gizmo follows @p camera's orientation each time it executes; pass nullptr to stop following.
      *
      * @param camera Source camera, or null to disable mirroring.
      */
@@ -109,22 +111,23 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo> {
 
     /** @brief Gets the device-pixel rectangle the sticks are drawn into (the viewport a declaration states).
      *
-     * The box follows the surface (onSurfaceResized) and the area origin (setAreaOrigin); a zero-area box means
-     * "this overlay does not fit in the area right now" and is skipped by the backend's empty-rectangle rule.
+     * @details
+     * - The box follows the surface (onSurfaceResized) and the area origin (setAreaOrigin); a
+     *   zero-area box means "this overlay does not fit in the area right now" and is skipped by the
+     *   backend's empty-rectangle rule.
      *
      * @return The box, in device pixels, top-left origin.
      */
     [[nodiscard]] Viewport boxViewport() const;
 
-    /** @brief Re-anchors the gizmo viewport to the bottom-left corner for a
-     * new surface size.
+    /** @brief Re-anchors the gizmo viewport to the bottom-left corner for a new surface size.
      *
-     * Called by the gizmo's owner whenever the surface changes (e.g. from a
-     * SceneView layout step, see SceneView::addSurfaceLayout). The size is the
-     * LOGICAL surface size the host reports - the same number it hands to
-     * SceneView::resize - and the configured devicePixelRatio is
-     * applied HERE, which is what turns it into the device-pixel rectangle a
-     * backend viewport needs. Handing it device pixels scales the box twice.
+     * @details
+     * - Called by the gizmo's owner whenever the surface changes (e.g. from a SceneView layout step,
+     *   see SceneView::addSurfaceLayout). The size is the LOGICAL surface size the host reports - the
+     *   same number it hands to SceneView::resize - and the configured devicePixelRatio is applied
+     *   HERE, which is what turns it into the device-pixel rectangle a backend viewport needs. Handing
+     *   it device pixels scales the box twice.
      *
      * @param width  Surface width in logical pixels.
      * @param height Surface height in logical pixels.
@@ -133,9 +136,11 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo> {
 
     /** @brief Sets the origin of the area this overlay lays its box out in, in device pixels.
      *
-     * The overlay anchors to the corner of its AREA (bottom-left for the gizmo, bottom-right for the
-     * readout), and its area starts at (0, 0) by default - the whole surface. A view that draws into a part
-     * of a shared surface (a split view) points this at that part's origin so the overlay lands inside it.
+     * @details
+     * - The overlay anchors to the corner of its AREA (bottom-left for the gizmo, bottom-right for the
+     *   readout), and its area starts at (0, 0) by default - the whole surface. A view that draws into
+     *   a part of a shared surface (a split view) points this at that part's origin so the overlay
+     *   lands inside it.
      *
      * @param x Area origin x in device pixels.
      * @param y Area origin y in device pixels.
@@ -144,8 +149,10 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo> {
 
     /** @brief Does the gizmo's per-frame work: mirror the source camera's orientation.
      *
-     * The one thing that must happen before the gizmo is drawn, and the reason the declaration that shows it has
-     * a `before_draw` hook at all (PassDesc). It writes this object's framing camera and touches no backend.
+     * @details
+     * - The one thing that must happen before the gizmo is drawn, and the reason the declaration that
+     *   shows it has a `before_draw` hook at all (PassDesc). It writes this object's framing camera
+     *   and touches no backend.
      */
     void update();
 

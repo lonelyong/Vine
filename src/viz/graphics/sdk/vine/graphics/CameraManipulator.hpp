@@ -17,16 +17,15 @@ class Camera;
 /**
  * @brief Abstract camera manipulator handling user interaction to update a camera.
  *
- * CameraManipulator defines the interface shared by all camera manipulators:
- * interaction mode, window input callbacks, and apply(). Concrete subclasses
- * (e.g. OrbitCameraManipulator) implement a specific camera control scheme and
- * are driven either directly through their motion methods or through the
- * window input callbacks (onMousePress/onMouseMove/onScroll/onKeyDown...).
- * A SceneView typically forwards vn::window events to these callbacks.
- *
- * CameraManipulator is reference counted (RefCounted<CameraManipulator>): the
- * SceneView that drives it keeps an intrusive_ptr so the manipulator stays
- * alive as long as it is attached. The camera must outlive the manipulator.
+ * @details
+ * - CameraManipulator defines the interface shared by all camera manipulators: interaction mode,
+ *   window input callbacks, and apply(). Concrete subclasses (e.g. OrbitCameraManipulator) implement
+ *   a specific camera control scheme and are driven either directly through their motion methods or
+ *   through the window input callbacks (onMousePress/onMouseMove/onScroll/onKeyDown...). A SceneView
+ *   typically forwards vn::window events to these callbacks.
+ * - CameraManipulator is reference counted (RefCounted<CameraManipulator>): the SceneView that drives
+ *   it keeps an intrusive_ptr so the manipulator stays alive as long as it is attached. The camera
+ *   must outlive the manipulator.
  */
 class VN_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
   public:
