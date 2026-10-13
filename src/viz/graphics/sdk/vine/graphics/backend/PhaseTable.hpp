@@ -10,28 +10,12 @@
 #include <vine/graphics/graphics_global.hpp>
 
 /**
- * @brief A phase table: the backend's own evidence, as data, sharing the format the self-test already
- * prints.
+ * @brief A phase table: the backend's own evidence, as data, sharing the format the self-test already prints.
  *
- * THE PROBLEM WITH A TEST FUNCTION PER CAPABILITY. The list of things a render backend must do is long
- * (off-screen targets, MRT, PiP, deferred composite, depth promotion, borrowing, readback, hot edits,
- * teardown) and each of them, written as its own function, drifts from the list in the design: a
- * capability gets added without a phase, a phase keeps asserting something the design stopped
- * requiring, and nothing shows the gap. As a table, the capability list and the test list are the same
- * list, the failure output names the phase, and "which capability has no phase?" is a question with a
- * mechanical answer.
- *
- * EACH ROW CARRIES THREE THINGS, and the third is the one that matters most for a backend: the
- * assertion, an optional counter sample, and what that counter is allowed to do during the phase.
- * "This phase must not raise the counter it is judged on" is a rule that a passing run otherwise says
- * nothing about - the phase renders correctly and still rebuilt everything. The expectation is
- * deliberately a predicate (before, after) rather than a number, so a phase can require "unchanged",
- * "grew by one" or "at least one" without the table inventing a delta type.
- *
- * THE LINE FORMAT IS THE CONTRACT with the evidence script: one `[selftest] <name>` line per phase that
- * passed, a `[selftest] <name> FAILED: <detail>` line for one that did not, and a closing
- * `[selftest] done` only when everything passed. Reusing the existing format is what lets a rewritten
- * backend be compared against the stored baseline byte for byte.
+ * @details
+ * - THE PROBLEM WITH A TEST FUNCTION PER CAPABILITY. The list of things a render backend must do is long (off-screen targets, MRT, PiP, deferred composite, depth promotion, borrowing, readback, hot edits, teardown) and each of them, written as its own function, drifts from the list in the design: a capability gets added without a phase, a phase keeps asserting something the design stopped requiring, and nothing shows the gap. As a table, the capability list and the test list are the same list, the failure output names the phase, and "which capability has no phase?" is a question with a mechanical answer.
+ * - EACH ROW CARRIES THREE THINGS, and the third is the one that matters most for a backend: the assertion, an optional counter sample, and what that counter is allowed to do during the phase. "This phase must not raise the counter it is judged on" is a rule that a passing run otherwise says nothing about - the phase renders correctly and still rebuilt everything. The expectation is deliberately a predicate (before, after) rather than a number, so a phase can require "unchanged", "grew by one" or "at least one" without the table inventing a delta type.
+ * - THE LINE FORMAT IS THE CONTRACT with the evidence script: one `[selftest] <name>` line per phase that passed, a `[selftest] <name> FAILED: <detail>` line for one that did not, and a closing `[selftest] done` only when everything passed. Reusing the existing format is what lets a rewritten backend be compared against the stored baseline byte for byte.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -64,8 +48,7 @@ class VN_GRAPHICS_API PhaseTable
     };
 
   public:
-    /** @brief Appends a phase. A phase without a name or without `run` is ignored (an empty row cannot
-     *  fail, and silently "passing" would be worse than not being there).
+    /** @brief Appends a phase. A phase without a name or without `run` is ignored (an empty row cannot fail, and silently "passing" would be worse than not being there).
      *
      * @param phase Phase to add.
      */

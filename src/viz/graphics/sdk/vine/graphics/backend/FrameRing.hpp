@@ -6,29 +6,13 @@
 #include <vine/graphics/graphics_global.hpp>
 
 /**
- * @brief The per-frame ring: the storage of everything that changes every frame, laid out so a steady frame
- * writes in place and never grows.
+ * @brief The per-frame ring: the storage of everything that changes every frame, laid out so a steady frame writes in place and never grows.
  *
- * WHAT LIVES HERE. The view block of each pass and the draw block of each draw - matrices, opacities, camera
- * values. These change every frame by definition, so they cannot be cached the way materials are; what they
- * can do is be written into the SAME bytes every frame. That is what makes the steady state measurable:
- * a frame's storage footprint is a constant, its allocations are zero, and `highWater()` is the number a
- * phase gates on instead of hoping.
- *
- * WHY IT CANNOT GROW. Growth is the failure mode this type is built to make impossible: an application that
- * adds drawables mid-session must be told that the storage is full (and rebuild it as a deliberate, one-off
- * act), never have a "convenient" resize silently relocate a buffer a submitted command buffer still names.
- * So a reservation past the frame's budget is INVALID and counted, and the caller decides what to do.
- *
- * WHY THE SLAB ROTATION, AND WHY THERE ARE MORE SLABS THAN FRAMES. Frames in flight read the ring at the same
- * time, and "in flight" reaches FURTHER BACK than the previous frame: the framework proves a frame finished
- * only when the slot that recorded it is recycled, and that fence wait happens inside the submit of a later
- * frame - after that frame has written its own bytes (see perFrameCopies). So the slab a frame writes is
- * the one the OLDEST frame still allowed to be in flight is reading, and the ring owns ONE SLAB MORE than
- * there are frames in flight. With exactly as many slabs as frames, that oldest frame shades with the newest
- * frame's matrices: a wrong frame rather than a lost one, and with a moving camera a visibly wrong one.
- *
- * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
+ * @details
+ * - WHAT LIVES HERE. The view block of each pass and the draw block of each draw - matrices, opacities, camera values. These change every frame by definition, so they cannot be cached the way materials are; what they can do is be written into the SAME bytes every frame. That is what makes the steady state measurable: a frame's storage footprint is a constant, its allocations are zero, and `highWater()` is the number a phase gates on instead of hoping.
+ * - WHY IT CANNOT GROW. Growth is the failure mode this type is built to make impossible: an application that adds drawables mid-session must be told that the storage is full (and rebuild it as a deliberate, one-off act), never have a "convenient" resize silently relocate a buffer a submitted command buffer still names. So a reservation past the frame's budget is INVALID and counted, and the caller decides what to do.
+ * - WHY THE SLAB ROTATION, AND WHY THERE ARE MORE SLABS THAN FRAMES. Frames in flight read the ring at the same time, and "in flight" reaches FURTHER BACK than the previous frame: the framework proves a frame finished only when the slot that recorded it is recycled, and that fence wait happens inside the submit of a later frame - after that frame has written its own bytes (see perFrameCopies). So the slab a frame writes is the one the OLDEST frame still allowed to be in flight is reading, and the ring owns ONE SLAB MORE than there are frames in flight. With exactly as many slabs as frames, that oldest frame shades with the newest frame's matrices: a wrong frame rather than a lost one, and with a moving camera a visibly wrong one.
+ * - NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -67,15 +51,14 @@ class VN_GRAPHICS_API FrameRing
   public:
     /** @brief Begins the next frame: rotates to the next slab and resets the frame's cursor.
      *
-     * The first call begins frame 0, so the caller that calls this at the top of every frame sees the frames
-     * numbered from zero.
+     * @details
+     * - The first call begins frame 0, so the caller that calls this at the top of every frame sees the frames numbered from zero.
      */
     void beginFrame() noexcept;
 
     /** @brief Reserves one block in the current frame's slab.
      *
-     * @return The block's offset, or `valid == false` when this frame already made
-     *         `blocks_per_frame` reservations (the caller reports it; growing is not an option).
+     * @return The block's offset, or `valid == false` when this frame already made `blocks_per_frame` reservations (the caller reports it; growing is not an option).
      */
     [[nodiscard]] Reservation reserve() noexcept;
 
