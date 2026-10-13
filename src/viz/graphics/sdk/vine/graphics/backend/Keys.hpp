@@ -16,28 +16,26 @@
  * @brief The three kinds of per-draw state, as separate types - so "which one may change what" is a
  * property of the type system instead of a rule to remember.
  *
- * THE RULE THE SPLIT ENCODES. Everything a draw needs falls into exactly one of three layers, and a
- * change in one layer must only cost that layer:
- *
- *   * IDENTITY (PipelineKey, and the keys under it): changing it means a different GPU object. It may
+ * @details
+ * - THE RULE THE SPLIT ENCODES. Everything a draw needs falls into exactly one of three layers, and a
+ *   change in one layer must only cost that layer:
+ *   - IDENTITY (PipelineKey, and the keys under it): changing it means a different GPU object. It may
  *     contain only what a pipeline is actually compiled against - the program and its revision, the
  *     vertex layout, render-pass compatibility, and whether a depth texture or a shadow map is bound.
  *     It must NOT contain an extent, a viewport, a matrix, an opacity, a material value, a cull mode
  *     or a blend choice.
- *   * DYNAMIC STATE (DynamicState): delivered per draw with a set command. Cheap by construction, and
+ *   - DYNAMIC STATE (DynamicState): delivered per draw with a set command. Cheap by construction, and
  *     this is why a host's state change costs a command instead of a pipeline.
- *   * DATA (InstanceSlot): per-frame values written into a buffer, plus the material reference.
- *
- * Both historical failure families in this backend are the same mistake in two directions: a host
- * state change that recompiled a pipeline (something dynamic had leaked into the identity key), and a
- * resize that rebuilt every full-screen program slot (an extent had leaked into one). Splitting the
- * layers is not tidiness; it is the fix, and the audit table below is how a new field has to declare
- * which layer it belongs to.
- *
- * WHAT THE AUDIT TABLE IS FOR. A comment saying "no extents in the key" is not checkable. The table
- * lists every key with its allowed inputs, and a test pins the table - so adding a field to a key
- * means touching the table (and the test), which is the moment to ask the question again. That is
- * deliberately more friction than a comment and deliberately less than a code generator.
+ *   - DATA (InstanceSlot): per-frame values written into a buffer, plus the material reference.
+ * - Both historical failure families in this backend are the same mistake in two directions: a host
+ *   state change that recompiled a pipeline (something dynamic had leaked into the identity key), and
+ *   a resize that rebuilt every full-screen program slot (an extent had leaked into one). Splitting
+ *   the layers is not tidiness; it is the fix, and the audit table below is how a new field has to
+ *   declare which layer it belongs to.
+ * - WHAT THE AUDIT TABLE IS FOR. A comment saying "no extents in the key" is not checkable. The table
+ *   lists every key with its allowed inputs, and a test pins the table - so adding a field to a key
+ *   means touching the table (and the test), which is the moment to ask the question again. That is
+ *   deliberately more friction than a comment and deliberately less than a code generator.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -69,9 +67,10 @@ enum class ImageLayout : std::uint8_t
 /**
  * @brief Identity of an aliased geometry stream: a buffer slice, plus the revision that makes it current.
  *
- * `revision` comes from the UPSTREAM resource (`Geometry::revision()` / a buffer's own revision). The
- * backend must never invent one by comparing bytes it happens to read: detection would itself become
- * state, and a key that depends on it stops being an identity.
+ * @details
+ * - `revision` comes from the UPSTREAM resource (`Geometry::revision()` / a buffer's own revision). The
+ *   backend must never invent one by comparing bytes it happens to read: detection would itself become
+ *   state, and a key that depends on it stops being an identity.
  */
 struct VN_GRAPHICS_API DataKey
 {
@@ -96,18 +95,19 @@ struct VN_GRAPHICS_API VertexLayoutKey
 };
 
 /**
- * @brief What one drawing call draws with: the engine has exactly two, and they compile against different
- * descriptor ABIs.
+ * @brief What one drawing call draws with: the engine has exactly two, and they compile against
+ * different descriptor ABIs.
  *
- * The kind is IDENTITY because the two are not interchangeable compilations of one program: a content draw
- * binds the four ABI blocks at set 0 and its sampled inputs at set 1, while a full-screen draw binds the
- * source's colour attachments at bindings 0..N-1 of set 0 (the full-screen ABI the engine's own screen
- * programs, `BuiltinShaders::screenCopyProgram` and friends, are written against). A pipeline compiled for
- * one of them cannot be bound for the other, so a key that did not carry the kind could hand one out for
- * the other - the failure mode this field exists to make impossible.
- *
- * It is declared here, next to the key that uses it, and the plan uses the same enumeration (see
- * FrameRecorder): one spelling for one fact.
+ * @details
+ * - The kind is IDENTITY because the two are not interchangeable compilations of one program: a
+ *   content draw binds the four ABI blocks at set 0 and its sampled inputs at set 1, while a
+ *   full-screen draw binds the source's colour attachments at bindings 0..N-1 of set 0 (the
+ *   full-screen ABI the engine's own screen programs, `BuiltinShaders::screenCopyProgram` and
+ *   friends, are written against). A pipeline compiled for one of them cannot be bound for the
+ *   other, so a key that did not carry the kind could hand one out for the other - the failure mode
+ *   this field exists to make impossible.
+ * - It is declared here, next to the key that uses it, and the plan uses the same enumeration (see
+ *   FrameRecorder): one spelling for one fact.
  */
 enum class DrawKind : std::uint8_t
 {
@@ -118,32 +118,30 @@ enum class DrawKind : std::uint8_t
 /**
  * @brief The part of a target's shape that a pipeline is compiled against.
  *
- * This is the whole of the "pipeline compatibility" question, and it is exactly what a pipeline key may
- * contain about a target. The load/store operations and the layouts are NOT in here - they live in
- * LoadOpVariantKey - because the API's compatibility rule excludes them, which is what makes several
- * variants of one attachment set share a single compiled pipeline.
- *
- * WHY THE DEVICE FORMATS ARE IN HERE ON TOP OF THE ENGINE'S SPELLING. The engine classifies attachments as
- * RGBA8 / RGBA16F / RGBA32F, and that vocabulary is a PROJECTION: a window whose swapchain format is
- * B8G8R8A8_SRGB and an off-screen target built as R8G8B8A8_UNORM are both "RGBA8" to it, while the render
- * passes they are used in are incompatible (channel order and colour space are part of a render pass'
- * identity). Measured: with only the engine's spelling in the key, ONE variant served both passes and the
- * off-screen-compiled VkPipeline was bound in the window's render pass
- * (`VUID-vkCmdDrawIndexed-renderPass-02684`, B8G8R8A8_SRGB versus R8G8B8A8_UNORM, two subpass dependencies
- * against one). The device formats cannot be recovered from the engine's vocabulary, so the layer that knows
- * them hands them over instead: a target reports them in its shape, and `TargetShape::compatibility()` copies
- * them into this key.
- *
- * They are carried as the DEVICE's own format code (a `VkFormat` value - 0, the device's UNDEFINED, also
- * means "no such attachment"). This layer compares them and never interprets them: the device layer is the
- * one place that knows what a format code means. "Not known" is not the same as "absent": a shape that
- * reports no device formats is a DIFFERENT compatibility from one that reports them, so an unknown never
- * silently merges two families - what it can do is merge two shapes that are BOTH unknown, which is the
- * behaviour this key had before the field existed.
- *
- * What the mismatch LOOKS like on the screen is not evidence: binding a pipeline compiled against another
- * render pass is undefined behaviour, and the measured run drew the right picture anyway. The validation
- * layer's report is the evidence (and the fix is a key, not a picture).
+ * @details
+ * - This is the whole of the "pipeline compatibility" question, and it is exactly what a pipeline key
+ *   may contain about a target. The load/store operations and the layouts are NOT in here - they live
+ *   in LoadOpVariantKey - because the API's compatibility rule excludes them, which is what makes
+ *   several variants of one attachment set share a single compiled pipeline.
+ * - WHY THE DEVICE FORMATS ARE IN HERE ON TOP OF THE ENGINE'S SPELLING. The engine classifies
+ *   attachments as RGBA8 / RGBA16F / RGBA32F, and that vocabulary is a PROJECTION: a window whose
+ *   swapchain format is B8G8R8A8_SRGB and an off-screen target built as R8G8B8A8_UNORM are both
+ *   "RGBA8" to it, while the render passes they are used in are incompatible (channel order and
+ *   colour space are part of a render pass' identity). Measured: with only the engine's spelling in
+ *   the key, ONE variant served both passes and the off-screen-compiled VkPipeline was bound in the
+ *   window's render pass (`VUID-vkCmdDrawIndexed-renderPass-02684`, B8G8R8A8_SRGB versus
+ *   R8G8B8A8_UNORM, two subpass dependencies against one). The device formats cannot be recovered
+ *   from the engine's vocabulary, so the layer that knows them hands them over instead: a target
+ *   reports them in its shape, and `TargetShape::compatibility()` copies them into this key.
+ * - They are carried as the DEVICE's own format code (a `VkFormat` value - 0, the device's UNDEFINED,
+ *   also means "no such attachment"). This layer compares them and never interprets them: the device
+ *   layer is the one place that knows what a format code means. "Not known" is not the same as
+ *   "absent": a shape that reports no device formats is a DIFFERENT compatibility from one that
+ *   reports them, so an unknown never silently merges two families - what it can do is merge two
+ *   shapes that are BOTH unknown, which is the behaviour this key had before the field existed.
+ * - What the mismatch LOOKS like on the screen is not evidence: binding a pipeline compiled against
+ *   another render pass is undefined behaviour, and the measured run drew the right picture anyway.
+ *   The validation layer's report is the evidence (and the fix is a key, not a picture).
  */
 struct VN_GRAPHICS_API RenderPassCompatibility
 {
@@ -161,19 +159,20 @@ struct VN_GRAPHICS_API RenderPassCompatibility
 /**
  * @brief What a pass asks of its attachments before it draws: the swappable half of a pass' graph.
  *
- * Kept apart from RenderPassCompatibility because the two have different lifetimes: this one changes with a
- * pass' clear policy (and is what a bootstrap swaps for one frame), while the compiled pipeline only depends
- * on the compatibility half. Vulkan draws the line in the same place: load/store operations and layouts are
- * NOT part of render pass compatibility, so several variants of one attachment set MAY share one compiled
- * pipeline - which is what makes a target able to serve a clearing pass and a loading pass without
- * recompiling anything (see OffscreenTarget, which keys its render pass objects by exactly this type).
- *
- * WHAT IT HAS TO CARRY is therefore every property of the render pass OBJECT a graph is built with: whether
- * each attachment clears or keeps what is there, whether its result survives, and which layout it is in at
- * the start and at the end of the pass. The colour attachments move together (a pass clears all of them or
- * none - see planClearValues), so one entry describes the set; the DEPTH is independent, because a later pass
- * may load the depth an earlier one wrote while the colour is cleared, and because a borrowed depth starts in
- * the layout its lender left it in.
+ * @details
+ * - Kept apart from RenderPassCompatibility because the two have different lifetimes: this one changes
+ *   with a pass' clear policy (and is what a bootstrap swaps for one frame), while the compiled
+ *   pipeline only depends on the compatibility half. Vulkan draws the line in the same place:
+ *   load/store operations and layouts are NOT part of render pass compatibility, so several variants
+ *   of one attachment set MAY share one compiled pipeline - which is what makes a target able to
+ *   serve a clearing pass and a loading pass without recompiling anything (see OffscreenTarget,
+ *   which keys its render pass objects by exactly this type).
+ * - WHAT IT HAS TO CARRY is therefore every property of the render pass OBJECT a graph is built with:
+ *   whether each attachment clears or keeps what is there, whether its result survives, and which
+ *   layout it is in at the start and at the end of the pass. The colour attachments move together (a
+ *   pass clears all of them or none - see planClearValues), so one entry describes the set; the DEPTH
+ *   is independent, because a later pass may load the depth an earlier one wrote while the colour is
+ *   cleared, and because a borrowed depth starts in the layout its lender left it in.
  */
 struct VN_GRAPHICS_API LoadOpVariantKey
 {
@@ -231,10 +230,11 @@ struct VN_GRAPHICS_API PipelineKey
 
 /** @brief Hashes a PipelineKey, for the maps that index variants by it.
  *
- * A hash is not an identity: two different keys may collide, and only @ref PipelineKey::operator== decides
- * whether two keys are the same variant. The hash exists so a lookup does not have to compare every key in
- * the pool - and it is written over exactly the fields the equality reads, so the two cannot drift apart
- * silently.
+ * @details
+ * - A hash is not an identity: two different keys may collide, and only @ref PipelineKey::operator==
+ *   decides whether two keys are the same variant. The hash exists so a lookup does not have to
+ *   compare every key in the pool - and it is written over exactly the fields the equality reads, so
+ *   the two cannot drift apart silently.
  */
 struct VN_GRAPHICS_API PipelineKeyHash
 {
@@ -246,7 +246,9 @@ struct VN_GRAPHICS_API PipelineKeyHash
 struct VN_GRAPHICS_API DynamicState
 {
     vn::graphics::DepthMode     depth{vn::graphics::DepthMode::TestAndWrite};  ///< Depth test/write policy.
-    vn::graphics::CompareOp     compare{vn::graphics::CompareOp::Less};        ///< Distance-semantic compare op; the reverse-Z inversion happens at the Vulkan boundary.
+    vn::graphics::CompareOp     compare{vn::graphics::CompareOp::Less};        ///< Distance-semantic compare op; the
+                                                                               ///< reverse-Z inversion happens at the
+                                                                               ///< Vulkan boundary.
     vn::graphics::CullMode      cull_mode{vn::graphics::CullMode::None};       ///< Face culling.
     vn::graphics::PolygonMode   polygon_mode{vn::graphics::PolygonMode::Fill}; ///< Rasterisation mode.
     vn::graphics::Topology      topology{vn::graphics::Topology::Triangles};   ///< Primitive assembly.
@@ -259,12 +261,14 @@ struct VN_GRAPHICS_API DynamicState
 /**
  * @brief The dynamic layer of one instance, from the command's FINAL state.
  *
- * A pure mapping, deliberately: the two depth intents (what the content authored and what the pass pipes in) were
- * already weighed by the ONE resolution function - `resolveRenderState(command.authoredState,
- * pass.stateOverrides())` in StateNode.hpp - so what arrives here is the answer, not two claims to compare. The
- * compare op is distance-semantic ("closer wins") and travels unchanged; the reverse-Z inversion happens at the
- * Vulkan boundary (`RenderStateMapper::mapCompareOp`), so the default Less maps to GREATER and a scene without
- * StateNodes stays on the pipeline it was on before.
+ * @details
+ * - A pure mapping, deliberately: the two depth intents (what the content authored and what the pass
+ *   pipes in) were already weighed by the ONE resolution function -
+ *   `resolveRenderState(command.authoredState, pass.stateOverrides())` in StateNode.hpp - so what
+ *   arrives here is the answer, not two claims to compare. The compare op is distance-semantic
+ *   ("closer wins") and travels unchanged; the reverse-Z inversion happens at the Vulkan boundary
+ *   (`RenderStateMapper::mapCompareOp`), so the default Less maps to GREATER and a scene without
+ *   StateNodes stays on the pipeline it was on before.
  *
  * @param state The command's resolved state.
  * @return The state to deliver with a set command (never part of an identity - see the file note).
@@ -274,9 +278,10 @@ struct VN_GRAPHICS_API DynamicState
 /**
  * @brief The per-frame data of one draw: written into a buffer, never part of an identity.
  *
- * A pure logical record - the GPU storage belongs to the session's arenas. Keeping the two apart is
- * what stops "the data a draw uses" from also being "the memory that holds it", which is the coupling
- * that used to make the material manager outlive every bridge.
+ * @details
+ * - A pure logical record - the GPU storage belongs to the session's arenas. Keeping the two apart is
+ *   what stops "the data a draw uses" from also being "the memory that holds it", which is the
+ *   coupling that used to make the material manager outlive every bridge.
  */
 struct InstanceSlot
 {
@@ -295,8 +300,9 @@ struct KeyAuditEntry
 
 /** @brief Gets the key audit table (see the file note for what it is for).
  *
- * A test pins the table's contents: adding a field to a key without deciding its layer fails there,
- * which is where the question "is this identity or data?" gets asked.
+ * @details
+ * - A test pins the table's contents: adding a field to a key without deciding its layer fails there,
+ *   which is where the question "is this identity or data?" gets asked.
  */
 [[nodiscard]] VN_GRAPHICS_API std::span<const KeyAuditEntry> keyAuditTable() noexcept;
 
