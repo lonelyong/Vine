@@ -6,11 +6,11 @@ VN_GRAPHICS_NS_BEGIN
 /**
  * @brief A rectangular draw region in device pixels (top-left origin).
  *
- * A pass without a viewport draws the full surface / target it renders into;
- * a pass that carries a Viewport restricts its draw to that rectangle (used
- * by picture-in-picture, minimaps, previews and corner HUD boxes). The
- * viewport is maintained explicitly by the pass's owner; it is never derived
- * automatically.
+ * @details
+ * - A pass without a viewport draws the full surface / target it renders into; a pass that carries a
+ *   Viewport restricts its draw to that rectangle (used by picture-in-picture, minimaps, previews and
+ *   corner HUD boxes).
+ * - The viewport is maintained explicitly by the pass's owner; it is never derived automatically.
  */
 struct VN_GRAPHICS_API Viewport {
     /** @brief Origin x in device pixels. */
