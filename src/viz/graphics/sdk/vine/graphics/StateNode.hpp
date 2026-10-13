@@ -33,14 +33,16 @@ enum class CompareOp
 /**
  * @brief Face culling mode for a StateNode subtree.
  *
- * WHICH FACE IS FRONT IS THE SDK'S RULE, NOT THE GPU'S: a triangle is front-facing when its vertices
- * appear counter-clockwise to the camera in a right-handed world (the SDK's view looks down -Z, see
- * Camera), so a host can author geometry against one convention and get the same picture on every
- * backend. A backend is free to render with another clip convention — the vsg backend flips Y for
- * Vulkan, where the front face is defined in framebuffer coordinates — and is responsible for mapping
- * this rule onto its own front face. A backend that got the mapping wrong culls the faces it was asked
- * to keep, which reads as an object disappearing with no diagnostic (the risk is recorded as UB-14 in
- * the vsg backend's notes).
+ * @details
+ * - WHICH FACE IS FRONT IS THE SDK'S RULE, NOT THE GPU'S: a triangle is front-facing when its vertices
+ *   appear counter-clockwise to the camera in a right-handed world (the SDK's view looks down -Z, see
+ *   Camera), so a host authors geometry against one convention and gets the same picture on every backend.
+ * - A backend rendering under another clip convention (the vsg backend flips Y for Vulkan, where the front
+ *   face is defined in framebuffer coordinates) maps this rule onto its own front face.
+ *
+ * @note
+ * - A backend that got the mapping wrong culls the faces it was asked to keep: the object disappears with
+ *   no diagnostic (recorded as UB-14 in the vsg backend's notes).
  */
 enum class CullMode
 {
@@ -50,22 +52,12 @@ enum class CullMode
 };
 
 /**
- * @brief Polygon rasterisation mode for a StateNode subtree.
- *
- * CONTENT scope: it says how this subtree's triangles rasterise, and it is what applies when no pass overrides it
- * (RenderPass::setPolygonModeOverride) - the two are the same idea at two scopes, which is why the type lives in
- * its own header (PolygonMode.hpp) rather than in one of the two classes. The pass' setter carries "Override" in
- * its name precisely because the pass BEATS this one; a host that wants the authored state to win simply leaves
- * the pass' override unset.
- */
-/**
  * @brief Primitive topology of a drawable's vertex stream.
  *
- * Topology decides how vertices are assembled into primitives. It is a render
- * state item, distinct from PolygonMode (which controls how triangles are
- * rasterised): the same vertex data can be drawn filled, as a wireframe
- * (PolygonMode::Line) or as points (PolygonMode::Point) without touching the
- * geometry, and point clouds use Topology::Points.
+ * @details
+ * - How vertices assemble into primitives - a render-state item distinct from PolygonMode (which controls
+ *   how triangles rasterise): the same vertex data draws filled, as wireframe (PolygonMode::Line) or as
+ *   points (PolygonMode::Point) without touching the geometry, and point clouds use Topology::Points.
  */
 enum class Topology
 {
@@ -150,7 +142,10 @@ struct VN_GRAPHICS_API RenderState
     std::optional<PolygonMode> polygonMode;  ///< Polygon rasterisation override.
     std::optional<Topology>    topology;     ///< Primitive topology override.
 
-    /** @brief Returns whether no item is set. */
+    /** @brief Returns whether no item is set.
+     *
+     * @return true when every item is unset (the block contributes nothing).
+     */
     bool empty() const
     {
         return !depth && !cullMode && !blend && !polygonMode && !topology;
@@ -237,22 +232,18 @@ struct VN_GRAPHICS_API RenderStateOrigin
 /**
  * @brief What a PASS says about the content it draws.
  *
- * The pass side of the state priority table (see resolveRenderState): everything a pass decides about its
- * content's state, in one value, so a backend can resolve a command without asking the pass anything else.
- *
- * The two items behave differently ON PURPOSE (the table in `.ai/design/graphics-state.md` §4.1):
- *
- *  - `depth` is a POLICY for content that authored none ("this slot tests and writes", "this slot is translucent
- *    over what is already there", "this slot is an overlay"). Content that authored a depth state of its own
- *    keeps it: depth is something scene content routinely declares (a transparent body, a HUD), so the pass
- *    supplies the default rather than the last word.
- *  - `polygonMode` is an OVERRIDE: it rewrites every command the pass draws, including one that authored Line.
- *    It is a viewing switch ("show me the edges"), and a switch a content-authored Line could veto would never be
- *    able to take the picture back to Fill.
- *
- * `program` is deliberately NOT here: replacing the program is not "another state item" but "draw this content
- * with another program", and the engine does it by rewriting each command, which is what keeps a backend's
- * per-command pipeline key valid (RenderPass::setProgramOverride).
+ * @details
+ * - The pass side of the state priority table (see resolveRenderState), in one value: a backend resolves a
+ *   command's state without asking the pass anything else.
+ * - The two items differ ON PURPOSE (the table in `.ai/design/graphics-state.md` §4.1): `depth` is a POLICY
+ *   for content that authored none ("this slot tests and writes", "this slot is translucent over what is
+ *   already there", "this slot is an overlay"), and content that authored a depth state keeps it - depth is
+ *   something scene content routinely declares; `polygonMode` is an OVERRIDE that rewrites every command the
+ *   pass draws, because it is a viewing switch ("show me the edges") that a content-authored Line must not
+ *   be able to veto.
+ * - `program` is deliberately NOT here: replacing the program is "draw this content with another program",
+ *   done by rewriting each command, which is what keeps a backend's per-command pipeline key valid
+ *   (RenderPass::setProgramOverride).
  */
 struct VN_GRAPHICS_API PassRenderState
 {
@@ -270,14 +261,12 @@ struct VN_GRAPHICS_API ResolvedCommandState
 /**
  * @brief Resolves the final render state of content drawn by a pass: the ONE implementation of the priority table.
  *
- * ```
- *   pass override  >  content (the folded StateNodes)  >  defaults
- * ```
- *
- * One place, one test table, and a caller that wants to know WHY an item has the value it has reads `origin`
- * instead of reconstructing the layering. Everything that consumes state goes through here: the geometry/state
- * a backend bakes into a pipeline variant, the dynamic state it diffs per command, and any diagnostic that has
- * to explain a picture.
+ * @details
+ * - The table: `pass override > content (the folded StateNodes) > defaults`.
+ * - One place and one test table; a caller wanting to know WHY an item has its value reads `origin` instead
+ *   of reconstructing the layering. Everything consuming state goes through here: the geometry/state a
+ *   backend bakes into a pipeline variant, the dynamic state it diffs per command, and any diagnostic that
+ *   has to explain a picture.
  *
  * @param authored The state the CONTENT authored (RenderCommand::authoredState): every item left unset is
  *                 "nobody on the path said anything about it", which is not the same as "set to the default".
@@ -289,70 +278,99 @@ VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& autho
 /**
  * @brief Scene-graph node applying render state to its subtree.
  *
- * StateNode is a Node that contributes optional render-state items (depth,
- * culling, blending, polygon mode, topology) to every drawable in its subtree. Items it
- * does not set are inherited from enclosing StateNodes; a deeper node
- * overrides a shallower one for the same item. The effective state of a leaf
- * is the fold of every StateNode from the scene root to the leaf
- * (collectRenderState) with defaults applied (resolveRenderState), and
- * participates in the backend's pipeline-variant key.
- *
- * State deliberately lives on these nodes rather than per drawable, so a
- * batch of geometry sharing one StateNode also shares one pipeline variant.
- * The model mirrors vsg::StateGroup / the OpenGL state stack and is
- * backend-agnostic.
+ * @details
+ * - Contributes optional state items (depth, culling, blending, polygon mode, topology) to every drawable in
+ *   its subtree; an unset item is inherited from enclosing StateNodes, and a deeper node overrides a
+ *   shallower one for the same item.
+ * - A leaf's effective state is the fold of every StateNode from the scene root to the leaf
+ *   (collectRenderState) with defaults applied (resolveRenderState), and it participates in the backend's
+ *   pipeline-variant key.
+ * - State deliberately lives on nodes rather than per drawable, so a batch of geometry sharing one StateNode
+ *   also shares one pipeline variant; the model mirrors vsg::StateGroup / the GL state stack and stays
+ *   backend-agnostic.
  */
 class VN_GRAPHICS_API StateNode : public Group {
     VN_OBJECT_META_DECL;
 
   public:
+    /** @brief Constructs a state node that overrides nothing. */
     StateNode();
     ~StateNode();
 
   public:
-    /** @brief Sets the depth state (test/write/compare) for this subtree. */
+    /** @brief Sets the depth state (test/write/compare) for this subtree.
+     *
+     * @param state Depth test / write / compare for this subtree.
+     */
     void setDepth(const DepthState& state);
 
     /** @brief Clears the depth override so enclosing state is inherited. */
     void clearDepth();
 
-    /** @brief Gets the depth override, or nullopt when unset. */
+    /** @brief Gets the depth override.
+     *
+     * @return The override, or nullopt when unset (the enclosing state applies).
+     */
     std::optional<DepthState> depth() const;
 
-    /** @brief Sets the face culling mode for this subtree. */
+    /** @brief Sets the face culling mode for this subtree.
+     *
+     * @param mode Which faces to cull (see CullMode).
+     */
     void setCullMode(CullMode mode);
 
     /** @brief Clears the culling override so enclosing state is inherited. */
     void clearCullMode();
 
-    /** @brief Gets the culling override, or nullopt when unset. */
+    /** @brief Gets the culling override.
+     *
+     * @return The override, or nullopt when unset (the enclosing state applies).
+     */
     std::optional<CullMode> cullMode() const;
 
-    /** @brief Sets the blend state for this subtree. */
+    /** @brief Sets the blend state for this subtree.
+     *
+     * @param state Blending on/off and its factors (see BlendState).
+     */
     void setBlend(const BlendState& state);
 
     /** @brief Clears the blend override so enclosing state is inherited. */
     void clearBlend();
 
-    /** @brief Gets the blend override, or nullopt when unset. */
+    /** @brief Gets the blend override.
+     *
+     * @return The override, or nullopt when unset (the enclosing state applies).
+     */
     std::optional<BlendState> blend() const;
 
-    /** @brief Sets the polygon rasterisation mode for this subtree. */
+    /** @brief Sets the polygon rasterisation mode for this subtree.
+     *
+     * @param mode How triangles rasterise: fill, line or point (see PolygonMode).
+     */
     void setPolygonMode(PolygonMode mode);
 
     /** @brief Clears the polygon-mode override so enclosing state is inherited. */
     void clearPolygonMode();
 
-    /** @brief Gets the polygon-mode override, or nullopt when unset. */
+    /** @brief Gets the polygon-mode override.
+     *
+     * @return The override, or nullopt when unset (the enclosing state applies).
+     */
     std::optional<PolygonMode> polygonMode() const;
 
-    /** @brief Sets the primitive topology for this subtree. */
+    /** @brief Sets the primitive topology for this subtree.
+     *
+     * @param topology How vertices assemble into primitives (see Topology).
+     */
     void setTopology(Topology topology);
 
     /** @brief Clears the topology override so enclosing state is inherited. */
     void clearTopology();
 
-    /** @brief Gets the topology override, or nullopt when unset. */
+    /** @brief Gets the topology override.
+     *
+     * @return The override, or nullopt when unset (the enclosing state applies).
+     */
     std::optional<Topology> topology() const;
 
     /** @brief Sets a custom shader program for this subtree.
@@ -369,7 +387,10 @@ class VN_GRAPHICS_API StateNode : public Group {
     /** @brief Clears this node's program override so it is inherited. */
     void clearProgram();
 
-    /** @brief Gets this node's program override, or null when unset. */
+    /** @brief Gets this node's program override.
+     *
+     * @return The program, or null when unset (the nearest ancestor's applies, then the engine default).
+     */
     raw_ptr<ShaderProgram> program() const;
 
     /** @brief Sets a material for this subtree.
@@ -389,13 +410,22 @@ class VN_GRAPHICS_API StateNode : public Group {
     /** @brief Clears this node's material override so it is inherited. */
     void clearMaterial();
 
-    /** @brief Gets this node's material override, or null when unset (the enclosing material applies). */
+    /** @brief Gets this node's material override.
+     *
+     * @return The material, or null when unset (the nearest ancestor's applies).
+     */
     raw_ptr<Material> material() const;
 
-    /** @brief Gets this node's whole optional state block. */
+    /** @brief Gets this node's whole optional state block.
+     *
+     * @return The block (unset items inherit from enclosing StateNodes).
+     */
     const RenderState& renderState() const;
 
-    /** @brief Returns whether any state item is set on this node. */
+    /** @brief Returns whether any state item is set on this node.
+     *
+     * @return true when at least one item is set.
+     */
     bool hasState() const;
 
     /** @brief Clears every state item set on this node. */

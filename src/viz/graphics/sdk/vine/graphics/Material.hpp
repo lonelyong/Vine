@@ -15,37 +15,46 @@ VN_GRAPHICS_NS_BEGIN
 /**
  * @brief Material class defining surface appearance.
  *
- * Describes the visual appearance of a geometry: diffuse/specular/ambient
- * colors, shininess and an optional texture. A material is always opaque:
- * transparency is a property of the leaf (Geometry::setOpacity) or of a
- * subtree (Node::setOpacity), never of the material itself. The diffuse color's
- * alpha is carried to the shader unchanged (VineMaterialBlock::diffuse.w) for a
- * host program that wants a transparency model of its own, but no engine program
- * reads it: the forward stage's fragment alpha is the drawable's opacity alone,
- * because the engine sorts by that value and a material is shared by every
- * drawable that uses it.
+ * @details
+ * - Diffuse / specular / ambient colours, shininess and an optional texture.
+ * - A material is always OPAQUE: transparency is the leaf's or the subtree's (Geometry::setOpacity /
+ *   Node::setOpacity), never the material's - the diffuse alpha travels to the shader unchanged
+ *   (VineMaterialBlock::diffuse.w) for a host program with a transparency model of its own, but no engine
+ *   program reads it, because the engine sorts by the drawable's opacity and a material is shared by every
+ *   drawable that uses it.
  */
 class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
     VN_OBJECT_META_DECL;
 
   public:
+    /** @brief Constructs a material with its default colours and no texture. */
     Material();
 
   public:
-    /** @brief Gets the material name. */
+    /** @brief Gets the material name.
+     *
+     * @return The name (empty when never set).
+     */
     String name() const;
 
-    /** @brief Sets the material name. */
+    /** @brief Sets the material name.
+     *
+     * @param name New material name.
+     */
     void setName(const String& name);
 
-    /** @brief Gets the diffuse color (RGBA). */
+    /** @brief Gets the diffuse color (RGBA).
+     *
+     * @return The diffuse colour.
+     */
     Colorf diffuse() const;
 
     /** @brief Sets the diffuse color.
      *
-     * The alpha is stored and passed to a host shader program through the material block; the
-     * engine's own programs do not read it (see the class note), so setting it does not make the
-     * object translucent - use Geometry::setOpacity() / Node::setOpacity() for that.
+     * @details
+     * - The alpha is stored and passed to a host shader program through the material block; the engine's
+     *   own programs do not read it (see the class note), so setting it does NOT make the object
+     *   translucent - use Geometry::setOpacity() / Node::setOpacity() for that.
      *
      * @param color RGBA color in [0, 1].
      */
@@ -53,10 +62,14 @@ class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
 
     /** @brief Gets the specular color (RGB, A is intensity).
      *
-     * The intensity multiplies the highlight in every engine program that shades one - the forward lit
-     * program and the deferred chain alike (the G-buffer's specular attachment carries the colour already
-     * scaled by it) - so an alpha of 0.5 leaves the surface half as reflective as the colour alone. Wired
-     * 2026-09-25: the accessor documented this from the first release, and no shader read it until then.
+     * @details
+     * - The intensity multiplies the highlight in every engine program that shades one - the forward lit
+     *   program and the deferred chain alike (the G-buffer's specular attachment carries the colour already
+     *   scaled by it) - so an alpha of 0.5 leaves the surface half as reflective as the colour alone.
+     *   Wired 2026-09-25: the accessor documented this from the first release, and no shader read it until
+     *   then.
+     *
+     * @return The specular colour (RGBA).
      */
     Colorf specular() const;
 
@@ -66,7 +79,10 @@ class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
      */
     void setSpecular(const Colorf& color);
 
-    /** @brief Gets the ambient color (RGB). */
+    /** @brief Gets the ambient color (RGB).
+     *
+     * @return The ambient colour.
+     */
     Colorf ambient() const;
 
     /** @brief Sets the ambient color.
@@ -75,7 +91,10 @@ class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
      */
     void setAmbient(const Colorf& color);
 
-    /** @brief Gets the shininess (Phong exponent). */
+    /** @brief Gets the shininess (Phong exponent).
+     *
+     * @return The Phong exponent.
+     */
     float shininess() const;
 
     /** @brief Sets the shininess (Phong exponent).

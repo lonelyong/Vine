@@ -13,23 +13,20 @@ class Scene;
 /**
  * @brief A named set of lights, added to a scene in one call.
  *
- * A scene with no light is not dark: the backends substitute a low ambient term so geometry stays visible
- * (measured: albedo * 0.15, i.e. flat colour). That fallback is why "why is my model flat?" is an easy question to
- * end up asking, and the answer is always the same - nobody added a light. This is the one-liner that adds a
- * whole rig, so the answer stops being a paragraph in a document.
+ * @details
+ * - A rig holds DESCRIPTIONS, not lights: addTo() creates fresh Light objects every time, so one `studio()`
+ *   can light any number of scenes and no Light object is shared behind the caller's back.
+ * - The two presets every viewer starts with: `studio()` - the classic three-point set (one ambient fill plus
+ *   a key and a fill from opposite sides), which gives shape to an arbitrary model without the host knowing
+ *   where its camera is (the safe default); `headlight(direction)` - one directional light travelling along
+ *   the camera's view direction (VTK's automatic light, made explicit).
+ * - Where to put them is the scene's business: `scene.addLighting(LightRig::studio())` appends,
+ *   `scene.setLighting(...)` replaces whatever the scene had.
  *
- * A rig holds DESCRIPTIONS, not lights: addTo() creates fresh Light objects every time, so one `studio()` can
- * light any number of scenes and no Light object is shared behind the caller's back.
- *
- * The presets are the two conventions every viewer starts with:
- *
- *  - studio(): the classic three-point set (one ambient fill + a key and a fill from opposite sides), which
- *    gives shape to an arbitrary model without the host knowing where its camera is. This is the safe default.
- *  - headlight(direction): one directional light travelling along the camera's view direction, the "I can always
- *    see what I am looking at" rig (VTK's automatic light is this one, created implicitly; here it is explicit).
- *
- * Where to put them is the scene's business: `scene.addLighting(LightRig::studio())` appends, and
- * `scene.setLighting(...)` replaces whatever the scene had.
+ * @note
+ * - A scene with no light is not dark: backends substitute a low ambient term so geometry stays visible
+ *   (measured: albedo * 0.15, i.e. flat colour) - which is why "why is my model flat?" always ends at
+ *   "nobody added a light". This one-liner exists so that answer stops being a paragraph in a document.
  */
 class VN_GRAPHICS_API LightRig {
   public:
@@ -44,6 +41,7 @@ class VN_GRAPHICS_API LightRig {
 
         /// @brief Returns whether this entry's direction is usable (a directional light pointing nowhere lights
         /// nothing).
+        /// @return true when @ref direction is non-zero.
         bool hasDirection() const noexcept
         {
             return direction.length() > 0.0;
@@ -71,8 +69,9 @@ class VN_GRAPHICS_API LightRig {
     /**
      * @brief Adds this rig's lights to @p scene, leaving the lights already there alone.
      *
-     * Creates one Light per entry (a directional one carries the entry's direction, colour and intensity; an
-     * ambient one carries the entry's colour and intensity) and hands each to Scene::addLight().
+     * @details
+     * - Creates one Light per entry (a directional one carries the entry's direction, colour and intensity;
+     *   an ambient one carries the entry's colour and intensity) and hands each to Scene::addLight().
      *
      * @param scene Scene to light; it keeps its own reference to every light created.
      */
