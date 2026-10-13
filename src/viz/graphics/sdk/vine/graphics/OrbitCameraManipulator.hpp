@@ -9,50 +9,41 @@ VN_GRAPHICS_NS_BEGIN
 class Scene;
 
 /**
- * @brief Orbit-style camera manipulator with pivot picking and projection
- * agnostic controls.
+ * @brief Orbit-style camera manipulator with pivot picking and projection agnostic controls.
  *
- * Implements a pivot-anchored orbit / pan / zoom camera with a pickable anchor
- * point:
- *
- * - Left-drag rotates the whole camera rig rigidly about the press anchor (the
- *   grabbed model point, or the scene centre on empty space), so that point
- *   stays pinned under the cursor while the model turns about it. The camera
- *   up is carried rigidly by the rotation, which gives the view the roll
- *   freedom it needs to sweep over the top to a true top-down / bottom-up view
- *   and beyond, without gimbal shake or a sudden 180 deg flip.
- * - Middle/right-drag pans.
- * - The wheel dollies along the view: it dives along the ray to the anchor
- *   (the point under the cursor stays pinned to it) and, once the camera
- *   reaches the surface, keeps moving forward so it can travel through the
- *   scene instead of stopping at a fixed point.
- *
- * On every button press / scroll the manipulator ray-picks the scene under the
- * cursor. When a model is hit, the hit point becomes the anchor (the rotate
- * pivot and the pan / zoom depth reference); when nothing is hit the anchor
- * falls back to the scene bounding-box centre, or to the world origin when
- * there is no scene. In FirstPerson mode WASD / arrow keys drive movement
- * instead.
- *
- * A rotate press never applies the pivot (no jump). Away from a drag, pan /
- * zoom and the keyboard orbit are expressed as a level spherical orbit
- * (yaw / pitch / roll about the camera target) so programmatic motion stays
- * stable and level.
- *
- * Both projection types are supported through a single distance parameter: the
- * camera keeps an eye-to-centre distance, which drives the perspective dolly
- * step and the orthographic frustum height.
+ * @details
+ * - Implements a pivot-anchored orbit / pan / zoom camera with a pickable anchor point:
+ *   - Left-drag rotates the whole camera rig rigidly about the press anchor (the grabbed model point,
+ *     or the scene centre on empty space), so that point stays pinned under the cursor while the model
+ *     turns about it. The camera up is carried rigidly by the rotation, which gives the view the roll
+ *     freedom it needs to sweep over the top to a true top-down / bottom-up view and beyond, without
+ *     gimbal shake or a sudden 180 deg flip.
+ *   - Middle/right-drag pans.
+ *   - The wheel dollies along the view: it dives along the ray to the anchor (the point under the
+ *     cursor stays pinned to it) and, once the camera reaches the surface, keeps moving forward so it
+ *     can travel through the scene instead of stopping at a fixed point.
+ * - On every button press / scroll the manipulator ray-picks the scene under the cursor. When a model
+ *   is hit, the hit point becomes the anchor (the rotate pivot and the pan / zoom depth reference);
+ *   when nothing is hit the anchor falls back to the scene bounding-box centre, or to the world origin
+ *   when there is no scene. In FirstPerson mode WASD / arrow keys drive movement instead.
+ * - A rotate press never applies the pivot (no jump). Away from a drag, pan / zoom and the keyboard
+ *   orbit are expressed as a level spherical orbit (yaw / pitch / roll about the camera target) so
+ *   programmatic motion stays stable and level.
+ * - Both projection types are supported through a single distance parameter: the camera keeps an
+ *   eye-to-centre distance, which drives the perspective dolly step and the orthographic frustum
+ *   height.
  */
 class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
   public:
     /** @brief Constructs an orbit manipulator bound to a camera.
      *
-     * The orbit centre and distance are initialized from the camera's current
-     * view (centre = camera target, distance = distance from eye to target).
+     * @details
+     * - The orbit centre and distance are initialized from the camera's current view (centre = camera
+     *   target, distance = distance from eye to target).
      *
      * @param camera Camera to manipulate. Must outlive the manipulator.
-     * @param scene  Optional scene used for ray picking, anchor fallback and
-     *               fitToScreen(). May be null (no picking / scene centre).
+     * @param scene  Optional scene used for ray picking, anchor fallback and fitToScreen(). May be null
+     *               (no picking / scene centre).
      */
     explicit OrbitCameraManipulator(raw_ptr<Camera> camera, raw_ptr<Scene> scene = nullptr);
 
@@ -96,10 +87,10 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
 
     /** @brief Zooms by a multiplicative factor.
      *
-     * Keeps the current anchor fixed on screen when it lies on the cursor ray
-     * (see zoomToCursor()); otherwise scales the eye-to-centre distance.
-     * The distance is multiplied by the factor, so a factor below 1 moves the
-     * camera closer (zoom in) and a factor above 1 moves it away (zoom out).
+     * @details
+     * - Keeps the current anchor fixed on screen when it lies on the cursor ray (see zoomToCursor());
+     *   otherwise scales the eye-to-centre distance. The distance is multiplied by the factor, so a
+     *   factor below 1 moves the camera closer (zoom in) and a factor above 1 moves it away (zoom out).
      *
      * @param factor Zoom factor; <1 zooms in, >1 zooms out.
      */
@@ -125,9 +116,10 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
 
     /** @brief Frames the whole scene into the view.
      *
-     * Positions the orbit centre at the scene bounding-box centre and picks an
-     * eye-to-centre distance that fits the scene into the vertical/horizontal
-     * field of view (perspective) or the frustum height (orthographic).
+     * @details
+     * - Positions the orbit centre at the scene bounding-box centre and picks an eye-to-centre distance
+     *   that fits the scene into the vertical/horizontal field of view (perspective) or the frustum
+     *   height (orthographic).
      *
      * @return true when a scene with valid bounds was fitted.
      */
@@ -140,9 +132,9 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
 
     /** @brief Sets whether wheel zoom keeps the cursor anchor fixed on screen.
      *
-     * When enabled, zooming towards a picked point keeps that world point under
-     * the cursor; the orbit centre slides towards the anchor so successive
-     * rotations orbit around the zoomed region.
+     * @details
+     * - When enabled, zooming towards a picked point keeps that world point under the cursor; the orbit
+     *   centre slides towards the anchor so successive rotations orbit around the zoomed region.
      *
      * @param enabled True to zoom towards the cursor anchor.
      */
@@ -182,10 +174,10 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
 
     /** @brief Sets the orbit centre to the point under the cursor.
      *
-     * Ray-picks the scene; on a hit the centre snaps to the hit point, on a
-     * miss it snaps to the scene bounding-box centre (or the world origin when
-     * there is no scene). The eye is left in place, so the view re-aims rather
-     * than teleports.
+     * @details
+     * - Ray-picks the scene; on a hit the centre snaps to the hit point, on a miss it snaps to the
+     *   scene bounding-box centre (or the world origin when there is no scene). The eye is left in
+     *   place, so the view re-aims rather than teleports.
      *
      * @param screenX Screen x in device pixels.
      * @param screenY Screen y in device pixels.
@@ -232,10 +224,10 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
 
     /** @brief Rotates the whole camera rig about the press anchor.
      *
-     * Yaws about the world-up axis through the pivot, then pitches about the
-     * resulting screen-right axis, carrying the camera up rigidly so the view
-     * may roll and sweep over the top (true 90 deg elevation and beyond). The
-     * rigid rotation keeps the pivot's screen position exactly fixed.
+     * @details
+     * - Yaws about the world-up axis through the pivot, then pitches about the resulting screen-right
+     *   axis, carrying the camera up rigidly so the view may roll and sweep over the top (true 90 deg
+     *   elevation and beyond). The rigid rotation keeps the pivot's screen position exactly fixed.
      *
      * @param screenDx Horizontal screen delta in pixels.
      * @param screenDy Vertical screen delta in pixels.
@@ -256,11 +248,12 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
 
     /** @brief Gets the aspect of the picture this manipulator's interaction works in.
      *
-     * The interaction works in screen space - orbit gains, framing and the picking ray all resolve there - so it
-     * needs the shape of the picture the user is pointing at, which is the CAMERA's own (see Camera): one number,
-     * read by the projection, the culling and the ray alike, so the interaction cannot disagree with the picture.
-     * Its own last onResize() rectangle is the fallback, and the only answer there is for a manipulator with no
-     * camera.
+     * @details
+     * - The interaction works in screen space - orbit gains, framing and the picking ray all resolve
+     *   there - so it needs the shape of the picture the user is pointing at, which is the CAMERA's own
+     *   (see Camera): one number, read by the projection, the culling and the ray alike, so the
+     *   interaction cannot disagree with the picture. Its own last onResize() rectangle is the
+     *   fallback, and the only answer there is for a manipulator with no camera.
      *
      * @return Width / height of the picture (1 when it is a manipulator with no camera and no size yet).
      */
