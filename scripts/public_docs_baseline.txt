@@ -1081,11 +1081,7 @@ src/viz/graphics/sdk/vine/graphics/MatrixTransform.hpp	brief|MatrixTransform::Ma
 src/viz/graphics/sdk/vine/graphics/MatrixTransform.hpp	return|MatrixTransform::matrix
 src/viz/graphics/sdk/vine/graphics/Node.hpp	brief|Node::Node
 src/viz/graphics/sdk/vine/graphics/Node.hpp	param|Node::setName/1
-src/viz/graphics/sdk/vine/graphics/Node.hpp	param|Node::setOpacity/1
-src/viz/graphics/sdk/vine/graphics/Node.hpp	param|Node::setVisible/1
-src/viz/graphics/sdk/vine/graphics/Node.hpp	return|Node::isVisible
 src/viz/graphics/sdk/vine/graphics/Node.hpp	return|Node::name
-src/viz/graphics/sdk/vine/graphics/Node.hpp	return|Node::opacity
 src/viz/graphics/sdk/vine/graphics/Node.hpp	return|Node::parent
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onKeyDown/1
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onKeyUp/1
@@ -1129,14 +1125,12 @@ src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp	return|RenderTarget::height
 src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp	return|RenderTarget::width
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	brief|Scene::Scene
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	param|Scene::setName/1
-src/viz/graphics/sdk/vine/graphics/Scene.hpp	param|Scene::setOpacity/1
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	param|Scene::setVisible/1
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	return|Scene::boundingBox
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	return|Scene::hasLights
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	return|Scene::isVisible
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	return|Scene::lights
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	return|Scene::name
-src/viz/graphics/sdk/vine/graphics/Scene.hpp	return|Scene::opacity
 src/viz/graphics/sdk/vine/graphics/SceneView.hpp	return|SceneView::camera
 src/viz/graphics/sdk/vine/graphics/SceneView.hpp	return|SceneView::engine
 src/viz/graphics/sdk/vine/graphics/ScreenPass.hpp	return|ScreenPass::program

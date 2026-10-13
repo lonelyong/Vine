@@ -52,10 +52,19 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     /** @brief Sets whether the whole scene is rendered. */
     void setVisible(bool visible);
 
-    /** @brief Gets the scene-level opacity multiplier in [0, 1]. */
+    /** @brief Gets the scene-level opacity multiplier in [0, 1].
+     *
+     * The top of the opacity fold: a drawable's effective opacity multiplies this value with every
+     * node's own multiplier on the way down (see Node::opacity).
+     *
+     * @return The scene-level multiplier.
+     */
     float opacity() const;
 
-    /** @brief Sets the scene-level opacity multiplier in [0, 1]. */
+    /** @brief Sets the scene-level opacity multiplier in [0, 1] (see opacity() for the fold).
+     *
+     * @param opacity Multiplier in [0, 1].
+     */
     void setOpacity(float opacity);
 
     /** @brief Gets the root node of the scene.

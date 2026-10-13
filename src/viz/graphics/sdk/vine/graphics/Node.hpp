@@ -45,6 +45,15 @@ inline constexpr std::uint32_t kDefaultLayer = 1u << 0;
  * boundingBox() of a subtree is computed by walking the parent chain, so any
  * node answers in world space regardless of depth.
  *
+ * WHAT A NODE PASSES DOWN to its subtree - the fold rules (the full table, including the StateNode
+ * items, is in docs/guides/graphics.md):
+ *  - visibility is a HARD GATE, not a folded value: an invisible node takes its whole subtree out of
+ *    the collection, the ray walks and the scene's box (see isVisible);
+ *  - opacity MULTIPLIES: scene x every ancestor x the node's own, clamped to [0, 1] at the drawn
+ *    leaf (see opacity);
+ *  - layers and drawOrder take the NEAREST declaration: a node that declares its own replaces what it
+ *    inherited, and clearing the declaration goes back to inheriting (see setLayers / setDrawOrder).
+ *
  * BOUNDS ARE CACHED PER NODE (see .ai/design/graphics-scene-graph.md §10.2): the collection walk keeps
  * each subtree's box in the node's OWN frame, so a camera move recomputes nothing and a culled subtree
  * costs one transformed box instead of a walk. The cache lives by ANNOUNCEMENT: every built-in mutation
@@ -68,10 +77,25 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     /** @brief Sets the node name. */
     void setName(const String& name);
 
-    /** @brief Returns whether this subtree is visible. */
+    /** @brief Returns whether this subtree is visible.
+     *
+     * This node's OWN flag, not a folded value: a hidden ancestor is not reported here, it is applied as
+     * a gate while walking. The gate is absolute - an invisible node takes its whole subtree out of the
+     * collection (nothing below becomes a draw), the ray walks (nothing below is pickable) and
+     * Scene::boundingBox (nothing below is measured).
+     *
+     * @return true when this node's own flag is set.
+     */
     bool isVisible() const;
 
-    /** @brief Sets whether this subtree is visible. */
+    /** @brief Sets whether this subtree is visible: false takes the whole subtree out of the picture.
+     *
+     * The host's "temporarily off" switch (a toggle, an LOD swap) - "which part of the content this is"
+     * is the layer declaration instead, and the two are independent (see setLayers). The scene has the
+     * same switch at the top of the tree (Scene::setVisible).
+     *
+     * @param visible false hides this node and every node below it.
+     */
     void setVisible(bool visible);
 
     /** @brief Gets the layers this subtree declares.
@@ -137,10 +161,22 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     /** @brief Withdraws this node's own draw-order declaration, so its subtree inherits again. */
     void clearDrawOrder();
 
-    /** @brief Gets the subtree opacity multiplier in [0, 1]. */
+    /** @brief Gets this node's OWN opacity multiplier in [0, 1].
+     *
+     * Not the folded value: a drawable's effective opacity is scene.opacity() x every ancestor's
+     * opacity() x its own, clamped to [0, 1] at the drawn leaf (see RenderCommand::opacity). It is the
+     * engine's only transparency channel - built-in forward shading writes it as the fragment alpha, and
+     * a material does not contribute (a shared material's alpha would make every drawable using it
+     * translucent).
+     *
+     * @return This node's own multiplier.
+     */
     float opacity() const;
 
-    /** @brief Sets the subtree opacity multiplier in [0, 1]. */
+    /** @brief Sets this node's own opacity multiplier; it multiplies down the subtree (see opacity()).
+     *
+     * @param opacity Multiplier in [0, 1].
+     */
     void setOpacity(float opacity);
 
     /** @brief Gets the parent node (null for root nodes). */
