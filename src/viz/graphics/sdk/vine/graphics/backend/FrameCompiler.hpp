@@ -18,48 +18,50 @@
  * @brief The frame's COMPILATION stage: what the host asked for becomes an executable plan, and every
  * default is made explicit.
  *
- * WHAT IT DECIDES. (1) the order the pass scopes run in - the dependency graph's answer, not the call
- * order (see FrameGraph); (2) the resolved form of every default the description is allowed to leave
- * open: a viewport nobody announced becomes the whole target, a clear nobody announced becomes "no clear
- * except where a fresh attachment forces one", and a command with no program of its own becomes the
- * frame's default program; (3) which pass of this frame is the BOOTSTRAP one for each target (the first
- * writer into attachments that were just built or invalidated), and what each target's plan and depth plan
- * are (planTarget / depthPlan, the pure functions of the target layer); (4) what each pass' declared inputs
- * ARE - identity plus the number of colour textures each offers - from the same target facts, so a binding
- * layer never has to ask the target registry the same question again.
- *
- * WHAT IT DOES NOT DECIDE. Which GPU objects exist, which pipeline a draw uses, what anything costs, and
- * whether a target should be rebuilt (that is planTarget's answer, read here, not invented here). It
- * touches no API type: the facts it needs arrive as plain values (FrameFacts) and the plan it produces is
- * plain values too, so a phase can drive the whole stage without a device.
- *
- * WHY IT NEEDS FACTS AT ALL. The description is what the host declared this frame; it cannot know that an
- * off-screen target is currently 0x103 in size, that its depth was promoted, or that another target
- * borrows it. Those are the backend's own account of its resources, so they arrive from the layer that
- * owns them (the API layer's registry) as TargetFacts - borrowed for the call, because the compiler only
- * reads them once, immediately.
- *
- * THE PLAN LIVES IN THE FRAME ARENA, and it is built from values only: no span points at a host container,
- * at a target's description, or at the API layer's registry - anything needed later was copied (see
- * FrameRecorder's file note for why that is the rule, and §2.5 P0-1 for the review that pinned it).
+ * @details
+ * - WHAT IT DECIDES. (1) the order the pass scopes run in - the dependency graph's answer, not the
+ *   call order (see FrameGraph); (2) the resolved form of every default the description is allowed to
+ *   leave open: a viewport nobody announced becomes the whole target, a clear nobody announced becomes
+ *   "no clear except where a fresh attachment forces one", and a command with no program of its own
+ *   becomes the frame's default program; (3) which pass of this frame is the BOOTSTRAP one for each
+ *   target (the first writer into attachments that were just built or invalidated), and what each
+ *   target's plan and depth plan are (planTarget / depthPlan, the pure functions of the target layer);
+ *   (4) what each pass' declared inputs ARE - identity plus the number of colour textures each offers -
+ *   from the same target facts, so a binding layer never has to ask the target registry the same
+ *   question again.
+ * - WHAT IT DOES NOT DECIDE. Which GPU objects exist, which pipeline a draw uses, what anything costs,
+ *   and whether a target should be rebuilt (that is planTarget's answer, read here, not invented here).
+ *   It touches no API type: the facts it needs arrive as plain values (FrameFacts) and the plan it
+ *   produces is plain values too, so a phase can drive the whole stage without a device.
+ * - WHY IT NEEDS FACTS AT ALL. The description is what the host declared this frame; it cannot know
+ *   that an off-screen target is currently 0x103 in size, that its depth was promoted, or that another
+ *   target borrows it. Those are the backend's own account of its resources, so they arrive from the
+ *   layer that owns them (the API layer's registry) as TargetFacts - borrowed for the call, because
+ *   the compiler only reads them once, immediately.
+ * - THE PLAN LIVES IN THE FRAME ARENA, and it is built from values only: no span points at a host
+ *   container, at a target's description, or at the API layer's registry - anything needed later was
+ *   copied (see FrameRecorder's file note for why that is the rule, and §2.5 P0-1 for the review that
+ *   pinned it).
  */
 
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 /** @brief What a target states about being a SHADOW MAP: whose it is, and how a fragment maps into it.
  *
- * The statement belongs to the TARGET, not to the pass that reads it (RenderTarget::shadowOf /
- * setProducerViewProjection): a pass declares targets as its inputs and nothing else, so a map is found by what the
- * target SAYS rather than by declaration order - "the first declared input whose depth is sampleable" bound one as
- * the sun's map for a whole deferred branch, because a G-buffer has a depth too (a measured defect of the reference
- * backend, see .ai/design/graphics-shadow.md).
- *
- * The matrix is the PRODUCER's own (light clip <- world, in the SDK's clip convention): a consumer cannot invent it,
- * and a map without one is not readable - shading nothing is the honest answer for a map nobody stated how to read.
+ * @details
+ * - The statement belongs to the TARGET, not to the pass that reads it (RenderTarget::shadowOf /
+ *   setProducerViewProjection): a pass declares targets as its inputs and nothing else, so a map is
+ *   found by what the target SAYS rather than by declaration order - "the first declared input whose
+ *   depth is sampleable" bound one as the sun's map for a whole deferred branch, because a G-buffer
+ *   has a depth too (a measured defect of the reference backend, see .ai/design/graphics-shadow.md).
+ * - The matrix is the PRODUCER's own (light clip <- world, in the SDK's clip convention): a consumer
+ *   cannot invent it, and a map without one is not readable - shading nothing is the honest answer
+ *   for a map nobody stated how to read.
  */
 struct ShadowFacts
 {
-    const void*       light{nullptr};              ///< The light this map belongs to (its identity); nullptr = not a map.
+    const void*       light{nullptr};              ///< The light this map belongs to (its identity); nullptr = not a
+                                                   ///< map.
     bool              has_view_projection{false};  ///< Whether the producer published how to read the map.
     vn::math::Mat4d view_projection{};           ///< Light clip <- world, in the producer's clip convention.
 };
@@ -94,14 +96,15 @@ struct CompiledCommand
 
 /** @brief One of a pass' declared inputs, as the plan carries it: what it reads, and what it offers.
  *
- * Identity plus the ONE shape fact a sampler binding needs: how many colour attachments the input offers
- * (that is the count of colour textures a sampled-input set binds for it). The value is answered HERE, from
- * the same target facts the pass' own target is resolved from, because the two must not be able to disagree:
- * a caller that re-derived it from the target it resolved would be answering the same question twice.
- *
- * An input nothing produced (the engine resolves those to null), or one the frame's facts cannot answer for,
- * offers nothing: its count is zero, and a binding layer has nothing to bind for it - which is why the
- * compiler REPORTS the second case (see compile()).
+ * @details
+ * - Identity plus the ONE shape fact a sampler binding needs: how many colour attachments the input
+ *   offers (that is the count of colour textures a sampled-input set binds for it). The value is
+ *   answered HERE, from the same target facts the pass' own target is resolved from, because the two
+ *   must not be able to disagree: a caller that re-derived it from the target it resolved would be
+ *   answering the same question twice.
+ * - An input nothing produced (the engine resolves those to null), or one the frame's facts cannot
+ *   answer for, offers nothing: its count is zero, and a binding layer has nothing to bind for it -
+ *   which is why the compiler REPORTS the second case (see compile()).
  */
 struct CompiledInput
 {
@@ -109,12 +112,15 @@ struct CompiledInput
     std::uint32_t color_attachments{0};   ///< Colour textures it offers (0 = nothing to bind for it).
     /// Whether the input's DEPTH is sampleable and therefore bound too (the engine's contract for a
     /// whole-target input: "every colour attachment of its source, plus its depth while that one is
-    /// sampleable"). Resolved from the same facts the target's own depth plan is made of, so "may a shader
-    /// sample it" has one answer per frame.
-    bool depth_sampleable{false};    /// The map this input IS, when it is one (the target's own statement, copied here): a pass samples a
-    /// shadow by declaring the target the map was rendered into, and what it reads only becomes a shadow
-    /// because the target says whose it is.
-    ShadowFacts shadow{};};
+    /// sampleable"). Resolved from the same facts the target's own depth plan is made of, so "may a
+    /// shader sample it" has one answer per frame.
+    bool depth_sampleable{false};
+
+    /// The map this input IS, when it is one (the target's own statement, copied here): a pass samples
+    /// a shadow by declaring the target the map was rendered into, and what it reads only becomes a
+    /// shadow because the target says whose it is.
+    ShadowFacts shadow{};
+};
 
 /** @brief One drawing call, resolved. */
 struct CompiledDraw
@@ -148,7 +154,8 @@ struct CompiledPass
     ClearPolicy   clear{};                    ///< The effective clear policy (announced, or the default).
     bool          bootstrap{false};           ///< First writer of freshly built attachments: it must clear.
     bool          depth_preserved{false};     ///< A later pass reads the depth this one writes: never clear it.
-    std::uint32_t color_attachments{0};       ///< Colour attachments of the pass' target (part of a pipeline's identity).
+    std::uint32_t color_attachments{0};       ///< Colour attachments of the pass' target (part of a pipeline's
+                                              ///< identity).
     bool          depth_sampleable{false};    ///< The pass' target offers a sampleable depth (part of the identity).
     std::span<const CompiledInput> inputs{};  ///< The pass' declared inputs, in declaration order.
     /// The shadow map this pass samples, resolved: the FIRST input that is one (a target that states its light),
@@ -162,43 +169,47 @@ struct CompiledPass
 /**
  * @brief The shape a plan was TOLD a target has, kept in the frame's own storage (see CompiledTarget).
  *
- * WHY THE PLAN CARRIES IT AT ALL. The executor compares the plan against the resource world at the one
- * place the two meet (see VsgExecutor::record), and what it could ask the plan until now was only what
- * the facts had already answered to the PASS: the colour-attachment count and the depth sampleability. A
- * shape that drifted in a format, in the sample count or in the subpass - same count, same depth
- * sampleability - was invisible to that check, and a pipeline compiled against the plan's account could
- * then be handed a render pass it was not compiled against. Formats are exactly where the engine's own
- * vocabulary is blind (RGBA8 covers both a linear image and an sRGB surface - measured, see
- * RenderPassCompatibility), so the check has to read the device's spelling as well as the engine's.
- *
- * WHY SPANS AND NOT A TargetShape. The plan's storage rule is the arena's (see FrameArena and §2.5
- * P0-1): a plan holds no span into the caller's facts, so the compiler COPIES what the facts stated into
- * the same arena the rest of the plan lives in and points there. A `TargetShape` by value would allocate
- * a vector per target per frame, which is what the steady-state allocation gate of every phase exists to
- * catch.
- *
- * "NOT KNOWN" IS NOT "ABSENT", and the fields say which is which: an EMPTY device_color_formats (or a
- * device_depth_format of 0) means the facts never learned the device's spellings, not that the target
- * has no such attachment - the engine's own fields answer that (an empty color_formats IS a target with
- * no colour attachments, which is what a depth-only shadow map states).
+ * @details
+ * - WHY THE PLAN CARRIES IT AT ALL. The executor compares the plan against the resource world at the
+ *   one place the two meet (see VsgExecutor::record), and what it could ask the plan until now was
+ *   only what the facts had already answered to the PASS: the colour-attachment count and the depth
+ *   sampleability. A shape that drifted in a format, in the sample count or in the subpass - same
+ *   count, same depth sampleability - was invisible to that check, and a pipeline compiled against
+ *   the plan's account could then be handed a render pass it was not compiled against. Formats are
+ *   exactly where the engine's own vocabulary is blind (RGBA8 covers both a linear image and an sRGB
+ *   surface - measured, see RenderPassCompatibility), so the check has to read the device's spelling
+ *   as well as the engine's.
+ * - WHY SPANS AND NOT A TargetShape. The plan's storage rule is the arena's (see FrameArena and §2.5
+ *   P0-1): a plan holds no span into the caller's facts, so the compiler COPIES what the facts stated
+ *   into the same arena the rest of the plan lives in and points there. A `TargetShape` by value
+ *   would allocate a vector per target per frame, which is what the steady-state allocation gate of
+ *   every phase exists to catch.
+ * - "NOT KNOWN" IS NOT "ABSENT", and the fields say which is which: an EMPTY device_color_formats
+ *   (or a device_depth_format of 0) means the facts never learned the device's spellings, not that
+ *   the target has no such attachment - the engine's own fields answer that (an empty color_formats
+ *   IS a target with no colour attachments, which is what a depth-only shadow map states).
  */
 struct CompiledShape
 {
-    std::span<const vn::graphics::RenderTarget::ColorFormat> color_formats{};  ///< The engine's spelling, one per colour attachment.
-    std::optional<vn::graphics::RenderTarget::DepthFormat>   depth_format{};   ///< The engine's spelling; absent = no depth attachment.
+    std::span<const vn::graphics::RenderTarget::ColorFormat> color_formats{};  ///< The engine's spelling, one per
+                                                                               ///< colour attachment.
+    std::optional<vn::graphics::RenderTarget::DepthFormat>   depth_format{};   ///< The engine's spelling; absent = no
+                                                                               ///< depth attachment.
     std::span<const std::uint32_t> device_color_formats{};   ///< The device's spelling; empty = never learned.
-    std::uint32_t                  device_depth_format{0};   ///< The device's depth format; 0 = no depth, or never learned.
+    std::uint32_t                  device_depth_format{0};   ///< The device's depth format; 0 = no depth, or never
+                                                             ///< learned.
     std::uint32_t                  samples{1};               ///< Sample count.
     std::uint32_t                  subpass{0};               ///< Subpass the pipeline targets.
 };
 
 /** @brief Whether what a plan was told about a target's shape agrees with what the target really has.
  *
- * The fields the plan STATES are compared against the target's own, and the ones it does not state are
- * not compared: a plan whose facts never learned the device's spellings states nothing about them, and
- * "not known" must not read as "absent" - nor may two unknowns be treated as agreeing evidence (the
- * two shapes may still differ; all this answers is "nothing the plan stated disagrees", see the record
- * step's note for what that is worth).
+ * @details
+ * - The fields the plan STATES are compared against the target's own, and the ones it does not state
+ *   are not compared: a plan whose facts never learned the device's spellings states nothing about
+ *   them, and "not known" must not read as "absent" - nor may two unknowns be treated as agreeing
+ *   evidence (the two shapes may still differ; all this answers is "nothing the plan stated
+ *   disagrees", see the record step's note for what that is worth).
  *
  * @param stated What the plan's facts said (see CompiledShape).
  * @param actual What the target reports now (see TargetShape).
