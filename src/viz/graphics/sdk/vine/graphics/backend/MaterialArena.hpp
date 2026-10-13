@@ -10,29 +10,29 @@
 #include <vine/graphics/graphics_global.hpp>
 
 /**
- * @brief The persistent storage of material blocks: one slot per material, one copy per frame that may still
- * read it, and a write only when the material's revision says its bytes changed.
+ * @brief The persistent storage of material blocks: one slot per material, one copy per frame that may
+ * still read it, and a write only when the material's revision says its bytes changed.
  *
- * WHY MATERIALS GET THEIR OWN STORAGE. Every other per-draw value is written every frame (a view block per
- * pass, a matrix and an opacity per draw) because it changes every frame. Material bytes do not: an
- * application edits a material a few times in a session, and a scene with N drawables sharing one material
- * must not pay N writes per frame for it. Giving materials their own arena - written only when the upstream
- * revision moves - is what makes "a steady scene transfers nothing" a property of the design rather than of
- * how carefully the frame path avoids writing.
- *
- * WHY COPIES, AND WHY THE ROTATION MATTERS. A write while an earlier frame is still reading the block is a
- * data race the GPU will happily commit (it renders half of the old and half of the new value). Each slot
- * therefore holds one copy MORE than the frames that may be in flight (perFrameCopies: the framework
- * only proves a frame finished when its slot is recycled, which is after the next frame's write), and the
- * frame's copy rotates - the same arithmetic the retirement queue uses to know which frames are done. A
- * caller that writes to the copy the current frame reads is correct by construction; a caller that writes to
- * the copy an IN-FLIGHT frame reads is the bug this layout exists to make impossible to express.
- *
- * WHAT THIS TYPE DOES NOT OWN. No GPU object and no buffer: it is the layout and the accounting (which slot,
- * which copy, how many 64-byte writes happened), so its rules are testable without a device. The API layer
- * allocates one buffer of @ref capacityBytes() and uses @ref offsetOf() for the dynamic offset.
- *
- * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
+ * @details
+ * - WHY MATERIALS GET THEIR OWN STORAGE. Every other per-draw value is written every frame (a view
+ *   block per pass, a matrix and an opacity per draw) because it changes every frame. Material bytes
+ *   do not: an application edits a material a few times in a session, and a scene with N drawables
+ *   sharing one material must not pay N writes per frame for it. Giving materials their own arena -
+ *   written only when the upstream revision moves - is what makes "a steady scene transfers nothing"
+ *   a property of the design rather than of how carefully the frame path avoids writing.
+ * - WHY COPIES, AND WHY THE ROTATION MATTERS. A write while an earlier frame is still reading the
+ *   block is a data race the GPU will happily commit (it renders half of the old and half of the new
+ *   value). Each slot therefore holds one copy MORE than the frames that may be in flight
+ *   (perFrameCopies: the framework only proves a frame finished when its slot is recycled, which is
+ *   after the next frame's write), and the frame's copy rotates - the same arithmetic the retirement
+ *   queue uses to know which frames are done. A caller that writes to the copy the current frame
+ *   reads is correct by construction; a caller that writes to the copy an IN-FLIGHT frame reads is
+ *   the bug this layout exists to make impossible to express.
+ * - WHAT THIS TYPE DOES NOT OWN. No GPU object and no buffer: it is the layout and the accounting
+ *   (which slot, which copy, how many 64-byte writes happened), so its rules are testable without a
+ *   device. The API layer allocates one buffer of @ref capacityBytes() and uses @ref offsetOf() for
+ *   the dynamic offset.
+ * - NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -62,7 +62,8 @@ class VN_GRAPHICS_API MaterialArena
     struct Write
     {
         WriteKind     kind{WriteKind::Unchanged};  ///< What happened.
-        std::uint32_t slot{0};                     ///< Slot the material occupies (meaningful for Allocated / Rewritten).
+        std::uint32_t slot{0};                     ///< Slot the material occupies (meaningful for Allocated /
+                                                   ///< Rewritten).
         std::uint32_t copy{0};                     ///< In-flight copy written (meaningful for Allocated / Rewritten).
         std::uint64_t bytes{0};                    ///< Bytes written (0 for Unchanged).
     };
@@ -80,17 +81,19 @@ class VN_GRAPHICS_API MaterialArena
   public:
     /** @brief Begins the next frame: advances the copy rotation and the frame-local write dedupe.
      *
-     * The first call begins frame 0, so a test (or a session) that calls this at the top of every frame
-     * sees the frames numbered from zero.
+     * @details
+     * - The first call begins frame 0, so a test (or a session) that calls this at the top of every
+     *   frame sees the frames numbered from zero.
      */
     void beginFrame() noexcept;
 
     /** @brief Notes that a material is in use this frame, telling the caller whether to write its bytes.
      *
-     * A material with no slot is allocated one and written (Allocated); a material whose revision moved is
-     * written once per frame (Rewritten) - the SECOND note in the same frame asks one block from an
-     * application that edited a value twice, and answering it twice would double the frame's traffic for
-     * bytes the GPU can only ever see one of.
+     * @details
+     * - A material with no slot is allocated one and written (Allocated); a material whose revision
+     *   moved is written once per frame (Rewritten) - the SECOND note in the same frame asks one block
+     *   from an application that edited a value twice, and answering it twice would double the frame's
+     *   traffic for bytes the GPU can only ever see one of.
      *
      * @param material Material identity (a raw pointer: the arena stores no reference to it).
      * @param revision Upstream revision of the material's bytes; the arena never invents one.
