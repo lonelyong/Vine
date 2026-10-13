@@ -615,7 +615,7 @@ VTK 那一派、**用法**却是 three.js 那一派（每个视图一台相机�
    从表面**问**（`surfaceWidth()/surfaceHeight()/surfacePixelRatio()`：表面在就用表面的三个数，否则用自己那份）。
    扇出随之改形：`RenderSurface::resize` / `present` 不再把三个数**推**给视图（推的那一份就是"第二份"的来源），
    而是让视图**重算自己的矩形**（`applySurfaceGeometry()`）。摘下来时表面把尺寸**交还**给视图（与矩形同一条
-   规矩，见 `dismiss` / `~RenderSurface`），于是"接着画同一块地方"在尺寸上也成立。`onSurfaceResized` 的两条语义
+   规矩，见 `dismiss` / `~RenderSurface`），于是"接着画同一块地方"在尺寸上也成立。`resize` 的两条语义
    不变：挂着转发给表面，没挂记在自己那份上。
 2. **六角色分组**：`SceneView` 的公开面按角色重排并命名 —— recipe / camera and content / navigation / geometry /
    input / presentation（文件里本来就有三处 `// ---- … ----` 分组标记，本片把它们对齐成这六段，并把这六段各管

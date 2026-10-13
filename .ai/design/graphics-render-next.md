@@ -27,7 +27,7 @@
 | 保留 | 为什么 |
 | --- | --- |
 | 四层 API + 第 0 层逃生口（`engine->addPass`、自写 shader、自建 builder） | "三五行出画面"和"完全自己接"能同时存在，靠的就是每层都能单独用 |
-| **配方 / 几何 / 开关** 三分（`SceneView::Options` / `setViewport`+`onSurfaceResized` / `setEnabled`） | 换设置才重建、开关永不重建、几何只改取值 —— 这是"配置窗口"能被信任的前提 |
+| **配方 / 几何 / 开关** 三分（`SceneView::Options` / `setViewport`+`resize` / `setEnabled`） | 换设置才重建、开关永不重建、几何只改取值 —— 这是"配置窗口"能被信任的前提 |
 | "**赢了内容才叫 Override**"的命名规则 | 优先级住在类型名字里，比藏在文档里强（`graphics-state.md` §4.1） |
 | 默认窗口管线**让位**给宿主自建主 pass（**M2a 已落地**：意图保留，机制从"读引擎的 pass 表"换成"宿主显式声明"—— 宿主 `present()` 自己的 pass，视图就不建默认管线） | 兜底而非竞争，宿主永远赢 |
 | 文档 → 视图 → 控件 → 面 的 1:1 链 + `DocumentView::deactivate()` 的收回约定 | 隔离干净、视角按实例保住、切文档回默认态天然正确 |
@@ -679,7 +679,7 @@ G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevisio
 
 | # | 类型 | 事项 | 动作 | 判据 / 触发 |
 | --- | --- | --- | --- | --- |
-| **T1** | 机制 | **表面尺寸扇出**（M5b 的机制半边，**已落地 2026-10-11**） | `RenderSurface::resize(w, h, ratio)` 记住表面尺寸并扇出给表里每一条**呈现的视图**（`SceneView::applySurfaceSize` 是"记下来 + 推几何"那一步）；`present` 把记着的尺寸**立刻**交给新呈现；`SceneView::onSurfaceResized` 在视图挂表面时转发给它（不挂表面时才是独立入口），新增 `SceneView::hasSurface()`；`SurfaceWindow::feedSurfaceSize` 改调表面，控件自己那个视图**不呈现**时才单独喂 | ①`RenderControlTest` 里手写的那行 `right->onSurfaceResized(...)` 全删（原稿写"两条"，实际是**四条**分屏用例，一并删净）；②`SceneViewViewportTest.APaneDeclaredOnASizedSurfaceIsSizedAtOnce`：present 后**立刻**、零手喂，pane = 640×720、窗口 pass viewport = {640, 0, 640, 720}；③单视图路径行为不变（`test_gui` **253** 绿），`test_graphics` 345→**346**；④变异：present 不把尺寸给新呈现 ⇒ ②**红**（实测） |
+| **T1** | 机制 | **表面尺寸扇出**（M5b 的机制半边，**已落地 2026-10-11**） | `RenderSurface::resize(w, h, ratio)` 记住表面尺寸并扇出给表里每一条**呈现的视图**（`SceneView::applySurfaceSize` 是"记下来 + 推几何"那一步）；`present` 把记着的尺寸**立刻**交给新呈现；`SceneView::resize` 在视图挂表面时转发给它（不挂表面时才是独立入口），新增 `SceneView::hasSurface()`；`SurfaceWindow::feedSurfaceSize` 改调表面，控件自己那个视图**不呈现**时才单独喂 | ①`RenderControlTest` 里手写的那行 `right->onSurfaceResized(...)` 全删（原稿写"两条"，实际是**四条**分屏用例，一并删净）；②`SceneViewViewportTest.APaneDeclaredOnASizedSurfaceIsSizedAtOnce`：present 后**立刻**、零手喂，pane = 640×720、窗口 pass viewport = {640, 0, 640, 720}；③单视图路径行为不变（`test_gui` **253** 绿），`test_graphics` 345→**346**；④变异：present 不把尺寸给新呈现 ⇒ ②**红**（实测） |
 | **T2** | 机制 | **M6：一设备 N 交换链 / N 会话** | 后端 + `RenderBackendRegistry` 支持同一会话多条交换链（`setSurface(i)`）；设备与资源归属始终在会话；**不碰控件与视图的 API** | 原 M6 判据（同一模型两窗口只上传一份几何 / 一个窗口销毁不带走另一个会话 / `SessionLease` 禁止会话先死在租约前 / R2 的"临时加引用"约定删除）。**触发**：同屏视图稳定 > 4、同一内容要上两块窗口、设备启动开销被窗口数乘。**2026-10-11 复核：没命中**（当前应用只有一块窗口）—— **登记为后期优化项**，命中再落 |
 | **T3** | 机制（小） | **设备夹具的可用性探测**（**已落地 2026-10-11**） | `SdkPixelFixture::available()` 变成"设备 + 会话起得来 + 离屏像素给得回来"的**共享入口**（进程内只答一次：`up()` + 一条手搭 pass 画一帧 + 读回）；`BlockStorageTest` / `BlockDescriptorsTest` / `SessionTest` / `VsgBackendTest` 的设备门禁**十处**改问它；`getenv("DISPLAY")` 的**四处**假门禁删除（X11-only 的那几个文件里另有 5 处与紧随其后的 `xcb_connect` 重复的 `DISPLAY` 检查，同样删掉） | ①`SdkPixelTest` 两条仍绿；②`test_vsg` 407 passed / 26 skipped → **428 passed / 3 skipped / 2 failed**（23 条误跳全部恢复，正如原稿预测：2 条本就红 —— `BlockDescriptorsTest.TheBindCarriesTheOffsetsInBindingOrderAndReusesOneSet`、`SessionTest.ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote`，**未修**，先记）；③剩下的 3 skip = 计数分配器 2 条 + `HostWindowReadTest`（X11-only）1 条 |
 | **T4** | 组合 | **分屏布局的所有者**（原 M5b 的组合半边） | **不进 SDK**：布局树 / 比例 / join / 格子生死 / 谁持有视图，是应用层（编辑器、查看器）自己的组合；`SplitLayout` 那份定稿作废 | 归属登记（§4 与 §5 M5b 行已改）。真有人要通用实现时，以"应用层小库"形态出现，不是引擎政策 |

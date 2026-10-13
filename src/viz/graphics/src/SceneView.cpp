@@ -252,12 +252,12 @@ bool SceneView::hasSurface() const noexcept
     return surface_ != nullptr;
 }
 
-void SceneView::onSurfaceResized(int width, int height)
+void SceneView::resize(int width, int height)
 {
-    onSurfaceResized(width, height, surfacePixelRatio());
+    resize(width, height, surfacePixelRatio());
 }
 
-void SceneView::onSurfaceResized(int width, int height, double pixel_ratio)
+void SceneView::resize(int width, int height, double pixel_ratio)
 {
     if (width <= 0 || height <= 0) {
         return;

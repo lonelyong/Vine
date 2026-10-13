@@ -338,7 +338,7 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
      * second call.
      *
      * @param width       New surface width in LOGICAL pixels (<= 0 is ignored), as reported to
-     *                    SceneView::onSurfaceResized.
+     *                    SceneView::resize.
      * @param height      New surface height in LOGICAL pixels (<= 0 is ignored).
      * @param pixel_ratio Device pixel ratio of that surface (<= 0 is treated as 1).
      */

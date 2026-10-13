@@ -635,7 +635,7 @@ void SurfaceWindow::feedSurfaceSize(int width, int height)
     // This surface's own view is fed separately ONLY when it does not present (a host declared a main pass of its
     // own, so nothing fans out to it): its geometry would otherwise stay at whatever it last saw.
     if (d->view != nullptr && !d->view->hasSurface()) {
-        d->view->onSurfaceResized(width, height, ratio);
+        d->view->resize(width, height, ratio);
     }
 }
 

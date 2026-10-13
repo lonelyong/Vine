@@ -116,7 +116,7 @@ classDiagram
         +setEngine(engine)
         +setScene(scene)
         +setPipeline(pipeline)
-        +onSurfaceResized(w, h, dpr)
+        +resize(w, h, dpr)
     }
     class RenderEngine {
         +setDevice(device)
@@ -250,7 +250,7 @@ vn::raw_ptr<vn::graphics::RenderPass> which = control->surface()->presentingPass
 - **PiP / 画中画**：给那条 pass 一个子矩形（`pass->setViewport(Viewport{...})`，设备像素）、并让它的输入是另一张**离屏目标**
   （`RenderTarget`，作为 pass 的输入声明）。`VINE_VSG_*` 那几个 demo 开关走的就是这条路。
 - **两块并排**：两支 pass，各自一个子矩形、各自读自己的离屏目标；**清屏只有一条**（`setClearEnabled(false)` 关掉其余的，
-  或者只让第一条清）—— 否则第二条会把第一条画的擦掉。位置与尺寸由你的布局算（`onSurfaceResized` 的一次公告 + 你的矩形）。
+  或者只让第一条清）—— 否则第二条会把第一条画的擦掉。位置与尺寸由你的布局算（`resize` 的一次公告 + 你的矩形）。
 - **叠加 HUD**：在默认画面那条 pass 之后加一条不做深度、不清屏的 pass（`PipelineStage::Overlay` 就是给它的档位）。
 - **要第二个"相机 + 内容"**：那就是第二个视图，得配第二个窗口（第二个 `RenderControl`）——一个区只画一幅画。
 

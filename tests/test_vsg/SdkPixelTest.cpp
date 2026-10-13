@@ -123,7 +123,7 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
     vn::intrusive_ptr<SceneView> view(new SceneView());
     view->setEngine(fixture.engine.get());
     view->setScene(fixture.scene);
-    view->onSurfaceResized(SdkPixelFixture::kSide, SdkPixelFixture::kSide, 1.0);
+    view->resize(SdkPixelFixture::kSide, SdkPixelFixture::kSide, 1.0);
 
     // Built once, with the options that are in force for the first picture: the chain forward, so the picture
     // pass is the scene pass itself.

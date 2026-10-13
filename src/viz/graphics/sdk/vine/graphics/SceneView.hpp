@@ -75,7 +75,7 @@ class Scene;
  * The engine stays camera- and content-agnostic: it forwards no mouse /
  * scroll / key input, holds no camera and no content scene. The host pushes
  * window input and surface resizes to the view (pushEvent /
- * onSurfaceResized), which forwards them to the manipulator and keeps the
+ * resize), which forwards them to the manipulator and keeps the
  * camera projection correct.
  */
 class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
@@ -159,7 +159,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * @param width  New surface width in pixels (logical, as the host reports it).
      * @param height New surface height in pixels (logical, as the host reports it).
      */
-    void onSurfaceResized(int width, int height);
+    void resize(int width, int height);
 
     /** @brief Refreshes the geometry of this view for a new surface size and device pixel ratio.
      *
@@ -177,11 +177,14 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * presents it (so one call sizes the picture, and a view that presents later is sized at once). This entry is then the
      * one for a view that presents nothing - a view used on its own needs no surface to be sized.
      *
+     * The verb deliberately matches RenderSurface::resize: the SAME announcement, addressed to whichever of the
+     * two a host holds.
+     *
      * @param width        New surface width in logical pixels.
      * @param height       New surface height in logical pixels.
      * @param pixel_ratio  Device pixels per logical pixel (devicePixelRatio); <= 0 keeps the current one.
      */
-    void onSurfaceResized(int width, int height, double pixel_ratio);
+    void resize(int width, int height, double pixel_ratio);
 
     /** @brief Registers a creator-managed surface-layout step.
      *
@@ -220,7 +223,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
 
     /** @brief The surface width (logical px) this view derives its picture from.
      *
-     * The SURFACE's while this view presents one, this view's own announcement otherwise (see onSurfaceResized):
+     * The SURFACE's while this view presents one, this view's own announcement otherwise (see resize):
      * the size has one owner, and a presenting view asks it rather than holding a second copy that could drift.
      *
      * @return Surface width in logical pixels, 0 when nobody has sized anything yet.
@@ -334,7 +337,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
 
     /** @brief Records the surface size (and ratio) a view with NO surface derives from.
      *
-     * The step onSurfaceResized() takes when this view presents nothing. A view that presents a surface does not
+     * The step resize() takes when this view presents nothing. A view that presents a surface does not
      * need it: it reads the surface's numbers (see surfaceWidth), because the size of the thing the picture ends
      * up in has ONE owner and that is the surface (RenderSurface::resize).
      *
@@ -347,7 +350,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /** @brief Turns {surface size, pixel ratio} into this view's picture, in one place.     *
      * The step RenderSurface::resize fans out to the view that presents it (the view is what a size is FOR), and
      * the step this view runs on its own when it presents nothing - not host API either way: the announcement that
-     * leads here is onSurfaceResized() / RenderSurface::resize.
+     * leads here is resize() / RenderSurface::resize.
      */
     void applySurfaceGeometry();
 

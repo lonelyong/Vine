@@ -130,6 +130,13 @@
 > 实例方法 `postToMain()` 与 `Application::startupProgress()` 都删了（前者是同义词，后者与 `StartupProgress::current()` 重复）。
 > **`Application::d` 已私有**（叶子只走 `dptr()`）；`argv()` 返回 `char* const*`。
 
+## 2026-10-13 视图尺寸入口改名 `SceneView::resize`（跟随 graphics）
+
+- `SceneView::onSurfaceResized` → `resize`（两个重载）：本仓语义里 resize 是**状态公告**不是事件/接收点，
+  且与 `RenderSurface::resize` 配对（拿着谁调谁的 `resize`）。appfw 侧只有 `SurfaceWindow::feedSurfaceSize`
+  一处调用改形（控件自己的视图不呈现时喂 `view->resize(...)`）；`ModelViewerTest` 两处跟进。
+  记录与边界见 `.ai/memory/graphics.md` 顶条。
+
 ## 2026-10-13 点中谁：拾取在 SDK、选择在业务（`model_viewer` 的点击选中 + 高亮）
 
 - **结论**：拾取这一半**本来就有**（`Camera::screenToWorldRay` 收 **[0, 1] 的屏幕坐标** + `RayIntersection::intersectScene`

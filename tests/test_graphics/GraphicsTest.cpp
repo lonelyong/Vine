@@ -3090,20 +3090,20 @@ TEST(SceneViewTest, SurfaceLayoutStepsRunOnResize)
         got_h  = h;
     });
 
-    view.onSurfaceResized(1600, 900);
+    view.resize(1600, 900);
     EXPECT_TRUE(called);
     EXPECT_EQ(got_w, 1600);
     EXPECT_EQ(got_h, 900);
 
     // A second resize re-runs the step with the new size.
-    view.onSurfaceResized(1280, 720);
+    view.resize(1280, 720);
     EXPECT_EQ(got_w, 1280);
     EXPECT_EQ(got_h, 720);
 
     // Clearing drops the registered steps.
     called = false;
     view.clearSurfaceLayouts();
-    view.onSurfaceResized(640, 480);
+    view.resize(640, 480);
     EXPECT_FALSE(called);
 }
 
@@ -3117,13 +3117,13 @@ TEST(SceneViewTest, ResizingTellsTheCameraTheShapeOfThePictureItDraws)
     ASSERT_NE(view.camera(), nullptr);
     EXPECT_DOUBLE_EQ(view.camera()->aspectRatio(), 1.0);
 
-    view.onSurfaceResized(1600, 900);
+    view.resize(1600, 900);
     EXPECT_DOUBLE_EQ(view.camera()->aspectRatio(), 1600.0 / 900.0);
 
     // The same view's camera follows every size, and a size nobody can draw (nothing to divide by) is not one.
-    view.onSurfaceResized(600, 800);
+    view.resize(600, 800);
     EXPECT_DOUBLE_EQ(view.camera()->aspectRatio(), 600.0 / 800.0);
-    view.onSurfaceResized(0, 0);
+    view.resize(0, 0);
     EXPECT_DOUBLE_EQ(view.camera()->aspectRatio(), 600.0 / 800.0) << "a surface with no extent states no shape";
 }
 
@@ -3689,7 +3689,7 @@ TEST(SceneViewViewportTest, TheAreaSizeDrivesAspectAndLayoutSteps)
 
     const std::size_t pass_count_before = engine->passCount();
 
-    view->onSurfaceResized(1280, 720, 2.0);
+    view->resize(1280, 720, 2.0);
 
     EXPECT_EQ(layout_w, 1280);
     EXPECT_EQ(layout_h, 720);
@@ -3718,7 +3718,7 @@ TEST(SceneViewViewportTest, TheAreaSizeDrivesAspectAndLayoutSteps)
     EXPECT_EQ(engine->passCount(), pass_count_before);
 
     // A second announcement goes through the same one path (and keeps the same pipeline).
-    view->onSurfaceResized(800, 600, 1.0);
+    view->resize(800, 600, 1.0);
     EXPECT_EQ(layout_w, 800);
     EXPECT_EQ(layout_h, 600);
     EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 800.0 / 600.0);
@@ -3736,7 +3736,7 @@ TEST(SceneViewViewportTest, TheAreaSizeHasOneOwnerAndTheViewReadsIt)
     view->setEngine(engine.get());
 
     // 1) No area: the host's own announcement is the only size (a view used on its own is a legal configuration).
-    view->onSurfaceResized(100, 100, 1.0);
+    view->resize(100, 100, 1.0);
     EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 1.0);
 
     // 2) Presented: the area's number wins (800x400 = 2:1), the view's own 100x100 stops being read.
@@ -3761,7 +3761,7 @@ TEST(SceneViewViewportTest, TheAreaSizeHasOneOwnerAndTheViewReadsIt)
     EXPECT_EQ(view->surfaceWidth(), 320) << "an area no longer feeds a view it does not present";
 
     // 5) Its own announcement is the size again.
-    view->onSurfaceResized(300, 600, 1.0);
+    view->resize(300, 600, 1.0);
     EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 0.5);
 
     // 6) A view presented on an already-sized area is laid out at once - the host feeds nothing (the area remembers,
@@ -3791,7 +3791,7 @@ TEST(SceneViewViewportTest, TheOverlayBoxSitsInTheAreaCorner)
     ASSERT_NE(pipeline, nullptr);
     ASSERT_NE(pipeline->gizmo(), nullptr);
 
-    view->onSurfaceResized(400, 300, 1.0);
+    view->resize(400, 300, 1.0);
 
     // The default gizmo still sits in the bottom-left corner of the surface with its 16 px margin: a full
     // viewport must not move anything.
@@ -3849,7 +3849,7 @@ TEST(SceneViewViewportTest, RebuildingAfterTheHostReleasedTheEngineIsSafe)
     EXPECT_FALSE(rebuilt->windowPass()->hasViewport());
 
     // The view is sized without the engine being asked (its own announcement is the size it derives from).
-    view->onSurfaceResized(800, 600, 1.0);
+    view->resize(800, 600, 1.0);
     EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 800.0 / 600.0);
     EXPECT_EQ(view->surfaceWidth(), 800);
     EXPECT_FALSE(rebuilt->windowPass()->hasViewport()) << "the picture is the area: no rectangle of its own";

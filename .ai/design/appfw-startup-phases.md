@@ -338,7 +338,7 @@ void assembleDemoContentLater(std::shared_ptr<DemoScene>);      // 自己包的�
 结论先给：**会话 init 只是"要句柄"，不是"要应用线程"**——设备/会话/管线建在池上完全成立，像素逐位不变。
 
 - 形状：`SurfaceWindow::initializeBackend()` 劈成 `prepareBackendAttach()`（应用线程：还句柄、`setWindowHandle`）→
-  `engine->initialize()`（**任意线程**）→ `finishBackendAttach()`（应用线程：状态、尺寸、`onSurfaceResized`、warm-up、
+  `engine->initialize()`（**任意线程**）→ `finishBackendAttach()`（应用线程：状态、尺寸、`resize`、warm-up、
   settle）。新增 `RenderControl::initAsync()`（`vn::async::Task<bool>`）把中间那一段走 `vn::async::run()` +
   `resumeOnMainThread()`；同步的 `init()` 一字不改（不跑循环的宿主照用）。demo 插件改成 `co_await …initAsync()`。
 - 先做过**可行性**实验（`engine->initialize()` 整段丢到 `std::thread` + join）：`ok=1`，`Pending -> Attached` 正常，

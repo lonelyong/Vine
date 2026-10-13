@@ -122,7 +122,7 @@
   `ensureWindowPass` / `removeWindowPass` / `setOptions`）在入口先 `intrusive_ptr<RenderEngine>(engine_, true)`
   临时持有 ⇒ 顺序自由，宿主提前释放引擎也安全（§13）。
 - **R3 三种状态各有回家路**：**配方**（`Options`：走哪条路、有没有 HUD 档）= 变更即**重建**；**几何**
-  （`setViewport` / `onSurfaceResized`：画在哪块、多大多密）= 只改取值；**开关与模式**（`setStatsVisible` /
+  （`setViewport` / `resize`：画在哪块、多大多密）= 只改取值；**开关与模式**（`setStatsVisible` /
   `setGizmoVisible` / `Options::mode`：现在看不看、表面颜色是什么含义）= 只改 pass 上的取值
   （`setEnabled` / `setProgramOverride`）。后两者**永不重建**（J8）—— 分屏拖动、F9 切读数、切着色模式都不该付构建代价。
   **边界由"变的是 pass 图还是 pass 的属性"划**：`ShadingPath` 换的是**有哪些 pass**（配方，重建）；
@@ -376,14 +376,14 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /// 这个视图画在表面的哪一块，**归一化 [0,1]**（与 Unity `Camera.rect` / VTK `vtkViewport::SetViewport` 同口径）。
     /// 默认 `{0,0,1,1}` = 铺满 = 今天的行为。归一化的好处：宿主**不必**做 DPR 换算，分屏比例天然跟随表面。
     /// **这是该视图矩形的唯一真相**：宽高比、pass 的设备像素视口、清屏范围、layout 步收到的尺寸全部由
-    /// "它 × 表面尺寸 × 比例"推出（所以 `onSurfaceResized` 永远只收**表面**尺寸，宿主不必自己算一半 —— §14 F1）。
+    /// "它 × 表面尺寸 × 比例"推出（所以 `resize` 永远只收**表面**尺寸，宿主不必自己算一半 —— §14 F1）。
     void setViewport(const NormalizedViewport& viewport);
     const NormalizedViewport& viewport() const noexcept;
 
     /// 表面事件：尺寸 **和比例** 一次给全（appfw 已在按窗口尺寸调它）。推给相机操纵器与 layout 步，
     /// 并**顺手 resize 自己的默认管线**（把归一化视口换算成设备像素写进它拥有的 pass）—— 宿主零代码。
     /// 比"另设一个 DPR setter"好的地方：比例与尺寸同生共死，不可能出现"设了比例、尺寸还是旧的"这种静默错位。
-    void onSurfaceResized(int width, int height, double pixel_ratio = 1.0);
+    void resize(int width, int height, double pixel_ratio = 1.0);
 
     /// 布局步：两参数版沿用；三参数版把比例一起给你（第 1 层自建路径用，见 §3 缝 4）。
     void addSurfaceLayout(std::function<void(int width, int height)> layout);
@@ -399,7 +399,7 @@ G-buffer），而视口、尺寸、比例是**每帧都可能变**的东西（�
 把最频繁的操作挂上最贵的代价，就是把"分屏拖动"变成"每帧重建管线"。行业里这条线画得很清楚：
 **Unity 的 `Camera.rect` 随手改，`URP Asset` 改了要重建**；**Unreal 的 `FSceneView::ViewRect` 每帧给，
 ShowFlags / FeatureLevel 才决定管线**；**VTK 的 `SetViewport` 是 viewport 的状态，与 rendering passes 无关**。
-所以定稿：`Options` = 配方（变更即重建），`setViewport` / `onSurfaceResized` = 几何（只改取值，永不重建）。
+所以定稿：`Options` = 配方（变更即重建），`setViewport` / `resize` = 几何（只改取值，永不重建）。
 
 **为什么撤掉视图上的 `setPipelineOptions()`**：`PipelineOptions` 里有程序覆盖、pass 偏移、离屏尺寸这些**构建细节** ——
 把它们与意图放在同一个对象上，就等于让宿主猜"哪些字段会与设置打架"。要构建细节 ⇒ 你就是在做第 1 层（自己 `build()`，
@@ -475,7 +475,7 @@ class VN_GRAPHICS_API Scene {
 | 控件要不要 `Signal`（如 `pipeline_changed`） | **不要**。加数据成员就是 ABI 断；`state_changed` 已覆盖"什么时候可以配置" |
 | 控件替宿主装灯/拥有场景 | **不要**（场景归宿主） |
 | 控件要不要一行工厂 `create(...)` | **不要**。它模糊所有权，而第 3 行本来就属于场景；3 行已经够短（§7） |
-| 控件**表面侧的改动** | 把 `devicePixelRatio()` 与尺寸**一起**推给**表面**：`surface()->resize(w, h, devicePixelRatio())`（两个调用点）——尺寸是表面的事实，表面扇出给每条呈现（`present` 也会立刻量新来的那格）；控件自己那个视图不呈现时才单独喂 `onSurfaceResized`。比例随同一次调用走 |
+| 控件**表面侧的改动** | 把 `devicePixelRatio()` 与尺寸**一起**推给**表面**：`surface()->resize(w, h, devicePixelRatio())`（两个调用点）——尺寸是表面的事实，表面扇出给每条呈现（`present` 也会立刻量新来的那格）；控件自己那个视图不呈现时才单独喂 `resize`。比例随同一次调用走 |
 | 控件要不要**输入路由** | **要一个，但只是一个"这一点归谁"的回调**：`setInputRouter(std::function<SceneView*(int x, int y)>)`。**放进 `Impl`**（`std::function`，不是 `Signal`）⇒ 公开面零新数据成员、ABI 不动。**已落地**。**M5a 修正（2026-10-11）**：它不再是**唯一**通路 —— 默认路由**问表面**（`RenderSurface::viewAt`，矩形就是路由表，M2d 之后矩形就住在表上），回调降级成"矩形说不清时才写"的**覆盖**（返回 `nullptr` = 交回矩形，不再等于"回退自己的视图"）。原稿写的"控件手里只有表面 + 尺寸、没有命中知识"仍成立：命中知识现在归**表面**那张表（唯一的 owner），不是在控件里再存一份 |
 | 控件要不要**连续渲染** | **要，一档而已**：`setContinuousRendering(on, interval_ms = 16)`。按需渲染仍是默认（attach / resize / 输入 / `renderFrame()` 才出帧），连续是给动画、仿真、要能读的读数用的。它是**帧驱动**不是帧率保证（滴答"要一帧"，一帧该多久多久）；未 attach 或表面未 exposed 时滴答**免费**（写明，不是静默）。**已落地** |
 | 控件的**初始化时机** | **构造只组装**（引擎 + 视图 + 诊断路由），不选后端、不 attach；attach 由宿主显式 `init()`（同步、优先）或第一拍兜底（§2.3、期 S0）。所以"`new` 之后立刻配置"永远有效，控件不新增任何配置 API |
@@ -568,7 +568,7 @@ view->setOptions(options);
    一类既有用例不动。
 2. **兜底而非竞争**：默认窗口管线只在**没有任何呈现声明**时存在；宿主自建主 pass 时它自动让位（**M2a**：声明是显式的 —— 宿主 `surface->present(pass)`，而不是视图去引擎里查"这台相机有没有窗口 pass"）。
 3. **谁构建谁接线**：默认那条由视图 resize（含比例）；自建那条由构建者接（一行 layout 步）。
-4. **尺寸与比例同生共死**：比例只随 `onSurfaceResized(w,h,ratio)` 走，不存在孤立的 DPR 状态。
+4. **尺寸与比例同生共死**：比例只随 `resize(w,h,ratio)` 走，不存在孤立的 DPR 状态。
 5. **无隐式装灯**：零灯就是零灯（后端的 `ambient=0.15` 是可见性兜底，不是照明策略）。
 6. **公开类不加数据成员**（尤其 `Signal`）；默认值不改。
 7. **一个表面一条窗口 pass（默认铺满 + 清屏）**（多视图/分屏见 §12.2：**底层可做、几何与输入两条缝已设计**，
@@ -578,7 +578,7 @@ view->setOptions(options);
    （控件 / 引擎 / 视图 / 后端会话）在任何数量的窗口下都成立；目标态见 §12.1 的判据。
 10. **输入先按"点"归视图，再捕获到松开**（§5）：默认路由 = 控件自己那个 `view()`（单视图行为逐字不变）；
     多视图的归属由宿主的路由回调决定 —— 控件**不猜**布局。
-11. **配方与几何分开**（J8）：`Options` 变了才重建管线；`setViewport` / `onSurfaceResized` 只改取值（含比例换算）。
+11. **配方与几何分开**（J8）：`Options` 变了才重建管线；`setViewport` / `resize` 只改取值（含比例换算）。
 12. **借用 + 操作期间临时加引用**（R2，§13）：`ensureWindowPass` / `removeWindowPass` / `setOptions` 入口临时持引擎，
     顺序自由、宿主提前释放也安全。
 13. **显示 / 隐藏是运行时开关，永不重建**（§4.1）：`setGizmoVisible` / `setStatsVisible` 只切 `setEnabled`；
@@ -587,7 +587,7 @@ view->setOptions(options);
     延迟配方进出非 Lit 档会换链条（前向），那一次是重建（M1，2026-10-11）。
     **关掉的档不会被一次重建又打开**：重建是从**配方**建的（新 pass 天生 enabled），所以使用者最后一次说的可见性
     由 `applyOverlayIntent()` 在每次建完之后落回去（换路径、补建另一个档、把档从配方里去掉再要回来，都算）。
-14. **几何只有一个输入**：`view->viewport()`（归一化）是矩形的**唯一真相**；`onSurfaceResized` 只收**表面**尺寸 + 比例；
+14. **几何只有一个输入**：`view->viewport()`（归一化）是矩形的**唯一真相**；`resize` 只收**表面**尺寸 + 比例；
     宽高比、pass 的设备像素视口、清屏范围、layout 步收到的尺寸**全部由它推**（宿主不必自己算"一半"）。
 15. **状态只有一份**：HUD 的可见性就是 **pass 的 `isEnabled()`**（`isStatsVisible()` 读它，不存第二份 bool）；
     `Options` 是**意图**，"有档 ⇔ 有那条 pass"。允许的唯一不一致：宿主自建了主 pass（那时默认管线不存在，开关记诊断）。
@@ -599,7 +599,7 @@ view->setOptions(options);
 | 期 | 内容 | 验收 |
 | --- | --- | --- |
 | **S0** appfw（**可先落地，独立于 S1**） | 初始化时机（§2.3）：构造只组装、attach 排第一拍或宿主显式 `init()`；`useDefaultBackend()` 守卫改为"引擎没有后端时才补";注释同步 | ①构造返回时 `state()==Pending`，第一拍后 `Presenting`；②构造后立刻 `setBackend()` 生效（不再是"已 initialize 的默认后端"）；③注册表空 → 之后注册后端 ⇒ 兜底能捡起；④`RenderControlTest` 全绿（显式 `init()`/`initAsync()` 的同步语义不变）；⑤启动时序不退化：demo/model_viewer 仍在自己那次 `init()`/`initAsync()` 上 attach（比对启动日志的耗时行，没有新的空屏拍）；⑥核对 `DemoScene.hpp:124` 的前置条件（`install()` 早于 attach）现在真的成立，并把 `DemoScene.cpp:1547` 的注释改成事实 |
-| **S1** graphics | `SceneView::Options` + `setOptions()` + `options()` + `pipeline()`；`setStatsVisible/setGizmoVisible/isStatsVisible/isGizmoVisible`（运行时开关，**零重建**）；`setViewport(归一化矩形)`（几何，不重建）；`onSurfaceResized(w,h,ratio)` 自 resize 默认管线；`addSurfaceLayout` 三参数重载 | ①不配置 ⇒ `passCount()==1`（既有用例不动）；②`.stats=true` ⇒ 2 个 pass 且在 HUD 档；③`onSurfaceResized(400,300,2.0)` 后 HUD/gizmo 拿到新尺寸与新比例；④换设置 ⇒ 重建后仍只有一条窗口管线（不重复注册）；⑤宿主已有主 pass ⇒ 默认管不插一脚；⑥空配置下 resize 无害空转；⑦三参数 layout 收到比例；⑧**管线还没建时 `setOptions()` ⇒ 不建管线、只记设置，随后 `ensureWindowPass()` 按新设置建**（§2.2 的零重建路径）；⑨默认窗 pass **内部按"视口矩形"取值**（默认 = 铺满），给 §12.2 的分屏留门；⑩**注销/重建在操作期间临时加引用**（R2，§13 后果 3）—— 用例里放一个"宿主把引擎也释放了"的变体钉住它；⑪`setViewport({0.25,0,0.5,1})` 后：默认窗 pass 的设备像素视口跟着变、**且不重建**（`passCount()` 不变、`pipeline()` 句柄不变）；**同一时刻**只喂表面尺寸（`onSurfaceResized(1280,720,1.0)`）也够 —— 相机宽高比与 layout 步收到的尺寸都等于"这一块"（640×720），证明几何**只有一个输入**（不变量 14）；⑫运行时开关：`.stats=true` 建好后 `setStatsVisible(false)/(true)` 连续切 10 次 ⇒ 读数档的 `isEnabled()` 跟着变，而 `passCount()` 与 `pipeline()` 句柄**不变**（零重建）；`.stats=false` 时第一次 `setStatsVisible(true)` **恰好付一次**构建（此后同样零重建） |
+| **S1** graphics | `SceneView::Options` + `setOptions()` + `options()` + `pipeline()`；`setStatsVisible/setGizmoVisible/isStatsVisible/isGizmoVisible`（运行时开关，**零重建**）；`setViewport(归一化矩形)`（几何，不重建）；`resize(w,h,ratio)` 自 resize 默认管线；`addSurfaceLayout` 三参数重载 | ①不配置 ⇒ `passCount()==1`（既有用例不动）；②`.stats=true` ⇒ 2 个 pass 且在 HUD 档；③`resize(400,300,2.0)` 后 HUD/gizmo 拿到新尺寸与新比例；④换设置 ⇒ 重建后仍只有一条窗口管线（不重复注册）；⑤宿主已有主 pass ⇒ 默认管不插一脚；⑥空配置下 resize 无害空转；⑦三参数 layout 收到比例；⑧**管线还没建时 `setOptions()` ⇒ 不建管线、只记设置，随后 `ensureWindowPass()` 按新设置建**（§2.2 的零重建路径）；⑨默认窗 pass **内部按"视口矩形"取值**（默认 = 铺满），给 §12.2 的分屏留门；⑩**注销/重建在操作期间临时加引用**（R2，§13 后果 3）—— 用例里放一个"宿主把引擎也释放了"的变体钉住它；⑪`setViewport({0.25,0,0.5,1})` 后：默认窗 pass 的设备像素视口跟着变、**且不重建**（`passCount()` 不变、`pipeline()` 句柄不变）；**同一时刻**只喂表面尺寸（`resize(1280,720,1.0)`）也够 —— 相机宽高比与 layout 步收到的尺寸都等于"这一块"（640×720），证明几何**只有一个输入**（不变量 14）；⑫运行时开关：`.stats=true` 建好后 `setStatsVisible(false)/(true)` 连续切 10 次 ⇒ 读数档的 `isEnabled()` 跟着变，而 `passCount()` 与 `pipeline()` 句柄**不变**（零重建）；`.stats=false` 时第一次 `setStatsVisible(true)` **恰好付一次**构建（此后同样零重建） |
 | **S2** appfw | 两个调用点改成推 `(w,h,ratio)`；比例变化时重推 | 无后端的 `test_gui`：尺寸与比例确实到了 view；比例变化后跟上。**不加任何配置 API** |
 | **S3** graphics | `LightRig`（`studio()`/`headlight()` + `addTo()`）+ `Scene::addLighting()/setLighting()` | ①`studio()` 三盏（1 环境 + 2 方向）、方向非零；②追加语义（装两次 = 两套）；③`setLighting()` 覆盖；④`Scene` 原有 `addLight/clearLights` 不动 |
 | **S4** 迁移 | `model_viewer`（灯 + HUD 收口）、`demo_plugin`（灯收口，管线保留） | viewer 的灯/读数用例改成断言新入口；demo 观感不变（截图/日志比对） |
@@ -619,7 +619,7 @@ view->setOptions(options);
 `PolygonMode::Line`。
 
 实现落在：`SceneView`（`Options`/`setOptions`/`options`/`pipeline`/`setViewport`/`viewport`/`setStatsVisible`/
-`setGizmoVisible`/`isStatsVisible`/`isGizmoVisible`/`onSurfaceResized(w,h,ratio)`/三参数 `addSurfaceLayout`）、
+`setGizmoVisible`/`isStatsVisible`/`isGizmoVisible`/`resize(w,h,ratio)`/三参数 `addSurfaceLayout`）、
 `Viewport.hpp`（`NormalizedViewport`）、`AxisGizmo`/`FpsOverlay`（`setAreaOrigin`）、`Pipeline::resize`（把比例也推给
 HUD 档）、`Scene`+`LightRig`、`SurfaceWindow`（S0 的兜底 attach、比例一起推、`ensureWindowPass()` 提到后端检查之前、
 输入路由与捕获）、`RenderControl::setInputRouter`、`ScrollEvent`（`x`/`y`）、`ModelRenderView`（迁到新入口）。
@@ -631,7 +631,7 @@ HUD 档）、`Scene`+`LightRig`、`SurfaceWindow`（S0 的兜底 attach、比例
 | 设备 + 交换链 + 提交 | vsg `Viewer`/`CommandGraph`、three.js `WebGLRenderer`、Unity pipeline 实例 | `RenderEngine` + `RenderBackend`（纯执行，不认识相机/内容） |
 | 窗口 + 原生表面 | vsg `Window`、VTK `vtkRenderWindow`、Qt3D `Qt3DWindow`、`QVTKOpenGLNativeWidget` | `RenderControl` |
 | 视图：相机 + 内容 + 视口 + 设置 | Unreal `FSceneView`（`ViewRect` + ShowFlags）、vsg `View`、VTK `vtkRenderer`（`SetViewport`） | `SceneView`：相机 + 场景 + `Options`（配方）+ `setViewport`（几何） |
-| **配方 vs 几何** | Unity `URP Asset`（改了要重建）/ `Camera.rect`（随手改）；Unreal ShowFlags / `FSceneView::ViewRect` | `SceneView::Options`（重建）/ `setViewport`+`onSurfaceResized`（不重建） |
+| **配方 vs 几何** | Unity `URP Asset`（改了要重建）/ `Camera.rect`（随手改）；Unreal ShowFlags / `FSceneView::ViewRect` | `SceneView::Options`（重建）/ `setViewport`+`resize`（不重建） |
 | 一进程一设备、N 交换链 | Filament（`Engine`+`Renderer`+`SwapChain`）、VTK（一 renderer 多 render window）、OSG（一 `Viewer` 多 `GraphicsWindow`） | **目标态**（§12.1）；现状是"一控件一设备"（Qt / three.js 口径） |
 | 多视图的输入分发 | VTK `vtkRenderWindowInteractor` 按 viewport 挑 renderer（按下路由、拖动捕获）；Blender/Unity 手柄同语义 | `RenderControl::setInputRouter`：按下路由、松开前捕获（§5、§12.2） |
 | **多窗口** | Unreal 一 RHI 设备 N 窗口；OSG 一 `Viewer` 多 `GraphicsWindow`；VTK 一个 renderer 可挂多个 render window；**Qt / three.js：每窗口一上下文** | **每控件一设备**（Qt/three.js 路线，§12.1）；共享设备是后端的缝 |
@@ -639,7 +639,7 @@ HUD 档）、`Scene`+`LightRig`、`SurfaceWindow`（S0 的兜底 attach、比例
 | 视图组的配方/设置资源 | Unreal `FSceneViewFamily`、Unity **URP Asset**、Godot `Environment`、three.js `EffectComposer`、Qt3D framegraph | `Pipeline` + `PipelineOptions`（值语义、变更即重建） |
 | 场景图 + 灯 | three.js/Godot/OSG：灯在**场景**；Unity `RenderSettings`/Godot `Environment` 是场景级设置；VTK 有 `vtkLightKit` | `Scene` + `LightRig` |
 | HUD / 统计 / gizmo | ImGui 叠 pass、Stats.js 在 DOM、Unity gizmo overlay、Unreal **ShowFlags** | `AxisGizmo` / `FpsOverlay`（= `Options` 的两个 show flag） |
-| DPI/像素比 | three.js `setPixelRatio()`+`setSize()`（文档要求先设比例）、Qt 逻辑像素×`devicePixelRatio()`、Vulkan extent×scale | `onSurfaceResized(w,h,ratio)`：**合并成一次**，让"先比例后尺寸"这类顺序错误不可能发生 |
+| DPI/像素比 | three.js `setPixelRatio()`+`setSize()`（文档要求先设比例）、Qt 逻辑像素×`devicePixelRatio()`、Vulkan extent×scale | `resize(w,h,ratio)`：**合并成一次**，让"先比例后尺寸"这类顺序错误不可能发生 |
 | 分层 API | Vulkan 命令 → render graph → 引擎预设；Qt3D framegraph → `Qt3DWindow`；three.js → `EffectComposer` → 预设 | §3 的四层与四条缝 |
 
 **命名对照**（便于按行业词检索）：`RenderControl` ≈ `RenderWindow`/`RenderWidget`/`Qt3DWindow`/`QVTKOpenGLNativeWidget`；

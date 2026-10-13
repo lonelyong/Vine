@@ -188,7 +188,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      *
      * The size of the thing a picture ends up in is a fact about the SURFACE: a host reports it ONCE (its window
      * knows it - see SurfaceWindow), and the view reads it from here rather than holding a second copy
-     * (SceneView::onSurfaceResized is the one step). A view presented LATER receives the size remembered here at
+     * (SceneView::resize is the one step). A view presented LATER receives the size remembered here at
      * once, so a view added to a running surface is sized without the host feeding it.
      *
      * The same ONE announcement serves the frame: the engine records it in the frame context every pass lays itself

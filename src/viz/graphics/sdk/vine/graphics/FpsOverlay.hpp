@@ -175,7 +175,7 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay> 
      * Called by the overlay's owner whenever the surface changes (e.g. from a
      * SceneView surface-layout step / Pipeline::resize()). The size is the
      * LOGICAL surface size the host reports - the same number it hands to
-     * SceneView::onSurfaceResized - and the configured devicePixelRatio is
+     * SceneView::resize - and the configured devicePixelRatio is
      * applied HERE, which is what turns it into the device-pixel rectangle a
      * backend viewport needs. Handing it device pixels scales the box twice.
      *

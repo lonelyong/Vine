@@ -25,6 +25,23 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-13 `SceneView::onSurfaceResized` → `resize`（公共 API 改名；`on*` 从此只留给接收点）
+
+- **结论**：视图的尺寸入口改名 `resize(w,h)` / `resize(w,h,ratio)` 两个重载，与 `RenderSurface::resize` 同词
+  ——"拿着谁就调谁的 `resize`"：挂着表面时视图转发给表面，不挂表面时记自己那份（`own_*`）。动机：本仓已定
+  "resize 跨过宿主边界是**状态公告**不是事件"（引擎那半边 2026-09-07 已由 `pushEvent(ResizeEvent)` 改名
+  `resize(w,h)`），视图这个事件味的 `on` 名是该次改名的遗留。候选 `notifyResized` 否掉：把"通知"框回来
+  （通知可忽略，这条必须落地）、语法缺宾语、破坏与 `RenderSurface::resize` 的配对。`on*` 保留给**接收点**：
+  `CameraManipulator::onMouse*/onKey*/onResize`、`AxisGizmo`/`FpsOverlay::onSurfaceResized`（管线通知它们重排，
+  **故意不动**）、`DockPanel::onClosing`。
+- **判据**：语言服务级改名（两个重载各一刀，9 + 13 处）；`SurfaceWindow::feedSurfaceSize` 调用点、
+  `GraphicsTest`/`RenderSurfaceTest`/`SdkPixelTest`/`ModelViewerTest` 全部改形；SDK 交叉引用注释
+  （`RenderSurface` / `RenderPipeline` / `AxisGizmo` / `FpsOverlay` 四个头）与两份指南
+  （`render-views.md` / `graphics.md`）、`appfw-render-view.md` 现役文字跟进。全量构建 0 错 0 警；
+  `ctest` **24/24**（`test_graphics` 375 例）；六道门禁 0 finding（`public_docs` 1156 基线 / 0 new / 0 stale）。
+- **边界**：历史记录（memory 旧条目、`graphics-render-next.md` T1 行里删旧代码的引文、旧设计稿、bug 单）
+  保留旧名，读旧名处一律读作 `resize`。
+
 ## 2026-10-13 层掩码的后续消费者落地：拾取与包围盒（`graphics-layers.md` §9.1 / §9.2）
 
 - **结论**：`RayIntersection::intersectScene/intersectSceneAll` 带 `layer_mask`；`Scene::boundingBox(layer_mask)`。

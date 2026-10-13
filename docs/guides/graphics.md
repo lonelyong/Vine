@@ -708,7 +708,7 @@ pipeline->setShadingMode(vn::graphics::ShadingMode::Wireframe);  // 见下
 
 // 几何（改它**不重建**）：视图的画面就是它呈现的那块区 —— 尺寸归区（`RenderSurface::resize` 一次扇出），
 // 相机宽高比与管线尺寸都从它推；**不设** pass 的设备像素视口 ⇒ 全幅（要多幅画面自己给 pass 设子视口）
-view->onSurfaceResized(w, h, dpr);        // 只喂**表面**尺寸 + 比例；"这一块"是视图自己算的
+view->resize(w, h, dpr);                  // 只喂**表面**尺寸 + 比例；"这一块"是视图自己算的
                                           // （视图挂在表面上时这句转发给 RenderSurface::resize，见 §3.11）
 ```
 
@@ -790,7 +790,7 @@ surface->dismiss(surface->presentedView());
   自己说清接线：自己算矩形、给 pass 子视口（`pass->setViewport(Viewport{...})`，设备像素）、自己决定哪条清屏
   （`setClearEnabled(false)` 关掉其余）。见 `render-views.md` §6。
 - **顺序的真相在引擎**：`RenderEngine::passOrder(pass)` 返回某条已注册 pass 的执行序（同时回答了"它还在不在"）。
-- **尺寸与窗口也归它**：一块区只有一个尺寸，报一次就够，其余是扇出（`SceneView::onSurfaceResized` 只是转发）。
+- **尺寸与窗口也归它**：一块区只有一个尺寸，报一次就够，其余是扇出（`SceneView::resize` 只是转发）。
   挂上之前视图用自己的公告，摘下来时区把尺寸**交还**给视图（`setSurface(nullptr)` 快照）。设备像素那一层仍是视图
   算的（按区的尺寸 × 比例），而**形状**是视图相机的（`SceneView::applySurfaceGeometry` 把区的形状 push 给相机）。
   宿主自建的 pass **没有**视图可喂：它自己给 `pass->setViewport()` 设备像素（它本来就知道尺寸）。

@@ -345,7 +345,7 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
     EXPECT_TRUE(rebuilt->setStatsVisible(true));
 
     // 改大小安全：读数的摆位与尺寸由链在 resize 时算（不再有查看器那套 layout 步）。
-    scene_view->onSurfaceResized(400, 300, control->devicePixelRatio());
+    scene_view->resize(400, 300, control->devicePixelRatio());
     EXPECT_TRUE(scene_view->pipeline()->fpsOverlayPass()->isEnabled());
 }
 
@@ -604,7 +604,7 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setProjectionMatrixAsPerspective(30.0, 0.1, 100.0);
     camera->setAspect(1.0);
-    scene_view->onSurfaceResized(400, 400, 1.0);
+    scene_view->resize(400, 400, 1.0);
 
     // ① 视图装的操纵器是自己的拾取型（不是默认那个裸轨道操纵器）。
     auto* manipulator = scene_view->manipulator();

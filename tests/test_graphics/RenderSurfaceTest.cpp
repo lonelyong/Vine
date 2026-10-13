@@ -400,7 +400,7 @@ TEST(RenderSurfaceTest, AViewThatOutlivesItsSurfaceDoesNotCallIntoIt)
     // The view keeps the numbers it last derived from the area, and is its own again: the host sizes it directly.
     EXPECT_EQ(view->surfaceWidth(), 320);
     EXPECT_EQ(view->surfaceHeight(), 240);
-    view->onSurfaceResized(640, 480);
+    view->resize(640, 480);
     EXPECT_EQ(view->surfaceWidth(), 640);
     EXPECT_EQ(view->surfaceHeight(), 480);
     EXPECT_NE(view->pipeline(), nullptr) << "the pipeline is the view's, not the surface's";
