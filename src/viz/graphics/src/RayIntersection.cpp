@@ -337,16 +337,25 @@ bool traverseMesh(const vn::geometry::Vec3fArray& positions,
 /**
  * @brief Recursively keeps the closest hit of a ray over a node subtree.
  *
- * @param ray   The ray.
- * @param node  Node to traverse.
- * @param best  Closest intersection found so far (in/out).
+ * @param ray              The ray.
+ * @param node             Node to traverse.
+ * @param inherited_layers Layers @p node inherits from its ancestors (kDefaultLayer at the top).
+ * @param layer_mask       Layers this query picks (see Node::setLayers).
+ * @param best             Closest intersection found so far (in/out).
  */
-void intersectNode(const Ray& ray, const Node* node, RayIntersectionResult& best)
+void intersectNode(const Ray& ray, const Node* node, std::uint32_t inherited_layers,
+                   std::uint32_t layer_mask, RayIntersectionResult& best)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
     }
+    const std::uint32_t layers = node->layers().value_or(inherited_layers);
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
+        // The content selection, taken at the drawn node like the collection walk (see
+        // Scene::collectRenderCommands): a container stands for structure, so it is never pruned.
+        if ((layers & layer_mask) == 0) {
+            return;
+        }
         // Leaf geometry: test against its data placed by the ancestor
         // MatrixTransform chain.
         const GeometryMesh mesh = meshOfGeometry(geometry);
@@ -366,7 +375,7 @@ void intersectNode(const Ray& ray, const Node* node, RayIntersectionResult& best
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
         for (const auto& child : group->childrenRef()) {
-            intersectNode(ray, child.get(), best);
+            intersectNode(ray, child.get(), layers, layer_mask, best);
         }
     }
 }
@@ -374,17 +383,25 @@ void intersectNode(const Ray& ray, const Node* node, RayIntersectionResult& best
 /**
  * @brief Recursively collects the closest hit of each geometry in a subtree.
  *
- * @param ray   The ray.
- * @param node  Node to traverse.
- * @param out   Output result list (one entry per geometry that was hit).
+ * @param ray              The ray.
+ * @param node             Node to traverse.
+ * @param inherited_layers Layers @p node inherits from its ancestors (kDefaultLayer at the top).
+ * @param layer_mask       Layers this query picks (see Node::setLayers).
+ * @param out              Output result list (one entry per geometry that was hit).
  */
-void collectNodeNearest(const Ray& ray, const Node* node,
-                        std::vector<RayIntersectionResult>& out)
+void collectNodeNearest(const Ray& ray, const Node* node, std::uint32_t inherited_layers,
+                        std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
     }
+    const std::uint32_t layers = node->layers().value_or(inherited_layers);
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
+        // The content selection, taken at the drawn node like the collection walk (see
+        // Scene::collectRenderCommands): a container stands for structure, so it is never pruned.
+        if ((layers & layer_mask) == 0) {
+            return;
+        }
         const Mat4d world = node->worldMatrix();
         RayIntersectionResult r = RayIntersection::intersect(
             ray, const_cast<Geometry*>(geometry), world);
@@ -395,7 +412,7 @@ void collectNodeNearest(const Ray& ray, const Node* node,
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
         for (const auto& child : group->childrenRef()) {
-            collectNodeNearest(ray, child.get(), out);
+            collectNodeNearest(ray, child.get(), layers, layer_mask, out);
         }
     }
 }
@@ -403,17 +420,25 @@ void collectNodeNearest(const Ray& ray, const Node* node,
 /**
  * @brief Recursively collects every triangle hit over a node subtree.
  *
- * @param ray   The ray.
- * @param node  Node to traverse.
- * @param out   Output result list (multiple entries per geometry possible).
+ * @param ray              The ray.
+ * @param node             Node to traverse.
+ * @param inherited_layers Layers @p node inherits from its ancestors (kDefaultLayer at the top).
+ * @param layer_mask       Layers this query picks (see Node::setLayers).
+ * @param out              Output result list (multiple entries per geometry possible).
  */
-void collectNodeHits(const Ray& ray, const Node* node,
-                     std::vector<RayIntersectionResult>& out)
+void collectNodeHits(const Ray& ray, const Node* node, std::uint32_t inherited_layers,
+                     std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
     }
+    const std::uint32_t layers = node->layers().value_or(inherited_layers);
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
+        // The content selection, taken at the drawn node like the collection walk (see
+        // Scene::collectRenderCommands): a container stands for structure, so it is never pruned.
+        if ((layers & layer_mask) == 0) {
+            return;
+        }
         const GeometryMesh mesh = meshOfGeometry(geometry);
         if (!mesh.valid()) {
             return;
@@ -430,7 +455,7 @@ void collectNodeHits(const Ray& ray, const Node* node,
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
         for (const auto& child : group->childrenRef()) {
-            collectNodeHits(ray, child.get(), out);
+            collectNodeHits(ray, child.get(), layers, layer_mask, out);
         }
     }
 }
@@ -488,21 +513,23 @@ std::vector<RayIntersectionResult> RayIntersection::intersect(const Ray& ray,
     return results;
 }
 
-RayIntersectionResult RayIntersection::intersectScene(const Ray& ray, raw_ptr<Scene> scene)
+RayIntersectionResult RayIntersection::intersectScene(const Ray& ray, raw_ptr<Scene> scene,
+                                                      std::uint32_t layer_mask)
 {
     RayIntersectionResult best;
     if (scene == nullptr) {
         return best;
     }
     if (const auto root = scene->root(); root != nullptr) {
-        intersectNode(ray, root.get(), best);
+        intersectNode(ray, root.get(), kDefaultLayer, layer_mask, best);
     }
     return best;
 }
 
 std::vector<RayIntersectionResult> RayIntersection::intersectSceneAll(const Ray& ray,
                                                                       raw_ptr<Scene> scene,
-                                                                      Mode mode)
+                                                                      Mode mode,
+                                                                      std::uint32_t layer_mask)
 {
     std::vector<RayIntersectionResult> results;
     if (scene == nullptr) {
@@ -510,9 +537,9 @@ std::vector<RayIntersectionResult> RayIntersection::intersectSceneAll(const Ray&
     }
     if (const auto root = scene->root(); root != nullptr) {
         if (mode == Mode::Nearest) {
-            collectNodeNearest(ray, root.get(), results);
+            collectNodeNearest(ray, root.get(), kDefaultLayer, layer_mask, results);
         } else {
-            collectNodeHits(ray, root.get(), results);
+            collectNodeHits(ray, root.get(), kDefaultLayer, layer_mask, results);
         }
     }
     std::sort(results.begin(), results.end(),

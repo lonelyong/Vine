@@ -221,32 +221,41 @@ void invalidateBoundsUnder(Node& node)
 }
 
 /**
- * @brief Unions the world-space boxes of a subtree's VISIBLE content.
+ * @brief Unions the world-space boxes of a subtree's VISIBLE content the @p layer_mask selects.
  *
  * The scene's box answers for what it would DRAW (see Scene::boundingBox), so an invisible node prunes
  * its whole subtree - the same rule the collection walk (collectNodeCommands below) and the ray walks
- * (RayIntersection) apply. Groups are read as structure: what a group contributes is what its children
- * do. Every other node answers through its own boundingBox(), which stays the purely GEOMETRIC query
- * (see Node::boundingBox) - the pruning is this query's own fold, not a change to what a node says about
- * itself.
+ * (RayIntersection) apply. The layers fold down (nearest declaration wins) and the mask is tested where
+ * a box is contributed (the drawn node), like the collection: a container stands for structure and is
+ * never pruned by the mask. Every other node answers through its own boundingBox(), which stays the
+ * purely GEOMETRIC query (see Node::boundingBox) - the selection is this query's own fold, not a change
+ * to what a node says about itself.
  *
- * @param node Subtree root to measure.
- * @return World-space union of the visible content, empty when nothing in it is visible.
+ * @param node             Subtree root to measure.
+ * @param inherited_layers Layers @p node inherits from its ancestors (kDefaultLayer at the top).
+ * @param layer_mask       Layers this query measures (see Node::setLayers).
+ * @return World-space union of the selected visible content, empty when nothing in it is selected.
  */
-Aabbd visibleWorldBox(const Node& node)
+Aabbd visibleWorldBox(const Node& node, std::uint32_t inherited_layers, std::uint32_t layer_mask)
 {
     if (!node.isVisible()) {
         return Aabbd::empty();
     }
+    const std::uint32_t layers = node.layers().value_or(inherited_layers);
     if (const auto* group = dynamic_cast<const Group*>(&node)) {
         Aabbd box = Aabbd::empty();
         for (const auto& child : group->childrenRef()) {
-            const Aabbd child_box = visibleWorldBox(*child);
+            const Aabbd child_box = visibleWorldBox(*child, layers, layer_mask);
             if (child_box.isValid()) {
                 box.expandBy(child_box);
             }
         }
         return box;
+    }
+    // The content selection, taken where the box is contributed (the drawn node): a container stands
+    // for structure, so the mask never prunes it (see Scene::collectRenderCommands).
+    if ((layers & layer_mask) == 0) {
+        return Aabbd::empty();
     }
     return node.boundingBox();
 }
@@ -536,12 +545,12 @@ bool Scene::hasLights() const
     return !lights_.empty();
 }
 
-Aabbd Scene::boundingBox() const
+Aabbd Scene::boundingBox(std::uint32_t layer_mask) const
 {
     if (!visible_ || root_ == nullptr) {
         return Aabbd::empty();
     }
-    return visibleWorldBox(*root_);
+    return visibleWorldBox(*root_, kDefaultLayer, layer_mask);
 }
 
 std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsShared(raw_ptr<const Camera> camera,

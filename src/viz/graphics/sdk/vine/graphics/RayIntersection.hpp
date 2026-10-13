@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <cstdint>
 #include <limits>
 #include <vector>
 
@@ -10,6 +11,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "Node.hpp"
 #include "Ray.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -96,11 +98,18 @@ class VN_GRAPHICS_API RayIntersection {
      *
      * Returns only the closest intersection.
      *
-     * @param ray   The ray to test.
-     * @param scene The scene containing geometries.
+     * The @p layer_mask selects like the collection does (see Scene::collectRenderCommands): a visible
+     * geometry whose resolved layers do not intersect the mask is left out of the query. A node that
+     * re-declares its layers is picked under its own declaration (containers are structure - the test is
+     * taken at the drawn geometry); kAllLayers (the default) picks everything visible, exactly as before.
+     *
+     * @param ray        The ray to test.
+     * @param scene      The scene containing geometries.
+     * @param layer_mask Layers this query picks (see Node::setLayers).
      * @return Intersection result. hit=false if no intersection.
      */
-    static RayIntersectionResult intersectScene(const Ray& ray, raw_ptr<Scene> scene);
+    static RayIntersectionResult intersectScene(const Ray& ray, raw_ptr<Scene> scene,
+                                                std::uint32_t layer_mask = kAllLayers);
 
     /** @brief Tests ray intersection with all geometries in a scene.
      *
@@ -108,14 +117,19 @@ class VN_GRAPHICS_API RayIntersection {
      * closest hit of every geometry; AllHits returns every triangle hit in
      * the scene (multiple hits per geometry, including back faces).
      *
-     * @param ray   The ray to test.
-     * @param scene The scene containing geometries.
-     * @param mode  Query mode; defaults to AllHits.
+     * The @p layer_mask selects like the collection does (see Scene::collectRenderCommands): a visible
+     * geometry whose resolved layers do not intersect the mask is left out. A node that re-declares its
+     * layers is picked under its own declaration; kAllLayers (the default) picks everything visible.
+     *
+     * @param ray        The ray to test.
+     * @param scene      The scene containing geometries.
+     * @param mode       Query mode; defaults to AllHits.
+     * @param layer_mask Layers this query picks (see Node::setLayers).
      * @return Vector of intersection results (may be empty).
      */
-    static std::vector<RayIntersectionResult> intersectSceneAll(const Ray& ray,
-                                                                raw_ptr<Scene> scene,
-                                                                Mode mode = Mode::AllHits);
+    static std::vector<RayIntersectionResult> intersectSceneAll(const Ray& ray, raw_ptr<Scene> scene,
+                                                                Mode mode = Mode::AllHits,
+                                                                std::uint32_t layer_mask = kAllLayers);
 };
 
 VN_GRAPHICS_NS_END

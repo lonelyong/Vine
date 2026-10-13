@@ -1126,7 +1126,6 @@ src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp	return|RenderTarget::width
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	brief|Scene::Scene
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	param|Scene::setName/1
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	param|Scene::setVisible/1
-src/viz/graphics/sdk/vine/graphics/Scene.hpp	return|Scene::boundingBox
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	return|Scene::hasLights
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	return|Scene::isVisible
 src/viz/graphics/sdk/vine/graphics/Scene.hpp	return|Scene::lights

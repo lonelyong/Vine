@@ -906,6 +906,8 @@ options.layer_mask = 1u << 1;                       // appfw 里就是 ViewerOpt
   但内容 pass 的掩码 0 会被引擎**报一次**（帧计划问题，`ContentSkipped`），因为那几乎总是笔误。
 - **判定在可绘制节点上**：`Group` 上的声明管的是它下面的内容，掩码**不会**在某个"没声明层的组"上把子树剪掉 ——
   否则声明了层的子内容就再也画不出来了（这条是落地时被用例抓到的）。
+- **同一个选择还给拾取和包围盒用**：`RayIntersection::intersectScene` / `intersectSceneAll` 与 `Scene::boundingBox`
+  都收 `layer_mask`（默认 `kAllLayers` = 逐位老行为）——“这条 pass 画什么”“拾取拾什么”“包围盒量什么”共用同一份声明与同一条判定。
 - 看一眼结果：`engine->framePlan()` 里 `PassPlan::layer_mask` 是这条 pass 的选择，`describe()` 只在非默认时打 `layers=0x..`。
 
 
@@ -939,6 +941,9 @@ const vn::graphics::Ray ray = camera->screenToWorldRay(vn::math::Vec2d(nx, ny));
 const vn::graphics::RayIntersectionResult hit = vn::graphics::RayIntersection::intersectScene(ray, scene.get());
 if (hit.hit) { /* hit.geometry / hit.distance / hit.normal */ }
 ```
+
+- **只拾某一层**：`intersectScene` / `intersectSceneAll` 收 `layer_mask`（默认 `kAllLayers`）——判定与收集同一条公式
+  `可见 && (层集合 & 掩码) != 0`，在被画的 Geometry 上判定；“只拾地形”这类工具模式就是这么表达的（见 §3.14）。
 
 - **"选中"不在框架里**：没有选中集合、没有描边/高亮 pass、没有框选 —— picker / intersector 在行业里也是**库**而不是核心
   （VTK 的 `vtkCellPicker` 用的是同一套射线数学、OSG 的 intersector 住在 `osgUtil`、three.js 是 `Raycaster` + 用户代码）。

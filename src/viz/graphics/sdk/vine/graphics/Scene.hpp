@@ -142,14 +142,22 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     /** @brief Returns whether the scene has at least one light source. */
     bool hasLights() const;
 
-    /** @brief Computes the bounding box of the visible scene.
+    /** @brief Computes the bounding box of the visible scene, as the picture with @p layer_mask sees it.
      *
      * Hidden content contributes nothing, at any depth: an invisible node prunes its whole subtree from the
      * union, the same rule the collection and ray walks apply. Empty when the scene itself is hidden, has no
-     * root, or the root is hidden. The per-node query (Node::boundingBox) stays purely geometric - this is
-     * the scene's own fold, answering for what it would draw.
+     * root, or the root is hidden.
+     *
+     * @p layer_mask selects like the collection does (see collectRenderCommands): a drawn node whose resolved
+     * layers do not intersect the mask contributes nothing, and a node that re-declares its layers counts
+     * under its own declaration (containers are structure - the test is taken at the drawn node). kAllLayers
+     * (the default) measures everything visible, exactly as before. The per-node query (Node::boundingBox)
+     * stays purely geometric - this is the scene's own fold, answering for what it would draw.
+     *
+     * @param layer_mask Layers this query measures (see Node::setLayers).
+     * @return World-space AABB of the selected visible content (empty when there is none).
      */
-    Aabbd boundingBox() const;
+    Aabbd boundingBox(std::uint32_t layer_mask = kAllLayers) const;
 
     /** @brief Collects render commands for the given camera, as a picture of @p aspect sees it.
      *

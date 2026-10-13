@@ -299,6 +299,52 @@ TEST(SceneTest, HiddenSubtreeContributesNothingToTheSceneBox)
     EXPECT_TRUE(scene.boundingBox().isEmpty());
 }
 
+TEST(SceneTest, TheSceneBoxFollowsTheLayerMask)
+{
+    // Scene::boundingBox(mask) measures what a pass drawing that mask would draw: the same selection the
+    // collection applies (visible gate; the drawn node's resolved layers against the mask; a re-declaration
+    // counts). The default kAllLayers keeps measuring everything visible.
+    Scene scene;
+    auto  root      = setIdentityRoot(scene);
+    auto  near_geom = geometryOf(*makeUnitTriangle()); // 0..1 box at the origin
+
+    auto far_group = intrusive_ptr<Group>(new Group());
+    far_group->setLayers(1u << 2); // everything below is a "caster" unless re-declared
+    auto far_place = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    far_place->setMatrix(vn::math::translate(Vec3d(30.0, 0.0, 0.0)));
+    far_place->addChild(geometryOf(*makeUnitTriangle())); // 30..31 box
+    far_group->addChild(far_place);
+
+    auto override_place = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    override_place->setMatrix(vn::math::translate(Vec3d(20.0, 0.0, 0.0)));
+    auto override_geom = geometryOf(*makeUnitTriangle()); // 20..21 box
+    override_geom->setLayers(kDefaultLayer);              // re-declared: not a caster
+    override_place->addChild(override_geom);
+    far_group->addChild(override_place);
+
+    root->addChild(near_geom);
+    root->addChild(far_group);
+
+    // Default: everything visible is measured.
+    EXPECT_NEAR(scene.boundingBox().max().x, 31.0, 1e-9);
+
+    // The default layer measures the origin triangle and the re-declared one - the caster subtree is out.
+    const Aabbd ordinary = scene.boundingBox(kDefaultLayer);
+    ASSERT_TRUE(ordinary.isValid());
+    EXPECT_NEAR(ordinary.min().x, 0.0, 1e-9);
+    EXPECT_NEAR(ordinary.max().x, 21.0, 1e-9);
+
+    // Only the caster layer: the far subtree, nothing else.
+    const Aabbd casters = scene.boundingBox(1u << 2);
+    ASSERT_TRUE(casters.isValid());
+    EXPECT_NEAR(casters.min().x, 30.0, 1e-9);
+    EXPECT_NEAR(casters.max().x, 31.0, 1e-9);
+
+    // A mask nobody is in (and mask 0) answers empty - a legal query, not an error.
+    EXPECT_TRUE(scene.boundingBox(1u << 5).isEmpty());
+    EXPECT_TRUE(scene.boundingBox(0u).isEmpty());
+}
+
 // ============ RenderCommand collection / culling ============
 
 /**
@@ -1192,6 +1238,53 @@ TEST(RayIntersectionTest, ASingularWorldTransformIsSkipped)
     auto thin = intrusive_ptr<MatrixTransform>(new MatrixTransform());
     thin->setMatrix(vn::math::scale(Vec3d(1e-4, 1.0, 1.0)));
     EXPECT_TRUE(RayIntersection::intersect(ray, geom.get(), thin->matrix()).hit);
+}
+
+TEST(RayIntersectionTest, TheLayerMaskSelectsWhatIsPicked)
+{
+    // Picking is a second consumer of the layer declaration: the same selection the collection applies
+    // (visible gate; the drawn node's resolved layers against the mask; a re-declaration counts).
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = intrusive_ptr<Group>(new Group());
+
+    auto near_geom = geometryOf(*makeUnitTriangle()); // hit at distance 1
+    near_geom->setName(u8"near");
+    auto far_place = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    far_place->setMatrix(vn::math::translate(Vec3d(0.0, 0.0, -2.0)));
+    auto far_geom = geometryOf(*makeUnitTriangle()); // hit at distance 3
+    far_geom->setName(u8"far");
+    far_geom->setLayers(1u << 2); // a "caster" in this test
+    far_place->addChild(far_geom);
+
+    root->addChild(near_geom);
+    root->addChild(far_place);
+    scene->setRoot(root);
+
+    Ray ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
+
+    // Default: everything visible is picked - the near triangle wins the nearest query.
+    EXPECT_EQ(RayIntersection::intersectScene(ray, scene.get()).geometry->name(), u8"near");
+    EXPECT_EQ(RayIntersection::intersectSceneAll(ray, scene.get()).size(), 2u);
+
+    // A mask without layer 2 leaves the far triangle out; a mask of only layer 2 keeps it.
+    EXPECT_EQ(RayIntersection::intersectScene(ray, scene.get(), kDefaultLayer).geometry->name(), u8"near");
+    EXPECT_EQ(RayIntersection::intersectScene(ray, scene.get(), 1u << 2).geometry->name(), u8"far");
+    EXPECT_EQ(RayIntersection::intersectSceneAll(ray, scene.get(), RayIntersection::Mode::AllHits,
+                                                 kDefaultLayer)
+                  .size(),
+              1u);
+
+    // A re-declaration counts: the far triangle joins the default layer and is picked again.
+    far_geom->setLayers(kDefaultLayer);
+    EXPECT_EQ(RayIntersection::intersectSceneAll(ray, scene.get(), RayIntersection::Mode::AllHits,
+                                                 kDefaultLayer)
+                  .size(),
+              2u);
+
+    // The visibility gate still comes first: hiding the near triangle leaves the masked-out far one out.
+    far_geom->setLayers(1u << 2);
+    near_geom->setVisible(false);
+    EXPECT_FALSE(RayIntersection::intersectScene(ray, scene.get(), kDefaultLayer).hit);
 }
 
 // ============ Material ============
