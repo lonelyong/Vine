@@ -52,7 +52,7 @@ class VN_DI_API Registration final {
     /**
      * @brief Provides a pre-built singleton instance.
      *
-     * The container takes ownership of inst through SPtr and the lifetime
+     * The container takes ownership of inst through intrusive_ptr and the lifetime
      * is forced to Singleton.
      *
      * @param inst Instance to serve; must be kind of the service type.
