@@ -38,14 +38,18 @@ S10b（多窗口共享设备）一落地就会同时踩到。
 - 目标用借用指针而不是 `intrusive_ptr`：S10a 的理由成立（它的问题只在"没有撤销点"，即发现 3）。
 - `Viewer` 住在 appfw::gui、老三条转发、`isActive()`/`takeArea()` 读区：§9.3 决议 + 不变量 1。
 - `RenderControl` 构造只组装、第一拍兜底 attach、无后端直接 `Failed`：S0/§2.3 裁决。
-- `SceneView::frame(dt)` 零调用者：只是转发 `engine->frame()`，不改状态（清理时机见下）。
 - `SurfaceWindow` 单视图仍按按钮记捕获：左键拖拽与右键菜单共存需要；多格下线删的是"按点路由"。
+- 后端半看着"重复"实则不然（2026-10-16 独立复核；**别当"重复"改**）：`RetirementQueue::retirePoint` 是转发（单一实现
+  在 `FrameTimeline::retirePoint`）；`DataKey` / `InstanceSlot` 是 audit 表的**词汇条目**（用例 `CoreKeysTest` 钉住），
+  不是误留；`Observe` 与 `RetirementQueue` 的保留数是**故意互校**（`Observe::agreesWith`，两条用例钉住）；`FrameRing` /
+  `MaterialArena` 共用 `perFrameCopies` 规则而结构不同；`PixelProbe` / `DepthProbe` 是像素类型不同的孪生夹具；
+  `FrameGraph` 取 `CollectedPass` 是 recorder → graph → compiler 的**相邻流水线段**，不是分层违规。
 
 ## 值得做但现在不做（带触发条件）
 
-1. **删/弃用 `SceneView::frame(double)`**：触发 = 下一次公开面清理，或出现"宿主把视图当帧泵"的用法（它会绕过
+1. ~~**删/弃用 `SceneView::frame(double)`**~~ **已做（2026-10-14：公开面清理中删除，零调用者）**。原判据：触发 = 下一次公开面清理，或出现"宿主把视图当帧泵"的用法（它会绕过
    `RenderControl` 的 surface_ok / 暴露检查）。
-2. **发现 3 的契约（已落地为口径）**：这不是"以后做"，而是 S10b 的**前置约束** —— 越早定越省。
+2. **发现 3 的契约（已落地为口径）**：这不是"以后做"，而是 S10b 的**前置约束** —— 越早定越省。另一条同源前置：**共享设备下 `initialize` / `shutdown` 归谁**，见 `graphics-window-device-viewer.md` §9.7（2026-10-16 补登）。
 3. **发现 6 的改名**：并进下一次 appfw 公开面小步（要动 ABI 版本号）。
 4. **`SurfaceWindow` 输入路由骨架整理**：触发 = 输入路由/焦点重新进 SDK 的那天（`viewAt` / `focus` 已删，
    `routedView` 恒返同一视图）。

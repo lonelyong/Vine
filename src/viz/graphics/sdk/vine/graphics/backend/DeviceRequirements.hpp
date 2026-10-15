@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**

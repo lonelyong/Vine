@@ -450,7 +450,7 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
     const auto           first_block = blockOf(*findMaterial(first, material.get()).entry);
     EXPECT_FLOAT_EQ(first_block.diffuse[0], 0.25F);
 
-    // The host edits the material and reports it (the SDK MaterialManager's contract).
+    // The host edits the material; the SDK has no material-edit channel, so the backend notices it here.
     material->setDiffuse(vn::Colorf(0.75F, 0.5F, 0.25F, 1.0F));
     store.updateMaterial(material.get());
 

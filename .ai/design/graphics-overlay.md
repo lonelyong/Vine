@@ -77,8 +77,8 @@ gizmo->setEnabled(false);                   // 需要时隐藏
 
 ## 已实现文件（新形态）
 
-- `sdk/vine/graphics/CameraMirror.hpp` / `src/CameraMirror.cpp`（镜像组件 + 单测）
-- `sdk/vine/graphics/AxisGizmo.hpp` / `src/AxisGizmo.cpp`——**`AxisGizmo : public RenderPass`**
+- `src/viz/graphics/sdk/vine/graphics/CameraMirror.hpp` / `src/viz/graphics/src/CameraMirror.cpp`（镜像组件 + 单测）
+- `src/viz/graphics/sdk/vine/graphics/AxisGizmo.hpp` / `src/viz/graphics/src/AxisGizmo.cpp`——**`AxisGizmo : public RenderPass`**
   自包含 HUD pass：owned framing `camera_` + owned 内容 `content_`（三根红X/绿Y/蓝Z 方柱，复用
   IndexedTriangleMesh）+ 左下角子视口；`execute()` 忽略引擎传入 scene，先镜像再画自己的内容。
   不再有 `Overlay::MirrorMode`（用命名空间 `MirrorMode`）与 `Overlay::pass()`（自身即 pass）。

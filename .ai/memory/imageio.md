@@ -27,7 +27,7 @@
 - **vendor** 进 `third_party/stb/`：`stb_image.h`（v2.30，sha256 `594c2fe3…`）、
   `stb_image_write.h`（v1.16，sha256 `cbd5f0ad…`）。不 FetchContent：上游无 CMakeLists、无 release，
   FetchContent 会拉整个仓库只为两个文件，还得手工建 target。
-- **编译配置集中在 `src/StbConfig.hpp`**，被两个 TU 包含（`StbImageImpl.cpp` 带 `*_IMPLEMENTATION`，
+- **编译配置集中在 `src/loaders/imageio/src/StbConfig.hpp`**，被两个 TU 包含（`StbImageImpl.cpp` 带 `*_IMPLEMENTATION`，
   `ImageCodec.cpp` 不带）。两处配置必须一致，所以只写一份。
 - `STBI_ONLY_{PNG,JPEG,BMP,TGA}` 裁剪 + `STBI_NO_STDIO`/`STBI_WRITE_NO_STDIO`：
   编解码走 **memory API**，文件 I/O 由我们自己用 `std::filesystem` + fstream 做

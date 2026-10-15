@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <vine/graphics/Viewport.hpp>
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/backend/Keys.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/graphics/graphics_global.hpp>

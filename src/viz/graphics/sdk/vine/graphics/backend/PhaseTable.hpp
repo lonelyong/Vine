@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**

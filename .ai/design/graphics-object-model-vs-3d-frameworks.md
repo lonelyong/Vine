@@ -80,6 +80,7 @@ OSG 的 intersector 住在 `osgUtil`、three.js 是 `Raycaster` + 用户代码�
 | 4 | **命名风险：`Pipeline` ≠ PSO** | Unreal / Unity 的 "pipeline state" | — | 不改名（S7 已定）；**对外文档首次出现该词时补一句"它是 pass 链条的编译产物，不是图形 API 的 pipeline state"** |
 | 5 | **没有内容掩码**（哪些对象被这条 pass 画） | Unity Layer + `cullingMask`、Qt3D `QLayer`/`QLayerFilter`、OSG `NodeMask` + cull mask、Ogre-Next 三级掩码 | 拆成两个 `Scene` 或整棵子树 `setVisible` | **已定形**：`graphics-layers.md` L1（对象 flags + pass mask 两级，收集与 memo key 的坑写在那里） |
 | 6 | **没有数组/切片目标**（分层渲染） | Ogre-Next 的 slice/array 目标（`TextureGpu::getNumSlices`）、Vulkan layered rendering | 多个 2D 目标 + 多次 pass + 自己合成 | **已定形**：`graphics-layers.md` L2（先逐切片 L2a，再一次写完 L2b），触发条件写在那里 |
+| 7 | **外部图像没有接线身份**（材质贴图 / 导入图 / cube map 不能作某条 pass 的输入或输出） | OSG `Texture` 挂 `StateSet`、three.js `Texture` 直接进 material、VTK 图像走 `vtkImageData` 输入端口 | 只有“某 pass 产出的 `RenderTarget` + attachment”能接线（`ImageRef`）；静态贴图走 `Material::setTexture`（`Texture` 对象），但它既不是任何 pass 的产出，也不能被 `ScreenPass` 采样 | **已登记（2026-10-14）**：`ImageRef`（target+attachment）与 `Texture`（由 `imaging::Image` 喂）是两套模型，未搭桥（`ImageRef.hpp` 的 note 已写明）。形状：让 `ImageRef` 能命名一个非 RT 图源，或引入一个“图源”抽象。**触发条件**：出现“把一张静态/导入贴图当某条 pass 的输入”的真实需求（离线烘焙的输入图、预览磁盘图、编辑器把选中纹理喂进屏幕 pass） |
 
 ## 4. 与既有文档的关系
 

@@ -41,7 +41,7 @@ class ShaderProgram;
  *   the exception - its render pass clears depth whatever this says, so a pass needing a previous frame's
  *   depth renders into an off-screen target and composites it.
  * - It lives with the rest of a pass' description, not with the backend interface: a backend is one of its
- *   readers (RenderBackend::setClearPolicy).
+ *   readers (FrameRecorder::setClearPolicy).
  */
 struct ClearPolicy
 {

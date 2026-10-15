@@ -373,7 +373,7 @@ X 服务端读回（**`scripts/xwinmap.py`**，已入库；它读 `XQueryTree` +
 ## 顺带修复（不修就没法跑 GUI 用例）
 
 `tests/test_gui/test_gui.cpp` 里的 `ConsoleProgressReporterTest.ConsoleUserIOPrintsTheProgressOfAForegroundOperation`
-直接构造 **appfw 私有**类 `ConsoleUserIO`（`src/ConsoleUserIO.hpp`），但该类没有导出宏，
+直接构造 **appfw 私有**类 `ConsoleUserIO`（`src/fw/appfw/src/ConsoleUserIO.hpp`），但该类没有导出宏，
 `viAppfwd.lib` 里根本没有它的符号 ⇒ `test_gui` 在 HEAD 上**链接失败**（LNK2019 ×2，`6ec0e4d` 引入）。
 修法：给 `ConsoleUserIO` 加 `VN_APPFW_API`（类仍私有，只多两个导出符号），保留那个端到端用例。
 

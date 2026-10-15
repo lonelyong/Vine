@@ -1,5 +1,9 @@
 vn_add_library(GRAPHICS_TARGET_NAME Graphics)
 
+# libGraphics compiles the backend half (sdk/vine/graphics/backend/), so it is a backend-half consumer:
+# those headers refuse to compile unless this is defined (see backend/BackendHalfGuard.hpp).
+target_compile_definitions(${GRAPHICS_TARGET_NAME} PRIVATE VN_GRAPHICS_BACKEND_CONSUMER)
+
 # Source files (src/*.cpp, incl. the HUD overlays AxisGizmo.cpp / FpsOverlay.cpp)
 # are collected from src/ by vn_add_library's glob; add a new file -> reconfigure.
 #

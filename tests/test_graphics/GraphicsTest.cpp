@@ -10,7 +10,6 @@
 #include <vine/graphics/StateNode.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Texture.hpp>
-#include <vine/graphics/MaterialManager.hpp>
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/CameraMirror.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
@@ -6040,96 +6039,6 @@ TEST(RenderBackendRegistryTest, RegistrarSelfRegisters)
     static RenderBackendRegistry::Registrar<MockBackendFactory> registrar;
     // The registrar's constructor self-registers; the factory is embedded.
     EXPECT_TRUE(registry.has(u8"mock3"));
-}
-
-namespace
-{
-
-/**
- * @brief Minimal MaterialManager for the SDK introspection contract.
- *
- * Registers materials in a set, mirroring the count / membership / iteration
- * semantics that any real backend manager (e.g. VsgMaterialManager) must
- * provide through the interface.
- */
-class FakeMaterialManager : public MaterialManager {
-  public:
-    void updateMaterial(vn::raw_ptr<Material> material) override
-    {
-        if (material != nullptr) {
-            registered_.insert(material);
-        }
-    }
-
-    void releaseMaterial(vn::raw_ptr<Material> material) override
-    {
-        registered_.erase(material);
-    }
-
-    void clear() override
-    {
-        registered_.clear();
-    }
-
-    std::size_t materialCount() const override
-    {
-        return registered_.size();
-    }
-
-    bool hasMaterial(vn::raw_ptr<Material> material) const override
-    {
-        return registered_.count(material) != 0u;
-    }
-
-    void forEachMaterial(const std::function<void(vn::raw_ptr<Material>)>& visitor) const override
-    {
-        for (vn::raw_ptr<Material> m : registered_) {
-            visitor(m);
-        }
-    }
-
-  private:
-    std::set<vn::raw_ptr<Material>> registered_;
-};
-
-}  // namespace
-
-TEST(MaterialManagerTest, RegisteredMaterialIntrospection)
-{
-    FakeMaterialManager manager;
-
-    auto a = intrusive_ptr<Material>(new Material());
-    auto b = intrusive_ptr<Material>(new Material());
-
-    // Nothing registered yet.
-    EXPECT_EQ(manager.materialCount(), 0u);
-    EXPECT_FALSE(manager.hasMaterial(a.get()));
-    EXPECT_FALSE(manager.hasMaterial(nullptr));
-
-    // Updating registers each material exactly once (deduplicated by pointer).
-    manager.updateMaterial(a.get());
-    manager.updateMaterial(a.get());
-    manager.updateMaterial(b.get());
-    EXPECT_EQ(manager.materialCount(), 2u);
-    EXPECT_TRUE(manager.hasMaterial(a.get()));
-    EXPECT_TRUE(manager.hasMaterial(b.get()));
-
-    // forEachMaterial enumerates every registered material.
-    std::set<vn::raw_ptr<Material>> seen;
-    manager.forEachMaterial([&seen](vn::raw_ptr<Material> m) { seen.insert(m); });
-    EXPECT_EQ(seen.size(), 2u);
-    EXPECT_TRUE(seen.count(a.get()) == 1u && seen.count(b.get()) == 1u);
-
-    // Release drops a single registration.
-    manager.releaseMaterial(a.get());
-    EXPECT_EQ(manager.materialCount(), 1u);
-    EXPECT_FALSE(manager.hasMaterial(a.get()));
-    EXPECT_TRUE(manager.hasMaterial(b.get()));
-
-    // Clear drops everything.
-    manager.clear();
-    EXPECT_EQ(manager.materialCount(), 0u);
-    EXPECT_FALSE(manager.hasMaterial(b.get()));
 }
 
 TEST(StateNodeTest, NewNodeHasNoState)

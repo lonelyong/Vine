@@ -9,7 +9,7 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/window/window_global.hpp>
 
-#include "RenderPipeline.hpp"
+#include "Pipeline.hpp"
 
 VN_WINDOW_NS_BEGIN
 struct KeyEvent;
@@ -275,12 +275,6 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * @return true when this view presents a surface.
      */
     [[nodiscard]] bool hasSurface() const noexcept;
-
-    /** @brief Renders one frame through the bound engine.
-     *
-     * @param dt Seconds elapsed since the previous frame.
-     */
-    void frame(double dt = 0.0);
 
   private:
     /** @brief Binds this view to the surface it presents, or unbinds it (RenderSurface::present / dismiss).

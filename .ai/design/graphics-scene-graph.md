@@ -191,8 +191,7 @@ class Geometry : public Node {
   每色要包一层 StateNode，且把"继承/覆盖折叠"引入到数据侧。
 - 拓扑反例：topology 之所以移去 StateNode，是因为它是纯管线属性，与数据面统计无关
   （`vertexCount` 不随拓扑变；`triangleCount` 因数据不保证是三角网格已于 2026-09-04 移除）；material 无此性质。
-- 后端现状已匹配：`RenderCommand.geometry/material` 分装，SceneBridge per-geometry 装配材质描述符、
-  MaterialManager 按 `Material*` 去重。
+- 后端现状已匹配：`RenderCommand.geometry/material` 分装，每几何装配材质描述符、按 `Material*` 去重。
 - 兜底（先不做，等真实用例）：若需"整棵子树统一材质"，扩展方式 = 叶子 `material()==nullptr` 时沿
   父链取最近 StateNode 的材质覆盖，而非把 material 常态化放进 StateNode。
 

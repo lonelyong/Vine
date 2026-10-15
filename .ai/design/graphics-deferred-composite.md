@@ -102,7 +102,7 @@ order 100 present（全幅采样 Composite）→ 窗口（携带 view camera）
   - setupContentSlot / drawScreenProgram / drawScreenTexture：统一按 order 插入（F1）；
   - 光照一律来自内容 scene（空则 seed：window presenting → headlight，其余 ambient）。
   - `buildOffscreenTarget` 已按 target 名打日志（前置切片已做）。
-- `src/viz/graphics/sdk/vine/graphics/RenderPass.hpp|RenderBackend.hpp|RenderPipeline.hpp` + builder。
+- `src/viz/graphics/sdk/vine/graphics/RenderPass.hpp|RenderBackend.hpp|Pipeline.hpp` + builder。
 
 ## 6. 收益 / 风险
 - 收益：默认 demo 半透明盒与 opaque 正确深度遮挡；无透明内容时零开销；builder 单一 recipe。

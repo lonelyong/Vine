@@ -167,7 +167,7 @@ class VN_ROBOTICS_IO_API XmlIOBase {
 要点：
 - 上下文携带 `len_unit_scaling`（单位缩放）、活动 `vfs`、`vfs_dir`、工作站指针与警告缓冲
   `msgs`；`warning()` / `msgs()` / `clearMsgs()` 类级成员已移除，改为内部
-  `detail::appendWarning(ctx.msgs, fmt, ...)`（`src/IoUtils.hpp`）。
+  `detail::appendWarning(ctx.msgs, fmt, ...)`（`src/robotics/io/src/IoUtils.hpp`）。
 - 无类级可变状态 → `XmlIOBase` / `DeviceIO` / `WorkcellIO` 实例可重入、可安全复用（含多线程，
   每次操作自带 context）；加载失败用 `std::runtime_error` 抛异常。
 - `exportMaterial` 已移除（禁止就地材质）；`parseMaterial` 仅用于读取设备材质库条目。

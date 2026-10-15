@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**

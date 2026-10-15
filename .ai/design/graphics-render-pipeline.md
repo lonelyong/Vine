@@ -639,7 +639,7 @@ preview->addInput(normal);                                     // 一行：我�
 
 **步 1 的实际落地范围**（比设计稿窄，据实记录）：
 
-- 类型：`src/viz/graphics/sdk/vine/graphics/ImageRef.hpp` + `src/ImageRef.cpp`（`label`/`kind`/`bind`/
+- 类型：`src/viz/graphics/sdk/vine/graphics/ImageRef.hpp` + `src/viz/graphics/src/ImageRef.cpp`（`label`/`kind`/`bind`/
   `unbind`/`target`/`attachment`/`bound`，**强持** target）；`RenderPass` 加 `setOutput`/`output`/
   `addInput`/`inputs`/`clearInputs`（与名字 API **并列**，互不清空——迁移中的 pass 可同时声明两者）。
 - 已实现的校验（`RenderEngine::validateWiring()`，`frame()` 首部调用）分**三个阶段**（消费者可能先注册 ⇒ 先收齐生产者再判消费者）：

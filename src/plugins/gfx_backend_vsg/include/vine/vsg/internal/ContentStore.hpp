@@ -97,8 +97,8 @@ class ContentStore
     /**
      * @brief Touches @p material: refreshes its entry when the values it carries NOW differ from the row's.
      *
-     * WHY A TOUCH, AND WHY IT COMPARES. The SDK's `MaterialManager` is where an edit is announced, but an
-     * engine does not hand one to a backend (`RenderBackend` carries no such entry point), so the only place
+     * WHY A TOUCH, AND WHY IT COMPARES. The SDK carries no material-edit channel (no manager is handed to a
+     * backend, and `RenderBackend` has no such entry point), so the only place
      * a live edit can be noticed is where the material is announced: every material a frame commands - which
      * is exactly what the implementation this backend replaces did (`VsgMaterialManager::updateMaterial` was
      * called once per distinct material per frame, and was itself the compare-and-write). What the material

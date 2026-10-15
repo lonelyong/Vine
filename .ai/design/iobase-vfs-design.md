@@ -33,7 +33,7 @@
 > **词汇提升（同日）**：`ZipArchive::EntryKind` 删除，提为 `Vfs.hpp` 的 `VfsEntryKind` + 非虚 `Vfs::kindOf(path)`
 > （由 `stat()` 派生；非法路径与不存在都报 `Missing`）；ZIP 内部条目表查询改名 `entryKindOf()`；`test_iobase` 46/46。
 > **层次收敛（同日）**：一次性 ZIP 操作（`entries` / `readEntry` / `decompressFile`）从 `ZipArchive` 移入基础层
-> `Zip.hpp` —— `ZipArchive` 只剩“打开态的 Vfs 后端”；两边共用的目录读取/存储名拼写下沉为 `src/ZipInternal.hpp`
+> `Zip.hpp` —— `ZipArchive` 只剩“打开态的 Vfs 后端”；两边共用的目录读取/存储名拼写下沉为 `src/base/iobase/src/ZipInternal.hpp`
 > （与 `VfsInternal.hpp` 同款做法）。> **Zip 层口径统一（同日）**：`Zip` 全部走 `Result` / `IoError`（零 out-parameter，字节入参统一 `std::span<const unsigned char>`）：
 > `compress` / `decompress` 返回字节，`readEntry` 返回 `Result<std::vector<unsigned char>>`，`compressDirectory` / `decompressFile` 返回 `IoError`。
 > 错误映射：坏 zlib 流 / 非归档 → `InvalidData`，解压超上限 → `CapacityExceeded`，缺文件 → `NotFound`，
@@ -785,7 +785,7 @@ class VN_IOBASE_API MountVfs : public Vfs
 5. **跨后端 `rename`**：同后端走 native `rename`；跨后端 = 读源 → 写目标 → 删源，失败保留源并返回错误。
 6. 所有 `Vfs` 方法在 `prefix` 命中为单后端时**直接转发**，不做多余复制。
 
-**已落地（2026-09-25，`sdk/vine/io/MountVfs.hpp` + `src/MountVfs.cpp`，用例 `tests/test_iobase/MountVfsTest.cpp`）**：
+**已落地（2026-09-25，`sdk/vine/io/MountVfs.hpp` + `src/base/iobase/src/MountVfs.cpp`，用例 `tests/test_iobase/MountVfsTest.cpp`）**：
 
 - 路由把最长前缀的挂载按优先级降序成一组；后端报错的路径在路由上视为未命中。
 - `stat` 在没有后端命中时合成**蕴含目录**（更深处挂载点的每一级祖先，含挂载点自身与根）：类型目录、大小为 0、路径为完整虚拟路径。
@@ -810,7 +810,7 @@ void setCapacityLimit(std::size_t max_bytes) noexcept; // 0 = 无限（默认）
   （`open` / `write` / 后端写入前预检），这正是 §2 里"推迟核心 `IStream`"的代价与分工。
 - 上限对 `seekp` 生效（不可 seek 到超过上限的位置）、对 `reserve` 生效（超出即 `false`）。
 
-**已落地（2026-09-25，`sdk/vine/MemoryStream.hpp` + `src/MemoryStream.cpp`，用例 `tests/test_core/MemoryStreamTest.cpp`）**：
+**已落地（2026-09-25，`sdk/vine/MemoryStream.hpp` + `src/base/core/src/MemoryStream.cpp`，用例 `tests/test_core/MemoryStreamTest.cpp`）**：
 
 - 三个方法只落在**两个缓冲类**上（`MemoryStreamBuf` / `ChunkedMemoryStreamBuf`；四个流包装不动——上限是缓冲层的事，需要 `CapacityExceeded` 的高层自己预检）。
 - `reserve(bytes)` 的口径是“从起点算总共能装 `bytes`”（vector::reserve 的意思）：已覆盖则无操作；超上限或分配失败返回 `false`，缓冲**原封不动**（`noexcept` 由设计稿钉死：分配失败也以 `false` 表达，旧存储保持完好）。

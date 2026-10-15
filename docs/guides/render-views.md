@@ -18,7 +18,7 @@
 | `SceneView` | [SceneView.hpp](../../src/viz/graphics/sdk/vine/graphics/SceneView.hpp) | "一台相机看什么" | 相机、内容场景、操纵器、采纳的那条链 |
 | `RenderEngine` | [RenderEngine.hpp](../../src/viz/graphics/sdk/vine/graphics/RenderEngine.hpp) | "这一帧画什么、按什么顺序" | pass 注册表、帧上下文 |
 | `RenderSurface` | [RenderSurface.hpp](../../src/viz/graphics/sdk/vine/graphics/RenderSurface.hpp) | "**哪条 pass 画这块窗口**、多大" | 呈现（一条）、尺寸与比例、目标（借用） |
-| `Pipeline` | [RenderPipeline.hpp](../../src/viz/graphics/sdk/vine/graphics/RenderPipeline.hpp) | "一个视图怎么画"（一条链的配方与运行期开关） | 一条链的 pass、档、离屏目标 |
+| `Pipeline` | [Pipeline.hpp](../../src/viz/graphics/sdk/vine/graphics/Pipeline.hpp) | "一个视图怎么画"（一条链的配方与运行期开关） | 一条链的 pass、档、离屏目标 |
 
 **一块区只画一幅画**（多格已下线）。这不是省事：一帧里两条都画默认帧缓冲的 pass 会互相擦，而"点归谁、谁有焦点、谁清屏"
 这些事实没有一个 owner 时，踩过的坑是**静默**的（第二条清屏公告被后端丢掉、第二个共用相机的视图被静默吞掉）。

@@ -5,6 +5,7 @@
 #include <span>
 #include <vector>
 
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/graphics/graphics_global.hpp>
 

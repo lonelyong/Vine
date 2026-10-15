@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/graphics/graphics_global.hpp>
 

@@ -94,7 +94,7 @@ void setLayerMask(std::uint32_t mask);   // 默认 kAllLayers
 ### 2.4 配方入口（`PipelineOptions` / `ViewerOptions`）
 
 ```cpp
-// PipelineOptions（RenderPipeline.hpp）：这条配方画哪些层
+// PipelineOptions（Pipeline.hpp）：这条配方画哪些层
 std::uint32_t layer_mask{ kAllLayers };
 // appfw（ViewerOptions.hpp）：原样转发给 PipelineOptions（Viewer::buildPipeline）
 ```
@@ -173,7 +173,7 @@ PassDesc::first_layer { 0 } + PassDesc::layer_count { 1 }
 | 3 | `PassDesc.hpp` | `layer_mask{ kAllLayers }` |
 | 4 | `RenderPass.hpp` / `RenderPass.cpp` | `setLayerMask` / `layerMask`；`describe()` 把掩码交给收集（今天那一行在 `RenderPass.cpp`） |
 | 5 | `FramePlan.hpp` + `EngineCompile.cpp`（问题）+ `RenderEngine.cpp`（填行与文本） | `PassPlan::layer_mask` + "掩码 0"的帧计划问题 |
-| 6 | `RenderPipeline.hpp` + `RenderPipelineBuilder.cpp` | `PipelineOptions::layer_mask` + 六个内容 pass 的盖章（两条 Screen 灯照 pass 与 overlay 不盖） |
+| 6 | `Pipeline.hpp` + `RenderPipelineBuilder.cpp` | `PipelineOptions::layer_mask` + 六个内容 pass 的盖章（两条 Screen 灯照 pass 与 overlay 不盖） |
 | 7 | `ViewerOptions.hpp` + `Viewer.cpp` | `ViewerOptions::layer_mask` 转发到 `PipelineOptions` |
 
 **L2 六处**：`RenderTarget`（层数）/ `PassDesc` + `RenderPass`（区间）/ `ImageRef`（层）/ `RenderDevice`（回读层）/

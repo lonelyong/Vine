@@ -5,6 +5,7 @@
 #include <functional>
 #include <vector>
 
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/graphics_global.hpp>
 

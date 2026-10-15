@@ -21,6 +21,10 @@ vn_add_plugin(GFX_BACKEND_VSG_TARGET gfx_backend_vsg)
 # explicitly so VN_VSG_API expands to dllexport when building this plugin.
 target_compile_definitions(${GFX_BACKEND_VSG_TARGET} PRIVATE VN_VSG_LIB)
 
+# This plugin consumes the backend half of graphics (`vine/graphics/backend/`), so it opts in
+# (see that half's BackendHalfGuard.hpp).
+target_compile_definitions(${GFX_BACKEND_VSG_TARGET} PRIVATE VN_GRAPHICS_BACKEND_CONSUMER)
+
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(FetchContent)

@@ -4,7 +4,7 @@
 #include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
-#include <vine/graphics/RenderPipeline.hpp>
+#include <vine/graphics/Pipeline.hpp>
 #include <vine/graphics/SceneView.hpp>
 
 #include "../ModelDocument.hpp"

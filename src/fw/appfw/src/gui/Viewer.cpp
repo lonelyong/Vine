@@ -2,9 +2,9 @@
 
 #include <utility>
 
+#include <vine/graphics/Pipeline.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
-#include <vine/graphics/RenderPipeline.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/SceneView.hpp>

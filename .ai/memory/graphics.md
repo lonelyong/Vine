@@ -37,7 +37,7 @@
 - **判据**：语言服务级改名（两个重载各一刀，9 + 13 处）；`SurfaceWindow::feedSurfaceSize` 调用点、
   `GraphicsTest`/`RenderSurfaceTest`/`SdkPixelTest`/`ModelViewerTest` 全部改形；SDK 交叉引用注释
   （`RenderSurface` / `RenderPipeline` / `AxisGizmo` / `FpsOverlay` 四个头）与两份指南
-  （`render-views.md` / `graphics.md`）、`appfw-render-view.md` 现役文字跟进。全量构建 0 错 0 警；
+  （`docs/guides/render-views.md` / `docs/guides/graphics.md`）、`appfw-render-view.md` 现役文字跟进。全量构建 0 错 0 警；
   `ctest` **24/24**（`test_graphics` 375 例）；六道门禁 0 finding（`public_docs` 1156 基线 / 0 new / 0 stale）。
 - **边界**：历史记录（memory 旧条目、`graphics-render-next.md` T1 行里删旧代码的引文、旧设计稿、bug 单）
   保留旧名，读旧名处一律读作 `resize`。
@@ -144,7 +144,7 @@
   替代派（N 张 2D 目标）字节数一样，而 L2a **省不了收集与提交**（每层一台相机 ⇒ 每层一次 walk）—— 省钱的那半是 L2b/`multiview`，
   且三条语义（清屏只洗"本条 pass 写的层"、深度层数一致、读侧带层）该由第一个消费者拍板。触发条件与落地顺序见 §6。
 - **两个常量一个 owner**：`kAllLayers`（掩码默认）与 `kDefaultLayer`（未声明节点的层，bit 0）都在 `Node.hpp`；需要它的公共头
-  直接 include（`FramePlan.hpp` / `RenderPass.hpp` / `RenderPipeline.hpp` 各加了一行，hygiene gate 要直接 include）。
+  直接 include（`FramePlan.hpp` / `RenderPass.hpp` / `Pipeline.hpp` 各加了一行，hygiene gate 要直接 include）。
 - **掩码进 memo key**（`ContentMemo::Entry::layer_mask`）：同一相机、同一帧、两条不同掩码的 pass **各走一次**（`+content_collect_count_`），
   同掩码则复用 —— 这是本片最容易错的一处：不进 key 就会"画面看着对、只是多了/少了几个物体"。
 - **帧值如实但进对的地方**：掩码进 `FramePlan::PassPlan::layer_mask`（`describe()` 只在非默认时打 `layers=0x..`），**不进**
@@ -439,7 +439,7 @@
   **结构性**（走哪条链 / 非 Lit 档要求几何趟 / 哪些档**存在** / 离屏尺寸 / 程序）进 `PipelineOptions`；
   **运行期**（同一条链上能表达的档、档的**显示/隐藏**）归 `Pipeline` 的 setter（零重建、零重新注册）。
   两个枚举各自成叶子头：`ShadingMode.hpp`（原 `SceneView::Options::Mode`）、`ShadingPath.hpp`（原在
-  `RenderPipeline.hpp` 里）—— 与 S5 同一条判据：读者该能独立拿到值，不被拖进整张契约。
+  `Pipeline.hpp` 里）—— 与 S5 同一条判据：读者该能独立拿到值，不被拖进整张契约。
 - **`Pipeline` 记下自己是哪条链**：`shadingPath()` 答的是**实际建成**的那条（延迟请求配非 Lit 档 ⇒ 前向，
   见 `RenderPipelineBuilder::effectivePath()`，它现在公开成静态，宿主也能问"这个请求会建成哪条链"）；
   `shadingMode()`/`setShadingMode()` 换档是 pass 上的覆盖；**链表达不了就如实拒绝 + 报一次**（`ReportOnce`），
@@ -558,7 +558,7 @@
   `announcePassState`/`announceLights`/`collectContentDraw`/`collectScreenDraw`；目标那两半共享
   `adoptHostTarget`+`reportUnbuildableTarget`）；`executeFrame` 按值走它们。**"description 缺席 ⇒ 一个属性都不发"
   仍成立**（S1 那条门禁原地不动）。
-- **`Protocol` 退场**：`backend/Protocol.hpp` + `Protocol.cpp` 删除。`FrameRecorder` 只留书（帧/scope 开合）
+- **`Protocol` 退场**：`backend/Protocol.hpp` + `Protocol.cpp` 删除。`FrameRecorder` 只留书（帧/scope 开合） <!-- drift-ok -->
   与契约里**唯一不能被值表达**的规则 —— **被释放的目标**（scope 公告的目标被 `releaseRenderTarget` 掉 ⇒
   该 scope 的效果丢弃、绘制**跳过而不改画到窗口**；另外半条"释放别的目标不影响本 scope"从 `CoreProtocolTest`
   搬进 `FrameRecorderTest`）。**顺序判决 + 那套 per-episode 上报（含 `PassProtocolViolation` 的三句话）一并删除**：
@@ -1474,7 +1474,7 @@
 > setSize/setViewport）。test_graphics 124/124。
 >
 > 2026-09-08 **统一主窗管线 preset**：`RenderPipelineBuilder::build(PipelinePreset, PipelineOptions)`
-> → `intrusive_ptr<Pipeline>`（新 `RenderPipeline.hpp/.cpp`，RefCounted）。`Forward`=order0 窗口场景 pass；
+> → `intrusive_ptr<Pipeline>`（新 `Pipeline.hpp/.cpp`，RefCounted）。`Forward`=order0 窗口场景 pass；
 > `Deferred`=order-3 gbuffer(MRT albedo/normal+shininess/spec/view-pos+D24, 发布"GBuffer")+order0 全屏延迟
 > 光照 ScreenPass（带 camera+绑 content 转发灯光）为窗口 pass；阴影变体 ForwardShadowed/DeferredShadowed
 > =占位（暂同无阴影）。Deferred **默认自带临时 shader**（builder 公共静态 `defaultGbufferGeometryProgram()`/

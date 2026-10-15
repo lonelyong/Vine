@@ -843,7 +843,7 @@ RenderEngine
 | 边 | 强度 | 依据 |
 | --- | --- | --- |
 | `SceneView` → `RenderEngine`（直接） | **借用** `raw_ptr` | `SceneView.hpp:229` 注释"The bound engine is borrowed (the host owns it and keeps it alive)" |
-| `SceneView` → `RenderEngine`（经默认管线） | **强引用** | `Pipeline::engine_`（`intrusive_ptr`，私有）；`RenderPipeline.hpp` 类注释"It also keeps the engine ALIVE (a strong reference, not a borrow)" |
+| `SceneView` → `RenderEngine`（经默认管线） | **强引用** | `Pipeline::engine_`（`intrusive_ptr`，私有）；`Pipeline.hpp` 类注释"It also keeps the engine ALIVE (a strong reference, not a borrow)" |
 | `RenderEngine` → `SceneView` | **没有这条边** | 引擎"camera- and content-agnostic"，类注释；不认识视图，也不认识管线（`Pipeline` 注释："There is no cycle — the engine does not know its pipelines"） |
 | `RenderEngine` → 相机 / 内容场景（经 pass） | **强引用，但那是 pass 的属性** | `slots_` 强引用 pass 与其内容场景；`RenderPass::setCamera(intrusive_ptr<Camera>)` "The pass KEEPS the camera alive" |
 | `RenderEngine` → `SceneView::Camera`（经窗口 pass） | 同上 | 视图的默认窗 pass 携带该相机 ⇒ 引擎间接让"这个相机对象"活着 |

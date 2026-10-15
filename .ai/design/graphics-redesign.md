@@ -358,7 +358,7 @@ per-pass / per-draw 的（`beginPass(PassId)` / `setPassOrder` / `setPassInputs`
    `collectScreenDraw`，目标那两半共享 `adoptHostTarget` / `reportUnbuildableTarget`），`executeFrame()` 按值
    走它们（**A 项检查仍在**：值里 `description` 缺席 ⇒ 一个属性都不发）；`setRenderTarget` 留下的是"宿主宣布
    目标"，pass 的目标由值带来（同一批 ensure/报告逻辑，`picture_depends` 区分两者）。
-5. **`Protocol` 退场**：`backend/Protocol.hpp` + `Protocol.cpp` 删除；`FrameRecorder` 只保留它需要的书
+5. **`Protocol` 退场**：`backend/Protocol.hpp` + `Protocol.cpp` 删除；`FrameRecorder` 只保留它需要的书 <!-- drift-ok -->
    （帧 / scope 的开合）与契约里**唯一不能被值表达**的规则 —— **被释放的目标**：scope 公告的目标被
    `releaseRenderTarget` 掉之后，该 scope 的其余效果丢弃、绘制**跳过而不改画到窗口**（`FrameRecorderTest`
    的 `AReleasedAnnouncedTargetKillsTheScopeAndNothingIsRedirected` 钉它，另加"释放**别的**目标不影响本 scope"
@@ -661,7 +661,7 @@ appfw 一行未改）、`test_vsg` **426 = 421 + 3 skip + 2 已知红**、`test_
    离屏尺寸、程序）→ `PipelineOptions`（建链时决定）；**运行期**（同一条链上能表达的档、档的**显示/隐藏**）→
    `Pipeline` 的 setter（零重建、零重新注册）。
 2. **两个枚举各自成叶子头**：`sdk/vine/graphics/ShadingMode.hpp`（原 `SceneView::Options::Mode`）、
-   `ShadingPath.hpp`（原住在 `RenderPipeline.hpp` 里）。判据与 S5 同：读者该能独立拿到值，不被拖进整张契约。
+   `ShadingPath.hpp`（原住在 `Pipeline.hpp` 里）。判据与 S5 同：读者该能独立拿到值，不被拖进整张契约。
 3. **`Pipeline` 记下自己是哪条链**：`shadingPath()` 答**实际建成**的那条（延迟请求 + 非 Lit 档 ⇒ 前向），
    `shadingMode()` / `setShadingMode()` / `setGizmoVisible()` / `setStatsVisible()` / `isGizmoVisible()` /
    `isStatsVisible()` 新增。链表达不了的档**拒绝 + 报一次**（`ReportOnce`，与既有的 `mode_refused_` 同形）；

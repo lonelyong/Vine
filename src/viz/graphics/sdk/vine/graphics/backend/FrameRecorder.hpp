@@ -13,6 +13,7 @@
 #include <vine/graphics/Viewport.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector3.hpp>
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/backend/ClearPlan.hpp>
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/FrameArena.hpp>

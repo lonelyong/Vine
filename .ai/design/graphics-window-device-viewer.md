@@ -210,7 +210,7 @@
 | 窗口 : 在场 Target | 1 : 1 | 平台硬约束 |
 | 区（`RenderSurface`）: Target | 1 : 1 | 我们的选择（一区一画面） |
 | Device : Target | 1 : N | 平台允许，我们要 |
-| Device : Engine | 1 : N | 共享显存/编译 |
+| Device : Engine | 1 : N | 共享显存/编译（契约已落；共享下的**会话归属未定**，见 §9.7） |
 | Engine : 区（`RenderSurface` + `Viewer`） | 1 : 1 | 帧的单位 |
 | View : Engine | **N : 1** | 多格必须同帧 |
 | Viewer : View | **1 : 1**（2026-10-11 晚：多格下线，早先的 1:N 已推翻，见 Q5） | 区的那一条请求 |
@@ -285,6 +285,19 @@ meshio 34 / iobase 94，并按片更新记账）；
    自己决定哪条清屏），SDK 只提供"帧 + 目标 + 呈递端"这三样机制；③ 一帧要同时交给多个呈递端 —— 那要改的是
    `executeFrame` 的参数形态（帧命名一组），不是呈递端契约。
    在那之前不动：今天的离屏路径（`RenderTarget` + readback + `executeFrame(frame, nullptr)`）已经能跑完"渲染但不显示"。
+
+7. **共享设备（`Device : Engine = 1 : N`）下 `initialize` / `shutdown` 归谁**（2026-10-16 补登；**S10b 的前置**）：今天
+   `RenderEngine::initialize()` 调 `device_->initialize()`、`RenderEngine::shutdown()` 调 `device_->shutdown()`
+   （`RenderEngine.cpp:147` / `:177`），而设备契约说“已初始化的设备**先拆掉上一个会话**”（`RenderDevice::initialize`）。
+   一设备两引擎时：**B 的 `initialize()` 会拆掉 A 的会话**，**A 的 `shutdown()` 会把 B 还在用的设备拆掉**
+   （B 的 `initialized_` 仍为 true，此后它每一帧静默无事）。同一处还有两条未收口：`setDevice` 把设备的诊断路线设成
+   “这个引擎的那条”（`RenderEngine.cpp:64`）⇒ 第二个引擎覆盖路线、第一个引擎的 `diagnosticCount()` 不再是全量；
+   无区引擎的“设备自带窗口”兜底（`RenderEngine.cpp:133`）也只够一个引擎（第二个拿 `WindowOccupied`）。
+   **形状（落地时三选一）**：① 引用计数式会话（引擎 acquire / release，最后一个放手才拆）；② 会话归**创建者**，
+   引擎只**借用**设备（`setDevice` 不再负责 initialize / shutdown）；③ 共享设备明确**不支持**多引擎（契约收紧成 1:1，
+   与插件今天的实际能力一致）。**触发条件**：S10b 立项，或出现“两个引擎共用一个设备”的真实用法。**在那之前**，
+   接线层的 `HeadlessBackendTest.OneDeviceServesSeveralAreasWithoutCrossingThem`（假后端）只证“帧不串台”，
+   **不覆盖**上面三条。
 
 ---
 

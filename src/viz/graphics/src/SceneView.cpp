@@ -10,9 +10,9 @@
 #include <vine/graphics/CameraManipulator.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/OrbitCameraManipulator.hpp>
+#include <vine/graphics/Pipeline.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderPipeline.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/Scene.hpp>
@@ -299,13 +299,6 @@ void SceneView::clearSurfaceLayouts()
 {
     surface_layouts_.clear();
     surface_layouts_with_ratio_.clear();
-}
-
-void SceneView::frame(double dt)
-{
-    if (engine_ != nullptr) {
-        engine_->frame(dt);
-    }
 }
 
 VN_GRAPHICS_NS_END

@@ -10,6 +10,7 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/math/Matrix4x4.hpp>
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**

@@ -41,7 +41,6 @@ src/viz/graphics/
     Drawable.hpp                 # 可绘制对象基类（几何 + 材质）
     Geometry.hpp                 # 几何体（包装 vn::geometry::Shape）
     Material.hpp                 # 材质定义（纯属性）
-    MaterialManager.hpp          # 材质管理器抽象基类（后端实现转换/缓存）
     Scene.hpp                    # 场景容器（管理根节点）
 
     # 相机与视图
@@ -950,7 +949,6 @@ backend->swapBuffers();
 - `graphics_global.hpp` — API 导出和命名空间宏
 - `Geometry.hpp` — 几何体类（包装 Shape）
 - `Material.hpp` — 材质定义（纯属性）
-- `MaterialManager.hpp` — 材质管理器抽象基类
 - `Node.hpp` — 场景图节点
 - `Scene.hpp` — 场景容器
 - `Camera.hpp` — 相机
@@ -968,7 +966,6 @@ backend->swapBuffers();
 - `CameraManipulator.cpp`
 - `Geometry.cpp`
 - `Material.cpp`
-- `MaterialManager.cpp`
 - `Node.cpp`
 - `Ray.cpp`
 - `RayIntersection.cpp`

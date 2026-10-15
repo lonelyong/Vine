@@ -41,7 +41,8 @@ VN_GRAPHICS_NS_BEGIN
  *   most one producer"). The role is already expressed by where it is used: `RenderPass::output()` for the
  *   write side, `RenderPass::inputs()` for the read side.
  * - An image that is no pass' output at all (a material's texture, an imported image, a cube map) has no
- *   identity in this SDK yet (a material texture is a file PATH), so it cannot be wired yet.
+ *   identity in this SDK yet: an ImageRef names a RenderTarget plus an attachment index, whereas a material
+ *   texture is a Texture (its pixels come from imaging::Image), so the two models are not bridged yet.
  */
 class VN_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef> {
     VN_OBJECT_META_DECL;

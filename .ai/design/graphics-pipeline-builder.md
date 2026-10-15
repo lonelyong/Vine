@@ -137,7 +137,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
   **M2a（2026-10-11）起**：抑制重复不再靠 `hasWindowPass(camera)`（已删），而是**声明** —— 宿主自建主 pass 时
   `control->surface()->present(pipeline->windowPass())`；没有声明时 `RenderControl::init()` 用 `present(*view)` 兜底。
   本设计此前“sceneOnly=engine.setScene/setMasterCamera + RenderControl 默认 pass”已过时。
-- 落地：`RenderPipelineBuilder::build(PipelinePreset, PipelineOptions)` → `intrusive_ptr<Pipeline>`（新 RenderPipeline.hpp/.cpp）。
+- 落地：`RenderPipelineBuilder::build(PipelinePreset, PipelineOptions)` → `intrusive_ptr<Pipeline>`（新 Pipeline.hpp/.cpp）。
   - Forward（含 ForwardShadowed 占位）：order-0 窗口场景 pass（camera+content）。
   - Deferred（含 DeferredShadowed 占位）：order-3 gbuffer 场景 pass（MRT：albedo RGBA8 / view-normal+shininess RGBA16F / spec RGBA8 / view-pos RGBA16F + D24；发布 "GBuffer"；program override）→ order-0 全屏延迟光照 ScreenPass（采样 GBuffer、带 camera、绑 content 转发 scene 灯光）即窗口 pass → **这条 pass 被 `surface->present(pipeline->windowPass())` 声明之后**，SceneView/RenderControl 不再叠 forward（M2a 之前是 `hasWindowPass(camera)` 为真就抑制）。
   - Deferred **默认自带临时 shader**（builder 公共静态 `defaultGbufferGeometryProgram()`/`defaultDeferredLightProgram()`）与 **canonical G-buffer target**（公共静态 `defaultGbufferTarget(w,h)`，builder 与 A/B 预览共用），调用方零 GLSL；PipelineOptions 的 gbuffer/lighting program 为可选覆盖（自定义着色）。缺 camera/content → 返回 null 且不注册。

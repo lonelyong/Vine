@@ -5,6 +5,7 @@
 #include <span>
 #include <vector>
 
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**
@@ -12,7 +13,7 @@
  *
  * @details
  * - WHY THIS TYPE EXISTS. A frame plan is a graph of small records - pass scopes, resolved inputs,
- *   lights, draws - that must stay valid from the call that collected it (inside RenderBackend::render,
+ *   lights, draws - that must stay valid from the call that collected it (inside FrameRecorder::render,
  *   where every argument is BORROWED) until the executor has recorded it at the end of the frame. Spans
  *   into the host's containers do not survive that window: the engine's own resolved-input vector is a
  *   reused member that is cleared and refilled per pass, so a plan holding a span into it would be

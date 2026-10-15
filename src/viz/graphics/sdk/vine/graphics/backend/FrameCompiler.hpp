@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/backend/FrameArena.hpp>
 #include <vine/graphics/backend/FrameGraph.hpp>
 #include <vine/graphics/backend/FrameRecorder.hpp>

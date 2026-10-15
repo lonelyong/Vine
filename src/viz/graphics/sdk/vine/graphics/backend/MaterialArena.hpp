@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/backend/SlotProbe.hpp>
 #include <vine/graphics/graphics_global.hpp>
 

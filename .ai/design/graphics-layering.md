@@ -130,10 +130,10 @@ backend 半**离开 `graphics` 就不能编译**（它整个建立在该模块�
 | 规则 | 内容 | 实现 |
 |---|---|---|
 | **R1** | backend 半**不许** include 任何后端（`vsg/`、`vine/vsg/`） | `check_include_hygiene.py` 的 `backend_half_findings()` |
-| **R2** | 除 `gfx_backend_*`、`test_vsg` 与 backend 半自己外，**任何地方不许** include `vine/graphics/backend/` | 同脚本的 `host_audience_findings()` |
+| **R2** | 除 `gfx_backend_*`、`test_vsg` 与 backend 半自己外，**任何地方不许** include `vine/graphics/backend/` | 同脚本的 `host_audience_findings()`；**外加编译期拦截**：每个 backend 头都 include `backend/BackendHalfGuard.hpp`，未定义 `VN_GRAPHICS_BACKEND_CONSUMER` 即 `#error`（三个合法消费者——libGraphics、`gfx_backend_vsg`、`test_vsg`——在各自 CMake 里定义） |
 | **R3** | backend 半里凡是有 **out-of-line 定义**的类型 / 自由函数，其声明必须带 `VN_GRAPHICS_API` | `check_export_annotations.py`（37/37） |
 
-R2 是关键的一条：没有它，"两半"只是目录约定；有了它，宿主在编译期就被挡住。
+R2 是关键的一条：没有它，"两半"只是目录约定；有了它，宿主在编译期就被挡住——而且**真的是编译期**（`backend/BackendHalfGuard.hpp` 的 `#error`），不只是门禁脚本。
 
 ## 4. 谁能复用到什么（三桶）
 

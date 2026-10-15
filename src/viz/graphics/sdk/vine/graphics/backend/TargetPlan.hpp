@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/backend/Keys.hpp>
 #include <vine/graphics/graphics_global.hpp>
 

@@ -71,6 +71,9 @@ set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 # and the executable can neither import (no plugin .lib) nor resolve them ->
 # LNK2019 / C4273. Harmless (empty) on Linux.
 target_compile_definitions(${TEST_NAME} PRIVATE VN_VSG_LIB)
+# This suite compiles the backend half directly (its headers, and the plugin's device sources added
+# below), so it is a backend-half consumer (see that half's BackendHalfGuard.hpp).
+target_compile_definitions(${TEST_NAME} PRIVATE VN_GRAPHICS_BACKEND_CONSUMER)
 # The backend is an appfw plugin (MODULE, cannot be linked). The plugin-load
 # test boots an Application, loads the gfx_backend_vsg plugin through
 # PluginManager, then creates the backend by name via RenderBackendRegistry —

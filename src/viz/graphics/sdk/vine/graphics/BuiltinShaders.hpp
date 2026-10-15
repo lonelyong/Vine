@@ -17,7 +17,8 @@ VN_GRAPHICS_NS_BEGIN
  *   editing that file, and nothing else, is how the built-in shading changes.
  * - A PROGRAM IS THE ONLY WAY TO SELECT SHADING. There is no shading-model enum: "which shading" is
  *   answered by which program a drawable is shaded with — an explicit choice (RenderCommand::program
- *   / Node::setProgram, or the engine's default content program), never an implicit lookup. Two
+ *   / StateNode::setProgram / Geometry::setProgram, or the engine's default content program), never an
+ *   implicit lookup. Two
  *   built-in programs exist because they differ in the TEXT (one define), not because the engine has
  *   two "modes".
  * - A backend materialises whatever program it is handed; the SDK never compiles. A program is

@@ -16,9 +16,9 @@
 #include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
+#include <vine/graphics/Pipeline.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderPipeline.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ScreenPass.hpp>

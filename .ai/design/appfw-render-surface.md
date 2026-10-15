@@ -25,7 +25,7 @@ QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返�
 
 ## 文件划分（2026-09-19 拆分）
 
-- **`RenderControl`**（公开，`sdk/vine/appfw/gui/RenderControl.hpp` + `src/gui/RenderControl.cpp`）只剩封装：
+- **`RenderControl`**（公开，`sdk/vine/appfw/gui/RenderControl.hpp` + `src/fw/appfw/src/gui/RenderControl.cpp`）只剩封装：
   构造 host QWidget、`createWindowContainer` 嵌表面、容器 `installEventFilter`，然后把
   `engine()/view()/init()/renderFrame()/fitToScreen()/devicePixelRatio()/state()/failureReason()`
   直接转发给表面。`state_changed` 是唯一需要中继的一处：控件订阅表面的 `on_state_changed` 再 trigger 自己的

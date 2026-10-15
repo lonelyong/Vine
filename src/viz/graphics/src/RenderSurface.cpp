@@ -1,8 +1,8 @@
 #include <vine/graphics/RenderSurface.hpp>
 
+#include <vine/graphics/Pipeline.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderPipeline.hpp>
 #include <vine/graphics/SceneView.hpp>
 
 VN_GRAPHICS_NS_BEGIN

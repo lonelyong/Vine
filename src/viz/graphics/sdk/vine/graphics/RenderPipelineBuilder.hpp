@@ -7,8 +7,8 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/intrusive_ptr.hpp>
 
+#include "Pipeline.hpp"
 #include "RenderPass.hpp"
-#include "RenderPipeline.hpp"
 #include "RenderTarget.hpp"
 
 VN_GRAPHICS_NS_BEGIN
