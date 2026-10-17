@@ -155,6 +155,20 @@ class VsgHostWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgHostWindow>
      */
     [[nodiscard]] void* hostHandle() const noexcept;
 
+    /** @brief Renders on @p device instead of creating one of its own (one device, several windows).
+     *
+     * @details
+     * - This is the whole of "share the device": the surface is created on the device's own instance, the formats
+     *   are read from this window's surface, and the render pass is built against the device - the swapchain,
+     *   the frames and the depth image follow when the swapchain is first asked for.
+     * - The device must already be able to present to this surface (same adapter, and the swapchain extension was
+     *   requested when it was created): a device built without a surface cannot serve a window, which is why a
+     *   device's presenting intent is a CREATION input (see the SDK's RenderDevice::createSurfaceTarget).
+     *
+     * @param device Device to render on (never null; the caller owns it and outlives this window).
+     */
+    void adoptDevice(::vsg::ref_ptr<::vsg::Device> device) { share(std::move(device)); }
+
   protected:
     /** @brief Releases this window without destroying the host's window.
      *
@@ -193,6 +207,44 @@ class VsgHostWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgHostWindow>
 #endif
     }
 };
+
+/**
+ * @brief A platform window this backend CREATED for itself, with device adoption exposed.
+ *
+ * WHY IT EXISTS. A session whose host named no window brings up one of its own (see VsgHostWindow: that class is the
+ * ADOPTING one, and it never destroys what it was handed). Such a window can still be one of several on ONE device -
+ * that is what S10b is - and vsg keeps the only way to do it (`Window::share(device)`) `protected`, next to the
+ * instance, the formats and the render pass it re-derives. This class is that door and nothing else: it derives from
+ * the same platform window vsg would have created (so the swapchain, the frames and the depth image stay vsg's own
+ * machinery), and unlike VsgHostWindow it DOES own the window it made, so the destructor destroys it.
+ */
+class VsgOwnedWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgOwnedWindow>
+{
+  public:
+    /** @brief Creates this backend's own platform window from @p traits. */
+    explicit VsgOwnedWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
+        Inherit(traits)
+    {
+    }
+
+    /** @brief Renders on @p device instead of one of its own (see VsgHostWindow::adoptDevice). */
+    void adoptDevice(::vsg::ref_ptr<::vsg::Device> device) { share(std::move(device)); }
+};
+
+/**
+ * @brief Makes @p window render on @p device: one device, several windows.
+ *
+ * @details
+ * - The windows this backend creates are two classes (an adopting one and an owning one), and this is the one place
+ *   that knows it: the caller passes what it has and gets "adopted" or "this window is not one of ours".
+ * - The device must be able to present to this window's surface - a Vulkan device is built with the surface it
+ *   presents to (see VsgBackend's note on the window half being a creation input).
+ *
+ * @param window Window to put on @p device.
+ * @param device Device to render on (the caller owns it; it must outlive the window).
+ * @return true when the window adopted the device; false when it is not a window of this backend (nothing changed).
+ */
+[[nodiscard]] bool adoptDevice(::vsg::Window& window, ::vsg::ref_ptr<::vsg::Device> device);
 
 } // namespace detail
 

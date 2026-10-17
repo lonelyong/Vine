@@ -131,6 +131,24 @@ VsgHostWindow::~VsgHostWindow()
     _window = {};
 }
 
+bool adoptDevice(::vsg::Window& window, ::vsg::ref_ptr<::vsg::Device> device)
+{
+    if (device == nullptr) {
+        return false;
+    }
+    // The two window classes this backend creates are the only ones that can do it (see the declaration): the
+    // adopting one and the owning one, both written here for exactly this door.
+    if (auto* host = dynamic_cast<VsgHostWindow*>(&window)) {
+        host->adoptDevice(std::move(device));
+        return true;
+    }
+    if (auto* owned = dynamic_cast<VsgOwnedWindow*>(&window)) {
+        owned->adoptDevice(std::move(device));
+        return true;
+    }
+    return false;
+}
+
 } // namespace detail
 
 VN_VSG_NS_END

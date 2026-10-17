@@ -54,6 +54,16 @@
   创建者拆掉），但**不能**顺手 `device_->shutdown()`——那正是共享设备被拆掉的那一刀。测试双实现（`MockBackend` /
   `HeadlessBackend` / `WindowedBackend` / `FleetBackend` / `StubBackend`）一律"默认 up"：引擎只借用，借用来的
   设备按定义是起来的；要测"没起来"那条，把 `up` 翻掉。
+- **同日半步（S10b 插件侧"一设备多窗口"的地基）**：`SessionOptions::device`（`void*`，值是 `vsg::Device*`，
+  会话自己加引用 —— 这个头仍然不出现图形类型）+ `detail::adoptDevice(window, device)`。两个窗口类各自暴露
+  `adoptDevice`：`VsgHostWindow`（采纳宿主窗口的那个）与**新增** `VsgOwnedWindow`（本后端自建窗口的薄壳，
+  `Inherit<Win32_Window|Xcb_Window, …>`，析构**销毁**自己的窗口）。为什么必须是子类：vsg 把
+  `Window::share(device)`（= setDevice + `_initSurface` + `_initFormats` + `_initRenderPass`）放在 `protected`，
+  公开的 `setDevice` 只设 instance/physical device、**不算 formats**，直接用会在建 render pass 时读到格式 0。
+  自建窗口从此走 `new VsgOwnedWindow(traits)` 而不是 `vsg::Window::create(traits)`。判据
+  `SessionTest.ASecondSessionRendersOnTheDeviceTheFirstOneCreated`（真设备）：两个会话同一个 `vsg::Device`、
+  各自的 `WindowTarget`、各自 beginFrame/commitFrame 各一帧；**变异 1/1 红**（忽略 `options.device` ⇒ 红）。
+  仍只服务一块窗口：窗口路由 1:N 与"替换的存储/内容在所有会话的回收队列上各停一次"是下一步。
 
 ## 2026-10-13 `SceneView::onSurfaceResized` → `resize`（公共 API 改名；`on*` 从此只留给接收点）
 

@@ -54,6 +54,13 @@ struct SessionOptions
     /// the session create a window of its own. Re-announcing a DIFFERENT handle moves an established
     /// session onto it, keeping the device and every compiled pipeline (see core::planSessionMove).
     void* native_handle{nullptr};
+    /// A device to render on instead of creating one (ONE DEVICE, SEVERAL WINDOWS), carried as `void*` because
+    /// this header deliberately names no graphics type - the value is a `vsg::Device*`, and the session takes its
+    /// own reference to it. Null (the default) means this session creates its own device through its window,
+    /// which is what a Vulkan device needs when there is no window to share yet (the surface comes first).
+    /// The device must be one created WITH a surface (it presents), and one whose physical device can serve this
+    /// window's surface: a device built without a surface cannot serve a window at all.
+    void* device{nullptr};
 };
 
 /**

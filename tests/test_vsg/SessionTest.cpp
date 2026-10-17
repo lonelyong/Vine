@@ -100,6 +100,54 @@ void setEnvironmentFlag(const char* name, bool on)
 
 }  // namespace
 
+/**
+ * @brief ONE DEVICE, SEVERAL WINDOWS: a session renders on a device another session created.
+ *
+ * This is the plugin's half of S10b, and the only thing it has to prove here is the property everything else rests
+ * on: the device is shared, not duplicated. Each session still brings its own window - a surface and a swapchain are
+ * the window's - while the device (and with it every pipeline and buffer built on it) stays one object.
+ */
+TEST(SessionTest, ASecondSessionRendersOnTheDeviceTheFirstOneCreated)
+{
+    if (!SdkPixelFixture::available())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    vn::graphics::Diagnostics diagnostics;
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    diagnostics.setSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) {
+        reported.push_back(diagnostic);
+    });
+
+    Session first;
+    ASSERT_TRUE(first.initialize(SessionOptions{}, diagnostics));
+    const ::vsg::ref_ptr<::vsg::Device> device = vn::vsg::detail::SessionContentAccess::device(first);
+    ASSERT_NE(device, nullptr);
+
+    // The second session ADOPTS the first one's device: its window brings nothing but a surface and a swapchain.
+    SessionOptions shared_options;
+    shared_options.device = device.get();
+    Session second;
+    ASSERT_TRUE(second.initialize(shared_options, diagnostics));
+    EXPECT_TRUE(vn::vsg::detail::SessionContentAccess::device(second) == device)
+        << "the second session renders on the device the first one created";
+    EXPECT_TRUE(vn::vsg::detail::SessionContentAccess::windowTarget(second) !=
+                vn::vsg::detail::SessionContentAccess::windowTarget(first))
+        << "and has a window (and a default-framebuffer target) of its own";
+
+    // Two swapchains on one device: each session opens and commits its own frames.
+    const FrameToken first_token = first.beginFrame();
+    ASSERT_TRUE(static_cast<bool>(first_token));
+    ASSERT_TRUE(first.commitFrame());
+    const FrameToken second_token = second.beginFrame();
+    ASSERT_TRUE(static_cast<bool>(second_token));
+    ASSERT_TRUE(second.commitFrame());
+    EXPECT_EQ(first.framesPresented(), 1U);
+    EXPECT_EQ(second.framesPresented(), 1U);
+    EXPECT_TRUE(reported.empty()) << "sharing a device is not an episode";
+}
+
 TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEvidence)
 {
     if (!SdkPixelFixture::available())

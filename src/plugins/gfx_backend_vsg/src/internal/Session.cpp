@@ -235,7 +235,10 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
         }
         else
         {
-            impl->window = ::vsg::Window::create(traits);
+            // A window of this backend's own, through the class that can also ADOPT a shared device (see
+            // detail::VsgOwnedWindow): vsg's own factory cannot, and one device serving several windows is the
+            // point of the session taking a device at all.
+            impl->window = ::vsg::ref_ptr<::vsg::Window>(new detail::VsgOwnedWindow(traits));
         }
         impl->host_handle    = options.native_handle;
         impl->on_host_window = options.native_handle != nullptr;
@@ -246,6 +249,24 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
                                vn::String::fromUtf8("the session could not create a window"));
             shutdown();
             return false;
+        }
+
+        // ONE DEVICE, SEVERAL WINDOWS. A session handed a device renders on IT instead of creating one through its
+        // window: the window is then a surface plus a swapchain (its own), and everything else - pipelines,
+        // buffers, the compiled programs - belongs to the device and is shared with every other session on it.
+        // This has to happen BEFORE anything asks the window for its device (the viewer does, below), because that
+        // is the moment vsg would build one.
+        if (options.device != nullptr)
+        {
+            auto adopted = ::vsg::ref_ptr<::vsg::Device>(static_cast<::vsg::Device*>(options.device));
+            if (!detail::adoptDevice(*impl->window, adopted))
+            {
+                diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
+                                   vn::String::fromUtf8("the session could not render on the device it was given: the "
+                                            "window is not one this backend creates, so it cannot adopt it"));
+                shutdown();
+                return false;
+            }
         }
 
         impl->viewer = ::vsg::ref_ptr<::vsg::Viewer>(new EmbeddedViewer());
