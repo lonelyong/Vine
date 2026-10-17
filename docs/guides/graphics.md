@@ -256,7 +256,11 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> target = engine->device()->create
 if (target == nullptr) { return false; }  // 无呈现能力 / 服务不了这块 surface / 窗口已被占用（见 @p why）
 area->bindTarget(target);                 // 区持有目标对象；平台重建窗口 = target->setWindowHandle(new)
 area->resize(width, height, dpr);         // 帧上下文 + 目标（窗口那一半）+ 每个呈现的视图，一次说清
-if (!engine->initialize()) { return false; }
+
+// 设备**属于它的创建者**（RenderDevice::initialize）：引擎只借用，绝不 bring up / tear down —— 这正是两个引擎
+// 能共用一个设备的原因。目标与尺寸是设备的**创建输入**，所以它们排在前面。
+if (!engine->device()->initialize()) { return false; }   // 平台重建窗口后再调一次 = 跟随新句柄
+if (!engine->initialize()) { return false; }             // 引擎附着：就绪、记尺寸、向设备要它自己的目标
 
 RenderPipelineBuilder builder(engine.get());
 builder.setContent(scene).setCamera(camera.get());

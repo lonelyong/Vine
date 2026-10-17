@@ -21,9 +21,39 @@
 | **面向使用者** | `docs/guides/graphics.md`（模块文档一节） |
 | **对象模型与行业口径** | `.ai/design/graphics-object-model-vs-3d-frameworks.md`（2026-10-12）：逐个对象对到 VTK / OSG / three.js / Filament / Qt3D；**刻意偏离**（一区一幅画、相机带 aspect，含代价；**拾取是机制、选择不在框架（§2.5，2026-10-13）**）与**能力缺口**（同 pass 内优先级 / 实例化 / LOD·空间划分 / `Pipeline` ≠ PSO 的命名风险 / 内容掩码 / 目标层），各带触发条件；后两条的定形见 `graphics-layers.md`（L1 内容掩码 `Node::setLayers` + `PassDesc::layer_mask` / L2 目标层 `layerCount` + 层区间，L2 分两步、读侧先行；**§9（2026-10-13：拾取 / 包围盒掩码参数已落地；"子树层并集"整段跳过仍登记）**） |
 | **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
-| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**2026-10-11 晚裁决推翻 S8 一半：多格下线，一块区只画一幅画**（见顶条与 Q5 的后续裁决）；**2026-10-12 又两条**：呈递端拆成 `PresentTarget`（帧的契约）+ `WindowPresentTarget`（窗口那一面，见顶条），命名仍否掉 `RenderTargetWindow` / `RenderTargetOffscreen` 一对（`RenderTarget` 是描述、不是同族，理由在 §8）、云渲染的落点是"**第二个呈递端**"而不是把区通用化（§8 末条 + §9 第 6 条，带触发条件）；**S10b（插件会话→设备：窗口与交换链 1:N、缓存上移、`DeviceDesc`）**/ S11（登记不做）未落地 |
+| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**2026-10-11 晚裁决推翻 S8 一半：多格下线，一块区只画一幅画**（见顶条与 Q5 的后续裁决）；**2026-10-12 又两条**：呈递端拆成 `PresentTarget`（帧的契约）+ `WindowPresentTarget`（窗口那一面，见顶条），命名仍否掉 `RenderTargetWindow` / `RenderTargetOffscreen` 一对（`RenderTarget` 是描述、不是同族，理由在 §8）、云渲染的落点是"**第二个呈递端**"而不是把区通用化（§8 末条 + §9 第 6 条，带触发条件）；**§9.7（共享设备的 initialize/shutdown 归谁）已于 2026-10-18 裁定并落地：形状②——会话归创建者、引擎只借用设备（见顶条）**；**S10b（插件会话→设备：窗口与交换链 1:N、缓存上移、`DeviceDesc`）**/ S11（登记不做）未落地 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-18 §9.7 落地：会话归创建者，引擎只**借用**设备（S10b 的前置；诊断路线改扇出）
+
+- **结论**：`RenderEngine::initialize()` 不再调 `device_->initialize()`、`shutdown()` 不再调 `device_->shutdown()`
+  ——设备由**建它的那一方** bring up / tear down。一设备两引擎因此成立：B 的 `initialize()` 不再拆 A 的会话，
+  A 的 `shutdown()` 也不再拆 B 还在用的设备。文档：`graphics-window-device-viewer.md` §9.7（裁决 + 落地 + 仍未收口）。
+- **做了什么**：① `RenderDevice` 加 `initialized()`（纯虚）；引擎附着前问一句，**没起来 ⇒ 一次报告**
+  （`ReportOnce device_not_up_`，换设备时 rearm）+ 附着失败 —— "借用来的设备没起来"是一等状态，不是静默空画面。
+  ② `RenderEngine::setDevice` 把默认内容程序公告给设备（设备由创建者 bring up，程序必须早于那一刻到），
+  换设备 / 析构时 `removeDiagnosticsRoute`（路线是**借**给设备的，引擎死了不能留悬垂指针）。
+  ③ **诊断路线从"一条"改成"扇出"**：`setDiagnosticsRoute` 追加、`removeDiagnosticsRoute` 撤销，`reportDiagnostic`
+  发给所有借来的路线 ⇒ 第二个引擎不再覆盖第一个的计数；设备自己的 `diagnosticSink()` 答第一条非空路线（这就是
+  "引擎装上去的 sink 代表这块设备"的意思），`diagnosticCount()` 读设备自己那条（同样收到全部报告）。
+  ④ 宿主侧：`SurfaceWindow::init()` 在目标的创建输入与 `feedSurfaceSize` **之后**调 `device->initialize()`
+  （尺寸是创建输入 ⇒ 窗口按最终尺寸出生，而不是先 640×360 再跟随一次、付一次 counted device wait），再
+  `engine->initialize()` 附着；设备起不来是**可重试**拒绝（状态留 Pending），不是 Failed 判决。
+  ⑤ 插件：`Session::wouldKeep(options)` 让 `VsgBackend::initialize()` 在"同一块窗口、已经起来"时**不丢内容世界**
+  ——原来它无条件 `releaseContentWorld()`，于是每次附着都把全部管线重建一遍。
+- **判据**：全量构建 0 错 0 警；`ctest` **24/24**（`test_graphics` 新增 `AnAttachToADeviceThatIsNotUpIsRefusedOnce`、
+  `OneDeviceReportsIntoEveryEngineThatBorrowsIt`、`AStoppedEngineLeavesTheDeviceItBorrowsAlone`，
+  `InitializeCallsBackend`/`ShutdownReleasesBackend` 按新语义改写；`HeadlessBackendTest.AReAnnouncedWindowMovesTheTargetAndTheDeviceStays`
+  改成宿主驱动设备，`initializes == 2` 的含义不变）。**变异 2/2 红**：去掉诊断扇出 ⇒
+  `OneDeviceReportsIntoEveryEngineThatBorrowsIt` 红；去掉"借用设备没起来"的守 ⇒
+  `AnAttachToADeviceThatIsNotUpIsRefusedOnce` 红。**未覆盖（登记）**：插件的 keep 路径（同一块宿主窗口再
+  `initialize()` 不丢内容世界）需要设备 + 宿主窗口，本机那条用例区是 X11-only；它只是省一次重建，正确性由
+  `Session::wouldKeep` 与 `planSessionMove` 同一张表保证。
+- **坑**：`RenderEngine::shutdown()` 里的 `bindTarget(nullptr)` 仍然要留着（目标是设备的对象，设备随时可能被它的
+  创建者拆掉），但**不能**顺手 `device_->shutdown()`——那正是共享设备被拆掉的那一刀。测试双实现（`MockBackend` /
+  `HeadlessBackend` / `WindowedBackend` / `FleetBackend` / `StubBackend`）一律"默认 up"：引擎只借用，借用来的
+  设备按定义是起来的；要测"没起来"那条，把 `up` 翻掉。
 
 ## 2026-10-13 `SceneView::onSurfaceResized` → `resize`（公共 API 改名；`on*` 从此只留给接收点）
 

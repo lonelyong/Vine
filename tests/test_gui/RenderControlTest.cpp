@@ -76,10 +76,18 @@ class StubBackend : public vn::graphics::RenderBackend
     bool initialize() override
     {
         ++initialize_calls;
-        return initialize_calls > failures;
+        return up = initialize_calls > failures;
     }
 
-    void shutdown() override { ++shutdown_calls; }
+    void shutdown() override
+    {
+        ++shutdown_calls;
+        up = false;
+    }
+
+    /// Whether this device is up (see RenderDevice::initialized): the CONTROL is its creator, so the attach asks -
+    /// the engine, which only borrows it, never brings it up.
+    [[nodiscard]] bool initialized() const noexcept override { return up; }
 
     void executeFrame(const vn::graphics::FrameDescription& frame,
                       vn::graphics::PresentTarget* present_to = nullptr) override
@@ -123,6 +131,9 @@ class StubBackend : public vn::graphics::RenderBackend
 
     /// Set to make this stub a device that presents nothing (see createSurfaceTarget).
     bool presents_nothing{ false };
+
+    /// Whether this device is up (see RenderDevice::initialized): false until its creator brings it up.
+    bool up{ false };
 
     int   initialize_calls{ 0 };
     int   shutdown_calls{ 0 };

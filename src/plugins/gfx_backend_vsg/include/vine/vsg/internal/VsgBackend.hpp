@@ -182,8 +182,8 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::gra
                          vn::graphics::ReadbackResult* why = nullptr) override;
 
   public:
-    /** @brief Gets whether the session is up. */
-    [[nodiscard]] bool initialized() const noexcept;
+    /** @brief Gets whether the session is up: the device contract's own answer (see RenderDevice::initialized). */
+    [[nodiscard]] bool initialized() const noexcept override;
 
     /** @brief Gets how many frames the session has presented. */
     [[nodiscard]] std::uint64_t framesPresented() const noexcept;

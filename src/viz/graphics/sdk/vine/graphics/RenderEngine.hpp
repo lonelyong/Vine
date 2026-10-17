@@ -77,8 +77,12 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Sets the device used for drawing (see RenderDevice / RenderFrameExecutor).
      *
      * @details
-     * - The engine keeps a reference while it is set (the device outlives the engine or until replaced);
-     *   call before initialize(). Setting the same instance again is a no-op.
+     * - The device is BORROWED: the engine keeps a reference so the device outlives this engine's use of it, and
+     *   never drives its lifecycle - the party that created the device brings it up and takes it down (see
+     *   RenderDevice::initialize), which is what lets two engines drive one device. Call before initialize().
+     *   Setting the same instance again is a no-op.
+     * - The default content program is announced here, so a device brought up afterwards already knows what
+     *   program-less content is drawn with - the device's own order asks for that before it comes up.
      * - The new device is handed this engine's ONE diagnostic route (see Diagnostics.hpp), so a host's
      *   sink and its single diagnosticCount() cover the device too.
      *
@@ -151,18 +155,29 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
                              vn::graphics::DiagnosticCategory category,
                              const String&                message);
 
-    /** @brief Initializes the backend.
+    /** @brief Attaches this engine to the device it borrows: ready to drive frames.
      *
-     * @return true when the backend initialized successfully.
+     * @details
+     * - The DEVICE IS NOT INITIALIZED HERE. It belongs to its creator (see RenderDevice::initialize), which brings it
+     *   up (and follows a re-announced window) before this call; an engine that brought it up would tear a shared
+     *   device down under whoever else is drawing through it.
+     * - A device that is not up fails the attach and is reported ONCE per episode: a frame driven through it would
+     *   look like a running engine drawing nothing.
+     * - What the attach does: asks the device for a target when this engine's area holds none (the device's own
+     *   window, or "no presentation" for a display-less device), replays the announced surface size to the area's
+     *   target, and marks the engine ready.
+     *
+     * @return true when the engine is ready to render; false when it has no device or the device is not up.
      */
     bool initialize();
 
-    /** @brief Releases backend resources, and unregisters the area's target with it.
+    /** @brief Detaches from the device: unbinds the area's target and stops driving frames.
      *
      * @details
-     * - The device is about to take its own objects down, and the target it handed out is one of them (see
-     *   RenderDevice::createSurfaceTarget): the area is unbound FIRST, so nothing is left naming an object
-     *   the device is destroying.
+     * - THE DEVICE IS NOT SHUT DOWN: it is borrowed (see setDevice), and another engine may still be driving it. Its
+     *   creator releases it - a host that also owns the device calls RenderDevice::shutdown() itself.
+     * - The area's target is unbound FIRST, because it is one of the device's objects (see
+     *   RenderDevice::createSurfaceTarget): nothing is left naming something the device may destroy.
      * - A host that comes back calls initialize() again, asks the device for a target and binds it - the
      *   "device lost, rebuild from the bottom" path.
      */
@@ -821,6 +836,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     raw_ptr<RenderSurface>              area_               = nullptr;
     /// "A second area tried to register" is one condition, not a per-call event (see adoptArea).
     ReportOnce                          area_refused_{};
+    /// "The borrowed device is not up" is one condition too (see initialize): re-armed when a device is set, so the
+    /// same device answering the same thing does not say it twice, and a different one gets its own say.
+    ReportOnce                          device_not_up_{};
     // The target the frame path presents through when this engine has NO area (see initialize): what the device
     // made for the window it brought up itself, or nullptr when it presents nothing. Borrowed - the device owns it.
     raw_ptr<PresentTarget>              own_target_         = nullptr;

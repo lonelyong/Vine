@@ -2319,6 +2319,9 @@ class MockBackend : public RenderBackend {
     };
 
     bool ok = false;
+    /// Whether this double answers initialized() with true (see RenderDevice::initialized): the device is BORROWED
+    /// by an engine, so a double that stands for a device its creator brought up is up from the start.
+    bool up = true;
 
     /// Emits one diagnostic through the backend contract (test hook for the
     /// engine's sink pass-through; reportDiagnostic is protected).
@@ -2377,6 +2380,10 @@ class MockBackend : public RenderBackend {
     intrusive_ptr<const ShaderProgram> last_default_content_program;
 
     bool initialize() override { ok = true; return true; }
+    /// The lifecycle of the BORROWED device (see RenderDevice::initialized): a double is up unless a case says
+    /// otherwise, because an engine attaches to a device its creator brought up and never brings one up itself.
+    /// A case that wants the "not up" report flips `up` before the attach.
+    [[nodiscard]] bool initialized() const noexcept override { return up; }
     void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program) override
     {
         last_default_content_program = std::move(program);
@@ -2920,15 +2927,33 @@ TEST(RenderEngineTest, AddSamePassTwiceKeepsSingleSlot)
     EXPECT_EQ(engine->passCount(), 1u);
 }
 
-TEST(RenderEngineTest, InitializeCallsBackend)
+TEST(RenderEngineTest, InitializeAttachesToTheDeviceItsCreatorBroughtUp)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
 
+    // A borrowed device is UP (its creator brought it up - RenderDevice::initialize), so the attach asks nothing of
+    // the device's lifecycle: it binds to what is there.
     EXPECT_TRUE(engine->initialize());
-    EXPECT_TRUE(backend->ok);
+    EXPECT_FALSE(backend->ok) << "the engine never drives the device's lifecycle: initialize() is its creator's, "
+                                 "which is what lets two engines drive one device";
     EXPECT_EQ(engine->device(), backend.get());
+}
+
+TEST(RenderEngineTest, AnAttachToADeviceThatIsNotUpIsRefusedOnce)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    backend->up  = false;
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+
+    EXPECT_FALSE(engine->initialize()) << "a frame driven through a device that is not up would draw nothing";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u);
+    EXPECT_FALSE(engine->initialize()) << "the same condition is one report, not one per call";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u);
+    engine->frame();
+    EXPECT_EQ(backend->frames_executed, 0) << "and nothing runs until the creator brings the device up";
 }
 
 TEST(RenderEngineTest, FrameRunsPipeline)
@@ -4385,16 +4410,39 @@ TEST(PassDescriptionTest, APassWithNothingToIssueAnnouncesNothingAtAll)
     EXPECT_TRUE(camera_less.draws.empty()) << "描述用空 draws 说同一件事";
 }
 
-TEST(RenderEngineTest, ShutdownReleasesBackend)
+TEST(RenderEngineTest, AStoppedEngineLeavesTheDeviceItBorrowsAlone)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
-    engine->initialize();
+    backend->ok = true;  // the creator brought it up (the engine never does, see the attach cases)
+    ASSERT_TRUE(engine->initialize());
     EXPECT_TRUE(backend->ok);
 
     engine->shutdown();
-    EXPECT_FALSE(backend->ok);
+    EXPECT_TRUE(backend->ok) << "the device belongs to its creator: an engine detaches, it never takes it down - a "
+                                "shared device must not be torn down under the other engine";
+}
+
+TEST(RenderEngineTest, OneDeviceReportsIntoEveryEngineThatBorrowsIt)
+{
+    auto backend  = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine_a = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto engine_b = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine_a->setDevice(backend);
+    engine_b->setDevice(backend);
+
+    backend->emitDiagnostic(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest, u8"one for both");
+
+    EXPECT_EQ(engine_a->diagnosticCount(), 1u)
+        << "the first engine keeps counting: a second borrower does not take its route away";
+    EXPECT_EQ(engine_b->diagnosticCount(), 1u);
+    EXPECT_EQ(backend->diagnosticCount(), 1u) << "and the device's own count is the same history";
+
+    // An engine that goes away takes its borrowed route with it, and leaves the other one working.
+    engine_a.reset();
+    backend->emitDiagnostic(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest, u8"one for B");
+    EXPECT_EQ(engine_b->diagnosticCount(), 2u);
 }
 
 TEST(RenderEngineTest, ScreenPassProgramCarriesTheAttachmentItReads)

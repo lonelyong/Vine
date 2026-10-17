@@ -286,18 +286,27 @@ meshio 34 / iobase 94，并按片更新记账）；
    `executeFrame` 的参数形态（帧命名一组），不是呈递端契约。
    在那之前不动：今天的离屏路径（`RenderTarget` + readback + `executeFrame(frame, nullptr)`）已经能跑完"渲染但不显示"。
 
-7. **共享设备（`Device : Engine = 1 : N`）下 `initialize` / `shutdown` 归谁**（2026-10-16 补登；**S10b 的前置**）：今天
-   `RenderEngine::initialize()` 调 `device_->initialize()`、`RenderEngine::shutdown()` 调 `device_->shutdown()`
-   （`RenderEngine.cpp:147` / `:177`），而设备契约说“已初始化的设备**先拆掉上一个会话**”（`RenderDevice::initialize`）。
-   一设备两引擎时：**B 的 `initialize()` 会拆掉 A 的会话**，**A 的 `shutdown()` 会把 B 还在用的设备拆掉**
-   （B 的 `initialized_` 仍为 true，此后它每一帧静默无事）。同一处还有两条未收口：`setDevice` 把设备的诊断路线设成
-   “这个引擎的那条”（`RenderEngine.cpp:64`）⇒ 第二个引擎覆盖路线、第一个引擎的 `diagnosticCount()` 不再是全量；
-   无区引擎的“设备自带窗口”兜底（`RenderEngine.cpp:133`）也只够一个引擎（第二个拿 `WindowOccupied`）。
-   **形状（落地时三选一）**：① 引用计数式会话（引擎 acquire / release，最后一个放手才拆）；② 会话归**创建者**，
-   引擎只**借用**设备（`setDevice` 不再负责 initialize / shutdown）；③ 共享设备明确**不支持**多引擎（契约收紧成 1:1，
-   与插件今天的实际能力一致）。**触发条件**：S10b 立项，或出现“两个引擎共用一个设备”的真实用法。**在那之前**，
-   接线层的 `HeadlessBackendTest.OneDeviceServesSeveralAreasWithoutCrossingThem`（假后端）只证“帧不串台”，
-   **不覆盖**上面三条。
+7. **共享设备（`Device : Engine = 1 : N`）下 `initialize` / `shutdown` 归谁**（2026-10-16 补登；**S10b 的前置**；
+   **2026-10-18 裁决并落地：形状②**）。
+   - **问题（登记时的三条）**：`RenderEngine::initialize()` 调 `device_->initialize()`、`RenderEngine::shutdown()`
+     调 `device_->shutdown()`，而设备契约说“已初始化的设备先拆掉上一个会话” ⇒ 一设备两引擎时 **B 的 `initialize()`
+     拆掉 A 的会话**、**A 的 `shutdown()` 拆掉 B 还在用的设备**（B 的 `initialized_` 仍为 true，此后每帧静默无事）；
+     诊断路线被第二个引擎覆盖（第一个的 `diagnosticCount()` 不再是全量）；无区引擎的“设备自带窗口”兜底只够一个引擎。
+   - **裁决**：**会话归创建者，引擎只借用设备**。`RenderEngine::initialize()` 不再 bring up、`shutdown()` 不再
+     tear down；设备由建它的那一方驱动（`SurfaceWindow` 在目标的创建输入与尺寸公告之后调 `device->initialize()`，
+     平台重建窗口后再调一次就是“跟随新句柄”）。否掉①（引用计数式会话：`initialize()` 的语义在“再次附着”和“第二个
+     租户”之间二义，且要加一对没有任何一方知道自己是不是“最后一个”的计数）；否掉③（收紧成 1:1 = 放弃 S10b）。
+     ②的代价是宿主显式驱动：115 处 `initialize()` 里生产代码只有 `SurfaceWindow` 一处，其余是测试夹具。
+   - **落地**：`RenderDevice` 加 `initialized()`（引擎附着前问“借用来的设备起来了吗”，没起来 ⇒ **一次**报告 + 附着
+     失败）；`RenderEngine::setDevice` 顺手把默认内容程序公告给设备（设备由创建者 bring up，程序必须早于那一刻
+     到），并在换设备 / 析构时 `removeDiagnosticsRoute`；**诊断路线改成扇出**——设备把每条报告发给**所有**借它的
+     路线（`setDiagnosticsRoute` 追加 / `removeDiagnosticsRoute` 撤销），设备自己的 `diagnosticSink()` /
+     `diagnosticCount()` 读它自己那条（同样收到全部报告）；插件侧 `Session::wouldKeep(options)` 让
+     `VsgBackend::initialize()` 在“同一块窗口、已经起来”时**不丢内容世界**（原来无条件 `releaseContentWorld()`
+     ⇒ 每次附着重建全部管线）。
+   - **仍未收口**：无区引擎的“设备自带窗口”兜底（`RenderEngine` 的 own-target 分支）在一设备两引擎下只有第一个
+     拿得到（第二个 `WindowOccupied`）——那是“设备自己的窗口”只够一个消费者，真要多窗口是 S10b 的 1:N 交换链
+     （插件侧），不是这里。判据与变异见 `.ai/memory/graphics.md` 顶部 2026-10-18 条。
 
 ---
 

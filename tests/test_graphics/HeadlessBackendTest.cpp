@@ -37,8 +37,12 @@ namespace
 class HeadlessBackend : public RenderBackend
 {
   public:
-    bool initialize() override { return ok = true; }
-    void shutdown() override { ok = false; }
+    bool initialize() override { return ok = up = true; }
+    void shutdown() override { ok = up = false; }
+
+    /// A BORROWED device is up unless a case says otherwise (see RenderDevice::initialized): an engine attaches
+    /// to a device its creator brought up, and never brings one up itself.
+    [[nodiscard]] bool initialized() const noexcept override { return up; }
 
     [[nodiscard]] RenderFrameExecutor& executor() override { return *this; }
 
@@ -69,6 +73,8 @@ class HeadlessBackend : public RenderBackend
     [[nodiscard]] Capabilities capabilities() const noexcept override { return Capabilities{ .render_targets = true }; }
 
     bool ok = false;
+    /// Whether this double answers initialized() with true (see RenderDevice::initialized).
+    bool up = true;
     int  frames = 0;
     /// How many times the device was asked for a window half (see createSurfaceTarget).
     int targets_asked = 0;
@@ -90,9 +96,12 @@ class WindowedBackend : public RenderBackend, public WindowPresentTarget
     bool initialize() override
     {
         ++initializes;
-        return true;
+        return up = true;
     }
-    void shutdown() override {}
+    void shutdown() override { up = false; }
+
+    /// Whether this device is up (see RenderDevice::initialized): its creator brings it up, the engine borrows it.
+    [[nodiscard]] bool initialized() const noexcept override { return up; }
 
     [[nodiscard]] RenderFrameExecutor& executor() override { return *this; }
 
@@ -151,6 +160,7 @@ class WindowedBackend : public RenderBackend, public WindowPresentTarget
     int   last_height      = 0;
     void* adopted_handle   = nullptr;
     bool  target_taken     = false;
+    bool  up               = true;  ///< The device is up (see RenderDevice::initialized).
     std::vector<PresentTarget*>       present_targets;  ///< What each frame named (see executeFrame).
 
   private:
@@ -193,9 +203,12 @@ class FleetBackend : public RenderBackend
     bool initialize() override
     {
         ++initializes;
-        return true;
+        return up = true;
     }
-    void shutdown() override {}
+    void shutdown() override { up = false; }
+    /// Whether this device is up (see RenderDevice::initialized): one device, several engines - none of them drives
+    /// this.
+    [[nodiscard]] bool initialized() const noexcept override { return up; }
     [[nodiscard]] RenderFrameExecutor& executor() override { return *this; }
 
     [[nodiscard]] raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
@@ -222,6 +235,7 @@ class FleetBackend : public RenderBackend
 
     int                                       frames      = 0;
     int                                       initializes = 0;
+    bool                                      up          = true;  ///< See RenderDevice::initialized.
     std::vector<std::unique_ptr<FleetTarget>> targets;  ///< What this device made (it owns them).
     std::vector<PresentTarget*>               present_targets;
 };
@@ -437,12 +451,13 @@ TEST(HeadlessBackendTest, ATargetTheHostMadeReachesTheFrameUnreported)
 }
 
 /**
- * @brief A stopped engine unbinds the area's target BEFORE it takes the device down.
+ * @brief A stopped engine unbinds the area's target, and leaves the device it borrowed alone.
  *
  * The target belongs to the DEVICE (see RenderDevice::createSurfaceTarget): what it hands out lives until that device
  * is destroyed or the area is unbound, and shutdown() is the unbinding - after it, the area names no object the
- * device is taking down, and nothing the host does afterwards can reach into one (a resize is the cheapest way to
- * look). A window closing is the device's own business: it detaches, it never leaves a dangling pointer behind.
+ * device may destroy, and nothing the host does afterwards can reach into one (a resize is the cheapest way to look).
+ * The DEVICE itself is not shut down (see RenderDevice::initialize): it is borrowed, and another engine may still be
+ * driving it.
  */
 TEST(HeadlessBackendTest, AStoppedEngineUnbindsTheAreasTargetFirst)
 {
@@ -460,11 +475,11 @@ TEST(HeadlessBackendTest, AStoppedEngineUnbindsTheAreasTargetFirst)
 
     engine->shutdown();
 
-    EXPECT_FALSE(area->hasTarget()) << "the area does not name an object the device is taking down";
+    EXPECT_FALSE(area->hasTarget()) << "the area does not name an object the device may destroy";
     area->resize(640, 480);
     EXPECT_EQ(backend->resize_calls, resize_calls_before) << "and a later resize does not reach the target";
     EXPECT_EQ(engine->frameContext().surface_width, 640)
-        << "the frame size is still the area's to announce: the device is gone, the area is not";
+        << "the frame size is still the area's to announce: the device was never this engine's to take down";
 
     // Coming back is the documented path: a host that lost its device initializes again, and the engine asks its
     // device for a target again rather than resurrecting the object the area let go of. This double hands one window
@@ -496,13 +511,17 @@ TEST(HeadlessBackendTest, AReAnnouncedWindowMovesTheTargetAndTheDeviceStays)
     int first  = 0;
     int second = 0;
     area->bindTarget(backend->createSurfaceTarget(&first));
+    ASSERT_TRUE(backend->initialize());  // the creator brings the device up (RenderDevice::initialize)
     ASSERT_TRUE(engine->initialize());
     engine->frame();
     EXPECT_EQ(backend->presents, 1);
 
     // The window the platform shows now is another one: the same target is re-announced (rule 5 of the axis).
     area->target()->setWindowHandle(&second);
-    ASSERT_TRUE(engine->initialize());  // the host re-attaches - the rule for a recreated window
+    // The host re-attaches, and THE DEVICE IS THE HOST'S TO DRIVE (RenderDevice::initialize): bringing it up again
+    // is what follows the re-announced window, and the engine - which only borrows it - attaches afterwards.
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(engine->initialize());
     engine->frame();
 
     EXPECT_EQ(backend->nativeHandle(), static_cast<void*>(&second)) << "the target moved onto the new window";
@@ -525,6 +544,7 @@ TEST(HeadlessBackendTest, AReAnnouncedWindowMovesTheTargetAndTheDeviceStays)
 TEST(HeadlessBackendTest, OneDeviceServesSeveralAreasWithoutCrossingThem)
 {
     auto device = intrusive_ptr<FleetBackend>(new FleetBackend());
+    ASSERT_TRUE(device->initialize()) << "the device's CREATOR brings it up (RenderDevice::initialize)";
 
     auto engine_a = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto engine_b = intrusive_ptr<RenderEngine>(new RenderEngine());

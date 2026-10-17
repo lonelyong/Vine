@@ -44,6 +44,12 @@ RenderEngine::RenderEngine()
 RenderEngine::~RenderEngine()
 {
     shutdown();
+    // The route this engine installed on the device goes with it: the device BORROWS it (see
+    // RenderDevice::setDiagnosticsRoute), so a route that outlived its engine would be a dangling pointer the next
+    // report walks into.
+    if (device_ != nullptr) {
+        device_->removeDiagnosticsRoute(diagnostics_);
+    }
 }
 
 raw_ptr<RenderBackend> RenderEngine::device() const
@@ -57,12 +63,23 @@ void RenderEngine::setDevice(intrusive_ptr<RenderBackend> device)
     if (device_ == device) {
         return;
     }
+    // The route this engine installed on the OLD device goes with the old device: it was borrowed there (see
+    // RenderDevice::setDiagnosticsRoute) and is about to stop being valid for it.
+    if (device_ != nullptr) {
+        device_->removeDiagnosticsRoute(diagnostics_);
+    }
     device_ = std::move(device);
+    // A different device is a different answer: the "not up" episode starts over (see initialize).
+    device_not_up_.rearm();
     // The device reports through THIS engine's one route (see Diagnostics.hpp): attaching it is what
     // makes the engine's count the whole truth instead of half of it, and it is why a device set after
     // the sink was installed needs nothing else done to it - the sink lives in the route, not in a copy.
     if (device_ != nullptr) {
         device_->setDiagnosticsRoute(diagnostics_);
+        // The default content program travels with the device, not with the attach: the device is brought up by
+        // its CREATOR (see RenderDevice::initialize), so the program has to be known before that - the engine is
+        // the only party that has it, and this is the moment the two are introduced.
+        device_->setDefaultContentProgram(default_content_program_);
     }
 }
 
@@ -125,6 +142,20 @@ bool RenderEngine::initialize()
     if (device_ == nullptr) {
         return false;
     }
+    // THE DEVICE IS BORROWED, so whether it is up is its CREATOR's doing (RenderDevice::initialize): an engine never
+    // brings it up - that would take a device shared with another engine down under it - and never takes it down.
+    // A device that is not up fails the attach and is said ONCE per episode: a frame driven through it would look
+    // like a running engine drawing nothing.
+    if (!device_->initialized()) {
+        initialized_ = false;
+        if (device_not_up_.shouldReport()) {
+            reportEngineProblem(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
+                                u8"RenderEngine::initialize(): the device this engine borrows is not up - the party "
+                                u8"that created it brings it up (RenderDevice::initialize); this engine only drives "
+                                u8"frames through it");
+        }
+        return false;
+    }
     // A device that brings up a window of its OWN (the host named none) is asked for that target here, once:
     // the frame path has to have something to present through, and the device is the party that knows whether
     // it presents at all (see RenderDevice::createSurfaceTarget). A device that presents nothing answers
@@ -142,40 +173,33 @@ bool RenderEngine::initialize()
         SurfaceTargetResult why = SurfaceTargetResult::Ok;
         own_target_             = device_->createSurfaceTarget(nullptr, &why);
     }
-    // Forward the default content program before the device builds its shader sets.
-    device_->setDefaultContentProgram(default_content_program_);
-    initialized_ = device_->initialize();
-    if (initialized_) {
-        // A size announced before initialization (a host sizes its widget before it has a device)
-        // never reached the target: it can only honour the announcement once it has a surface.
-        // Hand it over BEFORE the warm-up, so the content compiled there is built at the right size
-        // instead of the device's default.
-        if (frame_ctx_.surface_width > 0 && frame_ctx_.surface_height > 0 &&
-            area_ != nullptr && area_->hasTarget()) {
-            area_->target()->resize(frame_ctx_.surface_width, frame_ctx_.surface_height);
-        }
-        // NO PRE-FRAME WARM-UP. It used to execute every enabled, non-clearing pass once before the first frame, so
-        // a backend could see its whole pass set before presenting - which mattered when a frame arrived as a
-        // sequence of calls and content was built lazily inside a drawing call. A frame now arrives as ONE value
-        // (RenderFrameExecutor::executeFrame), so a backend has the whole pass set before it does anything, and the
-        // engine's own path to the backend is the same one the first frame takes (see frame()). What is left to
-        // pre-build is the backend's own business: the main content is compiled during device initialize().
+    // A size announced before initialization (a host sizes its widget before it has a device)
+    // never reached the target: it is handed over now, so what hangs off the size is laid out at it
+    // instead of the device's default.
+    if (frame_ctx_.surface_width > 0 && frame_ctx_.surface_height > 0 &&
+        area_ != nullptr && area_->hasTarget()) {
+        area_->target()->resize(frame_ctx_.surface_width, frame_ctx_.surface_height);
     }
-    return initialized_;
+    // NO PRE-FRAME WARM-UP. It used to execute every enabled, non-clearing pass once before the first frame, so
+    // a backend could see its whole pass set before presenting - which mattered when a frame arrived as a
+    // sequence of calls and content was built lazily inside a drawing call. A frame now arrives as ONE value
+    // (RenderFrameExecutor::executeFrame), so a backend has the whole pass set before it does anything, and the
+    // engine's own path to the backend is the same one the first frame takes (see frame()). What is left to
+    // pre-build is the backend's own business: the main content is compiled during device initialize().
+    initialized_ = true;
+    return true;
 }
 
 void RenderEngine::shutdown()
 {
-    if (device_ != nullptr && initialized_) {
-        // The target belongs to the DEVICE (see RenderDevice::createSurfaceTarget), so the area lets go of it
-        // BEFORE the device takes its objects down: what the device hands out lives until the device is destroyed
-        // or the area is unbound, and this is that unbinding (see RenderSurface::bindTarget). A host that comes
-        // back initializes again and binds a fresh target - the "device lost, rebuild from the bottom" path.
-        if (area_ != nullptr) {
-            area_->bindTarget(nullptr);
-        }
-        device_->shutdown();
+    // THE DEVICE IS NOT SHUT DOWN: this engine borrows it (see the declaration), and another engine may still be
+    // driving it. What is this engine's own is the area's binding - and it goes FIRST, because the target is one of
+    // the device's objects (see RenderDevice::createSurfaceTarget): nothing is left naming something the device's
+    // creator may destroy.
+    if (area_ != nullptr) {
+        area_->bindTarget(nullptr);
     }
+    own_target_  = nullptr;
     initialized_ = false;
 }
 

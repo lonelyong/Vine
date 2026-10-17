@@ -273,7 +273,16 @@ bool VsgBackend::initialize()
     // while they were still alive would need two devices at once, which vsg refuses by design. A host may call
     // initialize() again without a shutdown() in between (a moved surface, a failed session, a test that
     // exercises both), so the teardown cannot live in shutdown() alone.
-    releaseContentWorld();
+    //
+    // A KEEP IS NOT A REPLACEMENT, and this is the case a host hits on every attach: the window is the one the
+    // session is already on, so the device, the swapchain, the content world and every compiled pipeline survive -
+    // dropping them here would rebuild all of that for an announcement that changed nothing (the session's own
+    // decision table is what says so, see Session::wouldKeep).
+    const bool keeps_existing_session = d->session.wouldKeep(options);
+    if (!keeps_existing_session)
+    {
+        releaseContentWorld();
+    }
 
     if (!d->session.initialize(options, d->diagnostics))
     {
@@ -281,6 +290,13 @@ bool VsgBackend::initialize()
         // SDK's contract for a failed initialize(), and a half-built session is this layer's to clean up
         // (the session does its own, see its note).
         return false;
+    }
+    if (keeps_existing_session)
+    {
+        // Nothing was dropped and nothing was rebuilt: the plan's frame is the only thing that does not survive a
+        // call boundary (it is a borrowed value, see d->frame), so it is what this call resets.
+        d->frame = nullptr;
+        return true;
     }
 
     // The pieces the frame drive needs, registered where they are created: the window is the default

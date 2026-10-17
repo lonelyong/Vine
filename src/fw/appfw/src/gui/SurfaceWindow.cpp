@@ -758,10 +758,17 @@ bool SurfaceWindow::init()
         d->surface->target()->setWindowHandle(handle);
     }
 
-    // The attachment: the device, the session and every pipeline are built behind this call, on this thread. It
-    // returns before its caller does, so nothing can be "in the middle of an attach" - a host installs its content
-    // afterwards (see the declaration).
-    d->backend_live = d->engine->initialize();
+    // The size the surface has NOW goes to the SURFACE first: the surface owns it (PresentTarget::resize's authority
+    // order), and it is what the device creates its window at. Announcing it after the device came up would buy a
+    // swapchain rebuild - a counted device stop - for a size the window could have been born at.
+    feedSurfaceSize(width(), height());
+
+    // THE DEVICE BELONGS TO ITS CREATOR (RenderDevice::initialize): the area's target (a creation input) and the
+    // announced size are in place, so the device is brought up HERE - and again on every attach, because that is
+    // also what FOLLOWS a re-announced window (the engine, which only borrows the device, never drives this).
+    // A device that does not come up is a RETRYABLE refusal, not a verdict: the reason is on the diagnostics channel
+    // and the surface stays Pending, which is the same answer this attach gave when the engine drove the session.
+    d->backend_live = d->engine->device()->initialize() && d->engine->initialize();
 
     if (!d->backend_live) {
         // This platform will not attach to a surface that is not on screen (Wayland): ask the control to show the

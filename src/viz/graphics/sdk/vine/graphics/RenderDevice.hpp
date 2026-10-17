@@ -94,6 +94,11 @@ enum class SurfaceTargetResult
  *     the feature on);
  *   - diagnosticCount() / diagnosticsClean(): what it had to say, counted on the ONE route the engine handed over
  *     (setDiagnosticsRoute), so the host's sink and this device's own evidence read the same numbers.
+ * - WHO DRIVES THE LIFECYCLE. The party that CREATED the device owns initialize()/shutdown(); an engine BORROWS the
+ *   device (RenderEngine::setDevice) and never brings it up or takes it down. That is what makes one device serve
+ *   several engines: two engines driving one device would otherwise tear each other's session down, and the second
+ *   engine's initialize() would destroy the first one's - both silently. A borrowed device is up by definition, so
+ *   an engine whose device is not up reports it instead of driving frames into nothing.
  * - THREADING. The engine drives one frame at a time from one thread, so calls into a device are serialised, never
  *   concurrent and never reentrant. A device may therefore keep its state unsynchronised, but must not assume it
  *   stays on the same thread across an initialize()/shutdown() pair. The diagnostic sink is invoked synchronously
@@ -102,8 +107,8 @@ enum class SurfaceTargetResult
  *   throws across this interface: initialize() returns false, the readback methods return false,
  *   createSurfaceTarget() answers nullptr with a reason, and a request that cannot be served leaves the previous
  *   state intact. A false return never means "partially applied". A false initialize() must not leave a half-built
- *   session behind: the engine calls shutdown() only after a successful initialize() (see RenderEngine::shutdown), so
- *   the device owns the cleanup of its own partial state.
+ *   session behind: the creator calls shutdown() only after a successful initialize(), so the device owns the
+ *   cleanup of its own partial state.
  * - RenderBackend is the aggregate a device that also executes frames and presents through one window implements
  *   today (see its own note); a device is reference-counted through that aggregate, which is what a factory returns.
  */
@@ -112,16 +117,20 @@ class VN_GRAPHICS_API RenderDevice
   public:
     virtual ~RenderDevice() = default;
 
-    /** @brief Initializes the device: queues, caches, pipelines - and the windows it was asked to serve.
+    /** @brief Brings the device up: queues, caches, pipelines - and the windows it was asked to serve.
      *
      * @details
-     * - Called once per session, after the host asked for what it wants presented (createSurfaceTarget) and announced
-     *   the default content program (setDefaultContentProgram).
-     * - A device that is already initialized tears the previous session down first, so this may be called again on a
-     *   recreated surface.
+     * - THE CREATOR CALLS IT, not the engine (see the class note): the host that made the device is the only party
+     *   that knows when it is no longer needed, and an engine that drove this would take a shared device down under
+     *   whoever else is still drawing through it.
+     * - Called after the host asked for what it wants presented (createSurfaceTarget - the window is a CREATION
+     *   input on Vulkan, see the axis' Q1) and announced the default content program
+     *   (setDefaultContentProgram).
+     * - Called again on a live device, it FOLLOWS WHAT WAS ANNOUNCED: a re-announced window is moved onto, a device
+     *   whose session is unchanged keeps it (nothing is torn down, nothing is recompiled).
      *
      * @return true when the device is ready to render; false when a required resource could not be created. On false
-     *         the device owns the cleanup of whatever it built (the engine does not call shutdown() after a failed
+     *         the device owns the cleanup of whatever it built (its creator does not call shutdown() after a failed
      *         initialize()) and reports the reason on its diagnostics channel.
      */
     virtual bool initialize() = 0;
@@ -131,10 +140,22 @@ class VN_GRAPHICS_API RenderDevice
      * @details
      * - Safe to call after a failed initialize(), before any initialize(), or twice: when it returns, the device must
      *   be in the state of a freshly constructed one and initializable again.
-     * - Every window / GPU object the session created must be gone — the engine calls it both when the renderer shuts
-     *   down and when the rendering surface is recreated.
+     * - Every window / GPU object the session created must be gone. Its CREATOR calls it - when the device is being
+     *   destroyed or when the host wants the session rebuilt; an engine detaches without it (see
+     *   RenderEngine::shutdown).
      */
     virtual void shutdown() = 0;
+
+    /** @brief Gets whether the device is up (see @ref initialize).
+     *
+     * @details
+     * - The question an engine asks before it attaches: a borrowed device that is not up would take its frames and
+     *   draw them nowhere, so this is what turns that into one report instead of a silently empty picture.
+     * - A device that has never come up, one whose initialize() failed, and one that was shut down all answer false.
+     *
+     * @return true when the device is ready to render.
+     */
+    [[nodiscard]] virtual bool initialized() const noexcept = 0;
 
     /** @brief Gets the frame half of this device: how one frame comes out (see RenderFrameExecutor).
      *
@@ -167,9 +188,10 @@ class VN_GRAPHICS_API RenderDevice
      *                      SurfaceTargetResult.
      * @return The target, or nullptr when this device hands none out (see @p why). The target is BORROWED, and the
      *         device that made it owns it: it lives until that device is DESTROYED or the area is unbound (see
-     *         RenderSurface::bindTarget - RenderEngine::shutdown unbinds before it takes the device down). A window
-     *         closing is the device's own business: it DETACHES the target (the handle is gone, and a resize or a
-     *         present afterwards is a no-op that answers the truth), it does not hand the area a dangling object.
+     *         RenderSurface::bindTarget - RenderEngine::shutdown unbinds it, and the device's creator is the one that
+     *         releases the device). A window closing is the device's own business: it DETACHES the target (the handle
+     *         is gone, and a resize or a present afterwards is a no-op that answers the truth), it does not hand the
+     *         area a dangling object.
      */
     [[nodiscard]] virtual raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
                                                                          SurfaceTargetResult* why = nullptr)
@@ -331,18 +353,34 @@ class VN_GRAPHICS_API RenderDevice
         (void)program;
     }
 
-    /** @brief Installs the route every diagnostic this device reports goes through.
+    /** @brief Installs a route every diagnostic this device reports goes through.
      *
      * @details
-     * - The engine owns the one route (see Diagnostics.hpp) and hands it to the device it drives, so the engine's own
-     *   reports and this device's reports are counted and forwarded in the same place: a host that asks the engine
-     *   "did anything unexpected happen" gets one answer, not half of one.
+     * - The engine owns its own route (see Diagnostics.hpp) and hands it to the device it drives, so the engine's
+     *   own reports and this device's reports are counted and forwarded in the same place: a host that asks the
+     *   engine "did anything unexpected happen" gets one answer, not half of one.
+     * - A device may be BORROWED by several engines (they do not own its lifecycle, see the class note), and each of
+     *   them keeps its own route. Every report therefore goes to EVERY route installed here - so a second engine
+     *   never takes the first one's count away - and the accessors below answer from the device's own route, which
+     *   also receives all of them.
      * - A device driven without an engine (a test, a tool) is never handed one and answers every accessor below from
      *   the private route it was born with - so such a user sees no change at all.
      *
-     * @param route Route to report through; borrowed, and must outlive this device's reports.
+     * @param route Route to report through; borrowed, must outlive this device's reports, and is removed with
+     *              @ref removeDiagnosticsRoute when the engine that installed it goes away.
      */
     virtual void setDiagnosticsRoute(Diagnostics& route);
+
+    /** @brief Stops reporting into a route a previous @ref setDiagnosticsRoute installed.
+     *
+     * @details
+     * - Called by the engine that installed the route when it stops driving this device: the device borrows the
+     *   route (it is a member of the engine), so it must not keep pointing at one that is about to be destroyed.
+     * - Removing a route nobody installed changes nothing; the device's own route is never removed.
+     *
+     * @param route Route to stop reporting into.
+     */
+    virtual void removeDiagnosticsRoute(Diagnostics& route);
 
     /** @brief Installs the sink that receives device diagnostics.
      *
@@ -418,8 +456,12 @@ class VN_GRAPHICS_API RenderDevice
   private:
     /// The route used when no engine handed one over (see setDiagnosticsRoute).
     Diagnostics  owned_route_;
-    /// The active route: this device's own until an engine installs its.
+    /// The route this device's own accessors answer from: its own, always - every report also reaches it, so its
+    /// count is the whole truth about what this device said (see setDiagnosticsRoute).
     Diagnostics* route_ = &owned_route_;
+    /// The routes the engines that borrowed this device installed (see setDiagnosticsRoute), each of which receives
+    /// every report. Borrowed, and removed by the engine that installed it.
+    std::vector<Diagnostics*> borrowed_routes_;
 };
 
 VN_GRAPHICS_NS_END

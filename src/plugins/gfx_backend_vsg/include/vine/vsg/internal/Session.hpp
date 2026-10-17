@@ -90,6 +90,20 @@ class Session
     /** @brief Gets whether the session is up. */
     [[nodiscard]] bool initialized() const noexcept;
 
+    /** @brief Gets whether @p options describe the session this one already IS (nothing would be rebuilt).
+     *
+     * @details
+     * - The question a caller asks BEFORE it lets go of anything: the content world lives on the session's device,
+     *   so a caller that dropped it for a re-initialize that turns out to be a KEEP would rebuild every pipeline for
+     *   nothing. This answers with the same table initialize() decides by (core::planSessionMove).
+     * - True means initialize(options, ...) takes the cheap path: the device, the swapchain, the compiled pipelines
+     *   and everything retained against them survive.
+     *
+     * @param options What a caller is about to initialize with.
+     * @return true when that would leave an established session exactly as it is.
+     */
+    [[nodiscard]] bool wouldKeep(const SessionOptions& options) const noexcept;
+
     /** @brief Opens a frame.
      *
      * May acquire the next presentable image, which is why the frame MUST be committed.

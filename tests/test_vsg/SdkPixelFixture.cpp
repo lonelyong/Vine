@@ -139,7 +139,10 @@ bool SdkPixelFixture::up()
     // No window handle is announced: this backend then owns the window it brings the session up on. That
     // window is never read - the picture this fixture probes comes from the target below - so a case here
     // depends on the device and the content path, not on the platform's surface.
-    if (!engine->initialize()) {
+    //
+    // THE FIXTURE IS THE DEVICE'S CREATOR (see RenderDevice::initialize): the backend is brought up here, and the
+    // engine - which only borrows it - attaches afterwards.
+    if (!backend->initialize() || !engine->initialize()) {
         return false;
     }
 

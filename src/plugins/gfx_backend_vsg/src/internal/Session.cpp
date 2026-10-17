@@ -359,6 +359,22 @@ bool Session::initialized() const noexcept
     return impl && impl->ready;
 }
 
+bool Session::wouldKeep(const SessionOptions& options) const noexcept
+{
+    if (impl == nullptr)
+    {
+        return false;
+    }
+    // The same facts initialize() decides by: one table, so "would this be a keep" and "is this a keep" cannot
+    // answer differently (see core::planSessionMove).
+    core::MoveFacts facts;
+    facts.has_live_session = impl->ready;
+    facts.on_host_window   = impl->on_host_window;
+    facts.handle_announced = options.native_handle != nullptr;
+    facts.handle_differs   = options.native_handle != impl->host_handle;
+    return core::planSessionMove(facts).action == core::MoveAction::Keep;
+}
+
 core::FrameToken Session::beginFrame()
 {
     if (!impl || !impl->ready)
