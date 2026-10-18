@@ -3283,8 +3283,6 @@ TEST(VsgBackendTest, TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTa
     vn::raw_ptr<vn::graphics::WindowPresentTarget> own = backend->createSurfaceTarget(nullptr, &why);
     ASSERT_NE(own, nullptr);
     EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
-    EXPECT_EQ(own, static_cast<vn::graphics::WindowPresentTarget*>(backend.get()))
-        << "the aggregate answers for its first window";
     EXPECT_EQ(own->nativeHandle(), nullptr) << "nothing is attached before a session comes up";
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "the first window is not an episode";
     EXPECT_EQ(backend->windowCount(), 1U);
@@ -3305,8 +3303,7 @@ TEST(VsgBackendTest, TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTa
     vn::raw_ptr<vn::graphics::WindowPresentTarget> other = backend->createSurfaceTarget(&second, &why);
     ASSERT_NE(other, nullptr);
     EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
-    EXPECT_NE(other, static_cast<vn::graphics::WindowPresentTarget*>(backend.get()))
-        << "it is not the window the aggregate answers for";
+    EXPECT_NE(other, own) << "and it is not the first window's target";
     EXPECT_EQ(other->nativeHandle(), nullptr) << "nothing is attached before ITS session comes up";
     EXPECT_EQ(backend->windowCount(), 2U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U)
@@ -3370,8 +3367,7 @@ TEST(VsgBackendTest, AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce)
     backend->executeFrame(vn::graphics::FrameDescription{}, own);
     backend->present();
     EXPECT_EQ(backend->framesPresented(), before + 1U);
-    EXPECT_EQ(own, static_cast<vn::graphics::WindowPresentTarget*>(backend.get()))
-        << "the target this device hands out IS its own window half: the frame went through it";
+    EXPECT_EQ(backend->windowCount(), 1U) << "the frame went through the one window this device serves";
 
     backend->shutdown();
 }

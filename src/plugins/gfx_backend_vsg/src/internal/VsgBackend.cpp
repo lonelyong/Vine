@@ -399,14 +399,12 @@ void VsgBackend::ensureWindowAt(std::size_t index)
 {
     while (d->windows.size() <= index)
     {
-        auto window       = std::make_unique<Data::WindowSlot>();
-        window->session   = std::make_unique<api::Session>();
-        if (!d->windows.empty())
-        {
-            // Every window but the first is answered by its own target object (see the header): one identity per
-            // window, so "which window is this frame for" is a pointer compare.
-            window->target = std::make_unique<detail::WindowFacade>(*this, d->windows.size());
-        }
+        auto window     = std::make_unique<Data::WindowSlot>();
+        window->session = std::make_unique<api::Session>();
+        // EVERY window gets its own target object, including the first: the device holds and hands out what presents
+        // (see the header), and it is not one of them - one shape for N windows, and "which window is this frame
+        // for" stays a pointer compare.
+        window->target = std::make_unique<detail::WindowFacade>(*this, d->windows.size());
         d->windows.push_back(std::move(window));
     }
 }
@@ -507,10 +505,9 @@ VsgBackend::createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTarget
     {
         *why = vn::graphics::SurfaceTargetResult::Ok;
     }
-    // THE FIRST WINDOW IS THE DEVICE'S OWN (see the header): the aggregate answers for it. Every other one is
-    // answered by its own target object, which forwards back here.
-    return d->windows.size() == 1U ? static_cast<vn::graphics::WindowPresentTarget*>(this)
-                                   : d->windows.back()->target.get();
+    // THE DEVICE IS NOT A WINDOW (see the header): every ask - the first included - is answered by that window's own
+    // target object, which forwards back here by index.
+    return d->windows.back()->target.get();
 }
 
 std::size_t VsgBackend::windowCount() const noexcept
@@ -564,7 +561,7 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
     // nothing is recorded and the reason is said once per episode instead of being drawn into someone else's window.
     constexpr std::size_t kNoWindow = static_cast<std::size_t>(-1);
     std::size_t           index     = kNoWindow;
-    if (present_to == nullptr || present_to == static_cast<const vn::graphics::PresentTarget*>(this))
+    if (present_to == nullptr)
     {
         index = 0;
     }

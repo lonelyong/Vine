@@ -85,7 +85,7 @@ class BackendContentAccess;
 }  // namespace detail
 
 /** @brief The SDK's render device, driven by the rewrite's session (see the file note). */
-class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::graphics::WindowPresentTarget
+class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
 {
   public:
     VsgBackend();
@@ -173,17 +173,24 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::gra
     virtual void executeFrame(const vn::graphics::FrameDescription& frame,
                               vn::graphics::PresentTarget*           present_to = nullptr) override;
 
-    /** @brief Remembers the host's window handle for the next @ref initialize. */
-    void setWindowHandle(void* native_handle) override;
+    /** @brief Remembers the host's window handle for the next @ref initialize (the window this device was born with).
+     *
+     * @note The DEVICE IS NOT A WINDOW (see createSurfaceTarget): this and the three entries below are conveniences
+     *       for window 0, which a host that drives the aggregate directly and asked for no target uses. A host
+     *       holding a target object calls the same four methods THERE.
+     *
+     * @param native_handle Host window to present through, or nullptr for a window of this backend's own.
+     */
+    void setWindowHandle(void* native_handle);
 
-    /** @brief Gets the handle the session adopted, or null while it owns its window (see the file note). */
-    [[nodiscard]] void* nativeHandle() const override;
+    /** @brief Gets the handle window 0 was attached to, or null while it owns its window (see above). */
+    [[nodiscard]] void* nativeHandle() const;
 
-    /** @brief Announces a surface size: applied by the next @ref initialize, followed live (see the file note). */
-    void resize(int width, int height) override;
+    /** @brief Announces window 0's surface size: applied by the next @ref initialize, followed live (see above). */
+    void resize(int width, int height);
 
-    /** @brief Records the frame and commits it through the session: the one present. */
-    void present() override;
+    /** @brief Records window 0's frame and commits it: the one present (see @ref presentWindow). */
+    void present();
 
     /** @brief Answers what this backend can do: off-screen targets, whole (see `RenderDevice::capabilities`). */
     [[nodiscard]] vn::graphics::Capabilities capabilities() const noexcept override;
