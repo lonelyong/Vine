@@ -26,6 +26,7 @@
 #include <vector>
 
 #include <vine/graphics/backend/DepthProbe.hpp>
+#include <vine/graphics/backend/DeviceClock.hpp>
 #include <vine/graphics/backend/Readback.hpp>
 #include <vine/graphics/backend/DeviceRequirements.hpp>
 #include <vine/graphics/backend/FrameArena.hpp>
@@ -37,6 +38,7 @@
 #include <vine/graphics/backend/TargetPlan.hpp>
 
 using vn::graphics::RenderTarget;
+using vn::graphics::backend::DeviceClock;
 using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameTimeline;
 using vn::graphics::backend::LoadOpVariantKey;
@@ -776,4 +778,59 @@ TEST(CoreReadbackTest, TheDepthDecodeIsTheFormatsOwnConversion)
             << "half a texel is not a value: a probe built from it would claim a region is empty";
         EXPECT_TRUE(decodeDepth(RenderTarget::DepthFormat::D32, odd).empty());
     }
+}
+
+/**
+ * @brief The device's completion watermark is what EVERY window proved, and nothing else.
+ *
+ * This is the one rule one device with several windows rests on (see core::DeviceClock): a buffer or a pipeline the
+ * host replaced may still be named by a submission from ANY window, so "may it be destroyed" is answered by the
+ * minimum over the windows - the frame every one of them has a recycled slot for.
+ */
+TEST(CoreDeviceClockTest, TheWatermarkIsWhatEveryWindowProved)
+{
+    DeviceClock clock;
+    const auto a = clock.addWindow();
+    const auto b = clock.addWindow();
+    EXPECT_EQ(clock.windows(), 2U);
+    EXPECT_EQ(clock.completedFrame(), 0U);
+
+    // Reports before a window knows how many frames it may have in flight prove NOTHING: its evidence would be a
+    // guess, and a guess in this direction destroys an object a submitted command buffer still names.
+    clock.windowCompleted(a, 10U);
+    clock.windowCompleted(b, 10U);
+    EXPECT_EQ(clock.completedFrame(), 0U);
+
+    clock.setWindowSlots(a, 3U);
+    clock.setWindowSlots(b, 2U);
+    clock.windowCompleted(a, 7U);
+    clock.windowCompleted(b, 9U);
+    EXPECT_EQ(clock.completedFrame(), 7U) << "the window that is behind decides";
+
+    clock.windowCompleted(b, 12U);
+    EXPECT_EQ(clock.completedFrame(), 7U) << "one window moving on does not prove anything for the other";
+
+    clock.windowCompleted(a, 8U);
+    EXPECT_EQ(clock.completedFrame(), 8U);
+    EXPECT_EQ(clock.timeline().completedFrame(), 8U) << "and the frame clock carries the same number";
+
+    // Completion is a fact about the past: an older report never moves the device back.
+    clock.windowCompleted(a, 1U);
+    EXPECT_EQ(clock.completedFrame(), 8U);
+
+    // A window that leaves stops constraining the watermark (otherwise a closed window would hold the device at
+    // its last evidence forever).
+    clock.removeWindow(b);
+    clock.windowCompleted(a, 20U);
+    EXPECT_EQ(clock.completedFrame(), 20U);
+    EXPECT_EQ(clock.windows(), 1U);
+
+    // A window that joins LATER starts at the watermark: it existed for no earlier frame, so it must not roll the
+    // device's evidence back to zero.
+    const auto c = clock.addWindow();
+    clock.setWindowSlots(c, 3U);
+    clock.windowCompleted(c, 20U);
+    EXPECT_EQ(clock.completedFrame(), 20U) << "the newcomer did not roll the evidence back";
+
+    EXPECT_EQ(clock.widestSlots(), 3U) << "the park window is the widest a window owns, not the narrowest";
 }

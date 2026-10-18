@@ -60,10 +60,26 @@
   `Inherit<Win32_Window|Xcb_Window, …>`，析构**销毁**自己的窗口）。为什么必须是子类：vsg 把
   `Window::share(device)`（= setDevice + `_initSurface` + `_initFormats` + `_initRenderPass`）放在 `protected`，
   公开的 `setDevice` 只设 instance/physical device、**不算 formats**，直接用会在建 render pass 时读到格式 0。
-  自建窗口从此走 `new VsgOwnedWindow(traits)` 而不是 `vsg::Window::create(traits)`。判据
-  `SessionTest.ASecondSessionRendersOnTheDeviceTheFirstOneCreated`（真设备）：两个会话同一个 `vsg::Device`、
-  各自的 `WindowTarget`、各自 beginFrame/commitFrame 各一帧；**变异 1/1 红**（忽略 `options.device` ⇒ 红）。
-  仍只服务一块窗口：窗口路由 1:N 与"替换的存储/内容在所有会话的回收队列上各停一次"是下一步。
+  自建窗口从此走 `new VsgOwnedWindow(traits)` 而不是 `vsg::Window::create(traits)`。
+- **2026-10-18 S10b 落地：一设备 N 窗口（插件侧 1:N + 设备级完成水位）**
+  - **设备 + 窗口表**：`VsgBackend::Data` 从"一个 `api::Session`"变成 `windows`（每窗口一个 `Session` + 一把目标
+    对象）+ `device`（`ref_ptr<vsg::Device>`，设备比窗口长命，内容世界建在它上面）+ `driving`（这一帧属于哪块窗）。
+    第一块窗口的目标就是聚合自己（`createSurfaceTarget` 返 `this`），其余各一个 `detail::WindowFacade` 转发器；
+    **同一块窗口要第二次 ⇒ `WindowOccupied` 报一次**（一窗一条活交换链），不同的窗口是**服务**它 —— 那正是共享的
+    意义。`executeFrame(frame, present_to)` 按目标认窗口（`nullptr`/`this` ⇒ 第一块），`present()` 走窗口 0，
+    `presentWindow(i)` 走任意块。
+  - **完成证据升到设备级**：新 `core::DeviceClock`（`backend/DeviceClock.hpp`）—— 一条 `FrameTimeline`（帧号是设备的）
+    + 每个窗口报自己的证据（"我提交的 ≤F 都完成了"）+ 设备水位 = **各窗口的 min**（每个窗口只证明自己的工作；
+    只做过的才是真空完成）。窗口加入时从当前水位起（不回卷），离开时不再约束它。`api::SessionOptions` 可收一对
+    **借来的** clock/回收队列（为空 = 会话自持，单窗口路径一字未改）；主线程唯一时没有新锁。回收队列只有设备一处，
+    `setSlots` 用 `widestSlots()`（最宽的那块窗口决定停放窗口）。
+  - **为什么不是"在每条会话队列上各停一次"**：那是同一个结论的 N 份实现，且"最后一个放手"靠引用计数隐式实现；
+    设备级水位是 Filament `destroyDeferred` / UE RHI deferred delete / wgpu submission index 的形状（见
+    `graphics-window-device-viewer.md` §11）。
+  - **判据**：全量构建 0 错 0 警；`ctest` **24/24**。新增 `CoreDeviceClockTest.TheWatermarkIsWhatEveryWindowProved`
+    （min / 未学槽数时不证明 / 单调 / 加入不回卷 / 离开不约束 / 最宽槽数）、`VsgBackendTest.TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTarget`
+    （第一块由聚合答、同窗二次 ⇒ 占用报一次、异窗 ⇒ 自己的目标对象）、`SessionTest.ASecondSessionRendersOnTheDeviceTheFirstOneCreated`
+    （真设备：两个会话一个 `vsg::Device`）。**变异 2/2 红**：水位取 max ⇒ clock 用例红；每块窗口都返 `this` ⇒ 窗口用例红。
 
 ## 2026-10-13 `SceneView::onSurfaceResized` → `resize`（公共 API 改名；`on*` 从此只留给接收点）
 

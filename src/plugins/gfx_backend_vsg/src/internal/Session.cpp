@@ -134,6 +134,12 @@ struct Session::Impl
 {
     core::FrameTimeline    timeline;             ///< One clock for the session (see the class note).
     core::RetirementQueue  retirement{0};        ///< Constructed for real once the slots are learned.
+    /// The DEVICE's clock and park queue, when this session is one of several windows on one device (see
+    /// core::DeviceClock): the borrowed pair then REPLACES the two above, which stay unused.
+    core::DeviceClock*         clock{nullptr};
+    core::RetirementQueue*     shared_retirement{nullptr};
+    core::DeviceClock::WindowId clock_window{0};
+    bool                       clock_window_live{false};
     vn::graphics::Diagnostics*     diagnostics{nullptr}; ///< Where the session's reasons go (borrowed).
     /// The device profiler, when the switch asked for one (see Session::profiling): the executor wraps the
     /// passes, this owns the query pool and the log they are read from.
@@ -206,6 +212,17 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
     }
 
     shutdown();
+
+    // A device with several windows gives each session the DEVICE's clock and park queue (see core::DeviceClock):
+    // the completion evidence is the device's, because what it decides - whether a shared buffer or pipeline may
+    // be destroyed - is a device question. Registered here, after the teardown above reset the previous one.
+    impl->clock             = options.clock;
+    impl->shared_retirement = options.retirement;
+    if (impl->clock != nullptr)
+    {
+        impl->clock_window      = impl->clock->addWindow();
+        impl->clock_window_live = true;
+    }
 
     try
     {
@@ -373,6 +390,15 @@ void Session::shutdown() noexcept
     impl->window_target    = nullptr;
     impl->window           = {};
     impl->content          = {};
+    // The DEVICE's bookkeeping goes last, and only if it was this session's to leave (see initialize): a window
+    // that goes away stops constraining the device's watermark, which is what lets the remaining ones advance it.
+    if (impl->clock != nullptr && impl->clock_window_live)
+    {
+        impl->clock->removeWindow(impl->clock_window);
+    }
+    impl->clock_window_live = false;
+    impl->clock             = nullptr;
+    impl->shared_retirement = nullptr;
 }
 
 bool Session::initialized() const noexcept
@@ -419,7 +445,7 @@ core::FrameToken Session::beginFrame()
         probeSlots();
     }
 
-    return impl->timeline.begin();
+    return timeline().begin();
 }
 
 void Session::probeSlots()
@@ -439,7 +465,17 @@ void Session::probeSlots()
     impl->slots = impl->slot_tracker.slots();
     // In place: the queue's own counters (the counted device idles) must survive the moment the count is
     // learned - replacing the queue here is how a session silently loses them.
-    impl->retirement.setSlots(impl->slots);
+    if (impl->shared_retirement != nullptr && impl->clock != nullptr)
+    {
+        // A device's park window is the WIDEST any of its windows learned: a park made during this window's frame may
+        // name something the window with more slots still has in flight (see core::DeviceClock::widestSlots).
+        impl->clock->setWindowSlots(impl->clock_window, impl->slots);
+        impl->shared_retirement->setSlots(impl->clock->widestSlots());
+    }
+    else
+    {
+        impl->retirement.setSlots(impl->slots);
+    }
 
     if (impl->diagnostics == nullptr || impl->slot_tracker.agreesWithAssumption())
     {
@@ -458,7 +494,7 @@ bool Session::commitFrame()
     {
         return false;
     }
-    if (!impl->timeline.hasOpenFrame())
+    if (!timeline().hasOpenFrame())
     {
         // Committing what was never opened would advance the deferral clocks for a frame nothing
         // accounted for; the protocol layer reports it, and here it simply does not happen.
@@ -470,7 +506,7 @@ bool Session::commitFrame()
         return false;
     }
 
-    const core::FrameToken token        = impl->timeline.current();
+    const core::FrameToken token        = timeline().current();
     const std::uint64_t    frame_number = token.frame;
 
     impl->viewer->update();
@@ -485,8 +521,8 @@ bool Session::commitFrame()
         // itself is over (its swapchain image was acquired and its graph was recorded, so it cannot be
         // retried): the timeline abandons the token, which keeps the submitted watermark a count of
         // SUBMISSIONS - the fact a frame drive reads to mark what this frame wrote (a lost submission).
-        impl->timeline.abandoned(token);
-        impl->retirement.advance(impl->timeline);
+        timeline().abandoned(token);
+        retirement().advance(timeline());
         ++impl->lost_frames;
         // THE SWAPCHAIN IS REBUILT, and this is the whole reason a lost frame is survivable here: the frame's
         // image was acquired and never presented, so the WSI is short one image and the next acquire cannot
@@ -498,7 +534,7 @@ bool Session::commitFrame()
         if (impl->window != nullptr)
         {
             impl->window->resize();
-            impl->retirement.noteDeviceWait();
+            retirement().noteDeviceWait();
         }
         if (impl->diagnostics != nullptr)
         {
@@ -512,17 +548,28 @@ bool Session::commitFrame()
 
     if (impl->slots != 0 && frame_number > impl->slots)
     {
-        impl->timeline.completeUpTo(frame_number - impl->slots);
+        // THIS WINDOW'S evidence, not the device's: the recycled slot proves that the work this window submitted up
+        // to this frame is finished. A device with several windows folds those reports by MINIMUM (see
+        // core::DeviceClock), because only what every window proved is safe to call finished for a shared object.
+        const std::uint64_t proven = frame_number - impl->slots;
+        if (impl->clock != nullptr && impl->clock_window_live)
+        {
+            impl->clock->windowCompleted(impl->clock_window, proven);
+        }
+        else
+        {
+            timeline().completeUpTo(proven);
+        }
     }
 
     // The one present, and it happens even when the frame queued nothing - see the class note.
     impl->viewer->present();
     ++impl->frames_presented;
 
-    impl->timeline.submitted(token);
+    timeline().submitted(token);
     // The frame's LAST step: a park made after this would be dated against the next frame and released
     // one frame early (the failure this ordering exists to prevent).
-    impl->retirement.advance(impl->timeline);
+    retirement().advance(timeline());
     return true;
 }
 
@@ -642,17 +689,23 @@ Session::GpuProfile Session::gpuProfile() const
 
 std::size_t Session::deviceWaits() const noexcept
 {
-    return impl ? impl->retirement.deviceWaits() : 0;
+    // One number, whichever queue is in use: a session that shares its device's queue (see core::DeviceClock) is
+    // counted where the device counts, so "the frame path never idles the device" stays one fact about one device.
+    if (impl == nullptr)
+    {
+        return 0;
+    }
+    return impl->shared_retirement != nullptr ? impl->shared_retirement->deviceWaits() : impl->retirement.deviceWaits();
 }
 
 core::FrameTimeline& Session::timeline() noexcept
 {
-    return impl->timeline;
+    return impl->clock != nullptr ? impl->clock->timeline() : impl->timeline;
 }
 
 core::RetirementQueue& Session::retirement() noexcept
 {
-    return impl->retirement;
+    return impl->shared_retirement != nullptr ? *impl->shared_retirement : impl->retirement;
 }
 
 std::uint64_t Session::moves() const noexcept
@@ -702,7 +755,7 @@ bool Session::moveTo(void* handle)
     // named by work in flight. This is the one place a move needs the device quiet, and it is counted so
     // "the frame path never idles the device" stays checkable.
     impl->viewer->deviceWaitIdle();
-    impl->retirement.noteDeviceWait();
+    retirement().noteDeviceWait();
 
     if (!host_window->moveToHostSurface(handle))
     {
@@ -732,7 +785,7 @@ void SessionContentAccess::waitDeviceIdle(api::Session& session) noexcept
         return;  // nothing was ever submitted: there is nothing to wait for
     }
     session.impl->viewer->deviceWaitIdle();
-    session.impl->retirement.noteDeviceWait();  // the same counter Session::deviceWaits() answers with
+    session.retirement().noteDeviceWait();  // the same counter Session::deviceWaits() answers with
 }
 
 void SessionContentAccess::followResizedSurface(api::Session& session) noexcept
@@ -758,7 +811,7 @@ void SessionContentAccess::followResizedSurface(api::Session& session) noexcept
     // its images (the same cost the lost-frame repair in commitFrame pays). It is COUNTED for the same
     // reason - a live resize is the host's exception, and the counter is how often it happens stays visible
     // instead of becoming a habit.
-    session.impl->retirement.noteDeviceWait();
+    session.retirement().noteDeviceWait();
 }
 
 ::vsg::ref_ptr<::vsg::Group> SessionContentAccess::root(const api::Session& session) noexcept

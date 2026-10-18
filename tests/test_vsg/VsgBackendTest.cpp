@@ -3265,38 +3265,54 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
 
 #endif  // !defined(_WIN32)
 
-TEST(VsgBackendTest, TheOneWindowADeviceServesIsHandedOutOnceAndTheSecondAskSaysWhy)
+TEST(VsgBackendTest, TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTarget)
 {
-    // The device's window half is a CREATION input (RenderDevice::createSurfaceTarget): the first ask takes the
-    // one window this backend serves - no session needed for that, it is what initialize() adopts - and a second
-    // ask is refused with the reason, once, because a host that asked has to hear it rather than discover a
-    // picture that never appears. A window carries one live swapchain, so "occupied" is the truth here.
+    // ONE DEVICE, SEVERAL WINDOWS (S10b). What a device hands out is one target per WINDOW, because a window is a
+    // surface plus a swapchain and the platform allows one live swapchain per window; the DEVICE is the thing that
+    // is shared. So: the same window asked for twice is the "occupied" episode, said once; a different window gets
+    // its own target object - and the first window is answered by the aggregate itself (RenderBackend).
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::vector<vn::graphics::RenderDiagnostic> reported;
     backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) {
         reported.push_back(diagnostic);
     });
 
-    int second = 0;
-
+    // The device's own window (no handle): the device answers for it itself, so a host that drives one window
+    // directly has one object to hold.
     vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
-    vn::raw_ptr<vn::graphics::WindowPresentTarget> target = backend->createSurfaceTarget(nullptr, &why);
-    ASSERT_NE(target, nullptr);
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> own = backend->createSurfaceTarget(nullptr, &why);
+    ASSERT_NE(own, nullptr);
     EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
-    EXPECT_EQ(target->nativeHandle(), nullptr) << "nothing is attached before a session comes up";
+    EXPECT_EQ(own, static_cast<vn::graphics::WindowPresentTarget*>(backend.get()))
+        << "the aggregate answers for its first window";
+    EXPECT_EQ(own->nativeHandle(), nullptr) << "nothing is attached before a session comes up";
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "the first window is not an episode";
+    EXPECT_EQ(backend->windowCount(), 1U);
 
-    EXPECT_EQ(backend->createSurfaceTarget(&second, &why), nullptr);
+    // The same window again: occupied, said once.
+    EXPECT_EQ(backend->createSurfaceTarget(nullptr, &why), nullptr);
     EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::WindowOccupied);
     ASSERT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U);
     ASSERT_EQ(reported.size(), 1U);
     EXPECT_EQ(reported.front().severity, vn::graphics::DiagnosticSeverity::Warning);
 
-    EXPECT_EQ(backend->createSurfaceTarget(&second, &why), nullptr);
+    EXPECT_EQ(backend->createSurfaceTarget(nullptr, &why), nullptr);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U)
         << "one report per episode, however often the same ask comes";
 
-    // The window it already serves was left alone: the session is not moved by a refused ask.
+    // A DIFFERENT window: served, through its own target object (the same device, one more surface and swapchain).
+    int  second = 0;
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> other = backend->createSurfaceTarget(&second, &why);
+    ASSERT_NE(other, nullptr);
+    EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
+    EXPECT_NE(other, static_cast<vn::graphics::WindowPresentTarget*>(backend.get()))
+        << "it is not the window the aggregate answers for";
+    EXPECT_EQ(other->nativeHandle(), nullptr) << "nothing is attached before ITS session comes up";
+    EXPECT_EQ(backend->windowCount(), 2U);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U)
+        << "a second window is not an episode";
+
+    // And the refused ask left the window it already serves alone: the session is not moved by it.
     if (deviceCaseAvailable())
     {
         ASSERT_TRUE(backend->initialize());

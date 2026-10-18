@@ -4,6 +4,7 @@
 #include <memory>
 
 #include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/backend/DeviceClock.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/vsg/vsg_global.hpp>
@@ -61,6 +62,11 @@ struct SessionOptions
     /// The device must be one created WITH a surface (it presents), and one whose physical device can serve this
     /// window's surface: a device built without a surface cannot serve a window at all.
     void* device{nullptr};
+    /// The DEVICE's frame clock and park queue, when this session is one of several windows on one device (see
+    /// core::DeviceClock for why the completion evidence belongs to the device and not to a window). Null = this
+    /// session owns its own, which is what a session driven on its own needs; both must outlive the session.
+    core::DeviceClock*        clock{nullptr};
+    core::RetirementQueue*    retirement{nullptr};
 };
 
 /**
@@ -213,10 +219,16 @@ class Session
      */
     [[nodiscard]] GpuProfile gpuProfile() const;
 
-    /** @brief Gets the frame timeline (for the completion watermark and the open-frame state). */
+    /** @brief Gets the frame timeline: this session's own, or the DEVICE's when it was given one.
+     *
+     * @details
+     * - A session that is one of several windows on a device reports its evidence into the device's clock (see
+     *   core::DeviceClock): the watermark then means "every window's submissions up to this frame are finished",
+     *   which is the only question a shared buffer or pipeline can be answered with.
+     */
     [[nodiscard]] core::FrameTimeline& timeline() noexcept;
 
-    /** @brief Gets the retirement queue (where a replaced object is parked). */
+    /** @brief Gets the retirement queue: this session's own, or the DEVICE's when it was given one. */
     [[nodiscard]] core::RetirementQueue& retirement() noexcept;
 
     /** @brief Gets how many announcements MOVED an established session (the device survived). */

@@ -74,6 +74,11 @@ VN_VSG_NS_BEGIN
 
 class BlockStorage;
 
+namespace api
+{
+class Session;
+}  // namespace api
+
 namespace detail
 {
 class BackendContentAccess;
@@ -103,19 +108,48 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::gra
     /** @brief Answers this object: this device's frame half is its own (see RenderDevice::executor). */
     [[nodiscard]] vn::graphics::RenderFrameExecutor& executor() override;
 
-    /** @brief Hands out this object as the one window half this backend has (see the file note).
+    /** @brief Hands out the target of ONE WINDOW this device will serve (see WindowPresentTarget).
      *
-     * ONE WINDOW is served: the first ask takes it (the handle is what the next initialize() adopts, or moves an
-     * established session onto - see core::planSessionMove), and a SECOND ask is refused with WindowOccupied and
-     * said once, because a window carries one live swapchain and this implementation has one session to give.
+     * ONE DEVICE, SEVERAL WINDOWS: a window carries one live swapchain (a platform constraint), so a window that
+     * is already being served is refused with WindowOccupied and said once - and a NEW window gets its own target,
+     * because the device is the thing that is shared, not the window. The first window is answered by THIS object
+     * (the backend is the aggregate of device, frame half and the window it was born with, see RenderBackend);
+     * every further one is answered by a small target object that forwards here.
      *
-     * @param native_handle Host window to present through, or nullptr when the host names none (this backend then
-     *                      brings up a window of its own).
+     * What a window brings is a SURFACE and a SWAPCHAIN; the device, its compiled programs and the buffers they
+     * read are shared with the windows already served - which is the whole point of asking ONE device for them.
+     *
+     * @param native_handle Host window to present through, or nullptr when the host names none (this device then
+     *                      brings up a window of its own - it owns at most ONE of those, because a window of ours
+     *                      has no other reason to exist).
      * @param why           Receives why no target was handed out (Ok when one was), or null to ignore.
-     * @return This object, or nullptr when a window is already being served.
+     * @return The target of that window, or nullptr (see @p why).
      */
     [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget>
     createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why = nullptr) override;
+
+    /** @brief Gets how many windows this device serves (0 before the first ask). */
+    [[nodiscard]] std::size_t windowCount() const noexcept;
+
+    /** @brief Presents window @p index's last frame: what a target object this device handed out calls.
+     *
+     * @param index Window index (see createSurfaceTarget); an out-of-range one does nothing.
+     */
+    void presentWindow(std::size_t index);
+
+    /** @brief Announces window @p index's surface size: what a target object calls (see PresentTarget::resize).
+     *
+     * @param index  Window index.
+     * @param width  Announced width in pixels.
+     * @param height Announced height in pixels.
+     */
+    void resizeWindow(std::size_t index, int width, int height);
+
+    /** @brief Gets the handle window @p index is attached to, or nullptr (see WindowPresentTarget::nativeHandle). */
+    [[nodiscard]] void* windowHandleAt(std::size_t index) const noexcept;
+
+    /** @brief Re-announces window @p index's host handle (see WindowPresentTarget::setWindowHandle). */
+    void setWindowHandleAt(std::size_t index, void* native_handle);
 
     /** @brief Runs a frame from its value: the plugin's own translation of the frame the engine compiled.
      *
@@ -270,6 +304,19 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend, public vn::gra
     /** @brief Collects one content drawing call, and tracks the objects it names (see the file note). */
     void collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
                             const vn::graphics::Camera*                      camera);
+
+    /** @brief Creates the slot of window @p index when it does not exist yet (indices are dense and never reused).
+     *
+     * @param index Window index (0 is the window the device answers for itself).
+     */
+    void ensureWindowAt(std::size_t index);
+
+    /** @brief Gets window @p index's session, creating the window first when it does not exist yet.
+     *
+     * @param index Window index.
+     * @return The session (never null; see core::DeviceClock for what it shares when it is not alone).
+     */
+    [[nodiscard]] api::Session& sessionAt(std::size_t index);
 
     /** @brief Collects one full-screen drawing call whose source is one of the pass' declared inputs. */
     void collectScreenDraw(vn::graphics::RenderTarget*                     source,

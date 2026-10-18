@@ -182,6 +182,34 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
 
 }  // namespace
 
+namespace detail
+{
+
+/**
+ * @brief The target object of ONE window a device serves (every window but the first, see VsgBackend).
+ *
+ * WHAT IT IS: the SDK's `WindowPresentTarget` for a window that is not the one the backend itself answers for. It
+ * holds no state - the window's session, its swapchain and its size all belong to the device - and what it forwards
+ * to is the device's own per-window entry points, so the rule "which window is this" is answered in ONE place.
+ */
+class WindowFacade : public vn::graphics::WindowPresentTarget
+{
+  public:
+    /** @brief Creates the target of window @p index on @p device. */
+    WindowFacade(VsgBackend& device, std::size_t index) : device_(&device), index_(index) {}
+
+    void setWindowHandle(void* native_handle) override { device_->setWindowHandleAt(index_, native_handle); }
+    [[nodiscard]] void* nativeHandle() const override { return device_->windowHandleAt(index_); }
+    void resize(int width, int height) override { device_->resizeWindow(index_, width, height); }
+    void present() override { device_->presentWindow(index_); }
+
+  private:
+    VsgBackend* const device_;
+    const std::size_t index_;
+};
+
+}  // namespace detail
+
 struct VsgBackend::Data
 {
     /// This layer's inner route: its sink forwards into the SDK's ACTIVE route (see the constructor), which
@@ -191,7 +219,6 @@ struct VsgBackend::Data
     core::Observe     observe;
     core::FrameRecorder recorder{ arena, diagnostics, observe };
     core::FrameCompiler compiler{ arena, diagnostics, observe };
-    api::Session        session;
     VsgExecutor         executor{ diagnostics };
     PassRegistry        passes;   ///< The SDK's pass objects, as the numbers the plan carries (see the header).
     HostTargets         targets;  ///< The host's off-screen targets (see the header and api/HostTargets).
@@ -214,16 +241,41 @@ struct VsgBackend::Data
     std::unique_ptr<ContentAssembly> assembly{};
 
     void* host_handle{nullptr};            ///< The handle the host announced (nullptr = a window of our own).
-    int   announced_width{640};            ///< What the next initialize() creates its window at.
-    int   announced_height{360};           ///< What the next initialize() creates its window at.
+    int   announced_width{640};            ///< What the next initialize() creates its windows at.
+    int   announced_height{360};           ///< What the next initialize() creates its windows at.
     vn::intrusive_ptr<const vn::graphics::ShaderProgram> default_program;  ///< See the header.
+
+    /**
+     * @brief One window this device serves: its own session, and the target object the host holds.
+     *
+     * WHAT A WINDOW OWNS: the surface, the swapchain and the default-framebuffer target under them (all inside its
+     * session). What it does NOT own is anything a second window would have to duplicate - the device, its compiled
+     * programs and the buffers they read live on the backend (see core::DeviceClock as well).
+     */
+    struct WindowSlot
+    {
+        void*      host_handle{nullptr};
+        std::unique_ptr<api::Session> session;
+        /// The object the SDK sees. NULL for window 0: this backend answers for it itself (see the header), and one
+        /// identity per window is what keeps "which window is this frame for" answerable by a pointer compare.
+        std::unique_ptr<vn::graphics::WindowPresentTarget> target;
+    };
+
+    std::vector<std::unique_ptr<WindowSlot>> windows;  ///< In the order the host asked (0 = the device's own).
+    /// The window the OPEN frame belongs to (executeFrame names it, presentWindow uses it).
+    std::size_t driving{0};
+    /// THE DEVICE'S completion clock and park queue, shared by every window (see core::DeviceClock): whether a buffer
+    /// or a pipeline may be destroyed is a question about the whole device, because the windows draw with the same
+    /// objects. A session driven on its own keeps its own pair (see api::SessionOptions).
+    core::DeviceClock     clock;
+    core::RetirementQueue retirement{0};
+    /// The device itself, held here rather than only inside the windows: it outlives every window (the content world
+    /// is built on it), and a window that goes away must not take it down.
+    ::vsg::ref_ptr<::vsg::Device> device;
 
     std::array<vn::graphics::ReportOnce, kUnservedCount> unserved_reports{};  ///< One episode per entry point.
     std::array<vn::graphics::ReportOnce, kReadbackReportCount> readback_reports{};  ///< The unresolved-target episodes.
-    /// Whether the one window this device serves was handed out (see createSurfaceTarget): a second ask is the
-    /// "window occupied" episode, said once.
-    bool                     target_taken{false};
-    vn::graphics::ReportOnce occupied_report{};       ///< The "second target asked" episode (see createSurfaceTarget).
+    vn::graphics::ReportOnce occupied_report{};       ///< The "a window already served was asked again" episode.
     vn::graphics::ReportOnce foreign_target_report{};  ///< The "a frame named someone else's target" episode.
     /// What the frame's sweeps have let go (see api/ContentSweep); zero while the host holds everything.
     std::size_t released_objects{0};
@@ -255,110 +307,138 @@ VsgBackend::~VsgBackend() = default;
 
 bool VsgBackend::initialize()
 {
-    // What the host announced, as the session's options: the size the window is created at (the surface
-    // belongs to this backend when it owns the window, so the announcement is applied HERE - see the SDK's
-    // resize() note) and the handle it may have adopted (nullptr = a window of our own).
-    api::SessionOptions options;
-    options.width         = d->announced_width;
-    options.height        = d->announced_height;
-    // The debug-layer switch is the one the implementation this replaces read (VINE_VSG_DEBUG_LAYER, see
-    // VsgRenderer): the gate scripts and the troubleshooting notes set it and expect the validation layer,
-    // and a switch that silently does nothing is worse than none - the run would CLAIM to be
-    // validation-clean with nothing looking. Read here, where the device is asked for.
-    options.validation    = std::getenv("VINE_VSG_DEBUG_LAYER") != nullptr;
-    options.native_handle = d->host_handle;
+    // The host's announcements and the debug switch are the DEVICE's: every window is created with the size the
+    // surface last announced, and with the same layers.
+    const bool validation = std::getenv("VINE_VSG_DEBUG_LAYER") != nullptr;
 
-    // WHAT THE PREVIOUS SESSION OWNS GOES FIRST (see releaseContentWorld): that session's device is about to be
-    // replaced, and the content world holds GPU objects of it - a re-initialize that built the new device
-    // while they were still alive would need two devices at once, which vsg refuses by design. A host may call
-    // initialize() again without a shutdown() in between (a moved surface, a failed session, a test that
-    // exercises both), so the teardown cannot live in shutdown() alone.
-    //
-    // A KEEP IS NOT A REPLACEMENT, and this is the case a host hits on every attach: the window is the one the
-    // session is already on, so the device, the swapchain, the content world and every compiled pipeline survive -
-    // dropping them here would rebuild all of that for an announcement that changed nothing (the session's own
-    // decision table is what says so, see Session::wouldKeep).
-    const bool keeps_existing_session = d->session.wouldKeep(options);
-    if (!keeps_existing_session)
+    // A host that never asked for a window still gets one - the device's own (see createSurfaceTarget): the frame
+    // path has to have something to present through when a host drives the aggregate directly.
+    if (d->windows.empty())
     {
-        releaseContentWorld();
+        ensureWindowAt(0);
     }
 
-    if (!d->session.initialize(options, d->diagnostics))
+    for (std::size_t index = 0; index < d->windows.size(); ++index)
     {
-        // The session reported why (InitFailed), and the sink forwarded it: false plus a reason is the
-        // SDK's contract for a failed initialize(), and a half-built session is this layer's to clean up
-        // (the session does its own, see its note).
-        return false;
+        Data::WindowSlot& window = *d->windows[index];
+
+        api::SessionOptions options;
+        options.width         = d->announced_width;
+        options.height        = d->announced_height;
+        options.validation    = validation;
+        options.native_handle = window.host_handle;
+        // ONE DEVICE, SEVERAL WINDOWS: the first session creates the device, every other one ADOPTS it, and every
+        // window reports its completion evidence into the DEVICE's clock and parks into the DEVICE's queue - because
+        // what that evidence decides (may this buffer or pipeline go) is a question about the whole device.
+        options.device     = d->device.get();
+        options.clock      = &d->clock;
+        options.retirement = &d->retirement;
+
+        // A KEEP IS NOT A REPLACEMENT: this window is on the surface it is already on, so its device, its swapchain
+        // and every compiled pipeline survive, and the content world below stays with them (the session's own
+        // decision table is what answers this, see Session::wouldKeep).
+        if (window.session->wouldKeep(options))
+        {
+            continue;
+        }
+        if (!window.session->initialize(options, d->diagnostics))
+        {
+            // The session reported why (InitFailed), and the sink forwarded it: false plus a reason is the SDK's
+            // contract for a failed initialize(), and a half-built session is this layer's to clean up (the session
+            // does its own, see its note).
+            return false;
+        }
+        if (d->device == nullptr)
+        {
+            // The first window created the device; every later one adopted the same one (see the options above).
+            d->device = detail::SessionContentAccess::device(*window.session);
+        }
     }
-    if (keeps_existing_session)
+
+    if (d->device == nullptr)
     {
-        // Nothing was dropped and nothing was rebuilt: the plan's frame is the only thing that does not survive a
-        // call boundary (it is a borrowed value, see d->frame), so it is what this call resets.
-        d->frame = nullptr;
+        return false;  // no window came up, so there is no device to draw with (and the session said why)
+    }
+
+    // THE CONTENT WORLD BELONGS TO THE DEVICE, and is built ONCE: a window that came up, was re-attached or joined
+    // later does not invalidate what was uploaded or compiled on the same device.
+    d->frame = nullptr;
+    if (d->storage != nullptr)
+    {
         return true;
     }
 
-    // The pieces the frame drive needs, registered where they are created: the window is the default
-    // framebuffer's target, and the executor is the one that records into it.
-    if (WindowTarget* window = detail::SessionContentAccess::windowTarget(d->session))
+    d->storage = BlockStorage::create(d->device, BlockStorage::Layout{});
+    d->images  = MaterialImages::create();
+    if (d->images != nullptr)
     {
-        d->executor.setWindow(window);
-    }
-    d->frame = nullptr;
-
-    // The content world, on the session's device (see the header): without it the drawing half has nowhere
-    // to record, and render() says so instead of collecting draws nothing can render.
-    if (const ::vsg::ref_ptr<::vsg::Device> device = detail::SessionContentAccess::device(d->session))
-    {
-        d->storage = BlockStorage::create(device, BlockStorage::Layout{});
-        d->images  = MaterialImages::create();
-        if (d->images != nullptr)
+        // THE CACHE IS TOLD WHAT THE DEVICE OFFERS, once, here - where the device is. The limit is a
+        // device property, and a cache that is never told samples with anisotropy enabled at 1x, which is
+        // the same picture as not asking (see MaterialImages::makeSampler): the entry point existed and
+        // nothing called it, so mip-chained textures were filtered isotropically however good the device
+        // was. Read from the physical device the session built, and clamped by anisotropyFor - asking for
+        // more than VkPhysicalDeviceLimits::maxSamplerAnisotropy is a validation error.
+        if (const ::vsg::PhysicalDevice* physical = d->device->getPhysicalDevice())
         {
-            // THE CACHE IS TOLD WHAT THE DEVICE OFFERS, once, here - where the device is. The limit is a
-            // device property, and a cache that is never told samples with anisotropy enabled at 1x, which is
-            // the same picture as not asking (see MaterialImages::makeSampler): the entry point existed and
-            // nothing called it, so mip-chained textures were filtered isotropically however good the device
-            // was. Read from the physical device the session built, and clamped by anisotropyFor - asking for
-            // more than VkPhysicalDeviceLimits::maxSamplerAnisotropy is a validation error.
-            if (const ::vsg::PhysicalDevice* physical = device->getPhysicalDevice())
-            {
-                d->images->setMaxAnisotropy(physical->getProperties().limits.maxSamplerAnisotropy);
-            }
-        }
-        if (d->storage != nullptr && d->images != nullptr)
-        {
-            d->store    = std::make_unique<ContentStore>();
-            d->assembly = std::make_unique<ContentAssembly>(*d->store, device, d->pool, *d->storage, *d->images,
-                                                            d->diagnostics);
+            d->images->setMaxAnisotropy(physical->getProperties().limits.maxSamplerAnisotropy);
         }
     }
-    // The default program was announced before the session came up (the engine's own order), so it is
-    // tracked now - the tables must answer for it before any plan names it.
+    if (d->storage != nullptr && d->images != nullptr)
+    {
+        d->store    = std::make_unique<ContentStore>();
+        d->assembly = std::make_unique<ContentAssembly>(*d->store, d->device, d->pool, *d->storage, *d->images,
+                                                        d->diagnostics);
+    }
+    // The default program was announced before the device came up (the engine's own order), so it is tracked now -
+    // the tables must answer for it before any plan names it.
     trackProgram(d->store.get(), d->default_program);
     return true;
 }
 
+void VsgBackend::ensureWindowAt(std::size_t index)
+{
+    while (d->windows.size() <= index)
+    {
+        auto window       = std::make_unique<Data::WindowSlot>();
+        window->session   = std::make_unique<api::Session>();
+        if (!d->windows.empty())
+        {
+            // Every window but the first is answered by its own target object (see the header): one identity per
+            // window, so "which window is this frame for" is a pointer compare.
+            window->target = std::make_unique<detail::WindowFacade>(*this, d->windows.size());
+        }
+        d->windows.push_back(std::move(window));
+    }
+}
+
+api::Session& VsgBackend::sessionAt(std::size_t index)
+{
+    ensureWindowAt(index);
+    return *d->windows[index]->session;
+}
+
 void VsgBackend::releaseContentWorld() noexcept
 {
-    // THE DESTRUCTIVE PATH RUNS UNDER ONE COUNTED DEVICE IDLE (the resource rule the design writes down:
-    // destruction has two legal paths, and the whole-session replacement is the one that idles). What is
-    // about to be dropped holds the PIPELINES the frames just submitted still name, and a pipeline
-    // destroyed while a queue executes it is a validation error rather than a picture: measured
-    // 2026-09-25, tearing the world down right after a frame that had switched to a newly compiled
-    // program or topology produced four VUID-vkDestroyPipeline-pipeline-00765 messages (see the
-    // per-frame cost recipe in test_vsg/VsgBackendTest, which is the case that creates a pipeline after
-    // frames have started). The wait is COUNTED because "the frame path never idles the device" has to
-    // stay checkable - see Session::deviceWaits and RetentionStats::device_waits.
-    detail::SessionContentAccess::waitDeviceIdle(d->session);
+    // THE DESTRUCTIVE PATH RUNS UNDER COUNTED DEVICE IDLES, one per window (the resource rule the design writes
+    // down: destruction has two legal paths, and the whole-session replacement is the one that idles). What is
+    // about to be dropped holds the PIPELINES the frames just submitted still name, and a pipeline destroyed while
+    // a queue executes it is a validation error rather than a picture: measured 2026-09-25, tearing the world down
+    // right after a frame that had switched to a newly compiled program or topology produced four
+    // VUID-vkDestroyPipeline-pipeline-00765 messages (see the per-frame cost recipe in test_vsg/VsgBackendTest,
+    // which is the case that creates a pipeline after frames have started). The waits are COUNTED because "the frame
+    // path never idles the device" has to stay checkable - see Session::deviceWaits and RetentionStats::device_waits.
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
+    {
+        detail::SessionContentAccess::waitDeviceIdle(*window->session);
+    }
 
     d->frame = nullptr;
     d->facts.clear();
     d->packets.clear();
     d->executor.setWindow(nullptr);
     d->executor.clearTargets();
-    // The content world FIRST: its GPU objects (and the sets the assembly built) belong to the session's
-    // device, which the session drops on the way down.
+    // The content world FIRST: its GPU objects (and the sets the assembly built) belong to the device, which the
+    // windows drop on the way down.
     d->assembly.reset();
     d->store.reset();
     d->images.reset();
@@ -373,8 +453,19 @@ void VsgBackend::releaseContentWorld() noexcept
 
 void VsgBackend::shutdown()
 {
+    // The device's objects FIRST (see releaseContentWorld), then the windows, then the device itself: what is
+    // destroyed must not be named by anything still alive.
     releaseContentWorld();
-    d->session.shutdown();
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
+    {
+        window->session->shutdown();
+    }
+    d->device = {};
+    // The evidence starts over with the next device: nothing parked survives it, and the windows that come back are
+    // registered again by their own initialize().
+    d->clock      = core::DeviceClock{};
+    d->retirement = core::RetirementQueue{0};
+    d->driving    = 0;
 }
 
 vn::graphics::RenderFrameExecutor& VsgBackend::executor()
@@ -386,30 +477,45 @@ vn::graphics::RenderFrameExecutor& VsgBackend::executor()
 vn::raw_ptr<vn::graphics::WindowPresentTarget>
 VsgBackend::createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why)
 {
-    // ONE WINDOW, one live swapchain (see the header): the first ask is the window this device serves - the
-    // handle the next initialize() adopts, or moves an established session onto (see core::planSessionMove) - and
-    // a second one is refused, once per episode, because a host that asked has to hear it rather than discover a
-    // picture that never appears.
-    if (d->target_taken) {
-        if (why != nullptr) {
-            *why = vn::graphics::SurfaceTargetResult::WindowOccupied;
+    // ONE LIVE SWAPCHAIN PER WINDOW (see the header). The same window again - including a second window of the
+    // device's own, which has no other reason to exist - is the "occupied" episode, said once, because a host that
+    // asked has to hear it rather than discover a picture that never appears.
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
+    {
+        if (window->host_handle == native_handle)
+        {
+            if (why != nullptr)
+            {
+                *why = vn::graphics::SurfaceTargetResult::WindowOccupied;
+            }
+            if (d->occupied_report.shouldReport())
+            {
+                reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                                 vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                 vn::String::fromUtf8("a window this device already serves was asked for again: it was "
+                                                      "left alone (one live swapchain per window - see "
+                                                      "createSurfaceTarget, and .ai/design/graphics-window-device-"
+                                                      "viewer.md)"));
+            }
+            return nullptr;
         }
-        if (d->occupied_report.shouldReport()) {
-            reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
-                             vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                             vn::String::fromUtf8("a second surface target was asked of a device that serves one "
-                                                  "window: the window it already serves was left alone (see "
-                                                  "createSurfaceTarget, and .ai/design/graphics-window-device-"
-                                                  "viewer.md)"));
-        }
-        return nullptr;
     }
-    d->target_taken = true;
-    d->host_handle  = native_handle;
-    if (why != nullptr) {
+
+    ensureWindowAt(d->windows.size());
+    d->windows.back()->host_handle = native_handle;
+    if (why != nullptr)
+    {
         *why = vn::graphics::SurfaceTargetResult::Ok;
     }
-    return this;
+    // THE FIRST WINDOW IS THE DEVICE'S OWN (see the header): the aggregate answers for it. Every other one is
+    // answered by its own target object, which forwards back here.
+    return d->windows.size() == 1U ? static_cast<vn::graphics::WindowPresentTarget*>(this)
+                                   : d->windows.back()->target.get();
+}
+
+std::size_t VsgBackend::windowCount() const noexcept
+{
+    return d->windows.size();
 }
 
 void VsgBackend::openFrameBooks()
@@ -422,7 +528,7 @@ void VsgBackend::openFrameBooks()
 
     // The session mints the frame's token and advances the viewer's clock; the recorder opens the plan for
     // the same token, so the description and the session's frame cannot disagree about which frame it is.
-    const core::FrameToken token = d->session.beginFrame();
+    const core::FrameToken token = sessionAt(d->driving).beginFrame();
     (void)d->recorder.beginFrame(token);  // it answers whether the frame's books could be opened (see its note)
 }
 
@@ -436,7 +542,7 @@ void VsgBackend::closeFrameBooks()
     // because the plan has to be able to say "this one has no objects yet", and because the compiler resolves
     // a pass' declared INPUTS from this same table (see HostTargets::facts).
     d->facts.clear();
-    if (WindowTarget* window = detail::SessionContentAccess::windowTarget(d->session))
+    if (WindowTarget* window = detail::SessionContentAccess::windowTarget(sessionAt(d->driving)))
     {
         d->facts.push_back(window->facts());
     }
@@ -452,26 +558,50 @@ void VsgBackend::closeFrameBooks()
 void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
                               vn::graphics::PresentTarget* present_to)
 {
-    // THE FRAME'S TARGET. This device has one window half and it is this object (see createSurfaceTarget), so a
-    // frame that names another target is wiring it could not have produced: nothing is recorded and the reason is
-    // said once per episode instead of being drawn into someone else's window. A null target is a frame that
-    // presents NOWHERE (the off-screen half of the frame protocol, see RenderFrameExecutor::executeFrame): the
-    // passes that name their own render targets run as they always did, and nothing is presented.
-    if (present_to != nullptr && present_to != static_cast<vn::graphics::PresentTarget*>(this)) {
-        if (d->foreign_target_report.shouldReport()) {
+    // THE FRAME'S TARGET NAMES ITS WINDOW. A device hands out one target per window (see createSurfaceTarget), so
+    // this is where a frame says which window it is for: nullptr and this device itself mean its FIRST window, and
+    // any other target must be one this device handed out - anything else is wiring it could not have produced, so
+    // nothing is recorded and the reason is said once per episode instead of being drawn into someone else's window.
+    constexpr std::size_t kNoWindow = static_cast<std::size_t>(-1);
+    std::size_t           index     = kNoWindow;
+    if (present_to == nullptr || present_to == static_cast<const vn::graphics::PresentTarget*>(this))
+    {
+        index = 0;
+    }
+    else
+    {
+        for (std::size_t candidate = 0; candidate < d->windows.size(); ++candidate)
+        {
+            if (d->windows[candidate]->target.get() == present_to)
+            {
+                index = candidate;
+                break;
+            }
+        }
+    }
+    if (index >= d->windows.size())
+    {
+        if (d->foreign_target_report.shouldReport())
+        {
             reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
                              vn::graphics::DiagnosticCategory::UnsupportedRequest,
                              vn::String::fromUtf8("a frame named a surface target this device did not hand out: "
-                                                  "nothing was recorded (a device serves the window it created, "
+                                                  "nothing was recorded (a device serves the windows it created, "
                                                   "see createSurfaceTarget)"));
         }
         return;
     }
-    if (!d->session.initialized())
+
+    // The window this frame belongs to: the executor's default-framebuffer target is ITS, and presentWindow() reads
+    // the same index back when the frame's tail arrives.
+    d->driving            = index;
+    api::Session& session = sessionAt(index);
+    if (!session.initialized())
     {
         reportUnserved(kUnservedNoSession);
         return;  // nothing runs and nothing presents: the session that would record it is not up
     }
+    d->executor.setWindow(detail::SessionContentAccess::windowTarget(session));
 
     // THE VALUE, run by the layer that owns the identities, in the order the value states. What the engine
     // compiled arrives as data (see FrameDescription), so the frame's own shape is what drives this loop - and
@@ -527,7 +657,19 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
 
 void VsgBackend::present()
 {
-    if (d->frame == nullptr || !d->session.initialized())
+    // The aggregate's own window (see createSurfaceTarget): a host driving this backend directly presents here,
+    // and a host holding a target object named it on that object instead.
+    presentWindow(0);
+}
+
+void VsgBackend::presentWindow(std::size_t index)
+{
+    if (index >= d->windows.size())
+    {
+        return;
+    }
+    api::Session& session = sessionAt(index);
+    if (d->frame == nullptr || !session.initialized())
     {
         return;  // no frame is open (executeFrame closed none, and says why), or the session is down
     }
@@ -545,12 +687,12 @@ void VsgBackend::present()
         // The sweep runs on this path too: a frame that draws nothing is still a frame in which the host may
         // have dropped something, and the sweep's place is the frame's - not "the frames that drew".
         sweepAbandonedContent();
-        (void)d->executor.commit(*d->frame, d->session);
+        (void)d->executor.commit(*d->frame, session);
         d->frame = nullptr;
         return;
     }
 
-    const ::vsg::ref_ptr<::vsg::CommandGraph> graph = detail::SessionContentAccess::makeFrameGraph(d->session);
+    const ::vsg::ref_ptr<::vsg::CommandGraph> graph = detail::SessionContentAccess::makeFrameGraph(session);
     if (graph == nullptr)
     {
         d->frame = nullptr;
@@ -561,12 +703,12 @@ void VsgBackend::present()
     // real, the frame's content is assembled and recorded into the passes this slice can serve, the plan
     // is recorded into this frame's graph, and the graph is the session's - which is the call that submits
     // and presents, and the one whose false answer means the writes never happened.
-    (void)d->executor.applyTargetPlans(*d->frame, d->facts, d->session.timeline(), d->session.retirement());
+    (void)d->executor.applyTargetPlans(*d->frame, d->facts, session.timeline(), session.retirement());
     std::span<const PassContent> packets{};
-    if (WindowTarget* window = detail::SessionContentAccess::windowTarget(d->session);
+    if (WindowTarget* window = detail::SessionContentAccess::windowTarget(session);
         d->assembly != nullptr && window != nullptr)
     {
-        packets = recordContent(*d->assembly, *window, d->targets, d->session, *d->frame, d->input_scratch,
+        packets = recordContent(*d->assembly, *window, d->targets, session, *d->frame, d->input_scratch,
                                 d->input_views, d->packets);
     }
     (void)d->executor.record(*d->frame, graph, packets);
@@ -574,28 +716,48 @@ void VsgBackend::present()
     // what advances the retirement queue - so this is the last moment a park can be dated against this frame
     // (see api/ContentSweep, and the ordering rule core::RetirementQueue states).
     sweepAbandonedContent();
-    if (detail::SessionContentAccess::assignFrameGraphs(d->session, ::vsg::CommandGraphs{ graph }))
+    if (detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }))
     {
-        (void)d->executor.commit(*d->frame, d->session);  // it reports its own failure and marks what it wrote
+        (void)d->executor.commit(*d->frame, session);  // it reports its own failure and marks what it wrote
     }
     d->frame = nullptr;
 }
 
 void VsgBackend::setWindowHandle(void* native_handle)
 {
-    // A session decision: the next initialize() adopts the handle (or moves an established session onto it -
-    // see core::planSessionMove, which the session applies).
-    d->host_handle = native_handle;
+    setWindowHandleAt(0, native_handle);
+}
+
+void VsgBackend::setWindowHandleAt(std::size_t index, void* native_handle)
+{
+    // A session decision for THAT window: the next initialize() adopts the handle (or moves an established session
+    // onto it - see core::planSessionMove, which the session applies).
+    ensureWindowAt(index);
+    d->windows[index]->host_handle = native_handle;
 }
 
 void* VsgBackend::nativeHandle() const
 {
+    return windowHandleAt(0);
+}
+
+void* VsgBackend::windowHandleAt(std::size_t index) const noexcept
+{
     // The SDK's question is "which surface am I on": a host surface was adopted, a window of our own is not
     // the host's to name - and before initialize() there is nothing to name.
-    return d->session.initialized() ? d->host_handle : nullptr;
+    if (index >= d->windows.size())
+    {
+        return nullptr;
+    }
+    return d->windows[index]->session->initialized() ? d->windows[index]->host_handle : nullptr;
 }
 
 void VsgBackend::resize(int width, int height)
+{
+    resizeWindow(0, width, height);
+}
+
+void VsgBackend::resizeWindow(std::size_t index, int width, int height)
 {
     if (width <= 0 || height <= 0)
     {
@@ -603,7 +765,12 @@ void VsgBackend::resize(int width, int height)
     }
     d->announced_width  = width;
     d->announced_height = height;
-    if (d->session.initialized())
+    if (index >= d->windows.size())
+    {
+        return;  // a window that does not exist yet: the announced size is what it will be created at
+    }
+    api::Session& session = sessionAt(index);
+    if (session.initialized())
     {
         // THE SURFACE OWNS ITS SIZE (PresentTarget::resize's authority order: surface > announcement >
         // default), so a live announcement is served by FOLLOWING the surface: the session re-reads the one
@@ -617,7 +784,7 @@ void VsgBackend::resize(int width, int height)
         // The announcement is what tells the follow whether an unchanged answer is a problem or the truth: a
         // size the host announced as NEW and that the platform answers with the old extent is a read that
         // arrived before the platform applied it (see followResizedSurface's second ask).
-        detail::SessionContentAccess::followResizedSurface(d->session);
+        detail::SessionContentAccess::followResizedSurface(session);
     }
 }
 
@@ -642,12 +809,11 @@ vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
 vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
 {
     // ONE ANSWER from the two places that know (see FrameReport): the backend's own instrumentation
-    // (frame/Observe.hpp) answers the frame that just ended and what is retained, and the session's frame
-    // clock answers where the frames are - SUBMITTED is what reached the queue, COMPLETED is what has proof
-    // (the command slot that recorded it was recycled and its fence waited). Both watermarks are the
-    // session's own, so a host reads the same numbers the retirement window is dated against instead of
-    // guessing a lag.
-    const core::FrameTimeline& timeline = d->session.timeline();
+    // (frame/Observe.hpp) answers the frame that just ended and what is retained, and the DEVICE's frame clock
+    // answers where the frames are - SUBMITTED is what reached the queue, COMPLETED is what every window has proof
+    // of (see core::DeviceClock). Both watermarks are the device's own, so a host reads the same numbers the
+    // retirement window is dated against instead of guessing a lag.
+    const core::FrameTimeline& timeline = d->clock.timeline();
 
     vn::graphics::FrameReport report;
     report.counters  = d->observe.counters();
@@ -696,7 +862,7 @@ void VsgBackend::announceTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
 
 bool VsgBackend::adoptHostTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, bool picture_depends)
 {
-    const HostTargets::Ensured ensured = d->targets.ensure(*target, detail::SessionContentAccess::device(d->session));
+    const HostTargets::Ensured ensured = d->targets.ensure(*target, d->device);
     if (ensured.state == HostTargets::State::Ready)
     {
         ensured.entry->report.rearm();  // the condition ended: the same breakage reports again
@@ -956,7 +1122,7 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int a
     {
         return refuse(HostReadbackRefusal::UnknownAttachment, entry->readback_report);
     }
-    const ::vsg::ref_ptr<::vsg::Device> device = detail::SessionContentAccess::device(d->session);
+    const ::vsg::ref_ptr<::vsg::Device> device = d->device;
     if (device == nullptr)
     {
         return refuse(HostReadbackRefusal::NoDevice, entry->readback_report);
@@ -972,10 +1138,14 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int a
         return refuse(pre, entry->readback_report);
     }
 
-    // The frame that wrote the pixels may still be in flight, so the device is stopped first - and the wait
-    // is COUNTED (the counter deviceWaits() answers with): a readback is the one path that may stop the
-    // device, and "it did so exactly once" stays checkable (see SessionContentAccess::waitDeviceIdle).
-    detail::SessionContentAccess::waitDeviceIdle(d->session);
+    // The frame that wrote the pixels may still be in flight in ANY window (the pixels are a device object), so
+    // every window is stopped first - and each wait is COUNTED (the counter deviceWaits() answers with): a readback
+    // is the one path that may stop the device, and "it did so once per window" stays checkable (see
+    // SessionContentAccess::waitDeviceIdle).
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
+    {
+        detail::SessionContentAccess::waitDeviceIdle(*window->session);
+    }
 
     const HostReadbackRefusal refusal = readColorAttachment(*entry->target, static_cast<std::uint32_t>(attachment),
                                                             device.get(), outPixels);
@@ -1027,7 +1197,7 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::
         // Unsupported - the image belongs to the lender, and this target never promised it.
         return refuse(HostReadbackRefusal::BorrowedDepth, entry->readback_report);
     }
-    const ::vsg::ref_ptr<::vsg::Device> device = detail::SessionContentAccess::device(d->session);
+    const ::vsg::ref_ptr<::vsg::Device> device = d->device;
     if (device == nullptr)
     {
         return refuse(HostReadbackRefusal::NoDevice, entry->readback_report);
@@ -1039,7 +1209,12 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::
         return refuse(pre, entry->readback_report);
     }
 
-    detail::SessionContentAccess::waitDeviceIdle(d->session);
+    // Every window is stopped: the depth image is a device object, and the frame that wrote it may be in flight in
+    // any of them (see readColorBuffer's note).
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
+    {
+        detail::SessionContentAccess::waitDeviceIdle(*window->session);
+    }
 
     const HostReadbackRefusal refusal = readDepthAttachment(*entry->target, device.get(), outDepths);
     if (refusal != HostReadbackRefusal::None)
@@ -1056,17 +1231,33 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::
 
 bool VsgBackend::initialized() const noexcept
 {
-    return d->session.initialized();
+    // Up when ANY window is: a device with several windows is up as soon as one of them can draw, and a window that
+    // failed to come up does not take the others down with it (its own initialize() said why).
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
+    {
+        if (window->session->initialized())
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::uint64_t VsgBackend::framesPresented() const noexcept
 {
-    return d->session.framesPresented();
+    std::uint64_t presented = 0;
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
+    {
+        presented += window->session->framesPresented();
+    }
+    return presented;
 }
 
 std::size_t VsgBackend::deviceWaits() const noexcept
 {
-    return d->session.deviceWaits();
+    // The DEVICE's queue is where every window's destructive path is counted (see core::DeviceClock): one number,
+    // because "the frame path never idles the device" is one fact about one device.
+    return d->retirement.deviceWaits();
 }
 
 std::size_t VsgBackend::releasedContentObjects() const noexcept
@@ -1092,7 +1283,7 @@ void VsgBackend::sweepAbandonedContent()
         return;
     }
     const SweepOutcome outcome =
-        releaseAbandonedContent(*d->store, *d->images, d->session.timeline(), d->session.retirement());
+        releaseAbandonedContent(*d->store, *d->images, d->clock.timeline(), d->retirement);
     d->released_objects += outcome.objects;
     d->released_textures += outcome.textures;
 
@@ -1118,7 +1309,7 @@ void VsgBackend::growBlockStorageIfNeeded()
     // BlockStorage::layoutForInFlight) - which the storage is not, when the framework turns out to keep more
     // frames in flight than the code assumed. Answering them one at a time would drop the second request:
     // a replacement starts with no growth request of its own (see BlockStorage::growthNeeded).
-    const std::uint32_t        learned = d->stated_in_flight != 0U ? d->stated_in_flight : d->session.slots();
+    const std::uint32_t        learned = d->stated_in_flight != 0U ? d->stated_in_flight : d->clock.widestSlots();
     const BlockStorage::Layout before  = d->storage->layout();
     const BlockStorage::Growth need    = d->storage->growthNeeded();
 
@@ -1139,7 +1330,7 @@ void VsgBackend::growBlockStorageIfNeeded()
     }
 
     std::shared_ptr<BlockStorage> replacement =
-        BlockStorage::create(detail::SessionContentAccess::device(d->session), wanted);
+        BlockStorage::create(d->device, wanted);
     if (replacement == nullptr || !adoptBlockStorage(std::move(replacement)))
     {
         return;  // the old storage keeps serving (and counting); its refusals were already reported
@@ -1193,7 +1384,7 @@ bool VsgBackend::adoptBlockStorage(std::shared_ptr<BlockStorage> storage)
     // (the replaced sets are parked through the session's own window - see ContentSets::repoint).
     if (d->assembly != nullptr)
     {
-        d->assembly->repoint(*storage, d->session.timeline(), d->session.retirement());
+        d->assembly->repoint(*storage, d->clock.timeline(), d->retirement);
     }
     std::shared_ptr<BlockStorage> previous = std::move(d->storage);
     d->storage                             = std::move(storage);
@@ -1202,7 +1393,10 @@ bool VsgBackend::adoptBlockStorage(std::shared_ptr<BlockStorage> storage)
         // The old bytes may still be named by a submitted command buffer, so they leave through the window
         // every replaced object gets - and when there is no window to park through yet, they are KEPT
         // (memory spent, never freed early: the same fallback ContentAssembly::beginFrame takes).
-        if (!d->session.retirement().retire(d->session.timeline(), [previous]() {}))
+        //
+        // ONE PARK, ONE DEVICE: the queue is the device's and its watermark is what EVERY window has proven (see
+        // core::DeviceClock), so this is the same act whether one window or four draw with the storage.
+        if (!d->retirement.retire(d->clock.timeline(), [previous]() {}))
         {
             d->kept_storage.push_back(std::move(previous));
         }
@@ -1243,12 +1437,11 @@ BlockStorage* BackendContentAccess::storage(VsgBackend& backend) noexcept
 
 bool BackendContentAccess::useBlockStorage(VsgBackend& backend, const BlockStorage::Layout& layout)
 {
-    if (!backend.d->session.initialized() || backend.d->assembly == nullptr)
+    if (backend.d->device == nullptr || backend.d->assembly == nullptr)
     {
         return false;
     }
-    std::shared_ptr<BlockStorage> replacement =
-        BlockStorage::create(SessionContentAccess::device(backend.d->session), layout);
+    std::shared_ptr<BlockStorage> replacement = BlockStorage::create(backend.d->device, layout);
     return backend.adoptBlockStorage(std::move(replacement));
 }
 
@@ -1269,7 +1462,13 @@ VsgExecutor& BackendContentAccess::executor(VsgBackend& backend) noexcept
 
 WindowTarget* BackendContentAccess::windowTarget(VsgBackend& backend) noexcept
 {
-    return SessionContentAccess::windowTarget(backend.d->session);
+    // The window the last frame was for (the tests that use this seam drive one window, and executeFrame records
+    // which one that was - see Data::driving).
+    if (backend.d->driving >= backend.d->windows.size())
+    {
+        return nullptr;
+    }
+    return SessionContentAccess::windowTarget(*backend.d->windows[backend.d->driving]->session);
 }
 
 MaterialImages* BackendContentAccess::images(VsgBackend& backend) noexcept
