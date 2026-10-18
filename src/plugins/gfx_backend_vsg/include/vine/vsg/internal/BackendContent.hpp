@@ -100,6 +100,21 @@ class BackendContentAccess
      */
     [[nodiscard]] static VsgExecutor& executor(VsgBackend& backend) noexcept;
 
+    /** @brief Gets the target object this device handed out for window @p index, or null.
+     *
+     * @details
+     * - THE SAME OBJECT A HOST HOLDS: the window's identity as a frame names it (RenderFrameExecutor::executeFrame
+     *   resolves a frame's default-framebuffer row to it). A test that drives the device itself needs it to say "this
+     *   frame is for this window" exactly as a host would, whichever way the window came into existence (asked for
+     *   by the test, or brought up by initialize() as the device's own).
+     *
+     * @param backend Backend to ask.
+     * @param index   Window index (0 is the window the device brings up for itself).
+     * @return The target, or null when no such window exists.
+     */
+    [[nodiscard]] static vn::raw_ptr<vn::graphics::WindowPresentTarget> surfaceTarget(VsgBackend& backend,
+                                                                                      std::size_t index) noexcept;
+
     /** @brief Gets the session's window as the frame's default-framebuffer target.
      *
      * The window's own answers are what a size event has to have moved: its extent (a live read), its shape

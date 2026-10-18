@@ -28,8 +28,10 @@
  *
  * ```cpp
  *   backend->executeFrame(TestFrame().pass(pass.get()).target(nullptr).clear(clear).content(commands, camera));
- *   backend->present();
  * ```
+ *
+ * THE FRAME IS WHOLE WHEN THAT CALL RETURNS: the executor's tail presents through the target the frame named (see
+ * RenderFrameExecutor::executeFrame), so a case never calls present() itself - there is no tail call left to forget.
  */
 class TestFrame
 {

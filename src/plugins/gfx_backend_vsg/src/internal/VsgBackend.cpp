@@ -20,9 +20,11 @@
 #include <vine/vsg/internal/ContentAssembly.hpp>
 #include <vine/vsg/internal/ContentStore.hpp>
 #include <vine/vsg/internal/ContentSweep.hpp>
+#include <vine/vsg/internal/Device.hpp>
 #include <vine/vsg/internal/HostReadback.hpp>
 #include <vine/vsg/internal/HostTargets.hpp>
 #include <vine/vsg/internal/MaterialImages.hpp>
+#include <vine/vsg/internal/OffscreenSession.hpp>
 #include <vine/vsg/internal/PassRegistry.hpp>
 #include <vine/vsg/internal/Session.hpp>
 #include <vine/vsg/internal/SessionContent.hpp>
@@ -93,6 +95,32 @@ void trackProgram(ContentStore* store, const vn::intrusive_ptr<const vn::graphic
         const_cast<vn::graphics::ShaderProgram*>(program.get())));
 }
 
+/// @brief The spelling of "this frame belongs to no window": see Data::driving.
+constexpr std::size_t kNoWindow = static_cast<std::size_t>(-1);
+
+/**
+ * @brief Gets the queue family @p device records on: the first one that can do graphics, or -1 when it has none.
+ *
+ * Read from the DEVICE's own queues rather than from the physical device, and that is the difference that matters:
+ * a device built for a window has already chosen the family it serves a surface on, and an off-screen session that
+ * asked the physical device for "a graphics family" could get one the device was never created with (command pools
+ * and submits then refuse it). The queues a device has are the families it can use, by definition.
+ *
+ * @param device The device to ask.
+ * @return The queue family index, or -1 when the device exposes no graphics queue at all.
+ */
+int graphicsQueueFamily(const ::vsg::Device& device)
+{
+    for (const auto& queue : device.getQueues())
+    {
+        if ((queue->queueFlags() & VK_QUEUE_GRAPHICS_BIT) == VK_QUEUE_GRAPHICS_BIT)
+        {
+            return static_cast<int>(queue->queueFamilyIndex());
+        }
+    }
+    return -1;
+}
+
 /// @brief The content of every pass the frame's targets can be served for, one packet per pass that has any
 /// (see present).
 ///
@@ -102,14 +130,20 @@ void trackProgram(ContentStore* store, const vn::intrusive_ptr<const vn::graphic
 /// uses its extent. A pass whose target this backend does not hold produces no packet: the executor reports
 /// the pass instead of drawing it somewhere else, and content built for it would be content nothing records.
 /// A pass with no draws produces no packet either: its clear is the plan's own and records without help.
-std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarget& window, HostTargets& targets,
-                                           api::Session& session, const core::CompiledFrame& frame,
+///
+/// A FRAME MAY HAVE NO WINDOW AT ALL (the off-screen form, see executeFrame): then @p window is null and a pass
+/// that names no target of its own has nowhere to draw - it produces no packet, and the plan has already left it
+/// out (it was compiled against facts with no default-framebuffer row). Passes that name their own targets are
+/// recorded exactly as they are on the windowed path.
+std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarget* window, HostTargets& targets,
+                                           core::FrameTimeline& timeline, core::RetirementQueue& retirement,
+                                           float frame_seconds, const core::CompiledFrame& frame,
                                            std::vector<InputImages>& input_scratch,
                                            std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_views,
                                            std::vector<PassContent>& packets)
 {
     packets.clear();
-    (void)assembly.beginFrame(frame, session.timeline(), session.retirement());
+    (void)assembly.beginFrame(frame, timeline, retirement);
     for (const core::CompiledPass& pass : frame.passes)
     {
         if (pass.draws.empty())
@@ -123,9 +157,13 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
         if (const core::CompiledTarget& compiled_target = frame.targets[pass.target_index];
             compiled_target.target == nullptr)
         {
-            compatibility = window.shape().compatibility();
-            width         = window.width();
-            height        = window.height();
+            if (window == nullptr)
+            {
+                continue;  // no window: a pass that names no target of its own has nowhere to draw
+            }
+            compatibility = window->shape().compatibility();
+            width         = window->width();
+            height        = window->height();
         }
         else
         {
@@ -170,7 +208,7 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
         // The view block is the PASS' (the content layer's contract), built from the first drawing call's
         // camera - the engine's passes draw through one camera per scope, so the first is the pass'.
         const vn::graphics::VineViewBlock view_block =
-            buildViewBlock(pass.draws[0].camera, session.frameSeconds(), width, height);
+            buildViewBlock(pass.draws[0].camera, frame_seconds, width, height);
         ::vsg::ref_ptr<::vsg::Node> content;
         (void)assembly.record(pass, compatibility, input_scratch,
                               std::as_bytes(std::span<const vn::graphics::VineViewBlock>(&view_block, 1U)),
@@ -212,6 +250,10 @@ class WindowFacade : public vn::graphics::WindowPresentTarget
 
 struct VsgBackend::Data
 {
+    /// How this device reaches the display, as the creator stated it (see DeviceDesc): `None` means it was created
+    /// WITHOUT a window, and that is what capabilities().presentation and createSurfaceTarget answer from.
+    vn::graphics::DeviceDesc desc;
+
     /// This layer's inner route: its sink forwards into the SDK's ACTIVE route (see the constructor), which
     /// is the engine's when an engine drives this backend - that is what makes the host read one number.
     vn::graphics::Diagnostics diagnostics;
@@ -256,22 +298,30 @@ struct VsgBackend::Data
     {
         void*      host_handle{nullptr};
         std::unique_ptr<api::Session> session;
-        /// The object the SDK sees. NULL for window 0: this backend answers for it itself (see the header), and one
-        /// identity per window is what keeps "which window is this frame for" answerable by a pointer compare.
+        /// The object the SDK sees. Set for EVERY window, the first included: the device hands out what presents and
+        /// is not one of them (see the header), and one identity per window is what keeps "which window is this frame
+        /// for" answerable by a pointer compare.
         std::unique_ptr<vn::graphics::WindowPresentTarget> target;
     };
 
     std::vector<std::unique_ptr<WindowSlot>> windows;  ///< In the order the host asked (0 = the device's own).
-    /// The window the OPEN frame belongs to (executeFrame names it, presentWindow uses it).
-    std::size_t driving{0};
+    /// The session a frame that names NO window runs through (see executeFrame): built on the first such frame,
+    /// torn down with the device. It is a SUBMIT carrier, not a window - it has no surface, acquires nothing and
+    /// presents nothing.
+    std::unique_ptr<api::OffscreenSession> offscreen;
+    /// Which session the OPEN frame belongs to: an index into @ref windows, or kNoWindow when the frame is off-screen
+    /// (executeFrame names it; presentWindow and the content seam read it back).
+    std::size_t driving{kNoWindow};
     /// THE DEVICE'S completion clock and park queue, shared by every window (see core::DeviceClock): whether a buffer
     /// or a pipeline may be destroyed is a question about the whole device, because the windows draw with the same
     /// objects. A session driven on its own keeps its own pair (see api::SessionOptions).
     core::DeviceClock     clock;
     core::RetirementQueue retirement{0};
     /// The device itself, held here rather than only inside the windows: it outlives every window (the content world
-    /// is built on it), and a window that goes away must not take it down.
-    ::vsg::ref_ptr<::vsg::Device> device;
+    /// is built on it), and a window that goes away must not take it down. A device created WITHOUT a window (see
+    /// DeviceDesc::None) has no window's session to own its instance, so the instance is held beside it.
+    ::vsg::ref_ptr<::vsg::Device>   device;
+    ::vsg::ref_ptr<::vsg::Instance> instance;
 
     std::array<vn::graphics::ReportOnce, kUnservedCount> unserved_reports{};  ///< One episode per entry point.
     std::array<vn::graphics::ReportOnce, kReadbackReportCount> readback_reports{};  ///< The unresolved-target episodes.
@@ -292,8 +342,9 @@ struct VsgBackend::Data
 
 };
 
-VsgBackend::VsgBackend() : d(std::make_unique<Data>())
+VsgBackend::VsgBackend(const vn::graphics::DeviceDesc& desc) : d(std::make_unique<Data>())
 {
+    d->desc = desc;
     // The session and the pieces report through this layer's route, whose sink forwards them into the SDK's
     // ACTIVE route (RenderBackend::setDiagnosticsRoute - the engine's, when an engine drives this backend).
     // That is what puts those sentences in the host's sink and in the engine's single count, without this
@@ -311,53 +362,92 @@ bool VsgBackend::initialize()
     // surface last announced, and with the same layers.
     const bool validation = std::getenv("VINE_VSG_DEBUG_LAYER") != nullptr;
 
-    // A host that never asked for a window still gets one - the device's own (see createSurfaceTarget): the frame
-    // path has to have something to present through when a host drives the aggregate directly.
-    if (d->windows.empty())
+    if (d->desc.presentation == vn::graphics::DevicePresentation::None)
     {
-        ensureWindowAt(0);
-    }
-
-    for (std::size_t index = 0; index < d->windows.size(); ++index)
-    {
-        Data::WindowSlot& window = *d->windows[index];
-
-        api::SessionOptions options;
-        options.width         = d->announced_width;
-        options.height        = d->announced_height;
-        options.validation    = validation;
-        options.native_handle = window.host_handle;
-        // ONE DEVICE, SEVERAL WINDOWS: the first session creates the device, every other one ADOPTS it, and every
-        // window reports its completion evidence into the DEVICE's clock and parks into the DEVICE's queue - because
-        // what that evidence decides (may this buffer or pipeline go) is a question about the whole device.
-        options.device     = d->device.get();
-        options.clock      = &d->clock;
-        options.retirement = &d->retirement;
-
-        // A KEEP IS NOT A REPLACEMENT: this window is on the surface it is already on, so its device, its swapchain
-        // and every compiled pipeline survive, and the content world below stays with them (the session's own
-        // decision table is what answers this, see Session::wouldKeep).
-        if (window.session->wouldKeep(options))
-        {
-            continue;
-        }
-        if (!window.session->initialize(options, d->diagnostics))
-        {
-            // The session reported why (InitFailed), and the sink forwarded it: false plus a reason is the SDK's
-            // contract for a failed initialize(), and a half-built session is this layer's to clean up (the session
-            // does its own, see its note).
-            return false;
-        }
+        // A DEVICE THAT PRESENTS NOTHING IS CREATED WITHOUT A WINDOW: the windowless seam (createDevice) is the one
+        // door that needs no surface (see Device.hpp), so nothing on this path can bring a window into existence -
+        // which is what makes windowCount() == 0 the answer for the whole lifetime of such a device.
         if (d->device == nullptr)
         {
-            // The first window created the device; every later one adopted the same one (see the options above).
-            d->device = detail::SessionContentAccess::device(*window.session);
+            const DeviceResult created = createDevice(DeviceOptions{ .validation = validation });
+            if (!created.ok || created.device == nullptr)
+            {
+                d->diagnostics.report(vn::graphics::DiagnosticSeverity::Error,
+                                      vn::graphics::DiagnosticCategory::InitFailed, created.error);
+                return false;
+            }
+            d->instance = created.instance;
+            d->device   = created.device;
+        }
+    }
+    else
+    {
+        // A HANDLE IS A CREATION INPUT (see DeviceDesc): the host's window is what the device is made for, so the
+        // first window exists before the loop below brings it up. A Handle with nothing to attach to is wiring this
+        // layer cannot repair, and it is said instead of silently becoming a window of our own.
+        if (d->desc.presentation == vn::graphics::DevicePresentation::Handle && d->windows.empty())
+        {
+            if (d->desc.native_handle == nullptr)
+            {
+                d->diagnostics.report(vn::graphics::DiagnosticSeverity::Error,
+                                      vn::graphics::DiagnosticCategory::InitFailed,
+                                      vn::String::fromUtf8("this device was created with a window handle as its "
+                                                           "presentation input, but none was given"));
+                return false;
+            }
+            ensureWindowAt(0);
+            d->windows[0]->host_handle = d->desc.native_handle;
+        }
+
+        // A host that never asked for a window still gets one - the device's own (see createSurfaceTarget): the frame
+        // path has to have something to present through when a host drives the aggregate directly.
+        if (d->windows.empty())
+        {
+            ensureWindowAt(0);
+        }
+
+        for (std::size_t index = 0; index < d->windows.size(); ++index)
+        {
+            Data::WindowSlot& window = *d->windows[index];
+
+            api::SessionOptions options;
+            options.width         = d->announced_width;
+            options.height        = d->announced_height;
+            options.validation    = validation;
+            options.native_handle = window.host_handle;
+            // ONE DEVICE, SEVERAL WINDOWS: the first session creates the device, every other one ADOPTS it, and every
+            // window reports its completion evidence into the DEVICE's clock and parks into the DEVICE's queue -
+            // because what that evidence decides (may this buffer or pipeline go) is a question about the whole
+            // device.
+            options.device     = d->device.get();
+            options.clock      = &d->clock;
+            options.retirement = &d->retirement;
+
+            // A KEEP IS NOT A REPLACEMENT: this window is on the surface it is already on, so its device, its
+            // swapchain and every compiled pipeline survive, and the content world below stays with them (the
+            // session's own decision table is what answers this, see Session::wouldKeep).
+            if (window.session->wouldKeep(options))
+            {
+                continue;
+            }
+            if (!window.session->initialize(options, d->diagnostics))
+            {
+                // The session reported why (InitFailed), and the sink forwarded it: false plus a reason is the SDK's
+                // contract for a failed initialize(), and a half-built session is this layer's to clean up (the
+                // session does its own, see its note).
+                return false;
+            }
+            if (d->device == nullptr)
+            {
+                // The first window created the device; every later one adopted the same one (see the options above).
+                d->device = detail::SessionContentAccess::device(*window.session);
+            }
         }
     }
 
     if (d->device == nullptr)
     {
-        return false;  // no window came up, so there is no device to draw with (and the session said why)
+        return false;  // no window came up and none was created, so there is no device to draw with
     }
 
     // THE CONTENT WORLD BELONGS TO THE DEVICE, and is built ONCE: a window that came up, was re-attached or joined
@@ -415,6 +505,39 @@ api::Session& VsgBackend::sessionAt(std::size_t index)
     return *d->windows[index]->session;
 }
 
+api::OffscreenSession* VsgBackend::ensureOffscreenSession()
+{
+    if (d->device == nullptr)
+    {
+        return nullptr;  // no device came up: there is nothing to submit an off-screen frame on
+    }
+    if (d->offscreen == nullptr)
+    {
+        d->offscreen = std::make_unique<api::OffscreenSession>();
+    }
+    if (d->offscreen->initialized())
+    {
+        return d->offscreen.get();
+    }
+
+    // The device was created by a window's session (a Vulkan device is built with the surface it presents to), or by
+    // the windowless seam when this device presents nothing at all. Either way the family is read from the DEVICE's
+    // own queues - the families it was created with - and never inferred from the physical device (see
+    // graphicsQueueFamily).
+    api::OffscreenSessionOptions options;
+    options.device       = d->device.get();
+    options.queue_family = graphicsQueueFamily(*d->device);
+    // The DEVICE's clock and park queue, like every window: an off-screen frame's GPU work has to count towards the
+    // watermark every shared resource is dated against (see core::DeviceClock).
+    options.clock      = &d->clock;
+    options.retirement = &d->retirement;
+    if (!d->offscreen->initialize(options, d->diagnostics))
+    {
+        return nullptr;  // it reported why (InitFailed, forwarded to the SDK's route)
+    }
+    return d->offscreen.get();
+}
+
 void VsgBackend::releaseContentWorld() noexcept
 {
     // THE DESTRUCTIVE PATH RUNS UNDER COUNTED DEVICE IDLES, one per window (the resource rule the design writes
@@ -451,19 +574,22 @@ void VsgBackend::releaseContentWorld() noexcept
 
 void VsgBackend::shutdown()
 {
-    // The device's objects FIRST (see releaseContentWorld), then the windows, then the device itself: what is
-    // destroyed must not be named by anything still alive.
+    // The device's objects FIRST (see releaseContentWorld), then the sessions, then the device itself: what is
+    // destroyed must not be named by anything still alive. The off-screen session is one of those sessions - it
+    // borrows the device and reports into the device's clock - so it goes before the clock and the device do.
     releaseContentWorld();
+    d->offscreen.reset();
     for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
     {
         window->session->shutdown();
     }
-    d->device = {};
+    d->device   = {};
+    d->instance = {};
     // The evidence starts over with the next device: nothing parked survives it, and the windows that come back are
     // registered again by their own initialize().
     d->clock      = core::DeviceClock{};
     d->retirement = core::RetirementQueue{0};
-    d->driving    = 0;
+    d->driving    = kNoWindow;
 }
 
 vn::graphics::RenderFrameExecutor& VsgBackend::executor()
@@ -475,6 +601,17 @@ vn::graphics::RenderFrameExecutor& VsgBackend::executor()
 vn::raw_ptr<vn::graphics::WindowPresentTarget>
 VsgBackend::createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why)
 {
+    // A DEVICE CREATED TO PRESENT NOTHING has no window half at all: the machine answer is NoPresentation, and it is
+    // SILENT - a display-less device is a first-class state rather than a failure (see RenderDevice::createSurfaceTarget).
+    if (d->desc.presentation == vn::graphics::DevicePresentation::None)
+    {
+        if (why != nullptr)
+        {
+            *why = vn::graphics::SurfaceTargetResult::NoPresentation;
+        }
+        return nullptr;
+    }
+
     // ONE LIVE SWAPCHAIN PER WINDOW (see the header). The same window again - including a second window of the
     // device's own, which has no other reason to exist - is the "occupied" episode, said once, because a host that
     // asked has to hear it rather than discover a picture that never appears.
@@ -523,9 +660,18 @@ void VsgBackend::openFrameBooks()
     // in-flight count (see the in-flight floor note). Both are answered by one replacement.
     growBlockStorageIfNeeded();
 
-    // The session mints the frame's token and advances the viewer's clock; the recorder opens the plan for
-    // the same token, so the description and the session's frame cannot disagree about which frame it is.
-    const core::FrameToken token = sessionAt(d->driving).beginFrame();
+    // The frame's session mints the token and advances its own frame stamp; the recorder opens the plan for the same
+    // token, so the description and the session's frame cannot disagree about which frame it is. A frame with no
+    // window is the OFF-SCREEN form: the off-screen session opens it, and acquires nothing (see api::OffscreenSession).
+    core::FrameToken token{};
+    if (d->driving < d->windows.size())
+    {
+        token = sessionAt(d->driving).beginFrame();
+    }
+    else if (d->offscreen != nullptr)
+    {
+        token = d->offscreen->beginFrame();
+    }
     (void)d->recorder.beginFrame(token);  // it answers whether the frame's books could be opened (see its note)
 }
 
@@ -538,10 +684,17 @@ void VsgBackend::closeFrameBooks()
     // itself (see WindowTarget::facts), plus one row per host target this backend holds - built or not,
     // because the plan has to be able to say "this one has no objects yet", and because the compiler resolves
     // a pass' declared INPUTS from this same table (see HostTargets::facts).
+    //
+    // A FRAME WITH NO WINDOW has no default-framebuffer row at all: that row is what the frame's passes naming no
+    // target resolve to, and compiling without it is how "this pass has nowhere to draw" becomes a reported skip
+    // instead of a picture in a window nobody named.
     d->facts.clear();
-    if (WindowTarget* window = detail::SessionContentAccess::windowTarget(sessionAt(d->driving)))
+    if (d->driving < d->windows.size())
     {
-        d->facts.push_back(window->facts());
+        if (WindowTarget* window = detail::SessionContentAccess::windowTarget(sessionAt(d->driving)))
+        {
+            d->facts.push_back(window->facts());
+        }
     }
     for (const std::unique_ptr<HostTargets::Entry>& entry : d->targets.entries())
     {
@@ -555,17 +708,14 @@ void VsgBackend::closeFrameBooks()
 void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
                               vn::graphics::PresentTarget* present_to)
 {
-    // THE FRAME'S TARGET NAMES ITS WINDOW. A device hands out one target per window (see createSurfaceTarget), so
-    // this is where a frame says which window it is for: nullptr and this device itself mean its FIRST window, and
-    // any other target must be one this device handed out - anything else is wiring it could not have produced, so
-    // nothing is recorded and the reason is said once per episode instead of being drawn into someone else's window.
-    constexpr std::size_t kNoWindow = static_cast<std::size_t>(-1);
-    std::size_t           index     = kNoWindow;
-    if (present_to == nullptr)
-    {
-        index = 0;
-    }
-    else
+    // THE FRAME'S TARGET NAMES ITS WINDOW - AND NAMING NONE IS ITS OWN ANSWER. A device hands out one target per
+    // window (see createSurfaceTarget), so a non-null target must be one this device handed out; anything else is
+    // wiring it could not have produced, so nothing is recorded and the reason is said once per episode instead of
+    // being drawn into someone else's window. nullptr is a frame with NO WINDOW: the off-screen form, which runs
+    // through the device's off-screen session, records into the targets its passes name, submits, and presents
+    // nothing (see `.ai/design/device-is-not-a-window.md` §6).
+    std::size_t index = kNoWindow;
+    if (present_to != nullptr)
     {
         for (std::size_t candidate = 0; candidate < d->windows.size(); ++candidate)
         {
@@ -575,30 +725,47 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
                 break;
             }
         }
-    }
-    if (index >= d->windows.size())
-    {
-        if (d->foreign_target_report.shouldReport())
+        if (index >= d->windows.size())
         {
-            reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
-                             vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                             vn::String::fromUtf8("a frame named a surface target this device did not hand out: "
-                                                  "nothing was recorded (a device serves the windows it created, "
-                                                  "see createSurfaceTarget)"));
+            if (d->foreign_target_report.shouldReport())
+            {
+                reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                                 vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                 vn::String::fromUtf8("a frame named a surface target this device did not hand out: "
+                                                      "nothing was recorded (a device serves the windows it created, "
+                                                      "see createSurfaceTarget)"));
+            }
+            return;
         }
-        return;
     }
 
-    // The window this frame belongs to: the executor's default-framebuffer target is ITS, and presentWindow() reads
-    // the same index back when the frame's tail arrives.
-    d->driving            = index;
-    api::Session& session = sessionAt(index);
-    if (!session.initialized())
+    api::OffscreenSession* offscreen = nullptr;
+    if (present_to == nullptr)
     {
-        reportUnserved(kUnservedNoSession);
-        return;  // nothing runs and nothing presents: the session that would record it is not up
+        offscreen = ensureOffscreenSession();
+        if (offscreen == nullptr)
+        {
+            reportUnserved(kUnservedNoSession);
+            return;  // nothing runs: the device the frame would be submitted on is not up
+        }
+        // NO WINDOW IN THE FRAME, SO NONE IN THE EXECUTOR: a pass that names no target has nowhere to draw, and
+        // the plan it is compiled against says so (see closeFrameBooks).
+        d->driving = kNoWindow;
+        d->executor.setWindow(nullptr);
     }
-    d->executor.setWindow(detail::SessionContentAccess::windowTarget(session));
+    else
+    {
+        // The window this frame belongs to: the executor's default-framebuffer target is ITS, and presentWindow()
+        // reads the same index back when the frame's tail arrives.
+        d->driving            = index;
+        api::Session& session = sessionAt(index);
+        if (!session.initialized())
+        {
+            reportUnserved(kUnservedNoSession);
+            return;  // nothing runs and nothing presents: the session that would record it is not up
+        }
+        d->executor.setWindow(detail::SessionContentAccess::windowTarget(session));
+    }
 
     // THE VALUE, run by the layer that owns the identities, in the order the value states. What the engine
     // compiled arrives as data (see FrameDescription), so the frame's own shape is what drives this loop - and
@@ -650,6 +817,17 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
         closePassScope();
     }
     closeFrameBooks();
+
+    // THE FRAME'S TAIL, and it is this call's last step whichever way the frame is presented. WITH a window, the
+    // executor presents through the target the frame named - PresentTarget::present is the mechanism, the executor is
+    // the one making the call - and in this backend that call is what commits the frame and shows it. WITHOUT a
+    // window there is nothing to present, so the off-screen session commits it inline.
+    if (offscreen != nullptr)
+    {
+        commitFrameThrough(nullptr, offscreen);
+        return;
+    }
+    present_to->present();
 }
 
 void VsgBackend::presentWindow(std::size_t index)
@@ -663,52 +841,89 @@ void VsgBackend::presentWindow(std::size_t index)
     {
         return;  // no frame is open (executeFrame closed none, and says why), or the session is down
     }
+    commitFrameThrough(&session, nullptr);
+}
+
+void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession* offscreen)
+{
+    if (d->frame == nullptr || (window == nullptr && offscreen == nullptr))
+    {
+        return;
+    }
+
+    // The frame's own clock and park queue: the window's, or the off-screen session's - both are the DEVICE's when
+    // the backend gave them one (see core::DeviceClock).
+    core::FrameTimeline&   timeline      = window != nullptr ? window->timeline() : offscreen->timeline();
+    core::RetirementQueue& retirement    = window != nullptr ? window->retirement() : offscreen->retirement();
+    const float            frame_seconds = window != nullptr ? window->frameSeconds() : offscreen->frameSeconds();
+    WindowTarget*          window_target =
+        window != nullptr ? detail::SessionContentAccess::windowTarget(*window) : nullptr;
 
     if (d->frame->passes.empty())
     {
-        // NOTHING TO RECORD, and the frame is still submitted and presented - the session's own rule (an
-        // acquired image has to be handed back), and the graph it submits is the one the session created
-        // with its window's render graph in it. That graph is not decoration: it is what moves the acquired
-        // image out of UNDEFINED, and a present of an image still in UNDEFINED is a VUID (measured: an EMPTY
-        // command graph presents an image nobody rendered into). The plan with passes below builds its own
-        // graph instead, because the executor places each pass graph in it (the window's included, see
-        // recordWindow).
+        // NOTHING TO RECORD, and the frame is still submitted - the session's own rule (an acquired image has to be
+        // handed back), and the graph it submits is the one the session created with its window's render graph in it.
+        // That graph is not decoration: it is what moves the acquired image out of UNDEFINED, and a present of an
+        // image still in UNDEFINED is a VUID (measured: an EMPTY command graph presents an image nobody rendered
+        // into). The plan with passes below builds its own graph instead, because the executor places each pass graph
+        // in it (the window's included, see recordWindow).
         //
-        // The sweep runs on this path too: a frame that draws nothing is still a frame in which the host may
-        // have dropped something, and the sweep's place is the frame's - not "the frames that drew".
+        // An OFF-SCREEN session's bootstrap graph is empty and valid: there is no image to move out of UNDEFINED,
+        // because nothing was acquired and nothing will be presented.
+        //
+        // The sweep runs on this path too: a frame that draws nothing is still a frame in which the host may have
+        // dropped something, and the sweep's place is the frame's - not "the frames that drew".
         sweepAbandonedContent();
-        (void)d->executor.commit(*d->frame, session);
+        if (window != nullptr)
+        {
+            (void)d->executor.commit(*d->frame, *window);
+        }
+        else
+        {
+            (void)d->executor.commit(*d->frame, *offscreen);
+        }
         d->frame = nullptr;
         return;
     }
 
-    const ::vsg::ref_ptr<::vsg::CommandGraph> graph = detail::SessionContentAccess::makeFrameGraph(session);
+    const ::vsg::ref_ptr<::vsg::CommandGraph> graph = window != nullptr
+                                                          ? detail::SessionContentAccess::makeFrameGraph(*window)
+                                                          : offscreen->makeFrameGraph();
     if (graph == nullptr)
     {
         d->frame = nullptr;
         return;
     }
 
-    // The frame drive's own order, once (see VsgExecutor): what the plan answered for its targets becomes
-    // real, the frame's content is assembled and recorded into the passes this slice can serve, the plan
-    // is recorded into this frame's graph, and the graph is the session's - which is the call that submits
-    // and presents, and the one whose false answer means the writes never happened.
-    (void)d->executor.applyTargetPlans(*d->frame, d->facts, session.timeline(), session.retirement());
+    // The frame drive's own order, once (see VsgExecutor): what the plan answered for its targets becomes real, the
+    // frame's content is assembled and recorded into the passes this slice can serve, the plan is recorded into this
+    // frame's graph, and the graph is the session's - which is the call that submits (and, for a window, presents),
+    // and the one whose false answer means the writes never happened.
+    (void)d->executor.applyTargetPlans(*d->frame, d->facts, timeline, retirement);
     std::span<const PassContent> packets{};
-    if (WindowTarget* window = detail::SessionContentAccess::windowTarget(session);
-        d->assembly != nullptr && window != nullptr)
+    if (d->assembly != nullptr && (window_target != nullptr || window == nullptr))
     {
-        packets = recordContent(*d->assembly, *window, d->targets, session, *d->frame, d->input_scratch,
-                                d->input_views, d->packets);
+        packets = recordContent(*d->assembly, window_target, d->targets, timeline, retirement, frame_seconds,
+                                *d->frame, d->input_scratch, d->input_views, d->packets);
     }
     (void)d->executor.record(*d->frame, graph, packets);
     // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is
     // what advances the retirement queue - so this is the last moment a park can be dated against this frame
     // (see api/ContentSweep, and the ordering rule core::RetirementQueue states).
     sweepAbandonedContent();
-    if (detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }))
+    const bool assigned = window != nullptr
+                              ? detail::SessionContentAccess::assignFrameGraphs(*window, ::vsg::CommandGraphs{ graph })
+                              : offscreen->assignFrameGraphs(::vsg::CommandGraphs{ graph });
+    if (assigned)
     {
-        (void)d->executor.commit(*d->frame, session);  // it reports its own failure and marks what it wrote
+        if (window != nullptr)
+        {
+            (void)d->executor.commit(*d->frame, *window);  // it reports its own failure and marks what it wrote
+        }
+        else
+        {
+            (void)d->executor.commit(*d->frame, *offscreen);
+        }
     }
     d->frame = nullptr;
 }
@@ -775,10 +990,14 @@ void VsgBackend::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::
 
 vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
 {
-    // Both halves are served: frames are presented through the window this device handed out (so a host can plan
-    // for a picture), and a non-null target is held (api/HostTargets), drawn into by the passes that announce it,
-    // and read back through the readback entry points.
-    return vn::graphics::Capabilities{ .render_targets = true, .presentation = true };
+    // Both halves are served - EXCEPT THE WINDOW ONE when the device was created to present nothing (see
+    // DeviceDesc): frames are presented through a target this device handed out, a non-null target is held
+    // (api/HostTargets), drawn into by the passes that announce it, and read back through the readback entry points -
+    // and a `None` device says in the same value that it has no window half at all.
+    return vn::graphics::Capabilities{
+        .render_targets = true,
+        .presentation   = d->desc.presentation != vn::graphics::DevicePresentation::None,
+    };
 }
 
 vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
@@ -1206,6 +1425,12 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::
 
 bool VsgBackend::initialized() const noexcept
 {
+    // A device created to present nothing has no session to ask: it is up when its device is (and that is the only
+    // thing a window would have told us here).
+    if (d->desc.presentation == vn::graphics::DevicePresentation::None)
+    {
+        return d->device != nullptr;
+    }
     // Up when ANY window is: a device with several windows is up as soon as one of them can draw, and a window that
     // failed to come up does not take the others down with it (its own initialize() said why).
     for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
@@ -1438,12 +1663,23 @@ VsgExecutor& BackendContentAccess::executor(VsgBackend& backend) noexcept
 WindowTarget* BackendContentAccess::windowTarget(VsgBackend& backend) noexcept
 {
     // The window the last frame was for (the tests that use this seam drive one window, and executeFrame records
-    // which one that was - see Data::driving).
+    // which one that was - see Data::driving). A frame that named NO window leaves none: the off-screen form has no
+    // default framebuffer to answer with.
     if (backend.d->driving >= backend.d->windows.size())
     {
         return nullptr;
     }
     return SessionContentAccess::windowTarget(*backend.d->windows[backend.d->driving]->session);
+}
+
+vn::raw_ptr<vn::graphics::WindowPresentTarget> BackendContentAccess::surfaceTarget(VsgBackend& backend,
+                                                                                   std::size_t    index) noexcept
+{
+    if (index >= backend.d->windows.size())
+    {
+        return nullptr;
+    }
+    return backend.d->windows[index]->target.get();
 }
 
 MaterialImages* BackendContentAccess::images(VsgBackend& backend) noexcept

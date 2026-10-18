@@ -15,9 +15,14 @@
 executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟）+ FrameRecorder 开帧
                      ──▶  按值走每条 pass：FrameRecorder 只记"事实"（数据），不碰资源
                      ──▶  FrameCompiler + FrameGraph：依赖求值、缺省解析、合法性判定 → CompiledFrame
-present()           ──▶  ContentAssembly（事实表 + 流 + 块）→ ContentPass 录制 → VsgExecutor 提交/呈递
-（目标那一半，见 WindowPresentTarget）
+                     ──▶  ContentAssembly（事实表 + 流 + 块）→ ContentPass 录制 → VsgExecutor 记录/提交
+帧尾 present（执行器调）──▶  经帧命名的目标（PresentTarget；窗口实现是 WindowPresentTarget）
 ```
+
+**没有目标的那一帧**（`executeFrame(value, nullptr)`）走**离屏会话**（`OffscreenSession`）：`beginFrame()` 只推进
+帧时钟、**不取像**，`facts` 里没有默认帧缓冲行（命名了窗口的 pass 因此在编译期被排除），录完**立即提交、不 present**
+——没有目标就没有东西可呈递，所以这一帧在 `executeFrame()` 返回前就完成了；**有目标的那一帧也是**——帧尾的
+`present()` 由执行器调，宿主驱动完一帧就不必再做什么（`SessionDrive` 是两条路径共用的提交件）。
 
 帧的**值**（`vn::graphics::FrameDescription`）就是引擎给的一切：每条 pass 的身份、order、解析好的输入，
 以及它发出的 target / viewport / 清屏 / 状态与每条绘制调用 —— **没有一长串必须按顺序发的调用**，也没有
@@ -39,7 +44,7 @@ present()           ──▶  ContentAssembly（事实表 + 流 + 块）→ Con
 ## 2. 编译段（`FrameGraph` + `FrameCompiler`）
 
 * **依赖求值**：pass 之间按声明的输入求序；环 = 不变式违规 ⇒ 跳过该分量 + 报一次 + `invalid_schedules` 计数，
-  其余照跑，帧仍以 `present()`（表面的那一半）收尾。
+  其余照跑，帧仍以执行器在帧尾的 `present()`（表面的那一半）收尾。
 * **缺省解析**：视口（未公告 = 整目标）、程序（未点名 = 帧默认）、动态层（`resolveDynamicState`：
   显式 StateNode 赢 pass 深度）、清屏（有效 policy + `bootstrap`/`depth_preserved` 两个**执行器推不出来**的事实）。
 * **形状与格式**：`TargetPlan`（`None/Repair/ResizeInPlace/Rebuild`）与 `DepthProbe` 的答案从**同一份目标事实**

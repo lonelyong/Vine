@@ -6,6 +6,8 @@
 
 #include <vsg/core/Exception.h>
 
+#include <vine/vsg/internal/OffscreenSession.hpp>
+
 VN_VSG_NS_BEGIN
 
 namespace
@@ -384,6 +386,19 @@ bool VsgExecutor::commit(const core::CompiledFrame& frame, api::Session& session
     // this frame): the session has reported why, and what it cannot know is which of the frame's targets
     // are now holding contents nobody can vouch for - marking them is what makes the next compiled plan
     // repair them (see noteLostSubmission).
+    noteLostSubmission(frame);
+    return false;
+}
+
+bool VsgExecutor::commit(const core::CompiledFrame& frame, api::OffscreenSession& session)
+{
+    if (session.commitFrame())
+    {
+        return true;
+    }
+
+    // The off-screen session's half of the same rule: it reports why its submission did not happen, and this
+    // marks the targets whose contents are now unknown (see noteLostSubmission).
     noteLostSubmission(frame);
     return false;
 }

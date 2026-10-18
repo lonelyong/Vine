@@ -282,16 +282,10 @@ void RenderEngine::frame(double dt)
     PresentTarget* const present_to =
         (area_ != nullptr && area_->target() != nullptr) ? area_->target() : own_target_;
 
-    // The device's own frame (acquiring the presentable image, recording, reaching the state a present can hand
-    // back) happens inside this ONE call (see RenderFrameExecutor::executeFrame).
+    // The WHOLE FRAME happens inside this ONE call (see RenderFrameExecutor::executeFrame): the device acquires the
+    // presentable image, the record submits, and the frame's tail presents it through the target it names. The engine
+    // does not present afterwards - presenting twice would be presenting somebody else's frame (or nothing at all).
     device_->executor().executeFrame(frame_value_, present_to);
-
-    // The frame's tail - committing what was collected, and showing it - is the TARGET's own call (see
-    // WindowPresentTarget::present). A frame that named no target presents nothing, and it is complete when
-    // executeFrame() returned.
-    if (present_to != nullptr) {
-        present_to->present();
-    }
 }
 
 const FrameContext& RenderEngine::frameContext() const

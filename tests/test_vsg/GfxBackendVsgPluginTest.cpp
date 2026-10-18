@@ -297,14 +297,12 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
                                          .content(commands, camera.get())
                                          .value(),
                                      target);
-    target->present();
 
     // A presentation reaches the display server asynchronously: two plan-free frames re-present the picture
     // before it is read (the settle the rewrite's own device cases use).
     for (int index = 0; index < 2; ++index)
     {
         backend->executor().executeFrame(vn::graphics::FrameDescription{}, target);
-        target->present();
     }
 
     const auto left  = host.pixel(kWidth / 4, kHeight / 2);

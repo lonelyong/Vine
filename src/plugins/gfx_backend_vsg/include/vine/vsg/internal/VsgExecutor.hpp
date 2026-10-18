@@ -56,6 +56,11 @@
  */
 VN_VSG_NS_BEGIN
 
+namespace api
+{
+class OffscreenSession;
+}  // namespace api
+
 /**
  * @brief The content of one pass, as the layer that owns the content world recorded it.
  *
@@ -236,6 +241,25 @@ class VN_VSG_API VsgExecutor
      *         targets were marked, and the session reported why).
      */
     bool commit(const core::CompiledFrame& frame, api::Session& session);
+
+    /**
+     * @brief Commits @p frame through @p session: submit and completion evidence, with NO present.
+     *
+     * THE OFF-SCREEN TWIN OF @ref commit, and the reason it exists: a frame that names no surface
+     * (RenderFrameExecutor::executeFrame(frame, nullptr)) still has work to submit, and its session is an
+     * api::OffscreenSession - which owns the submission and the device-clock evidence but presents nothing. What
+     * this executor adds is the same half the windowed overload adds: WHICH of the frame's targets are now holding
+     * contents nobody can vouch for when the submission did not happen.
+     *
+     * A FALSE ANSWER MARKS, including "there was no open frame": both mean this frame's writes were never handed to
+     * the queue. The session is the reporter on this path, so this call adds no diagnostic of its own.
+     *
+     * @param frame   The frame whose graphs were recorded and assigned to the session.
+     * @param session The off-screen session that submits them.
+     * @return true when the frame was submitted; false when it was not (the frame's written targets were marked, and
+     *         the session reported why).
+     */
+    bool commit(const core::CompiledFrame& frame, api::OffscreenSession& session);
 
     /** @brief Sets whether this frame's passes are recorded through measurement wrappers.
      *

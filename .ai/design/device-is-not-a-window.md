@@ -111,6 +111,31 @@
 在这之前，`nullptr` 仍然驱动窗口 0——**这是已知且写在契约注释里的约定**，不是偶然：一块窗口的设备上
 "不呈现"与"没有窗口"今天无法区分，因为提交本身就是靠那条会话做的。
 
+**已落地（2026-10-18，第二片）**：上面的三步按顺序做完了。落地形状与判据：
+
+* `api::OffscreenSession`（`include/vine/vsg/internal/OffscreenSession.hpp` + `src/plugins/gfx_backend_vsg/src/internal/OffscreenSession.cpp`）：
+  借用设备与图形队列族，`vsg::Viewer`（零窗口）+ `CommandGraph(device, family)` + 一个 task；`beginFrame()` 只
+  `advanceToNextFrame()`（无窗口 ⇒ 不取像）与 `clock.begin()`，`commitFrame()` 提交、**不 present**，并按
+  `frame - slots` 向 `DeviceClock::windowCompleted` 报证据、`retirement().advance()` 收尾。槽数学习与窗口会话同源
+  （`core::probeSlotCount` / `SlotTracker`）。两个会话共用的两件（不泵事件的 viewer、保留 VkResult 的提交）
+  抽到 `SessionDrive.hpp`，避免第二份实现漂移。
+* `VsgBackend`：`Data::driving` 用 `kNoWindow` 表示"这一帧没有窗口"；`nullptr` ⇒ 懒建离屏会话、`executor.setWindow(nullptr)`、
+  `facts` 不含默认帧缓冲行、录完立即 `commit`（**帧在 `executeFrame` 返回前完成**，因为没有人会替它 present）。
+  窗口路径的"记录 + 提交"与离屏路径合并成 `commitFrameThrough(window, offscreen)`，两者只差会话、默认帧缓冲行与
+  present。
+* `recordContent(...)`：`WindowTarget&` 变成指针；没有窗口时跳过"命名默认帧缓冲"的 pass（这样的 pass 在编译期
+  就已因缺少 facts 行被排除），命名了自己目标的 pass 照常录。
+* 判据：全量构建 0 错 0 警；`ctest` **24/24**；`test_vsg` 434 例（431 过 + 3 skip）；五个门禁 0 finding。
+  新用例 `VsgBackendTest.ANullTargetRunsTheFrameWithoutAnyWindow` 覆盖：不 present、不新增窗口、无诊断、帧确实
+  进队列（`progress->submitted`）、离屏帧进设备水位（`progress->completed > 0`），随后窗口帧仍 present 一次。
+  变异实测：① `nullptr` 回到窗口 0 ⇒ 该用例红（且离屏电池连夹具都起不来）；② 离屏不报 `windowCompleted` ⇒
+  水位断言红。
+* 与 §4 判据 2 的一处口径修正：`initialize()` 仍会为"从未要过窗口"的设备起一块自己的窗口（`RenderEngine` 无区
+  兜底依赖它），所以"离屏帧后 `windowCount()`"是**不变**而不是 0——用例断言的是"离屏帧不新增窗口"。
+  **2026-10-20 补**：这一条只是"要过窗口的设备"的口径。设备**创建时**说了 `DeviceDesc::None`（永不上屏）之后，
+  `initialize()` 走无窗口缝 `createDevice()`、一块窗口都不建，`windowCount()` 在整个生命周期里**真的是 0**，
+  `createSurfaceTarget` 静默答 `NoPresentation`（`VsgBackendTest.ADeviceCreatedWithNoPresentationRunsWholeFramesWithoutAWindow`）。
+
 ## 6. 拆会话：提交载体可以没有窗口（下一片，2026-10-18 设计）
 
 **vsg 的事实（已核对）**：`vsg::CommandGraph` 有三种构造——

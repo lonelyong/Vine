@@ -67,6 +67,38 @@ enum class SurfaceTargetResult
 };
 
 /**
+ * @brief How a device reaches the display: the CREATION input a host states once (see RenderDevice::capabilities).
+ *
+ * @details
+ * - The three answers differ in what the host must have BEFORE the device exists:
+ *   - None: nothing. The device presents nothing at all - it runs the frames that name no target (the off-screen
+ *     form, see RenderFrameExecutor::executeFrame), and createSurfaceTarget answers NoPresentation silently,
+ *     because a display-less device is a first-class state (a bake, a CI run, a compute node), not a failure.
+ *   - Probe: nothing either, and the device brings up a window of its own when the host never asks for one. It is
+ *     the default, and what a host that lets the device own its surface relies on.
+ *   - Handle: the host's window handle (DeviceDesc::native_handle). The window is part of the creation input rather
+ *     than a later createSurfaceTarget() call, which is the shape a UI host with a surface already has.
+ * - `capabilities().presentation` is answered FROM this value, so a host reads back what it asked for instead of
+ *   inferring it from whether a target happened to be handed out.
+ */
+enum class DevicePresentation
+{
+    None,   ///< The device presents nothing: `capabilities().presentation == false`, and createSurfaceTarget
+            ///< answers NoPresentation without a report.
+    Probe,  ///< The device presents; with no window asked for it brings up one of its own (the default).
+    Handle, ///< The device presents; the host's window is the creation input (see DeviceDesc::native_handle).
+};
+
+/** @brief What a device is created with: how it reaches the display, and the window that is part of what it IS. */
+struct VN_GRAPHICS_API DeviceDesc
+{
+    DevicePresentation presentation{DevicePresentation::Probe}; ///< How this device reaches the display.
+    /// The host's window handle (HWND / xcb_window_t carried as `void*`) when @ref presentation is Handle; ignored
+    /// otherwise. A Handle without a handle is a wiring error, and the device reports it when it is brought up.
+    void* native_handle{nullptr};
+};
+
+/**
  * @brief The DEVICE half of a backend: what one GPU has, what it remembers, and the windows it can hand out.
  *
  * @details
@@ -79,6 +111,8 @@ enum class SurfaceTargetResult
  *   of the axis that shaped this: a device is not initialized with a window, but "will anything be shown" is part of
  *   what it is).
  * - WHAT A DEVICE IS TOLD, and when - each is a RESOURCE announcement, not a frame call:
+ *   - how it presents (DeviceDesc): the CREATION input, stated by whoever created it - and the one that decides
+ *     whether the device has a window half at all (DevicePresentation::None is a device created without a window);
  *   - setRenderTarget(target): a target the host will draw into or read back, so the device can hold it and build its
  *     attachments before any frame names it (null selects the default framebuffer, which needs none);
  *   - releasePass / releaseRenderTarget: the pass / target is going away - free what it owns (see each entry);

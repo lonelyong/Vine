@@ -45,13 +45,17 @@
  *     last submitted frame left (api/HostReadback). A refusal answers the SDK's machine-readable result and
  *     says its reason once per episode;
  *   * the surface facts - `setWindowHandle()`/`nativeHandle()` for a host surface, `resize()` and the present:
- *     this backend HAS a window half, so it implements `vn::graphics::WindowPresentTarget` and hands itself out
- *     from `createSurfaceTarget()` (a device that draws only into render targets answers none at all, see
- *     RenderDevice::createSurfaceTarget). ONE window is served per backend: a second ask is refused with
- *     `WindowOccupied` and said once, because one live swapchain per window is a platform constraint. The
- *     surface OWNS its size (the SDK's authority order), so a live announcement makes the session FOLLOW the
- *     surface it is on (re-read it, rebuild the swapchain when it changed - one COUNTED device stop), while
- *     the announced numbers are what the next `initialize()` creates a window at;
+ *     THE DEVICE IS NOT A WINDOW (see `.ai/design/device-is-not-a-window.md`), so what this backend hands out from
+ *     `createSurfaceTarget()` is one target OBJECT per window, the first included - never itself (a device that draws
+ *     only into render targets answers none at all, see RenderDevice::createSurfaceTarget). The same window asked for
+ *     twice is refused with `WindowOccupied` and said once, because one live swapchain per window is a platform
+ *     constraint, while a different window is served. The surface OWNS its size (the SDK's authority order), so a
+ *     live announcement makes the session FOLLOW the surface it is on (re-read it, rebuild the swapchain when it
+ *     changed - one COUNTED device stop), while the announced numbers are what the next `initialize()` creates a
+ *     window at;
+ *   * THE OFF-SCREEN FRAME (no window at all): `executeFrame(frame, nullptr)` is the off-screen form, not "window
+ *     0" - it runs through api::OffscreenSession, which has no surface, acquires nothing and presents nothing, and
+ *     the frame is submitted by the time the call returns (there is nobody to hand its tail to);
  *   * the diagnostics route - this layer's own route feeds the SDK's ACTIVE one (`reportDiagnostic`), so a
  *     host's sink and its single `diagnosticCount()` see the session's own reports without this layer
  *     re-reporting anything;
@@ -76,6 +80,7 @@ class BlockStorage;
 
 namespace api
 {
+class OffscreenSession;
 class Session;
 }  // namespace api
 
@@ -88,7 +93,19 @@ class BackendContentAccess;
 class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
 {
   public:
-    VsgBackend();
+    /** @brief Creates the device @p desc asks for (see DeviceDesc and RenderDevice::capabilities).
+     *
+     * @details
+     * - `Probe` (the default) is the window-owning shape: the device brings up a window of its own when the host
+     *   names none, and hands out one target per window the host asks for.
+     * - `None` is a device that presents nothing: `initialize()` creates its device through the WINDOWLESS seam (no
+     *   window is ever created), `capabilities().presentation` answers false, and `createSurfaceTarget` answers
+     *   NoPresentation silently. Its frames are the ones that name no target.
+     * - `Handle` is the same device made for the host's window, named as the creation input.
+     *
+     * @param desc How this device reaches the display (see vn::graphics::DeviceDesc).
+     */
+    explicit VsgBackend(const vn::graphics::DeviceDesc& desc = {});
     ~VsgBackend() override;
 
     VsgBackend(const VsgBackend&)            = delete;
@@ -96,6 +113,12 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
 
   public:
     /** @brief Brings the session up from what was announced (window handle, size, default program).
+     *
+     * @details
+     * - A device created with `DevicePresentation::None` creates its DEVICE here and no window: the windowless seam
+     *   (`vine/vsg/internal/Device.hpp`) is the door that needs no surface, so such a device never owns a window.
+     * - A device created with `DevicePresentation::Handle` without a handle is refused here with one InitFailed
+     *   report rather than quietly becoming a window of its own.
      *
      * @return true when the session is ready to render; false when it is not, with the reason reported on
      *         the diagnostics channel (the session reports it, and this layer forwards).
@@ -112,12 +135,15 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      *
      * ONE DEVICE, SEVERAL WINDOWS: a window carries one live swapchain (a platform constraint), so a window that
      * is already being served is refused with WindowOccupied and said once - and a NEW window gets its own target,
-     * because the device is the thing that is shared, not the window. The first window is answered by THIS object
-     * (the backend is the aggregate of device, frame half and the window it was born with, see RenderBackend);
-     * every further one is answered by a small target object that forwards here.
+     * because the device is the thing that is shared, not the window. EVERY window is answered by its own small
+     * target object, the first included: the backend is the device and the frame half, and it is never a window
+     * (see `.ai/design/device-is-not-a-window.md`).
      *
      * What a window brings is a SURFACE and a SWAPCHAIN; the device, its compiled programs and the buffers they
      * read are shared with the windows already served - which is the whole point of asking ONE device for them.
+     *
+     * A device created to present nothing (`DevicePresentation::None`) answers nullptr with NoPresentation and NO
+     * report: it has no window half at all, and that is a state rather than a failure.
      *
      * @param native_handle Host window to present through, or nullptr when the host names none (this device then
      *                      brings up a window of its own - it owns at most ONE of those, because a window of ours
@@ -157,13 +183,14 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      * the frame from a call sequence it has to keep in order - it walks the value and applies each entry to its own
      * pieces (see the file note): the frame's books open (storage, token, acquisition, the plan's frame), every
      * pass is collected in the order the value states, and the books close (the plan compiles against what the
-     * frame draws into). `present()` is what presents it.
+     * frame draws into). The frame's TAIL is here too: with a target the executor presents through it (which in this
+     * backend commits and shows the frame), so a host that drove the frame does not present it again.
      *
      * The TARGET is what the frame's "default framebuffer" row resolves to (see
      * vn::graphics::RenderFrameExecutor::executeFrame): this backend's own window half is the only one it can
      * serve, so a frame that names another target is refused and reported ONCE (nothing was recorded), while
-     * nullptr is a frame that presents nowhere - the off-screen half, where the passes that name their own render
-     * targets still run.
+     * nullptr is a frame with NO WINDOW - the off-screen form, which runs through this device's off-screen session,
+     * submits what its passes recorded into their own targets, and presents nothing.
      *
      * A frame with no session is reported once per episode and runs nothing (see the file note).
      *
@@ -173,7 +200,15 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     virtual void executeFrame(const vn::graphics::FrameDescription& frame,
                               vn::graphics::PresentTarget*           present_to = nullptr) override;
 
-    /** @brief Answers what this backend can do: off-screen targets, whole (see `RenderDevice::capabilities`). */
+    /** @brief Answers what this backend can do: off-screen targets, and presentation unless created to present nothing.
+     *
+     * @details
+     * - `render_targets` is always true: the held-target and readback half needs no window.
+     * - `presentation` answers the CREATION INPUT (see DeviceDesc): false for a device built with
+     *   `DevicePresentation::None`, which has no window half for its whole life.
+     *
+     * @return The capability value the engine reads (see `RenderDevice::capabilities`).
+     */
     [[nodiscard]] vn::graphics::Capabilities capabilities() const noexcept override;
 
     /** @brief Answers the ONE report: frame counters, retention, and the session's frame clock (see the file note). */
@@ -204,7 +239,14 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
                          vn::graphics::ReadbackResult* why = nullptr) override;
 
   public:
-    /** @brief Gets whether the session is up: the device contract's own answer (see RenderDevice::initialized). */
+    /** @brief Gets whether the session is up: the device contract's own answer (see RenderDevice::initialized).
+     *
+     * @details
+     * - A device created to present nothing (`DevicePresentation::None`) has no session to ask, so its answer is "the
+     *   device came up" - which is the only thing a window would have added there.
+     *
+     * @return true when any window can draw, or - for a display-less device - when its device exists.
+     */
     [[nodiscard]] bool initialized() const noexcept override;
 
     /** @brief Gets how many frames the session has presented. */
@@ -241,8 +283,11 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      * The first half of what used to be `beginFrame()` (the SDK's frame is one call now - see
      * RenderFrameExecutor::executeFrame): the per-frame storage is brought up to what this frame needs HERE, between
      * frames, where no recording is in progress and the previous frame's bytes can be left behind safely, and
-     * then the session mints the frame's token and advances the viewer's clock - the recorder opens the plan for
+     * then the frame's token is minted and the session's clock advanced - the recorder opens the plan for
      * the same token, so the description and the session's frame cannot disagree about which frame it is.
+     *
+     * WHICH session opens it is the frame's own answer: the window a target names, or the off-screen session when the
+     * frame names none (see executeFrame).
      */
     void openFrameBooks();
 
@@ -255,6 +300,23 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      * that same table (see HostTargets::facts).
      */
     void closeFrameBooks();
+
+    /** @brief Records and commits the frame whose books are closed, through the ONE session that owns it.
+     *
+     * @details
+     * - The window path and the off-screen path differ in three facts and nothing else: which session mints the
+     *   frame (a window's, or the off-screen one), which target the frame's default-framebuffer row resolves to
+     *   (the window's, or none at all), and whether the commit presents (a window's does, an off-screen one never).
+     *   Everything between - applying the plan's target answers, recording the content, the sweep, handing the graph
+     *   to the session, the commit - is one sequence, so it is one function.
+     * - A frame with no passes still commits: a window's opens an image that has to be handed back, and the
+     *   off-screen session's graph is a valid empty submission.
+     *
+     * @param window    The window's session that owns the frame, or null when the frame names no window.
+     * @param offscreen The off-screen session that owns the frame, or null when the frame belongs to a window
+     *                  (exactly one of the two is non-null).
+     */
+    void commitFrameThrough(api::Session* window, api::OffscreenSession* offscreen);
 
     /** @brief Opens a pass' scope under the pass' own number (see api/PassRegistry). */
     void openPassScope(vn::raw_ptr<const vn::graphics::RenderPass> pass);
@@ -305,6 +367,18 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      * @return The session (never null; see core::DeviceClock for what it shares when it is not alone).
      */
     [[nodiscard]] api::Session& sessionAt(std::size_t index);
+
+    /** @brief Brings up (lazily) the session a frame naming NO window runs through, or answers null.
+     *
+     * THE OFF-SCREEN SESSION IS THE DEVICE'S, not a window's: it borrows this backend's device and its graphics queue
+     * family, reports into the DEVICE's clock and parks into the DEVICE's queue, and presents nothing. It is built on
+     * the first frame that names no target, because a device that never runs an off-screen frame should not pay for
+     * one.
+     *
+     * @return The session, or null when this backend has no device to run frames on (the reason is reported by the
+     *         caller as the unserved frame it is).
+     */
+    [[nodiscard]] api::OffscreenSession* ensureOffscreenSession();
 
     /** @brief Collects one full-screen drawing call whose source is one of the pass' declared inputs. */
     void collectScreenDraw(vn::graphics::RenderTarget*                     source,

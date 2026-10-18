@@ -500,14 +500,15 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *   singlePassFrame): the same shape the engine hands over, through the same entry, so the two spellings cannot
      *   drift. A pass that issues nothing issues nothing here either: no frame is handed over at all.
      * - The TARGET is the third thing such a caller says, because a frame's "default framebuffer" has to resolve to
-     *   one (see RenderFrameExecutor::executeFrame): the target the host presents through, or nullptr for a pass
-     *   whose work is off-screen (a pass that draws into its own render target needs no window, and a caller with no
-     *   window at all draws none).
+     *   one (see RenderFrameExecutor::executeFrame): the target the frame is presented through (the executor makes
+     *   that call at the frame's tail, so the caller does not), or nullptr for a pass whose work is off-screen (a pass
+     *   that draws into its own render target needs no window, and a caller with no window at all draws none).
      *
      * @param scene      Scene containing drawables.
      * @param backend    Device to render with.
-     * @param present_to Target the pass' default framebuffer resolves to, or nullptr when the caller presents through
-     *                   a surface of the device's own (see RenderFrameExecutor::executeFrame).
+     * @param present_to Target the pass' default framebuffer resolves to (the executor presents through it when this
+     *                   call returns), or nullptr for a pass whose work is off-screen (see
+     *                   RenderFrameExecutor::executeFrame).
      */
     virtual void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend,
                          raw_ptr<PresentTarget> present_to = nullptr);

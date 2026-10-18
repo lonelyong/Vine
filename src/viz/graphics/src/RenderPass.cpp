@@ -327,20 +327,16 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend,
     }
     // Describe, then hand the device's frame half the frame that says so - there is no interleaving and no second
     // wire: what this pass issues is a value (the description needs nothing from the backend - the picture's shape
-    // is the camera's), and a pass a host drives itself is a frame with one pass in it (see singlePassFrame),
-    // which is the same shape the engine builds for a whole frame. The target is what its default framebuffer row
-    // resolves to (see RenderFrameExecutor::executeFrame); presenting it is the driver's own call
-    // (WindowPresentTarget::present), exactly as it is for the engine.
+    // is the camera's), and a pass a host drives itself is a frame with one pass in it (see singlePassFrame), which
+    // is the same shape the engine builds for a whole frame. The target is what its default framebuffer row resolves
+    // to, and the EXECUTOR presents through it at the frame's tail (RenderFrameExecutor::executeFrame): a host that
+    // drives one pass does not present afterwards, exactly as the engine does not.
     PassDescription description;
     if (!describe(scene, description)) {
         return;
     }
-    PresentTarget* const target = present_to;
     backend->executor().executeFrame(singlePassFrame(this, /*order*/ 0, /*inputs*/ {}, std::move(description)),
-                                    target);
-    if (target != nullptr) {
-        target->present();
-    }
+                                    present_to);
 }
 
 VN_GRAPHICS_NS_END

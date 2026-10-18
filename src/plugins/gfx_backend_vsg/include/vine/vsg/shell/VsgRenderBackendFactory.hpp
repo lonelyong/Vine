@@ -36,7 +36,7 @@ class VN_VSG_API VsgRenderBackendFactory : public vn::graphics::RenderBackendFac
      *
      * @return New backend; the caller owns it.
      */
-    vn::intrusive_ptr<vn::graphics::RenderBackend> create() override;
+    vn::intrusive_ptr<vn::graphics::RenderBackend> create(const vn::graphics::DeviceDesc& desc) override;
 };
 
 VN_VSG_NS_END

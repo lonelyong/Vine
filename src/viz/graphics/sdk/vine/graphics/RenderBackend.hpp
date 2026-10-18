@@ -29,10 +29,13 @@ class RenderTarget;
  *   (RenderDevice), how a frame comes out (RenderFrameExecutor), and how a window is presented (WindowPresentTarget,
  *   created by the device) - and they are separate because they change for different reasons and live for different
  *   times: a device outlives every window on top of it, and a window outlives no frame it is not named by. Today one
- *   object is all three, and this type is that aggregate: what a RenderBackendFactory returns, what the engine is
- *   handed (RenderEngine::setDevice), and what a test double implements. Splitting the contracts is what lets a
- *   device hand out another window, or run frames for several areas, without any of the three having to be re-spelled
- *   - the aggregate keeps compiling for a backend that does all three at once.
+ *   object answers the first two and PRODUCES the third: `createSurfaceTarget` creates one target per window, and the
+ *   device is not one of them. This type is the aggregate a RenderBackendFactory returns, what the engine is handed
+ *   (RenderEngine::setDevice), and what a test double implements. Splitting the contracts is what lets a device hand
+ *   out another window, or run frames for several areas, without any of the three having to be re-spelled - the
+ *   aggregate keeps compiling for a backend that does all three at once, and a backend whose frame path has no window
+ *   at all (a frame that names no target is the off-screen form, see RenderFrameExecutor::executeFrame) is simply one
+ *   that hands out no surface.
  * - WHAT A HOST SEES. A host talks to the faces: it asks the device what it can do (RenderDevice::capabilities), asks
  *   it for a window (RenderDevice::createSurfaceTarget - the target an area then holds, see
  *   RenderSurface::bindTarget), announces what it will draw into (RenderDevice::setRenderTarget), and drives frames

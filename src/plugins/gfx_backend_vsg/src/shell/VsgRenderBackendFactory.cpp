@@ -37,14 +37,17 @@ vn::graphics::RenderBackendInfo VsgRenderBackendFactory::info() const
     };
 }
 
-vn::intrusive_ptr<vn::graphics::RenderBackend> VsgRenderBackendFactory::create()
+vn::intrusive_ptr<vn::graphics::RenderBackend> VsgRenderBackendFactory::create(const vn::graphics::DeviceDesc& desc)
 {
     // THE NAME "vsg" MEANS THE REWRITE (see .ai/design/vsg-reimplementation.md §11.16bi): the facade is the
     // SDK's seam the rewritten backend was built around - the session, the frame protocol, the content
     // world, the off-screen half and the readbacks are the ones it drives. The implementation this replaces
     // (`VsgRenderer`) is still in this module and still driven by its own tests, but nothing creates it by
     // name any more; a second registered name would just be a second answer to "which backend is 'vsg'".
-    return vn::intrusive_ptr<vn::graphics::RenderBackend>(new VsgBackend());
+    //
+    // THE DESCRIPTION IS THE DEVICE'S CREATION INPUT (see DeviceDesc): the facade remembers it, and what it decides
+    // - a window or no window at all - is what the host later reads back through `capabilities().presentation`.
+    return vn::intrusive_ptr<vn::graphics::RenderBackend>(new VsgBackend(desc));
 }
 
 VN_VSG_NS_END

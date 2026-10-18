@@ -35,7 +35,9 @@
 ```
 
 * 插件 `load()` 在 `RenderBackendRegistry` 里登记工厂；`create(u8"vsg")` 拿到的就是重写版门面。
-  宿主不需要包含本模块或 vsg 的头文件。
+  宿主不需要包含本模块或 vsg 的头文件。工厂的入参是 `DeviceDesc`（`presentation: None | Probe | Handle`）——
+  它决定这台设备**有没有窗口那一半**：`None` 由无窗口缝建设备（`windowCount()` 恒 0，要目标时静默答
+  `NoPresentation`），`Probe`（默认）与 `Handle` 会建/接管一块窗口（见 `docs/guides/vsg-backend.md` §1）。
 * 命名空间：实现都在 `vn::vsg`（`vsg_global` 的宏）；graphics 类型在 `vn::graphics`；vsg 类型是全局 `::vsg`。
 * 分层纪律：`core/` **不许出现 `vsg::`**（`scripts/check_include_hygiene.py` 机器校验）——这是"哪些规则能
   无设备测试"的物理保证；只有 `api/` 与几个扁平单元碰 vsg 对象。
@@ -64,7 +66,7 @@
 
 | 组 | 单元 |
 | --- | --- |
-| 门面与会话 | `VsgBackend` `Session` `SessionContent` `SessionMove` `WindowTarget` `Device` `DeviceFeatures` `DeviceProbe` `VsgExecutor` |
+| 门面与会话 | `VsgBackend` `Session` `OffscreenSession` `SessionDrive` `SessionContent` `SessionMove` `WindowTarget` `Device` `DeviceFeatures` `DeviceProbe` `VsgExecutor` |
 | 内容层 | `ContentAssembly` `ContentPass` `ContentHalves` `ContentDraw` `ContentFacts` `ContentSources` `ContentStore` `ContentSweep` `ContentImages` `ContentPush` `ContentSets` `ContentPipeline` |
 | 数据与表 | `GeometryFacts` `DrawBlock` `LightBlock` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` `MaterialImages` `StreamUploads` `BlockStorage` `BlockDescriptors` `VariantPool` `PassRegistry` `StateCommands` |
 | 目标与读回 | `OffscreenTarget` `HostTargets` `HostReadback` `WhiteImage` |

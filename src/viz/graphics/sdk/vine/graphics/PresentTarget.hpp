@@ -15,8 +15,9 @@ VN_GRAPHICS_NS_BEGIN
  *   re-announcement after a platform recreation - live THERE, because a host that owns a window is the only party
  *   that asks them. A presenter that encodes and sends a frame, or that captures it to a file, implements this
  *   contract and nothing else: the frame, the area and the engine never learn which kind they were handed.
- * - WHO DRIVES ONE. The frame's driver calls present() once per frame it ran (see RenderEngine::frame(), which is the
- *   engine's own tail, and RenderPass::execute(), which is a host driving one pass). A device that presents nothing
+ * - WHO DRIVES ONE. The EXECUTOR calls present() once per frame it ran (RenderFrameExecutor::executeFrame): the
+ *   frame is whole when that call returns, so a host that drove a frame never presents it itself - not the engine
+ *   (RenderEngine::frame()), not a host driving one pass (RenderPass::execute()). A device that presents nothing
  *   hands out no presenter at all (RenderDevice::createSurfaceTarget answers "no presentation" - see
  *   Capabilities::presentation), and a frame that names none presents nowhere: a first-class state (an offline bake,
  *   a display-less run), not an empty implementation of the two calls below waiting to be written.
@@ -49,8 +50,9 @@ class VN_GRAPHICS_API PresentTarget
      * - The frame's own body - acquiring the next presentable image, collecting, compiling - happens inside
      *   RenderFrameExecutor::executeFrame; this is the half that records what was collected into the frame's graph,
      *   submits it, and hands the acquired image back to the display.
-     * - It is the ONE call that presents, it is called once per frame the executor ran, and the executor itself must
-     *   not present from executeFrame.
+     * - It is the ONE call that presents, it is called once per frame the executor ran, and the EXECUTOR makes that
+     *   call at the frame's tail (RenderFrameExecutor::executeFrame). A host that drove the frame does not call it:
+     *   a second present would find no frame of its own to hand back.
      */
     virtual void present() = 0;
 };

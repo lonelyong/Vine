@@ -25,14 +25,16 @@ VN_GRAPHICS_NS_BEGIN
  *   that drives one pass itself builds the same shape (RenderPass::execute -> singlePassFrame).
  * - A FRAME IS A PARAMETER, NOT AN INTERVAL, and it NAMES ITS TARGET. executeFrame() does the frame's whole body: it
  *   acquires the next presentable image of @p present_to when the frame has one (that is what "this is a frame" means
- *   to a windowed device), records the value, and leaves it ready to be presented. The row of a frame that means "the
- *   default framebuffer" (a pass naming no target) resolves to @p present_to, which is why the parameter is there:
- *   one frame draws into ONE surface, and an area that has none passes none (see below). There is no beginFrame() to
- *   pair it with, and no endFrame() to close it: "this frame is done" is the call returning.
- * - A NULL TARGET IS "THIS FRAME PRESENTS NOWHERE" - off-screen, which is a first-class state rather than a mode (see
+ *   to a windowed device), records the value, presents it through @p present_to, and returns. The row of a frame that
+ *   means "the default framebuffer" (a pass naming no target) resolves to @p present_to, which is why the parameter is
+ *   there: one frame draws into ONE surface, and an area that has none passes none (see below). There is no beginFrame()
+ *   to pair it with, no endFrame() to close it, and no tail call the driver has to remember: the frame is whole when
+ *   the call returns, with or without a target.
+ * - A NULL TARGET IS "THIS FRAME HAS NO WINDOW" - off-screen, which is a first-class state rather than a mode (see
  *   Capabilities::presentation): the default-framebuffer row has nothing to resolve to, nothing is acquired and
- *   nothing is presented, while the passes that name a render target still run. A device that presents nothing serves
- *   only such frames, and it is the answer a display-less run gets instead of an error.
+ *   nothing is presented, while the passes that name a render target still run. Such a frame is COMPLETE when
+ *   executeFrame() returns - and so is a frame WITH a target: it is submitted and presented inside the call. A device
+ *   that presents nothing serves only such frames, and it is the answer a display-less run gets instead of an error.
  * - BORROWED ARGUMENTS. Every pointer or reference INSIDE a FrameDescription (camera, commands, lights, target,
  *   program) is borrowed for the duration of executeFrame() and never owned: the producer keeps them alive while the
  *   call runs, and the engine reuses its own storage for them (a pass' resolved input vector, a scene's command list)
@@ -61,8 +63,8 @@ class VN_GRAPHICS_API RenderFrameExecutor
      *   pass runs when, what its inputs resolved to, what each pass issues), so this is "run THIS", not "here is one
      *   call at a time, in an order you have to know". Nothing is announced to the executor before or after this call
      *   that is about the frame - the acquisition of the next presentable image happens inside it for the target the
-     *   frame names, and presenting that image is the target's own call (see WindowPresentTarget::present), which the
-     *   frame's driver makes when the frame's tail is reached.
+     *   frame names, and presenting that image is this call's last step (`PresentTarget::present` is the mechanism; the
+     *   executor is the one that makes the call). A host that drives a frame therefore never presents it afterwards.
      * - WHAT IT MUST DO, in the order a frame means: take the value's passes as they come (an entry with a null pass
      *   is nothing to run; an entry whose description is empty is a pass that ran and issued nothing - the executor
      *   keys per-pass retained state by its identity, so that is a fact it must not confuse with "the pass was not in
@@ -73,10 +75,11 @@ class VN_GRAPHICS_API RenderFrameExecutor
      *   it beyond the call copies what it keeps.
      *
      * @param frame      The frame to execute, in run order (see FrameDescription).
-     * @param present_to Target the frame's default framebuffer resolves to, or nullptr for a frame that names no
-     *                   target of the host's: nothing is resolved, nothing is acquired and nothing is presented on
-     *                   the host's behalf (an off-screen frame, see the class contract). A device whose frame path
-     *                   owns a surface of its own keeps drawing into that one - it IS its surface.
+     * @param present_to Target the frame's default framebuffer resolves to, or nullptr for a frame that has NO
+     *                   window: nothing is resolved, nothing is acquired and nothing is presented, and the frame is
+     *                   submitted by the time this call returns (an off-screen frame, see the class contract). A
+     *                   device with a surface of its own does not take that surface by default - a caller that wants
+     *                   to draw into it names the target the device handed out (RenderDevice::createSurfaceTarget).
      */
     virtual void executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) = 0;
 

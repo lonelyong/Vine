@@ -82,16 +82,20 @@ class VN_GRAPHICS_API RenderBackendFactory {
      */
     virtual String name() const { return info().name; }
 
-    /** @brief Creates a backend instance.
+    /** @brief Creates a backend instance, told how its device presents.
      *
      * @details
      * - The engine owns the pipeline and drives content per pass, so a backend is not bound to a Vine scene or
      *   camera: its content slots are created lazily from the drawing calls a frame's value carries, keyed by the
      *   pass identity its entry names (see FrameDescription::Pass).
+     * - THE CREATION INPUT is @p desc (see DeviceDesc): `Probe` (the default) is a device that brings up a window of
+     *   its own, `None` one that presents nothing at all (created without a window), and `Handle` one made for the
+     *   host's window.
      *
+     * @param desc How the device reaches the display (see DeviceDesc).
      * @return Newly created backend; the caller owns the returned reference.
      */
-    virtual vn::intrusive_ptr<RenderBackend> create() = 0;
+    virtual vn::intrusive_ptr<RenderBackend> create(const DeviceDesc& desc = {}) = 0;
 };
 
 /**
@@ -122,12 +126,13 @@ class VN_GRAPHICS_API RenderBackendRegistry {
      */
     void registerFactory(raw_ptr<RenderBackendFactory> factory);
 
-    /** @brief Creates a backend by name.
+    /** @brief Creates a backend by name, told how its device presents.
      *
      * @param name Backend name, e.g. "vsg".
+     * @param desc How the device reaches the display (see DeviceDesc).
      * @return New backend, or null when no factory with that name is registered.
      */
-    vn::intrusive_ptr<RenderBackend> create(const String& name) const;
+    vn::intrusive_ptr<RenderBackend> create(const String& name, const DeviceDesc& desc = {}) const;
 
     /** @brief Gets the names of all registered backends. */
     std::vector<String> names() const;

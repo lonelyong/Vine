@@ -79,6 +79,11 @@ using vn::vsg::detail::BackendContentAccess;
 class DirectDriveBackend : public vn::vsg::VsgBackend
 {
   public:
+    /// @brief Creates the device @p desc asks for (see VsgBackend's constructor); this drive adds no opinion of its own.
+    ///
+    /// @param desc How the device reaches the display (a case about a display-less device states None).
+    explicit DirectDriveBackend(const vn::graphics::DeviceDesc& desc = {}) : vn::vsg::VsgBackend(desc) {}
+
     /// The window's handle is the target's CREATION input; a second announcement MOVES the target that exists.
     void setWindowHandle(void* native_handle)
     {
@@ -102,18 +107,15 @@ class DirectDriveBackend : public vn::vsg::VsgBackend
         }
     }
 
-    void present()
-    {
-        if (target_ != nullptr)
-        {
-            target_->present();
-        }
-    }
-
     /// One argument: the frame is for the window this case holds (see RenderFrameExecutor::executeFrame).
+    ///
+    /// nullptr NOW MEANS "NO WINDOW" (the off-screen form, see `.ai/design/device-is-not-a-window.md` §6), so this
+    /// form names the window's target EXPLICITLY: the target of the window this case holds, asked for from the
+    /// device when the case never asked (initialize() brings the device's own window up, and a frame still has to be
+    /// able to name it).
     void executeFrame(const vn::graphics::FrameDescription& frame)
     {
-        vn::vsg::VsgBackend::executeFrame(frame, target_);
+        vn::vsg::VsgBackend::executeFrame(frame, heldTarget());
     }
 
     /// The two-argument form, unchanged: a case that names a target explicitly (a foreign one, a bare presenter).
@@ -125,7 +127,19 @@ class DirectDriveBackend : public vn::vsg::VsgBackend
     [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget> target() const { return target_; }
 
   private:
-    vn::raw_ptr<vn::graphics::WindowPresentTarget> target_;
+    /// The target of window 0, asked for on first use (see the one-argument executeFrame).
+    [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget> heldTarget()
+    {
+        if (target_ == nullptr)
+        {
+            target_ = BackendContentAccess::surfaceTarget(*this, 0);
+        }
+        return target_;
+    }
+
+    /// Null until a case asks: stated here rather than left to `new X()` zero-initializing it (that help is what this
+    /// class' constructor takes away - a user-provided constructor makes the value-initialization stop at the members).
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> target_{nullptr};
 };
 
 /// The name the cases use: the device they drive, one window each (see DirectDriveBackend).
@@ -387,7 +401,6 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     EXPECT_FALSE(backend->initialized());
     EXPECT_EQ(backend->nativeHandle(), nullptr) << "this backend owns its window: there is no host surface";
     backend->executeFrame(vn::graphics::FrameDescription{});
-    backend->present();
     EXPECT_EQ(backend->framesPresented(), 0U);
     EXPECT_EQ(backend->diagnosticCount(), 1U) << "one report for the frame that had no session";
     EXPECT_EQ(seen, backend->diagnosticCount()) << "the sink sees every counted diagnostic";
@@ -399,7 +412,6 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     for (int index = 0; index < 3; ++index)
     {
         backend->executeFrame(vn::graphics::FrameDescription{});
-        backend->present();
     }
     EXPECT_EQ(backend->framesPresented(), 3U);
     EXPECT_EQ(backend->deviceWaits(), 0U) << "the frame path never stops the device";
@@ -459,7 +471,6 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     //    A pass that was never announced to the engine is exactly this shape.
     const vn::intrusive_ptr<RenderPass> quiet(new RenderPass());
     backend->executeFrame(TestFrame().pass(quiet.get()).value());
-    backend->present();
     EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U)
         << "a pass that issues nothing is not a mistake, and nothing needs saying about it";
     EXPECT_EQ(backend->framesPresented(), 4U) << "and the frame it was part of still presents";
@@ -481,7 +492,6 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     EXPECT_EQ(window->width(), 320U) << "the announcement is what the new session's window came up at";
     EXPECT_EQ(window->height(), 180U);
     backend->executeFrame(vn::graphics::FrameDescription{});
-    backend->present();
     EXPECT_EQ(backend->framesPresented(), 1U);
 
     // 7. shutdown() is safe twice and leaves the backend initializable again (the SDK's contract for a
@@ -491,7 +501,6 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     backend->shutdown();
     ASSERT_TRUE(backend->initialize());
     backend->executeFrame(vn::graphics::FrameDescription{});
-    backend->present();
     EXPECT_EQ(backend->framesPresented(), 1U);
     backend->shutdown();
 }
@@ -511,7 +520,6 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
     // An EMPTY frame still answers: the counters are kept, and they describe a frame that recorded nothing.
     // (A backend that kept none would leave the part DISENGAGED - that distinction is what the report is for.)
     backend->executeFrame(vn::graphics::FrameDescription{});
-    backend->present();
 
     vn::graphics::FrameReport report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value()) << "this backend keeps its own frame counters";
@@ -533,7 +541,6 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
         .depth(vn::graphics::DepthMode::TestAndWrite)
         .content(fixture.commands, camera.get())
         .value());
-    backend->present();
 
     report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value());
@@ -561,7 +568,6 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
         .target(nullptr)
         .content(fixture.commands, camera.get())
         .value());
-    backend->present();
 
     const std::uint64_t submitted_before = report.progress->submitted;
     report                               = backend->frameReport();
@@ -608,7 +614,6 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
     for (int index = 0; index < 2; ++index)
     {
         backend->executeFrame(vn::graphics::FrameDescription{});
-        backend->present();
     }
     EXPECT_EQ(backend->framesPresented(), 2U);
     EXPECT_TRUE(host.alive());
@@ -621,7 +626,6 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->nativeHandle(), second.handle());
     backend->executeFrame(vn::graphics::FrameDescription{});
-    backend->present();
     EXPECT_EQ(backend->framesPresented(), 3U) << "a move keeps the session: the frames it presented are still there";
     EXPECT_TRUE(host.alive()) << "the window the session moved OFF is the host's, and stays the host's";
     EXPECT_TRUE(second.alive());
@@ -721,7 +725,6 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, frame_camera)
             .value());
-        backend->present();
     };
     // The display path lags the session's presents, so a picture is read after a couple more frames that
     // carry the SAME picture. A plan-free frame is not a settle: it repaints the window with the session's
@@ -880,7 +883,6 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
                                   .depth(vn::graphics::DepthMode::Disabled)
                                   .screen(offscreen.get(), copy_program.get(), camera.get())
                                   .value());
-        backend->present();
     };
     const auto settle = [&] {
         drive();
@@ -987,7 +989,6 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
                               .target(lenderless.get())
                               .value());
     EXPECT_EQ(backend->diagnosticCount(), 1U) << "three announcements are one episode";
-    backend->present();
     backend->releaseRenderTarget(lenderless.get());
 
     backend->shutdown();
@@ -1046,7 +1047,6 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(triangle.commands, camera.get())
             .value());
-        backend->present();
     };
 
     drive();
@@ -1256,7 +1256,6 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, camera.get())
             .value());
-        backend->present();
     };
 
     // 帧 1..5：相机 0.95..0.75（红通道类 1）；末帧 0.1（类 0）——它的输出留在 target 上。
@@ -1394,7 +1393,6 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, camera.get())
             .value());
-        backend->present();
     };
     const auto settle = [&] {
         drive();
@@ -1524,7 +1522,6 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
     // A frame that presents with it held is served silently - the target is part of the frame's world now,
     // and nothing about it needs saying.
     backend->executeFrame(vn::graphics::FrameDescription{});
-    backend->present();
     EXPECT_EQ(backend->framesPresented(), 1U);
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
@@ -1621,7 +1618,6 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, camera.get())
             .value());
-        backend->present();
     };
     const auto settle = [&] {
         drive();
@@ -1782,10 +1778,9 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     ASSERT_NE(assembly, nullptr);
     VariantPool& pool = BackendContentAccess::pool(*backend);
 
-    // One frame, split at the seam between the two halves of the cost: everything up to endFrame() is the
-    // frame's own bookkeeping (facts, plan, blocks, streams), and swapBuffers() is the commit that records,
-    // submits and presents. The number a host feels is the sum; the two halves are printed apart because
-    // that is what tells a backend cost from a presentation cost.
+    // One frame, ONE cost: the executor drives the frame to its tail (see RenderFrameExecutor::executeFrame), so the
+    // bookkeeping and the commit/present are a single call - there is no seam left to split, and the number a host
+    // feels is the whole frame's.
     const auto drive = [&]() {
         const auto began = std::chrono::steady_clock::now();
         backend->executeFrame(TestFrame()
@@ -1796,14 +1791,8 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, camera.get())
             .value());
-        backend->present();
-        const auto recorded  = std::chrono::steady_clock::now();
-        backend->present();
-        const auto committed = std::chrono::steady_clock::now();
-        const auto micros    = [](auto from, auto to) {
-            return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(to - from).count();
-        };
-        return std::pair<double, double>{ micros(began, recorded), micros(recorded, committed) };
+        const auto ended = std::chrono::steady_clock::now();
+        return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(ended - began).count();
     };
 
     std::printf("\n");  // the measurements get their own lines
@@ -1813,19 +1802,16 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
 
     const auto run = [&](const char* label, int frames, auto&& edit) {
         const EditCostCounters before = readEditCosts(*store, *assembly, pool);
-        double                 record_us = 0.0;
-        double                 commit_us = 0.0;
+        double                 frame_us = 0.0;
         for (int frame = 0; frame < frames; ++frame) {
             edit(frame);
-            const auto [record, commit] = drive();
-            record_us += record;
-            commit_us += commit;
+            frame_us += drive();
         }
         const EditCostCounters after  = readEditCosts(*store, *assembly, pool);
         const EditCostDelta    change = editCostDelta(before, after);
-        std::printf("[cost] %-32s record %8.1f us/f  commit %8.1f us/f"
+        std::printf("[cost] %-32s frame %8.1f us/f"
                     " | builds %+4lld uploads %+4lld created %+4lld reused %+4lld\n",
-                    label, record_us / frames, commit_us / frames, static_cast<long long>(change.builds),
+                    label, frame_us / frames, static_cast<long long>(change.builds),
                     static_cast<long long>(change.uploads), static_cast<long long>(change.created),
                     static_cast<long long>(change.reused));
         return std::pair<EditCostCounters, EditCostCounters>{ before, after };
@@ -1940,12 +1926,12 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     {
         const EditCostCounters cold_before    = readEditCosts(*store, *assembly, pool);
         commands[0].program                   = program_b;
-        const auto [cold_record, cold_commit] = drive();
+        const double           cold_us        = drive();
         const EditCostCounters cold_after     = readEditCosts(*store, *assembly, pool);
         const EditCostDelta    cold_change    = editCostDelta(cold_before, cold_after);
-        std::printf("[cost] %-32s record %8.1f us    commit %8.1f us"
+        std::printf("[cost] %-32s frame %8.1f us"
                     " | builds %+4lld uploads %+4lld created %+4lld reused %+4lld\n",
-                    "program switched (first, cold)", cold_record, cold_commit,
+                    "program switched (first, cold)", cold_us,
                     static_cast<long long>(cold_change.builds), static_cast<long long>(cold_change.uploads),
                     static_cast<long long>(cold_change.created), static_cast<long long>(cold_change.reused));
         EXPECT_EQ(cold_change.created, 1) << "the first frame with a program compiles exactly one pipeline";
@@ -2127,14 +2113,8 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, camera.get())
             .value());
-        backend->present();
-        const auto recorded  = std::chrono::steady_clock::now();
-        backend->present();
-        const auto committed = std::chrono::steady_clock::now();
-        const auto micros    = [](auto from, auto to) {
-            return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(to - from).count();
-        };
-        return std::pair<double, double>{ micros(began, recorded), micros(recorded, committed) };
+        const auto ended = std::chrono::steady_clock::now();
+        return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(ended - began).count();
     };
 
     std::printf("\n");
@@ -2148,19 +2128,16 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
 
     const auto run = [&](const char* label, int frames, auto&& edit) {
         const EditCostCounters before = readEditCosts(*store, *assembly, pool);
-        double                 record_us = 0.0;
-        double                 commit_us = 0.0;
+        double                 frame_us = 0.0;
         for (int frame = 0; frame < frames; ++frame) {
             edit(frame);
-            const auto [record, commit] = drive();
-            record_us += record;
-            commit_us += commit;
+            frame_us += drive();
         }
         const EditCostCounters after  = readEditCosts(*store, *assembly, pool);
         const EditCostDelta    change = editCostDelta(before, after);
-        std::printf("[b6] %-32s record %8.1f us/f  commit %8.1f us/f"
+        std::printf("[b6] %-32s frame %8.1f us/f"
                     " | builds %+4lld uploads %+4lld created %+4lld reused %+4lld\n",
-                    label, record_us / frames, commit_us / frames, static_cast<long long>(change.builds),
+                    label, frame_us / frames, static_cast<long long>(change.builds),
                     static_cast<long long>(change.uploads), static_cast<long long>(change.created),
                     static_cast<long long>(change.reused));
         return std::pair<EditCostCounters, EditCostCounters>{ before, after };
@@ -2336,14 +2313,8 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
             .depth(vn::graphics::DepthMode::TestAndWrite)
             .content(commands, camera.get())
             .value());
-        backend->present();
-        const auto recorded  = std::chrono::steady_clock::now();
-        backend->present();
-        const auto committed = std::chrono::steady_clock::now();
-        const auto micros    = [](auto from, auto to) {
-            return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(to - from).count();
-        };
-        return std::pair<double, double>{ micros(began, recorded), micros(recorded, committed) };
+        const auto ended = std::chrono::steady_clock::now();
+        return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(ended - began).count();
     };
 
     struct MaterialCounters
@@ -2366,8 +2337,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
         std::int64_t  hits{0};
         std::int64_t  evictions{0};
         std::size_t   live{0};
-        double        record_us{0.0};
-        double        commit_us{0.0};
+        double        frame_us{0.0};
     };
 
     std::printf("\n");
@@ -2377,12 +2347,9 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
         }
         const EditCostCounters before  = readEditCosts(*store, *assembly, pool);
         const MaterialCounters material_before = read_material();
-        double                 record_us = 0.0;
-        double                 commit_us = 0.0;
+        double                 frame_us = 0.0;
         for (int frame = 0; frame < kFramesPerRegime; ++frame) {
-            const auto [record, commit] = drive();
-            record_us += record;
-            commit_us += commit;
+            frame_us += drive();
         }
         const EditCostCounters after  = readEditCosts(*store, *assembly, pool);
         const MaterialCounters material_after = read_material();
@@ -2393,9 +2360,9 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
         const std::int64_t writes = step(material_before.writes, material_after.writes);
         const std::int64_t hits   = step(material_before.hits, material_after.hits);
         const std::int64_t evictions = step(material_before.evictions, material_after.evictions);
-        std::printf("[a4] %-26s record %7.1f us/f  commit %8.1f us/f"
+        std::printf("[a4] %-26s frame %7.1f us/f"
                     " | uploads %+3lld created %+3lld | write/f %7.1f hit/f %7.1f evict/f %7.1f live %zu\n",
-                    label, record_us / kFramesPerRegime, commit_us / kFramesPerRegime,
+                    label, frame_us / kFramesPerRegime,
                     static_cast<long long>(change.uploads), static_cast<long long>(change.created),
                     static_cast<double>(writes) / kFramesPerRegime,
                     static_cast<double>(hits) / kFramesPerRegime,
@@ -2405,8 +2372,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
                            hits,
                            evictions,
                            material_after.live,
-                           record_us / kFramesPerRegime,
-                           commit_us / kFramesPerRegime };
+                           frame_us / kFramesPerRegime };
     };
 
     for (int settle = 0; settle < 6; ++settle) {
@@ -2435,7 +2401,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
         << "the first 2000-command frame grew the block storage (the draw budget), arena included: "
            "this arena has noted one material - and nothing but eviction ever removes a slot";
     std::printf("[a4] per-command floor ~= %.2f us/frame (2000-command frame minus the one-command frame)\n",
-                (many.commit_us - one.commit_us) / 1999.0);
+                (many.frame_us - one.frame_us) / 1999.0);
 
     // 3. THE BOUND, FITTING SIDE: 200 distinct materials are still served from the 256 slots - no write,
     //    no eviction, every note a hit.
@@ -2676,7 +2642,6 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
             .depth(vn::graphics::DepthMode::Disabled)
             .content(commands, camera.get())
             .value());
-        backend->present();
     };
 
     constexpr int kCycles = 12;
@@ -2915,7 +2880,6 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
                                   .depth(vn::graphics::DepthMode::Disabled)
                                   .content(commands, camera.get())
                                   .value());
-        backend->present();
     };
 
     // Put the drive on a storage that fits ONE draw block: the frame below will ask for two.
@@ -3020,7 +2984,6 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
             .depth(vn::graphics::DepthMode::Disabled)
             .content(no_commands, camera.get())
             .value());
-        backend->present();
     };
 
     drive();  // its beginFrame() finds the rings too shallow for the stated count
@@ -3131,7 +3094,6 @@ TEST(VsgBackendTest, TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsS
             .depth(vn::graphics::DepthMode::Disabled)
             .content(commands, camera.get())
             .value());
-        backend->present();
     };
 
     // The display path lags the session's presents: present the SAME picture once more, then read (a
@@ -3259,20 +3221,13 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
             .depth(vn::graphics::DepthMode::Disabled)
             .content(commands, camera.get())
             .value());
-        backend->present();
-        const auto recorded  = std::chrono::steady_clock::now();
-        backend->present();
-        const auto committed = std::chrono::steady_clock::now();
-        const auto millis    = [](auto from, auto to) {
-            return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(to - from).count();
-        };
-        return std::pair<double, double>{ millis(began, recorded), millis(recorded, committed) };
+        const auto ended = std::chrono::steady_clock::now();
+        return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(ended - began).count();
     };
 
     // Frame 1: the default budgets; the light blocks run out first (the call checks them first).
-    const auto [record1, commit1] = drive();
-    std::printf("[cost] %d draws, frame 1 (default budgets): record %.1f ms, commit %.1f ms\n", kDraws, record1,
-                commit1);
+    const double frame1_ms = drive();
+    std::printf("[cost] %d draws, frame 1 (default budgets): %.1f ms\n", kDraws, frame1_ms);
     BlockStorage* const default_storage = BackendContentAccess::storage(*backend);
     ASSERT_NE(default_storage, nullptr);
     EXPECT_EQ(default_storage->overflows(), kDraws - 1024) << "976 draw blocks were refused";
@@ -3285,8 +3240,8 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
 
     // Frame 2: the draw region grew, and the SAME content is served whole - the storage itself is not
     // resized: it was replaced by one whose draw budget covers what the frame tried.
-    const auto [record2, commit2] = drive();
-    std::printf("[cost] %d draws, frame 2 (draws grew): record %.1f ms, commit %.1f ms\n", kDraws, record2, commit2);
+    const double frame2_ms = drive();
+    std::printf("[cost] %d draws, frame 2 (draws grew): %.1f ms\n", kDraws, frame2_ms);
     BlockStorage* const grown = BackendContentAccess::storage(*backend);
     ASSERT_NE(grown, default_storage) << "frame 2's beginFrame() replaced the storage";
     EXPECT_EQ(grown->layout().draws.blocks_per_frame, 2048U) << "doubling covers the 2000 the frame tried";
@@ -3297,8 +3252,8 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
     EXPECT_EQ(backend->diagnosticCount(), 3U) << "two lines for the lost frame, one for the growth";
 
     // Frame 3: steady - the settling is ONE growth event, and a settled frame says nothing at all.
-    const auto [record3, commit3] = drive();
-    std::printf("[cost] %d draws, frame 3 (steady): record %.1f ms, commit %.1f ms\n", kDraws, record3, commit3);
+    const double frame3_ms = drive();
+    std::printf("[cost] %d draws, frame 3 (steady): %.1f ms\n", kDraws, frame3_ms);
     EXPECT_EQ(BackendContentAccess::storage(*backend), grown) << "a settled frame replaces nothing";
     EXPECT_EQ(grown->overflows(), 0U);
     EXPECT_EQ(backend->diagnosticCount(), 3U) << "and says nothing new";
@@ -3360,23 +3315,175 @@ TEST(VsgBackendTest, TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTa
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U)
         << "one report per episode, however often the same ask comes";
 
+    // The device comes up on the one window it serves. (Done HERE, before the second window is asked for: every
+    // window a device knows is brought up by initialize(), and `second` below is a value the test can name but the
+    // platform cannot adopt as a window - while a target asked for on a LIVE device never needs to be adopted at
+    // all, which is the fact this case tests.)
+    if (deviceCaseAvailable())
+    {
+        ASSERT_TRUE(backend->initialize());
+        EXPECT_EQ(backend->deviceWaits(), 0U) << "serving a window is not a device stop";
+    }
+
     // A DIFFERENT window: served, through its own target object (the same device, one more surface and swapchain).
     int  second = 0;
     vn::raw_ptr<vn::graphics::WindowPresentTarget> other = backend->createSurfaceTarget(&second, &why);
     ASSERT_NE(other, nullptr);
     EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
     EXPECT_NE(other, own) << "and it is not the first window's target";
+    EXPECT_NE(static_cast<const void*>(own), static_cast<const void*>(backend.get()))
+        << "neither target IS the device: the type does not even allow it (see device-is-not-a-window.md)";
+    EXPECT_NE(static_cast<const void*>(other), static_cast<const void*>(backend.get()));
     EXPECT_EQ(other->nativeHandle(), nullptr) << "nothing is attached before ITS session comes up";
     EXPECT_EQ(backend->windowCount(), 2U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U)
         << "a second window is not an episode";
+    EXPECT_EQ(backend->deviceWaits(), 0U) << "handing out a target is not a device stop either";
+}
 
-    // And the refused ask left the window it already serves alone: the session is not moved by it.
-    if (deviceCaseAvailable())
+TEST(VsgBackendTest, ANullTargetRunsTheFrameWithoutAnyWindow)
+{
+    if (!deviceCaseAvailable())
     {
-        ASSERT_TRUE(backend->initialize());
-        EXPECT_EQ(backend->deviceWaits(), 0U) << "serving a window is not a device stop";
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
+
+    // A FRAME THAT NAMES NO TARGET IS NOT A FRAME FOR WINDOW 0 (see RenderFrameExecutor::executeFrame and
+    // `.ai/design/device-is-not-a-window.md` §6): it is the off-screen form. It acquires nothing, presents nothing,
+    // brings no window into existence, and reports nothing - and the next frame through a window's target still
+    // presents exactly once.
+    vn::intrusive_ptr<vn::vsg::VsgBackend> backend(new vn::vsg::VsgBackend());
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) {
+        reported.push_back(diagnostic);
+    });
+
+    // The window is asked for BEFORE the device comes up (the SDK's order), so this case can drive a windowed frame
+    // afterwards without depending on the device's own window.
+    vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> window = backend->createSurfaceTarget(nullptr, &why);
+    ASSERT_NE(window, nullptr);
+    ASSERT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
+    ASSERT_TRUE(backend->initialize());
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "a healthy session reports nothing";
+
+    // 1. The off-screen frame: submitted (its passes, if any, draw into the targets they name), presented nowhere.
+    const std::size_t windows_before = backend->windowCount();
+    backend->executeFrame(vn::graphics::FrameDescription{});
+    EXPECT_EQ(backend->framesPresented(), 0U) << "an off-screen frame presents nothing";
+    EXPECT_EQ(backend->windowCount(), windows_before) << "and it does not become a window";
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "the off-screen form is a first-class frame, not a problem";
+    const vn::graphics::FrameReport offscreen_report = backend->frameReport();
+    ASSERT_TRUE(offscreen_report.progress.has_value()) << "the device's frame clock answers it";
+    EXPECT_EQ(offscreen_report.progress->submitted, 1U) << "and the frame really reached the queue";
+
+    // 2. The same value through the window's target: recorded, submitted and presented - once.
+    backend->executeFrame(vn::graphics::FrameDescription{}, window);
+    EXPECT_EQ(backend->framesPresented(), 1U);
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+    EXPECT_EQ(reported.size(), backend->diagnosticCount()) << "the sink sees every counted diagnostic";
+
+    // 3. EVIDENCE, NOT A GAP: an off-screen frame's GPU work counts towards the DEVICE's completion watermark like a
+    //    window's does (see core::DeviceClock). Each session learns its in-flight count over its own first frames, so
+    //    drive enough of both and read the completed watermark - a session that never reports would keep the device's
+    //    minimum pinned where it joined, and this number would stay 0.
+    for (int index = 0; index < 3; ++index)
+    {
+        backend->executeFrame(vn::graphics::FrameDescription{});
+    }
+    for (int index = 0; index < 4; ++index)
+    {
+        backend->executeFrame(vn::graphics::FrameDescription{}, window);
+    }
+    const vn::graphics::FrameReport evidence = backend->frameReport();
+    ASSERT_TRUE(evidence.progress.has_value());
+    EXPECT_EQ(backend->framesPresented(), 5U) << "the window's frames present; the off-screen ones never do";
+    EXPECT_GT(evidence.progress->completed, 0U)
+        << "the off-screen session's evidence reached the device clock (the watermark is the minimum over sources)";
+    EXPECT_LE(evidence.progress->completed, evidence.progress->submitted);
+
+    backend->shutdown();
+}
+
+TEST(VsgBackendTest, ADeviceCreatedWithNoPresentationRunsWholeFramesWithoutAWindow)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    // A DEVICE CREATED TO PRESENT NOTHING (see DeviceDesc::None) has no window half for its whole life: initialize()
+    // creates the device through the windowless seam, so no window is ever created, no target is handed out, and a
+    // frame that names none is submitted like any other. This is the shape a headless phase asks for - and the reason
+    // asking for a target is answered, not reported.
+    vn::graphics::DeviceDesc desc;
+    desc.presentation = vn::graphics::DevicePresentation::None;
+    // The plain device, not this file's drive: that one holds a window's target so a case can name it, and this device
+    // has no window to hold (its one-argument executeFrame would ask for window 0's target and be answered NoPresentation).
+    vn::intrusive_ptr<vn::vsg::VsgBackend> backend(new vn::vsg::VsgBackend(desc));
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) {
+        reported.push_back(diagnostic);
+    });
+
+    // 1. It says so before anything is created, and asking for a window is the silent NoPresentation.
+    EXPECT_FALSE(backend->capabilities().presentation) << "a device created to present nothing says so";
+    EXPECT_TRUE(backend->capabilities().render_targets) << "targets are still the half it does serve";
+    EXPECT_EQ(backend->windowCount(), 0U);
+    vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
+    EXPECT_EQ(backend->createSurfaceTarget(nullptr, &why), nullptr);
+    EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::NoPresentation);
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "a display-less device is a state, not a failure";
+    EXPECT_EQ(backend->windowCount(), 0U) << "and asking did not become a window";
+
+    // 2. It comes up without one, and stays without one.
+    ASSERT_TRUE(backend->initialize());
+    EXPECT_TRUE(backend->initialized());
+    EXPECT_EQ(backend->windowCount(), 0U) << "the windowless seam created the device, not a window's session";
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+
+    // 3. A frame that names no target is the only kind it has, and it is a whole frame: recorded, submitted, and
+    //    never presented.
+    backend->executeFrame(vn::graphics::FrameDescription{});
+    EXPECT_EQ(backend->framesPresented(), 0U);
+    EXPECT_EQ(backend->windowCount(), 0U);
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+    const vn::graphics::FrameReport report = backend->frameReport();
+    ASSERT_TRUE(report.progress.has_value()) << "the device's frame clock answers it";
+    EXPECT_EQ(report.progress->submitted, 1U) << "the frame really reached the queue";
+    for (int index = 0; index < 2; ++index)
+    {
+        backend->executeFrame(vn::graphics::FrameDescription{});
+    }
+    EXPECT_EQ(backend->framesPresented(), 0U);
+
+    backend->shutdown();
+    EXPECT_FALSE(backend->initialized());
+    backend->shutdown();  // idempotent, as for any other device
+    EXPECT_EQ(reported.size(), backend->diagnosticCount());
+}
+
+TEST(VsgBackendTest, ADeviceCreatedOnAHandleWithoutOneIsRefusedWithItsReason)
+{
+    // A HANDLE IS A CREATION INPUT (see DeviceDesc): a device asked for the host's window cannot invent one, so an
+    // empty handle is refused where it is stated - before a device is created, before a window of our own appears,
+    // and with a sentence the host can act on.
+    vn::graphics::DeviceDesc desc;
+    desc.presentation = vn::graphics::DevicePresentation::Handle;
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend(desc));
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) {
+        reported.push_back(diagnostic);
+    });
+
+    EXPECT_TRUE(backend->capabilities().presentation) << "it was created TO present";
+    EXPECT_FALSE(backend->initialize());
+    EXPECT_FALSE(backend->initialized());
+    ASSERT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 1U);
+    ASSERT_EQ(reported.size(), 1U);
+    EXPECT_EQ(reported.front().severity, vn::graphics::DiagnosticSeverity::Error);
+    EXPECT_FALSE(reported.front().message.empty()) << "false without a reason is not the SDK's contract";
+    EXPECT_EQ(backend->windowCount(), 0U) << "no window of our own was made instead";
 }
 
 TEST(VsgBackendTest, AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce)
@@ -3427,7 +3534,6 @@ TEST(VsgBackendTest, AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce)
     // Its OWN target is served, and it is the one the frame is presented through.
     const std::uint64_t before = backend->framesPresented();
     backend->executeFrame(vn::graphics::FrameDescription{}, own);
-    backend->present();
     EXPECT_EQ(backend->framesPresented(), before + 1U);
     EXPECT_EQ(backend->windowCount(), 1U) << "the frame went through the one window this device serves";
 

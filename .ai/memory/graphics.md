@@ -21,7 +21,7 @@
 | **面向使用者** | `docs/guides/graphics.md`（模块文档一节） |
 | **对象模型与行业口径** | `.ai/design/graphics-object-model-vs-3d-frameworks.md`（2026-10-12）：逐个对象对到 VTK / OSG / three.js / Filament / Qt3D；**刻意偏离**（一区一幅画、相机带 aspect，含代价；**拾取是机制、选择不在框架（§2.5，2026-10-13）**）与**能力缺口**（同 pass 内优先级 / 实例化 / LOD·空间划分 / `Pipeline` ≠ PSO 的命名风险 / 内容掩码 / 目标层），各带触发条件；后两条的定形见 `graphics-layers.md`（L1 内容掩码 `Node::setLayers` + `PassDesc::layer_mask` / L2 目标层 `layerCount` + 层区间，L2 分两步、读侧先行；**§9（2026-10-13：拾取 / 包围盒掩码参数已落地；"子树层并集"整段跳过仍登记）**） |
 | **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
-| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**2026-10-11 晚裁决推翻 S8 一半：多格下线，一块区只画一幅画**（见顶条与 Q5 的后续裁决）；**2026-10-12 又两条**：呈递端拆成 `PresentTarget`（帧的契约）+ `WindowPresentTarget`（窗口那一面，见顶条），命名仍否掉 `RenderTargetWindow` / `RenderTargetOffscreen` 一对（`RenderTarget` 是描述、不是同族，理由在 §8）、云渲染的落点是"**第二个呈递端**"而不是把区通用化（§8 末条 + §9 第 6 条，带触发条件）；**§9.7（共享设备的 initialize/shutdown 归谁）已于 2026-10-18 裁定并落地：形状②——会话归创建者、引擎只借用设备（见顶条）**；**S10b（插件会话→设备：窗口与交换链 1:N、缓存上移、`DeviceDesc`）**/ S11（登记不做）未落地 |
+| **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**2026-10-11 晚裁决推翻 S8 一半：多格下线，一块区只画一幅画**（见顶条与 Q5 的后续裁决）；**2026-10-12 又两条**：呈递端拆成 `PresentTarget`（帧的契约）+ `WindowPresentTarget`（窗口那一面，见顶条），命名仍否掉 `RenderTargetWindow` / `RenderTargetOffscreen` 一对（`RenderTarget` 是描述、不是同族，理由在 §8）、云渲染的落点是"**第二个呈递端**"而不是把区通用化（§8 末条 + §9 第 6 条，带触发条件）；**§9.7（共享设备的 initialize/shutdown 归谁）已于 2026-10-18 裁定并落地：形状②——会话归创建者、引擎只借用设备（见顶条）**；**S10b 的 1:N、离屏会话、执行器自持帧尾与 `DeviceDesc{presentation}` 创建输入均已落地（2026-10-18/19/20）**，S10b 的登记项已清空；S11（登记不做）未落地 |
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
@@ -80,6 +80,55 @@
     （min / 未学槽数时不证明 / 单调 / 加入不回卷 / 离开不约束 / 最宽槽数）、`VsgBackendTest.TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTarget`
     （第一块由聚合答、同窗二次 ⇒ 占用报一次、异窗 ⇒ 自己的目标对象）、`SessionTest.ASecondSessionRendersOnTheDeviceTheFirstOneCreated`
     （真设备：两个会话一个 `vsg::Device`）。**变异 2/2 红**：水位取 max ⇒ clock 用例红；每块窗口都返 `this` ⇒ 窗口用例红。
+
+## 2026-10-18 S10b 第二片：`executeFrame(frame, nullptr)` = 没有窗口（`api::OffscreenSession`）
+
+- **结论**：`nullptr` 不再落到窗口 0。它走**离屏会话**（`api::OffscreenSession`，借用设备 + 图形队列族；
+  `vsg::Viewer` 零窗口 + `CommandGraph(device, family)` + 一个 task）：`beginFrame()` 只推进时间线（**不取像**），
+  `commitFrame()` 提交、**不 present**，并按 `frame - slots` 向 `DeviceClock::windowCompleted` 报证据。帧在
+  `executeFrame` 返回前完成（没有人会替它 present）。`VsgBackend::Data::driving = kNoWindow` 表示"这一帧没有窗口"；
+  窗口/离屏的"记录 + 提交"合成 `commitFrameThrough(window, offscreen)`，只差会话、默认帧缓冲行与 present。
+- **共用件**：不泵事件的 viewer 与"保留 VkResult 的提交"抽到 `SessionDrive.hpp`（`detail::EmbeddedViewer` /
+  `detail::submitViewerTasks`），窗口会话与离屏会话各只有一份。
+- **`recordContent`**：窗口参数变指针；没有窗口时跳过"命名默认帧缓冲"的 pass（编译期已因缺 facts 行排除）。
+- **判据**：构建 0 错 0 警；`ctest` 24/24；`test_vsg` 434 = 431 过 + 3 skip；五道门禁 0 finding。新用例
+  `VsgBackendTest.ANullTargetRunsTheFrameWithoutAnyWindow`（不 present / 不新增窗口 / 无诊断 / 进队列 / 进水位）。
+  变异：① `nullptr` 回窗口 0 ⇒ 红；② 离屏不报证据 ⇒ 水位红。
+- **连带发现**：此前 `SdkPixelFixture::available()` 在本机（Windows）恒为 false —— 因为 `nullptr` 帧只录不提交，
+  宿主目标的像素从未画出来，整套设备用例一直在**跳过**。这一片之后它们真的跑起来了；`VsgBackendTest` 里用假句柄
+  （`int second = 0`）建第二块窗口再 `initialize()` 的那半段因此在 Windows 上不成立，改成"设备起来之后再要第二把目标"。
+
+## 2026-10-20 `DeviceDesc{presentation}` 成为**创建输入**（S10b 最后一项；`None` = 无窗口设备）
+
+- **结论**：设备的“呈现意图”在**建它的时候**说（`vn::graphics::DeviceDesc{presentation, native_handle}`），
+  `RenderBackendFactory::create(const DeviceDesc&)` → `RenderBackendRegistry::create(name, desc)` → `VsgBackend(desc)`
+  一路传下去，一个值贯穿创建。三种取值：`Probe`（默认，今天的形状：宿主没指名窗口就自己造一块）、
+  `None`（**永不上屏**）、`Handle`（为宿主那块窗口造设备，句柄是创建输入）。
+- **`None` 的形状**：`initialize()` 走**无窗口缝** `createDevice()`（`Instance` 由设备自己拿住，`Data::instance`），
+  因此 `windowCount()` 在整个生命周期里恒为 0；`capabilities().presentation == false`；`createSurfaceTarget` 答
+  `NoPresentation` 且**静默**；`initialized()` = “设备有没有起来”；它的帧就是“不命名目标”那种（离屏会话提交、不 present）。
+  `Handle` + 没给句柄 ⇒ `initialize()` 答 false + 一条 `InitFailed`（**不**改成自己造一块窗口——那是另一种意图）。
+- **队列族**：`graphicsQueueFamily(const vsg::Device&)` 从**设备自己的队列**读（不再问物理设备）；离屏会话因此
+  在 `None` 设备上也能起来，且窗口设备的族与它当初建的族必然一致。
+- **坑**：给 `tests` 的 `DirectDriveBackend` 加构造函数之后，`new X()` 的**零初始化不再覆盖成员** ⇒ `target_`（`raw_ptr`，
+  就是裸指针）是垃圾 ⇒ `nativeHandle()` 里解引用 0xc0000005；`target_{nullptr}` 修好。与 S10a 那条同一课：
+  `raw_ptr` 必须自己写初值，不能指望 `new X()`。
+- **判据**：构建 0 错 0 警；`ctest` 24/24；`test_vsg` **436 = 433 + 3 skip**（新 2 条：
+  `ADeviceCreatedWithNoPresentationRunsWholeFramesWithoutAWindow` / `ADeviceCreatedOnAHandleWithoutOneIsRefusedWithItsReason`）；
+  `test_graphics` **377**（新 1 条 `TheDescriptionReachesTheFactory`：注册表把描述原样交给工厂）；六道门禁 0 finding。
+  变异：`createSurfaceTarget` 的 `None` 早退拿掉 ⇒ 新用例 5 条断言红（已回退）。
+
+## 2026-10-19 执行器自持帧尾 present（`graphics-window-device-viewer.md` §5 规则 8 / §9 待决 5）
+
+- **结论**：`executeFrame(frame, present_to)` 在返回前把帧驱动到尾巴——有目标时经它 `present()`（本后端里那就是
+  “提交 + 呈递”那一步），`nullptr` 时走离屏会话只提交。引擎（`RenderEngine::frame()`）与直接驱动一格的宿主
+  （`RenderPass::execute()`）都不再 present；test_vsg 的 drive 直接调 `executeFrame`，不再跟一个 `present()`。
+- **契约文字**：`PresentTarget::present()` 改为“执行器在帧尾调它，驱动者不调”；`RenderFrameExecutor` 的
+  “一帧是参数不是区间”一条补上“有目标时也在返回前完成”。
+- **测试双实现**：`test_graphics` 的 `HeadlessBackend/WindowedBackend/FleetBackend/MockBackend`、`test_gui` 的 stub
+  在 `executeFrame` 尾部调 `present_to->present()`（计数因此不变）；否则它们的 `presents` 见证会归零。
+- **判据**：构建 0 错 0 警；`ctest` 24/24；`test_vsg` 434 = 431 + 3 skip；`test_graphics` 376；`test_gui` 259；
+  六道门禁 0 finding。变异：`VsgBackend::executeFrame` 不再驱动帧尾 ⇒ `TheSdkFacingBackend...` 5 条断言红。
 
 ## 2026-10-13 `SceneView::onSurfaceResized` → `resize`（公共 API 改名；`on*` 从此只留给接收点）
 

@@ -66,14 +66,14 @@ void RenderBackendRegistry::registerFactory(raw_ptr<RenderBackendFactory> factor
     d->factories[factory->name()] = factory;
 }
 
-vn::intrusive_ptr<RenderBackend> RenderBackendRegistry::create(const String& name) const
+vn::intrusive_ptr<RenderBackend> RenderBackendRegistry::create(const String& name, const DeviceDesc& desc) const
 {
     std::lock_guard<std::mutex> lock(d->mutex);
     const auto it = d->factories.find(name);
     if (it == d->factories.end()) {
         return {};
     }
-    return it->second->create();
+    return it->second->create(desc);
 }
 
 std::vector<String> RenderBackendRegistry::names() const

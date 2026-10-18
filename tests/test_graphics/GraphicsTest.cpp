@@ -2454,6 +2454,11 @@ class MockBackend : public RenderBackend {
             }
             ++entries_closed;
         }
+        // THE FRAME'S TAIL is this executor's (see RenderFrameExecutor::executeFrame): it presents through the target
+        // the frame named, so a case's `present_calls` witness stays exactly one per frame the engine ran.
+        if (present_to != nullptr) {
+            present_to->present();
+        }
     }
 
   private:
@@ -6015,10 +6020,17 @@ class MockBackendFactory : public RenderBackendFactory {
                                   RenderApi::Vulkan | RenderApi::OpenGL3 };
     }
 
-    vn::intrusive_ptr<RenderBackend> create() override
+    vn::intrusive_ptr<RenderBackend> create(const DeviceDesc& desc) override
     {
+        // The description is the CREATION INPUT (see DeviceDesc): a mock records what it was asked for, so the
+        // registry's forwarding can be asserted rather than assumed.
+        last_desc = desc;
+        ++created;
         return vn::intrusive_ptr<RenderBackend>(new MockBackend());
     }
+
+    DeviceDesc last_desc{};
+    int        created{0};
 
   private:
     vn::String name_;
@@ -6040,6 +6052,33 @@ TEST(RenderBackendRegistryTest, RegisterAndCreateByName)
     // Unknown names return null.
     EXPECT_EQ(registry.create(u8"nope"), nullptr);
     EXPECT_FALSE(registry.has(u8"nope"));
+}
+
+TEST(RenderBackendRegistryTest, TheDescriptionReachesTheFactory)
+{
+    auto& registry = RenderBackendRegistry::instance();
+    static MockBackendFactory factory(u8"mockdesc");
+    registry.registerFactory(&factory);
+
+    // A device is created FOR something (see DeviceDesc): the registry hands the description to the factory that
+    // builds it, unchanged, and a factory that is asked twice is told twice.
+    DeviceDesc desc;
+    desc.presentation  = DevicePresentation::Handle;
+    int        window  = 0;
+    desc.native_handle = &window;
+
+    const auto backend = registry.create(u8"mockdesc", desc);
+    ASSERT_NE(backend, nullptr);
+    EXPECT_EQ(factory.created, 1);
+    EXPECT_EQ(factory.last_desc.presentation, DevicePresentation::Handle);
+    EXPECT_EQ(factory.last_desc.native_handle, static_cast<void*>(&window));
+
+    // The default is the shape a host that says nothing gets: asked for, but with no window named.
+    const auto plain = registry.create(u8"mockdesc");
+    ASSERT_NE(plain, nullptr);
+    EXPECT_EQ(factory.created, 2);
+    EXPECT_EQ(factory.last_desc.presentation, DevicePresentation::Probe);
+    EXPECT_EQ(factory.last_desc.native_handle, nullptr);
 }
 
 TEST(RenderBackendRegistryTest, EnumerateNames)

@@ -65,6 +65,11 @@ class HeadlessBackend : public RenderBackend
             targets.push_back(entry.description->target);
             draws += entry.description->draws.size();
         }
+        // The frame's tail, exactly as the contract states it (RenderFrameExecutor::executeFrame): the executor
+        // presents through the target the frame named, and a frame that named none presents nowhere.
+        if (present_to != nullptr) {
+            present_to->present();
+        }
     }
 
     void setRenderTarget(RenderTarget*) override {}
@@ -131,6 +136,10 @@ class WindowedBackend : public RenderBackend, public WindowPresentTarget
     {
         ++frames;
         present_targets.push_back(present_to);
+        // The frame's tail: the executor presents through the target the frame named (see RenderFrameExecutor).
+        if (present_to != nullptr) {
+            present_to->present();
+        }
     }
 
     void setRenderTarget(RenderTarget*) override {}
@@ -225,6 +234,10 @@ class FleetBackend : public RenderBackend
     {
         ++frames;
         present_targets.push_back(present_to);
+        // One frame, one present - through THAT frame's target (see RenderFrameExecutor::executeFrame).
+        if (present_to != nullptr) {
+            present_to->present();
+        }
     }
 
     void setRenderTarget(RenderTarget*) override {}
