@@ -111,3 +111,37 @@
 在这之前，`nullptr` 仍然驱动窗口 0——**这是已知且写在契约注释里的约定**，不是偶然：一块窗口的设备上
 "不呈现"与"没有窗口"今天无法区分，因为提交本身就是靠那条会话做的。
 
+## 6. 拆会话：提交载体可以没有窗口（下一片，2026-10-18 设计）
+
+**vsg 的事实（已核对）**：`vsg::CommandGraph` 有三种构造——
+`CommandGraph()`、`CommandGraph(ref_ptr<Device>, int family)`、`CommandGraph(ref_ptr<Window>)`。
+**中间那种就是"没有窗口的一次提交"**：它不取像、不 present，只把命令缓冲交给设备的队列。
+
+**要拆的不是"一个共享 viewer"，而是"窗口"这一项依赖**。一条进程里每块窗口各有自己的 fence 表（槽数逐窗学习），
+硬把它们合成一个 viewer 会让 `viewer->present()` 一次呈现所有窗口，而一帧只该呈现它命名的那一块。所以：
+
+| 对象 | 拥有 | 是否有窗口 |
+| --- | --- | --- |
+| `api::Session`（现有） | 窗口、交换链、`WindowTarget`、viewer、命令图、槽数学习 | 有 |
+| `api::OffscreenSession`（**新增**） | 设备、viewer（零窗口）、`CommandGraph(device, family)`、槽数学习 | **无** |
+
+**`VsgBackend` 的接线**
+
+* 有目标：走该窗口的 `Session`（今天的行为）。
+* `nullptr`：**懒建**一个 `OffscreenSession`，用 `d->clock.begin()` 取帧号（不取像），
+  `executor.setWindow(nullptr)`，`facts` 只有宿主目标行，录完 `commit`，**不 present**。
+* 两条路径共用设备级 `DeviceClock`：`OffscreenSession` 也是一个"窗口"（`addWindow()` 一个 id），
+  它自己的 fence 证据照同样规则汇进 min——没有窗口的那一帧，其 GPU 工作同样要被算进水位。
+
+**要动的代码点（估）**
+
+1. `api::OffscreenSession`（新头 + 实现，~150 行，复用 `Session` 的槽数学习与 viewer 装配）；
+2. `recordContent(...)` 增加"没有默认帧缓冲目标"的分支（只录命名了自身目标的 pass）；
+3. `VsgBackend::executeFrame` 的 `nullptr` 分支 + `d->driving` 改成"窗口索引 or 离屏"；
+4. 测试：`DirectDriveBackend` 的一参 `executeFrame` 改成"离屏"语义，新用例
+   `ANullTargetRunsTheFrameWithoutAnyWindow`（`framesPresented()==0`、`windowCount()==0`、目标上的像素仍可读回）。
+
+**判据**：全量构建 0 错 0 警；`ctest` 24/24；离屏用例上设备电池可跑；变异：① 离屏帧仍 present ⇒ 红；
+② 离屏帧不进 `DeviceClock` ⇒ 水位用例/离屏用例红。
+
+
