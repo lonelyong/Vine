@@ -151,7 +151,7 @@
 
 ### 7.1 按顺序改四处
 
-1. **`src/plugins/gfx_backend_vsg/include/vine/vsg/internal/OffscreenSession.hpp`（新）**
+1. **`src/plugins/gfx_backend_vsg/include/vine/vsg/internal/OffscreenSession.hpp`（新）** <!-- drift-ok -->
    - 照 `Session.hpp` 的形状写一个**不带窗口**的会话：`initialize(options, diagnostics)`、`shutdown()`、
      `initialized()`、`beginFrame()`（只 `clock.begin()`，**不取像**）、`commitFrame()`（提交，**不 present**）、
      `slots()` / `framesPresented()` / `deviceWaits()`。
