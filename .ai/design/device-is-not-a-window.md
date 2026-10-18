@@ -144,4 +144,61 @@
 **判据**：全量构建 0 错 0 警；`ctest` 24/24；离屏用例上设备电池可跑；变异：① 离屏帧仍 present ⇒ 红；
 ② 离屏帧不进 `DeviceClock` ⇒ 水位用例/离屏用例红。
 
+## 7. 执行手册（给下一个会话说"开干"用）
+
+**起点**：`dev` 分支，工作树干净，最后一次提交是本文档的 §6（`57e24cea`）。**先跑一遍**下面第三节的验证，
+确认起点是绿的（`ctest` 24/24）。
+
+### 7.1 按顺序改四处
+
+1. **`src/plugins/gfx_backend_vsg/include/vine/vsg/internal/OffscreenSession.hpp`（新）**
+   - 照 `Session.hpp` 的形状写一个**不带窗口**的会话：`initialize(options, diagnostics)`、`shutdown()`、
+     `initialized()`、`beginFrame()`（只 `clock.begin()`，**不取像**）、`commitFrame()`（提交，**不 present**）、
+     `slots()` / `framesPresented()` / `deviceWaits()`。
+   - 内部：`vsg::Viewer`（同 `EmbeddedViewer`，不泵事件）+ `assignRecordAndSubmitTaskAndPresentation({CommandGraph(device, family)})`
+     + 复用 `Session` 的两个既有件：**槽数学习**（`core::SlotTracker` / `probeSlotCount`，从 `task->fence(i)`）
+     与**设备级 clock 的证据上报**（`clock->addWindow()` / `setWindowSlots` / `windowCompleted`）。
+   - 设备的 `queue_family`：从 `vsg::Device`/`PhysicalDevice` 取（`Session` 里是 `window->getOrCreateDevice()` 之后才有的信息；
+     离屏会话拿的是**别人建好的 device**，family 由调用方传入）。
+2. **`src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp`**
+   - `Data` 加 `std::unique_ptr<api::OffscreenSession> offscreen;`（懒建）。
+   - `executeFrame`：`present_to == nullptr` ⇒ 不再落到窗口 0，走离屏：`d->driving = kOffscreen`；
+     `d->executor.setWindow(nullptr)`；`openFrameBooks()` 用 `offscreen->beginFrame()`；
+     `closeFrameBooks()` 的 `facts` 不压窗口行；`presentWindow` 不会被调用（没有人持目标）。
+   - `recordContent(...)`（同文件匿名命名空间里那个）：`WindowTarget&` 参数变成指针，`nullptr` 时只录
+     **命名了自己目标**的 pass（`recordsWindow` 那类分支保持 false），并跳过窗口目标事实。
+   - `growBlockStorageIfNeeded` / `sweepAbandonedContent` / `applyTargetPlans` 已经读设备级 clock，不用动。
+3. **`src/plugins/gfx_backend_vsg/src/internal/Session.cpp`**：`d->driving` 的类型从 `std::size_t` 改成
+   "窗口索引 | 离屏"（建议 `std::size_t` + `kOffscreen = size_t(-1)`），或干脆在 `VsgBackend` 里存一个
+   `api::Session* driving_window` + `api::OffscreenSession* driving_offscreen`——后者更好读。
+4. **`tests/test_vsg/`**
+   - `VsgBackendTest.cpp` 的 `DirectDriveBackend::executeFrame(frame)`（一参）改成**离屏**语义？**不要**：
+     那些用例要的是"这块窗口的一帧"，保持现在（带 target）。
+   - 新增 `ANullTargetRunsTheFrameWithoutAnyWindow`：真 backend，`executeFrame(FrameDescription{})`（不带目标）⇒
+     `framesPresented()==0`、`windowCount()==0`、诊断干净；再要一把目标驱动一帧 ⇒ `framesPresented()==1`。
+   - 设备电池里的离屏像素用例（`SdkPixelTest`）必须仍然绿——它是 `recordContent` 空窗口分支的判据。
+
+### 7.2 验证（一条一条跑，别跳）
+
+```powershell
+cmake --build build --config Debug                     # 0 error / 0 warning
+ctest -C Debug                                          # 24/24；test_vsg 432 = 429 + 3 skip
+python scripts/check_ai_docs.py --strict                # 0
+python scripts/check_public_docs.py                     # 0 new / 0 stale（新头要有 @brief/@param/@return）
+python scripts/check_include_hygiene.py                 # 0
+python scripts/check_export_annotations.py              # 0
+```
+
+变异（各单独实测，必须红）：① 离屏帧仍 `present()`；② 离屏会话不上报 `windowCompleted`（水位不动）。
+
+### 7.3 已知坑
+
+* **新源文件要重跑 `cmake -S . -B build`**：`vn_add_library` 的 glob 没有 `CONFIGURE_DEPENDS`。
+* **`VsgOwnedWindow` / `adoptDevice` 只对"本后端造的窗口"有效**；离屏会话根本不建窗口，别去碰它们。
+* **不要用 `viewer->present()` 做离屏提交**：它按窗口呈现；离屏的提交只走 task 的 submit。
+* **水位不动的症状**：`BlockStorage` 的替换永远停不下来（`kept_storage` 增长），或断言"淘汰迟迟不释放"。
+  离屏会话必须像窗口一样 `addWindow()` 并上报证据，否则设备的 min 会把水位钉死。
+* **`Session::wouldKeep` 的表**不适用于离屏会话（它没有可"保持"的表面）：离屏的 `initialize()` 幂等即可。
+
+
 
