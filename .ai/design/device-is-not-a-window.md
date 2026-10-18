@@ -86,19 +86,28 @@
 
 **已落地**
 
-* `VsgBackend` **不再 derive `WindowPresentTarget`**：设备在类型上不再是窗口，"设备可以当窗户用"这件事不再成立。
-* **每块窗口（含第一块）都有自己的 target 对象**（`detail::WindowFacade`），`createSurfaceTarget` 只有一种返回；
-  "同一块窗口两次 ⇒ `WindowOccupied`、不同窗口 ⇒ 服务它"不变。`windowCount()` 是这条的观测面。
-* 设备上的 `setWindowHandle / nativeHandle / resize / present` 降级为**非虚便利入口**（窗口 0），文档写明
-  "它们本来就是目标的方法，持有目标的宿主在目标上调"。
-* 判据：全量构建 0 错 0 警；`ctest` **24/24**；`test_vsg` 计数不变。
+* `VsgBackend` **不再 derive `WindowPresentTarget`**：设备在类型上不再是窗口。
+* **每块窗口（含第一块）都有自己的 target 对象**（`detail::WindowFacade`）；`createSurfaceTarget` 只有一种返回；
+  "同一块窗口两次 ⇒ `WindowOccupied`、不同窗口 ⇒ 服务它"不变，`windowCount()` 是它的观测面。
+* **设备上不再有窗口入口**：`setWindowHandle / nativeHandle / resize / present` 已从 `VsgBackend` 删除，
+  只剩按索引的机制入口（`presentWindow / resizeWindow / windowHandleAt / setWindowHandleAt`），那几个只由
+  facade 调用。直驱的测试用 `DirectDriveBackend`（测试本地适配器）表达"这一帧是哪块窗口"——它们正是宿主的形状。
+* 判据：全量构建 0 错 0 警；`ctest` **24/24**；`test_vsg` 计数不变；五个门禁 0 finding。
 
-**待落地（下一步，改动面已知）**
+**待落地：`executeFrame(frame, nullptr)` 的真正含义**
 
-* `executeFrame(frame, nullptr)` 改成**真的没有窗口**：不 `beginFrame()`（不取像）、不 present、`facts` 只有宿主
-  目标行。今天它仍驱动窗口 0（因此仍会取一张交换链图像）。
-* 之后删掉那四个便利入口，`RenderBackend` 就只剩"设备 + 帧"。
-* 这两步都要改写 `tests/test_vsg/VsgBackendTest.cpp` 的 **85 处**（`setWindowHandle` → `createSurfaceTarget`、
-  `present()`/`executeFrame(f)` → 目标上的调用），`TestFrame.hpp` 的示例注释 2 处，以及
-  `HeadlessBackendTest::WindowedBackend`（把"返回 `this`"改成独立目标对象，与 `FleetBackend` 同形）。
+写这一步时发现它**不能单独翻**，原因是 `api::Session` 现在同时是两件事：**一个窗口**（表面 / 交换链）和
+**一次提交的载体**（viewer、命令缓冲、fence 表、in-flight 槽数）。没有任何窗口，就没有人把这一帧的命令缓冲区
+交给队列——离屏帧也就录不下来。
+
+所以顺序必须是：
+
+1. **先拆会话**：把"提交载体"从窗口里拿出来（设备级 viewer / 命令缓冲池），`api::Session` 只剩窗口那一半；
+2. **再翻语义**：`nullptr` ⇒ 用设备的提交载体开一帧（`clock.begin()` 取帧号、不取像、`facts` 只有宿主目标行），
+   录完提交，不 present；
+3. **再删**`d->driving` 的"无目标时默认窗口 0"这条分支，以及 `VsgBackendTest` 里 `DirectDriveBackend` 的一参
+   `executeFrame`（那时测试要显式说明"这一帧没有窗口"）。
+
+在这之前，`nullptr` 仍然驱动窗口 0——**这是已知且写在契约注释里的约定**，不是偶然：一块窗口的设备上
+"不呈现"与"没有窗口"今天无法区分，因为提交本身就是靠那条会话做的。
 

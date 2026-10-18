@@ -64,10 +64,72 @@ using vn::graphics::backend::depthPlan;
 using vn::vsg::BlockStorage;
 using vn::vsg::HostTargets;
 using vn::vsg::PassRegistry;
-using vn::vsg::VsgBackend;
 using vn::graphics::backend::VariantPool;
 using vn::vsg::WindowTarget;
 using vn::vsg::detail::BackendContentAccess;
+
+/**
+ * @brief The device these cases drive directly, with the ONE window a case presents through held explicitly.
+ *
+ * WHY IT IS NOT `VsgBackend`: the DEVICE IS NOT A WINDOW (see `.ai/design/device-is-not-a-window.md`) - it hands out
+ * a target per window and has none of `present / resize / nativeHandle` of its own. A case here drives one window, so
+ * this holds THAT window's target and names it in the frame, which is exactly what a host does; everything the cases
+ * assert about the device (counters, clock, storage, targets) is inherited unchanged.
+ */
+class DirectDriveBackend : public vn::vsg::VsgBackend
+{
+  public:
+    /// The window's handle is the target's CREATION input; a second announcement MOVES the target that exists.
+    void setWindowHandle(void* native_handle)
+    {
+        if (target_ == nullptr)
+        {
+            target_ = createSurfaceTarget(native_handle);
+        }
+        else
+        {
+            target_->setWindowHandle(native_handle);
+        }
+    }
+
+    [[nodiscard]] void* nativeHandle() const { return target_ != nullptr ? target_->nativeHandle() : nullptr; }
+
+    void resize(int width, int height)
+    {
+        if (target_ != nullptr)
+        {
+            target_->resize(width, height);
+        }
+    }
+
+    void present()
+    {
+        if (target_ != nullptr)
+        {
+            target_->present();
+        }
+    }
+
+    /// One argument: the frame is for the window this case holds (see RenderFrameExecutor::executeFrame).
+    void executeFrame(const vn::graphics::FrameDescription& frame)
+    {
+        vn::vsg::VsgBackend::executeFrame(frame, target_);
+    }
+
+    /// The two-argument form, unchanged: a case that names a target explicitly (a foreign one, a bare presenter).
+    void executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to) override
+    {
+        vn::vsg::VsgBackend::executeFrame(frame, present_to);
+    }
+
+    [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget> target() const { return target_; }
+
+  private:
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> target_;
+};
+
+/// The name the cases use: the device they drive, one window each (see DirectDriveBackend).
+using VsgBackend = DirectDriveBackend;
 
 namespace
 {

@@ -173,25 +173,6 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     virtual void executeFrame(const vn::graphics::FrameDescription& frame,
                               vn::graphics::PresentTarget*           present_to = nullptr) override;
 
-    /** @brief Remembers the host's window handle for the next @ref initialize (the window this device was born with).
-     *
-     * @note The DEVICE IS NOT A WINDOW (see createSurfaceTarget): this and the three entries below are conveniences
-     *       for window 0, which a host that drives the aggregate directly and asked for no target uses. A host
-     *       holding a target object calls the same four methods THERE.
-     *
-     * @param native_handle Host window to present through, or nullptr for a window of this backend's own.
-     */
-    void setWindowHandle(void* native_handle);
-
-    /** @brief Gets the handle window 0 was attached to, or null while it owns its window (see above). */
-    [[nodiscard]] void* nativeHandle() const;
-
-    /** @brief Announces window 0's surface size: applied by the next @ref initialize, followed live (see above). */
-    void resize(int width, int height);
-
-    /** @brief Records window 0's frame and commits it: the one present (see @ref presentWindow). */
-    void present();
-
     /** @brief Answers what this backend can do: off-screen targets, whole (see `RenderDevice::capabilities`). */
     [[nodiscard]] vn::graphics::Capabilities capabilities() const noexcept override;
 

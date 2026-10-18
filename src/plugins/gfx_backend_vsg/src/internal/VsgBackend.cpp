@@ -652,13 +652,6 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
     closeFrameBooks();
 }
 
-void VsgBackend::present()
-{
-    // The aggregate's own window (see createSurfaceTarget): a host driving this backend directly presents here,
-    // and a host holding a target object named it on that object instead.
-    presentWindow(0);
-}
-
 void VsgBackend::presentWindow(std::size_t index)
 {
     if (index >= d->windows.size())
@@ -720,22 +713,12 @@ void VsgBackend::presentWindow(std::size_t index)
     d->frame = nullptr;
 }
 
-void VsgBackend::setWindowHandle(void* native_handle)
-{
-    setWindowHandleAt(0, native_handle);
-}
-
 void VsgBackend::setWindowHandleAt(std::size_t index, void* native_handle)
 {
     // A session decision for THAT window: the next initialize() adopts the handle (or moves an established session
     // onto it - see core::planSessionMove, which the session applies).
     ensureWindowAt(index);
     d->windows[index]->host_handle = native_handle;
-}
-
-void* VsgBackend::nativeHandle() const
-{
-    return windowHandleAt(0);
 }
 
 void* VsgBackend::windowHandleAt(std::size_t index) const noexcept
@@ -747,11 +730,6 @@ void* VsgBackend::windowHandleAt(std::size_t index) const noexcept
         return nullptr;
     }
     return d->windows[index]->session->initialized() ? d->windows[index]->host_handle : nullptr;
-}
-
-void VsgBackend::resize(int width, int height)
-{
-    resizeWindow(0, width, height);
 }
 
 void VsgBackend::resizeWindow(std::size_t index, int width, int height)

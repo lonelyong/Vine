@@ -191,7 +191,7 @@ TEST_F(VsgBackendPluginTest, CreateBackendByName)
         << "the registered 'vsg' backend is the rewrite's facade, not the implementation it replaces";
     EXPECT_TRUE(backend->capabilities().render_targets);
     EXPECT_TRUE(backend->capabilities().presentation) << "this device HAS a window half: the value says so";
-    EXPECT_EQ(facade->nativeHandle(), nullptr) << "no surface was announced on this instance";
+    EXPECT_EQ(facade->windowCount(), 0U) << "no window was asked for on this instance";
 }
 
 #if !defined(_WIN32)
