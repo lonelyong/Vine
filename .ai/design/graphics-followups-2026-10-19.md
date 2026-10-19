@@ -58,13 +58,15 @@ B2 是“保持现状”的登记项。
      imported 输入。
    - 判据：`VsgBackendTest.AnImportedTextureInputReachesAScreenProgram`（像素）+ 既有全屏用例不回归。
 
-2. **produced 输入按 attachment 绑定**
-   - 现状：`ImageSource::attachment` / `depth` 只是选择符，vsg 仍绑定整个 target（binding N = attachment N）。
-   - 动作：`CompiledInput` 带 `attachment` / `depth`，`recordContent` 只 push 对应 view；
-     `color_attachments` 跟随单图而不是 target 的附件数。
-   - 判据：MRT target 只声明 attachment 1 的内容 pass，绑定集合只有一张图；现有 G-buffer 预览与
-     `screenCopyProgram(n)` 不回归。
-   - 风险：全屏预览依赖“binding N = attachment N”，需要保留全屏路径的整 target 绑定或显式例外。
+2. **produced 输入按 attachment 绑定（已落地 2026-10-19）**
+   - 结论：`CompiledInput` 带 `attachment` / `depth`；`ProducedImage` 的 `color_attachments` 跟随单图（彩色 1、
+     depth 0），`ProducedTarget` 仍是整 target。`recordContent` 只 push 声明的那个 view，内容 pass 的 sampled set
+     因此只有一张图。全屏 ABI 的 "binding N = attachment N" 作为显式兼容路径保留：`InputImages::screen_colors`
+     携带 source 的整 target，`recordScreenDraw` 优先用它；`ProducedTarget` 的旧路径不变。
+   - 判据：`VsgBackendTest.AProducedInputBindsOnlyTheAttachmentItNames`（MRT 只声明 attachment 1 的内容 pass，
+     像素读回 attachment 1 的红色，绿=attachment 0 被排除）；`ScreenDrawTest.TheBindingNamesTheAttachment...`
+     与 `SdkPixelTest.TheDeferredPresetFillsEveryGbufferAttachment` 不回归；`test_vsg` 465；`ctest` 24/24；
+     ASan 与 8 条 hygiene 门禁 0 finding。
 
 3. **imported input revision 失效用例**
    - 现状：`(Texture*, revision)` 已进 `CompiledInput`，`MaterialImages` 也按它缓存。
@@ -89,4 +91,4 @@ B2 是“保持现状”的登记项。
 
 ## 4. 下一 session 的第一条命令
 
-K1 与 E2 收尾 #1 已完成，直接从 §2 的 2 → 3 → 4 顺序做；每项先补失败用例，再改后端。
+K1 与 E2 收尾 #1、#2 已完成，直接从 §2 的 3 → 4 顺序做；每项先补失败用例，再改后端。

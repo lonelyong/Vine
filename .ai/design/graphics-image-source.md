@@ -109,9 +109,10 @@ struct ImageSource
   声明的 binding）；imported 图按输入声明序填程序**已经声明的其余 sampler binding**（升序）。数量对不上由
   backend 报 refusal，不静默绑错图。第一切片只支持 `Texture::Kind::D2`；Cube 作为输入需要程序声明 cube
   sampler，等真实需求再加。
-- **produced 输入的 attachment 仍是选择符**：vsg 绑定层今天给 produced 输入整个 target（binding N =
-  attachment N，全屏 ABI 的规则），`ImageSource::attachment` / `depth` 还没有收窄绑定集合；真正按
-  attachment 绑定是后端能力项，等程序需要时再加。
+- **produced 输入按 attachment 绑定（2026-10-19 落地）**：`CompiledInput` 携带 `attachment` / `depth`；
+  内容路径的 `ProducedImage` 只绑定声明的那一张图（彩色 1、depth 0，`ProducedTarget` 仍为整 target）。
+  全屏 ABI 保持 "binding N = attachment N"：`InputImages::screen_colors` 为 source 提供整 target，
+  `recordScreenDraw` 优先使用它，因此 `screenCopyProgram(n)` 与 G-buffer 预览不回归。
 
 ## 4. 备选方案与否决理由
 
@@ -158,3 +159,6 @@ struct ImageSource
   `RenderPipelineBuilderTest.AScreenPassKeepsImportedTextureInputsForItsProgram`、
   `VsgBackendTest.AnImportedTextureInputReachesAContentProgram` 与
   `VsgBackendTest.AnImportedTextureInputReachesAScreenProgram`（两条像素：内容与全屏程序各采样导入贴图）。
+- 2026-10-19 追加：produced 输入按 attachment 绑定。`CompiledInput.attachment` / `.depth` 收窄内容路径的
+  offer（`VsgBackendTest.AProducedInputBindsOnlyTheAttachmentItNames`），全屏 source 的整 target 由
+  `InputImages::screen_colors` 显式保留（`ScreenDrawTest` 与 `SdkPixelTest` 的 G-buffer 预览不回归）。

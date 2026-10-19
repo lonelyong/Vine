@@ -660,7 +660,15 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
         return false;
     }
 
-    const std::uint32_t colours = source != nullptr ? static_cast<std::uint32_t>(source->colors.size()) : 0U;
+    // THE FULL-SCREEN ABI'S SOURCE IS THE WHOLE TARGET. The plan narrows a ProducedImage input to the one image
+    // it names (the content path binds exactly that), but a full-screen call's binding N reads the source's
+    // attachment N (see BuiltinShaders::screenCopyProgram). The caller therefore offers the whole target in
+    // `screen_colors` for a call's source; `colors` is the fallback for a ProducedTarget input, where the two
+    // are the same list.
+    const std::span<const ::vsg::ref_ptr<::vsg::ImageView>> source_colors =
+        source == nullptr ? std::span<const ::vsg::ref_ptr<::vsg::ImageView>>{}
+                          : (source->screen_colors.empty() ? source->colors : source->screen_colors);
+    const std::uint32_t colours = static_cast<std::uint32_t>(source_colors.size());
     const std::uint32_t depths  = source != nullptr && source->depth != nullptr ? 1U : 0U;
 
     // Imported textures are the inputs that are neither the call's source nor the shadow map. They are the
@@ -836,7 +844,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
         }
         if (source != nullptr && declared.binding < colours)
         {
-            const ::vsg::ref_ptr<::vsg::ImageView>& view = source->colors[declared.binding];
+            const ::vsg::ref_ptr<::vsg::ImageView>& view = source_colors[declared.binding];
             if (view == nullptr)
             {
                 reportRefused("a full-screen drawing call", "the source offers no attachment at one of its bindings");

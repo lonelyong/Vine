@@ -1101,6 +1101,132 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
 }
 
 /*
+ * @brief A content pass that declares ONE produced attachment samples THAT image, not the target's first.
+ *
+ * The producer paints an MRT target: attachment 0 green, attachment 1 red. The consumer declares only
+ * attachment 1 (`ImageSource::producedImage(source, 1, false)`) and its program samples the pass' input set at
+ * set 1 binding 0. Red means the set carries the declared image; green means the whole target was offered and
+ * the content ABI's declaration-order binding answered with attachment 0.
+ */
+TEST(VsgBackendTest, AProducedInputBindsOnlyTheAttachmentItNames)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 128, 96);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(backend->capabilities().render_targets);
+
+    // The MRT source: attachment 0 green, attachment 1 red. The destination stays blue unless the image
+    // reaches it, so the three outcomes are distinct.
+    const vn::intrusive_ptr<RenderTarget> source(new RenderTarget());
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+    source->setSize(64, 64);
+    const vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    destination->attachColor(RenderTarget::ColorFormat::RGBA8);
+    destination->setSize(64, 64);
+
+    const vn::intrusive_ptr<ShaderProgram> producer_program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 first;\n"
+            "layout(location = 1) out vec4 second;\n"
+            "void main() { first = vec4(0.0, 1.0, 0.0, 1.0);\n"
+            "              second = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
+        producer_program->addStage(vertex);
+        producer_program->addStage(fragment);
+    }
+
+    // The content program samples the pass' input set at set 1 (see ContentPipeline::kInputSet): binding 0 is
+    // the first declared input, which is the ONE image the consumer names.
+    const vn::intrusive_ptr<ShaderProgram> consumer_program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 out_color;\n"
+            "layout(set = 1, binding = 0) uniform sampler2D declared_tex;\n"
+            "void main() { out_color = texture(declared_tex, vec2(0.5)); }\n"));
+        consumer_program->addStage(vertex);
+        consumer_program->addStage(fragment);
+    }
+
+    const TriangleFixture triangle = makeTriangle();
+    std::vector<RenderCommand> producer_commands = triangle.commands;
+    producer_commands.front().program            = producer_program;
+    std::vector<RenderCommand> consumer_commands = triangle.commands;
+    consumer_commands.front().program            = consumer_program;
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass> producer_pass(new RenderPass());
+    const vn::intrusive_ptr<RenderPass> consumer_pass(new RenderPass());
+    const vn::graphics::ClearPolicy source_clear{ vn::Color(0, 0, 255, 255), true };
+    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+
+    backend->executeFrame(TestFrame()
+                              .pass(producer_pass.get(), -1)
+                              .target(source.get())
+                              .clear(source_clear)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .content(producer_commands, camera.get())
+                              .pass(consumer_pass.get(), 0)
+                              .target(destination.get())
+                              .inputs(std::vector<vn::graphics::ImageSource>{
+                                  vn::graphics::ImageSource::producedImage(source.get(), 1, false) })
+                              .clear(destination_clear)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .content(consumer_commands, camera.get())
+                              .value());
+
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "the producer and the narrowed consumer both recorded";
+
+    std::vector<std::uint8_t>    pixels;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
+    const std::size_t at = (32U * 64U + 32U) * 4U;
+    ASSERT_LT(at + 3U, pixels.size());
+    EXPECT_TRUE(isColourByte(pixels[at], 1.0) && isColourByte(pixels[at + 1], 0.0) &&
+                isColourByte(pixels[at + 2], 0.0))
+        << "the declared attachment 1 is what the content program samples: got ("
+        << static_cast<int>(pixels[at]) << ", " << static_cast<int>(pixels[at + 1]) << ", "
+        << static_cast<int>(pixels[at + 2]) << ")";
+    EXPECT_FALSE(isColourByte(pixels[at], 0.0) && isColourByte(pixels[at + 1], 1.0))
+        << "green would be attachment 0: the whole-target offer reached the content input set";
+    EXPECT_EQ(pixels[at + 3], 255U);
+}
+
+/*
  * @brief A full-screen program samples an imported texture at its declared binding.
  *
  * The pass declares the imported texture first and its produced source second. The full-screen ABI binds the

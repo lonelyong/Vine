@@ -56,8 +56,15 @@ VN_VSG_NS_BEGIN
  */
 struct InputImages
 {
-    std::span<const ::vsg::ref_ptr<::vsg::ImageView>> colors;  ///< Colour attachments, in attachment order.
+    std::span<const ::vsg::ref_ptr<::vsg::ImageView>> colors;  ///< Colour attachments the CONTENT path binds.
     ::vsg::ref_ptr<::vsg::ImageView>                  depth;   ///< The input's DEPTH view, when it offers one.
+    /// The WHOLE source target's colour attachments, when this input is the source of a full-screen call.
+    ///
+    /// The full-screen ABI reads binding N as the source's attachment N (see BuiltinShaders::screenCopyProgram),
+    /// so a call whose pass declared the source as ONE image still binds the whole target - that compatibility
+    /// path is stated here rather than by widening `colors`, because the content path must keep binding only the
+    /// image its ProducedImage declaration names (see core::CompiledInput).
+    std::span<const ::vsg::ref_ptr<::vsg::ImageView>> screen_colors;
 };
 
 /** @brief Where a declared sampler binding takes its image from (the by-name policy of the file note). */

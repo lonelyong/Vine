@@ -309,14 +309,49 @@ std::span<const CompiledInput> FrameCompiler::resolveInputs(const CollectedPass&
                        "bound for it this frame");
             continue;
         }
-        out.color_attachments = static_cast<std::uint32_t>(found->wanted.shape.color_formats.size());
-        // The depth half, decided by the same function the target's own plan uses (depthPlan): a depth
-        // a pass preserves is not sampleable, and neither is a lender's depth - so a shader never samples an
-        // image some other pass is still depth-testing against.
-        out.depth_sampleable = depthPlan(found->depth).sampleable;
-        // And WHAT this input is, when the target says so: a shadow map is a depth input whose owner stated
-        // whose shadow it is (see ShadowFacts). The statement is copied, never re-derived by the consumer.
-        out.shadow = found->shadow;
+        const std::uint32_t offered_colors =
+            static_cast<std::uint32_t>(found->wanted.shape.color_formats.size());
+        if (source.kind == vn::graphics::ImageSource::Kind::ProducedImage)
+        {
+            // A SINGLE image: the attachment is the identity, so the offer is that one view (or the depth),
+            // never the whole target. The count follows the image rather than the target's attachment count -
+            // that is what a sampled-input set binds, and what a pipeline's input count is compiled for.
+            out.attachment = source.attachment;
+            out.depth      = source.depth;
+            if (source.depth)
+            {
+                // The depth half, decided by the same function the target's own plan uses (depthPlan): a depth
+                // a pass preserves is not sampleable, and neither is a lender's depth - so a shader never samples
+                // an image some other pass is still depth-testing against.
+                out.depth_sampleable = depthPlan(found->depth).sampleable;
+                // WHAT this input is, when the target says so: a shadow map is a depth input whose owner stated
+                // whose shadow it is (see ShadowFacts). The statement is copied, never re-derived by the consumer.
+                out.shadow = found->shadow;
+            }
+            else if (source.attachment < 0 ||
+                     static_cast<std::uint32_t>(source.attachment) >= offered_colors)
+            {
+                // The consumer is the one that knows what the target offers, so it is the one that reports the
+                // index. Offering nothing makes the binding layer refuse the pass instead of sampling another
+                // attachment, which is the only safe reading of an index this target does not have.
+                report(vn::graphics::DiagnosticCategory::ContentSkipped,
+                       "frame " + std::to_string(token.frame) + ": pass " + std::to_string(pass.pass) +
+                           " declares colour attachment " + std::to_string(source.attachment) +
+                           " of a sampled target that offers " + std::to_string(offered_colors) +
+                           " colour attachment(s): nothing is bound for it this frame");
+            }
+            else
+            {
+                out.color_attachments = 1U;
+            }
+            continue;
+        }
+
+        // A whole-target declaration keeps its coarse meaning: every colour attachment, plus the depth while
+        // that one is sampleable (see ImageSource::ProducedTarget).
+        out.color_attachments = offered_colors;
+        out.depth_sampleable  = depthPlan(found->depth).sampleable;
+        out.shadow            = found->shadow;
     }
     return inputs;
 }

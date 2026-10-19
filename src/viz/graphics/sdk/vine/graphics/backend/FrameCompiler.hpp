@@ -98,14 +98,18 @@ struct CompiledCommand
 /** @brief One of a pass' declared inputs, as the plan carries it: what it reads, and what it offers.
  *
  * @details
- * - Identity plus the ONE shape fact a sampler binding needs: how many colour attachments the input
- *   offers (that is the count of colour textures a sampled-input set binds for it). The value is
- *   answered HERE, from the same target facts the pass' own target is resolved from, because the two
- *   must not be able to disagree: a caller that re-derived it from the target it resolved would be
- *   answering the same question twice.
- * - An input nothing produced (the engine resolves those to null), or one the frame's facts cannot
- *   answer for, offers nothing: its count is zero, and a binding layer has nothing to bind for it -
- *   which is why the compiler REPORTS the second case (see compile()).
+ * - Identity plus ONE shape fact a sampler binding needs: how many colour textures the input offers (that is
+ *   the count of colour textures a sampled-input set binds for it). The value is answered HERE, from the same
+ *   target facts the pass' own target is resolved from, because the two must not be able to disagree: a caller
+ *   that re-derived it from the target it resolved would be answering the same question twice.
+ * - A `ProducedImage` input is NARROWED to the attachment it names: `attachment` / `depth` say which one, and
+ *   `color_attachments` is one (a colour image) or zero (the depth image), never the target's own count. A
+ *   `ProducedTarget` input is the coarse declaration and still offers every colour attachment plus the
+ *   sampleable depth. The full-screen ABI keeps its own "binding N = attachment N" rule over the whole source
+ *   target (see the binding layer); that is a property of the call, not of this narrowed value.
+ * - An input nothing produced (the engine resolves those to null), or one the frame's facts cannot answer for,
+ *   offers nothing: its count is zero, and a binding layer has nothing to bind for it - which is why the
+ *   compiler REPORTS the second case (see compile()).
  */
 struct CompiledInput
 {
@@ -113,11 +117,14 @@ struct CompiledInput
     const void*   target{nullptr};        ///< The target this input reads; nullptr = nothing produced it.
     const void*   texture{nullptr};       ///< The imported texture this input reads; nullptr for produced inputs.
     std::uint64_t texture_revision{0};    ///< The texture content revision; 0 for produced inputs.
+    int           attachment{-1};         ///< Colour attachment a ProducedImage names; -1 = whole target / imported.
+    bool          depth{false};           ///< Whether a ProducedImage names the target's depth attachment.
     std::uint32_t color_attachments{0};   ///< Colour textures it offers (0 = nothing to bind for it).
     /// Whether the input's DEPTH is sampleable and therefore bound too (the engine's contract for a
     /// whole-target input: "every colour attachment of its source, plus its depth while that one is
     /// sampleable"). Resolved from the same facts the target's own depth plan is made of, so "may a
-    /// shader sample it" has one answer per frame.
+    /// shader sample it" has one answer per frame. A ProducedImage of a COLOUR attachment never sets it:
+    /// the depth is not part of the image that input names.
     bool depth_sampleable{false};
 
     /// The map this input IS, when it is one (the target's own statement, copied here): a pass samples

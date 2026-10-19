@@ -122,6 +122,28 @@ int graphicsQueueFamily(const ::vsg::Device& device)
     return -1;
 }
 
+/// @brief Whether @p pass draws a full-screen call whose SOURCE is @p target.
+///
+/// The full-screen ABI binds binding N as the source's attachment N (see BuiltinShaders::screenCopyProgram), so
+/// the source's offer is the whole target even when the pass declared it as one ProducedImage. This answers
+/// "does this input have to carry that compatibility view", and it is asked here because the plan resolves the
+/// images while the calls name the source.
+bool isScreenSource(const core::CompiledPass& pass, const void* target) noexcept
+{
+    if (target == nullptr)
+    {
+        return false;
+    }
+    for (const core::CompiledDraw& draw : pass.draws)
+    {
+        if (draw.kind == core::DrawKind::Screen && draw.source == target)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// @brief The content of every pass the frame's targets can be served for, one packet per pass that has any
 /// (see present).
 ///
@@ -142,6 +164,8 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
                                            float frame_seconds, const core::CompiledFrame& frame,
                                            std::vector<InputImages>& input_scratch,
                                            std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_views,
+                                           std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>&
+                                               input_screen_views,
                                            std::vector<PassContent>& packets)
 {
     packets.clear();
@@ -186,9 +210,11 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
         // entry would not be.
         input_scratch.assign(pass.inputs.size(), InputImages{});
         input_views.assign(pass.inputs.size(), {});
+        input_screen_views.assign(pass.inputs.size(), {});
         for (std::size_t index = 0; index < pass.inputs.size(); ++index)
         {
-            std::vector<::vsg::ref_ptr<::vsg::ImageView>>& views = input_views[index];
+            InputImages&                                      offer = input_scratch[index];
+            std::vector<::vsg::ref_ptr<::vsg::ImageView>>&    views = input_views[index];
             views.clear();
 
             if (pass.inputs[index].kind == vn::graphics::ImageSource::Kind::ImportedTexture)
@@ -215,7 +241,7 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
                 {
                     views.push_back(sampled.view);
                 }
-                input_scratch[index].colors = views;
+                offer.colors = views;
                 continue;
             }
 
@@ -224,15 +250,57 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
             {
                 continue;
             }
-            const std::uint32_t attachments = entry->target->colorAttachmentCount();
-            for (std::uint32_t attachment = 0; attachment < attachments; ++attachment)
+            const core::CompiledInput& input       = pass.inputs[index];
+            const std::uint32_t        attachments = entry->target->colorAttachmentCount();
+
+            if (input.kind == vn::graphics::ImageSource::Kind::ProducedImage)
             {
-                views.push_back(entry->target->colorView(attachment));
+                // ONE image, the attachment the plan narrowed the input to. Offering the whole target here is
+                // what used to happen, and it made a content program's binding 0 answer with attachment 0 even
+                // when the pass declared attachment 1 (the declaration was a selector nothing read).
+                if (input.depth)
+                {
+                    if (input.depth_sampleable)
+                    {
+                        offer.depth = entry->target->depthView();
+                    }
+                }
+                else if (input.attachment >= 0 &&
+                         static_cast<std::uint32_t>(input.attachment) < attachments)
+                {
+                    views.push_back(
+                        entry->target->colorView(static_cast<std::uint32_t>(input.attachment)));
+                    offer.colors = views;
+                }
             }
-            input_scratch[index].colors = views;
-            if (pass.inputs[index].depth_sampleable)
+            else
             {
-                input_scratch[index].depth = entry->target->depthView();
+                // The coarse declaration: every colour attachment, plus the depth while the plan says it is
+                // sampleable.
+                for (std::uint32_t attachment = 0; attachment < attachments; ++attachment)
+                {
+                    views.push_back(entry->target->colorView(attachment));
+                }
+                offer.colors = views;
+                if (input.depth_sampleable)
+                {
+                    offer.depth = entry->target->depthView();
+                }
+            }
+
+            // The full-screen ABI's compatibility path: binding N reads the source's attachment N, so a call
+            // whose source is this input reads the WHOLE target - even when the pass declared the source as one
+            // ProducedImage (ScreenPass's addInput(ImageRef) is that shape, and the engine's G-buffer previews
+            // are built on it). The content path above keeps the narrowed offer.
+            if (isScreenSource(pass, input.target))
+            {
+                std::vector<::vsg::ref_ptr<::vsg::ImageView>>& screen_views = input_screen_views[index];
+                screen_views.clear();
+                for (std::uint32_t attachment = 0; attachment < attachments; ++attachment)
+                {
+                    screen_views.push_back(entry->target->colorView(attachment));
+                }
+                offer.screen_colors = screen_views;
             }
         }
 
@@ -368,6 +436,8 @@ struct VsgBackend::Data
     /// One colour-view list per declared input, reused per pass: the InputImages spans point into these, so
     /// they must outlive the record call and must not be reallocated while it runs (see recordContent).
     std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>> input_views;
+    /// The same, for the WHOLE source target of a full-screen call (see InputImages::screen_colors).
+    std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>> input_screen_views;
     std::vector<PassContent>                  packets;        ///< Reused per frame (see recordContent).
     const core::CompiledFrame*                frame{nullptr}; ///< This frame's plan, between end and swap.
 
@@ -942,7 +1012,8 @@ void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession*
     if (d->assembly != nullptr && d->images != nullptr && (window_target != nullptr || window == nullptr))
     {
         packets = recordContent(*d->assembly, window_target, d->targets, *d->images, d->diagnostics, timeline,
-                                retirement, frame_seconds, *d->frame, d->input_scratch, d->input_views, d->packets);
+                                retirement, frame_seconds, *d->frame, d->input_scratch, d->input_views,
+                                d->input_screen_views, d->packets);
     }
     (void)d->executor.record(*d->frame, graph, packets);
     // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is

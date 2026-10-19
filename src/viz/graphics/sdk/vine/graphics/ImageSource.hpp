@@ -81,9 +81,10 @@ class VN_GRAPHICS_API ImageInput
  * - `ProducedImage` is one attachment of a target; `ProducedTarget` is the whole target (every colour attachment,
  *   plus its depth while that one is sampleable - the coarse declaration used by `addInputTarget`). `ImportedTexture`
  *   is one texture, with the revision its upload was built from.
- * - The vsg binding layer currently offers a produced input's WHOLE target (binding N is attachment N, the
- *   full-screen ABI's rule), so `attachment`/`depth` are the identity a consumer selects with, not a narrowing of
- *   the bound set yet; per-attachment binding is a backend capability to add when a shader needs it.
+ * - A `ProducedImage` is NARROWED by the binding layer: a content pass binds exactly the attachment (or the depth)
+ *   the input names, so one image of an MRT target is one sampler rather than every attachment. A `ProducedTarget`
+ *   still offers every colour attachment, and the full-screen ABI keeps its own "binding N = attachment N" reading
+ *   of the whole source target even when the pass declared that source as one produced image.
  * - Both kinds travel in one ordered list. The CONTENT binding path binds them in declaration order; the FULL-SCREEN
  *   ABI binds the produced source's attachments (and its depth) first, then the imported textures at the program's
  *   remaining declared sampler bindings, in input declaration order. A program/pass binding mismatch is reported

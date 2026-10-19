@@ -25,6 +25,19 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-19 E2 收尾 #2：produced 输入按 attachment 绑定
+
+- **结论**：`CompiledInput` 增加 `attachment` / `depth`；`ProducedImage` 的 `color_attachments` 跟随单图
+  （彩色 1 / depth 0），`ProducedTarget` 仍为整 target。`VsgBackend::recordContent` 对 ProducedImage 只 push
+  声明的 view，内容 sampled set 因此只绑一张图。全屏 ABI 的 `binding N = attachment N` 用显式兼容字段
+  `InputImages::screen_colors`（source 的整 target）保留，`recordScreenDraw` 优先取它；`ProducedTarget` 路径不变。
+- **坑**：`ScreenPass::addInput(ImageRef)` 的 engine 用法（G-buffer 四格预览）解析成 `ProducedImage`，但全屏
+  ABI 读的是整 target；只收窄 `InputImages.colors` 会让 `screenCopyProgram(n>0)` 找不到 binding。`screen_colors`
+  只服务全屏 path，内容 path 的 `colors` 保持收窄，混合 pass 也不会绑错。
+- **判据**：`VsgBackendTest.AProducedInputBindsOnlyTheAttachmentItNames`（先红：读回绿=attachment 0；后绿）+
+  `ScreenDrawTest.TheBindingNamesTheAttachmentAndNotTheProgramsFirstOne` / SdkPixelTest G-buffer 预览不回归；
+  `test_vsg` 465；`ctest` 24/24；ASan 相关用例 + 8 条 hygiene 门禁 0 finding。
+
 ## 2026-10-19 E2 收尾 #1：全屏 ABI 绑定 imported texture
 
 - **结论**：`ScreenPass` 的 imported 输入不再被引擎拒绝。全屏绑定规则：source 颜色附件占 `0..C-1`，depth
