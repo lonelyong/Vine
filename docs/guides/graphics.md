@@ -120,11 +120,11 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   想要同一机位两种形状，用两台相机（`SceneView` 按自己窗格的形状 push 给相机，HUD 子视口相机自己声明形状）。
 - `RenderTarget` —— 若干彩色附件 + 可选深度：`attachColor(fmt)` / `attachDepth(fmt)` / `setSize(w,h)`，
   以及 `shareDepth(source)`（借用别人的深度）与 `setDepthPromotion(bool)`（深度是否变成可采样）。
-- `RenderPipelineBuilder` —— 配方层：`build(const PipelineOptions&)`（结构选择只有一个：
+- `RenderPipelineBuilder` —— 配方层：`build(const RenderPipelineOptions&)`（结构选择只有一个：
   `ShadingPath::Forward | Deferred`，其余是效果与选项，见 `.ai/design/graphics-pipeline.md`）、
   `addOffscreenToScreen(...)`（离屏 + PiP），并暴露延迟所需的公有件（`defaultGbufferTarget()`、
   `defaultGbufferGeometryProgram()`、`defaultDeferredLightProgram()`）。它装配出来的就是**你手写也会写的
-  那些对象**，返回值 `Pipeline` 句柄持有它们（`windowPass()`、`offscreenTarget()`、`resize(w,h)`），
+  那些对象**，返回值 `RenderPipeline` 句柄持有它们（`windowPass()`、`offscreenTarget()`、`resize(w,h)`），
   **并持有它们的注册**：丢掉句柄 = 那些 pass 从帧里撤下来（`RenderEngine::addPass` 自己另持引用，
   只持有引用会让被丢掉的 pass 继续每帧执行）。
 - **顺序用阶段说**（`PipelineStage` + `pipelineStageOrder`）：阴影深度、几何、效果、着色、透明、
@@ -243,7 +243,7 @@ camera->setAspect(16.0 / 9.0);                               // 投影的**形�
                                                              // （一台相机 = 一张画面，see Camera）
 
 // ④ 引擎 + 后端 + 预设管线。
-// 引擎是**引用计数**对象，管线**强持**它（`Pipeline` 的构造参数就是 `intrusive_ptr<RenderEngine>`）：栈上的引擎会被
+// 引擎是**引用计数**对象，管线**强持**它（`RenderPipeline` 的构造参数就是 `intrusive_ptr<RenderEngine>`）：栈上的引擎会被
 // "最后放手的那条管线"删掉 —— `delete` 的是别人的栈/成员内存，症状不在这一刻，而是**之后某次无关的 free 报堆损坏**。
 // 所以它和别的 SDK 对象一样由 `intrusive_ptr` 持有（`test_vsg/SdkPixelFixture.hpp` 是同一个形态）。
 auto engine = make_intrusive<RenderEngine>();
@@ -264,7 +264,7 @@ if (!engine->initialize()) { return false; }             // 引擎附着：就�
 
 RenderPipelineBuilder builder(engine.get());
 builder.setContent(scene).setCamera(camera.get());
-PipelineOptions options;                      // 默认 = forward 路径
+RenderPipelineOptions options;                // 默认 = forward 路径
 auto pipeline = builder.build(options);      // 或 options.path = ShadingPath::Deferred
 if (pipeline == nullptr) { return false; }
 
@@ -434,7 +434,7 @@ builder.setContent(scene).setCamera(camera.get());
 
 // 结构只有两选：forward / deferred。阴影不是预设——它由"投影的那盏灯"提出请求
 // （Light::castShadow），当前还没有阴影 pass，所以 builder 会报一条"画面无影"。
-PipelineOptions options;
+RenderPipelineOptions options;
 options.path = ShadingPath::Deferred;
 options.offscreen_width  = 0;          // 0 = 用当前 surface 尺寸，未知时回退 640x360
 options.offscreen_height = 0;
@@ -476,15 +476,15 @@ engine.addPass(hud);
 | 延迟管线 | §3.4 的 6 步（target / 4 个 pass / program / 借深度） | `build(Deferred)` |
 | G-buffer 布局与 program | 自己 `attachColor` × 4 + 写 MRT program | `defaultGbufferTarget()` / `defaultGbufferGeometryProgram()` |
 | 离屏 + PiP | §3.3 + `setViewport()` | `addOffscreenToScreen(...)` |
-| 尺寸跟随窗口 | 逐个 `setSize()` | `Pipeline::resize(w, h)` |
+| 尺寸跟随窗口 | 逐个 `setSize()` | `RenderPipeline::resize(w, h)` |
 | 任意自定义 pass | `engine.addPass(pass, order)` | `builder.addPass(pass, order)` |
 
 ### 3.6 例：HUD 叠加与"叠加场景"
 
 - **HUD**：`AxisGizmo` / `FpsOverlay` 是**内容对象**（自带 scene、取景相机与盒子），画它们的是一条 HUD 档的
   pass 声明（`tag = "Hud"`、`stage = Overlay`、不洗屏、`depth_mode = Disabled`、`before_draw` 调对象的
-  `update()`）—— 配方自己就这么声明（`PipelineOptions::gizmo` / `fps`）。句柄分两个：`Pipeline::gizmo()` /
-  `fpsOverlay()` 拿对象（摆位、尺寸、内容），`Pipeline::gizmoPass()` / `fpsOverlayPass()` 拿 pass（可见性开关
+  `update()`）—— 配方自己就这么声明（`RenderPipelineOptions::gizmo` / `fps`）。句柄分两个：`RenderPipeline::gizmo()` /
+  `fpsOverlay()` 拿对象（摆位、尺寸、内容），`RenderPipeline::gizmoPass()` / `fpsOverlayPass()` 拿 pass（可见性开关
   读的就是它的 `enabled`）；`resize()` 会顺带通知它们窗口尺寸并重述盒子。
 - **半透明叠加场景**：`builder.setTransparentContent(overlay_scene)`。forward 下它是在主 pass 之后、
   同一窗口 pass 里**带深度**的一笔；deferred 下它先与不透明结果在离屏 composite 里合成再呈现 ——
@@ -678,13 +678,13 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 `Rgba8Unorm` 改成 `Rgba8Srgb` 后天空回到正确亮度（视口带 mean 122.7 → 80.8，门禁判据一行未动）——
 读数与变异证明见 [`.ai/design/vsg-reimplementation.md`](../../.ai/design/vsg-reimplementation.md) §11.16cp。
 
-### 3.10 省事的视图：`Pipeline` 是配方，视图只采纳（appfw 的 `ViewerOptions` 是宿主那一层）
+### 3.10 省事的视图：`RenderPipeline` 是配方，视图只采纳（appfw 的 `ViewerOptions` 是宿主那一层）
 
-上面几节都是"自己搭管线"。**图形层把"配方"收进 `Pipeline`**：一条链就是它的选项建出来的（`PipelineOptions`），
+上面几节都是"自己搭管线"。**图形层把"配方"收进 `RenderPipeline`**：一条链就是它的选项建出来的（`RenderPipelineOptions`），
 宿主**建**它、**采纳**它（`SceneView::setPipeline`），视图从此画的就是它 —— 视图自己不记配方，也没有"默认管线"
 这回事（不采纳就不画）。
 
-> **名字的坑**：这个 `Pipeline` **不是**图形 API 的 pipeline state（Vulkan 的 `VkPipeline`，通常叫 PSO）——它是**一条
+> **名字的坑**：这个 `RenderPipeline` **不是**图形 API 的 pipeline state（Vulkan 的 `VkPipeline`，通常叫 PSO）——它是**一条
 > pass 链条的编译产物**（帧图编译的结果：谁画、按什么顺序、读谁写谁），一个视图/一块区一份。后端那种"管线状态"在本仓另
 > 有一套：`core::VariantPool` 按 `core::PipelineKey`（程序与其 revision、拓扑、采样颜色/深度数…，键里还带
 > `ProgramVariant` 着色器变体）缓存 `VkPipeline`。两个名字像，层次完全不同。
@@ -694,7 +694,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 ```cpp
 // 这个视图怎么画：选项 → 建 → 采纳（结构变了才有第二次建链）
-vn::graphics::PipelineOptions options;
+vn::graphics::RenderPipelineOptions options;
 options.path = vn::graphics::ShadingPath::Forward;               // 或 Deferred
 options.mode = vn::graphics::ShadingMode::Lit;                   // 见下："档"是选项也是运行期开关
 options.gizmo.source_camera = view->camera();                    // 有源相机 = 有这个档
@@ -705,7 +705,7 @@ builder.setContent(view->scene());
 view->setPipeline(builder.build(options));
 
 // 运行期：都是**那条链**上的开关/覆盖，零重建、零重新注册
-vn::graphics::Pipeline* pipeline = view->pipeline();
+vn::graphics::RenderPipeline* pipeline = view->pipeline();
 pipeline->setStatsVisible(false);        // pass->setEnabled(false) —— 没有这一档时如实拒绝 + 报一次
 pipeline->setGizmoVisible(true);
 pipeline->setShadingMode(vn::graphics::ShadingMode::Wireframe);  // 见下
@@ -716,13 +716,13 @@ view->resize(w, h, dpr);                  // 只喂**表面**尺寸 + 比例；"
                                           // （视图挂在表面上时这句转发给 RenderSurface::resize，见 §3.11）
 ```
 
-- **建链的选项 vs 链上的开关**：`PipelineOptions` 回答"这条链**有没有**这个档、走哪条链"（变更 = 一次建链），
+- **建链的选项 vs 链上的开关**：`RenderPipelineOptions` 回答"这条链**有没有**这个档、走哪条链"（变更 = 一次建链），
   `setStatsVisible()` / `setShadingMode()` 回答"现在画成什么样"（永不重建）。**"有没有"与"看不看得见"是两件事**：
   一条链没有读数档时 `setStatsVisible(true)` 返回 false 并报出来（静默的开关最坏）。
 - **档（`ShadingMode`）是 pass 属性，不是重建**：`Lit` 用内容自己的 program，`Flat/Unlit/Normals` 是同一段
   fragment 文本的另一个 `#define`（`setProgramOverride`），`Wireframe` 再加
   `RenderPass::setPolygonModeOverride(PolygonMode::Line)`。**档作用在几何阶段**：延迟的请求配非 Lit 档时，
-  `RenderPipelineBuilder::effectivePath()` 把链建成**前向**（选项字段不动，`Pipeline::shadingPath()` 记的是**实际建成**的那条），
+  `RenderPipelineBuilder::effectivePath()` 把链建成**前向**（选项字段不动，`RenderPipeline::shadingPath()` 记的是**实际建成**的那条），
   于是四档在两条请求上都能画出来；同一条链上换档零重建，而"延迟请求 + 非 Lit 档"期间选回 `Lit` 是一次建链
   （回到延迟链 —— 这就是那句 `effectivePath()` 公开成静态的用途）。
 - **重建之后谁把运行期选择搬过去**：重建的那一方（appfw 的 `Viewer`：读活着的链、在新链上重新落一遍 ——
@@ -876,7 +876,7 @@ desc.writes_shape.depth  = RenderTarget::DepthFormat::D24;
 - **clear 三件套不写就跟随 kind**：`clear_enabled` / `clear_color` / `clear_depth` 都是 `optional` —— 不写时用那种 kind 自己的策略
   （`Screen` 是叠在已有内容上的全屏档，从不洗、也不洗深度；`Scene` 档洗，默认洗到 `51,51,51,255`）。要覆盖就在声明里写出来。
 - **返回的是结点**：`addPass` 的三个重载都交回**已注册的那个执行结点**（重复注册则返回 null），于是"我声明了什么"与
-  "我接下来要调什么"是同一个对象：present 那一类配方把它记下来交给 `Pipeline::setWindowPass` 就行。builder 内部正是这样写的 ——
+  "我接下来要调什么"是同一个对象：present 那一类配方把它记下来交给 `RenderPipeline::setWindowPass` 就行。builder 内部正是这样写的 ——
   它的普通 pass（shadow / gbuffer / lighting / transparent / present / preview）全是描述符，order 一律由 `stage` 决定。
 - 逃生口不变：`engine->addPass(pass, content, order)` 仍然收一个手搭的 pass（需要结点本身时用它），描述符只是把"声明"
   变成数据。
@@ -896,7 +896,7 @@ group->clearLayers();              // 撤掉声明，改回继承祖先
 shadow_pass->setLayerMask(1u << 1);
 
 // 配方侧：整条链一次给（builder 会盖在这条链的每个内容 pass 上；HUD / 全屏灯照不盖）
-vn::graphics::PipelineOptions options;
+vn::graphics::RenderPipelineOptions options;
 options.layer_mask = 1u << 1;                       // appfw 里就是 ViewerOptions::layer_mask
 ```
 

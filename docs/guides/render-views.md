@@ -18,7 +18,7 @@
 | `SceneView` | [SceneView.hpp](../../src/viz/graphics/sdk/vine/graphics/SceneView.hpp) | "一台相机看什么" | 相机、内容场景、操纵器、采纳的那条链 |
 | `RenderEngine` | [RenderEngine.hpp](../../src/viz/graphics/sdk/vine/graphics/RenderEngine.hpp) | "这一帧画什么、按什么顺序" | pass 注册表、帧上下文 |
 | `RenderSurface` | [RenderSurface.hpp](../../src/viz/graphics/sdk/vine/graphics/RenderSurface.hpp) | "**哪条 pass 画这块窗口**、多大" | 呈现（一条）、尺寸与比例、目标（借用） |
-| `Pipeline` | [Pipeline.hpp](../../src/viz/graphics/sdk/vine/graphics/Pipeline.hpp) | "一个视图怎么画"（一条链的配方与运行期开关） | 一条链的 pass、档、离屏目标 |
+| `RenderPipeline` | [RenderPipeline.hpp](../../src/viz/graphics/sdk/vine/graphics/RenderPipeline.hpp) | "一个视图怎么画"（一条链的配方与运行期开关） | 一条链的 pass、档、离屏目标 |
 
 **一块区只画一幅画**（多格已下线）。这不是省事：一帧里两条都画默认帧缓冲的 pass 会互相擦，而"点归谁、谁有焦点、谁清屏"
 这些事实没有一个 owner 时，踩过的坑是**静默**的（第二条清屏公告被后端丢掉、第二个共用相机的视图被静默吞掉）。
@@ -42,7 +42,7 @@ graph TB
         ENG["RenderEngine<br/>一帧：画什么、按什么顺序"]
         VIEW["SceneView<br/>相机 / 内容 / 采纳的链"]
         AREA["RenderSurface 区<br/>哪条 pass 画这块窗口 / 尺寸"]
-        PIPE["Pipeline<br/>一条链的配方与开关"]
+        PIPE["RenderPipeline<br/>一条链的配方与开关"]
     end
 
     subgraph contract["后端契约（SDK 的设备面）"]
@@ -73,7 +73,7 @@ graph TB
 分层读法（自上而下，每层只依赖下一层的契约）：
 
 - **appfw**：把"窗口"这一件平台的事收进 `RenderControl` / `SurfaceWindow`（attach、尺寸、输入、失败状态机），把"这块区怎么画"收进 `Viewer`。
-- **graphics SDK**：帧的单位是引擎（`RenderEngine`）；视图只采纳链（`SceneView` + `Pipeline`）；"谁画这块窗口"是区自己的呈现（`RenderSurface`）。
+- **graphics SDK**：帧的单位是引擎（`RenderEngine`）；视图只采纳链（`SceneView` + `RenderPipeline`）；"谁画这块窗口"是区自己的呈现（`RenderSurface`）。
 - **后端契约**：设备（`RenderDevice`）造目标（`WindowPresentTarget`，即 `PresentTarget` 的窗口实现）、跑帧（`RenderFrameExecutor`）；三者今天由插件的一个对象同时实现（`RenderBackend` 是那个聚合）。**帧只认 `PresentTarget`**（`resize` + `present`）：窗口那两条动词（`setWindowHandle` / `nativeHandle`）只属于拥有窗口的宿主。
 - **插件**：Vulkan 的会话、录制与提交，宿主不直接碰。
 
@@ -132,7 +132,7 @@ classDiagram
         +resize(w, h, dpr)
         +bindTarget(target)
     }
-    class Pipeline {
+    class RenderPipeline {
         +windowPass() RenderPass*
         +setShadingMode(mode)
         +setGizmoVisible(bool)
@@ -157,7 +157,7 @@ classDiagram
     RenderSurface o-- "0..1" SceneView : 呈现（声明关系）
     RenderSurface o-- "0..1" RenderPass : 呈现（宿主自建的 pass）
     SceneView "N" --> "1" RenderEngine : 借用
-    SceneView "N" --> "0..1" Pipeline : 采纳
+    SceneView "N" --> "0..1" RenderPipeline : 采纳
     RenderEngine "1" --> "1" RenderSurface : 驱动
     RenderEngine "N" --> "1" RenderDevice : 设置（共享引用）
     RenderSurface "1" --> "0..1" WindowPresentTarget : 借用（设备造）
@@ -243,7 +243,7 @@ vn::raw_ptr<vn::graphics::RenderPass> which = control->surface()->presentingPass
 **自己说清接线**，SDK 不替你猜：
 
 - **一条 pass 只画一部分内容**：内容分层（`Node::setLayers`）＋ pass 的掩码（`RenderPass::setLayerMask`，或用配方
-  `PipelineOptions::layer_mask` / `ViewerOptions::layer_mask` 一次给整条链）。一条命令是否被收集 = `isVisible()`
+  `RenderPipelineOptions::layer_mask` / `ViewerOptions::layer_mask` 一次给整条链）。一条命令是否被收集 = `isVisible()`
   且它的层与掩码按位与非 0；没声明层的节点在 `kDefaultLayer`，掩码默认 `kAllLayers`（⇒ 不说就一切照旧）。例：
   阴影 caster 标 `caster->setLayers(1u << 1)`，阴影 pass 掩码 `1u << 1`，其余内容一个字都不用改。细节见
   `docs/guides/graphics.md` §3.14。

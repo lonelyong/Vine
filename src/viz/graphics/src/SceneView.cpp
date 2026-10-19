@@ -10,7 +10,7 @@
 #include <vine/graphics/CameraManipulator.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/OrbitCameraManipulator.hpp>
-#include <vine/graphics/Pipeline.hpp>
+#include <vine/graphics/RenderPipeline.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
@@ -74,12 +74,12 @@ raw_ptr<RenderEngine> SceneView::engine() const
     return engine_;
 }
 
-raw_ptr<Pipeline> SceneView::pipeline() const
+raw_ptr<RenderPipeline> SceneView::pipeline() const
 {
     return pipeline_.get();
 }
 
-void SceneView::setPipeline(intrusive_ptr<Pipeline> pipeline)
+void SceneView::setPipeline(intrusive_ptr<RenderPipeline> pipeline)
 {
     if (pipeline_.get() == pipeline.get()) {
         return;

@@ -1,5 +1,8 @@
 # appfw 渲染视图（最终设计 v2，2026-10-11）
 
+> **2026-10-19 K1 改名**：本文中的 `Pipeline` / `PipelineOptions` 是当时的名字；现行 API 是
+> `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups-2026-10-19.md` §1.1）。
+
 > 状态：**已落地 S0–S4 + 输入路由（S6+②）+ S7 改形 + S8 改形（多视图归 `Viewer`）+ S10a 改形（窗口那一半由设备造）；S8 之后"多格"下线（一块区只画一幅画）**（2026-10-11；其余 S6+ 三轴仍为"缝已定、未实现"）。本文**取代此前各稿**（那些是本设计的推演过程，结论以本文为准）；
 > 相关文档：`appfw-render-surface.md`（表面生命周期）、`graphics-pipeline-builder.md`（配方层）、`graphics-pipeline.md`（pass 调度）、
 > `graphics-render-next.md`（**如果重新设计这一套栈会怎么切**：提案，含 M1–M7 迁移切片与触发条件 —— 本文是"现在是什么"，那份是"要变成什么"）。
@@ -843,7 +846,7 @@ RenderEngine
 | 边 | 强度 | 依据 |
 | --- | --- | --- |
 | `SceneView` → `RenderEngine`（直接） | **借用** `raw_ptr` | `SceneView.hpp:229` 注释"The bound engine is borrowed (the host owns it and keeps it alive)" |
-| `SceneView` → `RenderEngine`（经默认管线） | **强引用** | `Pipeline::engine_`（`intrusive_ptr`，私有）；`Pipeline.hpp` 类注释"It also keeps the engine ALIVE (a strong reference, not a borrow)" |
+| `SceneView` → `RenderEngine`（经默认管线） | **强引用** | `RenderPipeline::engine_`（`intrusive_ptr`，私有）；`RenderPipeline.hpp` 类注释"It also keeps the engine ALIVE (a strong reference, not a borrow)" |
 | `RenderEngine` → `SceneView` | **没有这条边** | 引擎"camera- and content-agnostic"，类注释；不认识视图，也不认识管线（`Pipeline` 注释："There is no cycle — the engine does not know its pipelines"） |
 | `RenderEngine` → 相机 / 内容场景（经 pass） | **强引用，但那是 pass 的属性** | `slots_` 强引用 pass 与其内容场景；`RenderPass::setCamera(intrusive_ptr<Camera>)` "The pass KEEPS the camera alive" |
 | `RenderEngine` → `SceneView::Camera`（经窗口 pass） | 同上 | 视图的默认窗 pass 携带该相机 ⇒ 引擎间接让"这个相机对象"活着 |

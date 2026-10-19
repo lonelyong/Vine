@@ -332,7 +332,7 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
     EXPECT_TRUE(readout_pass->isEnabled());
 
     // 关掉之后**重建**（预设加一个坐标轴 ⇒ 一条新链）不该把它偷偷点亮：重建读的是活着那条链的运行期选择。
-    vn::intrusive_ptr<vn::graphics::Pipeline> old_pipeline(pipeline);  // 拿住它：地址会因为回收而被重用，比对象才作数
+    vn::intrusive_ptr<vn::graphics::RenderPipeline> old_pipeline(pipeline);  // 拿住它：地址会因为回收而被重用，比对象才作数
     auto options = control->viewerOptions();
     EXPECT_TRUE(pipeline->setStatsVisible(false));
     options.gizmo = true;

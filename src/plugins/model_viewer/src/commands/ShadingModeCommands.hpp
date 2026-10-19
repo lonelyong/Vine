@@ -22,7 +22,7 @@ inline constexpr const char8_t* kShadingModeWireframeCommand = u8"set_shading_wi
  *
  * 一条命令一个模式（而不是一条"循环切换"）：菜单里每条都有说得清的名字，用户不必先点两下才知道现在在哪一档。
  * 模式本身是 `vn::graphics::ShadingMode`（graphics 那一层的东西，五档见那里），这里只负责"找到该改哪个视图"，
- * 再把这档交给视图**那条链**（`Pipeline::setShadingMode()` —— 见下面的"改哪条链"）。
+ * 再把这档交给视图**那条链**（`RenderPipeline::setShadingMode()` —— 见下面的"改哪条链"）。
  *
  * **登记方式**：这五个类**不用** `VN_DECLARE_COMMAND` 的自动登记（那会把 `moduleCommandQueue()` 依赖带进每个
  * include 它的翻译单元，连带把"哪些命令属于本插件"这件事藏进静态初始化）—— 插件在自己的 `load()` 里按名字逐个
@@ -37,7 +37,7 @@ inline constexpr const char8_t* kShadingModeWireframeCommand = u8"set_shading_wi
  *  - 还没有视图上屏（文档开着但没显示过）⇒ 同样 `NotApplicable`，并说清原因（不静默）。
  *
  * **改哪条链**：视图的配方（哪条链、带不带坐标轴、带不带帧率读数）归 `Pipeline`，模式则是链**已经建好之后**
- * 还能改的那一项（见 `Pipeline::setShadingMode()`）。所以这里分两条路：
+ * 还能改的那一项（见 `RenderPipeline::setShadingMode()`）。所以这里分两条路：
  *
  *  - 视图**就是控件自己的视图** ⇒ 交给 `RenderControl::setShadingMode()`：控件知道这条链是不是它建的，
  *    能改就直接改（零重建），改不了就带着新档重建一次（延迟链没有可改的几何趟，重建时按实面那条前置链搭）；

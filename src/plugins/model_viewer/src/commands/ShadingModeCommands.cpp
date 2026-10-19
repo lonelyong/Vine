@@ -4,7 +4,7 @@
 #include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
-#include <vine/graphics/Pipeline.hpp>
+#include <vine/graphics/RenderPipeline.hpp>
 #include <vine/graphics/SceneView.hpp>
 
 #include "../ModelDocument.hpp"
@@ -45,7 +45,7 @@ vn::async::Task<vn::appfw::CommandResult> ShadingModeCommand::execute(vn::appfw:
                                            vn::String(u8"还没有活动的 3D 视图：把这份模型显示出来再试"));
     }
 
-    // 模式是这条链**建好之后**还能改的那一项（见 Pipeline::setShadingMode()）。视图就是控件自己的视图时交给
+    // 模式是这条链**建好之后**还能改的那一项（见 RenderPipeline::setShadingMode()）。视图就是控件自己的视图时交给
     // 控件：它知道链是不是它建的 —— 能直接改就是零重建，链表达不了就带着新档重建一次（延迟链没有可改的几何趟，
     // 重建时按实面那条前置链搭，见 RenderPipelineBuilder::effectivePath）。
     if (view == control->view()) {

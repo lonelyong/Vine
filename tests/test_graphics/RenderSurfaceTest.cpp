@@ -26,13 +26,13 @@ namespace
  * @param options The build options (chain, mode, overlays; see PipelineOptions).
  * @return The pipeline that was built and adopted; null when the builder refused @p options.
  */
-intrusive_ptr<Pipeline> buildFor(const intrusive_ptr<SceneView>& view, RenderEngine* engine,
-                                 const PipelineOptions& options = {})
+intrusive_ptr<RenderPipeline> buildFor(const intrusive_ptr<SceneView>& view, RenderEngine* engine,
+                                 const RenderPipelineOptions& options = {})
 {
     RenderPipelineBuilder builder(engine);
     builder.setCamera(view->camera());
     builder.setContent(view->scene());
-    intrusive_ptr<Pipeline> pipeline = builder.build(options);
+    intrusive_ptr<RenderPipeline> pipeline = builder.build(options);
     if (pipeline != nullptr) {
         view->setPipeline(pipeline);
     }
@@ -40,7 +40,7 @@ intrusive_ptr<Pipeline> buildFor(const intrusive_ptr<SceneView>& view, RenderEng
 }
 
 /** @brief A view bound to @p engine and drawing @p options (the engine outlives the view in these tests). */
-intrusive_ptr<SceneView> viewOn(RenderEngine* engine, const PipelineOptions& options = {})
+intrusive_ptr<SceneView> viewOn(RenderEngine* engine, const RenderPipelineOptions& options = {})
 {
     auto view = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine);
@@ -145,7 +145,7 @@ TEST(RenderSurfaceTest, ThePassFollowsARebuiltPipeline)
     RenderPass* const first = surface->presentingPass();
     ASSERT_NE(first, nullptr);
 
-    PipelineOptions with_gizmo;
+    RenderPipelineOptions with_gizmo;
     with_gizmo.gizmo.source_camera = view->camera();
     ASSERT_NE(buildFor(view, engine.get(), with_gizmo), nullptr);
     ASSERT_NE(view->pipeline(), nullptr);
@@ -349,7 +349,7 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
     EXPECT_EQ(window->clearColor(), Color(51, 51, 51, 255));
 
     window->setClearEnabled(false);
-    PipelineOptions with_gizmo;
+    RenderPipelineOptions with_gizmo;
     with_gizmo.gizmo.source_camera = view->camera();
     ASSERT_NE(buildFor(view, engine.get(), with_gizmo), nullptr);
     EXPECT_NE(surface->presentingPass(), window);
@@ -359,7 +359,7 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
     // Deferred: the picture is a fullscreen pass over the whole area, whose program is a ScreenPass and therefore asks
     // for no clear at all - being the area's picture does not make it want one.
     auto deferred_engine = intrusive_ptr<RenderEngine>(new RenderEngine());
-    PipelineOptions deferred;
+    RenderPipelineOptions deferred;
     deferred.path = ShadingPath::Deferred;
     auto deferred_view = viewOn(deferred_engine.get(), deferred);
     auto deferred_area = intrusive_ptr<RenderSurface>(new RenderSurface(*deferred_engine));

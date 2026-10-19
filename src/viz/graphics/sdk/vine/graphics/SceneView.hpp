@@ -9,7 +9,7 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/window/window_global.hpp>
 
-#include "Pipeline.hpp"
+#include "RenderPipeline.hpp"
 
 VN_WINDOW_NS_BEGIN
 struct KeyEvent;
@@ -21,7 +21,7 @@ VN_GRAPHICS_NS_BEGIN
 
 class Camera;
 class CameraManipulator;
-class Pipeline;
+class RenderPipeline;
 class RenderEngine;
 class RenderPass;
 class RenderSurface;
@@ -33,7 +33,7 @@ class Scene;
  * @details
  * - The view owns WHAT is drawn (a Camera and a content Scene) and WHERE (the whole area it presents - see
  *   RenderSurface); WHICH passes draw it is a Pipeline it ADOPTS (setPipeline), built by RenderPipelineBuilder -
- *   so a shading mode or overlay change is a call on the pipeline (Pipeline::setShadingMode / setGizmoVisible),
+ *   so a shading mode or overlay change is a call on the pipeline (RenderPipeline::setShadingMode / setGizmoVisible),
  *   never a view rebuild, and a view with no pipeline draws nothing.
  * - It borrows an engine (setEngine) rather than being one: the engine stays content- and camera-agnostic, while
  *   the view owns the primary view state - camera, content, manipulator, and the projection aspect kept in step
@@ -157,7 +157,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *   scheduler.
      * - The size is in the space the HOST reports (for the Qt host, the logical widget size - see RenderControl),
      *   but a pass viewport wants DEVICE pixels: scale by the ratio in the callback (see the ratio overload and
-     *   Pipeline::resize, which takes the ratio for exactly that reason; AxisGizmo / FpsOverlay lay out
+     *   RenderPipeline::resize, which takes the ratio for exactly that reason; AxisGizmo / FpsOverlay lay out
      *   logically and apply the ratio themselves).
      *
      * @param layout Callback taking the new surface width and height the host reported.
@@ -245,7 +245,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *
      * @return The adopted pipeline, or nullptr when this view has none.
      */
-    raw_ptr<Pipeline> pipeline() const;
+    raw_ptr<RenderPipeline> pipeline() const;
 
     /** @brief Adopts @p pipeline as what draws this view (build one with RenderPipelineBuilder).
      *
@@ -263,7 +263,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *
      * @param pipeline Pipeline that draws this view; null drops the current one.
      */
-    void setPipeline(intrusive_ptr<Pipeline> pipeline);
+    void setPipeline(intrusive_ptr<RenderPipeline> pipeline);
 
     /** @brief Gets whether this view presents a surface (RenderSurface::present bound it to one).
      *
@@ -333,7 +333,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     // The pipeline this view adopted, if any (setPipeline): what draws this view's camera and content into the
     // area. The handles in it are the pipeline's own - this one only keeps it alive, and dropping it is what
     // takes the passes out of the frame.
-    intrusive_ptr<Pipeline> pipeline_;
+    intrusive_ptr<RenderPipeline> pipeline_;
 
     // Creator-managed surface-layout steps run on every surface resize.
     std::vector<std::function<void(int width, int height)>> surface_layouts_;

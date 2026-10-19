@@ -4,7 +4,7 @@
 VN_GRAPHICS_NS_BEGIN
 
 /**
- * @brief What a pipeline's picture MEANS: the viewing mode of a viewer (see Pipeline::setShadingMode).
+ * @brief What a pipeline's picture MEANS: the viewing mode of a viewer (see RenderPipeline::setShadingMode).
  *
  * @details
  * - Every mode is the SAME built-in forward program text with one `#define` (see BuiltinShaders),
@@ -14,10 +14,10 @@ VN_GRAPHICS_NS_BEGIN
  *   modes interactive.
  * - IT IS DECLARED AT BUILD TIME AND SWITCHED AT RUNTIME. What a chain can express depends on the
  *   chain: a Deferred picture comes out of a fullscreen lighting pass that has no geometry left to
- *   shade, so a non-Lit mode has to be ASSEMBLED for it (PipelineOptions::mode; the builder then builds
+ *   shade, so a non-Lit mode has to be ASSEMBLED for it (RenderPipelineOptions::mode; the builder then builds
  *   the chain that can express it - see RenderPipelineBuilder::effectivePath), while switching among
  *   the modes that chain CAN express is one override on a live pipeline.
- * - Pipeline::setShadingMode() answers which of the two a request needs.
+ * - RenderPipeline::setShadingMode() answers which of the two a request needs.
  * - It lives here (rather than on a view) because a mode is a property of the pipeline that draws the
  *   picture: the pipeline owns the picture pass the override lands on, and two views drawn by two
  *   pipelines can be showing two different modes at once.

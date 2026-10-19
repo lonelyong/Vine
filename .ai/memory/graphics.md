@@ -25,6 +25,18 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-19 K1 落地：`Pipeline` 改名 `RenderPipeline`（公开面破坏）
+
+- **结论**：公开类 `Pipeline` → `RenderPipeline`，`PipelineOptions` → `RenderPipelineOptions`；头/源文件改成
+  `RenderPipeline.hpp` / `RenderPipeline.cpp`。`PipelineStage` / `pipelineStageOrder` 保留（它们是“阶段”，
+  不是 PSO），`RenderPipelineBuilder` 名字不变。这样 builder、返回值和 options 同一族，类名不再与
+  `VkPipeline` / PSO 混读。
+- **落点**：graphics SDK 公共头、`RenderPipelineBuilder`、`RenderEngine` 注释、appfw `Viewer*`、model_viewer
+  命令、demo、tests，以及 `docs/guides/graphics.md` / `docs/guides/render-views.md` 和 `.ai/design` 的现行引用。
+- **判据**：全量构建 0 error / 0 warning；`test_vsg` 463；`ctest` 24/24；`check_public_docs.py` 0 new；
+  `check_doc_symbols.py` 通过；8 条 hygiene 门禁 0 finding。任务列表见
+  `graphics-followups-2026-10-19.md` §1.1。
+
 ## 2026-10-19 E2 落地：pass 输入统一成 `ImageInput` / `ImageSource`（内容路径；全屏 ABI 仍登记）
 
 - **结论**：`RenderPass` / `PassDesc` 的输入声明是一个有序的 `ImageInput` 序列（produced `ImageRef` 或
@@ -62,7 +74,7 @@
   宿主快照、`FrameDescription` 是后端值；`ImageRef`（pass 产出）与 `Texture`（导入）是两个图源根；
   `Viewport` 是设备像素。清单见 `graphics-abstraction-review-2026-10-19.md`。
 - **落点**：`FrameDescription.hpp` / `RenderFrameExecutor.hpp` / `RenderEngine.hpp` / `FramePlan.hpp` /
-  `PassDesc.hpp` / `Pipeline.hpp` / `Texture.hpp` / `Viewport.hpp`；顺带修掉 `BackendHalfGuard.hpp`
+  `PassDesc.hpp` / `RenderPipeline.hpp` / `Texture.hpp` / `Viewport.hpp`；顺带修掉 `BackendHalfGuard.hpp`
   注释里的 `graphics/*.hpp`（GCC `-Wcomment` 在每个包含它的 TU 报一次，145 条）。
 - **判据**：构建 0 error / 0 warning（修前 145 条 `-Wcomment`）；8 条 hygiene 门禁 0 finding
   （include / diagnostic / doc symbols / export / ai-docs / public docs / vsg window state / vsg upstream）；
@@ -295,7 +307,7 @@
   替代派（N 张 2D 目标）字节数一样，而 L2a **省不了收集与提交**（每层一台相机 ⇒ 每层一次 walk）—— 省钱的那半是 L2b/`multiview`，
   且三条语义（清屏只洗"本条 pass 写的层"、深度层数一致、读侧带层）该由第一个消费者拍板。触发条件与落地顺序见 §6。
 - **两个常量一个 owner**：`kAllLayers`（掩码默认）与 `kDefaultLayer`（未声明节点的层，bit 0）都在 `Node.hpp`；需要它的公共头
-  直接 include（`FramePlan.hpp` / `RenderPass.hpp` / `Pipeline.hpp` 各加了一行，hygiene gate 要直接 include）。
+  直接 include（`FramePlan.hpp` / `RenderPass.hpp` / `RenderPipeline.hpp` 各加了一行，hygiene gate 要直接 include）。
 - **掩码进 memo key**（`ContentMemo::Entry::layer_mask`）：同一相机、同一帧、两条不同掩码的 pass **各走一次**（`+content_collect_count_`），
   同掩码则复用 —— 这是本片最容易错的一处：不进 key 就会"画面看着对、只是多了/少了几个物体"。
 - **帧值如实但进对的地方**：掩码进 `FramePlan::PassPlan::layer_mask`（`describe()` 只在非默认时打 `layers=0x..`），**不进**
@@ -590,7 +602,7 @@
   **结构性**（走哪条链 / 非 Lit 档要求几何趟 / 哪些档**存在** / 离屏尺寸 / 程序）进 `PipelineOptions`；
   **运行期**（同一条链上能表达的档、档的**显示/隐藏**）归 `Pipeline` 的 setter（零重建、零重新注册）。
   两个枚举各自成叶子头：`ShadingMode.hpp`（原 `SceneView::Options::Mode`）、`ShadingPath.hpp`（原在
-  `Pipeline.hpp` 里）—— 与 S5 同一条判据：读者该能独立拿到值，不被拖进整张契约。
+  `RenderPipeline.hpp` 里）—— 与 S5 同一条判据：读者该能独立拿到值，不被拖进整张契约。
 - **`Pipeline` 记下自己是哪条链**：`shadingPath()` 答的是**实际建成**的那条（延迟请求配非 Lit 档 ⇒ 前向，
   见 `RenderPipelineBuilder::effectivePath()`，它现在公开成静态，宿主也能问"这个请求会建成哪条链"）；
   `shadingMode()`/`setShadingMode()` 换档是 pass 上的覆盖；**链表达不了就如实拒绝 + 报一次**（`ReportOnce`），

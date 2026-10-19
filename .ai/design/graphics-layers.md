@@ -1,5 +1,8 @@
 # 层与分层渲染：内容掩码 + 目标层（数组 / 立方体面）（2026-10-12 设计定稿，**分两步落地**）
 
+> **2026-10-19 K1 改名**：本文中的 `Pipeline` / `PipelineOptions` 是当时的名字；现行 API 是
+> `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups-2026-10-19.md` §1.1）。
+
 > **状态**：**L1 内容掩码已落地**（2026-10-12，判据与变异见 §5 实测）；**L2 目标层**（L2a 逐层、L2b 一次写完）
 > 仍是**设计定稿、未落地** —— **裁决（2026-10-12）：现阶段不做**，命中 §6 的触发条件再做（理由见 §6 开头）。
 > 落点清单见 §4。
@@ -173,7 +176,7 @@ PassDesc::first_layer { 0 } + PassDesc::layer_count { 1 }
 | 3 | `PassDesc.hpp` | `layer_mask{ kAllLayers }` |
 | 4 | `RenderPass.hpp` / `RenderPass.cpp` | `setLayerMask` / `layerMask`；`describe()` 把掩码交给收集（今天那一行在 `RenderPass.cpp`） |
 | 5 | `FramePlan.hpp` + `EngineCompile.cpp`（问题）+ `RenderEngine.cpp`（填行与文本） | `PassPlan::layer_mask` + "掩码 0"的帧计划问题 |
-| 6 | `Pipeline.hpp` + `RenderPipelineBuilder.cpp` | `PipelineOptions::layer_mask` + 六个内容 pass 的盖章（两条 Screen 灯照 pass 与 overlay 不盖） |
+| 6 | `RenderPipeline.hpp` + `RenderPipelineBuilder.cpp` | `RenderPipelineOptions::layer_mask` + 六个内容 pass 的盖章（两条 Screen 灯照 pass 与 overlay 不盖） |
 | 7 | `ViewerOptions.hpp` + `Viewer.cpp` | `ViewerOptions::layer_mask` 转发到 `PipelineOptions` |
 
 **L2 六处**：`RenderTarget`（层数）/ `PassDesc` + `RenderPass`（区间）/ `ImageRef`（层）/ `RenderDevice`（回读层）/

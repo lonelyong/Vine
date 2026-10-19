@@ -24,7 +24,7 @@ VN_GRAPHICS_NS_BEGIN
  *
  * The program — and the GLSL it is built from — is owned by the SDK (see
  * BuiltinShaders.hpp); this is RenderPipelineBuilder's alias for it. Callers may
- * still override it through PipelineOptions::gbuffer_program.
+ * still override it through RenderPipelineOptions::gbuffer_program.
  *
  * @return The geometry program.
  */
@@ -41,7 +41,7 @@ intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultGbufferGeometryProgra
  *
  * The program — and the GLSL it is built from — is owned by the SDK (see
  * BuiltinShaders.hpp); this is RenderPipelineBuilder's alias for it. Callers may
- * still override it through PipelineOptions::lighting_program.
+ * still override it through RenderPipelineOptions::lighting_program.
  *
  * @return The lighting program (fragment stage only).
  */
@@ -128,7 +128,7 @@ RenderPipelineBuilder& RenderPipelineBuilder::setCamera(raw_ptr<Camera> camera)
     return *this;
 }
 
-intrusive_ptr<Pipeline> RenderPipelineBuilder::build(const PipelineOptions& options)
+intrusive_ptr<RenderPipeline> RenderPipelineBuilder::build(const RenderPipelineOptions& options)
 {
     if (engine_ == nullptr) {
         return nullptr;
@@ -139,10 +139,10 @@ intrusive_ptr<Pipeline> RenderPipelineBuilder::build(const PipelineOptions& opti
     // run with nobody holding them (see Pipeline).
     // The pipeline holds the engine STRONGLY (its passes live in that engine's
     // list): adopt the borrowed handle into an owning one.
-    auto pipeline = make_intrusive<Pipeline>(intrusive_ptr<RenderEngine>(engine_));
+    auto pipeline = make_intrusive<RenderPipeline>(intrusive_ptr<RenderEngine>(engine_));
     // A builder is reusable in principle, and the report is about THIS build.
     shadows_built_ = 0;
-    // This build's content selection: every pass that walks the content states it (see PipelineOptions::layer_mask).
+    // This build's content selection: every pass that walks the content states it (see RenderPipelineOptions::layer_mask).
     content_layers_ = options.layer_mask;
     // The chain the REQUEST assembles is not always the chain it names: a mode that needs the geometry pass
     // decides it (see effectivePath). The pipeline records what it was built as, because "can this chain
@@ -164,7 +164,7 @@ intrusive_ptr<Pipeline> RenderPipelineBuilder::build(const PipelineOptions& opti
     return pipeline;
 }
 
-ShadingPath RenderPipelineBuilder::effectivePath(const PipelineOptions& options) noexcept
+ShadingPath RenderPipelineBuilder::effectivePath(const RenderPipelineOptions& options) noexcept
 {
     // A non-Lit mode is a geometry-stage override: it needs the pass that turns geometry into the picture, and a
     // deferred recipe has no such pass in the picture's path (its window pass is a fullscreen lighting program
@@ -176,7 +176,7 @@ ShadingPath RenderPipelineBuilder::effectivePath(const PipelineOptions& options)
     return options.path;
 }
 
-bool RenderPipelineBuilder::applyOverlays(Pipeline& pipeline, const PipelineOptions& options)
+bool RenderPipelineBuilder::applyOverlays(RenderPipeline& pipeline, const RenderPipelineOptions& options)
 {
     // HUD overlays, stacked at one stage: what orders them against each other is
     // their own stacking offset inside it (see AxisGizmoOptions::order), not a
@@ -184,7 +184,7 @@ bool RenderPipelineBuilder::applyOverlays(Pipeline& pipeline, const PipelineOpti
     const int overlay_base = pipelineStageOrder(PipelineStage::Overlay);
 
     // An axis gizmo, mirroring the source camera. Re-anchored through
-    // Pipeline::resize.
+    // RenderPipeline::resize.
     if (options.gizmo.source_camera != nullptr) {
         auto gizmo = make_intrusive<AxisGizmo>();
         gizmo->setSourceCamera(options.gizmo.source_camera);
@@ -305,7 +305,7 @@ intrusive_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
 
 }  // namespace
 
-intrusive_ptr<RenderTarget> RenderPipelineBuilder::buildShadowPass(Pipeline& pipeline,
+intrusive_ptr<RenderTarget> RenderPipelineBuilder::buildShadowPass(RenderPipeline& pipeline,
                                                                   const intrusive_ptr<const Light>& shadow_light_owner)
 {
     // The map keeps the light it belongs to alive (RenderTarget::setShadowOf): a retained target can
@@ -350,7 +350,7 @@ intrusive_ptr<RenderTarget> RenderPipelineBuilder::buildShadowPass(Pipeline& pip
     return shadow_map;
 }
 
-bool RenderPipelineBuilder::buildForwardPath(Pipeline& pipeline)
+bool RenderPipelineBuilder::buildForwardPath(RenderPipeline& pipeline)
 {
     if (engine_ == nullptr || camera_ == nullptr) {
         return false;
@@ -400,7 +400,7 @@ bool RenderPipelineBuilder::buildForwardPath(Pipeline& pipeline)
     return true;
 }
 
-bool RenderPipelineBuilder::buildDeferredPath(Pipeline& pipeline, const PipelineOptions& options)
+bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const RenderPipelineOptions& options)
 {
     if (engine_ == nullptr || camera_ == nullptr || content_ == nullptr) {
         return false;

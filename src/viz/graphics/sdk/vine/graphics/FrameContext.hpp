@@ -14,7 +14,7 @@ VN_GRAPHICS_NS_BEGIN
 struct VN_GRAPHICS_API FrameContext {
     double dt = 0.0;  ///< Seconds elapsed since the previous frame.
     /// Surface width as the HOST announced it (the Qt host announces logical pixels - what its widget
-    /// reports - so a consumer that needs device pixels scales by that host's ratio; see Pipeline::resize
+    /// reports - so a consumer that needs device pixels scales by that host's ratio; see RenderPipeline::resize
     /// and SceneView::addSurfaceLayout). 0 until the first resize.
     int surface_width = 0;
     /// Surface height as the host announced it (see surface_width).

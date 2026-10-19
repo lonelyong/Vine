@@ -6,7 +6,7 @@
 > `ImageRef` §14）、`graphics-shadow.md`（阴影的语义模型）、`graphics-shader.md` §11（L1/L2/L3
 > 后端无关 ABI）。
 >
-> **一句话**：`Pipeline` 是**一棵小 pass 图 + 它注册过的东西的句柄**，不是继承体系；改变它的只有
+> **一句话**：`RenderPipeline` 是**一棵小 pass 图 + 它注册过的东西的句柄**，不是继承体系；改变它的只有
 > 两件事 —— **路径**（几何怎么被着色）与**效果**（在哪些 pass 之间插什么），二者正交，所以用
 > **选项 + 阶段（stage）**表达，不用子类。
 
@@ -18,14 +18,14 @@
 | 派生 `ShadowPipeline` / `SsaoPipeline`？ | **不**。它们是**效果**：往既有的 pass 图里插 pass、给既有 pass 加输入（§2、§5） |
 | PBR 是不是一种 pipeline？ | **不是**。它是**着色模型** = program + 材质 ABI（§2） |
 | 效果怎么插？ | **阶段（`PipelineStage`）+ 插入顺序**，取代魔数 order（§3） |
-| 谁负责注销 pass？ | **`Pipeline` 自己**（RAII）——今天它只持引用不持注册，是个真缺陷（§4） |
+| 谁负责注销 pass？ | **`RenderPipeline` 自己**（RAII）——今天它只持引用不持注册，是个真缺陷（§4） |
 
 ## 1. 为什么不派生
 
 1. **轴是正交的**：路径（forward / deferred）× 阴影（N 个投影光）× SSAO（开/关）× 泛后处理 ×
    HUD。单继承只能表达一个维度，`Deferred + SSAO + 阴影` 需要 2ᵏ 个子类或菱形继承。
    正交的东西**组合**，不做类层级。
-2. **`Pipeline` 是数据不是行为**：它持有的是“pass 列表 + target + 句柄”。行为在
+2. **`RenderPipeline` 是数据不是行为**：它持有的是“pass 列表 + target + 句柄”。行为在
    `RenderPass::execute` 与后端里；派生一个不覆写任何虚函数的类，只是把数据换成类型名
    （`copilot-instructions.md`：avoid unnecessary abstractions）。
 3. **本仓已经就同类问题拍过一次板**：着色从 `ShaderPreset` 枚举改成**命名 program**
@@ -54,7 +54,7 @@
 ```cpp
 enum class ShadingPath { Forward, Deferred };   // 内容怎么被着色（唯一封闭的结构轴）
 
-struct PipelineOptions {
+struct RenderPipelineOptions {
     ShadingPath path = ShadingPath::Forward;
     // deferred 路径的两张图与两段 program（forward 不读）
     int offscreen_width = 0, offscreen_height = 0;
@@ -87,14 +87,14 @@ constexpr int pipelineStageOrder(PipelineStage) noexcept;
 
 ## 4. 生命周期与管理
 
-### 4.1 一个真缺陷：`Pipeline` 只持有引用，不持有注册
+### 4.1 一个真缺陷：`RenderPipeline` 只持有引用，不持有注册
 
-`Pipeline::~Pipeline() = default`，而 `RenderEngine::addPass` 另持一份 `intrusive_ptr`。后果：
-**丢掉 Pipeline 不会注销任何 pass，它们继续每帧执行**。今天 `SceneView` 必须手写
+`RenderPipeline::~RenderPipeline() = default`，而 `RenderEngine::addPass` 另持一份 `intrusive_ptr`。后果：
+**丢掉 RenderPipeline 不会注销任何 pass，它们继续每帧执行**。今天 `SceneView` 必须手写
 `removeWindowPass()`，而且它**只删 window pass** —— 转 deferred 后 G-buffer / 光照 / 合成 / HUD
 全成孤儿（今天只建 forward 所以没炸）。
 
-**修法（S1）**：`Pipeline` 记下自己注册过的每一个 pass，析构时 `removePass`。它同时**强引用
+**修法（S1）**：`RenderPipeline` 记下自己注册过的每一个 pass，析构时 `removePass`。它同时**强引用
 engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不认识 pipeline），而是把
 "passes 注册在那个 engine 里"这个依赖说清楚：**pipeline 活着，它注册用的 engine 就必须活着**。
 
@@ -102,13 +102,13 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 
 | 档 | 例子 | 机制 |
 | --- | --- | --- |
-| **活的** | pass 开关、target 尺寸、program 热换 | `RenderPass::setEnabled` / `Pipeline::resize` / `ScreenPass::setProgram`（已有） |
-| **结构性的** | 加/减一个效果（阴影、SSAO） | 重建 pipeline 并换手；组装只是接线，GPU 资源本来就是懒建（`Pipeline::applyOptions()` 的 diff 化留到真有第二个消费者时再做，见 §6 不做清单） |
+| **活的** | pass 开关、target 尺寸、program 热换 | `RenderPass::setEnabled` / `RenderPipeline::resize` / `ScreenPass::setProgram`（已有） |
+| **结构性的** | 加/减一个效果（阴影、SSAO） | 重建 pipeline 并换手；组装只是接线，GPU 资源本来就是懒建（`RenderPipeline::applyOptions()` 的 diff 化留到真有第二个消费者时再做，见 §6 不做清单） |
 
 ### 4.3 谁持有
 
 保持"**创建者持有**，一个 view 一条 pipeline"（`SceneView` 已经如此），**不做**全局
-`PipelineManager`：管线是配置，不是资源池；需要共享的是**资源**（网格/纹理/材质），那已经由会话级
+`RenderPipelineManager`：管线是配置，不是资源池；需要共享的是**资源**（网格/纹理/材质），那已经由会话级
 缓存负责（`graphics-perf-backlog.md` P8/P9）。
 
 ## 5. 效果怎么接（三个例子）
@@ -133,7 +133,7 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 
 | 步 | 内容 | 判据 |
 | --- | --- | --- |
-| **S1** | §2/§3/§4 落地：`ShadingPath` 取代 `PipelinePreset`；`PipelineStage` 取代魔数；效果函数化（`buildPath` / `applyOverlays` / 阴影的"请求-报告"）；`Pipeline` RAII 注销 | **行为中性**：证据基线 **53 行逐字节不变**；`test_graphics` / `test_vsg` 计数；lavapipe PASS |
+| **S1** | §2/§3/§4 落地：`ShadingPath` 取代 `PipelinePreset`；`PipelineStage` 取代魔数；效果函数化（`buildPath` / `applyOverlays` / 阴影的"请求-报告"）；`RenderPipeline` RAII 注销 | **行为中性**：证据基线 **53 行逐字节不变**；`test_graphics` / `test_vsg` 计数；lavapipe PASS |
 | **S2** ✅ | 阴影：消费 `Light::castShadow`/`ShadowSettings`（已在 SDK 里躺着）；每个投影方向光一个 depth-only pass；forward / deferred 都接采样 | 落地记录见 §8.2（延迟）与 §8.3（前向）：两条路径各一个像素相位 + 无投影光时证据逐字节不变 |
 | **S3** | SSAO：证明"效果槽"这个抽象本身；deferred 直接用 G-buffer 深度，forward 走深度 prepass | 新像素相位（角落变暗）+ 默认关 ⇒ 证据不变 |
 | **S4** | PBR：**不是 pipeline 步**，是 program + 材质 ABI（`VineMaterialBlock` 扩 metallic/roughness） | 材质块 `static_assert` + 图像对照 |
@@ -143,12 +143,12 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 - ❌ 自动帧图定序（生产者/消费者推 order）：等 §14 的图像语义走完，且出现"人工排 order 排不对"
   的实例；今天 `PipelineStage` 已经让效果不必抢数字。
 - ❌ `PassContext` pull 重构（`graphics-render-pipeline.md` §11）：仍等"多 pass 完全成熟"。
-- ❌ `Pipeline::applyOptions()` 的 diff：等真有"运行中改结构"的消费者（今天是重建换手）。
-- ❌ `PipelineManager` / 全局管线注册表：§4.3。
+- ❌ `RenderPipeline::applyOptions()` 的 diff：等真有"运行中改结构"的消费者（今天是重建换手）。
+- ❌ `RenderPipelineManager` / 全局管线注册表：§4.3。
 - ❌ **宿主自选离屏 target 的前向管线**：前向路径只 presenting 到窗口，而窗口读不回来
   （`readColorBuffer` 拒绝 null target）——S2b 的像素门禁因此**重定向** window pass 才量到画面
-  （§8.3）。触发条件：出现"画面要渲进纹理"的消费者（预览、反射、录屏），那时给 `PipelineOptions`
-  或 `Pipeline` 一个离屏落点，并把门禁改回它自己声明的那种用法。
+  （§8.3）。触发条件：出现"画面要渲进纹理"的消费者（预览、反射、录屏），那时给 `RenderPipelineOptions`
+  或 `RenderPipeline` 一个离屏落点，并把门禁改回它自己声明的那种用法。
 
 ## 7. 决策记录
 
@@ -156,7 +156,7 @@ engine**（`intrusive_ptr<RenderEngine>`）—— 这不是循环（engine 不�
 2. **两个正交的入口**：`ShadingPath`（结构）与效果（附加），其余（阴影分辨率/偏差、PBR 材质）
    属于**光**与**材质/program**，不进 pipeline 选项。
 3. **阶段取代魔数**：顺序是**意图**（"阴影在所有消费者之前"），不是数字。
-4. **`Pipeline` 持有注册**（RAII）+ 强引用 engine：谁注册谁注销。
+4. **`RenderPipeline` 持有注册**（RAII）+ 强引用 engine：谁注册谁注销。
 5. **效果不静默降级**：建不出来就报，并说清画面与请求的差距（延续 `UnsupportedRequest` 的口径）。
 6. 本文取代 `graphics-pipeline-builder.md` 的 Design C 中 `PipelinePreset` 那部分；Builder 作为
    "薄配方层"的定位不变。
@@ -264,10 +264,10 @@ texel 的样子）；去掉 z 反转 ⇒ 影内 196；把 pass 的相机改回�
 
 | 环节 | 落点 |
 | --- | --- |
-| 路径 | `PipelinePreset`（4 值，含 2 个占位）→ `ShadingPath { Forward, Deferred }`，进 `PipelineOptions::path`；`build(const PipelineOptions&)` 取代 `build(preset, options)` |
+| 路径 | `PipelinePreset`（4 值，含 2 个占位）→ `ShadingPath { Forward, Deferred }`，进 `RenderPipelineOptions::path`；`build(const RenderPipelineOptions&)` 取代 `build(preset, options)` |
 | 阴影 | 占位枚举**删除**，不是改名：请求改由**灯**提出（`Light::castShadow` + `ShadowSettings`），builder 扫 content / transparent 两个场景里 `enabled && castShadow` 的灯，有就报一条 `UnsupportedRequest`（"画面无影"）。**比原来覆盖更广**：以前只有点名 `*Shadowed` 预设才报，宿主直接给灯设标志是**静默**的（`demo_plugin` 的 demo 就是这样） |
 | 顺序 | 新增 `PipelineStage` + `pipelineStageOrder()`：`Depth -100 / Geometry -40 / Effect -20 / Shading 0 / Transparent 20 / Present 40 / Overlay 60 / Preview 100`；builder 的每个 pass（含 HUD、含 PiP 配方）都按阶段落位，HUD 的 `order` 降级为**阶段内**堆叠偏移 |
-| 生命周期 | `Pipeline` 改 RAII：`Pipeline(intrusive_ptr<RenderEngine>)`（引擎是构造不变量）+ `addPass()` 注册并记账 + 析构**逐个 `removePass`**；成员 `intrusive_ptr<RenderEngine>` **强持**引擎（无环：引擎不认识 pipeline） |
+| 生命周期 | `RenderPipeline` 改 RAII：`RenderPipeline(intrusive_ptr<RenderEngine>)`（引擎是构造不变量）+ `addPass()` 注册并记账 + 析构**逐个 `removePass`**；成员 `intrusive_ptr<RenderEngine>` **强持**引擎（无环：引擎不认识 pipeline） |
 | SceneView | 手写的 `removeWindowPass()` 只剩"放开句柄"——那正是 RAII 修掉的那个缺陷：旧版只删 window pass，转 deferred 后 G-buffer / 光照 / 合成 / HUD 全成孤儿 |
 | AppShell | `VINE_PIPELINE=*_shadowed` 不再选另一条管线，改成给场景里的方向光设 `castShadow`，于是走上面那条"请求-报告"通路 |
 
@@ -278,7 +278,7 @@ deferred 默认路径 —— 档位重排后 lavapipe 无 VUID/validation 错误
 `test_vsg` 247；`vine_shader_check` PASS；lavapipe PASS。
 
 **诚实的遗留**：`addOffscreenToScreen`（PiP 配方）仍直接向 engine 注册并返回裸 `ScreenPass*`，
-那两条 pass 没有句柄负责注销 —— 与 S1 修的是同一个缺陷。它改成返回 `Pipeline` 需要同时给宿主
+那两条 pass 没有句柄负责注销 —— 与 S1 修的是同一个缺陷。它改成返回 `RenderPipeline` 需要同时给宿主
 一个"稍后锚定这个 ScreenPass"的路径，等第二个消费者出现时一起做（触发条件已写进 §6 不做清单）。
 ## 9. S2 阴影：三个 ABI 决定（2026-09-13）
 

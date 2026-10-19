@@ -1,6 +1,8 @@
 # RenderPipelineBuilder 设计（管线配方层）
 
 > 状态：**已落地（recipe: offscreenToScreen）**（2026-09-03）
+> **2026-10-19 K1 改名**：本文中的 `Pipeline` / `PipelineOptions` 是当时的名字；现行 API 是
+> `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups-2026-10-19.md` §1.1）。
 > ⚠ Design B 变更：RenderEngine 已无“内置零配置默认管线”（main pass 移除，空启动）。
 > “默认 viewer”引导现在归 fw 层 `RenderControl`（passCount()==0 时注册默认窗口 pass）；Builder
 > 相机回落用 `engine->masterCamera()`。本设计其余结论不变。

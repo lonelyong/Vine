@@ -14,7 +14,7 @@ VN_GRAPHICS_NS_BEGIN
  *
  * @note
  * - The unit is DEVICE pixels. A host that knows a LOGICAL size and a device pixel ratio converts before it
- *   states a viewport (see SceneView::resize / Pipeline::resize); mixing the two is the high-DPI bug class
+ *   states a viewport (see SceneView::resize / RenderPipeline::resize); mixing the two is the high-DPI bug class
  *   this sentence exists to make visible.
  */
 struct VN_GRAPHICS_API Viewport {

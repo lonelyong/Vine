@@ -363,7 +363,7 @@ TEST(RenderControlTest, ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt)
     EXPECT_EQ(control->viewerOptions().mode, vn::graphics::ShadingMode::Unlit) << "运行期那一档要记进预设";
 
     // 同一条（前向）链上表达得了的另一档：零重建 —— 预设跟着走（否则下次读-改-写会把旧档带回来）。
-    auto held = vn::intrusive_ptr<vn::graphics::Pipeline>(forward);
+    auto held = vn::intrusive_ptr<vn::graphics::RenderPipeline>(forward);
     EXPECT_TRUE(control->setShadingMode(vn::graphics::ShadingMode::Wireframe));
     EXPECT_EQ(control->view()->pipeline(), held.get()) << "同一条链上换档不该重建";
     EXPECT_EQ(control->viewerOptions().mode, vn::graphics::ShadingMode::Wireframe);
@@ -830,7 +830,7 @@ TEST(RenderControlTest, ARebuildCarriesTheLiveChainsRuntimeChoices)
     ASSERT_TRUE(first->setStatsVisible(false));
 
     // 结构变化（非 Lit 档：延迟链表达不了它）⇒ 重建 —— 关掉的读数必须跟着走，没动过的坐标轴照旧亮着。
-    vn::intrusive_ptr<vn::graphics::Pipeline> held(first);
+    vn::intrusive_ptr<vn::graphics::RenderPipeline> held(first);
     ASSERT_TRUE(viewer->setShadingMode(vn::graphics::ShadingMode::Unlit));
     auto* rebuilt = control->view()->pipeline();
     ASSERT_NE(rebuilt, nullptr);

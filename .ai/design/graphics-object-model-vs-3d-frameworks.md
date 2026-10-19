@@ -1,5 +1,8 @@
 # Vine 的对象模型 vs 3D 框架口径（2026-10-12）
 
+> **2026-10-19 K1 改名**：本文中的 `Pipeline` / `PipelineOptions` 是当时的名字；现行 API 是
+> `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups-2026-10-19.md` §1.1）。
+
 > **这是什么**：一次"对象设计合理性"复核的结论 —— 把 graphics SDK 的公开对象逐个对到三维框架的行业口径
 > （VTK / OSG / three.js / Filament / Qt3D），说明哪些同构、哪些是**刻意偏离**（含代价）、哪些是**能力缺口**
 > （含触发条件）。**不是**新提案：本文件不要求改任何东西，只把"我们像谁、不像谁、以后要补什么"写成一份

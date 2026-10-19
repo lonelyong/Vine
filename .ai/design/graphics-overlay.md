@@ -1,5 +1,8 @@
 # Graphics HUD / Top Pass（叠加绘制）设计
 
+> **2026-10-19 K1 改名**：本文中的 `Pipeline` / `PipelineOptions` 是当时的名字；现行 API 是
+> `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups-2026-10-19.md` §1.1）。
+
 状态：已随“overlay 类删除 + 引擎单列表统一”重构落地（2026-09），编译/单测全绿。
 
 > **2026-09-16 状态更新（替下面正文里的“已落地”措辞纠偏）**：本文写于叠加层**按相机键保留窗口层**的那一轮，其中两条**已不成立**：

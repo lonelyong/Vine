@@ -20,7 +20,7 @@
 | A1 | `FrameDescription` 被称作 value，实际是 borrowed snapshot | `FrameDescription.hpp` 类注释；`RenderEngine::frameDescription()` |
 | A2 | 顺序有两个权威：announced order vs dependency schedule | `FrameDescription.hpp`、`RenderFrameExecutor.hpp`、`FramePlan.hpp`、`RenderEngine::framePlan()` |
 | B1 | `PassKind` 封闭集 vs `RenderPass::describe()` 逃生口 | `PassDesc.hpp` 的 `PassKind` 注释 |
-| C1 | `Pipeline` 与 PSO 的命名碰撞 | `Pipeline.hpp` 类注释 |
+| C1 | `Pipeline` 与 PSO 的命名碰撞 | `RenderPipeline.hpp` 类注释 |
 | C2 | `FramePlan` 与 `FrameDescription` 两个帧值的读者不同 | `FramePlan.hpp` 类注释 |
 | D1 | `program` 不在 state 里 | 已由 `StateNode.hpp` 说明；本轮不改 |
 | E1 | `ImageRef`（pass 产出）与 `Texture`（导入）是两个图源根 | `Texture.hpp` 与 `ImageRef.hpp` 互指 |
@@ -50,13 +50,15 @@
 | # | 优化项 | 抽象问题 | 动作 | 触发条件 |
 |---|---|---|---|---|
 | H1 | 能力模型偏“懒惰” | `Capabilities` 只放预检事实，其余靠调用结果与诊断 | 第二个后端或 MSAA/compute 立项时加 `Feature` 枚举 | 第二个图形家族 / 新的预检问题 |
-| F2b | 色彩空间与数值域未进类型 | linear/sRGB、0–255/0–1 靠注释 | 强类型 `LinearColor` / `SrgbColor` / `UnitScalar` | 出现第二次同类色彩/数值域缺陷 |
-| E2 | 图源没有统一抽象 | `ImageRef` 与 `Texture` 两个根 | `ImageSource`，或让 `ImageRef` 能命名非 RT 图源 | 静态/导入贴图作为 pass 输入的真实需求 |
-| K1 | `Pipeline` 改名 | 与 PSO 词义冲突 | `RenderPipeline` / `PassChain` | 下一次公开面破坏性变更 |
+| F2b | 色彩空间与数值域未进类型 | linear/sRGB、0–255/0–1 靠注释 | 强类型 `LinearColor` / `SrgbColor` / `UnitScalar` | **本轮不做（用户决定 2026-10-19）** |
 | L1 | 帧 IR 没有 owned 形式 | 无法离线/序列化/跨线程 | `OwnedFrame` 或 `FrameDescription` 的 owned 兄弟 | 离线/远程渲染或帧录制 |
 | I1 | `RenderTarget::shareDepth` 把调度边藏进描述 | 资源图的边表达成字段 | 独立 `DepthView` / `ImageView` 关系 | 第三个共享 depth 的消费者或排序缺陷 |
 | J1 | `SceneView` 门面角色偏多 | 相机/内容/操纵器/管线/区/输入汇于一身 | 维持门面；必要时拆 `InputRouter` / `LayoutParticipant` | 多视图/输入路由重新进入 SDK |
 | B2 | `RenderPass::execute` 仍是虚函数 | 值路径与逃生口并存 | 保持现状；主路写死为 `describe()` | 已具备，仅登记 |
+
+> E2 已于 2026-10-19 落地（`114e0465`），其收尾项（全屏 ABI imported 输入、按 attachment 绑定、revision 失效、sampler state、Cube）不在本表，登记在
+> `graphics-followups-2026-10-19.md` §2；P1 的开工顺序与 F2b 的“不做”决定也在那份任务列表里。
+> K1 已于 2026-10-19 落地（`Pipeline` → `RenderPipeline`，见任务列表 §1.1）。
 
 ## 3. 明确不做
 

@@ -19,7 +19,7 @@ class AxisGizmo;
 class Camera;
 class FpsOverlay;
 // Declared rather than included: PassDesc is a declaration OF a pass, so it includes this header for
-// PipelineStage, and a pipeline only ever passes one straight on to the engine (Pipeline::addPass).
+// PipelineStage, and a pipeline only ever passes one straight on to the engine (RenderPipeline::addPass).
 struct PassDesc;
 class RenderEngine;
 class RenderPass;
@@ -158,7 +158,7 @@ struct VN_GRAPHICS_API FpsOverlayOptions {
  *   pipeline that draws that light's content, because a light outlives any one pipeline and a scene may be drawn by
  *   several (see PipelineStage::Depth and .ai/design/graphics-pipeline.md §2).
  */
-struct VN_GRAPHICS_API PipelineOptions {
+struct VN_GRAPHICS_API RenderPipelineOptions {
     /** @brief How the opaque content is shaded (the structural choice). */
     ShadingPath path = ShadingPath::Forward;
 
@@ -169,7 +169,7 @@ struct VN_GRAPHICS_API PipelineOptions {
      *   the chain has to be assembled differently to be able to express it - a non-Lit mode needs the geometry pass,
      *   so a Deferred request is built FORWARD for it (see effectivePath).
      * - Switching among the modes the built chain CAN express is one override on a live pipeline
-     *   (Pipeline::setShadingMode).
+     *   (RenderPipeline::setShadingMode).
      */
     ShadingMode mode = ShadingMode::Lit;
 
@@ -178,7 +178,7 @@ struct VN_GRAPHICS_API PipelineOptions {
      * @details
      * - 0 (the default) uses the engine's current surface size, falling back to a fixed 640 x 360 when the surface is
      *   not known yet.
-     * - The host keeps the G-buffer in step with the surface via Pipeline::resize() (e.g. from a SceneView
+     * - The host keeps the G-buffer in step with the surface via RenderPipeline::resize() (e.g. from a SceneView
      *   surface-layout step).
      */
     int offscreen_width = 0;
@@ -246,9 +246,9 @@ struct VN_GRAPHICS_API PipelineOptions {
  * @note
  * - This is a PASS CHAIN and its registration, not a graphics-API pipeline state object (PSO): the GPU pipeline
  *   variants are the backend's (see `VariantPool.hpp` / `PipelineKey`), and a host never builds or names one
- *   here. "Pipeline" is used in the FrameGraph / RDG sense: a compiled chain of passes.
+ *   here. The name follows the FrameGraph / RDG sense: a compiled chain of passes.
  */
-class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
+class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
     friend class RenderPipelineBuilder;
 
   public:
@@ -260,10 +260,10 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
      *
      * @param engine Engine the pipeline's passes are registered on (held strongly; must not be null).
      */
-    explicit Pipeline(intrusive_ptr<RenderEngine> engine);
+    explicit RenderPipeline(intrusive_ptr<RenderEngine> engine);
 
     /** @brief Destroys the pipeline, unregistering its passes from the engine. */
-    ~Pipeline();
+    ~RenderPipeline();
 
   public:
     /** @brief Gets the pass presenting the view camera to the window.
@@ -369,27 +369,27 @@ class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
      *   re-registered.
      * - A mode this chain CANNOT express is answered false and changes nothing: a Deferred picture comes out of a
      *   fullscreen lighting pass with no geometry left to shade, so its non-Lit modes have to be ASSEMBLED for (build
-     *   with PipelineOptions::mode, which builds the chain that can express it - see effectivePath).
+     *   with RenderPipelineOptions::mode, which builds the chain that can express it - see effectivePath).
      * - The false answer is reported once per episode, because a host that ignored it would be looking at a picture
      *   that did not change and would call that "switched".
      *
      * @param mode Mode to draw with.
      * @return true when this pipeline's picture now means @p mode (its picture pass was overridden); false when this
-     *         chain cannot express it (nothing changed - rebuild with PipelineOptions::mode instead).
+     *         chain cannot express it (nothing changed - rebuild with RenderPipelineOptions::mode instead).
      */
     bool setShadingMode(ShadingMode mode);
 
     /** @brief Shows or hides the axis-gizmo overlay (a switch, never a rebuild).
      *
      * @details
-     * - The overlay's EXISTENCE is a build decision (PipelineOptions::gizmo); this is the runtime switch over it (the
+     * - The overlay's EXISTENCE is a build decision (RenderPipelineOptions::gizmo); this is the runtime switch over it (the
      *   pass' enabled flag - the one state a reader sees, see isGizmoVisible).
      * - A pipeline with no gizmo answers false and says so once per episode: a switch that silently did nothing would
      *   leave a host believing the overlay was just hidden.
      *
      * @param on True to show the overlay, false to hide it.
      * @return true when this pipeline HAS the overlay (its visibility is now @p on); false when it has none - build
-     *         with PipelineOptions::gizmo to get one.
+     *         with RenderPipelineOptions::gizmo to get one.
      */
     bool setGizmoVisible(bool on);
 

@@ -1422,7 +1422,7 @@ bool demoUsesDeferred()
  * the deferred default.
  *
  * An axis gizmo mirroring the view camera is always added (configurable via
- * PipelineOptions::gizmo) and - together with any Deferred G-buffer - is kept
+ * RenderPipelineOptions::gizmo) and - together with any Deferred G-buffer - is kept
  * in step with the window by a single surface-layout step. This pipeline's
  * window pass is DECLARED as the surface's presentation (RenderSurface), which
  * is what keeps RenderControl from adding a default forward pass beside it.
@@ -1459,7 +1459,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     if (transparent != nullptr) {
         builder.setTransparentContent(std::move(transparent));
     }
-    vn::graphics::PipelineOptions options;
+    vn::graphics::RenderPipelineOptions options;
     options.path = path;
     // Axis-gizmo HUD overlay: mirrors the view camera in the bottom-left.
     options.gizmo.source_camera = view->camera();

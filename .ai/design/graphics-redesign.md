@@ -1,5 +1,8 @@
 # graphics 的重新设计（2026-10-11 定，提案）
 
+> **2026-10-19 K1 改名**：本文中的 `Pipeline` / `PipelineOptions` 是当时的名字；现行 API 是
+> `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups-2026-10-19.md` §1.1）。
+
 **状态：S1 / A / S2 / S3（含 3c 收口）/ S4b / S5 / S6 全部落地（2026-10-11）—— 六片迁移做完，逐片记录见下。
 S7（用户点名的收口：配方归 `Pipeline`、视图只采纳）也已落地（2026-10-11），记录见下。**
 用户 2026-10-11 定"重构，重新设计"，边界划到**含后端契约**
@@ -661,7 +664,7 @@ appfw 一行未改）、`test_vsg` **426 = 421 + 3 skip + 2 已知红**、`test_
    离屏尺寸、程序）→ `PipelineOptions`（建链时决定）；**运行期**（同一条链上能表达的档、档的**显示/隐藏**）→
    `Pipeline` 的 setter（零重建、零重新注册）。
 2. **两个枚举各自成叶子头**：`sdk/vine/graphics/ShadingMode.hpp`（原 `SceneView::Options::Mode`）、
-   `ShadingPath.hpp`（原住在 `Pipeline.hpp` 里）。判据与 S5 同：读者该能独立拿到值，不被拖进整张契约。
+   `ShadingPath.hpp`（原住在 `RenderPipeline.hpp` 里）。判据与 S5 同：读者该能独立拿到值，不被拖进整张契约。
 3. **`Pipeline` 记下自己是哪条链**：`shadingPath()` 答**实际建成**的那条（延迟请求 + 非 Lit 档 ⇒ 前向），
    `shadingMode()` / `setShadingMode()` / `setGizmoVisible()` / `setStatsVisible()` / `isGizmoVisible()` /
    `isStatsVisible()` 新增。链表达不了的档**拒绝 + 报一次**（`ReportOnce`，与既有的 `mode_refused_` 同形）；

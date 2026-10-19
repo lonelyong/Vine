@@ -13,7 +13,7 @@
 #include "DepthMode.hpp"
 #include "ImageRef.hpp"
 #include "ImageSource.hpp"
-#include "Pipeline.hpp"
+#include "RenderPipeline.hpp"
 #include "PolygonMode.hpp"
 #include "RenderTarget.hpp"
 #include "Scene.hpp"

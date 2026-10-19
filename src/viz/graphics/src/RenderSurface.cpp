@@ -1,6 +1,6 @@
 #include <vine/graphics/RenderSurface.hpp>
 
-#include <vine/graphics/Pipeline.hpp>
+#include <vine/graphics/RenderPipeline.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -35,7 +35,7 @@ raw_ptr<RenderPass> RenderSurface::passOf(raw_ptr<SceneView> view) const
     }
     // Resolved on every read, never remembered: a view's window pass is a NEW pass each time a recipe change
     // rebuilds its pipeline, and the area has to name the one that is in the frame.
-    const raw_ptr<Pipeline> pipeline = view->pipeline();
+    const raw_ptr<RenderPipeline> pipeline = view->pipeline();
     return pipeline != nullptr ? pipeline->windowPass() : nullptr;
 }
 

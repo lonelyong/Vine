@@ -224,7 +224,7 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
      * @brief 右下角的帧率读数（查看器的链里的 HUD 档）。
      *
      * 读数不再由查看器自己造：查看器预设里的 `stats` 让链带上这个 HUD 档，于是**尺寸、比例、摆位、窗口缩放**
-     * 全归链维护（见 `Pipeline`），显示/隐藏是链上的零重建开关（`Pipeline::setStatsVisible()`）。空文档时视图
+     * 全归链维护（见 `RenderPipeline`），显示/隐藏是链上的零重建开关（`RenderPipeline::setStatsVisible()`）。空文档时视图
      * 还没建链，这里就是空指针。
      *
      * @return 读数 pass；视图还没有链时是空指针。
@@ -479,7 +479,7 @@ inline void ModelRenderView::buildScene()
     // 帧率读数：让控件的查看器预设带上这个 HUD 档 —— 读-改-写，`setViewerOptions()` 收的是整个预设，只送 stats
     // 会把链、坐标轴那些关掉。以前查看器自己造 `FpsOverlay` 挂引擎（pixel ratio、把逻辑尺寸转给它、resize 再补
     // 一次，31 行），现在尺寸/比例/摆位/窗口缩放全归链自己维护（见 Pipeline）—— 而显示与隐藏是零重建的开关
-    // （`Pipeline::setStatsVisible()`，`System` 菜单里的"帧率"项就是它）。
+    // （`RenderPipeline::setStatsVisible()`，`System` 菜单里的"帧率"项就是它）。
     vn::appfw::gui::ViewerOptions options = control_->viewerOptions();
     options.stats                         = true;
     control_->setViewerOptions(options);

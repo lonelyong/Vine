@@ -2,7 +2,7 @@
 
 #include <utility>
 
-#include <vine/graphics/Pipeline.hpp>
+#include <vine/graphics/RenderPipeline.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
@@ -32,10 +32,10 @@ struct Viewer::Impl {
         }
 
         // A rebuild changes the STRUCTURE, never the picture: whether the user has an overlay showing is a runtime
-        // choice that lives on the live pipeline (Pipeline::setGizmoVisible / setStatsVisible), so it is read from
+        // choice that lives on the live pipeline (RenderPipeline::setGizmoVisible / setStatsVisible), so it is read from
         // there and re-stated on the new one. Only an overlay that WAS there and was hidden is carried - one this
         // build adds comes up showing, because nothing has hidden it yet.
-        vn::graphics::Pipeline* const previous = view->pipeline();
+        vn::graphics::RenderPipeline* const previous = view->pipeline();
         const bool gizmo_was_hidden =
             previous != nullptr && previous->gizmo() != nullptr && !previous->isGizmoVisible();
         const bool stats_was_hidden =
@@ -46,7 +46,7 @@ struct Viewer::Impl {
         // "no overlay" means), and the overlays are laid out in device pixels, so they take the area's ratio.
         const double ratio = surface != nullptr && surface->pixelRatio() > 0.0 ? surface->pixelRatio() : 1.0;
 
-        vn::graphics::PipelineOptions pipeline_options;
+        vn::graphics::RenderPipelineOptions pipeline_options;
         pipeline_options.path                = options.path;
         pipeline_options.mode                = options.mode;
         pipeline_options.offscreen_width     = options.offscreen_width;
@@ -60,7 +60,7 @@ struct Viewer::Impl {
         vn::graphics::RenderPipelineBuilder builder(engine);
         builder.setCamera(view->camera());
         builder.setContent(view->scene());
-        vn::intrusive_ptr<vn::graphics::Pipeline> pipeline = builder.build(pipeline_options);
+        vn::intrusive_ptr<vn::graphics::RenderPipeline> pipeline = builder.build(pipeline_options);
         if (pipeline == nullptr) {
             return false;  // the builder reports what it refused (see RenderPipelineBuilder::build)
         }
@@ -152,10 +152,10 @@ bool Viewer::setShadingMode(vn::graphics::ShadingMode mode)
     // forward chain while the request still says Deferred (see effectivePath), so "the chain is live and can express
     // this mode" is only the cheap path when the live chain is the one this request resolves to. Picking Lit again
     // after such a mode therefore REBUILDS the deferred chain - which is what the host asked for.
-    vn::graphics::PipelineOptions request;
+    vn::graphics::RenderPipelineOptions request;
     request.path = d->options.path;
     request.mode = mode;
-    vn::graphics::Pipeline* const pipeline = d->view->pipeline();
+    vn::graphics::RenderPipeline* const pipeline = d->view->pipeline();
     if (pipeline != nullptr &&
         pipeline->shadingPath() == vn::graphics::RenderPipelineBuilder::effectivePath(request) &&
         pipeline->setShadingMode(mode)) {

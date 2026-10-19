@@ -27,7 +27,7 @@ VN_APPFWGUI_NS_BEGIN
  * CHANGING IT REBUILDS. A chain, an overlay's existence and the shading mode the chain must be able to express
  * are all build decisions (see PipelineOptions), so a change here is one pipeline build - not a
  * per-frame cost, but not free either. What costs nothing is a mode the built chain can express and the
- * visibility of an overlay it has: those are Pipeline::setShadingMode / setGizmoVisible / setStatsVisible, calls
+ * visibility of an overlay it has: those are RenderPipeline::setShadingMode / setGizmoVisible / setStatsVisible, calls
  * on the live pipeline.
  */
 struct VN_APPFW_API ViewerOptions
@@ -50,7 +50,7 @@ struct VN_APPFW_API ViewerOptions
     int offscreen_width{0};
     int offscreen_height{0};
 
-    /// Which layers of the content the area draws (see Node::setLayers / PipelineOptions::layer_mask).
+    /// Which layers of the content the area draws (see Node::setLayers / RenderPipelineOptions::layer_mask).
     ///
     /// The area's own content selection, stated on every pass of the chain that walks the content: an area
     /// showing one part of a scene while another area (or another pass) shows the rest. kAllLayers (the

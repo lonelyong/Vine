@@ -106,12 +106,12 @@ bool drawsToWindow(vn::graphics::RenderPass* pass, vn::graphics::Camera* camera)
  * @param options The build options (chain, mode, overlays; see PipelineOptions).
  * @return The pipeline that was built and adopted; null when the builder refused @p options.
  */
-intrusive_ptr<Pipeline> buildFor(SceneView& view, RenderEngine* engine, const PipelineOptions& options = {})
+intrusive_ptr<RenderPipeline> buildFor(SceneView& view, RenderEngine* engine, const RenderPipelineOptions& options = {})
 {
     RenderPipelineBuilder builder(engine);
     builder.setCamera(view.camera());
     builder.setContent(view.scene());
-    intrusive_ptr<Pipeline> pipeline = builder.build(options);
+    intrusive_ptr<RenderPipeline> pipeline = builder.build(options);
     if (pipeline != nullptr) {
         view.setPipeline(pipeline);
     }
@@ -3317,7 +3317,7 @@ TEST(SceneViewViewportTest, TheBuildOptionsDecideWhichOverlayPassesExist)
         return names;
     };
 
-    PipelineOptions both;
+    RenderPipelineOptions both;
     both.gizmo.source_camera = view->camera();
     both.fps.enabled         = true;
     auto pipeline            = buildFor(*view, engine.get(), both);
@@ -3332,7 +3332,7 @@ TEST(SceneViewViewportTest, TheBuildOptionsDecideWhichOverlayPassesExist)
 
     // Dropping an overlay from the options takes its pass away: the next build is a different pipeline, and the one
     // it replaced takes its own registrations with it.
-    PipelineOptions readout_only;
+    RenderPipelineOptions readout_only;
     readout_only.fps.enabled = true;
     pipeline                 = buildFor(*view, engine.get(), readout_only);
     ASSERT_NE(pipeline, nullptr);
@@ -3353,7 +3353,7 @@ TEST(SceneViewViewportTest, OverlayVisibilityIsASwitchThatNeverRebuilds)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    PipelineOptions with_readout;
+    RenderPipelineOptions with_readout;
     with_readout.fps.enabled = true;
     auto pipeline            = buildFor(*view, engine.get(), with_readout);
     ASSERT_NE(pipeline, nullptr);
@@ -3397,7 +3397,7 @@ TEST(SceneViewViewportTest, AHiddenOverlayIsHiddenOnTheChainItWasStatedOnAndNowh
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    PipelineOptions options;
+    RenderPipelineOptions options;
     options.fps.enabled = true;
 
     auto pipeline = buildFor(*view, engine.get(), options);
@@ -3433,7 +3433,7 @@ TEST(SceneViewViewportTest, AddingAnOverlayIsABuildOptionAndShowingItIsNot)
     // 这条链没有读数，所以"要一个"是**另建一条**：多一条 pass，多一次建链。旧的句柄先放掉，这样 pass 表里只有
     // 新的那条链（放掉的那条析构时把自己的 pass 摘掉）。
     pipeline = nullptr;
-    PipelineOptions with_readout;
+    RenderPipelineOptions with_readout;
     with_readout.fps.enabled = true;
     auto readout             = buildFor(*view, engine.get(), with_readout);
     ASSERT_NE(readout, nullptr);
@@ -3597,7 +3597,7 @@ TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
     // first, because while it is held the replaced pipeline keeps its own passes registered (its destructor is what
     // unregisters them) and the pass count below would be measuring the wrong thing.
     pipeline = nullptr;
-    PipelineOptions with_readout;
+    RenderPipelineOptions with_readout;
     with_readout.fps.enabled = true;
     auto rebuilt             = buildFor(*view, engine.get(), with_readout);
     ASSERT_NE(rebuilt, nullptr);
@@ -3617,7 +3617,7 @@ TEST(SceneViewViewportTest, ANonLitModeOnADeferredRecipeBuildsTheForwardChain)
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
-    PipelineOptions options;
+    RenderPipelineOptions options;
     options.path  = ShadingPath::Deferred;
     options.mode  = ShadingMode::Unlit;
     auto pipeline = buildFor(*view, engine.get(), options);
@@ -3666,7 +3666,7 @@ TEST(SceneViewViewportTest, SwitchingBetweenNonLitModesOnADeferredRecipeKeepsThe
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
-    PipelineOptions options;
+    RenderPipelineOptions options;
     options.path  = ShadingPath::Deferred;
     options.mode  = ShadingMode::Unlit;
     auto pipeline = buildFor(*view, engine.get(), options);
@@ -3695,7 +3695,7 @@ TEST(SceneViewViewportTest, TheAreaSizeDrivesAspectAndLayoutSteps)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    PipelineOptions options;
+    RenderPipelineOptions options;
     options.gizmo.source_camera = view->camera();
     options.fps.enabled         = true;
     auto pipeline               = buildFor(*view, engine.get(), options);
@@ -3814,7 +3814,7 @@ TEST(SceneViewViewportTest, TheOverlayBoxSitsInTheAreaCorner)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    PipelineOptions options;
+    RenderPipelineOptions options;
     options.gizmo.source_camera = view->camera();
     auto pipeline               = buildFor(*view, engine.get(), options);
     ASSERT_NE(pipeline, nullptr);
@@ -3869,7 +3869,7 @@ TEST(SceneViewViewportTest, RebuildingAfterTheHostReleasedTheEngineIsSafe)
     auto* borrowed = view->engine();
     engine         = nullptr;
 
-    PipelineOptions with_readout;
+    RenderPipelineOptions with_readout;
     with_readout.fps.enabled = true;
     auto rebuilt             = buildFor(*view, borrowed, with_readout);
     ASSERT_NE(rebuilt, nullptr);
@@ -4778,7 +4778,7 @@ TEST(RenderPipelineBuilderTest, ForwardPathBuildsWindowPass)
     RenderPipelineBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
-    auto pipeline = builder.build(PipelineOptions{});
+    auto pipeline = builder.build(RenderPipelineOptions{});
 
     ASSERT_NE(pipeline, nullptr);
     ASSERT_NE(pipeline->windowPass(), nullptr);
@@ -4833,7 +4833,7 @@ TEST(RenderPipelineBuilderTest, DroppingThePipelineUnregistersItsPasses)
     builder.setCamera(cam.get());
     builder.setContent(content);
     {
-        PipelineOptions opts;
+        RenderPipelineOptions opts;
         opts.path = ShadingPath::Deferred;
         opts.offscreen_width  = 64;
         opts.offscreen_height = 64;
@@ -4865,15 +4865,15 @@ TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
     builder.setContent(content);
 
     // Nothing asked for: nothing to report.
-    ASSERT_NE(builder.build(PipelineOptions{}), nullptr);
+    ASSERT_NE(builder.build(RenderPipelineOptions{}), nullptr);
     EXPECT_TRUE(reported.empty());
 
     content->addLight(Light::createDirectional());
-    ASSERT_NE(builder.build(PipelineOptions{}), nullptr);
+    ASSERT_NE(builder.build(RenderPipelineOptions{}), nullptr);
     EXPECT_TRUE(reported.empty()) << "a light that casts no shadow asks for nothing";
 
     content->lights().front()->setCastShadow(true);
-    auto forward = builder.build(PipelineOptions{});
+    auto forward = builder.build(RenderPipelineOptions{});
     ASSERT_NE(forward, nullptr);
     // The FORWARD path HONOURS the request (S2b): the shadow pass is built and the content pass
     // declares its map as an input, so there is nothing to report. Whether that shadow then reaches
@@ -4890,7 +4890,7 @@ TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
     // not do. (vsg_backend_selftest's deferred shadow phase is what caught it: the map was bound and
     // empty while the host had been told the shadow was not built at all.)
     reported.clear();
-    PipelineOptions opts;
+    RenderPipelineOptions opts;
     opts.path             = ShadingPath::Deferred;
     opts.offscreen_width  = 64;
     opts.offscreen_height = 64;
@@ -4912,7 +4912,7 @@ TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
     // A disabled light asks for nothing, even with the flag still set.
     reported.clear();
     content->lights().front()->setEnabled(false);
-    ASSERT_NE(builder.build(PipelineOptions{}), nullptr);
+    ASSERT_NE(builder.build(RenderPipelineOptions{}), nullptr);
     EXPECT_TRUE(reported.empty());
 }
 
@@ -4945,7 +4945,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
     sun->setShadowResolution(64);
     content->addLight(sun);
 
-    PipelineOptions opts;
+    RenderPipelineOptions opts;
     opts.path             = ShadingPath::Deferred;
     opts.offscreen_width  = 32;
     opts.offscreen_height = 32;
@@ -5022,7 +5022,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
     RenderPipelineBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
-    auto pipeline = builder.build(PipelineOptions{});
+    auto pipeline = builder.build(RenderPipelineOptions{});
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->passCount(), 2u) << "shadow + the content pass (which IS the window pass)";
 
@@ -5069,7 +5069,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
     auto gbuf_prog  = intrusive_ptr<ShaderProgram>(new ShaderProgram());
     auto light_prog = intrusive_ptr<ShaderProgram>(new ShaderProgram());
 
-    PipelineOptions opts;
+    RenderPipelineOptions opts;
     opts.path = ShadingPath::Deferred;
     opts.offscreen_width   = 640;
     opts.offscreen_height  = 360;
@@ -5184,7 +5184,7 @@ TEST(RenderPipelineBuilderTest, DeclaredPassInputsReachTheBackend)
     RenderPipelineBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
-    ASSERT_NE(builder.build(PipelineOptions{}), nullptr);
+    ASSERT_NE(builder.build(RenderPipelineOptions{}), nullptr);
 
     // The G-buffer of a deferred pipeline is a target a later pass can declare; here it stands in
     // for any producer's output.
@@ -5305,7 +5305,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)
 
     // No programs supplied: the builder supplies its built-in temporary
     // G-buffer geometry + deferred-lighting programs.
-    PipelineOptions opts;
+    RenderPipelineOptions opts;
     opts.path = ShadingPath::Deferred;
     opts.offscreen_width  = 640;
     opts.offscreen_height = 360;
@@ -5332,7 +5332,7 @@ TEST(RenderPipelineBuilderTest, DeferredPathRefusesWithoutContent)
     // A Deferred main pass needs a content scene to fill its G-buffer.
     RenderPipelineBuilder builder(engine.get());
     builder.setCamera(cam.get());
-    PipelineOptions opts;
+    RenderPipelineOptions opts;
     opts.path     = ShadingPath::Deferred;
     auto pipeline = builder.build(opts);
 
@@ -5347,7 +5347,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsCompos
     auto overlay = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    PipelineOptions opts;
+    RenderPipelineOptions opts;
     opts.path = ShadingPath::Deferred;
     opts.offscreen_width  = 640;
     opts.offscreen_height = 360;
@@ -5412,7 +5412,7 @@ TEST(RenderPipelineBuilderTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
     auto overlay = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    PipelineOptions opts;
+    RenderPipelineOptions opts;
     opts.path             = ShadingPath::Deferred;
     opts.offscreen_width  = 640;
     opts.offscreen_height = 360;
@@ -5461,7 +5461,7 @@ TEST(RenderPipelineBuilderTest, TheHudOverlaysAreDeclarationsToo)
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    PipelineOptions opts;
+    RenderPipelineOptions opts;
     opts.path                = ShadingPath::Forward;
     opts.gizmo.source_camera = cam.get();
     opts.gizmo.box_size      = 96;
@@ -5534,7 +5534,7 @@ TEST(RenderPipelineBuilderTest, ForwardPresetWithTransparentContentStacksDepthOn
     builder.setCamera(cam.get());
     builder.setContent(content);
     builder.setTransparentContent(overlay);
-    auto pipeline = builder.build(PipelineOptions{});
+    auto pipeline = builder.build(RenderPipelineOptions{});
 
     ASSERT_NE(pipeline, nullptr);
     // Main order-0 window content pass + order-1 transparent content pass.
@@ -5603,7 +5603,7 @@ TEST(RenderPipelineBuilderTest, GizmoOverlayConfiguredOnPreset)
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    PipelineOptions opts;
+    RenderPipelineOptions opts;
     opts.gizmo.source_camera = cam.get();
     opts.gizmo.pixel_ratio   = 2.0;
     opts.gizmo.box_size      = 128;
@@ -5633,7 +5633,7 @@ TEST(RenderPipelineBuilderTest, ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumer
     auto gbuf_prog  = intrusive_ptr<ShaderProgram>(new ShaderProgram());
     auto light_prog = intrusive_ptr<ShaderProgram>(new ShaderProgram());
 
-    PipelineOptions opts;
+    RenderPipelineOptions opts;
     opts.path                = ShadingPath::Deferred;
     opts.offscreen_width     = 640;
     opts.offscreen_height    = 360;
@@ -8085,7 +8085,7 @@ TEST(ContentLayersTest, ARecipeStampsItsMaskOnEveryContentPassButNotOnTheOverlay
     auto cam = intrusive_ptr<Camera>(new Camera());
     setupLookAtCamera(*cam);
 
-    PipelineOptions options;
+    RenderPipelineOptions options;
     options.layer_mask = 1u << 1;
     options.gizmo.source_camera = cam.get();
 

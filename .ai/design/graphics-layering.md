@@ -1,5 +1,8 @@
 # graphics 的两半：契约与后端工具层（分层与依赖）
 
+> **2026-10-19 K1 改名**：本文中的 `Pipeline` / `PipelineOptions` 是当时的名字；现行 API 是
+> `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups-2026-10-19.md` §1.1）。
+
 > 状态：**已落地**（2026-09-27）。这份文档回答两个开发者问题——"要渲染，我依赖哪个模块？"、
 > "要写一个后端，我依赖哪个模块？"——并记录这一层从插件里摘出来、最终并入 graphics 的原因。
 > 相关：`graphics-design.md` §6（分层）、`vsg-reimplementation.md` §2.3（物理边界）。

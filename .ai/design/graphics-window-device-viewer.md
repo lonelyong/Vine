@@ -1,5 +1,8 @@
 # 窗口 · 设备 · 引擎 · 视图 · 离屏 · 多窗口 —— 目标设计（提案，2026-10-11）
 
+> **2026-10-19 K1 改名**：本文中的 `Pipeline` / `PipelineOptions` 是当时的名字；现行 API 是
+> `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups-2026-10-19.md` §1.1）。
+
 > 状态：**S8、S9 已落地（2026-10-11），S10–S11 仍为提案**。本文是 S7（配方归 `Pipeline`、视图只采纳）落地之后，用户逐条追问的设计收敛结果：
 > "`RenderControl` 职责是不是复杂了？要不要 `ViewerBase/AAAViewer`？" → "Viewer 管理多个 View" → "引擎不该接受
 > `WindowHandle`，应该接受 Device？一个 Viewer 一个 Engine 还是一个 View 一个 Engine？" → "无窗口怎么初始化

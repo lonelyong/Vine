@@ -1,4 +1,4 @@
-﻿#include <vine/graphics/Pipeline.hpp>
+﻿#include <vine/graphics/RenderPipeline.hpp>
 
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
@@ -12,9 +12,9 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-Pipeline::Pipeline(intrusive_ptr<RenderEngine> engine) : engine_(std::move(engine)) {}
+RenderPipeline::RenderPipeline(intrusive_ptr<RenderEngine> engine) : engine_(std::move(engine)) {}
 
-Pipeline::~Pipeline()
+RenderPipeline::~RenderPipeline()
 {
     // Hand every pass back to the engine that runs it: a pass left registered
     // keeps executing with nobody holding the handle that would have removed it
@@ -25,63 +25,63 @@ Pipeline::~Pipeline()
     }
 }
 
-raw_ptr<RenderPass> Pipeline::windowPass() const
+raw_ptr<RenderPass> RenderPipeline::windowPass() const
 {
     return window_pass_.get();
 }
 
-raw_ptr<RenderTarget> Pipeline::offscreenTarget() const
+raw_ptr<RenderTarget> RenderPipeline::offscreenTarget() const
 {
     return offscreen_target_.get();
 }
 
-raw_ptr<RenderTarget> Pipeline::compositeTarget() const
+raw_ptr<RenderTarget> RenderPipeline::compositeTarget() const
 {
     return composite_target_.get();
 }
 
-raw_ptr<AxisGizmo> Pipeline::gizmo() const
+raw_ptr<AxisGizmo> RenderPipeline::gizmo() const
 {
     return gizmo_.get();
 }
 
-raw_ptr<FpsOverlay> Pipeline::fpsOverlay() const
+raw_ptr<FpsOverlay> RenderPipeline::fpsOverlay() const
 {
     return fps_overlay_.get();
 }
 
-raw_ptr<RenderPass> Pipeline::gizmoPass() const
+raw_ptr<RenderPass> RenderPipeline::gizmoPass() const
 {
     return gizmo_pass_.get();
 }
 
-raw_ptr<RenderPass> Pipeline::fpsOverlayPass() const
+raw_ptr<RenderPass> RenderPipeline::fpsOverlayPass() const
 {
     return fps_overlay_pass_.get();
 }
 
-ShadingPath Pipeline::shadingPath() const noexcept
+ShadingPath RenderPipeline::shadingPath() const noexcept
 {
     return path_;
 }
 
-ShadingMode Pipeline::shadingMode() const noexcept
+ShadingMode RenderPipeline::shadingMode() const noexcept
 {
     return mode_;
 }
 
-bool Pipeline::setShadingMode(ShadingMode mode)
+bool RenderPipeline::setShadingMode(ShadingMode mode)
 {
     if (mode != ShadingMode::Lit && path_ == ShadingPath::Deferred) {
         // A Deferred picture comes out of a fullscreen lighting pass: there is no geometry pass left to
-        // override, so this mode has to be ASSEMBLED for (PipelineOptions::mode) - nothing here can make the
+        // override, so this mode has to be ASSEMBLED for (RenderPipelineOptions::mode) - nothing here can make the
         // picture mean it. Reported once per episode, because the alternative is a host that believes it
         // switched something.
         if (mode_refused_.shouldReport()) {
             engine_->reportEngineProblem(
                 vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
                 String(u8"this pipeline's Deferred chain has no geometry pass to shade, so the shading mode was "
-                       u8"not changed: build with PipelineOptions::mode (a non-Lit mode is built on the forward "
+                       u8"not changed: build with RenderPipelineOptions::mode (a non-Lit mode is built on the forward "
                        u8"chain, see RenderPipelineBuilder::effectivePath)"));
         }
         return false;
@@ -123,17 +123,17 @@ bool Pipeline::setShadingMode(ShadingMode mode)
     return true;
 }
 
-bool Pipeline::setGizmoVisible(bool on)
+bool RenderPipeline::setGizmoVisible(bool on)
 {
     if (gizmo_pass_ == nullptr) {
         // A switch that silently did nothing would leave a host believing the overlay was just hidden: its
-        // existence is a build decision (PipelineOptions::gizmo). Once per episode, because a host may ask every
+        // existence is a build decision (RenderPipelineOptions::gizmo). Once per episode, because a host may ask every
         // frame and the condition - not the call - is the news.
         if (overlay_refused_.shouldReport()) {
             engine_->reportEngineProblem(
                 vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
                 String(u8"this pipeline has no axis-gizmo overlay, so there was nothing to show or hide: build with "
-                       u8"PipelineOptions::gizmo to get one"));
+                       u8"RenderPipelineOptions::gizmo to get one"));
         }
         return false;
     }
@@ -142,14 +142,14 @@ bool Pipeline::setGizmoVisible(bool on)
     return true;
 }
 
-bool Pipeline::setStatsVisible(bool on)
+bool RenderPipeline::setStatsVisible(bool on)
 {
     if (fps_overlay_pass_ == nullptr) {
         if (overlay_refused_.shouldReport()) {
             engine_->reportEngineProblem(
                 vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
                 String(u8"this pipeline has no frame-rate readout, so there was nothing to show or hide: build with "
-                       u8"PipelineOptions::fps to get one"));
+                       u8"RenderPipelineOptions::fps to get one"));
         }
         return false;
     }
@@ -158,17 +158,17 @@ bool Pipeline::setStatsVisible(bool on)
     return true;
 }
 
-bool Pipeline::isGizmoVisible() const noexcept
+bool RenderPipeline::isGizmoVisible() const noexcept
 {
     return gizmo_pass_ != nullptr && gizmo_pass_->isEnabled();
 }
 
-bool Pipeline::isStatsVisible() const noexcept
+bool RenderPipeline::isStatsVisible() const noexcept
 {
     return fps_overlay_pass_ != nullptr && fps_overlay_pass_->isEnabled();
 }
 
-void Pipeline::resize(int width, int height, double pixel_ratio)
+void RenderPipeline::resize(int width, int height, double pixel_ratio)
 {
     if (width <= 0 || height <= 0) {
         return;
@@ -204,7 +204,7 @@ void Pipeline::resize(int width, int height, double pixel_ratio)
     }
 }
 
-void Pipeline::addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order)
+void RenderPipeline::addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order)
 {
     if (pass == nullptr) {
         return;
@@ -216,7 +216,7 @@ void Pipeline::addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> cont
     engine_->addPass(std::move(pass), std::move(content), order);
 }
 
-intrusive_ptr<RenderPass> Pipeline::addPass(const PassDesc& desc)
+intrusive_ptr<RenderPass> RenderPipeline::addPass(const PassDesc& desc)
 {
     // The engine makes the node (see RenderEngine::addPass): remembering it here is the same contract as the
     // overload above - a pass this pipeline registered is a pass this pipeline unregisters - and the node goes
@@ -229,28 +229,28 @@ intrusive_ptr<RenderPass> Pipeline::addPass(const PassDesc& desc)
     return node;
 }
 
-void Pipeline::setWindowPass(intrusive_ptr<RenderPass> pass)
+void RenderPipeline::setWindowPass(intrusive_ptr<RenderPass> pass)
 {
     window_pass_ = std::move(pass);
 }
 
-void Pipeline::setOffscreenTarget(intrusive_ptr<RenderTarget> target)
+void RenderPipeline::setOffscreenTarget(intrusive_ptr<RenderTarget> target)
 {
     offscreen_target_ = std::move(target);
 }
 
-void Pipeline::setCompositeTarget(intrusive_ptr<RenderTarget> target)
+void RenderPipeline::setCompositeTarget(intrusive_ptr<RenderTarget> target)
 {
     composite_target_ = std::move(target);
 }
 
-void Pipeline::setGizmo(intrusive_ptr<AxisGizmo> gizmo, intrusive_ptr<RenderPass> pass)
+void RenderPipeline::setGizmo(intrusive_ptr<AxisGizmo> gizmo, intrusive_ptr<RenderPass> pass)
 {
     gizmo_      = std::move(gizmo);
     gizmo_pass_ = std::move(pass);
 }
 
-void Pipeline::setFpsOverlay(intrusive_ptr<FpsOverlay> fps, intrusive_ptr<RenderPass> pass)
+void RenderPipeline::setFpsOverlay(intrusive_ptr<FpsOverlay> fps, intrusive_ptr<RenderPass> pass)
 {
     fps_overlay_      = std::move(fps);
     fps_overlay_pass_ = std::move(pass);

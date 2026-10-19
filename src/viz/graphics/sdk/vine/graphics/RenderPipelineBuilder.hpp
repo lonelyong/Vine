@@ -7,7 +7,7 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/intrusive_ptr.hpp>
 
-#include "Pipeline.hpp"
+#include "RenderPipeline.hpp"
 #include "RenderPass.hpp"
 #include "RenderTarget.hpp"
 
@@ -111,7 +111,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * @param options The pipeline's description (see PipelineOptions).
      * @return The built pipeline, or null when the requested path cannot be built.
      */
-    intrusive_ptr<Pipeline> build(const PipelineOptions& options);
+    intrusive_ptr<RenderPipeline> build(const RenderPipelineOptions& options);
 
     /** @brief The chain a build with @p options assembles, given what the requested mode needs.
      *
@@ -121,12 +121,12 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      *   expressed by the FORWARD chain, and a Deferred request carrying one is built forward for it (the requested
      *   path in @p options is untouched: switching back to Lit builds deferred again).
      * - Public because it is the rule a host reasons about: `options.path` is what a host ASKS for, this is what it
-     *   gets, and Pipeline::shadingPath() answers which one a live pipeline was built as.
+     *   gets, and RenderPipeline::shadingPath() answers which one a live pipeline was built as.
      *
      * @param options The pipeline request.
      * @return The chain the build assembles.
      */
-    [[nodiscard]] static ShadingPath effectivePath(const PipelineOptions& options) noexcept;
+    [[nodiscard]] static ShadingPath effectivePath(const RenderPipelineOptions& options) noexcept;
 
     /** @brief The light camera a directional shadow is rendered with.
      *
@@ -236,7 +236,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * @param pipeline Pipeline the pass is registered on.
      * @return true when the pass was registered.
      */
-    bool buildForwardPath(Pipeline& pipeline);
+    bool buildForwardPath(RenderPipeline& pipeline);
 
     /** @brief Builds the deferred path (G-buffer + lighting) into @p pipeline.
      *
@@ -244,7 +244,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * @param options  Options the path reads (G-buffer size, programs).
      * @return true when the passes were registered.
      */
-    bool buildDeferredPath(Pipeline& pipeline, const PipelineOptions& options);
+    bool buildDeferredPath(RenderPipeline& pipeline, const RenderPipelineOptions& options);
 
     /** @brief Builds the depth-only shadow pass a castShadow light asks for, and returns its map.
      *
@@ -262,7 +262,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      *                           is the map's).
      * @return The shadow map target (never null on this path).
      */
-    intrusive_ptr<RenderTarget> buildShadowPass(Pipeline& pipeline, const intrusive_ptr<const Light>& shadow_light_owner);
+    intrusive_ptr<RenderTarget> buildShadowPass(RenderPipeline& pipeline, const intrusive_ptr<const Light>& shadow_light_owner);
 
     /** @brief Adds the optional HUD overlays to @p pipeline.
      *
@@ -270,7 +270,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * @param options  Options naming which overlays to add.
      * @return true when every requested overlay was added.
      */
-    bool applyOverlays(Pipeline& pipeline, const PipelineOptions& options);
+    bool applyOverlays(RenderPipeline& pipeline, const RenderPipelineOptions& options);
 
     /** @brief Reports the shadow-casting lights this build did NOT honour.
      *
@@ -289,7 +289,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
     /// Shadow passes THIS build created: a requested shadow that WAS built is not a gap to report
     /// (see reportRequestedShadows).
     std::size_t shadows_built_ = 0;
-    /// This build's content selection, taken from PipelineOptions::layer_mask. A member because the paths
+    /// This build's content selection, taken from RenderPipelineOptions::layer_mask. A member because the paths
     /// (and the shadow pass they share) do not all take the options by parameter, and because the value is
     /// one per BUILD - like the counter above, it is set at the start of build().
     std::uint32_t content_layers_ = kAllLayers;

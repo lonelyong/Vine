@@ -60,7 +60,7 @@ class Scene;
  *   one packed position buffer and one revision bump, whatever the digits are.
  * - The overlay needs no source camera: it uses its own static framing camera, so the digits stay
  *   pinned to the corner while the scene camera orbits. Surface layout is creator-managed — report the
- *   surface size on every resize by calling onSurfaceResized(w, h) (e.g. via a Pipeline::resize() /
+ *   surface size on every resize by calling onSurfaceResized(w, h) (e.g. via a RenderPipeline::resize() /
  *   SceneView surface-layout step), which re-anchors the box to the bottom-right corner.
  *
  * Example:
@@ -177,7 +177,7 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay> 
      *
      * @details
      * - Called by the overlay's owner whenever the surface changes (e.g. from a SceneView surface-layout
-     *   step / Pipeline::resize()). The size is the LOGICAL surface size the host reports - the same
+     *   step / RenderPipeline::resize()). The size is the LOGICAL surface size the host reports - the same
      *   number it hands to SceneView::resize - and the configured devicePixelRatio is applied HERE,
      *   which is what turns it into the device-pixel rectangle a backend viewport needs. Handing it
      *   device pixels scales the box twice.

@@ -16,7 +16,7 @@
 #include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
-#include <vine/graphics/Pipeline.hpp>
+#include <vine/graphics/RenderPipeline.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderPipelineBuilder.hpp>
@@ -25,7 +25,7 @@
 #include <vine/graphics/SceneView.hpp>
 #include <vine/graphics/StateNode.hpp>
 
-using vn::graphics::PipelineOptions;
+using vn::graphics::RenderPipelineOptions;
 using vn::graphics::RenderPass;
 using vn::graphics::RenderPipelineBuilder;
 using vn::graphics::RenderTarget;
@@ -127,7 +127,7 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
 
     // Built once, with the options that are in force for the first picture: the chain forward, so the picture
     // pass is the scene pass itself.
-    PipelineOptions options;
+    RenderPipelineOptions options;
     options.path = ShadingPath::Deferred;      // 延迟的**请求**……
     options.mode = ShadingMode::Unlit;         // ……配上非 Lit 档 ⇒ 建成的链是前向的（effectivePath）
     RenderPipelineBuilder builder(fixture.engine.get());
@@ -251,12 +251,12 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
 {
     VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
-    PipelineOptions options;
+    RenderPipelineOptions options;
     options.path = ShadingPath::Deferred;
     RenderPipelineBuilder builder(fixture.engine.get());
     builder.setCamera(fixture.camera.get());
     builder.setContent(fixture.scene);
-    vn::intrusive_ptr<vn::graphics::Pipeline> pipeline = builder.build(options);
+    vn::intrusive_ptr<vn::graphics::RenderPipeline> pipeline = builder.build(options);
     ASSERT_NE(pipeline, nullptr) << "延迟预设必须建得起来";
 
     // 夹具的"窗口"是后端自己开的，读不回来：把画面那条 pass 指到夹具的目标上，预览才有东西可叠。

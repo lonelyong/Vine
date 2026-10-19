@@ -81,7 +81,7 @@ class VN_APPFW_API Viewer
      *
      * The structural call: a chain, an overlay's existence and the mode the chain must be able to express are build
      * decisions, so this costs one pipeline build. The rebuild CARRIES the runtime choices of the live chain (an
-     * overlay the user hid stays hidden - see Pipeline::setGizmoVisible), because the request cannot state them:
+     * overlay the user hid stays hidden - see RenderPipeline::setGizmoVisible), because the request cannot state them:
      * they are switches on the built chain, not recipe fields. A declaration the area already has is untouched (it
      * resolves the view's pass afresh, so a rebuilt chain is followed), and a view that had none is declared - the
      * area's view becomes the picture this way, which is what the first attach does.

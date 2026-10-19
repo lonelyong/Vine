@@ -26,7 +26,7 @@ class Scene;
  *   onto the framing one and keeps its own framing distance.
  * - Surface layout is creator-managed: the object's owner reports the surface size on every resize
  *   (onSurfaceResized) and points it at the corner of the area it lays out in (setAreaOrigin). The
- *   pipeline does both for the standard case (Pipeline::resize), and a view states the area origin
+ *   pipeline does both for the standard case (RenderPipeline::resize), and a view states the area origin
  *   (SceneView).
  *
  * Example:
