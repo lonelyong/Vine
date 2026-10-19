@@ -323,19 +323,23 @@ class VN_VSG_API ContentPass
 
     /** @brief Records one FULL-SCREEN drawing call; false when it was refused (and reported).
      *
-     * A full-screen call draws ONE of the pass' inputs - its source, named by the idENTITY the plan resolved -
-     * plus the shadow map (by name, wherever its text declares it), through the half its program names, with
-     * the plan's `CompiledDraw::dynamic` - a full-screen call has no per-command state to resolve.
+     * A full-screen call reads ONE produced input - its source, named by the idENTITY the plan resolved - plus
+     * the pass' imported textures and the shadow map (by name, wherever its text declares them), through the half
+     * its program names, with the plan's `CompiledDraw::dynamic` - a full-screen call has no per-command state to
+     * resolve.
      *
      * IT BUILDS THE SET ITSELF, and that is the difference from a content half: the source's attachments, the
-     * map and the call's block are the PASS' images, and a full-screen text declares where they live (see
-     * ContentPipeline). The block is the call's own (its lights and camera are), so the set is built per call;
-     * the engine's passes make one full-screen call each.
+     * imported textures, the map and the call's block are the PASS' images, and a full-screen text declares where
+     * they live (see ContentPipeline). The source's attachments take 0..C-1, its depth follows (skipping bindings
+     * the text names for something else), and the imported textures fill the text's remaining declared sampler
+     * bindings in input declaration order. The block is the call's own (its lights and camera are), so the set is
+     * built per call; the engine's passes make one full-screen call each.
      *
-     * WHAT IT REFUSES, and each by name: a source that is not one of the pass' declared inputs; an input that
-     * is neither the source nor the map; a text that declares `shadow_map` when the pass resolved no readable
-     * map (a text that names the map is a text that shades a shadow - the engine picks its shadowed variant
-     * only when a shadow exists); and a text that samples a texture this pass does not offer.
+     * WHAT IT REFUSES, and each by name: a source that is not one of the pass' declared inputs; a produced input
+     * that is not the source; a text that declares `shadow_map` when the pass resolved no readable map (a text
+     * that names the map is a text that shades a shadow - the engine picks its shadowed variant only when a
+     * shadow exists); and a mismatch between the pass' imported textures and the sampler bindings its text
+     * declares.
      *
      * THE PUSH BLOCK IS THE FULL-SCREEN ABI'S 128 BYTES AND CARRIES THE CALL'S LIGHTS
      * (`LightPushBlock` - the same packing the lighting phase uses for the content path's block).

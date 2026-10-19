@@ -378,9 +378,9 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * - The counterpart of addInput(ImageRef) for a STATIC/imported image: a texture has no producer in the frame,
      *   so it does not participate in the one-producer wiring rules; it is sampled where the pass' program declares
      *   a sampler for it (see the pass input set's binding order).
-     * - A Scene pass (content) binds imported textures in declaration order with the other inputs. The
-     *   full-screen ABI binds its produced source and the shadow map only, so a ScreenPass that declares one is
-     *   reported and draws nothing (see RenderEngine's plan checks) rather than silently sampling the wrong image.
+     * - A Scene pass (content) binds imported textures in declaration order with the other inputs. A full-screen
+     *   pass binds them at the sampler bindings its program declares beyond the source's attachments, in input
+     *   declaration order; a program/pass binding mismatch is reported by the backend.
      * - It is a full input in the pass' input list, in declaration order; a pass may mix produced images, whole
      *   targets and imported textures.
      *

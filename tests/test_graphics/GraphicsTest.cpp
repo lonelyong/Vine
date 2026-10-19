@@ -5258,43 +5258,49 @@ TEST(RenderPipelineBuilderTest, AnImportedTextureIsAnInputInDeclarationOrder)
     EXPECT_EQ(inputs[1].target, source.get());
 }
 
-TEST(RenderPipelineBuilderTest, AScreenPassReportsImportedTextureInputsItCannotBind)
+TEST(RenderPipelineBuilderTest, AScreenPassKeepsImportedTextureInputsForItsProgram)
 {
-    // The full-screen ABI binds the produced source and the shadow map only. Accepting an imported texture
-    // declaration and then drawing nothing would be the silent failure this project avoids: the engine names
-    // the pass and skips it, and the pass does not reach the backend.
+    // A ScreenPass may declare an imported texture next to its produced source. The full-screen ABI binds the
+    // imported image at the sampler binding the program declares beyond the source's attachments; the engine
+    // must hand both to the backend, in declaration order, instead of rejecting the pass.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto camera  = intrusive_ptr<Camera>(new Camera());
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
+    auto source = intrusive_ptr<RenderTarget>(new RenderTarget());
+    source->setSize(64, 64);
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+
+    PassDesc producer;
+    producer.name   = u8"producer";
+    producer.kind   = PassKind::Scene;
+    producer.camera = camera;
+    producer.writes = source;
+    engine->addPass(producer);
+
     const intrusive_ptr<Texture2D> texture(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
     PassDesc screen;
-    screen.name    = u8"screen";
-    screen.kind    = PassKind::Screen;
-    screen.camera  = camera;
-    screen.program = screenCopyProgram();
-    screen.inputs  = { ImageInput(texture) };
+    screen.name         = u8"screen";
+    screen.kind         = PassKind::Screen;
+    screen.camera       = camera;
+    screen.program      = screenCopyProgram(1);   // binding 1 is the imported texture's slot
+    screen.inputs       = { ImageInput(texture) };
+    screen.input_targets = { source };
     engine->addPass(screen);
 
-    std::vector<RenderDiagnostic> reported;
-    engine->setDiagnosticSink([&reported](const RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
-    const std::size_t before = engine->diagnosticCount();
+    const std::size_t before = engine->diagnosticCount(DiagnosticCategory::ContentSkipped);
     engine->frame(0.016);
 
-    ASSERT_EQ(engine->diagnosticCount(), before + 1u);
-    bool found = false;
-    for (const RenderDiagnostic& diagnostic : reported) {
-        if (diagnostic.category == DiagnosticCategory::ContentSkipped &&
-            diagnostic.message.as_std_str().find("imported texture") != std::string::npos) {
-            found = true;
-            EXPECT_NE(diagnostic.message.as_std_str().find("screen"), std::string::npos)
-                << "the report names the pass";
-        }
-    }
-    EXPECT_TRUE(found) << "a ScreenPass' imported texture input is reported, not silently ignored";
-    EXPECT_EQ(backend->program_draws, 0) << "and the pass draws nothing instead of sampling the wrong image";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), before)
+        << "the engine no longer rejects a ScreenPass imported input";
+    const auto& inputs = backend->last_pass_inputs;
+    ASSERT_EQ(inputs.size(), 2u) << "one entry per declaration, in declaration order";
+    EXPECT_EQ(inputs[0].kind, ImageSource::Kind::ImportedTexture);
+    EXPECT_EQ(inputs[0].texture, texture.get());
+    EXPECT_EQ(inputs[1].kind, ImageSource::Kind::ProducedTarget);
+    EXPECT_EQ(inputs[1].target, source.get());
 }
 
 TEST(RenderPipelineBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)

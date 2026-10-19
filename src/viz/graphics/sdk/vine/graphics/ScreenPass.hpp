@@ -73,8 +73,8 @@ class VN_GRAPHICS_API ScreenPass : public RenderPass {
     /** @brief Receives the engine-resolved input sources.
      *
      * Stores the first resolved PRODUCED target (an ImageSource::ProducedImage or ProducedTarget) as the source
-     * to sample. A full-screen call's source is still a render target; imported textures have no binding in the
-     * current full-screen ABI, so the engine reports a ScreenPass that declares one and it draws nothing.
+     * to sample. Imported textures in the same input list are bound at the sampler bindings the program declares
+     * beyond the source's attachments (see ContentPass's full-screen ABI).
      *
      * @param inputs Resolved input sources in declaration order (borrowed).
      */

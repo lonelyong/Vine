@@ -25,6 +25,17 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-19 E2 收尾 #1：全屏 ABI 绑定 imported texture
+
+- **结论**：`ScreenPass` 的 imported 输入不再被引擎拒绝。全屏绑定规则：source 颜色附件占 `0..C-1`，depth
+  跟随（跳过文本自己声明的 binding），imported 图按输入声明序填程序**已经声明的其余 sampler binding**
+  （升序）；数量对不上由 backend refusal，不静默绑错图。`sampledSetLayout` 的现有规则（文本声明的
+  sampler 保留自己的 binding）不变，`recordScreenDraw` 按同一规则填槽。
+- **判据**：`VsgBackendTest.AnImportedTextureInputReachesAScreenProgram`（像素：全屏程序采样导入贴图）；
+  `RenderPipelineBuilderTest.AScreenPassKeepsImportedTextureInputsForItsProgram`；`test_vsg` 464；
+  `ctest` 24/24；ASan 两条 imported 像素用例 PASS；内容与全屏路径的既有 copy 不回归。
+- **未做**：sampler state、Cube、按 attachment 绑 produced；见 `graphics-followups-2026-10-19.md` §2。
+
 ## 2026-10-19 K1 落地：`Pipeline` 改名 `RenderPipeline`（公开面破坏）
 
 - **结论**：公开类 `Pipeline` → `RenderPipeline`，`PipelineOptions` → `RenderPipelineOptions`；头/源文件改成

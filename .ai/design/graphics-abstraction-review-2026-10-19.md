@@ -56,7 +56,7 @@
 | J1 | `SceneView` 门面角色偏多 | 相机/内容/操纵器/管线/区/输入汇于一身 | 维持门面；必要时拆 `InputRouter` / `LayoutParticipant` | 多视图/输入路由重新进入 SDK |
 | B2 | `RenderPass::execute` 仍是虚函数 | 值路径与逃生口并存 | 保持现状；主路写死为 `describe()` | 已具备，仅登记 |
 
-> E2 已于 2026-10-19 落地（`114e0465`），其收尾项（全屏 ABI imported 输入、按 attachment 绑定、revision 失效、sampler state、Cube）不在本表，登记在
+> E2 已于 2026-10-19 落地（`114e0465`），其收尾项（全屏 ABI imported 输入已落地；按 attachment 绑定、revision 失效、sampler state、Cube 仍登记）不在本表，见
 > `graphics-followups-2026-10-19.md` §2；P1 的开工顺序与 F2b 的“不做”决定也在那份任务列表里。
 > K1 已于 2026-10-19 落地（`Pipeline` → `RenderPipeline`，见任务列表 §1.1）。
 

@@ -227,10 +227,11 @@ class ContentPipeline
      *     map is a CONTENT drawable's own map, see api/ContentImages and builtin_skybox.frag).
      *
      * WHERE THE IMAGES COME FROM is the pass', not a caller's: the source's colour attachments occupy
-     * bindings 0..N-1 (the ABI's own convention: "binding i is attachment i"), the source's depth takes
-     * binding N when a shader may sample it, a declared `shadow_map` takes ITS binding, and a declared
-     * shadow block takes its own. `sampledSetLayout` answers that layout per (colours, depths) - the pass
-     * builds the set from it (see ContentPass), which is why `declaredSets()` is empty for this kind.
+     * bindings 0..N-1 (the ABI's own convention: "binding i is attachment i"), the source's depth takes the
+     * next free binding when a shader may sample it, the pass' imported textures fill the text's remaining
+     * declared sampler bindings in input declaration order, a declared `shadow_map` takes ITS binding, and a
+     * declared shadow block takes its own. `sampledSetLayout` answers that layout per (colours, depths) - the
+     * pass builds the set from it (see ContentPass), which is why `declaredSets()` is empty for this kind.
      *
      * @param abi      The bindings and push ranges the program's text declares.
      * @param shaders  GLSL text of both stages (full-screen vertex + screen fragment).

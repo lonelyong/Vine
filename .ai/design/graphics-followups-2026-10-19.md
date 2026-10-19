@@ -52,13 +52,11 @@ B2 是“保持现状”的登记项。
 
 按价值排序；每项都要结构测试 + 真实设备像素判据。
 
-1. **全屏 ABI 支持 imported texture**
-   - 现状：`ScreenPass` 声明 imported 图会被引擎报 `ContentSkipped` 并跳过；全屏 ABI 只绑 produced source
-     + shadow map（`ContentPipeline::sampledSetLayout` / `ContentPass::recordScreenDraw`）。
-   - 动作：定义 imported 输入的 binding（source 颜色 → depth → imported → shadow），扩展
-     `sampledSetLayout` 与 `recordScreenDraw`；`ScreenPass` 不再拒绝 imported 输入。
-   - 判据：`VsgBackendTest` 新增“全屏程序采样 imported 图”的像素用例；无 imported 的既有全屏程序不变。
-   - 风险：shadow map 的固定 binding（4 色 G-buffer 的 5/6）不能被 import 槽位挤掉；先写 binding 规则再改代码。
+1. **全屏 ABI 支持 imported texture（已落地 2026-10-19）**
+   - 结论：source 的颜色附件占 0..C-1，depth 跟随（跳过文本自己声明的 binding）；imported 图按输入声明序
+     填程序已经声明的其余 sampler binding（升序）。数量对不上由 backend 报 refusal；`ScreenPass` 不再拒绝
+     imported 输入。
+   - 判据：`VsgBackendTest.AnImportedTextureInputReachesAScreenProgram`（像素）+ 既有全屏用例不回归。
 
 2. **produced 输入按 attachment 绑定**
    - 现状：`ImageSource::attachment` / `depth` 只是选择符，vsg 仍绑定整个 target（binding N = attachment N）。
@@ -91,4 +89,4 @@ B2 是“保持现状”的登记项。
 
 ## 4. 下一 session 的第一条命令
 
-K1 已完成，直接从 §2 的 1 → 2 → 3 顺序做 E2 收尾；每项先补失败用例，再改后端。
+K1 与 E2 收尾 #1 已完成，直接从 §2 的 2 → 3 → 4 顺序做；每项先补失败用例，再改后端。

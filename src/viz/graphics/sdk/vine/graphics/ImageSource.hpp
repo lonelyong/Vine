@@ -85,8 +85,9 @@ class VN_GRAPHICS_API ImageInput
  *   full-screen ABI's rule), so `attachment`/`depth` are the identity a consumer selects with, not a narrowing of
  *   the bound set yet; per-attachment binding is a backend capability to add when a shader needs it.
  * - Both kinds travel in one ordered list. The CONTENT binding path binds them in declaration order; the FULL-SCREEN
- *   ABI binds its produced source and the shadow map only, so a ScreenPass that declares an imported texture is
- *   reported by the engine and draws nothing until that ABI grows an imported-input binding.
+ *   ABI binds the produced source's attachments (and its depth) first, then the imported textures at the program's
+ *   remaining declared sampler bindings, in input declaration order. A program/pass binding mismatch is reported
+ *   by the backend before the call is drawn.
  * - This is deliberately NOT a base class of `ImageRef` or `Texture`: their lifetimes and failure rules differ, and
  *   inheritance would force one rule on both. The value only states what a consumer needs.
  */

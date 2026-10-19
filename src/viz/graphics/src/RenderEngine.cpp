@@ -937,23 +937,6 @@ void RenderEngine::collectPlanProblems()
             continue;
         }
 
-        // A full-screen call's ABI is its produced source plus the shadow map: imported textures have no
-        // binding in it. A ScreenPass that declares one would look wired and draw nothing (or be refused by
-        // the backend), so the engine says which pass and skips it. Content passes bind imported textures in
-        // declaration order, which is the supported path today.
-        const bool has_imported_input =
-            std::any_of(pass->inputs().begin(), pass->inputs().end(),
-                        [](const ImageInput& input) { return input.texture() != nullptr; });
-        if (has_imported_input) {
-            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                vn::graphics::DiagnosticCategory::ContentSkipped,
-                                String(u8"pass '") + reportedPassName(pass) +
-                                    String(u8"' is a ScreenPass that declares an imported texture input; the "
-                                           u8"full-screen ABI binds only its produced source and the shadow map, "
-                                           u8"so imported textures are supported by content passes today"));
-            continue;
-        }
-
         // 3. No camera: the fullscreen path builds the pass' view from it and pushes the scene's
         // lights through that view space, so without one ScreenPass::execute returns before asking the
         // backend for anything. The fix is static (setCamera), and a host would otherwise see a

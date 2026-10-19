@@ -2,9 +2,11 @@
 
 #include <vine/graphics/Texture.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <span>
 
 #include <vsg/core/Array.h>
 #include <vsg/state/BufferInfo.h>
@@ -657,26 +659,40 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
                       "inputs");
         return false;
     }
+
+    const std::uint32_t colours = source != nullptr ? static_cast<std::uint32_t>(source->colors.size()) : 0U;
+    const std::uint32_t depths  = source != nullptr && source->depth != nullptr ? 1U : 0U;
+
+    // Imported textures are the inputs that are neither the call's source nor the shadow map. They are the
+    // ONLY such inputs the full-screen ABI can bind: a produced image other than the source has no slot, and
+    // an imported one needs a sampler binding the program actually declares (see below).
+    std::vector<std::size_t> imported_indices;
     for (std::size_t index = 0; index < inputs.size(); ++index)
     {
         if (index == source_index)
         {
             continue;
         }
-        if (index != map_index)
+        if (index == map_index)
+        {
+            if (!inputs[index].colors.empty())
+            {
+                reportRefused("a full-screen drawing call",
+                              "the shadow map's input offers colour textures the full-screen ABI has no binding "
+                              "for (the map is its depth)");
+                return false;
+            }
+            continue;
+        }
+        if (index >= pass.inputs.size() ||
+            pass.inputs[index].kind != vn::graphics::ImageSource::Kind::ImportedTexture)
         {
             reportRefused("a full-screen drawing call",
-                          "one of the pass' inputs is neither the call's source nor the shadow map, and the "
-                          "full-screen ABI has no binding for its textures");
+                          "one of the pass' inputs is neither the call's source nor the shadow map nor an "
+                          "imported texture, and the full-screen ABI has no binding for its images");
             return false;
         }
-        if (!inputs[index].colors.empty())
-        {
-            reportRefused("a full-screen drawing call",
-                          "the shadow map's input offers colour textures the full-screen ABI has no binding "
-                          "for (the map is its depth)");
-            return false;
-        }
+        imported_indices.push_back(index);
     }
 
     // The text's own declaration of the map (the engine's shadow ABI names it) and of its block. A text that
@@ -684,8 +700,8 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     // when a shadow exists - so a pass without a readable map REFUSES the call instead of shading it through a
     // stand-in: the picture would be one nobody asked for, and the reason (the map's depth is not sampleable,
     // or its producer published no matrix) is exactly what the refusal has to say.
-    std::uint32_t map_binding = 0U;
-    const bool    declares_map = vn::vsg::shadowBindingOf(layer->abi(), 0U, map_binding);
+    std::uint32_t         map_binding  = 0U;
+    const bool            declares_map = vn::vsg::shadowBindingOf(layer->abi(), 0U, map_binding);
     vn::vsg::SamplerImage map_image;
     if (declares_map && !vn::vsg::shadowImageOf(pass, inputs, layer->depthSampler(), map_image))
     {
@@ -694,6 +710,52 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
                       "not sampleable, or the producer published no matrix)");
         return false;
     }
+
+    // WHICH BINDINGS THE IMPORTED INPUTS TAKE. The source's colour attachments are 0..colours-1, its depth
+    // follows (skipping any binding the text names for something of its own), and the imported textures fill
+    // the program's remaining DECLARED sampler bindings in ascending order and in input declaration order.
+    // The rule is deliberately the same one sampledSetLayout uses: the layout must have a slot for every
+    // binding the text names, and this pass must be able to fill every one of those slots.
+    const std::span<const std::uint32_t> declared_samplers = layer->samplerBindings(0U);
+    std::uint32_t                        depth_binding    = colours;
+    if (depths != 0U)
+    {
+        while (std::find(declared_samplers.begin(), declared_samplers.end(), depth_binding) !=
+               declared_samplers.end())
+        {
+            ++depth_binding;
+        }
+    }
+    std::vector<std::uint32_t> imported_bindings;
+    for (const std::uint32_t binding : declared_samplers)
+    {
+        if (binding < colours)
+        {
+            continue;   // the source's colour attachment already owns this binding
+        }
+        if (declares_map && binding == map_binding)
+        {
+            continue;   // the shadow map owns its own binding
+        }
+        if (depths != 0U && binding == depth_binding)
+        {
+            continue;   // the source's depth owns this binding
+        }
+        imported_bindings.push_back(binding);
+    }
+    std::sort(imported_bindings.begin(), imported_bindings.end());
+    imported_bindings.erase(std::unique(imported_bindings.begin(), imported_bindings.end()),
+                            imported_bindings.end());
+    if (imported_bindings.size() != imported_indices.size())
+    {
+        reportRefused("a full-screen drawing call",
+                      imported_bindings.size() < imported_indices.size()
+                          ? "the pass declares imported textures its program has no free sampler binding for"
+                          : "its program samples a texture the pass does not offer at the binding its text "
+                            "declares");
+        return false;
+    }
+
     // ... and the other direction, once per half: the pass resolved a map and the program cannot read it.
     reportShadowNotSampled(entry, pass);
 
@@ -723,8 +785,6 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     //
     // A text that declares NOTHING and a call with no source need no set at all: the draw's whole interface is
     // its push block (the engine's own screen programs always name a source - theirs shade its picture).
-    const std::uint32_t colours       = source != nullptr ? static_cast<std::uint32_t>(source->colors.size()) : 0U;
-    const std::uint32_t depths        = source != nullptr && source->depth != nullptr ? 1U : 0U;
     const bool          needs_set     = !layer->abi().bindings.empty() || colours != 0U || depths != 0U;
     const auto          set_layout    = needs_set ? layer->sampledSetLayout(colours, depths) : nullptr;
     const auto          sampler       = layer->inputSampler();
@@ -736,7 +796,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
         return false;
     }
     ::vsg::Descriptors descriptors;
-    bool               source_depth_used = false;
+    std::size_t        imported_slot = 0U;
     const std::span<const VkDescriptorSetLayoutBinding> declared_bindings =
         set_layout != nullptr ? std::span<const VkDescriptorSetLayoutBinding>(set_layout->bindings)
                               : std::span<const VkDescriptorSetLayoutBinding>{};
@@ -788,9 +848,8 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
             key.push_back(view.get());
             continue;
         }
-        if (!source_depth_used && source != nullptr && source->depth != nullptr)
+        if (depths != 0U && declared.binding == depth_binding)
         {
-            source_depth_used = true;
             descriptors.push_back(::vsg::DescriptorImage::create(
                 ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(depth_sampler, source->depth,
                                                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
@@ -798,12 +857,34 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
             key.push_back(source->depth.get());
             continue;
         }
-        // A binding the layout declares (the text names it) that neither the source nor the map fills: the
-        // text samples something this pass does not offer, said by NAME rather than left to read undefined
-        // data (a material's own map is the name this can be: a full-screen call has no drawable to take
-        // one from).
+        if (imported_slot < imported_bindings.size() && declared.binding == imported_bindings[imported_slot])
+        {
+            const InputImages& imported = inputs[imported_indices[imported_slot]];
+            if (imported.colors.empty() || imported.colors.front() == nullptr)
+            {
+                reportRefused("a full-screen drawing call", "an imported input offers no image view");
+                return false;
+            }
+            descriptors.push_back(::vsg::DescriptorImage::create(
+                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, imported.colors.front(),
+                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+            key.push_back(imported.colors.front().get());
+            ++imported_slot;
+            continue;
+        }
+        // A binding the layout declares (the text names it) that neither the source, the map nor an imported
+        // input fills: the text samples something this pass does not offer, said by NAME rather than left to
+        // read undefined data (a material's own map is the name this can be: a full-screen call has no
+        // drawable to take one from).
         reportRefused("a full-screen drawing call", "it samples a texture this pass does not offer at the "
                                                     "binding its text declares");
+        return false;
+    }
+    if (imported_slot != imported_bindings.size())
+    {
+        reportRefused("a full-screen drawing call",
+                      "an imported texture has no declared sampler binding in its program");
         return false;
     }
 

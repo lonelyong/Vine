@@ -1100,6 +1100,107 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
     EXPECT_EQ(pixels[at + 3], 255U);
 }
 
+/*
+ * @brief A full-screen program samples an imported texture at its declared binding.
+ *
+ * The pass declares the imported texture first and its produced source second. The full-screen ABI binds the
+ * source's colour attachment 0 at binding 0, and the imported texture at the program's next declared sampler
+ * binding (1). The program samples binding 1, so magenta means the imported image reached the shader; red
+ * means the source colour won the slot, and the destination's blue clear means the call never drew.
+ */
+TEST(VsgBackendTest, AnImportedTextureInputReachesAScreenProgram)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 128, 96);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(backend->capabilities().render_targets);
+
+    const vn::intrusive_ptr<RenderTarget> source(new RenderTarget());
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+    source->setSize(64, 64);
+    const vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    destination->attachColor(RenderTarget::ColorFormat::RGBA8);
+    destination->setSize(64, 64);
+
+    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
+        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+    {
+        const vn::intrusive_ptr<vn::imaging::Image> image(
+            new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        for (std::size_t index = 0; index < pixels.size(); ++index)
+        {
+            const std::uint8_t channel = static_cast<std::uint8_t>(index % 4U);
+            pixels[index] = static_cast<std::byte>(channel == 1U ? 0U : 255U);
+        }
+        texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
+    }
+
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "#version 450\n"
+            "layout(location = 0) in vec2 vine_uv;\n"
+            "layout(location = 0) out vec4 out_color;\n"
+            "layout(binding = 1) uniform sampler2D imported_tex;\n"
+            "void main() { out_color = texture(imported_tex, vec2(0.5)); }\n"));
+        program->addStage(fragment);
+    }
+
+    const TriangleFixture triangle = makeTriangle();
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass> source_pass(new RenderPass());
+    const vn::intrusive_ptr<RenderPass> screen_pass(new RenderPass());
+    const vn::graphics::ClearPolicy source_clear{ vn::Color(255, 0, 0, 255), true };
+    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+
+    backend->executeFrame(TestFrame()
+                              .pass(source_pass.get(), -1)
+                              .target(source.get())
+                              .clear(source_clear)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .content(triangle.commands, camera.get())
+                              .pass(screen_pass.get(), 0)
+                              .target(destination.get())
+                              .inputs(std::vector<vn::graphics::ImageSource>{
+                                  vn::graphics::ImageSource::imported(texture.get()),
+                                  vn::graphics::ImageSource::producedTarget(source.get()) })
+                              .clear(destination_clear)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .screen(source.get(), program.get(), camera.get())
+                              .value());
+
+    std::vector<std::uint8_t>    pixels;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
+    const std::size_t at = (40U * 64U + 16U) * 4U;
+    ASSERT_LT(at + 3U, pixels.size());
+    EXPECT_TRUE(isColourByte(pixels[at], 1.0) && isColourByte(pixels[at + 1], 0.0) &&
+                isColourByte(pixels[at + 2], 1.0))
+        << "the imported texture is what the full-screen program samples: got ("
+        << static_cast<int>(pixels[at]) << ", " << static_cast<int>(pixels[at + 1]) << ", "
+        << static_cast<int>(pixels[at + 2]) << ")";
+    EXPECT_EQ(pixels[at + 3], 255U);
+}
+
 TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
 {
     if (!deviceCaseAvailable())

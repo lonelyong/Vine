@@ -105,8 +105,9 @@ struct ImageSource
   `InputImages`；`color_attachments = 1`、`depth_sampleable = false`。上传失败时绑白图并报告原因。
 - 采样器暂用输入 set 的 `inputSampler()`（与现有 pass 输入一致）；`Texture` 没有 sampler state，等
   sampler 成为真实需求再加。
-- **全屏 ABI 未支持额外 imported 输入**：它只绑 one produced source + shadow map；`ScreenPass` 声明
-  imported 图会被引擎报告并跳过。第一切片只支持 `Texture::Kind::D2`；Cube 作为输入需要程序声明 cube
+- **全屏 ABI 的 imported 绑定（2026-10-19 落地）**：source 的颜色附件占 0..C-1，depth 跟随（跳过文本自己
+  声明的 binding）；imported 图按输入声明序填程序**已经声明的其余 sampler binding**（升序）。数量对不上由
+  backend 报 refusal，不静默绑错图。第一切片只支持 `Texture::Kind::D2`；Cube 作为输入需要程序声明 cube
   sampler，等真实需求再加。
 - **produced 输入的 attachment 仍是选择符**：vsg 绑定层今天给 produced 输入整个 target（binding N =
   attachment N，全屏 ABI 的规则），`ImageSource::attachment` / `depth` 还没有收窄绑定集合；真正按
@@ -128,8 +129,8 @@ struct ImageSource
    未解析前仍走现有 `inputs` 路径。判据：declaration-only 测试，现有 pass 行为不变。
 2. **解析侧（已落地，契约改动）**：`FrameDescription::Pass::inputs` 改为 `ImageSource`；engine / `RenderPass` /
    `ScreenPass` / 测试替身一起改。判据：现有 produced 输入的像素用例全绿。
-3. **后端绑定（内容路径已落地；全屏 ABI 仍登记）**：`CompiledInput` 加 imported 分支，复用 `MaterialImages`；
-   新增“static texture 作为 content pass 输入”的像素用例；全屏 ABI 的额外 sampler 绑定留到下一片。
+3. **后端绑定（内容与全屏路径均已落地）**：`CompiledInput` 加 imported 分支，复用 `MaterialImages`；
+   内容 pass 按声明序绑定，全屏 pass 在 source 绑定之后的 declared sampler binding 上绑定；两条路径都有像素用例。
 4. **便利层（未做）**：`PassDesc` 之外的便捷入口；材质贴图与 pass 输入已经共用 `MaterialImages`。
 
 ## 6. 判据与风险
@@ -147,11 +148,13 @@ struct ImageSource
   ImageSource>)`；`PassDesc::inputs`、`FrameDescription::Pass::inputs`、`singlePassFrame`、
   `RenderEngine::PlanRow::inputs` 同步。
 - 引擎：`resolveRowInputs` 产出 produced / imported 两种 source；`collectPlanProblems` 只对 produced 输入
-  跑 wiring 规则；ScreenPass 声明 imported 输入时报告 `ContentSkipped` 并跳过（全屏 ABI 限制）。
+  跑 wiring 规则；ScreenPass 的 imported 输入不再被引擎拒绝。
 - 后端：`FrameRecorder::InputRef` / `FrameCompiler::CompiledInput` 携带 `ImageSource` 的 kind / texture /
   revision；依赖边只为 produced 输入建；`VsgBackend::recordContent` 对 imported 输入调用
-  `MaterialImages::acquire`，把 view 填进该条目的 `InputImages`。
+  `MaterialImages::acquire`，把 view 填进该条目的 `InputImages`。全屏路径在
+  `ContentPass::recordScreenDraw` 里把 imported 输入按程序声明的 sampler binding 填充。
 - 判据：`FrameCompilerTest.AnImportedTextureInputIsAFirstClassInputWithNoProducerEdge`、
   `RenderPipelineBuilderTest.AnImportedTextureIsAnInputInDeclarationOrder`、
-  `RenderPipelineBuilderTest.AScreenPassReportsImportedTextureInputsItCannotBind`、
-  `VsgBackendTest.AnImportedTextureInputReachesAContentProgram`（像素：导入贴图被内容程序采样到目标上）。
+  `RenderPipelineBuilderTest.AScreenPassKeepsImportedTextureInputsForItsProgram`、
+  `VsgBackendTest.AnImportedTextureInputReachesAContentProgram` 与
+  `VsgBackendTest.AnImportedTextureInputReachesAScreenProgram`（两条像素：内容与全屏程序各采样导入贴图）。
