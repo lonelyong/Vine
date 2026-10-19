@@ -343,9 +343,9 @@ TEST(FrameRecorderTest, ThePassInputsAreCopiedAndBelongToThePass)
     ASSERT_EQ(description.passes.size(), 1u);
     const std::span<const vn::graphics::backend::InputRef> collected = description.passes[0].inputs;
     ASSERT_EQ(collected.size(), 3u);
-    EXPECT_EQ(collected[0].target, first.get());
-    EXPECT_EQ(collected[1].target, nullptr);
-    EXPECT_EQ(collected[2].target, second.get());
+    EXPECT_EQ(collected[0].source.target, first.get());
+    EXPECT_EQ(collected[1].source.target, nullptr);
+    EXPECT_EQ(collected[2].source.target, second.get());
 }
 
 TEST(FrameRecorderTest, AScopeThatDrewNothingIsDroppedUnlessItAnnouncedAClear)

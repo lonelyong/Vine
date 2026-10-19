@@ -594,8 +594,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         raw_ptr<Scene>                     content{ nullptr };
         int                                order{ 0 };
         /// The declared inputs, resolved for this frame: one entry per declaration, in declaration order,
-        /// null where nothing produced it (exactly what the pass and the backend are handed).
-        std::vector<raw_ptr<RenderTarget>> inputs;
+        /// Kind::None where nothing produced it (exactly what the pass and the backend are handed).
+        std::vector<ImageSource> inputs;
     };
 
     /** @brief One problem a compile found, as the sentence a report would carry.
@@ -711,7 +711,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @param pass Pass whose declarations are resolved.
      * @param out  Receives the resolved inputs in declaration order (cleared first).
      */
-    void resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<raw_ptr<RenderTarget>>& out);
+    void resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageSource>& out);
 
     /** @brief Publishes a pass' output name for the rest of this frame (see compileFrame).
      *

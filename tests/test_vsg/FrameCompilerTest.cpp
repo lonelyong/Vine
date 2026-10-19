@@ -26,9 +26,11 @@
 #include <vector>
 
 #include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/ImageSource.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/Texture.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
 
 using vn::graphics::DepthMode;
@@ -39,6 +41,7 @@ using vn::graphics::ShaderProgram;
 using vn::graphics::backend::ClearPolicy;
 using vn::graphics::backend::CompiledDraw;
 using vn::graphics::backend::CompiledFrame;
+using vn::graphics::backend::CompiledInput;
 using vn::graphics::backend::CompiledPass;
 using vn::graphics::backend::CompiledShape;
 using vn::graphics::backend::DepthFacts;
@@ -214,6 +217,40 @@ TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)
 
     // Nothing produced for the second entry is the ENGINE's business (it resolved it to null), so the backend
     // reports nothing about it: one diagnostic would point the reader at the wrong layer.
+    EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::ContentSkipped), 0u);
+}
+
+TEST(FrameCompilerTest, AnImportedTextureInputIsAFirstClassInputWithNoProducerEdge)
+{
+    // An imported texture has no pass that writes it, so it must not create a dependency edge - and it still
+    // offers one colour image to bind, exactly like a produced attachment. The plan is the one place both
+    // kinds become the same shape (see .ai/design/graphics-image-source.md).
+    Rig r;
+    vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    r.addTarget(destination.get(), 64, 64, true);
+    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
+        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+    std::vector<vn::graphics::ImageSource> inputs{ vn::graphics::ImageSource::imported(texture.get()) };
+    const std::vector<RenderCommand> commands = oneCommand();
+
+    r.recorder.beginFrame(FrameToken{ 1 });
+    r.recorder.beginPass(1);
+    r.recorder.setRenderTarget(destination.get());
+    r.recorder.setPassInputs(inputs);
+    r.recorder.render(commands, nullptr);
+    r.recorder.endPass();
+    r.recorder.endFrame();
+
+    const CompiledFrame& frame = r.compile();
+    ASSERT_EQ(frame.passes.size(), 1u) << "an imported input cannot order a pass: there is no producer to wait for";
+    ASSERT_EQ(frame.passes[0].inputs.size(), 1u);
+    const CompiledInput& input = frame.passes[0].inputs[0];
+    EXPECT_EQ(input.kind, vn::graphics::ImageSource::Kind::ImportedTexture);
+    EXPECT_EQ(input.texture, static_cast<const void*>(texture.get()));
+    EXPECT_EQ(input.texture_revision, texture->revision());
+    EXPECT_EQ(input.target, nullptr);
+    EXPECT_EQ(input.color_attachments, 1u) << "one sampled image, the same shape a single attachment offers";
+    EXPECT_FALSE(input.depth_sampleable);
     EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::ContentSkipped), 0u);
 }
 

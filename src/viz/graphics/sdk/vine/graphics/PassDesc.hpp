@@ -12,6 +12,7 @@
 #include "Camera.hpp"
 #include "DepthMode.hpp"
 #include "ImageRef.hpp"
+#include "ImageSource.hpp"
 #include "Pipeline.hpp"
 #include "PolygonMode.hpp"
 #include "RenderTarget.hpp"
@@ -120,8 +121,9 @@ struct VN_GRAPHICS_API PassDesc
     /// Promises the WHOLE of this target as this pass' output (a coarse claim; see RenderPass::setOutputTarget).
     intrusive_ptr<RenderTarget> output_target{ nullptr };
 
-    /// Fine-grained declared inputs, in declaration order (see RenderPass::addInput).
-    std::vector<intrusive_ptr<ImageRef>> inputs;
+    /// Fine-grained declared inputs, in declaration order: produced images or imported textures (see
+    /// RenderPass::addInput).
+    std::vector<ImageInput> inputs;
     /// Coarse declared inputs, in declaration order (see RenderPass::addInputTarget).
     std::vector<intrusive_ptr<RenderTarget>> input_targets;
     /// Name-based declared inputs, in declaration order: the sugar over the object-typed ones.

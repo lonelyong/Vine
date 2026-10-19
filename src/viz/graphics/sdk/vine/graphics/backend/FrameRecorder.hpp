@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <vine/graphics/Camera.hpp>
+#include <vine/graphics/ImageSource.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -86,16 +87,19 @@ struct ProgramRef
     std::uint64_t revision{0};        ///< Upstream content revision (`ShaderProgram::revision()`).
 };
 
-/** @brief One pass input as the frame remembers it: the identity of the target it reads.
+/** @brief One pass input as the frame remembers it: the identity it reads, produced or imported.
  *
  * @details
  * - Identity only, and deliberately so: what the executor needs to bind an input - its built images and
- *   views - belongs to the target's own bookkeeping (the API layer), which is keyed by this identity.
- *   Copying a target's GPU objects into a frame record would be a second owner of them.
+ *   views - belongs to the target's own bookkeeping (the API layer) or the texture cache, which are keyed
+ *   by this identity. Copying a target's or texture's GPU objects into a frame record would be a second
+ *   owner of them.
+ * - The value is the public ImageSource, so a produced target attachment and an imported texture travel in
+ *   one ordered list; the kind says which bookkeeping owns the images.
  */
 struct InputRef
 {
-    const void* target{nullptr};   ///< Target an input reads, or nullptr when nothing produced it.
+    vn::graphics::ImageSource source{};   ///< The resolved input (Produced* or ImportedTexture).
 };
 
 /** @brief One light as the frame remembers it: its numbers, never the borrowed pointer.
@@ -305,7 +309,14 @@ class VN_GRAPHICS_API FrameRecorder
 
     /** @brief Announces the pass' resolved inputs (a property of the pass, not of one drawing call).
      *
-     * @param inputs Resolved input targets in declaration order; a null entry means nothing produced it.
+     * @param inputs Resolved input sources in declaration order; an empty entry means nothing produced it.
+     * @return true when it was recorded; false when it was dropped.
+     */
+    bool setPassInputs(std::span<const vn::graphics::ImageSource> inputs);
+
+    /** @brief Announces target-only inputs (the convenience spelling over setPassInputs(ImageSource)).
+     *
+     * @param inputs Targets in declaration order; a null entry means nothing produced it.
      * @return true when it was recorded; false when it was dropped.
      */
     bool setPassInputs(std::span<const vn::graphics::RenderTarget* const> inputs);

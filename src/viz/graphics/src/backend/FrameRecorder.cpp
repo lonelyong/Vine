@@ -210,7 +210,7 @@ bool FrameRecorder::setPassState(const vn::graphics::PassRenderState& state)
     return true;
 }
 
-bool FrameRecorder::setPassInputs(std::span<const vn::graphics::RenderTarget* const> inputs)
+bool FrameRecorder::setPassInputs(std::span<const vn::graphics::ImageSource> inputs)
 {
     if (!pass_open_ || scope_target_released_)
     {
@@ -222,7 +222,27 @@ bool FrameRecorder::setPassInputs(std::span<const vn::graphics::RenderTarget* co
     const std::span<InputRef> copy = arena_.makeArray<InputRef>(inputs.size());
     for (std::size_t i = 0; i < inputs.size(); ++i)
     {
-        copy[i].target = inputs[i];
+        copy[i].source = inputs[i];
+    }
+    pass_inputs_ = copy;
+    return true;
+}
+
+bool FrameRecorder::setPassInputs(std::span<const vn::graphics::RenderTarget* const> inputs)
+{
+    if (!pass_open_ || scope_target_released_)
+    {
+        return false;  // no scope to fill, or the scope's target is gone (see the file note)
+    }
+
+    const std::span<InputRef> copy = arena_.makeArray<InputRef>(inputs.size());
+    for (std::size_t i = 0; i < inputs.size(); ++i)
+    {
+        // This convenience spelling receives pointers the caller only READS; ImageSource names the target as
+        // mutable because a source may also be a producer's handle. Nothing here writes through it.
+        copy[i].source = inputs[i] != nullptr
+                             ? vn::graphics::ImageSource::producedTarget(const_cast<vn::graphics::RenderTarget*>(inputs[i]))
+                             : vn::graphics::ImageSource{};
     }
     pass_inputs_ = copy;
     return true;

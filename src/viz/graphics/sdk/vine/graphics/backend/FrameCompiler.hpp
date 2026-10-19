@@ -109,7 +109,10 @@ struct CompiledCommand
  */
 struct CompiledInput
 {
+    vn::graphics::ImageSource::Kind kind{vn::graphics::ImageSource::Kind::None};  ///< Produced or imported.
     const void*   target{nullptr};        ///< The target this input reads; nullptr = nothing produced it.
+    const void*   texture{nullptr};       ///< The imported texture this input reads; nullptr for produced inputs.
+    std::uint64_t texture_revision{0};    ///< The texture content revision; 0 for produced inputs.
     std::uint32_t color_attachments{0};   ///< Colour textures it offers (0 = nothing to bind for it).
     /// Whether the input's DEPTH is sampleable and therefore bound too (the engine's contract for a
     /// whole-target input: "every colour attachment of its source, plus its depth while that one is

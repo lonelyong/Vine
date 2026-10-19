@@ -31,6 +31,7 @@
 #include <vine/vsg/internal/VsgExecutor.hpp>
 #include <vine/vsg/internal/ViewBlock.hpp>
 #include <vine/vsg/internal/WindowTarget.hpp>
+#include <vine/vsg/support/VsgSceneRules.hpp>
 #include <vine/graphics/backend/AllocationGate.hpp>
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
@@ -136,6 +137,7 @@ int graphicsQueueFamily(const ::vsg::Device& device)
 /// out (it was compiled against facts with no default-framebuffer row). Passes that name their own targets are
 /// recorded exactly as they are on the windowed path.
 std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarget* window, HostTargets& targets,
+                                           MaterialImages& images, vn::graphics::Diagnostics& diagnostics,
                                            core::FrameTimeline& timeline, core::RetirementQueue& retirement,
                                            float frame_seconds, const core::CompiledFrame& frame,
                                            std::vector<InputImages>& input_scratch,
@@ -186,13 +188,42 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
         input_views.assign(pass.inputs.size(), {});
         for (std::size_t index = 0; index < pass.inputs.size(); ++index)
         {
+            std::vector<::vsg::ref_ptr<::vsg::ImageView>>& views = input_views[index];
+            views.clear();
+
+            if (pass.inputs[index].kind == vn::graphics::ImageSource::Kind::ImportedTexture)
+            {
+                // An imported texture is one sampled image: the pass' program reads it at the input set's
+                // sampler (the input walk's by-name rule), not at the cache's material sampler. The view is
+                // copied into the per-pass vector so the span stays valid until assembly.record returns.
+                const auto* texture = static_cast<const vn::graphics::Texture*>(pass.inputs[index].texture);
+                if (texture == nullptr)
+                {
+                    continue;  // an empty declaration produces nothing to bind
+                }
+                vn::vsg::detail::TextureReject reject = vn::vsg::detail::TextureReject::Ok;
+                const SamplerImage sampled = images.acquire(texture, reject);
+                if (reject != vn::vsg::detail::TextureReject::Ok || sampled.view == nullptr)
+                {
+                    diagnostics.report(
+                        vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
+                        vn::String(u8"pass input texture could not be sampled; the input binds the white "
+                                   u8"stand-in: ") +
+                            vn::vsg::detail::textureRejectMessage(reject, *texture));
+                }
+                if (sampled.view != nullptr)
+                {
+                    views.push_back(sampled.view);
+                }
+                input_scratch[index].colors = views;
+                continue;
+            }
+
             const HostTargets::Entry* entry = targets.find(pass.inputs[index].target);
             if (entry == nullptr || entry->target == nullptr)
             {
                 continue;
             }
-            std::vector<::vsg::ref_ptr<::vsg::ImageView>>& views = input_views[index];
-            views.clear();
             const std::uint32_t attachments = entry->target->colorAttachmentCount();
             for (std::uint32_t attachment = 0; attachment < attachments; ++attachment)
             {
@@ -908,10 +939,10 @@ void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession*
     // and the one whose false answer means the writes never happened.
     (void)d->executor.applyTargetPlans(*d->frame, d->facts, timeline, retirement);
     std::span<const PassContent> packets{};
-    if (d->assembly != nullptr && (window_target != nullptr || window == nullptr))
+    if (d->assembly != nullptr && d->images != nullptr && (window_target != nullptr || window == nullptr))
     {
-        packets = recordContent(*d->assembly, window_target, d->targets, timeline, retirement, frame_seconds,
-                                *d->frame, d->input_scratch, d->input_views, d->packets);
+        packets = recordContent(*d->assembly, window_target, d->targets, *d->images, d->diagnostics, timeline,
+                                retirement, frame_seconds, *d->frame, d->input_scratch, d->input_views, d->packets);
     }
     (void)d->executor.record(*d->frame, graph, packets);
     // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is
@@ -1157,23 +1188,23 @@ void VsgBackend::announceLights(const std::vector<vn::raw_ptr<const vn::graphics
     (void)d->recorder.setLights(d->light_scratch);
 }
 
-void VsgBackend::announcePassInputs(const std::vector<vn::raw_ptr<vn::graphics::RenderTarget>>& inputs)
+void VsgBackend::announcePassInputs(const std::vector<vn::graphics::ImageSource>& inputs)
 {
     if (!d->recorder.inPass())
     {
         return;
     }
-    for (const vn::raw_ptr<vn::graphics::RenderTarget>& input : inputs)
+    for (const vn::graphics::ImageSource& input : inputs)
     {
-        if (input != nullptr)
+        if (input.isProduced() && input.target != nullptr)
         {
-            // The description of every input is kept current here too: its objects were built when a pass
-            // drew into it, and what has to be fresh is the facts row the plan resolves the input's shape
+            // The description of every produced input is kept current here too: its objects were built when a
+            // pass drew into it, and what has to be fresh is the facts row the plan resolves the input's shape
             // (its colour count, its depth's sampleability) from (see HostTargets::observe).
-            (void)d->targets.observe(*input);
+            (void)d->targets.observe(*input.target);
         }
     }
-    // The identities, in the pass' declaration order, nulls included: "nothing produced it this frame" is
+    // The identities, in the pass' declaration order, empties included: "nothing produced it this frame" is
     // a fact the plan carries (see InputRef), and the recording reads one entry per declaration.
     (void)d->recorder.setPassInputs(inputs);
 }

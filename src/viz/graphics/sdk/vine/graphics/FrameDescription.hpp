@@ -10,6 +10,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "ImageSource.hpp"
 #include "RenderCommand.hpp"
 #include "StateNode.hpp"
 #include "Viewport.hpp"
@@ -169,10 +170,10 @@ struct VN_GRAPHICS_API FrameDescription
         raw_ptr<const RenderPass> pass = nullptr;
         /// Where this pass stacks in its target (the explicit pipeline order its declaration gave).
         int order = 0;
-        /// What its declared inputs resolved to this frame, in declaration order (null where nothing produced
-        /// it) - exactly what the pass and the backend are handed, and the shape the backend binds the pass'
-        /// sampled inputs from.
-        std::vector<raw_ptr<RenderTarget>> inputs;
+        /// What its declared inputs resolved to this frame, in declaration order (ImageSource::Kind::None where
+        /// nothing produced it) - exactly what the pass and the backend are handed, and the shape the backend binds
+        /// the pass' sampled inputs from.
+        std::vector<ImageSource> inputs;
         /// What the pass issues, or nullopt when it issues NOTHING AT ALL this frame (a scene pass with no
         /// scene, a screen pass with no resolved source): the scope still opens, and no attribute of it - not
         /// even its target - is announced.
@@ -199,7 +200,7 @@ struct VN_GRAPHICS_API FrameDescription
  * @return The frame to hand to RenderFrameExecutor::executeFrame.
  */
 FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass, int order,
-                                                 std::vector<raw_ptr<RenderTarget>> inputs,
+                                                 std::vector<ImageSource> inputs,
                                                  std::optional<PassDescription> description);
 
 VN_GRAPHICS_NS_END

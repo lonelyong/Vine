@@ -821,16 +821,17 @@ void RenderEngine::collectPlanProblems()
             }
         }
 
-        for (const auto& image : pass->inputs()) {
+        for (const ImageInput& input : pass->inputs()) {
+            raw_ptr<ImageRef> image = input.image();
             if (image == nullptr) {
-                continue;
+                continue;   // an imported texture has no producer/wiring rule to check
             }
             const OutputIdentity identity = OutputIdentity::of(*image);
             // An UNBOUND image can never be delivered (resolveDeclaredImage returns null for it, and
             // deliberately says nothing — declaring it is what is wrong). Reported once per IMAGE:
             // by the producer side above when a pass declares it as its output, otherwise here.
             if (!image->isBound()) {
-                unbound_declared_by.emplace(image.get(), std::make_pair(raw_ptr<const RenderPass>(pass), false));
+                unbound_declared_by.emplace(image, std::make_pair(raw_ptr<const RenderPass>(pass), false));
                 continue;
             }
             // An unbound image has no address, so no target account can say anything about it: only
@@ -933,6 +934,23 @@ void RenderEngine::collectPlanProblems()
                                         String(u8"' is a ScreenPass that declares no input, so it can never draw"
                                                u8" (give it addInput / addInputName)"));
             }
+            continue;
+        }
+
+        // A full-screen call's ABI is its produced source plus the shadow map: imported textures have no
+        // binding in it. A ScreenPass that declares one would look wired and draw nothing (or be refused by
+        // the backend), so the engine says which pass and skips it. Content passes bind imported textures in
+        // declaration order, which is the supported path today.
+        const bool has_imported_input =
+            std::any_of(pass->inputs().begin(), pass->inputs().end(),
+                        [](const ImageInput& input) { return input.texture() != nullptr; });
+        if (has_imported_input) {
+            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::ContentSkipped,
+                                String(u8"pass '") + reportedPassName(pass) +
+                                    String(u8"' is a ScreenPass that declares an imported texture input; the "
+                                           u8"full-screen ABI binds only its produced source and the shadow map, "
+                                           u8"so imported textures are supported by content passes today"));
             continue;
         }
 

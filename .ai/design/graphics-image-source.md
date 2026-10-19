@@ -1,6 +1,9 @@
 # 图源统一：`ImageRef` / `Texture` 与 pass 输入（2026-10-19）
 
-> **状态：提案，未落地。** 本文只定形状与切片，不改公开头。
+> **状态：切片 1–3 的内容路径已落地（2026-10-19）；全屏 ABI 的 imported 绑定仍登记。** 公开头已改：
+> `ImageInput` / `ImageSource`、`RenderPass::addInput(Texture)`、`PassDesc::inputs`、
+> `FrameDescription::Pass::inputs`。Content（Scene）pass 按声明序绑定 imported 图；full-screen ABI 目前只绑
+> produced source + shadow map，引擎会报告声明 imported 图的 ScreenPass 并跳过它（见 §5 末尾）。
 > 触发条件：出现“把一张静态/导入贴图当某条 pass 的输入”的真实需求（离线烘焙的输入图、预览磁盘图、
 > 编辑器把选中纹理喂进屏幕 pass）。今天的两套图源模型见 `graphics-object-model-vs-3d-frameworks.md` §3 第 7 条。
 
@@ -72,31 +75,42 @@ struct ImageSource
 
 ### 3.1 声明侧
 
-- `RenderPass` 增加 `addInput(intrusive_ptr<Texture>)`（名字可以是 `addTextureInput`，但 `addInput` 重载更贴近
-  “一张输入图”的语义；两个重载在调用点可区分）。
-- `PassDesc` 增加 `std::vector<intrusive_ptr<Texture>> texture_inputs`，或者把输入声明收成一个
-  `std::vector<PassInputDecl>`（`std::variant<intrusive_ptr<ImageRef>, intrusive_ptr<Texture>>`）。
-  **推荐后者**：一个序列才能保留“produced / imported 混排”的声明顺序；两个 vector 只能表达“所有 produced
-  在前、所有 imported 在后”。
+- `RenderPass` 增加 `addInput(intrusive_ptr<Texture>)` 与 `addInput(ImageInput)`；`ImageInput` 是**声明**
+  值，持有 `intrusive_ptr<ImageRef>` 或 `intrusive_ptr<Texture>`，不是已解析形状。
+- `PassDesc::inputs` 是 `std::vector<ImageInput>`（一个序列保留 produced / imported 混排的声明顺序）；
+  `input_targets` / `input_names` 的旧路径不变。
 - `addInputName` 仍只解析 produced（名字注册表是 pass 产出的表）；imported 图必须对象声明。
 
 ### 3.2 解析侧
 
-- `RenderEngine::resolveRowInputs` 产出 `std::vector<ImageSource>`。
+- `RenderEngine::resolveRowInputs` 产出 `std::vector<ImageSource>`：`ImageInput::image()` 经
+  `resolveDeclaredImage` 变成 `ProducedImage` / `ProducedTarget`，`ImageInput::texture()` 变成
+  `ImportedTexture`（带 `Texture::revision()`）。
 - `FrameDescription::Pass::inputs` 从 `std::vector<raw_ptr<RenderTarget>>` 改为
   `std::vector<ImageSource>`；`RenderFrameExecutor` 的借用规则不变（`ImageSource` 里的指针仍是借用的）。
-- `RenderPass::resolveInputTextures` 的签名改为 `std::span<const ImageSource>`（或保持 vector 引用）。
-  这是一次**契约改动**，所有 pass 子类与测试替身一起改。
-- `CompiledInput` 增加 `kind` 与 `texture`/`revision`；produced 的字段保持原样。`sampled` 绑定层按 kind
-  选择 `target` 的 attachment view 或 `Texture` 的上传结果。
+- `RenderPass::resolveInputTextures` 的签名改为 `std::span<const ImageSource>`；`ScreenPass` 只取第一个
+  `isProduced()` 的 source。这是一次**契约改动**，所有 pass 子类与测试替身一起改。
+- `CompiledInput` 增加 `kind` / `texture` / `texture_revision`；produced 的字段保持原样。后端按 kind
+  选择 `target` 的 attachment view 或 `Texture` 的上传结果；`FrameCompiler` 只为 produced 输入加依赖边。
+
+以上形状对应实现里的 `ImageSource::Kind::{None, ProducedImage, ProducedTarget, ImportedTexture}`；
+`None` 是“本帧没产出”的条目，保留在列表里占位。
 
 ### 3.3 后端侧
 
-- vsg 后端已有 `TextureCache`（材质贴图）与 `SampledInput`（pass 输入）两条路径；统一后只需让
-  `SampledInput` 接受 imported 图，复用 `TextureCache` 的上传与 revision 失效。
-- `ScreenPass` 的 `source` 仍是一个 target：它是“全屏三角形的主输入”，不是任意贴图。额外的 imported 图
-  走输入列表，由程序自己声明 sampler slot；`ScreenPass` 不猜 sampler 类型（D2 vs Cube）。
-- 第一切片只支持 `Texture::Kind::D2`；Cube 作为输入需要程序声明 cube sampler，等真实需求再加。
+- vsg 后端用 `MaterialImages`（材质贴图缓存，键为 `(Texture*, revision)`）上传 imported 图；
+  `ContentPass` 的 sampled input set 按声明序绑定 `InputImages::colors`，所以 imported 图就是下一个
+  colour sampler。
+- `recordContent` 为 `ImportedTexture` 条目调用 `MaterialImages::acquire`，把 view 填入该条目的
+  `InputImages`；`color_attachments = 1`、`depth_sampleable = false`。上传失败时绑白图并报告原因。
+- 采样器暂用输入 set 的 `inputSampler()`（与现有 pass 输入一致）；`Texture` 没有 sampler state，等
+  sampler 成为真实需求再加。
+- **全屏 ABI 未支持额外 imported 输入**：它只绑 one produced source + shadow map；`ScreenPass` 声明
+  imported 图会被引擎报告并跳过。第一切片只支持 `Texture::Kind::D2`；Cube 作为输入需要程序声明 cube
+  sampler，等真实需求再加。
+- **produced 输入的 attachment 仍是选择符**：vsg 绑定层今天给 produced 输入整个 target（binding N =
+  attachment N，全屏 ABI 的规则），`ImageSource::attachment` / `depth` 还没有收窄绑定集合；真正按
+  attachment 绑定是后端能力项，等程序需要时再加。
 
 ## 4. 备选方案与否决理由
 
@@ -110,19 +124,34 @@ struct ImageSource
 
 ## 5. 迁移切片（每片独立验收）
 
-1. **声明侧（非破坏）**：`RenderPass::addInput(Texture)` + `PassDesc` 的输入声明收成 `PassInputDecl` 序列；
+1. **声明侧（已落地）**：`RenderPass::addInput(Texture)` + `ImageInput` + `PassDesc::inputs` 序列；
    未解析前仍走现有 `inputs` 路径。判据：declaration-only 测试，现有 pass 行为不变。
-2. **解析侧（契约改动）**：`FrameDescription::Pass::inputs` 改为 `ImageSource`；engine / `RenderPass` /
+2. **解析侧（已落地，契约改动）**：`FrameDescription::Pass::inputs` 改为 `ImageSource`；engine / `RenderPass` /
    `ScreenPass` / 测试替身一起改。判据：现有 produced 输入的像素用例全绿。
-3. **后端绑定**：`CompiledInput` 加 imported 分支，复用 `TextureCache`；新增“static texture 作为 screen pass
-   输入”的像素用例；`(texture, revision)` 改动后下一帧重上传。
-4. **便利层**：`ScreenPass` / `PipelineOptions` 暴露一个 `texture_inputs` 便捷入口；材质贴图与 pass 输入共用
-   同一个上传缓存。
+3. **后端绑定（内容路径已落地；全屏 ABI 仍登记）**：`CompiledInput` 加 imported 分支，复用 `MaterialImages`；
+   新增“static texture 作为 content pass 输入”的像素用例；全屏 ABI 的额外 sampler 绑定留到下一片。
+4. **便利层（未做）**：`PassDesc` 之外的便捷入口；材质贴图与 pass 输入已经共用 `MaterialImages`。
 
 ## 6. 判据与风险
 
 - **判据**：结构测试（声明顺序、produced/imported 混排、未绑定/未上传的拒绝）+ 像素测试（一张 D2 贴图被
-  screen pass 采样到目标上）+ revision 测试（`Texture::setSource` 后下一帧重上传）。
+  content pass 采样到目标上）+ revision 缓存键（`(Texture*, revision)` 已进 `CompiledInput`，下一帧重上传由
+  缓存负责）。
 - **风险**：`FrameDescription::Pass::inputs` 是公开 ABI；这次改动会动 vsg 后端与 `test_vsg` 的测试替身。
-  切片 2 单独提交，避免和“声明侧”混在一起。
 - **不做**：`Sampler` 抽象、Cube/array 输入、把 `Texture` 纳入 producer 规则、把 `RenderTarget` 改名。
+
+## 7. 落地记录（2026-10-19）
+
+- 公开头：`ImageSource.hpp`（`ImageInput` 声明值 + `ImageSource` 已解析值）、`RenderPass::addInput(Texture)`
+  / `addInput(ImageInput)`、`inputs()` 返回 `std::vector<ImageInput>`、`resolveInputTextures(std::span<const
+  ImageSource>)`；`PassDesc::inputs`、`FrameDescription::Pass::inputs`、`singlePassFrame`、
+  `RenderEngine::PlanRow::inputs` 同步。
+- 引擎：`resolveRowInputs` 产出 produced / imported 两种 source；`collectPlanProblems` 只对 produced 输入
+  跑 wiring 规则；ScreenPass 声明 imported 输入时报告 `ContentSkipped` 并跳过（全屏 ABI 限制）。
+- 后端：`FrameRecorder::InputRef` / `FrameCompiler::CompiledInput` 携带 `ImageSource` 的 kind / texture /
+  revision；依赖边只为 produced 输入建；`VsgBackend::recordContent` 对 imported 输入调用
+  `MaterialImages::acquire`，把 view 填进该条目的 `InputImages`。
+- 判据：`FrameCompilerTest.AnImportedTextureInputIsAFirstClassInputWithNoProducerEdge`、
+  `RenderPipelineBuilderTest.AnImportedTextureIsAnInputInDeclarationOrder`、
+  `RenderPipelineBuilderTest.AScreenPassReportsImportedTextureInputsItCannotBind`、
+  `VsgBackendTest.AnImportedTextureInputReachesAContentProgram`（像素：导入贴图被内容程序采样到目标上）。

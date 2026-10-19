@@ -67,7 +67,25 @@ class TestFrame
      * @param inputs What the pass' declared inputs resolved to this frame.
      * @return This builder, for chaining.
      */
-    TestFrame& inputs(std::vector<vn::raw_ptr<vn::graphics::RenderTarget>> inputs)
+    TestFrame& inputs(std::vector<vn::raw_ptr<vn::graphics::RenderTarget>> targets)
+    {
+        std::vector<vn::graphics::ImageSource> sources;
+        sources.reserve(targets.size());
+        for (const vn::raw_ptr<vn::graphics::RenderTarget>& target : targets)
+        {
+            sources.push_back(target != nullptr ? vn::graphics::ImageSource::producedTarget(target)
+                                                : vn::graphics::ImageSource{});
+        }
+        current().inputs = std::move(sources);
+        return *this;
+    }
+
+    /** @brief Sets the open pass' resolved inputs, including imported textures (see FrameDescription::Pass::inputs).
+     *
+     * @param inputs Resolved input sources, in declaration order.
+     * @return This builder, for chaining.
+     */
+    TestFrame& inputs(std::vector<vn::graphics::ImageSource> inputs)
     {
         current().inputs = std::move(inputs);
         return *this;

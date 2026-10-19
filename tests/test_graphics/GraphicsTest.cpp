@@ -2393,7 +2393,7 @@ class MockBackend : public RenderBackend {
     void setRenderTarget(RenderTarget* target) override { target_history.push_back(target); }
     std::vector<RenderTarget*> target_history;
     int                        pass_input_sets = 0;
-    std::vector<RenderTarget*> last_pass_inputs;
+    std::vector<vn::graphics::ImageSource> last_pass_inputs;
 
     /// The pass' own state, as the frame states it (see PassDescription::state).
     vn::graphics::PassRenderState pass_state{};
@@ -4345,7 +4345,8 @@ TEST(PassDescriptionTest, WhatAScreenPassDescribesIsWhatItAnnounces)
     pass->setCamera(cam);
     pass->setProgram(program);
     pass->setViewport(0, 0, 16, 16);
-    pass->resolveInputTextures({ source.get() });
+    const vn::graphics::ImageSource resolved[]{ vn::graphics::ImageSource::producedTarget(source.get()) };
+    pass->resolveInputTextures(resolved);
 
     pass->execute(nullptr, backend.get());  // 没有场景：只有灯会读到它
 
@@ -5205,8 +5206,95 @@ TEST(RenderPipelineBuilderTest, DeclaredPassInputsReachTheBackend)
     // Resolved in declaration order, null where nothing produced them: a pass learns what is
     // missing from the same list it reads what is there.
     ASSERT_EQ(backend->last_pass_inputs.size(), 2u);
-    EXPECT_EQ(backend->last_pass_inputs[0], produced.get());
-    EXPECT_EQ(backend->last_pass_inputs[1], nullptr);
+    EXPECT_EQ(backend->last_pass_inputs[0].target, produced.get());
+    EXPECT_EQ(backend->last_pass_inputs[1].kind, vn::graphics::ImageSource::Kind::None);
+}
+
+/**
+ * @brief An imported texture is an input like any other, in the same ordered list as a produced target.
+ *
+ * The two kinds travel in ONE ordered list (see .ai/design/graphics-image-source.md): the texture has no
+ * producer, so it adds no wiring rule and no schedule edge, while a produced target keeps the rules it had.
+ * A content pass is the kind that binds imported textures today; the full-screen ABI is source + shadow map
+ * only, and the engine reports a ScreenPass that declares one.
+ */
+TEST(RenderPipelineBuilderTest, AnImportedTextureIsAnInputInDeclarationOrder)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto camera  = intrusive_ptr<Camera>(new Camera());
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize()) << "a frame runs nothing until the engine is initialized";
+
+    auto source = intrusive_ptr<RenderTarget>(new RenderTarget());
+    source->setSize(64, 64);
+    source->attachColor(RenderTarget::ColorFormat::RGBA8);
+    const intrusive_ptr<Texture2D> texture(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
+
+    PassDesc producer;
+    producer.name    = u8"producer";
+    producer.kind    = PassKind::Scene;
+    producer.camera  = camera;
+    producer.content = intrusive_ptr<Scene>(new Scene());
+    producer.writes  = source;
+    engine->addPass(producer);
+
+    PassDesc compose;
+    compose.name          = u8"compose";
+    compose.kind          = PassKind::Scene;
+    compose.camera        = camera;
+    compose.inputs        = { ImageInput(texture) };
+    compose.input_targets = { source };
+    engine->addPass(compose);
+
+    engine->frame(0.016);
+
+    const auto& inputs = backend->last_pass_inputs;
+    ASSERT_EQ(inputs.size(), 2u) << "one entry per declaration, in declaration order";
+    EXPECT_EQ(inputs[0].kind, ImageSource::Kind::ImportedTexture);
+    EXPECT_EQ(inputs[0].texture, texture.get());
+    EXPECT_EQ(inputs[0].revision, texture->revision());
+    EXPECT_EQ(inputs[1].kind, ImageSource::Kind::ProducedTarget);
+    EXPECT_EQ(inputs[1].target, source.get());
+}
+
+TEST(RenderPipelineBuilderTest, AScreenPassReportsImportedTextureInputsItCannotBind)
+{
+    // The full-screen ABI binds the produced source and the shadow map only. Accepting an imported texture
+    // declaration and then drawing nothing would be the silent failure this project avoids: the engine names
+    // the pass and skips it, and the pass does not reach the backend.
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto camera  = intrusive_ptr<Camera>(new Camera());
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    const intrusive_ptr<Texture2D> texture(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
+    PassDesc screen;
+    screen.name    = u8"screen";
+    screen.kind    = PassKind::Screen;
+    screen.camera  = camera;
+    screen.program = screenCopyProgram();
+    screen.inputs  = { ImageInput(texture) };
+    engine->addPass(screen);
+
+    std::vector<RenderDiagnostic> reported;
+    engine->setDiagnosticSink([&reported](const RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+    const std::size_t before = engine->diagnosticCount();
+    engine->frame(0.016);
+
+    ASSERT_EQ(engine->diagnosticCount(), before + 1u);
+    bool found = false;
+    for (const RenderDiagnostic& diagnostic : reported) {
+        if (diagnostic.category == DiagnosticCategory::ContentSkipped &&
+            diagnostic.message.as_std_str().find("imported texture") != std::string::npos) {
+            found = true;
+            EXPECT_NE(diagnostic.message.as_std_str().find("screen"), std::string::npos)
+                << "the report names the pass";
+        }
+    }
+    EXPECT_TRUE(found) << "a ScreenPass' imported texture input is reported, not silently ignored";
+    EXPECT_EQ(backend->program_draws, 0) << "and the pass draws nothing instead of sampling the wrong image";
 }
 
 TEST(RenderPipelineBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)
@@ -8508,7 +8596,8 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     // ② the screen pass: a screen draw with its source and program, and the input it resolved.
     const FrameDescription::Pass& screen_entry = value.passes[1];
     ASSERT_EQ(screen_entry.inputs.size(), 1u);
-    EXPECT_EQ(screen_entry.inputs[0], target.get()) << "what its declared input resolved to this frame";
+    EXPECT_TRUE(screen_entry.inputs[0].isProduced());
+    EXPECT_EQ(screen_entry.inputs[0].target, target.get()) << "what its declared input resolved to this frame";
     ASSERT_TRUE(screen_entry.description.has_value());
     const PassDescription& screen_pass = *screen_entry.description;
     ASSERT_EQ(screen_pass.draws.size(), 1u);
@@ -9409,8 +9498,8 @@ TEST(RenderPassTest, ObjectTypedOutputAndInputImages)
     pass->addInput(color);
     pass->addInput(depth);
     ASSERT_EQ(pass->inputs().size(), 2u);
-    EXPECT_EQ(pass->inputs()[0].get(), color.get());
-    EXPECT_EQ(pass->inputs()[1].get(), depth.get());
+    EXPECT_EQ(pass->inputs()[0].image(), color.get());
+    EXPECT_EQ(pass->inputs()[1].image(), depth.get());
 
     // The object-typed API is a separate axis from the name API: neither
     // clears the other (a pass mid-migration can declare both).

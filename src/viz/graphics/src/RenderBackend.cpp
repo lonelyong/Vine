@@ -5,7 +5,7 @@ VN_GRAPHICS_NS_BEGIN
 VN_OBJECT_META_IMPL(RenderBackend, vn::Object);
 
 FrameDescription singlePassFrame(raw_ptr<const RenderPass> pass, int order,
-                                 std::vector<raw_ptr<RenderTarget>> inputs,
+                                 std::vector<ImageSource> inputs,
                                  std::optional<PassDescription> description)
 {
     // The ONE place a frame value is assembled outside the engine's compile, so a host that drives one pass

@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <span>
 #include <vector>
 
 #include <vine/raw_ptr.hpp>
@@ -69,14 +70,15 @@ class VN_GRAPHICS_API ScreenPass : public RenderPass {
      */
     void setProgram(intrusive_ptr<ShaderProgram> program);
 
-    /** @brief Receives the engine-resolved input textures.
+    /** @brief Receives the engine-resolved input sources.
      *
-     * Stores the first resolved non-null target (matching the single input
-     * name this pass declares) as the source to sample.
+     * Stores the first resolved PRODUCED target (an ImageSource::ProducedImage or ProducedTarget) as the source
+     * to sample. A full-screen call's source is still a render target; imported textures have no binding in the
+     * current full-screen ABI, so the engine reports a ScreenPass that declares one and it draws nothing.
      *
-     * @param inputs Resolved input targets in inputNames() order (borrowed).
+     * @param inputs Resolved input sources in declaration order (borrowed).
      */
-    void resolveInputTextures(const std::vector<raw_ptr<RenderTarget>>& inputs) override;
+    void resolveInputTextures(std::span<const ImageSource> inputs) override;
 
     /** @brief Describes the screen pass: nothing until a source resolved, then one full-screen draw.
      *

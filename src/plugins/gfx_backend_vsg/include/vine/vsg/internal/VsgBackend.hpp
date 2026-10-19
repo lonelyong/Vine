@@ -328,7 +328,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     void announcePassOrder(int order);
 
     /** @brief Announces the pass' resolved inputs, in declaration order (see FrameDescription::Pass::inputs). */
-    void announcePassInputs(const std::vector<vn::raw_ptr<vn::graphics::RenderTarget>>& inputs);
+    void announcePassInputs(const std::vector<vn::graphics::ImageSource>& inputs);
 
     /** @brief Announces the target a pass draws into, and reports it when it cannot be built at all.
      *

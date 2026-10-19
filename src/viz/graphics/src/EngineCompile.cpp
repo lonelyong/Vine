@@ -295,24 +295,37 @@ raw_ptr<RenderTarget> RenderEngine::transientTarget(const String& identity) cons
     return resources_->transient(identity);
 }
 
-void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<raw_ptr<RenderTarget>>& out)
+void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageSource>& out)
 {
     out.clear();
     if (pass == nullptr) {
         return;
     }
 
-    // The object-typed declarations ARE the wiring; a name is the sugar over it. When a pass declares images
-    // or targets, they decide what it gets - one resolved entry per declaration, in declaration order, null
-    // where nothing produced it - and the names are not consulted at all: one wire stated twice must not be
-    // resolved twice.
+    // The object-typed declarations ARE the wiring; a name is the sugar over it. When a pass declares images,
+    // textures or targets, they decide what it gets - one resolved entry per declaration, in declaration order,
+    // an empty ImageSource where nothing produced it - and the names are not consulted at all: one wire stated
+    // twice must not be resolved twice.
     if (!pass->inputs().empty() || !pass->inputTargets().empty()) {
         out.reserve(pass->inputs().size() + pass->inputTargets().size());
-        for (const auto& image : pass->inputs()) {
-            out.push_back(image != nullptr ? resolveDeclaredImage(pass, *image) : nullptr);
+        for (const ImageInput& input : pass->inputs()) {
+            if (raw_ptr<ImageRef> image = input.image(); image != nullptr) {
+                raw_ptr<RenderTarget> target = resolveDeclaredImage(pass, *image);
+                out.push_back(target != nullptr
+                                  ? ImageSource::producedImage(target, image->attachment(),
+                                                               image->kind() == ImageRef::Kind::Depth)
+                                  : ImageSource{});
+            }
+            else if (raw_ptr<Texture> texture = input.texture(); texture != nullptr) {
+                out.push_back(ImageSource::imported(texture));
+            }
+            else {
+                out.push_back(ImageSource{});
+            }
         }
         for (const auto& target : pass->inputTargets()) {
-            out.push_back(target != nullptr ? resolveDeclaredTarget(pass, target.get()) : nullptr);
+            raw_ptr<RenderTarget> resolved = target != nullptr ? resolveDeclaredTarget(pass, target.get()) : nullptr;
+            out.push_back(resolved != nullptr ? ImageSource::producedTarget(resolved) : ImageSource{});
         }
         return;
     }
@@ -323,7 +336,8 @@ void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<raw_pt
     }
     out.reserve(names.size());
     for (const auto& name : names) {
-        out.push_back(resources_->resolve(name));
+        raw_ptr<RenderTarget> resolved = resources_->resolve(name);
+        out.push_back(resolved != nullptr ? ImageSource::producedTarget(resolved) : ImageSource{});
     }
 
     // A declared input nobody published this frame means the pass draws NOTHING (ScreenPass keeps the first
@@ -332,7 +346,7 @@ void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<raw_pt
     // falls back), so this only fires when NONE of them resolved - and the compile forgets the problem the
     // moment one of them resolves, which is what re-arms it.
     const bool any_resolved = std::any_of(out.begin(), out.end(),
-                                         [](raw_ptr<RenderTarget> target) { return target != nullptr; });
+                                         [](const ImageSource& source) { return static_cast<bool>(source); });
     if (any_resolved) {
         return;
     }

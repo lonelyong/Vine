@@ -191,11 +191,25 @@ void RenderPass::clearInputNames()
 void RenderPass::addInput(intrusive_ptr<ImageRef> image)
 {
     if (image != nullptr) {
-        input_images_.push_back(std::move(image));
+        input_images_.emplace_back(std::move(image));
     }
 }
 
-const std::vector<intrusive_ptr<ImageRef>>& RenderPass::inputs() const
+void RenderPass::addInput(intrusive_ptr<Texture> texture)
+{
+    if (texture != nullptr) {
+        input_images_.emplace_back(std::move(texture));
+    }
+}
+
+void RenderPass::addInput(ImageInput input)
+{
+    if (input) {
+        input_images_.push_back(std::move(input));
+    }
+}
+
+const std::vector<ImageInput>& RenderPass::inputs() const
 {
     return input_images_;
 }

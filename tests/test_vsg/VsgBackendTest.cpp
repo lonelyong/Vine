@@ -995,6 +995,111 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     EXPECT_TRUE(host.alive());
 }
 
+/*
+ * @brief An imported texture is bound where a content pass' program samples it.
+ *
+ * The pass declares ONE input, the imported texture, and its content program samples the pass' input set at
+ * set 1 binding 0. A magenta center means the texture reached the shader; white means the stand-in was bound,
+ * and the destination's blue clear means the draw never happened. This is the backend half of
+ * `.ai/design/graphics-image-source.md` (the full-screen ABI has its own fixed source bindings; imported
+ * textures reach content passes first).
+ */
+TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 128, 96);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(backend->capabilities().render_targets);
+
+    const vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    destination->attachColor(RenderTarget::ColorFormat::RGBA8);
+    destination->setSize(64, 64);
+
+    // A 2x2 texture filled with magenta: neither the destination's blue clear nor an absent texture's white
+    // stand-in can produce it.
+    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
+        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+    {
+        const vn::intrusive_ptr<vn::imaging::Image> image(
+            new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        for (std::size_t index = 0; index < pixels.size(); ++index)
+        {
+            const std::uint8_t channel = static_cast<std::uint8_t>(index % 4U);
+            pixels[index] = static_cast<std::byte>(channel == 1U ? 0U : 255U);
+        }
+        texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
+    }
+
+    // The content program: the triangle's view block, and the pass' input set as its only texture. The input
+    // set is set 1 (see ContentPipeline::kInputSet), in declaration order.
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 out_color;\n"
+            "layout(set = 1, binding = 0) uniform sampler2D imported_tex;\n"
+            "void main() { out_color = texture(imported_tex, vec2(0.5)); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    const TriangleFixture triangle = makeTriangle();
+    std::vector<RenderCommand> commands = triangle.commands;
+    commands.front().program            = program;
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
+    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+
+    backend->executeFrame(TestFrame()
+                              .pass(pass_object.get(), 0)
+                              .target(destination.get())
+                              .inputs(std::vector<vn::graphics::ImageSource>{
+                                  vn::graphics::ImageSource::imported(texture.get()) })
+                              .clear(destination_clear)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .content(commands, camera.get())
+                              .value());
+
+    EXPECT_EQ(BackendContentAccess::executor(*backend).recorded().size(), 1U)
+        << "the content pass was recorded (no packet means no draw)";
+
+    std::vector<std::uint8_t>    pixels;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
+    const std::size_t at = (40U * 64U + 16U) * 4U;
+    ASSERT_LT(at + 3U, pixels.size());
+    EXPECT_TRUE(isColourByte(pixels[at], 1.0) && isColourByte(pixels[at + 1], 0.0) &&
+                isColourByte(pixels[at + 2], 1.0))
+        << "the imported texture is what the content program samples: got (" << static_cast<int>(pixels[at])
+        << ", " << static_cast<int>(pixels[at + 1]) << ", " << static_cast<int>(pixels[at + 2]) << ")";
+    EXPECT_EQ(pixels[at + 3], 255U);
+}
+
 TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
 {
     if (!deviceCaseAvailable())

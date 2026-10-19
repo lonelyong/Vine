@@ -155,14 +155,15 @@ const CompiledFrame& FrameCompiler::compile(const FrameDescription& description,
         }
         for (const InputRef& input : description.passes[consumer].inputs)
         {
-            if (input.target == nullptr)
+            if (!input.source.isProduced() || input.source.target == nullptr)
             {
-                continue;  // nothing produced it this frame (the engine resolved it to null)
+                continue;  // imported textures have no producer; an empty source produced nothing this frame
             }
             for (std::uint32_t producer = 0; producer < pass_count; ++producer)
             {
                 if (producer == consumer || servable_[producer] == 0 ||
-                    description.passes[producer].target != input.target || !writes(description.passes[producer]))
+                    description.passes[producer].target != input.source.target ||
+                    !writes(description.passes[producer]))
                 {
                     continue;
                 }
@@ -275,8 +276,19 @@ std::span<const CompiledInput> FrameCompiler::resolveInputs(const CollectedPass&
     const std::span<CompiledInput> inputs = arena_.makeArray<CompiledInput>(pass.inputs.size());
     for (std::size_t index = 0; index < pass.inputs.size(); ++index)
     {
-        CompiledInput& out = inputs[index];
-        out.target         = pass.inputs[index].target;
+        CompiledInput&                   out    = inputs[index];
+        const vn::graphics::ImageSource& source = pass.inputs[index].source;
+        out.kind                                = source.kind;
+        if (source.isImported())
+        {
+            // An imported texture is sampled like any other input: one colour image, no producer, no depth.
+            // Its revision is the content revision the cache is keyed by, so a re-upload invalidates binds.
+            out.texture           = source.texture;
+            out.texture_revision  = source.revision;
+            out.color_attachments = 1;
+            continue;
+        }
+        out.target = source.target;
         if (out.target == nullptr)
         {
             continue;  // nothing produced it this frame: the engine reports that, and there is nothing to bind

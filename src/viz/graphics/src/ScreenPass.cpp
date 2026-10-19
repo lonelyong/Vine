@@ -37,12 +37,12 @@ void ScreenPass::setProgram(intrusive_ptr<ShaderProgram> program)
     // a pass draws nothing): the base class cannot see this setter, so the subclass announces it.
 }
 
-void ScreenPass::resolveInputTextures(const std::vector<raw_ptr<RenderTarget>>& inputs)
+void ScreenPass::resolveInputTextures(std::span<const ImageSource> inputs)
 {
     source_ = nullptr;
-    for (const raw_ptr<RenderTarget> input : inputs) {
-        if (input != nullptr) {
-            source_ = input;
+    for (const ImageSource& input : inputs) {
+        if (input.isProduced() && input.target != nullptr) {
+            source_ = input.target;
             break;
         }
     }

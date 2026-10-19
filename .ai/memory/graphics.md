@@ -25,6 +25,23 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-19 E2 落地：pass 输入统一成 `ImageInput` / `ImageSource`（内容路径；全屏 ABI 仍登记）
+
+- **结论**：`RenderPass` / `PassDesc` 的输入声明是一个有序的 `ImageInput` 序列（produced `ImageRef` 或
+  imported `Texture`）；已解析形状是 `ImageSource`（`None` / `ProducedImage` / `ProducedTarget` /
+  `ImportedTexture`，带 target/attachment/depth 或 texture/revision）。`FrameDescription::Pass::inputs`、
+  `RenderEngine::resolveRowInputs`、`FrameRecorder::InputRef`、`FrameCompiler::CompiledInput` 全部改用它。
+  produced 图的单 producer / wiring 规则不变；imported 图没有 producer，`FrameCompiler` 不为它加依赖边。
+- **绑定**：vsg 的 `recordContent` 对 imported 输入调用 `MaterialImages::acquire`（键为 `Texture*` +
+  revision），把 view 填进该输入的 `InputImages`；内容 pass 按声明序采样。上传失败绑白图并报告。
+  **全屏 ABI 仍只绑 produced source + shadow map**：`ScreenPass` 声明 imported 图会被引擎以
+  `ContentSkipped` 报告并跳过（不静默采样错图）。
+- **未收窄的语义**：produced 输入的 `attachment` / `depth` 目前是选择符（全屏 ABI 的 binding N =
+  attachment N），绑定层仍给整个 target；按 attachment 绑定是后端能力项。
+- **判据**：构建 0 error / 0 warning；`test_vsg` 463；`ctest` 24/24；8 条 hygiene 门禁 0 finding；ASan
+  `VsgBackendTest.AnImportedTextureInputReachesAContentProgram` + offscreen 用例 PASS。设计见
+  `.ai/design/graphics-image-source.md` §7。
+
 ## 2026-10-19 F2a 落地：逻辑→设备像素换算收进 PixelGeometry
 
 - **结论**：`Pipeline::resize`、`AxisGizmo::onSurfaceResized`、`FpsOverlay::onSurfaceResized` 三处重复的 `static_cast<int>(logical * ratio)` 改为私有 `PixelGeometry.hpp` 的 `LogicalSize` / `DeviceSize` / `PixelRatio` / `toDeviceSize`；保留截断规则，`EngineCompile` 的形状容差说明改为指向它。公开签名不变。

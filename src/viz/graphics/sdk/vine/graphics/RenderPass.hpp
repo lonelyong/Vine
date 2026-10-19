@@ -2,6 +2,7 @@
 #include "graphics_global.hpp"
 
 #include <optional>
+#include <span>
 #include <vector>
 
 #include <vine/intrusive_ptr.hpp>
@@ -13,6 +14,7 @@
 #include "DepthMode.hpp"
 #include "FrameDescription.hpp"
 #include "ImageRef.hpp"
+#include "ImageSource.hpp"
 #include "Node.hpp"
 #include "PolygonMode.hpp"
 #include "PresentTarget.hpp"
@@ -356,7 +358,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     /** @brief Clears all declared input texture slots. */
     void clearInputNames();
 
-    /** @brief Declares one image this pass consumes (design §14).
+    /** @brief Declares one produced image this pass consumes (design §14).
      *
      * @details
      * - The object-typed counterpart of addInputName. A consumer samples one ATTACHMENT of the image's target
@@ -370,11 +372,33 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     void addInput(intrusive_ptr<ImageRef> image);
 
-    /** @brief Gets the images this pass consumes.
+    /** @brief Declares one imported texture this pass consumes.
      *
-     * @return The input images, in the order they were added.
+     * @details
+     * - The counterpart of addInput(ImageRef) for a STATIC/imported image: a texture has no producer in the frame,
+     *   so it does not participate in the one-producer wiring rules; it is sampled where the pass' program declares
+     *   a sampler for it (see the pass input set's binding order).
+     * - A Scene pass (content) binds imported textures in declaration order with the other inputs. The
+     *   full-screen ABI binds its produced source and the shadow map only, so a ScreenPass that declares one is
+     *   reported and draws nothing (see RenderEngine's plan checks) rather than silently sampling the wrong image.
+     * - It is a full input in the pass' input list, in declaration order; a pass may mix produced images, whole
+     *   targets and imported textures.
+     *
+     * @param texture Texture this pass consumes (null is ignored).
      */
-    const std::vector<intrusive_ptr<ImageRef>>& inputs() const;
+    void addInput(intrusive_ptr<Texture> texture);
+
+    /** @brief Declares one input from the declaration value (one of the two additions above).
+     *
+     * @param input Input declaration; an empty declaration is ignored.
+     */
+    void addInput(ImageInput input);
+
+    /** @brief Gets the images this pass consumes, in declaration order.
+     *
+     * @return The input declarations (produced images or imported textures), as added.
+     */
+    const std::vector<ImageInput>& inputs() const;
 
     /** @brief Declares a WHOLE target this pass consumes (the coarse counterpart of addInput).
      *
@@ -405,11 +429,13 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *   its inputNames(), resolved against the engine's named-output registry (the sugar layer).
      * - An entry stays null when nothing produced it this frame (the engine reports that once per episode), so the
      *   base pass ignores the inputs and a subclass such as ScreenPass treats a leading null as "nothing to sample".
-     * - The targets are borrowed: whatever produced them keeps them alive while the frame runs.
+     * - The sources are BORROWED: whatever produced a target and whatever owns a texture keep them alive while the
+     *   frame runs. An imported texture is an input like any other; a pass that needs a produced source (a screen
+     *   pass) picks it by kind.
      *
-     * @param inputs Resolved input targets, in declaration order (names last).
+     * @param inputs Resolved input sources, in declaration order (names last).
      */
-    virtual void resolveInputTextures(const std::vector<raw_ptr<RenderTarget>>& inputs)
+    virtual void resolveInputTextures(std::span<const ImageSource> inputs)
     {
         (void)inputs;
     }
@@ -538,7 +564,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     std::vector<String> input_names_;
     intrusive_ptr<ImageRef> output_image_;                 // fine output declaration (design §14)
     intrusive_ptr<RenderTarget> output_target_;            // coarse output declaration (design §14)
-    std::vector<intrusive_ptr<ImageRef>> input_images_;    // fine input declarations (design §14)
+    std::vector<ImageInput> input_images_;    // fine input declarations: produced images or imported textures
     std::vector<intrusive_ptr<RenderTarget>> input_targets_;   // coarse input declarations (design §14)
     ShaderProgramPtr program_override_;   // null = per-geometry programs
     std::optional<PolygonMode> polygon_mode_override_;  // unset = each command's own effective mode
