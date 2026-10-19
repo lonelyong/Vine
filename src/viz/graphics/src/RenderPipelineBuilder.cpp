@@ -137,9 +137,10 @@ intrusive_ptr<RenderPipeline> RenderPipelineBuilder::build(const RenderPipelineO
     // remembers it, so a build that stops half way (or a host that drops the
     // handle) takes its passes back out of the frame instead of leaving them to
     // run with nobody holding them (see Pipeline).
-    // The pipeline holds the engine STRONGLY (its passes live in that engine's
-    // list): adopt the borrowed handle into an owning one.
-    auto pipeline = make_intrusive<RenderPipeline>(intrusive_ptr<RenderEngine>(engine_));
+    // The handle is a LEASE, not an owning reference: the builder borrowed the engine and a pipeline must not own its
+    // engine from below (a released engine would live on for as long as any pipeline it once served). The lease keeps
+    // "is the engine still there" answerable for exactly as long as it is needed (see Lease / RenderEngine::lease).
+    auto pipeline = make_intrusive<RenderPipeline>(engine_->lease());
     // A builder is reusable in principle, and the report is about THIS build.
     shadows_built_ = 0;
     // This build's content selection: every pass that walks the content states it (see RenderPipelineOptions::layer_mask).
@@ -240,7 +241,7 @@ bool RenderPipelineBuilder::applyOverlays(RenderPipeline& pipeline, const Render
 
 void RenderPipelineBuilder::reportRequestedShadows() const
 {
-    // A shadow is asked for by the LIGHT (Light::castShadow + ShadowSettings) —
+    // A shadow is asked for by the LIGHT (Light::isCastingShadow + ShadowSettings) —
     // that is where the request lives, and it outlives any one pipeline. What
     // this reports is the request the pipeline did NOT honour: a forward path
     // builds no shadow at all yet (S2b), and a deferred path asked to shade with
@@ -254,7 +255,7 @@ void RenderPipelineBuilder::reportRequestedShadows() const
             continue;
         }
         for (const auto& light : scene->lights()) {
-            if (light != nullptr && light->isEnabled() && light->castShadow()) {
+            if (light != nullptr && light->isEnabled() && light->isCastingShadow()) {
                 ++requesting;
             }
         }
@@ -295,7 +296,7 @@ intrusive_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
     }
     // Single directional light per content, as the shadow design fixes it (graphics-pipeline.md §9).
     for (const auto& light : content->lights()) {
-        if (light != nullptr && light->isEnabled() && light->castShadow() &&
+        if (light != nullptr && light->isEnabled() && light->isCastingShadow() &&
             light->type() == LightType::Directional) {
             return light;   // a strong handle: the map holds its light (RenderTarget::setShadowOf)
         }
@@ -406,7 +407,7 @@ bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const Re
         return false;
     }
     // The light this pipeline must cast a shadow for, if any: the request lives on the LIGHT
-    // (Light::castShadow, with its own resolution/bias in ShadowSettings), because a light outlives
+    // (Light::isCastingShadow, with its own resolution/bias in ShadowSettings), because a light outlives
     // any one pipeline and a scene may be drawn by several. Single directional light per content,
     // as the shadow design fixes it (graphics-shadow.md §8).
     intrusive_ptr<const Light> shadow_light = requestedShadowLight(content_.get());
@@ -511,16 +512,16 @@ bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const Re
     // ---- Deferred + forward composite (transparent content present) ----
     // One off-screen composite target whose single render pass stacks the
     // passes in record order: fullscreen lighting (0) -> forward (+1). It does
-    // NOT own a depth buffer: it borrows the G-buffer's depth (shareDepth), so
-    // the opaque scene is rasterised once and the forward content tests against
-    // that same depth. The G-buffer's depth is therefore kept as an attachment
-    // (not promoted to a sampled texture) here.
+    // NOT own a depth buffer: its passes draw against the G-buffer's depth (a
+    // DepthView edge, stated by each pass that draws into it), so the opaque
+    // scene is rasterised once and the forward content tests against that same
+    // depth. The G-buffer's depth is therefore kept as an attachment (not
+    // promoted to a sampled texture) here.
     gbuffer->setDepthPromotion(false);
     auto composite = make_intrusive<RenderTarget>();
     composite->setName(u8"composite");
     composite->setSize(width, height);
     composite->attachColor(RenderTarget::ColorFormat::RGBA8);
-    composite->shareDepth(gbuffer);
 
     // Fullscreen deferred lighting (order 0) INTO the composite: a depth-off
     // program that overwrites every pixel with the lit opaque result.
@@ -538,6 +539,9 @@ bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const Re
         light_desc.input_targets.push_back(shadow_map);
     }
     light_desc.program = std::move(light_program);
+    // The edge, stated by the pass that draws against it (see DepthView): the composite has no depth of its
+    // own, so what it tests against is the G-buffer's.
+    light_desc.depth_view = depthViewOf(gbuffer);
     pipeline.addPass(light_desc);
 
     // Forward transparent / overlay content (order +1): depth-TESTS against
@@ -556,6 +560,7 @@ bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const Re
     transparent_desc.clear_enabled = false;
     transparent_desc.depth_mode    = DepthMode::TestOnly;
     transparent_desc.output_name   = u8"Composite";
+    transparent_desc.depth_view    = depthViewOf(gbuffer);
     // The composite's LAST writer owns the hand-off (the lighting pass above also draws into the same
     // target but promises nothing): promising on both would be a collision report, and the collision
     // report is exactly about two passes both claiming to be the source of one image.

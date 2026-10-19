@@ -563,7 +563,7 @@ TEST(FrameCompilerTest, ThePassDepthAppliesOnlyWhereTheContentAuthoredNone)
 
     // A command that authored its own depth state (a StateNode set it) and one that did not.
     RenderCommand authored;
-    authored.authoredState.depth = vn::graphics::DepthState{};  // test + write, as a StateNode would state it
+    authored.authored_state.depth = vn::graphics::DepthState{};  // test + write, as a StateNode would state it
     RenderCommand inherited;                                    // nothing authored: the pass' policy applies
 
     const std::vector<RenderCommand> commands{ authored, inherited };
@@ -597,8 +597,8 @@ TEST(FrameCompilerTest, TheAuthoredCompareOpTravelsIntoTheDynamicState)
     // left the default. The resolve copies what the content said and leaves the
     // reverse-Z inversion to the Vulkan boundary.
     RenderCommand authored;
-    authored.authoredState.depth         = vn::graphics::DepthState{};
-    authored.authoredState.depth->compare = vn::graphics::CompareOp::LessEqual;
+    authored.authored_state.depth         = vn::graphics::DepthState{};
+    authored.authored_state.depth->compare = vn::graphics::CompareOp::LessEqual;
     RenderCommand inherited;
 
     const std::vector<RenderCommand> commands{ authored, inherited };

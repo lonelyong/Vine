@@ -316,7 +316,7 @@ TEST(RenderSurfaceTest, TheAreaOwnsTheSizeAndTheViewReadsIt)
     EXPECT_EQ(view->surfaceWidth(), 800);
     EXPECT_EQ(view->surfaceHeight(), 600);
     EXPECT_EQ(view->surfacePixelRatio(), 2.0);
-    EXPECT_NEAR(view->camera()->aspectRatio(), 800.0 / 600.0, 1e-9) << "the camera is shaped for the area";
+    EXPECT_NEAR(view->camera()->aspect(), 800.0 / 600.0, 1e-9) << "the camera is shaped for the area";
     EXPECT_FALSE(surface->presentingPass()->hasViewport())
         << "a full-area picture is what a pass without a viewport already means";
 
@@ -329,7 +329,7 @@ TEST(RenderSurfaceTest, TheAreaOwnsTheSizeAndTheViewReadsIt)
     ASSERT_TRUE(other->present(*later));
     EXPECT_EQ(later->surfaceWidth(), 400);
     EXPECT_EQ(later->surfaceHeight(), 400);
-    EXPECT_NEAR(later->camera()->aspectRatio(), 1.0, 1e-9);
+    EXPECT_NEAR(later->camera()->aspect(), 1.0, 1e-9);
 }
 
 TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
@@ -426,4 +426,35 @@ TEST(RenderSurfaceTest, DismissingAViewStopsFeedingItTheSize)
     ASSERT_TRUE(surface->present(*view));
     EXPECT_EQ(view->surfaceWidth(), 1280);
     EXPECT_EQ(view->surfaceHeight(), 720);
+}
+
+/**
+ * @brief An area that outlives its engine is a DEAD area, not a dangling pointer.
+ *
+ * The area borrows its engine (it is 1:1 with it and registers itself on it), and "borrowed" used to mean a raw
+ * pointer plus a comment: a host that kept the area past the engine's destruction called into freed memory from
+ * ~RenderSurface, from resize() and from hasPresentation(). The borrow is a Lease now - the same one the view and
+ * the pipeline hold - so every use asks whether the engine is still there.
+ */
+TEST(RenderSurfaceTest, AnAreaOutlivingItsEngineAnswersNothingInsteadOfCallingIntoIt)
+{
+    intrusive_ptr<RenderSurface> surface;
+    {
+        auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+        surface     = intrusive_ptr<RenderSurface>(new RenderSurface(*engine));
+        surface->resize(640, 480, 1.0);
+        EXPECT_FALSE(surface->hasPresentation());
+    }   // the engine goes first
+
+    EXPECT_FALSE(surface->hasPresentation());
+    EXPECT_EQ(surface->presentingPass(), nullptr);
+    EXPECT_EQ(surface->presentedView(), nullptr);
+
+    // A size announcement is recorded (the number is the area's own fact) but reaches no frame.
+    surface->resize(800, 600, 1.0);
+    EXPECT_EQ(surface->pixelRatio(), 1.0);
+
+    // And no picture can be declared into a frame that is gone.
+    auto view = intrusive_ptr<SceneView>(new SceneView());
+    EXPECT_FALSE(surface->present(*view));
 }

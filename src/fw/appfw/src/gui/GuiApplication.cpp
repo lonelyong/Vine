@@ -479,7 +479,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
     // The window goes up now, and this is the only place it does: it was created by the constructor and kept off screen
     // for the whole boot. What shows in the render area until its first frame is the window's own background, not a hole
     // (see RenderControl).
-    if (d->main_window != nullptr && !d->main_window->visible()) {
+    if (d->main_window != nullptr && !d->main_window->isVisible()) {
         d->main_window->show();
     }
 
@@ -497,7 +497,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
     if (d->main_window != nullptr) {
         // Diagnostic: tells "the window sat behind something" (visible but not active) apart from "the window was never
         // shown", which are the two ways a frame that closes too early can look like a window that never appeared.
-        VN_LOGI("Startup frame going away: main window visible={}, active={}", d->main_window->visible(), d->main_window->isActive());
+        VN_LOGI("Startup frame going away: main window visible={}, active={}", d->main_window->isVisible(), d->main_window->isActive());
 
         if (auto* native = d->main_window->impl<QWidget>()) {
             native->raise();

@@ -683,9 +683,9 @@ TEST_F(GuiTest, RibbonButton_Properties)
     EXPECT_TRUE(btnPaste->text() == u8"Paste");
     EXPECT_FALSE(btnPaste->icon().isNull());
     EXPECT_EQ(btnPaste->buttonSize(), guifw::RibbonItemSize::Small);
-    EXPECT_TRUE(btnPaste->enabled());
-    EXPECT_FALSE(btnPaste->checkable());
-    EXPECT_FALSE(btnPaste->checked());
+    EXPECT_TRUE(btnPaste->isEnabled());
+    EXPECT_FALSE(btnPaste->isCheckable());
+    EXPECT_FALSE(btnPaste->isChecked());
     EXPECT_TRUE(btnPaste->tooltip().empty());
 }
 
@@ -695,9 +695,9 @@ TEST_F(GuiTest, RibbonButton_StyleAndState)
     EXPECT_EQ(btnStyle->style(), guifw::RibbonButtonStyle::TextBesideIcon);
     EXPECT_TRUE(btnStyle->iconRightText());
     EXPECT_TRUE(btnStyle->tooltip() == u8"style tooltip");
-    EXPECT_TRUE(btnStyle->checkable());
-    EXPECT_TRUE(btnStyle->checked());
-    EXPECT_TRUE(btnStyle->enabled());
+    EXPECT_TRUE(btnStyle->isCheckable());
+    EXPECT_TRUE(btnStyle->isChecked());
+    EXPECT_TRUE(btnStyle->isEnabled());
 }
 
 TEST_F(GuiTest, RibbonButton_ButtonSizes)
@@ -877,12 +877,12 @@ TEST_F(GuiTest, Control_CommonProps)
     auto* ctrl  = new guifw::Control(combo);
 
     ctrl->setEnabled(false);
-    EXPECT_FALSE(ctrl->enabled());
+    EXPECT_FALSE(ctrl->isEnabled());
     ctrl->setEnabled(true);
-    EXPECT_TRUE(ctrl->enabled());
+    EXPECT_TRUE(ctrl->isEnabled());
 
     ctrl->setVisible(false);
-    EXPECT_FALSE(ctrl->visible());
+    EXPECT_FALSE(ctrl->isVisible());
 
     ctrl->setTooltip(u8"hi");
     EXPECT_TRUE(ctrl->tooltip() == u8"hi");
@@ -2176,7 +2176,7 @@ TEST(ProgressPresenterTest, ShowsBarForActiveHostAndHidesAfter)
 
     // 无宿主：不忙、隐藏。
     EXPECT_FALSE(presenter.isBusy());
-    EXPECT_FALSE(presenter.visible());
+    EXPECT_FALSE(presenter.isVisible());
 
     {
         vn::appfw::ProgressHost host;
@@ -2192,7 +2192,7 @@ TEST(ProgressPresenterTest, ShowsBarForActiveHostAndHidesAfter)
         // 超过显示阈值后应出现进度条。
         pumpEventsFor(700);
         EXPECT_TRUE(presenter.isBusy());
-        EXPECT_TRUE(presenter.visible());
+        EXPECT_TRUE(presenter.isVisible());
 
         worker.join();
     }
@@ -2200,7 +2200,7 @@ TEST(ProgressPresenterTest, ShowsBarForActiveHostAndHidesAfter)
     // 宿主结束后，延迟隐藏。
     pumpEventsFor(500);
     EXPECT_FALSE(presenter.isBusy());
-    EXPECT_FALSE(presenter.visible());
+    EXPECT_FALSE(presenter.isVisible());
 }
 
 // 无 GUI 时的进度消费者：ConsoleUserIO 用它把 LongRunning 命令的进度打到控制台。

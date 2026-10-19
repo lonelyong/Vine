@@ -124,7 +124,7 @@ struct LightRef
     float                      intensity{1.0F};                   ///< Intensity multiplier.
     bool                       has_direction{false};              ///< Whether direction() means anything.
     vn::math::Vec3d          direction{};                       ///< World-space direction (directional lights).
-    bool                       cast_shadow{false};                ///< Light::castShadow: the switch that makes it a
+    bool                        cast_shadow{false};                ///< Light::isCastingShadow: the switch that makes it a
                                                                   ///< caster.
     float                      shadow_bias{0.0F};                 ///< ShadowSettings::bias: the map comparison's
                                                                   ///< depth bias.
@@ -156,7 +156,7 @@ struct CollectedCommand
     const void*   material{nullptr};            ///< Material identity, or nullptr.
     vn::math::Mat4d model{};                  ///< World-space model matrix.
     float         opacity{1.0F};                ///< Effective opacity (the engine's only transparency channel).
-    vn::graphics::RenderState authoredState{};  ///< What the CONTENT authored, item by item (see the resolution).
+    vn::graphics::RenderState authored_state{};  ///< What the CONTENT authored, item by item (see the resolution).
 };
 
 /**

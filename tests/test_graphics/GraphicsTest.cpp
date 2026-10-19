@@ -6,6 +6,7 @@
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/Node.hpp>
+#include <vine/graphics/OwnedFrame.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/graphics/Material.hpp>
@@ -14,6 +15,8 @@
 #include <vine/graphics/CameraMirror.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/FramePlan.hpp>
+#include <vine/graphics/InputRouter.hpp>
+#include <vine/graphics/LayoutParticipant.hpp>
 #include <vine/graphics/Ray.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
@@ -31,6 +34,7 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
 #include <vine/Buffer.hpp>
+#include <vine/window/InputEvent.hpp>
 #include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
 #include <vine/imaging/Image.hpp>
@@ -743,11 +747,11 @@ TEST(CameraTest, TheProjectionIsBuiltForTheCamerasOwnShape)
     Camera cam;
     cam.setProjectionMatrixAsPerspective(60.0, 0.1, 100.0);
 
-    EXPECT_DOUBLE_EQ(cam.aspectRatio(), 1.0) << "a camera is born square, which is what a headless picture is";
+    EXPECT_DOUBLE_EQ(cam.aspect(), 1.0) << "a camera is born square, which is what a headless picture is";
     const Mat4d square = cam.projectionMatrix();
 
     cam.setAspect(2.0);
-    EXPECT_DOUBLE_EQ(cam.aspectRatio(), 2.0);
+    EXPECT_DOUBLE_EQ(cam.aspect(), 2.0);
     const Mat4d wide = cam.projectionMatrix();
     EXPECT_NEAR(wide.element(0, 0), square.element(0, 0) / 2.0, 1e-9)
         << "twice as wide a picture halves the world's x scale";
@@ -756,7 +760,7 @@ TEST(CameraTest, TheProjectionIsBuiltForTheCamerasOwnShape)
     // A non-positive shape is ignored rather than stored: NaN would poison every projection built from it.
     cam.setAspect(0.0);
     cam.setAspect(-3.0);
-    EXPECT_DOUBLE_EQ(cam.aspectRatio(), 2.0) << "the last GOOD shape stays in force";
+    EXPECT_DOUBLE_EQ(cam.aspect(), 2.0) << "the last GOOD shape stays in force";
 
     // An ORTHOGRAPHIC camera is not fitted to a shape at all: its window already IS one (the shadow-map and the
     // tiled-window case), so the aspect is not folded in.
@@ -1322,6 +1326,47 @@ TEST(MaterialTest, CarriesTheTextureItSamples)
     EXPECT_EQ(mat.texture(), nullptr);
 }
 
+/**
+ * @brief The material counts its own shading edits, and only those.
+ *
+ * Every content type a backend answers for carries a revision, and a material is the one that can move its own: each
+ * of its shading values travels through a setter, so the setter reports the change and no consumer has to read the
+ * values back to find out. Two properties make that safe rather than noisy - re-applying the value a material already
+ * holds is not a change (a host that recomputes its settings every frame writes nothing), and the NAME is not shading
+ * (renaming a material cannot make anything rebuild).
+ */
+TEST(MaterialTest, TheRevisionMovesWhenAShadingValueChanges)
+{
+    auto     texture = intrusive_ptr<Texture>(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
+    Material mat;
+    EXPECT_EQ(mat.revision(), 0u) << "a material nobody changed has not changed";
+
+    mat.setDiffuse(Colorf(1.0f, 0.0f, 0.0f, 1.0f));
+    EXPECT_EQ(mat.revision(), 1u);
+    mat.setSpecular(Colorf(0.5f, 0.5f, 0.5f, 1.0f));
+    mat.setAmbient(Colorf(0.1f, 0.1f, 0.1f, 1.0f));
+    mat.setShininess(8.0f);
+    mat.setTexture(texture);
+    EXPECT_EQ(mat.revision(), 5u) << "every shading value that moved is one edit";
+
+    // Same values again: nothing changed, so nothing moves. This is what keeps a host that re-applies its settings
+    // every frame from rebuilding every material row every frame.
+    mat.setDiffuse(Colorf(1.0f, 0.0f, 0.0f, 1.0f));
+    mat.setSpecular(Colorf(0.5f, 0.5f, 0.5f, 1.0f));
+    mat.setAmbient(Colorf(0.1f, 0.1f, 0.1f, 1.0f));
+    mat.setShininess(8.0f);
+    mat.setTexture(texture);
+    EXPECT_EQ(mat.revision(), 5u) << "re-applying what the material already holds is not an edit";
+
+    // A name is a label, not shading.
+    mat.setName(u8"red");
+    EXPECT_EQ(mat.revision(), 5u) << "renaming a material is not a shading change";
+
+    // Clearing the texture is a change (the picture loses its map).
+    mat.setTexture(nullptr);
+    EXPECT_EQ(mat.revision(), 6u);
+}
+
 // ============ Material inheritance ============
 
 namespace
@@ -1822,8 +1867,8 @@ TEST(NodeTest, AddChildRejectsCycles)
     // Indirect cycle, one level up: middle adopting outer.
     middle->addChild(outer);
     EXPECT_EQ(middle->children().size(), 1u);   // still just `leaf`
-    EXPECT_EQ(middle->childrenRef()[0].get(), leaf.get());
-    EXPECT_EQ(outer->childrenRef()[0].get(), middle.get());
+    EXPECT_EQ(middle->children()[0].get(), leaf.get());
+    EXPECT_EQ(outer->children()[0].get(), middle.get());
 
     // The tree is still traversable (no infinite recursion) and its structure
     // is exactly the one built before the rejected adds.
@@ -2004,7 +2049,7 @@ TEST(SceneTest, CollectCommandsBakesNestedWorldMatrix)
     auto commands = scene.collectRenderCommands(&cam);
     ASSERT_EQ(commands.size(), 1u);
     // The command's model matrix is the folded world transform of the leaf.
-    const auto origin = commands[0].modelMatrix * vn::math::Point3d(0, 0, 0);
+    const auto origin = commands[0].model_matrix * vn::math::Point3d(0, 0, 0);
     EXPECT_NEAR(origin.x, 0.0, 1e-9);
     EXPECT_NEAR(origin.y, 0.0, 1e-9);
     EXPECT_NEAR(origin.z, -5.0, 1e-9);
@@ -2031,8 +2076,8 @@ TEST(GeometryTest, CountsStayDataStatsUnderPointsTopology)
     ASSERT_EQ(commands.size(), 1u);
     // The draw topology rides the content's state (and the pass drawing it decides the rest - see
     // resolveRenderState); the data counts stay.
-    ASSERT_TRUE(commands[0].authoredState.topology.has_value());
-    EXPECT_EQ(*commands[0].authoredState.topology, Topology::Points);
+    ASSERT_TRUE(commands[0].authored_state.topology.has_value());
+    EXPECT_EQ(*commands[0].authored_state.topology, Topology::Points);
     EXPECT_EQ(commands[0].geometry->vertexCount(), 3u);
 }
 
@@ -2408,9 +2453,17 @@ class MockBackend : public RenderBackend {
     /// the double honours every target it is handed (a pass test is not asking about target support).
     /// A test that wants the other answer flips this and the engine reports the pipeline it cannot serve.
     bool supports_targets = true;
+    /// The FEATURES this double answers (see Capabilities::features).
+    std::uint32_t capability_features = 0;
+    /// The LIMITS this double answers (see Capabilities).
+    float         capability_max_anisotropy        = 1.0F;
+    std::uint32_t capability_max_color_attachments = 1;
     [[nodiscard]] Capabilities capabilities() const noexcept override
     {
-        return Capabilities{ .render_targets = supports_targets };
+        return Capabilities{ .render_targets         = supports_targets,
+                             .features               = capability_features,
+                             .max_anisotropy         = capability_max_anisotropy,
+                             .max_color_attachments  = capability_max_color_attachments };
     }
 
     /// The pass identities the frame named, in RUN ORDER (see FrameDescription::Pass::pass): what the engine's
@@ -2514,12 +2567,12 @@ class MockBackend : public RenderBackend {
         last_commands_authored_polygon_modes.reserve(commands.size());
         for (const auto& command : commands) {
             last_programs.push_back(command.program.get());
-            last_commands_authored_polygon_modes.push_back(command.authoredState.polygonMode);
+            last_commands_authored_polygon_modes.push_back(command.authored_state.polygonMode);
             // The EFFECTIVE mode, resolved the way a real backend does it: what the content authored, weighed
             // against the pass that draws it (the rasterisation override travels with the pass' state, not in the
             // commands - see StateNode.hpp's resolveRenderState).
             last_polygon_modes.push_back(
-                resolveRenderState(command.authoredState, pass_state).state.polygonMode);
+                resolveRenderState(command.authored_state, pass_state).state.polygonMode);
         }
     }
 
@@ -2595,6 +2648,67 @@ TEST(RenderEngineTest, TheFrameReportCrossesTheEngineWholeAndAbsentPartsStayAbse
 
     // 4. Capabilities cross the same way: the engine's answer IS the backend's value, whole.
     EXPECT_TRUE(engine.capabilities().render_targets);
+}
+
+/*
+ * @brief A capability's features are ONE BIT each, and a feature nobody answered is false.
+ *
+ * The bit set is the whole point of the shape: a host branches BEFORE it plans a frame (a HUD asking for GPU
+times, a menu offering a wireframe mode, a texture pipeline asking about anisotropy), and the answer is one
+ * value that travels beside the other capabilities rather than a growing family of booleans. This pins the
+ * value's own arithmetic - one bit per feature, no overlap, nothing answered by accident - and that the engine
+ * hands the backend's bits over unchanged.
+ */
+TEST(CapabilitiesTest, OneFeatureIsOneBitAndAnUnansweredFeatureIsFalse)
+{
+    const Capabilities nothing;
+    EXPECT_FALSE(nothing.supports(Capabilities::Feature::GpuTimings));
+    EXPECT_FALSE(nothing.supports(Capabilities::Feature::Wireframe));
+    EXPECT_FALSE(nothing.supports(Capabilities::Feature::AnisotropicFiltering));
+
+    Capabilities answered;
+    answered.features = Capabilities::bit(Capabilities::Feature::Wireframe);
+    EXPECT_TRUE(answered.supports(Capabilities::Feature::Wireframe));
+    EXPECT_FALSE(answered.supports(Capabilities::Feature::GpuTimings)) << "one bit per feature";
+    EXPECT_FALSE(answered.supports(Capabilities::Feature::AnisotropicFiltering)) << "one bit per feature";
+
+    EXPECT_NE(Capabilities::bit(Capabilities::Feature::GpuTimings),
+              Capabilities::bit(Capabilities::Feature::Wireframe));
+    EXPECT_NE(Capabilities::bit(Capabilities::Feature::Wireframe),
+              Capabilities::bit(Capabilities::Feature::AnisotropicFiltering));
+
+    // The engine reports the backend's answer unchanged, feature bits included.
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    backend->capability_features = Capabilities::bit(Capabilities::Feature::GpuTimings);
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    EXPECT_TRUE(engine->capabilities().supports(Capabilities::Feature::GpuTimings));
+    EXPECT_FALSE(engine->capabilities().supports(Capabilities::Feature::Wireframe));
+}
+
+/*
+ * @brief A limit travels beside the feature bits: "anisotropy exists" and "how much of it" are two answers.
+ *
+ * A host that shows a quality setting needs both; a backend that answers nothing promises one attachment and no
+ * anisotropy, which is the honest floor rather than a claim.
+ */
+TEST(CapabilitiesTest, TheLimitsTravelBesideTheFeatureBits)
+{
+    const Capabilities defaults;
+    EXPECT_FLOAT_EQ(defaults.max_anisotropy, 1.0F) << "an unanswered limit promises no anisotropy";
+    EXPECT_EQ(defaults.max_color_attachments, 1U) << "and one attachment";
+
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    backend->capability_features               = Capabilities::bit(Capabilities::Feature::AnisotropicFiltering);
+    backend->capability_max_anisotropy         = 16.0F;
+    backend->capability_max_color_attachments  = 8U;
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+
+    const Capabilities caps = engine->capabilities();
+    EXPECT_TRUE(caps.supports(Capabilities::Feature::AnisotropicFiltering));
+    EXPECT_FLOAT_EQ(caps.max_anisotropy, 16.0F);
+    EXPECT_EQ(caps.max_color_attachments, 8U);
 }
 
 TEST(RenderEngineTest, EveryExecutedPassReachesTheBackendOnceAndADisabledOneDoesNot)
@@ -3089,6 +3203,159 @@ TEST(RenderEngineTest, EngineStartsEmpty)
     EXPECT_EQ(engine->passCount(), 0u);
 }
 
+namespace
+{
+
+/// @brief A manipulator that only records which call it received: the router's half of the contract, in isolation.
+class RecordingManipulator : public CameraManipulator
+{
+  public:
+    explicit RecordingManipulator(Camera* camera) : CameraManipulator(camera) {}
+
+    void apply() override {}
+    void onMousePress(const vn::window::MouseEvent& event) override { presses.push_back(event.button); }
+    void onMouseMove(const vn::window::MouseEvent&) override { ++moves; }
+    void onMouseRelease(const vn::window::MouseEvent&) override { ++releases; }
+    void onScroll(const vn::window::ScrollEvent& event) override { scrolls += event.deltaY; }
+    void onKeyDown(const vn::window::KeyEvent&) override { ++key_downs; }
+    void onKeyUp(const vn::window::KeyEvent&) override { ++key_ups; }
+    void onResize(const vn::window::ResizeEvent& event) override { resizes.push_back({ event.width, event.height }); }
+
+    std::vector<vn::window::MouseButton> presses;
+    int                                  moves     = 0;
+    int                                  releases  = 0;
+    double                               scrolls   = 0.0;
+    int                                  key_downs = 0;
+    int                                  key_ups   = 0;
+    std::vector<std::pair<int, int>>      resizes;
+};
+
+}  // namespace
+
+/*
+ * @brief The router is the only place that decides WHICH manipulator call a window event means.
+ *
+ * A mouse event with no button is a move, one with a button is a press or a release, and a key event is a down or an
+ * up: that mapping used to be a branch inside SceneView. It is now the router's whole job, so this case drives every
+ * event kind and checks the call that arrives - and that no manipulator (nobody listening yet) is a no-op rather
+ * than a crash.
+ */
+TEST(InputRouterTest, TheRouterTurnsEachWindowEventIntoTheCallTheManipulatorExpects)
+{
+    auto camera      = intrusive_ptr<Camera>(new Camera());
+    auto manipulator = intrusive_ptr<RecordingManipulator>(new RecordingManipulator(camera.get()));
+    InputRouter router(manipulator.get());
+
+    vn::window::MouseEvent move;
+    move.button = vn::window::MouseButton::None;
+    router.pushEvent(move);
+    EXPECT_EQ(manipulator->moves, 1) << "no button is a move";
+
+    vn::window::MouseEvent press;
+    press.button  = vn::window::MouseButton::Left;
+    press.pressed = true;
+    router.pushEvent(press);
+    ASSERT_EQ(manipulator->presses.size(), 1U);
+    EXPECT_EQ(manipulator->presses[0], vn::window::MouseButton::Left);
+
+    vn::window::MouseEvent release;
+    release.button  = vn::window::MouseButton::Left;
+    release.pressed = false;
+    router.pushEvent(release);
+    EXPECT_EQ(manipulator->releases, 1);
+
+    vn::window::ScrollEvent scroll;
+    scroll.deltaY = 1.5;
+    router.pushEvent(scroll);
+    EXPECT_DOUBLE_EQ(manipulator->scrolls, 1.5);
+
+    vn::window::KeyEvent down;
+    down.pressed = true;
+    router.pushEvent(down);
+    vn::window::KeyEvent up;
+    up.pressed = false;
+    router.pushEvent(up);
+    EXPECT_EQ(manipulator->key_downs, 1);
+    EXPECT_EQ(manipulator->key_ups, 1);
+
+    // Nobody listening is a no-op, not a crash: a view that has not created its default manipulator yet.
+    router.setManipulator(nullptr);
+    router.pushEvent(move);
+    router.pushEvent(scroll);
+    router.pushEvent(up);
+    EXPECT_EQ(manipulator->moves, 1);
+    EXPECT_DOUBLE_EQ(manipulator->scrolls, 1.5);
+    EXPECT_EQ(manipulator->key_ups, 1);
+}
+
+/*
+ * @brief The layout participant keeps the ORDER the view has always applied: its own step, then registered ones.
+ *
+ * The order is the point: the camera's aspect, the manipulator's resize and the pipeline's targets must be settled
+ * before a host step re-anchors something against them. Splitting the state out of SceneView must not turn that
+ * sequence into whatever registration order happens to be.
+ */
+TEST(LayoutParticipantTest, TheViewsOwnStepRunsBeforeTheRegisteredOnes)
+{
+    LayoutParticipant layout;
+    std::vector<int>    order;
+    layout.addStep([&order](int, int) { order.push_back(1); });
+    layout.addStep([&order](int, int, double) { order.push_back(2); });
+
+    layout.apply([&order](int, int, double) { order.push_back(0); });
+    EXPECT_TRUE(order.empty()) << "nothing runs before a usable size is announced";
+
+    layout.resize(800, 600, 2.0);
+    EXPECT_EQ(layout.width(), 800);
+    EXPECT_EQ(layout.height(), 600);
+    EXPECT_DOUBLE_EQ(layout.pixelRatio(), 2.0);
+    EXPECT_TRUE(layout.hasSize());
+
+    layout.apply([&order](int width, int height, double ratio) {
+        EXPECT_EQ(width, 800);
+        EXPECT_EQ(height, 600);
+        EXPECT_DOUBLE_EQ(ratio, 2.0);
+        order.push_back(0);
+    });
+    EXPECT_EQ(order, (std::vector<int>{ 0, 1, 2 })) << "the view's step first, then registration order";
+
+    layout.clearSteps();
+    order.clear();
+    layout.apply([&order](int, int, double) { order.push_back(0); });
+    EXPECT_EQ(order, std::vector<int>{ 0 }) << "cleared steps do not run";
+
+    // A size that is not a size is not an announcement; the recorded one stands.
+    layout.resize(0, -4, 3.0);
+    EXPECT_EQ(layout.width(), 800);
+    EXPECT_EQ(layout.height(), 600);
+}
+
+/*
+ * @brief The view keeps routing input through the router, including to the default manipulator it creates lazily.
+ */
+TEST(SceneViewTest, InputIsRoutedThroughTheRouterToTheManipulatorTheViewOwns)
+{
+    auto camera      = intrusive_ptr<Camera>(new Camera());
+    auto view        = intrusive_ptr<SceneView>(new SceneView());
+    auto manipulator = intrusive_ptr<RecordingManipulator>(new RecordingManipulator(camera.get()));
+    view->setManipulator(manipulator);
+
+    vn::window::MouseEvent press;
+    press.button  = vn::window::MouseButton::Left;
+    press.pressed = true;
+    view->pushEvent(press);
+    ASSERT_EQ(manipulator->presses.size(), 1U) << "the facade forwards through the router";
+    EXPECT_EQ(view->inputRouter().manipulator(), manipulator.get()) << "the router reads the view's manipulator";
+
+    // The lazy default manipulator is still created on the first event, as it was before the split.
+    auto plain = intrusive_ptr<SceneView>(new SceneView());
+    vn::window::MouseEvent move;
+    move.button = vn::window::MouseButton::None;
+    plain->pushEvent(move);
+    EXPECT_NE(plain->manipulator(), nullptr);
+    EXPECT_EQ(plain->inputRouter().manipulator(), plain->manipulator());
+}
+
 TEST(SceneViewTest, OwnsCameraAndContentScene)
 {
     // A SceneView owns a camera and a content scene; the engine it borrows
@@ -3144,16 +3411,16 @@ TEST(SceneViewTest, ResizingTellsTheCameraTheShapeOfThePictureItDraws)
     // RenderEngine::collectPictureShapeMismatches). A camera nobody resized keeps its 1:1.
     SceneView view;
     ASSERT_NE(view.camera(), nullptr);
-    EXPECT_DOUBLE_EQ(view.camera()->aspectRatio(), 1.0);
+    EXPECT_DOUBLE_EQ(view.camera()->aspect(), 1.0);
 
     view.resize(1600, 900);
-    EXPECT_DOUBLE_EQ(view.camera()->aspectRatio(), 1600.0 / 900.0);
+    EXPECT_DOUBLE_EQ(view.camera()->aspect(), 1600.0 / 900.0);
 
     // The same view's camera follows every size, and a size nobody can draw (nothing to divide by) is not one.
     view.resize(600, 800);
-    EXPECT_DOUBLE_EQ(view.camera()->aspectRatio(), 600.0 / 800.0);
+    EXPECT_DOUBLE_EQ(view.camera()->aspect(), 600.0 / 800.0);
     view.resize(0, 0);
-    EXPECT_DOUBLE_EQ(view.camera()->aspectRatio(), 600.0 / 800.0) << "a surface with no extent states no shape";
+    EXPECT_DOUBLE_EQ(view.camera()->aspect(), 600.0 / 800.0) << "a surface with no extent states no shape";
 }
 
 TEST(SceneViewTest, AViewDrawsThePipelineItAdopted)
@@ -3725,7 +3992,7 @@ TEST(SceneViewViewportTest, TheAreaSizeDrivesAspectAndLayoutSteps)
     EXPECT_EQ(layout_ratio_calls, 1);
     EXPECT_DOUBLE_EQ(layout_ratio, 2.0);
     // The picture's SHAPE is the area's (one camera, one shape - see Camera).
-    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 1280.0 / 720.0);
+    EXPECT_DOUBLE_EQ(view->camera()->aspect(), 1280.0 / 720.0);
 
     // The picture IS the area: the window pass keeps no rectangle of its own (what a pass without a viewport already
     // means), so the default path is byte-for-byte the pipeline it was before viewports existed. A host that wants a
@@ -3750,7 +4017,7 @@ TEST(SceneViewViewportTest, TheAreaSizeDrivesAspectAndLayoutSteps)
     view->resize(800, 600, 1.0);
     EXPECT_EQ(layout_w, 800);
     EXPECT_EQ(layout_h, 600);
-    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 800.0 / 600.0);
+    EXPECT_DOUBLE_EQ(view->camera()->aspect(), 800.0 / 600.0);
     EXPECT_EQ(view->pipeline(), pipeline.get());
 }
 
@@ -3766,20 +4033,20 @@ TEST(SceneViewViewportTest, TheAreaSizeHasOneOwnerAndTheViewReadsIt)
 
     // 1) No area: the host's own announcement is the only size (a view used on its own is a legal configuration).
     view->resize(100, 100, 1.0);
-    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 1.0);
+    EXPECT_DOUBLE_EQ(view->camera()->aspect(), 1.0);
 
     // 2) Presented: the area's number wins (800x400 = 2:1), the view's own 100x100 stops being read.
     ASSERT_NE(buildFor(*view, engine.get()), nullptr);
     surface->resize(800, 400, 1.0);
     ASSERT_TRUE(surface->present(*view));
-    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 2.0);
+    EXPECT_DOUBLE_EQ(view->camera()->aspect(), 2.0);
     EXPECT_EQ(view->surfaceWidth(), 800);
     EXPECT_EQ(view->surfaceHeight(), 400);
     EXPECT_DOUBLE_EQ(view->surfacePixelRatio(), 1.0);
 
     // 3) The area changes: the view was fed nothing and follows anyway - the measured form of "no second copy".
     surface->resize(320, 400, 1.0);
-    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 0.8);
+    EXPECT_DOUBLE_EQ(view->camera()->aspect(), 0.8);
 
     // 4) Dismissed: the area hands its last size over to the view, which keeps drawing where it was rather than
     //    jumping back to the number from before it was presented.
@@ -3791,7 +4058,7 @@ TEST(SceneViewViewportTest, TheAreaSizeHasOneOwnerAndTheViewReadsIt)
 
     // 5) Its own announcement is the size again.
     view->resize(300, 600, 1.0);
-    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 0.5);
+    EXPECT_DOUBLE_EQ(view->camera()->aspect(), 0.5);
 
     // 6) A view presented on an already-sized area is laid out at once - the host feeds nothing (the area remembers,
     //    and present() is what makes the view read it).
@@ -3856,32 +4123,39 @@ TEST(SceneViewViewportTest, AnApplicationWindowPassLeavesTheViewWithNothingToDec
     EXPECT_GT(engine->diagnosticCount(), diagnostics) << "and it says so instead of silently accepting";
 }
 
-TEST(SceneViewViewportTest, RebuildingAfterTheHostReleasedTheEngineIsSafe)
+/**
+ * @brief A view whose engine has been released reports it, instead of dangling or propping the engine up.
+ *
+ * The view and its pipeline BORROW the engine through leases (see Lease / RenderEngine::lease): the passes live in
+ * the engine's list, so both must be able to reach it, but neither may keep it alive - an ownership edge from a child
+ * to its parent means a "released" engine lives on for as long as anything it served still exists, and the day
+ * something drops the last of those it dies under a live borrow.
+ *
+ * So the behaviour that is pinned here is the pair: dropping the last owner's handle DESTROYS the engine (the borrows
+ * answer nothing), and everything that is the view's own - camera, surface size, layout - keeps working, because none
+ * of it was ever the engine's.
+ */
+TEST(SceneViewViewportTest, AViewWhoseEngineWasReleasedReportsIt)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
     auto pipeline = buildFor(*view, engine.get());
     ASSERT_NE(pipeline, nullptr);
+    EXPECT_EQ(view->engine(), engine.get());
+    EXPECT_EQ(pipeline->engine(), engine.get());
 
-    // The host drops its reference: the view borrows the engine, so from here on the only thing keeping it alive is
-    // the pipeline the view adopted (a Pipeline holds its engine strongly - its passes live in that engine's list).
-    auto* borrowed = view->engine();
-    engine         = nullptr;
+    // The host drops the last reference to the engine: nothing borrows it strongly, so this is where it dies.
+    engine = nullptr;
 
-    RenderPipelineOptions with_readout;
-    with_readout.fps.enabled = true;
-    auto rebuilt             = buildFor(*view, borrowed, with_readout);
-    ASSERT_NE(rebuilt, nullptr);
-    EXPECT_EQ(view->pipeline(), rebuilt.get());
-    EXPECT_TRUE(rebuilt->isStatsVisible());
-    EXPECT_FALSE(rebuilt->windowPass()->hasViewport());
+    EXPECT_EQ(view->engine(), nullptr) << "a borrow must not keep its engine alive, and must not dangle either";
+    EXPECT_EQ(pipeline->engine(), nullptr) << "the pipeline's passes went with the engine that ran them";
 
-    // The view is sized without the engine being asked (its own announcement is the size it derives from).
+    // What the view owns is unaffected: the size is the view's own statement and the camera's shape follows it.
     view->resize(800, 600, 1.0);
-    EXPECT_DOUBLE_EQ(view->camera()->aspectRatio(), 800.0 / 600.0);
+    EXPECT_DOUBLE_EQ(view->camera()->aspect(), 800.0 / 600.0);
     EXPECT_EQ(view->surfaceWidth(), 800);
-    EXPECT_FALSE(rebuilt->windowPass()->hasViewport()) << "the picture is the area: no rectangle of its own";
+    EXPECT_FALSE(pipeline->windowPass()->hasViewport()) << "the picture is the area: no rectangle of its own";
 }
 
 TEST(SceneViewTest, DefaultManipulatorBindsViewCameraAndScene)
@@ -4304,7 +4578,7 @@ TEST(PassDescriptionTest, WhatAScenePassDescribesIsWhatItAnnounces)
     EXPECT_EQ(described.clear->depth, backend->last_clear_policy.depth);
     EXPECT_EQ(described.state.depth, backend->pass_state.depth);
     EXPECT_EQ(described.state.polygonMode, backend->pass_state.polygonMode);
-    EXPECT_DOUBLE_EQ(cam->aspectRatio(), 32.0 / 18.0)
+    EXPECT_DOUBLE_EQ(cam->aspect(), 32.0 / 18.0)
         << "形状是 CAMERA 的状态（描述里没有这个字段），投影与剔除读的是同一个数";
 
     // —— 一次绘制：相机、命令、灯，以及走的是哪条调用 ——
@@ -4567,7 +4841,7 @@ TEST(LightTest, AmbientFactoryDefaults)
     // White, full intensity by default.
     EXPECT_FLOAT_EQ(light->color().r, 1.0f);
     EXPECT_FLOAT_EQ(light->intensity(), 1.0f);
-    EXPECT_FALSE(light->castShadow());
+    EXPECT_FALSE(light->isCastingShadow());
 }
 
 TEST(LightTest, DirectionalFactoryCarriesDirection)
@@ -4595,7 +4869,7 @@ TEST(LightTest, Setters)
     light->setIntensity(2.5f);
     EXPECT_FLOAT_EQ(light->intensity(), 2.5f);
     light->setCastShadow(true);
-    EXPECT_TRUE(light->castShadow());
+    EXPECT_TRUE(light->isCastingShadow());
 }
 
 TEST(SceneTest, LightSlots)
@@ -4624,6 +4898,62 @@ TEST(SceneTest, LightSlots)
     EXPECT_TRUE(scene.lights().empty());
 }
 
+namespace
+{
+
+/// @brief A pass whose whole behaviour is `describe()`: the one extension point a subclass has.
+class DescribeOnlyPass : public RenderPass
+{
+  public:
+    bool describe(Scene* scene, PassDescription& out) override
+    {
+        ++describes;
+        if (camera() == nullptr) {
+            return false;  // nothing to describe, and therefore no frame
+        }
+        fillPassFacts(out);
+        DrawDescription draw;
+        draw.kind   = DrawDescription::Kind::Scene;
+        draw.camera = camera();
+        out.draws.push_back(std::move(draw));
+        (void)scene;  // the pass is content-agnostic: its picture is the camera's
+        return true;
+    }
+
+    int describes = 0;
+};
+
+}  // namespace
+
+/*
+ * @brief `execute()` is sugar over `describe()`, and `describe()` is the ONLY extension point.
+ *
+ * While `execute()` was virtual, a subclass could draw something the engine's compile never saw - two truths for one
+ * pass, and the value path could be bypassed without a trace. It is not virtual now: one description becomes a
+ * one-pass frame through the same executor entry the engine uses, so a subclass customises `describe()` and nothing
+ * else, and a pass that describes nothing hands over no frame at all.
+ */
+TEST(RenderPassTest, ExecuteIsSugarOverDescribeAndTheOnlyExtensionPoint)
+{
+    auto camera  = intrusive_ptr<Camera>(new Camera());
+    auto scene   = intrusive_ptr<Scene>(new Scene());
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+
+    auto pass = intrusive_ptr<DescribeOnlyPass>(new DescribeOnlyPass());
+    pass->setCamera(camera);
+
+    pass->execute(scene.get(), backend.get());
+    EXPECT_EQ(pass->describes, 1) << "execute goes through describe";
+    ASSERT_EQ(backend->pass_entries.size(), 1U) << "and hands over a one-pass frame";
+    EXPECT_EQ(backend->pass_entries[0], pass.get());
+
+    // Nothing to describe is not a frame: no entry is added, and the call still went through describe.
+    pass->setCamera(nullptr);
+    pass->execute(scene.get(), backend.get());
+    EXPECT_EQ(pass->describes, 2);
+    EXPECT_EQ(backend->pass_entries.size(), 1U) << "a pass that issues nothing hands over nothing";
+}
+
 TEST(RenderPassTest, ExecuteForwardsSceneLights)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
@@ -4649,21 +4979,18 @@ TEST(RenderPassTest, ExecuteForwardsSceneLights)
 TEST(LightTest, ShadowSettingsDefaultsAndSetters)
 {
     auto sun = Light::createDirectional(vn::math::Vec3d(0.0, -1.0, 0.0));
-    EXPECT_FALSE(sun->castShadow());
+    EXPECT_FALSE(sun->isCastingShadow());
 
     const auto& defaults = sun->shadowSettings();
     EXPECT_EQ(defaults.resolution, 1024u);
     EXPECT_FLOAT_EQ(defaults.bias, 0.002f);
-    EXPECT_EQ(defaults.filter, ShadowFilter::Hard);
 
     sun->setCastShadow(true);
-    EXPECT_TRUE(sun->castShadow());
+    EXPECT_TRUE(sun->isCastingShadow());
     sun->setShadowResolution(2048);
     sun->setShadowBias(0.01f);
-    sun->setShadowFilter(ShadowFilter::PCF);
     EXPECT_EQ(sun->shadowSettings().resolution, 2048u);
     EXPECT_FLOAT_EQ(sun->shadowSettings().bias, 0.01f);
-    EXPECT_EQ(sun->shadowSettings().filter, ShadowFilter::PCF);
 }
 
 namespace
@@ -4845,9 +5172,49 @@ TEST(RenderPipelineBuilderTest, DroppingThePipelineUnregistersItsPasses)
     EXPECT_EQ(engine->passCount(), 0u) << "a dropped pipeline must not leave its passes registered";
 }
 
+/**
+ * @brief A pipeline that outlives its engine neither keeps it alive nor calls into it.
+ *
+ * The pipeline borrows the engine through a lease (RenderEngine::lease) because its passes live in the engine's list
+ * and it must be able to reach that list - but a pipeline owning its engine from below would invert ownership: a
+ * released engine would live on for as long as any pipeline it once served. So the two halves are asserted together:
+ * the pipeline takes NO reference (useCount stays at its owner's one), and once the owner drops the engine the
+ * borrow answers nothing (engine()), which is what makes using the pipeline afterwards a no-op instead of a call
+ * into freed memory.
+ */
+TEST(RenderPipelineBuilderTest, APipelineOutlivingItsEngineNeitherHoldsNorCallsIntoIt)
+{
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+
+    intrusive_ptr<RenderPipeline> pipeline;
+    RenderEngine*                 engine = nullptr;
+    {
+        auto owner = intrusive_ptr<RenderEngine>(new RenderEngine());
+        engine     = owner.get();
+
+        RenderPipelineBuilder builder(engine);
+        builder.setCamera(cam.get());
+        builder.setContent(content);
+        pipeline = builder.build({});
+        ASSERT_NE(pipeline, nullptr);
+
+        EXPECT_EQ(pipeline->engine(), engine);
+        EXPECT_EQ(engine->useCount(), 1u) << "a pipeline leases the engine it draws through, it does not own it";
+    }
+
+    EXPECT_EQ(pipeline->engine(), nullptr) << "the engine is gone, so the borrow answers nothing rather than dangling";
+
+    // Everything a host could still call on the kept pipeline has to survive that: the engine is the only place these
+    // would have reached, and each one asks the lease first.
+    EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Wireframe)) << "pass state is the pipeline's own";
+    EXPECT_FALSE(pipeline->setGizmoVisible(true)) << "no gizmo was built; the refusal has nobody to report to";
+    pipeline.reset();                             // unregistering its passes is a no-op: the engine took them with it
+}
+
 TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
 {
-    // A shadow is asked for by the LIGHT that casts it (Light::castShadow) rather than by a preset
+    // A shadow is asked for by the LIGHT that casts it (Light::isCastingShadow) rather than by a preset
     // name, because the light outlives any one pipeline and a scene may be drawn by several. Both
     // paths BUILD that shadow (the same pass, one implementation) — what a pipeline still cannot do
     // is shade with a map it was never given a program for, and THAT is what is reported: a host that
@@ -4917,7 +5284,7 @@ TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
 }
 
 /**
- * @brief The deferred path BUILDS the shadow a castShadow light asks for.
+ * @brief The deferred path BUILDS the shadow an isCastingShadow light asks for.
  *
  * The pixel proof lives in vsg_backend_selftest (only a GPU can tell a shadow from a dark pixel),
  * so this one pins the STRUCTURE the pixels then depend on: the frame opens with a pass drawing
@@ -4971,7 +5338,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
     EXPECT_FALSE(shadow->hasColor()) << "a shadow map carries depth, not a picture";
     EXPECT_EQ(shadow->width(), 64) << "the map is the side length the light asked for";
     EXPECT_EQ(shadow->height(), 64);
-    EXPECT_TRUE(shadow->depthPromotion()) << "the lighting samples this depth, so the pass may not preserve it";
+    EXPECT_TRUE(shadow->isDepthPromoted()) << "the lighting samples this depth, so the pass may not preserve it";
 
     // The stated matrix IS the one derivation, for this light and this content.
     auto         light_camera = intrusive_ptr<Camera>(new Camera());
@@ -5038,7 +5405,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
     EXPECT_TRUE(shadow->hasDepth());
     EXPECT_FALSE(shadow->hasColor());
     EXPECT_EQ(shadow->width(), 64);
-    EXPECT_TRUE(shadow->depthPromotion());
+    EXPECT_TRUE(shadow->isDepthPromoted());
     EXPECT_EQ(backend->target_history[1], nullptr) << "the content pass presents to the window";
 
     // The one derivation, and an orthographic camera that is not the view camera (see the deferred
@@ -5358,6 +5725,271 @@ TEST(RenderPipelineBuilderTest, DeferredPathRefusesWithoutContent)
     EXPECT_EQ(engine->passCount(), 0u);
 }
 
+/*
+ * @brief The depth-sharing edge is a VALUE, and the PASS declares it while the target stores the mechanism.
+ *
+ * The edge used to be a field written on the target by whoever built it, which made a scheduling relationship look
+ * like a property of one resource. It is now a DepthView: it names the image (and keeps it alive), it can be cleared
+ * by naming nothing, a pass states it, and the target a pass draws into receives it as the mechanism a backend builds
+ * its framebuffer from. Moving a pass to another target carries the edge with it - the pass is what draws.
+ */
+TEST(DepthViewTest, APassStatesTheDepthEdgeAndItsTargetGetsTheMechanism)
+{
+    auto lender = intrusive_ptr<RenderTarget>(new RenderTarget());
+    lender->attachDepth(RenderTarget::DepthFormat::D24);
+    lender->setSize(64, 64);
+    auto borrower = intrusive_ptr<RenderTarget>(new RenderTarget());
+    borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
+    borrower->setSize(64, 64);
+
+    const DepthView nothing;
+    EXPECT_FALSE(nothing.isValid());
+    EXPECT_EQ(nothing.target(), nullptr);
+
+    // The target-level mechanism, now spelled as the value it stores.
+    borrower->shareDepth(depthViewOf(lender));
+    EXPECT_TRUE(borrower->sharedDepth().isValid());
+    EXPECT_EQ(borrower->sharedDepth().target(), lender.get());
+    EXPECT_EQ(borrower->depthSource(), lender.get());
+    borrower->shareDepth(DepthView{});
+    EXPECT_FALSE(borrower->sharedDepth().isValid()) << "an invalid view clears the sharing";
+    EXPECT_FALSE(borrower->hasDepth()) << "and the target owns no depth again";
+
+    // A pass states the edge; the engine applies the declaration to the target the pass draws into.
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto drawn_into = intrusive_ptr<RenderTarget>(new RenderTarget());
+    drawn_into->attachColor(RenderTarget::ColorFormat::RGBA8);
+    drawn_into->setSize(64, 64);
+    PassDesc desc;
+    desc.kind       = PassKind::Scene;
+    desc.writes     = drawn_into;
+    desc.depth_view = depthViewOf(lender);
+    const auto pass = engine->addPass(desc);
+    ASSERT_NE(pass, nullptr);
+    EXPECT_TRUE(pass->depthView().isValid());
+    EXPECT_EQ(pass->depthView().target(), lender.get());
+    EXPECT_EQ(drawn_into->depthSource(), lender.get()) << "the pass' declaration reached the target's mechanism";
+
+    // Moving the pass to another target carries the edge with it; the target it left keeps what it was told (a
+    // second pass may still draw into it against the same depth).
+    auto moved = intrusive_ptr<RenderTarget>(new RenderTarget());
+    moved->attachColor(RenderTarget::ColorFormat::RGBA8);
+    moved->setSize(64, 64);
+    pass->setRenderTarget(moved);
+    EXPECT_EQ(moved->depthSource(), lender.get()) << "the edge follows the pass";
+    EXPECT_EQ(drawn_into->depthSource(), lender.get()) << "the target it left was not un-said by someone else";
+
+    // Clearing the declaration is a statement of its own: the pass draws against its target's own depth again.
+    pass->setDepthView(DepthView{});
+    EXPECT_FALSE(pass->depthView().isValid());
+    EXPECT_FALSE(moved->sharedDepth().isValid()) << "clearing the declaration clears the mechanism it set";
+}
+
+/*
+ * @brief A LAYERED depth view is refused (and said once) instead of silently becoming the whole image.
+ *
+ * A target carries one depth image until layered targets land, so a view whose layer is not 0 names something this SDK
+ * cannot point at. Refusing is the honest answer: applying it as "the whole image" would draw against the wrong depth
+ * with no report at all.
+ */
+TEST(DepthViewTest, ALayeredDepthViewIsRefusedRatherThanPointingAtTheWholeImage)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto lender = intrusive_ptr<RenderTarget>(new RenderTarget());
+    lender->attachDepth(RenderTarget::DepthFormat::D24);
+    lender->setSize(64, 64);
+    auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(64, 64);
+
+    PassDesc desc;
+    desc.kind       = PassKind::Scene;
+    desc.writes     = target;
+    desc.depth_view = depthViewOf(lender, 2);
+
+    const auto pass = engine->addPass(desc);
+    ASSERT_NE(pass, nullptr);
+    EXPECT_FALSE(pass->depthView().isValid()) << "the declaration is refused, not stored";
+    EXPECT_FALSE(target->sharedDepth().isValid()) << "and nothing was applied to the target";
+    EXPECT_EQ(engine->diagnosticCount(), 1U) << "the refusal is said once";
+
+    // The same condition, a second pass: no second sentence.
+    engine->addPass(desc);
+    EXPECT_EQ(engine->diagnosticCount(), 1U);
+}
+
+/*
+ * @brief One target draws against ONE depth image: a second, different declaration is refused once per pair.
+ *
+ * "The first declaration stands" is what keeps the picture coherent - whichever pass then draws into the target tests
+ * against the depth the target was built with. A repeated identical declaration (the same target and the same image)
+ * is not a second conflict, and the declaration that agrees with the target is accepted silently.
+ */
+TEST(DepthViewTest, TwoDifferentDepthViewsForOneTargetAreRefusedOnce)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto first = intrusive_ptr<RenderTarget>(new RenderTarget());
+    first->attachDepth(RenderTarget::DepthFormat::D24);
+    first->setSize(64, 64);
+    auto second = intrusive_ptr<RenderTarget>(new RenderTarget());
+    second->attachDepth(RenderTarget::DepthFormat::D24);
+    second->setSize(64, 64);
+    auto drawn_into = intrusive_ptr<RenderTarget>(new RenderTarget());
+    drawn_into->attachColor(RenderTarget::ColorFormat::RGBA8);
+    drawn_into->setSize(64, 64);
+
+    PassDesc agrees;
+    agrees.kind       = PassKind::Scene;
+    agrees.writes     = drawn_into;
+    agrees.depth_view = depthViewOf(first);
+    const auto accepted = engine->addPass(agrees);
+    ASSERT_NE(accepted, nullptr);
+    EXPECT_TRUE(accepted->depthView().isValid());
+    EXPECT_EQ(drawn_into->depthSource(), first.get());
+    EXPECT_EQ(engine->diagnosticCount(), 0U) << "the first declaration is not a conflict";
+
+    PassDesc disagrees = agrees;
+    disagrees.depth_view = depthViewOf(second);
+    const auto refused = engine->addPass(disagrees);
+    ASSERT_NE(refused, nullptr);
+    EXPECT_FALSE(refused->depthView().isValid()) << "the conflicting declaration is refused";
+    EXPECT_EQ(drawn_into->depthSource(), first.get()) << "the first one stands";
+    EXPECT_EQ(engine->diagnosticCount(), 1U) << "the conflict is said once";
+
+    // The same conflict again: the same sentence is not repeated.
+    engine->addPass(disagrees);
+    EXPECT_EQ(engine->diagnosticCount(), 1U);
+
+    // A pass that agrees with what the target already has is accepted silently.
+    const auto agreeing = engine->addPass(agrees);
+    ASSERT_NE(agreeing, nullptr);
+    EXPECT_TRUE(agreeing->depthView().isValid());
+    EXPECT_EQ(engine->diagnosticCount(), 1U);
+}
+
+/*
+ * @brief An OWNED frame keeps everything its producers held, and borrows into the shape an executor takes.
+ *
+ * This is the case the borrowed frame cannot serve: the producers are released before the frame is read, which is
+ * what offline rendering, a worker thread and frame recording all do. The test drops every local handle, then asks
+ * the owned frame for its borrowed form and runs it through the same executor entry point a compiled frame uses -
+ * so "owned" is not a second wire, only a second ownership rule over the same value.
+ */
+TEST(OwnedFrameTest, TheOwnedFrameKeepsWhatItsProducersReleased)
+{
+    OwnedFrame owned;
+
+    const RenderPass*    pass_raw    = nullptr;
+    const RenderTarget*  target_raw  = nullptr;
+    const Camera*        camera_raw  = nullptr;
+    const Texture*       texture_raw = nullptr;
+
+    {
+        auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+        pass->setName(u8"owned");
+        auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
+        target->attachColor(RenderTarget::ColorFormat::RGBA8);
+        target->setSize(32, 32);
+        auto camera = intrusive_ptr<Camera>(new Camera());
+        auto texture = intrusive_ptr<Texture>(new Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+        auto geometry = intrusive_ptr<Geometry>(new Geometry());
+        auto material = intrusive_ptr<Material>(new Material());
+        auto commands = std::make_shared<const std::vector<RenderCommand>>(
+            std::vector<RenderCommand>{ RenderCommand(geometry, material, Mat4d{}) });
+
+        pass_raw    = pass.get();
+        target_raw  = target.get();
+        camera_raw  = camera.get();
+        texture_raw = texture.get();
+
+        OwnedPass owned_pass;
+        owned_pass.pass  = pass;
+        owned_pass.order = 3;
+        owned_pass.inputs.push_back(ImageInput(texture));
+
+        OwnedPassDescription description;
+        description.target = target;
+        description.clear  = ClearPolicy{ Color(0, 0, 0, 255), true };
+        OwnedDraw draw;
+        draw.camera   = camera;
+        draw.commands = commands;
+        description.draws.push_back(std::move(draw));
+
+        owned_pass.description = std::move(description);
+        owned.passes.push_back(std::move(owned_pass));
+    }  // every local handle goes away here
+
+    const FrameDescription frame = owned.borrowed();
+    ASSERT_EQ(frame.passes.size(), 1U);
+    EXPECT_EQ(frame.passes[0].pass, pass_raw) << "the pass identity survives its handle";
+    EXPECT_EQ(frame.passes[0].order, 3);
+
+    ASSERT_EQ(frame.passes[0].inputs.size(), 1U);
+    EXPECT_TRUE(frame.passes[0].inputs[0].isImported()) << "the declaration is resolved the way the engine does";
+    EXPECT_EQ(frame.passes[0].inputs[0].texture, texture_raw);
+
+    ASSERT_TRUE(frame.passes[0].description.has_value()) << "a pass that issues something keeps its description";
+    const PassDescription& description = *frame.passes[0].description;
+    EXPECT_EQ(description.target, target_raw);
+    ASSERT_TRUE(description.clear.has_value());
+    ASSERT_EQ(description.draws.size(), 1U);
+    EXPECT_EQ(description.draws[0].camera, camera_raw);
+    ASSERT_NE(description.draws[0].commands, nullptr) << "the command collection is held, not borrowed";
+    EXPECT_EQ(description.draws[0].commands->size(), 1U);
+
+    // The borrowed value drives the same executor entry a compiled frame uses: owned is an ownership rule, not a
+    // second wire.
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    backend->executeFrame(frame);
+    ASSERT_EQ(backend->pass_entries.size(), 1U);
+    EXPECT_EQ(backend->pass_entries[0], pass_raw);
+}
+
+/*
+ * @brief A pass states ONE clear colour per attachment, and an unstated attachment keeps transparent black.
+ *
+ * The per-attachment spelling exists for MRT: a G-buffer's normal image wants (0,0,1,0), not the pass' colour and
+ * not the transparent black that means "nothing drawn here". The single-colour spelling stays the common case, and
+ * both travel as one policy so a backend reads one fact rather than a list plus a fallback.
+ */
+TEST(RenderPassTest, EachAttachmentClearColourTravelsWithThePassPolicy)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(32, 32);
+
+    PassDesc desc;
+    desc.kind              = PassKind::Scene;
+    desc.writes            = target;
+    desc.clear_color       = vn::Color(255, 0, 0, 255);
+    desc.clear_extra_colors.push_back(vn::Color(0, 255, 0, 255));
+
+    const auto pass = engine->addPass(desc);
+    ASSERT_NE(pass, nullptr);
+    EXPECT_EQ(pass->clearColor(0), vn::Color(255, 0, 0, 255)) << "the single colour is attachment 0";
+    EXPECT_EQ(pass->clearColor(1), vn::Color(0, 255, 0, 255)) << "the stated extra reaches its attachment";
+    EXPECT_EQ(pass->clearColor(2), vn::Color(0, 0, 0, 0))
+        << "an attachment nobody stated keeps transparent black";
+}
+
 TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsComposite)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -5394,8 +6026,8 @@ TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsCompos
     // which forces the G-buffer depth to stay an attachment (not sampleable).
     EXPECT_TRUE(composite->hasDepth());
     EXPECT_EQ(composite->depthSource(), gbuffer);
-    EXPECT_FALSE(gbuffer->depthPromotion());
-    EXPECT_TRUE(composite->depthPromotion()); // (irrelevant: composite has no own depth)
+    EXPECT_FALSE(gbuffer->isDepthPromoted());
+    EXPECT_TRUE(composite->isDepthPromoted()); // (irrelevant: composite has no own depth)
 
     // The window pass is the PRESENT pass: it carries the view camera (so
     // RenderControl / SceneView add no default forward pass), targets the
@@ -5826,14 +6458,14 @@ TEST(FpsOverlayTest, TheReadoutCameraIsShapedForTheBoxItDrawsInto)
 
     const Viewport box = overlay->boxViewport();
     ASSERT_GT(box.height, 0);
-    EXPECT_DOUBLE_EQ(overlay->camera()->aspectRatio(), static_cast<double>(box.width) / box.height);
+    EXPECT_DOUBLE_EQ(overlay->camera()->aspect(), static_cast<double>(box.width) / box.height);
 
     // A surface too narrow for the box scales BOTH sides down, and the shape the camera projects for follows it.
     overlay->onSurfaceResized(100, 600);
     const Viewport fitted = overlay->boxViewport();
     ASSERT_GT(fitted.height, 0);
     EXPECT_NE(fitted.width, box.width) << "the narrow surface really did refit the box";
-    EXPECT_DOUBLE_EQ(overlay->camera()->aspectRatio(), static_cast<double>(fitted.width) / fitted.height);
+    EXPECT_DOUBLE_EQ(overlay->camera()->aspect(), static_cast<double>(fitted.width) / fitted.height);
 }
 
 TEST(FpsOverlayTest, TheFigureAveragesFramesOverWallTimeAndPublishesAtAboutTwoHertz)
@@ -6022,7 +6654,7 @@ TEST(AxisGizmoTest, ViewportPlacedBottomLeft)
     EXPECT_EQ(vp.y, 600 - 16 - 96);
     // The box is square, so the camera that frames the sticks is projected for a square picture - stated where the
     // camera is made (see Camera and AxisGizmo's constructor) rather than derived from this rectangle later.
-    EXPECT_DOUBLE_EQ(gizmo->camera()->aspectRatio(), 1.0);
+    EXPECT_DOUBLE_EQ(gizmo->camera()->aspect(), 1.0);
 }
 
 TEST(AxisGizmoTest, ASurfaceTooSmallForTheBoxNeverYieldsANegativeViewport)
@@ -6555,7 +7187,7 @@ TEST(SceneTest, CollectCommandsCarriesStateFromAncestorStateNode)
     ASSERT_EQ(commands.size(), 1u);
     // The command carries what the CONTENT authored; the pass completes it (and the default pass state changes
     // nothing here, so the resolution below is the whole picture).
-    const auto resolved = resolveRenderState(commands[0].authoredState, PassRenderState{});
+    const auto resolved = resolveRenderState(commands[0].authored_state, PassRenderState{});
     EXPECT_EQ(resolved.state.cullMode, CullMode::Back);
     EXPECT_EQ(resolved.origin.cullMode, StateOrigin::Content);
     EXPECT_TRUE(resolved.state.depth.test);
@@ -6582,8 +7214,8 @@ TEST(SceneTest, CollectCommandsDeeperStateNodeOverrides)
     auto commands = scene.collectRenderCommands(&cam);
 
     ASSERT_EQ(commands.size(), 1u);
-    ASSERT_TRUE(commands[0].authoredState.polygonMode.has_value());
-    EXPECT_EQ(*commands[0].authoredState.polygonMode, PolygonMode::Point) << "the deeper StateNode authored it";
+    ASSERT_TRUE(commands[0].authored_state.polygonMode.has_value());
+    EXPECT_EQ(*commands[0].authored_state.polygonMode, PolygonMode::Point) << "the deeper StateNode authored it";
 }
 
 TEST(SceneTest, CollectCommandsDefaultsStateWithoutStateNode)
@@ -6599,8 +7231,8 @@ TEST(SceneTest, CollectCommandsDefaultsStateWithoutStateNode)
     ASSERT_EQ(commands.size(), 1u);
     // "Nobody said anything" is a fact of its own, and it is NOT the same as "said the default": the command
     // carries empty items, and the defaults appear in the resolution (where a pass could have said something).
-    EXPECT_TRUE(commands[0].authoredState.empty());
-    const auto resolved = resolveRenderState(commands[0].authoredState, PassRenderState{});
+    EXPECT_TRUE(commands[0].authored_state.empty());
+    const auto resolved = resolveRenderState(commands[0].authored_state, PassRenderState{});
     EXPECT_TRUE(resolved.state.depth.test);
     EXPECT_TRUE(resolved.state.depth.write);
     EXPECT_EQ(resolved.state.cullMode, CullMode::None);
@@ -7091,24 +7723,17 @@ TEST(NodeTest, ChildrenRefMirrorsChildrenInOrder)
     group->addChild(second);
     group->addChild(first);
 
-    const std::vector<NodePtr>& borrowed = group->childrenRef();
+    const std::vector<NodePtr>& borrowed = group->children();
     ASSERT_EQ(borrowed.size(), 2u);
     EXPECT_EQ(borrowed[0].get(), second.get());   // insertion order
     EXPECT_EQ(borrowed[1].get(), first.get());
 
-    // The copy-returning accessor stays in sync (same order, same nodes).
-    const std::vector<NodePtr> copied = group->children();
-    ASSERT_EQ(copied.size(), borrowed.size());
-    for (std::size_t i = 0; i < borrowed.size(); ++i) {
-        EXPECT_EQ(copied[i].get(), borrowed[i].get());
-    }
-
     group->removeChild(second.get());
-    EXPECT_EQ(group->childrenRef().size(), 1u);
-    EXPECT_EQ(group->childrenRef()[0].get(), first.get());
+    EXPECT_EQ(group->children().size(), 1u);
+    EXPECT_EQ(group->children()[0].get(), first.get());
 
     auto empty = intrusive_ptr<Group>(new Group());
-    EXPECT_TRUE(empty->childrenRef().empty());
+    EXPECT_TRUE(empty->children().empty());
 }
 
 TEST(NodeTest, DeepHierarchyWorldMatrixFoldsWholeChain)
@@ -7163,7 +7788,7 @@ TEST(NodeTest, DeepHierarchyWorldMatrixFoldsWholeChain)
     setupLookAtCamera(cam);
     const auto commands = scene->collectRenderCommands(&cam);
     ASSERT_EQ(commands.size(), 1u);
-    EXPECT_TRUE(close(commands[0].modelMatrix, leaf->worldMatrix()));
+    EXPECT_TRUE(close(commands[0].model_matrix, leaf->worldMatrix()));
 }
 
 TEST(SceneTest, CollectCommandsAccumulatesWorldMatrixAcrossNesting)
@@ -7192,8 +7817,8 @@ TEST(SceneTest, CollectCommandsAccumulatesWorldMatrixAcrossNesting)
     const auto commands = scene.collectRenderCommands(&cam);
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].geometry->name(), u8"nested");
-    EXPECT_NEAR(commands[0].modelMatrix.element(0, 3), 0.0, 1e-9);
-    EXPECT_NEAR(commands[0].modelMatrix.element(2, 3), -3.0, 1e-9);
+    EXPECT_NEAR(commands[0].model_matrix.element(0, 3), 0.0, 1e-9);
+    EXPECT_NEAR(commands[0].model_matrix.element(2, 3), -3.0, 1e-9);
 
     // Moving the geometry genuinely out of view still culls it, i.e. the
     // container bound is being derived from the children rather than ignored.
@@ -7369,7 +7994,7 @@ std::uint64_t sumBoundsRecomputes(const Node* node)
 {
     std::uint64_t total = node->boundsRecomputeCount();
     if (const auto* group = dynamic_cast<const Group*>(node)) {
-        for (const auto& child : group->childrenRef()) {
+        for (const auto& child : group->children()) {
             total += sumBoundsRecomputes(child.get());
         }
     }
@@ -7682,8 +8307,8 @@ TEST(SceneTest, TheFoldedStateAgreesWithTheUpWalkingHelpers)
     // The folded state, item by item, against the SDK's own up-walking spelling.
     const RenderState         folded   = collectRenderState(geometry.get());
     const ResolvedRenderState expected = effectiveRenderState(geometry.get());
-    EXPECT_EQ(command.authoredState, folded) << "the command carries exactly what the fold said";
-    const ResolvedCommandState resolved = resolveRenderState(command.authoredState, PassRenderState{});
+    EXPECT_EQ(command.authored_state, folded) << "the command carries exactly what the fold said";
+    const ResolvedCommandState resolved = resolveRenderState(command.authored_state, PassRenderState{});
     EXPECT_EQ(resolved.state.cullMode, expected.cullMode) << "the DEEPER StateNode's cull mode wins";
     EXPECT_EQ(resolved.state.cullMode, CullMode::Front);
     EXPECT_EQ(resolved.origin.cullMode, StateOrigin::Content);
@@ -7693,7 +8318,7 @@ TEST(SceneTest, TheFoldedStateAgreesWithTheUpWalkingHelpers)
     EXPECT_EQ(resolved.state.polygonMode, expected.polygonMode);
     EXPECT_EQ(resolved.state.blend.enabled, expected.blend.enabled);
     EXPECT_EQ(resolved.state.topology, expected.topology);
-    EXPECT_TRUE(command.authoredState.depth.has_value()) << "explicit depth is authored on a StateNode";
+    EXPECT_TRUE(command.authored_state.depth.has_value()) << "explicit depth is authored on a StateNode";
     EXPECT_EQ(resolved.origin.depth, StateOrigin::Content);
 
     // The single-valued items: the leaf's own material wins over every ancestor's, the program comes from
@@ -7872,7 +8497,7 @@ TEST(SceneContentCacheTest, SceneLevelEditsInvalidateTheMemo)
     // A node edited directly (transform / material / attributes) cannot be
     // observed by the scene: invalidateContent() makes it visible at once. The
     // command opacity is the scene multiplier timed this node's own opacity.
-    root->childrenRef()[0]->setOpacity(0.25f);
+    root->children()[0]->setOpacity(0.25f);
     scene.invalidateContent();
     EXPECT_EQ(scene.collectRenderCommands(&cam)[0].opacity, 0.125f);
     EXPECT_EQ(scene.contentCollectCount(), 3u);
@@ -8212,7 +8837,7 @@ TEST(DrawOrderTest, TheDeclaredOrderIsTheOuterKeyOfTheSort)
     // A higher order is drawn LATER - the subtree added first comes out last.
     first->setDrawOrder(2);
     EXPECT_EQ(order(scene.collectRenderCommands(&cam)), "second,third,first");
-    EXPECT_EQ(scene.collectRenderCommands(&cam).back().drawOrder, 2) << "the command carries the resolved order";
+    EXPECT_EQ(scene.collectRenderCommands(&cam).back().draw_order, 2) << "the command carries the resolved order";
 
     // A lower one is drawn EARLIER (negative orders are as legal as positive ones).
     third->setDrawOrder(-1);
@@ -8290,14 +8915,14 @@ TEST(DrawOrderTest, TheNearestDeclarationCoversItsSubtree)
     const auto resolved_order = [&scene, &cam](vn::raw_ptr<const Geometry> geometry) {
         for (const RenderCommand& command : scene.collectRenderCommands(&cam)) {
             if (command.geometry.get() == geometry) {
-                return command.drawOrder;
+                return command.draw_order;
             }
         }
         return -999;
     };
     const auto geometry_of = [](const intrusive_ptr<MatrixTransform>& node) {
         vn::raw_ptr<const Geometry> geometry = nullptr;
-        for (const auto& child : node->childrenRef()) {
+        for (const auto& child : node->children()) {
             if (const auto* leaf = dynamic_cast<const Geometry*>(child.get())) {
                 geometry = leaf;
             }
@@ -8338,7 +8963,7 @@ TEST(DrawOrderTest, TheDeclarationAppliesAtTheDrawableToo)
     // The geometry is the drawn node; the helper's MatrixTransform is its parent. Declaring on the LEAF itself
     // is what this pins (the cases above declare on a parent and read the inherited value).
     vn::raw_ptr<const Geometry> marked_geometry = nullptr;
-    for (const auto& child : marked->childrenRef()) {
+    for (const auto& child : marked->children()) {
         if (const auto* leaf = dynamic_cast<const Geometry*>(child.get())) {
             marked_geometry = leaf;
         }
@@ -8355,7 +8980,7 @@ TEST(DrawOrderTest, TheDeclarationAppliesAtTheDrawableToo)
     ASSERT_EQ(commands.size(), 2u);
     EXPECT_EQ(commands[0].geometry->name(), u8"plain") << "the marked one is drawn later, by its own declaration";
     EXPECT_EQ(commands[1].geometry->name(), u8"marked");
-    EXPECT_EQ(commands[1].drawOrder, 5) << "the leaf's own declaration is the command's order";
+    EXPECT_EQ(commands[1].draw_order, 5) << "the leaf's own declaration is the command's order";
 }
 
 /**
@@ -8645,31 +9270,25 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
 }
 
 /**
- * @brief The engine runs the frame's VALUE: each pass is described once per frame, and never asked to execute.
+ * @brief The engine runs the frame's VALUE: each pass is described once per frame, and nothing is executed twice.
  *
- * THE CONTRACT CHANGE OF A VALUE-DRIVEN FRAME, named. The compile describes every enabled pass once
- * (RenderEngine::buildFrameValue) and the run announces what came out, so a pass that overrides execute() and
- * expects the engine to call it does not run at all: what it issues belongs in describe(), and anything that has
- * to happen before the frame describes it belongs in the declaration's hook (PassDesc::before_draw). Pinned here
+ * THE CONTRACT OF A VALUE-DRIVEN FRAME, named. The compile describes every enabled pass once
+ * (RenderEngine::buildFrameValue), the run announces what came out, and the backend sees exactly ONE frame per call -
+ * `RenderPass::execute` is no longer virtual, so a pass cannot offer a second drawing path the compile would not
+ * see; a subclass customises describe() (and PassDesc::before_draw for work that must happen first). Pinned here
  * because the other half of it - "described once" - is what keeps the content walk memo honest (one walk per view
  * per frame, see PassesSharingSceneAndCameraCollectOncePerCameraPerFrame).
  */
-TEST(RenderEngineTest, TheEngineRunsTheFrameValueAndNeverCallsExecute)
+TEST(RenderEngineTest, TheEngineRunsTheFrameValueAndDescribesEachPassOnce)
 {
     class CountingPass : public RenderPass
     {
       public:
         int  describes = 0;
-        int  executes  = 0;
         bool describe(vn::raw_ptr<Scene> scene, PassDescription& out) override
         {
             ++describes;
             return RenderPass::describe(scene, out);
-        }
-        void execute(vn::raw_ptr<Scene>, vn::raw_ptr<RenderBackend>,
-                     vn::raw_ptr<PresentTarget>) override
-        {
-            ++executes;
         }
     };
 
@@ -8688,13 +9307,13 @@ TEST(RenderEngineTest, TheEngineRunsTheFrameValueAndNeverCallsExecute)
     engine->addPass(pass, scene, 0);
 
     const int describes_before = pass->describes;
-    const int executes_before  = pass->executes;
 
     engine->frame(0.016);
     engine->frame(0.016);
 
     EXPECT_EQ(pass->describes - describes_before, 2) << "once per frame, by the compile";
-    EXPECT_EQ(pass->executes - executes_before, 0) << "the engine announces the value instead";
+    EXPECT_EQ(backend->frames_executed, 2)
+        << "one frame per call: the engine announces the value, and no pass is executed a second time";
     // And the pass really did reach the backend - from the value, with its camera and its content.
     ASSERT_EQ(backend->pass_entries.size(), 2u) << "one entry per frame";
     EXPECT_EQ(backend->render_calls, 2);
@@ -9468,8 +10087,9 @@ TEST(ImageRefTest, LabelKindAndBindingRoundTrip)
     EXPECT_EQ(color->attachment(), 2);
 
     // Unbinding is how "the image is gone" is expressed, so a consumer can
-    // never be handed a stale one.
-    color->unbind();
+    // never be handed a stale one - and it is the ordinary bind() with nothing
+    // to bind, not a second spelling of the same act.
+    color->bind(nullptr);
     EXPECT_FALSE(color->isBound());
     EXPECT_EQ(color->target(), nullptr);
     EXPECT_EQ(color->attachment(), 0);
@@ -11067,7 +11687,7 @@ TEST(SceneMutationTest, ReparentingMovesTheCommandAndBothSubtreeBoxes)
 
     auto commands = scene.collectRenderCommands(&cam);
     ASSERT_EQ(commands.size(), 1u);
-    EXPECT_NEAR(commands[0].modelMatrix.element(0, 3), -2.0, 1e-9);
+    EXPECT_NEAR(commands[0].model_matrix.element(0, 3), -2.0, 1e-9);
     const std::uint64_t left_seeded  = left->boundsRecomputeCount();
     const std::uint64_t right_seeded = right->boundsRecomputeCount();
 
@@ -11085,7 +11705,7 @@ TEST(SceneMutationTest, ReparentingMovesTheCommandAndBothSubtreeBoxes)
 
     commands = scene.collectRenderCommands(&cam);
     ASSERT_EQ(commands.size(), 1u);
-    EXPECT_NEAR(commands[0].modelMatrix.element(0, 3), 2.0, 1e-9);
+    EXPECT_NEAR(commands[0].model_matrix.element(0, 3), 2.0, 1e-9);
 
     // Both unions are re-derived: the old parent loses a child, the new one
     // gains it, and each announcement must reach its own chain (the per-node
@@ -11222,7 +11842,7 @@ TEST(SceneMutationTest, RemovingASubtreeDropsItsCommandsAndShrinksTheBox)
     const std::uint64_t root_seeded = root->boundsRecomputeCount();
 
     root->removeChild(removed.get());
-    EXPECT_EQ(root->childrenRef().size(), 1u);
+    EXPECT_EQ(root->children().size(), 1u);
     EXPECT_EQ(removed->parent(), nullptr);
 
     // The box shrinks with the removal, and the command disappears.

@@ -8,7 +8,7 @@ VN_GRAPHICS_NS_BEGIN
  *
  * @details
  * - Declared by the pass (RenderPass::depthMode) and honoured by the backend for every command that
- *   does not author a depth state of its own (RenderCommand::authoredState.depth): TestAndWrite for opaque
+ *   does not author a depth state of its own (RenderCommand::authored_state.depth): TestAndWrite for opaque
  *   scene content, TestOnly for translucent content that tests against existing depth without writing,
  *   Disabled for HUD content drawn on top.
  * - Independent of clearing (RenderPass::setClearEnabled) and of lighting: whether the content is lit

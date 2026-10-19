@@ -170,7 +170,7 @@ namespace
 
 /// @brief Packs @p material's fields into the ABI's block, field for field.
 ///
-/// The ONE spelling of the mapping: buildMaterialFacts writes it, materialBlockAgreesWith reads it back, and
+/// The ONE spelling of the mapping: buildMaterialFacts writes it, and nothing else re-derives it.
 /// a member added to the engine's mapping cannot reach one without the other.
 [[nodiscard]] vn::graphics::VineMaterialBlock blockOfMaterial(const vn::graphics::Material& material) noexcept
 {
@@ -193,10 +193,9 @@ FactMiss buildMaterialFacts(const vn::graphics::Material* material, std::uint64_
 {
     // The block's MEMBERS are the payload, and `{}` is aggregate initialisation: it initialises the members
     // from their defaults (this is the ABI's default material - grey, one non-zero shininess) and leaves the
-    // struct's tail padding alone. That padding is not read by any shader and is deliberately left as it is:
-    // the ABI compares blocks with its own member-wise `operator==` (see materialBlockAgreesWith), and a
-    // byte-level comparison of these bytes is not a meaningful operation (it would report "the material
-    // changed" for a material that did not).
+    // struct's tail padding alone. That padding is not read by any shader and is deliberately left as it is: what
+    // decides whether a material changed is the number it reports (Material::revision), never a byte comparison of
+    // these bytes (which would report "changed" for a material that did not).
     const vn::graphics::VineMaterialBlock block =
         material != nullptr ? blockOfMaterial(*material) : vn::graphics::VineMaterialBlock{};
 
@@ -211,20 +210,6 @@ FactMiss buildMaterialFacts(const vn::graphics::Material* material, std::uint64_
     // decides whether the drawable takes the `VINE_DIFFUSE_MAP` variant of its program (api/ProgramVariant).
     out.texture = material != nullptr ? material->texture() : nullptr;
     return FactMiss::None;
-}
-
-bool materialBlockAgreesWith(const vn::graphics::Material& material, std::span<const std::byte> block) noexcept
-{
-    if (block.size() != sizeof(vn::graphics::VineMaterialBlock))
-    {
-        return false;  // not a block this ABI wrote: never "the same"
-    }
-    // The bytes are copied into a VALUE first: the struct is 16-byte aligned (std140) and the row's storage
-    // is a byte vector, so reading it in place would be an unaligned access; the comparison itself is the
-    // ABI's own member-wise one, which ignores the padding both sides leave alone.
-    vn::graphics::VineMaterialBlock carried{};
-    std::memcpy(&carried, block.data(), sizeof(carried));
-    return carried == blockOfMaterial(material);
 }
 
 VN_VSG_NS_END

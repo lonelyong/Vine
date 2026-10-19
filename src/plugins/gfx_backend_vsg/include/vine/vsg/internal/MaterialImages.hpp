@@ -88,13 +88,14 @@ class MaterialImages
   public:
     /** @brief Upper bound on cached textures.
      *
-     * Nothing tells the backend that a texture is gone, so a session that keeps
- creating them would
-     * otherwise grow this cache for ever. Past the bound the OLDEST entries are
- evicted, because the newest
-     * are the ones a live scene is using; an evicted texture simply rebuilds (an
-d re-uploads) on its next
-     * acquire.
+     * WHAT IT COVERS. Abandoned textures are not this bound's problem: releaseAbandoned() sweeps them once
+     * per frame, so a host that keeps creating and dropping textures does not grow this cache. The bound
+     * covers the other case - more textures LIVE at once than the cache keeps. Nothing else would stop that
+     * from growing for ever, which is why the bound exists rather than a policy on the live set.
+     * Past the bound the OLDEST entries are evicted, because the newest are the ones a live scene is using;
+     * an evicted texture simply rebuilds (and re-uploads) on its next acquire, which is correct and costs
+     * what it costs - evictions() counts how often that happened, so a caller can tell "a working set larger
+     * than the cache" from "a steady scene".
      */
     static constexpr std::size_t kMaxEntries = 256;
 
@@ -162,6 +163,22 @@ ck of its own.
     /** @brief Gets the number of textures with cached images (the fallbacks exc
 luded). */
     [[nodiscard]] std::size_t count() const noexcept;
+
+    /**
+     * @brief Gets how many entries the BOUND has dropped so far (see kMaxEntries).
+     *
+     * @details
+     * - WHAT IT ANSWERS. An entry the bound dropped comes back by rebuilding and re-uploading its texture, so a
+     *   number that keeps growing is the one visible sign of "more textures are sampled at once than this cache
+     *   keeps" - otherwise a silent per-frame re-upload cost.
+     * - WHAT IT DOES NOT COUNT. An entry released because the host dropped the texture (see releaseAbandoned) is
+     *   not an eviction: running out of room and "nobody holds it any more" are different facts.
+     * - THE CACHE STILL REPORTS NOTHING ITSELF (see the class note): the caller reads this number and says what
+     *   it means for its own host.
+     *
+     * @return Cumulative number of entries evicted by the bound.
+     */
+    [[nodiscard]] std::size_t evictions() const noexcept;
 
     /** @brief States whether @p texture has cached images (by address). */
     [[nodiscard]] bool has(vn::raw_ptr<const vn::graphics::Texture> texture) const noexcept;

@@ -40,9 +40,11 @@ VN_GRAPHICS_NS_BEGIN
  *   object carries an IDENTITY (which image) - and the engine's rules are about identity ("one image, at
  *   most one producer"). The role is already expressed by where it is used: `RenderPass::output()` for the
  *   write side, `RenderPass::inputs()` for the read side.
- * - An image that is no pass' output at all (a material's texture, an imported image, a cube map) has no
- *   identity in this SDK yet: an ImageRef names a RenderTarget plus an attachment index, whereas a material
- *   texture is a Texture (its pixels come from imaging::Image), so the two models are not bridged yet.
+ * - An image that is no pass' output at all is named by its own root: an ImageRef names a RenderTarget plus
+ *   an attachment index, while an imported image is a Texture (its pixels come from imaging::Image). A pass
+ *   declares either one as an input (ImageInput), and ImageSource is the resolved form that tells a backend
+ *   which of the two it got. Both texture kinds are accepted there - the backend builds the image view from
+ *   the texture's kind, so a cube map reaches a `samplerCube` declaration.
  */
 class VN_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef> {
     VN_OBJECT_META_DECL;
@@ -93,13 +95,6 @@ class VN_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef> {
      * @param attachment Attachment index inside @p target.
      */
     void bind(intrusive_ptr<RenderTarget> target, int attachment = 0);
-
-    /** @brief Unbinds: the image this object identified is gone.
-     *
-     * A consumer that reads an unbound image has no input, which the engine reports (once per
-     * episode) rather than handing out a stale image.
-     */
-    void unbind();
 
     /** @brief Gets the bound target.
      *

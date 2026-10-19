@@ -1,6 +1,8 @@
 #pragma once
 #include "graphics_global.hpp"
 
+#include <cstdint>
+
 VN_GRAPHICS_NS_BEGIN
 
 /**
@@ -21,6 +23,30 @@ VN_GRAPHICS_NS_BEGIN
  */
 struct VN_GRAPHICS_API Capabilities
 {
+    /**
+     * @brief One YES/NO fact a host has to know BEFORE it plans a frame (see supports).
+     *
+     * @details
+     * - A FEATURE IS A PROPERTY OF THE INITIALIZED BACKEND, not a tuning knob and not a requirement: the
+     *   numbers a plan may also need (samples, anisotropy) are limits and belong beside the features, while
+     *   anything the call itself answers better (whether a readback worked, say) stays with that call's own
+     *   machine-readable result instead of becoming a second spelling here.
+     * - The set exists so a host branches on ONE value before it draws: a HUD asks whether GPU times can be
+     *   shown, a viewer's menu asks whether a wireframe mode means anything, a texture pipeline asks whether
+     *   anisotropic sampling is honoured rather than clamped.
+     * - A backend that cannot answer yet (no device up) reports NO for every feature, which is the honest
+     *   answer: nothing renders without a device, so nothing is known either.
+     */
+    enum class Feature : std::uint8_t
+    {
+        /// The device can write timestamps, so per-pass GPU times can be measured and shown.
+        GpuTimings,
+        /// Triangle rasterisation can be line/point, so a wireframe (or point) view mode draws something.
+        Wireframe,
+        /// Samplers may request anisotropic filtering above 1x, so the request is honoured rather than clamped.
+        AnisotropicFiltering,
+    };
+
     /// Off-screen render targets are built, drawn into and sampled (see RenderDevice::setRenderTarget); false
     /// means a non-null target is ignored and the pass draws into the default framebuffer.
     bool render_targets{false};
@@ -33,6 +59,49 @@ struct VN_GRAPHICS_API Capabilities
     /// opened with a presentation intent at all" - which is why it is asked before a host plans a frame, rather
     /// than discovered from a present that did nothing.
     bool presentation{false};
+
+    /// The features this backend answers TRUE, one bit per Feature (see supports / bit).
+    std::uint32_t features{0};
+
+    /// The largest anisotropic filtering factor the device honours (1 = no anisotropy).
+    ///
+    /// A LIMIT, not a feature: the feature bit says "anisotropy is available at all", this says how far a sample
+    /// request is honoured before the backend clamps it - which is what a host showing or clamping a quality
+    /// setting needs.
+    float max_anisotropy{1.0F};
+
+    /// How many colour attachments one render target may carry.
+    ///
+    /// A CEILING, not a promise the engine enforces: a declaration asking for more is refused by the backend that
+    /// would have to build the attachment, with a diagnostic naming the count. A HOST reads this before authoring
+    /// an MRT pipeline, because only the host can decide what to do when the device cannot serve the shape it
+    /// wants - the engine never silently drops an attachment.
+    std::uint32_t max_color_attachments{1};
+
+    /**
+     * @brief Answers one feature (see Feature).
+     *
+     * @details
+     * - Reads the bit set, so it says exactly what the backend filled in and nothing it inferred.
+     *
+     * @param feature Feature to ask about.
+     * @return true when this backend reports it.
+     */
+    [[nodiscard]] bool supports(Feature feature) const noexcept
+    {
+        return (features & bit(feature)) != 0U;
+    }
+
+    /**
+     * @brief The bit @p feature occupies in @ref features.
+     *
+     * @param feature Feature to spell.
+     * @return The bit a backend sets to answer true.
+     */
+    [[nodiscard]] static constexpr std::uint32_t bit(Feature feature) noexcept
+    {
+        return std::uint32_t{1} << static_cast<std::uint32_t>(feature);
+    }
 };
 
 VN_GRAPHICS_NS_END

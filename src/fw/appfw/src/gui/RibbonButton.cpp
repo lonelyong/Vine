@@ -132,7 +132,7 @@ void RibbonButton::setCheckable(bool on)
     btn->setCheckable(on);
 }
 
-bool RibbonButton::checkable() const
+bool RibbonButton::isCheckable() const
 {
     auto* btn = impl<SARibbonToolButton>();
     return btn && btn->isCheckable();
@@ -146,7 +146,7 @@ void RibbonButton::setChecked(bool on)
     btn->setChecked(on);
 }
 
-bool RibbonButton::checked() const
+bool RibbonButton::isChecked() const
 {
     auto* btn = impl<SARibbonToolButton>();
     return btn && btn->isChecked();

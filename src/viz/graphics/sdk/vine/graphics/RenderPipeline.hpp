@@ -3,6 +3,7 @@
 
 #include <vector>
 
+#include <vine/Lease.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
@@ -154,7 +155,7 @@ struct VN_GRAPHICS_API FpsOverlayOptions {
  * @details
  * - The description of a pipeline: the ONE structural choice (path) plus the per-pass options of the passes the path
  *   and the overlays need.
- * - Shadows are NOT here — a shadow is requested by the LIGHT that casts it (Light::castShadow) and honoured by the
+ * - Shadows are NOT here — a shadow is requested by the LIGHT that casts it (Light::isCastingShadow) and honoured by the
  *   pipeline that draws that light's content, because a light outlives any one pipeline and a scene may be drawn by
  *   several (see PipelineStage::Depth and .ai/design/graphics-pipeline.md §2).
  */
@@ -236,9 +237,11 @@ struct VN_GRAPHICS_API RenderPipelineOptions {
  *   unregisters them when it dies, so dropping the handle takes the passes out of the frame instead of leaving them
  *   to run with nobody holding them (RenderEngine::addPass keeps its own reference, so a reference alone would keep a
  *   dropped pipeline's passes alive and drawing).
- * - It also keeps the engine ALIVE (a strong reference, not a borrow): the passes live in that engine's list, so
- *   "this pipeline is still alive" is exactly "its engine must still be". There is no cycle — the engine does not
- *   know its pipelines.
+ * - It also BORROWS the engine through a lease rather than owning it (RenderEngine::lease): the passes live in that
+ *   engine's list, so the pipeline must be able to reach the engine, but keeping it alive from below would invert
+ *   ownership - a released engine would live on for as long as any pipeline it once handed a pass to. With the
+ *   lease the engine dies exactly when its owners drop it, and a pipeline that outlives it answers "gone"
+ *   (engine()) and takes its passes with it instead of calling into freed memory.
  * - Exposes the window-presenting pass, and for deferred paths the off-screen G-buffer, whose size its owner
  *   maintains through resize() (the backend rebuilds the off-screen attachments whenever the target size changes
  *   between frames).
@@ -252,20 +255,33 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
     friend class RenderPipelineBuilder;
 
   public:
-    /** @brief Constructs a pipeline that registers its passes on @p engine.
+    /** @brief Constructs a pipeline that registers its passes on the engine @p engine leases.
      *
      * @details
      * - The engine is a constructor argument rather than a setter because a pipeline without one could not do the ONE
      *   thing this class does with a pass (register it, and later take it back).
+     * - A lease, not an owning handle: the pipeline must reach the engine, it must not keep it alive (see the class
+     *   note). A lease of an engine that is already gone mints a pipeline that registers nothing - the caller's own
+     *   bug, and a harmless one.
      *
-     * @param engine Engine the pipeline's passes are registered on (held strongly; must not be null).
+     * @param engine Lease of the engine the pipeline's passes are registered on (empty is accepted; nothing is
+     *               registered then).
      */
-    explicit RenderPipeline(intrusive_ptr<RenderEngine> engine);
+    explicit RenderPipeline(Lease<RenderEngine> engine);
 
-    /** @brief Destroys the pipeline, unregistering its passes from the engine. */
+    /** @brief Destroys the pipeline, unregistering its passes from the engine while the engine is still there. */
     ~RenderPipeline();
 
   public:
+    /** @brief Gets the engine this pipeline's passes are registered on.
+     *
+     * @details
+     * - A BORROW that may answer nothing: null once the engine has been destroyed, which is a normal answer for a
+     *   pipeline a host kept after dropping the control that owned the engine (its passes went with the engine).
+     *
+     * @return The engine, or nullptr when it is gone.
+     */
+    [[nodiscard]] raw_ptr<RenderEngine> engine() const noexcept;
     /** @brief Gets the pass presenting the view camera to the window.
      *
      * @return The order-0 window pass (a ScreenPass for the Deferred presets), or null when nothing was built.
@@ -455,7 +471,7 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
     // The engine the passes were registered on, held strongly (see the class
     // comment). Declared with a forward declaration and destroyed by the
     // out-of-line destructor, so this header does not pull RenderEngine.hpp in.
-    intrusive_ptr<RenderEngine> engine_;
+    Lease<RenderEngine> engine_;
     // A handle, not just a reference: the pipeline owns the registration of
     // every pass here (see addPass) and tears them all down in its destructor.
     std::vector<intrusive_ptr<RenderPass>> passes_;

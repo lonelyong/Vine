@@ -177,35 +177,19 @@ struct VN_GRAPHICS_API ImageSource
         return source;
     }
 
-    /** @brief Builds a resolved imported texture input read with the backend's input sampler.
+    /** @brief Builds a resolved imported texture input.
      *
-     * @param texture Texture to sample.
-     * @return The resolved source (the revision is read from the texture).
-     */
-    [[nodiscard]] static ImageSource imported(raw_ptr<const Texture> texture) noexcept
-    {
-        return imported(texture, std::optional<Sampler>{});
-    }
-
-    /** @brief Builds a resolved imported texture input read with an explicit sampler state.
-     *
-     * @param texture Texture to sample.
-     * @param sampler How the texture is read.
-     * @return The resolved source (the revision is read from the texture).
-     */
-    [[nodiscard]] static ImageSource imported(raw_ptr<const Texture> texture, const Sampler& sampler) noexcept
-    {
-        return imported(texture, std::optional<Sampler>{ sampler });
-    }
-
-    /** @brief Builds a resolved imported texture input from a declaration's optional state.
+     * @details
+     * - An empty @p sampler (the default) means the backend's own input sampler; a stated one is how the
+     *   declaration asked for the texture to be read.
+     * - A null texture answers an empty source: a kind without its texture would make isImported() a lie.
      *
      * @param texture Texture to sample.
      * @param sampler Declared state, or an empty optional for the backend's input sampler.
      * @return The resolved source (the revision is read from the texture).
      */
     [[nodiscard]] static ImageSource imported(raw_ptr<const Texture> texture,
-                                              std::optional<Sampler> sampler) noexcept
+                                              std::optional<Sampler> sampler = {}) noexcept
     {
         if (texture == nullptr) {
             return {};   // a kind without its texture would make isImported() a lie

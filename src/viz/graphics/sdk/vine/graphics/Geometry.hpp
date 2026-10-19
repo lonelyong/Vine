@@ -339,40 +339,26 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     std::vector<std::uint32_t> bufferLocations() const;
 
-    /** @brief Sets the positions (location 0) by SHARING a vertex buffer.
+    /** @brief Sets the positions (location 0) by SHARING a vertex buffer, optionally a segment of one.
      *
      * @details
      * - The buffer IS the vertex data (a Vec3f is three floats), so nothing is converted or repacked: a
      *   mesh hands its own storage over and both sides read ONE allocation. The geometry keeps the buffer
      *   alive, and because the channel re-reads it on every access, growing the buffer is followed, not
      *   dangled. A caller holding typed vertices packs them first with packAttribute().
-     * - This overload states a WHOLE buffer (offset 0, no fixed count): the one-buffer-per-geometry case,
-     *   following the buffer as it grows. A SEGMENT - several geometries reading one ARENA - is the
-     *   three-argument overload below.
-     *
-     * @param positions Vertex scalars to read (three floats per vertex), or null for an empty channel.
-     */
-    void setPositions(intrusive_ptr<const vn::Buffer<float>> positions);
-
-    /** @brief Sets the positions to a SEGMENT of a vertex buffer: @p vertex_count vertices from
-     *         @p first_vertex on.
-     *
-     * @details
-     * - An ARENA (one buffer, several geometries, one segment each) states its segment here instead of
-     *   unpacking a copy: the geometry reads the same bytes the arena holds.
-     * - The units are VERTICES, not scalars - the stride is the role's, and a caller should not have to
-     *   know it. A @p vertex_count of 0 means "the rest of @p positions from @p first_vertex" (the
-     *   growing-arena case), NOT an empty channel: to clear the channel, pass a null buffer.
-     * - The same door as the overload above - it delegates to
-     *   addBuffer(attributeLocation(VertexAttribute::Position), AttributeChannel::slice(...)) - so a segment
-     *   cannot mean one thing here and another there.
+     * - The defaults are the WHOLE buffer (offset 0, no fixed count): the one-buffer-per-geometry case,
+     *   following the buffer as it grows. Stating @p first_vertex / @p vertex_count is the ARENA case -
+     *   several geometries reading one buffer, each with its own segment, with no copy anywhere.
+     * - The units of a segment are VERTICES, not scalars: the stride is the role's, and a caller should not
+     *   have to know it. A @p vertex_count of 0 means "the rest of @p positions from @p first_vertex", NOT
+     *   an empty channel - to clear the channel, pass a null buffer.
      *
      * @param positions    Vertex scalars to read (three floats per vertex), or null for an empty channel.
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p positions from @p first_vertex.
      */
-    void setPositions(intrusive_ptr<const vn::Buffer<float>> positions, std::size_t first_vertex,
-                      std::size_t vertex_count);
+    void setPositions(intrusive_ptr<const vn::Buffer<float>> positions, std::size_t first_vertex = 0u,
+                      std::size_t vertex_count = 0u);
 
     /** @brief Returns whether positions (location 0) are present.
      *
@@ -386,25 +372,19 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     std::size_t positionCount() const;
 
-    /** @brief Sets the normals (location 1) by SHARING a vertex buffer.
+    /** @brief Sets the normals (location 1) by SHARING a vertex buffer, optionally a segment of one.
      *
      * @details
      * - Optional either way: when unset the renderer derives normals from the positions.
-     * - States a WHOLE buffer; the segment overload below states a slice of an arena (see setPositions for
-     *   what the two spellings share: one implementation path, and a count of 0 meaning "the rest").
-     *
-     * @param normals Normal scalars to read (three floats per vertex), or null for an empty channel.
-     */
-    void setNormals(intrusive_ptr<const vn::Buffer<float>> normals);
-
-    /** @brief Sets the normals to a SEGMENT of a vertex buffer (see setPositions for the units).
+     * - The defaults state the WHOLE buffer; stating a vertex range states an arena's segment (the units
+     *   are vertices and a count of 0 means "the rest", exactly as setPositions says).
      *
      * @param normals      Normal scalars to read (three floats per vertex), or null for an empty channel.
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p normals from @p first_vertex.
      */
-    void setNormals(intrusive_ptr<const vn::Buffer<float>> normals, std::size_t first_vertex,
-                    std::size_t vertex_count);
+    void setNormals(intrusive_ptr<const vn::Buffer<float>> normals, std::size_t first_vertex = 0u,
+                    std::size_t vertex_count = 0u);
 
     /** @brief Returns whether normals (location 1) are present.
      *
@@ -427,20 +407,15 @@ class VN_GRAPHICS_API Geometry : public Node {
      *   layer that interprets them; a program of your own may read the same width as anything.
      * - Optional: a geometry without coordinates still renders, but a material carrying a texture has
      *   nothing to sample it with.
-     * - States a WHOLE buffer; the segment overload below states a slice of an arena (see setPositions).
-     *
-     * @param texcoords Coordinate scalars to read (two floats per vertex), or null for an empty channel.
-     */
-    void setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords);
-
-    /** @brief Sets the texture coordinates to a SEGMENT of a vertex buffer (see setPositions for the units).
+     * - The defaults state the WHOLE buffer; stating a vertex range states an arena's segment (see
+     *   setPositions for the units).
      *
      * @param texcoords    Coordinate scalars to read (two floats per vertex), or null for an empty channel.
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p texcoords from @p first_vertex.
      */
-    void setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex,
-                       std::size_t vertex_count);
+    void setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex = 0u,
+                       std::size_t vertex_count = 0u);
 
     /** @brief Sets the texture coordinates (location kTexCoordLocation) made of THREE scalars per vertex.
      *
@@ -450,20 +425,15 @@ class VN_GRAPHICS_API Geometry : public Node {
      *   variant for a three-scalar texcoord channel and requires the material's texture to be a cube map,
      *   reporting a mismatch instead of sampling it. A program of your own may read the same three numbers
      *   as a volume coordinate instead.
-     * - States a WHOLE buffer; the segment overload below states a slice of an arena (see setPositions).
-     *
-     * @param texcoords Coordinate scalars to read (three floats per vertex), or null for an empty channel.
-     */
-    void setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords);
-
-    /** @brief Sets the three-scalar texture coordinates to a SEGMENT of a vertex buffer (see setPositions).
+     * - The defaults state the WHOLE buffer; stating a vertex range states an arena's segment (see
+     *   setPositions for the units).
      *
      * @param texcoords    Coordinate scalars to read (three floats per vertex), or null for an empty channel.
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p texcoords from @p first_vertex.
      */
-    void setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex,
-                       std::size_t vertex_count);
+    void setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex = 0u,
+                       std::size_t vertex_count = 0u);
 
     /** @brief Returns whether the texcoord slot (location kTexCoordLocation) holds a channel.
      *
@@ -483,38 +453,28 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     std::uint32_t texcoordComponents() const;
 
-    /** @brief Sets the optional index buffer by SHARING a whole buffer of indices.
+    /** @brief Sets the index buffer by SHARING one, optionally a segment of one.
      *
      * @details
      * - The same rule as the attribute setters: the geometry reads the buffer instead of copying it, so a
      *   mesh hands its own index buffer over and both sides read ONE allocation. A caller holding a plain
      *   index array packs it first with packIndices(). Replacing the buffer does NOT announce the change:
      *   report one with setRevision().
-     * - This overload states a WHOLE buffer (first index 0, no fixed count), following the buffer as it
-     *   grows. A SEGMENT - an INDEX ARENA's slice - is the three-argument overload below. The units are
-     *   INDICES (this stream's elements), never vertices.
-     *
-     * @param indices Index scalars to read (three per triangle), or null for an empty index buffer.
-     */
-    void setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices);
-
-    /** @brief Sets the index buffer to a SEGMENT: @p index_count indices from @p first_index on.
-     *
-     * @details
-     * - An INDEX ARENA works like a vertex one: several geometries share one index buffer and each states
-     *   its own segment here. The indices are relative to this geometry's OWN vertices (index 0 is the
-     *   first vertex its position channel reads), which keeps a vertex segment and an index segment
-     *   consistent with each other.
-     * - An @p index_count of 0 means "the rest of @p indices from @p first_index" (the growing-arena case),
-     *   NOT an empty range - to clear the stream, pass a null buffer. A first index at or past the end of
-     *   the buffer clamps to the end, so such a segment draws nothing.
+     * - The defaults are a WHOLE buffer (first index 0, no fixed count), following the buffer as it grows.
+     *   An INDEX ARENA works like a vertex one: several geometries share one index buffer and each states
+     *   its own segment here. The units are INDICES (this stream's elements), never vertices.
+     * - An index segment is relative to this geometry's OWN vertices (index 0 is the first vertex its
+     *   position channel reads), which keeps a vertex segment and an index segment consistent.
+     * - An @p index_count of 0 means "the rest of @p indices from @p first_index", NOT an empty range - to
+     *   clear the stream, pass a null buffer. A first index at or past the end of the buffer clamps to the
+     *   end, so such a segment draws nothing.
      *
      * @param indices     Index scalars to read (three per triangle), or null for an empty index buffer.
      * @param first_index First index this geometry draws (0 = the buffer's start).
      * @param index_count Indices this geometry draws, or 0 for the rest of @p indices from @p first_index.
      */
-    void setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices, std::size_t first_index,
-                    std::size_t index_count);
+    void setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices, std::size_t first_index = 0u,
+                    std::size_t index_count = 0u);
 
     /** @brief Returns whether a non-empty index range is attached.
      *

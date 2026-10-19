@@ -36,7 +36,7 @@ struct VN_GRAPHICS_API RenderCommand {
     ShaderProgramPtr program;
 
     /** World-space model matrix. */
-    Mat4d modelMatrix;
+    Mat4d model_matrix;
 
     /** @brief Returns whether the object is transparent and therefore needs sorted rendering.
      *
@@ -67,7 +67,7 @@ struct VN_GRAPHICS_API RenderCommand {
      *   a draw order.
      * - 0 is the default and means "nobody declared one".
      */
-    int drawOrder = 0;
+    int draw_order = 0;
 
     /** The render state the CONTENT authored for this command (every item optional).
      *
@@ -75,12 +75,12 @@ struct VN_GRAPHICS_API RenderCommand {
      * - Computed at collection time by folding every StateNode from the scene root down to the geometry. An unset
      *   item means "nobody on the path said anything about it" - NOT "set to the default": the final state of the
      *   command depends on the pass drawing it as well, and the ONE place that answers that is
-     *   `resolveRenderState(authoredState, pass.stateOverrides())` (see StateNode.hpp, which also says which item a
+     *   `resolveRenderState(authored_state, pass.stateOverrides())` (see StateNode.hpp, which also says which item a
      *   pass overrides and which one it only supplies a default for).
      * - A backend consumes the resolved state to select a pipeline variant and to diff its dynamic state; backends
      *   that consume no per-object state ignore this.
      */
-    RenderState authoredState;
+    RenderState authored_state;
 
     /** @brief Default constructor. */
     RenderCommand() = default;

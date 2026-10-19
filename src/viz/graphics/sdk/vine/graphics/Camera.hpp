@@ -19,7 +19,7 @@ using vn::math::Vec3d;
 
 /**
  * @brief Camera: the VIEWING (eye / target / up), the PROJECTION PARAMETERS (fov, planes, ortho window) and the
- *        SHAPE of the picture it is projected for (aspectRatio).
+ *        SHAPE of the picture it is projected for (aspect).
  *
  * @details
  * - ONE CAMERA, ONE PICTURE SHAPE: the aspect lives here because the projection is what needs it, and every
@@ -102,7 +102,7 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      *
      * @return The aspect ratio; 1.0 until a host states one (see setAspect).
      */
-    double aspectRatio() const;
+    double aspect() const;
 
     /** @brief States the shape of the picture this camera is projected for.
      *

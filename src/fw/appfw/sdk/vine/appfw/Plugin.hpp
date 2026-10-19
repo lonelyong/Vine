@@ -55,11 +55,16 @@
  * gone. Application::startupProgress() is gone too: StartupProgress::current() is the
  * one way to reach the boot's sink.
  *
+ * 8u: the GUI's boolean getters follow the is/has convention the rest of the framework uses. `Control::enabled()`
+ * became `isEnabled()` and `Control::visible()` became `isVisible()`; `RibbonAction::enabled()/checkable()/checked()`
+ * and `RibbonButton::checkable()/checked()` became `isEnabled()/isCheckable()/isChecked()`. The setters are
+ * unchanged, and `ProgressPresenter` inherits the renamed getters.
+ *
  * The name says *plugin* ABI on purpose: it is not the release version (that is
  * VN_APPFW_VERSION in appfw_global.hpp, diagnostic only), and it says nothing about
  * the host's own binaries, which are built and rebuilt together with the framework.
  */
-#define VN_APPFW_PLUGIN_ABI_VERSION 7u
+#define VN_APPFW_PLUGIN_ABI_VERSION 8u
 
 VN_APPFW_NS_BEGIN
 

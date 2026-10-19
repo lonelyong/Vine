@@ -9,6 +9,8 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
+
+#include "DepthView.hpp"
 #include "Light.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -84,7 +86,7 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
      *
      * @return True when the depth is sampleable (the default).
      */
-    bool depthPromotion() const;
+    bool isDepthPromoted() const;
 
     /** @brief Sets whether the backend may end this target's depth in a sampleable (SHADER_READ_ONLY) layout.
      *
@@ -104,7 +106,17 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
      */
     raw_ptr<RenderTarget> depthSource() const;
 
-    /** @brief Makes this target reuse @p source's depth attachment instead of allocating its own.
+    /** @brief Returns the borrowed depth as the VALUE it is stored as (see DepthView).
+     *
+     * @details
+     * - The value form of the edge: the same fact `depthSource()` answers as a raw pointer, with the target held
+     *   alive. A host or a pass compares and passes this instead of naming a bare target.
+     *
+     * @return The view, invalid when this target owns its depth.
+     */
+    DepthView sharedDepth() const;
+
+    /** @brief Makes this target reuse @p view's depth image instead of allocating its own.
      *
      * @details
      * - Lets two off-screen targets share one depth buffer within a frame: the source renders first (its depth is
@@ -112,11 +124,14 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
      *   testing forward content against the G-buffer depth).
      * - Constraints: both targets are off-screen and equally sized, the source renders earlier in the frame, and the
      *   source's depth is not promoted to a sampled texture (see setDepthPromotion).
-     * - The reference keeps the source alive.
+     * - THE EDGE IS A VALUE (see DepthView): it names an image, keeps the lender alive, and can be declared on the
+     *   PASS that draws against it (RenderPass::setDepthView) instead of on the target - a pass is what draws, so it
+     *   is what states the edge; the target's field is the mechanism a backend builds its framebuffer from.
+     * - An invalid view clears the sharing: this target goes back to owning its depth.
      *
-     * @param source The target whose depth is reused.
+     * @param view The depth image this target draws against.
      */
-    void shareDepth(intrusive_ptr<RenderTarget> source);
+    void shareDepth(DepthView view);
 
     /** @brief Gets the render target width. */
     int width() const;
@@ -150,18 +165,12 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
      */
     int colorCount() const;
 
-    /** @brief Gets the format of the first color attachment.
+    /** @brief Gets the format of one color attachment (attachment 0 unless one is named).
      *
-     * @return Color attachment 0 format.
-     */
-    ColorFormat colorFormat() const;
-
-    /** @brief Gets the format of a specific color attachment.
-     *
-     * @param index Color attachment index in [0, colorCount()).
+     * @param index Color attachment index in [0, colorCount()); out of range answers RGBA8.
      * @return The attachment's format.
      */
-    ColorFormat colorFormat(int index) const;
+    ColorFormat colorFormat(int index = 0) const;
 
     /** @brief Gets the configured depth attachment format. */
     DepthFormat depthFormat() const;
@@ -219,7 +228,7 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
      * - A fact about the MAP, which is where the pairing belongs. The pass that reads it stays a generic consumer -
      *   it declares targets as its inputs and nothing else - and no consumer has to infer from declaration order
      *   which of its inputs is a shadow map, because a G-buffer has a depth too.
-     * - A target is a light's shadow map for as long as that light says it casts (Light::castShadow, the runtime
+     * - A target is a light's shadow map for as long as that light says it casts (Light::isCastingShadow, the runtime
      *   switch, next to the ShadowSettings a consumer reads the bias from).
      * - The target HOLDS the light: a map is useless without the light it belongs to, and both the map and its
      *   consumer can outlive the scene that built them (a retained backend target outliving a phase is exactly how a
@@ -243,7 +252,7 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     DepthFormat depth_format_ = DepthFormat::D24;
     bool has_depth_ = false;
     bool depth_promotion_ = true;            // depth ends sampleable (SHADER_READ_ONLY)
-    intrusive_ptr<RenderTarget> depth_source_; // borrowed depth (null = own)
+    DepthView depth_view_;                   // the depth image this target draws against (invalid = own)
     // The view-projection the producer rendered this target with (see
     // setProducerViewProjection); identity until someone states one.
     Mat4d producer_view_projection_;

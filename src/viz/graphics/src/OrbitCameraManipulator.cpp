@@ -768,7 +768,7 @@ double OrbitCameraManipulator::viewportAspect() const
     // rectangle it was last resized to, which is all it has (guarded: an unlaid-out viewport must not divide by
     // zero or produce a degenerate frustum).
     if (camera_ != nullptr) {
-        return camera_->aspectRatio();
+        return camera_->aspect();
     }
     if (viewport_w_ <= 0 || viewport_h_ <= 0) {
         return 1.0;

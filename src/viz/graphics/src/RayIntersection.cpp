@@ -374,7 +374,7 @@ void intersectNode(const Ray& ray, const Node* node, std::uint32_t inherited_lay
         return;
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
-        for (const auto& child : group->childrenRef()) {
+        for (const auto& child : group->children()) {
             intersectNode(ray, child.get(), layers, layer_mask, best);
         }
     }
@@ -411,7 +411,7 @@ void collectNodeNearest(const Ray& ray, const Node* node, std::uint32_t inherite
         return;
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
-        for (const auto& child : group->childrenRef()) {
+        for (const auto& child : group->children()) {
             collectNodeNearest(ray, child.get(), layers, layer_mask, out);
         }
     }
@@ -454,7 +454,7 @@ void collectNodeHits(const Ray& ray, const Node* node, std::uint32_t inherited_l
         return;
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
-        for (const auto& child : group->childrenRef()) {
+        for (const auto& child : group->children()) {
             collectNodeHits(ray, child.get(), layers, layer_mask, out);
         }
     }

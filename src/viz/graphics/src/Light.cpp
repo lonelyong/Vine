@@ -79,7 +79,7 @@ void Light::setDirection(const vn::math::Vec3d& direction)
     direction_ = direction;
 }
 
-bool Light::castShadow() const
+bool Light::isCastingShadow() const
 {
     return cast_shadow_;
 }
@@ -107,11 +107,6 @@ void Light::setShadowResolution(uint32_t resolution)
 void Light::setShadowBias(float bias)
 {
     shadow_settings_.bias = bias;
-}
-
-void Light::setShadowFilter(ShadowFilter filter)
-{
-    shadow_settings_.filter = filter;
 }
 
 VN_GRAPHICS_NS_END

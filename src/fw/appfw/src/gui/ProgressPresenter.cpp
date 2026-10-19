@@ -227,7 +227,7 @@ void ProgressPresenter::refresh()
         data->hide_pending = false;
         setVisible(true);
     }
-    else if (visible()) {
+    else if (isVisible()) {
         if (!data->hide_pending) {
             data->hide_pending = true;
             data->hide_at      = now + milliseconds(kHideDelayMs);

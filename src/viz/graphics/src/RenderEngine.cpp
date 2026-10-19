@@ -38,15 +38,30 @@ RenderEngine::RenderEngine()
     // own is shaded with the engine's forward program until the host says otherwise. (Null would mean
     // "draw such content not at all"; nothing is ever shaded with a program nobody named.)
     default_content_program_ = forwardProgram();
+    // The validity bit every lease reads (see lease): alive from here on, and cleared in the destructor before
+    // anything the engine owns goes away.
+    lease_cell_         = std::make_shared<vn::detail::LeaseCell<RenderEngine>>();
+    lease_cell_->target = this;
     // No implicit pipeline: the engine starts empty. The caller registers the
     // scene passes explicitly (addPass()) or through a RenderPipelineBuilder;
     // the primary interactive view (camera + content + navigation) lives in a
     // SceneView borrowing this engine.
 }
 
+Lease<RenderEngine> RenderEngine::lease() noexcept
+{
+    return Lease<RenderEngine>(lease_cell_);
+}
+
 RenderEngine::~RenderEngine()
 {
     shutdown();
+    // Every lease this engine handed out stops referring to it HERE, before anything it owns is torn down: a holder
+    // that outlives the engine (a pipeline a host kept) then has nothing to call into, instead of a pointer into
+    // freed memory.
+    if (lease_cell_ != nullptr) {
+        lease_cell_->target = nullptr;
+    }
     // The route this engine installed on the device goes with it: the device BORROWS it (see
     // RenderDevice::setDiagnosticsRoute), so a route that outlived its engine would be a dangling pointer the next
     // report walks into.
@@ -937,8 +952,8 @@ void RenderEngine::collectPlanProblems()
         }
 
         // 3. No camera: the fullscreen path builds the pass' view from it and pushes the scene's
-        // lights through that view space, so without one ScreenPass::execute returns before asking the
-        // backend for anything. The fix is static (setCamera), and a host would otherwise see a
+        // lights through that view space, so without one the pass describes nothing and the frame hands the
+        // backend no draw at all. The fix is static (setCamera), and a host would otherwise see a
         // post-process that never appears with no reason for it.
         if (pass->camera() == nullptr) {
             {

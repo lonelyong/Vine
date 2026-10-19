@@ -450,8 +450,12 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
     const auto           first_block = blockOf(*findMaterial(first, material.get()).entry);
     EXPECT_FLOAT_EQ(first_block.diffuse[0], 0.25F);
 
-    // The host edits the material; the SDK has no material-edit channel, so the backend notices it here.
+    // The host edits the material. The material moves its own revision (Material::revision - every shading value
+    // goes through a setter, which compares first), and the facade touches every material a frame commands because
+    // the engine never announces an edit; this is that touch.
+    const std::uint64_t before = material->revision();
     material->setDiffuse(vn::Colorf(0.75F, 0.5F, 0.25F, 1.0F));
+    EXPECT_EQ(material->revision(), before + 1U);
     store.updateMaterial(material.get());
 
     const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
@@ -487,11 +491,17 @@ TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
                                   program.get());
     (void)store.tablesFor(plan->frame, timeline, retirement);
 
-    // A TOUCH IS A COMPARE-AND-WRITE (see ContentStore::updateMaterial): the facade touches every material a
-    // frame commands, because the engine never announces an edit - so a touch that finds the values it
-    // already has must build nothing and park nothing, or every frame would rebuild every material row.
+    // A TOUCH IS ONE NUMBER (see ContentStore::updateMaterial): the facade touches every material a frame commands,
+    // because the engine never announces an edit - so a touch that finds the revision it already accounted for must
+    // build nothing and park nothing, or every frame would rebuild every material row. Re-applying the values the
+    // material already holds is the other half of the same guarantee: it does not move the revision either.
     const std::uint64_t builds_before = store.builds();
-    store.updateMaterial(material.get());
+    for (int frame = 0; frame < 5; ++frame)
+    {
+        material->setDiffuse(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));  // same value: not an edit
+        store.updateMaterial(material.get());
+        (void)store.tablesFor(plan->frame, timeline, retirement);
+    }
     const ContentFacts& again = store.tablesFor(plan->frame, timeline, retirement);
     EXPECT_EQ(store.builds(), builds_before) << "the touch found nothing changed";
     EXPECT_EQ(retirement.pending(), 0U) << "and nothing was parked";

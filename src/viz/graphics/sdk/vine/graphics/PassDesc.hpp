@@ -116,6 +116,14 @@ struct VN_GRAPHICS_API PassDesc
     /// The shape writes_image is built at (ignored when writes_image is empty).
     TransientShape writes_shape;
 
+    /// The depth image this pass draws against when it is ANOTHER pass' (see DepthView).
+    ///
+    /// A deferred-lit composite that tests forward content against the G-buffer's depth is what this states.
+    /// Unset means the target's own depth, which is the ordinary case. The PASS states the edge because the pass
+    /// is what draws; the engine applies the declaration to the target when the pass is registered (the target's
+    /// borrow is the mechanism a backend builds its framebuffer from).
+    std::optional<DepthView> depth_view;
+
     /// Publishes this pass' target under this name for the rest of the frame ("" = publishes nothing).
     String output_name;
     /// Promises the WHOLE of this target as this pass' output (a coarse claim; see RenderPass::setOutputTarget).
@@ -136,6 +144,9 @@ struct VN_GRAPHICS_API PassDesc
     /// The colour its target is cleared to, or unset for the kind's own default (51,51,51, the colour a
     /// hand-built pass clears to — a surface that has its own colour states it here).
     std::optional<Color> clear_color;
+    /// Colours for attachments 1..N-1, in attachment order (see ClearPolicy): an absent entry is transparent
+    /// black. This is what a G-buffer needs (a normal image cleared to (0,0,1,0) rather than the pass' colour).
+    std::vector<Color> clear_extra_colors;
     /// Whether the depth attachment is cleared with it, or unset for the kind's own policy.
     std::optional<bool> clear_depth;
 

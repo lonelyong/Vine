@@ -12,7 +12,7 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-RenderPipeline::RenderPipeline(intrusive_ptr<RenderEngine> engine) : engine_(std::move(engine)) {}
+RenderPipeline::RenderPipeline(Lease<RenderEngine> engine) : engine_(engine) {}
 
 RenderPipeline::~RenderPipeline()
 {
@@ -20,9 +20,22 @@ RenderPipeline::~RenderPipeline()
     // keeps executing with nobody holding the handle that would have removed it
     // (see the class comment). Removing one the engine no longer has is a no-op,
     // so a host that removed a pass itself is not punished for it.
-    for (const auto& pass : passes_) {
-        engine_->removePass(pass.get());
+    //
+    // A pipeline can outlive its engine (a host may keep one after dropping the control that owned the engine): the
+    // lease then answers nullptr, the engine's own list went with it, and the passes die with this pipeline. That is
+    // why the borrow is a lease and not a raw pointer.
+    raw_ptr<RenderEngine> engine = engine_.get();
+    if (engine == nullptr) {
+        return;
     }
+    for (const auto& pass : passes_) {
+        engine->removePass(pass.get());
+    }
+}
+
+raw_ptr<RenderEngine> RenderPipeline::engine() const noexcept
+{
+    return engine_.get();
 }
 
 raw_ptr<RenderPass> RenderPipeline::windowPass() const
@@ -72,13 +85,14 @@ ShadingMode RenderPipeline::shadingMode() const noexcept
 
 bool RenderPipeline::setShadingMode(ShadingMode mode)
 {
+    raw_ptr<RenderEngine> engine = engine_.get();
     if (mode != ShadingMode::Lit && path_ == ShadingPath::Deferred) {
         // A Deferred picture comes out of a fullscreen lighting pass: there is no geometry pass left to
         // override, so this mode has to be ASSEMBLED for (RenderPipelineOptions::mode) - nothing here can make the
         // picture mean it. Reported once per episode, because the alternative is a host that believes it
         // switched something.
-        if (mode_refused_.shouldReport()) {
-            engine_->reportEngineProblem(
+        if (mode_refused_.shouldReport() && engine != nullptr) {
+            engine->reportEngineProblem(
                 vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
                 String(u8"this pipeline's Deferred chain has no geometry pass to shade, so the shading mode was "
                        u8"not changed: build with RenderPipelineOptions::mode (a non-Lit mode is built on the forward "
@@ -130,10 +144,12 @@ bool RenderPipeline::setGizmoVisible(bool on)
         // existence is a build decision (RenderPipelineOptions::gizmo). Once per episode, because a host may ask every
         // frame and the condition - not the call - is the news.
         if (overlay_refused_.shouldReport()) {
-            engine_->reportEngineProblem(
-                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                String(u8"this pipeline has no axis-gizmo overlay, so there was nothing to show or hide: build with "
-                       u8"RenderPipelineOptions::gizmo to get one"));
+            if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
+                engine->reportEngineProblem(
+                    vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                    String(u8"this pipeline has no axis-gizmo overlay, so there was nothing to show or hide: build "
+                           u8"with RenderPipelineOptions::gizmo to get one"));
+            }
         }
         return false;
     }
@@ -146,10 +162,12 @@ bool RenderPipeline::setStatsVisible(bool on)
 {
     if (fps_overlay_pass_ == nullptr) {
         if (overlay_refused_.shouldReport()) {
-            engine_->reportEngineProblem(
-                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                String(u8"this pipeline has no frame-rate readout, so there was nothing to show or hide: build with "
-                       u8"RenderPipelineOptions::fps to get one"));
+            if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
+                engine->reportEngineProblem(
+                    vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                    String(u8"this pipeline has no frame-rate readout, so there was nothing to show or hide: build "
+                           u8"with RenderPipelineOptions::fps to get one"));
+            }
         }
         return false;
     }
@@ -206,14 +224,17 @@ void RenderPipeline::resize(int width, int height, double pixel_ratio)
 
 void RenderPipeline::addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order)
 {
-    if (pass == nullptr) {
+    // No engine, no registration: a pipeline can outlive its engine (see the class note), and a pass remembered
+    // without being registered would only be a handle nobody can take back.
+    raw_ptr<RenderEngine> engine = engine_.get();
+    if (pass == nullptr || engine == nullptr) {
         return;
     }
     // Remember it BEFORE registering: the pass has to be reachable from the
     // handle in the same call that puts it in the frame, or a later failure in
     // the same build could leave a registered pass nobody can unregister.
     passes_.push_back(pass);
-    engine_->addPass(std::move(pass), std::move(content), order);
+    engine->addPass(std::move(pass), std::move(content), order);
 }
 
 intrusive_ptr<RenderPass> RenderPipeline::addPass(const PassDesc& desc)
@@ -222,7 +243,11 @@ intrusive_ptr<RenderPass> RenderPipeline::addPass(const PassDesc& desc)
     // overload above - a pass this pipeline registered is a pass this pipeline unregisters - and the node goes
     // back to the caller because that is the handle a recipe needs (the window pass it presents, a pass a mode
     // override is applied to).
-    intrusive_ptr<RenderPass> node = engine_->addPass(desc);
+    raw_ptr<RenderEngine> engine = engine_.get();
+    if (engine == nullptr) {
+        return nullptr;  // the engine is gone: there is nobody to register the pass on (see the class note)
+    }
+    intrusive_ptr<RenderPass> node = engine->addPass(desc);
     if (node != nullptr) {
         passes_.push_back(node);
     }

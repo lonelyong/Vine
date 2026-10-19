@@ -38,13 +38,33 @@ class VN_APPFW_API RibbonAction : public UIElement {
     String tooltip() const;
     /// Sets whether the action is enabled.
     void setEnabled(bool on);
-    bool enabled() const;
+
+    /**
+     * @brief Gets whether the action can be triggered.
+     *
+     * @return true when the action is enabled.
+     */
+    bool isEnabled() const;
+
     /// Sets whether the action is checkable (toggle state).
     void setCheckable(bool on);
-    bool checkable() const;
+
+    /**
+     * @brief Gets whether the action has a toggle state.
+     *
+     * @return true when the action is checkable.
+     */
+    bool isCheckable() const;
+
     /// Sets whether the action is checked (requires checkable(true) first).
     void setChecked(bool on);
-    bool checked() const;
+
+    /**
+     * @brief Gets whether the action is currently checked.
+     *
+     * @return true when the checkable action is checked.
+     */
+    bool isChecked() const;
 
   public:
     /// Binds a user custom data pointer (the framework does not manage its lifetime).

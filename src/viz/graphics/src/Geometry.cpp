@@ -71,12 +71,15 @@ std::vector<std::uint32_t> Geometry::bufferLocations() const
     return locations;
 }
 
-void Geometry::setPositions(intrusive_ptr<const vn::Buffer<float>> positions)
+void Geometry::setPositions(intrusive_ptr<const vn::Buffer<float>> positions, std::size_t first_vertex,
+                            std::size_t vertex_count)
 {
     // The location is the shader ABI's (ShaderAbi.hpp), never a number written here: the built-in
     // shaders declare the attribute where attributeLocation() says, so the two move together.
+    // ONE door: a whole buffer is the segment form with the whole range stated (slice() takes VERTICES),
+    // so "which part of an arena" cannot come to mean one thing here and another there.
     addBuffer(attributeLocation(VertexAttribute::Position),
-              AttributeChannel::shared(std::move(positions), kVec3Components));
+              AttributeChannel::slice(std::move(positions), kVec3Components, first_vertex, vertex_count));
 }
 
 bool Geometry::hasPositions() const
@@ -90,20 +93,11 @@ std::size_t Geometry::positionCount() const
     return positions != nullptr ? positions->vertexCount() : 0u;
 }
 
-void Geometry::setPositions(intrusive_ptr<const vn::Buffer<float>> positions, std::size_t first_vertex,
-                            std::size_t vertex_count)
-{
-    // ONE implementation path for both spellings: the segment overload is the general door
-    // (addBuffer + AttributeChannel::slice), so a segment cannot come to mean one thing here and
-    // another there. The stride is the role's, and slice() takes VERTICES.
-    addBuffer(attributeLocation(VertexAttribute::Position),
-              AttributeChannel::slice(std::move(positions), kVec3Components, first_vertex, vertex_count));
-}
-
-void Geometry::setNormals(intrusive_ptr<const vn::Buffer<float>> normals)
+void Geometry::setNormals(intrusive_ptr<const vn::Buffer<float>> normals, std::size_t first_vertex,
+                          std::size_t vertex_count)
 {
     addBuffer(attributeLocation(VertexAttribute::Normal),
-              AttributeChannel::shared(std::move(normals), kVec3Components));
+              AttributeChannel::slice(std::move(normals), kVec3Components, first_vertex, vertex_count));
 }
 
 bool Geometry::hasNormals() const
@@ -117,16 +111,12 @@ std::size_t Geometry::normalCount() const
     return normals != nullptr ? normals->vertexCount() : 0u;
 }
 
-void Geometry::setNormals(intrusive_ptr<const vn::Buffer<float>> normals, std::size_t first_vertex,
-                          std::size_t vertex_count)
+void Geometry::setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex,
+                             std::size_t vertex_count)
 {
-    addBuffer(attributeLocation(VertexAttribute::Normal),
-              AttributeChannel::slice(std::move(normals), kVec3Components, first_vertex, vertex_count));
-}
-
-void Geometry::setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords)
-{
-    addBuffer(kTexCoordLocation, AttributeChannel::shared(std::move(texcoords), kVec2Components));
+    // Two scalars per vertex here, and a caller states VERTICES: a segment of three vertices is six scalars.
+    addBuffer(kTexCoordLocation,
+              AttributeChannel::slice(std::move(texcoords), kVec2Components, first_vertex, vertex_count));
 }
 
 bool Geometry::hasTexcoords() const
@@ -148,34 +138,14 @@ std::uint32_t Geometry::texcoordComponents() const
     return texcoords != nullptr ? texcoords->components : 0u;
 }
 
-void Geometry::setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex,
+void Geometry::setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex,
                              std::size_t vertex_count)
-{
-    // Two scalars per vertex here, and a caller states VERTICES: a segment of three vertices is six scalars.
-    addBuffer(kTexCoordLocation,
-              AttributeChannel::slice(std::move(texcoords), kVec2Components, first_vertex, vertex_count));
-}
-
-void Geometry::setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords)
 {
     // The SAME slot as setTexcoords2, with the other width: three scalars per vertex, which is what a cube
     // map is sampled by direction with. What the width MEANS stays the sampler's business (a user program
     // may read these three as a volume coordinate); the engine's own program reads it as a direction.
-    addBuffer(kTexCoordLocation, AttributeChannel::shared(std::move(texcoords), kVec3Components));
-}
-
-void Geometry::setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex,
-                             std::size_t vertex_count)
-{
     addBuffer(kTexCoordLocation,
               AttributeChannel::slice(std::move(texcoords), kVec3Components, first_vertex, vertex_count));
-}
-
-void Geometry::setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices)
-{
-    // One implementation path for both spellings: the whole-buffer form IS the segment form with the
-    // whole range stated, so the two cannot drift apart.
-    setIndices(std::move(indices), 0u, 0u);
 }
 
 void Geometry::setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices, std::size_t first_index,

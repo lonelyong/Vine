@@ -120,7 +120,7 @@ TEST(DrawBlockTest, TheValuesThePlanCarriesAreTheOnesThatReachTheBytes)
     model(2, 3) = 1.5;   // z translation
 
     RenderCommand command;
-    command.modelMatrix = model;
+    command.model_matrix = model;
     command.opacity     = 0.25F;
     const std::vector<RenderCommand> commands{ command };
 

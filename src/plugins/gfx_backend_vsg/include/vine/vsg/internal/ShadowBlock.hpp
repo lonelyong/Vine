@@ -21,7 +21,7 @@
  *     defect of the reference backend, see the ShadowFacts note);
  *   * the producer published how to read it (`setProducerViewProjection`): a map without a matrix is not readable,
  *     and shading nothing is the honest answer;
- *   * the LIGHT still casts (`Light::castShadow`) and is one this call announced - the switch lives on the light, so
+ *   * the LIGHT still casts (`Light::isCastingShadow`) and is one this call announced - the switch lives on the light, so
  *     turning it off has to stop the shading, not just the rendering;
  *   * the light has a SLOT in the light block (one of its three directional entries): a caster the block cannot name
  *     would scale a light the map does not belong to, so the switch stays off instead.

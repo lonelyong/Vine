@@ -1,5 +1,6 @@
 #include <vine/vsg/internal/VsgBackend.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdlib>
@@ -33,6 +34,7 @@
 #include <vine/vsg/internal/ViewBlock.hpp>
 #include <vine/vsg/internal/WindowTarget.hpp>
 #include <vine/vsg/support/VsgSceneRules.hpp>
+#include <vine/vsg/support/VsgUtils.hpp>
 #include <vine/graphics/backend/AllocationGate.hpp>
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
@@ -370,6 +372,10 @@ struct VsgBackend::Data
     /// WITHOUT a window, and that is what capabilities().presentation and createSurfaceTarget answer from.
     vn::graphics::DeviceDesc desc;
 
+    /// The highest number of presented frames this device has ever seen (see frameReport): the host-visible
+    /// watermark must not go backwards when a window leaves (its session stops counting).
+    std::uint64_t presented_watermark{0};
+
     /// This layer's inner route: its sink forwards into the SDK's ACTIVE route (see the constructor), which
     /// is the engine's when an engine drives this backend - that is what makes the host read one number.
     vn::graphics::Diagnostics diagnostics;
@@ -420,8 +426,7 @@ struct VsgBackend::Data
         std::unique_ptr<vn::graphics::WindowPresentTarget> target;
     };
 
-    std::vector<std::unique_ptr<WindowSlot>> windows;  ///< In the order the host asked (0 = the device's own).
-    /// The session a frame that names NO window runs through (see executeFrame): built on the first such frame,
+    std::vector<std::unique_ptr<WindowSlot>> windows;  ///< In the order the host asked (0 = the device's own).    /// The session a frame that names NO window runs through (see executeFrame): built on the first such frame,
     /// torn down with the device. It is a SUBMIT carrier, not a window - it has no surface, acquires nothing and
     /// presents nothing.
     std::unique_ptr<api::OffscreenSession> offscreen;
@@ -443,6 +448,10 @@ struct VsgBackend::Data
     std::array<vn::graphics::ReportOnce, kReadbackReportCount> readback_reports{};  ///< The unresolved-target episodes.
     vn::graphics::ReportOnce occupied_report{};       ///< The "a window already served was asked again" episode.
     vn::graphics::ReportOnce foreign_target_report{};  ///< The "a frame named someone else's target" episode.
+    /// The "more textures are sampled at once than the image cache keeps" episode, and the number of evictions the
+    /// last frame accounted for (see sweepAbandonedContent).
+    vn::graphics::ReportOnce eviction_report{};
+    std::size_t              evicted_watermark{0};
     /// What the frame's sweeps have let go (see api/ContentSweep); zero while the host holds everything.
     std::size_t released_objects{0};
     std::size_t released_textures{0};
@@ -1122,10 +1131,37 @@ vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
     // DeviceDesc): frames are presented through a target this device handed out, a non-null target is held
     // (api/HostTargets), drawn into by the passes that announce it, and read back through the readback entry points -
     // and a `None` device says in the same value that it has no window half at all.
-    return vn::graphics::Capabilities{
+    vn::graphics::Capabilities answer{
         .render_targets = true,
         .presentation   = d->desc.presentation != vn::graphics::DevicePresentation::None,
     };
+
+    // THE FEATURES ARE THE DEVICE'S ANSWERS, read from the physical device the session built rather than assumed
+    // from the floor: two of the three are requirements this backend cannot run without (see DeviceRequirements),
+    // which is exactly why a live session reporting them is a fact and not a promise, while GPU timings is NOT a
+    // floor - a device that cannot write timestamps runs whole frames and reports its pass times as unavailable.
+    if (const ::vsg::PhysicalDevice* physical = d->device != nullptr ? d->device->getPhysicalDevice() : nullptr)
+    {
+        const VkPhysicalDeviceProperties& properties = physical->getProperties();
+        // The LIMITS travel beside the feature bits: "anisotropy exists" and "how much of it" are different
+        // answers, and the number is clamped the one way the sampler path clamps it (anisotropyFor).
+        answer.max_anisotropy        = vn::vsg::detail::anisotropyFor(properties.limits.maxSamplerAnisotropy);
+        answer.max_color_attachments = properties.limits.maxColorAttachments;
+        if (properties.limits.timestampComputeAndGraphics != VK_FALSE)
+        {
+            answer.features |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::GpuTimings);
+        }
+        if (physical->getFeatures().fillModeNonSolid == VK_TRUE)
+        {
+            answer.features |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::Wireframe);
+        }
+        if (physical->getFeatures().samplerAnisotropy == VK_TRUE)
+        {
+            answer.features |=
+                vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::AnisotropicFiltering);
+        }
+    }
+    return answer;
 }
 
 vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
@@ -1137,11 +1173,26 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
     // retirement window is dated against instead of guessing a lag.
     const core::FrameTimeline& timeline = d->clock.timeline();
 
+    // PRESENTED is the window half's own count: every frame a window's session committed was handed to the platform's
+    // present call (see api::Session::framesPresented - the off-screen carrier presents nothing and answers 0). The
+    // sum is kept MONOTONIC: a window that leaves stops being counted, and a host-visible watermark must not go
+    // backwards (see FrameProgress).
+    std::uint64_t presented = 0;
+    for (const auto& window : d->windows)
+    {
+        if (window->session != nullptr)
+        {
+            presented += window->session->framesPresented();
+        }
+    }
+    d->presented_watermark = std::max(d->presented_watermark, presented);
+
     vn::graphics::FrameReport report;
     report.counters  = d->observe.counters();
     report.retention = d->observe.retention();
     report.progress  = vn::graphics::FrameProgress{ .submitted = timeline.submittedFrame(),
-                                                   .completed = timeline.completedFrame() };
+                                                   .completed = timeline.completedFrame(),
+                                                   .presented = d->presented_watermark };
     return report;
 }
 
@@ -1323,6 +1374,15 @@ void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
     translated.color_value[1] = static_cast<float>(policy.color.g) / 255.0F;
     translated.color_value[2] = static_cast<float>(policy.color.b) / 255.0F;
     translated.color_value[3] = static_cast<float>(policy.color.a) / 255.0F;
+    // The per-attachment colours travel exactly as stated; an attachment nobody stated keeps transparent black
+    // (see the SDK's ClearPolicy and core::planClearValues).
+    translated.extra_color_values.reserve(policy.extra_colors.size());
+    for (const vn::Color& colour : policy.extra_colors) {
+        translated.extra_color_values.push_back({ static_cast<float>(colour.r) / 255.0F,
+                                                  static_cast<float>(colour.g) / 255.0F,
+                                                  static_cast<float>(colour.b) / 255.0F,
+                                                  static_cast<float>(colour.a) / 255.0F });
+    }
     translated.depth          = policy.depth;
     (void)d->recorder.setClearPolicy(translated);
 }
@@ -1614,6 +1674,31 @@ void VsgBackend::sweepAbandonedContent()
         releaseAbandonedContent(*d->store, *d->images, d->clock.timeline(), d->retirement);
     d->released_objects += outcome.objects;
     d->released_textures += outcome.textures;
+
+    // RUNNING OUT OF ROOM IS NOT THE SAME AS "NOBODY HOLDS IT" (see MaterialImages::evictions): the sweep above
+    // answers the second, and this answers the first. A texture the cache evicted by its entry bound rebuilds and
+    // re-uploads the next time it is sampled, so a working set larger than the cache re-uploads itself every frame -
+    // a cost nothing in the picture shows. One sentence per episode (a stretch of frames that evict), because the
+    // condition is the news, not each frame that repeats it.
+    const std::size_t evicted = d->images->evictions();
+    if (evicted != d->evicted_watermark)
+    {
+        d->evicted_watermark = evicted;
+        if (d->eviction_report.shouldReport())
+        {
+            d->diagnostics.report(
+                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ResourcePressure,
+                formatDiagnostic(u8"%zu texture entrie(s) were dropped by the image cache's %zu-entry bound: more "
+                                 u8"textures are sampled at once than it keeps, so each of them rebuilds and "
+                                 u8"re-uploads whenever it comes back. The picture is unaffected; the uploads "
+                                 u8"repeat every frame",
+                                 evicted, MaterialImages::kMaxEntries));
+        }
+    }
+    else
+    {
+        d->eviction_report.rearm();  // the burst is over: the next one gets its own sentence
+    }
 
     // The shared streams nothing names any more go in the same step (see api/StreamUploads): what a frame
     // binds is stamped with it, and this is the frame's last word on streams. It runs beside the sweep above

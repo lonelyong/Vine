@@ -62,7 +62,7 @@ bool Node::subtreeBounds(Aabbd& box) const
         ++bounds_recomputes_;
         Aabbd subtree  = Aabbd::empty();
         bool  complete = true;
-        for (const auto& child : group->childrenRef()) {
+        for (const auto& child : group->children()) {
             Aabbd child_box = Aabbd::empty();
             if (!child->subtreeBounds(child_box)) {
                 complete = false;

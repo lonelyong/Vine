@@ -32,10 +32,23 @@ class VN_APPFW_API Control : public UIElement {
   public:
     /// Whether the control is enabled.
     void setEnabled(bool on);
-    bool enabled() const;
+
+    /**
+     * @brief Gets whether the control accepts interaction.
+     *
+     * @return true when the native control is enabled.
+     */
+    bool isEnabled() const;
+
     /// Whether the control is visible.
     void setVisible(bool on);
-    bool visible() const;
+
+    /**
+     * @brief Gets whether the control is shown.
+     *
+     * @return true when the native control is visible.
+     */
+    bool isVisible() const;
     /// Tooltip text.
     void   setTooltip(const String& t);
     String tooltip() const;

@@ -881,7 +881,7 @@ void addBlendedPair(vn::graphics::Group* root, const BlendedPlacement& at)
  * an elevated 3/4 angle. The off-screen/PiP validation renders the same
  * engine scene and camera, so the PiP matches the main view.
  *
- * The key sun CASTS (Light::castShadow), so the default demo shows a shadow: the engine builds one
+ * The key sun CASTS (Light::isCastingShadow), so the default demo shows a shadow: the engine builds one
  * shadow pass per content from the first enabled shadow-casting directional light, and the demo's key
  * sun is it. The fill deliberately does NOT cast - the design allows one shadowed directional light
  * per content, and a second shadow would only muddy the first - and the ambient + fill keep the

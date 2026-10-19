@@ -25,7 +25,7 @@ void Control::setEnabled(bool on)
         w->setEnabled(on);
 }
 
-bool Control::enabled() const
+bool Control::isEnabled() const
 {
     auto* w = impl<QWidget>();
     return w && w->isEnabled();
@@ -37,7 +37,7 @@ void Control::setVisible(bool on)
         w->setVisible(on);
 }
 
-bool Control::visible() const
+bool Control::isVisible() const
 {
     auto* w = impl<QWidget>();
     return w && w->isVisible();

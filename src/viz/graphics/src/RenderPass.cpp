@@ -1,6 +1,7 @@
 #include <vine/graphics/RenderPass.hpp>
 
 #include <memory>
+#include <utility>
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/RenderBackend.hpp>
@@ -35,6 +36,31 @@ raw_ptr<RenderTarget> RenderPass::renderTarget() const
 void RenderPass::setRenderTarget(intrusive_ptr<RenderTarget> target)
 {
     render_target_ = std::move(target);
+    // The edge follows the target: a pass that stated a depth view keeps drawing against it when it is moved.
+    // A pass that stated NONE does not un-say what another pass set (attaching a new pass to a target is not a
+    // statement about the target's depth), and a LAYERED view has no mechanism yet - it stays a declaration.
+    if (render_target_ != nullptr && depth_view_.isValid() && depth_view_.layer() == 0)
+    {
+        render_target_->shareDepth(depth_view_);
+    }
+}
+
+DepthView RenderPass::depthView() const
+{
+    return depth_view_;
+}
+
+void RenderPass::setDepthView(DepthView view)
+{
+    depth_view_ = std::move(view);
+    // A layered view is a declaration this SDK cannot honour until layered targets land (see DepthView): it is
+    // kept (depthView() tells the truth about what was asked) and applied to nothing - the engine refuses it
+    // with a report when the declaration arrives through PassDesc. An invalid view is a statement of its own
+    // ("no borrowed depth") and clears what an earlier declaration set.
+    if (render_target_ != nullptr && depth_view_.layer() == 0)
+    {
+        render_target_->shareDepth(depth_view_);
+    }
 }
 
 raw_ptr<Camera> RenderPass::camera() const
@@ -47,14 +73,31 @@ void RenderPass::setCamera(intrusive_ptr<Camera> camera)
     camera_ = std::move(camera);
 }
 
-Color RenderPass::clearColor() const
+Color RenderPass::clearColor(int attachment) const
 {
-    return clear_color_;
+    if (attachment <= 0) {
+        return clear_color_;
+    }
+    const auto index = static_cast<std::size_t>(attachment - 1);
+    return index < extra_clear_colors_.size() ? extra_clear_colors_[index] : Color(0, 0, 0, 0);
 }
 
-void RenderPass::setClearColor(const Color& color)
+void RenderPass::setClearColor(const Color& color, int attachment)
 {
-    clear_color_ = color;
+    if (attachment < 0) {
+        return;
+    }
+    if (attachment == 0) {
+        clear_color_ = color;
+        return;
+    }
+    const auto index = static_cast<std::size_t>(attachment - 1);
+    if (extra_clear_colors_.size() <= index) {
+        // Grow with transparent black, so the index the caller names is the index the backend clears (an
+        // unstated attachment keeps meaning "nothing here", see ClearPolicy).
+        extra_clear_colors_.resize(index + 1, Color(0, 0, 0, 0));
+    }
+    extra_clear_colors_[index] = color;
 }
 
 bool RenderPass::shouldClearDepth() const
@@ -267,7 +310,7 @@ void RenderPass::clearPolygonModeOverride()
     polygon_mode_override_.reset();
 }
 
-std::optional<ClearPolicy> RenderPass::clearPolicy() const noexcept
+std::optional<ClearPolicy> RenderPass::clearPolicy() const
 {
     // The ONE place "does this pass clear, and how" is answered: a pass that does not clear
     // says nothing, so a backend can tell "clears to this colour" from "draws over what is
@@ -275,7 +318,11 @@ std::optional<ClearPolicy> RenderPass::clearPolicy() const noexcept
     if (!clear_enabled_) {
         return std::nullopt;
     }
-    return ClearPolicy{ clear_color_, clear_depth_ };
+    // One value, one authority: the per-attachment colours travel WITH the single-colour spelling (see
+    // setClearColor(int) and ClearPolicy), so a backend reads one policy rather than a list plus a fallback.
+    ClearPolicy policy{ clear_color_, clear_depth_ };
+    policy.extra_colors = extra_clear_colors_;
+    return policy;
 }
 
 void RenderPass::fillPassFacts(PassDescription& out)

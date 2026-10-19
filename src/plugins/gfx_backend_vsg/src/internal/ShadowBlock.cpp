@@ -18,7 +18,7 @@ bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& 
     }
 
     // The map belongs to ONE light, and that light has to be one this call announced - the switch lives on the
-    // LIGHT (Light::castShadow), so a caster that stopped casting has to stop shading, and a light this call never
+    // LIGHT (Light::isCastingShadow), so a caster that stopped casting has to stop shading, and a light this call never
     // announced is not a light it can shade.
     const core::LightRef* caster = nullptr;
     for (const core::LightRef& light : draw.lights)

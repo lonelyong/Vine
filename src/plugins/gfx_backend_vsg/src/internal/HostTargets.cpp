@@ -18,7 +18,7 @@ void HostTargets::describe(const vn::graphics::RenderTarget& target, Description
 
     out.has_depth       = target.hasDepth();
     out.depth_format    = target.depthFormat();
-    out.depth_promotion = target.depthPromotion();
+    out.depth_promotion = target.isDepthPromoted();
 
     const vn::graphics::RenderTarget* source = target.depthSource();
     out.depth_source = source;

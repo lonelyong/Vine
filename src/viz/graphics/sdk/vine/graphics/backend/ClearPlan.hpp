@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -48,6 +49,8 @@ struct ClearPolicy
     float color_value[4]{ 0.0F, 0.0F, 0.0F, 1.0F };  ///< The value attachment 0 receives when it clears.
     bool  depth{false};                     ///< The pass asked to clear depth (bootstrap clears it regardless).
     float depth_value{kReverseZFarDepth};   ///< Value the depth clear uses (the reverse-Z far plane by default).
+    /// Values for attachments 1..N-1, in attachment order; a missing entry is TRANSPARENT BLACK.
+    std::vector<std::array<float, 4>> extra_color_values;
 };
 
 /** @brief What one colour attachment does at the start of the pass. */
@@ -99,7 +102,9 @@ struct VN_GRAPHICS_API PassClearPlan
  *      must be, and a pass that asks for a clear gets it) - its borrowers read the depth the lender's
  *      pass writes in THIS frame, so a clear at the start of that pass is exactly what makes their
  *      depth test meaningful;
- *   4. a clear request clears all colour attachments, and only attachment 0 receives the pass' colour.
+ *   4. a clear request clears all colour attachments; each receives the value the policy states for it
+ *      (attachment 0's is `color_value`, the rest are `extra_color_values`), and an unstated extra gets
+ *      transparent black.
  *
  * @param shape          The target's shape (how many colour attachments, whether there is depth).
  * @param policy         What the pass asked for.

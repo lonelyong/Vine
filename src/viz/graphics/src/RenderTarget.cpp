@@ -29,7 +29,7 @@ void RenderTarget::attachDepth(DepthFormat format)
     has_depth_    = true;
 }
 
-bool RenderTarget::depthPromotion() const
+bool RenderTarget::isDepthPromoted() const
 {
     return depth_promotion_;
 }
@@ -67,12 +67,17 @@ raw_ptr<const Light> RenderTarget::shadowOf() const
 
 raw_ptr<RenderTarget> RenderTarget::depthSource() const
 {
-    return depth_source_.get();
+    return depth_view_.target();
 }
 
-void RenderTarget::shareDepth(intrusive_ptr<RenderTarget> source)
+DepthView RenderTarget::sharedDepth() const
 {
-    depth_source_ = std::move(source);
+    return depth_view_;
+}
+
+void RenderTarget::shareDepth(DepthView view)
+{
+    depth_view_ = std::move(view);
 }
 
 int RenderTarget::width() const
@@ -98,12 +103,7 @@ bool RenderTarget::hasColor() const
 
 bool RenderTarget::hasDepth() const
 {
-    return has_depth_ || depth_source_ != nullptr;
-}
-
-RenderTarget::ColorFormat RenderTarget::colorFormat() const
-{
-    return color_formats_.empty() ? ColorFormat::RGBA8 : color_formats_.front();
+    return has_depth_ || depth_view_.isValid();
 }
 
 int RenderTarget::colorCount() const

@@ -265,7 +265,7 @@ struct VN_GRAPHICS_API DynamicState
  * @details
  * - A pure mapping, deliberately: the two depth intents (what the content authored and what the pass
  *   pipes in) were already weighed by the ONE resolution function -
- *   `resolveRenderState(command.authoredState, pass.stateOverrides())` in StateNode.hpp - so what
+ *   `resolveRenderState(command.authored_state, pass.stateOverrides())` in StateNode.hpp - so what
  *   arrives here is the answer, not two claims to compare. The compare op is distance-semantic
  *   ("closer wins") and travels unchanged; the reverse-Z inversion happens at the Vulkan boundary
  *   (`RenderStateMapper::mapCompareOp`), so the default Less maps to GREATER and a scene without

@@ -31,6 +31,7 @@ struct ContentStore::Data
     {
         vn::intrusive_ptr<vn::graphics::Material> object{};
         std::uint64_t                                 revision{0};  ///< Edit counter; only updateMaterial() moves it.
+        std::uint64_t                                 seen_revision{0};  ///< The material's own revision last accounted for.
         bool                                          described{false};
         std::uint64_t                                 described_revision{0};
     };
@@ -303,22 +304,24 @@ void ContentStore::updateMaterial(vn::raw_ptr<vn::graphics::Material> material)
         return;  // untracked: nothing draws with it, so nothing can be asked about it
     }
 
-    // THE TOUCH IS A COMPARE-AND-WRITE (see the header note): the material's CURRENT values are compared with
-    // the row the table answers for it - member-wise, the ABI's way (see materialBlockAgreesWith: the block's
-    // tail padding is deliberately not part of the comparison) - and only a difference moves the revision,
-    // which is what makes the next tablesFor() rebuild that row and park the value it had. A blind bump would
-    // rebuild every commanded material's row every frame, which is exactly what this avoids; and it does not
-    // build anything to compare, so a steady frame allocates nothing.
+    // THE TOUCH IS ONE NUMBER (see the header note): a material moves its own revision when one of its shading
+    // values changes (Material::revision - every such change goes through a setter, and a setter that finds the
+    // value it already holds moves nothing), so this asks "did it move since the last time?" instead of reading
+    // the values back and comparing them. A steady frame therefore does one integer compare per commanded
+    // material and allocates nothing, and an edit lands on the very next frame that draws with the material.
     Data::LiveMaterial& live = entry->second;
+    const std::uint64_t seen  = material->revision();
     if (!live.described)
     {
-        return;  // nothing is described yet: the first description is taken when a frame records
+        // Nothing is described yet: the first description (taken when a frame records) reads the values as they
+        // are and records the revision it read (see ensureMaterial), so there is nothing to supersede.
+        return;
     }
-    const MaterialFacts* row = d->liveMaterial(material);
-    if (row != nullptr && materialBlockAgreesWith(*material, row->block) && row->texture == material->texture())
+    if (live.seen_revision == seen)
     {
         return;  // touched and unchanged: nothing to build, nothing to park, nothing allocated
     }
+    live.seen_revision = seen;
     ++live.revision;
 }
 
@@ -461,6 +464,10 @@ void ContentStore::ensureMaterial(const vn::graphics::Material* material, core::
     const FactMiss             miss             = buildMaterialFacts(material, live.revision, fresh, storage->block);
     live.described                              = true;
     live.described_revision                     = live.revision;
+    // The row about to be written carries the values the material has RIGHT NOW, so that is the revision this entry
+    // has accounted for: the next touch of an unedited material is then a no-op instead of a second description of
+    // the same values.
+    live.seen_revision = material != nullptr ? material->revision() : 0;
     if (miss != FactMiss::None)
     {
         return;

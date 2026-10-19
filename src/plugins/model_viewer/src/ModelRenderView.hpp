@@ -425,8 +425,9 @@ inline void ModelRenderView::selectAt(double nx, double ny)
         selected_ = hit.geometry;
     }
 
-    // 按需出帧的控件也要把这一笔画出来（连续出帧时多要一帧无害）。后端每帧都会重新读命令里的材质
-    // （见 ContentStore::updateMaterial 的"touch"），所以这里不需要任何"通知后端"的调用。
+    // 按需出帧的控件也要把这一笔画出来（连续出帧时多要一帧无害）。后端每帧都会重读命令里的材质：
+    // 材质自己数改动（`Material::revision()`），后端只比这一个数字（见 `ContentStore::updateMaterial`），
+    // 所以这里不需要任何"通知后端"的调用。
     control_->renderFrame();
 }
 

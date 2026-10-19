@@ -268,7 +268,7 @@ struct VN_GRAPHICS_API ResolvedCommandState
  *   backend bakes into a pipeline variant, the dynamic state it diffs per command, and any diagnostic that
  *   has to explain a picture.
  *
- * @param authored The state the CONTENT authored (RenderCommand::authoredState): every item left unset is
+ * @param authored The state the CONTENT authored (RenderCommand::authored_state): every item left unset is
  *                 "nobody on the path said anything about it", which is not the same as "set to the default".
  * @param pass     What the pass drawing it overrides (RenderPass::stateOverrides).
  * @return The final state and the origin of each item.

@@ -56,6 +56,14 @@ struct VN_GRAPHICS_API FrameProgress
 {
     std::uint64_t submitted{0}; ///< Frames handed to the queue so far.
     std::uint64_t completed{0}; ///< Frames whose GPU work is provably done (monotonic).
+    /// Frames handed to the platform's PRESENT path so far (monotonic).
+    ///
+    /// PRECISELY WHAT IT PROVES: the executor reached the present call for this frame and the platform accepted it
+    /// (a successful present, not a lost swapchain). It is NOT "the picture is on the glass" - that needs a
+    /// present-timing extension this backend does not require - and it is not the same clock as @ref completed:
+    /// a frame can be GPU-complete and still queued for presentation. A host reading the WINDOW itself (a
+    /// screenshot, a pixel probe) waits for THIS number to reach the frame it wants, then reads.
+    std::uint64_t presented{0};
 
     /**
      * @brief Gets how many frames are submitted and not yet provably complete.

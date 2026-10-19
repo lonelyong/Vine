@@ -48,25 +48,17 @@ class VN_GRAPHICS_API Group : public Node {
      */
     void removeChild(raw_ptr<Node> child);
 
-    /** @brief Gets all child nodes.
+    /** @brief Borrows the child list.
      *
      * @details
-     * - Returns a copy: use childrenRef() on hot paths (per-frame traversal, picking) to avoid copying the
-     *   list and bumping every child's reference count.
-     *
-     * @return The children, in insertion order.
-     */
-    std::vector<NodePtr> children() const;
-
-    /** @brief Borrows the child list without copying it.
-     *
-     * @details
+     * - BORROWED, never a copy: the list is walked once per pass by command collection, bounds and
+     *   picking, and copying it there would bump every child's reference count on every frame.
      * - The reference is valid until the group's children change: do not hold it across an
-     *   addChild() / removeChild().
+     *   addChild() / removeChild() (a caller that must keep the list copies it explicitly).
      *
      * @return The children, in insertion order.
      */
-    const std::vector<NodePtr>& childrenRef() const noexcept;
+    const std::vector<NodePtr>& children() const noexcept;
 
     /** @brief Computes the world-space bounding box of this subtree (the union of the children's; empty when
      * childless).

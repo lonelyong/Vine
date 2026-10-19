@@ -122,7 +122,7 @@ Mat4d Camera::viewMatrix() const
     return view_;
 }
 
-double Camera::aspectRatio() const
+double Camera::aspect() const
 {
     return aspect_;
 }

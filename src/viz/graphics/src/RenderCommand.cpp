@@ -9,7 +9,7 @@ RenderCommand::RenderCommand(intrusive_ptr<Geometry> g, intrusive_ptr<Material> 
                              const Mat4d& model)
   : geometry(std::move(g))
   , material(std::move(m))
-  , modelMatrix(model)
+  , model_matrix(model)
 {
     // Opacity/transparency are folded by the scene collector from leaf and
     // subtree opacity only; a material never contributes transparency.

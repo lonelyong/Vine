@@ -377,7 +377,7 @@ void FrameRecorder::snapshotLights(std::span<const vn::graphics::Light* const> l
         ref.color         = light->color();
         ref.intensity     = light->intensity();
         ref.has_direction = light->hasDirection();
-        ref.cast_shadow   = light->castShadow();
+        ref.cast_shadow   = light->isCastingShadow();
         ref.shadow_bias   = light->shadowSettings().bias;
         if (ref.has_direction)
         {
@@ -400,9 +400,9 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
         target.geometry_revision = source.geometry != nullptr ? source.geometry->revision() : 0;
         target.program           = programRef(source.program.get());
         target.material          = source.material.get();
-        target.model             = source.modelMatrix;
+        target.model             = source.model_matrix;
         target.opacity       = source.opacity;
-        target.authoredState = source.authoredState;
+        target.authored_state = source.authored_state;
     }
     return copy;
 }

@@ -4,11 +4,14 @@
 #include <functional>
 #include <vector>
 
+#include <vine/Lease.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 #include <vine/window/window_global.hpp>
 
+#include "InputRouter.hpp"
+#include "LayoutParticipant.hpp"
 #include "RenderPipeline.hpp"
 
 VN_WINDOW_NS_BEGIN
@@ -120,13 +123,6 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
   public:
     // ---- Geometry ----
 
-    /** @brief Refreshes this view's geometry for a new surface size (keeps the current pixel ratio).
-     *
-     * @param width  New surface width in logical pixels, as the host reports it (<= 0 is ignored).
-     * @param height New surface height in logical pixels (<= 0 is ignored).
-     */
-    void resize(int width, int height);
-
     /** @brief Refreshes this view's geometry for a new surface size and device pixel ratio.
      *
      * @details
@@ -138,14 +134,14 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * - A view that PRESENTS a surface forwards this to RenderSurface::resize (the size of the thing the picture
      *   ends up in is the SURFACE's fact - recorded there and fanned out), so this entry is the one for a view
      *   that presents nothing; a view that presents later is sized at once from what the surface remembers.
-     * - The verb matches RenderSurface::resize on purpose: the SAME announcement, addressed to whichever of the
-     *   two a host holds.
+     * - The verb and the default match RenderSurface::resize on purpose: the SAME announcement, addressed to
+     *   whichever of the two a host holds, and a call that omits the ratio keeps the one already in force.
      *
      * @param width        New surface width in logical pixels (<= 0 is ignored).
      * @param height       New surface height in logical pixels (<= 0 is ignored).
      * @param pixel_ratio  Device pixels per logical pixel (devicePixelRatio); <= 0 keeps the current one.
      */
-    void resize(int width, int height, double pixel_ratio);
+    void resize(int width, int height, double pixel_ratio = 0.0);
 
     /** @brief Registers a creator-managed surface-layout step.
      *
@@ -216,21 +212,37 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      */
     void pushEvent(const vn::window::KeyEvent& event);
 
+    /** @brief Gets the router that turns window input into manipulator calls.
+     *
+     * @details
+     * - The view keeps the router fed with its manipulator (including the default orbit one it creates lazily); a
+     *   host that routes input itself may set a different manipulator on it, or drive it directly.
+     *
+     * @return The router.
+     */
+    [[nodiscard]] InputRouter& inputRouter() noexcept;
+
+    /** @brief Gets the router that turns window input into manipulator calls (see the non-const overload). */
+    [[nodiscard]] const InputRouter& inputRouter() const noexcept;
+
   public:
     // ---- Presentation ----
 
-    /** @brief Binds the engine this view renders through (borrowed; must outlive the view; null detaches).
+    /** @brief Binds the engine this view renders through (borrowed through a lease; null detaches).
      *
      * @details
+     * - BORROWED, AND THE BORROW KNOWS WHEN IT ENDS (see Lease): the engine is the owner's to keep alive, so this
+     *   view never pins it. When the owner drops the engine the lease empties, engine() answers nullptr, and every
+     *   use here sees "no engine" instead of a pointer into freed memory.
      * - Re-binding replaces any previous engine, and the adopted pipeline is dropped with the old one (its
      *   passes live in the old engine's frame): adopt a pipeline built on the new engine to keep drawing.
      * - The engine stays content-free; this view binds its content to the passes it registers.
      *
-     * @param engine Engine to borrow.
+     * @param engine Engine to borrow, or null to detach.
      */
     void setEngine(raw_ptr<RenderEngine> engine);
 
-    /** @brief Gets the bound engine, or nullptr when unset. */
+    /** @brief Gets the bound engine, or nullptr when unset (including when its owner has destroyed it). */
     raw_ptr<RenderEngine> engine() const;
 
     /** @brief Gets the pipeline this view adopted (setPipeline), or nullptr - which means this view draws
@@ -312,7 +324,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     void applySurfaceGeometry();
 
     // The bound engine is borrowed (the host owns it and keeps it alive).
-    raw_ptr<RenderEngine> engine_ = nullptr;
+    Lease<RenderEngine> engine_;
 
     // The surface this view presents, while one says so (RenderSurface::present). Borrowed, and unbound from
     // either side: the surface must not be reached once it is gone, and it must stop naming this view when the
@@ -321,10 +333,12 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
 
     // The size this view lays its picture out with while it presents NO surface (the host's announcement). A view
     // that presents one reads the SURFACE's numbers instead (see surfaceWidth / RenderSurface::resize): the size of
-    // the thing the picture ends up in has one owner, and it is not the view.
-    int    own_width_       = 0;
-    int    own_height_      = 0;
-    double own_pixel_ratio_ = 1.0;
+    // the thing the picture ends up in has one owner, and it is not the view. The steps registered against it live
+    // there too (see LayoutParticipant).
+    LayoutParticipant layout_;
+
+    // Window input routed to the manipulator (see InputRouter). Kept fed with manipulator_ wherever that changes.
+    InputRouter input_router_;
 
     intrusive_ptr<Camera>  camera_;
     intrusive_ptr<Scene>   scene_;
@@ -334,11 +348,6 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     // area. The handles in it are the pipeline's own - this one only keeps it alive, and dropping it is what
     // takes the passes out of the frame.
     intrusive_ptr<RenderPipeline> pipeline_;
-
-    // Creator-managed surface-layout steps run on every surface resize.
-    std::vector<std::function<void(int width, int height)>> surface_layouts_;
-    // ... and the ones that asked for the ratio too.
-    std::vector<std::function<void(int width, int height, double pixel_ratio)>> surface_layouts_with_ratio_;
 };
 
 VN_GRAPHICS_NS_END

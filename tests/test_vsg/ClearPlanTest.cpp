@@ -110,7 +110,7 @@ TEST(CoreClearPlanTest, APassThatClearsNothingLoadsEverything)
     EXPECT_FALSE(plan.bootstrap);
 }
 
-TEST(CoreClearPlanTest, AClearRequestPutsTheColourOnAttachmentZeroOnly)
+TEST(CoreClearPlanTest, AClearRequestPutsEachAttachmentItsOwnColour)
 {
     ClearPolicy policy;
     policy.color           = true;
@@ -118,18 +118,35 @@ TEST(CoreClearPlanTest, AClearRequestPutsTheColourOnAttachmentZeroOnly)
     policy.color_value[1]  = 0.5F;
     policy.color_value[2]  = 0.0F;
     policy.color_value[3]  = 1.0F;
+    policy.extra_color_values.push_back({ 0.0F, 1.0F, 0.0F, 1.0F });  // attachment 1: green
 
     const auto plan = planClearValues(multiTarget(), policy, /*bootstrap*/ false, /*depth_preserved*/ false);
 
     ASSERT_EQ(plan.colors.size(), 3U);
     EXPECT_EQ(plan.colors[0].load, LoadOp::Clear);
-    EXPECT_FLOAT_EQ(plan.colors[0].clear[1], 0.5F);
-    for (std::size_t index = 1; index < plan.colors.size(); ++index) {
+    EXPECT_FLOAT_EQ(plan.colors[0].clear[1], 0.5F) << "attachment 0 gets the pass' colour";
+    EXPECT_FLOAT_EQ(plan.colors[1].clear[1], 1.0F) << "attachment 1 gets the colour stated for it";
+    for (std::size_t index = 2; index < plan.colors.size(); ++index) {
         EXPECT_EQ(plan.colors[index].load, LoadOp::Clear) << "the extras clear too";
-        EXPECT_FLOAT_EQ(plan.colors[index].clear[0], 0.0F) << "but never to the pass' colour";
+        EXPECT_FLOAT_EQ(plan.colors[index].clear[0], 0.0F) << "an unstated extra stays transparent black";
         EXPECT_FLOAT_EQ(plan.colors[index].clear[3], 0.0F);
     }
     EXPECT_EQ(plan.depth.load, LoadOp::Load) << "the pass did not ask for a depth clear";
+}
+
+TEST(CoreClearPlanTest, ABootstrapPassHonoursTheStatedPerAttachmentColours)
+{
+    ClearPolicy policy;  // the pass asked for nothing; the bootstrap rule clears anyway
+    policy.color_value[0] = 0.25F;
+    policy.color_value[3] = 1.0F;
+    policy.extra_color_values.push_back({ 0.0F, 0.0F, 1.0F, 1.0F });  // attachment 1: blue
+
+    const auto plan = planClearValues(multiTarget(), policy, /*bootstrap*/ true, /*depth_preserved*/ false);
+
+    ASSERT_EQ(plan.colors.size(), 3U);
+    EXPECT_FLOAT_EQ(plan.colors[0].clear[0], 0.25F);
+    EXPECT_FLOAT_EQ(plan.colors[1].clear[2], 1.0F) << "the stated colour survives the bootstrap rule";
+    EXPECT_FLOAT_EQ(plan.colors[2].clear[3], 0.0F) << "the unstated one is still transparent black";
 }
 
 TEST(CoreClearPlanTest, ADepthOnlyTargetHasNoColourEntries)

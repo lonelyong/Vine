@@ -45,10 +45,23 @@ class VN_APPFW_API RibbonButton : public Control {
 
     /// Sets whether the button is checkable (toggle state).
     void setCheckable(bool on);
-    bool checkable() const;
+
+    /**
+     * @brief Gets whether the button has a toggle state.
+     *
+     * @return true when the button is checkable.
+     */
+    bool isCheckable() const;
+
     /// Sets whether the button is checked (requires setCheckable(true) first).
     void setChecked(bool on);
-    bool checked() const;
+
+    /**
+     * @brief Gets whether the button is currently checked.
+     *
+     * @return true when the checkable button is checked.
+     */
+    bool isChecked() const;
     /**
      * @brief Sets the button size: large / medium / small.
      *

@@ -555,8 +555,8 @@ TEST(ModelViewerTest, AFilePayloadReachesTheRenderSceneInTheSourceUnits)
     ASSERT_NE(root, nullptr);
     const auto* group = dynamic_cast<const vn::graphics::Group*>(root.get());
     ASSERT_NE(group, nullptr);
-    ASSERT_EQ(group->childrenRef().size(), 1u);
-    const auto* geometry = dynamic_cast<const vn::graphics::Geometry*>(group->childrenRef()[0].get());
+    ASSERT_EQ(group->children().size(), 1u);
+    const auto* geometry = dynamic_cast<const vn::graphics::Geometry*>(group->children()[0].get());
     ASSERT_NE(geometry, nullptr) << "场景里那一个孩子就是网格的几何";
 
     // 文件里就是一个三角形，坐标就是那三个 —— 没被单位换算碰过。
@@ -618,8 +618,8 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
     ASSERT_NE(root, nullptr);
     const auto* group = dynamic_cast<const vn::graphics::Group*>(root.get());
     ASSERT_NE(group, nullptr);
-    ASSERT_EQ(group->childrenRef().size(), 1u);
-    auto* geometry = dynamic_cast<vn::graphics::Geometry*>(group->childrenRef()[0].get());
+    ASSERT_EQ(group->children().size(), 1u);
+    auto* geometry = dynamic_cast<vn::graphics::Geometry*>(group->children()[0].get());
     ASSERT_NE(geometry, nullptr);
     const vn::graphics::Material* const original = geometry->material();
     ASSERT_NE(original, nullptr) << "模型几何自带那份中灰材质（见 makeGeometry()）";

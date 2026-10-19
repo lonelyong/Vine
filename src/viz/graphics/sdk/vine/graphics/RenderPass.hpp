@@ -12,6 +12,7 @@
 #include <vine/Color.hpp>
 
 #include "DepthMode.hpp"
+#include "DepthView.hpp"
 #include "FrameDescription.hpp"
 #include "ImageRef.hpp"
 #include "ImageSource.hpp"
@@ -62,6 +63,27 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     /** @brief Gets the associated render target. */
     raw_ptr<RenderTarget> renderTarget() const;
 
+    /** @brief Gets the depth image this pass draws against.
+     *
+     * @return The view stated by setDepthView, or an invalid view when the pass uses its target's own depth.
+     */
+    DepthView depthView() const;
+
+    /** @brief States the depth image this pass draws against, when it is another pass' image (see DepthView).
+     *
+     * @details
+     * - THE PASS DECLARES THE EDGE; the target stores the mechanism. The view is kept here and applied to the
+     *   pass' current target (RenderTarget::shareDepth), and re-applied when a target is set later
+     *   (setRenderTarget) - so a pass moved to another target keeps drawing against the same depth.
+     * - Constraints are the target's (both off-screen and equally sized, the lender renders earlier, its depth is
+     *   not promoted): they are the backend's to enforce, and it reports a plan that breaks them rather than
+     *   guessing.
+     * - An invalid view clears the declaration: the pass goes back to its target's own depth.
+     *
+     * @param view The depth image this pass draws against.
+     */
+    void setDepthView(DepthView view);
+
     /** @brief Sets the render target this pass renders into.
      *
      * @details
@@ -93,25 +115,36 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     void setCamera(intrusive_ptr<Camera> camera);
 
-    /** @brief Gets the clear color.
+    /** @brief Gets one attachment's clear colour (attachment 0 unless one is named).
      *
      * @details
-     * - The default is an opaque dark grey (51, 51, 51, 255): the value the main WINDOW pass was written against,
-     *   because that is the pass filling the surface a host looks at.
-     * - Nothing in the engine names a colour for the off-screen targets its builders create, so an off-screen pass
-     *   that wants one says so itself — otherwise attachment 0 of an off-screen target clears to that window grey.
-     * - Attachments 1 and beyond are not this value at all: the backend clears them to transparent black by contract,
-     *   so a consumer can tell "nothing drawn here" from data — see ClearPolicy.
+     * - Attachment 0's default is an opaque dark grey (51, 51, 51, 255): the value the main WINDOW pass was
+     *   written against, because that is the pass filling the surface a host looks at.
+     * - Nothing in the engine names a colour for the off-screen targets its builders create, so an off-screen
+     *   pass that wants one says so itself - otherwise attachment 0 of an off-screen target clears to that
+     *   window grey.
+     * - Attachments 1 and beyond are not that value at all: an attachment nobody states a colour for is
+     *   cleared to transparent black by contract, so a consumer can tell "nothing drawn here" from data (see
+     *   ClearPolicy).
      *
-     * @return The colour this pass clears attachment 0 to when it clears.
+     * @param attachment Colour attachment index (0 = the first, the default).
+     * @return The colour stated for that attachment, or transparent black for an unstated one.
      */
-    Color clearColor() const;
+    Color clearColor(int attachment = 0) const;
 
-    /** @brief Sets the clear color.
+    /** @brief Sets one attachment's clear colour (attachment 0 unless one is named).
      *
-     * @param color Colour attachment 0 is cleared to when this pass clears (0..255 per channel).
+     * @details
+     * - Attachment 0 and the extras are ONE fact with one authority: the pass' clear policy. The index is
+     *   what a G-buffer needs (its normal image cleared to (0,0,1,0), say), and stating nothing for an
+     *   attachment keeps transparent black - the value that means "nothing here" (see ClearPolicy).
+     * - A negative index is ignored; indices above 0 grow the stated list with transparent-black entries so
+     *   the index the caller names is the index the backend clears.
+     *
+     * @param color      Colour that attachment is cleared to (0..255 per channel).
+     * @param attachment Colour attachment index (0 = the first, the default).
      */
-    void setClearColor(const Color& color);
+    void setClearColor(const Color& color, int attachment = 0);
 
     /** @brief Returns whether the depth buffer is cleared.
      *
@@ -178,7 +211,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * - The pass side of the state priority table: its depth policy (depthMode()) and its rasterisation override
      *   (polygonModeOverride()), in one value.
      * - Announced to the backend before the pass draws, so a backend can resolve each command's FINAL state in one
-     *   place - `resolveRenderState(command.authoredState, pass.stateOverrides())` , see StateNode.hpp.
+     *   place - `resolveRenderState(command.authored_state, pass.stateOverrides())` , see StateNode.hpp.
      *
      * @return The pass' state for its content.
      */
@@ -524,33 +557,29 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     virtual bool describe(raw_ptr<Scene> scene, PassDescription& out);
 
-    /** @brief Executes this render pass: describes it, then hands the backend the frame that says so.
+    /** @brief Executes this pass on its own: describes it, then hands the backend the one-pass frame that says so.
      *
      * @details
-     * - THE HOST'S OWN WIRE, and no longer how a frame runs: the engine compiles a frame into a value and hands THAT
-     *   over (see RenderEngine::frameDescription), so each pass is described once - by the compile - and a pass that
-     *   overrides this method is not called by the engine at all.
-     * - Whoever wants the engine to run the work must put it where the engine looks: what the pass ISSUES (its
-     *   target, its viewport, its draws) belongs in describe - the extension point S1 introduced; anything that must
-     *   happen before the frame describes the pass (writing content it then draws) belongs in the declaration's hook
-     *   (PassDesc::before_draw), which the compile runs in run order.
-     * - What remains for this method is a caller that drives one pass itself - a host drawing a pass into its own
-     *   device, a test - and it is exactly "describe, then execute a frame with one pass in it" (see
-     *   singlePassFrame): the same shape the engine hands over, through the same entry, so the two spellings cannot
-     *   drift. A pass that issues nothing issues nothing here either: no frame is handed over at all.
+     * - SUGAR, NOT AN EXTENSION POINT. This method is deliberately NOT virtual, because there is only one way a pass
+     *   becomes a picture: `describe()` fills a value, and a frame is that value (see
+     *   RenderFrameExecutor::executeFrame). A subclass that draws something else overrides `describe()`; a subclass
+     *   that must change content BEFORE the picture uses the declaration hook (`PassDesc::before_draw`), which the
+     *   compile runs in run order. While this was virtual, an override could draw something the engine's compile
+     *   never saw - two truths for one pass.
+     * - WHAT IT IS FOR: a caller that drives ONE pass itself - a host drawing into its own device, a test. It builds
+     *   `singlePassFrame(this, 0, {}, description)` and calls the executor's single entry (`executeFrame`), which is
+     *   the same shape the engine hands over for a whole frame, so the two spellings cannot drift. A pass that issues
+     *   nothing (describe answers false) issues nothing here either: no frame is handed over at all.
      * - The TARGET is the third thing such a caller says, because a frame's "default framebuffer" has to resolve to
-     *   one (see RenderFrameExecutor::executeFrame): the target the frame is presented through (the executor makes
-     *   that call at the frame's tail, so the caller does not), or nullptr for a pass whose work is off-screen (a pass
-     *   that draws into its own render target needs no window, and a caller with no window at all draws none).
+     *   one (see RenderFrameExecutor::executeFrame): the target the frame is presented through, or nullptr for a pass
+     *   whose work is off-screen. The EXECUTOR presents through it at the frame's tail, so the caller does not.
      *
-     * @param scene      Scene containing drawables.
-     * @param backend    Device to render with.
-     * @param present_to Target the pass' default framebuffer resolves to (the executor presents through it when this
-     *                   call returns), or nullptr for a pass whose work is off-screen (see
-     *                   RenderFrameExecutor::executeFrame).
+     * @param scene      Content scene to draw (a content-agnostic pass ignores it).
+     * @param backend    Device to render with (null does nothing).
+     * @param present_to Target the pass' default framebuffer resolves to, or nullptr for off-screen work.
      */
-    virtual void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend,
-                         raw_ptr<PresentTarget> present_to = nullptr);
+    void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend,
+                 raw_ptr<PresentTarget> present_to = nullptr);
 
   protected:
     /** @brief Fills this pass' own facts (target, viewport, clear, state) into @p out.
@@ -570,7 +599,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *
      * @return The policy, or nullopt when this pass does not clear.
      */
-    [[nodiscard]] std::optional<ClearPolicy> clearPolicy() const noexcept;
+    [[nodiscard]] std::optional<ClearPolicy> clearPolicy() const;
 
     String name_;
     String output_name_;
@@ -583,7 +612,11 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     std::optional<PolygonMode> polygon_mode_override_;  // unset = each command's own effective mode
     intrusive_ptr<RenderTarget> render_target_;
     intrusive_ptr<Camera> camera_;
+    DepthView depth_view_;   // the depth image this pass draws against (invalid = its target's own)
     Color clear_color_{ 51, 51, 51, 255 };
+    // Colours for attachments 1..N-1, in attachment order (an absent entry is transparent black; see
+    // setClearColor(int) and ClearPolicy).
+    std::vector<Color> extra_clear_colors_;
     bool clear_depth_ = true;
     bool clear_enabled_ = true;
     DepthMode depth_mode_ = DepthMode::TestAndWrite;

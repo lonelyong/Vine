@@ -191,7 +191,7 @@ class BoundsCache {
             // that CAN answer still use their caches through this same entry point — including the
             // exact Geometry fast path (its local data box placed by the accumulated matrix; a Geometry
             // SUBCLASS keeps answering through its own boundingBox(), see Node::subtreeBounds).
-            for (const auto& child : group->childrenRef()) {
+            for (const auto& child : group->children()) {
                 box.expandBy(worldBound(child.get(), world * child->localTransformMatrix()));
             }
         }
@@ -214,7 +214,7 @@ void invalidateBoundsUnder(Node& node)
 {
     node.invalidateBounds();
     if (const auto* group = dynamic_cast<const Group*>(&node)) {
-        for (const auto& child : group->childrenRef()) {
+        for (const auto& child : group->children()) {
             invalidateBoundsUnder(*child);
         }
     }
@@ -244,7 +244,7 @@ Aabbd visibleWorldBox(const Node& node, std::uint32_t inherited_layers, std::uin
     const std::uint32_t layers = node.layers().value_or(inherited_layers);
     if (const auto* group = dynamic_cast<const Group*>(&node)) {
         Aabbd box = Aabbd::empty();
-        for (const auto& child : group->childrenRef()) {
+        for (const auto& child : group->children()) {
             const Aabbd child_box = visibleWorldBox(*child, layers, layer_mask);
             if (child_box.isValid()) {
                 box.expandBy(child_box);
@@ -366,21 +366,21 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
             intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)),
             material, world);
         cmd.opacity = effective;
-        cmd.drawOrder = subtree.draw_order;
+        cmd.draw_order = subtree.draw_order;
         // Render state folds along the node path: every StateNode from the
         // scene root to this geometry contributes, deeper nodes overriding.
         // What arrives here is the CONTENT's word (every item optional, so
         // "nobody said" and "said the default" stay different facts); the pass
         // drawing it completes the picture, in one place (see StateNode.hpp's
         // resolveRenderState and RenderPass::stateOverrides).
-        cmd.authoredState = subtree.state;
+        cmd.authored_state = subtree.state;
         // Shading program resolves leaf-first then ancestor StateNodes.
         cmd.program = geometry->program() != nullptr ? ShaderProgramPtr(geometry->program())
                                                      : ShaderProgramPtr(subtree.program);
         return;
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
-        for (const auto& child : group->childrenRef()) {
+        for (const auto& child : group->children()) {
             collectNodeCommands(child.get(), world * child->localTransformMatrix(), frustum, node_opacity,
                                 subtree, layer_mask, bounds, out);
         }
@@ -613,7 +613,7 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsSh
     std::vector<std::pair<double, RenderCommand*>> keyed;
     keyed.reserve(commands.size());
     for (RenderCommand& cmd : commands) {
-        const auto origin = cmd.modelMatrix * vn::math::Point3d(0.0, 0.0, 0.0);
+        const auto origin = cmd.model_matrix * vn::math::Point3d(0.0, 0.0, 0.0);
         keyed.emplace_back((origin.asVector() - eye).length2(), &cmd);
     }
     std::stable_sort(keyed.begin(), keyed.end(),
@@ -624,8 +624,8 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsSh
                          // - an outline, a decal, a highlight - is expressed without its own pass. Equal orders
                          // fall through to the ordering the collection has always produced, so the default
                          // (everybody at 0) is bit for bit the picture it was.
-                         if (lhs.second->drawOrder != rhs.second->drawOrder) {
-                             return lhs.second->drawOrder < rhs.second->drawOrder;
+                         if (lhs.second->draw_order != rhs.second->draw_order) {
+                             return lhs.second->draw_order < rhs.second->draw_order;
                          }
                          if (lhs.second->isTransparent() != rhs.second->isTransparent()) {
                              return !lhs.second->isTransparent();

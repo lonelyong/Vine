@@ -443,7 +443,7 @@ std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedD
         out.model             = command.model;
         out.opacity           = command.opacity;
         // The ONE resolution: what the content authored, weighed against what the pass says (StateNode.hpp).
-        out.dynamic = resolveDynamicState(resolveRenderState(command.authoredState, pass_state).state);
+        out.dynamic = resolveDynamicState(resolveRenderState(command.authored_state, pass_state).state);
 
         // A command that names no program of its own is shaded by the frame's default - resolved here so the
         // executor never has to ask "and what if it is null?" (see the design's D2 table).

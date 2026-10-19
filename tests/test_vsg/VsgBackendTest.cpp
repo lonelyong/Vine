@@ -1101,6 +1101,383 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
 }
 
 /*
+ * @brief A CUBE map declared as a pass input reaches the content program's `samplerCube`.
+ *
+ * The imported-input path was only ever exercised with 2D textures, but nothing in it is kind-aware: the upload
+ * builds a six-layer cube view (`MaterialImages::acquire`), and the input set's layout comes from the program's
+ * declarations rather than from the texture. This case is the proof: the +X face is green, every other face is
+ * a different colour, and the program samples by a FIXED direction (1, 0, 0) - no texcoord channel and no
+ * material is involved - so a green centre says a cube view reached a cube sampler.
+ */
+TEST(VsgBackendTest, ACubeMapInputReachesAContentProgramAsACubeSampler)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 128, 96);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(backend->capabilities().render_targets);
+
+    const vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    destination->attachColor(RenderTarget::ColorFormat::RGBA8);
+    destination->setSize(64, 64);
+
+    // Six 4x4 faces in Vulkan's layer order (CubeMap::Face), each a solid distinct colour. Four texels rather
+    // than one: the cache's LINEAR filter bleeds across the cube's seams, and a face's colour is only pure
+    // inside it (the same measurement ContentPassTest's cube case records).
+    constexpr int kFaceSize = 4;
+    const vn::intrusive_ptr<vn::graphics::CubeMap> cube(
+        new vn::graphics::CubeMap(kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
+    const std::uint8_t face_colours[6][4]{ { 0U, 255U, 0U, 255U },      // PosX: green (the one this case reads)
+                                           { 255U, 0U, 0U, 255U },      // NegX: red
+                                           { 0U, 0U, 255U, 255U },      // PosY: blue
+                                           { 255U, 255U, 0U, 255U },    // NegY: yellow
+                                           { 255U, 0U, 255U, 255U },    // PosZ: magenta
+                                           { 0U, 255U, 255U, 255U } };  // NegZ: cyan
+    for (int face = 0; face < cube->faceCount(); ++face)
+    {
+        const vn::intrusive_ptr<vn::imaging::Image> image(
+            new vn::imaging::Image(kFaceSize, kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        for (std::size_t texel = 0; texel < pixels.size() / 4U; ++texel)
+        {
+            for (std::size_t byte = 0; byte < 4U; ++byte)
+            {
+                pixels[texel * 4U + byte] = static_cast<std::byte>(face_colours[face][byte]);
+            }
+        }
+        cube->setSource(face, vn::intrusive_ptr<const vn::imaging::Image>(image));
+    }
+
+    // The same view block and input set as the 2D case, with the one difference this case is about: the input
+    // set's sampler is declared `samplerCube`, and the direction is a constant.
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 out_color;\n"
+            "layout(set = 1, binding = 0) uniform samplerCube imported_cube;\n"
+            "void main() { out_color = texture(imported_cube, vec3(1.0, 0.0, 0.0)); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    const TriangleFixture triangle = makeTriangle();
+    std::vector<RenderCommand> commands = triangle.commands;
+    commands.front().program            = program;
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
+    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+
+    backend->executeFrame(TestFrame()
+                              .pass(pass_object.get(), 0)
+                              .target(destination.get())
+                              .inputs(std::vector<vn::graphics::ImageSource>{
+                                  vn::graphics::ImageSource::imported(cube.get()) })
+                              .clear(destination_clear)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .content(commands, camera.get())
+                              .value());
+
+    EXPECT_EQ(BackendContentAccess::executor(*backend).recorded().size(), 1U)
+        << "the content pass was recorded (no packet means no draw)";
+
+    std::vector<std::uint8_t>    pixels;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
+    const std::size_t at = (40U * 64U + 16U) * 4U;
+    ASSERT_LT(at + 3U, pixels.size());
+    EXPECT_TRUE(isColourByte(pixels[at], 0.0) && isColourByte(pixels[at + 1], 1.0) &&
+                isColourByte(pixels[at + 2], 0.0))
+        << "the cube's +X face is what the content program samples: got (" << static_cast<int>(pixels[at])
+        << ", " << static_cast<int>(pixels[at + 1]) << ", " << static_cast<int>(pixels[at + 2]) << ")";
+    EXPECT_EQ(pixels[at + 3], 255U);
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "a complete cube is uploaded silently";
+}
+
+/*
+ * @brief An INCOMPLETE cube declared as a pass input binds the WHITE CUBE, and says why once.
+ *
+ * The stand-in has to be a cube, not the 2D white texture: a `samplerCube` reading a 2D-array view is a
+ * descriptor mismatch, so a white picture here is also the proof that the fallback followed the declaration's
+ * kind. This is the failure half of the cube-input contract (the passing half is the case above).
+ */
+TEST(VsgBackendTest, AnIncompleteCubeInputBindsTheWhiteCubeAndSaysWhy)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 128, 96);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(backend->capabilities().render_targets);
+
+    const vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    destination->attachColor(RenderTarget::ColorFormat::RGBA8);
+    destination->setSize(64, 64);
+
+    // Not one face is filled: the upload is refused as Incomplete, which is the case the white stand-in
+    // exists for.
+    const vn::intrusive_ptr<vn::graphics::CubeMap> cube(
+        new vn::graphics::CubeMap(4, vn::imaging::PixelFormat::Rgba8Unorm));
+
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 out_color;\n"
+            "layout(set = 1, binding = 0) uniform samplerCube imported_cube;\n"
+            "void main() { out_color = texture(imported_cube, vec3(1.0, 0.0, 0.0)); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    const TriangleFixture triangle = makeTriangle();
+    std::vector<RenderCommand> commands = triangle.commands;
+    commands.front().program            = program;
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
+    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+
+    backend->executeFrame(TestFrame()
+                              .pass(pass_object.get(), 0)
+                              .target(destination.get())
+                              .inputs(std::vector<vn::graphics::ImageSource>{
+                                  vn::graphics::ImageSource::imported(cube.get()) })
+                              .clear(destination_clear)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .content(commands, camera.get())
+                              .value());
+
+    EXPECT_EQ(backend->diagnosticCount(), 1U) << "one report for the refused upload, and no other episode";
+
+    std::vector<std::uint8_t>    pixels;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
+    const std::size_t at = (40U * 64U + 16U) * 4U;
+    ASSERT_LT(at + 3U, pixels.size());
+    EXPECT_TRUE(isColourByte(pixels[at], 1.0) && isColourByte(pixels[at + 1], 1.0) &&
+                isColourByte(pixels[at + 2], 1.0))
+        << "the white CUBE stand-in is what the content program samples: got (" << static_cast<int>(pixels[at])
+        << ", " << static_cast<int>(pixels[at + 1]) << ", " << static_cast<int>(pixels[at + 2]) << ")";
+    EXPECT_EQ(pixels[at + 3], 255U);
+}
+
+/*
+ * @brief The capabilities answer the FEATURES as device facts, in the same value as the rest.
+ *
+ * Two of the three are floors this backend refuses a device without (see DeviceRequirements): a live session
+ * answering them is therefore a fact about the device it came up on, not a promise this file makes. The third,
+ * GPU timings, is NOT a floor - a device that cannot write timestamps still runs whole frames - so it is only
+ * asked to be the device's own stable answer.
+ */
+TEST(VsgBackendTest, TheCapabilitiesAnswerTheFeaturesTheDeviceActuallyHas)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 128, 96);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    const vn::graphics::Capabilities caps = backend->capabilities();
+    EXPECT_TRUE(caps.render_targets);
+    EXPECT_TRUE(caps.presentation);
+    EXPECT_TRUE(caps.supports(vn::graphics::Capabilities::Feature::Wireframe))
+        << "the device floor requires fillModeNonSolid";
+    EXPECT_TRUE(caps.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering))
+        << "the device floor requires samplerAnisotropy";
+    EXPECT_GE(caps.max_anisotropy, 1.0F);
+    EXPECT_EQ(caps.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering),
+              caps.max_anisotropy > 1.0F)
+        << "the feature bit and the limit are the same device fact";
+    EXPECT_GE(caps.max_color_attachments, 4U) << "the G-buffer carries four colour attachments";
+    EXPECT_EQ(caps.supports(vn::graphics::Capabilities::Feature::GpuTimings),
+              backend->capabilities().supports(vn::graphics::Capabilities::Feature::GpuTimings))
+        << "the answer is the device's, and asking again does not change it";
+}
+
+/*
+ * @brief Each colour attachment clears to ITS own stated colour, and an unstated one stays transparent black.
+ *
+ * An MRT pass had one clear colour and painted every attachment with it (or left the extras black); the policy now
+ * carries a colour per attachment. The picture is the proof: two attachments, red and green clears, read back one
+ * at a time - neither can stand in for the other.
+ */
+TEST(VsgBackendTest, EachAttachmentClearsToItsOwnColour)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 128, 96);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(16, 16);
+
+    const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
+
+    vn::graphics::ClearPolicy clear;
+    clear.color  = vn::Color(255, 0, 0, 255);  // attachment 0: red
+    clear.depth  = false;                      // there is no depth attachment
+    clear.extra_colors.push_back(vn::Color(0, 255, 0, 255));  // attachment 1: green
+
+    backend->executeFrame(TestFrame()
+                              .pass(pass.get(), 0)
+                              .target(target.get())
+                              .clear(clear)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .value());
+
+    const auto readAttachment = [&backend, &target](int attachment, std::vector<std::uint8_t>& pixels) {
+        vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+        const bool                    ok  = backend->readColorBuffer(target.get(), attachment, pixels, &why);
+        EXPECT_TRUE(ok) << "attachment " << attachment << " is read back";
+        EXPECT_EQ(why, vn::graphics::ReadbackResult::Ok);
+        return ok;
+    };
+
+    std::vector<std::uint8_t> first;
+    ASSERT_TRUE(readAttachment(0, first));
+    const std::size_t at = (4U * 16U + 4U) * 4U;
+    ASSERT_LT(at + 3U, first.size());
+    EXPECT_TRUE(isColourByte(first[at], 1.0) && isColourByte(first[at + 1], 0.0) &&
+                isColourByte(first[at + 2], 0.0))
+        << "attachment 0 is the colour stated for it: got (" << static_cast<int>(first[at]) << ", "
+        << static_cast<int>(first[at + 1]) << ", " << static_cast<int>(first[at + 2]) << ")";
+
+    std::vector<std::uint8_t> second;
+    ASSERT_TRUE(readAttachment(1, second));
+    ASSERT_LT(at + 3U, second.size());
+    EXPECT_TRUE(isColourByte(second[at], 0.0) && isColourByte(second[at + 1], 1.0) &&
+                isColourByte(second[at + 2], 0.0))
+        << "attachment 1 is the colour stated for IT, not the pass' colour: got ("
+        << static_cast<int>(second[at]) << ", " << static_cast<int>(second[at + 1]) << ", "
+        << static_cast<int>(second[at + 2]) << ")";
+
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "a per-attachment clear is not a report";
+}
+
+/*
+ * @brief The frame report says how many frames were handed to PRESENT: the fact a window reader waits for.
+ *
+ * The count is the WINDOW half's own (`api::Session::framesPresented`): an off-screen frame names no window and
+ * presents nothing, so it leaves the number alone; a committed window frame is handed to the platform's present call
+ * even when it drew nothing, so the number moves by one per frame. It is a WATERMARK, not a sample of a moving clock:
+ * asking twice without a frame between changes nothing.
+ */
+TEST(VsgBackendTest, TheFrameReportSaysHowManyFramesWereHandedToPresent)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 128, 96);
+    vn::intrusive_ptr<DirectDriveBackend> backend(new DirectDriveBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_NE(backend->target(), nullptr);
+
+    const auto progress = backend->frameReport().progress;
+    ASSERT_TRUE(progress.has_value()) << "this backend keeps the frame clock";
+    const std::uint64_t presented_before = progress->presented;
+
+    // Two frames that draw nothing are still committed, and committing presents (see Session::commit).
+    backend->executeFrame(vn::graphics::FrameDescription{});
+    backend->executeFrame(vn::graphics::FrameDescription{});
+
+    const auto after = backend->frameReport().progress;
+    ASSERT_TRUE(after.has_value());
+    EXPECT_EQ(after->presented, presented_before + 2U) << "one present per committed window frame";
+
+    // A watermark, not a sample: asking again without a frame changes nothing.
+    EXPECT_EQ(backend->frameReport().progress->presented, presented_before + 2U);
+}
+
+/*
  * @brief A re-filled imported texture reaches the NEXT frame, and the cache keeps one entry.
  *
  * The same Texture object is sampled by the same pass in two frames; between them `setImage` replaces its
@@ -2493,14 +2870,14 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     //    the mesh, which is what shows the flip reached the rasteriser instead of a local variable.
     {
         const auto [before, after] = run("state: cull mode flipped", kFramesPerRegime, [&](int frame) {
-            commands[0].authoredState.cullMode =
+            commands[0].authored_state.cullMode =
                 (frame % 2 == 0) ? vn::graphics::CullMode::Back : vn::graphics::CullMode::None;
         });
         const EditCostDelta change = editCostDelta(before, after);
         EXPECT_EQ(change.builds, 0) << "a state change is not content: no row is built";
         EXPECT_EQ(change.uploads, 0) << "and nothing is uploaded";
         EXPECT_EQ(change.created, 0) << "cull is dynamic state: the pipeline key cannot see it (core/Keys.hpp)";
-        commands[0].authoredState.cullMode = vn::graphics::CullMode::Back;
+        commands[0].authored_state.cullMode = vn::graphics::CullMode::Back;
         drive();
         const auto pixel = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
         EXPECT_TRUE(isColourByte(pixel[0], 0.54)) << "Back-face culling kept the mesh visible";
@@ -2537,7 +2914,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     //    edit that really is identity, in this very setup.
     {
         const EditCostCounters before    = readEditCosts(*store, *assembly, pool);
-        commands[0].authoredState.topology = vn::graphics::Topology::Lines;
+        commands[0].authored_state.topology = vn::graphics::Topology::Lines;
         drive();
         const EditCostCounters after = readEditCosts(*store, *assembly, pool);
         EXPECT_EQ(after.created - before.created, 1U)
@@ -3170,6 +3547,87 @@ TEST(VsgBackendTest, TheTextureCacheDropsTheOldestInsertionAndRebuildsWhatItDrop
 
     backend->shutdown();
     EXPECT_TRUE(host.alive());
+}
+
+/**
+ * @brief A working set larger than the texture cache is a COST, and a host can see it.
+ *
+ * The cache's entry bound (MaterialImages::kMaxEntries) rebuilds and re-uploads a texture that comes back after
+ * being evicted. The picture stays right, so nothing on screen says a word about it - which is why the sweep turns
+ * the counter into one `ResourcePressure` sentence per EPISODE (a stretch of frames that evict) instead of one per
+ * frame: a host reading `diagnosticCount(ResourcePressure)` can tell "my scene holds more textures at once than the
+ * cache keeps" from "a steady scene", and that number is the trigger the A6 register waits on.
+ *
+ * Nothing here draws: 257 live textures are enough to make the bound evict, and an EMPTY frame is what runs the
+ * frame's tail (the sweep is the frame's, not "the frames that drew") - this case is about the sentence it writes.
+ */
+TEST(VsgBackendTest, AWorkingSetLargerThanTheTextureCacheIsReportedOncePerEpisode)
+{
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    ASSERT_TRUE(backend->initialize());
+
+    vn::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
+    ASSERT_NE(images, nullptr);
+    const auto reported = [&backend]() {
+        return backend->diagnosticCount(vn::graphics::DiagnosticCategory::ResourcePressure);
+    };
+    const std::size_t before = reported();
+    EXPECT_EQ(images->evictions(), 0U) << "nothing has been sampled yet";
+
+    // One entry past the bound, every texture STILL HELD: this is "more textures live at once than the cache keeps",
+    // not "nobody holds it" (the sweep releases those, and that is not a cost).
+    const auto sample = [&images](const vn::intrusive_ptr<vn::graphics::Texture2D>& texture, unsigned shade) {
+        const vn::intrusive_ptr<vn::imaging::Image> image(
+            new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        std::fill(pixels.begin(), pixels.end(), static_cast<std::byte>(shade & 0xFFU));
+        texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
+
+        vn::vsg::detail::TextureReject reason = vn::vsg::detail::TextureReject::Ok;
+        (void)images->acquire(texture.get(), reason);
+        ASSERT_EQ(reason, vn::vsg::detail::TextureReject::Ok) << "a complete 2D texture must upload";
+    };
+
+    std::vector<vn::intrusive_ptr<vn::graphics::Texture2D>> textures;
+    textures.reserve(vn::vsg::MaterialImages::kMaxEntries + 1U);
+    for (std::size_t index = 0; index <= vn::vsg::MaterialImages::kMaxEntries; ++index)
+    {
+        textures.push_back(
+            vn::intrusive_ptr<vn::graphics::Texture2D>(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm)));
+        sample(textures.back(), static_cast<unsigned>(index));
+    }
+    ASSERT_EQ(images->evictions(), 1U) << "the bound had to drop exactly one entry to make room";
+
+    // The frame's tail turns that into a sentence - ONCE, however many frames keep evicting. A frame that draws nothing
+    // is still a frame (see VsgBackend's empty-frame path): it runs the sweep all the same.
+    backend->executeFrame(vn::graphics::FrameDescription{});
+    EXPECT_EQ(reported(), before + 1U) << "the sweep is where 'out of room' becomes something a host can see";
+    backend->executeFrame(vn::graphics::FrameDescription{});
+    EXPECT_EQ(reported(), before + 1U) << "the same episode is one sentence, not one per frame";
+
+    // A SUSTAINED oversized working set: the counter moves on every frame that samples a texture which was just
+    // evicted, and the episode rule is what keeps that from being one sentence per frame (the watermark alone would
+    // let each moved counter through).
+    textures.push_back(
+        vn::intrusive_ptr<vn::graphics::Texture2D>(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm)));
+    sample(textures.back(), 7U);
+    ASSERT_EQ(images->evictions(), 2U);
+    backend->executeFrame(vn::graphics::FrameDescription{});
+    EXPECT_EQ(reported(), before + 2U) << "a new episode (the counter had stopped moving) gets its own sentence";
+
+    textures.push_back(
+        vn::intrusive_ptr<vn::graphics::Texture2D>(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm)));
+    sample(textures.back(), 8U);
+    ASSERT_EQ(images->evictions(), 3U);
+    backend->executeFrame(vn::graphics::FrameDescription{});
+    EXPECT_EQ(reported(), before + 2U) << "the same episode is still one sentence while the counter keeps moving";
+
+    // Letting go of the textures is not the bound doing anything: the sweep releases them, and says nothing.
+    textures.clear();
+    backend->executeFrame(vn::graphics::FrameDescription{});
+    EXPECT_EQ(reported(), before + 2U) << "releasing a texture is not evicting it";
+
+    backend->shutdown();
 }
 
 TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)

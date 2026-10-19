@@ -438,6 +438,8 @@ struct MaterialImages::Data
     SamplerImage                   white_cube;
     // What the device offers (see setMaxAnisotropy); 1 is the safe answer for a cache that was never told.
     float                          max_anisotropy = 1.0F;
+    /// Entries the BOUND dropped so far (see evictions): a different fact from releaseAbandoned's count.
+    std::size_t                    evictions{0};
 };
 
 MaterialImages::MaterialImages() : d(new Data())
@@ -586,6 +588,7 @@ SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture
                 break;
             }
             d->cache.erase(oldest);
+            ++d->evictions;  // "out of room" is counted separately from "nobody holds it" (see evictions)
         }
     }
 
@@ -602,6 +605,11 @@ SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture
 std::size_t MaterialImages::count() const noexcept
 {
     return d->cache.size();
+}
+
+std::size_t MaterialImages::evictions() const noexcept
+{
+    return d->evictions;
 }
 
 bool MaterialImages::has(vn::raw_ptr<const vn::graphics::Texture> texture) const noexcept

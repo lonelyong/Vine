@@ -1,6 +1,8 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <cstdint>
+
 #include <vine/intrusive_ptr.hpp>
 #include <vine/Object.hpp>
 #include <vine/raw_ptr.hpp>
@@ -115,6 +117,23 @@ class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
      */
     void setTexture(intrusive_ptr<Texture> texture);
 
+    /** @brief Gets the revision, which moves whenever a shading value of this material changes.
+     *
+     * @details
+     * - THE MATERIAL MOVES ITS OWN REVISION. The other content types are announced by their WRITER instead
+     *   (`Geometry::setRevision()`), because their bytes sit in buffers a caller can refill behind the SDK's
+     *   back - a material has no such hole: every one of its shading values travels through a setter, so the
+     *   setter can report the change itself and nobody has to remember to.
+     * - WHAT MOVES IT: the diffuse / specular / ambient colours, the shininess and the texture - each only when
+     *   the value actually DIFFERS (assigning what a material already holds is not a change, so a host that
+     *   re-applies its settings every frame costs nothing). The NAME does not move it: a label is not shading.
+     * - WHAT READS IT: a consumer that answers for this material caches on the number instead of reading the
+     *   values back every frame (see the backend's ContentStore::updateMaterial).
+     *
+     * @return Monotonic revision, 0 until the first change.
+     */
+    std::uint64_t revision() const;
+
   private:
     String              name_;
     Colorf              diffuse_{ 0.8f, 0.8f, 0.8f, 1.0f };
@@ -122,6 +141,8 @@ class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
     Colorf              ambient_{ 0.2f, 0.2f, 0.2f, 1.0f };
     float               shininess_ = 32.0f;
     intrusive_ptr<Texture> texture_;
+    /// Moves when a shading value changes (see revision()); the name is deliberately not part of it.
+    std::uint64_t revision_ = 0;
 };
 
 using MaterialPtr = intrusive_ptr<Material>;

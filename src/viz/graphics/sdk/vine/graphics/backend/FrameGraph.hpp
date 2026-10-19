@@ -15,9 +15,9 @@
  * @details
  * - WHY A GRAPH AND NOT "JUST RUN THEM IN ORDER". The host announces its passes in registration order,
  *   but what a pass READS decides when it may run: a lighting pass that samples a G-buffer must run
- *   after the pass that wrote it. Nothing upstream orders them - the engine resolves a pass' declared
- *   inputs and checks who announced what (validateWiring), and it has no cycle detection at all - so
- *   the backend is the only place that can see a cycle.
+ *   after the pass that wrote it. Nothing upstream orders them - every frame the engine compiles the announced
+ *   declarations into a plan, resolving each pass' declared inputs and checking who announced what - and it has no
+ *   cycle detection at all, so the backend is the only place that can see a cycle.
  * - WHAT A CYCLE MEANS HERE, AND WHY IT IS NOT "KEEP THE CURRENT ORDER". A cycle is a declaration no
  *   execution order can satisfy: A reads what B writes while B reads what A writes. The three candidate
  *   answers are all wrong except one. Run them in call order anyway: the consumer samples an attachment

@@ -2,6 +2,7 @@
 #include "graphics_global.hpp"
 
 #include <vine/intrusive_ptr.hpp>
+#include <vine/Lease.hpp>
 #include <vine/raw_ptr.hpp>
 #include <vine/RefCounted.hpp>
 
@@ -44,8 +45,9 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
   public:
     /** @brief Creates the presentation of one surface rendered through @p engine.
      *
-     * @param engine Engine this area is registered on and driven by (borrowed; must outlive it; a second area on
-     *               one engine is refused and reported - RenderEngine::adoptArea).
+     * @param engine Engine this area is registered on and driven by (BORROWED THROUGH A LEASE: the area never owns
+     *               it, and an area that outlives it reports no presentation and lays nothing out instead of calling
+     *               into freed memory; a second area on one engine is refused and reported - RenderEngine::adoptArea).
      */
     explicit RenderSurface(RenderEngine& engine);
 
@@ -140,13 +142,6 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      */
     [[nodiscard]] raw_ptr<SceneView> presentedView() const noexcept;
 
-    /** @brief Records the size of this surface, keeping the pixel ratio it last saw.
-     *
-     * @param width  Surface width in logical pixels (the unit the host reports; <= 0 is ignored).
-     * @param height Surface height in logical pixels (<= 0 is ignored).
-     */
-    void resize(int width, int height);
-
     /** @brief Records the size of this surface and gives it to the view that presents it.
      *
      * @details
@@ -163,7 +158,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * @param height       Surface height in logical pixels (<= 0 is ignored, with the ratio).
      * @param pixel_ratio  Device pixels per logical pixel; <= 0 keeps the ratio this surface last saw.
      */
-    void resize(int width, int height, double pixel_ratio);
+    void resize(int width, int height, double pixel_ratio = 0.0);
 
     /** @brief Gets the device pixel ratio this surface last saw (resize).
      *
@@ -207,7 +202,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      *
      * @return The bound target, or nullptr.
      */
-    [[nodiscard]] WindowPresentTarget* target() const noexcept;
+    [[nodiscard]] raw_ptr<WindowPresentTarget> target() const noexcept;
 
     /** @brief Whether this area is bound to a window (see bindTarget).
      *
@@ -228,7 +223,10 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     /** @brief Reports "this area already draws a picture" once per episode (the second-presentation refusal). */
     void reportSecondPresentation();
 
-    raw_ptr<RenderEngine>          engine_;
+    /// The engine this area is registered on, BORROWED THROUGH A LEASE: the area does not own its engine, and an
+    /// area that outlives it (a host that kept one) reads an empty lease instead of a pointer into freed memory -
+    /// the same rule the view and the pipeline follow (see Lease and SceneView::engine_).
+    Lease<RenderEngine>           engine_;
     raw_ptr<SceneView>             view_ = nullptr;
     intrusive_ptr<RenderPass>      pass_;
     raw_ptr<WindowPresentTarget>   target_ = nullptr;

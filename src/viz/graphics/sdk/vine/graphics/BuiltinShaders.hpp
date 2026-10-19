@@ -185,7 +185,7 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> deferredLightProgram();
  *   `VineShadowBlock` at binding 6 (a pipeline that asks for it must declare that map as an input of
  *   the lighting pass), and scales each light's diffuse term by the map. A NAMED variant rather than a
  *   boolean argument, because the two programs have different interfaces: whoever calls this one owes
- *   the map (see Light::castShadow for the pipeline rule that decides between them).
+ *   the map (see Light::isCastingShadow for the pipeline rule that decides between them).
  *
  * @return The fragment program, or null when the source no longer carries the markers the shadowed
  *         variant is built from.

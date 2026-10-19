@@ -232,7 +232,7 @@ void RenderEngine::collectPictureShapeMismatches()
         const Camera& camera   = *pass->camera();
         const double  picture  = camera.projectionType() == Camera::ProjectionType::Orthographic
                                      ? orthographicShape(camera)
-                                     : camera.aspectRatio();
+                                     : camera.aspect();
         const double  rectangle = static_cast<double>(width) / static_cast<double>(height);
         // A sub-pixel difference is a device-pixel rounding, not a mistake: the rectangle of a pane is the pane's
         // logical size scaled by the pixel ratio, and that conversion truncates (see PixelGeometry.hpp's
@@ -488,6 +488,44 @@ intrusive_ptr<RenderPass> RenderEngine::addPass(const PassDesc& desc)
     if (desc.writes != nullptr) {
         node->setRenderTarget(desc.writes);
     }
+    // The depth edge comes with the pass that states it (see PassDesc::depth_view). Three answers, in the order a
+    // host can act on them:
+    //   * a LAYERED view is not a mechanism this SDK has yet (a target carries one depth image) - refused, said
+    //     once, and never silently turned into "the whole image";
+    //   * a target draws against ONE depth image, so a second, DIFFERENT declaration is refused too, once per
+    //     (target, image) pair - the first declaration stands;
+    //   * otherwise the declaration becomes the target's mechanism (and the pass keeps it, so a later
+    //     setRenderTarget carries the edge along).
+    if (desc.depth_view.has_value()) {
+        const DepthView declared = *desc.depth_view;
+        if (declared.isValid() && declared.layer() != 0) {
+            if (layered_depth_reported_.shouldReport()) {
+                reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                    vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                    u8"a pass names a layered depth view; layered targets are not built yet, so "
+                                    u8"the declaration is refused");
+            }
+        }
+        else if (desc.writes != nullptr && declared.isValid()) {
+            const DepthView current = desc.writes->sharedDepth();
+            if (current.isValid() && current.target() != declared.target()) {
+                if (depth_view_conflicts_
+                        .insert(std::make_pair(desc.writes.get(), declared.target()))
+                        .second) {
+                    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                        vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                        u8"two passes name different depth views for one target; the first "
+                                        u8"declaration stands and this one is refused");
+                }
+            }
+            else {
+                node->setDepthView(declared);
+            }
+        }
+        else {
+            node->setDepthView(declared);
+        }
+    }
     // The clear policy is applied only where the declaration states one: an unstated policy leaves the kind's
     // own (a Screen pass never clears, a Scene pass does), which is what keeps a descriptor and a hand-built
     // pass the same pass (see PassDesc::clear_enabled).
@@ -496,6 +534,9 @@ intrusive_ptr<RenderPass> RenderEngine::addPass(const PassDesc& desc)
     }
     if (desc.clear_color.has_value()) {
         node->setClearColor(*desc.clear_color);
+    }
+    for (std::size_t index = 0; index < desc.clear_extra_colors.size(); ++index) {
+        node->setClearColor(desc.clear_extra_colors[index], static_cast<int>(index) + 1);
     }
     if (desc.clear_depth.has_value()) {
         node->setShouldClearDepth(*desc.clear_depth);

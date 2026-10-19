@@ -31,11 +31,13 @@ class ShaderProgram;
  * - A PASS' OWN FACT, a field of its description (PassDescription::clear): the pass describes the clear its
  *   content expects and every draw of that pass gets it. Nothing is cleared at call time - a backend that
  *   clears through its render pass' load-op applies it when the pass records.
- * - ONE COLOUR: @ref color is attachment 0's; every further attachment of an MRT target is left TRANSPARENT
- *   BLACK (0,0,0,0) until a fragment writes it. That is the contract, not an omission - it lets a consumer
- *   tell "nothing was drawn here" from the stored data itself (the deferred-lighting program reads a stored
- *   view position of ~0 as background), so a backend may not clear every attachment uniformly without
- *   auditing those consumers; one that cannot honour this must report it instead of clearing differently.
+ * - PER ATTACHMENT: @ref color is attachment 0's clear and @ref extra_colors carries the ones the pass states
+ *   for the rest, in attachment order. An attachment nobody states a colour for is left TRANSPARENT BLACK
+ *   (0,0,0,0) until a fragment writes it - that is the contract, not an omission: it lets a consumer tell
+ *   "nothing was drawn here" from the stored data itself (the deferred-lighting program reads a stored view
+ *   position of ~0 as background). A pass that wants a G-buffer's normal image cleared to (0,0,1,0) states it
+ *   there instead of painting every attachment one colour. One that cannot honour these must report it rather
+ *   than clearing differently.
  * - DEPTH IS A FLAG, NOT A VALUE: every backend clears depth to its own far plane (reverse-Z here, far = 0 -
  *   see Camera), so a value here would be a second place to get the clip convention wrong. @ref depth is
  *   honoured for off-screen targets (whose depth survives frames through a depth-LOAD pass); the WINDOW is
@@ -50,6 +52,11 @@ struct ClearPolicy
     Color color{};
     /// Whether the depth buffer is cleared too (honoured off-screen; the window always clears depth).
     bool depth = true;
+    /// Colours for attachments 1..N-1, in attachment order (see the per-attachment note above).
+    ///
+    /// An absent entry is transparent black, which is what an auxiliary attachment (normals, ids) means by
+    /// "nothing here". A target with more attachments than entries clears the rest to that same value.
+    std::vector<Color> extra_colors;
 };
 
 /**

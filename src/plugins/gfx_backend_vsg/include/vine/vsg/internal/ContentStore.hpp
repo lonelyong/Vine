@@ -95,20 +95,17 @@ class ContentStore
     void track(const vn::intrusive_ptr<vn::graphics::Material>& material);
 
     /**
-     * @brief Touches @p material: refreshes its entry when the values it carries NOW differ from the row's.
+     * @brief Touches @p material: refreshes its entry when the material reports that it changed.
      *
-     * WHY A TOUCH, AND WHY IT COMPARES. The SDK carries no material-edit channel (no manager is handed to a
-     * backend, and `RenderBackend` has no such entry point), so the only place
-     * a live edit can be noticed is where the material is announced: every material a frame commands - which
-     * is exactly what the implementation this backend replaces did (`VsgMaterialManager::updateMaterial` was
-     * called once per distinct material per frame, and was itself the compare-and-write). What the material
-     * says NOW is built into a scratch block and compared with the row the table answers for it; only a
-     * difference moves the revision, so a steady frame compares and writes nothing while an edit lands on
-     * the very next frame that draws with it. The next frame that draws with it re-reads the block and
-     * REPLACES the entry (see the file note).
+     * WHY A TOUCH AT ALL. The SDK carries no material-edit CHANNEL (no manager is handed to a backend, and
+     * `RenderBackend` has no such entry point), so the only place an edit can be noticed is where the material is
+     * announced - every material a frame commands. WHICH IS WHY THE MATERIAL COUNTS ITS OWN EDITS:
+     * `Material::revision()` moves itself whenever a shading value changes (each setter compares first, so
+     * re-applying equality is not a change), and this call is one integer compare against the number it last
+     * accounted for. Nothing is read back, nothing is built, and a steady frame allocates nothing.
      *
-     * An edit for a material the host never tracked is ignored: nothing draws with it, so nothing can be
-     * asked about it.
+     * An edit for a material the host never tracked is ignored: nothing draws with it, so nothing can be asked about
+     * it.
      *
      * @param material Material to touch; null is ignored (the default entry describes itself).
      */

@@ -257,7 +257,7 @@ TEST(BootSplashTest, DisabledByDefaultInTheTestApplication)
     // 用例用 `result()` 在调用线程上把它驱动完（见 fixtures/TestGuiApplication.hpp）。
     app->startupEnd().result();
     app->startupEnd().result();
-    EXPECT_TRUE(app->mainWindow()->visible());
+    EXPECT_TRUE(app->mainWindow()->isVisible());
 }
 
 TEST(GuiApplicationConstructionTest, TheBuilderReturnsAFinishedApplication)

@@ -106,7 +106,7 @@ void RibbonAction::setEnabled(bool on)
     act->setEnabled(on);
 }
 
-bool RibbonAction::enabled() const
+bool RibbonAction::isEnabled() const
 {
     auto* act = impl<QAction>();
     return act && act->isEnabled();
@@ -120,7 +120,7 @@ void RibbonAction::setCheckable(bool on)
     act->setCheckable(on);
 }
 
-bool RibbonAction::checkable() const
+bool RibbonAction::isCheckable() const
 {
     auto* act = impl<QAction>();
     return act && act->isCheckable();
@@ -134,7 +134,7 @@ void RibbonAction::setChecked(bool on)
     act->setChecked(on);
 }
 
-bool RibbonAction::checked() const
+bool RibbonAction::isChecked() const
 {
     auto* act = impl<QAction>();
     return act && act->isChecked();

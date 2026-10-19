@@ -5,6 +5,9 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 namespace
 {
 
+/// @brief The value an attachment nobody stated a colour for receives (see the file note).
+constexpr float kTransparentBlack[4]{ 0.0F, 0.0F, 0.0F, 0.0F };
+
 /// @brief Whether two clear values are the same (the four channels, bit for bit).
 bool sameValue(const float* a, const float* b) noexcept
 {
@@ -38,17 +41,23 @@ PassClearPlan planClearValues(const TargetShape& shape, const ClearPolicy& polic
 
     for (std::size_t index = 0; index < shape.color_formats.size(); ++index) {
         AttachmentClear attachment;
-        // Rule 4: a clear request clears every colour attachment; only attachment 0 receives the pass' colour.
-        // The extras keep the transparent black they were constructed with, which is the value that means
-        // "nothing here" - painting them the pass' colour is the wrong picture that looks plausible.
+        // Rule 4: a clear request clears every colour attachment; each receives the value the policy states for
+        // it. Attachment 0's value is `color_value`; the rest are `extra_color_values`, and an attachment nobody
+        // stated a value for keeps the transparent black it was constructed with - the value that means "nothing
+        // here". Painting the extras the pass' colour is the wrong picture that looks plausible.
         if (bootstrap || policy.color) {
             attachment.load = LoadOp::Clear;
+            const float* value = kTransparentBlack;
             if (index == 0U) {
-                attachment.clear[0] = policy.color_value[0];
-                attachment.clear[1] = policy.color_value[1];
-                attachment.clear[2] = policy.color_value[2];
-                attachment.clear[3] = policy.color_value[3];
+                value = policy.color_value;
             }
+            else if (index - 1U < policy.extra_color_values.size()) {
+                value = policy.extra_color_values[index - 1U].data();
+            }
+            attachment.clear[0] = value[0];
+            attachment.clear[1] = value[1];
+            attachment.clear[2] = value[2];
+            attachment.clear[3] = value[3];
         }
         plan.colors.push_back(attachment);
     }

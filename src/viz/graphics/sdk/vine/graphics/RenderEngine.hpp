@@ -8,6 +8,7 @@
 #include <set>
 #include <vector>
 
+#include <vine/Lease.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/intrusive_ptr.hpp>
@@ -70,6 +71,24 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     RenderEngine();
     ~RenderEngine();
+
+  public:
+    /** @brief Gets a borrowed handle that stops referring to this engine once it is destroyed.
+     *
+     * @details
+     * - WHAT IT IS FOR. An object that is not owned by the engine but may outlive it - a RenderPipeline holds passes
+     *   registered HERE, and a host may keep a pipeline after the control that owned the engine is gone - needs a
+     *   borrow it can CHECK, and it must not take an owning reference to the engine to get one: an owning reference
+     *   from a child to its parent keeps the parent alive from below, which is how a "released" engine used to live
+     *   on for as long as anything it once handed a pipeline to (see Lease).
+     * - WHAT IT DOES NOT DO. It extends nothing: the engine still dies exactly when its last owner drops it, and a
+     *   lease taken before that becomes empty rather than dangling.
+     * - The cell lives as long as the engine and as long as any lease, so reading a lease after the engine is gone
+     *   is safe and answers nullptr.
+     *
+     * @return A lease of this engine (empty never; invalidated by this engine's destructor).
+     */
+    [[nodiscard]] Lease<RenderEngine> lease() noexcept;
 
   public:
     /** @brief Gets the bound device.
@@ -771,6 +790,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     // ---- Fields ----
     intrusive_ptr<RenderBackend>        device_;
+    // The validity bit behind every Lease this engine handed out (see lease): set to this in the constructor and
+    // cleared in the destructor, so a holder of a lease (a RenderPipeline, say) answers "the engine is gone" instead
+    // of calling into freed memory - and never has to keep the engine alive to be safe.
+    std::shared_ptr<vn::detail::LeaseCell<RenderEngine>> lease_cell_;
     // The engine's ONE diagnostic route (see Diagnostics.hpp): the host's sink lives inside it, and the
     // backend the engine drives reports through this very instance (setDiagnosticsRoute), which is what
     // makes diagnosticCount() the whole truth instead of half of it.
@@ -802,6 +825,13 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // said once, re-armed the moment no enabled pass needs a target. The shared helper, like every other
     // one-condition episode in this class.
     ReportOnce                          unsupported_target_reported_{};
+
+    /// "A pass names a layered depth view" is one condition, not a per-pass event (see addPass): layered targets
+    /// are not built yet, so the declaration is refused once rather than once per declaration.
+    ReportOnce                          layered_depth_reported_{};
+    /// The depth-view conflicts already said, keyed by (target, the image it was refused): a repeated identical
+    /// declaration stays silent, while a different second image gets its own sentence (see addPass).
+    std::set<std::pair<raw_ptr<RenderTarget>, raw_ptr<RenderTarget>>> depth_view_conflicts_{};
 
 
     /// The frame's image tables: host bindings, this frame's productions/publications, and transients. Kept

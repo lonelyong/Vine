@@ -24,30 +24,19 @@ enum class LightType {
 };
 
 /**
- * @brief Shadow sampling filter for a directional light.
- */
-enum class ShadowFilter {
-    None, ///< No shadow is sampled.
-    Hard, ///< Single depth compare (hard-edged shadow).
-    PCF,  ///< Percentage-closer filtering (soft-edged shadow).
-};
-
-/**
  * @brief Per-light shadow-map settings (value type).
  *
  * @details
  * - `resolution` and `bias` are consumed by the renderers that build and sample a shadow map.
  *
  * @note
- * - `filter` is RESERVED: no renderer reads it yet (the shadow term does one depth compare - see
- *   ShaderAbi.hpp's VineShadowBlock), so setting it changes nothing today. It is kept so a host can state
- *   the intent a future PCF implementation will honour, and marked here so it cannot be mistaken for a
- *   working quality knob.
+ * - There is deliberately NO sampling-filter knob: the shadow term does one depth compare (see
+ *   ShaderAbi.hpp's VineShadowBlock), so a filter setting would change nothing while reading as if it
+ *   did. A filter arrives together with the implementation that honours it, not before.
  */
 struct VN_GRAPHICS_API ShadowSettings {
-    uint32_t     resolution = 1024;                    ///< Shadow-map side length in texels.
-    float        bias       = 0.002f;                  ///< Depth bias used to avoid self-shadowing.
-    ShadowFilter filter     = ShadowFilter::Hard;      ///< Sampling filter (RESERVED — not read yet).
+    uint32_t resolution = 1024;   ///< Shadow-map side length in texels.
+    float    bias       = 0.002f; ///< Depth bias used to avoid self-shadowing.
 };
 
 /**
@@ -158,7 +147,7 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      *
      * @return true when shadow casting is requested.
      */
-    bool castShadow() const;
+    bool isCastingShadow() const;
 
     /** @brief Sets whether the light casts a shadow.
      *
@@ -198,11 +187,6 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      */
     void setShadowBias(float bias);
 
-    /** @brief Sets the shadow sampling filter.
-     *
-     * @param filter Shadow filter (None / Hard / PCF).
-     */
-    void setShadowFilter(ShadowFilter filter);
 
   private:
     String                              name_;

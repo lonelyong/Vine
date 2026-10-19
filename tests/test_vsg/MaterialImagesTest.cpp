@@ -395,3 +395,45 @@ TEST(MaterialImagesTest, ACubeBecomesACubeViewOverItsSixLayers)
     EXPECT_EQ(image->data->depth(), 6U) << "six layers, declared as a depth";
     EXPECT_EQ(image->data->properties.imageViewType, VK_IMAGE_VIEW_TYPE_CUBE);
 }
+
+/**
+ * @brief The bound drops the OLDEST entry, counts it, and counts nothing else.
+ *
+ * Two facts live here and they are deliberately separate. "Out of room" (this bound) means a texture that is
+ * still held gets rebuilt and re-uploaded whenever it comes back - a cost that repeats, which is why it is
+ * counted and reported. "Nobody holds it any more" (releaseAbandoned) means an entry can never be asked for
+ * again, and it is not a cost at all. A cache that confused the two would report a leak where there is none.
+ */
+TEST(MaterialImagesTest, TheBoundDropsTheOldestEntryAndCountsOnlyThat)
+{
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
+    ASSERT_NE(cache, nullptr);
+    EXPECT_EQ(cache->evictions(), 0U) << "nothing has been asked for yet";
+
+    // One entry more than the bound can hold, each texture kept alive by the vector the whole way: this is a
+    // LIVE working set larger than the cache, not a leak the sweep would have handled.
+    std::vector<vn::intrusive_ptr<Texture2D>> textures;
+    textures.reserve(MaterialImages::kMaxEntries + 1U);
+    for (std::size_t index = 0; index <= MaterialImages::kMaxEntries; ++index)
+    {
+        textures.push_back(readyTexture());
+        TextureReject reason = TextureReject::Ok;
+        (void)cache->acquire(textures.back().get(), reason);
+        ASSERT_EQ(reason, TextureReject::Ok);
+    }
+
+    EXPECT_EQ(cache->count(), MaterialImages::kMaxEntries) << "the cache holds its bound, no more";
+    EXPECT_EQ(cache->evictions(), 1U) << "exactly one entry had to make room";
+    EXPECT_FALSE(cache->has(textures.front().get())) << "the OLDEST entry is the one that left";
+    EXPECT_TRUE(cache->has(textures.back().get())) << "the newest is the one a live scene is using";
+
+    // Every texture is still held here, so the abandonment sweep finds nothing: releasing is not evicting.
+    EXPECT_EQ(cache->releaseAbandoned(), 0U);
+    EXPECT_EQ(cache->evictions(), 1U) << "a sweep is not an eviction";
+
+    // Dropping them all lets the sweep empty the cache - and still moves no eviction.
+    textures.clear();
+    EXPECT_EQ(cache->releaseAbandoned(), MaterialImages::kMaxEntries);
+    EXPECT_EQ(cache->count(), 0U);
+    EXPECT_EQ(cache->evictions(), 1U) << "only running out of room counts";
+}

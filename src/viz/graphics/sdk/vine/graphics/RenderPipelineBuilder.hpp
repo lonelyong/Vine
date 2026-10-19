@@ -93,7 +93,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      *   PipelineStage::Transparent - off-screen through a target that shares the G-buffer's depth, so forward-only
      *   content is occluded by the opaque depth instead of being drawn depth-less on top. The HUD overlays stack at
      *   PipelineStage::Overlay.
-     * - SHADOWS ARE NOT A PRESET HERE: a shadow is requested by the light that casts it (Light::castShadow, with its
+     * - SHADOWS ARE NOT A PRESET HERE: a shadow is requested by the light that casts it (Light::isCastingShadow, with its
      *   own resolution and bias in ShadowSettings), and BOTH paths honour that request through the one pass builder
      *   (buildShadowPass): a depth-only pass at PipelineStage::Depth framing the content with a single orthographic
      *   light camera (directionalShadowMatrix), whose view-projection is stated on the map, and which the pass that
@@ -246,7 +246,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      */
     bool buildDeferredPath(RenderPipeline& pipeline, const RenderPipelineOptions& options);
 
-    /** @brief Builds the depth-only shadow pass a castShadow light asks for, and returns its map.
+    /** @brief Builds the depth-only shadow pass an isCastingShadow light asks for, and returns its map.
      *
      * @details
      * - Both paths honour a shadow request through this ONE builder: the pass frames the content with
@@ -258,7 +258,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      *   outlive the scene that built it, and a consumer reads the light through the map.
      *
      * @param pipeline Pipeline the pass is added to.
-     * @param shadow_light_owner The light that casts the shadow (enabled, castShadow, directional; borrowed ownership
+     * @param shadow_light_owner The light that casts the shadow (enabled, isCastingShadow, directional; borrowed ownership
      *                           is the map's).
      * @return The shadow map target (never null on this path).
      */
@@ -275,7 +275,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
     /** @brief Reports the shadow-casting lights this build did NOT honour.
      *
      * @details
-     * - The request lives on the light (Light::castShadow), so the check walks the content scenes this builder binds:
+     * - The request lives on the light (Light::isCastingShadow), so the check walks the content scenes this builder binds:
      *   a host that asked for a shadow the pipeline did not build gets one report (per build) naming how many, rather
      *   than a frame that quietly differs from the one it asked for.
      * - A shadow the pipeline DID build is not reported — the count above is what it built.

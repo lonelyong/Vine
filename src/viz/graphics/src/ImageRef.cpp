@@ -22,12 +22,6 @@ void ImageRef::bind(intrusive_ptr<RenderTarget> target, int attachment)
     attachment_ = (target_ != nullptr) ? attachment : 0;
 }
 
-void ImageRef::unbind()
-{
-    target_     = nullptr;
-    attachment_ = 0;
-}
-
 raw_ptr<RenderTarget> ImageRef::target() const noexcept
 {
     return target_.get();

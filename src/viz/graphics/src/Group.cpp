@@ -55,12 +55,7 @@ void Group::removeChild(raw_ptr<Node> child)
     }
 }
 
-std::vector<NodePtr> Group::children() const
-{
-    return children_;
-}
-
-const std::vector<NodePtr>& Group::childrenRef() const noexcept
+const std::vector<NodePtr>& Group::children() const noexcept
 {
     return children_;
 }

@@ -1189,7 +1189,7 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     command.geometry    = geometry;
     command.material    = material;
     command.program     = program;
-    command.modelMatrix = model;
+    command.model_matrix = model;
     const std::vector<RenderCommand> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });
@@ -6464,7 +6464,7 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     command.geometry             = geometry;
     command.material             = material;
     command.program              = program;
-    command.authoredState.topology = vn::graphics::Topology::Points;
+    command.authored_state.topology = vn::graphics::Topology::Points;
     const std::vector<RenderCommand> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });

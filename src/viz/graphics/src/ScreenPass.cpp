@@ -60,8 +60,8 @@ bool ScreenPass::describe(raw_ptr<Scene> scene, PassDescription& out)
     (void)scene;
     fillPassFacts(out);
     if (program_ == nullptr || camera() == nullptr) {
-        // Nothing to draw with, or no view to build: the ENGINE reports both at wiring time (see
-        // RenderEngine::validateWiring), so this path stays silent and draws nothing.
+        // Nothing to draw with, or no view to build: the ENGINE reports both while it compiles the frame's
+        // declarations (RenderEngine::collectPlanProblems), so this path stays silent and draws nothing.
         return true;
     }
     DrawDescription draw;
