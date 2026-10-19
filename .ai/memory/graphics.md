@@ -25,6 +25,14 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-19 E2 收尾 #3：imported input revision 失效用例
+
+- **结论**：`(Texture*, revision)` 已是 `CompiledInput` / `MaterialImages` 的缓存键，后端无需改动；补真实设备
+  用例证明 `setImage` 后下一帧重新上传。
+- **判据**：`VsgBackendTest.ARefilledImportedTextureIsReuploadedForTheNextFrame`（第一帧品红，`setImage`
+  后第二帧黄色；`MaterialImages::count()` 始终 1，说明是替换而非新增条目）；`test_vsg` 466；`ctest` 24/24；
+  ASan PASS；8 条 hygiene 门禁 0 finding。
+
 ## 2026-10-19 E2 收尾 #2：produced 输入按 attachment 绑定
 
 - **结论**：`CompiledInput` 增加 `attachment` / `depth`；`ProducedImage` 的 `color_attachments` 跟随单图

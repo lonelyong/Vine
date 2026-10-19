@@ -1101,6 +1101,136 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
 }
 
 /*
+ * @brief A re-filled imported texture reaches the NEXT frame, and the cache keeps one entry.
+ *
+ * The same Texture object is sampled by the same pass in two frames; between them `setImage` replaces its
+ * pixels. The cache key is `(Texture*, revision)`, so the second frame must build new images (a new view)
+ * rather than keep serving the first upload - the picture is the proof - and the entry must be REPLACED
+ * rather than joined: `MaterialImages::count()` stays 1.
+ */
+TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 128, 96);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(backend->capabilities().render_targets);
+
+    const vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    destination->attachColor(RenderTarget::ColorFormat::RGBA8);
+    destination->setSize(64, 64);
+
+    // One texture, two fills: magenta first, yellow after `setImage`. Neither colour can come from the
+    // destination's blue clear or from an absent texture's white stand-in.
+    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
+        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+    const auto fill = [&texture](bool yellow) {
+        const vn::intrusive_ptr<vn::imaging::Image> image(
+            new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        for (std::size_t index = 0; index < pixels.size(); ++index)
+        {
+            const std::uint8_t channel = static_cast<std::uint8_t>(index % 4U);
+            // magenta (255, 0, 255): the green channel is zero; yellow (255, 255, 0): the blue one is.
+            const std::uint8_t zeroed = yellow ? 2U : 1U;
+            pixels[index]             = static_cast<std::byte>(channel == zeroed ? 0U : 255U);
+        }
+        texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
+    };
+    fill(/*yellow=*/false);
+
+    // The content program samples the pass' input set at set 1 binding 0 (see ContentPipeline::kInputSet).
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 out_color;\n"
+            "layout(set = 1, binding = 0) uniform sampler2D imported_tex;\n"
+            "void main() { out_color = texture(imported_tex, vec2(0.5)); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    const TriangleFixture triangle = makeTriangle();
+    std::vector<RenderCommand> commands = triangle.commands;
+    commands.front().program            = program;
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
+    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+
+    const auto drive = [&]() {
+        backend->executeFrame(TestFrame()
+                                  .pass(pass_object.get(), 0)
+                                  .target(destination.get())
+                                  .inputs(std::vector<vn::graphics::ImageSource>{
+                                      vn::graphics::ImageSource::imported(texture.get()) })
+                                  .clear(destination_clear)
+                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .content(commands, camera.get())
+                                  .value());
+    };
+    const auto centre = [&]() {
+        std::vector<std::uint8_t>    pixels;
+        vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+        EXPECT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
+        const std::size_t at = (32U * 64U + 32U) * 4U;
+        if (at + 3U >= pixels.size())
+        {
+            return std::array<std::uint8_t, 4>{};
+        }
+        return std::array<std::uint8_t, 4>{ pixels[at], pixels[at + 1U], pixels[at + 2U], pixels[at + 3U] };
+    };
+
+    vn::vsg::MaterialImages* const images = BackendContentAccess::images(*backend);
+    ASSERT_NE(images, nullptr);
+
+    drive();
+    const std::array<std::uint8_t, 4> before = centre();
+    EXPECT_TRUE(isColourByte(before[0], 1.0) && isColourByte(before[1], 0.0) &&
+                isColourByte(before[2], 1.0))
+        << "the first frame samples the first fill (magenta): got (" << static_cast<int>(before[0]) << ", "
+        << static_cast<int>(before[1]) << ", " << static_cast<int>(before[2]) << ")";
+    EXPECT_EQ(images->count(), 1U) << "the first frame cached the imported texture";
+    const std::uint64_t first_revision = texture->revision();
+
+    fill(/*yellow=*/true);
+    ASSERT_GT(texture->revision(), first_revision) << "setImage bumps the content revision";
+
+    drive();
+    const std::array<std::uint8_t, 4> after = centre();
+    EXPECT_TRUE(isColourByte(after[0], 1.0) && isColourByte(after[1], 1.0) && isColourByte(after[2], 0.0))
+        << "the next frame samples the re-filled texture (yellow); magenta would mean the old upload was "
+           "kept: got ("
+        << static_cast<int>(after[0]) << ", " << static_cast<int>(after[1]) << ", "
+        << static_cast<int>(after[2]) << ")";
+    EXPECT_EQ(images->count(), 1U)
+        << "the new revision replaced the entry instead of adding a second one for the same texture";
+}
+
+/*
  * @brief A content pass that declares ONE produced attachment samples THAT image, not the target's first.
  *
  * The producer paints an MRT target: attachment 0 green, attachment 1 red. The consumer declares only

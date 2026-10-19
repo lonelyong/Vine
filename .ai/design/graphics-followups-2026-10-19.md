@@ -68,10 +68,10 @@ B2 是“保持现状”的登记项。
      与 `SdkPixelTest.TheDeferredPresetFillsEveryGbufferAttachment` 不回归；`test_vsg` 465；`ctest` 24/24；
      ASan 与 8 条 hygiene 门禁 0 finding。
 
-3. **imported input revision 失效用例**
-   - 现状：`(Texture*, revision)` 已进 `CompiledInput`，`MaterialImages` 也按它缓存。
-   - 动作：补“`setImage` 后下一帧重上传”的真实设备用例（或结构断言缓存键变化）。
-   - 判据：改内容后像素变化；`MaterialImages::count()` 不增长（命中同一条目）。
+3. **imported input revision 失效用例（已落地 2026-10-19）**
+   - 结论：`(Texture*, revision)` 缓存键已在位，后端无需改动；补了真实设备用例证明第二帧取到新上传。
+   - 判据：`VsgBackendTest.ARefilledImportedTextureIsReuploadedForTheNextFrame`（第一帧品红、`setImage` 后
+     第二帧黄色；`MaterialImages::count() == 1` 前后不变）；`test_vsg` 466；`ctest` 24/24；ASan 与 8 条门禁。
 
 4. **imported input 的 sampler state**
    - 现状：用输入 set 的 `inputSampler()`；`Texture` 没有 wrap/filter/mip 描述。
@@ -91,4 +91,5 @@ B2 是“保持现状”的登记项。
 
 ## 4. 下一 session 的第一条命令
 
-K1 与 E2 收尾 #1、#2 已完成，直接从 §2 的 3 → 4 顺序做；每项先补失败用例，再改后端。
+K1 与 E2 收尾 #1–#3 已完成；§2 的 #4（sampler state）与 #5（Cube/array）都是触发条件型，触发未命中
+时不做，§2 已清空。

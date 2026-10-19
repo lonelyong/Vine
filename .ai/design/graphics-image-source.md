@@ -162,3 +162,6 @@ struct ImageSource
 - 2026-10-19 追加：produced 输入按 attachment 绑定。`CompiledInput.attachment` / `.depth` 收窄内容路径的
   offer（`VsgBackendTest.AProducedInputBindsOnlyTheAttachmentItNames`），全屏 source 的整 target 由
   `InputImages::screen_colors` 显式保留（`ScreenDrawTest` 与 `SdkPixelTest` 的 G-buffer 预览不回归）。
+- 2026-10-19 追加：revision 失效的真实设备判据
+  `VsgBackendTest.ARefilledImportedTextureIsReuploadedForTheNextFrame`（像素从品红变黄，
+  `MaterialImages::count()` 不增长，即同一 `(Texture*, revision)` 条目被替换而不是新增）。
