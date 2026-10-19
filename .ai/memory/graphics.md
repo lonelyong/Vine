@@ -25,6 +25,12 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-19 G1 落地：`RenderEngine` 的图源表拆到私有 `FrameResources`
+
+- **结论**：`publish`/`unpublish`/`resolve`、当前帧的 production/publication 表和 transient target 表从 `RenderEngine` 移到私有 `FrameResources`（`FrameResources.hpp` / `FrameResources.cpp`，不导出）；引擎保留 pass 注册、顺序、编译、诊断与 episode 规则。公开面不变。
+- **顺带修掉两个真实缺陷**：① `clearPasses()` 原来跨 `slots_.clear()` 使用 `raw_ptr<RenderPass>`（UAF 风险），现在持有 `intrusive_ptr`；② `VsgBackend::~VsgBackend()` 原为 `= default`，`Data` 成员顺序先销毁 `DeviceClock` / `RetirementQueue` / device，再销毁仍借用它们的 `OffscreenSession`，ASan 报 `OffscreenSession::shutdown -> DeviceClock::removeWindow` heap-use-after-free；析构现在调用幂等 `shutdown()`。
+- **判据**：构建 0 error / 0 warning；`test_vsg` 461；`ctest` 24/24；8 条 hygiene 门禁 0 finding。清单见 `graphics-abstraction-review-2026-10-19.md` §1.1。
+
 ## 2026-10-19 抽象层契约收口：帧 IR 的 borrowed 语义、顺序权威、Pass 双路径（comment-only）
 
 - **结论**：不改公开形态，只把七处抽象边界写死：`FrameDescription` 是 borrowed snapshot（不是 owned 帧值）；
@@ -38,7 +44,7 @@
 - **判据**：构建 0 error / 0 warning（修前 145 条 `-Wcomment`）；8 条 hygiene 门禁 0 finding
   （include / diagnostic / doc symbols / export / ai-docs / public docs / vsg window state / vsg upstream）；
   不跑测试（comment-only）。
-- **未做（登记触发条件）**：`RenderEngine` 拆 `FrameResources`、能力预检 `Feature`、强类型
+- **未做（登记触发条件）**：能力预检 `Feature`、强类型
   `DevicePixels`/`LogicalPixels`/`LinearColor`/`SrgbColor`、owned 帧、`ImageSource`、`Pipeline` 改名、
   `shareDepth` 的资源图边。触发条件见清单第 2 节。
 

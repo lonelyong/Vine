@@ -25,12 +25,21 @@
 | D1 | `program` 不在 state 里 | 已由 `StateNode.hpp` 说明；本轮不改 |
 | E1 | `ImageRef`（pass 产出）与 `Texture`（导入）是两个图源根 | `Texture.hpp` 与 `ImageRef.hpp` 互指 |
 | F1 | 设备像素/逻辑像素的边界 | `Viewport.hpp` 注释（并指向 `SceneView::resize` / `Pipeline::resize`） |
+| G1 | `RenderEngine` 角色过载（`publish`/`resolve` + transient） | 拆出私有 `FrameResources`（见 §1.1）；`RenderEngine` 保留 pass/顺序/编译/诊断 |
+
+### 1.1 G1 落地（2026-10-19）
+
+- **新私有类型** `FrameResources`（`FrameResources.hpp` / `FrameResources.cpp`，不导出）：拥有三类“关于图像”的表——宿主 standing binding（`publish`/`unpublish`）、当前帧的 production/publication 表、transient target 表。`RenderEngine` 仍然拥有 pass 注册、顺序、编译、诊断路线和 episode 规则。
+- **公开面不变**：`RenderEngine.hpp` 只多了一个前置声明和一个 `std::unique_ptr<detail::FrameResources>`；`publish`/`resolve`/`unpublish`/`transientTargetCount`/`transientTarget` 的签名与行为不变。
+- **顺带修掉两个真实的生命周期缺陷**：
+  - `clearPasses()` 原来先 `slots_.clear()`，再用 `raw_ptr<RenderPass>` 去 `releasePass` / 读 `renderTarget()`；现在先持有 `intrusive_ptr<RenderPass>`，pass 在释放期间保证存活。
+  - `VsgBackend::~VsgBackend()` 原来是 `= default`，`Data` 的成员顺序会先销毁 `DeviceClock` / `RetirementQueue` / device，再销毁仍借用它们的 `OffscreenSession`；ASan 抓到 `OffscreenSession::shutdown -> DeviceClock::removeWindow` 的 heap-use-after-free。析构现在调用幂等的 `shutdown()`，由它决定销毁顺序。
+- **判据**：构建 0 error / 0 warning；`test_vsg` 461 通过；`ctest` 24/24；8 条 hygiene 门禁 0 finding。
 
 ## 2. 待办（带触发条件）
 
 | # | 优化项 | 抽象问题 | 动作 | 触发条件 |
 |---|---|---|---|---|
-| G1 | `RenderEngine` 角色过载 | pass 注册 + 帧编译 + 输出解析 + transient + 诊断 + 区 + 设备借用 | 拆出 `FrameResources`（`publish`/`resolve` + transient），引擎回到调度 + 注册 | 下一次加多区/布局/帧图可视化 |
 | H1 | 能力模型偏“懒惰” | `Capabilities` 只放预检事实，其余靠调用结果与诊断 | 第二个后端或 MSAA/compute 立项时加 `Feature` 枚举 | 第二个图形家族 / 新的预检问题 |
 | F2 | 单位与色彩空间未进类型 | 逻辑/设备像素、linear/sRGB、0–255/0–1 靠注释 | 强类型 `DevicePixels` / `LogicalPixels` / `LinearColor` / `SrgbColor` | 出现第二次同类尺寸/色彩缺陷 |
 | E2 | 图源没有统一抽象 | `ImageRef` 与 `Texture` 两个根 | `ImageSource`，或让 `ImageRef` 能命名非 RT 图源 | 静态/导入贴图作为 pass 输入的真实需求 |
@@ -49,5 +58,5 @@
 
 ## 4. 判据
 
-本轮为契约文字变更：全量构建 0 error / 0 warning；`scripts/vsg_rewrite_gate.sh --no-build` 的 hygiene 段
-0 finding；不跑测试（comment-only 口径）。
+- 契约文字批：全量构建 0 error / 0 warning；8 条 hygiene 门禁 0 finding；不跑测试（comment-only 口径）。
+- G1 批：构建 0 error / 0 warning；`test_vsg` 461 通过；`ctest` **24/24**；8 条 hygiene 门禁 0 finding。

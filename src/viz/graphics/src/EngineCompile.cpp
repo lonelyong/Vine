@@ -15,20 +15,12 @@
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/Viewport.hpp>
 
+#include "FrameResources.hpp"
+
 VN_GRAPHICS_NS_BEGIN
 
 namespace
 {
-/// @brief Whether two declared transient shapes are the same shape (see PassDesc::writes_shape).
-///
-/// A shape is what the target is BUILT from, so a difference here is a different target rather than an edit to
-/// this one: the attachment set cannot change under a built target (see RenderTarget).
-bool sameTransientShape(const TransientShape& left, const TransientShape& right) noexcept
-{
-    return left.colors == right.colors && left.depth == right.depth &&
-           left.depth_promotion == right.depth_promotion;
-}
-
 /// @brief The shape difference between a pass' rectangle and its camera's picture that is rounding, not a mistake.
 ///
 /// A pane's rectangle is the pane's logical size scaled by the pixel ratio, and that conversion truncates (see
@@ -81,8 +73,7 @@ void RenderEngine::compileFrame()
     // nothing beyond what the compile's own bookkeeping already has capacity for.
     plan_problems_.clear();
     plan_rows_.clear();
-    plan_produced_.clear();
-    plan_published_.clear();
+    resources_->beginFrame();
     unusable_inputs_this_frame_.clear();
     // From here until the list is complete, every report the checks make is COLLECTED, not emitted: the
     // episode rule is applied once, at the end (see reportPlanProblems).
@@ -91,30 +82,17 @@ void RenderEngine::compileFrame()
     // A host binding is filled by the HOST: it is there from the start of the frame and no pass owns its
     // hand-off, so it seeds what this frame has already produced (an object-typed input addressing one is
     // answered like one addressing a pass' target).
-    for (const auto& binding : wiring_.host_outputs_) {
-        if (binding.second != nullptr) {
-            plan_produced_.push_back(binding.second.get());
-        }
-    }
+    resources_->seedFromHostBindings();
 
     // Transients first: a slot that declares one gets its target before anything reads a target, and one
     // nobody declares this frame is let go of.
-    for (TransientTarget& transient : transients_) {
-        transient.declared_now = false;
-    }
+    resources_->beginTransientCompile();
     for (Slot& slot : slots_) {
         if (!slot.writes_image.empty()) {
             resolveTransientTarget(slot);
         }
     }
-    for (auto transient = transients_.begin(); transient != transients_.end();) {
-        if (transient->declared_now) {
-            ++transient;
-            continue;
-        }
-        releaseTransientTarget(transient->target);
-        transient = transients_.erase(transient);
-    }
+    resources_->retireUndeclared(device_.get());
 
     // The structural checks read DECLARATIONS only, so they run before anything is resolved: a wire the check
     // already spoke about is one problem, and the resolution below stays quiet about it (see hasPlanProblem).
@@ -136,10 +114,7 @@ void RenderEngine::compileFrame()
             // What it fills: drawing into a target fills every image it has, which is what an object-typed
             // declared input is answered from. Linear and idempotent - several passes may fill one target.
             if (raw_ptr<RenderTarget> drawn_into = row.pass->renderTarget(); drawn_into != nullptr) {
-                const raw_ptr<const RenderTarget> filled = drawn_into;
-                if (std::find(plan_produced_.begin(), plan_produced_.end(), filled) == plan_produced_.end()) {
-                    plan_produced_.push_back(filled);
-                }
+                resources_->recordProduced(drawn_into);
             }
         }
         plan_rows_.push_back(std::move(row));
@@ -306,76 +281,18 @@ void RenderEngine::resolveTransientTarget(Slot& slot)
         height = 1;
     }
 
-    for (TransientTarget& transient : transients_) {
-        if (transient.identity != slot.writes_image) {
-            continue;
-        }
-        if (!sameTransientShape(transient.shape, shape) || transient.target->width() != width ||
-            transient.target->height() != height) {
-            // A different shape is a different TARGET: the attachments of a built one cannot change (see
-            // RenderTarget), so the compile replaces it and tells the backend the old one is done with.
-            releaseTransientTarget(transient.target);
-            transient.shape  = shape;
-            transient.target = makeTransientTarget(slot.writes_image, width, height, shape);
-        }
-        transient.declared_now = true;
-        slot.transient         = transient.target;
-        slot.pass->setRenderTarget(slot.transient);
-        return;
-    }
-
-    TransientTarget created;
-    created.identity     = slot.writes_image;
-    created.shape        = shape;
-    created.target       = makeTransientTarget(slot.writes_image, width, height, shape);
-    created.declared_now = true;
-    transients_.push_back(created);
-    slot.transient = created.target;
+    slot.transient = resources_->resolveTransient(slot.writes_image, shape, width, height, device_.get());
     slot.pass->setRenderTarget(slot.transient);
-}
-
-intrusive_ptr<RenderTarget> RenderEngine::makeTransientTarget(const String& identity, int width, int height,
-                                                              const TransientShape& shape)
-{
-    auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
-    target->setName(identity);
-    for (const RenderTarget::ColorFormat format : shape.colors) {
-        target->attachColor(format);
-    }
-    if (shape.depth.has_value()) {
-        target->attachDepth(*shape.depth);
-    }
-    target->setDepthPromotion(shape.depth_promotion);
-    target->setSize(width, height);
-    return target;
-}
-
-void RenderEngine::releaseTransientTarget(const intrusive_ptr<RenderTarget>& target)
-{
-    if (target == nullptr || device_ == nullptr) {
-        return;
-    }
-    // The SDK's announcement that the caller may destroy it now: the backend drops what it built for it (and
-    // retires anything still in flight), exactly as removePass() does for a pass' own target.
-    device_->releaseRenderTarget(target.get());
 }
 
 std::size_t RenderEngine::transientTargetCount() const noexcept
 {
-    return transients_.size();
+    return resources_->transientCount();
 }
 
 raw_ptr<RenderTarget> RenderEngine::transientTarget(const String& identity) const
 {
-    if (identity.empty()) {
-        return nullptr;
-    }
-    for (const TransientTarget& transient : transients_) {
-        if (transient.identity == identity) {
-            return transient.target.get();
-        }
-    }
-    return nullptr;
+    return resources_->transient(identity);
 }
 
 void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<raw_ptr<RenderTarget>>& out)
@@ -406,7 +323,7 @@ void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<raw_pt
     }
     out.reserve(names.size());
     for (const auto& name : names) {
-        out.push_back(resolveCompiled(name));
+        out.push_back(resources_->resolve(name));
     }
 
     // A declared input nobody published this frame means the pass draws NOTHING (ScreenPass keeps the first
@@ -451,16 +368,13 @@ void RenderEngine::publishRowOutput(raw_ptr<RenderPass> pass)
                                               u8" output name"));
         return;
     }
-    for (auto& published : plan_published_) {
-        if (published.first == nullptr || published.first->outputName() != name) {
-            continue;
-        }
-        if (published.second != nullptr && published.second != target) {
+    if (detail::FramePublication* published = resources_->findPublication(name); published != nullptr) {
+        if (published->target != nullptr && published->target != target) {
             // Two passes published DIFFERENT targets under one name: every consumer of that name silently gets
             // whichever pass ran last, and only the whole table can see the collision (each pass is
             // individually valid).
             const String first =
-                published.second->name().empty() ? String(u8"(unnamed)") : published.second->name();
+                published->target->name().empty() ? String(u8"(unnamed)") : published->target->name();
             const String second = target->name().empty() ? String(u8"(unnamed)") : target->name();
             reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
                                 vn::graphics::DiagnosticCategory::ContentSkipped,
@@ -469,21 +383,10 @@ void RenderEngine::publishRowOutput(raw_ptr<RenderPass> pass)
                                     String(u8"' and '") + second + String(u8"'); every consumer of '") + name +
                                     String(u8"' samples whichever pass ran last"));
         }
-        published.second = target;   // the latest publication serves the name for the rest of the frame
+        published->target = target;   // the latest publication serves the name for the rest of the frame
         return;
     }
-    plan_published_.emplace_back(pass, target);
-}
-
-raw_ptr<RenderTarget> RenderEngine::resolveCompiled(const String& name) const
-{
-    for (const auto& published : plan_published_) {
-        if (published.first != nullptr && published.first->outputName() == name) {
-            return published.second;
-        }
-    }
-    const auto bound = wiring_.host_outputs_.find(name);
-    return (bound != wiring_.host_outputs_.end()) ? bound->second.get() : nullptr;
+    resources_->recordPublication(pass, target);
 }
 
 void RenderEngine::noteProblem(String message)

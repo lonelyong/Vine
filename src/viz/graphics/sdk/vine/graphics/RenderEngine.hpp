@@ -3,7 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <vector>
@@ -22,9 +22,13 @@
 #include "PassDesc.hpp"
 #include "RenderDiagnostic.hpp"
 #include "ReportOnce.hpp"
-#include "BuiltinShaders.hpp"
 
 VN_GRAPHICS_NS_BEGIN
+
+namespace detail
+{
+class FrameResources;
+}  // namespace detail
 
 class Light;
 class Scene;
@@ -577,16 +581,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         bool operator<(const OutputIdentity& other) const noexcept;
     };
 
-    /// The transient targets this engine allocated for a frame that declared one (see resolveTransientTarget).
-    /// Keyed by the identity the declaration names plus the shape it asked for: two passes declaring the same
-    /// transient SHARE one target, and a shape change REPLACES rather than adds.
-    struct TransientTarget {
-        String                      identity;          ///< the declared identity (PassDesc::writes_image)
-        TransientShape              shape;             ///< the shape it was built at
-        intrusive_ptr<RenderTarget> target;            ///< the target itself
-        bool                        declared_now{false}; ///< whether this compile saw the declaration
-    };
-
     /** @brief One row of the compiled frame: what a pass will do, decided before the frame runs.
      *
      * @details
@@ -617,27 +611,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         String message;   ///< the sentence a report would carry
     };
 
-    /**
-     * @brief What the compile owns besides the plan itself: the host's bindings and the problems the
-     * PREVIOUS compile found.
-     *
-     * @details
-     * - The episode rule is ONE comparison - this compile's problems against the last compile's - and the
-     *   problems are kept as the SENTENCES they would print: "the same problem again" is "the same sentence
-     *   again", with no second vocabulary (kinds, subjects) that could drift from the message.
-     * - What is left here is the state that has no frame to be rebuilt from: the host's standing bindings
-     *   and the last compile's problem list.
-     */
-    struct WiringState {
-        /// Standing host bindings (RenderEngine::publish): they have no producer to re-publish them each
-        /// frame, so they survive the per-frame rebuild until unpublish() removes them. They are the only
-        /// entries of the name registry the compile does not derive from the passes.
-        std::map<String, intrusive_ptr<RenderTarget>> host_outputs_;
-        /// Host bindings currently refused because publish() was given no target. A host has no frame to
-        /// re-publish from, so the episode is the name itself: it leaves the set when a publish() for it hands
-        /// over a real target, or when unpublish() withdraws the name.
-        std::set<String> unpublishable_host_names_;
-    };
     /** @brief Compiles this frame's declarations into the table the frame runs from (see FramePlan).
      *
      * @details
@@ -698,17 +671,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     intrusive_ptr<RenderPass> insertSlot(Slot slot);
 
-    /** @brief Builds the target a transient declaration asks for (see resolveTransientTarget).
-     *
-     * @param identity Name to give the target (diagnostics and the plan read it).
-     * @param width    Extent in device pixels.
-     * @param height   Extent in device pixels.
-     * @param shape    Attachment set the declaration asked for.
-     * @return The target, configured but not yet built (the backend builds it when a pass draws into it).
-     */
-    [[nodiscard]] intrusive_ptr<RenderTarget> makeTransientTarget(const String& identity, int width, int height,
-                                                                  const TransientShape& shape);
-
     /** @brief Makes sure the transient target a slot declares exists, at the shape it declares.
      *
      * @param slot Slot whose declaration is served (its pass gets the target when it changed).
@@ -756,19 +718,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @param pass Pass whose output to publish.
      */
     void publishRowOutput(raw_ptr<RenderPass> pass);
-
-    /** @brief Resolves a published name for this frame: a pass' publication, else the host's binding.
-     *
-     * @param name Slot name to resolve.
-     * @return The target the name serves, or null when nothing produced it this frame.
-     */
-    [[nodiscard]] raw_ptr<RenderTarget> resolveCompiled(const String& name) const;
-
-    /** @brief Releases a transient target nobody declared this frame.
-     *
-     * @param target Target to let go of (the backend is told, so it can retire what it built for it).
-     */
-    void releaseTransientTarget(const intrusive_ptr<RenderTarget>& target);
 
     /** @brief Returns the name a pass is reported under (its own, or a readable fallback).
      *
@@ -855,24 +804,16 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     bool                                unsupported_target_reported_ = false;
 
 
-    WiringState wiring_;
-
+    /// The frame's image tables: host bindings, this frame's productions/publications, and transients. Kept
+    /// out of the engine so passes, ordering and the compile stay the engine's only business (see
+    /// FrameResources).
+    std::unique_ptr<detail::FrameResources> resources_;
 
     /// This frame's compiled rows, in the order they run (reused; one per slot).
     std::vector<PlanRow> plan_rows_;
     /// This frame as a value, rebuilt by every compile (see buildFrameValue). Reused, so a steady frame keeps its
     /// storage: the rows of the previous frame are dropped, not their capacity.
     FrameDescription frame_value_;
-    /// The targets this frame had produced when the compile walked to a given row, in production order: what
-    /// an object-typed declared input is answered from (a consumer sees what ran BEFORE it). Reused, and keyed
-    /// by target only - a target is filled once however many passes draw into it.
-    std::vector<raw_ptr<const RenderTarget>> plan_produced_;
-    /// The publications this frame made so far, in publication order, keyed by the PASS that made them: the
-    /// name is read off the pass, so a steady frame copies no strings to answer `resolve(name)`.
-    std::vector<std::pair<raw_ptr<const RenderPass>, raw_ptr<RenderTarget>>> plan_published_;
-
-
-    std::vector<TransientTarget> transients_;
     /// This frame's problems and the previous frame's, swapped after each compile: the episode rule.
     std::vector<PlanProblem>     plan_problems_;
     std::vector<PlanProblem>     previous_problems_;

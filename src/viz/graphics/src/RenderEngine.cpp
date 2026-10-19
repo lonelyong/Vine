@@ -1,9 +1,9 @@
 #include <vine/graphics/RenderEngine.hpp>
 #include <algorithm>
-#include <chrono>
 #include <functional>
 #include <utility>
 
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderPass.hpp>
@@ -11,6 +11,8 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/Scene.hpp>
+
+#include "FrameResources.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -30,6 +32,7 @@ String RenderEngine::reportedPassName(raw_ptr<const RenderPass> pass)
 VN_OBJECT_META_IMPL(RenderEngine, vn::Object);
 
 RenderEngine::RenderEngine()
+    : resources_(std::make_unique<detail::FrameResources>())
 {
     // The ONE default in the shading path, and it is a named program: content with no program of its
     // own is shaded with the engine's forward program until the host says otherwise. (Null would mean
@@ -391,40 +394,29 @@ void RenderEngine::removePass(raw_ptr<RenderPass> pass)
 
 void RenderEngine::clearPasses()
 {
-    // Snapshot the registered passes (and the transients they declared), drop all slots, then release the
-    // backend resources each removed pass owned (see RenderDevice::releasePass). A transient is this engine's,
-    // not the pass': the compile lets it go when nothing declares it any more.
-    std::vector<raw_ptr<RenderPass>> removed;
+    // Keep the passes alive while their retained backend state is released: a pass may be owned only by its
+    // slot, so dropping the slots first and then dereferencing a raw pointer would be a use-after-free.
+    std::vector<intrusive_ptr<RenderPass>> removed;
     removed.reserve(slots_.size());
     for (const auto& slot : slots_) {
         if (slot.pass != nullptr) {
-            removed.push_back(slot.pass.get());
+            removed.push_back(slot.pass);
         }
     }
-    std::vector<raw_ptr<RenderTarget>> transients;
-    transients.reserve(transients_.size());
-    for (const TransientTarget& transient : transients_) {
-        transients.push_back(transient.target.get());
-    }
-    transients_.clear();
-
     slots_.clear();
 
     if (device_ != nullptr) {
-        for (RenderPass* pass : removed) {
-            if (pass != nullptr) {
-                device_->releasePass(pass);
-            }
-            raw_ptr<RenderTarget> target = (pass != nullptr) ? pass->renderTarget() : nullptr;
-            const bool            owned  = std::find(transients.begin(), transients.end(), target) != transients.end();
-            if (target != nullptr && !owned) {
+        for (const intrusive_ptr<RenderPass>& pass : removed) {
+            device_->releasePass(pass.get());
+            raw_ptr<RenderTarget> target = pass->renderTarget();
+            // A transient is the resources table's, not the pass': releaseAll() below lets it go once, after
+            // every pass has stopped naming it.
+            if (target != nullptr && !resources_->owns(target)) {
                 device_->releaseRenderTarget(target);
             }
         }
-        for (const raw_ptr<RenderTarget> transient : transients) {
-            device_->releaseRenderTarget(transient);
-        }
     }
+    resources_->releaseAll(device_.get());
 }
 
 std::size_t RenderEngine::passCount() const
@@ -454,10 +446,9 @@ raw_ptr<Scene> RenderEngine::contentOf(raw_ptr<RenderPass> pass) const
 
 raw_ptr<RenderTarget> RenderEngine::resolveDeclaredTarget(raw_ptr<RenderPass> pass, raw_ptr<RenderTarget> target)
 {
-    // Resolved against what the frame has produced so far (plan_produced_): a target the frame fills LATER is
+    // Resolved against what the frame has produced so far (FrameResources): a target the frame fills LATER is
     // not something this pass can read, which is the same answer the per-pass resolution used to give.
-    if (plan_produced_.end() != std::find(plan_produced_.begin(), plan_produced_.end(),
-                                          static_cast<raw_ptr<const RenderTarget>>(target))) {
+    if (resources_->wasProduced(static_cast<raw_ptr<const RenderTarget>>(target))) {
         return target;
     }
     // A pass reading what it draws into is the feedback pattern, and whether the actual draw call is
@@ -483,8 +474,7 @@ raw_ptr<RenderTarget> RenderEngine::resolveDeclaredImage(raw_ptr<RenderPass> pas
         return nullptr;
     }
     const bool depth_usable = (image.kind() != ImageRef::Kind::Depth) || target->hasDepth();
-    const bool produced     = plan_produced_.end() != std::find(plan_produced_.begin(), plan_produced_.end(),
-                                                                static_cast<raw_ptr<const RenderTarget>>(target));
+    const bool produced     = resources_->wasProduced(static_cast<raw_ptr<const RenderTarget>>(target));
     if (depth_usable && produced) {
         return target;
     }
@@ -630,7 +620,7 @@ void RenderEngine::collectPlanProblems()
     // A host binding (publish) is filled by the HOST: it is there from the start of the frame and no
     // pass owns its hand-off, so a declared input addressing it is answered like one addressing a
     // pass' target.
-    for (const auto& binding : wiring_.host_outputs_) {
+    for (const auto& binding : resources_->hostBindings()) {
         if (binding.second != nullptr) {
             filled.emplace(binding.second.get(), Declaration{ nullptr, binding.second.get(), nullptr, 0 });
         }
@@ -990,51 +980,25 @@ void RenderEngine::collectPlanProblems()
 
 void RenderEngine::publish(const String& name, intrusive_ptr<RenderTarget> target)
 {
-    if (name.empty()) {
-        return;   // no name: nothing to serve, and nothing a consumer could have asked for
+    const String problem = resources_->publish(name, std::move(target));
+    if (!problem.empty()) {
+        reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                            vn::graphics::DiagnosticCategory::ContentSkipped, problem);
     }
-    if (target == nullptr) {
-        // The host-facing half of the rule above: publish() promises a target to by-name consumers,
-        // and a null one means there is nothing to hand out. The episode is the NAME: it ends when a
-        // publish() hands over a real target (or unpublish() withdraws it), because a host has no
-        // frame to re-publish from.
-        if (wiring_.unpublishable_host_names_.insert(name).second) {
-            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                vn::graphics::DiagnosticCategory::ContentSkipped,
-                                String(u8"publish('") + name +
-                                    String(u8"') was given no render target, so the name serves nothing and its"
-                                           u8" consumers find nothing — pass the target to hand out, or unpublish()"
-                                           u8" the name"));
-        }
-        return;
-    }
-    wiring_.unpublishable_host_names_.erase(name);
-    // A HOST binding, not a pass publication: it keeps until unpublish() removes it (or another
-    // publish replaces it), because a host has no per-frame hook to re-publish from — tying it to a
-    // frame is what made this documented capability unusable (the registry is cleared per frame, so
-    // the binding died before any consumer could resolve it). Publishing twice under one name is a
-    // host swapping what it offers, not the collision two PASSES produce.
-    //
-    // Nothing else has to be told: the compile reads the bindings every frame, so a binding is part of the
-    // NEXT frame's plan by definition - there is no revision for the host to bump and none to forget.
-    wiring_.host_outputs_[name] = std::move(target);
 }
 
 raw_ptr<RenderTarget> RenderEngine::resolve(const String& name) const
 {
     // The last compiled frame's answer: a pass publication (that pass ran, so its content is this frame's),
-    // else a standing host binding. Both are the frame's own table - see resolveCompiled.
-    return resolveCompiled(name);
+    // else a standing host binding.
+    return resources_->resolve(name);
 }
 
 void RenderEngine::unpublish(const String& name)
 {
     // A pass' publication lives only inside the frame that compiled it (see compileFrame), so the only binding
     // there is to withdraw is the host's: the next compile stops answering the name on its own.
-    wiring_.host_outputs_.erase(name);
-    // Withdrawing the name ends the "cannot serve it" episode: publishing it again with no target is
-    // a new mistake, not the same one.
-    wiring_.unpublishable_host_names_.erase(name);
+    resources_->unpublish(name);
 }
 
 void RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program)

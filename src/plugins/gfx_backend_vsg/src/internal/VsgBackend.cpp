@@ -354,7 +354,14 @@ VsgBackend::VsgBackend(const vn::graphics::DeviceDesc& desc) : d(std::make_uniqu
     });
 }
 
-VsgBackend::~VsgBackend() = default;
+VsgBackend::~VsgBackend()
+{
+    // THE CREATOR'S TEARDOWN, not the member order's: the sessions borrow the device's clock, its retirement queue
+    // and the device itself, and Data's member order destroys those before the sessions that still name them
+    // (measured under ASan: OffscreenSession::shutdown -> DeviceClock::removeWindow on a freed clock). shutdown()
+    // orders the teardown and is idempotent, so a backend destroyed without an explicit shutdown() is still safe.
+    shutdown();
+}
 
 bool VsgBackend::initialize()
 {
