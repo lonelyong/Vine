@@ -8,6 +8,8 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
 
+#include "PixelGeometry.hpp"
+
 VN_GRAPHICS_NS_BEGIN
 
 Pipeline::Pipeline(intrusive_ptr<RenderEngine> engine) : engine_(std::move(engine)) {}
@@ -174,27 +176,27 @@ void Pipeline::resize(int width, int height, double pixel_ratio)
     // The ratio is stated once by the host and applied where it belongs (see the declaration): the
     // off-screen targets are the consumer that wants device pixels, and the HUD overlays are laid out on
     // the logical surface they were written against (they apply their own ratio).
-    const double ratio    = pixel_ratio > 0.0 ? pixel_ratio : 1.0;
-    const int    device_w = static_cast<int>(width * ratio);
-    const int    device_h = static_cast<int>(height * ratio);
+    const detail::PixelRatio ratio{ pixel_ratio };
+    const detail::DeviceSize device =
+        detail::toDeviceSize(detail::LogicalSize{ width, height }, ratio);
     if (offscreen_target_ != nullptr) {
-        offscreen_target_->setSize(device_w, device_h);
+        offscreen_target_->setSize(device.width, device.height);
     }
     if (composite_target_ != nullptr) {
-        composite_target_->setSize(device_w, device_h);
+        composite_target_->setSize(device.width, device.height);
     }
     // The overlays own their box (the object computes it from the surface size and its area origin); the pass
     // that draws it is a DECLARATION, so the box it states is restated here - this is the one place that lays
     // an overlay out for a new surface size (see setGizmo).
     if (gizmo_ != nullptr) {
-        gizmo_->setPixelRatio(ratio);
+        gizmo_->setPixelRatio(ratio.value);
         gizmo_->onSurfaceResized(width, height);
         if (gizmo_pass_ != nullptr) {
             gizmo_pass_->setViewport(gizmo_->boxViewport());
         }
     }
     if (fps_overlay_ != nullptr) {
-        fps_overlay_->setPixelRatio(ratio);
+        fps_overlay_->setPixelRatio(ratio.value);
         fps_overlay_->onSurfaceResized(width, height);
         if (fps_overlay_pass_ != nullptr) {
             fps_overlay_pass_->setViewport(fps_overlay_->boxViewport());

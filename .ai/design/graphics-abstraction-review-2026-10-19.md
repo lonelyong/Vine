@@ -25,6 +25,7 @@
 | D1 | `program` 不在 state 里 | 已由 `StateNode.hpp` 说明；本轮不改 |
 | E1 | `ImageRef`（pass 产出）与 `Texture`（导入）是两个图源根 | `Texture.hpp` 与 `ImageRef.hpp` 互指 |
 | F1 | 设备像素/逻辑像素的边界 | `Viewport.hpp` 注释（并指向 `SceneView::resize` / `Pipeline::resize`） |
+| F2a | 逻辑→设备像素换算分散在三处 | 私有 `PixelGeometry.hpp`（`toDeviceSize`）；`Pipeline` / `AxisGizmo` / `FpsOverlay` 共用（见 §1.2） |
 | G1 | `RenderEngine` 角色过载（`publish`/`resolve` + transient） | 拆出私有 `FrameResources`（见 §1.1）；`RenderEngine` 保留 pass/顺序/编译/诊断 |
 
 ### 1.1 G1 落地（2026-10-19）
@@ -36,12 +37,20 @@
   - `VsgBackend::~VsgBackend()` 原来是 `= default`，`Data` 的成员顺序会先销毁 `DeviceClock` / `RetirementQueue` / device，再销毁仍借用它们的 `OffscreenSession`；ASan 抓到 `OffscreenSession::shutdown -> DeviceClock::removeWindow` 的 heap-use-after-free。析构现在调用幂等的 `shutdown()`，由它决定销毁顺序。
 - **判据**：构建 0 error / 0 warning；`test_vsg` 461 通过；`ctest` 24/24；8 条 hygiene 门禁 0 finding。
 
+### 1.2 F2a 落地：逻辑→设备像素换算（2026-10-19）
+
+- **新私有头** `PixelGeometry.hpp`：`LogicalSize` / `DeviceSize` / `PixelRatio` / `toDeviceSize`；换算规则只有一处（截断，与宿主自己的缩放一致），`EngineCompile.cpp` 的 `kShapeTolerance` 说明改为指向它。
+- **落点**：`Pipeline::resize`（离屏目标）、`AxisGizmo::onSurfaceResized`、`FpsOverlay::onSurfaceResized`——三处原来各自 `static_cast<int>(logical * ratio)`，现在都调用 `toDeviceSize`。
+- **公开面不变**：`Viewport`、`SceneView::resize`、`Pipeline::resize` 的签名不动；这次只把“内部换算”收成一个有名字的类型边界。
+- **未做**：色彩空间（linear/sRGB）与数值域（0–255 / 0–1）仍在注释里，按 F2b 的触发条件。
+- **判据**：构建 0 error / 0 warning；`ctest` 24/24；8 条 hygiene 门禁 0 finding。
+
 ## 2. 待办（带触发条件）
 
 | # | 优化项 | 抽象问题 | 动作 | 触发条件 |
 |---|---|---|---|---|
 | H1 | 能力模型偏“懒惰” | `Capabilities` 只放预检事实，其余靠调用结果与诊断 | 第二个后端或 MSAA/compute 立项时加 `Feature` 枚举 | 第二个图形家族 / 新的预检问题 |
-| F2 | 单位与色彩空间未进类型 | 逻辑/设备像素、linear/sRGB、0–255/0–1 靠注释 | 强类型 `DevicePixels` / `LogicalPixels` / `LinearColor` / `SrgbColor` | 出现第二次同类尺寸/色彩缺陷 |
+| F2b | 色彩空间与数值域未进类型 | linear/sRGB、0–255/0–1 靠注释 | 强类型 `LinearColor` / `SrgbColor` / `UnitScalar` | 出现第二次同类色彩/数值域缺陷 |
 | E2 | 图源没有统一抽象 | `ImageRef` 与 `Texture` 两个根 | `ImageSource`，或让 `ImageRef` 能命名非 RT 图源 | 静态/导入贴图作为 pass 输入的真实需求 |
 | K1 | `Pipeline` 改名 | 与 PSO 词义冲突 | `RenderPipeline` / `PassChain` | 下一次公开面破坏性变更 |
 | L1 | 帧 IR 没有 owned 形式 | 无法离线/序列化/跨线程 | `OwnedFrame` 或 `FrameDescription` 的 owned 兄弟 | 离线/远程渲染或帧录制 |
@@ -60,3 +69,4 @@
 
 - 契约文字批：全量构建 0 error / 0 warning；8 条 hygiene 门禁 0 finding；不跑测试（comment-only 口径）。
 - G1 批：构建 0 error / 0 warning；`test_vsg` 461 通过；`ctest` **24/24**；8 条 hygiene 门禁 0 finding。
+- F2a 批：构建 0 error / 0 warning；`ctest` **24/24**；8 条 hygiene 门禁 0 finding。

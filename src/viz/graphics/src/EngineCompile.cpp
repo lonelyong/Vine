@@ -24,9 +24,9 @@ namespace
 /// @brief The shape difference between a pass' rectangle and its camera's picture that is rounding, not a mistake.
 ///
 /// A pane's rectangle is the pane's logical size scaled by the pixel ratio, and that conversion truncates (see
-/// deviceViewport), so one shape can come out a device pixel off - a fraction of a percent on any real pane. A
-/// mismatch worth reporting is a different RATIO: 16:9 against 4:3 is a third of a picture, and a shared camera
-/// between a pane and a square target is most of one.
+/// PixelGeometry.hpp's toDeviceSize), so one shape can come out a device pixel off - a fraction of a percent on any
+/// real pane. A mismatch worth reporting is a different RATIO: 16:9 against 4:3 is a third of a picture, and a
+/// shared camera between a pane and a square target is most of one.
 constexpr double kShapeTolerance = 0.02;
 
 /// @brief The shape of the picture an orthographic camera's projection is built for.
@@ -235,8 +235,8 @@ void RenderEngine::collectPictureShapeMismatches()
                                      : camera.aspectRatio();
         const double  rectangle = static_cast<double>(width) / static_cast<double>(height);
         // A sub-pixel difference is a device-pixel rounding, not a mistake: the rectangle of a pane is the pane's
-        // logical size scaled by the pixel ratio, and that conversion truncates (see deviceViewport). A real
-        // mismatch - 16:9 against 1:1, a pane against a shared camera - is a dozen times this.
+        // logical size scaled by the pixel ratio, and that conversion truncates (see PixelGeometry.hpp's
+        // toDeviceSize). A real mismatch - 16:9 against 1:1, a pane against a shared camera - is a dozen times this.
         if (std::abs(rectangle - picture) <= kShapeTolerance * picture) {
             continue;
         }

@@ -25,6 +25,12 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-19 F2a 落地：逻辑→设备像素换算收进 PixelGeometry
+
+- **结论**：`Pipeline::resize`、`AxisGizmo::onSurfaceResized`、`FpsOverlay::onSurfaceResized` 三处重复的 `static_cast<int>(logical * ratio)` 改为私有 `PixelGeometry.hpp` 的 `LogicalSize` / `DeviceSize` / `PixelRatio` / `toDeviceSize`；保留截断规则，`EngineCompile` 的形状容差说明改为指向它。公开签名不变。
+- **未做**：色彩空间（linear/sRGB）与数值域（0–255 / 0–1）仍按 F2b 的触发条件。
+- **判据**：构建 0 error / 0 warning；`ctest` 24/24；8 条 hygiene 门禁 0 finding。清单见 `graphics-abstraction-review-2026-10-19.md` §1.2。
+
 ## 2026-10-19 G1 落地：`RenderEngine` 的图源表拆到私有 `FrameResources`
 
 - **结论**：`publish`/`unpublish`/`resolve`、当前帧的 production/publication 表和 transient target 表从 `RenderEngine` 移到私有 `FrameResources`（`FrameResources.hpp` / `FrameResources.cpp`，不导出）；引擎保留 pass 注册、顺序、编译、诊断与 episode 规则。公开面不变。

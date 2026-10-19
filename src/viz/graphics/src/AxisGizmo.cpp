@@ -13,6 +13,8 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/geometry/Array.hpp>
 
+#include "PixelGeometry.hpp"
+
 VN_GRAPHICS_NS_BEGIN
 
 VN_OBJECT_META_IMPL(AxisGizmo, Object);
@@ -160,23 +162,23 @@ void AxisGizmo::onSurfaceResized(int width, int height)
     if (surface_w_ <= 0 || surface_h_ <= 0) {
         return;
     }
-    // Convert the Qt logical surface size into device pixels, which is the
-    // space the backend's native surface uses for viewports.
-    const int dev_w = static_cast<int>(surface_w_ * pixel_ratio_);
-    const int dev_h = static_cast<int>(surface_h_ * pixel_ratio_);
-    if (dev_w <= 0 || dev_h <= 0) {
+    // Convert the host's logical surface size into device pixels, which is the space the backend's native
+    // surface uses for viewports.
+    const detail::DeviceSize device =
+        detail::toDeviceSize(detail::LogicalSize{ surface_w_, surface_h_ }, detail::PixelRatio{ pixel_ratio_ });
+    if (!device.isValid()) {
         return;
     }
     // Bottom-left corner in top-left-origin device coordinates.
     //
     // A window mid-layout can be smaller than the box plus its margins (measured 100x30 on the demo's
     // first shown frame): then the box does not fit and the honest spelling of that is a ZERO-area
-    // rectangle, which the backend's empty-rectangle rule skips. The naive `dev_h - 2 * margin_px_`
+    // rectangle, which the backend's empty-rectangle rule skips. The naive `device.height - 2 * margin_px_`
     // went NEGATIVE there and announced a -2x-2 viewport - the same skip downstream, but as garbage
     // handed to the backend rather than a stated decision.
-    const int fitted = dev_h - 2 * margin_px_;
+    const int fitted = device.height - 2 * margin_px_;
     const int side   = fitted > 0 ? (size_px_ > fitted ? fitted : size_px_) : 0;
-    box_ = Viewport{ area_x_ + margin_px_, area_y_ + dev_h - margin_px_ - side, side, side };
+    box_ = Viewport{ area_x_ + margin_px_, area_y_ + device.height - margin_px_ - side, side, side };
 }
 
 void AxisGizmo::setAreaOrigin(int x, int y)

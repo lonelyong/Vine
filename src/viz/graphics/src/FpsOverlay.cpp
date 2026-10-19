@@ -12,6 +12,8 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/geometry/Array.hpp>
 
+#include "PixelGeometry.hpp"
+
 VN_GRAPHICS_NS_BEGIN
 
 VN_OBJECT_META_IMPL(FpsOverlay, Object);
@@ -182,11 +184,11 @@ void FpsOverlay::onSurfaceResized(int width, int height)
     if (surface_w_ <= 0 || surface_h_ <= 0) {
         return;
     }
-    // Convert the (Qt logical) surface size into device pixels, the space the
-    // backend's native surface uses for viewports.
-    const int dev_w = static_cast<int>(surface_w_ * pixel_ratio_);
-    const int dev_h = static_cast<int>(surface_h_ * pixel_ratio_);
-    if (dev_w <= 0 || dev_h <= 0) {
+    // Convert the host's logical surface size into device pixels, the space the backend's native surface
+    // uses for viewports.
+    const detail::DeviceSize device =
+        detail::toDeviceSize(detail::LogicalSize{ surface_w_, surface_h_ }, detail::PixelRatio{ pixel_ratio_ });
+    if (!device.isValid()) {
         return;
     }
 
@@ -194,13 +196,13 @@ void FpsOverlay::onSurfaceResized(int width, int height)
     // aspect so the digits are never stretched or clipped.
     int w = box_width_px_;
     int h = box_height_px_;
-    if (w > dev_w - 2 * margin_px_) {
-        const double scale = static_cast<double>(dev_w - 2 * margin_px_) / w;
+    if (w > device.width - 2 * margin_px_) {
+        const double scale = static_cast<double>(device.width - 2 * margin_px_) / w;
         w = static_cast<int>(w * scale);
         h = static_cast<int>(h * scale);
     }
-    if (h > dev_h - 2 * margin_px_) {
-        const double scale = static_cast<double>(dev_h - 2 * margin_px_) / h;
+    if (h > device.height - 2 * margin_px_) {
+        const double scale = static_cast<double>(device.height - 2 * margin_px_) / h;
         w = static_cast<int>(w * scale);
         h = static_cast<int>(h * scale);
     }
@@ -209,7 +211,7 @@ void FpsOverlay::onSurfaceResized(int width, int height)
     }
 
     // Bottom-right corner of this overlay's area, in top-left-origin device coordinates.
-    box_ = Viewport{ area_x_ + dev_w - margin_px_ - w, area_y_ + dev_h - margin_px_ - h, w, h };
+    box_ = Viewport{ area_x_ + device.width - margin_px_ - w, area_y_ + device.height - margin_px_ - h, w, h };
     // The box above IS the picture's shape, and the projection is built from the camera's (see Camera) - so the
     // camera is given it here, where the box was last decided. The readout is content laid out for its own box,
     // not a scene culled against a frustum, so this changes nothing about what it holds - only that the row is
