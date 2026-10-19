@@ -27,7 +27,7 @@ S10b（多窗口共享设备）一落地就会同时踩到。
 | 3 | 结构错 / 生命周期 | 借来的 `WindowPresentTarget` 没有撤销点，两条契约句互相矛盾（"设备可在关窗时放掉" vs "必须活过区的使用"），今天只因 `VsgBackend` 把自己当目标才不炸 | **已修（改口径，后端零改动）**：目标**活到设备销毁或区解绑**，关窗只是 **detach**；`RenderEngine::shutdown()` 在拆设备前 `area_->bindTarget(nullptr)` |
 | 4 | 缺入口 | `RenderSurface(raw_ptr<RenderEngine>)` 允许 null，但 null 的区永久死且失败全静默（没有 `setEngine`） | **已修**：构造函数改收 `RenderEngine&`（非空由签名保证，与 `present(SceneView&)` 同款），调用点 31 处机械替换 |
 | 5 | 文档漂移 | `SceneView.hpp` 仍按"视图自己的矩形"写（同文件另一处又写对了）、`RenderEngine::passOrder` 说"读者是区"、`PresentTarget.hpp` 引用了不存在的 `RenderEngine::render()`、`RenderEngine` 类注释块与 `class` 挤在一行 | **已修**：纯注释 |
-| 6 | 命名 | appfw GUI 公开布尔 getter 违约定：`Control::enabled()/visible()`、`RibbonAction::enabled()/checkable()/checked()` | **不做**：改名要动 `VN_APPFW_PLUGIN_ABI_VERSION`，并进下一次 appfw 公开面变更（触发：下次动 appfw 公开面） |
+| 6 | 命名 | appfw GUI 公开布尔 getter 违约定：`Control::enabled()/visible()`、`RibbonAction::enabled()/checkable()/checked()` | **已修（2026-10-19）**：改为 `isEnabled()/isVisible()/isCheckable()/isChecked()`（`RibbonButton` 同步），配套补 Doxygen，`VN_APPFW_PLUGIN_ABI_VERSION` 7u→8u；调用点与测试同步 |
 
 ## 看着可疑但确实合理（别在后续复核里反复提）
 

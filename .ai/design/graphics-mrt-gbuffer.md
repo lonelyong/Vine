@@ -1,5 +1,11 @@
 # graphics MRT / GBuffer 设计（一次几何遍历产出多张图）
 
+> ⚠️ **2026-10-19 盘点**：本文件是 **VsgRenderer 世代**的设计记录（`VINE_VSG_DEFERRED_FULL` 等开关已不存在），
+> 不要按它改代码。现行实现见 `graphics-image-source.md` / `graphics-deferred-composite.md`；本文里**仍成立的
+> 缺口只有 per-attachment clear 色**已于 2026-10-19 落地**（`ClearPolicy::extra_colors` /
+> `core::planClearValues`），该文与统一清单均已收口（`graphics-followups-2026-10-19.md` §1）；
+> “>3 方向光”已不设限（lights 块 1024 槽）。
+
 > 状态：设计稿 v1（2026-09-04）· **S1 ✅ · S2a ✅ · S2b ✅ · S3 ✅ · S4a/b/c ✅**（deferred 主窗已实现，但
 > **2026-09-04 默认退回 FORWARD**：S3 曾把 deferred 设为默认，用户实测默认启动窗口空白（本环境无法
 > 截图/像素级核验）→ 默认还原 forward，deferred 主窗改由 `VINE_VSG_DEFERRED_FULL` 开关驱动，待

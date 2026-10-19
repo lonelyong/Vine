@@ -3,7 +3,7 @@
 > **2026-10-19 K1 改名**：本文中的 `Pipeline` / `PipelineOptions` 是当时的名字；现行 API 是
 > `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups-2026-10-19.md` §1.1）。
 
-**状态：M1 已落地（2026-10-11）；M2 的 M2a/M2b/M2c/M2d 与观测片 M4 已落地（2026-10-11），其中 **M2c 于同日回退**（aspect 回到相机，见 §3.2.3"回退"）；M3（状态解析单点）已落地；M5 拆成 M5a（已落地，输入按矩形 + 焦点）/ M5b（**机制半边 T1 已落地（表面尺寸扇出）；组合半边 T4 归应用层，见 §5.1**）；M8（SDK 级设备夹具 + 像素判据）已落地（2026-10-11）；M7（Pass 描述符 + 每帧 FramePlan，唯一的大改）已落地（2026-10-11）；待办清单里 T1 / T3 已落地（2026-10-11，见 §5.1）；**本文 §7 的"整块重写否决"已于 2026-10-11 作废**（用户定，
+**状态：M1 已落地（2026-10-11）；M2 的 M2a/M2b/M2c/M2d 与观测片 M4 已落地（2026-10-11），其中 **M2c 于同日回退**（aspect 回到相机，见 §3.2.3"回退"）；M3（状态解析单点）已落地；M5 拆成 M5a（已落地，输入按矩形 + 焦点）/ M5b（**机制半边 T1 已落地（表面尺寸扇出）；组合半边 T4 归应用层，见 §5.1**）；M8（SDK 级设备夹具 + 像素判据）已落地（2026-10-11）；M7（Pass 描述符 + 每帧 FramePlan，唯一的大改）已落地（2026-10-11）；待办清单里 T1 / T3 已落地（2026-10-11）；T2 已由 S10b 覆盖并关闭（2026-10-19，见 §5.1）；**本文 §7 的"整块重写否决"已于 2026-10-11 作废**（用户定，
 改由 [`graphics-redesign.md`](graphics-redesign.md) 接手，范围含后端契约）；其余是提案，未落地** ——
 本文回答"如果重新设计这一套会怎么切"，并把每条切成能独立验收的迁移片。落地的部分按本文自己的规矩**以现状文档为准**
 （`appfw-render-view.md` §4.1、`.ai/memory/graphics.md`），这里只留下"原稿哪里说错了"的记录。**本文允许大改**：
@@ -51,7 +51,8 @@
 
 每条只写"现象 + 证据 + 根因一句话"；机制细节在 §3 对应小节。
 
-- **F1 状态优先级住在名字和文档里**。同一件事有三个来源：内容自己的 `StateNode`、pass 级覆盖
+- **F1 状态优先级住在名字和文档里**（**已关闭：M3 落地了 `resolveRenderState`，见 §3.1；判据 `GraphicsTest` 的
+  `resolveRenderState` 用例族**）。同一件事有三个来源：内容自己的 `StateNode`、pass 级覆盖
   （`setProgramOverride` / `setPolygonModeOverride`）、视图配方（`Options::mode`）；靠 `graphics-state.md` §4.1
   那张"谁赢谁叫 Override"的表 + `RenderCommand::depthExplicit` 这类旗标对齐。`RenderPass::execute()` 的
   拷贝路径就是三个来源的汇总点，但它不做优先级决策 —— 决策分散在各自的 setter 里。
@@ -65,17 +66,23 @@
   `applyModeToGeometryPass()`）把"内容怎么着色"写在**窗口 pass** 上，于是
   Deferred 上四档天生兑现不了（G-buffer 出颜色 + 全屏光照合成）⇒ 只能报 `UnsupportedRequest` 并保持 Lit。
   *根因*：调试覆盖的作用域选错了阶段（应该是几何阶段：两条路径都从那儿开始）。
-- **F4 声明就地可变 ⇒ 引擎只能事后重查**。`RenderPass` 同时是"声明"（目标/输入输出/程序/启用）、"状态"
+- **F4 声明就地可变 ⇒ 引擎只能事后重查**（**已关闭：M7 把声明换成 `PassDesc` + 每帧 `FramePlan`，见 §3.4；
+  `wiringRevision()` / `validateWiring()` 两个名字在代码里已不存在**）。`RenderPass` 同时是"声明"（目标/输入输出/程序/启用）、"状态"
   （清屏/深度/视口/覆盖）和"执行"（`execute(scene, backend)` 收命令并下发）；`FpsOverlay`、`AxisGizmo`、
   `ScreenPass` 都是它的子类，注册后就地改。引擎因此需要 `wiringRevision()` 计数 + `validateWiring()` 重查。
   *根因*：缺一层"每帧重建的声明式图"。
-- **F5 借用与托管混在一起**。视图借用引擎（`raw_ptr`），但它的默认管线**强持有**引擎；于是"操作期间临时加
+- **F5 借用与托管混在一起**（**已落地 2026-10-19：借用一律 `Lease<T>`，见 §2 契约表的"所有权"一行**）。
+  视图借用引擎（`raw_ptr`），但它的默认管线**强持有**引擎；于是"操作期间临时加
   引用"成了必须记住的约定（`intrusive_ptr<RenderEngine>(engine_, true)`，`appfw-render-view.md` §13 的 R2）。
   *根因*：所有权不是从父到子的单向链，而是靠"谁恰好还活着"。
-- **F6 "当前视图"是可变全局槽**。命令要拿到"要改的那个 3D 视图"，靠 `MainWindow::setPrimaryRenderControl()`
+- **F6 "当前视图"是可变全局槽**（**未做，留给触发：一个窗口出现第二个 3D 区，或命令要指向非活动窗口** ——
+  单窗口下 `window->primaryRenderControl()` 就是那个上下文，两个命令共用两次，现在抽 `ViewContext` 只多一层）。
+  命令要拿到"要改的那个 3D 视图"，靠 `MainWindow::setPrimaryRenderControl()`
   这一个槽 + `activate()/deactivate()` 成对发布；单窗口成立，多窗口/多分屏含糊（§12 已记）。
   *根因*：命令缺一个**显式上下文**，于是用全局槽代替。
-- **F7 生命周期靠被动发现**。`QTimer::singleShot(0, …)` 兜底 + `activate()` 里重试 + `Pending/Presenting/Failed`
+- **F7 生命周期靠被动发现**（**已关闭 2026-10-19：事件协议 = `RenderControl::SurfaceState` +
+  `state_changed`；能力面 = `Capabilities` / `supports(Feature)`（D 系列同一轮补齐）。`QTimer::singleShot(0)` 兜底
+  留着，但它是**便利**而不是唯一的路：`init()` / `initAsync()` 是显式入口**）。`QTimer::singleShot(0, …)` 兜底 + `activate()` 里重试 + `Pending/Presenting/Failed`
   三态，本质是"没有任何一方声明自己 ready"的补丁；能力（能不能画线？能不能 MRT？）只能靠
   `reportEngineProblem(UnsupportedRequest)` + 人看日志。*根因*：宿主与会话之间没有事件协议，也没有能力查询面。
 
@@ -109,7 +116,7 @@ appfw/src/gui/
 
 | 契约 | 目标 | 取代 |
 | --- | --- | --- |
-| 所有权 | 一律"父持有子"：Device → Session → 资源/pass；借用一律 `Lease`/句柄，且**会话必须晚于它的租约销毁**（在类型上表达，不靠约定） | R2 的手工加引用 |
+| 所有权 | 一律"父持有子"：Device → Session → 资源/pass；借用一律 `Lease`/句柄，且**会话必须晚于它的租约销毁**（在类型上表达，不靠约定）—— **已落地 2026-10-19**：`vn::Lease<T>`（`base/core`）、`RenderEngine::lease()`，`SceneView` / `RenderPipeline` 借引擎用它 | R2 的手工加引用 |
 | 状态 | 一个函数决定一个 draw 的最终状态，输入是 (命令, pass, 视图覆盖)，优先级是一张表 | 分散的 setter + 命名规则 |
 | 能力 | `session->supports(feature)` / `featureLevel()`，可查询、可在建管线之前问 | 事后 `reportEngineProblem` + 文档 |
 | 观测 | 每帧一份 FramePlan（可 dump、可断言结构），替代 `passCount()`/指针身份当替身 —— **M4 已落地（2026-10-11）**：`RenderEngine::framePlan()` 返回 `FramePlan{passes}`，`describe()` 出一张表 | 隐式结构 |
@@ -683,7 +690,7 @@ G-buffer 那一类中间目标；`validateWiring()` 那 420 行 + `wiringRevisio
 | # | 类型 | 事项 | 动作 | 判据 / 触发 |
 | --- | --- | --- | --- | --- |
 | **T1** | 机制 | **表面尺寸扇出**（M5b 的机制半边，**已落地 2026-10-11**） | `RenderSurface::resize(w, h, ratio)` 记住表面尺寸并扇出给表里每一条**呈现的视图**（`SceneView::applySurfaceSize` 是"记下来 + 推几何"那一步）；`present` 把记着的尺寸**立刻**交给新呈现；`SceneView::resize` 在视图挂表面时转发给它（不挂表面时才是独立入口），新增 `SceneView::hasSurface()`；`SurfaceWindow::feedSurfaceSize` 改调表面，控件自己那个视图**不呈现**时才单独喂 | ①`RenderControlTest` 里手写的那行 `right->onSurfaceResized(...)` 全删（原稿写"两条"，实际是**四条**分屏用例，一并删净）；②`SceneViewViewportTest.APaneDeclaredOnASizedSurfaceIsSizedAtOnce`：present 后**立刻**、零手喂，pane = 640×720、窗口 pass viewport = {640, 0, 640, 720}；③单视图路径行为不变（`test_gui` **253** 绿），`test_graphics` 345→**346**；④变异：present 不把尺寸给新呈现 ⇒ ②**红**（实测） |
-| **T2** | 机制 | **M6：一设备 N 交换链 / N 会话** | 后端 + `RenderBackendRegistry` 支持同一会话多条交换链（`setSurface(i)`）；设备与资源归属始终在会话；**不碰控件与视图的 API** | 原 M6 判据（同一模型两窗口只上传一份几何 / 一个窗口销毁不带走另一个会话 / `SessionLease` 禁止会话先死在租约前 / R2 的"临时加引用"约定删除）。**触发**：同屏视图稳定 > 4、同一内容要上两块窗口、设备启动开销被窗口数乘。**2026-10-11 复核：没命中**（当前应用只有一块窗口）—— **登记为后期优化项**，命中再落 |
+| **T2** | 机制 | **M6：一设备 N 交换链 / N 会话** | 后端 + `RenderBackendRegistry` 支持同一会话多条交换链（`setSurface(i)`）；设备与资源归属始终在会话；**不碰控件与视图的 API** | 原 M6 判据（同一模型两窗口只上传一份几何 / 一个窗口销毁不带走另一个会话 / `SessionLease` 禁止会话先死在租约前 / R2 的"临时加引用"约定删除）。**触发**：同屏视图稳定 > 4、同一内容要上两块窗口、设备启动开销被窗口数乘。**2026-10-11 复核：没命中**（当前应用只有一块窗口）。**2026-10-19 已由 S10b 覆盖并关闭**：`VsgBackend` 是"设备 + 窗口表"，每窗口一个会话/交换链、`createSurfaceTarget` 按窗口发目标、完成证据是设备级 `DeviceClock`（见 `graphics-window-device-viewer.md` §7 的 S10b 行）；形状与本文原稿不同（不是 `setSurface(i)`，而是每窗口一个目标），SDK 侧因此不需要再加"一会话多交换链"入口。剩下的只有 S11（一帧跨多窗口，登记不做） |
 | **T3** | 机制（小） | **设备夹具的可用性探测**（**已落地 2026-10-11**） | `SdkPixelFixture::available()` 变成"设备 + 会话起得来 + 离屏像素给得回来"的**共享入口**（进程内只答一次：`up()` + 一条手搭 pass 画一帧 + 读回）；`BlockStorageTest` / `BlockDescriptorsTest` / `SessionTest` / `VsgBackendTest` 的设备门禁**十处**改问它；`getenv("DISPLAY")` 的**四处**假门禁删除（X11-only 的那几个文件里另有 5 处与紧随其后的 `xcb_connect` 重复的 `DISPLAY` 检查，同样删掉） | ①`SdkPixelTest` 两条仍绿；②`test_vsg` 407 passed / 26 skipped → **428 passed / 3 skipped / 2 failed**（23 条误跳全部恢复，正如原稿预测：2 条本就红 —— `BlockDescriptorsTest.TheBindCarriesTheOffsetsInBindingOrderAndReusesOneSet`、`SessionTest.ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote`，**未修**，先记）；③剩下的 3 skip = 计数分配器 2 条 + `HostWindowReadTest`（X11-only）1 条 |
 | **T4** | 组合 | **分屏布局的所有者**（原 M5b 的组合半边） | **不进 SDK**：布局树 / 比例 / join / 格子生死 / 谁持有视图，是应用层（编辑器、查看器）自己的组合；`SplitLayout` 那份定稿作废 | 归属登记（§4 与 §5 M5b 行已改）。真有人要通用实现时，以"应用层小库"形态出现，不是引擎政策 |
 | **T5** | 组合 | **多 transient 互相借用的配方** | **不进 SDK**（② 定案）：应用声明 transient、`RenderEngine::transientTarget(identity)` 取回当前实例、在自己的钩子/布局回调里重述 `RenderTarget::shareDepth` | 已记（`graphics-deferred-composite.md` 顶部 + `docs/guides/graphics.md` §3.13） |

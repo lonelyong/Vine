@@ -78,6 +78,7 @@ executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟�
 * 目标自己说事实：`shape()`/`instance()`/`written()`/`passVariantCount()`；计划的答案由
   `applyTargetPlans` 应用（窗口路径**问平台**，其余按计划）。
 * `Session`：帧时钟 `FrameTimeline`（`submitted` 与 `completed` 分开）、`RetirementQueue`（停靠窗口 = `slots + 1`）、
+  `framesPresented()`（交给平台 present 的帧数；设备把它们汇总成 `FrameProgress::presented`——**不是**"已上屏"）、
   呈递与丢帧的记录（丢帧 ⇒ 目标 `attachments_invalidated` ⇒ 下一帧 `Repair(Bootstrap)`）。
 * 提交这一步自己说失败（`SubmissionFailed` + 计数），重试的决定留给宿主/会话。
 

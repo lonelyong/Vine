@@ -83,7 +83,8 @@
 > ① **初始化时机**：控件构造只组装，attach 走"宿主显式 `init()`"或"第一拍兜底"（§2.3、R1）；
 > ② **配方与几何分开**：`SceneView::Options` 变更才重建，`setViewport`（归一化）只改取值（§4.1、J8）；
 > ③ **输入路由成缝**：`RenderControl::setInputRouter`，按下时路由、松开前捕获，ABI 安全（§5、§12.2）；
-> ④ **借用 + 操作期间临时加引用**：顺序自由、宿主提前释放引擎也安全（§13、R2）。
+> ④ **借用带租约**：顺序自由，宿主释放引擎也不会让借用变成悬垂指针（§13、R2；2026-10-19 起从"操作期间临时加引用"
+> 换成 `Lease`）。
 > 另：`ViewOptions` 更名 **`SceneView::Options`**（嵌套在消费它的类里，与 `UserIO::FileReadOptions` 同惯例）。
 >
 > **一句话**：**视图**（相机 + 内容 + 视口）持有它**采纳**的那条链并维护它的几何；**链**（`Pipeline`）持有配方；
@@ -121,9 +122,9 @@
 
 - **R1 初始化时机**：控件**构造只组装**（引擎 + 视图 + 诊断路由）；attach 由"宿主显式 `init()`"或"第一拍兜底"承担
   ⇒ **"`new` 之后立刻配置"永远有效**，而且**不需要**给控件加第二个配置面（§2.3）。
-- **R2 借用 + 操作期间临时加引用**：视图**借用**引擎（`raw_ptr`），但凡"会去引擎上注销 / 重建"的操作（
-  `ensureWindowPass` / `removeWindowPass` / `setOptions`）在入口先 `intrusive_ptr<RenderEngine>(engine_, true)`
-  临时持有 ⇒ 顺序自由，宿主提前释放引擎也安全（§13）。
+- **R2 借用带租约**：视图与管线**借**引擎（`Lease<RenderEngine>`，不碰引用计数），引擎析构时把自己的租约单元清空
+  ⇒ "注销 / 重建"的入口问一次租约就够：引擎没了就什么都不做，引擎活着才动手（§13；2026-10-19 之前的写法是
+  "借用 + 一条强引用兜底 + 操作期间临时加引用"，已被租约取代）。
 - **R3 三种状态各有回家路**：**配方**（`Options`：走哪条路、有没有 HUD 档）= 变更即**重建**；**几何**
   （`setViewport` / `resize`：画在哪块、多大多密）= 只改取值；**开关与模式**（`setStatsVisible` /
   `setGizmoVisible` / `Options::mode`：现在看不看、表面颜色是什么含义）= 只改 pass 上的取值
@@ -334,7 +335,7 @@ passes registered here"。构造自驱在后端已注册时**先 attach 了一�
 | 范式 | 规则 | 例子 |
 | --- | --- | --- |
 | **签名即所有权** | 借用 = `raw_ptr` 参数 + 文档"必须活得比我久"；接管 = `intrusive_ptr` 参数（调用点看得见"我把所有权交出去了"）；返回内部对象 = `raw_ptr` | `SceneView::setEngine(raw_ptr<>)` / `RenderEngine::setBackend(intrusive_ptr<>)` / `view->pipeline()` |
-| **操作期间临时加引用** | 借用的成员一旦要"跨操作使用"，入口先 `intrusive_ptr<T>(p, /*add_ref*/ true)`（该 ctor 的第二参数就是这个意思） | R2（视图→引擎，§13）、控件捕获期间→视图（§5）；**同一条通则，两处复用** |
+| **操作期间临时加引用** | 借用的成员一旦要"跨操作使用"，入口先 `intrusive_ptr<T>(p, /*add_ref*/ true)`；**要跨操作长期持有的借用用 `Lease`**（2026-10-19 起视图/管线→引擎就是这条） | 控件捕获期间→视图（§5，临时加引用）；视图/管线→引擎（§13，`Lease`）；**一个回答"操作期间活着"，一个回答"还在不在"** |
 | **意图用值、变更即重建** | 配方（`Options`）按值进出、无 setter 碎片；改它 = 一次重建 | `setOptions(Options)` / `options()` |
 | **几何用 setters、零重建** | 每帧会变的东西（视口、可见性、着色模式）只改取值，不碰结构 | `setViewport` / `setStatsVisible` / `Options::mode` |
 | **同名状态两处出现时，赢家的名字带 `Override`** | pass 级 setter **赢了内容**的 → `…Override`（`setProgramOverride` / `setPolygonModeOverride`）；pass 给的是**可被内容压过的默认** → 不带（`setDepthMode`）。判断依据与整张表在 `.ai/design/graphics-state.md` §4.1 | 视图的"线框"开关必须是覆盖：否则内容写过的线框会把它永久钉住 |
@@ -582,8 +583,8 @@ view->setOptions(options);
 10. **输入先按"点"归视图，再捕获到松开**（§5）：默认路由 = 控件自己那个 `view()`（单视图行为逐字不变）；
     多视图的归属由宿主的路由回调决定 —— 控件**不猜**布局。
 11. **配方与几何分开**（J8）：`Options` 变了才重建管线；`setViewport` / `resize` 只改取值（含比例换算）。
-12. **借用 + 操作期间临时加引用**（R2，§13）：`ensureWindowPass` / `removeWindowPass` / `setOptions` 入口临时持引擎，
-    顺序自由、宿主提前释放也安全。
+12. **借用带租约**（R2，§13；2026-10-19 改写）：视图与管线借引擎用 `Lease<RenderEngine>`，引擎析构时清空
+    ⇒ 引擎没了借用回答 nullptr（不悬垂、也不续命）；一切"注销 / 重建"的入口问一次租约，顺序自由。
 13. **显示 / 隐藏是运行时开关，永不重建**（§4.1）：`setGizmoVisible` / `setStatsVisible` 只切 `setEnabled`；
     档不存在时**按需补建一次**（每个视图每种档最多一次）。要频繁切就在配置窗口里把档都建好（R1 ⇒ 零重建）。
     着色模式同族：`Options::mode` 只切**画面那条 pass** 的 program override，同一条链条上换档**零重建**；
@@ -602,7 +603,9 @@ view->setOptions(options);
 | 期 | 内容 | 验收 |
 | --- | --- | --- |
 | **S0** appfw（**可先落地，独立于 S1**） | 初始化时机（§2.3）：构造只组装、attach 排第一拍或宿主显式 `init()`；`useDefaultBackend()` 守卫改为"引擎没有后端时才补";注释同步 | ①构造返回时 `state()==Pending`，第一拍后 `Presenting`；②构造后立刻 `setBackend()` 生效（不再是"已 initialize 的默认后端"）；③注册表空 → 之后注册后端 ⇒ 兜底能捡起；④`RenderControlTest` 全绿（显式 `init()`/`initAsync()` 的同步语义不变）；⑤启动时序不退化：demo/model_viewer 仍在自己那次 `init()`/`initAsync()` 上 attach（比对启动日志的耗时行，没有新的空屏拍）；⑥核对 `DemoScene.hpp:124` 的前置条件（`install()` 早于 attach）现在真的成立，并把 `DemoScene.cpp:1547` 的注释改成事实 |
-| **S1** graphics | `SceneView::Options` + `setOptions()` + `options()` + `pipeline()`；`setStatsVisible/setGizmoVisible/isStatsVisible/isGizmoVisible`（运行时开关，**零重建**）；`setViewport(归一化矩形)`（几何，不重建）；`resize(w,h,ratio)` 自 resize 默认管线；`addSurfaceLayout` 三参数重载 | ①不配置 ⇒ `passCount()==1`（既有用例不动）；②`.stats=true` ⇒ 2 个 pass 且在 HUD 档；③`resize(400,300,2.0)` 后 HUD/gizmo 拿到新尺寸与新比例；④换设置 ⇒ 重建后仍只有一条窗口管线（不重复注册）；⑤宿主已有主 pass ⇒ 默认管不插一脚；⑥空配置下 resize 无害空转；⑦三参数 layout 收到比例；⑧**管线还没建时 `setOptions()` ⇒ 不建管线、只记设置，随后 `ensureWindowPass()` 按新设置建**（§2.2 的零重建路径）；⑨默认窗 pass **内部按"视口矩形"取值**（默认 = 铺满），给 §12.2 的分屏留门；⑩**注销/重建在操作期间临时加引用**（R2，§13 后果 3）—— 用例里放一个"宿主把引擎也释放了"的变体钉住它；⑪`setViewport({0.25,0,0.5,1})` 后：默认窗 pass 的设备像素视口跟着变、**且不重建**（`passCount()` 不变、`pipeline()` 句柄不变）；**同一时刻**只喂表面尺寸（`resize(1280,720,1.0)`）也够 —— 相机宽高比与 layout 步收到的尺寸都等于"这一块"（640×720），证明几何**只有一个输入**（不变量 14）；⑫运行时开关：`.stats=true` 建好后 `setStatsVisible(false)/(true)` 连续切 10 次 ⇒ 读数档的 `isEnabled()` 跟着变，而 `passCount()` 与 `pipeline()` 句柄**不变**（零重建）；`.stats=false` 时第一次 `setStatsVisible(true)` **恰好付一次**构建（此后同样零重建） |
+| **S1** graphics | `SceneView::Options` + `setOptions()` + `options()` + `pipeline()`；`setStatsVisible/setGizmoVisible/isStatsVisible/isGizmoVisible`（运行时开关，**零重建**）；`setViewport(归一化矩形)`（几何，不重建）；`resize(w,h,ratio)` 自 resize 默认管线；`addSurfaceLayout` 三参数重载 | ①不配置 ⇒ `passCount()==1`（既有用例不动）；②`.stats=true` ⇒ 2 个 pass 且在 HUD 档；③`resize(400,300,2.0)` 后 HUD/gizmo 拿到新尺寸与新比例；④换设置 ⇒ 重建后仍只有一条窗口管线（不重复注册）；⑤宿主已有主 pass ⇒ 默认管不插一脚；⑥空配置下 resize 无害空转；⑦三参数 layout 收到比例；⑧**管线还没建时 `setOptions()` ⇒ 不建管线、只记设置，随后 `ensureWindowPass()` 按新设置建**（§2.2 的零重建路径）；⑨默认窗 pass **内部按"视口矩形"取值**（默认 = 铺满），给 §12.2 的分屏留门；⑩**注销/重建期间引擎必须活着**（R2；2026-10-19 起由租约回答，见 §13）—— 用例
+`SceneViewViewportTest.AViewWhoseEngineWasReleasedReportsIt`（原 `RebuildingAfterTheHostReleasedTheEngineIsSafe`）
+钉住"宿主释放引擎后借用回答 nullptr、不再续命"；⑪`setViewport({0.25,0,0.5,1})` 后：默认窗 pass 的设备像素视口跟着变、**且不重建**（`passCount()` 不变、`pipeline()` 句柄不变）；**同一时刻**只喂表面尺寸（`resize(1280,720,1.0)`）也够 —— 相机宽高比与 layout 步收到的尺寸都等于"这一块"（640×720），证明几何**只有一个输入**（不变量 14）；⑫运行时开关：`.stats=true` 建好后 `setStatsVisible(false)/(true)` 连续切 10 次 ⇒ 读数档的 `isEnabled()` 跟着变，而 `passCount()` 与 `pipeline()` 句柄**不变**（零重建）；`.stats=false` 时第一次 `setStatsVisible(true)` **恰好付一次**构建（此后同样零重建） |
 | **S2** appfw | 两个调用点改成推 `(w,h,ratio)`；比例变化时重推 | 无后端的 `test_gui`：尺寸与比例确实到了 view；比例变化后跟上。**不加任何配置 API** |
 | **S3** graphics | `LightRig`（`studio()`/`headlight()` + `addTo()`）+ `Scene::addLighting()/setLighting()` | ①`studio()` 三盏（1 环境 + 2 方向）、方向非零；②追加语义（装两次 = 两套）；③`setLighting()` 覆盖；④`Scene` 原有 `addLight/clearLights` 不动 |
 | **S4** 迁移 | `model_viewer`（灯 + HUD 收口）、`demo_plugin`（灯收口，管线保留） | viewer 的灯/读数用例改成断言新入口；demo 观感不变（截图/日志比对） |
@@ -840,36 +843,42 @@ RenderEngine
                        └─ RenderPass: intrusive_ptr<Camera>（"The pass KEEPS the camera alive"）
 ```
 
-<!-- drift-ok: 上面那条 `default_pipeline_` 是 S7 之前的名字；本节其余结论（借用 + 一条强引用兜底、R2、两个方向
-的解说）在 S7/S8 之后照旧成立 —— 只是"视图呈现出画面"那一步现在要它**先采纳一条链**（`setPipeline`）。 -->
+<!-- drift-ok: 上面那条 `default_pipeline_` 是 S7 之前的名字；"视图呈现出画面"那一步在 S7 之后要它**先采纳一条链**
+（`setPipeline`）。**本节（R2）已于 2026-10-19 改写**：不再是"借用 + 一条强引用兜底 + 操作期间临时加引用"，而是
+"借用带租约（`Lease`）"—— 下面是改写后的版本，旧写法留在这段引子里当记录。 -->
+
+**2026-10-19 变更（R2 → 借用带租约）**：这一节原来写的是"视图借用引擎，但它的默认管线**强持有**引擎，于是
+'我的管线活着 ⇒ 引擎活着'，卸载时谁都不必担心顺序"。那条约定的代价是**子持有父**：一个"已被宿主释放"的引擎会因为
+"还有东西被它服务过"而活着（`RenderPipelineBuilder` 里那句 `intrusive_ptr<RenderEngine>(engine_)` 就是这件事的
+痕迹），于是"释放"这个词变成了一句谎话 —— 而只要有一个借用方忘了加引用，同一个约定就反转成悬垂指针。现在改成：
+
+- 引擎发**租约**（`RenderEngine::lease()` → `Lease<RenderEngine>`）：借用方（`SceneView`、`RenderPipeline`）存的
+  是租约，**不加引用**；
+- 引擎析构时先清空自己的租约单元（在它拥有的任何东西拆掉之前），于是还在的借用**回答 nullptr**，而不是悬垂；
+- 谁创建引擎谁决定它活多久，**父持有子**是唯一的方向（与 Filament 的 `Engine`/`Renderer`、O3DE Atom 的
+  `RHI::Device` 同一口径；wgpu 走的是"资源持 `Arc<Device>` + 设备侧注册表"，Vine 没有那张注册表，所以不取那条）。
 
 | 边 | 强度 | 依据 |
 | --- | --- | --- |
-| `SceneView` → `RenderEngine`（直接） | **借用** `raw_ptr` | `SceneView.hpp:229` 注释"The bound engine is borrowed (the host owns it and keeps it alive)" |
-| `SceneView` → `RenderEngine`（经默认管线） | **强引用** | `RenderPipeline::engine_`（`intrusive_ptr`，私有）；`RenderPipeline.hpp` 类注释"It also keeps the engine ALIVE (a strong reference, not a borrow)" |
-| `RenderEngine` → `SceneView` | **没有这条边** | 引擎"camera- and content-agnostic"，类注释；不认识视图，也不认识管线（`Pipeline` 注释："There is no cycle — the engine does not know its pipelines"） |
+| `SceneView` → `RenderEngine` | **借用的租约**（`Lease<RenderEngine>`，不碰引用计数） | `SceneView::setEngine()` 存 `engine->lease()`；`engine()` 返回 `engine_.get()`，引擎没了就是 nullptr |
+| `SceneView` → `RenderPipeline`（采纳的那条链） | **强引用** | `SceneView::pipeline_`（`intrusive_ptr`）：视图持有它画的链 |
+| `RenderPipeline` → `RenderEngine` | **借用的租约**（同上） | `RenderPipeline::engine_`（`Lease<RenderEngine>`）；析构时 `engine_.get()` 为空就什么都不做 —— pass 跟着引擎一起没了 |
+| `RenderEngine` → `SceneView` / `RenderPipeline` | **没有这条边** | 引擎不认识视图，也不认识管线；它只认识 pass（`slots_`） |
 | `RenderEngine` → 相机 / 内容场景（经 pass） | **强引用，但那是 pass 的属性** | `slots_` 强引用 pass 与其内容场景；`RenderPass::setCamera(intrusive_ptr<Camera>)` "The pass KEEPS the camera alive" |
-| `RenderEngine` → `SceneView::Camera`（经窗口 pass） | 同上 | 视图的默认窗 pass 携带该相机 ⇒ 引擎间接让"这个相机对象"活着 |
 
-**为什么是"借用 + 一条强引用兜底"而不是单纯借用**：使用权与寿命要分开 —— 视图**不该**替宿主决定引擎活多久
-（引擎是服务：可以没有视图、可以被多个视图共享、`test_graphics` 里满地都是无窗口的引擎），但视图**析构时要去引擎上
-注销自己的 pass**，这个动作要求引擎此刻还活着。于是用一条不变量把两者焊在一起：**"我的默认管线活着 ⇒ 引擎活着"**。
-[`SceneView::~SceneView()`](/i:/projs/Vine/src/viz/graphics/src/SceneView.cpp) 的注释把这条讲透了：
-"it holds the engine strongly, so the engine is still there to be unregistered from **even if the host released it first**"。
-而一旦视图是被控件持有的，成员声明序（`engine` 在前、`view` 在后）又额外保证了析构时 **view 先走、engine 后走** ——
-两层保险，方向一致。
+**为什么不再"临时加引用"**：那个做法回答的是"操作期间能不能保证它活着"，代价是**把寿命的决定权交给了借用方**
+（借用方为了让自己的析构安全，反过来延长了所有者的寿命）。租约把两个问题分开：**"它还在吗"**（`Lease`，借用方随时
+可问、答案随时准）与**"它活多久"**（所有者一人决定）。
 
-**三个可观察的后果**（这才是"谁持有谁"的实用价值）：
+**四个可观察的后果**：
 
-1. **没建默认管线时，视图对引擎一点强引用都没有**（只 `new SceneView()` 还没 `setEngine()`+`ensureWindowPass()`）
-   ⇒ 那段时间引擎的寿命**完全**由宿主负责。
-2. **默认管线一建起来，视图就能让引擎活到视图死**：宿主提前 `reset()` 引擎不会把它拆掉（既是保护，也意味着
-   "释放被推迟到视图/管线消失"）。
-3. **顺序自由（本轮升级成 R2）**：凡是"会去引擎上注销 / 重建"的操作（`ensureWindowPass` / `removeWindowPass` /
-   `setOptions`）入口先做一次**临时加引用**：`intrusive_ptr<RenderEngine> keep(engine_, /*add_ref*/ true);`
-   —— 这才是"借用"这个接口意图的标准用法：**借用不等于不管寿命，而是"我只在操作期间需要它活着"**。
-   于是之前那条"必须先建新、再丢旧"的顺序陷阱**消失**：两个顺序都安全，宿主提前 `reset()` 引擎也安全。
-   （`SceneView::setEngine()` 仍是"先注销、再换指针" —— 它换的是**借用目标**，那条语义不变。）
+1. **操作顺序自由**：凡是会去引擎上注销 / 重建的操作，入口问一次租约即可 —— 引擎没了就什么都不做，不需要"先建新
+   再丢旧"的次序纪律。
+2. **宿主释放引擎 = 引擎没了**：此后视图与管线回答"没有引擎"（`view->engine()` / `pipeline->engine()` 为 nullptr），
+   不再替宿主续命。用例 `SceneViewViewportTest.AViewWhoseEngineWasReleasedReportsIt` 钉住这一对事实。
+3. **视图自己的东西不受影响**：尺寸、比例、相机形状、layout 步都是视图的（不变量 14），引擎没了照样能 resize。
+4. **控件内的析构顺序不再是正确性的前提**：`SurfaceWindow::Impl` 仍让 `view` 先于 `engine` 走，那只是"更早把 pass
+   交回去"的优化；反过来的顺序同样安全。
 
 ## 14. 框架级自评（流程 / 范式 / 协调性 / 可拓展性）
 
@@ -883,7 +892,7 @@ RenderEngine
 | 布局落地 → resize → 视图 resize 默认管线 | ✅ | 尺寸/比例一起推（不变量 4）；**几何只有一个输入**（不变量 14，本轮修） |
 | 交互 → 命中 → 捕获 → release | ✅（缝） | 契约三条本轮补齐（§5）：`nullptr` 回退自己的视图 / 必须本引擎的视图 / 捕获期持强引用 |
 | 换屏（句柄重建）→ 再 attach | ✅ | `ensureWindowPass()` 幂等 ⇒ 管线沿用、后端移动会话；`init()` 之后补一次尺寸 |
-| 销毁 | ✅ | 控件 `Impl` 反序（view → engine）；视图 dtor 注销自己的 pass；R2 保"注销那一刻引擎活着" |
+| 销毁 | ✅ | 控件 `Impl` 反序（view → engine）；视图 dtor 先把链交回；租约保"引擎没了就不再注销"（§13） |
 | 多视图的 attach | ✅（M2a；S8 起有正道） | 宿主的额外视图没有 attach 事件 ⇒ 在表面上显式声明（`control->surface()->present(*view)`，不变量 16、§12.2）；**S8 之后**这条归 `Viewer`：`control->viewer()->addView(view, rect, options)` 一次做齐建链 + 采纳 + 声明，控件自己那一格由 `Viewer::takeArea()` 在 attach 时落 |
 | 多视图的清屏 | ✅（M2b，2026-10-11） | 以前是"后端逼出来的约定：loadOp 整张清 ⇒ 恰好一个清 + 它排最前"；现在由**表面**保证：呈现表第一条保留自己的清屏，其余条被关掉，第一条走掉时下一条的 ask 恢复（§12.2 第 3 条） |
 

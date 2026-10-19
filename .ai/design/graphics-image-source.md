@@ -1,11 +1,12 @@
 # 图源统一：`ImageRef` / `Texture` 与 pass 输入（2026-10-19）
 
-> **状态：切片 1–3 的内容路径已落地（2026-10-19）；全屏 ABI 的 imported 绑定仍登记。** 公开头已改：
-> `ImageInput` / `ImageSource`、`RenderPass::addInput(Texture)`、`PassDesc::inputs`、
-> `FrameDescription::Pass::inputs`。Content（Scene）pass 按声明序绑定 imported 图；full-screen ABI 目前只绑
-> produced source + shadow map，引擎会报告声明 imported 图的 ScreenPass 并跳过它（见 §5 末尾）。
-> 触发条件：出现“把一张静态/导入贴图当某条 pass 的输入”的真实需求（离线烘焙的输入图、预览磁盘图、
-> 编辑器把选中纹理喂进屏幕 pass）。今天的两套图源模型见 `graphics-object-model-vs-3d-frameworks.md` §3 第 7 条。
+> **状态：切片 1–5 已落地（2026-10-19），全屏 ABI 也绑定 imported 输入。** 公开头：`ImageInput` /
+> `ImageSource`、`RenderPass::addInput(Texture[, Sampler])`、`PassDesc::inputs`、
+> `FrameDescription::Pass::inputs`。Content（Scene）pass 按声明序绑定 imported 图；full-screen 路径把
+> source 的颜色附件占 `0..C-1`、depth 跟随，imported 图按声明序填程序已声明的其余 sampler binding
+> （数量对不上由后端拒绝，不静默绑错图）。**仍未做**：`Texture::Kind::Cube` 作输入（第一切片只 D2）、
+> 硬件 compare sampler；见 `graphics-followups-2026-10-19.md` §2 与本文 §6。
+> 逐条收尾记录（全屏绑定 / 按 attachment 绑定 / revision 失效 / sampler state）见 `.ai/memory/graphics.md`。
 
 ## 0. 结论
 
@@ -111,8 +112,13 @@ struct ImageSource
   输入继续用 `ContentPipeline::inputSampler()`，行为不变。
 - **全屏 ABI 的 imported 绑定（2026-10-19 落地）**：source 的颜色附件占 0..C-1，depth 跟随（跳过文本自己
   声明的 binding）；imported 图按输入声明序填程序**已经声明的其余 sampler binding**（升序）。数量对不上由
-  backend 报 refusal，不静默绑错图。第一切片只支持 `Texture::Kind::D2`；Cube 作为输入需要程序声明 cube
-  sampler，等真实需求再加。
+  backend 报 refusal，不静默绑错图。**材质贴图与 pass 输入两条路径都支持 cube**（2026-10-19）：
+  `MaterialImages::acquire` 按 kind 建 `VK_IMAGE_VIEW_TYPE_CUBE`，输入 set 的 layout 来自程序声明
+  （`sampledSetLayout`），`VkSampler` 本身不带维度 —— 程序只要在该 binding 声明 `samplerCube`。
+  判据：`VsgBackendTest.ACubeMapInputReachesAContentProgramAsACubeSampler`（+X 面绿、其余面异色，
+  固定方向采样读回 `(0,1,0)`）与 `AnIncompleteCubeInputBindsTheWhiteCubeAndSaysWhy`（不完整 cube ⇒
+  白 cube + 一条 Warning）。**仍未做**：硬件 compare sampler；**array 类型不存在**（`Texture::Kind` 只有
+  D2 / Cube，分层目标是 `graphics-layers.md` L2）。
 - **produced 输入按 attachment 绑定（2026-10-19 落地）**：`CompiledInput` 携带 `attachment` / `depth`；
   内容路径的 `ProducedImage` 只绑定声明的那一张图（彩色 1、depth 0，`ProducedTarget` 仍为整 target）。
   全屏 ABI 保持 "binding N = attachment N"：`InputImages::screen_colors` 为 source 提供整 target，
@@ -146,8 +152,8 @@ struct ImageSource
   content pass 采样到目标上）+ revision 缓存键（`(Texture*, revision)` 已进 `CompiledInput`，下一帧重上传由
   缓存负责）+ sampler 状态（同一纹理两个状态在同一 pass 读到不同像素，上传只一份）。
 - **风险**：`FrameDescription::Pass::inputs` 是公开 ABI；这次改动会动 vsg 后端与 `test_vsg` 的测试替身。
-- **不做**：Cube/array 输入、compare sampler（硬件深度比较）、把 `Texture` 纳入 producer 规则、把
-  `RenderTarget` 改名。
+- **不做**：array 纹理类型（`Texture::Kind` 只有 D2 / Cube，分层渲染是 `graphics-layers.md` L2，登记不做）、
+  compare sampler（硬件深度比较）、把 `Texture` 纳入 producer 规则、把 `RenderTarget` 改名。
 
 ## 7. 落地记录（2026-10-19）
 

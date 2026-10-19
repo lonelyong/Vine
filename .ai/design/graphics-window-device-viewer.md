@@ -182,7 +182,7 @@
 | `executeFrame(frame)`（隐含"画到那一个窗口"） | `executeFrame(frame, WindowPresentTarget* present_to)` | **S10a 已落**（默认 nullptr＝这一帧不指名宿主的目标）：帧里"默认帧缓冲"那一行解析为它，引擎交的是**区**那把目标；`nullptr` ⇒ 不解析、不取像、不 present（离屏是一等形态）。present 仍由帧的驱动者在帧尾经目标调用（`WindowPresentTarget::present`），**2026-10-19 收口：帧尾 present 由执行器调**（驱动者不再调，见 §5 规则 8 / §9 待决 5） |
 | `Capabilities`（今天只有 `render_targets`） | 加 `presentation` | **S9 落了字段，S10a 换了答题人**：由**设备**自己答（`capabilities()` 直通），不再是引擎替它算"后端有没有窗口那一半" |
 | `RenderSurface`（表）+ `RenderSurfaceBinding`（后端半片） | `RenderSurface`（区）+ `WindowPresentTarget`（可呈现的半片，**由设备创建**；2026-10-12 起帧那半收在基类 `PresentTarget` 上） | **S10a 已落**：改名 `WindowPresentTarget`，`surface()` 退场，改 `RenderDevice::createSurfaceTarget(handle, why)`（设备工厂，§9 待决 1 的裁决）；区持有的是**目标对象**（`RenderSurface::bindTarget`/`target`），句柄只是造它时的输入；三因拒绝 `SurfaceTargetResult`（无呈现 / 这设备服务不了这块 surface / 窗口已被占用），"无呈现"静默答，"占用"报一次 |
-| 每控件一个后端实例（= 一个设备） | 每控件一个引擎；**设备可由多个区共享** | **S10a 落了契约面**（Device : Target = 1 : N、Device : Engine = 1 : N 上无第二份副本；无头结构判据已测）；插件把会话提升成设备（缓存上移、窗口 1:N）是 **S10b**（**已推迟**：当前只有一块窗口，见 §7） |
+| 每控件一个后端实例（= 一个设备） | 每控件一个引擎；**设备可由多个区共享** | **S10a 落了契约面**（Device : Target = 1 : N、Device : Engine = 1 : N 上无第二份副本；无头结构判据已测）；插件把会话提升成设备（缓存上移、窗口 1:N）是 **S10b，已落地（2026-10-18/19，见 §7）** |
 | 预设挂在控件 | 预设挂在 `Viewer` 的每一格 | §7 的 S8（已落地） |
 
 ---

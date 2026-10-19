@@ -22,8 +22,236 @@
 | **对象模型与行业口径** | `.ai/design/graphics-object-model-vs-3d-frameworks.md`（2026-10-12）：逐个对象对到 VTK / OSG / three.js / Filament / Qt3D；**刻意偏离**（一区一幅画、相机带 aspect，含代价；**拾取是机制、选择不在框架（§2.5，2026-10-13）**）与**能力缺口**（同 pass 内优先级 / 实例化 / LOD·空间划分 / `Pipeline` ≠ PSO 的命名风险 / 内容掩码 / 目标层），各带触发条件；后两条的定形见 `graphics-layers.md`（L1 内容掩码 `Node::setLayers` + `PassDesc::layer_mask` / L2 目标层 `layerCount` + 层区间，L2 分两步、读侧先行；**§9（2026-10-13：拾取 / 包围盒掩码参数已落地；"子树层并集"整段跳过仍登记）**） |
 | **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
 | **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**2026-10-11 晚裁决推翻 S8 一半：多格下线，一块区只画一幅画**（见顶条与 Q5 的后续裁决）；**2026-10-12 又两条**：呈递端拆成 `PresentTarget`（帧的契约）+ `WindowPresentTarget`（窗口那一面，见顶条），命名仍否掉 `RenderTargetWindow` / `RenderTargetOffscreen` 一对（`RenderTarget` 是描述、不是同族，理由在 §8）、云渲染的落点是"**第二个呈递端**"而不是把区通用化（§8 末条 + §9 第 6 条，带触发条件）；**§9.7（共享设备的 initialize/shutdown 归谁）已于 2026-10-18 裁定并落地：形状②——会话归创建者、引擎只借用设备（见顶条）**；**S10b 的 1:N、离屏会话、执行器自持帧尾与 `DeviceDesc{presentation}` 创建输入均已落地（2026-10-18/19/20）**，S10b 的登记项已清空；S11（登记不做）未落地 |
-| **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
+| **待办与口径** | **唯一清单：`.ai/design/graphics-followups-2026-10-19.md`**（2026-10-19 盘点：§2 现在可做 / §3 触发条件型 / §4 明确不做 / §5 不再是待办）。底层两个来源：**2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已由 S10b 覆盖并关闭，2026-10-19**：一设备 N 窗口、每窗口一个目标，见 `graphics-window-device-viewer.md` §7）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
+
+## 2026-10-20 骨架复核：先画图再动手（区对引擎的借用改 Lease）
+
+- 全文与四张 mermaid 图：`.ai/design/graphics-skeleton-review-2026-10-20.md`。判据：全量构建 0 error；
+  `test_graphics` **393**（+1 新用例）、`test_vsg` **478**；8 条门禁 0 finding。
+- **本轮唯一落地的结构改动（SK0）**：`RenderSurface::engine_` 从 `raw_ptr<RenderEngine>` 改成
+  `Lease<RenderEngine>`。原来 `引擎→区` 与 `区→引擎` 都是裸借用、一对一并由宿主当第三方保证顺序，
+  而 `~RenderSurface()` **会调用** `engine_->releaseArea(this)` —— 宿主先销毁引擎就是 UAF。
+  视图与管线 2026-10-19 已经换成 Lease（F5），**唯独区漏了**；现在三条向上边一套说法。
+  每个用点改成 `engine_.get()` + 显式处理"引擎已消失"（不展示、不报诊断——诊断路线随引擎走了）。
+  判据：`RenderSurfaceTest.AnAreaOutlivingItsEngineAnswersNothingInsteadOfCallingIntoIt`。
+- **登记的三条切片（按收益÷风险）**：
+  - **SK1 区归引擎所有**（建议下一个）：`RenderEngine::createSurface()` 返回 `intrusive_ptr`，引擎持
+    `intrusive_ptr<RenderSurface> area_`，区构造转私有。收益：1:1 由类型保证、"第二个区"从运行期诊断
+    变构造失败、消灭"区必须先于引擎销毁"的隐式前提；与 Filament/O3DE 同形。成本 ~30 处构造点（多为测试）
+    + `~RenderEngine` 显式排序。**不要与 SK2 同批**。
+  - **SK2 `RenderPass` 只存一份 `PassDesc`**（= followups §3.9 的 S1，最大的一处，单独一轮）：节点持 `desc_`
+    + 编译期事实，公开面 = `desc()`/`setDesc()`；可分三步（加 desc() → 迁读者 → 删镜像访问器）。
+  - **SK3**：`SceneView::setPipeline` 时若管线任何 pass 都不画视图的场景，报一次诊断（只诊断不改结构，
+    因为"一个管线画多个场景"合法）。
+- **核过但不算缺陷的三条**（别下次再"发现"）：`LightRig::addTo` 是配方（调 `Scene::addLight`），
+  不是第二个门；"尺寸三个入口"里 `RenderPipeline::resize` 是管线自己的重排，语义不同；
+  `RenderPass` 的 `shouldClearDepth` 属"规矩 vs 可读性"，留给人裁决。
+- **未跑**：SK0 的变异证据要 ASan 树（`scripts/asan_check.sh`）；本轮只给出结构论证 + 契约用例。
+
+## 2026-10-20 公开面瘦身：删旋钮、收拼法、改命名（零行为变化）
+
+- 设计与逐条依据：`.ai/design/graphics-api-simplification-2026-10-20.md`。判据：全量构建 0 error；
+  `test_graphics` **392**、`test_vsg` **478**；`vsg_rewrite_gate.sh --no-build --quick` 阶段 2–6 全 ok
+  （`failed=0 vuid=0 hazard=0 skipped=0`），阶段 7（deferred demo 启动占用 658–942 ms > 150 ms）在本容器
+  是环境问题，未碰启动路径，脚本注释记录参考环境 74–92 ms。
+- **删掉的两种"谎话 API"**：`ShadowFilter` / `ShadowSettings::filter` / `Light::setShadowFilter`（头文件自己
+  写着 RESERVED，`src/` 唯一读者就是写它自己，阴影只做一次深度比较）；`ImageRef::unbind()`（= `bind(nullptr)`）。
+  `ShadowSettings` 的注释改成"为什么故意没有 filter"，防下一个人以为是漏做。
+- **一个事实一种拼法**：`Group::children()` 只剩借用版（原来还有一个每次复制整个列表的，是纯陷阱，测试里那条
+  "复制版与借用版一致"的用例随之删除）；`Geometry` 五个 canonical setter 的**整段/段**两套 overload 各并成一个
+  （`first_vertex=0, vertex_count=0` 就是整段，调用点零改动）；`RenderPass::clearColor`/`setClearColor` 四合一为
+  **颜色在前、附件在后**；`RenderTarget::colorFormat(int=0)`；`RenderSurface`/`SceneView` 的 `resize` 两套并成
+  `resize(w,h,ratio=0.0)`（两边的实现本来就当 `<=0` 是"沿用当前"）；`ImageSource::imported` 三合为一
+  （`optional<Sampler> = {}`，`Sampler` 隐式转换，调用点零改动）；`SceneView::layoutParticipant()` 两个访问器
+  零调用，删。
+- **`LayoutParticipant` 顺带修掉一个怪行为**：原来两条 step 列表（无比例 / 带比例）分两遍跑，所以不管注册顺序
+  所有两步 step 都排在带比例 step 前面；现在一条列表、注册顺序即执行顺序（注释写的一直是 registration order）。
+- **命名对齐仓库规矩**：`Light::castShadow`→`isCastingShadow`、`RenderTarget::depthPromotion`→`isDepthPromoted`、
+  `DepthView::valid`→`isValid`、`Camera::aspectRatio`→`aspect`（setter 叫 `setAspect`）、
+  `RenderCommand::{modelMatrix,drawOrder,authoredState}`→snake_case（后端记录 `FrameRecorder` 的那一份 `authoredState` 一起改）；`RenderSurface::target()` 裸指针→`raw_ptr`。
+  用 LSP rename 时**测试目录不一定被索引**（`aspectRatio` 24 处里测试是手工补的），收尾要 grep 旧名。
+- `Capabilities::max_color_attachments` 的注释原来声称"MRT planning reads this"，全仓无读者；改成它真实的身份
+  （天花板，后端拒绝超出的声明并报诊断）。
+- 本轮明确不做、已进 `graphics-followups-2026-10-19.md` §3：`RenderPass`↔`PassDesc` 收敛（最大的结构性问题：
+  一个 pass 声明有值形式和节点形式，每个字段两边各一份）、`Texture` 的 `faceCount`/`layerCount` 与
+  `source`/`layer` 双拼法（60+ 处）、`Camera::setViewMatrixAsLookAt` → `lookAt`（74 处）；
+  `RenderPass::shouldClearDepth` 属于"规矩 vs 可读性"，留给人裁决。
+
+## 2026-10-19 后端 7 条重审：A4 落地（材质自带 revision），B6 的“修法”被驳回
+
+- **A4 落地**：`Material::revision()`（每个 shading setter **先比后 ++**，`setName` 不算）——材质是唯一“所有变更都走
+  setter”的内容类型，所以它能自己数；`ContentStore::updateMaterial` 从“逐命令建块 + 逐成员比”变成“比一个整数”，
+  `materialBlockAgreesWith` 删除。`LiveMaterial` 多一个 `seen_revision`（= 当前行是按哪个 revision 建的，在
+  `ensureMaterial` 里写），所以“刚描述完就 touch”不是一次多余重建。判据：
+  `MaterialTest.TheRevisionMovesWhenAShadingValueChanges`、`ContentStoreTest.ATouchWithNoEditChangesNothing`
+  （5 帧反复赋同值：0 build / 0 park）、`AMaterialEditReplacesItsEntryAndParksTheValue`。
+- **A4 落地时故意没采纳登记里的形状**：§11.16bw 写的是“加 revision 但**保留** compare-and-write 作为“没公告”的
+  兜底”。没保留——材质的每个变更都走 setter，它自己能报，不存在“宿主写了字段没人知道”的洞（那正是 `Geometry`
+  需要外部 `setRevision()` 的原因：它的字节在宿主能改的 buffer 里）。留着兜底只会把已经免费的信息再算一遍。
+- **B6 保持登记（重要判断）**：`StreamKey.revision` 取 `Geometry::revision()` 是真的，但改成逐 `Buffer::revision()`
+  会把“多传”换成“画错”：`Geometry::addBuffer/removeBuffer` 的契约就是“改动不公告，用 geometry 的 setRevision 报”，
+  按这个契约办事的宿主要么静默拿旧字节、要么被要求多报一次。**先定契约（谁公告），再省带宽**；触发不变。
+- **A6 的“改 LRU”也是错解**：已量化形状（200 张=0 缺失、300 张=每轮全重建）是**工作集 > 容量**；同序循环访问下
+  LRU 与 FIFO 表现相同（插入序 = 使用序）。真解法是容量可配 / 按字节上界 / 淘汰可见。
+- **A3/B7/B8/flake**：保持登记（A3 是 SDK 面决定、B7/B8 需复现、flake 等第三次）。
+- **A6 可观测面已落地（2026-10-20）**（不是“本来就有”，别把它当先例乱引用）：`DiagnosticCategory::ResourcePressure`
+  + `MaterialImages::evictions()`（与 `releaseAbandoned` 的“没人持有”严格分开）+ `VsgBackend::sweepAbandonedContent`
+  里的**水位 + `ReportOnce`** 一条句子。判据两条：`MaterialImagesTest.TheBoundDropsTheOldestEntryAndCountsOnlyThat`
+  （计数语义）与 `VsgBackendTest.AWorkingSetLargerThanTheTextureCacheIsReportedOncePerEpisode`（宿主真收到一条、且
+  持续超限时仍只一条；**变异“去掉 `shouldReport()` 守护” ⇒ 1/1 红**——只留水位不够，因为持续超限时计数器每帧都在动）。
+  A6 剩下的**只是淘汰键**（插入序 vs “最近 acquire 帧号”），而 LRU 不是已量化形状的解（工作集 > 容量时同序循环下
+  两者表现相同）。
+- **坑（浪费了一轮排查）**：给 `DiagnosticCategory` 加一个枚举值 → `Diagnostics` 里的
+  `std::array<uint64_t, Count>` 变了大小 → **`RenderDevice` 布局变** → 任何在测试二进制里定义 `MockBackend :
+  RenderDevice` 的用例 (`test_graphics`/`test_gui`) 如果没全量重编，就会在
+  `RenderDevice::setDiagnosticsRoute` 的 `push_back` 里 **SIGSEGV**（`construct_at(__location=0x0)`）。看到那个栈就
+  先全量构建，别去查代码逻辑。
+- **口径**：这是本轮唯一一次“未命中触发条件也动手”的项，理由是它同时是**一致性修复 + 删代码**（不是加机制），
+  且改完 A4 的前提（“唯一没有 revision 的内容类型”）就消失了。
+
+## 2026-10-19 F1–F7 重审：只有 F5 需要动手，落地 `vn::Lease<T>`
+
+- **结论**：`graphics-render-next.md` §1 的七条摩擦逐条对代码核过：**F1/F2/F3/F4/F7 已被后来的切片关闭**
+  （M3 的 `resolveRenderState`、M2a 的呈现声明、M1 的几何阶段覆盖、M7 的 `PassDesc`+`FramePlan`、`SurfaceState`
+  事件协议 + `Capabilities::supports`），**F6 留触发**（一个窗口第二个 3D 区 / 命令要指向非活动窗口），
+  **F5 是真缺陷并落地**：新增 `vn::Lease<T>`（`src/base/core/sdk/vine/Lease.hpp`）+ `RenderEngine::lease()`；
+  `SceneView::engine_` 与 `RenderPipeline::engine_` 从 `raw_ptr` / `intrusive_ptr` 改成 `Lease<RenderEngine>`；
+  `RenderPipelineBuilder` 里那句 `intrusive_ptr<RenderEngine>(engine_)`（临时加引用）删除。
+- **为什么这么选（对照其它引擎）**：租约 = Filament `Engine`/O3DE `RHI::Device` 那条"父持有子、子只借 + 借了要
+  能判活"的口径；wgpu 的"资源持 `Arc<Device>` + 设备侧注册表"是另一条成立的路，但 Vine 没有那张注册表，抄一半就是
+  现在的样子（子持有父、没有注册表、还要靠约定）。租约把"它还在吗"（借用方随时可问）与"它活多久"（所有者一人
+  决定）分开，不需要注册表。
+- **行为改变（有意）**：宿主释放引擎之后，`view->engine()` / `pipeline->engine()` 回答 **nullptr**，不再出现
+  "管线替宿主续命"。原用例 `SceneViewViewportTest.RebuildingAfterTheHostReleasedTheEngineIsSafe`（钉的是续命）
+  改写为 `AViewWhoseEngineWasReleasedReportsIt`（钉"释放即没了、视图自己的尺寸/相机照旧可用"）。
+- **判据**：`test_core` 的 `LeaseTest` 5 条（活着可读 / 空租约 / 死后回答 nullptr / 副本同一条有效性 / **不延长寿命**）；
+  `RenderPipelineBuilderTest.APipelineOutlivingItsEngineNeitherHoldsNorCallsIntoIt`（`engine->useCount()` 仍为 1，
+  之后 `pipeline->engine()==nullptr`、`setShadingMode` 仍改 pass 状态、`setGizmoVisible` 不再报给死者）；
+  `test_graphics` 391 全绿、`ctest` 23/24（唯一红是既存 async）。
+- **坑**：`vn::graphics::detail` 已存在（`FrameResources`），所以 `Lease` 的单元必须写 `vn::detail::LeaseCell<T>`；
+  `Lease` 没有 `operator->`（故意的：逼每处先判空），管线里 4 处 `engine_->` 全部改成先取 `engine_.get()` 再判。
+- **顺手清掉的两处过时注释**：`ScreenPass.cpp` 与 `backend/FrameGraph.hpp` 还在引用 `validateWiring`（该函数自 M7
+  起已不存在），改成"引擎每帧编译声明时报告 / `collectPlanProblems`"。
+
+## 2026-10-19 登记回写：四处"已落地但文档仍写未做"的漂移清零
+
+- **结论**：按现行实现回写四处登记，代码零语义改动（`ImageRef.hpp` 只改 `@note`）。
+  ① `graphics-object-model-vs-3d-frameworks.md` §3 缺口 4（`Pipeline` ≠ PSO 的命名风险）随 K1 改名关闭；
+  ② 缺口 5（内容掩码）改为 L1 已落地（2026-10-12，读侧拾取/包围盒 2026-10-13）；
+  ③ 缺口 7（外部图像没有接线身份）改为 E2 已落地（Cube 同日经验证，见下条），只剩 compare sampler 与 array；
+  ④ `graphics-render-next.md` §5.1 的 T2/M6 由 S10b 覆盖并关闭——形状不是 `setSurface(i)`，而是
+  "每窗口一个 `createSurfaceTarget`"，所以 SDK 侧不需要再加"一会话多交换链"入口。
+  顺带把 `graphics-image-source.md` 顶部状态与 `ImageRef::` 的 `@note` 里"两套模型未搭桥"去掉。
+- **为什么值得写回**：这四条都是"缺口清单"，不写回的话下一个 session 会照着它重做已完成的事；
+  S10b 的落地记录原本只在 `graphics-window-device-viewer.md` §7，T2 那一行读起来仍是"已推迟"。
+- **判据**：`scripts/check_ai_docs.py` / `scripts/check_doc_symbols.py` / `scripts/check_public_docs.py`
+  0 finding；无代码语义改动，不跑设备电池。
+
+## 2026-10-19 D1 / E1：present 计数与 appfw 布尔 getter 改名
+
+- **D1（画面已落地）**：`FrameProgress` 新增 `presented`，来自窗口会话的 `framesPresented()`（设备级汇总并取
+  历史最大值，窗口离开不回卷）。**精确含义**：帧被交到平台的 present 调用且成功——**不是**“已经上屏”
+  （后者需要 present-timing 扩展）。窗口读图应等这个数到目标帧再读。判据：
+  `VsgBackendTest.TheFrameReportSaysHowManyFramesWereHandedToPresent`（两帧空帧 ⇒ +2；再问不变）。
+- **E1（命名）**：`Control::enabled/visible`、`RibbonAction::enabled/checkable/checked`、`RibbonButton::checkable/checked`
+  → `isEnabled/isVisible/isCheckable/isChecked`；调用点与测试同步；`VN_APPFW_PLUGIN_ABI_VERSION` 7u→8u。
+- **坑**：改名会让 `check_public_docs.py` 把新名字当“新未文档化声明”（旧名字在基线里）——这些 getter 原本
+  只有 `///` 一行，现在补了 `@brief/@return`，`--update` 把基线从 1042→1028（真的降了欠账，不是加账）。
+- **判据**：全量构建 0 error；`test_gui` 259 + 1 skip、`test_appfw` 32、`test_vsg` 476、`test_graphics` 390；
+  `ctest` 23/24（既存 async 红）。
+
+## 2026-10-19 B1：MRT 每个附件自己的清屏色
+
+- **结论**：`ClearPolicy` 加 `extra_colors`（附件 1..N-1，缺省仍是透明黑）；`PassDesc::clear_extra_colors` /
+  `RenderPass::setClearColor(attachment, colour)` 是声明侧；后端 `core::ClearPolicy::extra_color_values` +
+  `planClearValues` 逐附件发值（bootstrap 也尊重已声明的颜色）。`clearColor(int)` 对未声明的附件回透明黑。
+- **判据**：`CoreClearPlanTest.AClearRequestPutsEachAttachmentItsOwnColour`、`…ABootstrapPassHonoursTheStated…`；
+  `RenderPassTest.EachAttachmentClearColourTravelsWithThePassPolicy`；
+  `VsgBackendTest.EachAttachmentClearsToItsOwnColour`（两附件红/绿分别读回）。`test_vsg` **475**、
+  `test_graphics` **390**。
+- **坑（重要）**：改了 `libvnGraphics` 的导出布局（这里是 `ClearPolicy` / `RenderPass`）后，**必须全量构建**
+  再跑 `test_vsg` —— 只建 `test_vsg` 不会重链 `gfx_backend_vsg` 插件，旧插件与新库布局不一致会在
+  `VsgBackendPluginTest.CreateBackendByName` 里段错误。
+
+## 2026-10-19 B2：`RenderPass::execute` 去虚，只剩 `describe()` 一个扩展点
+
+- **结论**：`execute()` 本来就是“`describe()` → `singlePassFrame()` → `executeFrame()`”的糖；只要可覆写，
+  子类就能画出编译期看不到的东西（一条 pass 两套真相）。现在它是普通成员函数，扩展点只剩 `describe()`
+  与声明侧 `PassDesc::before_draw`。
+- **连带**：旧用例 `TheEngineRunsTheFrameValueAndNeverCallsExecute` 的 `CountingPass::execute` 覆写不再能编译
+  （这正是想要的效果），改写成 `…AndDescribesEachPassOnce`：每帧 `describe` 一次 + `frames_executed` 每帧 +1。
+- **判据**：`RenderPassTest.ExecuteIsSugarOverDescribeAndTheOnlyExtensionPoint`；`test_graphics` **389**、
+  `test_vsg` **473**；6 条 hygiene 门禁 0 finding。
+
+## 2026-10-19 补登的 5 条：3 条落地，2 条按设计关闭
+
+- **结论**：盘点时新登记的 5 条缺口已全部处理，不留“登记了但没人做”的空条目。
+- **落地（代码 + 用例）**：
+  ① `Capabilities::max_anisotropy` / `max_color_attachments`（vsg 从 physical device 回答；anisotropy 走
+  `detail::anisotropyFor` 与 sampler 同一条夹紧；判据 `CapabilitiesTest.TheLimitsTravelBesideTheFeatureBits`
+  与设备用例里 `supports(AnisotropicFiltering) == max_anisotropy > 1`）；
+  ② `DepthView::layer()`：分层声明**报一次并拒绝**，不静默退回整张图（判据
+  `DepthViewTest.ALayeredDepthViewIsRefusedRatherThanPointingAtTheWholeImage`）；
+  ③ 同一 target 的冲突声明：首个立住，后续不同声明被拒，按 `(target, image)` 只报一次（判据
+  `DepthViewTest.TwoDifferentDepthViewsForOneTargetAreRefusedOnce`）。
+- **按设计关闭**：`OwnedFrame` 不加引擎入口/序列化（`OwnedFrame.hpp` 已写“为什么没有”）；`InputRouter` 不加
+  工具表（只有一个工具，表只有一行——正是本模块拒绝的空抽象）。
+- **坑**：`RenderPass::setRenderTarget` 不能因为“这个 pass 没声明”就去清 target 的借用——新 pass 挂到同一 target
+  会把别人设好的 depth 边清掉（被冲突用例抓到）。清空只属于**显式**的 `setDepthView(DepthView{})`。
+- **判据**：构建 0 error；`test_graphics` **388**、`test_vsg` **473**；`ctest` 23/24（既存 async 红）；6 条
+  hygiene 门禁 0 finding。
+
+## 2026-10-19 待办盘点：收敛成一份清单，移除 13 条过时项
+
+- **结论**：`graphics-followups-2026-10-19.md` 重写为**唯一待办入口**（§2 现在可做 / §3 触发条件型 /
+  §4 明确不做 / §5 不再是待办）。全部 graphics 登记点逐条对**现行代码**核实，移除/合并 **13 条**、
+  补登 **5 条**。
+- **移除（不要再捡）**：B9、A2 残留、首帧叠层、窗口随日志长大、B1/B2/B3、T2/M6、Cube 作输入、
+  >3 方向光、内容掩码 L1、`Pipeline` 命名风险、外部图像接线、MRT 文档“deferred 默认被 env 门控”、
+  perf-backlog 的 P1–P17/R1–R5/V1–V7（老渲染器时代）。理由逐条在 §5。
+- **补登（本轮新发现）**：`Capabilities` 没有数值上限；`DepthView` 没有“某一层”；同一 target 的两条
+  pass 声明不同 depth view 时 last-writer-wins 无诊断；`OwnedFrame` 缺引擎入口与序列化；
+  `InputRouter` 没有工具选择。
+- **仍成立且已核**：per-attachment clear 色（`ClearPlan` Rule 4；`graphics-mrt-gbuffer.md` 的 S4 剩余）；
+  appfw 布尔 getter 命名仍违约定（等下次公开面变更）。
+- **判据**：`check_ai_docs.py` / `check_doc_symbols.py` / `check_public_docs.py` 0 finding（纯文档轮）。
+- **顺带**：本机 `ctest` 是 **23/24**，唯一红为 `AsyncDefectRegressionTest.YieldLoopStackIsConstant`
+  （async 模块，单跑同样红；已记到 `.ai/memory/async.md`）。
+
+## 2026-10-19 H1 / L1 / I1 / J1 提前落地：先核前提，再收窄范围
+
+- **结论**：四条登记都挂着“触发条件”，本轮按用户要求提前做。**先核了前提是否过时**：H1 / L1 不过时；
+  I1 前提成立但**范围收窄**（资源图的边早就在 `backend/FrameCompiler.cpp` 里：`depth.borrowed` / `depth.source`
+  与“生产者先写”的顺序校验都在，缺的只是**声明点**在 target 字段上）；J1 **部分过时**（输入已经在
+  `CameraManipulator::onMouse*`，配方已归 `RenderPipelineBuilder`/`Viewer`，尺寸已归 `RenderSurface`），只拆剩下的两小块。
+- **落地**：① `Capabilities::Feature{GpuTimings, Wireframe, AnisotropicFiltering}` + `features` + `supports()`，
+  vsg 后端从 physical device 的 `timestampComputeAndGraphics` / `fillModeNonSolid` / `samplerAnisotropy` 回答
+  （与 `DeviceRequirements` 的地板分工：那里是“不做就不跑”）；② `DepthView` 值 + `PassDesc::depth_view` /
+  `RenderPass::setDepthView`（引擎在 `addPass` 应用到 target，`setRenderTarget` 携带边），builder 不再代写 target 字段；
+  ③ `OwnedFrame.hpp`（拥有式帧 + `borrowed()` 借用视图，命令集 `shared_ptr`、输入 `ImageInput`）；
+  ④ `InputRouter` / `LayoutParticipant` 成为 `SceneView` 的协作对象，`pushEvent` / `resize` / `addSurfaceLayout` 行为不变。
+- **判据**：`test_graphics` **385**、`test_vsg` **473**、`ctest` **23/24**（唯一红是既有
+  `AsyncDefectRegressionTest.YieldLoopStackIsConstant`，属 async 模块）；新用例 7 条；8 条 hygiene 门禁 0 finding。
+- **坑**：① `raw_ptr<T>` 是裸指针别名，写 `.get()` 编译不过；② 布局步骤必须按**有效尺寸**执行——呈现时尺寸归
+  `RenderSurface`，`LayoutParticipant` 记录的只是“不呈现时”那份，否则 `TheAreaSizeHasOneOwnerAndTheViewReadsIt`
+  与 `RenderSurfaceTest` 对应用例红；③ 新 `.cpp` 在 glob 里，要重新 `cmake -S . -B build` 才会进构建，否则链接报 undefined。
+
+## 2026-10-19 Cube 作 pass 输入：不需要改后端，补两条用例即关闭登记
+
+- **结论**：`addInput(cubeMap)` 今天就能用。后端不区分 kind——`MaterialImages::acquire` 对 cube 建
+  `VK_IMAGE_VIEW_TYPE_CUBE` 的六层视图、失败时 `whiteCube()`；输入 set 的 layout 来自**程序声明**
+  （`sampledSetLayout(颜色数, 深度数)`），而 `VkSampler` 本身不带维度。程序侧只要在该 binding 声明
+  `samplerCube`。此前文档写成“只支持 D2”，是把“没验证”误读成了“被拒绝”。
+- **判据**：`test_vsg` **472**（470 + 2）：`VsgBackendTest.ACubeMapInputReachesAContentProgramAsACubeSampler`
+  （六面异色、+X 绿，固定方向 `(1,0,0)` 采样读回 `(0,1,0)`，`diagnosticCount() == 0`）与
+  `VsgBackendTest.AnIncompleteCubeInputBindsTheWhiteCubeAndSaysWhy`（少面 ⇒ 白 cube 读回 `(1,1,1)` + 一条
+  Warning）；`test_graphics` 不回归。
+- **坑**：1×1 面在 LINEAR 过滤下会跨面渗色（`ContentPassTest` 已记录），用例用 4×4 并在面心方向采样。
+- **既存红（与本次无关）**：`ctest` 23/24，唯一红是 `AsyncDefectRegressionTest.YieldLoopStackIsConstant`
+  （`depth 319936` vs `< 65536`，单跑同样红，属 async 模块；本次只动 graphics 用例与文档）。
+- **登记**：`graphics-followups-2026-10-19.md` §2 #5 关闭；**array 仍不存在**（`Texture::Kind` 只有 D2 / Cube，
+  分层目标是 `graphics-layers.md` L2）。
 
 ## 2026-10-19 引擎 episode 收口：最后一个布尔 seen/reported 改用 `ReportOnce`
 
@@ -1008,7 +1236,7 @@
   第二格靠宿主手写 `right->onSurfaceResized(...)`，`RenderControlTest` 四行；**T1 已落地 2026-10-11，见上一条**），
   组合半边 = 布局树 / 比例 / join / 格子生死（T4，**归应用层**；`SplitLayout` 那份定稿作废 —— 原稿把它当 SDK 片是错的）。
   ② 的定案同源
-  （T5：多 transient 互借深度是应用组合）。其余：T2 M6（一设备 N 交换链，**已推迟**：当前只有一块窗口，登记为后期优化项、等触发）、T3 设备夹具可用性探测
+  （T5：多 transient 互借深度是应用组合）。其余：T2 M6（一设备 N 交换链，**已由 S10b 覆盖并关闭，2026-10-19**，见顶部索引）、T3 设备夹具可用性探测
   （删 `getenv("DISPLAY")` 假门禁，恢复 21 条被误跳的设备用例，其中 2 条本就红；**已落地 2026-10-11，见上一条**）、
   T6 便利边界（守）、
   T7 叠层对象跨重建存活（**2026-10-12 复核：不做** —— 重建罕见且本身已付新 pass/新目标；跨链继承读数与 `FpsOverlay`

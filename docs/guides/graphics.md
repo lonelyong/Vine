@@ -84,7 +84,8 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 ### 2.3 资源
 
 - `Material` —— Phong 参数（`ambient/diffuse/specular/shininess`）+ 可选 `Texture`。颜色改动是
-  **动态**的：后端逐帧就地刷新，所以改材质不需要任何重建。
+  **动态**的：材质自己数自己的改动（`revision()`，每个 setter 先比较再决定要不要 ++，所以反复赋同值是零成本），
+  后端每帧只比这一个数字，改了就在下一帧就地刷新 —— 改材质不需要任何重建，也不需要“通知后端”的调用。
 - `ShaderProgram` —— 一个或多个 stage，带 `revision()`，所以"同一个对象、改了源码"能被发现。
 - `Texture` —— 2D / Cube，按面填充（`setImage()` / `setFaceImage()` / `setSource()`）。每次填充都会
   `revision()++`，后端据此区分"同一张纹理、新像素"与"同一张纹理、同样像素"（只看指针做不到）。
@@ -100,11 +101,11 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   `shutdown()`。
 - `RenderPass` —— 相机 + 渲染目标 + 渲染状态 + 清屏/深度策略。**没有 renderTarget 的 pass 画进窗口**，
   order 决定先后。
-  - **扩展点有两个，`execute()` 不是其中之一**：这一条 pass 要"发什么"写在 `describe(scene, out)`（引擎编译这一帧时
-    调它一次，填 target / viewport / 清屏 / 状态 / 绘制调用）、要"先做什么"（写内容，比如 HUD 自更新）写在声明的
-    `before_draw` 钩子里。**引擎不调 `execute()`** —— 它是"宿主自己驱动一条 pass"（或测试）时才用的拼写：内部就是
-    "描述 → 把只含这一条 pass 的帧值交给后端"（`singlePassFrame`），与引擎整帧交出去的是**同一个形状**。覆写 `execute()` 想让引擎跑的
-    pass 必须把活搬到上面两处，否则它会**静默不跑**。
+  - **扩展点只有一个：`describe(scene, out)`**（另加声明侧的 `before_draw` 钩子）。这一条 pass 要"发什么"
+    写在 `describe`（引擎编译这一帧时调它一次，填 target / viewport / 清屏 / 状态 / 绘制调用）、要"先做什么"
+    （写内容，比如 HUD 自更新）写在 `before_draw` 里。**`execute()` 不是扩展点**（2026-10-19 起它不再是
+    `virtual`）：它是"宿主自己驱动一条 pass"（或测试）时的拼写，内部就是"描述 → 把只含这一条 pass 的帧值交给
+    后端"（`singlePassFrame`），与引擎整帧交出去的是**同一个形状**。子类想改变画什么，覆写 `describe()`。
 - `ScreenPass` —— `RenderPass` 子类，全屏 / 画中画。**必须命名 program**（没有隐式着色，也没有
   隐式拷贝）：
   - 把源的**每一张**彩色附件按 binding 0..N-1 绑成采样纹理，用它画一个全屏三角形；想读哪张附件，
@@ -119,7 +120,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   悄悄拉伸，而是被引擎在编译期**报出来**（`RenderEngine` 的 frame plan 诊断：pass 的矩形 vs 相机的画面形状）；
   想要同一机位两种形状，用两台相机（`SceneView` 按自己窗格的形状 push 给相机，HUD 子视口相机自己声明形状）。
 - `RenderTarget` —— 若干彩色附件 + 可选深度：`attachColor(fmt)` / `attachDepth(fmt)` / `setSize(w,h)`，
-  以及 `shareDepth(source)`（借用别人的深度）与 `setDepthPromotion(bool)`（深度是否变成可采样）。
+  以及 `shareDepth(DepthView)`（借别人的深度；`DepthView` 是个值，命名一张 target 的深度图并保活它）与
+  `setDepthPromotion(bool)`（深度是否变成可采样）。借来的深度也可以由**画它的那条 pass** 声明：
+  `RenderPass::setDepthView(depthViewOf(other))`（`depthViewOf()` 是由 raw pointer 构造 view 的简写）。
 - `RenderPipelineBuilder` —— 配方层：`build(const RenderPipelineOptions&)`（结构选择只有一个：
   `ShadingPath::Forward | Deferred`，其余是效果与选项，见 `.ai/design/graphics-pipeline.md`）、
   `addOffscreenToScreen(...)`（离屏 + PiP），并暴露延迟所需的公有件（`defaultGbufferTarget()`、
@@ -371,7 +374,7 @@ auto composite = make_intrusive<RenderTarget>();
 composite->setName(u8"composite");
 composite->setSize(width, height);
 composite->attachColor(RenderTarget::ColorFormat::RGBA8);
-composite->shareDepth(gbuffer);                  // 借深度
+composite->shareDepth(depthViewOf(gbuffer));     // 借深度（也可以由下面那条 pass 声明：setDepthView）
 
 // ④ 全屏延迟光照（带 program）：读 G-buffer 的全部彩色附件，写进 composite。
 auto light_program = RenderPipelineBuilder::defaultDeferredLightProgram();
@@ -422,7 +425,8 @@ engine.addPass(present, 2);
 - **MRT**：目标侧 `attachColor()` 调四次；程序侧输出按附件序号写；`ScreenPass` 的 program 会把源的每张
   彩色附件绑成纹理 0..N-1。
 - **借深度**：`shareDepth()` 之后**只有当两边尺寸一致**才是同一张图；源 target 重建（换尺寸）会让借用方
-  继续测旧深度 —— 引擎会检测并重建（见 §3.7）。
+  继续测旧深度 —— 引擎会检测并重建（见 §3.7）。边本身是个值（`DepthView`）：可以写在 target 上（机制），
+  也可以由那条画它的 pass 声明（`pass->setDepthView(q)`，边随 pass 走）。
 
 ### 3.5 例：同样的东西用 builder 写
 
@@ -502,6 +506,12 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 - **导入贴图**（`Texture`）：`addInput(texture)` / `addInput(texture, sampler)`。采样状态属于**这次声明**，
   所以同一张纹理在不同 pass（或同一 pass 的两次声明）可以用不同的 wrap/filter/mip 设置；不写 sampler
   时用后端的输入采样器，行为与之前一致。后端的上传仍按 `(texture, revision)` 共享，sampler 按状态值缓存。
+  - **全屏 pass 也能读它**：source 的彩色附件占 `binding 0..C-1`、depth 跟随（跳过文本自己声明的 binding），
+    导入图按**声明顺序**填程序里已经声明的其余 sampler binding（升序）；数量对不上由后端拒绝并报一次，
+    不会静默绑错图。
+  - **cube 也能作 pass 输入**：`addInput(cube)` + 程序在该 binding 声明 `samplerCube`（上传/绑定都按
+    kind 走，建六层 cube view）；不完整的 cube 会绑**白 cube**并报一次。材质贴图路径同样支持 cube
+    （`Material::setTexture(CubeMap)`，demo 天空盒即此路径）。
 
 `RenderEngine::validateWiring()` 每帧校验结构，并把每个问题**只报一次**（消失后重新武装）：
 
@@ -801,6 +811,10 @@ surface->dismiss(surface->presentedView());
   挂上之前视图用自己的公告，摘下来时区把尺寸**交还**给视图（`setSurface(nullptr)` 快照）。设备像素那一层仍是视图
   算的（按区的尺寸 × 比例），而**形状**是视图相机的（`SceneView::applySurfaceGeometry` 把区的形状 push 给相机）。
   宿主自建的 pass **没有**视图可喂：它自己给 `pass->setViewport()` 设备像素（它本来就知道尺寸）。
+- **两个协作对象，视图只当门面**：输入路由在 `SceneView::inputRouter()`（`InputRouter`：无按钮=移动、
+  有按钮=按下/松开、按键=down/up，直接交给操纵器）；布局参与在 `SceneView::layoutParticipant()`
+  （`LayoutParticipant`：记住“不呈现时”的尺寸/比例、保存宿主注册的步骤，并按“视图自己的步骤 → 两步步骤 →
+  带比例步骤”的固定顺序执行）。`pushEvent()` / `resize()` / `addSurfaceLayout()` 仍是门面入口，行为不变。
 - **输入只有一个去处**：这块区的那条呈现有视图时就是它（`SurfaceWindow::routedView()`）；没有视图（宿主自建 pass）
   时 input 什么也不做。按下**总是**捕获（拖出控件不断线），松手之前那次拖拽一直是同一个视图 —— 见
   `RenderControlTest.TheViewReceivesInputAndADragKeepsSteeringIt`。
@@ -808,6 +822,9 @@ surface->dismiss(surface->presentedView());
   说；换背景色改 `pass->setClearColor()` 就行。
 - **生命周期**：视图与区互相**借用**（都不是对方的所有者）—— 视图先死就自己从区上退出去（区回到"还没有呈现"），
   区先死就把视图那一侧指回清掉（并把尺寸交回视图）。所以扔掉视图 = 撤掉它的呈现，`dismiss()` 是显式写法。
+- **谁让引擎活着**：视图与管线**借**引擎（`Lease<RenderEngine>`，`RenderEngine::lease()`），都不持有它 —— 引擎活
+  多久由创建它的人决定。你放掉引擎之后 `view->engine()` / `pipeline->engine()` 回答 nullptr（而不是留一个悬垂
+  指针），此后视图与管线的操作不再碰引擎；视图自己的尺寸、相机形状、布局步照旧可用。
 - **被拒的声明**（记一条 `PassProtocolViolation`，不静默）：视图挂在**别的引擎**上（它的 pass 注册在另一帧上，
   永远画不到这块区）；区上**已经有**别的呈现（一块区只画一幅画）；视图已经服务着**另一块**区。
 
@@ -878,6 +895,9 @@ desc.writes_shape.depth  = RenderTarget::DepthFormat::D24;
   （在自己那口 `before_draw` 里把借用重述到当前实例，或干脆自己持有那些 target）。
 - **clear 三件套不写就跟随 kind**：`clear_enabled` / `clear_color` / `clear_depth` 都是 `optional` —— 不写时用那种 kind 自己的策略
   （`Screen` 是叠在已有内容上的全屏档，从不洗、也不洗深度；`Scene` 档洗，默认洗到 `51,51,51,255`）。要覆盖就在声明里写出来。
+- **MRT 每个附件自己的清屏色**：`clear_color` 只管 attachment 0；其余附件用 `clear_extra_colors`（按附件 1..N-1 的顺序），
+  pass 侧对应 `setClearColor(attachment, colour)`。没写的附件仍清成**透明黑**（那是“没画”的值），所以 G-buffer 想让
+  法线附件清成 `(0,0,1,0)` 就只写那一格，不必把所有附件涂成同一种颜色。
 - **返回的是结点**：`addPass` 的三个重载都交回**已注册的那个执行结点**（重复注册则返回 null），于是"我声明了什么"与
   "我接下来要调什么"是同一个对象：present 那一类配方把它记下来交给 `RenderPipeline::setWindowPass` 就行。builder 内部正是这样写的 ——
   它的普通 pass（shadow / gbuffer / lighting / transparent / present / preview）全是描述符，order 一律由 `stage` 决定。
