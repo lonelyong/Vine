@@ -5239,11 +5239,20 @@ TEST(RenderPipelineBuilderTest, AnImportedTextureIsAnInputInDeclarationOrder)
     producer.writes  = source;
     engine->addPass(producer);
 
+    // The state belongs to the INPUT: a content pass may read this texture with point/clamp while another
+    // declaration (or another pass) reads it with the backend default.
+    Sampler point_clamp;
+    point_clamp.min_filter  = Sampler::Filter::Nearest;
+    point_clamp.mag_filter  = Sampler::Filter::Nearest;
+    point_clamp.mipmap_mode = Sampler::MipmapMode::Nearest;
+    point_clamp.address_u   = Sampler::AddressMode::ClampToEdge;
+    point_clamp.address_v   = Sampler::AddressMode::ClampToEdge;
+
     PassDesc compose;
     compose.name          = u8"compose";
     compose.kind          = PassKind::Scene;
     compose.camera        = camera;
-    compose.inputs        = { ImageInput(texture) };
+    compose.inputs        = { ImageInput(texture, point_clamp) };
     compose.input_targets = { source };
     engine->addPass(compose);
 
@@ -5254,8 +5263,11 @@ TEST(RenderPipelineBuilderTest, AnImportedTextureIsAnInputInDeclarationOrder)
     EXPECT_EQ(inputs[0].kind, ImageSource::Kind::ImportedTexture);
     EXPECT_EQ(inputs[0].texture, texture.get());
     EXPECT_EQ(inputs[0].revision, texture->revision());
+    ASSERT_TRUE(inputs[0].sampler.has_value()) << "the declaration's state survives resolution";
+    EXPECT_EQ(*inputs[0].sampler, point_clamp);
     EXPECT_EQ(inputs[1].kind, ImageSource::Kind::ProducedTarget);
     EXPECT_EQ(inputs[1].target, source.get());
+    EXPECT_FALSE(inputs[1].sampler.has_value()) << "a produced input has no sampler declaration";
 }
 
 TEST(RenderPipelineBuilderTest, AScreenPassKeepsImportedTextureInputsForItsProgram)

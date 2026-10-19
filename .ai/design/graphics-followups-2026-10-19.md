@@ -73,10 +73,16 @@ B2 是“保持现状”的登记项。
    - 判据：`VsgBackendTest.ARefilledImportedTextureIsReuploadedForTheNextFrame`（第一帧品红、`setImage` 后
      第二帧黄色；`MaterialImages::count() == 1` 前后不变）；`test_vsg` 466；`ctest` 24/24；ASan 与 8 条门禁。
 
-4. **imported input 的 sampler state**
-   - 现状：用输入 set 的 `inputSampler()`；`Texture` 没有 wrap/filter/mip 描述。
-   - 动作：出现“同一贴图在不同 pass 要不同采样”的真实需求时，加 `Sampler` 值类型并进入输入声明。
-   - 判据：wrap/filter 的像素用例；不是现在做。
+4. **imported input 的 sampler state（已落地 2026-10-19）**
+   - 结论：新增 `Sampler` 值类型（filter / mip / wrap / anisotropy / LOD），随 `ImageInput(texture, sampler)` /
+     `RenderPass::addInput(texture, sampler)` 进入声明；`ImageSource` / `CompiledInput` 携带
+     `optional<Sampler>`。`MaterialImages` 的上传仍按 `(Texture*, revision)` 共享，显式状态按值缓存并在
+     旁边建 sampler；`InputImages::color_samplers` 与 `InputSetCache` 的 `(view, sampler)` 键把状态送到
+     content / full-screen 两条路径。不写状态时继续用后端输入采样器，现有行为不变。
+   - 判据：`VsgBackendTest.TwoInputStatesOverOneTextureSampleDifferently`（同一纹理同 pass clamp vs repeat，
+     像素不同；`MaterialImages::count() == 1`、`samplerCount() == 2`）；`MaterialImagesTest` 两条结构用例；
+     `FrameCompilerTest.AnImportedTextureInputCarriesItsDeclaredSampler`；
+     `RenderPipelineBuilderTest.AnImportedTextureIsAnInputInDeclarationOrder`（声明侧状态到达 backend）。
 
 5. **Cube / array 输入**
    - 现状：第一切片只支持 `Texture::Kind::D2`。
@@ -91,5 +97,4 @@ B2 是“保持现状”的登记项。
 
 ## 4. 下一 session 的第一条命令
 
-K1 与 E2 收尾 #1–#3 已完成；§2 的 #4（sampler state）与 #5（Cube/array）都是触发条件型，触发未命中
-时不做，§2 已清空。
+K1 与 E2 收尾 #1–#4 已完成；§2 的 #5（Cube/array 输入）是触发条件型，触发未命中时不做，§2 已清空。

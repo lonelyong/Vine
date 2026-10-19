@@ -6,6 +6,7 @@
 
 #include <vsg/core/ref_ptr.h>
 
+#include <vine/graphics/Sampler.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
@@ -52,12 +53,16 @@ silently). Each entry holds
 maining owner is the cache
  * itself.
  *
- * WHY THE REVISION IS PART OF THE KEY. `Texture::revision()` is bumped by every
- fill of a face, and a
- * texture that is re-filled keeps its address: without the revision the entry wo
-uld keep serving the image
- * built from the old pixels - the same failure `ShaderProgram::revision` exists
-to prevent.
+ * WHY THE REVISION IS PART OF THE KEY. `Texture::revision()` is bumped by every fill of a face, and a
+ * texture that is re-filled keeps its address: without the revision the entry would keep serving the image
+ * built from the old pixels - the same failure `ShaderProgram::revision` exists to prevent.
+ *
+ * WHAT IS NOT PART OF THE UPLOAD KEY: THE SAMPLER. Vulkan keeps the sampler out of the image, and so does
+ * this cache: an entry is keyed by `(texture, revision)` and holds the view every state samples, while
+ * explicit `Sampler` states are built and cached BY VALUE next to it. Two passes that read one texture with
+ * different filter/wrap settings therefore share one upload and bind two samplers -
+ * `acquire(texture, state, why)` is that path, and the state-less `acquire` returns the backend's own
+ * default.
  *
  * WHY IT DOES NOT REPORT. The cache answers "what can this texture be sampled th
 rough, and if nothing, why"
@@ -120,7 +125,25 @@ ct::Ok`.
      */
     [[nodiscard]] SamplerImage acquire(vn::raw_ptr<const vn::graphics::Texture> texture,
                                        detail::TextureReject& reason);
+    /**
+     * @brief Gets (or builds) the images @p texture is sampled through with an EXPLICIT state.
+     *
+     * @details
+     * - The uploaded image and its view are shared with every other state the texture is read with: only the
+     *   sampler object differs, which is exactly Vulkan's separation of `VkSampler` from `VkImage`.
+     * - The state is cached by value, so two passes that state the same fields share one sampler.
+     * - A texture that cannot be uploaded yields the white fallback as usual, read with @p sampler.
+     *
+     * @param texture Texture to sample (null yields the white fallback with `TextureReject::Absent`).
+     * @param sampler How the texture is read (see Sampler).
+     * @param reason  Receives why the texture was not uploaded, or `TextureReject::Ok`.
+     * @return The image and the sampler for @p sampler, never null.
+     */
+    [[nodiscard]] SamplerImage acquire(vn::raw_ptr<const vn::graphics::Texture> texture,
+                                       const vn::graphics::Sampler& sampler, detail::TextureReject& reason);
 
+    /** @brief Gets the number of EXPLICIT sampler states cached (the per-texture default samplers excluded). */
+    [[nodiscard]] std::size_t samplerCount() const noexcept;
     /** @brief Gets the 1x1 white image a 2D map falls back to (never null; see a
 pi/WhiteImage). */
     [[nodiscard]] SamplerImage white() const noexcept;
@@ -187,6 +210,10 @@ e default of 1 keeps a cache
     MaterialImages& operator=(const MaterialImages&) = delete;
 
   private:
+    /** @brief The shared body of the two acquires; @p state null means the backend's default sampler. */
+    [[nodiscard]] SamplerImage acquireImpl(vn::raw_ptr<const vn::graphics::Texture> texture,
+                                           const vn::graphics::Sampler* state, detail::TextureReject& reason);
+
     struct Data;
     // Lexically after Data so the out-of-line destructor is the only place that needs the complete
     // type.

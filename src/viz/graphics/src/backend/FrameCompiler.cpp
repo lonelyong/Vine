@@ -285,6 +285,7 @@ std::span<const CompiledInput> FrameCompiler::resolveInputs(const CollectedPass&
             // Its revision is the content revision the cache is keyed by, so a re-upload invalidates binds.
             out.texture           = source.texture;
             out.texture_revision  = source.revision;
+            out.sampler           = source.sampler;
             out.color_attachments = 1;
             continue;
         }

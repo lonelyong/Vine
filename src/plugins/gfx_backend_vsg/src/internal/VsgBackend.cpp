@@ -11,6 +11,7 @@
 
 #include <vsg/app/CommandGraph.h>
 #include <vsg/state/ImageView.h>
+#include <vsg/state/Sampler.h>
 #include <vsg/vk/Device.h>
 #include <vsg/vk/PhysicalDevice.h>
 
@@ -166,6 +167,8 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
                                            std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_views,
                                            std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>&
                                                input_screen_views,
+                                           std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>>&
+                                               input_color_samplers,
                                            std::vector<PassContent>& packets)
 {
     packets.clear();
@@ -211,6 +214,7 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
         input_scratch.assign(pass.inputs.size(), InputImages{});
         input_views.assign(pass.inputs.size(), {});
         input_screen_views.assign(pass.inputs.size(), {});
+        input_color_samplers.assign(pass.inputs.size(), {});
         for (std::size_t index = 0; index < pass.inputs.size(); ++index)
         {
             InputImages&                                      offer = input_scratch[index];
@@ -228,7 +232,13 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
                     continue;  // an empty declaration produces nothing to bind
                 }
                 vn::vsg::detail::TextureReject reject = vn::vsg::detail::TextureReject::Ok;
-                const SamplerImage sampled = images.acquire(texture, reject);
+                // The state belongs to the INPUT: the same texture declared with two states uploads once and
+                // yields two samplers (see MaterialImages). No state = the backend's input sampler, the
+                // behavior every imported input had before state existed.
+                const SamplerImage sampled =
+                    pass.inputs[index].sampler.has_value()
+                        ? images.acquire(texture, *pass.inputs[index].sampler, reject)
+                        : images.acquire(texture, reject);
                 if (reject != vn::vsg::detail::TextureReject::Ok || sampled.view == nullptr)
                 {
                     diagnostics.report(
@@ -242,6 +252,13 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
                     views.push_back(sampled.view);
                 }
                 offer.colors = views;
+                if (sampled.sampler != nullptr)
+                {
+                    std::vector<::vsg::ref_ptr<::vsg::Sampler>>& samplers = input_color_samplers[index];
+                    samplers.clear();
+                    samplers.push_back(sampled.sampler);
+                    offer.color_samplers = samplers;
+                }
                 continue;
             }
 
@@ -438,6 +455,8 @@ struct VsgBackend::Data
     std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>> input_views;
     /// The same, for the WHOLE source target of a full-screen call (see InputImages::screen_colors).
     std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>> input_screen_views;
+    /// One sampler list per declared input (see InputImages::color_samplers); imported inputs fill one entry.
+    std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>> input_color_samplers;
     std::vector<PassContent>                  packets;        ///< Reused per frame (see recordContent).
     const core::CompiledFrame*                frame{nullptr}; ///< This frame's plan, between end and swap.
 
@@ -1013,7 +1032,7 @@ void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession*
     {
         packets = recordContent(*d->assembly, window_target, d->targets, *d->images, d->diagnostics, timeline,
                                 retirement, frame_seconds, *d->frame, d->input_scratch, d->input_views,
-                                d->input_screen_views, d->packets);
+                                d->input_screen_views, d->input_color_samplers, d->packets);
     }
     (void)d->executor.record(*d->frame, graph, packets);
     // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is

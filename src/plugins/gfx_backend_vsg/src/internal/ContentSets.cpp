@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <utility>
 
+#include <vsg/state/Sampler.h>
+
 #include <vine/graphics/Texture.hpp>
 #include <vine/vsg/internal/ContentPipeline.hpp>
 #include <vine/vsg/internal/ProgramVariant.hpp>
@@ -32,25 +34,39 @@ struct InputWalk
     std::size_t                  color{0};  ///< The next colour attachment of it.
     bool                         depth{false};  ///< Whether that input's depth was already taken.
 
-    /** @brief Gets the next image the pass' input set would bind, or null when the inputs ran out. */
-    [[nodiscard]] SamplerImage next(const ::vsg::ref_ptr<::vsg::Sampler>& sampler) noexcept
+    /** @brief Gets the next image the pass' input set would bind, or null when the inputs ran out.
+     *
+     * Each input carries its own declared state when it has one (an imported input); an input that stated
+     * nothing uses @p default_sampler, and its depth uses @p default_depth_sampler. The walk is the same one
+     * the input set itself binds, so a by-name sampler and a declaration-order sampler see one texture.
+     *
+     * @param default_sampler       Sampler for a binding that declared none.
+     * @param default_depth_sampler Sampler for a depth binding that declared none.
+     * @return The next image and its sampler, or an empty value when the inputs ran out.
+     */
+    [[nodiscard]] SamplerImage next(const ::vsg::ref_ptr<::vsg::Sampler>& default_sampler,
+                                    const ::vsg::ref_ptr<::vsg::Sampler>& default_depth_sampler) noexcept
     {
         while (input < inputs.size())
         {
             const InputImages& entry = inputs[input];
             if (color < entry.colors.size())
             {
-                const ::vsg::ref_ptr<::vsg::ImageView>& view = entry.colors[color++];
+                const ::vsg::ref_ptr<::vsg::ImageView>& view = entry.colors[color];
+                const ::vsg::ref_ptr<::vsg::Sampler> chosen =
+                    color < entry.color_samplers.size() ? entry.color_samplers[color] : default_sampler;
+                ++color;
                 if (view != nullptr)
                 {
-                    return SamplerImage{ view, sampler };
+                    return SamplerImage{ view, chosen };
                 }
                 continue;
             }
             if (entry.depth != nullptr && !depth)
             {
                 depth = true;
-                return SamplerImage{ entry.depth, sampler };
+                return SamplerImage{ entry.depth, entry.depth_sampler != nullptr ? entry.depth_sampler
+                                                                                 : default_depth_sampler };
             }
             ++input;
             color = 0U;
@@ -192,8 +208,9 @@ struct ContentSets::Data
             case ImageOrigin::Input:
             {
                 // An Input-named sampler inside a DECLARED set is unusual but expressible - it takes the
-                // pass' images in the order the pass' own input set binds them.
-                map = walk.next(entry.pipelines->inputSampler());
+                // pass' images in the order the pass' own input set binds them, each with the state its
+                // declaration named (the layer's samplers when it named none).
+                map = walk.next(entry.pipelines->inputSampler(), entry.pipelines->depthSampler());
                 break;
             }
             }

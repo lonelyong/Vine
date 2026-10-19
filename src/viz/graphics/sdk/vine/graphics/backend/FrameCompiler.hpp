@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/Sampler.hpp>
 #include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/backend/FrameArena.hpp>
 #include <vine/graphics/backend/FrameGraph.hpp>
@@ -117,6 +118,8 @@ struct CompiledInput
     const void*   target{nullptr};        ///< The target this input reads; nullptr = nothing produced it.
     const void*   texture{nullptr};       ///< The imported texture this input reads; nullptr for produced inputs.
     std::uint64_t texture_revision{0};    ///< The texture content revision; 0 for produced inputs.
+    std::optional<vn::graphics::Sampler> sampler{};  ///< Imported texture's declared sampler state; absent = the
+                                                     ///< backend's input sampler. Always absent for produced inputs.
     int           attachment{-1};         ///< Colour attachment a ProducedImage names; -1 = whole target / imported.
     bool          depth{false};           ///< Whether a ProducedImage names the target's depth attachment.
     std::uint32_t color_attachments{0};   ///< Colour textures it offers (0 = nothing to bind for it).

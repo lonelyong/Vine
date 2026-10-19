@@ -202,6 +202,13 @@ void RenderPass::addInput(intrusive_ptr<Texture> texture)
     }
 }
 
+void RenderPass::addInput(intrusive_ptr<Texture> texture, const Sampler& sampler)
+{
+    if (texture != nullptr) {
+        input_images_.emplace_back(std::move(texture), sampler);
+    }
+}
+
 void RenderPass::addInput(ImageInput input)
 {
     if (input) {

@@ -222,13 +222,13 @@ using detail::vkFormatFor;
     return image;
 }
 
-/** @brief Builds the sampler a texture is read through.
+/** @brief Builds the sampler a texture is read through when no state was declared.
  *
  * @param mip_levels     How many levels the image has.
  * @param max_anisotropy Anisotropy to request, already clamped to what the device allows.
  * @return The sampler for it.
  */
-::vsg::ref_ptr<::vsg::Sampler> makeSampler(std::uint32_t mip_levels, float max_anisotropy)
+::vsg::ref_ptr<::vsg::Sampler> makeDefaultSampler(std::uint32_t mip_levels, float max_anisotropy)
 {
     auto sampler       = ::vsg::Sampler::create();
     sampler->maxLod    = static_cast<float>(mip_levels);
@@ -239,6 +239,91 @@ using detail::vkFormatFor;
     // the samplerAnisotropy feature - which is why the request comes from the device's own limit.
     sampler->anisotropyEnable = (mip_levels > 1U) ? VK_TRUE : VK_FALSE;
     sampler->maxAnisotropy    = (mip_levels > 1U) ? max_anisotropy : 1.0F;
+    return sampler;
+}
+
+/** @brief Maps the SDK's filter to Vulkan's. */
+VkFilter mapFilter(vn::graphics::Sampler::Filter filter) noexcept
+{
+    return filter == vn::graphics::Sampler::Filter::Nearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+}
+
+/** @brief Maps the SDK's mip mode to Vulkan's. */
+VkSamplerMipmapMode mapMipmapMode(vn::graphics::Sampler::MipmapMode mode) noexcept
+{
+    return mode == vn::graphics::Sampler::MipmapMode::Nearest ? VK_SAMPLER_MIPMAP_MODE_NEAREST
+                                                              : VK_SAMPLER_MIPMAP_MODE_LINEAR;
+}
+
+/** @brief Maps the SDK's address mode to Vulkan's. */
+VkSamplerAddressMode mapAddressMode(vn::graphics::Sampler::AddressMode mode) noexcept
+{
+    switch (mode)
+    {
+    case vn::graphics::Sampler::AddressMode::Repeat:
+        return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    case vn::graphics::Sampler::AddressMode::MirroredRepeat:
+        return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+    case vn::graphics::Sampler::AddressMode::ClampToEdge:
+        return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    case vn::graphics::Sampler::AddressMode::ClampToBorder:
+        return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    case vn::graphics::Sampler::AddressMode::MirrorClampToEdge:
+        return VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
+    }
+    return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+}
+
+/** @brief Maps the SDK's border colour to Vulkan's. */
+VkBorderColor mapBorderColor(vn::graphics::Sampler::BorderColor color) noexcept
+{
+    switch (color)
+    {
+    case vn::graphics::Sampler::BorderColor::TransparentBlack:
+        return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+    case vn::graphics::Sampler::BorderColor::OpaqueBlack:
+        return VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    case vn::graphics::Sampler::BorderColor::OpaqueWhite:
+        return VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    }
+    return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+}
+
+/** @brief Builds the sampler an EXPLICIT state declares.
+ *
+ * @details
+ * - Every field is the declaration's; the one device fact that overrides it is anisotropy, which is clamped to
+ *   what the device reported and disabled when the limit is 1 (Vulkan requires `maxAnisotropy > 1` whenever the
+ *   feature is enabled). Like every other value the cache builds, this is a create-info until a context
+ *   compiles it.
+ *
+ * @param state          The declared state.
+ * @param max_anisotropy The device's limit, as announced by setMaxAnisotropy.
+ * @return The sampler, or null when it could not be created.
+ */
+::vsg::ref_ptr<::vsg::Sampler> makeDeclaredSampler(const vn::graphics::Sampler& state, float max_anisotropy)
+{
+    auto sampler = ::vsg::Sampler::create();
+    if (sampler == nullptr)
+    {
+        return {};
+    }
+    sampler->magFilter       = mapFilter(state.mag_filter);
+    sampler->minFilter       = mapFilter(state.min_filter);
+    sampler->mipmapMode      = mapMipmapMode(state.mipmap_mode);
+    sampler->addressModeU    = mapAddressMode(state.address_u);
+    sampler->addressModeV    = mapAddressMode(state.address_v);
+    sampler->addressModeW    = mapAddressMode(state.address_w);
+    sampler->borderColor     = mapBorderColor(state.border_color);
+    sampler->mipLodBias      = state.lod_bias;
+    // The LOD range is sanitised rather than rejected: a max below the min is a clamp, not a different state,
+    // and Vulkan requires maxLod >= minLod.
+    const float min_lod      = std::max(0.0F, state.min_lod);
+    sampler->minLod          = min_lod;
+    sampler->maxLod          = std::max(min_lod, state.max_lod);
+    const bool anisotropic   = state.anisotropy > 1.0F && max_anisotropy > 1.0F;
+    sampler->anisotropyEnable = anisotropic ? VK_TRUE : VK_FALSE;
+    sampler->maxAnisotropy    = anisotropic ? std::min(state.anisotropy, max_anisotropy) : 1.0F;
     return sampler;
 }
 
@@ -292,7 +377,7 @@ SamplerImage makeWhiteCube(float max_anisotropy)
 
     SamplerImage white_cube;
     white_cube.view    = ::vsg::ImageView::create(image);
-    white_cube.sampler = makeSampler(1U, max_anisotropy);
+    white_cube.sampler = makeDefaultSampler(1U, max_anisotropy);
     return white_cube;
 }
 
@@ -306,18 +391,48 @@ SamplerImage makeWhiteCube(float max_anisotropy)
  */
 struct MaterialImages::Data
 {
-    /** @brief One texture's retained images, plus the content revision they were built from. */
+    /** @brief One texture's uploaded view, plus the content revision it was built from. */
     struct Entry
     {
-        vn::intrusive_ptr<const vn::graphics::Texture> owner;     ///< The key object, held (see the note).
-        SamplerImage                                       images;    ///< What a declared set binds.
-        std::uint64_t                                      revision{0};
-        std::uint64_t                                      stamp{0};  ///< Insertion order (see the trim).
+        vn::intrusive_ptr<const vn::graphics::Texture> owner;      ///< The key object, held (see the note).
+        ::vsg::ref_ptr<::vsg::ImageView>               view;       ///< The view every state samples.
+        ::vsg::ref_ptr<::vsg::Sampler>                 default_sampler;  ///< The no-state sampler (see
+                                                                        ///< makeDefaultSampler).
+        std::uint64_t                                  revision{0};
+        std::uint64_t                                  stamp{0};  ///< Insertion order (see the trim).
+    };
+
+    /** @brief One explicitly declared state and the sampler built from it. */
+    struct SamplerEntry
+    {
+        vn::graphics::Sampler            state{};
+        ::vsg::ref_ptr<::vsg::Sampler>   sampler;
     };
 
     using Map = std::unordered_map<const vn::graphics::Texture*, Entry>;
 
+    /** @brief Gets the sampler for @p state, building and remembering it on first use. */
+    ::vsg::ref_ptr<::vsg::Sampler> samplerFor(const vn::graphics::Sampler& state)
+    {
+        for (const SamplerEntry& entry : samplers)
+        {
+            if (entry.state == state)
+            {
+                return entry.sampler;
+            }
+        }
+        auto sampler = makeDeclaredSampler(state, max_anisotropy);
+        if (sampler != nullptr)
+        {
+            samplers.push_back(SamplerEntry{ state, sampler });
+        }
+        return sampler;
+    }
+
     Map                            cache;
+    /// The declared states this cache has built samplers for: one per distinct state, so two passes that state
+    /// the same fields share one VkSampler and a texture is never re-uploaded for a sampling change.
+    std::vector<SamplerEntry>      samplers;
     std::uint64_t                  clock{0};
     std::shared_ptr<WhiteImage>    white;
     SamplerImage                   white_cube;
@@ -342,7 +457,15 @@ std::shared_ptr<MaterialImages> MaterialImages::create()
 
 void MaterialImages::setMaxAnisotropy(float device_limit) noexcept
 {
-    d->max_anisotropy = anisotropyFor(device_limit);
+    const float clamped = anisotropyFor(device_limit);
+    if (clamped != d->max_anisotropy)
+    {
+        // An explicit state's anisotropy is clamped with this limit, so a sampler built under the old one is
+        // not the state it now declares. Dropping the cache rebuilds them on next use; descriptor sets that
+        // already name them keep their own references.
+        d->samplers.clear();
+    }
+    d->max_anisotropy = clamped;
 }
 
 float MaterialImages::maxAnisotropy() const noexcept
@@ -375,15 +498,44 @@ SamplerImage MaterialImages::whiteCube() const noexcept
 SamplerImage MaterialImages::acquire(vn::raw_ptr<const vn::graphics::Texture> texture,
                                      detail::TextureReject& reason)
 {
+    return acquireImpl(texture, nullptr, reason);
+}
+
+SamplerImage MaterialImages::acquire(vn::raw_ptr<const vn::graphics::Texture> texture,
+                                     const vn::graphics::Sampler& sampler, detail::TextureReject& reason)
+{
+    return acquireImpl(texture, &sampler, reason);
+}
+
+std::size_t MaterialImages::samplerCount() const noexcept
+{
+    return d->samplers.size();
+}
+
+SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture> texture,
+                                         const vn::graphics::Sampler* state, detail::TextureReject& reason)
+{
+    // The fallback follows the texture's KIND when there is a texture to ask: a cube slot with an unusable
+    // cube would otherwise be bound a 2D view, which is an invalid descriptor rather than an untextured draw.
+    // With no texture at all the cache cannot know what the slot samples, so the 2D fallback is answered and
+    // a caller whose text declares `samplerCube` asks for whiteCube() - it is the caller that knows its
+    // program's declaration. An explicit state is still honoured on the fallback: the white texel reads the
+    // same either way, and the descriptor keeps the state the pass declared.
+    const auto fallback = [&](bool cube) -> SamplerImage {
+        SamplerImage answer = cube ? whiteCube() : white();
+        if (state != nullptr)
+        {
+            if (const auto sampler = d->samplerFor(*state); sampler != nullptr)
+            {
+                answer.sampler = sampler;
+            }
+        }
+        return answer;
+    };
+
     reason = detail::classifyTexture(texture);
     if (reason != TextureReject::Ok) {
-        // The fallback follows the texture's KIND when there is a texture to ask: a cube slot with an
-        // unusable cube would otherwise be bound a 2D view, which is an invalid descriptor rather than an
-        // untextured draw. With no texture at all the cache cannot know what the slot samples, so the 2D
-        // fallback is answered and a caller whose text declares `samplerCube` asks for whiteCube() - it is
-        // the caller that knows its program's declaration.
-        const bool cube = texture != nullptr && texture->kind() == vn::graphics::Texture::Kind::Cube;
-        return cube ? whiteCube() : white();
+        return fallback(texture != nullptr && texture->kind() == vn::graphics::Texture::Kind::Cube);
     }
 
     // Held before the map is touched: replacing an entry can drop the last other reference to the texture,
@@ -391,50 +543,59 @@ SamplerImage MaterialImages::acquire(vn::raw_ptr<const vn::graphics::Texture> te
     vn::intrusive_ptr<const vn::graphics::Texture> owner(texture);
     const std::uint64_t                               revision = texture->revision();
 
-    const auto found = d->cache.find(texture);
-    if (found != d->cache.end() && found->second.revision == revision) {
-        return found->second.images;
-    }
+    auto found = d->cache.find(texture);
+    if (found == d->cache.end() || found->second.revision != revision) {
+        const VkFormat format = vkFormatFor(texture->format());
+        if (format == VK_FORMAT_UNDEFINED) {
+            // classifyTexture() answers this already; checked rather than assumed, because the image below
+            // would otherwise declare a format nothing can sample.
+            reason = TextureReject::UnsupportedFormat;
+            return fallback(false);
+        }
 
-    const VkFormat format = vkFormatFor(texture->format());
-    if (format == VK_FORMAT_UNDEFINED) {
-        // classifyTexture() answers this already; checked rather than assumed, because the image below
-        // would otherwise declare a format nothing can sample.
-        reason = TextureReject::UnsupportedFormat;
-        return white();
-    }
+        TextureReject build_reason;  // left at Ok unless the build refuses
+        auto          image = makeImage(*texture, format, build_reason);
+        if (image == nullptr) {
+            reason = build_reason;
+            return fallback(false);
+        }
 
-    TextureReject build_reason;  // left at Ok unless the build refuses
-    auto          image = makeImage(*texture, format, build_reason);
-    if (image == nullptr) {
-        reason = build_reason;
-        return white();
+        // The VIEW is shared by every sampler state the texture is read with; only the sampler changes.
+        ::vsg::ref_ptr<::vsg::ImageView> view = ::vsg::ImageView::create(image);
+        ::vsg::ref_ptr<::vsg::Sampler>   default_sampler =
+            makeDefaultSampler(static_cast<std::uint32_t>(texture->mipCount()), d->max_anisotropy);
+        if (view == nullptr || default_sampler == nullptr) {
+            reason = TextureReject::Inconsistent;  // creation refused: the caller reports it, nothing is cached
+            return fallback(false);
+        }
+
+        const std::uint64_t stamp = ++d->clock;
+        found = d->cache
+                    .insert_or_assign(texture, Data::Entry{ std::move(owner), view, default_sampler, revision,
+                                                            stamp })
+                    .first;
+
+        // A trimmed entry may have been the last owner of its texture AND of the images it referenced; a
+        // texture the scene still uses simply rebuilds on its next acquire, which is what bounds the cache.
+        while (d->cache.size() > kMaxEntries) {
+            const auto oldest =
+                std::min_element(d->cache.begin(), d->cache.end(), [](const auto& left, const auto& right) {
+                    return left.second.stamp < right.second.stamp;
+                });
+            if (oldest == d->cache.end()) {
+                break;
+            }
+            d->cache.erase(oldest);
+        }
     }
 
     SamplerImage images;
-    images.view    = ::vsg::ImageView::create(image);
-    images.sampler = makeSampler(static_cast<std::uint32_t>(texture->mipCount()), d->max_anisotropy);
+    images.view    = found->second.view;
+    images.sampler = state != nullptr ? d->samplerFor(*state) : found->second.default_sampler;
     if (images.view == nullptr || images.sampler == nullptr) {
-        reason = TextureReject::Inconsistent;  // creation refused: the caller reports it, nothing is cached
-        return white();
+        reason = TextureReject::Inconsistent;
+        return fallback(false);
     }
-
-    const std::uint64_t stamp = ++d->clock;
-    d->cache.insert_or_assign(texture, Data::Entry{ std::move(owner), images, revision, stamp });
-
-    // A trimmed entry may have been the last owner of its texture AND of the images it referenced; a
-    // texture the scene still uses simply rebuilds on its next acquire, which is what bounds the cache.
-    while (d->cache.size() > kMaxEntries) {
-        const auto oldest =
-            std::min_element(d->cache.begin(), d->cache.end(), [](const auto& left, const auto& right) {
-                return left.second.stamp < right.second.stamp;
-            });
-        if (oldest == d->cache.end()) {
-            break;
-        }
-        d->cache.erase(oldest);
-    }
-
     return images;
 }
 
@@ -469,6 +630,7 @@ std::size_t MaterialImages::releaseAbandoned()
 void MaterialImages::clear()
 {
     d->cache.clear();
+    d->samplers.clear();
     d->white.reset();
     d->white_cube = SamplerImage{};
 }

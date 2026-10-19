@@ -17,6 +17,7 @@
 #include "ImageSource.hpp"
 #include "Node.hpp"
 #include "PolygonMode.hpp"
+#include "Sampler.hpp"
 #include "PresentTarget.hpp"
 #include "StateNode.hpp"
 #include "Viewport.hpp"
@@ -387,6 +388,18 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * @param texture Texture this pass consumes (null is ignored).
      */
     void addInput(intrusive_ptr<Texture> texture);
+
+    /** @brief Declares one imported texture read with an explicit sampler state.
+     *
+     * @details
+     * - The state belongs to THIS input, not to the texture: the same texture can be declared by another pass (or
+     *   another declaration here) with different filter/wrap settings, and the backend binds one sampler per input.
+     * - The declaration without a state keeps the backend's input sampler, so an existing pass is unchanged.
+     *
+     * @param texture Texture this pass consumes (null is ignored).
+     * @param sampler How this pass reads the texture (see Sampler).
+     */
+    void addInput(intrusive_ptr<Texture> texture, const Sampler& sampler);
 
     /** @brief Declares one input from the declaration value (one of the two additions above).
      *

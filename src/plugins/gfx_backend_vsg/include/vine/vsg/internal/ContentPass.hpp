@@ -92,17 +92,28 @@ VN_VSG_NS_BEGIN
  * can be a violation: one set per distinct set of images, built once and bound by every frame that samples
  * those images.
  *
- * WHAT A KEY IS. `key` is the image views the set names, in binding order (the pass' inputs in declaration
- * order, and inside one input its colour attachments in attachment order and then its depth). Nothing else
- * about the set is a choice: its layout comes from the counts, the samplers from the pipeline layer, and the
- * layout every binding declares is the one the producers leave behind. A replaced image (a resize) is a new
- * key, and the entry it replaces is swept and parked through the retirement queue like every other replaced
- * object - a frame in flight may still name its VkDescriptorSet.
+ * WHAT A KEY IS. `key` is the image views AND the samplers the set names, in binding order (the pass' inputs
+ * in declaration order, and inside one input its colour attachments in attachment order and then its depth).
+ * The sampler is part of the key because one texture may be declared twice with different states: the views
+ * alone would let the first declaration answer the second, with the wrong filter/wrap silently in place. The
+ * layout is part of it too; every other fact comes from the counts, and the image layouts are the ones the
+ * producers leave behind. A replaced image (a resize) or a changed declared state is a new key, and the entry
+ * it replaces is swept and parked through the retirement queue like every other replaced object - a frame in
+ * flight may still name its VkDescriptorSet.
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
 struct InputSetCache
 {
+    /// @brief One binding the key names: its image and the sampler it is read through.
+    struct Binding
+    {
+        const ::vsg::ImageView* view{nullptr};     ///< The sampled image.
+        const ::vsg::Sampler*   sampler{nullptr};  ///< The state it is read with.
+
+        friend bool operator==(const Binding&, const Binding&) = default;
+    };
+
     /// @brief One built set and the key it was built for.
     struct Entry
     {
@@ -113,24 +124,24 @@ struct InputSetCache
         /// from the pass' inputs - so the views alone would let one kind answer for the other, with a layout
         /// mismatch the driver refuses.
         const ::vsg::DescriptorSetLayout*    layout{nullptr};
-        std::vector<const ::vsg::ImageView*> images;      ///< The views, in the order the set binds them.
-        ::vsg::ref_ptr<::vsg::DescriptorSet> set;         ///< What was built for that key.
-        std::uint64_t                        frame{0};    ///< The frame last asked for it (see `frame`).
+        std::vector<Binding>                 bindings;   ///< The bindings, in the order the set names them.
+        ::vsg::ref_ptr<::vsg::DescriptorSet> set;        ///< What was built for that key.
+        std::uint64_t                        frame{0};   ///< The frame last asked for it (see `frame`).
     };
 
     /** @brief Finds the set already built for @p key, marking it as used by the current frame.
      *
      * @param layout The layout the set must have been built against.
-     * @param key    The image views, in the order the set binds them.
+     * @param key    The images and samplers, in the order the set binds them.
      * @return The set, or null when this key has not been built yet.
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSet> find(const ::vsg::DescriptorSetLayout* layout,
-                                                            std::span<const ::vsg::ImageView* const> key)
+                                                            std::span<const Binding> key)
     {
         for (Entry& entry : entries)
         {
-            if (entry.layout == layout && entry.images.size() == key.size() &&
-                std::equal(key.begin(), key.end(), entry.images.begin()))
+            if (entry.layout == layout && entry.bindings.size() == key.size() &&
+                std::equal(key.begin(), key.end(), entry.bindings.begin()))
             {
                 entry.frame = frame;
                 return entry.set;
@@ -142,15 +153,15 @@ struct InputSetCache
     /** @brief Remembers @p set as the one built for @p key (and counts the build).
      *
      * @param layout The layout @p set was built against.
-     * @param key    The image views, in the order the set binds them.
+     * @param key    The images and samplers, in the order the set binds them.
      * @param set    The set built for them.
      */
-    void store(const ::vsg::DescriptorSetLayout* layout, std::span<const ::vsg::ImageView* const> key,
+    void store(const ::vsg::DescriptorSetLayout* layout, std::span<const Binding> key,
                const ::vsg::ref_ptr<::vsg::DescriptorSet>& set)
     {
         Entry entry;
         entry.layout = layout;
-        entry.images.assign(key.begin(), key.end());
+        entry.bindings.assign(key.begin(), key.end());
         entry.set   = set;
         entry.frame = frame;
         entries.push_back(std::move(entry));

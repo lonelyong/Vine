@@ -1231,6 +1231,130 @@ TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
 }
 
 /*
+ * @brief One texture declared twice with different states is read two ways in the SAME pass.
+ *
+ * The 2x2 texture holds red in its left column and green in its right. The program samples both inputs at
+ * u = 1.25: ClampToEdge reads the edge (green, r = 0), Repeat wraps to the left texel (red, r = 1). The output
+ * is (0, 1, 0) only when each input kept its own state; (1, 1, 0) means both used the default Repeat and
+ * (0, 0, 0) means both used ClampToEdge. `MaterialImages::count()` stays 1: the upload and view are shared,
+ * only the samplers differ.
+ */
+TEST(VsgBackendTest, TwoInputStatesOverOneTextureSampleDifferently)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 128, 96);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(backend->capabilities().render_targets);
+
+    const vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    destination->attachColor(RenderTarget::ColorFormat::RGBA8);
+    destination->setSize(64, 64);
+
+    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
+        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+    {
+        const vn::intrusive_ptr<vn::imaging::Image> image(
+            new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        for (std::size_t texel = 0; texel < 4; ++texel)
+        {
+            const bool left = (texel % 2U) == 0U;
+            pixels[texel * 4U + 0U] = static_cast<std::byte>(left ? 255 : 0);
+            pixels[texel * 4U + 1U] = static_cast<std::byte>(left ? 0 : 255);
+            pixels[texel * 4U + 2U] = std::byte{ 0 };
+            pixels[texel * 4U + 3U] = std::byte{ 255 };
+        }
+        texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
+    }
+
+    vn::graphics::Sampler clamp;
+    clamp.min_filter  = vn::graphics::Sampler::Filter::Nearest;
+    clamp.mag_filter  = vn::graphics::Sampler::Filter::Nearest;
+    clamp.mipmap_mode = vn::graphics::Sampler::MipmapMode::Nearest;
+    clamp.address_u   = vn::graphics::Sampler::AddressMode::ClampToEdge;
+    clamp.address_v   = vn::graphics::Sampler::AddressMode::ClampToEdge;
+    vn::graphics::Sampler repeat = clamp;
+    repeat.address_u             = vn::graphics::Sampler::AddressMode::Repeat;
+    repeat.address_v             = vn::graphics::Sampler::AddressMode::Repeat;
+
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 out_color;\n"
+            "layout(set = 1, binding = 0) uniform sampler2D clamp_tex;\n"
+            "layout(set = 1, binding = 1) uniform sampler2D repeat_tex;\n"
+            "void main() {\n"
+            "    vec2 uv = vec2(1.25, 0.5);\n"
+            "    out_color = vec4(texture(clamp_tex, uv).r, texture(repeat_tex, uv).r, 0.0, 1.0);\n"
+            "}\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    const TriangleFixture triangle = makeTriangle();
+    std::vector<RenderCommand> commands = triangle.commands;
+    commands.front().program            = program;
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
+    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+
+    backend->executeFrame(TestFrame()
+                              .pass(pass_object.get(), 0)
+                              .target(destination.get())
+                              .inputs(std::vector<vn::graphics::ImageSource>{
+                                  vn::graphics::ImageSource::imported(texture.get(), clamp),
+                                  vn::graphics::ImageSource::imported(texture.get(), repeat) })
+                              .clear(destination_clear)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .content(commands, camera.get())
+                              .value());
+
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "the two-state pass recorded";
+
+    std::vector<std::uint8_t>    pixels;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
+    const std::size_t at = (32U * 64U + 32U) * 4U;
+    ASSERT_LT(at + 3U, pixels.size());
+    EXPECT_TRUE(isColourByte(pixels[at], 0.0) && isColourByte(pixels[at + 1], 1.0) &&
+                isColourByte(pixels[at + 2], 0.0))
+        << "clamp reads the edge (r=0) and repeat wraps to the left texel (r=1): got ("
+        << static_cast<int>(pixels[at]) << ", " << static_cast<int>(pixels[at + 1]) << ", "
+        << static_cast<int>(pixels[at + 2]) << ")";
+    EXPECT_EQ(pixels[at + 3], 255U);
+
+    vn::vsg::MaterialImages* const images = BackendContentAccess::images(*backend);
+    ASSERT_NE(images, nullptr);
+    EXPECT_EQ(images->count(), 1U) << "one texture, one upload";
+    EXPECT_EQ(images->samplerCount(), 2U) << "two declared states, two samplers";
+}
+
+/*
  * @brief A content pass that declares ONE produced attachment samples THAT image, not the target's first.
  *
  * The producer paints an MRT target: attachment 0 green, attachment 1 red. The consumer declares only

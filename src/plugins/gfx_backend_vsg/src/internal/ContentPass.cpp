@@ -15,6 +15,7 @@
 #include <vsg/state/DescriptorSet.h>
 #include <vsg/state/ImageInfo.h>
 #include <vsg/state/PushConstants.h>
+#include <vsg/state/Sampler.h>
 
 #include <vine/vsg/internal/ContentPush.hpp>
 #include <vine/vsg/internal/DrawBlock.hpp>
@@ -525,25 +526,50 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     // behind (a colour attachment ends sampleable, and a depth a shader may sample ends sampleable too - see
     // OffscreenTarget), so the descriptors name the layouts the producers' passes really left.
     //
-    // THE VIEWS ARE ALSO THE KEY a session reuses a set by (see InputSetCache): a steady frame offers the very
-    // same views, so the set it needs already exists and the frame only BINDS it - no descriptor is written,
-    // which is what the pending-state rule needs (VUID-vkUpdateDescriptorSets-None-03047).
-    std::vector<const ::vsg::ImageView*> key;
+    // WHICH SAMPLER READS ONE BINDING. An imported input that declared a state carries its samplers aligned
+    // with its colours; every other binding (a produced image, or an imported one that stated nothing) uses the
+    // layer's input sampler, which is what this path always used.
+    const auto colour_sampler = [&sampler](const InputImages& input,
+                                           std::size_t index) -> ::vsg::ref_ptr<::vsg::Sampler> {
+        if (index < input.color_samplers.size())
+        {
+            return input.color_samplers[index];
+        }
+        return sampler;
+    };
+    const auto depth_sampler_for = [&layer](const InputImages& input) -> ::vsg::ref_ptr<::vsg::Sampler> {
+        return input.depth_sampler != nullptr ? input.depth_sampler : layer.depthSampler();
+    };
+
+    // THE VIEWS AND THEIR SAMPLERS ARE THE KEY a session reuses a set by (see InputSetCache): a steady frame
+    // offers the very same images read the same way, so the set it needs already exists and the frame only
+    // BINDS it - no descriptor is written, which is what the pending-state rule needs
+    // (VUID-vkUpdateDescriptorSets-None-03047). A different declared state is a different key: the same view
+    // with another wrap mode is another set, never a stale one.
+    std::vector<InputSetCache::Binding> key;
     key.reserve(texture_count + depth_count);
     for (const InputImages& input : inputs)
     {
-        for (const ::vsg::ref_ptr<::vsg::ImageView>& view : input.colors)
+        for (std::size_t index = 0U; index < input.colors.size(); ++index)
         {
-            if (view == nullptr)
+            const ::vsg::ref_ptr<::vsg::ImageView>& view    = input.colors[index];
+            const ::vsg::ref_ptr<::vsg::Sampler>   chosen  = colour_sampler(input, index);
+            if (view == nullptr || chosen == nullptr)
             {
-                reportRefused("the pass' sampled inputs", "an entry offers no image view");
+                reportRefused("the pass' sampled inputs", "an entry offers no image view or sampler");
                 return {};
             }
-            key.push_back(view.get());
+            key.push_back(InputSetCache::Binding{ view.get(), chosen.get() });
         }
         if (input.depth != nullptr)
         {
-            key.push_back(input.depth.get());
+            const ::vsg::ref_ptr<::vsg::Sampler> chosen = depth_sampler_for(input);
+            if (chosen == nullptr)
+            {
+                reportRefused("the pass' sampled inputs", "the depth sampler could not be created");
+                return {};
+            }
+            key.push_back(InputSetCache::Binding{ input.depth.get(), chosen.get() });
         }
     }
 
@@ -560,26 +586,23 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         std::uint32_t binding = 0;
         for (const InputImages& input : inputs)
         {
-            for (const ::vsg::ref_ptr<::vsg::ImageView>& view : input.colors)
+            for (std::size_t index = 0U; index < input.colors.size(); ++index)
             {
+                const ::vsg::ref_ptr<::vsg::Sampler> chosen = colour_sampler(input, index);
                 descriptors.push_back(::vsg::DescriptorImage::create(
-                    ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, view,
+                    ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(chosen, input.colors[index],
                                                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
                     binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
                 ++binding;
             }
             if (input.depth != nullptr)
             {
-                // A DEPTH texture gets the NEAREST sampler (see ContentPipeline::depthSampler): the shader
-                // compares exact depths, so an interpolated one would be a depth nobody rasterised.
-                const auto depth_sampler = layer.depthSampler();
-                if (depth_sampler == nullptr)
-                {
-                    reportRefused("the pass' sampled inputs", "the depth sampler could not be created");
-                    return {};
-                }
+                // A DEPTH texture gets the NEAREST sampler unless the input declared one (see
+                // ContentPipeline::depthSampler): the shader compares exact depths, so an interpolated one
+                // would be a depth nobody rasterised.
+                const ::vsg::ref_ptr<::vsg::Sampler> chosen = depth_sampler_for(input);
                 descriptors.push_back(::vsg::DescriptorImage::create(
-                    ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(depth_sampler, input.depth,
+                    ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(chosen, input.depth,
                                                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
                     binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
                 ++binding;
@@ -808,11 +831,12 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     const std::span<const VkDescriptorSetLayoutBinding> declared_bindings =
         set_layout != nullptr ? std::span<const VkDescriptorSetLayoutBinding>(set_layout->bindings)
                               : std::span<const VkDescriptorSetLayoutBinding>{};
-    // The set's KEY is the images it names, in the order the bindings take them (see InputSetCache): the
-    // block is a dynamic uniform, so what the SET names about it is the buffer, which does not move with the
-    // frame - which is what lets a steady frame find the set it built last time instead of writing a new one
-    // a command buffer of the previous frame may still read.
-    std::vector<const ::vsg::ImageView*> key;
+    // The set's KEY is the images AND their samplers, in the order the bindings take them (see InputSetCache):
+    // the block is a dynamic uniform, so what the SET names about it is the buffer, which does not move with
+    // the frame - which is what lets a steady frame find the set it built last time instead of writing a new
+    // one a command buffer of the previous frame may still read. A different declared state is a different
+    // key, so two inputs over one texture never answer with each other's sampler.
+    std::vector<InputSetCache::Binding> key;
     // The offsets the BIND carries, one per dynamic binding in binding order (the layout's bindings are in
     // ascending order), each naming this call's block.
     std::vector<std::uint32_t>           dynamic_offsets;
@@ -839,7 +863,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
                 ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(map_image.sampler, map_image.view,
                                                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
                 declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
-            key.push_back(map_image.view.get());
+            key.push_back(InputSetCache::Binding{ map_image.view.get(), map_image.sampler.get() });
             continue;
         }
         if (source != nullptr && declared.binding < colours)
@@ -853,16 +877,18 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
             descriptors.push_back(::vsg::DescriptorImage::create(
                 ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
                 declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
-            key.push_back(view.get());
+            key.push_back(InputSetCache::Binding{ view.get(), sampler.get() });
             continue;
         }
         if (depths != 0U && declared.binding == depth_binding)
         {
+            const ::vsg::ref_ptr<::vsg::Sampler> chosen =
+                source->depth_sampler != nullptr ? source->depth_sampler : depth_sampler;
             descriptors.push_back(::vsg::DescriptorImage::create(
-                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(depth_sampler, source->depth,
+                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(chosen, source->depth,
                                                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
                 declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
-            key.push_back(source->depth.get());
+            key.push_back(InputSetCache::Binding{ source->depth.get(), chosen.get() });
             continue;
         }
         if (imported_slot < imported_bindings.size() && declared.binding == imported_bindings[imported_slot])
@@ -873,11 +899,13 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
                 reportRefused("a full-screen drawing call", "an imported input offers no image view");
                 return false;
             }
+            const ::vsg::ref_ptr<::vsg::Sampler> chosen =
+                imported.color_samplers.empty() ? sampler : imported.color_samplers.front();
             descriptors.push_back(::vsg::DescriptorImage::create(
-                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, imported.colors.front(),
+                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(chosen, imported.colors.front(),
                                                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
                 declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
-            key.push_back(imported.colors.front().get());
+            key.push_back(InputSetCache::Binding{ imported.colors.front().get(), chosen.get() });
             ++imported_slot;
             continue;
         }

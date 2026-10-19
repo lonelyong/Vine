@@ -33,6 +33,21 @@
 - **判据**：`test_graphics` 379（`ABackendThatCannotDrawTargetsIsToldOncePerEpisode` 覆盖一次 / 重新武装）；
   `ctest` 24/24；8 条 hygiene 门禁 0 finding。
 
+## 2026-10-19 E2 收尾 #4：imported input 的 sampler state
+
+- **结论**：新增 `vn::graphics::Sampler` 值类型（min/mag filter、mipmap mode、UVW address、border color、
+  anisotropy、LOD bias / range）；`ImageInput(texture, sampler)` / `RenderPass::addInput(texture, sampler)`
+  把状态放进**输入声明**，`ImageSource` / `CompiledInput` 用 `optional<Sampler>` 携带。不写状态仍是后端
+  输入采样器。`MaterialImages` 的上传键仍是 `(Texture*, revision)`，显式状态按值缓存在旁边：同一纹理多状态
+  共享 image/view，只多 `VkSampler`。`InputImages::color_samplers` 和 `InputSetCache` 的 `(view, sampler)`
+  键把状态送到 content / full-screen 两条路径。
+- **坑**：`InputSetCache` 原来只键 view；同一 view 配不同 sampler 会静默复用旧 set。现在键含 sampler，测试
+  必须覆盖“同 pass 两次声明同一纹理、不同 wrap”的像素差异。`MaterialImages::setMaxAnisotropy` 变化会清空
+  显式 sampler 缓存，避免旧 limit 的 sampler 继续被复用。
+- **判据**：`VsgBackendTest.TwoInputStatesOverOneTextureSampleDifferently`（clamp vs repeat 同 pass：
+  (0,1,0)；`count()==1`、`samplerCount()==2`）；两条 `MaterialImagesTest`；`FrameCompilerTest` 与
+  `RenderPipelineBuilderTest` 各一条结构用例；构建 0/0、`test_vsg` 470、`test_graphics` 379、`ctest` 24/24。
+
 ## 2026-10-19 E2 收尾 #3：imported input revision 失效用例
 
 - **结论**：`(Texture*, revision)` 已是 `CompiledInput` / `MaterialImages` 的缓存键，后端无需改动；补真实设备

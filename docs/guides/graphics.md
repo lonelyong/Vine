@@ -499,6 +499,9 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 - **对象**（`ImageRef`）：生产者 `setOutput(image)` / `setOutputTarget(target)`，消费者
   `addInput(image)` / `addInputTarget(target)`。粒度可到**某一张附件**（`ImageRef` 带颜色/深度与附件号），
   也可粗到**整捆**（整张 target）—— 带 program 的 `ScreenPass` 读的是整捆。
+- **导入贴图**（`Texture`）：`addInput(texture)` / `addInput(texture, sampler)`。采样状态属于**这次声明**，
+  所以同一张纹理在不同 pass（或同一 pass 的两次声明）可以用不同的 wrap/filter/mip 设置；不写 sampler
+  时用后端的输入采样器，行为与之前一致。后端的上传仍按 `(texture, revision)` 共享，sampler 按状态值缓存。
 
 `RenderEngine::validateWiring()` 每帧校验结构，并把每个问题**只报一次**（消失后重新武装）：
 

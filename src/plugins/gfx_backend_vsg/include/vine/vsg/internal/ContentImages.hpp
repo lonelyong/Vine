@@ -58,6 +58,12 @@ struct InputImages
 {
     std::span<const ::vsg::ref_ptr<::vsg::ImageView>> colors;  ///< Colour attachments the CONTENT path binds.
     ::vsg::ref_ptr<::vsg::ImageView>                  depth;   ///< The input's DEPTH view, when it offers one.
+    /// The sampler for each of @ref colors, in the same order; EMPTY means the pipeline layer's input sampler.
+    /// An imported input that declared a state carries one entry per colour (the same sampler for all of them);
+    /// a produced input carries none.
+    std::span<const ::vsg::ref_ptr<::vsg::Sampler>>   color_samplers;
+    /// The sampler for @ref depth when the input declared one; null means the layer's depth sampler.
+    ::vsg::ref_ptr<::vsg::Sampler>                    depth_sampler;
     /// The WHOLE source target's colour attachments, when this input is the source of a full-screen call.
     ///
     /// The full-screen ABI reads binding N as the source's attachment N (see BuiltinShaders::screenCopyProgram),

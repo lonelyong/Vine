@@ -31,6 +31,7 @@
 #include <vine/vsg/internal/MaterialImages.hpp>
 
 using vn::graphics::CubeMap;
+using vn::graphics::Sampler;
 using vn::graphics::Texture;
 using vn::graphics::Texture2D;
 using vn::imaging::Image;
@@ -178,6 +179,85 @@ TEST(MaterialImagesTest, RefillingATextureRebuildsItsImages)
     ASSERT_NE(after.view, nullptr);
     EXPECT_NE(after.view.get(), before.view.get()) << "a re-filled texture is rebuilt";
     EXPECT_EQ(cache->count(), 1U) << "and it replaces its entry rather than joining it";
+}
+
+TEST(MaterialImagesTest, AnExplicitStateSharesTheUploadAndCachesOneSamplerPerState)
+{
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
+    ASSERT_NE(cache, nullptr);
+
+    const vn::intrusive_ptr<Texture2D> texture = readyTexture();
+
+    Sampler clamp;
+    clamp.min_filter  = Sampler::Filter::Nearest;
+    clamp.mag_filter  = Sampler::Filter::Nearest;
+    clamp.mipmap_mode = Sampler::MipmapMode::Nearest;
+    clamp.address_u   = Sampler::AddressMode::ClampToEdge;
+    clamp.address_v   = Sampler::AddressMode::ClampToEdge;
+    Sampler repeat    = clamp;
+    repeat.address_u  = Sampler::AddressMode::Repeat;
+    repeat.address_v  = Sampler::AddressMode::Repeat;
+
+    TextureReject      reason = TextureReject::Ok;
+    const SamplerImage clamped = cache->acquire(texture.get(), clamp, reason);
+    ASSERT_EQ(reason, TextureReject::Ok);
+    ASSERT_NE(clamped.view, nullptr);
+    ASSERT_NE(clamped.sampler, nullptr);
+    EXPECT_EQ(clamped.sampler->magFilter, VK_FILTER_NEAREST);
+    EXPECT_EQ(clamped.sampler->minFilter, VK_FILTER_NEAREST);
+    EXPECT_EQ(clamped.sampler->mipmapMode, VK_SAMPLER_MIPMAP_MODE_NEAREST);
+    EXPECT_EQ(clamped.sampler->addressModeU, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+    EXPECT_EQ(clamped.sampler->addressModeV, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+    EXPECT_EQ(cache->count(), 1U) << "the texture is uploaded once";
+    EXPECT_EQ(cache->samplerCount(), 1U);
+
+    const SamplerImage repeated = cache->acquire(texture.get(), repeat, reason);
+    ASSERT_EQ(reason, TextureReject::Ok);
+    EXPECT_EQ(repeated.view.get(), clamped.view.get()) << "a second state shares the upload and the view";
+    EXPECT_NE(repeated.sampler.get(), clamped.sampler.get());
+    EXPECT_EQ(repeated.sampler->addressModeU, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    EXPECT_EQ(cache->count(), 1U);
+    EXPECT_EQ(cache->samplerCount(), 2U) << "one sampler per distinct state, not per acquire";
+
+    const SamplerImage again = cache->acquire(texture.get(), clamp, reason);
+    EXPECT_EQ(again.sampler.get(), clamped.sampler.get()) << "the same state reuses its sampler";
+    EXPECT_EQ(cache->samplerCount(), 2U);
+
+    // A texture that cannot be uploaded still answers with the state the pass declared: the white texel reads
+    // the same through every filter, and the descriptor keeps the declaration.
+    const SamplerImage absent = cache->acquire(nullptr, clamp, reason);
+    EXPECT_EQ(reason, TextureReject::Absent);
+    EXPECT_EQ(absent.view.get(), cache->white().view.get());
+    EXPECT_EQ(absent.sampler.get(), clamped.sampler.get());
+}
+
+TEST(MaterialImagesTest, ADeclaredAnisotropyIsClampedToTheDeviceLimit)
+{
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
+    ASSERT_NE(cache, nullptr);
+    cache->setMaxAnisotropy(4.0F);
+
+    const auto texture = vn::intrusive_ptr<Texture2D>(new Texture2D(4, 4, PixelFormat::Rgba8Unorm, 2));
+    texture->setImage(vn::intrusive_ptr<const Image>(new Image(4, 4, PixelFormat::Rgba8Unorm, 2)));
+
+    Sampler state;
+    state.anisotropy = 16.0F;
+    TextureReject      reason = TextureReject::Ok;
+    const SamplerImage images = cache->acquire(texture.get(), state, reason);
+    ASSERT_EQ(reason, TextureReject::Ok);
+    ASSERT_NE(images.sampler, nullptr);
+    EXPECT_EQ(images.sampler->anisotropyEnable, VK_TRUE);
+    EXPECT_FLOAT_EQ(images.sampler->maxAnisotropy, 4.0F) << "the device's limit, not the declared 16";
+
+    // A device that offers no anisotropy disables the feature rather than asking for an illegal factor.
+    cache->setMaxAnisotropy(1.0F);
+    Sampler other;
+    other.mag_filter = Sampler::Filter::Nearest;
+    other.anisotropy = 8.0F;
+    const SamplerImage flat = cache->acquire(texture.get(), other, reason);
+    ASSERT_NE(flat.sampler, nullptr);
+    EXPECT_EQ(flat.sampler->anisotropyEnable, VK_FALSE);
+    EXPECT_FLOAT_EQ(flat.sampler->maxAnisotropy, 1.0F);
 }
 
 TEST(MaterialImagesTest, AnEntryKeepsItsTextureAliveUntilItIsAbandoned)

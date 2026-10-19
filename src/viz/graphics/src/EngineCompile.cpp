@@ -317,7 +317,7 @@ void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageS
                                   : ImageSource{});
             }
             else if (raw_ptr<Texture> texture = input.texture(); texture != nullptr) {
-                out.push_back(ImageSource::imported(texture));
+                out.push_back(ImageSource::imported(texture, input.sampler()));
             }
             else {
                 out.push_back(ImageSource{});

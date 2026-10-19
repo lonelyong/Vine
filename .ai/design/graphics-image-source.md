@@ -43,8 +43,9 @@
 4. **已解析输入有序**：一个 pass 的输入顺序就是声明顺序；produced / imported 可以混排，后端按同一序绑定。
 5. **借用规则不变**：`FrameDescription` 里的图仍只在 `executeFrame()` 期间有效；imported 图的 `Texture`
    由声明持有，后端要留存就按 `(Texture*, revision)` 缓存。
-6. **采样器不新增抽象**：`Texture` 目前没有 sampler state，pass 输入先用后端默认采样器（与
-   `Material::setTexture` 同一条路径）；等 anisotropic/wrap 成为真实需求再加 `Sampler`。
+6. **采样器状态属于输入声明，不属于 `Texture`**：`Sampler` 是值类型（filter / mip / wrap / anisotropy /
+   LOD），随 `addInput(texture, sampler)` 进入声明；不写状态时仍用后端输入采样器。`Texture` 本身不携带
+   采样设置，所以同一张贴图可以被不同 pass 以不同状态读取。
 7. **现有声明不回归**：`addInput(ImageRef)` / `addInputTarget` / `addInputName` 的行为与顺序保持不变。
 
 ## 3. 形状：`ImageSource` 值，不是继承根
@@ -103,8 +104,11 @@ struct ImageSource
   colour sampler。
 - `recordContent` 为 `ImportedTexture` 条目调用 `MaterialImages::acquire`，把 view 填入该条目的
   `InputImages`；`color_attachments = 1`、`depth_sampleable = false`。上传失败时绑白图并报告原因。
-- 采样器暂用输入 set 的 `inputSampler()`（与现有 pass 输入一致）；`Texture` 没有 sampler state，等
-  sampler 成为真实需求再加。
+- **采样器状态（2026-10-19 落地）**：`ImageInput` / `ImageSource` / `CompiledInput` 携带可选的
+  `Sampler`；`MaterialImages` 的上传缓存仍按 `(Texture*, revision)`，显式状态按**值**缓存在旁边，
+  同一纹理的多次声明共享 image/view、各自绑定 sampler。`InputImages::color_samplers` 把状态送到两条绑定
+  路径；`InputSetCache` 的键同时包含 view 与 sampler，避免同一 view 的不同状态互相命中。未声明状态的
+  输入继续用 `ContentPipeline::inputSampler()`，行为不变。
 - **全屏 ABI 的 imported 绑定（2026-10-19 落地）**：source 的颜色附件占 0..C-1，depth 跟随（跳过文本自己
   声明的 binding）；imported 图按输入声明序填程序**已经声明的其余 sampler binding**（升序）。数量对不上由
   backend 报 refusal，不静默绑错图。第一切片只支持 `Texture::Kind::D2`；Cube 作为输入需要程序声明 cube
@@ -132,15 +136,18 @@ struct ImageSource
    `ScreenPass` / 测试替身一起改。判据：现有 produced 输入的像素用例全绿。
 3. **后端绑定（内容与全屏路径均已落地）**：`CompiledInput` 加 imported 分支，复用 `MaterialImages`；
    内容 pass 按声明序绑定，全屏 pass 在 source 绑定之后的 declared sampler binding 上绑定；两条路径都有像素用例。
-4. **便利层（未做）**：`PassDesc` 之外的便捷入口；材质贴图与 pass 输入已经共用 `MaterialImages`。
+4. **采样器状态（2026-10-19 落地）**：`Sampler.hpp` 值类型 + `ImageInput(texture, sampler)` /
+   `RenderPass::addInput(texture, sampler)`；两条绑定路径按输入取 sampler，`MaterialImages` 按状态值缓存。
+5. **便利层（未做）**：`PassDesc` 之外的便捷入口；材质贴图与 pass 输入已经共用 `MaterialImages`。
 
 ## 6. 判据与风险
 
 - **判据**：结构测试（声明顺序、produced/imported 混排、未绑定/未上传的拒绝）+ 像素测试（一张 D2 贴图被
   content pass 采样到目标上）+ revision 缓存键（`(Texture*, revision)` 已进 `CompiledInput`，下一帧重上传由
-  缓存负责）。
+  缓存负责）+ sampler 状态（同一纹理两个状态在同一 pass 读到不同像素，上传只一份）。
 - **风险**：`FrameDescription::Pass::inputs` 是公开 ABI；这次改动会动 vsg 后端与 `test_vsg` 的测试替身。
-- **不做**：`Sampler` 抽象、Cube/array 输入、把 `Texture` 纳入 producer 规则、把 `RenderTarget` 改名。
+- **不做**：Cube/array 输入、compare sampler（硬件深度比较）、把 `Texture` 纳入 producer 规则、把
+  `RenderTarget` 改名。
 
 ## 7. 落地记录（2026-10-19）
 
@@ -165,3 +172,11 @@ struct ImageSource
 - 2026-10-19 追加：revision 失效的真实设备判据
   `VsgBackendTest.ARefilledImportedTextureIsReuploadedForTheNextFrame`（像素从品红变黄，
   `MaterialImages::count()` 不增长，即同一 `(Texture*, revision)` 条目被替换而不是新增）。
+- 2026-10-19 追加：sampler state 进入输入声明。`Sampler.hpp` 值类型；`ImageInput` / `ImageSource` /
+  `CompiledInput` 携带 `std::optional<Sampler>`；`MaterialImages::acquire(texture, sampler, reason)` 共享上传、
+  按值缓存 sampler；`InputImages::color_samplers` 与 `InputSetCache` 的 `(view, sampler)` 键把状态送到
+  content / full-screen 两条路径。判据：`MaterialImagesTest.AnExplicitStateSharesTheUploadAndCachesOneSamplerPerState`、
+  `MaterialImagesTest.ADeclaredAnisotropyIsClampedToTheDeviceLimit`、
+  `VsgBackendTest.TwoInputStatesOverOneTextureSampleDifferently`（同一纹理 clamp vs repeat 在同一 pass 读到不同
+  像素；上传 1 份、sampler 2 个）、`FrameCompilerTest.AnImportedTextureInputCarriesItsDeclaredSampler`、
+  `RenderPipelineBuilderTest.AnImportedTextureIsAnInputInDeclarationOrder`（声明侧状态到达 backend）。

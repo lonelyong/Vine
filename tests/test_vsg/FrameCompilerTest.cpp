@@ -37,6 +37,7 @@ using vn::graphics::DepthMode;
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
+using vn::graphics::Sampler;
 using vn::graphics::ShaderProgram;
 using vn::graphics::backend::ClearPolicy;
 using vn::graphics::backend::CompiledDraw;
@@ -251,7 +252,50 @@ TEST(FrameCompilerTest, AnImportedTextureInputIsAFirstClassInputWithNoProducerEd
     EXPECT_EQ(input.target, nullptr);
     EXPECT_EQ(input.color_attachments, 1u) << "one sampled image, the same shape a single attachment offers";
     EXPECT_FALSE(input.depth_sampleable);
+    EXPECT_FALSE(input.sampler.has_value()) << "no declaration means the backend's input sampler";
     EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::ContentSkipped), 0u);
+}
+
+TEST(FrameCompilerTest, AnImportedTextureInputCarriesItsDeclaredSampler)
+{
+    // The state belongs to the INPUT, not to the texture: one texture may appear twice with different states,
+    // and the plan has to keep them apart so the binding layer builds two samplers (see MaterialImages).
+    Rig r;
+    vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    r.addTarget(destination.get(), 64, 64, true);
+    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
+        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+
+    Sampler point_clamp;
+    point_clamp.min_filter  = Sampler::Filter::Nearest;
+    point_clamp.mag_filter  = Sampler::Filter::Nearest;
+    point_clamp.mipmap_mode = Sampler::MipmapMode::Nearest;
+    point_clamp.address_u   = Sampler::AddressMode::ClampToEdge;
+    point_clamp.address_v   = Sampler::AddressMode::ClampToEdge;
+
+    std::vector<vn::graphics::ImageSource> inputs{
+        vn::graphics::ImageSource::imported(texture.get(), point_clamp),
+        vn::graphics::ImageSource::imported(texture.get()),
+    };
+    const std::vector<RenderCommand> commands = oneCommand();
+
+    r.recorder.beginFrame(FrameToken{ 1 });
+    r.recorder.beginPass(1);
+    r.recorder.setRenderTarget(destination.get());
+    r.recorder.setPassInputs(inputs);
+    r.recorder.render(commands, nullptr);
+    r.recorder.endPass();
+    r.recorder.endFrame();
+
+    const CompiledFrame& frame = r.compile();
+    ASSERT_EQ(frame.passes.size(), 1u);
+    ASSERT_EQ(frame.passes[0].inputs.size(), 2u);
+    ASSERT_TRUE(frame.passes[0].inputs[0].sampler.has_value());
+    EXPECT_EQ(*frame.passes[0].inputs[0].sampler, point_clamp);
+    EXPECT_FALSE(frame.passes[0].inputs[1].sampler.has_value())
+        << "the second declaration states nothing and must not inherit the first one's state";
+    EXPECT_EQ(frame.passes[0].inputs[0].texture, static_cast<const void*>(texture.get()));
+    EXPECT_EQ(frame.passes[0].inputs[1].texture, static_cast<const void*>(texture.get()));
 }
 
 TEST(FrameCompilerTest, AnInputTheFactsCannotAnswerIsReportedAndOffersNothing)
