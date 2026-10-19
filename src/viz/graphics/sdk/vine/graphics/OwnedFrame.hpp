@@ -29,8 +29,12 @@ class RenderPass;
  *   camera and the program it was assembled from - which is what lets a caller build a frame on one thread, keep it,
  *   and hand it to an executor later (or serialise it, or record it). The commands are a `shared_ptr` in both forms:
  *   one collection is usually drawn by several passes, and ownership of it is already shared.
+ *
+ * @note
+ * - Like ClearPolicy, this is a header-only value: every member is defined here, so there is no symbol to export and
+ *   the type deliberately carries no VN_GRAPHICS_API (the DLL never instantiates it).
  */
-struct VN_GRAPHICS_API OwnedDraw
+struct OwnedDraw
 {
     /// Which drawing call this is (see DrawDescription::Kind).
     DrawDescription::Kind kind{ DrawDescription::Kind::Scene };
@@ -53,7 +57,7 @@ struct VN_GRAPHICS_API OwnedDraw
  * - Same shape, different ownership: `target` is held rather than borrowed, and the draws are @ref OwnedDraw. The
  *   fields that are plain values (viewport, clear, state) are copied verbatim, because a value cannot dangle.
  */
-struct VN_GRAPHICS_API OwnedPassDescription
+struct OwnedPassDescription
 {
     /// The off-screen target this pass draws into (held; null = the presenting surface).
     intrusive_ptr<RenderTarget> target;
@@ -78,7 +82,7 @@ struct VN_GRAPHICS_API OwnedPassDescription
  *   frame it is about to run, and an owned frame states what the host declared. @ref OwnedFrame::borrowed resolves
  *   them the same way a compiled frame carries them.
  */
-struct VN_GRAPHICS_API OwnedPass
+struct OwnedPass
 {
     /// The pass (its identity; held).
     intrusive_ptr<const RenderPass> pass;
@@ -117,7 +121,7 @@ struct VN_GRAPHICS_API OwnedPass
  * - SERIALISATION is likewise not here: a format needs a consumer (a file, a wire, a replay), and none exists -
  *   the value is what such a consumer would serialise.
  */
-class VN_GRAPHICS_API OwnedFrame
+class OwnedFrame
 {
   public:
     /** @brief The passes of this frame, in the order they were announced (see FrameDescription::Pass). */
