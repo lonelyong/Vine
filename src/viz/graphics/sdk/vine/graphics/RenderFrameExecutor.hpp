@@ -17,12 +17,17 @@ VN_GRAPHICS_NS_BEGIN
  *   frame path can be re-implemented without touching what the device has. Today one object answers all three (see
  *   RenderBackend, which is the aggregate), and a device that splits them hands this face out itself.
  * - ONE WIRE: THE FRAME IS A VALUE. A frame reaches an executor in ONE call - executeFrame(FrameDescription,
- *   present_to) - with every pass of it in the order it runs, each entry carrying the pass' identity, its order, its
- *   resolved inputs and everything the pass issues (see FrameDescription / PassDescription / DrawDescription). There
- *   is no pass scope, no incremental state setter and no call order to keep: what a frame ran and what it drew is the
- *   SHAPE of the value, so the sequence rules this layer used to document cannot be violated - they cannot be
- *   expressed. The engine compiles the frame and hands that value over (see RenderEngine::frameDescription); a host
- *   that drives one pass itself builds the same shape (RenderPass::execute -> singlePassFrame).
+ *   present_to) - with every pass of it in the order the host announced it, each entry carrying the pass' identity,
+ *   its order, its resolved inputs and everything the pass issues (see FrameDescription / PassDescription /
+ *   DrawDescription). There is no pass scope, no incremental state setter and no call order to keep: what a frame ran
+ *   and what it drew is the SHAPE of the value, so the sequence rules this layer used to document cannot be violated
+ *   - they cannot be expressed. The engine compiles the frame and hands that value over (see
+ *   RenderEngine::frameDescription); a host that drives one pass itself builds the same shape (RenderPass::execute ->
+ *   singlePassFrame).
+ * - THE ANNOUNCED ORDER IS THE PRIORITY, NOT NECESSARILY THE FINAL SCHEDULE. An executor that resolves pass
+ *   dependencies (the vsg backend's FrameGraph) may run a producer before a consumer even when the host announced it
+ *   later; the value's order is the stable tie-breaker, and the executor's own plan is what actually ran. A host that
+ *   drives one pass sees one entry and no reordering.
  * - A FRAME IS A PARAMETER, NOT AN INTERVAL, and it NAMES ITS TARGET. executeFrame() does the frame's whole body: it
  *   acquires the next presentable image of @p present_to when the frame has one (that is what "this is a frame" means
  *   to a windowed device), records the value, presents it through @p present_to, and returns. The row of a frame that
@@ -65,16 +70,18 @@ class VN_GRAPHICS_API RenderFrameExecutor
      *   that is about the frame - the acquisition of the next presentable image happens inside it for the target the
      *   frame names, and presenting that image is this call's last step (`PresentTarget::present` is the mechanism; the
      *   executor is the one that makes the call). A host that drives a frame therefore never presents it afterwards.
-     * - WHAT IT MUST DO, in the order a frame means: take the value's passes as they come (an entry with a null pass
-     *   is nothing to run; an entry whose description is empty is a pass that ran and issued nothing - the executor
-     *   keys per-pass retained state by its identity, so that is a fact it must not confuse with "the pass was not in
-     *   the frame"), and make the frame's content reach the target each pass names. How is the executor's business:
-     *   the vsg backend walks the value into its own collection stage and its session, a retained renderer builds a
-     *   graph from it, an offline renderer traverses it - the value says what ran, never how.
+     * - WHAT IT MUST DO, in the order a frame means: record the value's passes in the order given (that order is the
+     *   announced priority), resolve the dependencies their declarations state, and execute the resulting schedule.
+     *   An entry with a null pass is nothing to run; an entry whose description is empty is a pass that ran and issued
+     *   nothing - the executor keys per-pass retained state by its identity, so that is a fact it must not confuse
+     *   with "the pass was not in the frame". Then make the frame's content reach the target each pass names. How is
+     *   the executor's business: the vsg backend walks the value into its own collection stage and its session, a
+     *   retained renderer builds a graph from it, an offline renderer traverses it - the value says what ran, never
+     *   how.
      * - The value is valid for the duration of this call (see the class contract), and an executor that keeps any of
      *   it beyond the call copies what it keeps.
      *
-     * @param frame      The frame to execute, in run order (see FrameDescription).
+     * @param frame      The frame to execute, with its passes in announced order (see FrameDescription).
      * @param present_to Target the frame's default framebuffer resolves to, or nullptr for a frame that has NO
      *                   window: nothing is resolved, nothing is acquired and nothing is presented, and the frame is
      *                   submitted by the time this call returns (an off-screen frame, see the class contract). A

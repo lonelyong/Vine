@@ -79,19 +79,24 @@ struct VN_GRAPHICS_API PassPlan
 };
 
 /**
- * @brief A frame's plan: the passes the engine will run, in the order it will run them.
+ * @brief A frame's plan as the ENGINE compiled it: the passes it will announce, in announcement order.
  *
  * @details
  * - The answer to "what does a frame of this pipeline consist of", which used to have to be assembled from
  *   `passCount()` and pointer comparisons (or read out of a log after the fact). Every pass appears exactly
- *   once, in execution order, with the facts about it - a test asserts on the SHAPE of a frame instead of on
- *   a count, and a host can print one line per pass without reaching into the engine's slots.
+ *   once, in the engine's announcement order, with the facts about it - a test asserts on the SHAPE of a frame
+ *   instead of on a count, and a host can print one line per pass without reaching into the engine's slots.
+ * - This is the HOST-FACING snapshot (names, tags, last frame's record cost), not the backend-facing value it
+ *   is compiled from: executeFrame takes a FrameDescription, whose pointers are borrowed and whose order is
+ *   the announced priority. Both come from the same compile, so they cannot disagree about which pass ran;
+ *   they differ in what each audience needs. A dependency-resolving executor may still reorder the entries
+ *   (see FrameGraph), so this is the declaration side, not the final execution schedule.
  *
  * @see RenderEngine::framePlan
  */
 struct VN_GRAPHICS_API FramePlan
 {
-    /// The passes, in the order the engine runs them (two passes at one order keep registration order).
+    /// The passes, in the order the engine announces them (two passes at one order keep registration order).
     std::vector<PassPlan> passes;
 
     /** @brief Renders the plan as the table a human reads.

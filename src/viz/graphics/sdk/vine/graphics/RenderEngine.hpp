@@ -249,25 +249,32 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @details
      * - The plan is COMPILED from the registered passes (see compileFrame); every frame compiles its own,
-     *   so the answer is the last frame's plan - the table that frame actually ran from - or, before any
+     *   so the answer is the last frame's plan - the table the ENGINE announced for it - or, before any
      *   frame, the plan the current declarations would compile to. Both are the same compile, so a report
-     *   cannot disagree with what the engine draws.
+     *   cannot disagree with what the engine hands over.
+     * - It is the DECLARATION side, not the executor's final schedule: a backend that resolves pass
+     *   dependencies may run a producer before a consumer even when the announced order says otherwise
+     *   (see FrameDescription and FrameGraph). A report that claims "what actually ran" must read the
+     *   backend's plan, not this one.
      * - What it is for: a test asserting the SHAPE of a frame instead of counting passes or comparing
      *   pointers, a dev switch printing one table, and a host checking what a pipeline actually registered.
      *
-     * @return The plan, in execution order; empty when nothing is registered.
+     * @return The plan, in announcement order; empty when nothing is registered.
      */
     [[nodiscard]] FramePlan framePlan() const;
 
     /** @brief Gets the frame the last compile produced, as a value (see FrameDescription).
      *
      * @details
-     * - THE FRAME THE ENGINE IS ABOUT TO RUN, in the form a backend consumes: every enabled pass in run
-     *   order with its identity, order, resolved inputs and what it issues - assembled by the compile,
-     *   before anything is dispatched. Read it to see exactly what a frame is made of; a backend is handed
-     *   the same value once this path drives the frame (RenderFrameExecutor::executeFrame).
+     * - THE FRAME THE ENGINE IS ABOUT TO RUN, in the form a backend consumes: every enabled pass in the
+     *   engine's announced order with its identity, order, resolved inputs and what it issues - assembled by
+     *   the compile, before anything is dispatched. Read it to see exactly what a frame is made of; a backend
+     *   is handed the same value once this path drives the frame (RenderFrameExecutor::executeFrame).
+     * - The value is a BORROWED snapshot (see FrameDescription): it is valid until the next compile, and an
+     *   executor that resolves pass dependencies may schedule the entries differently - the announced order
+     *   is the priority, not necessarily the final schedule.
      *
-     * @return The value, valid until the next compile; empty before the first frame.
+     * @return The value, valid until the next compile and borrowed throughout; empty before the first frame.
      */
     [[nodiscard]] const FrameDescription& frameDescription() const noexcept;
 

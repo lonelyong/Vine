@@ -11,6 +11,11 @@ VN_GRAPHICS_NS_BEGIN
  *   Viewport restricts its draw to that rectangle (used by picture-in-picture, minimaps, previews and
  *   corner HUD boxes).
  * - The viewport is maintained explicitly by the pass's owner; it is never derived automatically.
+ *
+ * @note
+ * - The unit is DEVICE pixels. A host that knows a LOGICAL size and a device pixel ratio converts before it
+ *   states a viewport (see SceneView::resize / Pipeline::resize); mixing the two is the high-DPI bug class
+ *   this sentence exists to make visible.
  */
 struct VN_GRAPHICS_API Viewport {
     /** @brief Origin x in device pixels. */

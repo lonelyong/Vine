@@ -25,6 +25,23 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-19 抽象层契约收口：帧 IR 的 borrowed 语义、顺序权威、Pass 双路径（comment-only）
+
+- **结论**：不改公开形态，只把七处抽象边界写死：`FrameDescription` 是 borrowed snapshot（不是 owned 帧值）；
+  `passes` 的顺序是 announced priority，依赖解析执行器可重排（`FrameGraph` 的稳定拓扑排序）；`PassKind`
+  封闭集是声明式主路，`RenderPass::describe()` 是逃生口；`Pipeline` 是 pass 链不是 PSO；`FramePlan` 是
+  宿主快照、`FrameDescription` 是后端值；`ImageRef`（pass 产出）与 `Texture`（导入）是两个图源根；
+  `Viewport` 是设备像素。清单见 `graphics-abstraction-review-2026-10-19.md`。
+- **落点**：`FrameDescription.hpp` / `RenderFrameExecutor.hpp` / `RenderEngine.hpp` / `FramePlan.hpp` /
+  `PassDesc.hpp` / `Pipeline.hpp` / `Texture.hpp` / `Viewport.hpp`；顺带修掉 `BackendHalfGuard.hpp`
+  注释里的 `graphics/*.hpp`（GCC `-Wcomment` 在每个包含它的 TU 报一次，145 条）。
+- **判据**：构建 0 error / 0 warning（修前 145 条 `-Wcomment`）；8 条 hygiene 门禁 0 finding
+  （include / diagnostic / doc symbols / export / ai-docs / public docs / vsg window state / vsg upstream）；
+  不跑测试（comment-only）。
+- **未做（登记触发条件）**：`RenderEngine` 拆 `FrameResources`、能力预检 `Feature`、强类型
+  `DevicePixels`/`LogicalPixels`/`LinearColor`/`SrgbColor`、owned 帧、`ImageSource`、`Pipeline` 改名、
+  `shareDepth` 的资源图边。触发条件见清单第 2 节。
+
 ## 2026-10-18 §9.7 落地：会话归创建者，引擎只**借用**设备（S10b 的前置；诊断路线改扇出）
 
 - **结论**：`RenderEngine::initialize()` 不再调 `device_->initialize()`、`shutdown()` 不再调 `device_->shutdown()`

@@ -131,12 +131,24 @@ struct VN_GRAPHICS_API PassDescription
 };
 
 /**
- * @brief ONE FRAME, as a value: every pass that runs, in the order it runs, with everything it issues.
+ * @brief ONE FRAME, as a value: every enabled pass with everything it issues, in the order announced.
  *
  * THE FRAME IS ALREADY A VALUE INSIDE THE ENGINE (compileFrame() decides the order, the wiring and the
  * problems), so this is that value in the form a backend consumes - see `.ai/design/graphics-redesign.md`:
  * the engine assembles it BEFORE anything is dispatched, and a backend can then run a whole frame without the
  * flat announce-call sequence (RenderFrameExecutor::executeFrame).
+ *
+ * @note
+ * - This is an EPHEMERAL, BORROWED snapshot, not an owned or serialisable frame value: every pointer and span
+ *   inside it is borrowed from its producer and is valid only until the next compile (the engine reuses its
+ *   storage) or - at the executor boundary - for the duration of executeFrame(). A consumer that needs the
+ *   frame later copies what it keeps; this is not a command buffer.
+ * - THE ORDER IS THE ANNOUNCED ORDER, NOT NECESSARILY THE EXECUTION ORDER. The entries come in the engine's
+ *   declared order (Pass::order, registration order on a tie), which is the stable priority key a host
+ *   stated. An executor that resolves pass dependencies may schedule a producer before a consumer even when
+ *   the host announced it later; it must keep this order as its tie-breaker and report what it skipped (see
+ *   FrameGraph's stable topological sort). The value says what the host asked for; the executor's own plan
+ *   says what ran.
  *
  * A PASS THAT ISSUES NOTHING IS STILL AN ENTRY. "This pass ran and had nothing to issue" is a fact of the frame
  * (its scope opens and closes, the backend keys per-pass retained state by it), and it is a DIFFERENT fact from
@@ -167,7 +179,9 @@ struct VN_GRAPHICS_API FrameDescription
         std::optional<PassDescription> description;
     };
 
-    /// The passes of this frame, in the order they run (one entry per ENABLED pass; see Pass::description).
+    /// The passes of this frame, in the order the host announced them (one entry per ENABLED pass; see
+    /// Pass::description). This is the stable priority key, not necessarily the executor's final schedule: a
+    /// dependency-resolving executor may run a producer first (see the class note).
     std::vector<Pass> passes;
 };
 

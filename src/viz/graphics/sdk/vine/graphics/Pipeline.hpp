@@ -242,6 +242,11 @@ struct VN_GRAPHICS_API PipelineOptions {
  * - Exposes the window-presenting pass, and for deferred paths the off-screen G-buffer, whose size its owner
  *   maintains through resize() (the backend rebuilds the off-screen attachments whenever the target size changes
  *   between frames).
+ *
+ * @note
+ * - This is a PASS CHAIN and its registration, not a graphics-API pipeline state object (PSO): the GPU pipeline
+ *   variants are the backend's (see `VariantPool.hpp` / `PipelineKey`), and a host never builds or names one
+ *   here. "Pipeline" is used in the FrameGraph / RDG sense: a compiled chain of passes.
  */
 class VN_GRAPHICS_API Pipeline : public RefCounted<Pipeline> {
     friend class RenderPipelineBuilder;

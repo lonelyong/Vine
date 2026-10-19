@@ -30,6 +30,12 @@ VN_GRAPHICS_NS_BEGIN
  * - KINDS: `D2` is one 2D image; `Cube` is six, each a 2D image with its own mip chain. Larger kinds
  *   (1D, 3D, arrays) are deliberately absent until something needs them - adding one means answering what
  *   `faceCount()` means for it.
+ *
+ * @note
+ * - This is the IMPORTED / SAMPLED side of an image. An image PRODUCED by a pass and consumed by another is
+ *   an ImageRef (a RenderTarget plus an attachment): the two are different roots with different lifetimes,
+ *   and they are not interchangeable today - a Texture is not a pass input and an ImageRef is not a material
+ *   texture (see ImageRef's own note).
  */
 class VN_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
     VN_OBJECT_META_DECL;

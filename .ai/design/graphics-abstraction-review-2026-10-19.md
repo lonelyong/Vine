@@ -1,0 +1,53 @@
+# graphics 抽象层优化清单（2026-10-19）
+
+> **结论**：本轮只收口“契约文字”，不改公开形态。结构性条目按触发条件登记，等下一次公开面变更或真实负载命中再做。
+> 依据：graphics SDK 公开头与 `graphics-redesign.md` / `graphics-layering.md` /
+> `graphics-object-model-vs-3d-frameworks.md`。
+
+## 0. 判断口径
+
+优化的目标不是“更像某个引擎”，而是让**概念边界**自洽：
+
+- 一个事实只有一个权威；
+- 声明、解析、编译、执行、证据分开；
+- 缺席（没人说）与零（说了零）分开；
+- 机制在 SDK，策略在应用层。
+
+## 1. 本轮已收口
+
+| # | 问题 | 落点 |
+|---|---|---|
+| A1 | `FrameDescription` 被称作 value，实际是 borrowed snapshot | `FrameDescription.hpp` 类注释；`RenderEngine::frameDescription()` |
+| A2 | 顺序有两个权威：announced order vs dependency schedule | `FrameDescription.hpp`、`RenderFrameExecutor.hpp`、`FramePlan.hpp`、`RenderEngine::framePlan()` |
+| B1 | `PassKind` 封闭集 vs `RenderPass::describe()` 逃生口 | `PassDesc.hpp` 的 `PassKind` 注释 |
+| C1 | `Pipeline` 与 PSO 的命名碰撞 | `Pipeline.hpp` 类注释 |
+| C2 | `FramePlan` 与 `FrameDescription` 两个帧值的读者不同 | `FramePlan.hpp` 类注释 |
+| D1 | `program` 不在 state 里 | 已由 `StateNode.hpp` 说明；本轮不改 |
+| E1 | `ImageRef`（pass 产出）与 `Texture`（导入）是两个图源根 | `Texture.hpp` 与 `ImageRef.hpp` 互指 |
+| F1 | 设备像素/逻辑像素的边界 | `Viewport.hpp` 注释（并指向 `SceneView::resize` / `Pipeline::resize`） |
+
+## 2. 待办（带触发条件）
+
+| # | 优化项 | 抽象问题 | 动作 | 触发条件 |
+|---|---|---|---|---|
+| G1 | `RenderEngine` 角色过载 | pass 注册 + 帧编译 + 输出解析 + transient + 诊断 + 区 + 设备借用 | 拆出 `FrameResources`（`publish`/`resolve` + transient），引擎回到调度 + 注册 | 下一次加多区/布局/帧图可视化 |
+| H1 | 能力模型偏“懒惰” | `Capabilities` 只放预检事实，其余靠调用结果与诊断 | 第二个后端或 MSAA/compute 立项时加 `Feature` 枚举 | 第二个图形家族 / 新的预检问题 |
+| F2 | 单位与色彩空间未进类型 | 逻辑/设备像素、linear/sRGB、0–255/0–1 靠注释 | 强类型 `DevicePixels` / `LogicalPixels` / `LinearColor` / `SrgbColor` | 出现第二次同类尺寸/色彩缺陷 |
+| E2 | 图源没有统一抽象 | `ImageRef` 与 `Texture` 两个根 | `ImageSource`，或让 `ImageRef` 能命名非 RT 图源 | 静态/导入贴图作为 pass 输入的真实需求 |
+| K1 | `Pipeline` 改名 | 与 PSO 词义冲突 | `RenderPipeline` / `PassChain` | 下一次公开面破坏性变更 |
+| L1 | 帧 IR 没有 owned 形式 | 无法离线/序列化/跨线程 | `OwnedFrame` 或 `FrameDescription` 的 owned 兄弟 | 离线/远程渲染或帧录制 |
+| I1 | `RenderTarget::shareDepth` 把调度边藏进描述 | 资源图的边表达成字段 | 独立 `DepthView` / `ImageView` 关系 | 第三个共享 depth 的消费者或排序缺陷 |
+| J1 | `SceneView` 门面角色偏多 | 相机/内容/操纵器/管线/区/输入汇于一身 | 维持门面；必要时拆 `InputRouter` / `LayoutParticipant` | 多视图/输入路由重新进入 SDK |
+| B2 | `RenderPass::execute` 仍是虚函数 | 值路径与逃生口并存 | 保持现状；主路写死为 `describe()` | 已具备，仅登记 |
+
+## 3. 明确不做
+
+- 不改 `RenderTarget` 的名字（S10a 已裁决：它是描述，不是资源）。
+- 不现在拆 `RenderBackend` 聚合（三张契约已各自成头，聚合是过渡）。
+- 不引入通用 `std::variant` / `std::any` 的帧图节点（会破坏 `PassKind` 的可读性）。
+- 不为“将来可能”加能力标志（触发条件命中再加）。
+
+## 4. 判据
+
+本轮为契约文字变更：全量构建 0 error / 0 warning；`scripts/vsg_rewrite_gate.sh --no-build` 的 hygiene 段
+0 finding；不跑测试（comment-only 口径）。

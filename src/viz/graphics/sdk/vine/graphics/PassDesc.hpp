@@ -28,6 +28,12 @@ VN_GRAPHICS_NS_BEGIN
  * - A CLOSED SET, and deliberately small: the kind picks the ONE execution the engine knows how to run, so
  *   a caller adds a pass by naming a kind instead of deriving a class. Everything a pass DOES within its
  *   kind (which program, which content, where it lands) is a field of the declaration.
+ *
+ * @note
+ * - The closed set describes the DECLARATIVE path, not the extension ceiling: a new execution SHAPE is a
+ *   `RenderPass` subclass overriding describe() (which is what ScreenPass itself does), while a new
+ *   CONFIGURATION of an existing shape is a PassDesc. The descriptor is the primary authoring form; the
+ *   subclass is the escape hatch.
  */
 enum class PassKind : std::uint8_t
 {
