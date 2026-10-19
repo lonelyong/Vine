@@ -99,8 +99,10 @@ vn::graphics                          一个模块、一个 target、一个依�
    **同日追加**：帧时钟的查询面 `FrameProgress`（`submitted`/`completed`/`inFlight()`）走同一条通路
    （**S5 后与上面两样一起由 `frameReport()` 答出**，vsg 从 `Session::timeline()` 回答）。
    变异反证做了两处：引擎不转发 ⇒ `test_graphics` 红；后端改回 false ⇒ `test_vsg` 红。
-   **未做**：引擎自己那 6 组手写"seen / reported"集合改用 `ReportOnce`（行为中性，单独一轮）；
-   `TargetShape` / 计划数据（与 S3/S4/S5 的通路一起）；
+   **已收口（2026-10-19）**：引擎最后一处布尔 episode（`unsupported_target_reported_`）改用 `ReportOnce`。
+   其余 episode 都是 KEYED 的——`plan_problems_` 按句子、`unusable_inputs_this_frame_` 按 `(pass, image)`、
+   `shape_mismatches_*` 按 pass、`FrameResources` 的宿主名按 name——`ReportOnce` 是“一个条件一个实例”的
+   工具，键控集合保持各自的结构；`TargetShape` / 计划数据（与 S3/S4/S5 的通路一起）；
 4. 诊断路线**合并** —— **已做（2026-09-27）**：`ReportOnce` 与 `Diagnostics` 一起上 A 段
    （`vine/graphics/ReportOnce.hpp`、`vine/graphics/Diagnostics.hpp`），引擎持有唯一的路线，
    `RenderBackend::setDiagnosticsRoute()` 把它交给被驱动的后端 ⇒ 宿主读**一个**数

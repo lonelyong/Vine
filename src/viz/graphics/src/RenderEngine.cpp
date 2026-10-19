@@ -257,8 +257,7 @@ void RenderEngine::frame(double dt)
     // frame, and reported as an EPISODE: the pass is still run (its content is the host's to place), but
     // the host is told that the pipeline it built cannot mean what it says.
     if (raw_ptr<const RenderPass> unsupported = passNeedingAnUnsupportedTarget(); unsupported != nullptr) {
-        if (!unsupported_target_reported_) {
-            unsupported_target_reported_ = true;
+        if (unsupported_target_reported_.shouldReport()) {
             reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
                                 vn::graphics::DiagnosticCategory::TargetBuildFailed,
                                 String(u8"the backend reports no off-screen render target support, so pass '") +
@@ -270,7 +269,7 @@ void RenderEngine::frame(double dt)
     }
     else {
         // The pipeline stopped asking for what the backend cannot do, so a later ask is a new problem.
-        unsupported_target_reported_ = false;
+        unsupported_target_reported_.rearm();
     }
 
     // THE FRAME, HANDED OVER AS ONE VALUE. What runs is what the compile produced (see buildFrameValue): one entry

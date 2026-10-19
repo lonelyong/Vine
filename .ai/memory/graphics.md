@@ -25,6 +25,14 @@
 | **待办与口径** | **2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已推迟：当前只有一块窗口，登记为后期优化项**）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-19 引擎 episode 收口：最后一个布尔 seen/reported 改用 `ReportOnce`
+
+- **结论**：`RenderEngine::unsupported_target_reported_` 从手写 bool 改为 `ReportOnce`（`shouldReport()` /
+  `rearm()`），行为逐字不变；`graphics-layering.md` §1 的“6 组手写集合”从此收口。其余 episode 都是 KEYED 的
+  （按句子 / `(pass, image)` / pass / host name），不是 `ReportOnce` 的适用形状，登记为保持现状。
+- **判据**：`test_graphics` 379（`ABackendThatCannotDrawTargetsIsToldOncePerEpisode` 覆盖一次 / 重新武装）；
+  `ctest` 24/24；8 条 hygiene 门禁 0 finding。
+
 ## 2026-10-19 E2 收尾 #3：imported input revision 失效用例
 
 - **结论**：`(Texture*, revision)` 已是 `CompiledInput` / `MaterialImages` 的缓存键，后端无需改动；补真实设备

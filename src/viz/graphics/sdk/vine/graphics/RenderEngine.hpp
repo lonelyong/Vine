@@ -798,10 +798,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // The target the frame path presents through when this engine has NO area (see initialize): what the device
     // made for the window it brought up itself, or nullptr when it presents nothing. Borrowed - the device owns it.
     raw_ptr<PresentTarget>              own_target_         = nullptr;
-    // True once the frame reported that the backend cannot draw the off-screen targets the pipeline
-    // asks for (see frame()): the report is an EPISODE, so it repeats only after the pipeline stopped
-    // asking for one — the flag is cleared the moment no enabled pass needs a target.
-    bool                                unsupported_target_reported_ = false;
+    // The episode of "the backend cannot draw the off-screen targets the pipeline asks for" (see frame()):
+    // said once, re-armed the moment no enabled pass needs a target. The shared helper, like every other
+    // one-condition episode in this class.
+    ReportOnce                          unsupported_target_reported_{};
 
 
     /// The frame's image tables: host bindings, this frame's productions/publications, and transients. Kept
