@@ -267,9 +267,9 @@ TriangleFixture makeTriangle()
 vn::intrusive_ptr<vn::graphics::Camera> cameraLookingAt(double x)
 {
     vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(x, 0.0, 1.5), vn::math::Vec3d(x, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(x, 0.0, 1.5), vn::math::Vec3d(x, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
     return camera;
 }
 
@@ -1148,7 +1148,7 @@ TEST(VsgBackendTest, ACubeMapInputReachesAContentProgramAsACubeSampler)
                                            { 255U, 255U, 0U, 255U },    // NegY: yellow
                                            { 255U, 0U, 255U, 255U },    // PosZ: magenta
                                            { 0U, 255U, 255U, 255U } };  // NegZ: cyan
-    for (int face = 0; face < cube->faceCount(); ++face)
+    for (int face = 0; face < cube->layerCount(); ++face)
     {
         const vn::intrusive_ptr<vn::imaging::Image> image(
             new vn::imaging::Image(kFaceSize, kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
@@ -1160,7 +1160,7 @@ TEST(VsgBackendTest, ACubeMapInputReachesAContentProgramAsACubeSampler)
                 pixels[texel * 4U + byte] = static_cast<std::byte>(face_colours[face][byte]);
             }
         }
-        cube->setSource(face, vn::intrusive_ptr<const vn::imaging::Image>(image));
+        cube->setLayer(face, vn::intrusive_ptr<const vn::imaging::Image>(image));
     }
 
     // The same view block and input set as the 2D case, with the one difference this case is about: the input

@@ -13,6 +13,7 @@
 #include "InputRouter.hpp"
 #include "LayoutParticipant.hpp"
 #include "RenderPipeline.hpp"
+#include "ReportOnce.hpp"
 
 VN_WINDOW_NS_BEGIN
 struct KeyEvent;
@@ -323,6 +324,18 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      */
     void applySurfaceGeometry();
 
+    /** @brief Reports once per episode when the adopted chain draws none of this view's content.
+     *
+     * @details
+     * - "The view has content but the surface stays empty" is a WIRING mistake nothing downstream can see: every
+     *   pass of the chain is individually valid, and the engine compiles what it was handed (see
+     *   RenderPipeline::draws). A pipeline may draw several scenes on purpose, so this only speaks when NONE of its
+     *   passes draws this view's scene.
+     * - Run whenever the pair can change (setPipeline / setScene); the answer being right re-arms the report, so a
+     *   later break is a new episode.
+     */
+    void checkPipelineContent();
+
     // The bound engine is borrowed (the host owns it and keeps it alive).
     Lease<RenderEngine> engine_;
 
@@ -348,6 +361,10 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     // area. The handles in it are the pipeline's own - this one only keeps it alive, and dropping it is what
     // takes the passes out of the frame.
     intrusive_ptr<RenderPipeline> pipeline_;
+
+    // "The adopted chain draws none of this view's content" is one condition, not a per-call event (see
+    // checkPipelineContent).
+    ReportOnce content_mismatch_;
 };
 
 VN_GRAPHICS_NS_END

@@ -156,6 +156,9 @@ void Geometry::setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices
     // so "the rest of the arena", "clamp past the end" and "follow the buffer as it grows" have one
     // definition for every stream a geometry reads, index or vertex, today or later.
     indices_ = Geometry::IndexStream::slice(std::move(indices), first_index, index_count);
+    // A different index stream is a different picture (and possibly a different extent), so it announces one change
+    // rather than only the bounds.
+    invalidateBounds();
 }
 
 bool Geometry::hasIndices() const
@@ -245,7 +248,13 @@ raw_ptr<Material> Geometry::material() const
 
 void Geometry::setMaterial(intrusive_ptr<Material> m)
 {
+    if (material_ == m) {
+        return;   // an assignment that changes nothing must not cost the frame's collection
+    }
     material_ = std::move(m);
+    // The material a command carries is part of what a collected list says (see Node::announceContentChange): a
+    // different material is a different picture, so the memo cannot answer from the old list.
+    announceContentChange();
 }
 
 raw_ptr<ShaderProgram> Geometry::program() const
@@ -255,7 +264,12 @@ raw_ptr<ShaderProgram> Geometry::program() const
 
 void Geometry::setProgram(intrusive_ptr<ShaderProgram> program)
 {
+    if (program_ == program) {
+        return;
+    }
     program_ = std::move(program);
+    // Same rule as setMaterial: the program a command draws with is part of the list.
+    announceContentChange();
 }
 
 Aabbd Geometry::localBounds() const

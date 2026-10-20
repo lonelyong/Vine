@@ -462,9 +462,9 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // The look-at puts the triangle 0.5 to the LEFT of the window's centre; the fragment stage reports the
     // camera's x (0.5) in a colour byte.
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     RenderCommand command;
     command.geometry = geometry;

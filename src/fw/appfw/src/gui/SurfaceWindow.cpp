@@ -224,8 +224,10 @@ struct SurfaceWindow::Impl {
     vn::intrusive_ptr<vn::graphics::RenderEngine> engine;
     /// This surface's own view: one control holds one session (see appfw-document-model.md §9).
     vn::intrusive_ptr<vn::graphics::SceneView> view;
-    /// Which passes draw into this surface, and in which order (see RenderSurface). Declared after the engine so it
-    /// is DESTROYED before it: the surface borrows that engine.
+    /// Which passes draw into this surface, and in which order (see RenderSurface). The AREA belongs to the engine
+    /// (RenderEngine::createSurface) and this is the host's handle to the same object, so the member order here only
+    /// says when the host stops looking at it - the area cannot outlive the engine, and dropping this handle early
+    /// leaves the engine driving an area nobody presents into, which is a legal state.
     vn::intrusive_ptr<vn::graphics::RenderSurface> surface;
     /// The request this area's picture is built from (see Viewer). Declared after the engine, the view and
     /// the surface so it is destroyed before them: it borrows all three.
@@ -330,9 +332,10 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
         new vn::graphics::SceneView());
     d->view->setEngine(d->engine.get());
     // The one thing that knows which passes draw into THIS surface: the control falls back to its own view (see
-    // init()), and a host that brought a main pass of its own declares it here (RenderSurface::present).
-    d->surface = vn::intrusive_ptr<vn::graphics::RenderSurface>(
-        new vn::graphics::RenderSurface(*d->engine));
+    // init()), and a host that brought a main pass of its own declares it here (RenderSurface::present). The AREA is
+    // the engine's (createSurface): this handle is the host's view of the same object, so the window can be torn down
+    // in any order without leaving a surface that names a dead engine.
+    d->surface = d->engine->createSurface();
     // The area's picture (see Viewer): the control's own view, registered with the default request but neither a
     // chain nor a declaration - the first attach is where that becomes a picture, so a host that never touches the
     // viewer pays no build until there is an area to draw into.

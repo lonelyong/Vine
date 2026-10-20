@@ -201,11 +201,11 @@ namespace
  * @param texture Texture to inspect.
  * @return The number of faces holding a source image.
  */
-int filledFaceCount(const vn::graphics::Texture& texture) noexcept
+int filledLayerCount(const vn::graphics::Texture& texture) noexcept
 {
     int filled = 0;
-    for (int face = 0; face < texture.faceCount(); ++face) {
-        if (texture.hasSource(face)) {
+    for (int face = 0; face < texture.layerCount(); ++face) {
+        if (texture.hasLayer(face)) {
             ++filled;
         }
     }
@@ -306,7 +306,7 @@ vn::String textureRejectMessage(TextureReject reason, const vn::graphics::Textur
         case TextureReject::Incomplete:
             return formatDiagnostic(u8"texture is incomplete (%d of %d face(s) filled); "
                                     u8"the material renders untextured",
-                                    filledFaceCount(texture), texture.faceCount());
+                                    filledLayerCount(texture), texture.layerCount());
 
         case TextureReject::UnsupportedFormat:
             return formatDiagnostic(u8"texture pixel layout '%s' has no Vulkan format; "

@@ -238,12 +238,12 @@ struct VN_GRAPHICS_API RenderStateOrigin
  * - The two items differ ON PURPOSE (the table in `.ai/design/graphics-state.md` §4.1): `depth` is a POLICY
  *   for content that authored none ("this slot tests and writes", "this slot is translucent over what is
  *   already there", "this slot is an overlay"), and content that authored a depth state keeps it - depth is
- *   something scene content routinely declares; `polygonMode` is an OVERRIDE that rewrites every command the
+ *   something scene content routinely declares; `polygonMode` is an OVERRIDE that beats every command the
  *   pass draws, because it is a viewing switch ("show me the edges") that a content-authored Line must not
  *   be able to veto.
- * - `program` is deliberately NOT here: replacing the program is "draw this content with another program",
- *   done by rewriting each command, which is what keeps a backend's per-command pipeline key valid
- *   (RenderPass::setProgramOverride).
+ * - `program` is deliberately NOT here: it is not a render state but a different SHADING, so it travels as its own
+ *   field of the pass draw (PassDraw::program_override) and the backend resolves it per command exactly the way it
+ *   resolves `state` - the command list itself is never rewritten (RenderPass::setProgramOverride).
  */
 struct VN_GRAPHICS_API PassRenderState
 {

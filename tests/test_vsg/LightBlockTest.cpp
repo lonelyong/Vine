@@ -376,7 +376,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     // The camera every call announces: at +Z, looking at the origin. A world +Z light therefore travels TOWARDS
     // the viewer, which is the direction that lights the fragment stage's fixed normal.
     Camera camera;
-    camera.setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera.lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                  vn::math::Vec3d(0.0, 1.0, 0.0));
 
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
@@ -722,7 +722,7 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
     // The camera every call announces: at +Z looking at the origin, so a world +Z direction is a light towards the
     // viewer (which lights the fixed normal) and the reversed one does not.
     Camera camera;
-    camera.setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera.lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                  vn::math::Vec3d(0.0, 1.0, 0.0));
 
     vn::intrusive_ptr<Light> ambient = Light::createAmbient();

@@ -19,7 +19,7 @@
  * THE VALUE'S OWN SHAPE, SPELLED FOR A TEST. A case that used to drive the backend flat - open a pass, announce
  * its order, its target, its clear and its depth, draw, close, end the frame - names the same facts here and the
  * backend receives the finished value in one call. Nothing in this builder carries order semantics: `pass()`
- * starts a NEW entry, every setter fills that entry's description (see FrameDescription / PassDescription), and a
+ * starts a NEW entry, every setter fills that entry's description (see FrameDescription / PassDraw), and a
  * call before any `pass()` has no entry to fill at all - so the shapes the flat protocol had to forbid cannot be
  * written here either.
  *
@@ -202,13 +202,13 @@ class TestFrame
      *
      * @return The open entry's description.
      */
-    [[nodiscard]] vn::graphics::PassDescription& description()
+    [[nodiscard]] vn::graphics::PassDraw& description()
     {
         vn::graphics::FrameDescription::Pass& entry = current();
-        if (!entry.description.has_value()) {
-            entry.description.emplace();
+        if (!entry.draw.has_value()) {
+            entry.draw.emplace();
         }
-        return *entry.description;
+        return *entry.draw;
     }
 
     vn::graphics::FrameDescription frame_;

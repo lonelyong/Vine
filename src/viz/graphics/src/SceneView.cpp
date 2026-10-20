@@ -90,6 +90,32 @@ void SceneView::setPipeline(intrusive_ptr<RenderPipeline> pipeline)
     // Everything else (which passes exist, the shading mode, the overlays) is the pipeline's, which is why adopting
     // one is one call and why a pipeline change never has to re-state any of it.
     applySurfaceGeometry();
+    // The one thing the two halves can disagree on: the chain may have been built for OTHER content. Reported once
+    // per episode (see checkPipelineContent) - the structure is legal, and drawing a scene nobody has is exactly
+    // what an empty surface looks like from the host's side.
+    checkPipelineContent();
+}
+
+void SceneView::checkPipelineContent()
+{
+    raw_ptr<RenderEngine> engine = engine_.get();
+    if (pipeline_ == nullptr || scene_ == nullptr || engine == nullptr) {
+        content_mismatch_.rearm();   // nothing to be wrong about yet: a later break is a new episode
+        return;
+    }
+    if (pipeline_->draws(scene_.get())) {
+        content_mismatch_.rearm();
+        return;
+    }
+    if (!content_mismatch_.shouldReport()) {
+        return;
+    }
+    engine->reportEngineProblem(
+        vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
+        u8"this view adopted a pipeline whose passes draw other content: none of them draws the view's scene, so the"
+        u8" view's content never reaches the surface - build the chain for the view's scene"
+        u8" (RenderPipelineBuilder::setContent), or bind the pass that should draw it"
+        u8" (RenderEngine::bindPassContent)");
 }
 
 int SceneView::surfaceWidth() const noexcept
@@ -173,6 +199,9 @@ void SceneView::setScene(intrusive_ptr<Scene> scene)
     if (auto* orbit = dynamic_cast<OrbitCameraManipulator*>(manipulator_.get()); orbit != nullptr) {
         orbit->setScene(scene_.get());
     }
+    // Rebinding may have been exactly what the adopted chain drew: the wire is right again, so a later break is a
+    // new episode (see checkPipelineContent).
+    checkPipelineContent();
 }
 
 raw_ptr<CameraManipulator> SceneView::manipulator()

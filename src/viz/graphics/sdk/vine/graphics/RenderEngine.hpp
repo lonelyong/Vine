@@ -16,12 +16,12 @@
 
 #include "Capabilities.hpp"
 #include "Diagnostics.hpp"
-#include "FrameContext.hpp"
 #include "FrameDescription.hpp"
 #include "FramePlan.hpp"
 #include "FrameStats.hpp"
 #include "PassDesc.hpp"
 #include "RenderDiagnostic.hpp"
+#include "RenderSurface.hpp"
 #include "ReportOnce.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -37,7 +37,6 @@ class RenderPass;
 class ImageRef;
 class RenderTarget;
 class RenderBackend;
-class RenderSurface;
 class PresentTarget;
 
 /**
@@ -216,19 +215,28 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   not run, and no pass is described or executed a second time. A pass whose work must run therefore
      *   puts it where the compile looks - see RenderPass::execute.
      *
-     * @param dt Seconds elapsed since the previous frame (recorded in frameContext()).
+     * - The frame is what the declarations ARE: there is no clock and no per-frame context to pass in. Content that
+     *   animates measures its own time (a pass' `before_draw` hook, an overlay's own wall clock), which is what the
+     *   one `dt` a host had to hand over used to be - a number nothing in the frame read.
      */
-    void frame(double dt = 0.0);
+    void frame();
 
-    /** @brief Gets this frame's shared context (elapsed time, surface size).
+    /** @brief Gets the width the frame is laid out on, as the host announced it (see RenderSurface::resize).
      *
      * @details
-     * - Updated by frame() and the surface size announcement; the per-frame data shared across the pass
-     *   pipeline.
+     * - The surface's shape is the one number a builder or a host needs from the engine while it is assembling
+     *   passes (RenderPipelineBuilder lays its targets out on it). It is not a per-frame value: it changes when the
+     *   surface is resized, and everything that reads it reads the same fact.
      *
-     * @return The current frame context.
+     * @return Width in the units the host announced (logical pixels for the Qt host; 0 until the first resize).
      */
-    const FrameContext& frameContext() const;
+    [[nodiscard]] int surfaceWidth() const noexcept;
+
+    /** @brief Gets the height the frame is laid out on (see surfaceWidth).
+     *
+     * @return Height in the units the host announced (0 until the first resize).
+     */
+    [[nodiscard]] int surfaceHeight() const noexcept;
 
     /** @brief Gets what the device can do, as one value (see RenderDevice::capabilities).
      *
@@ -477,16 +485,33 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void unpublish(const String& name);
 
+    /** @brief Creates the ONE render area this engine drives (see RenderSurface).
+     *
+     * @details
+     * - ONE ENGINE, ONE AREA, OWNED HERE: the engine keeps the area it created, so the 1:1 relation has an owner
+     *   instead of a paragraph of documentation, and the host holds a handle to the same object (dropping it does
+     *   not destroy the area; the engine does). Filament's `Engine` and its `SwapChain`, and O3DE's `WindowContext`,
+     *   are the same shape.
+     * - A SECOND call answers null and says so once per episode: two areas on one engine would both declare the
+     *   picture for one frame (they draw over each other, and only one's target is the frame's default framebuffer)
+     *   while the other's size quietly drove the passes. A host that wants a second window builds a second engine; a
+     *   device may serve several.
+     * - The area outlives its host handle and never outlives the engine: an area a host kept after dropping the
+     *   control that owned the engine dies with the engine, so no path here can reach freed memory.
+     *
+     * @return The area this engine now drives, or nullptr when it already drives one (reported once).
+     */
+    [[nodiscard]] intrusive_ptr<RenderSurface> createSurface();
+
   private:
-    friend class RenderSurface;  // its one area: registers itself, announces its size, and asks whether it is the one
+    friend class RenderSurface;  // its one area: announces its size, and asks whether it is the one
 
     /** @brief Records the area's size for the frame and replays it to the target once a session can honour it.
      *
      * @details
      * - The engine's ONE size announcement (see RenderSurface::resize): recorded even with no device yet
-     *   (the frame context is what the passes read), replayed by initialize(). ONLY the engine's own area
-     *   is heard - a second area was refused when it tried to register (adoptArea), and a frame laid out
-     *   on another window's size would be a silent disagreement.
+     *   (the frame context is what the passes read), replayed by initialize(). Only the engine's own area is
+     *   heard (see createSurface) - a frame laid out on another window's size would be a silent disagreement.
      *
      * @param from   Area announcing (the engine's own is the only one it acts on).
      * @param width  Area width in pixels (> 0; the caller refuses the rest).
@@ -494,52 +519,24 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void announceAreaSize(raw_ptr<const RenderSurface> from, int width, int height);
 
-    /** @brief Registers @p area as the one area this engine drives (see RenderSurface - the frame's unit).
+    /** @brief One registered pass: the node, where it sits in the frame, and what a frame produced for it.
      *
      * @details
-     * - ONE engine drives ONE area: a second is REFUSED and reported once, because a silent takeover would
-     *   leave the first area presenting into a frame that no longer resolves it while its size kept being
-     *   the one the passes lay out on. A second window wants its own engine; a device may serve several
-     *   engines (see RenderDevice).
-     *
-     * @param area Area to register (borrowed; unregistered by ~RenderSurface).
-     */
-    void adoptArea(raw_ptr<RenderSurface> area);
-
-    /** @brief Unregisters @p area (a no-op unless it is the registered one).
-     *
-     * @param area Area going away.
-     */
-    void releaseArea(raw_ptr<const RenderSurface> area);
-
-    /** @brief One registered draw slot in the engine's ordered pass list.
-     *
-     * @details
-     * - A slot draws its bound @p content each frame; content may be null (a base scene pass draws
-     *   nothing). Disabled passes (RenderPass::setEnabled) are skipped. Top / HUD passes are ordinary
-     *   slots whose @p order sits above the main view.
-     * - The last four fields are what a PassDesc declared and a hand-built pass cannot say: where the pass
-     *   belongs in a human-reading table (@p tag), the transient it needs (@p writes_image / @p
-     *   writes_shape) and the content update it runs once per frame (@p before_draw).
+     * - THE DECLARATION IS NOT HERE. It is the pass' own (RenderPass::declaration()), so a descriptor-declared pass and the
+     *   node it became cannot drift apart, and the compile reads one copy of every fact instead of two.
+     * - What a slot adds is what only the ENGINE knows: the order the pass was registered at, the transient target
+     *   the compile resolved for it, and how long its last record took. A disabled pass is skipped at run time; its
+     *   declaration stays, because the wiring checks judge declarations.
      */
     struct Slot {
         intrusive_ptr<RenderPass> pass;
-        intrusive_ptr<Scene>      content;   // may be null (draws nothing)
         int                       order = 0;
         /// How long the last frame's record of this pass took, in microseconds (0: it did not run then).
         /// Measured by the compile, where that record happens (see buildFrameValue); reported through the frame
         /// plan (see FramePlan::PassPlan::record_micros).
         std::uint64_t record_micros = 0;
-        /// A label for the plan and for a human reading it ("" when nothing was declared).
-        String tag;
-        /// The transient image this pass declares it needs ("" = it writes what it holds).
-        String writes_image;
-        /// The shape writes_image is built at.
-        TransientShape writes_shape;
         /// The transient the compile allocated for this pass (null when it declares none).
         intrusive_ptr<RenderTarget> transient;
-        /// The content update this pass runs once per frame, before it draws.
-        std::function<void()> before_draw;
     };
 
     /** @brief WHICH image a declared output is, as the wiring check compares it (design §14.4).
@@ -562,6 +559,21 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
         /// @brief The coarse form: a whole target, as a bundle declaration names it.
         static constexpr int kWholeTarget = -1;
+
+        /** @brief Compares two identities for being the SAME image.
+         *
+         * @details
+         * - Field-wise, because the identity is a value: the wiring tables look an image up by identity, and two
+         *   declarations of one attachment answer the same.
+         *
+         * @param other Identity to compare with.
+         * @return true when both name the same image (or the same declared object, while unbound).
+         */
+        [[nodiscard]] bool operator==(const OutputIdentity& other) const noexcept
+        {
+            return target == other.target && attachment == other.attachment && depth == other.depth &&
+                   declared == other.declared;
+        }
 
         /** @brief Builds the identity of a declared output image.
          *
@@ -628,6 +640,28 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     struct PlanProblem {
         String message;   ///< the sentence a report would carry
+    };
+
+    /** @brief What one pass declared about one image or target, as the wiring checks compare it.
+     *
+     * @details
+     * - The pass count of a frame is small (single digits in every pipeline the framework builds), so the tables below
+     *   are FLAT and searched linearly: a red-black tree per compile would allocate a node per pass per frame for no
+     *   lookup benefit, and a vector keeps its capacity across frames (see collectPlanProblems).
+     */
+    struct Declaration {
+        raw_ptr<const ImageRef>     image{ nullptr };    ///< The fine declaration, when there was one.
+        raw_ptr<const RenderTarget> target{ nullptr };   ///< The target the declaration is about.
+        raw_ptr<const RenderPass>   pass{ nullptr };     ///< Who declared it (null: the host filled it).
+        std::size_t                 index{ 0 };          ///< Its position in the draw order.
+        OutputIdentity              identity{};          ///< The image it claims (the claimed table's key).
+    };
+
+    /** @brief A declared image nobody bound to a target, and who declared it (see collectPlanProblems phase 4). */
+    struct UnboundDeclaration {
+        raw_ptr<const ImageRef>   image{ nullptr };      ///< The unbound identity.
+        raw_ptr<const RenderPass> pass{ nullptr };       ///< Who declared it.
+        bool                      as_output{ false };    ///< Declared as an output (else as an input).
     };
 
     /** @brief Compiles this frame's declarations into the table the frame runs from (see FramePlan).
@@ -802,7 +836,17 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // the constructor to forwardProgram(), replaced by setDefaultContentProgram(), and null means "decline".
     intrusive_ptr<const ShaderProgram>  default_content_program_;
     std::vector<Slot>                   slots_;         // uniform ordered draw registry
-    FrameContext                        frame_ctx_;
+    // The wiring checks' tables (see collectPlanProblems). MEMBERS, cleared every compile: the pass count is small, a
+    // flat scan beats a tree, and a vector keeps its capacity - so a steady frame allocates nothing here.
+    std::vector<Declaration>            wiring_filled_;
+    std::vector<Declaration>            wiring_claimed_;
+    std::vector<OutputIdentity>         wiring_colliding_;
+    std::vector<UnboundDeclaration>     wiring_unbound_;
+    std::vector<OutputIdentity>         wiring_promised_images_;
+    // The shape the frame is laid out on, as the host announced it (see surfaceWidth / RenderSurface::resize):
+    // recorded even before a device exists, because the passes and their targets are built from it.
+    int                                 surface_width_      = 0;
+    int                                 surface_height_     = 0;
     // Monotonic content-frame token, announced to every rendered scene each
     // frame (Scene::setContentFrame): the passes of one frame that draw the same
     // scene through the same camera then share one tree walk instead of walking
@@ -810,10 +854,12 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // that never renders sees (no memoising at all).
     std::uint64_t                       content_frame_      = 0;
     bool                                initialized_        = false;
-    // The one area this engine drives (see RenderSurface): register on construction, gone with the area. Borrowed,
-    // and the only place the engine reads a target from - it owns no window and no handle (see the class contract).
-    raw_ptr<RenderSurface>              area_               = nullptr;
-    /// "A second area tried to register" is one condition, not a per-call event (see adoptArea).
+    // The one area this engine drives (see createSurface): OWNED, because a 1:1 relation needs one of its two ends
+    // to own it. It is the only place the engine reads a target from - the engine owns no window and no handle (see
+    // the class contract) - and a host holding the same object cannot outlive it: dropping the host's handle leaves
+    // the engine's, and the engine releases it while it is still an object (see ~RenderEngine).
+    intrusive_ptr<RenderSurface>        area_               = nullptr;
+    /// "A second area was asked for" is one condition, not a per-call event (see createSurface).
     ReportOnce                          area_refused_{};
     /// "The borrowed device is not up" is one condition too (see initialize): re-armed when a device is set, so the
     /// same device answering the same thing does not say it twice, and a different one gets its own say.

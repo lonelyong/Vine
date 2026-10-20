@@ -95,7 +95,7 @@ class StubBackend : public vn::graphics::RenderBackend
         ++frames;
         present_targets.push_back(present_to);
         for (const vn::graphics::FrameDescription::Pass& entry : frame.passes) {
-            draws += entry.description.has_value() ? entry.description->draws.size() : 0u;
+            draws += entry.draw.has_value() ? entry.draw->draws.size() : 0u;
         }
         // The frame's tail is the executor's (see RenderFrameExecutor::executeFrame): this stub presents through the
         // target the frame named, exactly as the real device does.

@@ -282,6 +282,21 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
      * @return The engine, or nullptr when it is gone.
      */
     [[nodiscard]] raw_ptr<RenderEngine> engine() const noexcept;
+
+    /** @brief Gets whether any pass of this chain draws @p scene.
+     *
+     * @details
+     * - "This chain draws that content" is a property of the CHAIN, not of its window pass: a deferred recipe draws
+     *   the scene in its G-buffer pass and shows the result through a screen pass, so asking the window pass would
+     *   answer no for every deferred picture.
+     * - It is what a view checks when it adopts a chain (see SceneView::setPipeline): a pipeline built for one
+     *   scene and adopted by a view holding another draws nothing the view has, and nothing downstream can see it
+     *   (each pass is individually legal).
+     *
+     * @param scene Content scene to look for (null draws nothing, so the answer is false).
+     * @return true when at least one registered pass of this chain has @p scene as its content.
+     */
+    [[nodiscard]] bool draws(raw_ptr<const Scene> scene) const noexcept;
     /** @brief Gets the pass presenting the view camera to the window.
      *
      * @return The order-0 window pass (a ScreenPass for the Deferred presets), or null when nothing was built.

@@ -181,56 +181,41 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      */
     Aabbd boundingBox(std::uint32_t layer_mask = kAllLayers) const;
 
-    /** @brief Collects render commands for the given camera, as a picture of the camera's aspect sees it.
+    /** @brief Collects render commands for @p camera, as a picture of the camera's aspect sees it.
      *
      * @details
-     * - The list is built by walking the tree (frustum culling, bounds caching, ordering). Inside a content
-     *   frame (see setContentFrame) the first walk's result is kept and shared - as a COPY, because a caller
-     *   may post-process what it receives - for every later call with the same camera and shape, until the
-     *   scene changes or the next frame begins.
-     * - The order: the content's declared draw order first (Node::setDrawOrder - higher is drawn later),
-     *   and inside one order the picture the collection has always produced - opaque front-to-back, then
-     *   transparent back-to-front.
-     * - The owning spelling: use it when the list is KEPT or EDITED. A caller that only reads it hands out
-     *   the shared list instead (collectRenderCommandsShared) and pays no copy at all.
+     * - ONE COLLECTION, ONE ENTRY. The list is built by walking the tree (frustum culling, bounds caching,
+     *   ordering) and handed over SHARED: the passes of one frame draw the same commands, so copying the list per
+     *   pass charged an intrusive_ptr increment per command plus a memcpy on every pass of every frame, for a list
+     *   nobody was going to change. A caller that must change something copies what it needs (`*list`) - which is
+     *   what makes the cost of a copy an explicit statement instead of an accident of which overload was called.
+     * - The order: the content's declared draw order first (Node::setDrawOrder - higher is drawn later), and inside
+     *   one order the picture the collection has always produced - opaque front-to-back, then transparent
+     *   back-to-front.
+     * - The list is immutable by contract and stays valid until the scene changes or the content frame ends (see
+     *   setContentFrame): do not hold it past the frame it was collected in.
      *
-     * @param camera Camera used for culling/ordering. Its own aspect is the picture's shape (see Camera -
-     *               one camera, one picture shape).
-     * @param layer_mask Layers this picture draws (see Node::setLayers); kAllLayers (the default) draws
-     *                   everything.
-     * @return Collected render commands (a copy of this frame's list for this view).
+     * @param camera Camera used for culling/ordering. Its own aspect is the picture's shape (see Camera - one
+     *               camera, one picture shape), and the memo matches on the view-projection it was built with, so a
+     *               camera whose shape changes gets its own walk.
+     * @param layer_mask Layers this picture draws (see Node::setLayers); part of the memo's key, because two passes
+     *                   drawing the same view with different masks do NOT draw the same list.
+     * @return The shared list of collected render commands (empty when there is nothing to draw).
      */
-    std::vector<RenderCommand> collectRenderCommands(raw_ptr<const Camera> camera,
-                                                     std::uint32_t layer_mask = kAllLayers) const;
-
-    /** @brief Collects render commands as a SHARED, immutable list.
-     *
-     * @details
-     * - The same collection as collectRenderCommands(), which is defined in terms of it, with the list handed
-     *   over by reference: the passes of one frame draw the SAME commands, and copying the list per pass
-     *   spent an intrusive_ptr increment per command and a memcpy on every pass of every frame for a list
-     *   nobody was going to change. A caller that has to change something makes its own copy of what it
-     *   needs (RenderPass::execute does exactly that, and only when a program override is set).
-     * - The list is immutable by contract (treat it as const) and stays valid until the scene changes or the
-     *   frame ends - do not hold it past the frame it was collected in.
-     *
-     * @param camera Camera used for culling/ordering. The memo matches on the view-projection it was built
-     *               with, which already carries the camera's shape - a camera whose shape changes gets its
-     *               own walk (see Camera).
-     * @param layer_mask Layers this picture draws (see Node::setLayers); part of the memo's key, because two
-     *                   passes drawing the same view with different masks do NOT draw the same list.
-     * @return Shared list of collected render commands (empty when there is nothing to draw).
-     */
-    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommandsShared(
+    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(
         raw_ptr<const Camera> camera, std::uint32_t layer_mask = kAllLayers) const;
 
-    /** @brief Opens the content frame the collected-command memo belongs to.
+    /** @brief Opens the content frame the collected-command memo belongs to (and ages what nothing asked for).
      *
      * @details
-     * - The engine announces one content frame per rendered frame, so several passes of one frame drawing
-     *   the same scene through the same camera share a single tree walk (see collectRenderCommands).
-     *   Nothing is memoised until a frame has been opened, so a caller that drives the collection itself
-     *   keeps the plain "walk on every call" behaviour.
+     * - The engine announces one content frame per rendered frame. Within a frame, every pass drawing this scene
+     *   through the same camera shares one walk; ACROSS frames the list is reused for as long as the graph does not
+     *   change (every node mutator announces through `Node::announceContentChange`, which the memo compares against),
+     *   so a static scene costs one walk when it changes, not one per frame.
+     * - An entry nothing asked for in the previous frame is dropped here, which is what keeps the memo bounded by the
+     *   views actually drawn instead of growing with the frame count.
+     * - Nothing is memoised until a frame has been opened, so a caller that drives the collection itself keeps the
+     *   plain "walk on every call" behaviour.
      * - Idempotent: announcing the same token again does nothing, so any number of passes may announce it.
      *
      * @param frame Opaque frame token; the same token means the same frame.
@@ -240,10 +225,10 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     /** @brief Drops the memoised collected commands.
      *
      * @details
-     * - The scene invalidates itself when its own content changes (root, visibility, opacity), and every
-     *   frame boundary ends the memo. A node edited DIRECTLY (a transform, a material, a drawable's
-     *   attributes) cannot be observed by the scene, so such an edit made between two passes of one frame
-     *   is picked up by the next frame - call this to pick it up at once.
+     * - The scene invalidates itself when its own content changes (root, visibility, opacity) and every built-in node
+     *   mutator announces one too (see Node::announceContentChange). What this call reaches is the edit no setter
+     *   could see: bytes written through a buffer, a custom node's own state, a hand-built geometry change. Call it
+     *   after such an edit - it is the ONLY way the collection learns about it.
      * - The CACHED BOUNDS (Node::invalidateBounds) are reset with it: the built-in setters announce
      *   themselves, and this call reaches the edits they could not see, so the next collection re-derives
      *   every box before it culls with one.
@@ -277,8 +262,13 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     std::uint64_t content_revision_ = 1;
     // Token of the content frame currently open, 0 = none (no memoising).
     std::uint64_t content_frame_ = 0;
-    // The frame's collected lists, one per camera. Scoped to the frame, so it
-    // cannot grow with the number of frames and cannot serve stale content.
+    // The graph's content epoch when the memo was last validated: a different value means SOMETHING in the graph
+    // changed since (every node mutator bumps it, see Node::announceContentChange), so every collected list may be
+    // stale and the memo is dropped before it is looked up again. Mutable: collecting is a const operation that
+    // maintains the memo (see content_collect_count_).
+    mutable std::uint64_t memo_epoch_ = 0;
+    // The collected lists of the views in use (one per camera), reused while the graph does not change and dropped
+    // when nothing asked for them in the previous frame - so the memo is bounded by the views drawn, not by frames.
     mutable std::unique_ptr<ContentMemo> content_memo_;
     mutable std::uint64_t                content_collect_count_ = 0;
     mutable std::uint64_t                content_reuse_count_ = 0;

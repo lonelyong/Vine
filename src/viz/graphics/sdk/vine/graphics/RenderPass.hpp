@@ -1,629 +1,666 @@
-﻿#pragma once
+#pragma once
 #include "graphics_global.hpp"
 
 #include <optional>
 #include <span>
 #include <vector>
 
+#include <vine/Color.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/Object.hpp>
-#include <vine/RefCounted.hpp>
 #include <vine/raw_ptr.hpp>
-#include <vine/Color.hpp>
+#include <vine/RefCounted.hpp>
 
 #include "DepthMode.hpp"
 #include "DepthView.hpp"
 #include "FrameDescription.hpp"
 #include "ImageRef.hpp"
 #include "ImageSource.hpp"
-#include "Node.hpp"
-#include "PolygonMode.hpp"
-#include "Sampler.hpp"
+#include "PassDesc.hpp"
 #include "PresentTarget.hpp"
+#include "Sampler.hpp"
 #include "StateNode.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
 class Camera;
-class RenderTarget;
 class RenderBackend;
+class RenderTarget;
 class Scene;
 class ShaderProgram;
 
 using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
 
 /**
- * @brief A render pass describing one complete rendering stage.
+ * @brief One rendering stage: its declaration (a PassDesc, stored once) plus the execution facts a frame resolved.
  *
  * @details
- * - Binds a camera, render target, and clear state.
- * - Executing a pass collects render commands from a scene and dispatches them to a backend.
- * - Multiple passes can be chained for split-screen, post-processing, etc.
+ * - ONE FACT, ONE STORAGE. The pass IS its declaration: every accessor below reads or writes a field of declaration(), and a
+ *   descriptor handed to `RenderEngine::addPass(const PassDesc&)` is adopted as-is (see setDesc). There is no second
+ *   copy of the clear colour, the camera, the inputs or the layer mask to keep in step, so "the value form and the
+ *   node form disagree" is not a defect this type can have.
+ * - WHAT IS NOT HERE: the facts the FRAME produces - the transient target a compile resolved, the measured record
+ *   time - belong to the engine's slot. A pass that declares `writes_image` still draws into the target the compile
+ *   handed it (see renderTarget()).
+ * - THE EXTENSION POINT IS describe(). A pass issues what it describes, and describe() needs nothing from a backend
+ *   (the picture's shape is the camera's), so a whole frame of descriptions can be assembled before anything runs.
  *
  * @note
- * - Naming: this is an engine-level rendering STAGE (the equivalent of an OSG render stage / a VulkanSceneGraph view
- *   + target + clear policy), NOT a Vulkan render pass. Several passes targeting the same framebuffer are recorded
- *   into one backend render pass; the backend owns that distinction.
+ * - Naming: this is an engine-level rendering STAGE (an OSG render stage, a VulkanSceneGraph view + target + clear
+ *   policy), NOT a Vulkan render pass. Several passes targeting one framebuffer are recorded into one backend render
+ *   pass; the backend owns that distinction.
  */
-class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
+class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
+{
     VN_OBJECT_META_DECL;
 
   public:
+    /// @brief Constructs a Scene pass: the ordinary stage that draws content through a camera.
     RenderPass();
-    ~RenderPass();
+    ~RenderPass() override;
 
   public:
-    /** @brief Gets the pass name. */
-    String name() const;
+    /**
+     * @brief Gets the declaration this pass IS.
+     *
+     * @details
+     * - The single storage of everything the pass states: kind, camera, content, target, inputs, clear policy, state,
+     *   layer mask and the per-frame hook.
+     *
+     * @return The declaration (valid until the next setDesc or mutating setter).
+     */
+    [[nodiscard]] const PassDesc& declaration() const noexcept { return desc_; }
 
-    /** @brief Sets the pass name. */
-    void setName(const String& name);
+    /**
+     * @brief Adopts @p desc as this pass' whole declaration.
+     *
+     * @details
+     * - Everything the pass stated before is replaced - this is "I am this descriptor", not a merge - which is what
+     *   makes a descriptor-declared pass and a hand-built one the same object (see RenderEngine::addPass).
+     * - A stated depth view is applied to the declared target again (see setDepthView), so a re-stated declaration
+     *   keeps its depth edge.
+     *
+     * @warning A layered depth view is kept as a declaration and applied to nothing: layered targets do not exist yet,
+     *          and the engine is what reports the refusal before adopting.
+     *
+     * @param desc Declaration to adopt (moved in).
+     */
+    void setDesc(PassDesc desc);
 
-    /** @brief Gets the associated render target. */
-    raw_ptr<RenderTarget> renderTarget() const;
+    /**
+     * @brief Gets the pass name.
+     *
+     * @return The name used by diagnostics and the frame plan (empty when never set).
+     */
+    [[nodiscard]] String name() const { return desc_.name; }
 
-    /** @brief Gets the depth image this pass draws against.
+    /**
+     * @brief Sets the pass name.
+     *
+     * @param name Name used by diagnostics and the frame plan.
+     */
+    void setName(const String& name) { desc_.name = name; }
+
+    /**
+     * @brief Gets the content scene this pass draws.
+     *
+     * @return The scene (null draws nothing, which is how a content-less pass states itself).
+     */
+    [[nodiscard]] raw_ptr<Scene> content() const noexcept { return desc_.content.get(); }
+
+    /**
+     * @brief Binds the content scene this pass draws (see RenderEngine::bindPassContent).
+     *
+     * @details
+     * - The pass keeps the scene alive. An overlay pass (a gizmo, an FPS readout) owns the scene it draws, so this is
+     *   also how such a pass is built.
+     *
+     * @param scene Scene to draw, or null to draw no content.
+     */
+    void setContent(intrusive_ptr<Scene> scene) { desc_.content = std::move(scene); }
+
+    /**
+     * @brief Gets the target this pass draws into.
+     *
+     * @return The target, or null for the window / the frame's own presented image.
+     */
+    [[nodiscard]] raw_ptr<RenderTarget> renderTarget() const noexcept { return desc_.writes.get(); }
+
+    /**
+     * @brief Sets the target this pass draws into.
+     *
+     * @details
+     * - The pass keeps the target alive: it draws into it every frame, so it must not be able to outlive it.
+     * - The compile also calls this with the transient target it resolved for a pass that declared
+     *   `PassDesc::writes_image`, which is why the effective target is the one this returns.
+     * - A stated depth view is applied to the new target (see setDepthView); a pass that stated none does not un-say
+     *   what another pass set.
+     *
+     * @param target Target to draw into, or null for the window.
+     */
+    void setRenderTarget(intrusive_ptr<RenderTarget> target);
+
+    /**
+     * @brief Gets the depth image this pass draws against.
      *
      * @return The view stated by setDepthView, or an invalid view when the pass uses its target's own depth.
      */
-    DepthView depthView() const;
+    [[nodiscard]] DepthView depthView() const { return desc_.depth_view.value_or(DepthView{}); }
 
-    /** @brief States the depth image this pass draws against, when it is another pass' image (see DepthView).
+    /**
+     * @brief States the depth image this pass draws against, when it is another pass' image (see DepthView).
      *
      * @details
-     * - THE PASS DECLARES THE EDGE; the target stores the mechanism. The view is kept here and applied to the
-     *   pass' current target (RenderTarget::shareDepth), and re-applied when a target is set later
-     *   (setRenderTarget) - so a pass moved to another target keeps drawing against the same depth.
-     * - Constraints are the target's (both off-screen and equally sized, the lender renders earlier, its depth is
-     *   not promoted): they are the backend's to enforce, and it reports a plan that breaks them rather than
-     *   guessing.
+     * - THE PASS DECLARES THE EDGE; the target stores the mechanism. The view is applied to the pass' current target
+     *   (RenderTarget::shareDepth) and re-applied when a target is set later, so a pass moved to another target keeps
+     *   drawing against the same depth.
+     * - Constraints are the target's (both off-screen and equally sized, the lender renders earlier, its depth is not
+     *   promoted); the backend reports a plan that breaks them rather than guessing.
      * - An invalid view clears the declaration: the pass goes back to its target's own depth.
+     *
+     * @warning A view whose layer is not 0 is kept as a declaration but applied to nothing: layered targets are not
+     *          built yet (the engine reports the refusal).
      *
      * @param view The depth image this pass draws against.
      */
     void setDepthView(DepthView view);
 
-    /** @brief Sets the render target this pass renders into.
+    /**
+     * @brief Gets the camera this pass draws through.
      *
-     * @details
-     * - The pass keeps a reference to the target (its output resource), so the target stays alive as long as the pass
-     *   uses it.
-     *
-     * @param target Render target to render into, or null for the default framebuffer.
+     * @return The camera (null draws nothing).
      */
-    void setRenderTarget(intrusive_ptr<RenderTarget> target);
+    [[nodiscard]] raw_ptr<Camera> camera() const noexcept { return desc_.camera.get(); }
 
-    /** @brief Gets the camera used by this pass. */
-    raw_ptr<Camera> camera() const;
-
-    /** @brief Sets the camera used by this pass.
+    /**
+     * @brief Sets the camera this pass draws through.
      *
      * @details
-     * - The pass KEEPS the camera alive, like it keeps its render target: every frame it draws through this camera,
-     *   so a caller that builds one for it — the pipeline builder derives the shadow pass' light camera on the fly —
-     *   must not be able to leave the pass rendering through freed memory by dropping its own handle.
-     * - That is not hypothetical: while this stored a borrowed pointer, the shadow pass drew through the freed light
-     *   camera and its map came back empty (found by vsg_backend_selftest's deferred shadow phase). A host camera
-     *   outliving its pass is unaffected.
-     * - The parameter says so: it is an owning handle, not a `raw_ptr` , so a caller reading the signature can see
-     *   the pass takes the camera over. Passing a borrowed camera is spelled `intrusive_ptr<Camera>(borrowed)` — the
-     *   conversion is explicit, which is what makes it a decision rather than an accident (this parameter used to be
-     *   a `raw_ptr` that the body retained, the one place in the SDK where the signature hid the retention).
+     * - The pass KEEPS the camera alive: it draws through it every frame, and a caller that derives one for the pass
+     *   (the pipeline builder derives the shadow pass' light camera) must not be able to leave it drawing through
+     *   freed memory. The owning parameter says so at the signature; pass a borrowed one explicitly as
+     *   `intrusive_ptr<Camera>(borrowed)`.
      *
      * @param camera Camera to draw through and keep alive (may be null).
      */
-    void setCamera(intrusive_ptr<Camera> camera);
+    void setCamera(intrusive_ptr<Camera> camera) { desc_.camera = std::move(camera); }
 
-    /** @brief Gets one attachment's clear colour (attachment 0 unless one is named).
+    /**
+     * @brief Gets one attachment's clear colour (attachment 0 unless one is named).
      *
      * @details
-     * - Attachment 0's default is an opaque dark grey (51, 51, 51, 255): the value the main WINDOW pass was
-     *   written against, because that is the pass filling the surface a host looks at.
-     * - Nothing in the engine names a colour for the off-screen targets its builders create, so an off-screen
-     *   pass that wants one says so itself - otherwise attachment 0 of an off-screen target clears to that
-     *   window grey.
-     * - Attachments 1 and beyond are not that value at all: an attachment nobody states a colour for is
-     *   cleared to transparent black by contract, so a consumer can tell "nothing drawn here" from data (see
-     *   ClearPolicy).
+     * - Attachment 0 defaulting to an opaque dark grey (51, 51, 51, 255) is the value the main WINDOW pass was written
+     *   against; nothing in the engine names a colour for the off-screen targets its builders create, so an
+     *   off-screen pass that wants one states it.
+     * - Attachments 1 and beyond are not that value: an unstated attachment is transparent black, so a consumer can
+     *   tell "nothing drawn here" from data (see ClearPolicy).
      *
      * @param attachment Colour attachment index (0 = the first, the default).
-     * @return The colour stated for that attachment, or transparent black for an unstated one.
+     * @return The colour stated for that attachment, or transparent black for an unstated one past the first.
      */
-    Color clearColor(int attachment = 0) const;
+    [[nodiscard]] Color clearColor(int attachment = 0) const;
 
-    /** @brief Sets one attachment's clear colour (attachment 0 unless one is named).
+    /**
+     * @brief Sets one attachment's clear colour (attachment 0 unless one is named).
      *
      * @details
-     * - Attachment 0 and the extras are ONE fact with one authority: the pass' clear policy. The index is
-     *   what a G-buffer needs (its normal image cleared to (0,0,1,0), say), and stating nothing for an
-     *   attachment keeps transparent black - the value that means "nothing here" (see ClearPolicy).
-     * - A negative index is ignored; indices above 0 grow the stated list with transparent-black entries so
-     *   the index the caller names is the index the backend clears.
+     * - Attachment 0 and the extras are ONE fact with one authority: the pass' clear policy, i.e. two fields of the
+     *   declaration. Stating nothing for an attachment keeps transparent black - the value that means "nothing here".
+     * - A negative index is ignored; indices above 0 grow the stated list with transparent-black entries so the index
+     *   the caller names is the index the backend clears.
      *
      * @param color      Colour that attachment is cleared to (0..255 per channel).
      * @param attachment Colour attachment index (0 = the first, the default).
      */
     void setClearColor(const Color& color, int attachment = 0);
 
-    /** @brief Returns whether the depth buffer is cleared.
-     *
-     * A REQUEST, not the state — hence "should" rather than the is/has prefix the other boolean
-     * accessors use: a backend may not be able to honour it (the window surface always clears depth),
-     * which is exactly what its documentation records. The state is only ever this pass' intent.
-     *
-     * @return True when this pass asks for a cleared depth buffer.
-     */
-    bool shouldClearDepth() const;
-
-    /** @brief Sets whether the depth buffer is cleared before this pass.
+    /**
+     * @brief Returns whether the depth buffer is cleared.
      *
      * @details
-     * - Controls the depth flag of the ClearPolicy announced to the backend when this pass clears (see
-     *   setClearEnabled / ClearPolicy).
-     * - Whether a false value actually preserves the previous depth depends on the target: it is honoured for
-     *   off-screen targets (their depth survives via a depth-LOAD pass), but a pass rendering into the window / main
-     *   surface always gets a cleared depth buffer (the surface render pass clears depth), so the flag is ignored
-     *   there.
+     * - A REQUEST, not the state - hence "should" rather than the is/has prefix: a backend may not be able to honour
+     *   it (the window surface always clears depth), which is what its documentation records.
      *
-     * @param clear True to clear the depth buffer (the default).
+     * @return True when this pass asks for a cleared depth buffer (the default for a Scene pass, never for a Screen
+     *         pass).
      */
-    void setShouldClearDepth(bool clear);
+    [[nodiscard]] bool shouldClearDepth() const noexcept;
 
-    /** @brief Returns whether the colour/depth buffer is cleared before this pass.
-     *
-     * @note The main pass clears by default; top / HUD passes usually disable it so they draw over the previous
-     *       frame's content.
-     */
-    bool isClearEnabled() const;
-
-    /** @brief Sets whether the colour/depth buffer is cleared before this pass.
-     *
-     * @param enabled True to clear the buffers (the default).
-     */
-    void setClearEnabled(bool enabled);
-
-    /** @brief Returns how this pass's content handles depth (the pass' own value).
-     *
-     * @return The depth mode (DepthMode::TestAndWrite by default). It is the pass' POLICY for content that authored
-     *         none - see stateOverrides() and StateNode.hpp's resolveRenderState for the decision.
-     */
-    DepthMode depthMode() const;
-
-    /** @brief Sets how this pass's content handles depth.
+    /**
+     * @brief Sets whether the depth buffer is cleared before this pass.
      *
      * @details
-     * - TestAndWrite (the default) draws the content as depth-occluded opaque scene content; TestOnly tests against
-     *   the target's current depth but does not write it (translucent content composited over already-written depth);
-     *   Disabled draws on top of whatever is already in the target with no depth testing (HUD / overlay style).
-     * - Independent of clearing and of lighting. A translucent pass drawn into a target whose depth an earlier pass
-     *   wrote uses TestOnly and disables only the clear.
-     * - It is a POLICY, not an override: a command that authored a depth state of its own keeps it (depth is
-     *   something scene content routinely declares), so this decides for the content that did not.
+     * - Off-screen targets honour a false value (their depth survives through a depth-LOAD pass); the window always
+     *   gets a cleared depth buffer, so the flag is ignored there.
+     *
+     * @param clear True to clear the depth buffer.
+     */
+    void setShouldClearDepth(bool clear) { desc_.clear_depth = clear; }
+
+    /**
+     * @brief Returns whether the colour/depth buffer is cleared before this pass.
+     *
+     * @return True when the pass clears (the default for a Scene pass, never for a Screen pass: a composite draws over
+     *         what is already there).
+     */
+    [[nodiscard]] bool isClearEnabled() const noexcept;
+
+    /**
+     * @brief Sets whether the colour/depth buffer is cleared before this pass.
+     *
+     * @param enabled True to clear the buffers.
+     */
+    void setClearEnabled(bool enabled) { desc_.clear_enabled = enabled; }
+
+    /**
+     * @brief Returns how this pass's content handles depth (the pass' own policy).
+     *
+     * @return The depth mode (DepthMode::TestAndWrite by default), which is what content that authored no depth state
+     *         of its own gets (see resolveRenderState).
+     */
+    [[nodiscard]] DepthMode depthMode() const noexcept { return desc_.depth_mode; }
+
+    /**
+     * @brief Sets how this pass's content handles depth.
+     *
+     * @details
+     * - TestAndWrite draws depth-occluded opaque content; TestOnly tests but does not write (translucent content over
+     *   already-written depth); Disabled draws on top with no depth test (HUD / overlay).
+     * - A POLICY, not an override: a command that authored its own depth state keeps it.
      *
      * @param mode The depth mode.
      */
-    void setDepthMode(DepthMode mode);
+    void setDepthMode(DepthMode mode) noexcept { desc_.depth_mode = mode; }
 
-    /** @brief What this pass says about the state of the content it draws.
+    /**
+     * @brief What this pass says about the state of the content it draws.
      *
      * @details
-     * - The pass side of the state priority table: its depth policy (depthMode()) and its rasterisation override
-     *   (polygonModeOverride()), in one value.
-     * - Announced to the backend before the pass draws, so a backend can resolve each command's FINAL state in one
-     *   place - `resolveRenderState(command.authored_state, pass.stateOverrides())` , see StateNode.hpp.
+     * - The pass side of the state priority table: its depth policy and its rasterisation override, in one value,
+     *   announced to the backend so it can resolve each command's final state in one place.
      *
      * @return The pass' state for its content.
      */
-    PassRenderState stateOverrides() const;
+    [[nodiscard]] PassRenderState stateOverrides() const noexcept;
 
-    /** @brief Returns whether this pass is drawn by the engine this frame. */
-    bool isEnabled() const;
-
-    /** @brief Sets whether this pass is drawn by the engine.
+    /**
+     * @brief Returns whether this pass is drawn by the engine this frame.
      *
-     * @details
-     * - The engine skips disabled passes, which lets a registered pass (e.g. a HUD overlay) be toggled on and off
-     *   without removing it. The default is true.
-     *
-     * @param enabled True to draw the pass (the default).
+     * @return True when enabled (the default).
      */
-    void setEnabled(bool enabled);
+    [[nodiscard]] bool isEnabled() const noexcept { return desc_.enabled; }
 
-    /** @brief Restricts this pass to a sub-rectangle of the render target.
+    /**
+     * @brief Sets whether this pass is drawn by the engine.
      *
      * @details
-     * - Used for sub-viewports such as an axis gizmo in a screen corner, a picture-in-picture preview, or a second
-     *   view drawn into part of the target.
-     * - One rule decides what a pass draws into, and EVERY pass follows it: this rectangle, or the whole target when
-     *   none is set, clamped into the target - in DEVICE pixels with a top-left origin (what a host's
-     *   devicePixelRatio() is for).
-     * - What the pass CLEARS is a different question and is not affected: a clear covers the whole target while a
-     *   draw stays inside this rectangle, which is what makes a preview in a corner work. A content pass used to be
-     *   the exception - one that cleared its target filled it whatever it announced, so this rectangle was silently
-     *   dropped - and the two kinds of pass honour it alike now.
-     * - The rectangle is a fact of the PASS (PassDescription::viewport), not of one drawing call: every draw the pass
-     *   issues is placed inside it. The base pass describes it once and draws once, so it covers the whole pass; a
-     *   subclass that draws more than once describes each draw itself.
-     * - The rectangle does NOT decide the shape the picture is projected with: a camera carries the shape of its own
-     *   picture (see Camera), and with it the frustum the content was culled against. For a pass drawing through a
-     *   camera that does not have this rectangle's shape the engine reports the mismatch - the drawing is a STRETCHED
-     *   picture, not a differently framed one - so a sub-viewport is set together with its camera's shape
-     *   (`camera->setAspect(w / h)`).
+     * - A disabled pass keeps its declaration, costs nothing, and still counts as a declaration for the wiring checks,
+     *   which is what lets a registered pass (a HUD overlay) be toggled without removing it.
+     *
+     * @param enabled True to draw the pass.
+     */
+    void setEnabled(bool enabled) noexcept { desc_.enabled = enabled; }
+
+    /**
+     * @brief Restricts this pass to a sub-rectangle of its target.
+     *
+     * @details
+     * - Used for an axis gizmo in a corner, a picture-in-picture preview, or a second view drawn into part of the
+     *   target. The rectangle is in DEVICE pixels with a top-left origin, and every draw the pass issues is placed
+     *   inside it.
+     * - What the pass CLEARS is a different question: a clear covers the whole target, a draw stays inside this
+     *   rectangle, which is what makes a corner preview work.
+     * - The rectangle does NOT decide the shape the picture is projected with: that is the camera's (see Camera). The
+     *   engine reports a pass whose rectangle and camera shape disagree, because the result is a stretched picture.
      *
      * @param viewport Draw rectangle in device pixels (top-left origin).
      */
-    void setViewport(const Viewport& viewport);
+    void setViewport(const Viewport& viewport) { desc_.viewport = viewport; }
 
-    /** @brief Restricts this pass to a sub-rectangle of the render target.
-     *
-     * @details
-     * - Convenience for setViewport(const Viewport&).
+    /**
+     * @brief Restricts this pass to a sub-rectangle of its target (see setViewport(const Viewport&)).
      *
      * @param x      Viewport origin x in device pixels.
      * @param y      Viewport origin y in device pixels (top-left origin).
      * @param width  Viewport width in device pixels.
      * @param height Viewport height in device pixels.
      */
-    void setViewport(int x, int y, int width, int height);
+    void setViewport(int x, int y, int width, int height) { setViewport(Viewport{ x, y, width, height }); }
 
-    /** @brief Returns whether a sub-viewport is configured for this pass. */
-    bool hasViewport() const;
-
-    /** @brief Gets the configured draw viewport.
+    /**
+     * @brief Returns whether a sub-viewport is configured for this pass.
      *
-     * Only meaningful when hasViewport() is true; otherwise the pass draws the whole target.
-     *
-     * @return The draw rectangle in device pixels.
+     * @return True when the pass draws into a stated rectangle.
      */
-    Viewport viewport() const;
+    [[nodiscard]] bool hasViewport() const noexcept { return desc_.viewport.has_value(); }
 
-    /** @brief Clears any configured sub-viewport (pass renders to the full surface). */
-    void clearViewport();
+    /**
+     * @brief Gets the configured draw viewport.
+     *
+     * @return The draw rectangle in device pixels; only meaningful when hasViewport() is true.
+     */
+    [[nodiscard]] Viewport viewport() const noexcept { return desc_.viewport.value_or(Viewport{}); }
 
-    /** @brief Returns which layers of the content this pass draws (see Node::setLayers).
+    /// @brief Clears any configured sub-viewport: the pass draws the whole target again.
+    void clearViewport() noexcept { desc_.viewport.reset(); }
+
+    /**
+     * @brief Returns which layers of the content this pass draws (see Node::setLayers).
      *
      * @return The mask (kAllLayers by default, which draws every layer).
      */
-    std::uint32_t layerMask() const;
+    [[nodiscard]] std::uint32_t layerMask() const noexcept { return desc_.layer_mask; }
 
-    /** @brief Sets which layers of the content this pass draws.
+    /**
+     * @brief Sets which layers of the content this pass draws.
      *
      * @details
-     * - The content selection of one pass: the collection leaves out every node whose resolved layers do not
-     *   intersect this mask, so one scene can feed several passes that each draw a different part of it (a shadow
-     *   pass drawing casters, a main pass drawing everything) - without splitting the scene in two and without a
-     *   second walk per pass that only the mask differs in (the mask is part of the collected list's key, see
-     *   Scene::collectRenderCommandsShared).
-     * - It is a declaration about CONTENT, not about the pass: an overlay pass drawing its own HUD scene states its
-     *   own mask if it wants one, and a pass with no content is unaffected.
+     * - The content selection of one pass: nodes whose resolved layers do not intersect the mask are left out of the
+     *   collection, so one scene can feed several passes that each draw a different part of it - and the mask is part
+     *   of the collected list's key, so no second walk is needed (see Scene::collectRenderCommands).
+     * - A mask of 0 selects nothing - legal, and reported once as a frame-plan problem, because a content pass that
+     *   draws nothing is nearly always a mistake.
      *
      * @param mask Layer mask (kAllLayers draws every layer; 0 draws no content at all).
      */
-    void setLayerMask(std::uint32_t mask);
+    void setLayerMask(std::uint32_t mask) noexcept { desc_.layer_mask = mask; }
 
-    /** @brief Sets the name this pass publishes its output under.
+    /**
+     * @brief Sets the name this pass publishes its output under.
      *
      * @details
-     * - When a pass renders into a non-null RenderTarget and declares an output name, the engine registers that
-     *   target in its named-output registry after the pass runs, so later passes can sample it by name without
-     *   holding a pointer to the producer. Leave empty to publish nothing.
+     * - Later passes can then consume it by name without holding a pointer to the producer. The engine clears the
+     *   registry at the start of every frame, so the producer must run earlier in the same frame.
      *
-     * @param name Output slot name, or empty to disable publishing.
+     * @param name Output slot name, or empty to publish nothing.
      */
-    void setOutputName(const String& name);
+    void setOutputName(const String& name) { desc_.output_name = name; }
 
-    /** @brief Gets the output slot name this pass publishes under.
+    /**
+     * @brief Gets the output slot name this pass publishes under.
      *
      * @return The output name (empty when publishing is disabled).
      */
-    String outputName() const;
+    [[nodiscard]] String outputName() const { return desc_.output_name; }
 
-    /** @brief Declares the image this pass produces (design §14).
+    /**
+     * @brief Declares the image this pass produces (the fine-grained output declaration).
      *
      * @details
-     * - The object-typed counterpart of setOutputName: the producer and every consumer point at the SAME ImageRef, so
-     *   a hand-off cannot be mistyped, and the engine can SEE the wiring — it reports an image that two passes
-     *   declare as their output instead of letting the second one silently win at run time.
-     * - A promise is about the content a consumer gets, so the engine checks that the target named here is the one
-     *   this pass RENDERS into (see setRenderTarget): promising what the pass never writes is a claim about nothing,
-     *   and it is reported.
-     * - The image has to be BOUND to a target (ImageRef::bind): an unbound identity has no address, so no consumer
-     *   can resolve it and the check above has nothing to compare — declaring one is reported (once per image, per
-     *   episode) instead of passing unnoticed.
-     * - A pass may declare an output image, an output target, an output name, or several of them. The object-typed
-     *   declarations drive the runtime; a name is resolved by the engine's named-output registry, which a pass
-     *   without object declarations falls back on (design §14.3). See setOutputName for what each declaration is for.
+     * - The object-typed counterpart of setOutputName: producer and consumers point at the SAME ImageRef, so a hand-off
+     *   cannot be mistyped and the engine can see the wiring (it reports an image two passes declare).
+     * - The image has to be BOUND to a target (ImageRef::bind); an unbound identity is reported instead of passing
+     *   unnoticed, and a promise about a target this pass does not draw into is reported too.
      *
      * @param image Image this pass produces (null clears it).
      */
-    void setOutput(intrusive_ptr<ImageRef> image);
+    void setOutput(intrusive_ptr<ImageRef> image) { desc_.output = std::move(image); }
 
-    /** @brief Gets the output image this pass produces.
+    /**
+     * @brief Gets the output image this pass produces.
      *
      * @return The declared output image, or null when none was declared.
      */
-    raw_ptr<ImageRef> output() const;
+    [[nodiscard]] raw_ptr<ImageRef> output() const noexcept { return desc_.output.get(); }
 
-    /** @brief Declares a WHOLE target this pass hands to consumers (the coarse counterpart of setOutput(ImageRef),
-     * design §14).
+    /**
+     * @brief Declares a WHOLE target this pass hands to consumers (the coarse counterpart of setOutput).
      *
      * @details
-     * - "Any image of this target is mine to hand out": a pass rendering into an MRT target fills ALL of its
-     *   attachments in one render scope, so promising them one by one would mean repeating today's attachment count
-     *   at every producer — and getting it wrong when the target grows an attachment.
-     * - Shape-agnostic on purpose: the promise covers whatever the target has when the engine validates it. One of
-     *   the three output declarations; see setOutputName for how they relate.
-     * - The target is NOT where the content comes from (that is setRenderTarget); it is what this pass promises about
-     *   it. Declaring both one image and a whole target is redundant, not wrong.
+     * - "Any image of this target is mine to hand out": a pass rendering into an MRT target fills all of its
+     *   attachments in one render scope, so promising them one by one would mean repeating the attachment count at
+     *   every producer.
+     * - Shape-agnostic on purpose: the promise covers whatever the target has when the engine validates it.
      *
      * @param target Target whose images this pass produces (null clears the declaration).
      */
-    void setOutputTarget(intrusive_ptr<RenderTarget> target);
+    void setOutputTarget(intrusive_ptr<RenderTarget> target) { desc_.output_target = std::move(target); }
 
-    /** @brief Gets the whole target this pass promises to consumers.
+    /**
+     * @brief Gets the whole target this pass promises to consumers.
      *
      * @return The declared output target, or null when none was declared.
      */
-    raw_ptr<RenderTarget> outputTarget() const;
+    [[nodiscard]] raw_ptr<RenderTarget> outputTarget() const noexcept { return desc_.output_target.get(); }
 
-    /** @brief Adds an input texture slot this pass consumes by name.
+    /**
+     * @brief Adds an input slot this pass consumes BY NAME.
      *
      * @details
-     * - A consumer declares "I want the texture published as X" without holding a pointer to the producer. The engine
-     *   resolves each declared name against its named-output registry before execute() and hands the matching targets
-     *   to resolveInputTextures().
-     * - The producer must run EARLIER in the same frame (a lower pass order, or an earlier registration at the same
-     *   order): the registry is cleared at the start of every frame.
-     * - Several names may be declared as alternatives — the first that resolves is used (a chain that falls back).
-     *   When NONE of them resolves, the pass draws nothing; the engine reports that on the host's diagnostic channel,
-     *   because a wiring mistake used to be silent.
+     * - Sugar over the object-typed declarations: the engine resolves each name against its named-output registry
+     *   before the pass runs, and names are only consulted when the pass declared no object-typed input at all - one
+     *   wire stated twice must not be resolved twice.
+     * - Several names may be declared as alternatives: the first that resolves is used, and when none resolves the
+     *   pass draws nothing and the engine reports it.
      *
-     * @param name Name of a published output to consume.
+     * @param name Name of a published output to consume (empty is ignored).
      */
-    void addInputName(const String& name);
+    void addInputName(const String& name)
+    {
+        if (!name.empty()) {
+            desc_.input_names.push_back(name);
+        }
+    }
 
-    /** @brief Gets the declared input texture slot names.
+    /**
+     * @brief Gets the declared input names.
      *
-     * @return The input names, in the order they were added.
+     * @return The names, in declaration order.
      */
-    const std::vector<String>& inputNames() const;
+    [[nodiscard]] const std::vector<String>& inputNames() const noexcept { return desc_.input_names; }
 
-    /** @brief Clears all declared input texture slots. */
-    void clearInputNames();
-
-    /** @brief Declares one produced image this pass consumes (design §14).
+    /**
+     * @brief Declares one produced image this pass consumes.
      *
      * @details
-     * - The object-typed counterpart of addInputName. A consumer samples one ATTACHMENT of the image's target
-     *   (ImageRef::attachment), which is what an MRT pass hands out: the identity is "this target, attachment N", not
-     *   just "this target".
-     * - The image has to be BOUND to a target (ImageRef::bind), and to the same object the producer declared: an
-     *   unbound identity has no address, so nothing can fill it — declaring one is reported (once per image, per
-     *   episode) instead of leaving the pass drawing nothing.
+     * - A consumer samples one ATTACHMENT of the image's target (ImageRef::attachment), which is what an MRT pass
+     *   hands out. The image has to be bound to a target, or nothing can fill it and the engine reports that.
      *
      * @param image Image this pass consumes (null is ignored).
      */
     void addInput(intrusive_ptr<ImageRef> image);
 
-    /** @brief Declares one imported texture this pass consumes.
+    /**
+     * @brief Declares one imported texture this pass consumes.
      *
      * @details
-     * - The counterpart of addInput(ImageRef) for a STATIC/imported image: a texture has no producer in the frame,
-     *   so it does not participate in the one-producer wiring rules; it is sampled where the pass' program declares
-     *   a sampler for it (see the pass input set's binding order).
-     * - A Scene pass (content) binds imported textures in declaration order with the other inputs. A full-screen
-     *   pass binds them at the sampler bindings its program declares beyond the source's attachments, in input
-     *   declaration order; a program/pass binding mismatch is reported by the backend.
-     * - It is a full input in the pass' input list, in declaration order; a pass may mix produced images, whole
-     *   targets and imported textures.
+     * - A static image has no producer in the frame, so it takes no part in the one-producer wiring rules; it is
+     *   sampled where the pass' program declares a sampler for it.
      *
      * @param texture Texture this pass consumes (null is ignored).
      */
     void addInput(intrusive_ptr<Texture> texture);
 
-    /** @brief Declares one imported texture read with an explicit sampler state.
+    /**
+     * @brief Declares one imported texture read with an explicit sampler state.
      *
      * @details
-     * - The state belongs to THIS input, not to the texture: the same texture can be declared by another pass (or
-     *   another declaration here) with different filter/wrap settings, and the backend binds one sampler per input.
-     * - The declaration without a state keeps the backend's input sampler, so an existing pass is unchanged.
+     * - The state belongs to THIS input, not to the texture: the same texture declared by another pass may be read
+     *   with different filter/wrap settings.
      *
      * @param texture Texture this pass consumes (null is ignored).
      * @param sampler How this pass reads the texture (see Sampler).
      */
     void addInput(intrusive_ptr<Texture> texture, const Sampler& sampler);
 
-    /** @brief Declares one input from the declaration value (one of the two additions above).
+    /**
+     * @brief Declares one input from the declaration value (one of the two forms above).
      *
      * @param input Input declaration; an empty declaration is ignored.
      */
     void addInput(ImageInput input);
 
-    /** @brief Gets the images this pass consumes, in declaration order.
+    /**
+     * @brief Gets the images this pass consumes, in declaration order.
      *
      * @return The input declarations (produced images or imported textures), as added.
      */
-    const std::vector<ImageInput>& inputs() const;
+    [[nodiscard]] const std::vector<ImageInput>& inputs() const noexcept { return desc_.inputs; }
 
-    /** @brief Declares a WHOLE target this pass consumes (the coarse counterpart of addInput).
+    /**
+     * @brief Declares a WHOLE target this pass consumes (the coarse counterpart of addInput).
      *
      * @details
-     * - "I read this target's images": a fullscreen program receives every colour attachment of its source (plus its
-     *   depth while that one is sampleable) and its shader picks by binding — so the unit it really consumes is the
-     *   target, not one attachment.
-     * - Shape-agnostic like the promise side: a target that gains an attachment later needs no change here.
+     * - "I read this target's images": a full-screen program receives every colour attachment of its source (plus its
+     *   depth while that one is sampleable) and its shader picks by binding, so the unit it consumes is the target.
      *
      * @param target Target whose images this pass consumes (null is ignored).
      */
-    void addInputTarget(intrusive_ptr<RenderTarget> target);
+    void addInputTarget(intrusive_ptr<RenderTarget> target)
+    {
+        if (target != nullptr) {
+            desc_.input_targets.push_back(std::move(target));
+        }
+    }
 
-    /** @brief Gets the whole targets this pass consumes.
+    /**
+     * @brief Gets the whole targets this pass consumes.
      *
-     * @return The input targets, in the order they were added.
+     * @return The input targets, in declaration order.
      */
-    const std::vector<intrusive_ptr<RenderTarget>>& inputTargets() const;
+    [[nodiscard]] const std::vector<intrusive_ptr<RenderTarget>>& inputTargets() const noexcept
+    {
+        return desc_.input_targets;
+    }
 
-    /** @brief Clears all declared input images AND input targets. */
-    void clearInputs();
-
-    /** @brief Receives the engine-resolved inputs.
+    /**
+     * @brief Clears every declared input: images, targets and names.
      *
      * @details
-     * - Called by the engine just before execute() once per frame: one entry per declaration, in declaration order —
-     *   the images of inputs() first, then the targets of inputTargets(); a pass that declared neither falls back to
-     *   its inputNames(), resolved against the engine's named-output registry (the sugar layer).
-     * - An entry stays null when nothing produced it this frame (the engine reports that once per episode), so the
-     *   base pass ignores the inputs and a subclass such as ScreenPass treats a leading null as "nothing to sample".
-     * - The sources are BORROWED: whatever produced a target and whatever owns a texture keep them alive while the
-     *   frame runs. An imported texture is an input like any other; a pass that needs a produced source (a screen
-     *   pass) picks it by kind.
+     * - One call, because "this pass now consumes nothing" is one statement. Clearing only part of the list would
+     *   leave the resolve order (images, then targets, then names) reading a stale half.
+     */
+    void clearInputs();
+
+    /**
+     * @brief Receives the engine-resolved inputs.
+     *
+     * @details
+     * - Called by the engine once per frame before the pass is described: one entry per declaration, in declaration
+     *   order - the images of inputs() first, then the targets of inputTargets(); a pass that declared neither falls
+     *   back to its inputNames() resolved against the engine's named-output registry.
+     * - An entry stays empty when nothing produced it this frame (reported once per episode).
+     * - The sources are BORROWED: whatever produced a target and whatever owns a texture keep them alive.
      *
      * @param inputs Resolved input sources, in declaration order (names last).
      */
-    virtual void resolveInputTextures(std::span<const ImageSource> inputs)
-    {
-        (void)inputs;
-    }
+    virtual void resolveInputTextures(std::span<const ImageSource> inputs) { (void)inputs; }
 
-    /** @brief Gets the pass-level program override (null when unset). */
-    raw_ptr<ShaderProgram> programOverride() const;
+    /**
+     * @brief Gets the pass-level program override.
+     *
+     * @return The program every command is rewritten to, or null for per-geometry programs.
+     */
+    [[nodiscard]] raw_ptr<ShaderProgram> programOverride() const noexcept { return desc_.program_override.get(); }
 
-    /** @brief Forces every command this pass renders to use one program.
+    /**
+     * @brief Forces every command this pass renders to use one program.
      *
      * @details
-     * - By default each geometry renders with its own effective program (leaf / StateNode resolution). Setting an
-     *   override replaces the program of every collected command, so the same content scene can be re-rendered with a
-     *   different shader (e.g. a wireframe or alternate-shading pass over the same scene).
-     * - The pass is its own retained slot in the backend (keyed by the pass, see FrameDescription::Pass), so an
-     *   override and the per-geometry pass never collapse into one slot; use setViewport / setClearEnabled to control
-     *   where each one lands.
+     * - A pass-level OVERRIDE, applied to every command whatever the content declared, so the same scene can be
+     *   re-rendered with another shader (an unlit or normals view).
+     * - IT TRAVELS AS PASS STATE, not as a rewrite of the commands: the pass states it once
+     *   (`PassDraw::program_override`) and the backend resolves it per command exactly like the pass' state
+     *   (`PassDraw::state`). The collected command list stays the shared, immutable list - rewriting it cost a whole
+     *   extra command list per frame per overriding pass.
      * - The pass keeps a reference.
      *
      * @param program Program applied to all content, or null for per-geometry programs (the default).
      */
-    void setProgramOverride(intrusive_ptr<ShaderProgram> program);
+    void setProgramOverride(intrusive_ptr<ShaderProgram> program) { desc_.program_override = std::move(program); }
 
-    /** @brief Gets the pass-level polygon-mode override (`nullopt` when unset). */
-    std::optional<PolygonMode> polygonModeOverride() const;
+    /**
+     * @brief Gets the pass-level polygon-mode override.
+     *
+     * @return The mode, or nullopt when each command keeps its own.
+     */
+    [[nodiscard]] std::optional<PolygonMode> polygonModeOverride() const noexcept { return desc_.polygon_mode; }
 
-    /** @brief Draws everything this pass renders as filled, outlined or point primitives.
+    /**
+     * @brief Draws everything this pass renders as filled, outlined or point primitives.
      *
      * @details
-     * - The RASTERISATION counterpart of setProgramOverride, and named the same way for the same reason: both are
-     *   PASS-LEVEL OVERRIDES, applied to every command this pass renders whatever the content itself declared. The
-     *   names carry the distinction on purpose - a pass-level setter that BEATS the content says "Override"
-     *   (setProgramOverride, setPolygonModeOverride), while the one the content can beat is a plain default
-     *   (setDepthMode, which yields to a command that authored its own depth - see DepthMode).
-     * - WHAT IT IS FOR: a viewer's "wireframe" switch, or a debug pass that wants the edges - "show me how this is
-     *   built" over content that asked for surfaces. Overriding the authored state is the point: a switch that left
-     *   authored wireframe subtrees alone could not show anything as surfaces, and a host that wants the authored
-     *   state to win simply does not set this (the StateNode's own mode is what applies then).
-     * - Unset is NOT the same as Fill: unset leaves every command's own effective polygon mode alone, so a subtree
-     *   that asked for Line stays outlined. That is what makes "back to shaded" mean "stop overriding" rather than
-     *   "force everything to fill".
-     * - It is rasterisation state, not wiring: a change does NOT bump the wiring revision (nothing about what this
-     *   pass declares has changed), and the backend picks it up per frame from the pass' state (stateOverrides(),
-     *   announced through PassDescription::state) - the same place its depth policy goes, so a pass states its state
-     *   ONCE and a backend resolves a command without asking anybody else (see StateNode.hpp).
+     * - The RASTERISATION counterpart of setProgramOverride: a pass-level override that beats the content, named
+     *   "Override" for exactly that reason.
+     * - Unset is NOT the same as Fill: unset leaves every command's own effective mode alone.
+     * - It is state, not wiring: the backend reads it per frame from stateOverrides(), where the pass states its
+     *   state once for every command it draws.
      *
      * @param mode Rasterisation mode applied to all content of this pass.
      */
-    void setPolygonModeOverride(PolygonMode mode);
+    void setPolygonModeOverride(PolygonMode mode) noexcept { desc_.polygon_mode = mode; }
 
-    /** @brief Removes the polygon-mode override, leaving each command's own state in effect. */
-    void clearPolygonModeOverride();
-    /** @brief Describes what this pass issues this frame: its target, its state and its drawing calls.
+    /// @brief Removes the polygon-mode override, leaving each command's own state in effect.
+    void clearPolygonModeOverride() noexcept { desc_.polygon_mode.reset(); }
+
+    /**
+     * @brief Describes what this pass issues this frame: its target, its state and its drawing calls.
      *
      * @details
-     * - THE EXTENSION POINT: what a pass does is data now, and a subclass that draws something else fills in a
-     *   different description (ScreenPass draws a full-screen program instead of collected geometry). The description
-     *   has no call order to get wrong - which state belongs to the pass and which to one drawing call is the shape
-     *   of the value (see PassDescription / DrawDescription) - and it is what a backend is handed: the engine puts it
-     *   in the frame it runs (see RenderEngine::frameDescription), and execute() hands over the same shape for a pass
-     *   a host drives itself.
-     * - ONE CALL, because nothing here needs the backend: the picture's shape is the CAMERA's (see Camera), the
-     *   commands are collected and culled with it, and a description can therefore be built without announcing
-     *   anything or asking anybody - which is what makes a whole frame's worth of these assemblable up front.
+     * - THE EXTENSION POINT: what a pass does is data, and a subclass that draws something else fills in a different
+     *   description (ScreenPass draws a full-screen program instead of collected geometry).
+     * - ONE CALL, because nothing here needs a backend: the picture's shape is the camera's and the commands are
+     *   collected with it, so a whole frame's worth of descriptions can be assembled before anything runs.
      * - A pass that issues NOTHING this frame answers false (a scene pass with no scene, a screen pass with no
-     *   resolved source): nothing is announced at all, not even a target, which is what keeps "this pass is not
-     *   running" distinguishable from "this pass has no picture". An empty PassDescription::draws is that second
-     *   answer - the pass announces its target and state and draws nothing (no camera, no program).
+     *   resolved source): nothing is announced at all, which keeps "this pass is not running" distinguishable from
+     *   "this pass has no picture" (an empty PassDraw::draws).
      *
-     * @param scene Content scene to draw (a scene pass with none issues nothing at all; a content-agnostic pass
-     *              ignores it).
+     * @param scene Content scene to draw (a scene pass with none issues nothing; a content-agnostic pass ignores it).
      * @param out   Receives the description; untouched when this returns false.
      * @return true when this pass issues anything at all this frame.
      */
-    virtual bool describe(raw_ptr<Scene> scene, PassDescription& out);
+    virtual bool describe(raw_ptr<Scene> scene, PassDraw& out);
 
-    /** @brief Executes this pass on its own: describes it, then hands the backend the one-pass frame that says so.
+    /**
+     * @brief Executes this pass on its own: describes it, then hands the backend the one-pass frame that says so.
      *
      * @details
-     * - SUGAR, NOT AN EXTENSION POINT. This method is deliberately NOT virtual, because there is only one way a pass
-     *   becomes a picture: `describe()` fills a value, and a frame is that value (see
-     *   RenderFrameExecutor::executeFrame). A subclass that draws something else overrides `describe()`; a subclass
-     *   that must change content BEFORE the picture uses the declaration hook (`PassDesc::before_draw`), which the
-     *   compile runs in run order. While this was virtual, an override could draw something the engine's compile
-     *   never saw - two truths for one pass.
-     * - WHAT IT IS FOR: a caller that drives ONE pass itself - a host drawing into its own device, a test. It builds
-     *   `singlePassFrame(this, 0, {}, description)` and calls the executor's single entry (`executeFrame`), which is
-     *   the same shape the engine hands over for a whole frame, so the two spellings cannot drift. A pass that issues
-     *   nothing (describe answers false) issues nothing here either: no frame is handed over at all.
-     * - The TARGET is the third thing such a caller says, because a frame's "default framebuffer" has to resolve to
-     *   one (see RenderFrameExecutor::executeFrame): the target the frame is presented through, or nullptr for a pass
-     *   whose work is off-screen. The EXECUTOR presents through it at the frame's tail, so the caller does not.
+     * - SUGAR, NOT AN EXTENSION POINT (deliberately not virtual): there is one way a pass becomes a picture -
+     *   describe() fills a value and a frame IS that value. While this was virtual, an override could draw something
+     *   the engine's compile never saw.
+     * - It builds `singlePassFrame(this, 0, {}, description)` and calls the executor's single entry, the same shape
+     *   the engine hands over for a whole frame, so the two spellings cannot drift.
+     * - The EXECUTOR presents through @p present_to at the frame's tail, so the caller does not present afterwards.
      *
      * @param scene      Content scene to draw (a content-agnostic pass ignores it).
      * @param backend    Device to render with (null does nothing).
      * @param present_to Target the pass' default framebuffer resolves to, or nullptr for off-screen work.
      */
-    void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend,
-                 raw_ptr<PresentTarget> present_to = nullptr);
+    void execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend, raw_ptr<PresentTarget> present_to = nullptr);
 
   protected:
-    /** @brief Fills this pass' own facts (target, viewport, clear, state) into @p out.
+    /**
+     * @brief Constructs a pass of @p kind (the kind decides the defaults the declaration leaves unstated).
+     *
+     * @param kind How this pass executes.
+     */
+    explicit RenderPass(PassKind kind);
+
+    /**
+     * @brief Fills this pass' own facts (target, viewport, clear, state) into @p out.
      *
      * @details
-     * - The ONE mapping from the pass' fields to a description, so a subclass states what is DIFFERENT about it
-     *   (ScreenPass draws a full-screen program instead of collected geometry) without restating what is the same.
-     * - The subclass' own "issues nothing at all" gate lives in its describe, not here: what counts as nothing is a
-     *   property of the kind of pass.
+     * - The ONE mapping from the pass' declaration to a description, so a subclass states what is DIFFERENT about it
+     *   without restating what is the same.
      *
-     * @param out Receives the facts.
+     * @param out Receives the facts; its draw list is cleared.
      */
-    void fillPassFacts(PassDescription& out);
+    void fillPassFacts(PassDraw& out);
+
+    /// The declaration this pass IS: one storage for every fact the pass states.
+    ///
+    /// Protected because a subclass that states something of its own (ScreenPass names the program it draws through)
+    /// writes it here instead of keeping a second copy of a fact the base already owns.
+    PassDesc desc_;
 
   private:
-    /** @brief The clear this pass announces, or nothing when it clears nothing (the ONE rule).
+    /**
+     * @brief The clear this pass announces, or nothing when it clears nothing (the ONE rule).
      *
      * @return The policy, or nullopt when this pass does not clear.
      */
     [[nodiscard]] std::optional<ClearPolicy> clearPolicy() const;
-
-    String name_;
-    String output_name_;
-    std::vector<String> input_names_;
-    intrusive_ptr<ImageRef> output_image_;                 // fine output declaration (design §14)
-    intrusive_ptr<RenderTarget> output_target_;            // coarse output declaration (design §14)
-    std::vector<ImageInput> input_images_;    // fine input declarations: produced images or imported textures
-    std::vector<intrusive_ptr<RenderTarget>> input_targets_;   // coarse input declarations (design §14)
-    ShaderProgramPtr program_override_;   // null = per-geometry programs
-    std::optional<PolygonMode> polygon_mode_override_;  // unset = each command's own effective mode
-    intrusive_ptr<RenderTarget> render_target_;
-    intrusive_ptr<Camera> camera_;
-    DepthView depth_view_;   // the depth image this pass draws against (invalid = its target's own)
-    Color clear_color_{ 51, 51, 51, 255 };
-    // Colours for attachments 1..N-1, in attachment order (an absent entry is transparent black; see
-    // setClearColor(int) and ClearPolicy).
-    std::vector<Color> extra_clear_colors_;
-    bool clear_depth_ = true;
-    bool clear_enabled_ = true;
-    DepthMode depth_mode_ = DepthMode::TestAndWrite;
-    bool enabled_ = true;
-    bool has_viewport_ = false;
-    Viewport viewport_;
-    std::uint32_t layer_mask_ = kAllLayers;
 };
 
 using RenderPassPtr = intrusive_ptr<RenderPass>;

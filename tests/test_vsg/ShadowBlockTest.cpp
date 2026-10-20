@@ -562,7 +562,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
 
     // The camera: at +Z looking at the origin, so "the world's +Z" is a light pointing at the viewer.
     Camera camera;
-    camera.setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera.lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                  vn::math::Vec3d(0.0, 1.0, 0.0));
 
     const auto make_sun = [](double r, double g, double b) {

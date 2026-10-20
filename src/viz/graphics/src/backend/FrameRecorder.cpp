@@ -259,7 +259,8 @@ bool FrameRecorder::setLights(std::span<const vn::graphics::Light* const> lights
 }
 
 bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands,
-                           const vn::graphics::Camera*                    camera)
+                           const vn::graphics::Camera*                    camera,
+                           const vn::graphics::ShaderProgram*             program_override)
 {
     if (!pass_open_ || scope_target_released_)
     {
@@ -282,7 +283,7 @@ bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands
         draw.has_viewport = pending_has_viewport_;
         draw.viewport     = pending_viewport_;
         draw.lights       = pending_lights_;
-        draw.commands     = snapshotCommands(commands);
+        draw.commands     = snapshotCommands(commands, program_override);
         open_draws_.push_back(draw);
         ++observe_.counters().draws;
     }
@@ -388,7 +389,7 @@ void FrameRecorder::snapshotLights(std::span<const vn::graphics::Light* const> l
 }
 
 std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
-    std::span<const vn::graphics::RenderCommand> commands)
+    std::span<const vn::graphics::RenderCommand> commands, const vn::graphics::ShaderProgram* program_override)
 {
     const std::span<CollectedCommand> copy = arena_.makeArray<CollectedCommand>(commands.size());
     for (std::size_t i = 0; i < commands.size(); ++i)
@@ -398,7 +399,9 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
 
         target.geometry          = source.geometry.get();
         target.geometry_revision = source.geometry != nullptr ? source.geometry->revision() : 0;
-        target.program           = programRef(source.program.get());
+        // The pass' override wins over the command's own program (see render()): the identity the plan keys its
+        // pipeline variants by is therefore the EFFECTIVE one, and nothing downstream needs to know about overrides.
+        target.program           = programRef(program_override != nullptr ? program_override : source.program.get());
         target.material          = source.material.get();
         target.model             = source.model_matrix;
         target.opacity       = source.opacity;

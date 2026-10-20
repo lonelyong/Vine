@@ -15,11 +15,13 @@ StateNode::~StateNode() = default;
 
 void StateNode::setDepth(const DepthState& state)
 {
+    announceContentChange();
     state_.depth = state;
 }
 
 void StateNode::clearDepth()
 {
+    announceContentChange();
     state_.depth.reset();
 }
 
@@ -30,11 +32,13 @@ std::optional<DepthState> StateNode::depth() const
 
 void StateNode::setCullMode(CullMode mode)
 {
+    announceContentChange();
     state_.cullMode = mode;
 }
 
 void StateNode::clearCullMode()
 {
+    announceContentChange();
     state_.cullMode.reset();
 }
 
@@ -45,11 +49,13 @@ std::optional<CullMode> StateNode::cullMode() const
 
 void StateNode::setBlend(const BlendState& state)
 {
+    announceContentChange();
     state_.blend = state;
 }
 
 void StateNode::clearBlend()
 {
+    announceContentChange();
     state_.blend.reset();
 }
 
@@ -60,11 +66,13 @@ std::optional<BlendState> StateNode::blend() const
 
 void StateNode::setPolygonMode(PolygonMode mode)
 {
+    announceContentChange();
     state_.polygonMode = mode;
 }
 
 void StateNode::clearPolygonMode()
 {
+    announceContentChange();
     state_.polygonMode.reset();
 }
 
@@ -75,11 +83,13 @@ std::optional<PolygonMode> StateNode::polygonMode() const
 
 void StateNode::setTopology(Topology topology)
 {
+    announceContentChange();
     state_.topology = topology;
 }
 
 void StateNode::clearTopology()
 {
+    announceContentChange();
     state_.topology.reset();
 }
 
@@ -100,16 +110,19 @@ bool StateNode::hasState() const
 
 void StateNode::clearState()
 {
+    announceContentChange();
     state_ = RenderState();
 }
 
 void StateNode::setProgram(intrusive_ptr<ShaderProgram> program)
 {
+    announceContentChange();
     program_ = std::move(program);
 }
 
 void StateNode::clearProgram()
 {
+    announceContentChange();
     program_.reset();
 }
 
@@ -120,11 +133,13 @@ raw_ptr<ShaderProgram> StateNode::program() const
 
 void StateNode::setMaterial(intrusive_ptr<Material> material)
 {
+    announceContentChange();
     material_ = std::move(material);
 }
 
 void StateNode::clearMaterial()
 {
+    announceContentChange();
     material_.reset();
 }
 

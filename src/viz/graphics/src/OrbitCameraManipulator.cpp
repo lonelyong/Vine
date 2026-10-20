@@ -214,7 +214,7 @@ void OrbitCameraManipulator::moveForward(double distance)
         return;
     }
     const Vec3d forward = (cam->target() - cam->eye()).normalized();
-    cam->setViewMatrixAsLookAt(cam->eye() + forward * distance,
+    cam->lookAt(cam->eye() + forward * distance,
                                cam->target() + forward * distance, cam->up());
     syncFromCamera();
 }
@@ -227,7 +227,7 @@ void OrbitCameraManipulator::moveRight(double distance)
     }
     const Vec3d forward = (cam->target() - cam->eye()).normalized();
     const Vec3d right = forward.cross(cam->up()).normalized();
-    cam->setViewMatrixAsLookAt(cam->eye() + right * distance,
+    cam->lookAt(cam->eye() + right * distance,
                                cam->target() + right * distance, cam->up());
     syncFromCamera();
 }
@@ -238,7 +238,7 @@ void OrbitCameraManipulator::moveUp(double distance)
     if (cam == nullptr) {
         return;
     }
-    cam->setViewMatrixAsLookAt(cam->eye() + cam->up() * distance,
+    cam->lookAt(cam->eye() + cam->up() * distance,
                                cam->target() + cam->up() * distance, cam->up());
     syncFromCamera();
 }
@@ -373,7 +373,7 @@ void OrbitCameraManipulator::apply()
         const Vec3d view_fwd = (center_ - eye).normalized();
         up = rotateAround(up, view_fwd, roll_);
     }
-    cam->setViewMatrixAsLookAt(eye, center_, up);
+    cam->lookAt(eye, center_, up);
 
     if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
         updateOrthoProjection();
@@ -661,7 +661,7 @@ void OrbitCameraManipulator::pivotRotate(double screenDx, double screenDy)
 
     // Keep the eye-to-target distance so the frame scale is unchanged.
     const Vec3d target2 = eye2 + fwd2 * (target - eye).length();
-    cam->setViewMatrixAsLookAt(eye2, target2, up2);
+    cam->lookAt(eye2, target2, up2);
     syncFromCamera();
 }
 
@@ -755,7 +755,7 @@ void OrbitCameraManipulator::updateOrthoProjection()
     const double tan_half = std::tan(cam->fieldOfView() * kDegToRad * 0.5);
     const double half_h = distance_ * tan_half;
     const double half_w = half_h * viewportAspect();
-    cam->setProjectionMatrixAsOrtho(-half_w, half_w, -half_h, half_h,
+    cam->setOrthographic(-half_w, half_w, -half_h, half_h,
                                     cam->nearPlane(), cam->farPlane());
 }
 

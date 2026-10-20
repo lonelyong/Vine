@@ -234,6 +234,20 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      */
     void invalidateBounds() noexcept;
 
+    /** @brief Announces that this subtree's CONTENT changed: what a collected command list depends on.
+     *
+     * @details
+     * - A collected command list is a pure function of the graph (transforms, visibility, layers, opacity, draw order,
+     *   material, program, state), so reusing one across frames is only sound while nothing changed. Nodes cannot
+     *   reach their Scene (there is no back-pointer, deliberately), so the announcement goes to the process-wide
+     *   content epoch every Scene compares against (see `.ai/design/graphics-abstraction-review-2026-10-20.md` §9).
+     * - Every built-in mutator that changes what a command would say announces through it - `invalidateBounds()`
+     *   does too, since a moved subtree changes the commands. A CUSTOM node whose state reaches its commands must
+     *   call it, exactly like a raw data writer announces through Geometry::setRevision().
+     * - The cost is one relaxed atomic increment: it is not a per-frame call, it is a per-EDIT call.
+     */
+    void announceContentChange() noexcept;
+
     /** @brief Gets this subtree's box in THIS node's own frame, served from the per-node cache.
      *
      * @details

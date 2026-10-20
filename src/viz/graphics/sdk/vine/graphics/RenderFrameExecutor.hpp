@@ -18,7 +18,7 @@ VN_GRAPHICS_NS_BEGIN
  *   RenderBackend, which is the aggregate), and a device that splits them hands this face out itself.
  * - ONE WIRE: THE FRAME IS A VALUE. A frame reaches an executor in ONE call - executeFrame(FrameDescription,
  *   present_to) - with every pass of it in the order the host announced it, each entry carrying the pass' identity,
- *   its order, its resolved inputs and everything the pass issues (see FrameDescription / PassDescription /
+ *   its order, its resolved inputs and everything the pass issues (see FrameDescription / PassDraw /
  *   DrawDescription). There is no pass scope, no incremental state setter and no call order to keep: what a frame ran
  *   and what it drew is the SHAPE of the value, so the sequence rules this layer used to document cannot be violated
  *   - they cannot be expressed. The engine compiles the frame and hands that value over (see

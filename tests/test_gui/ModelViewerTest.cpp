@@ -600,9 +600,9 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
     // 偏出 1.6 左右，**真的落空**（判"点空白"必须真的落空，否则量到的是别的东西）。
     auto* camera = scene_view->camera();
     ASSERT_NE(camera, nullptr);
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 7.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 7.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsPerspective(30.0, 0.1, 100.0);
+    camera->setPerspective(30.0, 0.1, 100.0);
     camera->setAspect(1.0);
     scene_view->resize(400, 400, 1.0);
 

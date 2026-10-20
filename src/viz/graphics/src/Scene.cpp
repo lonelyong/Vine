@@ -1,5 +1,7 @@
 ﻿#include <vine/graphics/Scene.hpp>
 
+#include "ContentEpoch.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -416,13 +418,15 @@ struct Scene::ContentMemo {
         // everything), so serving one's list for the other's mask would swap a few objects in and out of the
         // picture - correct-looking and wrong.
         std::uint32_t              layer_mask = kAllLayers;
-        // SHARED and immutable once built (see collectRenderCommandsShared): the passes of a frame hand
-        // the same list around, and a pass that must change something about it (the program override)
-        // makes its own copy of that one list rather than forcing a copy on every pass.
+        // SHARED and immutable once built (see collectRenderCommands): the passes of a frame hand the same list
+        // around, and it is reused across frames for as long as the graph does not change.
         std::shared_ptr<const std::vector<RenderCommand>> commands;
+        // The content frame that asked for this list last (see setContentFrame): an entry nothing asked for in the
+        // previous frame is dropped, which is what keeps the memo bounded to the views actually drawn.
+        std::uint64_t last_used_frame = 0;
     };
 
-    /// Lists collected so far this frame (one per distinct view used).
+    /// Lists collected for the views in use (one per distinct view), reused while the graph does not change.
     std::vector<Entry> entries;
 };
 
@@ -553,7 +557,7 @@ Aabbd Scene::boundingBox(std::uint32_t layer_mask) const
     return visibleWorldBox(*root_, kDefaultLayer, layer_mask);
 }
 
-std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsShared(raw_ptr<const Camera> camera,
+std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(raw_ptr<const Camera> camera,
                                                                                     std::uint32_t layer_mask) const
 {
     // The empty answer, shared rather than built: a caller with no camera / an empty scene asks for
@@ -567,17 +571,27 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsSh
     // below (which matches on the view-projection) cannot answer for one shape with another's walk.
     const Mat4d view_proj = camera->projectionMatrix() * camera->viewMatrix();
     const Vec3d eye       = camera->eye();
-    // Frame-scoped memo (see setContentFrame): the passes a frame runs over one
-    // scene through one camera share a single tree walk. A miss means "this
-    // scene changed, this view is new or was edited, or no frame is open", and
-    // the walk below rebuilds the entry.
+    // THE MEMO OUTLIVES ONE FRAME. A collected list is a pure function of the graph and the view, so it is reused
+    // for as long as NOTHING changed - which the graph announces through the process-wide content epoch (every
+    // mutator bumps it, see Node::announceContentChange). Before that, a memo entry lived for one frame only and a
+    // static scene paid a full walk per frame (measured: SceneTest.MeasureWhatOneCollectionCosts*).
+    const std::uint64_t epoch = detail::contentEpoch();
+    if (content_memo_ != nullptr && epoch != memo_epoch_) {
+        // Something in the graph changed since the last look: every view's list may be stale, and re-deriving each
+        // one is the walk a miss does anyway.
+        content_memo_->entries.clear();
+    }
+    // Recorded even when the memo was just cleared (or does not exist yet): the next call has to compare against
+    // THIS look, or it would invalidate a memo it built itself.
+    memo_epoch_ = epoch;
     const auto memo_entry = [this, &view_proj, &eye, layer_mask]() -> ContentMemo::Entry* {
         if (content_frame_ == 0 || content_memo_ == nullptr) {
-            return nullptr;
+            return nullptr;   // nothing is memoised until a frame is open (a caller that drives it keeps walking)
         }
         for (auto& entry : content_memo_->entries) {
             if (entry.revision == content_revision_ && entry.eye == eye && entry.layer_mask == layer_mask &&
                 sameView(entry.view_proj, view_proj)) {
+                entry.last_used_frame = content_frame_;
                 return &entry;
             }
         }
@@ -649,17 +663,11 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommandsSh
             entry->commands = shared; // the same view asked again after a change
         }
         else {
-            content_memo_->entries.push_back(ContentMemo::Entry{ view_proj, eye, content_revision_, layer_mask, shared });
+            content_memo_->entries.push_back(
+                ContentMemo::Entry{ view_proj, eye, content_revision_, layer_mask, shared, content_frame_ });
         }
     }
     return shared;
-}
-
-std::vector<RenderCommand> Scene::collectRenderCommands(raw_ptr<const Camera> camera, std::uint32_t layer_mask) const
-{
-    // The owning spelling of the same collection (see collectRenderCommandsShared): a caller that wants
-    // to keep or edit the list gets its own, and pays exactly one copy of it.
-    return *collectRenderCommandsShared(camera, layer_mask);
 }
 
 void Scene::setContentFrame(std::uint64_t frame)
@@ -667,12 +675,20 @@ void Scene::setContentFrame(std::uint64_t frame)
     if (content_frame_ == frame) {
         return; // idempotent: every pass of a frame may announce the same token
     }
-    content_frame_ = frame;
-    if (content_memo_ != nullptr) {
-        // The lists of the previous frame are not reusable: a memo entry is only
-        // valid inside the frame that built it.
-        content_memo_->entries.clear();
+    const std::uint64_t previous = content_frame_;
+    content_frame_               = frame;
+    if (content_memo_ == nullptr) {
+        return;
     }
+    // ONE FRAME OF GRACE, then the entry goes: a list is kept while some view keeps asking for it, so a view that
+    // stops being drawn (a closed pane, a camera that went away) releases its storage instead of owning it forever.
+    // This is what replaced "clear everything at every frame boundary" (see the memo note in collectRenderCommands).
+    auto& entries = content_memo_->entries;
+    entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                 [previous](const ContentMemo::Entry& entry) {
+                                     return entry.last_used_frame < previous;
+                                 }),
+                  entries.end());
 }
 
 void Scene::invalidateContent()

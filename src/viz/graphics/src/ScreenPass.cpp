@@ -11,11 +11,10 @@ VN_GRAPHICS_NS_BEGIN
 VN_OBJECT_META_IMPL(ScreenPass, vn::graphics::RenderPass);
 
 ScreenPass::ScreenPass()
+    : RenderPass(PassKind::Screen)
 {
-    // A screen-space pass composites over previously rendered content:
-    // clearing would wipe the main scene before the textured triangle draws.
-    setClearEnabled(false);
-    setShouldClearDepth(false);
+    // Nothing to state: "draws through a program over its resolved inputs, clears nothing" is what the KIND means
+    // (see RenderPass::isClearEnabled / shouldClearDepth), so a screen pass cannot be built that halves it.
 }
 
 ScreenPass::~ScreenPass() = default;
@@ -27,14 +26,14 @@ raw_ptr<RenderTarget> ScreenPass::sourceTarget() const
 
 raw_ptr<ShaderProgram> ScreenPass::program() const
 {
-    return program_.get();
+    return desc_.program.get();
 }
 
 void ScreenPass::setProgram(intrusive_ptr<ShaderProgram> program)
 {
-    program_ = std::move(program);
-    // A program is a wiring declaration here (the engine reports a ScreenPass that has none, because such
-    // a pass draws nothing): the base class cannot see this setter, so the subclass announces it.
+    // The declaration owns the program (PassDesc::program), so there is no second copy to keep in step and a
+    // descriptor-declared screen pass and a hand-built one are the same pass.
+    desc_.program = std::move(program);
 }
 
 void ScreenPass::resolveInputTextures(std::span<const ImageSource> inputs)
@@ -48,7 +47,7 @@ void ScreenPass::resolveInputTextures(std::span<const ImageSource> inputs)
     }
 }
 
-bool ScreenPass::describe(raw_ptr<Scene> scene, PassDescription& out)
+bool ScreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
 {
     if (source_ == nullptr) {
         // Nothing was resolved to sample: this pass issues nothing at all, not even a target - which is what
@@ -59,7 +58,7 @@ bool ScreenPass::describe(raw_ptr<Scene> scene, PassDescription& out)
     // output target, the sub-viewport and the clear are the inherited ones (one mapping for both kinds of pass).
     (void)scene;
     fillPassFacts(out);
-    if (program_ == nullptr || camera() == nullptr) {
+    if (desc_.program == nullptr || camera() == nullptr) {
         // Nothing to draw with, or no view to build: the ENGINE reports both while it compiles the frame's
         // declarations (RenderEngine::collectPlanProblems), so this path stays silent and draws nothing.
         return true;
@@ -68,7 +67,7 @@ bool ScreenPass::describe(raw_ptr<Scene> scene, PassDescription& out)
     draw.kind    = DrawDescription::Kind::Screen;
     draw.camera  = camera();
     draw.source  = source_;
-    draw.program = program_;
+    draw.program = desc_.program;
     // Forward the content scene's lights so the backend can push them to the
     // fullscreen fragment program (mirrors how scene passes feed their lights).
     // A pass with no scene announces NONE rather than an empty list: a screen pass is content-agnostic, and

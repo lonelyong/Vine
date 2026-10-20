@@ -28,7 +28,7 @@ class ShaderProgram;
  * @brief How a pass has its target cleared before it draws.
  *
  * @details
- * - A PASS' OWN FACT, a field of its description (PassDescription::clear): the pass describes the clear its
+ * - A PASS' OWN FACT, a field of its description (PassDraw::clear): the pass describes the clear its
  *   content expects and every draw of that pass gets it. Nothing is cleared at call time - a backend that
  *   clears through its render pass' load-op applies it when the pass records.
  * - PER ATTACHMENT: @ref color is attachment 0's clear and @ref extra_colors carries the ones the pass states
@@ -63,14 +63,14 @@ struct ClearPolicy
  * @brief ONE DRAWING CALL of a pass: what it draws, through what, and with what announced for it.
  *
  * @details
- * - The value a pass produces instead of CALLING the backend (see PassDescription). Everything here is either
+ * - The value a pass produces instead of CALLING the backend (see PassDraw). Everything here is either
  *   a borrowed pointer (valid for the call) or a handle kept alive by this value, so a description is only
  *   ever read while its producer is alive.
  *
  * @note
  * - Why the ORDER is not here: the old wire made the backend infer meaning from call order (state setters as
  *   the open scope's attribute; viewport / lights consumed by the NEXT draw). A description has no order -
- *   which state belongs to a pass and which to one draw is the SHAPE of these structs (PassDescription's
+ *   which state belongs to a pass and which to one draw is the SHAPE of these structs (PassDraw's
  *   fields belong to the pass, DrawDescription's to this draw), so the rules cannot be broken by calling
  *   something at the wrong moment.
  */
@@ -91,7 +91,7 @@ struct VN_GRAPHICS_API DrawDescription
     /// Scene kind: the commands this draw issues, collected for THIS frame's picture shape.
     ///
     /// Shared rather than copied: every pass of a frame usually draws the same command list, and the collection
-    /// is memoised per content frame (see Scene::collectRenderCommandsShared), so one description per pass holds
+    /// is memoised per content frame (see Scene::collectRenderCommands), so one description per pass holds
     /// a handle to the same list. Owned by this value, because nothing else promises to outlive the frame.
     std::shared_ptr<const std::vector<RenderCommand>> commands;
     /// Screen kind: the target whose colour attachments the full-screen program samples.
@@ -107,17 +107,20 @@ struct VN_GRAPHICS_API DrawDescription
 };
 
 /**
- * @brief What ONE PASS of a frame issues: its target, the state it draws with, and its drawing calls.
+ * @brief What ONE PASS draws this frame: its target, the state it draws with, and its drawing calls.
  *
- * The pass' own description - what RenderPass::describe() fills in - as opposed to the facts the ENGINE owns
- * about a pass (its identity, its order, its resolved inputs), which belong to the frame's row rather than to
- * the pass. Splitting them that way is what lets a pass describe itself without knowing where in the frame it
- * sits.
+ * @details
+ * - A DIFFERENT CONCEPT FROM PassDesc, and named so it cannot be confused with it: a PassDesc is the DECLARATION
+ *   a pass IS (authored, persists across frames, what RenderEngine::addPass adopts), while a PassDraw is what that
+ *   pass ISSUES on one frame (filled by RenderPass::describe, valid until the compile reuses its storage).
+ * - The pass' own half, as opposed to the facts the ENGINE owns about a pass (its identity, its order, its resolved
+ *   inputs), which belong to the frame's row rather than to the pass. Splitting them that way is what lets a pass
+ *   describe itself without knowing where in the frame it sits.
  *
- * @note The frame-level container is @ref FrameDescription, which carries these per pass next to the three facts
- *       the engine owns (identity, order, resolved inputs).
+ * @note The frame-level container is @ref FrameDescription, which carries one of these per pass next to the three
+ *       facts the engine owns (identity, order, resolved inputs).
  */
-struct VN_GRAPHICS_API PassDescription
+struct VN_GRAPHICS_API PassDraw
 {
     /// The off-screen target this pass draws into; null = the presenting surface (the default framebuffer).
     raw_ptr<RenderTarget> target = nullptr;
@@ -128,6 +131,14 @@ struct VN_GRAPHICS_API PassDescription
     std::optional<ClearPolicy> clear;
     /// This pass' state for the content it draws (see RenderPass::stateOverrides).
     PassRenderState state{};
+    /// The program this pass draws ALL of its content with, or null for per-geometry programs (see
+    /// RenderPass::setProgramOverride).
+    ///
+    /// THE BACKEND APPLIES IT, the way it applies @ref state: the pass states the override ONCE and the draw list
+    /// stays the shared, immutable list it was collected as. Rewriting every command's program instead cost a
+    /// command-sized copy (allocation + memcpy + three refcounts per command) on every frame the override existed -
+    /// the same trade the rasterisation override already made (see StateNode.hpp's resolveRenderState).
+    intrusive_ptr<const ShaderProgram> program_override;
     /// The drawing calls, in the order they happen. Empty is a real answer: a pass that announces its target and
     /// state but has nothing to draw with (no camera, no program) issues no draw, and does NOT become a draw of
     /// something else.
@@ -181,10 +192,10 @@ struct VN_GRAPHICS_API FrameDescription
         /// nothing produced it) - exactly what the pass and the backend are handed, and the shape the backend binds
         /// the pass' sampled inputs from.
         std::vector<ImageSource> inputs;
-        /// What the pass issues, or nullopt when it issues NOTHING AT ALL this frame (a scene pass with no
-        /// scene, a screen pass with no resolved source): the scope still opens, and no attribute of it - not
-        /// even its target - is announced.
-        std::optional<PassDescription> description;
+        /// What the pass draws this frame, or nullopt when it issues NOTHING AT ALL (a scene pass with no scene,
+        /// a screen pass with no resolved source): the scope still opens, and no attribute of it - not even its
+        /// target - is announced.
+        std::optional<PassDraw> draw;
     };
 
     /// The passes of this frame, in the order the host announced them (one entry per ENABLED pass; see
@@ -208,6 +219,6 @@ struct VN_GRAPHICS_API FrameDescription
  */
 FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass, int order,
                                                  std::vector<ImageSource> inputs,
-                                                 std::optional<PassDescription> description);
+                                                 std::optional<PassDraw> description);
 
 VN_GRAPHICS_NS_END

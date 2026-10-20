@@ -51,13 +51,13 @@ struct OwnedDraw
 };
 
 /**
- * @brief What ONE pass of an owned frame issues: the borrowed @ref PassDescription with owning handles.
+ * @brief What ONE pass of an owned frame issues: the borrowed @ref PassDraw with owning handles.
  *
  * @details
  * - Same shape, different ownership: `target` is held rather than borrowed, and the draws are @ref OwnedDraw. The
  *   fields that are plain values (viewport, clear, state) are copied verbatim, because a value cannot dangle.
  */
-struct OwnedPassDescription
+struct OwnedPassDraw
 {
     /// The off-screen target this pass draws into (held; null = the presenting surface).
     intrusive_ptr<RenderTarget> target;
@@ -67,6 +67,8 @@ struct OwnedPassDescription
     std::optional<ClearPolicy> clear;
     /// This pass' state for the content it draws.
     PassRenderState state{};
+    /// The program the pass draws all of its content with (held; null = per-geometry programs).
+    intrusive_ptr<const ShaderProgram> program_override;
     /// The drawing calls, in the order they happen.
     std::vector<OwnedDraw> draws;
 };
@@ -77,7 +79,7 @@ struct OwnedPassDescription
  * @details
  * - The owned twin of @ref FrameDescription::Pass. `pass` is held (a backend may key retained per-pass state by
  *   it, and a recorded frame must not lose the identity it names), the inputs are the OWNING declarations
- *   (@ref ImageInput), and the description is @ref OwnedPassDescription.
+ *   (@ref ImageInput), and what the pass draws is @ref OwnedPassDraw (the owned twin of PassDraw).
  * - The inputs are declarations rather than resolved sources on purpose: resolving is what the engine does for a
  *   frame it is about to run, and an owned frame states what the host declared. @ref OwnedFrame::borrowed resolves
  *   them the same way a compiled frame carries them.
@@ -91,7 +93,7 @@ struct OwnedPass
     /// What its inputs are, in declaration order (owning declarations).
     std::vector<ImageInput> inputs;
     /// What the pass issues, or nullopt when it issues nothing at all.
-    std::optional<OwnedPassDescription> description;
+    std::optional<OwnedPassDraw> draw;
 };
 
 /**
@@ -133,7 +135,7 @@ class OwnedFrame
      * @details
      * - Every pointer in the result addresses storage this frame holds, so the result is valid while this frame is
      *   alive and must not outlive it. The command collections are shared, not copied (both forms use the same
-     *   `shared_ptr`), and a pass with no description stays an entry with no description - an empty scope and an
+     *   `shared_ptr`), and a pass with no draw stays an entry with no draw - an empty scope and an
      *   absent one remain different facts.
      * - Input declarations are RESOLVED here the way the engine resolves them: a produced image keeps its target,
      *   attachment and kind; an imported texture carries the revision its upload is built from and its declared
@@ -167,9 +169,9 @@ class OwnedFrame
                     entry.inputs.emplace_back();
                 }
             }
-            if (owned.description.has_value())
+            if (owned.draw.has_value())
             {
-                entry.description = borrow(*owned.description);
+                entry.draw = borrow(*owned.draw);
             }
             frame.passes.push_back(std::move(entry));
         }
@@ -178,13 +180,14 @@ class OwnedFrame
 
   private:
     /** @brief Borrows one owned pass description (see borrowed). */
-    [[nodiscard]] static PassDescription borrow(const OwnedPassDescription& owned)
+    [[nodiscard]] static PassDraw borrow(const OwnedPassDraw& owned)
     {
-        PassDescription out;
-        out.target   = owned.target.get();
-        out.viewport = owned.viewport;
-        out.clear    = owned.clear;
-        out.state    = owned.state;
+        PassDraw out;
+        out.target           = owned.target.get();
+        out.viewport         = owned.viewport;
+        out.clear            = owned.clear;
+        out.state            = owned.state;
+        out.program_override = owned.program_override;
         out.draws.reserve(owned.draws.size());
         for (const OwnedDraw& draw : owned.draws)
         {

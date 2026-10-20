@@ -88,7 +88,7 @@ void RenderEngine::compileFrame()
     // nobody declares this frame is let go of.
     resources_->beginTransientCompile();
     for (Slot& slot : slots_) {
-        if (!slot.writes_image.empty()) {
+        if (slot.pass != nullptr && !slot.pass->declaration().writes_image.empty()) {
             resolveTransientTarget(slot);
         }
     }
@@ -102,7 +102,7 @@ void RenderEngine::compileFrame()
     for (Slot& slot : slots_) {
         PlanRow row;
         row.pass    = slot.pass.get();
-        row.content = slot.content.get();
+        row.content = slot.pass->content();
         row.order   = slot.order;
         if (row.pass != nullptr && row.pass->isEnabled()) {
             // What this pass reads: everything produced BEFORE it, which is exactly what "resolved at draw
@@ -138,7 +138,10 @@ void RenderEngine::buildFrameValue()
     // EVERY ENABLED PASS HAS AN ENTRY, whether it issues anything or not: "this pass ran and had nothing to
     // issue" is a fact of the frame (its scope opens and closes, and a backend keys per-pass retained state by
     // it), which is not the same fact as "this pass did not run" - a disabled pass has no entry at all.
-    frame_value_.passes.clear();
+    //
+    // The entries are REUSED rather than rebuilt (see below): a steady frame hands over the same pass list with the
+    // same input lists, so it must not free and re-allocate them 60 times a second.
+    std::size_t used = 0;
     // Rows and slots are one per index (see compileFrame): the row is the frame's answer about a pass, the slot
     // is the declaration itself - and the hook the declaration carries belongs to the DECLARATION.
     for (std::size_t index = 0; index < plan_rows_.size(); ++index) {
@@ -159,20 +162,29 @@ void RenderEngine::buildFrameValue()
         // Content that updates itself per frame (an FPS readout, a mirrored gizmo) does it through the hook its
         // declaration carried, and it is what the pass is ABOUT TO describe: it writes content, so it happens
         // here - before the pass is described - and in run order.
-        if (index < slots_.size() && slots_[index].before_draw) {
-            slots_[index].before_draw();
+        if (index < slots_.size() && slots_[index].pass != nullptr && slots_[index].pass->declaration().before_draw) {
+            slots_[index].pass->declaration().before_draw();
         }
         // The declared inputs were resolved by the compile (see compileFrame's rows), and the pass is told them
         // here: they are what a ScreenPass' effect reads, and they are part of what the pass describes.
         pass->resolveInputTextures(row.inputs);
 
-        FrameDescription::Pass entry;
-        entry.pass  = pass;
-        entry.order = row.order;
+        // Reuse the entry this index had last frame: the input list keeps its capacity (assign, not a fresh copy) and
+        // an already-described pass keeps its description's draw list, which fillPassFacts clears but does not free.
+        if (used == frame_value_.passes.size()) {
+            frame_value_.passes.emplace_back();
+        }
+        FrameDescription::Pass& entry = frame_value_.passes[used++];
+        entry.pass                    = pass;
+        entry.order                   = row.order;
         entry.inputs.assign(row.inputs.begin(), row.inputs.end());
-        PassDescription described;
-        if (pass->describe(row.content, described)) {
-            entry.description = std::move(described);
+        if (!entry.draw.has_value()) {
+            entry.draw.emplace();
+        }
+        if (!pass->describe(row.content, *entry.draw)) {
+            // "This pass issued nothing" must not leave the previous frame's picture behind: the draw goes away and
+            // the entry keeps the fact that the pass ran (see the note at the top).
+            entry.draw.reset();
         }
         if (index < slots_.size()) {
             slots_[index].record_micros = static_cast<std::uint64_t>(
@@ -180,7 +192,11 @@ void RenderEngine::buildFrameValue()
                                                                       pass_started)
                     .count());
         }
-        frame_value_.passes.push_back(std::move(entry));
+    }
+    // A frame with fewer running passes than the last one drops the surplus entries (the only frame that frees
+    // anything here, and it is a frame whose shape changed).
+    if (frame_value_.passes.size() > used) {
+        frame_value_.passes.resize(used);
     }
 }
 
@@ -204,7 +220,7 @@ void RenderEngine::collectPictureShapeMismatches()
 
     for (const Slot& slot : slots_) {
         const RenderPass* const pass = slot.pass.get();
-        if (pass == nullptr || !pass->isEnabled() || slot.content == nullptr || pass->camera() == nullptr) {
+        if (pass == nullptr || !pass->isEnabled() || pass->content() == nullptr || pass->camera() == nullptr) {
             continue;
         }
         if (dynamic_cast<const ScreenPass*>(pass) != nullptr) {
@@ -214,8 +230,8 @@ void RenderEngine::collectPictureShapeMismatches()
         // The rectangle: the pass' viewport when it named one, else the whole thing it draws into. A window pass
         // (no render target) draws into the surface this frame presents, which is what its rectangle is sized
         // from; a surface nobody has sized yet describes no picture, so there is nothing to check.
-        int width  = frame_ctx_.surface_width;
-        int height = frame_ctx_.surface_height;
+        int width  = surface_width_;
+        int height = surface_height_;
         if (raw_ptr<const RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
             width  = drawn_into->width();
             height = drawn_into->height();
@@ -273,15 +289,15 @@ void RenderEngine::resolveTransientTarget(Slot& slot)
     // The extent: what the declaration states, or the surface this frame is presenting (a transient is
     // normally the size of the picture that consumes it). A surface nobody has sized yet is not a reason to
     // build nothing: a 1x1 target keeps the pass' shape defined until the host reports a size.
-    const TransientShape& shape  = slot.writes_shape;
-    int                   width  = shape.width > 0 ? shape.width : frame_ctx_.surface_width;
-    int                   height = shape.height > 0 ? shape.height : frame_ctx_.surface_height;
+    const TransientShape& shape  = slot.pass->declaration().writes_shape;
+    int                   width  = shape.width > 0 ? shape.width : surface_width_;
+    int                   height = shape.height > 0 ? shape.height : surface_height_;
     if (width <= 0 || height <= 0) {
         width  = 1;
         height = 1;
     }
 
-    slot.transient = resources_->resolveTransient(slot.writes_image, shape, width, height, device_.get());
+    slot.transient = resources_->resolveTransient(slot.pass->declaration().writes_image, shape, width, height, device_.get());
     slot.pass->setRenderTarget(slot.transient);
 }
 
@@ -470,34 +486,30 @@ intrusive_ptr<RenderPass> RenderEngine::insertSlot(Slot slot)
 
 intrusive_ptr<RenderPass> RenderEngine::addPass(const PassDesc& desc)
 {
-    // The declaration is turned into the execution node of its kind ONCE, and that node is the only storage of
-    // it: a descriptor-declared pass and a hand-built one cannot drift apart, because by the time the engine
-    // holds it, it IS a hand-built pass (which is also what keeps the escape hatch the same thing).
+    // The declaration is turned into the execution node of its kind ONCE, and the node then IS the declaration
+    // (RenderPass::setDesc): a descriptor-declared pass and a hand-built one cannot drift apart, because by the time
+    // the engine holds it, it is a hand-built pass (which is also what keeps the escape hatch the same thing).
     intrusive_ptr<RenderPass> node;
     if (desc.kind == PassKind::Screen) {
-        auto screen = make_intrusive<ScreenPass>();
-        screen->setProgram(desc.program);
-        node = std::move(screen);
+        node = make_intrusive<ScreenPass>();
     }
     else {
         node = make_intrusive<RenderPass>();
     }
 
-    node->setName(desc.name);
-    node->setCamera(desc.camera);
-    if (desc.writes != nullptr) {
-        node->setRenderTarget(desc.writes);
-    }
     // The depth edge comes with the pass that states it (see PassDesc::depth_view). Three answers, in the order a
     // host can act on them:
     //   * a LAYERED view is not a mechanism this SDK has yet (a target carries one depth image) - refused, said
     //     once, and never silently turned into "the whole image";
     //   * a target draws against ONE depth image, so a second, DIFFERENT declaration is refused too, once per
     //     (target, image) pair - the first declaration stands;
-    //   * otherwise the declaration becomes the target's mechanism (and the pass keeps it, so a later
-    //     setRenderTarget carries the edge along).
-    if (desc.depth_view.has_value()) {
-        const DepthView declared = *desc.depth_view;
+    //   * otherwise the declaration becomes the target's mechanism (setDesc applies it, and the pass keeps it, so a
+    //     later setRenderTarget carries the edge along).
+    // A refused view is dropped from what the pass adopts rather than left to the pass: the refusal is this compile's
+    // judgement, and a declaration the SDK cannot honour must not look accepted on the node.
+    PassDesc adopted = desc;
+    if (adopted.depth_view.has_value()) {
+        const DepthView declared = *adopted.depth_view;
         if (declared.isValid() && declared.layer() != 0) {
             if (layered_depth_reported_.shouldReport()) {
                 reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
@@ -505,72 +517,26 @@ intrusive_ptr<RenderPass> RenderEngine::addPass(const PassDesc& desc)
                                     u8"a pass names a layered depth view; layered targets are not built yet, so "
                                     u8"the declaration is refused");
             }
+            adopted.depth_view.reset();
         }
-        else if (desc.writes != nullptr && declared.isValid()) {
-            const DepthView current = desc.writes->sharedDepth();
+        else if (adopted.writes != nullptr && declared.isValid()) {
+            const DepthView current = adopted.writes->sharedDepth();
             if (current.isValid() && current.target() != declared.target()) {
-                if (depth_view_conflicts_
-                        .insert(std::make_pair(desc.writes.get(), declared.target()))
-                        .second) {
+                if (depth_view_conflicts_.insert(std::make_pair(adopted.writes.get(), declared.target())).second) {
                     reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
                                         vn::graphics::DiagnosticCategory::UnsupportedRequest,
                                         u8"two passes name different depth views for one target; the first "
                                         u8"declaration stands and this one is refused");
                 }
-            }
-            else {
-                node->setDepthView(declared);
+                adopted.depth_view.reset();
             }
         }
-        else {
-            node->setDepthView(declared);
-        }
     }
-    // The clear policy is applied only where the declaration states one: an unstated policy leaves the kind's
-    // own (a Screen pass never clears, a Scene pass does), which is what keeps a descriptor and a hand-built
-    // pass the same pass (see PassDesc::clear_enabled).
-    if (desc.clear_enabled.has_value()) {
-        node->setClearEnabled(*desc.clear_enabled);
-    }
-    if (desc.clear_color.has_value()) {
-        node->setClearColor(*desc.clear_color);
-    }
-    for (std::size_t index = 0; index < desc.clear_extra_colors.size(); ++index) {
-        node->setClearColor(desc.clear_extra_colors[index], static_cast<int>(index) + 1);
-    }
-    if (desc.clear_depth.has_value()) {
-        node->setShouldClearDepth(*desc.clear_depth);
-    }
-    node->setDepthMode(desc.depth_mode);
-    node->setLayerMask(desc.layer_mask);
-    node->setProgramOverride(desc.program_override);
-    if (desc.polygon_mode.has_value()) {
-        node->setPolygonModeOverride(*desc.polygon_mode);
-    }
-    if (desc.viewport.has_value()) {
-        node->setViewport(*desc.viewport);
-    }
-    node->setOutputName(desc.output_name);
-    node->setOutputTarget(desc.output_target);
-    for (const auto& image : desc.inputs) {
-        node->addInput(image);
-    }
-    for (const auto& target : desc.input_targets) {
-        node->addInputTarget(target);
-    }
-    for (const auto& name : desc.input_names) {
-        node->addInputName(name);
-    }
-    node->setEnabled(desc.enabled);
+    node->setDesc(std::move(adopted));
 
     Slot slot;
-    slot.pass         = std::move(node);
-    slot.content      = desc.content;
-    slot.order        = desc.order.value_or(pipelineStageOrder(desc.stage));
-    slot.tag          = desc.tag;
-    slot.writes_image = desc.writes_image;
-    slot.writes_shape = desc.writes_shape;
-    slot.before_draw  = desc.before_draw;
+    slot.pass  = std::move(node);
+    slot.order = desc.order.value_or(pipelineStageOrder(desc.stage));
     return insertSlot(std::move(slot));
 }
 

@@ -70,8 +70,8 @@ Mat4d RenderPipelineBuilder::directionalShadowMatrix(const Light& light, const v
     const Vec3d up  = std::abs(forward.z) > 0.9 ? Vec3d(0.0, 1.0, 0.0) : Vec3d(0.0, 0.0, 1.0);
     const Vec3d eye = centre - forward * (radius * 2.0 + 1.0);
 
-    camera.setViewMatrixAsLookAt(eye, eye + forward, up);
-    camera.setProjectionMatrixAsOrtho(-radius, radius, -radius, radius, 0.0, depth);
+    camera.lookAt(eye, eye + forward, up);
+    camera.setOrthographic(-radius, radius, -radius, radius, 0.0, depth);
     // Orthographic: the window above carries the shape, and the matrix does not read the camera's aspect at all.
     // The shadow map is square anyway (the window is -radius..radius on both axes).
     return camera.projectionMatrix() * camera.viewMatrix();
@@ -429,8 +429,8 @@ bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const Re
     int width  = options.offscreen_width;
     int height = options.offscreen_height;
     if (width <= 0 || height <= 0) {
-        width  = engine_->frameContext().surface_width;
-        height = engine_->frameContext().surface_height;
+        width  = engine_->surfaceWidth();
+        height = engine_->surfaceHeight();
     }
     if (width <= 0 || height <= 0) {
         width  = 640;

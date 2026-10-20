@@ -1,5 +1,7 @@
 ﻿#include <vine/graphics/RenderPipeline.hpp>
 
+#include <algorithm>
+
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
@@ -36,6 +38,18 @@ RenderPipeline::~RenderPipeline()
 raw_ptr<RenderEngine> RenderPipeline::engine() const noexcept
 {
     return engine_.get();
+}
+
+bool RenderPipeline::draws(raw_ptr<const Scene> scene) const noexcept
+{
+    if (scene == nullptr) {
+        return false;
+    }
+    // Every pass of the chain, not just the presenting one: on a deferred chain the scene is drawn into the G-buffer
+    // and the window pass presents a target (see the declaration).
+    return std::any_of(passes_.begin(), passes_.end(), [scene](const intrusive_ptr<RenderPass>& pass) {
+        return pass != nullptr && pass->content() == scene;
+    });
 }
 
 raw_ptr<RenderPass> RenderPipeline::windowPass() const

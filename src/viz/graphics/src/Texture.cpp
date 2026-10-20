@@ -8,12 +8,12 @@ namespace
 {
 
 /**
- * @brief Gets how many images a kind is made of.
+ * @brief Gets how many images (layers) a kind is made of.
  *
  * @param kind Kind to count.
- * @return The face count of the kind.
+ * @return The layer count of the kind.
  */
-std::size_t faceCountOf(Texture::Kind kind) noexcept
+std::size_t layerCountOf(Texture::Kind kind) noexcept
 {
     return (kind == Texture::Kind::Cube) ? 6u : 1u;
 }
@@ -55,12 +55,7 @@ Texture::Texture(Kind kind, int width, int height, imaging::PixelFormat format, 
         throw std::invalid_argument("Texture: mip count must lie in [1, Image::mipCapacity(width, height)]");
     }
 
-    sources_.resize(faceCountOf(kind));
-}
-
-int Texture::faceCount() const noexcept
-{
-    return static_cast<int>(sources_.size());
+    sources_.resize(layerCountOf(kind));
 }
 
 Texture::Kind Texture::kind() const noexcept
@@ -88,10 +83,10 @@ int Texture::mipCount() const noexcept
     return mip_count_;
 }
 
-void Texture::setSource(int face, intrusive_ptr<const imaging::Image> image)
+void Texture::setLayer(int layer, intrusive_ptr<const imaging::Image> image)
 {
-    if (face < 0 || face >= faceCount()) {
-        throw std::out_of_range("Texture: face index is outside this kind");
+    if (layer < 0 || layer >= layerCount()) {
+        throw std::out_of_range("Texture: layer index is outside this kind");
     }
 
     if (image != nullptr) {
@@ -106,22 +101,22 @@ void Texture::setSource(int face, intrusive_ptr<const imaging::Image> image)
         }
     }
 
-    sources_[static_cast<std::size_t>(face)] = image;
+    sources_[static_cast<std::size_t>(layer)] = image;
     ++revision_;
 }
 
-raw_ptr<const imaging::Image> Texture::source(int face) const noexcept
+raw_ptr<const imaging::Image> Texture::layer(int index) const noexcept
 {
-    if (face < 0 || face >= faceCount()) {
+    if (index < 0 || index >= layerCount()) {
         return nullptr;
     }
 
-    return sources_[static_cast<std::size_t>(face)].get();
+    return sources_[static_cast<std::size_t>(index)].get();
 }
 
-bool Texture::hasSource(int face) const noexcept
+bool Texture::hasLayer(int layer) const noexcept
 {
-    return source(face) != nullptr;
+    return this->layer(layer) != nullptr;
 }
 
 bool Texture::isComplete() const noexcept
@@ -145,11 +140,6 @@ int Texture::layerCount() const noexcept
     return static_cast<int>(sources_.size());
 }
 
-raw_ptr<const imaging::Image> Texture::layer(int index) const noexcept
-{
-    return source(index);
-}
-
 VN_OBJECT_META_IMPL(Texture2D, Texture);
 
 Texture2D::Texture2D(int width, int height, imaging::PixelFormat format, int mip_count)
@@ -164,12 +154,12 @@ Texture::Kind Texture2D::kind() const noexcept
 
 void Texture2D::setImage(intrusive_ptr<const imaging::Image> image)
 {
-    setSource(0, image);
+    setLayer(0, image);
 }
 
 raw_ptr<const imaging::Image> Texture2D::image() const noexcept
 {
-    return source(0);
+    return layer(0);
 }
 
 VN_OBJECT_META_IMPL(CubeMap, Texture);
@@ -206,12 +196,13 @@ Texture::Kind CubeMap::kind() const noexcept
 
 void CubeMap::setFaceImage(Face face, intrusive_ptr<const imaging::Image> image)
 {
-    setSource(static_cast<int>(face), image);
+    // The named face is sugar over the numbered layer: one storage, one rule (see Texture::setLayer).
+    setLayer(static_cast<int>(face), image);
 }
 
 raw_ptr<const imaging::Image> CubeMap::faceImage(Face face) const noexcept
 {
-    return source(static_cast<int>(face));
+    return layer(static_cast<int>(face));
 }
 
 VN_GRAPHICS_NS_END

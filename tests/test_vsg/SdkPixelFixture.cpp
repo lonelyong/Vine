@@ -162,15 +162,15 @@ bool SdkPixelFixture::up()
     // covers 81% of whatever is drawn through it. Cases that hand the camera to a pass use this one; a case
     // that draws through a SceneView uses the view's own camera and its manipulator instead.
     camera = vn::intrusive_ptr<Camera>(new Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
     return true;
 }
 
 vn::graphics::backend::PixelProbe SdkPixelFixture::read()
 {
-    engine->frame(0.0);
+    engine->frame();
 
     std::vector<std::uint8_t>    pixels;
     vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Ok;

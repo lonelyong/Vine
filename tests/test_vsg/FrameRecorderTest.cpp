@@ -152,6 +152,34 @@ TEST(FrameRecorderTest, TheHostsReusedCommandListIsCopiedAtTheCallNotHeld)
     EXPECT_EQ(description.passes[1].draws[0].commands.size(), 2u);
 }
 
+TEST(FrameRecorderTest, ThePassProgramOverrideIsResolvedWhenTheDrawIsRecorded)
+{
+    // 覆盖是 PASS 的事实（见 PassDraw::program_override），所以它在**记录时**就落到每条命令的有效程序上：计划里
+    // 的 identity 因此仍然是"这条命令用哪个程序画"，下游（管线变体、程序表）不需要知道覆盖存在；而命令表本身
+    // 一个字节都没被改写——那个改写版本每帧要复制一整张表。
+    Rig r;
+    r.open();
+
+    auto own_program      = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    auto override_program = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    std::vector<RenderCommand> commands = oneCommand();
+    commands[0].program = own_program;
+
+    const auto list_before = commands[0].program;   // 借用同一个 identity，事后核对没有被改写
+
+    EXPECT_TRUE(r.recorder.beginPass(1));
+    EXPECT_TRUE(r.recorder.render(commands, nullptr, override_program.get()));
+    EXPECT_TRUE(r.recorder.endPass());
+
+    const FrameDescription& description = r.seal();
+    ASSERT_EQ(description.passes.size(), 1u);
+    ASSERT_EQ(description.passes[0].draws.size(), 1u);
+    ASSERT_EQ(description.passes[0].draws[0].commands.size(), 1u);
+    EXPECT_EQ(description.passes[0].draws[0].commands[0].program.program, override_program.get())
+        << "the recorded identity is the EFFECTIVE program";
+    EXPECT_EQ(commands[0].program, list_before) << "the host's list is never rewritten";
+}
+
 TEST(FrameRecorderTest, TheAnnouncedLightsAreCopiedNumbersNotBorrowedPointers)
 {
     Rig r;
@@ -232,9 +260,9 @@ TEST(FrameRecorderTest, TheViewBlockIsProjectedForTheCamerasOwnShape)
     r.open();
 
     vn::graphics::Camera camera;
-    camera.setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera.lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                  vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera.setProjectionMatrixAsPerspective(60.0, 0.1, 100.0);
+    camera.setPerspective(60.0, 0.1, 100.0);
     camera.setAspect(2.0);
     const vn::math::Mat4d wide = camera.projectionMatrix();
     const std::vector<RenderCommand> commands = oneCommand();

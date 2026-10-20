@@ -103,9 +103,9 @@ FpsOverlay::FpsOverlay()
     // (see onSurfaceResized) - the box is fitted and scaled there, and a picture projected for a shape the box
     // does not have is a stretched readout.
     camera_ = make_intrusive<Camera>();
-    camera_->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.6), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera_->lookAt(vn::math::Vec3d(0.0, 0.0, 1.6), vn::math::Vec3d(0.0, 0.0, 0.0),
                                    vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera_->setProjectionMatrixAsPerspective(45.0, 0.05, 20.0);
+    camera_->setPerspective(45.0, 0.05, 20.0);
     rebuild();
 }
 

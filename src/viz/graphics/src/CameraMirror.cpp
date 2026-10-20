@@ -11,7 +11,7 @@ void applyCameraMirror(raw_ptr<Camera> dst, raw_ptr<Camera> src, MirrorMode mode
     }
 
     if (mode == MirrorMode::FullView) {
-        dst->setViewMatrixAsLookAt(src->eye(), src->target(), src->up());
+        dst->lookAt(src->eye(), src->target(), src->up());
         return;
     }
 
@@ -37,7 +37,7 @@ void applyCameraMirror(raw_ptr<Camera> dst, raw_ptr<Camera> src, MirrorMode mode
         up = right.cross(fwd).normalized();
     }
     const Vec3d eye = fwd * (-dist);
-    dst->setViewMatrixAsLookAt(eye, Vec3d(0.0, 0.0, 0.0), up);
+    dst->lookAt(eye, Vec3d(0.0, 0.0, 0.0), up);
 }
 
 VN_GRAPHICS_NS_END

@@ -272,9 +272,9 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
 
     // The camera looks half a unit to its right, so the triangle lands in the window's LEFT half.
     vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
     const vn::graphics::ClearPolicy      clear{ vn::Color(0, 64, 0, 255), true };

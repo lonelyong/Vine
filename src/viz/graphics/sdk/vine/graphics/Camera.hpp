@@ -32,7 +32,7 @@ using vn::math::Vec3d;
  *   render time - a shape only the BACKEND could answer, depending on what had been announced before it
  *   (see `.ai/design/graphics-redesign.md`).
  * - The projection PARAMETERS are all state here: fov / near / far, the aspect, and the orthographic
- *   WINDOW (kept whole - see setProjectionMatrixAsOrtho). The perspective projection is rebuilt per call;
+ *   WINDOW (kept whole - see setOrthographic). The perspective projection is rebuilt per call;
  *   an orthographic one ignores the aspect, because its window already carries a shape.
  *
  * @note
@@ -77,15 +77,19 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      */
     ProjectionType projectionType() const;
 
-    /** @brief Sets the view matrix from a look-at specification.
+    /** @brief Points the camera at @p center from @p eye, keeping @p up as its up direction.
+     *
+     * @details
+     * - This states the VIEW, not a matrix: eye / target / up are kept, so a later lookAt or a read back of them
+     *   answers the same three values, and the view matrix is rebuilt from them on demand (see viewMatrix).
      *
      * @param eye    Camera eye position (world space).
      * @param center Point the camera looks at (world space).
      * @param up     Up vector (does not need to be orthogonal).
      */
-    void setViewMatrixAsLookAt(const Vec3d& eye, const Vec3d& center, const Vec3d& up);
+    void lookAt(const Vec3d& eye, const Vec3d& center, const Vec3d& up);
 
-    /** @brief Sets the projection parameters of a perspective camera.
+    /** @brief Makes this a perspective camera with the given frustum parameters.
      *
      * @details
      * - The picture's SHAPE is not among them: it is the camera's own state (see setAspect), because it is
@@ -96,7 +100,7 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      * @param zNear   Near clipping plane distance (> 0).
      * @param zFar    Far clipping plane distance.
      */
-    void setProjectionMatrixAsPerspective(double fovy, double zNear, double zFar);
+    void setPerspective(double fovy, double zNear, double zFar);
 
     /** @brief Gets the shape of the picture this camera is projected for (width / height).
      *
@@ -118,7 +122,7 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      */
     void setAspect(double aspect) noexcept;
 
-    /** @brief Sets the projection parameters of an orthographic camera.
+    /** @brief Makes this an orthographic camera with the given window.
      *
      * @details
      * - NO aspect: an orthographic window is a rectangle in view space, not a frustum fitted to a picture, so
@@ -134,21 +138,21 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      * @param zNear  Near clipping plane distance.
      * @param zFar   Far clipping plane distance.
      */
-    void setProjectionMatrixAsOrtho(double left, double right, double bottom, double top, double zNear, double zFar);
+    void setOrthographic(double left, double right, double bottom, double top, double zNear, double zFar);
 
-    /** @brief Gets the camera eye position (last set via setViewMatrixAsLookAt).
+    /** @brief Gets the camera eye position (last set via lookAt).
      *
      * @return The eye point (world space).
      */
     Vec3d eye() const;
 
-    /** @brief Gets the camera target/center point (last set via setViewMatrixAsLookAt).
+    /** @brief Gets the camera target/center point (last set via lookAt).
      *
      * @return The target point (world space).
      */
     Vec3d target() const;
 
-    /** @brief Gets the up vector (last set via setViewMatrixAsLookAt).
+    /** @brief Gets the up vector (last set via lookAt).
      *
      * @return The up vector.
      */
@@ -182,7 +186,7 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      *
      * The window is the whole orthographic frustum in view space; together with the three accessors
      * below it is what a backend must use to build the matching projection (see the class note). Value
-     * of the last setProjectionMatrixAsOrtho() call.
+     * of the last setOrthographic() call.
      *
      * @return Left bound (view space).
      */
@@ -216,7 +220,7 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      * clip space (see the class note).
      *
      * Rebuilt per call from the parameters above - there is no cache to invalidate. An orthographic camera
-     * ignores the aspect, whose window carries its own shape (see setProjectionMatrixAsOrtho).
+     * ignores the aspect, whose window carries its own shape (see setOrthographic).
      *
      * @return The view -> clip matrix.
      */
@@ -230,7 +234,7 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      * product cannot.
      *
      * For an orthographic camera the origin travels across the projection WINDOW (all four bounds, see
-     * setProjectionMatrixAsOrtho) and the direction is the view direction.
+     * setOrthographic) and the direction is the view direction.
      *
      * @param screenPos Normalized screen coordinates in [0, 1]
      *                  (pixel / viewport dimension).

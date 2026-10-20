@@ -8,8 +8,8 @@ VN_OBJECT_META_IMPL(Camera, vn::Object);
 
 Camera::Camera()
 {
-    setViewMatrixAsLookAt(eye_, center_, up_);
-    setProjectionMatrixAsPerspective(fov_, near_plane_, far_plane_);
+    lookAt(eye_, center_, up_);
+    setPerspective(fov_, near_plane_, far_plane_);
 }
 
 Camera::~Camera() = default;
@@ -29,7 +29,7 @@ Camera::ProjectionType Camera::projectionType() const
     return projection_type_;
 }
 
-void Camera::setViewMatrixAsLookAt(const Vec3d& eye, const Vec3d& center, const Vec3d& up)
+void Camera::lookAt(const Vec3d& eye, const Vec3d& center, const Vec3d& up)
 {
     eye_ = eye;
     center_ = center;
@@ -39,7 +39,7 @@ void Camera::setViewMatrixAsLookAt(const Vec3d& eye, const Vec3d& center, const 
                                up_);
 }
 
-void Camera::setProjectionMatrixAsPerspective(double fovy, double zNear, double zFar)
+void Camera::setPerspective(double fovy, double zNear, double zFar)
 {
     projection_type_ = ProjectionType::Perspective;
     fov_ = fovy;
@@ -47,7 +47,7 @@ void Camera::setProjectionMatrixAsPerspective(double fovy, double zNear, double 
     far_plane_ = zFar;
 }
 
-void Camera::setProjectionMatrixAsOrtho(double left, double right, double bottom, double top,
+void Camera::setOrthographic(double left, double right, double bottom, double top,
                                         double zNear, double zFar)
 {
     projection_type_ = ProjectionType::Orthographic;

@@ -330,11 +330,19 @@ class VN_GRAPHICS_API FrameRecorder
 
     /** @brief Collects a content drawing call (the SDK's render()).
      *
-     * @param commands Commands to draw, copied into the arena before this call returns.
-     * @param camera   Camera for view/projection, snapshotted.
+     * @details
+     * - THE PASS' PROGRAM OVERRIDE IS RESOLVED HERE, once per command, the way the pass' state is (see
+     *   `resolveRenderState`): the SDK hands over the shared command list it collected plus the override, and a backend
+     *   that draws content applies the two together. Rewriting the commands on the SDK side instead cost a whole extra
+     *   list per frame per overriding pass.
+     *
+     * @param commands         Commands to draw, copied into the arena before this call returns.
+     * @param camera           Camera for view/projection, snapshotted.
+     * @param program_override Program every command is drawn with, or null to use each command's own.
      * @return true when the call was collected; false when it was refused (no scope, or a released target).
      */
-    bool render(std::span<const vn::graphics::RenderCommand> commands, const vn::graphics::Camera* camera);
+    bool render(std::span<const vn::graphics::RenderCommand> commands, const vn::graphics::Camera* camera,
+                const vn::graphics::ShaderProgram* program_override = nullptr);
 
     /** @brief Collects a full-screen program drawing call (the screen kind of a frame's draw).
      *
@@ -380,9 +388,15 @@ class VN_GRAPHICS_API FrameRecorder
     /** @brief Copies @p lights into the arena and makes them the pending announcement. */
     void snapshotLights(std::span<const vn::graphics::Light* const> lights);
 
-    /** @brief Copies @p commands into the arena as collected commands. */
+    /** @brief Copies @p commands into the arena as collected commands, with the pass' program override applied.
+     *
+     * @param commands         Commands of one drawing call (borrowed).
+     * @param program_override Program every command is drawn with, or null for each command's own.
+     * @return The recorded commands (arena storage, valid until the frame's arena is reset).
+     */
     [[nodiscard]] std::span<const CollectedCommand> snapshotCommands(
-        std::span<const vn::graphics::RenderCommand> commands);
+        std::span<const vn::graphics::RenderCommand> commands,
+        const vn::graphics::ShaderProgram*           program_override);
 
     /** @brief Snapshots a borrowed camera, projected for a picture of the scope's announced shape. */
     [[nodiscard]] CameraSnapshot snapshotCamera(const vn::graphics::Camera* camera) const;

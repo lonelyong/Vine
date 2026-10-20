@@ -10,15 +10,10 @@ VN_GRAPHICS_NS_BEGIN
 RenderSurface::RenderSurface(RenderEngine& engine)
   : engine_(engine.lease())
 {
-    // The engine drives ONE area (see RenderEngine): this is it, and the registration is what lets the engine read
-    // this area's TARGET - the frame it hands over names it, and the engine holds no handle of its own. A second
-    // area on the same engine is refused there, and this one then presents nothing (see present()).
-    //
-    // The lease was minted a line above, so the engine is the object that just handed itself over: it cannot be
-    // empty here (a lease is only ever emptied by its owner's destructor, which has not run).
-    if (const raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
-        engine->adoptArea(this);
-    }
+    // Built only by RenderEngine::createSurface, which keeps the result: the 1:1 relation (one engine, one area) is
+    // OWNED by the engine, so there is nothing to register here and no way to create a second one. The lease records
+    // that the engine is a borrow - an area a host kept after the engine went away answers "no engine" instead of
+    // calling into freed memory.
 }
 
 RenderSurface::~RenderSurface()
@@ -28,13 +23,9 @@ RenderSurface::~RenderSurface()
     if (view_ != nullptr) {
         view_->setSurface(nullptr);
     }
-    // The registration goes with the area: a borrowed pointer must not outlive what it points at (the engine
-    // reads the area's target and keeps none of its own - see bindTarget). An area that OUTLIVED its engine has
-    // nothing to unregister from, and the lease is what says so - this call used to be the one place in the module
-    // that dereferenced a borrowed pointer without asking.
-    if (const raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
-        engine->releaseArea(this);
-    }
+    // Nothing is unregistered: the engine OWNS this area (RenderEngine::createSurface), so it is the engine that
+    // drops it (and clears its own handle first, see ~RenderEngine). The lease still guards the one window where the
+    // engine is already gone - a host that kept a handle: no call reaches the destroyed engine.
 }
 
 raw_ptr<RenderPass> RenderSurface::passOf(raw_ptr<SceneView> view) const
@@ -82,7 +73,7 @@ bool RenderSurface::present(SceneView& view)
             engine->reportEngineProblem(
                 DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
                 u8"RenderSurface::present: this area is not the one its engine drives (an engine drives one area, "
-                u8"see RenderEngine::adoptArea), so nothing it declares would reach the frame: give this window its "
+                u8"see RenderEngine::createSurface), so nothing it declares would reach the frame: give this window its "
                 u8"own engine");
         }
         return false;
@@ -237,7 +228,7 @@ void RenderSurface::resize(int width, int height, double pixel_ratio)
     }
     // The frame hears the same ONE announcement: the engine records it, and its frame context is what passes lay
     // themselves out on (the engine owns no size of its own - see RenderEngine). An area its engine does not drive
-    // is NOT heard (see adoptArea): its size is not what this frame lays out on.
+    // is NOT heard (see createSurface): its size is not what this frame lays out on.
     if (const raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
         engine->announceAreaSize(this, width, height);
     }

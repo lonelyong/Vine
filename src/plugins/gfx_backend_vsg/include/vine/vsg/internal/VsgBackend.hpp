@@ -339,21 +339,28 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      */
     void announceTarget(vn::raw_ptr<vn::graphics::RenderTarget> target);
 
-    /** @brief Announces the pass' sub-rectangle (see PassDescription::viewport). */
+    /** @brief Announces the pass' sub-rectangle (see PassDraw::viewport). */
     void announceViewport(const vn::graphics::Viewport& viewport);
 
-    /** @brief Announces the pass' clear policy, translated into the plan's spelling (see PassDescription::clear). */
+    /** @brief Announces the pass' clear policy, translated into the plan's spelling (see PassDraw::clear). */
     void announceClear(const vn::graphics::ClearPolicy& policy);
 
-    /** @brief Announces the pass' own state for the content it draws (see PassDescription::state). */
+    /** @brief Announces the pass' own state for the content it draws (see PassDraw::state). */
     void announcePassState(const vn::graphics::PassRenderState& state);
 
     /** @brief Announces the lights of one drawing call (see DrawDescription::lights). */
     void announceLights(const std::vector<vn::raw_ptr<const vn::graphics::Light>>& lights);
 
-    /** @brief Collects one content drawing call, and tracks the objects it names (see the file note). */
+    /** @brief Collects one content drawing call, and tracks the objects it names (see the file note).
+     *
+     * @param commands         The pass' collected commands (shared and immutable - never rewritten here).
+     * @param camera           The camera the draw is projected with.
+     * @param program_override The pass' program override, applied to every command when the draw is recorded
+     *                         (see PassDraw::program_override), or null for each command's own program.
+     */
     void collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
-                            const vn::graphics::Camera*                      camera);
+                            const vn::graphics::Camera*                      camera,
+                            const vn::graphics::ShaderProgram*               program_override);
 
     /** @brief Creates the slot of window @p index when it does not exist yet (indices are dense and never reused).
      *

@@ -953,7 +953,7 @@ void addDemoLighting(vn::appfw::gui::RenderControl* render_control)
     // manipulator, so the manipulator home syncs to this vantage.
     auto* camera = render_control->view()->camera();
     if (camera != nullptr) {
-        camera->setViewMatrixAsLookAt(vn::math::Vec3d(6.5, 6.5, 5.0),  // eye: front-right, elevated
+        camera->lookAt(vn::math::Vec3d(6.5, 6.5, 5.0),  // eye: front-right, elevated
                                       vn::math::Vec3d(0.0, 0.0, 0.6),  // target: mid-stack
                                       vn::math::Vec3d(0.0, 0.0, 1.0)); // up: +Z
     }
@@ -1001,8 +1001,8 @@ void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
     // middle of the window instead of its corner.
     const auto anchorRect = [render_control, margin, dpr](int w, int h, int& out_x, int& out_y) {
         auto* engine_ptr = render_control->engine();
-        int   sw         = (engine_ptr != nullptr) ? engine_ptr->frameContext().surface_width : 0;
-        int   sh         = (engine_ptr != nullptr) ? engine_ptr->frameContext().surface_height : 0;
+        int   sw         = (engine_ptr != nullptr) ? engine_ptr->surfaceWidth() : 0;
+        int   sh         = (engine_ptr != nullptr) ? engine_ptr->surfaceHeight() : 0;
         sw               = static_cast<int>(sw * dpr);
         sh               = static_cast<int>(sh * dpr);
         if (sw <= 0 || sh <= 0) {
@@ -1041,8 +1041,8 @@ void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
     // Re-anchor once the backend surface is realized and sized.
     QTimer::singleShot(600, [render_control, screen, pip_w, pip_h, margin, dpr] {
         auto* engine_ptr = render_control->engine();
-        int   sw         = (engine_ptr != nullptr) ? engine_ptr->frameContext().surface_width : 0;
-        int   sh         = (engine_ptr != nullptr) ? engine_ptr->frameContext().surface_height : 0;
+        int   sw         = (engine_ptr != nullptr) ? engine_ptr->surfaceWidth() : 0;
+        int   sh         = (engine_ptr != nullptr) ? engine_ptr->surfaceHeight() : 0;
         sw               = static_cast<int>(sw * dpr);   // the viewport below is device pixels (see anchorRect)
         sh               = static_cast<int>(sh * dpr);
         if (sw <= 0 || sh <= 0) {
@@ -1201,8 +1201,8 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     int          sx    = 0;
     int          sy    = 0;
     {
-        int sw = engine->frameContext().surface_width;
-        int sh = engine->frameContext().surface_height;
+        int sw = engine->surfaceWidth();
+        int sh = engine->surfaceHeight();
         if (sw <= 0 || sh <= 0) {
             sw = 1280;
             sh = 720;

@@ -26,9 +26,10 @@ class SceneView;
  * - ONE AREA, ONE PICTURE: a second presentation of any kind is refused and reported once - two passes cannot both
  *   be the picture, and the swapchain's ONE clear means the presenting pass is whose clear policy the frame starts
  *   with.
- * - ONE AREA, ONE ENGINE: the engine this area is built on drives it and only it (RenderEngine::adoptArea); a
- *   second area on one engine is refused, so two windows never share a frame, and this area's size is always the
- *   size that frame's passes lay themselves out on.
+ * - ONE AREA, ONE ENGINE, AND THE ENGINE OWNS IT: the only way to get an area is RenderEngine::createSurface,
+ *   which keeps it - so the relation has an owner rather than a convention, a second area cannot be constructed at
+ *   all, and two windows never share a frame. This area's size is always the size that frame's passes lay
+ *   themselves out on.
  * - THE WINDOW IS THE AREA'S TOO: bindTarget() holds the target the DEVICE made for the host's window
  *   (RenderDevice::createSurfaceTarget), resize() is the ONE size announcement (the view, the frame, the target's
  *   window half), and a recreated window is re-announced ON the target, which moves the established session
@@ -43,16 +44,15 @@ class SceneView;
  */
 class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
   public:
-    /** @brief Creates the presentation of one surface rendered through @p engine.
-     *
-     * @param engine Engine this area is registered on and driven by (BORROWED THROUGH A LEASE: the area never owns
-     *               it, and an area that outlives it reports no presentation and lays nothing out instead of calling
-     *               into freed memory; a second area on one engine is refused and reported - RenderEngine::adoptArea).
-     */
-    explicit RenderSurface(RenderEngine& engine);
+    friend class RenderEngine;  // the ONE creator (createSurface), which owns the result
 
     /** @brief Destroys the area: the view stops naming it; the pass stays registered and the view keeps its
      * pipeline (a declaration owns neither).
+     *
+     * @details
+     * - Normally reached by ~RenderEngine, which owns this area: the engine releases its handle while it is still an
+     * object, so nothing here can call into a destroyed engine. A host that kept its own handle after dropping the
+     * control keeps a surface whose lease is empty (see engine()), which reports no presentation instead of failing.
      */
     ~RenderSurface();
 
@@ -67,7 +67,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      *   in that engine's frame), an area that is not the one its engine drives, and a second presentation of any
      *   kind (one area draws one picture).
      * - A view presenting another surface needs no rule of its own: a view can only present the area of its own
-     *   engine (an engine drives one area - RenderEngine::adoptArea).
+     *   engine (an engine drives one area - RenderEngine::createSurface).
      *
      * @param view View to present; must have adopted a pipeline, be bound to this surface's engine, present no
      *             other surface, and be the area's only presentation.
@@ -212,6 +212,18 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
 
   private:
     friend class SceneView;  // reads the size it lays its geometry out with (see resize)
+
+    /** @brief Creates the presentation of one surface rendered through @p engine (see RenderEngine::createSurface).
+     *
+     * @details
+     * - PRIVATE, because the relation is 1:1 and has an owner: the engine creates the area it drives and keeps it,
+     *   so "one area per engine" is a property of the type rather than a rule a constructor has to refuse.
+     * - The engine is a BORROW through a lease: an area kept past its engine reports no presentation and lays nothing
+     *   out instead of calling into freed memory.
+     *
+     * @param engine Engine this area is driven by (must be the engine creating it).
+     */
+    explicit RenderSurface(RenderEngine& engine);
 
     /** @brief The pass a presented view draws this surface through: the window pass of its live pipeline.
      *

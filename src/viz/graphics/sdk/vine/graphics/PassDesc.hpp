@@ -128,6 +128,9 @@ struct VN_GRAPHICS_API PassDesc
     String output_name;
     /// Promises the WHOLE of this target as this pass' output (a coarse claim; see RenderPass::setOutputTarget).
     intrusive_ptr<RenderTarget> output_target{ nullptr };
+    /// Promises ONE image (a target's attachment, or its depth) as this pass' output: the fine-grained claim every
+    /// consumer points at (see RenderPass::setOutput). Null means the pass promises no single image.
+    intrusive_ptr<ImageRef> output{ nullptr };
 
     /// Fine-grained declared inputs, in declaration order: produced images or imported textures (see
     /// RenderPass::addInput).

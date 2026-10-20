@@ -29,7 +29,7 @@ VN_GRAPHICS_NS_BEGIN
  *   validated and tested with no device present.
  * - KINDS: `D2` is one 2D image; `Cube` is six, each a 2D image with its own mip chain. Larger kinds
  *   (1D, 3D, arrays) are deliberately absent until something needs them - adding one means answering what
- *   `faceCount()` means for it.
+ *   `layerCount()` means for it.
  *
  * @note
  * - This is the IMPORTED / SAMPLED side of an image. An image PRODUCED by a pass and consumed by another is
@@ -80,13 +80,6 @@ class VN_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
     [[nodiscard]] static const char* kindName(Kind kind) noexcept;
 
     /**
-     * @brief Gets how many images this texture is made of.
-     *
-     * @return 1 for `D2`, 6 for `Cube`.
-     */
-    [[nodiscard]] int faceCount() const noexcept;
-
-    /**
      * @brief Gets the kind this texture was described with.
      *
      * A NAMING answer, not the one a consumer branches on: a backend that needs to know how much to upload
@@ -129,37 +122,26 @@ class VN_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
     [[nodiscard]] int mipCount() const noexcept;
 
     /**
-     * @brief Fills one face with its source image, or clears it.
+     * @brief Fills one layer with its source image, or clears it.
      *
      * A source image must agree with the description on format, size and mip count, because the texture
      * would otherwise describe something other than what it is filled with — a state the backend could only
      * discover by uploading the wrong amount of data.
      *
-     * @param face  Face index in `[0, faceCount())`.
-     * @param image The image filling this face, or null to clear the face.
-     * @throws std::out_of_range if @p face is outside `[0, faceCount())`.
+     * @param layer Layer index in `[0, layerCount())` (a cube's layers are its faces, in Face order).
+     * @param image The image filling this layer, or null to clear the layer.
+     * @throws std::out_of_range if @p layer is outside `[0, layerCount())`.
      * @throws std::invalid_argument if @p image does not match the description.
      */
-    void setSource(int face, intrusive_ptr<const imaging::Image> image);
+    void setLayer(int layer, intrusive_ptr<const imaging::Image> image);
 
     /**
-     * @brief Gets one face's source image.
+     * @brief States whether one layer holds a source image.
      *
-     * An index outside the kind is a query rather than a mistake, so it answers "no such face" instead of
-     * failing; use `setSource()` to discover an out-of-range face.
-     *
-     * @param face Face index; an out-of-range index yields null.
-     * @return The filling image, or null when the face is empty or does not exist.
+     * @param layer Layer index; an out-of-range index yields false.
+     * @return true when the layer exists and is filled.
      */
-    [[nodiscard]] raw_ptr<const imaging::Image> source(int face) const noexcept;
-
-    /**
-     * @brief States whether one face holds a source image.
-     *
-     * @param face Face index; an out-of-range index yields false.
-     * @return true when the face exists and is filled.
-     */
-    [[nodiscard]] bool hasSource(int face) const noexcept;
+    [[nodiscard]] bool hasLayer(int layer) const noexcept;
 
     /**
      * @brief States whether every face holds a source image.
@@ -198,8 +180,10 @@ class VN_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
     /**
      * @brief Gets one layer's source image.
      *
-     * The kind-agnostic spelling of `source()`: an index outside the kind is a query rather than a
-     * mistake, so it answers null instead of failing.
+     * THE numbered spelling of this texture's images: an uploader walks `0..layerCount()-1` through it and
+     * is done, so `D2` (1 layer), `Cube` (6) and a future array (N) need no branch anywhere. An index
+     * outside the kind is a query rather than a mistake, so it answers null instead of failing; use
+     * `setLayer()` to discover an out-of-range index.
      *
      * @param index Layer index; an out-of-range index yields null.
      * @return The filling image, or null when the layer is empty or does not exist.

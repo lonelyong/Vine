@@ -917,9 +917,9 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
         openPassScope(entry.pass);
         announcePassOrder(entry.order);
         announcePassInputs(entry.inputs);
-        if (entry.description.has_value())
+        if (entry.draw.has_value())
         {
-            const vn::graphics::PassDescription& description = *entry.description;
+            const vn::graphics::PassDraw& description = *entry.draw;
             announceTarget(description.target);
             if (description.viewport.has_value())
             {
@@ -946,7 +946,9 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
                 }
                 else if (draw.commands != nullptr)
                 {
-                    collectContentDraw(*draw.commands, draw.camera);
+                    // The override is a PASS fact (see PassDraw::program_override), so every drawing call of the
+                    // pass is drawn with it; the command list itself is never rewritten.
+                    collectContentDraw(*draw.commands, draw.camera, description.program_override.get());
                 }
             }
         }
@@ -1388,7 +1390,8 @@ void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
 }
 
 void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
-                                    const vn::graphics::Camera*                      camera)
+                                    const vn::graphics::Camera*                      camera,
+                                    const vn::graphics::ShaderProgram*               program_override)
 {
     if (!d->recorder.inFrame())
     {
@@ -1418,7 +1421,16 @@ void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderComman
     }
     // The picture's shape is the CAMERA's (see Camera), and the recorder reads it from the same camera when it
     // builds the view block - one number, read by culling and projection alike, so they cannot drift.
-    (void)d->recorder.render(commands, camera);  // refusing (a released target) is the recorder's to report
+    if (program_override != nullptr)
+    {
+        // The override's own texts are content like any other: the store must answer for them when the plan
+        // records, even though no command names it.
+        trackProgram(d->store.get(), vn::intrusive_ptr<const vn::graphics::ShaderProgram>(
+                                         const_cast<vn::graphics::ShaderProgram*>(program_override)));
+    }
+    // The pass' override is resolved when the draw is recorded (see FrameRecorder::render): the command list stays the
+    // shared one the engine collected, and nothing here rewrites it.
+    (void)d->recorder.render(commands, camera, program_override);  // refusing (a released target) is the recorder's to report
 }
 
 void VsgBackend::collectScreenDraw(vn::graphics::RenderTarget*                     source,

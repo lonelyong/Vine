@@ -32,8 +32,9 @@ class VN_GRAPHICS_API ScreenPass : public RenderPass {
   public:
     /** @brief Constructs a screen pass.
      *
-     * Clearing is disabled by default: the pass draws its textured triangle on
-     * top of previously rendered content (e.g. the main scene).
+     * The kind is what makes it a screen pass: it draws through a program over its resolved inputs, and it clears
+     * nothing by default (it composites over what an earlier pass already wrote) - both facts follow from the kind
+     * rather than from a setting this constructor would have to state.
      */
     ScreenPass();
 
@@ -92,13 +93,11 @@ class VN_GRAPHICS_API ScreenPass : public RenderPass {
      * @param out   Receives the description.
      * @return true when a source resolved to sample; false when this pass issues nothing at all.
      */
-    bool describe(raw_ptr<Scene> scene, PassDescription& out) override;
+    bool describe(raw_ptr<Scene> scene, PassDraw& out) override;
 
   private:
     /// Source texture sampled by this pass (borrowed; the engine registry keeps it alive).
     raw_ptr<RenderTarget> source_ = nullptr;
-    /// Fragment program the pass draws through (null = nothing is drawn).
-    intrusive_ptr<ShaderProgram> program_;
 };
 
 using ScreenPassPtr = intrusive_ptr<ScreenPass>;

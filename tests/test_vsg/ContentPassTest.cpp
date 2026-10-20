@@ -1148,9 +1148,9 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     // same framing SessionContentTest uses, and one the folded projection maps to device z ~ 0.857 - INSIDE
     // (0, 1): an unfolded one would be clipped away entirely).
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     FrameArena    arena{ 64 * 1024 };
     Diagnostics   diagnostics;
@@ -1393,9 +1393,9 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     FrameCompiler compiler{ arena, diagnostics, observe };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     TargetFacts target_facts;
     target_facts.target        = target.get();
@@ -1541,7 +1541,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
                                           { 255U, 255U, 0U, 255U },    // NegY: yellow
                                           { 255U, 0U, 255U, 255U },    // PosZ: magenta
                                           { 0U, 255U, 255U, 255U } };  // NegZ: cyan
-    for (int face = 0; face < cube->faceCount(); ++face) {
+    for (int face = 0; face < cube->layerCount(); ++face) {
         auto image = vn::intrusive_ptr<vn::imaging::Image>(
             new vn::imaging::Image(kFaceSize, kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
         const std::span<std::byte> pixels = image->mipData(0);
@@ -1550,7 +1550,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
                 pixels[texel * 4U + byte] = static_cast<std::byte>(face_colors[face][byte]);
             }
         }
-        cube->setSource(face, vn::intrusive_ptr<const vn::imaging::Image>(image));
+        cube->setLayer(face, vn::intrusive_ptr<const vn::imaging::Image>(image));
     }
 
     const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
@@ -1649,9 +1649,9 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
     FrameCompiler compiler{ arena, diagnostics, observe };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     TargetFacts target_facts;
     target_facts.target        = target.get();
@@ -1887,9 +1887,9 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     FrameCompiler compiler{ arena, diagnostics, observe };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     const auto targetFacts = [](std::unique_ptr<OffscreenTarget>& which) {
         TargetFacts entry;
@@ -2206,9 +2206,9 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
     FrameCompiler compiler{ arena, diagnostics, observe };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     TargetFacts target_facts;
     target_facts.target        = target.get();
@@ -2479,9 +2479,9 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     facts.materials  = materials;
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     ClearPolicy clear;
     clear.color          = true;
@@ -2689,9 +2689,9 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     FrameCompiler compiler{ arena, diagnostics, observe };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     TargetFacts target_facts;
     target_facts.target        = target.get();
@@ -2932,9 +2932,9 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     FrameCompiler compiler{ arena, diagnostics, observe };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     const auto targetFacts = [](OffscreenTarget& which, const void* handle) {
         TargetFacts entry;
@@ -3297,7 +3297,7 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     ASSERT_TRUE(lit_map_handle->hasProducerViewProjection());
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
 
     // The G-buffer writer: a CONTENT program that writes all four attachments from a clip-space triangle. Its
@@ -3682,7 +3682,7 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
     ambient->setIntensity(1.0F);
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
 
     // The G-buffer writer: fills the LEFT half of the picture (NDC x in [-1, 0]) with a position the camera
@@ -3961,7 +3961,7 @@ TEST(ContentPassTest, ASpecularIntensityScalesWhatTheSurfaceReflects)
     sun->setIntensity(1.0F);
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
 
     const vn::intrusive_ptr<Material> black_material(new Material());
@@ -4670,7 +4670,7 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
     const std::vector<RenderCommand> commands{ command };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
 
     // Five directional lights for a block with three slots: the drop is the packer's arithmetic, not a guess.
@@ -4904,7 +4904,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     const vn::intrusive_ptr<vn::graphics::Light> bright_light = ambient_with(8.0F);  // x 4.0
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
 
     FrameArena    arena{ 64 * 1024 };
@@ -5253,9 +5253,9 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     FrameCompiler compiler{ arena, diagnostics, observe };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     TargetFacts target_facts;
     target_facts.target        = target.get();
@@ -6130,7 +6130,7 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
                                           { 255U, 255U, 0U, 255U },    // NegY: yellow
                                           { 255U, 0U, 255U, 255U },    // PosZ: magenta
                                           { 0U, 255U, 255U, 255U } };  // NegZ: cyan
-    for (int face = 0; face < sky_cube->faceCount(); ++face) {
+    for (int face = 0; face < sky_cube->layerCount(); ++face) {
         auto image = vn::intrusive_ptr<vn::imaging::Image>(
             new vn::imaging::Image(kFaceSize, kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
         const std::span<std::byte> pixels = image->mipData(0);
@@ -6139,7 +6139,7 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
                 pixels[texel * 4U + byte] = static_cast<std::byte>(face_colors[face][byte]);
             }
         }
-        sky_cube->setSource(face, vn::intrusive_ptr<const vn::imaging::Image>(image));
+        sky_cube->setLayer(face, vn::intrusive_ptr<const vn::imaging::Image>(image));
     }
 
     // A 2D texture for the mismatch row: it is complete and uploadable, and it still cannot fill a cube
@@ -6230,9 +6230,9 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     // The camera the sky stage's push block is packed from: an ortho camera over the quads' own square, so
     // the draw covers its whole strip.
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->setViewMatrixAsLookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
-    camera->setProjectionMatrixAsOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
+    camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     RenderCommand posz_command;
     posz_command.geometry = to_posz;

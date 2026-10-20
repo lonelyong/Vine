@@ -241,7 +241,7 @@ class VN_GRAPHICS_API RenderDevice
      *
      * @details
      * - The host's announcement of a target it is about to draw into or read back - a RESOURCE announcement, not a
-     *   frame call: which pass draws into which target travels inside the frame value (see PassDescription::target),
+     *   frame call: which pass draws into which target travels inside the frame value (see PassDraw::target),
      *   and this is how a host configures a target BEFORE any frame names it, which is what the device builds the
      *   target's GPU attachments from (lazily, and again when its description changes).
      * - nullptr selects the default framebuffer, which needs no announcement: a frame that names no target draws into

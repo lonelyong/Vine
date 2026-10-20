@@ -55,8 +55,8 @@ vn::intrusive_ptr<Texture2D> readyTexture(int width = 4, int height = 4)
 vn::intrusive_ptr<CubeMap> readyCube()
 {
     auto cube = vn::intrusive_ptr<CubeMap>(new CubeMap(1, PixelFormat::Rgba8Unorm));
-    for (int face = 0; face < cube->faceCount(); ++face) {
-        cube->setSource(face, vn::intrusive_ptr<const Image>(new Image(1, 1, PixelFormat::Rgba8Unorm)));
+    for (int face = 0; face < cube->layerCount(); ++face) {
+        cube->setLayer(face, vn::intrusive_ptr<const Image>(new Image(1, 1, PixelFormat::Rgba8Unorm)));
     }
     return cube;
 }

@@ -8,6 +8,8 @@
 #include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
 
+#include "ContentEpoch.hpp"
+
 VN_GRAPHICS_NS_BEGIN
 
 VN_OBJECT_META_IMPL(Node, vn::Object);
@@ -39,11 +41,19 @@ Aabbd transformBox(const Aabbd& local, const Mat4d& world)
 
 void Node::invalidateBounds() noexcept
 {
+    // A moved subtree changes BOTH what the cached boxes answer and what a collected command would say, so this
+    // announces one content change as well (once, not per ancestor: the epoch is a global counter).
+    announceContentChange();
     // This node's box and every ancestor's union may now be stale. Only UP: a subtree box lives in the
     // node's own frame (see subtreeBounds), so nothing below this node depended on what changed here.
     for (Node* node = this; node != nullptr; node = node->parent_) {
         ++node->bounds_stamp_;
     }
+}
+
+void Node::announceContentChange() noexcept
+{
+    detail::announceContentChange();
 }
 
 bool Node::subtreeBounds(Aabbd& box) const
@@ -119,6 +129,7 @@ bool Node::isVisible() const
 
 void Node::setVisible(bool visible)
 {
+    announceContentChange();
     visible_ = visible;
 }
 
@@ -129,11 +140,13 @@ std::optional<std::uint32_t> Node::layers() const
 
 void Node::setLayers(std::uint32_t layers)
 {
+    announceContentChange();
     layers_ = layers;
 }
 
 void Node::clearLayers()
 {
+    announceContentChange();
     layers_.reset();
 }
 
@@ -144,11 +157,13 @@ std::optional<int> Node::drawOrder() const
 
 void Node::setDrawOrder(int order)
 {
+    announceContentChange();
     draw_order_ = order;
 }
 
 void Node::clearDrawOrder()
 {
+    announceContentChange();
     draw_order_.reset();
 }
 
@@ -159,6 +174,7 @@ float Node::opacity() const
 
 void Node::setOpacity(float opacity)
 {
+    announceContentChange();
     opacity_ = opacity;
 }
 

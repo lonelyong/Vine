@@ -825,7 +825,7 @@ vn::intrusive_ptr<vn::graphics::Texture> filledTexture(vn::graphics::Texture::Ki
         is_cube ? static_cast<vn::graphics::Texture*>(new vn::graphics::CubeMap(4, format))
                 : static_cast<vn::graphics::Texture*>(new vn::graphics::Texture2D(4, 4, format)));
     for (int face = 0; face < faces; ++face) {
-        texture->setSource(face, vn::intrusive_ptr<const vn::imaging::Image>(
+        texture->setLayer(face, vn::intrusive_ptr<const vn::imaging::Image>(
                                      new vn::imaging::Image(4, 4, format)));
     }
     return texture;
@@ -884,8 +884,8 @@ TEST(VsgSceneRulesTest, TheExtentRuleAccountsForEveryLevelAndLayer)
     // map with mips exercises.
     auto cube = vn::intrusive_ptr<vn::graphics::CubeMap>(
         new vn::graphics::CubeMap(4, vn::imaging::PixelFormat::Rgba8Unorm, 2));
-    for (int face = 0; face < cube->faceCount(); ++face) {
-        cube->setSource(face, vn::intrusive_ptr<const vn::imaging::Image>(
+    for (int face = 0; face < cube->layerCount(); ++face) {
+        cube->setLayer(face, vn::intrusive_ptr<const vn::imaging::Image>(
                                    new vn::imaging::Image(4, 4, vn::imaging::PixelFormat::Rgba8Unorm, 2)));
     }
     EXPECT_TRUE(textureDataMatchesExtent(*cube));
@@ -911,7 +911,7 @@ TEST(VsgSceneRulesTest, AnUnfilledLayerIsRefusedInsteadOfBeingDereferenced)
     // enough to refuse (and the uploader never stages a partly filled cube).
     auto half_cube = vn::intrusive_ptr<vn::graphics::CubeMap>(
         new vn::graphics::CubeMap(4, vn::imaging::PixelFormat::Rgba8Unorm));
-    half_cube->setSource(0, vn::intrusive_ptr<const vn::imaging::Image>(
+    half_cube->setLayer(0, vn::intrusive_ptr<const vn::imaging::Image>(
                                 new vn::imaging::Image(4, 4, vn::imaging::PixelFormat::Rgba8Unorm)));
 
     EXPECT_FALSE(textureDataMatchesExtent(*half_cube));
