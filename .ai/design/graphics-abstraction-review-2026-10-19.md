@@ -67,7 +67,7 @@
   `DepthViewTest.ALayeredDepthViewIsRefusedRatherThanPointingAtTheWholeImage`、
   `DepthViewTest.TwoDifferentDepthViewsForOneTargetAreRefusedOnce`；既有 `RenderPipelineBuilderTest` 的
   `composite->depthSource() == gbuffer` 与 `SharedDepthTest` 全部不回归。
-- **L1 owned 帧**：新 `OwnedFrame.hpp`（`OwnedDraw` / `OwnedPassDescription` / `OwnedPass` / `OwnedFrame`）。
+- **L1 owned 帧**：新 `OwnedFrame.hpp`（`OwnedDraw` / `OwnedPassDraw` / `OwnedPass` / `OwnedFrame`）。
   每个句柄都是拥有式（pass/target/camera/program/lights、`shared_ptr` 命令集、`ImageInput` 输入声明），
   `borrowed()` 交出后端消费的借用视图，有效期 = owned 帧的寿命；输入在 `borrowed()` 里按引擎同一规则解析。
   判据：`OwnedFrameTest.TheOwnedFrameKeepsWhatItsProducersReleased`（生产者全部释放后仍可读，并通过

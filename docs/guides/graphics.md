@@ -53,7 +53,7 @@ engine.setDevice(backend);
 | `MatrixTransform` | `Group` + **场景图里唯一持有变换的地方**（`matrix()` / `setMatrix()`） | 嵌套变换沿 root→leaf 相乘 |
 | `StateNode` | 给子树施加渲染状态，并可覆盖 material / program | 越深的节点优先 |
 | `Geometry` | 叶子：**借用**的属性缓冲 + 可选索引 | `setPositions/setNormals/setTexcoords2/setIndices`、`addBuffer` 加自定义通道、`setRevision()` |
-| `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)`（**拥有一份副本**）、`collectRenderCommandsShared(camera)`（**共享不可变表**，引擎自己的 pass 路径用；要改写就自己 fork） |
+| `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)`（**共享不可变表**：一次遍历，多个 pass 共用；要改写就自己 `*list` 复制一份） |
 
 ### 2.2 属性沿树折叠的规则
 
@@ -87,7 +87,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   **动态**的：材质自己数自己的改动（`revision()`，每个 setter 先比较再决定要不要 ++，所以反复赋同值是零成本），
   后端每帧只比这一个数字，改了就在下一帧就地刷新 —— 改材质不需要任何重建，也不需要“通知后端”的调用。
 - `ShaderProgram` —— 一个或多个 stage，带 `revision()`，所以"同一个对象、改了源码"能被发现。
-- `Texture` —— 2D / Cube，按面填充（`setImage()` / `setFaceImage()` / `setSource()`）。每次填充都会
+- `Texture` —— 2D / Cube，按层填充（`setImage()` / `setFaceImage()` / `setLayer()`；编号一律用 `layer` 词汇）。每次填充都会
   `revision()++`，后端据此区分"同一张纹理、新像素"与"同一张纹理、同样像素"（只看指针做不到）。
 - `Light` —— ambient / directional，带 `castShadow()` 与 `ShadowSettings{resolution, bias, filter}`
   （阴影渲染的现状见 §4.3）。
@@ -113,7 +113,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   - **纯拷贝 = `BuiltinShaders::screenCopyProgram()`**（SDK 的命名程序，不是后端默认）；
   - **必须有相机**（否则什么都不画，引擎在接线期报一次）；**没有 program 也不画**（同样接线期报一次）。
 - `Camera` —— 观看（eye / target / up）+ 投影**参数**（fov / near / far、类型、正交盒）**与画面的形状**：
-  `setViewMatrixAsLookAt()`、`setProjectionMatrixAsPerspective(fov, near, far)`、`setProjectionMatrixAsOrtho(...)`、
+  `lookAt()`、`setPerspective(fov, near, far)`、`setOrthographic(...)`、
   `setAspect(w / h)` / `aspectRatio()`、`projectionMatrix()`（**每次现算**）、`screenToWorldRay(pos)`。
   **一台相机 = 一张画面**（2026-10-11 定，见 §3.11）：形状是相机自己的状态，投影、剔除、拾取射线读的都是
   同这一个数，于是"矩形变了投影没跟上"这类错在结构上不存在。同一台相机放进**形状不同**的两块矩形不再被
@@ -147,8 +147,10 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
    并**顺手产出这一帧的值**（`FrameDescription`：每条启用的 pass 的身份 / order / 解析后的输入 + 它自己描述出来的
    绘制），`RenderEngine::frameDescription()` 可以读它。**帧跑的是这个值**，不是"逐条 pass 再问一遍"。
    编译期跑每条 pass 的 `before_draw` 钩子（HUD 自更新那类"先写内容"的活），再请它描述自己 ——
-   于是**内容收集**发生在编译里，`Scene::collectRenderCommands(camera)` 对 **(scene, camera)** 每帧只走一次树，
-   结果记忆到帧末（规则见 §2.2）。相机自带画面的形状（见 §2.1 的 `Camera` 段），剔除用的视锥与画面用的投影是从
+   于是**内容收集**发生在编译里，`Scene::collectRenderCommands(camera)` 对 **(scene, camera, mask)** 只走一次树，
+   结果被记忆下来并**跨帧复用**——只有图里真的改了东西才会重走（每个节点改动都通过
+   `Node::announceContentChange()` 公告，规则见 §2.2；直接写缓冲这类 Scene 看不见的改动要宿主自己调
+   `Scene::invalidateContent()`）。相机自带画面的形状（见 §2.1 的 `Camera` 段），剔除用的视锥与画面用的投影是从
    **同一个数**推出来的：改相机的形状就是改整个视图（memo 以 view-projection 为键，天然区分两种形状，
    不会拿一个形状的走树结果去回答另一个）。返回的是**视锥剔除后**的列表：
    `isVisible()` 是硬门，包围盒完全在视锥外（p-vertex 测试）的节点**整棵子树**被剪掉，被剔除的几何体
@@ -240,8 +242,8 @@ scene->addLight(Light::createDirectional({ 0.0, 0.0, -1.0 }));  // 一盏方向�
 
 // ③ 相机。
 CameraPtr camera(new Camera());
-camera->setViewMatrixAsLookAt({ 0.0, 0.0, 3.0 }, { 0.0, 0.0, 0.0 }, { 0.0, 1.0, 0.0 });
-camera->setProjectionMatrixAsPerspective(45.0, 0.1, 100.0);
+camera->lookAt({ 0.0, 0.0, 3.0 }, { 0.0, 0.0, 0.0 }, { 0.0, 1.0, 0.0 });
+camera->setPerspective(45.0, 0.1, 100.0);
 camera->setAspect(16.0 / 9.0);                               // 投影的**形状**就在这里：它是相机自己的状态
                                                              // （一台相机 = 一张画面，see Camera）
 
@@ -927,8 +929,9 @@ options.layer_mask = 1u << 1;                       // appfw 里就是 ViewerOpt
   两者相乘，今天的行为**逐位不变**，所以分层是"需要时才声明少数节点"的能力，而不是给每个物体贴标签。
 - **为什么要两层**：一行内容要被两条 pass 用不同方式画（阴影只画 caster、主 pass 画全部），
   掩码就是**这条 pass 的内容选择**；只想要一幅画的投影，用 `setVisible` 就够。
-- **掩码进收集的记忆化键**：同一相机同一帧、两条不同掩码的 pass 各自走一次树（同掩码才复用）——
+- **掩码进收集的记忆化键**：同一相机、两条不同掩码的 pass 各自走一次树（同掩码才复用）——
   自己驱动收集时（`Scene::collectRenderCommands(camera, mask)`）注意这一点：掩码是参数，也是键。
+  记忆体跨帧存活，只有图发生变化时才作废（见 §2.2 / `Node::announceContentChange`）。
 - **写 0 会空画**：掩码 0（或整棵树的层集合与掩码不相交）⇒ 这条 pass 一条命令都不发出。那是合法声明，
   但内容 pass 的掩码 0 会被引擎**报一次**（帧计划问题，`ContentSkipped`），因为那几乎总是笔误。
 - **判定在可绘制节点上**：`Group` 上的声明管的是它下面的内容，掩码**不会**在某个"没声明层的组"上把子树剪掉 ——

@@ -167,7 +167,7 @@ classDiagram
 
 关系上的四条要点：
 
-1. **拥有 vs 借用**：`RenderControl`/`SurfaceWindow` 拥有引擎、区、视图与 `Viewer`；视图是**借**引擎的（`SceneView::setEngine`）；区与引擎互相指认（`RenderSurface` 构造时登记到引擎，`adoptArea`）。
+1. **拥有 vs 借用**：`RenderControl`/`SurfaceWindow` 拥有引擎、区、视图与 `Viewer`；视图是**借**引擎的（`SceneView::setEngine`）；**区是引擎自己的**（`RenderEngine::createSurface()` 造出来并由引擎持有，宿主拿的只是一个句柄）。
 2. **`Viewer` 不拥有"呈现"**：`isActive()` / `view()` 读的是区（`presentedView()`），`Viewer` 只存那条请求与为建链持有的视图引用。
 3. **一个视图同时只呈现在一块区上**：呈现在别处的视图会被区**拒绝 + 报一次**（它从"自己呈现的那块区"读尺寸，两处就说不清画哪）。
 4. **目标由设备造、区借用**：`RenderDevice::createSurfaceTarget(...)` 交出的目标归设备；`RenderSurface::bindTarget(target)` 只是借来用（重建窗口是**在旧目标上重公告**，不是第二把目标）。

@@ -74,7 +74,7 @@ void setShadowSettings(const ShadowSettings&);
 `size(resolution,resolution)` + `attachDepth(D16/D24)`（无 color）。
 
 ### 2.3 光相机 —— 复用现有 `Camera`
-`Camera` 已有 `setViewMatrixAsLookAt(eye,center,up)` + `setProjectionMatrixAsOrtho(...)`：
+`Camera` 已有 `lookAt(eye,center,up)` + `setOrthographic(...)`：
 - eye = 沿光方向（`-direction`）退到内容 AABB 之外；
 - center = scene AABB 中心；
 - up = 与光方向不平行的一轴；

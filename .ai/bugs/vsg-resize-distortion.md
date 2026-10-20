@@ -27,7 +27,7 @@
 1. `RenderEngine::pushEvent(ResizeEvent)`
    （`src/viz/graphics/src/RenderEngine.cpp`）：无 manipulator 时，用新窗口
    `w/h` 更新主相机 aspect
-   （`setProjectionMatrixAsPerspective(fov, w/h, near, far)`），与
+   （`setPerspective(fov, w/h, near, far)`），与
    `OrbitCameraManipulator::onResize()` 的做法一致。
 2. `RenderControl::initializeBackend()`
    （`src/fw/appfw/src/gui/RenderControl.cpp`）：首次 attach 成功后，在首帧

@@ -78,7 +78,7 @@ sequenceDiagram
     participant X as FrameCompiler
     H->>E: frame(dt)
     E->>E: compileFrame()（每帧，读声明）
-    E->>P: describe(PassDescription&) 每个 enabled pass 一次
+    E->>P: describe(PassDraw&) 每个 enabled pass 一次
     P-->>E: 画什么（DrawDescription）
     E->>F: buildFrameValue()（借用快照 + 解析后的输入）
     E->>B: executeFrame(FrameDescription)
@@ -169,7 +169,7 @@ graph LR
 - **判据**：`RenderSurfaceTest.AnAreaOutlivingItsEngineAnswersNothingInsteadOfCallingIntoIt`
   （引擎先销毁，区仍可查询/重设尺寸/拒绝展示）；`test_graphics` 392 → **393** 全绿。
 
-### SK1（建议下一个做）**区归引擎所有**
+### SK1（**2026-10-20 已落地**，见 §10）**区归引擎所有**
 
 - **问题**：这是所有权矩阵里唯一"父不拥有子"的边。一扇窗一个引擎一个区是 1:1，但 owner 是宿主，
   于是"第二个区被拒"只能**在运行期报**，而"区必须先于引擎销毁"只是一句注释。SK0 让它不再 UB，
@@ -236,3 +236,135 @@ graph LR
 
 SK0 的"不再解引用已销毁引擎"是**结构上**成立的（租约为空 ⇒ 一个引擎调用都不发生）；
 把它变成可复现的变异证据需要 ASan 树（`scripts/asan_check.sh`），本轮未跑，记在下一轮的开场。
+
+## 8. SK2 落地（2026-10-20，本轮）— pass 声明只剩一份存储
+
+> 上一轮把 SK2 排在"最大的一处，单独一轮"。这一轮用户直接把窗口开了，于是
+> **S1（`RenderPass` 双份声明）+ S3（相机正名）同批**做完，顺带把两处"每帧分配"收掉。
+
+### 8.1 改了什么
+
+| 位置 | 之前 | 现在 | 为什么 |
+|---|---|---|---|
+| `RenderPass` | 24 个成员字段（`name_` / `camera_` / `clear_color_` / `layer_mask_` / `input_images_` …）+ 与 `PassDesc` 一一对应的 getter/setter | **一个** `PassDesc desc_`；`declaration()` 读它，`setDesc()` 整体采纳它；访问器全部是它的一行投影（多数内联在头文件里） | 一个字段一份存储 ⇒ "值形式与节点形式不一致"这一类缺陷不再可能 |
+| `PassDesc` | 能表达 output name / output target / inputs / input targets / input names，**不能**表达细粒度输出 `ImageRef` | 新增 `intrusive_ptr<ImageRef> output` | 值形式第一次能完整描述一个 pass；`addPass(PassDesc)` 不再悄悄丢掉 `setOutput` 那一条声明 |
+| `RenderPass::kind` 的默认值 | `ScreenPass` 的构造函数里 `setClearEnabled(false); setShouldClearDepth(false);` | `desc_.clear_enabled / clear_depth` 为 `unset` 时按 **kind** 回答（Scene 清、Screen 不清） | 默认值从"某个构造函数顺手设的"变成 kind 的定义：一个 pass 不可能被建成"半个 Screen pass" |
+| `RenderEngine::Slot` | 9 个字段（pass / content / order / record_micros / tag / writes_image / writes_shape / transient / before_draw） | **4 个**：pass / order / record_micros / transient，且注释写明"这里只放只有帧知道的事实" | 同一份声明原来存了**三份**（`PassDesc` → `RenderPass` 字段 → `Slot`）；content 也回到声明里（`PassDesc::content`），`bindPassContent` 写穿到它 |
+| `RenderEngine::addPass(const PassDesc&)` | 25 行逐字段抄写 + 若干 `if (has_value())` | 建节点 → 处理 depth 边的三种裁决 → `node->setDesc(std::move(adopted))` | 抄写表就是漂移源；现在"采纳一份声明"是一次赋值 |
+| `ScreenPass` | 自己的 `program_` 成员 | `declaration().program` / `desc_.program` | 同一个程序存过两份 |
+| `clearInputs()` / `clearInputNames()` | 两个入口，前者不清名字 | **一个** `clearInputs()`，清 images + targets + names | 同一件事的第二种写法；而且"清一半"是个真陷阱 |
+| `Camera::setViewMatrixAsLookAt(eye, center, up)` | 名字说的是"设置矩阵"，收的是三个向量 | `Camera::lookAt(eye, center, up)`（74 处调用点，src / tests / docs 一次改完） | 仓库命名口径；与 S1 同批花掉同一次公开变更窗口 |
+
+### 8.2 顺带收掉的两处每帧分配（"性能"）
+
+模块自己的规矩是"稳态帧不分配"。这一轮找到两处违反它的地方，都按**"表是成员、按帧清空"**收掉：
+
+| 位置 | 之前（每帧） | 现在 |
+|---|---|---|
+| `collectPlanProblems` | `std::map` ×2 + `std::set` ×1 + `std::map` ×1 + `std::vector` ×1：每帧按 pass 数分配/释放红黑树节点 | 引擎成员 `wiring_filled_ / wiring_claimed_ / wiring_colliding_ / wiring_unbound_ / wiring_promised_images_`，**扁平 vector + 线性查找**（pass 数是个位数，树只会多付分配），`clear()` 保留容量 |
+| `buildFrameValue` | `frame_value_.passes.clear()` 后再 `push_back`：每个 pass 的 `inputs` 与描述里的 `draws` 每帧重建 | 按索引**复用**上一帧的 `FrameDescription::Pass`（`inputs.assign` 复用容量、已就位的 `PassDraw` 不销毁，`fillPassFacts` 只 clear `draws`）；只有"这一帧运行的 pass 变少"才 `resize` 收缩 |
+
+`OutputIdentity` 相应补了 `operator==`（扁平表的查找键；原来只有 `operator<` 给 map 用）。
+
+### 8.3 一条被改掉的语义，写在这里免得下一个 session 以为是回归
+
+`setDesc()` 采纳一份声明时，**只在声明里的 depth view 有效时**把它施加到目标上；声明里没有
+（或无效）depth view 时**不会**清掉另一个 pass 为同一目标建立的 depth 边。原来 `addPass`
+对"无效 view"走的是 `setDepthView(invalid)`（会清），这一轮把"采纳一份声明"和"显式声明一条边"
+分开：`setDepthView()`（显式）仍然会清，`setDesc()`（整体替换）不清。判据：
+`DepthViewTest.TwoDifferentDepthViewsForOneTargetAreRefusedOnce`（冲突被拒后，先声明的那条边必须还在）。
+
+### 8.4 判据
+
+| 门 | 结果 |
+|---|---|
+| 全量构建（ninja all） | 0 error |
+| `test_graphics` | **393 passed** |
+| `test_vsg` | **478 passed**（含全部 `[sdk-pixels]` 证据行） |
+| `test_gui` | **259 passed / 1 skipped** |
+| 静态门禁 6 条（ai_docs / doc_symbols / include_hygiene / export_annotations / diagnostic_formats / public_docs） | 0 finding，公开面基线 `0 new / 0 stale` |
+
+`RenderPass.cpp` 410 → 250 行；`RenderPass.hpp` 的字数主要花在 Doxygen（每个公开声明都必须有
+`@brief` / `@param` / `@return`），所以头文件行数没有跟着掉，但**每个访问器都只剩一行**，
+且不再有第二份存储。下一次要动 pass 面时，只需要动 `PassDesc` 一处。
+
+## 9. S2 + SK3 落地（2026-10-20，同一轮）
+
+### 9.1 S2：纹理只有一个编号词汇（`layer`）
+
+| 之前 | 现在 | 为什么 |
+|---|---|---|
+| `faceCount()`（同一个数） + `layerCount()` | **`layerCount()`** | 一个事实一个名字；`faceCount()` 对 `D2` 毫无意义 |
+| `source(int face)` + `layer(int index)`（同一张图） | **`layer(int index)`** | 头文件自己写着 "kind-agnostic spelling"，却留了两种说法 |
+| `hasSource(int face)` | **`hasLayer(int layer)`** | 与 `layer()` 同一个词汇，语义仍是"这层有图" |
+| `setSource(int face, image)` | **`setLayer(int layer, image)`** | 与 `layerCount()`/`layer()` 成对 |
+| `CubeMap::setFaceImage(Face)` / `faceImage(Face)` | **保留**（内部调用 `setLayer`/`layer`） | 立方体的**命名**面是类型自带的糖，不是第二套编号；测试钉住 `Face::NegY` 与 `layer(4)` 是同一格 |
+
+调用点：`src/viz/graphics/src/Texture.cpp`、`src/plugins/gfx_backend_vsg/src/support/VsgSceneRules.cpp`
+（`filledFaceCount` 一并改名 `filledLayerCount`）、`tests/test_graphics`、`tests/test_vsg`、
+`docs/guides/graphics.md`、`.ai/memory/imaging.md`。原来那条"两种拼法说的是同一张纹理"的用例改成
+`TextureLayersTest.OneNumberedSpellingWalksAnyKind`：它判的是**一个**词汇能走完任何 kind、越界是查询、以及命名面与层号同格。
+
+### 9.2 SK3：视图采纳了"画别的内容"的链条时，报一次
+
+- **问题**：`SceneView::setPipeline` 只把链条挂上，不检查它画的是不是这个视图的内容。一条为场景 A 建好的
+  管线被持有场景 B 的视图采纳时，每个 pass 都合法、引擎照单编译，结果是"视图有内容但窗口空"——没有任何
+  下游能看见。视图是唯一同时持有这两半的对象，所以判断放在那里。
+- **形状**：`RenderPipeline::draws(raw_ptr<const Scene>)`（问的是**整条链**，不是窗口 pass：延迟链条在
+  G-buffer pass 画场景、窗口 pass 只是呈现目标）+ `SceneView::checkPipelineContent()`（`setPipeline` /
+  `setScene` 各调一次，`ReportOnce` 管一次发作）。`setScene` 会把窗口 pass 的内容重绑到新场景，所以
+  "绑对了"会 re-arm，下一次错是新的一次发作。
+- **不改结构**：一个管线画多个场景是合法的；只有"一个都不画这个视图的场景"才报。判据：
+  `SceneViewTest.AChainBuiltForOtherContentIsReportedOnceAndIsANewEpisodeOnceTheWireIsRight`
+  （1 条 = 第一次采纳；仍 1 条 = 同一发作；2 条 = 修好后再坏是新发作）。
+
+### 9.3 判据
+
+| 门 | 结果 |
+|---|---|
+| 全量构建 | 0 error |
+| `test_graphics` | **394 passed**（+1 条 SK3 用例，纹理用例改写后总数不变） |
+| `test_vsg` | **478 passed** |
+| `test_gui` | **259 passed / 1 skipped** |
+| 静态门禁 8 条 | 0 finding |
+
+剩余登记只有 **SK1**（区归引擎所有，动的是生命周期，需单独一轮）。
+
+## 10. SK1 落地（2026-10-20）：引擎拥有它的区
+
+> §4 的 SK1 是所有者矩阵里唯一"父不拥有子"的边。这一轮把它变成关系本身——**没有第三方约定，也没有回指协议**。
+
+### 10.1 改了什么
+
+| 位置 | 之前 | 现在 |
+|---|---|---|
+| 创建 | `new RenderSurface(*engine)`（任何人都能造，第二个由引擎在登记时拒绝） | **`RenderEngine::createSurface()`**，唯一入口；第二次调用回 `nullptr` + 报一次（`UnsupportedRequest`） |
+| 所有权 | 宿主持 `intrusive_ptr<RenderSurface>`；引擎持 `raw_ptr` | 引擎持 **`intrusive_ptr<RenderSurface> area_`**；宿主那句赋值变成"要一个句柄"，不再是"造一个对象" |
+| 构造 | public `explicit RenderSurface(RenderEngine&)` | **private** + `friend class RenderEngine`（关系由类型保证，不是一句注释） |
+| 回指协议 | `~RenderSurface` 调 `engine_->releaseArea(this)`，构造里 `adoptArea(this)` | **两个都删掉**：引擎自己 `area_` 就是那个关系，`~RenderEngine` 在自己还是个对象时把 `area_` move 出去再释放，所以区的析构永远看不到一个半死的引擎 |
+| `announceAreaSize` | 只认引擎的区（`from != area_`） | 不变（`area_` 现在是拥有的句柄，比较改成 `area_.get() != from`） |
+| `SurfaceWindow` | `d->surface = intrusive_ptr<RenderSurface>(new RenderSurface(*d->engine));` | `d->surface = d->engine->createSurface();` |
+
+宿主侧的成员顺序约束消失了：`~SurfaceWindow` 先销毁引擎也安全（引擎释放它那份引用后，宿主手里的区只是"引擎没了"的区，SK0 的 `Lease` 已经让它逐条回答"没有呈现"）。
+
+### 10.2 对照
+
+Filament：`Engine` 创建并持有 `SwapChain`（每个 surface 一个）；O3DE：`WindowContext` 持 swapchain；
+wgpu：`Surface` 由 instance + window 造、由应用持有，但**同一 instance 的 surface 与 device 是分开的**。
+这里一个引擎驱动一幅画面、一扇窗，所以"引擎拥有区"是最短的那条边，也正是 §0 第 2 条口径（1:1 的 owner 必须是这条边的一端）。
+
+### 10.3 判据
+
+| 门 | 结果 |
+|---|---|
+| 全量构建 | 0 error |
+| `test_graphics` | **394 passed**（两条"第二个区"用例改写成构造失败的形状，条数不变） |
+| `test_vsg` | **478 passed** |
+| `test_gui` | **259 passed / 1 skipped** |
+| 静态门禁 8 条 | 0 finding |
+
+改写的两条用例：
+- `ASecondAreaIsAConstructionFailureNotASecondObject`：第二次/第三次 `createSurface()` 都是 `nullptr`，只报一次，且既有那块区照常呈现；
+- `ARefusedSecondAreaCannotFeedTheFrameContext`：被拒的那次创建不改变"谁在喂 frame context"。
+
+`~RenderEngine` 的顺序现在是：`shutdown()`（解绑目标）→ `area` move 出 `area_` → 清租约 → 卸设备诊断路线 → 作用域结束时释放区（此时租约为空，区不会再回指引擎）。

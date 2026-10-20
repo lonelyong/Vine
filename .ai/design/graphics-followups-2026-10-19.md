@@ -33,6 +33,17 @@
 | F5 借用与托管混在一起 | 2026-10-19 | 新增 `vn::Lease<T>`（`base/core/sdk/vine/Lease.hpp`）+ `RenderEngine::lease()`；`SceneView` / `RenderPipeline` 借引擎改成存租约（不碰引用计数），`RenderPipelineBuilder` 那句 `intrusive_ptr<RenderEngine>(engine_)` 删除。判据：`LeaseTest` 5 条、`RenderPipelineBuilderTest.APipelineOutlivingItsEngineNeitherHoldsNorCallsIntoIt`、`SceneViewViewportTest.AViewWhoseEngineWasReleasedReportsIt`（原 `RebuildingAfterTheHostReleasedTheEngineIsSafe` 改写，见 `appfw-render-view.md` §13） |
 | A4 `Material` 没有 revision | 2026-10-19 | `Material::revision()` 自带（每个 shading setter **先比后 ++**，名字不算）；后端 `ContentStore::updateMaterial` 从"逐命令建块 + 逐成员比"变成"比一个整数"，`materialBlockAgreesWith` 删除。判据：`MaterialTest.TheRevisionMovesWhenAShadingValueChanges`、`ContentStoreTest.ATouchWithNoEditChangesNothing`（5 帧反复赋同值：0 build / 0 park）、`AMaterialEditReplacesItsEntryAndParksTheValue`（编辑 ⇒ revision+1 ⇒ 一条被替换+被暂存） |
 | A6 的可观测面 | 2026-10-20 | `DiagnosticCategory::ResourcePressure` + `MaterialImages::evictions()`（与 `releaseAbandoned` 严格分开）+ `VsgBackend::sweepAbandonedContent` 的水位/`ReportOnce` 一条句子。判据：`MaterialImagesTest.TheBoundDropsTheOldestEntryAndCountsOnlyThat`、`VsgBackendTest.AWorkingSetLargerThanTheTextureCacheIsReportedOncePerEpisode`（变异"去掉 `shouldReport()` 守卫" ⇒ 1/1 红）。**剩余只是淘汰键策略**（§3.6） |
+| S1 / SK2 `RenderPass` 只存一份声明 | 2026-10-20 | 节点持有 `PassDesc desc_`，`declaration()` 读它、`setDesc()` 整体采纳它；`RenderEngine::Slot` 只剩运行期事实（order / transient / record_micros）；`addPass(PassDesc)` 的 25 行逐字段抄写退场；`PassDesc` 新增 `output`（值形式第一次能表达细粒度输出）。见 `graphics-skeleton-review-2026-10-20.md` §6 |
+| S3 `Camera::setViewMatrixAsLookAt` → `lookAt` | 2026-10-20 | 74 处调用点（src / tests / docs）一次改完，与 S1 同批（一次公开变更窗口） |
+| S2 `Texture` 只剩 layer 词汇 | 2026-10-20 | `layerCount()` / `layer(i)` / `hasLayer(i)` / `setLayer(i, image)`；`faceCount` / `source` / `hasSource` / `setSource` 退场，`CubeMap::setFaceImage` 收敛成它的命名糖。判据 `TextureLayersTest.OneNumberedSpellingWalksAnyKind`。见骨架复核 §9.1 |
+| SK3 视图/链条内容不一致的诊断 | 2026-10-20 | `RenderPipeline::draws(scene)` + `SceneView::checkPipelineContent()`（`ReportOnce`，`setScene` 修好后 re-arm）。判据 `SceneViewTest.AChainBuiltForOtherContentIsReportedOnceAndIsANewEpisodeOnceTheWireIsRight`。见骨架复核 §9.2 |
+| SK1 区归引擎所有 | 2026-10-20 | `RenderEngine::createSurface()` 是唯一创建入口，引擎持 `intrusive_ptr<RenderSurface> area_`，`RenderSurface` 构造转私有（`friend class RenderEngine`）；`adoptArea`/`releaseArea` 两个回指协议删除，「第二个区」变成构造失败（`createSurface()` 回 null + 报一次）。判据 `RenderSurfaceTest.ASecondAreaIsAConstructionFailureNotASecondObject` / `ARefusedSecondAreaCannotFeedTheFrameContext`。见骨架复核 §10 |
+| 概念改名：`PassDescription` → `PassDraw` | 2026-10-20 | 与 `PassDesc` 只差一个词的两个概念终于分开了；`FrameDescription::Pass::draw`、`OwnedPassDraw`、`PassDrawTest` 一并改名。见 `graphics-abstraction-review-2026-10-20.md` §1.1 |
+| F1 `Scene` 收集只剩一个入口 | 2026-10-20 | `collectRenderCommands()` 返回共享不可变表，复制版与其 `Shared` 拼法一起退场；要复制就显式写 `*list`。111 处测试调用点迁移。见 `graphics-abstraction-review-2026-10-20.md` §6 |
+| F2a 程序覆盖不再改写命令 | 2026-10-20 | `PassDraw::program_override` + 后端在**记录时**解析（`FrameRecorder::render` / `snapshotCommands`），命令表保持共享不可变；`OwnedPassDraw` 同步。判据 `FrameRecorderTest.ThePassProgramOverrideIsResolvedWhenTheDrawIsRecorded`。见 `graphics-abstraction-review-2026-10-20.md` §7 |
+| F2b 内容记忆体跨帧存活 | 2026-10-20 | `Node::announceContentChange()` + 进程级 content epoch；`setContentFrame` 改为"老化上一帧没人用的条目"。稳态每帧收集 **8.7 ms → 36 µs**（2000 drawable，调试构建）。判据 `SceneContentCacheTest.EveryMutationThatChangesACommandEndsTheMemo`（11 种改动；它抓到 `Geometry::setMaterial/setProgram` 漏公告）。见 review §9 |
+| `FrameContext` 删除（含没人读的 `dt`） | 2026-10-20 | 该类型只有一个非每帧事实（表面尺寸），`dt` 写了零个读者；改成 `RenderEngine::surfaceWidth()/surfaceHeight()`，`frame(dt)` → `frame()` |
+| `Camera::setProjectionMatrixAsPerspective/Ortho` → `setPerspective`/`setOrthographic` | 2026-10-20 | 52 处调用点，与类内 `ProjectionType{Perspective, Orthographic}` 对齐（上一轮的 `lookAt` 是同一类问题） |
 
 ## 2. 现在可做（无触发条件）
 
@@ -110,11 +121,16 @@
 
 | 项 | 内容 | 触发条件 | 出处 |
 |---|---|---|---|
-| S1 `RenderPass` ↔ `PassDesc` 双份 | 一个 pass 声明有**值形式**（`PassDesc`）和**节点形式**（`RenderPass` 的 ~50 个 getter/setter），每个字段两边各一份，引擎在 `addPass` 里逐字段抄一遍——漂移风险与阅读成本都压在这里。方向：节点只持有值 + `desc()`，镜像访问器退场 | **下一次必须动 pass 面的公开变更窗口**（例如新增 `PassKind` 或 pass 级状态），或出现"值形式与节点形式不一致"的真实缺陷 | 本轮复核（`.ai/design/graphics-api-simplification-2026-10-20.md` §2） |
-| S2 `Texture` 的 face/layer 双拼 | `faceCount()` / `layerCount()`（同一个数 1 / 6）与 `source(face)` / `layer(index)`（同一张图）两套说法，头文件自己写着"kind-agnostic spelling"；牵动 vsg 上传路径 60+ 处 | 下一次碰纹理面（新纹理类型 / 上传路径改动 / 分层纹理） | 同上 |
-| S3 `Camera::setViewMatrixAsLookAt` | 收三个向量却叫"设置视图矩阵"；正名 `lookAt(eye, target, up)`。74 处调用点，纯命名收益 | 下一次必须动相机面的公开变更窗口（与 S1 同批做，一次窗口花在一次破坏上） | 同上 |
-| **SK1** 区归引擎所有 | `RenderEngine::createSurface()` + 引擎持 `intrusive_ptr<RenderSurface>`，区构造转私有；1:1 由类型保证、"第二个区"变构造失败、消灭"区必须先于引擎销毁"的隐式前提（`~RenderSurface` 已经不再解引用已销毁引擎，因为 SK0 把它换成 `Lease`） | **下一次动区/引擎生命周期**（多窗口、离屏会话、或任一宿主需要第二个区）——或 S1 落地时顺手一起做（同一块面，一次窗口） | `graphics-skeleton-review-2026-10-20.md` §4 SK1 |
-| **SK3** 视图场景不在管线里的诊断 | `SceneView::setPipeline` 时报一次"这条管线没有任何 pass 画这个视图的场景"（只诊断，不改结构：一个管线画多个场景是合法的） | 第一次出现"视图有内容但窗口空"类缺陷，或 `Viewer` 增加第二种建管线方式 | 同上 §3.1 / §4 SK3 |
+| ~~S1~~ **已落地 2026-10-20**（原行列作历史记录）：`RenderPass` ↔ `PassDesc` 双份 | 一个 pass 声明有**值形式**（`PassDesc`）和**节点形式**（`RenderPass` 的 ~50 个 getter/setter），每个字段两边各一份，引擎在 `addPass` 里逐字段抄一遍——漂移风险与阅读成本都压在这里。方向：节点只持有值 + `desc()`，镜像访问器退场 | **下一次必须动 pass 面的公开变更窗口**（例如新增 `PassKind` 或 pass 级状态），或出现"值形式与节点形式不一致"的真实缺陷 | 本轮复核（`.ai/design/graphics-api-simplification-2026-10-20.md` §2） |
+| ~~S2~~ **已落地 2026-10-20**（原行列作历史记录）：`Texture` 的 face/layer 双拼 | `faceCount()` / `layerCount()`（同一个数 1 / 6）与 `source(face)` / `layer(index)`（同一张图）两套说法，头文件自己写着"kind-agnostic spelling"；牵动 vsg 上传路径 60+ 处 | 下一次碰纹理面（新纹理类型 / 上传路径改动 / 分层纹理） | 同上 |
+| ~~S3~~ **已落地 2026-10-20**（原行列作历史记录）：`Camera::lookAt` | 收三个向量却叫"设置视图矩阵"；正名 `lookAt(eye, target, up)`。74 处调用点，纯命名收益 | 下一次必须动相机面的公开变更窗口（与 S1 同批做，一次窗口花在一次破坏上） | 同上 |
+| ~~SK1~~ **已落地 2026-10-20**（原行列作历史记录）：区归引擎所有 | `RenderEngine::createSurface()` + 引擎持 `intrusive_ptr<RenderSurface>`，区构造转私有；1:1 由类型保证、"第二个区"变构造失败、消灭"区必须先于引擎销毁"的隐式前提（`~RenderSurface` 已经不再解引用已销毁引擎，因为 SK0 把它换成 `Lease`） | **下一次动区/引擎生命周期**（多窗口、离屏会话、或任一宿主需要第二个区）——或 S1 落地时顺手一起做（同一块面，一次窗口） | `graphics-skeleton-review-2026-10-20.md` §4 SK1 |
+| ~~SK3~~ **已落地 2026-10-20**（原行列作历史记录）：视图场景不在管线里的诊断 | `SceneView::setPipeline` 时报一次"这条管线没有任何 pass 画这个视图的场景"（只诊断，不改结构：一个管线画多个场景是合法的） | 第一次出现"视图有内容但窗口空"类缺陷，或 `Viewer` 增加第二种建管线方式 | 同上 §3.1 / §4 SK3 |
+
+### 3.10 数据流成本（2026-10-20 复核登记，见 `graphics-abstraction-review-2026-10-20.md`）
+
+**全部收口 / 关闭**：F1（收集只剩一个入口）、F2a（程序覆盖成为 pass 的事实）、F2b（内容记忆体跨帧存活）、
+F3（灯光列表复制，按成本/收益关闭）。**本节不再有待办。**
 
 ## 4. 明确不做（有理由，不是待办）
 

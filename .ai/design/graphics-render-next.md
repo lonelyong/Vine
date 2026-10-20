@@ -262,7 +262,7 @@ m(1,1) = f                                          y_ndc =  f       ·y_view / 
 ```
 
 所以"矩阵里必须有 aspect"是硬约束（`gluPerspective` / `glm::perspective` / 我们的
-`Camera::setProjectionMatrixAsPerspective(fovy, aspect, near, far)` 都把它当必填参数）。真正要决定的是另一件事：
+`Camera::setPerspective(fovy, aspect, near, far)` 都把它当必填参数）。真正要决定的是另一件事：
 
 | | view matrix | projection matrix |
 | --- | --- | --- |
@@ -318,7 +318,7 @@ m(1,1) = f                                          y_ndc =  f       ·y_view / 
 
 **回退（2026-10-11，同日）**：M2c 的这条口径被**反转**了 —— aspect **回到相机**（`Camera::setAspect()` /
 `aspectRatio()` / `projectionMatrix()` / `screenToWorldRay(pos)`），`RenderBackend::viewAspect()` 从契约里删除，
-`PassDescription` 不带形状，"同一台相机进两块不同形状的矩形"从**被支持**变成**被报告**（引擎编译期的
+`PassDraw` 不带形状，"同一台相机进两块不同形状的矩形"从**被支持**变成**被报告**（引擎编译期的
 frame-plan 诊断）。理由与落地记录见 `.ai/design/graphics-redesign.md` §"已落地：A"：
 
 * **M2c 买到的"投影不可能过期"是有代价的**：形状成了**只有后端能答**的问题，而它的答案**取决于之前公告了什么**
@@ -423,8 +423,8 @@ class RenderSurface {
 // Camera::setAspect(double) / aspectRatio() const             ← 形状是相机自己的状态
 // Camera::projectionMatrix() const                            ← 正交忽略该形状（正交盒自带比例）
 // Camera::screenToWorldRay(screenPos) const                   ← 少掉那个 aspect 形参
-// Camera::setProjectionMatrixAsPerspective(fovy, near, far)   ← 不变（形状不在这条调用里）
-// Camera::setProjectionMatrixAsOrtho(left, right, bottom, top, near, far) ← 不变（正交盒自带比例）
+// Camera::setPerspective(fovy, near, far)   ← 不变（形状不在这条调用里）
+// Camera::setOrthographic(left, right, bottom, top, near, far) ← 不变（正交盒自带比例）
 
 // graphics：**没有** `RenderBackend::viewAspect()` 了 —— 形状不再由后端推导（M2c 的回退）。
 // "同一台相机进两块形状不同的矩形" = 画面被拉伸，引擎在编译期报出来
@@ -475,7 +475,7 @@ appfw/src/gui/
 | --- | --- | --- |
 | **M2a** 谁呈现（**已落地 2026-10-11**） | `RenderSurface`（"这块表面的最后一步是谁"：呈现表 + `present/dismiss/presentations`）+ `RenderEngine::passOrder()` 只读查询 + 删掉 `hasWindowPass(camera)` 与 `ensureWindowPass()` 的全局让位规则 + `RenderControl::surface()` / `SurfaceWindow::surface()`；demo 显式 `present(pipeline->windowPass())` | ①默认路径行为不变（`test_gui` 253 绿）②宿主自建主 pass 且**未**声明 ⇒ 视图的默认窗口管线**会**建；显式声明 ⇒ 不建（`RenderSurfaceTest` 两条 + `SceneViewTest.EnsureWindowPassDoesNotStandDownForSomebodyElsesPass`）③`applyOverlayIntent` 行为不回退（`AnApplicationWindowPassKeepsTheOverlaysToItself` 改写后仍钉住）④demo 冒烟零 error/warn |
 | **M2b** 清屏归表面（**已落地 2026-10-11**） | 表面决定**谁**清：呈现表第一条保留自己的清屏，其余条被 `setClearEnabled(false)`（不再是"公告了却被后端静默丢弃"）；每条呈现自己的"ask"（清不清）被记住，撤掉第一条时下一条恢复；视图重建后用友元回调让表面把决定落回新建的 pass 上。**没有** `Surface::setClear` —— 值仍住在 pass 上（一份真相），理由见 §3.2.4 那一段 | ①一块表面里只有一条呈现 pass 带清屏（其余条 `isClearEnabled()` 为 false）②撤掉第一条 ⇒ 清屏回到剩下那条自己的 ask ③延迟配方的 `present` 屏 pass（自己不清）不会被"第一条"逼着清 ④视图重建（`setOptions`）之后仍然只有一条 ⑤第一次呈现 → 下一条挤进来 → 第一条走掉，三种事件下不变式都成立；⑥表面先死/视图先死都不留悬垂 | M2a | 中 |
-| **M2c** ③：**aspect 出相机**（**已落地 2026-10-11**；**同日已回退** —— 见 §3.2.3 的"回退"与 `.ai/design/graphics-redesign.md` §"已落地：A"）（正确性 + 复用） | `Camera` 只持观看与投影**参数**（`setProjectionMatrixAsPerspective(fovy, near, far)`、`projectionMatrix(aspect)`、`aspectRatio()` 删除、`screenToWorldRay(pos, aspect)`）；**aspect 只有一处推导** —— `RenderBackend::viewAspect()`（pass 的 viewport，否则目标/表面尺寸），剔除（`RenderPass::execute` 收集前问一次）与 view block（`FrameRecorder::setViewAspect`，vsg 在每次 `render()` 前公告同一个数）读同一个；`Scene::collectRenderCommands*(camera, aspect)`（帧内 memo 以 view-projection 为键，天然区分两种视锥）；`OrbitCameraManipulator` 自持 `viewportAspect()`，`onResize` 不再往相机里塞 aspect | ①同一台相机进两块不同矩形：两张画面各自的 aspect 都对（`CameraTest.TheProjectionIsBuiltForTheShapeTheCallerNames`：同一相机两次投影只差水平缩放；`SceneTest.OneCameraInTwoRectanglesIsTwoPicturesAndTwoWalks`：同一帧两种形状 = 两次走树、两份结果）②剔除与画面一致：**同一台相机**、一条 1600×600 的 pass 与一条 600×600 的 pass，前者画出画面外侧那颗、后者剔掉（`RenderEngineTest.EachPassCullsWithTheShapeOfItsOwnRectangle`；变异：`execute()` 里写死 1.0 ⇒ 失败）③view block 与 pass 的 viewport 同源：`FrameRecorderTest.TheViewBlockIsProjectedForTheShapeTheScopeAnnounced`（公告 2.0 ⇒ 快照投影按 2.0；下一条 pass 回到默认，不继承上一条；0/NaN 被拒）④正交（阴影）行为不变：`CameraTest.TheOrthographicWindowIsKeptWhole` + `TheProjectionIsBuiltForTheShapeTheCallerNames` 后半（正交忽略 aspect）⑤`test_vsg` 405 绿（后端只看矩阵，不受影响）⑥全套 `test_graphics` 330 绿（92 处 `collectRenderCommands` 逐处补上形状，原判据不动） | M2a/M2b + M4（先有 dump） | 大 |
+| **M2c** ③：**aspect 出相机**（**已落地 2026-10-11**；**同日已回退** —— 见 §3.2.3 的"回退"与 `.ai/design/graphics-redesign.md` §"已落地：A"）（正确性 + 复用） | `Camera` 只持观看与投影**参数**（`setPerspective(fovy, near, far)`、`projectionMatrix(aspect)`、`aspectRatio()` 删除、`screenToWorldRay(pos, aspect)`）；**aspect 只有一处推导** —— `RenderBackend::viewAspect()`（pass 的 viewport，否则目标/表面尺寸），剔除（`RenderPass::execute` 收集前问一次）与 view block（`FrameRecorder::setViewAspect`，vsg 在每次 `render()` 前公告同一个数）读同一个；`Scene::collectRenderCommands*(camera, aspect)`（帧内 memo 以 view-projection 为键，天然区分两种视锥）；`OrbitCameraManipulator` 自持 `viewportAspect()`，`onResize` 不再往相机里塞 aspect | ①同一台相机进两块不同矩形：两张画面各自的 aspect 都对（`CameraTest.TheProjectionIsBuiltForTheShapeTheCallerNames`：同一相机两次投影只差水平缩放；`SceneTest.OneCameraInTwoRectanglesIsTwoPicturesAndTwoWalks`：同一帧两种形状 = 两次走树、两份结果）②剔除与画面一致：**同一台相机**、一条 1600×600 的 pass 与一条 600×600 的 pass，前者画出画面外侧那颗、后者剔掉（`RenderEngineTest.EachPassCullsWithTheShapeOfItsOwnRectangle`；变异：`execute()` 里写死 1.0 ⇒ 失败）③view block 与 pass 的 viewport 同源：`FrameRecorderTest.TheViewBlockIsProjectedForTheShapeTheScopeAnnounced`（公告 2.0 ⇒ 快照投影按 2.0；下一条 pass 回到默认，不继承上一条；0/NaN 被拒）④正交（阴影）行为不变：`CameraTest.TheOrthographicWindowIsKeptWhole` + `TheProjectionIsBuiltForTheShapeTheCallerNames` 后半（正交忽略 aspect）⑤`test_vsg` 405 绿（后端只看矩阵，不受影响）⑥全套 `test_graphics` 330 绿（92 处 `collectRenderCommands` 逐处补上形状，原判据不动） | M2a/M2b + M4（先有 dump） | 大 |
 | **M2d** ③：**矩形放呈现条目**（**已落地 2026-10-11**） | 矩形住在表面那张表上（`Presentation::rect`），视图**读**它：`Surface::present(view, rect)` / `present(view)`（沿用视图当前那块）/ `Surface::setViewport(view, rect)`；`SceneView::setViewport` 转发（**无表面时留在自己身上**，一个视图单独用也不需要表面）；`dismiss`/`~RenderSurface` 把矩形**还给**视图（接着画同一块地方）；`SceneView::viewport()` 改成**按值**返回（绑定期间读表）；顺带 `Surface::viewAt(nx, ny)` 与"一个视图呈现两块表面"的拒绝（一个视图画一张画）。**边界**（本片不做，理由见下）：表面**尺寸**没搬进这张表（表里只有归一化矩形）⇒ 宿主自建的 pass 没有归一化矩形（它自己给 `pass->setViewport` 设备像素 —— 它本来就知道尺寸），`viewAt` 用**归一化**坐标（宿主有像素，除以它喂给视图的表面尺寸即可）。要把尺寸也搬进表，得先回答"尺寸在表面与视图**哪一份**"：两份就是本设计要消掉的病，而没有任何验收判据需要它 | ①分屏：两块呈现各占一块、几何/设备视口各按自己的矩形（`SceneViewViewportTest.ASurfaceSplitStatesEachViewsRectangleAndNothingIsRebuilt`：半宽 = 640×720、右上四分之一 = 640×360，两块形状不同）②`SceneView::setViewport` 老写法仍可用（不绑表面那条：既有 `TheViewportDrivesAspectWindowRectAndLayoutSteps` 不动；绑了表面那条：`RenderSurfaceTest.TheSurfaceOwnsTheRectangleAndTheViewReadsIt` 断言两种拼写写的是**同一块**矩形）③改矩形**不重建**（同一用例：`pipeline()` 句柄与 `passCount()` 都不变，只有 pass 的 viewport 与视图的换算跟着走）④`viewAt` 与矩形一致（`AViewIsFoundByThePointItsRectangleHolds`：共享边归东/南邻、右/下边缘无主、宿主自建的 pass 永不中选；`ThePointGoesToThePresentationDrawnLast`：重叠时最后画的那条赢）⑤矩形交接：`dismiss` 之后视图接着画同一块（同一用例，且用的值（0.7）视图自己从没存过）⑥一个视图不能呈现两块表面（`AViewThatAlreadyPresentsAnotherSurfaceIsRefused`，诊断一条） | M2a | 中 |
 | **M2e**（并入 §5 的 **M5a/M5b**） | 默认输入路由 = 按矩形推（`Surface::viewAt(nx, ny)`，`setInputRouter` 可覆盖）+ 命令的焦点视图 —— **已落地 M5a** | 见 §5 M5a 行 |
 

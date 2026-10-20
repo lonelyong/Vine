@@ -25,6 +25,136 @@
 | **待办与口径** | **唯一清单：`.ai/design/graphics-followups-2026-10-19.md`**（2026-10-19 盘点：§2 现在可做 / §3 触发条件型 / §4 明确不做 / §5 不再是待办）。底层两个来源：**2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已由 S10b 覆盖并关闭，2026-10-19**：一设备 N 窗口、每窗口一个目标，见 `graphics-window-device-viewer.md` §7）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-20 F2b 落地：内容记忆体跨帧存活（"内容纪元"），稳态收集 8.7 ms → 36 µs
+
+- **机制**：`Node::announceContentChange()` 自增一个**进程级 content epoch**（relaxed atomic，见
+  `src/ContentEpoch.hpp`）。`Scene::collectRenderCommands` 比对 epoch：变了就清空记忆体，然后再按
+  (revision, eye, view-proj, mask) 命中。`setContentFrame()` 从"换 token 就清空"改成"老化上一帧没人用过的
+  条目"——记忆体因此被**实际在画的视图数**界定，不是帧数。
+- **公告点**：`Node::invalidateBounds()`（顺带，移动的子树既改盒也改命令）、`Node::setVisible/setLayers/
+  clearLayers/setDrawOrder/clearDrawOrder/setOpacity`、`StateNode` 的 15 个 mutator、
+  `Geometry::setMaterial/setProgram/setIndices`。**自定义节点必须自己调**，这点写进了 Node 的注释。
+- **实测**（调试构建，`MeasureWhatOneCollectionCosts*` 的 `per_frame`）：200 drawable 880 µs → **5 µs**；
+  2000 drawable 8701 µs → **36 µs**。`moving` 列不变（相机每帧动本来就该走树）。
+- **契约变化**：Scene 看不见的改动（直接写缓冲、自定义节点状态）现在必须调 `Scene::invalidateContent()`，
+  否则永远不被收集看到（以前靠"记忆只活一帧"兜底）。
+- **判据**：`SceneContentCacheTest.EveryMutationThatChangesACommandEndsTheMemo`（11 种改动逐个验证"改了就必须
+  换一张表"）——它当场抓到 `Geometry::setMaterial`/`setProgram` **没有公告**（改了材质还是旧表），两条都补上了。
+- 门禁：test_graphics **395** / test_vsg 479 / test_gui 259(1 skip) / 8 条静态脚本 0 finding。
+
+## 2026-10-20 F2b 量化 + F3 关闭：数据流成本登记只剩一条
+
+- **F2b 有了数**：`MeasureWhatOneCollectionCosts*` 多打印一列 `per_frame`（引擎自己的稳态：同一相机、同一内容、
+  每帧换内容帧 token）。调试构建 **200 drawable = 880 µs/帧、2000 = 8.7 ms/帧**；`still` 那一列仍是 1 µs
+  （同一帧内记忆命中）。差的就是那次遍历——**记忆体只活一帧，所以静态场景每帧都付**。
+- **为什么不当场改**：跨帧复用要回答"节点被直接改动时谁通知 Scene"（今天靠记忆只活一帧保证下一帧看见；改成
+  跨帧，动画会冻住）。两种设计写进 review §8.1：**A 全局变更纪元**（几十个 setter 都要 ++，漏一个就是静默画面
+  错误，且任何场景改动作废所有记忆）、**B 节点回指 Scene**（一条新的 ownership 边）。二者互斥，等真实负载。
+- **F3 关闭**：`DrawDescription::lights` 每 pass 每帧复制 N 个指针（N 个位数）。span over `intrusive_ptr<Light>`
+  会把拥有式 `OwnedDraw::lights` 的元素类型一起拖进来；span over `LightRef` 要 `Scene` 维护一份镜像（同一事实
+  两份存储，模块反复拒绝的形状）。**不做**，理由写在 review §8.2。
+- 至此 graphics 的待办登记簿只剩 **F2b** 一条（带触发条件与两套设计）。
+
+## 2026-10-20 F2a 收口：程序覆盖成为 pass 的事实（不再逐帧复制命令表）
+
+- **形状**：`PassDraw::program_override`（null = 每条命令自己的程序）。`RenderPass::describe()` 只把它写进
+  描述，`draw.commands` 永远是收集来的**共享不可变表**。后端在**记录时**解析：`VsgBackend::collectContentDraw(
+  commands, camera, override)` → `FrameRecorder::render(..., override)` → `snapshotCommands()` 把每条命令的
+  程序 identity 换成生效程序。计划、管线变体、程序表因此完全不知道"覆盖"存在。
+- **与 M1 同一条路**：2026-10-19 把光栅化覆盖从"改写命令"改成"随 pass 状态走"。程序覆盖是同一件事的剩余
+  一半；它不是 render state，所以有独立字段而不是进 `PassRenderState`。`StateNode.hpp` 里那段旧解释已改正。
+- **契约变化（要记住）**：应用覆盖现在是**后端契约**的一部分，和 `PassDraw::state` 一样。SDK 不再替后端改写。
+  vsg 与测试里的 mock 都已实现（mock 的 `consumeCommands` 现在收 override）。
+- **判据**：`FrameRecorderTest.ThePassProgramOverrideIsResolvedWhenTheDrawIsRecorded`（记录的身份是生效程序、
+  宿主表未被改写）、`PassDrawTest.WhatAScenePassDescribesIsWhatItAnnounces`、`RenderEngineTest.
+  TheFrameValueIsEveryPassAndEveryDrawTheFrameRan`（后两条断言改成"覆盖在 pass 上、共享表未改写"）。
+  门禁：test_graphics 394 / test_vsg **479** / test_gui 259(1 skip) / 8 条静态脚本 0 finding。
+- 剩下两条数据流成本：**F2b**（内容记忆体按帧失效 ⇒ 静态场景每帧重走树；这是刻意的，节点被直接改动 Scene
+  看不到）、**F3**（灯光列表每 pass 复制；改 span 需要镜像或改后端 `LightRef`）。
+
+## 2026-10-20 抽象/概念/API/数据流复核：三组改名，零行为变化
+
+- **口径**：名字相差一个词的两个类型 = 陷阱；类型名要说出真身份；一帧六跳每跳都要说清"谁拥有/借多久/复制几次"。
+  全文：`.ai/design/graphics-abstraction-review-2026-10-20.md`。
+- **改了什么**（全部零行为，编译器全量兜底）：
+  - `PassDescription` → **`PassDraw`**（+ `OwnedPassDraw`、`FrameDescription::Pass::draw`、
+    `OwnedPass::draw`、`PassDrawTest`）。和 `PassDesc`（声明）终于不是一个词的距离。
+  - **`FrameContext` 整个删除**：它只有"表面尺寸"这一个**非每帧**事实，`dt` 只有一处写、零个读者
+    （违反"不装旋钮"）。改成 `RenderEngine::surfaceWidth()/surfaceHeight()`；`frame(double dt = 0.0)` →
+    `frame()`；`FrameContext.hpp` 下线。<!-- drift-ok -->
+  - `Camera::setProjectionMatrixAsPerspective/Ortho` → **`setPerspective`/`setOrthographic`**（52 处），
+    与类内 `ProjectionType{Perspective, Orthographic}` 同词。
+- **成本点**（同一轮的后半段收掉了 F1）：**F1 已收口**——`Scene` 只剩一个
+  `collectRenderCommands()` 返回共享不可变表，复制版删除（111 处测试调用点迁移成 `*list`）；
+  F2a program override 每帧复制整表（正解：覆盖随 `PassDraw` 走、后端逐命令解析）、
+  F2b 静态场景每帧重走一遍树（记忆体按帧失效是刻意的：节点被直接改动 Scene 看不到）、
+  F3 灯光列表每 pass 每帧复制（改 span 需要镜像或改后端 `LightRef`）。
+- **坑**：`check_ai_docs.py` 的漂移豁免是**精确字符串** `<!-- drift-ok -->`，写成 `<!-- drift-ok: 原因 -->`
+  不算；被删掉的头文件名只要出现在反引号里就会被查。
+- 门禁：test_graphics 394 / test_vsg 478 / test_gui 259(1 skip) / 8 条静态脚本 0 finding（`--strict` 也 0）。
+
+## 2026-10-20 SK1：引擎拥有它的区（所有者矩阵最后一条"父不拥有子"的边）
+
+- **形状**：`RenderEngine::createSurface()` 是唯一创建入口（第二次回 `nullptr` + 报一次
+  `UnsupportedRequest`）；引擎持 `intrusive_ptr<RenderSurface> area_`；`RenderSurface` 构造转私有
+  （`friend class RenderEngine`）。宿主 `SurfaceWindow` 那句从"造一个对象"变成"要一个句柄"。
+- **删掉的协议**：`adoptArea` / `releaseArea`。区不再在构造/析构里回指引擎——引擎自己就是那个关系，
+  `~RenderEngine` 先 `shutdown()`（解绑目标）、把 `area_` move 到一个局部、清租约、卸设备诊断路线，
+  作用域结束时才释放区（此时租约为空）。**区永远不会看到半死的引擎**，宿主先销毁引擎也安全。
+- **判据**：`RenderSurfaceTest.ASecondAreaIsAConstructionFailureNotASecondObject`（第二次/第三次
+  `createSurface()` 都是 null、只报一次、既有的区照常呈现）、
+  `ARefusedSecondAreaCannotFeedTheFrameContext`。门禁：test_graphics 394 / test_vsg 478 /
+  test_gui 259(1 skip) / 8 条静态脚本 0 finding。
+- **坑**：把 `area_` 从 `raw_ptr` 换成 `intrusive_ptr` 后，`RenderEngine.hpp` 必须**完整包含**
+  `RenderSurface.hpp`（否则 `intrusive_ptr_release` 在别的 TU 里找不到，报的是一串模板实例化错误）；
+  `announceAreaSize` 里的比较要写成 `area_.get() != from`（`raw_ptr<const T>` 与 `intrusive_ptr<T>`
+  没有比较运算符）。
+- 这一轮之后 graphics 的登记簿**空了**（S1/S2/S3 + SK0/SK1/SK2/SK3 全落地）；剩下的都是带触发条件的
+  能力项（实例化、LOD、分层目标、Windows 读像素等），见 `graphics-followups-2026-10-19.md` §3。
+
+## 2026-10-20 S2 / SK3：纹理只剩 layer 词汇；视图采纳了画别的内容的链条会报一次
+
+- **S2（纹理 API 单拼法）**：`Texture` 只留 `layerCount()` / `layer(i)` / `hasLayer(i)` /
+  `setLayer(i, image)`；`faceCount` / `source(face)` / `hasSource` / `setSource` 全部退场。
+  `CubeMap::setFaceImage`/`faceImage`（命名面）保留，内部就是 `setLayer`/`layer`——命名面是类型自带的糖，
+  不是第二套编号。本地助手 `faceCountOf`→`layerCountOf`，vsg 的 `filledFaceCount`→`filledLayerCount`。
+  判据：`TextureLayersTest.OneNumberedSpellingWalksAnyKind`（原"两种拼法一致"的用例改写）。
+- **SK3（视图/链条不一致诊断）**：`RenderPipeline::draws(raw_ptr<const Scene>)` 问的是**整条链**
+  （延迟链条在 G-buffer pass 画场景，窗口 pass 只呈现目标），`SceneView::checkPipelineContent()` 在
+  `setPipeline` / `setScene` 各跑一次 + `ReportOnce`。`setScene` 会重绑窗口 pass 的内容，所以修好后自动
+  re-arm。判据：`SceneViewTest.AChainBuiltForOtherContentIsReportedOnceAndIsANewEpisodeOnceTheWireIsRight`。
+- **坑**：`test_vsg` 偶发"27 skipped + 6 failed"不是代码问题，是**设备被上一个进程占着**（前一轮刚跑完
+  立刻再跑）。重跑即绿；看 `[... SKIPPED ]` 的数量就能认出来。
+- 门禁：test_graphics 394 / test_vsg 478 / test_gui 259(1 skip) / 8 条静态脚本 0 finding。
+- 剩余登记：**只剩 SK1**（区归引擎所有，动生命周期，单独一轮）。
+
+## 2026-10-20 SK2 落地：一个 pass 声明只存一份（+ 两处每帧分配收口）
+
+- **`RenderPass` 现在 IS 一份 `PassDesc`**：`declaration()` 读它、`setDesc()` 整体采纳它，24 个镜像字段
+  全部退场，访问器是它的一行投影（多数内联）。`Slot` 从 9 个字段掉到 4 个（pass / order /
+  record_micros / transient），content 回到声明里（`PassDesc::content`，`bindPassContent` 写穿）。
+  `addPass(PassDesc)` 的 25 行逐字段抄写退场。判据：`test_graphics` 393 / `test_vsg` 478 /
+  `test_gui` 259（1 skip）。
+- **`PassDesc` 补了 `output`（`intrusive_ptr<ImageRef>`）**：之前值形式**无法**表达细粒度输出，
+  `addPass(desc)` 会静默丢掉那条声明；现在采纳声明就带着它。这是"值形式与节点形式不一致"的最后一个洞。
+- **kind 决定默认值**：`clear_enabled` / `clear_depth` 为 unset 时按 `PassKind` 回答（Scene 清、
+  Screen 不清），`ScreenPass` 构造函数里那两句 `setClear*` 因此消失——默认值不再是"某个构造函数顺手设的"。
+- **`setDesc()` 不清 depth 边**：采纳一份声明时只有**有效**的 depth view 会施加到目标；无效/缺席不动目标
+  （`setDepthView(invalid)` 仍然会清——它是显式声明）。原来 `addPass` 对无效 view 走 `setDepthView` 会
+  把别的 pass 建立的边清掉。判据：`DepthViewTest.TwoDifferentDepthViewsForOneTargetAreRefusedOnce`。
+- **`clearInputs()` 收掉 `clearInputNames()`**：一个入口清 images + targets + names（"清一半"是个真陷阱）。
+- **`Camera::setViewMatrixAsLookAt` → `lookAt(eye, center, up)`**，74 处调用点一次改完（与 S1 同批，
+  一次公开变更窗口）。
+- **两处每帧分配收掉**（模块规矩是"稳态帧不分配"）：`collectPlanProblems` 的
+  `map/map/set/map/vector` 换成引擎成员扁平 vector（pass 数是个位数，线性查找；`clear()` 保容量）；
+  `buildFrameValue` 按索引**复用** `FrameDescription::Pass`（`inputs.assign` 与已就位的
+  `PassDraw` 都不再每帧重建），只有运行的 pass 变少时才 `resize` 收缩。
+  `OutputIdentity` 因此补了 `operator==`。
+- **坑**：`RenderPass::desc()` 拿不到——`VN_OBJECT_META_DECL` 已经提供了一个静态 `desc()`（元对象），
+  所以访问器叫 `declaration()`。新加同名的"读声明"访问器前先查宏。
+- 剩余登记（未做）：S2 `Texture` face/layer 双拼（60+ 处，等下一次碰纹理面）、SK1 区归引擎所有、
+  SK3 视图/管线场景不一致诊断。
+
 ## 2026-10-20 骨架复核：先画图再动手（区对引擎的借用改 Lease）
 
 - 全文与四张 mermaid 图：`.ai/design/graphics-skeleton-review-2026-10-20.md`。判据：全量构建 0 error；
@@ -36,10 +166,10 @@
   每个用点改成 `engine_.get()` + 显式处理"引擎已消失"（不展示、不报诊断——诊断路线随引擎走了）。
   判据：`RenderSurfaceTest.AnAreaOutlivingItsEngineAnswersNothingInsteadOfCallingIntoIt`。
 - **登记的三条切片（按收益÷风险）**：
-  - **SK1 区归引擎所有**（建议下一个）：`RenderEngine::createSurface()` 返回 `intrusive_ptr`，引擎持
-    `intrusive_ptr<RenderSurface> area_`，区构造转私有。收益：1:1 由类型保证、"第二个区"从运行期诊断
-    变构造失败、消灭"区必须先于引擎销毁"的隐式前提；与 Filament/O3DE 同形。成本 ~30 处构造点（多为测试）
-    + `~RenderEngine` 显式排序。**不要与 SK2 同批**。
+  - ~~**SK1 区归引擎所有**~~ **已于 2026-10-20 落地**（见顶条）：`RenderEngine::createSurface()` +
+    引擎持 `intrusive_ptr<RenderSurface> area_`，区构造转私有（`friend class RenderEngine`），
+    `adoptArea`/`releaseArea` 两个回指协议整体删除。与 Filament `Engine`/`SwapChain`、
+    O3DE `WindowContext` 同形。
   - **SK2 `RenderPass` 只存一份 `PassDesc`**（= followups §3.9 的 S1，最大的一处，单独一轮）：节点持 `desc_`
     + 编译期事实，公开面 = `desc()`/`setDesc()`；可分三步（加 desc() → 迁读者 → 删镜像访问器）。
   - **SK3**：`SceneView::setPipeline` 时若管线任何 pass 都不画视图的场景，报一次诊断（只诊断不改结构，
@@ -73,10 +203,9 @@
   用 LSP rename 时**测试目录不一定被索引**（`aspectRatio` 24 处里测试是手工补的），收尾要 grep 旧名。
 - `Capabilities::max_color_attachments` 的注释原来声称"MRT planning reads this"，全仓无读者；改成它真实的身份
   （天花板，后端拒绝超出的声明并报诊断）。
-- 本轮明确不做、已进 `graphics-followups-2026-10-19.md` §3：`RenderPass`↔`PassDesc` 收敛（最大的结构性问题：
-  一个 pass 声明有值形式和节点形式，每个字段两边各一份）、`Texture` 的 `faceCount`/`layerCount` 与
-  `source`/`layer` 双拼法（60+ 处）、`Camera::setViewMatrixAsLookAt` → `lookAt`（74 处）；
-  `RenderPass::shouldClearDepth` 属于"规矩 vs 可读性"，留给人裁决。
+- 本轮明确不做、已进 `graphics-followups-2026-10-19.md` §3 三条（**2026-10-20 均已落地**，见顶条与本条：
+  `RenderPass`↔`PassDesc` 收敛、`Texture` 的 `faceCount`/`layerCount` 与 `source`/`layer` 双拼法、
+  `Camera::lookAt` → `lookAt`）；`RenderPass::shouldClearDepth` 属于"规矩 vs 可读性"，留给人裁决。
 
 ## 2026-10-19 后端 7 条重审：A4 落地（材质自带 revision），B6 的“修法”被驳回
 
@@ -594,7 +723,7 @@
 - **掩码进 memo key**（`ContentMemo::Entry::layer_mask`）：同一相机、同一帧、两条不同掩码的 pass **各走一次**（`+content_collect_count_`），
   同掩码则复用 —— 这是本片最容易错的一处：不进 key 就会"画面看着对、只是多了/少了几个物体"。
 - **帧值如实但进对的地方**：掩码进 `FramePlan::PassPlan::layer_mask`（`describe()` 只在非默认时打 `layers=0x..`），**不进**
-  `PassDescription` —— 后者是后端消费的绘制形状（目标/视口/清屏/状态/绘制），掩码是**选择的理由**。
+  `PassDraw` —— 后者是后端消费的绘制形状（目标/视口/清屏/状态/绘制），掩码是**选择的理由**。
 - **配方入口**：`PipelineOptions::layer_mask`（`build()` 开头取一份 `content_layers_`，与 `shadows_built_` 同款"一次 build 一个值"），
   六个走收集的内容 pass 各盖一次（阴影 / 前向主 / 前向透明 / G-buffer / 延迟透明 / 预览）；**两条 Screen 灯照 pass 不盖**
   （content 只用来取灯，盖了是假话）、**gizmo / 帧率 overlay 不盖**（UI 不该被内容选择藏掉）；appfw `ViewerOptions::layer_mask` 原样转发。
@@ -811,8 +940,8 @@
   `setWindowHandle(void*)` 与 `resize(w,h)`；**区**（`RenderSurface`）成为窗口与尺寸的 owner —— 新增
   `bindTarget(void*)` / `targetHandle()` / `hasTarget()`（`nullptr` = 解绑），`resize(w,h,ratio)` 从"只扇出给视图"
   变成**唯一**的尺寸公告（先 `engine_->announceAreaSize(w,h)`：帧上下文 + 窗口那一半，再扇出给每条呈现的视图）；
-  引擎留两条**私有**入口（`bindAreaTarget` / `announceAreaSize`，`friend class RenderSurface`）与 1:1 的
-  `adoptArea`/`releaseArea`（区在构造/析构里登记/注销，引擎自己不持句柄）。
+  引擎留私有入口 `announceAreaSize`（`friend class RenderSurface`）。<!-- drift-ok: `adoptArea`/`releaseArea`
+  是当时的做法，2026-10-20 的 SK1 已换成"引擎创建并持有区"（`RenderEngine::createSurface`）。 -->
 - **判定与报告**：无呈现意图的设备（后端 `surface() == nullptr`）上 `bindTarget` **被拒（false）+ 报一次**
   （`PassProtocolViolation`，"报一次"是 episode：同一次会话里再公告还是那一条）；**公告本身留在区上**（窗口是宿主的
   话，能呈现的会话起来时接手）——拒绝说的是"这次会话接不住"，不是"这个区没有窗口"。会话起来时（`initialize()`）
@@ -994,7 +1123,7 @@
   `beginFrame`/`endFrame`/`beginPass`/`endPass`/`setPassOrder`/`setPassState`/`setClearPolicy`/`setViewport`/
   `setLights`/`setPassInputs`/`render`/`drawScreenProgram` **12 个全删**（`RenderBackend.hpp` 的 CALL ORDER 一节
   整段消失：值里没有调用序列可写）。`setRenderTarget` **留下但改义**："pass 画进哪张目标"在值里
-  （`PassDescription::target`），它只剩"宿主宣布一张它要用/回读的目标"（持握 + 懒建 + 上报）；
+  （`PassDraw::target`），它只剩"宿主宣布一张它要用/回读的目标"（持握 + 懒建 + 上报）；
   `RenderPass::announceClear`、`announcePassTo`/`announceDrawsTo`、"默认 `executeFrame`"随平坦路径删除。
   **宿主自己驱动一条 pass** 落成 `singlePassFrame(pass, order, inputs, description)`（`FrameDescription.hpp`
   + `RenderBackend.cpp`）：`RenderPass::execute()` = 描述它 + 把这一帧交给后端 —— **引擎与宿主同一个入口、同一个形状**。
@@ -1119,7 +1248,7 @@
 ## 2026-10-11 S2 前半落地：帧的值（引擎产出，可观测）
 
 - **做了什么**：`FrameDescription` 有了帧那一层（`FrameDescription::Pass` = pass 身份 / order / 解析后的 inputs +
-  该 pass 自己的 `PassDescription`，nullopt = 这帧什么都不发）；`compileFrame()` 末尾 `buildFrameValue()`
+  该 pass 自己的 `PassDraw`，nullopt = 这帧什么都不发）；`compileFrame()` 末尾 `buildFrameValue()`
   按运行序跑每条启用 pass 的 `before_draw` 钩子、告诉它解析好的 inputs、请它描述自己 —— **整帧的值在派发前存在**；
   `RenderEngine::frameDescription()` 观测它。`announcePassTo`/`announceDrawsTo` 从 `RenderPass.cpp` 匿名命名空间
   **搬到 `RenderBackend.cpp` 并导出**（声明在 `FrameDescription.hpp`）：描述→平坦调用的映射只有一份。
@@ -1153,7 +1282,7 @@
   本仓根本不出现（分屏是每格一台相机）。
 - **落地形态**：`Camera::{setAspect,aspectRatio,projectionMatrix(),screenToWorldRay(pos)}`；`Scene::collectRenderCommands*(camera)`
   （memo 仍以 view-projection 为键 ⇒ 两种形状两条 memo）；`RenderBackend::viewAspect()` **删除**（纯虚 9→8）；
-  `PassDescription` 无形状字段；`FrameRecorder::setViewAspect` 删除（快照投影读相机）；`RenderPass`/`ScreenPass`
+  `PassDraw` 无形状字段；`FrameRecorder::setViewAspect` 删除（快照投影读相机）；`RenderPass`/`ScreenPass`
   合成**一个** `describe(scene, out)` 虚函数（S1 的那道缝没了）；`SceneView::applySurfaceGeometry` 把窗格形状
   push 给相机（与 `manip->onResize` 同一个矩形，一行）；`AxisGizmo` 声明 1:1、`FpsOverlay` 声明自己 box 的形状；
   `OrbitCameraManipulator::viewportAspect()` 读相机（无相机才回退自己的矩形 —— 否则交互与拾取射线读两个数）；
@@ -1174,13 +1303,13 @@
 
 ## 2026-10-11 S1 落地：pass 描述它的绘制（重新设计的第一片）
 
-- **做了什么**：新增导出的 `sdk/vine/graphics/FrameDescription.hpp`（`DrawDescription` + `PassDescription`；
+- **做了什么**：新增导出的 `sdk/vine/graphics/FrameDescription.hpp`（`DrawDescription` + `PassDraw`；
   `ClearPolicy` **从 `RenderBackend.hpp` 移进来** —— 它是"一条 pass 描述自己"的东西，后端是它的读者之一，
   于是 `RenderBackend.hpp` 反过来 include 它）。`RenderPass` 拆出两个虚拟扩展点
   `describePass(scene, out)` / `describeDraws(scene, out)`，`execute()` 成为薄壳
   （描述 → **两半之间**问画面形状 → 描述绘制 → 按契约顺序宣告）；`ScreenPass` 不再覆写 `execute`。
   **（同日 A 之后：两半合成一个 `describe(scene, out)`，`execute()` 仍是薄壳 —— "描述 → 宣告"）**
-- **判据（实测）**：`test_graphics` 346→**349**（`PassDescriptionTest` 三条：场景档 / 全屏档 / "什么都不发"，
+- **判据（实测）**：`test_graphics` 346→**349**（`PassDrawTest` 三条：场景档 / 全屏档 / "什么都不发"，
   每条都把**描述的值**与记录型后端**收到的调用**逐项对照）；`test_gui` **253**、`test_vsg` **428**（+3 skip
   +2 已知红，逐项与落地前相同）、`test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94 全绿；全量 Release 构建
   0 error / 0 warning；五个 gate 0 finding。**变异 1/1 红**：`describeDraws` 少填 `lights` ⇒ 只有场景档那条红。
@@ -2096,7 +2225,7 @@
   全部判据在 `tests/test_graphics/RenderSurfaceTest.cpp`（变异验证：去掉 `applyClear()` 调用 ⇒ 4 条失败；
   去掉 `entry.clears` / 去掉视图重建回调 ⇒ 各 1 条失败；去掉 `~SceneView` 的自解绑 ⇒ 1 条失败）。
 - **aspect 出相机（M2c，2026-10-11 已落地；⛔ 同日已回退 —— 见下面 2026-10-11 A 那条，本节只作历史记录）**：`Camera` 只持**观看**（eye/up/target）+ **投影参数**（fov / near / far /
-  类型 / 正交盒），**不持 aspect、也不缓存投影矩阵** —— `setProjectionMatrixAsPerspective(fovy, near, far)`
+  类型 / 正交盒），**不持 aspect、也不缓存投影矩阵** —— `setPerspective(fovy, near, far)`
   （少一个形参）、`projectionMatrix(double aspect)` 现算（正交**忽略**该参数：盒自带比例）、`aspectRatio()` 删除、
   `screenToWorldRay(screenPos, aspect)` 多收一个（**提案漏算的第五个读者**）。为什么：view matrix 只依赖眼睛、
   可跨矩形复用，projection 依赖 fov **和 aspect**、不可 —— 差别就在 aspect，于是"矩形变了投影没跟上"这一整类

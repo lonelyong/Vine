@@ -56,8 +56,8 @@
 
 **落地**：
 - 新增 `graphics::Texture`（`Object` + `RefCounted`，与 `Material`/`ImageRef` 同族）：
-  `Shape{D2,Cube}`、`faceCount()`（D2=1 / Cube=6）、`width/height/format/mipCount`、
-  `setSource(face, intrusive_ptr<const imaging::Image>)` / `source(face)` / `hasSource(face)` / `complete()`。
+  `Shape{D2,Cube}`、`layerCount()`（D2=1 / Cube=6）、`width/height/format/mipCount`、
+  `setLayer(layer, intrusive_ptr<const imaging::Image>)` / `layer(index)` / `hasLayer(layer)` / `isComplete()`。
 - **跟 `RenderTarget` 同一个模式**：SDK 类型是**逻辑描述**，不持 GPU 对象；后端物化它。
 - 源图必须与描述在 **format / size / mipCount 三项都一致**（不一致在**调用处**就拒绝，
   不让后端到上传时才发现）。

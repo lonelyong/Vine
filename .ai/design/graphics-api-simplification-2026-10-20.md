@@ -67,11 +67,11 @@
 
 | 项 | 为什么这一轮不做 |
 |---|---|
-| `Camera::setViewMatrixAsLookAt()` → `lookAt()` | 名字确实差（它收三个向量，叫"设置视图矩阵"），但 74 处调用点、跨 `src`/`tests`；改名本身不产生任何行为或表达力的收益，等下一次必须动相机面的时候一起做 |
-| `Texture::faceCount()` / `layerCount()` 与 `source(face)` / `layer(index)` 的双拼法 | 同一个数两个名字（1 / 6），头文件自己写了"kind-agnostic spelling"，是真正的"两种说法"；但它牵动 60+ 处（含 vsg 插件上传路径），单独一轮做 |
+| `Camera::lookAt()` → `lookAt()` | **已于 2026-10-20 的 SK2 轮落地**（74 处调用点与 `RenderPass` 单存储同批改完，见 `graphics-skeleton-review-2026-10-20.md` §8） |
+| `Texture::faceCount()` / `layerCount()` 与 `source(face)` / `layer(index)` 的双拼法 | **已于 2026-10-20 落地**：只剩 `layerCount()` / `layer(i)` / `hasLayer(i)` / `setLayer(i, image)`；Cube 的 `setFaceImage`/`faceImage` 收敛成它的命名糖（见 `graphics-skeleton-review-2026-10-20.md` §9） |
 | `RenderPass::shouldClearDepth()` | 和 `isClearEnabled()` 并列时口径不齐，但 `shouldClearDepth` 读起来比 `isDepthClearEnabled` 更准（它是"请求"，不是"状态"，头文件已把这个取舍写清楚）——这条属于"规矩 vs 可读性"的裁决，留给人定 |
 | `backend/` 里的 `valid()` / `known()` / `derived()` | 后端半不面对宿主（`BackendHalfGuard.hpp` 禁止宿主包含），而且 `valid()` 在测试里上百处；收了收益小、噪声大 |
-| `RenderPass` ↔ `PassDesc` 的字段/方法双份 | 这是本轮看下来**最大**的结构性问题（一个 pass 声明有值形式和节点形式，每个字段两边各一份），但把它收成"`RenderPass` 持有一个 `PassDesc`"是一次结构性重构，必须单独立项 |
+| `RenderPass` ↔ `PassDesc` 的字段/方法双份 | **已于 2026-10-20 的 SK2 轮落地**：节点只持有 `PassDesc`，镜像字段退场（见 `graphics-skeleton-review-2026-10-20.md` §8） |
 
 ## 3. 判据（已跑）
 
@@ -89,7 +89,7 @@
 
 - `RenderPass` / `PassDesc` 收敛成一份存储；
 - `Texture` 的 face/layer 双拼法；
-- `Camera::setViewMatrixAsLookAt` 的名字。
+- `Camera::lookAt` 的名字。
 
 ## 5. 一条经验
 

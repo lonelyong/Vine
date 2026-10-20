@@ -90,8 +90,8 @@ void setLayerMask(std::uint32_t mask);   // 默认 kAllLayers
 - **层（L2）不进 key**：层不改变"收集出什么"，只改变"画到哪儿"。
 - **判定只有一处**：收集遍历里那一个条件；解析出来的层集合由 `InheritedState` 往下带（与状态继承同一个 fold，
   同一处 `clearLayers()` = 把 `std::optional` 清空）。
-- **帧值如实，但进对的地方**：掩码进 **`FramePlan::PassPlan`**（字段 + `describe()` 文本），**不进 `PassDescription`**
-  —— `PassDescription` 说的是"这条 pass 发出什么"（目标 / 视口 / 清屏 / 状态 / 绘制，后端消费的形状），
+- **帧值如实，但进对的地方**：掩码进 **`FramePlan::PassPlan`**（字段 + `describe()` 文本），**不进 `PassDraw`**
+  —— `PassDraw` 说的是"这条 pass 发出什么"（目标 / 视口 / 清屏 / 状态 / 绘制，后端消费的形状），
   掩码是**选择的理由**而不是绘制内容，塞进去只会让后端多读一个它不用的字段（见 `FrameDescription.hpp` 的说明）。
 
 ### 2.4 配方入口（`PipelineOptions` / `ViewerOptions`）

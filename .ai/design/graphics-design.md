@@ -319,16 +319,16 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
     ProjectionType projectionType() const;
 
     /** @brief 用 look-at 参数设置视图矩阵。 */
-    void setViewMatrixAsLookAt(const Vec3d& eye, const Vec3d& center, const Vec3d& up);
+    void lookAt(const Vec3d& eye, const Vec3d& center, const Vec3d& up);
 
     /** @brief 用透视参数设置投影矩阵。 */
-    void setProjectionMatrixAsPerspective(double fovy, double aspect, double zNear, double zFar);
+    void setPerspective(double fovy, double aspect, double zNear, double zFar);
 
     /** @brief 用正交参数设置投影矩阵。 */
-    void setProjectionMatrixAsOrtho(double left, double right, double bottom, double top,
+    void setOrthographic(double left, double right, double bottom, double top,
                                     double zNear, double zFar);
 
-    // 相机参数（最近一次 setViewMatrixAsLookAt 的记录）
+    // 相机参数（最近一次 lookAt 的记录）
     Vec3d eye() const;
     Vec3d target() const;
     Vec3d up() const;
@@ -358,7 +358,7 @@ using CameraPtr = intrusive_ptr<Camera>;
 ```
 
 > 说明：镜像 OSG 相机 API，视图/投影矩阵一次性整体设置，避免中间不一致状态。
-> 宽高比直接由调用方传入 `setProjectionMatrixAsPerspective`，无独立 `Viewport` 概念。
+> 宽高比直接由调用方传入 `setPerspective`，无独立 `Viewport` 概念。
 
 ### 3.5b `Node`（场景图节点）
 
@@ -931,8 +931,8 @@ scene->addNode(node);
 // 创建相机
 auto camera = make_intrusive<Camera>();
 camera->setName(u8"MainCamera");
-camera->setViewMatrixAsLookAt(Vec3d(0, 10, 15), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
-camera->setProjectionMatrixAsPerspective(60.0, 16.0 / 9.0, 0.1, 1000.0);
+camera->lookAt(Vec3d(0, 10, 15), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+camera->setPerspective(60.0, 16.0 / 9.0, 0.1, 1000.0);
 
 // 收集渲染命令（自动视锥剔除 + 排序）
 auto commands = scene->collectRenderCommands(camera.get());

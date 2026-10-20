@@ -1006,16 +1006,6 @@ src/viz/graphics/sdk/vine/graphics/RenderBackendRegistry.hpp	param|RenderBackend
 src/viz/graphics/sdk/vine/graphics/RenderBackendRegistry.hpp	return|RenderBackendRegistry::has
 src/viz/graphics/sdk/vine/graphics/RenderBackendRegistry.hpp	return|RenderBackendRegistry::instance
 src/viz/graphics/sdk/vine/graphics/RenderBackendRegistry.hpp	return|RenderBackendRegistry::names
-src/viz/graphics/sdk/vine/graphics/RenderPass.hpp	brief|RenderPass::RenderPass
-src/viz/graphics/sdk/vine/graphics/RenderPass.hpp	param|RenderPass::setName/1
-src/viz/graphics/sdk/vine/graphics/RenderPass.hpp	return|RenderPass::camera
-src/viz/graphics/sdk/vine/graphics/RenderPass.hpp	return|RenderPass::hasViewport
-src/viz/graphics/sdk/vine/graphics/RenderPass.hpp	return|RenderPass::isClearEnabled
-src/viz/graphics/sdk/vine/graphics/RenderPass.hpp	return|RenderPass::isEnabled
-src/viz/graphics/sdk/vine/graphics/RenderPass.hpp	return|RenderPass::name
-src/viz/graphics/sdk/vine/graphics/RenderPass.hpp	return|RenderPass::polygonModeOverride
-src/viz/graphics/sdk/vine/graphics/RenderPass.hpp	return|RenderPass::programOverride
-src/viz/graphics/sdk/vine/graphics/RenderPass.hpp	return|RenderPass::renderTarget
 src/viz/graphics/sdk/vine/graphics/RenderPipelineBuilder.hpp	return|RenderPipelineBuilder::setCamera
 src/viz/graphics/sdk/vine/graphics/RenderPipelineBuilder.hpp	return|RenderPipelineBuilder::setContent
 src/viz/graphics/sdk/vine/graphics/RenderPipelineBuilder.hpp	return|RenderPipelineBuilder::setTransparentContent

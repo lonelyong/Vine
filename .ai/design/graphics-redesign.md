@@ -201,7 +201,7 @@ class VN_GRAPHICS_API RenderSurfaceBinding
 - `FrameDescription` 的形状**已经在 `backend/FrameRecorder.hpp` 里存在**（T2 直接把它提到宿主半并改名，
   或保留在 `backend/` 而由宿主包含——这取决于放置判据，见 `graphics-layering.md` §0）。
 - **引擎侧要新做的事只有一件**：让 pass**描述**它的绘制而不是**执行**它 ——
-  `RenderPass::execute(backend)` → `RenderPass::describe(scene, PassDescription&)`（信息它今天全有：
+  `RenderPass::execute(backend)` → `RenderPass::describe(scene, PassDraw&)`（信息它今天全有：
   `render_target_`/`viewport_`/`stateOverrides()`/`render_commands`/`camera_`，见 `RenderPass.cpp:248-301`）。
   这是 S1 的主体工作量，也是唯一一处"真改结构"（**已落地**，见 §4"已落地：S1"）。
 - `ScreenPass` 同理（`ScreenPass.cpp:56-78` → 一条带 `program` 的 `Draw`）。
@@ -247,14 +247,14 @@ class VN_GRAPHICS_API RenderSurfaceBinding
 
 ### 已落地（2026-10-11）：S1
 
-**动作**：新增导出的 `sdk/vine/graphics/FrameDescription.hpp`（`DrawDescription` + `PassDescription`），
+**动作**：新增导出的 `sdk/vine/graphics/FrameDescription.hpp`（`DrawDescription` + `PassDraw`），
 `ClearPolicy` **从 `RenderBackend.hpp` 移到这里**（它是"一条 pass 描述自己"的东西，不是后端接口的东西 ——
 `VkRenderingInfo` 的 loadOp/clearValue 也在渲染信息里，不在设备接口上；`RenderBackend.hpp` 反过来 include 它）。
 `RenderPass` 拆出两个虚拟扩展点 `describePass(scene, out)` / `describeDraws(scene, out)`，
 `execute()` 变成"描述 → 在**两半之间**问画面形状 → 描述绘制 → 按契约的顺序宣告"的**薄壳**；
 `ScreenPass` 不再覆写 `execute`，只覆写两个 describe。
 
-**判据（实测）**：`test_graphics` 346 → **349**（新增 `PassDescriptionTest` 三条：场景档 / 全屏档 /
+**判据（实测）**：`test_graphics` 346 → **349**（新增 `PassDrawTest` 三条：场景档 / 全屏档 /
 "什么都不发" —— 每条都把**描述的值**与记录型后端**收到的调用**逐项对照）；`test_gui` **253**、
 `test_vsg` **428**（+3 skip +2 已知红，与落地前逐项相同）、`test_appfw` 32 / `test_meshio` 34 / `test_iobase` 94
 全绿；全量 Release 构建 0 error / 0 warning；五个 gate 0 finding。
@@ -347,7 +347,7 @@ per-pass / per-draw 的（`beginPass(PassId)` / `setPassOrder` / `setPassInputs`
    `beginPass` / `endPass` / `setPassOrder` / `setPassState` / `setClearPolicy` / `setViewport` / `setLights` /
    `setPassInputs` / `render` / `drawScreenProgram` **全部删除**（12 个）—— `RenderBackend.hpp` 的 CALL ORDER
    一节整段消失（值里没有调用序列可写）。`setRenderTarget` **留下并改述**：pass 画进哪张目标写在帧值里
-   （`PassDescription::target`），于是它只剩"宿主宣布一张它将使用/回读的目标"这一半（持握 + 懒建 + 上报），
+   （`PassDraw::target`），于是它只剩"宿主宣布一张它将使用/回读的目标"这一半（持握 + 懒建 + 上报），
    与 `releaseRenderTarget` 同类；`announceClear`（`RenderPass` 的便捷入口）与 `announcePassTo` / `announceDrawsTo`
    （"描述 → 逐条调用"的映射）随平坦路径一起删除。
 2. **"宿主自己驱动一条 pass"落成一个单 pass 的帧**：新增 `singlePassFrame(pass, order, inputs, description)`
@@ -431,7 +431,7 @@ meshio 34 / iobase 94）；全量 Release 0 error / 0 warning。`MockBackend` �
 S2 与 S3 前半是同一件事的两半，合起来就是"引擎产出整帧的值，并且跑的就是它"。
 
 **动作**：`FrameDescription` 补上帧那一层（`vn::graphics::FrameDescription::Pass` = 引擎知道的三个事实
-〔pass 身份 / order / 解析后的 inputs〕+ 该 pass 自己的 `PassDescription`〔nullopt = 这帧什么都不发〕）。
+〔pass 身份 / order / 解析后的 inputs〕+ 该 pass 自己的 `PassDraw`〔nullopt = 这帧什么都不发〕）。
 `RenderEngine::compileFrame()` 末尾调 `buildFrameValue()`：按**运行序**对每条启用的 pass 跑它的 `before_draw`
 钩子、把解析好的 inputs 告诉它、请它描述自己 —— 于是**整帧的值在派发之前就存在**（这正是 A 解除的那条依赖）。
 `RenderEngine::frameDescription()` 把它读出来（只读观测，像 `framePlan()` 一样）。
@@ -486,7 +486,7 @@ VTK 那一派、**用法**却是 three.js 那一派（每个视图一台相机�
 **动作**：`Camera` 持 `aspect_`（`setAspect` 忽略非正数 / `aspectRatio` / `projectionMatrix()` /
 `screenToWorldRay(pos)`）；`Scene::collectRenderCommands*(camera)` 少一个入参（memo 仍以 view-projection 为键 ——
 形状在矩阵里，所以两种形状天然是两条 memo 项）；`RenderBackend::viewAspect()` 从契约里**删除**（纯虚 9 → 8）；
-`PassDescription` 不再有形状字段；`FrameRecorder` 删 `setViewAspect`，快照投影读相机；`SceneView`
+`PassDraw` 不再有形状字段；`FrameRecorder` 删 `setViewAspect`，快照投影读相机；`SceneView`
 把窗格的形状 push 给相机（`applySurfaceGeometry` 里的一行，与 `manip->onResize` 同一个矩形）；HUD 子视口相机
 自己声明形状（`AxisGizmo` 1:1、`FpsOverlay` = 自己那块 box 的形状）；`OrbitCameraManipulator::viewportAspect()`
 读相机（无相机时才回退到自己的矩形 —— 否则交互与**拾取射线**会读两个数）；**新增**引擎编译期检查
@@ -508,7 +508,7 @@ VTK 那一派、**用法**却是 three.js 那一派（每个视图一台相机�
 **变异 4/4 红**：① 检查里永不报 ⇒ 两条新用例红；② 矩形不读 viewport ⇒ 视口那条红；
 ③ `SceneView` 不 push 形状 ⇒ `ResizingTellsTheCamera...` 红；④ `FpsOverlay` 不 push box 形状 ⇒ HUD 那条红（各自实测）。
 
-**留下的记账**：S4a 整片**取消**（A 就是它要的东西，只是把形状放在相机而不是 `PassDescription`）；
+**留下的记账**：S4a 整片**取消**（A 就是它要的东西，只是把形状放在相机而不是 `PassDraw`）；
 `RenderBackend.hpp` 的 include 与 `ClearPolicy` 的位置不变（S1 已搬）；S2 的前置依赖现在是 **A（已落地）**。
 
 ### 已落地（2026-10-11）：S4b —— 拆出呈现（窗口成为可选依赖）
