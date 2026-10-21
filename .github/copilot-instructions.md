@@ -47,6 +47,11 @@ Fields use `snake_case`:
 * `private` and `protected` fields get a trailing underscore `_` (e.g. `file_path_`, `val3_`).
 * `public` fields do NOT get a trailing underscore (e.g. `val1`).
 * Class static fields additionally get an `s_` prefix (e.g. `s_count`, `s_val2`, `s_val5_`).
+  * **Exception - constants**: a static whose value is fixed for the program's lifetime is a CONSTANT and is named like
+    every other constant - a `k` prefix followed by PascalCase (`Color::kWhite`, `Colorf::kTransparent`). `s_` stays
+    for statics that hold state (`MemoryStream::s_maxBump`), and a static *accessor* for such a value is a function and
+    follows the function rule instead (`Vector3::unitX()`). The prefix is not decoration: it marks what a name IS
+    (constant / state / function), so a constant does not get an exemption for being public API vocabulary.
 * Under PImpl:
   * The `impl` member does NOT get a trailing underscore (`Impl* const impl;` or `std::unique_ptr<Impl> impl;`).
   * appfw's data blocks are named the Qt way instead - `d` with a `dptr()` accessor - also

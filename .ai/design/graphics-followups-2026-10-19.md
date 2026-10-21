@@ -37,13 +37,14 @@
 | S3 `Camera::setViewMatrixAsLookAt` → `lookAt` | 2026-10-20 | 74 处调用点（src / tests / docs）一次改完，与 S1 同批（一次公开变更窗口） |
 | S2 `Texture` 只剩 layer 词汇 | 2026-10-20 | `layerCount()` / `layer(i)` / `hasLayer(i)` / `setLayer(i, image)`；`faceCount` / `source` / `hasSource` / `setSource` 退场，`CubeMap::setFaceImage` 收敛成它的命名糖。判据 `TextureLayersTest.OneNumberedSpellingWalksAnyKind`。见骨架复核 §9.1 |
 | SK3 视图/链条内容不一致的诊断 | 2026-10-20 | `RenderPipeline::draws(scene)` + `SceneView::checkPipelineContent()`（`ReportOnce`，`setScene` 修好后 re-arm）。判据 `SceneViewTest.AChainBuiltForOtherContentIsReportedOnceAndIsANewEpisodeOnceTheWireIsRight`。见骨架复核 §9.2 |
-| SK1 区归引擎所有 | 2026-10-20 | `RenderEngine::createSurface()` 是唯一创建入口，引擎持 `intrusive_ptr<RenderSurface> area_`，`RenderSurface` 构造转私有（`friend class RenderEngine`）；`adoptArea`/`releaseArea` 两个回指协议删除，「第二个区」变成构造失败（`createSurface()` 回 null + 报一次）。判据 `RenderSurfaceTest.ASecondAreaIsAConstructionFailureNotASecondObject` / `ARefusedSecondAreaCannotFeedTheFrameContext`。见骨架复核 §10 |
+| SK1 区归引擎所有 | 2026-10-20 | `RenderEngine::createSurface()` 是唯一创建入口，引擎持 `intrusive_ptr<RenderSurface> area_`，`RenderSurface` 构造转私有（`friend class RenderEngine`）；`adoptArea`/`releaseArea` 两个回指协议删除，「第二个区」变成构造失败（`createSurface()` 回 null + 报一次）。判据 `RenderSurfaceTest.ASecondAreaIsAConstructionFailureNotASecondObject` / `ARefusedSecondAreaCannotReshapeTheFrame`。见骨架复核 §10 |
 | 概念改名：`PassDescription` → `PassDraw` | 2026-10-20 | 与 `PassDesc` 只差一个词的两个概念终于分开了；`FrameDescription::Pass::draw`、`OwnedPassDraw`、`PassDrawTest` 一并改名。见 `graphics-abstraction-review-2026-10-20.md` §1.1 |
 | F1 `Scene` 收集只剩一个入口 | 2026-10-20 | `collectRenderCommands()` 返回共享不可变表，复制版与其 `Shared` 拼法一起退场；要复制就显式写 `*list`。111 处测试调用点迁移。见 `graphics-abstraction-review-2026-10-20.md` §6 |
 | F2a 程序覆盖不再改写命令 | 2026-10-20 | `PassDraw::program_override` + 后端在**记录时**解析（`FrameRecorder::render` / `snapshotCommands`），命令表保持共享不可变；`OwnedPassDraw` 同步。判据 `FrameRecorderTest.ThePassProgramOverrideIsResolvedWhenTheDrawIsRecorded`。见 `graphics-abstraction-review-2026-10-20.md` §7 |
 | F2b 内容记忆体跨帧存活 | 2026-10-20 | `Node::announceContentChange()` + 进程级 content epoch；`setContentFrame` 改为"老化上一帧没人用的条目"。稳态每帧收集 **8.7 ms → 36 µs**（2000 drawable，调试构建）。判据 `SceneContentCacheTest.EveryMutationThatChangesACommandEndsTheMemo`（11 种改动；它抓到 `Geometry::setMaterial/setProgram` 漏公告）。见 review §9 |
 | `FrameContext` 删除（含没人读的 `dt`） | 2026-10-20 | 该类型只有一个非每帧事实（表面尺寸），`dt` 写了零个读者；改成 `RenderEngine::surfaceWidth()/surfaceHeight()`，`frame(dt)` → `frame()` |
 | `Camera::setProjectionMatrixAsPerspective/Ortho` → `setPerspective`/`setOrthographic` | 2026-10-20 | 52 处调用点，与类内 `ProjectionType{Perspective, Orthographic}` 对齐（上一轮的 `lookAt` 是同一类问题） |
+| F2b 颜色：空间与数值域进类型 | 2026-10-21 | `vn::Colorf` = 线性光、`vn::Color` = sRGB 编码字节，一对有名转换（sRGB 分段曲线，alpha 不编码）；SDK 作者颜色只剩线性浮点一种，`clear_color` / `ClearPolicy` / `FramePlan` 从 `Color` 改成 `Colorf`，后端不再 `/255`，默认清屏色写成 `Color(51,51,51).toLinear()`。修掉“清屏灰亮一个 gamma”（#333333 → #7C7C7C）。判据含设备级 `VsgBackendTest.AClearColourIsAStoredLinearValueNotAnEncodedOne`（UNORM 清 0.2159 读回 55，编码过会是 128）。见 `graphics-colour-space.md` |
 
 ## 2. 现在可做（无触发条件）
 
@@ -57,7 +58,14 @@
 
 | 项 | 内容 | 触发条件 | 出处 |
 |---|---|---|---|
-| F2b | 色彩空间（linear/sRGB）与数值域（0–255 / 0–1）未进类型 | 第二次同类色彩/数值域缺陷；**本轮用户裁决不做** | review §2 |
+| ~~F2b~~ **已落地 2026-10-21**（原行列作历史记录）：色彩空间与数值域未进类型 | `Colorf` 是线性光、`Color` 是 sRGB 编码字节，只由 `toLinear()` / `toColor()` 一对转换往来；SDK 的作者颜色只剩一种（`PassDesc::clear_color` / `ClearPolicy` / `FramePlan` 改成 `Colorf`，后端不再 `/255`）。原触发条件是“第二次同类缺陷”，**用户 2026-10-21 直接指定做** | ~~第二次同类色彩/数值域缺陷~~ 已收口 | `graphics-colour-space.md` |
+| ~~颜色的**插值**~~ **已落地 2026-10-21**（用户判定“基础接口”；原行列作历史记录） | 落地形状：`static Colorf lerp(from, to, t)` —— 静态对称（跟 `Quaternion::slerp` 同形）、对通道原值插值（对 graphics 就是线性光下的 `mix`）、alpha 一起插、`t` 不夹紧；判据 `ColorfTest.LerpBlendsLightNotSamples`（黑白中点是 188 不是 128） | ~~第一处颜色动画 / 淡入淡出 / 主题过渡~~ 已收口 | `graphics-colour-space.md` §8 |
+| 颜色的**十六进制字符串**读写（`#rrggbb[aa]`） | 今天 0 个读者：没有主题文件 / 样式表 / 配置解析，`ConsoleTheme` 是 C++ 打包字面量。字符串是**对外格式契约**（CSS hex vs `rgba()` vs `0xRRGGBBAA`），没消费方先选一个就是发明格式 | 第一次从外部文本读颜色（配置 / 主题文件 / 命令行 / 日志回读） | 同上 |
+| `Color` 的**其他字节序**（`0xaarrggbb`、`0x00bbggrr`） | 现有打包接口已经够用：`explicit Color(uint32_t)`（`0xRRGGBBAA`）+ `toRgba32()` + 公开通道字段，`ConsoleTheme` 真的在用打包 ctor。缺的只是 Qt `QRgb` / Win32 `COLORREF` 那种序，而仓库里没有持有那种 int 的读者（Qt 颜色都是 `QColor` 字面量）。加的时候必须是**带序的具名函数**，不是通用移位 | 第一次从持有那种 int 的 API 取值 | 同上 |
+
+**本节没有“现在可做”的项**：上面三条都等触发条件。反色这一条已经落地（**2026-10-21，用户判定“基础接口”**）：一对
+拼法跟 math 类型一致（`invert()` 就地 / `inverted()` 副本），`Colorf` 补线性光、`Color` 补编码样本，两者是两个数。
+`Color::toRgba32()` 仍只有自己的用例在读，保留为打包 ctor 的自然另一半；要严格就一起删，别只加不减。
 
 ### 3.2 资源与目标
 

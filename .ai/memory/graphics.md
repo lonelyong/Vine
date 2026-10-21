@@ -25,6 +25,48 @@
 | **待办与口径** | **唯一清单：`.ai/design/graphics-followups-2026-10-19.md`**（2026-10-19 盘点：§2 现在可做 / §3 触发条件型 / §4 明确不做 / §5 不再是待办）。底层两个来源：**2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已由 S10b 覆盖并关闭，2026-10-19**：一设备 N 窗口、每窗口一个目标，见 `graphics-window-device-viewer.md` §7）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-21 颜色把空间进类型：`Colorf` 线性 / `Color` sRGB，清屏色不再是字节
+
+- **形状**：两个类型各说一件事 —— `vn::Colorf` 是**浮点通道值**（0..1、HDR 可 >1），`vn::Color` 是
+  **sRGB 编码的 8 位**（调色板 / PNG / `QColor` 给你的那种）。中间只有一对有名转换：
+  `Color::toLinear()`（解码）/ `Colorf::toColor()`（编码 + 量化）。退场三个半真话：
+  `Color::toColorf()`、`Colorf::fromColor()`、裸量化的 `Colorf::toColor()`。
+- **定位（2026-10-21 修正）**：core 的类型注释只声明"**值 + 转换**"；**空间由消费方声明** ——
+  graphics 的 `ClearPolicy` / `PassDesc::clear_color` / `RenderPass::setClearColor` 才写"交给引擎的颜色一律线性，
+  编码只在硬件两头（D3）"。第一版把这条写进了 `Colorf` 的类注释，那是过度限定：同一个 `Colorf` 还被
+  `geometry` / `robotics::io` / `loaders` 用来表示空间未声明的 URDF 颜色（见设计文档 §6/§7）。
+- **alpha 不参与编码**（覆盖率，只做 /255 与 ×255）——最容易顺手写错的一行，混合与透明读回全看它。
+- **反色（2026-10-21 用户定为“基础接口”后补上）**：一对拼法跟 math 类型一致 —— `invert()` 就地、`inverted()` 返回
+  副本（副本由前者实现）。`Colorf` 补**线性光**（`1 - channel`），`Color` 补**编码样本** —— **两个数**
+  （0.2 线性 → 0.8；#333333 的屏幕反色是 #cccccc = 0.6039 光）。判据：`ColorfTest.TheLinearComplementIsNotTheEncodedComplement`
+  与两边的 `InvertMutatesInPlaceAndTheCopyAgrees`。
+- **插值（2026-10-21 同批）**：`static Colorf lerp(from, to, t)` —— 静态对称（跟 `Quaternion::slerp` 同形），
+  逐通道插值（对 graphics 就是线性光下的 `mix`）、alpha 一起插、`t` 不夹紧（越界外推）。判据
+  `ColorfTest.LerpBlendsLightNotSamples`：黑白中点是 188（混编码样本会得 128）。
+- **常用颜色预设（2026-10-21 同批）**：`Colorf::kTransparent/kWhite/kBlack/kRed/kGreen/kBlue`，与 `Color` 同名同义，
+  `static const` + `.cpp` 定义（类内 `inline static constexpr` 自引用不合法）。这套可以两边共享是因为 **0 与 1 是
+  sRGB 曲线的定点**——所以预设里**没有灰**（灰与空间有关）。生产读者：`AxisGizmo` / `FpsOverlay` / `DemoScene`
+  的 ambient/specular 六处。
+- **传输函数只有一份实现**：`src/base/core/src/ColorTransfer.hpp`（私有头，两方向各一个 inline）。sRGB 分段曲线，
+  **不是** `pow(2.2)`（128 解码 0.2159 vs 0.2195 = 两个量化级）。
+- **SDK 只剩一种作者颜色**：`PassDesc::clear_color` / `clear_extra_colors`、`RenderPass::clearColor()` /
+  `setClearColor(const Colorf&, int)`、`ClearPolicy::color` / `extra_colors`、`FramePlan::Pass::clear_color`
+  全部从 `Color` 改成 `Colorf`；后端 `announceClear` 不再 `/255`（线性浮点直接进 `core::ClearPolicy::color_value`）。
+  默认清屏色写成 `Color(51,51,51,255).toLinear()`（≈0.0331）：保留"#333333"这个**原意**，同时只说一次空间。
+- **修掉的真实缺陷**：以前 `Color(51,51,51)` 被 `/255` 当线性 0.2，在 sRGB 交换链上被硬件编码成 #7C7C7C ——
+  背景**亮一个 gamma**。这一轮之后 demo 窗口背景是 #333333（可见变化，不是回归）。
+- **报表**：`FramePlan` 的文本从 `clear=rgba(1,2,3,255)` 变成 `clear=linear(0.216,...)`——空间写进文本。
+- **判据**：`ColorfTest` 4 条（256 值往返 / 曲线不是 2.2 / 越界夹紧 + 0.5→188 / alpha 不编码）、
+  `RenderEngineTest.APassAnnouncesItsClearPolicyToTheBackend`（r/g/b 都是线性值）、
+  `RenderEngineTest.ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise`（默认 = `Color(51,51,51).toLinear()`）、
+  `RenderEngineTest.FramePlanDescribesThePassesInTheOrderTheyWillRun`（文本）、
+  **设备级** `VsgBackendTest.AClearColourIsAStoredLinearValueNotAnEncodedOne`（UNORM 离屏清 0.2159 读回 **55**；
+  编码过会是 128）。
+- **不做**（理由在 `.ai/design/graphics-colour-space.md` §4）：`UnitScalar`（无读者）、`RenderTarget::ColorFormat`
+  加 sRGB 变体（设备格式已经承担身份，加一列只会出现第二个真相）、`Colorf→LinearColor` 改名（247+105 处，且
+  geometry/robotics 用 `Colorf` 表示**空间未声明**的 URDF 颜色）、8 位图色彩空间（`imaging::PixelFormat` 已有）。
+- 门禁：test_core 全绿 / test_graphics **395** / test_vsg **480**（新增 1 条）/ test_gui 259(1 skip) / 8 条静态脚本 0 finding。
+
 ## 2026-10-20 F2b 落地：内容记忆体跨帧存活（"内容纪元"），稳态收集 8.7 ms → 36 µs
 
 - **机制**：`Node::announceContentChange()` 自增一个**进程级 content epoch**（relaxed atomic，见
@@ -103,7 +145,7 @@
   作用域结束时才释放区（此时租约为空）。**区永远不会看到半死的引擎**，宿主先销毁引擎也安全。
 - **判据**：`RenderSurfaceTest.ASecondAreaIsAConstructionFailureNotASecondObject`（第二次/第三次
   `createSurface()` 都是 null、只报一次、既有的区照常呈现）、
-  `ARefusedSecondAreaCannotFeedTheFrameContext`。门禁：test_graphics 394 / test_vsg 478 /
+  `ARefusedSecondAreaCannotReshapeTheFrame`。门禁：test_graphics 394 / test_vsg 478 /
   test_gui 259(1 skip) / 8 条静态脚本 0 finding。
 - **坑**：把 `area_` 从 `raw_ptr` 换成 `intrusive_ptr` 后，`RenderEngine.hpp` 必须**完整包含**
   `RenderSurface.hpp`（否则 `intrusive_ptr_release` 在别的 TU 里找不到，报的是一串模板实例化错误）；

@@ -56,6 +56,7 @@
   的整表复制、每 pass 的灯光列表复制）与各自的触发条件。
 - `graphics-skeleton-review-2026-10-20.md` —— **骨架复核（2026-10-20）**：先画四张图（宿主/区/视图/引擎/设备的所有权与借用、内容模型、一帧怎么走、配方层），再按“它担了几件事 / 业界同位置是谁”逐对象审 13 个公开对象；落地 S0（区对引擎的借用改 `Lease`，修掉 `~RenderSurface` 的悬空解引用），并把 S1（区归引擎所有）/ S2（`RenderPass` 只存一份 `PassDesc`）/ S3（视图场景不在管线里的诊断）排成切片，另附“不重开”的六条已裁决题与命名裁定表。
 - `graphics-followups-2026-10-19.md` —— **下一 session 的 graphics 任务列表（2026-10-19）**：P1（`Pipeline` 改名 / 能力预检 / owned 帧 / `shareDepth` 资源图边 / `SceneView` 拆分 / 逃生口登记）在前，F2b 明确不做；随后是 E2 收尾（全屏 ABI imported 输入、按 attachment 绑定、revision 失效、sampler state、Cube），每项带动作、判据与风险。
+- `graphics-colour-space.md` —— **颜色：把“色彩空间 + 数值域”放进类型（2026-10-21）**：`Colorf` 是线性光、`Color` 是 sRGB 编码字节，两者只由一对有名转换桥接（`Color::toLinear()` / `Colorf::toColor()`，IEC 61966-2-1 分段曲线、alpha 不参与编码）；SDK 的作者颜色因此只剩一种（`PassDesc::clear_color` / `ClearPolicy` / `FramePlan` 从字节改成线性浮点，后端不再 `/255`），默认清屏色写成“#333333 的原意 + 解一次”，判据含一条设备级“读回 55 而不是 128”；另登记“不做”的四条（`UnitScalar`、目标格式加 sRGB 变体、两个颜色类型改名、8 位图色彩空间）与 robotics / geometry 侧 `Colorf` 输入空间未声明的交互。
 - `graphics-layers.md` —— **层与分层渲染（L1 内容掩码已落地 2026-10-12；L2 设计定稿，裁决现阶段不做、等触发）**：**L1**（对象声明 `Node::setLayers` + pass 掩码 `setLayerMask` 两级；收集与**记忆化 memo key** 的坑；配方入口、0 的退化语义、落点清单、判据与 5 条变异实测）与 **L2 目标层**（`layerCount` + pass 的层区间，L2a 逐层先落、L2b 一次写完等触发；读侧先行的理由；§6 开头是"不做"的四条理由），两者的行业依据（Ogre-Next 的三级掩码 + slice/array 目标 + render queue 子组）、与既有裁决的关系、以及"不做的话今天的替代与代价"；**§9（2026-10-13：拾取 / 包围盒掩码参数已落地，各配判据；"子树层并集"整段跳过仍登记）**。
 - `vsg-reimplementation.md` —— vsg 后端"从零重新实现"：契约、坑与实施记录（本仓库最长的设计文档）。
 - `vsg-design.md` —— vsg 渲染后端设计 v5（历史登记）。

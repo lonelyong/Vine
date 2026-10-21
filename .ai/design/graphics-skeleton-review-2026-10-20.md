@@ -365,6 +365,6 @@ wgpu：`Surface` 由 instance + window 造、由应用持有，但**同一 insta
 
 改写的两条用例：
 - `ASecondAreaIsAConstructionFailureNotASecondObject`：第二次/第三次 `createSurface()` 都是 `nullptr`，只报一次，且既有那块区照常呈现；
-- `ARefusedSecondAreaCannotFeedTheFrameContext`：被拒的那次创建不改变"谁在喂 frame context"。
+- `ARefusedSecondAreaCannotReshapeTheFrame`：被拒的那次创建不改变当前帧的尺寸（没有第二个区来喂它）。
 
 `~RenderEngine` 的顺序现在是：`shutdown()`（解绑目标）→ `area` move 出 `area_` → 清租约 → 卸设备诊断路线 → 作用域结束时释放区（此时租约为空，区不会再回指引擎）。

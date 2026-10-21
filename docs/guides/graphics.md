@@ -667,11 +667,37 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | 离屏 target | ——（不编码） | `RenderTarget::ColorFormat` 取线性拼写：`RGBA8` 在后端投影成 `R8G8B8A8_UNORM`；浮点格式没有 sRGB 拼写 |
 
 于是宿主只有一个问题要回答：**这条路里的字节是"颜色"还是"数据"**。
-
 * 是颜色（albedo、emissive、天空盒、环境贴图 —— PNG/JPG 的字节本来就是 sRGB 编码的）⇒ 声明成 `*Srgb`。
 * 是数据（法线、粗糙度、金属度、遮罩 —— 它们不是"给人看的亮度"，不能被解码）⇒ 声明成 `*Unorm`。
 
 说错的两个方向都是**静默**的，症状都是"整体差一个 gamma"：
+
+**"给一个颜色"只有一个说法：`vn::core::Colorf`（线性值）**。宿主手里的 8 位颜色是 sRGB 编码的（调色板、PNG、
+`QColor`、主题表都是这个），所以两个颜色类型之间只有一对转换，而且名字里带方向：
+
+| 你手上的值 | 引擎要的 | 写法 |
+| --- | --- | --- |
+| `Color(51, 51, 51)`（sRGB 字节，#333333） | 线性光 | `Color(51, 51, 51).toLinear()` ≈ (0.0331, …) |
+| `Colorf(0.5F, …)`（线性光） | 8 位 sRGB | `Colorf(...).toColor()` = **188**，不是 128 |
+
+* **清屏色也是线性值**：`PassDesc::clear_color` / `RenderPass::setClearColor` / `ClearPolicy::color` 都取
+  `Colorf`，后端不再 `/255`。默认清屏色是"#333333 在屏幕上看起来的样子"解一次（`kDefaultClearColor`），
+  所以窗口背景就是设计师写下的那个灰。
+* **alpha 不参与编码**：它是覆盖率，两个方向都只是 `/255` 与 `×255`。编码 alpha 会让每一次混合与透明读回全错。
+* **“反色”是两个数**：`Colorf::inverted()` 补的是**光**（`1 - channel`），`Color::inverted()` 补的是**屏幕上的样本**
+  —— 线性 0.2 的反色是 0.8，而它显示出来的那个灰（#333333）的反色是 #cccccc = 0.6039 的线性光。要屏幕上的反色，
+  走 `toColor().inverted().toLinear()`。就地版是 `invert()`（与 `Matrix4x4` 的 `invert()` / `inverted()` 同一对约定）。
+* **插值就是 shader 里的 `mix`**：`Colorf::lerp(from, to, t)` 逐通道插值，alpha 一起淡，`t` 不夹紧。黑白中点是
+  **0.5 的光（188）**，不是 128 —— 淡入淡出发生在光上，不在屏幕的样本上。
+* **常用颜色有名字**：`Colorf::kWhite` / `kBlack` / `kTransparent` / `kRed` / `kGreen` / `kBlue`（与 `Color` 同名同义）。
+  只收这几个是因为它们的**数字与空间无关**（0 与 1 是 sRGB 曲线的定点）；灰不行，所以没有预设灰。
+* 曲线是 **sRGB 分段曲线**（IEC 61966-2-1），不是 `pow(x, 2.2)`：两者在中间调差两个量化级（128 解码成 0.2159，
+  不是 0.2195），差得出来的那点"略微偏亮"就是它。
+* 帧报表把空间写出来：`clear=linear(0.033,0.033,0.033,1.000)` —— `rgba(...)` 那种写法在两种空间下都读得通，
+  正是这一轮要消灭的歧义。
+
+再回答第二个问题：**这一帧里的颜色给对了空间吗**。宿主调色板里的字节直接 `/255` 交给引擎（而不是
+`toLinear()`），画面就**亮一个 gamma**，而它和"颜色图声明成 `*Unorm`"是同一个错误的两种写法。
 
 | 说错的方向 | 症状 | 为什么 |
 | --- | --- | --- |
@@ -684,7 +710,8 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 | 契约 | 写在哪 |
 | --- | --- |
-| 浮点颜色是线性值 | `vn::core::Colorf` 的类注释 |
+| 浮点颜色是线性值；8 位颜色是 sRGB 编码，两者只由 `toLinear()` / `toColor()` 往来 | `vn::core::Colorf` / `vn::core::Color` 的类注释 |
+| 清屏色是线性值（默认色写成它显示时的样子，解一次） | `vn::graphics::ClearPolicy` / `PassDesc::clear_color` 的注释 |
 | 颜色图 `*Srgb`、数据图 `*Unorm` | `vn::imaging::PixelFormat` 的文件注释 |
 | target 格式是"投影"，离屏取线性拼写 | `vn::graphics::RenderTarget::ColorFormat` 的枚举注释 |
 | 内建 program 不自己套 gamma | `vn::graphics::forwardProgram` 等工厂所在的 `sdk/vine/graphics/BuiltinShaders.hpp` 文件注释 |
@@ -692,6 +719,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 仓库里**第一个按契约改过来的读者是 demo 自己**：`test_data/images` 的六张 JPG 天空面是颜色图，声明从
 `Rgba8Unorm` 改成 `Rgba8Srgb` 后天空回到正确亮度（视口带 mean 122.7 → 80.8，门禁判据一行未动）——
 读数与变异证明见 [`.ai/design/vsg-reimplementation.md`](../../.ai/design/vsg-reimplementation.md) §11.16cp。
+完整形状、判据与"不做"的四条见 [`.ai/design/graphics-colour-space.md`](../../.ai/design/graphics-colour-space.md)。
 
 ### 3.10 省事的视图：`RenderPipeline` 是配方，视图只采纳（appfw 的 `ViewerOptions` 是宿主那一层）
 
