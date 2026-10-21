@@ -3,6 +3,9 @@
 #include "core_global.hpp"
 
 #include <cstdint>
+#include <optional>
+
+#include "String.hpp"
 
 VN_CORE_NS_BEGIN
 
@@ -59,6 +62,41 @@ class VN_CORE_API Color
     {
     }
 
+    /**
+     * @brief Constructs from a packed 0xAARRGGBB integer - the order Qt's `ARGB32` and Win32's `ARGB` hand you.
+     *
+     * @details
+     * - The byte order IS the name: a call says which order it means, instead of leaving the reader to count shifts.
+     * - It is deliberately NOT the same integer as @ref Color(std::uint32_t), which is 0xRRGGBBAA: `0x80FF0000` is
+     *   half-transparent red here and opaque-green-with-red-alpha there. That is exactly the mistake a named entry
+     *   point prevents, and why this one is not spelled as another shift.
+     *
+     * @param argb Packed colour; the most significant byte is alpha, the least significant is blue.
+     * @return The colour.
+     */
+    [[nodiscard]] static constexpr Color fromArgb(std::uint32_t argb) noexcept
+    {
+        return Color{ static_cast<std::uint8_t>((argb >> 16) & 0xFFU), static_cast<std::uint8_t>((argb >> 8) & 0xFFU),
+                      static_cast<std::uint8_t>(argb & 0xFFU), static_cast<std::uint8_t>((argb >> 24) & 0xFFU) };
+    }
+
+    /**
+     * @brief Constructs from a packed 0x00BBGGRR integer - Win32's `COLORREF` order, opaque.
+     *
+     * @details
+     * - Red sits in the low byte and blue in bits 16..23; the high byte is not part of the value and is IGNORED, so a
+     *   `COLORREF` whose top byte carries a flag reads the same as the plain one.
+     * - `COLORREF` has no coverage, so the result is opaque. A caller that holds an alpha wants @ref fromArgb.
+     *
+     * @param bgr Packed colour; red in the low byte, blue in bits 16..23; the high byte is ignored.
+     * @return The opaque colour.
+     */
+    [[nodiscard]] static constexpr Color fromBgr(std::uint32_t bgr) noexcept
+    {
+        return Color{ static_cast<std::uint8_t>(bgr & 0xFFU), static_cast<std::uint8_t>((bgr >> 8) & 0xFFU),
+                      static_cast<std::uint8_t>((bgr >> 16) & 0xFFU), 255 };
+    }
+
   public:
     /**
      * @brief Returns the packed 0xRRGGBBAA representation.
@@ -105,6 +143,38 @@ class VN_CORE_API Color
      * @return The same colour as a linear-light value, 0..1 per channel.
      */
     [[nodiscard]] Colorf toLinear() const noexcept;
+
+    /**
+     * @brief Returns the canonical `#rrggbb` / `#rrggbbaa` text of the colour.
+     *
+     * @details
+     * - Lowercase hex, one leading `#`, and the alpha pair written ONLY when the colour is not opaque - so one value
+     *   has exactly one text, and an opaque colour never carries a redundant trailing pair.
+     * - The short forms @ref parse also accepts (`#CCC`, `#C0F8`) are never written: they are an input convenience, and
+     *   a writer that chose between the two spellings would give one value two texts.
+     * - The samples go out as they are: this is the sRGB-encoded half, so the text is what a palette, a style sheet or
+     *   a colour picker expects. There is no linear-light text - that would have to name the space in the string;
+     *   @ref Colorf answers it by writing `toColor()` first.
+     *
+     * @return The text, 7 or 9 characters long.
+     */
+    [[nodiscard]] String toString() const;
+
+    /**
+     * @brief Parses the `#rrggbb` / `#rrggbbaa` text and its short forms; anything else is a refusal, not a guess.
+     *
+     * @details
+     * - ONE grammar, the CSS hex family: a `#` followed by 3, 4, 6 or 8 hex digits in either case (a palette may well
+     *   hand you `#FF0000`). A short form duplicates each digit, so `#CCC` is `#CCCCCC` and `#C0F8` is `#CC00FF88`;
+     *   a missing alpha means opaque.
+     * - Refused on purpose: `0xRRGGBB`, bare digits, `rgba(255,0,0,1)`, 2 or 5 or 7 digits, and surrounding
+     *   whitespace. Each of those is a second way to spell one value, and a format contract exists so that there is
+     *   one - the four lengths above are one grammar's productions, not four grammars.
+     *
+     * @param text The text to parse.
+     * @return The colour, or an empty optional when @p text is not that grammar.
+     */
+    [[nodiscard]] static std::optional<Color> parse(const String& text);
 
     bool operator==(const Color&) const = default;
 

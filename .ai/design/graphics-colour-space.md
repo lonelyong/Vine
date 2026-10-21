@@ -93,6 +93,14 @@ D3 已经裁定（`vsg-reimplementation.md` §11.16cp）：**引擎内部一律�
 | `RenderEngineTest.APassAnnouncesItsClearPolicyToTheBackend` | 声明成的、后端收到的都是同一个线性值（r/g/b 逐个比） |
 | `RenderEngineTest.FramePlanDescribesThePassesInTheOrderTheyWillRun`（`clear=linear(...)` 那一行断言） | 宿主读的报表把空间说出来，格式也钉住 |
 | `VsgBackendTest.AClearColourIsAStoredLinearValueNotAnEncodedOne` | 设备判据：离屏 RGBA8（UNORM）清 `Color(128,128,128).toLinear()` 读回 **55**；若引擎偷偷做了 sRGB 编码会是 128 —— 只有编码真的没发生，这个数才成立 |
+| `ColorTest.HexTextIsOneTextPerValueAndTheEncodedHalf` | 文本是**编码那一半**：不透明写 6 位、半透明写 8 位；线性 0.5 写成 `#bc0000`（若写成 `#800000` 就是拿光当样本） |
+| `ColorTest.HexTextParsesBothAlphaFormsAndForgetsTheCase` | 6/8 位都收、大小写都收；缺 alpha = 不透明 |
+| `ColorTest.HexTextAcceptsTheShortFormsAndWritesThemBackInFull` | `#CCC` / `#C0F` / `#C0F8` 逐位重复；且短式只是**输入**：写回去是 `#cccccc` / `#cc00ff88` |
+| `ColorTest.HexTextRoundTripsEveryValueItWrites` | 自己写的文本自己读回来相等（a = 0/1/128/254/255） |
+| `ColorTest.EverythingElseIsARefusedParseNotAGuess` | 15 种“同一个值的别的拼法”逐个拒绝（`0x` 前缀、裸数字、2/5/7/9 位、`rgba(...)`、空白） |
+| `ColorTest.TheOrderedFormsAreNotThePositionalOne` | `0x80FF0000` 在 `0xAARRGGBB` 与 `0xRRGGBBAA` 下是**两个颜色**：具名入口存在的理由 |
+| `ColorTest.BgrIsColorRefOrderAndIgnoresItsHighByte` | `COLORREF` 的低字节是红、高字节不参与、结果不透明 |
+| `ColorTest.TheOrderedFormsAreUsableInConstantExpressions` | `fromArgb` / `fromBgr` 是 `constexpr`（`static_assert`） |
 
 ## 6. 交互登记（不在本轮，别当成已解决）
 
@@ -127,16 +135,18 @@ D3 已经裁定（`vsg-reimplementation.md` §11.16cp）：**引擎内部一律�
 |---|---|---|
 | 颜色插值 | 0 处生产读者，但用户判定它也是**基础接口** | **已落地 2026-10-21**：`static Colorf lerp(from, to, t)`（静态、对称，跟 `Quaternion::slerp` 同形）。**空间怎么写清的**：静态签名让"两个输入"都是显式参数，类型本身是浮点/线性那一半，注释把结论钉成一句可观测的事实（黑白中点是 **0.5 光 = 188**，不是 128）；不夹紧 `t`（越界就外推） |
 | `Colorf` 的反色 | **0 处生产读者**，但用户判定它是**基础接口** | **已落地 2026-10-21**：一对拼法（跟 math 类型同一个约定）—— `invert()` 就地、`inverted()` 返回副本（副本由前者实现，不会漂）。语义是**线性补色** `1 - channel`（alpha 不动），与 `Color::invert()/inverted()`（补编码样本）是**两个数** |
-| `Color` 的 int32 解构 | **有**：`explicit Color(uint32_t)`（`0xRRGGBBAA`）+ `toRgba32()` + 公开通道字段；`ConsoleTheme` 真的在用打包 ctor（10 处） | 已有。缺的只是别的字节序（Qt `QRgb` / Win32 `COLORREF`），而仓库里没有持有那种 int 的读者 |
-| 颜色的字符串 | **0**：没有主题文件 / 样式表 / 配置解析；`ConsoleTheme` 是 C++ 字面量。（core 的 `Version` / `Uuid` 有 `toString()` 的先例，但那是它们有交换格式。） | 不加。字符串是**对外格式契约**，没有消费方先选一个语法就是发明格式 |
+| `Color` 的 int32 解构 | **有**：`explicit Color(uint32_t)`（`0xRRGGBBAA`）+ `toRgba32()` + 公开通道字段；`ConsoleTheme` 真的在用打包 ctor（10 处） | **已落地 2026-10-21**：既有拼法不动，补上**按顺序命名**的两个入口 `Color::fromArgb`（`0xAARRGGBB`）/ `Color::fromBgr`（`0x00BBGGRR`，`COLORREF`），见 §9.2。**没有**加 `toArgb32()`：反方向没有读者 |
+| 颜色的字符串 | **0**：没有主题文件 / 样式表 / 配置解析；`ConsoleTheme` 是 C++ 字面量。（core 的 `Version` / `Uuid` 有 `toString()` 的先例，但那是它们有交换格式。） | **已落地 2026-10-21（用户点名做；短式按用户要求补于同日）**：`Color::toString()` + `Color::parse()`，**一种语法**（CSS hex：`#rgb[a]` / `#rrggbb[aa]`），见 §9.1 |
 | 常用颜色的**静态成员** | **有读者**：`kWhite` / `kBlack` 在生产代码里 6 处（`AxisGizmo`、`FpsOverlay`、`DemoScene`），此前写成 `Colorf(1.0f, 1.0f, 1.0f, 1.0f)` 四元组 | **已加 2026-10-21**：与 `Color` 同名同义的六个（`kTransparent` / `kWhite` / `kBlack` / `kRed` / `kGreen` / `kBlue`，`k` 前缀按常量规矩，见 §8.1），`static const` + `.cpp` 定义（与 `Color` 同形——类内 `inline static constexpr` 自引用时类型尚未完整，不合法）。**这套能共享的理由是判据而不是习惯**：0 与 1 是 sRGB 曲线的**定点**，所以这些名字在两种拼法下就是同一组数（这就是为什么**不提供预设灰**：灰与空间有关） |
 
-三条都进了待办总表 §3.1（带触发条件）。真落地时的判据也已经想清楚，写在那一行里：
+三条当时都进了待办总表 §3.1（带触发条件）。**现在三条全部落地**（插值 / 反色 / 预设 2026-10-21 同批，文本与
+字节序见 §9），落地的形状就是下面这三句判据：
 
 - 插值：**签名里带空间**（否掉的一个形状：`Colorf lerp(const Colorf&, const Colorf&, float)` —— 它把
   "被改的那个颜色"藏成了隐式主体）。`lerp` 已按这个口径落地：静态、对称、类型是线性那一半，
   判据把"0.5 光 = 188"钉住。
 - 字符串：**只有一种语法**（否掉的形状：同时给 `#rrggbb` 与 `rgba(...)` 两种解析）—— 两个语法就是两个真相。
+  落地时补了短式 `#rgb[a]`（用户点名）：那是**同一条语法的产出**，不是第二种语法（见 §9.1）。
 - 字节序：**带序的具名函数**（`fromArgb` / `fromBgr` 那种），不是通用的移位/掩码接口。
 
 反方向也点了名：`Color::toRgba32()` 与 `Color::inverted()` 目前只有自己的用例在读。`inverted` 这一对自
@@ -164,3 +174,51 @@ D3 已经裁定（`vsg-reimplementation.md` §11.16cp）：**引擎内部一律�
 代价诚实地记下来：`static const` + `.cpp` 定义意味着预设**不是常量表达式**——类内
 `inline static constexpr Colorf kWhite{…}` 在自己的类体里遇到不完整类型，不合法。真需要在常量表达式里用颜色时，
 正确形状是加一个 `static constexpr` 的**访问器**（按 `Vector3::unitX()` 的规矩命名），等第一个这样的读者。
+
+## 9. 文本与打包字节序：一种语法、一个顺序一个名字（2026-10-21，§3.1 收口）
+
+§3.1 最后两条（**触发条件都没命中**，用户点名做）落在同一个值类型上。它们的共同判据只有一句：别人手里的
+东西能不能原样进来、原样出去，而且**同一种东西只有一种说法**。
+
+### 9.1 `Color` 的文本：`#rgb[a]` / `#rrggbb[aa]`
+
+| 方向 | 声明 | 契约 |
+|---|---|---|
+| 写 | `String Color::toString() const` | 小写、一个 `#`；alpha 对**只在非不透明时**写（`#ff0000` / `#ff0000fe`）⇒ 一个值只有一份文本，而"缺席"永远只表示一件事：255 |
+| 读 | `static std::optional<Color> Color::parse(const String&)` | 同一个语法：`#` + **3 / 4 / 6 / 8** 位十六进制（大小写都收）；短式逐位重复（`#CCC` = `#CCCCCC`，`#C0F8` = `#CC00FF88`），缺 alpha = 不透明。**失败在类型里**（空 optional），不在注释里，也不靠哨兵值 |
+
+为什么是这一份语法：
+
+- **文本属于编码那一半**。`#rrggbb` 是调色板 / 样式表 / 取色器给你的那种东西，它就是 sRGB 样本；线性光的
+  文本必须把空间写进字符串里，那就是第二个真相。要线性值的文本先走 `toColor()` —— 判据把这一点钉成数字：
+  线性 0.5 写成 `#bc0000`（188），不是 `#800000`。
+- **收整族 CSS hex，但只写一种**。读侧收 3 / 4 / 6 / 8 位：短式是 CSS 同一条语法的**产出**（每位重复一次），
+  拒掉它的一半（只收 3 不收 4）才是任意的洞。写侧只有规范形式（6 或 8 位、不透明不带 alpha 对），
+  所以**一个值仍然只有一份文本** —— `#CCC` 读进来、写出去就是 `#cccccc`。
+- **拒掉的邻居**：`0xRRGGBB`、裸数字、`rgba(255,0,0,1)`、2 / 5 / 7 / 9 位、前后空白 —— 每一种都是同一个值的
+  第二种**拼法**（不是第二种长度），而格式契约存在的意义就是只有一种。
+- **不给 `Colorf` 文本**。`Colorf` 的文本必须先回答"这是哪个空间"；`Color` 的文本已经回答了。
+
+实现上两处刻意的选择：十六进制数字是手写的 `hexDigit()`，不走 `String::toInt(&ok, 16)`（后者收符号、
+前导空白和 `0x` 前缀，正好是要拒绝的那几种）；写侧复用 `String::hex(span)`，与 `String` 自己的十六进制
+拼法只有一份。
+
+### 9.2 打包字节序：顺序就是名字
+
+| 入口 | 布局 | 它替谁说话 |
+|---|---|---|
+| `explicit Color(std::uint32_t)` / `toRgba32()` | `0xRRGGBBAA` | 既有拼法，`ConsoleTheme` 在用 |
+| `static constexpr Color fromArgb(std::uint32_t)` | `0xAARRGGBB` | Qt `ARGB32`、Win32 `ARGB` |
+| `static constexpr Color fromBgr(std::uint32_t)` | `0x00BBGGRR`（高字节忽略，结果不透明） | Win32 `COLORREF` |
+
+- **不收通用移位 / 掩码接口**：`(v >> 16) & 0xFF` 读不出它以为的顺序，而 `0x80FF0000` 在两种顺序里是两个不同的
+  颜色 —— 这正是具名入口要拦的错误，所以顺序写在**名字**里，不写在注释里。
+- **`fromBgr` 忽略高字节**：`COLORREF` 的高字节不在值里，带标记的与不带的是同一个颜色；它也**没有 alpha**
+  （`COLORREF` 没有覆盖率），结果一律不透明。
+- **没有 `toArgb32()` / `toBgr()`**：反方向今天没有读者（要有"把值交给持有那种 int 的 API"才需要），
+  而 `toRgba32()` 已与打包 ctor 成对。加了就是一条只能靠用例养着的接口。
+- 两个都是 `constexpr`（`static_assert` 钉住），所以常量表可以直接写 `Color::fromArgb(0xFF112233)`。
+
+判据全部在 §5 的表里（`ColorTest.HexText*` / `EverythingElseIsARefusedParseNotAGuess` /
+`TheOrderedFormsAreNotThePositionalOne` / `BgrIsColorRefOrderAndIgnoresItsHighByte` /
+`TheOrderedFormsAreUsableInConstantExpressions`）。

@@ -45,6 +45,7 @@
 | `FrameContext` 删除（含没人读的 `dt`） | 2026-10-20 | 该类型只有一个非每帧事实（表面尺寸），`dt` 写了零个读者；改成 `RenderEngine::surfaceWidth()/surfaceHeight()`，`frame(dt)` → `frame()` |
 | `Camera::setProjectionMatrixAsPerspective/Ortho` → `setPerspective`/`setOrthographic` | 2026-10-20 | 52 处调用点，与类内 `ProjectionType{Perspective, Orthographic}` 对齐（上一轮的 `lookAt` 是同一类问题） |
 | F2b 颜色：空间与数值域进类型 | 2026-10-21 | `vn::Colorf` = 线性光、`vn::Color` = sRGB 编码字节，一对有名转换（sRGB 分段曲线，alpha 不编码）；SDK 作者颜色只剩线性浮点一种，`clear_color` / `ClearPolicy` / `FramePlan` 从 `Color` 改成 `Colorf`，后端不再 `/255`，默认清屏色写成 `Color(51,51,51).toLinear()`。修掉“清屏灰亮一个 gamma”（#333333 → #7C7C7C）。判据含设备级 `VsgBackendTest.AClearColourIsAStoredLinearValueNotAnEncodedOne`（UNORM 清 0.2159 读回 55，编码过会是 128）。见 `graphics-colour-space.md` |
+| F2b 颜色：文本与打包字节序（§3.1 收口） | 2026-10-21 | `Color::toString()` / `Color::parse()`，**一种语法**（CSS hex：`#rgb[a]` / `#rrggbb[aa]`；短式逐位重复，写侧只有规范形式；alpha 对只在非不透明时写；失败在 `std::optional` 里）；按顺序命名的 `Color::fromArgb`（`0xAARRGGBB`）/ `Color::fromBgr`（`0x00BBGGRR`，`COLORREF`），无通用移位入口、无反方向。判据 8 条 `ColorTest.*`（含 `HexTextIsOneTextPerValueAndTheEncodedHalf`：线性 0.5 → `#bc0000`）。见 `graphics-colour-space.md` §9 |
 
 ## 2. 现在可做（无触发条件）
 
@@ -60,11 +61,12 @@
 |---|---|---|---|
 | ~~F2b~~ **已落地 2026-10-21**（原行列作历史记录）：色彩空间与数值域未进类型 | `Colorf` 是线性光、`Color` 是 sRGB 编码字节，只由 `toLinear()` / `toColor()` 一对转换往来；SDK 的作者颜色只剩一种（`PassDesc::clear_color` / `ClearPolicy` / `FramePlan` 改成 `Colorf`，后端不再 `/255`）。原触发条件是“第二次同类缺陷”，**用户 2026-10-21 直接指定做** | ~~第二次同类色彩/数值域缺陷~~ 已收口 | `graphics-colour-space.md` |
 | ~~颜色的**插值**~~ **已落地 2026-10-21**（用户判定“基础接口”；原行列作历史记录） | 落地形状：`static Colorf lerp(from, to, t)` —— 静态对称（跟 `Quaternion::slerp` 同形）、对通道原值插值（对 graphics 就是线性光下的 `mix`）、alpha 一起插、`t` 不夹紧；判据 `ColorfTest.LerpBlendsLightNotSamples`（黑白中点是 188 不是 128） | ~~第一处颜色动画 / 淡入淡出 / 主题过渡~~ 已收口 | `graphics-colour-space.md` §8 |
-| 颜色的**十六进制字符串**读写（`#rrggbb[aa]`） | 今天 0 个读者：没有主题文件 / 样式表 / 配置解析，`ConsoleTheme` 是 C++ 打包字面量。字符串是**对外格式契约**（CSS hex vs `rgba()` vs `0xRRGGBBAA`），没消费方先选一个就是发明格式 | 第一次从外部文本读颜色（配置 / 主题文件 / 命令行 / 日志回读） | 同上 |
-| `Color` 的**其他字节序**（`0xaarrggbb`、`0x00bbggrr`） | 现有打包接口已经够用：`explicit Color(uint32_t)`（`0xRRGGBBAA`）+ `toRgba32()` + 公开通道字段，`ConsoleTheme` 真的在用打包 ctor。缺的只是 Qt `QRgb` / Win32 `COLORREF` 那种序，而仓库里没有持有那种 int 的读者（Qt 颜色都是 `QColor` 字面量）。加的时候必须是**带序的具名函数**，不是通用移位 | 第一次从持有那种 int 的 API 取值 | 同上 |
+| ~~颜色的**十六进制字符串**读写（`#rrggbb[aa]`）~~ **已落地 2026-10-21**（用户点名做；短式同日按用户要求补上；原行列作历史记录） | 落地形状：`Color::toString()` + `static std::optional<Color> Color::parse(const String&)` —— **一种语法**（CSS hex：`#` + 3/4/6/8 位十六进制，大小写都收；短式逐位重复，`#CCC` = `#CCCCCC`），写侧只有规范形式（6/8 位、不透明不带 alpha 对），拒绝 `0x` 前缀 / 裸数字 / 2·5·7·9 位 / `rgba(...)` / 空白；文本是**编码那一半**（线性 0.5 写成 `#bc0000`）。判据 `ColorTest.HexText*` 四条 + `EverythingElseIsARefusedParseNotAGuess` | ~~第一次从外部文本读颜色~~ 已收口 | `graphics-colour-space.md` §9.1 |
+| ~~`Color` 的**其他字节序**（`0xaarrggbb`、`0x00bbggrr`）~~ **已落地 2026-10-21**（同批；原行列作历史记录） | 落地形状：**带序的具名函数** —— `static constexpr Color fromArgb(0xAARRGGBB)` / `static constexpr Color fromBgr(0x00BBGGRR，高字节忽略、结果不透明)`；没有通用移位入口，也**没有** `toArgb32()`（反方向无读者）。判据 `ColorTest.TheOrderedFormsAreNotThePositionalOne` / `BgrIsColorRefOrderAndIgnoresItsHighByte` / `TheOrderedFormsAreUsableInConstantExpressions` | ~~第一次从持有那种 int 的 API 取值~~ 已收口 | `graphics-colour-space.md` §9.2 |
 
-**本节没有“现在可做”的项**：上面三条都等触发条件。反色这一条已经落地（**2026-10-21，用户判定“基础接口”**）：一对
-拼法跟 math 类型一致（`invert()` 就地 / `inverted()` 副本），`Colorf` 补线性光、`Color` 补编码样本，两者是两个数。
+**本节已清空（2026-10-21）**：颜色那五件（类型分空间 / 反色 / 插值 / 常用预设 / 文本 / 字节序）都已落地，
+剩下两条当时带触发条件的颜色登记也都收口了。反色（**2026-10-21，用户判定“基础接口”**）的一对拼法跟 math 类型一致
+（`invert()` 就地 / `inverted()` 副本），`Colorf` 补线性光、`Color` 补编码样本，两者是两个数。
 `Color::toRgba32()` 仍只有自己的用例在读，保留为打包 ctor 的自然另一半；要严格就一起删，别只加不减。
 
 ### 3.2 资源与目标
