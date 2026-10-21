@@ -142,7 +142,7 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
     ASSERT_NE(picture, nullptr);
     picture->setRenderTarget(fixture.target);
     picture->setClearEnabled(true);
-    picture->setClearColor(vn::Color(0, 0, 0));
+    picture->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
     picture->setShouldClearDepth(true);
     ASSERT_TRUE(view->fitToScreen()) << "默认操纵器按内容把相机摆好";
 
@@ -216,7 +216,7 @@ TEST(SdkPixelTest, TheFixtureAlsoDrawsContentWithNoViewAtAll)
     pass->setCamera(fixture.camera);
     pass->setRenderTarget(fixture.target);
     pass->setClearEnabled(true);
-    pass->setClearColor(vn::Color(0, 0, 0));
+    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
     pass->setShouldClearDepth(true);
     // 无光照档的程序：没有光的环境里跑默认的前向程序，得到的是"被算黑了的画面"，而这一条要判的是覆盖，不是光照。
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());
@@ -264,7 +264,7 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
     ASSERT_NE(picture, nullptr);
     picture->setRenderTarget(fixture.target);
     picture->setClearEnabled(true);
-    picture->setClearColor(vn::Color(0, 0, 0));
+    picture->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
     picture->setShouldClearDepth(true);
 
     RenderTarget* const gbuffer = pipeline->offscreenTarget();
@@ -385,7 +385,7 @@ TEST(SdkPixelTest, ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop)
     pass->setCamera(fixture.camera);
     pass->setRenderTarget(fixture.target);
     pass->setClearEnabled(true);
-    pass->setClearColor(vn::Color(0, 0, 0));
+    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
     pass->setShouldClearDepth(true);
     // 共面 ⇒ 深度测试会让"后画的"被拒（同深度 LESS 不成立），而这条要量的正是**顺序**，所以把深度关掉：
     // pass 里只剩顺序这一个决定谁留下的因素。

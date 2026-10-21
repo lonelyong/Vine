@@ -277,7 +277,7 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
-    const vn::graphics::ClearPolicy      clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy      clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     // The window half is the DEVICE's to hand out (RenderDevice::createSurfaceTarget): the host's handle is the creation
     // input, and the target that comes back is what the frames below resolve to and present through.

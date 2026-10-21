@@ -5,7 +5,7 @@
 #include <span>
 #include <vector>
 
-#include <vine/Color.hpp>
+#include <vine/Colorf.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/Object.hpp>
 #include <vine/raw_ptr.hpp>
@@ -190,16 +190,16 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      * @brief Gets one attachment's clear colour (attachment 0 unless one is named).
      *
      * @details
-     * - Attachment 0 defaulting to an opaque dark grey (51, 51, 51, 255) is the value the main WINDOW pass was written
-     *   against; nothing in the engine names a colour for the off-screen targets its builders create, so an
-     *   off-screen pass that wants one states it.
+     * - Attachment 0 defaulting to the #333333 grey the main WINDOW pass was written against is the value stated
+     *   in the space it is DISPLAYED in and decoded once (see kDefaultClearColor); nothing in the engine names a
+     *   colour for the off-screen targets its builders create, so an off-screen pass that wants one states it.
      * - Attachments 1 and beyond are not that value: an unstated attachment is transparent black, so a consumer can
      *   tell "nothing drawn here" from data (see ClearPolicy).
      *
      * @param attachment Colour attachment index (0 = the first, the default).
-     * @return The colour stated for that attachment, or transparent black for an unstated one past the first.
+     * @return The LINEAR colour stated for that attachment, or transparent black for an unstated one past the first.
      */
-    [[nodiscard]] Color clearColor(int attachment = 0) const;
+    [[nodiscard]] Colorf clearColor(int attachment = 0) const;
 
     /**
      * @brief Sets one attachment's clear colour (attachment 0 unless one is named).
@@ -210,10 +210,11 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      * - A negative index is ignored; indices above 0 grow the stated list with transparent-black entries so the index
      *   the caller names is the index the backend clears.
      *
-     * @param color      Colour that attachment is cleared to (0..255 per channel).
+     * @param color      Colour that attachment is cleared to, in LINEAR light (a host holding an encoded colour - a
+     *                   palette, a PNG, a `QColor` - states it as `Color(...).toLinear()`).
      * @param attachment Colour attachment index (0 = the first, the default).
      */
-    void setClearColor(const Color& color, int attachment = 0);
+    void setClearColor(const Colorf& color, int attachment = 0);
 
     /**
      * @brief Returns whether the depth buffer is cleared.

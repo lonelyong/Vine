@@ -39,6 +39,7 @@
 #include <vine/geometry/TriangleMesh.hpp>
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
+#include <vine/Color.hpp>
 #include <vine/Colorf.hpp>
 #include <vine/math/Transform3.hpp>
 
@@ -2875,7 +2876,7 @@ TEST(RenderEngineTest, FramePlanDescribesThePassesInTheOrderTheyWillRun)
     auto present = intrusive_ptr<RenderPass>(new RenderPass());
     present->setName(u8"present");
     present->setCamera(camera);
-    present->setClearColor(Color(1, 2, 3, 255));
+    present->setClearColor(Color(128, 128, 128, 255).toLinear());
     present->setShouldClearDepth(false);
 
     auto hud = intrusive_ptr<RenderPass>(new RenderPass());
@@ -2910,7 +2911,8 @@ TEST(RenderEngineTest, FramePlanDescribesThePassesInTheOrderTheyWillRun)
     EXPECT_EQ(plan.passes[1].name, u8"present");
     EXPECT_EQ(plan.passes[1].target, nullptr);
     EXPECT_TRUE(plan.passes[1].clears);
-    EXPECT_EQ(plan.passes[1].clear_color, Color(1, 2, 3, 255));
+    EXPECT_EQ(plan.passes[1].clear_color, Color(128, 128, 128, 255).toLinear())
+        << "the plan carries the linear colour, not the bytes that produced it";
     EXPECT_FALSE(plan.passes[1].clears_depth);
     EXPECT_FALSE(plan.passes[1].viewport.has_value()) << "no viewport: the whole target";
 
@@ -2923,7 +2925,8 @@ TEST(RenderEngineTest, FramePlanDescribesThePassesInTheOrderTheyWillRun)
     EXPECT_NE(text.find("frame plan: 3 pass(es) (1 disabled)"), std::string::npos);
     EXPECT_NE(text.find("name='gbuffer'"), std::string::npos);
     EXPECT_NE(text.find("DISABLED"), std::string::npos);
-    EXPECT_NE(text.find("clear=rgba(1,2,3,255)"), std::string::npos) << "no depth in the clear: the pass said so";
+    EXPECT_NE(text.find("clear=linear(0.216,0.216,0.216,1.000)"), std::string::npos)
+        << "no depth in the clear: the pass said so, and the text says which space the colour is in";
     EXPECT_NE(text.find("viewport=[10,20 30x40]"), std::string::npos);
     EXPECT_EQ(std::count(text.begin(), text.end(), '\n'), 3) << "one line per pass, plus the header";
 }
@@ -3121,7 +3124,7 @@ TEST(RenderEngineTest, APassAnnouncesItsClearPolicyToTheBackend)
     // A pass that CLEARS announces its colour and its depth flag...
     auto clearing = intrusive_ptr<RenderPass>(new RenderPass());
     clearing->setCamera(cam);
-    clearing->setClearColor(Color(10, 20, 30, 255));
+    clearing->setClearColor(Color(10, 20, 30, 255).toLinear());
     clearing->setShouldClearDepth(false);
     engine->addPass(clearing, content, 0);
 
@@ -3131,15 +3134,17 @@ TEST(RenderEngineTest, APassAnnouncesItsClearPolicyToTheBackend)
     auto loading = intrusive_ptr<RenderPass>(new RenderPass());
     loading->setCamera(cam);
     loading->setClearEnabled(false);
-    loading->setClearColor(Color(200, 200, 200, 255));
+    loading->setClearColor(Color(200, 200, 200, 255).toLinear());
     engine->addPass(loading, content, 1);
 
     engine->frame();
 
     EXPECT_EQ(backend->clear_calls, 1);
-    EXPECT_EQ(backend->last_clear_policy.color.r, 10);
-    EXPECT_EQ(backend->last_clear_policy.color.g, 20);
-    EXPECT_EQ(backend->last_clear_policy.color.b, 30);
+    const Colorf authored = Color(10, 20, 30, 255).toLinear();
+    EXPECT_FLOAT_EQ(backend->last_clear_policy.color.r, authored.r)
+        << "the announced colour is the linear one the host authored, not its bytes";
+    EXPECT_FLOAT_EQ(backend->last_clear_policy.color.g, authored.g);
+    EXPECT_FLOAT_EQ(backend->last_clear_policy.color.b, authored.b);
     EXPECT_FALSE(backend->last_clear_policy.depth);
 }
 
@@ -4604,7 +4609,7 @@ TEST(PassDrawTest, WhatAScenePassDescribesIsWhatItAnnounces)
     pass->setCamera(cam);
     pass->setRenderTarget(target);
     pass->setViewport(4, 2, 32, 18);
-    pass->setClearColor(vn::Color(10, 20, 30));
+    pass->setClearColor(vn::Color(10, 20, 30).toLinear());
     pass->setShouldClearDepth(false);
     pass->setDepthMode(DepthMode::TestOnly);
     pass->setPolygonModeOverride(PolygonMode::Line);
@@ -5977,7 +5982,7 @@ TEST(OwnedFrameTest, TheOwnedFrameKeepsWhatItsProducersReleased)
 
         OwnedPassDraw description;
         description.target = target;
-        description.clear  = ClearPolicy{ Color(0, 0, 0, 255), true };
+        description.clear  = ClearPolicy{ Color(0, 0, 0, 255).toLinear(), true };
         OwnedDraw draw;
         draw.camera   = camera;
         draw.commands = commands;
@@ -6035,14 +6040,15 @@ TEST(RenderPassTest, EachAttachmentClearColourTravelsWithThePassPolicy)
     PassDesc desc;
     desc.kind              = PassKind::Scene;
     desc.writes            = target;
-    desc.clear_color       = vn::Color(255, 0, 0, 255);
-    desc.clear_extra_colors.push_back(vn::Color(0, 255, 0, 255));
+    desc.clear_color       = vn::Color(255, 0, 0, 255).toLinear();
+    desc.clear_extra_colors.push_back(vn::Color(0, 255, 0, 255).toLinear());
 
     const auto pass = engine->addPass(desc);
     ASSERT_NE(pass, nullptr);
-    EXPECT_EQ(pass->clearColor(0), vn::Color(255, 0, 0, 255)) << "the single colour is attachment 0";
-    EXPECT_EQ(pass->clearColor(1), vn::Color(0, 255, 0, 255)) << "the stated extra reaches its attachment";
-    EXPECT_EQ(pass->clearColor(2), vn::Color(0, 0, 0, 0))
+    EXPECT_EQ(pass->clearColor(0), vn::Color(255, 0, 0, 255).toLinear()) << "the single colour is attachment 0";
+    EXPECT_EQ(pass->clearColor(1), vn::Color(0, 255, 0, 255).toLinear())
+        << "the stated extra reaches its attachment";
+    EXPECT_EQ(pass->clearColor(2), vn::Color(0, 0, 0, 0).toLinear())
         << "an attachment nobody stated keeps transparent black";
 }
 
@@ -9999,19 +10005,20 @@ TEST(RenderEngineTest, ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise)
     const auto opaque_node = engine->addPass(opaque);
     ASSERT_NE(opaque_node, nullptr);
     EXPECT_TRUE(opaque_node->isClearEnabled());
-    EXPECT_EQ(opaque_node->clearColor(), Color(51, 51, 51, 255));
+    EXPECT_EQ(opaque_node->clearColor(), Color(51, 51, 51, 255).toLinear())
+        << "the default is the #333333 grey a host would pick, stated in display space and decoded once";
 
     // A declaration that states the policy wins over the kind, on each of the three axes on its own.
     PassDesc tinted;
     tinted.name          = u8"tinted";
     tinted.camera        = camera;
     tinted.clear_enabled = true;
-    tinted.clear_color   = Color(10, 20, 30, 255);
+    tinted.clear_color   = Color(10, 20, 30, 255).toLinear();
     tinted.clear_depth   = false;
     const auto tinted_node = engine->addPass(tinted);
     ASSERT_NE(tinted_node, nullptr);
     EXPECT_TRUE(tinted_node->isClearEnabled());
-    EXPECT_EQ(tinted_node->clearColor(), Color(10, 20, 30, 255));
+    EXPECT_EQ(tinted_node->clearColor(), Color(10, 20, 30, 255).toLinear());
     EXPECT_FALSE(tinted_node->shouldClearDepth());
 }
 

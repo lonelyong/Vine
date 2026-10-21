@@ -6,6 +6,7 @@
 #include <optional>
 #include <vector>
 
+#include <vine/Colorf.hpp>
 #include <vine/raw_ptr.hpp>
 #include <vine/intrusive_ptr.hpp>
 
@@ -144,12 +145,16 @@ struct VN_GRAPHICS_API PassDesc
     /// (it composites over what is already there), a Scene pass does. Stating one is how a declaration
     /// overrides that (the transparent pass tests depth without clearing, for instance).
     std::optional<bool> clear_enabled;
-    /// The colour its target is cleared to, or unset for the kind's own default (51,51,51, the colour a
-    /// hand-built pass clears to — a surface that has its own colour states it here).
-    std::optional<Color> clear_color;
+    /// The colour its target is cleared to, or unset for the kind's own default (the #333333 grey a hand-built
+    /// pass clears to — a surface that has its own colour states it here).
+    ///
+    /// LINEAR, like every other authored colour in this module (see ClearPolicy): a host holding an encoded colour
+    /// - a palette, a PNG, a `QColor` - states it with `Color(...).toLinear()`.
+    /// Channels may exceed 1 for a floating-point target: an HDR clear is a value, not a clamped sample.
+    std::optional<Colorf> clear_color;
     /// Colours for attachments 1..N-1, in attachment order (see ClearPolicy): an absent entry is transparent
     /// black. This is what a G-buffer needs (a normal image cleared to (0,0,1,0) rather than the pass' colour).
-    std::vector<Color> clear_extra_colors;
+    std::vector<Colorf> clear_extra_colors;
     /// Whether the depth attachment is cleared with it, or unset for the kind's own policy.
     std::optional<bool> clear_depth;
 

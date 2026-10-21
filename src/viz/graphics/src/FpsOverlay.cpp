@@ -362,8 +362,8 @@ void FpsOverlay::rebuild()
     // On-top HUD content is lit by a pure ambient light: a WHITE ambient material makes
     // ambientColor == diffuse == the bar colour, so this IS the readout's on-screen colour; black
     // specular avoids highlights.
-    material->setAmbient(Colorf(1.0f, 1.0f, 1.0f, 1.0f));
-    material->setSpecular(Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+    material->setAmbient(Colorf::kWhite);
+    material->setSpecular(Colorf::kBlack);
     geometry->setMaterial(material);
     // Hidden until the first measurement: the readout draws the digits' LIT segments only (see
     // writePattern), so it starts blank rather than showing a dark three-eights behind the number.

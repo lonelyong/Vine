@@ -99,7 +99,7 @@ bool SdkPixelFixture::available()
         pass->setCamera(probe.camera);
         pass->setRenderTarget(probe.target);
         pass->setClearEnabled(true);
-        pass->setClearColor(vn::Color(0, 0, 0));
+        pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
         pass->setShouldClearDepth(true);
         pass->setProgramOverride(vn::graphics::unlitForwardProgram());
         probe.engine->addPass(pass, probe.scene, 0);

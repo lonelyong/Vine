@@ -5,6 +5,8 @@
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/SceneView.hpp>
 
+#include <vine/Color.hpp>
+
 #include <gtest/gtest.h>
 
 using namespace vn::graphics;
@@ -343,7 +345,8 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
 
     ASSERT_TRUE(surface->present(*view));
     EXPECT_TRUE(window->isClearEnabled()) << "the presentation's own ask is untouched";
-    EXPECT_EQ(window->clearColor(), Color(51, 51, 51, 255));
+    EXPECT_EQ(window->clearColor(), Color(51, 51, 51, 255).toLinear())
+        << "the window's grey is the linear light that displays as #333333";
 
     window->setClearEnabled(false);
     RenderPipelineOptions with_gizmo;

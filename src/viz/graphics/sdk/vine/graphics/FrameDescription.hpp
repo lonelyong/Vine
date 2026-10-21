@@ -6,7 +6,7 @@
 #include <optional>
 #include <vector>
 
-#include <vine/Color.hpp>
+#include <vine/Colorf.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
@@ -45,18 +45,28 @@ class ShaderProgram;
  *   depth renders into an off-screen target and composites it.
  * - It lives with the rest of a pass' description, not with the backend interface: a backend is one of its
  *   readers (FrameRecorder::setClearPolicy).
+ *
+ * @note
+ * - A DEFAULT-CONSTRUCTED policy is not "the default clear": this aggregate is only ever built by the pass that
+ *   states one (RenderPass::clearPolicy), and that pass' own default colour is the #333333 grey, not the white a
+ *   zero-initialised @ref color would be. The initialiser exists so the type can be stored and assigned, not to
+ *   describe a clearing frame.
  */
 struct ClearPolicy
 {
     /// Colour attachment 0 is cleared to (the only colour a single-attachment target reads).
-    Color color{};
+    ///
+    /// LINEAR light, and the only spelling this module takes: an encoded colour is decoded by whoever holds it
+    /// (`Color::toLinear()`), because a conversion here would be the engine handling an encoding it cannot see the
+    /// source of. Alpha is a coverage fraction and is not encoded in either direction.
+    Colorf color{};
     /// Whether the depth buffer is cleared too (honoured off-screen; the window always clears depth).
     bool depth = true;
     /// Colours for attachments 1..N-1, in attachment order (see the per-attachment note above).
     ///
     /// An absent entry is transparent black, which is what an auxiliary attachment (normals, ids) means by
     /// "nothing here". A target with more attachments than entries clears the rest to that same value.
-    std::vector<Color> extra_colors;
+    std::vector<Colorf> extra_colors;
 };
 
 /**

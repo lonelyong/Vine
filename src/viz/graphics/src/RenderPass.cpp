@@ -3,6 +3,7 @@
 #include <memory>
 #include <utility>
 
+#include <vine/Color.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderCommand.hpp>
@@ -16,12 +17,14 @@ namespace
 {
 /// @brief The colour attachment 0 clears to when the declaration states none.
 ///
-/// The value the main WINDOW pass was written against (an opaque dark grey). An off-screen target inherits it too,
-/// which is why it is a default the pass can override rather than a property of the kind.
-constexpr Color kDefaultClearColor{ 51, 51, 51, 255 };
+/// The value the main WINDOW pass was written against (an opaque dark grey), STATED IN THE SPACE IT IS SEEN IN and
+/// decoded once: a host or a designer picks #333333, and the engine needs the linear light that produces it. Writing
+/// the linear number directly (0.0331) would hide where it came from; keeping the bytes and dividing by 255 at the
+/// backend would be a different colour on every sRGB target (the defect this states away).
+const Colorf kDefaultClearColor = Color(51, 51, 51, 255).toLinear();
 
 /// @brief The colour an unstated attachment past the first clears to: "nothing was drawn here".
-constexpr Color kUnstatedClearColor{ 0, 0, 0, 0 };
+constexpr Colorf kUnstatedClearColor{ 0.0F, 0.0F, 0.0F, 0.0F };
 }  // namespace
 
 VN_OBJECT_META_IMPL(RenderPass, vn::Object);
@@ -77,7 +80,7 @@ void RenderPass::setDepthView(DepthView view)
     }
 }
 
-Color RenderPass::clearColor(int attachment) const
+Colorf RenderPass::clearColor(int attachment) const
 {
     if (attachment <= 0) {
         return desc_.clear_color.value_or(kDefaultClearColor);
@@ -86,7 +89,7 @@ Color RenderPass::clearColor(int attachment) const
     return index < desc_.clear_extra_colors.size() ? desc_.clear_extra_colors[index] : kUnstatedClearColor;
 }
 
-void RenderPass::setClearColor(const Color& color, int attachment)
+void RenderPass::setClearColor(const Colorf& color, int attachment)
 {
     if (attachment < 0) {
         return;

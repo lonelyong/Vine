@@ -30,12 +30,23 @@ TEST(ColorTest, Inverted)
     EXPECT_EQ(inv.a, 255);
 }
 
+TEST(ColorTest, InvertMutatesInPlaceAndTheCopyAgrees)
+{
+    Color c(0, 10, 20, 128);
+    c.invert();
+    EXPECT_EQ(c, Color(255, 245, 235, 128)) << "the channels complement, the alpha does not move";
+
+    // The two spellings are one operation: the copy is defined through the in-place one, so they cannot drift.
+    const Color again(0, 10, 20, 128);
+    EXPECT_EQ(again.inverted(), c);
+}
+
 TEST(ColorTest, Presets)
 {
-    EXPECT_EQ(Color::White, Color(255, 255, 255, 255));
-    EXPECT_EQ(Color::Black, Color(0, 0, 0, 255));
-    EXPECT_EQ(Color::Red, Color(255, 0, 0, 255));
-    EXPECT_EQ(Color::Green, Color(0, 255, 0, 255));
-    EXPECT_EQ(Color::Blue, Color(0, 0, 255, 255));
-    EXPECT_EQ(Color::Transparent, Color(0, 0, 0, 0));
+    EXPECT_EQ(Color::kWhite, Color(255, 255, 255, 255));
+    EXPECT_EQ(Color::kBlack, Color(0, 0, 0, 255));
+    EXPECT_EQ(Color::kRed, Color(255, 0, 0, 255));
+    EXPECT_EQ(Color::kGreen, Color(0, 255, 0, 255));
+    EXPECT_EQ(Color::kBlue, Color(0, 0, 255, 255));
+    EXPECT_EQ(Color::kTransparent, Color(0, 0, 0, 0));
 }

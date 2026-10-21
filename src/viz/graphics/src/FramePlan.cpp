@@ -27,9 +27,14 @@ std::string clearText(const PassPlan& pass)
     if (!pass.clears) {
         return "-";
     }
-    return "rgba(" + std::to_string(pass.clear_color.r) + "," + std::to_string(pass.clear_color.g) + "," +
-           std::to_string(pass.clear_color.b) + "," + std::to_string(pass.clear_color.a) +
-           (pass.clears_depth ? ",depth)" : ")");
+    // The SPACE is part of the text: "rgba(51,51,51,255)" reads the same whether it means encoded samples or linear
+    // light, and telling which one this is was the whole point (see ClearPolicy). Three decimals is finer than an
+    // 8-bit sRGB step at the values a pass usually clears to.
+    char color[256]{};
+    std::snprintf(color, sizeof(color), "linear(%.3f,%.3f,%.3f,%.3f)", static_cast<double>(pass.clear_color.r),
+                  static_cast<double>(pass.clear_color.g), static_cast<double>(pass.clear_color.b),
+                  static_cast<double>(pass.clear_color.a));
+    return std::string(color) + (pass.clears_depth ? ",depth)" : ")");
 }
 
 /** @brief A pass' declared input names, or a dash when it declared none. */

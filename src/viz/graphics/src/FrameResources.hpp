@@ -5,7 +5,6 @@
 #include <set>
 #include <vector>
 
-#include <vine/Color.hpp>
 #include <vine/String.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>

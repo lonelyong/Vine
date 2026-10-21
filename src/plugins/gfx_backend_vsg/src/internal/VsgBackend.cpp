@@ -1366,24 +1366,28 @@ void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
     {
         return;
     }
-    // The SDK's policy is bytes plus a depth flag; the plan's is floats plus a depth VALUE. The colour is
-    // the bytes as they are (no transfer function is applied here - the convention the tests read the
-    // window back with), and depth keeps the plan's own far value because the SDK has no depth value to
-    // give: one there would be a second place to get the clip convention wrong (see the SDK's ClearPolicy).
+    // The SDK's policy is linear floats plus a depth flag; the plan's is floats plus a depth VALUE. The colour is
+    // passed THROUGH, with no transfer function: the SDK's contract is that a colour reaching the engine is already
+    // linear, so the only encoding left is the target's own (an sRGB surface encodes on write inside the GPU, and a
+    // linear off-screen target stores the value as it stands - see the SDK's ClearPolicy). Depth keeps the plan's
+    // own far value because the SDK has no depth value to give: one there would be a second place to get the clip
+    // convention wrong.
+    //
+    // WHY TWO SHAPES at all: the backend half speaks DEVICE values (a packed float4 per attachment, the thing a clear
+    // plan is compared and submitted with), while the SDK speaks colours with alpha semantics. This function is the
+    // one place the two meet, and since the SDK side became linear the translation is a straight copy - the reason it
+    // still exists is that neither half should have to know the other's shape.
     core::ClearPolicy translated;
     translated.color          = true;  // the SDK only announces a policy for a pass that clears its colour
-    translated.color_value[0] = static_cast<float>(policy.color.r) / 255.0F;
-    translated.color_value[1] = static_cast<float>(policy.color.g) / 255.0F;
-    translated.color_value[2] = static_cast<float>(policy.color.b) / 255.0F;
-    translated.color_value[3] = static_cast<float>(policy.color.a) / 255.0F;
+    translated.color_value[0] = policy.color.r;
+    translated.color_value[1] = policy.color.g;
+    translated.color_value[2] = policy.color.b;
+    translated.color_value[3] = policy.color.a;
     // The per-attachment colours travel exactly as stated; an attachment nobody stated keeps transparent black
     // (see the SDK's ClearPolicy and core::planClearValues).
     translated.extra_color_values.reserve(policy.extra_colors.size());
-    for (const vn::Color& colour : policy.extra_colors) {
-        translated.extra_color_values.push_back({ static_cast<float>(colour.r) / 255.0F,
-                                                  static_cast<float>(colour.g) / 255.0F,
-                                                  static_cast<float>(colour.b) / 255.0F,
-                                                  static_cast<float>(colour.a) / 255.0F });
+    for (const vn::Colorf& colour : policy.extra_colors) {
+        translated.extra_color_values.push_back({ colour.r, colour.g, colour.b, colour.a });
     }
     translated.depth          = policy.depth;
     (void)d->recorder.setClearPolicy(translated);

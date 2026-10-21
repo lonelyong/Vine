@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include <vine/Color.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
@@ -537,7 +538,7 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
         .pass(pass.get())
         .order(0)
         .target(nullptr)
-        .clear(vn::graphics::ClearPolicy{ vn::Color(0, 64, 0, 255), true })
+        .clear(vn::graphics::ClearPolicy{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true })
         .depth(vn::graphics::DepthMode::TestAndWrite)
         .content(fixture.commands, camera.get())
         .value());
@@ -714,7 +715,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     const vn::intrusive_ptr<vn::graphics::Camera> camera_b = cameraLookingAt(-0.5);
     const vn::intrusive_ptr<RenderPass>             pass(new RenderPass());
 
-    const vn::graphics::ClearPolicy clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive = [&](const vn::graphics::Camera* frame_camera) {
         backend->executeFrame(TestFrame()
@@ -866,8 +867,8 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     // The SCREEN's clear is blue and the TARGET's is green, so a window pixel says which one a frame ended
     // with: the screen draw covers the window, so a pixel the screen draw touched is the TARGET's picture -
     // the triangle, or the target's clear.
-    const vn::graphics::ClearPolicy offscreen_clear{ vn::Color(0, 64, 0, 255), true };
-    const vn::graphics::ClearPolicy window_clear{ vn::Color(0, 0, 64, 255), true };
+    const vn::graphics::ClearPolicy offscreen_clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
+    const vn::graphics::ClearPolicy window_clear{ vn::Colorf(0.0F, 0.0F, 0.25F, 1.0F), true };
 
     const auto drive = [&]() {
         backend->executeFrame(TestFrame()
@@ -1073,7 +1074,7 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
     commands.front().program            = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
-    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     backend->executeFrame(TestFrame()
                               .pass(pass_object.get(), 0)
@@ -1189,7 +1190,7 @@ TEST(VsgBackendTest, ACubeMapInputReachesAContentProgramAsACubeSampler)
     commands.front().program            = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
-    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     backend->executeFrame(TestFrame()
                               .pass(pass_object.get(), 0)
@@ -1280,7 +1281,7 @@ TEST(VsgBackendTest, AnIncompleteCubeInputBindsTheWhiteCubeAndSaysWhy)
     commands.front().program            = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
-    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     backend->executeFrame(TestFrame()
                               .pass(pass_object.get(), 0)
@@ -1390,9 +1391,9 @@ TEST(VsgBackendTest, EachAttachmentClearsToItsOwnColour)
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
 
     vn::graphics::ClearPolicy clear;
-    clear.color  = vn::Color(255, 0, 0, 255);  // attachment 0: red
+    clear.color  = vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F);  // attachment 0: red
     clear.depth  = false;                      // there is no depth attachment
-    clear.extra_colors.push_back(vn::Color(0, 255, 0, 255));  // attachment 1: green
+    clear.extra_colors.push_back(vn::Colorf(0.0F, 1.0F, 0.0F, 1.0F));  // attachment 1: green
 
     backend->executeFrame(TestFrame()
                               .pass(pass.get(), 0)
@@ -1428,6 +1429,67 @@ TEST(VsgBackendTest, EachAttachmentClearsToItsOwnColour)
         << static_cast<int>(second[at + 2]) << ")";
 
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "a per-attachment clear is not a report";
+}
+
+/*
+ * @brief A clear colour is stored as the LINEAR value it is: the target's format, not the pipeline, does any encoding.
+ *
+ * The colour authored here is #808080 seen on a display, decoded once by the holder of the bytes (`toLinear()`, so
+ * 0.2159). An 8-bit linear target stores that value as it stands (55), which is what makes this a device-level proof
+ * that no transfer function runs inside the engine: encoding it first would store 128. The same 0.2159 written into
+ * an sRGB surface is encoded by the GPU on write - that edge belongs to the hardware (the window's own format decides
+ * it), which is the whole point of the separation.
+ */
+TEST(VsgBackendTest, AClearColourIsAStoredLinearValueNotAnEncodedOne)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 64, 64);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(16, 16);
+
+    const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
+
+    vn::graphics::ClearPolicy clear;
+    clear.color = vn::Color(128, 128, 128, 255).toLinear();  // ≈ 0.2159: the light #808080 stands for
+    clear.depth = false;                                    // there is no depth attachment
+
+    backend->executeFrame(TestFrame()
+                              .pass(pass.get(), 0)
+                              .target(target.get())
+                              .clear(clear)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .value());
+
+    std::vector<std::uint8_t>    pixels;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "the target is read back";
+    const std::size_t at = (8U * 16U + 8U) * 4U;
+    ASSERT_LT(at + 3U, pixels.size());
+    EXPECT_NEAR(static_cast<int>(pixels[at]), 55, 1)
+        << "0.2159 stored in 8 bits is 55; 128 would mean the colour was ENCODED before it reached the target";
+    EXPECT_NEAR(static_cast<int>(pixels[at + 1]), 55, 1);
+    EXPECT_NEAR(static_cast<int>(pixels[at + 2]), 55, 1);
+    EXPECT_EQ(pixels[at + 3], 255U) << "alpha is a fraction, and it crosses without a transfer function";
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "a clear colour is not a report";
 }
 
 /*
@@ -1556,7 +1618,7 @@ TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
     commands.front().program            = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
-    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     const auto drive = [&]() {
         backend->executeFrame(TestFrame()
@@ -1698,7 +1760,7 @@ TEST(VsgBackendTest, TwoInputStatesOverOneTextureSampleDifferently)
     commands.front().program            = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
-    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     backend->executeFrame(TestFrame()
                               .pass(pass_object.get(), 0)
@@ -1822,8 +1884,8 @@ TEST(VsgBackendTest, AProducedInputBindsOnlyTheAttachmentItNames)
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass> producer_pass(new RenderPass());
     const vn::intrusive_ptr<RenderPass> consumer_pass(new RenderPass());
-    const vn::graphics::ClearPolicy source_clear{ vn::Color(0, 0, 255, 255), true };
-    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+    const vn::graphics::ClearPolicy source_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     backend->executeFrame(TestFrame()
                               .pass(producer_pass.get(), -1)
@@ -1926,8 +1988,8 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAScreenProgram)
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass> source_pass(new RenderPass());
     const vn::intrusive_ptr<RenderPass> screen_pass(new RenderPass());
-    const vn::graphics::ClearPolicy source_clear{ vn::Color(255, 0, 0, 255), true };
-    const vn::graphics::ClearPolicy destination_clear{ vn::Color(0, 0, 255, 255), true };
+    const vn::graphics::ClearPolicy source_clear{ vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F), true };
+    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     backend->executeFrame(TestFrame()
                               .pass(source_pass.get(), -1)
@@ -1999,7 +2061,7 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     const TriangleFixture             triangle = makeTriangle();
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>             pass(new RenderPass());
-    const vn::graphics::ClearPolicy                 clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy                 clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive = [&]() {
         backend->executeFrame(TestFrame()
@@ -2207,7 +2269,7 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
     const std::vector<RenderCommand> commands(kDrawsPerFrame, command);
 
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
-    const vn::graphics::ClearPolicy     clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy     clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive_into = [&](RenderTarget* where, double camera_x) {
         const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(camera_x);
@@ -2345,7 +2407,7 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>             pass(new RenderPass());
-    const vn::graphics::ClearPolicy                 clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy                 clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive = [&] {
         backend->executeFrame(TestFrame()
@@ -2570,7 +2632,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>             pass(new RenderPass());
-    const vn::graphics::ClearPolicy                 clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy                 clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive = [&] {
         backend->executeFrame(TestFrame()
@@ -2733,7 +2795,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
-    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     ContentStore*    store    = BackendContentAccess::store(*backend);
     ContentAssembly* assembly = BackendContentAccess::assembly(*backend);
@@ -3058,7 +3120,7 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
-    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     ContentStore*    store    = BackendContentAccess::store(*backend);
     ContentAssembly* assembly = BackendContentAccess::assembly(*backend);
@@ -3258,7 +3320,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
-    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     ContentStore*    store    = BackendContentAccess::store(*backend);
     ContentAssembly* assembly = BackendContentAccess::assembly(*backend);
@@ -3673,7 +3735,7 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
-    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     std::vector<RenderCommand> commands;
 
@@ -3912,7 +3974,7 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
-    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive = [&] {
         // Depth off, so the second drawing call is simply the one whose colour the probe sees - the pass states it
@@ -4017,7 +4079,7 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
-    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
     const std::vector<RenderCommand>              no_commands;
     const auto                                    drive = [&] {
         backend->executeFrame(TestFrame()
@@ -4127,7 +4189,7 @@ TEST(VsgBackendTest, TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsS
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
     // A blue clear: the dst factor is what leaves it standing at half strength next to the fragment's red.
-    const vn::graphics::ClearPolicy clear{ vn::Color(0, 0, 255, 255), true };
+    const vn::graphics::ClearPolicy clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     const auto drive = [&] {
         backend->executeFrame(TestFrame()
@@ -4253,7 +4315,7 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
-    const vn::graphics::ClearPolicy               clear{ vn::Color(0, 64, 0, 255), true };
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive = [&]() {
         const auto began = std::chrono::steady_clock::now();

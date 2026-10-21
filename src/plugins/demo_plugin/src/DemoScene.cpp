@@ -433,8 +433,8 @@ void addDemoSkyBox(vn::graphics::Group* root, double radius, vn::intrusive_ptr<v
 
         auto material = vn::make_intrusive<vn::graphics::Material>();
         // White: the sky program is unlit and multiplies nothing, so the map IS the colour.
-        material->setDiffuse(vn::Colorf(1.0f, 1.0f, 1.0f, 1.0f));
-        material->setSpecular(vn::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+        material->setDiffuse(vn::Colorf::kWhite);
+        material->setSpecular(vn::Colorf::kBlack);
         material->setTexture(std::move(cube));
         geometry->setMaterial(material);
         // The SDK's built-in sky program (BuiltinShaders::skyboxProgram): unlit, samples the material's
@@ -715,7 +715,7 @@ void addForwardShowcase(vn::graphics::Group* root)
                     u8"void main(){ outColor = vec4(0.9, 0.1, 0.85, 1.0); }\n";
         program->addStage(fs);
 
-        auto  box      = addBox(root, vn::Colorf(1.0f, 1.0f, 1.0f, 1.0f), u8"custom_program", Vec3d(0.0, 0.0, 0.85), Vec3d(0.42, 0.42, 0.45));
+        auto  box      = addBox(root, vn::Colorf::kWhite, u8"custom_program", Vec3d(0.0, 0.0, 0.85), Vec3d(0.42, 0.42, 0.45));
         auto* geometry = dynamic_cast<Geometry*>(box->children().front().get());
         if (geometry != nullptr) {
             geometry->setProgram(program);
@@ -1105,8 +1105,8 @@ void addSlotOverlayDemo(vn::appfw::gui::RenderControl* render_control)
             // ambient material makes ambientColor == diffuse == the box color.
             if (auto* geometry = dynamic_cast<vn::graphics::Geometry*>(box->children().front().get())) {
                 if (auto* material = geometry->material(); material != nullptr) {
-                    material->setAmbient(vn::Colorf(1.0f, 1.0f, 1.0f, 1.0f));
-                    material->setSpecular(vn::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+                    material->setAmbient(vn::Colorf::kWhite);
+                    material->setSpecular(vn::Colorf::kBlack);
                 }
             }
         };
@@ -1177,8 +1177,8 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
         // ambient material makes ambientColor == diffuse == the box colour.
         if (auto* geometry = dynamic_cast<vn::graphics::Geometry*>(box->children().front().get())) {
             if (auto* material = geometry->material(); material != nullptr) {
-                material->setAmbient(vn::Colorf(1.0f, 1.0f, 1.0f, 1.0f));
-                material->setSpecular(vn::Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+                material->setAmbient(vn::Colorf::kWhite);
+                material->setSpecular(vn::Colorf::kBlack);
             }
         }
     };

@@ -241,9 +241,9 @@ void AxisGizmo::rebuild()
         // ambient material makes ambientColor == diffuse == the stick colour
         // regardless of viewing direction (a directional headlight made the
         // sticks go dark/black when the camera looked along a diagonal).
-        material->setAmbient(Colorf(1.0f, 1.0f, 1.0f, 1.0f));
+        material->setAmbient(Colorf::kWhite);
         // Black specular avoids any white highlight.
-        material->setSpecular(Colorf(0.0f, 0.0f, 0.0f, 1.0f));
+        material->setSpecular(Colorf::kBlack);
         geometry->setMaterial(material);
 
         auto group = make_intrusive<Group>();

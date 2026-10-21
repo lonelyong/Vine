@@ -5,7 +5,7 @@
 #include <optional>
 #include <vector>
 
-#include <vine/Color.hpp>
+#include <vine/Colorf.hpp>
 #include <vine/String.hpp>
 #include <vine/raw_ptr.hpp>
 #include "Node.hpp"
@@ -57,8 +57,8 @@ struct VN_GRAPHICS_API PassPlan
     bool enabled = true;
     /// Whether it clears its target before it draws (see ClearPolicy: the pass' own clear, not "a clear happened").
     bool clears = false;
-    /// The colour attachment 0 is cleared to when @ref clears is true.
-    Color clear_color{};
+    /// The colour attachment 0 is cleared to when @ref clears is true (linear, like every authored colour).
+    Colorf clear_color{};
     /// Whether that clear includes depth.
     bool clears_depth = true;
     /// The sub-rectangle of the target it draws into, or nullopt for the whole target.
@@ -103,6 +103,11 @@ struct VN_GRAPHICS_API FramePlan
      *
      * One line per pass, key=value pairs, so the result is greppable as well as readable: this is what a dev
      * switch prints and what a bug report carries. An empty plan says so in one line.
+     *
+     * @note
+     * - The TEXT is for humans and is not a parsing contract; the fields above are. That is also why the colour it
+     *   prints is spelled in the space it holds (`clear=linear(...)`): the sentence has to be unambiguous to a reader,
+     *   a machine reads @ref PassPlan::clear_color instead.
      *
      * @return The table, UTF-8, lines separated by '\n' (no trailing newline).
      */
