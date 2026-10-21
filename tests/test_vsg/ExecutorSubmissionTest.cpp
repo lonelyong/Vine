@@ -20,7 +20,7 @@
 #include "FailingStepNode.hpp"
 
 using vn::graphics::RenderTarget;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::Diagnostics;
 using vn::graphics::backend::FrameArena;
@@ -82,7 +82,7 @@ TEST(ExecutorSubmissionTest, ALostSubmissionIsRepairedByTheNextFrameExactlyOnce)
     executor.addTarget(written.get(), written.get());
     executor.addTarget(other.get(), other.get());
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[3] = 1.0F;
 
@@ -160,7 +160,7 @@ TEST(ExecutorSubmissionTest, TheSubmissionStepItselfMarksWhatAFailedFrameWrote)
     executor.addTarget(written.get(), written.get());
     executor.addTarget(other.get(), other.get());
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[3] = 1.0F;
 

@@ -66,7 +66,7 @@
 
 | 组 | 单元 |
 | --- | --- |
-| 门面与会话 | `VsgBackend` `Session` `OffscreenSession` `SessionDrive` `SessionContent` `SessionMove` `WindowTarget` `Device` `DeviceFeatures` `DeviceProbe` `VsgExecutor` |
+| 门面与会话 | `VsgBackend` `Session` `OffscreenSession` `SessionDrive` `SessionContent` `SessionMove` `WindowTarget` `Device` `DeviceFeatures` `DeviceRequirements` `DeviceProbe` `VsgExecutor` |
 | 内容层 | `ContentAssembly` `ContentPass` `ContentHalves` `ContentDraw` `ContentFacts` `ContentSources` `ContentStore` `ContentSweep` `ContentImages` `ContentPush` `ContentSets` `ContentPipeline` |
 | 数据与表 | `GeometryFacts` `DrawBlock` `LightBlock` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` `MaterialImages` `StreamUploads` `BlockStorage` `BlockDescriptors` `VariantPool` `PassRegistry` `StateCommands` |
 | 目标与读回 | `OffscreenTarget` `HostTargets` `HostReadback` `WhiteImage` |
@@ -80,12 +80,16 @@
 | 协议与帧 | `FrameRecorder` `FrameCompiler` `FrameGraph` `FrameArena` `FrameRing` `FrameTimeline` `RetirementQueue` |
 | 键与状态 | `Keys` `StateRegistry` `VariantPool`（声明在 core） `ClearPlan` `TargetPlan` `DepthProbe` |
 | 内容身份与存储 | `Streams` `MaterialArena` `FactResult` |
-| 设备约束 | `DeviceRequirements` `AllocationGate` |
+| 设备约束 | `AllocationGate` |
 | 证据 | `Observe` `PhaseTable` `PixelProbe` `SlotProbe` `Readback` `OneShot` |
 
 > `Diagnostics` / `ReportOnce` 已上移 SDK（`vine/graphics/Diagnostics.hpp` / `ReportOnce.hpp`，2026-09-27）：
 > 引擎持有唯一的诊断路线，本插件自己那条路线的 sink 转发进去 —— 宿主的 sink 与
 > `RenderEngine::diagnosticCount()` 因此能看到 session 自己的报告，而本层不重复上报。
+>
+> `DeviceRequirements` 相反：**从后端半移入本插件**（`include/vine/vsg/internal/` + `src/internal/`，2026-10-21）。
+> 它命名的是 Vulkan 1.4 地板与 `VK_EXT_*` 要求，只有 Vulkan 后端能用；留在"随 SDK 安装"的那一半里
+> 会把"每个后端都能用"写成假话（见 `.ai/design/graphics-object-model-audit-2026-10-21.md` R1）。
 
 **`shell/`（插件外壳）**：`GfxBackendVsgPlugin`（`VN_DECLARE_PLUGIN`）与 `VsgRenderBackendFactory`（按名注册/创建），头在 `include/vine/vsg/shell/`、实现在 `src/shell/`。
 

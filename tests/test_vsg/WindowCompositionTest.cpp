@@ -118,7 +118,7 @@ using vn::vsg::ProgramFacts;
 using vn::vsg::StreamUploads;
 using vn::vsg::VsgExecutor;
 using vn::vsg::WindowTarget;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::Diagnostics;
 using vn::graphics::backend::DrawKind;
@@ -367,21 +367,21 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     FrameRecorder recorder{ arena, diagnostics, observe };
     FrameCompiler compiler{ arena, diagnostics, observe };
 
-    ClearPolicy scene_clear;
+    ClearValues scene_clear;
     scene_clear.color          = true;
     scene_clear.color_value[0] = kSceneClear[0];
     scene_clear.color_value[1] = kSceneClear[1];
     scene_clear.color_value[2] = kSceneClear[2];
     scene_clear.color_value[3] = 1.0F;
 
-    ClearPolicy overlay_clear;
+    ClearValues overlay_clear;
     overlay_clear.color          = true;
     overlay_clear.color_value[0] = kOverlayClear[0];
     overlay_clear.color_value[1] = kOverlayClear[1];
     overlay_clear.color_value[2] = kOverlayClear[2];
     overlay_clear.color_value[3] = 1.0F;
 
-    ClearPolicy picture_clear;
+    ClearValues picture_clear;
     picture_clear.color          = true;
     picture_clear.color_value[0] = kPictureClear[0];
     picture_clear.color_value[1] = kPictureClear[1];

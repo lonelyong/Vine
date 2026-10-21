@@ -32,7 +32,7 @@ bool PassClearPlan::operator==(const PassClearPlan& other) const noexcept
            bootstrap == other.bootstrap;
 }
 
-PassClearPlan planClearValues(const TargetShape& shape, const ClearPolicy& policy, bool bootstrap,
+PassClearPlan planClearValues(const TargetShape& shape, const ClearValues& policy, bool bootstrap,
                               bool depth_borrowed) noexcept
 {
     PassClearPlan plan;

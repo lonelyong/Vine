@@ -23,7 +23,7 @@
 
 #include <vine/vsg/support/VsgBackendUtility.hpp>
 #include <vine/vsg/support/VsgHostWindow.hpp>
-#include <vine/graphics/backend/DeviceRequirements.hpp>
+#include <vine/vsg/internal/DeviceRequirements.hpp>
 #include <vine/graphics/backend/SessionMove.hpp>
 #include <vine/graphics/backend/SlotProbe.hpp>
 

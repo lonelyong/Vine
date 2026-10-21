@@ -107,6 +107,17 @@ inline bool operator!=(const DepthState& lhs, const DepthState& rhs)
 
 /**
  * @brief Concrete blend state (defaults applied).
+ *
+ * @details
+ * - `enabled` is the ENABLE, not a hint: false means the surface writes its fragment unchanged, even when a
+ *   program writes an alpha below 1 (the rule three.js / Filament / Unity follow for an opaque material).
+ * - TRANSPARENCY HAS ONE OTHER SOURCE, and it is merged where the two meet: a command whose effective
+ *   opacity is below 1 (Node::setOpacity / Scene::setOpacity) is drawn with blending on and the pair
+ *   below, because opacity is the engine's transparency channel (see RenderCommand::opacity). Content that
+ *   wants per-pixel alpha from its own shader states the blend here instead of relying on the object's
+ *   opacity.
+ * - A backend whose target carries several colour attachments never blends them (they hold data, not a
+ *   surface), and a full-screen draw writes its rectangle; both are target-shape rules, not this flag.
  */
 struct VN_GRAPHICS_API BlendState
 {

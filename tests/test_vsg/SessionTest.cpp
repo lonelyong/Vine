@@ -42,7 +42,7 @@ using vn::vsg::OffscreenTarget;
 using vn::vsg::VsgExecutor;
 using vn::vsg::api::Session;
 using vn::vsg::api::SessionOptions;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::Diagnostics;
 using vn::graphics::backend::FrameArena;
@@ -261,7 +261,7 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
     FrameRecorder recorder{ arena, diagnostics, observe };
     FrameCompiler compiler{ arena, diagnostics, observe };
 
-    ClearPolicy window_clear;
+    ClearValues window_clear;
     window_clear.color          = true;
     window_clear.color_value[3] = 1.0F;
 
@@ -273,7 +273,7 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
         const FrameToken token = session.beginFrame();
         EXPECT_TRUE(token);
 
-        ClearPolicy clear;
+        ClearValues clear;
         clear.color          = true;
         clear.color_value[0] = value;
         clear.color_value[3] = 1.0F;
@@ -352,10 +352,10 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    ClearPolicy window_clear;
+    ClearValues window_clear;
     window_clear.color          = true;
     window_clear.color_value[3] = 1.0F;
-    ClearPolicy target_clear;
+    ClearValues target_clear;
     target_clear.color          = true;
     target_clear.color_value[0] = 0.25F;
     target_clear.color_value[1] = 0.5F;
@@ -639,7 +639,7 @@ TEST(SessionTest, AWindowPlanThatGotTheFormatWrongIsNotRecorded)
     const FrameToken token = session.beginFrame();
     ASSERT_TRUE(token);
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[3] = 1.0F;
 
@@ -727,7 +727,7 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
     const FrameToken token = session.beginFrame();
     ASSERT_TRUE(token);
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[3] = 1.0F;
 

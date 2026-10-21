@@ -41,19 +41,24 @@ vn::graphics                          一个模块、一个 target、一个依�
 
 | | HOST 半 | BACKEND 半（`backend/`） |
 |---|---|---|
-| 内容 | `Scene` `Node` `Geometry` `Material` `Camera` `CameraManipulator` `RenderEngine` `RenderPass` `RenderTarget` `Pipeline` `ShaderProgram` `RenderBackend`（契约）、后端注册表、`Diagnostics`（唯一诊断路线）`ReportOnce`（每 episode 报一次） | `Protocol`（合法性状态机）`FrameRecorder` `FrameCompiler` `FrameGraph`（依赖序 + 环）`Keys` `TargetPlan`/`ClearPlan` `Streams`/`FrameArena`/`FrameRing`/`MaterialArena` `VariantPool` `RetirementQueue`/`FrameTimeline` `Observe`/`PhaseTable`/`PixelProbe`/`SlotProbe`/`AllocationGate`/`DeviceRequirements`/`SessionMove` |
+| 内容 | `Scene` `Node` `Geometry` `Material` `Camera` `CameraManipulator` `RenderEngine` `RenderPass` `RenderTarget` `Pipeline` `ShaderProgram` `RenderBackend`（契约）、后端注册表、`Diagnostics`（唯一诊断路线）`ReportOnce`（每 episode 报一次） | `Protocol`（合法性状态机）`FrameRecorder` `FrameCompiler` `FrameGraph`（依赖序 + 环）`Keys` `TargetPlan`/`ClearPlan` `Streams`/`FrameArena`/`FrameRing`/`MaterialArena` `VariantPool` `RetirementQueue`/`FrameTimeline` `Observe`/`PhaseTable`/`PixelProbe`/`SlotProbe`/`AllocationGate`/`SessionMove` |
 | 读者 | 宿主应用、appfw、应用插件 | 后端作者 |
 | 稳定性 | 宿主 API：不为某个后端改动 | 随后端一起演进（`vsg-reimplementation.md` §4 的标题就是"当前实现的名字"） |
 | 规模 | ~7.5k 行 src + 40 头 | ~3.5k 行 src + 24 头 |
 
 ## 1.5 `backend/` 内部：分类而**不分目录**，以及四个"粘连"单元
 
+> **2026-10-21 变更**：`DeviceRequirements`（Vulkan 1.4 地板 + `VK_EXT_*` 要求）从本半**移入 vsg 插件**
+> （`include/vine/vsg/internal/` + `src/internal/`）。它是 Vulkan 策略，与本文件 §4 的"C Vulkan 家族"同类，
+> 但"随 SDK 安装"把"每个后端都能用"写成了假话（见 `.ai/design/graphics-object-model-audit-2026-10-21.md` R1）。
+> 其余单元不动。
+
 `backend/` 里只放**只有后端需要**的那一半；25 个单元**平铺**在一个目录里。按"它回答什么问题"可以分成四类，
 但这只是**分类**，不落成目录（也不提为同级）：
 
 | 类 | 单元 | 判据 |
 |---|---|---|
-| 设备/WSI | `DeviceRequirements` `SessionMove` `SlotProbe` `Readback` `DepthProbe` | 只有"有设备/交换链的 API"才有 |
+| 设备/WSI | `SessionMove` `SlotProbe` `Readback` `DepthProbe` | 只有"有设备/交换链的 API"才有 |
 | 存储 | `FrameArena` `FrameRing` `MaterialArena` `Streams` | "这些字节放哪、这个流是不是新的" |
 | 证据 | `Observe` `PhaseTable` `PixelProbe` `AllocationGate` | 不在渲染路径上，只被"要证据的人"用 |
 | 一帧怎么走 + 后端的身份与寿命 | `Protocol` `FrameRecorder` `FrameCompiler` `FrameGraph` `Keys` `VariantPool` `StateRegistry` `ClearPlan` `TargetPlan` `RetirementQueue` `FrameTimeline` | 每帧必过，或后端跳帧缓存的身份/寿命 |
@@ -146,7 +151,7 @@ R2 是关键的一条：没有它，"两半"只是目录约定；有了它，宿
 |---|---|---|---|---|
 | **A 任何后端**（API 无关帧纪律） | `Protocol` `FrameRecorder` `FrameCompiler` `FrameGraph` `Observe` `PhaseTable` `AllocationGate` `FrameArena` `FrameRing` `Streams` `RetirementQueue` `PixelProbe` `DepthProbe` `StateRegistry` | ✅ | ✅ | ✅（时间线/槽位概念退化） |
 | **B 显式 API 家族** | `Keys` `ClearPlan` `TargetPlan` `VariantPool` `Readback` `SlotProbe` `FrameTimeline` | ✅ | ⚠️ 可映射 | ❌（无管线对象/load-op/描述符集） |
-| **C Vulkan 家族** | `DeviceRequirements` `SessionMove`、以及键里命名 API 版本/交换链/兼容性的字段 | ✅ | ⚠️ 换掉能力表 | ❌ |
+| **C Vulkan 家族** | `SessionMove`、以及键里命名 API 版本/交换链/兼容性的字段（`DeviceRequirements` 已移入 vsg 插件，2026-10-21） | ✅ | ⚠️ 换掉能力表 | ❌ |
 
 支持这三桶的两个事实（可复核）：
 

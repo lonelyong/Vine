@@ -80,7 +80,7 @@ FrameCompiler::FrameCompiler(FrameArena& arena, Diagnostics& diagnostics, Observ
 {
 }
 
-const CompiledFrame& FrameCompiler::compile(const FrameDescription& description, const FrameFacts& facts)
+const CompiledFrame& FrameCompiler::compile(const CollectedFrame& description, const FrameFacts& facts)
 {
     frame_                  = CompiledFrame{};
     frame_.token            = description.token;
@@ -443,7 +443,16 @@ std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedD
         out.model             = command.model;
         out.opacity           = command.opacity;
         // The ONE resolution: what the content authored, weighed against what the pass says (StateNode.hpp).
-        out.dynamic = resolveDynamicState(resolveRenderState(command.authored_state, pass_state).state);
+        vn::graphics::ResolvedRenderState resolved = resolveRenderState(command.authored_state, pass_state).state;
+        // THE ENGINE'S TRANSPARENCY CHANNEL IS THE COMMAND'S OPACITY, and this is the only place that can weigh it
+        // against the authored blend state: a translucent command blends with the standard pair even though its
+        // content authored none (no StateNode has to say "and blend"), while an opaque command that authored none
+        // stays unblended - what `ResolvedRenderState::blend` documents. The two spellings cannot disagree because
+        // this is the one place that derives one from the other (see Node::setOpacity / Material's "always opaque").
+        if (out.opacity < 1.0F - 1e-6F) {
+            resolved.blend.enabled = true;
+        }
+        out.dynamic = resolveDynamicState(resolved);
 
         // A command that names no program of its own is shaded by the frame's default - resolved here so the
         // executor never has to ask "and what if it is null?" (see the design's D2 table).

@@ -67,7 +67,7 @@ using vn::vsg::PassContent;
 using vn::vsg::StreamUploads;
 using vn::vsg::ViewportRect;
 using vn::vsg::VsgExecutor;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::backend::CompiledPass;
 using vn::graphics::Diagnostics;
@@ -314,7 +314,7 @@ struct Fixture
     /// @brief Collects one clear-only pass into @p target (the clear IS the picture; no content involved).
     void clearPass(const void* target, PassId id, int order, float red, float green, float blue)
     {
-        ClearPolicy policy;
+        ClearValues policy;
         policy.color          = true;
         policy.color_value[0] = red;
         policy.color_value[1] = green;
@@ -409,7 +409,7 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
         table[0].current = target->instance();
         return table;
     };
-    const auto record_frame = [&](std::uint64_t token, const ClearPolicy& policy,
+    const auto record_frame = [&](std::uint64_t token, const ClearValues& policy,
                                   const std::vector<TargetFacts>& table) {
         EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
         EXPECT_TRUE(recorder.beginPass(1U));
@@ -443,7 +443,7 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
         return applied;
     };
 
-    ClearPolicy fill;
+    ClearValues fill;
     fill.color          = true;
     fill.color_value[0] = kFirst[0];
     fill.color_value[1] = kFirst[1];
@@ -596,7 +596,7 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
     executor.addTarget(lender.get(), lender.get());
 
     const auto clear_of = [](const OffscreenTarget::TargetLayout& layout) {
-        ClearPolicy policy;
+        ClearValues policy;
         policy.color       = true;
         policy.depth       = true;
         policy.depth_value = 0.0F;
@@ -729,7 +729,7 @@ TEST(ExecutorTest, TheContentOfAPassIsRecordedInsideThatPassWithThePlansClear)
                      << fixture.created.error.as_std_str();
     }
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];

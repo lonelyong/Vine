@@ -3,13 +3,19 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
+#include <vine/vsg/vsg_global.hpp>
 
 /**
  * @brief The device a session may run on: the policy, checkable without a graphics API.
  *
  * @details
+ * - WHY IT LIVES IN THIS PLUGIN (2026-10-21). The floor, the feature set and the extension names are VULKAN
+ *   POLICY, not a property of the graphics SDK: they name `VK_EXT_extended_dynamic_state3` and a 1.4 API level.
+ *   The header used to sit in the SDK's backend half (which is installed with the SDK), which claimed every
+ *   backend could use it - no non-Vulkan backend can. It stays in `vn::graphics::backend` because this plugin
+ *   aliases that namespace as `core`, and the policy is still "the backend layer's answer about a device"; what
+ *   it no longer is, is part of what the SDK hands to hosts (see `.ai/design/graphics-object-model-audit-2026-10-21.md` R1).
  * - WHY THE POLICY IS SEPARATE FROM THE PROBE. "Which device will we run on" has two halves with very
  *   different testability: what the backend REQUIRES (a version floor and a handful of features, all of
  *   them decisions this backend made) and what a machine OFFERS (a driver's answer, only obtainable on a
@@ -96,7 +102,7 @@ enum class DeviceExtension : std::uint8_t
 inline constexpr std::size_t kDeviceExtensionCount = static_cast<std::size_t>(DeviceExtension::Count);
 
 /** @brief What a device offers, in the terms this policy checks. */
-struct VN_GRAPHICS_API DeviceFacts
+struct VN_VSG_API DeviceFacts
 {
     std::uint32_t api_version{0};  ///< A physical device's reported version (NOT the instance's).
     std::uint32_t features{0};     ///< Bit i is set when DeviceFeature(i) is present.
@@ -132,35 +138,35 @@ struct VN_GRAPHICS_API DeviceFacts
  * @param feature Feature to name; an out-of-range value names nothing rather than reading memory.
  * @return A static string.
  */
-[[nodiscard]] VN_GRAPHICS_API const char* featureName(DeviceFeature feature) noexcept;
+[[nodiscard]] VN_VSG_API const char* featureName(DeviceFeature feature) noexcept;
 
 /** @brief Gets whether a device reporting @p api_version may host a session (major/minor only).
  *
  * @param api_version Version a physical device reports.
  * @return true when it is at least kRequiredApiVersion.
  */
-[[nodiscard]] VN_GRAPHICS_API bool supportsRequiredVersion(std::uint32_t api_version) noexcept;
+[[nodiscard]] VN_VSG_API bool supportsRequiredVersion(std::uint32_t api_version) noexcept;
 
 /** @brief Counts the required features @p facts is missing.
  *
  * @param facts What the device offers.
  * @return Number of missing features; 0 means every one is present.
  */
-[[nodiscard]] VN_GRAPHICS_API std::size_t missingFeatureCount(const DeviceFacts& facts) noexcept;
+[[nodiscard]] VN_VSG_API std::size_t missingFeatureCount(const DeviceFacts& facts) noexcept;
 
 /** @brief Counts the required extensions @p facts is missing.
  *
  * @param facts What the device offers.
  * @return Number of missing extensions; 0 means every one is available.
  */
-[[nodiscard]] VN_GRAPHICS_API std::size_t missingExtensionCount(const DeviceFacts& facts) noexcept;
+[[nodiscard]] VN_VSG_API std::size_t missingExtensionCount(const DeviceFacts& facts) noexcept;
 
 /** @brief The name of @p extension, for a diagnostic a human has to act on.
  *
  * @param extension Extension to name; an out-of-range value names nothing rather than reading memory.
  * @return A static string, in the API's own spelling (VK_EXT_...).
  */
-[[nodiscard]] VN_GRAPHICS_API const char* extensionName(DeviceExtension extension) noexcept;
+[[nodiscard]] VN_VSG_API const char* extensionName(DeviceExtension extension) noexcept;
 
 /** @brief Gets whether a device described by @p facts may host a session.
  *
@@ -169,6 +175,6 @@ struct VN_GRAPHICS_API DeviceFacts
  * @param facts What the device offers.
  * @return true when the version and every required feature are satisfied.
  */
-[[nodiscard]] VN_GRAPHICS_API bool satisfiesRequirements(const DeviceFacts& facts) noexcept;
+[[nodiscard]] VN_VSG_API bool satisfiesRequirements(const DeviceFacts& facts) noexcept;
 
 VN_GRAPHICSBACKEND_NS_END

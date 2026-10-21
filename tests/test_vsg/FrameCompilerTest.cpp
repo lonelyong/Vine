@@ -33,13 +33,15 @@
 #include <vine/graphics/Texture.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
 
+using vn::graphics::BlendFactor;
+using vn::graphics::BlendState;
 using vn::graphics::DepthMode;
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::graphics::Sampler;
 using vn::graphics::ShaderProgram;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledDraw;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::backend::CompiledInput;
@@ -142,7 +144,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     r.recorder.setRenderTarget(source.get());
     // The producer pass announces a clear: "a pass that announced them and drew nothing" is still a pass (and a
     // pass with neither is not one - the plan drops it).
-    vn::graphics::backend::ClearPolicy fill;
+    vn::graphics::backend::ClearValues fill;
     fill.color          = true;
     fill.color_value[0] = 0.25F;
     fill.color_value[3] = 1.0F;
@@ -470,7 +472,7 @@ TEST(FrameCompilerTest, ASteadyTargetNeedsNoBootstrap)
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(target.get());
-    r.recorder.setClearPolicy(ClearPolicy{});  // announced, but nothing is being rebuilt
+    r.recorder.setClearPolicy(ClearValues{});  // announced, but nothing is being rebuilt
     r.recorder.render(commands, nullptr);
     r.recorder.endPass();
     r.recorder.endFrame();
@@ -617,6 +619,46 @@ TEST(FrameCompilerTest, TheAuthoredCompareOpTravelsIntoTheDynamicState)
     EXPECT_EQ(frame.passes[0].draws[0].commands[0].dynamic.compare, vn::graphics::CompareOp::LessEqual);
     EXPECT_EQ(frame.passes[0].draws[0].commands[1].dynamic.compare, vn::graphics::CompareOp::Less)
         << "the untouched default is carried as-is";
+}
+
+TEST(FrameCompilerTest, AnOpaqueCommandDoesNotBlendAndATranslucentOneDoes)
+{
+    // THE TWO SOURCES OF TRANSPARENCY, WEIGHED IN ONE PLACE. A command that authored no blend is opaque (the
+    // resolved state documents "default: disabled"); a command whose OPACITY is below 1 is translucent, because
+    // opacity is the engine's transparency channel - and the content must not also have to state a blend for it
+    // (Node::setOpacity is enough). A StateNode that authored the blend turns it on whatever the opacity is.
+    Rig r;
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    r.addTarget(target.get(), 64, 64, true);
+
+    RenderCommand opaque;
+    RenderCommand translucent;
+    translucent.opacity = 0.5F;
+    RenderCommand authored;
+    authored.authored_state.blend = BlendState{ true, BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha };
+
+    const std::vector<RenderCommand> commands{ opaque, translucent, authored };
+
+    r.recorder.beginFrame(FrameToken{ 1 });
+    r.recorder.beginPass(1);
+    r.recorder.setRenderTarget(target.get());
+    r.recorder.render(commands, nullptr);
+    r.recorder.endPass();
+    r.recorder.endFrame();
+
+    const CompiledFrame& frame = r.compile();
+    ASSERT_EQ(frame.passes.size(), 1u);
+    ASSERT_EQ(frame.passes[0].draws.size(), 1u);
+    ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 3u);
+
+    EXPECT_FALSE(frame.passes[0].draws[0].commands[0].dynamic.blend.enabled)
+        << "an opaque command that authored no blend does not blend";
+    EXPECT_TRUE(frame.passes[0].draws[0].commands[1].dynamic.blend.enabled)
+        << "opacity below 1 is the engine's transparency channel and turns blending on";
+    EXPECT_TRUE(frame.passes[0].draws[0].commands[2].dynamic.blend.enabled)
+        << "a StateNode's blend is carried as authored";
+    EXPECT_EQ(frame.passes[0].draws[0].commands[1].dynamic.blend.src, BlendFactor::SrcAlpha)
+        << "and the translucent path keeps the standard pair";
 }
 
 TEST(FrameCompilerTest, ACommandWithoutAProgramGetsTheFramesDefault)

@@ -237,7 +237,7 @@ struct OffscreenTarget::Data
     bool                              depth_sampleable{false};  ///< The host asked for a sampleable depth.
     /// The clear policy `create` was given: the initial graph's clear values come from it, and a rebuilt graph
     /// has to use the same policy - values a caller never re-announces must not change under it.
-    core::ClearPolicy                 clear_policy{};
+    core::ClearValues                 clear_policy{};
     /// Bumped every time the attachments are replaced (see resize): a caller can tell "the same target, new
     /// images" from "the same images" without comparing pointers.
     std::uint64_t                     generation{0};
@@ -724,7 +724,7 @@ OffscreenTarget::~OffscreenTarget()
     return d->attachments.render_graph;
 }
 
-::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::passGraph(const core::ClearPolicy& policy, bool bootstrap)
+::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::passGraph(const core::ClearValues& policy, bool bootstrap)
 {
     if (d->render_pass == nullptr || d->attachments.framebuffer == nullptr)
     {
@@ -1231,7 +1231,7 @@ OffscreenTarget::Rebuilt OffscreenTarget::rebuild(const TargetLayout& wanted, co
     const core::TargetShape                 previous_shape      = std::move(d->shape);
     const std::optional<vn::graphics::RenderTarget::DepthFormat> previous_depth = d->depth_format;
     const bool                              previous_sampleable = d->depth_sampleable;
-    const core::ClearPolicy                 previous_clear      = d->clear_policy;
+    const core::ClearValues                 previous_clear      = d->clear_policy;
     const ::vsg::ref_ptr<::vsg::RenderPass> previous_pass       = d->render_pass;
     d->shape            = shape;
     d->depth_format     = wanted.depth_format;

@@ -97,7 +97,7 @@ using vn::vsg::PassContent;
 using vn::vsg::ProgramFacts;
 using vn::vsg::StreamUploads;
 using vn::vsg::VsgExecutor;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::Diagnostics;
 using vn::graphics::backend::FrameArena;
@@ -301,7 +301,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -520,7 +520,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -761,7 +761,7 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
     ASSERT_FALSE(target_facts.current.built) << "nothing has been recorded into it yet";
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -987,7 +987,7 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -1166,7 +1166,7 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -1405,7 +1405,7 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -1661,7 +1661,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -1902,7 +1902,7 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     };
     const std::vector<TargetFacts> target_table{ targetFacts(first_target), targetFacts(second_target) };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -2218,7 +2218,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -2372,7 +2372,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     // into an attachment - see OffscreenTargetTest). The colour attachment ends the pass sampleable, which is
     // exactly the layout the caller's descriptor declares.
     {
-        ClearPolicy policy;
+        ClearValues policy;
         policy.color          = true;
         policy.color_value[0] = 0.5F;
         policy.color_value[1] = 0.25F;
@@ -2483,7 +2483,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -2701,7 +2701,7 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -2958,13 +2958,13 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
 
     // Pass 1 publishes the OTHER sampleable depth (cleared to the reverse-Z far plane, 0.0), pass 2 the map
     // (0.25): both are real images in the layout a descriptor declares, and only one of them is the map.
-    ClearPolicy depth_clear;
+    ClearValues depth_clear;
     depth_clear.depth       = true;
     depth_clear.depth_value = 0.0F;
-    ClearPolicy map_clear;
+    ClearValues map_clear;
     map_clear.depth       = true;
     map_clear.depth_value = 0.25F;
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -3421,7 +3421,7 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
                                                  targetFacts(*flat, flat_handle.get()),
                                                  targetFacts(*plain, plain_handle.get()) };
 
-    ClearPolicy shade_clear;
+    ClearValues shade_clear;
     shade_clear.color          = true;
     shade_clear.color_value[0] = kClear[0];
     shade_clear.color_value[1] = kClear[1];
@@ -3429,10 +3429,10 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     shade_clear.color_value[3] = 1.0F;
     shade_clear.depth          = true;
     shade_clear.depth_value    = 0.0F;
-    ClearPolicy lit_map_clear;
+    ClearValues lit_map_clear;
     lit_map_clear.depth       = true;
     lit_map_clear.depth_value = 0.0F;   // the far plane: nothing casts, the sun reaches the fragment
-    ClearPolicy shadowed_map_clear;
+    ClearValues shadowed_map_clear;
     shadowed_map_clear.depth       = true;
     shadowed_map_clear.depth_value = 1.0F;   // a caster at the near plane: the fragment is behind it
 
@@ -3785,13 +3785,13 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
     const std::vector<TargetFacts> target_table{ targetFacts(*gbuffer, gbuffer_handle.get()),
                                                   targetFacts(*lit, lit_handle.get()) };
 
-    ClearPolicy gbuffer_clear;
+    ClearValues gbuffer_clear;
     gbuffer_clear.color          = true;
     gbuffer_clear.color_value[0] = kClear[0];
     gbuffer_clear.color_value[1] = kClear[1];
     gbuffer_clear.color_value[2] = kClear[2];
     gbuffer_clear.color_value[3] = 1.0F;
-    ClearPolicy lit_clear;
+    ClearValues lit_clear;
     lit_clear.color          = true;
     lit_clear.color_value[0] = 0.0F;   // the lit target's own clear, NOT the 0.06 the background branch writes
     lit_clear.color_value[1] = 0.0F;
@@ -4065,7 +4065,7 @@ TEST(ContentPassTest, ASpecularIntensityScalesWhatTheSurfaceReflects)
         targetFacts(*deferred, deferred_handle.get())
     };
 
-    ClearPolicy black_clear;
+    ClearValues black_clear;
     black_clear.color       = true;
     black_clear.color_value[3] = 1.0F;
     RenderCommand black_command;
@@ -4330,7 +4330,7 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -4483,7 +4483,7 @@ TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[3] = 1.0F;
     RenderCommand ramp_command;
@@ -4660,7 +4660,7 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[3] = 1.0F;
     RenderCommand command;
@@ -4933,7 +4933,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
         targetFacts(*bright_half_float, bright_half_float_handle.get())
     };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[3] = 1.0F;
     RenderCommand write_command;
@@ -5265,7 +5265,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -5506,7 +5506,7 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -5738,7 +5738,7 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -5961,7 +5961,7 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -6218,7 +6218,7 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];
@@ -6453,7 +6453,7 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     target_facts.current       = target->instance();
     const std::vector<TargetFacts> target_table{ target_facts };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = kClear[0];
     clear.color_value[1] = kClear[1];

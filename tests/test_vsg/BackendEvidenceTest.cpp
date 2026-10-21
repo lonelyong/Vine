@@ -53,7 +53,7 @@ using vn::graphics::RenderDiagnostic;
 using vn::graphics::RenderTarget;
 using vn::graphics::Viewport;
 using vn::graphics::backend::AllocationGate;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::Diagnostics;
 using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameCompiler;
@@ -501,7 +501,7 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
 
     TargetShape shape;
     shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    ClearPolicy  policy;
+    ClearValues  policy;
     policy.color         = true;
     const std::uint64_t plan = measure(kCalls, [&]() -> std::uint64_t {
         const vn::graphics::backend::PassClearPlan built =

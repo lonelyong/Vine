@@ -24,7 +24,7 @@
 
 using vn::graphics::RenderTarget;
 using vn::graphics::backend::AttachmentClear;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::DepthClear;
 using vn::graphics::backend::depthFinalLayout;
 using vn::graphics::backend::ImageLayout;
@@ -77,7 +77,7 @@ TargetShape depthOnly()
 
 TEST(CoreClearPlanTest, ABootstrapPassClearsEverythingItHas)
 {
-    ClearPolicy policy;  // the pass itself asked for nothing
+    ClearValues policy;  // the pass itself asked for nothing
     policy.color_value[0] = 0.25F;
     policy.color_value[3] = 1.0F;
 
@@ -101,7 +101,7 @@ TEST(CoreClearPlanTest, ABootstrapPassClearsEverythingItHas)
 
 TEST(CoreClearPlanTest, APassThatClearsNothingLoadsEverything)
 {
-    const auto plan = planClearValues(singleColor(), ClearPolicy{}, /*bootstrap*/ false, /*depth_preserved*/ false);
+    const auto plan = planClearValues(singleColor(), ClearValues{}, /*bootstrap*/ false, /*depth_preserved*/ false);
 
     ASSERT_EQ(plan.colors.size(), 1U);
     EXPECT_EQ(plan.colors[0].load, LoadOp::Load);
@@ -112,7 +112,7 @@ TEST(CoreClearPlanTest, APassThatClearsNothingLoadsEverything)
 
 TEST(CoreClearPlanTest, AClearRequestPutsEachAttachmentItsOwnColour)
 {
-    ClearPolicy policy;
+    ClearValues policy;
     policy.color           = true;
     policy.color_value[0]  = 1.0F;
     policy.color_value[1]  = 0.5F;
@@ -136,7 +136,7 @@ TEST(CoreClearPlanTest, AClearRequestPutsEachAttachmentItsOwnColour)
 
 TEST(CoreClearPlanTest, ABootstrapPassHonoursTheStatedPerAttachmentColours)
 {
-    ClearPolicy policy;  // the pass asked for nothing; the bootstrap rule clears anyway
+    ClearValues policy;  // the pass asked for nothing; the bootstrap rule clears anyway
     policy.color_value[0] = 0.25F;
     policy.color_value[3] = 1.0F;
     policy.extra_color_values.push_back({ 0.0F, 0.0F, 1.0F, 1.0F });  // attachment 1: blue
@@ -151,7 +151,7 @@ TEST(CoreClearPlanTest, ABootstrapPassHonoursTheStatedPerAttachmentColours)
 
 TEST(CoreClearPlanTest, ADepthOnlyTargetHasNoColourEntries)
 {
-    ClearPolicy policy;
+    ClearValues policy;
     policy.depth = true;
 
     const auto plan = planClearValues(depthOnly(), policy, /*bootstrap*/ false, /*depth_preserved*/ false);
@@ -164,7 +164,7 @@ TEST(CoreClearPlanTest, ADepthOnlyTargetHasNoColourEntries)
 
 TEST(CoreClearPlanTest, ABorrowedDepthIsNeverClearedAndAnOwnDepthIsNotPreservedFromTheClear)
 {
-    ClearPolicy policy;
+    ClearValues policy;
     policy.color = true;
     policy.depth = true;
 
@@ -190,7 +190,7 @@ TEST(CoreClearPlanTest, ABorrowedDepthIsNeverClearedAndAnOwnDepthIsNotPreservedF
 
 TEST(CoreClearPlanTest, TheDepthClearValueIsThePolicyValueWhenItAsksForOne)
 {
-    ClearPolicy policy;
+    ClearValues policy;
     policy.depth       = true;
     policy.depth_value = 0.75F;  // a pass that wants a specific depth to start from
 
@@ -212,7 +212,7 @@ TEST(CoreClearPlanTest, AVariantNamesWhatAPassDoesAndNotWhatItClearsWith)
     //     target leaves its attachments in;
     //   * the clear VALUES are no part of it: the value belongs to the pass instance, so two passes that
     //     clear to different colours share one render pass object.
-    ClearPolicy first;
+    ClearValues first;
     first.color          = true;
     first.color_value[0] = 0.25F;
     first.depth          = true;
@@ -233,7 +233,7 @@ TEST(CoreClearPlanTest, AVariantNamesWhatAPassDoesAndNotWhatItClearsWith)
     EXPECT_EQ(clear_variant.depth_final, ImageLayout::DepthAttachment);
 
     // The same variant, a different colour: the value is not identity.
-    ClearPolicy second = first;
+    ClearValues second = first;
     second.color_value[0] = 0.75F;
     const auto other_plan = planClearValues(singleColorShapeWithDepth(), second, /*bootstrap*/ false,
                                            /*depth_preserved*/ false);
@@ -245,7 +245,7 @@ TEST(CoreClearPlanTest, AVariantNamesWhatAPassDoesAndNotWhatItClearsWith)
 
     // A pass that clears nothing LOADS, and then the layouts it starts in are the ones the target leaves:
     // a LOAD has to name where the pixels it keeps really are.
-    const auto load_plan = planClearValues(singleColorShapeWithDepth(), ClearPolicy{}, /*bootstrap*/ false,
+    const auto load_plan = planClearValues(singleColorShapeWithDepth(), ClearValues{}, /*bootstrap*/ false,
                                            /*depth_preserved*/ false);
     const auto load_variant =
         loadOpVariantOf(load_plan, ImageLayout::ShaderReadOnly, ImageLayout::DepthAttachment,
@@ -259,7 +259,7 @@ TEST(CoreClearPlanTest, AVariantNamesWhatAPassDoesAndNotWhatItClearsWith)
 
     // A preserved depth on a bootstrapping pass is the borrowed/promoted case: the colour is cleared, the
     // depth is loaded from where its lender left it.
-    ClearPolicy borrowing;
+    ClearValues borrowing;
     borrowing.color = true;
     const auto borrowed_plan = planClearValues(singleColorShapeWithDepth(), borrowing, /*bootstrap*/ true,
                                                /*depth_preserved*/ true);
@@ -271,7 +271,7 @@ TEST(CoreClearPlanTest, AVariantNamesWhatAPassDoesAndNotWhatItClearsWith)
     EXPECT_EQ(borrowed_variant.depth_initial, ImageLayout::DepthAttachment);
 
     // A colour-only target: no depth participation at all, and the depth fields stay at their defaults.
-    const auto color_only_plan = planClearValues(singleColor(), ClearPolicy{}, /*bootstrap*/ false,
+    const auto color_only_plan = planClearValues(singleColor(), ClearValues{}, /*bootstrap*/ false,
                                                 /*depth_preserved*/ false);
     const auto color_only_variant =
         loadOpVariantOf(color_only_plan, ImageLayout::ShaderReadOnly, ImageLayout::DepthAttachment,
@@ -310,7 +310,7 @@ TEST(CoreClearPlanTest, TheShadowMapVariantNamesTheSampledDepthOnTheWayInAndOut)
     const ImageLayout steady       = depthFinalLayout(shadow_shape, /*depth_sampleable*/ true);
     ASSERT_EQ(steady, ImageLayout::ShaderReadOnly);
 
-    ClearPolicy clear_depth;
+    ClearValues clear_depth;
     clear_depth.depth = true;
     const auto clearing = planClearValues(shadow_shape, clear_depth, /*bootstrap*/ true, /*depth_preserved*/ false);
     const auto clear_variant = loadOpVariantOf(clearing, ImageLayout::ShaderReadOnly, steady, steady);
@@ -320,7 +320,7 @@ TEST(CoreClearPlanTest, TheShadowMapVariantNamesTheSampledDepthOnTheWayInAndOut)
     EXPECT_EQ(clear_variant.depth_final, steady) << "and it still ends where the sampler reads it";
 
     const auto loading =
-        planClearValues(shadow_shape, ClearPolicy{}, /*bootstrap*/ false, /*depth_preserved*/ false);
+        planClearValues(shadow_shape, ClearValues{}, /*bootstrap*/ false, /*depth_preserved*/ false);
     const auto load_variant = loadOpVariantOf(loading, ImageLayout::ShaderReadOnly, steady, steady);
     EXPECT_EQ(load_variant.depth_load, LoadOp::Load);
     EXPECT_EQ(load_variant.depth_initial, steady)

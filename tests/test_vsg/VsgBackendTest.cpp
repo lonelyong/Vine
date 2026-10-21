@@ -4117,15 +4117,15 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
     EXPECT_TRUE(host.alive());
 }
 
-TEST(VsgBackendTest, TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsSaySo)
+TEST(VsgBackendTest, AnOpaqueContentDrawDoesNotBlendAndATranslucentOneDoes)
 {
-    // THE OPACITY PATH'S FACTORS, READ BACK FROM THE SURFACE. A content draw into a ONE-attachment target
-    // blends with SRC_ALPHA / ONE_MINUS_SRC_ALPHA even though the draw does not opt in (StateCommands.cpp:
-    // the single-attachment CONTENT path's standard pair; the opaque pair is what a >1-attachment or
-    // full-screen draw gets). A fragment writing (1, 0, 0, 0.5) over a blue clear therefore leaves HALF red
-    // and HALF blue - 0.5 in both outer bytes. With either factor flipped to the opaque pair the same probe
-    // reads 1.0 red / 0.0 blue (the read-back accepts 0.5's linear AND sRGB spellings, but not 1.0's), so
-    // this case asserts the FACTORS, not merely that blending happens at all.
+    // THE ENABLE AND THE FACTORS, READ BACK FROM THE SURFACE. The resolved state is what decides blending
+    // (StateCommands.cpp honours `state.blend.enabled`; FrameCompiler::resolveCommands is what turns it on for
+    // opacity < 1). So a fragment writing (1, 0, 0, 0.5) into a ONE-attachment target over a blue clear:
+    //   * opaque command -> writes its colour UNCHANGED: 1.0 red, the clear gone (blending off, as three.js /
+    //     Filament / Unity treat an opaque material, even though the shader wrote an alpha below 1);
+    //   * the same command at opacity 0.5 -> HALF red / HALF blue (the standard SRC_ALPHA pair).
+    // The read-back accepts 0.5's linear AND sRGB spellings but not 1.0's, so the pair tells the two apart.
     if (!deviceCaseAvailable())
     {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
@@ -4184,14 +4184,17 @@ TEST(VsgBackendTest, TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsS
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<RenderCommand> opaque_commands{ command };
+    RenderCommand                    translucent_command = command;
+    translucent_command.opacity                          = 0.5F;
+    const std::vector<RenderCommand> translucent_commands{ translucent_command };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
     // A blue clear: the dst factor is what leaves it standing at half strength next to the fragment's red.
     const vn::graphics::ClearPolicy clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
-    const auto drive = [&] {
+    const auto drive = [&](const std::vector<RenderCommand>& commands) {
         backend->executeFrame(TestFrame()
             .pass(pass.get())
             .order(0)
@@ -4204,20 +4207,35 @@ TEST(VsgBackendTest, TheSingleAttachmentContentDrawBlendsBySrcAlphaAndThePixelsS
 
     // The display path lags the session's presents: present the SAME picture once more, then read (a
     // plan-free frame would repaint the window with the session's own graph).
-    drive();
-    drive();
-    const auto centre = host.waitForPixel(
+    drive(opaque_commands);
+    drive(opaque_commands);
+    const auto opaque_centre = host.waitForPixel(
+        kWidth / 2, kHeight / 2, [](const std::array<std::uint8_t, 3>& pixel) { return isRed(pixel); },
+        std::chrono::milliseconds{ 500 });
+    EXPECT_TRUE(isRed(opaque_centre))
+        << "an opaque command writes its colour unchanged (blending off, shader alpha ignored), got ("
+        << static_cast<int>(opaque_centre[0]) << ", " << static_cast<int>(opaque_centre[1]) << ", "
+        << static_cast<int>(opaque_centre[2]) << ")";
+    EXPECT_FALSE(isColourByte(opaque_centre[0], 0.5) || isColourByte(opaque_centre[2], 0.5))
+        << "and the blue clear did not survive at half strength, got ("
+        << static_cast<int>(opaque_centre[0]) << ", " << static_cast<int>(opaque_centre[1]) << ", "
+        << static_cast<int>(opaque_centre[2]) << ")";
+
+    drive(translucent_commands);
+    drive(translucent_commands);
+    const auto translucent_centre = host.waitForPixel(
         kWidth / 2, kHeight / 2,
-        [](const std::array<std::uint8_t, 3>& pixel) { return isColourByte(pixel[0], 0.5); },
+        [](const std::array<std::uint8_t, 3>& pixel) { return isColourByte(pixel[2], 0.5); },
         std::chrono::milliseconds{ 500 });
     // Both outer channels are 0.5, so the surface's byte order does not matter for the centre.
-    EXPECT_TRUE(isColourByte(centre[0], 0.5))
-        << "src * SRC_ALPHA: the fragment's red at half alpha, got (" << static_cast<int>(centre[0]) << ", "
-        << static_cast<int>(centre[1]) << ", " << static_cast<int>(centre[2]) << ")";
-    EXPECT_TRUE(isColourByte(centre[2], 0.5))
+    EXPECT_TRUE(isColourByte(translucent_centre[0], 0.5))
+        << "src * SRC_ALPHA: the fragment's red at half alpha, got ("
+        << static_cast<int>(translucent_centre[0]) << ", " << static_cast<int>(translucent_centre[1]) << ", "
+        << static_cast<int>(translucent_centre[2]) << ")";
+    EXPECT_TRUE(isColourByte(translucent_centre[2], 0.5))
         << "dst * ONE_MINUS_SRC_ALPHA: the clear's blue survives at half strength, got ("
-        << static_cast<int>(centre[0]) << ", " << static_cast<int>(centre[1]) << ", "
-        << static_cast<int>(centre[2]) << ")";
+        << static_cast<int>(translucent_centre[0]) << ", " << static_cast<int>(translucent_centre[1]) << ", "
+        << static_cast<int>(translucent_centre[2]) << ")";
 
     // The corner never saw a fragment: the pass' own clear, in whichever byte order the surface uses.
     const auto corner = host.pixel(1, 1);

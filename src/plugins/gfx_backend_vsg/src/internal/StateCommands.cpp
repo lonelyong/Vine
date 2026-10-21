@@ -113,21 +113,22 @@ VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
     command->polygon_mode = mapPolygon(state.polygon_mode);
     command->topology     = mapTopology(state.topology);
 
-    // Blending is always on for a SINGLE colour attachment OF A CONTENT DRAW (the engine's per-vertex
-    // opacity can drop below 1 without a pipeline rebuild, so the one-attachment picture keeps the
-    // standard pair), and always OFF for a pass with several: those attachments carry DATA, and a
-    // G-buffer's normal rides with the material's shininess in its alpha, so blending would scale the
-    // stored normal by its own alpha (a shininess of 32 attenuates it to 12.5%). The L2's G-buffer hit
-    // exactly that and writes its attachments unblended (see applyOpaqueBlendForAttachments,
-    // VsgSceneRules.cpp); the rule is re-applied at THIS end because the enable and the factors are
-    // delivered by this command, so the pipeline's baked state no longer decides for either path.
-    //
-    // A FULL-SCREEN draw is a write rather than a surface, and it never blends whatever the attachment
-    // count says (see the declaration): blending one made a copy of a transparent attachment disappear.
-    const bool opaque = color_attachments > 1U || !draws_content;
-    VkBlendFactor src = opaque ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_SRC_ALPHA;
-    VkBlendFactor dst = opaque ? VK_BLEND_FACTOR_ZERO : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    if (!opaque && state.blend.enabled) {
+    // The ENABLE is the resolved state's, and the compiler is what makes it true for a translucent command
+    // (opacity < 1, see FrameCompiler::resolveCommands): "blend disabled" therefore really means no blending,
+    // the way three.js / Filament / Unity state it (an opaque material does not blend just because a fragment
+    // wrote an alpha below 1). A single colour attachment of a CONTENT draw is the only shape that can blend:
+    // a pass with several attachments carries DATA (a G-buffer's normal rides with the material's shininess in
+    // its alpha, so blending would scale the stored normal by its own alpha - a shininess of 32 attenuates it to
+    // 12.5%; the L2's G-buffer hit exactly that and writes its attachments unblended, see
+    // applyOpaqueBlendForAttachments, VsgSceneRules.cpp), and a FULL-SCREEN draw is a write rather than a
+    // surface (blending one made a copy of a transparent attachment disappear). The rule is re-applied at THIS
+    // end because the enable and the factors are delivered by this command, so the pipeline's baked state no
+    // longer decides for either path.
+    const bool can_blend = color_attachments <= 1U && draws_content;
+    const bool blending  = can_blend && state.blend.enabled;
+    VkBlendFactor src    = VK_BLEND_FACTOR_ONE;
+    VkBlendFactor dst    = VK_BLEND_FACTOR_ZERO;
+    if (blending) {
         src = mapBlendFactor(state.blend.src);
         dst = mapBlendFactor(state.blend.dst);
     }
@@ -136,7 +137,7 @@ VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
     const std::uint32_t carried = std::min(color_attachments, detail::kMaxDynamicAttachments);
     for (std::uint32_t index = 0; index < carried; ++index) {
         VkPipelineColorBlendAttachmentState& attachment = command->blend[index];
-        attachment.blendEnable         = opaque ? VK_FALSE : VK_TRUE;
+        attachment.blendEnable         = blending ? VK_TRUE : VK_FALSE;
         attachment.srcColorBlendFactor = src;
         attachment.dstColorBlendFactor = dst;
         attachment.srcAlphaBlendFactor = src;

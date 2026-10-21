@@ -95,7 +95,7 @@ using vn::vsg::VineLightsBlock;
 using vn::vsg::VsgExecutor;
 using vn::graphics::backend::CameraSnapshot;
 using vn::graphics::backend::CompiledDraw;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::Diagnostics;
 using vn::graphics::backend::DrawKind;
@@ -499,7 +499,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     };
     const RenderCommand commands[]{ command_of(0), command_of(1), command_of(2), command_of(3) };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color = true;
     for (std::size_t index = 0; index < 4U; ++index)
     {

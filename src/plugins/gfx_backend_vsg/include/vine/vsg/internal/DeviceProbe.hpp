@@ -4,7 +4,7 @@
 #include <vector>
 
 #include <vine/String.hpp>
-#include <vine/graphics/backend/DeviceRequirements.hpp>
+#include <vine/vsg/internal/DeviceRequirements.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**

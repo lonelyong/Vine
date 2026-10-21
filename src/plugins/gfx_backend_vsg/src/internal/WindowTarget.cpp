@@ -130,7 +130,7 @@ std::unique_ptr<WindowTarget> WindowTarget::create(::vsg::ref_ptr<::vsg::Window>
 
 WindowTarget::~WindowTarget() = default;
 
-void WindowTarget::prepare(const core::ClearPolicy& policy) noexcept
+void WindowTarget::prepare(const core::ClearValues& policy) noexcept
 {
     const VkExtent2D extent = d->window->extent2D();
     d->graph->renderArea    = VkRect2D{ { 0, 0 }, extent };

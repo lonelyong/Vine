@@ -42,7 +42,7 @@
  *   to belong to, a scope to fill). WHAT IT NEVER DECIDES: rebuilds, resizes, borrowing, scheduling,
  *   caching, or what any of it costs - those are the compiler's and the resource manager's answers,
  *   and a recorder that started giving them would be the second backend.
- * - WHAT IT NO LONGER JUDGES. A frame is a VALUE now (FrameDescription), so the sequence this type is
+ * - WHAT IT NO LONGER JUDGES. A frame is a VALUE now (CollectedFrame), so the sequence this type is
  *   driven with cannot be wrong: the layer that drives it - the plugin's own walk over the value -
  *   states each pass once, in run order, which is exactly the shape of the entries below. There is
  *   therefore no state machine here and no reporting: a call that has no frame or no scope to belong
@@ -197,13 +197,13 @@ struct CollectedPass
     const void*   target{nullptr};         ///< Draw target identity; nullptr = the default framebuffer.
     std::span<const InputRef> inputs{};    ///< The pass' resolved inputs, in declaration order.
     bool          has_clear{false};        ///< Whether the host announced a clear policy for this scope.
-    ClearPolicy   clear{};                 ///< The announced policy (meaningful when has_clear).
+    ClearValues   clear{};                 ///< The announced policy (meaningful when has_clear).
     vn::graphics::PassRenderState state{}; ///< The pass' own state: depth policy + rasterisation override.
     std::span<const CollectedDraw> draws{};///< Drawing calls that arrived in the scope, in call order.
 };
 
 /** @brief One frame's worth of collected intent (see the file note for what is not resolved here). */
-struct FrameDescription
+struct CollectedFrame
 {
     FrameToken  token{};                             ///< The frame this description belongs to.
     ProgramRef  default_program{};                   ///< What content without a program of its own is drawn with.
@@ -294,7 +294,7 @@ class VN_GRAPHICS_API FrameRecorder
      * @param policy The backend-neutral policy (the API layer translates the SDK's spelling).
      * @return true when it was recorded; false when it was dropped.
      */
-    bool setClearPolicy(const ClearPolicy& policy);
+    bool setClearPolicy(const ClearValues& policy);
 
     /** @brief Announces the pass' own state for the content it draws (depth policy + rasterisation override).
      *
@@ -375,7 +375,7 @@ class VN_GRAPHICS_API FrameRecorder
      * Valid between endFrame() and the next beginFrame() (the arena is reset there); it is empty before
      * the first endFrame() and partial while a frame is still being collected.
      */
-    [[nodiscard]] const FrameDescription& description() const noexcept;
+    [[nodiscard]] const CollectedFrame& description() const noexcept;
 
     /** @brief Gets whether a frame is open. */
     [[nodiscard]] bool inFrame() const noexcept;
@@ -418,7 +418,7 @@ class VN_GRAPHICS_API FrameRecorder
     int         order_{0};                       ///< Order announced for the open scope.
     const void* pass_target_{nullptr};           ///< Target announced for the open scope.
     bool        pass_has_clear_{false};          ///< Whether the scope announced a clear.
-    ClearPolicy pass_clear_{};                   ///< The announced clear.
+    ClearValues pass_clear_{};                   ///< The announced clear.
     vn::graphics::PassRenderState pass_state_{};  ///< The scope's own state (depth policy + rasterisation override).
     std::span<const InputRef> pass_inputs_{};    ///< The scope's inputs (a property of the pass).
 
@@ -428,7 +428,7 @@ class VN_GRAPHICS_API FrameRecorder
 
     std::vector<CollectedDraw> open_draws_;      ///< The open scope's drawing calls (copied to the arena at endPass).
     std::vector<CollectedPass> passes_;          ///< The frame's pass scopes (copied to the arena at endFrame).
-    FrameDescription           description_{};   ///< The published description (arena-backed spans).
+    CollectedFrame           description_{};   ///< The published description (arena-backed spans).
 };
 
 VN_GRAPHICSBACKEND_NS_END

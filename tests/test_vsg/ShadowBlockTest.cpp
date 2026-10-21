@@ -91,7 +91,7 @@ using vn::vsg::VsgExecutor;
 using vn::graphics::backend::CameraSnapshot;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::backend::CompiledPass;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledDraw;
 using vn::graphics::Diagnostics;
 using vn::graphics::backend::DrawKind;
@@ -645,7 +645,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     recorder.endPass();
     recorder.beginPass(2U);  // the receiver: four calls, four light lists
     recorder.setRenderTarget(receiver_handle.get());
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color = true;
     for (std::size_t index = 0; index < 4U; ++index)
     {

@@ -1,4 +1,4 @@
-// 模型查看器（测试插件）的**模型信息面板**：顶点数与三角形数要显示对，而且要跟着当前文档走。
+// 模型查看器（测试插件）的**模型信息面板**：顶点数、三角形数与部件数要显示对，而且要跟着当前文档走。
 //
 // 这条用例不加载插件：面板是 header-only 的（没有元数据、没有信号槽），用例直接 include 它、自己接上
 // DocumentManager —— 和插件 load() 里做的是同一件事（followDocumentManager），所以面板的"跟当前文档走"
@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 
 #include <QLabel>
@@ -28,6 +29,8 @@
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
+#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/Model.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
@@ -53,13 +56,13 @@ namespace
 struct TestMeshPayload : public vn::Object {
     VN_OBJECT_META_DECL;
 
-    vn::String                                                 name;
-    vn::intrusive_ptr<const vn::geometry::IndexedTriangleMesh> mesh;
+    vn::String                                          name;
+    vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> mesh;
 };
 
 VN_OBJECT_META_IMPL(TestMeshPayload, vn::Object)
 
-/// 一个**不是模型**的文档：面板该照样报它的类型与标题，两个数则说"不是模型文档"。
+/// 一个**不是模型**的文档：面板该照样报它的类型与标题，三个数则说"不是模型文档"。
 class OtherDocument : public vn::appfw::Document {
   public:
     vn::String typeId() const override { return u8"other"; }
@@ -100,9 +103,30 @@ bool registerMeshFileOpener(vn::appfw::DocumentManager& documents)
     });
 }
 
+/// 一条已经带结构的载荷（多部件模型的用例用）：证明文档/视图吃的不只是"一个网格"。
+struct TestModelTreePayload : public vn::Object {
+    VN_OBJECT_META_DECL;
+
+    vn::String                            name;
+    vn::intrusive_ptr<vn::geometry::Model> model;
+};
+
+VN_OBJECT_META_IMPL(TestModelTreePayload, vn::Object)
+
+bool registerModelTreeOpener(vn::appfw::DocumentManager& documents)
+{
+    return documents.registerOpener<TestModelTreePayload>({
+        .type_id = kModelType,
+        .open    = [](const TestModelTreePayload& payload) -> vn::appfw::Document* {
+            return new vn::model_viewer::ModelDocument(payload.name,
+                                                       vn::intrusive_ptr<vn::geometry::Model>(payload.model));
+        },
+    });
+}
+
 /// 开一份模型文档并把它设为当前（"打开就显示这一份"是宿主的策略，用例里这样模拟）。
 vn::appfw::Document* openModel(vn::appfw::DocumentManager& documents, vn::String name,
-                               vn::intrusive_ptr<const vn::geometry::IndexedTriangleMesh> mesh)
+                               vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> mesh)
 {
     TestMeshPayload payload;
     payload.name = std::move(name);
@@ -129,6 +153,72 @@ bool hasVertex(const vn::graphics::Geometry& geometry, float x, float y, float z
         }
     }
     return false;
+}
+
+/// 子树里的第一件几何（模型的节点树可能有多层：`sceneFromModel` 每个节点一个容器）。
+const vn::graphics::Geometry* firstGeometry(const vn::graphics::Node& node)
+{
+    if (const auto* geometry = dynamic_cast<const vn::graphics::Geometry*>(&node)) {
+        return geometry;
+    }
+    if (const auto* group = dynamic_cast<const vn::graphics::Group*>(&node)) {
+        for (const auto& child : group->children()) {
+            if (child != nullptr) {
+                if (const auto* found = firstGeometry(*child)) {
+                    return found;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
+/// 子树里的全部几何（多部件模型：场景里有几个叶子）。
+void collectGeometries(const vn::graphics::Node& node, std::vector<const vn::graphics::Geometry*>& out)
+{
+    if (const auto* geometry = dynamic_cast<const vn::graphics::Geometry*>(&node)) {
+        out.push_back(geometry);
+        return;
+    }
+    if (const auto* group = dynamic_cast<const vn::graphics::Group*>(&node)) {
+        for (const auto& child : group->children()) {
+            if (child != nullptr) {
+                collectGeometries(*child, out);
+            }
+        }
+    }
+}
+
+/// 一个三角形，平移到 @p cx（两个部件并排，拾取能分清谁是谁）。
+vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> makePartMesh(const char8_t* name, float cx)
+{
+    auto mesh = vn::make_intrusive<vn::geometry::IndexedTriangleMesh>();
+    const auto a = mesh->addVertex(vn::math::Vec3f{ cx - 0.5F, -0.5F, 0.0F });
+    const auto b = mesh->addVertex(vn::math::Vec3f{ cx + 0.5F, -0.5F, 0.0F });
+    const auto c = mesh->addVertex(vn::math::Vec3f{ cx, 0.5F, 0.0F });
+    mesh->addTriangle(a, b, c);
+    mesh->setName(name);
+    return mesh;
+}
+
+/// 两个部件的模型：同一个节点下两个 entry（数据上是两份网格）。
+vn::intrusive_ptr<vn::geometry::Model> makeTwoPartModel()
+{
+    auto model = vn::make_intrusive<vn::geometry::Model>();
+
+    vn::geometry::Model::Node node;
+    node.name   = u8"parts";
+    node.meshes = { 0U, 1U };
+
+    vn::geometry::Model::Entry left;
+    left.mesh = makePartMesh(u8"left", -1.0F);
+    vn::geometry::Model::Entry right;
+    right.mesh = makePartMesh(u8"right", 1.0F);
+
+    model->setNodes({ node });
+    model->setMeshes({ left, right });
+    model->setRoot(0U);
+    return model;
 }
 
 } // namespace
@@ -169,14 +259,16 @@ TEST(ModelViewerTest, TheInfoPanelShowsTheVertexAndTriangleCountsOfTheCurrentDoc
     EXPECT_EQ(panel.titleText(), QStringLiteral("立方体"));
     EXPECT_EQ(panel.verticesText(), QStringLiteral("8"));
     EXPECT_EQ(panel.trianglesText(), QStringLiteral("12"));
+    EXPECT_EQ(panel.partsText(), QStringLiteral("1")) << "单网格载荷被包成一个部件";
 
-    // 网格 2×2：顶点 (2+1)² = 9，三角形 2·2² = 8 —— 换一份当前文档，两个数跟着换。
+    // 网格 2×2：顶点 (2+1)² = 9，三角形 2·2² = 8 —— 换一份当前文档，三个数跟着换。
     vn::appfw::Document* grid = openModel(documents, u8"网格", vn::model_viewer::makeGridMesh(2));
     ASSERT_NE(grid, nullptr);
     ASSERT_NE(grid, box);
     EXPECT_EQ(panel.titleText(), QStringLiteral("网格"));
     EXPECT_EQ(panel.verticesText(), QStringLiteral("9"));
     EXPECT_EQ(panel.trianglesText(), QStringLiteral("8"));
+    EXPECT_EQ(panel.partsText(), QStringLiteral("1"));
 
     // 切回去：面板显示的是**当前**那一份，不是最后打开的那一份。
     ASSERT_TRUE(documents.setCurrent(box));
@@ -207,11 +299,12 @@ TEST(ModelViewerTest, TheInfoPanelSaysSoWhenTheCurrentDocumentIsNotAModel)
     ASSERT_NE(stranger, nullptr);
     ASSERT_TRUE(documents.setCurrent(stranger));
 
-    // 类型与标题照样显示；两个数说清楚"不是模型文档"，而不是假装 0。
+    // 类型与标题照样显示；三个数说清楚"不是模型文档"，而不是假装 0。
     EXPECT_EQ(panel.typeText(), QStringLiteral("other"));
     EXPECT_EQ(panel.titleText(), QStringLiteral("别的文档"));
     EXPECT_EQ(panel.verticesText(), QStringLiteral("—（不是模型文档）"));
     EXPECT_EQ(panel.trianglesText(), QStringLiteral("—（不是模型文档）"));
+    EXPECT_EQ(panel.partsText(), QStringLiteral("—（不是模型文档）"));
 }
 
 TEST(ModelViewerTest, TheSceneCarriesItsOwnLights)
@@ -553,11 +646,8 @@ TEST(ModelViewerTest, AFilePayloadReachesTheRenderSceneInTheSourceUnits)
 
     const auto root = scene->root();
     ASSERT_NE(root, nullptr);
-    const auto* group = dynamic_cast<const vn::graphics::Group*>(root.get());
-    ASSERT_NE(group, nullptr);
-    ASSERT_EQ(group->children().size(), 1u);
-    const auto* geometry = dynamic_cast<const vn::graphics::Geometry*>(group->children()[0].get());
-    ASSERT_NE(geometry, nullptr) << "场景里那一个孩子就是网格的几何";
+    const auto* geometry = firstGeometry(*root);
+    ASSERT_NE(geometry, nullptr) << "场景里能走到的第一件几何就是网格";
 
     // 文件里就是一个三角形，坐标就是那三个 —— 没被单位换算碰过。
     const auto* positions = geometry->buffer(0);
@@ -566,6 +656,96 @@ TEST(ModelViewerTest, AFilePayloadReachesTheRenderSceneInTheSourceUnits)
     EXPECT_TRUE(hasVertex(*geometry, 0.0f, 0.0f, 0.0f));
     EXPECT_TRUE(hasVertex(*geometry, 1.0f, 0.0f, 0.0f));
     EXPECT_TRUE(hasVertex(*geometry, 0.0f, 1.0f, 0.0f));
+}
+
+TEST(ModelViewerTest, AMultiPartModelReachesTheSceneAsPartsAndSelectionPicksOne)
+{
+    // 一个模型两个部件：文档的三个数按 entry 汇总、场景里是两个叶子、点击只选中被点中的那一个。
+    // 这是"文档持模型树"的验收 —— 摊平成单网格时这些都不可能成立。
+    vn::appfw::DocumentManager           documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow           window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ASSERT_TRUE(registerModelType(documents));
+    ASSERT_TRUE(registerModelTreeOpener(documents));
+    ASSERT_TRUE(views.registerView(kModelType, vn::model_viewer::createRenderView));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    TestModelTreePayload payload;
+    payload.name  = u8"双部件";
+    payload.model = makeTwoPartModel();
+
+    vn::appfw::Document* document = documents.open(&payload);
+    ASSERT_NE(document, nullptr);
+    ASSERT_TRUE(documents.setCurrent(document));
+
+    const auto* model_document = dynamic_cast<const vn::model_viewer::ModelDocument*>(document);
+    ASSERT_NE(model_document, nullptr);
+    EXPECT_EQ(model_document->partCount(), 2U);
+    EXPECT_EQ(model_document->vertexCount(), 6U) << "两份网格各 3 个顶点";
+    EXPECT_EQ(model_document->triangleCount(), 2U) << "每个部件一个三角形";
+
+    auto* view = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());
+    ASSERT_NE(view, nullptr);
+    view->activate(); // 场景是懒建的（同文件载荷那条用例）
+
+    auto* control = view->renderControl();
+    ASSERT_NE(control, nullptr);
+    auto* scene_view = control->view();
+    ASSERT_NE(scene_view, nullptr);
+    const auto scene = scene_view->scene();
+    ASSERT_NE(scene, nullptr);
+
+    // 相机与视口由用例定死（同点击用例）：世界 x = ±1 在 400×400 的画面上落在像素 93 / 307。
+    auto* camera = scene_view->camera();
+    ASSERT_NE(camera, nullptr);
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 7.0), vn::math::Vec3d(0.0, 0.0, 0.0),
+                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera->setPerspective(30.0, 0.1, 100.0);
+    camera->setAspect(1.0);
+    scene_view->resize(400, 400, 1.0);
+
+    const auto root = scene->root();
+    ASSERT_NE(root, nullptr);
+    std::vector<const vn::graphics::Geometry*> parts;
+    collectGeometries(*root, parts);
+    ASSERT_EQ(parts.size(), 2U) << "两个 entry ⇒ 两个叶子";
+    std::vector<vn::String> names;
+    names.reserve(parts.size());
+    for (const auto* part : parts) {
+        names.push_back(part->name());
+    }
+    EXPECT_NE(std::find(names.begin(), names.end(), vn::String(u8"left")), names.end());
+    EXPECT_NE(std::find(names.begin(), names.end(), vn::String(u8"right")), names.end());
+
+    auto* manipulator = scene_view->manipulator();
+    ASSERT_NE(manipulator, nullptr);
+    const auto click = [&](double x, double y) {
+        vn::window::MouseEvent press;
+        press.button  = vn::window::MouseButton::Left;
+        press.x       = x;
+        press.y       = y;
+        press.pressed = true;
+        manipulator->onMousePress(press);
+        vn::window::MouseEvent release = press;
+        release.pressed                = false;
+        manipulator->onMouseRelease(release);
+    };
+
+    click(93.0, 200.0);
+    ASSERT_NE(view->selectedGeometry(), nullptr);
+    EXPECT_EQ(view->selectedGeometry()->name(), vn::String(u8"left")) << "点左边只选中左边那个部件";
+
+    click(307.0, 200.0);
+    ASSERT_NE(view->selectedGeometry(), nullptr);
+    EXPECT_EQ(view->selectedGeometry()->name(), vn::String(u8"right")) << "换选只动被点中的部件";
+
+    click(4.0, 4.0);
+    EXPECT_EQ(view->selectedGeometry(), nullptr) << "点空白 = 取消选择";
 }
 
 // 点击选中：视图自己带一个拾取型操纵器（`ModelPickManipulator`），导航原样转发、点击交回视图 —— 选择是**业务**
@@ -616,13 +796,10 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
     ASSERT_NE(scene, nullptr);
     const auto root = scene->root();
     ASSERT_NE(root, nullptr);
-    const auto* group = dynamic_cast<const vn::graphics::Group*>(root.get());
-    ASSERT_NE(group, nullptr);
-    ASSERT_EQ(group->children().size(), 1u);
-    auto* geometry = dynamic_cast<vn::graphics::Geometry*>(group->children()[0].get());
+    auto* geometry = const_cast<vn::graphics::Geometry*>(firstGeometry(*root));
     ASSERT_NE(geometry, nullptr);
     const vn::graphics::Material* const original = geometry->material();
-    ASSERT_NE(original, nullptr) << "模型几何自带那份中灰材质（见 makeGeometry()）";
+    ASSERT_NE(original, nullptr) << "模型几何自带那份中灰材质（见 ModelRenderView::applyDefaultMaterials）";
     EXPECT_EQ(view->selectedGeometry(), nullptr) << "一开始没有选中任何东西";
 
     const auto click = [&](double x, double y) {

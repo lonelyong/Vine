@@ -38,10 +38,10 @@ using vn::graphics::Light;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::Diagnostics;
 using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameDescription;
+using vn::graphics::backend::CollectedFrame;
 using vn::graphics::backend::FrameRecorder;
 using vn::graphics::backend::FrameToken;
 using vn::graphics::backend::Observe;
@@ -64,7 +64,7 @@ struct Rig
     }
 
     /// @brief Closes the open frame and returns its description (valid until the next beginFrame).
-    const FrameDescription& seal()
+    const CollectedFrame& seal()
     {
         EXPECT_TRUE(recorder.endFrame());
         return recorder.description();
@@ -99,7 +99,7 @@ TEST(FrameRecorderTest, TheScopeAttributesOfEachPassAreCollectedWithItsDrawingCa
     EXPECT_TRUE(r.recorder.render(commands, nullptr));
     EXPECT_TRUE(r.recorder.endPass());
 
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
     ASSERT_EQ(description.passes.size(), 2u);
 
     EXPECT_EQ(description.passes[0].pass, 7u);
@@ -143,7 +143,7 @@ TEST(FrameRecorderTest, TheHostsReusedCommandListIsCopiedAtTheCallNotHeld)
     EXPECT_TRUE(r.recorder.render(shared, nullptr));
     EXPECT_TRUE(r.recorder.endPass());
 
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
     ASSERT_EQ(description.passes.size(), 2u);
     ASSERT_EQ(description.passes[0].draws.size(), 1u);
     ASSERT_EQ(description.passes[0].draws[0].commands.size(), 1u);
@@ -171,7 +171,7 @@ TEST(FrameRecorderTest, ThePassProgramOverrideIsResolvedWhenTheDrawIsRecorded)
     EXPECT_TRUE(r.recorder.render(commands, nullptr, override_program.get()));
     EXPECT_TRUE(r.recorder.endPass());
 
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
     ASSERT_EQ(description.passes.size(), 1u);
     ASSERT_EQ(description.passes[0].draws.size(), 1u);
     ASSERT_EQ(description.passes[0].draws[0].commands.size(), 1u);
@@ -197,7 +197,7 @@ TEST(FrameRecorderTest, TheAnnouncedLightsAreCopiedNumbersNotBorrowedPointers)
     // The contract: a light is borrowed for the call. The host may destroy it as soon as the call
     // returns, and the plan must still know what the picture was lit by.
     sun->setIntensity(9.0F);
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
     sun.reset();
 
     ASSERT_EQ(description.passes.size(), 1u);
@@ -231,7 +231,7 @@ TEST(FrameRecorderTest, OneViewportAndLightAnnouncementServesOneDrawingCall)
     }
     EXPECT_TRUE(r.recorder.endPass());
 
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
     ASSERT_EQ(description.passes.size(), 1u);
     const std::span<const vn::graphics::backend::CollectedDraw> draws = description.passes[0].draws;
     ASSERT_EQ(draws.size(), 3u);
@@ -279,7 +279,7 @@ TEST(FrameRecorderTest, TheViewBlockIsProjectedForTheCamerasOwnShape)
     EXPECT_TRUE(r.recorder.render(commands, &camera));
     EXPECT_TRUE(r.recorder.endPass());
 
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
     ASSERT_EQ(description.passes.size(), 2u);
     ASSERT_EQ(description.passes[0].draws.size(), 1u);
     ASSERT_EQ(description.passes[1].draws.size(), 1u);
@@ -312,7 +312,7 @@ TEST(FrameRecorderTest, ADrawingCallWithNothingToDrawIsNotADrawAtAll)
     std::vector<const Light*>        lights{ sun.get() };
     const std::vector<RenderCommand> commands = oneCommand();
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color = true;
 
     EXPECT_TRUE(r.recorder.beginPass(1));
@@ -325,7 +325,7 @@ TEST(FrameRecorderTest, ADrawingCallWithNothingToDrawIsNotADrawAtAll)
     EXPECT_TRUE(r.recorder.render(commands, nullptr));  // nothing announced: the whole target, default lights
     EXPECT_TRUE(r.recorder.endPass());
 
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
     ASSERT_EQ(description.passes.size(), 1u);
     EXPECT_TRUE(description.passes[0].has_clear);
     const std::span<const vn::graphics::backend::CollectedDraw> draws = description.passes[0].draws;
@@ -366,7 +366,7 @@ TEST(FrameRecorderTest, ThePassInputsAreCopiedAndBelongToThePass)
     // The engine refills its resolved-input vector for the next pass (a null entry means "nothing
     // produced it"); the plan must keep this frame's answer, including the null.
     inputs.assign(1, nullptr);
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
 
     ASSERT_EQ(description.passes.size(), 1u);
     const std::span<const vn::graphics::backend::InputRef> collected = description.passes[0].inputs;
@@ -394,14 +394,14 @@ TEST(FrameRecorderTest, AScopeThatDrewNothingIsDroppedUnlessItAnnouncedAClear)
 
     // A pass that announced a CLEAR and drew nothing is a real pass: the clear happens through the pass'
     // own load-op, so dropping the scope would erase the picture's background.
-    ClearPolicy policy;
+    ClearValues policy;
     policy.color       = true;
     policy.color_value[0] = 0.5F;
     EXPECT_TRUE(r.recorder.beginPass(2));
     EXPECT_TRUE(r.recorder.setClearPolicy(policy));
     EXPECT_TRUE(r.recorder.endPass());
 
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
     ASSERT_EQ(description.passes.size(), 1u);
     EXPECT_EQ(description.passes[0].pass, 2u);
     EXPECT_TRUE(description.passes[0].has_clear);
@@ -419,11 +419,11 @@ TEST(FrameRecorderTest, ScopeAttributesOutsideAScopeTakeNoEffect)
 
     // A call with nothing to fill takes NO effect: the recorder answers false and records nothing. There is
     // nothing to report either - the value the plugin walks states every pass' facts inside that pass (see
-    // FrameDescription), so an announcement with no scope is its driver's bug rather than a picture that came out
+    // CollectedFrame), so an announcement with no scope is its driver's bug rather than a picture that came out
     // wrong, and the driver's own tests are where that is caught.
     EXPECT_FALSE(r.recorder.setPassOrder(4));
     EXPECT_FALSE(r.recorder.setViewport(0, 0, 1, 1));
-    EXPECT_FALSE(r.recorder.setClearPolicy(ClearPolicy{}));
+    EXPECT_FALSE(r.recorder.setClearPolicy(ClearValues{}));
     EXPECT_FALSE(r.recorder.setPassState(vn::graphics::PassRenderState{ .depth = DepthMode::Disabled }));
     EXPECT_FALSE(r.recorder.setPassInputs(std::span<const RenderTarget* const>{}));
     EXPECT_FALSE(r.recorder.setLights(std::span<const Light* const>{}));
@@ -435,7 +435,7 @@ TEST(FrameRecorderTest, ScopeAttributesOutsideAScopeTakeNoEffect)
     EXPECT_TRUE(r.recorder.render(commands, nullptr));
     EXPECT_TRUE(r.recorder.endPass());
 
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
     ASSERT_EQ(description.passes.size(), 1u);
     EXPECT_EQ(description.passes[0].order, 0);
     EXPECT_FALSE(description.passes[0].has_clear);
@@ -484,7 +484,7 @@ TEST(FrameRecorderTest, ANestedBeginPassLeavesTheOuterScopeInCharge)
     EXPECT_TRUE(r.recorder.endPass());
     EXPECT_FALSE(r.recorder.inPass());
 
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
     ASSERT_EQ(description.passes.size(), 1u);
     EXPECT_EQ(description.passes[0].pass, 1u);
     EXPECT_EQ(description.passes[0].order, 5);
@@ -528,7 +528,7 @@ TEST(FrameRecorderTest, AReleasedAnnouncedTargetKillsTheScopeAndNothingIsRedirec
     EXPECT_FALSE(r.recorder.setRenderTarget(&other));
 
     EXPECT_TRUE(r.recorder.endPass());
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
     ASSERT_EQ(description.passes.size(), 1u) << "the scope still enters the plan: it drew before the release";
     EXPECT_EQ(description.passes[0].draws.size(), 1u) << "and what arrived after the release is not in it";
     EXPECT_EQ(r.observe.counters().draws, 1u) << "one draw was collected, and no more";
@@ -542,7 +542,7 @@ TEST(FrameRecorderTest, AnEmptyFrameIsStillAFrameWithItsOwnToken)
     EXPECT_TRUE(r.recorder.inFrame());
     EXPECT_TRUE(r.recorder.endFrame());
 
-    const FrameDescription& description = r.recorder.description();
+    const CollectedFrame& description = r.recorder.description();
     EXPECT_EQ(description.token.frame, 12u);
     EXPECT_TRUE(description.passes.empty());
 
@@ -580,7 +580,7 @@ TEST(FrameRecorderTest, TheDefaultProgramIsAFrameLevelFactTheCompilerResolves)
     EXPECT_TRUE(r.recorder.render(commands, nullptr));
     EXPECT_TRUE(r.recorder.endPass());
 
-    const FrameDescription& description = r.seal();
+    const CollectedFrame& description = r.seal();
     EXPECT_EQ(description.default_program.program, program.get());
     ASSERT_EQ(description.passes.size(), 1u);
     ASSERT_EQ(description.passes[0].draws.size(), 1u);

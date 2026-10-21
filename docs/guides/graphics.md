@@ -691,6 +691,13 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
   **0.5 的光（188）**，不是 128 —— 淡入淡出发生在光上，不在屏幕的样本上。
 * **常用颜色有名字**：`Colorf::kWhite` / `kBlack` / `kTransparent` / `kRed` / `kGreen` / `kBlue`（与 `Color` 同名同义）。
   只收这几个是因为它们的**数字与空间无关**（0 与 1 是 sRGB 曲线的定点）；灰不行，所以没有预设灰。
+* **颜色的文本只有一种语法**（CSS hex：`#rgb[a]` 与 `#rrggbb[aa]`）：`Color::toString()` 写出（不透明时**不带**
+  alpha 对，所以一个值只有一份文本），`Color::parse()` 读入（3/4/6/8 位、大小写都收；短式逐位重复，`#CCC` 就是
+  `#CCCCCC`；失败返回空的 `std::optional`）。文本永远属于**编码那一半** —— 要给线性值写文本，先 `toColor()`
+  （线性 0.5 是 `#bc0000`，不是 `#800000`）；`0xRRGGBBAA`、`rgba(...)`、2/5/7 位这类拼法一律不接受。
+* **打包整数的顺序写在名字里**：`Color(uint32_t)` 是 `0xRRGGBBAA`，`Color::fromArgb()` 是 `0xAARRGGBB`（Qt
+  `ARGB32` / Win32 `ARGB`），`Color::fromBgr()` 是 `0x00BBGGRR`（Win32 `COLORREF`，高字节忽略、结果不透明）。
+  同一个 `0x80FF0000` 在前两种里是**两个颜色** —— 所以入口按顺序命名，不做通用移位。
 * 曲线是 **sRGB 分段曲线**（IEC 61966-2-1），不是 `pow(x, 2.2)`：两者在中间调差两个量化级（128 解码成 0.2159，
   不是 0.2195），差得出来的那点"略微偏亮"就是它。
 * 帧报表把空间写出来：`clear=linear(0.033,0.033,0.033,1.000)` —— `rgba(...)` 那种写法在两种空间下都读得通，
@@ -711,6 +718,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | 契约 | 写在哪 |
 | --- | --- |
 | 浮点颜色是线性值；8 位颜色是 sRGB 编码，两者只由 `toLinear()` / `toColor()` 往来 | `vn::core::Colorf` / `vn::core::Color` 的类注释 |
+| 颜色文本是 CSS hex（`#rgb[a]` / `#rrggbb[aa]`）；打包整数的顺序写在入口名字里 | `vn::core::Color::toString` / `parse` / `fromArgb` / `fromBgr` 的注释 |
 | 清屏色是线性值（默认色写成它显示时的样子，解一次） | `vn::graphics::ClearPolicy` / `PassDesc::clear_color` 的注释 |
 | 颜色图 `*Srgb`、数据图 `*Unorm` | `vn::imaging::PixelFormat` 的文件注释 |
 | target 格式是"投影"，离屏取线性拼写 | `vn::graphics::RenderTarget::ColorFormat` 的枚举注释 |
@@ -1016,8 +1024,34 @@ if (hit.hit) { /* hit.geometry / hit.distance / hit.normal */ }
   与拾取：`model_viewer` 的 `ModelPickManipulator` 就是"导航原样转发给轨道操纵器 + 按下与松开落在同一点附近才算点击"。
 
 
-## 4. 现成例子：怎么构建、怎么跑
+### 3.17 资产 → 场景：`sceneFromModel`
 
+加载器（`meshio`）产出的是一棵树，不是一块摊平的网格：`geometry::Model` 有节点、每节点的局部矩阵、每节点引用哪些
+（网格, 材质）。把它变成能画的东西只要一跳 —— `vn::graphics::sceneFromModel`（`vine/graphics/ModelScene.hpp`）：
+
+```cpp
+#include <vine/graphics/ModelScene.hpp>
+
+auto model = loader.loadModel(path);                                  // 保留节点树与材质
+const vn::graphics::ModelScene converted = vn::graphics::sceneFromModel(*model);
+if (converted.root != nullptr) {
+    scene->setRoot(converted.root);                                   // 内容场景是调用方的
+}
+```
+
+- **形状就是模型的形状**：单位矩阵的节点 → `Group`，带矩阵的节点 → `MatrixTransform`（两者都带节点名）；每个
+  `Model::Entry` → 一个 `Geometry`（名字取网格名），节点的子节点按模型里的顺序挂上。
+- **顶点数据共享、节点不共享**：每个 `Geometry` 是独立的叶子（场景图是严格树，见 `Group::addChild`），但缓冲来自
+  `geometryFromShape` —— 一个网格挂十个节点是十个叶子、一份内存。
+- **材质按源对象缓存**：同一份 `geometry::Material` 被两个 entry 引用时，只生成一个 `graphics::Material`（后端的批次
+  靠这一点才成立）。Color/Phong 直译；PBR 是**显式近似**（详见头文件注释），要真 PBR 需要渲染侧的 PBR 通路。
+- **法线不会被发明出来**：来源带了就用，没带就是没有 —— STL 这类只有面法线的格式要在转换前自己补（查看器的打开器
+  就是这么做的，见 `MeshFileOpener.hpp` 的 `ensureSmoothNormals`）。
+- **坏模型是计数，不是修复**：`ModelScene` 回报 `geometries` / `skipped_meshes` / `skipped_nodes`；越界索引、
+  没有网格的 entry、成环的引用都被跳过并计数，剩下部分照样转换。
+- **它不做的三件事**：不建 `Scene`（根节点归调用方）、不做单位换算（加载选项已经折进根变换）、不配灯（灯属于场景）。
+
+## 4. 现成例子：怎么构建、怎么跑
 ### 4.1 构建
 
 ```bash

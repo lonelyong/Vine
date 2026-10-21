@@ -24,7 +24,7 @@ struct MeshPayload : public vn::Object {
     vn::String name;
 
     /// 解析好的网格；空表示"这份载荷里没有模型"，打开器会拒绝它。
-    vn::intrusive_ptr<const vn::geometry::IndexedTriangleMesh> mesh;
+    vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> mesh;
 };
 
 /**

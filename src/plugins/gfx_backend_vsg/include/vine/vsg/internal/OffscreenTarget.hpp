@@ -73,7 +73,7 @@ class OffscreenTarget
         std::vector<vn::graphics::RenderTarget::ColorFormat> color_formats{ vn::graphics::RenderTarget::ColorFormat::RGBA8 };
         std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;  ///< Absent for colour only.
         bool           depth_sampleable{false};  ///< The host asked for a depth a shader may sample (promotion).
-        core::ClearPolicy clear;        ///< What the pass clears (bootstrap applies).
+        core::ClearValues clear;        ///< What the pass clears (bootstrap applies).
     };
 
   public:
@@ -138,7 +138,7 @@ class OffscreenTarget
      * @return The graph this pass records into (its only child is the target's content view - see
      *         `addContent`), or null when the target has no attachments or the variant could not be built.
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> passGraph(const core::ClearPolicy& policy, bool bootstrap = true);
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> passGraph(const core::ClearValues& policy, bool bootstrap = true);
 
     /** @brief Gets how many load-op variants of this target's render pass have been built.
      *

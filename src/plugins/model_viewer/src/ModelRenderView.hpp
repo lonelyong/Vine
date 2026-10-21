@@ -2,10 +2,7 @@
 
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
 #include <functional>
-#include <span>
-#include <vector>
 
 #include <QWidget>
 
@@ -29,6 +26,7 @@
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/LightRig.hpp>
 #include <vine/graphics/Material.hpp>
+#include <vine/graphics/ModelScene.hpp>
 #include <vine/graphics/OrbitCameraManipulator.hpp>
 #include <vine/graphics/Ray.hpp>
 #include <vine/graphics/RayIntersection.hpp>
@@ -269,22 +267,17 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
      */
     static void addLighting(vn::graphics::Scene& scene);
 
-    /// 网格 → 引擎能画的 `Geometry`（缺法线就按三角面算一套平滑法线）。
-    vn::intrusive_ptr<vn::graphics::Geometry> makeGeometry() const;
-
     /**
-     * @brief 按三角面累加顶点法线并归一化（索引不变，因此是平滑法线）。
+     * @brief 给没有材质的几何补一份中灰材质（显示策略，不是模型的事实）。
      *
-     * STL 这类来源只有面法线、没有顶点法线；前向内容程序要读法线，缺了就画成一片死黑。
-     * 平滑（而不是按面复制顶点）是刻意的选择：它不改索引，因此不改变面板上那两个数（顶点数/三角形数）——
-     * 视图怎么画不该让文档的几何事实变样。
+     * 文件里没声明材质的网格（STL 就是这种）在引擎里落到"默认材质"；查看器给它一份中灰（不是纯白）—— 前向
+     * 程序把材质与环境/漫反射相乘，纯白在亮背景下会让明暗看不出来。整棵子树共用**同一份**材质对象，于是后端
+     * 能把它们归成一个批次。
      *
-     * @param positions 顶点位置（与索引空间同序）。
-     * @param indices   三角索引（三个一组）。
-     * @return 与 positions 同长的法线。
+     * @param node   子树根。
+     * @param shared 共用那份中灰材质。
      */
-    static std::vector<vn::math::Vec3f> smoothNormals(std::span<const vn::math::Vec3f> positions,
-                                                      std::span<const std::uint32_t>  indices);
+    static void applyDefaultMaterials(vn::graphics::Node& node, const vn::intrusive_ptr<vn::graphics::Material>& shared);
 
   private:
     ModelDocument*                             model_   = nullptr;
@@ -295,92 +288,32 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
     bool                                       fitted_ = false;
     /// 当前选中的几何（空 = 没选中）。选择是本视图的（框架里没有这个概念，见类注释）。
     vn::intrusive_ptr<vn::graphics::Geometry>  selected_;
-    /// 选中前那份材质（`makeGeometry()` 造的中灰）：取消选择时原样还回去，而不是重造一份。
+    /// 选中前那份材质（模型自带的，或 `applyDefaultMaterials` 补的中灰）：取消选择时原样还回去，而不是重造一份。
     vn::intrusive_ptr<vn::graphics::Material>  selected_material_;
     /// 高亮材质（第一次选中时才造）：橙色、低高光，与中灰的模型放在一起一眼能认出"选中的是它"。
     vn::intrusive_ptr<vn::graphics::Material>  highlight_;
 };
-inline std::vector<vn::math::Vec3f> ModelRenderView::smoothNormals(std::span<const vn::math::Vec3f> positions,
-                                                                   std::span<const std::uint32_t>  indices)
+inline void ModelRenderView::applyDefaultMaterials(vn::graphics::Node& node,
+                                                    const vn::intrusive_ptr<vn::graphics::Material>& shared)
 {
-    std::vector<vn::math::Vec3f> normals(positions.size(), vn::math::Vec3f(0.0f, 0.0f, 0.0f));
-
-    for (std::size_t i = 0; i + 2 < indices.size(); i += 3)
+    if (auto* geometry = dynamic_cast<vn::graphics::Geometry*>(&node))
     {
-        const std::uint32_t i0 = indices[i + 0];
-        const std::uint32_t i1 = indices[i + 1];
-        const std::uint32_t i2 = indices[i + 2];
-        if (i0 >= positions.size() || i1 >= positions.size() || i2 >= positions.size())
+        if (geometry->material() == nullptr)
         {
-            continue; // 越界索引：跳过这个面，而不是读出去。
+            geometry->setMaterial(shared);
         }
-
-        const auto face = (positions[i1] - positions[i0]).cross(positions[i2] - positions[i0]);
-        // 面积加权（叉积的长度就是两倍面积）：大面对法线的贡献更大，退化面贡献为零。
-        normals[i0] += face;
-        normals[i1] += face;
-        normals[i2] += face;
+        return;
     }
-
-    for (auto& normal : normals)
+    if (auto* group = dynamic_cast<vn::graphics::Group*>(&node))
     {
-        const float length = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
-        if (length > 1.0e-12f)
+        for (const auto& child : group->children())
         {
-            normal = normal * (1.0f / length);
-        }
-        else
-        {
-            normal = vn::math::Vec3f(0.0f, 0.0f, 1.0f); // 孤立顶点：给一个确定的朝向，别留零向量。
+            if (child != nullptr)
+            {
+                applyDefaultMaterials(*child, shared);
+            }
         }
     }
-    return normals;
-}
-
-inline vn::intrusive_ptr<vn::graphics::Geometry> ModelRenderView::makeGeometry() const
-{
-    if (model_ == nullptr)
-    {
-        return nullptr;
-    }
-
-    auto mesh = model_->mesh();
-    if (mesh == nullptr)
-    {
-        return nullptr;
-    }
-
-    const auto positions = mesh->positions();
-    const auto indices   = mesh->indices();
-    if (positions.empty() || indices.size() < 3)
-    {
-        return nullptr; // 没有可画的东西（空文档）：让 activate() 什么都不呈现，而不是建个空场景。
-    }
-
-    auto geometry = vn::make_intrusive<vn::graphics::Geometry>();
-    geometry->setName(model_->title());
-    geometry->setPositions(vn::graphics::packAttribute(positions));
-    geometry->setIndices(vn::graphics::packIndices(indices));
-
-    // 法线：来源带了就用它（长度对得上才算带了），没带就自己算平滑法线。
-    const auto normals = mesh->normals();
-    if (normals.size() == positions.size())
-    {
-        geometry->setNormals(vn::graphics::packAttribute(normals));
-    }
-    else
-    {
-        geometry->setNormals(vn::graphics::packAttribute(smoothNormals(positions, indices)));
-    }
-
-    // 材质：中灰（不是纯白）—— 前向程序把材质与环境/漫反射相乘，纯白在亮背景下会让明暗看不出来。
-    auto material = vn::make_intrusive<vn::graphics::Material>();
-    material->setDiffuse(vn::Colorf(0.72f, 0.74f, 0.78f, 1.0f));
-    material->setSpecular(vn::Colorf(0.25f, 0.25f, 0.25f, 1.0f));
-    material->setShininess(48.0f);
-    geometry->setMaterial(std::move(material));
-
-    return geometry;
 }
 
 inline void ModelRenderView::clearSelection()
@@ -445,8 +378,16 @@ inline void ModelRenderView::addLighting(vn::graphics::Scene& scene)
 
 inline void ModelRenderView::buildScene()
 {
-    auto geometry = makeGeometry();
-    if (geometry == nullptr)
+    const vn::geometry::Model* source = model_ != nullptr ? model_->model() : nullptr;
+    if (source == nullptr)
+    {
+        return; // 空文档：让 activate() 什么都不呈现，而不是建个空场景。
+    }
+
+    // 结构就是模型自己的：`sceneFromModel` 把节点树变成场景节点（identity → Group、非 identity →
+    // MatrixTransform），每个 entry 一个 `Geometry`（顶点 buffer 共享，叶子不共享 —— 场景图是严格树）。
+    const vn::graphics::ModelScene converted = vn::graphics::sceneFromModel(*source);
+    if (converted.root == nullptr)
     {
         return;
     }
@@ -467,9 +408,15 @@ inline void ModelRenderView::buildScene()
     view_->setManipulator(vn::make_intrusive<ModelPickManipulator>(
         view_->camera(), [this](double nx, double ny) { selectAt(nx, ny); }));
 
-    auto root = vn::make_intrusive<vn::graphics::Group>();
-    root->setName(u8"model_root");
-    root->addChild(geometry);
+    // 文件里没声明材质的网格（STL 就是这种）补一份中灰：整棵子树共用**同一份**材质对象，后端能把它们
+    // 归成一个批次；没有这一步，它们会落到引擎默认材质上（查看器不该让同一个模型有两种外观）。
+    auto grey = vn::make_intrusive<vn::graphics::Material>();
+    grey->setDiffuse(vn::Colorf(0.72f, 0.74f, 0.78f, 1.0f));
+    grey->setSpecular(vn::Colorf(0.25f, 0.25f, 0.25f, 1.0f));
+    grey->setShininess(48.0f);
+    applyDefaultMaterials(*converted.root, grey);
+
+    auto root = converted.root;
 
     // 视图的引擎是面自己设好的（SurfaceWindow 那一段），这里只把内容放进去：内容场景、相机、轨道操纵器都是
     // 这一份文档自己的。

@@ -98,7 +98,7 @@ using vn::vsg::WindowTarget;
 using vn::vsg::api::Session;
 using vn::vsg::api::SessionOptions;
 using vn::vsg::api::probePhysicalDevices;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameCompiler;
@@ -472,7 +472,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     command.program  = program;
     const std::vector<RenderCommand> commands{ command };
 
-    ClearPolicy clear;
+    ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = 0.0F;
     clear.color_value[1] = 0.25F;  // the plan's clear: a green the shader's colour cannot be

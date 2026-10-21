@@ -57,7 +57,7 @@ bool FrameRecorder::beginFrame(FrameToken token)
     open_draws_.clear();
     passes_.clear();
 
-    description_                 = FrameDescription{};
+    description_                 = CollectedFrame{};
     description_.token           = token;
     description_.default_program = default_program_;
     return true;
@@ -104,7 +104,7 @@ bool FrameRecorder::beginPass(PassId pass)
     order_                  = 0;
     pass_target_            = nullptr;
     pass_has_clear_         = false;
-    pass_clear_             = ClearPolicy{};
+    pass_clear_             = ClearValues{};
     pass_state_             = vn::graphics::PassRenderState{};
     pass_inputs_            = {};
     pending_has_viewport_   = false;
@@ -189,7 +189,7 @@ bool FrameRecorder::setViewport(int x, int y, int width, int height)
     return true;
 }
 
-bool FrameRecorder::setClearPolicy(const ClearPolicy& policy)
+bool FrameRecorder::setClearPolicy(const ClearValues& policy)
 {
     if (!pass_open_ || scope_target_released_)
     {
@@ -346,7 +346,7 @@ bool FrameRecorder::releaseRenderTarget(const void* target)
     return true;
 }
 
-const FrameDescription& FrameRecorder::description() const noexcept
+const CollectedFrame& FrameRecorder::description() const noexcept
 {
     return description_;
 }

@@ -97,7 +97,7 @@ struct RecordedFrame
 ///        one colour attachment needs one per attachment a case reads back).
 /// @return The frame's viewer and graph, both alive.
 RecordedFrame recordOneFrame(const DeviceResult& created, OffscreenTarget& target,
-                             const vn::graphics::backend::ClearPolicy& policy, bool with_depth_capture = false,
+                             const vn::graphics::backend::ClearValues& policy, bool with_depth_capture = false,
                              std::uint32_t color_captures = 1U)
 {
     const ::vsg::ref_ptr<::vsg::RenderGraph> pass =
@@ -143,10 +143,10 @@ ReadbackRefusal refusalOf(const OffscreenTarget& target, ReadbackKind kind, std:
 ///                    from the bootstrap rule and not from this flag.
 /// @param depth_value The depth value the pass clears with, when it asks for one (the reverse-Z far plane is
 ///                    the default, so a case that reads the depth back has to say what it expects).
-vn::graphics::backend::ClearPolicy clearPolicy(const float (&color)[4], bool asked = true,
+vn::graphics::backend::ClearValues clearPolicy(const float (&color)[4], bool asked = true,
                                          std::optional<float> depth_value = std::nullopt)
 {
-    vn::graphics::backend::ClearPolicy policy;
+    vn::graphics::backend::ClearValues policy;
     policy.color = asked;
     for (std::size_t index = 0; index < 4U; ++index) {
         policy.color_value[index] = color[index];
@@ -456,7 +456,7 @@ void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCoun
         facts.current = target->instance();
         return facts;
     };
-    const auto record_frame = [&](std::uint64_t token, const vn::graphics::backend::ClearPolicy& policy) {
+    const auto record_frame = [&](std::uint64_t token, const vn::graphics::backend::ClearValues& policy) {
         EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
         EXPECT_TRUE(recorder.beginPass(1U));
         EXPECT_TRUE(recorder.setRenderTarget(handle.get()));
@@ -501,7 +501,7 @@ void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCoun
     EXPECT_FALSE(fresh.built) << "images exist, but nothing has been written into them: loading is impossible";
     EXPECT_FALSE(fresh.attachments_invalidated);
 
-    vn::graphics::backend::ClearPolicy fill;
+    vn::graphics::backend::ClearValues fill;
     fill.color          = true;
     fill.color_value[0] = kRed[0];
     fill.color_value[1] = kRed[1];
@@ -529,7 +529,7 @@ void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCoun
     // Frame 2 does NOT ask for a clear, and paints its own colour. If the plan honours the invalidation, the
     // pass is the bootstrap one and the colour below IS what the frame shows; if it does not, this frame loads
     // whatever the lost submission left behind (red).
-    vn::graphics::backend::ClearPolicy after_loss;
+    vn::graphics::backend::ClearValues after_loss;
     after_loss.color          = false;
     after_loss.color_value[0] = kGreen[0];
     after_loss.color_value[1] = kGreen[1];
@@ -559,7 +559,7 @@ void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCoun
                                    .action),
               static_cast<int>(vn::graphics::backend::TargetAction::None));
 
-    vn::graphics::backend::ClearPolicy steady;
+    vn::graphics::backend::ClearValues steady;
     steady.color          = false;
     steady.color_value[0] = kBlue[0];
     steady.color_value[1] = kBlue[1];

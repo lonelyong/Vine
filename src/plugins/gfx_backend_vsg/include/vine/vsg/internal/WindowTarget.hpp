@@ -91,7 +91,7 @@ class VN_VSG_API WindowTarget
      *
      * @param policy What that pass asked the target to clear.
      */
-    void prepare(const core::ClearPolicy& policy) noexcept;
+    void prepare(const core::ClearValues& policy) noexcept;
 
     /** @brief Brings the graph up to date for a frame that has NO window pass (see the file note).
      *

@@ -19,7 +19,7 @@ namespace vn::model_viewer
 {
 
 /**
- * @brief 模型信息面板：显示**当前文档**的类型、标题、顶点数与三角形数。
+ * @brief 模型信息面板：显示**当前文档**的类型、标题、顶点数、三角形数与部件数。
  *
  * 它是 `Control`（appfw 的 UIElement 包装）而不是裸 QWidget：dock 面板要的是 UIElement。整个类 header-only、
  * 不带自己的元数据、也没有信号槽 —— 于是 GUI 用例可以直接 include 它、驱动它，不必先加载插件。
@@ -48,12 +48,14 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
         title_label_     = new QLabel(root);
         vertices_label_  = new QLabel(root);
         triangles_label_ = new QLabel(root);
+        parts_label_     = new QLabel(root);
 
         int row = 0;
         addRow(root, layout, row, u8"类型", type_label_);
         addRow(root, layout, row, u8"标题", title_label_);
         addRow(root, layout, row, u8"顶点数", vertices_label_);
         addRow(root, layout, row, u8"三角形数", triangles_label_);
+        addRow(root, layout, row, u8"部件数", parts_label_);
         layout->setRowStretch(row, 1);
 
         clear();
@@ -80,7 +82,7 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
      * @brief 显示一份文档。
      *
      * @param document 要显示的文档；nullptr 表示"没有当前文档"（回到空状态）。不是模型文档时照样显示它的类型与
-     *                 标题，两个数则说明"不是模型文档" —— 面板宁可说清楚，也不假装那是 0。
+     *                 标题，三个数则说明"不是模型文档" —— 面板宁可说清楚，也不假装那是 0。
      */
     void setDocument(const vn::appfw::Document* document)
     {
@@ -100,6 +102,8 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
                                                   : notAModelText());
         triangles_label_->setText(model != nullptr ? QString::number(static_cast<qulonglong>(model->triangleCount()))
                                                    : notAModelText());
+        parts_label_->setText(model != nullptr ? QString::number(static_cast<qulonglong>(model->partCount()))
+                                               : notAModelText());
     }
 
     /// 回到"没有当前文档"的状态。
@@ -109,14 +113,16 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
         title_label_->setText(noneText());
         vertices_label_->setText(noneText());
         triangles_label_->setText(noneText());
+        parts_label_->setText(noneText());
     }
 
   public:
-    /// 面板上四行的当前文本（用例断言它们，而不是去翻 QLabel 的层级）。
+    /// 面板上五行的当前文本（用例断言它们，而不是去翻 QLabel 的层级）。
     QString typeText() const { return type_label_->text(); }
     QString titleText() const { return title_label_->text(); }
     QString verticesText() const { return vertices_label_->text(); }
     QString trianglesText() const { return triangles_label_->text(); }
+    QString partsText() const { return parts_label_->text(); }
 
   private:
     /// 加一行"名字 + 值"：名字是静态文本，值是面板要显示的东西。
@@ -143,6 +149,7 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
     QLabel*                     title_label_     = nullptr;
     QLabel*                     vertices_label_  = nullptr;
     QLabel*                     triangles_label_ = nullptr;
+    QLabel*                     parts_label_     = nullptr;
     std::vector<vn::Connection> connections_;
 };
 

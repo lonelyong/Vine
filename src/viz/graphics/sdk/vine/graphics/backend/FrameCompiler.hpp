@@ -165,7 +165,7 @@ struct CompiledPass
     std::uint32_t target_index{0};            ///< Index into CompiledFrame::targets (the pass' target).
     vn::graphics::Viewport viewport{};      ///< Whole-target rectangle, for the draw calls that announced none.
     vn::graphics::PassRenderState state{};  ///< The pass' own state (depth policy + rasterisation override).
-    ClearPolicy   clear{};                    ///< The effective clear policy (announced, or the default).
+    ClearValues   clear{};                    ///< The effective clear policy (announced, or the default).
     bool          bootstrap{false};           ///< First writer of freshly built attachments: it must clear.
     bool          depth_preserved{false};     ///< A later pass reads the depth this one writes: never clear it.
     std::uint32_t color_attachments{0};       ///< Colour attachments of the pass' target (part of a pipeline's
@@ -276,7 +276,7 @@ class VN_GRAPHICS_API FrameCompiler
      * @param facts       The backend's own account of the targets the frame draws into.
      * @return The compiled plan, valid until the next beginFrame().
      */
-    const CompiledFrame& compile(const FrameDescription& description, const FrameFacts& facts);
+    const CompiledFrame& compile(const CollectedFrame& description, const FrameFacts& facts);
 
     /** @brief Gets the plan published by the last compile(). */
     [[nodiscard]] const CompiledFrame& frame() const noexcept;

@@ -28,7 +28,7 @@
 #include <vine/graphics/backend/DepthProbe.hpp>
 #include <vine/graphics/backend/DeviceClock.hpp>
 #include <vine/graphics/backend/Readback.hpp>
-#include <vine/graphics/backend/DeviceRequirements.hpp>
+#include <vine/vsg/internal/DeviceRequirements.hpp>
 #include <vine/graphics/backend/FrameArena.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/Keys.hpp>

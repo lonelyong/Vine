@@ -18,7 +18,7 @@
 #include <string>
 
 #include <vine/vsg/internal/DeviceProbe.hpp>
-#include <vine/graphics/backend/DeviceRequirements.hpp>
+#include <vine/vsg/internal/DeviceRequirements.hpp>
 
 using vn::vsg::api::probePhysicalDevices;
 using vn::graphics::backend::kDeviceFeatureCount;

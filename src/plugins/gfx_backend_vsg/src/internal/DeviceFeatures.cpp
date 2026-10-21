@@ -1,6 +1,6 @@
 #include <vine/vsg/internal/DeviceFeatures.hpp>
 
-#include <vine/graphics/backend/DeviceRequirements.hpp>
+#include <vine/vsg/internal/DeviceRequirements.hpp>
 
 VN_VSG_NS_BEGIN
 

@@ -1377,7 +1377,7 @@ void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
     // plan is compared and submitted with), while the SDK speaks colours with alpha semantics. This function is the
     // one place the two meet, and since the SDK side became linear the translation is a straight copy - the reason it
     // still exists is that neither half should have to know the other's shape.
-    core::ClearPolicy translated;
+    core::ClearValues translated;
     translated.color          = true;  // the SDK only announces a policy for a pass that clears its colour
     translated.color_value[0] = policy.color.r;
     translated.color_value[1] = policy.color.g;

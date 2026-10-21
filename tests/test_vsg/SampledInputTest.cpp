@@ -86,7 +86,7 @@ using vn::vsg::PassContent;
 using vn::vsg::ProgramFacts;
 using vn::vsg::StreamUploads;
 using vn::vsg::VsgExecutor;
-using vn::graphics::backend::ClearPolicy;
+using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::Diagnostics;
 using vn::graphics::backend::DrawKind;
@@ -276,14 +276,14 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     destination_facts.current       = destination->instance();
     const std::vector<TargetFacts> target_table{ source_facts, destination_facts };
 
-    ClearPolicy red_clear;
+    ClearValues red_clear;
     red_clear.color          = true;
     red_clear.color_value[0] = kRed[0];
     red_clear.color_value[1] = kRed[1];
     red_clear.color_value[2] = kRed[2];
     red_clear.color_value[3] = 1.0F;
 
-    ClearPolicy blue_clear;
+    ClearValues blue_clear;
     blue_clear.color          = true;
     blue_clear.color_value[0] = kBlue[0];
     blue_clear.color_value[1] = kBlue[1];
@@ -493,14 +493,14 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     destination_facts.current       = destination->instance();
     const std::vector<TargetFacts> target_table{ source_facts, destination_facts };
 
-    ClearPolicy red_clear;
+    ClearValues red_clear;
     red_clear.color          = true;
     red_clear.color_value[0] = kRed[0];
     red_clear.color_value[1] = kRed[1];
     red_clear.color_value[2] = kRed[2];
     red_clear.color_value[3] = 1.0F;
 
-    ClearPolicy blue_clear;
+    ClearValues blue_clear;
     blue_clear.color          = true;
     blue_clear.color_value[0] = kBlue[0];
     blue_clear.color_value[1] = kBlue[1];
@@ -631,7 +631,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     }
     // The recorder is told about it explicitly: a pass' clear is a HOST decision (the plan only decides when
     // the bootstrap rule overrides it), so the fixture hands the same policy to both the target and the frame.
-    ClearPolicy receiver_clear;
+    ClearValues receiver_clear;
     receiver_clear.color = true;
     for (std::size_t index = 0; index < 4U; ++index) {
         receiver_clear.color_value[index] = kBlue[index];

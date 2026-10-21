@@ -43,7 +43,7 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 inline constexpr float kReverseZFarDepth = 0.0F;
 
 /** @brief What the pass asked for, before the rules above are applied. */
-struct ClearPolicy
+struct ClearValues
 {
     bool  color{false};                     ///< The pass asked to clear its colour attachments.
     float color_value[4]{ 0.0F, 0.0F, 0.0F, 1.0F };  ///< The value attachment 0 receives when it clears.
@@ -112,7 +112,7 @@ struct VN_GRAPHICS_API PassClearPlan
  * @param depth_borrowed Whether the depth attachment is ANOTHER target's image (see rule 3).
  * @return The per-attachment plan.
  */
-[[nodiscard]] VN_GRAPHICS_API PassClearPlan planClearValues(const TargetShape& shape, const ClearPolicy& policy, bool bootstrap,
+[[nodiscard]] VN_GRAPHICS_API PassClearPlan planClearValues(const TargetShape& shape, const ClearValues& policy, bool bootstrap,
                                             bool depth_borrowed) noexcept;
 
 /** @brief Gets the layout a target leaves its depth attachment in.

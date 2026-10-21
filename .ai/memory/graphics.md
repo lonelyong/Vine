@@ -25,6 +25,64 @@
 | **待办与口径** | **唯一清单：`.ai/design/graphics-followups-2026-10-19.md`**（2026-10-19 盘点：§2 现在可做 / §3 触发条件型 / §4 明确不做 / §5 不再是待办）。底层两个来源：**2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已由 S10b 覆盖并关闭，2026-10-19**：一设备 N 窗口、每窗口一个目标，见 `graphics-window-device-viewer.md` §7）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-21 对象模型复核落地：混合使能归位 + 资产→场景桥（设计见 `.ai/design/graphics-object-model-audit-2026-10-21.md`）
+
+- **B1 混合使能按契约执行**：`ResolvedRenderState::blend` 写着 "default: disabled"，而 vsg 对单附件内容绘制**恒开混合**
+  （`StateCommands.cpp` 的 `opaque` 规则）⇒ 公开 setter `StateNode::setBlend(enabled=false)` 静默无效。修法：两个透明
+  来源在**唯一有权合并的地方**合并——`FrameCompiler::resolveCommands` 里 `opacity < 1` ⇒ `blend.enabled = true`；
+  `makeDynamicStateCommand` 按 `state.blend.enabled` 下发 `blendEnable`（多附件仍恒不混合、全屏绘制仍恒不混合）。
+  下发通道是 `VK_EXT_extended_dynamic_state3` 的 `vkCmdSetColorBlendEnableEXT`（早已接线，只是没被用来关）。
+  判据：`FrameCompilerTest.AnOpaqueCommandDoesNotBlendAndATranslucentOneDoes`（不透明 / opacity 0.5 / 显式 StateNode
+  三条）+ 设备用例 `VsgBackendTest.AnOpaqueContentDrawDoesNotBlendAndATranslucentOneDoes`（原"恒按 SRC_ALPHA 混合"那条改写）。
+  **变异 M1**：删掉 opacity 合并 ⇒ 设备无关用例红（实测）。**坑**：设备读回是 BGR 字节序，1.0 的单通道断言要用 `isRed()`，
+  不能写 `pixel[0]`。
+- **G1 资产→场景桥**：`geometry::Model`（节点树 + `Entry{mesh, material}`）此前**零生产消费者**（`model_viewer` 只画单网格 +
+  中灰），场景图层级与材质模型只有测试/demo 在跑。新增 `ModelScene.hpp`：`sceneFromModel()`（identity 变换 → `Group`，
+  非 identity → `MatrixTransform`；每个 Entry 一个 `Geometry`，**顶点 buffer 共享、叶子不共享**——严格树；材质按源对象缓存）
+  与 `materialFrom()`（Color/Phong 直译；**PBR 显式近似**：diffuse = base*(1-metallic)、高光 = mix(白, base, metallic)、
+  强度 1-roughness、指数 1+(1-roughness)*127；`PbrMaterial::opacity` 落到叶子 `Geometry::setOpacity`）。
+  判据：`test_graphics` 的 `ModelSceneTest.*` **8 条**（树形/共享 buffer/三种材质 + 空模型、root 越界、节点环、entry 越界
+  四种坏输入；ASan 专项 RESULT: PASS），`test_graphics` 403。
+- **G1b 消费者（同批）**：`model_viewer` 改用桥 —— `ModelDocument` 持 `geometry::Model`（内存载荷包成单节点模型）、
+  文件打开器改 `loadModel()` + `ensureSmoothNormals()`（只补缺法线的网格，索引不变 ⇒ 面板两个数不变）、
+  `ModelRenderView::buildScene()` 改 `sceneFromModel()` 并只给"没声明材质"的叶子补一份共享中灰；面板加一行
+  **部件数**（`ModelDocument::partCount()` = 可画的 entry 数），选择本来就按叶子、现在有“多部件只选中被点中的那个”
+  的用例。判据：`ModelViewerTest.*` 10 条全绿、`test_gui` **261**（260 + 1 skip）。
+- **N1 后端半改名**（零行为）：`backend::FrameDescription` → `CollectedFrame`、`backend::ClearPolicy` → `ClearValues`
+  （外层 `vn::graphics::FrameDescription` / `ClearPolicy` 不变）。**坑**：`FrameRecorder` 的符号变了，改名后必须**全量构建**，
+  否则老插件 `.so` 报 `undefined symbol ...setClearPolicy`。
+- **撤回的一条**：`RenderEngine::device()` 返回 `RenderBackend` 不是缺陷——S10a 的前向命名，S10b 才改借用 `RenderDevice&`
+  （见 `graphics-window-device-viewer.md`），下一轮别再报。
+- **R1 部分关闭（同批）**：`DeviceRequirements`（Vulkan 1.4 地板 + `VK_EXT_*` 要求）从 SDK 后端半**移入 vsg 插件**
+  （`include/vine/vsg/internal/` + `src/internal/`，导出宏改 `VN_VSG_API`，命名空间仍是 `vn::graphics::backend`
+  因为插件把它 alias 成 `core`）。剩余部分（`Keys` 里的 `VkFormat`/layout、证据夹具随 SDK 安装）仍登记。
+  **坑**：库与插件的源列表都是 GLOB 且无 `CONFIGURE_DEPENDS` —— 移文件后要 `touch` 两个 CMakeLists 再构建，
+  并且 `tests/test_vsg/CMakeLists.txt` 的 `SRC_FILE_LIST` 要手动加上新路径。
+- **拓扑归位（R3）2026-10-21 裁决：先不做**——模型上拓扑该随数据走（glTF `primitive.mode` / Unity `MeshTopology` /
+  OSG `PrimitiveSet` / Filament `PrimitiveType`），但当前没有生产触发点（无名点云/线类型、导入器不产 `POINTS`/`LINES`，
+  唯一调用点是 demo 的 `StateNode{Points}`），且加了就会与 `StateNode::setTopology` 形成两种拼法。做的那天：
+  `Geometry::topology()`（叶子 > 最近 StateNode > Triangles）+ 收集折叠时覆盖，后端零改动。
+- 门禁：test_graphics **398**、test_vsg **481（480 + 1 skip）**、test_gui **260（259 + 1 skip）**、6 个静态脚本 0 finding。
+
+## 2026-10-21 颜色值类型收口：`Color` 的文本与分序打包入口（接下面那条）
+
+- **`Color::toString()` / `Color::parse()`**：**一种语法**（CSS hex：`#rgb[a]` / `#rrggbb[aa]`）—— 小写写出、两种大小写都收，
+  **alpha 对只在非不透明时写**（`#ff0000` / `#ff0000fe`）⇒ 一个值只有一份文本；失败在 `std::optional` 里
+  （没有哨兵值，也不靠注释）。**短式是同一语法的产出**（`#CCC` = `#CCCCCC`，`#C0F8` = `#CC00FF88`，逐位重复）；
+  收 3 就必须收 4，否则是任意的洞。写侧**只有规范形式**（`#CCC` 读进来写出去是 `#cccccc`）。
+  文本永远属于**编码那一半**：线性 0.5 写成 `#bc0000`（188），要线性值的文本先 `toColor()`；`Colorf` 刻意没有
+  文本（文本必须先说空间）。
+- **拒掉的邻居（有意）**：`0x` 前缀、裸数字、`rgba(...)`、三位 `#f00`、前后空白 —— 每一种都是同一个值的第二种
+  拼法。十六进制数字手写 `hexDigit()`，**不走 `String::toInt(&ok, 16)`**：后者收符号 / 前导空白 / `0x` 前缀，
+  正好是要拒的那几种；写侧复用 `String::hex(span)`。
+- **分序打包入口**：`static constexpr Color fromArgb(0xAARRGGBB)`（Qt `ARGB32` / Win32 `ARGB`）与
+  `fromBgr(0x00BBGGRR)`（Win32 `COLORREF`；**高字节忽略、结果不透明**）。**不收通用移位**，也**没有**
+  `toArgb32()`/`toBgr()`（反方向无读者）。`static_assert` 钉住两者 `constexpr`。
+- **坑 / 代价**：`std::optional<Color>` 当 `Color` 自己的成员函数返回类型，在 gcc 15 与 clang 22 上
+  `-fsyntax-only` 都通过；但 `Color.hpp` 因此多了一条 `#include "String.hpp"`（与 `Uuid` / `Version` 同形）。
+- **判据**：`ColorTest` 8 条（文本 4 + 拒绝 1 + 字节序 3），`test_core --gtest_filter='Color*'` **24 条全绿**。
+- 设计记录：`.ai/design/graphics-colour-space.md` §9；待办总表 §3.1 **已清空**（§2 仍是空的，剩下的都是触发条件型）。
+
 ## 2026-10-21 颜色把空间进类型：`Colorf` 线性 / `Color` sRGB，清屏色不再是字节
 
 - **形状**：两个类型各说一件事 —— `vn::Colorf` 是**浮点通道值**（0..1、HDR 可 >1），`vn::Color` 是
