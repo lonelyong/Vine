@@ -17,7 +17,7 @@
 | **着色器与 ABI 契约** | shader 文件命名 `builtin_<角色>.<阶段>` · `vn_`→`vine_` 前缀 · texcoord kind 显式化 · P0.A/P0.B1/P0.C1（前向着色归 SDK / location 表 / L1 块布局） · P12 文件化 + 构建期嵌入 · program 槽 P1 三步 |
 | **证据与门禁** | M7 每帧编译 + 描述符（`PassDesc`）· M8 SDK 级设备夹具 + 像素判据（`SdkPixelTest`） · M11k 背景看写掩码 · M11l 第三条画面判据"整片背景灰" · FPS 窗口真平均 · ASan 两片（余量收口 / 全量 test_vsg 首通） · V3/V4 上游能力门禁 · R5 LSan 抑制 · M11g 计数分配器（**`skipped == 0` 才是跑过设备电池**） · 2026-10-11 修：G-buffer 几何 pass 缺 `program_override`（像素判据抓到，见顶条） · **2026-10-12 两条"已知红"清零（`test_vsg` 429 = 426 + 3 skip，见顶条）** |
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
-| **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` · **2026-10-22（下午）`PassChain` 自己就是注册归属（`PassGroup` 已删）** · **2026-10-22（夜二）TRS `PositionAttitudeTransform` + billboard `AutoTransform`（R4 关闭）** · **2026-10-22（夜三）收集期视图上下文 `CollectView` + AutoTransform 自动缩放** · **2026-10-22（夜四）AutoTransform `RotateToAxis`** · **2026-10-22（夜五）B7 headless 破坏路径补 idle；B8 复核非设计缺陷** |
+| **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` · **2026-10-22（下午）`PassChain` 自己就是注册归属（`PassGroup` 已删）** · **2026-10-22（夜二）TRS `PositionAttitudeTransform` + billboard `AutoTransform`（R4 关闭）** · **2026-10-22（夜三）收集期视图上下文 `CollectView` + AutoTransform 自动缩放** · **2026-10-22（夜四）AutoTransform `RotateToAxis`** · **2026-10-22（夜五）B7 headless 破坏路径补 idle；B8 复核非设计缺陷；A3 内容释放设计** |
 | **面向使用者** | `docs/guides/graphics.md`（模块文档一节） |
 | **对象模型与行业口径** | `.ai/design/graphics-object-model-vs-3d-frameworks.md`（2026-10-12）：逐个对象对到 VTK / OSG / three.js / Filament / Qt3D；**刻意偏离**（一区一幅画、相机带 aspect，含代价；**拾取是机制、选择不在框架（§2.5，2026-10-13）**）与**能力缺口**（同 pass 内优先级 / 实例化 / LOD·空间划分 / `Pipeline` ≠ PSO 的命名风险 / 内容掩码 / 目标层），各带触发条件；后两条的定形见 `graphics-layers.md`（L1 内容掩码 `Node::setLayers` + `PassDesc::layer_mask` / L2 目标层 `layerCount` + 层区间，L2 分两步、读侧先行；**§9（2026-10-13：拾取 / 包围盒掩码参数已落地；"子树层并集"整段跳过仍登记）**） |
 | **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
@@ -25,11 +25,12 @@
 | **待办与口径** | **现行登记：`.ai/design/graphics-followups-2026-10-22.md` 已无开放行**（F1/F2/F3 全部关闭，2026-10-22 晚）；活账本回到 **`.ai/design/graphics-followups-2026-10-19.md` §3 触发条件型**，外加对象模型复核（`graphics-object-model-audit-2026-10-21.md`）的 R1/R5–R10（R4 于 2026-10-22 晚关闭）。10-19 是历史盘点（§2 现在可做：空 / §3 触发条件型 / §4 明确不做 / §5 不再是待办），它的触发项仍然有效。底层两个来源：**2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已由 S10b 覆盖并关闭，2026-10-19**：一设备 N 窗口、每窗口一个目标，见 `graphics-window-device-viewer.md` §7）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
-## 2026-10-22（夜五）B7 补 headless idle；B8 复核不是设计缺陷
+## 2026-10-22（夜五）B7 补 headless idle；B8 复核不是设计缺陷；A3 设计
 
 - **B7 的真缺口**：`releaseContentWorld()` 只 idle 了窗口会话；headless 设备只有 `OffscreenSession`，它提交的 GPU work 同样是 device-wide，于是销毁内容时可能撞上在飞命令。已给 `OffscreenSession` 加 `waitDeviceIdle()`（空会话不计数）并在破坏路径调用；判据 `OffscreenSessionTest.TheDestructiveWaitIsCountedOnce`。`test_vsg` 482 → **483**。
 - **B7 不是设计缺陷的部分**：破坏路径用计数过的 device idle、替换路径用 `RetirementQueue` 是文档写明的两条路；不改。
 - **B8 复核**：`perFrameCopies(n) = n + 1`，当前实际 3 槽、4 slab，最旧在飞帧与当前帧永不同 slab；结构性用例已钉住。所谓 F−N 洞是 **readback 只看最新帧** 的观测缺口，不是生产代码的竞态设计缺陷；不加旧帧读回接缝。\n- **台账**：B7/B8 已从 `graphics-followups-2026-10-19.md` §3.6 与 `vsg-reimplementation.md` §6 的开放项移入 §5 关闭；再现按新问题重开。
+- **A3 设计已出（未实现）**：`.ai/design/graphics-content-release-2026-10-22.md`。一个 `releaseContent(raw_ptr<const Object>)`，释放 GPU 驻留而非对象；`ContentStore` 的 live entry 用 release token + park 支持取消；纹理 cache 立即删。仍等“宿主报内存压力”触发。
 
 ## 2026-10-22（夜四）`AutoTransform::RotateToAxis`：轴向 billboard
 

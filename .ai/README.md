@@ -22,9 +22,9 @@
   `历史登记` / `不再更新` —— 这类小节里**允许**点名已不存在的东西（那正是它存在的意义）。
 * 必须在**现行**段落里提一个已经不存在的东西时，给那一行加 `<!-- drift-ok -->`。
 
-## design/ —— 完整设计文档（50）
+## design/ —— 完整设计文档（51）
 
-**graphics / vsg（27）**
+**graphics / vsg（28）**
 - `graphics-design.md` —— Graphics 模块设计（现代化架构）。
 - `graphics-layering.md` —— graphics 的两半：契约与后端工具层（分层、依赖方向、机器规则 R1/R2/R3）。
 - `graphics-render-pipeline.md` —— 多 Pass 渲染管线设计（pass 调度 / 命名产出槽 / 与内容关联）。
@@ -81,6 +81,11 @@
   只读了粗的那一个 ⇒ 按 `Buffer` 契约公告的宿主**静默拿到旧字节**，且任一通道变动都重传全部通道（16.98 MiB / +30 ms）。
   目标形状：两级都生效（buffer bump ⇒ 只重传读它的通道；几何 bump ⇒ 全部，语义不变），并派生一个只用于“事实表要不要
   重算”的 `Geometry::contentRevision()`；附落点清单、三条能红的判据与变异、以及两处待拍板。
+- `graphics-content-release-2026-10-22.md` —— **A3 内容释放设计（2026-10-22，方案未实现）**：一个
+  `RenderDevice::releaseContent(raw_ptr<const Object>)` / `RenderEngine` 转发入口，释放的是后端 GPU 驻留而不是对象；
+  `ContentStore` 的 live entry 用 release token + park 实现“可取消的释放”，宿主下一次使用就取消，避免释放后复用被旧回调误删；
+  纹理 cache 立即删条目、描述符集自己持引用；不 idle 设备、不做全局预算/LRU（A6 另立）。附 API 语义、四类内容各自何时真正离开、
+  三条设备级与五条设备无关判据、落地切片与已知边界。
 - `graphics-colour-space.md` —— **颜色：把“色彩空间 + 数值域”放进类型（2026-10-21）**：`Colorf` 是线性光、`Color` 是 sRGB 编码字节，两者只由一对有名转换桥接（`Color::toLinear()` / `Colorf::toColor()`，IEC 61966-2-1 分段曲线、alpha 不参与编码）；SDK 的作者颜色因此只剩一种（`PassDesc::clear_color` / `ClearPolicy` / `FramePlan` 从字节改成线性浮点，后端不再 `/255`），默认清屏色写成“#333333 的原意 + 解一次”，判据含一条设备级“读回 55 而不是 128”；另登记“不做”的四条（`UnitScalar`、目标格式加 sRGB 变体、两个颜色类型改名、8 位图色彩空间）与 robotics / geometry 侧 `Colorf` 输入空间未声明的交互。
 - `graphics-layers.md` —— **层与分层渲染（L1 内容掩码已落地 2026-10-12；L2 设计定稿，裁决现阶段不做、等触发）**：**L1**（对象声明 `Node::setLayers` + pass 掩码 `setLayerMask` 两级；收集与**记忆化 memo key** 的坑；配方入口、0 的退化语义、落点清单、判据与 5 条变异实测）与 **L2 目标层**（`layerCount` + pass 的层区间，L2a 逐层先落、L2b 一次写完等触发；读侧先行的理由；§6 开头是"不做"的四条理由），两者的行业依据（Ogre-Next 的三级掩码 + slice/array 目标 + render queue 子组）、与既有裁决的关系、以及"不做的话今天的替代与代价"；**§9（2026-10-13：拾取 / 包围盒掩码参数已落地，各配判据；"子树层并集"整段跳过仍登记）**。
 - `vsg-reimplementation.md` —— vsg 后端"从零重新实现"：契约、坑与实施记录（本仓库最长的设计文档）。
