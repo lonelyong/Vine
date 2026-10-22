@@ -123,6 +123,8 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   以及 `shareDepth(DepthView)`（借别人的深度；`DepthView` 是个值，命名一张 target 的深度图并保活它）与
   `setDepthPromotion(bool)`（深度是否变成可采样）。借来的深度也可以由**画它的那条 pass** 声明：
   `RenderPass::setDepthView(depthViewOf(other))`（`depthViewOf()` 是由 raw pointer 构造 view 的简写）。
+  **样本数也是目标的属性**：`setSamples(n)`（默认 1，0 当 1）—— 离屏目标会自建多重采样图并把**颜色**
+  解析成一张单采样图，那张图就是它的彩色内容；上限问 `capabilities().max_samples`，用法与三条限制见 §3.20。
 - `PassChain::build(engine, const ChainDesc&)` —— 配方层（结构选择只有一个：
   `ShadingPath::Forward | Deferred`，其余是效果与选项，见 `.ai/design/graphics-pipeline.md`）、
   `addOffscreenToScreen(...)`（离屏 + PiP），并暴露延迟所需的公有件（`defaultGbufferTarget()`、
@@ -1121,6 +1123,37 @@ pipeline->isOverlayVisible(vn::String(u8"corner"));
   同理）。
 - **开关不重建**：可见性就是 pass 的 `enabled`，与 §3.10 的其它运行时开关一致；问一个没登记过的 role 会得到 false
   并报一次问题 —— 静默无效比拒绝更难查。
+
+### 3.20 抗锯齿：采样数是**目标**的属性（`RenderTarget::setSamples`）
+
+抗锯齿不挂在 pass 或 program 上，它挂在**你要画进去的那张 target** 上 —— 因为一个样本数同时决定三件必须一
+致的事：图像的样本数、渲染通道每个附件的样本数、管线编译时的 `rasterizationSamples`。所以只有一处设置：
+
+```cpp
+// 与 §3.3 同一个形状，只多一行。
+auto scene_rt = make_intrusive<RenderTarget>();
+scene_rt->attachColor(RenderTarget::ColorFormat::RGBA8);
+scene_rt->attachDepth(RenderTarget::DepthFormat::D24);
+scene_rt->setSize(w, h);
+scene_rt->setSamples(4);              // 默认 1；0 也当 1（不存在“零样本”的目标）
+
+// 画法一个字都不用改：场景 pass 画进 scene_rt，屏幕 pass 把它的彩色图拷到窗口。
+// 后端替你做的是：scene_rt 自建多重采样图，并把**颜色**解析（resolve）成一张单采样图；
+// 那张解析图就是 target 的彩色内容 —— 后面的 pass 采它、readColorBuffer() 读它，拿到的都是它。
+```
+
+- **先问设备**：`capabilities().max_samples` 是上限（彩色与深度两个上限的**较小值**：一张 target 只有一个样本
+  数，两种附件都得支持）。超过它的描述会被后端**拒绝并报一次**，不会悄悄降级 —— `initialize()` 之后读
+  `capabilities()` 再选值。
+- **窗口仍是单采样**：交换链的样本数归平台。要让窗口抗锯齿，就把场景画进多重采样离屏目标，再用 `ScreenPass`
+  把解析后的图呈现到窗口 —— 也就是 §3.3 的 2 pass 形状，一行不改。
+- **深度这一版不解析**，于是下面几件事是**显式拒绝**，而不是“看起来能跑”：多重采样目标不能 `shareDepth()`
+  借出深度、不能 `setDepthPromotion(true)` 让 shader 采深度，`readDepthBuffer()` 答 `Unsupported`
+  （彩色回读不受影响：它读的正是那张解析图）。
+- **换样本数是换形状**：活目标把 `setSamples` 改成另一个数，下一帧会重建它的图像、帧缓冲与通道；正在被别人借
+  深度时不能重建（与 `shareDepth` 那条拒绝同源）。
+- **代价**：显存与带宽大致随样本数成倍增长，颜色还要每帧多一次全图“读 + 写”（解析）。4× 在 1080p 上已经很可
+  观 —— 先量再定，`VINE_FRAME_PLAN=1` 与 `frameReport()` 能看每帧时间。
 
 ## 4. 现成例子：怎么构建、怎么跑
 ### 4.1 构建
