@@ -29,7 +29,7 @@
 
 - **B7 的真缺口**：`releaseContentWorld()` 只 idle 了窗口会话；headless 设备只有 `OffscreenSession`，它提交的 GPU work 同样是 device-wide，于是销毁内容时可能撞上在飞命令。已给 `OffscreenSession` 加 `waitDeviceIdle()`（空会话不计数）并在破坏路径调用；判据 `OffscreenSessionTest.TheDestructiveWaitIsCountedOnce`。`test_vsg` 482 → **483**。
 - **B7 不是设计缺陷的部分**：破坏路径用计数过的 device idle、替换路径用 `RetirementQueue` 是文档写明的两条路；不改。
-- **B8 复核**：`perFrameCopies(n) = n + 1`，当前实际 3 槽、4 slab，最旧在飞帧与当前帧永不同 slab；结构性用例已钉住。所谓 F−N 洞是 **readback 只看最新帧** 的观测缺口，不是生产代码的竞态设计缺陷；不加旧帧读回接缝。
+- **B8 复核**：`perFrameCopies(n) = n + 1`，当前实际 3 槽、4 slab，最旧在飞帧与当前帧永不同 slab；结构性用例已钉住。所谓 F−N 洞是 **readback 只看最新帧** 的观测缺口，不是生产代码的竞态设计缺陷；不加旧帧读回接缝。\n- **台账**：B7/B8 已从 `graphics-followups-2026-10-19.md` §3.6 与 `vsg-reimplementation.md` §6 的开放项移入 §5 关闭；再现按新问题重开。
 
 ## 2026-10-22（夜四）`AutoTransform::RotateToAxis`：轴向 billboard
 

@@ -104,8 +104,6 @@
 |---|---|---|
 | ~~B6~~ | ~~`StreamKey.revision` 取几何 revision ⇒ 任一通道改动重传全部通道（已量化 16.98 MiB / +30 ms 一帧）~~ **已关闭（2026-10-22 晚）**：**形状归几何、字节归 buffer，没有兜底**——`StreamKey` 的 revision 只取该 buffer 自己的（`Buffer::setRevision` 是唯一的重传公告），几何 revision 只驱动事实行重建（layout/通道集/计数）；事实行不再拷贝字节，键在录制时拼、字节在上传时读，所以"改一条通道"既不需要重建行也不需要重传别的流。实测（512×512、4 通道 + 索引、整份 16.98 MiB）：稳态 0 上传；单通道就地编辑 **1** 上传/帧、0 rebuilds；换 buffer **1**/帧 + 1 rebuild；四通道就地编辑 **4**/帧、0 rebuilds（旧契约一律 5/帧）。契约变更：`Geometry::setRevision()` 只表示形状，改字节必须 `buffer->setRevision()`。设计见 `graphics-geometry-revision-2026-10-22.md`，判据 `StreamRevisionTest`（5 条）+ 设备级那条测量用例 | ~~宿主报上传带宽~~ 用户 2026-10-22 直接指定做（框架问题，不等触发） |
 （复盘 §3.1）。真要省带宽时的正确形状（`setChannelRevision` + 懒拷贝）记录在复盘 §4，**不需要派生版本号** | 宿主报上传带宽（仍是**唯一**触发；没有任何宿主报过） |
-| B7 | 管线销毁 vs 在飞提交竞态（已加计数 device idle；2026-10-22 补：windowless 的 `OffscreenSession` 也在破坏路径上计数 idle，未再复现） | 再现时先查被替换/逐出的管线 |
-| B8 | F−N 最旧在飞帧的可读回洞（结构性旋转用例守着） | 真机再现同类画面缺陷 |
 | A3 | SDK 无内容释放入口 | 宿主报内存压力 |
 | A6 | `MaterialImages` 淘汰键是插入序（FIFO）而非“最近 acquire 帧号” | 活纹理数接近 256 **且**看到“用了很久的贴图被重建”——**已可观测**（`ResourcePressure` + `evictions()`，见 §1）；注意 LRU 不是已量化形状的解 |
 | `BlockStorageTest` 偶发 | `TheRegionsAreLaidOutOnceAndDoNotOverlap` 首跑红重跑绿 | 第三次出现 |
@@ -162,6 +160,8 @@ F3（灯光列表复制，按成本/收益关闭）。**本节不再有待办。
 | **首帧叠层空白** | 已查明（首帧画在 Qt 布局瞬态尺寸上）并收口（§11.16db） |
 | **窗口随日志长大** | `MainWindow` 已显式 `resize(800×600)`（§11.16dc） |
 | **B1/B2/B3** 内容表查找 | 已二分并落地（§11.16bz/ca）；剩余证据强度问题按测量结论维持 |
+| **B7** 管线销毁竞态 | **已关闭（2026-10-22）**：破坏路径的计数 device idle 本来就有；本轮补上 headless 的 `OffscreenSession`（唯一 frame source），`releaseContentWorld()` 现在窗口与离屏都 idle。20 次单例 + 2 次全量套件 + 两棵树门禁 **0 VUID**；判据 `OffscreenSessionTest.TheDestructiveWaitIsCountedOnce`。再现时按新问题重开，不重捡本行 |
+| **B8** F−N 可读回洞 | **已关闭（2026-10-22）**：不是生产设计缺陷——`perFrameCopies(n) = n + 1`，当前 3 槽 / 4 slab，最旧在飞帧与当前帧永不同 slab；`BlockStorageTest.TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightDoNot` 钉住轮转。F−N 只是 readback 只看最新帧的观测缺口；加旧帧读回是测试接缝，不是正确性修复，不做 |
 | **T2 / M6** 一设备 N 交换链 | 由 S10b 覆盖并关闭（2026-10-19），形状是“每窗口一个 `createSurfaceTarget`” |
 | **Cube 作 pass 输入** | 两条真实设备用例证明，无需改后端（2026-10-19） |
 | **>3 个方向光** | 新后端走 lights 块（1024 槽），不设限（2026-09-25 对账） |
@@ -207,8 +207,8 @@ F3（灯光列表复制，按成本/收益关闭）。**本节不再有待办。
 | **B6 逐通道 revision** | **保持登记** | 前提成立（`GeometryFacts.cpp` 里 `facts.key.revision = geometry.revision()`，所有通道共用一个数）。但"修法"不是免费的：`Geometry::addBuffer/removeBuffer` 的**契约**写的是"改动不公告，用 geometry 的 `setRevision()` 报"。改成逐 `Buffer::revision()` 会让按该契约公告的宿主**静默拿到旧字节**——这是把"多传"换成"画错"，不是优化。先定契约（谁公告），再谈省带宽；触发仍是宿主报上传带宽（16.98 MiB ≈ +30 ms 已量化）。 | 现代引擎里上传键普遍是"资源 + 资源自己的版本"（wgpu `Buffer` 更新即版本、O3DE RHI 资源有 version），但它们**没有**第二套"父对象公告"的契约——所以这不是抄不抄的问题，是 Vine 两套契约只能留一套 |
 | **A3 无内容释放入口** | **保持登记** | 是 SDK 面的**决定**（`releaseGeometry/Material/Program/Texture` 加不加），不是漏做；账本已量化（12 轮创建+丢弃全清，唯材料槽残留）。触发：宿主报内存压力。 | wgpu/bgfx 都有显式 `destroy`；Filament 用 `Engine::destroy(obj)`。Vine 没有，是因为现在没有"长期增删"的宿主 |
 | **A6 FIFO 淘汰 + 无容量上界** | **保持登记，且要改"修法"** | 已量化的形状（200 张 = 0 缺失，300 张 = 每轮全重建）说穿了是**工作集 > 容量**：在"同序循环访问"下 LRU 与 FIFO 表现**相同**（插入序 = 使用序），所以"改 LRU"不会变好。真解法是容量可配 + 淘汰可见（诊断一次），或按字节上界。触发：同屏活纹理逼近 256。 | 没有引擎用无限缓存：wgpu/Vulkan 应用普遍自行管理池；Filament 的 `Texture` 由调用方持有、引擎不缓存 |
-| **B7 管线销毁竞态** | **保持登记** | 已按设计加计数过的 device idle；此后 20 次单例 + 2 次全量套件 + 两棵树门禁 **0 VUID**。触发：再现。 | — |
-| **B8 F−N 可读回洞** | **保持登记** | 结构性旋转用例守着；把负载压到 ≈1G 像素/帧也造不出重叠（本机框架逐帧节流 ≈1 GPU 帧）。触发：真机再现同类画面缺陷。 | 同族问题在所有"每帧轮转 per-frame UBO"的引擎里都存在，解法都是"槽数 ≥ 在飞帧数 + 1"（Vine 已是 `slots + 1`） |
+| **B7 管线销毁竞态** | **已关闭（2026-10-22）** | 破坏路径的计数 device idle 保留；本轮补上 headless 的 `OffscreenSession`，`releaseContentWorld()` 现在窗口与离屏都 idle。20 次单例 + 2 次全量套件 + 两棵树门禁 **0 VUID**；判据 `OffscreenSessionTest.TheDestructiveWaitIsCountedOnce`。 | — |
+| **B8 F−N 可读回洞** | **已关闭（2026-10-22），不是生产缺陷** | `perFrameCopies(n) = n + 1`，当前 3 槽 / 4 slab，最旧在飞帧与当前帧永不同 slab；结构性旋转用例守着。F−N 只是 readback 只看最新帧的观测缺口，不改变正确性；旧帧读回接缝不做。 | 同族问题在所有“每帧轮转 per-frame UBO”的引擎里都存在，解法都是“槽数 ≥ 在飞帧数 + 1”（Vine 已是 `slots + 1`） |
 | **`BlockStorageTest` 偶发** | **保持登记** | 首跑红重跑绿两次，证据已预置（打印 alignment + regions + strides）。触发：第三次出现。 | — |
 
 ## 6. 下一 session 的第一条命令
