@@ -984,8 +984,10 @@ options.layer_mask = 1u << 1;                       // appfw 里就是 ViewerOpt
   记忆体跨帧存活，只有图发生变化时才作废（见 §2.2 / `Node::announceContentChange`）。
 - **写 0 会空画**：掩码 0（或整棵树的层集合与掩码不相交）⇒ 这条 pass 一条命令都不发出。那是合法声明，
   但内容 pass 的掩码 0 会被引擎**报一次**（帧计划问题，`ContentSkipped`），因为那几乎总是笔误。
-- **判定在可绘制节点上**：`Group` 上的声明管的是它下面的内容，掩码**不会**在某个"没声明层的组"上把子树剪掉 ——
-  否则声明了层的子内容就再也画不出来了（这条是落地时被用例抓到的）。
+- **判定在可绘制节点上**：`Group` 上的声明管的是它下面的内容。遍历可以先跳过一整棵子树，但前提是
+  **子树层并集**与掩码不相交（并集把后代重声明的层也算进来，只会少剪不会误剪）——所以不会出现
+  “没声明层的组把声明了层的子内容剪掉”。这个并集是私有缓存；`setLayers` / `clearLayers` / `addChild` /
+  `removeChild` 会失效，`setVisible` / opacity / 变换 / 内容编辑不会。
 - **同一个选择还给拾取和包围盒用**：`RayIntersection::intersectScene` / `intersectSceneAll` 与 `Scene::boundingBox`
   都收 `layer_mask`（默认 `kAllLayers` = 逐位老行为）——“这条 pass 画什么”“拾取拾什么”“包围盒量什么”共用同一份声明与同一条判定。
 - 看一眼结果：`engine->framePlan()` 里 `PassPlan::layer_mask` 是这条 pass 的选择，`describe()` 只在非默认时打 `layers=0x..`。

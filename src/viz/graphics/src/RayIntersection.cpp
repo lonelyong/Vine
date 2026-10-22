@@ -384,6 +384,9 @@ void intersectNode(const Ray& ray, const Node* node, std::uint32_t inherited_lay
     if (node == nullptr || !node->isVisible()) {
         return;
     }
+    if ((node->subtreeLayerUnion(inherited_layers) & layer_mask) == 0) {
+        return;  // no resolved layer in this subtree can match: skip it whole (see Node::subtreeLayerUnion)
+    }
     const std::uint32_t layers = node->layers().value_or(inherited_layers);
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
         // The content selection, taken at the drawn node like the collection walk (see
@@ -425,6 +428,9 @@ void collectNodeNearest(const Ray& ray, const Node* node, std::uint32_t inherite
     if (node == nullptr || !node->isVisible()) {
         return;
     }
+    if ((node->subtreeLayerUnion(inherited_layers) & layer_mask) == 0) {
+        return;
+    }
     const std::uint32_t layers = node->layers().value_or(inherited_layers);
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
         // The content selection, taken at the drawn node like the collection walk (see
@@ -460,6 +466,9 @@ void collectNodeHits(const Ray& ray, const Node* node, std::uint32_t inherited_l
                      std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
 {
     if (node == nullptr || !node->isVisible()) {
+        return;
+    }
+    if ((node->subtreeLayerUnion(inherited_layers) & layer_mask) == 0) {
         return;
     }
     const std::uint32_t layers = node->layers().value_or(inherited_layers);

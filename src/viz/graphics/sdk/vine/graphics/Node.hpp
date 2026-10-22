@@ -324,6 +324,34 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      */
     [[nodiscard]] std::uint64_t boundsRecomputeCount() const noexcept;
 
+    /** @brief Gets the OR of every resolved layer in this subtree, served from the per-node cache.
+     *
+     * @details
+     * - The value is an OVER-APPROXIMATION of what the subtree draws: it includes every node's resolved layer
+     *   (the nearest declaration wins, `inherited_layers` when this node declares none), so a layer no drawable
+     *   actually uses can be in the union. That can only miss a prune, never make one wrong.
+     * - It is a CACHE, not a second layer field: it is derived, private and read-only. A walk may use it to skip
+     *   a whole subtree only when `(union & mask) == 0`; a positive answer is not a decision to draw anything.
+     * - The cache is valid at the layer epoch it was built at. A stale entry is recomputed here before it is
+     *   returned, so an old union is never used to prune.
+     * - Layers inherit by nearest declaration, so a declaration change can alter descendants as well as
+     *   ancestors; the epoch covers both directions without the caller having to invalidate a path.
+     *
+     * @param inherited_layers Layers this node inherits from its ancestors (kDefaultLayer at the top).
+     * @return OR of the resolved layers of this node and every node below it.
+     */
+    [[nodiscard]] std::uint32_t subtreeLayerUnion(std::uint32_t inherited_layers) const;
+
+    /** @brief Gets how many times this subtree's layer union was RECOMPUTED.
+     *
+     * @details
+     * - The witness of the cache above: a steady walk with the same epoch recomputes nothing. A count that
+     *   keeps rising while no layer/structure edit happened means the cache is being thrown away too eagerly.
+     *
+     * @return Number of recomputes since construction.
+     */
+    [[nodiscard]] std::uint64_t subtreeLayerRecomputeCount() const noexcept;
+
   private:
     String name_;
     bool visible_ = true;
@@ -342,6 +370,14 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     mutable std::uint64_t cached_stamp_{0};      ///< bounds_stamp_ when the box was computed.
     mutable bool          cached_known_{false};  ///< False until a recompute succeeded (or after one failed).
     mutable std::uint64_t bounds_recomputes_{0}; ///< Recomputation witness (see boundsRecomputeCount).
+
+    // The subtree layer union cache (see subtreeLayerUnion). It is a pure function of the layer declarations
+    // and the tree shape, not of geometry bytes, so it has its own epoch rather than sharing bounds_stamp_.
+    mutable std::uint32_t cached_subtree_layers_{0};     ///< OR of resolved layers in this subtree.
+    mutable std::uint32_t cached_inherited_layers_{0};   ///< Inherited value the union was computed with.
+    mutable std::uint64_t cached_layer_epoch_{0};        ///< layerEpoch() when the union was computed.
+    mutable bool          cached_layer_known_{false};    ///< False until the first recompute.
+    mutable std::uint64_t layer_union_recomputes_{0};    ///< Recomputation witness (see subtreeLayerRecomputeCount).
 
     friend class Group;
 };

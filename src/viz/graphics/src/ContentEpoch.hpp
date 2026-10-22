@@ -27,6 +27,34 @@ namespace detail
  */
 inline std::atomic<std::uint64_t> g_content_epoch{ 0 };
 
+/**
+ * @brief A second, narrower epoch: changes that can alter a node's RESOLVED layers.
+ *
+ * @details
+ * - WHY IT IS NOT THE CONTENT EPOCH. The content epoch is bumped by every geometry, material, state and
+ *   transform edit. The subtree layer union only depends on the layer declarations and the tree shape, so
+ *   reusing the content epoch would throw away the pruning cache on edits that cannot change a layer.
+ * - WHAT BUMPS IT: `Node::setLayers` / `clearLayers` when the declaration really changes, `Group::addChild` /
+ *   `removeChild` when the structure really changes, and `Scene::setRoot` / `clear`. It is deliberately not
+ *   bumped by visibility, opacity, draw order, transforms or content edits.
+ * - The clock is RELAXED and process-wide, like the content epoch: nodes cannot reach their Scene, and a
+ *   cached union that misses a bump is simply recomputed on the next walk (a stale cache is never used for a
+ *   prune decision, see Node::subtreeLayerUnion).
+ */
+inline std::atomic<std::uint64_t> g_layer_epoch{ 0 };
+
+/// @brief Announces that a resolved-layer-affecting change happened (see g_layer_epoch).
+inline void announceLayerChange() noexcept
+{
+    g_layer_epoch.fetch_add(1, std::memory_order_relaxed);
+}
+
+/** @brief Gets the current layer epoch (see g_layer_epoch). */
+[[nodiscard]] inline std::uint64_t layerEpoch() noexcept
+{
+    return g_layer_epoch.load(std::memory_order_relaxed);
+}
+
 /// @brief Announces that the scene graph changed (see g_content_epoch).
 inline void announceContentChange() noexcept
 {

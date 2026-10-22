@@ -257,6 +257,9 @@ Aabbd visibleWorldBox(const Node& node, std::uint32_t inherited_layers, std::uin
     if (!node.isVisible()) {
         return Aabbd::empty();
     }
+    if ((node.subtreeLayerUnion(inherited_layers) & layer_mask) == 0) {
+        return Aabbd::empty();
+    }
     const std::uint32_t layers = node.layers().value_or(inherited_layers);
     if (const auto* billboard = dynamic_cast<const AutoTransform*>(&node)) {
         // A billboard's world box depends on the camera that draws it. Its own answer is the conservative
@@ -342,6 +345,12 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
                          BoundsCache& bounds, bool& viewport_used, std::vector<RenderCommand>& out)
 {
     if (node == nullptr || !node->isVisible()) {
+        return;
+    }
+    // The whole subtree can be skipped before its matrix, bounds or visibility below are touched: the union
+    // is an over-approximation of the resolved layers below, so a zero intersection is a proof that no
+    // drawable in it can match (see Node::subtreeLayerUnion). A positive answer only means "look further".
+    if ((node->subtreeLayerUnion(inherited.layers) & layer_mask) == 0) {
         return;
     }
     // A view-dependent node (AutoTransform with auto-rotation or screen-space scaling) supplies its own world
@@ -530,6 +539,7 @@ void Scene::setRoot(intrusive_ptr<Node> root)
         return; // no content change: keep the frame's memo usable
     }
     root_ = std::move(root);
+    detail::announceLayerChange();
     invalidateContent();
 }
 
@@ -547,6 +557,7 @@ void Scene::clear()
         return;
     }
     root_.reset();
+    detail::announceLayerChange();
     invalidateContent();
 }
 

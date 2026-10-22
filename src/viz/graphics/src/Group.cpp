@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "ContentEpoch.hpp"
+
 VN_GRAPHICS_NS_BEGIN
 
 VN_OBJECT_META_IMPL(Group, Node);
@@ -37,6 +39,7 @@ void Group::addChild(intrusive_ptr<Node> child)
     children_.emplace_back(std::move(child));
     // The structure changed: the union this node answers with is stale, and so is every ancestor's
     // (see Node::invalidateBounds).
+    detail::announceLayerChange();
     invalidateBounds();
 }
 
@@ -51,6 +54,7 @@ void Group::removeChild(raw_ptr<Node> child)
         child->parent_ = nullptr;
         children_.erase(it);
         // The structure changed: the union this node answers with is stale (see Node::invalidateBounds).
+        detail::announceLayerChange();
         invalidateBounds();
     }
 }

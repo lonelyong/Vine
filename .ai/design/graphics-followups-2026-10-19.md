@@ -75,7 +75,6 @@
 |---|---|---|---|
 | per-attachment clear 色 | （已落地 2026-10-19，见 §1）—— `ClearPolicy::extra_colors` 让每个附件拿自己的颜色，未写的仍为透明黑 | ~~G-buffer 需要按附件不同清色~~ 已收口 | `graphics-mrt-gbuffer.md` S4 剩余 |
 | L2a / L2b 目标层 | 分层渲染（`layerCount` + pass 的 `first_layer` / `layer_count`）；`DepthView::layer()` 已在位并**拒绝**未支持的分层声明 | 点光立方体阴影 / CSM / VR 双眼 / 实例化被触发 | `graphics-layers.md` §6 |
-| §9.3 子树层并集剪枝 | 掩码今天不剪结构（判定点在可绘制节点） | “按掩码排除大子树”的遍历成本进入剖析前列 | `graphics-layers.md` §9.3 |
 
 ### 3.3 内容、场景图与选择
 
@@ -205,6 +204,7 @@ F3（灯光列表复制，按成本/收益关闭）。**本节不再有待办。
 | **A4 材质无 revision** | **已落地** | 前提成立：`Material` 确实是唯一没有 revision 的内容类型，于是后端只能逐命令建块 + 逐成员比。而材质的每个 shading 值都走 setter，它**能自己数** → 加 `revision()`（先比后 ++），后端比一个整数。 | three.js `Material.version` 就是这条（setter 自增、渲染器按 version 缓存）；Filament 的 material 也按实例/变体身份缓存，没有"每帧读回值"这一招 |
 | **B6 逐通道 revision** | **保持登记** | 前提成立（`GeometryFacts.cpp` 里 `facts.key.revision = geometry.revision()`，所有通道共用一个数）。但"修法"不是免费的：`Geometry::addBuffer/removeBuffer` 的**契约**写的是"改动不公告，用 geometry 的 `setRevision()` 报"。改成逐 `Buffer::revision()` 会让按该契约公告的宿主**静默拿到旧字节**——这是把"多传"换成"画错"，不是优化。先定契约（谁公告），再谈省带宽；触发仍是宿主报上传带宽（16.98 MiB ≈ +30 ms 已量化）。 | 现代引擎里上传键普遍是"资源 + 资源自己的版本"（wgpu `Buffer` 更新即版本、O3DE RHI 资源有 version），但它们**没有**第二套"父对象公告"的契约——所以这不是抄不抄的问题，是 Vine 两套契约只能留一套 |
 | **A3** 无内容释放入口 | **已落地（2026-10-22）**：`RenderDevice::releaseContent(raw_ptr<const Object>)` + `RenderEngine` 转发；释放 GPU 驻留而非对象，可选四种内容，token 可取消，纹理 cache 立即删，行/编译产物走 park；判据 `ContentStoreTest.*Release*`（6 条）、`MaterialImagesTest.Release*`（2 条）、`VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt`、`HeadlessBackendTest.TheEngineForwardsAContentReleaseToItsDevice` | 设计见 `graphics-content-release-2026-10-22.md`；原先“宿主报内存压力”的触发由用户 2026-10-22 直接指定做 |
+| **§9.3 子树层并集剪枝** | **已落地（2026-10-22）**：`Node::subtreeLayerUnion(inherited)` 延迟缓存（layer epoch），收集 / 拾取 / 包围盒三条 walk 在可见性之后先判 `(union & mask) == 0`；判据 3 条 `SceneTest.TheSubtreeLayer*`；`test_graphics` 434 → **437** | 设计见 `graphics-layers.md` §9.3；用户 2026-10-22 直接指定做 |
 | **A6 FIFO 淘汰 + 无容量上界** | **保持登记，且要改"修法"** | 已量化的形状（200 张 = 0 缺失，300 张 = 每轮全重建）说穿了是**工作集 > 容量**：在"同序循环访问"下 LRU 与 FIFO 表现**相同**（插入序 = 使用序），所以"改 LRU"不会变好。真解法是容量可配 + 淘汰可见（诊断一次），或按字节上界。触发：同屏活纹理逼近 256。 | 没有引擎用无限缓存：wgpu/Vulkan 应用普遍自行管理池；Filament 的 `Texture` 由调用方持有、引擎不缓存 |
 | **B7 管线销毁竞态** | **已关闭（2026-10-22）** | 破坏路径的计数 device idle 保留；本轮补上 headless 的 `OffscreenSession`，`releaseContentWorld()` 现在窗口与离屏都 idle。20 次单例 + 2 次全量套件 + 两棵树门禁 **0 VUID**；判据 `OffscreenSessionTest.TheDestructiveWaitIsCountedOnce`。 | — |
 | **B8 F−N 可读回洞** | **已关闭（2026-10-22），不是生产缺陷** | `perFrameCopies(n) = n + 1`，当前 3 槽 / 4 slab，最旧在飞帧与当前帧永不同 slab；结构性旋转用例守着。F−N 只是 readback 只看最新帧的观测缺口，不改变正确性；旧帧读回接缝不做。 | 同族问题在所有“每帧轮转 per-frame UBO”的引擎里都存在，解法都是“槽数 ≥ 在飞帧数 + 1”（Vine 已是 `slots + 1`） |

@@ -108,6 +108,33 @@ std::uint64_t Node::boundsRecomputeCount() const noexcept
     return bounds_recomputes_;
 }
 
+std::uint32_t Node::subtreeLayerUnion(std::uint32_t inherited_layers) const
+{
+    const std::uint64_t epoch = detail::layerEpoch();
+    if (cached_layer_known_ && cached_layer_epoch_ == epoch && cached_inherited_layers_ == inherited_layers) {
+        return cached_subtree_layers_;
+    }
+
+    ++layer_union_recomputes_;
+    const std::uint32_t layers = layers_.value_or(inherited_layers);
+    std::uint32_t       union_layers = layers;
+    if (const auto* group = dynamic_cast<const Group*>(this)) {
+        for (const auto& child : group->children()) {
+            union_layers |= child->subtreeLayerUnion(layers);
+        }
+    }
+    cached_subtree_layers_   = union_layers;
+    cached_inherited_layers_ = inherited_layers;
+    cached_layer_epoch_      = epoch;
+    cached_layer_known_      = true;
+    return union_layers;
+}
+
+std::uint64_t Node::subtreeLayerRecomputeCount() const noexcept
+{
+    return layer_union_recomputes_;
+}
+
 Node::Node() = default;
 
 Node::~Node() = default;
@@ -140,13 +167,21 @@ std::optional<std::uint32_t> Node::layers() const
 
 void Node::setLayers(std::uint32_t layers)
 {
+    if (layers_.has_value() && *layers_ == layers) {
+        return;  // same declaration: resolved layers below are unchanged
+    }
     announceContentChange();
+    detail::announceLayerChange();
     layers_ = layers;
 }
 
 void Node::clearLayers()
 {
+    if (!layers_.has_value()) {
+        return;  // already inheriting: nothing to withdraw
+    }
     announceContentChange();
+    detail::announceLayerChange();
     layers_.reset();
 }
 

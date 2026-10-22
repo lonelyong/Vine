@@ -355,6 +355,91 @@ TEST(SceneTest, TheSceneBoxFollowsTheLayerMask)
     EXPECT_TRUE(scene.boundingBox(0u).isEmpty());
 }
 
+TEST(SceneTest, TheSubtreeLayerUnionPrunesAWholeExcludedSubtree)
+{
+    // The union is what lets a walk skip a container whose entire subtree is outside the mask. A cached
+    // union must be used (not recomputed) for the excluded group: that is the whole point of the cache.
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  near_node = makeTriangleNode(Vec3d(0.0, 0.0, 0.0), nullptr, u8"near");
+
+    auto far_group = intrusive_ptr<Group>(new Group());
+    far_group->setLayers(1u << 2);
+    auto far_node = makeTriangleNode(Vec3d(30.0, 0.0, 0.0), nullptr, u8"far");
+    far_group->addChild(far_node);
+
+    root->addChild(near_node);
+    root->addChild(far_group);
+
+    ASSERT_TRUE(scene.boundingBox().isValid()) << "the warm-up walk builds the cache";
+    const std::uint64_t group_recomputes = far_group->subtreeLayerRecomputeCount();
+    ASSERT_GT(group_recomputes, 0U) << "the far group took part in the warm-up walk";
+
+    const Aabbd ordinary = scene.boundingBox(kDefaultLayer);
+    ASSERT_TRUE(ordinary.isValid());
+    EXPECT_NEAR(ordinary.max().x, 1.0, 1e-9) << "only the near triangle is measured";
+    EXPECT_EQ(far_group->subtreeLayerRecomputeCount(), group_recomputes)
+        << "the cached union proved the whole far subtree is out, before visiting its children";
+}
+
+TEST(SceneTest, TheSubtreeLayerCacheInvalidatesOnDeclarationsAndStructure)
+{
+    Scene scene;
+    auto  root  = setIdentityRoot(scene);
+    auto  group = intrusive_ptr<Group>(new Group());
+    group->addChild(geometryOf(*makeUnitTriangle()));
+    root->addChild(group);
+
+    ASSERT_TRUE(scene.boundingBox().isValid());
+    const std::uint64_t warm      = group->subtreeLayerRecomputeCount();
+    const std::uint64_t root_warm = root->subtreeLayerRecomputeCount();
+    ASSERT_GT(warm, 0U);
+
+    // A declaration changes not only this node's resolved layer: the child below inherits the new one.
+    group->setLayers(1u << 3);
+    ASSERT_TRUE(scene.boundingBox(1u << 3).isValid());
+    EXPECT_GT(group->subtreeLayerRecomputeCount(), warm)
+        << "the cached union was rebuilt for the declaration and its inherited descendants";
+    EXPECT_GT(root->subtreeLayerRecomputeCount(), root_warm)
+        << "the ancestor's union also has to see the descendant's new resolved layer";
+    const std::uint64_t rebuilt = group->subtreeLayerRecomputeCount();
+
+    (void)scene.boundingBox(1u << 3);
+    EXPECT_EQ(group->subtreeLayerRecomputeCount(), rebuilt) << "the next walk reuses the rebuilt cache";
+
+    // Clearing the declaration changes the inherited base again.
+    group->clearLayers();
+    EXPECT_TRUE(scene.boundingBox(kDefaultLayer).isValid());
+    EXPECT_GT(group->subtreeLayerRecomputeCount(), rebuilt)
+        << "clearLayers went back to the inherited layer, so the union is stale";
+
+    // A structure change is also a layer change: the new child's inherited layer joins the union.
+    const std::uint64_t cleared = group->subtreeLayerRecomputeCount();
+    group->addChild(geometryOf(*makeUnitTriangle()));
+    (void)scene.boundingBox(kDefaultLayer);
+    EXPECT_GT(group->subtreeLayerRecomputeCount(), cleared)
+        << "a child added below the declaration can change the union";
+}
+
+TEST(SceneTest, TheSubtreeLayerCacheIgnoresNonLayerMutations)
+{
+    Scene scene;
+    auto  root  = setIdentityRoot(scene);
+    auto  group = intrusive_ptr<Group>(new Group());
+    group->addChild(geometryOf(*makeUnitTriangle()));
+    root->addChild(group);
+
+    ASSERT_TRUE(scene.boundingBox().isValid());
+    const std::uint64_t warm = group->subtreeLayerRecomputeCount();
+    ASSERT_GT(warm, 0U);
+
+    // Opacity and transforms change the picture, not the resolved layers: the union cache must survive.
+    group->setOpacity(0.5F);
+    (void)scene.boundingBox();
+    EXPECT_EQ(group->subtreeLayerRecomputeCount(), warm)
+        << "a non-layer edit must not throw the subtree union away";
+}
+
 // ============ RenderCommand collection / culling ============
 
 /**

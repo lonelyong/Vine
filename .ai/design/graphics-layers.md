@@ -47,10 +47,11 @@
 - **未声明 = 默认层（bit 0），不是"所有层"**：选择性掩码的用处是**排除**没声明的内容（阴影只画 caster），
   而"未声明 = 全 1"会让每个不画的物体都得先声明一次。这条跟 three.js / Unity / Qt3D 的默认层走，
   Ogre-Next（两边都是 0xFFFFFFFF）**刻意不跟**。`kDefaultLayer` 与 `kAllLayers` 两个常量都在 `Node.hpp`（一个 owner）。
-- **掩码测试落在可绘制节点上（容器是结构）**：判定写在遍历里"发一条命令"的地方，而不是节点入口 —— 在容器上剪枝
-  会让“声明了层的子内容”在“没声明层的组”下**不可达**（第一版就是这样，被 §5 的 C1 抓到）。行业口径大体一致
-  （Unity 的层在 GameObject 上，Qt3D 的 `QLayer` 也挂在对象上）；**OSG 是例外**——`NodeMask` 在每个节点判定、
-  不匹配即剪整棵子树，代价正是“后代不可达”，本片刻意不跟（见 §9.3）。
+- **语义判定落在可绘制节点上（容器是结构）**：判定写在遍历里"发一条命令"的地方，而不是容器自己的层上 ——
+  在容器自身层上剪枝会让“声明了层的子内容”在“没声明层的组”下**不可达**（第一版就是这样，被 §5 的 C1 抓到）。
+  结构上可以跳过一整棵子树，但只在**子树层并集与掩码不相交**时（§9.3）；并集包含后代重声明，所以不会复现
+  那个不可达问题。行业口径大体一致（Unity 的层在 GameObject 上，Qt3D 的 `QLayer` 也挂在对象上）；
+  **OSG 是例外**——`NodeMask` 在每个节点自身判定、不匹配即剪整棵子树，代价正是“后代不可达”，本片不跟。
 - **为什么只两级**：Ogre-Next 是三级（对象 flags / viewport mask / compositor pass mask）。我们没有 viewport 概念，
   "一次绘制声明"就是 pass ⇒ **pass 级掩码是那条 viewport 级掩码的等价物**，不需要再造一层。
 
@@ -262,10 +263,10 @@ PassDesc::first_layer { 0 } + PassDesc::layer_count { 1 }
 | 某条 pass 只画一部分对象 | 把对象拆到两个 `Scene`，或整棵子树 `setVisible(false)` 再恢复 | 拆场景 = 内容重复与同步；`setVisible` = 两处互相影响（多视角下必错） |
 | 立方体面 / 多级阴影 | 多个 2D 目标 + 多次 pass + 自己合成 | N 份显存与 N 次收集；点光源阴影在今天的阴影实现里根本没有入口 |
 
-## 9. 后续消费者：拾取与包围盒（**§9.1 / §9.2 已落地 2026-10-13；§9.3 登记**）
+## 9. 后续消费者：拾取与包围盒（**§9.1 / §9.2 已落地 2026-10-13；§9.3 已落地 2026-10-22**）
 
 层是场景图上的**选择字段**，收集只是它的第一个消费者。§9.1 / §9.2 已按下面的形状落地（2026-10-13，各配一条用例）；
-§9.3 仍等触发。两条共同前提：
+§9.3 已于 2026-10-22 落地。两条共同前提：
 
 - **谓词只有一处**：`(解析层 & 掩码) == 0` 的折叠与判定，与收集**同一行代码、同一判定点**（§2.1：可绘制节点，
   容器是结构——祖先的声明不能把后代变成不可达）；收集 / 拾取 / 包围盒三条 walk 共享一个内部折叠助手，
@@ -304,7 +305,7 @@ PassDesc::first_layer { 0 } + PassDesc::layer_count { 1 }
   （默认 0..31 / 默认层 0..21 / caster 层 30..31 / 空掩码空盒）；全量 `ctest` 24/24。消费方（阴影拟合 /
   取景传掩码）按落点，等真实负载再接。
 
-### 9.3 相关的"整段跳过"（登记：形状）
+### 9.3 子树层并集剪枝（已落地 2026-10-22）
 
 掩码现在**不剪结构**（判定点在可绘制节点上，§2.1）。若将来"按掩码排除大子树"的遍历成本进入剖析前列，
 加的是**子树层并集的保守判定**：每个节点带私有的 `cached_subtree_layers_`（子树内所有节点**解析层**的并集；
@@ -330,3 +331,10 @@ PassDesc::first_layer { 0 } + PassDesc::layer_count { 1 }
 命名说明：因为它现在是真缓存（懒算 + epoch），`cached_subtree_layers_` / `subtree_layers_epoch_` 比
 `subtree_layer_union` 更准确，和 `Node` 的 `cached_bounds_` / `cached_stamp_` 同形；它不是第二个 layer，
 也不是可写的选择字段，私有、派生。
+
+**已落地（2026-10-22）**：`Node::subtreeLayerUnion(inherited_layers)` + `subtreeLayerRecomputeCount()`；
+`detail::layerEpoch` 由 `Node::setLayers` / `clearLayers`（值真变）与 `Group::addChild` / `removeChild`
+（结构真变）、`Scene::setRoot` / `clear` 推进；收集、包围盒、拾取三条 walk 在可见性之后先判
+`(union & mask) == 0`。判据：`SceneTest.TheSubtreeLayerUnionPrunesAWholeExcludedSubtree` /
+`TheSubtreeLayerCacheInvalidatesOnDeclarationsAndStructure` / `TheSubtreeLayerCacheIgnoresNonLayerMutations`；
+`test_graphics` 434 → **437**。
