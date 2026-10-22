@@ -448,14 +448,12 @@ struct VsgBackend::Data
     std::array<vn::graphics::ReportOnce, kReadbackReportCount> readback_reports{};  ///< The unresolved-target episodes.
     vn::graphics::ReportOnce occupied_report{};       ///< The "a window already served was asked again" episode.
     vn::graphics::ReportOnce foreign_target_report{};  ///< The "a frame named someone else's target" episode.
-    /// The "more textures are sampled at once than the image cache keeps" episode, and the number of evictions the
-    /// last frame accounted for (see sweepAbandonedContent).
-    vn::graphics::ReportOnce eviction_report{};
-    std::size_t              evicted_watermark{0};
     /// What the frame's sweeps have let go (see api/ContentSweep); zero while the host holds everything.
     std::size_t released_objects{0};
     std::size_t released_textures{0};
     std::size_t released_streams{0};
+    /// Reused by the sweep: the abandoned material identities whose arena slots the storage returns.
+    std::vector<const void*> abandoned_materials;
     std::vector<core::TargetFacts>            facts;          ///< This frame's target table (borrowed rows).
     std::vector<const vn::graphics::Light*> light_scratch;  ///< Reused by announceLights (no per-call allocation).
     std::vector<InputImages>                  input_scratch;  ///< Reused per content pass (see recordContent).
@@ -1055,6 +1053,9 @@ void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession*
     // frame's graph, and the graph is the session's - which is the call that submits (and, for a window, presents),
     // and the one whose false answer means the writes never happened.
     (void)d->executor.applyTargetPlans(*d->frame, d->facts, timeline, retirement);
+    // THE MATERIAL ARENA IS SIZED BEFORE ANYTHING IS RECORDED (see the declaration): every live row keeps a
+    // slot until the host releases it, so the frame that would have run out is given a bigger one first.
+    growMaterialArenaIfNeeded();
     std::span<const PassContent> packets{};
     if (d->assembly != nullptr && d->images != nullptr && (window_target != nullptr || window == nullptr))
     {
@@ -1542,7 +1543,13 @@ bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
     }
     if (const auto* material = vn::obj_cast<const vn::graphics::Material>(content))
     {
-        return d->store->releaseMaterial(material, d->clock.timeline(), d->retirement);
+        const bool released = d->store->releaseMaterial(material, d->clock.timeline(), d->retirement);
+        if (released && d->storage != nullptr)
+        {
+            // The row's slot goes with it: a released material must not keep memory the host asked to free.
+            (void)d->storage->releaseMaterial(material);
+        }
+        return released;
     }
     if (const auto* texture = vn::obj_cast<const vn::graphics::Texture>(content))
     {
@@ -1757,35 +1764,24 @@ void VsgBackend::sweepAbandonedContent()
         // No content world on this session (see initialize): there is nothing retained to let go of either.
         return;
     }
-    const SweepOutcome outcome =
-        releaseAbandonedContent(*d->store, *d->images, d->clock.timeline(), d->retirement);
+    const SweepOutcome outcome = releaseAbandonedContent(*d->store, *d->images, d->clock.timeline(), d->retirement,
+                                                          d->abandoned_materials);
     d->released_objects += outcome.objects;
     d->released_textures += outcome.textures;
 
-    // RUNNING OUT OF ROOM IS NOT THE SAME AS "NOBODY HOLDS IT" (see MaterialImages::evictions): the sweep above
-    // answers the second, and this answers the first. A texture the cache evicted by its entry bound rebuilds and
-    // re-uploads the next time it is sampled, so a working set larger than the cache re-uploads itself every frame -
-    // a cost nothing in the picture shows. One sentence per episode (a stretch of frames that evict), because the
-    // condition is the news, not each frame that repeats it.
-    const std::size_t evicted = d->images->evictions();
-    if (evicted != d->evicted_watermark)
+    // THE MATERIAL SLOT FOLLOWS THE ROW: a material nobody holds any more cannot be drawn again, so the arena's
+    // slot is nobody's to keep (releaseMaterial is a key lookup, never a dereference - the object may be gone).
+    if (d->storage != nullptr)
     {
-        d->evicted_watermark = evicted;
-        if (d->eviction_report.shouldReport())
+        for (const void* material : d->abandoned_materials)
         {
-            d->diagnostics.report(
-                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ResourcePressure,
-                formatDiagnostic(u8"%zu texture entrie(s) were dropped by the image cache's %zu-entry bound: more "
-                                 u8"textures are sampled at once than it keeps, so each of them rebuilds and "
-                                 u8"re-uploads whenever it comes back. The picture is unaffected; the uploads "
-                                 u8"repeat every frame",
-                                 evicted, MaterialImages::kMaxEntries));
+            (void)d->storage->releaseMaterial(material);
         }
     }
-    else
-    {
-        d->eviction_report.rearm();  // the burst is over: the next one gets its own sentence
-    }
+
+    // THE IMAGE CACHE HAS NO CAPACITY TO RUN OUT OF (see MaterialImages): an entry leaves when its texture is
+    // released (the sweep above) or named explicitly, never to make room. So there is no "over the bound" sentence
+    // here - the host decides what to release, and count()/bytes() are what it reads to decide.
 
     // The shared streams nothing names any more go in the same step (see api/StreamUploads): what a frame
     // binds is stamped with it, and this is the frame's last word on streams. It runs beside the sweep above
@@ -1795,6 +1791,41 @@ void VsgBackend::sweepAbandonedContent()
     {
         d->released_streams += d->assembly->releaseUnusedStreams();
     }
+}
+
+void VsgBackend::growMaterialArenaIfNeeded()
+{
+    if (d->storage == nullptr || d->store == nullptr)
+    {
+        return; // no content world on this session: nothing notes materials
+    }
+
+    const BlockStorage::Layout before  = d->storage->layout();
+    const BlockStorage::Growth pending = d->storage->growthNeeded();
+    // Every material row the store answers for is a slot the arena keeps, plus whatever a refused note asked
+    // for (the fallback path). One number, from the layer that knows the live set.
+    const std::uint32_t live = static_cast<std::uint32_t>(d->store->materialCount());
+    const std::uint32_t need = std::max(live, pending.materials);
+    if (need <= before.materials.capacity)
+    {
+        return;
+    }
+
+    BlockStorage::Growth request{};
+    request.materials = need;
+    const BlockStorage::Layout wanted = BlockStorage::grownLayout(before, request);
+    std::shared_ptr<BlockStorage> replacement = BlockStorage::create(d->device, wanted);
+    if (replacement == nullptr || !adoptBlockStorage(std::move(replacement)))
+    {
+        return; // the old storage keeps serving and counting; a refusal is reported by the draw that hits it
+    }
+
+    // The same shape of sentence as the block budgets' growth: Info, because the request was served by a bigger
+    // buffer rather than by dropping content.
+    reportDiagnostic(vn::graphics::DiagnosticSeverity::Info, vn::graphics::DiagnosticCategory::ContentSkipped,
+                     formatDiagnostic(u8"the live material set outgrew the arena, so the block storage was replaced "
+                                      u8"(a new buffer; the old one is parked): materials %u -> %u",
+                                      before.materials.capacity, wanted.materials.capacity));
 }
 
 void VsgBackend::growBlockStorageIfNeeded()

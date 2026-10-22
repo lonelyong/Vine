@@ -436,6 +436,15 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      */
     void growBlockStorageIfNeeded();
 
+    /** @brief Replaces the block storage when the live material set is larger than the arena it holds.
+     *
+     * Runs BEFORE the frame's content is recorded (see commitFrameThrough): the requirement is the number of
+     * material rows the store answers for, every one of which keeps a slot until the host releases it. Growing
+     * here means the frame never loses a draw to a full arena, and the replacement moves no recorded bytes - the
+     * same rule growBlockStorageIfNeeded follows, one step later in the frame.
+     */
+    void growMaterialArenaIfNeeded();
+
     /** @brief Lets the drive use @p storage from now on, parking the one it replaces (the growth step).
      *
      * @param storage The replacement (null leaves the current storage in place and answers false).

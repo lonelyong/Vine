@@ -53,11 +53,10 @@ enum class DiagnosticCategory : std::uint8_t
     SubmissionFailed,      ///< A frame's submission could not be made: the frame was not drawn, and the
                            ///< backend will repair what it recorded before the next one (a device-lost
                            ///< keeps failing, so a host seeing this repeatedly has lost the device).
-    ResourcePressure,      ///< The frame is over a bound the engine cannot lift on its own, so work is being
-                           ///< repeated rather than dropped: a texture evicted by an internal cache's entry
-                           ///< bound is rebuilt and re-uploaded whenever it comes back. The picture is RIGHT,
-                           ///< which is why this is not an error - the cost is what is reported, and the host
-                           ///< is the one that can decide to hold fewer things at once.
+    ResourcePressure,      ///< The frame hit a capacity the backend cannot lift THIS frame (currently a full
+                           ///< material arena): the affected draws are skipped and the storage grows before the
+                           ///< next frame. The picture is right except for those skipped draws, which is why this
+                           ///< is a warning rather than an error - and the host can release content to avoid it.
 
     Count, ///< Number of categories (not a category itself; keeps count arrays sized).
 };

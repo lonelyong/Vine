@@ -173,6 +173,7 @@ TEST(ContentSweepTest, NothingIsLetGoWhileTheHostStillHoldsEverything)
     const std::shared_ptr<MaterialImages>    cache = MaterialImages::create();
     FrameTimeline                           timeline;
     RetirementQueue                         retirement(1U);
+    std::vector<const void*>                released_materials;
     ASSERT_NE(cache, nullptr);
 
     const auto geometry = quad();
@@ -196,7 +197,7 @@ TEST(ContentSweepTest, NothingIsLetGoWhileTheHostStillHoldsEverything)
     ASSERT_EQ(reason, TextureReject::Ok);
 
     // The host holds every one of them: the sweep has nothing to do, and nothing to park.
-    const SweepOutcome outcome = releaseAbandonedContent(store, *cache, timeline, retirement);
+    const SweepOutcome outcome = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
     EXPECT_EQ(outcome.objects, 0U) << "a geometry, a program and a material the host still holds";
     EXPECT_EQ(outcome.textures, 0U) << "a texture the host still holds (through its material)";
     EXPECT_EQ(store.geometryEntries(), 1U);
@@ -212,6 +213,7 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
     const std::shared_ptr<MaterialImages>  cache = MaterialImages::create();
     FrameTimeline                         timeline;
     RetirementQueue                       retirement(1U);
+    std::vector<const void*>              released_materials;
     ASSERT_NE(cache, nullptr);
 
     auto geometry = quad();
@@ -242,8 +244,9 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
     program.reset();
     texture.reset();
 
-    const SweepOutcome outcome = releaseAbandonedContent(store, *cache, timeline, retirement);
+    const SweepOutcome outcome = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
     EXPECT_EQ(outcome.objects, 3U) << "the geometry, the program and the material the host dropped";
+    ASSERT_EQ(released_materials.size(), 1U) << "the abandoned material identity is handed back for its slot";
     EXPECT_EQ(outcome.textures, 1U) << "the texture nothing sampled any more";
     EXPECT_FALSE(cache->has(texture_address)) << "the image cache has no entry left to look up";
 
@@ -267,6 +270,7 @@ TEST(ContentSweepTest, AnObjectIsLetGoOnceAndASecondSweepCountsNothing)
     const std::shared_ptr<MaterialImages>  cache = MaterialImages::create();
     FrameTimeline                         timeline;
     RetirementQueue                       retirement(1U);
+    std::vector<const void*>              released_materials;
     ASSERT_NE(cache, nullptr);
 
     auto geometry = quad();
@@ -282,12 +286,12 @@ TEST(ContentSweepTest, AnObjectIsLetGoOnceAndASecondSweepCountsNothing)
     geometry.reset();
     program.reset();
 
-    const SweepOutcome first = releaseAbandonedContent(store, *cache, timeline, retirement);
+    const SweepOutcome first = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
     EXPECT_EQ(first.objects, 2U);
 
     // The live set no longer holds them, so the second sweep has nothing to forget: a sweep that counted the
     // same object every frame would make "nothing is retained" unobservable.
-    const SweepOutcome second = releaseAbandonedContent(store, *cache, timeline, retirement);
+    const SweepOutcome second = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
     EXPECT_EQ(second.objects, 0U);
     EXPECT_EQ(second.textures, 0U);
 }
@@ -298,6 +302,7 @@ TEST(ContentSweepTest, TheDefaultMaterialIsNeverAbandoned)
     const std::shared_ptr<MaterialImages>  cache = MaterialImages::create();
     FrameTimeline                         timeline;
     RetirementQueue                       retirement(1U);
+    std::vector<const void*>              released_materials;
     ASSERT_NE(cache, nullptr);
 
     auto geometry = quad();
@@ -315,7 +320,8 @@ TEST(ContentSweepTest, TheDefaultMaterialIsNeverAbandoned)
     geometry.reset();
     program.reset();
 
-    const SweepOutcome outcome = releaseAbandonedContent(store, *cache, timeline, retirement);
+    const SweepOutcome outcome = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
     EXPECT_EQ(outcome.objects, 2U) << "the geometry and the program, never the default material";
+    EXPECT_TRUE(released_materials.empty()) << "the default material is not handed back: it has no slot";
     EXPECT_EQ(store.materialEntries(), 1U) << "the default entry stays: it is not an object anyone holds";
 }

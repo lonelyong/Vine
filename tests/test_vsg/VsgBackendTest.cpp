@@ -3352,18 +3352,17 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
 
 TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
 {
-    // A4'S FLOOR, AND THE MATERIAL ARENA'S BOUNDARY. The registry (§6) keeps A4 gated on "material count
+    // A4'S FLOOR, AND THE MATERIAL ARENA'S GROWTH. The registry (§6) keeps A4 gated on "material count
     // large enough that the per-frame O(commands) block compares enter the profile top". Before that
     // report exists, this recipe measures what a command costs when its DRAWING lands nothing: three
     // IDENTICAL vertices are a zero-area triangle, so no fragment ever runs and what is left is the
-    // per-command floor - the draw block, the material note, the bind, the draw call. The material ARENA
-    // holds 256 slots (BlockStorage's default layout), so the same recipe walks the bound: while the live
-    // set fits, every note is a HIT and nothing is written; past it, the FIFO cascade means NO note
-    // hits at all - every command allocates-and-evicts every frame, which is exactly the "per-frame
-    // O(commands) material work" A4 worries about, quantised.
+    // per-command floor - the draw block, the material note, the bind, the draw call. The material arena
+    // STARTS at 256 slots (BlockStorage's default layout); when a frame names more live materials than
+    // that, the storage is replaced with a larger one BEFORE recording (see VsgBackend::growMaterialArenaIfNeeded),
+    // so every regime past the start is all hits, with no refusal and no eviction.
     //
     // The numbers are PRINTED for the design log; what is ASSERTED is machine-independent: nothing
-    // compiles or uploads in any regime, the arena's counters say exactly what the bound implies, and
+    // compiles or uploads in any regime, the arena's counters say exactly what the growth implies, and
     // the window stays the clear colour - the drawings really did land nothing.
     if (!deviceCaseAvailable())
     {
@@ -3472,13 +3471,13 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     {
         std::uint64_t writes{0};
         std::uint64_t hits{0};
-        std::uint64_t evictions{0};
+        std::uint64_t refusals{0};
         std::size_t   live{0};
     };
     const auto read_material = [&]() {
         const BlockStorage* storage = BackendContentAccess::storage(*backend);
         return MaterialCounters{ storage->materialWrites(), storage->materialHits(),
-                                 storage->materialEvictions(), storage->liveMaterials() };
+                                 storage->materialRefusals(), storage->liveMaterials() };
     };
 
     struct RegimeCost
@@ -3486,7 +3485,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
         EditCostDelta content;
         std::int64_t  writes{0};
         std::int64_t  hits{0};
-        std::int64_t  evictions{0};
+        std::int64_t  refusals{0};
         std::size_t   live{0};
         double        frame_us{0.0};
     };
@@ -3508,20 +3507,20 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
         const auto             step   = [](std::uint64_t from, std::uint64_t to) {
             return static_cast<std::int64_t>(to) - static_cast<std::int64_t>(from);
         };
-        const std::int64_t writes = step(material_before.writes, material_after.writes);
-        const std::int64_t hits   = step(material_before.hits, material_after.hits);
-        const std::int64_t evictions = step(material_before.evictions, material_after.evictions);
+        const std::int64_t writes   = step(material_before.writes, material_after.writes);
+        const std::int64_t hits     = step(material_before.hits, material_after.hits);
+        const std::int64_t refusals = step(material_before.refusals, material_after.refusals);
         std::printf("[a4] %-26s frame %7.1f us/f"
-                    " | uploads %+3lld created %+3lld | write/f %7.1f hit/f %7.1f evict/f %7.1f live %zu\n",
+                    " | uploads %+3lld created %+3lld | write/f %7.1f hit/f %7.1f refuse/f %7.1f live %zu\n",
                     label, frame_us / kFramesPerRegime,
                     static_cast<long long>(change.uploads), static_cast<long long>(change.created),
                     static_cast<double>(writes) / kFramesPerRegime,
                     static_cast<double>(hits) / kFramesPerRegime,
-                    static_cast<double>(evictions) / kFramesPerRegime, material_after.live);
+                    static_cast<double>(refusals) / kFramesPerRegime, material_after.live);
         return RegimeCost{ change,
                            writes,
                            hits,
-                           evictions,
+                           refusals,
                            material_after.live,
                            frame_us / kFramesPerRegime };
     };
@@ -3537,7 +3536,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     EXPECT_EQ(one.content.created, 0);
     EXPECT_EQ(one.writes, 0) << "one unchanged material is one hit per frame";
     EXPECT_EQ(one.hits, kFramesPerRegime);
-    EXPECT_EQ(one.evictions, 0);
+    EXPECT_EQ(one.refusals, 0);
     EXPECT_EQ(one.live, 1U);
 
     // 2. MANY commands, ONE material: everything the delta over regime 1 shows is the per-command floor.
@@ -3547,43 +3546,40 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     EXPECT_EQ(many.content.created, 0) << "2000 commands of one program/layout/geometry compile nothing";
     EXPECT_EQ(many.writes, 0);
     EXPECT_EQ(many.hits, static_cast<std::int64_t>(kFramesPerRegime) * 2000);
-    EXPECT_EQ(many.evictions, 0);
+    EXPECT_EQ(many.refusals, 0);
     EXPECT_EQ(many.live, 1U)
         << "the first 2000-command frame grew the block storage (the draw budget), arena included: "
-           "this arena has noted one material - and nothing but eviction ever removes a slot";
+           "this arena has noted one material, and a slot leaves only when the host releases it";
     std::printf("[a4] per-command floor ~= %.2f us/frame (2000-command frame minus the one-command frame)\n",
                 (many.frame_us - one.frame_us) / 1999.0);
 
-    // 3. THE BOUND, FITTING SIDE: 200 distinct materials are still served from the 256 slots - no write,
-    //    no eviction, every note a hit.
+    // 3. 200 distinct materials: still served from the starting 256 slots - no write, no refusal, every note
+    //    a hit.
     commands = commands_for(material_set(200U), 200U);
     const RegimeCost fitting = measure("200 commands, 200 materials");
     EXPECT_EQ(fitting.writes, 0) << "the live set fits the arena: nothing is rewritten";
     EXPECT_EQ(fitting.hits, static_cast<std::int64_t>(kFramesPerRegime) * 200);
-    EXPECT_EQ(fitting.evictions, 0);
-    EXPECT_EQ(fitting.live, 201U)
-        << "200 live materials read as 201 slots: the PREVIOUS regime's material is still resident, "
-           "because the storage has no release path at all - a slot leaves by eviction alone";
+    EXPECT_EQ(fitting.refusals, 0);
+    EXPECT_EQ(fitting.live, 200U)
+        << "the previous regime's material was abandoned and its slot returned by the sweep: the live set is "
+           "exactly this regime's 200, not 201";
 
-    // 4. THE BOUND, MISSING SIDE BY 44: 300 distinct materials against 256 slots - and the FIFO cascade
-    //    means NOT ONE note hits: every command of every frame allocates and evicts.
+    // 4. 300 distinct materials: the arena GROWS before recording instead of churning. After the warm-up the
+    //    replacement has happened, so the measured regime is all hits.
     commands = commands_for(material_set(300U), 300U);
     const RegimeCost tight = measure("300 commands, 300 materials");
-    EXPECT_EQ(tight.writes, static_cast<std::int64_t>(kFramesPerRegime) * 300)
-        << "past the bound the scene can NEVER have a steady frame";
-    EXPECT_EQ(tight.hits, 0) << "the cascade evicts a material before its own note comes round";
-    EXPECT_EQ(tight.evictions, static_cast<std::int64_t>(kFramesPerRegime) * 300)
-        << "every allocation evicts: the arena churns its whole live set per frame";
-    EXPECT_EQ(tight.live, 256U);
+    EXPECT_EQ(tight.writes, 0) << "the replacement happened during the warm-up: the measured regime is steady";
+    EXPECT_EQ(tight.hits, static_cast<std::int64_t>(kFramesPerRegime) * 300);
+    EXPECT_EQ(tight.refusals, 0) << "the live set grew the arena before anything was recorded";
+    EXPECT_EQ(tight.live, 300U) << "the replacement starts empty and holds exactly this frame's materials";
 
-    // 5. THE EXTREME: 2000 distinct materials - the whole per-frame cost writes every block, and the
-    //    counters are the same shape, 2000 times over.
+    // 5. THE EXTREME: 2000 distinct materials - one more growth, then the same steady shape.
     commands = commands_for(material_set(2000U), 2000U);
     const RegimeCost churn = measure("2000 commands, 2000 materials");
-    EXPECT_EQ(churn.writes, static_cast<std::int64_t>(kFramesPerRegime) * 2000);
-    EXPECT_EQ(churn.hits, 0);
-    EXPECT_EQ(churn.evictions, static_cast<std::int64_t>(kFramesPerRegime) * 2000);
-    EXPECT_EQ(churn.live, 256U);
+    EXPECT_EQ(churn.writes, 0);
+    EXPECT_EQ(churn.hits, static_cast<std::int64_t>(kFramesPerRegime) * 2000);
+    EXPECT_EQ(churn.refusals, 0);
+    EXPECT_EQ(churn.live, 2000U);
 
     // The drawings landed nothing: whatever the regimes did to the arena, the window is still the clear.
     drive();
@@ -3596,16 +3592,161 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     EXPECT_TRUE(host.alive());
 }
 
-TEST(VsgBackendTest, TheTextureCacheDropsTheOldestInsertionAndRebuildsWhatItDropped)
+TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
 {
-    // A6'S SEMANTICS, PINNED WITHOUT A COUNTER. The cache's own vocabulary (has/count) is enough to say
-    // what the registry (§6) registers: eviction is by INSERTION order rather than by use, and past the
-    // 256-entry bound the cache stops caching - in a cyclic pass over L > 256 textures EVERY acquire of
-    // the NEXT pass misses (each texture is evicted before its own turn comes round again), so the cache
-    // uploads all L textures per pass. A pass over 200 textures misses NOTHING.
+    // THE INVARIANT A6 IS ABOUT, SEEN IN PIXELS. 300 distinct materials are more than the arena starts with
+    // (256 slots). Before A6, the full arena reused the oldest slot and the draws already recorded against it
+    // read the NEW material's bytes - the picture was silently wrong. Now the storage is sized before the
+    // recording, so every quad paints its own material; the first and last cells are the discriminator
+    // (material 0 is blue, material 299 is red).
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int kWidth  = 64;
+    constexpr int kHeight = 64;
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(backend->capabilities().render_targets);
+
+    const vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    destination->attachColor(RenderTarget::ColorFormat::RGBA8);
+    destination->setSize(kWidth, kHeight);
+
+    // The content program: the pass' view block, and the material's diffuse as the fragment's only input.
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) in vec3 position;\n"
+            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\n"
+            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+            "{\n"
+            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "} material;\n"
+            "void main() { outColor = material.diffuse; }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    // 20 x 15 cells, each a small quad in world space; the camera sees the whole [-1,1] square.
+    constexpr int   kCols = 20;
+    constexpr int   kRows = 15;
+    constexpr float kHalf = 0.03F;
+    std::vector<vn::intrusive_ptr<Geometry>>    geometries;
+    std::vector<vn::intrusive_ptr<Material>>    materials;
+    std::vector<RenderCommand>                  commands;
+    std::vector<std::pair<float, float>>        centres;
+    geometries.reserve(kCols * kRows);
+    materials.reserve(kCols * kRows);
+    commands.reserve(kCols * kRows);
+    centres.reserve(kCols * kRows);
+    for (int row = 0; row < kRows; ++row)
+    {
+        for (int col = 0; col < kCols; ++col)
+        {
+            const std::size_t index = static_cast<std::size_t>(row * kCols + col);
+            const float       cx    = -0.95F + 0.1F * static_cast<float>(col);
+            const float       cy    = -0.7F + 0.1F * static_cast<float>(row);
+            centres.emplace_back(cx, cy);
+
+            const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+            geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
+                std::vector<float>{ cx - kHalf, cy - kHalf, 0.0F, cx + kHalf, cy - kHalf, 0.0F,
+                                    cx + kHalf, cy + kHalf, 0.0F, cx - kHalf, cy + kHalf, 0.0F })));
+            geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+                new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+            geometry->setRevision(1U);
+            geometries.push_back(geometry);
+
+            const vn::intrusive_ptr<Material> material(new Material());
+            const float red = static_cast<float>(index) / static_cast<float>(kCols * kRows - 1);
+            material->setDiffuse(vn::Colorf(red, 0.0F, 1.0F - red, 1.0F));
+            materials.push_back(material);
+
+            RenderCommand command;
+            command.geometry = geometries.back();
+            command.material = materials.back();
+            command.program  = program;
+            commands.push_back(command);
+        }
+    }
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F), true };
+    backend->executeFrame(TestFrame()
+                              .pass(pass.get(), 0)
+                              .target(destination.get())
+                              .clear(clear)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .content(commands, camera.get())
+                              .value());
+
+    std::vector<std::uint8_t>    pixels;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
+    ASSERT_EQ(pixels.size(), static_cast<std::size_t>(kWidth * kHeight * 4));
+
+    const auto sample = [&](std::size_t index) {
+        const auto& [cx, cy] = centres[index];
+        const int px = static_cast<int>((cx + 1.0F) * 0.5F * static_cast<float>(kWidth - 1));
+        const int py = static_cast<int>((1.0F - cy) * 0.5F * static_cast<float>(kHeight - 1));
+        const std::size_t at = (static_cast<std::size_t>(py) * kWidth + static_cast<std::size_t>(px)) * 4U;
+        return std::array<int, 3>{ pixels[at], pixels[at + 1U], pixels[at + 2U] };
+    };
+
+    // The ends of the set are the proof: material 0 is blue, material 299 is red, and the materials the old
+    // FIFO would have reused (the last 44) must not appear where the first 44 were drawn.
+    const auto first = sample(0U);
+    const auto last  = sample(kCols * kRows - 1U);
+    EXPECT_LT(first[0], 16) << "material 0 is blue; a reused slot would have painted a late material here";
+    EXPECT_GT(first[2], 239);
+    EXPECT_GT(last[0], 239) << "material 299 is red";
+    EXPECT_LT(last[2], 16);
+
+    // A middle material, to show the whole range travelled and not just the two ends.
+    const std::size_t middle = (kCols * kRows) / 2U;
+    const auto        centre = sample(middle);
+    const int         expected = static_cast<int>(middle * 255U / (kCols * kRows - 1U));
+    EXPECT_NEAR(centre[0], expected, 8) << "material " << middle << " painted its own red";
+    EXPECT_NEAR(centre[2], 255 - expected, 8) << "and its own blue";
+
+    EXPECT_EQ(backend->deviceWaits(), 1U) << "the only device stop is the readback itself";
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
+TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
+{
+    // A6'S SEMANTICS, PINNED WITHOUT A COUNTER. The cache has NO capacity: an entry lives as long as the host
+    // holds its texture, so a working set larger than the old 256-entry bound is served every pass (0 misses),
+    // and dropping the host's references is what lets the sweep release it. A pass over 200 textures is the
+    // control: it missed once and then nothing, exactly like before.
     //
-    // Nothing is drawn: this is the cache's contract, not a frame's. The numbers are printed; the
-    // assertions are the misses counted through has() plus the one A/B pair that tells FIFO from LRU.
+    // Nothing is drawn: this is the cache's contract, not a frame's. The numbers are printed; the assertions
+    // are the misses counted through has().
     if (!deviceCaseAvailable())
     {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
@@ -3654,9 +3795,8 @@ TEST(VsgBackendTest, TheTextureCacheDropsTheOldestInsertionAndRebuildsWhatItDrop
     };
 
     std::printf("\n");
-    // 1. THE POLICY: insertion order, NOT use. B is acquired right after A; A is then acquired AGAIN (a
-    //    hit - same revision) before X pushes the cache one past its bound. A cache that refreshed
-    //    recency on a hit would drop B; this one drops A.
+    // 1. NOTHING IS DROPPED TO MAKE ROOM. Past the old bound (256) every texture is still resident, including
+    //    the first one and the one a hit refreshed - there is no eviction key to observe any more.
     {
         const auto oldest = make_texture(2, 1U);
         const auto second = make_texture(2, 2U);
@@ -3668,15 +3808,13 @@ TEST(VsgBackendTest, TheTextureCacheDropsTheOldestInsertionAndRebuildsWhatItDrop
             filler.push_back(make_texture(2, 3U + index));
             acquire(filler.back());
         }
-        ASSERT_EQ(images->count(), 256U) << "the bound is 256 entries";
-        ASSERT_TRUE(images->has(oldest.get()));
-        acquire(oldest);  // the hit an LRU cache would count as USE
+        ASSERT_EQ(images->count(), 256U);
+        acquire(oldest);  // a hit
         const auto one_past = make_texture(2, 9U);
         acquire(one_past);
-        EXPECT_FALSE(images->has(oldest.get()))
-            << "eviction is by insertion order: the re-acquired texture is still the OLDEST insertion";
-        EXPECT_TRUE(images->has(second.get())) << "an LRU cache would have dropped this one instead";
-        EXPECT_EQ(images->count(), 256U) << "one past the bound evicts exactly one entry";
+        EXPECT_EQ(images->count(), 257U) << "one more live texture is one more entry";
+        EXPECT_TRUE(images->has(oldest.get())) << "nothing is evicted to make room";
+        EXPECT_TRUE(images->has(second.get()));
     }
 
     // The pass runner: count the entries the NEXT acquire will have to REBUILD by asking has() BEFORE it.
@@ -3712,45 +3850,44 @@ TEST(VsgBackendTest, TheTextureCacheDropsTheOldestInsertionAndRebuildsWhatItDrop
     std::printf("[a6] 200-texture pass: %zu misses then %zu; %.2f ms then %.2f ms\n", first_fitting,
                 after_fitting, first_fitting_ms, after_fitting_ms);
 
-    // 3. PAST THE BOUND: 300 textures - a pass's tail (the last 256 insertions) survives, and EVERY pass
-    //    after it misses EVERY texture (each is evicted before its own turn comes round again).
+    // 3. PAST THE OLD BOUND: 300 more textures, all live - every one is resident and the next pass is a
+    //    pure hit run (the old 256-entry bound rebuilt all of them every pass).
     std::vector<vn::intrusive_ptr<vn::graphics::Texture2D>> exceeding;
     exceeding.reserve(300U);
     for (unsigned index = 0; index < 300U; ++index) {
         exceeding.push_back(make_texture(64, 64U + index));
     }
     const auto [first_exceeding, first_exceeding_ms] = time_pass(exceeding);
-    EXPECT_EQ(first_exceeding, 300U) << "first sight of every texture rebuilds it";
-    EXPECT_EQ(images->count(), 256U) << "the bound caps the entries";
-    EXPECT_FALSE(images->has(exceeding[0].get()));
-    EXPECT_TRUE(images->has(exceeding[44].get())) << "the last 256 insertions are what survives a pass";
+    EXPECT_EQ(first_exceeding, 300U) << "first sight of every texture builds it";
+    EXPECT_EQ(images->count(), 757U) << "457 resident + the 300 new ones, all live";
+    EXPECT_TRUE(images->has(exceeding[0].get())) << "the first of the batch was not evicted to make room";
     EXPECT_TRUE(images->has(exceeding[299].get()));
     const auto [after_exceeding, after_exceeding_ms] = time_pass(exceeding);
-    EXPECT_EQ(after_exceeding, 300U) << "past the bound the cache uploads every texture of every pass";
-    std::printf("[a6] 300-texture pass: %zu misses then %zu; %.2f ms then %.2f ms (~%.1f us per rebuilt "
-                "64x64 texture)\n",
-                first_exceeding, after_exceeding, first_exceeding_ms, after_exceeding_ms,
-                (after_exceeding_ms - after_fitting_ms) * 1000.0 / 300.0);
-    EXPECT_EQ(images->count(), 256U);
+    EXPECT_EQ(after_exceeding, 0U) << "a set larger than the old bound is served every pass";
+    std::printf("[a6] 300-texture pass (past the old bound): %zu misses then %zu; %.2f ms then %.2f ms\n",
+                first_exceeding, after_exceeding, first_exceeding_ms, after_exceeding_ms);
+    EXPECT_EQ(images->count(), 757U);
 
     backend->shutdown();
     EXPECT_TRUE(host.alive());
 }
 
 /**
- * @brief A working set larger than the texture cache is a COST, and a host can see it.
+ * @brief A live working set larger than the old bound is resident, and the sweep says nothing.
  *
- * The cache's entry bound (MaterialImages::kMaxEntries) rebuilds and re-uploads a texture that comes back after
- * being evicted. The picture stays right, so nothing on screen says a word about it - which is why the sweep turns
- * the counter into one `ResourcePressure` sentence per EPISODE (a stretch of frames that evict) instead of one per
- * frame: a host reading `diagnosticCount(ResourcePressure)` can tell "my scene holds more textures at once than the
- * cache keeps" from "a steady scene", and that number is the trigger the A6 register waits on.
+ * There is no capacity any more (see MaterialImages): 300 live textures all keep their entries, so no
+ * `ResourcePressure` sentence is written and a frame that samples them again rebuilds nothing. Dropping the
+ * host's references is what the sweep answers - releasing, not evicting.
  *
- * Nothing here draws: 257 live textures are enough to make the bound evict, and an EMPTY frame is what runs the
- * frame's tail (the sweep is the frame's, not "the frames that drew") - this case is about the sentence it writes.
+ * Nothing here draws: an EMPTY frame is still a frame and runs the frame's tail (the sweep is the frame's,
+ * not "the frames that drew").
  */
-TEST(VsgBackendTest, AWorkingSetLargerThanTheTextureCacheIsReportedOncePerEpisode)
+TEST(VsgBackendTest, AWorkingSetLargerThanTheOldTextureBoundStaysResident)
 {
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     ASSERT_TRUE(backend->initialize());
 
@@ -3760,10 +3897,7 @@ TEST(VsgBackendTest, AWorkingSetLargerThanTheTextureCacheIsReportedOncePerEpisod
         return backend->diagnosticCount(vn::graphics::DiagnosticCategory::ResourcePressure);
     };
     const std::size_t before = reported();
-    EXPECT_EQ(images->evictions(), 0U) << "nothing has been sampled yet";
 
-    // One entry past the bound, every texture STILL HELD: this is "more textures live at once than the cache keeps",
-    // not "nobody holds it" (the sweep releases those, and that is not a cost).
     const auto sample = [&images](const vn::intrusive_ptr<vn::graphics::Texture2D>& texture, unsigned shade) {
         const vn::intrusive_ptr<vn::imaging::Image> image(
             new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
@@ -3776,44 +3910,31 @@ TEST(VsgBackendTest, AWorkingSetLargerThanTheTextureCacheIsReportedOncePerEpisod
         ASSERT_EQ(reason, vn::vsg::detail::TextureReject::Ok) << "a complete 2D texture must upload";
     };
 
+    constexpr std::size_t kTextures = 300U;
     std::vector<vn::intrusive_ptr<vn::graphics::Texture2D>> textures;
-    textures.reserve(vn::vsg::MaterialImages::kMaxEntries + 1U);
-    for (std::size_t index = 0; index <= vn::vsg::MaterialImages::kMaxEntries; ++index)
+    textures.reserve(kTextures);
+    for (std::size_t index = 0; index < kTextures; ++index)
     {
         textures.push_back(
             vn::intrusive_ptr<vn::graphics::Texture2D>(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm)));
         sample(textures.back(), static_cast<unsigned>(index));
     }
-    ASSERT_EQ(images->evictions(), 1U) << "the bound had to drop exactly one entry to make room";
+    EXPECT_EQ(images->count(), kTextures) << "every live texture is resident past the old bound";
+    EXPECT_GT(images->bytes(), 0U);
+    EXPECT_TRUE(images->has(textures.front().get())) << "the first was not evicted to make room";
 
-    // The frame's tail turns that into a sentence - ONCE, however many frames keep evicting. A frame that draws nothing
-    // is still a frame (see VsgBackend's empty-frame path): it runs the sweep all the same.
+    // The frame's tail runs the sweep, and with no capacity there is nothing to report.
     backend->executeFrame(vn::graphics::FrameDescription{});
-    EXPECT_EQ(reported(), before + 1U) << "the sweep is where 'out of room' becomes something a host can see";
+    EXPECT_EQ(reported(), before) << "using memory is not a pressure episode any more";
     backend->executeFrame(vn::graphics::FrameDescription{});
-    EXPECT_EQ(reported(), before + 1U) << "the same episode is one sentence, not one per frame";
+    EXPECT_EQ(images->count(), kTextures);
 
-    // A SUSTAINED oversized working set: the counter moves on every frame that samples a texture which was just
-    // evicted, and the episode rule is what keeps that from being one sentence per frame (the watermark alone would
-    // let each moved counter through).
-    textures.push_back(
-        vn::intrusive_ptr<vn::graphics::Texture2D>(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm)));
-    sample(textures.back(), 7U);
-    ASSERT_EQ(images->evictions(), 2U);
-    backend->executeFrame(vn::graphics::FrameDescription{});
-    EXPECT_EQ(reported(), before + 2U) << "a new episode (the counter had stopped moving) gets its own sentence";
-
-    textures.push_back(
-        vn::intrusive_ptr<vn::graphics::Texture2D>(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm)));
-    sample(textures.back(), 8U);
-    ASSERT_EQ(images->evictions(), 3U);
-    backend->executeFrame(vn::graphics::FrameDescription{});
-    EXPECT_EQ(reported(), before + 2U) << "the same episode is still one sentence while the counter keeps moving";
-
-    // Letting go of the textures is not the bound doing anything: the sweep releases them, and says nothing.
+    // Letting go of the textures is what the sweep answers: released, not evicted.
     textures.clear();
     backend->executeFrame(vn::graphics::FrameDescription{});
-    EXPECT_EQ(reported(), before + 2U) << "releasing a texture is not evicting it";
+    EXPECT_EQ(images->count(), 0U);
+    EXPECT_EQ(images->bytes(), 0U);
+    EXPECT_EQ(reported(), before) << "releasing is not a capacity episode either";
 
     backend->shutdown();
 }

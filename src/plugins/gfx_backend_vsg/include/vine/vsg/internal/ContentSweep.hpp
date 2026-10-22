@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <vector>
 
 #include <vine/vsg/internal/ContentStore.hpp>
 #include <vine/vsg/internal/MaterialImages.hpp>
@@ -59,13 +60,17 @@ struct SweepOutcome
  *
  * @param store      The content tables' production side (its abandoned objects and their rows).
  * @param images     The material-image cache (the textures nothing else samples any more).
- * @param timeline   The frame clock the store's parks are dated against.
- * @param retirement Where the store's row removals are parked; the caller advances it AFTER this call, as the
- *                   frame's last step (see core::RetirementQueue - this is the ordering rule, not a style).
+ * @param timeline            The frame clock the store's parks are dated against.
+ * @param retirement          Where the store's row removals are parked; the caller advances it AFTER this call, as
+ *                            the frame's last step (see core::RetirementQueue - this is the ordering rule, not a
+ *                            style).
+ * @param released_materials  Receives the identities of abandoned materials (cleared first): the caller returns
+ *                            their arena slots (see BlockStorage::releaseMaterial).
  * @return What the sweep let go (never an error: an object somebody else holds is simply not this sweep's).
  */
 [[nodiscard]] SweepOutcome releaseAbandonedContent(ContentStore& store, MaterialImages& images,
                                                    core::FrameTimeline& timeline,
-                                                   core::RetirementQueue& retirement);
+                                                   core::RetirementQueue& retirement,
+                                                   std::vector<const void*>& released_materials);
 
 VN_VSG_NS_END

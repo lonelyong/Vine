@@ -610,10 +610,12 @@ void ContentStore::ensureProgram(const vn::graphics::ShaderProgram* program, con
     ++d->builds;
 }
 
-std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement,
+                                            std::vector<const void*>& released_materials)
 {
     const std::weak_ptr<Data> weak     = d;
     std::size_t               released = 0U;
+    released_materials.clear();
 
     for (auto it = d->geometries.begin(); it != d->geometries.end();)
     {
@@ -682,6 +684,9 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
         {
             ++d->retained;
         }
+        // The arena slot follows the row: the material is gone, so its storage is nobody's to keep. The
+        // identity is a KEY only (the object may already be destroyed - see the declaration).
+        released_materials.push_back(identity);
         it = d->materials.erase(it);
         ++released;
     }
@@ -852,6 +857,14 @@ std::size_t ContentStore::programEntries() const noexcept
 std::size_t ContentStore::materialEntries() const noexcept
 {
     return d->material.size();
+}
+
+std::size_t ContentStore::materialCount() const noexcept
+{
+    // The default material (a null identity) is not an object the host holds: it is the fill-in for a command
+    // that names none, and it does not get an arena slot of its own until it is noted like any other.
+    const std::size_t all = d->materials.size();
+    return (all != 0U && d->materials.find(nullptr) != d->materials.end()) ? all - 1U : all;
 }
 
 std::uint64_t ContentStore::builds() const noexcept

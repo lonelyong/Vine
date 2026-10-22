@@ -155,6 +155,8 @@ struct BlockStorage::Data
     std::uint32_t grow_draws{0};
     std::uint32_t grow_lights{0};
     std::uint32_t grow_shadows{0};
+    /// The live materials a frame needed (see MaterialArena::capacityNeed); 0 when nothing was refused.
+    std::uint32_t grow_materials{0};
 
     /** @brief Records one write attempt and, when the budget refused it, what the frame wanted instead.
      *
@@ -301,7 +303,13 @@ BlockStorage::MaterialWrite BlockStorage::writeMaterial(const void* material, st
     }
 
     const core::MaterialArena::Write write = d->arena.note(material, revision);
-    // WHERE THE BLOCK IS, for EVERY answer. On a hit nothing is written, but the bytes the LAST write put
+    if (write.kind == core::MaterialArena::WriteKind::Refused) {
+        // The arena is full: ask for one that would serve every material this frame wanted, and tell the caller
+        // to skip this draw. Binding another material's offset would paint the picture with the wrong bytes.
+        d->grow_materials = std::max(d->grow_materials, d->arena.capacityNeed());
+        return {write.kind, false, 0, 0};
+    }
+    // WHERE THE BLOCK IS, for EVERY other answer. On a hit nothing is written, but the bytes the LAST write put
     // there are still the material's (the arena keeps a slot's copies readable for as long as a frame may),
     // so the offset a draw binds is the same one - and answering 0 instead would bind the first block of the
     // storage's buffer, i.e. another region's data: measured as a steady frame shading with a zero material
@@ -309,13 +317,13 @@ BlockStorage::MaterialWrite BlockStorage::writeMaterial(const void* material, st
     // case, which pins the bytes at that offset).
     const std::uint64_t offset = d->regions.materials_base + d->arena.offsetOf(write.slot, write.copy);
     if (write.kind == core::MaterialArena::WriteKind::Unchanged) {
-        return {write.kind, offset, 0};
+        return {write.kind, true, offset, 0};
     }
 
     if (!d->writeInto(offset, d->arena.blockBytes(), block, d->oversized_count)) {
-        return {write.kind, 0, 0};
+        return {write.kind, false, 0, 0};
     }
-    return {write.kind, offset, block.size()};
+    return {write.kind, true, offset, block.size()};
 }
 
 BlockStorage::Regions BlockStorage::regions() const noexcept
@@ -381,7 +389,7 @@ std::uint64_t BlockStorage::overflows() const noexcept
 
 BlockStorage::Growth BlockStorage::growthNeeded() const noexcept
 {
-    return Growth{ d->grow_views, d->grow_draws, d->grow_lights, d->grow_shadows };
+    return Growth{ d->grow_views, d->grow_draws, d->grow_lights, d->grow_shadows, d->grow_materials };
 }
 
 bool BlockStorage::hasSlabsForInFlight(const Layout& layout, std::uint32_t frames_in_flight) noexcept
@@ -423,6 +431,7 @@ BlockStorage::Layout BlockStorage::grownLayout(const Layout& current, const Grow
     grown_layout.draws.blocks_per_frame   = grown(current.draws.blocks_per_frame, need.draws);
     grown_layout.lights.blocks_per_frame  = grown(current.lights.blocks_per_frame, need.lights);
     grown_layout.shadows.blocks_per_frame = grown(current.shadows.blocks_per_frame, need.shadows);
+    grown_layout.materials.capacity        = grown(current.materials.capacity, need.materials);
     return grown_layout;
 }
 
@@ -441,9 +450,14 @@ std::uint64_t BlockStorage::materialHits() const noexcept
     return d->arena.hits();
 }
 
-std::uint64_t BlockStorage::materialEvictions() const noexcept
+std::uint64_t BlockStorage::materialRefusals() const noexcept
 {
-    return d->arena.evictions();
+    return d->arena.refusals();
+}
+
+bool BlockStorage::releaseMaterial(const void* material) noexcept
+{
+    return d->arena.release(material);
 }
 
 VN_VSG_NS_END

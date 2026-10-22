@@ -141,11 +141,15 @@ class ContentStore
      * rows have no future lookups to answer - but they are parked rather than dropped, because a plan that
      * already named the object may still be recorded.
      *
-     * @param timeline   The frame clock parks are dated against.
-     * @param retirement Where the abandoned entries' removals are parked.
+     * @param timeline           The frame clock parks are dated against.
+     * @param retirement         Where the abandoned entries' removals are parked.
+     * @param released_materials Receives the identities of abandoned MATERIALS (cleared first): the block
+     *                           storage returns their arena slots. A raw pointer is only used as the arena's
+     *                           key, never dereferenced, so it may already name freed memory.
      * @return Number of abandoned objects released.
      */
-    std::size_t releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    std::size_t releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement,
+                                 std::vector<const void*>& released_materials);
 
     /**
      * @brief Marks a geometry the host still owns as releasable and parks the removal of its rows.
@@ -210,6 +214,13 @@ class ContentStore
 
     /** @brief Gets how many material entries the tables carry (one per identity). */
     [[nodiscard]] std::size_t materialEntries() const noexcept;
+
+    /** @brief Gets how many material rows are LIVE (tracked objects, the default material excluded).
+     *
+     * This is the number the block storage sizes its material arena against: every row is a material the host
+     * still holds, and the arena keeps a slot for each of them until the host releases it. O(1).
+     */
+    [[nodiscard]] std::size_t materialCount() const noexcept;
 
     /** @brief Gets how many entries were built in total: a steady frame raises this by nothing. */
     [[nodiscard]] std::uint64_t builds() const noexcept;

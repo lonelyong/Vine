@@ -25,6 +25,29 @@
 | **待办与口径** | **现行登记：`.ai/design/graphics-followups-2026-10-22.md` 已无开放行**（F1/F2/F3 全部关闭，2026-10-22 晚）；活账本回到 **`.ai/design/graphics-followups-2026-10-19.md` §3 触发条件型**，外加对象模型复核（`graphics-object-model-audit-2026-10-21.md`）的 R1/R5–R10（R4 于 2026-10-22 晚关闭）。10-19 是历史盘点（§2 现在可做：空 / §3 触发条件型 / §4 明确不做 / §5 不再是待办），它的触发项仍然有效。底层两个来源：**2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已由 S10b 覆盖并关闭，2026-10-19**：一设备 N 窗口、每窗口一个目标，见 `graphics-window-device-viewer.md` §7）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-22（夜八）A6 落地：缓存不设上限，释放显式管理
+
+- **方向（用户定）**：**不设容量上限，有多少内存就用多少，释放显式管理**。旧方案（LRU + 压力增长 + 512 MiB
+  字节上限）作废：LRU 修不了 300 张同序循环（300/300 缺失），而上限是替宿主做决定。
+- **纹理**：`MaterialImages` 删除 `kMaxEntries`/`stamp`/`clock`/`evictions()`；条目跟宿主持有量走，只有
+  `releaseAbandoned()`（宿主丢掉）与 `releaseTexture()`/`releaseContent(texture)`（显式）删条目；新增 `bytes()`
+  （mip 链暂存字节）。`sweepAbandonedContent` 不再发 `ResourcePressure` 警告。
+- **材质**：`core::MaterialArena` 删除 `order_`/FIFO；槽满返回 `WriteKind::Refused`（**不淘汰活材质**，因为同帧复用
+  已记录的槽可能画错）；`capacityNeed() = live + 本帧不同被拒材质`。`VsgBackend::growMaterialArenaIfNeeded()` 在
+  `recordContent()` **之前**按 `ContentStore::materialCount()`（不含默认 null 行）换更大 storage（`grownLayout`
+  只动 materials，无硬上限；失败保留旧 storage 并报）。`ContentPass` 对拒绝的 draw 报一次并跳过。
+- **显式释放闭环**：`ContentStore::releaseAbandoned` 新增出参交回被弃材质身份；`ContentSweep` 传给
+  `VsgBackend`，逐项 `BlockStorage::releaseMaterial()`；`releaseContent(material)` 也在成功后归还槽。
+  这收掉了 A3 的“12/12 arena 残量”。槽立即复用安全：每槽 `copies` 份，新材质写当前 copy。
+- **判据**：模型无关用例 + 设备级（lavapipe）：300 张纹理超过旧上限后第二轮 **0** 缺失；200/300/2000 个材质
+  扩容后 `write/f=0 refus/f=0 live=200/300/2000`；300 个材质的 20×15 小四边形逐格读回：第 0 格蓝、第 299 格红、
+  中间格按索引匹配（`ThreeHundredLiveMaterialsDrawTheirOwnColours`）。**两棵树** `test_vsg` **498**、`test_graphics` **441**、
+  六道脚本 0 finding、**完整门禁** `vsg_rewrite_gate.sh build --no-build` 全阶段干净
+  （0 VUID / 0 SYNC-HAZARD、应用画面 `87.04%/244`）。
+- **坑/诚实记录**：门禁首跑应用阶段 `background 5.07% > 5%`，重跑同一门禁 `0.02%` 且画面行与历史逐字相同 ⇒
+  按既有规矩判为截图/布局偶发，不是本片。没有新增“材质画错”的像素专项：删掉淘汰后该路径在构造上不存在，
+  单元用例已钉“拒绝后旧材质仍命中”。
+
 ## 2026-10-22（夜七）R9 关闭：内容纪元从进程级收到根子树级
 
 - **形状**：`Node` 私有 `content_epoch_` 是**本子树**的公告计数。`announceContentChange()` 沿父链逐级 +1（自己 + 每个祖先），

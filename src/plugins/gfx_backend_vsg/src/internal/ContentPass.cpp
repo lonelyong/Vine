@@ -1146,6 +1146,13 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         reportRefused("the command's draw block", "the frame's block budget is full");
         return false;
     }
+    if (!material_write.valid)
+    {
+        // The arena had no slot for this material. The storage grows before the next frame; this draw is
+        // skipped rather than bound to another material's bytes (see MaterialArena::note).
+        reportRefused("the command's material", "the material arena is full");
+        return false;
+    }
 
     // The streams: one bind per channel, in the entry's order (which is the binding order).
     std::array<::vsg::ref_ptr<::vsg::BindVertexBuffers>, kMaxChannels> binds;

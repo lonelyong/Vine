@@ -103,7 +103,7 @@
 |---|---|---|
 | ~~B6~~ | ~~`StreamKey.revision` 取几何 revision ⇒ 任一通道改动重传全部通道（已量化 16.98 MiB / +30 ms 一帧）~~ **已关闭（2026-10-22 晚）**：**形状归几何、字节归 buffer，没有兜底**——`StreamKey` 的 revision 只取该 buffer 自己的（`Buffer::setRevision` 是唯一的重传公告），几何 revision 只驱动事实行重建（layout/通道集/计数）；事实行不再拷贝字节，键在录制时拼、字节在上传时读，所以"改一条通道"既不需要重建行也不需要重传别的流。实测（512×512、4 通道 + 索引、整份 16.98 MiB）：稳态 0 上传；单通道就地编辑 **1** 上传/帧、0 rebuilds；换 buffer **1**/帧 + 1 rebuild；四通道就地编辑 **4**/帧、0 rebuilds（旧契约一律 5/帧）。契约变更：`Geometry::setRevision()` 只表示形状，改字节必须 `buffer->setRevision()`。设计见 `graphics-geometry-revision-2026-10-22.md`，判据 `StreamRevisionTest`（5 条）+ 设备级那条测量用例 | ~~宿主报上传带宽~~ 用户 2026-10-22 直接指定做（框架问题，不等触发） |
 （复盘 §3.1）。真要省带宽时的正确形状（`setChannelRevision` + 懒拷贝）记录在复盘 §4，**不需要派生版本号** | 宿主报上传带宽（仍是**唯一**触发；没有任何宿主报过） |
-| A6 | `MaterialImages` 淘汰键是插入序（FIFO）而非“最近 acquire 帧号” | 活纹理数接近 256 **且**看到“用了很久的贴图被重建”——**已可观测**（`ResourcePressure` + `evictions()`，见 §1）；注意 LRU 不是已量化形状的解 |
+| ~~A6~~ **已落地 2026-10-22** | 两个有界缓存的同一份契约：纹理删 256 条上限与淘汰（条目跟宿主持有量走）；材质删 FIFO，记录前按 `ContentStore` 的活材质数换更大 storage（无硬上限，拒绝只兜底）；材质槽随显式 `releaseContent(material)` 与弃用扫尾归还。设计/落地见 `graphics-cache-eviction-2026-10-22.md` | ~~活纹理数接近 256 且看到旧贴图被重建~~ **已关闭**：`test_vsg` 498、`test_graphics` 441、门禁全绿 |
 | `BlockStorageTest` 偶发 | `TheRegionsAreLaidOutOnceAndDoNotOverlap` 首跑红重跑绿 | 第三次出现 |
 
 ### 3.7 上游阻塞（有门禁脚本盯着）

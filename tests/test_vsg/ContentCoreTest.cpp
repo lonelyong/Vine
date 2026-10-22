@@ -332,7 +332,7 @@ TEST(CoreMaterialArenaTest, TheCopyRotationSpansTheInFlightFrames)
     EXPECT_NE(arena.offsetOf(0U, copies[0]), arena.offsetOf(0U, copies[1])) << "copies are distinct blocks";
 }
 
-TEST(CoreMaterialArenaTest, TheCapacityBoundEvictsTheOldestMaterial)
+TEST(CoreMaterialArenaTest, AMaterialThatDoesNotFitIsRefusedNotEvicted)
 {
     MaterialArena arena({64U, 3U, 2U});
     arena.beginFrame();
@@ -340,17 +340,61 @@ TEST(CoreMaterialArenaTest, TheCapacityBoundEvictsTheOldestMaterial)
     const int second = 1;
     const int third  = 2;
 
-    (void)arena.note(&first, 1);
+    const MaterialArena::Write first_write = arena.note(&first, 1);
     (void)arena.note(&second, 1);
-    const MaterialArena::Write evicting = arena.note(&third, 1);
+    const MaterialArena::Write refused = arena.note(&third, 1);
 
-    EXPECT_EQ(evicting.kind, MaterialArena::WriteKind::Allocated);
-    EXPECT_EQ(arena.evictions(), 1U) << "the bound was reached; the oldest material left";
+    // NO EVICTION: the material that does not fit is refused, and the two live ones keep their slots.
+    EXPECT_EQ(refused.kind, MaterialArena::WriteKind::Refused);
+    EXPECT_EQ(arena.refusals(), 1U);
     EXPECT_EQ(arena.live(), 2U);
+    EXPECT_EQ(arena.capacityNeed(), 3U) << "one capacity would have served this frame";
+    EXPECT_EQ(arena.note(&first, 1).kind, MaterialArena::WriteKind::Unchanged)
+        << "the existing material still hits: nothing was reused under it";
 
-    const MaterialArena::Write back = arena.note(&first, 1);
-    EXPECT_EQ(back.kind, MaterialArena::WriteKind::Allocated) << "its slot left with it, so it allocates again";
-    EXPECT_EQ(arena.allocations(), 4U);
+    // A release is what makes room - the host's decision, not the arena's.
+    EXPECT_TRUE(arena.release(&first));
+    const MaterialArena::Write fitted = arena.note(&third, 1);
+    EXPECT_EQ(fitted.kind, MaterialArena::WriteKind::Allocated);
+    EXPECT_EQ(fitted.slot, first_write.slot) << "the released slot is the one reused";
+    EXPECT_EQ(arena.refusals(), 1U) << "a release is not a refusal";
+}
+
+TEST(CoreMaterialArenaTest, TheCapacityNeedCountsDistinctRefusedMaterialsPerFrame)
+{
+    MaterialArena arena({64U, 3U, 1U});
+    arena.beginFrame();
+    const int held    = 0;
+    const int refused = 1;
+
+    (void)arena.note(&held, 1);
+    (void)arena.note(&refused, 1);
+    (void)arena.note(&refused, 1);  // the same material twice in one frame is one slot short, not two
+    EXPECT_EQ(arena.refusals(), 2U) << "both notes were answered Refused";
+    EXPECT_EQ(arena.capacityNeed(), 2U) << "live (1) + distinct refused (1)";
+
+    arena.beginFrame();
+    (void)arena.note(&refused, 1);
+    EXPECT_EQ(arena.capacityNeed(), 2U) << "the need is the frame's own";
+}
+
+TEST(CoreMaterialArenaTest, AReleasedSlotIsReusedByTheNextMaterial)
+{
+    MaterialArena arena({64U, 3U, 2U});
+    arena.beginFrame();
+    const int first  = 0;
+    const int second = 1;
+    const int third  = 2;
+
+    const MaterialArena::Write allocated = arena.note(&first, 1);
+    (void)arena.note(&second, 1);
+    EXPECT_TRUE(arena.release(&first));
+
+    const MaterialArena::Write reused = arena.note(&third, 1);
+    EXPECT_EQ(reused.kind, MaterialArena::WriteKind::Allocated);
+    EXPECT_EQ(reused.slot, allocated.slot) << "the freed slot is what the next material takes";
+    EXPECT_EQ(arena.live(), 2U);
+    EXPECT_EQ(arena.refusals(), 0U) << "releasing first means nothing had to be refused";
 }
 
 // --- the per-frame ring --------------------------------------------------------------------------------

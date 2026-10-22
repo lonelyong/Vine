@@ -26,6 +26,8 @@ void MaterialArena::beginFrame() noexcept
     else {
         started_ = true;
     }
+    // The refusal set is the FRAME's: a material refused twice in one frame is still one slot short, not two.
+    refused_this_frame_.clear();
 }
 
 std::uint64_t MaterialArena::offsetOf(std::uint32_t slot, std::uint32_t copy) const noexcept
@@ -41,9 +43,9 @@ MaterialArena::Write MaterialArena::note(const void* material, std::uint64_t rev
 {
     const std::uint32_t copy = currentCopy();
 
-    const auto found = index_.find(material);
-    if (found != index_.end()) {
-        Entry& entry = *found->second;
+    const auto found = entries_.find(material);
+    if (found != entries_.end()) {
+        Entry& entry = found->second;
         if (entry.revision == revision) {
             // The bytes the storage holds are the bytes the material has: this is the steady frame, and the
             // whole reason materials have their own arena instead of a per-frame write.
@@ -64,15 +66,14 @@ MaterialArena::Write MaterialArena::note(const void* material, std::uint64_t rev
         return {WriteKind::Unchanged, entry.slot, entry.last_copy, 0};
     }
 
-    // A slot is allocated for a material the arena has not seen. Past the capacity the OLDEST entry leaves -
-    // the same FIFO bound the retained caches use, and the same meaning: the newest are the ones a live scene
-    // is using, and an evicted material simply allocates again on its next note.
-    if (index_.size() >= layout_.capacity) {
-        Entry& oldest = order_.front();
-        index_.erase(oldest.material);
-        free_slots_.push_back(oldest.slot);
-        order_.pop_front();
-        ++evictions_;
+    // A FULL ARENA IS REFUSED, NOT EVICTED. Reusing a live material's slot could overwrite bytes a draw
+    // already recorded this frame binds (the copy rotation makes a cross-frame reuse safe, not a same-frame
+    // one), and "which live material deserves the slot" is not this layer's decision. The caller skips the
+    // draw and replaces the arena with one the layer sizes (see capacityNeed).
+    if (entries_.size() >= layout_.capacity) {
+        refused_this_frame_.insert(material);
+        ++refusals_;
+        return {WriteKind::Refused, 0U, 0U, 0U};
     }
 
     std::uint32_t slot = 0;
@@ -84,8 +85,7 @@ MaterialArena::Write MaterialArena::note(const void* material, std::uint64_t rev
         slot = next_slot_++;
     }
 
-    order_.push_back(Entry{material, revision, slot, frame_, copy});
-    index_[material] = std::prev(order_.end());
+    entries_.emplace(material, Entry{material, revision, slot, frame_, copy});
     ++allocations_;
     ++writes_;
     bytes_written_ += layout_.block_bytes;
@@ -94,13 +94,12 @@ MaterialArena::Write MaterialArena::note(const void* material, std::uint64_t rev
 
 bool MaterialArena::release(const void* material) noexcept
 {
-    const auto found = index_.find(material);
-    if (found == index_.end()) {
+    const auto found = entries_.find(material);
+    if (found == entries_.end()) {
         return false;
     }
-    free_slots_.push_back(found->second->slot);
-    order_.erase(found->second);
-    index_.erase(found);
+    free_slots_.push_back(found->second.slot);
+    entries_.erase(found);
     return true;
 }
 
@@ -131,7 +130,7 @@ std::uint64_t MaterialArena::frame() const noexcept
 
 std::size_t MaterialArena::live() const noexcept
 {
-    return index_.size();
+    return entries_.size();
 }
 
 std::uint64_t MaterialArena::writes() const noexcept
@@ -149,9 +148,15 @@ std::uint64_t MaterialArena::hits() const noexcept
     return hits_;
 }
 
-std::uint64_t MaterialArena::evictions() const noexcept
+std::uint64_t MaterialArena::refusals() const noexcept
 {
-    return evictions_;
+    return refusals_;
+}
+
+std::uint32_t MaterialArena::capacityNeed() const noexcept
+{
+    // The live materials plus the ones this frame could not fit: one capacity that would have served it.
+    return static_cast<std::uint32_t>(entries_.size() + refused_this_frame_.size());
 }
 
 std::uint64_t MaterialArena::bytesWritten() const noexcept
@@ -161,8 +166,8 @@ std::uint64_t MaterialArena::bytesWritten() const noexcept
 
 void MaterialArena::clear() noexcept
 {
-    order_.clear();
-    index_.clear();
+    entries_.clear();
+    refused_this_frame_.clear();
     free_slots_.clear();
     next_slot_ = 0;
 }

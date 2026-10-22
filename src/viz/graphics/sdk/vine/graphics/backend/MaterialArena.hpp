@@ -2,8 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <list>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <vine/graphics/backend/BackendHalfGuard.hpp>
@@ -48,7 +48,10 @@ class VN_GRAPHICS_API MaterialArena
         /// Copies per slot, one MORE than the frames that may be in flight (see perFrameCopies and
         /// FrameRing::Layout::slabs: the same rule, for the same reason).
         std::uint32_t copies{perFrameCopies(kAssumedInFlightSlots)};
-        std::uint32_t capacity{256};         ///< Slots; the oldest entry is evicted past it (the cache bound).
+        /// Slots this arena can hold. It is the size of the buffer the API layer allocates, NOT a policy on
+        /// live materials: past it note() answers Refused and the layer replaces the arena with a larger one
+        /// (see capacityNeed); nothing is evicted to make room.
+        std::uint32_t capacity{256};
     };
 
     /** @brief How a note was answered. */
@@ -57,6 +60,7 @@ class VN_GRAPHICS_API MaterialArena
         Allocated,  ///< The material had no slot: one was allocated and its block written.
         Rewritten,  ///< The revision moved: the new bytes were written into the material's copy.
         Unchanged,  ///< The revision matched what the storage holds: nothing was written.
+        Refused,    ///< The arena is full: no slot was allocated and nothing was written (see capacityNeed).
     };
 
     /** @brief The answer of @ref note. */
@@ -64,9 +68,9 @@ class VN_GRAPHICS_API MaterialArena
     {
         WriteKind     kind{WriteKind::Unchanged};  ///< What happened.
         std::uint32_t slot{0};                     ///< Slot the material occupies (meaningful for Allocated /
-                                                   ///< Rewritten).
+                                                   ///< Rewritten; meaningless for Refused).
         std::uint32_t copy{0};                     ///< In-flight copy written (meaningful for Allocated / Rewritten).
-        std::uint64_t bytes{0};                    ///< Bytes written (0 for Unchanged).
+        std::uint64_t bytes{0};                    ///< Bytes written (0 for Unchanged and Refused).
     };
 
   public:
@@ -95,6 +99,9 @@ class VN_GRAPHICS_API MaterialArena
      *   moved is written once per frame (Rewritten) - the SECOND note in the same frame asks one block
      *   from an application that edited a value twice, and answering it twice would double the frame's
      *   traffic for bytes the GPU can only ever see one of.
+     * - A FULL arena answers Refused and changes nothing: the caller must not draw with the returned slot.
+     *   Live materials are never evicted to make room, because a slot reused in the same frame can be read
+     *   by a draw that was already recorded against it (see capacityNeed for the growth request).
      *
      * @param material Material identity (a raw pointer: the arena stores no reference to it).
      * @param revision Upstream revision of the material's bytes; the arena never invents one.
@@ -145,8 +152,18 @@ class VN_GRAPHICS_API MaterialArena
     /** @brief Gets the number of notes answered without a write. */
     [[nodiscard]] std::uint64_t hits() const noexcept;
 
-    /** @brief Gets the number of entries dropped because the capacity was reached. */
-    [[nodiscard]] std::uint64_t evictions() const noexcept;
+    /** @brief Gets the number of notes answered Refused because the arena was full. */
+    [[nodiscard]] std::uint64_t refusals() const noexcept;
+
+    /** @brief Gets the slot count a replacement arena needs to serve this frame's refused materials.
+     *
+     * The live materials plus the ones this frame could not fit. It is what the layer feeds into its growth
+     * policy: the arena itself has no opinion on how large it should be, because growing means replacing the
+     * buffer it lives in (see BlockStorage).
+     *
+     * @return The number of distinct materials this frame wants to hold, or 0 when nothing was refused.
+     */
+    [[nodiscard]] std::uint32_t capacityNeed() const noexcept;
 
     /** @brief Gets the total bytes written since construction. */
     [[nodiscard]] std::uint64_t bytesWritten() const noexcept;
@@ -174,14 +191,14 @@ class VN_GRAPHICS_API MaterialArena
     std::uint32_t next_slot_{0};
     std::vector<std::uint32_t> free_slots_;
 
-    std::list<Entry>                                            order_;  ///< FIFO order (insertion).
-    std::unordered_map<const void*, std::list<Entry>::iterator> index_;  ///< Material -> its entry.
+    std::unordered_map<const void*, Entry> entries_;  ///< Material -> its slot (no order: nothing is evicted).
 
     std::uint64_t writes_{0};
     std::uint64_t allocations_{0};
     std::uint64_t hits_{0};
-    std::uint64_t evictions_{0};
-    std::uint64_t bytes_written_{0};
+    std::uint64_t                               refusals_{0};
+    std::unordered_set<const void*>            refused_this_frame_;  ///< Distinct materials refused this frame.
+    std::uint64_t                              bytes_written_{0};
 };
 
 VN_GRAPHICSBACKEND_NS_END

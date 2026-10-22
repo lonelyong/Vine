@@ -371,6 +371,7 @@ TEST(MaterialImagesTest, ClearDropsEveryEntryAndTheFallbacks)
     cache->clear();
 
     EXPECT_EQ(cache->count(), 0U);
+    EXPECT_EQ(cache->bytes(), 0U);
     EXPECT_FALSE(cache->has(texture.get()));
 
     const auto rebuilt = cache->acquire(texture.get(), reason);
@@ -382,24 +383,62 @@ TEST(MaterialImagesTest, ClearDropsEveryEntryAndTheFallbacks)
     EXPECT_NE(cache->white().view.get(), white_before.get()) << "the fallback is rebuilt too";
 }
 
-TEST(MaterialImagesTest, TheOldestEntryIsTrimmedAtCapacity)
+/**
+ * @brief A live texture keeps its images however many there are: the cache has no capacity to run out of.
+ *
+ * The old contract was a 256-entry bound that rebuilt the whole working set every time it was sampled again.
+ * The rule now is the host's: hold the texture and it stays resident; drop it and releaseAbandoned lets it go.
+ */
+TEST(MaterialImagesTest, EveryLiveTextureKeepsItsImages)
 {
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     ASSERT_NE(cache, nullptr);
 
+    // Past the old bound (256) on purpose: a working set this size used to evict before its own next use.
+    constexpr std::size_t kTextures = 300U;
     std::vector<vn::intrusive_ptr<Texture2D>> textures;
-    textures.reserve(MaterialImages::kMaxEntries + 1U);
-    for (std::size_t index = 0; index < MaterialImages::kMaxEntries + 1U; ++index) {
+    textures.reserve(kTextures);
+    for (std::size_t index = 0; index < kTextures; ++index) {
         textures.push_back(readyTexture(1, 1));
         TextureReject reason = TextureReject::Ok;
         ASSERT_NE(cache->acquire(textures.back().get(), reason).view, nullptr);
+        ASSERT_EQ(reason, TextureReject::Ok);
     }
 
-    // Nothing tells the backend a texture is gone, so the cache is bounded: the OLDEST entry goes, because
-    // the newest are the ones a live scene is using - and an evicted texture rebuilds on its next acquire.
-    EXPECT_EQ(cache->count(), MaterialImages::kMaxEntries);
-    EXPECT_FALSE(cache->has(textures.front().get()));
-    EXPECT_TRUE(cache->has(textures.back().get()));
+    EXPECT_EQ(cache->count(), kTextures) << "every live texture is resident";
+    EXPECT_GT(cache->bytes(), 0U) << "the residency is counted, not bounded";
+    EXPECT_TRUE(cache->has(textures.front().get())) << "nothing was evicted to make room";
+
+    // A second acquire of the same texture is a HIT: the same image, no rebuild, no re-upload.
+    TextureReject      reason = TextureReject::Ok;
+    const SamplerImage again  = cache->acquire(textures.front().get(), reason);
+    ASSERT_EQ(reason, TextureReject::Ok);
+    EXPECT_EQ(cache->count(), kTextures);
+    EXPECT_NE(again.view, nullptr);
+}
+
+TEST(MaterialImagesTest, DroppingTheTextureIsWhatRemovesItsImages)
+{
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
+    ASSERT_NE(cache, nullptr);
+
+    auto          texture = readyTexture();
+    TextureReject reason  = TextureReject::Ok;
+    ASSERT_NE(cache->acquire(texture.get(), reason).view, nullptr);
+    ASSERT_EQ(cache->count(), 1U);
+    const std::uint64_t bytes_before = cache->bytes();
+    ASSERT_GT(bytes_before, 0U);
+
+    // The host still holds it, so the sweep has nothing to do.
+    EXPECT_EQ(cache->releaseAbandoned(), 0U);
+    EXPECT_EQ(cache->bytes(), bytes_before) << "a sweep that releases nothing changes nothing";
+
+    const Texture* address = texture.get();
+    texture.reset();
+    EXPECT_EQ(cache->releaseAbandoned(), 1U) << "nobody can ask for it again";
+    EXPECT_FALSE(cache->has(address));
+    EXPECT_EQ(cache->count(), 0U);
+    EXPECT_EQ(cache->bytes(), 0U) << "the residency follows the entry";
 }
 
 TEST(MaterialImagesTest, ACubeBecomesACubeViewOverItsSixLayers)
@@ -429,44 +468,25 @@ TEST(MaterialImagesTest, ACubeBecomesACubeViewOverItsSixLayers)
     EXPECT_EQ(image->data->properties.imageViewType, VK_IMAGE_VIEW_TYPE_CUBE);
 }
 
-/**
- * @brief The bound drops the OLDEST entry, counts it, and counts nothing else.
- *
- * Two facts live here and they are deliberately separate. "Out of room" (this bound) means a texture that is
- * still held gets rebuilt and re-uploaded whenever it comes back - a cost that repeats, which is why it is
- * counted and reported. "Nobody holds it any more" (releaseAbandoned) means an entry can never be asked for
- * again, and it is not a cost at all. A cache that confused the two would report a leak where there is none.
- */
-TEST(MaterialImagesTest, TheBoundDropsTheOldestEntryAndCountsOnlyThat)
+TEST(MaterialImagesTest, ExplicitReleaseDropsTheResidencyImmediately)
 {
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     ASSERT_NE(cache, nullptr);
-    EXPECT_EQ(cache->evictions(), 0U) << "nothing has been asked for yet";
 
-    // One entry more than the bound can hold, each texture kept alive by the vector the whole way: this is a
-    // LIVE working set larger than the cache, not a leak the sweep would have handled.
-    std::vector<vn::intrusive_ptr<Texture2D>> textures;
-    textures.reserve(MaterialImages::kMaxEntries + 1U);
-    for (std::size_t index = 0; index <= MaterialImages::kMaxEntries; ++index)
-    {
-        textures.push_back(readyTexture());
-        TextureReject reason = TextureReject::Ok;
-        (void)cache->acquire(textures.back().get(), reason);
-        ASSERT_EQ(reason, TextureReject::Ok);
-    }
+    const auto    texture = readyTexture();
+    TextureReject reason  = TextureReject::Ok;
+    ASSERT_NE(cache->acquire(texture.get(), reason).view, nullptr);
+    ASSERT_GT(cache->bytes(), 0U);
 
-    EXPECT_EQ(cache->count(), MaterialImages::kMaxEntries) << "the cache holds its bound, no more";
-    EXPECT_EQ(cache->evictions(), 1U) << "exactly one entry had to make room";
-    EXPECT_FALSE(cache->has(textures.front().get())) << "the OLDEST entry is the one that left";
-    EXPECT_TRUE(cache->has(textures.back().get())) << "the newest is the one a live scene is using";
-
-    // Every texture is still held here, so the abandonment sweep finds nothing: releasing is not evicting.
-    EXPECT_EQ(cache->releaseAbandoned(), 0U);
-    EXPECT_EQ(cache->evictions(), 1U) << "a sweep is not an eviction";
-
-    // Dropping them all lets the sweep empty the cache - and still moves no eviction.
-    textures.clear();
-    EXPECT_EQ(cache->releaseAbandoned(), MaterialImages::kMaxEntries);
+    EXPECT_TRUE(cache->releaseTexture(texture.get()));
+    EXPECT_FALSE(cache->has(texture.get()));
     EXPECT_EQ(cache->count(), 0U);
-    EXPECT_EQ(cache->evictions(), 1U) << "only running out of room counts";
+    EXPECT_EQ(cache->bytes(), 0U) << "an explicit release is as final as an abandoned one";
+
+    // The host still owns the texture: acquiring it again rebuilds and re-counts its bytes.
+    const SamplerImage again = cache->acquire(texture.get(), reason);
+    ASSERT_EQ(reason, TextureReject::Ok);
+    ASSERT_NE(again.view, nullptr);
+    EXPECT_EQ(cache->count(), 1U);
+    EXPECT_GT(cache->bytes(), 0U);
 }

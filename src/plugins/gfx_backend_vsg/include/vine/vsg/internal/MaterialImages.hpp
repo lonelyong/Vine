@@ -86,18 +86,21 @@ backend.
 class MaterialImages
 {
   public:
-    /** @brief Upper bound on cached textures.
+    /** @brief Why there is NO entry bound: the host owns the memory policy.
      *
-     * WHAT IT COVERS. Abandoned textures are not this bound's problem: releaseAbandoned() sweeps them once
-     * per frame, so a host that keeps creating and dropping textures does not grow this cache. The bound
-     * covers the other case - more textures LIVE at once than the cache keeps. Nothing else would stop that
-     * from growing for ever, which is why the bound exists rather than a policy on the live set.
-     * Past the bound the OLDEST entries are evicted, because the newest are the ones a live scene is using;
-     * an evicted texture simply rebuilds (and re-uploads) on its next acquire, which is correct and costs
-     * what it costs - evictions() counts how often that happened, so a caller can tell "a working set larger
-     * than the cache" from "a steady scene".
+     * WHAT LIVES HERE. An entry lives exactly as long as the host holds its texture: the cache never drops
+     * a texture it can still be asked to sample, because "which live content deserves GPU memory" is the
+     * host's decision rather than this cache's. That matters because a bound made the cache rebuild and
+     * re-upload a whole working set every time it was sampled again - a cost the picture never shows, and one
+     * the cache could only trade against another arbitrary number.
+     *
+     * WHAT SHRINKS IT. releaseAbandoned() drops the entries whose texture the host let go (nobody can ask for
+     * them again), and releaseTexture() drops one the host names explicitly. Those are the only two answers to
+     * "should this leave?", and neither is a capacity rule.
+     *
+     * WHAT THE HOST CAN READ. count() and bytes() describe the residency so a host that wants to spend less
+     * memory can decide what to release; the cache itself does not warn or evict on their values.
      */
-    static constexpr std::size_t kMaxEntries = 256;
 
   public:
     /** @brief Builds the cache, including the two white fallbacks (no device; s
@@ -165,20 +168,18 @@ luded). */
     [[nodiscard]] std::size_t count() const noexcept;
 
     /**
-     * @brief Gets how many entries the BOUND has dropped so far (see kMaxEntries).
+     * @brief Gets the staged bytes the cached images carry (the mip chains, no allocator overhead).
      *
      * @details
-     * - WHAT IT ANSWERS. An entry the bound dropped comes back by rebuilding and re-uploading its texture, so a
-     *   number that keeps growing is the one visible sign of "more textures are sampled at once than this cache
-     *   keeps" - otherwise a silent per-frame re-upload cost.
-     * - WHAT IT DOES NOT COUNT. An entry released because the host dropped the texture (see releaseAbandoned) is
-     *   not an eviction: running out of room and "nobody holds it any more" are different facts.
-     * - THE CACHE STILL REPORTS NOTHING ITSELF (see the class note): the caller reads this number and says what
-     *   it means for its own host.
+     * - WHAT IT IS. The sum of the bytes each entry stages for the transfer step - the same number
+     *   `makeImage` sizes its storage with (every layer of every level). It is a RESIDENCY FACT, not a budget:
+     *   nothing in this cache evicts, warns or grows on it.
+     * - WHAT IT DOES NOT INCLUDE. The two white fallbacks, driver alignment and the sampler objects. A host that
+     *   wants to decide what to release reads this beside count() and its own texture sizes.
      *
-     * @return Cumulative number of entries evicted by the bound.
+     * @return The staged bytes of every cached texture, or 0 for an empty cache.
      */
-    [[nodiscard]] std::size_t evictions() const noexcept;
+    [[nodiscard]] std::uint64_t bytes() const noexcept;
 
     /** @brief States whether @p texture has cached images (by address). */
     [[nodiscard]] bool has(vn::raw_ptr<const vn::graphics::Texture> texture) const noexcept;

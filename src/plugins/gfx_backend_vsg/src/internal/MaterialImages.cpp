@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <limits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -142,10 +141,11 @@ using detail::vkFormatFor;
  * @param reason  Receives why no image could be built (left untouched on success): a texel width no vsg
  *                array type is as wide as (`UnsupportedFormat`), or pixel data that does not account for
  *                the extent the staging below sizes its slots from (`Inconsistent`).
+ * @param bytes   Receives the staged byte count on success (every layer of every level); untouched otherwise.
  * @return The image, ready for the transfer step to upload, or null (the caller reports @p reason).
  */
 ::vsg::ref_ptr<::vsg::Image> makeImage(const vn::graphics::Texture& texture, VkFormat format,
-                                       TextureReject& reason)
+                                       TextureReject& reason, std::uint64_t& bytes)
 {
     // The staging below sizes each layer's slot from the texture's EXTENT and copies the layer's own bytes
     // into it, so a texture whose data disagrees with that extent would write past the slot (and a chain
@@ -219,6 +219,7 @@ using detail::vkFormatFor;
     image->flags         = is_cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0U;
     image->usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     image->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    bytes                = static_cast<std::uint64_t>(total);
     return image;
 }
 
@@ -386,12 +387,13 @@ SamplerImage makeWhiteCube(float max_anisotropy)
 /**
  * @brief The cache's retained state.
  *
- * An entry owns the texture it is keyed by (see the class note) and remembers the revision its images were
- * built from, and `clock` orders insertions so a trim evicts the oldest rather than an arbitrary one.
+ * An entry owns the texture it is keyed by (see the class note), remembers the revision its images were
+ * built from, and counts the bytes it stages so a host can read what is resident. There is no capacity:
+ * entries leave when their texture is released, never to make room (see the class note).
  */
 struct MaterialImages::Data
 {
-    /** @brief One texture's uploaded view, plus the content revision it was built from. */
+    /** @brief One texture's uploaded view, plus the content revision and the bytes it was built from. */
     struct Entry
     {
         vn::intrusive_ptr<const vn::graphics::Texture> owner;      ///< The key object, held (see the note).
@@ -399,7 +401,7 @@ struct MaterialImages::Data
         ::vsg::ref_ptr<::vsg::Sampler>                 default_sampler;  ///< The no-state sampler (see
                                                                         ///< makeDefaultSampler).
         std::uint64_t                                  revision{0};
-        std::uint64_t                                  stamp{0};  ///< Insertion order (see the trim).
+        std::uint64_t                                  bytes{0};  ///< Staged bytes (every layer of every level).
     };
 
     /** @brief One explicitly declared state and the sampler built from it. */
@@ -433,13 +435,12 @@ struct MaterialImages::Data
     /// The declared states this cache has built samplers for: one per distinct state, so two passes that state
     /// the same fields share one VkSampler and a texture is never re-uploaded for a sampling change.
     std::vector<SamplerEntry>      samplers;
-    std::uint64_t                  clock{0};
+    /// The staged bytes of every live entry (what bytes() answers; kept in step with insertions and erasures).
+    std::uint64_t                  bytes_total{0};
     std::shared_ptr<WhiteImage>    white;
     SamplerImage                   white_cube;
     // What the device offers (see setMaxAnisotropy); 1 is the safe answer for a cache that was never told.
     float                          max_anisotropy = 1.0F;
-    /// Entries the BOUND dropped so far (see evictions): a different fact from releaseAbandoned's count.
-    std::size_t                    evictions{0};
 };
 
 MaterialImages::MaterialImages() : d(new Data())
@@ -556,7 +557,8 @@ SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture
         }
 
         TextureReject build_reason;  // left at Ok unless the build refuses
-        auto          image = makeImage(*texture, format, build_reason);
+        std::uint64_t bytes        = 0;
+        auto          image        = makeImage(*texture, format, build_reason, bytes);
         if (image == nullptr) {
             reason = build_reason;
             return fallback(false);
@@ -571,25 +573,15 @@ SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture
             return fallback(false);
         }
 
-        const std::uint64_t stamp = ++d->clock;
+        // The entry this replaces keeps its staged bytes until now; the new revision stages its own.
+        if (found != d->cache.end()) {
+            d->bytes_total -= found->second.bytes;
+        }
         found = d->cache
                     .insert_or_assign(texture, Data::Entry{ std::move(owner), view, default_sampler, revision,
-                                                            stamp })
+                                                            bytes })
                     .first;
-
-        // A trimmed entry may have been the last owner of its texture AND of the images it referenced; a
-        // texture the scene still uses simply rebuilds on its next acquire, which is what bounds the cache.
-        while (d->cache.size() > kMaxEntries) {
-            const auto oldest =
-                std::min_element(d->cache.begin(), d->cache.end(), [](const auto& left, const auto& right) {
-                    return left.second.stamp < right.second.stamp;
-                });
-            if (oldest == d->cache.end()) {
-                break;
-            }
-            d->cache.erase(oldest);
-            ++d->evictions;  // "out of room" is counted separately from "nobody holds it" (see evictions)
-        }
+        d->bytes_total += bytes;
     }
 
     SamplerImage images;
@@ -607,9 +599,9 @@ std::size_t MaterialImages::count() const noexcept
     return d->cache.size();
 }
 
-std::size_t MaterialImages::evictions() const noexcept
+std::uint64_t MaterialImages::bytes() const noexcept
 {
-    return d->evictions;
+    return d->bytes_total;
 }
 
 bool MaterialImages::has(vn::raw_ptr<const vn::graphics::Texture> texture) const noexcept
@@ -626,6 +618,7 @@ std::size_t MaterialImages::releaseAbandoned()
     std::size_t released = 0;
     for (auto it = d->cache.begin(); it != d->cache.end();) {
         if (it->second.owner == nullptr || it->second.owner->useCount() <= 1UL) {
+            d->bytes_total -= it->second.bytes;
             it = d->cache.erase(it);
             ++released;
             continue;
@@ -643,13 +636,17 @@ bool MaterialImages::releaseTexture(vn::raw_ptr<const vn::graphics::Texture> tex
     // A texture has at most one entry: a revision change replaces it in place. Erasing the lookup is enough -
     // descriptor sets that already name the image hold their own reference until the retirement queue lets
     // them go, and the next acquire re-uploads the texture from its live bytes.
-    (void)d->cache.erase(texture);
+    if (const auto found = d->cache.find(texture); found != d->cache.end()) {
+        d->bytes_total -= found->second.bytes;
+        d->cache.erase(found);
+    }
     return true;
 }
 
 void MaterialImages::clear()
 {
     d->cache.clear();
+    d->bytes_total = 0;
     d->samplers.clear();
     d->white.reset();
     d->white_cube = SamplerImage{};

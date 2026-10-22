@@ -76,11 +76,13 @@ class BlockStorage
     struct MaterialWrite
     {
         core::MaterialArena::WriteKind kind{core::MaterialArena::WriteKind::Unchanged};  ///< What happened.
-        /// Byte offset in the storage's buffer - the dynamic offset to bind, meaningful for EVERY answer: a
-        /// hit names the block the last write left, which is exactly what a draw must bind (its bytes are the
+        /// false when the arena was full (Refused): the draw must be skipped, never bound to another material.
+        bool          valid{false};
+        /// Byte offset in the storage's buffer - the dynamic offset to bind, meaningful for EVERY valid answer:
+        /// a hit names the block the last write left, which is exactly what a draw must bind (its bytes are the
         /// material's - see `writeMaterial`).
-        std::uint64_t                  offset{0};
-        std::uint64_t                  bytes{0};   ///< Bytes written (0 when nothing was).
+        std::uint64_t offset{0};
+        std::uint64_t bytes{0};   ///< Bytes written (0 when nothing was).
     };
 
     /** @brief The regions the buffer is divided into (what a write's offset must fall inside). */
@@ -116,15 +118,16 @@ class BlockStorage
      */
     struct Growth
     {
-        std::uint32_t views{0};    ///< Blocks the worst frame tried to write into the view region.
-        std::uint32_t draws{0};    ///< Blocks the worst frame tried to write into the draw region.
-        std::uint32_t lights{0};   ///< Blocks the worst frame tried to write into the light region.
-        std::uint32_t shadows{0};  ///< Blocks the worst frame tried to write into the shadow region.
+        std::uint32_t views{0};     ///< Blocks the worst frame tried to write into the view region.
+        std::uint32_t draws{0};     ///< Blocks the worst frame tried to write into the draw region.
+        std::uint32_t lights{0};    ///< Blocks the worst frame tried to write into the light region.
+        std::uint32_t shadows{0};   ///< Blocks the worst frame tried to write into the shadow region.
+        std::uint32_t materials{0}; ///< Live materials a frame needed (sized before recording; a refused note records it too).
 
         /** @brief Whether any region ran out of budget (only then is a replacement storage needed). */
         [[nodiscard]] bool needed() const noexcept
         {
-            return views != 0U || draws != 0U || lights != 0U || shadows != 0U;
+            return views != 0U || draws != 0U || lights != 0U || shadows != 0U || materials != 0U;
         }
     };
 
@@ -189,11 +192,21 @@ class BlockStorage
      * @param material Material identity (a raw pointer: the arena stores no reference to it).
      * @param revision Upstream revision of the material's bytes.
      * @param block    Block bytes (a `VineMaterialBlock`); not written when the revision matches.
-     * @return What happened and where the block is; the offset is valid for every answer, so a caller binds
-     *         it whether the bytes were written or were already right (see @ref MaterialWrite).
+     * @return What happened and where the block is; the offset is valid for every answer except Refused
+     *         (`valid == false`), where the caller skips the draw and growth is requested (see MaterialWrite).
      */
     [[nodiscard]] MaterialWrite writeMaterial(const void* material, std::uint64_t revision,
                                               std::span<const std::byte> block);
+
+    /** @brief Returns a material's slot to the arena (the application is done with it).
+     *
+     * Safe between frames: the slot's per-copy rotation keeps the bytes an in-flight frame reads untouched
+     * until that frame is done (the same rule the arena's writes follow).
+     *
+     * @param material Material identity; a material with no slot answers false.
+     * @return true when a slot was returned.
+     */
+    bool releaseMaterial(const void* material) noexcept;
 
   public:
     /** @brief Gets the regions the buffer is divided into. */
@@ -293,8 +306,8 @@ class BlockStorage
     /** @brief Gets the number of material notes answered without a write (the steady frame). */
     [[nodiscard]] std::uint64_t materialHits() const noexcept;
 
-    /** @brief Gets the number of materials dropped because the arena's capacity was reached. */
-    [[nodiscard]] std::uint64_t materialEvictions() const noexcept;
+    /** @brief Gets the number of material notes refused because the arena's capacity was reached. */
+    [[nodiscard]] std::uint64_t materialRefusals() const noexcept;
 
   private:
     struct Data;

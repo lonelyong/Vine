@@ -630,15 +630,18 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark
     ASSERT_EQ(store.geometryEntries(), 1U);
     ASSERT_EQ(store.programEntries(), 1U);
 
+    std::vector<const void*> released_materials;
+
     // The host still holds both, so neither is abandoned.
-    EXPECT_EQ(store.releaseAbandoned(timeline, retirement), 0U);
+    EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 0U);
     EXPECT_EQ(store.geometryEntries(), 1U);
+    EXPECT_TRUE(released_materials.empty());
 
     // The host lets the geometry go: the store's share is the last one.
     const void* const identity = geometry.get();
     const std::uint64_t revision = geometry->revision();
     geometry.reset();
-    EXPECT_EQ(store.releaseAbandoned(timeline, retirement), 1U);
+    EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U);
     EXPECT_EQ(retirement.pending(), 1U) << "the abandoned rows are parked, not dropped: a recorded frame may still name them";
     EXPECT_TRUE(findGeometry(store.tablesFor(plan->frame, timeline, retirement), identity, revision).found())
         << "the rows still answer while the parking window is open";

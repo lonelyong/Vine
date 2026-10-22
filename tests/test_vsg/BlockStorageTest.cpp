@@ -501,3 +501,52 @@ TEST(BlockStorageTest, TheMaterialCopiesRotateSoAnInFlightFrameIsNeverOverwritte
     EXPECT_NE(offsets[1], offsets[2]);
     EXPECT_NE(offsets[3], offsets[0]) << "the third frame in flight is still reading the first copy";
 }
+
+TEST(BlockStorageTest, AMaterialRefusalAsksForTheWholeFramesNeed)
+{
+    if (!Fixture::available()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+    Fixture fixture;
+    BlockStorage::Layout layout;
+    layout.materials.capacity = 2U;
+    ASSERT_TRUE(fixture.build(layout));
+
+    const int a = 0, b = 1, c = 2;
+    fixture.storage->beginFrame();
+    EXPECT_TRUE(fixture.storage->writeMaterial(&a, 1, blockOf(64, 0x10)).valid);
+    EXPECT_TRUE(fixture.storage->writeMaterial(&b, 1, blockOf(64, 0x20)).valid);
+
+    // No eviction: the third material is refused, and the request is "one capacity that serves this frame".
+    const auto refused = fixture.storage->writeMaterial(&c, 1, blockOf(64, 0x30));
+    EXPECT_EQ(refused.kind, vn::graphics::backend::MaterialArena::WriteKind::Refused);
+    EXPECT_FALSE(refused.valid) << "a refused write has no offset a draw may bind";
+    EXPECT_EQ(fixture.storage->materialRefusals(), 1U);
+    EXPECT_EQ(fixture.storage->liveMaterials(), 2U) << "the two live materials kept their slots";
+    EXPECT_EQ(fixture.storage->growthNeeded().materials, 3U) << "live (2) + the one refused";
+
+    // The release path is what makes room - no capacity to run out of.
+    EXPECT_TRUE(fixture.storage->releaseMaterial(&a));
+    const auto fitted = fixture.storage->writeMaterial(&c, 1, blockOf(64, 0x30));
+    EXPECT_TRUE(fitted.valid);
+    EXPECT_EQ(fitted.kind, vn::graphics::backend::MaterialArena::WriteKind::Allocated);
+    EXPECT_EQ(fixture.storage->materialRefusals(), 1U) << "a release is not a refusal";
+}
+
+TEST(BlockStorageTest, TheMaterialRegionGrowsWhileTheOthersStay)
+{
+    BlockStorage::Layout current;
+    current.views.blocks_per_frame = 10U;
+    current.materials.capacity       = 2U;
+
+    BlockStorage::Growth request{};
+    request.materials = 3U;
+    EXPECT_TRUE(request.needed()) << "a material request alone asks for a replacement";
+
+    const BlockStorage::Layout grown = BlockStorage::grownLayout(current, request);
+    EXPECT_EQ(grown.materials.capacity, 4U) << "doubling (2 -> 4) covers a need of 3";
+    EXPECT_EQ(grown.views.blocks_per_frame, 10U) << "the regions without a request are untouched";
+
+    BlockStorage::Growth none{};
+    EXPECT_FALSE(none.needed());
+}
