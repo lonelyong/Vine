@@ -24,7 +24,7 @@ class RenderControl;
  * One render area draws one picture (see RenderSurface), and this is the object that turns "how the host wants it
  * drawn" into the chain that draws it: the request is a VALUE (ViewerOptions - path, shading mode, which overlays,
  * off-screen size), and every structural change is one build plus one adoption on the area's view
- * (SceneView::setPipeline). What is left over in the area - who draws it, how big it is, which window it is - stays
+ * (SceneView::setChain). What is left over in the area - who draws it, how big it is, which window it is - stays
  * where it was: on the surface (RenderSurface), which this class READS and never copies.
  *
  * WHAT IT IS NOT. It is not an owner of the area's presentation: isActive() READS it (a pass a host declared there, a view
@@ -80,8 +80,8 @@ class VN_APPFW_API Viewer
      * @brief Re-states how the area draws: rebuilds the chain from @p options, adopts it, and declares the picture.
      *
      * The structural call: a chain, an overlay's existence and the mode the chain must be able to express are build
-     * decisions, so this costs one pipeline build. The rebuild CARRIES the runtime choices of the live chain (an
-     * overlay the user hid stays hidden - see RenderPipeline::setGizmoVisible), because the request cannot state them:
+     * decisions, so this costs one chain build. The rebuild CARRIES the runtime choices of the live chain (an
+     * overlay the user hid stays hidden - see PassChain::setGizmoVisible), because the request cannot state them:
      * they are switches on the built chain, not recipe fields. A declaration the area already has is untouched (it
      * resolves the view's pass afresh, so a rebuilt chain is followed), and a view that had none is declared - the
      * area's view becomes the picture this way, which is what the first attach does.
@@ -95,9 +95,9 @@ class VN_APPFW_API Viewer
     /**
      * @brief Switches the shading mode of the area.
      *
-     * The cheap call: a mode the built chain can express is one override on the live pipeline (no rebuild, no device
+     * The cheap call: a mode the built chain can express is one override on the live chain (no rebuild, no device
      * work). When it cannot express @p mode (a deferred chain asked for a non-Lit mode), the area is rebuilt from
-     * its current request carrying @p mode - see ViewerOptions and RenderPipelineBuilder::effectivePath.
+     * its current request carrying @p mode - see ViewerOptions and PassChainBuilder::effectivePath.
      *
      * @param mode The viewing mode to switch to.
      * @return true when the area now shades in @p mode; false when there is no view, or the rebuild failed (the
@@ -111,7 +111,7 @@ class VN_APPFW_API Viewer
      * The declaration this viewer made is withdrawn (RenderSurface::dismiss), the view is forgotten and the
      * reference this viewer held is dropped - the view is the host's again, and a host that keeps it may destroy
      * it. The chain this viewer built stays ADOPTED on the view: a chain belongs to the view it draws, so a host
-     * that takes the picture over replaces it (SceneView::setPipeline) rather than starting from nothing.
+     * that takes the picture over replaces it (SceneView::setChain) rather than starting from nothing.
      *
      * @param view View to give back (the one this viewer draws with).
      * @return true when @p view was this viewer's view.

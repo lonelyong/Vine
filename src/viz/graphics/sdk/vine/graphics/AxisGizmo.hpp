@@ -26,7 +26,7 @@ class Scene;
  *   onto the framing one and keeps its own framing distance.
  * - Surface layout is creator-managed: the object's owner reports the surface size on every resize
  *   (onSurfaceResized) and points it at the corner of the area it lays out in (setAreaOrigin). The
- *   pipeline does both for the standard case (RenderPipeline::resize), and a view states the area origin
+ *   chain does both for the standard case (PassChain::resize), and a view states the area origin
  *   (SceneView).
  *
  * Example:
@@ -36,7 +36,7 @@ class Scene;
  * PassDesc hud;
  * hud.name            = u8"axis_gizmo";
  * hud.tag             = u8"Hud";                   // a HUD pass declared like any other
- * hud.stage           = PipelineStage::Overlay;
+ * hud.stage           = PassStage::Overlay;
  * hud.camera          = intrusive_ptr<Camera>(gizmo->camera());
  * hud.content         = intrusive_ptr<Scene>(gizmo->content());
  * hud.viewport        = gizmo->boxViewport();

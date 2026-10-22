@@ -36,19 +36,20 @@ class ScreenPass;
  *   reusable way to assemble common configurations, and the SceneView default viewer is assembled through the same
  *   Forward preset so the whole codebase shares one main-pipeline recipe.
  */
-class VN_GRAPHICS_API RenderPipelineBuilder {
+class VN_GRAPHICS_API PassChainBuilder {
   public:
     /** @brief Constructs a builder targeting an engine.
      *
      * @param engine Engine the assembled passes are applied to (borrowed; must outlive the builder).
      */
-    explicit RenderPipelineBuilder(raw_ptr<RenderEngine> engine);
+    explicit PassChainBuilder(raw_ptr<RenderEngine> engine);
 
     /** @brief Binds the content scene for produced scene passes.
      *
      * @param content Scene used by the produced passes, or null to fall back to the engine's default content scene.
+     * @return This builder, for chaining.
      */
-    RenderPipelineBuilder& setContent(intrusive_ptr<Scene> content);
+    PassChainBuilder& setContent(intrusive_ptr<Scene> content);
 
     /** @brief Binds an optional forward-only (transparent / overlay) scene.
      *
@@ -63,8 +64,9 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * - Without a transparent scene the presets behave exactly as before.
      *
      * @param transparent Transparent / overlay scene, or null for none.
+     * @return This builder, for chaining.
      */
-    RenderPipelineBuilder& setTransparentContent(intrusive_ptr<Scene> transparent);
+    PassChainBuilder& setTransparentContent(intrusive_ptr<Scene> transparent);
 
     /** @brief Binds the camera used by the produced scene passes.
      *
@@ -73,8 +75,9 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      *   SceneView's camera).
      *
      * @param camera Camera (borrowed), or null to leave unset (scene-pass recipes then refuse to build).
+     * @return This builder, for chaining.
      */
-    RenderPipelineBuilder& setCamera(raw_ptr<Camera> camera);
+    PassChainBuilder& setCamera(raw_ptr<Camera> camera);
 
     /** @brief Assembles a pipeline from @p options.
      *
@@ -111,7 +114,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * @param options The pipeline's description (see PipelineOptions).
      * @return The built pipeline, or null when the requested path cannot be built.
      */
-    intrusive_ptr<RenderPipeline> build(const RenderPipelineOptions& options);
+    intrusive_ptr<PassChain> build(const ChainDesc& options);
 
     /** @brief The chain a build with @p options assembles, given what the requested mode needs.
      *
@@ -126,7 +129,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * @param options The pipeline request.
      * @return The chain the build assembles.
      */
-    [[nodiscard]] static ShadingPath effectivePath(const RenderPipelineOptions& options) noexcept;
+    [[nodiscard]] static ShadingPath effectivePath(const ChainDesc& options) noexcept;
 
     /** @brief The light camera a directional shadow is rendered with.
      *
@@ -236,7 +239,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * @param pipeline Pipeline the pass is registered on.
      * @return true when the pass was registered.
      */
-    bool buildForwardPath(RenderPipeline& pipeline);
+    bool buildForwardPath(PassChain& pipeline);
 
     /** @brief Builds the deferred path (G-buffer + lighting) into @p pipeline.
      *
@@ -244,7 +247,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * @param options  Options the path reads (G-buffer size, programs).
      * @return true when the passes were registered.
      */
-    bool buildDeferredPath(RenderPipeline& pipeline, const RenderPipelineOptions& options);
+    bool buildDeferredPath(PassChain& pipeline, const ChainDesc& options);
 
     /** @brief Builds the depth-only shadow pass an isCastingShadow light asks for, and returns its map.
      *
@@ -262,7 +265,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      *                           is the map's).
      * @return The shadow map target (never null on this path).
      */
-    intrusive_ptr<RenderTarget> buildShadowPass(RenderPipeline& pipeline, const intrusive_ptr<const Light>& shadow_light_owner);
+    intrusive_ptr<RenderTarget> buildShadowPass(PassChain& pipeline, const intrusive_ptr<const Light>& shadow_light_owner);
 
     /** @brief Adds the optional HUD overlays to @p pipeline.
      *
@@ -270,7 +273,7 @@ class VN_GRAPHICS_API RenderPipelineBuilder {
      * @param options  Options naming which overlays to add.
      * @return true when every requested overlay was added.
      */
-    bool applyOverlays(RenderPipeline& pipeline, const RenderPipelineOptions& options);
+    bool applyOverlays(PassChain& pipeline, const ChainDesc& options);
 
     /** @brief Reports the shadow-casting lights this build did NOT honour.
      *

@@ -1,7 +1,7 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/SceneView.hpp>
 
@@ -17,32 +17,32 @@ namespace
 {
 
 /**
- * @brief Builds a pipeline for @p view from @p options and adopts it: the two steps a host does for a view.
+ * @brief Builds a chain for @p view from @p options and adopts it: the two steps a host does for a view.
  *
- * A view no longer carries a recipe - a pipeline IS the recipe (see RenderPipelineBuilder and
- * SceneView::setPipeline) - so a test that wants "this view, drawn this way" states the options here and hands the
+ * A view no longer carries a recipe - a chain IS the recipe (see PassChainBuilder and
+ * SceneView::setChain) - so a test that wants "this view, drawn this way" states the options here and hands the
  * result over. The builder is given the view's own camera and scene, which is what every caller in the app does.
  *
- * @param view    View the pipeline is built for; it adopts the result.
+ * @param view    View the chain is built for; it adopts the result.
  * @param engine  Engine the passes are registered on.
- * @param options The build options (chain, mode, overlays; see PipelineOptions).
- * @return The pipeline that was built and adopted; null when the builder refused @p options.
+ * @param options The build options (chain, mode, overlays; see ChainDesc).
+ * @return The chain that was built and adopted; null when the builder refused @p options.
  */
-intrusive_ptr<RenderPipeline> buildFor(const intrusive_ptr<SceneView>& view, RenderEngine* engine,
-                                 const RenderPipelineOptions& options = {})
+intrusive_ptr<PassChain> buildFor(const intrusive_ptr<SceneView>& view, RenderEngine* engine,
+                                 const ChainDesc& options = {})
 {
-    RenderPipelineBuilder builder(engine);
+    PassChainBuilder builder(engine);
     builder.setCamera(view->camera());
     builder.setContent(view->scene());
-    intrusive_ptr<RenderPipeline> pipeline = builder.build(options);
+    intrusive_ptr<PassChain> pipeline = builder.build(options);
     if (pipeline != nullptr) {
-        view->setPipeline(pipeline);
+        view->setChain(pipeline);
     }
     return pipeline;
 }
 
 /** @brief A view bound to @p engine and drawing @p options (the engine outlives the view in these tests). */
-intrusive_ptr<SceneView> viewOn(RenderEngine* engine, const RenderPipelineOptions& options = {})
+intrusive_ptr<SceneView> viewOn(RenderEngine* engine, const ChainDesc& options = {})
 {
     auto view = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine);
@@ -96,7 +96,7 @@ TEST(RenderSurfaceTest, PresentingAViewDeclaresWhatItDraws)
     EXPECT_TRUE(surface->dismiss(view.get()));
     EXPECT_FALSE(surface->hasPresentation());
     EXPECT_FALSE(surface->dismiss(view.get()));
-    EXPECT_NE(view->pipeline(), nullptr);
+    EXPECT_NE(view->chain(), nullptr);
     EXPECT_EQ(engine->passCount(), 1u);
 }
 
@@ -147,12 +147,12 @@ TEST(RenderSurfaceTest, ThePassFollowsARebuiltPipeline)
     RenderPass* const first = surface->presentingPass();
     ASSERT_NE(first, nullptr);
 
-    RenderPipelineOptions with_gizmo;
+    ChainDesc with_gizmo;
     with_gizmo.gizmo.source_camera = view->camera();
     ASSERT_NE(buildFor(view, engine.get(), with_gizmo), nullptr);
-    ASSERT_NE(view->pipeline(), nullptr);
+    ASSERT_NE(view->chain(), nullptr);
     EXPECT_NE(surface->presentingPass(), first);
-    EXPECT_EQ(surface->presentingPass(), view->pipeline()->presentingPass());
+    EXPECT_EQ(surface->presentingPass(), view->chain()->presentingPass());
     EXPECT_EQ(surface->presentedView(), view.get());
 }
 
@@ -164,7 +164,7 @@ TEST(RenderSurfaceTest, AViewWithNoPipelineIsRefusedOutLoud)
     view->setEngine(engine.get());
     auto surface = engine->createSurface();
 
-    EXPECT_EQ(view->pipeline(), nullptr);
+    EXPECT_EQ(view->chain(), nullptr);
     EXPECT_FALSE(surface->present(*view));
     EXPECT_FALSE(surface->hasPresentation());
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u);
@@ -179,7 +179,7 @@ TEST(RenderSurfaceTest, AViewOnAnotherEngineIsRefusedOutLoud)
     auto view    = viewOn(other.get());
     auto surface = engine->createSurface();
 
-    ASSERT_NE(view->pipeline(), nullptr);
+    ASSERT_NE(view->chain(), nullptr);
     EXPECT_FALSE(surface->present(*view));
     EXPECT_FALSE(surface->hasPresentation());
     EXPECT_EQ(engine->passCount(), 0u) << "nothing of that view was ever registered on this surface's engine";
@@ -207,7 +207,7 @@ TEST(RenderSurfaceTest, ASecondAreaIsAConstructionFailureNotASecondObject)
 
     // The area the engine drives is untouched by the refusals: it still decides what this engine presents.
     auto view = viewOn(engine.get());
-    ASSERT_NE(view->pipeline(), nullptr);
+    ASSERT_NE(view->chain(), nullptr);
     EXPECT_TRUE(first->present(*view));
     EXPECT_TRUE(first->hasPresentation());
 }
@@ -284,7 +284,7 @@ TEST(RenderSurfaceTest, OneAreaDrawsOnePicture)
 
     EXPECT_FALSE(surface->present(*second)) << "a second view is not a split - it is a second picture";
     EXPECT_EQ(surface->presentedView(), first.get());
-    EXPECT_EQ(surface->presentingPass(), first->pipeline()->presentingPass());
+    EXPECT_EQ(surface->presentingPass(), first->chain()->presentingPass());
 
     auto host_pass = intrusive_ptr<RenderPass>(new RenderPass());
     engine->addPass(host_pass, 40);
@@ -339,7 +339,7 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
     auto surface = engine->createSurface();
-    RenderPass* const window = view->pipeline()->presentingPass();
+    RenderPass* const window = view->chain()->presentingPass();
     ASSERT_NE(window, nullptr);
     EXPECT_TRUE(window->isClearEnabled());
 
@@ -349,7 +349,7 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
         << "the window's grey is the linear light that displays as #333333";
 
     window->setClearEnabled(false);
-    RenderPipelineOptions with_gizmo;
+    ChainDesc with_gizmo;
     with_gizmo.gizmo.source_camera = view->camera();
     ASSERT_NE(buildFor(view, engine.get(), with_gizmo), nullptr);
     EXPECT_NE(surface->presentingPass(), window);
@@ -359,13 +359,13 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
     // Deferred: the picture is a fullscreen pass over the whole area, whose program is a ScreenPass and therefore asks
     // for no clear at all - being the area's picture does not make it want one.
     auto deferred_engine = intrusive_ptr<RenderEngine>(new RenderEngine());
-    RenderPipelineOptions deferred;
+    ChainDesc deferred;
     deferred.path = ShadingPath::Deferred;
     auto deferred_view = viewOn(deferred_engine.get(), deferred);
     auto deferred_area = deferred_engine->createSurface();
     ASSERT_TRUE(deferred_area->present(*deferred_view));
-    ASSERT_NE(deferred_view->pipeline()->presentingPass(), nullptr);
-    EXPECT_FALSE(deferred_view->pipeline()->presentingPass()->isClearEnabled());
+    ASSERT_NE(deferred_view->chain()->presentingPass(), nullptr);
+    EXPECT_FALSE(deferred_view->chain()->presentingPass()->isClearEnabled());
 }
 
 TEST(RenderSurfaceTest, APresentedViewThatDiesLeavesTheSurface)
@@ -403,7 +403,7 @@ TEST(RenderSurfaceTest, AViewThatOutlivesItsSurfaceDoesNotCallIntoIt)
     view->resize(640, 480);
     EXPECT_EQ(view->surfaceWidth(), 640);
     EXPECT_EQ(view->surfaceHeight(), 480);
-    EXPECT_NE(view->pipeline(), nullptr) << "the pipeline is the view's, not the surface's";
+    EXPECT_NE(view->chain(), nullptr) << "the pipeline is the view's, not the surface's";
 }
 
 TEST(RenderSurfaceTest, DismissingAViewStopsFeedingItTheSize)

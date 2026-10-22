@@ -18,7 +18,7 @@
 | `SceneView` | [SceneView.hpp](../../src/viz/graphics/sdk/vine/graphics/SceneView.hpp) | "一台相机看什么" | 相机、内容场景、操纵器、采纳的那条链 |
 | `RenderEngine` | [RenderEngine.hpp](../../src/viz/graphics/sdk/vine/graphics/RenderEngine.hpp) | "这一帧画什么、按什么顺序" | pass 注册表、帧上下文 |
 | `RenderSurface` | [RenderSurface.hpp](../../src/viz/graphics/sdk/vine/graphics/RenderSurface.hpp) | "**哪条 pass 画这块窗口**、多大" | 呈现（一条）、尺寸与比例、目标（借用） |
-| `RenderPipeline` | [RenderPipeline.hpp](../../src/viz/graphics/sdk/vine/graphics/RenderPipeline.hpp) | "一个视图怎么画"（一条链的配方与运行期开关） | 一条链的 pass、档、离屏目标 |
+| `PassChain` | [PassChain.hpp](../../src/viz/graphics/sdk/vine/graphics/PassChain.hpp) | "一个视图怎么画"（一条链的配方与运行期开关） | 一条链的 pass、档、离屏目标 |
 
 **一块区只画一幅画**（多格已下线）。这不是省事：一帧里两条都画默认帧缓冲的 pass 会互相擦，而"点归谁、谁有焦点、谁清屏"
 这些事实没有一个 owner 时，踩过的坑是**静默**的（第二条清屏公告被后端丢掉、第二个共用相机的视图被静默吞掉）。
@@ -42,7 +42,7 @@ graph TB
         ENG["RenderEngine<br/>一帧：画什么、按什么顺序"]
         VIEW["SceneView<br/>相机 / 内容 / 采纳的链"]
         AREA["RenderSurface 区<br/>哪条 pass 画这块窗口 / 尺寸"]
-        PIPE["RenderPipeline<br/>一条链的配方与开关"]
+        PIPE["PassChain<br/>一条链的配方与开关"]
     end
 
     subgraph contract["后端契约（SDK 的设备面）"]
@@ -73,7 +73,7 @@ graph TB
 分层读法（自上而下，每层只依赖下一层的契约）：
 
 - **appfw**：把"窗口"这一件平台的事收进 `RenderControl` / `SurfaceWindow`（attach、尺寸、输入、失败状态机），把"这块区怎么画"收进 `Viewer`。
-- **graphics SDK**：帧的单位是引擎（`RenderEngine`）；视图只采纳链（`SceneView` + `RenderPipeline`）；"谁画这块窗口"是区自己的呈现（`RenderSurface`）。
+- **graphics SDK**：帧的单位是引擎（`RenderEngine`）；视图只采纳链（`SceneView` + `PassChain`）；"谁画这块窗口"是区自己的呈现（`RenderSurface`）。
 - **后端契约**：设备（`RenderDevice`）造目标（`WindowPresentTarget`，即 `PresentTarget` 的窗口实现）、跑帧（`RenderFrameExecutor`）；三者今天由插件的一个对象同时实现（`RenderBackend` 是那个聚合）。**帧只认 `PresentTarget`**（`resize` + `present`）：窗口那两条动词（`setWindowHandle` / `nativeHandle`）只属于拥有窗口的宿主。
 - **插件**：Vulkan 的会话、录制与提交，宿主不直接碰。
 
@@ -115,7 +115,7 @@ classDiagram
     class SceneView {
         +setEngine(engine)
         +setScene(scene)
-        +setPipeline(pipeline)
+        +setChain(chain)
         +resize(w, h, dpr)
     }
     class RenderEngine {
@@ -132,7 +132,7 @@ classDiagram
         +resize(w, h, dpr)
         +bindTarget(target)
     }
-    class RenderPipeline {
+    class PassChain {
         +presentingPass() RenderPass*
         +setShadingMode(mode)
         +setGizmoVisible(bool)
@@ -157,7 +157,7 @@ classDiagram
     RenderSurface o-- "0..1" SceneView : 呈现（声明关系）
     RenderSurface o-- "0..1" RenderPass : 呈现（宿主自建的 pass）
     SceneView "N" --> "1" RenderEngine : 借用
-    SceneView "N" --> "0..1" RenderPipeline : 采纳
+    SceneView "N" --> "0..1" PassChain : 采纳
     RenderEngine "1" --> "1" RenderSurface : 驱动
     RenderEngine "N" --> "1" RenderDevice : 设置（共享引用）
     RenderSurface "1" --> "0..1" WindowPresentTarget : 借用（设备造）
@@ -220,8 +220,8 @@ int main(int argc, char** argv)
 
 `Viewer::setViewerOptions` 把一条请求需要的顺序**一次做完**：
 
-1. **建链**：`RenderPipelineBuilder` 按 `options` 建（相机与内容取自这个视图，HUD 的像素比取自区）；
-2. **采纳**：`view->setPipeline(...)` —— 视图从此画的就是这条链；
+1. **建链**：`PassChainBuilder` 按 `options` 建（相机与内容取自这个视图，HUD 的像素比取自区）；
+2. **采纳**：`view->setChain(...)` —— 视图从此画的就是这条链；
 3. **声明**：`surface->present(view)` —— 区记下"这块窗口由这条链的窗口 pass 画"，并把 `view.setSurface(区)`。
 
 **这个 View 的 surface 就是它声明的那块区**（对控件来说 = `control->surface()`），绑定发生在第 3 步里。所以：
@@ -230,7 +230,7 @@ int main(int argc, char** argv)
 - 同一时刻一个视图最多呈现在一块区上：已经呈现在别处的视图会被区**拒绝 + 报一次**。
 - 前提：视图必须已绑定**这个引擎**（`view->setEngine(control->engine())`）。
 - 建链失败不会留下半个状态：请求与链都停在调用前（`Viewer` 只在建链成功后才改记住的请求）。
-- 解除：`viewer->release(view)` —— 区里撤掉声明、`view.setSurface(nullptr)`，视图回到独立形态；链仍**采纳**在视图上（采纳是单向的），宿主换画法用 `setPipeline`。
+- 解除：`viewer->release(view)` —— 区里撤掉声明、`view.setSurface(nullptr)`，视图回到独立形态；链仍**采纳**在视图上（采纳是单向的），宿主换画法用 `setChain`。
 
 ```cpp
 // 区这一侧的读法（控件把区交出来：control->surface()）
@@ -243,7 +243,7 @@ vn::raw_ptr<vn::graphics::RenderPass> which = control->surface()->presentingPass
 **自己说清接线**，SDK 不替你猜：
 
 - **一条 pass 只画一部分内容**：内容分层（`Node::setLayers`）＋ pass 的掩码（`RenderPass::setLayerMask`，或用配方
-  `RenderPipelineOptions::layer_mask` / `ViewerOptions::layer_mask` 一次给整条链）。一条命令是否被收集 = `isVisible()`
+  `ChainDesc::layer_mask` / `ViewerOptions::layer_mask` 一次给整条链）。一条命令是否被收集 = `isVisible()`
   且它的层与掩码按位与非 0；没声明层的节点在 `kDefaultLayer`，掩码默认 `kAllLayers`（⇒ 不说就一切照旧）。例：
   阴影 caster 标 `caster->setLayers(1u << 1)`，阴影 pass 掩码 `1u << 1`，其余内容一个字都不用改。细节见
   `docs/guides/graphics.md` §3.14。
@@ -251,7 +251,7 @@ vn::raw_ptr<vn::graphics::RenderPass> which = control->surface()->presentingPass
   （`RenderTarget`，作为 pass 的输入声明）。`VINE_VSG_*` 那几个 demo 开关走的就是这条路。
 - **两块并排**：两支 pass，各自一个子矩形、各自读自己的离屏目标；**清屏只有一条**（`setClearEnabled(false)` 关掉其余的，
   或者只让第一条清）—— 否则第二条会把第一条画的擦掉。位置与尺寸由你的布局算（`resize` 的一次公告 + 你的矩形）。
-- **叠加 HUD**：在默认画面那条 pass 之后加一条不做深度、不清屏的 pass（`PipelineStage::Overlay` 就是给它的档位）。
+- **叠加 HUD**：在默认画面那条 pass 之后加一条不做深度、不清屏的 pass（`PassStage::Overlay` 就是给它的档位）。
 - **要第二个"相机 + 内容"**：那就是第二个视图，得配第二个窗口（第二个 `RenderControl`）——一个区只画一幅画。
 
 ## 7. 多窗口

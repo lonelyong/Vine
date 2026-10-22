@@ -20,7 +20,6 @@
 #include "FramePlan.hpp"
 #include "FrameStats.hpp"
 #include "PassDesc.hpp"
-#include "PassGroup.hpp"
 #include "RenderDiagnostic.hpp"
 #include "RenderSurface.hpp"
 #include "ReportOnce.hpp"
@@ -66,7 +65,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
   public:
     /** @brief Constructs an empty engine (no device, no passes).
      *
-     * Configure the pipeline explicitly (addPass) or through a RenderPipelineBuilder, then setDevice()
+     * Configure the chain explicitly (addPass) or through a PassChainBuilder, then setDevice()
      * before initialize().
      */
     RenderEngine();
@@ -76,11 +75,11 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Gets a borrowed handle that stops referring to this engine once it is destroyed.
      *
      * @details
-     * - WHAT IT IS FOR. An object that is not owned by the engine but may outlive it - a RenderPipeline holds passes
-     *   registered HERE, and a host may keep a pipeline after the control that owned the engine is gone - needs a
+     * - WHAT IT IS FOR. An object that is not owned by the engine but may outlive it - a PassChain holds passes
+     *   registered HERE, and a host may keep a chain after the control that owned the engine is gone - needs a
      *   borrow it can CHECK, and it must not take an owning reference to the engine to get one: an owning reference
      *   from a child to its parent keeps the parent alive from below, which is how a "released" engine used to live
-     *   on for as long as anything it once handed a pipeline to (see Lease).
+     *   on for as long as anything it once handed a chain to (see Lease).
      * - WHAT IT DOES NOT DO. It extends nothing: the engine still dies exactly when its last owner drops it, and a
      *   lease taken before that becomes empty rather than dangling.
      * - The cell lives as long as the engine and as long as any lease, so reading a lease after the engine is gone
@@ -167,7 +166,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @details
      * - The engine owns the route, so the message reaches the host whether or not a backend is set (a
      *   wiring problem exists before any backend draws); counted in diagnosticCount().
-     * - Public because the engine's own builders report through it too (e.g. RenderPipelineBuilder tells
+     * - Public because the engine's own builders report through it too (e.g. PassChainBuilder tells)
      *   the host that content asks for shadows while no shadow pass is built).
      *
      * @param severity How bad the situation is.
@@ -226,7 +225,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @details
      * - The surface's shape is the one number a builder or a host needs from the engine while it is assembling
-     *   passes (RenderPipelineBuilder lays its targets out on it). It is not a per-frame value: it changes when the
+     *   passes (PassChainBuilder lays its targets out on it). It is not a per-frame value: it changes when the
      *   surface is resized, and everything that reads it reads the same fact.
      *
      * @return Width in the units the host announced (logical pixels for the Qt host; 0 until the first resize).
@@ -402,30 +401,17 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   `PassKind::Screen` -> ScreenPass) and registered like any other pass: nothing downstream knows which
      *   way a pass arrived, and no second mechanism has to be kept in step.
      * - What the descriptor adds over the setters: the STAGE it belongs to (its order follows from intent,
-     *   see pipelineStageOrder), a TAG for the plan, the TRANSIENT it needs (no host owns the target - see
+     *   see passStageOrder), a TAG for the plan, the TRANSIENT it needs (no host owns the target - see
      *   PassDesc::writes_image), and the per-frame hook its content updates itself through.
      * - What the return is for: a declaration says what a pass IS; the node it became is how a host CHANGES
      *   what it does without re-declaring - a program override, a viewport that follows the surface, a
-     *   restated clear policy. That is the one handle a caller needs (Pipeline keeps the node for exactly
+     *   restated clear policy. That is the one handle a caller needs (a PassChain keeps the node for exactly
      *   this).
      *
      * @param desc The declaration (see PassDesc; a null camera draws nothing, as any pass does).
      * @return The execution node the declaration became, or null when that pass was already registered.
      */
     intrusive_ptr<RenderPass> addPass(const PassDesc& desc);
-
-    /** @brief Mints a registration handle: the passes added through it are removed with it (see PassGroup).
-     *
-     * @details
-     * - The registry stays the engine's single slot table; a group is only an id the slots carry. A recipe (a
-     *   picture, a preview, a test) puts its passes in one group instead of remembering the handles itself, so
-     *   "registered" and "removed" are the same object's two ends.
-     * - A group is independent of the order passes run at: the engine still sorts the whole table (see
-     *   pipelineStageOrder), and a group may register passes at any order.
-     *
-     * @return The new, empty group; it is invalid once this engine is destroyed (see PassGroup::isValid).
-     */
-    [[nodiscard]] PassGroup createPassGroup() noexcept;
 
     /** @brief Removes a previously added pass.
      *
@@ -545,9 +531,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     struct Slot {
         intrusive_ptr<RenderPass> pass;
         int                       order = 0;
-        /// The registration group this pass belongs to (0 = registered without a group).
-        std::uint64_t             group{ 0 };
-        /// The role the group gave this pass (empty = anonymous).
+        /// The object that registered this pass and takes it back when it dies (null = registered without an owner,
+        /// e.g. straight on the engine). Opaque on purpose: the engine never calls into it, only compares it.
+        raw_ptr<Object>           owner{ nullptr };
+        /// The role that owner gave this pass (empty = anonymous).
         String                    role;
         /// How long the last frame's record of this pass took, in microseconds (0: it did not run then).
         /// Measured by the compile, where that record happens (see buildFrameValue); reported through the frame
@@ -742,21 +729,39 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     intrusive_ptr<RenderPass> insertSlot(Slot slot);
 
-    // ---- Registration groups (see PassGroup): one slot table, an id per group ----
+    // ---- Registration by owner (see PassChain): one slot table, an owner pointer per row ----
 
-    friend class PassGroup;
+    friend class PassChain;
 
-    /** @brief Registers @p desc under @p group with @p role (the PassGroup::add implementation). */
-    intrusive_ptr<RenderPass> addPassToGroup(const PassDesc& desc, std::uint64_t group, const String& role);
+    /** @brief Registers @p desc on behalf of @p owner under @p role (the PassChain::addPass implementation).
+     *
+     * @param desc  Declaration of the pass to register.
+     * @param owner Object that keeps the pass and takes it back when it dies (null = no owner).
+     * @param role  Name the owner gives this pass (empty = anonymous).
+     * @return The registered node, or null when it was already registered.
+     */
+    intrusive_ptr<RenderPass> addPassOwnedBy(const PassDesc& desc, raw_ptr<Object> owner, const String& role);
 
-    /** @brief Removes every pass whose slot carries @p group (each one as removePass). */
-    void removePassGroup(std::uint64_t group) noexcept;
+    /** @brief Removes every pass whose slot is owned by @p owner (each one as removePass).
+     *
+     * @param owner Owner whose passes are taken back (null is a no-op: unowned passes belong to whoever added them).
+     */
+    void removePassesOwnedBy(const Object* owner) noexcept;
 
-    /** @brief Answers the passes of @p group, in engine order. */
-    [[nodiscard]] std::vector<intrusive_ptr<RenderPass>> groupPasses(std::uint64_t group) const;
+    /** @brief Answers the passes owned by @p owner, in engine order.
+     *
+     * @param owner Owner whose passes are asked for (null answers nothing).
+     * @return The handles; empty when nothing is registered for that owner.
+     */
+    [[nodiscard]] std::vector<intrusive_ptr<RenderPass>> passesOwnedBy(const Object* owner) const;
 
-    /** @brief Answers the pass of @p group registered as @p role, or null. */
-    [[nodiscard]] raw_ptr<RenderPass> groupPass(std::uint64_t group, const String& role) const;
+    /** @brief Answers the pass @p owner registered as @p role, or null.
+     *
+     * @param owner Owner whose pass is asked for (null answers nothing).
+     * @param role  Role the pass was registered under.
+     * @return The pass, or null when that owner registered no pass with that role.
+     */
+    [[nodiscard]] raw_ptr<RenderPass> passOwnedBy(const Object* owner, const String& role) const;
 
     /** @brief Makes sure the transient target a slot declares exists, at the shape it declares.
      *
@@ -859,7 +864,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // ---- Fields ----
     intrusive_ptr<RenderBackend>        device_;
     // The validity bit behind every Lease this engine handed out (see lease): set to this in the constructor and
-    // cleared in the destructor, so a holder of a lease (a RenderPipeline, say) answers "the engine is gone" instead
+    // cleared in the destructor, so a holder of a lease (a PassChain, say) answers "the engine is gone" instead
     // of calling into freed memory - and never has to keep the engine alive to be safe.
     std::shared_ptr<vn::detail::LeaseCell<RenderEngine>> lease_cell_;
     // The engine's ONE diagnostic route (see Diagnostics.hpp): the host's sink lives inside it, and the
@@ -870,8 +875,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // the constructor to forwardProgram(), replaced by setDefaultContentProgram(), and null means "decline".
     intrusive_ptr<const ShaderProgram>  default_content_program_;
     std::vector<Slot>                   slots_;         // uniform ordered draw registry
-    /// The id the next registration group gets (0 is reserved for "no group").
-    std::uint64_t                       next_pass_group_{ 1 };
     // The wiring checks' tables (see collectPlanProblems). MEMBERS, cleared every compile: the pass count is small, a
     // flat scan beats a tree, and a vector keeps its capacity - so a steady frame allocates nothing here.
     std::vector<Declaration>            wiring_filled_;

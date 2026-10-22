@@ -144,7 +144,7 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      * - WITHIN one pass, and only there: a higher order is drawn LATER - how content that must land ON TOP
      *   (a selection outline, a decal, a highlight overlay) is expressed. It never moves content between
      *   passes: which passes exist and in what order they run is the recipe's (`PassDesc::order` /
-     *   `PipelineStage`).
+     *   `PassStage`).
      * - The order is the OUTER sort key of the pass's draw list, so a declared order leapfrogs the default
      *   batches (order 1 is drawn after every draw at order 0, opaque or not); INSIDE one order the usual
      *   picture holds - opaque front-to-back, then transparent back-to-front (see

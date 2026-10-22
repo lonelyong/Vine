@@ -170,7 +170,7 @@ if (engine_->hasWindowPass(camera_.get())) { return; }   // 有人占了 ⇒ 我
 
 | 后果 | 证据 |
 | --- | --- |
-| 判断是**全局**的：任何"这台相机 + render target 为空"的 pass 都算占位，没人记"是**谁**占了这块表面" | `RenderPipelineBuilder.cpp` 里专门写了注释解释"null target 也算，所以 `hasWindowPass(camera)` 为真" |
+| 判断是**全局**的：任何"这台相机 + render target 为空"的 pass 都算占位，没人记"是**谁**占了这块表面" | `RenderPipelineBuilder.cpp` 里专门写了注释解释"null target 也算，所以 `hasWindowPass(camera)` 为真" | <!-- drift-ok -->
 | **顺序敏感**：`addPass()` 的先后决定谁不建 | 规则读的是当时的引擎 pass 表，没有"谁声明要呈现"这一层 |
 | 两台视图共用一台相机（镜像 / 概览 / VR 双眼）⇒ 第二个被**静默跳过** | 同上；`hasWindowPass()` 只是查询，不回答"这块表面上的这一块是谁" |
 

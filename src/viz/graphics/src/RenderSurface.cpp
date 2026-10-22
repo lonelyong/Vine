@@ -1,6 +1,6 @@
 #include <vine/graphics/RenderSurface.hpp>
 
-#include <vine/graphics/RenderPipeline.hpp>
+#include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -35,7 +35,7 @@ raw_ptr<RenderPass> RenderSurface::passOf(raw_ptr<SceneView> view) const
     }
     // Resolved on every read, never remembered: a view's window pass is a NEW pass each time a recipe change
     // rebuilds its pipeline, and the area has to name the one that is in the frame.
-    const raw_ptr<RenderPipeline> pipeline = view->pipeline();
+    const raw_ptr<PassChain> pipeline = view->chain();
     return pipeline != nullptr ? pipeline->presentingPass() : nullptr;
 }
 
@@ -101,20 +101,20 @@ bool RenderSurface::present(SceneView& view)
     }
     view_ = &view;
     // The view and the area name each other while the presentation stands: the area resolves the view's window pass
-    // from it, and the view reads this surface's size and reports back when its pipeline is rebuilt.
+    // from it, and the view reads this surface's size and reports back when its chain is rebuilt.
     view.setSurface(this);
-    // DECLARING A VIEW IS DECLARING ITS PIPELINE. What presents this surface is the pass of the pipeline the view
-    // ADOPTED (SceneView::setPipeline - built by RenderPipelineBuilder), and this area reads it back through the
-    // view, so it never has to know a recipe, a chain or an overlay: a view with no pipeline has nothing to
+    // DECLARING A VIEW IS DECLARING ITS CHAIN. What presents this surface is the pass of the chain the view
+    // ADOPTED (SceneView::setChain - built by PassChainBuilder), and this area reads it back through the
+    // view, so it never has to know a recipe, a chain or an overlay: a view with no chain has nothing to
     // resolve, and a declaration without one would leave a host believing a window is being drawn into.
-    if (view.pipeline() == nullptr) {
+    if (view.chain() == nullptr) {
         view_ = nullptr;
         view.setSurface(nullptr);
         if (refused_.shouldReport()) {
             engine->reportEngineProblem(
                 DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
                 u8"RenderSurface::present: this view has no pipeline to draw with, so nothing could declare this "
-                u8"surface: build one (RenderPipelineBuilder) and adopt it (SceneView::setPipeline) first");
+                u8"surface: build one (PassChainBuilder) and adopt it (SceneView::setChain) first");
         }
         return false;
     }

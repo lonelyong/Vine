@@ -57,11 +57,11 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     ~RenderSurface();
 
   public:
-    /** @brief Declares that @p view presents this surface: the pass of the pipeline the view adopted.
+    /** @brief Declares that @p view presents this surface: the pass of the chain the view adopted.
      *
      * @details
      * - The declaration for a host with no main pass of its own; the area never builds the pass - it resolves it
-     *   back through the view (SceneView::setPipeline), so a view with NO pipeline is refused and reported: the
+     *   back through the view (SceneView::setChain), so a view with NO chain is refused and reported: the
      *   host would otherwise believe a window is drawn into while nothing draws.
      * - Refused and reported, each for its own reason: a view that draws through ANOTHER engine (its passes live
      *   in that engine's frame), an area that is not the one its engine drives, and a second presentation of any
@@ -69,7 +69,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * - A view presenting another surface needs no rule of its own: a view can only present the area of its own
      *   engine (an engine drives one area - RenderEngine::createSurface).
      *
-     * @param view View to present; must have adopted a pipeline, be bound to this surface's engine, present no
+     * @param view View to present; must have adopted a chain, be bound to this surface's engine, present no
      *             other surface, and be the area's only presentation.
      * @return true when this declared the area's presentation; false when @p view already presented this surface,
      *         or could not.

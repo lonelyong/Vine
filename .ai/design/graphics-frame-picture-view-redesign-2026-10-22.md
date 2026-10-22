@@ -189,12 +189,15 @@ bool ⇒ 可见性用例红；S4 让 `RenderSurface` 继续问配方 ⇒ 表面/
 - **不做多视图共享一条配方**：一区一幅画仍是裁决（`graphics-object-model-vs-3d-frameworks.md` §2.1）。
 - **不把 `PassKind` 改成插件注册**：闭集 + `RenderPass` 子类已经是两档扩展点。
 
-## 7. 待拍板
+## 7. 待拍板（2026-10-22 下午：1 已拍，2/3 未拍）
 
-1. **命名**：`ScenePicture`（推荐，与文档里的"画面"一致） / `ScenePipeline`（继承旧名） / `RenderRecipe`（强调配方）。
+1. ~~**命名**~~ **已定：`PassChain`**。`ScenePicture` 被否（`Picture` 与 `Texture`/`RenderTarget` 同域，读成"场景图片"）；
+   `PassPipeline` 被否（重开 K1 关掉的 PSO 混读，`PipelineKey`/`VkPipeline` 还占着 `Pipeline`）。
+   配套：`PassChainBuilder` / `ChainDesc` / `SceneView::setChain`；`PipelineStage`→`PassStage` 并挪进叶子头
+   `PassStage.hpp`（`PassDesc.hpp` 不再反向 include 链头）。
 2. **S5 同轮还是下一轮**：它是唯一改变像素路径的切片；若同一轮做，"调度只有一处"的新契约一次成立；若下一轮，
    S1–S4 先让类型各就各位，S5 独立验证。
-3. **`PipelineStage` 去留**：保留为 tie-break（推荐），或彻底删除、只允许显式 `order` + 依赖边。
+3. **`PassStage` 去留**：保留为 tie-break（推荐），或彻底删除、只允许显式 `order` + 依赖边。
 
 ## 8. 与既有文档的关系
 
@@ -222,6 +225,11 @@ bool ⇒ 可见性用例红；S4 让 `RenderSurface` 继续问配方 ⇒ 表面/
 确实编不过（计数在 `RefCounted<T>` 基类里，不在 `Object` 上）—— 但 overlay 根本不需要擦除的**拥有者**：内容由注册方持有
 （builder 的 layout lambda 捕获 `intrusive_ptr<AxisGizmo>`，`PassDesc::before_draw` 也捕获一份），表里存 `raw_ptr<Object>`
 就够。S3 因此不需要新类型擦除容器（§3.4 建议的 `OverlayContent` 接口也随之不必存在：值 + role + layout 已经够开）。
+
+**2026-10-22 下午（S1 落地）**：命名按 `PassChain` 落地（`PassChainBuilder` / `ChainDesc` / `SceneView::setChain`），
+`PassGroup` 删除 —— 链自己就是注册范围（`Slot.owner` + `PassChain::~PassChain` 的 `removePassesOwnedBy(this)`，
+存储仍只有引擎那张槽位表）；`PassStage` 独立成头，`PassDesc` 不再反向 include 链头。§3.2 的 `PassRegistry` /
+`PassGroup` 形状是提案，现行的 `PassRegistry` 门面仍属 F1。 <!-- drift-ok -->
 
 **明确推迟（带触发条件）**
 

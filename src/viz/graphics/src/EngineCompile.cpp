@@ -266,7 +266,7 @@ void RenderEngine::collectPictureShapeMismatches()
         }
         if (episode.reported.shouldReport()) {
             // The numbers go in as ASCII digits, like every other message in the SDK (see
-            // RenderPipelineBuilder::reportRequestedShadows).
+            // PassChainBuilder::reportRequestedShadows).
             const std::string size_text = std::to_string(width) + "x" + std::to_string(height);
             noteProblem(String(u8"pass '") + reportedPassName(pass) + String(u8"' draws into a ") +
                         String(toU8(size_text)) + String(u8" rectangle, but its camera is projected for a picture "
@@ -486,10 +486,10 @@ intrusive_ptr<RenderPass> RenderEngine::insertSlot(Slot slot)
 
 intrusive_ptr<RenderPass> RenderEngine::addPass(const PassDesc& desc)
 {
-    return addPassToGroup(desc, 0, String());
+    return addPassOwnedBy(desc, nullptr, String());
 }
 
-intrusive_ptr<RenderPass> RenderEngine::addPassToGroup(const PassDesc& desc, std::uint64_t group, const String& role)
+intrusive_ptr<RenderPass> RenderEngine::addPassOwnedBy(const PassDesc& desc, raw_ptr<Object> owner, const String& role)
 {
     // The declaration is turned into the execution node of its kind ONCE, and the node then IS the declaration
     // (RenderPass::setDesc): a descriptor-declared pass and a hand-built one cannot drift apart, because by the time
@@ -541,27 +541,22 @@ intrusive_ptr<RenderPass> RenderEngine::addPassToGroup(const PassDesc& desc, std
 
     Slot slot;
     slot.pass  = std::move(node);
-    slot.order = desc.order.value_or(pipelineStageOrder(desc.stage));
-    slot.group = group;
+    slot.order = desc.order.value_or(passStageOrder(desc.stage));
+    slot.owner = std::move(owner);
     slot.role  = role;
     return insertSlot(std::move(slot));
 }
 
-PassGroup RenderEngine::createPassGroup() noexcept
+void RenderEngine::removePassesOwnedBy(const Object* owner) noexcept
 {
-    return PassGroup(lease(), next_pass_group_++);
-}
-
-void RenderEngine::removePassGroup(std::uint64_t group) noexcept
-{
-    if (group == 0) {
-        return;  // 0 is "registered without a group": no token owns those passes
+    if (owner == nullptr) {
+        return;  // unowned passes belong to whoever added them; no chain can take them back
     }
     // Collected first: removePass() mutates the table, and the release path it takes (backend state, an owned
     // target) must run once per pass - which is exactly what removePass does for a handle.
     std::vector<raw_ptr<RenderPass>> doomed;
     for (const Slot& slot : slots_) {
-        if (slot.group == group && slot.pass != nullptr) {
+        if (slot.owner == owner && slot.pass != nullptr) {
             doomed.push_back(slot.pass.get());
         }
     }
@@ -570,27 +565,27 @@ void RenderEngine::removePassGroup(std::uint64_t group) noexcept
     }
 }
 
-std::vector<intrusive_ptr<RenderPass>> RenderEngine::groupPasses(std::uint64_t group) const
+std::vector<intrusive_ptr<RenderPass>> RenderEngine::passesOwnedBy(const Object* owner) const
 {
     std::vector<intrusive_ptr<RenderPass>> passes;
-    if (group == 0) {
+    if (owner == nullptr) {
         return passes;
     }
     for (const Slot& slot : slots_) {
-        if (slot.group == group && slot.pass != nullptr) {
+        if (slot.owner == owner && slot.pass != nullptr) {
             passes.push_back(slot.pass);
         }
     }
     return passes;
 }
 
-raw_ptr<RenderPass> RenderEngine::groupPass(std::uint64_t group, const String& role) const
+raw_ptr<RenderPass> RenderEngine::passOwnedBy(const Object* owner, const String& role) const
 {
-    if (group == 0) {
+    if (owner == nullptr) {
         return nullptr;
     }
     for (const Slot& slot : slots_) {
-        if (slot.group == group && slot.pass != nullptr && slot.role == role) {
+        if (slot.owner == owner && slot.pass != nullptr && slot.role == role) {
             return slot.pass.get();
         }
     }

@@ -40,7 +40,7 @@
 #include <vine/graphics/Node.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
@@ -987,7 +987,7 @@ void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
         return;
     }
 
-    // Recipe #1 (RenderPipelineBuilder): compose the "off-screen RT -> PiP
+    // Recipe #1 (PassChainBuilder): compose the "off-screen RT -> PiP
     // ScreenPass" wiring instead of hand-building the two passes.
     const double dpr    = render_control->devicePixelRatio();
     const int    margin = static_cast<int>(10.0 * dpr);
@@ -1025,7 +1025,7 @@ void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
     int px = 0, py = 0;
     anchorRect(pip_w, pip_h, px, py);
 
-    vn::graphics::RenderPipelineBuilder builder(engine);
+    vn::graphics::PassChainBuilder builder(engine);
     builder.setCamera(render_control->view()->camera());
     builder.setContent(render_control->view()->scene());
     auto* screen = builder.addOffscreenToScreen(u8"SceneColor",
@@ -1226,7 +1226,7 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     engine->addPass(screen, 100);
 }
 
-// The deferred / G-buffer previews reuse the RenderPipelineBuilder Deferred
+// The deferred / G-buffer previews reuse the PassChainBuilder Deferred
 // preset's built-in shaders and canonical G-buffer target (single source).
 vn::intrusive_ptr<vn::graphics::RenderTarget> makeGbufferTarget();
 
@@ -1234,7 +1234,7 @@ vn::intrusive_ptr<vn::graphics::RenderTarget> makeGbufferTarget();
  * @brief Previews the Deferred G-buffer's colour attachments (env
  * VINE_VSG_GBUFFER).
  *
- * Bakes the engine scene into the canonical G-buffer (RenderPipelineBuilder's
+ * Bakes the engine scene into the canonical G-buffer (PassChainBuilder's
  * default geometry program + target) and shows each colour attachment as a
  * small picture-in-picture: 0 = albedo, 1 = view normal (+ shininess in
  * alpha), 2 = specular, 3 = view position. Lets the MRT writes be validated
@@ -1261,7 +1261,7 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
     gbuf->setName(u8"gbuffer_pass");
     gbuf->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
     gbuf->setRenderTarget(target);
-    gbuf->setProgramOverride(vn::graphics::RenderPipelineBuilder::defaultGbufferGeometryProgram());
+    gbuf->setProgramOverride(vn::graphics::PassChainBuilder::defaultGbufferGeometryProgram());
     gbuf->setOutputName(u8"GBuffer");
     gbuf->setOutputTarget(target);   // the G-buffer's only writer owns the hand-off (design §14)
     engine->addPass(gbuf, render_control->view()->scene(), -3);
@@ -1322,7 +1322,7 @@ void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
     gbuf->setName(u8"deferred_gbuffer");
     gbuf->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
     gbuf->setRenderTarget(target);
-    gbuf->setProgramOverride(vn::graphics::RenderPipelineBuilder::defaultGbufferGeometryProgram());
+    gbuf->setProgramOverride(vn::graphics::PassChainBuilder::defaultGbufferGeometryProgram());
     gbuf->setOutputName(u8"GBuffer");
     gbuf->setOutputTarget(target);   // the G-buffer's only writer owns the hand-off (design §14)
     engine->addPass(gbuf, render_control->view()->scene(), -3);
@@ -1336,7 +1336,7 @@ void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
     light->addInputName(u8"GBuffer");
     light->addInputTarget(target);   // a fullscreen program reads the whole source target
     light->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
-    light->setProgram(vn::graphics::RenderPipelineBuilder::defaultDeferredLightProgram());
+    light->setProgram(vn::graphics::PassChainBuilder::defaultDeferredLightProgram());
     light->setViewport(8, 8, pw, ph);
     // The content scene must be bound to THIS pass too: ScreenPass forwards a scene's lights to the
     // fullscreen program, and a program pass with no scene is handed the backend's default ambient
@@ -1357,8 +1357,8 @@ void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
 vn::intrusive_ptr<vn::graphics::RenderTarget> makeGbufferTarget()
 {
     // The A/B preview shares the Deferred preset's canonical G-buffer layout
-    // (single source in RenderPipelineBuilder).
-    return vn::graphics::RenderPipelineBuilder::defaultGbufferTarget(640, 360);
+    // (single source in PassChainBuilder).
+    return vn::graphics::PassChainBuilder::defaultGbufferTarget(640, 360);
 }
 
 /**
@@ -1422,8 +1422,8 @@ bool demoUsesDeferred()
  * the deferred default.
  *
  * An axis gizmo mirroring the view camera is always added (configurable via
- * RenderPipelineOptions::gizmo) and - together with any Deferred G-buffer - is kept
- * in step with the window by a single surface-layout step. This pipeline's
+ * ChainDesc::gizmo) and - together with any Deferred G-buffer - is kept
+ * in step with the window by a single surface-layout step. This chain's
  * window pass is DECLARED as the surface's presentation (RenderSurface), which
  * is what keeps RenderControl from adding a default forward pass beside it.
  *
@@ -1450,7 +1450,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
         }
     }
 
-    vn::graphics::RenderPipelineBuilder builder(engine);
+    vn::graphics::PassChainBuilder builder(engine);
     builder.setCamera(view->camera());
     builder.setContent(view->scene());
     // Forward-only overlay content (Deferred default demo): handed to the
@@ -1459,7 +1459,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     if (transparent != nullptr) {
         builder.setTransparentContent(std::move(transparent));
     }
-    vn::graphics::RenderPipelineOptions options;
+    vn::graphics::ChainDesc options;
     options.path = path;
     // Axis-gizmo HUD overlay: mirrors the view camera in the bottom-left.
     options.gizmo.source_camera = view->camera();

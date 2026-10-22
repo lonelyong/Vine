@@ -11,7 +11,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "Node.hpp"
-#include "PassGroup.hpp"
+#include "PassStage.hpp"
 #include "ReportOnce.hpp"
 #include "ShaderProgram.hpp"
 #include "ShadingMode.hpp"
@@ -22,8 +22,8 @@ VN_GRAPHICS_NS_BEGIN
 class AxisGizmo;
 class Camera;
 class FpsOverlay;
-// Declared rather than included: PassDesc is a declaration OF a pass, so it includes this header for
-// PipelineStage, and a pipeline only ever passes one straight on to the engine (RenderPipeline::addPass).
+// Declared rather than included: a chain only ever passes a declaration straight on to the engine
+// (RenderEngine::addPassOwnedBy), so its own header does not need the one that defines it.
 struct PassDesc;
 class RenderEngine;
 class RenderPass;
@@ -31,64 +31,11 @@ class RenderTarget;
 class Scene;
 
 /**
- * @brief Where a pass enters the frame's order.
- *
- * @details
- * - A pipeline is a list of passes the engine runs in ascending order, and a pass an EFFECT adds has to enter at the
- *   right place without knowing the numbers the passes around it happened to use: a shadow map belongs before every
- *   pass that samples it, a screen-space effect between the geometry that produced its inputs and the shading that
- *   consumes them.
- * - A stage names that place by intent — pipelineStageOrder() turns it into the number the engine sorts by, and
- *   passes inside one stage run in the order they were planned (the engine resolves equal orders by registration
- *   order).
- * - The scale is documented rather than private so a host that registers its own pass (RenderEngine::addPass) can
- *   place it by intent too, instead of guessing where the gaps are.
- */
-enum class PipelineStage {
-    Depth,       ///< Produces depth for later sampling: shadow maps, depth prepasses.
-    Geometry,    ///< Opaque scene content (the G-buffer pass on a deferred path).
-    Effect,      ///< Screen-space effects reading Geometry's outputs (e.g. SSAO).
-    Shading,     ///< The lit result: the forward content pass, or the deferred lighting pass.
-    Transparent, ///< Forward-only content composited over the shaded result.
-    Present,     ///< Presents a baked result to the window (deferred + forward content).
-    Overlay,     ///< HUD passes drawn over everything the pipeline shaded.
-    Preview,     ///< Host / debug preview screens (PiP, attachment previews), above the HUD.
-};
-
-/**
- * @brief The order the engine sorts a pass of @p stage by.
- *
- * @details
- * - Effects state where they belong relative to the stage they serve, and this table is the one place that turns
- *   intent into the engine's sort key.
- * - The bands are spaced so a stage can gain passes later without renumbering any other; a pass inside one stage runs
- *   by registration order, so a stage needs exactly one number.
- *
- * @param stage Stage to place.
- * @return The pass order of @p stage.
- */
-constexpr int pipelineStageOrder(PipelineStage stage) noexcept
-{
-    switch (stage)
-    {
-    case PipelineStage::Depth: return -100;
-    case PipelineStage::Geometry: return -40;
-    case PipelineStage::Effect: return -20;
-    case PipelineStage::Shading: return 0;
-    case PipelineStage::Transparent: return 20;
-    case PipelineStage::Present: return 40;
-    case PipelineStage::Overlay: return 60;
-    case PipelineStage::Preview: return 100;
-    }
-    return 0;
-}
-
-/**
  * @brief Optional HUD overlay: a world-orientation axis gizmo.
  *
  * @details
  * - The overlay's CONTENT is an AxisGizmo (its scene, its framing camera, its box) and the recipe declares the pass
- *   that shows it (a HUD-tagged PassDesc - see RenderPipelineBuilder): it is stacked above the window pass and
+ *   that shows it (a HUD-tagged PassDesc - see PassChainBuilder): it is stacked above the window pass and
  *   mirrors the source camera's orientation each frame.
  * - When source_camera is null the overlay is disabled and nothing is added.
  */
@@ -116,8 +63,8 @@ struct VN_GRAPHICS_API AxisGizmoOptions {
 
     /** @brief Stacking offset inside the HUD stage (default 10).
      *
-     * @note Relative to the other HUD overlay, not to the scene: the pipeline places every overlay at
-     *       PipelineStage::Overlay and adds this offset, so the HUD stays above the passes it annotates no matter
+     * @note Relative to the other HUD overlay, not to the scene: the chain places every overlay at
+     *       PassStage::Overlay and adds this offset, so the HUD stays above the passes it annotates no matter
      *       what orders they took.
      */
     int order = 10;
@@ -153,27 +100,27 @@ struct VN_GRAPHICS_API FpsOverlayOptions {
 };
 
 /**
- * @brief Options controlling RenderPipelineBuilder::build().
+ * @brief Options controlling PassChainBuilder::build().
  *
  * @details
- * - The description of a pipeline: the ONE structural choice (path) plus the per-pass options of the passes the path
+ * - The description of a chain: the ONE structural choice (path) plus the per-pass options of the passes the path
  *   and the overlays need.
  * - Shadows are NOT here — a shadow is requested by the LIGHT that casts it (Light::isCastingShadow) and honoured by the
- *   pipeline that draws that light's content, because a light outlives any one pipeline and a scene may be drawn by
- *   several (see PipelineStage::Depth and .ai/design/graphics-pipeline.md §2).
+ *   chain that draws that light's content, because a light outlives any one chain and a scene may be drawn by
+ *   several (see PassStage::Depth and .ai/design/graphics-pipeline.md §2).
  */
-struct VN_GRAPHICS_API RenderPipelineOptions {
+struct VN_GRAPHICS_API ChainDesc {
     /** @brief How the opaque content is shaded (the structural choice). */
     ShadingPath path = ShadingPath::Forward;
 
-    /** @brief What the picture MEANS (the viewing mode the pipeline is built for; see ShadingMode).
+    /** @brief What the picture MEANS (the viewing mode the chain is built for; see ShadingMode).
      *
      * @details
      * - A mode is a pass property, so this is not a second structural knob: what it decides at BUILD time is whether
      *   the chain has to be assembled differently to be able to express it - a non-Lit mode needs the geometry pass,
      *   so a Deferred request is built FORWARD for it (see effectivePath).
-     * - Switching among the modes the built chain CAN express is one override on a live pipeline
-     *   (RenderPipeline::setShadingMode).
+     * - Switching among the modes the built chain CAN express is one override on a live chain
+     *   (PassChain::setShadingMode).
      */
     ShadingMode mode = ShadingMode::Lit;
 
@@ -182,7 +129,7 @@ struct VN_GRAPHICS_API RenderPipelineOptions {
      * @details
      * - 0 (the default) uses the engine's current surface size, falling back to a fixed 640 x 360 when the surface is
      *   not known yet.
-     * - The host keeps the G-buffer in step with the surface via RenderPipeline::resize() (e.g. from a SceneView
+     * - The host keeps the G-buffer in step with the surface via PassChain::resize() (e.g. from a SceneView
      *   surface-layout step).
      */
     int offscreen_width = 0;
@@ -207,7 +154,7 @@ struct VN_GRAPHICS_API RenderPipelineOptions {
      * @details
      * - Must write the canonical four outputs the builder's G-buffer declares (albedo / view normal + shininess /
      *   specular / view position; see the builder docs).
-     * - Optional: when omitted, RenderPipelineBuilder::build() supplies its built-in temporary default program.
+     * - Optional: when omitted, PassChainBuilder::build() supplies its built-in temporary default program.
      */
     intrusive_ptr<ShaderProgram> gbuffer_program;
 
@@ -215,7 +162,7 @@ struct VN_GRAPHICS_API RenderPipelineOptions {
      *
      * @details
      * - Runs as the window pass and shades from the resolved G-buffer attachments.
-     * - Optional: when omitted, RenderPipelineBuilder::build() supplies its built-in temporary default program.
+     * - Optional: when omitted, PassChainBuilder::build() supplies its built-in temporary default program.
      */
     intrusive_ptr<ShaderProgram> lighting_program;
 
@@ -233,7 +180,7 @@ struct VN_GRAPHICS_API RenderPipelineOptions {
 };
 
 /**
- * @brief The main-window pipeline produced by RenderPipelineBuilder::build().
+ * @brief The main-window chain produced by PassChainBuilder::build().
  *
  * @details
  * - Owns the passes it created AND their registration: it registers them on the engine as they are planned and
@@ -254,8 +201,8 @@ struct VN_GRAPHICS_API RenderPipelineOptions {
  *   variants are the backend's (see `VariantPool.hpp` / `PipelineKey`), and a host never builds or names one
  *   here. The name follows the FrameGraph / RDG sense: a compiled chain of passes.
  */
-class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
-    friend class RenderPipelineBuilder;
+class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
+    friend class PassChainBuilder;
 
   public:
     /** @brief Constructs a pipeline that registers its passes on the engine @p engine leases.
@@ -270,11 +217,11 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
      * @param engine Lease of the engine the pipeline's passes are registered on (empty is accepted; nothing is
      *               registered then).
      */
-    explicit RenderPipeline(Lease<RenderEngine> engine);
+    explicit PassChain(Lease<RenderEngine> engine);
 
-    /** @brief Destroys the pipeline: its registration token hands every pass back to the engine while the engine is
-     *         still there, and answers nothing once it is gone. */
-    ~RenderPipeline();
+    /** @brief Destroys the chain: it hands every pass it registered back to the engine while the engine is still
+     *         there, and answers nothing once it is gone. */
+    ~PassChain();
   public:
     /** @brief Gets the engine this pipeline's passes are registered on.
      *
@@ -292,7 +239,7 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
      * - "This chain draws that content" is a property of the CHAIN, not of its window pass: a deferred recipe draws
      *   the scene in its G-buffer pass and shows the result through a screen pass, so asking the window pass would
      *   answer no for every deferred picture.
-     * - It is what a view checks when it adopts a chain (see SceneView::setPipeline): a pipeline built for one
+     * - It is what a view checks when it adopts a chain (see SceneView::setChain): a chain built for one
      *   scene and adopted by a view holding another draws nothing the view has, and nothing downstream can see it
      *   (each pass is individually legal).
      *
@@ -306,7 +253,7 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
      * - "Presenting" is the pass whose output is what the window shows, which is not necessarily the pass that draws
      *   the content: a Deferred chain bakes the picture off-screen and presents it through a screen pass, so a host
      *   that wants "the picture pass" (to override its program, see setShadingMode) must ask this, not the content.
-     * - It is set by the recipe (RenderPipelineBuilder), because only the recipe knows what its chain ends with.
+     * - It is set by the recipe (PassChainBuilder), because only the recipe knows what its chain ends with.
      *
      * @return The presenting pass (the order-0 window pass, or a ScreenPass for the Deferred presets), or null when
      *         nothing was built.
@@ -342,8 +289,8 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
     /** @brief Adds a HUD overlay: a pass registered under @p role, plus the content that lays itself out.
      *
      * @details
-     * - An overlay is a VALUE, not a subclass: what draws it (a HUD pass, registered in this pipeline's group under
-     *   @p role - see PassGroup), what it IS (@p content, an Object - the half a pass cannot hold: a gizmo's
+     * - An overlay is a VALUE, not a subclass: what draws it (a HUD pass, registered under @p role - see
+     *   PassChain::addPass), what it IS (@p content, an Object - the half a pass cannot hold: a gizmo's
      *   framing camera and box, a readout's digits), and how it is laid out. A THIRD overlay is therefore a call to
      *   this method, not a field on this class; the two the recipe builds are gizmo() and fpsOverlay().
      * - Ownership stays where it already is: whoever registers an overlay keeps its content alive (through
@@ -457,7 +404,7 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
      */
     void resize(int width, int height, double pixel_ratio);
 
-    /** @brief Gets the chain this pipeline was built as (see RenderPipelineBuilder::effectivePath).
+    /** @brief Gets the shading path this chain was built as (see PassChainBuilder::effectivePath).
      *
      * @details
      * - The EFFECTIVE path, not the requested one: a Deferred request carrying a non-Lit mode is built Forward, and
@@ -482,28 +429,28 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
      *   re-registered.
      * - A mode this chain CANNOT express is answered false and changes nothing: a Deferred picture comes out of a
      *   fullscreen lighting pass with no geometry left to shade, so its non-Lit modes have to be ASSEMBLED for (build
-     *   with RenderPipelineOptions::mode, which builds the chain that can express it - see effectivePath).
+     *   with ChainDesc::mode, which builds the chain that can express it - see effectivePath).
      * - The false answer is reported once per episode, because a host that ignored it would be looking at a picture
      *   that did not change and would call that "switched".
      *
      * @param mode Mode to draw with.
-     * @return true when this pipeline's picture now means @p mode (its picture pass was overridden); false when this
-     *         chain cannot express it (nothing changed - rebuild with RenderPipelineOptions::mode instead).
+     * @return true when this chain's picture now means @p mode (its picture pass was overridden); false when this
+     *         chain cannot express it (nothing changed - rebuild with ChainDesc::mode instead).
      */
     bool setShadingMode(ShadingMode mode);
 
     /** @brief Shows or hides the axis-gizmo overlay (see setOverlayVisible).
      *
      * @param on True to show the overlay, false to hide it.
-     * @return true when this pipeline HAS the overlay (its visibility is now @p on); false when it has none - build
-     *         with RenderPipelineOptions::gizmo to get one.
+     * @return true when this chain HAS the overlay (its visibility is now @p on); false when it has none - build
+     *         with ChainDesc::gizmo to get one.
      */
     bool setGizmoVisible(bool on);
 
     /** @brief Shows or hides the frame-rate readout (see setOverlayVisible).
      *
      * @param on True to show the readout, false to hide it.
-     * @return true when this pipeline HAS the readout; false when it has none (RenderPipelineOptions::fps).
+     * @return true when this chain HAS the readout; false when it has none (ChainDesc::fps).
      */
     bool setStatsVisible(bool on);
 
@@ -523,12 +470,12 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
     [[nodiscard]] bool isStatsVisible() const noexcept;
 
   private:
-    /** @brief Registers a DECLARED pass on the engine and remembers what it became.
+    /** @brief Registers a DECLARED pass on the engine under this chain's ownership.
      *
      * @details
      * - The declaration says what each pass IS (its kind, stage, tag, target, inputs), the engine makes the node, and
-     *   the group keeps it - so the recipe reads as declarations while the unregistration stays one token's job (see
-     *   the destructor).
+     *   the row records this chain as its owner - so the recipe reads as declarations while the unregistration stays
+     *   one owner's job (see the destructor).
      *
      * @param desc The declaration (see PassDesc).
      * @param role Name the pass is registered under, so a reader can find it again (see gizmoPass); empty for the
@@ -564,10 +511,9 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
     // comment). Declared with a forward declaration and destroyed by the
     // out-of-line destructor, so this header does not pull RenderEngine.hpp in.
     Lease<RenderEngine> engine_;
-    // The registration of every pass this pipeline added: one token over the engine's own slot table, so "a pass the
-    // pipeline registered is a pass the pipeline unregisters" needs no second list here (see the destructor) and a
-    // named pass is found by its role instead of by a field per pass.
-    PassGroup group_;
+    // Every pass this chain registered lives in the engine's own slot table with `owner = this` (see
+    // RenderEngine::addPassOwnedBy), so "a pass the chain registered is a pass the chain unregisters" needs no second
+    // list here (see the destructor) and a named pass is found by its role instead of by a field per pass.
     intrusive_ptr<RenderPass> window_pass_;
     intrusive_ptr<RenderTarget> offscreen_target_;
     intrusive_ptr<RenderTarget> composite_target_;

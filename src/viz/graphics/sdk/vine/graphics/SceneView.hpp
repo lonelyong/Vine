@@ -12,7 +12,7 @@
 
 #include "InputRouter.hpp"
 #include "LayoutParticipant.hpp"
-#include "RenderPipeline.hpp"
+#include "PassChain.hpp"
 #include "ReportOnce.hpp"
 
 VN_WINDOW_NS_BEGIN
@@ -25,7 +25,7 @@ VN_GRAPHICS_NS_BEGIN
 
 class Camera;
 class CameraManipulator;
-class RenderPipeline;
+class PassChain;
 class RenderEngine;
 class RenderPass;
 class RenderSurface;
@@ -36,9 +36,9 @@ class Scene;
  *
  * @details
  * - The view owns WHAT is drawn (a Camera and a content Scene) and WHERE (the whole area it presents - see
- *   RenderSurface); WHICH passes draw it is a Pipeline it ADOPTS (setPipeline), built by RenderPipelineBuilder -
- *   so a shading mode or overlay change is a call on the pipeline (RenderPipeline::setShadingMode / setGizmoVisible),
- *   never a view rebuild, and a view with no pipeline draws nothing.
+ *   RenderSurface); WHICH passes draw it is a PassChain it ADOPTS (setChain), built by PassChainBuilder -
+ *   so a shading mode or overlay change is a call on the chain (PassChain::setShadingMode / setGizmoVisible),
+ *   never a view rebuild, and a view with no chain draws nothing.
  * - It borrows an engine (setEngine) rather than being one: the engine stays content- and camera-agnostic, while
  *   the view owns the primary view state - camera, content, manipulator, and the projection aspect kept in step
  *   with the surface.
@@ -62,7 +62,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
   public:
     /** @brief Constructs a view with a default camera and an empty content scene.
      *
-     * The view borrows no engine until setEngine(), and draws nothing until a pipeline is adopted (setPipeline).
+     * The view borrows no engine until setEngine(), and draws nothing until a chain is adopted (setChain).
      */
     SceneView();
 
@@ -154,7 +154,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *   scheduler.
      * - The size is in the space the HOST reports (for the Qt host, the logical widget size - see RenderControl),
      *   but a pass viewport wants DEVICE pixels: scale by the ratio in the callback (see the ratio overload and
-     *   RenderPipeline::resize, which takes the ratio for exactly that reason; AxisGizmo / FpsOverlay lay out
+     *   PassChain::resize, which takes the ratio for exactly that reason; AxisGizmo / FpsOverlay lay out
      *   logically and apply the ratio themselves).
      *
      * @param layout Callback taking the new surface width and height the host reported.
@@ -246,7 +246,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /** @brief Gets the bound engine, or nullptr when unset (including when its owner has destroyed it). */
     raw_ptr<RenderEngine> engine() const;
 
-    /** @brief Gets the pipeline this view adopted (setPipeline), or nullptr - which means this view draws
+    /** @brief Gets the chain this view adopted (setChain), or nullptr - which means this view draws
      * nothing.
      *
      * @details
@@ -256,27 +256,27 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * - The view shares ownership of it, so it stays alive while the view draws through it; letting it go is
      *   what removes its passes from the frame.
      *
-     * @return The adopted pipeline, or nullptr when this view has none.
+     * @return The adopted chain, or nullptr when this view has none.
      */
-    raw_ptr<RenderPipeline> pipeline() const;
+    raw_ptr<PassChain> chain() const;
 
-    /** @brief Adopts @p pipeline as what draws this view (build one with RenderPipelineBuilder).
+    /** @brief Adopts @p pipeline as what draws this view (build one with PassChainBuilder).
      *
      * @details
-     * - THE one step connecting a view to a drawing: the view brings what a pipeline cannot know (its camera and
+     * - THE one step connecting a view to a drawing: the view brings what a chain cannot know (its camera and
      *   content are the builder's inputs; the area's size and this view's layout steps are applied here), and
-     *   the pipeline brings what a view must not own (which passes exist, the shading mode, the overlays).
-     * - Adopting replaces any previous pipeline; null drops the current one, which takes the view out of the
-     *   frame (the pipeline unregisters its passes when its last handle goes away). A presenting view keeps
-     *   being one across a change: the area resolves the view's pass afresh, so a REBUILT pipeline (a recipe
+     *   the chain brings what a view must not own (which passes exist, the shading mode, the overlays).
+     * - Adopting replaces any previous chain; null drops the current one, which takes the view out of the
+     *   frame (the chain unregisters its passes when its last handle goes away). A presenting view keeps
+     *   being one across a change: the area resolves the view's pass afresh, so a REBUILT chain (a recipe
      *   change) is followed without re-declaring anything.
      * - The view is drawn where its area is - the whole of it. It is the CALLER's business to have built a
-     *   pipeline for this view: one built for another camera draws that camera's picture into this view's area
+     *   chain for this view: one built for another camera draws that camera's picture into this view's area
      *   (the engine reports the shape mismatch when the two disagree).
      *
      * @param pipeline Pipeline that draws this view; null drops the current one.
      */
-    void setPipeline(intrusive_ptr<RenderPipeline> pipeline);
+    void setChain(intrusive_ptr<PassChain> pipeline);
 
     /** @brief Gets whether this view presents a surface (RenderSurface::present bound it to one).
      *
@@ -329,12 +329,12 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * @details
      * - "The view has content but the surface stays empty" is a WIRING mistake nothing downstream can see: every
      *   pass of the chain is individually valid, and the engine compiles what it was handed (see
-     *   RenderPipeline::draws). A pipeline may draw several scenes on purpose, so this only speaks when NONE of its
+     *   PassChain::draws). A chain may draw several scenes on purpose, so this only speaks when NONE of its
      *   passes draws this view's scene.
-     * - Run whenever the pair can change (setPipeline / setScene); the answer being right re-arms the report, so a
+     * - Run whenever the pair can change (setChain / setScene); the answer being right re-arms the report, so a
      *   later break is a new episode.
      */
-    void checkPipelineContent();
+    void checkChainContent();
 
     // The bound engine is borrowed (the host owns it and keeps it alive).
     Lease<RenderEngine> engine_;
@@ -357,13 +357,13 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     intrusive_ptr<Scene>   scene_;
     intrusive_ptr<CameraManipulator> manipulator_;
 
-    // The pipeline this view adopted, if any (setPipeline): what draws this view's camera and content into the
-    // area. The handles in it are the pipeline's own - this one only keeps it alive, and dropping it is what
+    // The chain this view adopted, if any (setChain): what draws this view's camera and content into the
+    // area. The handles in it are the chain's own - this one only keeps it alive, and dropping it is what
     // takes the passes out of the frame.
-    intrusive_ptr<RenderPipeline> pipeline_;
+    intrusive_ptr<PassChain> pipeline_;
 
     // "The adopted chain draws none of this view's content" is one condition, not a per-call event (see
-    // checkPipelineContent).
+    // checkChainContent).
     ReportOnce content_mismatch_;
 };
 

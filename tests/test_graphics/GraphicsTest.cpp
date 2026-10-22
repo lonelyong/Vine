@@ -28,7 +28,7 @@
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/LightRig.hpp>
-#include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/Scene.hpp>
@@ -99,26 +99,26 @@ bool drawsToWindow(vn::graphics::RenderPass* pass, vn::graphics::Camera* camera)
 }
 
 /**
- * @brief Builds a pipeline for @p view and adopts it: the two steps a host does for a view.
+ * @brief Builds a chain for @p view and adopts it: the two steps a host does for a view.
  *
- * A view no longer carries a recipe - a pipeline IS the recipe (see RenderPipelineBuilder and
- * SceneView::setPipeline) - so a test that wants "this view, drawn this way" states the options here and hands the
+ * A view no longer carries a recipe - a chain IS the recipe (see PassChainBuilder and
+ * SceneView::setChain) - so a test that wants "this view, drawn this way" states the options here and hands the
  * result over. The builder is given the view's own camera and scene, which is what every caller in the app does:
- * the view owns both, the pipeline owns the passes.
+ * the view owns both, the chain owns the passes.
  *
- * @param view    View the pipeline is built for; it adopts the result.
+ * @param view    View the chain is built for; it adopts the result.
  * @param engine  Engine the passes are registered on.
- * @param options The build options (chain, mode, overlays; see PipelineOptions).
- * @return The pipeline that was built and adopted; null when the builder refused @p options.
+ * @param options The build options (chain, mode, overlays; see ChainDesc).
+ * @return The chain that was built and adopted; null when the builder refused @p options.
  */
-intrusive_ptr<RenderPipeline> buildFor(SceneView& view, RenderEngine* engine, const RenderPipelineOptions& options = {})
+intrusive_ptr<PassChain> buildFor(SceneView& view, RenderEngine* engine, const ChainDesc& options = {})
 {
-    RenderPipelineBuilder builder(engine);
+    PassChainBuilder builder(engine);
     builder.setCamera(view.camera());
     builder.setContent(view.scene());
-    intrusive_ptr<RenderPipeline> pipeline = builder.build(options);
+    intrusive_ptr<PassChain> pipeline = builder.build(options);
     if (pipeline != nullptr) {
-        view.setPipeline(pipeline);
+        view.setChain(pipeline);
     }
     return pipeline;
 }
@@ -3305,7 +3305,7 @@ TEST(InputRouterTest, TheRouterTurnsEachWindowEventIntoTheCallTheManipulatorExpe
 /*
  * @brief The layout participant keeps the ORDER the view has always applied: its own step, then registered ones.
  *
- * The order is the point: the camera's aspect, the manipulator's resize and the pipeline's targets must be settled
+ * The order is the point: the camera's aspect, the manipulator's resize and the chain's targets must be settled
  * before a host step re-anchors something against them. Splitting the state out of SceneView must not turn that
  * sequence into whatever registration order happens to be.
  */
@@ -3439,26 +3439,26 @@ TEST(SceneViewTest, ResizingTellsTheCameraTheShapeOfThePictureItDraws)
 
 TEST(SceneViewTest, AViewDrawsThePipelineItAdopted)
 {
-    // A view holds no recipe: a chain IS a pipeline (built by RenderPipelineBuilder, which is where the options
-    // live) and a view only adopts one (SceneView::setPipeline). So "this view presents a picture" is that two
+    // A view holds no recipe: a chain IS the recipe (built by PassChainBuilder, which is where the options
+    // live) and a view only adopts one (SceneView::setChain). So "this view presents a picture" is that two
     // steps and nothing else - before them there is no pass at all, after them exactly the pass that was built.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
-    EXPECT_EQ(view->pipeline(), nullptr);
+    EXPECT_EQ(view->chain(), nullptr);
     EXPECT_EQ(engine->passCount(), 0u);
 
     auto pipeline = buildFor(*view, engine.get());
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->passCount(), 1u);
-    EXPECT_EQ(view->pipeline(), pipeline.get());
+    EXPECT_EQ(view->chain(), pipeline.get());
     // The pass IS the window pass: it draws this view's camera to the backbuffer (both were given to the builder).
     ASSERT_NE(pipeline->presentingPass(), nullptr);
     EXPECT_TRUE(drawsToWindow(pipeline->presentingPass(), view->camera()));
 
-    // Adopting the pipeline it already has is one pipeline, and nothing is re-registered.
-    view->setPipeline(pipeline);
+    // Adopting the chain it already has is one chain, and nothing is re-registered.
+    view->setChain(pipeline);
     EXPECT_EQ(engine->passCount(), 1u);
 }
 
@@ -3466,7 +3466,7 @@ TEST(SceneViewTest, AChainBuiltForOtherContentIsReportedOnceAndIsANewEpisodeOnce
 {
     // "The view has content but the surface stays empty" has no other witness: every pass of the chain is legal, and
     // the engine compiles what it was handed. The view is the only object that holds BOTH halves, so the check lives
-    // there (see SceneView::checkPipelineContent) and follows the episode rule like every other wiring report.
+    // there (see SceneView::checkChainContent) and follows the episode rule like every other wiring report.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
@@ -3474,36 +3474,36 @@ TEST(SceneViewTest, AChainBuiltForOtherContentIsReportedOnceAndIsANewEpisodeOnce
 
     auto other = intrusive_ptr<Scene>(new Scene());
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(view->camera());
     builder.setContent(other);
     auto pipeline = builder.build({});
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->diagnosticCount(), 0u) << "building a chain is not a mistake";
 
-    view->setPipeline(pipeline);
+    view->setChain(pipeline);
     EXPECT_EQ(engine->diagnosticCount(), 1u) << "no pass of that chain draws the view's scene";
     ASSERT_FALSE(pipeline->draws(view->scene().get()));
     ASSERT_TRUE(pipeline->draws(other.get()));
 
     // A second chain built for yet another scene: the same mistake in the same episode is said once.
     auto third = intrusive_ptr<Scene>(new Scene());
-    RenderPipelineBuilder second(engine.get());
+    PassChainBuilder second(engine.get());
     second.setCamera(view->camera());
     second.setContent(third);
-    view->setPipeline(second.build({}));
+    view->setChain(second.build({}));
     EXPECT_EQ(engine->diagnosticCount(), 1u) << "one episode, one message";
 
     // The view's content catches up with the chain it adopted (setScene rebinds the window pass): the wire is right,
     // so the next break is a NEW episode rather than the same silence.
     view->setScene(third);
-    ASSERT_TRUE(view->pipeline()->draws(view->scene().get()));
+    ASSERT_TRUE(view->chain()->draws(view->scene().get()));
 
     auto fourth = intrusive_ptr<Scene>(new Scene());
-    RenderPipelineBuilder third_builder(engine.get());
+    PassChainBuilder third_builder(engine.get());
     third_builder.setCamera(view->camera());
     third_builder.setContent(fourth);
-    view->setPipeline(third_builder.build({}));
+    view->setChain(third_builder.build({}));
     EXPECT_EQ(engine->diagnosticCount(), 2u) << "a break after a good frame is a new problem";
 }
 
@@ -3511,7 +3511,7 @@ TEST(SceneViewTest, AdoptingAPipelineDoesNotStandDownForSomebodyElsesPass)
 {    // "Whoever speaks first presents" is gone: a pass carrying this view's camera with a null target used to
     // suppress the view's default window pass, inferred from the engine's pass list (global, order-sensitive, and it
     // dropped the SECOND view sharing a camera). Which pass presents which SURFACE is declared on the surface now
-    // (RenderSurface) - so a view draws the pipeline it adopted, and the engine's list is only where passes live.
+    // (RenderSurface) - so a view draws the chain it adopted, and the engine's list is only where passes live.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
@@ -3605,7 +3605,7 @@ TEST(LightRigTest, TheOriginalLightApiIsUnchanged)
 TEST(SceneViewViewportTest, ADefaultBuildIsTheBehaviourBeforeAnyOptions)
 {
     // No options at all: forward, no HUD, the whole surface - and exactly one window pass, which is what every
-    // existing host and test already relied on (J2). The view holds none of it: it holds a pipeline, or nothing.
+    // existing host and test already relied on (J2). The view holds none of it: it holds a chain, or nothing.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
@@ -3622,7 +3622,7 @@ TEST(SceneViewViewportTest, ADefaultBuildIsTheBehaviourBeforeAnyOptions)
     EXPECT_FALSE(pipeline->isGizmoVisible());
     EXPECT_FALSE(pipeline->isStatsVisible());
     // A full viewport is what "no viewport" already means: the pass is left without one, so the default path is
-    // byte-for-byte the pipeline it was before viewports existed.
+    // byte-for-byte the chain it was before viewports existed.
     ASSERT_NE(pipeline->presentingPass(), nullptr);
     EXPECT_FALSE(pipeline->presentingPass()->hasViewport());
 }
@@ -3642,7 +3642,7 @@ TEST(SceneViewViewportTest, TheBuildOptionsDecideWhichOverlayPassesExist)
         return names;
     };
 
-    RenderPipelineOptions both;
+    ChainDesc both;
     both.gizmo.source_camera = view->camera();
     both.fps.enabled         = true;
     auto pipeline            = buildFor(*view, engine.get(), both);
@@ -3655,9 +3655,9 @@ TEST(SceneViewViewportTest, TheBuildOptionsDecideWhichOverlayPassesExist)
     EXPECT_TRUE(pipeline->isGizmoVisible());
     EXPECT_TRUE(pipeline->isStatsVisible());
 
-    // Dropping an overlay from the options takes its pass away: the next build is a different pipeline, and the one
+    // Dropping an overlay from the options takes its pass away: the next build is a different chain, and the one
     // it replaced takes its own registrations with it.
-    RenderPipelineOptions readout_only;
+    ChainDesc readout_only;
     readout_only.fps.enabled = true;
     pipeline                 = buildFor(*view, engine.get(), readout_only);
     ASSERT_NE(pipeline, nullptr);
@@ -3678,7 +3678,7 @@ TEST(SceneViewViewportTest, OverlayVisibilityIsASwitchThatNeverRebuilds)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    RenderPipelineOptions with_readout;
+    ChainDesc with_readout;
     with_readout.fps.enabled = true;
     auto pipeline            = buildFor(*view, engine.get(), with_readout);
     ASSERT_NE(pipeline, nullptr);
@@ -3696,9 +3696,9 @@ TEST(SceneViewViewportTest, OverlayVisibilityIsASwitchThatNeverRebuilds)
     }
 
     // Nothing was rebuilt and nothing was re-registered: same handle, same pass count.
-    EXPECT_EQ(view->pipeline(), pipeline.get());
+    EXPECT_EQ(view->chain(), pipeline.get());
     EXPECT_EQ(engine->passCount(), 2u);
-    // The state lives on the pass, so a host toggling through the handle is seen by the pipeline.
+    // The state lives on the pass, so a host toggling through the handle is seen by the chain.
     readout->setEnabled(false);
     EXPECT_FALSE(pipeline->isStatsVisible());
 
@@ -3722,7 +3722,7 @@ TEST(SceneViewViewportTest, AHiddenOverlayIsHiddenOnTheChainItWasStatedOnAndNowh
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    RenderPipelineOptions options;
+    ChainDesc options;
     options.fps.enabled = true;
 
     auto pipeline = buildFor(*view, engine.get(), options);
@@ -3739,7 +3739,7 @@ TEST(SceneViewViewportTest, AHiddenOverlayIsHiddenOnTheChainItWasStatedOnAndNowh
     ASSERT_NE(rebuilt, nullptr);
     EXPECT_TRUE(rebuilt->isStatsVisible()) << "重建是按选项建的：链不知道使用者关过什么";
     EXPECT_FALSE(pipeline->isStatsVisible()) << "被关掉的那条链没有被动过";
-    EXPECT_EQ(view->pipeline(), rebuilt.get());
+    EXPECT_EQ(view->chain(), rebuilt.get());
 }
 
 // 补出自己的 show/hide 之后，档从配方里去掉再回来：可见性是**使用者最后说的那一句**，不是"新 pass 天生可见"。
@@ -3758,7 +3758,7 @@ TEST(SceneViewViewportTest, AddingAnOverlayIsABuildOptionAndShowingItIsNot)
     // 这条链没有读数，所以"要一个"是**另建一条**：多一条 pass，多一次建链。旧的句柄先放掉，这样 pass 表里只有
     // 新的那条链（放掉的那条析构时把自己的 pass 摘掉）。
     pipeline = nullptr;
-    RenderPipelineOptions with_readout;
+    ChainDesc with_readout;
     with_readout.fps.enabled = true;
     auto readout             = buildFor(*view, engine.get(), with_readout);
     ASSERT_NE(readout, nullptr);
@@ -3769,7 +3769,7 @@ TEST(SceneViewViewportTest, AddingAnOverlayIsABuildOptionAndShowingItIsNot)
     // 那个地址上 —— 弱身份断言就是这样错的），所以这里拿住句柄比对象。
     EXPECT_TRUE(readout->setStatsVisible(false));
     EXPECT_TRUE(readout->setStatsVisible(true));
-    EXPECT_EQ(view->pipeline(), readout.get());
+    EXPECT_EQ(view->chain(), readout.get());
     EXPECT_EQ(engine->passCount(), 2u);
 }
 
@@ -3862,14 +3862,14 @@ TEST(SceneViewViewportTest, WireframeIsAnEdgePassWithTheUnlitColourAndNoRebuild)
     auto pipeline = buildFor(*view, engine.get());
     ASSERT_NE(pipeline, nullptr);
 
-    // Held for the length of the test: "the same pipeline" then means the same OBJECT, not the same address.
+    // Held for the length of the test: "the same chain" then means the same OBJECT, not the same address.
     RenderPass* const window = pipeline->presentingPass();
     ASSERT_NE(window, nullptr);
     const std::size_t pass_count = engine->passCount();
     ASSERT_FALSE(window->polygonModeOverride().has_value());
 
     EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Wireframe));
-    EXPECT_EQ(view->pipeline(), pipeline.get()) << "换到线框不该重建管线";
+    EXPECT_EQ(view->chain(), pipeline.get()) << "换到线框不该重建管线";
     EXPECT_EQ(engine->passCount(), pass_count);
     ASSERT_TRUE(window->polygonModeOverride().has_value());
     EXPECT_EQ(*window->polygonModeOverride(), PolygonMode::Line);
@@ -3879,7 +3879,7 @@ TEST(SceneViewViewportTest, WireframeIsAnEdgePassWithTheUnlitColourAndNoRebuild)
 
     // Back to Lit: BOTH overrides go away (and again with no rebuild).
     EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Lit));
-    EXPECT_EQ(view->pipeline(), pipeline.get());
+    EXPECT_EQ(view->chain(), pipeline.get());
     EXPECT_FALSE(window->polygonModeOverride().has_value());
     EXPECT_EQ(window->programOverride(), nullptr);
 }
@@ -3902,12 +3902,12 @@ TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
     EXPECT_EQ(pipeline->shadingMode(), ShadingMode::Lit);
     EXPECT_EQ(window->programOverride(), nullptr);
 
-    // The four modes are three overrides plus Lit - and every one of them is a PASS property: same pipeline, same
+    // The four modes are three overrides plus Lit - and every one of them is a PASS property: same chain, same
     // registered passes, so the switch costs an assignment instead of a build.
     for (const auto mode : { ShadingMode::Flat, ShadingMode::Unlit, ShadingMode::Normals, ShadingMode::Lit }) {
         EXPECT_TRUE(pipeline->setShadingMode(mode));
         EXPECT_EQ(pipeline->shadingMode(), mode);
-        EXPECT_EQ(view->pipeline(), pipeline.get()) << "换着色模式不该重建管线";
+        EXPECT_EQ(view->chain(), pipeline.get()) << "换着色模式不该重建管线";
         EXPECT_EQ(engine->passCount(), pass_count) << "换着色模式不该动 pass 表";
         const bool lit = mode == ShadingMode::Lit;
         EXPECT_EQ(window->programOverride() == nullptr, lit) << "Lit 用内容自己的程序，其余三种是覆盖";
@@ -3919,10 +3919,10 @@ TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
     EXPECT_NE(window->programOverride()->name().find(u8"builtin_forward"), vn::String::npos);
 
     // Changing the STRUCTURE is what costs a build (so the two costs stay separated). The old handle is released
-    // first, because while it is held the replaced pipeline keeps its own passes registered (its destructor is what
+    // first, because while it is held the replaced chain keeps its own passes registered (its destructor is what
     // unregisters them) and the pass count below would be measuring the wrong thing.
     pipeline = nullptr;
-    RenderPipelineOptions with_readout;
+    ChainDesc with_readout;
     with_readout.fps.enabled = true;
     auto rebuilt             = buildFor(*view, engine.get(), with_readout);
     ASSERT_NE(rebuilt, nullptr);
@@ -3935,14 +3935,14 @@ TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
 // （链条变了），回到 Lit 再建回延迟；这与"同一链条上换档零重建"是两条规则，各钉一条。
 // 延迟选项 + 非 Lit 档：模式是**几何阶段**的覆盖，而延迟链画的最后一步是全屏光照（没有几何可着色）——所以这一档
 // 期间链按**前向**建（选项字段不动，`shadingPath()` 记的是**实际建成的**那条链），回到 Lit 就再建回延迟。这是
-// "选项 → 链"的一次性决定（RenderPipelineBuilder::effectivePath），与"同一条链上换档零重建"是两条规则，各钉一条。
+// "选项 → 链"的一次性决定（PassChainBuilder::effectivePath），与"同一条链上换档零重建"是两条规则，各钉一条。
 TEST(SceneViewViewportTest, ANonLitModeOnADeferredRecipeBuildsTheForwardChain)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
-    RenderPipelineOptions options;
+    ChainDesc options;
     options.path  = ShadingPath::Deferred;
     options.mode  = ShadingMode::Unlit;
     auto pipeline = buildFor(*view, engine.get(), options);
@@ -3991,7 +3991,7 @@ TEST(SceneViewViewportTest, SwitchingBetweenNonLitModesOnADeferredRecipeKeepsThe
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
-    RenderPipelineOptions options;
+    ChainDesc options;
     options.path  = ShadingPath::Deferred;
     options.mode  = ShadingMode::Unlit;
     auto pipeline = buildFor(*view, engine.get(), options);
@@ -4001,13 +4001,13 @@ TEST(SceneViewViewportTest, SwitchingBetweenNonLitModesOnADeferredRecipeKeepsThe
     const std::size_t passes = engine->passCount();
 
     EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Normals));
-    EXPECT_EQ(view->pipeline(), pipeline.get()) << "同一条链上换档不该重建";
+    EXPECT_EQ(view->chain(), pipeline.get()) << "同一条链上换档不该重建";
     EXPECT_EQ(engine->passCount(), passes);
     EXPECT_NE(pipeline->presentingPass()->programOverride()->name().find(u8"builtin_forward_normals"),
               vn::String::npos);
 
     EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Wireframe));
-    EXPECT_EQ(view->pipeline(), pipeline.get());
+    EXPECT_EQ(view->chain(), pipeline.get());
     EXPECT_EQ(engine->passCount(), passes);
 }
 
@@ -4020,7 +4020,7 @@ TEST(SceneViewViewportTest, TheAreaSizeDrivesAspectAndLayoutSteps)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    RenderPipelineOptions options;
+    ChainDesc options;
     options.gizmo.source_camera = view->camera();
     options.fps.enabled         = true;
     auto pipeline               = buildFor(*view, engine.get(), options);
@@ -4053,7 +4053,7 @@ TEST(SceneViewViewportTest, TheAreaSizeDrivesAspectAndLayoutSteps)
     EXPECT_DOUBLE_EQ(view->camera()->aspect(), 1280.0 / 720.0);
 
     // The picture IS the area: the window pass keeps no rectangle of its own (what a pass without a viewport already
-    // means), so the default path is byte-for-byte the pipeline it was before viewports existed. A host that wants a
+    // means), so the default path is byte-for-byte the chain it was before viewports existed. A host that wants a
     // sub-rectangle states one on the pass itself, in device pixels (RenderPass::setViewport).
     RenderPass* const window = pipeline->presentingPass();
     ASSERT_NE(window, nullptr);
@@ -4066,17 +4066,17 @@ TEST(SceneViewViewportTest, TheAreaSizeDrivesAspectAndLayoutSteps)
     EXPECT_LE(readout.x + readout.width, 1280 * 2);
     EXPECT_LE(readout.y + readout.height, 720 * 2);
 
-    // Geometry is not recipe: no rebuild happened, the very same pipeline is still there and nothing was
+    // Geometry is not recipe: no rebuild happened, the very same chain is still there and nothing was
     // re-registered (whatever the recipe's pass count is, it did not change).
-    EXPECT_EQ(view->pipeline(), pipeline.get());
+    EXPECT_EQ(view->chain(), pipeline.get());
     EXPECT_EQ(engine->passCount(), pass_count_before);
 
-    // A second announcement goes through the same one path (and keeps the same pipeline).
+    // A second announcement goes through the same one path (and keeps the same chain).
     view->resize(800, 600, 1.0);
     EXPECT_EQ(layout_w, 800);
     EXPECT_EQ(layout_h, 600);
     EXPECT_DOUBLE_EQ(view->camera()->aspect(), 800.0 / 600.0);
-    EXPECT_EQ(view->pipeline(), pipeline.get());
+    EXPECT_EQ(view->chain(), pipeline.get());
 }
 
 TEST(SceneViewViewportTest, TheAreaSizeHasOneOwnerAndTheViewReadsIt)
@@ -4139,7 +4139,7 @@ TEST(SceneViewViewportTest, TheOverlayBoxSitsInTheAreaCorner)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    RenderPipelineOptions options;
+    ChainDesc options;
     options.gizmo.source_camera = view->camera();
     auto pipeline               = buildFor(*view, engine.get(), options);
     ASSERT_NE(pipeline, nullptr);
@@ -4174,7 +4174,7 @@ TEST(SceneViewViewportTest, AnApplicationWindowPassLeavesTheViewWithNothingToDec
 
     // The view adopted nothing, so nothing was built for it and there is no picture of its own.
     EXPECT_EQ(engine->passCount(), 1u);
-    EXPECT_EQ(view->pipeline(), nullptr);
+    EXPECT_EQ(view->chain(), nullptr);
 
     const std::size_t diagnostics = engine->diagnosticCount();
     EXPECT_FALSE(surface->present(*view)) << "a declaration has to point at a pass of the pipeline the view adopted";
@@ -4184,7 +4184,7 @@ TEST(SceneViewViewportTest, AnApplicationWindowPassLeavesTheViewWithNothingToDec
 /**
  * @brief A view whose engine has been released reports it, instead of dangling or propping the engine up.
  *
- * The view and its pipeline BORROW the engine through leases (see Lease / RenderEngine::lease): the passes live in
+ * The view and its chain BORROW the engine through leases (see Lease / RenderEngine::lease): the passes live in
  * the engine's list, so both must be able to reach it, but neither may keep it alive - an ownership edge from a child
  * to its parent means a "released" engine lives on for as long as anything it served still exists, and the day
  * something drops the last of those it dies under a live borrow.
@@ -4237,7 +4237,7 @@ TEST(SceneViewTest, DefaultManipulatorBindsViewCameraAndScene)
 TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
 {
     // Replacing the view's scene must reach BOTH consumers the view created:
-    // the adopted pipeline's window pass (whose content is bound to the PASS, not to the
+    // the adopted chain's window pass (whose content is bound to the PASS, not to the
     // view) and a scene-aware manipulator, which holds a NON-OWNING scene
     // pointer and would otherwise navigate a scene the host may have dropped
     // (a use-after-free once its last reference goes away).
@@ -4268,7 +4268,7 @@ TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
     EXPECT_EQ(view->scene().get(), replacement.get());
     EXPECT_EQ(orbit->scene(), replacement.get());
 
-    // One frame: the pipeline's window pass must now walk the REPLACEMENT scene
+    // One frame: the chain's window pass must now walk the REPLACEMENT scene
     // (its bound content) and no longer the scene it replaced.
     ASSERT_TRUE(engine->initialize());
     engine->frame();
@@ -5119,7 +5119,7 @@ TEST(RenderEngineTest, ShadowPassIsJustARegisteredScenePass)
     EXPECT_EQ(backend->target_history[1], nullptr);
 }
 
-TEST(RenderPipelineBuilderTest, OffscreenToScreenBuildsExpectedPipeline)
+TEST(PassChainBuilderTest, OffscreenToScreenBuildsExpectedChain)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -5131,7 +5131,7 @@ TEST(RenderPipelineBuilderTest, OffscreenToScreenBuildsExpectedPipeline)
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam = intrusive_ptr<Camera>(new Camera());
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
     auto* screen = builder.addOffscreenToScreen(
@@ -5157,21 +5157,21 @@ TEST(RenderPipelineBuilderTest, OffscreenToScreenBuildsExpectedPipeline)
     EXPECT_TRUE(engine->resolve(u8"SceneColor")->hasColor());
 }
 
-TEST(RenderPipelineBuilderTest, ForwardPathBuildsWindowPass)
+TEST(PassChainBuilderTest, ForwardPathBuildsWindowPass)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
-    auto pipeline = builder.build(RenderPipelineOptions{});
+    auto pipeline = builder.build(ChainDesc{});
 
     ASSERT_NE(pipeline, nullptr);
     ASSERT_NE(pipeline->presentingPass(), nullptr);
     EXPECT_EQ(engine->passCount(), 1u);
-    // One pass, and the plan says what it is: the window pass drawing the bound content through the pipeline's
+    // One pass, and the plan says what it is: the window pass drawing the bound content through the chain's
     // camera to the backbuffer, clearing the window grey - the frame's shape in one line instead of three
     // assertions about a handle.
     const FramePlan plan = engine->framePlan();
@@ -5187,41 +5187,41 @@ TEST(RenderPipelineBuilderTest, ForwardPathBuildsWindowPass)
 }
 
 /**
- * @brief A pipeline every pass of which is placed by a STAGE, not by a hand-picked number.
+ * @brief A chain every pass of which is placed by a STAGE, not by a hand-picked number.
  *
  * The stage table is what lets an effect enter relative to the passes it serves; it is only worth
  * anything if the assembled passes actually land in the order the stages state.
  */
-TEST(RenderPipelineBuilderTest, StagesOrderThePasses)
+TEST(PassChainBuilderTest, StagesOrderThePasses)
 {
-    EXPECT_LT(pipelineStageOrder(PipelineStage::Depth), pipelineStageOrder(PipelineStage::Geometry));
-    EXPECT_LT(pipelineStageOrder(PipelineStage::Geometry), pipelineStageOrder(PipelineStage::Effect));
-    EXPECT_LT(pipelineStageOrder(PipelineStage::Effect), pipelineStageOrder(PipelineStage::Shading));
-    EXPECT_LT(pipelineStageOrder(PipelineStage::Shading), pipelineStageOrder(PipelineStage::Transparent));
-    EXPECT_LT(pipelineStageOrder(PipelineStage::Transparent), pipelineStageOrder(PipelineStage::Present));
-    EXPECT_LT(pipelineStageOrder(PipelineStage::Present), pipelineStageOrder(PipelineStage::Overlay));
-    EXPECT_LT(pipelineStageOrder(PipelineStage::Overlay), pipelineStageOrder(PipelineStage::Preview));
+    EXPECT_LT(passStageOrder(PassStage::Depth), passStageOrder(PassStage::Geometry));
+    EXPECT_LT(passStageOrder(PassStage::Geometry), passStageOrder(PassStage::Effect));
+    EXPECT_LT(passStageOrder(PassStage::Effect), passStageOrder(PassStage::Shading));
+    EXPECT_LT(passStageOrder(PassStage::Shading), passStageOrder(PassStage::Transparent));
+    EXPECT_LT(passStageOrder(PassStage::Transparent), passStageOrder(PassStage::Present));
+    EXPECT_LT(passStageOrder(PassStage::Present), passStageOrder(PassStage::Overlay));
+    EXPECT_LT(passStageOrder(PassStage::Overlay), passStageOrder(PassStage::Preview));
 }
 
 /**
- * @brief Dropping the pipeline handle takes its passes out of the frame.
+ * @brief Dropping the chain handle takes its passes out of the frame.
  *
  * The engine keeps its own reference to every registered pass, so a handle that only held
  * references would leave its passes running with nobody able to name them (the defect the
- * pipeline's ownership exists to close). Removing the passes is the handle's job, and the count
+ * chain's ownership exists to close). Removing the passes is the handle's job, and the count
  * going back to zero is what says it happened.
  */
-TEST(RenderPipelineBuilderTest, DroppingThePipelineUnregistersItsPasses)
+TEST(PassChainBuilderTest, DroppingTheChainUnregistersItsPasses)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
     {
-        RenderPipelineOptions opts;
+        ChainDesc opts;
         opts.path = ShadingPath::Deferred;
         opts.offscreen_width  = 64;
         opts.offscreen_height = 64;
@@ -5234,27 +5234,27 @@ TEST(RenderPipelineBuilderTest, DroppingThePipelineUnregistersItsPasses)
 }
 
 /**
- * @brief A pipeline that outlives its engine neither keeps it alive nor calls into it.
+ * @brief A chain that outlives its engine neither keeps it alive nor calls into it.
  *
- * The pipeline borrows the engine through a lease (RenderEngine::lease) because its passes live in the engine's list
- * and it must be able to reach that list - but a pipeline owning its engine from below would invert ownership: a
- * released engine would live on for as long as any pipeline it once served. So the two halves are asserted together:
- * the pipeline takes NO reference (useCount stays at its owner's one), and once the owner drops the engine the
- * borrow answers nothing (engine()), which is what makes using the pipeline afterwards a no-op instead of a call
+ * The chain borrows the engine through a lease (RenderEngine::lease) because its passes live in the engine's list
+ * and it must be able to reach that list - but a chain owning its engine from below would invert ownership: a
+ * released engine would live on for as long as any chain it once served. So the two halves are asserted together:
+ * the chain takes NO reference (useCount stays at its owner's one), and once the owner drops the engine the
+ * borrow answers nothing (engine()), which is what makes using the chain afterwards a no-op instead of a call
  * into freed memory.
  */
-TEST(RenderPipelineBuilderTest, APipelineOutlivingItsEngineNeitherHoldsNorCallsIntoIt)
+TEST(PassChainBuilderTest, AChainOutlivingItsEngineNeitherHoldsNorCallsIntoIt)
 {
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    intrusive_ptr<RenderPipeline> pipeline;
+    intrusive_ptr<PassChain> pipeline;
     RenderEngine*                 engine = nullptr;
     {
         auto owner = intrusive_ptr<RenderEngine>(new RenderEngine());
         engine     = owner.get();
 
-        RenderPipelineBuilder builder(engine);
+        PassChainBuilder builder(engine);
         builder.setCamera(cam.get());
         builder.setContent(content);
         pipeline = builder.build({});
@@ -5266,18 +5266,18 @@ TEST(RenderPipelineBuilderTest, APipelineOutlivingItsEngineNeitherHoldsNorCallsI
 
     EXPECT_EQ(pipeline->engine(), nullptr) << "the engine is gone, so the borrow answers nothing rather than dangling";
 
-    // Everything a host could still call on the kept pipeline has to survive that: the engine is the only place these
+    // Everything a host could still call on the kept chain has to survive that: the engine is the only place these
     // would have reached, and each one asks the lease first.
     EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Wireframe)) << "pass state is the pipeline's own";
     EXPECT_FALSE(pipeline->setGizmoVisible(true)) << "no gizmo was built; the refusal has nobody to report to";
     pipeline.reset();                             // unregistering its passes is a no-op: the engine took them with it
 }
 
-TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
+TEST(PassChainBuilderTest, AShadowThisChainCannotShadeIsReported)
 {
     // A shadow is asked for by the LIGHT that casts it (Light::isCastingShadow) rather than by a preset
-    // name, because the light outlives any one pipeline and a scene may be drawn by several. Both
-    // paths BUILD that shadow (the same pass, one implementation) — what a pipeline still cannot do
+    // name, because the light outlives any one chain and a scene may be drawn by several. Both
+    // paths BUILD that shadow (the same pass, one implementation) — what a chain still cannot do
     // is shade with a map it was never given a program for, and THAT is what is reported: a host that
     // supplied its own deferred lighting program gets no shadow pass (the shading is theirs), and
     // saying so is the difference between a picture they asked for and one that quietly differs.
@@ -5288,20 +5288,20 @@ TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
     std::vector<RenderDiagnostic> reported;
     engine->setDiagnosticSink([&reported](const RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
 
     // Nothing asked for: nothing to report.
-    ASSERT_NE(builder.build(RenderPipelineOptions{}), nullptr);
+    ASSERT_NE(builder.build(ChainDesc{}), nullptr);
     EXPECT_TRUE(reported.empty());
 
     content->addLight(Light::createDirectional());
-    ASSERT_NE(builder.build(RenderPipelineOptions{}), nullptr);
+    ASSERT_NE(builder.build(ChainDesc{}), nullptr);
     EXPECT_TRUE(reported.empty()) << "a light that casts no shadow asks for nothing";
 
     content->lights().front()->setCastShadow(true);
-    auto forward = builder.build(RenderPipelineOptions{});
+    auto forward = builder.build(ChainDesc{});
     ASSERT_NE(forward, nullptr);
     // The FORWARD path HONOURS the request (S2b): the shadow pass is built and the content pass
     // declares its map as an input, so there is nothing to report. Whether that shadow then reaches
@@ -5318,7 +5318,7 @@ TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
     // not do. (vsg_backend_selftest's deferred shadow phase is what caught it: the map was bound and
     // empty while the host had been told the shadow was not built at all.)
     reported.clear();
-    RenderPipelineOptions opts;
+    ChainDesc opts;
     opts.path             = ShadingPath::Deferred;
     opts.offscreen_width  = 64;
     opts.offscreen_height = 64;
@@ -5340,7 +5340,7 @@ TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
     // A disabled light asks for nothing, even with the flag still set.
     reported.clear();
     content->lights().front()->setEnabled(false);
-    ASSERT_NE(builder.build(RenderPipelineOptions{}), nullptr);
+    ASSERT_NE(builder.build(ChainDesc{}), nullptr);
     EXPECT_TRUE(reported.empty());
 }
 
@@ -5358,7 +5358,7 @@ TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
  * It also pins that the lighting pass' declared input is RESOLVED (the engine reports a pass that
  * reads what no pass produced), which is the wire the map travels on.
  */
-TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
+TEST(PassChainBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -5373,15 +5373,15 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
     sun->setShadowResolution(64);
     content->addLight(sun);
 
-    RenderPipelineOptions opts;
+    ChainDesc opts;
     opts.path             = ShadingPath::Deferred;
     opts.offscreen_width  = 32;
     opts.offscreen_height = 32;
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
-    // The handle is HELD: dropping it unregisters its passes (Pipeline's RAII), so a test that
-    // measured a dropped pipeline would measure an empty frame.
+    // The handle is HELD: dropping it unregisters its passes (PassChain's RAII), so a test that
+    // measured a dropped chain would measure an empty frame.
     auto pipeline = builder.build(opts);
     ASSERT_NE(pipeline, nullptr);
     ASSERT_EQ(engine->passCount(), 3u) << "shadow + G-buffer + lighting (which IS the window pass "
@@ -5403,7 +5403,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
 
     // The stated matrix IS the one derivation, for this light and this content.
     auto         light_camera = intrusive_ptr<Camera>(new Camera());
-    const Mat4d  expected     = RenderPipelineBuilder::directionalShadowMatrix(*sun, content->boundingBox(), *light_camera);
+    const Mat4d  expected     = PassChainBuilder::directionalShadowMatrix(*sun, content->boundingBox(), *light_camera);
     const Mat4d  stated       = shadow->producerViewProjection();
     for (int r = 0; r < 4; ++r) {
         for (int c = 0; c < 4; ++c) {
@@ -5426,13 +5426,13 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
  * @brief The forward path builds the SAME shadow, and hands it to its content pass.
  *
  * The structural sibling of the deferred test above, and the reason it exists separately is the
- * hand-off: a forward pipeline has no G-buffer and no fullscreen program, so the map travels as a
+ * hand-off: a forward chain has no G-buffer and no fullscreen program, so the map travels as a
  * declared INPUT of the content pass itself (the pass that draws into the window), which is what
  * makes the backend bind it into the content set's shadow binding. A forward path that built the
  * pass but forgot the declaration would look complete here and shade an unshadowed picture on the
  * GPU - the one failure the pixel gate in vsg_backend_selftest exists to catch.
  */
-TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
+TEST(PassChainBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -5447,10 +5447,10 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
     sun->setShadowResolution(64);
     content->addLight(sun);
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
-    auto pipeline = builder.build(RenderPipelineOptions{});
+    auto pipeline = builder.build(ChainDesc{});
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->passCount(), 2u) << "shadow + the content pass (which IS the window pass)";
 
@@ -5472,7 +5472,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
     // The one derivation, and an orthographic camera that is not the view camera (see the deferred
     // test: the same assertions, because it is the same pass builder).
     auto        light_camera = intrusive_ptr<Camera>(new Camera());
-    const Mat4d expected     = RenderPipelineBuilder::directionalShadowMatrix(*sun, content->boundingBox(), *light_camera);
+    const Mat4d expected     = PassChainBuilder::directionalShadowMatrix(*sun, content->boundingBox(), *light_camera);
     const Mat4d stated       = shadow->producerViewProjection();
     for (int r = 0; r < 4; ++r) {
         for (int c = 0; c < 4; ++c) {
@@ -5489,7 +5489,7 @@ TEST(RenderPipelineBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
     EXPECT_EQ(engine->diagnosticCount(), problems_before);
 }
 
-TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
+TEST(PassChainBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
 {
     auto engine     = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content    = intrusive_ptr<Scene>(new Scene());
@@ -5497,14 +5497,14 @@ TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
     auto gbuf_prog  = intrusive_ptr<ShaderProgram>(new ShaderProgram());
     auto light_prog = intrusive_ptr<ShaderProgram>(new ShaderProgram());
 
-    RenderPipelineOptions opts;
+    ChainDesc opts;
     opts.path = ShadingPath::Deferred;
     opts.offscreen_width   = 640;
     opts.offscreen_height  = 360;
     opts.gbuffer_program   = gbuf_prog;
     opts.lighting_program  = light_prog;
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
     auto pipeline = builder.build(opts);
@@ -5560,7 +5560,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
  * private helper the shadow pass happens to share: a host (or a test) that builds its own shadow
  * pass has to get the SAME camera, and re-deriving one is the failure mode this pins.
  */
-TEST(RenderPipelineBuilderTest, TheDirectionalShadowCameraFramesTheContentFromTheLightSide)
+TEST(PassChainBuilderTest, TheDirectionalShadowCameraFramesTheContentFromTheLightSide)
 {
     auto sun = LightPtr(Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0)));
     sun->setName(u8"sun");
@@ -5570,7 +5570,7 @@ TEST(RenderPipelineBuilderTest, TheDirectionalShadowCameraFramesTheContentFromTh
                                           vn::math::Point3<double>(6.0, 4.0, 2.0));
 
     auto camera = intrusive_ptr<Camera>(new Camera());
-    const vn::math::Mat4d view_projection = RenderPipelineBuilder::directionalShadowMatrix(*sun, bounds, *camera);
+    const vn::math::Mat4d view_projection = PassChainBuilder::directionalShadowMatrix(*sun, bounds, *camera);
 
     // Every corner of the box lands inside the clip volume (the map has to cover the casters), and it
     // is the ORTHO window that puts it there — the shading maps fragments through this same matrix.
@@ -5600,7 +5600,7 @@ TEST(RenderPipelineBuilderTest, TheDirectionalShadowCameraFramesTheContentFromTh
  * empty list rather than skipping the call, so a backend can never keep a stale one from the pass
  * before.
  */
-TEST(RenderPipelineBuilderTest, DeclaredPassInputsReachTheBackend)
+TEST(PassChainBuilderTest, DeclaredPassInputsReachTheBackend)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -5609,12 +5609,12 @@ TEST(RenderPipelineBuilderTest, DeclaredPassInputsReachTheBackend)
     engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize()) << "a frame runs nothing until the engine is initialized";
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
-    ASSERT_NE(builder.build(RenderPipelineOptions{}), nullptr);
+    ASSERT_NE(builder.build(ChainDesc{}), nullptr);
 
-    // The G-buffer of a deferred pipeline is a target a later pass can declare; here it stands in
+    // The G-buffer of a deferred chain is a target a later pass can declare; here it stands in
     // for any producer's output.
     auto produced = intrusive_ptr<RenderTarget>(new RenderTarget());
     produced->setName(u8"Produced");
@@ -5646,7 +5646,7 @@ TEST(RenderPipelineBuilderTest, DeclaredPassInputsReachTheBackend)
  * A content pass is the kind that binds imported textures today; the full-screen ABI is source + shadow map
  * only, and the engine reports a ScreenPass that declares one.
  */
-TEST(RenderPipelineBuilderTest, AnImportedTextureIsAnInputInDeclarationOrder)
+TEST(PassChainBuilderTest, AnImportedTextureIsAnInputInDeclarationOrder)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto camera  = intrusive_ptr<Camera>(new Camera());
@@ -5698,7 +5698,7 @@ TEST(RenderPipelineBuilderTest, AnImportedTextureIsAnInputInDeclarationOrder)
     EXPECT_FALSE(inputs[1].sampler.has_value()) << "a produced input has no sampler declaration";
 }
 
-TEST(RenderPipelineBuilderTest, AScreenPassKeepsImportedTextureInputsForItsProgram)
+TEST(PassChainBuilderTest, AScreenPassKeepsImportedTextureInputsForItsProgram)
 {
     // A ScreenPass may declare an imported texture next to its produced source. The full-screen ABI binds the
     // imported image at the sampler binding the program declares beyond the source's attachments; the engine
@@ -5743,7 +5743,7 @@ TEST(RenderPipelineBuilderTest, AScreenPassKeepsImportedTextureInputsForItsProgr
     EXPECT_EQ(inputs[1].target, source.get());
 }
 
-TEST(RenderPipelineBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)
+TEST(PassChainBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -5751,12 +5751,12 @@ TEST(RenderPipelineBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)
 
     // No programs supplied: the builder supplies its built-in temporary
     // G-buffer geometry + deferred-lighting programs.
-    RenderPipelineOptions opts;
+    ChainDesc opts;
     opts.path = ShadingPath::Deferred;
     opts.offscreen_width  = 640;
     opts.offscreen_height = 360;
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
     auto pipeline = builder.build(opts);
@@ -5770,15 +5770,15 @@ TEST(RenderPipelineBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)
     EXPECT_NE(light->program(), nullptr);
 }
 
-TEST(RenderPipelineBuilderTest, DeferredPathRefusesWithoutContent)
+TEST(PassChainBuilderTest, DeferredPathRefusesWithoutContent)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto cam    = intrusive_ptr<Camera>(new Camera());
 
     // A Deferred main pass needs a content scene to fill its G-buffer.
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
-    RenderPipelineOptions opts;
+    ChainDesc opts;
     opts.path     = ShadingPath::Deferred;
     auto pipeline = builder.build(opts);
 
@@ -6052,19 +6052,19 @@ TEST(RenderPassTest, EachAttachmentClearColourTravelsWithThePassPolicy)
         << "an attachment nobody stated keeps transparent black";
 }
 
-TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsComposite)
+TEST(PassChainBuilderTest, DeferredPresetWithTransparentContentBuildsComposite)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
     auto overlay = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    RenderPipelineOptions opts;
+    ChainDesc opts;
     opts.path = ShadingPath::Deferred;
     opts.offscreen_width  = 640;
     opts.offscreen_height = 360;
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
     builder.setTransparentContent(overlay);
@@ -6117,19 +6117,19 @@ TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsCompos
  * depends on: every row is labelled by the tag the recipe gave it, and the order of the rows is the order the
  * declared STAGES imply rather than a number the builder picked out of the air.
  */
-TEST(RenderPipelineBuilderTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
+TEST(PassChainBuilderTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
     auto overlay = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    RenderPipelineOptions opts;
+    ChainDesc opts;
     opts.path             = ShadingPath::Deferred;
     opts.offscreen_width  = 640;
     opts.offscreen_height = 360;
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
     builder.setTransparentContent(overlay);
@@ -6143,10 +6143,10 @@ TEST(RenderPipelineBuilderTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
     EXPECT_EQ(plan.passes[2].tag, vn::String(u8"Transparent"));
     EXPECT_EQ(plan.passes[3].tag, vn::String(u8"Present"));
     // The stage is what ordered them: the numbers below are the stage orders, not choices of the recipe's.
-    EXPECT_EQ(plan.passes[0].order, pipelineStageOrder(PipelineStage::Geometry));
-    EXPECT_EQ(plan.passes[1].order, pipelineStageOrder(PipelineStage::Shading));
-    EXPECT_EQ(plan.passes[2].order, pipelineStageOrder(PipelineStage::Transparent));
-    EXPECT_EQ(plan.passes[3].order, pipelineStageOrder(PipelineStage::Present));
+    EXPECT_EQ(plan.passes[0].order, passStageOrder(PassStage::Geometry));
+    EXPECT_EQ(plan.passes[1].order, passStageOrder(PassStage::Shading));
+    EXPECT_EQ(plan.passes[2].order, passStageOrder(PassStage::Transparent));
+    EXPECT_EQ(plan.passes[3].order, passStageOrder(PassStage::Present));
     // Every row is still a pass with a name, a camera and a place to draw: a declaration did not cost the plan
     // anything (see the deferred preset test above for what the passes themselves are).
     for (const PassPlan& row : plan.passes) {
@@ -6163,7 +6163,7 @@ TEST(RenderPipelineBuilderTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
  * pins the whole shape: the pass carries the overlay's own camera and content, a HUD tag, the HUD stage's order
  * and no clear; the per-frame work is the declaration's hook, and it runs when the FRAME runs.
  */
-TEST(RenderPipelineBuilderTest, TheHudOverlaysAreDeclarationsToo)
+TEST(PassChainBuilderTest, TheHudOverlaysAreDeclarationsToo)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
@@ -6173,19 +6173,19 @@ TEST(RenderPipelineBuilderTest, TheHudOverlaysAreDeclarationsToo)
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    RenderPipelineOptions opts;
+    ChainDesc opts;
     opts.path                = ShadingPath::Forward;
     opts.gizmo.source_camera = cam.get();
     opts.gizmo.box_size      = 96;
     opts.fps.enabled         = true;
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
     auto pipeline = builder.build(opts);
     ASSERT_NE(pipeline, nullptr);
 
-    // Two handles per overlay, and they answer different questions (see Pipeline::gizmo/gizmoPass).
+    // Two handles per overlay, and they answer different questions (see PassChain::gizmo/gizmoPass).
     AxisGizmo* const  gizmo        = pipeline->gizmo();
     FpsOverlay* const readout      = pipeline->fpsOverlay();
     RenderPass* const gizmo_pass   = pipeline->gizmoPass();
@@ -6213,8 +6213,8 @@ TEST(RenderPipelineBuilderTest, TheHudOverlaysAreDeclarationsToo)
     // engine's back), a HUD tag, the HUD stage's order, and no clear.
     EXPECT_EQ(gizmo_row->tag, vn::String(u8"Hud"));
     EXPECT_EQ(readout_row->tag, vn::String(u8"Hud"));
-    EXPECT_EQ(gizmo_row->order, pipelineStageOrder(PipelineStage::Overlay) + opts.gizmo.order);
-    EXPECT_EQ(readout_row->order, pipelineStageOrder(PipelineStage::Overlay) + opts.fps.order);
+    EXPECT_EQ(gizmo_row->order, passStageOrder(PassStage::Overlay) + opts.gizmo.order);
+    EXPECT_EQ(readout_row->order, passStageOrder(PassStage::Overlay) + opts.fps.order);
     EXPECT_FALSE(gizmo_row->clears) << "a HUD draws over the picture it is on, it never washes it out";
     EXPECT_EQ(gizmo_row->camera, gizmo->camera());
     EXPECT_EQ(gizmo_row->content, gizmo->content());
@@ -6235,18 +6235,18 @@ TEST(RenderPipelineBuilderTest, TheHudOverlaysAreDeclarationsToo)
     EXPECT_NEAR(shown_forward.z, source_forward.z, 1.0e-6);
 }
 
-TEST(RenderPipelineBuilderTest, ForwardPresetWithTransparentContentStacksDepthOnPass)
+TEST(PassChainBuilderTest, ForwardPresetWithTransparentContentStacksDepthOnPass)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
     auto overlay = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
     builder.setTransparentContent(overlay);
-    auto pipeline = builder.build(RenderPipelineOptions{});
+    auto pipeline = builder.build(ChainDesc{});
 
     ASSERT_NE(pipeline, nullptr);
     // Main order-0 window content pass + order-1 transparent content pass.
@@ -6281,9 +6281,9 @@ TEST(RenderPassTest, DepthStyleIsExplicitAndIndependentOfClear)
     EXPECT_EQ(pass.depthMode(), DepthMode::TestOnly);
 }
 
-TEST(RenderPipelineBuilderTest, DefaultGbufferTargetIsCanonicalLayout)
+TEST(PassChainBuilderTest, DefaultGbufferTargetIsCanonicalLayout)
 {
-    auto gbuffer = RenderPipelineBuilder::defaultGbufferTarget(320, 180);
+    auto gbuffer = PassChainBuilder::defaultGbufferTarget(320, 180);
     ASSERT_NE(gbuffer, nullptr);
     EXPECT_EQ(gbuffer->width(), 320);
     EXPECT_EQ(gbuffer->height(), 180);
@@ -6299,13 +6299,13 @@ TEST(RenderPipelineBuilderTest, DefaultGbufferTargetIsCanonicalLayout)
     EXPECT_EQ(gbuffer->colorFormat(3), RenderTarget::ColorFormat::RGBA16F);  // view position
 
     // Non-positive sizes fall back to the default resolution.
-    auto fallback = RenderPipelineBuilder::defaultGbufferTarget(0, 0);
+    auto fallback = PassChainBuilder::defaultGbufferTarget(0, 0);
     ASSERT_NE(fallback, nullptr);
     EXPECT_EQ(fallback->width(), 640);
     EXPECT_EQ(fallback->height(), 360);
 }
 
-TEST(RenderPipelineBuilderTest, GizmoOverlayConfiguredOnPreset)
+TEST(PassChainBuilderTest, GizmoOverlayConfiguredOnPreset)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -6315,12 +6315,12 @@ TEST(RenderPipelineBuilderTest, GizmoOverlayConfiguredOnPreset)
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    RenderPipelineOptions opts;
+    ChainDesc opts;
     opts.gizmo.source_camera = cam.get();
     opts.gizmo.pixel_ratio   = 2.0;
     opts.gizmo.box_size      = 128;
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
     auto pipeline = builder.build(opts);
@@ -6337,7 +6337,7 @@ TEST(RenderPipelineBuilderTest, GizmoOverlayConfiguredOnPreset)
     engine->frame();
 }
 
-TEST(RenderPipelineBuilderTest, ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumerNeeds)
+TEST(PassChainBuilderTest, ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumerNeeds)
 {
     auto engine     = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content    = intrusive_ptr<Scene>(new Scene());
@@ -6345,7 +6345,7 @@ TEST(RenderPipelineBuilderTest, ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumer
     auto gbuf_prog  = intrusive_ptr<ShaderProgram>(new ShaderProgram());
     auto light_prog = intrusive_ptr<ShaderProgram>(new ShaderProgram());
 
-    RenderPipelineOptions opts;
+    ChainDesc opts;
     opts.path                = ShadingPath::Deferred;
     opts.offscreen_width     = 640;
     opts.offscreen_height    = 360;
@@ -6355,7 +6355,7 @@ TEST(RenderPipelineBuilderTest, ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumer
     opts.gizmo.pixel_ratio   = 2.0;
     opts.gizmo.box_size      = 128;
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
     auto pipeline = builder.build(opts);
@@ -6701,7 +6701,7 @@ TEST(AxisGizmoTest, BuildsThreeColouredSticks)
     }
     EXPECT_NE(gizmo->camera(), nullptr);
     // A HUD overlay draws over the main content: what says so is the DECLARATION that shows it (no clear, depth
-    // disabled), which the builder writes - see RenderPipelineBuilderTest.TheHudOverlaysAreDeclarationsToo.
+    // disabled), which the builder writes - see PassChainBuilderTest.TheHudOverlaysAreDeclarationsToo.
 }
 
 TEST(AxisGizmoTest, ViewportPlacedBottomLeft)
@@ -8872,11 +8872,11 @@ TEST(ContentLayersTest, ARecipeStampsItsMaskOnEveryContentPassButNotOnTheOverlay
     auto cam = intrusive_ptr<Camera>(new Camera());
     setupLookAtCamera(*cam);
 
-    RenderPipelineOptions options;
+    ChainDesc options;
     options.layer_mask = 1u << 1;
     options.gizmo.source_camera = cam.get();
 
-    RenderPipelineBuilder builder(engine.get());
+    PassChainBuilder builder(engine.get());
     builder.setCamera(cam.get());
     builder.setContent(content);
     auto pipeline = builder.build(options);
@@ -9880,7 +9880,7 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     PassDesc desc;
     desc.name          = u8"declared_pass";
     desc.tag           = u8"Lighting";
-    desc.stage         = PipelineStage::Shading;
+    desc.stage         = PassStage::Shading;
     desc.kind          = PassKind::Scene;
     desc.camera        = camera;
     desc.content       = scene;
@@ -9897,7 +9897,7 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     ASSERT_EQ(plan.passes.size(), 1u);
     EXPECT_EQ(plan.passes[0].name, vn::String(u8"declared_pass"));
     EXPECT_EQ(plan.passes[0].tag, vn::String(u8"Lighting")) << "the tag is what the plan carries for a human";
-    EXPECT_EQ(plan.passes[0].order, pipelineStageOrder(PipelineStage::Shading))
+    EXPECT_EQ(plan.passes[0].order, passStageOrder(PassStage::Shading))
         << "the stage is the order: nobody picks an order number for a declared pass";
     EXPECT_EQ(plan.passes[0].target, target.get());
     EXPECT_TRUE(plan.passes[0].clears);
@@ -9954,7 +9954,7 @@ TEST(RenderEngineTest, AScreenPassCanBeDeclaredAsAValueToo)
     PassDesc compose;
     compose.name        = u8"compose";
     compose.tag         = u8"Compositing";
-    compose.stage       = PipelineStage::Transparent;
+    compose.stage       = PassStage::Transparent;
     compose.kind        = PassKind::Screen;
     compose.camera      = camera;
     compose.program     = screenCopyProgram();

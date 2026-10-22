@@ -45,7 +45,7 @@ class Viewer;
  * CONSTRUCTION ONLY COMPOSES. The control builds its engine, its view and its viewer and installs the diagnostics
  * route; it does not pick a backend and does not attach. The first attach happens on the first turn of the event loop
  * (a fallback), which is exactly what makes "configure right after new" work: engine()->setDevice(),
- * viewer()->setViewerOptions() (or a host's own view()->setPipeline()) and content assembly are synchronous code and
+ * viewer()->setViewerOptions() (or a host's own view()->setChain()) and content assembly are synchronous code and
  * therefore always run BEFORE it. A host that wants the attach inside its
  * own ordering calls init()/initAsync() itself (synchronous, idempotent) - that call IS the attach, and the fallback
  * then finds the session already bound. Window events (show, resize, a recreated platform window) keep the session
@@ -107,12 +107,12 @@ class VN_APPFW_API RenderControl : public Control {
      * The view owns this control's camera, content scene and orbit
      * manipulator. Application code fills the content scene via
      * view()->scene() and reads the camera via view()->camera() when it
-     * assembles an explicit pipeline.
+     * assembles an explicit chain.
      *
-     * What the view DRAWS is the pipeline it has adopted, and by default that is this control's viewer pipeline: the
+     * What the view DRAWS is the chain it has adopted, and by default that is this control's viewer chain: the
      * control's Viewer builds it (see ViewerOptions) and adopts it on the view before the first attach, so a host
-     * that never touches pipelines nevertheless gets a picture. A host that assembles its own adopts it instead
-     * (view()->setPipeline(...)) and from then on owns that view's drawing - including rebuilding it (see Pipeline).
+     * that never touches chains nevertheless gets a picture. A host that assembles its own adopts it instead
+     * (view()->setChain(...)) and from then on owns that view's drawing - including rebuilding it (see PassChain).
      *
      * One control holds one session and one view: a document that renders brings its OWN control (and with it
      * its own surface, device and pipelines - see appfw-document-model.md §9).

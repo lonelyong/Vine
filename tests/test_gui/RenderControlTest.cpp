@@ -24,7 +24,7 @@
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderEngine.hpp>
-#include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -262,10 +262,10 @@ vn::intrusive_ptr<vn::graphics::SceneView> secondPane(vn::graphics::RenderEngine
 {
     auto view = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
     view->setEngine(engine);
-    vn::graphics::RenderPipelineBuilder builder(engine);
+    vn::graphics::PassChainBuilder builder(engine);
     builder.setCamera(view->camera());
     builder.setContent(view->scene());
-    view->setPipeline(builder.build({}));
+    view->setChain(builder.build({}));
     return view;
 }
 
@@ -320,8 +320,8 @@ TEST(RenderControlTest, TheControlsSurfacePresentsItsOwnViewByDefault)
     EXPECT_NE(surface->presentingPass(), nullptr);
 
     // 那块 pass 就是该视图默认管线里那条窗口 pass（视图重建时表跟着走 —— 见 RenderSurfaceTest）。
-    ASSERT_NE(control->view()->pipeline(), nullptr);
-    EXPECT_EQ(surface->presentingPass(), control->view()->pipeline()->presentingPass());
+    ASSERT_NE(control->view()->chain(), nullptr);
+    EXPECT_EQ(surface->presentingPass(), control->view()->chain()->presentingPass());
     // 这块表面的**唯一一口清屏**留在要清的那条 pass 上（默认画面照旧清成窗口灰）：区不碰它的清屏策略。
     EXPECT_TRUE(surface->presentingPass()->isClearEnabled());
 
@@ -336,7 +336,7 @@ TEST(RenderControlTest, TheControlsSurfacePresentsItsOwnViewByDefault)
 
 // 查看器预设与运行期换档是两件事：预设说"走哪条链、哪些档、档要能表达什么"，换档问的是"这条链能不能表达、
 // 以及**这个请求**是不是就该由它来画"。延迟预设 + 非 Lit 档 ⇒ 链按前向建（effectivePath）；这时选回 Lit，
-// 前向链当然表达得了 Lit，但这个请求要的是延迟 ⇒ **建回延迟**（老规矩，见 RenderPipelineBuilder::effectivePath）。
+// 前向链当然表达得了 Lit，但这个请求要的是延迟 ⇒ **建回延迟**（老规矩，见 PassChainBuilder::effectivePath）。
 TEST(RenderControlTest, ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt)
 {
     HostedControl host;
@@ -346,7 +346,7 @@ TEST(RenderControlTest, ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt)
     vn::appfw::gui::ViewerOptions options;  // 预设：延迟（宿主写的就是它，链只是它的实现）
     options.path = vn::graphics::ShadingPath::Deferred;
     ASSERT_TRUE(control->setViewerOptions(options));
-    auto* pipeline = control->view()->pipeline();
+    auto* pipeline = control->view()->chain();
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(pipeline->shadingPath(), vn::graphics::ShadingPath::Deferred);
     EXPECT_NE(pipeline->offscreenTarget(), nullptr) << "延迟链的输入是 G-buffer";
@@ -354,7 +354,7 @@ TEST(RenderControlTest, ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt)
 
     // 非 Lit 档：延迟链表达不了它（没有几何趟可改）⇒ 换档就是**重建**，链变前向、G-buffer 退场。
     ASSERT_TRUE(control->setShadingMode(vn::graphics::ShadingMode::Unlit));
-    auto* forward = control->view()->pipeline();
+    auto* forward = control->view()->chain();
     ASSERT_NE(forward, nullptr);
     EXPECT_NE(forward, pipeline) << "重建了：链不一样了";
     EXPECT_EQ(forward->shadingPath(), vn::graphics::ShadingPath::Forward);
@@ -363,14 +363,14 @@ TEST(RenderControlTest, ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt)
     EXPECT_EQ(control->viewerOptions().mode, vn::graphics::ShadingMode::Unlit) << "运行期那一档要记进预设";
 
     // 同一条（前向）链上表达得了的另一档：零重建 —— 预设跟着走（否则下次读-改-写会把旧档带回来）。
-    auto held = vn::intrusive_ptr<vn::graphics::RenderPipeline>(forward);
+    auto held = vn::intrusive_ptr<vn::graphics::PassChain>(forward);
     EXPECT_TRUE(control->setShadingMode(vn::graphics::ShadingMode::Wireframe));
-    EXPECT_EQ(control->view()->pipeline(), held.get()) << "同一条链上换档不该重建";
+    EXPECT_EQ(control->view()->chain(), held.get()) << "同一条链上换档不该重建";
     EXPECT_EQ(control->viewerOptions().mode, vn::graphics::ShadingMode::Wireframe);
 
     // 选回 Lit：链能表达它，但请求要的是延迟 ⇒ 建回延迟，且 G-buffer 回来。
     EXPECT_TRUE(control->setShadingMode(vn::graphics::ShadingMode::Lit));
-    auto* deferred = control->view()->pipeline();
+    auto* deferred = control->view()->chain();
     ASSERT_NE(deferred, nullptr);
     EXPECT_EQ(deferred->shadingPath(), vn::graphics::ShadingPath::Deferred) << "请求说了算：回到延迟";
     EXPECT_NE(deferred->offscreenTarget(), nullptr);
@@ -716,7 +716,7 @@ TEST(RenderControlTest, TheViewerDrawsTheAreaFromItsRequest)
     vn::appfw::gui::ViewerOptions wanted;
     wanted.gizmo = true;
     ASSERT_TRUE(viewer->setViewerOptions(wanted));
-    auto* pipeline = control->view()->pipeline();
+    auto* pipeline = control->view()->chain();
     ASSERT_NE(pipeline, nullptr);
     EXPECT_NE(pipeline->gizmo(), nullptr) << "请求要的是坐标轴";
     EXPECT_EQ(pipeline->fpsOverlay(), nullptr) << "请求没有读数这一档";
@@ -744,7 +744,7 @@ TEST(RenderControlTest, AHostPassTakesTheAreaAndTheViewerStandsDown)
     auto*         view    = control->view();
     ASSERT_NE(control->viewer(), nullptr);
 
-    vn::graphics::RenderPipelineBuilder builder(control->engine());
+    vn::graphics::PassChainBuilder builder(control->engine());
     builder.setCamera(view->camera());
     builder.setContent(view->scene());
     auto host_pipeline = builder.build({});
@@ -756,7 +756,7 @@ TEST(RenderControlTest, AHostPassTakesTheAreaAndTheViewerStandsDown)
     EXPECT_FALSE(control->viewer()->isActive()) << "有宿主自建的 pass 在 ⇒ 查看器不是这块表面的呈现者";
     EXPECT_EQ(surface->presentedView(), nullptr) << "呈现者是宿主自建的 pass，没有视图";
     EXPECT_EQ(surface->presentingPass(), host_pipeline->presentingPass());
-    EXPECT_EQ(view->pipeline(), nullptr) << "主人自己搭 pass 时，默认链不该被建出来";
+    EXPECT_EQ(view->chain(), nullptr) << "主人自己搭 pass 时，默认链不该被建出来";
 
     // 后半：先让查看器上线，再接管 —— 一块区一次只画一幅画，所以接管是"查看器先放手，宿主再声明"（第二条呈现会被
     // 拒并说出来，这正是"谁在这块窗口上"只能有一个答案的意思）。
@@ -766,7 +766,7 @@ TEST(RenderControlTest, AHostPassTakesTheAreaAndTheViewerStandsDown)
     EXPECT_TRUE(live.control()->viewer()->isActive());
 
     auto* live_view = live.control()->view();
-    vn::graphics::RenderPipelineBuilder live_builder(live.control()->engine());
+    vn::graphics::PassChainBuilder live_builder(live.control()->engine());
     live_builder.setCamera(live_view->camera());
     live_builder.setContent(live_view->scene());
     auto taken_over = live_builder.build({});
@@ -802,7 +802,7 @@ TEST(RenderControlTest, ReleasingTheViewTakesItOutOfTheArea)
     EXPECT_FALSE(viewer->isActive()) << "撤掉的就是它那条声明";
     EXPECT_FALSE(surface->hasPresentation());
     EXPECT_EQ(surface->presentedView(), nullptr);
-    EXPECT_NE(view->pipeline(), nullptr) << "链是视图的：还给宿主的是那个视图，不是它的画";
+    EXPECT_NE(view->chain(), nullptr) << "链是视图的：还给宿主的是那个视图，不是它的画";
     EXPECT_FALSE(viewer->release(view.get())) << "已经不是查看器的视图了";
 }
 
@@ -820,7 +820,7 @@ TEST(RenderControlTest, ARebuildCarriesTheLiveChainsRuntimeChoices)
     options.gizmo = true;
     options.stats = true;
     ASSERT_TRUE(control->setViewerOptions(options));  // 控件的老入口 = 作用于第一格
-    auto* first = control->view()->pipeline();
+    auto* first = control->view()->chain();
     ASSERT_NE(first, nullptr);
     EXPECT_EQ(first->shadingPath(), vn::graphics::ShadingPath::Deferred);
     ASSERT_NE(first->gizmo(), nullptr);
@@ -830,9 +830,9 @@ TEST(RenderControlTest, ARebuildCarriesTheLiveChainsRuntimeChoices)
     ASSERT_TRUE(first->setStatsVisible(false));
 
     // 结构变化（非 Lit 档：延迟链表达不了它）⇒ 重建 —— 关掉的读数必须跟着走，没动过的坐标轴照旧亮着。
-    vn::intrusive_ptr<vn::graphics::RenderPipeline> held(first);
+    vn::intrusive_ptr<vn::graphics::PassChain> held(first);
     ASSERT_TRUE(viewer->setShadingMode(vn::graphics::ShadingMode::Unlit));
-    auto* rebuilt = control->view()->pipeline();
+    auto* rebuilt = control->view()->chain();
     ASSERT_NE(rebuilt, nullptr);
     ASSERT_NE(rebuilt, held.get()) << "延迟链表达不了这一档 ⇒ 换档就是重建（链变前向）";
     EXPECT_EQ(rebuilt->shadingPath(), vn::graphics::ShadingPath::Forward);
@@ -843,7 +843,7 @@ TEST(RenderControlTest, ARebuildCarriesTheLiveChainsRuntimeChoices)
     EXPECT_EQ(viewer->viewerOptions().mode, vn::graphics::ShadingMode::Unlit);
     EXPECT_EQ(viewer->viewerOptions().path, vn::graphics::ShadingPath::Deferred);
     ASSERT_TRUE(viewer->setViewerOptions(viewer->viewerOptions()));
-    auto* again = control->view()->pipeline();
+    auto* again = control->view()->chain();
     ASSERT_NE(again, nullptr);
     ASSERT_NE(again, held.get());
     EXPECT_EQ(again->shadingMode(), vn::graphics::ShadingMode::Unlit);

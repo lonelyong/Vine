@@ -18,7 +18,7 @@ graph TB
     UI["应用框架<br/>（appfw RenderControl、graphics SceneView）"]
     Engine["RenderEngine<br/>pass · target · 接线校验 · 诊断"]
     Scene["场景模型<br/>Node / Group / MatrixTransform / StateNode / Geometry"]
-    Builder["RenderPipelineBuilder<br/>配方：forward · deferred · 离屏+PiP"]
+    Builder["PassChainBuilder<br/>配方：forward · deferred · 离屏+PiP"]
     BackendIface["RenderBackend（三面一体：设备 / 执行器 / 目标工厂）"]
     Plugin["gfx_backend_vsg 插件<br/>SceneBridge · VsgRenderer"]
     VSG["VulkanSceneGraph → Vulkan"]
@@ -123,14 +123,15 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   以及 `shareDepth(DepthView)`（借别人的深度；`DepthView` 是个值，命名一张 target 的深度图并保活它）与
   `setDepthPromotion(bool)`（深度是否变成可采样）。借来的深度也可以由**画它的那条 pass** 声明：
   `RenderPass::setDepthView(depthViewOf(other))`（`depthViewOf()` 是由 raw pointer 构造 view 的简写）。
-- `RenderPipelineBuilder` —— 配方层：`build(const RenderPipelineOptions&)`（结构选择只有一个：
+- `PassChainBuilder` —— 配方层：`build(const ChainDesc&)`（结构选择只有一个：
   `ShadingPath::Forward | Deferred`，其余是效果与选项，见 `.ai/design/graphics-pipeline.md`）、
   `addOffscreenToScreen(...)`（离屏 + PiP），并暴露延迟所需的公有件（`defaultGbufferTarget()`、
   `defaultGbufferGeometryProgram()`、`defaultDeferredLightProgram()`）。它装配出来的就是**你手写也会写的
-  那些对象**，返回值 `RenderPipeline` 句柄持有它们（`presentingPass()`、`offscreenTarget()`、`resize(w,h)`），
-  **并持有它们的注册**：丢掉句柄 = 那些 pass 从帧里撤下来（注册是一个 `PassGroup` 令牌，见 §3.18；
-  `RenderEngine::addPass` 自己另持引用，只持有引用会让被丢掉的 pass 继续每帧执行）。
-- **顺序用阶段说**（`PipelineStage` + `pipelineStageOrder`）：阴影深度、几何、效果、着色、透明、
+  那些对象**，返回值 `PassChain` 句柄持有它们（`presentingPass()`、`offscreenTarget()`、`resize(w,h)`），
+  **并持有它们的注册**：丢掉句柄 = 那些 pass 从帧里撤下来（链自己就是注册范围：引擎的槽位表把链记为
+  pass 的 owner，链的析构调用 `removePassesOwnedBy(this)`，见 §3.18；`RenderEngine::addPass` 自己另持引用，
+  只持有引用会让被丢掉的 pass 继续每帧执行）。
+- **顺序用阶段说**（`PassStage` + `passStageOrder`）：阴影深度、几何、效果、着色、透明、
   呈现、HUD、预览各占一个档位，效果按"我在谁之前"进入，不去抢别人的魔数。
 - `RenderBackend` —— **三面一体的聚合**（工厂返回、引擎收、测试双实现，2026-10-11 S10a 起）：整帧 `executeFrame()`
   在 `RenderFrameExecutor` 那面，**窗口是可选的另一半** → `RenderDevice::createSurfaceTarget(handle, why)` 交出一把
@@ -247,8 +248,8 @@ camera->setPerspective(45.0, 0.1, 100.0);
 camera->setAspect(16.0 / 9.0);                               // 投影的**形状**就在这里：它是相机自己的状态
                                                              // （一台相机 = 一张画面，see Camera）
 
-// ④ 引擎 + 后端 + 预设管线。
-// 引擎是**引用计数**对象，管线**强持**它（`RenderPipeline` 的构造参数就是 `intrusive_ptr<RenderEngine>`）：栈上的引擎会被
+// ④ 引擎 + 后端 + 预设链。
+// 引擎是**引用计数**对象，链**强持**它（`PassChain` 的构造参数就是 `intrusive_ptr<RenderEngine>`）：栈上的引擎会被
 // "最后放手的那条管线"删掉 —— `delete` 的是别人的栈/成员内存，症状不在这一刻，而是**之后某次无关的 free 报堆损坏**。
 // 所以它和别的 SDK 对象一样由 `intrusive_ptr` 持有（`test_vsg/SdkPixelFixture.hpp` 是同一个形态）。
 auto engine = make_intrusive<RenderEngine>();
@@ -267,9 +268,9 @@ area->resize(width, height, dpr);         // 帧上下文 + 目标（窗口那�
 if (!engine->device()->initialize()) { return false; }   // 平台重建窗口后再调一次 = 跟随新句柄
 if (!engine->initialize()) { return false; }             // 引擎附着：就绪、记尺寸、向设备要它自己的目标
 
-RenderPipelineBuilder builder(engine.get());
+PassChainBuilder builder(engine.get());
 builder.setContent(scene).setCamera(camera.get());
-RenderPipelineOptions options;                // 默认 = forward 路径
+ChainDesc options;                            // 默认 = forward 路径
 auto pipeline = builder.build(options);      // 或 options.path = ShadingPath::Deferred
 if (pipeline == nullptr) { return false; }
 
@@ -345,7 +346,7 @@ compose->setViewport(surface_w - 320 - 8, 8, 320, 180);
 
 ### 3.4 例：纯手动 4 pass —— 手搭一条延迟管线
 
-这条管线用的三件"公有件"正是 `RenderPipelineBuilder::build(Deferred)` 内部用的东西，所以手搭出来
+这条链用的三件"公有件"正是 `PassChainBuilder::build(Deferred)` 内部用的东西，所以手搭出来
 与预设**完全等价**：它演示了手写延迟管线的三个要点 —— **MRT target**、**带 program 的 ScreenPass**、
 以及**借用深度**。
 
@@ -356,10 +357,10 @@ compose->setViewport(surface_w - 320 - 8, 8, 320, 180);
 //    所以前向与延迟两条路的高光强度一致（2026-09-25 接线）。
 //    位置的 w 是**契约的一半**：写过的像素写 1（清除留下的透明黑是 0），光照 program 用它区分
 //    "背景" 与 "几何"；距离判据做不到——相机贴住的像素视图位置就是 ~0（2026-09-25 修）。
-auto gbuffer = RenderPipelineBuilder::defaultGbufferTarget(width, height);
+auto gbuffer = PassChainBuilder::defaultGbufferTarget(width, height);
 
 // ② G-buffer pass（order < 0）：一个场景遍历写 MRT。
-auto gbuffer_program = RenderPipelineBuilder::defaultGbufferGeometryProgram();
+auto gbuffer_program = PassChainBuilder::defaultGbufferGeometryProgram();
 auto gbuf_pass = make_intrusive<RenderPass>();
 gbuf_pass->setName(u8"gbuffer");
 gbuf_pass->setCamera(camera);
@@ -379,7 +380,7 @@ composite->attachColor(RenderTarget::ColorFormat::RGBA8);
 composite->shareDepth(depthViewOf(gbuffer));     // 借深度（也可以由下面那条 pass 声明：setDepthView）
 
 // ④ 全屏延迟光照（带 program）：读 G-buffer 的全部彩色附件，写进 composite。
-auto light_program = RenderPipelineBuilder::defaultDeferredLightProgram();
+auto light_program = PassChainBuilder::defaultDeferredLightProgram();
 auto light = make_intrusive<ScreenPass>();
 light->setName(u8"deferred_lighting");
 light->setCamera(camera);                  // program 路径**必须**有相机
@@ -435,12 +436,12 @@ engine.addPass(present, 2);
 builder 只是把 §3.3 / §3.4 的装配收起来，配上默认 program；它不会替你省掉"相机、内容、尺寸"这三个前提。
 
 ```cpp
-RenderPipelineBuilder builder(&engine);
+PassChainBuilder builder(&engine);
 builder.setContent(scene).setCamera(camera.get());
 
 // 结构只有两选：forward / deferred。阴影不是预设——它由"投影的那盏灯"提出请求
 // （Light::castShadow），当前还没有阴影 pass，所以 builder 会报一条"画面无影"。
-RenderPipelineOptions options;
+ChainDesc options;
 options.path = ShadingPath::Deferred;
 options.offscreen_width  = 0;          // 0 = 用当前 surface 尺寸，未知时回退 640x360
 options.offscreen_height = 0;
@@ -466,7 +467,7 @@ auto gizmo = make_intrusive<AxisGizmo>();
 gizmo->setSourceCamera(camera.get());
 gizmo->onSurfaceResized(surface_w, surface_h);
 PassDesc hud;
-hud.name = u8"axis_gizmo"; hud.tag = u8"Hud"; hud.stage = PipelineStage::Overlay; hud.order = 10;
+hud.name = u8"axis_gizmo"; hud.tag = u8"Hud"; hud.stage = PassStage::Overlay; hud.order = 10;
 hud.camera = intrusive_ptr<Camera>(gizmo->camera());
 hud.content = intrusive_ptr<Scene>(gizmo->content());
 hud.viewport = gizmo->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;
@@ -482,15 +483,15 @@ engine.addPass(hud);
 | 延迟管线 | §3.4 的 6 步（target / 4 个 pass / program / 借深度） | `build(Deferred)` |
 | G-buffer 布局与 program | 自己 `attachColor` × 4 + 写 MRT program | `defaultGbufferTarget()` / `defaultGbufferGeometryProgram()` |
 | 离屏 + PiP | §3.3 + `setViewport()` | `addOffscreenToScreen(...)` |
-| 尺寸跟随窗口 | 逐个 `setSize()` | `RenderPipeline::resize(w, h)` |
+| 尺寸跟随窗口 | 逐个 `setSize()` | `PassChain::resize(w, h)` |
 | 任意自定义 pass | `engine.addPass(pass, order)` | `builder.addPass(pass, order)` |
 
 ### 3.6 例：HUD 叠加与"叠加场景"
 
 - **HUD**：`AxisGizmo` / `FpsOverlay` 是**内容对象**（自带 scene、取景相机与盒子），画它们的是一条 HUD 档的
   pass 声明（`tag = "Hud"`、`stage = Overlay`、不洗屏、`depth_mode = Disabled`、`before_draw` 调对象的
-  `update()`）—— 配方自己就这么声明（`RenderPipelineOptions::gizmo` / `fps`）。句柄分两个：`RenderPipeline::gizmo()` /
-  `fpsOverlay()` 拿对象（摆位、尺寸、内容），`RenderPipeline::gizmoPass()` / `fpsOverlayPass()` 拿 pass（可见性开关
+  `update()`）—— 配方自己就这么声明（`ChainDesc::gizmo` / `fps`）。句柄分两个：`PassChain::gizmo()` /
+  `fpsOverlay()` 拿对象（摆位、尺寸、内容），`PassChain::gizmoPass()` / `fpsOverlayPass()` 拿 pass（可见性开关
   读的就是它的 `enabled`）；`resize()` 会顺带通知它们窗口尺寸并重述盒子。
 - **半透明叠加场景**：`builder.setTransparentContent(overlay_scene)`。forward 下它是在主 pass 之后、
   同一窗口 pass 里**带深度**的一笔；deferred 下它先与不透明结果在离屏 composite 里合成再呈现 ——
@@ -645,7 +646,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 出多个 program 时加后缀：`builtin_forward_flat`、`builtin_forward_unlit`、`builtin_forward_normals`、
 `builtin_deferred_lighting_shadowed`），所以一条报出 program
 名的 diagnostic 直接告诉你去读哪个文件。默认管线的 pass 用**角色词**（`gbuffer` / `deferred_lighting`，见
-`RenderPipelineBuilder`）而不带前缀：一个 pass 画的是**宿主给它的** program，管它叫"内建"是错的。
+`PassChainBuilder`）而不带前缀：一个 pass 画的是**宿主给它的** program，管它叫"内建"是错的。
 
 **所有 GLSL 都归 SDK**：后端**没有**自己的 shader 目录（曾经有，2026-09-13 收回来了），它只决定怎么编译和绑。
 | 文件怎么进二进制、怎么加一个、有哪些门禁 | [`.ai/design/vsg-custom-shader.md`](../../.ai/design/vsg-custom-shader.md) §10 |
@@ -729,13 +730,13 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 读数与变异证明见 [`.ai/design/vsg-reimplementation.md`](../../.ai/design/vsg-reimplementation.md) §11.16cp。
 完整形状、判据与"不做"的四条见 [`.ai/design/graphics-colour-space.md`](../../.ai/design/graphics-colour-space.md)。
 
-### 3.10 省事的视图：`RenderPipeline` 是配方，视图只采纳（appfw 的 `ViewerOptions` 是宿主那一层）
+### 3.10 省事的视图：`PassChain` 是配方，视图只采纳（appfw 的 `ViewerOptions` 是宿主那一层）
 
-上面几节都是"自己搭管线"。**图形层把"配方"收进 `RenderPipeline`**：一条链就是它的选项建出来的（`RenderPipelineOptions`），
-宿主**建**它、**采纳**它（`SceneView::setPipeline`），视图从此画的就是它 —— 视图自己不记配方，也没有"默认管线"
+上面几节都是"自己搭链"。**图形层把"配方"收进 `PassChain`**：一条链就是它的选项建出来的（`ChainDesc`），
+宿主**建**它、**采纳**它（`SceneView::setChain`），视图从此画的就是它 —— 视图自己不记配方，也没有"默认链"
 这回事（不采纳就不画）。
 
-> **名字的坑**：这个 `RenderPipeline` **不是**图形 API 的 pipeline state（Vulkan 的 `VkPipeline`，通常叫 PSO）——它是**一条
+> **名字的坑**：这个 `PassChain` **不是**图形 API 的 pipeline state（Vulkan 的 `VkPipeline`，通常叫 PSO）——它是**一条
 > pass 链条的编译产物**（帧图编译的结果：谁画、按什么顺序、读谁写谁），一个视图/一块区一份。后端那种"管线状态"在本仓另
 > 有一套：`core::VariantPool` 按 `core::PipelineKey`（程序与其 revision、拓扑、采样颜色/深度数…，键里还带
 > `ProgramVariant` 着色器变体）缓存 `VkPipeline`。两个名字像，层次完全不同。
@@ -745,21 +746,21 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 ```cpp
 // 这个视图怎么画：选项 → 建 → 采纳（结构变了才有第二次建链）
-vn::graphics::RenderPipelineOptions options;
+vn::graphics::ChainDesc options;
 options.path = vn::graphics::ShadingPath::Forward;               // 或 Deferred
 options.mode = vn::graphics::ShadingMode::Lit;                   // 见下："档"是选项也是运行期开关
 options.gizmo.source_camera = view->camera();                    // 有源相机 = 有这个档
 options.fps.enabled = true;                                      // 帧率读数档
-vn::graphics::RenderPipelineBuilder builder(engine);
+vn::graphics::PassChainBuilder builder(engine);
 builder.setCamera(view->camera());
 builder.setContent(view->scene());
-view->setPipeline(builder.build(options));
+view->setChain(builder.build(options));
 
 // 运行期：都是**那条链**上的开关/覆盖，零重建、零重新注册
-vn::graphics::RenderPipeline* pipeline = view->pipeline();
-pipeline->setStatsVisible(false);        // pass->setEnabled(false) —— 没有这一档时如实拒绝 + 报一次
-pipeline->setGizmoVisible(true);
-pipeline->setShadingMode(vn::graphics::ShadingMode::Wireframe);  // 见下
+vn::graphics::PassChain* chain = view->chain();
+chain->setStatsVisible(false);           // pass->setEnabled(false) —— 没有这一档时如实拒绝 + 报一次
+chain->setGizmoVisible(true);
+chain->setShadingMode(vn::graphics::ShadingMode::Wireframe);  // 见下
 
 // 几何（改它**不重建**）：视图的画面就是它呈现的那块区 —— 尺寸归区（`RenderSurface::resize` 一次扇出），
 // 相机宽高比与管线尺寸都从它推；**不设** pass 的设备像素视口 ⇒ 全幅（要多幅画面自己给 pass 设子视口）
@@ -767,13 +768,13 @@ view->resize(w, h, dpr);                  // 只喂**表面**尺寸 + 比例；"
                                           // （视图挂在表面上时这句转发给 RenderSurface::resize，见 §3.11）
 ```
 
-- **建链的选项 vs 链上的开关**：`RenderPipelineOptions` 回答"这条链**有没有**这个档、走哪条链"（变更 = 一次建链），
+- **建链的选项 vs 链上的开关**：`ChainDesc` 回答"这条链**有没有**这个档、走哪条链"（变更 = 一次建链），
   `setStatsVisible()` / `setShadingMode()` 回答"现在画成什么样"（永不重建）。**"有没有"与"看不看得见"是两件事**：
   一条链没有读数档时 `setStatsVisible(true)` 返回 false 并报出来（静默的开关最坏）。
 - **档（`ShadingMode`）是 pass 属性，不是重建**：`Lit` 用内容自己的 program，`Flat/Unlit/Normals` 是同一段
   fragment 文本的另一个 `#define`（`setProgramOverride`），`Wireframe` 再加
   `RenderPass::setPolygonModeOverride(PolygonMode::Line)`。**档作用在几何阶段**：延迟的请求配非 Lit 档时，
-  `RenderPipelineBuilder::effectivePath()` 把链建成**前向**（选项字段不动，`RenderPipeline::shadingPath()` 记的是**实际建成**的那条），
+  `PassChainBuilder::effectivePath()` 把链建成**前向**（选项字段不动，`PassChain::shadingPath()` 记的是**实际建成**的那条），
   于是四档在两条请求上都能画出来；同一条链上换档零重建，而"延迟请求 + 非 Lit 档"期间选回 `Lit` 是一次建链
   （回到延迟链 —— 这就是那句 `effectivePath()` 公开成静态的用途）。
 - **重建之后谁把运行期选择搬过去**：重建的那一方（appfw 的 `Viewer`：读活着的链、在新链上重新落一遍 ——
@@ -903,7 +904,7 @@ frame plan: 11 pass(es)
 vn::graphics::PassDesc desc;
 desc.name          = u8"compose";              // 诊断与计划表里的名字
 desc.tag           = u8"Compositing";          // 给人看的标签（"这条 pass 是干什么的"）
-desc.stage         = PipelineStage::Transparent;// 位置由意图决定：pipelineStageOrder() 变成 order
+desc.stage         = PassStage::Transparent;    // 位置由意图决定：passStageOrder() 变成 order
 desc.kind          = PassKind::Screen;         // 怎么执行：Scene（画一个内容场景）/ Screen（全屏三角形 + program）
 desc.camera        = camera.get();
 desc.program       = vn::graphics::screenCopyProgram();
@@ -913,7 +914,7 @@ desc.before_draw   = [&hud] { hud.update(); };  // 每帧跑一次的内容更�
 engine->addPass(desc);
 ```
 
-- **位置**由 `stage` 决定；要精确插到某个数就用 `desc.order`（逃生口，见 `PipelineStage` 的刻度）。
+- **位置**由 `stage` 决定；要精确插到某个数就用 `desc.order`（逃生口，见 `PassStage` 的刻度）。
 - **`before_draw`** 是"内容每帧自己更新"的唯一钩子（FPS 读数、镜像的坐标轴）：它写**内容**，所以在 pass 记录任何状态之前跑，
   禁用的 pass 不跑。
 - **transient 目标**：不写 `desc.writes` 而是声明你需要哪张图、什么形状，帧的编译就替你分配、复用、并在没人再声明时释放：
@@ -937,7 +938,7 @@ desc.writes_shape.depth  = RenderTarget::DepthFormat::D24;
   pass 侧对应 `setClearColor(attachment, colour)`。没写的附件仍清成**透明黑**（那是“没画”的值），所以 G-buffer 想让
   法线附件清成 `(0,0,1,0)` 就只写那一格，不必把所有附件涂成同一种颜色。
 - **返回的是结点**：`addPass` 的三个重载都交回**已注册的那个执行结点**（重复注册则返回 null），于是"我声明了什么"与
-  "我接下来要调什么"是同一个对象：present 那一类配方把它记下来交给 `RenderPipeline::setWindowPass` 就行。builder 内部正是这样写的 ——
+  "我接下来要调什么"是同一个对象：present 那一类配方把它记下来交给 `PassChain::setWindowPass` 就行。builder 内部正是这样写的 ——
   它的普通 pass（shadow / gbuffer / lighting / transparent / present / preview）全是描述符，order 一律由 `stage` 决定。
 - 逃生口不变：`engine->addPass(pass, content, order)` 仍然收一个手搭的 pass（需要结点本身时用它），描述符只是把"声明"
   变成数据。
@@ -957,7 +958,7 @@ group->clearLayers();              // 撤掉声明，改回继承祖先
 shadow_pass->setLayerMask(1u << 1);
 
 // 配方侧：整条链一次给（builder 会盖在这条链的每个内容 pass 上；HUD / 全屏灯照不盖）
-vn::graphics::RenderPipelineOptions options;
+vn::graphics::ChainDesc options;
 options.layer_mask = 1u << 1;                       // appfw 里就是 ViewerOptions::layer_mask
 ```
 
@@ -988,7 +989,7 @@ outline->setDrawOrder(1);   // 高 = 后画 = 压在上面（子树继承；clea
 
 - **它是 pass 内那张列表的外键**：画序先分档，档内还是老画面。所以一个**不透明**的描边可以越过**透明**批次画在最后 ——
   这正是"同一 pass 内覆盖式绘制"能做到、而"为它多加一条 pass"又要重开清屏 / 深度的地方。
-- **与 pass 的顺序无关**：谁先谁后是配方的事（`PassDesc::order` / `PipelineStage`），这个值不会把内容搬到别的 pass 里。
+- **与 pass 的顺序无关**：谁先谁后是配方的事（`PassDesc::order` / `PassStage`），这个值不会把内容搬到别的 pass 里。
 - **要不要关深度看目的**：想"永远压在上面"就给那条 pass `DepthMode::Disabled`（或给几何一点偏移）；想"被挡住就不该看见"
   就让它照常测深度。**共面**的两件东西若开着深度，后画的那件会被深度拒绝（同深度 `LESS` 不成立）—— 那时量到的是深度，不是画序。
 - 自己驱动收集 / 后处理命令表时，`RenderCommand::drawOrder` 就是这个命令的档。
@@ -1051,38 +1052,37 @@ if (converted.root != nullptr) {
   没有网格的 entry、成环的引用都被跳过并计数，剩下部分照样转换。
 - **它不做的三件事**：不建 `Scene`（根节点归调用方）、不做单位换算（加载选项已经折进根变换）、不配灯（灯属于场景）。
 
-### 3.18 注册归一个句柄：`PassGroup`
+### 3.18 注册归链自己
 
 `RenderEngine::addPass(...)` 是**唯一的注册表**（顺序、内容绑定、资源都在它那儿），
-所以"这些 pass 是我的、我走的时候要撤掉"不需要第二份列表，
-只要一个**句柄**：`PassGroup` 就是那个句柄 —— 它把话说不出去的分组编号写在引擎自
-己的槽位上。
+而"这些 pass 是我的、我走的时候要撤掉"不需要第二份列表：**链自己就是注册范围** ——
+引擎的槽位表把链记为它注册的 pass 的 owner（`RenderEngine::addPassOwnedBy`），
+链的析构调用 `removePassesOwnedBy(this)`，一次交还它注册过的全部 pass。
 
 ```cpp
-auto group = engine->createPassGroup();            // 一个 RAII 令牌，引擎那边一张表
-group.add(desc, vn::String(u8"gbuffer"));          // 声明一条，可选给它起个名字（role）
-group.add(other_desc);
-engine->passCount();                               // 2：没有第二份拷贝
-
-group.pass(vn::String(u8"gbuffer"));               // 按名字拿回来（没有就是 null）
-group.passes();                                    // 快照，按引擎顺序
-group = vn::PassGroup();                           // 丢掉句柄 = 那两条 pass 撤下来
+{
+    auto chain = builder.build(options);               // 建链 = 把 pass 注册到引擎，链是 owner
+    chain->addOverlay(                                 // 加一层 HUD 也是一次注册（role 是名字）
+        vn::String(u8"corner"),                        // role：也是那条 pass 登记用的名字
+        corner_readout.get(),                          // 内容（非拥有，见 §3.19）
+        desc,                                          // HUD pass 的声明（同 §3.13）
+        [corner_readout](vn::graphics::RenderPass& pass, int w, int h, double ratio) {
+            corner_readout->setPixelRatio(ratio);
+            corner_readout->onSurfaceResized(w, h);
+            pass.setViewport(corner_readout->boxViewport());
+        });
+    engine->passCount();                               // 链活着，这些 pass 就在帧里
+}                                                      // 链走完作用域 → 它注册的 pass 全部撤下
 ```
 
-- **为什么不是句柄列表**：`std::vector<intrusive_ptr<RenderPass>>` 记着"我注册了什
-么"会和引擎的表各说一套 ——
-  "注册了却没人记着撤" 正是它们能对不上的那类缺陷。分组编号存在槽位上，就只有一份
-真相。
-- **role 是名字，不是字段**：配方（HUD 的两条 overlay pass 就是这么登记的）把一个
-pass 登记在一个名字下，
-  读的人按名字问，于是"再加一层 HUD"是**多登记一条**，而不是给某个类多加一个字段。
-  HUD 的用例见 `RenderPipeline::gizmoPass()` / `fpsOverlayPass()`。
-- **引擎先死也不炸**：句柄借的是引擎的 `Lease` —— 引擎没了，`isValid()` 回答 fal
-se，析构什么也不做（表跟着引擎一起没了），
-  `add()` 回答 null。
-- **移动是移交**：`PassGroup` 只能移动，且移动赋**先撤掉自己原来那批**再接管 ——
-默认移动会覆盖编号、把原来那批漏在帧里。
-- **谁在用**：`RenderPipeline` 就是"一个 `PassGroup` + 若干句柄"（`presentingPass()` / `offscreenTarget()` /
+- **为什么不是句柄列表**：`std::vector<intrusive_ptr<RenderPass>>` 记着"我注册了什么"会和引擎的表各说一套 ——
+  "注册了却没人记着撤"正是它们能对不上的那类缺陷。owner 写在引擎的槽位上，就只有一份真相。
+- **role 是名字，不是字段**：配方（HUD 的两条 overlay pass 就是这么登记的）把一个 pass 登记在一个名字下，
+  读的人按名字问（`overlayPass(role)` / `overlayContent(role)`），于是"再加一层 HUD"是**多登记一条**，
+  而不是给某个类多加一个字段。HUD 的用例见 `PassChain::gizmoPass()` / `fpsOverlayPass()`。
+- **引擎先死也不炸**：链借的是引擎的 `Lease` —— 引擎没了，`engine()` 回答 nullptr，
+  析构时没有表可动（表跟着引擎一起没了），注册调用回答 null。
+- **谁在用**：`PassChain` 自己就是"注册范围 + 若干句柄"（`presentingPass()` / `offscreenTarget()` /
   overlay 表），它自己的析构不再有一条 for 循环，`passes` 也不再有第二份存储。
 
 ### 3.19 overlay 是值：`addOverlay`（加第三层 HUD 不用改类）
@@ -1108,7 +1108,7 @@ pipeline->isOverlayVisible(vn::String(u8"corner"));
 ```
 
 - **第三层 HUD 是一次调用**：`resize()` 只跑每条 overlay 自己的 layout，不再特判 gizmo / 读数，所以 host 加自己的 HUD
-  不需要碰 `RenderPipeline`。配方里的两条（坐标轴 gizmo、帧率读数）走的就是同一条路，只是另外保留了类型化访问器
+  不需要碰 `PassChain`。配方里的两条（坐标轴 gizmo、帧率读数）走的就是同一条路，只是另外保留了类型化访问器
   （`gizmo()` / `fpsOverlay()` / `gizmoPass()` / `fpsOverlayPass()`），实现只有
   `obj_cast<AxisGizmo>(overlayContent(...))` 一行。
 - **内容不归管线拥有**：登记方自己持有（上面的 lambda 捕获了 `intrusive_ptr`），表里存的是 `raw_ptr<Object>` ——
@@ -1184,7 +1184,7 @@ albedo 格应是场景的颜色。位置格**天生就暗**——视图位置的
 
 两个面向使用者的要点：
 
-- **画在哪**：`PipelineStage::Transparent` 那趟（叠加场景），也就是**不透明结果之后**、测深度但不写深度的 pass。
+- **画在哪**：`PassStage::Transparent` 那趟（叠加场景），也就是**不透明结果之后**、测深度但不写深度的 pass。
   天空的片元都很远 ⇒ 只在"还没人画过"的背景像素上通过深度测试，别处全部失败 —— 这正是"天空在所有东西后面"。
   它也顺带避开两件事：pass 级 program override（延迟 G-buffer）会盖掉它自己的程序；阴影 pass 的光相机按内容
   包围盒取景，这么大的盒子会把 shadow map 分辨率摊薄成几百个单位一格。**前向预设**同样把它放在自己的
@@ -1201,8 +1201,8 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 
 | 路径 | 装配内容 |
 | --- | --- |
-| `ShadingPath::Forward` | 一个 `PipelineStage::Shading` 的窗口场景 pass 画内容（可选叠加场景是同一窗口 pass 里带深度的第二笔，`PipelineStage::Transparent`）。 |
-| `ShadingPath::Deferred` | `PipelineStage::Geometry` 的 pass 把内容画进**规范 G-buffer**（4 张彩色：albedo RGBA8、view normal+shininess RGBA16F、specular RGBA8、view position RGBA16F，加 D24 深度；发布为 `"GBuffer"`），再用一个 `Shading` 阶段的全屏光照 `ScreenPass` 作为窗口 pass。有叠加场景时，光照结果先与离屏 composite 合成再呈现（`Transparent` → `Present`）。 |
+| `ShadingPath::Forward` | 一个 `PassStage::Shading` 的窗口场景 pass 画内容（可选叠加场景是同一窗口 pass 里带深度的第二笔，`PassStage::Transparent`）。 |
+| `ShadingPath::Deferred` | `PassStage::Geometry` 的 pass 把内容画进**规范 G-buffer**（4 张彩色：albedo RGBA8、view normal+shininess RGBA16F、specular RGBA8、view position RGBA16F，加 D24 深度；发布为 `"GBuffer"`），再用一个 `Shading` 阶段的全屏光照 `ScreenPass` 作为窗口 pass。有叠加场景时，光照结果先与离屏 composite 合成再呈现（`Transparent` → `Present`）。 |
 
 **demo 的内容是一套词汇表、两条装配线。** 两个示例（forward / deferred）画同一批**切片**，各自只加自己确实画得对的
 那些（规则写在 `DemoScene::buildScene()` 一处，见 `src/plugins/demo_plugin/src/DemoScene.hpp`）：
@@ -1221,7 +1221,7 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 
 **阴影由投影的那盏灯提出请求**（`Light::castShadow()` + `ShadowSettings{resolution, bias, filter}` /
 `ShadowFilter::{None, Hard, PCF}`），**两条路径都会**为它建一条 depth-only 的阴影 pass
-（`PipelineStage::Depth`，默认 1024²，`RenderPipelineBuilder::directionalShadowMatrix()` 从光那一侧框住内容）。
+（`PassStage::Depth`，默认 1024²，`PassChainBuilder::directionalShadowMatrix()` 从光那一侧框住内容）。
 内容集合**无条件**声明阴影 ABI（set 0：map 在 3、块在 4；全屏的延迟光照程序用 5 / 6），`shadow.params.x` 是开关 ——
 没有可用阴影时程序一次都不采那张图。宿主自己的程序声明了 `shadow_map` 却没带上它时，会**按 drawable** 报一条
 `DiagnosticCategory::UnsupportedRequest`，而不是画出一张"没有阴影的阴影"。两个约定不同、且都写在 ABI 里：矩阵是

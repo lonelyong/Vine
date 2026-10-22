@@ -664,7 +664,7 @@ appfw 一行未改）、`test_vsg` **426 = 421 + 3 skip + 2 已知红**、`test_
    离屏尺寸、程序）→ `PipelineOptions`（建链时决定）；**运行期**（同一条链上能表达的档、档的**显示/隐藏**）→
    `Pipeline` 的 setter（零重建、零重新注册）。
 2. **两个枚举各自成叶子头**：`sdk/vine/graphics/ShadingMode.hpp`（原 `SceneView::Options::Mode`）、
-   `ShadingPath.hpp`（原住在 `RenderPipeline.hpp` 里）。判据与 S5 同：读者该能独立拿到值，不被拖进整张契约。
+   `ShadingPath.hpp`（原住在 `RenderPipeline.hpp` 里）。判据与 S5 同：读者该能独立拿到值，不被拖进整张契约。 <!-- drift-ok -->
 3. **`Pipeline` 记下自己是哪条链**：`shadingPath()` 答**实际建成**的那条（延迟请求 + 非 Lit 档 ⇒ 前向），
    `shadingMode()` / `setShadingMode()` / `setGizmoVisible()` / `setStatsVisible()` / `isGizmoVisible()` /
    `isStatsVisible()` 新增。链表达不了的档**拒绝 + 报一次**（`ReportOnce`，与既有的 `mode_refused_` 同形）；

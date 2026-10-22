@@ -17,15 +17,38 @@
 | **着色器与 ABI 契约** | shader 文件命名 `builtin_<角色>.<阶段>` · `vn_`→`vine_` 前缀 · texcoord kind 显式化 · P0.A/P0.B1/P0.C1（前向着色归 SDK / location 表 / L1 块布局） · P12 文件化 + 构建期嵌入 · program 槽 P1 三步 |
 | **证据与门禁** | M7 每帧编译 + 描述符（`PassDesc`）· M8 SDK 级设备夹具 + 像素判据（`SdkPixelTest`） · M11k 背景看写掩码 · M11l 第三条画面判据"整片背景灰" · FPS 窗口真平均 · ASan 两片（余量收口 / 全量 test_vsg 首通） · V3/V4 上游能力门禁 · R5 LSan 抑制 · M11g 计数分配器（**`skipped == 0` 才是跑过设备电池**） · 2026-10-11 修：G-buffer 几何 pass 缺 `program_override`（像素判据抓到，见顶条） · **2026-10-12 两条"已知红"清零（`test_vsg` 429 = 426 + 3 skip，见顶条）** |
 | **宿主窗口与 X11** | M11j 读窗口偶发红（VIEWABLE 之前呈递到不了 / 空帧不是 settle / 读错误 0 vs 8） · M11ae·M11af 首帧叠层与启动尺寸 |
-| **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` · **2026-10-22 `PassGroup` 注册令牌 + `presentingPass`** |
+| **SDK 与引擎形态** | 后端契约（规范性在 `RenderBackend.hpp`） · Design C（RenderEngine 瘦身 + SceneView） · Scene 收敛单根 · Material 透明度移除 · 拓扑归位 · State 切片 · 边界框 `Aabbd` · **2026-10-22（下午）`PassChain` 自己就是注册归属（`PassGroup` 已删）** |
 | **面向使用者** | `docs/guides/graphics.md`（模块文档一节） |
 | **对象模型与行业口径** | `.ai/design/graphics-object-model-vs-3d-frameworks.md`（2026-10-12）：逐个对象对到 VTK / OSG / three.js / Filament / Qt3D；**刻意偏离**（一区一幅画、相机带 aspect，含代价；**拾取是机制、选择不在框架（§2.5，2026-10-13）**）与**能力缺口**（同 pass 内优先级 / 实例化 / LOD·空间划分 / `Pipeline` ≠ PSO 的命名风险 / 内容掩码 / 目标层），各带触发条件；后两条的定形见 `graphics-layers.md`（L1 内容掩码 `Node::setLayers` + `PassDesc::layer_mask` / L2 目标层 `layerCount` + 层区间，L2 分两步、读侧先行；**§9（2026-10-13：拾取 / 包围盒掩码参数已落地；"子树层并集"整段跳过仍登记）**） |
 | **重新设计（含后端契约）** | `.ai/design/graphics-redesign.md`（2026-10-11 提案）：病根 = 帧在引擎里已是值、边界上又被打散成一串有顺序的可变调用；**六片全部落地**：S1 / A / S2 前半 / S3（前半：帧由值驱动；之一：`executeFrame`；之二：预热删除；**收口：平坦路径与 `Protocol` 一起删除**）/ **S4b（窗口成为可选依赖：`surface()` + `RenderSurfaceBinding`）** / **S5（能力与观测各收成一个值：`Capabilities` / `FrameReport`）** / **S6（宿主侧：尺寸唯一 owner + `SceneView` 六角色 + 呈现知识归表）** / **S7（用户点名的收口：配方归 `Pipeline`，视图只采纳 —— 删掉 `ensureWindowPass` 那一层）** |
 | **窗口 / 设备 / 多视图（下一轴）** | `.ai/design/graphics-window-device-viewer.md`（2026-10-11 提案）：**S8（appfw 的 `Viewer` 管 N 个 `View`）、S9（句柄与尺寸归区）与 S10a（三张契约 + 目标由设备造）已落地**，见下；**2026-10-11 晚裁决推翻 S8 一半：多格下线，一块区只画一幅画**（见顶条与 Q5 的后续裁决）；**2026-10-12 又两条**：呈递端拆成 `PresentTarget`（帧的契约）+ `WindowPresentTarget`（窗口那一面，见顶条），命名仍否掉 `RenderTargetWindow` / `RenderTargetOffscreen` 一对（`RenderTarget` 是描述、不是同族，理由在 §8）、云渲染的落点是"**第二个呈递端**"而不是把区通用化（§8 末条 + §9 第 6 条，带触发条件）；**§9.7（共享设备的 initialize/shutdown 归谁）已于 2026-10-18 裁定并落地：形状②——会话归创建者、引擎只借用设备（见顶条）**；**S10b 的 1:N、离屏会话、执行器自持帧尾与 `DeviceDesc{presentation}` 创建输入均已落地（2026-10-18/19/20）**，S10b 的登记项已清空；S11（登记不做）未落地 |
-| **待办与口径** | **唯一清单：`.ai/design/graphics-followups-2026-10-19.md`**（2026-10-19 盘点：§2 现在可做 / §3 触发条件型 / §4 明确不做 / §5 不再是待办）。底层两个来源：**2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已由 S10b 覆盖并关闭，2026-10-19**：一设备 N 窗口、每窗口一个目标，见 `graphics-window-device-viewer.md` §7）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
+| **待办与口径** | **现行登记：`.ai/design/graphics-followups-2026-10-22.md`**（本轮未做的 F1/F2/F3，各带为什么不做 / 触发 / 怎么验；仍开放的 R 项指向对象模型复核原表）。`.ai/design/graphics-followups-2026-10-19.md` 是历史盘点（§2 现在可做 / §3 触发条件型 / §4 明确不做 / §5 不再是待办），它的触发项仍然有效。底层两个来源：**2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已由 S10b 覆盖并关闭，2026-10-19**：一设备 N 窗口、每窗口一个目标，见 `graphics-window-device-viewer.md` §7）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
-## 2026-10-22 注册归一个令牌：`PassGroup` + `presentingPass`（设计见 `.ai/design/graphics-frame-picture-view-redesign-2026-10-22.md` §9）
+## 2026-10-22（下午）名字与注册归属一起收口：`PassChain`，`PassGroup` 删除
+
+- **名字的裁决**：`ScenePicture` 被否（`Picture` 挨着 `Texture`/`RenderTarget` 会被读成"场景图片"）；
+  `PassPipeline` 被否（重开 K1 关掉的 PSO 混读，`PipelineKey`/`VkPipeline` 还占着那个词）。取 **`PassChain`**
+  —— 类注释与指南本来就写 "PASS CHAIN"/"一条 pass 链条"，改完那两段"这不是 PSO"的免责说明可以整段删。
+- **改名（一次性公开面）**：`RenderPipeline`→`PassChain`、`RenderPipelineBuilder`→`PassChainBuilder`、
+  `RenderPipelineOptions`→`ChainDesc`、`SceneView::setPipeline/pipeline`→`setChain/chain`、
+  `checkPipelineContent`→`checkChainContent`；文件同名（`PassChain.hpp/.cpp`、`PassChainBuilder.hpp/.cpp`）。
+  `PipelineStage`/`pipelineStageOrder`→`PassStage`/`passStageOrder`，并从链头挪进新叶子头 **`PassStage.hpp`**：
+  `PassDesc.hpp` 不再反向 include 链头（文件顶部那条"为 `PipelineStage` include"的注释删除）。
+- **`PassGroup` 删除（令牌折进链）**：引擎 `Slot.group(uint64)` → `Slot.owner(raw_ptr<Object>)`；
+  `createPassGroup/removePassGroup/groupPass(es)` → `addPassOwnedBy/removePassesOwnedBy/pass(es)OwnedBy`。
+  `PassChain : Object, RefCounted<PassChain>`，所以引擎能以擦除的引用记 owner（引擎从不调用它，只比较指针）；
+  析构一句 `removePassesOwnedBy(this)`。存储仍然只有引擎那张槽位表，R2 不重开。
+- **判据**：`ChainRegistrationTest.*` 四条（撤自己那批 + 外来 pass 不受影响 + role 查回同一结点；链/引擎
+  两种死亡顺序；两条老 HUD 用例不改即绿；宿主第三条 overlay 不改类）。移动语义那条用例随令牌一起消失
+  （链不可移动，`PassGroup` 那个"移动赋漏撤"的坑不再存在）。
+- **一套数字**：全量构建 0 error；`test_graphics` 407、`test_vsg` 481、`test_gui` 261、`test_core` 165；
+  6 个静态门禁 0 finding（`check_ai_docs --strict` 也 0，历史条目按惯例加 `<!-- drift-ok -->`）；
+  `docs/guides/graphics.md` §3.18 从"注册归一个句柄"重写成"注册归链自己"。
+- **仍开放**：F1 引擎三门面、F3 调度上移（见 `graphics-followups-2026-10-22.md`）；F2 关闭 —— 改名半边已落地，
+  另一半"`RenderSurface` 问视图"在 S6 就已经是现状。
+
+## 2026-10-22 注册归一个令牌：`PassGroup` + `presentingPass`（历史登记；当日下午已折进 `PassChain`，设计见 `.ai/design/graphics-frame-picture-view-redesign-2026-10-22.md` §9）
 
 - **S2 落地（引擎仍是唯一注册表）**：新增 `vine/graphics/PassGroup.hpp/.cpp` —— 一个 **RAII 令牌**：`Slot` 加
   `group`（分组号）/`role`（名字），`RenderEngine` 加 `createPassGroup()` 与私有的
@@ -37,7 +60,7 @@
   `release()` 再接管，源句柄 `id_ = 0`（不转移 = 两个主人各撤一遍）。
 - **坑 2（比第一版 B1 更值钱）：插件 `.so` 不重建 ⇒ 用例假绿**。`ContentDrawTest.TheDynamicMappingFollowsTheEngineConventions`
   还写着 B1 **之前**的断言（"一个附件恒开混合"）——B1 那一轮各门禁都绿，是因为 `gfx_backend_vsg` 的 `.so` 没跟着重建；
-  这次动 `RenderPipeline.hpp`（插件包含它）被迫重建，老账才现形。修法：断言改成交付的契约（不 opt-in ⇒ `blendEnable` 为
+  这次动 `RenderPipeline.hpp`（插件包含它）被迫重建，老账才现形。修法：断言改成交付的契约（不 opt-in ⇒ `blendEnable` 为 <!-- drift-ok -->
   false，opt-in 且默认因子 ⇒ 标准 alpha 对）。**教训**：改 `StateCommands`/`FrameCompiler` 这类"被插件实现、被 SDK 测试
   断言"的规则后，必须重建插件再跑 `test_vsg`，否则绿的是旧二进制。
 - **S4 的改名部分**：`RenderPipeline::windowPass()` → `presentingPass()`（"呈现的那条"不一定是"画内容的那条"，延迟链尤其
@@ -579,7 +602,7 @@
 ## 2026-10-19 K1 落地：`Pipeline` 改名 `RenderPipeline`（公开面破坏）
 
 - **结论**：公开类 `Pipeline` → `RenderPipeline`，`PipelineOptions` → `RenderPipelineOptions`；头/源文件改成
-  `RenderPipeline.hpp` / `RenderPipeline.cpp`。`PipelineStage` / `pipelineStageOrder` 保留（它们是“阶段”，
+  `RenderPipeline.hpp` / `RenderPipeline.cpp`。`PipelineStage` / `pipelineStageOrder` 保留（它们是“阶段”， <!-- drift-ok -->
   不是 PSO），`RenderPipelineBuilder` 名字不变。这样 builder、返回值和 options 同一族，类名不再与
   `VkPipeline` / PSO 混读。
 - **落点**：graphics SDK 公共头、`RenderPipelineBuilder`、`RenderEngine` 注释、appfw `Viewer*`、model_viewer
@@ -625,7 +648,7 @@
   宿主快照、`FrameDescription` 是后端值；`ImageRef`（pass 产出）与 `Texture`（导入）是两个图源根；
   `Viewport` 是设备像素。清单见 `graphics-abstraction-review-2026-10-19.md`。
 - **落点**：`FrameDescription.hpp` / `RenderFrameExecutor.hpp` / `RenderEngine.hpp` / `FramePlan.hpp` /
-  `PassDesc.hpp` / `RenderPipeline.hpp` / `Texture.hpp` / `Viewport.hpp`；顺带修掉 `BackendHalfGuard.hpp`
+  `PassDesc.hpp` / `RenderPipeline.hpp` / `Texture.hpp` / `Viewport.hpp`；顺带修掉 `BackendHalfGuard.hpp` <!-- drift-ok -->
   注释里的 `graphics/*.hpp`（GCC `-Wcomment` 在每个包含它的 TU 报一次，145 条）。
 - **判据**：构建 0 error / 0 warning（修前 145 条 `-Wcomment`）；8 条 hygiene 门禁 0 finding
   （include / diagnostic / doc symbols / export / ai-docs / public docs / vsg window state / vsg upstream）；
@@ -858,7 +881,7 @@
   替代派（N 张 2D 目标）字节数一样，而 L2a **省不了收集与提交**（每层一台相机 ⇒ 每层一次 walk）—— 省钱的那半是 L2b/`multiview`，
   且三条语义（清屏只洗"本条 pass 写的层"、深度层数一致、读侧带层）该由第一个消费者拍板。触发条件与落地顺序见 §6。
 - **两个常量一个 owner**：`kAllLayers`（掩码默认）与 `kDefaultLayer`（未声明节点的层，bit 0）都在 `Node.hpp`；需要它的公共头
-  直接 include（`FramePlan.hpp` / `RenderPass.hpp` / `RenderPipeline.hpp` 各加了一行，hygiene gate 要直接 include）。
+  直接 include（`FramePlan.hpp` / `RenderPass.hpp` / `RenderPipeline.hpp` 各加了一行，hygiene gate 要直接 include）。 <!-- drift-ok -->
 - **掩码进 memo key**（`ContentMemo::Entry::layer_mask`）：同一相机、同一帧、两条不同掩码的 pass **各走一次**（`+content_collect_count_`），
   同掩码则复用 —— 这是本片最容易错的一处：不进 key 就会"画面看着对、只是多了/少了几个物体"。
 - **帧值如实但进对的地方**：掩码进 `FramePlan::PassPlan::layer_mask`（`describe()` 只在非默认时打 `layers=0x..`），**不进**
@@ -1153,7 +1176,7 @@
   **结构性**（走哪条链 / 非 Lit 档要求几何趟 / 哪些档**存在** / 离屏尺寸 / 程序）进 `PipelineOptions`；
   **运行期**（同一条链上能表达的档、档的**显示/隐藏**）归 `Pipeline` 的 setter（零重建、零重新注册）。
   两个枚举各自成叶子头：`ShadingMode.hpp`（原 `SceneView::Options::Mode`）、`ShadingPath.hpp`（原在
-  `RenderPipeline.hpp` 里）—— 与 S5 同一条判据：读者该能独立拿到值，不被拖进整张契约。
+  `RenderPipeline.hpp` 里）—— 与 S5 同一条判据：读者该能独立拿到值，不被拖进整张契约。 <!-- drift-ok -->
 - **`Pipeline` 记下自己是哪条链**：`shadingPath()` 答的是**实际建成**的那条（延迟请求配非 Lit 档 ⇒ 前向，
   见 `RenderPipelineBuilder::effectivePath()`，它现在公开成静态，宿主也能问"这个请求会建成哪条链"）；
   `shadingMode()`/`setShadingMode()` 换档是 pass 上的覆盖；**链表达不了就如实拒绝 + 报一次**（`ReportOnce`），

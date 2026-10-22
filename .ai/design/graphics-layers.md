@@ -102,7 +102,7 @@ std::uint32_t layer_mask{ kAllLayers };
 // appfw（ViewerOptions.hpp）：原样转发给 PipelineOptions（Viewer::buildPipeline）
 ```
 
-- **落点是内容 pass，一处一行**：`RenderPipelineBuilder.cpp` 里每一个走收集的**内容** `PassDesc`（阴影 / 前向主 /
+- **落点是内容 pass，一处一行**：`RenderPipelineBuilder.cpp` 里每一个走收集的**内容** `PassDesc`（阴影 / 前向主 / <!-- drift-ok -->
   前向透明 / G-buffer / 延迟透明 / 预览 —— 六处）各加 `desc.layer_mask = content_layers_;`（`build()` 开头从
   `options.layer_mask` 取一份，与 `shadows_built_` 同款"一次 build 一个值"）—— 与既有的 `desc.content = ...`
   同样的重复形态，不是新规矩。
@@ -176,7 +176,7 @@ PassDesc::first_layer { 0 } + PassDesc::layer_count { 1 }
 | 3 | `PassDesc.hpp` | `layer_mask{ kAllLayers }` |
 | 4 | `RenderPass.hpp` / `RenderPass.cpp` | `setLayerMask` / `layerMask`；`describe()` 把掩码交给收集（今天那一行在 `RenderPass.cpp`） |
 | 5 | `FramePlan.hpp` + `EngineCompile.cpp`（问题）+ `RenderEngine.cpp`（填行与文本） | `PassPlan::layer_mask` + "掩码 0"的帧计划问题 |
-| 6 | `RenderPipeline.hpp` + `RenderPipelineBuilder.cpp` | `RenderPipelineOptions::layer_mask` + 六个内容 pass 的盖章（两条 Screen 灯照 pass 与 overlay 不盖） |
+| 6 | `RenderPipeline.hpp` + `RenderPipelineBuilder.cpp` | `RenderPipelineOptions::layer_mask` + 六个内容 pass 的盖章（两条 Screen 灯照 pass 与 overlay 不盖） | <!-- drift-ok -->
 | 7 | `ViewerOptions.hpp` + `Viewer.cpp` | `ViewerOptions::layer_mask` 转发到 `PipelineOptions` |
 
 **L2 六处**：`RenderTarget`（层数）/ `PassDesc` + `RenderPass`（区间）/ `ImageRef`（层）/ `RenderDevice`（回读层）/

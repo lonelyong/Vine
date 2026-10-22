@@ -42,8 +42,8 @@ RenderEngine::RenderEngine()
     // anything the engine owns goes away.
     lease_cell_         = std::make_shared<vn::detail::LeaseCell<RenderEngine>>();
     lease_cell_->target = this;
-    // No implicit pipeline: the engine starts empty. The caller registers the
-    // scene passes explicitly (addPass()) or through a RenderPipelineBuilder;
+    // No implicit chain: the engine starts empty. The caller registers the
+    // scene passes explicitly (addPass()) or through a PassChainBuilder;
     // the primary interactive view (camera + content + navigation) lives in a
     // SceneView borrowing this engine.
 }

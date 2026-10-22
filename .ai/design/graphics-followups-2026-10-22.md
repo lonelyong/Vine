@@ -12,10 +12,14 @@
 | # | 事项 | 为什么本轮不做 | 触发条件 | 做完怎么验 |
 | --- | --- | --- | --- | --- |
 | F1 | **S1 引擎三个门面**：`passes()` / `outputs()` / `diagnostics()`（同一存储的三个视图，旧方法保留为转发） | 纯转发层，零行为收益；现在只有一个消费者（宿主自己），多出来的门面只是多一层间接 | 出现**第二个**门面消费者：后端要查同一张表、或诊断要按来源过滤、或宿主想遍历"我发布的输出" | 全量构建 0 error；四套件计数不变；6 个静态脚本 0 finding |
-| F2 | **S4 的改名与归属**：`RenderPipeline`→`ScenePicture`、`RenderPipelineBuilder`→`ScenePictureBuilder`、`SceneView::setPipeline`→`setPicture`、`RenderSurface` 改成问**视图**而不是问配方 | 纯改名 + 一次全库改动；与 F3（注册 vs 画面的真拆分）撞在同一批文件上，分两轮做等于改两遍 | 下一件真正动 `RenderPipeline` 公开面的事（F3、或第三种画面消费者） | 同上 + `RenderSurface` 的"谁在画这块窗口"用例仍绿（`presentingPass()` / `presentedView()`） |
+| ~~F2~~ | ~~**S4 的改名与归属**~~ **已关闭（2026-10-22 下午）**：改名按 `PassChain` / `PassChainBuilder` / `ChainDesc` / `SceneView::setChain` 落地（`ScenePicture` 被否：读成"场景图片"；`PassPipeline` 被否：重开 K1 的 PSO 歧义），`PipelineStage`→`PassStage` 并挪进 `PassStage.hpp`；"`RenderSurface` 问视图"在 S6 已是现状 | — | ~~下一件真正动公开面的事~~ 已做 | 全量构建 0 error；`test_graphics` 407 / `test_vsg` 481 / `test_gui` 261 / `test_core` 165；6 个静态脚本 0 finding；`RenderSurface` 的 `presentingPass()` / `presentedView()` 用例不改即绿 |
 | F3 | **S5 调度上移**：引擎里做稳定拓扑排序，后端只物化；`backend::FrameGraph` 退场；`PipelineStage` 降为 tie-break | **唯一会改像素路径的一片**，与本轮"不动画面"的判据冲突；且需要把环/依赖用例从 `test_vsg` 迁到 SDK | 出现**跨阶段的真实依赖**（SSAO 要在 Shading 之前采样、阴影要在它之外排），或第二个后端出现（它不愿再实现一遍调度） | `scripts/vsg_rewrite_gate.sh` 逐字节不变；环/依赖用例迁到 SDK 且语义不变；`test_vsg` 计数不变 |
 
 ## 2. 对象模型复核（2026-10-21）里仍然开放的登记项
+
+> **2026-10-22 下午补记**：`PassGroup` 已删除 —— 链自己就是注册范围（引擎槽位记 `owner`，链析构一次交还）。
+> 这没有重开 R2：存储仍然只有引擎那张槽位表，链不存 pass 清单。下文提到 `PassGroup` 的句子是当时的形状，
+> 现行写法见 `.ai/memory/graphics.md` 的 2026-10-22（下午）条。 <!-- drift-ok -->
 
 R1 / R3–R10 的完整论证、业界依据、触发条件在
 `graphics-object-model-audit-2026-10-21.md` §"登记项"，**不在这里复制**。本轮动了其中两行：

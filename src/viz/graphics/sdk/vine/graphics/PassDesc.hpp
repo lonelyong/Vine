@@ -14,7 +14,7 @@
 #include "DepthMode.hpp"
 #include "ImageRef.hpp"
 #include "ImageSource.hpp"
-#include "RenderPipeline.hpp"
+#include "PassStage.hpp"
 #include "PolygonMode.hpp"
 #include "RenderTarget.hpp"
 #include "Scene.hpp"
@@ -92,8 +92,8 @@ struct VN_GRAPHICS_API PassDesc
     String name;
     /// A label for the plan and for a human reading it ("GBuffer", "Lighting", "Hud"). No behaviour.
     String tag;
-    /// Where this pass belongs in the frame's order (see pipelineStageOrder). Equal stages keep plan order.
-    PipelineStage stage{ PipelineStage::Shading };
+    /// Where this pass belongs in the frame's order (see passStageOrder). Equal stages keep plan order.
+    PassStage stage{ PassStage::Shading };
     /// An explicit order, overriding the stage's (the escape hatch a host-built pass may need).
     std::optional<int> order;
     /// How this pass executes (see PassKind).

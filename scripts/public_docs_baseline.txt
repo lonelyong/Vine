@@ -1006,9 +1006,6 @@ src/viz/graphics/sdk/vine/graphics/RenderBackendRegistry.hpp	param|RenderBackend
 src/viz/graphics/sdk/vine/graphics/RenderBackendRegistry.hpp	return|RenderBackendRegistry::has
 src/viz/graphics/sdk/vine/graphics/RenderBackendRegistry.hpp	return|RenderBackendRegistry::instance
 src/viz/graphics/sdk/vine/graphics/RenderBackendRegistry.hpp	return|RenderBackendRegistry::names
-src/viz/graphics/sdk/vine/graphics/RenderPipelineBuilder.hpp	return|RenderPipelineBuilder::setCamera
-src/viz/graphics/sdk/vine/graphics/RenderPipelineBuilder.hpp	return|RenderPipelineBuilder::setContent
-src/viz/graphics/sdk/vine/graphics/RenderPipelineBuilder.hpp	return|RenderPipelineBuilder::setTransparentContent
 src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp	brief|RenderTarget::RenderTarget
 src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp	return|RenderTarget::depthFormat
 src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp	return|RenderTarget::hasColor

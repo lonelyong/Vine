@@ -20,7 +20,7 @@
 | A1 | `FrameDescription` 被称作 value，实际是 borrowed snapshot | `FrameDescription.hpp` 类注释；`RenderEngine::frameDescription()` |
 | A2 | 顺序有两个权威：announced order vs dependency schedule | `FrameDescription.hpp`、`RenderFrameExecutor.hpp`、`FramePlan.hpp`、`RenderEngine::framePlan()` |
 | B1 | `PassKind` 封闭集 vs `RenderPass::describe()` 逃生口 | `PassDesc.hpp` 的 `PassKind` 注释 |
-| C1 | `Pipeline` 与 PSO 的命名碰撞 | `RenderPipeline.hpp` 类注释 |
+| C1 | `Pipeline` 与 PSO 的命名碰撞 | `RenderPipeline.hpp` 类注释 | <!-- drift-ok -->
 | C2 | `FramePlan` 与 `FrameDescription` 两个帧值的读者不同 | `FramePlan.hpp` 类注释 |
 | D1 | `program` 不在 state 里 | 已由 `StateNode.hpp` 说明；本轮不改 |
 | E1 | `ImageRef`（pass 产出）与 `Texture`（导入）是两个图源根 | `Texture.hpp` 与 `ImageRef.hpp` 互指 |

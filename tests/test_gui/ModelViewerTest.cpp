@@ -35,7 +35,7 @@
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/window/InputEvent.hpp>
@@ -393,7 +393,7 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
 
     auto* scene_view = control->view();
     ASSERT_NE(scene_view, nullptr);
-    auto* pipeline = scene_view->pipeline();
+    auto* pipeline = scene_view->chain();
     ASSERT_NE(pipeline, nullptr) << "上屏之后查看器该给视图一条链";
     // 预设说的是"这条链有没有读数"（结构决定），读数在不在是链上的 pass 说了算。
     EXPECT_TRUE(control->viewerOptions().stats) << "查看器的预设要带这个 HUD 档";
@@ -413,24 +413,24 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
     view->activate();
     view->activate();
     EXPECT_EQ(engine->passCount(), registered) << "activate() 可重复：读数不能挂两遍";
-    EXPECT_EQ(scene_view->pipeline(), pipeline);
+    EXPECT_EQ(scene_view->chain(), pipeline);
 
     // 宿主想关掉读数：开关只切 pass 的 enabled（引擎跳过被禁用的 pass），链与 pass 表都不动。
     EXPECT_TRUE(pipeline->setStatsVisible(false));
     EXPECT_FALSE(readout_pass->isEnabled());
     EXPECT_FALSE(pipeline->fpsOverlayPass()->isEnabled());
     EXPECT_EQ(engine->passCount(), registered);
-    EXPECT_EQ(scene_view->pipeline(), pipeline) << "开关不该重建链";
+    EXPECT_EQ(scene_view->chain(), pipeline) << "开关不该重建链";
     EXPECT_TRUE(pipeline->setStatsVisible(true));
     EXPECT_TRUE(readout_pass->isEnabled());
 
     // 关掉之后**重建**（预设加一个坐标轴 ⇒ 一条新链）不该把它偷偷点亮：重建读的是活着那条链的运行期选择。
-    vn::intrusive_ptr<vn::graphics::RenderPipeline> old_pipeline(pipeline);  // 拿住它：地址会因为回收而被重用，比对象才作数
+    vn::intrusive_ptr<vn::graphics::PassChain> old_pipeline(pipeline);  // 拿住它：地址会因为回收而被重用，比对象才作数
     auto options = control->viewerOptions();
     EXPECT_TRUE(pipeline->setStatsVisible(false));
     options.gizmo = true;
     ASSERT_TRUE(control->setViewerOptions(options)) << "结构变化 = 一次建链";
-    auto* rebuilt = scene_view->pipeline();
+    auto* rebuilt = scene_view->chain();
     ASSERT_NE(rebuilt, nullptr);
     ASSERT_NE(rebuilt, old_pipeline.get()) << "结构变了，链是新的";
     EXPECT_TRUE(rebuilt->isGizmoVisible()) << "新要的坐标轴亮着";
@@ -439,7 +439,7 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
 
     // 改大小安全：读数的摆位与尺寸由链在 resize 时算（不再有查看器那套 layout 步）。
     scene_view->resize(400, 300, control->devicePixelRatio());
-    EXPECT_TRUE(scene_view->pipeline()->fpsOverlayPass()->isEnabled());
+    EXPECT_TRUE(scene_view->chain()->fpsOverlayPass()->isEnabled());
 }
 
 TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
@@ -473,7 +473,7 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
     ASSERT_NE(control, nullptr);
     auto* scene_view = control->view();
     ASSERT_NE(scene_view, nullptr);
-    ASSERT_NE(scene_view->pipeline(), nullptr) << "上屏之后视图该有自己的默认管线";
+    ASSERT_NE(scene_view->chain(), nullptr) << "上屏之后视图该有自己的默认管线";
     // 命令靠"宿主发布的那个当前 3D 视图"找到要改的东西，所以先把这两件事说清楚：现在的主窗口就是这一个，
     // 而这份文档的控件被发布在它上面（视图在 activate() 里发布）。
     ASSERT_EQ(vn::appfw::gui::MainWindow::current(), &window);
@@ -509,11 +509,11 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
         const auto result = commands->executeCommandAndWait(vn::String(item.command));
         EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success)
             << "命令该成功（说清了什么就不算失败：" << result.message().as_std_str() << "）";
-        EXPECT_EQ(scene_view->pipeline()->shadingMode(), item.mode);
-        EXPECT_TRUE(scene_view->pipeline()->isStatsVisible()) << "命令不该把帧率读数顺手关掉";
+        EXPECT_EQ(scene_view->chain()->shadingMode(), item.mode);
+        EXPECT_TRUE(scene_view->chain()->isStatsVisible()) << "命令不该把帧率读数顺手关掉";
         // 线框是"程序 + 光栅化"两个覆盖；其余档不许留下光栅化覆盖。
-        const auto polygon = scene_view->pipeline()->presentingPass() != nullptr
-                                 ? scene_view->pipeline()->presentingPass()->polygonModeOverride()
+        const auto polygon = scene_view->chain()->presentingPass() != nullptr
+                                 ? scene_view->chain()->presentingPass()->polygonModeOverride()
                                  : std::optional<vn::graphics::PolygonMode>{};
         if (item.wireframe) {
             ASSERT_TRUE(polygon.has_value());
@@ -531,15 +531,15 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
     // 宿主自己搭的链：命令碰上它时只问那条链能不能换档，不替它重建（"别人搭的链别人管"）。把控件自己那个视图的链
     // 换成宿主的，就能看见这一条路。
     {
-        vn::graphics::RenderPipelineBuilder builder(control->engine());
+        vn::graphics::PassChainBuilder builder(control->engine());
         builder.setCamera(scene_view->camera());
         builder.setContent(scene_view->scene());
-        scene_view->setPipeline(builder.build({}));
+        scene_view->setChain(builder.build({}));
     }
-    ASSERT_NE(scene_view->pipeline(), nullptr);
+    ASSERT_NE(scene_view->chain(), nullptr);
     const auto host_chain_run = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeUnlitCommand));
     EXPECT_EQ(host_chain_run.status(), vn::appfw::CommandStatus::Success);
-    EXPECT_EQ(scene_view->pipeline()->shadingMode(), vn::graphics::ShadingMode::Unlit)
+    EXPECT_EQ(scene_view->chain()->shadingMode(), vn::graphics::ShadingMode::Unlit)
         << "宿主搭的链也换得了这一档（命令问的就是那条链）";
 
     // 守卫：当前文档不是模型（这里直接清掉当前文档）⇒ 命令如实说"不适用"，而不是去改别人的视图。

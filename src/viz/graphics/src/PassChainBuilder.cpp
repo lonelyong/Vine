@@ -1,4 +1,4 @@
-﻿#include <vine/graphics/RenderPipelineBuilder.hpp>
+﻿#include <vine/graphics/PassChainBuilder.hpp>
 
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
@@ -23,12 +23,12 @@ VN_GRAPHICS_NS_BEGIN
  * matches the backend's per-material block and view-space light ABI.
  *
  * The program — and the GLSL it is built from — is owned by the SDK (see
- * BuiltinShaders.hpp); this is RenderPipelineBuilder's alias for it. Callers may
- * still override it through RenderPipelineOptions::gbuffer_program.
+ * BuiltinShaders.hpp); this is PassChainBuilder's alias for it. Callers may
+ * still override it through ChainDesc::gbuffer_program.
  *
  * @return The geometry program.
  */
-intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultGbufferGeometryProgram()
+intrusive_ptr<ShaderProgram> PassChainBuilder::defaultGbufferGeometryProgram()
 {
     return gbufferGeometryProgram();
 }
@@ -40,17 +40,17 @@ intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultGbufferGeometryProgra
  * lights whose parameters arrive in the backend's view-space push block.
  *
  * The program — and the GLSL it is built from — is owned by the SDK (see
- * BuiltinShaders.hpp); this is RenderPipelineBuilder's alias for it. Callers may
- * still override it through RenderPipelineOptions::lighting_program.
+ * BuiltinShaders.hpp); this is PassChainBuilder's alias for it. Callers may
+ * still override it through ChainDesc::lighting_program.
  *
  * @return The lighting program (fragment stage only).
  */
-intrusive_ptr<ShaderProgram> RenderPipelineBuilder::defaultDeferredLightProgram()
+intrusive_ptr<ShaderProgram> PassChainBuilder::defaultDeferredLightProgram()
 {
     return deferredLightProgram();
 }
 
-Mat4d RenderPipelineBuilder::directionalShadowMatrix(const Light& light, const vn::math::Aabbd& bounds,
+Mat4d PassChainBuilder::directionalShadowMatrix(const Light& light, const vn::math::Aabbd& bounds,
                                                         Camera& camera)
 {
     using vn::math::Vec3d;
@@ -77,7 +77,7 @@ Mat4d RenderPipelineBuilder::directionalShadowMatrix(const Light& light, const v
     return camera.projectionMatrix() * camera.viewMatrix();
 }
 
-intrusive_ptr<RenderTarget> RenderPipelineBuilder::defaultGbufferTarget(int width, int height)
+intrusive_ptr<RenderTarget> PassChainBuilder::defaultGbufferTarget(int width, int height)
 {
     if (width <= 0) {
         width = 640;
@@ -106,29 +106,29 @@ intrusive_ptr<RenderTarget> RenderPipelineBuilder::defaultGbufferTarget(int widt
     return gbuffer;
 }
 
-RenderPipelineBuilder::RenderPipelineBuilder(raw_ptr<RenderEngine> engine)
+PassChainBuilder::PassChainBuilder(raw_ptr<RenderEngine> engine)
   : engine_(engine)
 {}
 
-RenderPipelineBuilder& RenderPipelineBuilder::setContent(intrusive_ptr<Scene> content)
+PassChainBuilder& PassChainBuilder::setContent(intrusive_ptr<Scene> content)
 {
     content_ = std::move(content);
     return *this;
 }
 
-RenderPipelineBuilder& RenderPipelineBuilder::setTransparentContent(intrusive_ptr<Scene> transparent)
+PassChainBuilder& PassChainBuilder::setTransparentContent(intrusive_ptr<Scene> transparent)
 {
     transparent_ = std::move(transparent);
     return *this;
 }
 
-RenderPipelineBuilder& RenderPipelineBuilder::setCamera(raw_ptr<Camera> camera)
+PassChainBuilder& PassChainBuilder::setCamera(raw_ptr<Camera> camera)
 {
     camera_ = camera;
     return *this;
 }
 
-intrusive_ptr<RenderPipeline> RenderPipelineBuilder::build(const RenderPipelineOptions& options)
+intrusive_ptr<PassChain> PassChainBuilder::build(const ChainDesc& options)
 {
     if (engine_ == nullptr) {
         return nullptr;
@@ -136,14 +136,14 @@ intrusive_ptr<RenderPipeline> RenderPipelineBuilder::build(const RenderPipelineO
     // The pipeline IS the plan: it registers each pass as it is planned and
     // remembers it, so a build that stops half way (or a host that drops the
     // handle) takes its passes back out of the frame instead of leaving them to
-    // run with nobody holding them (see Pipeline).
+    // run with nobody holding them (see PassChain).
     // The handle is a LEASE, not an owning reference: the builder borrowed the engine and a pipeline must not own its
     // engine from below (a released engine would live on for as long as any pipeline it once served). The lease keeps
     // "is the engine still there" answerable for exactly as long as it is needed (see Lease / RenderEngine::lease).
-    auto pipeline = make_intrusive<RenderPipeline>(engine_->lease());
+    auto pipeline = make_intrusive<PassChain>(engine_->lease());
     // A builder is reusable in principle, and the report is about THIS build.
     shadows_built_ = 0;
-    // This build's content selection: every pass that walks the content states it (see RenderPipelineOptions::layer_mask).
+    // This build's content selection: every pass that walks the content states it (see ChainDesc::layer_mask).
     content_layers_ = options.layer_mask;
     // The chain the REQUEST assembles is not always the chain it names: a mode that needs the geometry pass
     // decides it (see effectivePath). The pipeline records what it was built as, because "can this chain
@@ -165,7 +165,7 @@ intrusive_ptr<RenderPipeline> RenderPipelineBuilder::build(const RenderPipelineO
     return pipeline;
 }
 
-ShadingPath RenderPipelineBuilder::effectivePath(const RenderPipelineOptions& options) noexcept
+ShadingPath PassChainBuilder::effectivePath(const ChainDesc& options) noexcept
 {
     // A non-Lit mode is a geometry-stage override: it needs the pass that turns geometry into the picture, and a
     // deferred recipe has no such pass in the picture's path (its window pass is a fullscreen lighting program
@@ -177,15 +177,15 @@ ShadingPath RenderPipelineBuilder::effectivePath(const RenderPipelineOptions& op
     return options.path;
 }
 
-bool RenderPipelineBuilder::applyOverlays(RenderPipeline& pipeline, const RenderPipelineOptions& options)
+bool PassChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
 {
     // HUD overlays, stacked at one stage: what orders them against each other is
     // their own stacking offset inside it (see AxisGizmoOptions::order), not a
     // number that has to stay bigger than the passes below.
-    const int overlay_base = pipelineStageOrder(PipelineStage::Overlay);
+    const int overlay_base = passStageOrder(PassStage::Overlay);
 
     // An axis gizmo, mirroring the source camera. Re-anchored through
-    // RenderPipeline::resize.
+    // PassChain::resize.
     if (options.gizmo.source_camera != nullptr) {
         auto gizmo = make_intrusive<AxisGizmo>();
         gizmo->setSourceCamera(options.gizmo.source_camera);
@@ -200,7 +200,7 @@ bool RenderPipelineBuilder::applyOverlays(RenderPipeline& pipeline, const Render
         PassDesc desc;
         desc.name          = u8"axis_gizmo";
         desc.tag           = u8"Hud";
-        desc.stage         = PipelineStage::Overlay;
+        desc.stage         = PassStage::Overlay;
         desc.order         = overlay_base + options.gizmo.order;
         desc.camera        = intrusive_ptr<Camera>(gizmo->camera());
         desc.content       = intrusive_ptr<Scene>(gizmo->content());
@@ -211,10 +211,10 @@ bool RenderPipelineBuilder::applyOverlays(RenderPipeline& pipeline, const Render
         // The one thing that must happen before it draws: mirror the source camera's orientation onto the
         // framing one.
         desc.before_draw   = [gizmo] { gizmo->update(); };
-        // Registered through the same public entry a host uses (see RenderPipeline::addOverlay): the recipe states the
+        // Registered through the same public entry a host uses (see PassChain::addOverlay): the recipe states the
         // overlay's CONTENT, the label its pass carries, and how it re-anchors itself - a third overlay is another
-        // call, not a change to RenderPipeline.
-        pipeline.addOverlay(String(RenderPipeline::kGizmoRole), gizmo.get(), desc,
+        // call, not a change to PassChain.
+        pipeline.addOverlay(String(PassChain::kGizmoRole), gizmo.get(), desc,
                             [gizmo](RenderPass& hud, int width, int height, double ratio) {
                                 gizmo->setPixelRatio(ratio);
                                 gizmo->onSurfaceResized(width, height);
@@ -233,7 +233,7 @@ bool RenderPipelineBuilder::applyOverlays(RenderPipeline& pipeline, const Render
         PassDesc desc;
         desc.name          = u8"fps_overlay";
         desc.tag           = u8"Hud";
-        desc.stage         = PipelineStage::Overlay;
+        desc.stage         = PassStage::Overlay;
         desc.order         = overlay_base + options.fps.order;
         desc.camera        = intrusive_ptr<Camera>(fps->camera());
         desc.content       = intrusive_ptr<Scene>(fps->content());
@@ -242,7 +242,7 @@ bool RenderPipelineBuilder::applyOverlays(RenderPipeline& pipeline, const Render
         desc.depth_mode    = DepthMode::Disabled;
         // Measure the frame rate and repaint the digits (see FpsOverlay::update).
         desc.before_draw   = [fps] { fps->update(); };
-        pipeline.addOverlay(String(RenderPipeline::kStatsRole), fps.get(), desc,
+        pipeline.addOverlay(String(PassChain::kStatsRole), fps.get(), desc,
                             [fps](RenderPass& hud, int width, int height, double ratio) {
                                 fps->setPixelRatio(ratio);
                                 fps->onSurfaceResized(width, height);
@@ -252,7 +252,7 @@ bool RenderPipelineBuilder::applyOverlays(RenderPipeline& pipeline, const Render
     return true;
 }
 
-void RenderPipelineBuilder::reportRequestedShadows() const
+void PassChainBuilder::reportRequestedShadows() const
 {
     // A shadow is asked for by the LIGHT (Light::isCastingShadow + ShadowSettings) —
     // that is where the request lives, and it outlives any one pipeline. What
@@ -319,7 +319,7 @@ intrusive_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
 
 }  // namespace
 
-intrusive_ptr<RenderTarget> RenderPipelineBuilder::buildShadowPass(RenderPipeline& pipeline,
+intrusive_ptr<RenderTarget> PassChainBuilder::buildShadowPass(PassChain& pipeline,
                                                                   const intrusive_ptr<const Light>& shadow_light_owner)
 {
     // The map keeps the light it belongs to alive (RenderTarget::setShadowOf): a retained target can
@@ -347,7 +347,7 @@ intrusive_ptr<RenderTarget> RenderPipelineBuilder::buildShadowPass(RenderPipelin
     PassDesc desc;
     desc.name          = u8"shadow";
     desc.tag           = u8"Shadow";
-    desc.stage         = PipelineStage::Depth;
+    desc.stage         = PassStage::Depth;
     desc.camera        = light_camera;
     desc.content       = content_;
     // The recipe's content selection, on every pass that walks this content (see PipelineOptions::layer_mask):
@@ -364,7 +364,7 @@ intrusive_ptr<RenderTarget> RenderPipelineBuilder::buildShadowPass(RenderPipelin
     return shadow_map;
 }
 
-bool RenderPipelineBuilder::buildForwardPath(RenderPipeline& pipeline)
+bool PassChainBuilder::buildForwardPath(PassChain& pipeline)
 {
     if (engine_ == nullptr || camera_ == nullptr) {
         return false;
@@ -384,7 +384,7 @@ bool RenderPipelineBuilder::buildForwardPath(RenderPipeline& pipeline)
     PassDesc main_desc;
     main_desc.name    = u8"main";
     main_desc.tag     = u8"Opaque";
-    main_desc.stage   = PipelineStage::Shading;
+    main_desc.stage   = PassStage::Shading;
     main_desc.camera  = intrusive_ptr<Camera>(camera_);
     main_desc.content = content_;
     main_desc.layer_mask = content_layers_;
@@ -399,7 +399,7 @@ bool RenderPipelineBuilder::buildForwardPath(RenderPipeline& pipeline)
         PassDesc transparent_desc;
         transparent_desc.name    = u8"forward_transparent";
         transparent_desc.tag     = u8"Transparent";
-        transparent_desc.stage   = PipelineStage::Transparent;
+        transparent_desc.stage   = PassStage::Transparent;
         transparent_desc.camera  = camera_;
         transparent_desc.content = transparent_;
         transparent_desc.layer_mask = content_layers_;
@@ -414,7 +414,7 @@ bool RenderPipelineBuilder::buildForwardPath(RenderPipeline& pipeline)
     return true;
 }
 
-bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const RenderPipelineOptions& options)
+bool PassChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& options)
 {
     if (engine_ == nullptr || camera_ == nullptr || content_ == nullptr) {
         return false;
@@ -471,7 +471,7 @@ bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const Re
     PassDesc gbuf_desc;
     gbuf_desc.name          = u8"gbuffer";
     gbuf_desc.tag           = u8"GBuffer";
-    gbuf_desc.stage         = PipelineStage::Geometry;
+    gbuf_desc.stage         = PassStage::Geometry;
     gbuf_desc.camera        = camera_;
     gbuf_desc.content       = content_;
     gbuf_desc.layer_mask    = content_layers_;
@@ -498,7 +498,7 @@ bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const Re
         PassDesc light_desc;
         light_desc.name    = u8"deferred_lighting";
         light_desc.tag     = u8"Lighting";
-        light_desc.stage   = PipelineStage::Shading;
+        light_desc.stage   = PassStage::Shading;
         light_desc.kind    = PassKind::Screen;
         light_desc.camera  = intrusive_ptr<Camera>(camera_);
         light_desc.content = content_;
@@ -541,7 +541,7 @@ bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const Re
     PassDesc light_desc;
     light_desc.name    = u8"deferred_lighting";
     light_desc.tag     = u8"Lighting";
-    light_desc.stage   = PipelineStage::Shading;
+    light_desc.stage   = PassStage::Shading;
     light_desc.kind    = PassKind::Screen;
     light_desc.camera  = intrusive_ptr<Camera>(camera_);
     light_desc.content = content_;
@@ -565,7 +565,7 @@ bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const Re
     PassDesc transparent_desc;
     transparent_desc.name    = u8"forward_transparent";
     transparent_desc.tag     = u8"Transparent";
-    transparent_desc.stage   = PipelineStage::Transparent;
+    transparent_desc.stage   = PassStage::Transparent;
     transparent_desc.camera  = intrusive_ptr<Camera>(camera_);
     transparent_desc.content = transparent_;
     transparent_desc.layer_mask = content_layers_;
@@ -588,7 +588,7 @@ bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const Re
     PassDesc present_desc;
     present_desc.name   = u8"present";
     present_desc.tag    = u8"Present";
-    present_desc.stage  = PipelineStage::Present;
+    present_desc.stage  = PassStage::Present;
     present_desc.kind   = PassKind::Screen;
     present_desc.camera = intrusive_ptr<Camera>(camera_);
     // The recipe names the copy program: the SDK's own passes have no implicit shading either, so
@@ -605,7 +605,7 @@ bool RenderPipelineBuilder::buildDeferredPath(RenderPipeline& pipeline, const Re
     return true;
 }
 
-raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& output_slot,
+raw_ptr<ScreenPass> PassChainBuilder::addOffscreenToScreen(const String& output_slot,
                                                                 int rt_width,
                                                                 int rt_height,
                                                                 RenderTarget::ColorFormat color_format,
@@ -635,7 +635,7 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
     PassDesc preview_desc;
     preview_desc.name          = output_slot;
     preview_desc.tag           = u8"Preview";
-    preview_desc.stage         = PipelineStage::Geometry;
+    preview_desc.stage         = PassStage::Geometry;
     preview_desc.camera        = intrusive_ptr<Camera>(camera);
     preview_desc.content       = content_;
     preview_desc.layer_mask    = content_layers_;
@@ -650,7 +650,7 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
     PassDesc pip_desc;
     pip_desc.name   = output_slot;
     pip_desc.tag    = u8"Preview";
-    pip_desc.stage  = PipelineStage::Preview;
+    pip_desc.stage  = PassStage::Preview;
     pip_desc.kind   = PassKind::Screen;
     pip_desc.camera = intrusive_ptr<Camera>(camera_);
     // The recipe names the copy program: the SDK's own passes have no implicit shading either, so
@@ -667,7 +667,7 @@ raw_ptr<ScreenPass> RenderPipelineBuilder::addOffscreenToScreen(const String& ou
     return static_cast<ScreenPass*>(screen.get());
 }
 
-void RenderPipelineBuilder::addPass(intrusive_ptr<RenderPass> pass, int order)
+void PassChainBuilder::addPass(intrusive_ptr<RenderPass> pass, int order)
 {
     if (engine_ == nullptr || pass == nullptr) {
         return;

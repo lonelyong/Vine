@@ -1,4 +1,4 @@
-﻿#include <vine/graphics/RenderPipeline.hpp>
+﻿#include <vine/graphics/PassChain.hpp>
 
 #include <algorithm>
 #include <vector>
@@ -15,101 +15,102 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-RenderPipeline::RenderPipeline(Lease<RenderEngine> engine) : engine_(engine)
+PassChain::PassChain(Lease<RenderEngine> engine) : engine_(engine)
 {
-    if (raw_ptr<RenderEngine> raw = engine_.get()) {
-        group_ = raw->createPassGroup();
+}
+
+PassChain::~PassChain()
+{
+    // The chain IS its registration scope: every pass it added is filed in the engine's slot table with this chain as
+    // its owner (see RenderEngine::addPassOwnedBy), so ONE call hands them all back - no second list to keep in step
+    // and no move-only token to get wrong. A chain that outlived its engine has no table left to hand anything back
+    // to: the lease answers nullptr, and the passes died with the engine that owned them.
+    if (raw_ptr<RenderEngine> engine = engine_.get()) {
+        engine->removePassesOwnedBy(this);
     }
 }
 
-RenderPipeline::~RenderPipeline()
-{
-    // Nothing to do here: the group is a token over the engine's own slot table, and dropping it is what hands every
-    // pass this pipeline registered back to the engine (see PassGroup). A pass left registered keeps executing with
-    // nobody holding the handle that would have removed it, which is exactly what the token exists to prevent.
-    //
-    // A pipeline can outlive its engine (a host may keep one after dropping the control that owned the engine): the
-    // lease then answers nullptr, the engine's own list went with it, and the passes die with this pipeline. That is
-    // why the borrow is a lease and not a raw pointer.
-}
-
-raw_ptr<RenderEngine> RenderPipeline::engine() const noexcept
+raw_ptr<RenderEngine> PassChain::engine() const noexcept
 {
     return engine_.get();
 }
 
-bool RenderPipeline::draws(raw_ptr<const Scene> scene) const noexcept
+bool PassChain::draws(raw_ptr<const Scene> scene) const noexcept
 {
     if (scene == nullptr) {
         return false;
     }
     // Every pass of the chain, not just the presenting one: on a deferred chain the scene is drawn into the G-buffer
     // and the window pass presents a target (see the declaration).
-    const std::vector<intrusive_ptr<RenderPass>> passes = group_.passes();
+    raw_ptr<RenderEngine> engine = engine_.get();
+    if (engine == nullptr) {
+        return false;
+    }
+    const std::vector<intrusive_ptr<RenderPass>> passes = engine->passesOwnedBy(this);
     return std::any_of(passes.begin(), passes.end(), [scene](const intrusive_ptr<RenderPass>& pass) {
         return pass != nullptr && pass->content() == scene;
     });
 }
 
-raw_ptr<RenderPass> RenderPipeline::presentingPass() const
+raw_ptr<RenderPass> PassChain::presentingPass() const
 {
     return window_pass_.get();
 }
 
-raw_ptr<RenderTarget> RenderPipeline::offscreenTarget() const
+raw_ptr<RenderTarget> PassChain::offscreenTarget() const
 {
     return offscreen_target_.get();
 }
 
-raw_ptr<RenderTarget> RenderPipeline::compositeTarget() const
+raw_ptr<RenderTarget> PassChain::compositeTarget() const
 {
     return composite_target_.get();
 }
 
-raw_ptr<AxisGizmo> RenderPipeline::gizmo() const
+raw_ptr<AxisGizmo> PassChain::gizmo() const
 {
     return obj_cast<AxisGizmo>(overlayContent(kGizmoRole));
 }
 
-raw_ptr<FpsOverlay> RenderPipeline::fpsOverlay() const
+raw_ptr<FpsOverlay> PassChain::fpsOverlay() const
 {
     return obj_cast<FpsOverlay>(overlayContent(kStatsRole));
 }
 
-raw_ptr<RenderPass> RenderPipeline::gizmoPass() const
+raw_ptr<RenderPass> PassChain::gizmoPass() const
 {
     return overlayPass(kGizmoRole);
 }
 
-raw_ptr<RenderPass> RenderPipeline::fpsOverlayPass() const
+raw_ptr<RenderPass> PassChain::fpsOverlayPass() const
 {
     return overlayPass(kStatsRole);
 }
 
-ShadingPath RenderPipeline::shadingPath() const noexcept
+ShadingPath PassChain::shadingPath() const noexcept
 {
     return path_;
 }
 
-ShadingMode RenderPipeline::shadingMode() const noexcept
+ShadingMode PassChain::shadingMode() const noexcept
 {
     return mode_;
 }
 
-bool RenderPipeline::setShadingMode(ShadingMode mode)
+bool PassChain::setShadingMode(ShadingMode mode)
 {
     raw_ptr<RenderEngine> engine = engine_.get();
     if (mode != ShadingMode::Lit && path_ == ShadingPath::Deferred) {
         // A Deferred picture comes out of a fullscreen lighting pass: there is no geometry pass left to
-        // override, so this mode has to be ASSEMBLED for (RenderPipelineOptions::mode) - nothing here can make the
+        // override, so this mode has to be ASSEMBLED for (ChainDesc::mode) - nothing here can make the
         // picture mean it. Reported once per episode, because the alternative is a host that believes it
         // switched something.
         if (mode_refused_.shouldReport() && engine != nullptr) {
             engine->reportEngineProblem(
                 vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
                 String(u8"this pipeline's Deferred chain has no geometry pass to shade, so the shading mode was "
-                       u8"not changed: build with RenderPipelineOptions::mode (a non-Lit mode is built on the forward "
-                       u8"chain, see RenderPipelineBuilder::effectivePath)"));
+                       u8"not changed: build with ChainDesc::mode (a non-Lit mode is built on the forward "
+                       u8"chain, see PassChainBuilder::effectivePath)"));
         }
         return false;
     }
@@ -150,34 +151,34 @@ bool RenderPipeline::setShadingMode(ShadingMode mode)
     return true;
 }
 
-bool RenderPipeline::setGizmoVisible(bool on)
+bool PassChain::setGizmoVisible(bool on)
 {
     return setOverlayVisible(kGizmoRole, on);
 }
 
-bool RenderPipeline::setStatsVisible(bool on)
+bool PassChain::setStatsVisible(bool on)
 {
     return setOverlayVisible(kStatsRole, on);
 }
 
-bool RenderPipeline::isGizmoVisible() const noexcept
+bool PassChain::isGizmoVisible() const noexcept
 {
     return isOverlayVisible(kGizmoRole);
 }
 
-bool RenderPipeline::isStatsVisible() const noexcept
+bool PassChain::isStatsVisible() const noexcept
 {
     return isOverlayVisible(kStatsRole);
 }
 
-raw_ptr<RenderPass> RenderPipeline::addOverlay(const String&   role,
+raw_ptr<RenderPass> PassChain::addOverlay(const String&   role,
                                               raw_ptr<Object> content,
                                               const PassDesc& desc,
                                               OverlayLayout   layout)
 {
     // The registration and the value are one step: a pass registered under a role nobody recorded, or a value pointing
-    // at a pass nothing draws, are both states this method makes unreachable (see the group's contract).
-    intrusive_ptr<RenderPass> pass = group_.add(desc, role);
+    // at a pass nothing draws, are both states this method makes unreachable.
+    intrusive_ptr<RenderPass> pass = addPass(desc, role);
     if (pass == nullptr) {
         return nullptr;  // the engine is gone, or that pass was already registered
     }
@@ -185,19 +186,20 @@ raw_ptr<RenderPass> RenderPipeline::addOverlay(const String&   role,
     return pass.get();
 }
 
-raw_ptr<RenderPass> RenderPipeline::overlayPass(const String& role) const noexcept
+raw_ptr<RenderPass> PassChain::overlayPass(const String& role) const noexcept
 {
-    return group_.pass(role);
+    raw_ptr<RenderEngine> engine = engine_.get();
+    return engine != nullptr ? engine->passOwnedBy(this, role) : nullptr;
 }
 
-raw_ptr<Object> RenderPipeline::overlayContent(const String& role) const noexcept
+raw_ptr<Object> PassChain::overlayContent(const String& role) const noexcept
 {
     const auto found = std::find_if(overlays_.begin(), overlays_.end(),
                                     [&role](const Overlay& overlay) { return overlay.role == role; });
     return found != overlays_.end() ? found->content : nullptr;
 }
 
-bool RenderPipeline::setOverlayVisible(const String& role, bool on)
+bool PassChain::setOverlayVisible(const String& role, bool on)
 {
     const raw_ptr<RenderPass> pass = overlayPass(role);
     if (pass == nullptr) {
@@ -208,7 +210,7 @@ bool RenderPipeline::setOverlayVisible(const String& role, bool on)
             if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
                 const String message = String(u8"this pipeline has no overlay registered as '") + role +
                                        u8"', so there was nothing to show or hide: register it with "
-                                       u8"RenderPipeline::addOverlay (or build with the recipe option that does)";
+                                       u8"PassChain::addOverlay (or build with the recipe option that does)";
                 engine->reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
                                             vn::graphics::DiagnosticCategory::UnsupportedRequest, message);
             }
@@ -220,13 +222,13 @@ bool RenderPipeline::setOverlayVisible(const String& role, bool on)
     return true;
 }
 
-bool RenderPipeline::isOverlayVisible(const String& role) const noexcept
+bool PassChain::isOverlayVisible(const String& role) const noexcept
 {
     const raw_ptr<RenderPass> pass = overlayPass(role);
     return pass != nullptr && pass->isEnabled();
 }
 
-void RenderPipeline::resize(int width, int height, double pixel_ratio)
+void PassChain::resize(int width, int height, double pixel_ratio)
 {
     if (width <= 0 || height <= 0) {
         return;
@@ -256,24 +258,28 @@ void RenderPipeline::resize(int width, int height, double pixel_ratio)
     }
 }
 
-intrusive_ptr<RenderPass> RenderPipeline::addPass(const PassDesc& desc, const String& role)
+intrusive_ptr<RenderPass> PassChain::addPass(const PassDesc& desc, const String& role)
 {
-    // The group is the registration (see the class note): a pass it registered is a pass it takes back, and the role
-    // is what a reader asks for by name instead of a field per pass (see gizmoPass).
-    return group_.add(desc, role);
+    // The engine's row carries this chain as the pass' owner (see the destructor): registering and taking back are
+    // the same relation, and the role is what a reader asks for by name instead of a field per pass (see gizmoPass).
+    raw_ptr<RenderEngine> engine = engine_.get();
+    if (engine == nullptr) {
+        return nullptr;
+    }
+    return engine->addPassOwnedBy(desc, this, role);
 }
 
-void RenderPipeline::setWindowPass(intrusive_ptr<RenderPass> pass)
+void PassChain::setWindowPass(intrusive_ptr<RenderPass> pass)
 {
     window_pass_ = std::move(pass);
 }
 
-void RenderPipeline::setOffscreenTarget(intrusive_ptr<RenderTarget> target)
+void PassChain::setOffscreenTarget(intrusive_ptr<RenderTarget> target)
 {
     offscreen_target_ = std::move(target);
 }
 
-void RenderPipeline::setCompositeTarget(intrusive_ptr<RenderTarget> target)
+void PassChain::setCompositeTarget(intrusive_ptr<RenderTarget> target)
 {
     composite_target_ = std::move(target);
 }

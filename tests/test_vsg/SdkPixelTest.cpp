@@ -16,18 +16,18 @@
 #include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
-#include <vine/graphics/RenderPipeline.hpp>
+#include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/SceneView.hpp>
 #include <vine/graphics/StateNode.hpp>
 
-using vn::graphics::RenderPipelineOptions;
+using vn::graphics::ChainDesc;
 using vn::graphics::RenderPass;
-using vn::graphics::RenderPipelineBuilder;
+using vn::graphics::PassChainBuilder;
 using vn::graphics::RenderTarget;
 using vn::graphics::ScreenPass;
 using vn::graphics::SceneView;
@@ -127,18 +127,18 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
 
     // Built once, with the options that are in force for the first picture: the chain forward, so the picture
     // pass is the scene pass itself.
-    RenderPipelineOptions options;
+    ChainDesc options;
     options.path = ShadingPath::Deferred;      // 延迟的**请求**……
     options.mode = ShadingMode::Unlit;         // ……配上非 Lit 档 ⇒ 建成的链是前向的（effectivePath）
-    RenderPipelineBuilder builder(fixture.engine.get());
+    PassChainBuilder builder(fixture.engine.get());
     builder.setCamera(view->camera());
     builder.setContent(view->scene());
-    view->setPipeline(builder.build(options));
-    ASSERT_NE(view->pipeline(), nullptr);
+    view->setChain(builder.build(options));
+    ASSERT_NE(view->chain(), nullptr);
 
     // The picture pass draws into the fixture's off-screen target instead of the window: the SDK's own pass
     // object, with the SDK's own mode applied to it, so the ONE thing this case turns on is the polygon mode.
-    RenderPass* const picture = view->pipeline()->presentingPass();
+    RenderPass* const picture = view->chain()->presentingPass();
     ASSERT_NE(picture, nullptr);
     picture->setRenderTarget(fixture.target);
     picture->setClearEnabled(true);
@@ -153,8 +153,8 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
     // 同一帧的另一版：只换档。链条没变 ⇒ 不该重建 ⇒ 还是那条 pass（目标没被换掉），相机当然也没动。
     // 这里**不判**"pass 上多了个 PolygonMode::Line 覆盖"：那是 M1 在 test_graphics 的结构判据；这一条判的是像素，
     // 覆盖没到光栅器就该由画面来说（否则结构断言会先红，抢掉像素判据的那一刀）。
-    EXPECT_TRUE(view->pipeline()->setShadingMode(ShadingMode::Wireframe));
-    ASSERT_EQ(view->pipeline()->presentingPass(), picture) << "链条内换档不重建（M1 的另一半）";
+    EXPECT_TRUE(view->chain()->setShadingMode(ShadingMode::Wireframe));
+    ASSERT_EQ(view->chain()->presentingPass(), picture) << "链条内换档不重建（M1 的另一半）";
 
     const PixelProbe lines = fixture.read();
     ASSERT_TRUE(lines.valid());
@@ -251,12 +251,12 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
 {
     VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
-    RenderPipelineOptions options;
+    ChainDesc options;
     options.path = ShadingPath::Deferred;
-    RenderPipelineBuilder builder(fixture.engine.get());
+    PassChainBuilder builder(fixture.engine.get());
     builder.setCamera(fixture.camera.get());
     builder.setContent(fixture.scene);
-    vn::intrusive_ptr<vn::graphics::RenderPipeline> pipeline = builder.build(options);
+    vn::intrusive_ptr<vn::graphics::PassChain> pipeline = builder.build(options);
     ASSERT_NE(pipeline, nullptr) << "延迟预设必须建得起来";
 
     // 夹具的"窗口"是后端自己开的，读不回来：把画面那条 pass 指到夹具的目标上，预览才有东西可叠。

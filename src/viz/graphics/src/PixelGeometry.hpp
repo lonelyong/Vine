@@ -64,7 +64,7 @@ struct PixelRatio
  * - ONE spelling of the conversion (the host's, `logical * ratio`), TRUNCATING like the host's own scaling: a
  *   fractional device pixel has no meaning to a viewport, and the engine's picture-shape check tolerates the
  *   one-pixel rounding this can produce (see EngineCompile.cpp's `kShapeTolerance`).
- * - The three consumers that used to spell this out separately (RenderPipeline::resize, AxisGizmo and FpsOverlay's
+ * - The three consumers that used to spell this out separately (PassChain::resize, AxisGizmo and FpsOverlay's
  *   surface-resize steps) now call this one function, so a change to the rounding rule has one place to land.
  *
  * @param logical Logical size the host reported.

@@ -10,10 +10,10 @@
 #include <vine/graphics/CameraManipulator.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/OrbitCameraManipulator.hpp>
-#include <vine/graphics/RenderPipeline.hpp>
+#include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/window/InputEvent.hpp>
@@ -42,7 +42,7 @@ SceneView::~SceneView()
     // Drop the pipeline this view adopted. Dropping the handle is all it takes: the pipeline unregisters every
     // pass it registered, and it holds the engine strongly, so the engine is still there to be unregistered from
     // even if the host released it first (see Pipeline).
-    setPipeline(nullptr);
+    setChain(nullptr);
 }
 
 void SceneView::setSurface(raw_ptr<RenderSurface> surface) noexcept
@@ -63,7 +63,7 @@ void SceneView::setEngine(raw_ptr<RenderEngine> engine)
     }
     // The adopted pipeline's passes live in the OLD engine's frame: dropping the handle takes them out of it
     // (see Pipeline), and the host adopts one built on the new engine if it wants this view to keep drawing.
-    setPipeline(nullptr);
+    setChain(nullptr);
     // A BORROW, not an ownership: the engine is the owner's to keep alive, and this lease only says whether that is
     // still true (see Lease). Taking a strong reference here would invert ownership - a view would keep a whole
     // device alive after its owner released it.
@@ -75,28 +75,28 @@ raw_ptr<RenderEngine> SceneView::engine() const
     return engine_.get();
 }
 
-raw_ptr<RenderPipeline> SceneView::pipeline() const
+raw_ptr<PassChain> SceneView::chain() const
 {
     return pipeline_.get();
 }
 
-void SceneView::setPipeline(intrusive_ptr<RenderPipeline> pipeline)
+void SceneView::setChain(intrusive_ptr<PassChain> pipeline)
 {
     if (pipeline_.get() == pipeline.get()) {
         return;
     }
     pipeline_ = std::move(pipeline);
-    // The view brings what a pipeline cannot know: the surface size it comes out of and the pixel ratio.
-    // Everything else (which passes exist, the shading mode, the overlays) is the pipeline's, which is why adopting
-    // one is one call and why a pipeline change never has to re-state any of it.
+    // The view brings what a chain cannot know: the surface size it comes out of and the pixel ratio.
+    // Everything else (which passes exist, the shading mode, the overlays) is the chain's, which is why adopting
+    // one is one call and why a chain change never has to re-state any of it.
     applySurfaceGeometry();
     // The one thing the two halves can disagree on: the chain may have been built for OTHER content. Reported once
-    // per episode (see checkPipelineContent) - the structure is legal, and drawing a scene nobody has is exactly
+    // per episode (see checkChainContent) - the structure is legal, and drawing a scene nobody has is exactly
     // what an empty surface looks like from the host's side.
-    checkPipelineContent();
+    checkChainContent();
 }
 
-void SceneView::checkPipelineContent()
+void SceneView::checkChainContent()
 {
     raw_ptr<RenderEngine> engine = engine_.get();
     if (pipeline_ == nullptr || scene_ == nullptr || engine == nullptr) {
@@ -114,7 +114,7 @@ void SceneView::checkPipelineContent()
         vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
         u8"this view adopted a pipeline whose passes draw other content: none of them draws the view's scene, so the"
         u8" view's content never reaches the surface - build the chain for the view's scene"
-        u8" (RenderPipelineBuilder::setContent), or bind the pass that should draw it"
+        u8" (PassChainBuilder::setContent), or bind the pass that should draw it"
         u8" (RenderEngine::bindPassContent)");
 }
 
@@ -200,8 +200,8 @@ void SceneView::setScene(intrusive_ptr<Scene> scene)
         orbit->setScene(scene_.get());
     }
     // Rebinding may have been exactly what the adopted chain drew: the wire is right again, so a later break is a
-    // new episode (see checkPipelineContent).
-    checkPipelineContent();
+    // new episode (see checkChainContent).
+    checkChainContent();
 }
 
 raw_ptr<CameraManipulator> SceneView::manipulator()

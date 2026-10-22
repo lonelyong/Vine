@@ -23,7 +23,7 @@
 
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/EmbeddedShaders.hpp>
-#include <vine/graphics/RenderPipelineBuilder.hpp>
+#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
@@ -162,7 +162,7 @@ void expectDerivedFromSource(const std::string& text, const std::string& source,
 
 TEST(EmbeddedShadersTest, TheDeferredProgramsUseTheEmbeddedSources)
 {
-    const auto gbuffer = RenderPipelineBuilder::defaultGbufferGeometryProgram();
+    const auto gbuffer = PassChainBuilder::defaultGbufferGeometryProgram();
     ASSERT_NE(gbuffer, nullptr);
     ASSERT_EQ(gbuffer->stageCount(), 2u);
     const ShaderStage* geometry_vs = gbuffer->stage(0);
@@ -174,7 +174,7 @@ TEST(EmbeddedShadersTest, TheDeferredProgramsUseTheEmbeddedSources)
     EXPECT_EQ(geometry_vs->source, vn::String(kBuiltinGbufferVert));
     EXPECT_EQ(geometry_fs->source, vn::String(kBuiltinGbufferFrag));
 
-    const auto light = RenderPipelineBuilder::defaultDeferredLightProgram();
+    const auto light = PassChainBuilder::defaultDeferredLightProgram();
     ASSERT_NE(light, nullptr);
     ASSERT_EQ(light->stageCount(), 1u);
     const ShaderStage* light_fs = light->stage(0);
