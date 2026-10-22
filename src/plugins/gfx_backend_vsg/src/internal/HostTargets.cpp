@@ -55,13 +55,11 @@ HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device
     {
         return State::SamplesUnsupported;
     }
-    // What a multisampled target may also ask for, and why each is refused rather than approximated:
-    //   * a SHARED depth - every borrower's framebuffer names the lender's image, and the lender's sample
-    //     count is its own, so one image cannot be both;
-    //   * a PROMOTED (sampleable) depth - this backend does not resolve depth, so a multisampled depth image
-    //     is never in a layout a shader can sample (see OffscreenTarget's class note).
-    if (description.samples > 1U && description.has_depth &&
-        (description.depth_source != nullptr || description.depth_promotion))
+    // What multisampling still refuses, and no longer refuses: a multisampled target can PROMOTE and LEND its
+    // depth (both read the resolved single-sample image - see OffscreenTarget's class note), but it cannot
+    // BORROW one: what it would attach is the lender's single-sample picture while its own pass draws at
+    // another count, and a framebuffer's attachments share one count. Refused rather than approximated.
+    if (description.samples > 1U && description.has_depth && description.depth_source != nullptr)
     {
         return State::SamplesUnsupported;
     }

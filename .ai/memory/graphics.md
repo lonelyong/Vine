@@ -51,9 +51,20 @@
   `HostTargetsTest.TheSampleCountLimitStartsAtOneAndZeroMeansOne`、
   `FrameScheduleTest.ATargetsSampleCountTravelsWithItAndDefaultsToOne`。全仓
   ctest 24/24、网关全阶段干净（**1 样本像素零变化**）、6 个静态网关 0。
-- **有意没做**：深度解析（做了才能解除后两条拒绝）、sample shading / alpha-to-
-  coverage 的宿主词汇、交换链多重采样（归窗口后端）。见
-  `.ai/design/graphics-msaa-2026-10-22.md`。
+- **R6b（同日）：深度也解析**。MS 深度图只作 attachment，另一张单采样 resolve 图
+  给 `TRANSFER_SRC[｜SAMPLED]`，子通道 `depthStencilResolveAttachments` +
+  `depthResolveMode = sample0`（**不平均**：打开多重采样不改变深度值）。回读/借出/
+  提升全指向 `depthPicture()`。于是"MS 目标不能提升/出借/回读深度"三条解除，
+  `ReadbackState::multisampled` 与 `ReadbackRefusal::Multisampled`（含宿主侧）
+  **一起删掉**——不留不会发生的理由。只剩一条：**MS 目标不能借入深度**（借到的是
+  单采样解析图，一个帧缓冲的附件共用样本数），`HostTargets` 与 `OffscreenTarget::create`
+  两处都拒。
+- **坑（会崩）**：`Image::usage` 必须在**建视图之前**定好——vsg 在第一次
+  `createImageView` 时才 `vkCreateImage`，事后 `|=` 不生效（实测：阴影图路径段错误、
+  无诊断）。
+- **有意没做**：resolve mode 的宿主词汇（min/max）、sample shading / alpha-to-
+  coverage、交换链多重采样（归窗口后端）。见
+  `.ai/design/graphics-msaa-2026-10-22.md`（§7 记 R6b）。
 
 
 ## 2026-10-22（下午）名字与注册归属一起收口：`PassChain`，`PassGroup` 删除

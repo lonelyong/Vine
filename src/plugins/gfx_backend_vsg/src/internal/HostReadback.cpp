@@ -32,7 +32,6 @@ HostReadbackRefusal ensureCopy(OffscreenTarget& target, core::ReadbackKind kind,
         {
         case core::ReadbackRefusal::UnknownAttachment: return HostReadbackRefusal::UnknownAttachment;
         case core::ReadbackRefusal::UnreadableFormat: return HostReadbackRefusal::UnreadableFormat;
-        case core::ReadbackRefusal::Multisampled: return HostReadbackRefusal::Multisampled;
         case core::ReadbackRefusal::None:
         case core::ReadbackRefusal::NotCaptured: break;
         }
@@ -75,7 +74,6 @@ HostReadbackRefusal classifyReadback(OffscreenTarget& target, core::ReadbackKind
     {
     case core::ReadbackRefusal::UnknownAttachment: return HostReadbackRefusal::UnknownAttachment;
     case core::ReadbackRefusal::UnreadableFormat: return HostReadbackRefusal::UnreadableFormat;
-    case core::ReadbackRefusal::Multisampled: return HostReadbackRefusal::Multisampled;
     case core::ReadbackRefusal::NotCaptured:
         // No frame has copied this attachment back. A target that has been drawn into gets its copy made at
         // read time; one that never was is NotRecorded (the SDK's NotReady), never a copy of UNDEFINED memory.
@@ -132,7 +130,6 @@ vn::graphics::ReadbackResult readbackResultOf(HostReadbackRefusal refusal) noexc
     case HostReadbackRefusal::UnknownAttachment: return vn::graphics::ReadbackResult::Invalid;
     case HostReadbackRefusal::UnreadableFormat:
     case HostReadbackRefusal::BorrowedDepth:
-    case HostReadbackRefusal::Multisampled:
     case HostReadbackRefusal::NoDevice: return vn::graphics::ReadbackResult::Unsupported;
     case HostReadbackRefusal::TransferFailed: return vn::graphics::ReadbackResult::Failed;
     }

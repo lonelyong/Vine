@@ -49,9 +49,9 @@ namespace
 {
 
 using vn::graphics::RenderTarget;
+using vn::graphics::backend::DepthProbe;
 using vn::graphics::backend::PixelProbe;
 using vn::graphics::backend::ReadbackKind;
-using vn::graphics::backend::ReadbackRefusal;
 using vn::graphics::backend::Rgba8;
 using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::StreamKey;
@@ -273,6 +273,11 @@ struct Fixture
         auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
         command_graph->addChild(target->renderGraph());
         command_graph->addChild(target->capture(0U));
+        // Both attachments are copied: a depth case that recorded only the colour copy would read an
+        // unrecorded buffer and call the target unreadable.
+        if (const ::vsg::ref_ptr<::vsg::Node> depth_copy = target->captureDepth()) {
+            command_graph->addChild(depth_copy);
+        }
         viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
         if (!viewer->compile()) {
             return false;
@@ -388,37 +393,72 @@ TEST(MsaaTargetTest, FourSamplesBlendThePixelsATriangleEdgePassesThrough)
     EXPECT_TRUE(isClearColor(smooth.pixel(1, 1))) << "a corner outside it is still the pass' clear colour";
 }
 
-TEST(MsaaTargetTest, AFourSampleTargetRefusesItsDepthReadbackAndKeepsItsColourReadback)
+TEST(MsaaTargetTest, AFourSampleTargetsDepthIsTheResolvedPicture)
 {
-    Fixture four;
-    if (!four.build(4U)) {
+    Fixture single;
+    if (!single.build(1U)) {
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
-    const auto triangle = four.triangle();
-    ASSERT_NE(triangle, nullptr);
-    ASSERT_TRUE(four.frame({ triangle }));
+    const auto single_triangle = single.triangle();
+    ASSERT_NE(single_triangle, nullptr);
+    ASSERT_TRUE(single.frame({ single_triangle }));
 
-    // COLOUR is served: the readback copies the RESOLVED single-sample image, so the sample count never reaches
-    // the copy (see OffscreenTarget::Attachments::Color::picture).
+    Fixture four;
+    ASSERT_TRUE(four.buildOn(single.created, 4U));
+    const auto four_triangle = four.triangle();
+    ASSERT_NE(four_triangle, nullptr);
+    ASSERT_TRUE(four.frame({ four_triangle }));
+
+    // COLOUR and DEPTH are both readable, and both are the RESOLVED single-sample images (see
+    // OffscreenTarget::Attachments::picture / depthPicture): the sample count never reaches a copy.
     EXPECT_TRUE(four.target->probe(0U).valid()) << "the resolved colour image is what a capture copies";
 
-    // DEPTH is refused, and with the reason that says why: this backend does not resolve depth, so there is no
-    // copy to hand out and none ever will be.
-    const auto depth = four.target->readbackResult(vn::graphics::backend::ReadbackRequest{ ReadbackKind::Depth, 0U });
-    EXPECT_FALSE(depth.ok);
-    EXPECT_EQ(static_cast<int>(depth.refusal), static_cast<int>(ReadbackRefusal::Multisampled))
-        << "a multisampled depth is a permanent property of the target, not 'not captured yet'";
+    const DepthProbe sharp  = single.target->depthProbe();
+    const DepthProbe smooth = four.target->depthProbe();
+    ASSERT_TRUE(sharp.valid()) << "a single-sample depth reads back";
+    ASSERT_TRUE(smooth.valid()) << "a four-sample depth reads back through its RESOLVED image";
+    EXPECT_EQ(smooth.width(), static_cast<int>(kSize));
+
+    // The resolve mode is `sample0`, so DEPTH TAKES NO INTERMEDIATE VALUES - unlike colour, whose edge pixels
+    // blend. That is the whole difference between the two attachments' resolves, and it is what makes turning
+    // multisampling on unable to change the depth a later pass tests against: every pixel holds either the
+    // triangle's depth (the shader writes clip z = 0.5, and the API's NDC z is already [0, 1], so the window
+    // depth is 0.5) or the clear value (0, the reverse-Z far plane).
+    const auto is_one_of_the_two = [](const DepthProbe& probe) {
+        std::size_t other = 0U;
+        for (int y = 0; y < probe.height(); ++y) {
+            for (int x = 0; x < probe.width(); ++x) {
+                const float value = probe.depthAt(x, y);
+                const bool  triangle = std::abs(value - 0.5F) < 0.01F;
+                const bool  cleared  = std::abs(value) < 0.01F;
+                if (!triangle && !cleared) {
+                    ++other;
+                }
+            }
+        }
+        return other;
+    };
+    EXPECT_EQ(is_one_of_the_two(sharp), 0U);
+    EXPECT_EQ(is_one_of_the_two(smooth), 0U)
+        << "a depth resolve is not a colour resolve: sample0 picks a sample's value, it does not average";
+
+    // ... and the VALUES agree where the picture does: the interior is the triangle's depth in both, the
+    // exterior is the clear value in both.
+    const int center = static_cast<int>(kSize) / 4;
+    EXPECT_NEAR(smooth.depthAt(center, center), sharp.depthAt(center, center), 0.01F);
+    EXPECT_NEAR(smooth.depthAt(1, 1), sharp.depthAt(1, 1), 0.01F);
 }
 
 /*
- * @brief What the host's table answers for a description the device cannot build - through `ensure`, which is
- *        the door the backend uses.
+ * @brief What the host's table answers for the descriptions a device can and cannot build - through `ensure`,
+ *        which is the door the backend uses.
  *
- * Three descriptions and three answers, and the two refusals are refused BEFORE anything is created (so they
- * are the description's, not a build that failed): a count above the device's limit, a multisampled target that
- * wants its depth shared with another pass, and one that wants it sampleable. The last case is the control -
- * the same multisampled target with an ordinary depth DOES build, which is what makes the other two refusals
- * mean "this combination", not "multisampling".
+ * TWO refusals and they are about different facts, both answered BEFORE anything is created (so they are the
+ * description's, not a build that failed): a count above the device's limit, and a MULTISAMPLED BORROWER (what
+ * it would attach is the lender's single-sample picture while its own pass draws at another count). Everything
+ * else a multisampled target asks for is legal now that depth is resolved: promoting its own depth and lending
+ * it to a single-sample pass are the two cases below that MUST build - they are the control that makes the
+ * refusal above mean "this combination", not "multisampling".
  */
 TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCannot)
 {
@@ -454,22 +494,27 @@ TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCan
         << "one depth image cannot be a four-sample attachment for one pass and a single-sample one for "
            "another";
 
+    // A multisampled lender: legal, because a borrower attaches its RESOLVED picture - and the borrower is
+    // single-sample, which is the shape the refusal above rules out when it is not.
+    lender->setSamples(4U);
+    (void)targets.observe(*lender);
+    EXPECT_EQ(targets.ensure(*lender, created.device).state, vn::vsg::HostTargets::State::Ready)
+        << "a multisampled target lends its resolved depth picture like any other depth";
+
+    borrower->setSamples(1U);
+    (void)targets.observe(*borrower);
+    EXPECT_EQ(targets.ensure(*borrower, created.device).state, vn::vsg::HostTargets::State::Ready)
+        << "a single-sample pass borrowing that picture is the case the resolve made possible";
+
+    // Promoting a multisampled target's OWN depth: legal, and it is the resolved image a shader samples.
     const vn::intrusive_ptr<RenderTarget> promoted(new RenderTarget());
     promoted->attachColor(RenderTarget::ColorFormat::RGBA8);
     promoted->attachDepth(RenderTarget::DepthFormat::D32);
     promoted->setSize(16, 16);
     promoted->setSamples(4U);
-    EXPECT_EQ(targets.ensure(*promoted, created.device).state,
-              vn::vsg::HostTargets::State::SamplesUnsupported)
-        << "depth is not resolved in this slice, so a multisampled depth can never be the texture promotion "
-           "promised (see Capabilities::max_samples)";
-
-    // The control: an ordinary multisampled depth is a legal attachment.
-    promoted->setDepthPromotion(false);
-    (void)targets.observe(*promoted);
+    EXPECT_TRUE(promoted->isDepthPromoted()) << "the SDK default asks for a sampleable depth";
     EXPECT_EQ(targets.ensure(*promoted, created.device).state, vn::vsg::HostTargets::State::Ready)
-        << "the two refusals above are about SHARING and PROMOTING a multisampled depth, not about "
-           "multisampling";
+        << "the multisampled image is a draw target only; the RESOLVED one is what promotion makes sampleable";
 }
 
 /*

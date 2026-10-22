@@ -45,14 +45,20 @@ class Device;
  * order. After the frame is submitted and the device is idle, `probe()` reads the mapped destination buffer.
  *
  * MULTISAMPLING IS A PROPERTY OF THE TARGET, and it changes only the images rather than the shape of the
- * pass: a target whose `samples` is above one builds multisampled colour and depth images and RESOLVES the
- * colour into a single-sample image, which is the one later passes sample and the one a capture copies (see
- * Attachments::Color::picture). Resolving COLOUR and not depth is a deliberate limit of this slice, and it is
- * what three refusals follow from: a multisampled target cannot hand its depth to another pass (`shareDepth`),
- * cannot promote it to a shader-sampled texture, and cannot answer a depth readback - the image is never in a
- * layout or a usage those need, and approximating one would be a picture that is not the frame's. The default
- * framebuffer is the WINDOW's and stays single-sample: antialiasing a window is drawing into a multisampled
- * target of this kind and presenting the resolved image, which is the shape the engine's own presets use.
+ * pass: a target whose `samples` is above one builds multisampled colour AND depth images and RESOLVES both
+ * into single-sample images, which are the ones later passes sample, a borrower attaches and a capture copies
+ * (see Attachments::Color::picture and Attachments::depthPicture). The resolve mode is `sample0` for depth:
+ * the resolved value is the first sample's, which is exactly what a single-sample draw of the same scene would
+ * have written - a min/max rule would turn the picture into a different one depending on the count. The
+ * default framebuffer is the WINDOW's and stays single-sample: antialiasing a window is drawing into a
+ * multisampled target of this kind and presenting the resolved image, which is the shape the engine's own
+ * presets use.
+ *
+ * A BORROWED depth stays single-sample, and that is a property of LENDING rather than a limit: what a
+ * borrower attaches is the lender's resolved image (its PICTURE), so a multisampled target can lend and a
+ * multisampled BORROWER cannot borrow - its own pass would have to attach a single-sample image while drawing
+ * at another count. Promotion follows the same rule in reverse: the multisampled image is only ever a draw
+ * target, so `setDepthPromotion` makes the RESOLVED image sampleable.
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
@@ -580,6 +586,11 @@ class OffscreenTarget
         std::vector<Color>                                   colors;
         ::vsg::ref_ptr<::vsg::Image>                         depth_image;   ///< Empty when the depth is borrowed.
         ::vsg::ref_ptr<::vsg::ImageView>                     depth_view;    ///< Empty when the depth is borrowed.
+        /// Where a MULTISAMPLED pass resolves the depth into (single-sample): the image later passes sample,
+        /// a borrower attaches, and the depth readback copies. Null when the target is single-sample (then
+        /// @ref depth_image is that image) or when the depth is borrowed (the lender's picture answers).
+        ::vsg::ref_ptr<::vsg::Image>                         depth_resolve_image;
+        ::vsg::ref_ptr<::vsg::ImageView>                     depth_resolve_view;
         ::vsg::ref_ptr<::vsg::Commands>                      depth_capture;  ///< Empty when the format is unreadable.
         ::vsg::ref_ptr<::vsg::Buffer>                        depth_destination;
         ::vsg::ref_ptr<::vsg::DeviceMemory>                  depth_destination_memory;
@@ -587,6 +598,17 @@ class OffscreenTarget
         bool                                                 depth_captured{false};  ///< See Color::captured.
         ::vsg::ref_ptr<::vsg::Framebuffer>                   framebuffer;
         ::vsg::ref_ptr<::vsg::RenderGraph>                   render_graph;
+
+        /** @brief Gets the image that holds the depth PICTURE (the resolved one when multisampled).
+         *
+         * The depth equivalent of @ref Color::picture, and the one definition every reader uses: the
+         * readback copies it, a borrower attaches it and promotion samples it. The multisampled image is a
+         * DRAW target only - the API forbids sampling or copying it.
+         */
+        [[nodiscard]] const ::vsg::ref_ptr<::vsg::Image>& depthPicture() const noexcept
+        {
+            return depth_resolve_image != nullptr ? depth_resolve_image : depth_image;
+        }
     };
 
     /** @brief Builds a layout's shape in both spellings (the engine's and the device's).

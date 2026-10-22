@@ -1294,9 +1294,9 @@ void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget>
         message += too_many
             ? "above the device's limit of " + std::to_string(max_samples) +
                   ": the passes that draw into it are skipped (see Capabilities::max_samples)"
-            : "with a depth this backend cannot build at that count: a multisampled target cannot lend, "
-              "promote or read back its depth (depth is not resolved yet), so the passes that draw into it "
-              "are skipped";
+            : "and borrows its depth from another target: a borrowed depth is that target's resolved "
+              "single-sample picture, and a framebuffer's attachments share one sample count - announce the "
+              "borrower at one sample, or let it own its depth";
     }
     else if (reason == UnbuildableReason::DepthSourceMissing)
     {

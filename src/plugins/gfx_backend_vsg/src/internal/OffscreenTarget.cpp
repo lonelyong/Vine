@@ -112,9 +112,9 @@ VkImageLayout toVkLayout(vn::graphics::backend::ImageLayout layout) noexcept
     const auto toLayout = [](vn::graphics::backend::ImageLayout layout) noexcept { return toVkLayout(layout); };
 
     // The multisample rule this builder states once: a multisampled pass DRAWS into the multisampled images and
-    // RESOLVES the colour into the single-sample images later passes sample. Depth is not resolved (see the
-    // class note), so a multisampled pass that names a depth attachment leaves it multisampled - which is also
-    // why a multisampled target cannot hand its depth to another pass.
+    // RESOLVES both colour and depth into single-sample images - the ones later passes sample, a borrower
+    // attaches and a readback copies (see the class note). The multisampled images are therefore draw targets
+    // only, and the variant's layouts describe the PICTURE that crosses a frame boundary.
     const VkSampleCountFlagBits draw_samples = samplesToVk(samples);
 
     ::vsg::RenderPass::Attachments attachments;
@@ -149,14 +149,22 @@ VkImageLayout toVkLayout(vn::graphics::backend::ImageLayout layout) noexcept
         description.storeOp       = VK_ATTACHMENT_STORE_OP_STORE;
         description.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         description.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        description.initialLayout = toLayout(variant.depth_initial);
-        description.finalLayout   = toLayout(variant.depth_final);
+        // A multisampled depth image is never sampled nor copied, so its contents stay a DRAW target between
+        // passes: the variant's depth layouts describe the PICTURE, and with samples > 1 that picture lives in
+        // the resolve image (whose description follows the colour resolve ones below).
+        description.initialLayout = samples > 1U
+            ? (variant.depth_load == vn::graphics::backend::LoadOp::Clear
+                   ? VK_IMAGE_LAYOUT_UNDEFINED
+                   : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            : toLayout(variant.depth_initial);
+        description.finalLayout   = samples > 1U ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                                                 : toLayout(variant.depth_final);
         attachments.push_back(description);
     }
-    // The resolve attachments come last, one per colour attachment, and only when the pass resolves at all:
-    // their initial layout is UNDEFINED because the resolve REWRITES every pixel of the render area, so no
-    // cross-frame contents are preserved through them, and their final layout is the one the variant gives a
-    // colour picture - the layout later passes sample them in.
+    // The resolve attachments come last and only when the pass resolves at all: their initial layout is
+    // UNDEFINED because the resolve REWRITES every pixel of the render area, so no cross-frame contents are
+    // preserved through them, and their final layout is the one the variant gives the matching PICTURE - the
+    // layout later passes sample them in (and a borrower's pass starts in).
     const std::uint32_t resolve_base =
         static_cast<std::uint32_t>(color_formats.size()) + (variant.has_depth ? 1U : 0U);
     if (samples > 1U) {
@@ -171,6 +179,21 @@ VkImageLayout toVkLayout(vn::graphics::backend::ImageLayout layout) noexcept
             description.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
             description.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
             description.finalLayout    = toLayout(variant.color_final);
+            attachments.push_back(description);
+        }
+        if (variant.has_depth) {
+            ::vsg::AttachmentDescription description;
+            description.flags   = 0;
+            description.format  = toDepthFormat(depth_format.value());
+            description.samples = VK_SAMPLE_COUNT_1_BIT;
+            // The depth AND stencil halves are rewritten by the resolve, so the image's previous contents
+            // never matter (DONT_CARE on the way in) and both are stored on the way out.
+            description.loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            description.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+            description.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            description.stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
+            description.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+            description.finalLayout    = toLayout(variant.depth_final);
             attachments.push_back(description);
         }
     }
@@ -197,6 +220,21 @@ VkImageLayout toVkLayout(vn::graphics::backend::ImageLayout layout) noexcept
             reference.attachment = resolve_base + index;
             reference.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
             subpass.resolveAttachments.push_back(reference);
+        }
+        if (variant.has_depth) {
+            // ONE depth/stencil resolve attachment, not one per depth attachment (there is at most one), and
+            // the mode is `sample0`: the resolved value is what a single-sample draw of the same scene would
+            // have written, so turning multisampling on cannot change the depth a later pass reads. min/max
+            // would turn the picture into a different one depending on the count.
+            ::vsg::AttachmentReference reference;
+            reference.attachment = resolve_base + static_cast<std::uint32_t>(color_formats.size());
+            reference.layout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            subpass.depthStencilResolveAttachments.push_back(reference);
+            subpass.depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+            subpass.stencilResolveMode =
+                toDepthFormat(depth_format.value()) == VK_FORMAT_D24_UNORM_S8_UINT
+                    ? VK_RESOLVE_MODE_SAMPLE_ZERO_BIT
+                    : VK_RESOLVE_MODE_NONE;
         }
     }
 
@@ -277,6 +315,10 @@ void fillClearValues(::vsg::RenderGraph& graph, const core::PassClearPlan& plan,
     if (samples > 1U)
     {
         for (std::size_t index = 0; index < plan.colors.size(); ++index)
+        {
+            graph.clearValues.push_back(VkClearValue{});
+        }
+        if (plan.has_depth)
         {
             graph.clearValues.push_back(VkClearValue{});
         }
@@ -452,6 +494,14 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
         return nullptr;
     }
 
+    // A BORROWED depth is the lender's single-sample PICTURE, and a framebuffer's attachments share one sample
+    // count: a multisampled borrower would name that picture while its pass draws at another count. Refused
+    // here as well as in the host table (which reports why) so the rule cannot be sidestepped by a caller that
+    // builds a target directly.
+    if (depth_borrowed && shape.samples > 1U) {
+        return nullptr;
+    }
+
     auto target = std::unique_ptr<OffscreenTarget>(new OffscreenTarget());
     target->d->device           = std::move(device);
     target->d->width            = layout.width;
@@ -570,8 +620,13 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
         // where this pass' fragment tests can read it. Nothing is created and nothing is owned here: the
         // lender keeps its reference, and the borrower count is the CALLER's business (create counts one
         // only once this build succeeded; a resize never does, because it refuses while one exists).
-        out.depth_image = d->depth_source->d->attachments.depth_image;
-        out.depth_view  = d->depth_source->d->attachments.depth_view;
+        //
+        // The image is the lender's PICTURE, which for a multisampled lender is its RESOLVED image: a borrower
+        // attaches a single-sample depth (its own pass draws at one sample - see the class note).
+        out.depth_image = d->depth_source->d->attachments.depthPicture();
+        out.depth_view  = d->depth_source->d->attachments.depth_resolve_view != nullptr
+                              ? d->depth_source->d->attachments.depth_resolve_view
+                              : d->depth_source->d->attachments.depth_view;
     }
     else if (plan.has_depth) {
         out.depth_image            = ::vsg::Image::create();
@@ -582,23 +637,48 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
         out.depth_image->arrayLayers = 1U;
         out.depth_image->samples   = samples;
         out.depth_image->tiling    = VK_IMAGE_TILING_OPTIMAL;
-        // TRANSFER_SRC is part of the depth image's usage even though nothing samples it: a target that
-        // offers a depth readback MUST be created with the usage that permits the copy, or the copy is a
-        // validation error (VUID-vkCmdCopyImageToBuffer-srcImage-00186) - and a readback that is refused at
-        // runtime is worth less than an image built for it.
-        // A MULTISAMPLED depth gets neither extra usage, and neither promotion nor borrowing: this slice does
-        // not resolve depth (see the class note), so the image is only ever an attachment - asking for a usage a
-        // copy that cannot happen would need fails on the device rather than say why.
-        out.depth_image->usage     = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                                     (multisampled ? 0U
-                                                   : VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                                                         (d->depth_sampleable ? VK_IMAGE_USAGE_SAMPLED_BIT : 0U));
+        // The usage is decided BEFORE the view is created, and that ordering is a rule rather than style: vsg
+        // creates the image when its first view is created, so a usage assigned afterwards never reaches
+        // `vkCreateImage` - a sampleable or copyable image would then be described as neither, and the first
+        // descriptor or copy that names it is a crash without a diagnostic (measured on the shadow-map shape).
+        //
+        // A MULTISAMPLED depth image is a DRAW target only - the API forbids sampling or copying it (a sampled
+        // or copied image has one sample per texel) - so it asks for the attachment usage and nothing else.
+        // A single-sample one IS the picture and carries the readback and promotion usages itself.
+        out.depth_image->usage =
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+            (multisampled ? 0U
+                          : VK_IMAGE_USAGE_TRANSFER_SRC_BIT | (d->depth_sampleable ? VK_IMAGE_USAGE_SAMPLED_BIT : 0U));
         out.depth_image->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         out.depth_image->sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
         out.depth_view = ::vsg::createImageView(d->device, out.depth_image,
                                                        VK_IMAGE_ASPECT_DEPTH_BIT);
         if (out.depth_view == nullptr) {
             return false;
+        }
+        if (multisampled) {
+            // The RESOLVE target, and it holds every capability a single-sample depth attachment used to have:
+            // DEPTH_STENCIL_ATTACHMENT (the pass resolves into it, a borrower attaches it), TRANSFER_SRC (a
+            // readback copies it - a copy needs the usage or it is VUID-vkCmdCopyImageToBuffer-srcImage-00186)
+            // and SAMPLED when the host asked for promotion (a shader samples it).
+            out.depth_resolve_image              = ::vsg::Image::create();
+            out.depth_resolve_image->imageType   = VK_IMAGE_TYPE_2D;
+            out.depth_resolve_image->format      = toDepthFormat(d->depth_format.value());
+            out.depth_resolve_image->extent      = VkExtent3D{ width, height, 1U };
+            out.depth_resolve_image->mipLevels   = 1U;
+            out.depth_resolve_image->arrayLayers = 1U;
+            out.depth_resolve_image->samples     = VK_SAMPLE_COUNT_1_BIT;
+            out.depth_resolve_image->tiling      = VK_IMAGE_TILING_OPTIMAL;
+            out.depth_resolve_image->usage       = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                                             VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                             (d->depth_sampleable ? VK_IMAGE_USAGE_SAMPLED_BIT : 0U);
+            out.depth_resolve_image->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            out.depth_resolve_image->sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+            out.depth_resolve_view =
+                ::vsg::createImageView(d->device, out.depth_resolve_image, VK_IMAGE_ASPECT_DEPTH_BIT);
+            if (out.depth_resolve_view == nullptr) {
+                return false;
+            }
         }
     }
 
@@ -615,6 +695,9 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
     if (d->shape.samples > 1U) {
         for (const OffscreenTarget::Attachments::Color& color : out.colors) {
             attachments.push_back(color.resolve_view);
+        }
+        if (plan.has_depth) {
+            attachments.push_back(out.depth_resolve_view);
         }
     }
     out.framebuffer = ::vsg::Framebuffer::create(d->render_pass, attachments, width, height, 1U);
@@ -737,10 +820,11 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
     // The depth copy is built only for a readable format: the rest of the target is still usable, it just
     // cannot answer "what is in the depth buffer" (see core::depthReadbackOf, and the refusal it makes the
     // target report).
-    // A multisampled depth has no readback in this slice: the copy would have to read a multisampled image
-    // (VUID-vkCmdCopyImageToBuffer-srcImage-00186), and resolving depth is not something this backend does yet.
-    // The target still renders; it reports the refusal (core::ReadbackRefusal::Multisampled).
-    if (plan.has_depth && out.depth_view != nullptr && !multisampled) {
+    //
+    // It copies the depth PICTURE, which for a multisampled target is the resolved image: the multisampled
+    // image is a draw target only (a copy of it is VUID-vkCmdCopyImageToBuffer-srcImage-00186), and the
+    // resolve is what makes "the depth of this frame" a single-sample value a copy can carry.
+    if (plan.has_depth && out.depth_view != nullptr) {
         const core::ReadbackFormat packed = core::depthReadbackOf(d->depth_format.value());
         if (packed.readable) {
             const VkDeviceSize depth_bytes = static_cast<VkDeviceSize>(width) * height * packed.bytes_per_texel;
@@ -773,15 +857,26 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
             // VUID-VkImageMemoryBarrier-oldLayout-01197).
             const VkImageSubresourceRange depth_range{ VK_IMAGE_ASPECT_DEPTH_BIT, 0U, 1U, 0U, 1U };
             const VkImageLayout steady_layout = toVkLayout(depthSteadyLayout());
+            // WHAT WROTE THIS IMAGE DEPENDS ON WHICH ONE IT IS. A single-sample picture is written by the
+            // depth tests (the fragment-test stages); a RESOLVED one is written by the pass' resolve, which the
+            // API accounts as a COLOUR ATTACHMENT WRITE at the colour-output stage, not as a depth write. The
+            // source scope therefore covers both when the depth resolves - without it the copy's transition is
+            // a WRITE-AFTER-WRITE against the pass' resolve (measured: `SYNC-HAZARD-WRITE-AFTER-WRITE` on
+            // exactly this image, 2 cases, from the sync-validation pass of the gate).
+            const VkPipelineStageFlags depth_write_stages =
+                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                (multisampled ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT : 0U);
+            const VkAccessFlags depth_write_access =
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT |
+                (multisampled ? VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT : 0U);
             auto to_transfer = ::vsg::ImageMemoryBarrier::create(
-                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
-                VK_ACCESS_TRANSFER_READ_BIT, steady_layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, out.depth_image, depth_range);
+                depth_write_access, VK_ACCESS_TRANSFER_READ_BIT, steady_layout,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+                out.depthPicture(), depth_range);
             auto from_transfer = ::vsg::ImageMemoryBarrier::create(
-                VK_ACCESS_TRANSFER_READ_BIT,
-                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
-                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, steady_layout, VK_QUEUE_FAMILY_IGNORED,
-                VK_QUEUE_FAMILY_IGNORED, out.depth_image, depth_range);
+                VK_ACCESS_TRANSFER_READ_BIT, depth_write_access, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                steady_layout, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, out.depthPicture(),
+                depth_range);
 
             VkBufferImageCopy depth_region = {};
             depth_region.bufferOffset      = 0U;
@@ -792,7 +887,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
             depth_region.imageExtent       = VkExtent3D{ width, height, 1U };
 
             auto depth_copy            = ::vsg::CopyImageToBuffer::create();
-            depth_copy->srcImage       = out.depth_image;
+            depth_copy->srcImage       = out.depthPicture();
             depth_copy->srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
             depth_copy->dstBuffer      = out.depth_destination;
             depth_copy->regions.push_back(depth_region);
@@ -802,14 +897,15 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
                 VK_QUEUE_FAMILY_IGNORED, out.depth_destination, 0U, depth_bytes);
 
             out.depth_capture = ::vsg::Commands::create();
-            out.depth_capture->addChild(::vsg::PipelineBarrier::create(
-                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, to_transfer));
+            out.depth_capture->addChild(
+                ::vsg::PipelineBarrier::create(depth_write_stages, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                               to_transfer));
             out.depth_capture->addChild(depth_copy);
             out.depth_capture->addChild(::vsg::PipelineBarrier::create(
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
-                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                    (multisampled ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT : 0U),
                 0, from_transfer));
             out.depth_capture->addChild(::vsg::PipelineBarrier::create(
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, depth_buffer_barrier));
@@ -1062,7 +1158,6 @@ core::ReadbackResult OffscreenTarget::readbackResult(const core::ReadbackRequest
 {
     core::ReadbackState state;
     state.color_attachments = static_cast<std::uint32_t>(d->attachments.colors.size());
-    state.multisampled      = d->shape.samples > 1U;
     if (request.kind == core::ReadbackKind::Color && request.attachment < d->shape.color_formats.size())
     {
         state.color_format = d->shape.color_formats[request.attachment];

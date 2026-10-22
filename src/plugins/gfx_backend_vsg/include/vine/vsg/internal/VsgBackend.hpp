@@ -413,7 +413,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     {
         BuildFailed,        ///< The objects could not be created.
         DepthSourceMissing, ///< The depth is borrowed from a target this backend does not hold.
-        SamplesUnsupported, ///< The sample count is above the device's, or a multisampled depth is shared/promoted.
+        SamplesUnsupported, ///< The sample count is above the device's, or a multisampled target borrows a depth.
     };
 
     void reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, UnbuildableReason reason,

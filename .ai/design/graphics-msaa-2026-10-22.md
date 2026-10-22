@@ -1,8 +1,8 @@
-# MSAA（2026-10-22）：采样数是**目标**的属性，颜色解析、深度不解析
+# MSAA（2026-10-22）：采样数是**目标**的属性，颜色与深度各解析一张图
 
-> R6 的定稿记录（含为什么不是管线开关、为什么深度这一轮不解析、几条必须显式拒绝的组合）。
+> R6（第一片：颜色解析）与 R6b（同日：深度解析）的定稿记录，含为什么不是管线开关、几条必须显式拒绝的组合。
 > 一句话：**`RenderTarget::setSamples` 是唯一的入口**，它进目标形状 ⇒ 进管线键 ⇒ 进渲染通道与图像；
-> 离屏目标自建多重采样图并把**颜色**解析成单采样图，那张图就是"画面"。
+> 离屏目标自建多重采样图并把**颜色与深度**各解析成一张单采样图，那两张图就是"画面"。
 
 ## 0. 规则
 
@@ -30,29 +30,26 @@ Vulkan 要求三者相等（`VUID-VkGraphicsPipelineCreateInfo-renderPass-06055`
 - `fillClearValues` 的条目数 = **通道附件数**（多重采样时 resolve 附件排在最后，也要
   占位，否则驱动读到表尾）。
 
-## 2. 颜色解析、深度不解析
-
-一轮只做**颜色**：
+## 2. 两个附件都解析，读的都是"画面"
 
 | 附件 | 多重采样时 | 为什么 |
 | --- | --- | --- |
 | 颜色 | 建 MS 图（只作 attachment）+ 单采样 resolve 图（`COLOR_ATTACHMENT｜SAMPLED｜TRANSFER_SRC`）；子通道 `resolveAttachments` 把 MS 写进 resolve 图 | 采样/拷贝/跨 pass 读取都要求单样本（`VUID-vkCmdCopyImageToBuffer-srcImage-00186`） |
-| 深度 | 建 MS 图，**只**给 `DEPTH_STENCIL_ATTACHMENT` 用途 | 深度解析（`depthStencilResolveAttachments`）这一轮不做 |
+| 深度 | 建 MS 图（**只**给 `DEPTH_STENCIL_ATTACHMENT`）+ 单采样 resolve 图（`DEPTH_STENCIL_ATTACHMENT｜TRANSFER_SRC[｜SAMPLED]`）；子通道 `depthStencilResolveAttachments` + `depthResolveMode = sample0` | 同上；`sample0` 让"打开多重采样"**不改变深度值**（不平均） |
 
-"画面"因此只有一个定义：`Attachments::Color::picture()` —— 单采样时是颜色图本身，多重
-采样时是 resolve 图。`capture(i)` / `probe(i)` 都走它，所以读回路径**不因样本数分叉**。
+"画面"因此只有一个定义：`Attachments::Color::picture()` / `Attachments::depthPicture()` —— 单采样时是
+绘制图本身，多重采样时是 resolve 图。`capture(i)` / `probe(i)` / `captureDepth()` / `depthProbe()` /
+借出 / 提升都走它，所以**读回与共享路径不因样本数分叉**。
 
-## 3. 三条必须显式拒绝的组合（不兜底）
-
-深度没有被解析，就意味着那张 MS 深度图永远不在"可采样/可拷贝/可借"的布局与用途里。
-于是一次性、带理由地拒绝，而不是"看起来能跑"：
+## 3. 必须显式拒绝的组合（不兜底）
 
 | 组合 | 答案 | 理由 |
 | --- | --- | --- |
 | `samples > max_samples` | `HostTargets::State::SamplesUnsupported` + 诊断（"above the device's limit"） | 设备没有那个计数 |
-| `samples > 1` **且** `depth_promotion` | 同上（"a multisampled target cannot lend, promote or read back its depth"） | 提升 = 让 shader 采样深度 ⇒ 需要单采样或解析 |
-| `samples > 1` **且** `shareDepth(...)` | 同上 | 借出方的帧缓冲按自己的样本数命名同一张图，一张图不能同时是两种 |
-| 多重采样目标的**深度回读** | `core::ReadbackRefusal::Multisampled`（宿主侧 `HostReadbackRefusal::Multisampled` ⇒ SDK `ReadbackResult::Unsupported`） | 永久事实，不是"这一帧还没拷" |
+| `samples > 1` **且** `shareDepth(...)`（多重采样**借入**） | 同上（"borrows its depth from another target…"） | 借到的是出借方的单采样解析图，而一个帧缓冲的附件共用一个样本数 |
+
+**出借方可以是多重采样**（借出的是它的解析图），**提升也可以是**（采样的是解析图）—— 这两条在 R6 第一片
+里也是拒绝项，R6b 之后合法，见 §7。
 
 **默认窗口/默认帧缓冲仍是单采样**：交换链的样本数归平台。窗口抗锯齿的画法是"画进多重
 采样离屏目标、把 resolve 图当屏幕 pass 的输入"，这正是引擎既有预设的形状，不需要新的
@@ -73,10 +70,10 @@ API。
 - `MsaaTargetTest.FourSamplesBlendThePixelsATriangleEdgePassesThrough`：同一个三角形、
   同一个 shader，**1 样本时没有任何"混合"像素（0 个），4 样本时一定 > 0**；内部仍是
   纯绿、角落仍是清除色（解析只平均样本，不洗淡整幅）；
-- `MsaaTargetTest.AFourSampleTargetRefusesItsDepthReadbackAndKeepsItsColourReadback`；
+- `MsaaTargetTest.AFourSampleTargetsDepthIsTheResolvedPicture`：4 样本的深度可读，**没有中间值**
+  （`sample0` 不平均），内部/外部与 1 样本逐点一致；
 - `MsaaTargetTest.ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCannot`：
-  超限/借深度/提升深度三种拒绝，**外加对照组**（普通 MS 深度能建 ⇒ 拒绝的是组合，不是
-  多重采样）；
+  两种拒绝（超限、多重采样借入），**外加两个对照组**（多重采样出借、多重采样提升都能建）；
 - `MsaaTargetTest.RebuildingAtANewCountReplacesTheImages`：活目标换计数 = 重建（图集、
   帧缓冲、pass 图都换），深度策略仍归目标。
 
@@ -85,8 +82,8 @@ API。
 
 ## 5. 这一轮没做的（有意）
 
-- **深度解析**：要 `depthStencilResolveAttachments` + 一张单采样深度图，且"哪个样本
-  赢"是策略（min/max/sample0）。做了它才能解除 §3 的后两条拒绝。
+- **resolve mode 的宿主词汇**：深度固定 `sample0`（不平均、不改值）。min/max 是深度缓冲的语义而不是
+  画质开关，等真有反例再开口子。
 - **样本级着色（sample shading）/alpha-to-coverage**：`MultisampleState` 的字段都在，
   但没有宿主词汇；等真有需求再给它们写进 `PassDesc`。
 - **交换链多重采样**：归窗口后端（`WindowTarget::refresh`）。
@@ -104,3 +101,22 @@ API。
 | `plugin/internal/StateCommands.*` | `samplesToVk()`：**唯一**一处计数映射（通道与管线共用） |
 | `plugin/internal/VsgBackend.cpp` | 初始化时把设备上限写进 `HostTargets`；`capabilities()` 报同一个数；拒绝诊断按原因分支 |
 | `plugin/internal/VsgExecutor.cpp` | Rebuild 分支带上 `layout.samples` |
+
+## 7. R6b（同日）：深度也解析
+
+- **图像**：MS 深度图只给 `DEPTH_STENCIL_ATTACHMENT`；另一张单采样 resolve 图给
+  `DEPTH_STENCIL_ATTACHMENT｜TRANSFER_SRC[｜SAMPLED]` —— 回读、借出、提升都读它。**用途必须在建视图
+  之前定**：vsg 在第一次 `createImageView` 时真的 `vkCreateImage`，之后再改 `usage` 不生效（实测：阴影图
+  那条路径直接段错误、无诊断）。
+- **通道**：`depthStencilResolveAttachments` + `depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT`；
+  `stencilResolveMode` 只有格式**真带模板**（`D24` ⇒ `D24_UNORM_S8`）才 `SAMPLE_ZERO`，否则 `NONE`
+  （`VUID-VkSubpassDescriptionDepthStencilResolve-pDepthStencilResolveAttachment-03178`）。
+- **一条"画面"规则管两个附件**：`depthSteadyLayout()` 描述的就是解析图的布局；回读的拷贝与屏障、借出方
+  的 attachment、提升的 SHADER_READ_ONLY 全部指向 `depthPicture()`。
+- **解除三条**：多重采样目标现在可以提升深度、可以出借深度、可以 `readDepthBuffer()`。`ReadbackState` 的
+  `multisampled` 字段与 `ReadbackRefusal::Multisampled`（及宿主侧对应项）**一起删掉** —— 词汇里不留一个
+  已经不会被报告的理由。
+- **保留一条**：多重采样目标**借入**深度仍被拒（借到的是单采样解析图，而一个帧缓冲的附件共用样本数），
+  `HostTargets`（带诊断）与 `OffscreenTarget::create`（直接调用者也绕不过）两处都拒。
+- 判据：`MsaaTargetTest.AFourSampleTargetsDepthIsTheResolvedPicture`（4 样本深度可读、无中间值、与 1 样本
+  逐点一致）、拒绝用例改成"两种拒绝 + 两个对照组"；全仓 `test_vsg` 480 例 0 失败。

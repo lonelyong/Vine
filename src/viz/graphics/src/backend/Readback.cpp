@@ -27,12 +27,6 @@ ReadbackResult readbackOf(const ReadbackState& state, const ReadbackRequest& req
         {
             return ReadbackResult{ false, ReadbackRefusal::UnknownAttachment };
         }
-        // A multisampled depth is a permanent property of the target, like an unreadable format: no copy will
-        // ever be handed out for it, so "not captured yet" would describe this frame rather than the target.
-        if (state.multisampled)
-        {
-            return ReadbackResult{ false, ReadbackRefusal::Multisampled };
-        }
         if (!depthReadbackOf(state.depth_format.value()).readable)
         {
             return ReadbackResult{ false, ReadbackRefusal::UnreadableFormat };
@@ -57,7 +51,6 @@ std::string_view refusalName(ReadbackRefusal refusal) noexcept
     case ReadbackRefusal::None: return "none";
     case ReadbackRefusal::UnknownAttachment: return "unknown-attachment";
     case ReadbackRefusal::UnreadableFormat: return "unreadable-format";
-    case ReadbackRefusal::Multisampled: return "multisampled";
     case ReadbackRefusal::NotCaptured: return "not-captured";
     }
     return "none";

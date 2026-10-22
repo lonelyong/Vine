@@ -49,8 +49,6 @@ enum class HostReadbackRefusal : std::uint8_t
     UnknownAttachment, ///< The target has no such attachment.
     UnreadableFormat,  ///< This backend cannot read that attachment's format (see core::colorReadbackOf).
     BorrowedDepth,     ///< The depth is the LENDER's image: the source target is the one to read (SDK's rule).
-    Multisampled,      ///< The attachment is multisampled and this backend does not resolve that kind for
-                       ///< reading (depth today; colour is resolved and readable).
     NoDevice,          ///< There is no device to copy with or whose work produced the values.
     TransferFailed,    ///< The copy was submitted/fenced and did not produce a readable picture.
 };
