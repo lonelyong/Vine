@@ -316,7 +316,7 @@ material 值 / 流字节 / cull 全部**不进**。
 
 | 项 | 内容 | 触发器 |
 | --- | --- | --- |
-| **B6** | `StreamKey.revision` 取 Geometry 的 revision ⇒ 任何数据公告重传所有通道；逐 `Buffer::revision()` 能省未改通道，但契约更弱（漏报静默） | 多通道大网格宿主报上传带宽（**2026-09-25 已量化，见 §11.16cw**：512²×4 通道+索引一次公告重传 16.98 MiB ≈ +30 ms/帧；触发未兑现） |
+| ~~**B6**~~ | ~~`StreamKey.revision` 取 Geometry 的 revision ⇒ 任何数据公告重传所有通道~~ **已关闭（2026-10-22）**：流键的 revision 只取该 buffer 自己的（`Buffer::setRevision` 是唯一的重传公告），几何 revision 只驱动事实行重建；事实行不再拷贝字节，键在录制时拼、字节在上传时读。实测见本文 §11.16da 与 `.ai/design/graphics-geometry-revision-2026-10-22.md` | ~~多通道大网格宿主报上传带宽~~ 用户 2026-10-22 直接指定做（框架问题） |
 | **B7** | 管线销毁与在飞提交的竞态：已按设计规则给破坏路径加计数过的 device idle；此后 20 次单例 + 2 次全量套件 + 两棵树门禁 **0 VUID，未再复现** | 再次出现时先查"最近被替换或逐出的管线"与 teardown 的 `deviceWaits` |
 | **B8** | **"跨帧差异"相位：可读回子类已在门禁里，F−N 洞仍在**。新相位 `VsgBackendTest.TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue`（每帧动相机 0.95..0.75、末帧 0.1；片元 `step(0.75,|cam_pos.x|)` 把红通道变成 0/1 两类，判据与色彩空间无关）守住**末帧读到别帧数据 / 绑定冻结·过期**的形状；变异（`recordCommand` 读侧绑定落后一 slab）⇒ 2/2 红。§11.16dd 的受害帧是**最旧在飞帧（F−N）**：它的输出不进 readback（只见最新帧），且 2026-09-25 探针实测（写偏移/slab 轮转/学到槽数=3/帧写节奏）本机框架逐帧节流 ≈ 1 GPU 帧，F−N 总在覆盖写之前收尾；负载压到 4096²×64 遍（≈1G 像素/帧）也造不出重叠 ⇒ **该洞继续由结构性旋转用例承担**（`BlockStorageTest.TheSlabsRotate…`） | 触发不变；真机/换框架再现同类画面缺陷时，先复核"唯一在飞数/布局"与相位边界（§11.16dd 诚实登记） |
 | **A3** | SDK 没有内容释放入口（`releaseGeometry/Material/Program/Texture`）：登记的"不改 SDK" | 宿主报告内存压力（**2026-09-25 账本已量化，见 §11.16cz**：12 轮创建+丢弃全清；唯材料槽残留；slot 知识学到前的丢弃会保留整会话） |
@@ -1541,3 +1541,18 @@ material 值 / 流字节 / cull 全部**不进**。
 * **诚实边界**：① 插件帧的符号化仍**只是部分**（外部 `llvm-symbolizer` 也只改善一部分），所以这套豁免的根据是
   **LSan 的结构性 INDIRECT 标记**（它自己算出来的可达性），不是帧名；帧名只用来解释"这堆字节长什么样"；② 计数在两次
   运行间有小幅摆动（6,048/108 与 5,936/106）——有多少条目能解出符号，决定它们走 `spv::Builder::` 条目还是走间接判词。
+
+### §11.16da B6 收口（2026-10-22）：形状归几何、字节归 buffer，没有兜底
+
+* **规则**：`StreamKey` 的 revision = 该流 buffer 自己的（`Buffer::setRevision` 是唯一的重传公告）；`Geometry::setRevision`
+  只描述形状（喂哪些通道、每条读哪段），驱动事实行（layout/计数）重建，**不进上传键**。谁都没喊 ⇒ 字节视为没变
+  （渲染器从不比较字节，也没有"几何 revision 兜底"——这条是本轮定稿的关键决定）。
+* **实现**：事实行只借 buffer 句柄 + 切片（`ChannelFacts::values` / `scalars()`），键在录制时拼（`streamKey()` 读 live
+  revision），`StreamUploads` 只在 sharing miss 时建 vsg 数组 —— 于是"buffer 改了、几何没动"既不重建行也不重传别的流。
+  结构变化（换 buffer / 换切片）靠**身份**换键，不需要任何 revision。
+* **实测**（`VsgBackendTest.MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges`，512²×4 通道+索引，整份 16.98 MiB；
+  uploads/帧 | rebuilds/帧）：稳态 0|0；单通道就地编辑 **1|0**；换 buffer **1|1**；四通道就地编辑 **4|0**——旧契约一律 **5**。
+* **契约变更**：`Geometry::setRevision()` 不再表示"字节变了"；改字节必须 `buffer->setRevision()`。仓库内唯一相关宿主
+  `FpsOverlay` 每次装新 buffer（身份变化天然是新 stream），只改注释。
+* **判据**：`tests/test_vsg/StreamRevisionTest.cpp` 五条（含"几何公告不改变任何流键"这条钉住没有兜底）；
+  变异：`streamKey()` 不读 live revision ⇒ 第 1、5 条红。
