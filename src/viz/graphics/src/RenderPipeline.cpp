@@ -68,22 +68,22 @@ raw_ptr<RenderTarget> RenderPipeline::compositeTarget() const
 
 raw_ptr<AxisGizmo> RenderPipeline::gizmo() const
 {
-    return gizmo_.get();
+    return obj_cast<AxisGizmo>(overlayContent(kGizmoRole));
 }
 
 raw_ptr<FpsOverlay> RenderPipeline::fpsOverlay() const
 {
-    return fps_overlay_.get();
+    return obj_cast<FpsOverlay>(overlayContent(kStatsRole));
 }
 
 raw_ptr<RenderPass> RenderPipeline::gizmoPass() const
 {
-    return group_.pass(kGizmoRole);
+    return overlayPass(kGizmoRole);
 }
 
 raw_ptr<RenderPass> RenderPipeline::fpsOverlayPass() const
 {
-    return group_.pass(kStatsRole);
+    return overlayPass(kStatsRole);
 }
 
 ShadingPath RenderPipeline::shadingPath() const noexcept
@@ -152,52 +152,77 @@ bool RenderPipeline::setShadingMode(ShadingMode mode)
 
 bool RenderPipeline::setGizmoVisible(bool on)
 {
-    if (gizmoPass() == nullptr) {
-        // A switch that silently did nothing would leave a host believing the overlay was just hidden: its
-        // existence is a build decision (RenderPipelineOptions::gizmo). Once per episode, because a host may ask every
-        // frame and the condition - not the call - is the news.
-        if (overlay_refused_.shouldReport()) {
-            if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
-                engine->reportEngineProblem(
-                    vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                    String(u8"this pipeline has no axis-gizmo overlay, so there was nothing to show or hide: build "
-                           u8"with RenderPipelineOptions::gizmo to get one"));
-            }
-        }
-        return false;
-    }
-    overlay_refused_.rearm();
-    gizmoPass()->setEnabled(on);
-    return true;
+    return setOverlayVisible(kGizmoRole, on);
 }
 
 bool RenderPipeline::setStatsVisible(bool on)
 {
-    if (fpsOverlayPass() == nullptr) {
+    return setOverlayVisible(kStatsRole, on);
+}
+
+bool RenderPipeline::isGizmoVisible() const noexcept
+{
+    return isOverlayVisible(kGizmoRole);
+}
+
+bool RenderPipeline::isStatsVisible() const noexcept
+{
+    return isOverlayVisible(kStatsRole);
+}
+
+raw_ptr<RenderPass> RenderPipeline::addOverlay(const String&   role,
+                                              raw_ptr<Object> content,
+                                              const PassDesc& desc,
+                                              OverlayLayout   layout)
+{
+    // The registration and the value are one step: a pass registered under a role nobody recorded, or a value pointing
+    // at a pass nothing draws, are both states this method makes unreachable (see the group's contract).
+    intrusive_ptr<RenderPass> pass = group_.add(desc, role);
+    if (pass == nullptr) {
+        return nullptr;  // the engine is gone, or that pass was already registered
+    }
+    overlays_.push_back(Overlay{ role, content, std::move(layout) });
+    return pass.get();
+}
+
+raw_ptr<RenderPass> RenderPipeline::overlayPass(const String& role) const noexcept
+{
+    return group_.pass(role);
+}
+
+raw_ptr<Object> RenderPipeline::overlayContent(const String& role) const noexcept
+{
+    const auto found = std::find_if(overlays_.begin(), overlays_.end(),
+                                    [&role](const Overlay& overlay) { return overlay.role == role; });
+    return found != overlays_.end() ? found->content : nullptr;
+}
+
+bool RenderPipeline::setOverlayVisible(const String& role, bool on)
+{
+    const raw_ptr<RenderPass> pass = overlayPass(role);
+    if (pass == nullptr) {
+        // A switch that silently did nothing would leave a host believing the overlay was just hidden: its existence
+        // is whoever registered it (addOverlay). Once per episode, because a host may ask every frame and the
+        // condition - not the call - is the news.
         if (overlay_refused_.shouldReport()) {
             if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
-                engine->reportEngineProblem(
-                    vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                    String(u8"this pipeline has no frame-rate readout, so there was nothing to show or hide: build "
-                           u8"with RenderPipelineOptions::fps to get one"));
+                const String message = String(u8"this pipeline has no overlay registered as '") + role +
+                                       u8"', so there was nothing to show or hide: register it with "
+                                       u8"RenderPipeline::addOverlay (or build with the recipe option that does)";
+                engine->reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                            vn::graphics::DiagnosticCategory::UnsupportedRequest, message);
             }
         }
         return false;
     }
     overlay_refused_.rearm();
-    fpsOverlayPass()->setEnabled(on);
+    pass->setEnabled(on);
     return true;
 }
 
-bool RenderPipeline::isGizmoVisible() const noexcept
+bool RenderPipeline::isOverlayVisible(const String& role) const noexcept
 {
-    const raw_ptr<RenderPass> pass = gizmoPass();
-    return pass != nullptr && pass->isEnabled();
-}
-
-bool RenderPipeline::isStatsVisible() const noexcept
-{
-    const raw_ptr<RenderPass> pass = fpsOverlayPass();
+    const raw_ptr<RenderPass> pass = overlayPass(role);
     return pass != nullptr && pass->isEnabled();
 }
 
@@ -218,21 +243,15 @@ void RenderPipeline::resize(int width, int height, double pixel_ratio)
     if (composite_target_ != nullptr) {
         composite_target_->setSize(device.width, device.height);
     }
-    // The overlays own their box (the object computes it from the surface size and its area origin); the pass
-    // that draws it is a DECLARATION, so the box it states is restated here - this is the one place that lays
-    // an overlay out for a new surface size (see setGizmo).
-    if (gizmo_ != nullptr) {
-        gizmo_->setPixelRatio(ratio.value);
-        gizmo_->onSurfaceResized(width, height);
-        if (raw_ptr<RenderPass> pass = gizmoPass()) {
-            pass->setViewport(gizmo_->boxViewport());
+    // Each overlay lays ITSELF out (see addOverlay): the pipeline hands over the surface size, the ratio and the pass
+    // the overlay's role names, and the overlay restates its own content's box and the pass' rectangle. A third
+    // overlay therefore needs no change here.
+    for (const Overlay& overlay : overlays_) {
+        if (!overlay.layout) {
+            continue;
         }
-    }
-    if (fps_overlay_ != nullptr) {
-        fps_overlay_->setPixelRatio(ratio.value);
-        fps_overlay_->onSurfaceResized(width, height);
-        if (raw_ptr<RenderPass> pass = fpsOverlayPass()) {
-            pass->setViewport(fps_overlay_->boxViewport());
+        if (raw_ptr<RenderPass> pass = overlayPass(overlay.role)) {
+            overlay.layout(*pass, width, height, ratio.value);
         }
     }
 }
@@ -257,16 +276,6 @@ void RenderPipeline::setOffscreenTarget(intrusive_ptr<RenderTarget> target)
 void RenderPipeline::setCompositeTarget(intrusive_ptr<RenderTarget> target)
 {
     composite_target_ = std::move(target);
-}
-
-void RenderPipeline::setGizmo(intrusive_ptr<AxisGizmo> gizmo)
-{
-    gizmo_ = std::move(gizmo);
-}
-
-void RenderPipeline::setFpsOverlay(intrusive_ptr<FpsOverlay> fps)
-{
-    fps_overlay_ = std::move(fps);
 }
 
 VN_GRAPHICS_NS_END

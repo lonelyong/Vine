@@ -204,7 +204,7 @@ bool ⇒ 可见性用例红；S4 让 `RenderSurface` 继续问配方 ⇒ 表面/
 - 后端半是什么、为什么叫 `backend/`：`graphics-layering.md`。
 - 本次审计的判据与门禁数字：同目录 `graphics-object-model-audit-2026-10-21.md` §3。
 
-## 9. 落地记录（2026-10-22，本轮只做 S2 + S4 的改名）
+## 9. 落地记录（2026-10-22，本轮做 S2 + S3 + S4 的改名部分）
 
 **已落地**
 
@@ -213,16 +213,20 @@ bool ⇒ 可见性用例红；S4 让 `RenderSurface` 继续问配方 ⇒ 表面/
 | **S2** | `PassGroup`（`vine/graphics/PassGroup.hpp/.cpp`）：引擎仍是唯一注册表，`Slot` 多了 `group` / `role`；`RenderEngine::createPassGroup()` + 私有的 `addPassToGroup/removePassGroup/groupPass(es)`；`RenderPipeline` 删掉 `passes_`，析构不再有 for 循环，两条 HUD pass 按 role 登记、按 role 取回（`gizmo_pass_` / `fps_overlay_pass_` 两个字段随之消失） | `PassGroupTest.AGroupTakesBackExactlyThePassesItRegistered`（引擎先死、外来的 pass 不受影响、role 查回同一个结点）、`AGroupOutlivingItsEngineAnswersNothing`、`ThePipelineFindsItsHudPassesByRoleAndHandsThemAllBack`；现有 HUD 用例（`TheBuildOptionsDecideWhichOverlayPassesExist`、`OverlayVisibilityIsASwitchThatNeverRebuilds`）不改即绿 |
 | **S2 的移动语义** | `PassGroup` 的移动**手写**：移动赋先 `release()` 自己那批再接管 —— 默认移动会覆盖 id、把原来那批漏在帧里（这条是被上面的用例当场抓到的） | 同用例最后一句：`group = PassGroup()` 之后 `passCount() == 1`（外来那条还在） |
 | **S4（部分）** | `RenderPipeline::windowPass()` → `presentingPass()`（`RenderSurface` / `SceneView` / demo / appfw 文档 / 用例 / 指南同步）；`RenderPipeline` 自己的三参 `addPass` 删除（无人调用，注册只走 group） | 全量构建 0 error；`test_graphics` 406、`test_vsg` 481、`test_gui` 261、`test_core` 165；6 个静态脚本 0 finding；`PassGroupTest.*` 过 ASan |
+| **S3（同一轮补上）** | overlay 变成 **值**：`RenderPipeline::addOverlay(role, content, PassDesc, layout)` 是**公开扩展点**（配方的 gizmo / 读数走同一条路），`overlayPass/overlayContent/setOverlayVisible/isOverlayVisible` 按 role 读写，`resize()` 只跑每条 overlay 自己的 layout（不再特判 gizmo / 读数），`gizmo_` / `fps_overlay_` 两个字段删除 —— 类型化访问器成了 `obj_cast<AxisGizmo>(overlayContent(kGizmoRole))` 一行 | `PassGroupTest.AHostRegistersAThirdOverlayWithoutTouchingThePipeline`：宿主注册**第三条** overlay（同一个引擎表、自己的 role、自己的 layout、`resize` 里被调用），不碰 `RenderPipeline` 一行代码；老 HUD 用例不改即绿；`test_graphics` 407 |
 | **顺手修的老账** | `ContentDrawTest.TheDynamicMappingFollowsTheEngineConventions` 还停在 B1（混色契约）**之前**的断言（"一个附件总是混"），因插件 `.so` 未重建而一直假绿；插件重建后暴露。已改成交付的契约：不 opt-in ⇒ `blendEnable = VK_FALSE`；opt-in 且默认因子 ⇒ 标准 alpha 对 | `test_vsg` 481 全绿 |
+
+**一条被纠正的措辞**（原 §3.4 / 上一版本 §9 写"需要一个类型擦除的持有者"）：仓库里已经有擦除的**引用**——`vn::Object`
+是所有 graphics 对象的公共基类，读侧用 `raw_ptr<Object>` + `obj_cast<T>`（`appfw::DocumentManager` 就是这么存 payload 的），
+拥有侧 appfw 用 `std::shared_ptr<const Object>`（`EventBus`）。graphics 的对象是 intrusive 的，所以 `intrusive_ptr<Object>`
+确实编不过（计数在 `RefCounted<T>` 基类里，不在 `Object` 上）—— 但 overlay 根本不需要擦除的**拥有者**：内容由注册方持有
+（builder 的 layout lambda 捕获 `intrusive_ptr<AxisGizmo>`，`PassDesc::before_draw` 也捕获一份），表里存 `raw_ptr<Object>`
+就够。S3 因此不需要新类型擦除容器（§3.4 建议的 `OverlayContent` 接口也随之不必存在：值 + role + layout 已经够开）。
 
 **明确推迟（带触发条件）**
 
 - **S1 引擎三个门面**（`passes()` / `outputs()` / `diagnostics()`）：转发层没有行为收益，等"第二个门面消费者"出现
   （后端也要查表、或诊断要按来源过滤）再做。
-- **S3 overlay 值化 / `OverlayContent`**：`AxisGizmo` 与 `FpsOverlay` 的类型化手柄（`gizmo()` / `fpsOverlay()`）被
-  `Viewer`、`model_viewer` 和 ~20 条用例直接使用，而**共同内容手柄**需要一个类型擦除的持有者（`intrusive_ptr<Object>`
-  不可用：`Object` 不带引用计数，两者各自 `RefCounted<T>`）。触发条件与 §3.4 一致：出现**第三种** overlay，或
-  某个 overlay 需要"不重新编译就知道自己是第几个"。
 - **S4 的改名与归属**（`ScenePicture` / `ScenePictureBuilder` / `setPicture` / `RenderSurface` 问视图）：纯改名，
   等 R2 的下一件（`RenderPipeline` 真拆成"注册 + 画面"）一起做，避免两次全库改名。
 - **S5 调度上移**：唯一改变像素路径的一片，与本轮"不动画面"的判据冲突；单独一轮，用 `vsg_rewrite_gate.sh` 逐字节把关。

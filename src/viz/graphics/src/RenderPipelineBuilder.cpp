@@ -211,10 +211,15 @@ bool RenderPipelineBuilder::applyOverlays(RenderPipeline& pipeline, const Render
         // The one thing that must happen before it draws: mirror the source camera's orientation onto the
         // framing one.
         desc.before_draw   = [gizmo] { gizmo->update(); };
-        // Registered under the role the pipeline reads it back by (see RenderPipeline::gizmoPass): the recipe states
-        // the overlay's CONTENT and the label its pass carries, not a second handle that has to be kept in step.
-        pipeline.addPass(desc, String(RenderPipeline::kGizmoRole));
-        pipeline.setGizmo(gizmo);
+        // Registered through the same public entry a host uses (see RenderPipeline::addOverlay): the recipe states the
+        // overlay's CONTENT, the label its pass carries, and how it re-anchors itself - a third overlay is another
+        // call, not a change to RenderPipeline.
+        pipeline.addOverlay(String(RenderPipeline::kGizmoRole), gizmo.get(), desc,
+                            [gizmo](RenderPass& hud, int width, int height, double ratio) {
+                                gizmo->setPixelRatio(ratio);
+                                gizmo->onSurfaceResized(width, height);
+                                hud.setViewport(gizmo->boxViewport());
+                            });
     }
 
     // A frame-rate readout (bottom-right corner). It measures the actual
@@ -237,8 +242,12 @@ bool RenderPipelineBuilder::applyOverlays(RenderPipeline& pipeline, const Render
         desc.depth_mode    = DepthMode::Disabled;
         // Measure the frame rate and repaint the digits (see FpsOverlay::update).
         desc.before_draw   = [fps] { fps->update(); };
-        pipeline.addPass(desc, String(RenderPipeline::kStatsRole));
-        pipeline.setFpsOverlay(fps);
+        pipeline.addOverlay(String(RenderPipeline::kStatsRole), fps.get(), desc,
+                            [fps](RenderPass& hud, int width, int height, double ratio) {
+                                fps->setPixelRatio(ratio);
+                                fps->onSurfaceResized(width, height);
+                                hud.setViewport(fps->boxViewport());
+                            });
     }
     return true;
 }

@@ -1,6 +1,9 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <functional>
+#include <vector>
+
 #include <vine/Lease.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
@@ -328,7 +331,79 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
      */
     raw_ptr<RenderTarget> compositeTarget() const;
 
-    /** @brief Gets the configured axis-gizmo overlay's CONTENT, if any.
+    /** @brief How an overlay lays itself out for a surface size (see addOverlay).
+     *
+     * @details
+     * - The pass is handed over so one layout can restate both halves: the content's own box (a gizmo's framing
+     *   camera) and the rectangle the pass draws into.
+     */
+    using OverlayLayout = std::function<void(RenderPass& pass, int width, int height, double pixel_ratio)>;
+
+    /** @brief Adds a HUD overlay: a pass registered under @p role, plus the content that lays itself out.
+     *
+     * @details
+     * - An overlay is a VALUE, not a subclass: what draws it (a HUD pass, registered in this pipeline's group under
+     *   @p role - see PassGroup), what it IS (@p content, an Object - the half a pass cannot hold: a gizmo's
+     *   framing camera and box, a readout's digits), and how it is laid out. A THIRD overlay is therefore a call to
+     *   this method, not a field on this class; the two the recipe builds are gizmo() and fpsOverlay().
+     * - Ownership stays where it already is: whoever registers an overlay keeps its content alive (through
+     *   @p layout's capture and through the pass' before-draw hook), so this class holds a non-owning @p content.
+     * - @p layout runs from resize() with the surface size and the ratio; empty means the pass states its own
+     *   rectangle and nothing has to be re-laid-out.
+     *
+     * @param role    Name the overlay's pass is registered under - also the key overlayPass/overlayContent look up
+     *                (not enforced unique: the first match answers).
+     * @param content The overlay's content object, or null for a pass with no content half.
+     * @param desc    Declaration of the HUD pass that draws it.
+     * @param layout  Lays the overlay out for a surface size (see OverlayLayout).
+     * @return The registered pass, or null when the engine is gone or that pass was already registered.
+     */
+    raw_ptr<RenderPass> addOverlay(const String&   role,
+                                   raw_ptr<Object> content,
+                                   const PassDesc& desc,
+                                   OverlayLayout   layout = {});
+
+    /** @brief Gets an overlay's pass (see addOverlay).
+     *
+     * @param role Role the overlay was registered under.
+     * @return The HUD pass - whose enabled flag IS the overlay's visibility - or null when this pipeline has no
+     *         overlay with that role.
+     */
+    [[nodiscard]] raw_ptr<RenderPass> overlayPass(const String& role) const noexcept;
+
+    /** @brief Gets an overlay's CONTENT object (see addOverlay).
+     *
+     * @details
+     * - Non-owning and untyped: a caller that registered it casts it (`obj_cast<AxisGizmo>`), which is why the two
+     *   overlays the recipe builds also have typed accessors (gizmo(), fpsOverlay()).
+     *
+     * @param role Role the overlay was registered under.
+     * @return The content object, or null when there is no overlay with that role (or it has no content half).
+     */
+    [[nodiscard]] raw_ptr<Object> overlayContent(const String& role) const noexcept;
+
+    /** @brief Shows or hides an overlay (a switch, never a rebuild).
+     *
+     * @details
+     * - An overlay's EXISTENCE is the decision of whoever registered it (addOverlay); this is the runtime switch over
+     *   that registration - the pass' enabled flag, the one state a reader sees (see isOverlayVisible).
+     * - A role this pipeline has no overlay for answers false and says so once per episode: a switch that silently
+     *   did nothing would leave a host believing the overlay was just hidden.
+     *
+     * @param role Role the overlay was registered under.
+     * @param on   True to show the overlay, false to hide it.
+     * @return true when this pipeline HAS that overlay (its visibility is now @p on); false when it has none.
+     */
+    bool setOverlayVisible(const String& role, bool on);
+
+    /** @brief Gets whether an overlay is currently visible (see setOverlayVisible).
+     *
+     * @param role Role the overlay was registered under.
+     * @return true when the overlay exists and its pass is enabled.
+     */
+    [[nodiscard]] bool isOverlayVisible(const String& role) const noexcept;
+
+    /** @brief Gets the axis-gizmo overlay's CONTENT (the typed view of the recipe's gizmo overlay).
      *
      * @details
      * - The object holds the half a pass cannot (its scene, its framing camera and the box it is laid out in - see
@@ -417,13 +492,7 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
      */
     bool setShadingMode(ShadingMode mode);
 
-    /** @brief Shows or hides the axis-gizmo overlay (a switch, never a rebuild).
-     *
-     * @details
-     * - The overlay's EXISTENCE is a build decision (RenderPipelineOptions::gizmo); this is the runtime switch over it (the
-     *   pass' enabled flag - the one state a reader sees, see isGizmoVisible).
-     * - A pipeline with no gizmo answers false and says so once per episode: a switch that silently did nothing would
-     *   leave a host believing the overlay was just hidden.
+    /** @brief Shows or hides the axis-gizmo overlay (see setOverlayVisible).
      *
      * @param on True to show the overlay, false to hide it.
      * @return true when this pipeline HAS the overlay (its visibility is now @p on); false when it has none - build
@@ -431,14 +500,14 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
      */
     bool setGizmoVisible(bool on);
 
-    /** @brief Shows or hides the frame-rate readout (same rules as setGizmoVisible).
+    /** @brief Shows or hides the frame-rate readout (see setOverlayVisible).
      *
      * @param on True to show the readout, false to hide it.
-     * @return true when this pipeline HAS the readout; false when it has none (PipelineOptions::fps).
+     * @return true when this pipeline HAS the readout; false when it has none (RenderPipelineOptions::fps).
      */
     bool setStatsVisible(bool on);
 
-    /** @brief Gets whether the axis-gizmo overlay is currently visible.
+    /** @brief Gets whether the axis-gizmo overlay is currently visible (see isOverlayVisible).
      *
      * The overlay pass is the single source of truth (its enabled flag), so this stays in step with
      * setGizmoVisible and with a host that toggles gizmoPass() itself.
@@ -447,7 +516,10 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
      */
     [[nodiscard]] bool isGizmoVisible() const noexcept;
 
-    /** @brief Gets whether the frame-rate readout is currently visible (see isGizmoVisible). */
+    /** @brief Gets whether the frame-rate readout is currently visible (see isOverlayVisible).
+     *
+     * @return true when the readout exists and is enabled.
+     */
     [[nodiscard]] bool isStatsVisible() const noexcept;
 
   private:
@@ -474,11 +546,13 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
     /** @brief Sets the off-screen composite target (Deferred + transparent content). */
     void setCompositeTarget(intrusive_ptr<RenderTarget> target);
 
-    /** @brief Sets the axis-gizmo overlay's CONTENT (the pass that draws it is the one registered under kGizmoRole). */
-    void setGizmo(intrusive_ptr<AxisGizmo> gizmo);
-
-    /** @brief Sets the frame-rate overlay's CONTENT (the pass is the one registered under kStatsRole). */
-    void setFpsOverlay(intrusive_ptr<FpsOverlay> fps);
+    /** @brief One HUD overlay: the role its pass is registered under, its content, and how it lays itself out. */
+    struct Overlay
+    {
+        String          role;
+        raw_ptr<Object> content{ nullptr };
+        OverlayLayout   layout;
+    };
 
     /** @brief Role the axis-gizmo HUD pass is registered under. */
     inline static constexpr const char8_t kGizmoRole[] = u8"gizmo";
@@ -497,10 +571,10 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
     intrusive_ptr<RenderPass> window_pass_;
     intrusive_ptr<RenderTarget> offscreen_target_;
     intrusive_ptr<RenderTarget> composite_target_;
-    // The overlays' CONTENT (its scene, camera, box): the half a pass cannot hold. The pass that draws each one is
-    // registered under kGizmoRole / kStatsRole (see gizmoPass), so "is it on" and "where is it" are one lookup.
-    intrusive_ptr<AxisGizmo> gizmo_;
-    intrusive_ptr<FpsOverlay> fps_overlay_;
+    // The overlays, as VALUES (see addOverlay): a role (which is also the name the pass is registered under), the
+    // content object and its layout. No field per overlay and no pass handle here - the pass lives in the group and is
+    // found by role, and the content stays alive with whoever registered it.
+    std::vector<Overlay> overlays_;
     // The chain this pipeline was built as (the EFFECTIVE one) and the mode its picture means: what
     // setShadingMode decides "can this be expressed" on, and what a rebuild would start from. Set by the
     // builder, which is the only thing that builds chains.

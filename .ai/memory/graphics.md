@@ -43,7 +43,18 @@
 - **S4 的改名部分**：`RenderPipeline::windowPass()` → `presentingPass()`（"呈现的那条"不一定是"画内容的那条"，延迟链尤其
   如此），`RenderSurface`/`SceneView`/demo/appfw 注释/用例/两份指南同步；`RenderPipeline` 自己的三参 `addPass` 删除（无人
   调用，注册只走 group）。
-- **判据**：`test_graphics` 的 `PassGroupTest.*` 三条（撤掉自己那批 + 外来 pass 不受影响 + role 查回同一结点；引擎先
+- **S3 落地（同轮补上，overlay 值化）**：`RenderPipeline::addOverlay(role, content, PassDesc, layout)` 是**公开扩展点**
+  —— 配方里的 gizmo / 读数也走它；`overlayPass/overlayContent/setOverlayVisible/isOverlayVisible` 按 role 读写；
+  `resize()` 只跑每条 overlay 自己的 `OverlayLayout`（`(pass, w, h, ratio)`），不再特判 gizmo / 读数；`gizmo_` /
+  `fps_overlay_` 字段删除，类型化访问器成了 `obj_cast<AxisGizmo>(overlayContent(kGizmoRole))`。
+  **纠正自己上一版的说法**：不需要新的类型擦除容器 —— 擦除的**引用**仓库里早有（`Object` 是公共基类，读侧
+  `raw_ptr<Object>` + `obj_cast<T>`，`appfw::DocumentManager` 存 payload 就是这么做的），overlay 也不需要擦除的**拥有者**
+  （内容由登记方的 layout lambda 捕获 `intrusive_ptr` + pass 的 `before_draw` 保有）。`intrusive_ptr<Object>` 仍然编不过
+  （计数在 `RefCounted<T>` 里，不在 `Object` 上）。
+  判据：`PassGroupTest.AHostRegistersAThirdOverlayWithoutTouchingThePipeline`（宿主注册第三条 overlay：同一张引擎表、
+  自己的 role、自己的 layout、`resize` 里被调用、`setOverlayVisible` 只影响这一条、丢管线后 pass 表清零），加现有
+  Gizmo / FPS 用例不改即绿；`test_graphics` 407。
+- **判据**：`test_graphics` 的 `PassGroupTest.*` 四条（撤掉自己那批 + 外来 pass 不受影响 + role 查回同一结点；引擎先
   死 ⇒ `isValid()` false / `passes()` 空 / `add()` null；管线按 role 找到两条 HUD pass 且丢管线后 `passCount() == 0`）；
   两条老 HUD 用例不改即绿（`TheBuildOptionsDecideWhichOverlayPassesExist`、`OverlayVisibilityIsASwitchThatNeverRebuilds`）；
   `test_graphics` 406、`test_vsg` 481、`test_gui` 261、`test_core` 165；`PassGroupTest.*` ASan RESULT: PASS；6 个静态脚本

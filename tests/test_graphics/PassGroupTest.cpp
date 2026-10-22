@@ -1,4 +1,5 @@
 #include <vine/graphics/Camera.hpp>
+#include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/PassDesc.hpp>
 #include <vine/graphics/PassGroup.hpp>
 #include <vine/graphics/RenderEngine.hpp>
@@ -14,6 +15,7 @@
 
 using namespace vn::graphics;
 using vn::intrusive_ptr;
+using vn::raw_ptr;
 using vn::String;
 
 namespace {
@@ -123,4 +125,80 @@ TEST(PassGroupTest, ThePipelineFindsItsHudPassesByRoleAndHandsThemAllBack)
 
     pipeline = nullptr;
     EXPECT_EQ(engine->passCount(), 0u) << "dropping the pipeline drops the token that owned its passes";
+}
+
+/*
+ * @brief A THIRD overlay is a CALL, not a change to the class: the recipe's two go through the same public entry.
+ *
+ * An overlay is a value - a role, the content that owns its own box, and the layout that re-anchors it - so a host
+ * that wants another HUD layer registers one and the pipeline needs to know nothing about it. The alternative (a
+ * field and a resize() branch per overlay) is exactly what a second overlay used to cost.
+ */
+TEST(PassGroupTest, AHostRegistersAThirdOverlayWithoutTouchingThePipeline)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+
+    RenderPipelineBuilder builder(engine.get());
+    builder.setCamera(cam.get());
+    builder.setContent(content);
+
+    RenderPipelineOptions options;
+    options.fps.enabled         = true;  // one overlay the recipe knows; the host's is a second readout
+    auto pipeline               = builder.build(options);
+    ASSERT_NE(pipeline, nullptr);
+    const std::size_t recipe_passes = engine->passCount();
+
+    auto corner = intrusive_ptr<FpsOverlay>(new FpsOverlay());
+    corner->setSize(80, 24);
+
+    PassDesc hud;
+    hud.name          = u8"corner_readout";
+    hud.tag           = u8"Hud";
+    hud.stage         = PipelineStage::Overlay;
+    hud.order         = pipelineStageOrder(PipelineStage::Overlay) + 50;
+    hud.kind          = PassKind::Scene;
+    hud.camera        = intrusive_ptr<Camera>(corner->camera());
+    hud.content       = intrusive_ptr<Scene>(corner->content());
+    hud.viewport      = corner->boxViewport();
+    hud.clear_enabled = false;
+
+    int    laid_out_width  = 0;
+    int    laid_out_height = 0;
+    double laid_out_ratio  = 0.0;
+    const raw_ptr<RenderPass> hud_pass =
+        pipeline->addOverlay(String(u8"corner"), corner.get(), hud,
+                             [corner, &laid_out_width, &laid_out_height, &laid_out_ratio](RenderPass& pass,
+                                                                                         int width,
+                                                                                         int height,
+                                                                                         double ratio) {
+                                 laid_out_width  = width;
+                                 laid_out_height = height;
+                                 laid_out_ratio  = ratio;
+                                 corner->setPixelRatio(ratio);
+                                 corner->onSurfaceResized(width, height);
+                                 pass.setViewport(corner->boxViewport());
+                             });
+    ASSERT_NE(hud_pass, nullptr) << "a host-owned overlay registers through the same entry the recipe uses";
+    EXPECT_EQ(engine->passCount(), recipe_passes + 1) << "one more pass in the SAME table, under its own role";
+    EXPECT_EQ(pipeline->overlayContent(String(u8"corner")), corner.get()) << "the content comes back untyped";
+    EXPECT_EQ(pipeline->overlayPass(String(u8"corner")), hud_pass);
+
+    // The generic switch works on a role the class never heard of, and leaves the recipe's overlay alone.
+    EXPECT_TRUE(pipeline->isOverlayVisible(String(u8"corner")));
+    EXPECT_TRUE(pipeline->setOverlayVisible(String(u8"corner"), false));
+    EXPECT_FALSE(pipeline->isOverlayVisible(String(u8"corner")));
+    EXPECT_TRUE(pipeline->isStatsVisible());
+    EXPECT_FALSE(pipeline->setOverlayVisible(String(u8"no_such_role"), true))
+        << "a switch over a role nobody registered says so instead of silently doing nothing";
+
+    // resize() runs every overlay's own layout: the third one is laid out without being named in the pipeline.
+    pipeline->resize(800, 600, 2.0);
+    EXPECT_EQ(laid_out_width, 800);
+    EXPECT_EQ(laid_out_height, 600);
+    EXPECT_DOUBLE_EQ(laid_out_ratio, 2.0);
+
+    pipeline = nullptr;
+    EXPECT_EQ(engine->passCount(), 0u) << "the host's overlay left with the same token";
 }

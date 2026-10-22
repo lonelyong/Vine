@@ -1082,9 +1082,40 @@ se，析构什么也不做（表跟着引擎一起没了），
   `add()` 回答 null。
 - **移动是移交**：`PassGroup` 只能移动，且移动赋**先撤掉自己原来那批**再接管 ——
 默认移动会覆盖编号、把原来那批漏在帧里。
-- **谁在用**：`RenderPipeline` 就是"一个 `PassGroup` + 若干句柄"（`presentingPas
-s()` / `offscreenTarget()` / 两条 HUD），
-  它自己的析构不再有一条 for 循环，`passes` 也不再有第二份存储。
+- **谁在用**：`RenderPipeline` 就是"一个 `PassGroup` + 若干句柄"（`presentingPass()` / `offscreenTarget()` /
+  overlay 表），它自己的析构不再有一条 for 循环，`passes` 也不再有第二份存储。
+
+### 3.19 overlay 是值：`addOverlay`（加第三层 HUD 不用改类）
+
+一条 HUD 叠加由三件东西组成：画它的 pass、它"是什么"（内容对象）、以及表面尺寸变了它怎么重新摆放。这三件作为**值**
+登记在管线里，键就是那个 role：
+
+```cpp
+auto hud = pipeline->addOverlay(
+    vn::String(u8"corner"),                           // role：也是那条 pass 登记用的名字
+    corner_readout.get(),                             // 内容（非拥有，见下）
+    desc,                                             // HUD pass 的声明（同 §3.13）
+    [corner_readout](vn::graphics::RenderPass& pass, int w, int h, double ratio) {
+        corner_readout->setPixelRatio(ratio);
+        corner_readout->onSurfaceResized(w, h);
+        pass.setViewport(corner_readout->boxViewport());
+    });
+
+pipeline->overlayPass(vn::String(u8"corner"));              // 画它的那条 pass
+pipeline->overlayContent(vn::String(u8"corner"));           // 内容对象（裸指针，要类型就 obj_cast）
+pipeline->setOverlayVisible(vn::String(u8"corner"), false);  // 开关（就是 pass 的 enabled）
+pipeline->isOverlayVisible(vn::String(u8"corner"));
+```
+
+- **第三层 HUD 是一次调用**：`resize()` 只跑每条 overlay 自己的 layout，不再特判 gizmo / 读数，所以 host 加自己的 HUD
+  不需要碰 `RenderPipeline`。配方里的两条（坐标轴 gizmo、帧率读数）走的就是同一条路，只是另外保留了类型化访问器
+  （`gizmo()` / `fpsOverlay()` / `gizmoPass()` / `fpsOverlayPass()`），实现只有
+  `obj_cast<AxisGizmo>(overlayContent(...))` 一行。
+- **内容不归管线拥有**：登记方自己持有（上面的 lambda 捕获了 `intrusive_ptr`），表里存的是 `raw_ptr<Object>` ——
+  `Object` 是所有 graphics 对象的公共基类，读侧用 `obj_cast<T>` 回到具体类型（`appfw::DocumentManager` 存 payload
+  同理）。
+- **开关不重建**：可见性就是 pass 的 `enabled`，与 §3.10 的其它运行时开关一致；问一个没登记过的 role 会得到 false
+  并报一次问题 —— 静默无效比拒绝更难查。
 
 ## 4. 现成例子：怎么构建、怎么跑
 ### 4.1 构建
