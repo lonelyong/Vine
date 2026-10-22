@@ -512,8 +512,8 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
         EXPECT_EQ(scene_view->pipeline()->shadingMode(), item.mode);
         EXPECT_TRUE(scene_view->pipeline()->isStatsVisible()) << "命令不该把帧率读数顺手关掉";
         // 线框是"程序 + 光栅化"两个覆盖；其余档不许留下光栅化覆盖。
-        const auto polygon = scene_view->pipeline()->windowPass() != nullptr
-                                 ? scene_view->pipeline()->windowPass()->polygonModeOverride()
+        const auto polygon = scene_view->pipeline()->presentingPass() != nullptr
+                                 ? scene_view->pipeline()->presentingPass()->polygonModeOverride()
                                  : std::optional<vn::graphics::PolygonMode>{};
         if (item.wireframe) {
             ASSERT_TRUE(polygon.has_value());

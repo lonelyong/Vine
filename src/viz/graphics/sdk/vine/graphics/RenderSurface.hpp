@@ -21,7 +21,7 @@ class SceneView;
  *
  * @details
  * - The presentation is a DECLARATION with exactly one owner (this object): a host names its own main pass
- *   (`surface->present(pipeline->windowPass())`), and with nothing declared a view's default window pass presents
+ *   (`surface->present(pipeline->presentingPass())`), and with nothing declared a view's default window pass presents
  *   the area (`surface->present(*view)`).
  * - ONE AREA, ONE PICTURE: a second presentation of any kind is refused and reported once - two passes cannot both
  *   be the picture, and the swapchain's ONE clear means the presenting pass is whose clear policy the frame starts

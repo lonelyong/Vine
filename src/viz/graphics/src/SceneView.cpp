@@ -186,7 +186,7 @@ void SceneView::setScene(intrusive_ptr<Scene> scene)
     // scene.
     if (pipeline_ != nullptr) {
         if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
-            if (RenderPass* window = pipeline_->windowPass(); window != nullptr) {
+            if (RenderPass* window = pipeline_->presentingPass(); window != nullptr) {
                 engine->bindPassContent(window, scene_);
             }
         }

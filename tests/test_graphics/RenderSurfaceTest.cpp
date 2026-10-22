@@ -80,15 +80,15 @@ TEST(RenderSurfaceTest, PresentingAViewDeclaresWhatItDraws)
     EXPECT_TRUE(surface->present(*view));
     EXPECT_TRUE(surface->hasPresentation());
     EXPECT_EQ(engine->passCount(), 1u) << "one pass: the window pass of the pipeline that was adopted";
-    EXPECT_EQ(surface->presentingPass(), pipeline->windowPass());
+    EXPECT_EQ(surface->presentingPass(), pipeline->presentingPass());
     EXPECT_EQ(surface->presentedView(), view.get());
 
     // Declaring the same view twice is ONE presentation.
     EXPECT_FALSE(surface->present(*view));
-    EXPECT_EQ(surface->presentingPass(), pipeline->windowPass());
+    EXPECT_EQ(surface->presentingPass(), pipeline->presentingPass());
 
     // Naming the very pass that presents the area is the same picture again - not a second presentation.
-    EXPECT_FALSE(surface->present(pipeline->windowPass()));
+    EXPECT_FALSE(surface->present(pipeline->presentingPass()));
     EXPECT_EQ(surface->presentedView(), view.get())
         << "declaring the pass again must not turn the view's presentation into a host pass";
 
@@ -152,7 +152,7 @@ TEST(RenderSurfaceTest, ThePassFollowsARebuiltPipeline)
     ASSERT_NE(buildFor(view, engine.get(), with_gizmo), nullptr);
     ASSERT_NE(view->pipeline(), nullptr);
     EXPECT_NE(surface->presentingPass(), first);
-    EXPECT_EQ(surface->presentingPass(), view->pipeline()->windowPass());
+    EXPECT_EQ(surface->presentingPass(), view->pipeline()->presentingPass());
     EXPECT_EQ(surface->presentedView(), view.get());
 }
 
@@ -284,7 +284,7 @@ TEST(RenderSurfaceTest, OneAreaDrawsOnePicture)
 
     EXPECT_FALSE(surface->present(*second)) << "a second view is not a split - it is a second picture";
     EXPECT_EQ(surface->presentedView(), first.get());
-    EXPECT_EQ(surface->presentingPass(), first->pipeline()->windowPass());
+    EXPECT_EQ(surface->presentingPass(), first->pipeline()->presentingPass());
 
     auto host_pass = intrusive_ptr<RenderPass>(new RenderPass());
     engine->addPass(host_pass, 40);
@@ -339,7 +339,7 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
     auto surface = engine->createSurface();
-    RenderPass* const window = view->pipeline()->windowPass();
+    RenderPass* const window = view->pipeline()->presentingPass();
     ASSERT_NE(window, nullptr);
     EXPECT_TRUE(window->isClearEnabled());
 
@@ -364,8 +364,8 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
     auto deferred_view = viewOn(deferred_engine.get(), deferred);
     auto deferred_area = deferred_engine->createSurface();
     ASSERT_TRUE(deferred_area->present(*deferred_view));
-    ASSERT_NE(deferred_view->pipeline()->windowPass(), nullptr);
-    EXPECT_FALSE(deferred_view->pipeline()->windowPass()->isClearEnabled());
+    ASSERT_NE(deferred_view->pipeline()->presentingPass(), nullptr);
+    EXPECT_FALSE(deferred_view->pipeline()->presentingPass()->isClearEnabled());
 }
 
 TEST(RenderSurfaceTest, APresentedViewThatDiesLeavesTheSurface)

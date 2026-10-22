@@ -211,7 +211,10 @@ bool RenderPipelineBuilder::applyOverlays(RenderPipeline& pipeline, const Render
         // The one thing that must happen before it draws: mirror the source camera's orientation onto the
         // framing one.
         desc.before_draw   = [gizmo] { gizmo->update(); };
-        pipeline.setGizmo(gizmo, pipeline.addPass(desc));
+        // Registered under the role the pipeline reads it back by (see RenderPipeline::gizmoPass): the recipe states
+        // the overlay's CONTENT and the label its pass carries, not a second handle that has to be kept in step.
+        pipeline.addPass(desc, String(RenderPipeline::kGizmoRole));
+        pipeline.setGizmo(gizmo);
     }
 
     // A frame-rate readout (bottom-right corner). It measures the actual
@@ -234,7 +237,8 @@ bool RenderPipelineBuilder::applyOverlays(RenderPipeline& pipeline, const Render
         desc.depth_mode    = DepthMode::Disabled;
         // Measure the frame rate and repaint the digits (see FpsOverlay::update).
         desc.before_draw   = [fps] { fps->update(); };
-        pipeline.setFpsOverlay(fps, pipeline.addPass(desc));
+        pipeline.addPass(desc, String(RenderPipeline::kStatsRole));
+        pipeline.setFpsOverlay(fps);
     }
     return true;
 }

@@ -486,6 +486,11 @@ intrusive_ptr<RenderPass> RenderEngine::insertSlot(Slot slot)
 
 intrusive_ptr<RenderPass> RenderEngine::addPass(const PassDesc& desc)
 {
+    return addPassToGroup(desc, 0, String());
+}
+
+intrusive_ptr<RenderPass> RenderEngine::addPassToGroup(const PassDesc& desc, std::uint64_t group, const String& role)
+{
     // The declaration is turned into the execution node of its kind ONCE, and the node then IS the declaration
     // (RenderPass::setDesc): a descriptor-declared pass and a hand-built one cannot drift apart, because by the time
     // the engine holds it, it is a hand-built pass (which is also what keeps the escape hatch the same thing).
@@ -537,7 +542,59 @@ intrusive_ptr<RenderPass> RenderEngine::addPass(const PassDesc& desc)
     Slot slot;
     slot.pass  = std::move(node);
     slot.order = desc.order.value_or(pipelineStageOrder(desc.stage));
+    slot.group = group;
+    slot.role  = role;
     return insertSlot(std::move(slot));
+}
+
+PassGroup RenderEngine::createPassGroup() noexcept
+{
+    return PassGroup(lease(), next_pass_group_++);
+}
+
+void RenderEngine::removePassGroup(std::uint64_t group) noexcept
+{
+    if (group == 0) {
+        return;  // 0 is "registered without a group": no token owns those passes
+    }
+    // Collected first: removePass() mutates the table, and the release path it takes (backend state, an owned
+    // target) must run once per pass - which is exactly what removePass does for a handle.
+    std::vector<raw_ptr<RenderPass>> doomed;
+    for (const Slot& slot : slots_) {
+        if (slot.group == group && slot.pass != nullptr) {
+            doomed.push_back(slot.pass.get());
+        }
+    }
+    for (raw_ptr<RenderPass> pass : doomed) {
+        removePass(pass);
+    }
+}
+
+std::vector<intrusive_ptr<RenderPass>> RenderEngine::groupPasses(std::uint64_t group) const
+{
+    std::vector<intrusive_ptr<RenderPass>> passes;
+    if (group == 0) {
+        return passes;
+    }
+    for (const Slot& slot : slots_) {
+        if (slot.group == group && slot.pass != nullptr) {
+            passes.push_back(slot.pass);
+        }
+    }
+    return passes;
+}
+
+raw_ptr<RenderPass> RenderEngine::groupPass(std::uint64_t group, const String& role) const
+{
+    if (group == 0) {
+        return nullptr;
+    }
+    for (const Slot& slot : slots_) {
+        if (slot.group == group && slot.pass != nullptr && slot.role == role) {
+            return slot.pass.get();
+        }
+    }
+    return nullptr;
 }
 
 VN_GRAPHICS_NS_END

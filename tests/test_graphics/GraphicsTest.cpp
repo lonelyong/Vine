@@ -3454,8 +3454,8 @@ TEST(SceneViewTest, AViewDrawsThePipelineItAdopted)
     EXPECT_EQ(engine->passCount(), 1u);
     EXPECT_EQ(view->pipeline(), pipeline.get());
     // The pass IS the window pass: it draws this view's camera to the backbuffer (both were given to the builder).
-    ASSERT_NE(pipeline->windowPass(), nullptr);
-    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), view->camera()));
+    ASSERT_NE(pipeline->presentingPass(), nullptr);
+    EXPECT_TRUE(drawsToWindow(pipeline->presentingPass(), view->camera()));
 
     // Adopting the pipeline it already has is one pipeline, and nothing is re-registered.
     view->setPipeline(pipeline);
@@ -3523,7 +3523,7 @@ TEST(SceneViewTest, AdoptingAPipelineDoesNotStandDownForSomebodyElsesPass)
     auto pipeline = buildFor(*view, engine.get());
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->passCount(), 2u) << "the adopted pipeline registers its passes beside whatever is there";
-    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), view->camera()));
+    EXPECT_TRUE(drawsToWindow(pipeline->presentingPass(), view->camera()));
 }
 
 TEST(LightRigTest, StudioIsAmbientPlusKeyAndFill)
@@ -3623,8 +3623,8 @@ TEST(SceneViewViewportTest, ADefaultBuildIsTheBehaviourBeforeAnyOptions)
     EXPECT_FALSE(pipeline->isStatsVisible());
     // A full viewport is what "no viewport" already means: the pass is left without one, so the default path is
     // byte-for-byte the pipeline it was before viewports existed.
-    ASSERT_NE(pipeline->windowPass(), nullptr);
-    EXPECT_FALSE(pipeline->windowPass()->hasViewport());
+    ASSERT_NE(pipeline->presentingPass(), nullptr);
+    EXPECT_FALSE(pipeline->presentingPass()->hasViewport());
 }
 
 TEST(SceneViewViewportTest, TheBuildOptionsDecideWhichOverlayPassesExist)
@@ -3670,7 +3670,7 @@ TEST(SceneViewViewportTest, TheBuildOptionsDecideWhichOverlayPassesExist)
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(pass_names(), (std::vector<String>{ u8"main" }))
         << "one pass, still the window pass, and nothing else left over";
-    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), view->camera()));
+    EXPECT_TRUE(drawsToWindow(pipeline->presentingPass(), view->camera()));
 }
 
 TEST(SceneViewViewportTest, OverlayVisibilityIsASwitchThatNeverRebuilds)
@@ -3795,7 +3795,7 @@ TEST(SceneViewViewportTest, ThePassLevelPolygonModeOverridesTheContentAndCanBeCl
 
     auto pipeline            = buildFor(*view, engine.get());
     ASSERT_NE(pipeline, nullptr);
-    RenderPass* const window = pipeline->windowPass();
+    RenderPass* const window = pipeline->presentingPass();
     ASSERT_NE(window, nullptr);
 
     // No override: the content's own Line reaches the backend (and the default is exactly that).
@@ -3863,7 +3863,7 @@ TEST(SceneViewViewportTest, WireframeIsAnEdgePassWithTheUnlitColourAndNoRebuild)
     ASSERT_NE(pipeline, nullptr);
 
     // Held for the length of the test: "the same pipeline" then means the same OBJECT, not the same address.
-    RenderPass* const window = pipeline->windowPass();
+    RenderPass* const window = pipeline->presentingPass();
     ASSERT_NE(window, nullptr);
     const std::size_t pass_count = engine->passCount();
     ASSERT_FALSE(window->polygonModeOverride().has_value());
@@ -3894,7 +3894,7 @@ TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
 
     // Held while the "no rebuild" claims are checked: identity here means the same OBJECT, so the claim cannot
     // pass on a recycled address.
-    RenderPass* const window = pipeline->windowPass();
+    RenderPass* const window = pipeline->presentingPass();
     ASSERT_NE(window, nullptr);
     const std::size_t pass_count = engine->passCount();
 
@@ -3952,7 +3952,7 @@ TEST(SceneViewViewportTest, ANonLitModeOnADeferredRecipeBuildsTheForwardChain)
     EXPECT_EQ(pipeline->shadingPath(), ShadingPath::Forward) << "记的是实际建成的链，不是选项里写的那个";
     EXPECT_EQ(pipeline->shadingMode(), ShadingMode::Unlit);
     EXPECT_EQ(pipeline->offscreenTarget(), nullptr) << "非 Lit 档不需要 G-buffer";
-    RenderPass* const window = pipeline->windowPass();
+    RenderPass* const window = pipeline->presentingPass();
     ASSERT_NE(window, nullptr);
     ASSERT_NE(window->programOverride(), nullptr) << "画面由这条 pass 用无光照程序产出";
     EXPECT_NE(window->programOverride()->name().find(u8"builtin_forward_unlit"), vn::String::npos);
@@ -3970,7 +3970,7 @@ TEST(SceneViewViewportTest, ANonLitModeOnADeferredRecipeBuildsTheForwardChain)
     ASSERT_NE(deferred, nullptr);
     EXPECT_EQ(deferred->shadingPath(), ShadingPath::Deferred);
     EXPECT_NE(deferred->offscreenTarget(), nullptr) << "Lit 档回到延迟：G-buffer 是它的输入";
-    RenderPass* const lit = deferred->windowPass();
+    RenderPass* const lit = deferred->presentingPass();
     ASSERT_NE(lit, nullptr);
     EXPECT_EQ(lit->programOverride(), nullptr);
     EXPECT_FALSE(lit->polygonModeOverride().has_value());
@@ -4003,7 +4003,7 @@ TEST(SceneViewViewportTest, SwitchingBetweenNonLitModesOnADeferredRecipeKeepsThe
     EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Normals));
     EXPECT_EQ(view->pipeline(), pipeline.get()) << "同一条链上换档不该重建";
     EXPECT_EQ(engine->passCount(), passes);
-    EXPECT_NE(pipeline->windowPass()->programOverride()->name().find(u8"builtin_forward_normals"),
+    EXPECT_NE(pipeline->presentingPass()->programOverride()->name().find(u8"builtin_forward_normals"),
               vn::String::npos);
 
     EXPECT_TRUE(pipeline->setShadingMode(ShadingMode::Wireframe));
@@ -4055,7 +4055,7 @@ TEST(SceneViewViewportTest, TheAreaSizeDrivesAspectAndLayoutSteps)
     // The picture IS the area: the window pass keeps no rectangle of its own (what a pass without a viewport already
     // means), so the default path is byte-for-byte the pipeline it was before viewports existed. A host that wants a
     // sub-rectangle states one on the pass itself, in device pixels (RenderPass::setViewport).
-    RenderPass* const window = pipeline->windowPass();
+    RenderPass* const window = pipeline->presentingPass();
     ASSERT_NE(window, nullptr);
     EXPECT_FALSE(window->hasViewport());
 
@@ -4213,7 +4213,7 @@ TEST(SceneViewViewportTest, AViewWhoseEngineWasReleasedReportsIt)
     view->resize(800, 600, 1.0);
     EXPECT_DOUBLE_EQ(view->camera()->aspect(), 800.0 / 600.0);
     EXPECT_EQ(view->surfaceWidth(), 800);
-    EXPECT_FALSE(pipeline->windowPass()->hasViewport()) << "the picture is the area: no rectangle of its own";
+    EXPECT_FALSE(pipeline->presentingPass()->hasViewport()) << "the picture is the area: no rectangle of its own";
 }
 
 TEST(SceneViewTest, DefaultManipulatorBindsViewCameraAndScene)
@@ -5169,20 +5169,20 @@ TEST(RenderPipelineBuilderTest, ForwardPathBuildsWindowPass)
     auto pipeline = builder.build(RenderPipelineOptions{});
 
     ASSERT_NE(pipeline, nullptr);
-    ASSERT_NE(pipeline->windowPass(), nullptr);
+    ASSERT_NE(pipeline->presentingPass(), nullptr);
     EXPECT_EQ(engine->passCount(), 1u);
     // One pass, and the plan says what it is: the window pass drawing the bound content through the pipeline's
     // camera to the backbuffer, clearing the window grey - the frame's shape in one line instead of three
     // assertions about a handle.
     const FramePlan plan = engine->framePlan();
     ASSERT_EQ(plan.passes.size(), 1u);
-    EXPECT_EQ(plan.passes[0].pass, pipeline->windowPass());
+    EXPECT_EQ(plan.passes[0].pass, pipeline->presentingPass());
     EXPECT_EQ(plan.passes[0].name, u8"main");
     EXPECT_EQ(plan.passes[0].content, content.get());
     EXPECT_EQ(plan.passes[0].camera, cam.get());
     EXPECT_EQ(plan.passes[0].target, nullptr) << "no target: the window";
     EXPECT_TRUE(plan.passes[0].clears);
-    EXPECT_EQ(engine->contentOf(pipeline->windowPass()), content.get());
+    EXPECT_EQ(engine->contentOf(pipeline->presentingPass()), content.get());
     EXPECT_EQ(pipeline->offscreenTarget(), nullptr);
 }
 
@@ -5228,7 +5228,7 @@ TEST(RenderPipelineBuilderTest, DroppingThePipelineUnregistersItsPasses)
         auto pipeline         = builder.build(opts);
         ASSERT_NE(pipeline, nullptr);
         EXPECT_EQ(engine->passCount(), 2u); // G-buffer + lighting
-        EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
+        EXPECT_TRUE(drawsToWindow(pipeline->presentingPass(), cam.get()));
     }
     EXPECT_EQ(engine->passCount(), 0u) << "a dropped pipeline must not leave its passes registered";
 }
@@ -5309,7 +5309,7 @@ TEST(RenderPipelineBuilderTest, AShadowThisPipelineCannotShadeIsReported)
     // use it — which is a per-drawable question the backend answers (see the vsg backend's
     // "declares no shadow_map" report).
     EXPECT_TRUE(reported.empty()) << "the forward path builds the shadow pass, so it has nothing to report";
-    EXPECT_NE(forward->windowPass(), nullptr);
+    EXPECT_NE(forward->presentingPass(), nullptr);
     EXPECT_EQ(forward->offscreenTarget(), nullptr);
 
     // The SAME request on the deferred path is honoured the same way: the pass is built, so there is
@@ -5514,9 +5514,9 @@ TEST(RenderPipelineBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
     EXPECT_EQ(engine->passCount(), 2u);
     // The lighting pass presents the view camera, so a host that declares it owns the surface's presentation
     // (RenderSurface) - no second forward window pass beside it.
-    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
+    EXPECT_TRUE(drawsToWindow(pipeline->presentingPass(), cam.get()));
 
-    RenderPass* window = pipeline->windowPass();
+    RenderPass* window = pipeline->presentingPass();
     ASSERT_NE(window, nullptr);
     EXPECT_EQ(window->camera(), cam.get());
     EXPECT_EQ(window->renderTarget(), nullptr);
@@ -5763,9 +5763,9 @@ TEST(RenderPipelineBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)
 
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->passCount(), 2u);
-    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
+    EXPECT_TRUE(drawsToWindow(pipeline->presentingPass(), cam.get()));
     // The lighting window pass received the built-in default fragment program.
-    auto* light = dynamic_cast<ScreenPass*>(pipeline->windowPass());
+    auto* light = dynamic_cast<ScreenPass*>(pipeline->presentingPass());
     ASSERT_NE(light, nullptr);
     EXPECT_NE(light->program(), nullptr);
 }
@@ -6075,7 +6075,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsCompos
     // four registered passes (the opaque scene is rasterised once — the
     // composite reuses the G-buffer depth instead of re-rendering it).
     EXPECT_EQ(engine->passCount(), 4u);
-    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
+    EXPECT_TRUE(drawsToWindow(pipeline->presentingPass(), cam.get()));
 
     // Both off-screen stages exist: the G-buffer (sampled by the lighting) and
     // the composite (baked off-screen, then presented to the window).
@@ -6094,7 +6094,7 @@ TEST(RenderPipelineBuilderTest, DeferredPresetWithTransparentContentBuildsCompos
     // The window pass is the PRESENT pass: it carries the view camera (so
     // RenderControl / SceneView add no default forward pass), targets the
     // window, does not clear, and consumes the published composite.
-    auto* present = dynamic_cast<ScreenPass*>(pipeline->windowPass());
+    auto* present = dynamic_cast<ScreenPass*>(pipeline->presentingPass());
     ASSERT_NE(present, nullptr);
     EXPECT_EQ(present->camera(), cam.get());
     EXPECT_EQ(present->renderTarget(), nullptr);
@@ -6251,9 +6251,9 @@ TEST(RenderPipelineBuilderTest, ForwardPresetWithTransparentContentStacksDepthOn
     ASSERT_NE(pipeline, nullptr);
     // Main order-0 window content pass + order-1 transparent content pass.
     EXPECT_EQ(engine->passCount(), 2u);
-    ASSERT_NE(pipeline->windowPass(), nullptr);
-    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
-    EXPECT_EQ(engine->contentOf(pipeline->windowPass()), content.get());
+    ASSERT_NE(pipeline->presentingPass(), nullptr);
+    EXPECT_TRUE(drawsToWindow(pipeline->presentingPass(), cam.get()));
+    EXPECT_EQ(engine->contentOf(pipeline->presentingPass()), content.get());
     // Forward composites nothing off-screen: no composite target.
     EXPECT_EQ(pipeline->compositeTarget(), nullptr);
 }
@@ -6329,7 +6329,7 @@ TEST(RenderPipelineBuilderTest, GizmoOverlayConfiguredOnPreset)
     ASSERT_NE(pipeline->gizmo(), nullptr);
     // Window pass + the gizmo HUD pass.
     EXPECT_EQ(engine->passCount(), 2u);
-    EXPECT_TRUE(drawsToWindow(pipeline->windowPass(), cam.get()));
+    EXPECT_TRUE(drawsToWindow(pipeline->presentingPass(), cam.get()));
 
     // resize() re-anchors the gizmo even without an off-screen target; a
     // frame draws both the window and the gizmo without crashing.

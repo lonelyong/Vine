@@ -321,7 +321,7 @@ TEST(RenderControlTest, TheControlsSurfacePresentsItsOwnViewByDefault)
 
     // 那块 pass 就是该视图默认管线里那条窗口 pass（视图重建时表跟着走 —— 见 RenderSurfaceTest）。
     ASSERT_NE(control->view()->pipeline(), nullptr);
-    EXPECT_EQ(surface->presentingPass(), control->view()->pipeline()->windowPass());
+    EXPECT_EQ(surface->presentingPass(), control->view()->pipeline()->presentingPass());
     // 这块表面的**唯一一口清屏**留在要清的那条 pass 上（默认画面照旧清成窗口灰）：区不碰它的清屏策略。
     EXPECT_TRUE(surface->presentingPass()->isClearEnabled());
 
@@ -749,13 +749,13 @@ TEST(RenderControlTest, AHostPassTakesTheAreaAndTheViewerStandsDown)
     builder.setContent(view->scene());
     auto host_pipeline = builder.build({});
     ASSERT_NE(host_pipeline, nullptr);
-    ASSERT_TRUE(surface->present(host_pipeline->windowPass()));
+    ASSERT_TRUE(surface->present(host_pipeline->presentingPass()));
 
     host.show();
     ASSERT_TRUE(pumpUntil([&] { return control->state() == RenderControl::SurfaceState::Presenting; }, 3000));
     EXPECT_FALSE(control->viewer()->isActive()) << "有宿主自建的 pass 在 ⇒ 查看器不是这块表面的呈现者";
     EXPECT_EQ(surface->presentedView(), nullptr) << "呈现者是宿主自建的 pass，没有视图";
-    EXPECT_EQ(surface->presentingPass(), host_pipeline->windowPass());
+    EXPECT_EQ(surface->presentingPass(), host_pipeline->presentingPass());
     EXPECT_EQ(view->pipeline(), nullptr) << "主人自己搭 pass 时，默认链不该被建出来";
 
     // 后半：先让查看器上线，再接管 —— 一块区一次只画一幅画，所以接管是"查看器先放手，宿主再声明"（第二条呈现会被
@@ -771,13 +771,13 @@ TEST(RenderControlTest, AHostPassTakesTheAreaAndTheViewerStandsDown)
     live_builder.setContent(live_view->scene());
     auto taken_over = live_builder.build({});
     ASSERT_NE(taken_over, nullptr);
-    EXPECT_FALSE(live.control()->surface()->present(taken_over->windowPass()))
+    EXPECT_FALSE(live.control()->surface()->present(taken_over->presentingPass()))
         << "查看器还在呈现这块区：第二条呈现是被拒的";
     ASSERT_TRUE(live.control()->viewer()->release(live_view)) << "查看器放手";
-    ASSERT_TRUE(live.control()->surface()->present(taken_over->windowPass()));
+    ASSERT_TRUE(live.control()->surface()->present(taken_over->presentingPass()));
     EXPECT_FALSE(live.control()->viewer()->isActive()) << "接管之后：呈现者是宿主自建的 pass";
     EXPECT_EQ(live.control()->surface()->presentedView(), nullptr);
-    EXPECT_EQ(live.control()->surface()->presentingPass(), taken_over->windowPass());
+    EXPECT_EQ(live.control()->surface()->presentingPass(), taken_over->presentingPass());
 }
 
 // release(view)：撤掉查看器为这个视图做的那条声明 —— 表里没有它，isActive() 也立刻为 false。还给宿主的只是这个

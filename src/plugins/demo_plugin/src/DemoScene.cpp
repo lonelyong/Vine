@@ -1478,7 +1478,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     // passes would draw over each other. Declared here rather than in the control because the demo - not the
     // control - owns this pipeline.
     if (auto* surface = render_control->surface(); surface != nullptr) {
-        surface->present(pipeline->windowPass());
+        surface->present(pipeline->presentingPass());
     }
 
     // Deferred preset: the builder's G-buffer pass published its MRT target

@@ -133,7 +133,7 @@ classDiagram
         +bindTarget(target)
     }
     class RenderPipeline {
-        +windowPass() RenderPass*
+        +presentingPass() RenderPass*
         +setShadingMode(mode)
         +setGizmoVisible(bool)
         +setStatsVisible(bool)

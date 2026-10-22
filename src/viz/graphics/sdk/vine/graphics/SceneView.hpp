@@ -250,7 +250,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * nothing.
      *
      * @details
-     * - The handle for inspection and micro-tuning: `windowPass()` (what presents this view), `gizmoPass()` /
+     * - The handle for inspection and micro-tuning: `presentingPass()` (what presents this view), `gizmoPass()` /
      *   `fpsOverlayPass()` (their state IS the overlay's visibility), `gizmo()` / `fpsOverlay()` (the content
      *   objects), `offscreenTarget()`, `setShadingMode()`.
      * - The view shares ownership of it, so it stays alive while the view draws through it; letting it go is

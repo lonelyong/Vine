@@ -332,17 +332,27 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
     EXPECT_EQ(mapped->polygon_mode, VK_POLYGON_MODE_LINE);
     EXPECT_EQ(mapped->topology, VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
     EXPECT_EQ(mapped->color_attachment_count, 1U);
-    // Blending is always on for ONE attachment - the per-vertex opacity path, where an alpha may drop
-    // below 1 without a rebuild - and always off for several, where the attachments are DATA (a
-    // G-buffer's normal rides with the material's shininess in its alpha). Several attachments are
-    // pinned device-free in DynamicStateTest.SeveralColourAttachmentsAreDeliveredUnblended; the rule
-    // itself is the L2's own (applyOpaqueBlendForAttachments, VsgSceneRules.hpp).
-    EXPECT_EQ(mapped->blend[0].blendEnable, VK_TRUE) << "one attachment: the engine's opacity path";
-    EXPECT_EQ(mapped->blend[0].srcColorBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA)
-        << "a state that does not opt in gets the standard pair";
-    EXPECT_EQ(mapped->blend[0].dstColorBlendFactor, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
-    EXPECT_EQ(mapped->blend[0].srcAlphaBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA);
-    EXPECT_EQ(mapped->blend[0].dstAlphaBlendFactor, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+    // Blending is the RESOLVED state's, not the attachment count's: an alpha below 1 is what the compiler merges
+    // into the enable (FrameCompiler::resolveCommands), so a state that does not opt in stays opaque - an opaque
+    // material must not blend just because a fragment wrote an alpha. ONE attachment of a content draw is the shape
+    // that CAN blend; several are DATA (a G-buffer's normal rides the material's shininess in its alpha, so
+    // blending would attenuate the stored normal - the rule is the L2's, applyOpaqueBlendForAttachments in
+    // VsgSceneRules.hpp, and DynamicStateTest pins the multi-attachment answer).
+    EXPECT_EQ(mapped->blend[0].blendEnable, VK_FALSE) << "a state that does not opt in does not blend";
+    EXPECT_EQ(mapped->blend[0].srcColorBlendFactor, VK_BLEND_FACTOR_ONE) << "no blend, no factors";
+    EXPECT_EQ(mapped->blend[0].dstColorBlendFactor, VK_BLEND_FACTOR_ZERO);
+
+    // The translucent path: a command whose opacity dropped below 1 arrives here with the enable already merged in,
+    // and what is delivered is the standard alpha pair.
+    DynamicState translucent_blend;
+    translucent_blend.blend.enabled = true;
+    const auto standard             = vn::vsg::makeDynamicStateCommand(translucent_blend, 1U, none);
+    EXPECT_EQ(standard->blend[0].blendEnable, VK_TRUE) << "one attachment: the engine's opacity path";
+    EXPECT_EQ(standard->blend[0].srcColorBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA)
+        << "a state that opts in with the default pair gets the standard pair";
+    EXPECT_EQ(standard->blend[0].dstColorBlendFactor, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+    EXPECT_EQ(standard->blend[0].srcAlphaBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA);
+    EXPECT_EQ(standard->blend[0].dstAlphaBlendFactor, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
 
     DynamicState opted_in;
     opted_in.blend.enabled = true;

@@ -138,7 +138,7 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
 
     // The picture pass draws into the fixture's off-screen target instead of the window: the SDK's own pass
     // object, with the SDK's own mode applied to it, so the ONE thing this case turns on is the polygon mode.
-    RenderPass* const picture = view->pipeline()->windowPass();
+    RenderPass* const picture = view->pipeline()->presentingPass();
     ASSERT_NE(picture, nullptr);
     picture->setRenderTarget(fixture.target);
     picture->setClearEnabled(true);
@@ -154,7 +154,7 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
     // 这里**不判**"pass 上多了个 PolygonMode::Line 覆盖"：那是 M1 在 test_graphics 的结构判据；这一条判的是像素，
     // 覆盖没到光栅器就该由画面来说（否则结构断言会先红，抢掉像素判据的那一刀）。
     EXPECT_TRUE(view->pipeline()->setShadingMode(ShadingMode::Wireframe));
-    ASSERT_EQ(view->pipeline()->windowPass(), picture) << "链条内换档不重建（M1 的另一半）";
+    ASSERT_EQ(view->pipeline()->presentingPass(), picture) << "链条内换档不重建（M1 的另一半）";
 
     const PixelProbe lines = fixture.read();
     ASSERT_TRUE(lines.valid());
@@ -260,7 +260,7 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
     ASSERT_NE(pipeline, nullptr) << "延迟预设必须建得起来";
 
     // 夹具的"窗口"是后端自己开的，读不回来：把画面那条 pass 指到夹具的目标上，预览才有东西可叠。
-    RenderPass* const picture = pipeline->windowPass();
+    RenderPass* const picture = pipeline->presentingPass();
     ASSERT_NE(picture, nullptr);
     picture->setRenderTarget(fixture.target);
     picture->setClearEnabled(true);

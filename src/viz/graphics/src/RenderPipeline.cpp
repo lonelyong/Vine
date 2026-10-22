@@ -1,6 +1,7 @@
 ﻿#include <vine/graphics/RenderPipeline.hpp>
 
 #include <algorithm>
+#include <vector>
 
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
@@ -14,25 +15,22 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-RenderPipeline::RenderPipeline(Lease<RenderEngine> engine) : engine_(engine) {}
+RenderPipeline::RenderPipeline(Lease<RenderEngine> engine) : engine_(engine)
+{
+    if (raw_ptr<RenderEngine> raw = engine_.get()) {
+        group_ = raw->createPassGroup();
+    }
+}
 
 RenderPipeline::~RenderPipeline()
 {
-    // Hand every pass back to the engine that runs it: a pass left registered
-    // keeps executing with nobody holding the handle that would have removed it
-    // (see the class comment). Removing one the engine no longer has is a no-op,
-    // so a host that removed a pass itself is not punished for it.
+    // Nothing to do here: the group is a token over the engine's own slot table, and dropping it is what hands every
+    // pass this pipeline registered back to the engine (see PassGroup). A pass left registered keeps executing with
+    // nobody holding the handle that would have removed it, which is exactly what the token exists to prevent.
     //
     // A pipeline can outlive its engine (a host may keep one after dropping the control that owned the engine): the
     // lease then answers nullptr, the engine's own list went with it, and the passes die with this pipeline. That is
     // why the borrow is a lease and not a raw pointer.
-    raw_ptr<RenderEngine> engine = engine_.get();
-    if (engine == nullptr) {
-        return;
-    }
-    for (const auto& pass : passes_) {
-        engine->removePass(pass.get());
-    }
 }
 
 raw_ptr<RenderEngine> RenderPipeline::engine() const noexcept
@@ -47,12 +45,13 @@ bool RenderPipeline::draws(raw_ptr<const Scene> scene) const noexcept
     }
     // Every pass of the chain, not just the presenting one: on a deferred chain the scene is drawn into the G-buffer
     // and the window pass presents a target (see the declaration).
-    return std::any_of(passes_.begin(), passes_.end(), [scene](const intrusive_ptr<RenderPass>& pass) {
+    const std::vector<intrusive_ptr<RenderPass>> passes = group_.passes();
+    return std::any_of(passes.begin(), passes.end(), [scene](const intrusive_ptr<RenderPass>& pass) {
         return pass != nullptr && pass->content() == scene;
     });
 }
 
-raw_ptr<RenderPass> RenderPipeline::windowPass() const
+raw_ptr<RenderPass> RenderPipeline::presentingPass() const
 {
     return window_pass_.get();
 }
@@ -79,12 +78,12 @@ raw_ptr<FpsOverlay> RenderPipeline::fpsOverlay() const
 
 raw_ptr<RenderPass> RenderPipeline::gizmoPass() const
 {
-    return gizmo_pass_.get();
+    return group_.pass(kGizmoRole);
 }
 
 raw_ptr<RenderPass> RenderPipeline::fpsOverlayPass() const
 {
-    return fps_overlay_pass_.get();
+    return group_.pass(kStatsRole);
 }
 
 ShadingPath RenderPipeline::shadingPath() const noexcept
@@ -116,7 +115,7 @@ bool RenderPipeline::setShadingMode(ShadingMode mode)
     }
     mode_refused_.rearm();  // the condition is over: the next refusal is a new episode
 
-    RenderPass* const picture = windowPass();
+    RenderPass* const picture = presentingPass();
     if (picture == nullptr) {
         return false;  // nothing draws: there is no picture pass to override
     }
@@ -153,7 +152,7 @@ bool RenderPipeline::setShadingMode(ShadingMode mode)
 
 bool RenderPipeline::setGizmoVisible(bool on)
 {
-    if (gizmo_pass_ == nullptr) {
+    if (gizmoPass() == nullptr) {
         // A switch that silently did nothing would leave a host believing the overlay was just hidden: its
         // existence is a build decision (RenderPipelineOptions::gizmo). Once per episode, because a host may ask every
         // frame and the condition - not the call - is the news.
@@ -168,13 +167,13 @@ bool RenderPipeline::setGizmoVisible(bool on)
         return false;
     }
     overlay_refused_.rearm();
-    gizmo_pass_->setEnabled(on);
+    gizmoPass()->setEnabled(on);
     return true;
 }
 
 bool RenderPipeline::setStatsVisible(bool on)
 {
-    if (fps_overlay_pass_ == nullptr) {
+    if (fpsOverlayPass() == nullptr) {
         if (overlay_refused_.shouldReport()) {
             if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
                 engine->reportEngineProblem(
@@ -186,18 +185,20 @@ bool RenderPipeline::setStatsVisible(bool on)
         return false;
     }
     overlay_refused_.rearm();
-    fps_overlay_pass_->setEnabled(on);
+    fpsOverlayPass()->setEnabled(on);
     return true;
 }
 
 bool RenderPipeline::isGizmoVisible() const noexcept
 {
-    return gizmo_pass_ != nullptr && gizmo_pass_->isEnabled();
+    const raw_ptr<RenderPass> pass = gizmoPass();
+    return pass != nullptr && pass->isEnabled();
 }
 
 bool RenderPipeline::isStatsVisible() const noexcept
 {
-    return fps_overlay_pass_ != nullptr && fps_overlay_pass_->isEnabled();
+    const raw_ptr<RenderPass> pass = fpsOverlayPass();
+    return pass != nullptr && pass->isEnabled();
 }
 
 void RenderPipeline::resize(int width, int height, double pixel_ratio)
@@ -223,49 +224,24 @@ void RenderPipeline::resize(int width, int height, double pixel_ratio)
     if (gizmo_ != nullptr) {
         gizmo_->setPixelRatio(ratio.value);
         gizmo_->onSurfaceResized(width, height);
-        if (gizmo_pass_ != nullptr) {
-            gizmo_pass_->setViewport(gizmo_->boxViewport());
+        if (raw_ptr<RenderPass> pass = gizmoPass()) {
+            pass->setViewport(gizmo_->boxViewport());
         }
     }
     if (fps_overlay_ != nullptr) {
         fps_overlay_->setPixelRatio(ratio.value);
         fps_overlay_->onSurfaceResized(width, height);
-        if (fps_overlay_pass_ != nullptr) {
-            fps_overlay_pass_->setViewport(fps_overlay_->boxViewport());
+        if (raw_ptr<RenderPass> pass = fpsOverlayPass()) {
+            pass->setViewport(fps_overlay_->boxViewport());
         }
     }
 }
 
-void RenderPipeline::addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order)
+intrusive_ptr<RenderPass> RenderPipeline::addPass(const PassDesc& desc, const String& role)
 {
-    // No engine, no registration: a pipeline can outlive its engine (see the class note), and a pass remembered
-    // without being registered would only be a handle nobody can take back.
-    raw_ptr<RenderEngine> engine = engine_.get();
-    if (pass == nullptr || engine == nullptr) {
-        return;
-    }
-    // Remember it BEFORE registering: the pass has to be reachable from the
-    // handle in the same call that puts it in the frame, or a later failure in
-    // the same build could leave a registered pass nobody can unregister.
-    passes_.push_back(pass);
-    engine->addPass(std::move(pass), std::move(content), order);
-}
-
-intrusive_ptr<RenderPass> RenderPipeline::addPass(const PassDesc& desc)
-{
-    // The engine makes the node (see RenderEngine::addPass): remembering it here is the same contract as the
-    // overload above - a pass this pipeline registered is a pass this pipeline unregisters - and the node goes
-    // back to the caller because that is the handle a recipe needs (the window pass it presents, a pass a mode
-    // override is applied to).
-    raw_ptr<RenderEngine> engine = engine_.get();
-    if (engine == nullptr) {
-        return nullptr;  // the engine is gone: there is nobody to register the pass on (see the class note)
-    }
-    intrusive_ptr<RenderPass> node = engine->addPass(desc);
-    if (node != nullptr) {
-        passes_.push_back(node);
-    }
-    return node;
+    // The group is the registration (see the class note): a pass it registered is a pass it takes back, and the role
+    // is what a reader asks for by name instead of a field per pass (see gizmoPass).
+    return group_.add(desc, role);
 }
 
 void RenderPipeline::setWindowPass(intrusive_ptr<RenderPass> pass)
@@ -283,16 +259,14 @@ void RenderPipeline::setCompositeTarget(intrusive_ptr<RenderTarget> target)
     composite_target_ = std::move(target);
 }
 
-void RenderPipeline::setGizmo(intrusive_ptr<AxisGizmo> gizmo, intrusive_ptr<RenderPass> pass)
+void RenderPipeline::setGizmo(intrusive_ptr<AxisGizmo> gizmo)
 {
-    gizmo_      = std::move(gizmo);
-    gizmo_pass_ = std::move(pass);
+    gizmo_ = std::move(gizmo);
 }
 
-void RenderPipeline::setFpsOverlay(intrusive_ptr<FpsOverlay> fps, intrusive_ptr<RenderPass> pass)
+void RenderPipeline::setFpsOverlay(intrusive_ptr<FpsOverlay> fps)
 {
-    fps_overlay_      = std::move(fps);
-    fps_overlay_pass_ = std::move(pass);
+    fps_overlay_ = std::move(fps);
 }
 
 VN_GRAPHICS_NS_END

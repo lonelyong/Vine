@@ -177,7 +177,7 @@ class VN_APPFW_API RenderControl : public Control {
      *
      * @code
      * auto pipeline = builder.build(options);
-     * control->surface()->present(pipeline->windowPass());   // before the first attach (install is synchronous)
+     * control->surface()->present(pipeline->presentingPass());   // before the first attach (install is synchronous)
      * @endcode
      *
      * The control keeps the same fallback it always had: with nothing declared, the viewer's view presents the

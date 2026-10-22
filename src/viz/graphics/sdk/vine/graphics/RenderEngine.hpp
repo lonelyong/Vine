@@ -20,6 +20,7 @@
 #include "FramePlan.hpp"
 #include "FrameStats.hpp"
 #include "PassDesc.hpp"
+#include "PassGroup.hpp"
 #include "RenderDiagnostic.hpp"
 #include "RenderSurface.hpp"
 #include "ReportOnce.hpp"
@@ -413,6 +414,19 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     intrusive_ptr<RenderPass> addPass(const PassDesc& desc);
 
+    /** @brief Mints a registration handle: the passes added through it are removed with it (see PassGroup).
+     *
+     * @details
+     * - The registry stays the engine's single slot table; a group is only an id the slots carry. A recipe (a
+     *   picture, a preview, a test) puts its passes in one group instead of remembering the handles itself, so
+     *   "registered" and "removed" are the same object's two ends.
+     * - A group is independent of the order passes run at: the engine still sorts the whole table (see
+     *   pipelineStageOrder), and a group may register passes at any order.
+     *
+     * @return The new, empty group; it is invalid once this engine is destroyed (see PassGroup::isValid).
+     */
+    [[nodiscard]] PassGroup createPassGroup() noexcept;
+
     /** @brief Removes a previously added pass.
      *
      * @details
@@ -531,6 +545,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     struct Slot {
         intrusive_ptr<RenderPass> pass;
         int                       order = 0;
+        /// The registration group this pass belongs to (0 = registered without a group).
+        std::uint64_t             group{ 0 };
+        /// The role the group gave this pass (empty = anonymous).
+        String                    role;
         /// How long the last frame's record of this pass took, in microseconds (0: it did not run then).
         /// Measured by the compile, where that record happens (see buildFrameValue); reported through the frame
         /// plan (see FramePlan::PassPlan::record_micros).
@@ -724,6 +742,22 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     intrusive_ptr<RenderPass> insertSlot(Slot slot);
 
+    // ---- Registration groups (see PassGroup): one slot table, an id per group ----
+
+    friend class PassGroup;
+
+    /** @brief Registers @p desc under @p group with @p role (the PassGroup::add implementation). */
+    intrusive_ptr<RenderPass> addPassToGroup(const PassDesc& desc, std::uint64_t group, const String& role);
+
+    /** @brief Removes every pass whose slot carries @p group (each one as removePass). */
+    void removePassGroup(std::uint64_t group) noexcept;
+
+    /** @brief Answers the passes of @p group, in engine order. */
+    [[nodiscard]] std::vector<intrusive_ptr<RenderPass>> groupPasses(std::uint64_t group) const;
+
+    /** @brief Answers the pass of @p group registered as @p role, or null. */
+    [[nodiscard]] raw_ptr<RenderPass> groupPass(std::uint64_t group, const String& role) const;
+
     /** @brief Makes sure the transient target a slot declares exists, at the shape it declares.
      *
      * @param slot Slot whose declaration is served (its pass gets the target when it changed).
@@ -836,6 +870,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // the constructor to forwardProgram(), replaced by setDefaultContentProgram(), and null means "decline".
     intrusive_ptr<const ShaderProgram>  default_content_program_;
     std::vector<Slot>                   slots_;         // uniform ordered draw registry
+    /// The id the next registration group gets (0 is reserved for "no group").
+    std::uint64_t                       next_pass_group_{ 1 };
     // The wiring checks' tables (see collectPlanProblems). MEMBERS, cleared every compile: the pass count is small, a
     // flat scan beats a tree, and a vector keeps its capacity - so a steady frame allocates nothing here.
     std::vector<Declaration>            wiring_filled_;

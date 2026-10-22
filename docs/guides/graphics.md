@@ -127,9 +127,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   `ShadingPath::Forward | Deferred`，其余是效果与选项，见 `.ai/design/graphics-pipeline.md`）、
   `addOffscreenToScreen(...)`（离屏 + PiP），并暴露延迟所需的公有件（`defaultGbufferTarget()`、
   `defaultGbufferGeometryProgram()`、`defaultDeferredLightProgram()`）。它装配出来的就是**你手写也会写的
-  那些对象**，返回值 `RenderPipeline` 句柄持有它们（`windowPass()`、`offscreenTarget()`、`resize(w,h)`），
-  **并持有它们的注册**：丢掉句柄 = 那些 pass 从帧里撤下来（`RenderEngine::addPass` 自己另持引用，
-  只持有引用会让被丢掉的 pass 继续每帧执行）。
+  那些对象**，返回值 `RenderPipeline` 句柄持有它们（`presentingPass()`、`offscreenTarget()`、`resize(w,h)`），
+  **并持有它们的注册**：丢掉句柄 = 那些 pass 从帧里撤下来（注册是一个 `PassGroup` 令牌，见 §3.18；
+  `RenderEngine::addPass` 自己另持引用，只持有引用会让被丢掉的 pass 继续每帧执行）。
 - **顺序用阶段说**（`PipelineStage` + `pipelineStageOrder`）：阴影深度、几何、效果、着色、透明、
   呈现、HUD、预览各占一个档位，效果按"我在谁之前"进入，不去抢别人的魔数。
 - `RenderBackend` —— **三面一体的聚合**（工厂返回、引擎收、测试双实现，2026-10-11 S10a 起）：整帧 `executeFrame()`
@@ -825,7 +825,7 @@ surface->target()->setWindowHandle(new_handle);
 // 接管这块窗口：宿主自建主 pass 时声明自己的那条（attach 之前声明，默认链一条都不建；已经上线的先让查看器
 // release(view)，再声明 —— 一块区一次只画一幅画）
 auto pipeline = builder.build(options);
-surface->present(pipeline->windowPass());
+surface->present(pipeline->presentingPass());
 ```
 
 ```cpp
@@ -1050,6 +1050,41 @@ if (converted.root != nullptr) {
 - **坏模型是计数，不是修复**：`ModelScene` 回报 `geometries` / `skipped_meshes` / `skipped_nodes`；越界索引、
   没有网格的 entry、成环的引用都被跳过并计数，剩下部分照样转换。
 - **它不做的三件事**：不建 `Scene`（根节点归调用方）、不做单位换算（加载选项已经折进根变换）、不配灯（灯属于场景）。
+
+### 3.18 注册归一个句柄：`PassGroup`
+
+`RenderEngine::addPass(...)` 是**唯一的注册表**（顺序、内容绑定、资源都在它那儿），
+所以"这些 pass 是我的、我走的时候要撤掉"不需要第二份列表，
+只要一个**句柄**：`PassGroup` 就是那个句柄 —— 它把话说不出去的分组编号写在引擎自
+己的槽位上。
+
+```cpp
+auto group = engine->createPassGroup();            // 一个 RAII 令牌，引擎那边一张表
+group.add(desc, vn::String(u8"gbuffer"));          // 声明一条，可选给它起个名字（role）
+group.add(other_desc);
+engine->passCount();                               // 2：没有第二份拷贝
+
+group.pass(vn::String(u8"gbuffer"));               // 按名字拿回来（没有就是 null）
+group.passes();                                    // 快照，按引擎顺序
+group = vn::PassGroup();                           // 丢掉句柄 = 那两条 pass 撤下来
+```
+
+- **为什么不是句柄列表**：`std::vector<intrusive_ptr<RenderPass>>` 记着"我注册了什
+么"会和引擎的表各说一套 ——
+  "注册了却没人记着撤" 正是它们能对不上的那类缺陷。分组编号存在槽位上，就只有一份
+真相。
+- **role 是名字，不是字段**：配方（HUD 的两条 overlay pass 就是这么登记的）把一个
+pass 登记在一个名字下，
+  读的人按名字问，于是"再加一层 HUD"是**多登记一条**，而不是给某个类多加一个字段。
+  HUD 的用例见 `RenderPipeline::gizmoPass()` / `fpsOverlayPass()`。
+- **引擎先死也不炸**：句柄借的是引擎的 `Lease` —— 引擎没了，`isValid()` 回答 fal
+se，析构什么也不做（表跟着引擎一起没了），
+  `add()` 回答 null。
+- **移动是移交**：`PassGroup` 只能移动，且移动赋**先撤掉自己原来那批**再接管 ——
+默认移动会覆盖编号、把原来那批漏在帧里。
+- **谁在用**：`RenderPipeline` 就是"一个 `PassGroup` + 若干句柄"（`presentingPas
+s()` / `offscreenTarget()` / 两条 HUD），
+  它自己的析构不再有一条 for 循环，`passes` 也不再有第二份存储。
 
 ## 4. 现成例子：怎么构建、怎么跑
 ### 4.1 构建

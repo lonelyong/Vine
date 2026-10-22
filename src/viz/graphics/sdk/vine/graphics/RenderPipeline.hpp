@@ -1,14 +1,14 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
-#include <vector>
-
 #include <vine/Lease.hpp>
 #include <vine/RefCounted.hpp>
+#include <vine/String.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
 #include "Node.hpp"
+#include "PassGroup.hpp"
 #include "ReportOnce.hpp"
 #include "ShaderProgram.hpp"
 #include "ShadingMode.hpp"
@@ -269,9 +269,9 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
      */
     explicit RenderPipeline(Lease<RenderEngine> engine);
 
-    /** @brief Destroys the pipeline, unregistering its passes from the engine while the engine is still there. */
+    /** @brief Destroys the pipeline: its registration token hands every pass back to the engine while the engine is
+     *         still there, and answers nothing once it is gone. */
     ~RenderPipeline();
-
   public:
     /** @brief Gets the engine this pipeline's passes are registered on.
      *
@@ -297,11 +297,18 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
      * @return true when at least one registered pass of this chain has @p scene as its content.
      */
     [[nodiscard]] bool draws(raw_ptr<const Scene> scene) const noexcept;
-    /** @brief Gets the pass presenting the view camera to the window.
+    /** @brief Gets the pass presenting the picture to the window.
      *
-     * @return The order-0 window pass (a ScreenPass for the Deferred presets), or null when nothing was built.
+     * @details
+     * - "Presenting" is the pass whose output is what the window shows, which is not necessarily the pass that draws
+     *   the content: a Deferred chain bakes the picture off-screen and presents it through a screen pass, so a host
+     *   that wants "the picture pass" (to override its program, see setShadingMode) must ask this, not the content.
+     * - It is set by the recipe (RenderPipelineBuilder), because only the recipe knows what its chain ends with.
+     *
+     * @return The presenting pass (the order-0 window pass, or a ScreenPass for the Deferred presets), or null when
+     *         nothing was built.
      */
-    raw_ptr<RenderPass> windowPass() const;
+    raw_ptr<RenderPass> presentingPass() const;
 
     /** @brief Gets the off-screen G-buffer of a Deferred pipeline.
      *
@@ -444,29 +451,19 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
     [[nodiscard]] bool isStatsVisible() const noexcept;
 
   private:
-    /** @brief Registers a pass on the engine and remembers it.
-     *
-     * @details
-     * - The two halves are one call on purpose: a pass registered without being remembered is a pass nothing will
-     *   ever unregister (the defect this method exists to make impossible).
-     *
-     * @param pass    Pass to register (the pipeline keeps it alive).
-     * @param content Content scene the pass draws, or null for none.
-     * @param order   Pass order (see pipelineStageOrder).
-     */
-    void addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order);
-
     /** @brief Registers a DECLARED pass on the engine and remembers what it became.
      *
      * @details
-     * - The declared half of addPass() above, for the recipes: the declaration says what each pass IS (its kind,
-     *   stage, tag, target, inputs), the engine makes the node, and the pipeline keeps it - so the recipe reads as
-     *   declarations while the pipeline holds the same one handle it always did (see RenderEngine::addPass).
+     * - The declaration says what each pass IS (its kind, stage, tag, target, inputs), the engine makes the node, and
+     *   the group keeps it - so the recipe reads as declarations while the unregistration stays one token's job (see
+     *   the destructor).
      *
      * @param desc The declaration (see PassDesc).
+     * @param role Name the pass is registered under, so a reader can find it again (see gizmoPass); empty for the
+     *             passes nothing asks for by name.
      * @return The node the declaration became, or null when that pass was already registered.
      */
-    intrusive_ptr<RenderPass> addPass(const PassDesc& desc);
+    intrusive_ptr<RenderPass> addPass(const PassDesc& desc, const String& role = String());
 
     /** @brief Sets the window-presenting pass. */
     void setWindowPass(intrusive_ptr<RenderPass> pass);
@@ -477,28 +474,33 @@ class VN_GRAPHICS_API RenderPipeline : public RefCounted<RenderPipeline> {
     /** @brief Sets the off-screen composite target (Deferred + transparent content). */
     void setCompositeTarget(intrusive_ptr<RenderTarget> target);
 
-    /** @brief Sets the axis-gizmo overlay and the pass that draws it (optional). */
-    void setGizmo(intrusive_ptr<AxisGizmo> gizmo, intrusive_ptr<RenderPass> pass);
+    /** @brief Sets the axis-gizmo overlay's CONTENT (the pass that draws it is the one registered under kGizmoRole). */
+    void setGizmo(intrusive_ptr<AxisGizmo> gizmo);
 
-    /** @brief Sets the frame-rate overlay and the pass that draws it (optional). */
-    void setFpsOverlay(intrusive_ptr<FpsOverlay> fps, intrusive_ptr<RenderPass> pass);
+    /** @brief Sets the frame-rate overlay's CONTENT (the pass is the one registered under kStatsRole). */
+    void setFpsOverlay(intrusive_ptr<FpsOverlay> fps);
+
+    /** @brief Role the axis-gizmo HUD pass is registered under. */
+    inline static constexpr const char8_t kGizmoRole[] = u8"gizmo";
+
+    /** @brief Role the frame-rate readout pass is registered under. */
+    inline static constexpr const char8_t kStatsRole[] = u8"stats";
 
     // The engine the passes were registered on, held strongly (see the class
     // comment). Declared with a forward declaration and destroyed by the
     // out-of-line destructor, so this header does not pull RenderEngine.hpp in.
     Lease<RenderEngine> engine_;
-    // A handle, not just a reference: the pipeline owns the registration of
-    // every pass here (see addPass) and tears them all down in its destructor.
-    std::vector<intrusive_ptr<RenderPass>> passes_;
+    // The registration of every pass this pipeline added: one token over the engine's own slot table, so "a pass the
+    // pipeline registered is a pass the pipeline unregisters" needs no second list here (see the destructor) and a
+    // named pass is found by its role instead of by a field per pass.
+    PassGroup group_;
     intrusive_ptr<RenderPass> window_pass_;
     intrusive_ptr<RenderTarget> offscreen_target_;
     intrusive_ptr<RenderTarget> composite_target_;
+    // The overlays' CONTENT (its scene, camera, box): the half a pass cannot hold. The pass that draws each one is
+    // registered under kGizmoRole / kStatsRole (see gizmoPass), so "is it on" and "where is it" are one lookup.
     intrusive_ptr<AxisGizmo> gizmo_;
     intrusive_ptr<FpsOverlay> fps_overlay_;
-    // The declarations that draw them: the overlay object owns the CONTENT (its scene, camera, box), these are
-    // what the frame runs and what carries "is it on" (see gizmo()/gizmoPass()).
-    intrusive_ptr<RenderPass> gizmo_pass_;
-    intrusive_ptr<RenderPass> fps_overlay_pass_;
     // The chain this pipeline was built as (the EFFECTIVE one) and the mode its picture means: what
     // setShadingMode decides "can this be expressed" on, and what a rebuild would start from. Set by the
     // builder, which is the only thing that builds chains.
