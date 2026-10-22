@@ -25,6 +25,24 @@
 | **待办与口径** | **现行登记：`.ai/design/graphics-followups-2026-10-22.md` 已无开放行**（F1/F2/F3 全部关闭，2026-10-22 晚）；活账本回到 **`.ai/design/graphics-followups-2026-10-19.md` §3 触发条件型**，外加对象模型复核（`graphics-object-model-audit-2026-10-21.md`）的 R1/R5–R10（R4 于 2026-10-22 晚关闭）。10-19 是历史盘点（§2 现在可做：空 / §3 触发条件型 / §4 明确不做 / §5 不再是待办），它的触发项仍然有效。底层两个来源：**2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已由 S10b 覆盖并关闭，2026-10-19**：一设备 N 窗口、每窗口一个目标，见 `graphics-window-device-viewer.md` §7）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-22（夜七）R9 关闭：内容纪元从进程级收到根子树级
+
+- **形状**：`Node` 私有 `content_epoch_` 是**本子树**的公告计数。`announceContentChange()` 沿父链逐级 +1（自己 + 每个祖先），
+  所以根节点回答“我下面有没有东西变过”；`Scene::collectRenderCommands` 只读 `root_->content_epoch_` 与自己记的
+  `memo_epoch_` 比。`invalidateBounds()` 与它合并成**一次**向上遍历（同一趟也 bump `bounds_stamp_`），
+  `Geometry` 里三处“先 announce 再 invalidate”的重复调用已删。
+- **作用域**：编辑场景 A 的节点只 bump A 的根；B 的记忆体原样命中。游离子树（没有场景在画）的编辑不影响任何场景；
+  以后被 `addChild` 挂进某棵树时，`addChild` / `invalidateBounds` 才让该根失效。进程级 `g_content_epoch` 已删，
+  私有头 `ContentEpoch.hpp` 更名 `LayerEpoch.hpp`（只剩层纪元；它仍是进程级：只在走树时懒重算并集，不会让别的场景多走一次）。 <!-- drift-ok -->
+- **场景级改动**：`Scene::invalidateContent()` 现在同时 `++content_revision_` 与 `++root_->content_epoch_`；条目键里仍带
+  `revision`，所以换根/换可见性即使纪元巧合相同也不会拿到旧表（`SwappingTheRootEndsTheMemo` 钉住）。
+- **成本**：内容改动从 O(1) 原子自增变成 O(深度) 自增；移动/几何/结构类改动本来就在 `invalidateBounds()` 付同一趟父链，
+  新增的只是纯状态编辑（`setVisible` / `setOpacity` / `StateNode`）。`Node` 布局变了 ⇒ 插件需全量重建。
+- **判据**：`SceneContentCacheTest.AnEditInOneSceneDoesNotEndAnotherScenesMemo`（A 编辑 ⇒ A 两次走树、B 仍 1 次且拿到同一张表）、
+  `EditingADetachedSubtreeDoesNotEndTheScenesMemo`、`SwappingTheRootEndsTheMemo`；变异“任意编辑都清空记忆体” ⇒ 1/1 红。
+  `test_graphics` 437 → **440**、`test_vsg` 492、`test_gui` 260(+1 skip)、ctest 24/24，六道静态脚本 0 finding。
+  用户 2026-10-22 直接指定做（原触发条件：多视图/多场景下编辑频繁）。
+
 ## 2026-10-22（夜六）§9.3 子树层并集剪枝
 
 - **形状**：`Node::subtreeLayerUnion(inherited_layers)` 是**懒缓存**：缓存值 + `subtree_layers_epoch_` + inherited 值；`detail::layerEpoch()` 是独立于 content epoch 的进程级计数器（层/结构变更才 ++，几何/材质/变换编辑不丢剪枝）。
@@ -462,9 +480,10 @@
 ## 2026-10-20 F2b 落地：内容记忆体跨帧存活（"内容纪元"），稳态收集 8.7 ms → 36 µs
 
 - **机制**：`Node::announceContentChange()` 自增一个**进程级 content epoch**（relaxed atomic，见
-  `src/ContentEpoch.hpp`）。`Scene::collectRenderCommands` 比对 epoch：变了就清空记忆体，然后再按
+  `src/ContentEpoch.hpp`）。 <!-- drift-ok --> `Scene::collectRenderCommands` 比对 epoch：变了就清空记忆体，然后再按
   (revision, eye, view-proj, mask) 命中。`setContentFrame()` 从"换 token 就清空"改成"老化上一帧没人用过的
-  条目"——记忆体因此被**实际在画的视图数**界定，不是帧数。
+  条目"——记忆体因此被**实际在画的视图数**界定，不是帧数。**（2026-10-22 夜七：纪元已改为根子树级、私有头更名
+  `LayerEpoch.hpp`，见顶条。）**
 - **公告点**：`Node::invalidateBounds()`（顺带，移动的子树既改盒也改命令）、`Node::setVisible/setLayers/
   clearLayers/setDrawOrder/clearDrawOrder/setOpacity`、`StateNode` 的 15 个 mutator、
   `Geometry::setMaterial/setProgram/setIndices`。**自定义节点必须自己调**，这点写进了 Node 的注释。

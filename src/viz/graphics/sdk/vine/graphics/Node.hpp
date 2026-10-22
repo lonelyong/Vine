@@ -20,6 +20,7 @@ using vn::math::Mat4d;
 using vn::math::Aabbd;
 
 class Group;
+class Scene;
 
 /// Every layer: the default on the pass side (a mask that states nothing draws every layer), so a scene whose
 /// nodes say nothing about layers is drawn exactly as it was before layers existed.
@@ -277,6 +278,8 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      *   until something announces a change: this bumps the node's stamp AND every ancestor's (a box unions
      *   its children's). A change ABOVE cannot stale a box below - a subtree box lives in the node's own
      *   frame (see subtreeBounds).
+     * - One walk up the chain does both of this node's announcements: the bounds stamps above and the content epoch
+     *   (see announceContentChange), because a moved subtree changes the cached boxes AND what a command would say.
      * - Every built-in mutation announces through it; code the engine cannot see that changes a local
      *   matrix or an extent must call it, exactly like a raw data writer announces through
      *   Geometry::bumpRevision().
@@ -287,13 +290,16 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      *
      * @details
      * - A collected command list is a pure function of the graph (transforms, visibility, layers, opacity, draw order,
-     *   material, program, state), so reusing one across frames is only sound while nothing changed. Nodes cannot
-     *   reach their Scene (there is no back-pointer, deliberately), so the announcement goes to the process-wide
-     *   content epoch every Scene compares against (see `.ai/design/graphics-abstraction-review-2026-10-20.md` §9).
+     *   material, program, state), so reusing one across frames is only sound while nothing changed.
+     * - Nodes cannot reach their Scene (there is no back-pointer, deliberately), so the announcement climbs the PARENT
+     *   CHAIN: this node and every ancestor increment their subtree epoch, which makes the ROOT answer "something
+     *   below me changed". A Scene reads its own root's value (see Scene), so the announcement is scoped to the tree
+     *   that owns the edited node - editing one scene does NOT throw away another scene's collected lists.
      * - Every built-in mutator that changes what a command would say announces through it - `invalidateBounds()`
      *   does too, since a moved subtree changes the commands. A CUSTOM node whose state reaches its commands must
      *   call it, exactly like a raw data writer announces through Geometry::setRevision().
-     * - The cost is one relaxed atomic increment: it is not a per-frame call, it is a per-EDIT call.
+     * - The cost is one increment per ancestor: it is not a per-frame call, it is a per-EDIT call, and the mutators
+     *   that move or resize content already pay the same walk in invalidateBounds().
      */
     void announceContentChange() noexcept;
 
@@ -362,6 +368,11 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     float opacity_ = 1.0f;
     raw_ptr<Node> parent_ = nullptr;
 
+    // The content announcement count of THIS SUBTREE (see announceContentChange): every edit below increments this
+    // node and every ancestor up to the root, so a Scene reads its root's value to learn that its content changed.
+    // NOT atomic: graph edits and collection are single-threaded by contract, exactly like the bounds cache.
+    std::uint64_t content_epoch_{0};
+
     // The bounds cache (see invalidateBounds / subtreeBounds). Mutable for the same reason
     // Geometry::local_bounds_ is (see its note): collection is single-threaded by contract, and the
     // cache is a pure function of the stamps.
@@ -380,6 +391,7 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     mutable std::uint64_t layer_union_recomputes_{0};    ///< Recomputation witness (see subtreeLayerRecomputeCount).
 
     friend class Group;
+    friend class Scene;   // reads the root's content epoch (see Scene::collectRenderCommands)
 };
 
 using NodePtr = intrusive_ptr<Node>;

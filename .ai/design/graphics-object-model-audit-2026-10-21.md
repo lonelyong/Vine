@@ -127,7 +127,7 @@ VINE_ASAN_FILTER='ModelSceneTest.*'` ⇒ RESULT: PASS）。
 | R6 | ~~无 MSAA：`TargetShape::samples` / `PipelineKey.samples` 存在但宿主无法设置，`Capabilities` 无 `max_samples`~~ **已关闭（2026-10-22）**：`RenderTarget::setSamples` 是唯一入口，采样数进目标形状 ⇒ 管线键 ⇒ 通道与图像；离屏目标自建多重采样图并**颜色与深度各解析一张单采样图**（`picture()` / `depthPicture()` 即"画面"，深度 `sample0` 不平均），R6b 后"MS 深度提升/出借/回读"全部合法，只留"MS 目标不能**借入**深度"一条显式拒绝；默认窗口仍单采样。`Capabilities::max_samples` 报设备限制 | 所有引擎都有 MSAA 开关 | ~~画面锯齿成为用户可见问题~~（用户 2026-10-22 直接指定做） |
 | R7 | 无实例化、无 DAG（`Group::addChild` 自动脱离旧父） | OSG/vsg 允许一节点多父；`InstancedMesh` | 重复件数量让收集/内存成为瓶颈 |
 | R8 | 无异步上传/编译入口（契约是单线程串行），大模型首帧卡顿 | Filament/bgfx 的异步资源上传、vsg 自己的异步编译 | 一次加载超过一帧预算 |
-| R9 | 场景 memo 用进程级 `ContentEpoch`，任何场景的编辑会让所有场景失效 | — | 多视图/多场景下编辑频繁 |
+| R9 | ~~场景 memo 用进程级 `ContentEpoch`，任何场景的编辑会让所有场景失效~~ **已关闭（2026-10-22）**：内容纪元上移到节点（编辑沿父链 +1），`Scene` 只读自己 root 的值；游离子树的编辑不影响任何场景；`Scene::invalidateContent()` 同时 bump 自己的 revision 与 root 纪元。判据 `SceneContentCacheTest.AnEditInOneSceneDoesNotEndAnotherScenesMemo` / `EditingADetachedSubtreeDoesNotEndTheScenesMemo` / `SwappingTheRootEndsTheMemo`；变异（任意编辑清空全部记忆体）⇒ 1/1 红。见 `.ai/memory/graphics.md` 2026-10-22（夜七） | ~~多视图/多场景下编辑频繁~~（2026-10-22 用户直接指定做） |
 | R10 | `OwnedFrame` 是零生产消费者的公开类型（仅自测）；保留理由：它是"帧可跨线程/跨进程搬运"的设计件 | Filament 的 `FrameGraph` 也有 owned 编译产物 | 远程渲染/录制真正开工时再决定去留 |
 
 ### R3 裁决（2026-10-21）：拓扑暂不归位到 `Geometry`

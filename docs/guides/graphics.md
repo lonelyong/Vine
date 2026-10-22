@@ -156,8 +156,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
    编译期跑每条 pass 的 `before_draw` 钩子（HUD 自更新那类"先写内容"的活），再请它描述自己 ——
    于是**内容收集**发生在编译里，`Scene::collectRenderCommands(camera)` 对 **(scene, camera, mask)** 只走一次树，
    结果被记忆下来并**跨帧复用**——只有图里真的改了东西才会重走（每个节点改动都通过
-   `Node::announceContentChange()` 公告，规则见 §2.2；直接写缓冲这类 Scene 看不见的改动要宿主自己调
-   `Scene::invalidateContent()`）。相机自带画面的形状（见 §2.1 的 `Camera` 段），剔除用的视锥与画面用的投影是从
+   `Node::announceContentChange()` 公告，规则见 §2.2；公告沿父链走到根，所以只作废**这个场景**的记忆体，
+   别的场景照常命中；直接写缓冲这类 Scene 看不见的改动要宿主自己调 `Scene::invalidateContent()`）。
+   相机自带画面的形状（见 §2.1 的 `Camera` 段），剔除用的视锥与画面用的投影是从
    **同一个数**推出来的：改相机的形状就是改整个视图（memo 以 view-projection 为键，天然区分两种形状，
    不会拿一个形状的走树结果去回答另一个）。返回的是**视锥剔除后**的列表：
    `isVisible()` 是硬门，包围盒完全在视锥外（p-vertex 测试）的节点**整棵子树**被剪掉，被剔除的几何体

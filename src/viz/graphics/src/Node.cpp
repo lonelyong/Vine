@@ -8,7 +8,7 @@
 #include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
 
-#include "ContentEpoch.hpp"
+#include "LayerEpoch.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -41,19 +41,24 @@ Aabbd transformBox(const Aabbd& local, const Mat4d& world)
 
 void Node::invalidateBounds() noexcept
 {
-    // A moved subtree changes BOTH what the cached boxes answer and what a collected command would say, so this
-    // announces one content change as well (once, not per ancestor: the epoch is a global counter).
-    announceContentChange();
-    // This node's box and every ancestor's union may now be stale. Only UP: a subtree box lives in the
-    // node's own frame (see subtreeBounds), so nothing below this node depended on what changed here.
+    // A moved subtree changes BOTH what the cached boxes answer and what a collected command would say. This node's
+    // box and every ancestor's union may now be stale, and the content announcement must reach the root as well, so
+    // ONE walk up the chain does both. Only UP: a subtree box lives in the node's own frame (see subtreeBounds), so
+    // nothing below this node depended on what changed here.
     for (Node* node = this; node != nullptr; node = node->parent_) {
+        ++node->content_epoch_;
         ++node->bounds_stamp_;
     }
 }
 
 void Node::announceContentChange() noexcept
 {
-    detail::announceContentChange();
+    // Scoped to the ROOT SUBTREE, not the process: every ancestor carries a count of the edits below it, so a Scene
+    // reading its root's value learns about its own content only. A node still cannot reach its Scene (there is no
+    // back-pointer, deliberately); the root is the value both ends can see.
+    for (Node* node = this; node != nullptr; node = node->parent_) {
+        ++node->content_epoch_;
+    }
 }
 
 bool Node::subtreeBounds(Aabbd& box) const

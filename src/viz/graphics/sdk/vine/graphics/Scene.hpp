@@ -231,9 +231,10 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *
      * @details
      * - The engine announces one content frame per rendered frame. Within a frame, every pass drawing this scene
-     *   through the same camera shares one walk; ACROSS frames the list is reused for as long as the graph does not
-     *   change (every node mutator announces through `Node::announceContentChange`, which the memo compares against),
-     *   so a static scene costs one walk when it changes, not one per frame.
+     *   through the same camera shares one walk; ACROSS frames the list is reused for as long as THIS scene's graph
+     *   does not change (every node mutator announces through `Node::announceContentChange`, which climbs to the root
+     *   the memo compares against), so a static scene costs one walk when it changes, not one per frame.
+     * - The announcement is scoped to the root subtree: editing another scene never ends this scene's memo.
      * - An entry nothing asked for in the previous frame is dropped here, which is what keeps the memo bounded by the
      *   views actually drawn instead of growing with the frame count.
      * - Nothing is memoised until a frame has been opened, so a caller that drives the collection itself keeps the
@@ -284,10 +285,10 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     std::uint64_t content_revision_ = 1;
     // Token of the content frame currently open, 0 = none (no memoising).
     std::uint64_t content_frame_ = 0;
-    // The graph's content epoch when the memo was last validated: a different value means SOMETHING in the graph
-    // changed since (every node mutator bumps it, see Node::announceContentChange), so every collected list may be
-    // stale and the memo is dropped before it is looked up again. Mutable: collecting is a const operation that
-    // maintains the memo (see content_collect_count_).
+    // THIS SCENE'S ROOT SUBTREE content epoch when the memo was last validated: a different value means something in
+    // this scene's graph changed since (Node::announceContentChange climbs to the root), so every collected list may
+    // be stale and the memo is dropped before it is looked up again. Another scene's edits leave it alone. Mutable:
+    // collecting is a const operation that maintains the memo (see content_collect_count_).
     mutable std::uint64_t memo_epoch_ = 0;
     // The collected lists of the views in use (one per camera), reused while the graph does not change and dropped
     // when nothing asked for them in the previous frame - so the memo is bounded by the views drawn, not by frames.

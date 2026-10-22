@@ -196,6 +196,10 @@ graph LR
 两条都是**一个切片**，不是顺手改；它们的方向互相排斥（A 不引入边但要求全体 setter 配合，B 局部但要一条新边）。
 **登记，等"静态大场景 + 相机常动"的真实负载来触发**，触发时先测 Release，再用 A/B 中的一个。
 
+> **2026-10-22 更新**：表里 A 的那条坏处（"任何场景的改动会作废所有场景的记忆"）已经消除——纪元不再进程级，
+> 而是沿父链上移到根、由每个 `Scene` 只读自己的 root（见 §9.1 的更新与 `.ai/memory/graphics.md` 同日"夜七"条）。
+> 形状仍是 A 的"每个 setter 公告"，只是作用域收窄；没有引入 B 的 `Scene*` 回指。
+
 ### 8.2 F3 关闭
 
 `DrawDescription::lights` 每 pass 每帧复制一次（一个 `optional<vector<raw_ptr<const Light>>>`）。两条改法都
@@ -216,7 +220,7 @@ graph LR
 
 | 位置 | 之前 | 现在 |
 |---|---|---|
-| 变更公告 | 场景级改动 bump `content_revision_`；节点改动**什么都不通知**，靠"记忆只活一帧"兜底 | `Node::announceContentChange()`：进程级 **content epoch**（relaxed atomic）自增一次。`Node::invalidateBounds()` 顺带公告（移动的子树既改包围盒也改命令）；`Node::setVisible/setLayers/clearLayers/setDrawOrder/clearDrawOrder/setOpacity`、`StateNode` 的 15 个 mutator、`Geometry::setMaterial/setProgram/setIndices` 各自公告 |
+| 变更公告 | 场景级改动 bump `content_revision_`；节点改动**什么都不通知**，靠"记忆只活一帧"兜底 | `Node::announceContentChange()`：**根子树级** content epoch（2026-10-22 起；之前是进程级）沿父链自增。`Node::invalidateBounds()` 顺带公告（移动的子树既改包围盒也改命令）；`Node::setVisible/setLayers/clearLayers/setDrawOrder/clearDrawOrder/setOpacity`、`StateNode` 的 15 个 mutator、`Geometry::setMaterial/setProgram/setIndices` 各自公告 |
 | 记忆体寿命 | `setContentFrame()` 换 token 就**清空** | 跨帧存活；`collectRenderCommands` 比对 epoch，变了就清空。`setContentFrame()` 只做**老化**：上一帧没人问过的条目删掉（记忆体因此被"实际在画的视图数"界定，而不是帧数） |
 | 正确性依据 | "下一帧一定重走" | "改动一定公告"：改图 = 新纪元 = 新列表。Scene 看不见的改动（直接写缓冲、自定义节点）仍由 `Scene::invalidateContent()` 负责，这条契约写进了 `Scene.hpp` |
 

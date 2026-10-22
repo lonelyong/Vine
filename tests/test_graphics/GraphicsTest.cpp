@@ -9144,6 +9144,108 @@ TEST(SceneContentCacheTest, SceneLevelEditsInvalidateTheMemo)
 }
 
 /**
+ * @brief The content announcement is scoped to the ROOT SUBTREE: editing one scene must not end another's memo.
+ *
+ * The epoch climbs from the edited node to its own root, and a Scene reads only that root. While the epoch was
+ * process-wide this was the memo's cross-scene cost: a HUD repainting its digits (or a second document being
+ * edited) threw away the main scene's list and made it walk again.
+ */
+TEST(SceneContentCacheTest, AnEditInOneSceneDoesNotEndAnotherScenesMemo)
+{
+    Scene scene_a;
+    auto  root_a = setIdentityRoot(scene_a);
+    root_a->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"a"));
+    Scene scene_b;
+    auto  root_b = setIdentityRoot(scene_b);
+    root_b->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"b"));
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    scene_a.setContentFrame(1);
+    scene_b.setContentFrame(1);
+
+    const auto list_a = scene_a.collectRenderCommands(&cam);
+    const auto list_b = scene_b.collectRenderCommands(&cam);
+    ASSERT_NE(list_a, nullptr);
+    ASSERT_NE(list_b, nullptr);
+    EXPECT_EQ(scene_a.contentCollectCount(), 1u);
+    EXPECT_EQ(scene_b.contentCollectCount(), 1u);
+
+    // ONLY A is edited, in the next frame; B is untouched.
+    scene_a.setContentFrame(2);
+    scene_b.setContentFrame(2);
+    root_a->children().front()->setOpacity(0.5f);
+
+    const auto a_after = scene_a.collectRenderCommands(&cam);
+    const auto b_after = scene_b.collectRenderCommands(&cam);
+    ASSERT_NE(a_after, nullptr);
+    ASSERT_NE(b_after, nullptr);
+    EXPECT_EQ(scene_a.contentCollectCount(), 2u) << "the edited scene collects again";
+    EXPECT_EQ(scene_b.contentCollectCount(), 1u) << "the untouched scene keeps its walk";
+    EXPECT_EQ(b_after.get(), list_b.get()) << "B gets the very same shared list";
+    EXPECT_NE(a_after.get(), list_a.get());
+    ASSERT_EQ(a_after->size(), 1u);
+    EXPECT_FLOAT_EQ((*a_after)[0].opacity, 0.5f);
+}
+
+/**
+ * @brief A detached subtree is nobody's content: editing it does not end any scene's memo.
+ */
+TEST(SceneContentCacheTest, EditingADetachedSubtreeDoesNotEndTheScenesMemo)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"drawn"));
+    Camera cam;
+    setupLookAtCamera(cam);
+    scene.setContentFrame(1);
+    const auto list = scene.collectRenderCommands(&cam);
+    ASSERT_NE(list, nullptr);
+    ASSERT_EQ(list->size(), 1u);
+
+    // A subtree nobody draws, built and edited AFTER the list was collected.
+    auto loose_root = intrusive_ptr<Group>(new Group());
+    auto loose      = makeTriangleNode(Vec3d(2, 0, -2), nullptr, u8"loose");
+    loose_root->addChild(loose);
+    loose->setOpacity(0.25f);
+
+    scene.setContentFrame(2);
+    const auto again = scene.collectRenderCommands(&cam);
+    ASSERT_NE(again, nullptr);
+    EXPECT_EQ(scene.contentCollectCount(), 1u) << "a detached edit is not this scene's content";
+    EXPECT_EQ(again.get(), list.get());
+}
+
+/**
+ * @brief Swapping the root is a scene-level change: the old list is never served for the new tree.
+ */
+TEST(SceneContentCacheTest, SwappingTheRootEndsTheMemo)
+{
+    Scene scene;
+    auto  first_root = setIdentityRoot(scene);
+    first_root->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"first"));
+    Camera cam;
+    setupLookAtCamera(cam);
+    scene.setContentFrame(1);
+    const auto before = scene.collectRenderCommands(&cam);
+    ASSERT_NE(before, nullptr);
+    ASSERT_EQ(before->size(), 1u);
+    ASSERT_EQ((*before)[0].geometry->name(), u8"first");
+
+    auto second_root = intrusive_ptr<Group>(new Group());
+    second_root->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"second"));
+    scene.setRoot(second_root);
+
+    scene.setContentFrame(2);
+    const auto after = scene.collectRenderCommands(&cam);
+    ASSERT_NE(after, nullptr);
+    ASSERT_EQ(after->size(), 1u);
+    EXPECT_NE(after.get(), before.get()) << "a swapped root is a new list";
+    EXPECT_EQ((*after)[0].geometry->name(), u8"second") << "and it is the new tree's content";
+    EXPECT_EQ(scene.contentCollectCount(), 2u);
+}
+
+/**
  * @brief Every caller gets its own copy of the memoised list.
  *
  * A pass post-processes the list it is handed (the pass-level program override

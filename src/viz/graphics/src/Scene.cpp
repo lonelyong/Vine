@@ -1,6 +1,6 @@
 ﻿#include <vine/graphics/Scene.hpp>
 
-#include "ContentEpoch.hpp"
+#include "LayerEpoch.hpp"
 
 #include <algorithm>
 #include <array>
@@ -643,13 +643,15 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     const Vec3d    eye       = view.eye;
     const Viewport viewport  = view.viewport;
     // THE MEMO OUTLIVES ONE FRAME. A collected list is a pure function of the graph and the view, so it is reused
-    // for as long as NOTHING changed - which the graph announces through the process-wide content epoch (every
-    // mutator bumps it, see Node::announceContentChange). Before that, a memo entry lived for one frame only and a
-    // static scene paid a full walk per frame (measured: SceneTest.MeasureWhatOneCollectionCosts*).
-    const std::uint64_t epoch = detail::contentEpoch();
+    // for as long as NOTHING changed - which the graph announces through the content epoch of THIS SCENE'S ROOT
+    // SUBTREE (every mutator bumps itself and every ancestor, see Node::announceContentChange). The scope is
+    // deliberate: editing another scene's tree leaves this root's epoch alone, so its lists survive. Before the
+    // memo existed an entry lived for one frame only and a static scene paid a full walk per frame (measured:
+    // SceneTest.MeasureWhatOneCollectionCosts*).
+    const std::uint64_t epoch = root_->content_epoch_;
     if (content_memo_ != nullptr && epoch != memo_epoch_) {
-        // Something in the graph changed since the last look: every view's list may be stale, and re-deriving each
-        // one is the walk a miss does anyway.
+        // Something in THIS scene's graph changed since the last look: every view's list may be stale, and
+        // re-deriving each one is the walk a miss does anyway.
         content_memo_->entries.clear();
     }
     // Recorded even when the memo was just cleared (or does not exist yet): the next call has to compare against
@@ -770,11 +772,15 @@ void Scene::setContentFrame(std::uint64_t frame)
 void Scene::invalidateContent()
 {
     ++content_revision_;
-    // The bounds caches are per node and keyed by ANNOUNCEMENTS, and the built-in setters already
-    // announce - so what this reaches is the edit they could not see: data written through a buffer, a
-    // custom node's own state. Bumping every stamp makes the next collect recompute every box once (and
-    // re-cache), which is what "picked up at once" has to mean for the culling cache too.
     if (root_ != nullptr) {
+        // Scene-level facts (a swapped root, scene visibility / opacity, an edit no setter could see) are announced
+        // on the root's own subtree epoch: the memo then drops its entries at the next collect, and the per-entry
+        // revision below is still the key that says which scene version a list was built for.
+        ++root_->content_epoch_;
+        // The bounds caches are per node and keyed by ANNOUNCEMENTS, and the built-in setters already
+        // announce - so what this reaches is the edit they could not see: data written through a buffer, a
+        // custom node's own state. Bumping every stamp makes the next collect recompute every box once (and
+        // re-cache), which is what "picked up at once" has to mean for the culling cache too.
         invalidateBoundsUnder(*root_);
     }
 }

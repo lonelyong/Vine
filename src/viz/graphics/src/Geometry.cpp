@@ -170,9 +170,8 @@ bool samePrimitive(const Primitive& a, const Primitive& b) noexcept
 void Geometry::addPrimitive(Primitive primitive)
 {
     primitives_.push_back(std::move(primitive));
-    // A new draw of the same data is a different picture (and possibly a different extent), so the
-    // collection is announced: the frame memo cannot answer from the list it built before this call.
-    announceContentChange();
+    // A new draw of the same data is a different picture (and possibly a different extent): invalidateBounds()
+    // announces the content change as well, so the frame memo cannot answer from the list it built before this call.
     invalidateBounds();
 }
 
@@ -186,7 +185,6 @@ void Geometry::setPrimitive(std::size_t index, Primitive primitive)
         return;   // an assignment that changes nothing must not cost the frame's collection
     }
     primitives_[index] = std::move(primitive);
-    announceContentChange();
     invalidateBounds();
 }
 
@@ -196,7 +194,6 @@ void Geometry::clearPrimitives()
         return;
     }
     primitives_.clear();
-    announceContentChange();
     invalidateBounds();
 }
 

@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-#include "ContentEpoch.hpp"
+#include "LayerEpoch.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
