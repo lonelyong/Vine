@@ -801,8 +801,8 @@ VN_GRAPHICS_API intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const
  * - This is the ONLY Shape -> Geometry conversion: Geometry has no setShape(), because a setter named after
  *   a property it never retains is misleading, and silently emptying an existing geometry when handed a
  *   shape it cannot convert loses data with no way to report it. To (re)fill an existing geometry, use the
- *   per-channel setters (setPositions / setNormals / setTexcoords2 / setTexcoords3 / setIndices), which
- *   leave custom attribute channels alone.
+ *   per-channel setters (setPositions / setNormals / setTexcoords2 / setTexcoords3) plus setPrimitive for
+ *   the draw's topology and index span, which leave custom attribute channels alone.
  *
  * @param shape Mesh shape to convert.
  * @return Filled geometry, or null for unsupported shapes.

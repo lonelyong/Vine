@@ -206,6 +206,8 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 - **一段就是一条流**：共享绑定缓存按 `缓冲地址 + Buffer::revision() + offset + 长度` 分辨，同缓冲的相邻两段
   绝不互借设备缓冲；索引侧相反 —— 索引绑定别名**整段缓冲**，切片写在 draw 命令里（`firstIndex` / `indexCount`），
   所以一个索引 arena 的所有 geometry 共享一次索引上传。
+- **一份顶点也可以有多条 draw**：顶点通道挂在 `Geometry` 上，一次 draw 挂在 `Primitive` 上，所以"一个对象、
+  几段索引"是一条几何体 + 几条图元（见 §3.21），不需要拆成多个几何体。
 - **改这一段要公告**：`buffer->setRevision(buffer->revision() + 1)`（重新填了字节）+ `geometry->setRevision(...)`
   （渲染侧才知道要重建）。只挪 `offset`（同缓冲换一段）同样要公告。
 - **边界**：`offset` 越过缓冲末尾、或段长超过剩余长度 ⇒ 访问器一律当**空**处理（不会读越界）。
@@ -1156,6 +1158,56 @@ scene_rt->setSamples(4);              // 默认 1；0 也当 1（不存在“零
   深度时不能重建（与 `shareDepth` 那条拒绝同源）。
 - **代价**：显存与带宽大致随样本数成倍增长，颜色还要每帧多一次全图“读 + 写”（解析）。4× 在 1080p 上已经很可
   观 —— 先量再定，`VINE_FRAME_PLAN=1` 与 `frameReport()` 能看每帧时间。
+
+### 3.21 一个几何体多个图元：一份顶点，几条 draw
+
+`Geometry` 是**数据**（顶点通道），`Primitive` 是**一次 draw**（拓扑 + 索引片段 + 材质 + 程序）。一个资产的
+"网格 + 去重边线 + 选中点集"因此是一份顶点 + 三条图元，而不是三个几何体：
+
+```cpp
+auto mesh = make_intrusive<Geometry>();
+mesh->setPositions(positions);        // 数据即绘制：语句本身就给了默认图元（三角形、非索引）
+mesh->setNormals(normals);
+
+// 同一份顶点、一个索引 arena 切三段：三角形 / 边线 / 点集
+Primitive triangles;
+triangles.topology = Topology::Triangles;
+triangles.indices  = Primitive::IndexSpan::slice(arena, 0u, tri_count);
+triangles.material = lit_material;                 // 材质/程序也是"每次 draw"的
+
+Primitive edges;
+edges.topology = Topology::Lines;
+edges.indices  = Primitive::IndexSpan::slice(arena, tri_count, edge_count);
+edges.material = edge_material;
+
+Primitive points;
+points.topology = Topology::Points;                // 非索引：直接消费顶点流
+points.program  = vertex_marker_program;
+
+mesh->setPrimitive(0u, std::move(triangles));      // 第 0 条：setPositions 建的那条
+mesh->addPrimitive(std::move(edges));
+mesh->addPrimitive(std::move(points));
+mesh->bumpRevision();                              // 形状变了：公告一次
+root->addChild(mesh);                              // 一个对象、一次挂载
+```
+
+规则（每条都能在 API 里查到）：
+
+- **数据即绘制**：装位置通道时若还没有图元，会自动有一条默认图元（三角形、非索引）。所以绝大多数几何体
+  仍然只是 `setPositions(...)` 一行；`primitiveCount() == 0` 只在你显式 `clearPrimitives()` 之后出现。
+- **收集器一条图元一条命令**，排序、透明度、`drawOrder` 按命令走（所以透明的部件不会被不透明的挡住顺序）。
+  计划里带 `(primitive, topology)`，后端按行取索引片段。
+- **材质/程序**：图元自己写的优先，否则用最近的 `StateNode` 的；`Geometry::setMaterial()` / `setProgram()`
+  是"这份资产所有 draw 用同一份"的便捷写法。
+- **拾取只打三角形图元**（线/点不是面），命中结果带 `primitiveIndex` 说明打中的是哪一份。
+- **线框不要做成"另一条 Lines 图元"**：那要自己生成边表。`PolygonMode::Line`（子树或 pass override）是画法，
+  不重编管线、不重传字节；只有需要**独立线宽/独立颜色/只画轮廓**时才值得做数据级线框。
+- **代价**：N 条图元 = N 次 draw，管线按拓扑 class 各一条；顶点**只上传一次**（缓存键是
+  `buffer + revision + 切片`）。索引按 buffer 共享：一个 arena 一次上传，改任一段整段重传；想让选中点集改一次
+  只传它自己，就给它单独的索引 buffer。
+
+想确认"真的画了三条"，`RenderEngine::framePlan()` 的 pass 行会给出 draw 数；测试里读 `StreamUploads` 的
+uploads/aliases 计数可以钉住"顶点只传一次"。
 
 ## 4. 现成例子：怎么构建、怎么跑
 ### 4.1 构建
