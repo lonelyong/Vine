@@ -22,6 +22,12 @@ VN_GRAPHICS_NS_BEGIN
  * @note A pass may OVERRIDE it for a whole view ("show me this scene as points"); that is a viewing
  *       decision and lives on the pass (see RenderPass::stateOverrides), the same way it already overrides
  *       the program. The data keeps saying what it is.
+ *
+ * @note @ref Topology::Points is a contract on the PROGRAM as well as on the data: a POINT_LIST pipeline
+ *       needs a vertex stage that statically writes `gl_PointSize`, and without it (and without
+ *       `maintenance5`) the pipeline and every draw with it are invalid. The built-in programs write 1.0,
+ *       so any geometry can be drawn as points out of the box; a caller that wants points bigger than one
+ *       pixel supplies a program that writes the size it wants.
  */
 enum class Topology
 {

@@ -93,22 +93,6 @@ bool onSilhouette(const PixelProbe& probe, int x, int y)
            !covered(probe.pixel(x > 0 ? x - 1 : x, y)) || !covered(probe.pixel(x, y > 0 ? y - 1 : y));
 }
 
-/// @brief Skips out of a case when this machine cannot serve the fixture.
-///
-/// `available()` is the shared gate (a device, a session that comes up on it, and off-screen pixels back - see
-/// SdkPixelFixture); the two checks after it guard THIS fixture instance, so everything past the gate is a
-/// failure of the case rather than a skip of the machine.
-#define VINE_SKIP_WITHOUT_SDK_DEVICE(fixture)                                                                    \
-    if (!SdkPixelFixture::available()) {                                                                         \
-        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";                       \
-    }                                                                                                            \
-    SdkPixelFixture fixture;                                                                                     \
-    if (!fixture.up()) {                                                                                         \
-        GTEST_SKIP() << "the SDK session cannot come up on this machine (see the diagnostics above)";            \
-    }                                                                                                            \
-    if (!fixture.backend->capabilities().render_targets) {                                                       \
-        GTEST_SKIP() << "this device cannot serve off-screen pixels";                                            \
-    }
 }  // namespace
 
 // 线框不是"少画一点"，是**同一批几何按边画**：同一个视图、同一台相机、同一条 pass、同一张目标，只把光栅化模式换掉

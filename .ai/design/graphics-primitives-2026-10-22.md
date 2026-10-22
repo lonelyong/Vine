@@ -84,3 +84,22 @@ struct PrimitiveFacts {
 - `RayIntersectionTest.*`：只打三角形 primitive；`hit.primitiveIndex` 指出命中的那一份。
 - `GeometryFactsTest.AMultiPrimitiveGeometryDescribesOneRowPerDraw`：一个几何体三条 primitive（三角形/线/点）
   ⇒ 三行、拓扑按顺序、span 各归各的、同一 arena 上的两条共享流身份（一次上传）、非索引那条用几何体顶点数。
+
+## 5. 端到端证据（同日夜，设备级）
+
+上面每一条都是"按构造"或"设备无关"的。真正关系到宿主的句子——**一份顶点、三条图元、每条流只传一次**——
+需要一个画面和一本流账，落在 `tests/test_vsg/PrimitiveDrawTest.cpp`：
+
+- **配方**：几何体 10 个顶点、一个 12 个索引的 arena；三条 primitive = 三角形（左三分之一，红）/ 线（中间一列，
+  绿）/ 点（右三分之一四颗，蓝）。三段不重叠，所以每种颜色只可能来自它那一条 draw。`StateNode` 的材质故意是
+  白色：图元材质若在链路上被丢掉，画面会全白，三段计数一起归零。
+- **判据**：像素 `red=1334 / green=58 / blue=4`（面 > 线 > 点，且各自有下界）；`FrameReport::counters`
+  `passes=1, draws=1`（一次**绘制调用**，三条图元是这次调用里的三条命令——这正是 `draws` 的语义）；
+  `StreamUploads` 首帧 `uploads=3 / aliases=6 / live=3`（位置 + 法线 + arena），第二帧 `uploads` 不变、
+  `aliases` 再涨 9（九次取流全命中）。
+- **它抓到的 bug**：`Topology::Points` 配内置前向程序，4 条 `VUID-vkCmdDrawIndexed-primitiveTopology-10748`
+  ——POINT_LIST 要求顶点阶段**静态写 `gl_PointSize`**，否则管线与每次 draw 都是无效用法。修在源头：
+  `builtin_forward.vert` / `builtin_gbuffer.vert` 写 `gl_PointSize = 1.0`（Vulkan 的默认值，三角形无影响），
+  `Topology.hpp` 与指南 §3.21 把"点是数据与程序的共同契约"写进文档。自建程序若忘了写，Vulkan 在**建管线**时
+  就报 08773，后端不必反射 SPIR-V。
+- 判据：`test_vsg` 482（+1）、`test_graphics` 414、ctest 24/24、网关每阶段干净（0 VUID、0 hazard）。

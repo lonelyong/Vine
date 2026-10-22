@@ -40,4 +40,7 @@ void main()
     vine_texcoord = vine_TexCoord0;
 #endif
     gl_Position = pc.projection * view_pos;
+    // The same obligation the forward stage states: a POINT_LIST pipeline needs a stage that
+    // statically writes gl_PointSize, and 1.0 keeps a points draw legal without inventing a size.
+    gl_PointSize = 1.0;
 }

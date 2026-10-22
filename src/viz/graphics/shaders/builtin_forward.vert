@@ -61,4 +61,11 @@ void main()
     // what this backend's depth compare (GREATER) expects. See the depth
     // convention note in SceneBridgePipeline.cpp.
     gl_Position = pc.projection * view_pos;
+    // A POINT_LIST pipeline needs a vertex stage that STATICALLY writes gl_PointSize: without
+    // maintenance5 (and with no tessellation / geometry stage) a point draw from a stage that never
+    // writes it is invalid, at pipeline creation and at every draw (VUID-...-topology-08773 and
+    // VUID-...-primitiveTopology-10748). 1.0 is Vulkan's own default, so any geometry of this engine
+    // may be drawn as points and nothing changes for triangles; a caller that wants larger points
+    // supplies a program of its own, because this one has no point-size input.
+    gl_PointSize = 1.0;
 }

@@ -25,6 +25,24 @@
 | **待办与口径** | **现行登记：`.ai/design/graphics-followups-2026-10-22.md` 已无开放行**（F1/F2/F3 全部关闭，2026-10-22 晚）；活账本回到 **`.ai/design/graphics-followups-2026-10-19.md` §3 触发条件型**，外加对象模型复核（`graphics-object-model-audit-2026-10-21.md`）的 R1/R3–R10。10-19 是历史盘点（§2 现在可做：空 / §3 触发条件型 / §4 明确不做 / §5 不再是待办），它的触发项仍然有效。底层两个来源：**2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已由 S10b 覆盖并关闭，2026-10-19**：一设备 N 窗口、每窗口一个目标，见 `graphics-window-device-viewer.md` §7）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-22（夜）R3 收口：一条几何体三条图元的**端到端**证据，顺带修好点图元
+
+- **用例**：`PrimitiveDrawTest.OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUpload`（`tests/test_vsg`）。
+  10 个顶点 + 一个 12 索引的 arena，三条 primitive = 三角形（红，左三分之一）/ 线（绿，中间一列）/ 点（蓝，
+  右三分之一四颗）；`StateNode` 材质故意给白色当陷阱（图元材质被丢 ⇒ 全白 ⇒ 三段计数一起归零）。
+- **判据**（从"按构造"变成"测量"）：像素 `red=1334 / green=58 / blue=4`；`FrameReport::counters` 是
+  `passes=1, draws=1`（`draws` 数是**绘制调用**不是图元：一个几何体仍是一次调用，三条图元是这次调用里的
+  三条命令）；`StreamUploads` 首帧 `uploads=3 / aliases=6 / live=3`、第二帧 `uploads` 不变而 `aliases` 再涨 9
+  ⇒ 一份顶点、N 条 draw、每条流只传一次。
+- **坑（这条用例抓到的真 bug）**：`Topology::Points` + 内置前向程序 = 4 条
+  `VUID-vkCmdDrawIndexed-primitiveTopology-10748`——POINT_LIST 要求顶点阶段**静态写 `gl_PointSize`**
+  （`maintenance5` 没开时）。修在源头：`builtin_forward.vert` / `builtin_gbuffer.vert` 写 `gl_PointSize = 1.0`
+  （Vulkan 默认值，三角形无影响）；`Topology.hpp` 与指南 §3.21 写明"点是程序与数据双方的契约，要大于 1 像素
+  就自备程序"。自建程序忘写时 Vulkan 在**建管线**就报 08773，后端不必反射 SPIR-V。
+- **顺手**：`VINE_SKIP_WITHOUT_SDK_DEVICE` 从 `SdkPixelTest.cpp` 移进 `SdkPixelFixture.hpp`，设备用例跨文件共用
+  同一道门（三道检查漏一道就会把"没有设备"报成"功能坏了"）。
+- 判据：`test_vsg` 482（+1）、`test_graphics` 414、ctest 24/24、网关每阶段干净（0 VUID、0 hazard）。
+
 ## 2026-10-22（晚）R3 第一片：拓扑归图元，几何体只剩数据
 
 - **形状**：`Geometry` = 通道集；`Primitive` = `topology` + `BufferSlice<uint32_t> indices` + `material`

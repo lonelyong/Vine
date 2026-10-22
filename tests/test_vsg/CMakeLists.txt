@@ -60,6 +60,8 @@ set(SRC_FILE_LIST
 	SceneRulesTest.cpp
 	# The SDK-level device fixture: the engine, a view and a picture a probe can read (see SdkPixelFixture.hpp).
 	SdkPixelTest.cpp
+	# The primitives model end to end: one geometry, three draws, one upload of each shared stream.
+	PrimitiveDrawTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
