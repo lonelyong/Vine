@@ -38,11 +38,14 @@
 #                                     without DISPLAY skips it unless VINE_GATE_ALLOW_SKIPS=1, and a run
 #                                     whose demo never reports its window FAILS. It also guards the boot's
 #                                     own timing (the demo prints it under VINE_BOOT_TIMING=1): the longest
-#                                     single stretch the boot holds the APPLICATION THREAD for, bounded by
-#                                     VINE_GATE_BOOT_OCCUPANCY_MS (default 150 ms; measured 74-92 ms in the
-#                                     current shape against 414 ms when the whole session attach ran on the
-#                                     application thread) - so moving work back onto that thread is a red row
-#                                     here instead of a note in a commit message.
+#                                     single stretch the boot holds the APPLICATION THREAD for, bounded PER
+#                                     DEVICE CLASS - 150 ms on hardware (measured 74-92 ms in the current shape
+#                                     against 414 ms when the whole session attach ran on the application
+#                                     thread), 650 ms on a software rasteriser (measured 311-437 ms here: the
+#                                     same shape reads higher because what the row measures is partly a WAIT on
+#                                     the device's own speed). Moving work back onto that thread is a red row
+#                                     here instead of a note in a commit message, and the line names when the
+#                                     stretch ended so a red row can be lined up with the boot's own log lines.
 #
 # A FAILING SUITE IS RUN ONCE MORE, and the retry decides the stage (the first run's failing cases are
 # named in the evidence line, never hidden): one case in this suite reads a window right after a session's
@@ -73,6 +76,8 @@
 #   VINE_GATE_APP_AFTER=N    Seconds to settle after the resize before the second sample (default 3).
 #   VINE_GATE_APP_MIN_CONTENT=P  Percent of the render area that must not be near-black (default 30).
 #   VINE_GATE_APP_MIN_PREVIEW=C  Max channel the G-buffer preview strip must reach (default 64).
+#   VINE_GATE_BOOT_OCCUPANCY_MS=N  Override the boot's app-thread occupancy budget (default 150 ms on a
+#                          hardware device, 650 ms on a software rasteriser - see the app stage).
 #   VINE_GATE_APP_MAX_BACKGROUND=P  Percent of the picture the flat background colour may cover (default 5;
 #                                measured 0.00% when healthy, 14.53% when the whole view goes flat).
 #   VINE_GATE_KEEP_LOGS=1    Keep the logs of a clean run too (chasing a flake across runs).
@@ -136,6 +141,14 @@ fi
 if [ -z "${VK_ICD_FILENAMES:-}" ] && [ -f /usr/share/vulkan/icd.d/lvp_icd.json ]; then
     export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
 fi
+
+# THE DEVICE CLASS IS A FACT OF THE RUN, and one measurement depends on it (the boot's app-thread occupancy,
+# see the app stage). A software rasteriser runs the same code and takes several times as long to do it, so a
+# budget measured on hardware would read as a regression on every run here.
+SOFTWARE_DEVICE=0
+case "${VK_ICD_FILENAMES:-}" in
+    *lvp_icd.json* | *lavapipe* | *swiftshader*) SOFTWARE_DEVICE=1 ;;
+esac
 
 LOG_DIR="$(mktemp -d)"
 
@@ -628,19 +641,37 @@ check_app() {
         fi
     done
     # 4. The boot's own timing. The application prints one line under VINE_BOOT_TIMING=1: how long the boot held the
-    #    APPLICATION THREAD in its longest single stretch. That number is the whole point of the boot's shape - what
-    #    runs on the pool (session attach, its warm-up frame, the content load) does not block the loop, what has to
-    #    stay on the thread does - so it is guarded here instead of living in a commit message: moving a stretch back
-    #    onto the application thread turns this stage red. Measured 2026-09-26: 74 ms in the current shape, 414 ms when
-    #    the whole attach ran on the application thread. The threshold is ~2x the measurement on purpose (a machine
-    #    under load must not read as a regression); override with VINE_GATE_BOOT_OCCUPANCY_MS to probe the check itself.
-    local boot_max
+    #    APPLICATION THREAD in its longest single stretch, and when that stretch ended. That number is the whole point
+    #    of the boot's shape - what runs on the pool (session attach, its warm-up frame, the content load) does not
+    #    block the loop, what has to stay on the thread does - so it is guarded here instead of living in a commit
+    #    message: moving a stretch back onto the application thread turns this stage red.
+    #
+    #    THE BUDGET IS PER DEVICE CLASS, because the number is a WAIT as much as it is work: the boot's longest
+    #    stretch ends after the session attach and the first presenting transition, so a device that is four times
+    #    slower reads four times higher with the same shape. Measured: 74 ms on hardware (2026-09-26), against 414 ms
+    #    when the whole attach ran on the application thread; on this machine's lavapipe 311-437 ms with the shape
+    #    unchanged. Hence 150 ms for a hardware device and 650 ms for a software rasteriser (~1.5x the worst
+    #    measurement here) - and on a software device this row is only a smoke bound: it catches work moving back
+    #    onto the thread in multiples, not a subtle one, because the wait it measures is the device's own speed.
+    #    VINE_GATE_BOOT_OCCUPANCY_MS overrides either (to probe the check itself).
+    local boot_budget="${VINE_GATE_BOOT_OCCUPANCY_MS:-}"
+    if [ -z "$boot_budget" ]; then
+        if [ "$SOFTWARE_DEVICE" -eq 1 ]; then boot_budget=650; else boot_budget=150; fi
+    fi
+    local boot_class="a hardware device"
+    if [ "$SOFTWARE_DEVICE" -eq 1 ]; then boot_class="a software rasteriser"; fi
+    local boot_max boot_end
     boot_max="$(sed -n 's/.*\[boot-timing\] application thread max continuous occupancy: \([0-9]*\) ms.*/\1/p' "$log" | tail -1)"
+    boot_end="$(sed -n 's/.*max continuous occupancy: [0-9]* ms ending \([0-9]*\) ms after start.*/\1/p' "$log" | tail -1)"
     if [ -z "$boot_max" ]; then
         evidence="$evidence (no [boot-timing] line in the log: the application did not report its boot timing)"
         status=1
-    elif [ "$boot_max" -gt "${VINE_GATE_BOOT_OCCUPANCY_MS:-150}" ]; then
-        evidence="$evidence (the boot held the application thread for ${boot_max} ms, over the ${VINE_GATE_BOOT_OCCUPANCY_MS:-150} ms allowed: something that should run on the pool runs on it)"
+    elif [ "$boot_max" -gt "$boot_budget" ]; then
+        # WHERE it happened, not just how long: line the end up against the boot's own log lines (session attach,
+        # the surface reaching Presenting, a plugin load) and the red row names its stage without a rebuild.
+        local where=""
+        if [ -n "$boot_end" ]; then where=" (it ended ${boot_end} ms after start)"; fi
+        evidence="$evidence (the boot held the application thread for ${boot_max} ms${where}, over the ${boot_budget} ms allowed for ${boot_class}: something that should run on the pool runs on it)"
         status=1
     fi
 

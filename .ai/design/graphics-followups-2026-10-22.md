@@ -15,6 +15,10 @@
 | ~~F2~~ | ~~**S4 的改名与归属**~~ **已关闭（2026-10-22 下午）**：改名按 `PassChain` / `PassChainBuilder` / `ChainDesc` / `SceneView::setChain` 落地（`ScenePicture` 被否：读成"场景图片"；`PassPipeline` 被否：重开 K1 的 PSO 歧义），`PipelineStage`→`PassStage` 并挪进 `PassStage.hpp`；"`RenderSurface` 问视图"在 S6 已是现状 | — | ~~下一件真正动公开面的事~~ 已做 | 全量构建 0 error；`test_graphics` 407 / `test_vsg` 481 / `test_gui` 261 / `test_core` 165；6 个静态脚本 0 finding；`RenderSurface` 的 `presentingPass()` / `presentedView()` 用例不改即绿 |
 | ~~F3~~ | ~~**S5 调度上移**：引擎里做稳定拓扑排序，后端只物化；`backend::FrameGraph` 退场；`PassStage` 降为 tie-break~~ **已关闭（2026-10-22 晚）**：调度器搬进派生层 `detail::FrameScheduler`（迭代 Tarjan + 堆就绪队列，稳态零分配），`EngineCompile.cpp` 的 `scheduleRows()` 建行/建边（`input_targets`、ImageRef 输入、借用深度）+ 排序 + 按序发布；环组件整块跳过并由引擎报一次 `ContentSkipped`；`PassStage` 只做同优先级 tie-break（`passStageOrder`），注册位置只做**历史记录**（跨引擎关闭/重开 pass 的顺序不再影响执行序）。`backend::FrameGraph` 与 `FrameGraphTest`、`FrameCompiler::graph()` 全部删除；后端按交来的 `description.passes` 物化，不再重排、不报环、`frame_.cycles` 恒 0 | — | ~~跨阶段真实依赖 / 第二个后端~~ 本轮即触发（调度语义已在引擎，后端留一份就是第二个画面） | `vsg_rewrite_gate.sh`：suite 两跑 0 VUID / 0 SYNC-HAZARD、相位行全闭合、`app` 阶段内容/预览/背景与基线一致（`boot occupancy` 327–437 ms 超 150 ms 预算，**基线同机 311 ms**，登记为环境项）；`test_graphics` 412（+3 `FrameScheduleTest`）、`test_vsg` 470（−11 `FrameGraphTest`）、`test_gui` 261、`test_core` 165；6 个静态脚本 0 finding |
 
+> **2026-10-22（晚二）补记 —— F3 验收里那条"环境红"已收口**：`vsg_rewrite_gate.sh` 的 `app` 阶段把启动占用预算按
+> **设备类别**分档（硬件 150 ms / 软件光栅器 650 ms，实测见 `.ai/memory/graphics.md` 同日条目），红行证据同时给出
+> "那一段结束在启动后多少毫秒"。上表 F3 行的 327–437 ms 是分档前的记录，保留作历史。 <!-- drift-ok -->
+
 ## 2. 对象模型复核（2026-10-21）里仍然开放的登记项
 
 > **2026-10-22 下午补记**：`PassGroup` 已删除 —— 链自己就是注册范围（引擎槽位记 `owner`，链析构一次交还）。

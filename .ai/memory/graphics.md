@@ -94,6 +94,20 @@
   **宣告序**（文档已写明它与执行序的区别）；`docs/guides/vsg-data-flow.md` §0/§2 与 `docs/guides/vsg-plugin.md` 的单元表
   去掉 `FrameGraph`。
 
+## 2026-10-22（晚二）门禁的启动占用预算按设备类别分档（F3 那条"环境红"的收口）
+
+- **实测**：`[boot-timing]`（`src/app/src/main.cpp`，`VINE_BOOT_TIMING=1`）在本机 lavapipe 上是 304–437 ms；
+  历史硬件基线是 74–92 ms（同步形状 414 ms）。把探针加了一句 `ending <N> ms after start` 后一眼看清：**一整段**
+  从计时开始连续到 ~304 ms，覆盖"插件已加载 → 会话 up → 首次 Presenting → 启动框收起"——也就是说它测的是**等设备**
+  的时长（软件光栅器慢 4 倍，同一个形状就读 4 倍），不是"活干错了线程"。
+- **决定**：`scripts/vsg_rewrite_gate.sh` 的 `app` 阶段按 **ICD 类别**给预算——硬件 150 ms（不变），软件光栅器
+  （`lvp_icd.json` / `lavapipe` / `swiftshader`）650 ms（本机最差值的 ~1.5 倍）；`VINE_GATE_BOOT_OCCUPANCY_MS`
+  仍可覆盖。红行证据带上"那一段结束在启动后多少毫秒"，所以下次变红能直接对日志时间线说出是哪一段，不必重建探针。
+- **诚实的边界**（写进了脚本文档）：软件设备上这一行只能挡**成倍**的回归（把等待变成工作），挡不住细微的；
+  形状证明仍然在硬件机上。这不是放宽门禁，是把"硬件量的阈值"换成"设备类别的阈值"。
+- 判据：完整跑 `scripts/vsg_rewrite_gate.sh` 全阶段绿；`VINE_GATE_BOOT_OCCUPANCY_MS=50` 强制红时证据可读
+  （`... for 304 ms (it ended 304 ms after start), over the 50 ms allowed for a software rasteriser ...`）。
+
 ## 2026-10-22 注册归一个令牌：`PassGroup` + `presentingPass`（历史登记；当日下午已折进 `PassChain`，设计见 `.ai/design/graphics-frame-picture-view-redesign-2026-10-22.md` §9）
 
 - **S2 落地（引擎仍是唯一注册表）**：新增 `vine/graphics/PassGroup.hpp/.cpp` —— 一个 **RAII 令牌**：`Slot` 加
