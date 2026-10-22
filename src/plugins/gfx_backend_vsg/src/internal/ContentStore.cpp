@@ -236,7 +236,7 @@ struct ContentStore::Data
         {
             return nullptr;
         }
-        return findGeometry(view(), geometry, geometry->contentRevision()).entry;
+        return findGeometry(view(), geometry, geometry->revision()).entry;
     }
 
     /** @brief Gets the row that answers for a material right now (identity is the whole key). */
@@ -397,10 +397,8 @@ void ContentStore::ensureGeometry(const vn::graphics::Geometry* geometry, core::
         return;
     }
 
-    Data::LiveGeometry& live = entry->second;
-    // The CONTENT version, not the coarse announcement: a buffer edited in place and announced on the buffer
-    // moves it, and the rows this store hands out have to describe the bytes the host actually wrote.
-    const std::uint64_t revision = geometry->contentRevision();
+    Data::LiveGeometry& live     = entry->second;
+    const std::uint64_t revision = geometry->revision();
     if (live.described && live.described_revision == revision)
     {
         return;  // the steady frame: nothing to build, nothing to park

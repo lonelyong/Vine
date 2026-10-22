@@ -517,34 +517,15 @@ class VN_GRAPHICS_API Geometry : public Node {
      *   setters change what the geometry holds without touching this counter, because this object cannot
      *   tell bytes it has not read yet from the ones it read before (it does not copy them) - the caller,
      *   which does know, is the one that says so.
-     * - This is the COARSE announcement: "this geometry's data changed, I did not say which part". A
-     *   consumer that also honours the per-buffer announcement (see Buffer::revision()) re-reads every
-     *   channel when this number moves, and only the touched ones when a buffer's own revision moves.
+     * - THIS IS THE ANNOUNCEMENT THE RENDERER FOLLOWS, for the whole geometry: a geometry is ONE
+     *   description (its channel set is part of it), so a renderer that cached that description rebuilds it
+     *   when this number moves, and cannot answer "which channel changed" from it. A per-buffer
+     *   announcement (Buffer::setRevision) is for consumers that read that buffer's bytes themselves - the
+     *   local bounds cache below is one; the upload cache is not (see Buffer's revision note).
      *
      * @return Revision counter (starts at 0).
      */
     std::uint64_t revision() const;
-
-    /** @brief Gets the version of the DATA this geometry currently describes, folded from every announcement.
-     *
-     * @details
-     * - Answers one question: "would a description built from this geometry differ from the last one?".
-     *   It folds this geometry's own revision with every channel's identity AND its buffer's own revision
-     *   (and the index stream's), because either level is a valid announcement - a buffer edited in place
-     *   and announced through Buffer::setRevision moves this number even when nobody called
-     *   Geometry::setRevision (see Buffer::revision() and the two-level rule in Geometry::revision()).
-     * - It is DERIVED, not an announcement: nothing can set it, and calling it reports rather than moves.
-     *   A backend keys its per-geometry facts table by it (rebuild when it moves) and by each channel's
-     *   buffer revision (re-upload only what moved); no consumer should publish it as a "data revision".
-     *
-     * @note
-     * - The value is a fold (FNV-1a), not a counter: it is safe to COMPARE for equality and must not be
-     *   ordered or assumed to grow. A caller that needs an ordering wants revision().
-     * - Cost is one pass over the channels (a handful, no allocation) per call.
-     *
-     * @return The content version of this geometry's data right now.
-     */
-    std::uint64_t contentRevision() const;
 
     /** @brief Announces a data change by reporting the revision.
      *
@@ -554,6 +535,10 @@ class VN_GRAPHICS_API Geometry : public Node {
      *   buffer here, or by rebuilding the model this geometry BORROWS from (see setPositions()) - reports
      *   the new revision afterwards. Nothing else reports it, not even the setters, and a forgotten
      *   announcement is silent: the renderer keeps drawing the data it uploaded first.
+     * - ONE ANNOUNCEMENT PER BATCH, NOT ONE PER SETTER - which is why nothing here announces by itself, not
+     *   even a REPLACED buffer: a host editing a model often changes several channels in one go (swap the
+     *   positions, refill the normals, re-slice the indices), and it may still be filling the buffer it just
+     *   installed. Only the host knows where such a batch ends, so it says so once, when it does.
      * - The counter is only ever COMPARED, so nothing breaks if it jumps.
      *
      * @warning

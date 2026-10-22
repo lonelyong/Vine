@@ -229,7 +229,7 @@ TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(named.get(), named->contentRevision(), program.get(), material.get()) },
+    const auto plan = contentPlan({ command(named.get(), named->revision(), program.get(), material.get()) },
                                   program.get());
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
 
@@ -238,13 +238,13 @@ TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
     EXPECT_EQ(store.materialEntries(), 1U);
     EXPECT_EQ(store.builds(), 3U);
 
-    EXPECT_TRUE(findGeometry(facts, named.get(), named->contentRevision()).found());
+    EXPECT_TRUE(findGeometry(facts, named.get(), named->revision()).found());
     EXPECT_TRUE(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content).found());
     EXPECT_TRUE(findMaterial(facts, material.get()).found());
 
     // A second frame naming the other three builds the other three, and nothing else.
     const auto other_plan =
-        contentPlan({ command(unnamed.get(), unnamed->contentRevision(), program.get(), nullptr) }, program.get());
+        contentPlan({ command(unnamed.get(), unnamed->revision(), program.get(), nullptr) }, program.get());
     const ContentFacts& second = store.tablesFor(other_plan->frame, timeline, retirement);
     EXPECT_EQ(store.geometryEntries(), 2U);
     EXPECT_EQ(store.programEntries(), 1U);
@@ -267,7 +267,7 @@ TEST(ContentStoreTest, ASteadyFrameBuildsNothing)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto          plan  = contentPlan({ command(geometry.get(), geometry->contentRevision(), program.get(), material.get()) },
+    const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
                                             program.get());
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
     const std::uint64_t built = store.builds();
@@ -298,7 +298,7 @@ TEST(ContentStoreTest, ThePublishedTablesCarryTheirRowOrder)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->contentRevision(), program.get(), material.get()) },
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
                                   program.get());
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
 
@@ -310,7 +310,7 @@ TEST(ContentStoreTest, ThePublishedTablesCarryTheirRowOrder)
     // And the order is the one the lookups search, so the recording's own three questions answer through it.
     const auto found_program  = findProgram(facts, ProgramRef{ program.get(), program->revision() },
                                             ProgramVariant{}, DrawKind::Content);
-    const auto found_geometry = findGeometry(facts, geometry.get(), geometry->contentRevision());
+    const auto found_geometry = findGeometry(facts, geometry.get(), geometry->revision());
     const auto found_material = findMaterial(facts, material.get());
     EXPECT_TRUE(found_program.entry != nullptr);
     EXPECT_TRUE(found_geometry.entry != nullptr);
@@ -338,7 +338,7 @@ TEST(ContentStoreTest, TheRowOrderCoversEveryRowAfterAppendsAndErasures)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->contentRevision(), program.get(), material.get()) },
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
                                   program.get());
     const auto covers = [](const ContentFacts& facts) {
         const auto is_permutation = [](std::span<const std::uint32_t> order, std::size_t rows) {
@@ -399,15 +399,15 @@ TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesAtItsPa
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->contentRevision(), program.get(), nullptr) },
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) },
                                   program.get());
     const ContentFacts& first = store.tablesFor(plan->frame, timeline, retirement);
-    ASSERT_TRUE(findGeometry(first, geometry.get(), geometry->contentRevision()).found());
-    const std::uint64_t old_revision = geometry->contentRevision();
+    ASSERT_TRUE(findGeometry(first, geometry.get(), geometry->revision()).found());
+    const std::uint64_t old_revision = geometry->revision();
 
     // The host edits the data and announces it (the SDK's contract): the plan still names the old revision.
     geometry->bumpRevision();
-    const std::uint64_t new_revision = geometry->contentRevision();
+    const std::uint64_t new_revision = geometry->revision();
     EXPECT_NE(new_revision, old_revision);
 
     const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
@@ -444,7 +444,7 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->contentRevision(), program.get(), material.get()) },
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
                                   program.get());
     const ContentFacts& first = store.tablesFor(plan->frame, timeline, retirement);
     const auto           first_block = blockOf(*findMaterial(first, material.get()).entry);
@@ -487,7 +487,7 @@ TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->contentRevision(), program.get(), material.get()) },
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
                                   program.get());
     (void)store.tablesFor(plan->frame, timeline, retirement);
 
@@ -535,8 +535,8 @@ TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->contentRevision(), program.get(), textured.get()),
-                                    command(geometry.get(), geometry->contentRevision(), program.get(), plain.get()) },
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), textured.get()),
+                                    command(geometry.get(), geometry->revision(), program.get(), plain.get()) },
                                   program.get());
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
 
@@ -599,7 +599,7 @@ TEST(ContentStoreTest, AnUntrackedObjectIsSimplyAbsent)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->contentRevision(), program.get(), material.get()) },
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
                                   program.get());
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
 
@@ -607,7 +607,7 @@ TEST(ContentStoreTest, AnUntrackedObjectIsSimplyAbsent)
     EXPECT_EQ(store.programEntries(), 0U);
     EXPECT_EQ(store.materialEntries(), 0U);
     EXPECT_EQ(store.builds(), 0U);
-    EXPECT_EQ(findGeometry(facts, geometry.get(), geometry->contentRevision()).miss, FactMiss::Unknown);
+    EXPECT_EQ(findGeometry(facts, geometry.get(), geometry->revision()).miss, FactMiss::Unknown);
     EXPECT_EQ(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
     EXPECT_EQ(findMaterial(facts, material.get()).miss, FactMiss::Unknown);
 }
@@ -624,7 +624,7 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->contentRevision(), program.get(), nullptr) },
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) },
                                   program.get());
     (void)store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_EQ(store.geometryEntries(), 1U);
@@ -636,7 +636,7 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark
 
     // The host lets the geometry go: the store's share is the last one.
     const void* const identity = geometry.get();
-    const std::uint64_t revision = geometry->contentRevision();
+    const std::uint64_t revision = geometry->revision();
     geometry.reset();
     EXPECT_EQ(store.releaseAbandoned(timeline, retirement), 1U);
     EXPECT_EQ(retirement.pending(), 1U) << "the abandoned rows are parked, not dropped: a recorded frame may still name them";
@@ -662,7 +662,7 @@ TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
 
     // One frame shades CONTENT with it...
     const auto content_plan =
-        contentPlan({ command(geometry.get(), geometry->contentRevision(), program.get(), nullptr) }, program.get());
+        contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
     (void)store.tablesFor(content_plan->frame, timeline, retirement);
     ASSERT_EQ(store.programEntries(), 1U);
 

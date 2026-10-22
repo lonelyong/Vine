@@ -398,9 +398,7 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
         CollectedCommand&                    target = copy[i];
 
         target.geometry          = source.geometry.get();
-        // The CONTENT version: it folds the geometry's own announcement and every channel's buffer revision, so
-        // the backend's facts row (keyed by the same number) describes the bytes as they are at collection.
-        target.geometry_revision = source.geometry != nullptr ? source.geometry->contentRevision() : 0;
+        target.geometry_revision = source.geometry != nullptr ? source.geometry->revision() : 0;
         // The pass' override wins over the command's own program (see render()): the identity the plan keys its
         // pipeline variants by is therefore the EFFECTIVE one, and nothing downstream needs to know about overrides.
         target.program           = programRef(program_override != nullptr ? program_override : source.program.get());

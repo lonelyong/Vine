@@ -191,45 +191,6 @@ std::uint64_t Geometry::revision() const
     return revision_;
 }
 
-std::uint64_t Geometry::contentRevision() const
-{
-    // ONE FOLD OVER EVERY ANNOUNCEMENT THIS GEOMETRY CAN RECEIVE, because two levels are valid and a
-    // consumer of "did the data change" has to honour both (see the header): its own coarse revision,
-    // and each channel's buffer revision (which a host moves without touching this object at all).
-    //
-    // What goes in is the IDENTITY of the description, not the bytes: the buffer pointer, that buffer's
-    // revision and the segment. Nothing here reads the data, so the call is O(channels) integer work and
-    // allocates nothing. The map walks in location order, so the same geometry always folds the same way.
-    //
-    // FNV-1a on purpose: the value is compared for equality, never ordered, so a hash is the cheapest
-    // spelling of "did anything in this fold move" (the header says so, to stop anybody sorting by it).
-    constexpr std::uint64_t kFnvOffset = 1469598103934665603ULL;
-    constexpr std::uint64_t kFnvPrime  = 1099511628211ULL;
-    std::uint64_t           hash       = kFnvOffset;
-    const auto              mix        = [&hash](std::uint64_t value) noexcept {
-        hash ^= value;
-        hash *= kFnvPrime;
-    };
-
-    mix(revision_);
-
-    mix(reinterpret_cast<std::uintptr_t>(indices_.values.get()));
-    mix(indices_.values != nullptr ? indices_.values->revision() : 0U);
-    mix(static_cast<std::uint64_t>(indices_.first));
-    mix(static_cast<std::uint64_t>(indices_.count));
-
-    for (const auto& [location, channel] : attributes_) {
-        mix(static_cast<std::uint64_t>(location));
-        mix(reinterpret_cast<std::uintptr_t>(channel.values.get()));
-        mix(channel.values != nullptr ? channel.values->revision() : 0U);
-        mix(static_cast<std::uint64_t>(channel.components));
-        mix(static_cast<std::uint64_t>(channel.offset));
-        mix(static_cast<std::uint64_t>(channel.scalarCount));
-    }
-
-    return hash;
-}
-
 void Geometry::setRevision(std::uint64_t revision) noexcept
 {
     revision_ = revision;

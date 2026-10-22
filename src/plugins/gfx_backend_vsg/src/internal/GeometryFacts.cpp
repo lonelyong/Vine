@@ -59,10 +59,7 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
     storage.clear();
     out          = GeometryFacts{};
     out.geometry = &geometry;
-    // The ROW's revision is the CONTENT version, not the coarse announcement: a buffer edited in place and
-    // announced through Buffer::setRevision must rebuild this row too, or the copied scalars below would be
-    // the old bytes with a new key in front of them.
-    out.revision = geometry.contentRevision();
+    out.revision = geometry.revision();
 
     const std::vector<std::uint32_t> locations = geometry.bufferLocations();
     if (locations.empty())
@@ -107,10 +104,7 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
         facts.key.location   = location;
         facts.key.components = channel->components;
         facts.key.buffer     = channel->values.get();
-        // Two facts, two fields (see StreamKey): the geometry's coarse revision re-keys every channel, and
-        // this buffer's own revision re-keys only the channels that read it.
-        facts.key.revision        = geometry.revision();
-        facts.key.buffer_revision = channel->values->revision();
+        facts.key.revision   = geometry.revision();
         facts.key.offset     = static_cast<std::uint32_t>(channel->offset);
         facts.key.count      = static_cast<std::uint32_t>(channel->floatCount());
 
@@ -180,9 +174,8 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
     index_facts.key.kind       = core::StreamKind::Index;
     index_facts.key.location   = 0U;
     index_facts.key.components = 1U;
-    index_facts.key.buffer          = index_buffer.get();
-    index_facts.key.revision        = geometry.revision();
-    index_facts.key.buffer_revision = index_buffer->revision();
+    index_facts.key.buffer     = index_buffer.get();
+    index_facts.key.revision   = geometry.revision();
     index_facts.key.offset     = 0U;
     index_facts.key.count      = 0U;  // the whole buffer: two geometries over one arena share one upload
 

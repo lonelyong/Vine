@@ -38,25 +38,23 @@ enum class StreamKind : std::uint8_t
 };
 
 /**
- * @brief Identity of one stream: a buffer slice, plus the two announcements that make it current.
+ * @brief Identity of one stream: a buffer slice, plus the revision that makes it current.
  *
  * @details
  * - THE SLICE IS PART OF THE IDENTITY. One buffer may hold several geometries' data, so two reads of
  *   it at different offsets are two streams; treating them as one would feed a draw another
  *   geometry's bytes.
- * - TWO REVISIONS, because the SDK announces data at two levels and both are valid (see
- *   Geometry::revision() and Buffer::revision()):
- *   - @ref revision is the GEOMETRY's - the coarse "this geometry changed, I did not say which part" -
- *     so moving it re-keys every channel of that geometry, which is what the coarse announcement means;
- *   - @ref buffer_revision is the channel's own buffer's - the fine "these bytes changed" - so moving
- *     it re-keys only the channels that read that buffer.
- *   Both are compared and hashed, so a backend re-uploads exactly the streams whose key moved.
- * - Neither revision is invented here: the backend never compares bytes it happens to read. A refilled
- *   buffer is therefore a different key, never a stale copy.
+ * - `revision` is the GEOMETRY's (`Geometry::revision()`), because a stream is one channel OF a geometry
+ *   and a geometry is one description: the number that makes this stream current is the number that
+ *   re-describes every channel of it. A buffer's own revision (Buffer::revision()) is NOT in the key - the
+ *   upload cache sits behind a per-geometry description, not behind the bytes, so honouring it here would
+ *   need a second key component (see `.ai/design/graphics-geometry-revision-2026-10-22.md`, which records
+ *   two attempts and why they were withdrawn). The backend never invents a revision by comparing bytes it
+ *   happens to read: a refilled buffer is a different key, never a stale copy.
  * - A derived channel - one the backend builds itself because the model authors none (a white
- *   opacity carrier, zero UVs, computed normals) - has a null @ref buffer and no buffer revision. Such
- *   a channel is not a stream and can never be shared: its bytes belong to one geometry and change
- *   with that geometry's own revision.
+ *   opacity carrier, zero UVs, computed normals) - has a null @ref buffer. Such a channel is not a
+ *   stream and can never be shared: its bytes belong to one geometry and change with that geometry's
+ *   own revision.
  */
 struct VN_GRAPHICS_API StreamKey
 {
@@ -64,8 +62,7 @@ struct VN_GRAPHICS_API StreamKey
     std::uint32_t location{0};               ///< Attribute location; 0 for an index stream.
     std::uint32_t components{0};             ///< Components per element (the packed stride); 1 for indices.
     const void*   buffer{nullptr};           ///< Buffer the slice lives in; null for a derived channel.
-    std::uint64_t revision{0};               ///< The GEOMETRY's revision (the coarse announcement).
-    std::uint64_t buffer_revision{0};        ///< That buffer's own revision (the fine one); 0 when derived.
+    std::uint64_t revision{0};               ///< The geometry's revision (see the class note).
     std::uint64_t offset{0};                 ///< First element of the slice.
     std::uint64_t count{0};                  ///< Elements the slice reads.
 

@@ -38,8 +38,18 @@ VN_CORE_NS_BEGIN
  * pointer, an element reference, a write from another thread are all invisible to it) and it does not know
  * where an edit begins and ends, so a self-bump could only ever be a half-truth: one write path announces
  * itself, the next one silently does not. The WRITER reports the change with setRevision(), once per edit,
- * and a consumer that cached the bytes compares the revision it read against revision() before reusing them
- * — the rule `Geometry`, `Texture` and `ShaderProgram` already follow for "the same object, new contents".
+ * and a consumer that cached THE BYTES IT READ FROM THIS BUFFER compares the revision it read against
+ * revision() before reusing them — the rule `Texture` and `ShaderProgram` follow for "the same object, new
+ * contents".
+ *
+ * WHO HONOURS IT, AND WHO DOES NOT. A consumer that reads this buffer's bytes itself honours it (Geometry's
+ * local bounds cache keys on it). The RENDER path does not, and says so in its own words: a backend caches a
+ * description of a GEOMETRY — layout, slices, copies — and follows Geometry::revision(), because that is the
+ * announcement that re-describes every channel of it; a buffer's revision alone cannot say which geometry's
+ * description is stale. A host that edits a buffer in place therefore announces on the GEOMETRY as well (see
+ * Geometry::addBuffer / setRevision), which is the contract it already had. Fine-grained re-upload (one
+ * channel instead of all of them) is NOT this object's revision; see
+ * `.ai/design/graphics-geometry-revision-2026-10-22.md` for why it needs a different shape.
  * Freezing the length instead would have made the model side unexpressible.
  *
  * @tparam T Element type. Must be trivially copyable for `bytes()` to be meaningful.

@@ -94,23 +94,33 @@
   **宣告序**（文档已写明它与执行序的区别）；`docs/guides/vsg-data-flow.md` §0/§2 与 `docs/guides/vsg-plugin.md` 的单元表
   去掉 `FrameGraph`。
 
-## 2026-10-22（晚四）B6 落地：两级 revision 都生效（`contentRevision` + `StreamKey::buffer_revision`）
+## 2026-10-22（晚五）B6 收口：一个对象一条版本号（两级公告做完又整体回退）
 
-- **形状**：`StreamKey` 增加 `buffer_revision`（相等 + 哈希都看）。`revision` 保持几何级（粗公告 ⇒ 每个通道换键，
-  语义不变），`buffer_revision` 是该 buffer 自己的（细公告 ⇒ 只让读它的通道换键）。事实行（`GeometryFacts.revision`）
-  与命令里的 `geometry_revision` 都改取 `Geometry::contentRevision()`（FNV-1a 折叠：自身 revision + 索引流 +
-  每通道的 (location, buffer, buffer revision, components, offset, scalarCount)），所以"只 bump 一个 buffer"
-  也能让事实重建，而单通道键只变一条 ⇒ **只重传那一条**。
-- **别名范围没变**（有意）：两几何同 buffer 同段仍只在几何 revision 相等时共用上传——"按字节共用"和"几何级公告让
-  全部通道失效"互斥，选后者（粗公告是仓库里唯一在用的写法）。文档 §4 已把这条写成代价。
-- **判据**：`tests/test_vsg/GeometryRevisionTest.cpp` 三条；变异 3/3 红（`buffer_revision` 恒 0 ⇒ 细粒度；通道
-  revision 换成 buffer revision ⇒ 粗粒度；行 revision 退回 `geometry.revision()` ⇒ 事实不重建）。
-- **数字**：`test_vsg` 473（+3）、`test_graphics` 413、`test_gui` 261、`test_core` 165；完整 ctest 24/24；
-  `vsg_rewrite_gate.sh` 全阶段 clean；6 个静态门禁 0。
-- **坑（这次踩到）**：`StreamKey` 布局变了以后 `build/plugins` 里的旧 `gfx_backend_vsg.so` 让 `VsgBackendPluginTest`
-  假红（画出来只有清屏色，无诊断）。**改 SDK 的布局后必须整树重建**（`cmake --build build`，不能只建测试目标）。
-- 迁移：测试里手写的 `commandOf(... geometry->revision() ...)` / `findGeometry(..., geometry->revision())` 全部改成
-  `contentRevision()`——那正是 `FrameRecorder` 现在做的事，测试手写时也必须一致（12 处）。
+- **两次尝试都比问题复杂**：①把折叠哈希（FNV-1a）当 `Geometry::contentRevision()` 公开 + `StreamKey` 加
+  `buffer_revision`（提交 `a02b9500`）——功能成立，但 `revision` 在本仓库的语义是**单调计数器**（`setRevision`
+  的 `@warning` 整段讲只升不降），哈希穿着 revision 的衣服；②把哈希藏成私有探测器、公开单调计数器——语义对了，
+  但给 `Geometry` 加了可变状态 + 每帧每几何一次 O(通道) 检测，而它存在的唯一理由是"行键只能是一个数"。
+- **共同的根（记住这条）**：**缓存键必须包含它要响应的每一个公告**。粗（几何）与细（buffer）是两个事实，一个数
+  装两个只能折叠，折叠就是哈希。问题不在命名，在前提。
+- **结论**：`a02b9500` 整体回退；规则收回成**一个对象一条版本号**——渲染器跟 `Geometry::revision()`（几何是一个
+  描述，通道集是它的一部分），`Buffer::revision()` 只对"自己读这块字节"的消费者有效（几何的局部包围盒缓存就是，
+  它两级都认，不动）。三处文档（`Geometry::revision()`、`Buffer.hpp`、`StreamKey`）改成同一口径并点名各自读者，
+  宿主不再有一份"看着该生效、实际无效"的承诺。
+- **将来真要省带宽**：形状记在 `graphics-geometry-revision-2026-10-22.md` §4——`ChannelFacts` 的标量拷贝改懒
+  （上传 miss 时才读 `values->view()`），行键只需覆盖 layout（几何 revision 够），通道键 = `(buffer, 通道自己的
+  revision)`，由 `Geometry::setChannelRevision(location, n)` 指明是哪条。**不需要派生版本号**。触发仍是"宿主报
+  上传带宽"（16.98 MiB / +30 ms 是构造的形状，无人报过）。
+- **B6 行**：登记表里改回开放（只留带宽那一半），并指向复盘。`test_vsg` 回到 470（三条新用例随回退删除）。
+
+## 2026-10-22（晚六）revision 只由宿主显式公告——连"换了 buffer"也不自动
+
+- **决定（用户）**：`Geometry::revision()` 只由 `setRevision` / `bumpRevision` 移动。结构变化（`setPositions(new)` /
+  `addBuffer` / `removeBuffer` / `setIndices` / 换切片）**也不**自动 bump，理由不是"看不见"而是**批量**：宿主一次编辑
+  常同时改多条通道，甚至先把新 buffer 装上再往里填，只有它知道这一批何时结束。公告 = 每批一次、由宿主发出。
+- **代价写在 `setRevision` 的 `@details` 里**：忘喊就是静默的（渲染器继续画先传上去的那份）。换来的是公告点由宿主决定，
+  而不是被 setter 的调用次序切碎。
+- 所以三条输入各有归属：`Geometry::revision()` = 渲染器跟的那一条（粗、宿主写）；`Buffer::revision()` = "自己读这块
+  字节"的消费者跟的那一条（几何局部包围盒缓存就是）；派生缓存不得自己发明版本号（两次尝试的教训见同日"晚五"条）。
 
 ## 2026-10-22（晚三）几何 revision：两级公告已经存在，但只有一个生效（B6 的契约定位）
 

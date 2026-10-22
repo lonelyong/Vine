@@ -70,9 +70,7 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage), FactMiss::None);
 
     EXPECT_EQ(facts.geometry, &geometry);
-    // The row's revision is the CONTENT version (it folds every announcement, see Geometry::contentRevision), not
-    // the coarse number the host stated: a buffer announced on the buffer has to move this row too.
-    EXPECT_EQ(facts.revision, geometry.contentRevision());
+    EXPECT_EQ(facts.revision, 4U);
 
     // Position and normal, in ABI order: the layout's mask is the same fact the pipeline key reads.
     EXPECT_EQ(facts.layout.canonical_mask, 0x3U);

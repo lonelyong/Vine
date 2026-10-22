@@ -6536,7 +6536,7 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     // pipeline - exactly the shape the previous implementation shipped, where only the API's own
     // same-topology-class rule stood between the picture and undefined behaviour.
     const vn::vsg::FactResult<GeometryFacts> live_geometry =
-        vn::vsg::findGeometry(assembly.facts(), geometry.get(), geometry->contentRevision());
+        vn::vsg::findGeometry(assembly.facts(), geometry.get(), geometry->revision());
     ASSERT_TRUE(live_geometry.found());
     ASSERT_EQ(assembly.facts().programs.size(), 1U) << "one program was compiled for this frame";
     const ProgramFacts& live_program = assembly.facts().programs.front();

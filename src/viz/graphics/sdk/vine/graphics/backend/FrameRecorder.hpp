@@ -151,7 +151,7 @@ struct CameraSnapshot
 struct CollectedCommand
 {
     const void*   geometry{nullptr};            ///< Leaf geometry identity.
-    std::uint64_t geometry_revision{0};         ///< `Geometry::contentRevision()` at collection time.
+    std::uint64_t geometry_revision{0};         ///< `Geometry::revision()` at collection time.
     ProgramRef    program{};                    ///< The command's own program; null = the frame's default.
     const void*   material{nullptr};            ///< Material identity, or nullptr.
     vn::math::Mat4d model{};                  ///< World-space model matrix.

@@ -7,8 +7,7 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 bool StreamKey::operator==(const StreamKey& other) const noexcept
 {
     return kind == other.kind && location == other.location && components == other.components &&
-           buffer == other.buffer && revision == other.revision && buffer_revision == other.buffer_revision &&
-           offset == other.offset && count == other.count;
+           buffer == other.buffer && revision == other.revision && offset == other.offset && count == other.count;
 }
 
 bool StreamKey::derived() const noexcept
@@ -26,7 +25,6 @@ std::size_t StreamKeyHash::operator()(const StreamKey& key) const noexcept
     };
     mix(reinterpret_cast<std::uintptr_t>(key.buffer));
     mix(key.revision);
-    mix(key.buffer_revision);
     mix(key.offset);
     mix(key.count);
     mix(key.location);
