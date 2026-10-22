@@ -1,11 +1,15 @@
 # graphics 待办登记（2026-10-22）：本轮没做的，以及为什么
-
+> **历史登记（2026-10-22 晚）——本表已无开放行**：F1 / F2 / F3 三片全部关闭（F3 的收口见
+> `graphics-frame-picture-view-redesign-2026-10-22.md` §10 与 `.ai/memory/graphics.md` 的 2026-10-22（晚）条）。
+> **活账本**是 `.ai/design/graphics-followups-2026-10-19.md` §3 触发条件型，加上对象模型复核
+> （`graphics-object-model-audit-2026-10-21.md`）里仍开放的 R1 / R3–R10。本表保留作“这三片当初为什么不做、
+> 后来在什么条件下做的”记录，不要再往这里登记新事项。
 只记**开放式**事项：每条写清"为什么现在不做 / 什么时候必须做 / 做完怎么验 / 设计在哪"。
 已做完的一律不列（历史在 git 与各轮设计文档里）。本轮（`614d2508`、`a7a9cd6e`）落地的是
 **S2 注册令牌（`PassGroup`）+ S3 overlay 值化 + S4 的改名部分**，见
 `graphics-frame-picture-view-redesign-2026-10-22.md` §9。
 
-## 1. 帧 / 画面 / 视图重设计剩下的三片
+## 1. 帧 / 画面 / 视图重设计剩下的三片（三片均已关闭，下面每行保留关闭时的形状与证据）
 
 判据、旧→新迁移表、变异判据都在 `graphics-frame-picture-view-redesign-2026-10-22.md`（§3、§4、§5）。
 
@@ -21,6 +25,9 @@
 
 ## 2. 对象模型复核（2026-10-21）里仍然开放的登记项
 
+> **2026-10-22（晚）补记**：本节现在只是**指向**：仍开放的项目（R1 的剩余部分、R3–R10）一律以
+> `graphics-object-model-audit-2026-10-21.md` 的登记表为准，本表不再重写它们的状态。
+
 > **2026-10-22 下午补记**：`PassGroup` 已删除 —— 链自己就是注册范围（引擎槽位记 `owner`，链析构一次交还）。
 > 这没有重开 R2：存储仍然只有引擎那张槽位表，链不存 pass 清单。下文提到 `PassGroup` 的句子是当时的形状，
 > 现行写法见 `.ai/memory/graphics.md` 的 2026-10-22（下午）条。 <!-- drift-ok -->
@@ -31,7 +38,7 @@ R1 / R3–R10 的完整论证、业界依据、触发条件在
 - **R2（`RenderPipeline` 同时是通用 pass 链与具体配方，第三种 overlay 要改类）**：**已关闭**
   （2026-10-22）。`PassGroup` 收掉了注册的第二份清单，`addOverlay` 让第三种 overlay 变成一次调用
   （`PassGroupTest.AHostRegistersAThirdOverlayWithoutTouchingThePipeline`）。剩下的"通用链 / 具体配方"两半
-  是 F2 + F3。
+  是 F2 + F3，而 F3 也已关闭（另行陈述的调度上移，见 §1）——所以 R2 在 2026-10-22 晚已无附属片。
 - **R1（`backend/` 半里的 Vulkan 策略，以及证据夹具随 SDK 安装）**：只做了 `DeviceRequirements`（2026-10-21
   移入 vsg 插件）。剩下的部分 —— `Keys` 里的 `VkFormat` / `ImageLayout`、`TargetPlan` 的 subpass、夹具
   （`PhaseTable` / `AllocationGate` / `PixelProbe` / `DepthProbe`）随 SDK 安装 —— **仍然开放**，触发条件不变
