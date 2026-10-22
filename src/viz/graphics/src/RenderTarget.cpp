@@ -96,6 +96,16 @@ void RenderTarget::setSize(int w, int h)
     height_ = h;
 }
 
+std::uint32_t RenderTarget::samples() const
+{
+    return samples_ != 0U ? samples_ : 1U;
+}
+
+void RenderTarget::setSamples(std::uint32_t samples)
+{
+    samples_ = samples != 0U ? samples : 1U;
+}
+
 bool RenderTarget::hasColor() const
 {
     return !color_formats_.empty();

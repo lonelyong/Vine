@@ -652,6 +652,11 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
             layout.height        = static_cast<std::uint32_t>(wanted->wanted.height);
             layout.color_formats = wanted->wanted.shape.color_formats;
             layout.depth_format  = wanted->wanted.shape.depth_format;
+            // The count is part of the shape the plan changed, so it travels with the formats: an image set is
+            // built for ONE count, and rebuilding the attachments at the old count would leave the plan and the
+            // target disagreeing (the shape agreement in record() would catch it, but only after a frame was
+            // wasted on images nobody can draw into at the new count).
+            layout.samples = wanted->wanted.shape.samples;
             const OffscreenTarget::Rebuilt rebuilt = target->rebuild(layout, timeline, retirement);
             replaced = rebuilt.replaced;
             if (rebuilt.replaced)

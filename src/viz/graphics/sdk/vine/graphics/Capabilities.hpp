@@ -70,6 +70,14 @@ struct VN_GRAPHICS_API Capabilities
     /// setting needs.
     float max_anisotropy{1.0F};
 
+    /// The largest sample count a render target may ask for (1 = multisampling is not available).
+    ///
+    /// A LIMIT, not a feature: `RenderTarget::setSamples` states what a target is drawn with, and a request
+    /// above this is refused by the backend that would have to build the images (reported once, never
+    /// silently lowered). The count reported is the one BOTH the colour and the depth attachment support,
+    /// because one target has one sample count.
+    std::uint32_t max_samples{1};
+
     /// How many colour attachments one render target may carry.
     ///
     /// A CEILING, not a promise the engine enforces: a declaration asking for more is refused by the backend that

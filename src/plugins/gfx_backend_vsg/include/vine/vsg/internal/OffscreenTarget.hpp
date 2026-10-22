@@ -44,6 +44,16 @@ class Device;
  * appends AFTER the render graph, so the copy is recorded in the same command buffer, on the same queue, in
  * order. After the frame is submitted and the device is idle, `probe()` reads the mapped destination buffer.
  *
+ * MULTISAMPLING IS A PROPERTY OF THE TARGET, and it changes only the images rather than the shape of the
+ * pass: a target whose `samples` is above one builds multisampled colour and depth images and RESOLVES the
+ * colour into a single-sample image, which is the one later passes sample and the one a capture copies (see
+ * Attachments::Color::picture). Resolving COLOUR and not depth is a deliberate limit of this slice, and it is
+ * what three refusals follow from: a multisampled target cannot hand its depth to another pass (`shareDepth`),
+ * cannot promote it to a shader-sampled texture, and cannot answer a depth readback - the image is never in a
+ * layout or a usage those need, and approximating one would be a picture that is not the frame's. The default
+ * framebuffer is the WINDOW's and stays single-sample: antialiasing a window is drawing into a multisampled
+ * target of this kind and presenting the resolved image, which is the shape the engine's own presets use.
+ *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
 VN_VSG_NS_BEGIN
@@ -73,6 +83,7 @@ class OffscreenTarget
         std::vector<vn::graphics::RenderTarget::ColorFormat> color_formats{ vn::graphics::RenderTarget::ColorFormat::RGBA8 };
         std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;  ///< Absent for colour only.
         bool           depth_sampleable{false};  ///< The host asked for a depth a shader may sample (promotion).
+        std::uint32_t  samples{1};               ///< Samples per pixel (1 = no multisampling; see RenderTarget::setSamples).
         core::ClearValues clear;        ///< What the pass clears (bootstrap applies).
     };
 
@@ -542,8 +553,15 @@ class OffscreenTarget
         /// @brief One colour attachment and the memory its pixels are copied back into.
         struct Color
         {
+            /// The attachment the pass DRAWS into: multisampled when the target asks for it, otherwise the
+            /// image a later pass samples and a readback copies.
             ::vsg::ref_ptr<::vsg::Image>                         image;
             ::vsg::ref_ptr<::vsg::ImageView>                     view;
+            /// Where a multisampled pass RESOLVES into (single-sample): the image later passes sample, the
+            /// readback copies from, and the one that carries the picture between frames. Null when the
+            /// target is single-sample (then @ref image is that image).
+            ::vsg::ref_ptr<::vsg::Image>                         resolve_image;
+            ::vsg::ref_ptr<::vsg::ImageView>                     resolve_view;
             ::vsg::ref_ptr<::vsg::Commands>                      capture;  ///< Empty when the format is unreadable.
             ::vsg::ref_ptr<::vsg::Buffer>                        destination;
             ::vsg::ref_ptr<::vsg::DeviceMemory>                  destination_memory;
@@ -551,6 +569,12 @@ class OffscreenTarget
             /// Whether the copy node was handed out for recording (see capture). A fresh set starts
             /// UNCLEARED here: its buffers hold whatever the allocation held, which is not a picture.
             bool                                                 captured{false};
+
+            /** @brief Gets the image that holds the PICTURE (the resolved one when multisampled). */
+            [[nodiscard]] const ::vsg::ref_ptr<::vsg::Image>& picture() const noexcept
+            {
+                return resolve_image != nullptr ? resolve_image : image;
+            }
         };
 
         std::vector<Color>                                   colors;

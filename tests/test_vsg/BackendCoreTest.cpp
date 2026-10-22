@@ -719,6 +719,44 @@ TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
     EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::None), "none");
 }
 
+TEST(CoreReadbackTest, AMultisampledTargetIsReadableInColourAndRefusedInDepth)
+{
+    using vn::graphics::backend::ReadbackKind;
+    using vn::graphics::backend::ReadbackRefusal;
+    using vn::graphics::backend::readbackOf;
+
+    ReadbackState state;
+    state.color_attachments = 1U;
+    state.color_format      = RenderTarget::ColorFormat::RGBA8;
+    state.depth_format      = RenderTarget::DepthFormat::D32;
+    state.multisampled      = true;
+
+    // COLOUR IS SERVED: the pass resolves into a single-sample image, and that image is what a capture
+    // copies - so the count never reaches the copy.
+    state.color_captured = true;
+    state.depth_captured = true;
+    EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).ok);
+
+    // DEPTH IS NOT: a multisampled depth has no copy and never will (this backend does not resolve depth), so
+    // the answer is the target's rather than this frame's - reporting "not captured" would send a caller off
+    // to run a frame that cannot change anything.
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
+              static_cast<int>(ReadbackRefusal::Multisampled));
+    state.depth_captured = false;
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
+              static_cast<int>(ReadbackRefusal::Multisampled))
+        << "the same answer with nothing captured: the count decides, not the frame";
+
+    // ... and a target with no depth at all still answers UnknownAttachment first: "nothing there" outranks
+    // "and it is multisampled".
+    ReadbackState colorless = state;
+    colorless.depth_format.reset();
+    EXPECT_EQ(static_cast<int>(readbackOf(colorless, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
+              static_cast<int>(ReadbackRefusal::UnknownAttachment));
+
+    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::Multisampled), "multisampled");
+}
+
 TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexel)
 {
     using vn::graphics::backend::colorReadbackOf;

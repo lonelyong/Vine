@@ -177,4 +177,29 @@ VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
     return ::vsg::SetScissor::create(0U, ::vsg::Scissors{ scissor });
 }
 
+VkSampleCountFlagBits samplesToVk(std::uint32_t samples) noexcept
+{
+    // Rounding DOWN is the honest projection: a target cannot draw with "three samples", and a count that is not
+    // an API one would otherwise have to be refused by every caller.
+    if (samples >= 64U) {
+        return VK_SAMPLE_COUNT_64_BIT;
+    }
+    if (samples >= 32U) {
+        return VK_SAMPLE_COUNT_32_BIT;
+    }
+    if (samples >= 16U) {
+        return VK_SAMPLE_COUNT_16_BIT;
+    }
+    if (samples >= 8U) {
+        return VK_SAMPLE_COUNT_8_BIT;
+    }
+    if (samples >= 4U) {
+        return VK_SAMPLE_COUNT_4_BIT;
+    }
+    if (samples >= 2U) {
+        return VK_SAMPLE_COUNT_2_BIT;
+    }
+    return VK_SAMPLE_COUNT_1_BIT;
+}
+
 VN_VSG_NS_END

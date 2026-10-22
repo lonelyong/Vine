@@ -283,6 +283,11 @@ struct ContentPipeline::Data
     std::unordered_map<SampledKey, Sampled, SampledKeyHash>     sampled;  ///< One entry per distinct pair.
     ::vsg::ref_ptr<::vsg::Sampler>                              input_sampler;
     ::vsg::GraphicsPipelineStates                               states;
+    /// The same states with the multisample entry replaced, one set per sample count a pass drew with. The
+    /// count is part of the PIPELINE's state (and of its key), not of the layer: one content layer serves
+    /// every pass of its kind, and two passes that render into targets of different counts need two
+    /// pipelines - which is exactly what the key already says (see core::RenderPassCompatibility::samples).
+    std::unordered_map<std::uint32_t, ::vsg::GraphicsPipelineStates> states_by_samples;
     ::vsg::ref_ptr<::vsg::Sampler> depth_sampler;  ///< NEAREST: a depth compare reads exact texels.
     std::unordered_map<std::uint64_t, ::vsg::ref_ptr<::vsg::GraphicsPipeline>> pipelines;
     std::uint64_t                                               compiles{0};
@@ -593,7 +598,7 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
         return {lookup.action, lookup.id, {}};
     }
 
-    auto pipeline = ::vsg::GraphicsPipeline::create(layout, d->stages, d->states);
+    auto pipeline = ::vsg::GraphicsPipeline::create(layout, d->stages, statesFor(key.compatibility.samples));
     if (pipeline == nullptr) {
         ++d->failures;
         return {lookup.action, lookup.id, {}};
@@ -606,6 +611,28 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
         it = pool.contains(it->first) ? std::next(it) : d->pipelines.erase(it);
     }
     return {lookup.action, lookup.id, std::move(pipeline)};
+}
+
+const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t samples)
+{
+    const std::uint32_t count = samples == 0U ? 1U : samples;
+    if (const auto found = d->states_by_samples.find(count); found != d->states_by_samples.end())
+    {
+        return found->second;
+    }
+    // The layer's own states with ONLY the multisample entry replaced: every other state is the layer's policy
+    // (topology, blend, depth), and the count is the one fact a target owns. Copying the vector shares those
+    // objects, which is safe - they are never mutated after construction.
+    ::vsg::GraphicsPipelineStates states = d->states;
+    for (::vsg::ref_ptr<::vsg::GraphicsPipelineState>& state : states)
+    {
+        if (state.cast<::vsg::MultisampleState>() == nullptr)
+        {
+            continue;
+        }
+        state = ::vsg::MultisampleState::create(vn::vsg::samplesToVk(count));
+    }
+    return d->states_by_samples.emplace(count, std::move(states)).first->second;
 }
 
 ::vsg::ref_ptr<::vsg::PipelineLayout> ContentPipeline::layout() const noexcept

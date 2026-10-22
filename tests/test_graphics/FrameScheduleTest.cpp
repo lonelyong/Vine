@@ -216,3 +216,39 @@ TEST(FrameScheduleTest, ThePlanKeepsTheDeclarationOrderAndTheFrameTheExecutionOr
     EXPECT_EQ(frame.passes[0].pass->name(), u8"producer") << "the frame answers 'what runs, in what order'";
     EXPECT_EQ(frame.passes[1].pass->name(), u8"consumer");
 }
+
+/*
+ * @brief The sample count is the TARGET's property, and the frame's description carries it to the backend.
+ *
+ * The count decides how many samples the target's images hold and which pipeline the API accepts for it, so
+ * it has to travel with the target rather than with a pass or a pipeline: a pass draws INTO a target, and two
+ * passes on targets of different counts are two pipelines of one pass kind. This case pins the SDK half -
+ * the round trip, the "0 means one" rule, and the value reaching the target's shape.
+ */
+TEST(FrameScheduleTest, ATargetsSampleCountTravelsWithItAndDefaultsToOne)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto target = colourTarget();
+    EXPECT_EQ(target->samples(), 1u) << "a target nobody configured is single-sample: the default cannot be 0";
+
+    target->setSamples(4);
+    EXPECT_EQ(target->samples(), 4u);
+
+    target->setSamples(0);
+    EXPECT_EQ(target->samples(), 1u) << "0 means one sample - there is no such thing as a sample-less target";
+
+    target->setSamples(4);
+    auto camera = vn::make_intrusive<Camera>();
+    engine->addPass(writingPass(u8"msaa", target, 0, camera));
+    engine->frame();
+
+    // The count stays the TARGET's through a frame: nothing in the schedule copies it into a pass or a
+    // pipeline, so there is exactly one place it can be wrong - and it is the place the host set.
+    const FrameDescription& frame = engine->frameDescription();
+    ASSERT_EQ(frame.passes.size(), 1u);
+    EXPECT_EQ(target->samples(), 4u) << "a frame does not consume the count: the target keeps saying it";
+}

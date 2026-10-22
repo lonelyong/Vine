@@ -64,6 +64,19 @@ struct ViewportRect
  */
 [[nodiscard]] VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept;
 
+/** @brief Maps a target's sample count onto the API's pipeline-state enum.
+ *
+ * The ONE spelling of the mapping: a target owns its count (see RenderTarget::setSamples) and it reaches a
+ * pipeline through the key's compatibility, so both the render pass (attachment descriptions) and the
+ * pipeline (rasterisation samples) take the value from here - a pass whose attachments are multisampled and a
+ * pipeline compiled for one sample are an incompatibility the API refuses at draw time.
+ *
+ * @param samples Samples per pixel; a value between two API counts rounds DOWN, and 0 and 1 both mean one
+ *                sample.
+ * @return The API's count (never 0 for an input of at least 1).
+ */
+[[nodiscard]] VkSampleCountFlagBits samplesToVk(std::uint32_t samples) noexcept;
+
 /** @brief Maps the engine's dynamic state onto the set command that delivers it.
  *
  * @param state            The state the next draws use.

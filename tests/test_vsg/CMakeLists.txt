@@ -16,6 +16,7 @@ set(SRC_FILE_LIST
 	ContentSourcesTest.cpp
 	ProgramAbiTest.cpp
 	ContentPassTest.cpp
+	MsaaTargetTest.cpp
 	MrtTargetTest.cpp
 	SharedDepthTest.cpp
 	VariantCoreTest.cpp

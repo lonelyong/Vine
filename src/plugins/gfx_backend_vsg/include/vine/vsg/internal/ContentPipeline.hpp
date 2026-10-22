@@ -313,6 +313,22 @@ class ContentPipeline
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layout() const noexcept;
 
+    /** @brief Gets the pipeline states to compile with for a target of @p samples samples per pixel.
+     *
+     * @details
+     * - The pipeline states the rasteriser is created with include the sample count, and the API requires it to
+     *   equal the count of the render pass' attachments (VUID-VkGraphicsPipelineCreateInfo-renderPass-06055),
+     *   so this is per-COUNT rather than per-layer: one layer serves every pass of its kind, and two passes of
+     *   different counts need two pipelines (which the key already spells - see
+     *   core::RenderPassCompatibility::samples).
+     * - The first call for a count builds the set and the layer keeps it; the states other than the
+     *   multisample one are the layer's policy and are shared, never mutated.
+     *
+     * @param samples The target's sample count (0 and 1 mean one sample).
+     * @return The states, owned by the layer and valid for its lifetime.
+     */
+    [[nodiscard]] const ::vsg::GraphicsPipelineStates& statesFor(std::uint32_t samples);
+
     /** @brief Gets (or builds and keeps) the pipeline layout that binds @p sampled_color_bindings colour
      *         samplers and @p sampled_depth_bindings depth samplers.
      *

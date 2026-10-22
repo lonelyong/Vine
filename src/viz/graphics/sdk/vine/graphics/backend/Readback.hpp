@@ -62,6 +62,10 @@ enum class ReadbackRefusal : std::uint8_t
     None,               ///< Served (or servable): nothing to report.
     UnknownAttachment,  ///< The target has no such attachment.
     UnreadableFormat,   ///< This backend cannot read that attachment's format, ever.
+    /// The attachment is multisampled and this backend does not resolve it for reading. Colour is resolved
+    /// into a single-sample image (which is what a colour readback copies), so this refusal is the DEPTH
+    /// attachment's: resolving depth is not something the backend does yet.
+    Multisampled,
     NotCaptured,        ///< No copy of that attachment has been handed out for recording (yet).
 };
 
@@ -86,6 +90,9 @@ struct ReadbackState
     std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;
     bool color_captured{false};  ///< A copy-back node for the requested colour attachment was handed out.
     bool depth_captured{false};  ///< A copy-back node for the depth attachment was handed out.
+    /// Whether the target draws multisampled (see RenderTarget::setSamples). Colour is still readable: its
+    /// picture is the resolved single-sample image. Depth is not, and this is the field that says why.
+    bool multisampled{false};
 };
 
 /** @brief The table's answer: whether the readback is servable, and why not when it is not. */

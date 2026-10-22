@@ -126,3 +126,23 @@ TEST(HostTargetsTest, ABorrowedDepthAndAShadowStatementAreTheHostsOwnWords)
     targets.facts(*ensured.entry, borrower_row);
     EXPECT_EQ(borrower_row.shadow.light, nullptr);
 }
+
+/*
+ * @brief The device's sample-count limit is state on the table, not a per-call argument.
+ *
+ * The refusal itself needs a device to reach (a description is only built when one exists - see
+ * `MsaaTargetTest`, which drives both refusals through `ensure`), so what this device-free case pins is the
+ * one thing that must never be wrong: the DEFAULT. A table nobody configured refuses multisampling, because
+ * a device that said nothing about its counts is treated as one that cannot multisample.
+ */
+TEST(HostTargetsTest, TheSampleCountLimitStartsAtOneAndZeroMeansOne)
+{
+    HostTargets targets;
+    EXPECT_EQ(targets.maxSamples(), 1U) << "an unconfigured table cannot multisample";
+
+    targets.setMaxSamples(8U);
+    EXPECT_EQ(targets.maxSamples(), 8U);
+
+    targets.setMaxSamples(0U);
+    EXPECT_EQ(targets.maxSamples(), 1U) << "0 is not a limit, it is 'no multisampling': the same as 1";
+}

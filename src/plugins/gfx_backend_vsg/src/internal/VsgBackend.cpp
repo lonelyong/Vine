@@ -586,6 +586,16 @@ bool VsgBackend::initialize()
         return false;  // no window came up and none was created, so there is no device to draw with
     }
 
+    // The sample-count limit is the DEVICE's, read once here rather than at every target build: a target's
+    // description is refused against it (see HostTargets::State::SamplesUnsupported), and the same number is
+    // what capabilities() reports - one fact, one source.
+    if (const ::vsg::PhysicalDevice* physical = d->device->getPhysicalDevice(); physical != nullptr)
+    {
+        const VkPhysicalDeviceLimits& limits = physical->getProperties().limits;
+        d->targets.setMaxSamples(
+            std::min(limits.framebufferColorSampleCounts, limits.framebufferDepthSampleCounts));
+    }
+
     // THE CONTENT WORLD BELONGS TO THE DEVICE, and is built ONCE: a window that came up, was re-attached or joined
     // later does not invalidate what was uploaded or compiled on the same device.
     d->frame = nullptr;
@@ -1149,6 +1159,10 @@ vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
         // answers, and the number is clamped the one way the sampler path clamps it (anisotropyFor).
         answer.max_anisotropy        = vn::vsg::detail::anisotropyFor(properties.limits.maxSamplerAnisotropy);
         answer.max_color_attachments = properties.limits.maxColorAttachments;
+        // ONE target has ONE sample count, and its colour and depth attachments must both support it, so the
+        // limit reported is what BOTH can do (a device whose depth tops out lower is the binding side).
+        answer.max_samples =
+            std::min(properties.limits.framebufferColorSampleCounts, properties.limits.framebufferDepthSampleCounts);
         if (properties.limits.timestampComputeAndGraphics != VK_FALSE)
         {
             answer.features |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::GpuTimings);
@@ -1245,7 +1259,12 @@ bool VsgBackend::adoptHostTarget(vn::raw_ptr<vn::graphics::RenderTarget> target,
     else if (ensured.state != HostTargets::State::NotBuilt && picture_depends &&
              ensured.entry->report.shouldReport())
     {
-        reportUnbuildableTarget(target, ensured.state == HostTargets::State::DepthSourceMissing);
+        reportUnbuildableTarget(target, ensured.state == HostTargets::State::DepthSourceMissing
+                                            ? UnbuildableReason::DepthSourceMissing
+                                            : (ensured.state == HostTargets::State::SamplesUnsupported
+                                                   ? UnbuildableReason::SamplesUnsupported
+                                                   : UnbuildableReason::BuildFailed),
+                                d->targets.maxSamples());
     }
 
     if (ensured.entry->target != nullptr)
@@ -1255,7 +1274,8 @@ bool VsgBackend::adoptHostTarget(vn::raw_ptr<vn::graphics::RenderTarget> target,
     return ensured.entry->target != nullptr;
 }
 
-void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, bool depth_source_missing)
+void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget> target,
+                                          UnbuildableReason reason, std::uint32_t max_samples)
 {
     // What is reported is the description that cannot become objects at all - a missing lender, or a build that
     // failed - and never "NotBuilt", which is not a failure: a host configures a target before it draws into it
@@ -1263,7 +1283,22 @@ void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget>
     // SDK's own label, see RenderTarget::setName): "a target could not be built" is a sentence a host cannot act
     // on, and the pipeline builder names everything it creates.
     std::string message;
-    if (depth_source_missing)
+    if (reason == UnbuildableReason::SamplesUnsupported)
+    {
+        // The two reasons a sample count is refused, said as the difference they are: a count the device does
+        // not have, and a multisampled target asking for what a multisampled depth cannot do (be shared with
+        // another pass, or be sampled by a shader). Both are the DESCRIPTION's, so the host can fix it.
+        const std::uint32_t samples = target->samples();
+        const bool          too_many = samples > max_samples;
+        message = nameOf(target) + " asks for " + std::to_string(samples) + " samples per pixel, ";
+        message += too_many
+            ? "above the device's limit of " + std::to_string(max_samples) +
+                  ": the passes that draw into it are skipped (see Capabilities::max_samples)"
+            : "with a depth this backend cannot build at that count: a multisampled target cannot lend, "
+              "promote or read back its depth (depth is not resolved yet), so the passes that draw into it "
+              "are skipped";
+    }
+    else if (reason == UnbuildableReason::DepthSourceMissing)
     {
         // The lender is read from the target itself (shareDepth keeps it alive), so this works whether or
         // not it was ever announced - which is exactly the case being reported.

@@ -19,6 +19,7 @@ void HostTargets::describe(const vn::graphics::RenderTarget& target, Description
     out.has_depth       = target.hasDepth();
     out.depth_format    = target.depthFormat();
     out.depth_promotion = target.isDepthPromoted();
+    out.samples         = target.samples() == 0U ? 1U : target.samples();
 
     const vn::graphics::RenderTarget* source = target.depthSource();
     out.depth_source = source;
@@ -31,7 +32,8 @@ void HostTargets::describe(const vn::graphics::RenderTarget& target, Description
     }
 }
 
-HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device> device)
+HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device> device,
+                                      std::uint32_t max_samples)
 {
     const Description& description = entry.description;
 
@@ -45,10 +47,30 @@ HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device
         return State::NotBuilt;
     }
 
+    // The sample count is a property of the TARGET and this backend builds one image set per count, so a
+    // description that asks for more than the device supports is refused HERE rather than at image creation:
+    // the numbers came from the host, and "the device cannot do that" is a different answer from "the objects
+    // failed to build".
+    if (description.samples > max_samples)
+    {
+        return State::SamplesUnsupported;
+    }
+    // What a multisampled target may also ask for, and why each is refused rather than approximated:
+    //   * a SHARED depth - every borrower's framebuffer names the lender's image, and the lender's sample
+    //     count is its own, so one image cannot be both;
+    //   * a PROMOTED (sampleable) depth - this backend does not resolve depth, so a multisampled depth image
+    //     is never in a layout a shader can sample (see OffscreenTarget's class note).
+    if (description.samples > 1U && description.has_depth &&
+        (description.depth_source != nullptr || description.depth_promotion))
+    {
+        return State::SamplesUnsupported;
+    }
+
     OffscreenTarget::TargetLayout layout;
     layout.width         = static_cast<std::uint32_t>(description.width);
     layout.height        = static_cast<std::uint32_t>(description.height);
     layout.color_formats = description.color_formats;
+    layout.samples       = description.samples;
 
     const OffscreenTarget* depth_source = nullptr;
     if (description.has_depth)
@@ -114,7 +136,7 @@ HostTargets::Ensured HostTargets::ensure(const vn::graphics::RenderTarget& targe
         }
     }
 
-    return Ensured{ entry, build(*entry, std::move(device)) };
+    return Ensured{ entry, build(*entry, std::move(device), max_samples_) };
 }
 
 HostTargets::Entry* HostTargets::observe(const vn::graphics::RenderTarget& target)
@@ -197,18 +219,22 @@ void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
     out.wanted.shape.depth_format  = entry.description.has_depth
                                          ? std::optional{ entry.description.depth_format }
                                          : std::optional<vn::graphics::RenderTarget::DepthFormat>{};
+    // The sample count is the host's word like the formats are - NOT the built target's: a host that changes it
+    // announces a different shape, which is what makes the plan answer Rebuild instead of quietly drawing into
+    // the old images (a target's objects are built for one count, see OffscreenTarget).
+    out.wanted.shape.samples = entry.description.samples == 0U ? 1U : entry.description.samples;
 
     if (entry.target != nullptr)
     {
         out.current = entry.target->instance();
         const bool same_engine_shape = out.current.desc.shape.color_formats == out.wanted.shape.color_formats &&
-                                       out.current.desc.shape.depth_format == out.wanted.shape.depth_format;
+                                       out.current.desc.shape.depth_format == out.wanted.shape.depth_format &&
+                                       out.current.desc.shape.samples == out.wanted.shape.samples;
         if (same_engine_shape)
         {
             const core::TargetShape& built = entry.target->shape();
             out.wanted.shape.device_color_formats = built.device_color_formats;
             out.wanted.shape.device_depth_format  = built.device_depth_format;
-            out.wanted.shape.samples              = built.samples;
             out.wanted.shape.subpass              = built.subpass;
         }
     }

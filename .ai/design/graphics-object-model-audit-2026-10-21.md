@@ -123,7 +123,7 @@ VINE_ASAN_FILTER='ModelSceneTest.*'` ⇒ RESULT: PASS）。
 | R3 | `Geometry` 没有 topology（在 `StateNode` 上），点云与三角面同子树要两个 `StateNode`。**2026-10-21 裁决：先不做**（详见下方"R3 裁决"） | OSG `Drawable` 的 `PrimitiveSet`、vsg `VertexIndexDraw`、glTF 的 `primitive.mode`、Unity 的 `MeshTopology`、Filament 的 `PrimitiveType` 都随 drawable | **同一子树需要两种图元**（点云/线 + 三角网格）**且调用点开始复制 `StateNode`**，或某个导入器要保留 `POINTS`/`LINES` 图元 |
 | R4 | 变换只有 `MatrixTransform`（无 TRS 节点），`math` 已有 `Quaternion`/`Isometry3` | three.js `Object3D` 的 position/quaternion/scale、Unity `Transform`、OSG `MatrixTransform`+`PositionAttitudeTransform` | 逐帧驱动节点变换并需要插值（URDF 关节回放） |
 | R5 | 材质是单一平铺 Phong + 一张贴图 + 采样器按 magic uniform 名；无 `MaterialInstance`；几何侧 `PbrMaterial` 到渲染侧只能是近似 | Filament `Material`/`MaterialInstance`、three.js `Material` 子类 + `uniforms` | 逐对象参数（高亮/tint）在第二个调用点出现，或需要真实 PBR |
-| R6 | 无 MSAA：`TargetShape::samples` / `PipelineKey.samples` 存在但宿主无法设置，`Capabilities` 无 `max_samples` | 所有引擎都有 MSAA 开关 | 画面锯齿成为用户可见问题 |
+| R6 | ~~无 MSAA：`TargetShape::samples` / `PipelineKey.samples` 存在但宿主无法设置，`Capabilities` 无 `max_samples`~~ **已关闭（2026-10-22）**：`RenderTarget::setSamples` 是唯一入口，采样数进目标形状 ⇒ 管线键 ⇒ 通道与图像；离屏目标自建多重采样图并**解析颜色**（单采样 resolve 图即"画面"），**深度这一轮不解析**，因此"MS 深度借出/提升/回读"三种组合被显式拒绝（`State::SamplesUnsupported`、`ReadbackRefusal::Multisampled`），默认窗口仍单采样。`Capabilities::max_samples` 报设备限制 | 所有引擎都有 MSAA 开关 | ~~画面锯齿成为用户可见问题~~（用户 2026-10-22 直接指定做） |
 | R7 | 无实例化、无 DAG（`Group::addChild` 自动脱离旧父） | OSG/vsg 允许一节点多父；`InstancedMesh` | 重复件数量让收集/内存成为瓶颈 |
 | R8 | 无异步上传/编译入口（契约是单线程串行），大模型首帧卡顿 | Filament/bgfx 的异步资源上传、vsg 自己的异步编译 | 一次加载超过一帧预算 |
 | R9 | 场景 memo 用进程级 `ContentEpoch`，任何场景的编辑会让所有场景失效 | — | 多视图/多场景下编辑频繁 |

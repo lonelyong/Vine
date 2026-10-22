@@ -149,6 +149,39 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
      */
     void setSize(int w, int h);
 
+    /** @brief Gets how many samples each pixel of this target is drawn with (1 = no multisampling).
+     *
+     * @return The sample count (always at least 1).
+     */
+    std::uint32_t samples() const;
+
+    /** @brief Sets how many samples each pixel of this target is drawn with.
+     *
+     * @details
+     * - A property of the TARGET, not of a pass or a pipeline: the images are what carry samples, and every
+     *   pass drawing into this target inherits them (its pipeline is compiled for them - see
+     *   RenderPassCompatibility). One target, one sample count.
+     * - WHAT IT COVERS, and what it does not:
+     *   - Off-screen targets are drawn multi-sampled and RESOLVED when the pass ends, so the colour a later
+     *     pass samples, and the pixels a readback answers, are the resolved picture - one colour per pixel,
+     *     with geometry edges averaged instead of stepped.
+     *   - A DEPTH a shader samples (see setDepthPromoted / shareDepth) has to be single-sample: the depth
+     *     attachment of a multi-sampled target is not resolved in this SDK, so the two cannot be asked for
+     *     together (the backend refuses that target with a diagnostic naming it).
+     *   - The DEFAULT FRAMEBUFFER is the window's image set and its sample count belongs to the window: a
+     *     target that draws into it is single-sample whatever this says. Antialiasing a window is the
+     *     off-screen + present shape the chain presets already use: draw into a multi-sampled off-screen
+     *     target, then present it with the full-screen pass.
+     *
+     * @note
+     * - Read the device's limit before choosing a count: Capabilities::max_samples is what the backend can
+     *   build, and a larger request is refused (reported once) rather than silently lowered.
+     * - 0 is not "automatic": a sample count below 1 means 1.
+     *
+     * @param samples Samples per pixel (1 = none).
+     */
+    void setSamples(std::uint32_t samples);
+
     /** @brief Returns whether a color attachment is configured. */
     bool hasColor() const;
 
@@ -258,8 +291,9 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     Mat4d producer_view_projection_;
     bool  producer_view_projection_stated_ = false;
     intrusive_ptr<const Light> shadow_of_;   // whose shadow map this is, when it is one (held: see setShadowOf)
-    int width_ = 1;
-    int height_ = 1;
+    int           width_   = 1;
+    int           height_  = 1;
+    std::uint32_t samples_ = 1;  // samples per pixel (see setSamples; 1 = none)
 };
 
 using RenderTargetPtr = intrusive_ptr<RenderTarget>;

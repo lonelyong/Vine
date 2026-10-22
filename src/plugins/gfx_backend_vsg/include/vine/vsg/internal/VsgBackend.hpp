@@ -408,7 +408,16 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      * @param target               The target the host announced (named in the sentence).
      * @param depth_source_missing Whether the reason is a borrowed depth whose lender this backend does not hold.
      */
-    void reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, bool depth_source_missing);
+    /// Why a target's description could not become objects (see reportUnbuildableTarget).
+    enum class UnbuildableReason : std::uint8_t
+    {
+        BuildFailed,        ///< The objects could not be created.
+        DepthSourceMissing, ///< The depth is borrowed from a target this backend does not hold.
+        SamplesUnsupported, ///< The sample count is above the device's, or a multisampled depth is shared/promoted.
+    };
+
+    void reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, UnbuildableReason reason,
+                                 std::uint32_t max_samples);
 
     /** @brief Replaces the frame's block storage when a frame outgrew it or the learned in-flight count did.
      *

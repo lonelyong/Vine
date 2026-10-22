@@ -25,6 +25,37 @@
 | **待办与口径** | **现行登记：`.ai/design/graphics-followups-2026-10-22.md` 已无开放行**（F1/F2/F3 全部关闭，2026-10-22 晚）；活账本回到 **`.ai/design/graphics-followups-2026-10-19.md` §3 触发条件型**，外加对象模型复核（`graphics-object-model-audit-2026-10-21.md`）的 R1/R3–R10。10-19 是历史盘点（§2 现在可做：空 / §3 触发条件型 / §4 明确不做 / §5 不再是待办），它的触发项仍然有效。底层两个来源：**2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已由 S10b 覆盖并关闭，2026-10-19**：一设备 N 窗口、每窗口一个目标，见 `graphics-window-device-viewer.md` §7）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-22（晚）R6 MSAA：采样数进目标形状，颜色解析、深度不解析
+
+- **规则**：`RenderTarget::setSamples(n)` 是唯一入口（0 当 1），值只走
+  `TargetShape::samples` → `RenderPassCompatibility::samples` → 管线
+  `MultisampleState` + 渲染通道附件描述。`HostTargets::facts()` 上行**宿主的**值
+  （不再取已建目标的旧值），所以活目标换计数 ⇒ 计划答 `Rebuild` ⇒
+  `VsgExecutor` 带新计数重建；`Capabilities::max_samples` = 颜色/深度两个
+  framebuffer 计数上限的较小值，初始化时同时写进 `HostTargets`（一处来源）。
+- **图像**：MS 颜色图只作 attachment；单采样 resolve 图（`COLOR_ATTACHMENT｜
+  SAMPLED｜TRANSFER_SRC`）才是"画面"——`Attachments::Color::picture()` 是唯一
+  定义，`capture()`/`probe()` 都走它，读回路径不分叉。MS 深度只给
+  `DEPTH_STENCIL_ATTACHMENT`（这一轮不做深度解析）。
+- **坑（会崩）**：帧缓冲视图顺序必须与通道附件列表一一对应（颜色…、深度?、
+  resolve…）；漏了 resolve 视图 ⇒ lavapipe 段错误，没有诊断。`fillClearValues`
+  的条目数也要按**附件数**补齐。
+- **三条显式拒绝（不兜底）**：超 `max_samples`、`samples>1` 且
+  `depth_promotion`、`samples>1` 且 `shareDepth` ⇒
+  `HostTargets::State::SamplesUnsupported` + 一条按原因分岔的诊断；MS 目标的
+  深度回读 ⇒ `ReadbackRefusal::Multisampled`（永久事实，先于格式/拷贝判定，
+  但"没有深度"仍先答 `UnknownAttachment`）。
+- **判据**：`MsaaTargetTest`（同一三角形同一 shader：1 样本 0 个混合像素、4 样本
+  >0；深度拒绝；三种拒绝 + 普通 MS 深度能建的对照组；活目标换计数是重建）、
+  `CoreReadbackTest.AMultisampledTargetIsReadableInColourAndRefusedInDepth`、
+  `HostTargetsTest.TheSampleCountLimitStartsAtOneAndZeroMeansOne`、
+  `FrameScheduleTest.ATargetsSampleCountTravelsWithItAndDefaultsToOne`。全仓
+  ctest 24/24、网关全阶段干净（**1 样本像素零变化**）、6 个静态网关 0。
+- **有意没做**：深度解析（做了才能解除后两条拒绝）、sample shading / alpha-to-
+  coverage 的宿主词汇、交换链多重采样（归窗口后端）。见
+  `.ai/design/graphics-msaa-2026-10-22.md`。
+
+
 ## 2026-10-22（下午）名字与注册归属一起收口：`PassChain`，`PassGroup` 删除
 
 - **名字的裁决**：`ScenePicture` 被否（`Picture` 挨着 `Texture`/`RenderTarget` 会被读成"场景图片"）；
