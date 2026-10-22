@@ -698,6 +698,13 @@ void VsgBackend::releaseContentWorld() noexcept
     {
         detail::SessionContentAccess::waitDeviceIdle(*window->session);
     }
+    // A WINDOWLESS DEVICE HAS NO WINDOW TO IDLE ABOVE: the off-screen session is a frame source too, and its
+    // submitted work is device-wide, so the same destructive rule applies to it. On a device with a window the
+    // idle above already covers this work; waiting again is harmless and keeps the rule one sentence.
+    if (d->offscreen != nullptr)
+    {
+        d->offscreen->waitDeviceIdle();
+    }
 
     d->frame = nullptr;
     d->facts.clear();

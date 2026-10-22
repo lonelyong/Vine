@@ -333,6 +333,16 @@ std::size_t OffscreenSession::deviceWaits() const noexcept
     return impl->shared_retirement != nullptr ? impl->shared_retirement->deviceWaits() : impl->retirement.deviceWaits();
 }
 
+void OffscreenSession::waitDeviceIdle() noexcept
+{
+    if (!impl || !impl->viewer || timeline().submittedFrame() == 0)
+    {
+        return;  // nothing was ever submitted: there is nothing to wait for
+    }
+    impl->viewer->deviceWaitIdle();
+    retirement().noteDeviceWait();  // the same counter deviceWaits() answers with
+}
+
 int OffscreenSession::queueFamily() const noexcept
 {
     return impl ? impl->queue_family : -1;

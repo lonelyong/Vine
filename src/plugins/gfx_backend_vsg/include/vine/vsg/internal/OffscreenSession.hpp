@@ -88,6 +88,17 @@ class OffscreenSession
     /** @brief Tears the session down: safe before any initialize(), after a failed one, and twice. */
     void shutdown() noexcept;
 
+    /** @brief Stops the device and counts the stop: the destructive teardown's legal wait.
+     *
+     * @details
+     * - The off-screen counterpart of the windowed session's counted wait: a whole-session teardown drops
+     *   objects a submitted command buffer may still name, so it must idle the device first.
+     *
+     * @note
+     * - Safe before initialize(), after a failed one, and twice; a session that never submitted does not idle.
+     */
+    void waitDeviceIdle() noexcept;
+
     /** @brief Gets whether the session is up. */
     [[nodiscard]] bool initialized() const noexcept;
 

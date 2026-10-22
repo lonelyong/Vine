@@ -26,6 +26,7 @@
 #include <vine/graphics/RenderTarget.hpp>
 
 #include <vine/vsg/internal/Device.hpp>
+#include <vine/vsg/internal/OffscreenSession.hpp>
 #include <vine/vsg/internal/OffscreenTarget.hpp>
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/FrameArena.hpp>
@@ -51,6 +52,7 @@ using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::TargetInstance;
 using vn::vsg::DeviceResult;
 using vn::vsg::OffscreenTarget;
+using vn::vsg::api::OffscreenSessionOptions;
 using vn::vsg::createDevice;
 using vn::graphics::backend::FrameTimeline;
 using vn::graphics::backend::PixelProbe;
@@ -1261,4 +1263,35 @@ TEST(OffscreenTargetTest, ARePointIsRefusedWhenTheLenderShrankBelowTheBorrower)
     EXPECT_EQ(borrower->depthView().get(), followed.get())
         << "and the borrower keeps the image it named (a stale read at worst, never an invalid framebuffer)";
     EXPECT_NE(borrower->depthView().get(), lender->depthView().get());
+}
+
+TEST(OffscreenSessionTest, TheDestructiveWaitIsCountedOnce)
+{
+    // The windowless frame source has to idle the device before a whole-session teardown drops the
+    // pipelines a submitted command buffer may still name. A session that never submitted must not
+    // pretend it waited; one that did must count exactly the wait it took.
+    const auto created = createDevice();
+    if (!created.ok) {
+        GTEST_SKIP() << "no device satisfies the device-floor requirements";
+    }
+
+    Diagnostics diagnostics;
+    vn::vsg::api::OffscreenSession session;
+    OffscreenSessionOptions options;
+    options.device       = created.device;
+    options.queue_family = created.queue_family;
+    ASSERT_TRUE(session.initialize(options, diagnostics));
+
+    EXPECT_EQ(session.deviceWaits(), 0U) << "bringing the session up does not stop the device";
+    session.waitDeviceIdle();
+    EXPECT_EQ(session.deviceWaits(), 0U) << "a session that never submitted has nothing to wait for";
+
+    const vn::graphics::backend::FrameToken token = session.beginFrame();
+    ASSERT_NE(token.frame, 0U);
+    ASSERT_TRUE(session.commitFrame());
+
+    const std::size_t waits_before = session.deviceWaits();
+    session.waitDeviceIdle();
+    EXPECT_EQ(session.deviceWaits(), waits_before + 1U)
+        << "the destructive wait is one counted device idle, not a silent assumption";
 }
