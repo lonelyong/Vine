@@ -177,3 +177,42 @@ TEST(FrameScheduleTest, ACycleIsSkippedAndTheRestOfTheFrameStillRuns)
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1u)
         << "the skipped component is reported once per episode";
 }
+
+/*
+ * @brief The two reports say different things on purpose: the PLAN is the declaration order, the FRAME is the
+ * execution order, and the difference is exactly the scheduler's own answer.
+ *
+ * A report that "the frame plan IS the execution order" would be the same mistake the retired backend graph
+ * made from the other side - two tables, one picture. This case pins the split: same engine, same frame, two
+ * orders, and each one named after the question it answers.
+ */
+TEST(FrameScheduleTest, ThePlanKeepsTheDeclarationOrderAndTheFrameTheExecutionOrder)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = vn::make_intrusive<Camera>();
+    auto source = colourTarget();
+
+    // Declared: the consumer at -10, the producer it reads at 50 - so the declaration order puts the reader
+    // first, and only the edge can move the writer ahead of it.
+    PassDesc consumer = writingPass(u8"consumer", colourTarget(), -10, camera);
+    consumer.input_targets = { source };
+    engine->addPass(consumer);
+    engine->addPass(writingPass(u8"producer", source, 50, camera));
+    engine->frame();
+
+    const FramePlan plan = engine->framePlan();
+    ASSERT_EQ(plan.passes.size(), 2u);
+    EXPECT_EQ(plan.passes[0].name, u8"consumer") << "the plan answers 'what did the host declare', in order";
+    EXPECT_EQ(plan.passes[0].order, -10);
+    EXPECT_EQ(plan.passes[1].name, u8"producer");
+    EXPECT_EQ(plan.passes[1].order, 50);
+
+    const FrameDescription& frame = engine->frameDescription();
+    ASSERT_EQ(frame.passes.size(), 2u);
+    EXPECT_EQ(frame.passes[0].pass->name(), u8"producer") << "the frame answers 'what runs, in what order'";
+    EXPECT_EQ(frame.passes[1].pass->name(), u8"consumer");
+}
