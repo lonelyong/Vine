@@ -54,7 +54,7 @@ engine.setDevice(backend);
 | `PositionAttitudeTransform` | `Group` + **TRS 形式**的变换节点（`position()` / `attitude()` / `scale()` / `pivot()`） | 矩阵按 `T * R * S * T(-pivot)` 自动合成；`setTransform()` 直接吃 `Isometry3d` |
 | `AutoTransform` | `Group` + **面向屏幕/相机**的 billboard（OSG 同名） | `RotateToScreen` / `RotateToCamera` / `RotateToAxis`；`setAutoScaleToScreen` 保持恒定像素大小 |
 | `StateNode` | 给子树施加渲染状态，并可覆盖 material / program | 越深的节点优先；**拓扑不在状态里**（它随 `Primitive` 走） |
-| `Geometry` | 叶子：**借用**的属性缓冲 + 图元列表（每条图元是一次 draw） | `setPositions/setNormals/setTexcoords2`、`addBuffer` 加自定义通道、`addPrimitive` / `setPrimitive`、`setRevision()`；`setIndices` 是单 draw 的便捷拼写 |
+| `Geometry` | 叶子：**借用**的属性缓冲 + 图元列表（每条图元是一次 draw） | `setPositions/setNormals/setTexcoords2`、`addBuffer` 加自定义通道、`addPrimitive` / `setPrimitive`、`setRevision()`；`setIndices` 是单 draw 的便捷拼写；实例流用 `setInstanceTransforms()` 设在 **Primitive** 上 |
 | `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)`（**共享不可变表**：一次遍历，多个 pass 共用；要改写就自己 `*list` 复制一份） |
 
 ### 2.2 属性沿树折叠的规则
@@ -72,6 +72,7 @@ engine.setDevice(backend);
 | `isVisible` | **硬门**：不可见子树整棵不收集 |
 | 层（`Node::setLayers`） | **最深者覆盖**：最近的声明赢，`clearLayers()` 回到继承；没声明过的节点在 `kDefaultLayer`（bit 0）。判定在**可绘制节点**上（容器是结构，不是内容），所以 `Group` 上的声明管的是它下面的内容 |
 | 画序（`Node::setDrawOrder`） | **最深者覆盖**：最近的声明赢，`clearDrawOrder()` 回到继承，默认 0。**高 = 后画**（压在上面）；它是 pass 内那张列表的**外键** —— 同序之内仍是"不透明 前→后、透明 后→前"，所以它能越过透明批次、也能被同序的深度规则保护 |
+| 实例（不是折叠，随 `Primitive` 走） | **属于一条 draw**：每个 `Primitive` 自己带一段实例矩阵和可见前缀；没有流就是普通单次 draw。多个 primitive 可以共享同一个缓冲的不同切片；实例矩阵在**该 draw 的几何局部空间**里乘 |
 
 `cmd.isTransparent` 由有效 opacity 推出，它决定这个 drawable 走管线的透明部分。
 整个折叠是**一次自顶向下**的遍历（世界矩阵 / 透明度 / 状态 / material / program 一起往下传），
@@ -84,6 +85,12 @@ pass.stateOverrides(), cmd.topology)`（`StateNode.hpp`），它按项回答"最
 第三个参数是**数据的拓扑**（命令所属的 `Primitive`），pass 只能覆盖它，`StateNode` 不能。
 优先级一句话：**pass 的光栅化覆盖赢过内容，内容的 depth 赢过 pass 的 depth 策略**（pass 给的是"没写过
 depth 的那些的默认"），其余没有别的层 —— 视图的模式在**建管线时**就已经变成 pass 级覆盖（那是配方的事）。
+
+**实例化**不是子树状态，而是 **`Primitive` 的 draw 参数**：每个 `Primitive` 可以带一段列主序 `mat4`
+（每实例 16 个 float），收集时把切片、`first_instance`、`instance_count` 写进该 primitive 的命令，
+后端以 binding 4 的逐实例顶点流喂给 `#ifdef VINE_INSTANCED` 的顶点阶段。可见前缀只改 draw 参数，
+不重传缓冲；包围盒和拾取按 primitive 的可见实例展开，命中结果给
+`geometry + primitiveIndex + instanceIndex`。逐实例材质/颜色/排序不在这一层：一条 draw 里它们必须相同。
 
 ### 2.3 资源
 

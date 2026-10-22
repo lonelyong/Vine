@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -395,6 +396,9 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
             subtree.program = program;
         }
     }
+    // The instance stream is NOT a subtree fold: each Primitive is one draw, and its own stream travels
+    // with that draw (see Primitive.hpp). Nothing above has to be consulted, so the collector stays the
+    // same top-down walk it has always been.
 
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
         // The content selection, tested on the DRAWN node (see Node::setLayers): one AND per command, and no
@@ -410,6 +414,11 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
         for (std::size_t index = 0; index < geometry->primitiveCount(); ++index) {
             const Primitive* primitive = geometry->primitive(index);
             if (primitive == nullptr) {
+                continue;
+            }
+            // A visible prefix of zero is not a draw. The primitive is skipped, not the whole geometry:
+            // another primitive of the same data may still be drawn.
+            if (primitive->hasInstances() && primitive->visibleInstanceCount() == 0u) {
                 continue;
             }
             const MaterialPtr material = primitive->material != nullptr ? primitive->material
@@ -428,6 +437,13 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
             // resolveRenderState and RenderPass::stateOverrides).
             cmd.authored_state = subtree.state;
             cmd.program = program;
+            if (primitive->hasInstances()) {
+                cmd.instance_transforms = primitive->instance_transforms;
+                cmd.first_instance      = static_cast<std::uint32_t>(std::min<std::size_t>(
+                    primitive->firstInstance(), std::numeric_limits<std::uint32_t>::max()));
+                cmd.instance_count = static_cast<std::uint32_t>(std::min<std::size_t>(
+                    primitive->visibleInstanceCount(), std::numeric_limits<std::uint32_t>::max()));
+            }
         }
         return;
     }

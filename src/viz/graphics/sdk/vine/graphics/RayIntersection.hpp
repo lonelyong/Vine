@@ -43,8 +43,11 @@ struct VN_GRAPHICS_API RayIntersectionResult {
     /** Distance from ray origin to intersection point. */
     double distance = std::numeric_limits<double>::max();
 
-    /** Intersected geometry. */
+    /** The geometry whose data was intersected (the mesh, shared by every instance). */
     intrusive_ptr<Geometry> geometry;
+
+    /** Which instance of the hit primitive was intersected; max() for a primitive without a stream. */
+    std::uint32_t instanceIndex = std::numeric_limits<std::uint32_t>::max();
 
     /** Triangle index (if applicable, otherwise max). */
     std::size_t triangleIndex = std::numeric_limits<std::size_t>::max();
@@ -120,7 +123,7 @@ class VN_GRAPHICS_API RayIntersection {
      *
      * @details
      * - Results are sorted by distance (near to far). Nearest returns the closest hit of every geometry;
-     *   AllHits returns every triangle hit in the scene (multiple hits per geometry, including back faces).
+     *   AllHits returns every triangle hit in the scene, including one entry per instance.
      * - The @p layer_mask selects like the collection does (see Scene::collectRenderCommands): a visible
      *   geometry whose resolved layers do not intersect the mask is left out; a re-declaration counts;
      *   kAllLayers (the default) picks everything visible.

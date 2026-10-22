@@ -15,24 +15,33 @@ VN_GRAPHICS_NS_BEGIN
  *   vsg attribute-binding name, a D3D semantic, a GL attribute index — while the SHADER declares the attribute at the
  *   location attributeLocation() returns. See .ai/design/graphics-shader.md §11.
  * - A caller-provided attribute (a forwarded custom channel) is not in this enum: it keeps its SOURCE location as its
- *   shader location (>= 3, never the reserved texcoord slot), which is what lets a program address its own attributes
- *   without the engine renumbering them.
+ *   shader location (>= 3, never the reserved texcoord slot 8 and never the four instance-matrix columns 12-15), which
+ *   is what lets a program address its own attributes without the engine renumbering them.
+ * - The instance matrix is ONE role with four consecutive locations: the vertex stage declares it as a `mat4`, and
+ *   a backend that declares one attribute per column walks `instanceMatrixLocation(0..3)`.
  */
 enum class VertexAttribute
 {
-    Position,  ///< Object-space position (the only required attribute).
-    Normal,    ///< Shading normal (derived when the geometry authors none).
-    Color,     ///< Optional per-vertex colour (define-gated on the vsg set).
-    TexCoord0, ///< Optional texture coordinate (define-gated on the vsg set).
+    Position,      ///< Object-space position (the only required attribute).
+    Normal,        ///< Shading normal (derived when the geometry authors none).
+    Color,         ///< Optional per-vertex colour (define-gated on the vsg set).
+    TexCoord0,     ///< Optional texture coordinate (define-gated on the vsg set).
+    InstanceModel, ///< One instance's local model matrix (four consecutive locations).
 };
+
+/** @brief The number of shader locations one instance matrix occupies. */
+constexpr std::uint32_t kInstanceMatrixColumns = 4u;
+
+/** @brief The number of scalars in one instance matrix (a column-major mat4). */
+constexpr std::uint32_t kInstanceMatrixComponents = kInstanceMatrixColumns * 4u;
 
 /**
  * @brief Shader location of a canonical attribute.
  *
  * @details
- * - The values are the engine's ABI, not a free choice: 8 is the reserved texcoord slot, deliberately not the next
- *   number after the custom-channel range, so a forwarded custom channel (which reuses its source location) cannot
- *   collide with a canonical one.
+ * - The values are the engine's ABI, not a free choice: 8 is the reserved texcoord slot and 12-15 are the instance
+ *   matrix, deliberately not the next numbers after the custom-channel range, so a forwarded custom channel (which
+ *   reuses its source location) cannot collide with a canonical one.
  * - Changing a value here changes what the built-in shaders must declare, so the two move together — a unit test pins
  *   that agreement.
  *
@@ -47,8 +56,24 @@ constexpr std::uint32_t attributeLocation(VertexAttribute attribute) noexcept
     case VertexAttribute::Normal: return 1u;
     case VertexAttribute::Color: return 2u;
     case VertexAttribute::TexCoord0: return 8u;
+    case VertexAttribute::InstanceModel: return 12u;
     }
     return 0u;
+}
+
+/**
+ * @brief Gets the shader location of one instance-matrix column.
+ *
+ * @details
+ * - The four columns are CONSECUTIVE in the ABI, and the vertex stage declares them as one `mat4`; a
+ *   backend that declares one attribute per column starts at the first and adds the column offset.
+ *
+ * @param column Column in [0, kInstanceMatrixColumns).
+ * @return Shader location the column is declared at.
+ */
+constexpr std::uint32_t instanceMatrixLocation(std::uint32_t column) noexcept
+{
+    return attributeLocation(VertexAttribute::InstanceModel) + column;
 }
 
 /**
@@ -66,6 +91,11 @@ constexpr std::uint32_t attributeLocation(VertexAttribute attribute) noexcept
  */
 constexpr bool isCanonicalAttributeLocation(std::uint32_t location) noexcept
 {
+    if (location >= attributeLocation(VertexAttribute::InstanceModel) &&
+        location < attributeLocation(VertexAttribute::InstanceModel) + kInstanceMatrixColumns)
+    {
+        return true;  // the four instance-matrix columns
+    }
     return location == attributeLocation(VertexAttribute::Position) ||
            location == attributeLocation(VertexAttribute::Normal) ||
            location == attributeLocation(VertexAttribute::Color) ||

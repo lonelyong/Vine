@@ -91,6 +91,19 @@
   材质 arena 删除 FIFO，记录前按活材质数换更大的存储（无硬上限），拒绝只作兜底；
   活内容只能由 A3 `releaseContent()` 释放，材质槽随释放/弃用归还。含落地记录、判据与实际数字
   （`test_vsg` 498、`test_graphics` 441、门禁全绿）。
+- `graphics-instancing-primitive-2026-10-23.md` —— **实例化：`Primitive` 级实例流（2026-10-23，已落地）**：
+  实例化是一条 draw 的参数，挂在 `Primitive` 上，不再是场景图作用域；`Geometry` 逐 primitive 发命令，
+  每条命令快照 `instance_transforms` / `first_instance` / `instance_count`，后端 binding 4 + `VINE_INSTANCED`
+  不变。包围盒按 primitive 的可见实例并集，拾取结果唯一为 `geometry + primitiveIndex + instanceIndex`；
+  多 part = 多个 Primitive，多个放置 = 多个 Geometry 节点（可共享 buffer）。含与 OSG/vsg 的对照、
+  落地记录与边界。**取代同日的 `InstanceScope` 作用域方案。**
+- `graphics-instancing-scope-2026-10-22.md` —— **实例化的 `InstanceScope` 作用域方案（2026-10-22，历史登记）**：
+  早期把实例流折叠到子树的作用域设计；因选择单位、射线递归和间接嵌套/包围盒语义复杂而放弃，
+  由 `graphics-instancing-primitive-2026-10-23.md` 取代。
+- `graphics-instancing-channel-2026-10-22.md` —— **实例化的几何通道方案（2026-10-22，已作废，历史登记）**：
+  早期把实例矩阵作为 `Geometry` 保留通道（位置 12–15）的设计；因“没有引擎把实例挂在网格资产上”、一个几何只能一套实例、
+  可见数量与选择单位被绑死而放弃。保留作为“通道方案为什么被否”的记录；现行设计见
+  `graphics-instancing-primitive-2026-10-23.md`。
 - `graphics-colour-space.md` —— **颜色：把“色彩空间 + 数值域”放进类型（2026-10-21）**：`Colorf` 是线性光、`Color` 是 sRGB 编码字节，两者只由一对有名转换桥接（`Color::toLinear()` / `Colorf::toColor()`，IEC 61966-2-1 分段曲线、alpha 不参与编码）；SDK 的作者颜色因此只剩一种（`PassDesc::clear_color` / `ClearPolicy` / `FramePlan` 从字节改成线性浮点，后端不再 `/255`），默认清屏色写成“#333333 的原意 + 解一次”，判据含一条设备级“读回 55 而不是 128”；另登记“不做”的四条（`UnitScalar`、目标格式加 sRGB 变体、两个颜色类型改名、8 位图色彩空间）与 robotics / geometry 侧 `Colorf` 输入空间未声明的交互。
 - `graphics-layers.md` —— **层与分层渲染（L1 内容掩码已落地 2026-10-12；L2 设计定稿，裁决现阶段不做、等触发）**：**L1**（对象声明 `Node::setLayers` + pass 掩码 `setLayerMask` 两级；收集与**记忆化 memo key** 的坑；配方入口、0 的退化语义、落点清单、判据与 5 条变异实测）与 **L2 目标层**（`layerCount` + pass 的层区间，L2a 逐层先落、L2b 一次写完等触发；读侧先行的理由；§6 开头是"不做"的四条理由），两者的行业依据（Ogre-Next 的三级掩码 + slice/array 目标 + render queue 子组）、与既有裁决的关系、以及"不做的话今天的替代与代价"；**§9（2026-10-13：拾取 / 包围盒掩码参数已落地，各配判据；"子树层并集"整段跳过仍登记）**。
 - `vsg-reimplementation.md` —— vsg 后端"从零重新实现"：契约、坑与实施记录（本仓库最长的设计文档）。

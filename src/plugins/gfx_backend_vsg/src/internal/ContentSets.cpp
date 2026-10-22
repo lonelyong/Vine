@@ -297,7 +297,8 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
             {
                 continue;
             }
-            const ProgramVariant variant = variantOf(*material.entry, *geometry.entry);
+            ProgramVariant variant = variantOf(*material.entry, *geometry.entry);
+            variant.instanced      = command.instance_buffer != nullptr;
 
             const ContentPass::Scope::Entry* entry = nullptr;
             for (const ContentPass::Scope::Entry& candidate : halves)

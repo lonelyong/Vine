@@ -9,14 +9,15 @@ VN_VSG_NS_BEGIN
 namespace
 {
 
-/// @brief Whether a location is one of the canonical attributes (a custom channel is not).
-bool isCanonicalLocation(std::uint32_t location) noexcept
-{
-    return location == vn::graphics::attributeLocation(vn::graphics::VertexAttribute::Position) ||
-           location == vn::graphics::attributeLocation(vn::graphics::VertexAttribute::Normal) ||
-           location == vn::graphics::attributeLocation(vn::graphics::VertexAttribute::Color) ||
-           location == vn::graphics::attributeLocation(vn::graphics::VertexAttribute::TexCoord0);
-}
+/**
+ * @brief The backend binding the instance-matrix stream occupies.
+ *
+ * @details
+ * - 0-3 are vsg's canonical arrays (position, normal, texcoord, colour). The instance matrix is the next
+ *   free binding, and it is the one `ContentPipeline::create` declares when the `VINE_INSTANCED` define is
+ *   in the variant's list.
+ */
+constexpr std::uint32_t kInstanceBinding = 4U;
 
 /// @brief Gets the key a bind is shared under.
 ///
@@ -69,11 +70,15 @@ std::uint32_t StreamUploads::bindingOfCanonical(std::uint32_t location) noexcept
 {
     // The CASES are the shader ABI's locations (ShaderAbi.hpp), the VALUES are this backend's binding
     // numbers - vsg's own order for its canonical arrays (texcoords at 2, colour at 3), which is a spelling
-    // of the ABI here, not a definition of it. A custom channel (location >= 3, never the reserved texcoord
-    // slot) has no canonical binding: its arrays are bound through one command whose identity is the whole
-    // custom layout.
+    // of the ABI here, not a definition of it. The instance matrix is ONE stream starting at its first
+    // column; a custom channel has no canonical binding: its arrays are bound through one command whose
+    // identity is the whole custom layout.
     using vn::graphics::attributeLocation;
     using vn::graphics::VertexAttribute;
+    if (location >= attributeLocation(VertexAttribute::InstanceModel) &&
+        location < attributeLocation(VertexAttribute::InstanceModel) + vn::graphics::kInstanceMatrixColumns) {
+        return kInstanceBinding;
+    }
     switch (location) {
     case attributeLocation(VertexAttribute::Position): return 0U;
     case attributeLocation(VertexAttribute::Normal): return 1U;
@@ -89,8 +94,8 @@ StreamUploads::VertexResult StreamUploads::acquireVertex(const core::StreamKey& 
     // A derived channel is built per geometry, and a custom channel's bind identity is the whole custom
     // layout: sharing either draws every peer with the first drawable's data. Refusing here - loudly, and
     // counted - is what stops the rule from depending on a caller remembering it.
-    if (key.kind != core::StreamKind::Vertex || key.derived() || !isCanonicalLocation(key.location) ||
-        scalars.empty()) {
+    if (key.kind != core::StreamKind::Vertex || key.derived() ||
+        !vn::graphics::isCanonicalAttributeLocation(key.location) || scalars.empty()) {
         ++d->refusals;
         return {};
     }

@@ -413,6 +413,12 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
         target.model             = source.model_matrix;
         target.opacity       = source.opacity;
         target.authored_state = source.authored_state;
+        if (!source.instance_transforms.empty()) {
+            target.instance_buffer   = source.instance_transforms.values.get();
+            target.instance_revision = source.instance_transforms.values->revision();
+            target.first_instance    = source.first_instance;
+            target.instance_count    = source.instance_count;
+        }
     }
     return copy;
 }

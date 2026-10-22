@@ -3,7 +3,7 @@
 // ONLY when the source asks for it on this line: a name that is missing here is silently dropped (the
 // branch that tests it stays dead, with no error from any layer). Keep the list in sync with the
 // backend's variants — scripts/vine_shader_check.sh compiles every combination of these names.
-#pragma import_defines (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)
+#pragma import_defines (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE, VINE_INSTANCED)
 layout(push_constant) uniform PushConstants
 {
     mat4 projection;
@@ -11,6 +11,11 @@ layout(push_constant) uniform PushConstants
 } pc;
 layout(location = 0) in vec3 vine_Vertex;
 layout(location = 1) in vec3 vine_Normal;
+#ifdef VINE_INSTANCED
+// One instance's model matrix, applied in the drawable's local space: `pc.modelView` already carries the
+// scene node's world, and this is what places the instance relative to it.
+layout(location = 12) in mat4 vine_InstanceModel;
+#endif
 #ifdef VINE_VERTEX_COLOR
 layout(location = 2) in vec4 vine_Color;
 #endif
@@ -47,10 +52,16 @@ void main()
 {
     // View space on purpose: the lights arrive in view space (VineLightsBlock),
     // so the fragment stage never needs the world matrix and the model matrix
-    // stays the only per-drawable data vsg has to push.
-    vec4 view_pos = pc.modelView * vec4(vine_Vertex, 1.0);
+    // stays the only per-drawable data vsg has to push. An instanced draw multiplies
+    // the instance's local matrix on the right, which is exactly the drawn node's placement
+    // in the drawable's frame.
+    mat4 model = pc.modelView;
+#ifdef VINE_INSTANCED
+    model = model * vine_InstanceModel;
+#endif
+    vec4 view_pos = model * vec4(vine_Vertex, 1.0);
     vine_view_pos = view_pos.xyz;
-    vine_view_normal = mat3(pc.modelView) * vine_Normal;
+    vine_view_normal = mat3(model) * vine_Normal;
 #ifdef VINE_VERTEX_COLOR
     vine_color = vine_Color;
 #endif

@@ -39,6 +39,7 @@ struct ProgramVariant
     bool diffuse_map{false};   ///< `VINE_DIFFUSE_MAP`: the material carries a texture to sample.
     bool vertex_color{false};  ///< `VINE_VERTEX_COLOR`: the geometry feeds the colour channel.
     bool cube_texcoord{false}; ///< `VINE_TEXCOORD_CUBE`; false asks for `VINE_TEXCOORD_UV` instead.
+    bool instanced{false};     ///< `VINE_INSTANCED`: the draw reads the per-instance model matrix at 12-15.
 
     /** @brief Gets the number the pipeline key carries for this variant (see core::PipelineKey::variant). */
     [[nodiscard]] std::uint32_t bits() const noexcept;
@@ -59,7 +60,7 @@ struct ProgramVariant
     [[nodiscard]] std::string describe() const;
 };
 
-/** @brief Compares two variants (the identity is all three switches). */
+/** @brief Compares two variants (the identity is all four switches). */
 [[nodiscard]] bool operator==(const ProgramVariant& left, const ProgramVariant& right) noexcept;
 
 /** @brief Compares two variants. */

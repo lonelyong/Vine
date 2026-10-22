@@ -300,6 +300,98 @@ TEST(ContentPipelineTest, TheEditableHalfIsDeclaredDynamic)
     EXPECT_EQ(blend->attachments.size(), 1U) << "the blend state follows the colour attachment count";
 }
 
+TEST(ContentPipelineTest, AnInstanceVariantDeclaresThePerInstanceStreamTheShaderImports)
+{
+    ContentPipeline::Shaders shaders = contentShaders();
+    shaders.vertex = "#version 450\n"
+                     "#pragma import_defines(VINE_INSTANCED)\n"
+                     "layout(location = 0) in vec3 position;\n"
+                     "layout(location = 12) in mat4 instance_model;\n"
+                     "void main() { gl_Position = instance_model * vec4(position, 1.0); }\n";
+    shaders.defines = { "VINE_INSTANCED" };
+
+    vn::vsg::GeometryFacts geometry;
+    vn::vsg::ChannelFacts position;
+    position.key.kind       = vn::graphics::backend::StreamKind::Vertex;
+    position.key.location   = 0U;
+    position.key.components = 3U;
+    position.key.buffer     = reinterpret_cast<const void*>(0x1U);
+    position.key.count      = 3U;
+    geometry.channels       = std::span<const vn::vsg::ChannelFacts>(&position, 1U);
+
+    ContentPipeline::Settings settings;
+    settings.color_attachments = 1U;
+    std::unique_ptr<ContentPipeline> layer =
+        ContentPipeline::create(abiOf(shaders), geometry, shaders, settings);
+    ASSERT_NE(layer, nullptr) << "the vertex text imports the define, so the layout may be built";
+
+    VariantPool pool;
+    const auto  result = layer->acquire(pool, contentKey(1));
+    ASSERT_NE(result.pipeline, nullptr);
+
+    const auto* vertex_input = stateOf<::vsg::VertexInputState>(*result.pipeline);
+    ASSERT_NE(vertex_input, nullptr);
+    ASSERT_EQ(vertex_input->vertexBindingDescriptions.size(), 2U);
+    EXPECT_EQ(vertex_input->vertexBindingDescriptions[0].binding, 0U);
+    EXPECT_EQ(vertex_input->vertexBindingDescriptions[1].binding, 4U)
+        << "the instance stream has its own binding, past the geometry's channels";
+    EXPECT_EQ(vertex_input->vertexBindingDescriptions[1].stride, 64U) << "four vec4 columns";
+    EXPECT_EQ(vertex_input->vertexBindingDescriptions[1].inputRate, VK_VERTEX_INPUT_RATE_INSTANCE);
+
+    ASSERT_EQ(vertex_input->vertexAttributeDescriptions.size(), 5U);
+    for (std::uint32_t column = 0U; column < 4U; ++column) {
+        const auto& attribute = vertex_input->vertexAttributeDescriptions[1U + column];
+        EXPECT_EQ(attribute.location, 12U + column);
+        EXPECT_EQ(attribute.binding, 4U);
+        EXPECT_EQ(attribute.format, VK_FORMAT_R32G32B32A32_SFLOAT);
+        EXPECT_EQ(attribute.offset, column * 16U);
+    }
+}
+
+TEST(ContentPipelineTest, AnInstanceVariantWithoutThePragmaIsRefused)
+{
+    // The define selects the instanced text, but vsg only delivers names the source imports. Without the
+    // pragma the text would compile as a non-instanced shader while the layer declared binding 4: a picture
+    // with every instance at the same transform. The layer refuses instead of guessing.
+    ContentPipeline::Shaders shaders = contentShaders();
+    shaders.defines                  = { "VINE_INSTANCED" };
+
+    vn::vsg::GeometryFacts geometry;
+    vn::vsg::ChannelFacts position;
+    position.key.kind       = vn::graphics::backend::StreamKind::Vertex;
+    position.key.location   = 0U;
+    position.key.components = 3U;
+    position.key.buffer     = reinterpret_cast<const void*>(0x1U);
+    position.key.count      = 3U;
+    geometry.channels       = std::span<const vn::vsg::ChannelFacts>(&position, 1U);
+
+    ContentPipeline::Settings settings;
+    settings.color_attachments = 1U;
+    EXPECT_EQ(ContentPipeline::create(abiOf(shaders), geometry, shaders, settings), nullptr);
+}
+
+TEST(ContentPipelineTest, AGeometryChannelCannotTakeAnInstanceSlot)
+{
+    ContentPipeline::Shaders shaders = contentShaders();
+    shaders.vertex = "#version 450\n"
+                     "layout(location = 12) in vec4 custom;\n"
+                     "void main() { gl_Position = custom; }\n";
+
+    vn::vsg::GeometryFacts geometry;
+    vn::vsg::ChannelFacts custom;
+    custom.key.kind       = vn::graphics::backend::StreamKind::Vertex;
+    custom.key.location   = 12U;
+    custom.key.components = 4U;
+    custom.key.buffer     = reinterpret_cast<const void*>(0x1U);
+    custom.key.count      = 3U;
+    geometry.channels     = std::span<const vn::vsg::ChannelFacts>(&custom, 1U);
+
+    ContentPipeline::Settings settings;
+    settings.color_attachments = 1U;
+    EXPECT_EQ(ContentPipeline::create(abiOf(shaders), geometry, shaders, settings), nullptr)
+        << "12-15 belong to the instance stream; a geometry channel there would collide with binding 4";
+}
+
 TEST(ContentPipelineTest, TheLayoutIsExactlyWhatTheTextDeclares)
 {
     auto layer = makeLayer();

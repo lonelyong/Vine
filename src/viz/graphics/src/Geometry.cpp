@@ -1,7 +1,10 @@
 ﻿#include <vine/graphics/Geometry.hpp>
 
 #include <algorithm>
+#include <optional>
 #include <span>
+#include <typeinfo>
+#include <utility>
 #include <vector>
 
 #include <vine/graphics/Material.hpp>
@@ -163,7 +166,11 @@ bool samePrimitive(const Primitive& a, const Primitive& b) noexcept
 {
     return a.topology == b.topology && a.indices.values.get() == b.indices.values.get() &&
            a.indices.first == b.indices.first && a.indices.count == b.indices.count &&
-           a.material.get() == b.material.get() && a.program.get() == b.program.get();
+           a.material.get() == b.material.get() && a.program.get() == b.program.get() &&
+           a.instance_transforms.values.get() == b.instance_transforms.values.get() &&
+           a.instance_transforms.first == b.instance_transforms.first &&
+           a.instance_transforms.count == b.instance_transforms.count &&
+           a.visible_instances == b.visible_instances;
 }
 }  // namespace
 
@@ -230,6 +237,80 @@ void Geometry::setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices
         return;
     }
     setPrimitive(0, std::move(draw));
+}
+
+bool Geometry::setInstanceTransforms(std::size_t index, BufferSlice<float> transforms)
+{
+    if (index >= primitives_.size()) {
+        ++ignored_primitive_edits_;
+        return false;
+    }
+    Primitive updated = primitives_[index];
+    if (!updated.setInstanceTransforms(std::move(transforms))) {
+        return false;
+    }
+    setPrimitive(index, std::move(updated));
+    // An accepted instance edit is an edit even when the slice identity is unchanged: the bytes behind the
+    // same buffer may have moved (the slice re-reads its buffer). The setter is the caller's announcement,
+    // so do not let setPrimitive's no-op check swallow it.
+    invalidateBounds();
+    return true;
+}
+
+bool Geometry::setInstanceTransforms(BufferSlice<float> transforms)
+{
+    return setInstanceTransforms(0U, std::move(transforms));
+}
+
+bool Geometry::setVisibleInstanceCount(std::size_t index, std::size_t count)
+{
+    if (index >= primitives_.size()) {
+        ++ignored_primitive_edits_;
+        return false;
+    }
+    Primitive updated = primitives_[index];
+    updated.setVisibleInstanceCount(count);
+    setPrimitive(index, std::move(updated));
+    return true;
+}
+
+bool Geometry::setVisibleInstanceCount(std::size_t count)
+{
+    return setVisibleInstanceCount(0U, count);
+}
+
+bool Geometry::clearVisibleInstanceCount(std::size_t index)
+{
+    if (index >= primitives_.size()) {
+        ++ignored_primitive_edits_;
+        return false;
+    }
+    Primitive updated = primitives_[index];
+    updated.clearVisibleInstanceCount();
+    setPrimitive(index, std::move(updated));
+    return true;
+}
+
+bool Geometry::clearVisibleInstanceCount()
+{
+    return clearVisibleInstanceCount(0U);
+}
+
+bool Geometry::clearInstanceTransforms(std::size_t index)
+{
+    if (index >= primitives_.size()) {
+        ++ignored_primitive_edits_;
+        return false;
+    }
+    Primitive updated = primitives_[index];
+    updated.clearInstanceTransforms();
+    setPrimitive(index, std::move(updated));
+    return true;
+}
+
+bool Geometry::clearInstanceTransforms()
+{
+    return clearInstanceTransforms(0U);
 }
 
 bool Geometry::hasIndices() const
@@ -395,11 +476,44 @@ Aabbd Geometry::localBounds() const
     return local_bounds_.box;
 }
 
+bool Geometry::subtreeBounds(Aabbd& box) const
+{
+    // A SUBCLASS may place itself differently (the legacy contract let it answer through its own
+    // boundingBox()): only the engine's exact leaf can hand out the data box in its own frame.
+    if (typeid(*this) != typeid(Geometry)) {
+        return false;
+    }
+    const Aabbd data_box = localBounds();
+    box = Aabbd::empty();
+    if (primitives_.empty()) {
+        box = data_box;
+        return true;
+    }
+    for (const Primitive& primitive : primitives_) {
+        if (!primitive.hasInstances()) {
+            box.expandBy(data_box);  // this draw is one placement of the data
+            continue;
+        }
+        const std::size_t visible = primitive.visibleInstanceCount();
+        for (std::size_t instance = 0u; instance < visible; ++instance) {
+            const std::optional<vn::math::Mat4d> matrix = primitive.instanceMatrix(instance);
+            if (matrix.has_value()) {
+                box.expandBy(transformBox(data_box, *matrix));
+            }
+        }
+    }
+    return true;
+}
+
 Aabbd Geometry::boundingBox() const
 {
     // The same LOCAL box a collection walk transforms with the matrix IT accumulated (see Scene.cpp's
     // bounds cache), placed by this leaf's own worldMatrix(): one spelling of "place the box"
     // (transformBox), so the walk's answer and this one cannot disagree (a test pins it).
+    Aabbd local;
+    if (subtreeBounds(local)) {
+        return transformBox(local, worldMatrix());
+    }
     return transformBox(localBounds(), worldMatrix());
 }
 

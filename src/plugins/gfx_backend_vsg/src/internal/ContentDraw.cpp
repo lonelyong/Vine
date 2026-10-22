@@ -79,10 +79,10 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
     if (draw.index != nullptr) {
         commands->addChild(draw.index);
         commands->addChild(::vsg::DrawIndexed::create(draw.index_count, draw.instances, draw.first_index,
-                                                      draw.vertex_offset, 0U));
+                                                     draw.vertex_offset, draw.first_instance));
     }
     else {
-        commands->addChild(::vsg::Draw::create(draw.vertex_count, draw.instances, 0U, 0U));
+        commands->addChild(::vsg::Draw::create(draw.vertex_count, draw.instances, 0U, draw.first_instance));
     }
     group->addChild(commands);
 

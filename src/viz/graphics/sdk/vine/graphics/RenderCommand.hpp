@@ -87,6 +87,22 @@ struct VN_GRAPHICS_API RenderCommand {
      */
     RenderState authored_state;
 
+    /** The instance transforms this command is drawn with (empty = a plain, single-instance draw).
+     *
+     * @details
+     * - A BufferSlice of SCALARS: 16 per instance, column-major. It is the instance stream of the Primitive
+     *   that produced this command; a command without a stream leaves it empty.
+     * - The buffer is held (not copied): the frame borrows its address and revision, the same way it borrows the
+     *   geometry and material identities.
+     */
+    BufferSlice<float> instance_transforms;
+
+    /** The first instance drawn from @ref instance_transforms (the primitive slice's start). */
+    std::uint32_t first_instance{0};
+
+    /** How many instances this command draws (0 = a plain draw; an instanced primitive uses 1..N). */
+    std::uint32_t instance_count{0};
+
     /** @brief Default constructor. */
     RenderCommand() = default;
 

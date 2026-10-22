@@ -165,6 +165,11 @@ struct CollectedCommand
     vn::math::Mat4d model{};                  ///< World-space model matrix.
     float         opacity{1.0F};                ///< Effective opacity (the engine's only transparency channel).
     vn::graphics::RenderState authored_state{};  ///< What the CONTENT authored, item by item (see the resolution).
+    /// The instance stream, BORROWED for the frame (the primitive's slice holds it): null for a plain draw.
+    const vn::Buffer<float>* instance_buffer{nullptr};
+    std::uint64_t            instance_revision{0};  ///< The buffer revision the borrow was made at.
+    std::uint32_t            first_instance{0};     ///< First instance the draw reads.
+    std::uint32_t            instance_count{0};     ///< Instances the draw reads (0 = plain).
 };
 
 /**

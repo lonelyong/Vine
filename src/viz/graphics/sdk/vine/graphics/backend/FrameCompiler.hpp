@@ -98,6 +98,11 @@ struct CompiledCommand
     vn::math::Mat4d model{};            ///< World-space model matrix.
     float         opacity{1.0F};          ///< Effective opacity.
     DynamicState  dynamic{};              ///< The dynamic layer, resolved (see resolveDynamicState).
+    /// The instance stream, BORROWED from the collected frame: null for a plain draw.
+    const vn::Buffer<float>* instance_buffer{nullptr};
+    std::uint64_t            instance_revision{0};  ///< The buffer revision the borrow was made at.
+    std::uint32_t            first_instance{0};     ///< First instance the draw reads.
+    std::uint32_t            instance_count{0};     ///< Instances the draw reads (0 = plain).
 };
 
 /** @brief One of a pass' declared inputs, as the plan carries it: what it reads, and what it offers.

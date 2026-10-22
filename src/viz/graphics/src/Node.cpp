@@ -68,12 +68,9 @@ std::uint64_t Node::contentEpoch() const noexcept
 
 bool Node::subtreeBounds(Aabbd& box) const
 {
-    // A leaf's box is its DATA box, and localBounds() re-checks its own data key on every ask (cheap:
-    // a few compares against the cached scan), so a leaf needs no stamp and answers fresh.
-    if (typeid(*this) == typeid(Geometry)) {
-        box = static_cast<const Geometry*>(this)->localBounds();
-        return true;
-    }
+    // The leaf types (Geometry) override this with their own frame's box. What is left here
+    // is the container's union and the plain node's empty answer; any other class is unknown and the walk
+    // falls back to its world-space boundingBox().
     if (const auto* group = dynamic_cast<const Group*>(this)) {
         if (cached_known_ && cached_stamp_ == bounds_stamp_) {
             box = cached_bounds_;

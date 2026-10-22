@@ -1276,6 +1276,210 @@ TEST(RayIntersectionTest, SceneQuery)
     RayIntersectionResult result = RayIntersection::intersectScene(ray, scene.get());
     EXPECT_TRUE(result.hit);
     EXPECT_EQ(result.geometry.get(), geom.get());
+    EXPECT_EQ(result.instanceIndex, std::numeric_limits<std::uint32_t>::max());
+}
+
+namespace
+{
+
+/// @brief A whole-instance stream holding @p count column-major identity matrices.
+///
+/// @param count Instances to build.
+/// @return Storage whose slices cover whole matrices.
+intrusive_ptr<vn::Buffer<float>> identityInstances(std::size_t count)
+{
+    std::vector<float> values(count * static_cast<std::size_t>(kInstanceMatrixComponents), 0.0f);
+    for (std::size_t instance = 0; instance < count; ++instance)
+    {
+        const std::size_t base = instance * static_cast<std::size_t>(kInstanceMatrixComponents);
+        values[base + 0]        = 1.0f;
+        values[base + 5]        = 1.0f;
+        values[base + 10]       = 1.0f;
+        values[base + 15]       = 1.0f;
+    }
+    return vn::make_intrusive<vn::Buffer<float>>(std::move(values));
+}
+
+}  // namespace
+
+TEST(PrimitiveInstancingTest, AnInstancedPrimitiveDrawsEveryPlacement)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  geom = geometryOf(*makeUnitTriangle());
+    root->addChild(geom);
+
+    intrusive_ptr<vn::Buffer<float>> storage = identityInstances(2);
+    storage->data()[16 + 12] = 2.0f;  // the second instance translates by +2 in x (column 3, row 0)
+    storage->bumpRevision();
+    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::whole(storage)));
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_TRUE(commands != nullptr);
+    ASSERT_EQ(commands->size(), 1u);
+    EXPECT_EQ((*commands)[0].instance_count, 2u);
+    EXPECT_EQ((*commands)[0].first_instance, 0u);
+    EXPECT_EQ((*commands)[0].instance_transforms.size(), 32u);
+
+    const Primitive* primitive = geom->primitive(0);
+    ASSERT_NE(primitive, nullptr);
+    ASSERT_TRUE(primitive->instanceMatrix(1).has_value());
+    EXPECT_NEAR(primitive->instanceMatrix(1)->element(0, 3), 2.0, 1e-9);
+
+    // The geometry's box is the union of both placements, not its uninstanced data box.
+    const Aabbd box = geom->boundingBox();
+    ASSERT_TRUE(box.isValid());
+    EXPECT_NEAR(box.xmin, 0.0, 1e-9);
+    EXPECT_NEAR(box.xmax, 3.0, 1e-9);
+}
+
+TEST(PrimitiveInstancingTest, TheVisiblePrefixIsTheDrawRangeAndCanChangeWithoutANewSlice)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  geom = geometryOf(*makeUnitTriangle());
+    root->addChild(geom);
+
+    intrusive_ptr<vn::Buffer<float>> storage = identityInstances(3);
+    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::slice(storage, 16u, 16u)));
+    ASSERT_NE(geom->primitive(0), nullptr);
+    EXPECT_EQ(geom->primitive(0)->firstInstance(), 1u);
+    EXPECT_EQ(geom->primitive(0)->instanceCount(), 1u);
+
+    ASSERT_TRUE(geom->setVisibleInstanceCount(0u));
+    Camera cam;
+    setupLookAtCamera(cam);
+    EXPECT_TRUE(scene.collectRenderCommands(&cam)->empty());
+    EXPECT_EQ(geom->primitive(0)->visibleInstanceCount(), 0u);
+
+    ASSERT_TRUE(geom->clearInstanceTransforms(0u));
+    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::slice(storage, 16u, 16u)));
+    ASSERT_TRUE(geom->clearVisibleInstanceCount());
+    EXPECT_EQ(geom->primitive(0)->visibleInstanceCount(), 1u);
+    const auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands->size(), 1u);
+    EXPECT_EQ((*commands)[0].first_instance, 1u);
+    EXPECT_EQ((*commands)[0].instance_count, 1u);
+}
+
+TEST(PrimitiveInstancingTest, WithoutAStreamItIsAPlainDrawAndMalformedStreamsAreRefused)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  geom = geometryOf(*makeUnitTriangle());
+    root->addChild(geom);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands->size(), 1u);
+    EXPECT_EQ((*commands)[0].instance_count, 0u);
+    ASSERT_NE(geom->primitive(0), nullptr);
+    EXPECT_FALSE(geom->primitive(0)->hasInstances());
+
+    // A slice that is not a whole number of matrices is refused, not floored into one.
+    intrusive_ptr<vn::Buffer<float>> storage = identityInstances(1);
+    EXPECT_FALSE(geom->setInstanceTransforms(vn::BufferSlice<float>::slice(storage, 0u, 8u)));
+    EXPECT_FALSE(geom->primitive(0)->hasInstances());
+    EXPECT_TRUE(scene.collectRenderCommands(&cam)->size() == 1u);
+}
+
+TEST(PrimitiveInstancingTest, CullingUsesTheInstancesOwnBounds)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  geom = geometryOf(*makeUnitTriangle());
+    root->addChild(geom);
+
+    intrusive_ptr<vn::Buffer<float>> storage = identityInstances(1);
+    storage->data()[12] = 4000.0f;
+    storage->bumpRevision();
+    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::whole(storage)));
+
+    // The geometry's data box is at the origin; the instance is at x=4000. The geometry's instance-aware
+    // box must keep the draw when the camera is aimed at the placement, not cull it at the origin.
+    Camera cam;
+    cam.lookAt(Vec3d(4000.0, 0.0, 5.0), Vec3d(4000.0, 0.0, 0.0), Vec3d(0.0, 1.0, 0.0));
+    cam.setPerspective(60.0, 0.1, 1000.0);
+    cam.setAspect(kSceneAspect);
+
+    const auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands->size(), 1u);
+    EXPECT_EQ((*commands)[0].instance_count, 1u);
+}
+
+TEST(PrimitiveInstancingTest, EachPrimitiveOwnsItsInstanceStream)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  geom = geometryOf(*makeUnitTriangle());
+    root->addChild(geom);
+    ASSERT_NE(geom->primitive(0), nullptr);
+    geom->addPrimitive(*geom->primitive(0));
+    ASSERT_EQ(geom->primitiveCount(), 2u);
+
+    intrusive_ptr<vn::Buffer<float>> first_stream  = identityInstances(2);
+    intrusive_ptr<vn::Buffer<float>> second_stream = identityInstances(3);
+    ASSERT_TRUE(geom->setInstanceTransforms(0u, vn::BufferSlice<float>::whole(first_stream)));
+    ASSERT_TRUE(geom->setInstanceTransforms(1u, vn::BufferSlice<float>::whole(second_stream)));
+    ASSERT_TRUE(geom->setVisibleInstanceCount(0u, 1u));
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const auto commands = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(commands->size(), 2u);
+    EXPECT_EQ((*commands)[0].instance_count, 1u) << "primitive 0 draws its own visible prefix";
+    EXPECT_EQ((*commands)[1].instance_count, 3u) << "primitive 1 keeps its own stream and count";
+    EXPECT_EQ((*commands)[0].instance_transforms.values.get(), first_stream.get());
+    EXPECT_EQ((*commands)[1].instance_transforms.values.get(), second_stream.get());
+}
+
+TEST(PrimitiveInstancingTest, ASameSliceAfterABufferEditStillInvalidatesTheDraw)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  geom = geometryOf(*makeUnitTriangle());
+    root->addChild(geom);
+
+    intrusive_ptr<vn::Buffer<float>> storage = identityInstances(1);
+    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::whole(storage)));
+    const std::uint64_t before = geom->contentEpoch();
+
+    // Same buffer, same slice, new bytes: the draw really changed, so the announcement must not be
+    // swallowed by "the slice pointer looks the same".
+    storage->data()[12] = 4.0f;
+    storage->bumpRevision();
+    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::whole(storage)));
+    EXPECT_GT(geom->contentEpoch(), before);
+}
+
+TEST(PrimitiveInstancingTest, PickingReportsThePrimitiveAndTheInstanceThatWasHit)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  geom = geometryOf(*makeUnitTriangle());
+    root->addChild(geom);
+
+    intrusive_ptr<vn::Buffer<float>> storage = identityInstances(2);
+    storage->data()[16 + 12] = 2.0f;
+    storage->bumpRevision();
+    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::whole(storage)));
+
+    const Ray ray(Vec3d(2.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    const RayIntersectionResult result = RayIntersection::intersectScene(ray, &scene);
+    ASSERT_TRUE(result.hit);
+    EXPECT_EQ(result.geometry.get(), geom.get());
+    EXPECT_EQ(result.primitiveIndex, 0u);
+    EXPECT_EQ(result.instanceIndex, 1u);
+    EXPECT_NEAR(result.point.x, 2.25, 1e-6);
+    EXPECT_NEAR(result.point.y, 0.25, 1e-6);
+
+    // Picking follows the drawn prefix: the second instance is not there once the primitive hides it.
+    ASSERT_TRUE(geom->setVisibleInstanceCount(1u));
+    EXPECT_FALSE(RayIntersection::intersectScene(ray, &scene).hit);
+    EXPECT_TRUE(RayIntersection::intersectScene(Ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1)), &scene).hit);
 }
 
 TEST(RayIntersectionTest, AllHitsCollectsEveryTriangleSortedByDepth)

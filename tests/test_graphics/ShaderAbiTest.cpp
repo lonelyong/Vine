@@ -42,6 +42,11 @@ TEST(ShaderAbiTest, AttributeLocationsAreTheCanonicalValues)
     EXPECT_EQ(attributeLocation(VertexAttribute::Normal), 1u);
     EXPECT_EQ(attributeLocation(VertexAttribute::Color), 2u);
     EXPECT_EQ(attributeLocation(VertexAttribute::TexCoord0), 8u);
+    // The instance matrix is four consecutive slots past the custom-channel range: the shader
+    // declares them as one mat4, and the backend binds one per-instance stream to feed all four.
+    EXPECT_EQ(attributeLocation(VertexAttribute::InstanceModel), 12u);
+    EXPECT_EQ(instanceMatrixLocation(0u), 12u);
+    EXPECT_EQ(instanceMatrixLocation(3u), 15u);
 }
 
 TEST(ShaderAbiTest, TheCanonicalPredicateMatchesTheLocations)
@@ -50,11 +55,15 @@ TEST(ShaderAbiTest, TheCanonicalPredicateMatchesTheLocations)
     // consumer that walks a geometry's channels, so it is answered by the ABI (and not by a range
     // test: the reserved texcoord slot is exactly the value a range test gets wrong).
     for (const auto attribute : { VertexAttribute::Position, VertexAttribute::Normal, VertexAttribute::Color,
-                                  VertexAttribute::TexCoord0 }) {
+                                  VertexAttribute::TexCoord0, VertexAttribute::InstanceModel }) {
         EXPECT_TRUE(isCanonicalAttributeLocation(attributeLocation(attribute)));
     }
     EXPECT_FALSE(isCanonicalAttributeLocation(3u)) << "3 upward is the custom-channel range";
     EXPECT_FALSE(isCanonicalAttributeLocation(7u)) << "the texcoord slot's neighbours are not canonical";
+    EXPECT_FALSE(isCanonicalAttributeLocation(11u)) << "the slot before the instance matrix is custom";
+    EXPECT_TRUE(isCanonicalAttributeLocation(13u)) << "the matrix's second column";
+    EXPECT_TRUE(isCanonicalAttributeLocation(15u)) << "the matrix's fourth column";
+    EXPECT_FALSE(isCanonicalAttributeLocation(16u)) << "the slot after the matrix is custom";
 }
 
 TEST(ShaderAbiTest, GeometryAttachesCanonicalChannelsWhereTheAbiSays)

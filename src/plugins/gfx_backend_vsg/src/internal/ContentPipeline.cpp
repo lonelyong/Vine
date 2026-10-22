@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -31,6 +32,36 @@ namespace
 
 /** @brief The descriptor set a CONTENT program's sampled inputs live in (see the file note). */
 constexpr std::uint32_t kContentInputSet = 1U;
+
+/**
+ * @brief Whether @p source lists @p name in one of its `#pragma import_defines` lines.
+ *
+ * @details
+ * - vsg delivers a define ONLY when the source asks for it on that line; a name that is merely used in
+ *   `#ifdef` is silently dropped. Checking the pragma is therefore the difference between "the program opts
+ *   in" and "the program will draw every instance at the same transform".
+ *
+ * @param source Shader source to scan.
+ * @param name   Define name to look for.
+ * @return true when a pragma line lists @p name.
+ */
+bool shaderImportsDefine(std::string_view source, std::string_view name) noexcept
+{
+    constexpr std::string_view kPragma = "#pragma import_defines";
+    for (std::size_t pos = source.find(kPragma); pos != std::string_view::npos;
+         pos = source.find(kPragma, pos + kPragma.size()))
+    {
+        const std::size_t open  = source.find('(', pos);
+        const std::size_t close = open == std::string_view::npos ? std::string_view::npos : source.find(')', open);
+        if (close == std::string_view::npos) {
+            continue;
+        }
+        if (source.substr(open + 1U, close - open - 1U).find(name) != std::string_view::npos) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /** @brief The `VkFormat` of one channel: its components are 32-bit floats (see core::StreamKey). */
 std::uint32_t channelFormatOf(std::uint32_t components) noexcept
@@ -418,12 +449,34 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
 std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi, const GeometryFacts& geometry,
                                                          const Shaders& shaders, const Settings& settings)
 {
+    // THE INSTANCE MATRIX IS A VERTEX-INPUT STREAM, NOT A GEOMETRY CHANNEL: each Primitive owns its stream,
+    // and the variant's own define is the one switch that asks for both the shader text and the four
+    // attributes that feed it. Deriving the layout here - from the same define list the compiler receives -
+    // is what keeps the pipeline's vertex input and its text from disagreeing.
+    const bool instanced = std::find(shaders.defines.begin(), shaders.defines.end(), "VINE_INSTANCED") !=
+                           shaders.defines.end();
+    if (instanced && !shaderImportsDefine(shaders.vertex, "VINE_INSTANCED"))
+    {
+        return nullptr;  // the define would be dropped by vsg: the program does not opt in
+    }
+
     std::vector<VertexBinding>   bindings;
     std::vector<VertexAttribute> attributes;
-    bindings.reserve(geometry.channels.size());
-    attributes.reserve(geometry.channels.size());
+    bindings.reserve(geometry.channels.size() + (instanced ? 1U : 0U));
+    attributes.reserve(geometry.channels.size() + (instanced ? vn::graphics::kInstanceMatrixColumns : 0U));
+    const std::uint32_t instance_first =
+        vn::graphics::attributeLocation(vn::graphics::VertexAttribute::InstanceModel);
     for (const ChannelFacts& channel : geometry.channels)
     {
+        // The instance-matrix slots belong to the per-instance stream, never to a geometry channel: a geometry
+        // that authored location 12 would collide with the per-instance binding 4 (and was refused before
+        // the ABI grew that role). Keep that refusal, or a custom channel could silently become an
+        // instance matrix.
+        if (channel.key.location >= instance_first &&
+            channel.key.location < instance_first + vn::graphics::kInstanceMatrixColumns)
+        {
+            return nullptr;
+        }
         const std::uint32_t binding = StreamUploads::bindingOfCanonical(channel.key.location);
         if (binding == StreamUploads::kNoBinding)
         {
@@ -434,6 +487,25 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi, 
                                           false });
         attributes.push_back(
             VertexAttribute{ channel.key.location, binding, channelFormatOf(channel.key.components), 0U });
+    }
+    if (instanced)
+    {
+        const std::uint32_t binding =
+            StreamUploads::bindingOfCanonical(vn::graphics::attributeLocation(vn::graphics::VertexAttribute::InstanceModel));
+        if (binding == StreamUploads::kNoBinding)
+        {
+            return nullptr;  // the ABI and the stream store disagree: never compile a guess
+        }
+        bindings.push_back(VertexBinding{ binding,
+                                          static_cast<std::uint32_t>(vn::graphics::kInstanceMatrixComponents *
+                                                                     sizeof(float)),
+                                          true });
+        for (std::uint32_t column = 0U; column < vn::graphics::kInstanceMatrixColumns; ++column)
+        {
+            attributes.push_back(VertexAttribute{ vn::graphics::instanceMatrixLocation(column), binding,
+                                                  channelFormatOf(4U),
+                                                  static_cast<std::uint32_t>(column * 4U * sizeof(float)) });
+        }
     }
     return create(abi, bindings, attributes, shaders, settings);
 }

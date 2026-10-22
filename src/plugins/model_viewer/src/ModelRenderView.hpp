@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <vector>
 
 #include <QWidget>
 
@@ -216,7 +217,7 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
      *
      * @return 选中的几何，或 nullptr。
      */
-    vn::raw_ptr<vn::graphics::Geometry> selectedGeometry() const { return selected_.get(); }
+    vn::raw_ptr<vn::graphics::Geometry> selectedGeometry() const { return selected_geometry_.get(); }
 
     /**
      * @brief 右下角的帧率读数（查看器的链里的 HUD 档）。
@@ -286,10 +287,10 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
     vn::intrusive_ptr<vn::graphics::SceneView> view_;
     /// 右下角的帧率读数由查看器预设提供（`ViewerOptions::stats`），见 `fpsOverlay()`。
     bool                                       fitted_ = false;
-    /// 当前选中的几何（空 = 没选中）。选择是本视图的（框架里没有这个概念，见类注释）。
-    vn::intrusive_ptr<vn::graphics::Geometry>  selected_;
-    /// 选中前那份材质（模型自带的，或 `applyDefaultMaterials` 补的中灰）：取消选择时原样还回去，而不是重造一份。
-    vn::intrusive_ptr<vn::graphics::Material>  selected_material_;
+    /// 当前选中的几何：空 = 没选中。
+    vn::intrusive_ptr<vn::graphics::Geometry> selected_geometry_;
+    /// 选中前的材质：取消选择时原样还回去。
+    vn::intrusive_ptr<vn::graphics::Material> selected_material_;
     /// 高亮材质（第一次选中时才造）：橙色、低高光，与中灰的模型放在一起一眼能认出"选中的是它"。
     vn::intrusive_ptr<vn::graphics::Material>  highlight_;
 };
@@ -318,14 +319,14 @@ inline void ModelRenderView::applyDefaultMaterials(vn::graphics::Node& node,
 
 inline void ModelRenderView::clearSelection()
 {
-    if (selected_ == nullptr)
+    if (selected_geometry_ == nullptr)
     {
         return;
     }
     // 原来那份材质**原样还回去**（而不是重造一份一样的）：材质是内容的属性，视图只是临时换了它。
-    selected_->setMaterial(std::move(selected_material_));
+    selected_geometry_->setMaterial(std::move(selected_material_));
+    selected_geometry_ = nullptr;
     selected_material_ = nullptr;
-    selected_         = nullptr;
 }
 
 inline void ModelRenderView::selectAt(double nx, double ny)
@@ -343,7 +344,7 @@ inline void ModelRenderView::selectAt(double nx, double ny)
     {
         clearSelection(); // 点空白 = 取消选择（合法的选择动作，不是"什么都没发生"）
     }
-    else if (hit.geometry.get() != selected_.get())
+    else if (hit.geometry != selected_geometry_)
     {
         clearSelection(); // 换选：先把上一件的材质还回去
         if (highlight_ == nullptr)
@@ -353,9 +354,9 @@ inline void ModelRenderView::selectAt(double nx, double ny)
             highlight_->setSpecular(vn::Colorf(0.10f, 0.10f, 0.10f, 1.0f));
             highlight_->setShininess(16.0f);
         }
-        selected_material_ = hit.geometry->material();
-        hit.geometry->setMaterial(highlight_);
-        selected_ = hit.geometry;
+        selected_geometry_ = hit.geometry;
+        selected_material_ = vn::intrusive_ptr<vn::graphics::Material>(hit.geometry->material());
+        selected_geometry_->setMaterial(highlight_);
     }
 
     // 按需出帧的控件也要把这一笔画出来（连续出帧时多要一帧无害）。后端每帧都会重读命令里的材质：

@@ -197,7 +197,8 @@ std::span<const ContentPass::Scope::Entry> ContentHalves::halvesFor(const core::
             {
                 continue;
             }
-            const ProgramVariant           variant = variantOf(*material.entry, *geometry.entry);
+            ProgramVariant                 variant = variantOf(*material.entry, *geometry.entry);
+            variant.instanced = command.instance_buffer != nullptr;
             const FactResult<ProgramFacts> program =
                 findProgram(facts, command.program, variant, core::DrawKind::Content);
             if (!program.found())

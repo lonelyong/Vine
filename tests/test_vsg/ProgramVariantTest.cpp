@@ -2,11 +2,11 @@
  * @brief Device-free tests of the PROGRAM VARIANT: the defines that change what a text means.
  *
  * The engine's own stages gate declarations and code on names in a `#pragma import_defines` line, so one
- * program text is several programs - several ABIs and several pictures. This suite pins the three
- * switches' NAMES, the engine's rule for picking them from a drawable (the texcoord channel's width, the
- * material's texture, the geometry's authored colour), and the fact that the engine's own forward program
- * really does describe itself differently per variant: a layout scanned for the wrong variant is a
- * pipeline the driver refuses at best, and the wrong picture at worst.
+ * program text is several programs - several ABIs and several pictures. This suite pins the switches'
+ * NAMES, the engine's rule for picking them from a drawable (the texcoord channel's width, the
+ * material's texture, the geometry's authored colour), the instance stream's own switch, and the fact that
+ * the engine's own forward program really does describe itself differently per variant: a layout scanned for
+ * the wrong variant is a pipeline the driver refuses at best, and the wrong picture at worst.
  */
 
 #include <cstdint>
@@ -88,18 +88,28 @@ TEST(ProgramVariantTest, TheDefinesAreTheEnginesOwnNames)
     EXPECT_EQ(cube_names[1], "VINE_DIFFUSE_MAP");
     EXPECT_EQ(cube_names[2], "VINE_VERTEX_COLOR");
 
+    // The instance stream is a switch too: it changes the vertex input the layer declares, so it must
+    // change the identity the pool and the half are filed under.
+    ProgramVariant instanced;
+    instanced.instanced = true;
+    const std::vector<std::string> instanced_names = instanced.defines();
+    ASSERT_EQ(instanced_names.size(), 2U);
+    EXPECT_EQ(instanced_names[0], "VINE_TEXCOORD_UV");
+    EXPECT_EQ(instanced_names[1], "VINE_INSTANCED");
+
     // The number the pipeline key carries must tell the variants apart - all of them.
     std::vector<std::uint32_t> seen;
-    for (int mask = 0; mask < 8; ++mask) {
+    for (int mask = 0; mask < 16; ++mask) {
         ProgramVariant variant;
         variant.diffuse_map   = (mask & 1) != 0;
         variant.vertex_color  = (mask & 2) != 0;
         variant.cube_texcoord = (mask & 4) != 0;
+        variant.instanced     = (mask & 8) != 0;
         const std::uint32_t bits = variant.bits();
         EXPECT_EQ(std::find(seen.begin(), seen.end(), bits), seen.end()) << "two variants share a key number";
         seen.push_back(bits);
     }
-    EXPECT_EQ(seen.size(), 8U);
+    EXPECT_EQ(seen.size(), 16U);
 }
 
 TEST(ProgramVariantTest, TheRuleFollowsTheChannelWidthTheTextureAndTheAuthoredColour)

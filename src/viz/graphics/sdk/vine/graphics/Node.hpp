@@ -324,13 +324,18 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      *   children's boxes transformed by each child's localTransformMatrix(), so a change above cannot
      *   stale the cache - only a change inside the subtree can, which invalidateBounds() announces.
      *
+     * - A LEAF THAT KNOWS ITS OWN EXTENT OVERRIDES THIS (Geometry): the answer is in that
+     *   leaf's frame, so a parent's cached union is invalidated by the same edit that invalidated the leaf.
+     *   The default answers a Group's union and an empty plain Node; any other class returns false, which
+     *   tells the walk to fall back to its world-space boundingBox().
+     *
      * @param box Receives the box when one is known (possibly genuinely empty).
      * @return true when the box is known; false when the subtree cannot be answered in this frame - what a
-     *         node that only overrides boundingBox() (world space) yields, and what a plain Node (no
-     *         content, no children) avoids by answering empty. A false answer tells the walk to compute
-     *         from scratch, which stays sound for any node class.
+     *         custom leaf that overrides neither this nor a Group yields, and what a plain Node (no content,
+     *         no children) avoids by answering empty. A false answer tells the walk to compute from scratch,
+     *         which stays sound for any node class.
      */
-    [[nodiscard]] bool subtreeBounds(Aabbd& box) const;
+    [[nodiscard]] virtual bool subtreeBounds(Aabbd& box) const;
 
     /** @brief Gets how many times this subtree's box was RECOMPUTED from its children.
      *

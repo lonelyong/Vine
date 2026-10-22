@@ -541,6 +541,63 @@ class VN_GRAPHICS_API Geometry : public Node {
     void setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices, std::size_t first_index = 0u,
                     std::size_t index_count = 0u);
 
+    /** @brief Sets one primitive's instance stream (16 scalars per instance, column-major).
+     *
+     * @details
+     * - The draw, not the geometry, owns the stream: every primitive may carry its own instance set, and
+     *   several primitives may point at the same buffer through different slices.
+     * - A stream that does not cover whole matrices is rejected and leaves the primitive unchanged; a
+     *   null slice clears it. The stream's start is the draw's firstInstance.
+     * - Adding/replacing a stream announces the geometry's content change (bounds and collected commands).
+     *
+     * @param index      Primitive to edit; must exist.
+     * @param transforms Instance matrices, or a null slice to clear.
+     * @return true when the edit was applied; false for a missing primitive or a malformed slice.
+     */
+    bool setInstanceTransforms(std::size_t index, BufferSlice<float> transforms);
+
+    /** @brief Sets primitive 0's instance stream (the ONE-draw spelling).
+     * @param transforms Instance matrices, or a null slice to clear.
+     * @return true when applied; false when there is no primitive 0 or the slice is malformed.
+     */
+    bool setInstanceTransforms(BufferSlice<float> transforms);
+
+    /** @brief Limits how many instances one primitive draws from its stream.
+     *
+     * @param index Primitive to edit; must exist.
+     * @param count Instances to draw (clamped to the stream's capacity at read time).
+     * @return true when applied; false when @p index is out of range.
+     */
+    bool setVisibleInstanceCount(std::size_t index, std::size_t count);
+
+    /** @brief Limits how many instances primitive 0 draws.
+     * @param count Instances to draw.
+     * @return true when applied; false when there is no primitive 0.
+     */
+    bool setVisibleInstanceCount(std::size_t count);
+
+    /** @brief Draws every instance one primitive's stream holds again.
+     * @param index Primitive to edit.
+     * @return true when applied; false when @p index is out of range.
+     */
+    bool clearVisibleInstanceCount(std::size_t index);
+
+    /** @brief Draws every instance primitive 0's stream holds again.
+     * @return true when applied; false when there is no primitive 0.
+     */
+    bool clearVisibleInstanceCount();
+
+    /** @brief Clears one primitive's instance stream (it becomes a plain draw).
+     * @param index Primitive to edit.
+     * @return true when applied; false when @p index is out of range.
+     */
+    bool clearInstanceTransforms(std::size_t index);
+
+    /** @brief Clears primitive 0's instance stream.
+     * @return true when applied; false when there is no primitive 0.
+     */
+    bool clearInstanceTransforms();
+
     /** @brief Gets whether the first primitive draws indices.
      * @return true when primitive 0 exists and is indexed.
      */
@@ -673,9 +730,24 @@ class VN_GRAPHICS_API Geometry : public Node {
      *   geometry's own revision - the writer announces an edit, and a consumer of the announced revision
      *   may cache what it derived from it.
      *
-     * @return World-space AABB of this geometry's data.
+     * @return World-space AABB of this geometry's data, over the visible instance placements of its
+     *         primitives.
      */
     Aabbd boundingBox() const override;
+
+    /** @brief Gets this geometry's data box in its own frame (the box a parent unions).
+     *
+     * @details
+     * - The polymorphic form of localBounds(): a Group asks every child for its OWN frame, which is why a
+     *   moved subtree invalidates only its ancestors. Geometry answers its data box placed by each
+     *   primitive's visible instances; a container answers its children's union.
+     * - Only the ENGINE's exact Geometry answers here. A subclass may place itself differently through its
+     *   own boundingBox(), so it returns false and the walk falls back to world space (the legacy contract).
+     *
+     * @param box Receives the local box (possibly empty).
+     * @return true for an exact Geometry; false for a subclass that answers only in world space.
+     */
+    [[nodiscard]] bool subtreeBounds(Aabbd& box) const override;
 
     /** @brief Gets how many times this geometry's local data box was computed.
      *

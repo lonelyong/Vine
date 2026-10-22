@@ -48,7 +48,7 @@ INVENTORY="$ROOT/cmake/VineShaders.cmake"
 # The variant defines the backend can set on a compiled stage. Keep in sync with
 # the define names used by the shaders themselves (the compile matrix below is
 # what catches a mismatch).
-VARIANT_DEFINES=(VINE_VERTEX_COLOR VINE_DIFFUSE_MAP VINE_FLAT)
+VARIANT_DEFINES=(VINE_VERTEX_COLOR VINE_DIFFUSE_MAP VINE_FLAT VINE_INSTANCED)
 # The texcoord KIND is not an on/off flag: the backend sets EXACTLY ONE of these
 # on every content variant (the geometry's texcoord width decides which), and the
 # shaders reject a sampled slot whose kind is unstated (#error) rather than

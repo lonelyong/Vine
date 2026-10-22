@@ -21,6 +21,7 @@
 #include <vine/vsg/internal/DrawBlock.hpp>
 #include <vine/vsg/internal/LightBlock.hpp>
 #include <vine/vsg/internal/ShadowBlock.hpp>
+#include <vine/graphics/ShaderAbi.hpp>
 
 VN_VSG_NS_BEGIN
 
@@ -1023,12 +1024,41 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         return false;
     }
 
+    // THE INSTANCE STREAM, BEFORE ANY PIPELINE IS ACQUIRED: a draw that names no stream cannot be instanced,
+    // and a stream whose visible range does not fit the buffer would read another scope's matrices (or past
+    // the buffer). Both are refused here, by name, rather than drawn as a guess.
+    const bool instanced = command.instance_buffer != nullptr;
+    if (!instanced && command.instance_count > 1U)
+    {
+        reportRefused("the command's instances", "an instance count without an instance stream");
+        return false;
+    }
+    if (instanced)
+    {
+        if (command.instance_count == 0U)
+        {
+            return true;  // a visible prefix of zero: nothing to draw, and nothing to report
+        }
+        if (command.instance_buffer->size() % vn::graphics::kInstanceMatrixComponents != 0U)
+        {
+            reportRefused("the command's instances", "its instance buffer does not hold whole matrices");
+            return false;
+        }
+        const std::size_t capacity = command.instance_buffer->size() / vn::graphics::kInstanceMatrixComponents;
+        if (command.first_instance > capacity || command.instance_count > capacity - command.first_instance)
+        {
+            reportRefused("the command's instances", "its visible range is outside the instance buffer");
+            return false;
+        }
+    }
+
     // THE VARIANT: which of the program's texts this drawable means, computed from the two facts that
     // decide it (the engine's own rule - see api/ProgramVariant). It is part of the half's identity, so a
     // pass that compiled one variant never draws another variant's drawable through it - and it is part of
     // the PROGRAM ENTRY's key as well, so the `abi` this command is served (its push ranges) is the one its
     // own text declares (see findProgram).
-    const ProgramVariant variant = variantOf(*material.entry, *geometry.entry);
+    ProgramVariant variant = variantOf(*material.entry, *geometry.entry);
+    variant.instanced      = instanced;
 
     const FactResult<ProgramFacts> program =
         findProgram(facts, command.program, variant, core::DrawKind::Content);
@@ -1176,6 +1206,33 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         binds[bound] = acquired.bind;
         ++bound;
     }
+    if (instanced)
+    {
+        if (bound == binds.size())
+        {
+            reportRefused("the command's instances", "the layer has no vertex binding left for them");
+            return false;
+        }
+        // The key names the WHOLE buffer (offset 0, count 0): the visible range travels in the draw, so a
+        // changed prefix does not produce a new upload (see first_instance / instance_count above).
+        core::StreamKey key;
+        key.kind       = core::StreamKind::Vertex;
+        key.location   = vn::graphics::attributeLocation(vn::graphics::VertexAttribute::InstanceModel);
+        key.components = vn::graphics::kInstanceMatrixComponents;
+        key.buffer     = command.instance_buffer;
+        key.revision   = command.instance_revision;
+        key.offset     = 0U;
+        key.count      = 0U;
+        const StreamUploads::VertexResult acquired =
+            scope_.uploads->acquireVertex(key, command.instance_buffer->view());
+        if (acquired.bind == nullptr)
+        {
+            reportRefused("the command's instances", "its instance stream could not be uploaded");
+            return false;
+        }
+        binds[bound] = acquired.bind;
+        ++bound;
+    }
 
     // The DRAW's own row: a geometry is a set of channels plus N primitives, and the plan names one by its
     // index (CompiledCommand::primitive). Everything below reads THIS row - the index stream, its span and the
@@ -1286,9 +1343,11 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // binding a set the pipeline layout has no room for is an API violation, and the engine's own programs
     // have their inputs served by name in their own sets.
     record.inputs       = reads_inputs ? inputs : nullptr;
-    record.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);
-    record.index        = index_bind;
-    record.viewport     = ViewportRect{ static_cast<float>(draw.viewport.x), static_cast<float>(draw.viewport.y),
+    record.vertex_binds   = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);
+    record.index          = index_bind;
+    record.instances      = instanced ? command.instance_count : 1U;
+    record.first_instance = instanced ? command.first_instance : 0U;
+    record.viewport       = ViewportRect{ static_cast<float>(draw.viewport.x), static_cast<float>(draw.viewport.y),
                                         static_cast<float>(draw.viewport.width),
                                         static_cast<float>(draw.viewport.height) };
     // Which of the entry's two spans the draw reads: an indexed entry states the slice of its index stream, an

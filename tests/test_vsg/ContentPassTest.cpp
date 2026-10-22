@@ -400,6 +400,186 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     EXPECT_NE(missing, nullptr);  // the node exists and is empty: the executor still has something to place
 }
 
+TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
+{
+    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    if (!created.ok)
+    {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
+    }
+
+    OffscreenTarget::Layout layout;
+    layout.width  = kSize;
+    layout.height = kSize;
+    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    ASSERT_NE(target, nullptr);
+
+    std::unique_ptr<BlockStorage>     storage     = BlockStorage::create(created.device, BlockStorage::Layout{});
+    ASSERT_NE(storage, nullptr);
+    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::create(created.device, *storage);
+    ASSERT_NE(descriptors, nullptr);
+
+    const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    {
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(
+            reinterpret_cast<const char8_t*>("#pragma import_defines(VINE_INSTANCED)\n"
+                                             "layout(location = 0) in vec3 position;\n"
+                                             "layout(location = 12) in mat4 instance_model;\n"
+                                             "void main() { gl_Position = instance_model * vec4(position, 1.0); }\n"));
+        ShaderStage fragment;
+        fragment.type   = ShaderStageType::Fragment;
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
+            "layout(location = 0) out vec4 outColor;\nvoid main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }\n"));
+        program->addStage(vertex);
+        program->addStage(fragment);
+    }
+
+    vn::vsg::ProgramVariant variant;
+    variant.instanced = true;
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildProgramFacts(*program, variant, program_facts), FactMiss::None);
+    ASSERT_TRUE(program_facts.shaders.vertex.find("VINE_INSTANCED") != std::string::npos);
+
+    Triangle                                   triangle;
+    const vn::intrusive_ptr<Geometry>        geometry(new Geometry());
+    geometry->setPositions(triangle.positions);
+    geometry->setIndices(triangle.indices);
+    geometry->setRevision(1U);
+
+    GeometryFacts                        geometry_facts;
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
+
+    const vn::intrusive_ptr<Material> material(new Material());
+    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    MaterialFacts          material_facts;
+    std::vector<std::byte> material_storage;
+    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+
+    const ProgramFacts   programs[]   = { program_facts };
+    const GeometryFacts  geometries[] = { geometry_facts };
+    const MaterialFacts  materials[]  = { material_facts };
+    ContentFacts         facts;
+    facts.programs   = programs;
+    facts.geometries = geometries;
+    facts.materials  = materials;
+
+    ContentPipeline::Settings settings;
+    settings.color_attachments = 1U;
+    std::unique_ptr<ContentPipeline> pipelines =
+        ContentPipeline::create(program_facts.abi, geometry_facts, program_facts.shaders, settings);
+    ASSERT_NE(pipelines, nullptr);
+
+    VariantPool   pool;
+    StateRegistry registry(pool);
+    StreamUploads uploads;
+    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
+                                                                                         created.instance->vk()));
+
+    // Two placements at x = -0.4 and +0.4: the shader applies the matrix itself, so the picture is two
+    // triangles drawn by ONE command over ONE instance stream.
+    auto instance_storage = vn::make_intrusive<vn::Buffer<float>>(std::vector<float>(32U, 0.0F));
+    for (std::size_t instance = 0; instance < 2U; ++instance)
+    {
+        const std::size_t base = instance * 16U;
+        instance_storage->data()[base + 0U]  = 1.0F;
+        instance_storage->data()[base + 5U]  = 1.0F;
+        instance_storage->data()[base + 10U] = 1.0F;
+        instance_storage->data()[base + 15U] = 1.0F;
+        instance_storage->data()[base + 12U] = instance == 0U ? -0.4F : 0.4F;
+    }
+    instance_storage->bumpRevision();
+
+    FrameArena    arena{ 64 * 1024 };
+    Diagnostics   diagnostics;
+    Observe       observe;
+    FrameRecorder recorder{ arena, diagnostics, observe };
+    FrameCompiler compiler{ arena, diagnostics, observe };
+
+    TargetFacts target_facts;
+    target_facts.target        = target.get();
+    target_facts.wanted.width  = static_cast<int>(kSize);
+    target_facts.wanted.height = static_cast<int>(kSize);
+    target_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    target_facts.current       = target->instance();
+    const std::vector<TargetFacts> target_table{ target_facts };
+
+    ClearValues clear;
+    clear.color          = true;
+    clear.color_value[0] = kClear[0];
+    clear.color_value[1] = kClear[1];
+    clear.color_value[2] = kClear[2];
+    clear.color_value[3] = 1.0F;
+
+    RenderCommand command;
+    command.geometry            = geometry;
+    command.material            = material;
+    command.program             = program;
+    command.instance_transforms = vn::BufferSlice<float>::whole(instance_storage);
+    command.instance_count      = 2U;
+    const std::vector<RenderCommand> commands{ command };
+
+    recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(target.get());
+    recorder.setClearPolicy(clear);
+    recorder.render(commands, nullptr);
+    recorder.endPass();
+    recorder.endFrame();
+
+    const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
+    ASSERT_EQ(frame.passes.size(), 1U);
+    ASSERT_EQ(frame.passes[0].draws.size(), 1U);
+    ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 1U);
+    EXPECT_EQ(frame.passes[0].draws[0].commands[0].first_instance, 0U);
+    EXPECT_EQ(frame.passes[0].draws[0].commands[0].instance_count, 2U);
+
+    storage->beginFrame();
+    ContentPass::Scope::Entry half{ vn::graphics::backend::DrawKind::Content, program.get(), program_facts.revision,
+                                    geometry_facts.layout, pipelines.get(), &draws };
+    half.variant = program_facts.variant;
+    const ContentPass::Scope::Entry halves[]{ half };
+    ContentPass::Scope scope;
+    scope.entries  = halves;
+    scope.registry = &registry;
+    scope.storage  = storage.get();
+    scope.uploads  = &uploads;
+    ContentPass content(scope, diagnostics);
+
+    const std::vector<std::byte> view_block(288U, std::byte{ 0 });
+    ::vsg::ref_ptr<::vsg::Node>  content_node;
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(diagnostics.clean()) << "nothing may be refused: the half and the stream are both present";
+    EXPECT_EQ(draws.draws(), 1U) << "two placements are ONE draw";
+    EXPECT_EQ(uploads.uploads(), 3U) << "positions, indices and the whole instance stream";
+
+    VsgExecutor executor(diagnostics);
+    executor.addTarget(target.get(), target.get());
+
+    auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const PassContent packet{ frame.passes[0].pass, content_node };
+    ASSERT_TRUE(executor.record(frame, command_graph, std::span<const PassContent>(&packet, 1U)));
+
+    ::vsg::ref_ptr<::vsg::Viewer> viewer = ::vsg::Viewer::create();
+    ASSERT_NE(viewer, nullptr);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+    ASSERT_TRUE(viewer->compile());
+    viewer->advanceToNextFrame();
+    viewer->handleEvents();
+    viewer->recordAndSubmit();
+    viewer->deviceWaitIdle();
+
+    const Rgba8 left  = target->probe().pixel(19, static_cast<int>(kSize) / 2);
+    const Rgba8 right = target->probe().pixel(45, static_cast<int>(kSize) / 2);
+    EXPECT_TRUE(isGreen(left)) << "the left placement must be the triangle, got (" << static_cast<int>(left.r) << ", "
+                               << static_cast<int>(left.g) << ", " << static_cast<int>(left.b) << ")";
+    EXPECT_TRUE(isGreen(right)) << "the right placement must be the triangle, got (" << static_cast<int>(right.r)
+                                << ", " << static_cast<int>(right.g) << ", " << static_cast<int>(right.b) << ")";
+}
+
 TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
 {
     // A pipeline layer is one program's stages against ONE vertex layout, so a pass that draws meshes of two

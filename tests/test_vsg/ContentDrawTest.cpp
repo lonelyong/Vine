@@ -175,6 +175,24 @@ TEST(ContentDrawTest, TheFirstDrawRecordsThePipelineTheStateAndTheGeometry)
     EXPECT_EQ(fixture.recorder->dynamic_commands(), 1U);
 }
 
+TEST(ContentDrawTest, TheDrawCarriesTheInstanceCountAndTheFirstInstance)
+{
+    Fixture             fixture;
+    StateRegistry       registry(fixture.pool);
+    ContentDraw::Draw   draw = fixture.draw();
+    draw.instances           = 5U;
+    draw.first_instance      = 3U;
+
+    const auto group = fixture.recorder->record(registry, draw);
+    ASSERT_NE(group, nullptr);
+    const auto* commands = dynamic_cast<const ::vsg::Commands*>(group->children[0].get());
+    ASSERT_NE(commands, nullptr);
+    const auto* indexed = dynamic_cast<const ::vsg::DrawIndexed*>(commands->children.back().get());
+    ASSERT_NE(indexed, nullptr);
+    EXPECT_EQ(indexed->instanceCount, 5U);
+    EXPECT_EQ(indexed->firstInstance, 3U);
+}
+
 TEST(ContentDrawTest, ANonIndexedDrawRecordsTheVertexStreamsItIsAssembledFrom)
 {
     Fixture      fixture;

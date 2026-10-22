@@ -176,8 +176,8 @@ TEST(ProgramAbiTest, TheFlatForwardProgramIsTheSameAbiAndItsDefineComesFromTheTe
 
     // `VINE_FLAT` is a define the TEXT carries (`#define VINE_FLAT 1`), not one the source imports: the
     // compiler drops a define the source never asks for, so the two must not be conflated.
-    const std::vector<std::string> expected = { "VINE_DIFFUSE_MAP", "VINE_TEXCOORD_CUBE", "VINE_TEXCOORD_UV",
-                                                "VINE_VERTEX_COLOR" };
+    const std::vector<std::string> expected = { "VINE_DIFFUSE_MAP", "VINE_INSTANCED", "VINE_TEXCOORD_CUBE",
+                                                "VINE_TEXCOORD_UV", "VINE_VERTEX_COLOR" };
     EXPECT_EQ(flat.import_defines, expected);
     EXPECT_EQ(std::find(expected.begin(), expected.end(), "VINE_FLAT"), expected.end());
 }

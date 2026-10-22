@@ -396,7 +396,9 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
                 {
                     continue;
                 }
-                ensureProgram(program, variantOf(*live_material, *live_geometry), false, timeline, retirement);
+                ProgramVariant variant = variantOf(*live_material, *live_geometry);
+                variant.instanced      = command.instance_buffer != nullptr;
+                ensureProgram(program, variant, false, timeline, retirement);
             }
         }
     }

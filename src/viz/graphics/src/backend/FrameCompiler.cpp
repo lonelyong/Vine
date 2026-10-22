@@ -376,6 +376,10 @@ std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedD
         out.material          = command.material;
         out.model             = command.model;
         out.opacity           = command.opacity;
+        out.instance_buffer   = command.instance_buffer;
+        out.instance_revision = command.instance_revision;
+        out.first_instance    = command.first_instance;
+        out.instance_count    = command.instance_count;
         // The ONE resolution: what the content authored, weighed against what the pass says (StateNode.hpp).
         vn::graphics::ResolvedRenderState resolved =
             resolveRenderState(command.authored_state, pass_state, command.topology).state;

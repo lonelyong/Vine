@@ -82,6 +82,10 @@ class ContentDraw
         std::uint32_t       vertex_count{0};
         std::uint32_t       vertex_offset{0};    ///< Added to every index before fetching (indexed draws only).
         std::uint32_t       instances{1};        ///< Instance count.
+        /// The first instance this draw reads. Vulkan offsets BOTH the per-instance vertex fetch and
+        /// `gl_InstanceIndex` by it, so the instance stream can be uploaded whole and a visible prefix drawn
+        /// without re-uploading it (the same spelling vsg's `Draw`/`DrawIndexed` use).
+        std::uint32_t       first_instance{0};
         std::uint32_t       color_attachments{1};///< Colour attachments of the pass (for the blend state).
     };
 

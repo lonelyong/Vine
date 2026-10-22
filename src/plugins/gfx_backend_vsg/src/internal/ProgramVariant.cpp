@@ -12,13 +12,14 @@ std::uint32_t ProgramVariant::bits() const noexcept
     // One bit per switch, and the bits ARE the spelling `core::PipelineKey::variant` carries: a key that
     // compared two variants by anything else would have to know this mapping, which is exactly what the
     // core does not (see the class note).
-    return (diffuse_map ? 1U : 0U) | (vertex_color ? 2U : 0U) | (cube_texcoord ? 4U : 0U);
+    return (diffuse_map ? 1U : 0U) | (vertex_color ? 2U : 0U) | (cube_texcoord ? 4U : 0U) |
+           (instanced ? 8U : 0U);
 }
 
 std::vector<std::string> ProgramVariant::defines() const
 {
     std::vector<std::string> names;
-    names.reserve(3U);
+    names.reserve(4U);
     // The kind is NOT optional (see the declaration): it is the one name every variant states, because a
     // stage that samples the slot without it refuses to build.
     names.emplace_back(cube_texcoord ? "VINE_TEXCOORD_CUBE" : "VINE_TEXCOORD_UV");
@@ -27,6 +28,9 @@ std::vector<std::string> ProgramVariant::defines() const
     }
     if (vertex_color) {
         names.emplace_back("VINE_VERTEX_COLOR");
+    }
+    if (instanced) {
+        names.emplace_back("VINE_INSTANCED");
     }
     return names;
 }
@@ -40,13 +44,16 @@ std::string ProgramVariant::describe() const
     if (vertex_color) {
         text += ", VINE_VERTEX_COLOR";
     }
+    if (instanced) {
+        text += ", VINE_INSTANCED";
+    }
     return text;
 }
 
 bool operator==(const ProgramVariant& left, const ProgramVariant& right) noexcept
 {
     return left.diffuse_map == right.diffuse_map && left.vertex_color == right.vertex_color &&
-           left.cube_texcoord == right.cube_texcoord;
+           left.cube_texcoord == right.cube_texcoord && left.instanced == right.instanced;
 }
 
 bool operator!=(const ProgramVariant& left, const ProgramVariant& right) noexcept
