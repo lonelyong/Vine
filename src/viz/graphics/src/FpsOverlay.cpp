@@ -294,10 +294,11 @@ void FpsOverlay::writePattern(std::uint32_t pattern)
         }
     }
 
-    // The vertex count is the one the geometry was built with, so this is a DATA edit of a drawn
-    // geometry: the backend re-points the position stream instead of building the node again. Announcing
-    // it is the caller's job (see Geometry::setRevision), and a forgotten announcement is silent -- the
-    // renderer would keep drawing the digits it uploaded first.
+    // The vertex count is unchanged; what changes is WHERE the positions live (a fresh buffer every update).
+    // Two facts travel together and they are different announcements: the new buffer is a new stream by
+    // IDENTITY (nothing to say about it - a stream nobody has uploaded yet is simply uploaded), and the
+    // geometry's channel set now names that buffer, which is a SHAPE change the geometry announces. Bytes
+    // are announced on the buffer, and this path never edits one in place, so it has none to announce.
     readout_->setPositions(packAttribute(positions));
     readout_->bumpRevision();
     // Nothing is drawn while the row is hidden, and the first measurement is what un-hides it (the row

@@ -510,40 +510,43 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     intrusive_ptr<const vn::Buffer<std::uint32_t>> indicesBuffer() const;
 
-    /** @brief Gets the data revision.
+    /** @brief Gets the revision of this geometry's DESCRIPTION (which channels it feeds, and where each reads).
      *
      * @details
-     * - Moved ONLY by setRevision(): a data change is announced by the caller, never inferred here. The
-     *   setters change what the geometry holds without touching this counter, because this object cannot
-     *   tell bytes it has not read yet from the ones it read before (it does not copy them) - the caller,
-     *   which does know, is the one that says so.
-     * - THIS IS THE ANNOUNCEMENT THE RENDERER FOLLOWS, for the whole geometry: a geometry is ONE
-     *   description (its channel set is part of it), so a renderer that cached that description rebuilds it
-     *   when this number moves, and cannot answer "which channel changed" from it. A per-buffer
-     *   announcement (Buffer::setRevision) is for consumers that read that buffer's bytes themselves - the
-     *   local bounds cache below is one; the upload cache is not (see Buffer's revision note).
+     * - Moved ONLY by setRevision() / bumpRevision(): a change to the shape is announced by the caller,
+     *   never inferred here. The setters state a new channel set or a new slice without touching this
+     *   counter, because a host often changes several of them in one edit and only it knows where that
+     *   edit ends.
+     * - This number is NOT about bytes, and it is NOT a fallback for a buffer that was never announced:
+     *   the renderer re-uploads a stream when the STREAM's own buffer announces (Buffer::setRevision), and
+     *   treats bytes nobody announced as unchanged (see StreamKey's revision). What this number drives is
+     *   the DESCRIPTION: a backend rebuilds the geometry's fact row (layout, channel set, counts) when it
+     *   moves - and by doing so picks up a replaced buffer, a new slice or an added channel.
      *
      * @return Revision counter (starts at 0).
      */
     std::uint64_t revision() const;
 
-    /** @brief Announces a data change by reporting the revision.
+    /** @brief Announces a change to this geometry's SHAPE by reporting the revision.
      *
      * @details
-     * - The ONLY way the revision moves, and the whole gate a retained render node rebuilds on: the
-     *   renderer compares this counter, so a caller that changed the vertex or index data - by replacing a
-     *   buffer here, or by rebuilding the model this geometry BORROWS from (see setPositions()) - reports
-     *   the new revision afterwards. Nothing else reports it, not even the setters, and a forgotten
-     *   announcement is silent: the renderer keeps drawing the data it uploaded first.
-     * - ONE ANNOUNCEMENT PER BATCH, NOT ONE PER SETTER - which is why nothing here announces by itself, not
-     *   even a REPLACED buffer: a host editing a model often changes several channels in one go (swap the
-     *   positions, refill the normals, re-slice the indices), and it may still be filling the buffer it just
-     *   installed. Only the host knows where such a batch ends, so it says so once, when it does.
+     * - The ONLY way this counter moves, and the gate a retained render node re-describes itself on: a
+     *   caller that added, removed or replaced a channel, re-sliced one, or changed which indices are drawn
+     *   reports the new revision afterwards. The renderer then rebuilds what it knows about this geometry
+     *   (layout, channel set, counts) - and the streams a replacement introduced are new by IDENTITY, so
+     *   they are uploaded without any revision being involved.
+     * - IT IS NOT HOW BYTES ARE ANNOUNCED. An edit in place is announced on the buffer that holds the
+     *   bytes (Buffer::setRevision), and that is the only announcement the upload cache listens to; a host
+     *   that edits bytes and calls this instead will keep drawing the bytes it uploaded first, because the
+     *   renderer never compares bytes itself and has no fallback from this number.
+     * - ONE ANNOUNCEMENT PER BATCH, NOT ONE PER SETTER, which is why nothing here announces by itself - not
+     *   even a replaced buffer: a host editing a model changes several things in one go (swap the positions,
+     *   refill the normals, re-slice the indices) and may still be filling the buffer it just installed.
      * - The counter is only ever COMPARED, so nothing breaks if it jumps.
      *
      * @warning
-     * - LOWERING it is a real hazard: a consumer holding a cached revision could then treat old bytes as
-     *   current. Treat it as monotonic and report `revision() + 1` or the model's own version.
+     * - LOWERING it is a real hazard: a consumer holding a cached revision could then treat an old
+     *   description as current. Treat it as monotonic and report `revision() + 1`.
      *
      * @param revision Revision to report.
      */

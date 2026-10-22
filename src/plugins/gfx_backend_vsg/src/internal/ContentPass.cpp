@@ -1157,7 +1157,10 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
             reportRefused("the command's geometry", "it feeds more channels than this layer binds");
             return false;
         }
-        const StreamUploads::VertexResult acquired = scope_.uploads->acquireVertex(channel.key, channel.data);
+        // The key is composed HERE, from the two live announcements (see ChannelFacts::keyFor), and the bytes
+        // are handed over as a view: a stream that is already in the sharing table reads neither.
+        const StreamUploads::VertexResult acquired =
+            scope_.uploads->acquireVertex(channel.streamKey(), channel.scalars());
         if (acquired.bind == nullptr)
         {
             reportRefused("the command's geometry", "one of its channels could not be uploaded");
@@ -1173,8 +1176,8 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     ::vsg::ref_ptr<::vsg::BindIndexBuffer> index_bind;
     if (geometry.entry->indices.has_value())
     {
-        const StreamUploads::IndexResult acquired =
-            scope_.uploads->acquireIndex(geometry.entry->indices->key, geometry.entry->indices->data);
+        const StreamUploads::IndexResult acquired = scope_.uploads->acquireIndex(
+            geometry.entry->indices->streamKey(), geometry.entry->indices->scalars());
         if (acquired.bind == nullptr)
         {
             reportRefused("the command's geometry", "its index stream could not be uploaded");

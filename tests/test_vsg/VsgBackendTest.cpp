@@ -3143,8 +3143,8 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     };
 
     std::printf("\n");
-    std::printf("[b6] mesh %dx%d (%zu verts), 4 channels + indices: one announcement re-sends 5 streams "
-                "= %.2f MiB\n",
+    std::printf("[b6] mesh %dx%d (%zu verts), 4 channels + indices: the WHOLE mesh is %.2f MiB, and each "
+                "stream is announced on its own buffer\n",
                 kSide, kSide, vertex_count,
                 static_cast<double>(stream_bytes) / (1024.0 * 1024.0));
     for (int settle = 0; settle < 6; ++settle) {
@@ -3176,9 +3176,8 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
         EXPECT_EQ(change.created, 0) << "and compiles nothing";
     }
 
-    // ONE channel re-authored (a new positions buffer, the spelling the SDK's contract names): the frame
-    // pays for the WHOLE mesh - four channel streams and the index stream all carry the announced
-    // revision. This is the row B6 exists to shrink.
+    // ONE channel RE-AUTHORED (a new positions buffer): a different buffer is a different STREAM by identity,
+    // so exactly one stream is re-sent - the other three channels and the index stream keep their uploads.
     {
         const auto [before, after] = run("one channel re-authored", kFramesPerRegime, [&](int) {
             positions = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(grid_vertex_data));
@@ -3186,17 +3185,30 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
             geometry->bumpRevision();
         });
         const EditCostDelta change = editCostDelta(before, after);
-        EXPECT_EQ(change.builds, kFramesPerRegime) << "each announcement is a new revision: one row";
+        EXPECT_EQ(change.builds, kFramesPerRegime) << "the geometry announced a shape change: one row";
         EXPECT_EQ(change.created, 0) << "bytes are data: the pipeline key cannot see them";
-        EXPECT_EQ(change.uploads, 5LL * kFramesPerRegime)
-            << "one announcement moves EVERY channel and the index stream - the whole mesh is re-sent";
+        EXPECT_EQ(change.uploads, 1LL * kFramesPerRegime)
+            << "only the channel whose buffer changed is sent; the rest of the mesh is aliased";
     }
 
-    // ALL FOUR channels re-authored in place: the cost must be IDENTICAL to the one-channel row, because
-    // today's granularity is the geometry, not the channel. The contrast is the point: what B6 would buy
-    // is exactly the difference this row does NOT show.
+    // ONE channel EDITED IN PLACE and announced on its buffer (the spelling Buffer's contract names): every
+    // frame sends that one stream and NOTHING else - and no row is rebuilt, because the shape did not change.
     {
-        const auto [before, after] = run("all channels re-authored", kFramesPerRegime, [&](int frame) {
+        const auto [before, after] = run("one channel edited in place", kFramesPerRegime, [&](int frame) {
+            const auto bytes = positions->data();
+            bytes[0]         = 0.01F * static_cast<float>(frame + 1);
+            positions->setRevision(positions->revision() + 1U);
+        });
+        const EditCostDelta change = editCostDelta(before, after);
+        EXPECT_EQ(change.builds, 0) << "bytes are not a shape: nothing to re-describe";
+        EXPECT_EQ(change.uploads, 1LL * kFramesPerRegime) << "exactly the stream the host announced";
+        EXPECT_EQ(change.created, 0);
+    }
+
+    // ALL FOUR channels edited in place: four streams, four uploads - and still no row. This is the case the
+    // old contract could not tell apart from the one-channel one (the whole mesh was re-sent for either).
+    {
+        const auto [before, after] = run("all channels edited in place", kFramesPerRegime, [&](int frame) {
             const auto touch = [&](const vn::intrusive_ptr<vn::Buffer<float>>& buffer) {
                 const auto bytes = buffer->data();
                 bytes[0]         = 0.01F * static_cast<float>(frame + 1);
@@ -3206,11 +3218,11 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
             touch(normals);
             touch(colour);
             touch(texcoords);
-            geometry->bumpRevision();
         });
         const EditCostDelta change = editCostDelta(before, after);
-        EXPECT_EQ(change.uploads, 5LL * kFramesPerRegime)
-            << "touching four channels costs exactly what touching one costs: no per-channel granularity";
+        EXPECT_EQ(change.builds, 0) << "four byte edits are still not a shape change";
+        EXPECT_EQ(change.uploads, 4LL * kFramesPerRegime)
+            << "one per announced buffer: the index stream and the untouched rows are not re-sent";
         EXPECT_EQ(change.created, 0) << "and no variant either way";
     }
 

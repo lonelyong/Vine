@@ -122,6 +122,24 @@
 - 所以三条输入各有归属：`Geometry::revision()` = 渲染器跟的那一条（粗、宿主写）；`Buffer::revision()` = "自己读这块
   字节"的消费者跟的那一条（几何局部包围盒缓存就是）；派生缓存不得自己发明版本号（两次尝试的教训见同日"晚五"条）。
 
+## 2026-10-22（晚七）B6 定稿：形状归几何、字节归 buffer，**没有兜底**（逐通道重传落地）
+
+- **规则**：`Buffer::setRevision()` 是**唯一**的重传公告——`StreamKey` 的 revision 只取该 buffer 自己的
+  （`(buffer, buffer revision, 切片, kind/location/components)`）；`Geometry::setRevision()` 只描述形状
+  （喂哪些通道、每条读哪段），驱动事实行（layout/计数）按 `(geometry, geometry.revision())` 重建，**不进上传键**。
+  谁都没喊 ⇒ 字节视为没变（渲染器从不比较字节，也没有"几何 revision 兜底"）。共享 arena 被改 ⇒ 每个读者都跟着重传。
+- **实现三条**：①键在录制时拼（`ChannelFacts::streamKey()` 读 live `values->revision()`，事实行不存 revision）；
+  ②字节在上传时读（事实行只借 buffer 句柄 + 切片，`scalars()` 返回 live 视图；`StreamUploads` miss 时才建 vsg 数组）；
+  ③结构变化靠身份（换 buffer / 换切片 ⇒ 新键，不需要任何 revision）。
+- **实测**（`VsgBackendTest.MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges`，512²、4 通道 + 索引、整份 16.98 MiB）：
+  稳态 0 上传/0 rebuild；单通道就地编辑 **1 上传/帧、0 rebuild**；换 buffer **1/帧 + 1 rebuild**；四通道就地编辑
+  **4/帧、0 rebuild**。旧契约一律 **5/帧**。
+- **契约变更**：`Geometry::setRevision()` 不再表示"字节变了"。`FpsOverlay` 这类"装新 buffer"的路径天然是新 stream；
+  真正依赖旧语义的宿主需要改成 `buffer->setRevision()`（仓库内除测试外无此调用点）。
+- **判据**：`tests/test_vsg/StreamRevisionTest.cpp` 5 条（含"几何公告不改变 stream 键"这条钉住没兜底）；
+  变异：`streamKey()` 不读 live ⇒ 第 1、5 条红。设计/复盘：`graphics-geometry-revision-2026-10-22.md`。
+- **记账**：B6 关闭（触发条件被用户 2026-10-22 直接跳过："框架问题，不要等"）。
+
 ## 2026-10-22（晚三）几何 revision：两级公告已经存在，但只有一个生效（B6 的契约定位）
 
 - **发现（比登记里写的严）**：`StreamKey` 的字段注释写着 revision 来自 `Geometry::revision()` **或** `Buffer::revision()`，

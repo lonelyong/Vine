@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -9,7 +10,9 @@
 #include <vsg/core/Data.h>
 #include <vsg/core/ref_ptr.h>
 
+#include <vine/Buffer.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
+#include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 #include <vine/vsg/internal/ContentPipeline.hpp>
 #include <vine/vsg/internal/FactResult.hpp>
@@ -59,11 +62,74 @@ class Texture;
 
 VN_VSG_NS_BEGIN
 
-/** @brief One vertex channel of a geometry: what the stream is shared by, and the bytes to upload. */
+/** @brief One vertex channel of a geometry: what the stream is shared by, and where its bytes live.
+ *
+ * @details
+ * - THE ENTRY BORROWS THE SOURCE, IT DOES NOT COPY IT. It keeps the buffer handle and the slice, so the
+ *   bytes are read when a stream is actually UPLOADED (a sharing hit reads nothing) and are always the ones
+ *   the host wrote - a table built before an edit cannot hand out the old bytes.
+ * - THE KEY'S REVISIONS ARE PER FRAME, not facts of the entry: `keyFor()` fills them from the two live
+ *   announcements - the geometry's (batch: every channel re-keys) and the buffer's own (fine: only the
+ *   streams reading it re-key).
+ */
 struct ChannelFacts
 {
-    core::StreamKey             key{};   ///< Identity of the stream (kind, location, components, buffer, revision, slice).
-    ::vsg::ref_ptr<::vsg::Data> data;    ///< The source array; borrowed for as long as the entry is.
+    core::StreamKey                            key{};   ///< Kind, location, components, buffer, slice (and the
+                                                        ///< revisions it had when the entry was built).
+    vn::intrusive_ptr<const vn::Buffer<float>> values;  ///< The source scalars; read only when uploading.
+
+    /** @brief Gets the stream's identity as the frame that is being recorded sees it.
+     *
+     * @details
+     * - The revision is the BUFFER's, read now: an edit the host announced on the buffer re-keys this
+     *   stream, and an edit nobody announced leaves it keyed exactly as it was (see StreamKey).
+     *
+     * @return The key, with the buffer's revision read live.
+     */
+    [[nodiscard]] core::StreamKey streamKey() const noexcept
+    {
+        core::StreamKey out = key;
+        out.revision        = values != nullptr ? values->revision() : 0U;
+        return out;
+    }
+
+    /** @brief Gets this channel's scalars as they are right now (the slice's own range).
+     * @return A view over the source buffer; empty when the channel holds nothing.
+     */
+    [[nodiscard]] std::span<const float> scalars() const noexcept
+    {
+        if (values == nullptr) {
+            return {};
+        }
+        const std::span<const float> all = values->view();
+        const std::size_t            begin = std::min<std::size_t>(key.offset, all.size());
+        return all.subspan(begin, std::min<std::size_t>(key.count, all.size() - begin));
+    }
+};
+
+/** @brief The index stream of a geometry: the same shape as one vertex channel, over indices. */
+struct IndexFacts
+{
+    core::StreamKey                                      key{};   ///< Kind Index, the whole buffer, no slice.
+    vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> values;   ///< The source indices; read only when uploading.
+
+    /** @brief Gets the stream's identity as the frame that is being recorded sees it (see ChannelFacts::streamKey).
+     * @return The key, with the buffer's revision read live.
+     */
+    [[nodiscard]] core::StreamKey streamKey() const noexcept
+    {
+        core::StreamKey out = key;
+        out.revision        = values != nullptr ? values->revision() : 0U;
+        return out;
+    }
+
+    /** @brief Gets the whole index buffer as it is right now (the bind aliases all of it; the draw states the span).
+     * @return A view over the index buffer; empty when it holds nothing.
+     */
+    [[nodiscard]] std::span<const std::uint32_t> scalars() const noexcept
+    {
+        return values != nullptr ? values->view() : std::span<const std::uint32_t>{};
+    }
 };
 
 /** @brief What a geometry identity answers with: its layout, its vertex channels, and how it is assembled. */
@@ -79,7 +145,7 @@ struct GeometryFacts
     /// COMMAND (`vkCmdDraw`) than an indexed one (`vkCmdDrawIndexed`) - the same way
     /// `core::GeometryStreams` treats an absent index stream, and the reason the two modes cannot be
     /// told apart by the vertex layout alone.
-    std::optional<ChannelFacts> indices{};
+    std::optional<IndexFacts> indices{};
     std::uint32_t  index_count{0};      ///< Indices of this geometry (indexed only).
     std::uint32_t  first_index{0};      ///< First index of the span the geometry states (indexed only).
     /// Vertices a NON-indexed draw reads: the position stream's own vertex count (the SDK's definition of

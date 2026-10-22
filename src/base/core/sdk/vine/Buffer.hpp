@@ -42,14 +42,12 @@ VN_CORE_NS_BEGIN
  * revision() before reusing them — the rule `Texture` and `ShaderProgram` follow for "the same object, new
  * contents".
  *
- * WHO HONOURS IT, AND WHO DOES NOT. A consumer that reads this buffer's bytes itself honours it (Geometry's
- * local bounds cache keys on it). The RENDER path does not, and says so in its own words: a backend caches a
- * description of a GEOMETRY — layout, slices, copies — and follows Geometry::revision(), because that is the
- * announcement that re-describes every channel of it; a buffer's revision alone cannot say which geometry's
- * description is stale. A host that edits a buffer in place therefore announces on the GEOMETRY as well (see
- * Geometry::addBuffer / setRevision), which is the contract it already had. Fine-grained re-upload (one
- * channel instead of all of them) is NOT this object's revision; see
- * `.ai/design/graphics-geometry-revision-2026-10-22.md` for why it needs a different shape.
+ * THIS IS THE ANNOUNCEMENT THAT DECIDES RE-UPLOADS. The renderer keys every stream it uploads on
+ * (this buffer, this revision, the slice), so moving this number re-sends exactly the streams that read this
+ * buffer - one channel of one geometry, or every geometry sharing an arena, because the bytes are shared.
+ * Geometry::setRevision() is a different announcement: it is about the geometry's SHAPE (which channels it
+ * feeds, where each reads) and says nothing about bytes; a host that edits bytes and announces only on the
+ * geometry keeps drawing the bytes it uploaded first - there is no fallback, by design.
  * Freezing the length instead would have made the model side unexpressible.
  *
  * @tparam T Element type. Must be trivially copyable for `bytes()` to be meaningful.

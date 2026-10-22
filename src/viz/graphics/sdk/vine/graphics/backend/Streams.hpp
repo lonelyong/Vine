@@ -44,13 +44,13 @@ enum class StreamKind : std::uint8_t
  * - THE SLICE IS PART OF THE IDENTITY. One buffer may hold several geometries' data, so two reads of
  *   it at different offsets are two streams; treating them as one would feed a draw another
  *   geometry's bytes.
- * - `revision` is the GEOMETRY's (`Geometry::revision()`), because a stream is one channel OF a geometry
- *   and a geometry is one description: the number that makes this stream current is the number that
- *   re-describes every channel of it. A buffer's own revision (Buffer::revision()) is NOT in the key - the
- *   upload cache sits behind a per-geometry description, not behind the bytes, so honouring it here would
- *   need a second key component (see `.ai/design/graphics-geometry-revision-2026-10-22.md`, which records
- *   two attempts and why they were withdrawn). The backend never invents a revision by comparing bytes it
- *   happens to read: a refilled buffer is a different key, never a stale copy.
+ * - THE REVISION IS THE BUFFER'S OWN (`Buffer::revision()`), and there is no second one: a host edited
+ *   bytes in place and said so on the buffer, or it did not, in which case the bytes are considered
+ *   UNCHANGED - the renderer never compares bytes itself, and a geometry's own revision does not stand in
+ *   for an announcement nobody made (see Geometry::setRevision, which speaks about the geometry's SHAPE).
+ *   A stream that reads a shared arena re-keys for every geometry reading it, because the bytes are shared.
+ * - The backend never invents a revision by comparing bytes it happens to read: a refilled buffer is a
+ *   different key, never a stale copy.
  * - A derived channel - one the backend builds itself because the model authors none (a white
  *   opacity carrier, zero UVs, computed normals) - has a null @ref buffer. Such a channel is not a
  *   stream and can never be shared: its bytes belong to one geometry and change with that geometry's
@@ -62,7 +62,7 @@ struct VN_GRAPHICS_API StreamKey
     std::uint32_t location{0};               ///< Attribute location; 0 for an index stream.
     std::uint32_t components{0};             ///< Components per element (the packed stride); 1 for indices.
     const void*   buffer{nullptr};           ///< Buffer the slice lives in; null for a derived channel.
-    std::uint64_t revision{0};               ///< The geometry's revision (see the class note).
+    std::uint64_t revision{0};               ///< The buffer's own revision (Buffer::revision()); 0 when derived.
     std::uint64_t offset{0};                 ///< First element of the slice.
     std::uint64_t count{0};                  ///< Elements the slice reads.
 

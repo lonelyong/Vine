@@ -84,13 +84,13 @@ std::uint32_t StreamUploads::bindingOfCanonical(std::uint32_t location) noexcept
 }
 
 StreamUploads::VertexResult StreamUploads::acquireVertex(const core::StreamKey& key,
-                                                         ::vsg::ref_ptr<::vsg::Data> array)
+                                                         std::span<const float> scalars)
 {
     // A derived channel is built per geometry, and a custom channel's bind identity is the whole custom
     // layout: sharing either draws every peer with the first drawable's data. Refusing here - loudly, and
     // counted - is what stops the rule from depending on a caller remembering it.
     if (key.kind != core::StreamKind::Vertex || key.derived() || !isCanonicalLocation(key.location) ||
-        array == nullptr) {
+        scalars.empty()) {
         ++d->refusals;
         return {};
     }
@@ -106,6 +106,10 @@ StreamUploads::VertexResult StreamUploads::acquireVertex(const core::StreamKey& 
         return {Action::Aliased, found == d->vertex.end() ? nullptr : found->second};
     }
 
+    // The bytes are read HERE and nowhere earlier: a sharing hit returned above without touching them.
+    auto array = ::vsg::floatArray::create(scalars.size());
+    std::copy(scalars.begin(), scalars.end(), array->begin());
+
     const auto binding = bindingOfCanonical(key.location);
     auto       bind    = ::vsg::BindVertexBuffers::create(binding, ::vsg::DataList{ array });
     d->vertex.insert_or_assign(key, bind);
@@ -113,9 +117,9 @@ StreamUploads::VertexResult StreamUploads::acquireVertex(const core::StreamKey& 
 }
 
 StreamUploads::IndexResult StreamUploads::acquireIndex(const core::StreamKey& key,
-                                                       ::vsg::ref_ptr<::vsg::Data> indices)
+                                                       std::span<const std::uint32_t> indices)
 {
-    if (key.kind != core::StreamKind::Index || key.derived() || indices == nullptr) {
+    if (key.kind != core::StreamKind::Index || key.derived() || indices.empty()) {
         ++d->refusals;
         return {};
     }
@@ -134,7 +138,9 @@ StreamUploads::IndexResult StreamUploads::acquireIndex(const core::StreamKey& ke
         return {Action::Aliased, found == d->index.end() ? nullptr : found->second};
     }
 
-    auto bind = ::vsg::BindIndexBuffer::create(indices);
+    auto array = ::vsg::uintArray::create(indices.size());
+    std::copy(indices.begin(), indices.end(), array->begin());
+    auto bind = ::vsg::BindIndexBuffer::create(array);
     d->index.insert_or_assign(normalised, bind);
     return {Action::Uploaded, bind};
 }

@@ -85,7 +85,7 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
     EXPECT_EQ(facts.vertex_offset, 0U);
     ASSERT_TRUE(facts.indices.has_value()) << "the geometry draws indexed: it has an index stream";
     EXPECT_EQ(facts.indices->key.kind, StreamKind::Index);
-    EXPECT_NE(facts.indices->data, nullptr);
+    EXPECT_NE(facts.indices->values, nullptr);
     EXPECT_EQ(facts.indices->key.count, 0U) << "the index stream aliases the whole buffer";
 }
 
@@ -206,8 +206,8 @@ TEST(GeometryFactsTest, ASlicedChannelUploadsItsOwnSegment)
     EXPECT_EQ(positions.key.buffer, shared.get());
     EXPECT_EQ(positions.key.offset, 9U);
     EXPECT_EQ(positions.key.count, 9U);
-    ASSERT_NE(positions.data, nullptr);
-    EXPECT_EQ(positions.data->valueCount(), 9U);
+    ASSERT_NE(positions.values, nullptr);
+    EXPECT_EQ(positions.scalars().size(), 9U);
 
     // The indices stay relative to the geometry's own vertices.
     EXPECT_EQ(facts.vertex_offset, 0U);

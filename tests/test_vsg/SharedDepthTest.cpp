@@ -51,6 +51,28 @@
 
 #include "DevicePhases.hpp"
 
+/// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
+inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
+{
+    return array == nullptr
+               ? std::span<const float>{}
+               : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
+}
+
+/// @brief The scalars of a float array, as the upload layer takes them.
+inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::floatArray>& array) noexcept
+{
+    return array == nullptr ? std::span<const float>{}
+                            : std::span<const float>(array->data(), array->size());
+}
+
+/// @brief The indices of an index array, as the upload layer takes them.
+inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>& array) noexcept
+{
+    return array == nullptr ? std::span<const std::uint32_t>{}
+                            : std::span<const std::uint32_t>(array->data(), array->size());
+}
+
 using vn::graphics::RenderTarget;
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
@@ -224,8 +246,8 @@ struct Stack
             return {};
         }
 
-        const auto vertex_bind = uploads->acquireVertex(positionKey(), trianglePositions());
-        const auto index_bind  = uploads->acquireIndex(indexKey(), triangleIndices());
+        const auto vertex_bind = uploads->acquireVertex(positionKey(), scalarsOf(trianglePositions()));
+        const auto index_bind  = uploads->acquireIndex(indexKey(), indicesOf(triangleIndices()));
         if (vertex_bind.bind == nullptr || index_bind.bind == nullptr) {
             return {};
         }

@@ -104,16 +104,17 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
         facts.key.location   = location;
         facts.key.components = channel->components;
         facts.key.buffer     = channel->values.get();
-        facts.key.revision   = geometry.revision();
+        facts.key.revision   = channel->values != nullptr ? channel->values->revision() : 0U;
         facts.key.offset     = static_cast<std::uint32_t>(channel->offset);
         facts.key.count      = static_cast<std::uint32_t>(channel->floatCount());
 
         // The slice IS the stream: what is uploaded is this channel's own scalars, so the bind covers it from
-        // its first vertex and the draw needs no vertex offset.
-        ::vsg::ref_ptr<::vsg::floatArray> array = ::vsg::floatArray::create(scalars.size());
-        std::copy(scalars.begin(), scalars.end(), array->begin());
-        facts.data = array;
+        // its first vertex and the draw needs no vertex offset. The bytes are NOT copied here: the entry keeps
+        // the buffer handle and the slice, and the upload layer reads them when a stream is actually uploaded
+        // (see ChannelFacts) - a copy taken now would be the bytes as of this description, which is exactly
+        // what a host edit announced afterwards must not serve.
 
+        facts.values = channel->values;
         storage.push_back(facts);
 
         vn::graphics::VertexAttribute role{};
@@ -170,19 +171,16 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
         return FactMiss::Malformed;  // hasIndices() promised a range: an empty one draws nothing
     }
 
-    ChannelFacts index_facts;
+    IndexFacts index_facts;
     index_facts.key.kind       = core::StreamKind::Index;
     index_facts.key.location   = 0U;
     index_facts.key.components = 1U;
     index_facts.key.buffer     = index_buffer.get();
-    index_facts.key.revision   = geometry.revision();
+    index_facts.key.revision   = index_buffer->revision();
     index_facts.key.offset     = 0U;
     index_facts.key.count      = 0U;  // the whole buffer: two geometries over one arena share one upload
 
-    const std::span<const std::uint32_t> index_scalars = index_buffer->view();
-    ::vsg::ref_ptr<::vsg::uintArray>     index_array   = ::vsg::uintArray::create(index_scalars.size());
-    std::copy(index_scalars.begin(), index_scalars.end(), index_array->begin());
-    index_facts.data = index_array;
+    index_facts.values = index_buffer;
     out.indices      = index_facts;
 
     out.index_count   = static_cast<std::uint32_t>(geometry.indexCount());

@@ -56,6 +56,31 @@
 
 #include "DevicePhases.hpp"
 
+/// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
+///
+/// The production path hands `StreamUploads` a view of the source buffer; these cases own their arrays and
+/// hand over the same bytes, so the evidence runs through the same door.
+inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
+{
+    return array == nullptr
+               ? std::span<const float>{}
+               : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
+}
+
+/// @brief The scalars of a float array, as the upload layer takes them.
+inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::floatArray>& array) noexcept
+{
+    return array == nullptr ? std::span<const float>{}
+                            : std::span<const float>(array->data(), array->size());
+}
+
+/// @brief The indices of an index array, as the upload layer takes them.
+inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>& array) noexcept
+{
+    return array == nullptr ? std::span<const std::uint32_t>{}
+                            : std::span<const std::uint32_t>(array->data(), array->size());
+}
+
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::vsg::BlockDescriptors;
@@ -251,8 +276,8 @@ struct Fixture
         index_key.revision   = 1U;
         index_key.count      = 3U;
 
-        const auto vertex_bind = uploads->acquireVertex(vertex_key, positions);
-        const auto index_bind  = uploads->acquireIndex(index_key, indices);
+        const auto vertex_bind = uploads->acquireVertex(vertex_key, scalarsOf(positions));
+        const auto index_bind  = uploads->acquireIndex(index_key, indicesOf(indices));
         if (vertex_bind.bind == nullptr || index_bind.bind == nullptr)
         {
             return {};

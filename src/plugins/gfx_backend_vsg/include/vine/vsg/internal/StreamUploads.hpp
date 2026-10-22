@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <memory>
 
 #include <vsg/commands/BindIndexBuffer.h>
@@ -109,19 +110,24 @@ class StreamUploads
 
     /** @brief Gets (or builds) the shared bind for a canonical vertex stream.
      *
-     * @param key   Stream identity; its kind must be Vertex and its location canonical.
-     * @param array The array that reads the stream (whatever the caller would have bound anyway).
+     * @details
+     * - The BYTES are handed over as a view and are only read when the stream must actually be uploaded: a
+     *   sharing hit touches neither the buffer nor its memory, so a steady frame pays nothing for them.
+     *
+     * @param key     Stream identity; its kind must be Vertex and its location canonical.
+     * @param scalars The channel's scalars as they are right now (read on a miss).
      * @return The action and the bind (null when the stream may not be shared).
      */
-    [[nodiscard]] VertexResult acquireVertex(const core::StreamKey& key, ::vsg::ref_ptr<::vsg::Data> array);
+    [[nodiscard]] VertexResult acquireVertex(const core::StreamKey& key, std::span<const float> scalars);
 
     /** @brief Gets (or builds) the shared bind for an index stream.
      *
      * @param key     Stream identity; its kind must be Index.
-     * @param indices The array aliasing the WHOLE index buffer (see the file note).
+     * @param indices The WHOLE index buffer as it is right now (the bind aliases all of it, and the draw
+     *                states the span; read on a miss, like acquireVertex's bytes).
      * @return The action and the bind (null when the stream may not be shared).
      */
-    [[nodiscard]] IndexResult acquireIndex(const core::StreamKey& key, ::vsg::ref_ptr<::vsg::Data> indices);
+    [[nodiscard]] IndexResult acquireIndex(const core::StreamKey& key, std::span<const std::uint32_t> indices);
 
     /** @brief Opens a frame: the stamp every acquire from it carries (see the file note).
      *

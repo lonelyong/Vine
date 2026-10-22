@@ -27,6 +27,7 @@ using vn::vsg::findGeometry;
 using vn::vsg::findMaterial;
 using vn::vsg::findProgram;
 using vn::vsg::GeometryFacts;
+using vn::vsg::IndexFacts;
 using vn::vsg::MaterialFacts;
 using vn::vsg::ProgramFacts;
 using vn::vsg::ProgramVariant;
@@ -49,9 +50,9 @@ ChannelFacts channel(std::uint32_t location)
 }
 
 /// @brief The index stream an INDEXED geometry draws through (see GeometryFacts::indices).
-ChannelFacts indexStream()
+IndexFacts indexStream()
 {
-    ChannelFacts facts;
+    IndexFacts facts;
     facts.key.kind       = StreamKind::Index;
     facts.key.location   = 0U;
     facts.key.components = 1U;

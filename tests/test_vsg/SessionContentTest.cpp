@@ -69,6 +69,28 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
+/// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
+inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
+{
+    return array == nullptr
+               ? std::span<const float>{}
+               : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
+}
+
+/// @brief The scalars of a float array, as the upload layer takes them.
+inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::floatArray>& array) noexcept
+{
+    return array == nullptr ? std::span<const float>{}
+                            : std::span<const float>(array->data(), array->size());
+}
+
+/// @brief The indices of an index array, as the upload layer takes them.
+inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>& array) noexcept
+{
+    return array == nullptr ? std::span<const std::uint32_t>{}
+                            : std::span<const std::uint32_t>(array->data(), array->size());
+}
+
 using vn::graphics::Geometry;
 using vn::graphics::Material;
 using vn::graphics::RenderCommand;
@@ -263,14 +285,14 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     vertex_key.buffer     = &model_vertices;
     vertex_key.revision   = 1U;
     vertex_key.count      = 9U;
-    const auto vertex_bind = uploads.acquireVertex(vertex_key, positions);
+    const auto vertex_bind = uploads.acquireVertex(vertex_key, scalarsOf(positions));
     StreamKey  index_key;
     index_key.kind       = StreamKind::Index;
     index_key.components = 1U;
     index_key.buffer     = &model_indices;
     index_key.revision   = 1U;
     index_key.count      = 3U;
-    const auto index_bind = uploads.acquireIndex(index_key, indices);
+    const auto index_bind = uploads.acquireIndex(index_key, indicesOf(indices));
     ASSERT_NE(vertex_bind.bind, nullptr);
     ASSERT_NE(index_bind.bind, nullptr);
 
