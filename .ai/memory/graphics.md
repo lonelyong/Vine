@@ -59,10 +59,10 @@
   两条老 HUD 用例不改即绿（`TheBuildOptionsDecideWhichOverlayPassesExist`、`OverlayVisibilityIsASwitchThatNeverRebuilds`）；
   `test_graphics` 406、`test_vsg` 481、`test_gui` 261、`test_core` 165；`PassGroupTest.*` ASan RESULT: PASS；6 个静态脚本
   0 finding。
-- **明确推迟**（带触发条件，见设计 §9 末）：引擎三门面（S1，等第二个门面消费者）、overlay 值化/`OverlayContent`（S3，
-  两种 overlay 各有类型化手柄 20 处在用，而"共同内容手柄"需要类型擦除——`Object` 不带引用计数；触发：出现第三种
-  overlay）、`ScenePicture` 全库改名（与 R2 的"注册 vs 画面"拆分同轮做）、调度上移（S5，唯一改像素的一片，单独一轮走
-  `vsg_rewrite_gate.sh`）。
+- **明确推迟**（带触发条件，见设计 §9 末与 `.ai/design/graphics-followups-2026-10-22.md`）：引擎三门面
+  （S1 / F1，等第二个门面消费者）、`ScenePicture` 全库改名与归属（S4 的另一半 / F2，与"注册 vs 画面"的拆分同轮做）、
+  调度上移（S5 / F3，唯一改像素的一片，单独一轮走 `vsg_rewrite_gate.sh`）。`OverlayContent` 接口**取消**（不再推迟）：
+  overlay 已是"值 + role + layout"。
 
 ## 2026-10-21 对象模型复核落地：混合使能归位 + 资产→场景桥（设计见 `.ai/design/graphics-object-model-audit-2026-10-21.md`）
 
