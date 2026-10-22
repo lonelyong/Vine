@@ -33,6 +33,7 @@ set(SRC_FILE_LIST
 	ExecutorSubmissionTest.cpp
 	ContentHalvesTest.cpp
 	ContentDrawTest.cpp
+	GeometryRevisionTest.cpp
 	DevicePhaseTest.cpp
 	OffscreenTargetTest.cpp
 	ContentStackTest.cpp

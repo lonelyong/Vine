@@ -203,8 +203,8 @@ TEST(ContentHalvesTest, OneHalfPerTupleThePassNames)
 
     // ONE draw, TWO commands over the same tuple: the pass asks for one half, not two.
     const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()),
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+        commandOf(geometry.get(), geometry->contentRevision(), program.get(), program->revision(), shaded.get()),
+        commandOf(geometry.get(), geometry->contentRevision(), program.get(), program->revision(), shaded.get())
     };
     const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
     const CompiledPass              pass = passWith(draws);
@@ -253,7 +253,7 @@ TEST(ContentHalvesTest, ASteadyPassBuildsNothing)
     RetirementQueue retirement(1U);
 
     const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+        commandOf(geometry.get(), geometry->contentRevision(), program.get(), program->revision(), shaded.get())
     };
     const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
     const CompiledPass              pass = passWith(draws);
@@ -305,7 +305,7 @@ TEST(ContentHalvesTest, TheHalvesEpisodeStateIsTheHalvesOwn)
     RetirementQueue retirement(1U);
 
     const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+        commandOf(geometry.get(), geometry->contentRevision(), program.get(), program->revision(), shaded.get())
     };
     const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
     const CompiledPass              first_pass  = passWith(draws);
@@ -386,8 +386,8 @@ TEST(ContentHalvesTest, TwoTextsOfOneProgramAreTwoHalves)
     RetirementQueue retirement(1U);
 
     const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), textured.get()),
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), plain.get())
+        commandOf(geometry.get(), geometry->contentRevision(), program.get(), program->revision(), textured.get()),
+        commandOf(geometry.get(), geometry->contentRevision(), program.get(), program->revision(), plain.get())
     };
     const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
     const CompiledPass              pass = passWith(draws);
@@ -429,7 +429,7 @@ TEST(ContentHalvesTest, ThePassAttachmentCountIsPartOfTheHalf)
     RetirementQueue retirement(1U);
 
     const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+        commandOf(geometry.get(), geometry->contentRevision(), program.get(), program->revision(), shaded.get())
     };
     const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
 
@@ -478,8 +478,8 @@ TEST(ContentHalvesTest, ALayoutIsPartOfTheHalf)
     RetirementQueue retirement(1U);
 
     const std::vector<CompiledCommand> commands{
-        commandOf(uv_geometry.get(), uv_geometry->revision(), program.get(), program->revision(), shaded.get()),
-        commandOf(plain_geometry.get(), plain_geometry->revision(), program.get(), program->revision(), shaded.get())
+        commandOf(uv_geometry.get(), uv_geometry->contentRevision(), program.get(), program->revision(), shaded.get()),
+        commandOf(plain_geometry.get(), plain_geometry->contentRevision(), program.get(), program->revision(), shaded.get())
     };
     const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
     const CompiledPass              pass = passWith(draws);
@@ -531,7 +531,7 @@ TEST(ContentHalvesTest, AKeyTheTablesCannotAnswerProducesNoHalf)
 
     const ContentFacts empty{};
     const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+        commandOf(geometry.get(), geometry->contentRevision(), program.get(), program->revision(), shaded.get())
     };
     const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
     const CompiledPass              pass = passWith(draws);
@@ -571,7 +571,7 @@ TEST(ContentHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
     RetirementQueue retirement(1U);
 
     const std::vector<CompiledCommand> old_commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), old_revision, shaded.get())
+        commandOf(geometry.get(), geometry->contentRevision(), program.get(), old_revision, shaded.get())
     };
     const std::vector<CompiledDraw> old_draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, old_commands } };
     const CompiledPass              old_pass = passWith(old_draws);
@@ -610,7 +610,7 @@ TEST(ContentHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
     fresh.facts.materials  = fresh.materials;
 
     const std::vector<CompiledCommand> new_commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), new_revision, shaded.get())
+        commandOf(geometry.get(), geometry->contentRevision(), program.get(), new_revision, shaded.get())
     };
     const std::vector<CompiledDraw> new_draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, new_commands } };
     const CompiledPass              new_pass = passWith(new_draws);
@@ -664,7 +664,7 @@ TEST(ContentHalvesTest, ARefusedLayerIsNotRetriedEveryFrame)
     RetirementQueue retirement(1U);
 
     const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+        commandOf(geometry.get(), geometry->contentRevision(), program.get(), program->revision(), shaded.get())
     };
     const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
     const CompiledPass              pass = passWith(draws);

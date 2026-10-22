@@ -94,6 +94,24 @@
   **宣告序**（文档已写明它与执行序的区别）；`docs/guides/vsg-data-flow.md` §0/§2 与 `docs/guides/vsg-plugin.md` 的单元表
   去掉 `FrameGraph`。
 
+## 2026-10-22（晚四）B6 落地：两级 revision 都生效（`contentRevision` + `StreamKey::buffer_revision`）
+
+- **形状**：`StreamKey` 增加 `buffer_revision`（相等 + 哈希都看）。`revision` 保持几何级（粗公告 ⇒ 每个通道换键，
+  语义不变），`buffer_revision` 是该 buffer 自己的（细公告 ⇒ 只让读它的通道换键）。事实行（`GeometryFacts.revision`）
+  与命令里的 `geometry_revision` 都改取 `Geometry::contentRevision()`（FNV-1a 折叠：自身 revision + 索引流 +
+  每通道的 (location, buffer, buffer revision, components, offset, scalarCount)），所以"只 bump 一个 buffer"
+  也能让事实重建，而单通道键只变一条 ⇒ **只重传那一条**。
+- **别名范围没变**（有意）：两几何同 buffer 同段仍只在几何 revision 相等时共用上传——"按字节共用"和"几何级公告让
+  全部通道失效"互斥，选后者（粗公告是仓库里唯一在用的写法）。文档 §4 已把这条写成代价。
+- **判据**：`tests/test_vsg/GeometryRevisionTest.cpp` 三条；变异 3/3 红（`buffer_revision` 恒 0 ⇒ 细粒度；通道
+  revision 换成 buffer revision ⇒ 粗粒度；行 revision 退回 `geometry.revision()` ⇒ 事实不重建）。
+- **数字**：`test_vsg` 473（+3）、`test_graphics` 413、`test_gui` 261、`test_core` 165；完整 ctest 24/24；
+  `vsg_rewrite_gate.sh` 全阶段 clean；6 个静态门禁 0。
+- **坑（这次踩到）**：`StreamKey` 布局变了以后 `build/plugins` 里的旧 `gfx_backend_vsg.so` 让 `VsgBackendPluginTest`
+  假红（画出来只有清屏色，无诊断）。**改 SDK 的布局后必须整树重建**（`cmake --build build`，不能只建测试目标）。
+- 迁移：测试里手写的 `commandOf(... geometry->revision() ...)` / `findGeometry(..., geometry->revision())` 全部改成
+  `contentRevision()`——那正是 `FrameRecorder` 现在做的事，测试手写时也必须一致（12 处）。
+
 ## 2026-10-22（晚三）几何 revision：两级公告已经存在，但只有一个生效（B6 的契约定位）
 
 - **发现（比登记里写的严）**：`StreamKey` 的字段注释写着 revision 来自 `Geometry::revision()` **或** `Buffer::revision()`，

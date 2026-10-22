@@ -184,7 +184,7 @@ TEST(ContentSweepTest, NothingIsLetGoWhileTheHostStillHoldsEverything)
     store.track(program);
     store.track(shading);
 
-    const auto plan = contentPlan(geometry.get(), geometry->revision(), program.get(), shading.get());
+    const auto plan = contentPlan(geometry.get(), geometry->contentRevision(), program.get(), shading.get());
     (void)store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_EQ(store.geometryEntries(), 1U);
     ASSERT_EQ(store.programEntries(), 1U);
@@ -223,7 +223,7 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
     store.track(program);
     store.track(shading);
 
-    const auto          plan  = contentPlan(geometry.get(), geometry->revision(), program.get(), shading.get());
+    const auto          plan  = contentPlan(geometry.get(), geometry->contentRevision(), program.get(), shading.get());
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_EQ(store.geometryEntries(), 1U);
 
@@ -233,7 +233,7 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
 
     // The identities the rows are keyed by: what a later lookup would use.
     const void* const   geometry_address  = geometry.get();
-    const std::uint64_t geometry_revision = geometry->revision();
+    const std::uint64_t geometry_revision = geometry->contentRevision();
 
     // The host lets go of the whole drawable - the texture goes with the material that held it.
     const vn::graphics::Texture* texture_address = texture.get();
@@ -275,7 +275,7 @@ TEST(ContentSweepTest, AnObjectIsLetGoOnceAndASecondSweepCountsNothing)
     store.track(geometry);
     store.track(program);
 
-    const auto plan = contentPlan(geometry.get(), geometry->revision(), program.get(), nullptr);
+    const auto plan = contentPlan(geometry.get(), geometry->contentRevision(), program.get(), nullptr);
     (void)store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_EQ(store.geometryEntries(), 1U);
 
@@ -308,7 +308,7 @@ TEST(ContentSweepTest, TheDefaultMaterialIsNeverAbandoned)
 
     // Content with no material of its own: the plan names nullptr, and the store answers with its own
     // default entry, which no host handle can abandon (see ContentStore::releaseAbandoned).
-    const auto plan = contentPlan(geometry.get(), geometry->revision(), program.get(), nullptr);
+    const auto plan = contentPlan(geometry.get(), geometry->contentRevision(), program.get(), nullptr);
     (void)store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_EQ(store.materialEntries(), 1U);
 

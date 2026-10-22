@@ -101,7 +101,7 @@
 
 | 项 | 内容 | 触发条件 |
 |---|---|---|
-| B6 | `StreamKey.revision` 取几何 revision ⇒ 任一通道改动重传全部通道（已量化 16.98 MiB / +30 ms 一帧）。**2026-10-22：契约那一半已定** —— 它同时是个**正确性**缺陷：`StreamKey` 的字段注释与 `Buffer::revision()` 的契约都写着"缓存字节的人要比 buffer revision"，而唯一缓存字节的后端只读几何 revision，所以按 buffer 公告的宿主**静默拿到旧字节**。两级都生效的形状、落点、三条能红的判据与变异见 `graphics-geometry-revision-2026-10-22.md`；实现（S2）待拍板 | 宿主报上传带宽（带宽那一半）；正确性那一半**无触发条件**——实现范围待用户拍板 |
+| ~~B6~~ | ~~`StreamKey.revision` 取几何 revision ⇒ 任一通道改动重传全部通道~~ **已关闭（2026-10-22 晚）**：两级公告都生效——`StreamKey` 加 `buffer_revision`（几何级 `revision` 让每个通道换键，buffer 级只让读它的通道换键），每个几何行改按 `Geometry::contentRevision()`（折叠所有公告）建键，`FrameRecorder` 写进命令的也是它。按 `Buffer` 契约公告的宿主不再拿到旧字节，单通道编辑只重传那一条。落地形状、判据与变异见 `graphics-geometry-revision-2026-10-22.md` §9 | ~~宿主报上传带宽~~ 正确性那一半当时就成立（文档契约未兑现） |
 | B7 | 管线销毁 vs 在飞提交竞态（已加计数 device idle，未再复现） | 再现时先查被替换/逐出的管线 |
 | B8 | F−N 最旧在飞帧的可读回洞（结构性旋转用例守着） | 真机再现同类画面缺陷 |
 | A3 | SDK 无内容释放入口 | 宿主报内存压力 |

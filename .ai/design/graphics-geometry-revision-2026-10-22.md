@@ -53,19 +53,29 @@ model 加载器、`SceneView` 的宿主）改完字节只 bump 几何 revision�
 | --- | --- | --- |
 | `Buffer::setRevision(n)` | "**这块字节**变了" | 重建事实行；**只有读这个 buffer 的通道**换 `StreamKey` ⇒ 只重传它 |
 | `Geometry::setRevision(n)` | "这个几何变了，我**没说是哪条**"（今天的写法，保持不变） | 重建事实行；**所有通道**换键 ⇒ 全部重传（与今天一致） |
-| 派生通道（后端自己造的白色载体 / 零 UV / 计算法线） | 没有 buffer，字节归这个几何 | 键用几何的**内容版本**（见下），几何任一公告都让它变 |
+| 派生通道（后端自己造的白色载体 / 零 UV / 计算法线） | 没有 buffer，字节归这个几何 | 与今天一致：跟着几何公告走 |
 
-实现只需要一个新概念：**几何的内容版本** `Geometry::contentRevision()`（派生、不可写、不是新的公告口）——
-`fold(自身 revision, 每个通道的 (buffer 指针, buffer revision, 段))`。它只回答"这份事实表要不要重算"，
-**不**用作单通道的上传键。于是：
+**通道键要同时带两个事实**，`StreamKey` 加一个字段：
 
-- 事实行键：`(identity, contentRevision())`（今天是 `(identity, revision())`）。查找的比较字段不变，只是
-  revision 的含义从"宿主公告的数"变成"内容版本"。
-- 属性 / 索引通道的 `StreamKey.revision`：`channel->values->revision()` / `indicesBuffer()->revision()`。
-- 派生通道的 `StreamKey.revision`：`contentRevision()`（它没有 buffer 可依）。
+| 字段 | 值 | 为什么 |
+| --- | --- | --- |
+| `revision`（已有） | `geometry.revision()` | 粗粒度公告必须让**每个**通道换键——否则"我没说是哪条"就失效了 |
+| `buffer_revision`（新增） | 该通道自己的 buffer revision（派生通道为 0，buffer 也为 null） | 细粒度公告只让**读这个 buffer 的**通道换键 |
 
-单调性沿用今天的规矩（`Buffer::revision()` 的注释已经写明"只升不降"），`contentRevision()` 不需要单调：
-它只当身份键被比较，不当序数用。
+相等与哈希都看两个字段。这样两份契约同时成立：buffer bump ⇒ 只有那一条换键 ⇒ 只重传它；几何 bump ⇒
+全部换键 ⇒ 全部重传（与今天同义）。
+
+**一处必须说清的代价**：两个几何读同一 buffer 同一段时，上传能不能共用仍然取决于**几何 revision 是否相等**
+（今天就是这样，因为 `StreamKey.revision` 是它）。"按字节身份共用、与几何 revision 无关"和"几何级公告让全部
+通道失效"是**互斥**的——前者要求键里没有几何 rev，后者要求有。选后者：粗粒度是仓库里**唯一在用的**公告，
+而字节级共用是在"两个几何恰好同 revision"时才可能发生的既有行为，没人为它登记过需求。
+
+**`Geometry::contentRevision()`**（派生、不可写、不是新的公告口）只回答"这份事实表要不要重算"：
+`fold(自身 revision, 每个通道的 (location, buffer 指针, buffer revision, components, offset, scalarCount),
+索引流的 (buffer 指针, revision, offset, count))`。事实行键用它（`(identity, contentRevision())`），
+**不**用作单通道上传键。它是 FNV-1a 折叠值，不单调、只当身份比较——这一点写进注释，免得有人拿它排序。
+
+单调性沿用今天的规矩（`Buffer::revision()` 的注释已经写明"只升不降"）。
 
 ## 5. 成本与收益
 
@@ -83,25 +93,28 @@ model 加载器、`SceneView` 的宿主）改完字节只 bump 几何 revision�
 
 **S1（本文）**：契约、落点、判据。无代码。
 
-**S2（后端 + SDK 访问器）**：
+**S2（已落地 2026-10-22，见 §9）**：
 
 1. `Geometry::contentRevision()`（公开、派生）+ 相应 `@details`；`Geometry::revision()` 的注释补一句"粗粒度，
    不知道是哪条通道"。
 2. `GeometryFacts.cpp`：通道 / 索引键取 buffer 自己的 revision；派生通道取 `contentRevision()`。
 3. `ContentFacts` 的几何行：建键与查找都用 `contentRevision()`（`GeometryKey` 的字段不变）。
-4. `StreamKey` 的 `revision` 注释改成两句（通道 = buffer revision；派生 = 几何内容版本）。
+4. `StreamKey` 加 `buffer_revision`（相等 + 哈希都看），并把两个字段的注释写清：
+   `revision` = 几何级公告，`buffer_revision` = 该 buffer 自己的公告（派生通道为 0）。
 
 判据（每条都要能红）：
 
-- **细粒度生效**：两个通道的几何，改 normal 缓冲的字节 + bump 它的 revision ⇒ 后端 `uploads` 计数只 +1，
-  且像素上法线相关的那一项变了（沿用 `VsgBackendTest` 的像素判据）。变异：通道键改回 `geometry.revision()` ⇒
-  计数 +2，红。
-- **粗粒度仍是"全部"**：只 bump 几何 revision ⇒ `uploads` 计数 +通道数，像素更新。变异：事实行键改回
-  `geometry.revision()`（丢掉 contentRevision）⇒ 细粒度用例读到旧字节，红。
-- **别名不误伤**：两个几何读同一 arena 的同一段、几何 revision 不同 ⇒ 仍然只上传一次（今天要 revision 相等才
-  共用）。变异：键里加回几何 revision ⇒ 上传两次，红。
+- **细粒度生效**：两个通道的几何，改 positions 缓冲的字节 + bump 它的 revision ⇒ 重算事实后**只有 positions
+  的键变了**，另一个通道的键逐字段相同（等价于"只重传一条"）。变异：`buffer_revision` 恒 0 ⇒ 一条都不变，红。
+- **粗粒度仍是"全部"**：只 bump 几何 revision ⇒ **每个**通道的键都变（`revision` 字段）。变异：通道键的
+  `revision` 改成 `buffer_revision`（丢掉粗粒度）⇒ 只 bump 几何时一条都不变，红。
+- **事实行跟着内容走**：只 bump 一个 buffer 的 revision ⇒ `contentRevision()` 变、`geometry.revision()` 不变，
+  所以事实行会重建（读到的是新字节）。变异：行键改回 `geometry.revision()` ⇒ 用例看到旧字节，红。
+- **别名照旧**：两个几何同 buffer 同段同 revision ⇒ 键相等（一次上传）；几何 revision 不同 ⇒ 键不等（各一次）。
+  这一条钉的是"别名范围没有悄悄扩大也没有缩小"。
 
-**S3（文档 / 登记）**：`Buffer.hpp` / `Geometry.hpp` / `StreamKey` 三处口径统一，B6 行关闭并指向本文。
+**S3（已落地 2026-10-22）**：`Geometry::revision()` / `contentRevision()`、`StreamKey`、`FrameRecorder` / `FrameCompiler`
+的 `geometry_revision` 注释统一成两级口径；B6 行关闭并指向本文。
 
 ## 7. 不做的话
 
@@ -114,3 +127,15 @@ model 加载器、`SceneView` 的宿主）改完字节只 bump 几何 revision�
 1. **范围**：S2 一起做（推荐：它同时是正确性修复），还是只落 S1 的契约、等宿主报带宽。
 2. **`contentRevision()` 的名字**：备选 `streamRevision()`（更像"通道们合起来"）、`dataRevision()`（与
    `Geometry::revision()` 太近，不推荐）。倾向 `contentRevision()`：它答的就是"这份内容现在是什么版本"。
+
+## 9. 落地记录（2026-10-22 晚）
+
+| 片 | 落了什么 | 证据 |
+| --- | --- | --- |
+| **SDK** | `Geometry::contentRevision()`：折叠 `revision_` + 索引流 `(buffer, revision, first, count)` + 每个通道 `(location, buffer, buffer revision, components, offset, scalarCount)`，FNV-1a，不分配、O(通道数)；`revision()` 的注释写明它是**粗**公告 | `Geometry.hpp` / `Geometry.cpp` |
+| **上传键** | `StreamKey` 新增 `buffer_revision`（相等 + 哈希都看）。`revision` 仍是几何级公告（粗粒度让每个通道换键），`buffer_revision` 是该 buffer 自己的（细粒度只让读它的通道换键） | `Streams.hpp` / `Streams.cpp` |
+| **事实** | `buildGeometryFacts` 的行 revision = `contentRevision()`；通道 / 索引键写两个 revision（派生通道 `buffer_revision` 为 0） | `GeometryFacts.cpp` |
+| **链路** | `FrameRecorder` 把 `contentRevision()` 写进 `CollectedCommand.geometry_revision`；`ContentStore::ensureGeometry` / 它的 `findGeometry` 都用同一个数 | `FrameRecorder.cpp`、`ContentStore.cpp` |
+| **判据** | 新套件 `GeometryRevisionTest`（3 条）：buffer 公告只换它那条键；几何公告换全部键；同 buffer 同段的两几何仍只在**几何 revision 相等**时共用上传（别名范围没变）。变异实测：`buffer_revision` 恒 0 ⇒ 第 1 条红；通道 `revision` 改取 buffer revision ⇒ 3 条全红；行 revision 退回 `geometry.revision()` ⇒ 第 1 条红 | `tests/test_vsg/GeometryRevisionTest.cpp` |
+| **数字** | `test_vsg` 473（+3）、`test_graphics` 413、`test_gui` 261、`test_core` 165；完整 ctest 24/24；`vsg_rewrite_gate.sh` 全阶段 clean（0 VUID / 0 SYNC-HAZARD、相位闭合、画面三项与基线一致）；6 个静态门禁 0 finding | 见提交信息 |
+| **顺手** | 迁移测试里手写的命令/查找参数（`commandOf(... geometry->revision() ...)`）到 `contentRevision()`：那是 `FrameRecorder` 的同一件事；一处陈旧插件 `.so` 让 `VsgBackendPluginTest` 假红（`StreamKey` 布局变了），全量重建后绿 —— **改 SDK 布局后必须整树重建** | `ContentHalvesTest` / `ContentStoreTest` / `ContentSweepTest` / `ContentPassTest` / `GeometryFactsTest` |
