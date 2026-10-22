@@ -9189,6 +9189,36 @@ TEST(SceneContentCacheTest, AnEditInOneSceneDoesNotEndAnotherScenesMemo)
 }
 
 /**
+ * @brief The epoch is an aggregate over one subtree: an edit moves the edited node and its ancestors, not siblings.
+ */
+TEST(SceneContentCacheTest, TheEpochIsScopedToTheEditedNodesAncestors)
+{
+    Scene scene;
+    auto  root   = setIdentityRoot(scene);
+    auto  first  = makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"first");
+    auto  second = makeTriangleNode(Vec3d(1, 0, -2), nullptr, u8"second");
+    root->addChild(first);
+    root->addChild(second);
+
+    const std::uint64_t root_before   = root->contentEpoch();
+    const std::uint64_t first_before  = first->contentEpoch();
+    const std::uint64_t second_before = second->contentEpoch();
+
+    first->setOpacity(0.5f);
+
+    EXPECT_GT(root->contentEpoch(), root_before) << "an edit below the root reaches it";
+    EXPECT_GT(first->contentEpoch(), first_before) << "the edited node counts its own announcement";
+    EXPECT_EQ(second->contentEpoch(), second_before) << "a sibling subtree is not touched";
+
+    // A detached tree has its own count: its edits never reach this scene's root.
+    auto loose_root = intrusive_ptr<Group>(new Group());
+    const std::uint64_t scene_root_before = root->contentEpoch();
+    loose_root->addChild(makeTriangleNode(Vec3d(3, 0, -2), nullptr, u8"loose"));
+    loose_root->children().front()->setOpacity(0.25f);
+    EXPECT_EQ(root->contentEpoch(), scene_root_before) << "a detached subtree is not this scene's content";
+}
+
+/**
  * @brief A detached subtree is nobody's content: editing it does not end any scene's memo.
  */
 TEST(SceneContentCacheTest, EditingADetachedSubtreeDoesNotEndTheScenesMemo)

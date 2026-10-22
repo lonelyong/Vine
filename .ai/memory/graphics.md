@@ -28,8 +28,9 @@
 ## 2026-10-22（夜七）R9 关闭：内容纪元从进程级收到根子树级
 
 - **形状**：`Node` 私有 `content_epoch_` 是**本子树**的公告计数。`announceContentChange()` 沿父链逐级 +1（自己 + 每个祖先），
-  所以根节点回答“我下面有没有东西变过”；`Scene::collectRenderCommands` 只读 `root_->content_epoch_` 与自己记的
-  `memo_epoch_` 比。`invalidateBounds()` 与它合并成**一次**向上遍历（同一趟也 bump `bounds_stamp_`），
+  所以根节点回答“我下面有没有东西变过”；`Scene::collectRenderCommands` 只读 `root_->contentEpoch()` 与自己记的
+  `memo_epoch_` 比。`contentEpoch()` 是公开只读访问器（宿主自建缓存也能问同一问题），所以 `Node.hpp` 不再前向声明
+  `Scene`、也没有 friend。`invalidateBounds()` 与公告合并成**一次**向上遍历（同一趟也 bump `bounds_stamp_`），
   `Geometry` 里三处“先 announce 再 invalidate”的重复调用已删。
 - **作用域**：编辑场景 A 的节点只 bump A 的根；B 的记忆体原样命中。游离子树（没有场景在画）的编辑不影响任何场景；
   以后被 `addChild` 挂进某棵树时，`addChild` / `invalidateBounds` 才让该根失效。进程级 `g_content_epoch` 已删，
@@ -39,8 +40,8 @@
 - **成本**：内容改动从 O(1) 原子自增变成 O(深度) 自增；移动/几何/结构类改动本来就在 `invalidateBounds()` 付同一趟父链，
   新增的只是纯状态编辑（`setVisible` / `setOpacity` / `StateNode`）。`Node` 布局变了 ⇒ 插件需全量重建。
 - **判据**：`SceneContentCacheTest.AnEditInOneSceneDoesNotEndAnotherScenesMemo`（A 编辑 ⇒ A 两次走树、B 仍 1 次且拿到同一张表）、
-  `EditingADetachedSubtreeDoesNotEndTheScenesMemo`、`SwappingTheRootEndsTheMemo`；变异“任意编辑都清空记忆体” ⇒ 1/1 红。
-  `test_graphics` 437 → **440**、`test_vsg` 492、`test_gui` 260(+1 skip)、ctest 24/24，六道静态脚本 0 finding。
+  `EditingADetachedSubtreeDoesNotEndTheScenesMemo`、`SwappingTheRootEndsTheMemo`、`TheEpochIsScopedToTheEditedNodesAncestors`（编辑只动自己和祖先，不动兄弟；游离子树不进场景根）；
+  变异“任意编辑都清空记忆体” ⇒ 1/1 红。`test_graphics` 437 → **441**、`test_vsg` 492、`test_gui` 260(+1 skip)、ctest 24/24，六道静态脚本 0 finding。
   用户 2026-10-22 直接指定做（原触发条件：多视图/多场景下编辑频繁）。
 
 ## 2026-10-22（夜六）§9.3 子树层并集剪枝

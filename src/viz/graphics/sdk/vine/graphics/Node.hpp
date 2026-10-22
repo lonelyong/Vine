@@ -20,7 +20,6 @@ using vn::math::Mat4d;
 using vn::math::Aabbd;
 
 class Group;
-class Scene;
 
 /// Every layer: the default on the pass side (a mask that states nothing draws every layer), so a scene whose
 /// nodes say nothing about layers is drawn exactly as it was before layers existed.
@@ -303,6 +302,21 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      */
     void announceContentChange() noexcept;
 
+    /** @brief Gets this subtree's content-announcement counter: how many edits the subtree has seen.
+     *
+     * @details
+     * - This is the value a collected command list is validated against (see announceContentChange): every edit
+     *   increments the edited node and every ancestor, so the ROOT's value covers the whole tree and a Scene compares
+     *   its own root's value to decide whether its memo is stale.
+     * - It says THAT something changed, not WHAT: it is a clock, not a revision of a particular property, so only
+     *   compare values. Equal values mean nothing under this node was announced in between.
+     * - The Scene's collection memo is the built-in consumer; the count is exposed because a host keeping its own
+     *   per-subtree cache asks the same question ("is what I derived from this subtree still valid?").
+     *
+     * @return The subtree's announcement count (starts at 0 and only grows while the node is alive).
+     */
+    [[nodiscard]] std::uint64_t contentEpoch() const noexcept;
+
     /** @brief Gets this subtree's box in THIS node's own frame, served from the per-node cache.
      *
      * @details
@@ -391,7 +405,7 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     mutable std::uint64_t layer_union_recomputes_{0};    ///< Recomputation witness (see subtreeLayerRecomputeCount).
 
     friend class Group;
-    friend class Scene;   // reads the root's content epoch (see Scene::collectRenderCommands)
+
 };
 
 using NodePtr = intrusive_ptr<Node>;

@@ -61,6 +61,11 @@ void Node::announceContentChange() noexcept
     }
 }
 
+std::uint64_t Node::contentEpoch() const noexcept
+{
+    return content_epoch_;
+}
+
 bool Node::subtreeBounds(Aabbd& box) const
 {
     // A leaf's box is its DATA box, and localBounds() re-checks its own data key on every ask (cheap:
