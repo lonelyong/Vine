@@ -122,7 +122,7 @@ VINE_ASAN_FILTER='ModelSceneTest.*'` ⇒ RESULT: PASS）。
 | R2 | `RenderPipeline` 同时是"通用 pass 链"与"具体配方"（window/offscreen/composite/gizmo/fps 各自成员），第三种 overlay 要改类。**2026-10-22 已关闭**：`PassGroup` 收掉注册的第二份清单、`addOverlay` 让第三种 overlay 变成一次调用（剩下的"通用链 / 具体配方"两半即 `graphics-followups-2026-10-22.md` 的 F2 / F3，2026-10-22 晚均已关闭——R2 已无附属片） | Unity 用 `ScriptableRenderer` + `ScriptableRenderPass` 组合，overlay 是 pass 不是字段 | ~~第二个 overlay 类型出现~~（已触发，已做） |
 | R3 | ~~`Geometry` 没有 topology（在 `StateNode` 上），点云与三角面同子树要两个 `StateNode`~~ **第一片已落地（2026-10-22）**：拓扑归 `Primitive`（`Geometry` = 通道集，`Primitive` = 拓扑 + 索引片段 + 材质 + 程序），`StateNode::topology` 已删、pass 可覆盖；收集器与计划按 primitive 出行，拾取只打三角形。**第二片（同日）已完成**：后端事实表按 primitive 出行，`ContentPass` 按 `command.primitive` 取行 —— R3 关闭。**设备级证据同日补上**：`PrimitiveDrawTest.OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUpload`
 （一份顶点 + 三条图元 ⇒ 画面三段颜色、`draws=1`、`uploads=3` 且稳态帧零重传）。设计见 `graphics-primitives-2026-10-22.md`；2026-10-21 裁决留档在下。（详见下方"R3 裁决"） | OSG `Drawable` 的 `PrimitiveSet`、vsg `VertexIndexDraw`、glTF 的 `primitive.mode`、Unity 的 `MeshTopology`、Filament 的 `PrimitiveType` 都随 drawable | **同一子树需要两种图元**（点云/线 + 三角网格）**且调用点开始复制 `StateNode`**，或某个导入器要保留 `POINTS`/`LINES` 图元 |
-| R4 | ~~变换只有 `MatrixTransform`（无 TRS 节点）~~ **已关闭（2026-10-22）**：新增 `PositionAttitudeTransform`（`Group` + `position()` / `attitude()` / `scale()` / `pivot()`，矩阵按 `T * R * S * T(-pivot)` 自动合成；`setTransform(Isometry3d)` 只改平移 + 姿态）；判据 `PositionAttitudeTransformTest.*` 5 条。同日另加 **`AutoTransform`**（OSG 同名 billboard：`RotateToScreen` / `RotateToCamera`、`setAutoScaleToScreen` + min/max；收集按视图计算矩阵；包围盒为保守球盒）；判据 `AutoTransformTest.*` 12 条。设计见下方“R4 裁决”与 `graphics-view-context-2026-10-22.md`。 | three.js `Object3D` 的 position/quaternion/scale、Unity `Transform`、OSG `MatrixTransform`+`PositionAttitudeTransform`+`AutoTransform` | ~~逐帧驱动节点变换并需要插值（URDF 关节回放）~~（已做） |
+| R4 | ~~变换只有 `MatrixTransform`（无 TRS 节点）~~ **已关闭（2026-10-22）**：新增 `PositionAttitudeTransform`（`Group` + `position()` / `attitude()` / `scale()` / `pivot()`，矩阵按 `T * R * S * T(-pivot)` 自动合成；`setTransform(Isometry3d)` 只改平移 + 姿态）；判据 `PositionAttitudeTransformTest.*` 5 条。同日另加 **`AutoTransform`**（OSG 同名 billboard：`RotateToScreen` / `RotateToCamera` / `RotateToAxis`、`setAutoScaleToScreen` + min/max；收集按视图计算矩阵；包围盒为保守球盒）；判据 `AutoTransformTest.*` 14 条。设计见下方“R4 裁决”与 `graphics-view-context-2026-10-22.md`。 | three.js `Object3D` 的 position/quaternion/scale、Unity `Transform`、OSG `MatrixTransform`+`PositionAttitudeTransform`+`AutoTransform` | ~~逐帧驱动节点变换并需要插值（URDF 关节回放）~~（已做） |
 | R5 | 材质是单一平铺 Phong + 一张贴图 + 采样器按 magic uniform 名；无 `MaterialInstance`；几何侧 `PbrMaterial` 到渲染侧只能是近似 | Filament `Material`/`MaterialInstance`、three.js `Material` 子类 + `uniforms` | 逐对象参数（高亮/tint）在第二个调用点出现，或需要真实 PBR |
 | R6 | ~~无 MSAA：`TargetShape::samples` / `PipelineKey.samples` 存在但宿主无法设置，`Capabilities` 无 `max_samples`~~ **已关闭（2026-10-22）**：`RenderTarget::setSamples` 是唯一入口，采样数进目标形状 ⇒ 管线键 ⇒ 通道与图像；离屏目标自建多重采样图并**颜色与深度各解析一张单采样图**（`picture()` / `depthPicture()` 即"画面"，深度 `sample0` 不平均），R6b 后"MS 深度提升/出借/回读"全部合法，只留"MS 目标不能**借入**深度"一条显式拒绝；默认窗口仍单采样。`Capabilities::max_samples` 报设备限制 | 所有引擎都有 MSAA 开关 | ~~画面锯齿成为用户可见问题~~（用户 2026-10-22 直接指定做） |
 | R7 | 无实例化、无 DAG（`Group::addChild` 自动脱离旧父） | OSG/vsg 允许一节点多父；`InstancedMesh` | 重复件数量让收集/内存成为瓶颈 |
@@ -171,10 +171,13 @@ VINE_ASAN_FILTER='ModelSceneTest.*'` ⇒ RESULT: PASS）。
   同相机画到不同矩形仍是一次收集。公式见 `graphics-view-context-2026-10-22.md` §3（OSG 的 0.48 参考半径）。
 - **包围盒**：自动朝向可能指向任意方向，`AutoTransform::boundingBox()` 返回以 position 为球心的保守
   球盒；`Scene::visibleWorldBox` 在 Group 递归前先问它，所以场景框不会随“最后是哪台相机收集的”而变。
-- **本片不做**：`RotateToAxis`（轴向 billboard）、自动模式继承父旋转/缩放。
+- **`RotateToAxis`（同日补齐）**：只绕局部固定轴转，默认轴 +Z、front -Y，与 OSG 的
+  `osg::AutoTransform` 同名默认值一致；`setAxis()` 归一化后把 front 重投影到垂直平面，`setNormal()` 把
+  front 投影到轴上，两者始终正交；eye 落在轴上时保持 identity（没有唯一朝向）。
 - **判据**：`PositionAttitudeTransformTest.*` 5 条（`T*R*S*T(-pivot)` 数值、Isometry 交接、嵌套、包围盒、
-  收集失效）与 `AutoTransformTest.*` 12 条（NoRotation 等于 PAT、屏幕/相机朝向、自动缩放恒像素、min/max、
-  无 viewport 回退、两视图各一张命令表、父变换继承、conservative 包围盒）；`test_graphics` 414 → **431**。
+  收集失效）与 `AutoTransformTest.*` 14 条（NoRotation 等于 PAT、屏幕/相机/轴向朝向、轴向随父旋转、
+  自动缩放恒像素、min/max、无 viewport 回退、两视图各一张命令表、父变换继承、conservative 包围盒）；
+  `test_graphics` 414 → **433**。
 
 ## 3. 本轮切片与验收（已落地 2026-10-21）
 | 切片 | 内容 | 判据（实测） |

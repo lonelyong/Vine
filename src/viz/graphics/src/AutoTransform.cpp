@@ -67,6 +67,32 @@ Mat4d screenRotation(const Mat4d& model_view)
 }
 
 /**
+ * @brief Returns the pure turn around @p axis that points @p normal at @p local_eye as much as the axis allows.
+ *
+ * @details
+ * - The eye vector is projected onto the plane perpendicular to @p axis; the angle is measured from the
+ *   normal's perpendicular projection to that vector. If the eye lies ON the axis there is no preferred
+ *   direction, so the result is the identity (a cylindrical billboard cannot choose a side).
+ *
+ * @param local_eye Eye point in the node's local frame.
+ * @param position  The node's local position.
+ * @param axis      Normalized rotation axis.
+ * @param normal    Normalized front direction, perpendicular to @p axis.
+ * @return The rotation matrix around @p axis.
+ */
+Mat4d axisRotation(const Vec3d& local_eye, const Point3d& position, const Vec3d& axis, const Vec3d& normal)
+{
+    const Vec3d to_eye = local_eye - Vec3d(position.x, position.y, position.z);
+    const Vec3d flat   = to_eye - axis * to_eye.dot(axis);
+    if (flat.length2() <= 0.0) {
+        return Mat4d();
+    }
+    const Vec3d side  = axis.cross(normal).normalized();
+    const double angle = std::atan2(flat.dot(side), flat.dot(normal));
+    return vn::math::rotate(axis, angle);
+}
+
+/**
  * @brief Returns a rotation whose local +Z points from @p world_position at @p eye.
  *
  * @param world_position The billboard's world position.
@@ -159,6 +185,43 @@ void AutoTransform::setAutoRotateMode(AutoRotateMode mode)
     recompose();
 }
 
+Vec3d AutoTransform::axis() const
+{
+    return axis_;
+}
+
+void AutoTransform::setAxis(const Vec3d& axis)
+{
+    if (!(axis.length2() > 0.0)) {
+        return;
+    }
+    axis_ = axis.normalized();
+    // The front direction must stay in the plane perpendicular to the axis; re-project it.
+    Vec3d normal = normal_ - axis_ * normal_.dot(axis_);
+    if (!(normal.length2() > 0.0)) {
+        // The old normal was parallel to the new axis: choose a stable perpendicular. Z is avoided when
+        // the axis is already close to Z, so the fallback never collapses.
+        normal = (std::abs(axis_.z) < 0.9 ? Vec3d(0.0, 0.0, 1.0) : Vec3d(1.0, 0.0, 0.0)).cross(axis_);
+    }
+    normal_ = normal.normalized();
+    invalidateBounds();
+}
+
+Vec3d AutoTransform::normal() const
+{
+    return normal_;
+}
+
+void AutoTransform::setNormal(const Vec3d& normal)
+{
+    const Vec3d flat = normal - axis_ * normal.dot(axis_);
+    if (!(flat.length2() > 0.0)) {
+        return; // zero or parallel to the axis: no in-plane direction to turn toward
+    }
+    normal_ = flat.normalized();
+    invalidateBounds();
+}
+
 bool AutoTransform::autoScaleToScreen() const
 {
     return auto_scale_to_screen_;
@@ -230,15 +293,17 @@ ViewDependence AutoTransform::localToWorldForView(const Mat4d& parent_world, con
             auto_rotation = screenRotation(view.view * parent_world);
         }
         else {
-            Mat4d parent_inverse = parent_world;
-            if (parent_inverse.invert()) {
-                const Point3d local_eye =
-                    parent_inverse * Point3d(view.eye.x, view.eye.y, view.eye.z);
-                const Vec3d local_up = parent_inverse * view.up;
-                auto_rotation        = cameraRotation(position_, Vec3d(local_eye.x, local_eye.y, local_eye.z), local_up);
+            Mat4d       parent_inverse = parent_world;
+            const bool  inverted       = parent_inverse.invert();
+            const Point3d local_point  = inverted ? parent_inverse * Point3d(view.eye.x, view.eye.y, view.eye.z)
+                                                  : Point3d(view.eye.x, view.eye.y, view.eye.z);
+            const Vec3d local_eye(local_point.x, local_point.y, local_point.z);
+            if (mode_ == AutoRotateMode::RotateToCamera) {
+                const Vec3d local_up = inverted ? parent_inverse * view.up : view.up;
+                auto_rotation        = cameraRotation(position_, local_eye, local_up);
             }
             else {
-                auto_rotation = cameraRotation(position_, view.eye, view.up);
+                auto_rotation = axisRotation(local_eye, position_, axis_, normal_);
             }
         }
     }

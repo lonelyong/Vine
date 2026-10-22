@@ -52,7 +52,7 @@ engine.setDevice(backend);
 | `Group` | 聚合子节点 | `addChild()` / `removeChild()` 会维护 parent 链 |
 | `MatrixTransform` | `Group` + **矩阵形式**的变换节点（`matrix()` / `setMatrix()`） | 嵌套变换沿 root→leaf 相乘 |
 | `PositionAttitudeTransform` | `Group` + **TRS 形式**的变换节点（`position()` / `attitude()` / `scale()` / `pivot()`） | 矩阵按 `T * R * S * T(-pivot)` 自动合成；`setTransform()` 直接吃 `Isometry3d` |
-| `AutoTransform` | `Group` + **面向屏幕/相机**的 billboard（OSG 同名） | `RotateToScreen` / `RotateToCamera`；`setAutoScaleToScreen` 保持恒定像素大小 |
+| `AutoTransform` | `Group` + **面向屏幕/相机**的 billboard（OSG 同名） | `RotateToScreen` / `RotateToCamera` / `RotateToAxis`；`setAutoScaleToScreen` 保持恒定像素大小 |
 | `StateNode` | 给子树施加渲染状态，并可覆盖 material / program | 越深的节点优先；**拓扑不在状态里**（它随 `Primitive` 走） |
 | `Geometry` | 叶子：**借用**的属性缓冲 + 图元列表（每条图元是一次 draw） | `setPositions/setNormals/setTexcoords2`、`addBuffer` 加自定义通道、`addPrimitive` / `setPrimitive`、`setRevision()`；`setIndices` 是单 draw 的便捷拼写 |
 | `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)`（**共享不可变表**：一次遍历，多个 pass 共用；要改写就自己 `*list` 复制一份） |
@@ -1253,10 +1253,12 @@ joint->setTransform(kinematics.frameInWorld(joint_frame, state));
 
 ### 3.23 面向屏幕：`AutoTransform`（OSG 同名 billboard）
 
-`PositionAttitudeTransform` 的姿态来自属性；`AutoTransform` 的姿态来自**画它的那台相机**。两种模式：
+`PositionAttitudeTransform` 的姿态来自属性；`AutoTransform` 的姿态来自**画它的那台相机**。三种模式：
 
 - `RotateToScreen`：抵消相机旋转，子树始终与屏幕平面平行（标签 / 文字 / sprite 的经典 billboard）；
-- `RotateToCamera`：局部 +Z 指向 eye（球形 billboard，偏离画面中心时会跟着转）。
+- `RotateToCamera`：局部 +Z 指向 eye（球形 billboard，偏离画面中心时会跟着转）；
+- `RotateToAxis`：只绕固定轴转（默认局部 +Z），正面（默认 -Y）尽量朝向 eye —— 圆柱面 billboard，
+  轴本身不动，像立在场景里的路牌。
 
 ```cpp
 #include <vine/graphics/AutoTransform.hpp>
@@ -1287,6 +1289,9 @@ root->addChild(label);
   屏幕/相机），父缩放会进入 billboard 的最终大小。建议父缩放保持**均匀**；非均匀父缩放 + billboard
   旋转会产生拉伸/剪切。要完全静态地继承父变换，用 `NoRotation` 或 `PositionAttitudeTransform`。
 - **`rotation` 在自动姿态之后应用**：可以在自己的屏幕平面里旋转 sprite；`scale` / `pivot` 与 PAT 同义。
+- **`RotateToAxis` 的轴与前向**：`setAxis()` 归一化后把已有 front 重新投影到垂直平面，`setNormal()` 把
+  front 投影到轴上；两者始终正交，零向量或与轴平行的 front 会被忽略。eye 落在轴上时没有唯一朝向，
+  保持原姿态（identity），不会产生 NaN。轴是**局部**轴，随父节点旋转。
 - **`NoRotation` 就是 PAT 的静态摆放**：`worldMatrix()`、拾取与 `Scene::boundingBox()` 看到的是它。
 - **包围盒是保守的球盒**：覆盖任意朝向，所以 culling 与场景框不会因为相机换了就“跳”。自动缩放时用
   `maximumScale`（有限时）算上界；场景框允许偏大，不允许偏小。

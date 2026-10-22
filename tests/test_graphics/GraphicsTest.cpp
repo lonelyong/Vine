@@ -2267,6 +2267,58 @@ TEST(AutoTransformTest, RotateToCameraUnderARotatedParentFacesTheEye)
     EXPECT_NEAR(normal.z, to_eye.z, 1e-9);
 }
 
+TEST(AutoTransformTest, RotateToAxisKeepsTheAxisFixedAndTurnsToTheEye)
+{
+    // Cylindrical billboard: the default axis is +Z and the front is -Y. A camera on +X must turn the
+    // front to +X while leaving the local +Z axis exactly where it was.
+    AutoTransform billboard;
+    billboard.setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToAxis);
+
+    Camera cam;
+    cam.lookAt(Vec3d(5, 0, 0), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    cam.setPerspective(60.0, 0.1, 100.0);
+    cam.setAspect(1.0);
+
+    Mat4d world;
+    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), viewOf(cam), world), ViewDependence::View);
+
+    const auto origin = world * Point3d(0, 0, 0);
+    const auto axis   = world * Point3d(0, 0, 1) - origin;
+    EXPECT_NEAR(axis.x, 0.0, 1e-9) << "the rotation axis is fixed";
+    EXPECT_NEAR(axis.y, 0.0, 1e-9);
+    EXPECT_NEAR(axis.z, 1.0, 1e-9);
+
+    const auto front = world * Point3d(0, -1, 0) - origin;
+    EXPECT_NEAR(front.x, 1.0, 1e-9) << "the front turns toward the eye's projection";
+    EXPECT_NEAR(front.y, 0.0, 1e-9);
+    EXPECT_NEAR(front.z, 0.0, 1e-9);
+}
+
+TEST(AutoTransformTest, RotateToAxisUnderARotatedParentKeepsItsWorldAxis)
+{
+    auto parent = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    parent->setMatrix(vn::math::rotate(Vec3d(0, 1, 0), vn::math::PI_HALF));
+    auto billboard = intrusive_ptr<AutoTransform>(new AutoTransform());
+    billboard->setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToAxis);
+    parent->addChild(billboard);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    Mat4d world;
+    ASSERT_EQ(billboard->localToWorldForView(parent->worldMatrix(), viewOf(cam), world), ViewDependence::View);
+
+    const auto origin = world * Point3d(0, 0, 0);
+    const auto axis   = world * Point3d(0, 0, 1) - origin;
+    EXPECT_NEAR(axis.x, 1.0, 1e-9) << "the local Z axis follows the parent rotation";
+    EXPECT_NEAR(axis.y, 0.0, 1e-9);
+    EXPECT_NEAR(axis.z, 0.0, 1e-9);
+
+    const auto front = world * Point3d(0, -1, 0) - origin;
+    EXPECT_NEAR(front.x, 0.0, 1e-9) << "the front turns in the plane perpendicular to that world axis";
+    EXPECT_NEAR(front.y, 0.0, 1e-9);
+    EXPECT_NEAR(front.z, 1.0, 1e-9);
+}
+
 TEST(AutoTransformTest, AutoScaleCancelsAUniformParentScale)
 {
     AutoTransform billboard;

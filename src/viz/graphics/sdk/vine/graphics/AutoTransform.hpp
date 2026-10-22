@@ -22,11 +22,13 @@ using vn::math::Vec3d;
  *
  * @details
  * - The automatic counterpart of PositionAttitudeTransform: the subtree is placed at position with scale
- *   and pivot, but its ROTATION is derived from the camera that draws it. The two modes that matter:
+ *   and pivot, but its ROTATION is derived from the camera that draws it. The modes:
  *   - RotateToScreen: the subtree stays parallel to the screen plane (the camera's view rotation is
  *     cancelled), the classic text / sprite / label billboard;
  *   - RotateToCamera: the subtree's local +Z axis points at the eye (a spherical billboard, which turns
- *     more than the screen-aligned one as it moves off-centre).
+ *     more than the screen-aligned one as it moves off-centre);
+ *   - RotateToAxis: the subtree turns only around `axis`, keeping that axis fixed (a cylindrical billboard:
+ *     trees, grass, upright signs). `normal` says which local direction is the front before turning.
  * - The camera-dependent matrix is computed during command collection, once per view: the collected list
  *   is already memoised per view, so two cameras get two correct lists and a still view reuses one.
  * - position, rotation, scale and pivot are in the parent's frame, and the parent transform is inherited
@@ -58,6 +60,7 @@ class VN_GRAPHICS_API AutoTransform : public Group {
         NoRotation,      ///< No automatic rotation: the plain TRS placement (the view-independent matrix).
         RotateToScreen,  ///< Cancel the camera's rotation, so the subtree stays parallel to the screen plane.
         RotateToCamera,  ///< Point the subtree's local +Z at the eye (spherical billboard).
+        RotateToAxis,    ///< Turn around `axis` only (cylindrical billboard), keeping that axis fixed.
     };
 
   public:
@@ -130,6 +133,39 @@ class VN_GRAPHICS_API AutoTransform : public Group {
      */
     void setAutoRotateMode(AutoRotateMode mode);
 
+    /** @brief Gets the rotation axis used by RotateToAxis.
+     *
+     * @return The normalized local axis (Z by default).
+     */
+    Vec3d axis() const;
+
+    /** @brief Sets the rotation axis used by RotateToAxis.
+     *
+     * @details
+     * - The axis is normalized when stored; the normal is re-projected perpendicular to the new axis.
+     * - Ignored by the other auto-rotate modes.
+     *
+     * @param axis Local rotation axis (a zero vector is ignored).
+     */
+    void setAxis(const Vec3d& axis);
+
+    /** @brief Gets the local front direction used by RotateToAxis.
+     *
+     * @return The normalized direction, perpendicular to axis() (-Y by default).
+     */
+    Vec3d normal() const;
+
+    /** @brief Sets the local front direction used by RotateToAxis.
+     *
+     * @details
+     * - The normal is normalized and projected onto the plane perpendicular to axis(); the component along
+     *   the axis is dropped, because the rotation must be a pure turn around that axis.
+     * - Ignored by the other auto-rotate modes.
+     *
+     * @param normal Local front direction (a zero or axis-parallel vector is ignored).
+     */
+    void setNormal(const Vec3d& normal);
+
     /** @brief Gets whether screen-space scaling is enabled.
      *
      * @return true when the per-view matrix derives a uniform scale from the viewport.
@@ -187,8 +223,9 @@ class VN_GRAPHICS_API AutoTransform : public Group {
      * - NoRotation without auto-scale is view-independent (the walk uses the plain local matrix). A
      *   view-dependent mode fills @p world with
      *   `T(world_position) * R(auto) * R(rotation) * S(scale) * T(-pivot)`.
-     * - The world position is `parent_world * position`; the auto rotation is a world-space rotation, so
-     *   parent rotation / scale do not enter it (see the class note).
+     * - The world position is `parent_world * position`; the automatic rotation is computed in the node's
+     *   local frame from the model-view, so a parent rotation is cancelled by it and a parent scale is
+     *   inherited (see the class note).
      * - With autoScaleToScreen() the scale is uniform and derived from the viewport; otherwise the authored
      *   scale() is used. An invalid viewport keeps the authored scale.
      *
@@ -223,6 +260,8 @@ class VN_GRAPHICS_API AutoTransform : public Group {
     Quatd          rotation_{};
     Vec3d          scale_{ 1.0, 1.0, 1.0 };
     Point3d        pivot_{};
+    Vec3d          axis_{ 0.0, 0.0, 1.0 };
+    Vec3d          normal_{ 0.0, -1.0, 0.0 };
     AutoRotateMode mode_{ AutoRotateMode::NoRotation };
     bool           auto_scale_to_screen_{ false };
     double         minimum_scale_{ 0.0 };
