@@ -2,6 +2,7 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/CameraManipulator.hpp>
 #include <vine/graphics/OrbitCameraManipulator.hpp>
+#include <vine/graphics/AutoTransform.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
@@ -64,6 +65,9 @@ using vn::imaging::Image;
 using vn::imaging::PixelFormat;
 using vn::math::Vec2d;
 using vn::math::Vec3d;
+using vn::math::Point3d;
+using vn::math::Quatd;
+using vn::math::Isometry3d;
 using vn::math::Mat4d;
 using vn::math::Aabbd;
 using vn::math::Aabbf;
@@ -2026,6 +2030,105 @@ TEST(MatrixTransformTest, WorldMatrixIsOwnMatrixForSingleNode)
     node->setMatrix(vn::math::translate(Vec3d(4, 0, 0)));
     const auto p = node->worldMatrix() * vn::math::Point3d(0, 0, 0);
     EXPECT_NEAR(p.x, 4.0, 1e-9);
+}
+
+// ============ AutoTransform ============
+
+TEST(AutoTransformTest, ComposesTranslationRotationAndScale)
+{
+    AutoTransform node;
+    EXPECT_TRUE(node.matrix().isIdentity());
+    EXPECT_EQ(node.position(), Point3d(0, 0, 0));
+    EXPECT_EQ(node.rotation(), Quatd());
+    EXPECT_EQ(node.scale(), Vec3d(1, 1, 1));
+
+    node.setPosition(Point3d(1, 2, 3));
+    node.setRotation(Quatd(vn::math::PI_HALF, Vec3d(0, 0, 1)));
+    node.setScale(Vec3d(2, 3, 4));
+
+    // T * R * S on (1, 0, 0): scale -> (2, 0, 0), quarter turn about Z -> (0, 2, 0), translate -> (1, 4, 3).
+    const auto p = node.matrix() * Point3d(1, 0, 0);
+    EXPECT_NEAR(p.x, 1.0, 1e-9);
+    EXPECT_NEAR(p.y, 4.0, 1e-9);
+    EXPECT_NEAR(p.z, 3.0, 1e-9);
+}
+
+TEST(AutoTransformTest, SetTransformTakesAnIsometryAndLeavesScaleAlone)
+{
+    AutoTransform node;
+    node.setScale(Vec3d(2, 2, 2));
+    const Isometry3d pose(Point3d(4, 5, 6), Quatd(vn::math::PI_HALF, Vec3d(0, 1, 0)));
+    node.setTransform(pose);
+
+    EXPECT_EQ(node.position(), pose.translation);
+    EXPECT_EQ(node.rotation(), pose.rotation);
+    EXPECT_EQ(node.scale(), Vec3d(2, 2, 2));
+    EXPECT_EQ(node.transform().translation, pose.translation);
+    EXPECT_EQ(node.transform().rotation, pose.rotation);
+
+    // Scale stays in the composed matrix: (1, 0, 0) -> (2, 0, 0), quarter turn about Y -> (0, 0, -2).
+    const auto p = node.matrix() * Point3d(1, 0, 0);
+    EXPECT_NEAR(p.x, 4.0, 1e-9);
+    EXPECT_NEAR(p.y, 5.0, 1e-9);
+    EXPECT_NEAR(p.z, 4.0, 1e-9);
+}
+
+TEST(AutoTransformTest, NestedTransformsAccumulate)
+{
+    auto outer = intrusive_ptr<AutoTransform>(new AutoTransform());
+    outer->setPosition(Point3d(1, 0, 0));
+    auto inner = intrusive_ptr<AutoTransform>(new AutoTransform());
+    inner->setPosition(Point3d(0, 2, 0));
+    outer->addChild(inner);
+
+    const auto p = inner->worldMatrix() * Point3d(0, 0, 0);
+    EXPECT_NEAR(p.x, 1.0, 1e-9);
+    EXPECT_NEAR(p.y, 2.0, 1e-9);
+}
+
+TEST(AutoTransformTest, WorldBoxFollowsTheProperties)
+{
+    auto place = intrusive_ptr<AutoTransform>(new AutoTransform());
+    place->addChild(geometryOf(*makeUnitTriangle()));
+
+    place->setPosition(Point3d(10, 0, 0));
+    Aabbd box = place->boundingBox();
+    EXPECT_NEAR(box.min().x, 10.0, 1e-9);
+    EXPECT_NEAR(box.max().x, 11.0, 1e-9);
+
+    // Moving and scaling announces a stale box: the next ask is in world space again.
+    place->setPosition(Point3d(0, 5, 0));
+    place->setScale(Vec3d(2, 2, 2));
+    box = place->boundingBox();
+    EXPECT_NEAR(box.min().x, 0.0, 1e-9);
+    EXPECT_NEAR(box.max().x, 2.0, 1e-9);
+    EXPECT_NEAR(box.min().y, 5.0, 1e-9);
+    EXPECT_NEAR(box.max().y, 7.0, 1e-9);
+}
+
+TEST(AutoTransformTest, AnEditInvalidatesTheCollectedCommands)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  place = intrusive_ptr<AutoTransform>(new AutoTransform());
+    root->addChild(place);
+    place->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"tri"));
+
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    scene.setContentFrame(1);
+    const auto first = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(first->size(), 1u);
+    EXPECT_NEAR(((*first)[0].model_matrix * Point3d(0, 0, 0)).x, 0.0, 1e-9);
+    EXPECT_EQ(scene.contentCollectCount(), 1u);
+
+    place->setPosition(Point3d(1, 0, 0));
+    scene.setContentFrame(2);
+    const auto second = scene.collectRenderCommands(&cam);
+    ASSERT_EQ(second->size(), 1u);
+    EXPECT_NEAR(((*second)[0].model_matrix * Point3d(0, 0, 0)).x, 1.0, 1e-9);
+    EXPECT_EQ(scene.contentCollectCount(), 2u) << "a transform edit must end the memo";
 }
 
 TEST(GroupTest, ReParentDetachesFromOldParent)

@@ -280,8 +280,9 @@ struct VN_GRAPHICS_API AttributeChannel
  *   The vertex channels are what the primitives share, which is exactly why they live here and the
  *   per-draw facts do not.
  * - It has NO children and NO transform of its own: attach it under a Group / StateNode and place it with
- *   an enclosing MatrixTransform, whose chain (Node::worldMatrix()) positions the data in world space; its
- *   world box is the bound of the location-0 positions through that chain.
+ *   an enclosing transform node (MatrixTransform or AutoTransform), whose chain (Node::worldMatrix())
+ *   positions the data in world space; its world box is the bound of the location-0 positions through that
+ *   chain.
  * - Visibility / opacity are Node's (the fold rules are the base class's).
  */
 class VN_GRAPHICS_API Geometry : public Node {
@@ -651,7 +652,7 @@ class VN_GRAPHICS_API Geometry : public Node {
     /** @brief Computes the LOCAL-space bounding box of this leaf's vertex data.
      *
      * @details
-     * - The bound of the location-0 positions in the leaf's OWN frame: no enclosing MatrixTransform
+     * - The bound of the location-0 positions in the leaf's OWN frame: no enclosing transform node
      *   contributes. A collection pass that already accumulates world matrices uses this plus
      *   transformBox() instead of boundingBox(), which would re-walk the parent chain once per leaf per
      *   pass - the two spellings are equal by construction and a test pins it.
@@ -663,8 +664,8 @@ class VN_GRAPHICS_API Geometry : public Node {
     /** @brief Computes the world-space bounding box of this leaf.
      *
      * @details
-     * - The bound of the location-0 positions (local data box) transformed by the enclosing
-     *   MatrixTransform chain; empty when no positions are set.
+     * - The bound of the location-0 positions (local data box) transformed by the enclosing transform
+     *   chain; empty when no positions are set.
      * - The LOCAL box is computed once per data revision and remembered (see localBoundsCache_), because a
      *   collection pass asks every geometry for its bound on every frame it has to walk the tree (a moving
      *   camera fills the frame memo for nothing) and the box costs a pass over every vertex. The keys are

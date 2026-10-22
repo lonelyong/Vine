@@ -122,7 +122,7 @@ VINE_ASAN_FILTER='ModelSceneTest.*'` ⇒ RESULT: PASS）。
 | R2 | `RenderPipeline` 同时是"通用 pass 链"与"具体配方"（window/offscreen/composite/gizmo/fps 各自成员），第三种 overlay 要改类。**2026-10-22 已关闭**：`PassGroup` 收掉注册的第二份清单、`addOverlay` 让第三种 overlay 变成一次调用（剩下的"通用链 / 具体配方"两半即 `graphics-followups-2026-10-22.md` 的 F2 / F3，2026-10-22 晚均已关闭——R2 已无附属片） | Unity 用 `ScriptableRenderer` + `ScriptableRenderPass` 组合，overlay 是 pass 不是字段 | ~~第二个 overlay 类型出现~~（已触发，已做） |
 | R3 | ~~`Geometry` 没有 topology（在 `StateNode` 上），点云与三角面同子树要两个 `StateNode`~~ **第一片已落地（2026-10-22）**：拓扑归 `Primitive`（`Geometry` = 通道集，`Primitive` = 拓扑 + 索引片段 + 材质 + 程序），`StateNode::topology` 已删、pass 可覆盖；收集器与计划按 primitive 出行，拾取只打三角形。**第二片（同日）已完成**：后端事实表按 primitive 出行，`ContentPass` 按 `command.primitive` 取行 —— R3 关闭。**设备级证据同日补上**：`PrimitiveDrawTest.OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUpload`
 （一份顶点 + 三条图元 ⇒ 画面三段颜色、`draws=1`、`uploads=3` 且稳态帧零重传）。设计见 `graphics-primitives-2026-10-22.md`；2026-10-21 裁决留档在下。（详见下方"R3 裁决"） | OSG `Drawable` 的 `PrimitiveSet`、vsg `VertexIndexDraw`、glTF 的 `primitive.mode`、Unity 的 `MeshTopology`、Filament 的 `PrimitiveType` 都随 drawable | **同一子树需要两种图元**（点云/线 + 三角网格）**且调用点开始复制 `StateNode`**，或某个导入器要保留 `POINTS`/`LINES` 图元 |
-| R4 | 变换只有 `MatrixTransform`（无 TRS 节点），`math` 已有 `Quaternion`/`Isometry3` | three.js `Object3D` 的 position/quaternion/scale、Unity `Transform`、OSG `MatrixTransform`+`PositionAttitudeTransform` | 逐帧驱动节点变换并需要插值（URDF 关节回放） |
+| R4 | ~~变换只有 `MatrixTransform`（无 TRS 节点）~~ **已关闭（2026-10-22）**：新增 `AutoTransform`（`Group` + `position()` / `rotation()` / `scale()`，矩阵按 `T * R * S` 自动合成；`setTransform(Isometry3d)` 只改平移 + 旋转，缩放另存）；每次 set 走 `invalidateBounds()`，包围盒与收集记忆体一起失效。判据 `AutoTransformTest.*` 5 条（合成顺序、Isometry 交接、嵌套、包围盒、收集失效）。设计见下方“R4 裁决”。 | three.js `Object3D` 的 position/quaternion/scale、Unity `Transform`、OSG `MatrixTransform`+`PositionAttitudeTransform` | ~~逐帧驱动节点变换并需要插值（URDF 关节回放）~~（已做） |
 | R5 | 材质是单一平铺 Phong + 一张贴图 + 采样器按 magic uniform 名；无 `MaterialInstance`；几何侧 `PbrMaterial` 到渲染侧只能是近似 | Filament `Material`/`MaterialInstance`、three.js `Material` 子类 + `uniforms` | 逐对象参数（高亮/tint）在第二个调用点出现，或需要真实 PBR |
 | R6 | ~~无 MSAA：`TargetShape::samples` / `PipelineKey.samples` 存在但宿主无法设置，`Capabilities` 无 `max_samples`~~ **已关闭（2026-10-22）**：`RenderTarget::setSamples` 是唯一入口，采样数进目标形状 ⇒ 管线键 ⇒ 通道与图像；离屏目标自建多重采样图并**颜色与深度各解析一张单采样图**（`picture()` / `depthPicture()` 即"画面"，深度 `sample0` 不平均），R6b 后"MS 深度提升/出借/回读"全部合法，只留"MS 目标不能**借入**深度"一条显式拒绝；默认窗口仍单采样。`Capabilities::max_samples` 报设备限制 | 所有引擎都有 MSAA 开关 | ~~画面锯齿成为用户可见问题~~（用户 2026-10-22 直接指定做） |
 | R7 | 无实例化、无 DAG（`Group::addChild` 自动脱离旧父） | OSG/vsg 允许一节点多父；`InstancedMesh` | 重复件数量让收集/内存成为瓶颈 |
@@ -145,6 +145,23 @@ VINE_ASAN_FILTER='ModelSceneTest.*'` ⇒ RESULT: PASS）。
   （与 material/program 同一条优先级）；`Scene::collectRenderCommands` 折叠后覆盖 `authored_state.topology`；
   后端零改动（`PipelineKey::topology` 与按类选半片已就位）；判据 = 同一子树里的点云与网格产生两条 pipeline，
   并去掉 `demo_plugin` 的 `StateNode` 包裹。
+
+### R4 裁决（2026-10-22）：TRS 节点叫 `AutoTransform`，与 `MatrixTransform` 并列
+
+- **形状**：`AutoTransform : Group` 持有 `Point3d position_` / `Quatd rotation_` / `Vec3d scale_`（默认
+  零 / 单位四元数 / 1），每次 set 重算 `T * R * S` 并 `invalidateBounds()`；`matrix()` 是只读的合成结果，
+  `transform()` / `setTransform()` 与 `Isometry3d` 互转（缩放不参与）。
+- **为什么不是 `MatrixTransform` 的子类**：矩阵是父类的唯一事实；TRS 子类若继承 `setMatrix`，同一位置会出现
+  “属性说一套、矩阵说一套”两种真相，而父类的 setter 又不能删。两个并列的 `Group` 子类让两种拼写各自完整。
+- **为什么叫这个名字**：用户点名 `AutoTransform`；“auto” 指矩阵随属性自动合成。**这与 OSG 的
+  `AutoTransform`（面向相机的 billboard）同名不同义**，头文件与用户指南都写明；要 billboard 是另一条
+  （需要相机 / 视图相关的收集），不要拿这个代替。
+- **为什么不现在做 billboard**：今天的命令收集是视图无关的（一份命令表多个 pass 共用）；billboard 要把
+  相机放进收集，属于另一条设计。R4 的触发条件（URDF 关节回放）只需要 TRS。
+- **判据**：`AutoTransformTest.ComposesTranslationRotationAndScale`（`T*R*S` 的数值）、
+  `SetTransformTakesAnIsometryAndLeavesScaleAlone`、`NestedTransformsAccumulate`、
+  `WorldBoxFollowsTheProperties`（包围盒随属性更新）、`AnEditInvalidatesTheCollectedCommands`
+  （收集记忆体失效）。
 
 ## 3. 本轮切片与验收（已落地 2026-10-21）
 | 切片 | 内容 | 判据（实测） |

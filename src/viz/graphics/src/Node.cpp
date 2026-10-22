@@ -194,7 +194,7 @@ Mat4d Node::worldMatrix() const
 {
     // Fold the local matrices from the top of the chain down to this node.
     // Non-transform nodes contribute the identity, so only enclosing
-    // MatrixTransforms (and this node itself when it is one) affect the
+    // transform nodes (and this node itself when it is one) affect the
     // result.
     //
     // Walked bottom-up with a left-multiply per level: the previous recursive

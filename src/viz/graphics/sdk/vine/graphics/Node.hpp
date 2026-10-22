@@ -35,12 +35,12 @@ inline constexpr std::uint32_t kDefaultLayer = 1u << 0;
  * @brief Base class of every scene-graph node.
  *
  * @details
- * - The OSG/vsg-style base of the scene hierarchy: Group aggregates children, MatrixTransform places a
- *   subtree with a local matrix, StateNode applies render state, Geometry carries vertex data. Node itself
- *   provides only the shared identity - name, subtree visibility / opacity, the parent link, world-matrix /
- *   bounds queries - and is NOT a container: it holds no transform of its own (attach children through Group,
- *   place a subtree through MatrixTransform). Its boundingBox() answers in world space at any depth, by
- *   walking the parent chain.
+ * - The OSG/vsg-style base of the scene hierarchy: Group aggregates children, MatrixTransform (matrix) and
+ *   AutoTransform (position / rotation / scale) place a subtree, StateNode applies render state, Geometry
+ *   carries vertex data. Node itself provides only the shared identity - name, subtree visibility / opacity,
+ *   the parent link, world-matrix / bounds queries - and is NOT a container: it holds no transform of its own
+ *   (attach children through Group, place a subtree through MatrixTransform / AutoTransform). Its
+ *   boundingBox() answers in world space at any depth, by walking the parent chain.
  * - WHAT A NODE PASSES DOWN (the fold rules; the full table is in docs/guides/graphics.md):
  *   - visibility is a HARD GATE, not a folded value: an invisible node takes its whole subtree out of the
  *     collection, the ray walks and the scene's box (see isVisible);
@@ -51,9 +51,9 @@ inline constexpr std::uint32_t kDefaultLayer = 1u << 0;
  * - BOUNDS ARE CACHED PER NODE (see .ai/design/graphics-scene-graph.md §10.2): the collection walk keeps each
  *   subtree's box in the node's OWN frame, so a camera move recomputes nothing and a culled subtree costs
  *   one transformed box instead of a walk. The cache lives by ANNOUNCEMENT: every built-in mutation
- *   (MatrixTransform::setMatrix, Group::addChild / removeChild, the geometry setters) calls
- *   invalidateBounds(), and a node whose placement or extent is computed OUTSIDE those paths must call it
- *   too. A node that answers only in world space (an overridden boundingBox()) is left uncached - its
+ *   (MatrixTransform::setMatrix / AutoTransform setters, Group::addChild / removeChild, the geometry
+ *   setters) calls invalidateBounds(), and a node whose placement or extent is computed OUTSIDE those
+ *   paths must call it too. A node that answers only in world space (an overridden boundingBox()) is left uncached - its
  *   ancestors compute from scratch, which is always sound (see subtreeBounds).
  */
 class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
@@ -188,8 +188,8 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      *
      * @details
      * - Every node answers in world space: a Geometry's box is the bound of its vertex data transformed by
-     *   the enclosing MatrixTransforms; Group / MatrixTransform union their children's boxes (which are
-     *   already world-space); base Node (never a renderable or container) answers empty.
+     *   the enclosing transform nodes; Group / MatrixTransform / AutoTransform union their children's boxes
+     *   (which are already world-space); base Node (never a renderable or container) answers empty.
      * - Visibility is NOT folded here - a hidden node still answers (the pure geometry query).
      *   Scene::boundingBox is the one that answers for the VISIBLE content: it prunes hidden subtrees at
      *   any depth.
@@ -201,8 +201,8 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     /** @brief Gets the accumulated world matrix of this node.
      *
      * @details
-     * - The product, from the scene root downwards, of every enclosing MatrixTransform's local matrix
-     *   (identity for every other node); for a MatrixTransform it includes its own. For a leaf Geometry it
+     * - The product, from the scene root downwards, of every enclosing transform node's local matrix
+     *   (identity for every other node); for a transform node it includes its own. For a leaf Geometry it
      *   places the local vertex data in world space.
      * - This walks the ancestor chain: a traversal should accumulate top-down with localTransformMatrix()
      *   (one product per node) instead of calling this once per node (one product per ancestor).
@@ -211,7 +211,7 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      */
     Mat4d worldMatrix() const;
 
-    /** @brief Gets this node's own local matrix contribution (identity unless a MatrixTransform).
+    /** @brief Gets this node's own local matrix contribution (identity unless a transform node).
      *
      * @details
      * - Public so a traversal can accumulate world matrices top-down:
