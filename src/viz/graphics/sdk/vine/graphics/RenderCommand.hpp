@@ -18,12 +18,17 @@ using vn::math::Mat4d;
  * @brief A single geometry rendering instruction.
  *
  * @details
- * - Encapsulates everything needed to render one object: the leaf geometry itself, its material, and its world-space
- *   model matrix baked from the enclosing MatrixTransform chain.
+ * - ONE COMMAND IS ONE DRAW. It names the leaf geometry AND which of its primitives to draw (see
+ *   Primitive.hpp): a geometry with three parts collects three commands, because a primitive's topology, index
+ *   span and shading are exactly what a draw is. The material and program here are the RESOLVED ones (the
+ *   primitive's, else the nearest StateNode's), so a backend never has to look at the scene graph to shade.
  */
 struct VN_GRAPHICS_API RenderCommand {
     /** Leaf geometry to render. */
     GeometryPtr geometry;
+
+    /** Which of the geometry's primitives this command draws (its index, see Geometry::primitive). */
+    std::uint32_t primitive_index{0};
 
     /** Material to use. */
     MaterialPtr material;
@@ -87,10 +92,27 @@ struct VN_GRAPHICS_API RenderCommand {
 
     /** @brief Constructs a render command.
      *
-     * @param g     Leaf geometry to render.
-     * @param m     Material to use.
-     * @param model World-space model matrix.
+     * @param g             Leaf geometry to render.
+     * @param m             Material to use.
+     * @param model         World-space model matrix.
+     * @param primitive_index Which of @p g's primitives this command draws.
      */
-    RenderCommand(intrusive_ptr<Geometry> g, intrusive_ptr<Material> m, const Mat4d& model);};
+    RenderCommand(intrusive_ptr<Geometry> g, intrusive_ptr<Material> m, const Mat4d& model,
+                  std::uint32_t primitive_index = 0);
+
+    /** @brief Gets the primitive this command draws (null when the geometry no longer has it).
+     *
+     * @details
+     * - Read through the geometry rather than copied: a primitive's index span is a slice that follows a
+     *   growing buffer, and the collected list is rebuilt when the content announces a change, so a command
+     *   never outlives the shape it names.
+     *
+     * @return The primitive, or null when the geometry was edited under this command.
+     */
+    [[nodiscard]] const Primitive* primitive() const noexcept
+    {
+        return geometry != nullptr ? geometry->primitive(primitive_index) : nullptr;
+    }
+};
 
 VN_GRAPHICS_NS_END

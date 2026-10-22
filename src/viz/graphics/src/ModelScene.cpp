@@ -21,6 +21,34 @@ VN_GRAPHICS_NS_BEGIN
 
 namespace
 {
+/**
+ * @brief Puts @p material on every primitive of @p geometry (adding one when it has none).
+ *
+ * The material is the DRAW's (see Primitive.hpp): a leaf built from one shape has one primitive, and a
+ * caller that only holds the geometry assigns through it instead of keeping a second spelling on the leaf.
+ *
+ * @param geometry Geometry to shade.
+ * @param material Material to assign.
+ */
+void assignMaterial(Geometry& geometry, intrusive_ptr<Material> material)
+{
+    if (geometry.primitiveCount() == 0) {
+        Primitive draw;
+        draw.material = std::move(material);
+        geometry.addPrimitive(std::move(draw));
+        return;
+    }
+    for (std::size_t index = 0; index < geometry.primitiveCount(); ++index) {
+        Primitive draw = *geometry.primitive(index);
+        draw.material  = material;
+        geometry.setPrimitive(index, std::move(draw));
+    }
+}
+}  // namespace
+
+
+namespace
+{
 
 /// The share of a flat colour a ColorMaterial's ambient term gets: the engine's own default ambient is 0.2 grey,
 /// so a colour-only source keeps the same "unlit parts are dark, not black" look its Phong sibling would have.
@@ -88,7 +116,7 @@ struct Conversion
             }
             leaf->setName(entry.mesh->name());
             if (entry.material != nullptr) {
-                leaf->setMaterial(sharedMaterial(*entry.material));
+                assignMaterial(*leaf, sharedMaterial(*entry.material));
                 // PBR carries a per-material opacity; the engine's transparency is the NODE's (a shared material's
                 // alpha would make every drawable translucent), so it is put on the leaf here.
                 if (const auto* pbr = dynamic_cast<const vn::geometry::PbrMaterial*>(entry.material.get())) {

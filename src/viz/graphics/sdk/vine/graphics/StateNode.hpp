@@ -3,6 +3,8 @@
 
 #include <optional>
 
+#include "Topology.hpp"
+
 #include "Group.hpp"
 // Included rather than forward-declared: this class HOLDS an intrusive_ptr<Material>, so every translation
 // unit that destroys a StateNode instantiates the reference-count hooks and needs the complete type.
@@ -49,21 +51,6 @@ enum class CullMode
     None,  ///< No faces are culled (two-sided rendering).
     Front, ///< Counter-clockwise (front-facing) triangles are culled.
     Back,  ///< Clockwise (back-facing) triangles are culled.
-};
-
-/**
- * @brief Primitive topology of a drawable's vertex stream.
- *
- * @details
- * - How vertices assemble into primitives - a render-state item distinct from PolygonMode (which controls
- *   how triangles rasterise): the same vertex data draws filled, as wireframe (PolygonMode::Line) or as
- *   points (PolygonMode::Point) without touching the geometry, and point clouds use Topology::Points.
- */
-enum class Topology
-{
-    Triangles,  ///< Triangle list (the default).
-    Points,     ///< Unconnected points (e.g. point clouds).
-    Lines,      ///< Line list.
 };
 
 /**
@@ -151,7 +138,6 @@ struct VN_GRAPHICS_API RenderState
     std::optional<CullMode>    cullMode;     ///< Face culling override.
     std::optional<BlendState>  blend;        ///< Blending override.
     std::optional<PolygonMode> polygonMode;  ///< Polygon rasterisation override.
-    std::optional<Topology>    topology;     ///< Primitive topology override.
 
     /** @brief Returns whether no item is set.
      *
@@ -159,7 +145,7 @@ struct VN_GRAPHICS_API RenderState
      */
     bool empty() const
     {
-        return !depth && !cullMode && !blend && !polygonMode && !topology;
+        return !depth && !cullMode && !blend && !polygonMode;
     }
 
     /** @brief Overlays another state block onto this one.
@@ -176,8 +162,7 @@ struct VN_GRAPHICS_API RenderState
 inline bool operator==(const RenderState& lhs, const RenderState& rhs)
 {
     return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode &&
-           lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode &&
-           lhs.topology == rhs.topology;
+           lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode;
 }
 
 /** @brief Returns whether two optional state blocks differ. */
@@ -200,7 +185,10 @@ struct VN_GRAPHICS_API ResolvedRenderState
     CullMode     cullMode = CullMode::None;    ///< Face culling (default: none).
     BlendState   blend;                        ///< Blending (default: disabled).
     PolygonMode  polygonMode = PolygonMode::Fill;  ///< Polygon mode (default: fill).
-    Topology     topology = Topology::Triangles;   ///< Primitive topology (default: triangles).
+    /// The EFFECTIVE primitive topology of the draw: the PRIMITIVE's own value (see Primitive.hpp), or the
+    /// pass' override of it for the whole view. It has no "content" layer and no default here - a command
+    /// without a primitive draws nothing - so this is filled by the caller that knows the data.
+    Topology     topology = Topology::Triangles;
 };
 
 /** @brief Returns whether two resolved states are equal. */
@@ -228,6 +216,7 @@ enum class StateOrigin
     Default,   ///< Nobody said: the engine's default for that item.
     Content,   ///< A StateNode on the command's path authored it (the content's own word).
     Pass,      ///< The pass that draws it (see PassRenderState).
+    Data,      ///< The DATA said it (a primitive's topology): not a state anybody authored.
 };
 
 /** @brief The origin of every item of a resolved state (one per item, in the same order as ResolvedRenderState). */
@@ -237,7 +226,7 @@ struct VN_GRAPHICS_API RenderStateOrigin
     StateOrigin cullMode{StateOrigin::Default};     ///< Where the cull mode came from.
     StateOrigin blend{StateOrigin::Default};        ///< Where the blend state came from.
     StateOrigin polygonMode{StateOrigin::Default};  ///< Where the rasterisation mode came from.
-    StateOrigin topology{StateOrigin::Default};     ///< Where the topology came from.
+    StateOrigin topology{StateOrigin::Default};     ///< Where the topology came from (Data or Pass).
 };
 
 /**
@@ -260,6 +249,10 @@ struct VN_GRAPHICS_API PassRenderState
 {
     DepthMode                  depth{DepthMode::TestAndWrite};  ///< Depth policy for content that authored none.
     std::optional<PolygonMode> polygonMode{};                   ///< Rasterisation override for every command.
+    /// Primitive-topology override for every command ("show me this scene as points"). It overrides what the
+    /// DATA states, because how a view looks at a scene is the pass' decision - the same rule the rasterisation
+    /// mode already follows. The data keeps saying what it is; a pipeline is compiled per effective topology.
+    std::optional<Topology>    topology{};
 };
 
 /** @brief One command's FINAL state in one pass, and the layer each item came from. */
@@ -282,15 +275,19 @@ struct VN_GRAPHICS_API ResolvedCommandState
  * @param authored The state the CONTENT authored (RenderCommand::authored_state): every item left unset is
  *                 "nobody on the path said anything about it", which is not the same as "set to the default".
  * @param pass     What the pass drawing it overrides (RenderPass::stateOverrides).
+ * @param data_topology The PRIMITIVE's topology (see Primitive.hpp): the data's own word, which the pass may
+ *                 override but a StateNode cannot (topology is not state - it says how this draw consumes its
+ *                 vertex/index data).
  * @return The final state and the origin of each item.
  */
-VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass);
+VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass,
+                                                       Topology data_topology);
 
 /**
  * @brief Scene-graph node applying render state to its subtree.
  *
  * @details
- * - Contributes optional state items (depth, culling, blending, polygon mode, topology) to every drawable in
+ * - Contributes optional state items (depth, culling, blending, polygon mode) to every drawable in
  *   its subtree; an unset item is inherited from enclosing StateNodes, and a deeper node overrides a
  *   shallower one for the same item.
  * - A leaf's effective state is the fold of every StateNode from the scene root to the leaf
@@ -368,21 +365,6 @@ class VN_GRAPHICS_API StateNode : public Group {
      * @return The override, or nullopt when unset (the enclosing state applies).
      */
     std::optional<PolygonMode> polygonMode() const;
-
-    /** @brief Sets the primitive topology for this subtree.
-     *
-     * @param topology How vertices assemble into primitives (see Topology).
-     */
-    void setTopology(Topology topology);
-
-    /** @brief Clears the topology override so enclosing state is inherited. */
-    void clearTopology();
-
-    /** @brief Gets the topology override.
-     *
-     * @return The override, or nullopt when unset (the enclosing state applies).
-     */
-    std::optional<Topology> topology() const;
 
     /** @brief Sets a custom shader program for this subtree.
      *

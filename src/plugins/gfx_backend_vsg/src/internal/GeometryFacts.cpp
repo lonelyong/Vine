@@ -61,6 +61,20 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
     out.geometry = &geometry;
     out.revision = geometry.revision();
 
+    // THE BOUNDARY OF THIS SLICE: one draw per geometry. The SDK and the plan already carry a draw's identity
+    // (Geometry::primitiveCount / RenderCommand::primitive_index / CompiledCommand::primitive), but this table
+    // still describes ONE index stream, so a geometry that states several primitives is REFUSED rather than
+    // drawn as its first primitive N times - which would be a wrong picture nobody could explain.
+    // The follow-up is per-primitive rows (topology + index span + count) and one draw per command; until then
+    // a multi-part asset is expressed as several geometries sharing buffers (the arena rule, see the guide's
+    // §2.7), which needs no new backend work.
+    if (geometry.primitiveCount() > 1U) {
+        return FactMiss::Malformed;
+    }
+    if (geometry.primitiveCount() == 0U) {
+        return FactMiss::Unknown;  // no draw at all: nothing to describe
+    }
+
     const std::vector<std::uint32_t> locations = geometry.bufferLocations();
     if (locations.empty())
     {

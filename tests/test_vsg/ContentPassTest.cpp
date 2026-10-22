@@ -6464,7 +6464,12 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     command.geometry             = geometry;
     command.material             = material;
     command.program              = program;
-    command.authored_state.topology = vn::graphics::Topology::Points;
+    // The point cloud IS a points draw: the primitive states it (see Primitive.hpp) - a StateNode cannot.
+    if (geometry != nullptr && geometry->primitive(0) != nullptr) {
+        vn::graphics::Primitive points = *geometry->primitive(0);
+        points.topology                = vn::graphics::Topology::Points;
+        geometry->setPrimitive(0U, std::move(points));
+    }
     const std::vector<RenderCommand> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });

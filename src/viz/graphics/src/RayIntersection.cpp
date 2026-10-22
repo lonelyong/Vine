@@ -198,7 +198,7 @@ struct GeometryMesh {
  * @param geometry Geometry to read.
  * @return GeometryMesh with no positions for an empty geometry.
  */
-GeometryMesh meshOfGeometry(const Geometry* geometry)
+GeometryMesh meshOfGeometry(const Geometry* geometry, const Primitive* primitive)
 {
     GeometryMesh mesh;
     if (geometry != nullptr) {
@@ -214,11 +214,46 @@ GeometryMesh meshOfGeometry(const Geometry* geometry)
                 mesh.positions.emplace_back(p[0], p[1], p[2]);
             }
         }
-        if (geometry->hasIndices()) {
-            mesh.indices = geometry->indices();
+        if (primitive != nullptr && primitive->isIndexed()) {
+            mesh.indices = primitive->indices.span();
         }
     }
     return mesh;
+}
+
+/**
+ * @brief Walks every TRIANGLE primitive of @p geometry and reports each hit it produces.
+ *
+ * A geometry is a set of primitives, and only the triangle ones are surfaces: a mesh drawn with its edge
+ * lines and a selected-point set has one triangle primitive and two that cannot be hit. Each hit is tagged
+ * with the primitive it came from, so a caller can tell "which part of the asset" from "which geometry".
+ *
+ * @param geometry Geometry to intersect.
+ * @param ray      The ray, in world space.
+ * @param world    The geometry's world matrix.
+ * @param visit    Called for every hit (receives it by value, already tagged).
+ */
+template <typename Visit>
+void forEachTriangleHit(const Geometry* geometry, const Ray& ray, const Mat4d& world, Visit&& visit)
+{
+    if (geometry == nullptr) {
+        return;
+    }
+    for (std::size_t index = 0; index < geometry->primitiveCount(); ++index) {
+        const Primitive* primitive = geometry->primitive(index);
+        if (primitive == nullptr || primitive->topology != Topology::Triangles) {
+            continue;   // a line or point primitive is not a surface
+        }
+        const GeometryMesh mesh = meshOfGeometry(geometry, primitive);
+        if (!mesh.valid()) {
+            continue;
+        }
+        traverseMesh(mesh.positions, mesh.indices, ray, world, [&](const RayIntersectionResult& hit) {
+            RayIntersectionResult tagged = hit;
+            tagged.primitiveIndex        = static_cast<std::uint32_t>(index);
+            visit(tagged);
+        });
+    }
 }
 
 /**
@@ -358,19 +393,14 @@ void intersectNode(const Ray& ray, const Node* node, std::uint32_t inherited_lay
         }
         // Leaf geometry: test against its data placed by the ancestor
         // MatrixTransform chain.
-        const GeometryMesh mesh = meshOfGeometry(geometry);
-        if (!mesh.valid()) {
-            return;
-        }
         const Mat4d world = node->worldMatrix();
         Geometry* geom = const_cast<Geometry*>(geometry);
-        traverseMesh(mesh.positions, mesh.indices, ray, world,
-                     [&](const RayIntersectionResult& hit) {
-                         if (hit.distance < best.distance) {
-                             best = hit;
-                             best.geometry = geom;
-                         }
-                     });
+        forEachTriangleHit(geometry, ray, world, [&](RayIntersectionResult hit) {
+            if (hit.distance < best.distance) {
+                best          = std::move(hit);
+                best.geometry = geom;
+            }
+        });
         return;
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
@@ -439,15 +469,10 @@ void collectNodeHits(const Ray& ray, const Node* node, std::uint32_t inherited_l
         if ((layers & layer_mask) == 0) {
             return;
         }
-        const GeometryMesh mesh = meshOfGeometry(geometry);
-        if (!mesh.valid()) {
-            return;
-        }
         const Mat4d world = node->worldMatrix();
         Geometry* geom = const_cast<Geometry*>(geometry);
-        traverseMesh(mesh.positions, mesh.indices, ray, world,
-                     [&](const RayIntersectionResult& hit) {
-                         RayIntersectionResult copy = hit;
+        forEachTriangleHit(geometry, ray, world, [&](RayIntersectionResult hit) {
+                         RayIntersectionResult copy = std::move(hit);
                          copy.geometry = geom;
                          out.push_back(std::move(copy));
                      });
@@ -469,14 +494,9 @@ RayIntersectionResult RayIntersection::intersect(const Ray& ray, raw_ptr<Geometr
     if (geometry == nullptr) {
         return result;
     }
-    const GeometryMesh mesh = meshOfGeometry(geometry);
-    if (!mesh.valid()) {
-        return result;
-    }
-    traverseMesh(mesh.positions, mesh.indices, ray, world,
-                 [&](const RayIntersectionResult& hit) {
+    forEachTriangleHit(geometry, ray, world, [&](RayIntersectionResult hit) {
                      if (hit.distance < result.distance) {
-                         result = hit;
+                         result = std::move(hit);
                      }
                  });
     if (result.hit) {
@@ -500,13 +520,8 @@ std::vector<RayIntersectionResult> RayIntersection::intersect(const Ray& ray,
         }
         return results;
     }
-    const GeometryMesh mesh = meshOfGeometry(geometry);
-    if (!mesh.valid()) {
-        return results;
-    }
-    traverseMesh(mesh.positions, mesh.indices, ray, world,
-                 [&](const RayIntersectionResult& hit) {
-                     RayIntersectionResult copy = hit;
+    forEachTriangleHit(geometry, ray, world, [&](RayIntersectionResult hit) {
+                     RayIntersectionResult copy = std::move(hit);
                      copy.geometry = geometry;
                      results.push_back(std::move(copy));
                  });

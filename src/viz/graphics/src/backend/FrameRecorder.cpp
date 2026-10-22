@@ -399,6 +399,13 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
 
         target.geometry          = source.geometry.get();
         target.geometry_revision = source.geometry != nullptr ? source.geometry->revision() : 0;
+        target.primitive         = source.primitive_index;
+        // The primitive's topology travels with the command: it is the data's word (the pass may still override
+        // it - see resolveRenderState), and a command whose primitive the geometry no longer holds keeps the
+        // documented default, which draws nothing because the facts cannot answer for it.
+        if (const vn::graphics::Primitive* primitive = source.primitive()) {
+            target.topology = primitive->topology;
+        }
         // The pass' override wins over the command's own program (see render()): the identity the plan keys its
         // pipeline variants by is therefore the EFFECTIVE one, and nothing downstream needs to know about overrides.
         target.program           = programRef(program_override != nullptr ? program_override : source.program.get());

@@ -81,23 +81,6 @@ std::optional<PolygonMode> StateNode::polygonMode() const
     return state_.polygonMode;
 }
 
-void StateNode::setTopology(Topology topology)
-{
-    announceContentChange();
-    state_.topology = topology;
-}
-
-void StateNode::clearTopology()
-{
-    announceContentChange();
-    state_.topology.reset();
-}
-
-std::optional<Topology> StateNode::topology() const
-{
-    return state_.topology;
-}
-
 const RenderState& StateNode::renderState() const
 {
     return state_;
@@ -162,9 +145,6 @@ void RenderState::merge(const RenderState& other)
     if (other.polygonMode) {
         polygonMode = other.polygonMode;
     }
-    if (other.topology) {
-        topology = other.topology;
-    }
 }
 
 RenderState collectRenderState(raw_ptr<const Node> node)
@@ -200,13 +180,11 @@ ResolvedRenderState resolveRenderState(const RenderState& state)
     if (state.polygonMode) {
         resolved.polygonMode = *state.polygonMode;
     }
-    if (state.topology) {
-        resolved.topology = *state.topology;
-    }
     return resolved;
 }
 
-ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass)
+ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass,
+                                        Topology data_topology)
 {
     ResolvedCommandState resolved;
 
@@ -224,10 +202,11 @@ ResolvedCommandState resolveRenderState(const RenderState& authored, const PassR
         resolved.state.polygonMode = *authored.polygonMode;
         resolved.origin.polygonMode = StateOrigin::Content;
     }
-    if (authored.topology) {
-        resolved.state.topology = *authored.topology;
-        resolved.origin.topology = StateOrigin::Content;
-    }
+    // Topology: the DATA's own word (a primitive's topology) - no StateNode layer exists for it, because a
+    // subtree cannot reinterpret another object's vertex/index data. The pass may override it below, which is
+    // the "show me this scene as points" view switch.
+    resolved.state.topology  = data_topology;
+    resolved.origin.topology = StateOrigin::Data;
 
     // Depth: the pass states a POLICY, the content may state an intent. An authored depth wins (finer-grained
     // intent over the pass default); where the content authored none, the pass decides whether depth is used at
@@ -251,6 +230,13 @@ ResolvedCommandState resolveRenderState(const RenderState& authored, const PassR
         resolved.origin.polygonMode = StateOrigin::Pass;
     }
 
+    // Same rule for the more drastic view switch: a pass that says "assemble everything as points" wins over
+    // what the data states (and the pipeline is then compiled for that topology - see core::PipelineKey).
+    if (pass.topology) {
+        resolved.state.topology  = *pass.topology;
+        resolved.origin.topology = StateOrigin::Pass;
+    }
+
     return resolved;
 }
 
@@ -267,9 +253,13 @@ ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node)
     if (node == nullptr) {
         return ShaderProgramPtr();
     }
+    // The LEAF's own word is the first PRIMITIVE's now (see Primitive.hpp): this helper answers "what would
+    // this node's single draw use", which is the question a host asks about a leaf it built itself. A
+    // geometry whose draws state different programs has no single answer - a caller that means a specific
+    // draw reads `RenderCommand::program`, which the collection already resolved per primitive.
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
-        if (raw_ptr<ShaderProgram> own = geometry->program()) {
-            return ShaderProgramPtr(own);
+        if (const Primitive* draw = geometry->primitive(0); draw != nullptr && draw->program != nullptr) {
+            return ShaderProgramPtr(draw->program);
         }
     }
     for (const Node* current = node->parent(); current != nullptr;
@@ -292,9 +282,10 @@ MaterialPtr effectiveMaterial(raw_ptr<const Node> node)
     if (node == nullptr) {
         return MaterialPtr();
     }
+    // Same rule as effectiveProgram: the first primitive is the leaf's word for the single-draw case.
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
-        if (raw_ptr<Material> own = geometry->material()) {
-            return MaterialPtr(own);
+        if (const Primitive* draw = geometry->primitive(0); draw != nullptr && draw->material != nullptr) {
+            return MaterialPtr(draw->material);
         }
     }
     for (const Node* current = node->parent(); current != nullptr; current = current->parent()) {

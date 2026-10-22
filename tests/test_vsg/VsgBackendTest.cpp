@@ -2975,8 +2975,15 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     //    is also the positive control for every "no compile" claim above: it shows the counter moving for an
     //    edit that really is identity, in this very setup.
     {
-        const EditCostCounters before    = readEditCosts(*store, *assembly, pool);
-        commands[0].authored_state.topology = vn::graphics::Topology::Lines;
+        const EditCostCounters before = readEditCosts(*store, *assembly, pool);
+        // Topology is the PRIMITIVE's now (see Primitive.hpp): switching the class is an edit of the geometry's
+        // data statement, and the geometry announces it the way any shape change is announced.
+        if (commands[0].geometry != nullptr && commands[0].primitive() != nullptr) {
+            vn::graphics::Primitive redrawn = *commands[0].primitive();
+            redrawn.topology                = vn::graphics::Topology::Lines;
+            commands[0].geometry->setPrimitive(commands[0].primitive_index, std::move(redrawn));
+            commands[0].geometry->bumpRevision();
+        }
         drive();
         const EditCostCounters after = readEditCosts(*store, *assembly, pool);
         EXPECT_EQ(after.created - before.created, 1U)

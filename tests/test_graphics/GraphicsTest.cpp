@@ -2065,27 +2065,34 @@ TEST(SceneTest, CollectCommandsBakesNestedWorldMatrix)
 TEST(GeometryTest, CountsStayDataStatsUnderPointsTopology)
 {
     // Topology lives on StateNode render state, NOT on the geometry data:
-    // the vertex count is a pure data statistic and must not change when an
-    // enclosing StateNode overrides the draw topology.
+    // The vertex count is a pure data statistic and does not change when the PRIMITIVE states another
+    // topology: topology is the data's word (see Primitive.hpp), and the count comes from the positions.
     auto geom = geometryOf(*makeUnitTriangle());  // 3 vertices
     EXPECT_EQ(geom->vertexCount(), 3u);
 
     Scene scene;
-    auto state = intrusive_ptr<StateNode>(new StateNode());
-    state->setTopology(Topology::Points);
     auto holder = makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri");
-    state->addChild(holder);
-    scene.setRoot(state);
+    scene.setRoot(holder);
 
     Camera cam;
     setupLookAtCamera(cam);
     auto commands = (*scene.collectRenderCommands(&cam));
     ASSERT_EQ(commands.size(), 1u);
-    // The draw topology rides the content's state (and the pass drawing it decides the rest - see
-    // resolveRenderState); the data counts stay.
-    ASSERT_TRUE(commands[0].authored_state.topology.has_value());
-    EXPECT_EQ(*commands[0].authored_state.topology, Topology::Points);
-    EXPECT_EQ(commands[0].geometry->vertexCount(), 3u);
+    // The topology is the geometry's PRIMITIVE, and restating it changes the draw's identity while the data
+    // counts stay: this is the pair of facts the old StateNode spelling used to blur.
+    ASSERT_EQ(commands[0].primitive_index, 0u);
+    ASSERT_NE(commands[0].primitive(), nullptr);
+    EXPECT_EQ(commands[0].primitive()->topology, Topology::Triangles);
+
+    Primitive points = *commands[0].primitive();
+    points.topology   = Topology::Points;
+    commands[0].geometry->setPrimitive(0U, std::move(points));
+    commands[0].geometry->bumpRevision();
+    commands         = (*scene.collectRenderCommands(&cam));
+    ASSERT_EQ(commands.size(), 1u);
+    ASSERT_NE(commands[0].primitive(), nullptr);
+    EXPECT_EQ(commands[0].primitive()->topology, Topology::Points);
+    EXPECT_EQ(commands[0].geometry->vertexCount(), 3u) << "the vertex count is a data statistic";
 }
 
 TEST(ShaderProgramTest, AggregatesStages)
@@ -2583,7 +2590,8 @@ class MockBackend : public RenderBackend {
             // against the pass that draws it (the rasterisation override travels with the pass' state, not in the
             // commands - see StateNode.hpp's resolveRenderState).
             last_polygon_modes.push_back(
-                resolveRenderState(command.authored_state, pass_state).state.polygonMode);
+                resolveRenderState(command.authored_state, pass_state, Topology::Triangles)
+                    .state.polygonMode);
         }
     }
 
@@ -6927,23 +6935,21 @@ TEST(StateNodeTest, NewNodeHasNoState)
     EXPECT_FALSE(state.cullMode().has_value());
     EXPECT_FALSE(state.blend().has_value());
     EXPECT_FALSE(state.polygonMode().has_value());
-    EXPECT_FALSE(state.topology().has_value());
 }
 
-TEST(StateNodeTest, TopologyIsStateAndDefaultsToTriangles)
+TEST(StateNodeTest, TopologyIsNotStateAtAll)
 {
+    // It used to be a subtree override; it is the PRIMITIVE's fact now (see Primitive.hpp), because it says
+    // how a draw consumes its vertex/index data. A StateNode contributes the state items only, so the
+    // resolved state's topology is whatever the DATA said - the default here is the caller's argument.
     StateNode state;
-    EXPECT_FALSE(state.topology().has_value());
-    EXPECT_EQ(effectiveRenderState(&state).topology, Topology::Triangles);
-
-    state.setTopology(Topology::Points);
-    ASSERT_TRUE(state.topology().has_value());
-    EXPECT_EQ(*state.topology(), Topology::Points);
-    EXPECT_EQ(effectiveRenderState(&state).topology, Topology::Points);
-
-    state.clearTopology();
-    EXPECT_FALSE(state.topology().has_value());
-    EXPECT_EQ(effectiveRenderState(&state).topology, Topology::Triangles);
+    EXPECT_EQ(effectiveRenderState(&state).topology, Topology::Triangles)
+        << "the content-only spelling has no data layer, so it keeps the documented default";
+    EXPECT_EQ(resolveRenderState(RenderState{}, PassRenderState{}, Topology::Lines).state.topology,
+              Topology::Lines)
+        << "the data's word is what resolves";
+    EXPECT_EQ(resolveRenderState(RenderState{}, PassRenderState{}, Topology::Lines).origin.topology,
+              StateOrigin::Data);
 }
 TEST(StateNodeTest, SettersAndClears)
 {
@@ -6999,11 +7005,9 @@ TEST(StateNodeTest, ResolveAppliesDefaults)
     RenderState partial;
     partial.cullMode    = CullMode::Back;
     partial.polygonMode = PolygonMode::Line;
-    partial.topology    = Topology::Points;
     const ResolvedRenderState resolved = resolveRenderState(partial);
     EXPECT_EQ(resolved.cullMode, CullMode::Back);
     EXPECT_EQ(resolved.polygonMode, PolygonMode::Line);
-    EXPECT_EQ(resolved.topology, Topology::Points);
     EXPECT_TRUE(resolved.depth.test);
     EXPECT_TRUE(resolved.depth.write);
 }
@@ -7165,12 +7169,11 @@ TEST(RenderStateTest, ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem)
     content.cullMode    = CullMode::Back;
     content.blend       = BlendState{ .enabled = true };
     content.polygonMode = PolygonMode::Line;
-    content.topology    = Topology::Lines;
 
     PassRenderState pass;
     pass.polygonMode = PolygonMode::Point;
 
-    const ResolvedCommandState resolved = resolveRenderState(content, pass);
+    const ResolvedCommandState resolved = resolveRenderState(content, pass, Topology::Lines);
 
     // What the content authored is kept, and it says so.
     EXPECT_EQ(resolved.state.cullMode, CullMode::Back);
@@ -7178,14 +7181,15 @@ TEST(RenderStateTest, ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem)
     EXPECT_TRUE(resolved.state.blend.enabled);
     EXPECT_EQ(resolved.origin.blend, StateOrigin::Content);
     EXPECT_EQ(resolved.state.topology, Topology::Lines);
-    EXPECT_EQ(resolved.origin.topology, StateOrigin::Content);
+    EXPECT_EQ(resolved.origin.topology, StateOrigin::Data) << "topology is the DATA's word, not a StateNode's";
     // ... except the one item the pass OVERRIDES: rasterisation is a viewing switch, so it wins even over a
     // content-authored Line (otherwise "back to shaded" could never be reached).
     EXPECT_EQ(resolved.state.polygonMode, PolygonMode::Point);
     EXPECT_EQ(resolved.origin.polygonMode, StateOrigin::Pass);
 
     // Depth is the asymmetric one: the pass states a POLICY for content that authored none...
-    const ResolvedCommandState from_pass = resolveRenderState(RenderState{}, PassRenderState{ .depth = DepthMode::TestOnly });
+    const ResolvedCommandState from_pass =
+        resolveRenderState(RenderState{}, PassRenderState{ .depth = DepthMode::TestOnly }, Topology::Triangles);
     EXPECT_TRUE(from_pass.state.depth.test);
     EXPECT_FALSE(from_pass.state.depth.write);
     EXPECT_EQ(from_pass.origin.depth, StateOrigin::Pass);
@@ -7194,13 +7198,14 @@ TEST(RenderStateTest, ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem)
     authored_depth.compare = CompareOp::Always;
     RenderState depth_content;
     depth_content.depth = authored_depth;
-    const ResolvedCommandState authored = resolveRenderState(depth_content, PassRenderState{ .depth = DepthMode::Disabled });
+    const ResolvedCommandState authored =
+        resolveRenderState(depth_content, PassRenderState{ .depth = DepthMode::Disabled }, Topology::Triangles);
     EXPECT_TRUE(authored.state.depth.test) << "an authored depth is kept even where the pass says 'no depth'";
     EXPECT_EQ(authored.state.depth.compare, CompareOp::Always);
     EXPECT_EQ(authored.origin.depth, StateOrigin::Content);
 
     // Nobody said anything: the engine's defaults, and the origins say so (per item).
-    const ResolvedCommandState defaults = resolveRenderState(RenderState{}, PassRenderState{});
+    const ResolvedCommandState defaults = resolveRenderState(RenderState{}, PassRenderState{}, Topology::Triangles);
     EXPECT_TRUE(defaults.state.depth.test);
     EXPECT_TRUE(defaults.state.depth.write);
     EXPECT_EQ(defaults.state.depth.compare, CompareOp::Less);
@@ -7211,11 +7216,21 @@ TEST(RenderStateTest, ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem)
     EXPECT_EQ(defaults.origin.cullMode, StateOrigin::Default);
     EXPECT_EQ(defaults.origin.blend, StateOrigin::Default);
     EXPECT_EQ(defaults.origin.polygonMode, StateOrigin::Default);
-    EXPECT_EQ(defaults.origin.topology, StateOrigin::Default);
+    EXPECT_EQ(defaults.origin.topology, StateOrigin::Data)
+        << "even the default topology came from the data layer (a draw always has one)";
+
+    // The pass' viewpoint override: it wins over the data, and says so.
+    PassRenderState as_points;
+    as_points.topology = Topology::Points;
+    const ResolvedCommandState viewed = resolveRenderState(RenderState{}, as_points, Topology::Triangles);
+    EXPECT_EQ(viewed.state.topology, Topology::Points);
+    EXPECT_EQ(viewed.origin.topology, StateOrigin::Pass);
 
     // The content-only spelling answers exactly like the same call with a pass that overrides nothing.
     const ResolvedRenderState alone = resolveRenderState(content);
-    const ResolvedCommandState with_empty_pass = resolveRenderState(content, PassRenderState{});
+    const ResolvedCommandState with_empty_pass = resolveRenderState(content, PassRenderState{}, Topology::Triangles);
+    // (the content-only spelling has no data layer, so its topology is the documented default - the same one
+    // the two-argument call takes)
     EXPECT_EQ(alone, with_empty_pass.state);
 }
 
@@ -7239,7 +7254,7 @@ TEST(SceneTest, CollectCommandsCarriesStateFromAncestorStateNode)
     ASSERT_EQ(commands.size(), 1u);
     // The command carries what the CONTENT authored; the pass completes it (and the default pass state changes
     // nothing here, so the resolution below is the whole picture).
-    const auto resolved = resolveRenderState(commands[0].authored_state, PassRenderState{});
+    const auto resolved = resolveRenderState(commands[0].authored_state, PassRenderState{}, Topology::Triangles);
     EXPECT_EQ(resolved.state.cullMode, CullMode::Back);
     EXPECT_EQ(resolved.origin.cullMode, StateOrigin::Content);
     EXPECT_TRUE(resolved.state.depth.test);
@@ -7284,13 +7299,14 @@ TEST(SceneTest, CollectCommandsDefaultsStateWithoutStateNode)
     // "Nobody said anything" is a fact of its own, and it is NOT the same as "said the default": the command
     // carries empty items, and the defaults appear in the resolution (where a pass could have said something).
     EXPECT_TRUE(commands[0].authored_state.empty());
-    const auto resolved = resolveRenderState(commands[0].authored_state, PassRenderState{});
+    const auto resolved = resolveRenderState(commands[0].authored_state, PassRenderState{}, Topology::Triangles);
     EXPECT_TRUE(resolved.state.depth.test);
     EXPECT_TRUE(resolved.state.depth.write);
     EXPECT_EQ(resolved.state.cullMode, CullMode::None);
     EXPECT_EQ(resolved.state.polygonMode, PolygonMode::Fill);
     EXPECT_EQ(resolved.origin.cullMode, StateOrigin::Default) << "and it says so, per item";
-    EXPECT_EQ(resolved.origin.topology, StateOrigin::Default);
+    EXPECT_EQ(resolved.origin.topology, StateOrigin::Data)
+        << "topology is never 'nobody said': it comes from the primitive (or the pass), see Primitive.hpp";
 }
 
 TEST(GeometryTest, RawPositionsDriveCountsAndBounds)
@@ -8360,7 +8376,7 @@ TEST(SceneTest, TheFoldedStateAgreesWithTheUpWalkingHelpers)
     const RenderState         folded   = collectRenderState(geometry.get());
     const ResolvedRenderState expected = effectiveRenderState(geometry.get());
     EXPECT_EQ(command.authored_state, folded) << "the command carries exactly what the fold said";
-    const ResolvedCommandState resolved = resolveRenderState(command.authored_state, PassRenderState{});
+    const ResolvedCommandState resolved = resolveRenderState(command.authored_state, PassRenderState{}, Topology::Triangles);
     EXPECT_EQ(resolved.state.cullMode, expected.cullMode) << "the DEEPER StateNode's cull mode wins";
     EXPECT_EQ(resolved.state.cullMode, CullMode::Front);
     EXPECT_EQ(resolved.origin.cullMode, StateOrigin::Content);

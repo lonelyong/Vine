@@ -16,6 +16,7 @@
 #include <vine/geometry/Shape.hpp>
 
 #include "Node.hpp"
+#include "Primitive.hpp"
 #include "ShaderAbi.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -274,8 +275,10 @@ struct VN_GRAPHICS_API AttributeChannel
  * @brief Leaf scene-graph node holding vertex data to render.
  *
  * @details
- * - Mirrors vsg::Geometry: an OPEN list of attribute buffers (location 0 = positions) plus optional
- *   indices, and the material / program to render with.
+ * - An OPEN list of attribute buffers (location 0 = positions) plus a list of PRIMITIVES: each is one
+ *   draw of that data (topology + index span + the material / program it is shaded with, see Primitive).
+ *   The vertex channels are what the primitives share, which is exactly why they live here and the
+ *   per-draw facts do not.
  * - It has NO children and NO transform of its own: attach it under a Group / StateNode and place it with
  *   an enclosing MatrixTransform, whose chain (Node::worldMatrix()) positions the data in world space; its
  *   world box is the bound of the location-0 positions through that chain.
@@ -285,7 +288,13 @@ class VN_GRAPHICS_API Geometry : public Node {
     VN_OBJECT_META_DECL;
 
   public:
-    /** @brief Constructs a geometry with no channels and no material. */
+    /** @brief Constructs a geometry with no channels and ONE default primitive (triangles, non-indexed).
+     *
+     * @details
+     * - The primitive is what makes the data drawable: a geometry without one would say every vertex stream
+     *   and never say how to assemble them. A caller that wants several parts appends more (addPrimitive);
+     *   one that wants none at all clears them (clearPrimitives).
+     */
     Geometry();
     ~Geometry();
 
@@ -453,62 +462,134 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     std::uint32_t texcoordComponents() const;
 
-    /** @brief Sets the index buffer by SHARING one, optionally a segment of one.
+    /** @brief Adds a draw of this geometry's data (see Primitive).
      *
      * @details
-     * - The same rule as the attribute setters: the geometry reads the buffer instead of copying it, so a
-     *   mesh hands its own index buffer over and both sides read ONE allocation. A caller holding a plain
-     *   index array packs it first with packIndices(). Replacing the buffer does NOT announce the change:
-     *   report one with setRevision().
-     * - The defaults are a WHOLE buffer (first index 0, no fixed count), following the buffer as it grows.
-     *   An INDEX ARENA works like a vertex one: several geometries share one index buffer and each states
-     *   its own segment here. The units are INDICES (this stream's elements), never vertices.
-     * - An index segment is relative to this geometry's OWN vertices (index 0 is the first vertex its
-     *   position channel reads), which keeps a vertex segment and an index segment consistent.
-     * - An @p index_count of 0 means "the rest of @p indices from @p first_index", NOT an empty range - to
-     *   clear the stream, pass a null buffer. A first index at or past the end of the buffer clamps to the
-     *   end, so such a segment draws nothing.
+     * - A geometry with no primitives draws NOTHING, so a plain single-draw mesh is a geometry with one
+     *   entry - the overwhelming case, and the one whose numbers (index span, topology, material) used to
+     *   live on the geometry itself.
+     * - Adding one does NOT announce the change: report it with @ref setRevision, the same rule every
+     *   shape setter follows (a host often adds or replaces several primitives in one edit).
+     * - Order is the draw order of this geometry's parts (the collection sorts the commands it produces
+     *   with everything else, so an opaque part is not drawn after a transparent one by accident).
      *
-     * @param indices     Index scalars to read (three per triangle), or null for an empty index buffer.
-     * @param first_index First index this geometry draws (0 = the buffer's start).
-     * @param index_count Indices this geometry draws, or 0 for the rest of @p indices from @p first_index.
+     * @param primitive The draw to append; its index span is resolved lazily (a growing buffer is followed).
+     */
+    void addPrimitive(Primitive primitive);
+
+    /** @brief Replaces the primitive at @p index (the draw keeps its place in the order).
+     *
+     * @details
+     * - The way to change one part's topology, index span, material or program while a scene runs. It
+     *   announces nothing, like addPrimitive: an edit is reported once, by the host that made it.
+     * - An index at or past primitiveCount() is ignored (and counted, see ignoredPrimitiveEdits) rather
+     *   than growing the list: appending is what addPrimitive is for, and a silent append from a typo'd
+     *   index is a draw nobody asked for.
+     *
+     * @param index     Primitive to replace.
+     * @param primitive The new draw.
+     */
+    void setPrimitive(std::size_t index, Primitive primitive);
+
+    /** @brief Removes every primitive (the geometry keeps its channels and draws nothing). */
+    void clearPrimitives();
+
+    /** @brief Gets one primitive.
+     *
+     * @param index Primitive index.
+     * @return The primitive, or null when @p index is out of range.
+     */
+    [[nodiscard]] const Primitive* primitive(std::size_t index) const;
+
+    /** @brief Gets how many draws this geometry is.
+     *
+     * @return The primitive count (0 = the geometry draws nothing).
+     */
+    [[nodiscard]] std::size_t primitiveCount() const;
+
+    /** @brief Gets every primitive as a view (the draw order).
+     *
+     * @return A borrowed view; the primitives live in this geometry.
+     */
+    [[nodiscard]] std::span<const Primitive> primitives() const;
+
+    /** @brief Gets how many setPrimitive calls named a primitive that does not exist.
+     *
+     * @details
+     * - The witness for the ignore rule above: a number that is not zero means a caller believed the
+     *   geometry had a primitive it never added, which is a bug worth seeing rather than a silent no-op.
+     *
+     * @return The ignored-call count since construction.
+     */
+    [[nodiscard]] std::uint64_t ignoredPrimitiveEdits() const noexcept;
+
+    /** @brief Sets the single primitive's index span (the ONE-draw spelling of addPrimitive).
+     *
+     * @details
+     * - It writes primitive 0, creating it when the geometry has none: a geometry that draws one indexed
+     *   part is the overwhelming case, and making it write `addPrimitive({...})` by hand buys nothing.
+     * - A geometry with SEVERAL primitives has no single index span; this replaces the first one and leaves
+     *   the rest alone, which is why the multi-primitive API is the one to use for those.
+     * - Slicing follows every other stream: `first_index` / `index_count` are a segment, `count == 0` is
+     *   "the rest", and an offset past the end clamps.
+     *
+     * @param indices     Index scalars to read, or null to make this draw non-indexed.
+     * @param first_index First index of the segment.
+     * @param index_count Indices the segment covers, or 0 for the rest.
      */
     void setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices, std::size_t first_index = 0u,
                     std::size_t index_count = 0u);
 
-    /** @brief Returns whether a non-empty index range is attached.
-     *
-     * @return true when the index stream draws something.
+    /** @brief Gets whether the first primitive draws indices.
+     * @return true when primitive 0 exists and is indexed.
      */
     bool hasIndices() const;
 
-    /** @brief Gets the indices this geometry draws as a borrowed view.
-     *
-     * @return The drawn index scalars, empty when there are none.
+    /** @brief Gets the first primitive's index span.
+     * @return The drawn indices, empty when there is no indexed primitive.
      */
     std::span<const std::uint32_t> indices() const;
 
-    /** @brief Gets the first index this geometry draws from its buffer (0 when it draws the whole buffer).
-     *
-     * @return The first index of the segment.
+    /** @brief Gets the first primitive's first index.
+     * @return The segment's first index (0 when there is no indexed primitive).
      */
     std::size_t firstIndex() const;
 
-    /** @brief Gets the number of indices this geometry draws (0 when there is no index range).
-     *
-     * @return The index count.
+    /** @brief Gets how many indices the first primitive draws.
+     * @return The segment length (0 when there is no indexed primitive).
      */
     std::size_t indexCount() const;
 
-    /** @brief Returns the index buffer itself, for a consumer that reads its memory instead of a copy.
-     *
-     * @details
-     * - The counterpart of indices(): the handle keeps the storage alive while a backend aliases the very
-     *   bytes, so the indices exist once rather than once per side.
-     *
-     * @return The index buffer, or null when no index buffer is attached.
+    /** @brief Gets the first primitive's index buffer.
+     * @return The buffer, or null when there is no indexed primitive.
      */
     intrusive_ptr<const vn::Buffer<std::uint32_t>> indicesBuffer() const;
+
+    /** @brief Gets the first primitive's material.
+     * @return The material, or null when that draw inherits the nearest StateNode's.
+     */
+    raw_ptr<Material> material() const;
+
+    /** @brief Puts @p m on every primitive (adding one when the geometry has none).
+     *
+     * @details
+     * - "This geometry is shaded by m" is still one call: the assign walks the primitives, because the
+     *   material belongs to each draw (a mesh and its edge lines may want different ones - then the caller
+     *   uses setPrimitive and this method is not what it wants).
+     *
+     * @param m Material to assign, or nullptr to let every draw inherit again.
+     */
+    void setMaterial(intrusive_ptr<Material> m);
+
+    /** @brief Gets the first primitive's program.
+     * @return The program, or null when that draw inherits (StateNode, then the pass).
+     */
+    raw_ptr<ShaderProgram> program() const;
+
+    /** @brief Puts @p program on every primitive (adding one when the geometry has none).
+     * @param program Program to assign, or nullptr to let every draw inherit again.
+     */
+    void setProgram(intrusive_ptr<ShaderProgram> program);
 
     /** @brief Gets the revision of this geometry's DESCRIPTION (which channels it feeds, and where each reads).
      *
@@ -566,36 +647,6 @@ class VN_GRAPHICS_API Geometry : public Node {
      * @return Number of vertices (the position buffer at location 0).
      */
     std::size_t vertexCount() const;
-
-    /** @brief Gets the bound material.
-     *
-     * @return Material, or null when unset (engine default applies).
-     */
-    raw_ptr<Material> material() const;
-
-    /** @brief Sets the bound material.
-     *
-     * The geometry keeps a reference to the material.
-     *
-     * @param m Material, or nullptr to clear.
-     */
-    void setMaterial(intrusive_ptr<Material> m);
-
-    /** @brief Gets the bound custom shader program.
-     *
-     * @return Program, or null when the engine default applies.
-     */
-    raw_ptr<ShaderProgram> program() const;
-
-    /** @brief Sets the custom shader program for this leaf.
-     *
-     * The geometry keeps a reference to the program. A program replaces the
-     * engine's default shading for this geometry (per graphics-shader.md);
-     * binding null restores the default.
-     *
-     * @param program Program, or nullptr to clear.
-     */
-    void setProgram(intrusive_ptr<ShaderProgram> program);
 
     /** @brief Computes the LOCAL-space bounding box of this leaf's vertex data.
      *
@@ -689,14 +740,12 @@ class VN_GRAPHICS_API Geometry : public Node {
     };
 
     std::map<std::uint32_t, AttributeChannel> attributes_;
-    /// The index stream: a SEGMENT of a buffer, described the same way an attribute channel is
-    /// (see BufferSlice). One structure for every stream means the slicing rules — an offset past the
-    /// end clamps, a count of 0 is "the rest", the length follows the buffer as it grows — live in
-    /// one place instead of once per stream kind.
-    IndexStream                                     indices_;
-    std::uint64_t                                   revision_ = 0;
-    intrusive_ptr<Material> material_;
-    intrusive_ptr<ShaderProgram> program_;
+    /// The draws this geometry's data is. Each primitive's index span is a SEGMENT of a buffer (see
+    /// BufferSlice), so an index arena's slicing rules — an offset past the end clamps, a count of 0 is
+    /// "the rest", the length follows the buffer as it grows — are the same rules a vertex channel obeys.
+    std::vector<Primitive> primitives_;
+    std::uint64_t          revision_ = 0;
+    std::uint64_t          ignored_primitive_edits_ = 0;
     // Mutable because boundingBox() is const and the cache is a pure function of the keys above: the
     // collection is single-threaded by contract (see Node/Scene), so remembering a derived value while
     // reading is not a data race between engine threads.

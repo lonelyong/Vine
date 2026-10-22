@@ -152,6 +152,14 @@ struct CollectedCommand
 {
     const void*   geometry{nullptr};            ///< Leaf geometry identity.
     std::uint64_t geometry_revision{0};         ///< `Geometry::revision()` at collection time.
+    /// Which of the geometry's primitives this command draws (see Geometry::primitive). It is the draw's
+    /// identity inside the geometry: two commands of one geometry differ here, and the frame's facts answer
+    /// per (geometry, primitive).
+    std::uint32_t primitive{0};
+    /// The PRIMITIVE's topology, copied because the plan is what a backend reads: it is the pipeline key's
+    /// class and the value every draw delivers, and it is data rather than state (see Primitive.hpp) - which
+    /// is why it travels with the command instead of with `authored_state`.
+    vn::graphics::Topology topology{vn::graphics::Topology::Triangles};
     ProgramRef    program{};                    ///< The command's own program; null = the frame's default.
     const void*   material{nullptr};            ///< Material identity, or nullptr.
     vn::math::Mat4d model{};                  ///< World-space model matrix.

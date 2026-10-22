@@ -359,26 +359,33 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
         if ((layers & layer_mask) == 0) {
             return;
         }
-        // Resolved rather than read off the geometry: a material set on an enclosing StateNode covers every
-        // Geometry in its subtree, and the leaf's own material still wins over it.
-        const MaterialPtr material = geometry->material() != nullptr ? MaterialPtr(geometry->material())
-                                                                     : MaterialPtr(subtree.material);
+        // ONE COMMAND PER PRIMITIVE: a primitive IS a draw (its own topology, index span, material and
+        // program), and a geometry with none draws nothing. The material / program a primitive states wins;
+        // otherwise the nearest StateNode's applies - the same two-level rule as before, with the primitive
+        // as the leaf layer instead of the geometry (which no longer owns either: see Primitive.hpp).
         const float effective = std::clamp(node_opacity, 0.0f, 1.0f);
-        auto& cmd = out.emplace_back(
-            intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)),
-            material, world);
-        cmd.opacity = effective;
-        cmd.draw_order = subtree.draw_order;
-        // Render state folds along the node path: every StateNode from the
-        // scene root to this geometry contributes, deeper nodes overriding.
-        // What arrives here is the CONTENT's word (every item optional, so
-        // "nobody said" and "said the default" stay different facts); the pass
-        // drawing it completes the picture, in one place (see StateNode.hpp's
-        // resolveRenderState and RenderPass::stateOverrides).
-        cmd.authored_state = subtree.state;
-        // Shading program resolves leaf-first then ancestor StateNodes.
-        cmd.program = geometry->program() != nullptr ? ShaderProgramPtr(geometry->program())
-                                                     : ShaderProgramPtr(subtree.program);
+        for (std::size_t index = 0; index < geometry->primitiveCount(); ++index) {
+            const Primitive* primitive = geometry->primitive(index);
+            if (primitive == nullptr) {
+                continue;
+            }
+            const MaterialPtr material = primitive->material != nullptr ? primitive->material
+                                                                        : MaterialPtr(subtree.material);
+            const ShaderProgramPtr program = primitive->program != nullptr ? primitive->program
+                                                                           : ShaderProgramPtr(subtree.program);
+            auto& cmd = out.emplace_back(intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)), material,
+                                         world, static_cast<std::uint32_t>(index));
+            cmd.opacity = effective;
+            cmd.draw_order = subtree.draw_order;
+            // Render state folds along the node path: every StateNode from the
+            // scene root to this geometry contributes, deeper nodes overriding.
+            // What arrives here is the CONTENT's word (every item optional, so
+            // "nobody said" and "said the default" stay different facts); the pass
+            // drawing it completes the picture, in one place (see StateNode.hpp's
+            // resolveRenderState and RenderPass::stateOverrides).
+            cmd.authored_state = subtree.state;
+            cmd.program = program;
+        }
         return;
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {

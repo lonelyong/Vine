@@ -25,6 +25,26 @@
 | **待办与口径** | **现行登记：`.ai/design/graphics-followups-2026-10-22.md` 已无开放行**（F1/F2/F3 全部关闭，2026-10-22 晚）；活账本回到 **`.ai/design/graphics-followups-2026-10-19.md` §3 触发条件型**，外加对象模型复核（`graphics-object-model-audit-2026-10-21.md`）的 R1/R3–R10。10-19 是历史盘点（§2 现在可做：空 / §3 触发条件型 / §4 明确不做 / §5 不再是待办），它的触发项仍然有效。底层两个来源：**2026-10-11 按"机制/组合"重评的待办清单**（`graphics-render-next.md` §5.1：**T1 表面尺寸扇出（已落地）** / T2 M6（**已由 S10b 覆盖并关闭，2026-10-19**：一设备 N 窗口、每窗口一个目标，见 `graphics-window-device-viewer.md` §7）/ **T3 设备夹具探测（已落地）** / T4 布局归应用层 / T5 组合归应用层 / T6 便利边界 / T7 叠层跨重建（**2026-10-12 复核：不做**））；这两条的落地记录见下面 2026-10-11 T1+T3 那条 |
 
 
+## 2026-10-22（晚）R3 第一片：拓扑归图元，几何体只剩数据
+
+- **形状**：`Geometry` = 通道集；`Primitive` = `topology` + `BufferSlice<uint32_t> indices` + `material`
+  + `program`；`StateNode` 不再有拓扑（`RenderState::topology` 与 origin 的 `Content|Default` 两档一起
+  删），`PassRenderState::topology` 是"整片当点看"的视图覆盖（origin 报 `Data` / `Pass`）；
+  `resolveRenderState(authored, pass, data_topology)` 第三个参数是数据的话。
+- **数据即绘制**：`Geometry::addBuffer` 装**位置**通道时若还没有 primitive 就放一个默认的（三角形、
+  非索引）——"设了数据却没画"结构上不可能；`setIndices/material/program` 保留为单 draw 便捷写法
+  （读写 primitive 0；材质/程序写给所有），过渡项登记进 followups。
+- **收集与计划**：`RenderCommand::primitive_index` + `primitive()`；Scene 一条 primitive 一条命令；
+  `CollectedCommand`/`CompiledCommand` 带 `primitive`，前者还带 primitive 的 `topology`；拾取只打
+  `Triangles` 图元，命中带 `primitiveIndex`。
+- **本片后端边界（重要）**：`buildGeometryFacts` 仍只描述一个索引流，`primitiveCount() > 1` ⇒
+  `FactMiss::Malformed`（拒绝+报告，不是画第一份 N 次）；多部件资产暂时仍用"多几何体 + 共用 buffer +
+  不同切片"（guide §2.7）。下一片 = `GeometryFacts` 的 `vector<PrimitiveFacts>` + `ContentPass` 按
+  `command.primitive` 取行；判据预算：三图元 ⇒ 3 draw / 2~3 管线 / 顶点 uploads=1，改一份索引只传一份。
+- 判据：`test_graphics` 414、`test_vsg` 480、ctest 24/24 绿；网关每阶段干净（单图元逐像素不变）。
+  设计见 `.ai/design/graphics-primitives-2026-10-22.md`。
+
+
 ## 2026-10-22（晚）R6 MSAA：采样数进目标形状，颜色解析、深度不解析
 
 - **规则**：`RenderTarget::setSamples(n)` 是唯一入口（0 当 1），值只走

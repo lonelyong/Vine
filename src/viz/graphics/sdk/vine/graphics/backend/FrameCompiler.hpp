@@ -89,6 +89,10 @@ struct CompiledCommand
 {
     const void*   geometry{nullptr};      ///< Leaf geometry identity.
     std::uint64_t geometry_revision{0};   ///< `Geometry::revision()` at collection time.
+    /// Which of the geometry's primitives this command draws. The plan names ONE DRAW, so the pair
+    /// (geometry, primitive) is this command's data identity - the backend's facts answer index spans and
+    /// uploads per primitive, and nothing downstream has to walk a primitive list to find it.
+    std::uint32_t primitive{0};
     ProgramRef    program{};              ///< The command's own program, or the frame's default (resolved).
     const void*   material{nullptr};      ///< Material identity, or nullptr.
     vn::math::Mat4d model{};            ///< World-space model matrix.

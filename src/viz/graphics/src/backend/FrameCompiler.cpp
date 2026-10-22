@@ -354,7 +354,7 @@ std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass&  
             const vn::graphics::RenderState       screen_authored{};
             const vn::graphics::PassRenderState   screen_pass{ .depth = vn::graphics::DepthMode::Disabled };
             draw.dynamic = resolveDynamicState(
-                resolveRenderState(screen_authored, screen_pass).state);
+                resolveRenderState(screen_authored, screen_pass, vn::graphics::Topology::Triangles).state);
         }
     }
     return draws;
@@ -372,11 +372,13 @@ std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedD
 
         out.geometry          = command.geometry;
         out.geometry_revision = command.geometry_revision;
+        out.primitive         = command.primitive;
         out.material          = command.material;
         out.model             = command.model;
         out.opacity           = command.opacity;
         // The ONE resolution: what the content authored, weighed against what the pass says (StateNode.hpp).
-        vn::graphics::ResolvedRenderState resolved = resolveRenderState(command.authored_state, pass_state).state;
+        vn::graphics::ResolvedRenderState resolved =
+            resolveRenderState(command.authored_state, pass_state, command.topology).state;
         // THE ENGINE'S TRANSPARENCY CHANNEL IS THE COMMAND'S OPACITY, and this is the only place that can weigh it
         // against the authored blend state: a translucent command blends with the standard pair even though its
         // content authored none (no StateNode has to say "and blend"), while an opaque command that authored none

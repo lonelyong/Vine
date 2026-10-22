@@ -756,12 +756,14 @@ void addForwardShowcase(vn::graphics::Group* root)
             }
         }
         cloud->setPositions(vn::graphics::packAttribute(points));
-        cloud->setProgram(program);
 
-        auto state = make_intrusive<StateNode>();
-        state->setTopology(vn::graphics::Topology::Points);
-        state->addChild(cloud);
-        root->addChild(state);
+        // Topology is the PRIMITIVE's (see Primitive.hpp): a point cloud IS a points draw, and no extra
+        // StateNode is needed to say so.
+        vn::graphics::Primitive point_draw;
+        point_draw.topology = vn::graphics::Topology::Points;
+        point_draw.program  = program;
+        cloud->setPrimitive(0U, std::move(point_draw));
+        root->addChild(cloud);
     }
 
     // --- Nested MatrixTransform: world-matrix chain --------------------------
@@ -863,12 +865,12 @@ void addBlendedPair(vn::graphics::Group* root, const BlendedPlacement& at)
             }
         }
         stars->setPositions(vn::graphics::packAttribute(points));
-        stars->setProgram(program);
 
-        auto state = make_intrusive<StateNode>();
-        state->setTopology(vn::graphics::Topology::Points);
-        state->addChild(stars);
-        root->addChild(state);
+        vn::graphics::Primitive star_draw;
+        star_draw.topology = vn::graphics::Topology::Points;
+        star_draw.program  = program;
+        stars->setPrimitive(0U, std::move(star_draw));
+        root->addChild(stars);
     }
 }
 } // namespace

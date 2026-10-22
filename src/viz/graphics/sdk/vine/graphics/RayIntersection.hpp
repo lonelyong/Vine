@@ -48,6 +48,11 @@ struct VN_GRAPHICS_API RayIntersectionResult {
 
     /** Triangle index (if applicable, otherwise max). */
     std::size_t triangleIndex = std::numeric_limits<std::size_t>::max();
+
+    /** Which of the geometry's primitives was hit (see Geometry::primitive). A geometry is picked through its
+     *  TRIANGLE primitives only - a line or point primitive is not a surface - so this names the part that
+     *  was actually intersected. */
+    std::uint32_t primitiveIndex = 0;
 };
 
 /**

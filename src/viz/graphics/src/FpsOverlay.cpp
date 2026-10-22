@@ -354,7 +354,6 @@ void FpsOverlay::rebuild()
     auto geometry = make_intrusive<Geometry>();
     geometry->setPositions(packAttribute(positions));
     geometry->setNormals(packAttribute(normals));
-    geometry->setIndices(packIndices(indices));
 
     // ONE material for the whole row: the bar colour lives here, not per segment, because the row is one
     // draw -- an off segment is expressed by GEOMETRY (no area), never by a colour.
@@ -365,7 +364,12 @@ void FpsOverlay::rebuild()
     // specular avoids highlights.
     material->setAmbient(Colorf::kWhite);
     material->setSpecular(Colorf::kBlack);
-    geometry->setMaterial(material);
+
+    Primitive readout_draw;
+    readout_draw.topology = Topology::Triangles;
+    readout_draw.indices  = Primitive::IndexSpan::whole(packIndices(indices));
+    readout_draw.material = material;
+    geometry->setPrimitive(0U, std::move(readout_draw));
     // Hidden until the first measurement: the readout draws the digits' LIT segments only (see
     // writePattern), so it starts blank rather than showing a dark three-eights behind the number.
     geometry->setVisible(false);

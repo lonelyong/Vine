@@ -232,7 +232,6 @@ void AxisGizmo::rebuild()
         auto geometry = make_intrusive<Geometry>();
         geometry->setPositions(packAttribute(positions));
         geometry->setNormals(packAttribute(normals));
-        geometry->setIndices(packIndices(indices));
 
         auto material = make_intrusive<Material>();
         material->setDiffuse(stick.color);
@@ -244,7 +243,12 @@ void AxisGizmo::rebuild()
         material->setAmbient(Colorf::kWhite);
         // Black specular avoids any white highlight.
         material->setSpecular(Colorf::kBlack);
-        geometry->setMaterial(material);
+
+        Primitive stick_draw;
+        stick_draw.topology = Topology::Triangles;
+        stick_draw.indices  = Primitive::IndexSpan::whole(packIndices(indices));
+        stick_draw.material = material;
+        geometry->setPrimitive(0U, std::move(stick_draw));
 
         auto group = make_intrusive<Group>();
         group->addChild(geometry);

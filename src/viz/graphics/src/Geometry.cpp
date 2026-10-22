@@ -34,6 +34,14 @@ constexpr std::uint32_t kVec2Components = vn::geometry::Mesh::kVec2Components;
 void Geometry::addBuffer(std::uint32_t location, const AttributeChannel& buffer)
 {
     attributes_[location] = buffer;
+    // DATA IMPLIES A DRAW, and this is the ONE door every channel comes through (setPositions and the other
+    // convenience setters are addBuffer with a stated location): positions are the one required channel, so
+    // installing them states the default draw (triangles, non-indexed) - which is what a single-part geometry
+    // means, and what makes "I set data and nothing was drawn" impossible. A caller that wants another
+    // topology or several parts edits/appends its primitives.
+    if (location == attributeLocation(VertexAttribute::Position) && primitives_.empty()) {
+        primitives_.emplace_back();
+    }
     // The data box may have changed: the cached boxes above this leaf are stale (see
     // Node::invalidateBounds).
     invalidateBounds();
@@ -148,42 +156,155 @@ void Geometry::setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords, s
               AttributeChannel::slice(std::move(texcoords), kVec3Components, first_vertex, vertex_count));
 }
 
+namespace
+{
+/// @brief Whether two primitives describe the same draw (an assignment that changes nothing).
+bool samePrimitive(const Primitive& a, const Primitive& b) noexcept
+{
+    return a.topology == b.topology && a.indices.values.get() == b.indices.values.get() &&
+           a.indices.first == b.indices.first && a.indices.count == b.indices.count &&
+           a.material.get() == b.material.get() && a.program.get() == b.program.get();
+}
+}  // namespace
+
+void Geometry::addPrimitive(Primitive primitive)
+{
+    primitives_.push_back(std::move(primitive));
+    // A new draw of the same data is a different picture (and possibly a different extent), so the
+    // collection is announced: the frame memo cannot answer from the list it built before this call.
+    announceContentChange();
+    invalidateBounds();
+}
+
+void Geometry::setPrimitive(std::size_t index, Primitive primitive)
+{
+    if (index >= primitives_.size()) {
+        ++ignored_primitive_edits_;
+        return;
+    }
+    if (samePrimitive(primitives_[index], primitive)) {
+        return;   // an assignment that changes nothing must not cost the frame's collection
+    }
+    primitives_[index] = std::move(primitive);
+    announceContentChange();
+    invalidateBounds();
+}
+
+void Geometry::clearPrimitives()
+{
+    if (primitives_.empty()) {
+        return;
+    }
+    primitives_.clear();
+    announceContentChange();
+    invalidateBounds();
+}
+
+const Primitive* Geometry::primitive(std::size_t index) const
+{
+    return index < primitives_.size() ? &primitives_[index] : nullptr;
+}
+
+std::size_t Geometry::primitiveCount() const
+{
+    return primitives_.size();
+}
+
+std::span<const Primitive> Geometry::primitives() const
+{
+    return primitives_;
+}
+
+std::uint64_t Geometry::ignoredPrimitiveEdits() const noexcept
+{
+    return ignored_primitive_edits_;
+}
+
 void Geometry::setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices, std::size_t first_index,
                           std::size_t index_count)
 {
-    // The index stream is a SEGMENT of a buffer, described by the same structure an attribute
-    // channel is (see BufferSlice): which buffer, where the segment starts, how much it covers —
-    // so "the rest of the arena", "clamp past the end" and "follow the buffer as it grows" have one
-    // definition for every stream a geometry reads, index or vertex, today or later.
-    indices_ = Geometry::IndexStream::slice(std::move(indices), first_index, index_count);
-    // A different index stream is a different picture (and possibly a different extent), so it announces one change
-    // rather than only the bounds.
-    invalidateBounds();
+    Primitive draw;
+    if (const Primitive* existing = primitive(0)) {
+        draw = *existing;   // the other fields of the one-draw spelling stay what they were
+    }
+    draw.indices = Primitive::IndexSpan::slice(std::move(indices), first_index, index_count);
+    if (primitiveCount() == 0) {
+        addPrimitive(std::move(draw));
+        return;
+    }
+    setPrimitive(0, std::move(draw));
 }
 
 bool Geometry::hasIndices() const
 {
-    return !indices_.empty();
+    const Primitive* draw = primitive(0);
+    return draw != nullptr && draw->isIndexed();
 }
 
 std::span<const std::uint32_t> Geometry::indices() const
 {
-    return indices_.span();
+    const Primitive* draw = primitive(0);
+    return draw != nullptr ? draw->indices.span() : std::span<const std::uint32_t>{};
 }
 
 std::size_t Geometry::firstIndex() const
 {
-    return indices_.begin();
+    const Primitive* draw = primitive(0);
+    return draw != nullptr ? draw->indices.begin() : 0U;
 }
 
 std::size_t Geometry::indexCount() const
 {
-    return indices_.size();
+    const Primitive* draw = primitive(0);
+    return draw != nullptr ? draw->indexCount() : 0U;
 }
 
 intrusive_ptr<const vn::Buffer<std::uint32_t>> Geometry::indicesBuffer() const
 {
-    return indices_.values;
+    const Primitive* draw = primitive(0);
+    return draw != nullptr ? draw->indices.values : intrusive_ptr<const vn::Buffer<std::uint32_t>>{};
+}
+
+raw_ptr<Material> Geometry::material() const
+{
+    const Primitive* draw = primitive(0);
+    return draw != nullptr ? draw->material.get() : nullptr;
+}
+
+void Geometry::setMaterial(intrusive_ptr<Material> m)
+{
+    if (primitiveCount() == 0) {
+        Primitive draw;
+        draw.material = std::move(m);
+        addPrimitive(std::move(draw));
+        return;
+    }
+    for (std::size_t index = 0; index < primitiveCount(); ++index) {
+        Primitive draw = *primitive(index);
+        draw.material  = m;
+        setPrimitive(index, std::move(draw));
+    }
+}
+
+raw_ptr<ShaderProgram> Geometry::program() const
+{
+    const Primitive* draw = primitive(0);
+    return draw != nullptr ? draw->program.get() : nullptr;
+}
+
+void Geometry::setProgram(intrusive_ptr<ShaderProgram> program)
+{
+    if (primitiveCount() == 0) {
+        Primitive draw;
+        draw.program = std::move(program);
+        addPrimitive(std::move(draw));
+        return;
+    }
+    for (std::size_t index = 0; index < primitiveCount(); ++index) {
+        Primitive draw = *primitive(index);
+        draw.program   = program;
+        setPrimitive(index, std::move(draw));
+    }
 }
 
 std::uint64_t Geometry::revision() const
@@ -240,37 +361,6 @@ Aabbd scanLocalBounds(const Geometry* geometry)
     return box;
 }
 }  // namespace
-
-raw_ptr<Material> Geometry::material() const
-{
-    return material_.get();
-}
-
-void Geometry::setMaterial(intrusive_ptr<Material> m)
-{
-    if (material_ == m) {
-        return;   // an assignment that changes nothing must not cost the frame's collection
-    }
-    material_ = std::move(m);
-    // The material a command carries is part of what a collected list says (see Node::announceContentChange): a
-    // different material is a different picture, so the memo cannot answer from the old list.
-    announceContentChange();
-}
-
-raw_ptr<ShaderProgram> Geometry::program() const
-{
-    return program_.get();
-}
-
-void Geometry::setProgram(intrusive_ptr<ShaderProgram> program)
-{
-    if (program_ == program) {
-        return;
-    }
-    program_ = std::move(program);
-    // Same rule as setMaterial: the program a command draws with is part of the list.
-    announceContentChange();
-}
 
 Aabbd Geometry::localBounds() const
 {
@@ -370,10 +460,14 @@ GeometryPtr geometryFromShape(const vn::geometry::Shape& shape)
     if (texcoords.size() == positions.size()) {
         geometry->setTexcoords2(mesh->texcoordsBuffer());
     }
-    if (const auto* indexed =
-            dynamic_cast<const vn::geometry::IndexedTriangleMesh*>(&shape)) {
-        geometry->setIndices(indexed->indicesBuffer());
+    // A mesh shape is ONE triangle draw: the primitive states the topology and the index span, which is where
+    // both belong now (see Primitive.hpp). An unindexed mesh states no indices and draws its vertex streams.
+    Primitive primitive;
+    primitive.topology = Topology::Triangles;
+    if (const auto* indexed = dynamic_cast<const vn::geometry::IndexedTriangleMesh*>(&shape)) {
+        primitive.indices = Primitive::IndexSpan::whole(indexed->indicesBuffer());
     }
+    geometry->setPrimitive(0U, std::move(primitive));
     return geometry;
 }
 
