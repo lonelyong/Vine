@@ -104,7 +104,7 @@ bool RenderSurface::present(SceneView& view)
     // from it, and the view reads this surface's size and reports back when its chain is rebuilt.
     view.setSurface(this);
     // DECLARING A VIEW IS DECLARING ITS CHAIN. What presents this surface is the pass of the chain the view
-    // ADOPTED (SceneView::setChain - built by PassChainBuilder), and this area reads it back through the
+    // ADOPTED (SceneView::setChain - built by PassChain::build), and this area reads it back through the
     // view, so it never has to know a recipe, a chain or an overlay: a view with no chain has nothing to
     // resolve, and a declaration without one would leave a host believing a window is being drawn into.
     if (view.chain() == nullptr) {
@@ -114,7 +114,7 @@ bool RenderSurface::present(SceneView& view)
             engine->reportEngineProblem(
                 DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
                 u8"RenderSurface::present: this view has no pipeline to draw with, so nothing could declare this "
-                u8"surface: build one (PassChainBuilder) and adopt it (SceneView::setChain) first");
+                u8"surface: build one (PassChain::build) and adopt it (SceneView::setChain) first");
         }
         return false;
     }

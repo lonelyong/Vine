@@ -7,7 +7,6 @@
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/PassChain.hpp>
-#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/Scene.hpp>
 
 #include <vine/String.hpp>
@@ -103,14 +102,12 @@ TEST(ChainRegistrationTest, TheChainFindsItsHudPassesByRoleAndHandsThemAllBack)
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-
     ChainDesc options;
+    options.camera              = cam.get();
+    options.content             = content;
     options.gizmo.source_camera = cam.get();
     options.fps.enabled         = true;
-    auto chain                  = builder.build(options);
+    auto chain                  = PassChain::build(engine.get(), options);
     ASSERT_NE(chain, nullptr);
 
     EXPECT_NE(chain->gizmoPass(), nullptr) << "the gizmo pass is registered under its role";
@@ -139,13 +136,11 @@ TEST(ChainRegistrationTest, AHostRegistersAThirdOverlayWithoutTouchingTheChain)
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-
     ChainDesc options;
+    options.camera      = cam.get();
+    options.content     = content;
     options.fps.enabled = true;  // one overlay the recipe knows; the host's is a second readout
-    auto chain          = builder.build(options);
+    auto chain          = PassChain::build(engine.get(), options);
     ASSERT_NE(chain, nullptr);
     const std::size_t recipe_passes = engine->passCount();
 

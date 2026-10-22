@@ -5,7 +5,6 @@
 #include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
-#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/SceneView.hpp>
 
@@ -57,12 +56,12 @@ struct Viewer::Impl {
         pipeline_options.fps.enabled         = options.stats;
         pipeline_options.fps.pixel_ratio     = ratio;
 
-        vn::graphics::PassChainBuilder builder(engine);
-        builder.setCamera(view->camera());
-        builder.setContent(view->scene());
-        vn::intrusive_ptr<vn::graphics::PassChain> pipeline = builder.build(pipeline_options);
+        pipeline_options.camera  = view->camera();
+        pipeline_options.content = view->scene();
+        vn::intrusive_ptr<vn::graphics::PassChain> pipeline =
+            vn::graphics::PassChain::build(engine, pipeline_options);
         if (pipeline == nullptr) {
-            return false;  // the builder reports what it refused (see PassChainBuilder::build)
+            return false;  // the build reports what it refused (see PassChain::build)
         }
         if (gizmo_was_hidden) {
             (void)pipeline->setGizmoVisible(false);
@@ -157,7 +156,7 @@ bool Viewer::setShadingMode(vn::graphics::ShadingMode mode)
     request.mode = mode;
     vn::graphics::PassChain* const pipeline = d->view->chain();
     if (pipeline != nullptr &&
-        pipeline->shadingPath() == vn::graphics::PassChainBuilder::effectivePath(request) &&
+        pipeline->shadingPath() == vn::graphics::PassChain::effectivePath(request) &&
         pipeline->setShadingMode(mode)) {
         d->options.mode = mode;  // remembered: the next build (any structural change) starts from here
         return true;

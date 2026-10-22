@@ -18,7 +18,7 @@ graph TB
     UI["应用框架<br/>（appfw RenderControl、graphics SceneView）"]
     Engine["RenderEngine<br/>pass · target · 接线校验 · 诊断"]
     Scene["场景模型<br/>Node / Group / MatrixTransform / StateNode / Geometry"]
-    Builder["PassChainBuilder<br/>配方：forward · deferred · 离屏+PiP"]
+    Builder["PassChain::build<br/>配方：forward · deferred · 离屏+PiP"]
     BackendIface["RenderBackend（三面一体：设备 / 执行器 / 目标工厂）"]
     Plugin["gfx_backend_vsg 插件<br/>SceneBridge · VsgRenderer"]
     VSG["VulkanSceneGraph → Vulkan"]
@@ -123,7 +123,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   以及 `shareDepth(DepthView)`（借别人的深度；`DepthView` 是个值，命名一张 target 的深度图并保活它）与
   `setDepthPromotion(bool)`（深度是否变成可采样）。借来的深度也可以由**画它的那条 pass** 声明：
   `RenderPass::setDepthView(depthViewOf(other))`（`depthViewOf()` 是由 raw pointer 构造 view 的简写）。
-- `PassChainBuilder` —— 配方层：`build(const ChainDesc&)`（结构选择只有一个：
+- `PassChain::build(engine, const ChainDesc&)` —— 配方层（结构选择只有一个：
   `ShadingPath::Forward | Deferred`，其余是效果与选项，见 `.ai/design/graphics-pipeline.md`）、
   `addOffscreenToScreen(...)`（离屏 + PiP），并暴露延迟所需的公有件（`defaultGbufferTarget()`、
   `defaultGbufferGeometryProgram()`、`defaultDeferredLightProgram()`）。它装配出来的就是**你手写也会写的
@@ -268,10 +268,10 @@ area->resize(width, height, dpr);         // 帧上下文 + 目标（窗口那�
 if (!engine->device()->initialize()) { return false; }   // 平台重建窗口后再调一次 = 跟随新句柄
 if (!engine->initialize()) { return false; }             // 引擎附着：就绪、记尺寸、向设备要它自己的目标
 
-PassChainBuilder builder(engine.get());
-builder.setContent(scene).setCamera(camera.get());
 ChainDesc options;                            // 默认 = forward 路径
-auto pipeline = builder.build(options);      // 或 options.path = ShadingPath::Deferred
+options.content = scene;
+options.camera  = camera.get();
+auto pipeline = PassChain::build(engine.get(), options);   // 或 options.path = ShadingPath::Deferred
 if (pipeline == nullptr) { return false; }
 
 // ⑤ 帧循环。
@@ -346,7 +346,7 @@ compose->setViewport(surface_w - 320 - 8, 8, 320, 180);
 
 ### 3.4 例：纯手动 4 pass —— 手搭一条延迟管线
 
-这条链用的三件"公有件"正是 `PassChainBuilder::build(Deferred)` 内部用的东西，所以手搭出来
+这条链用的三件"公有件"正是 `PassChain::build` 的 Deferred 预设内部用的东西，所以手搭出来
 与预设**完全等价**：它演示了手写延迟管线的三个要点 —— **MRT target**、**带 program 的 ScreenPass**、
 以及**借用深度**。
 
@@ -357,10 +357,10 @@ compose->setViewport(surface_w - 320 - 8, 8, 320, 180);
 //    所以前向与延迟两条路的高光强度一致（2026-09-25 接线）。
 //    位置的 w 是**契约的一半**：写过的像素写 1（清除留下的透明黑是 0），光照 program 用它区分
 //    "背景" 与 "几何"；距离判据做不到——相机贴住的像素视图位置就是 ~0（2026-09-25 修）。
-auto gbuffer = PassChainBuilder::defaultGbufferTarget(width, height);
+auto gbuffer = defaultGbufferTarget(width, height);
 
 // ② G-buffer pass（order < 0）：一个场景遍历写 MRT。
-auto gbuffer_program = PassChainBuilder::defaultGbufferGeometryProgram();
+auto gbuffer_program = defaultGbufferGeometryProgram();
 auto gbuf_pass = make_intrusive<RenderPass>();
 gbuf_pass->setName(u8"gbuffer");
 gbuf_pass->setCamera(camera);
@@ -380,7 +380,7 @@ composite->attachColor(RenderTarget::ColorFormat::RGBA8);
 composite->shareDepth(depthViewOf(gbuffer));     // 借深度（也可以由下面那条 pass 声明：setDepthView）
 
 // ④ 全屏延迟光照（带 program）：读 G-buffer 的全部彩色附件，写进 composite。
-auto light_program = PassChainBuilder::defaultDeferredLightProgram();
+auto light_program = defaultDeferredLightProgram();
 auto light = make_intrusive<ScreenPass>();
 light->setName(u8"deferred_lighting");
 light->setCamera(camera);                  // program 路径**必须**有相机
@@ -436,18 +436,19 @@ engine.addPass(present, 2);
 builder 只是把 §3.3 / §3.4 的装配收起来，配上默认 program；它不会替你省掉"相机、内容、尺寸"这三个前提。
 
 ```cpp
-PassChainBuilder builder(&engine);
-builder.setContent(scene).setCamera(camera.get());
+// 请求是一个值：写它，交给静态 build。
+ChainDesc options;
+options.content = scene;
+options.camera  = camera.get();
 
 // 结构只有两选：forward / deferred。阴影不是预设——它由"投影的那盏灯"提出请求
-// （Light::castShadow），当前还没有阴影 pass，所以 builder 会报一条"画面无影"。
-ChainDesc options;
+// （Light::castShadow），当前还没有阴影 pass，所以 build 会报一条"画面无影"。
 options.path = ShadingPath::Deferred;
 options.offscreen_width  = 0;          // 0 = 用当前 surface 尺寸，未知时回退 640x360
 options.offscreen_height = 0;
 options.gbuffer_program  = nullptr;    // 空 = 用内置的临时 G-buffer 几何 program
 options.lighting_program = nullptr;    // 空 = 用内置的临时延迟光照 program
-auto pipeline = builder.build(options);
+auto pipeline = PassChain::build(&engine, options);
 pipeline->resize(surface_w, surface_h, device_pixel_ratio);  // 同时管离屏 / 合成 target（device 像素）与 HUD 叠加（逻辑像素）
 
 // 内容着色：必须**显式指定**程序。没有 shader preset 枚举，也没有兜底——
@@ -457,10 +458,10 @@ engine.setDefaultContentProgram(forwardProgram());       // 回到默认前向�
 
 // 离屏 + 画中画（内部就是 §3.3 的两个 pass）。注意最后那个矩形是 VIEWPORT ⇒ **device 像素**
 // （surface_w 是逻辑像素，所以高 DPI 下要各自乘 dpr；见 RenderPass::setViewport）：
-builder.addOffscreenToScreen(u8"preview", 512, 288,
-                             RenderTarget::ColorFormat::RGBA8,
-                             RenderTarget::DepthFormat::D24,
-                             viewport_x, viewport_y, 320, 180);
+addOffscreenToScreen(&engine, camera.get(), scene, u8"preview", 512, 288,
+                     RenderTarget::ColorFormat::RGBA8,
+                     RenderTarget::DepthFormat::D24,
+                     Viewport{ viewport_x, viewport_y, 320, 180 });
 
 // 也可以自己加 HUD：叠层是**内容对象**（自己带 scene + 取景相机 + 盒子），画的是一条普通 pass 声明。
 auto gizmo = make_intrusive<AxisGizmo>();
@@ -646,7 +647,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 出多个 program 时加后缀：`builtin_forward_flat`、`builtin_forward_unlit`、`builtin_forward_normals`、
 `builtin_deferred_lighting_shadowed`），所以一条报出 program
 名的 diagnostic 直接告诉你去读哪个文件。默认管线的 pass 用**角色词**（`gbuffer` / `deferred_lighting`，见
-`PassChainBuilder`）而不带前缀：一个 pass 画的是**宿主给它的** program，管它叫"内建"是错的。
+`PassChain::build`）而不带前缀：一个 pass 画的是**宿主给它的** program，管它叫"内建"是错的。
 
 **所有 GLSL 都归 SDK**：后端**没有**自己的 shader 目录（曾经有，2026-09-13 收回来了），它只决定怎么编译和绑。
 | 文件怎么进二进制、怎么加一个、有哪些门禁 | [`.ai/design/vsg-custom-shader.md`](../../.ai/design/vsg-custom-shader.md) §10 |
@@ -751,10 +752,9 @@ options.path = vn::graphics::ShadingPath::Forward;               // 或 Deferred
 options.mode = vn::graphics::ShadingMode::Lit;                   // 见下："档"是选项也是运行期开关
 options.gizmo.source_camera = view->camera();                    // 有源相机 = 有这个档
 options.fps.enabled = true;                                      // 帧率读数档
-vn::graphics::PassChainBuilder builder(engine);
-builder.setCamera(view->camera());
-builder.setContent(view->scene());
-view->setChain(builder.build(options));
+options.content = view->scene();
+options.camera  = view->camera();
+view->setChain(vn::graphics::PassChain::build(engine, options));
 
 // 运行期：都是**那条链**上的开关/覆盖，零重建、零重新注册
 vn::graphics::PassChain* chain = view->chain();
@@ -774,7 +774,7 @@ view->resize(w, h, dpr);                  // 只喂**表面**尺寸 + 比例；"
 - **档（`ShadingMode`）是 pass 属性，不是重建**：`Lit` 用内容自己的 program，`Flat/Unlit/Normals` 是同一段
   fragment 文本的另一个 `#define`（`setProgramOverride`），`Wireframe` 再加
   `RenderPass::setPolygonModeOverride(PolygonMode::Line)`。**档作用在几何阶段**：延迟的请求配非 Lit 档时，
-  `PassChainBuilder::effectivePath()` 把链建成**前向**（选项字段不动，`PassChain::shadingPath()` 记的是**实际建成**的那条），
+  `PassChain::effectivePath()` 把链建成**前向**（选项字段不动，`PassChain::shadingPath()` 记的是**实际建成**的那条），
   于是四档在两条请求上都能画出来；同一条链上换档零重建，而"延迟请求 + 非 Lit 档"期间选回 `Lit` 是一次建链
   （回到延迟链 —— 这就是那句 `effectivePath()` 公开成静态的用途）。
 - **重建之后谁把运行期选择搬过去**：重建的那一方（appfw 的 `Viewer`：读活着的链、在新链上重新落一遍 ——
@@ -1226,7 +1226,7 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 
 **阴影由投影的那盏灯提出请求**（`Light::castShadow()` + `ShadowSettings{resolution, bias, filter}` /
 `ShadowFilter::{None, Hard, PCF}`），**两条路径都会**为它建一条 depth-only 的阴影 pass
-（`PassStage::Depth`，默认 1024²，`PassChainBuilder::directionalShadowMatrix()` 从光那一侧框住内容）。
+（`PassStage::Depth`，默认 1024²，`directionalShadowMatrix()` 从光那一侧框住内容）。
 内容集合**无条件**声明阴影 ABI（set 0：map 在 3、块在 4；全屏的延迟光照程序用 5 / 6），`shadow.params.x` 是开关 ——
 没有可用阴影时程序一次都不采那张图。宿主自己的程序声明了 `shadow_map` 却没带上它时，会**按 drawable** 报一条
 `DiagnosticCategory::UnsupportedRequest`，而不是画出一张"没有阴影的阴影"。两个约定不同、且都写在 ABI 里：矩阵是

@@ -104,7 +104,7 @@ bool PassChain::setShadingMode(ShadingMode mode)
                 vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
                 String(u8"this chain's Deferred picture has no geometry pass to shade, so the shading mode was "
                        u8"not changed: build with ChainDesc::mode (a non-Lit mode is built on the forward "
-                       u8"chain, see PassChainBuilder::effectivePath)"));
+                       u8"chain, see PassChain::effectivePath)"));
         }
         return false;
     }

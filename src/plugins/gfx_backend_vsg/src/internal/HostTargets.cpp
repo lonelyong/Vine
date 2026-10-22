@@ -228,7 +228,7 @@ void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
     // rather than derived from the description: a lender planned as "nothing preserves it" would be called
     // sampleable while a borrower reads the very same image as an attachment - a depth that must be in the
     // attachment layout and in the sampled one at once. The engine's own deferred chain only escapes that
-    // by turning promotion off itself (PassChainBuilder::buildDeferredPath); a host that does not gets
+    // by turning promotion off itself (the build's deferred path); a host that does not gets
     // it right from these facts.
     out.depth.any_pass_preserves_depth = entry.target != nullptr && entry.target->depth().preserve;
 

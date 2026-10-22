@@ -14,14 +14,14 @@ VN_APPFWGUI_NS_BEGIN
  * @brief How the area draws: the recipe the viewer builds its chain from.
  *
  * WHAT THIS IS. A render control gives a host a 3D area it does not have to wire itself: the viewer (Viewer)
- * owns one request, builds the area's chain from it (PassChainBuilder with the options derived
+ * owns one request, builds the area's chain from it (PassChain::build with the options derived
  * from here) and adopts it on the area's view. This is the host-facing half of the recipe - the choices the area
  * has - while the CONTEXTUAL fields of ChainDesc (the gizmo's source camera = the area's camera, the pixel
  * ratio both overlays want = the area's ratio) are filled in where the chain is built. A render control's
  * viewerOptions / setViewerOptions / setShadingMode are shortcuts onto the area's viewer.
  *
  * WHAT IT IS NOT. It is not the chain contract: a host that wants more (its own G-buffer or lighting
- * programs, a chain of its own) builds a PassChain with PassChainBuilder and adopts it (SceneView::setChain)
+ * programs, a chain of its own) builds a PassChain (PassChain::build) and adopts it (SceneView::setChain)
  * - that view's drawing is then the host's, and this request no longer applies to it.
  *
  * CHANGING IT REBUILDS. A chain, an overlay's existence and the shading mode the chain must be able to express
@@ -36,7 +36,7 @@ struct VN_APPFW_API ViewerOptions
     vn::graphics::ShadingPath path{ vn::graphics::ShadingPath::Forward };
 
     /// What the picture MEANS (see ShadingMode). A non-Lit mode is a geometry-stage override, so a Deferred
-    /// request carrying one is built FORWARD for it (PassChainBuilder::effectivePath) - the requested path
+    /// request carrying one is built FORWARD for it (PassChain::effectivePath) - the requested path
     /// is kept, so switching back to Lit builds deferred again.
     vn::graphics::ShadingMode mode{ vn::graphics::ShadingMode::Lit };
 

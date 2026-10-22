@@ -35,7 +35,6 @@
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/window/InputEvent.hpp>
@@ -531,10 +530,10 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
     // 宿主自己搭的链：命令碰上它时只问那条链能不能换档，不替它重建（"别人搭的链别人管"）。把控件自己那个视图的链
     // 换成宿主的，就能看见这一条路。
     {
-        vn::graphics::PassChainBuilder builder(control->engine());
-        builder.setCamera(scene_view->camera());
-        builder.setContent(scene_view->scene());
-        scene_view->setChain(builder.build({}));
+        vn::graphics::ChainDesc options;
+        options.camera  = scene_view->camera();
+        options.content = scene_view->scene();
+        scene_view->setChain(vn::graphics::PassChain::build(control->engine(), options));
     }
     ASSERT_NE(scene_view->chain(), nullptr);
     const auto host_chain_run = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeUnlitCommand));

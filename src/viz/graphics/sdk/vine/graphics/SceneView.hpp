@@ -36,7 +36,7 @@ class Scene;
  *
  * @details
  * - The view owns WHAT is drawn (a Camera and a content Scene) and WHERE (the whole area it presents - see
- *   RenderSurface); WHICH passes draw it is a PassChain it ADOPTS (setChain), built by PassChainBuilder -
+ *   RenderSurface); WHICH passes draw it is a PassChain it ADOPTS (setChain), built by PassChain::build -
  *   so a shading mode or overlay change is a call on the chain (PassChain::setShadingMode / setGizmoVisible),
  *   never a view rebuild, and a view with no chain draws nothing.
  * - It borrows an engine (setEngine) rather than being one: the engine stays content- and camera-agnostic, while
@@ -260,7 +260,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      */
     raw_ptr<PassChain> chain() const;
 
-    /** @brief Adopts @p pipeline as what draws this view (build one with PassChainBuilder).
+    /** @brief Adopts @p pipeline as what draws this view (build one with PassChain::build).
      *
      * @details
      * - THE one step connecting a view to a drawing: the view brings what a chain cannot know (its camera and

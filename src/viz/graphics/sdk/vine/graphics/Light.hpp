@@ -152,7 +152,7 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
     /** @brief Sets whether the light casts a shadow.
      *
      * @details
-     * - Read by PassChainBuilder, which builds ONE depth-only pass for the FIRST enabled, shadow-casting
+     * - Read by PassChain::build, which builds ONE depth-only pass for the FIRST enabled, shadow-casting
      *   directional light of the content it was given (further ones, and content rendered by passes it did not
      *   create, stay unshadowed and are reported on the host's diagnostic channel).
      * - The engine itself schedules nothing: a shadow pass is an ordinary registered pass at

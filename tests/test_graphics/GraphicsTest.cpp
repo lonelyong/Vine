@@ -28,7 +28,8 @@
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/LightRig.hpp>
-#include <vine/graphics/PassChainBuilder.hpp>
+#include <vine/graphics/ChainPresets.hpp>
+#include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/Scene.hpp>
@@ -101,22 +102,22 @@ bool drawsToWindow(vn::graphics::RenderPass* pass, vn::graphics::Camera* camera)
 /**
  * @brief Builds a chain for @p view and adopts it: the two steps a host does for a view.
  *
- * A view no longer carries a recipe - a chain IS the recipe (see PassChainBuilder and
+ * A view no longer carries a recipe - a chain IS the recipe (see PassChain::build and
  * SceneView::setChain) - so a test that wants "this view, drawn this way" states the options here and hands the
- * result over. The builder is given the view's own camera and scene, which is what every caller in the app does:
- * the view owns both, the chain owns the passes.
+ * result over. The description is given the view's own camera and scene, which is what every caller in the app
+ * does: the view owns both, the chain owns the passes.
  *
  * @param view    View the chain is built for; it adopts the result.
  * @param engine  Engine the passes are registered on.
  * @param options The build options (chain, mode, overlays; see ChainDesc).
- * @return The chain that was built and adopted; null when the builder refused @p options.
+ * @return The chain that was built and adopted; null when the build refused @p options.
  */
 intrusive_ptr<PassChain> buildFor(SceneView& view, RenderEngine* engine, const ChainDesc& options = {})
 {
-    PassChainBuilder builder(engine);
-    builder.setCamera(view.camera());
-    builder.setContent(view.scene());
-    intrusive_ptr<PassChain> pipeline = builder.build(options);
+    ChainDesc desc = options;
+    desc.camera    = view.camera();
+    desc.content   = view.scene();
+    intrusive_ptr<PassChain> pipeline = PassChain::build(engine, desc);
     if (pipeline != nullptr) {
         view.setChain(pipeline);
     }
@@ -3439,7 +3440,7 @@ TEST(SceneViewTest, ResizingTellsTheCameraTheShapeOfThePictureItDraws)
 
 TEST(SceneViewTest, AViewDrawsThePipelineItAdopted)
 {
-    // A view holds no recipe: a chain IS the recipe (built by PassChainBuilder, which is where the options
+    // A view holds no recipe: a chain IS the recipe (built by PassChain::build, which is where the options
     // live) and a view only adopts one (SceneView::setChain). So "this view presents a picture" is that two
     // steps and nothing else - before them there is no pass at all, after them exactly the pass that was built.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -3474,10 +3475,10 @@ TEST(SceneViewTest, AChainBuiltForOtherContentIsReportedOnceAndIsANewEpisodeOnce
 
     auto other = intrusive_ptr<Scene>(new Scene());
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(view->camera());
-    builder.setContent(other);
-    auto pipeline = builder.build({});
+    ChainDesc desc;
+    desc.camera  = view->camera();
+    desc.content = other;
+    auto pipeline = PassChain::build(engine.get(), desc);
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->diagnosticCount(), 0u) << "building a chain is not a mistake";
 
@@ -3488,10 +3489,10 @@ TEST(SceneViewTest, AChainBuiltForOtherContentIsReportedOnceAndIsANewEpisodeOnce
 
     // A second chain built for yet another scene: the same mistake in the same episode is said once.
     auto third = intrusive_ptr<Scene>(new Scene());
-    PassChainBuilder second(engine.get());
-    second.setCamera(view->camera());
-    second.setContent(third);
-    view->setChain(second.build({}));
+    ChainDesc second_desc;
+    second_desc.camera  = view->camera();
+    second_desc.content = third;
+    view->setChain(PassChain::build(engine.get(), second_desc));
     EXPECT_EQ(engine->diagnosticCount(), 1u) << "one episode, one message";
 
     // The view's content catches up with the chain it adopted (setScene rebinds the window pass): the wire is right,
@@ -3500,10 +3501,10 @@ TEST(SceneViewTest, AChainBuiltForOtherContentIsReportedOnceAndIsANewEpisodeOnce
     ASSERT_TRUE(view->chain()->draws(view->scene().get()));
 
     auto fourth = intrusive_ptr<Scene>(new Scene());
-    PassChainBuilder third_builder(engine.get());
-    third_builder.setCamera(view->camera());
-    third_builder.setContent(fourth);
-    view->setChain(third_builder.build({}));
+    ChainDesc third_desc;
+    third_desc.camera  = view->camera();
+    third_desc.content = fourth;
+    view->setChain(PassChain::build(engine.get(), third_desc));
     EXPECT_EQ(engine->diagnosticCount(), 2u) << "a break after a good frame is a new problem";
 }
 
@@ -3935,7 +3936,7 @@ TEST(SceneViewViewportTest, TheShadingModeIsAProgramOverrideNotARebuild)
 // （链条变了），回到 Lit 再建回延迟；这与"同一链条上换档零重建"是两条规则，各钉一条。
 // 延迟选项 + 非 Lit 档：模式是**几何阶段**的覆盖，而延迟链画的最后一步是全屏光照（没有几何可着色）——所以这一档
 // 期间链按**前向**建（选项字段不动，`shadingPath()` 记的是**实际建成的**那条链），回到 Lit 就再建回延迟。这是
-// "选项 → 链"的一次性决定（PassChainBuilder::effectivePath），与"同一条链上换档零重建"是两条规则，各钉一条。
+// "选项 → 链"的一次性决定（PassChain::effectivePath），与"同一条链上换档零重建"是两条规则，各钉一条。
 TEST(SceneViewViewportTest, ANonLitModeOnADeferredRecipeBuildsTheForwardChain)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -5119,7 +5120,7 @@ TEST(RenderEngineTest, ShadowPassIsJustARegisteredScenePass)
     EXPECT_EQ(backend->target_history[1], nullptr);
 }
 
-TEST(PassChainBuilderTest, OffscreenToScreenBuildsExpectedChain)
+TEST(PassChainTest, OffscreenToScreenBuildsExpectedChain)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -5131,10 +5132,7 @@ TEST(PassChainBuilderTest, OffscreenToScreenBuildsExpectedChain)
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam = intrusive_ptr<Camera>(new Camera());
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    auto* screen = builder.addOffscreenToScreen(
+    auto* screen = addOffscreenToScreen(engine.get(), cam.get(), content,
         u8"SceneColor", 640, 360,
         RenderTarget::ColorFormat::RGBA8,
         RenderTarget::DepthFormat::D24,
@@ -5157,16 +5155,16 @@ TEST(PassChainBuilderTest, OffscreenToScreenBuildsExpectedChain)
     EXPECT_TRUE(engine->resolve(u8"SceneColor")->hasColor());
 }
 
-TEST(PassChainBuilderTest, ForwardPathBuildsWindowPass)
+TEST(PassChainTest, ForwardPathBuildsWindowPass)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    auto pipeline = builder.build(ChainDesc{});
+    ChainDesc options;
+    options.camera  = cam.get();
+    options.content = content;
+    auto pipeline   = PassChain::build(engine.get(), options);
 
     ASSERT_NE(pipeline, nullptr);
     ASSERT_NE(pipeline->presentingPass(), nullptr);
@@ -5192,7 +5190,7 @@ TEST(PassChainBuilderTest, ForwardPathBuildsWindowPass)
  * The stage table is what lets an effect enter relative to the passes it serves; it is only worth
  * anything if the assembled passes actually land in the order the stages state.
  */
-TEST(PassChainBuilderTest, StagesOrderThePasses)
+TEST(PassChainTest, StagesOrderThePasses)
 {
     EXPECT_LT(passStageOrder(PassStage::Depth), passStageOrder(PassStage::Geometry));
     EXPECT_LT(passStageOrder(PassStage::Geometry), passStageOrder(PassStage::Effect));
@@ -5211,21 +5209,20 @@ TEST(PassChainBuilderTest, StagesOrderThePasses)
  * chain's ownership exists to close). Removing the passes is the handle's job, and the count
  * going back to zero is what says it happened.
  */
-TEST(PassChainBuilderTest, DroppingTheChainUnregistersItsPasses)
+TEST(PassChainTest, DroppingTheChainUnregistersItsPasses)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
     {
         ChainDesc opts;
-        opts.path = ShadingPath::Deferred;
+        opts.camera           = cam.get();
+        opts.content          = content;
+        opts.path             = ShadingPath::Deferred;
         opts.offscreen_width  = 64;
         opts.offscreen_height = 64;
-        auto pipeline         = builder.build(opts);
+        auto pipeline         = PassChain::build(engine.get(), opts);
         ASSERT_NE(pipeline, nullptr);
         EXPECT_EQ(engine->passCount(), 2u); // G-buffer + lighting
         EXPECT_TRUE(drawsToWindow(pipeline->presentingPass(), cam.get()));
@@ -5243,7 +5240,7 @@ TEST(PassChainBuilderTest, DroppingTheChainUnregistersItsPasses)
  * borrow answers nothing (engine()), which is what makes using the chain afterwards a no-op instead of a call
  * into freed memory.
  */
-TEST(PassChainBuilderTest, AChainOutlivingItsEngineNeitherHoldsNorCallsIntoIt)
+TEST(PassChainTest, AChainOutlivingItsEngineNeitherHoldsNorCallsIntoIt)
 {
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
@@ -5254,10 +5251,10 @@ TEST(PassChainBuilderTest, AChainOutlivingItsEngineNeitherHoldsNorCallsIntoIt)
         auto owner = intrusive_ptr<RenderEngine>(new RenderEngine());
         engine     = owner.get();
 
-        PassChainBuilder builder(engine);
-        builder.setCamera(cam.get());
-        builder.setContent(content);
-        pipeline = builder.build({});
+        ChainDesc desc;
+        desc.camera  = cam.get();
+        desc.content = content;
+        pipeline     = PassChain::build(engine, desc);
         ASSERT_NE(pipeline, nullptr);
 
         EXPECT_TRUE(pipeline->isValid());
@@ -5273,7 +5270,7 @@ TEST(PassChainBuilderTest, AChainOutlivingItsEngineNeitherHoldsNorCallsIntoIt)
     pipeline.reset();                             // unregistering its passes is a no-op: the engine took them with it
 }
 
-TEST(PassChainBuilderTest, AShadowThisChainCannotShadeIsReported)
+TEST(PassChainTest, AShadowThisChainCannotShadeIsReported)
 {
     // A shadow is asked for by the LIGHT that casts it (Light::isCastingShadow) rather than by a preset
     // name, because the light outlives any one chain and a scene may be drawn by several. Both
@@ -5288,20 +5285,20 @@ TEST(PassChainBuilderTest, AShadowThisChainCannotShadeIsReported)
     std::vector<RenderDiagnostic> reported;
     engine->setDiagnosticSink([&reported](const RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
+    ChainDesc options;
+    options.camera  = cam.get();
+    options.content = content;
 
     // Nothing asked for: nothing to report.
-    ASSERT_NE(builder.build(ChainDesc{}), nullptr);
+    ASSERT_NE(PassChain::build(engine.get(), options), nullptr);
     EXPECT_TRUE(reported.empty());
 
     content->addLight(Light::createDirectional());
-    ASSERT_NE(builder.build(ChainDesc{}), nullptr);
+    ASSERT_NE(PassChain::build(engine.get(), options), nullptr);
     EXPECT_TRUE(reported.empty()) << "a light that casts no shadow asks for nothing";
 
     content->lights().front()->setCastShadow(true);
-    auto forward = builder.build(ChainDesc{});
+    auto forward = PassChain::build(engine.get(), options);
     ASSERT_NE(forward, nullptr);
     // The FORWARD path HONOURS the request (S2b): the shadow pass is built and the content pass
     // declares its map as an input, so there is nothing to report. Whether that shadow then reaches
@@ -5319,10 +5316,12 @@ TEST(PassChainBuilderTest, AShadowThisChainCannotShadeIsReported)
     // empty while the host had been told the shadow was not built at all.)
     reported.clear();
     ChainDesc opts;
+    opts.camera           = cam.get();
+    opts.content          = content;
     opts.path             = ShadingPath::Deferred;
     opts.offscreen_width  = 64;
     opts.offscreen_height = 64;
-    auto deferred         = builder.build(opts);
+    auto deferred         = PassChain::build(engine.get(), opts);
     ASSERT_NE(deferred, nullptr);
     EXPECT_TRUE(reported.empty()) << "the deferred path built the shadow, so it has nothing to report";
     EXPECT_NE(deferred->offscreenTarget(), nullptr);
@@ -5331,7 +5330,7 @@ TEST(PassChainBuilderTest, AShadowThisChainCannotShadeIsReported)
     // they would not read is not built, and that IS reported.
     reported.clear();
     opts.lighting_program = intrusive_ptr<ShaderProgram>(new ShaderProgram());
-    ASSERT_NE(builder.build(opts), nullptr);
+    ASSERT_NE(PassChain::build(engine.get(), opts), nullptr);
     ASSERT_EQ(reported.size(), 1u);
     EXPECT_EQ(reported[0].severity, DiagnosticSeverity::Warning);
     EXPECT_EQ(reported[0].category, DiagnosticCategory::UnsupportedRequest);
@@ -5340,7 +5339,7 @@ TEST(PassChainBuilderTest, AShadowThisChainCannotShadeIsReported)
     // A disabled light asks for nothing, even with the flag still set.
     reported.clear();
     content->lights().front()->setEnabled(false);
-    ASSERT_NE(builder.build(ChainDesc{}), nullptr);
+    ASSERT_NE(PassChain::build(engine.get(), options), nullptr);
     EXPECT_TRUE(reported.empty());
 }
 
@@ -5358,7 +5357,7 @@ TEST(PassChainBuilderTest, AShadowThisChainCannotShadeIsReported)
  * It also pins that the lighting pass' declared input is RESOLVED (the engine reports a pass that
  * reads what no pass produced), which is the wire the map travels on.
  */
-TEST(PassChainBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
+TEST(PassChainTest, ARequestedShadowIsBuiltOnTheDeferredPath)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -5374,15 +5373,14 @@ TEST(PassChainBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
     content->addLight(sun);
 
     ChainDesc opts;
+    opts.camera           = cam.get();
+    opts.content          = content;
     opts.path             = ShadingPath::Deferred;
     opts.offscreen_width  = 32;
     opts.offscreen_height = 32;
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
     // The handle is HELD: dropping it unregisters its passes (PassChain's RAII), so a test that
     // measured a dropped chain would measure an empty frame.
-    auto pipeline = builder.build(opts);
+    auto pipeline = PassChain::build(engine.get(), opts);
     ASSERT_NE(pipeline, nullptr);
     ASSERT_EQ(engine->passCount(), 3u) << "shadow + G-buffer + lighting (which IS the window pass "
                                           "while nothing is composited over it)";
@@ -5403,7 +5401,7 @@ TEST(PassChainBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
 
     // The stated matrix IS the one derivation, for this light and this content.
     auto         light_camera = intrusive_ptr<Camera>(new Camera());
-    const Mat4d  expected     = PassChainBuilder::directionalShadowMatrix(*sun, content->boundingBox(), *light_camera);
+    const Mat4d  expected     = directionalShadowMatrix(*sun, content->boundingBox(), *light_camera);
     const Mat4d  stated       = shadow->producerViewProjection();
     for (int r = 0; r < 4; ++r) {
         for (int c = 0; c < 4; ++c) {
@@ -5432,7 +5430,7 @@ TEST(PassChainBuilderTest, ARequestedShadowIsBuiltOnTheDeferredPath)
  * pass but forgot the declaration would look complete here and shade an unshadowed picture on the
  * GPU - the one failure the pixel gate in vsg_backend_selftest exists to catch.
  */
-TEST(PassChainBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
+TEST(PassChainTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -5447,10 +5445,10 @@ TEST(PassChainBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
     sun->setShadowResolution(64);
     content->addLight(sun);
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    auto pipeline = builder.build(ChainDesc{});
+    ChainDesc options;
+    options.camera  = cam.get();
+    options.content = content;
+    auto pipeline   = PassChain::build(engine.get(), options);
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->passCount(), 2u) << "shadow + the content pass (which IS the window pass)";
 
@@ -5472,7 +5470,7 @@ TEST(PassChainBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
     // The one derivation, and an orthographic camera that is not the view camera (see the deferred
     // test: the same assertions, because it is the same pass builder).
     auto        light_camera = intrusive_ptr<Camera>(new Camera());
-    const Mat4d expected     = PassChainBuilder::directionalShadowMatrix(*sun, content->boundingBox(), *light_camera);
+    const Mat4d expected     = directionalShadowMatrix(*sun, content->boundingBox(), *light_camera);
     const Mat4d stated       = shadow->producerViewProjection();
     for (int r = 0; r < 4; ++r) {
         for (int c = 0; c < 4; ++c) {
@@ -5489,7 +5487,7 @@ TEST(PassChainBuilderTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
     EXPECT_EQ(engine->diagnosticCount(), problems_before);
 }
 
-TEST(PassChainBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
+TEST(PassChainTest, DeferredPresetBuildsGbufferAndLightingPasses)
 {
     auto engine     = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content    = intrusive_ptr<Scene>(new Scene());
@@ -5498,16 +5496,15 @@ TEST(PassChainBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
     auto light_prog = intrusive_ptr<ShaderProgram>(new ShaderProgram());
 
     ChainDesc opts;
-    opts.path = ShadingPath::Deferred;
+    opts.camera            = cam.get();
+    opts.content           = content;
+    opts.path              = ShadingPath::Deferred;
     opts.offscreen_width   = 640;
     opts.offscreen_height  = 360;
     opts.gbuffer_program   = gbuf_prog;
     opts.lighting_program  = light_prog;
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    auto pipeline = builder.build(opts);
+    auto pipeline = PassChain::build(engine.get(), opts);
 
     ASSERT_NE(pipeline, nullptr);
     // G-buffer (order < 0) + fullscreen lighting window pass (order 0).
@@ -5560,7 +5557,7 @@ TEST(PassChainBuilderTest, DeferredPresetBuildsGbufferAndLightingPasses)
  * private helper the shadow pass happens to share: a host (or a test) that builds its own shadow
  * pass has to get the SAME camera, and re-deriving one is the failure mode this pins.
  */
-TEST(PassChainBuilderTest, TheDirectionalShadowCameraFramesTheContentFromTheLightSide)
+TEST(PassChainTest, TheDirectionalShadowCameraFramesTheContentFromTheLightSide)
 {
     auto sun = LightPtr(Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0)));
     sun->setName(u8"sun");
@@ -5570,7 +5567,7 @@ TEST(PassChainBuilderTest, TheDirectionalShadowCameraFramesTheContentFromTheLigh
                                           vn::math::Point3<double>(6.0, 4.0, 2.0));
 
     auto camera = intrusive_ptr<Camera>(new Camera());
-    const vn::math::Mat4d view_projection = PassChainBuilder::directionalShadowMatrix(*sun, bounds, *camera);
+    const vn::math::Mat4d view_projection = directionalShadowMatrix(*sun, bounds, *camera);
 
     // Every corner of the box lands inside the clip volume (the map has to cover the casters), and it
     // is the ORTHO window that puts it there — the shading maps fragments through this same matrix.
@@ -5600,7 +5597,7 @@ TEST(PassChainBuilderTest, TheDirectionalShadowCameraFramesTheContentFromTheLigh
  * empty list rather than skipping the call, so a backend can never keep a stale one from the pass
  * before.
  */
-TEST(PassChainBuilderTest, DeclaredPassInputsReachTheBackend)
+TEST(PassChainTest, DeclaredPassInputsReachTheBackend)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -5609,10 +5606,10 @@ TEST(PassChainBuilderTest, DeclaredPassInputsReachTheBackend)
     engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize()) << "a frame runs nothing until the engine is initialized";
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    ASSERT_NE(builder.build(ChainDesc{}), nullptr);
+    ChainDesc options;
+    options.camera  = cam.get();
+    options.content = content;
+    ASSERT_NE(PassChain::build(engine.get(), options), nullptr);
 
     // The G-buffer of a deferred chain is a target a later pass can declare; here it stands in
     // for any producer's output.
@@ -5646,7 +5643,7 @@ TEST(PassChainBuilderTest, DeclaredPassInputsReachTheBackend)
  * A content pass is the kind that binds imported textures today; the full-screen ABI is source + shadow map
  * only, and the engine reports a ScreenPass that declares one.
  */
-TEST(PassChainBuilderTest, AnImportedTextureIsAnInputInDeclarationOrder)
+TEST(PassChainTest, AnImportedTextureIsAnInputInDeclarationOrder)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto camera  = intrusive_ptr<Camera>(new Camera());
@@ -5698,7 +5695,7 @@ TEST(PassChainBuilderTest, AnImportedTextureIsAnInputInDeclarationOrder)
     EXPECT_FALSE(inputs[1].sampler.has_value()) << "a produced input has no sampler declaration";
 }
 
-TEST(PassChainBuilderTest, AScreenPassKeepsImportedTextureInputsForItsProgram)
+TEST(PassChainTest, AScreenPassKeepsImportedTextureInputsForItsProgram)
 {
     // A ScreenPass may declare an imported texture next to its produced source. The full-screen ABI binds the
     // imported image at the sampler binding the program declares beyond the source's attachments; the engine
@@ -5743,23 +5740,22 @@ TEST(PassChainBuilderTest, AScreenPassKeepsImportedTextureInputsForItsProgram)
     EXPECT_EQ(inputs[1].target, source.get());
 }
 
-TEST(PassChainBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)
+TEST(PassChainTest, DeferredPresetFallsBackToBuiltinPrograms)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    // No programs supplied: the builder supplies its built-in temporary
+    // No programs supplied: the build supplies its built-in temporary
     // G-buffer geometry + deferred-lighting programs.
     ChainDesc opts;
-    opts.path = ShadingPath::Deferred;
+    opts.camera           = cam.get();
+    opts.content          = content;
+    opts.path             = ShadingPath::Deferred;
     opts.offscreen_width  = 640;
     opts.offscreen_height = 360;
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    auto pipeline = builder.build(opts);
+    auto pipeline = PassChain::build(engine.get(), opts);
 
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->passCount(), 2u);
@@ -5770,17 +5766,16 @@ TEST(PassChainBuilderTest, DeferredPresetFallsBackToBuiltinPrograms)
     EXPECT_NE(light->program(), nullptr);
 }
 
-TEST(PassChainBuilderTest, DeferredPathRefusesWithoutContent)
+TEST(PassChainTest, DeferredPathRefusesWithoutContent)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto cam    = intrusive_ptr<Camera>(new Camera());
 
     // A Deferred main pass needs a content scene to fill its G-buffer.
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
     ChainDesc opts;
+    opts.camera   = cam.get();
     opts.path     = ShadingPath::Deferred;
-    auto pipeline = builder.build(opts);
+    auto pipeline = PassChain::build(engine.get(), opts);
 
     EXPECT_EQ(pipeline, nullptr);
     EXPECT_EQ(engine->passCount(), 0u);
@@ -6052,7 +6047,7 @@ TEST(RenderPassTest, EachAttachmentClearColourTravelsWithThePassPolicy)
         << "an attachment nobody stated keeps transparent black";
 }
 
-TEST(PassChainBuilderTest, DeferredPresetWithTransparentContentBuildsComposite)
+TEST(PassChainTest, DeferredPresetWithTransparentContentBuildsComposite)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -6060,15 +6055,14 @@ TEST(PassChainBuilderTest, DeferredPresetWithTransparentContentBuildsComposite)
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
     ChainDesc opts;
-    opts.path = ShadingPath::Deferred;
+    opts.camera           = cam.get();
+    opts.content          = content;
+    opts.transparent      = overlay;
+    opts.path             = ShadingPath::Deferred;
     opts.offscreen_width  = 640;
     opts.offscreen_height = 360;
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    builder.setTransparentContent(overlay);
-    auto pipeline = builder.build(opts);
+    auto pipeline = PassChain::build(engine.get(), opts);
 
     ASSERT_NE(pipeline, nullptr);
     // G-buffer + lighting INTO the composite + forward transparent + present:
@@ -6117,7 +6111,7 @@ TEST(PassChainBuilderTest, DeferredPresetWithTransparentContentBuildsComposite)
  * depends on: every row is labelled by the tag the recipe gave it, and the order of the rows is the order the
  * declared STAGES imply rather than a number the builder picked out of the air.
  */
-TEST(PassChainBuilderTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
+TEST(PassChainTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -6125,15 +6119,14 @@ TEST(PassChainBuilderTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
     ChainDesc opts;
+    opts.camera           = cam.get();
+    opts.content          = content;
+    opts.transparent      = overlay;
     opts.path             = ShadingPath::Deferred;
     opts.offscreen_width  = 640;
     opts.offscreen_height = 360;
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    builder.setTransparentContent(overlay);
-    auto pipeline = builder.build(opts);
+    auto pipeline = PassChain::build(engine.get(), opts);
     ASSERT_NE(pipeline, nullptr);
 
     const FramePlan plan = engine->framePlan();
@@ -6163,7 +6156,7 @@ TEST(PassChainBuilderTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
  * pins the whole shape: the pass carries the overlay's own camera and content, a HUD tag, the HUD stage's order
  * and no clear; the per-frame work is the declaration's hook, and it runs when the FRAME runs.
  */
-TEST(PassChainBuilderTest, TheHudOverlaysAreDeclarationsToo)
+TEST(PassChainTest, TheHudOverlaysAreDeclarationsToo)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
@@ -6174,15 +6167,14 @@ TEST(PassChainBuilderTest, TheHudOverlaysAreDeclarationsToo)
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
     ChainDesc opts;
+    opts.camera              = cam.get();
+    opts.content             = content;
     opts.path                = ShadingPath::Forward;
     opts.gizmo.source_camera = cam.get();
     opts.gizmo.box_size      = 96;
     opts.fps.enabled         = true;
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    auto pipeline = builder.build(opts);
+    auto pipeline = PassChain::build(engine.get(), opts);
     ASSERT_NE(pipeline, nullptr);
 
     // Two handles per overlay, and they answer different questions (see PassChain::gizmo/gizmoPass).
@@ -6235,18 +6227,18 @@ TEST(PassChainBuilderTest, TheHudOverlaysAreDeclarationsToo)
     EXPECT_NEAR(shown_forward.z, source_forward.z, 1.0e-6);
 }
 
-TEST(PassChainBuilderTest, ForwardPresetWithTransparentContentStacksDepthOnPass)
+TEST(PassChainTest, ForwardPresetWithTransparentContentStacksDepthOnPass)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
     auto overlay = intrusive_ptr<Scene>(new Scene());
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    builder.setTransparentContent(overlay);
-    auto pipeline = builder.build(ChainDesc{});
+    ChainDesc options;
+    options.camera      = cam.get();
+    options.content     = content;
+    options.transparent = overlay;
+    auto pipeline       = PassChain::build(engine.get(), options);
 
     ASSERT_NE(pipeline, nullptr);
     // Main order-0 window content pass + order-1 transparent content pass.
@@ -6281,9 +6273,9 @@ TEST(RenderPassTest, DepthStyleIsExplicitAndIndependentOfClear)
     EXPECT_EQ(pass.depthMode(), DepthMode::TestOnly);
 }
 
-TEST(PassChainBuilderTest, DefaultGbufferTargetIsCanonicalLayout)
+TEST(PassChainTest, DefaultGbufferTargetIsCanonicalLayout)
 {
-    auto gbuffer = PassChainBuilder::defaultGbufferTarget(320, 180);
+    auto gbuffer = defaultGbufferTarget(320, 180);
     ASSERT_NE(gbuffer, nullptr);
     EXPECT_EQ(gbuffer->width(), 320);
     EXPECT_EQ(gbuffer->height(), 180);
@@ -6299,13 +6291,13 @@ TEST(PassChainBuilderTest, DefaultGbufferTargetIsCanonicalLayout)
     EXPECT_EQ(gbuffer->colorFormat(3), RenderTarget::ColorFormat::RGBA16F);  // view position
 
     // Non-positive sizes fall back to the default resolution.
-    auto fallback = PassChainBuilder::defaultGbufferTarget(0, 0);
+    auto fallback = defaultGbufferTarget(0, 0);
     ASSERT_NE(fallback, nullptr);
     EXPECT_EQ(fallback->width(), 640);
     EXPECT_EQ(fallback->height(), 360);
 }
 
-TEST(PassChainBuilderTest, GizmoOverlayConfiguredOnPreset)
+TEST(PassChainTest, GizmoOverlayConfiguredOnPreset)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -6316,14 +6308,13 @@ TEST(PassChainBuilderTest, GizmoOverlayConfiguredOnPreset)
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
     ChainDesc opts;
+    opts.camera              = cam.get();
+    opts.content             = content;
     opts.gizmo.source_camera = cam.get();
     opts.gizmo.pixel_ratio   = 2.0;
     opts.gizmo.box_size      = 128;
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    auto pipeline = builder.build(opts);
+    auto pipeline = PassChain::build(engine.get(), opts);
 
     ASSERT_NE(pipeline, nullptr);
     ASSERT_NE(pipeline->gizmo(), nullptr);
@@ -6337,7 +6328,7 @@ TEST(PassChainBuilderTest, GizmoOverlayConfiguredOnPreset)
     engine->frame();
 }
 
-TEST(PassChainBuilderTest, ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumerNeeds)
+TEST(PassChainTest, ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumerNeeds)
 {
     auto engine     = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content    = intrusive_ptr<Scene>(new Scene());
@@ -6346,6 +6337,8 @@ TEST(PassChainBuilderTest, ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumerNeeds
     auto light_prog = intrusive_ptr<ShaderProgram>(new ShaderProgram());
 
     ChainDesc opts;
+    opts.camera              = cam.get();
+    opts.content             = content;
     opts.path                = ShadingPath::Deferred;
     opts.offscreen_width     = 640;
     opts.offscreen_height    = 360;
@@ -6355,10 +6348,7 @@ TEST(PassChainBuilderTest, ResizeMapsOneSurfaceSizeIntoTheSpaceEachConsumerNeeds
     opts.gizmo.pixel_ratio   = 2.0;
     opts.gizmo.box_size      = 128;
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    auto pipeline = builder.build(opts);
+    auto pipeline = PassChain::build(engine.get(), opts);
     ASSERT_NE(pipeline, nullptr);
     RenderTarget* gbuffer = pipeline->offscreenTarget();
     ASSERT_NE(gbuffer, nullptr);
@@ -6701,7 +6691,7 @@ TEST(AxisGizmoTest, BuildsThreeColouredSticks)
     }
     EXPECT_NE(gizmo->camera(), nullptr);
     // A HUD overlay draws over the main content: what says so is the DECLARATION that shows it (no clear, depth
-    // disabled), which the builder writes - see PassChainBuilderTest.TheHudOverlaysAreDeclarationsToo.
+    // disabled), which the build writes - see PassChainTest.TheHudOverlaysAreDeclarationsToo.
 }
 
 TEST(AxisGizmoTest, ViewportPlacedBottomLeft)
@@ -8873,13 +8863,12 @@ TEST(ContentLayersTest, ARecipeStampsItsMaskOnEveryContentPassButNotOnTheOverlay
     setupLookAtCamera(*cam);
 
     ChainDesc options;
+    options.camera     = cam.get();
+    options.content    = content;
     options.layer_mask = 1u << 1;
     options.gizmo.source_camera = cam.get();
 
-    PassChainBuilder builder(engine.get());
-    builder.setCamera(cam.get());
-    builder.setContent(content);
-    auto pipeline = builder.build(options);
+    auto pipeline = PassChain::build(engine.get(), options);
     ASSERT_NE(pipeline, nullptr);
 
     std::size_t content_passes = 0;

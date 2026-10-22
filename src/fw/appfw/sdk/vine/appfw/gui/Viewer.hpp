@@ -97,7 +97,7 @@ class VN_APPFW_API Viewer
      *
      * The cheap call: a mode the built chain can express is one override on the live chain (no rebuild, no device
      * work). When it cannot express @p mode (a deferred chain asked for a non-Lit mode), the area is rebuilt from
-     * its current request carrying @p mode - see ViewerOptions and PassChainBuilder::effectivePath.
+     * its current request carrying @p mode - see ViewerOptions and PassChain::effectivePath.
      *
      * @param mode The viewing mode to switch to.
      * @return true when the area now shades in @p mode; false when there is no view, or the rebuild failed (the

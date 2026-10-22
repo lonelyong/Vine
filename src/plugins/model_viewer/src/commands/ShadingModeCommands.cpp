@@ -47,7 +47,7 @@ vn::async::Task<vn::appfw::CommandResult> ShadingModeCommand::execute(vn::appfw:
 
     // 模式是这条链**建好之后**还能改的那一项（见 PassChain::setShadingMode()）。视图就是控件自己的视图时交给
     // 控件：它知道链是不是它建的 —— 能直接改就是零重建，链表达不了就带着新档重建一次（延迟链没有可改的几何趟，
-    // 重建时按实面那条前置链搭，见 PassChainBuilder::effectivePath）。
+    // 重建时按实面那条前置链搭，见 PassChain::effectivePath）。
     if (view == control->view()) {
         if (!control->setShadingMode(mode())) {
             co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed,

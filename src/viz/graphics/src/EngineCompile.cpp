@@ -266,7 +266,7 @@ void RenderEngine::collectPictureShapeMismatches()
         }
         if (episode.reported.shouldReport()) {
             // The numbers go in as ASCII digits, like every other message in the SDK (see
-            // PassChainBuilder::reportRequestedShadows).
+            // the chain build).
             const std::string size_text = std::to_string(width) + "x" + std::to_string(height);
             noteProblem(String(u8"pass '") + reportedPassName(pass) + String(u8"' draws into a ") +
                         String(toU8(size_text)) + String(u8" rectangle, but its camera is projected for a picture "

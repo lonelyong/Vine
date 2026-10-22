@@ -1,7 +1,6 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/SceneView.hpp>
 
@@ -19,7 +18,7 @@ namespace
 /**
  * @brief Builds a chain for @p view from @p options and adopts it: the two steps a host does for a view.
  *
- * A view no longer carries a recipe - a chain IS the recipe (see PassChainBuilder and
+ * A view no longer carries a recipe - a chain IS the recipe (see PassChain::build and
  * SceneView::setChain) - so a test that wants "this view, drawn this way" states the options here and hands the
  * result over. The builder is given the view's own camera and scene, which is what every caller in the app does.
  *
@@ -31,10 +30,10 @@ namespace
 intrusive_ptr<PassChain> buildFor(const intrusive_ptr<SceneView>& view, RenderEngine* engine,
                                  const ChainDesc& options = {})
 {
-    PassChainBuilder builder(engine);
-    builder.setCamera(view->camera());
-    builder.setContent(view->scene());
-    intrusive_ptr<PassChain> pipeline = builder.build(options);
+    ChainDesc request = options;
+    request.camera    = view->camera();
+    request.content   = view->scene();
+    intrusive_ptr<PassChain> pipeline = PassChain::build(engine, request);
     if (pipeline != nullptr) {
         view->setChain(pipeline);
     }

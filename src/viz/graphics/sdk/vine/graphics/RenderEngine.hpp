@@ -68,7 +68,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
   public:
     /** @brief Constructs an empty engine (no device, no passes).
      *
-     * Configure the chain explicitly (addPass) or through a PassChainBuilder, then setDevice()
+     * Configure the chain explicitly (addPass) or through PassChain::build, then setDevice()
      * before initialize().
      */
     RenderEngine();
@@ -202,7 +202,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @details
      * - The engine owns the route, so the message reaches the host whether or not a backend is set (a
      *   wiring problem exists before any backend draws); counted in diagnosticCount().
-     * - Public because the engine's own builders report through it too (e.g. PassChainBuilder tells)
+     * - Public because the engine's own builders report through it too (e.g. the chain build tells)
      *   the host that content asks for shadows while no shadow pass is built).
      *
      * @param severity How bad the situation is.
@@ -261,7 +261,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @details
      * - The surface's shape is the one number a builder or a host needs from the engine while it is assembling
-     *   passes (PassChainBuilder lays its targets out on it). It is not a per-frame value: it changes when the
+     *   passes (PassChain::build lays its targets out on it). It is not a per-frame value: it changes when the
      *   surface is resized, and everything that reads it reads the same fact.
      *
      * @return Width in the units the host announced (logical pixels for the Qt host; 0 until the first resize).

@@ -56,6 +56,13 @@
 - **坑（S2 踩到）**：在 `VN_GRAPHICS_NS_BEGIN` 里写 `class Object;` 会声明一个**新的 `vn::graphics::Object`**，
   把 `vn::Object` 遮住（症状：一片 `base class has incomplete type`）。引用仓库的擦除基类要么 include
   `<vine/Object.hpp>` 并裸写 `Object`，要么写全 `vn::Object`。
+- **S3 落地（同日）**：`PassChainBuilder` 删除。宿主入口是静态 **`PassChain::build(engine, desc)`**；
+  `ChainDesc` 吸收 `camera` / `content` / `transparent`（原来 builder 的三个 setter）；`effectivePath` 成为
+  `PassChain` 的静态。预设件搬到 **`ChainPresets.hpp` 的自由函数**（`defaultGbufferTarget` /
+  `defaultGbufferGeometryProgram` / `defaultDeferredLightProgram` / `directionalShadowMatrix` /
+  `addOffscreenToScreen`）。配方实现退成 `src/ChainBuilder.hpp` 里的私有 `detail::ChainBuilder`——公开类型
+  少一个，实现一行没重写。判据：全量构建 0；四套件 409 / 481 / 261 / 165；6 门禁 0；指南 §3.3/§3.5/§3.10
+  的示例改成值 + 静态 build。
 
 ## 2026-10-22 注册归一个令牌：`PassGroup` + `presentingPass`（历史登记；当日下午已折进 `PassChain`，设计见 `.ai/design/graphics-frame-picture-view-redesign-2026-10-22.md` §9）
 

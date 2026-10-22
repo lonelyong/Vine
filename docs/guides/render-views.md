@@ -220,7 +220,7 @@ int main(int argc, char** argv)
 
 `Viewer::setViewerOptions` 把一条请求需要的顺序**一次做完**：
 
-1. **建链**：`PassChainBuilder` 按 `options` 建（相机与内容取自这个视图，HUD 的像素比取自区）；
+1. **建链**：`PassChain::build(engine, options)` 按 `options` 建（相机与内容取自这个视图，HUD 的像素比取自区）；
 2. **采纳**：`view->setChain(...)` —— 视图从此画的就是这条链；
 3. **声明**：`surface->present(view)` —— 区记下"这块窗口由这条链的窗口 pass 画"，并把 `view.setSurface(区)`。
 

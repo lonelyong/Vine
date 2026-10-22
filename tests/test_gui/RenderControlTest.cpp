@@ -24,7 +24,6 @@
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderEngine.hpp>
-#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -262,10 +261,10 @@ vn::intrusive_ptr<vn::graphics::SceneView> secondPane(vn::graphics::RenderEngine
 {
     auto view = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
     view->setEngine(engine);
-    vn::graphics::PassChainBuilder builder(engine);
-    builder.setCamera(view->camera());
-    builder.setContent(view->scene());
-    view->setChain(builder.build({}));
+    vn::graphics::ChainDesc options;
+    options.camera  = view->camera();
+    options.content = view->scene();
+    view->setChain(vn::graphics::PassChain::build(engine, options));
     return view;
 }
 
@@ -336,7 +335,7 @@ TEST(RenderControlTest, TheControlsSurfacePresentsItsOwnViewByDefault)
 
 // 查看器预设与运行期换档是两件事：预设说"走哪条链、哪些档、档要能表达什么"，换档问的是"这条链能不能表达、
 // 以及**这个请求**是不是就该由它来画"。延迟预设 + 非 Lit 档 ⇒ 链按前向建（effectivePath）；这时选回 Lit，
-// 前向链当然表达得了 Lit，但这个请求要的是延迟 ⇒ **建回延迟**（老规矩，见 PassChainBuilder::effectivePath）。
+// 前向链当然表达得了 Lit，但这个请求要的是延迟 ⇒ **建回延迟**（老规矩，见 PassChain::effectivePath）。
 TEST(RenderControlTest, ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt)
 {
     HostedControl host;
@@ -744,10 +743,10 @@ TEST(RenderControlTest, AHostPassTakesTheAreaAndTheViewerStandsDown)
     auto*         view    = control->view();
     ASSERT_NE(control->viewer(), nullptr);
 
-    vn::graphics::PassChainBuilder builder(control->engine());
-    builder.setCamera(view->camera());
-    builder.setContent(view->scene());
-    auto host_pipeline = builder.build({});
+    vn::graphics::ChainDesc options;
+    options.camera  = view->camera();
+    options.content = view->scene();
+    auto host_pipeline = vn::graphics::PassChain::build(control->engine(), options);
     ASSERT_NE(host_pipeline, nullptr);
     ASSERT_TRUE(surface->present(host_pipeline->presentingPass()));
 
@@ -766,10 +765,10 @@ TEST(RenderControlTest, AHostPassTakesTheAreaAndTheViewerStandsDown)
     EXPECT_TRUE(live.control()->viewer()->isActive());
 
     auto* live_view = live.control()->view();
-    vn::graphics::PassChainBuilder live_builder(live.control()->engine());
-    live_builder.setCamera(live_view->camera());
-    live_builder.setContent(live_view->scene());
-    auto taken_over = live_builder.build({});
+    vn::graphics::ChainDesc live_options;
+    live_options.camera  = live_view->camera();
+    live_options.content = live_view->scene();
+    auto taken_over = vn::graphics::PassChain::build(live.control()->engine(), live_options);
     ASSERT_NE(taken_over, nullptr);
     EXPECT_FALSE(live.control()->surface()->present(taken_over->presentingPass()))
         << "查看器还在呈现这块区：第二条呈现是被拒的";

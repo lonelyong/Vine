@@ -13,7 +13,6 @@
 #include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/window/InputEvent.hpp>
@@ -114,7 +113,7 @@ void SceneView::checkChainContent()
         vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
         u8"this view adopted a pipeline whose passes draw other content: none of them draws the view's scene, so the"
         u8" view's content never reaches the surface - build the chain for the view's scene"
-        u8" (PassChainBuilder::setContent), or bind the pass that should draw it"
+        u8" (ChainDesc::content), or bind the pass that should draw it"
         u8" (RenderEngine::bindPassContent)");
 }
 

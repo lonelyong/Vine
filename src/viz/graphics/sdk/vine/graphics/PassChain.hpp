@@ -14,11 +14,17 @@
 #include "PassRegistry.hpp"
 #include "PassStage.hpp"
 #include "ReportOnce.hpp"
+#include "Scene.hpp"
 #include "ShaderProgram.hpp"
 #include "ShadingMode.hpp"
 #include "ShadingPath.hpp"
 
 VN_GRAPHICS_NS_BEGIN
+
+namespace detail
+{
+class ChainBuilder;
+}  // namespace detail
 
 class AxisGizmo;
 class Camera;
@@ -36,7 +42,7 @@ class Scene;
  *
  * @details
  * - The overlay's CONTENT is an AxisGizmo (its scene, its framing camera, its box) and the recipe declares the pass
- *   that shows it (a HUD-tagged PassDesc - see PassChainBuilder): it is stacked above the window pass and
+ *   that shows it (a HUD-tagged PassDesc - see PassChain::build): it is stacked above the window pass and
  *   mirrors the source camera's orientation each frame.
  * - When source_camera is null the overlay is disabled and nothing is added.
  */
@@ -101,16 +107,42 @@ struct VN_GRAPHICS_API FpsOverlayOptions {
 };
 
 /**
- * @brief Options controlling PassChainBuilder::build().
+ * @brief Options controlling PassChain::build().
  *
  * @details
- * - The description of a chain: the ONE structural choice (path) plus the per-pass options of the passes the path
- *   and the overlays need.
+ * - The description of a chain: WHAT to draw (camera, content, optional transparent scene), the ONE structural choice
+ *   (path), and the per-pass options of the passes the path and the overlays need.
  * - Shadows are NOT here — a shadow is requested by the LIGHT that casts it (Light::isCastingShadow) and honoured by the
  *   chain that draws that light's content, because a light outlives any one chain and a scene may be drawn by
  *   several (see PassStage::Depth and .ai/design/graphics-pipeline.md §2).
  */
 struct VN_GRAPHICS_API ChainDesc {
+    /** @brief Camera the produced scene passes frame (borrowed).
+     *
+     * @note A scene-pass recipe refuses to build without one (null is reported once per build).
+     */
+    raw_ptr<Camera> camera = nullptr;
+
+    /** @brief Content scene the produced scene passes draw.
+     *
+     * @note A Deferred request needs one; null leaves the content passes contentless (a forward chain then draws
+     *       nothing, a deferred one is refused).
+     */
+    intrusive_ptr<Scene> content;
+
+    /** @brief Optional forward-only (transparent / overlay) scene composited over the lit result.
+     *
+     * @details
+     * - When set, the produced chain also renders this scene as transparent content composited over the lit opaque
+     *   content WITH depth occlusion (alpha-blended geometry half behind the opaque scene is clipped correctly)
+     *   instead of being drawn depth-less on top:
+     *   - Forward: a depth-on pass stacked right after the main content pass in the same window render pass.
+     *   - Deferred: the lighting pass shades into an off-screen composite target together with the opaque depth; this
+     *     scene is drawn depth-on over it and the composite is presented to the window.
+     * - The scene is lit by its own lights (like any forward pass).
+     */
+    intrusive_ptr<Scene> transparent;
+
     /** @brief How the opaque content is shaded (the structural choice). */
     ShadingPath path = ShadingPath::Forward;
 
@@ -155,7 +187,7 @@ struct VN_GRAPHICS_API ChainDesc {
      * @details
      * - Must write the canonical four outputs the builder's G-buffer declares (albedo / view normal + shininess /
      *   specular / view position; see the builder docs).
-     * - Optional: when omitted, PassChainBuilder::build() supplies its built-in temporary default program.
+     * - Optional: when omitted, PassChain::build() supplies its built-in temporary default program.
      */
     intrusive_ptr<ShaderProgram> gbuffer_program;
 
@@ -163,7 +195,7 @@ struct VN_GRAPHICS_API ChainDesc {
      *
      * @details
      * - Runs as the window pass and shades from the resolved G-buffer attachments.
-     * - Optional: when omitted, PassChainBuilder::build() supplies its built-in temporary default program.
+     * - Optional: when omitted, PassChain::build() supplies its built-in temporary default program.
      */
     intrusive_ptr<ShaderProgram> lighting_program;
 
@@ -181,7 +213,7 @@ struct VN_GRAPHICS_API ChainDesc {
 };
 
 /**
- * @brief The main-window chain produced by PassChainBuilder::build().
+ * @brief The chain of one picture, built by PassChain::build().
  *
  * @details
  * - Owns the passes it created AND their registration: it registers them on the engine as they are planned and
@@ -203,7 +235,7 @@ struct VN_GRAPHICS_API ChainDesc {
  *   here. The name follows the FrameGraph / RDG sense: a compiled chain of passes.
  */
 class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
-    friend class PassChainBuilder;
+    friend class detail::ChainBuilder;
 
   public:
     /** @brief Constructs a chain that registers its passes through @p registry and reports through @p diagnostics.
@@ -224,6 +256,36 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      *         there, and answers nothing once it is gone. */
     ~PassChain();
   public:
+    /** @brief Builds the chain @p desc describes, registering its passes on @p engine.
+     *
+     * @details
+     * - The ONE build entry: the request is a value (ChainDesc) and the result is a handle that owns the
+     *   registration - dropping it takes its passes out of the frame (see the class note). No separate builder
+     *   object has to be kept alive or kept in step with the request.
+     * - A build that cannot assemble the requested picture (a Deferred path without camera/content, or one whose
+     *   shading mode needs the geometry pass and therefore builds the forward path) answers per the same rules as
+     *   before: `effectivePath()` says what will be built, and a refusal answers null after reporting once.
+     *
+     * @param engine Engine the passes are registered on (null answers null: nothing could be built).
+     * @param desc   What to build (see ChainDesc).
+     * @return The built chain, or null when the request cannot be assembled on @p engine.
+     */
+    [[nodiscard]] static intrusive_ptr<PassChain> build(raw_ptr<RenderEngine> engine, const ChainDesc& desc);
+
+    /** @brief The chain a build with @p desc assembles, given what the requested mode needs.
+     *
+     * @details
+     * - A shading mode is a GEOMETRY-stage override, and a Deferred picture comes out of a fullscreen lighting pass
+     *   that has no geometry left to shade - so a non-Lit mode can only be expressed by the FORWARD chain, and a
+     *   Deferred request carrying one is built forward for it (the requested path in @p desc is untouched: switching
+     *   back to Lit builds deferred again).
+     * - Public because it is the rule a host reasons about: `desc.path` is what a host ASKS for, this is what it
+     *   gets, and PassChain::shadingPath() answers which one a live chain was built as.
+     *
+     * @param desc The chain request.
+     * @return The chain the build assembles.
+     */
+    [[nodiscard]] static ShadingPath effectivePath(const ChainDesc& desc) noexcept;
     /** @brief Gets whether the engine this chain registered on is still alive.
      *
      * @details
@@ -254,7 +316,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      * - "Presenting" is the pass whose output is what the window shows, which is not necessarily the pass that draws
      *   the content: a Deferred chain bakes the picture off-screen and presents it through a screen pass, so a host
      *   that wants "the picture pass" (to override its program, see setShadingMode) must ask this, not the content.
-     * - It is set by the recipe (PassChainBuilder), because only the recipe knows what its chain ends with.
+     * - It is set by the recipe (PassChain::build), because only the recipe knows what its chain ends with.
      *
      * @return The presenting pass (the order-0 window pass, or a ScreenPass for the Deferred presets), or null when
      *         nothing was built.
@@ -405,7 +467,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      */
     void resize(int width, int height, double pixel_ratio);
 
-    /** @brief Gets the shading path this chain was built as (see PassChainBuilder::effectivePath).
+    /** @brief Gets the shading path this chain was built as (see PassChain::effectivePath).
      *
      * @details
      * - The EFFECTIVE path, not the requested one: a Deferred request carrying a non-Lit mode is built Forward, and

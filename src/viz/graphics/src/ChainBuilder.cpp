@@ -1,8 +1,9 @@
-﻿#include <vine/graphics/PassChainBuilder.hpp>
+﻿#include "ChainBuilder.hpp"
 
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
+#include <vine/graphics/ChainPresets.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/math/Point3.hpp>
@@ -16,139 +17,34 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-/** @brief Builds the default G-buffer geometry program (scene -> MRT).
- *
- * The canonical four outputs the Deferred preset's G-buffer declares: albedo (0),
- * view-space normal + shininess (1), specular (2) and view-space position (3). It
- * matches the backend's per-material block and view-space light ABI.
- *
- * The program — and the GLSL it is built from — is owned by the SDK (see
- * BuiltinShaders.hpp); this is PassChainBuilder's alias for it. Callers may
- * still override it through ChainDesc::gbuffer_program.
- *
- * @return The geometry program.
- */
-intrusive_ptr<ShaderProgram> PassChainBuilder::defaultGbufferGeometryProgram()
+namespace detail
 {
-    return gbufferGeometryProgram();
-}
 
-/** @brief Builds the default deferred-lighting fragment program (fullscreen).
- *
- * Samples the G-buffer's albedo / normal / specular / view-position
- * attachments (binding 0..3) and shades ambient + up to three directional
- * lights whose parameters arrive in the backend's view-space push block.
- *
- * The program — and the GLSL it is built from — is owned by the SDK (see
- * BuiltinShaders.hpp); this is PassChainBuilder's alias for it. Callers may
- * still override it through ChainDesc::lighting_program.
- *
- * @return The lighting program (fragment stage only).
- */
-intrusive_ptr<ShaderProgram> PassChainBuilder::defaultDeferredLightProgram()
-{
-    return deferredLightProgram();
-}
-
-Mat4d PassChainBuilder::directionalShadowMatrix(const Light& light, const vn::math::Aabbd& bounds,
-                                                        Camera& camera)
-{
-    using vn::math::Vec3d;
-
-    const bool   valid   = bounds.max().x >= bounds.min().x && bounds.max().y >= bounds.min().y &&
-                         bounds.max().z >= bounds.min().z;
-    const Vec3d  extent  = valid ? Vec3d(bounds.max().x - bounds.min().x, bounds.max().y - bounds.min().y,
-                                        bounds.max().z - bounds.min().z)
-                                 : Vec3d(2.0, 2.0, 2.0);
-    const Vec3d  centre  = valid ? Vec3d(bounds.center().x, bounds.center().y, bounds.center().z) : Vec3d(0.0, 0.0, 0.0);
-    // Every orientation of the box fits in this sphere, so the window does not shrink when the sun
-    // moves; the margin keeps a caster standing exactly on the border out of the depth clamp.
-    const double radius  = extent.length() * 0.5;
-    const double depth   = radius * 4.0 + 1.0;
-    const Vec3d  forward = light.direction().length() > 1e-9 ? light.direction().normalized() : Vec3d(0.0, 0.0, -1.0);
-    // Any up vector that is not parallel to the direction: a light is a direction, not a roll.
-    const Vec3d up  = std::abs(forward.z) > 0.9 ? Vec3d(0.0, 1.0, 0.0) : Vec3d(0.0, 0.0, 1.0);
-    const Vec3d eye = centre - forward * (radius * 2.0 + 1.0);
-
-    camera.lookAt(eye, eye + forward, up);
-    camera.setOrthographic(-radius, radius, -radius, radius, 0.0, depth);
-    // Orthographic: the window above carries the shape, and the matrix does not read the camera's aspect at all.
-    // The shadow map is square anyway (the window is -radius..radius on both axes).
-    return camera.projectionMatrix() * camera.viewMatrix();
-}
-
-intrusive_ptr<RenderTarget> PassChainBuilder::defaultGbufferTarget(int width, int height)
-{
-    if (width <= 0) {
-        width = 640;
-    }
-    if (height <= 0) {
-        height = 360;
-    }
-    auto gbuffer = make_intrusive<RenderTarget>();
-    gbuffer->setSize(width, height);
-    // att 0: albedo - HALF FLOAT, not 8 bit (D5, wired 2026-09-25). What the extra bits buy was measured END
-    // TO END, because the display is 8 bit too: with a DIM light (x0.5, the demo's regime) the output is
-    // identical either way - the output's own quantisation is the limit (both: 1 LSB of error, 9 levels over a
-    // 0..0.06 ramp) - while with a BRIGHT one (x4) the 8-bit albedo's step reaches the eye multiplied: 2 LSB of
-    // error and 16 levels against 1 LSB and 62 levels for the half-float store (see ContentPassTest's
-    // `MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd`). So this is future-proofing for hosts that light with an
-    // intensity above 1, at +8.3 MB per 1080p G-buffer and one recompile of the offscreen pipelines (the shape
-    // is part of their key). Trade-off worth stating: the colour read-back packs RGBA8 only, so this attachment
-    // can no longer be read back as a target attachment - the previews copy it through a program, which is how
-    // the demo shows it.
-    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F);
-    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F); // att 1: view normal (+ shininess)
-    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA8);   // att 2: specular
-    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F); // att 3: view position
-    gbuffer->attachDepth(RenderTarget::DepthFormat::D24);
-    gbuffer->setName(u8"gbuffer");
-    return gbuffer;
-}
-
-PassChainBuilder::PassChainBuilder(raw_ptr<RenderEngine> engine)
+ChainBuilder::ChainBuilder(raw_ptr<RenderEngine> engine)
   : engine_(engine)
-{}
-
-PassChainBuilder& PassChainBuilder::setContent(intrusive_ptr<Scene> content)
 {
-    content_ = std::move(content);
-    return *this;
 }
 
-PassChainBuilder& PassChainBuilder::setTransparentContent(intrusive_ptr<Scene> transparent)
-{
-    transparent_ = std::move(transparent);
-    return *this;
-}
-
-PassChainBuilder& PassChainBuilder::setCamera(raw_ptr<Camera> camera)
-{
-    camera_ = camera;
-    return *this;
-}
-
-intrusive_ptr<PassChain> PassChainBuilder::build(const ChainDesc& options)
+intrusive_ptr<PassChain> ChainBuilder::build(const ChainDesc& options)
 {
     if (engine_ == nullptr) {
         return nullptr;
     }
-    // The pipeline IS the plan: it registers each pass as it is planned and
-    // remembers it, so a build that stops half way (or a host that drops the
-    // handle) takes its passes back out of the frame instead of leaving them to
-    // run with nobody holding them (see PassChain).
-    // The handle is a LEASE, not an owning reference: the builder borrowed the engine and a pipeline must not own its
-    // engine from below (a released engine would live on for as long as any pipeline it once served). The lease keeps
-    // "is the engine still there" answerable for exactly as long as it is needed (see Lease / RenderEngine::lease).
-    auto pipeline = make_intrusive<PassChain>(engine_->passes(), engine_->diagnostics());
-    // A builder is reusable in principle, and the report is about THIS build.
-    shadows_built_ = 0;
-    // This build's content selection: every pass that walks the content states it (see ChainDesc::layer_mask).
+    // The request is a value; the builder copies what it needs for THIS build once, so the recipes below read a
+    // snapshot instead of a host's object that could change half way through.
+    camera_      = options.camera;
+    content_     = options.content;
+    transparent_ = options.transparent;
+    shadows_built_  = 0;
     content_layers_ = options.layer_mask;
+    // The chain IS its registration: each pass is filed with it as owner, so a build that stops half way (or a host
+    // that drops the handle) takes its passes back out of the frame. The handles are leases; the engine may die
+    // first and the chain then answers "gone" instead of reaching into freed memory.
+    auto pipeline = make_intrusive<PassChain>(engine_->passes(), engine_->diagnostics());
     // The chain the REQUEST assembles is not always the chain it names: a mode that needs the geometry pass
-    // decides it (see effectivePath). The pipeline records what it was built as, because "can this chain
+    // decides it (see effectivePath). The chain records what it was built as, because "can this chain
     // express that mode" is what a later setShadingMode() is answered from.
-    const ShadingPath path = effectivePath(options);
+    const ShadingPath path = PassChain::effectivePath(options);
     const bool        ok   = (path == ShadingPath::Forward) ? buildForwardPath(*pipeline)
                                                             : buildDeferredPath(*pipeline, options);
     if (!ok) {
@@ -165,19 +61,7 @@ intrusive_ptr<PassChain> PassChainBuilder::build(const ChainDesc& options)
     return pipeline;
 }
 
-ShadingPath PassChainBuilder::effectivePath(const ChainDesc& options) noexcept
-{
-    // A non-Lit mode is a geometry-stage override: it needs the pass that turns geometry into the picture, and a
-    // deferred recipe has no such pass in the picture's path (its window pass is a fullscreen lighting program
-    // reading the G-buffer). So the chain is built forward while such a mode is active - and the REQUEST is left
-    // untouched, so switching back to Lit builds deferred again.
-    if (options.mode != ShadingMode::Lit && options.path == ShadingPath::Deferred) {
-        return ShadingPath::Forward;
-    }
-    return options.path;
-}
-
-bool PassChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
+bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
 {
     // HUD overlays, stacked at one stage: what orders them against each other is
     // their own stacking offset inside it (see AxisGizmoOptions::order), not a
@@ -252,7 +136,7 @@ bool PassChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& optio
     return true;
 }
 
-void PassChainBuilder::reportRequestedShadows() const
+void ChainBuilder::reportRequestedShadows() const
 {
     // A shadow is asked for by the LIGHT (Light::isCastingShadow + ShadowSettings) —
     // that is where the request lives, and it outlives any one pipeline. What
@@ -319,7 +203,7 @@ intrusive_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
 
 }  // namespace
 
-intrusive_ptr<RenderTarget> PassChainBuilder::buildShadowPass(PassChain& pipeline,
+intrusive_ptr<RenderTarget> ChainBuilder::buildShadowPass(PassChain& pipeline,
                                                                   const intrusive_ptr<const Light>& shadow_light_owner)
 {
     // The map keeps the light it belongs to alive (RenderTarget::setShadowOf): a retained target can
@@ -364,7 +248,7 @@ intrusive_ptr<RenderTarget> PassChainBuilder::buildShadowPass(PassChain& pipelin
     return shadow_map;
 }
 
-bool PassChainBuilder::buildForwardPath(PassChain& pipeline)
+bool ChainBuilder::buildForwardPath(PassChain& pipeline)
 {
     if (engine_ == nullptr || camera_ == nullptr) {
         return false;
@@ -414,7 +298,7 @@ bool PassChainBuilder::buildForwardPath(PassChain& pipeline)
     return true;
 }
 
-bool PassChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& options)
+bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& options)
 {
     if (engine_ == nullptr || camera_ == nullptr || content_ == nullptr) {
         return false;
@@ -605,74 +489,23 @@ bool PassChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& o
     return true;
 }
 
-raw_ptr<ScreenPass> PassChainBuilder::addOffscreenToScreen(const String& output_slot,
-                                                                int rt_width,
-                                                                int rt_height,
-                                                                RenderTarget::ColorFormat color_format,
-                                                                RenderTarget::DepthFormat depth_format,
-                                                                const Viewport& pip)
+}  // namespace detail
+
+ShadingPath PassChain::effectivePath(const ChainDesc& options) noexcept
 {
-    if (engine_ == nullptr) {
-        return nullptr;
+    // A non-Lit mode is a geometry-stage override: it needs the pass that turns geometry into the picture, and a
+    // deferred recipe has no such pass in the picture's path (its window pass is a fullscreen lighting program
+    // reading the G-buffer). So the chain is built forward while such a mode is active - and the REQUEST is left
+    // untouched, so switching back to Lit builds deferred again.
+    if (options.mode != ShadingMode::Lit && options.path == ShadingPath::Deferred) {
+        return ShadingPath::Forward;
     }
-    raw_ptr<Camera> camera = camera_;
-    if (camera == nullptr) {
-        // Scene-pass recipes need a view camera; none was bound via setCamera.
-        return nullptr;
-    }
-
-    // Off-screen target + an order < 0 scene pass that renders into it and
-    // publishes the result under the slot name.
-    auto target = make_intrusive<RenderTarget>();
-    target->setName(output_slot);
-    target->setSize(rt_width, rt_height);
-    target->attachColor(color_format);
-    target->attachDepth(depth_format);
-
-    // Registered on the engine, NOT through a Pipeline handle: the engine keeps
-    // this pass alive and no Pipeline owns it, so it is only addressable through
-    // clearPasses() — see the ownership note above.
-    PassDesc preview_desc;
-    preview_desc.name          = output_slot;
-    preview_desc.tag           = u8"Preview";
-    preview_desc.stage         = PassStage::Geometry;
-    preview_desc.camera        = intrusive_ptr<Camera>(camera);
-    preview_desc.content       = content_;
-    preview_desc.layer_mask    = content_layers_;
-    preview_desc.writes        = target;
-    preview_desc.output_name   = output_slot;
-    preview_desc.output_target = target;   // its only writer: it owns the hand-off
-    engine_->addPass(preview_desc);
-
-    // The order > 0 ScreenPass sampling the slot into the PiP sub-viewport. Its picture is the SDK's
-    // copy program, and it carries the view camera because a fullscreen program is drawn through the
-    // pass' view (see ScreenPass::setProgram).
-    PassDesc pip_desc;
-    pip_desc.name   = output_slot;
-    pip_desc.tag    = u8"Preview";
-    pip_desc.stage  = PassStage::Preview;
-    pip_desc.kind   = PassKind::Screen;
-    pip_desc.camera = intrusive_ptr<Camera>(camera_);
-    // The recipe names the copy program: the SDK's own passes have no implicit shading either, so
-    // "present the baked target" is an SDK program (BuiltinShaders::screenCopyProgram) rather than a
-    // backend-side default (see ScreenPass::setProgram).
-    pip_desc.program         = screenCopyProgram();
-    pip_desc.input_names     = { output_slot };
-    pip_desc.input_targets   = { target };   // samples the whole published target
-    pip_desc.viewport        = pip;
-    // The node is the handle this function hands back, and a Screen declaration is a ScreenPass by
-    // construction (see RenderEngine::addPass).
-    const intrusive_ptr<RenderPass> screen = engine_->addPass(pip_desc);
-
-    return static_cast<ScreenPass*>(screen.get());
+    return options.path;
 }
 
-void PassChainBuilder::addPass(intrusive_ptr<RenderPass> pass, int order)
+intrusive_ptr<PassChain> PassChain::build(raw_ptr<RenderEngine> engine, const ChainDesc& desc)
 {
-    if (engine_ == nullptr || pass == nullptr) {
-        return;
-    }
-    engine_->addPass(std::move(pass), order);
+    return detail::ChainBuilder(engine).build(desc);
 }
 
 VN_GRAPHICS_NS_END

@@ -19,15 +19,14 @@
 #include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/PassChainBuilder.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/SceneView.hpp>
 #include <vine/graphics/StateNode.hpp>
 
 using vn::graphics::ChainDesc;
+using vn::graphics::PassChain;
 using vn::graphics::RenderPass;
-using vn::graphics::PassChainBuilder;
 using vn::graphics::RenderTarget;
 using vn::graphics::ScreenPass;
 using vn::graphics::SceneView;
@@ -128,12 +127,11 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
     // Built once, with the options that are in force for the first picture: the chain forward, so the picture
     // pass is the scene pass itself.
     ChainDesc options;
-    options.path = ShadingPath::Deferred;      // 延迟的**请求**……
-    options.mode = ShadingMode::Unlit;         // ……配上非 Lit 档 ⇒ 建成的链是前向的（effectivePath）
-    PassChainBuilder builder(fixture.engine.get());
-    builder.setCamera(view->camera());
-    builder.setContent(view->scene());
-    view->setChain(builder.build(options));
+    options.path    = ShadingPath::Deferred;   // 延迟的**请求**……
+    options.mode    = ShadingMode::Unlit;      // ……配上非 Lit 档 ⇒ 建成的链是前向的（effectivePath）
+    options.camera  = view->camera();
+    options.content = view->scene();
+    view->setChain(PassChain::build(fixture.engine.get(), options));
     ASSERT_NE(view->chain(), nullptr);
 
     // The picture pass draws into the fixture's off-screen target instead of the window: the SDK's own pass
@@ -252,11 +250,10 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
     VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     ChainDesc options;
-    options.path = ShadingPath::Deferred;
-    PassChainBuilder builder(fixture.engine.get());
-    builder.setCamera(fixture.camera.get());
-    builder.setContent(fixture.scene);
-    vn::intrusive_ptr<vn::graphics::PassChain> pipeline = builder.build(options);
+    options.path    = ShadingPath::Deferred;
+    options.camera  = fixture.camera.get();
+    options.content = fixture.scene;
+    vn::intrusive_ptr<vn::graphics::PassChain> pipeline = PassChain::build(fixture.engine.get(), options);
     ASSERT_NE(pipeline, nullptr) << "延迟预设必须建得起来";
 
     // 夹具的"窗口"是后端自己开的，读不回来：把画面那条 pass 指到夹具的目标上，预览才有东西可叠。
