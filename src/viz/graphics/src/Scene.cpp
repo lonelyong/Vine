@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include <vine/graphics/AutoTransform.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
@@ -231,7 +232,9 @@ void invalidateBoundsUnder(Node& node)
  * a box is contributed (the drawn node), like the collection: a container stands for structure and is
  * never pruned by the mask. Every other node answers through its own boundingBox(), which stays the
  * purely GEOMETRIC query (see Node::boundingBox) - the selection is this query's own fold, not a change
- * to what a node says about itself.
+ * to what a node says about itself. A billboard (AutoTransform) is answered by its own conservative box
+ * before the Group recursion: its orientation depends on the drawing camera, so a per-view box here
+ * would make the scene bound depend on which pass looked last.
  *
  * @param node             Subtree root to measure.
  * @param inherited_layers Layers @p node inherits from its ancestors (kDefaultLayer at the top).
@@ -244,6 +247,12 @@ Aabbd visibleWorldBox(const Node& node, std::uint32_t inherited_layers, std::uin
         return Aabbd::empty();
     }
     const std::uint32_t layers = node.layers().value_or(inherited_layers);
+    if (const auto* billboard = dynamic_cast<const AutoTransform*>(&node)) {
+        // A billboard's world box depends on the camera that draws it. Its own answer is the conservative
+        // sphere-box, which is a superset of every orientation (and of every layer selection) - a scene
+        // bound may be too large, never too small.
+        return billboard->boundingBox();
+    }
     if (const auto* group = dynamic_cast<const Group*>(&node)) {
         Aabbd box = Aabbd::empty();
         for (const auto& child : group->children()) {
@@ -309,18 +318,28 @@ struct InheritedState
  * @param node       Root node to traverse.
  * @param world      World matrix of @p node (accumulated by the caller).
  * @param frustum    View frustum for culling.
+ * @param view       The camera's world-to-view matrix (for view-dependent nodes, see Node::localToWorldForView).
+ * @param eye        The camera's eye point in world space.
+ * @param up         The camera's up direction in world space.
  * @param opacity    Accumulated opacity of the ancestors.
  * @param inherited  State of the ancestors (see InheritedState).
  * @param layer_mask Layers this picture draws (see Scene::collectRenderCommands).
  * @param bounds     Per-pass bound cache.
  * @param out        Output command list.
  */
-void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& frustum, float opacity,
-                         const InheritedState& inherited, std::uint32_t layer_mask, BoundsCache& bounds,
-                         std::vector<RenderCommand>& out)
+void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& frustum, const Mat4d& view,
+                         const Vec3d& eye, const Vec3d& up, float opacity, const InheritedState& inherited,
+                         std::uint32_t layer_mask, BoundsCache& bounds, std::vector<RenderCommand>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
+    }
+    // A view-dependent node (AutoTransform in a billboard mode) supplies its own world matrix for THIS
+    // camera. The collected list is memoised per view, so the answer is stable for as long as the view is.
+    Mat4d node_world = world;
+    Mat4d view_world;
+    if (node->localToWorldForView(world, view, eye, up, view_world)) {
+        node_world = view_world;
     }
     // The layers this node BELONGS to: its own declaration when it has one, otherwise what it inherited. The
     // fold happens here (it is what the children inherit), but the TEST is at the drawable below: a container
@@ -329,7 +348,7 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
     const std::uint32_t layers = node->layers().value_or(inherited.layers);
     // Where this subtree's draws sit inside the pass that draws them (see Node::setDrawOrder): folded the same
     // way, and read by the sort that orders the collected list.
-    if (frustum.isOutside(bounds.worldBound(node, world))) {
+    if (frustum.isOutside(bounds.worldBound(node, node_world))) {
         return;
     }
     // Opacity multiplies down the hierarchy: scene x ancestors x node. A leaf
@@ -374,7 +393,7 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
             const ShaderProgramPtr program = primitive->program != nullptr ? primitive->program
                                                                            : ShaderProgramPtr(subtree.program);
             auto& cmd = out.emplace_back(intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)), material,
-                                         world, static_cast<std::uint32_t>(index));
+                                         node_world, static_cast<std::uint32_t>(index));
             cmd.opacity = effective;
             cmd.draw_order = subtree.draw_order;
             // Render state folds along the node path: every StateNode from the
@@ -390,8 +409,8 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
         for (const auto& child : group->children()) {
-            collectNodeCommands(child.get(), world * child->localTransformMatrix(), frustum, node_opacity,
-                                subtree, layer_mask, bounds, out);
+            collectNodeCommands(child.get(), node_world * child->localTransformMatrix(), frustum, view, eye, up,
+                                node_opacity, subtree, layer_mask, bounds, out);
         }
     }
 }
@@ -578,6 +597,8 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(r
     // below (which matches on the view-projection) cannot answer for one shape with another's walk.
     const Mat4d view_proj = camera->projectionMatrix() * camera->viewMatrix();
     const Vec3d eye       = camera->eye();
+    const Mat4d view      = camera->viewMatrix();
+    const Vec3d up        = camera->up();
     // THE MEMO OUTLIVES ONE FRAME. A collected list is a pure function of the graph and the view, so it is reused
     // for as long as NOTHING changed - which the graph announces through the process-wide content epoch (every
     // mutator bumps it, see Node::announceContentChange). Before that, a memo entry lived for one frame only and a
@@ -617,8 +638,8 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(r
     std::vector<RenderCommand> commands;
     const Frustum frustum = Frustum::fromViewProjection(view_proj);
     BoundsCache bounds;
-    collectNodeCommands(root_.get(), root_->worldMatrix(), frustum, opacity_, InheritedState{}, layer_mask, bounds,
-                        commands);
+    collectNodeCommands(root_.get(), root_->worldMatrix(), frustum, view, eye, up, opacity_, InheritedState{},
+                        layer_mask, bounds, commands);
     // Where the sort puts things, in one sentence: the draw order the CONTENT declared is the outer key (see
     // Node::setDrawOrder - higher is drawn later), and inside one order: opaque front-to-back (near first),
     // transparent back-to-front (far first) after the opaque batch. Transparent objects need painter's

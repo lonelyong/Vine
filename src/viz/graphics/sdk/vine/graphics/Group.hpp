@@ -15,8 +15,8 @@ VN_GRAPHICS_NS_BEGIN
  *
  * @details
  * - The OSG/vsg-style container: it adds no state or transform of its own, only children (nested Groups,
- *   MatrixTransforms, AutoTransforms, StateNodes and leaf Geometries), and keeps each child's parent link in
- *   sync. Kinds that
+ *   MatrixTransforms, PositionAttitudeTransforms, AutoTransforms, StateNodes and leaf Geometries), and keeps
+ *   each child's parent link in sync. Kinds that
  *   apply something to their subtree (a transform, render state) derive from Group so they stay ordinary
  *   containers.
  * - Its world-space box is the union of its children's boxes (each child already answers in world space, so

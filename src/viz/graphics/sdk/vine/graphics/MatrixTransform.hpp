@@ -13,9 +13,9 @@ using vn::math::Mat4d;
  * @brief Scene-graph node placing its subtree with a local transform.
  *
  * @details
- * - A transform holder: nested transform nodes (this one and AutoTransform) multiply along the root-to-leaf
- *   path (Node::worldMatrix()) to place geometry in world space, and command collection bakes that chain into
- *   each command's world model matrix.
+ * - A transform holder: nested transform nodes (this one, PositionAttitudeTransform and AutoTransform)
+ *   multiply along the root-to-leaf path (Node::worldMatrix()) to place geometry in world space, and command
+ *   collection bakes that chain into each command's world model matrix.
  * - As a Group it also aggregates children (typically leaf Geometries or nested transforms); its world-space
  *   box is inherited from Group (children already answer in world space, this matrix included).
  */

@@ -8,6 +8,7 @@
 #include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/Node.hpp>
 #include <vine/graphics/OwnedFrame.hpp>
+#include <vine/graphics/PositionAttitudeTransform.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/graphics/Material.hpp>
@@ -2032,18 +2033,19 @@ TEST(MatrixTransformTest, WorldMatrixIsOwnMatrixForSingleNode)
     EXPECT_NEAR(p.x, 4.0, 1e-9);
 }
 
-// ============ AutoTransform ============
+// ============ PositionAttitudeTransform ============
 
-TEST(AutoTransformTest, ComposesTranslationRotationAndScale)
+TEST(PositionAttitudeTransformTest, ComposesPositionAttitudeScaleAndPivot)
 {
-    AutoTransform node;
+    PositionAttitudeTransform node;
     EXPECT_TRUE(node.matrix().isIdentity());
     EXPECT_EQ(node.position(), Point3d(0, 0, 0));
-    EXPECT_EQ(node.rotation(), Quatd());
+    EXPECT_EQ(node.attitude(), Quatd());
     EXPECT_EQ(node.scale(), Vec3d(1, 1, 1));
+    EXPECT_EQ(node.pivot(), Point3d(0, 0, 0));
 
     node.setPosition(Point3d(1, 2, 3));
-    node.setRotation(Quatd(vn::math::PI_HALF, Vec3d(0, 0, 1)));
+    node.setAttitude(Quatd(vn::math::PI_HALF, Vec3d(0, 0, 1)));
     node.setScale(Vec3d(2, 3, 4));
 
     // T * R * S on (1, 0, 0): scale -> (2, 0, 0), quarter turn about Z -> (0, 2, 0), translate -> (1, 4, 3).
@@ -2051,17 +2053,24 @@ TEST(AutoTransformTest, ComposesTranslationRotationAndScale)
     EXPECT_NEAR(p.x, 1.0, 1e-9);
     EXPECT_NEAR(p.y, 4.0, 1e-9);
     EXPECT_NEAR(p.z, 3.0, 1e-9);
+
+    // The pivot is the local point that lands at position: (1,1,1) maps there instead of the origin.
+    node.setPivot(Point3d(1, 1, 1));
+    const auto pivot_at_position = node.matrix() * Point3d(1, 1, 1);
+    EXPECT_NEAR(pivot_at_position.x, 1.0, 1e-9);
+    EXPECT_NEAR(pivot_at_position.y, 2.0, 1e-9);
+    EXPECT_NEAR(pivot_at_position.z, 3.0, 1e-9);
 }
 
-TEST(AutoTransformTest, SetTransformTakesAnIsometryAndLeavesScaleAlone)
+TEST(PositionAttitudeTransformTest, SetTransformTakesAnIsometryAndLeavesScaleAlone)
 {
-    AutoTransform node;
+    PositionAttitudeTransform node;
     node.setScale(Vec3d(2, 2, 2));
     const Isometry3d pose(Point3d(4, 5, 6), Quatd(vn::math::PI_HALF, Vec3d(0, 1, 0)));
     node.setTransform(pose);
 
     EXPECT_EQ(node.position(), pose.translation);
-    EXPECT_EQ(node.rotation(), pose.rotation);
+    EXPECT_EQ(node.attitude(), pose.rotation);
     EXPECT_EQ(node.scale(), Vec3d(2, 2, 2));
     EXPECT_EQ(node.transform().translation, pose.translation);
     EXPECT_EQ(node.transform().rotation, pose.rotation);
@@ -2073,11 +2082,11 @@ TEST(AutoTransformTest, SetTransformTakesAnIsometryAndLeavesScaleAlone)
     EXPECT_NEAR(p.z, 4.0, 1e-9);
 }
 
-TEST(AutoTransformTest, NestedTransformsAccumulate)
+TEST(PositionAttitudeTransformTest, NestedTransformsAccumulate)
 {
-    auto outer = intrusive_ptr<AutoTransform>(new AutoTransform());
+    auto outer = intrusive_ptr<PositionAttitudeTransform>(new PositionAttitudeTransform());
     outer->setPosition(Point3d(1, 0, 0));
-    auto inner = intrusive_ptr<AutoTransform>(new AutoTransform());
+    auto inner = intrusive_ptr<PositionAttitudeTransform>(new PositionAttitudeTransform());
     inner->setPosition(Point3d(0, 2, 0));
     outer->addChild(inner);
 
@@ -2086,9 +2095,9 @@ TEST(AutoTransformTest, NestedTransformsAccumulate)
     EXPECT_NEAR(p.y, 2.0, 1e-9);
 }
 
-TEST(AutoTransformTest, WorldBoxFollowsTheProperties)
+TEST(PositionAttitudeTransformTest, WorldBoxFollowsTheProperties)
 {
-    auto place = intrusive_ptr<AutoTransform>(new AutoTransform());
+    auto place = intrusive_ptr<PositionAttitudeTransform>(new PositionAttitudeTransform());
     place->addChild(geometryOf(*makeUnitTriangle()));
 
     place->setPosition(Point3d(10, 0, 0));
@@ -2106,11 +2115,11 @@ TEST(AutoTransformTest, WorldBoxFollowsTheProperties)
     EXPECT_NEAR(box.max().y, 7.0, 1e-9);
 }
 
-TEST(AutoTransformTest, AnEditInvalidatesTheCollectedCommands)
+TEST(PositionAttitudeTransformTest, AnEditInvalidatesTheCollectedCommands)
 {
     Scene scene;
     auto  root = setIdentityRoot(scene);
-    auto  place = intrusive_ptr<AutoTransform>(new AutoTransform());
+    auto  place = intrusive_ptr<PositionAttitudeTransform>(new PositionAttitudeTransform());
     root->addChild(place);
     place->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"tri"));
 
@@ -2129,6 +2138,132 @@ TEST(AutoTransformTest, AnEditInvalidatesTheCollectedCommands)
     ASSERT_EQ(second->size(), 1u);
     EXPECT_NEAR(((*second)[0].model_matrix * Point3d(0, 0, 0)).x, 1.0, 1e-9);
     EXPECT_EQ(scene.contentCollectCount(), 2u) << "a transform edit must end the memo";
+}
+
+// ============ AutoTransform (billboard) ============
+
+TEST(AutoTransformTest, NoRotationIsThePlainPlacement)
+{
+    AutoTransform billboard;
+    billboard.setPosition(Point3d(1, 2, 3));
+    billboard.setRotation(Quatd(vn::math::PI_HALF, Vec3d(0, 0, 1)));
+    billboard.setScale(Vec3d(2, 3, 4));
+    billboard.setPivot(Point3d(1, 1, 1));
+
+    PositionAttitudeTransform plain;
+    plain.setPosition(Point3d(1, 2, 3));
+    plain.setAttitude(Quatd(vn::math::PI_HALF, Vec3d(0, 0, 1)));
+    plain.setScale(Vec3d(2, 3, 4));
+    plain.setPivot(Point3d(1, 1, 1));
+
+    EXPECT_TRUE(billboard.matrix().isEqual(plain.matrix(), 1e-12));
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    Mat4d world;
+    EXPECT_FALSE(billboard.localToWorldForView(Mat4d(), cam.viewMatrix(), cam.eye(), cam.up(), world))
+        << "NoRotation must leave the view-independent path alone";
+}
+
+TEST(AutoTransformTest, RotateToScreenCancelsTheCameraRotation)
+{
+    AutoTransform billboard;
+    billboard.setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToScreen);
+
+    // Camera on +X looking at the origin: the screen plane is YZ, so the billboard's local +Z must map to
+    // world +X (the camera's backward axis).
+    Camera cam;
+    cam.lookAt(Vec3d(5, 0, 0), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    cam.setPerspective(60.0, 0.1, 100.0);
+    cam.setAspect(1.0);
+
+    Mat4d world;
+    ASSERT_TRUE(billboard.localToWorldForView(Mat4d(), cam.viewMatrix(), cam.eye(), cam.up(), world));
+
+    const auto normal = world * Point3d(0, 0, 1) - world * Point3d(0, 0, 0);
+    EXPECT_NEAR(normal.x, 1.0, 1e-9);
+    EXPECT_NEAR(normal.y, 0.0, 1e-9);
+    EXPECT_NEAR(normal.z, 0.0, 1e-9);
+
+    // Rotation applied after the automatic orientation spins the billboard in its own plane.
+    billboard.setRotation(Quatd(vn::math::PI_HALF, Vec3d(0, 0, 1)));
+    ASSERT_TRUE(billboard.localToWorldForView(Mat4d(), cam.viewMatrix(), cam.eye(), cam.up(), world));
+    const auto spun = world * Point3d(1, 0, 0) - world * Point3d(0, 0, 0);
+    EXPECT_NEAR(spun.x, 0.0, 1e-9);
+    EXPECT_NEAR(spun.y, 1.0, 1e-9);
+    EXPECT_NEAR(spun.z, 0.0, 1e-9);
+}
+
+TEST(AutoTransformTest, RotateToCameraPointsLocalZAtTheEye)
+{
+    AutoTransform billboard;
+    billboard.setPosition(Point3d(1, 0, 0));
+    billboard.setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToCamera);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    Mat4d world;
+    ASSERT_TRUE(billboard.localToWorldForView(Mat4d(), cam.viewMatrix(), cam.eye(), cam.up(), world));
+
+    const auto normal   = world * Point3d(0, 0, 1) - world * Point3d(0, 0, 0);
+    const auto expected = (cam.eye() - Vec3d(1, 0, 0)).normalized();
+    EXPECT_NEAR(normal.x, expected.x, 1e-9);
+    EXPECT_NEAR(normal.y, expected.y, 1e-9);
+    EXPECT_NEAR(normal.z, expected.z, 1e-9);
+}
+
+TEST(AutoTransformTest, TwoViewsGetTheirOwnCommandMatrices)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  billboard = intrusive_ptr<AutoTransform>(new AutoTransform());
+    billboard->setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToScreen);
+    billboard->addChild(makeTriangleNode(Vec3d(0, 0, 0), nullptr, u8"tri"));
+    root->addChild(billboard);
+
+    Camera front;
+    setupLookAtCamera(front);
+    Camera side;
+    side.lookAt(Vec3d(5, 0, 0), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    side.setPerspective(60.0, 0.1, 100.0);
+    side.setAspect(1.0);
+
+    scene.setContentFrame(1);
+    const auto front_commands = scene.collectRenderCommands(&front);
+    const auto side_commands  = scene.collectRenderCommands(&side);
+    ASSERT_EQ(front_commands->size(), 1u);
+    ASSERT_EQ(side_commands->size(), 1u);
+
+    const auto front_normal =
+        (*front_commands)[0].model_matrix * Point3d(0, 0, 1) - (*front_commands)[0].model_matrix * Point3d(0, 0, 0);
+    const auto side_normal =
+        (*side_commands)[0].model_matrix * Point3d(0, 0, 1) - (*side_commands)[0].model_matrix * Point3d(0, 0, 0);
+    EXPECT_NEAR(front_normal.z, 1.0, 1e-9);
+    EXPECT_NEAR(side_normal.x, 1.0, 1e-9);
+    EXPECT_EQ(scene.contentCollectCount(), 2u) << "one list per view, as the memo key already states";
+}
+
+TEST(AutoTransformTest, TheBoundingBoxCoversEveryOrientation)
+{
+    auto billboard = intrusive_ptr<AutoTransform>(new AutoTransform());
+    billboard->setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToScreen);
+    billboard->setPosition(Point3d(10, 0, 0));
+    billboard->addChild(geometryOf(*makeUnitTriangle()));
+
+    // The unit triangle's local box is [0,1]^2, so the sphere around the origin has radius sqrt(2): the
+    // conservative box must cover that in every direction.
+    const double radius = std::sqrt(2.0);
+    Aabbd        box     = billboard->boundingBox();
+    EXPECT_NEAR(box.min().x, 10.0 - radius, 1e-9);
+    EXPECT_NEAR(box.max().x, 10.0 + radius, 1e-9);
+    EXPECT_NEAR(box.min().y, -radius, 1e-9);
+    EXPECT_NEAR(box.max().y, radius, 1e-9);
+
+    // The node's own scale is part of the covered sphere: doubling it doubles the radius.
+    billboard->setScale(Vec3d(2, 2, 2));
+    box = billboard->boundingBox();
+    EXPECT_NEAR(box.min().x, 10.0 - 2.0 * radius, 1e-9);
+    EXPECT_NEAR(box.max().x, 10.0 + 2.0 * radius, 1e-9);
 }
 
 TEST(GroupTest, ReParentDetachesFromOldParent)

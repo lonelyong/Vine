@@ -280,9 +280,9 @@ struct VN_GRAPHICS_API AttributeChannel
  *   The vertex channels are what the primitives share, which is exactly why they live here and the
  *   per-draw facts do not.
  * - It has NO children and NO transform of its own: attach it under a Group / StateNode and place it with
- *   an enclosing transform node (MatrixTransform or AutoTransform), whose chain (Node::worldMatrix())
- *   positions the data in world space; its world box is the bound of the location-0 positions through that
- *   chain.
+ *   an enclosing transform node (MatrixTransform, PositionAttitudeTransform or AutoTransform), whose chain
+ *   (Node::worldMatrix()) positions the data in world space; its world box is the bound of the location-0
+ *   positions through that chain.
  * - Visibility / opacity are Node's (the fold rules are the base class's).
  */
 class VN_GRAPHICS_API Geometry : public Node {

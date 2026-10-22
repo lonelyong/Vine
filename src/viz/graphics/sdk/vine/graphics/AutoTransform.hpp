@@ -16,29 +16,45 @@ using vn::math::Quatd;
 using vn::math::Vec3d;
 
 /**
- * @brief Scene-graph node placing its subtree with position, rotation and scale.
+ * @brief Scene-graph node that turns its subtree to face the screen or the camera (an OSG-style billboard).
  *
  * @details
- * - The TRS counterpart of MatrixTransform: a host that drives a joint, a part or a camera rig keeps the
- *   three properties apart and changes the one it animates, instead of rebuilding a matrix by hand.
- * - The local matrix is composed as `T * R * S` (scale in the node's own axes, then rotation, then
- *   translation) on every setter, so the render path reads a ready matrix through
- *   localTransformMatrix() and never composes one per frame.
- * - Scale is a vector, so non-uniform scale is legal. A zero component collapses the subtree along that
- *   axis; a negative component mirrors it (and flips the winding of its triangles).
- * - `transform()` / `setTransform()` exchange the translation and rotation as an Isometry3d, which is
- *   what the robotics side already produces. Scale is not part of an isometry, so setTransform() leaves
- *   it alone.
+ * - The automatic counterpart of PositionAttitudeTransform: the subtree is placed at position with scale
+ *   and pivot, but its ROTATION is derived from the camera that draws it. The two modes that matter:
+ *   - RotateToScreen: the subtree stays parallel to the screen plane (the camera's view rotation is
+ *     cancelled), the classic text / sprite / label billboard;
+ *   - RotateToCamera: the subtree's local +Z axis points at the eye (a spherical billboard, which turns
+ *     more than the screen-aligned one as it moves off-centre).
+ * - The camera-dependent matrix is computed during command collection, once per view: the collected list
+ *   is already memoised per view, so two cameras get two correct lists and a still view reuses one.
+ * - position is in the parent's frame and is transformed by the parent; the automatic modes do NOT inherit
+ *   the parent's rotation or scale (a billboard is world-oriented - only where it sits comes from the
+ *   parent). rotation is applied AFTER the automatic orientation, so it can spin the billboard in its own
+ *   plane. scale and pivot are the same as PositionAttitudeTransform's.
+ * - NoRotation is the plain, camera-independent placement: it behaves exactly like
+ *   PositionAttitudeTransform and is what worldMatrix(), picking and Scene::boundingBox() see.
  *
  * @note
- * - The NAME is the host's, not OSG's: OSG's AutoTransform is a billboard that faces the camera. This node
- *   never looks at a camera - "auto" means the matrix follows the properties automatically.
+ * - Screen-space SCALING (OSG's setAutoScaleToScreen) is not implemented: it needs the target's pixel
+ *   height, which collection does not receive. The rotation modes above are the billboard feature; a
+ *   constant-pixel-size node is a separate slice.
+ * - This node is view-dependent by design. Its boundingBox() is conservative (a sphere-bound around
+ *   position) so culling and scene framing never depend on which camera collected last.
  */
 class VN_GRAPHICS_API AutoTransform : public Group {
     VN_OBJECT_META_DECL;
 
   public:
-    /** @brief Constructs a node at the origin, with an identity rotation and unit scale. */
+    /** @brief How the automatic rotation is derived from the current camera. */
+    enum class AutoRotateMode
+    {
+        NoRotation,      ///< No automatic rotation: the plain TRS placement (the view-independent matrix).
+        RotateToScreen,  ///< Cancel the camera's rotation, so the subtree stays parallel to the screen plane.
+        RotateToCamera,  ///< Point the subtree's local +Z at the eye (spherical billboard).
+    };
+
+  public:
+    /** @brief Constructs a billboard that does not rotate automatically, at the origin with unit scale. */
     AutoTransform();
     ~AutoTransform();
 
@@ -51,17 +67,17 @@ class VN_GRAPHICS_API AutoTransform : public Group {
 
     /** @brief Sets the position in the parent's frame.
      *
-     * @param position Translation applied after rotation and scale.
+     * @param position Where the pivot lands after the transform.
      */
     void setPosition(const Point3d& position);
 
-    /** @brief Gets the rotation.
+    /** @brief Gets the rotation applied AFTER the automatic orientation.
      *
      * @return The stored quaternion (identity by default). The matrix path normalizes a non-unit value.
      */
     Quatd rotation() const;
 
-    /** @brief Sets the rotation, applied after scale and before translation.
+    /** @brief Sets the rotation applied after the automatic orientation.
      *
      * @param rotation Unit quaternion (a non-unit value is normalized by the matrix path).
      */
@@ -73,46 +89,83 @@ class VN_GRAPHICS_API AutoTransform : public Group {
      */
     Vec3d scale() const;
 
-    /** @brief Sets the scale, applied in the node's own axes before rotation.
+    /** @brief Sets the scale, applied in the billboard's own axes.
      *
      * @param scale Per-axis factors (negative mirrors that axis, zero collapses it).
      */
     void setScale(const Vec3d& scale);
 
-    /** @brief Gets the translation and rotation as an isometry (scale is not part of it).
+    /** @brief Gets the pivot in the node's own frame.
      *
-     * @return The stored position and rotation; scale is reported separately by scale().
+     * @return The local point that stays at position (zero by default).
      */
-    Isometry3d transform() const;
+    Point3d pivot() const;
 
-    /** @brief Sets the translation and rotation from an isometry, leaving scale unchanged.
+    /** @brief Sets the pivot in the node's own frame: the point scale and rotation turn around.
      *
-     * @param transform Pose in the parent's frame (its rotation should be a unit quaternion).
+     * @param pivot Local point mapped to position after the transform.
      */
-    void setTransform(const Isometry3d& transform);
+    void setPivot(const Point3d& pivot);
 
-    /** @brief Gets the composed local matrix, `T * R * S`.
+    /** @brief Gets the automatic rotation mode.
+     *
+     * @return The mode (NoRotation by default).
+     */
+    AutoRotateMode autoRotateMode() const;
+
+    /** @brief Sets the automatic rotation mode.
+     *
+     * @param mode How the camera determines the rotation (see AutoRotateMode).
+     */
+    void setAutoRotateMode(AutoRotateMode mode);
+
+    /** @brief Gets the view-INDEPENDENT local matrix (the NoRotation placement).
      *
      * @details
-     * - A READ-ONLY view of what localTransformMatrix() hands the render path: derived from the three
-     *   properties, never set. It is the same spelling MatrixTransform::matrix() uses, so a caller that
-     *   asks "where does this subtree land" does not need to know which transform kind it holds.
+     * - What worldMatrix(), picking and the static layout use. In an auto-rotate mode the matrix actually
+     *   drawn is the one localToWorldForView() computes for that camera.
      *
-     * @return The composed local matrix.
+     * @return `T(position) * R(rotation) * S(scale) * T(-pivot)`.
      */
     Mat4d matrix() const;
 
+    /** @brief Computes this billboard's world matrix for the camera being drawn.
+     *
+     * @details
+     * - NoRotation returns false (the walk uses the plain local matrix). The auto modes return true with
+     *   `T(world_position) * R(auto) * R(rotation) * S(scale) * T(-pivot)`.
+     * - The world position is `parent_world * position`; the auto rotation is a world-space rotation, so
+     *   parent rotation / scale do not enter it (see the class note).
+     *
+     * @param parent_world World matrix of this node's parent.
+     * @param view         The camera's world-to-view matrix.
+     * @param eye          The camera's eye point in WORLD space.
+     * @param up           The camera's up direction in WORLD space.
+     * @param world        Receives the world matrix when the return value is true.
+     * @return true when @p world was filled; false in NoRotation.
+     */
+    bool localToWorldForView(const Mat4d& parent_world, const Mat4d& view, const Vec3d& eye, const Vec3d& up,
+                             Mat4d& world) const override;
+
+    /** @brief Computes a conservative world-space box (the sphere around position covering every orientation).
+     *
+     * @return World-space AABB that contains the subtree in any automatic orientation.
+     */
+    Aabbd boundingBox() const override;
+
   protected:
-    /** @brief This node's composed local matrix, contributed to Node::worldMatrix(). */
+    /** @brief This node's view-independent local matrix (see matrix()). */
     Mat4d localTransformMatrix() const override;
 
   private:
     void recompose();
 
-    Point3d position_{};
-    Quatd   rotation_{};
-    Vec3d   scale_{ 1.0, 1.0, 1.0 };
-    Mat4d   matrix_;
+    Point3d        position_{};
+    Quatd          rotation_{};
+    Vec3d          scale_{ 1.0, 1.0, 1.0 };
+    Point3d        pivot_{};
+    AutoRotateMode mode_{ AutoRotateMode::NoRotation };
+    Mat4d          matrix_;
 };
 
 using AutoTransformPtr = intrusive_ptr<AutoTransform>;

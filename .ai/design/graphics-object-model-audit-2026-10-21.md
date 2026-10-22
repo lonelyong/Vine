@@ -122,7 +122,7 @@ VINE_ASAN_FILTER='ModelSceneTest.*'` ⇒ RESULT: PASS）。
 | R2 | `RenderPipeline` 同时是"通用 pass 链"与"具体配方"（window/offscreen/composite/gizmo/fps 各自成员），第三种 overlay 要改类。**2026-10-22 已关闭**：`PassGroup` 收掉注册的第二份清单、`addOverlay` 让第三种 overlay 变成一次调用（剩下的"通用链 / 具体配方"两半即 `graphics-followups-2026-10-22.md` 的 F2 / F3，2026-10-22 晚均已关闭——R2 已无附属片） | Unity 用 `ScriptableRenderer` + `ScriptableRenderPass` 组合，overlay 是 pass 不是字段 | ~~第二个 overlay 类型出现~~（已触发，已做） |
 | R3 | ~~`Geometry` 没有 topology（在 `StateNode` 上），点云与三角面同子树要两个 `StateNode`~~ **第一片已落地（2026-10-22）**：拓扑归 `Primitive`（`Geometry` = 通道集，`Primitive` = 拓扑 + 索引片段 + 材质 + 程序），`StateNode::topology` 已删、pass 可覆盖；收集器与计划按 primitive 出行，拾取只打三角形。**第二片（同日）已完成**：后端事实表按 primitive 出行，`ContentPass` 按 `command.primitive` 取行 —— R3 关闭。**设备级证据同日补上**：`PrimitiveDrawTest.OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUpload`
 （一份顶点 + 三条图元 ⇒ 画面三段颜色、`draws=1`、`uploads=3` 且稳态帧零重传）。设计见 `graphics-primitives-2026-10-22.md`；2026-10-21 裁决留档在下。（详见下方"R3 裁决"） | OSG `Drawable` 的 `PrimitiveSet`、vsg `VertexIndexDraw`、glTF 的 `primitive.mode`、Unity 的 `MeshTopology`、Filament 的 `PrimitiveType` 都随 drawable | **同一子树需要两种图元**（点云/线 + 三角网格）**且调用点开始复制 `StateNode`**，或某个导入器要保留 `POINTS`/`LINES` 图元 |
-| R4 | ~~变换只有 `MatrixTransform`（无 TRS 节点）~~ **已关闭（2026-10-22）**：新增 `AutoTransform`（`Group` + `position()` / `rotation()` / `scale()`，矩阵按 `T * R * S` 自动合成；`setTransform(Isometry3d)` 只改平移 + 旋转，缩放另存）；每次 set 走 `invalidateBounds()`，包围盒与收集记忆体一起失效。判据 `AutoTransformTest.*` 5 条（合成顺序、Isometry 交接、嵌套、包围盒、收集失效）。设计见下方“R4 裁决”。 | three.js `Object3D` 的 position/quaternion/scale、Unity `Transform`、OSG `MatrixTransform`+`PositionAttitudeTransform` | ~~逐帧驱动节点变换并需要插值（URDF 关节回放）~~（已做） |
+| R4 | ~~变换只有 `MatrixTransform`（无 TRS 节点）~~ **已关闭（2026-10-22）**：新增 `PositionAttitudeTransform`（`Group` + `position()` / `attitude()` / `scale()` / `pivot()`，矩阵按 `T * R * S * T(-pivot)` 自动合成；`setTransform(Isometry3d)` 只改平移 + 姿态）；判据 `PositionAttitudeTransformTest.*` 5 条。同日另加 **`AutoTransform`**（OSG 同名 billboard：`RotateToScreen` / `RotateToCamera`，收集按视图计算矩阵；包围盒为保守球盒）；判据 `AutoTransformTest.*` 5 条。设计见下方“R4 裁决”。 | three.js `Object3D` 的 position/quaternion/scale、Unity `Transform`、OSG `MatrixTransform`+`PositionAttitudeTransform`+`AutoTransform` | ~~逐帧驱动节点变换并需要插值（URDF 关节回放）~~（已做） |
 | R5 | 材质是单一平铺 Phong + 一张贴图 + 采样器按 magic uniform 名；无 `MaterialInstance`；几何侧 `PbrMaterial` 到渲染侧只能是近似 | Filament `Material`/`MaterialInstance`、three.js `Material` 子类 + `uniforms` | 逐对象参数（高亮/tint）在第二个调用点出现，或需要真实 PBR |
 | R6 | ~~无 MSAA：`TargetShape::samples` / `PipelineKey.samples` 存在但宿主无法设置，`Capabilities` 无 `max_samples`~~ **已关闭（2026-10-22）**：`RenderTarget::setSamples` 是唯一入口，采样数进目标形状 ⇒ 管线键 ⇒ 通道与图像；离屏目标自建多重采样图并**颜色与深度各解析一张单采样图**（`picture()` / `depthPicture()` 即"画面"，深度 `sample0` 不平均），R6b 后"MS 深度提升/出借/回读"全部合法，只留"MS 目标不能**借入**深度"一条显式拒绝；默认窗口仍单采样。`Capabilities::max_samples` 报设备限制 | 所有引擎都有 MSAA 开关 | ~~画面锯齿成为用户可见问题~~（用户 2026-10-22 直接指定做） |
 | R7 | 无实例化、无 DAG（`Group::addChild` 自动脱离旧父） | OSG/vsg 允许一节点多父；`InstancedMesh` | 重复件数量让收集/内存成为瓶颈 |
@@ -146,22 +146,30 @@ VINE_ASAN_FILTER='ModelSceneTest.*'` ⇒ RESULT: PASS）。
   后端零改动（`PipelineKey::topology` 与按类选半片已就位）；判据 = 同一子树里的点云与网格产生两条 pipeline，
   并去掉 `demo_plugin` 的 `StateNode` 包裹。
 
-### R4 裁决（2026-10-22）：TRS 节点叫 `AutoTransform`，与 `MatrixTransform` 并列
+### R4 裁决（2026-10-22）：TRS 是 `PositionAttitudeTransform`，billboard 是 `AutoTransform`
 
-- **形状**：`AutoTransform : Group` 持有 `Point3d position_` / `Quatd rotation_` / `Vec3d scale_`（默认
-  零 / 单位四元数 / 1），每次 set 重算 `T * R * S` 并 `invalidateBounds()`；`matrix()` 是只读的合成结果，
-  `transform()` / `setTransform()` 与 `Isometry3d` 互转（缩放不参与）。
+- **TRS 形状**：`PositionAttitudeTransform : Group` 持有 `Point3d position_` / `Quatd attitude_` /
+  `Vec3d scale_` / `Point3d pivot_`（默认零 / 单位四元数 / 1 / 零），每次 set 重算
+  `T(position) * R(attitude) * S(scale) * T(-pivot)` 并 `invalidateBounds()`；`matrix()` 是只读的合成结果，
+  `transform()` / `setTransform()` 与 `Isometry3d` 互转（缩放与 pivot 不参与）。
 - **为什么不是 `MatrixTransform` 的子类**：矩阵是父类的唯一事实；TRS 子类若继承 `setMatrix`，同一位置会出现
   “属性说一套、矩阵说一套”两种真相，而父类的 setter 又不能删。两个并列的 `Group` 子类让两种拼写各自完整。
-- **为什么叫这个名字**：用户点名 `AutoTransform`；“auto” 指矩阵随属性自动合成。**这与 OSG 的
-  `AutoTransform`（面向相机的 billboard）同名不同义**，头文件与用户指南都写明；要 billboard 是另一条
-  （需要相机 / 视图相关的收集），不要拿这个代替。
-- **为什么不现在做 billboard**：今天的命令收集是视图无关的（一份命令表多个 pass 共用）；billboard 要把
-  相机放进收集，属于另一条设计。R4 的触发条件（URDF 关节回放）只需要 TRS。
-- **判据**：`AutoTransformTest.ComposesTranslationRotationAndScale`（`T*R*S` 的数值）、
-  `SetTransformTakesAnIsometryAndLeavesScaleAlone`、`NestedTransformsAccumulate`、
-  `WorldBoxFollowsTheProperties`（包围盒随属性更新）、`AnEditInvalidatesTheCollectedCommands`
-  （收集记忆体失效）。
+- **billboard 形状**：`AutoTransform : Group` 同样有 position / rotation / scale / pivot，但姿态来自
+  **画它的相机**：`RotateToScreen` 抵消相机旋转（屏幕平行），`RotateToCamera` 让局部 +Z 指向 eye。
+  相机依赖在收集时算 —— `Node::localToWorldForView(parent_world, view, eye, up, world)` 是新的虚钩子，
+  `collectNodeCommands` 用它给节点自己的 culling 盒与子节点矩阵；收集表本来就按视图 memo，所以两个相机
+  各拿一张正确的表。`NoRotation` 不填矩阵，走普通 `localTransformMatrix()` 路径。
+- **命名**：用户纠正过一次 —— `AutoTransform` 指的是 OSG 的“自动朝向”，不是“自动合成矩阵”。于是
+  TRS 归 `PositionAttitudeTransform`（OSG 同名），`AutoTransform` 与 OSG 同名同义。
+- **自动模式只继承父的位置**：父的旋转 / 缩放不进入 billboard（billboard 是世界朝向的）；需要完整继承
+  父变换就用 PAT。`rotation` 在自动姿态之后应用，可在屏幕平面内自旋。
+- **包围盒**：自动朝向可能指向任意方向，`AutoTransform::boundingBox()` 返回以 position 为球心的保守
+  球盒；`Scene::visibleWorldBox` 在 Group 递归前先问它，所以场景框不会随“最后是哪台相机收集的”而变。
+- **本片不做**：`setAutoScaleToScreen`（需要目标像素高度，收集目前拿不到视口）、`RotateToAxis`（轴向
+  billboard）、自动模式继承父旋转/缩放。前两条的触发条件是“标签需要恒定像素大小 / 树状轴向 billboard”。
+- **判据**：`PositionAttitudeTransformTest.*` 5 条（`T*R*S*T(-pivot)` 数值、Isometry 交接、嵌套、包围盒、
+  收集失效）与 `AutoTransformTest.*` 5 条（NoRotation 等于 PAT、屏幕/相机朝向、两视图各一张命令表、
+  保守包围盒）；`test_graphics` 414 → **424**。
 
 ## 3. 本轮切片与验收（已落地 2026-10-21）
 | 切片 | 内容 | 判据（实测） |

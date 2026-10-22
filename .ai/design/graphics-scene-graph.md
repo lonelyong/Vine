@@ -30,9 +30,11 @@
 > 4. 图元计数：`vertexCount` = 纯数据统计，不随 StateNode Topology 变（有测试钉住）。
 >    ⚠ 2026-09-04：graphics `Geometry::triangleCount()` 已**移除**——Geometry 顶点数据面不保证是三角网格
 >    （开放通道 + Points/Lines 拓扑），三角语义统计不再成立；geometry 模块 `Mesh::triangleCount()` 保留。
-> 5. **变换节点（2026-10-22）**：除 `MatrixTransform`（矩阵）外，场景图现在还有 `AutoTransform`
->    （`position` / `rotation` / `scale`，自动合成 `T * R * S`；见 `.ai/design/graphics-object-model-audit-2026-10-21.md`
->    的 R4 裁决与 `docs/guides/graphics.md` §3.22）。下文“变换唯一归属 `MatrixTransform`”是 2026-09-03 的记录。
+> 5. **变换节点（2026-10-22）**：除 `MatrixTransform`（矩阵）外，场景图现在还有两个变换节点：
+>    `PositionAttitudeTransform`（`position` / `attitude` / `scale` / `pivot`，自动合成 `T * R * S * T(-pivot)`）
+>    与 `AutoTransform`（OSG 同名 billboard：`RotateToScreen` / `RotateToCamera`，姿态来自画它的相机）。
+>    两者见 `.ai/design/graphics-object-model-audit-2026-10-21.md` 的 R4 裁决与 `docs/guides/graphics.md`
+>    §3.22 / §3.23。下文“变换唯一归属 `MatrixTransform`”是 2026-09-03 的记录。
 >
 > ⚠ 落地后修订（2026-09-03，代码已先于文档）：
 > - **R1 核心已全部落地**：`Node` 拆为基类（name/visible/opacity/parent + 虚 `boundingBox()`
@@ -290,7 +292,9 @@ transformBox(node->localBounds(), world /* walk 传下来的 */);    // 摆放�
 三条规则：
 
 1. **版本键上行**：`Node::invalidateBounds()` 从本节点沿 `parent_` 链把每个节点的 `bounds_stamp_` 加一。
-   内置变更路径全部挂钩：`MatrixTransform::setMatrix`、`AutoTransform::setPosition/setRotation/setScale/setTransform`、
+   内置变更路径全部挂钩：`MatrixTransform::setMatrix`、
+   `PositionAttitudeTransform::setPosition/setAttitude/setScale/setPivot/setTransform`、
+   `AutoTransform::setPosition/setRotation/setScale/setPivot/setAutoRotateMode`、
    `Group::addChild/removeChild`、`Geometry::addBuffer/removeBuffer/setRevision/bumpRevision`、
    `Scene::invalidateContent`（另起一层：内容帧号 + 全体 stamp 加一，作为"懒得逐条公告"的逃生口）。
 2. **unknown 回退（sound 由构造保证）**：`bool Node::subtreeBounds(Aabbd&)` 只对**恰好是 `Geometry`** 的叶子

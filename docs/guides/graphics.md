@@ -17,7 +17,7 @@ graph TB
     Host["宿主 / 应用<br/>（src/app/main.cpp、app_shell 插件）"]
     UI["应用框架<br/>（appfw RenderControl、graphics SceneView）"]
     Engine["RenderEngine<br/>pass · target · 接线校验 · 诊断"]
-    Scene["场景模型<br/>Node / Group / MatrixTransform / AutoTransform / StateNode / Geometry"]
+    Scene["场景模型<br/>Node / Group / MatrixTransform / PositionAttitudeTransform / AutoTransform / StateNode / Geometry"]
     Builder["PassChain::build<br/>配方：forward · deferred · 离屏+PiP"]
     BackendIface["RenderBackend（三面一体：设备 / 执行器 / 目标工厂）"]
     Plugin["gfx_backend_vsg 插件<br/>SceneBridge · VsgRenderer"]
@@ -51,7 +51,8 @@ engine.setDevice(backend);
 | `Node` | 所有节点共有的身份：`name()`、`isVisible()`、`opacity()`、`parent()` | `boundingBox()`（世界空间）、`worldMatrix()`、`localTransformMatrix()`（非变换节点恒为单位阵） |
 | `Group` | 聚合子节点 | `addChild()` / `removeChild()` 会维护 parent 链 |
 | `MatrixTransform` | `Group` + **矩阵形式**的变换节点（`matrix()` / `setMatrix()`） | 嵌套变换沿 root→leaf 相乘 |
-| `AutoTransform` | `Group` + **TRS 形式**的变换节点（`position()` / `rotation()` / `scale()`） | 矩阵按 `T * R * S` 自动合成；`setTransform()` 直接吃 `Isometry3d` |
+| `PositionAttitudeTransform` | `Group` + **TRS 形式**的变换节点（`position()` / `attitude()` / `scale()` / `pivot()`） | 矩阵按 `T * R * S * T(-pivot)` 自动合成；`setTransform()` 直接吃 `Isometry3d` |
+| `AutoTransform` | `Group` + **面向屏幕/相机**的 billboard（OSG 同名） | `RotateToScreen` / `RotateToCamera`；姿态由画它的相机决定 |
 | `StateNode` | 给子树施加渲染状态，并可覆盖 material / program | 越深的节点优先；**拓扑不在状态里**（它随 `Primitive` 走） |
 | `Geometry` | 叶子：**借用**的属性缓冲 + 图元列表（每条图元是一次 draw） | `setPositions/setNormals/setTexcoords2`、`addBuffer` 加自定义通道、`addPrimitive` / `setPrimitive`、`setRevision()`；`setIndices` 是单 draw 的便捷拼写 |
 | `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)`（**共享不可变表**：一次遍历，多个 pass 共用；要改写就自己 `*list` 复制一份） |
@@ -1215,31 +1216,34 @@ root->addChild(mesh);                              // 一个对象、一次挂�
 想确认"真的画了三条"，`RenderEngine::framePlan()` 的 pass 行会给出 draw 数；测试里读 `StreamUploads` 的
 uploads/aliases 计数可以钉住"顶点只传一次"。
 
-### 3.22 逐帧驱动变换：`AutoTransform`（位置 / 旋转 / 缩放）
+### 3.22 逐帧驱动变换：`PositionAttitudeTransform`（位置 / 姿态 / 缩放）
 
-`MatrixTransform` 收一个矩阵；`AutoTransform` 收**三个属性**，并在每次 set 时自动合成 `T * R * S`。
-需要插值、回放或从机器人学那边直接搬一份位姿时，用它不必每帧自己拼矩阵：
+`MatrixTransform` 收一个矩阵；`PositionAttitudeTransform`（OSG 同名）收**四个属性**，并在每次 set 时
+自动合成 `T(position) * R(attitude) * S(scale) * T(-pivot)`。需要插值、回放或从机器人学那边直接搬一份
+位姿时，用它不必每帧自己拼矩阵：
 
 ```cpp
-#include <vine/graphics/AutoTransform.hpp>
+#include <vine/graphics/PositionAttitudeTransform.hpp>
 
-auto joint = make_intrusive<AutoTransform>();
+auto joint = make_intrusive<PositionAttitudeTransform>();
 joint->setPosition(Point3d(0.0, 0.0, 0.4));
-joint->setRotation(Quatd(angle, Vec3d(0.0, 0.0, 1.0)));  // 绕关节轴
+joint->setAttitude(Quatd(angle, Vec3d(0.0, 0.0, 1.0)));  // 绕关节轴
+joint->setPivot(Point3d(0.0, 0.0, 0.0));                 // 默认原点
 joint->setScale(Vec3d(1.0, 1.0, 1.0));
 root->addChild(joint);
 link->addChild(link_mesh);       // 子树跟着关节走
 
-// 机器人学那侧的位姿可以直接交过来（只改平移 + 旋转，缩放保持不变）
+// 机器人学那侧的位姿可以直接交过来（只改平移 + 姿态，缩放与 pivot 保持不变）
 joint->setTransform(kinematics.frameInWorld(joint_frame, state));
 ```
 
 规则：
 
-- **合成顺序是 `T * R * S`**：缩放发生在节点自己的轴上，再旋转，最后平移。三个属性都是普通值，
-  读回来就是设进去的那份；`matrix()` 是只读的合成结果，与 `MatrixTransform::matrix()` 同一种拼写。
-- **`setTransform(Isometry3d)` 不动缩放**：等距变换里没有缩放这一项；先用 `setScale()` 设好，再逐帧
-  只更新位姿。`transform()` 也只返回平移 + 旋转。
+- **合成顺序是 `T * R * S * T(-pivot)`**：缩放发生在节点自己的轴上，再旋转，最后平移；`pivot` 是
+  局部空间中**落在 position 上的那个点**（默认原点）。四个属性都是普通值，读回来就是设进去的那份；
+  `matrix()` 是只读的合成结果，与 `MatrixTransform::matrix()` 同一种拼写。
+- **`setTransform(Isometry3d)` 不动缩放和 pivot**：等距变换里没有这两项；先用 `setScale()` / `setPivot()`
+  设好，再逐帧只更新位姿。`transform()` 也只返回平移 + 姿态。
 - **每次 set 都公告**：`invalidateBounds()` 同时让上层包围盒和场景的收集记忆体失效，所以回放时下一帧
   会重新收集；不要绕过 setter 去改字段。
 - **零/负缩放**：0 让该轴塌成一片，负值镜像该轴（三角形绕序会翻转）。要镜像又不想翻面，就在数据侧
@@ -1247,8 +1251,35 @@ joint->setTransform(kinematics.frameInWorld(joint_frame, state));
 - **何时仍用 `MatrixTransform`**：矩阵本身就是结果（反射、投影、从外部系统整块搬来的 4×4），或者
   只有一次性的静态摆放。
 
-> 命名注：OSG 的 `AutoTransform` 是"面向相机的 billboard"，这里的 `AutoTransform` **不看任何相机**，
-> "auto" 指矩阵随三个属性自动合成。需要 billboard 时不要拿它代替。
+### 3.23 面向屏幕：`AutoTransform`（OSG 同名 billboard）
+
+`PositionAttitudeTransform` 的姿态来自属性；`AutoTransform` 的姿态来自**画它的那台相机**。两种模式：
+
+- `RotateToScreen`：抵消相机旋转，子树始终与屏幕平面平行（标签 / 文字 / sprite 的经典 billboard）；
+- `RotateToCamera`：局部 +Z 指向 eye（球形 billboard，偏离画面中心时会跟着转）。
+
+```cpp
+#include <vine/graphics/AutoTransform.hpp>
+
+auto label = make_intrusive<AutoTransform>();
+label->setPosition(Point3d(0.0, 1.0, 0.0));
+label->setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToScreen);
+label->addChild(text_geometry);
+root->addChild(label);
+```
+
+规则：
+
+- **每个视图一次**：收集表本来就按相机视图 memo（键是 view-projection + eye），所以两个相机拿到两张正确
+  的命令表；静止视图复用同一张，不会每帧重算。
+- **父节点只贡献位置**：自动模式下父的旋转 / 缩放不进入 billboard（billboard 是世界朝向的）；需要完整
+  继承父变换就用 `PositionAttitudeTransform`。
+- **`rotation` 在自动姿态之后应用**：可以在自己的屏幕平面里旋转 sprite；`scale` / `pivot` 与 PAT 同义。
+- **`NoRotation` 就是 PAT 的静态摆放**：`worldMatrix()`、拾取与 `Scene::boundingBox()` 看到的是它。
+- **包围盒是保守的球盒**：覆盖任意朝向，所以 culling 与场景框不会因为相机换了就“跳”。代价是框比
+  实际大一点（场景框允许偏大，不允许偏小）。
+- **未实现 `setAutoScaleToScreen`**：恒定像素大小需要目标的高度（像素），而收集目前拿不到视口；这是
+  另一片，别用 `scale` 手猜。
 
 ## 4. 现成例子：怎么构建、怎么跑
 ### 4.1 构建
