@@ -283,6 +283,39 @@ TEST(MaterialImagesTest, AnEntryKeepsItsTextureAliveUntilItIsAbandoned)
     EXPECT_EQ(cache->count(), 0U);
 }
 
+TEST(MaterialImagesTest, ReleaseDropsTheCacheEntryAndAcquireBuildsItAgain)
+{
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
+    ASSERT_NE(cache, nullptr);
+
+    auto          texture = readyTexture();
+    TextureReject reason  = TextureReject::Ok;
+    const auto    first   = cache->acquire(texture.get(), reason);
+    ASSERT_NE(first.view, nullptr);
+    ASSERT_EQ(cache->count(), 1U);
+
+    EXPECT_TRUE(cache->releaseTexture(texture.get()));
+    EXPECT_FALSE(cache->has(texture.get())) << "the lookup share is what a release drops";
+    EXPECT_EQ(cache->count(), 0U);
+
+    const auto second = cache->acquire(texture.get(), reason);
+    EXPECT_NE(second.view, nullptr) << "the host still owns the texture, so it can be uploaded again";
+    EXPECT_TRUE(cache->has(texture.get()));
+    EXPECT_EQ(cache->count(), 1U);
+    EXPECT_NE(second.view, first.view) << "the release really dropped the old upload";
+}
+
+TEST(MaterialImagesTest, ReleaseOfANeverCachedTextureIsAccepted)
+{
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
+    ASSERT_NE(cache, nullptr);
+
+    const auto texture = readyTexture();
+    EXPECT_TRUE(cache->releaseTexture(texture.get())) << "nothing was resident, which is already the release's answer";
+    EXPECT_EQ(cache->count(), 0U);
+    EXPECT_FALSE(cache->releaseTexture(nullptr)) << "null is not a texture to release";
+}
+
 TEST(MaterialImagesTest, TheDeviceLimitIsWhatMipChainedTexturesAreFilteredWith)
 {
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();

@@ -1,7 +1,7 @@
 # A3 内容释放设计（2026-10-22）：一个 `releaseContent()`，释放的是 GPU 驻留，不是对象
 
-> **状态：方案，未实现。** 触发条件仍是“宿主报告内存压力，且需要在同帧内/数帧内让后端放手”。
-> 现行行为（宿主丢掉引用，帧级扫尾回收）不改；本文件定的是触发后加的那一个入口，以及它必须遵守的
+> **状态：已落地（2026-10-22）。** 触发条件仍是“宿主报告内存压力，且需要在同帧内/数帧内让后端放手”。
+> 现行行为（宿主丢掉引用，帧级扫尾回收）不改；本文件定的是那一个入口，以及它必须遵守的
 > 语义。实现切片见 §7，判据见 §6。
 
 ## 0. 结论
@@ -221,12 +221,14 @@ LiveGeometry {
 
 ## 7. 落地切片
 
+**全部落地（2026-10-22）**：`test_graphics` 433 → **434**，`test_vsg` 483 → **492**。
+
 | 片 | 内容 | 判据 |
 | --- | --- | --- |
-| A3-1 | `RenderDevice::releaseContent` + `RenderEngine::releaseContent`（默认 false / 转发），Doxygen 与指南 | 编译、API 文档门禁 |
+| A3-1 | `RenderDevice::releaseContent` + `RenderEngine::releaseContent`（默认 false / 转发），Doxygen 与指南 | `HeadlessBackendTest.TheEngineForwardsAContentReleaseToItsDevice` |
 | A3-2 | `ContentStore` 的 live release token + `releaseGeometry/Material/Program`；`MaterialImages::releaseTexture` | 6.1 + 6.2（设备无关） |
-| A3-3 | `VsgBackend::releaseContent` 分派与设备级用例 | 6.3；`deviceWaits()` 不变 |
-| A3-4 | 指南与台账：A3 从“无入口”改为“入口已落地，触发=宿主实际使用” | 全量套件 + 六道门禁 |
+| A3-3 | `VsgBackend::releaseContent` 分派与设备级用例 | `VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt`；`deviceWaits()` 不变 |
+| A3-4 | 指南与台账：A3 关闭 | 全量套件 + 六道门禁 |
 
 ## 8. 未决 / 已知边界
 

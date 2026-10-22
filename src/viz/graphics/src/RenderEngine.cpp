@@ -423,6 +423,12 @@ void RenderEngine::removePass(raw_ptr<RenderPass> pass)
     }
 }
 
+bool RenderEngine::releaseContent(raw_ptr<const Object> content)
+{
+    raw_ptr<RenderBackend> target = device();
+    return target != nullptr && target->releaseContent(content);
+}
+
 void RenderEngine::clearPasses()
 {
     // Keep the passes alive while their retained backend state is released: a pass may be owned only by its

@@ -187,6 +187,11 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 - geometry **借用**别人交给它的顶点字节（mesh 把自己的 buffer 交过来），所以：**先建模型、再接线**，
   之后每次改数据都要用 `Geometry::setRevision()` 公告。revision 是渲染侧唯一的重建闸门 ——
   **写 setter 不会推进它**，因为 geometry 分不出"还没读过的新字节"和"上次读过的旧字节"。
+- **显式放掉 GPU 驻留**：`RenderEngine::releaseContent(object)`（或设备上的同名入口）接受
+  `Geometry` / `Material` / `ShaderProgram` / `Texture`，释放的是后端手里的 GPU 副本，**不是对象**：
+  对象仍然有效、`revision()` 不变，下一次画到它时重新上传/编译。释放是**排队的**（行与编译产物走
+  in-flight 窗口，纹理立即出图像缓存），不会 `deviceWaitIdle`；宿主仍在画的热内容不建议释放，
+  纹理释放后马上复用会短暂出现新旧两份。停车窗口还没学到时返回 `false`，不会提前释放。
 
 ### 2.7 顶点数据：整块缓冲，或者缓冲里的一段（arena）
 

@@ -195,6 +195,20 @@ look it up again, so its
      */
     std::size_t releaseAbandoned();
 
+    /**
+     * @brief Releases the cached image of one texture the host still owns.
+     *
+     * @details
+     * - The cache entry holds the only lookup share; erasing it is enough, because a descriptor set that already
+     *   names the image holds its own reference until it is retired. The next acquire rebuilds and re-uploads the
+     *   texture, which is the documented cost of releasing a texture that is used again.
+     * - Samplers are keyed by their value, not by the texture, so they stay shared with the rest of the scene.
+     *
+     * @param texture Texture whose cached image should leave; null is refused.
+     * @return true when @p texture was recognized (erased, or it had no cached image); false for null.
+     */
+    bool releaseTexture(vn::raw_ptr<const vn::graphics::Texture> texture);
+
     /** @brief Releases every cached image, including the two fallbacks. */
     void clear();
 

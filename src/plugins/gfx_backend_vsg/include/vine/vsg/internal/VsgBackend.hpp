@@ -230,6 +230,9 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     /** @brief Drops everything held for a target the host is about to destroy. */
     void releaseRenderTarget(vn::graphics::RenderTarget* target) override;
 
+    /** @brief Releases the GPU residency of one content object the host still owns. */
+    bool releaseContent(vn::raw_ptr<const vn::Object> content) override;
+
     /** @brief Reads a colour attachment back: the device is stopped (counted), the copy is fenced, bytes out. */
     bool readColorBuffer(const vn::graphics::RenderTarget* target, int attachment,
                          std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why = nullptr) override;

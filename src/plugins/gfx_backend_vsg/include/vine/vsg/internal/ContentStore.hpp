@@ -147,6 +147,58 @@ class ContentStore
      */
     std::size_t releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
+    /**
+     * @brief Marks a geometry the host still owns as releasable and parks the removal of its rows.
+     *
+     * @details
+     * - The live entry stays until the parked callback runs; that is what makes the release CANCELABLE:
+     *   track() / ensureGeometry() clear the request and bump the token, so a later use keeps the object
+     *   resident and an old callback becomes a no-op. A direct erase here would let a reused object have its
+     *   newly built rows removed by the previous release's callback.
+     * - The rows leave when the in-flight window is past (see the retirement queue); the object and its
+     *   revision are untouched.
+     * - When parking is unavailable the request is rolled back and false is returned: memory may be kept,
+     *   never freed while a recorded frame can still name it.
+     *
+     * @param geometry   Geometry to release; null is refused.
+     * @param timeline   Frame clock the park is dated against.
+     * @param retirement Where the removal is parked.
+     * @return true when the request was accepted (or the object was not resident); false when it could not be
+     *         parked safely.
+     */
+    bool releaseGeometry(vn::raw_ptr<const vn::graphics::Geometry> geometry, core::FrameTimeline& timeline,
+                         core::RetirementQueue& retirement);
+
+    /** @brief Marks a program the host still owns as releasable and parks the removal of its rows.
+     *
+     * @details
+     * - Same token and parking semantics as releaseGeometry(): a later track() / ensureProgram() cancels
+     *   the request, and a failed park leaves the store unchanged.
+     *
+     * @param program    Program to release; null is refused.
+     * @param timeline   Frame clock the park is dated against.
+     * @param retirement Where the removal is parked.
+     * @return true when the request was accepted (or the object was not resident); false when it could not be
+     *         parked safely.
+     */
+    bool releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram> program, core::FrameTimeline& timeline,
+                        core::RetirementQueue& retirement);
+
+    /** @brief Marks a material the host still owns as releasable and parks the removal of its row.
+     *
+     * @details
+     * - Same token and parking semantics as releaseGeometry(): a later track() / updateMaterial() /
+     *   ensureMaterial() cancels the request, and a failed park leaves the store unchanged.
+     *
+     * @param material   Material to release; null is refused.
+     * @param timeline   Frame clock the park is dated against.
+     * @param retirement Where the removal is parked.
+     * @return true when the request was accepted (or the object was not resident); false when it could not be
+     *         parked safely.
+     */
+    bool releaseMaterial(vn::raw_ptr<const vn::graphics::Material> material, core::FrameTimeline& timeline,
+                         core::RetirementQueue& retirement);
+
     /** @brief Forgets every tracked object and every entry. The session-teardown path: nothing is parked. */
     void clear();
 

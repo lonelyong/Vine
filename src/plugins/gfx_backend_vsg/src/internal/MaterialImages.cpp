@@ -635,6 +635,18 @@ std::size_t MaterialImages::releaseAbandoned()
     return released;
 }
 
+bool MaterialImages::releaseTexture(vn::raw_ptr<const vn::graphics::Texture> texture)
+{
+    if (texture == nullptr) {
+        return false;
+    }
+    // A texture has at most one entry: a revision change replaces it in place. Erasing the lookup is enough -
+    // descriptor sets that already name the image hold their own reference until the retirement queue lets
+    // them go, and the next acquire re-uploads the texture from its live bytes.
+    (void)d->cache.erase(texture);
+    return true;
+}
+
 void MaterialImages::clear()
 {
     d->cache.clear();

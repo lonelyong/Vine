@@ -285,6 +285,30 @@ class VN_GRAPHICS_API RenderDevice
         (void)target;
     }
 
+    /** @brief Releases the device's GPU residency of a content object the host still owns.
+     *
+     * @details
+     * - Recognized content: Geometry, Material, ShaderProgram and Texture. Any other Object is not content
+     *   and is refused, not silently ignored.
+     * - The object stays valid and keeps its revision; the next frame that names it uploads, compiles or
+     *   builds its tables again. This releases a COPY, not the host's object.
+     * - The release is SCHEDULED, not synchronous: rows and compiled objects are parked through the session's
+     *   retirement queue, so a command buffer that already names them is past before they leave. Textures leave
+     *   the image cache immediately; retained descriptor sets keep their own shares.
+     * - Call between frames, on the frame thread, like the other resource announcements. The default returns false
+     *   (a device that keeps no content residency has nothing to release).
+     *
+     * @param content Content object to evict; null is refused.
+     * @return true when @p content was recognized and the release was accepted (scheduled, or nothing was
+     *         resident); false when it is not content, the device is not up, or the release cannot be parked
+     *         safely (the session has not learned its in-flight count).
+     */
+    virtual bool releaseContent(raw_ptr<const Object> content)
+    {
+        (void)content;
+        return false;
+    }
+
     /** @brief Reads back a colour attachment of an off-screen render target.
      *
      * @details

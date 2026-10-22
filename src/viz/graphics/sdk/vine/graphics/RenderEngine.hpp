@@ -462,6 +462,22 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void removePass(raw_ptr<RenderPass> pass);
 
+    /** @brief Releases the device's GPU residency of a content object the host still owns.
+     *
+     * @details
+     * - The object remains valid and keeps its revision; the next frame that names it uploads, compiles or
+     *   builds its tables again. This is the explicit release for a host under memory pressure that still
+     *   wants to keep its logical content.
+     * - Recognized content: Geometry, Material, ShaderProgram and Texture. The release is scheduled through the
+     *   backend's retirement queue (see RenderDevice::releaseContent), not done synchronously.
+     * - Call between frames, on the frame thread.
+     *
+     * @param content Content object to evict; null is refused.
+     * @return true when the object was recognized and the release was accepted; false when it is not content,
+     *         no device is bound, or the backend cannot park the release safely.
+     */
+    bool releaseContent(raw_ptr<const Object> content);
+
     /** @brief Removes all registered passes (each one as removePass: resources released). */
     void clearPasses();
 

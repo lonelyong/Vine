@@ -16,6 +16,8 @@ struct ContentStore::Data
         vn::intrusive_ptr<vn::graphics::Geometry> object{};  ///< The share that keeps the address alive.
         bool                                          described{false};
         std::uint64_t                                 described_revision{0};
+        std::uint64_t                                 release_token{0};      ///< Bumped by release and by reuse.
+        bool                                          release_requested{false};  ///< A release wait is parked.
     };
 
     struct LiveProgram
@@ -25,6 +27,8 @@ struct ContentStore::Data
         std::uint64_t                                      described_revision{0};
         std::vector<std::uint32_t> variants;  ///< Variants built at that revision (their bits()).
         bool                       screen_built{false};  ///< The full-screen entry, at that revision.
+        std::uint64_t              release_token{0};
+        bool                       release_requested{false};
     };
 
     struct LiveMaterial
@@ -34,6 +38,8 @@ struct ContentStore::Data
         std::uint64_t                                 seen_revision{0};  ///< The material's own revision last accounted for.
         bool                                          described{false};
         std::uint64_t                                 described_revision{0};
+        std::uint64_t                                 release_token{0};
+        bool                                          release_requested{false};
     };
 
     struct GeometryStorage
@@ -146,6 +152,18 @@ struct ContentStore::Data
     std::unordered_map<const vn::graphics::Geometry*, LiveGeometry>     geometries;
     std::unordered_map<const vn::graphics::ShaderProgram*, LiveProgram> programs;
     std::unordered_map<const vn::graphics::Material*, LiveMaterial>     materials;
+
+    /** @brief Cancels a pending release because the object is being used again.
+     *
+     * The token moves even when no release was requested, so a callback from a previous release can never
+     * match after the object has been tracked again (see releaseGeometry).
+     */
+    template <typename Live>
+    static void markUsed(Live& live) noexcept
+    {
+        live.release_requested = false;
+        ++live.release_token;
+    }
 
     // The tables (see Table: rows, their storage and their row order together).
     Table<GeometryFacts, GeometryStorage, &orderGeometryRows> geometry;
@@ -265,6 +283,10 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::Geometry>& geomet
     {
         entry->second.object = geometry;
     }
+    else
+    {
+        Data::markUsed(entry->second);
+    }
 }
 
 void ContentStore::track(const vn::intrusive_ptr<vn::graphics::ShaderProgram>& program)
@@ -277,6 +299,10 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::ShaderProgram>& p
     if (inserted)
     {
         entry->second.object = program;
+    }
+    else
+    {
+        Data::markUsed(entry->second);
     }
 }
 
@@ -291,6 +317,10 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::Material>& materi
     {
         entry->second.object = material;
     }
+    else
+    {
+        Data::markUsed(entry->second);
+    }
 }
 
 void ContentStore::updateMaterial(vn::raw_ptr<vn::graphics::Material> material)
@@ -304,6 +334,7 @@ void ContentStore::updateMaterial(vn::raw_ptr<vn::graphics::Material> material)
     {
         return;  // untracked: nothing draws with it, so nothing can be asked about it
     }
+    Data::markUsed(entry->second);  // touched by a frame: a pending release is cancelled
 
     // THE TOUCH IS ONE NUMBER (see the header note): a material moves its own revision when one of its shading
     // values changes (Material::revision - every such change goes through a setter, and a setter that finds the
@@ -399,6 +430,7 @@ void ContentStore::ensureGeometry(const vn::graphics::Geometry* geometry, core::
     }
 
     Data::LiveGeometry& live     = entry->second;
+    Data::markUsed(live);  // ensured by a frame: a pending release is cancelled
     const std::uint64_t revision = geometry->revision();
     if (live.described && live.described_revision == revision)
     {
@@ -456,6 +488,7 @@ void ContentStore::ensureMaterial(const vn::graphics::Material* material, core::
     }
 
     Data::LiveMaterial& live = entry->second;
+    Data::markUsed(live);  // ensured by a frame: a pending release is cancelled
     if (live.described && live.described_revision == live.revision)
     {
         return;
@@ -519,6 +552,7 @@ void ContentStore::ensureProgram(const vn::graphics::ShaderProgram* program, con
     }
 
     Data::LiveProgram&  live     = entry->second;
+    Data::markUsed(live);  // ensured by a frame: a pending release is cancelled
     const std::uint64_t revision = program->revision();
     if (live.described && live.described_revision == revision)
     {
@@ -653,6 +687,143 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
     }
 
     return released;
+}
+
+bool ContentStore::releaseGeometry(vn::raw_ptr<const vn::graphics::Geometry> geometry,
+                                   core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+{
+    if (geometry == nullptr)
+    {
+        return false;
+    }
+    const auto entry = d->geometries.find(geometry);
+    if (entry == d->geometries.end())
+    {
+        return true;  // not resident: the release is already true of this object
+    }
+    Data::LiveGeometry& live = entry->second;
+    if (live.release_requested)
+    {
+        return true;  // one request is enough; a second callback would only repeat the removal
+    }
+
+    const std::uint64_t token = ++live.release_token;
+    live.release_requested    = true;
+    const std::weak_ptr<Data> weak = d;
+    const bool parked = retirement.retire(timeline, [weak, geometry, token]() {
+        const std::shared_ptr<Data> data = weak.lock();
+        if (data == nullptr)
+        {
+            return;
+        }
+        const auto found = data->geometries.find(geometry);
+        if (found == data->geometries.end() || !found->second.release_requested ||
+            found->second.release_token != token)
+        {
+            return;  // the object was used again: this release was cancelled
+        }
+        data->geometries.erase(found);
+        data->eraseGeometryOf(geometry);
+    });
+    if (!parked)
+    {
+        // No in-flight window: keep everything, so the object's rows cannot vanish while a recorded frame
+        // still names them. The token moves so a stale callback (there is none) could never match.
+        live.release_requested = false;
+        ++live.release_token;
+        return false;
+    }
+    return true;
+}
+
+bool ContentStore::releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram> program,
+                                  core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+{
+    if (program == nullptr)
+    {
+        return false;
+    }
+    const auto entry = d->programs.find(program);
+    if (entry == d->programs.end())
+    {
+        return true;
+    }
+    Data::LiveProgram& live = entry->second;
+    if (live.release_requested)
+    {
+        return true;
+    }
+
+    const std::uint64_t token = ++live.release_token;
+    live.release_requested    = true;
+    const std::weak_ptr<Data> weak = d;
+    const bool parked = retirement.retire(timeline, [weak, program, token]() {
+        const std::shared_ptr<Data> data = weak.lock();
+        if (data == nullptr)
+        {
+            return;
+        }
+        const auto found = data->programs.find(program);
+        if (found == data->programs.end() || !found->second.release_requested ||
+            found->second.release_token != token)
+        {
+            return;
+        }
+        data->programs.erase(found);
+        data->eraseProgramOf(program);
+    });
+    if (!parked)
+    {
+        live.release_requested = false;
+        ++live.release_token;
+        return false;
+    }
+    return true;
+}
+
+bool ContentStore::releaseMaterial(vn::raw_ptr<const vn::graphics::Material> material,
+                                   core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+{
+    if (material == nullptr)
+    {
+        return false;
+    }
+    const auto entry = d->materials.find(material);
+    if (entry == d->materials.end())
+    {
+        return true;
+    }
+    Data::LiveMaterial& live = entry->second;
+    if (live.release_requested)
+    {
+        return true;
+    }
+
+    const std::uint64_t token = ++live.release_token;
+    live.release_requested    = true;
+    const std::weak_ptr<Data> weak = d;
+    const bool parked = retirement.retire(timeline, [weak, material, token]() {
+        const std::shared_ptr<Data> data = weak.lock();
+        if (data == nullptr)
+        {
+            return;
+        }
+        const auto found = data->materials.find(material);
+        if (found == data->materials.end() || !found->second.release_requested ||
+            found->second.release_token != token)
+        {
+            return;
+        }
+        data->materials.erase(found);
+        data->eraseMaterialOf(material);
+    });
+    if (!parked)
+    {
+        live.release_requested = false;
+        ++live.release_token;
+        return false;
+    }
+    return true;
 }
 
 void ContentStore::clear()

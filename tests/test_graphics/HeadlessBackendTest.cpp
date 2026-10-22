@@ -4,6 +4,7 @@
 #include <vine/graphics/RenderDevice.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
+#include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/PresentTarget.hpp>
@@ -74,6 +75,17 @@ class HeadlessBackend : public RenderBackend
 
     void setRenderTarget(RenderTarget*) override {}
 
+    /// A content release is a device announcement: this double records it like the real backend dispatches it.
+    bool releaseContent(raw_ptr<const vn::Object> content) override
+    {
+        if (content == nullptr) {
+            return false;
+        }
+        ++released;
+        last_released = content;
+        return true;
+    }
+
     /// Answers the capability the frame path is driven by: this double honours every target it is handed.
     [[nodiscard]] Capabilities capabilities() const noexcept override { return Capabilities{ .render_targets = true }; }
 
@@ -86,6 +98,9 @@ class HeadlessBackend : public RenderBackend
     std::vector<raw_ptr<RenderTarget>> targets;
     std::vector<PresentTarget*>        present_targets;  ///< What each frame named (see executeFrame).
     std::size_t                        draws = 0;
+    /// What releaseContent() was asked to drop (see RenderDevice::releaseContent).
+    std::size_t                        released = 0;
+    raw_ptr<const vn::Object>          last_released = nullptr;
 };
 
 /**
@@ -601,6 +616,21 @@ TEST(HeadlessBackendTest, OneDeviceServesSeveralAreasWithoutCrossingThem)
  * the session comes up on, however late that announcement was made (the window comes first: an application opens
  * its window and then picks what renders into it).
  */
+TEST(HeadlessBackendTest, TheEngineForwardsAContentReleaseToItsDevice)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto device = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(device);
+
+    const auto material = intrusive_ptr<Material>(new Material());
+    EXPECT_TRUE(engine->releaseContent(material.get()));
+    EXPECT_EQ(device->released, 1U) << "the engine's entry is the device's entry, not a second cache";
+    EXPECT_EQ(device->last_released, material.get());
+
+    EXPECT_FALSE(engine->releaseContent(nullptr));
+    EXPECT_EQ(device->released, 1U) << "null never becomes a release announcement";
+}
+
 TEST(HeadlessBackendTest, TheDeviceIsAskedForItsOwnTargetOnlyWhenTheAreaHoldsNone)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());

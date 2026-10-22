@@ -1522,6 +1522,35 @@ void VsgBackend::releaseRenderTarget(vn::graphics::RenderTarget* target)
     (void)d->recorder.releaseRenderTarget(target);
 }
 
+bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
+{
+    if (content == nullptr || !initialized() || d->store == nullptr || d->images == nullptr)
+    {
+        return false;
+    }
+
+    // ONE TYPE DISPATCH: the SDK names the entry with Object because the four content types have no common
+    // narrower base (see graphics-content-release-2026-10-22.md). The order is exact: no two of these types
+    // are related, and a Texture2D / CubeMap answers through Texture::desc().
+    if (const auto* geometry = vn::obj_cast<const vn::graphics::Geometry>(content))
+    {
+        return d->store->releaseGeometry(geometry, d->clock.timeline(), d->retirement);
+    }
+    if (const auto* program = vn::obj_cast<const vn::graphics::ShaderProgram>(content))
+    {
+        return d->store->releaseProgram(program, d->clock.timeline(), d->retirement);
+    }
+    if (const auto* material = vn::obj_cast<const vn::graphics::Material>(content))
+    {
+        return d->store->releaseMaterial(material, d->clock.timeline(), d->retirement);
+    }
+    if (const auto* texture = vn::obj_cast<const vn::graphics::Texture>(content))
+    {
+        return d->images->releaseTexture(texture);
+    }
+    return false;
+}
+
 bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int attachment,
                                  std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why)
 {

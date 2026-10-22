@@ -648,6 +648,158 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark
     EXPECT_EQ(store.programEntries(), 1U) << "the program is still held by the host";
 }
 
+TEST(ContentStoreTest, AReleaseIsCancelledByTheNextUse)
+{
+    ContentStore store;
+    const auto   geometry = quad();
+    const auto   program  = contentProgram();
+    const auto   material = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    store.track(geometry);
+    store.track(program);
+    store.track(material);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
+                                  program.get());
+    (void)store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_EQ(store.geometryEntries(), 1U);
+
+    ASSERT_TRUE(store.releaseGeometry(geometry.get(), timeline, retirement));
+    EXPECT_EQ(retirement.pending(), 1U) << "the release waits for the in-flight window";
+
+    // The next frame uses it again: the pending callback must become a no-op, not erase the object's rows.
+    store.track(geometry);
+    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    EXPECT_EQ(store.geometryEntries(), 1U);
+    EXPECT_TRUE(findGeometry(store.tablesFor(plan->frame, timeline, retirement), geometry.get(),
+                             geometry->revision())
+                    .found());
+}
+
+TEST(ContentStoreTest, AReleaseWithoutReuseDropsTheRowsAtThePark)
+{
+    ContentStore store;
+    const auto   geometry = quad();
+    const auto   program  = contentProgram();
+    store.track(geometry);
+    store.track(program);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) },
+                                  program.get());
+    (void)store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_EQ(store.geometryEntries(), 1U);
+
+    ASSERT_TRUE(store.releaseGeometry(geometry.get(), timeline, retirement));
+    EXPECT_EQ(retirement.pending(), 1U);
+    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    EXPECT_EQ(store.geometryEntries(), 0U);
+    EXPECT_EQ(retirement.released(), 1U);
+
+    // The object was not destroyed: it is untracked, so the next frame that names it can hand it over again.
+    const std::uint64_t builds = store.builds();
+    store.track(geometry);
+    (void)store.tablesFor(plan->frame, timeline, retirement);
+    EXPECT_EQ(store.builds(), builds + 1U);
+}
+
+TEST(ContentStoreTest, ASecondReleaseDoesNotParkASecondCallback)
+{
+    ContentStore store;
+    const auto   geometry = quad();
+    store.track(geometry);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    ASSERT_TRUE(store.releaseGeometry(geometry.get(), timeline, retirement));
+    ASSERT_TRUE(store.releaseGeometry(geometry.get(), timeline, retirement));
+    EXPECT_EQ(retirement.pending(), 1U) << "one request is enough";
+}
+
+TEST(ContentStoreTest, AReleaseWithoutAParkingWindowChangesNothing)
+{
+    ContentStore store;
+    const auto   geometry = quad();
+    store.track(geometry);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(0U);  // the session has not learned its in-flight count
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
+    (void)store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_EQ(store.geometryEntries(), 1U);
+
+    EXPECT_FALSE(store.releaseGeometry(geometry.get(), timeline, retirement))
+        << "a release that cannot be parked must be refused, not guessed";
+    EXPECT_EQ(retirement.pending(), 0U);
+    EXPECT_EQ(store.geometryEntries(), 1U);
+
+    // It is still a live object: the next walk must not find a half-released entry.
+    (void)store.tablesFor(plan->frame, timeline, retirement);
+    EXPECT_EQ(store.geometryEntries(), 1U);
+}
+
+TEST(ContentStoreTest, AReleaseThenAnEditKeepsTheNewRevisionAfterThePark)
+{
+    ContentStore store;
+    const auto   geometry = quad();
+    const auto   program  = contentProgram();
+    store.track(geometry);
+    store.track(program);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) },
+                                  program.get());
+    (void)store.tablesFor(plan->frame, timeline, retirement);
+    const std::uint64_t old_revision = geometry->revision();
+
+    ASSERT_TRUE(store.releaseGeometry(geometry.get(), timeline, retirement));
+
+    // The object is edited and used again before the release callback runs: the new revision must survive.
+    const_cast<vn::graphics::Geometry*>(geometry.get())->bumpRevision();
+    const std::uint64_t new_revision = geometry->revision();
+    store.track(geometry);
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_NE(new_revision, old_revision);
+    EXPECT_TRUE(findGeometry(facts, geometry.get(), new_revision).found());
+
+    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    const ContentFacts& after = store.tablesFor(plan->frame, timeline, retirement);
+    EXPECT_TRUE(findGeometry(after, geometry.get(), new_revision).found())
+        << "the cancelled release must not erase the revision the host is using now";
+    EXPECT_EQ(store.geometryEntries(), 1U);
+}
+
+TEST(ContentStoreTest, AReleaseOfAProgramOrMaterialDropsItsRows)
+{
+    ContentStore store;
+    const auto   geometry = quad();
+    const auto   program  = contentProgram();
+    const auto   material = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    store.track(geometry);
+    store.track(program);
+    store.track(material);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
+                                  program.get());
+    (void)store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_EQ(store.programEntries(), 1U);
+    ASSERT_EQ(store.materialEntries(), 1U);
+
+    ASSERT_TRUE(store.releaseProgram(program.get(), timeline, retirement));
+    ASSERT_TRUE(store.releaseMaterial(material.get(), timeline, retirement));
+    EXPECT_EQ(retirement.pending(), 2U);
+
+    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    EXPECT_EQ(store.programEntries(), 0U);
+    EXPECT_EQ(store.materialEntries(), 0U);
+    EXPECT_EQ(store.geometryEntries(), 1U) << "the untouched geometry stays";
+}
+
 TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
 {
     ContentStore store;

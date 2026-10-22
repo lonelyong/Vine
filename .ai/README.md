@@ -81,7 +81,7 @@
   只读了粗的那一个 ⇒ 按 `Buffer` 契约公告的宿主**静默拿到旧字节**，且任一通道变动都重传全部通道（16.98 MiB / +30 ms）。
   目标形状：两级都生效（buffer bump ⇒ 只重传读它的通道；几何 bump ⇒ 全部，语义不变），并派生一个只用于“事实表要不要
   重算”的 `Geometry::contentRevision()`；附落点清单、三条能红的判据与变异、以及两处待拍板。
-- `graphics-content-release-2026-10-22.md` —— **A3 内容释放设计（2026-10-22，方案未实现）**：一个
+- `graphics-content-release-2026-10-22.md` —— **A3 内容释放（2026-10-22，已落地）**：一个
   `RenderDevice::releaseContent(raw_ptr<const Object>)` / `RenderEngine` 转发入口，释放的是后端 GPU 驻留而不是对象；
   `ContentStore` 的 live entry 用 release token + park 实现“可取消的释放”，宿主下一次使用就取消，避免释放后复用被旧回调误删；
   纹理 cache 立即删条目、描述符集自己持引用；不 idle 设备、不做全局预算/LRU（A6 另立）。附 API 语义、四类内容各自何时真正离开、

@@ -996,6 +996,93 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     EXPECT_TRUE(host.alive());
 }
 
+TEST(VsgBackendTest, ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    // A windowless device: the release path is the same one a windowed device takes, and this case does not
+    // need a display to prove what the content tables did.
+    vn::graphics::DeviceDesc desc;
+    desc.presentation = vn::graphics::DevicePresentation::None;
+    const vn::intrusive_ptr<VsgBackend> backend(new VsgBackend(desc));
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(backend->capabilities().render_targets);
+
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(32, 32);
+
+    const TriangleFixture triangle = makeTriangle();
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass>          pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
+
+    const auto drive_content = [&] {
+        backend->executeFrame(TestFrame()
+                                  .pass(pass.get())
+                                  .target(target.get())
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .content(triangle.commands, camera.get())
+                                  .value());
+    };
+    const auto drive_empty = [&] {
+        backend->executeFrame(TestFrame()
+                                  .pass(pass.get())
+                                  .target(target.get())
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .value());
+    };
+
+    // Warm the session up so its in-flight count is learned and the release can be parked (a session that
+    // has not learned it refuses, see ContentStore::releaseGeometry).
+    for (int frame = 0; frame < 8; ++frame) {
+        drive_content();
+    }
+    ASSERT_EQ(backend->diagnosticCount(), 0U);
+
+    ContentStore* store = BackendContentAccess::store(*backend);
+    ASSERT_NE(store, nullptr);
+    ASSERT_EQ(store->geometryEntries(), 1U);
+    ASSERT_EQ(store->materialEntries(), 1U);
+    ASSERT_EQ(store->programEntries(), 1U);
+    const std::uint64_t builds_before = store->builds();
+    const std::size_t   waits_before  = backend->deviceWaits();
+
+    EXPECT_FALSE(backend->releaseContent(pass.get())) << "a pass is not content";
+    const vn::intrusive_ptr<Material> never_seen(new Material());
+    EXPECT_TRUE(backend->releaseContent(never_seen.get()))
+        << "an object with no residency is already released";
+
+    ASSERT_TRUE(backend->releaseContent(triangle.geometry.get()));
+    ASSERT_TRUE(backend->releaseContent(triangle.material.get()));
+    ASSERT_TRUE(backend->releaseContent(triangle.program.get()));
+
+    // Frames that do not name the content let the parked removals come due. They must not idle the device.
+    for (int frame = 0; frame < 8; ++frame) {
+        drive_empty();
+    }
+    EXPECT_EQ(store->geometryEntries(), 0U);
+    EXPECT_EQ(store->materialEntries(), 0U);
+    EXPECT_EQ(store->programEntries(), 0U);
+    EXPECT_EQ(backend->deviceWaits(), waits_before) << "a content release never stops the device";
+
+    // The host still owns the objects: the next frame that names them hands them over again and builds new
+    // rows. Nothing was destroyed, and nothing reports a miss.
+    drive_content();
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+    EXPECT_EQ(store->geometryEntries(), 1U);
+    EXPECT_EQ(store->materialEntries(), 1U);
+    EXPECT_EQ(store->programEntries(), 1U);
+    EXPECT_GT(store->builds(), builds_before);
+
+    backend->shutdown();
+}
+
 /*
  * @brief An imported texture is bound where a content pass' program samples it.
  *
@@ -1076,15 +1163,18 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
     const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
     const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
-    backend->executeFrame(TestFrame()
-                              .pass(pass_object.get(), 0)
-                              .target(destination.get())
-                              .inputs(std::vector<vn::graphics::ImageSource>{
-                                  vn::graphics::ImageSource::imported(texture.get()) })
-                              .clear(destination_clear)
-                              .depth(vn::graphics::DepthMode::Disabled)
-                              .content(commands, camera.get())
-                              .value());
+    const auto drive = [&] {
+        backend->executeFrame(TestFrame()
+                                  .pass(pass_object.get(), 0)
+                                  .target(destination.get())
+                                  .inputs(std::vector<vn::graphics::ImageSource>{
+                                      vn::graphics::ImageSource::imported(texture.get()) })
+                                  .clear(destination_clear)
+                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .content(commands, camera.get())
+                                  .value());
+    };
+    drive();
 
     EXPECT_EQ(BackendContentAccess::executor(*backend).recorded().size(), 1U)
         << "the content pass was recorded (no packet means no draw)";
@@ -1099,6 +1189,23 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
         << "the imported texture is what the content program samples: got (" << static_cast<int>(pixels[at])
         << ", " << static_cast<int>(pixels[at + 1]) << ", " << static_cast<int>(pixels[at + 2]) << ")";
     EXPECT_EQ(pixels[at + 3], 255U);
+
+    // The texture is resident in the image cache; releasing it drops that entry, and the next frame uploads it
+    // again because the host still owns the texture. The picture is the same magenta, not the white fallback.
+    vn::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
+    ASSERT_NE(images, nullptr);
+    ASSERT_TRUE(images->has(texture.get()));
+    EXPECT_TRUE(backend->releaseContent(texture.get()));
+    EXPECT_FALSE(images->has(texture.get()));
+
+    drive();
+    std::vector<std::uint8_t> again;
+    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, again, &why));
+    ASSERT_LT(at + 3U, again.size());
+    EXPECT_TRUE(isColourByte(again[at], 1.0) && isColourByte(again[at + 1], 0.0) &&
+                isColourByte(again[at + 2], 1.0))
+        << "the re-acquired upload is still the magenta texture";
+    EXPECT_TRUE(images->has(texture.get())) << "the next acquire cached it again";
 }
 
 /*
