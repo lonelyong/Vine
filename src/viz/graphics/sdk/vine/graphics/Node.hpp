@@ -11,13 +11,13 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Rect3.hpp>
-#include <vine/math/Vector3.hpp>
+
+#include "CollectView.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
 using vn::math::Mat4d;
 using vn::math::Aabbd;
-using vn::math::Vec3d;
 
 class Group;
 
@@ -32,6 +32,23 @@ inline constexpr std::uint32_t kAllLayers = 0xFFFFFFFFu;
 /// "undeclared = every layer" every non-caster would have to be declared before it could be excluded. Here,
 /// declaring the few items that ARE in a named layer is enough.
 inline constexpr std::uint32_t kDefaultLayer = 1u << 0;
+
+/**
+ * @brief What a node's per-view placement depends on (see Node::localToWorldForView).
+ *
+ * @details
+ * - None: the node is placed by localTransformMatrix() alone (the common case).
+ * - View: projection / view / eye / up matter, but the device-pixel viewport does not (a billboard that only
+ *   rotates). A collected list can be shared by two passes that look the same but fill different rectangles.
+ * - ViewAndViewport: the viewport matters too (screen-space scaling), so the collected-list memo must key on
+ *   the device-pixel rectangle as well.
+ */
+enum class ViewDependence
+{
+    None,             ///< View-independent placement.
+    View,             ///< Depends on the camera, but not on the device-pixel viewport.
+    ViewAndViewport,  ///< Depends on the camera and on the device-pixel viewport.
+};
 
 /**
  * @brief Base class of every scene-graph node.
@@ -194,9 +211,9 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      *   the enclosing transform nodes; Group / MatrixTransform / PositionAttitudeTransform union their
      *   children's boxes (which are already world-space); base Node (never a renderable or container)
      *   answers empty.
-     * - A view-dependent node (AutoTransform in a billboard mode) answers with a CONSERVATIVE box: its
-     *   placement is a function of the camera, so boundingBox() covers every orientation instead of the
-     *   one a particular camera happened to use.
+     * - A view-dependent node (AutoTransform with auto-rotation or screen-space scaling) answers with a
+     *   CONSERVATIVE box: its placement is a function of the camera, so boundingBox() covers every
+     *   orientation instead of the one a particular camera happened to use.
      * - Visibility is NOT folded here - a hidden node still answers (the pure geometry query).
      *   Scene::boundingBox is the one that answers for the VISIBLE content: it prunes hidden subtrees at
      *   any depth.
@@ -211,9 +228,9 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      * - The product, from the scene root downwards, of every enclosing transform node's local matrix
      *   (identity for every other node); for a transform node it includes its own. For a leaf Geometry it
      *   places the local vertex data in world space.
-     * - This is the VIEW-INDEPENDENT placement: a view-dependent node (AutoTransform in a billboard mode)
-     *   is reported with the placement it has with no camera, while command collection asks
-     *   localToWorldForView() for the matrix of the view being drawn.
+     * - This is the VIEW-INDEPENDENT placement: a view-dependent node (AutoTransform with auto-rotation or
+     *   screen-space scaling) is reported with the placement it has with no camera, while command collection
+     *   asks localToWorldForView() for the matrix of the view being drawn.
      * - This walks the ancestor chain: a traversal should accumulate top-down with localTransformMatrix()
      *   (one product per node) instead of calling this once per node (one product per ancestor).
      *
@@ -236,22 +253,22 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      * @details
      * - The collection walk offers this hook before it descends. The default answers false, so the walk uses
      *   `parent_world * localTransformMatrix()` - the view-independent placement every other node has.
-     * - A view-dependent node (AutoTransform's billboard modes) fills @p world and returns true. The walk
-     *   then uses that matrix for the node's own culling box and for its children. The collected-list memo is
+     * - A view-dependent node (AutoTransform's auto-rotation or screen-space scaling) fills @p world and
+     *   returns a non-None dependence. The walk then uses that matrix for the node's own culling box and for
+     *   its children. The collected-list memo is
      *   already keyed by the view, so "one list per camera" remains the existing contract.
      * - It is NOT used by Node::worldMatrix(), Scene::boundingBox() or picking: those have no camera and keep
      *   asking the view-independent placement (a view-dependent node makes its own boundingBox()
      *   conservative).
      *
      * @param parent_world World matrix of this node's parent (already accumulated).
-     * @param view         The camera's world-to-view matrix.
-     * @param eye          The camera's eye point in WORLD space.
-     * @param up           The camera's up direction in WORLD space.
-     * @param world        Receives the node's world matrix when the return value is true.
-     * @return true when @p world was filled; false when the placement is view-independent.
+     * @param view         The view being drawn: projection / view / eye / up and the device-pixel viewport.
+     * @param world        Receives the node's world matrix when the return value is not None.
+     * @return None when the placement is view-independent; View when @p world was filled and the viewport does
+     *         not matter; ViewAndViewport when @p world was filled and the viewport is one of its inputs.
      */
-    virtual bool localToWorldForView(const Mat4d& parent_world, const Mat4d& view, const Vec3d& eye,
-                                     const Vec3d& up, Mat4d& world) const;
+    virtual ViewDependence localToWorldForView(const Mat4d& parent_world, const CollectView& view,
+                                               Mat4d& world) const;
 
     /** @brief Announces that this subtree's bound may have changed.
      *

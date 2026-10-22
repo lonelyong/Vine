@@ -84,7 +84,7 @@
 | 实例化 / 批处理 | 一条 `RenderCommand` 一个几何 | 同一几何 N 份（粒子、植被）；与 L2b 同源 | object-model §3 缺口 2 |
 | LOD / 空间划分 | 无 LOD 节点、无八叉树 / 可见性集合 | 大场景“每帧收集本身成为瓶颈” | object-model §3 缺口 3 |
 | 选择态（描边 / 框选 / 多选） | 拾取是机制（已有），选择不在框架 | 多处调用点各自重写同一套选择与高亮 | object-model §2.5 |
-| `AutoTransform` 的剩余能力 | `setAutoScaleToScreen`（恒定像素大小，需要目标视口高度）与 `RotateToAxis`（轴向 billboard）；已落地 `RotateToScreen` / `RotateToCamera` | 标签需要恒定像素大小 / 树状或柱状轴向 billboard | object-model R4 裁决（2026-10-22） |
+| `AutoTransform` 的剩余能力 | `RotateToAxis`（轴向 billboard）；已落地 `RotateToScreen` / `RotateToCamera` / `setAutoScaleToScreen` + min/max | 树状或柱状轴向 billboard | object-model R4 裁决（2026-10-22）与 `graphics-view-context-2026-10-22.md` |
 | 单图元便捷拼写（过渡） | `Geometry` 的 `setIndices` / `hasIndices` / `indices` / `firstIndex` / `indexCount` / `indicesBuffer` / `material` / `setMaterial` / `program` / `setProgram` 是"读写 primitive 0"的便捷写法（材质/程序写给所有 primitive） | 第二个宿主稳定使用多图元、且单 draw 拼写开始造成两种真相时；或决定它是永久便利（那就把设计文档里的"过渡"改掉） | `graphics-primitives-2026-10-22.md` §2 |
 
 ### 3.4 帧、线程与证据

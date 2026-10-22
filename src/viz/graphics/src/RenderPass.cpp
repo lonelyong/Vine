@@ -204,11 +204,24 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     DrawDescription draw;
     draw.kind   = DrawDescription::Kind::Scene;
     draw.camera = desc_.camera.get();
+    // The viewport this pass lands in, in DEVICE pixels. A sub-viewport wins; otherwise an explicit target's
+    // size; otherwise the surface size the engine/chain stated for a window pass. Collection needs it for
+    // view-dependent features (AutoTransform screen-space scaling), not for the backend's own viewport.
+    Viewport viewport = desc_.viewport.value_or(Viewport{});
+    if (!viewport.isValid()) {
+        if (desc_.writes != nullptr) {
+            viewport = Viewport{ 0, 0, desc_.writes->width(), desc_.writes->height() };
+        }
+        else {
+            viewport = draw_size_;
+        }
+    }
+    const Viewport* stated_viewport = viewport.isValid() ? &viewport : nullptr;
     // The shared list, not a copy of it: every pass of a frame draws the same commands, and a per-pass copy would cost
     // an intrusive_ptr increment per command plus a command-sized memcpy per pass per frame. What a pass may change is
     // its own VIEW of the list, so the copy happens below - and only for a pass that actually rewrites something.
     const std::shared_ptr<const std::vector<RenderCommand>> commands =
-        scene->collectRenderCommands(desc_.camera.get(), desc_.layer_mask);
+        scene->collectRenderCommands(desc_.camera.get(), desc_.layer_mask, stated_viewport);
     // The pass lights whatever content scene it renders: forward the scene's lights so the backend can match this
     // pass's view lighting. Announced even when there are none: "there are no lights" restores a backend's default.
     std::vector<raw_ptr<const Light>> light_ptrs;

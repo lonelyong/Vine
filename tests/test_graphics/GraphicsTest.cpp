@@ -371,6 +371,18 @@ void setupLookAtCamera(Camera& cam)
     cam.setAspect(kSceneAspect);
 }
 
+/**
+ * @brief Builds the collection-time view of a camera, optionally with a device-pixel viewport.
+ *
+ * @param camera   Camera stating projection / view / eye / up.
+ * @param viewport Device-pixel rectangle (invalid by default, as a host collecting without a target).
+ * @return The view value the collection and view-dependent nodes consume.
+ */
+CollectView viewOf(const Camera& camera, const Viewport& viewport = Viewport{})
+{
+    return CollectView{ camera.projectionMatrix(), camera.viewMatrix(), camera.eye(), camera.up(), viewport };
+}
+
 TEST(SceneTest, CollectCommandsSortsOpaqueFrontToBack)
 {
     Scene scene;
@@ -2161,7 +2173,7 @@ TEST(AutoTransformTest, NoRotationIsThePlainPlacement)
     Camera cam;
     setupLookAtCamera(cam);
     Mat4d world;
-    EXPECT_FALSE(billboard.localToWorldForView(Mat4d(), cam.viewMatrix(), cam.eye(), cam.up(), world))
+    EXPECT_EQ(billboard.localToWorldForView(Mat4d(), viewOf(cam), world), ViewDependence::None)
         << "NoRotation must leave the view-independent path alone";
 }
 
@@ -2178,7 +2190,7 @@ TEST(AutoTransformTest, RotateToScreenCancelsTheCameraRotation)
     cam.setAspect(1.0);
 
     Mat4d world;
-    ASSERT_TRUE(billboard.localToWorldForView(Mat4d(), cam.viewMatrix(), cam.eye(), cam.up(), world));
+    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), viewOf(cam), world), ViewDependence::View);
 
     const auto normal = world * Point3d(0, 0, 1) - world * Point3d(0, 0, 0);
     EXPECT_NEAR(normal.x, 1.0, 1e-9);
@@ -2187,7 +2199,7 @@ TEST(AutoTransformTest, RotateToScreenCancelsTheCameraRotation)
 
     // Rotation applied after the automatic orientation spins the billboard in its own plane.
     billboard.setRotation(Quatd(vn::math::PI_HALF, Vec3d(0, 0, 1)));
-    ASSERT_TRUE(billboard.localToWorldForView(Mat4d(), cam.viewMatrix(), cam.eye(), cam.up(), world));
+    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), viewOf(cam), world), ViewDependence::View);
     const auto spun = world * Point3d(1, 0, 0) - world * Point3d(0, 0, 0);
     EXPECT_NEAR(spun.x, 0.0, 1e-9);
     EXPECT_NEAR(spun.y, 1.0, 1e-9);
@@ -2203,13 +2215,82 @@ TEST(AutoTransformTest, RotateToCameraPointsLocalZAtTheEye)
     Camera cam;
     setupLookAtCamera(cam);
     Mat4d world;
-    ASSERT_TRUE(billboard.localToWorldForView(Mat4d(), cam.viewMatrix(), cam.eye(), cam.up(), world));
+    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), viewOf(cam), world), ViewDependence::View);
 
     const auto normal   = world * Point3d(0, 0, 1) - world * Point3d(0, 0, 0);
     const auto expected = (cam.eye() - Vec3d(1, 0, 0)).normalized();
     EXPECT_NEAR(normal.x, expected.x, 1e-9);
     EXPECT_NEAR(normal.y, expected.y, 1e-9);
     EXPECT_NEAR(normal.z, expected.z, 1e-9);
+}
+
+TEST(AutoTransformTest, ParentTranslationAndRotationReachTheBillboard)
+{
+    // OSG semantics: the parent transform is inherited; RotateToScreen cancels the parent's ROTATION in
+    // world space, but its translation still places the billboard.
+    auto parent = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    parent->setMatrix(vn::math::translate(Vec3d(10, 0, 0)) * vn::math::rotate(Vec3d(0, 1, 0), vn::math::PI_HALF));
+    auto billboard = intrusive_ptr<AutoTransform>(new AutoTransform());
+    billboard->setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToScreen);
+    parent->addChild(billboard);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    Mat4d world;
+    ASSERT_EQ(billboard->localToWorldForView(parent->worldMatrix(), viewOf(cam), world), ViewDependence::View);
+
+    const auto origin = world * Point3d(0, 0, 0);
+    EXPECT_NEAR(origin.x, 10.0, 1e-9) << "the parent translation places the billboard";
+    const auto normal = world * Point3d(0, 0, 1) - origin;
+    EXPECT_NEAR(normal.x, 0.0, 1e-9) << "the parent rotation is cancelled: the result faces the screen";
+    EXPECT_NEAR(normal.z, 1.0, 1e-9);
+}
+
+TEST(AutoTransformTest, RotateToCameraUnderARotatedParentFacesTheEye)
+{
+    auto parent = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    parent->setMatrix(vn::math::translate(Vec3d(1, 0, 0)) * vn::math::rotate(Vec3d(0, 1, 0), vn::math::PI_HALF));
+    auto billboard = intrusive_ptr<AutoTransform>(new AutoTransform());
+    billboard->setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToCamera);
+    parent->addChild(billboard);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    Mat4d world;
+    ASSERT_EQ(billboard->localToWorldForView(parent->worldMatrix(), viewOf(cam), world), ViewDependence::View);
+
+    const auto origin = world * Point3d(0, 0, 0);
+    const auto normal = world * Point3d(0, 0, 1) - origin;
+    const auto to_eye = (cam.eye() - Vec3d(origin.x, origin.y, origin.z)).normalized();
+    EXPECT_NEAR(normal.x, to_eye.x, 1e-9);
+    EXPECT_NEAR(normal.y, to_eye.y, 1e-9);
+    EXPECT_NEAR(normal.z, to_eye.z, 1e-9);
+}
+
+TEST(AutoTransformTest, AutoScaleCancelsAUniformParentScale)
+{
+    AutoTransform billboard;
+    billboard.setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToScreen);
+    billboard.setAutoScaleToScreen(true);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const CollectView view = viewOf(cam, Viewport{ 0, 0, 800, 600 });
+
+    Mat4d plain_world;
+    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), view, plain_world), ViewDependence::ViewAndViewport);
+
+    auto parent = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    parent->setMatrix(vn::math::scale(Vec3d(2, 2, 2)));
+    Mat4d scaled_world;
+    ASSERT_EQ(billboard.localToWorldForView(parent->worldMatrix(), view, scaled_world),
+              ViewDependence::ViewAndViewport);
+
+    const auto height = [](const Mat4d& world) {
+        return (world * Point3d(0, 1, 0) - world * Point3d(0, 0, 0)).length();
+    };
+    EXPECT_NEAR(height(scaled_world), height(plain_world), 1e-9)
+        << "the local scale is reduced by the same factor the parent adds";
 }
 
 TEST(AutoTransformTest, TwoViewsGetTheirOwnCommandMatrices)
@@ -2241,6 +2322,107 @@ TEST(AutoTransformTest, TwoViewsGetTheirOwnCommandMatrices)
     EXPECT_NEAR(front_normal.z, 1.0, 1e-9);
     EXPECT_NEAR(side_normal.x, 1.0, 1e-9);
     EXPECT_EQ(scene.contentCollectCount(), 2u) << "one list per view, as the memo key already states";
+}
+
+TEST(AutoTransformTest, AutoScaleKeepsAConstantPixelSize)
+{
+    AutoTransform billboard;
+    billboard.setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToScreen);
+    billboard.setAutoScaleToScreen(true);
+
+    Camera near_camera;
+    near_camera.lookAt(Vec3d(0, 0, 5), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    near_camera.setPerspective(60.0, 0.1, 100.0);
+    near_camera.setAspect(4.0 / 3.0);
+    Camera far_camera;
+    far_camera.lookAt(Vec3d(0, 0, 10), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    far_camera.setPerspective(60.0, 0.1, 100.0);
+    far_camera.setAspect(4.0 / 3.0);
+
+    const Viewport viewport{ 0, 0, 800, 600 };
+    const CollectView near_view = viewOf(near_camera, viewport);
+    const CollectView far_view  = viewOf(far_camera, viewport);
+
+    Mat4d near_world;
+    Mat4d far_world;
+    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), near_view, near_world), ViewDependence::ViewAndViewport);
+    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), far_view, far_world), ViewDependence::ViewAndViewport);
+
+    const auto screen_height = [](const CollectView& view, const Mat4d& world) {
+        const Mat4d   view_projection = view.viewProjection();
+        const Point3d bottom = view_projection * (world * Point3d(0, 0, 0));
+        const Point3d top    = view_projection * (world * Point3d(0, 1, 0));
+        return std::abs(top.y - bottom.y) * static_cast<double>(view.viewport.height) * 0.5;
+    };
+
+    const double near_pixels = screen_height(near_view, near_world);
+    const double far_pixels  = screen_height(far_view, far_world);
+    EXPECT_NEAR(near_pixels, far_pixels, 1e-9) << "the same local height covers the same pixels at both distances";
+    EXPECT_NEAR(near_pixels, 1.0 / 0.48, 1e-9) << "OSG's reference: a local radius of 0.48 is one pixel";
+}
+
+TEST(AutoTransformTest, AutoScaleClampsToTheConfiguredRange)
+{
+    AutoTransform billboard;
+    billboard.setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToScreen);
+    billboard.setAutoScaleToScreen(true);
+    billboard.setMinimumScale(0.5);
+    billboard.setMaximumScale(0.5);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const CollectView view = viewOf(cam, Viewport{ 0, 0, 800, 600 });
+    Mat4d             world;
+    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), view, world), ViewDependence::ViewAndViewport);
+
+    const auto height = (world * Point3d(0, 1, 0) - world * Point3d(0, 0, 0)).length();
+    EXPECT_NEAR(height, 0.5, 1e-9);
+}
+
+TEST(AutoTransformTest, AutoScaleWithoutAViewportKeepsTheAuthoredScale)
+{
+    AutoTransform billboard;
+    billboard.setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToScreen);
+    billboard.setAutoScaleToScreen(true);
+    billboard.setScale(Vec3d(2, 3, 4));
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const CollectView view = viewOf(cam); // no viewport
+
+    Mat4d world;
+    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), view, world), ViewDependence::View);
+    const auto height = (world * Point3d(0, 1, 0) - world * Point3d(0, 0, 0)).length();
+    EXPECT_NEAR(height, 3.0, 1e-9) << "the authored Y scale is the fallback";
+}
+
+TEST(AutoTransformTest, TwoViewportsGetTheirOwnCommandMatrices)
+{
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+    auto  billboard = intrusive_ptr<AutoTransform>(new AutoTransform());
+    billboard->setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToScreen);
+    billboard->setAutoScaleToScreen(true);
+    billboard->addChild(makeTriangleNode(Vec3d(0, 0, 0), nullptr, u8"tri"));
+    root->addChild(billboard);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    const Viewport large{ 0, 0, 800, 600 };
+    const Viewport small{ 0, 0, 400, 300 };
+
+    scene.setContentFrame(1);
+    const auto large_commands = scene.collectRenderCommands(&cam, kAllLayers, &large);
+    const auto small_commands = scene.collectRenderCommands(&cam, kAllLayers, &small);
+    ASSERT_EQ(large_commands->size(), 1u);
+    ASSERT_EQ(small_commands->size(), 1u);
+
+    const auto height = [](const RenderCommand& command) {
+        return (command.model_matrix * Point3d(0, 1, 0) - command.model_matrix * Point3d(0, 0, 0)).length();
+    };
+    EXPECT_NEAR(height((*small_commands)[0]), 2.0 * height((*large_commands)[0]), 1e-9)
+        << "half the pixels need twice the world scale";
+    EXPECT_EQ(scene.contentCollectCount(), 2u) << "the viewport is part of the memo key";
 }
 
 TEST(AutoTransformTest, TheBoundingBoxCoversEveryOrientation)

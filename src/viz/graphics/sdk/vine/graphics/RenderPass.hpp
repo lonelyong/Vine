@@ -346,6 +346,25 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
     /// @brief Clears any configured sub-viewport: the pass draws the whole target again.
     void clearViewport() noexcept { desc_.viewport.reset(); }
 
+    /** @brief States the device-pixel size of the surface this pass draws into when it has no target.
+     *
+     * @details
+     * - A pass that writes an explicit RenderTarget already knows its size; a WINDOW pass does not. The engine
+     *   (or PassChain, which already converts the surface size with the pixel ratio) states it here, and
+     *   collection uses it as the viewport for view-dependent features (AutoTransform screen-space scaling).
+     * - It does NOT change the backend's viewport: a pass without setViewport() still draws the full target.
+     *
+     * @param width  Draw width in DEVICE pixels (<= 0 clears the size).
+     * @param height Draw height in DEVICE pixels (<= 0 clears the size).
+     */
+    void setDrawSize(int width, int height) noexcept
+    {
+        draw_size_ = (width > 0 && height > 0) ? Viewport{ 0, 0, width, height } : Viewport{};
+    }
+
+    /** @brief Gets the draw size stated by setDrawSize(). */
+    [[nodiscard]] Viewport drawSize() const noexcept { return draw_size_; }
+
     /**
      * @brief Returns which layers of the content this pass draws (see Node::setLayers).
      *
@@ -662,6 +681,9 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      * @return The policy, or nullopt when this pass does not clear.
      */
     [[nodiscard]] std::optional<ClearPolicy> clearPolicy() const;
+
+    /// Device-pixel size of the surface for a pass that has no target (see setDrawSize).
+    Viewport draw_size_{};
 };
 
 using RenderPassPtr = intrusive_ptr<RenderPass>;

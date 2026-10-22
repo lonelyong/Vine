@@ -30,6 +30,17 @@ namespace
 {
 
 /**
+ * @brief Returns the process-wide empty command list (one allocation for "nothing to draw").
+ *
+ * @return The shared empty list.
+ */
+std::shared_ptr<const std::vector<RenderCommand>> noCommands()
+{
+    static const auto kNoCommands = std::make_shared<const std::vector<RenderCommand>>();
+    return kNoCommands;
+}
+
+/**
  * @brief Returns whether two projection*view matrices are identical.
  *
  * Matrix4x4 has no operator==, and the memo only needs "the same view": exact
@@ -318,28 +329,32 @@ struct InheritedState
  * @param node       Root node to traverse.
  * @param world      World matrix of @p node (accumulated by the caller).
  * @param frustum    View frustum for culling.
- * @param view       The camera's world-to-view matrix (for view-dependent nodes, see Node::localToWorldForView).
- * @param eye        The camera's eye point in world space.
- * @param up         The camera's up direction in world space.
+ * @param view       The view being drawn (for view-dependent nodes, see Node::localToWorldForView).
  * @param opacity    Accumulated opacity of the ancestors.
  * @param inherited  State of the ancestors (see InheritedState).
  * @param layer_mask Layers this picture draws (see Scene::collectRenderCommands).
  * @param bounds     Per-pass bound cache.
+ * @param viewport_used Receives true when some node's placement also depends on the device-pixel viewport.
  * @param out        Output command list.
  */
-void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& frustum, const Mat4d& view,
-                         const Vec3d& eye, const Vec3d& up, float opacity, const InheritedState& inherited,
-                         std::uint32_t layer_mask, BoundsCache& bounds, std::vector<RenderCommand>& out)
+void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& frustum, const CollectView& view,
+                         float opacity, const InheritedState& inherited, std::uint32_t layer_mask,
+                         BoundsCache& bounds, bool& viewport_used, std::vector<RenderCommand>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
     }
-    // A view-dependent node (AutoTransform in a billboard mode) supplies its own world matrix for THIS
-    // camera. The collected list is memoised per view, so the answer is stable for as long as the view is.
+    // A view-dependent node (AutoTransform with auto-rotation or screen-space scaling) supplies its own world
+    // matrix for THIS view. The collected list is memoised per view, so the answer is stable for as long as the
+    // view is; ViewAndViewport additionally keys the memo on the viewport.
     Mat4d node_world = world;
     Mat4d view_world;
-    if (node->localToWorldForView(world, view, eye, up, view_world)) {
+    const ViewDependence dependence = node->localToWorldForView(world, view, view_world);
+    if (dependence != ViewDependence::None) {
         node_world = view_world;
+    }
+    if (dependence == ViewDependence::ViewAndViewport) {
+        viewport_used = true;
     }
     // The layers this node BELONGS to: its own declaration when it has one, otherwise what it inherited. The
     // fold happens here (it is what the children inherit), but the TEST is at the drawable below: a container
@@ -409,8 +424,8 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
         for (const auto& child : group->children()) {
-            collectNodeCommands(child.get(), node_world * child->localTransformMatrix(), frustum, view, eye, up,
-                                node_opacity, subtree, layer_mask, bounds, out);
+            collectNodeCommands(child.get(), node_world * child->localTransformMatrix(), frustum, view, node_opacity,
+                                subtree, layer_mask, bounds, viewport_used, out);
         }
     }
 }
@@ -438,12 +453,18 @@ struct Scene::ContentMemo {
     struct Entry {
         Mat4d                      view_proj;
         Vec3d                      eye;
+        // The device-pixel rectangle is part of the KEY: the same camera drawn into two PiP rectangles
+        // produces different screen-space scales for view-dependent nodes (AutoTransform).
+        Viewport                   viewport;
         std::uint64_t              revision = 0;
         // The mask is part of the KEY, not only a parameter: two passes may draw the same view through the
         // same camera and still want DIFFERENT lists (a shadow pass drawing only casters, a main pass drawing
         // everything), so serving one's list for the other's mask would swap a few objects in and out of the
         // picture - correct-looking and wrong.
         std::uint32_t              layer_mask = kAllLayers;
+        // True when the list was built by a node that also depends on the device-pixel viewport
+        // (AutoTransform screen-space scaling). A list without such a node is shared across rectangles.
+        bool                       viewport_sensitive = false;
         // SHARED and immutable once built (see collectRenderCommands): the passes of a frame hand the same list
         // around, and it is reused across frames for as long as the graph does not change.
         std::shared_ptr<const std::vector<RenderCommand>> commands;
@@ -584,21 +605,32 @@ Aabbd Scene::boundingBox(std::uint32_t layer_mask) const
 }
 
 std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(raw_ptr<const Camera> camera,
+                                                                                    std::uint32_t layer_mask,
+                                                                                    const Viewport* viewport) const
+{
+    if (camera == nullptr) {
+        // The empty answer, shared rather than built: a caller with no camera asks for nothing.
+        return noCommands();
+    }
+    const Viewport draw_viewport = viewport != nullptr ? *viewport : Viewport{};
+    const CollectView view{ camera->projectionMatrix(), camera->viewMatrix(), camera->eye(), camera->up(),
+                            draw_viewport };
+    return collectRenderCommands(view, layer_mask);
+}
+
+std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(const CollectView& view,
                                                                                     std::uint32_t layer_mask) const
 {
-    // The empty answer, shared rather than built: a caller with no camera / an empty scene asks for
-    // nothing, and paying an allocation for "nothing" would make the cheap case the expensive one.
-    static const std::shared_ptr<const std::vector<RenderCommand>> kNoCommands =
-        std::make_shared<const std::vector<RenderCommand>>();
-    if (camera == nullptr || !visible_ || root_ == nullptr) {
-        return kNoCommands;
+    // The empty answer, shared rather than built: an empty scene asks for nothing, and paying an allocation
+    // for "nothing" would make the cheap case the expensive one.
+    if (!visible_ || root_ == nullptr) {
+        return noCommands();
     }
     // The shape is part of the view: the projection encodes it (the camera states it, see Camera), so the memo
     // below (which matches on the view-projection) cannot answer for one shape with another's walk.
-    const Mat4d view_proj = camera->projectionMatrix() * camera->viewMatrix();
-    const Vec3d eye       = camera->eye();
-    const Mat4d view      = camera->viewMatrix();
-    const Vec3d up        = camera->up();
+    const Mat4d    view_proj = view.viewProjection();
+    const Vec3d    eye       = view.eye;
+    const Viewport viewport  = view.viewport;
     // THE MEMO OUTLIVES ONE FRAME. A collected list is a pure function of the graph and the view, so it is reused
     // for as long as NOTHING changed - which the graph announces through the process-wide content epoch (every
     // mutator bumps it, see Node::announceContentChange). Before that, a memo entry lived for one frame only and a
@@ -612,12 +644,14 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(r
     // Recorded even when the memo was just cleared (or does not exist yet): the next call has to compare against
     // THIS look, or it would invalidate a memo it built itself.
     memo_epoch_ = epoch;
-    const auto memo_entry = [this, &view_proj, &eye, layer_mask]() -> ContentMemo::Entry* {
+    const auto memo_entry = [this, &view_proj, &eye, &viewport, layer_mask]() -> ContentMemo::Entry* {
         if (content_frame_ == 0 || content_memo_ == nullptr) {
             return nullptr;   // nothing is memoised until a frame is open (a caller that drives it keeps walking)
         }
         for (auto& entry : content_memo_->entries) {
             if (entry.revision == content_revision_ && entry.eye == eye && entry.layer_mask == layer_mask &&
+                (!entry.viewport_sensitive || (entry.viewport.width == viewport.width &&
+                                                entry.viewport.height == viewport.height)) &&
                 sameView(entry.view_proj, view_proj)) {
                 entry.last_used_frame = content_frame_;
                 return &entry;
@@ -638,8 +672,9 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(r
     std::vector<RenderCommand> commands;
     const Frustum frustum = Frustum::fromViewProjection(view_proj);
     BoundsCache bounds;
-    collectNodeCommands(root_.get(), root_->worldMatrix(), frustum, view, eye, up, opacity_, InheritedState{},
-                        layer_mask, bounds, commands);
+    bool viewport_used = false;
+    collectNodeCommands(root_.get(), root_->worldMatrix(), frustum, view, opacity_, InheritedState{}, layer_mask,
+                        bounds, viewport_used, commands);
     // Where the sort puts things, in one sentence: the draw order the CONTENT declared is the outer key (see
     // Node::setDrawOrder - higher is drawn later), and inside one order: opaque front-to-back (near first),
     // transparent back-to-front (far first) after the opaque batch. Transparent objects need painter's
@@ -688,11 +723,13 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(r
             content_memo_ = std::make_unique<ContentMemo>();
         }
         if (ContentMemo::Entry* entry = memo_entry()) {
-            entry->commands = shared; // the same view asked again after a change
+            entry->commands            = shared; // the same view asked again after a change
+            entry->viewport_sensitive  = viewport_used;
         }
         else {
-            content_memo_->entries.push_back(
-                ContentMemo::Entry{ view_proj, eye, content_revision_, layer_mask, shared, content_frame_ });
+            content_memo_->entries.push_back(ContentMemo::Entry{ view_proj, eye, viewport, content_revision_,
+                                                                layer_mask, viewport_used, shared,
+                                                                content_frame_ });
         }
     }
     return shared;

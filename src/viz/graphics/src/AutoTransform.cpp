@@ -10,6 +10,9 @@ VN_GRAPHICS_NS_BEGIN
 namespace
 {
 
+/// OSG's reference radius for screen-space scaling: a local radius of 0.48 covers one pixel.
+constexpr double kAutoScaleReferenceRadius = 0.48;
+
 /**
  * @brief Builds a rotation matrix whose columns are the given local axes in world space.
  *
@@ -34,20 +37,33 @@ Mat4d rotationFromBasis(const Vec3d& x, const Vec3d& y, const Vec3d& z)
 }
 
 /**
- * @brief Returns the inverse of the camera's view rotation (a screen-aligned billboard rotation).
+ * @brief Returns the local rotation that cancels the model-view rotation (a screen-aligned billboard).
  *
- * @param view The camera's world-to-view matrix (rigid: rotation plus translation).
- * @return The rotation whose local axes are the camera's world-space right / up / backward axes.
+ * @details
+ * - The input is the node's model-view (view * parent world), so the parent's rotation/scale are part of
+ *   the rotation being cancelled - exactly OSG's `computeMatrix` (decompose the model-view, invert its
+ *   rotation). A non-uniform parent scale can leave a shear; the decomposition then falls back to the
+ *   rigid transpose.
+ *
+ * @param model_view The node's world-to-view matrix (view * parent world).
+ * @return The local rotation whose world result is screen-aligned.
  */
-Mat4d screenRotation(const Mat4d& view)
+Mat4d screenRotation(const Mat4d& model_view)
 {
-    Mat4d rotation;
+    Vec3d translation;
+    Quatd rotation;
+    Vec3d scale;
+    if (vn::math::decompose(model_view, translation, rotation, scale)) {
+        return vn::math::rotate(rotation.inverted());
+    }
+    // Fall back to the rigid case: the inverse of an orthonormal rotation is its transpose.
+    Mat4d result;
     for (std::size_t row = 0; row < 3; ++row) {
         for (std::size_t col = 0; col < 3; ++col) {
-            rotation.element(row, col) = view.element(col, row);
+            result.element(row, col) = model_view.element(col, row);
         }
     }
-    return rotation;
+    return result;
 }
 
 /**
@@ -143,6 +159,49 @@ void AutoTransform::setAutoRotateMode(AutoRotateMode mode)
     recompose();
 }
 
+bool AutoTransform::autoScaleToScreen() const
+{
+    return auto_scale_to_screen_;
+}
+
+void AutoTransform::setAutoScaleToScreen(bool enabled)
+{
+    if (auto_scale_to_screen_ == enabled) {
+        return;
+    }
+    auto_scale_to_screen_ = enabled;
+    // The view-independent matrix is unchanged, but the per-view one and the conservative bound are not.
+    invalidateBounds();
+}
+
+double AutoTransform::minimumScale() const
+{
+    return minimum_scale_;
+}
+
+void AutoTransform::setMinimumScale(double scale)
+{
+    minimum_scale_ = std::max(0.0, scale);
+    if (maximum_scale_ < minimum_scale_) {
+        maximum_scale_ = minimum_scale_;
+    }
+    invalidateBounds();
+}
+
+double AutoTransform::maximumScale() const
+{
+    return maximum_scale_;
+}
+
+void AutoTransform::setMaximumScale(double scale)
+{
+    maximum_scale_ = std::max(0.0, scale);
+    if (minimum_scale_ > maximum_scale_) {
+        minimum_scale_ = maximum_scale_;
+    }
+    invalidateBounds();
+}
+
 Mat4d AutoTransform::matrix() const
 {
     return matrix_;
@@ -153,23 +212,86 @@ Mat4d AutoTransform::localTransformMatrix() const
     return matrix_;
 }
 
-bool AutoTransform::localToWorldForView(const Mat4d& parent_world, const Mat4d& view, const Vec3d& eye,
-                                        const Vec3d& up, Mat4d& world) const
+ViewDependence AutoTransform::localToWorldForView(const Mat4d& parent_world, const CollectView& view,
+                                                   Mat4d& world) const
 {
-    if (mode_ == AutoRotateMode::NoRotation) {
-        return false;
+    const bool auto_rotate = mode_ != AutoRotateMode::NoRotation;
+    const bool auto_scale  = auto_scale_to_screen_ && view.hasViewport();
+    if (!auto_rotate && !auto_scale) {
+        return ViewDependence::None;
     }
 
-    // The position is in the parent frame; the automatic rotation is world-oriented, so only the parent's
-    // placement (not its rotation or scale) reaches the billboard.
-    const Point3d world_position = parent_world * position_;
-    const Mat4d   auto_rotation =
-        mode_ == AutoRotateMode::RotateToScreen ? screenRotation(view) : cameraRotation(world_position, eye, up);
+    // The automatic rotation is computed in THIS node's frame, exactly as OSG does: the model-view includes
+    // the parent transform, so a parent rotation is cancelled by the local rotation and a parent scale is
+    // inherited. RotateToCamera needs the eye/up expressed in the same local frame.
+    Mat4d auto_rotation;
+    if (auto_rotate) {
+        if (mode_ == AutoRotateMode::RotateToScreen) {
+            auto_rotation = screenRotation(view.view * parent_world);
+        }
+        else {
+            Mat4d parent_inverse = parent_world;
+            if (parent_inverse.invert()) {
+                const Point3d local_eye =
+                    parent_inverse * Point3d(view.eye.x, view.eye.y, view.eye.z);
+                const Vec3d local_up = parent_inverse * view.up;
+                auto_rotation        = cameraRotation(position_, Vec3d(local_eye.x, local_eye.y, local_eye.z), local_up);
+            }
+            else {
+                auto_rotation = cameraRotation(position_, view.eye, view.up);
+            }
+        }
+    }
 
-    world = vn::math::translate(Vec3d(world_position.x, world_position.y, world_position.z)) * auto_rotation *
-            vn::math::rotate(rotation_) * vn::math::scale(scale_) *
-            vn::math::translate(Vec3d(-pivot_.x, -pivot_.y, -pivot_.z));
-    return true;
+    Vec3d draw_scale = scale_;
+    if (auto_scale) {
+        const double scale = screenScaleFor(view, parent_world);
+        draw_scale         = Vec3d(scale, scale, scale);
+    }
+
+    // The local matrix is the ordinary T * R * S * T(-pivot); the walk multiplies the parent on the left,
+    // so parent translation, rotation and scale all reach the billboard (OSG semantics).
+    const Mat4d local = vn::math::translate(Vec3d(position_.x, position_.y, position_.z)) * auto_rotation *
+                        vn::math::rotate(rotation_) * vn::math::scale(draw_scale) *
+                        vn::math::translate(Vec3d(-pivot_.x, -pivot_.y, -pivot_.z));
+    world = parent_world * local;
+    return auto_scale ? ViewDependence::ViewAndViewport : ViewDependence::View;
+}
+
+double AutoTransform::screenScaleFor(const CollectView& view, const Mat4d& parent_world) const
+{
+    // OSG's pixelSize(position, 0.48): 0.48 local units at the node cover N pixels, and the scale that keeps
+    // that constant is 1/N. The model-view includes the parent, so a parent scale is cancelled by the local
+    // scale (a non-uniform parent scale is an approximation; document it).
+    if (!view.hasViewport()) {
+        return scale_.x;
+    }
+    // Project one local unit along X and Y at the node's position. The model-view includes the parent, so a
+    // parent scale/rotation (and a perspective depth) is part of the measured pixel size. This is the same
+    // quantity OSG's computePixelSizeVector measures, without assuming the parent is rigid.
+    const Mat4d   view_projection = view.projection * (view.view * parent_world);
+    const Point3d origin          = view_projection * position_;
+    const Point3d x_axis = view_projection * Point3d(position_.x + 1.0, position_.y, position_.z);
+    const Point3d y_axis = view_projection * Point3d(position_.x, position_.y + 1.0, position_.z);
+
+    const double half_width  = static_cast<double>(view.viewport.width) * 0.5;
+    const double half_height = static_cast<double>(view.viewport.height) * 0.5;
+    const auto   pixel_length = [&](const Point3d& point) {
+        const double dx = (point.x - origin.x) * half_width;
+        const double dy = (point.y - origin.y) * half_height;
+        return std::sqrt(dx * dx + dy * dy);
+    };
+    // Use the tighter axis so a non-square viewport keeps the whole billboard inside the picture.
+    const double pixels_per_local = std::min(pixel_length(x_axis), pixel_length(y_axis));
+    const double pixel_size       = kAutoScaleReferenceRadius * pixels_per_local;
+    if (!(pixel_size > 0.0) || !std::isfinite(pixel_size)) {
+        return scale_.x;
+    }
+    const double scale = 1.0 / pixel_size;
+    if (!std::isfinite(scale)) {
+        return scale_.x;
+    }
+    return std::clamp(scale, minimum_scale_, maximum_scale_);
 }
 
 Aabbd AutoTransform::boundingBox() const
@@ -182,25 +304,32 @@ Aabbd AutoTransform::boundingBox() const
         return Group::boundingBox();
     }
 
-    const auto   mn = local.min();
-    const auto   mx = local.max();
-    double       radius = 0.0;
-    const double xs[2]   = { mn.x, mx.x };
-    const double ys[2]   = { mn.y, mx.y };
-    const double zs[2]   = { mn.z, mx.z };
+    // The actual screen scale is not known without a camera; a finite maximum is the conservative choice.
+    Vec3d bound_scale = scale_;
+    if (auto_scale_to_screen_ && maximum_scale_ < std::numeric_limits<double>::max()) {
+        bound_scale = Vec3d(maximum_scale_, maximum_scale_, maximum_scale_);
+    }
+
+    const Mat4d parent_world = parent() != nullptr ? parent()->worldMatrix() : Mat4d();
+    const auto  mn           = local.min();
+    const auto  mx           = local.max();
+    double      radius       = 0.0;
+    const double xs[2]       = { mn.x, mx.x };
+    const double ys[2]       = { mn.y, mx.y };
+    const double zs[2]       = { mn.z, mx.z };
     for (const double x : xs) {
         for (const double y : ys) {
             for (const double z : zs) {
                 // The node's own transform is T(position) * R * S * T(-pivot): measure from the pivot and
                 // apply the scale before asking for a length, or a scaled billboard would under-report.
-                const Vec3d offset((x - pivot_.x) * scale_.x, (y - pivot_.y) * scale_.y,
-                                   (z - pivot_.z) * scale_.z);
-                radius = std::max(radius, offset.length());
+                // The parent's linear part is then applied so its scale/shear is covered too.
+                const Vec3d offset((x - pivot_.x) * bound_scale.x, (y - pivot_.y) * bound_scale.y,
+                                   (z - pivot_.z) * bound_scale.z);
+                radius = std::max(radius, (parent_world * offset).length());
             }
         }
     }
 
-    const Mat4d   parent_world = parent() != nullptr ? parent()->worldMatrix() : Mat4d();
     const Point3d world_position = parent_world * position_;
     Aabbd         box            = Aabbd::empty();
     box.expandBy(Point3d(world_position.x - radius, world_position.y - radius, world_position.z - radius));

@@ -230,6 +230,11 @@ void PassChain::resize(int width, int height, double pixel_ratio)
     const detail::PixelRatio ratio{ pixel_ratio };
     const detail::DeviceSize device =
         detail::toDeviceSize(detail::LogicalSize{ width, height }, ratio);
+    // A window pass has no target to read a size from; state the device-pixel size here so collection can
+    // compute screen-space scaling (AutoTransform). It does not change the backend's viewport.
+    if (window_pass_ != nullptr) {
+        window_pass_->setDrawSize(device.width, device.height);
+    }
     if (offscreen_target_ != nullptr) {
         offscreen_target_->setSize(device.width, device.height);
     }

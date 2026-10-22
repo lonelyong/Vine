@@ -11,6 +11,7 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/String.hpp>
 
+#include "CollectView.hpp"
 #include "Light.hpp"
 #include "Node.hpp"
 
@@ -200,10 +201,31 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *               camera whose shape changes gets its own walk.
      * @param layer_mask Layers this picture draws (see Node::setLayers); part of the memo's key, because two passes
      *                   drawing the same view with different masks do NOT draw the same list.
+     * @param viewport   Device-pixel rectangle this picture lands in, or null when the caller cannot state one.
+     *                   A view-dependent node (AutoTransform) uses it for screen-space scaling, and keeps its
+     *                   authored values when it is absent. It joins the memo's key only when the collected list
+     *                   contains a node that declared ViewDependence::ViewAndViewport.
      * @return The shared list of collected render commands (empty when there is nothing to draw).
      */
     std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(
-        raw_ptr<const Camera> camera, std::uint32_t layer_mask = kAllLayers) const;
+        raw_ptr<const Camera> camera, std::uint32_t layer_mask = kAllLayers,
+        const Viewport* viewport = nullptr) const;
+
+    /** @brief Collects the commands for one explicit view (the primary entry point).
+     *
+     * @details
+     * - The same rules as the camera overload; the caller states projection / view / eye / up / viewport
+     *   directly. RenderPass builds this from its own camera and viewport, and a host that drives a pass itself
+     *   can do the same without owning a Camera.
+     * - The memo key is the view-projection, the eye and the viewport: two cameras (or two rectangles) that
+     *   look differently get their own lists.
+     *
+     * @param view      The view this picture is collected for.
+     * @param layer_mask Layers this picture draws (see Node::setLayers).
+     * @return The shared list of collected render commands (empty when there is nothing to draw).
+     */
+    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(
+        const CollectView& view, std::uint32_t layer_mask = kAllLayers) const;
 
     /** @brief Opens the content frame the collected-command memo belongs to (and ages what nothing asked for).
      *

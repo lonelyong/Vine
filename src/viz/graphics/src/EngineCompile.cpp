@@ -251,6 +251,14 @@ void RenderEngine::buildFrameValue()
     // The entries are REUSED rather than rebuilt (see below): a steady frame hands over the same pass list with the
     // same input lists, so it must not free and re-allocate them 60 times a second.
     std::size_t used = 0;
+    // A window pass has no target to read a device-pixel size from. The engine states the surface size (converted
+    // with the surface's pixel ratio) on every pass; RenderPass::describe prefers a sub-viewport or the target's
+    // own size, so off-screen passes are unaffected.
+    const double pixel_ratio = area_ != nullptr ? area_->pixelRatio() : 1.0;
+    const int device_width =
+        static_cast<int>(std::lround(static_cast<double>(surface_width_) * pixel_ratio));
+    const int device_height =
+        static_cast<int>(std::lround(static_cast<double>(surface_height_) * pixel_ratio));
     // Rows and slots are one per index (see compileFrame): the row is the frame's answer about a pass, the slot
     // is the declaration itself - and the hook the declaration carries belongs to the DECLARATION.
     for (const std::uint32_t index : frame_order_) {
@@ -287,6 +295,7 @@ void RenderEngine::buildFrameValue()
         if (!entry.draw.has_value()) {
             entry.draw.emplace();
         }
+        pass->setDrawSize(device_width, device_height);
         if (!pass->describe(row.content, *entry.draw)) {
             // "This pass issued nothing" must not leave the previous frame's picture behind: the draw goes away and
             // the entry keeps the fact that the pass ran (see the note at the top).

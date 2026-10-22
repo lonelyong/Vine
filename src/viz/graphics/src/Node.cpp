@@ -215,15 +215,12 @@ Mat4d Node::localTransformMatrix() const
     return Mat4d();
 }
 
-bool Node::localToWorldForView(const Mat4d& parent_world, const Mat4d& view, const Vec3d& eye, const Vec3d& up,
-                               Mat4d& world) const
+ViewDependence Node::localToWorldForView(const Mat4d& parent_world, const CollectView& view, Mat4d& world) const
 {
     (void)parent_world;
     (void)view;
-    (void)eye;
-    (void)up;
     (void)world;
-    return false;
+    return ViewDependence::None;
 }
 
 VN_GRAPHICS_NS_END

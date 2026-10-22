@@ -59,6 +59,12 @@
 - `graphics-frame-picture-view-redesign-2026-10-22.md` —— **帧 / 画面 / 视图重设计（2026-10-22 提案；§9 记 S2 注册令牌 + `presentingPass` 改名，§10 记 S5 调度上移落地；S1–S5 全部落地）**：按“总体框架”重切 graphics 的四个大对象 —— 引擎拆出 `passes()`/`outputs()`/`diagnostics()` 三个门面（同一存储的三个视图），配方与注册句柄集分开（现行名 `PassChain` + `PassRegistry`，`Slot` 记 `role`/`owner`，**不复制指针清单**），overlay 值化（第三种 overlay 不改类），呈递归视图/表面回答，**调度只留引擎一处**（`backend::FrameGraph` 退场，`PassStage` 降为 tie-break）；附旧→新调用点迁移表、S1–S6 切片与变异判据、命名裁定与 S5 的落地记录。
 - `graphics-followups-2026-10-22.md` —— **graphics 待办登记（2026-10-22，历史登记：F1/F2/F3 三片已全部关闭）**：三片（F1 引擎三门面 / F2 `ScenePicture` 改名与归属 / F3 调度上移）各带“为什么当时不做 → 触发条件 → 做完怎么验”，保留作关闭时的形状与证据；对象模型复核里仍开放的 R1 / R5–R10 指向原表；另列**明确取消**的提案（`OverlayContent` 接口、类型擦除内容句柄）与本轮已知取舍。**活账本不在这里**：`.ai/design/graphics-followups-2026-10-19.md` §3 + 对象模型复核原表的 R 项。
 - `graphics-followups-2026-10-19.md` —— **下一 session 的 graphics 任务列表（2026-10-19）**：P1（`Pipeline` 改名 / 能力预检 / owned 帧 / `shareDepth` 资源图边 / `SceneView` 拆分 / 逃生口登记）在前，F2b 明确不做；随后是 E2 收尾（全屏 ABI imported 输入、按 attachment 绑定、revision 失效、sampler state、Cube），每项带动作、判据与风险。
+- `graphics-view-context-2026-10-22.md` —— **收集期视图上下文与 AutoTransform 自动缩放（2026-10-22，已落地）**：
+  `CollectView`（projection / view / eye / up / 设备像素 viewport）是 OSG `CullStack` 的窄版本，不是全帧单例；
+  `Node::localToWorldForView` 返回 `ViewDependence`（None / View / ViewAndViewport），收集 memo 只在后者出现时
+  把 viewport 进键；`RenderPass` 按子视口 / target / 窗口 draw size 组装 viewport，`setAutoScaleToScreen`
+  按 OSG 的 0.48 参考半径算恒定像素大小（min/max 夹紧）。另记 `FrameContext`/`UpdateContext` 的边界与
+  “一个阶段一个上下文”的扩展规则。
 - `graphics-primitives-2026-10-22.md` —— **几何体与图元（2026-10-22，R3 第一片）**：拓扑从 `StateNode`
   搬到 `Primitive`（拓扑是 draw 的事实，资产是一个整体）；`Geometry` 只剩通道集，"数据即绘制"（装位置通道时
   自动有一个默认三角形图元），`Primitive` = 拓扑 + 索引片段 + 材质 + 程序；收集器一条 primitive 一条命令，
