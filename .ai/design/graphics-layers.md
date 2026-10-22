@@ -307,7 +307,12 @@ PassDesc::first_layer { 0 } + PassDesc::layer_count { 1 }
 ### 9.3 相关的"整段跳过"（登记：形状）
 
 掩码现在**不剪结构**（判定点在可绘制节点上，§2.1）。若将来"按掩码排除大子树"的遍历成本进入剖析前列，
-加的是**子树层并集**的保守判定：每个节点带 `subtree_layers`（子树内所有节点**解析层**的并集；超额近似——
-只会少剪、不会误剪），公告点与 `invalidateBounds()` 同款（`setLayers` / `clearLayers` / `addChild` /
-`removeChild`），三条 walk 同一行：`if ((subtree_layers & 掩码) == 0) return;`。它**语义零变化**、老用例全绿，
+加的是**子树层并集**的保守判定：每个节点带私有的 `subtree_layer_union`（子树内所有节点**解析层**的并集；
+超额近似——只会少剪、不会误剪），公告点与 `invalidateBounds()` 同款（`setLayers` / `clearLayers` / `addChild` /
+`removeChild`），三条 walk 同一行：`if ((subtree_layer_union & 掩码) == 0) return;`。它**语义零变化**、老用例全绿，
 是纯增量优化。**不要**退化成 OSG 式"节点自身层剪枝"（后代重声明会变不可达，破坏 §2.1 的语义）。
+
+命名说明：它是**派生值**，不是第二个 layer，也不是可写的选择字段；`subtree_layer_union` 直接命名"并集"这个事实，
+比 `subtree_layers` 更不容易被读成"节点自己的层"。它也不是 `cached_bounds_` 那种按 stamp 懒算的 memo
+（这里是变更时增量维护、没有失效戳），所以不用 `cached_` 前缀；如果将来真改成懒算，再改名为
+`cached_subtree_layers_` 并配 `subtree_layers_stamp_`，和 `Node` 的 bounds 缓存同一套形状。
