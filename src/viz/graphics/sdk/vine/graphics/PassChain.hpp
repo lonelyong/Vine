@@ -4,13 +4,14 @@
 #include <functional>
 #include <vector>
 
-#include <vine/Lease.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "DiagnosticsRoute.hpp"
 #include "Node.hpp"
+#include "PassRegistry.hpp"
 #include "PassStage.hpp"
 #include "ReportOnce.hpp"
 #include "ShaderProgram.hpp"
@@ -187,11 +188,11 @@ struct VN_GRAPHICS_API ChainDesc {
  *   unregisters them when it dies, so dropping the handle takes the passes out of the frame instead of leaving them
  *   to run with nobody holding them (RenderEngine::addPass keeps its own reference, so a reference alone would keep a
  *   dropped pipeline's passes alive and drawing).
- * - It also BORROWS the engine through a lease rather than owning it (RenderEngine::lease): the passes live in that
- *   engine's list, so the pipeline must be able to reach the engine, but keeping it alive from below would invert
- *   ownership - a released engine would live on for as long as any pipeline it once handed a pass to. With the
- *   lease the engine dies exactly when its owners drop it, and a pipeline that outlives it answers "gone"
- *   (engine()) and takes its passes with it instead of calling into freed memory.
+ * - It also BORROWS the engine through two NARROW handles rather than owning it (see PassRegistry /
+ *   DiagnosticsRoute): the passes live in the engine's table, so the chain must be able to reach it, but keeping the
+ *   engine alive from below would invert ownership - a released engine would live on for as long as any chain it
+ *   once handed a pass to. The handles are leases, so the engine dies exactly when its owners drop it, and a chain
+ *   that outlives it answers "gone" (isValid()) and takes its passes with it instead of calling into freed memory.
  * - Exposes the window-presenting pass, and for deferred paths the off-screen G-buffer, whose size its owner
  *   maintains through resize() (the backend rebuilds the off-screen attachments whenever the target size changes
  *   between frames).
@@ -205,33 +206,33 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     friend class PassChainBuilder;
 
   public:
-    /** @brief Constructs a pipeline that registers its passes on the engine @p engine leases.
+    /** @brief Constructs a chain that registers its passes through @p registry and reports through @p diagnostics.
      *
      * @details
-     * - The engine is a constructor argument rather than a setter because a pipeline without one could not do the ONE
-     *   thing this class does with a pass (register it, and later take it back).
-     * - A lease, not an owning handle: the pipeline must reach the engine, it must not keep it alive (see the class
-     *   note). A lease of an engine that is already gone mints a pipeline that registers nothing - the caller's own
-     *   bug, and a harmless one.
+     * - The handles are constructor arguments rather than setters because a chain without them could not do the ONE
+     *   thing this class does with a pass (register it, and later take it back) nor say what it refused.
+     * - They are leases, not owners: the chain must reach the engine, it must not keep it alive (see the class
+     *   note). Handles of an engine that is already gone mint a chain that registers nothing - the caller's own bug,
+     *   and a harmless one.
      *
-     * @param engine Lease of the engine the pipeline's passes are registered on (empty is accepted; nothing is
-     *               registered then).
+     * @param registry    Handle over the engine's one pass table (empty is accepted; nothing is registered then).
+     * @param diagnostics Handle over the engine's one diagnostic route (empty silences the chain's refusals).
      */
-    explicit PassChain(Lease<RenderEngine> engine);
+    PassChain(PassRegistry registry, DiagnosticsRoute diagnostics);
 
     /** @brief Destroys the chain: it hands every pass it registered back to the engine while the engine is still
      *         there, and answers nothing once it is gone. */
     ~PassChain();
   public:
-    /** @brief Gets the engine this pipeline's passes are registered on.
+    /** @brief Gets whether the engine this chain registered on is still alive.
      *
      * @details
-     * - A BORROW that may answer nothing: null once the engine has been destroyed, which is a normal answer for a
-     *   pipeline a host kept after dropping the control that owned the engine (its passes went with the engine).
+     * - A chain a host kept after dropping the control that owned the engine answers false: its passes went with
+     *   the engine, and every query below answers nothing instead of reaching into freed memory.
      *
-     * @return The engine, or nullptr when it is gone.
+     * @return true while the handles still reach their engine.
      */
-    [[nodiscard]] raw_ptr<RenderEngine> engine() const noexcept;
+    [[nodiscard]] bool isValid() const noexcept;
 
     /** @brief Gets whether any pass of this chain draws @p scene.
      *
@@ -510,7 +511,10 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     // The engine the passes were registered on, held strongly (see the class
     // comment). Declared with a forward declaration and destroyed by the
     // out-of-line destructor, so this header does not pull RenderEngine.hpp in.
-    Lease<RenderEngine> engine_;
+    // The two narrow contracts this chain depends on (see the class note). Both carry a lease, so the engine may
+    // die first and the chain answers "gone" instead of reaching into freed memory.
+    PassRegistry    registry_;
+    DiagnosticsRoute diagnostics_;
     // Every pass this chain registered lives in the engine's own slot table with `owner = this` (see
     // RenderEngine::addPassOwnedBy), so "a pass the chain registered is a pass the chain unregisters" needs no second
     // list here (see the destructor) and a named pass is found by its role instead of by a field per pass.

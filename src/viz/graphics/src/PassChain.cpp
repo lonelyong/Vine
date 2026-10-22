@@ -6,7 +6,6 @@
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
-#include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
@@ -15,24 +14,24 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-PassChain::PassChain(Lease<RenderEngine> engine) : engine_(engine)
+PassChain::PassChain(PassRegistry registry, DiagnosticsRoute diagnostics)
+  : registry_(std::move(registry))
+  , diagnostics_(std::move(diagnostics))
 {
 }
 
 PassChain::~PassChain()
 {
     // The chain IS its registration scope: every pass it added is filed in the engine's slot table with this chain as
-    // its owner (see RenderEngine::addPassOwnedBy), so ONE call hands them all back - no second list to keep in step
-    // and no move-only token to get wrong. A chain that outlived its engine has no table left to hand anything back
-    // to: the lease answers nullptr, and the passes died with the engine that owned them.
-    if (raw_ptr<RenderEngine> engine = engine_.get()) {
-        engine->removePassesOwnedBy(this);
-    }
+    // its owner (see PassRegistry::addOwnedBy), so ONE call hands them all back - no second list to keep in step and
+    // no move-only token to get wrong. A chain that outlived its engine has no table left to hand anything back to:
+    // the handle answers "gone" and the passes died with the engine that owned them.
+    registry_.removeOwnedBy(this);
 }
 
-raw_ptr<RenderEngine> PassChain::engine() const noexcept
+bool PassChain::isValid() const noexcept
 {
-    return engine_.get();
+    return registry_.isValid();
 }
 
 bool PassChain::draws(raw_ptr<const Scene> scene) const noexcept
@@ -42,11 +41,7 @@ bool PassChain::draws(raw_ptr<const Scene> scene) const noexcept
     }
     // Every pass of the chain, not just the presenting one: on a deferred chain the scene is drawn into the G-buffer
     // and the window pass presents a target (see the declaration).
-    raw_ptr<RenderEngine> engine = engine_.get();
-    if (engine == nullptr) {
-        return false;
-    }
-    const std::vector<intrusive_ptr<RenderPass>> passes = engine->passesOwnedBy(this);
+    const std::vector<intrusive_ptr<RenderPass>> passes = registry_.passesOwnedBy(this);
     return std::any_of(passes.begin(), passes.end(), [scene](const intrusive_ptr<RenderPass>& pass) {
         return pass != nullptr && pass->content() == scene;
     });
@@ -99,16 +94,15 @@ ShadingMode PassChain::shadingMode() const noexcept
 
 bool PassChain::setShadingMode(ShadingMode mode)
 {
-    raw_ptr<RenderEngine> engine = engine_.get();
     if (mode != ShadingMode::Lit && path_ == ShadingPath::Deferred) {
         // A Deferred picture comes out of a fullscreen lighting pass: there is no geometry pass left to
         // override, so this mode has to be ASSEMBLED for (ChainDesc::mode) - nothing here can make the
         // picture mean it. Reported once per episode, because the alternative is a host that believes it
         // switched something.
-        if (mode_refused_.shouldReport() && engine != nullptr) {
-            engine->reportEngineProblem(
+        if (mode_refused_.shouldReport()) {
+            diagnostics_.report(
                 vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                String(u8"this pipeline's Deferred chain has no geometry pass to shade, so the shading mode was "
+                String(u8"this chain's Deferred picture has no geometry pass to shade, so the shading mode was "
                        u8"not changed: build with ChainDesc::mode (a non-Lit mode is built on the forward "
                        u8"chain, see PassChainBuilder::effectivePath)"));
         }
@@ -188,8 +182,7 @@ raw_ptr<RenderPass> PassChain::addOverlay(const String&   role,
 
 raw_ptr<RenderPass> PassChain::overlayPass(const String& role) const noexcept
 {
-    raw_ptr<RenderEngine> engine = engine_.get();
-    return engine != nullptr ? engine->passOwnedBy(this, role) : nullptr;
+    return registry_.passOwnedBy(this, role);
 }
 
 raw_ptr<Object> PassChain::overlayContent(const String& role) const noexcept
@@ -207,13 +200,11 @@ bool PassChain::setOverlayVisible(const String& role, bool on)
         // is whoever registered it (addOverlay). Once per episode, because a host may ask every frame and the
         // condition - not the call - is the news.
         if (overlay_refused_.shouldReport()) {
-            if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
-                const String message = String(u8"this pipeline has no overlay registered as '") + role +
-                                       u8"', so there was nothing to show or hide: register it with "
-                                       u8"PassChain::addOverlay (or build with the recipe option that does)";
-                engine->reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                            vn::graphics::DiagnosticCategory::UnsupportedRequest, message);
-            }
+            const String message = String(u8"this chain has no overlay registered as '") + role +
+                                   u8"', so there was nothing to show or hide: register it with "
+                                   u8"PassChain::addOverlay (or build with the recipe option that does)";
+            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::UnsupportedRequest, message);
         }
         return false;
     }
@@ -262,11 +253,7 @@ intrusive_ptr<RenderPass> PassChain::addPass(const PassDesc& desc, const String&
 {
     // The engine's row carries this chain as the pass' owner (see the destructor): registering and taking back are
     // the same relation, and the role is what a reader asks for by name instead of a field per pass (see gizmoPass).
-    raw_ptr<RenderEngine> engine = engine_.get();
-    if (engine == nullptr) {
-        return nullptr;
-    }
-    return engine->addPassOwnedBy(desc, this, role);
+    return registry_.addOwnedBy(desc, this, role);
 }
 
 void PassChain::setWindowPass(intrusive_ptr<RenderPass> pass)

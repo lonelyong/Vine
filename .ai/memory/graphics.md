@@ -45,8 +45,17 @@
 - **一套数字**：全量构建 0 error；`test_graphics` 407、`test_vsg` 481、`test_gui` 261、`test_core` 165；
   6 个静态门禁 0 finding（`check_ai_docs --strict` 也 0，历史条目按惯例加 `<!-- drift-ok -->`）；
   `docs/guides/graphics.md` §3.18 从"注册归一个句柄"重写成"注册归链自己"。
-- **仍开放**：F1 引擎三门面、F3 调度上移（见 `graphics-followups-2026-10-22.md`）；F2 关闭 —— 改名半边已落地，
-  另一半"`RenderSurface` 问视图"在 S6 就已经是现状。
+- **仍开放**：F3 调度上移（见 `graphics-followups-2026-10-22.md`）；F1/F2 已关闭。
+- **S2 落地（同日）**：引擎的三个窄句柄 `PassRegistry` / `OutputRegistry` / `DiagnosticsRoute`（各自带 `Lease`：
+  引擎先死 ⇒ `isValid()` false，调用安全空转）；引擎加 `passes()` / `outputs()` / `diagnostics()`，原平铺方法
+  （`addPass` / `publish` / `diagnosticCount` …）保留为同一表的简写——一套实现，两张门面。`PassChain` 不再持
+  `Lease<RenderEngine>`，改持 `PassRegistry` + `DiagnosticsRoute`；诊断仍走 `reportEngineProblem`，所以编译期的
+  episode 规则不变。
+  判据：`ChainRegistrationTest.TheHandlesOutliveTheirEngineAndThenAnswerNothing`（三个句柄跨引擎死亡、report 空转）/
+  `AChainRegistersThroughTheHandleItWasGiven`（链走句柄注册，引擎数同一张表）；`test_graphics` 409。
+- **坑（S2 踩到）**：在 `VN_GRAPHICS_NS_BEGIN` 里写 `class Object;` 会声明一个**新的 `vn::graphics::Object`**，
+  把 `vn::Object` 遮住（症状：一片 `base class has incomplete type`）。引用仓库的擦除基类要么 include
+  `<vine/Object.hpp>` 并裸写 `Object`，要么写全 `vn::Object`。
 
 ## 2026-10-22 注册归一个令牌：`PassGroup` + `presentingPass`（历史登记；当日下午已折进 `PassChain`，设计见 `.ai/design/graphics-frame-picture-view-redesign-2026-10-22.md` §9）
 

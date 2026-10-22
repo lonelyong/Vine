@@ -16,10 +16,13 @@
 
 #include "Capabilities.hpp"
 #include "Diagnostics.hpp"
+#include "DiagnosticsRoute.hpp"
 #include "FrameDescription.hpp"
 #include "FramePlan.hpp"
 #include "FrameStats.hpp"
+#include "OutputRegistry.hpp"
 #include "PassDesc.hpp"
+#include "PassRegistry.hpp"
 #include "RenderDiagnostic.hpp"
 #include "RenderSurface.hpp"
 #include "ReportOnce.hpp"
@@ -88,6 +91,39 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @return A lease of this engine (empty never; invalidated by this engine's destructor).
      */
     [[nodiscard]] Lease<RenderEngine> lease() noexcept;
+
+    /** @brief Gets the pass registry: the ONE table a frame runs from (see PassRegistry).
+     *
+     * @details
+     * - The narrow contract a recipe (PassChain) depends on: registration, order, content binding, and the owner
+     *   relation that makes "the chain takes back what it registered" one call. The flat methods below
+     *   (`addPass`, `removePass`, `passCount`, ...) are shorthands for this handle.
+     * - The handle carries a lease, so it may outlive the engine: `isValid()` then answers false and every call is
+     *   a no-op.
+     *
+     * @return A handle over this engine's pass table.
+     */
+    [[nodiscard]] PassRegistry passes() noexcept;
+
+    /** @brief Gets the named-output table (see OutputRegistry).
+     *
+     * @details
+     * - The narrow contract for `publish` / `resolve` / `unpublish` and the compile's transients; the flat methods
+     *   below are shorthands for this handle.
+     *
+     * @return A handle over this engine's outputs.
+     */
+    [[nodiscard]] OutputRegistry outputs() noexcept;
+
+    /** @brief Gets the engine's one diagnostic route (see DiagnosticsRoute).
+     *
+     * @details
+     * - The narrow contract for counting and reporting; a recipe holds this instead of the whole engine, and the
+     *   compile-time episode rule is preserved because the handle forwards to the engine's own report path.
+     *
+     * @return A handle over this engine's diagnostic route.
+     */
+    [[nodiscard]] DiagnosticsRoute diagnostics() noexcept;
 
   public:
     /** @brief Gets the bound device.
@@ -731,7 +767,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     // ---- Registration by owner (see PassChain): one slot table, an owner pointer per row ----
 
-    friend class PassChain;
+    friend class PassRegistry;
 
     /** @brief Registers @p desc on behalf of @p owner under @p role (the PassChain::addPass implementation).
      *

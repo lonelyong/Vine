@@ -4201,13 +4201,13 @@ TEST(SceneViewViewportTest, AViewWhoseEngineWasReleasedReportsIt)
     auto pipeline = buildFor(*view, engine.get());
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(view->engine(), engine.get());
-    EXPECT_EQ(pipeline->engine(), engine.get());
+    EXPECT_EQ(pipeline->isValid(), true);
 
     // The host drops the last reference to the engine: nothing borrows it strongly, so this is where it dies.
     engine = nullptr;
 
     EXPECT_EQ(view->engine(), nullptr) << "a borrow must not keep its engine alive, and must not dangle either";
-    EXPECT_EQ(pipeline->engine(), nullptr) << "the pipeline's passes went with the engine that ran them";
+    EXPECT_FALSE(pipeline->isValid()) << "the chain's passes went with the engine that ran them";
 
     // What the view owns is unaffected: the size is the view's own statement and the camera's shape follows it.
     view->resize(800, 600, 1.0);
@@ -5260,11 +5260,11 @@ TEST(PassChainBuilderTest, AChainOutlivingItsEngineNeitherHoldsNorCallsIntoIt)
         pipeline = builder.build({});
         ASSERT_NE(pipeline, nullptr);
 
-        EXPECT_EQ(pipeline->engine(), engine);
+        EXPECT_TRUE(pipeline->isValid());
         EXPECT_EQ(engine->useCount(), 1u) << "a pipeline leases the engine it draws through, it does not own it";
     }
 
-    EXPECT_EQ(pipeline->engine(), nullptr) << "the engine is gone, so the borrow answers nothing rather than dangling";
+    EXPECT_FALSE(pipeline->isValid()) << "the engine is gone, so the borrow answers nothing rather than dangling";
 
     // Everything a host could still call on the kept chain has to survive that: the engine is the only place these
     // would have reached, and each one asks the lease first.

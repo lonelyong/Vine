@@ -140,7 +140,7 @@ intrusive_ptr<PassChain> PassChainBuilder::build(const ChainDesc& options)
     // The handle is a LEASE, not an owning reference: the builder borrowed the engine and a pipeline must not own its
     // engine from below (a released engine would live on for as long as any pipeline it once served). The lease keeps
     // "is the engine still there" answerable for exactly as long as it is needed (see Lease / RenderEngine::lease).
-    auto pipeline = make_intrusive<PassChain>(engine_->lease());
+    auto pipeline = make_intrusive<PassChain>(engine_->passes(), engine_->diagnostics());
     // A builder is reusable in principle, and the report is about THIS build.
     shadows_built_ = 0;
     // This build's content selection: every pass that walks the content states it (see ChainDesc::layer_mask).

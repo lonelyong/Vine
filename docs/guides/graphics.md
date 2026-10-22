@@ -1075,6 +1075,11 @@ if (converted.root != nullptr) {
 }                                                      // 链走完作用域 → 它注册的 pass 全部撤下
 ```
 
+同一张引擎表面上的另外两件事也有同样的窄句柄：**`engine.outputs()`**（`publish` / `resolve` / `unpublish` /
+transient）与 **`engine.diagnostics()`**（计数 + 宿主 sink + `report`）。引擎自己的平铺方法
+（`engine->publish(...)`、`engine->diagnosticCount()` …）是这些句柄的**简写**，存储与实现都只有一份；
+链依赖的是句柄，不是整个引擎 —— 所以引擎先死时链只会答 `isValid() == false`，不会碰失效内存。
+
 - **为什么不是句柄列表**：`std::vector<intrusive_ptr<RenderPass>>` 记着"我注册了什么"会和引擎的表各说一套 ——
   "注册了却没人记着撤"正是它们能对不上的那类缺陷。owner 写在引擎的槽位上，就只有一份真相。
 - **role 是名字，不是字段**：配方（HUD 的两条 overlay pass 就是这么登记的）把一个 pass 登记在一个名字下，

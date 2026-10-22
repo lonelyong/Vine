@@ -1,6 +1,9 @@
 #include <vine/graphics/Camera.hpp>
+#include <vine/graphics/DiagnosticsRoute.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
+#include <vine/graphics/OutputRegistry.hpp>
 #include <vine/graphics/PassDesc.hpp>
+#include <vine/graphics/PassRegistry.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/PassChain.hpp>
@@ -51,7 +54,7 @@ TEST(ChainRegistrationTest, AChainTakesBackExactlyThePassesItRegistered)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     EXPECT_EQ(engine->passCount(), 0u);
 
-    auto chain = intrusive_ptr<PassChain>(new PassChain(engine->lease()));
+    auto chain = intrusive_ptr<PassChain>(new PassChain(engine->passes(), engine->diagnostics()));
 
     const raw_ptr<RenderPass> hud = chain->addOverlay(String(u8"hud"), nullptr, overlayDeclaration(u8"hud_pass"));
     ASSERT_NE(hud, nullptr);
@@ -77,12 +80,12 @@ TEST(ChainRegistrationTest, AChainOutlivingItsEngineAnswersNothing)
     intrusive_ptr<PassChain> survivor;
     {
         auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
-        survivor    = intrusive_ptr<PassChain>(new PassChain(engine->lease()));
+        survivor    = intrusive_ptr<PassChain>(new PassChain(engine->passes(), engine->diagnostics()));
         ASSERT_NE(survivor->addOverlay(String(u8"doomed"), nullptr, overlayDeclaration(u8"doomed")), nullptr);
         EXPECT_EQ(engine->passCount(), 1u);
     }
 
-    EXPECT_EQ(survivor->engine(), nullptr) << "the engine it registered on is gone";
+    EXPECT_FALSE(survivor->isValid()) << "the engine it registered on is gone";
     EXPECT_EQ(survivor->overlayPass(String(u8"doomed")), nullptr);
     EXPECT_EQ(survivor->addOverlay(String(u8"late"), nullptr, overlayDeclaration(u8"late")), nullptr)
         << "there is nobody left to register it on";
@@ -197,4 +200,61 @@ TEST(ChainRegistrationTest, AHostRegistersAThirdOverlayWithoutTouchingTheChain)
 
     chain = nullptr;
     EXPECT_EQ(engine->passCount(), 0u) << "the host's overlay left with the same chain";
+}
+
+/*
+ * @brief The three narrow handles are leases: they may outlive the engine and then answer "nothing".
+ *
+ * A recipe holds the registry and the diagnostic route instead of the engine, so both have to survive the engine
+ * being dropped without reaching into freed memory - the same rule the chain itself follows.
+ */
+TEST(ChainRegistrationTest, TheHandlesOutliveTheirEngineAndThenAnswerNothing)
+{
+    PassRegistry     registry;
+    OutputRegistry   outputs;
+    DiagnosticsRoute diagnostics;
+    {
+        auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+        registry    = engine->passes();
+        outputs     = engine->outputs();
+        diagnostics = engine->diagnostics();
+
+        EXPECT_TRUE(registry.isValid());
+        EXPECT_TRUE(outputs.isValid());
+        EXPECT_TRUE(diagnostics.isValid());
+        EXPECT_NE(registry.add(overlayDeclaration(u8"outside")), nullptr) << "the same table the engine's own methods read";
+        EXPECT_EQ(registry.count(), engine->passCount());
+    }
+
+    EXPECT_FALSE(registry.isValid()) << "the engine it read is gone";
+    EXPECT_FALSE(outputs.isValid());
+    EXPECT_FALSE(diagnostics.isValid());
+    EXPECT_EQ(registry.count(), 0u);
+    EXPECT_EQ(registry.add(overlayDeclaration(u8"late")), nullptr) << "there is nobody left to register it on";
+    EXPECT_EQ(outputs.resolve(String(u8"nothing")), nullptr);
+    EXPECT_EQ(outputs.transientTarget(String(u8"nothing")), nullptr);
+    EXPECT_EQ(outputs.transientCount(), 0u);
+    EXPECT_EQ(diagnostics.count(), 0u);
+    EXPECT_TRUE(diagnostics.isClean());
+    diagnostics.report(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
+                       String(u8"dropped with the engine"));
+    EXPECT_EQ(diagnostics.count(), 0u) << "a report with no route is a no-op, not a crash";
+}
+
+/*
+ * @brief A chain registers through the handle it was given - the engine's own count is that table's count.
+ */
+TEST(ChainRegistrationTest, AChainRegistersThroughTheHandleItWasGiven)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto chain  = intrusive_ptr<PassChain>(new PassChain(engine->passes(), engine->diagnostics()));
+
+    const raw_ptr<RenderPass> hud = chain->addOverlay(String(u8"hud"), nullptr, overlayDeclaration(u8"hud_pass"));
+    ASSERT_NE(hud, nullptr);
+    EXPECT_EQ(engine->passes().count(), 1u) << "one table: the handle and the engine answer the same number";
+    EXPECT_EQ(chain->overlayPass(String(u8"hud")), hud);
+
+    chain = nullptr;
+    EXPECT_EQ(engine->passes().count(), 0u);
+    EXPECT_TRUE(engine->passes().isValid()) << "the engine is still there; only the chain went";
 }

@@ -11,7 +11,7 @@
 
 | # | 事项 | 为什么本轮不做 | 触发条件 | 做完怎么验 |
 | --- | --- | --- | --- | --- |
-| F1 | **S1 引擎三个门面**：`passes()` / `outputs()` / `diagnostics()`（同一存储的三个视图，旧方法保留为转发） | 纯转发层，零行为收益；现在只有一个消费者（宿主自己），多出来的门面只是多一层间接 | 出现**第二个**门面消费者：后端要查同一张表、或诊断要按来源过滤、或宿主想遍历"我发布的输出" | 全量构建 0 error；四套件计数不变；6 个静态脚本 0 finding |
+| ~~F1~~ | ~~**S1 引擎三个门面**：`passes()` / `outputs()` / `diagnostics()`（同一存储的三个视图，旧方法保留为转发）~~ **已关闭（2026-10-22 下午）**：三个句柄 `PassRegistry` / `OutputRegistry` / `DiagnosticsRoute` 落地，各带 `Lease`（引擎先死 ⇒ `isValid()` false，调用空转）；引擎加 `passes()` / `outputs()` / `diagnostics()`，原平铺方法保留为同一句柄的简写（一套实现）。`PassChain` 不再持引擎租约，改持注册表 + 诊断两个句柄 | — | ~~第二个门面消费者~~ 已出现：链本身就是消费者 | 全量构建 0 error；`test_graphics` 409（+2：句柄跨引擎死亡 / 链走句柄注册）；四套件其余不变；6 个静态脚本 0 finding |
 | ~~F2~~ | ~~**S4 的改名与归属**~~ **已关闭（2026-10-22 下午）**：改名按 `PassChain` / `PassChainBuilder` / `ChainDesc` / `SceneView::setChain` 落地（`ScenePicture` 被否：读成"场景图片"；`PassPipeline` 被否：重开 K1 的 PSO 歧义），`PipelineStage`→`PassStage` 并挪进 `PassStage.hpp`；"`RenderSurface` 问视图"在 S6 已是现状 | — | ~~下一件真正动公开面的事~~ 已做 | 全量构建 0 error；`test_graphics` 407 / `test_vsg` 481 / `test_gui` 261 / `test_core` 165；6 个静态脚本 0 finding；`RenderSurface` 的 `presentingPass()` / `presentedView()` 用例不改即绿 |
 | F3 | **S5 调度上移**：引擎里做稳定拓扑排序，后端只物化；`backend::FrameGraph` 退场；`PipelineStage` 降为 tie-break | **唯一会改像素路径的一片**，与本轮"不动画面"的判据冲突；且需要把环/依赖用例从 `test_vsg` 迁到 SDK | 出现**跨阶段的真实依赖**（SSAO 要在 Shading 之前采样、阴影要在它之外排），或第二个后端出现（它不愿再实现一遍调度） | `scripts/vsg_rewrite_gate.sh` 逐字节不变；环/依赖用例迁到 SDK 且语义不变；`test_vsg` 计数不变 |
 
