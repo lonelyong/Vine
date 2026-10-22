@@ -94,6 +94,19 @@
   **宣告序**（文档已写明它与执行序的区别）；`docs/guides/vsg-data-flow.md` §0/§2 与 `docs/guides/vsg-plugin.md` 的单元表
   去掉 `FrameGraph`。
 
+## 2026-10-22（晚三）几何 revision：两级公告已经存在，但只有一个生效（B6 的契约定位）
+
+- **发现（比登记里写的严）**：`StreamKey` 的字段注释写着 revision 来自 `Geometry::revision()` **或** `Buffer::revision()`，
+  `Buffer.hpp` 也把 revision 定义成"缓存字节的人在用之前比一比"的契约，几何自己的局部包围盒缓存**两级都认**
+  （键 = `(buffer, 该 buffer 的 revision, 段) + 几何 revision`，`ChannelSliceTest` / `GraphicsTest` 都钉着）；但
+  `GeometryFacts.cpp` 把每个通道与索引流的 `key.revision` 都写成 `geometry.revision()`。⇒ 按 buffer 契约公告的宿主
+  **静默拿到旧字节**，且任一道通道变动都重传全部通道（16.98 MiB / +30 ms）。
+- **契约（已定，写进 `graphics-geometry-revision-2026-10-22.md`）**：两级都生效——buffer bump ⇒ 只重传读它的通道；
+  几何 bump ⇒ "我没说是哪条"，全部（与今天同义）。派生一个只用于"事实表要不要重算"的 `Geometry::contentRevision()`
+  = fold(自身 revision, 每通道 (buffer, buffer revision, 段))；**不**用作单通道上传键；派生通道（无 buffer）用它。
+  代价：每次"内容变了"判断从 O(1) 变 O(通道数)。
+- **状态**：S1（契约/落点/判据）已落地；S2（后端两行 + `contentRevision()` + 三条判据）待拍板。登记行 B6 已指向本文。
+
 ## 2026-10-22（晚二）门禁的启动占用预算按设备类别分档（F3 那条"环境红"的收口）
 
 - **实测**：`[boot-timing]`（`src/app/src/main.cpp`，`VINE_BOOT_TIMING=1`）在本机 lavapipe 上是 304–437 ms；
