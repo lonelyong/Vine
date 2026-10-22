@@ -625,26 +625,26 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
         }
     }
 
-    // A frame whose two passes READ each other's targets: a cycle. The compiler must skip the whole component
-    // and COUNT it - "validation clean, one pass missing" is the failure the rule replaces. Both passes draw,
-    // because a pass with neither a draw nor a clear is not pass at all and would be dropped for that reason
-    // (which is how this row once passed while counting nothing).
-    const auto cycles = [&] {
+    // The ORDER is the ENGINE's (see FrameScheduleTest): the compiler materializes what it was handed and never
+    // re-derives it. This row pins that contract - the passes stay in announcement order, including when their
+    // announced orders say otherwise - so a second schedule cannot reappear here unnoticed.
+    const auto kept_order = [&] {
         EXPECT_TRUE(recorder.beginFrame(FrameToken{ 200U }));
         EXPECT_TRUE(recorder.beginPass(1U));
+        EXPECT_TRUE(recorder.setPassOrder(10));
         EXPECT_TRUE(recorder.setRenderTarget(first.get()));
-        EXPECT_TRUE(recorder.setPassInputs(std::vector<RenderTarget*>{ second.get() }));
         EXPECT_TRUE(recorder.render(one_draw, nullptr));
         EXPECT_TRUE(recorder.endPass());
         EXPECT_TRUE(recorder.beginPass(2U));
+        EXPECT_TRUE(recorder.setPassOrder(0));
         EXPECT_TRUE(recorder.setRenderTarget(second.get()));
-        EXPECT_TRUE(recorder.setPassInputs(std::vector<RenderTarget*>{ first.get() }));
         EXPECT_TRUE(recorder.render(one_draw, nullptr));
         EXPECT_TRUE(recorder.endPass());
         EXPECT_TRUE(recorder.endFrame());
         EXPECT_TRUE(recorder.swapBuffers());
-        const auto* cycle_frame = compile_frame({ first_facts, second_facts });
-        return cycle_frame != nullptr && cycle_frame->passes.empty();
+        const auto* frame = compile_frame({ first_facts, second_facts });
+        return frame != nullptr && frame->passes.size() == 2U && frame->passes[0].pass == 1U &&
+               frame->passes[1].pass == 2U;
     };
 
     PhaseTable table;
@@ -667,10 +667,8 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
         [](std::uint64_t before, std::uint64_t after) { return after == before + 2U; },
     });
     table.add(Phase{
-        "a cycle is skipped and counted",
-        [&]() { return cycles(); },
-        [&]() { return static_cast<std::uint64_t>(observe.counters().invalid_schedules); },
-        [](std::uint64_t before, std::uint64_t after) { return after == before + 1U; },
+        "the handed-over order is kept",
+        [&]() { return kept_order(); },
     });
 
     const vn::graphics::backend::PhaseTable::Report report = table.runAll();
@@ -688,7 +686,7 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
     const std::vector<std::string> baseline{
         "[selftest] two steady frames allocate nothing",
         "[selftest] counters move by the frame's own shape",
-        "[selftest] a cycle is skipped and counted",
+        "[selftest] the handed-over order is kept",
         "[selftest] done",
     };
     EXPECT_EQ(report.lines, baseline) << "the phase list IS the capability list: a diff here is a phase that "

@@ -300,22 +300,22 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     std::vector<RenderTarget*> inputs{ source_handle.get() };
 
     recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(source_handle.get());
+    recorder.setClearPolicy(red_clear);  // the clear IS the source picture: no content required
+    recorder.endPass();
+
     recorder.beginPass(2U);
     recorder.setRenderTarget(destination_handle.get());
     recorder.setClearPolicy(blue_clear);
     recorder.setPassInputs(inputs);
     recorder.render(commands, nullptr);
     recorder.endPass();
-
-    recorder.beginPass(1U);
-    recorder.setRenderTarget(source_handle.get());
-    recorder.setClearPolicy(red_clear);  // the clear IS the source picture: no content required
-    recorder.endPass();
     recorder.endFrame();
 
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 2U);
-    ASSERT_EQ(frame.passes[0].pass, 1U) << "the producer runs first - the sampled edge says so";
+    ASSERT_EQ(frame.passes[0].pass, 1U) << "the producer runs first: the ENGINE scheduled it and handed the order over";
     const vn::graphics::backend::CompiledPass& consumer = frame.passes[1];
     ASSERT_EQ(consumer.inputs.size(), 1U) << "the plan carries what the pass declared";
     EXPECT_EQ(consumer.inputs[0].target, static_cast<const void*>(source_handle.get()));
@@ -513,6 +513,11 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     std::vector<RenderTarget*> inputs{ source_handle.get() };
 
     recorder.beginFrame(FrameToken{ 1 });
+    recorder.beginPass(1U);
+    recorder.setRenderTarget(source_handle.get());
+    recorder.setClearPolicy(red_clear);
+    recorder.endPass();
+
     recorder.beginPass(2U);
     recorder.setRenderTarget(destination_handle.get());
     recorder.setClearPolicy(blue_clear);
@@ -521,16 +526,11 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
                          kPictureInPicture.height);
     recorder.drawScreenProgram(source_handle.get(), screen_program.get(), camera.get());
     recorder.endPass();
-
-    recorder.beginPass(1U);
-    recorder.setRenderTarget(source_handle.get());
-    recorder.setClearPolicy(red_clear);
-    recorder.endPass();
     recorder.endFrame();
 
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 2U);
-    ASSERT_EQ(frame.passes[0].pass, 1U) << "the producer runs first - the sampled edge says so";
+    ASSERT_EQ(frame.passes[0].pass, 1U) << "the producer runs first: the ENGINE scheduled it and handed the order over";
     const vn::graphics::backend::CompiledPass& consumer = frame.passes[1];
     ASSERT_EQ(consumer.draws.size(), 1U);
     ASSERT_EQ(consumer.draws[0].kind, DrawKind::Screen);

@@ -32,6 +32,7 @@ VN_GRAPHICS_NS_BEGIN
 namespace detail
 {
 class FrameResources;
+class FrameScheduler;
 }  // namespace detail
 
 class Light;
@@ -319,10 +320,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   so the answer is the last frame's plan - the table the ENGINE announced for it - or, before any
      *   frame, the plan the current declarations would compile to. Both are the same compile, so a report
      *   cannot disagree with what the engine hands over.
-     * - It is the DECLARATION side, not the executor's final schedule: a backend that resolves pass
-     *   dependencies may run a producer before a consumer even when the announced order says otherwise
-     *   (see FrameDescription and FrameGraph). A report that claims "what actually ran" must read the
-     *   backend's plan, not this one.
+     * - The order here is the DECLARATION order (order, then registration); the engine's scheduler turns it
+     *   into execution order for the frame it hands a backend (see frameDescription), so the two differ
+     *   exactly where a dependency overrides the announced priority. A report that claims "what actually
+     *   ran" reads the executor's own plan.
      * - What it is for: a test asserting the SHAPE of a frame instead of counting passes or comparing
      *   pointers, a dev switch printing one table, and a host checking what a pipeline actually registered.
      *
@@ -333,13 +334,14 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Gets the frame the last compile produced, as a value (see FrameDescription).
      *
      * @details
-     * - THE FRAME THE ENGINE IS ABOUT TO RUN, in the form a backend consumes: every enabled pass in the
-     *   engine's announced order with its identity, order, resolved inputs and what it issues - assembled by
-     *   the compile, before anything is dispatched. Read it to see exactly what a frame is made of; a backend
-     *   is handed the same value once this path drives the frame (RenderFrameExecutor::executeFrame).
-     * - The value is a BORROWED snapshot (see FrameDescription): it is valid until the next compile, and an
-     *   executor that resolves pass dependencies may schedule the entries differently - the announced order
-     *   is the priority, not necessarily the final schedule.
+     * - THE FRAME THE ENGINE IS ABOUT TO RUN, in the form a backend consumes: every enabled pass in
+     *   EXECUTION order (the engine's own stable topological sort) with its identity, order, resolved inputs
+     *   and what it issues - assembled by the compile, before anything is dispatched. Read it to see exactly
+     *   what a frame is made of; a backend is handed the same value once this path drives the frame
+     *   (RenderFrameExecutor::executeFrame).
+     * - The value is a BORROWED snapshot (see FrameDescription): it is valid until the next compile, and
+     *   its order IS the execution order - a backend keeps it, and a cyclic component is already removed and
+     *   reported before the value is published.
      *
      * @return The value, valid until the next compile and borrowed throughout; empty before the first frame.
      */
@@ -716,6 +718,15 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void compileFrame();
 
+    /** @brief Orders this frame's rows: dependencies first, announced order as the tie-break (see FrameScheduler).
+     *
+     * @details
+     * - The ONE scheduler: the engine sees every producer and consumer, so a backend never re-derives the order.
+     *   The result lands in frame_order_ (indices into plan_rows_), and a cyclic component is left out and reported
+     *   instead of being run in call order.
+     */
+    void scheduleRows();
+
     /** @brief Collects the problems this frame's declarations carry (see PlanProblem).
      *
      * @details
@@ -962,6 +973,12 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     /// This frame's compiled rows, in the order they run (reused; one per slot).
     std::vector<PlanRow> plan_rows_;
+    /// The execution order of plan_rows_ (indices), decided by scheduleRows(); also what buildFrameValue walks.
+    std::vector<std::uint32_t> frame_order_;
+    /// The announced sort key of each plan row, rebuilt by scheduleRows() (the scheduler reads a contiguous span).
+    std::vector<int> frame_order_keys_;
+    /// The scheduler's working memory (see FrameScheduler): one per engine, reused every frame.
+    std::unique_ptr<detail::FrameScheduler> scheduler_;
     /// This frame as a value, rebuilt by every compile (see buildFrameValue). Reused, so a steady frame keeps its
     /// storage: the rows of the previous frame are dropped, not their capacity.
     FrameDescription frame_value_;

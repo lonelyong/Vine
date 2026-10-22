@@ -16,6 +16,7 @@
 #include <vine/graphics/Viewport.hpp>
 
 #include "FrameResources.hpp"
+#include "FrameScheduler.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -102,22 +103,33 @@ void RenderEngine::compileFrame()
     for (Slot& slot : slots_) {
         PlanRow row;
         row.pass    = slot.pass.get();
-        row.content = slot.pass->content();
+        row.content = slot.pass != nullptr ? slot.pass->content() : nullptr;
         row.order   = slot.order;
-        if (row.pass != nullptr && row.pass->isEnabled()) {
-            // What this pass reads: everything produced BEFORE it, which is exactly what "resolved at draw
-            // time" meant - a producer registered later is not part of the frame this pass can see.
-            resolveRowInputs(row.pass, row.inputs);
-            // What it publishes: the name serves the rest of the frame (the latest publisher wins the name,
-            // as the per-frame registry did).
-            publishRowOutput(row.pass);
-            // What it fills: drawing into a target fills every image it has, which is what an object-typed
-            // declared input is answered from. Linear and idempotent - several passes may fill one target.
-            if (raw_ptr<RenderTarget> drawn_into = row.pass->renderTarget(); drawn_into != nullptr) {
-                resources_->recordProduced(drawn_into);
-            }
-        }
         plan_rows_.push_back(std::move(row));
+    }
+
+    // THE ONE SCHEDULER: what a pass READS decides when it may run, and the announced order only breaks ties. A
+    // producer announced AFTER its consumer is therefore ordinary, not a wiring mistake - the resolution below
+    // walks the run order, so the consumer sees it. A cyclic component is left out of the run order and reported.
+    scheduleRows();
+
+    for (const std::uint32_t index : frame_order_) {
+        PlanRow&          row  = plan_rows_[index];
+        RenderPass* const pass = row.pass;
+        if (pass == nullptr) {
+            continue;  // excluded by the scheduler (disabled or cyclic); buildFrameValue never sees it
+        }
+        // What this pass reads: everything that RUNS before it, which is now the scheduled order and no longer
+        // "whatever happened to be registered earlier".
+        resolveRowInputs(pass, row.inputs);
+        // What it publishes: the name serves the rest of the frame (the latest publisher wins the name, as the
+        // per-frame registry did).
+        publishRowOutput(pass);
+        // What it fills: drawing into a target fills every image it has, which is what an object-typed declared
+        // input is answered from. Linear and idempotent - several passes may fill one target.
+        if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
+            resources_->recordProduced(drawn_into);
+        }
     }
 
     // The last of the compile's checks, and the only one that reads the FRAME's own facts (a target's size) next
@@ -133,9 +145,106 @@ void RenderEngine::compileFrame()
     collecting_problems_ = false;
 }
 
-void RenderEngine::buildFrameValue()
+void RenderEngine::scheduleRows()
 {
-    // EVERY ENABLED PASS HAS AN ENTRY, whether it issues anything or not: "this pass ran and had nothing to
+    // The announced key of every row, in one contiguous buffer the scheduler reads (reused, like its own tables).
+    frame_order_keys_.clear();
+    frame_order_keys_.reserve(plan_rows_.size());
+    for (const PlanRow& row : plan_rows_) {
+        frame_order_keys_.push_back(row.order);
+    }
+    scheduler_->reset(std::span<const int>(frame_order_keys_.data(), frame_order_keys_.size()));
+
+    const std::uint32_t count = static_cast<std::uint32_t>(plan_rows_.size());
+    for (std::uint32_t index = 0; index < count; ++index) {
+        RenderPass* const pass = plan_rows_[index].pass;
+        if (pass == nullptr || !pass->isEnabled()) {
+            scheduler_->exclude(index);  // a disabled pass neither runs nor orders anything this frame
+        }
+    }
+
+    // "A pass writes its target" is the producer half. It is judged from the DECLARATION (the resolution runs after
+    // this order is known), and it mirrors what the backend counts as a write: a pass that can issue a draw. A pass
+    // that merely names a target (no camera, no program) writes nothing and orders nothing - a clear is part of a
+    // draw, not a substitute for one.
+    const auto writes = [](const RenderPass& pass) -> bool {
+        if (const auto* screen = dynamic_cast<const ScreenPass*>(&pass)) {
+            return screen->program() != nullptr &&
+                   (!pass.inputs().empty() || !pass.inputTargets().empty() || !pass.inputNames().empty());
+        }
+        return pass.camera() != nullptr && (pass.content() != nullptr || pass.isClearEnabled());
+    };
+    const auto add_edges = [this, count, &writes](std::uint32_t consumer, const RenderTarget* target) {
+        if (target == nullptr) {
+            return;
+        }
+        for (std::uint32_t producer = 0; producer < count; ++producer) {
+            if (producer == consumer) {
+                continue;  // sampling what this pass itself writes is the feedback pattern, not a cycle
+            }
+            RenderPass* const writer = plan_rows_[producer].pass;
+            if (writer != nullptr && writer->isEnabled() && writer->renderTarget() == target && writes(*writer)) {
+                scheduler_->addEdge(producer, consumer);
+            }
+        }
+    };
+
+    for (std::uint32_t consumer = 0; consumer < count; ++consumer) {
+        RenderPass* const pass = plan_rows_[consumer].pass;
+        if (pass == nullptr || !pass->isEnabled()) {
+            continue;
+        }
+        for (const intrusive_ptr<RenderTarget>& target : pass->declaration().input_targets) {
+            add_edges(consumer, target.get());
+        }
+        for (const ImageInput& input : pass->declaration().inputs) {
+            if (raw_ptr<ImageRef> image = input.image(); image != nullptr) {
+                add_edges(consumer, image->target());
+            }
+        }
+        for (const String& name : pass->inputNames()) {
+            for (std::uint32_t producer = 0; producer < count; ++producer) {
+                RenderPass* const writer = plan_rows_[producer].pass;
+                if (producer != consumer && writer != nullptr && writer->isEnabled() &&
+                    writer->renderTarget() != nullptr && writer->outputName() == name && writes(*writer)) {
+                    scheduler_->addEdge(producer, consumer);
+                }
+            }
+        }
+        if (raw_ptr<RenderTarget> target = pass->renderTarget(); target != nullptr) {
+            const DepthView depth = target->sharedDepth();
+            if (depth.isValid()) {
+                add_edges(consumer, depth.target());
+            }
+        }
+    }
+
+    const detail::FrameSchedule& schedule = scheduler_->schedule();
+    frame_order_.assign(schedule.order.begin(), schedule.order.end());
+
+    // A cycle is a declaration no order can satisfy: its whole component is skipped (every other pass still runs and
+    // the frame still presents) and said once per episode, because the members and their mistake do not change.
+    for (const std::vector<std::uint32_t>& component : schedule.cycles) {
+        String members;
+        for (const std::uint32_t member : component) {
+            if (!members.empty()) {
+                members += String(u8", ");
+            }
+            members += reportedPassName(plan_rows_[member].pass);
+        }
+        noteProblem(String(u8"passes ") + members +
+                    String(u8" declare a dependency cycle (each reads what another writes), which no execution order "
+                           u8"can satisfy: those passes are skipped this frame, and the rest of the frame still runs"));
+    }
+
+    // A row that does not run this frame (disabled or cyclic) has no timing to report.
+    for (Slot& slot : slots_) {
+        slot.record_micros = 0;
+    }
+}
+
+void RenderEngine::buildFrameValue()
+{    // EVERY ENABLED PASS HAS AN ENTRY, whether it issues anything or not: "this pass ran and had nothing to
     // issue" is a fact of the frame (its scope opens and closes, and a backend keys per-pass retained state by
     // it), which is not the same fact as "this pass did not run" - a disabled pass has no entry at all.
     //
@@ -144,14 +253,11 @@ void RenderEngine::buildFrameValue()
     std::size_t used = 0;
     // Rows and slots are one per index (see compileFrame): the row is the frame's answer about a pass, the slot
     // is the declaration itself - and the hook the declaration carries belongs to the DECLARATION.
-    for (std::size_t index = 0; index < plan_rows_.size(); ++index) {
+    for (const std::uint32_t index : frame_order_) {
         PlanRow&          row  = plan_rows_[index];
         RenderPass* const pass = row.pass;
         if (pass == nullptr || !pass->isEnabled()) {
-            if (index < slots_.size()) {
-                slots_[index].record_micros = 0;   // a pass that does not run costs nothing this frame
-            }
-            continue;
+            continue;  // the scheduler never puts a pass that does not run into the order
         }
         // THIS IS WHAT A PASS COSTS THE FRAME. Under a value-driven frame the work is here: the hook runs, the
         // inputs are told, the pass describes itself (collecting and culling its content) - and the run then only

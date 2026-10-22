@@ -87,7 +87,6 @@ const CompiledFrame& FrameCompiler::compile(const CollectedFrame& description, c
     frame_.default_program  = description.default_program;
 
     const std::size_t pass_count = description.passes.size();
-    graph_.reset(description.passes);
 
     // 1. The facts: which passes can be served at all, and the target table they draw into. A target the
     //    backend does not know cannot be drawn into, and saying so is the only honest answer - the
@@ -102,7 +101,6 @@ const CompiledFrame& FrameCompiler::compile(const CollectedFrame& description, c
         const TargetFacts*   found = findTarget(facts, pass.target);
         if (found == nullptr)
         {
-            graph_.exclude(index);  // no target, no pass: it neither runs nor orders anything
             report(vn::graphics::DiagnosticCategory::ContentSkipped,
                    "frame " + std::to_string(frame_.token.frame) + ": pass " + std::to_string(pass.pass) +
                        " draws into a render target this backend does not know about: nothing is drawn for it "
@@ -137,90 +135,30 @@ const CompiledFrame& FrameCompiler::compile(const CollectedFrame& description, c
         {
             // Nothing may be drawn into it yet: not a mistake, and not a report either. It leaves the
             // schedule with the passes that have no target at all.
-            graph_.exclude(index);
             continue;
         }
         servable_[index]     = 1;
         target_index_[index] = slot;
     }
 
-    // 2. The dependency edges. A sampled input is produced by a pass that writes the target it names - and
-    //    a pass that samples the target it draws into is the feedback pattern, not a cycle, so an edge from
-    //    a pass to itself is never added here.
-    for (std::uint32_t consumer = 0; consumer < pass_count; ++consumer)
+    // 2. The passes, in the order the ENGINE announced: the frame value already lists them by dependency
+    //    (dependencies first, announced order as the tie-break), and a cyclic component was removed before it
+    //    reached this compiler. This stage materializes that order and nothing else - a second schedule here is
+    //    a second picture.
+    std::size_t servable_count = 0;
+    for (const std::uint8_t servable : servable_)
     {
-        if (servable_[consumer] == 0)
-        {
-            continue;
-        }
-        for (const InputRef& input : description.passes[consumer].inputs)
-        {
-            if (!input.source.isProduced() || input.source.target == nullptr)
-            {
-                continue;  // imported textures have no producer; an empty source produced nothing this frame
-            }
-            for (std::uint32_t producer = 0; producer < pass_count; ++producer)
-            {
-                if (producer == consumer || servable_[producer] == 0 ||
-                    description.passes[producer].target != input.source.target ||
-                    !writes(description.passes[producer]))
-                {
-                    continue;
-                }
-                graph_.addEdge(producer, consumer);
-            }
-        }
-
-        // A borrowed depth is another target's attachment: the pass that owns it must have written before the
-        // borrower reads it (the second kind of edge the schedule exists for).
-        const CompiledTarget& compiled_target = targets_[target_index_[consumer]].compiled;
-        if (!compiled_target.depth.borrowed || compiled_target.depth.source == nullptr)
-        {
-            continue;
-        }
-        for (std::uint32_t producer = 0; producer < pass_count; ++producer)
-        {
-            if (producer == consumer || servable_[producer] == 0 ||
-                description.passes[producer].target != compiled_target.depth.source ||
-                !writes(description.passes[producer]))
-            {
-                continue;
-            }
-            graph_.addEdge(producer, consumer);
-        }
+        servable_count += (servable != 0) ? 1U : 0U;
     }
-
-    // 3. The order, and the cycles that have none.
-    const FrameSchedule& schedule = graph_.schedule();
-    frame_.cycles = static_cast<std::uint32_t>(schedule.cycleCount());
-    observe_.counters().invalid_schedules += frame_.cycles;
-    for (const std::vector<std::uint32_t>& component : schedule.cycles)
-    {
-        std::string members;
-        for (const std::uint32_t member : component)
-        {
-            if (!members.empty())
-            {
-                members += ", ";
-            }
-            members += std::to_string(description.passes[member].pass);
-        }
-        report(vn::graphics::DiagnosticCategory::ContentSkipped,
-               "frame " + std::to_string(frame_.token.frame) + ": passes " + members +
-                   " declare a dependency cycle (each reads what the other writes), which no execution order "
-                   "can satisfy: those passes are skipped this frame, and the rest of the frame still runs");
-    }
-
-    // 4. The passes, in execution order, with every default made explicit.
-    const std::span<CompiledPass> compiled = arena_.makeArray<CompiledPass>(schedule.order.size());
+    const std::span<CompiledPass> compiled = arena_.makeArray<CompiledPass>(servable_count);
     bootstrapped_.assign(targets_.size(), 0);
 
     std::uint32_t schedule_index = 0;
-    for (const std::uint32_t node : schedule.order)
+    for (std::size_t node = 0; node < pass_count; ++node)
     {
         if (servable_[node] == 0)
         {
-            continue;  // unreachable while the loop above excludes every unservable pass (see there)
+            continue;
         }
         const CollectedPass&  source = description.passes[node];
         const std::uint32_t   slot   = target_index_[node];
@@ -360,11 +298,6 @@ std::span<const CompiledInput> FrameCompiler::resolveInputs(const CollectedPass&
 const CompiledFrame& FrameCompiler::frame() const noexcept
 {
     return frame_;
-}
-
-const FrameGraph& FrameCompiler::graph() const noexcept
-{
-    return graph_;
 }
 
 const TargetFacts* FrameCompiler::findTarget(const FrameFacts& facts, const void* target) noexcept

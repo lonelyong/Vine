@@ -23,7 +23,7 @@ struct VN_GRAPHICS_API FrameCounters
 {
     std::uint64_t passes{0};            ///< Pass scopes recorded.
     std::uint64_t draws{0};             ///< Draw calls recorded.
-    std::uint64_t invalid_schedules{0}; ///< Cyclic pass-dependency components skipped (see FrameGraph).
+    std::uint64_t invalid_schedules{0}; ///< Cyclic pass-dependency components skipped (reported by the engine).
 };
 
 /**

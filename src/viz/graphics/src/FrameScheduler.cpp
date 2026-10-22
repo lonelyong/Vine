@@ -1,4 +1,4 @@
-#include <vine/graphics/backend/FrameGraph.hpp>
+#include "FrameScheduler.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -6,7 +6,10 @@
 #include <utility>
 #include <vector>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
+
+namespace detail
+{
 
 namespace
 {
@@ -16,9 +19,9 @@ constexpr std::uint32_t kUnvisited = 0xFFFFFFFFU;
 
 }  // namespace
 
-void FrameGraph::reset(std::span<const CollectedPass> passes)
+void FrameScheduler::reset(std::span<const int> orders)
 {
-    const std::size_t count = passes.size();
+    const std::size_t count = orders.size();
 
     // IN PLACE, CAPACITY KEPT (see the header's working-memory note): resizing the adjacency table only
     // allocates when the pass count GROWS, and clearing each row keeps the buffer an edge will need - which
@@ -59,11 +62,11 @@ void FrameGraph::reset(std::span<const CollectedPass> passes)
 
     for (std::size_t index = 0; index < count; ++index)
     {
-        order_key_[index] = passes[index].order;
+        order_key_[index] = orders[index];
     }
 }
 
-void FrameGraph::addEdge(std::uint32_t before, std::uint32_t after)
+void FrameScheduler::addEdge(std::uint32_t before, std::uint32_t after)
 {
     if (before >= successors_.size() || after >= successors_.size())
     {
@@ -77,7 +80,7 @@ void FrameGraph::addEdge(std::uint32_t before, std::uint32_t after)
     out.push_back(after);
 }
 
-void FrameGraph::exclude(std::uint32_t node)
+void FrameScheduler::exclude(std::uint32_t node)
 {
     if (node < excluded_.size())
     {
@@ -85,17 +88,17 @@ void FrameGraph::exclude(std::uint32_t node)
     }
 }
 
-std::size_t FrameGraph::nodeCount() const noexcept
+std::size_t FrameScheduler::nodeCount() const noexcept
 {
     return successors_.size();
 }
 
-std::size_t FrameGraph::excludedCount() const noexcept
+std::size_t FrameScheduler::excludedCount() const noexcept
 {
     return static_cast<std::size_t>(std::count(excluded_.begin(), excluded_.end(), static_cast<std::uint8_t>(1)));
 }
 
-std::size_t FrameGraph::edgeCount() const noexcept
+std::size_t FrameScheduler::edgeCount() const noexcept
 {
     std::size_t total = 0;
     for (std::size_t node = 0; node < successors_.size(); ++node)
@@ -108,7 +111,7 @@ std::size_t FrameGraph::edgeCount() const noexcept
     return total;
 }
 
-const FrameSchedule& FrameGraph::schedule()
+const FrameSchedule& FrameScheduler::schedule()
 {
     // The bookkeeping is cleared, not rebuilt (see the header's working-memory note): a steady frame that
     // assigned fresh containers here would allocate on every frame, which is what the counting half of
@@ -128,7 +131,7 @@ const FrameSchedule& FrameGraph::schedule()
     return schedule_;
 }
 
-void FrameGraph::findCycles()
+void FrameScheduler::findCycles()
 {
     // Tarjan, iterative: the recursion a textbook version uses would put the pass count on the C++ call
     // stack, and the pass count is the HOST's number, not this backend's. The three tables and the two
@@ -234,7 +237,7 @@ void FrameGraph::findCycles()
     std::sort(schedule_.skipped.begin(), schedule_.skipped.end());
 }
 
-void FrameGraph::orderAcyclic()
+void FrameScheduler::orderAcyclic()
 {
     const std::size_t node_count = successors_.size();
 
@@ -306,16 +309,18 @@ void FrameGraph::orderAcyclic()
     }
 }
 
-bool FrameGraph::selfLoop(std::uint32_t node) const noexcept
+bool FrameScheduler::selfLoop(std::uint32_t node) const noexcept
 {
     const std::vector<std::uint32_t>& out = successors_[node];
     return std::find(out.begin(), out.end(), node) != out.end();
 }
 
-bool FrameGraph::isSkipped(std::uint32_t node) const noexcept
+bool FrameScheduler::isSkipped(std::uint32_t node) const noexcept
 {
     // `skipped` is kept sorted (see findCycles), so this is the cheap half of the question.
     return std::binary_search(schedule_.skipped.begin(), schedule_.skipped.end(), node);
 }
 
-VN_GRAPHICSBACKEND_NS_END
+}  // namespace detail
+
+VN_GRAPHICS_NS_END

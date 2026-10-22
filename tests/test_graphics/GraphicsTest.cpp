@@ -10622,7 +10622,7 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
  * pair, and the fix (register the producer first, or lower its order) is not something a reader of
  * either pass can infer.
  */
-TEST(RenderEngineTest, InputImageProducedByALaterPassIsReported)
+TEST(RenderEngineTest, AProducerRegisteredLaterIsScheduledFirstAndAWholeMissingProducerIsReported)
 {
     std::vector<RenderDiagnostic> received;
     auto                          backend = intrusive_ptr<MockBackend>(new MockBackend());
@@ -10659,27 +10659,21 @@ TEST(RenderEngineTest, InputImageProducedByALaterPassIsReported)
     engine->addPass(producer, 5);
 
     engine->frame();
+    EXPECT_EQ(engine->diagnosticCount(), 0u)
+        << "registration order is not execution order: the scheduler runs the producer first";
+    EXPECT_TRUE(received.empty());
+
+    // Removing the producer leaves the image with NO writer at all: that is a wiring problem, said once.
+    engine->removePass(producer.get());
+    engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
     EXPECT_NE(received[0].message.find(u8"light"), vn::String::npos);
-    EXPECT_NE(received[0].message.find(u8"gbuffer"), vn::String::npos);
+    EXPECT_NE(received[0].message.find(u8"GBuffer.albedo"), vn::String::npos);
 
     engine->frame();
-    EXPECT_EQ(engine->diagnosticCount(), 1u);
-
-    // The producer moves before the consumer: fixed, and nothing more to say.
-    engine->removePass(producer.get());
-    engine->addPass(producer, -1);
-    engine->frame();
-    EXPECT_EQ(engine->diagnosticCount(), 1u);
-
-    // It moves back: the same problem, reported again.
-    engine->removePass(producer.get());
-    engine->addPass(producer, 5);
-    engine->frame();
-    EXPECT_EQ(engine->diagnosticCount(), 2u);
-    EXPECT_EQ(received.size(), 2u);
+    EXPECT_EQ(engine->diagnosticCount(), 1u) << "the same missing writer is one episode, not one per frame";
 }
 
 /**

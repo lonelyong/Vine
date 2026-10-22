@@ -14,7 +14,8 @@
 宿主/引擎                 后端（门面：VsgBackend）
 executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟）+ FrameRecorder 开帧
                      ──▶  按值走每条 pass：FrameRecorder 只记"事实"（数据），不碰资源
-                     ──▶  FrameCompiler + FrameGraph：依赖求值、缺省解析、合法性判定 → CompiledFrame
+                     ──▶  FrameCompiler：缺省解析、合法性判定（执行顺序由引擎的调度器给定，
+                          这里只物化）→ CompiledFrame
                      ──▶  ContentAssembly（事实表 + 流 + 块）→ ContentPass 录制 → VsgExecutor 记录/提交
 帧尾 present（执行器调）──▶  经帧命名的目标（PresentTarget；窗口实现是 WindowPresentTarget）
 ```
@@ -41,10 +42,11 @@ executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟�
   帧值由构造带顺序，能发出来的形状就是值的形状。
 * 一帧的"描述"是值：`FrameDescription`（`FrameArena` 上分配），跨帧不合法。
 
-## 2. 编译段（`FrameGraph` + `FrameCompiler`）
+## 2. 编译段（`FrameCompiler`）
 
-* **依赖求值**：pass 之间按声明的输入求序；环 = 不变式违规 ⇒ 跳过该分量 + 报一次 + `invalid_schedules` 计数，
-  其余照跑，帧仍以执行器在帧尾的 `present()`（表面的那一半）收尾。
+* **顺序是给定的**：一帧的 pass 顺序由引擎的调度器决定（稳定拓扑排序：依赖优先，同类按
+  `order`/宣告位置，`PassStage` 做最后 tie-break）；环组件由引擎整块跳过并报一次。
+  后端**按交来的顺序物化**，不再重排、不再检环、`frame.cycles` 恒 0——同一个画面只有一个调度者。
 * **缺省解析**：视口（未公告 = 整目标）、程序（未点名 = 帧默认）、动态层（`resolveDynamicState`：
   显式 StateNode 赢 pass 深度）、清屏（有效 policy + `bootstrap`/`depth_preserved` 两个**执行器推不出来**的事实）。
 * **形状与格式**：`TargetPlan`（`None/Repair/ResizeInPlace/Rebuild`）与 `DepthProbe` 的答案从**同一份目标事实**

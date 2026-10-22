@@ -634,16 +634,25 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
         facts[1] = one(lender_target);
     };
 
-    // One frame's pass scopes: the BORROWER's pass first, the lender's second (see the note above).
-    const auto record_frame = [&](std::uint64_t token, int width, int height) -> const CompiledFrame* {
+    // One frame's pass scopes. `borrower_first` is the PLAN order under test - a frame's plan names the
+    // targets in the order their passes were announced - and it is also the EXECUTION order, because the
+    // compiler keeps the order it is handed (the engine is the one scheduler). A borrower that runs before
+    // its lender LOADs a depth nothing has written yet (VUID-vkCmdDraw-None-09600), so this phase submits
+    // only frames written lender first, and keeps the borrower-first one as a PLAN (see below).
+    const auto record_frame = [&](std::uint64_t token, int width, int height,
+                                  bool borrower_first) -> const CompiledFrame* {
+        const std::uint32_t first  = borrower_first ? 1U : 2U;
+        const std::uint32_t second = borrower_first ? 2U : 1U;
+        const OffscreenTarget& first_target  = borrower_first ? *borrower : *lender;
+        const OffscreenTarget& second_target = borrower_first ? *lender : *borrower;
         EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
-        EXPECT_TRUE(recorder.beginPass(1U));
-        EXPECT_TRUE(recorder.setRenderTarget(borrower.get()));
-        EXPECT_TRUE(recorder.setClearPolicy(clear_of(borrower_layout)));
+        EXPECT_TRUE(recorder.beginPass(first));
+        EXPECT_TRUE(recorder.setRenderTarget(&first_target));
+        EXPECT_TRUE(recorder.setClearPolicy(clear_of(borrower_first ? borrower_layout : lender_layout)));
         EXPECT_TRUE(recorder.endPass());
-        EXPECT_TRUE(recorder.beginPass(2U));
-        EXPECT_TRUE(recorder.setRenderTarget(lender.get()));
-        EXPECT_TRUE(recorder.setClearPolicy(clear_of(lender_layout)));
+        EXPECT_TRUE(recorder.beginPass(second));
+        EXPECT_TRUE(recorder.setRenderTarget(&second_target));
+        EXPECT_TRUE(recorder.setClearPolicy(clear_of(borrower_first ? lender_layout : borrower_layout)));
         EXPECT_TRUE(recorder.endPass());
         EXPECT_TRUE(recorder.endFrame());
         EXPECT_TRUE(recorder.swapBuffers());
@@ -664,10 +673,10 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
         viewer->deviceWaitIdle();
     };
 
-    // Frame 1 at the size the pair was built at: nothing to apply, and the passes are the bootstrap clears -
-    // which is what makes the second frame a RESIZE rather than a repair (the plan answers Repair(Bootstrap)
-    // for a target nothing has written yet, and that arm outranks a resize).
-    const CompiledFrame* bootstrap = record_frame(1U, 8, 4);
+    // Frame 1 at the size the pair was built at: the pair writes once, lender first, which is what gives
+    // its depth a layout at all. Nothing to apply - the plan answers Repair(Bootstrap) for a target nothing
+    // has written yet, and that arm outranks a resize.
+    const CompiledFrame* bootstrap = record_frame(1U, 8, 4, /*borrower_first=*/false);
     ASSERT_NE(bootstrap, nullptr);
     const VsgExecutor::TargetApplications idle = executor.applyTargetPlans(*bootstrap, facts, timeline, queue);
     EXPECT_EQ(idle.resized + idle.rebuilt + idle.refused + idle.failed, 0U) << "nothing to apply yet";
@@ -676,8 +685,10 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
     EXPECT_TRUE(borrower->written());
     ++counters.frames;
 
-    // Frame 2: both grow to the same new extent, with the BORROWER's pass announced first on purpose.
-    const CompiledFrame* growth = record_frame(2U, 16, 12);
+    // Frame 2: both grow to the same new extent, with the BORROWER named first in the plan on purpose. This
+    // frame is COMPILED and its plan applied, never submitted: its handed order puts the borrower before the
+    // depth's writer, and the pixels are the next frame's business (see the note on record_frame).
+    const CompiledFrame* growth = record_frame(2U, 16, 12, /*borrower_first=*/true);
     ASSERT_NE(growth, nullptr);
     ASSERT_EQ(growth->targets.size(), 2U);
     ASSERT_EQ(growth->targets[0].target, borrower.get())
@@ -700,8 +711,11 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
     counters.plan_applied += 2U;
     counters.parked += 2U;
 
-    // And the pictures: both targets really render at the new extent, through what the drive applied.
-    submit(*growth);
+    // Frame 3: the pictures, in the order a borrowed depth allows - lender first, at the extent the plan
+    // just applied. The borrower's pass LOADs the depth this frame's lender pass writes.
+    const CompiledFrame* rendered = record_frame(3U, 16, 12, /*borrower_first=*/false);
+    ASSERT_NE(rendered, nullptr);
+    submit(*rendered);
     ++counters.frames;
 
     const auto expects_clear = [](const OffscreenTarget& target, float value, const char* which) {
@@ -774,7 +788,7 @@ TEST(ExecutorTest, TheContentOfAPassIsRecordedInsideThatPassWithThePlansClear)
     EXPECT_TRUE(fixture.diagnostics.clean());
 }
 
-TEST(ExecutorTest, TheRecordOrderIsTheSchedulesOrderNotTheOrderThePassesWereAnnouncedIn)
+TEST(ExecutorTest, TheRecordOrderIsTheOrderTheFrameWasHandedInAndThePixelsFollowIt)
 {
     Fixture fixture;
     if (!fixture.build())
@@ -786,47 +800,47 @@ TEST(ExecutorTest, TheRecordOrderIsTheSchedulesOrderNotTheOrderThePassesWereAnno
     ASSERT_NE(fixture.first, nullptr);
 
     fixture.recorder.beginFrame(FrameToken{ 1 });
-    // Target A: RED announced with order 10, GREEN with order 0 - so the schedule runs GREEN first and RED
-    // last, and the frame's final colour there must be RED.
+    // Target A: RED announced with order 10, GREEN with order 0. The ENGINE decides the order and hands it
+    // over (see FrameScheduleTest); this compiler keeps the handed order - RED then GREEN - so the final
+    // colour is GREEN.
     fixture.clearPass(fixture.first.get(), 1U, 10, 1.0F, 0.0F, 0.0F);
     fixture.clearPass(fixture.first.get(), 2U, 0, 0.0F, 1.0F, 0.0F);
 
-    // Target B: the same two colours with the opposite stack order - the schedule runs RED then GREEN.
+    // Target B: the same two colours the other way round, and the same rule - the last handed pass wins.
     fixture.clearPass(fixture.second.get(), 3U, 10, 0.0F, 1.0F, 0.0F);
     fixture.clearPass(fixture.second.get(), 4U, 0, 1.0F, 0.0F, 0.0F);
     fixture.recorder.endFrame();
 
     const CompiledFrame& frame = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ fixture.facts });
 
-    // The plan's order: the two order-0 passes first (call order within the tie), then the two order-10 ones.
+    // The plan's order: exactly the call order it was handed, never re-stacked by this stage.
     ASSERT_EQ(frame.passes.size(), 4U);
-    EXPECT_EQ(frame.passes[0].pass, 2U);
-    EXPECT_EQ(frame.passes[1].pass, 4U);
-    EXPECT_EQ(frame.passes[2].pass, 1U);
-    EXPECT_EQ(frame.passes[3].pass, 3U);
+    EXPECT_EQ(frame.passes[0].pass, 1U);
+    EXPECT_EQ(frame.passes[1].pass, 2U);
+    EXPECT_EQ(frame.passes[2].pass, 3U);
+    EXPECT_EQ(frame.passes[3].pass, 4U);
 
-    ASSERT_TRUE(fixture.render(frame)) << "the graph must compile and submit";
+    ASSERT_TRUE(fixture.render(frame)) << "the plan must compile and submit";
     ASSERT_EQ(fixture.executor.skipped(), 0U) << "no pass may be skipped: every one has a target";
 
-    // The executor recorded them in the plan's order - not in the order they were announced.
+    // The executor recorded them in the handed-over order.
     const std::span<const PassId> recorded = fixture.executor.recorded();
     ASSERT_EQ(recorded.size(), 4U);
-    EXPECT_EQ(recorded[0], 2U);
-    EXPECT_EQ(recorded[1], 4U);
-    EXPECT_EQ(recorded[2], 1U);
-    EXPECT_EQ(recorded[3], 3U);
+    EXPECT_EQ(recorded[0], 1U);
+    EXPECT_EQ(recorded[1], 2U);
+    EXPECT_EQ(recorded[2], 3U);
+    EXPECT_EQ(recorded[3], 4U);
 
-    // ...and the pixels say the same thing. A walk in call order would put GREEN last into target A and RED
-    // last into target B - the pair (A, B) = (red, green) is only reachable through the schedule.
+    // ...and the pixels say the same thing: the LAST pass each target was handed is the one left standing.
     const Rgba8 first_pixel  = fixture.centre(*fixture.first);
     const Rgba8 second_pixel = fixture.centre(*fixture.second);
-    EXPECT_TRUE(isRed(first_pixel)) << "target A must end on the pass the SCHEDULE ran last (red), got ("
-                                    << static_cast<int>(first_pixel.r) << ", " << static_cast<int>(first_pixel.g)
-                                    << ", " << static_cast<int>(first_pixel.b) << ")";
-    EXPECT_TRUE(isGreen(second_pixel)) << "target B must end on its schedule-last pass (green), got ("
-                                       << static_cast<int>(second_pixel.r) << ", "
-                                       << static_cast<int>(second_pixel.g) << ", "
-                                       << static_cast<int>(second_pixel.b) << ")";
+    EXPECT_TRUE(isGreen(first_pixel)) << "target A must end on its last handed pass (green), got ("
+                                      << static_cast<int>(first_pixel.r) << ", " << static_cast<int>(first_pixel.g)
+                                      << ", " << static_cast<int>(first_pixel.b) << ")";
+    EXPECT_TRUE(isRed(second_pixel)) << "target B must end on its last handed pass (red), got ("
+                                     << static_cast<int>(second_pixel.r) << ", "
+                                     << static_cast<int>(second_pixel.g) << ", "
+                                     << static_cast<int>(second_pixel.b) << ")";
 
     EXPECT_TRUE(fixture.diagnostics.clean());
 }

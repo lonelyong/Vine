@@ -232,7 +232,8 @@ struct VN_GRAPHICS_API ChainDesc {
  * @note
  * - This is a PASS CHAIN and its registration, not a graphics-API pipeline state object (PSO): the GPU pipeline
  *   variants are the backend's (see `VariantPool.hpp` / `PipelineKey`), and a host never builds or names one
- *   here. The name follows the FrameGraph / RDG sense: a compiled chain of passes.
+ *   here. The name follows the FrameGraph / RDG sense: a compiled chain of passes (the industry term, not
+ *   the retired backend type).
  */
 class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     friend class detail::ChainBuilder;

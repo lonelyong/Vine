@@ -156,7 +156,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     ASSERT_EQ(frame.passes.size(), 2u);
     EXPECT_EQ(r.recorder.description().passes[0].draws.size(), 2u)
         << "the recorder keeps both call kinds (a dropped one would make the plan look deliberately small)";
-    const CompiledPass& consumer = frame.passes[1];  // the producer runs first, as the sampled edge says
+    const CompiledPass& consumer = frame.passes[0];  // the order it was handed: the engine sorts before this
     ASSERT_EQ(consumer.draws.size(), 2u);
 
     const CompiledDraw& screen = consumer.draws[0];
@@ -210,8 +210,8 @@ TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)
 
     const CompiledFrame& frame = r.compile();
     ASSERT_EQ(frame.passes.size(), 2u);
-    EXPECT_EQ(frame.passes[0].pass, 2u);  // the producer first, as the sampled edge says
-    const CompiledPass& consumer = frame.passes[1];
+    EXPECT_EQ(frame.passes[0].pass, 1u);  // the order it was handed, unchanged
+    const CompiledPass& consumer = frame.passes[0];
     ASSERT_EQ(consumer.inputs.size(), 2u);
     EXPECT_EQ(consumer.inputs[0].target, static_cast<const void*>(source.get()));
     EXPECT_EQ(consumer.inputs[0].color_attachments, 2u) << "the count comes from the target's shape, not a flag";
@@ -691,7 +691,7 @@ TEST(FrameCompilerTest, ACommandWithoutAProgramGetsTheFramesDefault)
     EXPECT_EQ(frame.default_program.program, fallback.get());
 }
 
-TEST(FrameCompilerTest, WhatAPassReadsDecidesWhenItRunsNotWhenItWasAnnounced)
+TEST(FrameCompilerTest, TheCompilerKeepsTheOrderTheEngineAnnounced)
 {
     Rig r;
     vn::intrusive_ptr<RenderTarget> produced(new RenderTarget());
@@ -704,8 +704,9 @@ TEST(FrameCompilerTest, WhatAPassReadsDecidesWhenItRunsNotWhenItWasAnnounced)
 
     r.recorder.beginFrame(FrameToken{ 1 });
 
-    // The consumer is announced FIRST (order 10) and the producer after it (order 0), which is exactly the
-    // shape the graph exists for: registration order is not execution order.
+    // The consumer is announced first and the producer after it. The ENGINE is the one that turns this into
+    // producer-before-consumer (FrameScheduleTest) and hands over the final order; the compiler materializes that
+    // order and never re-derives it - a second schedule here would be a second picture.
     r.recorder.beginPass(7);
     r.recorder.setPassOrder(10);
     r.recorder.setRenderTarget(composed.get());
@@ -723,13 +724,13 @@ TEST(FrameCompilerTest, WhatAPassReadsDecidesWhenItRunsNotWhenItWasAnnounced)
 
     const CompiledFrame& frame = r.compile();
     ASSERT_EQ(frame.passes.size(), 2u);
-    EXPECT_EQ(frame.passes[0].pass, 9u);  // the producer runs first, whatever the announced order said
-    EXPECT_EQ(frame.passes[1].pass, 7u);
+    EXPECT_EQ(frame.passes[0].pass, 7u);  // the order it was handed, unchanged
+    EXPECT_EQ(frame.passes[1].pass, 9u);
     EXPECT_EQ(frame.passes[0].schedule_index, 0u);
     EXPECT_EQ(frame.passes[1].schedule_index, 1u);
 }
 
-TEST(FrameCompilerTest, ACycleIsSkippedTheFrameStillRunsAndTheCounterMoves)
+TEST(FrameCompilerTest, TheCompilerDoesNotReorderOrDropWhatTheEngineHandedOver)
 {
     Rig r;
     vn::intrusive_ptr<RenderTarget> left(new RenderTarget());
@@ -766,12 +767,15 @@ TEST(FrameCompilerTest, ACycleIsSkippedTheFrameStillRunsAndTheCounterMoves)
 
     const CompiledFrame& frame = r.compile();
 
-    // The cycle is SKIPPED, not run in call order: those two passes draw nothing this frame.
-    ASSERT_EQ(frame.passes.size(), 1u);
-    EXPECT_EQ(frame.passes[0].pass, 3u);
-    EXPECT_EQ(frame.cycles, 1u);
-    EXPECT_EQ(r.observe.counters().invalid_schedules, 1u);
-    EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::ContentSkipped), 1u);
+    // A cycle never reaches the backend: the ENGINE skips the component before it hands the frame over (see
+    // FrameScheduleTest). What is handed over is materialized as-is - no reordering, no dropping, no cycle
+    // counter here.
+    ASSERT_EQ(frame.passes.size(), 3u);
+    EXPECT_EQ(frame.passes[0].pass, 1u);
+    EXPECT_EQ(frame.passes[1].pass, 2u);
+    EXPECT_EQ(frame.passes[2].pass, 3u);
+    EXPECT_EQ(frame.cycles, 0u);
+    EXPECT_EQ(r.observe.counters().invalid_schedules, 0u);
 
     // The frame itself is still a frame: the token is carried through for the submission that follows.
     EXPECT_EQ(frame.token.frame, 1u);

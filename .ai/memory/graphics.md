@@ -45,7 +45,7 @@
 - **一套数字**：全量构建 0 error；`test_graphics` 407、`test_vsg` 481、`test_gui` 261、`test_core` 165；
   6 个静态门禁 0 finding（`check_ai_docs --strict` 也 0，历史条目按惯例加 `<!-- drift-ok -->`）；
   `docs/guides/graphics.md` §3.18 从"注册归一个句柄"重写成"注册归链自己"。
-- **仍开放**：F3 调度上移（见 `graphics-followups-2026-10-22.md`）；F1/F2 已关闭。
+- **仍开放**：无（F3 于当日晚关闭，见上条 2026-10-22（晚））；F1/F2 已关闭。
 - **S2 落地（同日）**：引擎的三个窄句柄 `PassRegistry` / `OutputRegistry` / `DiagnosticsRoute`（各自带 `Lease`：
   引擎先死 ⇒ `isValid()` false，调用安全空转）；引擎加 `passes()` / `outputs()` / `diagnostics()`，原平铺方法
   （`addPass` / `publish` / `diagnosticCount` …）保留为同一表的简写——一套实现，两张门面。`PassChain` 不再持
@@ -63,6 +63,36 @@
   `addOffscreenToScreen`）。配方实现退成 `src/ChainBuilder.hpp` 里的私有 `detail::ChainBuilder`——公开类型
   少一个，实现一行没重写。判据：全量构建 0；四套件 409 / 481 / 261 / 165；6 门禁 0；指南 §3.3/§3.5/§3.10
   的示例改成值 + 静态 build。
+
+## 2026-10-22（晚）调度上移：引擎是唯一的调度者，`backend::FrameGraph` 退场
+
+- **调度进引擎**：派生层新单元 `src/viz/graphics/src/FrameScheduler.hpp/.cpp`（`detail::FrameScheduler`：迭代
+  Tarjan 检环 + 堆就绪队列；所有表都是成员并跨帧保留，稳态帧零分配）。`EngineCompile.cpp` 的 `scheduleRows()`
+  先按宣告建行（pass/content/order），再建边（`input_targets` → 写它的那条 pass；`declaration().inputs` 的
+  ImageRef 按 inputName/outputName 配对；借用深度 `RenderTarget::sharedDepth()` 指回 lender），然后排序，
+  `buildFrameValue()` 按 `frame_order_` 解析与发布。**`PassStage` 只是同优先级 tie-break**；注册位置只作历史记录
+  ——跨引擎关闭/重开 pass 不再改变执行序。
+- **环与跳过**：环组件整块不进 `frame_order_`，引擎报一次 `ContentSkipped`（`noteProblem` + 既有 episode 规则）；
+  后端不再检环、`frame_.cycles` 恒 0、`invalid_schedules` 不再由编译器累加。
+- **后端只剩物化**：`backend::FrameGraph`（`.hpp/.cpp`）、`FrameCompiler::graph()`、`FrameGraphTest`（文件已删）
+  全删；`FrameCompiler::compile()` 按交来的 `description.passes` 顺序发布（`compiled` 按可服务数分配），
+  `targets_` 仍按**宣告序**建表——计划的应用顺序与执行顺序是两件事，`applyTargetPlans` 自己按 lender-first 排。
+- **踩到的坑之一（测试所有权）**：`PassDesc::camera` 是**拥有型** `intrusive_ptr<Camera>`。`FrameScheduleTest`
+  里把栈上 `Camera` 的地址交进去 = 把栈对象交给引用计数，析构时 `double free or corruption (out)`；ASan 报
+  `stack-use-after-scope in RefCounted<Camera>::release`。测试相机一律 `make_intrusive<Camera>()`。
+- **踩到的坑之二（设备顺序）**：`DevicePhaseTest` 的 leased 相位直连 `FrameCompiler`，原本靠旧的 `FrameGraph`
+  把 borrower 排到 lender 之后。删掉图以后 borrower 先跑会 `LOAD` 一张从未写过的借用深度 ⇒
+  `VUID-vkCmdDraw-None-09600`（"expected DEPTH_STENCIL_ATTACHMENT_OPTIMAL, current UNDEFINED"）。改法是分开两件事：
+  计划顺序仍 borrower-first（只编译、不提交 → 断言 `growth->targets[0]` 与两次 ResizeInPlace），设备证据用
+  lender-first 的一帧提交。**规律：直连编译器的调用者自己负责执行顺序，borrower 永远不能先于 lender 提交。**
+- **门禁**：`vsg_rewrite_gate.sh` suite 两跑 0 VUID / 0 SYNC-HAZARD、相位行全闭合；`app` 阶段内容 87.04%→85.14%、
+  预览 244、背景 0%（基线记录一致）。`boot occupancy` 327–437 ms 超 150 ms 预算，**同一台机器同一方法在基线上
+  测得 311 ms**（lavapipe 软件渲染），登记为环境项。一套数字：`test_graphics` 412（+3 `FrameScheduleTest`）、
+  `test_vsg` 470（−11 `FrameGraphTest`）、`test_gui` 261、`test_core` 165；6 门禁 0。
+- **文档**：`FrameDescription` / `FramePlan` / `FrameStats` / `RenderEngine::frameDescription` /
+  `RenderFrameExecutor` 的"顺序只是优先级、执行器可重排"全部改成"交来的顺序就是执行顺序"；`framePlan()` 仍是
+  **宣告序**（文档已写明它与执行序的区别）；`docs/guides/vsg-data-flow.md` §0/§2 与 `docs/guides/vsg-plugin.md` 的单元表
+  去掉 `FrameGraph`。
 
 ## 2026-10-22 注册归一个令牌：`PassGroup` + `presentingPass`（历史登记；当日下午已折进 `PassChain`，设计见 `.ai/design/graphics-frame-picture-view-redesign-2026-10-22.md` §9）
 

@@ -237,5 +237,13 @@ bool ⇒ 可见性用例红；S4 让 `RenderSurface` 继续问配方 ⇒ 表面/
   （后端也要查表、或诊断要按来源过滤）再做。
 - **S4 的改名与归属**（`ScenePicture` / `ScenePictureBuilder` / `setPicture` / `RenderSurface` 问视图）：纯改名，
   等 R2 的下一件（`RenderPipeline` 真拆成"注册 + 画面"）一起做，避免两次全库改名。
-- **S5 调度上移**：唯一改变像素路径的一片，与本轮"不动画面"的判据冲突；单独一轮，用 `vsg_rewrite_gate.sh` 逐字节把关。
+- ~~**S5 调度上移**~~ **已落地（2026-10-22 晚，见 §10）**：本来登记为"唯一改变像素路径的一片，与本轮不动画面的判据冲突，单独一轮"；实际单开一片，`vsg_rewrite_gate.sh` 的画面判据（内容/预览/背景三项）与基线一致。
 
+## 10. 落地记录（2026-10-22 晚：S5 / F3 调度上移）
+
+| 片 | 落了什么 | 证据 |
+| --- | --- | --- |
+| **S5** | 调度进引擎：派生层 `detail::FrameScheduler`（迭代 Tarjan + 堆就绪队列，成员工作区稳态零分配）；`EngineCompile.cpp` 的 `scheduleRows()` 建行（pass/content/order）、建边（`input_targets`、ImageRef 输入、借用深度 `RenderTarget::sharedDepth()`）、排序、按 `frame_order_` 解析与发布；`PassStage` 只做同优先级 tie-break，注册位置只作历史记录 | `FrameScheduleTest`（无依赖保持宣告序 / 先宣告的消费者仍排在生产者之后 / 环整块跳过且只报一次） |
+| **后端退场** | `backend::FrameGraph`（`FrameGraph.hpp/.cpp` + `FrameGraphTest` + `FrameCompiler::graph()`）删除；`FrameCompiler::compile()` 按交来的 `description.passes` 物化，不再重排、不检环、`frame_.cycles` 恒 0；`targets_` 仍按宣告序建表（计划的应用顺序与执行顺序是两件事） | `FrameCompilerTest` 两条改为"保持交来的顺序"；`ExecutorTest` 的像素用例断言最后一条交来的 pass 赢；`SampledInputTest` 改生产者先宣告 |
+| **借用深度的执行前提** | 引擎为借用深度加边，所以真实帧里 lender 总在 borrower 之前；`DevicePhaseTest` 的 leased 相位是直连编译器的，改为"计划顺序 borrower-first（未提交）+ 设备证据用 lender-first 提交"——borrower 先跑会 `LOAD` 一张未写过的深度（`VUID-vkCmdDraw-None-09600`） | `DevicePhaseTest` 0 VUID；`ExecutorTest.runLeasedTargetOrderPhase` 断言的 `targets[0]`（plan 序）与像素都不变 |
+| **门禁** | `vsg_rewrite_gate.sh`：suite 两跑 0 VUID / 0 SYNC-HAZARD、相位行全闭合；`app` 阶段内容 87.04%→85.14%、预览 244、背景 0%（与基线记录一致）。`boot occupancy` 327–437 ms 超 150 ms 预算，**基线同机同法测得 311 ms**，登记为环境项而非本片回归 | `test_graphics` 412 / `test_vsg` 470（−11 条 `FrameGraphTest`）/ `test_gui` 261 / `test_core` 165；6 个静态脚本 0 finding |

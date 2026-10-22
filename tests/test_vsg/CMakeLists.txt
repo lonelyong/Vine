@@ -7,7 +7,6 @@ set(SRC_FILE_LIST
 	ContentCoreTest.cpp
 	ClearPlanTest.cpp
 	FrameRecorderTest.cpp
-	FrameGraphTest.cpp
 	FrameCompilerTest.cpp
 	ExecutorTest.cpp
 	ContentFactsTest.cpp

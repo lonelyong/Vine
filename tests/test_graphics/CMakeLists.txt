@@ -1,6 +1,7 @@
 set(TEST_NAME test_graphics)
 set(SRC_FILE_LIST
 	ChainRegistrationTest.cpp
+	FrameScheduleTest.cpp
 	GraphicsTest.cpp
 	HeadlessBackendTest.cpp
 	RenderSurfaceTest.cpp

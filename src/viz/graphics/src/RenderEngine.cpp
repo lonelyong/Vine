@@ -13,6 +13,7 @@
 #include <vine/graphics/Scene.hpp>
 
 #include "FrameResources.hpp"
+#include "FrameScheduler.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -33,6 +34,7 @@ VN_OBJECT_META_IMPL(RenderEngine, vn::Object);
 
 RenderEngine::RenderEngine()
     : resources_(std::make_unique<detail::FrameResources>())
+    , scheduler_(std::make_unique<detail::FrameScheduler>())
 {
     // The ONE default in the shading path, and it is a named program: content with no program of its
     // own is shaded with the engine's forward program until the host says otherwise. (Null would mean
@@ -834,10 +836,11 @@ void RenderEngine::collectPlanProblems()
     }
 
     // Phase 2: every declared input its consumer cannot draw from — nobody fills the image (or the
-    // whole target), the only filler is registered after the consumer, or the image asked for is a
-    // depth the target does not have. This is the structural half of D37 (design §14.4); its
-    // name-based counterpart can only be judged once a frame has run, because a name resolves per
-    // frame.
+    // whole target), or the image asked for is a depth the target does not have. WHERE the producer was
+    // registered is no longer a wiring fact: the scheduler orders a later-announced producer first (see
+    // scheduleRows), so registration order says nothing about execution order. This is the structural half of
+    // D37 (design §14.4); its name-based counterpart can only be judged once a frame has run, because a name
+    // resolves per frame.
     for (std::size_t index = 0; index < slots_.size(); ++index) {
         RenderPass* pass = slots_[index].pass.get();
         if (pass == nullptr) {
@@ -855,26 +858,17 @@ void RenderEngine::collectPlanProblems()
             if (entry != nullptr && entry->pass == pass) {
                 continue;
             }
-            if (entry != nullptr && entry->index < index) {
-                continue;   // filled before this pass draws
+            if (entry != nullptr) {
+                continue;   // someone fills it; the scheduler puts that pass before this one
             }
             // The structural check speaks for this wire; the collect keeps its subject so the RESOLUTION of the
             // same input stays quiet about it (see unusableInputReported / reportUnproducedInput).
             unusable_inputs_this_frame_.emplace(pass, identity);
             {
                 const String consumer = reportedPassName(pass);
-                // One format string per branch: "nobody writes it" and "its producer runs too late"
-                // are different problems with different fixes.
                 const String message =
-                    (entry == nullptr)
-                        ? String(u8"pass '") + consumer + String(u8"' declares the input target '") +
-                              target_name(target.get()) +
-                              String(u8"' but no pass writes it, so nothing fills it")
-                        : String(u8"pass '") + consumer + String(u8"' declares the input target '") +
-                              target_name(target.get()) + String(u8"' but its producer '") +
-                              reportedPassName(entry->pass) +
-                              String(u8"' is registered after it, so the target is still a frame behind when this"
-                                     u8" pass draws");
+                    String(u8"pass '") + consumer + String(u8"' declares the input target '") +
+                    target_name(target.get()) + String(u8"' but no pass writes it, so nothing fills it");
                 reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
                                     vn::graphics::DiagnosticCategory::ContentSkipped,
                                     message);
@@ -906,24 +900,13 @@ void RenderEngine::collectPlanProblems()
                 continue;
             }
 
-            // Whoever can fill the image: the EARLIEST of the pass that promises this very image and
-            // the pass that draws into its target (drawing into a target fills all of its images).
-            // A filler may have NO pass at all: a host binding is filled by the host.
-            std::size_t               producer_index = slots_.size();
-            raw_ptr<const RenderPass> producer       = nullptr;
-            if (claim != nullptr && claim->index < producer_index) {
-                producer       = claim->pass;
-                producer_index = claim->index;
-            }
-            if (entry != nullptr && entry->index < producer_index) {
-                producer       = entry->pass;
-                producer_index = entry->index;
-            }
-            const bool has_filler = (producer_index < slots_.size());
+            // Whoever can fill the image: a pass that promises this very image, a pass that draws into its target
+            // (drawing into a target fills all of its images), or the host (a host binding is filled by the host).
+            // WHERE that pass sits in registration order is not a question any more: the scheduler orders it.
+            const bool has_filler = claim != nullptr || entry != nullptr;
 
-            if (has_filler && producer_index < index &&
-                (!identity.depth || identity.target->hasDepth())) {
-                continue;   // filled in time
+            if (has_filler && (!identity.depth || identity.target->hasDepth())) {
+                continue;   // filled, by a pass the scheduler orders before this one (or by the host)
             }
 
             // The structural check speaks for this wire; the collect keeps its subject so the RESOLUTION of the
@@ -931,22 +914,16 @@ void RenderEngine::collectPlanProblems()
             unusable_inputs_this_frame_.emplace(pass, identity);
             {
                 const String consumer = reportedPassName(pass);
-                // One format string per branch: "nobody declares it", "the target has no depth" and
-                // "the producer runs too late" are different problems with different fixes.
+                // Two problems, two fixes: nobody declares it, or the target simply has no depth.
                 const String message =
                     !has_filler
                         ? String(u8"pass '") + consumer + String(u8"' declares the input image '") +
                               image->label() +
                               String(u8"' but no pass declares it as an output, so nothing fills it")
-                        : (identity.depth && !identity.target->hasDepth())
-                              ? String(u8"pass '") + consumer + String(u8"' declares the input image '") +
-                                    image->label() + String(u8"' (the depth of target '") +
-                                    target_name(identity.target) +
-                                    String(u8"') but that target has no depth attachment, so nothing fills it")
-                              : String(u8"pass '") + consumer + String(u8"' declares the input image '") +
-                                    image->label() + String(u8"' but its producer '") + reportedPassName(producer) +
-                                    String(u8"' is registered after it, so the image is still a frame behind when"
-                                           u8" this pass draws");
+                        : String(u8"pass '") + consumer + String(u8"' declares the input image '") +
+                              image->label() + String(u8"' (the depth of target '") +
+                              target_name(identity.target) +
+                              String(u8"') but that target has no depth attachment, so nothing fills it");
                 reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
                                     vn::graphics::DiagnosticCategory::ContentSkipped,
                                     message);

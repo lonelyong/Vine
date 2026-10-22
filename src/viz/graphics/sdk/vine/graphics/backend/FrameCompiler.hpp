@@ -9,7 +9,6 @@
 #include <vine/graphics/Sampler.hpp>
 #include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/backend/FrameArena.hpp>
-#include <vine/graphics/backend/FrameGraph.hpp>
 #include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/graphics/backend/Keys.hpp>
 #include <vine/graphics/backend/Observe.hpp>
@@ -21,8 +20,9 @@
  * default is made explicit.
  *
  * @details
- * - WHAT IT DECIDES. (1) the order the pass scopes run in - the dependency graph's answer, not the
- *   call order (see FrameGraph); (2) the resolved form of every default the description is allowed to
+ * - WHAT IT DECIDES. (1) the order the pass scopes run in - it KEEPS the order the frame was handed in,
+ *   because the engine is the one scheduler (see RenderEngine::frameDescription); (2) the resolved form of
+ *   every default the description is allowed to
  *   leave open: a viewport nobody announced becomes the whole target, a clear nobody announced becomes
  *   "no clear except where a fresh attachment forces one", and a command with no program of its own
  *   becomes the frame's default program; (3) which pass of this frame is the BOOTSTRAP one for each
@@ -281,9 +281,6 @@ class VN_GRAPHICS_API FrameCompiler
     /** @brief Gets the plan published by the last compile(). */
     [[nodiscard]] const CompiledFrame& frame() const noexcept;
 
-    /** @brief Gets the dependency graph of the last compile() (for tests and diagnostics). */
-    [[nodiscard]] const FrameGraph& graph() const noexcept;
-
 
   private:
     /** @brief Finds the facts for @p target, or nullptr when the backend does not know it. */
@@ -345,7 +342,6 @@ class VN_GRAPHICS_API FrameCompiler
     Diagnostics& diagnostics_;  ///< The one diagnostic route.
     Observe&     observe_;      ///< The counters a phase gates on.
 
-    FrameGraph    graph_;       ///< The pass-dependency graph of the frame being compiled.
     CompiledFrame frame_;       ///< The plan last published.
 
     // Working memory, one frame at a time, capacity kept across frames (see the file note: the PLAN is

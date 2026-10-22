@@ -90,7 +90,8 @@ struct VN_GRAPHICS_API PassPlan
  *   is compiled from: executeFrame takes a FrameDescription, whose pointers are borrowed and whose order is
  *   the announced priority. Both come from the same compile, so they cannot disagree about which pass ran;
  *   they differ in what each audience needs. A dependency-resolving executor may still reorder the entries
- *   (see FrameGraph), so this is the declaration side, not the final execution schedule.
+ *   (see RenderEngine::frameDescription), so this is a view of the engine's own scheduling input, not a
+ *   second schedule.
  *
  * @see RenderEngine::framePlan
  */
