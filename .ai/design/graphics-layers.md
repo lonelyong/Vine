@@ -307,12 +307,26 @@ PassDesc::first_layer { 0 } + PassDesc::layer_count { 1 }
 ### 9.3 相关的"整段跳过"（登记：形状）
 
 掩码现在**不剪结构**（判定点在可绘制节点上，§2.1）。若将来"按掩码排除大子树"的遍历成本进入剖析前列，
-加的是**子树层并集**的保守判定：每个节点带私有的 `subtree_layer_union`（子树内所有节点**解析层**的并集；
-超额近似——只会少剪、不会误剪），公告点与 `invalidateBounds()` 同款（`setLayers` / `clearLayers` / `addChild` /
-`removeChild`），三条 walk 同一行：`if ((subtree_layer_union & 掩码) == 0) return;`。它**语义零变化**、老用例全绿，
-是纯增量优化。**不要**退化成 OSG 式"节点自身层剪枝"（后代重声明会变不可达，破坏 §2.1 的语义）。
+加的是**子树层并集的保守判定**：每个节点带私有的 `cached_subtree_layers_`（子树内所有节点**解析层**的并集；
+超额近似——只会少剪、不会误剪）和 `subtree_layers_epoch_`，三条 walk 同一行：
+`if ((cached_subtree_layers_ & 掩码) == 0) return;`。它**语义零变化**、老用例全绿，是纯增量优化。
+**不要**退化成 OSG 式"节点自身层剪枝"（后代重声明会变不可达，破坏 §2.1 的语义）。
 
-命名说明：它是**派生值**，不是第二个 layer，也不是可写的选择字段；`subtree_layer_union` 直接命名"并集"这个事实，
-比 `subtree_layers` 更不容易被读成"节点自己的层"。它也不是 `cached_bounds_` 那种按 stamp 懒算的 memo
-（这里是变更时增量维护、没有失效戳），所以不用 `cached_` 前缀；如果将来真改成懒算，再改名为
-`cached_subtree_layers_` 并配 `subtree_layers_stamp_`，和 `Node` 的 bounds 缓存同一套形状。
+**它什么时候失效**——层是"最近的声明获胜"（`Node::setLayers` / `clearLayers`），所以失效**不是只向上**：
+
+- **`setLayers` / `clearLayers` 且值真的变了**：这个节点自己的解析层变了；没有自己声明的后代继承的基也变了。
+  只像 `invalidateBounds()` 那样向上戳 stamp 是不够的——后代的旧并集可能**偏小**，下次剪枝会误剪。
+- **`addChild` / `removeChild` 且结构真的变了**：被挂子树的继承基变了（旧父/新父两侧都可能）；`addChild`
+  自动重挂旧父时，两次结构变更都要算。
+- **不失效**：`setVisible`、`opacity`、`drawOrder`、变换/几何编辑——它们不改变解析层。`setLayers(0)` 是合法值
+  （“不在任何层”），要失效；`clearLayers` 在没有声明时是 no-op，不需要失效。
+
+实现形状：一个 **layer epoch**（单线程场景图契约下，进程级计数器即可）在上述变更时 `++`；节点缓存带上
+`subtree_layers_epoch_`。walk 发现 `epoch` 不匹配就**懒重算**：`resolved = layers().value_or(inherited)`，
+再并上每个孩子的并集；算完写入当前 epoch。**只有 epoch 匹配的缓存才允许用于剪枝**，所以过期缓存最多让
+这一趟少剪（全走一遍），**不会误剪**。这比“变更时向下逐棵子树更新”少一类容易漏的后代路径；代价是层编辑后的
+第一趟收集失去剪枝收益，层编辑通常是装载期一次性动作，可接受。
+
+命名说明：因为它现在是真缓存（懒算 + epoch），`cached_subtree_layers_` / `subtree_layers_epoch_` 比
+`subtree_layer_union` 更准确，和 `Node` 的 `cached_bounds_` / `cached_stamp_` 同形；它不是第二个 layer，
+也不是可写的选择字段，私有、派生。
