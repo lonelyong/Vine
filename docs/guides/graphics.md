@@ -51,8 +51,8 @@ engine.setDevice(backend);
 | `Node` | 所有节点共有的身份：`name()`、`isVisible()`、`opacity()`、`parent()` | `boundingBox()`（世界空间）、`worldMatrix()`、`localTransformMatrix()`（非变换节点恒为单位阵） |
 | `Group` | 聚合子节点 | `addChild()` / `removeChild()` 会维护 parent 链 |
 | `MatrixTransform` | `Group` + **场景图里唯一持有变换的地方**（`matrix()` / `setMatrix()`） | 嵌套变换沿 root→leaf 相乘 |
-| `StateNode` | 给子树施加渲染状态，并可覆盖 material / program | 越深的节点优先 |
-| `Geometry` | 叶子：**借用**的属性缓冲 + 可选索引 | `setPositions/setNormals/setTexcoords2/setIndices`、`addBuffer` 加自定义通道、`setRevision()` |
+| `StateNode` | 给子树施加渲染状态，并可覆盖 material / program | 越深的节点优先；**拓扑不在状态里**（它随 `Primitive` 走） |
+| `Geometry` | 叶子：**借用**的属性缓冲 + 图元列表（每条图元是一次 draw） | `setPositions/setNormals/setTexcoords2`、`addBuffer` 加自定义通道、`addPrimitive` / `setPrimitive`、`setRevision()`；`setIndices` 是单 draw 的便捷拼写 |
 | `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)`（**共享不可变表**：一次遍历，多个 pass 共用；要改写就自己 `*list` 复制一份） |
 
 ### 2.2 属性沿树折叠的规则
@@ -64,7 +64,8 @@ engine.setDevice(backend);
 | --- | --- |
 | 变换 | **相乘**；折好的结果烘焙进 `RenderCommand::modelMatrix` |
 | `opacity` | **相乘**：scene × 各层祖先 × 自身，在叶子处夹取到 `[0, 1]`。**它是引擎唯一的透明度通道**：内置前向着色的片元 alpha 就是它，不乘材质/纹理的 alpha（材质是共享的，乘进去会让所有用它的 drawable 一起半透明，而排序用的是这个值） |
-| 渲染状态（blend / depth / cull / polygon / topology） | **最深者覆盖**（折叠进 `RenderCommand::authoredState`，**每项 optional**：没有 StateNode 说过某一项，那它在这里就是"没人说"，而不是"设成了默认值"） |
+| 渲染状态（blend / depth / cull / polygon） | **最深者覆盖**（折叠进 `RenderCommand::authoredState`，**每项 optional**：没有 StateNode 说过某一项，那它在这里就是"没人说"，而不是"设成了默认值"） |
+| 拓扑 | **不是状态**：每条 `Primitive` 自己说（数据事实，见 §3.21）；`RenderPass` 的 `topology` 可以把整片当点/线看，覆盖值由 `resolveRenderState` 报 `Pass` |
 | material / program | 叶子自己的优先，否则取最近的祖先 `StateNode` |
 | `isVisible` | **硬门**：不可见子树整棵不收集 |
 | 层（`Node::setLayers`） | **最深者覆盖**：最近的声明赢，`clearLayers()` 回到继承；没声明过的节点在 `kDefaultLayer`（bit 0）。判定在**可绘制节点**上（容器是结构，不是内容），所以 `Group` 上的声明管的是它下面的内容 |
@@ -77,7 +78,8 @@ engine.setDevice(backend);
 
 **折叠出来的只是"内容作者写的那份"**：一条命令画出来是什么状态，还要加上**画它的那条 pass** 说的
 （depth 策略 + 光栅化覆盖）—— 两者由**一个函数**合并，`resolveRenderState(cmd.authoredState,
-pass.stateOverrides())`（`StateNode.hpp`），它按项回答"最终值 + 这一项是谁给的"（`StateOrigin`）。
+pass.stateOverrides(), cmd.topology)`（`StateNode.hpp`），它按项回答"最终值 + 这一项是谁给的"（`StateOrigin`）；
+第三个参数是**数据的拓扑**（命令所属的 `Primitive`），pass 只能覆盖它，`StateNode` 不能。
 优先级一句话：**pass 的光栅化覆盖赢过内容，内容的 depth 赢过 pass 的 depth 策略**（pass 给的是"没写过
 depth 的那些的默认"），其余没有别的层 —— 视图的模式在**建管线时**就已经变成 pass 级覆盖（那是配方的事）。
 

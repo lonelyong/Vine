@@ -664,7 +664,7 @@ void addGbufferVariety(vn::graphics::Group* root)
  *  - StateNode{ CullMode::Back } box             -> per-subtree culling state
  *  - Geometry::setProgram magenta box (runtime-compiled GLSL, official vsg
  *    "pc" projection/modelView contract)
- *  - StateNode{ Topology::Points } + cyan user program point cloud
+ *  - a Geometry whose primitive states Topology::Points + cyan user program point cloud
  *  - nested MatrixTransform (world-matrix chain)
  * That is why they are not part of the shared base: the base is what both paths can draw correctly.
  *
@@ -722,7 +722,7 @@ void addForwardShowcase(vn::graphics::Group* root)
         }
     }
 
-    // --- Point cloud: StateNode{ Topology::Points } + cyan program ----------
+    // --- Point cloud: primitive Topology::Points + cyan program -------------
     {
         auto program = make_intrusive<ShaderProgram>();
         program->setName(u8"demo_cyan_points");
