@@ -223,15 +223,30 @@ bool channelsMatchLayout(const GeometryFacts& facts) noexcept
     {
         return false;
     }
-    // The stream the draw is assembled from: an indexed geometry must be drawn THROUGH its index stream (its
-    // KIND is the mode), an unindexed one needs vertices to assemble (see GeometryFacts) - a geometry that
-    // offers neither draws nothing, and "described but not drawable" must stay a miss rather than become an
-    // empty picture. Whether the stream's PAYLOAD is there is the upload layer's business, not this check's.
-    if (facts.indices.has_value())
+    // Every DRAW has to be assemblable: an indexed primitive is drawn THROUGH its index stream (its KIND is the
+    // mode), a non-indexed one needs vertices (see GeometryFacts). A geometry with no primitives draws nothing,
+    // and "described but not drawable" must stay a miss rather than become an empty picture. Whether a stream's
+    // PAYLOAD is there is the upload layer's business, not this check's.
+    if (facts.primitives.empty())
     {
-        return facts.indices->key.kind == core::StreamKind::Index;
+        return false;
     }
-    return facts.vertex_count > 0U;
+    for (const PrimitiveFacts& primitive : facts.primitives)
+    {
+        if (primitive.indices.has_value())
+        {
+            if (primitive.indices->key.kind != core::StreamKind::Index)
+            {
+                return false;
+            }
+            continue;
+        }
+        if (facts.vertex_count == 0U)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool blockFitsAbi(const MaterialFacts& facts) noexcept

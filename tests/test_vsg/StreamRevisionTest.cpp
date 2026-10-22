@@ -35,10 +35,13 @@ struct TwoChannel
     vn::intrusive_ptr<vn::Buffer<float>> texcoords;
 
     /// @brief What the table says about it right now (built fresh: entries borrow the caller's storage).
+    /// The primitive rows the returned facts borrow (the caller owns the channel storage the same way).
+    mutable std::vector<vn::vsg::PrimitiveFacts> primitives;
+
     [[nodiscard]] GeometryFacts describe(std::vector<ChannelFacts>& storage) const
     {
         GeometryFacts facts;
-        EXPECT_EQ(buildGeometryFacts(*geometry, facts, storage), FactMiss::None);
+        EXPECT_EQ(buildGeometryFacts(*geometry, facts, storage, primitives), FactMiss::None);
         return facts;
     }
 };
@@ -67,8 +70,9 @@ TEST(StreamRevisionTest, ABufferAnnouncementRekeysOnlyTheChannelThatReadsIt)
 {
     const TwoChannel two = twoChannels();
 
-    std::vector<ChannelFacts> storage;
-    const GeometryFacts       facts = two.describe(storage);
+    std::vector<ChannelFacts>            storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives;
+    const GeometryFacts                  facts = two.describe(storage);
     ASSERT_EQ(facts.channels.size(), 2U);
 
     const StreamKey positions_before = facts.channels[0].streamKey();
@@ -95,8 +99,9 @@ TEST(StreamRevisionTest, AGeometryAnnouncementDoesNotRekeyTheStreams)
 {
     const TwoChannel two = twoChannels();
 
-    std::vector<ChannelFacts> storage;
-    const GeometryFacts       facts = two.describe(storage);
+    std::vector<ChannelFacts>            storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives;
+    const GeometryFacts                  facts = two.describe(storage);
 
     const StreamKey before_positions = facts.channels[0].streamKey();
     const StreamKey before_texcoords = facts.channels[1].streamKey();
@@ -107,7 +112,8 @@ TEST(StreamRevisionTest, AGeometryAnnouncementDoesNotRekeyTheStreams)
     EXPECT_EQ(facts.channels[1].streamKey(), before_texcoords);
 
     // What it DOES move is the description's revision: the number a table is rebuilt on (layout and counts).
-    std::vector<ChannelFacts> again;
+    std::vector<ChannelFacts>            again;
+        std::vector<vn::vsg::PrimitiveFacts> again_primitives;
     const GeometryFacts       rebuilt = two.describe(again);
     EXPECT_NE(rebuilt.revision, facts.revision) << "the geometry announced, so its description is a new one";
 }
@@ -120,8 +126,9 @@ TEST(StreamRevisionTest, AStructuralChangeIsANewStreamByIdentity)
 {
     const TwoChannel two = twoChannels();
 
-    std::vector<ChannelFacts> storage;
-    const GeometryFacts       facts = two.describe(storage);
+    std::vector<ChannelFacts>            storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives;
+    const GeometryFacts                  facts = two.describe(storage);
     const StreamKey           before = facts.channels[0].streamKey();
 
     // The same bytes in a DIFFERENT buffer (a replacement is how a host swaps a channel's source).
@@ -132,7 +139,8 @@ TEST(StreamRevisionTest, AStructuralChangeIsANewStreamByIdentity)
     two.geometry->bumpRevision();
     ASSERT_EQ(replacement->revision(), 0U) << "a fresh buffer starts at 0: the identity, not a revision, is what moved";
 
-    std::vector<ChannelFacts> replaced_storage;
+    std::vector<ChannelFacts>            replaced_storage;
+        std::vector<vn::vsg::PrimitiveFacts> replaced_storage_primitives;
     const GeometryFacts       replaced = two.describe(replaced_storage);
     const StreamKey           after    = replaced.channels[0].streamKey();
     EXPECT_NE(after.buffer, before.buffer) << "a different buffer is a different stream";
@@ -141,7 +149,8 @@ TEST(StreamRevisionTest, AStructuralChangeIsANewStreamByIdentity)
     // ...and so is the same buffer read from a different place: the slice is part of the identity.
     two.geometry->setPositions(replacement, 0U, 2U);
     two.geometry->bumpRevision();
-    std::vector<ChannelFacts> sliced_storage;
+    std::vector<ChannelFacts>            sliced_storage;
+        std::vector<vn::vsg::PrimitiveFacts> sliced_storage_primitives;
     const GeometryFacts       sliced = two.describe(sliced_storage);
     EXPECT_NE(sliced.channels[0].streamKey(), after) << "the slice's own fields are the identity";
 }
@@ -157,8 +166,9 @@ TEST(StreamRevisionTest, TheBytesComeFromTheBufferAndNotFromTheTable)
 {
     const TwoChannel two = twoChannels();
 
-    std::vector<ChannelFacts> storage;
-    const GeometryFacts       facts = two.describe(storage);
+    std::vector<ChannelFacts>            storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives;
+    const GeometryFacts                  facts = two.describe(storage);
 
     const std::span<const float> before = facts.channels[0].scalars();
     ASSERT_EQ(before.size(), 12U);
@@ -181,8 +191,9 @@ TEST(StreamRevisionTest, TheSharingTableUploadsOnlyTheStreamWhoseAnnouncementMov
 {
     const TwoChannel two = twoChannels();
 
-    std::vector<ChannelFacts> storage;
-    const GeometryFacts       facts = two.describe(storage);
+    std::vector<ChannelFacts>            storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives;
+    const GeometryFacts                  facts = two.describe(storage);
 
     SharedStreams table(8U);
     const auto    acquire = [&table](const StreamKey& key, std::uint64_t frame) {

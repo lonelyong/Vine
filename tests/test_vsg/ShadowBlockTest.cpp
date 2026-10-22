@@ -538,13 +538,17 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
 
     GeometryFacts                        quad_facts;
-    std::vector<vn::vsg::ChannelFacts> quad_channels;
-    ASSERT_EQ(buildGeometryFacts(*full_quad, quad_facts, quad_channels), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   quad_channels;
+    std::vector<vn::vsg::PrimitiveFacts> quad_primitives;
+    ASSERT_EQ(buildGeometryFacts(*full_quad, quad_facts, quad_channels, quad_primitives), FactMiss::None);
     GeometryFacts                        band_facts[4];
-    std::vector<vn::vsg::ChannelFacts> band_channels[4];
+    std::vector<vn::vsg::ChannelFacts>   band_channels[4];
+    std::vector<vn::vsg::PrimitiveFacts> band_primitives[4];
     for (std::size_t index = 0; index < 4U; ++index)
     {
-        ASSERT_EQ(buildGeometryFacts(*bands[index], band_facts[index], band_channels[index]), FactMiss::None);
+        ASSERT_EQ(buildGeometryFacts(*bands[index], band_facts[index], band_channels[index],
+                                     band_primitives[index]),
+                  FactMiss::None);
     }
 
     const ProgramFacts  programs[]{ producer_facts, consumer_facts };

@@ -64,6 +64,7 @@ struct Rows
     std::vector<GeometryFacts>             geometries;
     std::vector<MaterialFacts>             materials;
     std::vector<std::vector<ChannelFacts>> channels;  ///< One per geometry row: what `GeometryFacts::channels` spans.
+    std::vector<std::vector<vn::vsg::PrimitiveFacts>> primitives;  ///< One per geometry row: its draws.
     std::vector<std::vector<std::byte>>    blocks;    ///< One per material row: what `MaterialFacts::block` spans.
 
     /// @brief Adds one geometry row: @p channel_count streams of @p mask's shape (the malformed row is one
@@ -85,17 +86,22 @@ struct Rows
         row.revision              = revision;
         row.layout.canonical_mask = mask;
         row.channels              = channels.back();
+        // ONE PRIMITIVE ROW PER GEOMETRY ROW (the plan names a draw by its primitive index): indexed ones
+        // carry the stream and its span, non-indexed ones are assembled from the vertex count.
+        primitives.emplace_back(1U);   // one draw per geometry row
+        vn::vsg::PrimitiveFacts& draw = primitives.back().front();
         if (indexed)
         {
-            row.indices.emplace();
-            row.indices->key.kind   = StreamKind::Index;
-            row.indices->key.revision = 1U;
-            row.index_count         = 3U;
+            draw.indices.emplace();
+            draw.indices->key.kind    = StreamKind::Index;
+            draw.indices->key.revision = 1U;
+            draw.index_count          = 3U;
         }
         else
         {
             row.vertex_count = 3U;
         }
+        row.primitives = primitives.back();
         geometries.push_back(row);
     }
 

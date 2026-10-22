@@ -50,19 +50,29 @@ class Geometry {                       // 只剩数据
 | `RenderCommand` | `primitive_index` + `primitive()`；收集器**一条 primitive 一条命令**，材质/程序按 primitive → StateNode 解析 |
 | 计划 | `CollectedCommand` / `CompiledCommand` 带 `primitive`；`CollectedCommand` 还带 primitive 的 `topology`，`FrameCompiler` 用它做 `resolveRenderState` 的第三个参数 |
 | 拾取 | 只对 `Topology::Triangles` 的 primitive 求交，命中结果带 `primitiveIndex`（顶点/索引仍从几何体读） |
-| 后端（本片边界） | `buildGeometryFacts` 仍只描述**一个**索引流：`primitiveCount() > 1` 一律 `FactMiss::Malformed`（**拒绝并报告**，不是画第一份 N 次），0 个则 `Unknown` |
+| 后端（已随第二片完成） | `GeometryFacts::primitives` 是**每 draw 一行**（topology + 索引流 + span + 计数），`ContentPass` 用 `CompiledCommand::primitive` 取那一行；0 个 primitive 是 `Unknown` |
 
-## 3. 下一片（明确的边界）
+## 3. 后端按图元出行（第二片，已完成）
 
-后端要按 primitive 出行：`GeometryFacts` 里 `std::vector<PrimitiveFacts>`（每个 = topology + `IndexFacts`
-+ first/count），`ContentPass` 用 `command.primitive` 取那一条来拼 key 和 draw。做完之后：
+`GeometryFacts::primitives` 是每 draw 一行：
 
-- 一份顶点 + 三角形/线/点三条 primitive ⇒ **3 次 draw、2~3 条管线、顶点只上传一次**；
-- 两份索引各在各的 buffer ⇒ 改哪份传哪份；同 arena ⇒ 一次上传、整段失效（宿主可选）；
-- 新增判据：uploads/aliases 计数（见下）。
+```cpp
+struct PrimitiveFacts {
+    vn::graphics::Topology    topology;
+    std::optional<IndexFacts> indices;      // 空 = 非索引 draw（一个不同的 API 命令）
+    std::uint32_t             index_count;
+    std::uint32_t             first_index;
+};
+```
 
-在本片里，多部件资产请仍用**"多个几何体 + 共用 buffer + 不同切片"**表达（`docs/guides/graphics.md` §2.7），
-那条路不需要后端改动，且上传共享已经按切片生效。
+- `buildGeometryFacts(geometry, out, channels, primitives)` 按几何体的顺序建行（计划用 `primitive` 索引进
+  这张表）；索引流仍**归一化到整段 buffer**（绑定别名整段、span 在 draw 里）⇒ 同一 arena 上的多个 primitive
+  **共享一次上传**。
+- `ContentPass` 用 `command.primitive` 取自己那一行：索引流、span、顶点数都读它；越界的 primitive 一次报告
+  并跳过那条命令（几何体在计划编译后被改过）。
+- `channelsMatchLayout` 对**每条** primitive 判"能否组装"（有索引流、或几何体有顶点）。
+- 于是：一份顶点 + 三角形/线/点三条 primitive ⇒ **3 次 draw、2~3 条管线（按 class）、顶点只上传一次**；
+  两份索引各在各的 buffer ⇒ 改哪份传哪份；同 arena ⇒ 一次上传、整段失效（宿主可选）。
 
 ## 4. 判据（本片）
 
@@ -72,3 +82,5 @@ class Geometry {                       // 只剩数据
 - `StateNodeTest.TopologyIsNotStateAtAll`（改写）：`StateNode` 不再有拓扑；数据层与 pass 覆盖各报自己的 origin。
 - `ContentPassTest.AnUnindexedPointCloudDrawsThroughThePointsPipeline`（改写）：点云靠 primitive 声明拓扑。
 - `RayIntersectionTest.*`：只打三角形 primitive；`hit.primitiveIndex` 指出命中的那一份。
+- `GeometryFactsTest.AMultiPrimitiveGeometryDescribesOneRowPerDraw`：一个几何体三条 primitive（三角形/线/点）
+  ⇒ 三行、拓扑按顺序、span 各归各的、同一 arena 上的两条共享流身份（一次上传）、非索引那条用几何体顶点数。

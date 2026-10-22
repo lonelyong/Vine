@@ -223,7 +223,8 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
 
     GeometryFacts               geometry_facts;
     std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
     material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
@@ -728,9 +729,11 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     GeometryFacts                        shadow_geometry_facts;
     GeometryFacts                        sampling_geometry_facts;
     std::vector<vn::vsg::ChannelFacts> shadow_channels;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_shadow_channels;
     std::vector<vn::vsg::ChannelFacts> sampling_channels;
-    ASSERT_EQ(buildGeometryFacts(*shadow_geometry, shadow_geometry_facts, shadow_channels), FactMiss::None);
-    ASSERT_EQ(buildGeometryFacts(*sampling_geometry, sampling_geometry_facts, sampling_channels), FactMiss::None);
+    std::vector<vn::vsg::PrimitiveFacts> primitives_sampling_channels;
+    ASSERT_EQ(buildGeometryFacts(*shadow_geometry, shadow_geometry_facts, shadow_channels, primitives_shadow_channels), FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(*sampling_geometry, sampling_geometry_facts, sampling_channels, primitives_sampling_channels), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
     material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));

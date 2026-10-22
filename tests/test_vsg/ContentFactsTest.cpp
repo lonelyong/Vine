@@ -63,8 +63,9 @@ IndexFacts indexStream()
 /// @brief Owns the storage a GeometryFacts points at: the tables BORROW, so a test must keep them alive.
 struct GeometryHolder
 {
-    std::vector<ChannelFacts> channels;
-    GeometryFacts             facts;
+    std::vector<ChannelFacts>   channels;
+    std::vector<vn::vsg::PrimitiveFacts> primitive_rows;  ///< What `facts.primitives` points at.
+    GeometryFacts               facts;
 
     GeometryHolder(const void* identity, std::uint64_t revision, std::uint32_t canonical_mask,
                    std::size_t channel_count, std::uint32_t custom_locations = 0U)
@@ -74,8 +75,10 @@ struct GeometryHolder
         facts.revision              = revision;
         facts.layout.canonical_mask = canonical_mask;
         facts.channels              = channels;
-        facts.indices.emplace(indexStream());
-        facts.index_count           = 3U;
+        primitive_rows.emplace_back();
+        primitive_rows.back().indices.emplace(indexStream());
+        primitive_rows.back().index_count = 3U;
+        facts.primitives            = primitive_rows;
         for (std::uint32_t extra = 0; extra < custom_locations; ++extra)
         {
             facts.layout.custom_locations.push_back(3U + extra);
@@ -155,7 +158,8 @@ TEST(ContentFactsTest, AGeometryIsFoundByItsIdentityAndRevision)
     const ContentFacts facts = tables.view();
     const auto         found = findGeometry(facts, &identity, 3U);
     ASSERT_TRUE(found.found());
-    EXPECT_EQ(found.entry->index_count, 3U);
+    ASSERT_EQ(found.entry->primitives.size(), 1U);
+    EXPECT_EQ(found.entry->primitives[0].index_count, 3U);
     EXPECT_EQ(found.entry->channels.size(), 2U);
     EXPECT_EQ(found.miss, FactMiss::None);
 
@@ -182,14 +186,16 @@ TEST(ContentFactsTest, AGeometryWhoseChannelsDoNotMatchItsLayoutCannotBeDrawn)
     // A geometry whose "indices" are a vertex stream is not drawable this way: the mode is the stream's KIND,
     // so a stream that is not an index stream states nothing about how the draw is assembled.
     GeometryHolder not_indexed(nullptr, 1U, /*canonical_mask*/ 0x1U, /*channels*/ 1U);
-    not_indexed.facts.indices->key.kind = StreamKind::Vertex;
+    not_indexed.primitive_rows[0].indices->key.kind = StreamKind::Vertex;
     EXPECT_FALSE(channelsMatchLayout(not_indexed.facts));
 
     // ...while a geometry that names NO index stream is the unindexed mode and is drawable from its vertices.
     GeometryHolder unindexed(nullptr, 1U, /*canonical_mask*/ 0x1U, /*channels*/ 1U);
-    unindexed.facts.indices.reset();
-    unindexed.facts.index_count = 0U;
+    unindexed.facts.primitives = {};
     EXPECT_FALSE(channelsMatchLayout(unindexed.facts)) << "no index stream and no vertex count: nothing to draw";
+    // A geometry whose primitives are all non-indexed IS drawable from its vertices.
+    unindexed.primitive_rows.assign(1U, vn::vsg::PrimitiveFacts{});
+    unindexed.facts.primitives   = unindexed.primitive_rows;
     unindexed.facts.vertex_count = 3U;
     EXPECT_TRUE(channelsMatchLayout(unindexed.facts));
 

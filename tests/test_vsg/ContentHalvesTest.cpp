@@ -146,6 +146,7 @@ struct Tables
     std::vector<GeometryFacts>             geometries;
     std::vector<MaterialFacts>             materials;
     std::vector<std::vector<ChannelFacts>> channel_storage;  ///< One per geometry entry.
+    std::vector<std::vector<vn::vsg::PrimitiveFacts>> primitive_storage;  ///< One per geometry entry: its draws.
     std::vector<std::vector<std::byte>>    block_storage;    ///< One per material entry.
     ContentFacts                           facts;
 };
@@ -185,7 +186,7 @@ TEST(ContentHalvesTest, OneHalfPerTupleThePassNames)
     Tables tables;
     tables.programs.push_back(program_facts);
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back()),
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
               FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     MaterialFacts material_facts;
@@ -236,7 +237,7 @@ TEST(ContentHalvesTest, ASteadyPassBuildsNothing)
     Tables tables;
     tables.programs.push_back(program_facts);
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back()),
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
               FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     MaterialFacts material_facts;
@@ -288,7 +289,7 @@ TEST(ContentHalvesTest, TheHalvesEpisodeStateIsTheHalvesOwn)
     Tables tables;
     tables.programs.push_back(program_facts);
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back()),
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
               FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     MaterialFacts material_facts;
@@ -365,7 +366,7 @@ TEST(ContentHalvesTest, TwoTextsOfOneProgramAreTwoHalves)
     tables.programs.push_back(textured_facts);
     tables.programs.push_back(plain_facts);
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back()),
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
               FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     MaterialFacts textured_material_facts;
@@ -412,7 +413,7 @@ TEST(ContentHalvesTest, ThePassAttachmentCountIsPartOfTheHalf)
     Tables tables;
     tables.programs.push_back(program_facts);
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back()),
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
               FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     MaterialFacts material_facts;
@@ -455,11 +456,11 @@ TEST(ContentHalvesTest, ALayoutIsPartOfTheHalf)
     tables.programs.push_back(program_facts);
 
     GeometryFacts uv_geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*uv_geometry, uv_geometry_facts, tables.channel_storage.emplace_back()),
+    ASSERT_EQ(buildGeometryFacts(*uv_geometry, uv_geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
               FactMiss::None);
     tables.geometries.push_back(uv_geometry_facts);
     GeometryFacts plain_geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*plain_geometry, plain_geometry_facts, tables.channel_storage.emplace_back()),
+    ASSERT_EQ(buildGeometryFacts(*plain_geometry, plain_geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
               FactMiss::None);
     tables.geometries.push_back(plain_geometry_facts);
     ASSERT_NE(uv_geometry_facts.layout, plain_geometry_facts.layout);
@@ -554,7 +555,7 @@ TEST(ContentHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
     Tables tables;
     tables.programs.push_back(old_facts);
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back()),
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
               FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     MaterialFacts material_facts;
@@ -598,7 +599,7 @@ TEST(ContentHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
     Tables fresh;
     fresh.programs.push_back(new_facts);
     GeometryFacts fresh_geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, fresh_geometry_facts, fresh.channel_storage.emplace_back()),
+    ASSERT_EQ(buildGeometryFacts(*geometry, fresh_geometry_facts, fresh.channel_storage.emplace_back(), fresh.primitive_storage.emplace_back()),
               FactMiss::None);
     fresh.geometries.push_back(fresh_geometry_facts);
     MaterialFacts fresh_material_facts;
@@ -647,7 +648,7 @@ TEST(ContentHalvesTest, ARefusedLayerIsNotRetriedEveryFrame)
     tables.programs.push_back(program_facts);
     const auto geometry = quad();
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back()), FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     const auto shaded = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
     MaterialFacts material_facts;

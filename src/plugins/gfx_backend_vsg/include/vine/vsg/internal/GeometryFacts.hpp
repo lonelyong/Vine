@@ -47,11 +47,14 @@ VN_VSG_NS_BEGIN
  *
  * @param geometry SDK geometry to describe (borrowed; the entry points at its buffers).
  * @param out      Receives the entry (its spans point into @p storage).
- * @param storage  Caller-owned storage the entry borrows; cleared first, and must outlive the entry.
+ * @param storage  Caller-owned channel storage the entry borrows; cleared first, and must outlive the entry.
+ * @param primitive_storage Caller-owned primitive storage, same rule: @ref GeometryFacts::primitives points
+ *                 into it, one row per draw in the geometry's order.
  * @return None when the entry was built; Unknown when there is nothing to describe; Malformed when the
  *         geometry cannot be drawn as authored (see the file note).
  */
 [[nodiscard]] FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFacts& out,
-                                          std::vector<ChannelFacts>& storage);
+                                          std::vector<ChannelFacts>& storage,
+                                          std::vector<PrimitiveFacts>& primitive_storage);
 
 VN_VSG_NS_END

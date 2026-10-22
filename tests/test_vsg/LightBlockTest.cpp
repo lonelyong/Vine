@@ -436,10 +436,13 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
 
     GeometryFacts                        geometry_facts[4];
-    std::vector<vn::vsg::ChannelFacts> geometry_channels[4];
+    std::vector<vn::vsg::ChannelFacts>   geometry_channels[4];
+    std::vector<vn::vsg::PrimitiveFacts> geometry_primitives[4];
     for (std::size_t index = 0; index < 4U; ++index)
     {
-        ASSERT_EQ(buildGeometryFacts(*bands[index], geometry_facts[index], geometry_channels[index]), FactMiss::None);
+        ASSERT_EQ(buildGeometryFacts(*bands[index], geometry_facts[index], geometry_channels[index],
+                                     geometry_primitives[index]),
+                  FactMiss::None);
     }
     // The four bands share one program and one vertex layout, so they are one compiled half.
     ASSERT_TRUE(geometry_facts[0].layout == geometry_facts[1].layout);

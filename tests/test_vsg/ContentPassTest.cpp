@@ -269,8 +269,9 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     geometry->setRevision(1U);
 
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
     material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
@@ -455,12 +456,15 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     GeometryFacts             left_facts;
     GeometryFacts             right_facts;
     GeometryFacts             unserved_facts;
-    std::vector<ChannelFacts> left_channels;
-    std::vector<ChannelFacts> right_channels;
-    std::vector<ChannelFacts> unserved_channels;
-    ASSERT_EQ(buildGeometryFacts(*left.geometry, left_facts, left_channels), FactMiss::None);
-    ASSERT_EQ(buildGeometryFacts(*right.geometry, right_facts, right_channels), FactMiss::None);
-    ASSERT_EQ(buildGeometryFacts(*unserved.geometry, unserved_facts, unserved_channels), FactMiss::None);
+    std::vector<ChannelFacts>            left_channels;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_left_channels;
+    std::vector<ChannelFacts>            right_channels;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_right_channels;
+    std::vector<ChannelFacts>            unserved_channels;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_unserved_channels;
+    ASSERT_EQ(buildGeometryFacts(*left.geometry, left_facts, left_channels, primitives_left_channels), FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(*right.geometry, right_facts, right_channels, primitives_right_channels), FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(*unserved.geometry, unserved_facts, unserved_channels, primitives_unserved_channels), FactMiss::None);
     ASSERT_FALSE(left_facts.layout == right_facts.layout) << "the two meshes have to feed different layouts";
     ASSERT_EQ(right_facts.channels.size(), 2U);
 
@@ -709,10 +713,12 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
 
     GeometryFacts             left_facts;
     GeometryFacts             right_facts;
-    std::vector<ChannelFacts> left_channels;
-    std::vector<ChannelFacts> right_channels;
-    ASSERT_EQ(buildGeometryFacts(*left.geometry, left_facts, left_channels), FactMiss::None);
-    ASSERT_EQ(buildGeometryFacts(*right.geometry, right_facts, right_channels), FactMiss::None);
+    std::vector<ChannelFacts>            left_channels;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_left_channels;
+    std::vector<ChannelFacts>            right_channels;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_right_channels;
+    ASSERT_EQ(buildGeometryFacts(*left.geometry, left_facts, left_channels, primitives_left_channels), FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(*right.geometry, right_facts, right_channels, primitives_right_channels), FactMiss::None);
     ASSERT_TRUE(left_facts.layout == right_facts.layout) << "the two meshes must ask for the same layout";
 
     std::unique_ptr<ContentPipeline> pipelines =
@@ -954,8 +960,9 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
     geometry->setIndices(triangle.indices);
     geometry->setRevision(1U);
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     // A colour the CLEAR's channels do not match, so a role read from the wrong binding cannot pass: the clear
     // is (0.25, 0.5, 0.75) and the material is its mirror in red and blue.
@@ -1128,8 +1135,9 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     geometry->setIndices(triangle.indices);
     geometry->setRevision(1U);
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                       material_facts;
@@ -1356,8 +1364,9 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     std::unique_ptr<ContentPipeline> pipelines =
         pipelineFor(geometry_facts, program_facts.shaders, program_facts.abi);
@@ -1613,8 +1622,9 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     std::unique_ptr<ContentPipeline> pipelines =
         pipelineFor(geometry_facts, program_facts.shaders, program_facts.abi);
@@ -1851,8 +1861,9 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     std::unique_ptr<ContentPipeline> pipelines =
         pipelineFor(geometry_facts, program_facts.shaders, program_facts.abi);
@@ -2155,8 +2166,9 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     std::unique_ptr<ContentPipeline> textured_layer =
         pipelineFor(geometry_facts, textured_facts.shaders, textured_facts.abi);
@@ -2461,8 +2473,9 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     geometry->setIndices(triangle.indices);
     geometry->setRevision(1U);
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
     material->setDiffuse(vn::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
@@ -2664,8 +2677,9 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     geometry->setIndices(triangle.indices);
     geometry->setRevision(1U);
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
     material->setDiffuse(vn::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
@@ -2908,8 +2922,9 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
     material->setDiffuse(vn::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
@@ -3372,8 +3387,9 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                       material_facts;
@@ -3749,8 +3765,9 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
         geometry->setRevision(1U);
     }
     GeometryFacts                      geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
@@ -4000,8 +4017,9 @@ TEST(ContentPassTest, ASpecularIntensityScalesWhatTheSurfaceReflects)
         geometry->setRevision(1U);
     }
     GeometryFacts                      geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     MaterialFacts        black_facts;
     MaterialFacts        quarter_facts;
@@ -4276,8 +4294,9 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
         geometry->setRevision(1U);
     }
     GeometryFacts                      geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
     std::vector<std::byte>            material_storage;
@@ -4454,8 +4473,9 @@ TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
         geometry->setRevision(1U);
     }
     GeometryFacts                      geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
     std::vector<std::byte>            material_storage;
@@ -4603,8 +4623,9 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
         geometry->setRevision(1U);
     }
     GeometryFacts                      geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
     std::vector<std::byte>            material_storage;
@@ -4877,8 +4898,9 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
         geometry->setRevision(1U);
     }
     GeometryFacts                      geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
     std::vector<std::byte>            material_storage;

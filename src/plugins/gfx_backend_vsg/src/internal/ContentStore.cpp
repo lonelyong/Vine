@@ -38,7 +38,8 @@ struct ContentStore::Data
 
     struct GeometryStorage
     {
-        std::vector<ChannelFacts> channels;  ///< What the row's `GeometryFacts::channels` points at.
+        std::vector<ChannelFacts>   channels;    ///< What the row's `GeometryFacts::channels` points at.
+        std::vector<PrimitiveFacts> primitives;  ///< What the row's `GeometryFacts::primitives` points at.
     };
 
     struct MaterialStorage
@@ -425,7 +426,8 @@ void ContentStore::ensureGeometry(const vn::graphics::Geometry* geometry, core::
 
     auto           storage = std::make_unique<Data::GeometryStorage>();
     GeometryFacts  fresh;
-    const FactMiss miss                   = buildGeometryFacts(*geometry, fresh, storage->channels);
+    const FactMiss miss =
+        buildGeometryFacts(*geometry, fresh, storage->channels, storage->primitives);
     live.described                        = true;
     // The ATTEMPT, not the success: a description that failed is not retried until the revision moves.
     live.described_revision = revision;

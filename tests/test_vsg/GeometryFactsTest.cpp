@@ -65,9 +65,11 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
     geometry.setIndices(content.indices);
     geometry.setRevision(4U);
 
-    GeometryFacts              facts;
-    std::vector<ChannelFacts>  storage;
-    ASSERT_EQ(buildGeometryFacts(geometry, facts, storage), FactMiss::None);
+    GeometryFacts                facts;
+    std::vector<ChannelFacts>   storage;
+    std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
+    std::vector<vn::vsg::PrimitiveFacts>  primitives;
+    ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, primitives), FactMiss::None);
 
     EXPECT_EQ(facts.geometry, &geometry);
     EXPECT_EQ(facts.revision, 4U);
@@ -80,13 +82,17 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
     EXPECT_EQ(facts.channels[1].key.location, 1U);
     EXPECT_TRUE(channelsMatchLayout(facts)) << "the entry must be usable as authored";
 
-    EXPECT_EQ(facts.index_count, 3U);
-    EXPECT_EQ(facts.first_index, 0U);
+    // ONE ROW PER DRAW: the geometry has one primitive, and it is the row that says how it assembles.
+    ASSERT_EQ(facts.primitives.size(), 1U);
+    const vn::vsg::PrimitiveFacts& draw = facts.primitives[0];
+    EXPECT_EQ(draw.topology, vn::graphics::Topology::Triangles);
+    EXPECT_EQ(draw.index_count, 3U);
+    EXPECT_EQ(draw.first_index, 0U);
     EXPECT_EQ(facts.vertex_offset, 0U);
-    ASSERT_TRUE(facts.indices.has_value()) << "the geometry draws indexed: it has an index stream";
-    EXPECT_EQ(facts.indices->key.kind, StreamKind::Index);
-    EXPECT_NE(facts.indices->values, nullptr);
-    EXPECT_EQ(facts.indices->key.count, 0U) << "the index stream aliases the whole buffer";
+    ASSERT_TRUE(draw.indices.has_value()) << "the primitive draws indexed: it has an index stream";
+    EXPECT_EQ(draw.indices->key.kind, StreamKind::Index);
+    EXPECT_NE(draw.indices->values, nullptr);
+    EXPECT_EQ(draw.indices->key.count, 0U) << "the index stream aliases the whole buffer";
 }
 
 TEST(GeometryFactsTest, TheChannelOrderIsCanonicalFirstAndCustomsAscending)
@@ -106,8 +112,9 @@ TEST(GeometryFactsTest, TheChannelOrderIsCanonicalFirstAndCustomsAscending)
     geometry.addBuffer(4U, custom);
 
     GeometryFacts             facts;
-    std::vector<ChannelFacts> storage;
-    ASSERT_EQ(buildGeometryFacts(geometry, facts, storage), FactMiss::None);
+    std::vector<ChannelFacts>   storage;
+    std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
+    ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, storage_primitives), FactMiss::None);
 
     ASSERT_EQ(facts.channels.size(), 3U);
     EXPECT_EQ(facts.channels[0].key.location, 0U);  // positions
@@ -127,11 +134,12 @@ TEST(GeometryFactsTest, AGeometryWithoutPositionsCannotBeDescribed)
     without_positions.setIndices(content.indices);
 
     GeometryFacts             facts;
-    std::vector<ChannelFacts> storage;
-    EXPECT_EQ(buildGeometryFacts(without_positions, facts, storage), FactMiss::Malformed);
+    std::vector<ChannelFacts>   storage;
+    std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
+    EXPECT_EQ(buildGeometryFacts(without_positions, facts, storage, storage_primitives), FactMiss::Malformed);
 
     Geometry empty;
-    EXPECT_EQ(buildGeometryFacts(empty, facts, storage), FactMiss::Unknown);
+    EXPECT_EQ(buildGeometryFacts(empty, facts, storage, storage_primitives), FactMiss::Unknown);
 
     // ...and an entry that was NOT built leaves no half-filled table behind for a later frame to find.
     EXPECT_TRUE(storage.empty());
@@ -150,12 +158,15 @@ TEST(GeometryFactsTest, AGeometryWithoutIndicesIsDrawnFromItsVertexStreams)
     geometry.setRevision(2U);
 
     GeometryFacts             facts;
-    std::vector<ChannelFacts> storage;
-    ASSERT_EQ(buildGeometryFacts(geometry, facts, storage), FactMiss::None);
+    std::vector<ChannelFacts>   storage;
+    std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
+    ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, storage_primitives), FactMiss::None);
 
-    EXPECT_FALSE(facts.indices.has_value()) << "there is no index stream, and that is a fact about the draw";
-    EXPECT_EQ(facts.index_count, 0U);
-    EXPECT_EQ(facts.first_index, 0U);
+    ASSERT_EQ(facts.primitives.size(), 1U);
+    EXPECT_FALSE(facts.primitives[0].indices.has_value())
+        << "there is no index stream, and that is a fact about the DRAW";
+    EXPECT_EQ(facts.primitives[0].index_count, 0U);
+    EXPECT_EQ(facts.primitives[0].first_index, 0U);
     // The count the draw carries is the position stream's own vertex count (three scalars per vertex here).
     EXPECT_EQ(facts.vertex_count, 3U);
     EXPECT_TRUE(channelsMatchLayout(facts)) << "an unindexed geometry is as drawable as an indexed one";
@@ -173,8 +184,9 @@ TEST(GeometryFactsTest, ANonIndexedSliceCountsItsOwnVertices)
     geometry.setPositions(shared, /*first_vertex*/ 3U, /*vertex_count*/ 3U);
 
     GeometryFacts             facts;
-    std::vector<ChannelFacts> storage;
-    ASSERT_EQ(buildGeometryFacts(geometry, facts, storage), FactMiss::None);
+    std::vector<ChannelFacts>   storage;
+    std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
+    ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, storage_primitives), FactMiss::None);
 
     ASSERT_EQ(facts.channels.size(), 1U);
     EXPECT_EQ(facts.channels[0].key.offset, 9U) << "the channel reads the slice";
@@ -195,8 +207,9 @@ TEST(GeometryFactsTest, ASlicedChannelUploadsItsOwnSegment)
     geometry.setIndices(content.indices);
 
     GeometryFacts             facts;
-    std::vector<ChannelFacts> storage;
-    ASSERT_EQ(buildGeometryFacts(geometry, facts, storage), FactMiss::None);
+    std::vector<ChannelFacts>   storage;
+    std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
+    ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, storage_primitives), FactMiss::None);
 
     ASSERT_EQ(facts.channels.size(), 1U);
     const ChannelFacts& positions = facts.channels[0];
@@ -227,17 +240,82 @@ TEST(GeometryFactsTest, TwoGeometriesOverOneIndexArenaShareOneStreamIdentity)
 
     GeometryFacts             first_facts;
     GeometryFacts             second_facts;
-    std::vector<ChannelFacts> storage_a;
-    std::vector<ChannelFacts> storage_b;
-    ASSERT_EQ(buildGeometryFacts(first, first_facts, storage_a), FactMiss::None);
-    ASSERT_EQ(buildGeometryFacts(second, second_facts, storage_b), FactMiss::None);
+    std::vector<ChannelFacts>   storage_a;
+    std::vector<vn::vsg::PrimitiveFacts> storage_a_primitives;
+    std::vector<ChannelFacts>   storage_b;
+    std::vector<vn::vsg::PrimitiveFacts> storage_b_primitives;
+    ASSERT_EQ(buildGeometryFacts(first, first_facts, storage_a, storage_a_primitives), FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(second, second_facts, storage_b, storage_b_primitives), FactMiss::None);
 
-    // The stream identity is the BUFFER, so the upload is shared; the segment travels with the draw.
-    ASSERT_TRUE(first_facts.indices.has_value());
-    ASSERT_TRUE(second_facts.indices.has_value());
-    EXPECT_EQ(first_facts.indices->key.buffer, second_facts.indices->key.buffer);
-    EXPECT_EQ(first_facts.indices->key.count, 0U);
-    EXPECT_EQ(second_facts.indices->key.count, 0U);
-    EXPECT_EQ(first_facts.first_index, 0U);
-    EXPECT_EQ(second_facts.index_count, 3U);
+    // The stream identity is the BUFFER, so the upload is shared; the segment travels with the DRAW.
+    ASSERT_EQ(first_facts.primitives.size(), 1U);
+    ASSERT_EQ(second_facts.primitives.size(), 1U);
+    ASSERT_TRUE(first_facts.primitives[0].indices.has_value());
+    ASSERT_TRUE(second_facts.primitives[0].indices.has_value());
+    EXPECT_EQ(first_facts.primitives[0].indices->key.buffer, second_facts.primitives[0].indices->key.buffer);
+    EXPECT_EQ(first_facts.primitives[0].indices->key.count, 0U);
+    EXPECT_EQ(second_facts.primitives[0].indices->key.count, 0U);
+    EXPECT_EQ(first_facts.primitives[0].first_index, 0U);
+    EXPECT_EQ(second_facts.primitives[0].index_count, 3U);
+}
+
+/*
+ * @brief A geometry with three parts is THREE draws, each with its own topology and index span.
+ *
+ * This is what primitives exist for: one vertex buffer, one index arena sliced three ways - a triangle
+ * mesh, its edge lines and a point set - and the table has to answer per DRAW, because the plan names a
+ * draw by its primitive index (CompiledCommand::primitive). The rows must therefore be in the geometry's
+ * order, carry that primitive's topology, and state its span; the two primitives over one arena share the
+ * stream identity (the buffer), which is what makes one upload serve both.
+ */
+TEST(GeometryFactsTest, AMultiPrimitiveGeometryDescribesOneRowPerDraw)
+{
+    Content  content;
+    Geometry geometry;
+    geometry.setPositions(content.positions);
+    geometry.setNormals(content.normals);
+
+    // One index arena sliced three ways: triangles (all three indices), edges (the last two), points
+    // (non-indexed).
+    const auto arena = content.indices;   // six indices; the third slice reuses it with a short count
+    vn::graphics::Primitive triangles;
+    triangles.topology = vn::graphics::Topology::Triangles;
+    triangles.indices  = vn::graphics::Primitive::IndexSpan::slice(arena, 0U, 3U);
+    vn::graphics::Primitive edges;
+    edges.topology = vn::graphics::Topology::Lines;
+    edges.indices  = vn::graphics::Primitive::IndexSpan::slice(arena, 1U, 2U);
+    vn::graphics::Primitive points;
+    points.topology = vn::graphics::Topology::Points;   // non-indexed: draws the vertex streams themselves
+    geometry.setPrimitive(0U, std::move(triangles));   // the one 'setPositions' created
+    geometry.addPrimitive(std::move(edges));
+    geometry.addPrimitive(std::move(points));
+
+    GeometryFacts                        facts;
+    std::vector<ChannelFacts>            channels;
+    std::vector<vn::vsg::PrimitiveFacts> primitives;
+    ASSERT_EQ(buildGeometryFacts(geometry, facts, channels, primitives), FactMiss::None);
+
+    ASSERT_EQ(facts.primitives.size(), 3U) << "one row per draw, in the geometry's order";
+    EXPECT_EQ(facts.primitives[0].topology, vn::graphics::Topology::Triangles);
+    EXPECT_EQ(facts.primitives[1].topology, vn::graphics::Topology::Lines);
+    EXPECT_EQ(facts.primitives[2].topology, vn::graphics::Topology::Points);
+
+    ASSERT_TRUE(facts.primitives[0].indices.has_value());
+    ASSERT_TRUE(facts.primitives[1].indices.has_value());
+    EXPECT_FALSE(facts.primitives[2].indices.has_value()) << "the point set is a non-indexed draw";
+
+    EXPECT_EQ(facts.primitives[0].index_count, 3U);
+    EXPECT_EQ(facts.primitives[0].first_index, 0U);
+    EXPECT_EQ(facts.primitives[1].index_count, 2U);
+    EXPECT_EQ(facts.primitives[1].first_index, 1U) << "the segment travels with the draw";
+
+    // The SAME arena: the stream identity is the buffer, so the upload is shared between the two indexed
+    // draws (one upload, two spans), which is the whole reason the key normalizes the slice away.
+    EXPECT_EQ(facts.primitives[0].indices->key.buffer, facts.primitives[1].indices->key.buffer);
+    EXPECT_EQ(facts.primitives[0].indices->key.count, 0U);
+    EXPECT_EQ(facts.primitives[1].indices->key.count, 0U);
+
+    // The non-indexed draw assembles the geometry's own vertex count.
+    EXPECT_EQ(facts.vertex_count, 3U);
+    EXPECT_TRUE(channelsMatchLayout(facts));
 }

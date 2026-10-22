@@ -309,7 +309,8 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
 
     GeometryFacts                        geometry_facts;
     std::vector<vn::vsg::ChannelFacts> channel_storage;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage), FactMiss::None);
+    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
     material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));

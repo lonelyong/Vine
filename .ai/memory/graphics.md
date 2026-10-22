@@ -37,10 +37,11 @@
 - **收集与计划**：`RenderCommand::primitive_index` + `primitive()`；Scene 一条 primitive 一条命令；
   `CollectedCommand`/`CompiledCommand` 带 `primitive`，前者还带 primitive 的 `topology`；拾取只打
   `Triangles` 图元，命中带 `primitiveIndex`。
-- **本片后端边界（重要）**：`buildGeometryFacts` 仍只描述一个索引流，`primitiveCount() > 1` ⇒
-  `FactMiss::Malformed`（拒绝+报告，不是画第一份 N 次）；多部件资产暂时仍用"多几何体 + 共用 buffer +
-  不同切片"（guide §2.7）。下一片 = `GeometryFacts` 的 `vector<PrimitiveFacts>` + `ContentPass` 按
-  `command.primitive` 取行；判据预算：三图元 ⇒ 3 draw / 2~3 管线 / 顶点 uploads=1，改一份索引只传一份。
+- **后端（同日第二片）**：`GeometryFacts::primitives` 每 draw 一行（topology + 索引流 + span + 计数）；
+  `ContentPass` 读 `command.primitive` 那一行（越界一次报告并跳过）；索引流仍归一化到整段 buffer ⇒ 同 arena
+  的多个 primitive 共享一次上传；`channelsMatchLayout` 逐 primitive 判可否组装。判据
+  `GeometryFactsTest.AMultiPrimitiveGeometryDescribesOneRowPerDraw`（三图元 ⇒ 三行、span 各归各的、
+  同 arena 共享流身份、非索引用几何体顶点数）。
 - 判据：`test_graphics` 414、`test_vsg` 480、ctest 24/24 绿；网关每阶段干净（单图元逐像素不变）。
   设计见 `.ai/design/graphics-primitives-2026-10-22.md`。
 

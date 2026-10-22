@@ -1170,14 +1170,24 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         ++bound;
     }
 
+    // The DRAW's own row: a geometry is a set of channels plus N primitives, and the plan names one by its
+    // index (CompiledCommand::primitive). Everything below reads THIS row - the index stream, its span and the
+    // vertex count - because two primitives of one geometry may read different buffers, or none at all.
+    if (command.primitive >= geometry.entry->primitives.size())
+    {
+        reportRefused("the command's geometry", "it names a primitive this geometry no longer has");
+        return false;
+    }
+    const PrimitiveFacts& primitive = geometry.entry->primitives[command.primitive];
+
     // The stream the draw is ASSEMBLED from, and the two modes are different commands: with an index stream
     // the span travels with the draw (the bind aliases the whole buffer, so an index arena is uploaded once),
     // and without one the vertex streams themselves are the geometry (see api/GeometryFacts).
     ::vsg::ref_ptr<::vsg::BindIndexBuffer> index_bind;
-    if (geometry.entry->indices.has_value())
+    if (primitive.indices.has_value())
     {
-        const StreamUploads::IndexResult acquired = scope_.uploads->acquireIndex(
-            geometry.entry->indices->streamKey(), geometry.entry->indices->scalars());
+        const StreamUploads::IndexResult acquired =
+            scope_.uploads->acquireIndex(primitive.indices->streamKey(), primitive.indices->scalars());
         if (acquired.bind == nullptr)
         {
             reportRefused("the command's geometry", "its index stream could not be uploaded");
@@ -1276,10 +1286,10 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
                                         static_cast<float>(draw.viewport.height) };
     // Which of the entry's two spans the draw reads: an indexed entry states the slice of its index stream, an
     // unindexed one the vertex count - never both, because the command they lead to is a different one.
-    if (geometry.entry->indices.has_value())
+    if (primitive.indices.has_value())
     {
-        record.index_count   = geometry.entry->index_count;
-        record.first_index   = geometry.entry->first_index;
+        record.index_count   = primitive.index_count;
+        record.first_index   = primitive.first_index;
         record.vertex_offset = geometry.entry->vertex_offset;
     }
     else

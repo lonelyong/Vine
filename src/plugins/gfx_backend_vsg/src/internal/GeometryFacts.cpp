@@ -54,25 +54,19 @@ namespace
 }  // namespace
 
 FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFacts& out,
-                            std::vector<ChannelFacts>& storage)
+                            std::vector<ChannelFacts>& storage,
+                            std::vector<PrimitiveFacts>& primitive_storage)
 {
     storage.clear();
+    primitive_storage.clear();
     out          = GeometryFacts{};
     out.geometry = &geometry;
     out.revision = geometry.revision();
 
-    // THE BOUNDARY OF THIS SLICE: one draw per geometry. The SDK and the plan already carry a draw's identity
-    // (Geometry::primitiveCount / RenderCommand::primitive_index / CompiledCommand::primitive), but this table
-    // still describes ONE index stream, so a geometry that states several primitives is REFUSED rather than
-    // drawn as its first primitive N times - which would be a wrong picture nobody could explain.
-    // The follow-up is per-primitive rows (topology + index span + count) and one draw per command; until then
-    // a multi-part asset is expressed as several geometries sharing buffers (the arena rule, see the guide's
-    // §2.7), which needs no new backend work.
-    if (geometry.primitiveCount() > 1U) {
-        return FactMiss::Malformed;
-    }
+    // A geometry with data always has at least one draw (see Geometry::addBuffer), and one that was cleared
+    // deliberately draws nothing - both are facts worth describing rather than guessing at.
     if (geometry.primitiveCount() == 0U) {
-        return FactMiss::Unknown;  // no draw at all: nothing to describe
+        return FactMiss::Unknown;
     }
 
     const std::vector<std::uint32_t> locations = geometry.bufferLocations();
@@ -163,42 +157,55 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
     // roles first, then the custom locations), which is the vertex-binding order.
     out.channels = storage;
 
-    if (!geometry.hasIndices())
+    // The vertices a NON-indexed draw assembles from: the position stream's own count. It is stated once, for
+    // the geometry, because it is a property of the data - every non-indexed primitive draws all of it.
+    out.vertex_count = static_cast<std::uint32_t>(position_vertices);
+    if (out.vertex_count == 0U)
     {
-        // NON-INDEXED: there is no index stream to describe, and the draw assembles its primitives from the
-        // vertex streams themselves - so the count it carries is the position stream's own vertex count. This
-        // is a different draw COMMAND rather than a degenerate indexed one (see GeometryFacts), and the
-        // topology that turns those vertices into points, lines or triangles is the state's business.
-        out.vertex_count = static_cast<std::uint32_t>(position_vertices);
-        if (out.vertex_count == 0U)
+        return FactMiss::Malformed;  // positions too short to form a single vertex: nothing to assemble
+    }
+
+    // ONE ROW PER PRIMITIVE, in the geometry's own order: the plan names a draw by its primitive index, so
+    // the rows must be the geometry's order and nothing else. Each index stream is normalized to its WHOLE
+    // buffer (see the file note): the bind aliases it and the draw states the span, which is what lets
+    // primitives slicing one arena share a single upload.
+    primitive_storage.reserve(geometry.primitiveCount());
+    for (std::size_t index = 0; index < geometry.primitiveCount(); ++index)
+    {
+        const vn::graphics::Primitive* primitive = geometry.primitive(index);
+        if (primitive == nullptr)
         {
-            return FactMiss::Malformed;  // positions too short to form a single vertex: nothing to assemble
+            continue;  // cannot happen (the index is in range); a missing row would misalign the plan's
         }
-        return FactMiss::None;
+        PrimitiveFacts row;
+        row.topology = primitive->topology;
+        if (primitive->isIndexed())
+        {
+            const vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> index_buffer = primitive->indices.values;
+            if (index_buffer == nullptr || primitive->indexCount() == 0U)
+            {
+                return FactMiss::Malformed;  // an indexed primitive that draws no index: nothing to assemble
+            }
+            IndexFacts index_facts;
+            index_facts.key.kind       = core::StreamKind::Index;
+            index_facts.key.location   = 0U;
+            index_facts.key.components = 1U;
+            index_facts.key.buffer     = index_buffer.get();
+            index_facts.key.revision   = index_buffer->revision();
+            index_facts.key.offset     = 0U;
+            index_facts.key.count      = 0U;  // the whole buffer: primitives over one arena share one upload
+            index_facts.values         = index_buffer;
+            row.indices                = index_facts;
+            row.index_count            = static_cast<std::uint32_t>(primitive->indexCount());
+            row.first_index            = static_cast<std::uint32_t>(primitive->indices.begin());
+        }
+        else if (out.vertex_count == 0U)
+        {
+            return FactMiss::Malformed;  // a non-indexed draw with no vertices to assemble
+        }
+        primitive_storage.push_back(std::move(row));
     }
-
-    // The index stream, normalized to the whole buffer (see the file note): the buffer is the identity, the
-    // segment travels with the draw.
-    const vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> index_buffer = geometry.indicesBuffer();
-    if (index_buffer == nullptr || geometry.indexCount() == 0U)
-    {
-        return FactMiss::Malformed;  // hasIndices() promised a range: an empty one draws nothing
-    }
-
-    IndexFacts index_facts;
-    index_facts.key.kind       = core::StreamKind::Index;
-    index_facts.key.location   = 0U;
-    index_facts.key.components = 1U;
-    index_facts.key.buffer     = index_buffer.get();
-    index_facts.key.revision   = index_buffer->revision();
-    index_facts.key.offset     = 0U;
-    index_facts.key.count      = 0U;  // the whole buffer: two geometries over one arena share one upload
-
-    index_facts.values = index_buffer;
-    out.indices      = index_facts;
-
-    out.index_count   = static_cast<std::uint32_t>(geometry.indexCount());
-    out.first_index   = static_cast<std::uint32_t>(geometry.firstIndex());
+    out.primitives    = primitive_storage;
     out.vertex_offset = 0U;  // the stream starts at the geometry's first vertex (see the file note)
 
     return FactMiss::None;

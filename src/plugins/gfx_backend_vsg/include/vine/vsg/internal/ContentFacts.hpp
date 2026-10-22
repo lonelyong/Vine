@@ -132,7 +132,27 @@ struct IndexFacts
     }
 };
 
-/** @brief What a geometry identity answers with: its layout, its vertex channels, and how it is assembled. */
+/** @brief ONE of a geometry's draws: how it assembles, and the index span it reads.
+ *
+ * @details
+ * - A geometry is a set of vertex channels plus N primitives (see the SDK's Primitive.hpp), and a
+ *   primitive IS a draw: the plan names one by its index (CompiledCommand::primitive), so this row is
+ *   what a command's `(geometry, primitive)` pair resolves to.
+ * - The index stream is optional HERE rather than on the geometry: an unindexed primitive assembles from
+ *   the vertex streams themselves and is a different COMMAND (`vkCmdDraw`) than an indexed one
+ *   (`vkCmdDrawIndexed`), which is why the absence has to be a fact of the DRAW.
+ * - The stream is normalized to its WHOLE buffer (the bind aliases all of it, the draw states the span),
+ *   so primitives slicing one arena share a single upload.
+ */
+struct PrimitiveFacts
+{
+    vn::graphics::Topology    topology{vn::graphics::Topology::Triangles};  ///< How it assembles.
+    std::optional<IndexFacts> indices{};      ///< The index stream when this draw is indexed.
+    std::uint32_t             index_count{0}; ///< Indices it reads (indexed only).
+    std::uint32_t             first_index{0}; ///< First index of its span (indexed only).
+};
+
+/** @brief What a geometry identity answers with: its layout, its vertex channels, and its draws. */
 struct GeometryFacts
 {
     const void*    geometry{nullptr};   ///< The identity the plan names.
@@ -140,14 +160,10 @@ struct GeometryFacts
     core::VertexLayoutKey layout{};     ///< Which channels this geometry feeds (the pipeline key's half).
     std::span<const ChannelFacts> channels{};  ///< One per fed channel, in binding order.
 
-    /// The index stream, when the geometry draws INDEXED. Its absence is a fact, not a default: an
-    /// unindexed draw assembles its primitives from the vertex streams themselves and is a different
-    /// COMMAND (`vkCmdDraw`) than an indexed one (`vkCmdDrawIndexed`) - the same way
-    /// `core::GeometryStreams` treats an absent index stream, and the reason the two modes cannot be
-    /// told apart by the vertex layout alone.
-    std::optional<IndexFacts> indices{};
-    std::uint32_t  index_count{0};      ///< Indices of this geometry (indexed only).
-    std::uint32_t  first_index{0};      ///< First index of the span the geometry states (indexed only).
+    /// The draws, in the geometry's own order: `CompiledCommand::primitive` indexes this row. Empty is a
+    /// fact ("this geometry draws nothing"), never a default - a geometry with data always has one.
+    std::span<const PrimitiveFacts> primitives{};
+
     /// Vertices a NON-indexed draw reads: the position stream's own vertex count (the SDK's definition of
     /// `Geometry::vertexCount()`), because positions are the one required attribute and the only stream the
     /// count can be derived from.

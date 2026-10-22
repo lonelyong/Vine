@@ -62,8 +62,8 @@
 - `graphics-primitives-2026-10-22.md` —— **几何体与图元（2026-10-22，R3 第一片）**：拓扑从 `StateNode`
   搬到 `Primitive`（拓扑是 draw 的事实，资产是一个整体）；`Geometry` 只剩通道集，"数据即绘制"（装位置通道时
   自动有一个默认三角形图元），`Primitive` = 拓扑 + 索引片段 + 材质 + 程序；收集器一条 primitive 一条命令，
-  计划带 `(primitive, topology)`，拾取只打三角形图元；**本片后端边界**：仍只描述一个索引流，`primitiveCount>1`
-  一律 `FactMiss::Malformed` 拒绝而不是画错。下一片 = 后端按 primitive 出行（§3，含预算好的 uploads 判据）。
+  计划带 `(primitive, topology)`，拾取只打三角形图元；**两片都已落地**：后端 `GeometryFacts::primitives` 每 draw
+  一行、`ContentPass` 按 `command.primitive` 取行；同一索引 arena 的多个 primitive 共享一次上传。
 - `graphics-msaa-2026-10-22.md` —— **MSAA（2026-10-22，R6 + R6b）**：采样数是**目标**的属性而非管线开关
   （`RenderTarget::setSamples` → `TargetShape::samples` → 管线键 → 通道与图像）；离屏目标自建多重采样图并
   把**颜色与深度**各解析成一张单采样图（`picture()` / `depthPicture()` 是"画面"的唯一定义，回读/采样/借出/
