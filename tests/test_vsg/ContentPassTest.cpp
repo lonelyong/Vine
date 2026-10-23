@@ -68,7 +68,10 @@
 #include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/support/VsgDynamicState.hpp>
 
+#include "TestGeometryBuilders.hpp"
+
 using vn::graphics::Geometry;
+using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
@@ -181,7 +184,7 @@ struct Mesh
         , geometry(new Geometry())
     {
         geometry->setPositions(positions);
-        geometry->setIndices(indices);
+        setPrimitiveIndices(*geometry, 0U, indices);
         if (!texcoord_values.empty())
         {
             geometry->setTexcoords2(texcoords);
@@ -265,7 +268,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     Triangle                                   triangle;
     const vn::intrusive_ptr<Geometry>        geometry(new Geometry());
     geometry->setPositions(triangle.positions);
-    geometry->setIndices(triangle.indices);
+    setPrimitiveIndices(*geometry, 0U, triangle.indices);
     geometry->setRevision(1U);
 
     GeometryFacts                        geometry_facts;
@@ -445,7 +448,7 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
     Triangle                                   triangle;
     const vn::intrusive_ptr<Geometry>        geometry(new Geometry());
     geometry->setPositions(triangle.positions);
-    geometry->setIndices(triangle.indices);
+    setPrimitiveIndices(*geometry, 0U, triangle.indices);
     geometry->setRevision(1U);
 
     GeometryFacts                        geometry_facts;
@@ -1137,7 +1140,7 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
     Triangle                            triangle;
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
     geometry->setPositions(triangle.positions);
-    geometry->setIndices(triangle.indices);
+    setPrimitiveIndices(*geometry, 0U, triangle.indices);
     geometry->setRevision(1U);
     GeometryFacts                        geometry_facts;
     std::vector<vn::vsg::ChannelFacts>   channel_storage;
@@ -1312,7 +1315,7 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     Triangle                            triangle;
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
     geometry->setPositions(triangle.positions);
-    geometry->setIndices(triangle.indices);
+    setPrimitiveIndices(*geometry, 0U, triangle.indices);
     geometry->setRevision(1U);
     GeometryFacts                        geometry_facts;
     std::vector<vn::vsg::ChannelFacts>   channel_storage;
@@ -1539,7 +1542,7 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
         geometry->setTexcoords2(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(texcoords)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
         geometry->setRevision(1U);
     }
@@ -1797,7 +1800,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
         geometry->setTexcoords2(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(texcoords)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
         geometry->setRevision(1U);
     }
@@ -2036,7 +2039,7 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
         geometry->setTexcoords2(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(texcoords)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
         geometry->setRevision(1U);
     }
@@ -2341,7 +2344,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
         geometry->setTexcoords2(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(texcoords)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
         geometry->setRevision(1U);
     }
@@ -2650,7 +2653,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     Triangle                            triangle;
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
     geometry->setPositions(triangle.positions);
-    geometry->setIndices(triangle.indices);
+    setPrimitiveIndices(*geometry, 0U, triangle.indices);
     geometry->setRevision(1U);
     GeometryFacts                        geometry_facts;
     std::vector<vn::vsg::ChannelFacts>   channel_storage;
@@ -2854,7 +2857,7 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     Triangle                            triangle;
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
     geometry->setPositions(triangle.positions);
-    geometry->setIndices(triangle.indices);
+    setPrimitiveIndices(*geometry, 0U, triangle.indices);
     geometry->setRevision(1U);
     GeometryFacts                        geometry_facts;
     std::vector<vn::vsg::ChannelFacts>   channel_storage;
@@ -3098,7 +3101,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     {
         Triangle triangle;
         geometry->setPositions(triangle.positions);
-        geometry->setIndices(triangle.indices);
+        setPrimitiveIndices(*geometry, 0U, triangle.indices);
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
@@ -3562,7 +3565,7 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
         const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 3.0F, -1.0F, 0.0F, -1.0F, 3.0F, 0.0F };
         geometry->setPositions(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
         geometry->setRevision(1U);
     }
@@ -3940,7 +3943,7 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
                                             0.0F,  1.0F,  0.0F, -1.0F, 1.0F, 0.0F };
         geometry->setPositions(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
         geometry->setRevision(1U);
     }
@@ -4192,7 +4195,7 @@ TEST(ContentPassTest, ASpecularIntensityScalesWhatTheSurfaceReflects)
         geometry->setPositions(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
         geometry->setNormals(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(normals)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
         geometry->setRevision(1U);
     }
@@ -4469,7 +4472,7 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
         const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 3.0F, -1.0F, 0.0F, -1.0F, 3.0F, 0.0F };
         geometry->setPositions(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
         geometry->setRevision(1U);
     }
@@ -4648,7 +4651,7 @@ TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
         const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 3.0F, -1.0F, 0.0F, -1.0F, 3.0F, 0.0F };
         geometry->setPositions(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
         geometry->setRevision(1U);
     }
@@ -4798,7 +4801,7 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
         const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 3.0F, -1.0F, 0.0F, -1.0F, 3.0F, 0.0F };
         geometry->setPositions(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
         geometry->setRevision(1U);
     }
@@ -5073,7 +5076,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
         const std::vector<float> positions{ -1.0F, -1.0F, 0.0F, 3.0F, -1.0F, 0.0F, -1.0F, 3.0F, 0.0F };
         geometry->setPositions(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
         geometry->setRevision(1U);
     }
@@ -5431,7 +5434,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
         geometry->setTexcoords2(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(texcoords)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
         geometry->setRevision(1U);
     }
@@ -5678,7 +5681,7 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
         geometry->setTexcoords2(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(texcoords)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
         geometry->setRevision(1U);
     }
@@ -5910,7 +5913,7 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
         geometry->setTexcoords2(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(texcoords)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
         geometry->setRevision(1U);
     }
@@ -6133,7 +6136,7 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
         geometry->setTexcoords2(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(texcoords)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
         geometry->setRevision(1U);
     }
@@ -6376,7 +6379,7 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(positions)));
         geometry->setTexcoords3(
             vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(directions)));
-        geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+        setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
         geometry->setRevision(1U);
         return geometry;
@@ -6627,7 +6630,8 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(
         new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 0.0F })));
     geometry->setRevision(1U);
-    ASSERT_FALSE(geometry->hasIndices()) << "the fixture is the shape under test: no index arena exists";
+    ASSERT_EQ(geometry->primitiveCount(), 1U);
+    ASSERT_FALSE(geometry->primitive(0)->isIndexed()) << "the fixture is the shape under test: no index arena exists";
 
     const vn::intrusive_ptr<Material> material(new Material());
     material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));

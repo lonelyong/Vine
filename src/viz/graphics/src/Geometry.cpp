@@ -224,21 +224,6 @@ std::uint64_t Geometry::ignoredPrimitiveEdits() const noexcept
     return ignored_primitive_edits_;
 }
 
-void Geometry::setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices, std::size_t first_index,
-                          std::size_t index_count)
-{
-    Primitive draw;
-    if (const Primitive* existing = primitive(0)) {
-        draw = *existing;   // the other fields of the one-draw spelling stay what they were
-    }
-    draw.indices = Primitive::IndexSpan::slice(std::move(indices), first_index, index_count);
-    if (primitiveCount() == 0) {
-        addPrimitive(std::move(draw));
-        return;
-    }
-    setPrimitive(0, std::move(draw));
-}
-
 bool Geometry::setInstanceTransforms(std::size_t index, BufferSlice<float> transforms)
 {
     if (index >= primitives_.size()) {
@@ -257,11 +242,6 @@ bool Geometry::setInstanceTransforms(std::size_t index, BufferSlice<float> trans
     return true;
 }
 
-bool Geometry::setInstanceTransforms(BufferSlice<float> transforms)
-{
-    return setInstanceTransforms(0U, std::move(transforms));
-}
-
 bool Geometry::setVisibleInstanceCount(std::size_t index, std::size_t count)
 {
     if (index >= primitives_.size()) {
@@ -272,11 +252,6 @@ bool Geometry::setVisibleInstanceCount(std::size_t index, std::size_t count)
     updated.setVisibleInstanceCount(count);
     setPrimitive(index, std::move(updated));
     return true;
-}
-
-bool Geometry::setVisibleInstanceCount(std::size_t count)
-{
-    return setVisibleInstanceCount(0U, count);
 }
 
 bool Geometry::clearVisibleInstanceCount(std::size_t index)
@@ -291,11 +266,6 @@ bool Geometry::clearVisibleInstanceCount(std::size_t index)
     return true;
 }
 
-bool Geometry::clearVisibleInstanceCount()
-{
-    return clearVisibleInstanceCount(0U);
-}
-
 bool Geometry::clearInstanceTransforms(std::size_t index)
 {
     if (index >= primitives_.size()) {
@@ -308,81 +278,34 @@ bool Geometry::clearInstanceTransforms(std::size_t index)
     return true;
 }
 
-bool Geometry::clearInstanceTransforms()
-{
-    return clearInstanceTransforms(0U);
-}
-
-bool Geometry::hasIndices() const
-{
-    const Primitive* draw = primitive(0);
-    return draw != nullptr && draw->isIndexed();
-}
-
-std::span<const std::uint32_t> Geometry::indices() const
-{
-    const Primitive* draw = primitive(0);
-    return draw != nullptr ? draw->indices.span() : std::span<const std::uint32_t>{};
-}
-
-std::size_t Geometry::firstIndex() const
-{
-    const Primitive* draw = primitive(0);
-    return draw != nullptr ? draw->indices.begin() : 0U;
-}
-
-std::size_t Geometry::indexCount() const
-{
-    const Primitive* draw = primitive(0);
-    return draw != nullptr ? draw->indexCount() : 0U;
-}
-
-intrusive_ptr<const vn::Buffer<std::uint32_t>> Geometry::indicesBuffer() const
-{
-    const Primitive* draw = primitive(0);
-    return draw != nullptr ? draw->indices.values : intrusive_ptr<const vn::Buffer<std::uint32_t>>{};
-}
-
 raw_ptr<Material> Geometry::material() const
 {
-    const Primitive* draw = primitive(0);
-    return draw != nullptr ? draw->material.get() : nullptr;
+    return material_.get();
 }
 
 void Geometry::setMaterial(intrusive_ptr<Material> m)
 {
-    if (primitiveCount() == 0) {
-        Primitive draw;
-        draw.material = std::move(m);
-        addPrimitive(std::move(draw));
-        return;
+    if (material_.get() == m.get()) {
+        return;  // an assignment that changes nothing must not cost the frame's collection
     }
-    for (std::size_t index = 0; index < primitiveCount(); ++index) {
-        Primitive draw = *primitive(index);
-        draw.material  = m;
-        setPrimitive(index, std::move(draw));
-    }
+    material_ = std::move(m);
+    // The collector folds this default into the primitive's material; a memo built before the edit must
+    // not answer with the old one.
+    announceContentChange();
 }
 
 raw_ptr<ShaderProgram> Geometry::program() const
 {
-    const Primitive* draw = primitive(0);
-    return draw != nullptr ? draw->program.get() : nullptr;
+    return program_.get();
 }
 
 void Geometry::setProgram(intrusive_ptr<ShaderProgram> program)
 {
-    if (primitiveCount() == 0) {
-        Primitive draw;
-        draw.program = std::move(program);
-        addPrimitive(std::move(draw));
+    if (program_.get() == program.get()) {
         return;
     }
-    for (std::size_t index = 0; index < primitiveCount(); ++index) {
-        Primitive draw = *primitive(index);
-        draw.program   = program;
-        setPrimitive(index, std::move(draw));
-    }
+    program_ = std::move(program);
+    announceContentChange();
 }
 
 std::uint64_t Geometry::revision() const

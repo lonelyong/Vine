@@ -2,8 +2,8 @@
  * @brief Channels that read a SEGMENT of one buffer: "one arena, one segment per geometry" (P7).
  *
  * `AttributeChannel::offset` / `scalarCount` are what make an arena expressible — several geometries share one
- * buffer and each reads its own scalars — and the geometry's INDEX stream takes a span the same way
- * (`Geometry::setIndices(buffer, first_index, index_count)`).
+ * buffer and each reads its own scalars — and a primitive's INDEX span takes a segment the same way
+ * (`Primitive::IndexSpan::slice(buffer, first_index, index_count)`).
  *
  * What these tests pin is that the slice is the channel, all the way through the SDK:
  *
@@ -242,14 +242,12 @@ TEST(GeometryTest, TheIndexStreamIsTheSameKindOfSegment)
     // ItsSpan pins the numbers; this pins that the numbers come from the shared rule and the shared type.
     const auto indices = intrusive_ptr<const vn::Buffer<std::uint32_t>>(
         new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 0u, 1u, 2u }));
-    auto geometry = intrusive_ptr<Geometry>(new Geometry());
-
-    geometry->setIndices(indices, 4u, 0u); // "the rest of the arena"
-    EXPECT_EQ(geometry->indexCount(), 2u);
-    EXPECT_EQ(geometry->firstIndex(), 4u);
-    geometry->setIndices(indices, 6u, 0u); // past the end clamps to empty
-    EXPECT_FALSE(geometry->hasIndices());
-    EXPECT_EQ(geometry->firstIndex(), 6u) << "the clamped start, not the unclamped one";
+    const Primitive::IndexSpan rest = Primitive::IndexSpan::slice(indices, 4u, 0u); // "the rest of the arena"
+    EXPECT_EQ(rest.size(), 2u);
+    EXPECT_EQ(rest.begin(), 4u);
+    const Primitive::IndexSpan past = Primitive::IndexSpan::slice(indices, 6u, 0u); // past the end clamps
+    EXPECT_TRUE(past.span().empty());
+    EXPECT_EQ(past.begin(), 6u) << "the clamped start, not the unclamped one";
 
     // The same inputs, the same rule: an element slice and a scalar channel resolve their length with one
     // function, so "the rest" cannot come out as two different numbers for two streams of one geometry.
@@ -319,60 +317,60 @@ TEST(GeometryTest, TheIndexStreamsTwoSpellingsShareOneSegment)
     const auto arena = intrusive_ptr<vn::Buffer<std::uint32_t>>(
         new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 2u, 1u, 0u }));
 
-    auto whole = intrusive_ptr<Geometry>(new Geometry());
-    whole->setIndices(arena);
-    auto segment = intrusive_ptr<Geometry>(new Geometry());
-    segment->setIndices(arena, 0u, 6u); // the same range, stated as a segment
+    Primitive whole;
+    whole.indices = Primitive::IndexSpan::whole(arena);
+    Primitive segment;
+    segment.indices = Primitive::IndexSpan::slice(arena, 0u, 6u); // the same range, stated as a segment
 
-    EXPECT_EQ(whole->indicesBuffer(), arena);
-    EXPECT_EQ(segment->indicesBuffer(), arena);
-    EXPECT_EQ(whole->firstIndex(), 0u);
-    EXPECT_EQ(segment->firstIndex(), 0u);
-    EXPECT_EQ(whole->indexCount(), 6u);
-    EXPECT_EQ(segment->indexCount(), 6u);
-    EXPECT_EQ(whole->indices().size(), segment->indices().size());
+    EXPECT_EQ(whole.indices.values, arena);
+    EXPECT_EQ(segment.indices.values, arena);
+    EXPECT_EQ(whole.indices.begin(), 0u);
+    EXPECT_EQ(segment.indices.begin(), 0u);
+    EXPECT_EQ(whole.indexCount(), 6u);
+    EXPECT_EQ(segment.indexCount(), 6u);
+    EXPECT_EQ(whole.indices.span().size(), segment.indices.span().size());
 
     // The difference between the two spellings is the same as on the channel side: a whole buffer is
     // "follow it", a segment keeps the count it stated.
     arena->append(std::vector<std::uint32_t>{ 0u, 1u, 2u });
-    EXPECT_EQ(whole->indexCount(), 9u) << "the whole-buffer spelling followed the buffer";
-    EXPECT_EQ(segment->indexCount(), 6u) << "the segment stayed the segment";
+    EXPECT_EQ(whole.indexCount(), 9u) << "the whole-buffer spelling followed the buffer";
+    EXPECT_EQ(segment.indexCount(), 6u) << "the segment stayed the segment";
 
-    // And a geometry that states no buffer at all has an empty stream, whichever view is asked.
-    auto none = intrusive_ptr<Geometry>(new Geometry());
-    EXPECT_FALSE(none->hasIndices());
-    EXPECT_TRUE(none->indices().empty());
-    EXPECT_EQ(none->indexCount(), 0u);
-    EXPECT_EQ(none->firstIndex(), 0u);
+    // And a primitive that states no buffer at all has an empty stream.
+    const Primitive none;
+    EXPECT_FALSE(none.isIndexed());
+    EXPECT_TRUE(none.indices.span().empty());
+    EXPECT_EQ(none.indexCount(), 0u);
+    EXPECT_EQ(none.indices.begin(), 0u);
 }
 
 TEST(GeometryTest, IndexSliceExposesItsSpan)
 {
     const auto indices = intrusive_ptr<const vn::Buffer<std::uint32_t>>(
         new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 0u, 1u, 2u }));
-    auto geom = intrusive_ptr<Geometry>(new Geometry());
+    Primitive draw;
 
-    geom->setIndices(indices, 3u, 3u);
-    EXPECT_TRUE(geom->hasIndices());
-    EXPECT_EQ(geom->firstIndex(), 3u);
-    EXPECT_EQ(geom->indexCount(), 3u);
-    ASSERT_EQ(geom->indices().size(), 3u) << "the drawn span, not the buffer's six";
+    draw.indices = Primitive::IndexSpan::slice(indices, 3u, 3u);
+    EXPECT_TRUE(draw.isIndexed());
+    EXPECT_EQ(draw.indices.begin(), 3u);
+    EXPECT_EQ(draw.indexCount(), 3u);
+    ASSERT_EQ(draw.indices.span().size(), 3u) << "the drawn span, not the buffer's six";
 
     // The buffer itself is still reachable whole: that is what a backend aliases and what an index arena
-    // shares between its geometries.
-    EXPECT_EQ(geom->indicesBuffer()->size(), 6u);
+    // shares between its draws.
+    EXPECT_EQ(draw.indices.values->size(), 6u);
 
     // No fixed count means "to the end", and the slice is never longer than the buffer.
-    geom->setIndices(indices, 3u, 0u);
-    EXPECT_EQ(geom->indexCount(), 3u);
-    geom->setIndices(indices, 5u, 0u);
-    EXPECT_EQ(geom->indexCount(), 1u);
-    EXPECT_TRUE(geom->hasIndices());
-    geom->setIndices(indices, 6u, 0u);
-    EXPECT_FALSE(geom->hasIndices()) << "a span that starts past the end draws nothing";
+    draw.indices = Primitive::IndexSpan::slice(indices, 3u, 0u);
+    EXPECT_EQ(draw.indexCount(), 3u);
+    draw.indices = Primitive::IndexSpan::slice(indices, 5u, 0u);
+    EXPECT_EQ(draw.indexCount(), 1u);
+    EXPECT_TRUE(draw.isIndexed());
+    draw.indices = Primitive::IndexSpan::slice(indices, 6u, 0u);
+    EXPECT_FALSE(draw.isIndexed()) << "a span that starts past the end draws nothing";
 
-    geom->setIndices(indices, 0u, 0u);
-    EXPECT_EQ(geom->indexCount(), 6u);
+    draw.indices = Primitive::IndexSpan::slice(indices, 0u, 0u);
+    EXPECT_EQ(draw.indexCount(), 6u);
 }
 
 TEST(RayIntersectionTest, HitsTheSegmentNotTheArena)

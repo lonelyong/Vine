@@ -407,9 +407,10 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
             return;
         }
         // ONE COMMAND PER PRIMITIVE: a primitive IS a draw (its own topology, index span, material and
-        // program), and a geometry with none draws nothing. The material / program a primitive states wins;
-        // otherwise the nearest StateNode's applies - the same two-level rule as before, with the primitive
-        // as the leaf layer instead of the geometry (which no longer owns either: see Primitive.hpp).
+        // program), and a geometry with none draws nothing. The fold is three levels: a primitive's own
+        // material / program wins, otherwise the GEOMETRY's default (the leaf's own value), otherwise the
+        // nearest StateNode's - so "this leaf is shaded by m" is one geometry-level value and a primitive
+        // can still specialize it.
         const float effective = std::clamp(node_opacity, 0.0f, 1.0f);
         for (std::size_t index = 0; index < geometry->primitiveCount(); ++index) {
             const Primitive* primitive = geometry->primitive(index);
@@ -421,10 +422,17 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
             if (primitive->hasInstances() && primitive->visibleInstanceCount() == 0u) {
                 continue;
             }
-            const MaterialPtr material = primitive->material != nullptr ? primitive->material
-                                                                        : MaterialPtr(subtree.material);
-            const ShaderProgramPtr program = primitive->program != nullptr ? primitive->program
-                                                                           : ShaderProgramPtr(subtree.program);
+            const raw_ptr<Material> geometry_material = geometry->material();
+            const MaterialPtr       material =
+                primitive->material != nullptr
+                    ? primitive->material
+                    : (geometry_material != nullptr ? MaterialPtr(geometry_material) : MaterialPtr(subtree.material));
+            const raw_ptr<ShaderProgram> geometry_program = geometry->program();
+            const ShaderProgramPtr       program =
+                primitive->program != nullptr
+                    ? primitive->program
+                    : (geometry_program != nullptr ? ShaderProgramPtr(geometry_program)
+                                                   : ShaderProgramPtr(subtree.program));
             auto& cmd = out.emplace_back(intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)), material,
                                          node_world, static_cast<std::uint32_t>(index));
             cmd.opacity = effective;

@@ -29,6 +29,7 @@
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
+
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderCommand.hpp>
@@ -55,8 +56,11 @@
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
 
+#include "TestGeometryBuilders.hpp"
+
 using vn::graphics::Camera;
 using vn::graphics::Geometry;
+using vn::test::setPrimitiveIndices;
 using vn::graphics::Light;
 using vn::graphics::LightType;
 using vn::graphics::Material;
@@ -518,7 +522,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
         auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
         geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(
             new vn::Buffer<float>(std::move(positions))));
-        geometry->setIndices(indices);
+        setPrimitiveIndices(*geometry, 0U, indices);
         geometry->setRevision(1U);
         return geometry;
     };

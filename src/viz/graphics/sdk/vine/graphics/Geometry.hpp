@@ -289,12 +289,13 @@ class VN_GRAPHICS_API Geometry : public Node {
     VN_OBJECT_META_DECL;
 
   public:
-    /** @brief Constructs a geometry with no channels and ONE default primitive (triangles, non-indexed).
+    /** @brief Constructs a geometry with no channels and no primitives (it draws nothing until data arrives).
      *
      * @details
-     * - The primitive is what makes the data drawable: a geometry without one would say every vertex stream
-     *   and never say how to assemble them. A caller that wants several parts appends more (addPrimitive);
-     *   one that wants none at all clears them (clearPrimitives).
+     * - The first POSITION channel installs the default draw (triangles, non-indexed): a geometry with data
+     *   and no primitive would say every vertex stream and never say how to assemble them. A caller that
+     *   wants several parts appends more (addPrimitive); one that wants none at all clears them
+     *   (clearPrimitives).
      */
     Geometry();
     ~Geometry();
@@ -306,8 +307,9 @@ class VN_GRAPHICS_API Geometry : public Node {
      * - The list is OPEN and keyed by shader location: any number of custom channels can be added (only the
      *   backend's max-attribute limit applies). Convention: location 0 holds positions (three components per
      *   vertex) and drives vertex counts and the bounding box; location 1 may hold normals.
-     * - Replacing or adding a buffer does NOT announce the change: report one with setRevision() (see
-     *   revision()).
+     * - Replacing or adding a buffer announces the geometry's content change (a collected-command memo
+     *   cannot answer from the old data), but it does NOT move revision(): report the new description with
+     *   setRevision() (see revision()).
      *
      * @param location Shader attribute location (0 = positions).
      * @param buffer   Packed per-vertex data.
@@ -317,7 +319,8 @@ class VN_GRAPHICS_API Geometry : public Node {
     /** @brief Removes the attribute buffer at @p location (if present).
      *
      * @details
-     * - Like addBuffer(), removing one does not announce the change: report it with setRevision().
+     * - Like addBuffer(), removing one announces the geometry's content change but leaves revision() for the
+     *   caller to report with setRevision().
      *
      * @param location Shader attribute location to clear.
      */
@@ -467,10 +470,12 @@ class VN_GRAPHICS_API Geometry : public Node {
      *
      * @details
      * - A geometry with no primitives draws NOTHING, so a plain single-draw mesh is a geometry with one
-     *   entry - the overwhelming case, and the one whose numbers (index span, topology, material) used to
-     *   live on the geometry itself.
-     * - Adding one does NOT announce the change: report it with @ref setRevision, the same rule every
-     *   shape setter follows (a host often adds or replaces several primitives in one edit).
+     *   entry - the overwhelming case, and the one whose per-draw numbers (index span, topology) used to
+     *   live on the geometry itself. Material and program stay on the geometry as DEFAULTS (see
+     *   setMaterial / setProgram); a primitive may state its own.
+     * - A new draw changes the picture, so the call announces the geometry's content change: a scene memo
+     *   cannot answer from the list it built before this call. It does NOT move @ref revision - that stays
+     *   the caller's separate announcement for the DATA (see setRevision).
      * - Order is the draw order of this geometry's parts (the collection sorts the commands it produces
      *   with everything else, so an opaque part is not drawn after a transparent one by accident).
      *
@@ -481,8 +486,8 @@ class VN_GRAPHICS_API Geometry : public Node {
     /** @brief Replaces the primitive at @p index (the draw keeps its place in the order).
      *
      * @details
-     * - The way to change one part's topology, index span, material or program while a scene runs. It
-     *   announces nothing, like addPrimitive: an edit is reported once, by the host that made it.
+     * - The way to change one part's topology, index span, material or program while a scene runs. A real
+     *   change announces the geometry's content change; assigning the same draw is a no-op.
      * - An index at or past primitiveCount() is ignored (and counted, see ignoredPrimitiveEdits) rather
      *   than growing the list: appending is what addPrimitive is for, and a silent append from a typo'd
      *   index is a draw nobody asked for.
@@ -524,23 +529,6 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     [[nodiscard]] std::uint64_t ignoredPrimitiveEdits() const noexcept;
 
-    /** @brief Sets the single primitive's index span (the ONE-draw spelling of addPrimitive).
-     *
-     * @details
-     * - It writes primitive 0, creating it when the geometry has none: a geometry that draws one indexed
-     *   part is the overwhelming case, and making it write `addPrimitive({...})` by hand buys nothing.
-     * - A geometry with SEVERAL primitives has no single index span; this replaces the first one and leaves
-     *   the rest alone, which is why the multi-primitive API is the one to use for those.
-     * - Slicing follows every other stream: `first_index` / `index_count` are a segment, `count == 0` is
-     *   "the rest", and an offset past the end clamps.
-     *
-     * @param indices     Index scalars to read, or null to make this draw non-indexed.
-     * @param first_index First index of the segment.
-     * @param index_count Indices the segment covers, or 0 for the rest.
-     */
-    void setIndices(intrusive_ptr<const vn::Buffer<std::uint32_t>> indices, std::size_t first_index = 0u,
-                    std::size_t index_count = 0u);
-
     /** @brief Sets one primitive's instance stream (16 scalars per instance, column-major).
      *
      * @details
@@ -556,12 +544,6 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     bool setInstanceTransforms(std::size_t index, BufferSlice<float> transforms);
 
-    /** @brief Sets primitive 0's instance stream (the ONE-draw spelling).
-     * @param transforms Instance matrices, or a null slice to clear.
-     * @return true when applied; false when there is no primitive 0 or the slice is malformed.
-     */
-    bool setInstanceTransforms(BufferSlice<float> transforms);
-
     /** @brief Limits how many instances one primitive draws from its stream.
      *
      * @param index Primitive to edit; must exist.
@@ -570,22 +552,11 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     bool setVisibleInstanceCount(std::size_t index, std::size_t count);
 
-    /** @brief Limits how many instances primitive 0 draws.
-     * @param count Instances to draw.
-     * @return true when applied; false when there is no primitive 0.
-     */
-    bool setVisibleInstanceCount(std::size_t count);
-
     /** @brief Draws every instance one primitive's stream holds again.
      * @param index Primitive to edit.
      * @return true when applied; false when @p index is out of range.
      */
     bool clearVisibleInstanceCount(std::size_t index);
-
-    /** @brief Draws every instance primitive 0's stream holds again.
-     * @return true when applied; false when there is no primitive 0.
-     */
-    bool clearVisibleInstanceCount();
 
     /** @brief Clears one primitive's instance stream (it becomes a plain draw).
      * @param index Primitive to edit.
@@ -593,59 +564,44 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     bool clearInstanceTransforms(std::size_t index);
 
-    /** @brief Clears primitive 0's instance stream.
-     * @return true when applied; false when there is no primitive 0.
-     */
-    bool clearInstanceTransforms();
-
-    /** @brief Gets whether the first primitive draws indices.
-     * @return true when primitive 0 exists and is indexed.
-     */
-    bool hasIndices() const;
-
-    /** @brief Gets the first primitive's index span.
-     * @return The drawn indices, empty when there is no indexed primitive.
-     */
-    std::span<const std::uint32_t> indices() const;
-
-    /** @brief Gets the first primitive's first index.
-     * @return The segment's first index (0 when there is no indexed primitive).
-     */
-    std::size_t firstIndex() const;
-
-    /** @brief Gets how many indices the first primitive draws.
-     * @return The segment length (0 when there is no indexed primitive).
-     */
-    std::size_t indexCount() const;
-
-    /** @brief Gets the first primitive's index buffer.
-     * @return The buffer, or null when there is no indexed primitive.
-     */
-    intrusive_ptr<const vn::Buffer<std::uint32_t>> indicesBuffer() const;
-
-    /** @brief Gets the first primitive's material.
-     * @return The material, or null when that draw inherits the nearest StateNode's.
+    /** @brief Gets this geometry's default material.
+     *
+     * @details
+     * - A GEOMETRY-LEVEL default, not "the first draw's material": every primitive that states no
+     *   material of its own uses this one. A primitive's own material (Primitive::material) overrides it.
+     * - Null means the geometry states none, so its primitives inherit the nearest StateNode's.
+     *
+     * @return The default material, or null when this geometry inherits.
      */
     raw_ptr<Material> material() const;
 
-    /** @brief Puts @p m on every primitive (adding one when the geometry has none).
+    /** @brief Sets this geometry's default material (the one primitives without their own use).
      *
      * @details
-     * - "This geometry is shaded by m" is still one call: the assign walks the primitives, because the
-     *   material belongs to each draw (a mesh and its edge lines may want different ones - then the caller
-     *   uses setPrimitive and this method is not what it wants).
+     * - This is NOT a batch write over the primitives: a primitive that states its own material keeps it.
+     *   To change one draw, copy its primitive and call setPrimitive; to shade every draw, set this default
+     *   and clear the per-primitive overrides that should follow it.
+     * - The change announces the geometry's content, so a scene memo cannot serve commands shaded with the
+     *   old value.
      *
-     * @param m Material to assign, or nullptr to let every draw inherit again.
+     * @param m Material to use as the default, or nullptr to inherit from the nearest StateNode again.
      */
     void setMaterial(intrusive_ptr<Material> m);
 
-    /** @brief Gets the first primitive's program.
-     * @return The program, or null when that draw inherits (StateNode, then the pass).
+    /** @brief Gets this geometry's default program (a primitive's own program overrides it).
+     *
+     * @return The default program, or null when this geometry inherits (StateNode, then the pass).
      */
     raw_ptr<ShaderProgram> program() const;
 
-    /** @brief Puts @p program on every primitive (adding one when the geometry has none).
-     * @param program Program to assign, or nullptr to let every draw inherit again.
+    /** @brief Sets this geometry's default program (the one primitives without their own use).
+     *
+     * @details
+     * - This is NOT a batch write over the primitives: a primitive that states its own program keeps it.
+     *   The change announces the geometry's content, so a scene memo cannot serve commands compiled with the
+     *   old program.
+     *
+     * @param program Program to use as the default, or nullptr to inherit again.
      */
     void setProgram(intrusive_ptr<ShaderProgram> program);
 
@@ -678,9 +634,11 @@ class VN_GRAPHICS_API Geometry : public Node {
      *   bytes (Buffer::setRevision), and that is the only announcement the upload cache listens to; a host
      *   that edits bytes and calls this instead will keep drawing the bytes it uploaded first, because the
      *   renderer never compares bytes itself and has no fallback from this number.
-     * - ONE ANNOUNCEMENT PER BATCH, NOT ONE PER SETTER, which is why nothing here announces by itself - not
-     *   even a replaced buffer: a host editing a model changes several things in one go (swap the positions,
-     *   refill the normals, re-slice the indices) and may still be filling the buffer it just installed.
+     * - ONE ANNOUNCEMENT PER BATCH, NOT ONE PER SETTER, which is why the shape setters never move THIS
+     *   number - not even a replaced buffer: a host editing a model changes several things in one go (swap the
+     *   positions, refill the normals, re-slice the indices) and may still be filling the buffer it just
+     *   installed. They do announce the content epoch (via invalidateBounds), so a stale command memo is not
+     *   served; the re-description gate is still this revision.
      * - The counter is only ever COMPARED, so nothing breaks if it jumps.
      *
      * @warning
@@ -769,8 +727,8 @@ class VN_GRAPHICS_API Geometry : public Node {
      *   elements, not of vertices), which lets a consumer treat a geometry's streams alike. It is NOT a
      *   channel: a channel is a shader INPUT (per-vertex, with a stride); this is the TOPOLOGY the vertex
      *   fetch is indexed by, which no shader ever sees.
-     * - The draw's numbers read off that one segment: indices() is its span(), firstIndex() its begin(),
-     *   indexCount() its size(), indicesBuffer() its buffer - one segment, four views, no second state to
+     * - A primitive holds one as `Primitive::indices`: `.span()` is the drawn run, `.begin()` its first
+     *   element, `Primitive::indexCount()` its size, `.values` its buffer - one segment, no second state to
      *   keep in step.
      */
     using IndexStream = BufferSlice<std::uint32_t>;
@@ -817,8 +775,12 @@ class VN_GRAPHICS_API Geometry : public Node {
     /// BufferSlice), so an index arena's slicing rules — an offset past the end clamps, a count of 0 is
     /// "the rest", the length follows the buffer as it grows — are the same rules a vertex channel obeys.
     std::vector<Primitive> primitives_;
-    std::uint64_t          revision_ = 0;
-    std::uint64_t          ignored_primitive_edits_ = 0;
+    /// The leaf's default material/program: a primitive's own value overrides it, and a null default
+    /// inherits from the nearest StateNode (see Scene.cpp's fold).
+    MaterialPtr      material_;
+    ShaderProgramPtr program_;
+    std::uint64_t    revision_                = 0;
+    std::uint64_t    ignored_primitive_edits_ = 0;
     // Mutable because boundingBox() is const and the cache is a pure function of the keys above: the
     // collection is single-threaded by contract (see Node/Scene), so remembering a derived value while
     // reading is not a data race between engine threads.

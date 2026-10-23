@@ -36,6 +36,7 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Geometry.hpp>
+
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/RenderCommand.hpp>
@@ -60,7 +61,10 @@
 #include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/support/VsgDynamicState.hpp>
 
+#include "TestGeometryBuilders.hpp"
+
 using vn::graphics::Geometry;
+using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
@@ -218,7 +222,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     Triangle                            triangle;
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
     geometry->setPositions(triangle.positions);
-    geometry->setIndices(triangle.indices);
+    setPrimitiveIndices(*geometry, 0U, triangle.indices);
     geometry->setRevision(1U);
 
     GeometryFacts               geometry_facts;
@@ -717,7 +721,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
         auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
         geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(
             new vn::Buffer<float>(std::move(positions))));
-        geometry->setIndices(indices);
+        setPrimitiveIndices(*geometry, 0U, indices);
         geometry->setRevision(1U);
         return geometry;
     };

@@ -21,7 +21,8 @@ using vn::math::Mat4d;
  * - ONE COMMAND IS ONE DRAW. It names the leaf geometry AND which of its primitives to draw (see
  *   Primitive.hpp): a geometry with three parts collects three commands, because a primitive's topology, index
  *   span and shading are exactly what a draw is. The material and program here are the RESOLVED ones (the
- *   primitive's, else the nearest StateNode's), so a backend never has to look at the scene graph to shade.
+ *   primitive's own, else the geometry's default, else the nearest StateNode's), so a backend never has to
+ *   look at the scene graph to shade.
  */
 struct VN_GRAPHICS_API RenderCommand {
     /** Leaf geometry to render. */

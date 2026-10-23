@@ -64,10 +64,13 @@
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
+
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+
+#include "TestGeometryBuilders.hpp"
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
@@ -92,6 +95,7 @@ inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uint
 }
 
 using vn::graphics::Geometry;
+using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::RenderCommand;
 using vn::graphics::ShaderProgram;
@@ -453,7 +457,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
         vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions_buffer);
-    geometry->setIndices(indices_buffer);
+    setPrimitiveIndices(*geometry, 0U, indices_buffer);
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());

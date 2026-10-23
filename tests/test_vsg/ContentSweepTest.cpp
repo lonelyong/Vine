@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include <vine/graphics/Geometry.hpp>
+
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -36,7 +37,10 @@
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 
+#include "TestGeometryBuilders.hpp"
+
 using vn::graphics::Geometry;
+using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
@@ -96,8 +100,9 @@ vn::intrusive_ptr<Geometry> quad()
     const auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
     geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
         std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F })));
-    geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+                                           new vn::Buffer<std::uint32_t>(
+                                               std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
     geometry->setRevision(1U);
     return geometry;
 }

@@ -81,8 +81,6 @@
 | 实例化 / 批处理 | 一条 `RenderCommand` 一个几何。**已落地（2026-10-23）**：实例流挂在 `Primitive` 上（per-draw 参数），命令快照 `instance_transforms` / `first_instance` / `instance_count`；后端 `Draw.instances` / `first_instance` + binding 4 整段实例流；`VINE_INSTANCED` 同时决定文本与顶点布局。早期 `Geometry` 通道方案与 `InstanceScope` 作用域方案均已作废 | 同一几何 N 份（粒子、植被）；与 L2b 同源只指触发评估 | object-model §3 缺口 2；`graphics-instancing-primitive-2026-10-23.md` |
 | LOD / 空间划分 | 无 LOD 节点、无八叉树 / 可见性集合 | 大场景“每帧收集本身成为瓶颈” | object-model §3 缺口 3 |
 | 选择态（描边 / 框选 / 多选） | 拾取是机制（已有），选择不在框架 | 多处调用点各自重写同一套选择与高亮 | object-model §2.5 |
-| 单图元便捷拼写（过渡） | `Geometry` 的 `setIndices` / `hasIndices` / `indices` / `firstIndex` / `indexCount` / `indicesBuffer` / `material` / `setMaterial` / `program` / `setProgram` 是"读写 primitive 0"的便捷写法（材质/程序写给所有 primitive） | 第二个宿主稳定使用多图元、且单 draw 拼写开始造成两种真相时；或决定它是永久便利（那就把设计文档里的"过渡"改掉） | `graphics-primitives-2026-10-22.md` §2 |
-
 ### 3.4 帧、线程与证据
 
 | 项 | 内容 | 触发条件 | 出处 |
@@ -158,6 +156,7 @@ F3（灯光列表复制，按成本/收益关闭）。**本节不再有待办。
 | **B1/B2/B3** 内容表查找 | 已二分并落地（§11.16bz/ca）；剩余证据强度问题按测量结论维持 |
 | **B7** 管线销毁竞态 | **已关闭（2026-10-22）**：破坏路径的计数 device idle 本来就有；本轮补上 headless 的 `OffscreenSession`（唯一 frame source），`releaseContentWorld()` 现在窗口与离屏都 idle。20 次单例 + 2 次全量套件 + 两棵树门禁 **0 VUID**；判据 `OffscreenSessionTest.TheDestructiveWaitIsCountedOnce`。再现时按新问题重开，不重捡本行 |
 | **B8** F−N 可读回洞 | **已关闭（2026-10-22）**：不是生产设计缺陷——`perFrameCopies(n) = n + 1`，当前 3 槽 / 4 slab，最旧在飞帧与当前帧永不同 slab；`BlockStorageTest.TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightDoNot` 钉住轮转。F−N 只是 readback 只看最新帧的观测缺口；加旧帧读回是测试接缝，不是正确性修复，不做 |
+| **单图元便捷拼写** | **已关闭（2026-10-23，用户选 B）**：`setIndices` / `hasIndices` / `indices` / `firstIndex` / `indexCount` / `indicesBuffer` 与“primitive 0”的实例便捷全部删除，索引/实例直接在 `Primitive` 上写。`material` / `setMaterial` / `program` / `setProgram` 保留，但语义改为**几何级默认**（图元自己的值优先，再否则最近 `StateNode`），不是批量写。判据 `GeometryTest.MaterialAndProgramAreGeometryDefaultsNotBatchWrites` / `SceneTest.TheDrawResolvesPrimitiveThenGeometryThenStateNode`；设计见 `graphics-primitives-2026-10-22.md` §2 |
 | **T2 / M6** 一设备 N 交换链 | 由 S10b 覆盖并关闭（2026-10-19），形状是“每窗口一个 `createSurfaceTarget`” |
 | **L2 目标层（L2a/L2b）** | 2026-10-23 L2a 曾落地（数组目标 + 逐层帧缓冲 + 按层读回）后**回撤**：没有消费者，N 张 2D 目标 + N 条 pass 已能实现同样画面；L2a 只多一点打包/身份，不省收集/提交，却增加公开面与组合拒绝。当前不做；L2b 等 VR / 实测 N-pass 开销再与 L2a 一起设计。历史记录见 `graphics-layers.md` §10 |
 | **Cube 作 pass 输入** | 两条真实设备用例证明，无需改后端（2026-10-19） |

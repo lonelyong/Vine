@@ -4,6 +4,7 @@
 #include <vine/graphics/OrbitCameraManipulator.hpp>
 #include <vine/graphics/AutoTransform.hpp>
 #include <vine/graphics/Geometry.hpp>
+
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/Node.hpp>
@@ -57,7 +58,10 @@
 #include <stdexcept>
 #include <thread>
 
+#include "TestGeometryBuilders.hpp"
+
 using namespace vn::graphics;
+using vn::test::setPrimitiveIndices;
 using vn::intrusive_ptr;
 using vn::String;
 using vn::Colorf;
@@ -1312,7 +1316,7 @@ TEST(PrimitiveInstancingTest, AnInstancedPrimitiveDrawsEveryPlacement)
     intrusive_ptr<vn::Buffer<float>> storage = identityInstances(2);
     storage->data()[16 + 12] = 2.0f;  // the second instance translates by +2 in x (column 3, row 0)
     storage->bumpRevision();
-    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::whole(storage)));
+    ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(storage)));
 
     Camera cam;
     setupLookAtCamera(cam);
@@ -1343,20 +1347,20 @@ TEST(PrimitiveInstancingTest, TheVisiblePrefixIsTheDrawRangeAndCanChangeWithoutA
     root->addChild(geom);
 
     intrusive_ptr<vn::Buffer<float>> storage = identityInstances(3);
-    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::slice(storage, 16u, 16u)));
+    ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::slice(storage, 16u, 16u)));
     ASSERT_NE(geom->primitive(0), nullptr);
     EXPECT_EQ(geom->primitive(0)->firstInstance(), 1u);
     EXPECT_EQ(geom->primitive(0)->instanceCount(), 1u);
 
-    ASSERT_TRUE(geom->setVisibleInstanceCount(0u));
+    ASSERT_TRUE(geom->setVisibleInstanceCount(0U, 0u));
     Camera cam;
     setupLookAtCamera(cam);
     EXPECT_TRUE(scene.collectRenderCommands(&cam)->empty());
     EXPECT_EQ(geom->primitive(0)->visibleInstanceCount(), 0u);
 
     ASSERT_TRUE(geom->clearInstanceTransforms(0u));
-    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::slice(storage, 16u, 16u)));
-    ASSERT_TRUE(geom->clearVisibleInstanceCount());
+    ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::slice(storage, 16u, 16u)));
+    ASSERT_TRUE(geom->clearVisibleInstanceCount(0U));
     EXPECT_EQ(geom->primitive(0)->visibleInstanceCount(), 1u);
     const auto commands = scene.collectRenderCommands(&cam);
     ASSERT_EQ(commands->size(), 1u);
@@ -1381,7 +1385,7 @@ TEST(PrimitiveInstancingTest, WithoutAStreamItIsAPlainDrawAndMalformedStreamsAre
 
     // A slice that is not a whole number of matrices is refused, not floored into one.
     intrusive_ptr<vn::Buffer<float>> storage = identityInstances(1);
-    EXPECT_FALSE(geom->setInstanceTransforms(vn::BufferSlice<float>::slice(storage, 0u, 8u)));
+    EXPECT_FALSE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::slice(storage, 0u, 8u)));
     EXPECT_FALSE(geom->primitive(0)->hasInstances());
     EXPECT_TRUE(scene.collectRenderCommands(&cam)->size() == 1u);
 }
@@ -1396,7 +1400,7 @@ TEST(PrimitiveInstancingTest, CullingUsesTheInstancesOwnBounds)
     intrusive_ptr<vn::Buffer<float>> storage = identityInstances(1);
     storage->data()[12] = 4000.0f;
     storage->bumpRevision();
-    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::whole(storage)));
+    ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(storage)));
 
     // The geometry's data box is at the origin; the instance is at x=4000. The geometry's instance-aware
     // box must keep the draw when the camera is aimed at the placement, not cull it at the origin.
@@ -1444,14 +1448,14 @@ TEST(PrimitiveInstancingTest, ASameSliceAfterABufferEditStillInvalidatesTheDraw)
     root->addChild(geom);
 
     intrusive_ptr<vn::Buffer<float>> storage = identityInstances(1);
-    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::whole(storage)));
+    ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(storage)));
     const std::uint64_t before = geom->contentEpoch();
 
     // Same buffer, same slice, new bytes: the draw really changed, so the announcement must not be
     // swallowed by "the slice pointer looks the same".
     storage->data()[12] = 4.0f;
     storage->bumpRevision();
-    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::whole(storage)));
+    ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(storage)));
     EXPECT_GT(geom->contentEpoch(), before);
 }
 
@@ -1465,7 +1469,7 @@ TEST(PrimitiveInstancingTest, PickingReportsThePrimitiveAndTheInstanceThatWasHit
     intrusive_ptr<vn::Buffer<float>> storage = identityInstances(2);
     storage->data()[16 + 12] = 2.0f;
     storage->bumpRevision();
-    ASSERT_TRUE(geom->setInstanceTransforms(vn::BufferSlice<float>::whole(storage)));
+    ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(storage)));
 
     const Ray ray(Vec3d(2.25, 0.25, 1.0), Vec3d(0, 0, -1));
     const RayIntersectionResult result = RayIntersection::intersectScene(ray, &scene);
@@ -1477,7 +1481,7 @@ TEST(PrimitiveInstancingTest, PickingReportsThePrimitiveAndTheInstanceThatWasHit
     EXPECT_NEAR(result.point.y, 0.25, 1e-6);
 
     // Picking follows the drawn prefix: the second instance is not there once the primitive hides it.
-    ASSERT_TRUE(geom->setVisibleInstanceCount(1u));
+    ASSERT_TRUE(geom->setVisibleInstanceCount(0U, 1u));
     EXPECT_FALSE(RayIntersection::intersectScene(ray, &scene).hit);
     EXPECT_TRUE(RayIntersection::intersectScene(Ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1)), &scene).hit);
 }
@@ -2095,7 +2099,7 @@ TEST(GeometryTest, NoShapeYieldsZero)
     EXPECT_EQ(geom->vertexCount(), 0u);
     EXPECT_FALSE(geom->hasPositions());
     EXPECT_FALSE(geom->hasNormals());
-    EXPECT_FALSE(geom->hasIndices());
+    EXPECT_EQ(geom->primitiveCount(), 0u);
     EXPECT_TRUE(geom->boundingBox().isEmpty());
 }
 
@@ -7921,6 +7925,67 @@ TEST(SceneTest, CollectCommandsCarriesEffectiveProgram)
     EXPECT_EQ(plain_commands[0].program, nullptr);
 }
 
+TEST(SceneTest, TheDrawResolvesPrimitiveThenGeometryThenStateNode)
+{
+    Scene scene;
+    auto  state          = intrusive_ptr<StateNode>(new StateNode());
+    auto  state_material = intrusive_ptr<Material>(new Material());
+    auto  state_program  = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    state->setMaterial(state_material);
+    state->setProgram(state_program);
+
+    auto holder = makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"geo");
+    state->addChild(holder);
+    scene.setRoot(state);
+
+    auto* geom = dynamic_cast<Geometry*>(holder->children().front().get());
+    ASSERT_NE(geom, nullptr);
+    ASSERT_EQ(geom->primitiveCount(), 1u);
+
+    auto geom_material = intrusive_ptr<Material>(new Material());
+    auto geom_program  = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    geom->setMaterial(geom_material);
+    geom->setProgram(geom_program);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    auto commands = (*scene.collectRenderCommands(&cam));
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material.get(), geom_material.get()) << "the geometry default beats the StateNode";
+    EXPECT_EQ(commands[0].program.get(), geom_program.get());
+    EXPECT_EQ(effectiveMaterial(geom).get(), geom_material.get());
+    EXPECT_EQ(effectiveProgram(geom).get(), geom_program.get());
+
+    // The draw's own choice beats the geometry default.
+    auto      draw_material = intrusive_ptr<Material>(new Material());
+    auto      draw_program  = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    Primitive draw          = *geom->primitive(0);
+    draw.material           = draw_material;
+    draw.program            = draw_program;
+    geom->setPrimitive(0, std::move(draw));
+
+    commands = (*scene.collectRenderCommands(&cam));
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands[0].material.get(), draw_material.get());
+    EXPECT_EQ(commands[0].program.get(), draw_program.get());
+
+    // Clearing the draw's overrides falls back to the geometry default, not the StateNode.
+    draw          = *geom->primitive(0);
+    draw.material = nullptr;
+    draw.program  = nullptr;
+    geom->setPrimitive(0, std::move(draw));
+    commands = (*scene.collectRenderCommands(&cam));
+    EXPECT_EQ(commands[0].material.get(), geom_material.get());
+    EXPECT_EQ(commands[0].program.get(), geom_program.get());
+
+    // Clearing the geometry defaults hands the draws back to the StateNode.
+    geom->setMaterial(nullptr);
+    geom->setProgram(nullptr);
+    commands = (*scene.collectRenderCommands(&cam));
+    EXPECT_EQ(commands[0].material.get(), state_material.get());
+    EXPECT_EQ(commands[0].program.get(), state_program.get());
+}
+
 TEST(RenderStateTest, ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem)
 {
     // THE table: pass override > content (the folded StateNodes) > default, item by item, with the layer that
@@ -8074,7 +8139,7 @@ TEST(GeometryTest, RawPositionsDriveCountsAndBounds)
 {
     Geometry geom;
     EXPECT_FALSE(geom.hasPositions());
-    EXPECT_FALSE(geom.hasIndices());
+    EXPECT_EQ(geom.primitiveCount(), 0u);
     EXPECT_EQ(geom.vertexCount(), 0u);
     EXPECT_TRUE(geom.boundingBox().isEmpty());
 
@@ -8095,10 +8160,10 @@ TEST(GeometryTest, RawPositionsDriveCountsAndBounds)
     EXPECT_NEAR(box.max().y, 3.0, 1e-9);
 
     vn::geometry::UInt32Array indices = { 0u, 1u, 2u };
-    geom.setIndices(packIndices(indices));
-    EXPECT_TRUE(geom.hasIndices());
-    EXPECT_FALSE(geom.indices().empty());
-    EXPECT_EQ(geom.indices().size(), 3u);
+    setPrimitiveIndices(geom, 0U, packIndices(indices));
+    ASSERT_EQ(geom.primitiveCount(), 1u);
+    EXPECT_TRUE(geom.primitive(0)->isIndexed());
+    EXPECT_EQ(geom.primitive(0)->indices.span().size(), 3u);
     EXPECT_EQ(geom.vertexCount(), 3u);
 }
 
@@ -8144,9 +8209,56 @@ TEST(GeometryTest, RevisionCanBeReportedByHand)
 
     // A setter afterwards does NOT move it: the announcement belongs to the caller, so a stale report
     // cannot quietly become fresh again (nor is a fresh one lost).
-    geom.setIndices(packIndices(std::vector<std::uint32_t>{ 0u }));
-    EXPECT_TRUE(geom.hasIndices());
+    setPrimitiveIndices(geom, 0U, packIndices(std::vector<std::uint32_t>{ 0u }));
+    ASSERT_EQ(geom.primitiveCount(), 1u);
+    EXPECT_TRUE(geom.primitive(0)->isIndexed());
     EXPECT_EQ(geom.revision(), 41u);
+}
+
+TEST(GeometryTest, MaterialAndProgramAreGeometryDefaultsNotBatchWrites)
+{
+    Geometry geom;
+    auto     default_material = intrusive_ptr<Material>(new Material());
+    auto     default_program  = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+
+    // Shading a leaf is not a draw: a geometry with no primitives keeps drawing nothing.
+    EXPECT_EQ(geom.primitiveCount(), 0u);
+    geom.setMaterial(default_material);
+    geom.setProgram(default_program);
+    EXPECT_EQ(geom.material(), default_material.get());
+    EXPECT_EQ(geom.program(), default_program.get());
+    EXPECT_EQ(geom.primitiveCount(), 0u) << "a default is not a primitive";
+
+    vn::geometry::Vec3fArray points = { vn::math::Vec3f(0, 0, 0), vn::math::Vec3f(1, 0, 0),
+                                         vn::math::Vec3f(0, 1, 0) };
+    geom.setPositions(packAttribute(points));
+    ASSERT_EQ(geom.primitiveCount(), 1u);
+    EXPECT_EQ(geom.primitive(0)->material, nullptr) << "the installed draw states no override yet";
+    EXPECT_EQ(geom.primitive(0)->program, nullptr);
+
+    // A primitive's own choice wins, and a later geometry-default write leaves it alone.
+    auto own_material = intrusive_ptr<Material>(new Material());
+    auto own_program  = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    Primitive draw    = *geom.primitive(0);
+    draw.material     = own_material;
+    draw.program      = own_program;
+    geom.setPrimitive(0, std::move(draw));
+
+    geom.setMaterial(default_material);
+    geom.setProgram(default_program);
+    EXPECT_EQ(geom.primitive(0)->material.get(), own_material.get()) << "setMaterial is not a batch write";
+    EXPECT_EQ(geom.primitive(0)->program.get(), own_program.get());
+
+    // The same pointer is not an announcement; a real change is.
+    const std::uint64_t epoch = geom.contentEpoch();
+    geom.setMaterial(default_material);
+    geom.setProgram(default_program);
+    EXPECT_EQ(geom.contentEpoch(), epoch);
+    geom.setMaterial(nullptr);
+    EXPECT_GT(geom.contentEpoch(), epoch);
+    geom.setProgram(nullptr);
+    EXPECT_EQ(geom.material(), nullptr);
+    EXPECT_EQ(geom.program(), nullptr);
 }
 
 TEST(GeometryTest, ConverterFillsBuffersFromTriangleMesh)
@@ -8161,7 +8273,8 @@ TEST(GeometryTest, ConverterFillsBuffersFromTriangleMesh)
     // The triangle mesh carries no normals, so the converter leaves them empty
     // (the renderer derives normals from the positions when needed).
     EXPECT_FALSE(geom->hasNormals());
-    EXPECT_FALSE(geom->hasIndices());
+    ASSERT_EQ(geom->primitiveCount(), 1u);
+    EXPECT_FALSE(geom->primitive(0)->isIndexed());
 
     // The converter is the Shape -> vertex-data bridge; a geometry filled by
     // the per-channel setters must carry exactly the same data.
@@ -8170,7 +8283,7 @@ TEST(GeometryTest, ConverterFillsBuffersFromTriangleMesh)
     EXPECT_TRUE(via_setters.hasPositions());
     EXPECT_EQ(via_setters.vertexCount(), 3u);
     EXPECT_EQ(via_setters.positionCount(), geom->positionCount());
-    EXPECT_EQ(via_setters.hasIndices(), geom->hasIndices());
+    EXPECT_EQ(via_setters.primitiveCount(), 1u) << "a channel setter installs the default draw";
     EXPECT_EQ(via_setters.hasNormals(), geom->hasNormals());
 }
 
@@ -8226,18 +8339,19 @@ TEST(GeometryTest, ConverterSharesTheMeshIndexStorage)
 
     const auto geom = geometryFromShape(*mesh);
     ASSERT_NE(geom.get(), nullptr);
-    ASSERT_TRUE(geom->hasIndices());
+    ASSERT_EQ(geom->primitiveCount(), 1u);
+    ASSERT_TRUE(geom->primitive(0)->isIndexed());
 
     // The index stream is shared too: one allocation, read by both sides.
-    EXPECT_EQ(geom->indices().data(), mesh->indicesBuffer()->data());
-    EXPECT_EQ(geom->indices().size(), 3u);
-    EXPECT_EQ(geom->indices()[2], 2u);
+    EXPECT_EQ(geom->primitive(0)->indices.span().data(), mesh->indicesBuffer()->data());
+    EXPECT_EQ(geom->primitive(0)->indices.span().size(), 3u);
+    EXPECT_EQ(geom->primitive(0)->indices.span()[2], 2u);
 
     // ...and because the geometry holds the buffer rather than a snapshot, the mesh appending another
     // triangle is followed instead of dangled.
     mesh->addTriangle(2u, 1u, 0u);
-    EXPECT_EQ(geom->indices().size(), 6u);
-    EXPECT_EQ(geom->indices().data(), mesh->indicesBuffer()->data());
+    EXPECT_EQ(geom->primitive(0)->indices.span().size(), 6u);
+    EXPECT_EQ(geom->primitive(0)->indices.span().data(), mesh->indicesBuffer()->data());
 }
 
 TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)

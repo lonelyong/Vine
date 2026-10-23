@@ -9,6 +9,7 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/Geometry.hpp>
+
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
@@ -43,7 +44,10 @@
 #include <memory>
 #include <vector>
 
+#include "TestGeometryBuilders.hpp"
+
 using vn::graphics::Geometry;
+using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderPass;
@@ -258,7 +262,7 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
         vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
-    geometry->setIndices(indices);
+    setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());

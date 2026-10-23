@@ -50,7 +50,10 @@
 #include "TestFrame.hpp"
 #include "TestHostWindow.hpp"
 
+#include "TestGeometryBuilders.hpp"
+
 using vn::graphics::Geometry;
+using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderPass;
@@ -245,7 +248,7 @@ TriangleFixture makeTriangle()
         vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
-    geometry->setIndices(indices);
+    setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
     fixture.geometry = geometry;
 
@@ -699,7 +702,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
         vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
-    geometry->setIndices(indices);
+    setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -2359,7 +2362,7 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
     const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
         vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U }));
     geometry->setPositions(positions);
-    geometry->setIndices(indices);
+    setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -2500,7 +2503,7 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
         vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
-    geometry->setIndices(indices);
+    setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -2725,7 +2728,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
         vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
-    geometry->setIndices(indices);
+    setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -2888,7 +2891,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     vn::intrusive_ptr<Geometry>          geometry(new Geometry());
     vn::intrusive_ptr<vn::Buffer<float>> positions(new vn::Buffer<float>(gridPositions(kGridSide)));
     geometry->setPositions(positions);
-    geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
         new vn::Buffer<std::uint32_t>(gridIndices(kGridSide))));
     geometry->bumpRevision();
 
@@ -3219,7 +3222,7 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     geometry->addBuffer(vn::graphics::attributeLocation(vn::graphics::VertexAttribute::Color),
                         vn::graphics::AttributeChannel::shared(colour, 3U));
     geometry->setTexcoords2(texcoords);
-    geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
                              new vn::Buffer<std::uint32_t>(index_data)),
                          0U, 6U);
     geometry->bumpRevision();
@@ -3414,7 +3417,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
     geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
         std::vector<float>{ -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F })));
-    geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
         new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
     geometry->bumpRevision();
 
@@ -3675,7 +3678,7 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
             geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
                 std::vector<float>{ cx - kHalf, cy - kHalf, 0.0F, cx + kHalf, cy - kHalf, 0.0F,
                                     cx + kHalf, cy + kHalf, 0.0F, cx - kHalf, cy + kHalf, 0.0F })));
-            geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
                 new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
             geometry->setRevision(1U);
             geometries.push_back(geometry);
@@ -4010,7 +4013,7 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
             const vn::intrusive_ptr<Geometry> geometry(new Geometry());
             geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
                 std::vector<float>{ -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F })));
-            geometry->setIndices(vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
                 new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
             geometry->bumpRevision();
 
@@ -4201,7 +4204,7 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
         vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
-    geometry->setIndices(indices);
+    setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> first_material(new Material());
@@ -4421,7 +4424,7 @@ TEST(VsgBackendTest, AnOpaqueContentDrawDoesNotBlendAndATranslucentOneDoes)
     const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices = vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
         new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
-    geometry->setIndices(indices);
+    setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -4566,7 +4569,7 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
         vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
             new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
-    geometry->setIndices(indices);
+    setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());

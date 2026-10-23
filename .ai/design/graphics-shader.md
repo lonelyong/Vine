@@ -74,11 +74,12 @@ class ShaderProgram : public Object, public RefCounted<ShaderProgram> {
 
 ## 2. 挂点与解析链
 
-- `Geometry::setProgram(...)`（null=默认）——per-object 覆盖（graphics-scene-graph.md）；
-- `StateNode::setProgram(...)`——给子树统一设（如"整块无光照"），可选；叶子优先；
+- `Geometry::setProgram(...)`（null=默认）——这份资产的**几何级默认**（graphics-scene-graph.md）；
+- `Primitive::program`——单条 draw 的覆盖，优先于几何级默认；
+- `StateNode::setProgram(...)`——给子树统一设（如"整块无光照"），可选；
 - **pass 级**：`ScreenPass`/通用 pass 可挂 Program + 声明输入槽（见 §5）。
 
-解析链：`Geometry.program` 非空用它；否则向上找最近 `StateNode.program`；否则引擎默认内置。
+解析链：`Primitive.program` 非空用它；否则 `Geometry.program`；否则向上找最近 `StateNode.program`；否则引擎默认内置。
 
 ## 3. 最小绑定约定（后端保证，用户对着写）
 

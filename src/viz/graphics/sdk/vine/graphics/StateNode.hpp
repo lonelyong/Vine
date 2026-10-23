@@ -470,8 +470,9 @@ VN_GRAPHICS_API ResolvedRenderState effectiveRenderState(raw_ptr<const Node> nod
 /**
  * @brief Resolves the effective shader program for a leaf geometry.
  *
- * A Geometry with its own program wins; otherwise the nearest ancestor
- * StateNode program applies; otherwise the engine default (null) is used.
+ * The leaf's first primitive's own program wins; otherwise the Geometry's default program applies; otherwise
+ * the nearest ancestor StateNode program; otherwise the engine default (null). The helper answers "what would
+ * this node's single draw use"; a geometry whose draws state different programs is read per command instead.
  *
  * @param node Leaf (Geometry) or intermediate node to resolve for.
  * @return Effective program, or null for the engine default.
@@ -481,10 +482,10 @@ VN_GRAPHICS_API ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node);
 /**
  * @brief Resolves the material a node's Geometry renders with.
  *
- * The same rule as effectiveProgram(): a leaf Geometry's own material wins, otherwise the nearest ancestor
- * StateNode material applies, otherwise null (the engine default). Nearest, not literal — the first
- * override found walking up the parents ends the search, because a material replaces the shading wholesale
- * rather than overriding one item of it.
+ * The same rule as effectiveProgram(): the first primitive's own material wins, then the Geometry's default,
+ * then the nearest ancestor StateNode material, then null (the engine default). Nearest, not literal — the
+ * first override found walking up the parents ends the search, because a material replaces the shading
+ * wholesale rather than overriding one item of it.
  *
  * @param node Node to resolve for (typically a Geometry).
  * @return The material to render with, or null when neither the leaf nor any ancestor sets one.

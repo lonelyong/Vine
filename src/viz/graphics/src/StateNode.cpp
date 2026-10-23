@@ -253,13 +253,16 @@ ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node)
     if (node == nullptr) {
         return ShaderProgramPtr();
     }
-    // The LEAF's own word is the first PRIMITIVE's now (see Primitive.hpp): this helper answers "what would
-    // this node's single draw use", which is the question a host asks about a leaf it built itself. A
-    // geometry whose draws state different programs has no single answer - a caller that means a specific
-    // draw reads `RenderCommand::program`, which the collection already resolved per primitive.
+    // The LEAF's own word is the first PRIMITIVE's, then the GEOMETRY's default (see Primitive.hpp): this
+    // helper answers "what would this node's single draw use", which is the question a host asks about a leaf
+    // it built itself. A geometry whose draws state different programs has no single answer - a caller that
+    // means a specific draw reads `RenderCommand::program`, which the collection already resolved per primitive.
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
         if (const Primitive* draw = geometry->primitive(0); draw != nullptr && draw->program != nullptr) {
             return ShaderProgramPtr(draw->program);
+        }
+        if (raw_ptr<ShaderProgram> own = geometry->program()) {
+            return ShaderProgramPtr(own);
         }
     }
     for (const Node* current = node->parent(); current != nullptr;
@@ -282,10 +285,13 @@ MaterialPtr effectiveMaterial(raw_ptr<const Node> node)
     if (node == nullptr) {
         return MaterialPtr();
     }
-    // Same rule as effectiveProgram: the first primitive is the leaf's word for the single-draw case.
+    // Same rule as effectiveProgram: the first primitive's own material, then the geometry's default.
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
         if (const Primitive* draw = geometry->primitive(0); draw != nullptr && draw->material != nullptr) {
             return MaterialPtr(draw->material);
+        }
+        if (raw_ptr<Material> own = geometry->material()) {
+            return MaterialPtr(own);
         }
     }
     for (const Node* current = node->parent(); current != nullptr; current = current->parent()) {

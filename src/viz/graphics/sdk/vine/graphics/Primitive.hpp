@@ -41,8 +41,9 @@ VN_GRAPHICS_NS_BEGIN
  *   visible prefix. Several primitives may share one buffer through their own slices, which is how a
  *   multi-part model uses one upload without introducing a scene-graph scope node.
  * - MATERIAL AND PROGRAM are the shading side of one draw, and they are optional: an empty pointer means
- *   "the nearest StateNode's", which is how a subtree restyles what it contains. A primitive that states
- *   one owns it - reparenting the geometry cannot change it.
+ *   \"the GEOMETRY's default\" (Geometry::material / program), and an empty geometry default means \"the
+ *   nearest StateNode's\" - which is how a subtree restyles what it contains. A primitive that states one
+ *   owns it - reparenting the geometry cannot change it.
  * - The vertex data is NOT here: positions, normals, texcoords and custom channels belong to the
  *   `Geometry`, because they are what its primitives have in common.
  *
@@ -63,8 +64,10 @@ struct VN_GRAPHICS_API Primitive
     /// a vertex channel: `count == 0` means "the rest of the buffer from `first`".
     IndexSpan indices{};
 
-    intrusive_ptr<Material>      material{};  ///< Shading, or nullptr to inherit the nearest StateNode's.
-    intrusive_ptr<ShaderProgram> program{};   ///< Program, or nullptr to inherit (StateNode, then the pass).
+    /// Shading, or nullptr to use the geometry's default material (then the nearest StateNode's).
+    intrusive_ptr<Material> material{};
+    /// Program, or nullptr to use the geometry's default (then StateNode, then the pass).
+    intrusive_ptr<ShaderProgram> program{};
 
     /// The instance stream this draw reads: 16 scalars per instance, column-major. Empty = one plain draw.
     /// A BufferSlice holds the buffer, so copying a Primitive shares the stream rather than copying it.

@@ -66,8 +66,9 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
 - 因为通道**持的是 buffer 而不是快照**，即使源 buffer 增长，通道也不会悬空：长度与地址都现取。
 - **通道可以只是缓冲的一段（arena）**：`AttributeChannel::slice(values, components, first_vertex, vertex_count)`
   用顶点说话，`shared(..., offset, scalar_count)` 用标量说话；`floatCount()/vertexCount()/scalars()/xyz()/vec3View()`
-  全部只认**这一段**（越过末尾就是空，不会读到邻居）。索引侧用 `Geometry::setIndices(buffer, first_index, index_count)`
-  表达切片，但**绑定的是整段缓冲**（切片在 draw 命令里：`firstIndex/indexCount`）⇒ 一个索引 arena 共享一次索引上传。
+  全部只认**这一段**（越过末尾就是空，不会读到邻居）。索引侧用 `Primitive::IndexSpan::slice(buffer, first_index, index_count)`
+  （或 `whole(buffer)`）写进图元，但**绑定的是整段缓冲**（切片在 draw 命令里：`firstIndex/indexCount`）⇒ 一个索引 arena
+  共享一次索引上传。
   段的身份进两层缓存 key：共享绑定缓存用 `缓冲地址 + revision + offset + 长度`，派生法线缓存另加索引的 `first/count`。
 
 ## 分期
@@ -79,7 +80,7 @@ reinterpret 得到：`Vector3` 是 `{T x, y, z}` 与 `T data[3]` 的 union，布
 | 3a | `AttributeChannel` 改为「视图 + keepalive」（当时是类型擦除版），行为不变 | ✅ `55204a1` |
 | 3b | `geometryFromShape()` 走共享 ⇒ **内存不再翻倍** | ✅ `6e9acff` |
 | 3c | 元素钉死 float/uint32、`AttributeChannel` 直接持 buffer（删掉擦除与快照）、setter 合一名 | ✅ 本批 |
-| 3d | 索引同样改成 `intrusive_ptr<const Buffer<uint32_t>>` + `packIndices()`；`Geometry::indices()` 改返回 `std::span` | ✅ 本批 |
+| 3d | 索引同样改成 `intrusive_ptr<const Buffer<uint32_t>>` + `packIndices()`；索引片段随后归 `Primitive::indices`（`Geometry::indices()` 已删除） | ✅ 本批 |
 | 4 | 后端从 `bytes()` 上传；`SceneBridgeGeometry` 不再逐顶点拷进 vsg typed array | ⬜ |
 
 ## 教训（第一版被推翻的过程）
@@ -151,7 +152,7 @@ debug 打印证明 `format` / `stride` / `valueSize` / `valueCount` / `dataSize`
 - 新断言 `SceneBridgePipelineSharingTest.PositionBindingAliasesTheModelBuffer`：绑定数组的 `dataPointer()` 必须**等于**模型 buffer 的 `scalars().data()`，且必须是真 `vsg::vec3Array`（`test_vsg` 185 → **186**）。
 - 变异：关掉别名分支改回拷贝 → 该断言失败。渲染关口做不到这一点：拷贝渲染得逐字节相同，**只有指针同一性能区分**。
 
-**其余通道（法线 / texcoords / 4 分量颜色 / 自定义通道 / 索引）已按同一机制落地**：`detail::aliasArray<Array, Element>(buffer, count)` 是所有通道的**唯一**入口（`aliasTypedVertexData` 只是按分量数选数组类型的 switch）；`geometry->indicesBuffer()` 补上以让索引也能别名。
+**其余通道（法线 / texcoords / 4 分量颜色 / 自定义通道 / 索引）已按同一机制落地**：`detail::aliasArray<Array, Element>(buffer, count)` 是所有通道的**唯一**入口（`aliasTypedVertexData` 只是按分量数选数组类型的 switch）；索引侧现在由 `Primitive::indices.values` 提供 buffer，让索引也能别名。
 
 **推导量仍然自己分配真数组**：白色 opacity 载体（alpha 会被逐 drawable 就地改写，别名会写穿到模型）、零填充 texcoords、以及 `makeNormals` / `makeIndexedNormals` 的推导分支。`makeTypedVertexData`（拷贝版）**已删除** —— 自定义通道的布局由 `channelShape` 保证匹配，拷贝是纯开销。
 vec4 位置（stride 4）**有意不进别名**：它要的是 R32G32B32 绑定，别名会改成 R32G32B32A32，属行为变化；仍走 `unpackXyz`。
@@ -177,15 +178,15 @@ vec4 位置（stride 4）**有意不进别名**：它要的是 R32G32B32 绑定�
 - **属性通道**：`AttributeChannel`（原 `AttributeBuffer`，改名以对齐代码与文档里一直用的 "channel" 说法）
   = **一个 `BufferSlice<float>`（以 scalar 计）+ 顶点 stride（components）**。`scalarSlice()` 把它的段
   交出去，`fromSlice(slice, components)` 从段 + stride 建回来。
-- **索引流**：`Geometry::IndexStream = BufferSlice<std::uint32_t>`，元素计、无 stride；`setIndices(buffer,
-  first, count)` 就是建这个段。
+- **索引流**：`Primitive::IndexSpan = BufferSlice<std::uint32_t>`（`Geometry::IndexStream` 是同一类型的旧别名），
+  元素计、无 stride；把它写进 `Primitive::indices` 就是建这个段。
 - **自定义流**（未来）：同一个 `BufferSlice<T>`，不需要第三种表示。
 
 **谁陈述切片**：**四个角色、两种拼写**，都只有一条实现路径。整块 = `count` 0 ⇒ **跟随增长**；段 = 固定 count（`count == 0` 是"到末尾"，**不是空**；要空就传 null）。
 - 顶点侧：`setPositions/setNormals/setTexcoords2/setTexcoords3(buffer)` 与 `...(buffer, first_vertex, vertex_count)`，实现是 `addBuffer(location, AttributeChannel::slice(...))`；
-- 索引侧：`setIndices(buffer)` 与 `setIndices(buffer, first_index, index_count)`，实现是 `IndexStream::slice(...)`；1 参重载就是"整段"，`Geometry.cpp` 里只是一行转调，所以两种拼写不会漂。
+- 索引侧：`Primitive::IndexSpan::whole(buffer)` 与 `Primitive::IndexSpan::slice(buffer, first_index, index_count)`，写进该图元后 `addPrimitive` / `setPrimitive`；"整段"与"段"共用同一个 `BufferSlice` 解析规则，所以两种拼写不会漂。
 
-**索引流不是 channel**：channel = 着色器**输入**（per-vertex、有 stride、按 location 绑定），索引流 = **拓扑**（顶点装配按它取属性，着色器看不到，元素是 `uint32`、无 stride）。两者共享的只是**表示**（`BufferSlice`）。`Geometry::IndexStream` 就是 `BufferSlice<std::uint32_t>` 的别名；`indices()/firstIndex()/indexCount()/indicesBuffer()` 是它同一个段的四个视图（没有第二份状态）。单位要分清：顶点侧是**顶点**（texcoord 段 3 顶点 = 6 scalar），索引侧是**索引元素**。
+**索引流不是 channel**：channel = 着色器**输入**（per-vertex、有 stride、按 location 绑定），索引流 = **拓扑**（顶点装配按它取属性，着色器看不到，元素是 `uint32`、无 stride）。两者共享的只是**表示**（`BufferSlice`）。`Primitive::IndexSpan` 就是 `BufferSlice<std::uint32_t>` 的别名；`Primitive::indices`、`isIndexed()`、`indexCount()` 是它同一个段的视图（没有第二份状态）。单位要分清：顶点侧是**顶点**（texcoord 段 3 顶点 = 6 scalar），索引侧是**索引元素**。
 
 `addBuffer(location, channel)` 仍是**非 canonical**（别的 location、vec4 位置、别的 stride）的门，也仍然是"段"的实现路径：三个新重载都是**一行委托**给它。守卫：`TheWholeBufferAndTheSegmentSpellingsAgree`（同一 buffer/offset/components、覆盖相同、整块侧跟随增长而段不跟随、以及每个角色各自的 stride —— 复制粘贴重载用错 stride 会在 texcoord 那条上红）。
 

@@ -8,6 +8,7 @@
 #include <vine/Color.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Geometry.hpp>
+
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
@@ -17,8 +18,11 @@
 #include <vine/math/Point3.hpp>
 #include <vine/vsg/internal/DeviceProbe.hpp>
 
+#include "TestGeometryBuilders.hpp"
+
 using vn::graphics::Camera;
 using vn::graphics::Geometry;
+using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::MatrixTransform;
 using vn::graphics::RenderDiagnostic;
@@ -60,7 +64,7 @@ vn::intrusive_ptr<Scene> makeQuadScene()
     geometry->setNormals(vn::intrusive_ptr<vn::Buffer<float>>(
         new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F,
                                                   0.0F, 1.0F })));
-    geometry->setIndices(vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
         new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
     geometry->setRevision(1U);
 

@@ -26,6 +26,7 @@ else()
     endif()
 endif()
 include_directories(${CMAKE_SOURCE_DIR}/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})  # TestGeometryBuilders.hpp, shared by the SDK test targets.
 link_directories(${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/$<$<CONFIG:Debug>:Debug>$<$<CONFIG:Release>:Release>)
 link_libraries(gtest gtest_main)
 

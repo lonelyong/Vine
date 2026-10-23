@@ -46,8 +46,8 @@ class Geometry {                       // 只剩数据
 | `Topology.hpp`（新） | 枚举从 `StateNode.hpp` 搬出来：它是 primitive 的事实 |
 | `Primitive.hpp`（新） | 上面那个结构 + `IndexSpan` 别名 |
 | `Geometry` | `addPrimitive` / `setPrimitive` / `clearPrimitives` / `primitive(i)` / `primitiveCount` / `primitives()`；**数据即绘制**：`addBuffer` 装位置通道时若还没有 primitive 就放一个默认的（三角形、非索引）——"设了数据却没画"在结构上不可能 |
-| 单图元拼写（过渡） | `setIndices` / `hasIndices` / `indices` / `firstIndex` / `indexCount` / `indicesBuffer` / `material` / `setMaterial` / `program` / `setProgram` 保留为**单 draw 的便捷写法**（读写 primitive 0；`setMaterial/setProgram` 写给所有 primitive）。位置见 `.ai/design/graphics-followups-2026-10-19.md` §3.3 |
-| `RenderCommand` | `primitive_index` + `primitive()`；收集器**一条 primitive 一条命令**，材质/程序按 primitive → StateNode 解析 |
+| 材质/程序默认（2026-10-23 定稿） | `Geometry::setMaterial` / `setProgram` 是**几何级默认**：图元自己的值优先，图元没写才用几何默认，再否则用最近的 `StateNode`；它不是“写给所有 primitive”的批量写。`setIndices` / `hasIndices` / `indices` / `firstIndex` / `indexCount` / `indicesBuffer` 等“读写 primitive 0”的便利已删除，调用方直接 `addPrimitive` / `setPrimitive` / `primitive(0)`。决定见 `.ai/design/graphics-followups-2026-10-19.md` §3.3 |
+| `RenderCommand` | `primitive_index` + `primitive()`；收集器**一条 primitive 一条命令**，材质/程序按 primitive → 几何级默认 → StateNode 解析 |
 | 计划 | `CollectedCommand` / `CompiledCommand` 带 `primitive`；`CollectedCommand` 还带 primitive 的 `topology`，`FrameCompiler` 用它做 `resolveRenderState` 的第三个参数 |
 | 拾取 | 只对 `Topology::Triangles` 的 primitive 求交，命中结果带 `primitiveIndex`（顶点/索引仍从几何体读） |
 | 后端（已随第二片完成） | `GeometryFacts::primitives` 是**每 draw 一行**（topology + 索引流 + span + 计数），`ContentPass` 用 `CompiledCommand::primitive` 取那一行；0 个 primitive 是 `Unknown` |

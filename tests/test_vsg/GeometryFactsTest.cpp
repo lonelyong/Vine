@@ -31,7 +31,10 @@
 #include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/GeometryFacts.hpp>
 
+#include "TestGeometryBuilders.hpp"
+
 using vn::graphics::Geometry;
+using vn::test::setPrimitiveIndices;
 using vn::vsg::buildGeometryFacts;
 using vn::vsg::channelsMatchLayout;
 using vn::vsg::ChannelFacts;
@@ -62,7 +65,7 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
     Geometry geometry;
     geometry.setPositions(content.positions);
     geometry.setNormals(content.normals);
-    geometry.setIndices(content.indices);
+    setPrimitiveIndices(geometry, 0U, content.indices);
     geometry.setRevision(4U);
 
     GeometryFacts                facts;
@@ -100,7 +103,7 @@ TEST(GeometryFactsTest, TheChannelOrderIsCanonicalFirstAndCustomsAscending)
     Content  content;
     Geometry geometry;
     geometry.setPositions(content.positions);
-    geometry.setIndices(content.indices);
+    setPrimitiveIndices(geometry, 0U, content.indices);
 
     // A texcoord (the reserved location 8) and a custom channel at 4: the entry's order is fixed by the ABI,
     // not by the map's iteration order, because the entry's order IS the binding order.
@@ -131,7 +134,7 @@ TEST(GeometryFactsTest, AGeometryWithoutPositionsCannotBeDescribed)
     Content  content;
     Geometry without_positions;
     without_positions.setNormals(content.normals);
-    without_positions.setIndices(content.indices);
+    setPrimitiveIndices(without_positions, 0U, content.indices);
 
     GeometryFacts             facts;
     std::vector<ChannelFacts>   storage;
@@ -204,7 +207,7 @@ TEST(GeometryFactsTest, ASlicedChannelUploadsItsOwnSegment)
 
     Geometry geometry;
     geometry.setPositions(shared, /*first_vertex*/ 3U, /*vertex_count*/ 3U);
-    geometry.setIndices(content.indices);
+    setPrimitiveIndices(geometry, 0U, content.indices);
 
     GeometryFacts             facts;
     std::vector<ChannelFacts>   storage;
@@ -232,11 +235,11 @@ TEST(GeometryFactsTest, TwoGeometriesOverOneIndexArenaShareOneStreamIdentity)
 
     Geometry first;
     first.setPositions(content.positions);
-    first.setIndices(content.indices);
+    setPrimitiveIndices(first, 0U, content.indices);
 
     Geometry second;
     second.setPositions(content.positions);
-    second.setIndices(content.indices, /*first_index*/ 0U, /*index_count*/ 3U);
+    setPrimitiveIndices(second, 0U, content.indices, /*first_index*/ 0U, /*index_count*/ 3U);
 
     GeometryFacts             first_facts;
     GeometryFacts             second_facts;

@@ -104,7 +104,8 @@ TEST(ModelSceneTest, TheTreeShapeNamesAndTransformsComeFromTheModel)
     ASSERT_NE(leaf, nullptr);
     EXPECT_EQ(leaf->name(), vn::String(u8"body"));
     EXPECT_EQ(leaf->positionCount(), 3U);
-    EXPECT_EQ(leaf->indexCount(), 3U);
+    ASSERT_EQ(leaf->primitiveCount(), 1U);
+    EXPECT_EQ(leaf->primitive(0)->indexCount(), 3U);
 }
 
 TEST(ModelSceneTest, AMeshUsedTwiceIsOneAllocationBehindTwoLeaves)

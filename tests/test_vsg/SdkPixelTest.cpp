@@ -12,6 +12,7 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/Geometry.hpp>
+
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/Material.hpp>
@@ -24,6 +25,8 @@
 #include <vine/graphics/SceneView.hpp>
 #include <vine/graphics/StateNode.hpp>
 
+#include "TestGeometryBuilders.hpp"
+
 using vn::graphics::ChainDesc;
 using vn::graphics::PassChain;
 using vn::graphics::RenderPass;
@@ -32,6 +35,7 @@ using vn::graphics::ScreenPass;
 using vn::graphics::SceneView;
 using vn::graphics::ShadingMode;
 using vn::graphics::ShadingPath;
+using vn::test::setPrimitiveIndices;
 using vn::graphics::backend::PixelProbe;
 using vn::graphics::backend::Rgba8;
 
@@ -315,7 +319,7 @@ vn::intrusive_ptr<vn::graphics::MatrixTransform> makeCoplanarQuad(const vn::intr
     geometry->setNormals(vn::intrusive_ptr<vn::Buffer<float>>(
         new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F,
                                                   1.0F })));
-    geometry->setIndices(vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
         new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
     geometry->setRevision(1U);
 

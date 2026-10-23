@@ -54,7 +54,7 @@ engine.setDevice(backend);
 | `PositionAttitudeTransform` | `Group` + **TRS 形式**的变换节点（`position()` / `attitude()` / `scale()` / `pivot()`） | 矩阵按 `T * R * S * T(-pivot)` 自动合成；`setTransform()` 直接吃 `Isometry3d` |
 | `AutoTransform` | `Group` + **面向屏幕/相机**的 billboard（OSG 同名） | `RotateToScreen` / `RotateToCamera` / `RotateToAxis`；`setAutoScaleToScreen` 保持恒定像素大小 |
 | `StateNode` | 给子树施加渲染状态，并可覆盖 material / program | 越深的节点优先；**拓扑不在状态里**（它随 `Primitive` 走） |
-| `Geometry` | 叶子：**借用**的属性缓冲 + 图元列表（每条图元是一次 draw） | `setPositions/setNormals/setTexcoords2`、`addBuffer` 加自定义通道、`addPrimitive` / `setPrimitive`、`setRevision()`；`setIndices` 是单 draw 的便捷拼写；实例流用 `setInstanceTransforms()` 设在 **Primitive** 上 |
+| `Geometry` | 叶子：**借用**的属性缓冲 + 图元列表（每条图元是一次 draw） | `setPositions/setNormals/setTexcoords2`、`addBuffer` 加自定义通道、`addPrimitive` / `setPrimitive`、`setRevision()`；索引片段、实例流都写在 **Primitive** 上；`setMaterial()` / `setProgram()` 是这份资产的**几何级默认**，图元自己的值优先 |
 | `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)`（**共享不可变表**：一次遍历，多个 pass 共用；要改写就自己 `*list` 复制一份） |
 
 ### 2.2 属性沿树折叠的规则
@@ -68,7 +68,7 @@ engine.setDevice(backend);
 | `opacity` | **相乘**：scene × 各层祖先 × 自身，在叶子处夹取到 `[0, 1]`。**它是引擎唯一的透明度通道**：内置前向着色的片元 alpha 就是它，不乘材质/纹理的 alpha（材质是共享的，乘进去会让所有用它的 drawable 一起半透明，而排序用的是这个值） |
 | 渲染状态（blend / depth / cull / polygon） | **最深者覆盖**（折叠进 `RenderCommand::authoredState`，**每项 optional**：没有 StateNode 说过某一项，那它在这里就是"没人说"，而不是"设成了默认值"） |
 | 拓扑 | **不是状态**：每条 `Primitive` 自己说（数据事实，见 §3.21）；`RenderPass` 的 `topology` 可以把整片当点/线看，覆盖值由 `resolveRenderState` 报 `Pass` |
-| material / program | 叶子自己的优先，否则取最近的祖先 `StateNode` |
+| material / program | **图元**自己的优先 → `Geometry` 的几何级默认 → 最近的祖先 `StateNode` |
 | `isVisible` | **硬门**：不可见子树整棵不收集 |
 | 层（`Node::setLayers`） | **最深者覆盖**：最近的声明赢，`clearLayers()` 回到继承；没声明过的节点在 `kDefaultLayer`（bit 0）。判定在**可绘制节点**上（容器是结构，不是内容），所以 `Group` 上的声明管的是它下面的内容 |
 | 画序（`Node::setDrawOrder`） | **最深者覆盖**：最近的声明赢，`clearDrawOrder()` 回到继承，默认 0。**高 = 后画**（压在上面）；它是 pass 内那张列表的**外键** —— 同序之内仍是"不透明 前→后、透明 后→前"，所以它能越过透明批次、也能被同序的深度规则保护 |
@@ -210,7 +210,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 | --- | --- |
 | 整块缓冲就是通道 | `setPositions / setNormals / setTexcoords2`（= `AttributeChannel::shared(values, components)`） |
 | 缓冲里的一段 | `addBuffer(0, AttributeChannel::slice(arena, 3, first_vertex, vertex_count))`（自定义通道、法线、UV 同理） |
-| 索引也是缓冲的一段 | `setIndices(index_arena, first_index, index_count)`（`index_count == 0` 表示"到缓冲末尾"） |
+| 索引也是缓冲的一段 | `Primitive::IndexSpan::whole(index_arena)`，或 `Primitive::IndexSpan::slice(index_arena, first_index, index_count)`（`index_count == 0` 表示"到缓冲末尾"）；把 span 写进图元后 `addPrimitive` / `setPrimitive` |
 
 规则与后果：
 
@@ -1216,8 +1216,9 @@ root->addChild(mesh);                              // 一个对象、一次挂�
   仍然只是 `setPositions(...)` 一行；`primitiveCount() == 0` 只在你显式 `clearPrimitives()` 之后出现。
 - **收集器一条图元一条命令**，排序、透明度、`drawOrder` 按命令走（所以透明的部件不会被不透明的挡住顺序）。
   计划里带 `(primitive, topology)`，后端按行取索引片段。
-- **材质/程序**：图元自己写的优先，否则用最近的 `StateNode` 的；`Geometry::setMaterial()` / `setProgram()`
-  是"这份资产所有 draw 用同一份"的便捷写法。
+- **材质/程序**：图元自己写的优先；否则用 `Geometry::setMaterial()` / `setProgram()` 设的**几何级默认**；
+  再否则用最近的 `StateNode` 的。几何级默认不会覆盖图元自己的值——多图元资产可以给边线、点集各自一套，
+  其余 draw 共享默认。
 - **拾取只打三角形图元**（线/点不是面），命中结果带 `primitiveIndex` 说明打中的是哪一份。
 - **线框不要做成"另一条 Lines 图元"**：那要自己生成边表。`PolygonMode::Line`（子树或 pass override）是画法，
   不重编管线、不重传字节；只有需要**独立线宽/独立颜色/只画轮廓**时才值得做数据级线框。

@@ -321,7 +321,9 @@ vn::intrusive_ptr<vn::graphics::Geometry> makeDirectionBox(const vn::String& nam
     geometry->setPositions(vn::graphics::packAttribute(positions));
     geometry->setNormals(vn::graphics::packAttribute(normals));
     geometry->setTexcoords3(vn::graphics::packAttribute(directions));
-    geometry->setIndices(vn::graphics::packIndices(indices));
+    vn::graphics::Primitive draw;
+    draw.indices = vn::graphics::Primitive::IndexSpan::whole(vn::graphics::packIndices(indices));
+    geometry->addPrimitive(std::move(draw));
     return geometry;
 }
 
@@ -519,7 +521,9 @@ addBox(vn::graphics::Group* root, const vn::Colorf& diffuse, const vn::String& n
     geometry->setName(name);
     geometry->setPositions(vn::graphics::packAttribute(positions));
     geometry->setNormals(vn::graphics::packAttribute(normals));
-    geometry->setIndices(vn::graphics::packIndices(indices));
+    vn::graphics::Primitive draw;
+    draw.indices = vn::graphics::Primitive::IndexSpan::whole(vn::graphics::packIndices(indices));
+    geometry->addPrimitive(std::move(draw));
 
     auto material = vn::make_intrusive<vn::graphics::Material>();
     material->setDiffuse(diffuse);

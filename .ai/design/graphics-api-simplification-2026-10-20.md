@@ -34,7 +34,7 @@
 | 位置 | 原状 | 现状 |
 |---|---|---|
 | `Group` | `children()`（**每次调用复制整个列表**）+ `childrenRef()`（借用） | 只有 `children()`，返回 `const&`。每帧的收集/包围盒/拾取都走它，复制版是纯陷阱；测试里那条"复制版和借用版一致"的用例随第二个 getter 一起退场 |
-| `Geometry` | `setPositions/setNormals/setTexcoords2/setTexcoords3/setIndices` 各 **2 个 overload**（整段 / 段） | 各 1 个，`first_vertex = 0, vertex_count = 0` 就是"整段"。**调用点一个没改**，实现也只剩一条路径（`AttributeChannel::slice`，整段就是 0/0 的段） |
+| `Geometry` | `setPositions/setNormals/setTexcoords2/setTexcoords3/setIndices` 各 **2 个 overload**（整段 / 段） | 各 1 个，`first_vertex = 0, vertex_count = 0` 就是"整段"。**调用点一个没改**，实现也只剩一条路径（`AttributeChannel::slice`，整段就是 0/0 的段）。**2026-10-23 更新**：索引不再属于 `Geometry`，`setIndices` 已删除；索引片段写在 `Primitive::IndexSpan` 上（见 `graphics-primitives-2026-10-22.md` §2） |
 | `RenderPass` | `clearColor()` / `clearColor(int)` / `setClearColor(const Color&)` / `setClearColor(int, const Color&)` | `clearColor(int attachment = 0)` / `setClearColor(const Color&, int attachment = 0)`。参数顺序改成"颜色在前、附件在后"：颜色是主语，附件是修饰 |
 | `RenderTarget` | `colorFormat()` / `colorFormat(int)` | `colorFormat(int index = 0)` |
 | `RenderSurface` / `SceneView` | `resize(w,h)` / `resize(w,h,ratio)`（两个类各一对） | `resize(w,h,ratio = 0.0)`，`<= 0` 就是"沿用当前比例"——两边的实现本来就是这样，只是被拆成了两个入口 |

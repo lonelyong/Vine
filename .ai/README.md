@@ -70,6 +70,8 @@
   自动有一个默认三角形图元），`Primitive` = 拓扑 + 索引片段 + 材质 + 程序；收集器一条 primitive 一条命令，
   计划带 `(primitive, topology)`，拾取只打三角形图元；**两片都已落地**：后端 `GeometryFacts::primitives` 每 draw
   一行、`ContentPass` 按 `command.primitive` 取行；同一索引 arena 的多个 primitive 共享一次上传。
+  2026-10-23 收尾：`Geometry::material` / `program` 是**几何级默认**（图元自己的值优先），索引与实例流只写在
+  `Primitive` 上；`setIndices` 等单图元便捷拼写已删除。
 - `graphics-msaa-2026-10-22.md` —— **MSAA（2026-10-22，R6 + R6b）**：采样数是**目标**的属性而非管线开关
   （`RenderTarget::setSamples` → `TargetShape::samples` → 管线键 → 通道与图像）；离屏目标自建多重采样图并
   把**颜色与深度**各解析成一张单采样图（`picture()` / `depthPicture()` 是"画面"的唯一定义，回读/采样/借出/

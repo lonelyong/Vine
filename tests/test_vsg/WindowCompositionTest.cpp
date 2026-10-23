@@ -51,6 +51,7 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
+
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -87,7 +88,10 @@
 #include <vine/graphics/backend/Streams.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
 
+#include "TestGeometryBuilders.hpp"
+
 using vn::graphics::Geometry;
+using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
@@ -303,7 +307,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
     geometry->setPositions(vn::intrusive_ptr<vn::Buffer<float>>(
         new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F })));
-    geometry->setIndices(vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
+    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
         new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
     geometry->setRevision(1U);
 

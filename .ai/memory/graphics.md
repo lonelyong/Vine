@@ -2827,3 +2827,21 @@
   `RenderPipelineBuilderTest.ForwardPathBuildsWindowPass`（断言 plan 那一条的全部事实）。
 - **边界**：M4 只读**当前注册表** —— 不编译图、不分配 transient、不做依赖排序（那是 M7 的 FramePlan 编译）；
   `describe()` 是文本，结构性断言请直接读 `passes`。
+
+## 2026-10-23 R3 收尾：材质/程序是几何级默认，单图元便捷拼写删除
+
+- **决定（用户选 B）**：`Geometry` 不再保留“读写 primitive 0”的便利。`setIndices` / `hasIndices` /
+  `indices` / `firstIndex` / `indexCount` / `indicesBuffer` 与无 index 的实例便捷
+  （`setInstanceTransforms(slice)` / `setVisibleInstanceCount(n)` / `clear*`）全部删除；索引片段与实例流
+  只写在 `Primitive` 上（`Primitive::IndexSpan::whole/slice`、`setInstanceTransforms(index, ...)`）。
+- **材质/程序语义**：`Geometry::material/setMaterial`、`program/setProgram` 保留，但改为**几何级默认**：
+  图元自己的值优先，图元没写才用几何默认，再否则用最近的 `StateNode`。`setMaterial` **不是**“写给所有
+  primitive”的批量写，也不会创建 primitive；真正改变时 `announceContentChange()`（同指针是 no-op）。
+  解析点：`Scene.cpp` 的收集折叠、`StateNode.cpp` 的 `effectiveMaterial/effectiveProgram`。
+- **迁移**：生产只剩 `DemoScene.cpp` 两处显式 `Primitive`；测试用 `tests/TestGeometryBuilders.hpp` 的
+  `setPrimitiveIndices(geometry, index, ...)` 把索引写到指定图元（测试夹具便利，不是公开 API）。
+- **判据**：`GeometryTest.MaterialAndProgramAreGeometryDefaultsNotBatchWrites`（默认不建图元、不覆盖图元
+  自己的值、同指针不公告、真改公告）、`SceneTest.TheDrawResolvesPrimitiveThenGeometryThenStateNode`
+  （primitive → geometry → StateNode，material/program 同规则）、`StateNodeTest.EffectiveProgramLeafWinsOverAncestor`
+  继续覆盖单值 helper。`test_graphics` 450、`test_vsg` 503、ctest 24/24；`vsg_rewrite_gate.sh build --no-build`
+  503 cases、0 VUID、0 SYNC-HAZARD、app picture judged。
