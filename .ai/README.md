@@ -7,7 +7,7 @@
 **索引由机器钉住**（`scripts/check_ai_docs.py`）：`.ai/` 下每一份 `.md` 必须在这里被点名，点到的名字必须存在。
 **写法**：结论在上、历史在下；现行段落提到已不存在的东西时加 `<!-- drift-ok -->`。
 
-## design/ —— 现行设计文档（27）
+## design/ —— 现行设计文档（26）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#）→ 判据（T#）→ 相关文档**。
@@ -35,10 +35,9 @@
 - `appfw-userio.md` —— UserIO。
 - `appfw-document-model.md` —— 文档模型（身份 + 生命周期 + 类型注册）。
 
-**base 与其他（8）**
+**base 与其他（7）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
 - `async-next.md` —— async 下一步（取消、作用域、帧分配的 go/no-go）。
-- `geometry-attribute-storage.md` —— geometry 属性存储：一份分配、两侧共用。
 - `imaging-design.md` —— imaging 模块（CPU 像素数据）。
 - `iobase-vfs-design.md` —— IOBase（`vn::io`）VFS 与 Stream。
 - `robotics-io-design.md` —— Robotics IO（XML、VFS 打包、材质库）。
